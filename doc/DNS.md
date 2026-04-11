@@ -12,9 +12,9 @@ The root resolver address is typically published in `ConfigParam 4`.
 
 ## Useful Tools
 
-- [lite-client](../build/lite-client/lite-client)
-- [toslib-cli](../build/toslib/toslib-cli)
-- [rldp-http-proxy](../build/rldp-http-proxy/rldp-http-proxy)
+- [lite-client](../lite-client)
+- [toslib-cli](../toslib)
+- [rldp-http-proxy](../rldp-http-proxy)
 
 ## Inspecting DNS Data with Lite Client
 

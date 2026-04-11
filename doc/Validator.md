@@ -4,9 +4,9 @@ This guide describes the operator view of the validator stack in this repository
 
 ## Main Components
 
-- [validator-engine](../build/validator-engine/validator-engine)
-- [validator-engine-console](../build/validator-engine-console/validator-engine-console)
-- [lite-client](../build/lite-client/lite-client)
+- [validator-engine](../validator-engine)
+- [validator-engine-console](../validator-engine-console)
+- [lite-client](../lite-client)
 
 ## Validator vs Full Node
 

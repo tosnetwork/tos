@@ -57,10 +57,10 @@ There is no single safe "edit config" shortcut. The correct method depends on th
 
 Relevant tools in this repository:
 
-- [fift](../build/crypto/fift)
-- [lite-client](../build/lite-client/lite-client)
-- [validator-engine-console](../build/validator-engine-console/validator-engine-console)
-- [create-state](../build/crypto/create-state)
+- [fift](../crypto/fift)
+- [lite-client](../lite-client)
+- [validator-engine-console](../validator-engine-console)
+- [create-state](../crypto/block/create-state.cpp)
 
 ## Safety Rules
 

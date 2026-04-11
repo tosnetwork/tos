@@ -6,7 +6,7 @@ TOS Sites expose HTTP content through RLDP and ADNL rather than a traditional pu
 
 The operator and client entrypoint is:
 
-- [rldp-http-proxy](../build/rldp-http-proxy/rldp-http-proxy)
+- [rldp-http-proxy](../rldp-http-proxy)
 
 ## Two Modes
 
@@ -55,8 +55,8 @@ Example pattern:
 
 TOS Sites depend on working DNS resolution when using named sites. Validate DNS first with:
 
-- [lite-client](../build/lite-client/lite-client)
-- [toslib-cli](../build/toslib/toslib-cli)
+- [lite-client](../lite-client)
+- [toslib-cli](../toslib)
 
 ## Operational Notes
 

@@ -8,7 +8,7 @@ Use the verified build flow in [BUILD.md](../BUILD.md).
 
 The binary is:
 
-- [lite-client](../build/lite-client/lite-client)
+- [lite-client](../lite-client)
 
 ## Required Inputs
 
