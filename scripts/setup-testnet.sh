@@ -247,7 +247,9 @@ ExecStart=$INSTALL_BIN/tos-validator-engine \\
   -c $NODE_DIR/config.json \\
   -D $NODE_DIR \\
   -f $INSTALL_SHARE/fift/lib \\
+  --initial-sync-delay 5 \\
   --session-logs $NODE_DIR/session-logs \\
+  --quic-flood-control -1 \\
   -l $NODE_DIR/log \\
   -t 4
 Restart=on-failure
