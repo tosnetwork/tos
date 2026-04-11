@@ -38,8 +38,12 @@ cd build
   -D /data/tos/db \
   -f ./crypto/fift/lib \
   -I <public-ip>:<port> \
+  --initial-sync-delay 5 \
+  --quic-flood-control -1 \
   -l /data/tos/logs/validator-engine.log
 ```
+
+> **Note:** `--initial-sync-delay` and `--quic-flood-control -1` are required for ADNL connectivity. See [Validator.md](Validator.md) for details.
 
 ## Important Runtime Options
 

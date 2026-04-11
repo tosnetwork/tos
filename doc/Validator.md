@@ -31,16 +31,28 @@ cd build
   -D /data/tos/db \
   -f ./crypto/fift/lib \
   -I <public-ip>:<port> \
+  --initial-sync-delay 5 \
+  --quic-flood-control -1 \
   -l /data/tos/logs/validator-engine.log
 ```
 
-Useful options:
+### Required Launch Parameters
 
-- `-t`: worker threads
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| `--initial-sync-delay` | `5` (seconds) | Delay before starting validation to allow initial state sync. Without this, ADNL handshake fails and liteserver connections time out. |
+| `--quic-flood-control` | `-1` (disabled) | Disable QUIC flood control. Required for local/small networks. Without this, peer-to-peer communication may stall. |
+
+These parameters are required for the node to accept external connections (lite-client, validator console). Omitting them causes the node to appear active but reject all ADNL handshakes.
+
+### Optional Parameters
+
+- `-t <N>`: worker threads (default: 7)
 - `--parallel-validation`: enable account-level parallel validation
 - `--collect-validator-telemetry`: export validator telemetry
 - `--db-event-fifo`: publish DB events
 - `--exporter-address`: bind metrics exporter
+- `--session-logs <file>`: validator session statistics
 
 ## Using Validator Console
 

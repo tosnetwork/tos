@@ -419,7 +419,7 @@ This generates new keys, new zero state, and fresh databases. All previous chain
 | `setup-testnet.sh` fails with "another setup is running" | Lock file held | Remove `/tmp/tos-setup.lock` |
 | Service exits with status=2 | Invalid local config format | Verify `config.json` has all TL-required fields |
 | `time` works but `last` times out on first try | lite-client picked a not-yet-ready node | Run `time` first, or retry — lite-client rotates liteservers |
-| ADNL timeout on all nodes | Key mismatch between global and local configs | Re-run `setup-testnet.sh --clean` |
+| ADNL timeout on all nodes | Missing `--initial-sync-delay` or `--quic-flood-control` launch params | Verify systemd ExecStart includes both flags (see below) |
 | "missing file" in log for static/ | Zero state .boc not in static dir | Check symlinks in `static/` point to valid .boc files |
 | DHT "failed to get from dht" | Nodes haven't discovered each other yet | Wait 5-10 seconds, DHT needs time to propagate |
 | Nodes not producing blocks | < 2/3 validators online | Ensure all 3 validator services are active |
@@ -435,6 +435,25 @@ This generates new keys, new zero state, and fresh databases. All previous chain
 | `test/tostester/src/tostester/network.py` | Python network orchestration class (tested, canonical) |
 | `test/tostester/src/tostester/zerostate.py` | Zero state generation via Fift |
 | `test/tostester/src/tostester/key.py` | Ed25519 key generation and keyring management |
+
+## Critical Launch Parameters
+
+The following parameters are **required** for validator-engine to accept external connections. Without them, nodes appear active but all ADNL handshakes time out.
+
+```ini
+ExecStart=tos-validator-engine \
+  ...
+  --initial-sync-delay 5 \
+  --quic-flood-control -1 \
+  ...
+```
+
+| Parameter | Value | Why required |
+|-----------|-------|--------------|
+| `--initial-sync-delay` | `5` | Gives the node 5 seconds to complete initial state sync before starting validation. Without this, the ADNL layer fails to initialize properly, causing all liteserver and console connections to time out with "Connection reset by peer". |
+| `--quic-flood-control` | `-1` | Disables QUIC flood control. In local/small networks, the default flood control can block peer-to-peer communication. Without this, nodes cannot discover each other or complete consensus. |
+
+These parameters are set automatically by `setup-testnet.sh` in the generated systemd units. If you create units manually, ensure they are included.
 
 ## Production Deployment Notes
 
