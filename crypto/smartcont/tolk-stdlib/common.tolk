@@ -1209,7 +1209,7 @@ fun slice.preloadBits(self, len: int): slice
 /// Loads the serialized amount of nanotoncoins (any unsigned integer up to `2^120 - 1`).
 @pure
 fun slice.loadCoins(mutate self): coins
-    asm( -> 1 0) "LDGRAMS"
+    asm( -> 1 0) "LDTOMIS"
 
 /// Loads a boolean from a slice.
 @pure

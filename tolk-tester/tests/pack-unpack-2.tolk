@@ -76,7 +76,7 @@ struct JustMaybeInt32 {
 
 /*
     op:int32
-    amount:Grams
+    amount:Tomis
     = TwoInts32AndCoins;
 */
 

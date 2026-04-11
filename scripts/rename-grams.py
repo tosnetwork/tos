@@ -82,7 +82,7 @@ RULES = [
 EXCLUDE_DIRS = {'third-party', '.git', '.venv', 'build', 'node_modules'}
 EXCLUDE_FILES = {'rename-grams.py'}
 
-INCLUDE_EXTENSIONS = {'.cpp', '.h', '.hpp', '.fif', '.fc', '.tlb', '.py', '.md'}
+INCLUDE_EXTENSIONS = {'.cpp', '.h', '.hpp', '.fif', '.fc', '.tolk', '.tlb', '.py', '.md'}
 
 # ── Words that must NEVER be modified ─────────────────────────────
 

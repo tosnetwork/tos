@@ -47,8 +47,8 @@ fun run<TInputStruct>(input: TInputStruct, ans: slice) {
 
 /*
 single_prefix32#87654321
-    amount1:Grams
-    amount2:Grams
+    amount1:Tomis
+    amount2:Tomis
     = MsgSinglePrefix32;
 */
 
@@ -59,7 +59,7 @@ struct(0x87654321) MsgSinglePrefix32 {
 
 /*
 single_prefix48#876543211234
-    amount:(Either Grams uint64)
+    amount:(Either Tomis uint64)
     = MsgSinglePrefix48;
 */
 
@@ -176,7 +176,7 @@ type MsgExternal1 = SayHiAndGoodbye | SayStoreInChain
 /*
 transferParams1#794
     dest_int:MsgAddressInt
-    amount:Grams
+    amount:Tomis
     dest_ext:MsgAddressExt
     = TransferParams;
 */
@@ -189,7 +189,7 @@ struct(0x794) TransferParams1 {
 
 /*
 transferParams2#9
-    intVector:(Both int32 (Both (Maybe Grams) uint64))
+    intVector:(Both int32 (Both (Maybe Tomis) uint64))
     needs_more:^Bit
     = TransferParams;
  */

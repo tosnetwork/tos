@@ -6,8 +6,8 @@ int_msg_info$0                                                              1
     src:MsgAddress                      // always 00 on send                2
     dest:MsgAddressInt                  // parameter                        267
     value:CurrencyCollection            // parameter                        124 + 1
-    extra_flags:Grams                   // if new bounces enabled           12
-    fwd_fee:Grams                       // always 0 on send                 4
+    extra_flags:Tomis                   // if new bounces enabled           12
+    fwd_fee:Tomis                       // always 0 on send                 4
     created_lt:uint64                   // always 0 on send                 64
     created_at:uint32                   // always 0 on send                 32
     = CommonMsgInfoRelaxed;

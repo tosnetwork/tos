@@ -8,8 +8,8 @@ int_msg_info$0                                                              1
     src:MsgAddress                      // always 00 on send                2
     dest:MsgAddressInt                  // parameter                        267
     value:CurrencyCollection            // parameter                        124 + 1
-    extra_flags:Grams                   // if new bounces enabled           12
-    fwd_fee:Grams                       // always 0 on send                 4
+    extra_flags:Tomis                   // if new bounces enabled           12
+    fwd_fee:Tomis                       // always 0 on send                 4
     created_lt:uint64                   // always 0 on send                 64
     created_at:uint32                   // always 0 on send                 32
     = CommonMsgInfoRelaxed;
@@ -65,7 +65,7 @@ fun test1_manual() {
     return beginCell()
         .storeUint(0x18, 6)            // bounce
         .storeAddress(address("UQDKbjIcfM6ezt8KjKJJLshZJJSqX7XOA4ff-W72r5gqPuwA"))
-        .storeCoins(123)   // value.grams
+        .storeCoins(123)   // value.tomis
         .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)  // ... + 0 init + 0 body (not ref)
         // MyBody: op + queryId
         .storeUint(0x12345678, 32)
@@ -91,7 +91,7 @@ fun test2_manual() {
     return beginCell()
         .storeUint(0x10, 6)            // no bounce
         .storeAddress(address("1:527964d55cfa6eb731f4bfc07e9d025098097ef8505519e853986279bd8400d8"))
-        .storeCoins(90)   // value.grams
+        .storeCoins(90)   // value.tomis
         .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)  // ... + 0 init + 0 body (not ref)
         // body: op + queryId
         .storeUint(0x12345678, 32)
@@ -121,7 +121,7 @@ fun test3_manual() {
     return beginCell()
         .storeUint(0x10, 6)            // no bounce
         .storeAddress(address("1:527964d55cfa6eb731f4bfc07e9d025098097ef8505519e853986279bd8400d8"))
-        .storeCoins(90)   // value.grams
+        .storeCoins(90)   // value.tomis
         .storeUint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)  // ... + 0 init + 1 body (ref)
         .storeRef(body_ref)
         .endCell();
@@ -174,7 +174,7 @@ fun test5_manual() {
     return beginCell()
         .storeUint(0x18, 6)            // bounce
         .storeAddress(address("UQDKbjIcfM6ezt8KjKJJLshZJJSqX7XOA4ff-W72r5gqPuwA"))
-        .storeCoins(123)          // value.grams
+        .storeCoins(123)          // value.tomis
         .storeMaybeRef(ec_dict.toLowLevelDict())   // value.extra
         .storeUint(0, 0 + 4 + 4 + 64 + 32 + 1 + 1)  // ... + 0 init + 0 body (not ref)
         // body: op + queryId
@@ -203,7 +203,7 @@ fun test6_manual(value: coins, ec_dict: dict) {
     return beginCell()
         .storeUint(0x18, 6)            // bounce
         .storeAddress(address("UQDKbjIcfM6ezt8KjKJJLshZJJSqX7XOA4ff-W72r5gqPuwA"))
-        .storeCoins(value)        // value.grams
+        .storeCoins(value)        // value.tomis
         .storeMaybeRef(ec_dict)   // value.extra
         .storeUint(0, 0 + 4 + 4 + 64 + 32 + 1 + 1)  // ... + 0 init + 0 body (not ref)
         // body: op + queryId
@@ -279,7 +279,7 @@ fun test8_manual(destAddr: address, requestedAmount: coins) {
     return beginCell()
         .storeUint(0x18, 6)            // bounce
         .storeAddress(destAddr)
-        .storeCoins(123)   // value.grams
+        .storeCoins(123)   // value.tomis
         .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)  // ... + 0 init + 0 body (not ref)
         .storeUint(0x706c7567, 32)
         .storeUint(0, 64)
@@ -310,7 +310,7 @@ fun test9_manual(bounceable: bool) {
     return beginCell()
         .storeUint(0b01, 2).storeBool(bounceable).storeUint(0b000, 3)
         .storeAddress(address("UQDKbjIcfM6ezt8KjKJJLshZJJSqX7XOA4ff-W72r5gqPuwA"))
-        .storeCoins(0)   // value.grams
+        .storeCoins(0)   // value.tomis
         .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)  // ... + 0 init + 0 body (not ref)
         .storeUint(0x12345678, 32)
         .storeUint(800, 64)
@@ -423,7 +423,7 @@ fun test13_manual() {
     return beginCell()
         .storeUint(0x18, 6)            // bounce
         .storeAddress(address("EQDE0HBgfkOiqHezLtExBGTvOs8eitthHQosBjW3BmDy1y2K"))
-        .storeCoins(52 << 78)   // value.grams
+        .storeCoins(52 << 78)   // value.tomis
         .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)  // ... + 0 init + 0 body (not ref)
         .endCell();     // no body at all
 }
@@ -521,7 +521,7 @@ fun test18_manual(dest: builder, queryId: uint64) {
     return beginCell()
         .storeUint(0x18, 6)            // bounce
         .storeBuilder(dest)
-        .storeCoins(123)   // value.grams
+        .storeCoins(123)   // value.tomis
         .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)  // ... + 0 init + 0 body (not ref)
         // MyBody: op + queryId
         .storeUint(0x12345678, 32)
@@ -573,7 +573,7 @@ fun test20_manual() {
     return beginCell()
         .storeUint(0x18, 6)            // bounce
         .storeAddress(address("UQDKbjIcfM6ezt8KjKJJLshZJJSqX7XOA4ff-W72r5gqPuwA"))
-        .storeCoins(123)   // value.grams
+        .storeCoins(123)   // value.tomis
         .storeUint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)  // ... + 0 init + 1 body (ref)
         .storeRef(bodyB.endCell())
         .endCell();
@@ -602,7 +602,7 @@ fun test21_manual(bd: Body21) {
     return beginCell()
         .storeUint(0x10, 6)            // no bounce
         .storeAddress(address("EQAUzE-Nef80O9dLZy91HfPiOb6EEQ8YqyWKyIU-KeaYLNUi"))
-        .storeCoins(tos("0.1"))     // value.grams
+        .storeCoins(tos("0.1"))     // value.tomis
         .storeDict(createEmptyDict())
         .storeUint(1, 4 + 4 + 64 + 32 + 1 + 1)  // ... + 0 init + 1 body (ref)
         .storeRef(bd.toCell())      // stored as ref due to remainder of unpredictable size
@@ -728,7 +728,7 @@ fun test25_manual() {
     return beginCell()
         .storeUint(0x18, 6)            // bounce
         .storeAddress(address("UQDKbjIcfM6ezt8KjKJJLshZJJSqX7XOA4ff-W72r5gqPuwA"))
-        .storeCoins(123)   // value.grams
+        .storeCoins(123)   // value.tomis
         .storeUint(0, 1)    // no extra currencies
         .storeCoins(3)      // extra_flags for bounces
         .storeUint(0, 4 + 64 + 32 + 1 + 1)  // ... + 0 init + 0 body (not ref)
