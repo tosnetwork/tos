@@ -162,15 +162,15 @@ Each `WorkchainDescr` entry (keyed by workchain ID):
 |-------|------|-------|-------------|
 | `max_validators` | uint32 | **400** | Maximum total validators |
 | `max_main_validators` | uint32 | **100** | Maximum masterchain validators |
-| `min_validators` | uint32 | **13** | Minimum validators for network to operate |
+| `min_validators` | uint32 | **3** | Minimum validators for network to operate |
 
 ## ConfigParam 17 — Stake Limits
 
 | Field | Type | Value | Description |
 |-------|------|-------|-------------|
-| `min_stake` | Tomis | **10,000 TOS** | Minimum stake to participate in elections |
+| `min_stake` | Tomis | **300,000 TOS** | Minimum stake to participate in elections |
 | `max_stake` | Tomis | **10,000,000 TOS** | Maximum stake per validator |
-| `min_total_stake` | Tomis | **500,000 TOS** | Minimum total stake across all validators |
+| `min_total_stake` | Tomis | **900,000 TOS** | Minimum total stake across all validators |
 | `max_stake_factor` | uint32 | **196,608** (3x) | Max ratio of largest to smallest stake. Fixed-point: 65536 = 1x. |
 
 ## ConfigParam 18 — Storage Prices

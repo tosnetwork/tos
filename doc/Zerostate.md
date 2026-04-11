@@ -272,8 +272,8 @@ The following table maps Fift calls in the zero state script to their recommende
 |-----------|-------------|-------------------|
 | `setglobalid` | 19 | **1** (mainnet), **2** (testnet), **3** (dev) |
 | `config.version!` | 8 | version=13, capabilities=494 |
-| `config.validator_num!` | 16 | max=400, main=100, min=13 |
-| `config.validator_stake_limits!` | 17 | min=10K TOS, max=10M TOS, total=500K TOS, factor=3x |
+| `config.validator_num!` | 16 | max=400, main=100, min=3 |
+| `config.validator_stake_limits!` | 17 | min=300K TOS, max=10M TOS, total=900K TOS, factor=3x |
 | `config.election_params!` | 15 | 65536 / 32768 / 8192 / 32768 |
 | `config.storage_prices!` | 18 | 1 / 500 / 1000 / 500000 |
 | `config.gas_prices!` | 21 | gas_price=26M, limit=1M, block=10M |
