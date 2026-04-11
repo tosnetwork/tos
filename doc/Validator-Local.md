@@ -459,7 +459,7 @@ These parameters are set automatically by `setup-testnet.sh` in the generated sy
 
 For production, the following changes are needed:
 
-1. **global_id**: Change from `3` (dev) to `1` (mainnet) or `2` (testnet) in `gen-zerostate.fif`
+1. **global_id**: Change from `3` (dev) to `1` (mainnet) or `-3` (testnet) in `gen-zerostate.fif`
 2. **IP addresses**: Replace `127.0.0.1` with public IPs; each validator on a separate machine
 3. **Separate machines**: Run each validator on its own server with dedicated storage
 4. **init_block**: Add `init_block` to global config after network is running (for faster sync)

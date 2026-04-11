@@ -23,7 +23,7 @@ The zero state is the initial state of the blockchain — block 0 of the masterc
 | File | Purpose |
 |------|---------|
 | `crypto/smartcont/gen-zerostate.fif` | Mainnet template (`global_id = 1`) |
-| `crypto/smartcont/gen-zerostate-test.fif` | Testnet template (`global_id = 2`) |
+| `crypto/smartcont/gen-zerostate-test.fif` | Testnet template (`global_id = -3`) |
 | `test/tostester/src/tostester/zerostate.py` | Python wrapper for test/dev generation |
 | `crypto/smartcont/CreateState.fif` | Fift library with `setglobalid`, `register_smc`, `create_state`, etc. |
 
@@ -270,7 +270,7 @@ The following table maps Fift calls in the zero state script to their recommende
 
 | Fift call | ConfigParam | Recommended Value |
 |-----------|-------------|-------------------|
-| `setglobalid` | 19 | **1** (mainnet), **2** (testnet), **3** (dev) |
+| `setglobalid` | 19 | **1** (mainnet), **-3** (testnet), **3** (dev) |
 | `config.version!` | 8 | version=13, capabilities=494 |
 | `config.validator_num!` | 16 | max=400, main=100, min=3 |
 | `config.validator_stake_limits!` | 17 | min=300K TOS, max=10M TOS, total=900K TOS, factor=3x |
@@ -285,7 +285,7 @@ The following table maps Fift calls in the zero state script to their recommende
 | `config.block_create_fees!` | 14 | mc=1.7 TOS, base=1.0 TOS |
 
 **Design notes:**
-- **global_id**: TOS uses positive values (1/2/3) to clearly distinguish from other networks. Wallet contracts include global_id in signatures for [anti-replay protection](../crypto/smartcont/wallet3-code.fc).
+- **global_id**: TOS uses distinct values (1/-3/3) to distinguish networks. Wallet contracts include global_id in signatures for [anti-replay protection](../crypto/smartcont/wallet3-code.fc).
 - **Validator thresholds**: `min_validators=13` and `min_stake=10K TOS` allow bootstrapping with a smaller initial validator set, then increase via governance as the network grows.
 - **ConfigParam 19 is permanent** — global_id should never change after genesis, as it would invalidate all existing wallet signatures.
 

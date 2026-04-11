@@ -187,7 +187,7 @@ Each `WorkchainDescr` entry (keyed by workchain ID):
 
 | Field | Type | Value | Description |
 |-------|------|-------|-------------|
-| `global_id` | int32 | **1** (mainnet) / **2** (testnet) / **3** (dev) | Chain identity. Must match every block header. **Never change after genesis** — wallet signatures depend on it. |
+| `global_id` | int32 | **1** (mainnet) / **-3** (testnet) / **3** (dev) | Chain identity. Must match every block header. **Never change after genesis** — wallet signatures depend on it. |
 
 ## ConfigParam 20 — Masterchain Gas Prices
 
