@@ -62,6 +62,9 @@ class WalletInterface : public SmartContract {
   virtual ~WalletInterface() {
   }
 
+  void set_global_id(td::int32 id) { global_id_ = id; }
+  td::int32 get_chain_global_id() const { return global_id_; }
+
   virtual size_t get_max_gifts_size() const = 0;
   virtual size_t get_max_message_size() const = 0;
   virtual td::Result<td::Ref<vm::Cell>> make_a_gift_message(const td::Ed25519::PrivateKey &private_key,
@@ -76,6 +79,9 @@ class WalletInterface : public SmartContract {
                                                  td::uint32 valid_until = std::numeric_limits<td::uint32>::max()) const;
 
   static td::Ref<vm::Cell> create_int_message(const Gift &gift);
+
+ protected:
+  td::int32 global_id_{0};
 
  private:
   static void store_gift_message(vm::CellBuilder &cb, const Gift &gift);

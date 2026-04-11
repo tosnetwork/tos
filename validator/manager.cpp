@@ -20,7 +20,7 @@
 #include <fstream>
 
 #include "auto/tl/lite_api.h"
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "common/delay.h"
 #include "common/stats.h"
 #include "db/fileref.hpp"
@@ -2569,7 +2569,7 @@ void ValidatorManagerImpl::update_shards() {
   }
   if (!serializer_.empty()) {
     td::actor::send_closure(serializer_, &AsyncStateSerializer::auto_disable_serializer,
-                            is_validator() && last_masterchain_state_->get_global_id() == -239);  // mainnet only
+                            is_validator() && last_masterchain_state_->get_global_id() == 1);  // TOS mainnet only
   }
   init_shard_block_verifier(mc_validator_adnl_id);
 }
@@ -3143,7 +3143,7 @@ void ValidatorManagerImpl::prepare_stats(td::Promise<std::vector<std::pair<std::
   }
 
   bool serializer_enabled = opts_->get_state_serializer_enabled();
-  if (is_validator() && last_masterchain_state_.not_null() && last_masterchain_state_->get_global_id() == -239) {
+  if (is_validator() && last_masterchain_state_.not_null() && last_masterchain_state_->get_global_id() == 1) {
     serializer_enabled = false;
   }
   vec.emplace_back("stateserializerenabled", serializer_enabled ? "true" : "false");

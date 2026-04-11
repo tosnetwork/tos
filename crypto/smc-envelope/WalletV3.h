@@ -122,6 +122,7 @@ class RestrictedWallet : public WalletBase<RestrictedWallet, RestrictedWalletTra
       return td::Status::Error("Wallet is already inited");
     }
 
+    cb.store_long(global_id_, 32);
     cb.store_long(wallet_id, 32);
     cb.store_long(valid_until, 32);
     cb.store_long(seqno, 32);
@@ -155,6 +156,7 @@ class RestrictedWallet : public WalletBase<RestrictedWallet, RestrictedWalletTra
     if (seqno == 0) {
       return td::Status::Error("Wallet is not inited yet");
     }
+    cb.store_long(global_id_, 32);
     cb.store_long(wallet_id, 32);
     cb.store_long(valid_until, 32);
     cb.store_long(seqno, 32);

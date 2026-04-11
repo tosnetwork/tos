@@ -122,7 +122,7 @@ R downcast_call2(O&& o, F&& f, R res = {}) {
 }
 
 auto to_toslib_api(const tos::BlockIdExt& blk) {
-  return toslib_api::make_object<toslib_api::ton_blockIdExt>(
+  return toslib_api::make_object<toslib_api::tos_blockIdExt>(
       blk.id.workchain, blk.id.shard, blk.id.seqno, blk.root_hash.as_slice().str(), blk.file_hash.as_slice().str());
 }
 
@@ -139,7 +139,7 @@ td::Result<toslib_api::object_ptr<toslib_api::blocks_BlockSignatures>> to_toslib
   toslib_api::object_ptr<toslib_api::blocks_BlockSignatures> result;
   tos::tos_api::downcast_call(*sig_set->tl(),
                               td::overloaded(
-                                  [&](const tos::tos_api::tonNode_signatureSet_ordinary& obj) {
+                                  [&](const tos::tos_api::tosNode_signatureSet_ordinary& obj) {
                                     std::vector<toslib_api_ptr<toslib_api::blocks_signature>> signatures;
                                     for (const auto& s : obj.signatures_) {
                                       signatures.push_back(tos::create_tl_object<toslib_api::blocks_signature>(
@@ -148,7 +148,7 @@ td::Result<toslib_api::object_ptr<toslib_api::blocks_BlockSignatures>> to_toslib
                                     result = tos::create_tl_object<toslib_api::blocks_blockSignatures>(
                                         to_toslib_api(blk), std::move(signatures));
                                   },
-                                  [&](const tos::tos_api::tonNode_signatureSet_simplex& obj) {
+                                  [&](const tos::tos_api::tosNode_signatureSet_simplex& obj) {
                                     std::vector<toslib_api_ptr<toslib_api::blocks_signature>> signatures;
                                     for (const auto& s : obj.signatures_) {
                                       signatures.push_back(tos::create_tl_object<toslib_api::blocks_signature>(
@@ -383,8 +383,8 @@ td::Result<tos::pchan::Config> to_pchan_config(const toslib_api::pchan_initialAc
 
 class AccountState {
  public:
-  AccountState(block::StdAddress address, RawAccountState&& raw, td::uint32 wallet_id)
-      : address_(std::move(address)), raw_(std::move(raw)), wallet_id_(wallet_id) {
+  AccountState(block::StdAddress address, RawAccountState&& raw, td::uint32 wallet_id, td::int32 global_id = 0)
+      : address_(std::move(address)), raw_(std::move(raw)), wallet_id_(wallet_id), global_id_(global_id) {
     guess_type();
   }
 
@@ -618,6 +618,7 @@ class AccountState {
     return false;
   }
   td::unique_ptr<tos::WalletInterface> get_wallet() const {
+    td::unique_ptr<tos::WalletInterface> wallet;
     switch (get_wallet_type()) {
       case AccountState::Empty:
       case AccountState::Unknown:
@@ -625,18 +626,26 @@ class AccountState {
       case AccountState::PaymentChannel:
         return {};
       case AccountState::WalletV3:
-        return td::make_unique<tos::WalletV3>(get_smc_state());
+        wallet = td::make_unique<tos::WalletV3>(get_smc_state());
+        break;
       case AccountState::HighloadWalletV1:
-        return td::make_unique<tos::HighloadWallet>(get_smc_state());
+        wallet = td::make_unique<tos::HighloadWallet>(get_smc_state());
+        break;
       case AccountState::HighloadWalletV2:
-        return td::make_unique<tos::HighloadWalletV2>(get_smc_state());
+        wallet = td::make_unique<tos::HighloadWalletV2>(get_smc_state());
+        break;
       case AccountState::RestrictedWallet:
-        return td::make_unique<tos::RestrictedWallet>(get_smc_state());
+        wallet = td::make_unique<tos::RestrictedWallet>(get_smc_state());
+        break;
       case AccountState::WalletV4:
-        return td::make_unique<tos::WalletV4>(get_smc_state());
+        wallet = td::make_unique<tos::WalletV4>(get_smc_state());
+        break;
+      default:
+        UNREACHABLE();
+        return {};
     }
-    UNREACHABLE();
-    return {};
+    wallet->set_global_id(global_id_);
+    return wallet;
   }
   bool is_frozen() const {
     return !raw_.frozen_hash.empty();
@@ -833,6 +842,7 @@ class AccountState {
   WalletType wallet_type_{Unknown};
   td::int32 wallet_revision_{0};
   td::uint32 wallet_id_{0};
+  td::int32 global_id_{0};
   bool has_new_state_{false};
 
   WalletType guess_type() {
@@ -1333,7 +1343,7 @@ class RemoteRunSmcMethod : public td::actor::Actor {
     TRY_RESULT(method_id, query_.args.get_method_id());
     TRY_RESULT(serialized_stack, query_.args.get_serialized_stack());
     client_.send_query(
-        //liteServer.runSmcMethod mode:# id:tonNode.blockIdExt account:liteServer.accountId method_id:long params:bytes = liteServer.RunMethodResult;
+        //liteServer.runSmcMethod mode:# id:tosNode.blockIdExt account:liteServer.accountId method_id:long params:bytes = liteServer.RunMethodResult;
         tos::lite_api::liteServer_runSmcMethod(
             0x17, tos::create_tl_lite_block_id(query_.block_id.value()),
             tos::create_tl_object<tos::lite_api::liteServer_accountId>(query_.address.workchain, query_.address.addr),
@@ -1967,7 +1977,7 @@ class GetOutMsgQueueSizes : public td::actor::Actor {
   size_t pending_ = 0;
 };
 
-auto to_lite_api(const toslib_api::ton_blockIdExt& blk) -> td::Result<lite_api_ptr<tos::lite_api::tonNode_blockIdExt>>;
+auto to_lite_api(const toslib_api::tos_blockIdExt& blk) -> td::Result<lite_api_ptr<tos::lite_api::tosNode_blockIdExt>>;
 auto to_toslib_api(const tos::lite_api::liteServer_transactionId& txid) -> toslib_api_ptr<toslib_api::blocks_shortTxId>;
 
 td::Status check_block_transactions_proof(lite_api_ptr<tos::lite_api::liteServer_blockTransactions>& bTxes,
@@ -3148,6 +3158,7 @@ td::Result<ToslibClient::FullConfig> ToslibClient::validate_config(toslib_api::o
   res.config = std::move(new_config);
   res.use_callbacks_for_network = config->use_callbacks_for_network_;
   res.wallet_id = td::as<td::uint32>(res.config.zero_state_id.root_hash.as_slice().data());
+  res.global_id = 1;  // TOS mainnet global_id; overridden by actual chain config at runtime
   res.rwallet_init_public_key = "Puasxr0QfFZZnYISRphVse7XHKfW7pZU5SJarVHXvQ+rpzkD";
   res.last_state_key = std::move(last_state_key);
   res.last_state = std::move(state);
@@ -3159,6 +3170,7 @@ void ToslibClient::set_config(FullConfig full_config) {
   config_ = std::move(full_config.config);
   config_generation_++;
   wallet_id_ = full_config.wallet_id;
+  global_id_ = full_config.global_id;
   rwallet_init_public_key_ = full_config.rwallet_init_public_key;
   last_state_key_ = full_config.last_state_key;
 
@@ -5403,10 +5415,10 @@ td::Status ToslibClient::do_request(toslib_api::pchan_unpackPromise& request,
 }
 
 td::Status ToslibClient::do_request(toslib_api::sync& request,
-                                    td::Promise<object_ptr<toslib_api::ton_blockIdExt>>&& promise) {
-  // ton.blockIdExt workchain:int32 shard:int64 seqno:int32 root_hash:bytes file_hash:bytes = ton.BlockIdExt;
+                                    td::Promise<object_ptr<toslib_api::tos_blockIdExt>>&& promise) {
+  // tos.blockIdExt workchain:int32 shard:int64 seqno:int32 root_hash:bytes file_hash:bytes = tos.BlockIdExt;
   client_.with_last_block(
-      std::move(promise).wrap([](auto last_block) -> td::Result<toslib_api::object_ptr<toslib_api::ton_blockIdExt>> {
+      std::move(promise).wrap([](auto last_block) -> td::Result<toslib_api::object_ptr<toslib_api::tos_blockIdExt>> {
         return to_toslib_api(last_block.last_block_id);
       }));
   return td::Status::OK();
@@ -5691,9 +5703,9 @@ td::Status ToslibClient::do_request(int_api::GetAccountState request,
   actors_[actor_id] = td::actor::create_actor<GetRawAccountState>(
       "GetAccountState", client_.get_client(), request.address, std::move(request.block_id),
       actor_shared(this, actor_id),
-      promise.wrap([address = request.address, wallet_id = wallet_id_,
+      promise.wrap([address = request.address, wallet_id = wallet_id_, global_id = global_id_,
                     o_public_key = std::move(request.public_key)](auto&& state) mutable {
-        auto res = td::make_unique<AccountState>(std::move(address), std::move(state), wallet_id);
+        auto res = td::make_unique<AccountState>(std::move(address), std::move(state), wallet_id, global_id);
         if (false && o_public_key) {
           res->guess_type_by_public_key(o_public_key.value());
         }
@@ -5771,30 +5783,30 @@ td::Status ToslibClient::do_request(toslib_api::withBlock& request,
   return td::Status::OK();
 }
 
-auto to_toslib_api(const tos::lite_api::tonNode_blockIdExt& blk) -> toslib_api_ptr<toslib_api::ton_blockIdExt> {
-  return toslib_api::make_object<toslib_api::ton_blockIdExt>(
+auto to_toslib_api(const tos::lite_api::tosNode_blockIdExt& blk) -> toslib_api_ptr<toslib_api::tos_blockIdExt> {
+  return toslib_api::make_object<toslib_api::tos_blockIdExt>(
       blk.workchain_, blk.shard_, blk.seqno_, blk.root_hash_.as_slice().str(), blk.file_hash_.as_slice().str());
 }
 
-/*auto to_toslib_api(const tos::BlockIdExt& blk) -> toslib_api_ptr<toslib_api::ton_blockIdExt> {
-  return toslib_api::make_object<toslib_api::ton_blockIdExt>(
+/*auto to_toslib_api(const tos::BlockIdExt& blk) -> toslib_api_ptr<toslib_api::tos_blockIdExt> {
+  return toslib_api::make_object<toslib_api::tos_blockIdExt>(
       blk.workchain, blk.shard, blk.seqno, blk.root_hash.as_slice().str(), blk.file_hash.as_slice().str());
 }*/
 
-auto to_toslib_api(const tos::lite_api::tonNode_zeroStateIdExt& zeroStateId)
-    -> toslib_api_ptr<toslib_api::ton_blockIdExt> {
-  return toslib_api::make_object<toslib_api::ton_blockIdExt>(  //TODO check wether shard indeed 0???
+auto to_toslib_api(const tos::lite_api::tosNode_zeroStateIdExt& zeroStateId)
+    -> toslib_api_ptr<toslib_api::tos_blockIdExt> {
+  return toslib_api::make_object<toslib_api::tos_blockIdExt>(  //TODO check wether shard indeed 0???
       zeroStateId.workchain_, 0, 0, zeroStateId.root_hash_.as_slice().str(), zeroStateId.file_hash_.as_slice().str());
 }
 
-auto to_lite_api(const toslib_api::ton_blockIdExt& blk) -> td::Result<lite_api_ptr<tos::lite_api::tonNode_blockIdExt>> {
+auto to_lite_api(const toslib_api::tos_blockIdExt& blk) -> td::Result<lite_api_ptr<tos::lite_api::tosNode_blockIdExt>> {
   TRY_RESULT(root_hash, to_bits256(blk.root_hash_, "blk.root_hash"))
   TRY_RESULT(file_hash, to_bits256(blk.file_hash_, "blk.file_hash"))
-  return tos::lite_api::make_object<tos::lite_api::tonNode_blockIdExt>(blk.workchain_, blk.shard_, blk.seqno_,
+  return tos::lite_api::make_object<tos::lite_api::tosNode_blockIdExt>(blk.workchain_, blk.shard_, blk.seqno_,
                                                                        root_hash, file_hash);
 }
 
-td::Result<tos::BlockIdExt> to_block_id(const toslib_api::ton_blockIdExt& blk) {
+td::Result<tos::BlockIdExt> to_block_id(const toslib_api::tos_blockIdExt& blk) {
   TRY_RESULT(root_hash, to_bits256(blk.root_hash_, "blk.root_hash"))
   TRY_RESULT(file_hash, to_bits256(blk.file_hash_, "blk.file_hash"))
   return tos::BlockIdExt(blk.workchain_, blk.shard_, blk.seqno_, root_hash, file_hash);
@@ -5968,11 +5980,11 @@ td::Status check_lookup_block_proof(lite_api_ptr<tos::lite_api::liteServer_looku
                                     td::uint32 utime);
 
 td::Status ToslibClient::do_request(const toslib_api::blocks_lookupBlock& request,
-                                    td::Promise<object_ptr<toslib_api::ton_blockIdExt>>&& promise) {
+                                    td::Promise<object_ptr<toslib_api::tos_blockIdExt>>&& promise) {
   if (!request.id_) {
     return ToslibError::EmptyField("id");
   }
-  auto lite_block = tos::lite_api::make_object<tos::lite_api::tonNode_blockId>(
+  auto lite_block = tos::lite_api::make_object<tos::lite_api::tosNode_blockId>(
       (*request.id_).workchain_, (*request.id_).shard_, (*request.id_).seqno_);
   auto blkid = tos::BlockId(request.id_->workchain_, request.id_->shard_, request.id_->seqno_);
   client_.with_last_block([self = this, blkid, lite_block = std::move(lite_block), mode = request.mode_,
@@ -5988,7 +6000,7 @@ td::Status ToslibClient::do_request(const toslib_api::blocks_lookupBlock& reques
             mode, std::move(lite_block), tos::create_tl_lite_block_id(r_last_block.ok().last_block_id), lt, utime),
         promise.wrap([blkid, mode, utime, lt, last_block = r_last_block.ok().last_block_id](
                          lite_api_ptr<tos::lite_api::liteServer_lookupBlockResult>&& result)
-                         -> td::Result<object_ptr<toslib_api::ton_blockIdExt>> {
+                         -> td::Result<object_ptr<toslib_api::tos_blockIdExt>> {
           TRY_STATUS(check_lookup_block_proof(result, mode, blkid, last_block, lt, utime));
           return to_toslib_api(*result->id_);
         }));

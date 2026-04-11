@@ -77,6 +77,7 @@ class ToslibClient : public td::actor::Actor {
     LastBlockState last_state;
     std::string last_state_key;
     td::uint32 wallet_id;
+    td::int32 global_id{0};
     std::string rwallet_init_public_key;
   };
 
@@ -98,6 +99,7 @@ class ToslibClient : public td::actor::Actor {
   Config config_;
   td::uint32 config_generation_{0};
   td::uint32 wallet_id_;
+  td::int32 global_id_{0};
   std::string rwallet_init_public_key_;
   std::string last_state_key_;
   bool use_callbacks_for_network_{false};
@@ -257,7 +259,7 @@ class ToslibClient : public td::actor::Actor {
   td::Status do_request(toslib_api::guessAccount& request,
                         td::Promise<object_ptr<toslib_api::accountRevisionList>>&& promise);
 
-  td::Status do_request(toslib_api::sync& request, td::Promise<object_ptr<toslib_api::ton_blockIdExt>>&& promise);
+  td::Status do_request(toslib_api::sync& request, td::Promise<object_ptr<toslib_api::tos_blockIdExt>>&& promise);
 
   td::Status do_request(const toslib_api::createNewKey& request, td::Promise<object_ptr<toslib_api::key>>&& promise);
   td::Status do_request(const toslib_api::exportKey& request,
@@ -383,7 +385,7 @@ class ToslibClient : public td::actor::Actor {
   td::Status do_request(const toslib_api::blocks_getShards& request,
                         td::Promise<object_ptr<toslib_api::blocks_shards>>&& promise);
   td::Status do_request(const toslib_api::blocks_lookupBlock& block_header,
-                        td::Promise<object_ptr<toslib_api::ton_blockIdExt>>&& promise);
+                        td::Promise<object_ptr<toslib_api::tos_blockIdExt>>&& promise);
   td::Status do_request(const toslib_api::blocks_getTransactions& block_data,
                         td::Promise<object_ptr<toslib_api::blocks_transactions>>&& promise);
   td::Status do_request(const toslib_api::blocks_getTransactionsExt& request,

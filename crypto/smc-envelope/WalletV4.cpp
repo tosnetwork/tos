@@ -31,8 +31,8 @@ td::Result<td::Ref<vm::Cell>> WalletV4::make_a_gift_message(const td::Ed25519::P
   TRY_RESULT(seqno, get_seqno());
   TRY_RESULT(wallet_id, get_wallet_id());
   vm::CellBuilder cb;
-  cb.store_long(wallet_id, 32).store_long(valid_until, 32).store_long(seqno, 32);
-  cb.store_long(0, 8);  // The only difference with wallet-v3
+  cb.store_long(global_id_, 32).store_long(wallet_id, 32).store_long(valid_until, 32).store_long(seqno, 32);
+  cb.store_long(0, 8);  // op=0 means simple send
 
   for (auto& gift : gifts) {
     td::int32 send_mode = 3;

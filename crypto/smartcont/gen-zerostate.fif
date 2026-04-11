@@ -8,8 +8,8 @@ def? $1 { @' $1 } { "" } cond constant suffix
 256 1<<1- 15 / constant AllOnes
 
 wc_master setworkchain
-13 setglobalid   // negative value means a test instance of the blockchain
-0x11EF55AA default-subwallet-id!  // use this subwallet id in user wallets by default
+1 setglobalid   // TOS mainnet global_id
+0x544F5301 default-subwallet-id!  // TOS-specific default subwallet id
 
 // Initial state of Workchain 0 (Basic workchain)
 

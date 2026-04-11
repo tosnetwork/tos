@@ -47,67 +47,9 @@ const auto& get_map() {
 #include "smartcont/auto/restricted-wallet3-code.cpp"
 #include "smartcont/auto/wallet-code.cpp"
 
-    with_tvm_code("highload-wallet-r1",
-                  "te6ccgEBBgEAhgABFP8A9KQT9KDyyAsBAgEgAgMCAUgEBQC88oMI1xgg0x/TH9Mf+CMTu/Jj7UTQ0x/TH9P/"
-                  "0VEyuvKhUUS68qIE+QFUEFX5EPKj9ATR+AB/jhghgBD0eG+hb6EgmALTB9QwAfsAkTLiAbPmWwGkyMsfyx/L/"
-                  "8ntVAAE0DAAEaCZL9qJoa4WPw==");
-    with_tvm_code("highload-wallet-r2",
-                  "te6ccgEBCAEAlwABFP8A9KQT9LzyyAsBAgEgAgMCAUgEBQC48oMI1xgg0x/TH9Mf+CMTu/Jj7UTQ0x/TH9P/"
-                  "0VEyuvKhUUS68qIE+QFUEFX5EPKj9ATR+AB/jhYhgBD0eG+lIJgC0wfUMAH7AJEy4gGz5lsBpMjLH8sfy//"
-                  "J7VQABNAwAgFIBgcAF7s5ztRNDTPzHXC/+AARuMl+1E0NcLH4");
-    with_tvm_code("highload-wallet-v2-r1",
-                  "te6ccgEBBwEA1gABFP8A9KQT9KDyyAsBAgEgAgMCAUgEBQHu8oMI1xgg0x/TP/gjqh9TILnyY+1E0NMf0z/T//"
-                  "QE0VNggED0Dm+hMfJgUXO68qIH+QFUEIf5EPKjAvQE0fgAf44YIYAQ9HhvoW+"
-                  "hIJgC0wfUMAH7AJEy4gGz5luDJaHIQDSAQPRDiuYxyBLLHxPLP8v/9ADJ7VQGAATQMABBoZfl2omhpj5jpn+n/"
-                  "mPoCaKkQQCB6BzfQmMktv8ld0fFADgggED0lm+hb6EyURCUMFMDud4gkzM2AZIyMOKz");
-    with_tvm_code("highload-wallet-v2-r2",
-                  "te6ccgEBCQEA5QABFP8A9KQT9LzyyAsBAgEgAgMCAUgEBQHq8oMI1xgg0x/TP/gjqh9TILnyY+1E0NMf0z/T//"
-                  "QE0VNggED0Dm+hMfJgUXO68qIH+QFUEIf5EPKjAvQE0fgAf44WIYAQ9HhvpSCYAtMH1DAB+wCRMuIBs+"
-                  "ZbgyWhyEA0gED0Q4rmMcgSyx8Tyz/L//QAye1UCAAE0DACASAGBwAXvZznaiaGmvmOuF/8AEG+X5dqJoaY+Y6Z/p/"
-                  "5j6AmipEEAgegc30JjJLb/JXdHxQANCCAQPSWb6UyURCUMFMDud4gkzM2AZIyMOKz");
-    with_tvm_code("wallet3-r1",
-                  "te6ccgEBAQEAYgAAwP8AIN0gggFMl7qXMO1E0NcLH+Ck8mCDCNcYINMf0x/TH/gjE7vyY+1E0NMf0x/T/"
-                  "9FRMrryoVFEuvKiBPkBVBBV+RDyo/gAkyDXSpbTB9QC+wDo0QGkyMsfyx/L/8ntVA==");
-    with_tvm_code("wallet3-r2",
-                  "te6ccgEBAQEAcQAA3v8AIN0gggFMl7ohggEznLqxn3Gw7UTQ0x/THzHXC//jBOCk8mCDCNcYINMf0x/TH/gjE7vyY+1E0NMf0x/"
-                  "T/9FRMrryoVFEuvKiBPkBVBBV+RDyo/gAkyDXSpbTB9QC+wDo0QGkyMsfyx/L/8ntVA==");
-    with_tvm_code(
-        "dns-manual-r1",
-        "te6ccgECGAEAAtAAART/APSkE/S88sgLAQIBIAIDAgFIBAUC7PLbPAWDCNcYIPkBAdMf0z/"
-        "4I6ofUyC58mNTKoBA9A5voTHyYFKUuvKiVBNG+RDyo/gAItcLBcAzmDQBdtch0/"
-        "8wjoVa2zxAA+"
-        "IDgyWhyEAHgED0Q44aIIBA9JZvpTJREJQwUwe53iCTMzUBkjIw4rPmNVUD8AQREgICxQYHAgEgDA0CAc8ICQAIqoJfAwIBSAoLACHWQK5Y+"
-        "J5Z/l//oAegBk9qpAAFF8DgABcyPQAydBBM/Rw8qGAAF72c52omhpr5jrhf/"
-        "AIBIA4PABG7Nz7UTQ1wsfgD+"
-        "7owwh10kglF8DcG3hIHew8l4ieNci1wsHnnDIUATPFhPLB8nQAqYI3iDACJRfA3Bt4Ns8FF8EI3ADqwKY0wcBwAAToQLkIG2OnF8DIcjLBiTPF"
-        "snQhAlUQgHbPAWlFbIgwQEVQzDmMzUilF8FcG3hMgHHAJMxfwHfAtdJpvmBEVEAAYIcAAkjEB4AKAEPRqABztRNDTH9M/0//"
-        "0BPQE0QE2cFmOlNs8IMcBnCDXSpPUMNCTMn8C4t4i5jAxEwT20wUhwQqOLCGRMeEhwAGXMdMH1AL7AOABwAmOFNQh+wTtQwLQ7R7tU1RiA/"
-        "EGgvIA4PIt4HAiwRSUMNIPAd5tbSTBHoreJMEUjpElhAkj2zwzApUyxwDyo5Fb4t4kwAuOEzQC9ARQJIAQ9G4wECOECVnwAQHgJMAMiuAwFBUW"
-        "FwCEMQLTAAHAAZPUAdCY0wUBqgLXGAHiINdJwg/"
-        "ypiB41yLXCwfyaHBTEddJqTYCmNMHAcAAEqEB5DDIywYBzxbJ0FADACBZ9KhvpSCUAvQEMJIybeICACg0A4AQ9FqZECOECUBE8AEBkjAx4gBmM"
-        "SLAFZwy9AQQI4QJUELwAQHgIsAWmDIChAn0czAB4DAyIMAfkzD0BODAIJJtAeDyLG0B");
-    with_tvm_code(
-        "restricted-wallet3-r1",
-        "te6ccgECEgEAAUsAART/APSkE/S88sgLAQIBIAIDAgFIBAUD+PKDCNcYINMf0x/THwL4I7vyY+1E0NMf0x/T/"
-        "1NDuvKhUWK68qIG+QFUEHb5EPKkAY4fMwHT/9EB0x/0BNH4AAOkyMsfFMsfy/8Syx/0AMntVOEC0x/"
-        "0BNH4ACH4I9s8IYAg9HtvpTGW+gAwcvsCkTDiApMg10qK6NECpMgPEBEABNAwAgEgBgcCASAICQIBSAwNAgFuCgsAEbjJftRNDXCx+"
-        "AAXrc52omhpn5jrhf/AABesePaiaGmPmOuFj8ABDbbYHwR7Z5AOAQm1B1tnkA4BTu1E0IEBQNch0x/"
-        "0BNEC2zz4J28QAoAg9HtvpTGX+gAwoXC2CZEw4g8AOiGOETGA8/gzIG6SMHCU0NcLH+IB3yGSAaGSW3/iAAzTB9QC+wAAHssfFMsfEsv/yx/"
-        "0AMntVA==");
-    with_tvm_code(
-        "wallet-v4-r2",
-        "te6cckECFAEAAtQAART/APSkE/S88sgLAQIBIAIDAgFIBAUE+PKDCNcYINMf0x/THwL4I7vyZO1E0NMf0x/T//"
-        "QE0VFDuvKhUVG68qIF+QFUEGT5EPKj+AAkpMjLH1JAyx9SMMv/"
-        "UhD0AMntVPgPAdMHIcAAn2xRkyDXSpbTB9QC+wDoMOAhwAHjACHAAuMAAcADkTDjDQOkyMsfEssfy/"
-        "8QERITAubQAdDTAyFxsJJfBOAi10nBIJJfBOAC0x8hghBwbHVnvSKCEGRzdHK9sJJfBeAD+kAwIPpEAcjKB8v/"
-        "ydDtRNCBAUDXIfQEMFyBAQj0Cm+hMbOSXwfgBdM/"
-        "yCWCEHBsdWe6kjgw4w0DghBkc3RyupJfBuMNBgcCASAICQB4AfoA9AQw+CdvIjBQCqEhvvLgUIIQcGx1Z4MesXCAGFAEywUmzxZY+"
-        "gIZ9ADLaRfLH1Jgyz8gyYBA+wAGAIpQBIEBCPRZMO1E0IEBQNcgyAHPFvQAye1UAXKwjiOCEGRzdHKDHrFwgBhQBcsFUAPPFiP6AhPLassfyz/"
-        "JgED7AJJfA+ICASAKCwBZvSQrb2omhAgKBrkPoCGEcNQICEekk30pkQzmkD6f+YN4EoAbeBAUiYcVnzGEAgFYDA0AEbjJftRNDXCx+"
-        "AA9sp37UTQgQFA1yH0BDACyMoHy//J0AGBAQj0Cm+hMYAIBIA4PABmtznaiaEAga5Drhf/AABmvHfaiaEAQa5DrhY/AAG7SB/"
-        "oA1NQi+QAFyMoHFcv/ydB3dIAYyMsFywIizxZQBfoCFMtrEszMyXP7AMhAFIEBCPRR8qcCAHCBAQjXGPoA0z/"
-        "IVCBHgQEI9FHyp4IQbm90ZXB0gBjIywXLAlAGzxZQBPoCFMtqEssfyz/Jc/sAAgBsgQEI1xj6ANM/"
-        "MFIkgQEI9Fnyp4IQZHN0cnB0gBjIywXLAlAFzxZQA/oCE8tqyx8Syz/Jc/sAAAr0AMntVGliJeU=");
+#include "smartcont/auto/wallet3-code.cpp"
+#include "smartcont/auto/wallet-v4-code.cpp"
+#include "smartcont/auto/wallet-v5-code.cpp"
     return map;
   }();
   return map;
@@ -126,15 +68,15 @@ td::Result<td::Ref<vm::Cell>> SmartContractCode::load(td::Slice name) {
 td::Span<int> SmartContractCode::get_revisions(Type type) {
   switch (type) {
     case Type::WalletV3: {
-      static int res[] = {1, 2};
+      static int res[] = {-1};
       return res;
     }
     case Type::HighloadWalletV1: {
-      static int res[] = {-1, 1, 2};
+      static int res[] = {-1};
       return res;
     }
     case Type::HighloadWalletV2: {
-      static int res[] = {-1, 1, 2};
+      static int res[] = {-1};
       return res;
     }
     case Type::Multisig: {
@@ -150,11 +92,15 @@ td::Span<int> SmartContractCode::get_revisions(Type type) {
       return res;
     }
     case Type::RestrictedWallet: {
-      static int res[] = {1};
+      static int res[] = {-1};
       return res;
     }
     case Type::WalletV4: {
-      static int res[] = {2};
+      static int res[] = {-1};
+      return res;
+    }
+    case Type::WalletV5: {
+      static int res[] = {-1};
       return res;
     }
   }
@@ -199,7 +145,9 @@ td::Ref<vm::Cell> SmartContractCode::get_code(Type type, int ext_revision) {
       case Type::RestrictedWallet:
         return "restricted-wallet3";
       case Type::WalletV4:
-        return "wallet-v4";
+        return "wallet_v4";
+      case Type::WalletV5:
+        return "wallet_v5";
     }
     UNREACHABLE();
   }(type);

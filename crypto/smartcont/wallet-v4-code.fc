@@ -1,0 +1,121 @@
+;; Wallet V4 smart contract with plugin support and global_id anti-replay protection
+
+int get_global_id() asm "GLOBALID";
+(slice, int) dict_get?(cell dict, int key_len, slice key) asm(key dict key_len) "DICTGET" "NULLSWAPIFNOT";
+(cell, int) dict_delete?(cell dict, int key_len, slice key) asm(key dict key_len) "DICTDEL";
+
+;; storage: seqno:uint32 subwallet_id:uint32 public_key:uint256 plugins:dict(uint264 -> empty)
+;; plugin key = (workchain:int8 ++ addr_hash:uint256) packed as uint264
+
+(int, int, int, cell) load_data() inline {
+  var ds = get_data().begin_parse();
+  return (ds~load_uint(32), ds~load_uint(32), ds~load_uint(256), ds~load_dict());
+}
+
+() save_data(int seqno, int subwallet_id, int public_key, cell plugins) impure inline {
+  set_data(begin_cell()
+    .store_uint(seqno, 32)
+    .store_uint(subwallet_id, 32)
+    .store_uint(public_key, 256)
+    .store_dict(plugins)
+    .end_cell());
+}
+
+slice pack_plugin_key(int wc, int addr_hash) inline {
+  return begin_cell().store_int(wc, 8).store_uint(addr_hash, 256).end_cell().begin_parse();
+}
+
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
+  if (in_msg_body.slice_bits() < 32) { return (); }
+
+  var cs = in_msg_full.begin_parse();
+  var flags = cs~load_uint(4);
+  if (flags & 1) { return (); }  ;; bounced
+  slice sender = cs~load_msg_addr();
+
+  int op = in_msg_body~load_uint(32);
+  if (op != 0x706c7567) { return (); }  ;; "plug" - plugin payment request
+
+  var (stored_seqno, stored_subwallet, public_key, plugins) = load_data();
+
+  var (wc, addr_hash) = parse_std_addr(sender);
+  slice key = pack_plugin_key(wc, addr_hash);
+  var (_, found?) = plugins.dict_get?(264, key);
+
+  if (found?) {
+    int ton_amount = in_msg_body~load_grams();
+    raw_reserve(ton_amount, 2);
+    var msg = begin_cell()
+      .store_uint(0x18, 6)
+      .store_slice(sender)
+      .store_grams(0)
+      .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+      .end_cell();
+    send_raw_message(msg, 128);
+  }
+}
+
+() recv_external(slice in_msg) impure {
+  var signature = in_msg~load_bits(512);
+  var cs = in_msg;
+  var msg_global_id = cs~load_int(32);
+  throw_unless(36, msg_global_id == get_global_id());
+  var (subwallet_id, valid_until, msg_seqno) = (cs~load_uint(32), cs~load_uint(32), cs~load_uint(32));
+  var op = cs~load_uint(8);
+  throw_if(35, valid_until <= now());
+  var (stored_seqno, stored_subwallet, public_key, plugins) = load_data();
+  throw_unless(33, msg_seqno == stored_seqno);
+  throw_unless(34, subwallet_id == stored_subwallet);
+  throw_unless(35, check_signature(slice_hash(in_msg), signature, public_key));
+  accept_message();
+
+  if (op == 0) {
+    ;; simple send
+    cs~touch();
+    while (cs.slice_refs()) {
+      var mode = cs~load_uint(8);
+      send_raw_message(cs~load_ref(), mode);
+    }
+  }
+
+  if (op == 1) {
+    ;; install plugin
+    var (wc, addr_hash) = (cs~load_int(8), cs~load_uint(256));
+    slice key = pack_plugin_key(wc, addr_hash);
+    plugins~dict_set_builder(264, key, begin_cell());
+  }
+
+  if (op == 2) {
+    ;; remove plugin
+    var (wc, addr_hash) = (cs~load_int(8), cs~load_uint(256));
+    slice key = pack_plugin_key(wc, addr_hash);
+    (plugins, _) = dict_delete?(plugins, 264, key);
+  }
+
+  save_data(stored_seqno + 1, stored_subwallet, public_key, plugins);
+}
+
+;; Get methods
+
+int seqno() method_id {
+  return get_data().begin_parse().preload_uint(32);
+}
+
+int get_subwallet_id() method_id {
+  var ds = get_data().begin_parse();
+  ds~load_uint(32);
+  return ds.preload_uint(32);
+}
+
+int get_public_key() method_id {
+  var cs = get_data().begin_parse();
+  cs~load_uint(64);
+  return cs.preload_uint(256);
+}
+
+int is_plugin_installed(int wc, int addr_hash) method_id {
+  var (_, _, _, plugins) = load_data();
+  slice key = pack_plugin_key(wc, addr_hash);
+  var (_, found?) = plugins.dict_get?(264, key);
+  return found?;
+}

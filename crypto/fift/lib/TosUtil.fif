@@ -3,6 +3,7 @@ library TosUtil // TOS Blockchain Fift Library
 
 -1 constant Masterchain
 0 constant Basechain
+1 constant tos-global-id  // TOS mainnet global_id for anti-replay protection
 
 // parse workchain id
 // ( S -- workchain )

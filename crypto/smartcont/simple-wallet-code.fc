@@ -1,4 +1,6 @@
-;; Simple wallet smart contract
+;; Simple wallet smart contract with global_id anti-replay protection
+
+int get_global_id() asm "GLOBALID";
 
 () recv_internal(slice in_msg) impure {
   ;; do nothing for internal messages
@@ -7,6 +9,8 @@
 () recv_external(slice in_msg) impure {
   var signature = in_msg~load_bits(512);
   var cs = in_msg;
+  var msg_global_id = cs~load_int(32);
+  throw_unless(36, msg_global_id == get_global_id());
   int msg_seqno = cs~load_uint(32);
   var cs2 = begin_parse(get_data());
   var stored_seqno = cs2~load_uint(32);

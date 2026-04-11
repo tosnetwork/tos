@@ -78,7 +78,7 @@ order-file include
 
 // create external message
 now timeout + 32 << <b orders @ dict, b> hashu 32 1<<1- and + =: query_id
-<b subwallet-id 32 i, query_id 64 u, orders @ dict, b>
+<b tos-global-id 32 i, subwallet-id 32 i, query_id 64 u, orders @ dict, b>
 dup ."signing message: " <s csr. cr
 dup hashu wallet_pk ed25519_sign_uint
 <b b{1000100} s, wallet_addr addr, 0 Gram, b{00} s,

@@ -23,9 +23,13 @@
   ;; do nothing for internal messages
 }
 
+int get_global_id() asm "GLOBALID";
+
 () recv_external(slice in_msg) impure {
   var signature = in_msg~load_bits(512);
   var cs = in_msg;
+  var msg_global_id = cs~load_int(32);
+  throw_unless(36, msg_global_id == get_global_id());
   var (subwallet_id, query_id) = (cs~load_uint(32), cs~load_uint(64));
   var bound = (now() << 32);
   throw_if(35, query_id < bound);

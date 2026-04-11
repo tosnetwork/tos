@@ -39,9 +39,9 @@ td::Ref<vm::Cell> Wallet::get_init_message_new(const td::Ed25519::PrivateKey& pr
   td::uint32 valid_until = std::numeric_limits<td::uint32>::max();
   auto signature =
       private_key
-          .sign(vm::CellBuilder().store_long(seqno, 32).store_long(valid_until, 32).finalize()->get_hash().as_slice())
+          .sign(vm::CellBuilder().store_long(global_id_, 32).store_long(seqno, 32).store_long(valid_until, 32).finalize()->get_hash().as_slice())
           .move_as_ok();
-  return vm::CellBuilder().store_bytes(signature).store_long(seqno, 32).store_long(valid_until, 32).finalize();
+  return vm::CellBuilder().store_bytes(signature).store_long(global_id_, 32).store_long(seqno, 32).store_long(valid_until, 32).finalize();
 }
 
 td::Ref<vm::Cell> Wallet::make_a_gift_message(const td::Ed25519::PrivateKey& private_key, td::uint32 seqno,
@@ -49,7 +49,7 @@ td::Ref<vm::Cell> Wallet::make_a_gift_message(const td::Ed25519::PrivateKey& pri
   CHECK(gifts.size() <= max_gifts_size);
 
   vm::CellBuilder cb;
-  cb.store_long(seqno, 32).store_long(valid_until, 32);
+  cb.store_long(global_id_, 32).store_long(seqno, 32).store_long(valid_until, 32);
 
   for (auto& gift : gifts) {
     td::int32 send_mode = 3;

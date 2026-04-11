@@ -172,8 +172,19 @@ td::Ref<vm::Tuple> prepare_vm_c7(SmartContract::Args args, td::Ref<vm::Cell> cod
     tuple.push_back(args.prev_blocks_info ? args.prev_blocks_info.value() : vm::StackEntry{});  // prev_block_info
   }
   if (global_version >= 6) {
-    tuple.push_back(args.config ? args.config.value()->get_unpacked_config_tuple(now)
-                                : vm::StackEntry{});  // unpacked_config_tuple
+    if (args.config) {
+      tuple.push_back(args.config.value()->get_unpacked_config_tuple(now));  // unpacked_config_tuple
+    } else {
+      // Provide minimal unpacked_config_tuple with global_id for tests
+      // Index 0: storage_prices (empty), Index 1: global_id as ConfigParam 19
+      td::int32 default_global_id = args.global_id ? args.global_id.value() : 1;
+      vm::CellBuilder gcb;
+      gcb.store_long(default_global_id, 32);
+      std::vector<vm::StackEntry> config_tuple(2);
+      config_tuple[0] = vm::StackEntry{};  // storage_prices
+      config_tuple[1] = vm::load_cell_slice_ref(gcb.finalize());  // global_id
+      tuple.push_back(td::make_cnt_ref<std::vector<vm::StackEntry>>(std::move(config_tuple)));
+    }
     tuple.push_back(td::zero_refint());               // due_payment
     // precompiled_gas_usage:(Maybe Integer)
     td::optional<block::PrecompiledContractsConfig::Contract> precompiled;

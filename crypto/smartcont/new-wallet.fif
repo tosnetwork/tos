@@ -52,7 +52,7 @@ dup hashu wc swap 2dup 2constant wallet_addr
 2dup file-base +".addr" save-address-verbose
 ."Non-bounceable address (for init): " 2dup 7 .Addr cr
 ."Bounceable address (for later access): " 6 .Addr cr
-<b 0 32 u, b>
+<b tos-global-id 32 i, 0 32 u, b>
 dup ."signing message: " <s csr. cr
 dup hashu wallet_pk ed25519_sign_uint rot
 <b b{1000100} s, wallet_addr addr, b{000010} s, swap <s s, b{0} s, swap B, swap <s s, b>

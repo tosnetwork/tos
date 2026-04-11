@@ -4,7 +4,7 @@ from pathlib import Path
 import nacl.signing
 from contract import Provider, WalletV1
 from pytoniq_core import Address
-from tonapi import tos_api
+from tosapi import tos_api
 
 from .install import Install, run_fift
 from .key import Key
@@ -52,7 +52,7 @@ class Zerostate:
     main_wallet_address: Address
 
     def as_block(self):
-        return tos_api.TonNode_blockIdExt(
+        return tos_api.TosNode_blockIdExt(
             workchain=-1,
             shard=_shard_json_repr(0x8000_0000_0000_0000),
             seqno=0,
@@ -76,7 +76,7 @@ _TEMPLATE = """
 256 1<<1- 15 / constant AllOnes
 
 wc_master setworkchain
--777 setglobalid   // negative value means a test instance of the blockchain
+3 setglobalid   // TOS dev global_id
 
 // Initial state of Workchain 0 (Basic workchain)
 

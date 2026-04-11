@@ -34,7 +34,7 @@ td::Result<td::Ref<vm::Cell>> HighloadWalletV2::get_init_message(const td::Ed255
   TRY_RESULT(wallet_id, get_wallet_id());
   td::uint32 id = -1;
   auto append_message = [&](auto&& cb) -> vm::CellBuilder& {
-    cb.store_long(wallet_id, 32).store_long(valid_until, 32).store_long(id, 32);
+    cb.store_long(global_id_, 32).store_long(wallet_id, 32).store_long(valid_until, 32).store_long(id, 32);
     CHECK(cb.store_maybe_ref({}));
     return cb;
   };
@@ -68,7 +68,7 @@ td::Result<td::Ref<vm::Cell>> HighloadWalletV2::make_a_gift_message(const td::Ed
   }
 
   vm::CellBuilder cb;
-  cb.store_long(wallet_id, 32).store_long(valid_until, 32).store_bytes(hash);
+  cb.store_long(global_id_, 32).store_long(wallet_id, 32).store_long(valid_until, 32).store_bytes(hash);
   CHECK(cb.store_maybe_ref(messages.get_root_cell()));
   auto message_outer = cb.finalize();
   auto signature = private_key.sign(message_outer->get_hash().as_slice()).move_as_ok();

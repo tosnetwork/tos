@@ -90,8 +90,8 @@ SETCP0 DUP IFNOTRET // return if recv_internal
 }
 
 TEST(Toslib, WalletV3) {
-  LOG(ERROR) << td::base64_encode(std_boc_serialize(get_wallet_v3_source()).move_as_ok());
-  CHECK(get_wallet_v3_source()->get_hash() == tos::WalletV3::get_init_code(2)->get_hash());
+  // Note: get_wallet_v3_source() is a legacy hand-written ASM without global_id check.
+  // The compiled bytecode now includes global_id verification, so hash comparison is skipped.
 
   auto fift_output = fift::mem_run_fift(load_source("smartcont/new-wallet-v3.fif"), {"aba", "0", "239"}).move_as_ok();
   auto new_wallet_pk = fift_output.source_lookup.read_file("new-wallet.pk").move_as_ok().data;
@@ -103,7 +103,8 @@ TEST(Toslib, WalletV3) {
   tos::WalletV3::InitData init_data;
   init_data.public_key = pub_key.as_octet_string();
   init_data.wallet_id = 239;
-  auto wallet = tos::WalletV3::create(init_data, 2);
+  auto wallet = tos::WalletV3::create(init_data, -1);
+  wallet.write().set_global_id(1);  // TOS mainnet global_id
   ASSERT_EQ(239u, wallet->get_wallet_id().ok());
   ASSERT_EQ(0u, wallet->get_seqno().ok());
 
@@ -122,6 +123,9 @@ TEST(Toslib, WalletV3) {
   CHECK(wallet.write().send_external_message(init_message).success);
 
   fift_output.source_lookup.write_file("/main.fif", load_source("smartcont/wallet-v3.fif")).ensure();
+  fift_output.source_lookup.write_file("/wallet-v3-code.fif", load_source("smartcont/wallet-v3-code.fif")).ensure();
+  fift_output.source_lookup.write_file("/auto/wallet3-code.fif", load_source("smartcont/auto/wallet3-code.fif"))
+      .ensure();
   class ZeroOsTime : public fift::OsTime {
    public:
     td::uint32 now() override {
@@ -172,6 +176,7 @@ TEST(Toslib, HighloadWallet) {
   tos::HighloadWallet::InitData init_data(pub_key.as_octet_string(), 239);
 
   auto wallet = tos::HighloadWallet::create(init_data, -1);
+  wallet.write().set_global_id(1);
   auto address = wallet->get_address();
   CHECK(address.addr.as_slice() == td::Slice(new_wallet_addr).substr(0, 32));
   ASSERT_EQ(239u, wallet->get_wallet_id().ok());
@@ -220,6 +225,7 @@ TEST(Toslib, HighloadWallet) {
   };
   init_data.seqno = 123;
   wallet = tos::HighloadWallet::create(init_data, -1);
+  wallet.write().set_global_id(1);
   fift_output.source_lookup.set_os_time(std::make_unique<ZeroOsTime>());
   fift_output = fift::mem_run_fift(std::move(fift_output.source_lookup), {"aba", "new-wallet", "239", "123", "order"})
                     .move_as_ok();
@@ -257,6 +263,7 @@ TEST(Toslib, HighloadWalletV2) {
   tos::HighloadWalletV2::InitData init_data(pub_key.as_octet_string(), 239);
 
   auto wallet = tos::HighloadWalletV2::create(init_data, -1);
+  wallet.write().set_global_id(1);
   auto address = wallet->get_address();
 
   ASSERT_EQ(239u, wallet->get_wallet_id().ok());
@@ -385,7 +392,8 @@ TEST(Toslib, RestrictedWallet3) {
   init_data.init_key = init_pub_key.as_octet_string();
   init_data.main_key = pub_key.as_octet_string();
   init_data.wallet_id = 123;
-  auto wallet = tos::RestrictedWallet::create(init_data, 1);
+  auto wallet = tos::RestrictedWallet::create(init_data, -1);
+  wallet.write().set_global_id(1);
 
   auto address = wallet->get_address();
 
@@ -437,6 +445,7 @@ class InitWallet {
     init_data.public_key = pub_key.as_octet_string();
 
     auto wallet = T::create(init_data, revision);
+    wallet.write().set_global_id(1);
     auto address = wallet->get_address();
     check_wallet_state(wallet, 0, 123, init_data.public_key);
     CHECK(wallet.write().send_external_message(wallet->get_init_message(priv_key).move_as_ok()).success);
@@ -460,7 +469,8 @@ CreatedWallet InitWallet<tos::RestrictedWallet>::operator()(int revision) const 
   init_data.init_key = init_pub_key.as_octet_string();
   init_data.main_key = pub_key.as_octet_string();
   init_data.wallet_id = 123;
-  auto wallet = tos::RestrictedWallet::create(init_data, 1);
+  auto wallet = tos::RestrictedWallet::create(init_data, revision);
+  wallet.write().set_global_id(1);
   check_wallet_state(wallet, 0, 123, init_data.init_key);
 
   auto address = wallet->get_address();
@@ -529,6 +539,150 @@ TEST(Toslib, Wallet) {
   do_test_wallet<tos::HighloadWallet>();
   do_test_wallet<tos::HighloadWalletV2>();
   do_test_wallet<tos::RestrictedWallet>();
+}
+
+TEST(Toslib, WalletV4) {
+  // Test V4 basic functionality: create, init, transfer with op=0
+  auto priv_key = td::Ed25519::generate_private_key().move_as_ok();
+  auto pub_key = priv_key.get_public_key().move_as_ok();
+
+  tos::WalletV4::InitData init_data;
+  init_data.public_key = pub_key.as_octet_string();
+  init_data.wallet_id = 42;
+  init_data.seqno = 0;
+
+  auto wallet = tos::WalletV4::create(init_data, -1);
+  wallet.write().set_global_id(1);
+  auto address = wallet->get_address();
+
+  // Verify initial state
+  ASSERT_EQ(42u, wallet->get_wallet_id().ok());
+  ASSERT_EQ(0u, wallet->get_seqno().ok());
+
+  // Send init message
+  auto init_msg = wallet->get_init_message(priv_key).move_as_ok();
+  CHECK(wallet.write().send_external_message(init_msg).success);
+  ASSERT_EQ(1u, wallet->get_seqno().ok());
+
+  // Send a transfer (op=0)
+  tos::WalletInterface::Gift gift;
+  gift.gramms = 1;
+  gift.destination = address;
+  gift.message = "test v4";
+  auto gift_msg = wallet->make_a_gift_message(priv_key, 10000, {gift}).move_as_ok();
+  auto ans = wallet.write().send_external_message(gift_msg, tos::SmartContract::Args().set_now(9999));
+  CHECK(ans.success);
+  ASSERT_EQ(2u, wallet->get_seqno().ok());
+
+  // Test expired message is rejected
+  auto expired_msg = wallet->make_a_gift_message(priv_key, 100, {gift}).move_as_ok();
+  CHECK(!wallet.write().send_external_message(expired_msg, tos::SmartContract::Args().set_now(101)).success);
+  ASSERT_EQ(2u, wallet->get_seqno().ok());  // seqno unchanged
+
+  // Test global_id mismatch: set wrong global_id, sign, then try to execute on correct chain
+  wallet.write().set_global_id(2);  // wrong chain
+  auto wrong_chain_msg = wallet->make_a_gift_message(priv_key, 20000, {gift}).move_as_ok();
+  wallet.write().set_global_id(1);  // restore correct chain
+  CHECK(!wallet.write().send_external_message(wrong_chain_msg, tos::SmartContract::Args().set_now(19999)).success);
+  ASSERT_EQ(2u, wallet->get_seqno().ok());  // seqno unchanged
+}
+
+TEST(Toslib, WalletV5) {
+  // Test V5 using direct contract interaction (no C++ wrapper class)
+  auto priv_key = td::Ed25519::generate_private_key().move_as_ok();
+  auto pub_key = priv_key.get_public_key().move_as_ok();
+
+  // Load V5 contract code
+  auto code = tos::SmartContractCode::get_code(tos::SmartContractCode::WalletV5);
+  CHECK(code.not_null());
+
+  // Build initial data: is_signature_allowed(1) + seqno(32) + wallet_id(32) + public_key(256) + extensions(dict)
+  td::uint32 wallet_id = 42;
+  auto data = vm::CellBuilder()
+      .store_long(-1, 1)       // is_signature_allowed = true
+      .store_long(0, 32)       // seqno = 0
+      .store_long(wallet_id, 32)
+      .store_bytes(pub_key.as_octet_string())
+      .store_zeroes(1)         // empty extensions dict
+      .finalize();
+
+  tos::SmartContract::State state{code, data};
+  auto wallet = tos::SmartContract::create(state);
+
+  // Verify get methods
+  auto seqno_res = wallet->run_get_method("seqno");
+  ASSERT_EQ(0, seqno_res.stack.write().pop_smallint_range(1000000));
+
+  auto wid_res = wallet->run_get_method("get_subwallet_id");
+  ASSERT_EQ(42, wid_res.stack.write().pop_smallint_range(1000000));
+
+  auto pk_res = wallet->run_get_method("get_public_key");
+  auto got_pk = pk_res.stack.write().pop_int_finite();
+  CHECK(got_pk->bit_size(false) <= 256);
+
+  auto sig_res = wallet->run_get_method("is_signature_allowed");
+  ASSERT_EQ(-1, sig_res.stack.write().pop_smallint_range(1, -1));
+
+  // Build and send a signed external message
+  // V5 format: prefix(32) | global_id(32) | wallet_id(32) | valid_until(32) | seqno(32) | actions | signature(512)
+  // signature is at the END of the message
+  td::int32 global_id = 1;
+  td::uint32 valid_until = 10000;
+  td::uint32 seqno = 0;
+
+  // Build signed body (no actions: empty maybe_ref + no other_actions)
+  vm::CellBuilder body_cb;
+  body_cb.store_long(0x7369676E, 32);  // prefix::signed_external
+  body_cb.store_long(global_id, 32);
+  body_cb.store_long(wallet_id, 32);
+  body_cb.store_long(valid_until, 32);
+  body_cb.store_long(seqno, 32);
+  body_cb.store_zeroes(1);  // no c5_actions (Maybe Cell = nothing)
+  body_cb.store_zeroes(1);  // no other_actions
+  auto body_cell = body_cb.finalize();
+
+  // Sign the body
+  auto body_hash = body_cell->get_hash();
+  auto signature = priv_key.sign(body_hash.as_slice()).move_as_ok();
+
+  // Append signature at the end
+  vm::CellBuilder msg_cb;
+  msg_cb.append_cellslice(vm::load_cell_slice(body_cell));
+  msg_cb.store_bytes(signature);
+  auto ext_msg = msg_cb.finalize();
+
+  // Send external message
+  auto ans = wallet.write().send_external_message(
+      ext_msg, tos::SmartContract::Args().set_now(9999).set_global_id(global_id));
+  CHECK(ans.success);
+
+  // Verify seqno incremented
+  seqno_res = wallet->run_get_method("seqno");
+  ASSERT_EQ(1, seqno_res.stack.write().pop_smallint_range(1000000));
+
+  // Test global_id mismatch: sign with global_id=2, execute on chain with global_id=1
+  seqno = 1;
+  vm::CellBuilder bad_body_cb;
+  bad_body_cb.store_long(0x7369676E, 32);
+  bad_body_cb.store_long(2, 32);  // wrong global_id
+  bad_body_cb.store_long(wallet_id, 32);
+  bad_body_cb.store_long(valid_until, 32);
+  bad_body_cb.store_long(seqno, 32);
+  bad_body_cb.store_zeroes(1);
+  bad_body_cb.store_zeroes(1);
+  auto bad_body = bad_body_cb.finalize();
+  auto bad_sig = priv_key.sign(bad_body->get_hash().as_slice()).move_as_ok();
+  vm::CellBuilder bad_msg_cb;
+  bad_msg_cb.append_cellslice(vm::load_cell_slice(bad_body));
+  bad_msg_cb.store_bytes(bad_sig);
+
+  auto bad_ans = wallet.write().send_external_message(
+      bad_msg_cb.finalize(), tos::SmartContract::Args().set_now(9999).set_global_id(1));
+  CHECK(!bad_ans.success);  // should fail: global_id mismatch
+
+  // Seqno should not have changed
+  seqno_res = wallet->run_get_method("seqno");
+  ASSERT_EQ(1, seqno_res.stack.write().pop_smallint_range(1000000));
 }
 
 namespace std {  // ouch

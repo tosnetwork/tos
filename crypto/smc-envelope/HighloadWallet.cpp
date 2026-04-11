@@ -49,7 +49,7 @@ td::Result<td::Ref<vm::Cell>> HighloadWallet::make_a_gift_message(const td::Ed25
   }
 
   vm::CellBuilder cb;
-  cb.store_long(wallet_id, 32).store_long(valid_until, 32).store_long(seqno, 32);
+  cb.store_long(global_id_, 32).store_long(wallet_id, 32).store_long(valid_until, 32).store_long(seqno, 32);
   CHECK(cb.store_maybe_ref(messages.get_root_cell()));
   auto message_outer = cb.finalize();
   auto signature = private_key.sign(message_outer->get_hash().as_slice()).move_as_ok();

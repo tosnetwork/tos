@@ -13,9 +13,13 @@ _ seconds_passed(int start_at, int utime) inline_ref {
   return start_at ? utime - start_at : -1;
 }
 
+int get_global_id() asm "GLOBALID";
+
 () recv_external(slice in_msg) impure {
   var signature = in_msg~load_bits(512);
   var cs = in_msg;
+  var msg_global_id = cs~load_int(32);
+  throw_unless(36, msg_global_id == get_global_id());
   var (msg_seqno, valid_until) = (cs~load_uint(32), cs~load_uint(32));
   throw_if(35, valid_until <= now());
   var ds = get_data().begin_parse();

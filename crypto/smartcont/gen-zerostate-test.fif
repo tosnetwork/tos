@@ -8,7 +8,7 @@ def? $1 { @' $1 } { "" } cond constant suffix
 256 1<<1- 15 / constant AllOnes
 
 wc_master setworkchain
--239 setglobalid   // negative value means a test instance of the blockchain
+2 setglobalid   // TOS testnet global_id
 
 // Initial state of Workchain 0 (Basic workchain)
 
