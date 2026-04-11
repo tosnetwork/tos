@@ -102,7 +102,7 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
 
   static td::Result<td::actor::ActorOwn<QuicServer>> create(int port, td::Ed25519::PrivateKey server_key,
                                                             std::unique_ptr<Callback> callback, td::uint64 default_mtu,
-                                                            td::Slice alpn = "ton", td::Slice bind_host = "0.0.0.0");
+                                                            td::Slice alpn = "tos", td::Slice bind_host = "0.0.0.0");
   static td::Result<td::actor::ActorOwn<QuicServer>> create(int port, td::Ed25519::PrivateKey server_key,
                                                             std::unique_ptr<Callback> callback, td::uint64 default_mtu,
                                                             td::Slice alpn, td::Slice bind_host, Options options,

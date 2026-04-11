@@ -29,14 +29,14 @@
 
 namespace tos {
 
-PeerState::State from_ton_api(const tos::tos_api::storage_state &state) {
+PeerState::State from_tos_api(const tos::tos_api::storage_state &state) {
   PeerState::State res;
   res.want_download = state.want_download_;
   res.will_upload = state.will_upload_;
   return res;
 }
 
-tos::tos_api::object_ptr<tos::tos_api::storage_state> to_ton_api(const PeerState::State &state) {
+tos::tos_api::object_ptr<tos::tos_api::storage_state> to_tos_api(const PeerState::State &state) {
   return tos::tos_api::make_object<tos::tos_api::storage_state>(state.will_upload, state.want_download);
 }
 
@@ -251,7 +251,7 @@ void PeerActor::loop_update_init() {
   }
   s = s.substr(peer_init_offset_, UPDATE_INIT_BLOCK_SIZE);
   auto query = create_update_query(tos::create_tl_object<tos::tos_api::storage_updateInit>(
-      td::BufferSlice(s), (int)peer_init_offset_ * 8, to_ton_api(node_state)));
+      td::BufferSlice(s), (int)peer_init_offset_ * 8, to_tos_api(node_state)));
 
   // take care about update_state_query initial state
   update_state_query_.state = node_state;
@@ -278,7 +278,7 @@ void PeerActor::loop_update_state() {
   }
 
   auto query = create_update_query(
-      tos::create_tl_object<tos::tos_api::storage_updateState>(to_ton_api(update_state_query_.state)));
+      tos::create_tl_object<tos::tos_api::storage_updateState>(to_tos_api(update_state_query_.state)));
   LOG(DEBUG) << "Sending updateState query (" << update_state_query_.state.want_download << ", "
              << update_state_query_.state.will_upload << ")";
   update_state_query_.query_id = send_query(std::move(query));
@@ -472,8 +472,8 @@ void PeerActor::execute_add_update(tos::tos_api::storage_addUpdate &add_update, 
       *add_update.update_,
       td::overloaded(
           [&](const tos::tos_api::storage_updateHavePieces &have_pieces) {},
-          [&](const tos::tos_api::storage_updateState &state) { update_peer_state(from_ton_api(*state.state_)); },
-          [&](const tos::tos_api::storage_updateInit &init) { update_peer_state(from_ton_api(*init.state_)); }));
+          [&](const tos::tos_api::storage_updateState &state) { update_peer_state(from_tos_api(*state.state_)); },
+          [&](const tos::tos_api::storage_updateInit &init) { update_peer_state(from_tos_api(*init.state_)); }));
   if (torrent_info_) {
     process_update_peer_parts(add_update.update_);
   } else {

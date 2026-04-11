@@ -12,7 +12,7 @@ from ipaddress import IPv4Address
 from pathlib import Path
 from typing import Literal, final, override
 
-from tonapi import tos_api
+from tosapi import tos_api
 
 from tl import TLObject
 from toslib import EngineConsoleClient, ToslibClient, ToslibError, ToslibEventLoop

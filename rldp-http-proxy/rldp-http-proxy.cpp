@@ -31,7 +31,7 @@
 #include <set>
 
 #include "adnl/adnl.h"
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "auto/tl/toslib_api.hpp"
 #include "common/delay.h"
 #include "common/errorcode.h"
@@ -177,8 +177,8 @@ td::BufferSlice create_error_response(const std::string &proto_version, int code
       proto_version, code, reason, std::vector<tos::tl_object_ptr<tos::tos_api::http_header>>(), true);
 }
 
-const std::string PROXY_SITE_VERISON_HEADER_NAME = "Ton-Proxy-Site-Version";
-const std::string PROXY_ENTRY_VERISON_HEADER_NAME = "Ton-Proxy-Entry-Version";
+const std::string PROXY_SITE_VERISON_HEADER_NAME = "Tos-Proxy-Site-Version";
+const std::string PROXY_ENTRY_VERISON_HEADER_NAME = "Tos-Proxy-Entry-Version";
 const std::string PROXY_VERSION_HEADER = PSTRING() << "Commit: " << GitMetadata::CommitSHA1()
                                                    << ", Date: " << GitMetadata::CommitDate();
 const td::uint64 CAPABILITY_RLDP2 = 1;
@@ -1177,7 +1177,7 @@ class RldpHttpProxy : public td::actor::Actor {
     }
     std::transform(host.begin(), host.end(), host.begin(), [](unsigned char c) { return std::tolower(c); });
     bool allow = proxy_all_;
-    for (const char *suffix : {".adnl", ".ton", ".bag"}) {
+    for (const char *suffix : {".adnl", ".tos", ".bag"}) {
       if (td::ends_with(host, td::Slice(suffix))) {
         allow = true;
       }
@@ -1642,11 +1642,11 @@ int main(int argc, char *argv[]) {
 
   td::OptionParser p;
   p.set_description(
-      "A simple rldp-to-http and http-to-rldp proxy for running and accessing ton sites\n"
+      "A simple rldp-to-http and http-to-rldp proxy for running and accessing tos sites\n"
       "Example:\n\trldp-http-proxy -p 8080 -c 3333 -C tos-global.config.json\tRuns a local HTTP->RLDP proxy that "
       "accepts HTTP proxy queries at localhost:8080\n"
-      "Example:\n\trldp-http-proxy -a <global-ip>:3333 -L example.ton -C tos-global.config.json\tRuns a local "
-      "RLDP->HTTP proxy on UDP port <global-ip>:3333 that forwards all queries for http://example.ton to HTTP server "
+      "Example:\n\trldp-http-proxy -a <global-ip>:3333 -L example.tos -C tos-global.config.json\tRuns a local "
+      "RLDP->HTTP proxy on UDP port <global-ip>:3333 that forwards all queries for http://example.tos to HTTP server "
       "at localhost:80\n");
   p.add_option('v', "verbosity", "set verbosity level", [&](td::Slice arg) {
     int v = VERBOSITY_NAME(FATAL) + (td::to_integer<int>(arg));
@@ -1718,12 +1718,12 @@ int main(int argc, char *argv[]) {
     logger_ = td::FileLog::create(fname.str()).move_as_ok();
     td::log_interface = logger_.get();
   });
-  p.add_checked_option('S', "storage-gateway", "adnl address of ton storage gateway", [&](td::Slice arg) -> td::Status {
+  p.add_checked_option('S', "storage-gateway", "adnl address of tos storage gateway", [&](td::Slice arg) -> td::Status {
     TRY_RESULT(adnl, tos::adnl::AdnlNodeIdShort::parse(arg));
     td::actor::send_closure(x, &RldpHttpProxy::set_storage_gateway, adnl);
     return td::Status::OK();
   });
-  p.add_checked_option('P', "proxy-all", "value=[YES|NO]. proxy all HTTP requests (default only *.ton and *.adnl)",
+  p.add_checked_option('P', "proxy-all", "value=[YES|NO]. proxy all HTTP requests (default only *.tos and *.adnl)",
                        [&](td::Slice value) {
                          if (value == "YES" || value == "yes") {
                            td::actor::send_closure(x, &RldpHttpProxy::set_proxy_all, true);

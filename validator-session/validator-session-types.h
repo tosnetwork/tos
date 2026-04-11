@@ -236,7 +236,7 @@ struct NewValidatorGroupStats {
   std::vector<Node> nodes{};
 
   tl_object_ptr<tos_api::validatorStats_newValidatorGroup> tl() const {
-    std::vector<tl_object_ptr<tos_api::tonNode_blockIdExt>> prev_arr;
+    std::vector<tl_object_ptr<tos_api::tosNode_blockIdExt>> prev_arr;
     for (const auto &p : prev) {
       prev_arr.push_back(create_tl_block_id(p));
     }

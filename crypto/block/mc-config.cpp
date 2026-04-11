@@ -409,8 +409,8 @@ td::optional<tos::NewConsensusConfig> Config::get_new_consensus_config(tos::Work
 
         .noncritical_params =
             {
-                .target_rate{v1.target_rate_ms},
-                .first_block_timeout{v1.first_block_timeout_ms},
+                .target_rate = std::chrono::milliseconds(v1.target_rate_ms),
+                .first_block_timeout = std::chrono::milliseconds(v1.first_block_timeout_ms),
                 .max_leader_window_desync = v1.max_leader_window_desync,
             },
     };

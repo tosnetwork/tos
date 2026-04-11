@@ -21,7 +21,7 @@
 
 #include "full-node-shard.h"
 #include "full-node.h"
-//#include "ton-node-slave.h"
+//#include "tos-node-slave.h"
 #include <map>
 #include <queue>
 #include <set>

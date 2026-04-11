@@ -31,7 +31,7 @@
 #include "adnl/adnl-ext-client.h"
 #include "adnl/utils.hpp"
 #include "auto/tl/lite_api.h"
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "block/block-auto.h"
 #include "block/block-db.h"
 #include "block/block.h"
@@ -123,7 +123,7 @@ class HttpQueryRunner {
 
 class CoreActor : public CoreActorInterface {
  private:
-  std::string global_config_ = "ton-global.config";
+  std::string global_config_ = "tos-global.config";
 
   td::actor::ActorOwn<liteclient::ExtClient> client_;
 

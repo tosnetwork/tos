@@ -74,7 +74,7 @@ using td::int32;
 using td::uint32;
 
 // Concurrent SHA256 benchmark
-// Simplified ton Cell and Block structures
+// Simplified tos Cell and Block structures
 struct CellRef {
   int32 cell_id{0};
   td::MutableSlice hash_slice;

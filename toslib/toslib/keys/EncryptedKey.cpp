@@ -41,7 +41,7 @@ td::Result<DecryptedKey> EncryptedKey::decrypt(td::Slice local_password, bool ch
   }
 
   td::SecureString encryption_secret =
-      SimpleEncryption::kdf(as_slice(decrypted_secret), "TON local key", EncryptedKey::PBKDF_ITERATIONS);
+      SimpleEncryption::kdf(as_slice(decrypted_secret), "TOS local key", EncryptedKey::PBKDF_ITERATIONS);
 
   TRY_RESULT(decrypted_data, SimpleEncryption::decrypt_data(as_slice(encrypted_data), as_slice(encryption_secret)));
 

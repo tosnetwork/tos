@@ -121,9 +121,9 @@ void DownloadArchiveSlice::got_node_to_download(adnl::AdnlNodeIdShort download_f
 
   td::BufferSlice q;
   if (shard_prefix_.is_masterchain()) {
-    q = create_serialize_tl_object<tos_api::tonNode_getArchiveInfo>(masterchain_seqno_);
+    q = create_serialize_tl_object<tos_api::tosNode_getArchiveInfo>(masterchain_seqno_);
   } else {
-    q = create_serialize_tl_object<tos_api::tonNode_getShardArchiveInfo>(masterchain_seqno_,
+    q = create_serialize_tl_object<tos_api::tosNode_getShardArchiveInfo>(masterchain_seqno_,
                                                                          create_tl_shard_id(shard_prefix_));
   }
   if (client_.empty()) {
@@ -131,13 +131,13 @@ void DownloadArchiveSlice::got_node_to_download(adnl::AdnlNodeIdShort download_f
                             "get_archive_info", std::move(P), td::Timestamp::in(3.0), std::move(q));
   } else {
     td::actor::send_closure(client_, &adnl::AdnlExtClient::send_query, "get_archive_info",
-                            create_serialize_tl_object_suffix<tos_api::tonNode_query>(std::move(q)),
+                            create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(q)),
                             td::Timestamp::in(1.0), std::move(P));
   }
 }
 
 void DownloadArchiveSlice::got_archive_info(td::BufferSlice data) {
-  auto F = fetch_tl_object<tos_api::tonNode_ArchiveInfo>(std::move(data), true);
+  auto F = fetch_tl_object<tos_api::tosNode_ArchiveInfo>(std::move(data), true);
   if (F.is_error()) {
     abort_query(F.move_as_error_prefix("failed to parse ArchiveInfo answer"));
     return;
@@ -146,11 +146,11 @@ void DownloadArchiveSlice::got_archive_info(td::BufferSlice data) {
 
   bool fail = false;
   tos_api::downcast_call(*f.get(), td::overloaded(
-                                       [&](const tos_api::tonNode_archiveNotFound &obj) {
+                                       [&](const tos_api::tosNode_archiveNotFound &obj) {
                                          abort_query(td::Status::Error(ErrorCode::notready, "remote db not found"));
                                          fail = true;
                                        },
-                                       [&](const tos_api::tonNode_archiveInfo &obj) { archive_id_ = obj.id_; }));
+                                       [&](const tos_api::tosNode_archiveInfo &obj) { archive_id_ = obj.id_; }));
   if (fail) {
     return;
   }
@@ -170,14 +170,14 @@ void DownloadArchiveSlice::get_archive_slice() {
     }
   });
 
-  auto q = create_serialize_tl_object<tos_api::tonNode_getArchiveSlice>(archive_id_, offset_, slice_size());
+  auto q = create_serialize_tl_object<tos_api::tosNode_getArchiveSlice>(archive_id_, offset_, slice_size());
   if (client_.empty()) {
     td::actor::send_closure(overlays_, &overlay::Overlays::send_query_via, download_from_, local_id_, overlay_id_,
                             "get_archive_slice", std::move(P), td::Timestamp::in(15.0), std::move(q),
                             slice_size() + 1024, rldp_);
   } else {
     td::actor::send_closure(client_, &adnl::AdnlExtClient::send_query, "get_archive_slice",
-                            create_serialize_tl_object_suffix<tos_api::tonNode_query>(std::move(q)),
+                            create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(q)),
                             td::Timestamp::in(15.0), std::move(P));
   }
 }

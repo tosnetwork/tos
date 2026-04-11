@@ -28,7 +28,7 @@
 */
 #include <map>
 
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "common/checksum.h"
 #include "common/errorcode.h"
 #include "td/actor/actor.h"

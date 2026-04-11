@@ -2,14 +2,14 @@ import base64
 import json
 
 import pytest
-from tonapi.tos_api import (
+from tosapi.tos_api import (
     Adnl_packetContents,
     Catchain_config_global,
     Engine_validator_config,
     Id_config_local,
     Pk_aes,
     Pub_unenc,
-    TonNode_blockIdExt,
+    TosNode_blockIdExt,
 )
 
 
@@ -20,7 +20,7 @@ def pubk():
 
 @pytest.fixture()
 def block():
-    return TonNode_blockIdExt(
+    return TosNode_blockIdExt(
         workchain=-1, shard=0, seqno=123456, root_hash=b"\x01" * 32, file_hash=b"\x02" * 32
     )
 
@@ -122,9 +122,9 @@ def test_reading_engine_validator_config():
     assert vc.to_json() == json.dumps(json.loads(config))
 
 
-def test_to_dict(pubk: Pub_unenc, block: TonNode_blockIdExt):
+def test_to_dict(pubk: Pub_unenc, block: TosNode_blockIdExt):
     assert block.to_dict() == {
-        "@type": "tonNode.blockIdExt",
+        "@type": "tosNode.blockIdExt",
         "workchain": -1,
         "shard": 0,
         "seqno": 123456,

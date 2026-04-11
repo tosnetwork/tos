@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: LGPL-2.0-or-later
  */
 
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "tl/tl_json.h"
 
 #include "bus.h"

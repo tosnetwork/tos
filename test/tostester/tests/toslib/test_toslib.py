@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from tonapi import tos_api
+from tosapi import tos_api
 from tostester.install import Install
 
 from tl import JSONSerializable
@@ -87,7 +87,7 @@ async def test_request(toslib_client: ToslibClient, monkeypatch: pytest.MonkeyPa
             "@type": "blocks.masterchainInfo",
             "@extra": q["@extra"],
             "last": {
-                "@type": "ton.blockIdExt",
+                "@type": "tos.blockIdExt",
                 "workchain": -1,
                 "shard": -9223372036854775808,
                 "seqno": 1,
@@ -96,7 +96,7 @@ async def test_request(toslib_client: ToslibClient, monkeypatch: pytest.MonkeyPa
             },
             "state_root_hash": "9DcJlDUeelZCBniBzWseg6KyjbjtkB8r6rX4x6BDT9o=",
             "init": {
-                "@type": "ton.blockIdExt",
+                "@type": "tos.blockIdExt",
                 "workchain": -1,
                 "shard": 0,
                 "seqno": 0,
@@ -207,7 +207,7 @@ async def test_read_results_error_cancels_inflight_requests(
         with pytest.raises(RuntimeError, match="Simulated error in _read_results"):
             await task3
 
-        with pytest.raises(AssertionError, match="TonLib failed with state"):
+        with pytest.raises(AssertionError, match="TosLib failed with state"):
             _ = await toslib_client.get_masterchain_info()
 
 

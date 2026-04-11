@@ -3,7 +3,7 @@ import logging
 import shutil
 from pathlib import Path
 
-from contract import WalletV1Blueprint, ton
+from contract import WalletV1Blueprint, tos
 from tostester.install import Install
 from tostester.network import FullNode, Network
 
@@ -48,7 +48,7 @@ async def main():
         client = await nodes[0].toslib_client()
         main_wallet = network.zerostate.main_wallet(client)
 
-        new_wallet = await main_wallet.deploy(WalletV1Blueprint(workchain=0), ton(1))
+        new_wallet = await main_wallet.deploy(WalletV1Blueprint(workchain=0), tos(1))
 
         async def balance_changed():
             while True:

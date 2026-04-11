@@ -18,7 +18,7 @@ slice zero_address() {
     return begin_cell().store_uint(0, 2).end_cell().begin_parse();
 }
 
-;; "ton\0test\0" -> "ton"
+;; "tos\0test\0" -> "tos"
 int get_top_domain_bits(slice domain) {
     int i = 0;
     int need_break = 0;

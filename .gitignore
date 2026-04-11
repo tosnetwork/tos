@@ -27,7 +27,7 @@ dev/
 test/integration/.network
 
 test/tostester/tests/tl/generated
-test/tostester/src/tonapi
+test/tostester/src/tosapi
 build-mingw64/
 build-ucrt64/
 build/

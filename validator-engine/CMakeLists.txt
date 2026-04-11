@@ -9,7 +9,7 @@ target_link_libraries(validator-engine metrics overlay tdutils tdactor adnl tl_a
   fift-lib memprof git ${JEMALLOC_LIBRARIES})
 if (JEMALLOC_FOUND)
   target_include_directories(validator-engine PRIVATE ${JEMALLOC_INCLUDE_DIR})
-  target_compile_definitions(validator-engine PRIVATE -DTON_USE_JEMALLOC=1)
+  target_compile_definitions(validator-engine PRIVATE -DTOS_USE_JEMALLOC=1)
 endif()
 
 install(TARGETS validator-engine RUNTIME DESTINATION bin)

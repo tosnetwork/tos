@@ -2,7 +2,7 @@ import json
 import traceback
 from typing import cast, final
 
-from tonapi import tos_api
+from tosapi import tos_api
 
 from tl import JSONSerializable, TLRequest
 

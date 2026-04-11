@@ -5,7 +5,7 @@ import json
 from unittest.mock import Mock
 
 import pytest
-from tonapi import tos_api
+from tosapi import tos_api
 
 from toslib import EngineConsoleClient, LocalError, RemoteError
 

@@ -68,7 +68,7 @@ slice zero_address() asm "b{00} PUSHSLICE";
 }
 
 
-;; "ton\0test\0" -> "ton"
+;; "tos\0test\0" -> "tos"
 int get_top_domain_bits(slice domain) inline {
     int i = -8;
     int char = 1;

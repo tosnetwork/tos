@@ -125,7 +125,7 @@ void LastBlock::sync_loop() {
 }
 
 void LastBlock::do_get_last_block() {
-  //liteServer.getBlockProof mode:# known_block:tonNode.blockIdExt target_block:mode.0?tonNode.blockIdExt = liteServer.PartialBlockProof;
+  //liteServer.getBlockProof mode:# known_block:tosNode.blockIdExt target_block:mode.0?tosNode.blockIdExt = liteServer.PartialBlockProof;
   VLOG(last_block) << "get_last_block: continue " << state_.last_key_block_id.to_str() << " -> ?";
   get_last_block_stats_.queries_++;
   client_.send_query(
@@ -137,7 +137,7 @@ void LastBlock::do_get_last_block() {
 
 void LastBlock::do_check_init_block(tos::BlockIdExt from, tos::BlockIdExt to) {
   VLOG(last_block) << "check_init_block: continue " << from.to_str() << " -> " << to.to_str();
-  //liteServer.getBlockProof mode:# known_block:tonNode.blockIdExt target_block:mode.0?tonNode.blockIdExt = liteServer.PartialBlockProof;
+  //liteServer.getBlockProof mode:# known_block:tosNode.blockIdExt target_block:mode.0?tosNode.blockIdExt = liteServer.PartialBlockProof;
   check_init_block_stats_.queries_++;
   client_.send_query(
       tos::lite_api::liteServer_getBlockProof(1, create_tl_lite_block_id(from), create_tl_lite_block_id(to)),

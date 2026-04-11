@@ -96,9 +96,9 @@ struct ShardId {
       : workchain_id(wc_id), shard_pfx_len(0), shard_pfx(1ULL << 63) {
   }
   ShardId(tos::WorkchainId wc_id, unsigned long long sh_pfx);
-  ShardId(tos::ShardIdFull ton_shard);
-  ShardId(tos::BlockId ton_block);
-  ShardId(const tos::BlockIdExt& ton_block);
+  ShardId(tos::ShardIdFull tos_shard);
+  ShardId(tos::BlockId tos_block);
+  ShardId(const tos::BlockIdExt& tos_block);
   ShardId(tos::WorkchainId wc_id, unsigned long long sh_pfx, int sh_pfx_len);
   ShardId(vm::CellSlice& cs) {
     deserialize(cs);

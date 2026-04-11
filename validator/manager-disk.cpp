@@ -1046,7 +1046,7 @@ void ValidatorManagerImpl::update_shard_blocks() {
 }
 
 ValidatorSessionId ValidatorManagerImpl::get_validator_set_id(ShardIdFull shard, td::Ref<block::ValidatorSet> val_set) {
-  return create_hash_tl_object<tos_api::tonNode_sessionId>(shard.workchain, shard.shard, val_set->get_catchain_seqno(),
+  return create_hash_tl_object<tos_api::tosNode_sessionId>(shard.workchain, shard.shard, val_set->get_catchain_seqno(),
                                                            td::Bits256::zero());
 }
 

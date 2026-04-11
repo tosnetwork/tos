@@ -928,18 +928,18 @@ decltype(FullNodeImpl::limiter_) FullNodeImpl::make_limiter(const FullNodeOption
   size_t g_limit = opts.ratelimit_global_;
   return std::make_shared<RateLimiter<>>(
       RateLimit{w_size, g_limit},
-      std::map<int32_t, RateLimit>{{tos_api::tonNode_getArchiveSlice::ID, {w_size, h_limit}},
-                                   {tos_api::tonNode_downloadPersistentStateSliceV2::ID, {w_size, h_limit}},
-                                   {tos_api::tonNode_downloadZeroState::ID, {w_size, h_limit}},
+      std::map<int32_t, RateLimit>{{tos_api::tosNode_getArchiveSlice::ID, {w_size, h_limit}},
+                                   {tos_api::tosNode_downloadPersistentStateSliceV2::ID, {w_size, h_limit}},
+                                   {tos_api::tosNode_downloadZeroState::ID, {w_size, h_limit}},
 
-                                   {tos_api::tonNode_downloadBlock::ID, {w_size, m_limit}},
-                                   {tos_api::tonNode_downloadBlockFull::ID, {w_size, m_limit}},
-                                   {tos_api::tonNode_downloadNextBlockFull::ID, {w_size, m_limit}},
-                                   {tos_api::tonNode_downloadBlockProof::ID, {w_size, m_limit}},
-                                   {tos_api::tonNode_downloadBlockProofLink::ID, {w_size, m_limit}},
-                                   {tos_api::tonNode_downloadKeyBlockProof::ID, {w_size, m_limit}},
-                                   {tos_api::tonNode_downloadKeyBlockProofLink::ID, {w_size, m_limit}},
-                                   {tos_api::tonNode_getOutMsgQueueProof::ID, {w_size, m_limit}}});
+                                   {tos_api::tosNode_downloadBlock::ID, {w_size, m_limit}},
+                                   {tos_api::tosNode_downloadBlockFull::ID, {w_size, m_limit}},
+                                   {tos_api::tosNode_downloadNextBlockFull::ID, {w_size, m_limit}},
+                                   {tos_api::tosNode_downloadBlockProof::ID, {w_size, m_limit}},
+                                   {tos_api::tosNode_downloadBlockProofLink::ID, {w_size, m_limit}},
+                                   {tos_api::tosNode_downloadKeyBlockProof::ID, {w_size, m_limit}},
+                                   {tos_api::tosNode_downloadKeyBlockProofLink::ID, {w_size, m_limit}},
+                                   {tos_api::tosNode_getOutMsgQueueProof::ID, {w_size, m_limit}}});
 }
 
 }  // namespace fullnode

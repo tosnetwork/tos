@@ -143,7 +143,7 @@ class ToslibCli : public td::actor::Actor {
   td::Promise<td::Slice> cont_;
   td::uint32 wallet_id_;
   td::int32 workchain_id_;
-  tos::toslib_api::object_ptr<toslib_api::ton_blockIdExt> current_block_;
+  tos::toslib_api::object_ptr<toslib_api::tos_blockIdExt> current_block_;
   enum class BlockMode { Auto, Manual } block_mode_ = BlockMode::Auto;
 
   struct KeyInfo {
@@ -1392,7 +1392,7 @@ class ToslibCli : public td::actor::Actor {
         return;
       }
       func = make_object<toslib_api::withBlock>(
-          make_object<toslib_api::ton_blockIdExt>(current_block_->workchain_, current_block_->shard_,
+          make_object<toslib_api::tos_blockIdExt>(current_block_->workchain_, current_block_->shard_,
                                                   current_block_->seqno_, current_block_->root_hash_,
                                                   current_block_->file_hash_),
           std::move(func));

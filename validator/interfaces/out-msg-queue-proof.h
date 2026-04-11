@@ -43,14 +43,14 @@ struct OutMsgQueueProof : public td::CntObject {
 
   static td::Result<std::vector<td::Ref<OutMsgQueueProof>>> fetch(ShardIdFull dst_shard, std::vector<BlockIdExt> blocks,
                                                                   block::ImportedMsgQueueLimits limits,
-                                                                  const tos_api::tonNode_outMsgQueueProof &f);
+                                                                  const tos_api::tosNode_outMsgQueueProof &f);
 
   struct OneBlock {
     BlockIdExt id;
     Ref<vm::Cell> state_root;
     Ref<vm::Cell> block_root;
   };
-  static td::Result<tl_object_ptr<tos_api::tonNode_outMsgQueueProof>> build(ShardIdFull dst_shard,
+  static td::Result<tl_object_ptr<tos_api::tosNode_outMsgQueueProof>> build(ShardIdFull dst_shard,
                                                                             std::vector<OneBlock> blocks,
                                                                             block::ImportedMsgQueueLimits limits);
 };

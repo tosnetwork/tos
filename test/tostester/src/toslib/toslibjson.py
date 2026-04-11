@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import override
 
-from tonapi import toslib_api
+from tosapi import toslib_api
 
 from tl import JSONSerializable, TLObject
 from toslib.toslib_cdll import ToslibCDLL
@@ -46,7 +46,7 @@ class _Status(Enum):
     CRASHED = auto()
 
 
-class TonLib:
+class TosLib:
     def __init__(
         self,
         loop: asyncio.AbstractEventLoop,
@@ -65,7 +65,7 @@ class TonLib:
 
     def __del__(self):
         assert self._client == 0, (
-            "TonLib client not destroyed. Call 'aclose' before destroying the object."
+            "TosLib client not destroyed. Call 'aclose' before destroying the object."
         )
 
     def _send(self, query: JSONSerializable):
@@ -79,7 +79,7 @@ class TonLib:
         return result
 
     async def execute(self, query: TLObject) -> JSONSerializable:
-        assert self._is_working, f"TonLib failed with state: {self._state}"
+        assert self._is_working, f"TosLib failed with state: {self._state}"
 
         request_id = self._next_request_id()
         query_d = query.to_dict()
@@ -157,7 +157,7 @@ class TonLib:
                 except Exception as e:
                     future.set_exception(e)
         except Exception as e:
-            logger.error("TonLib background task failed", exc_info=True)
+            logger.error("TosLib background task failed", exc_info=True)
             self._state = _Status.CRASHED
             for f in self._futures.values():
                 if not f.done():

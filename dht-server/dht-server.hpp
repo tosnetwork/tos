@@ -31,7 +31,7 @@
 
 #include "adnl/adnl.h"
 #include "auto/tl/tos_api.hpp"
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "dht/dht.h"
 #include "td/actor/MultiPromise.h"
 #include "tos/tos-types.h"
@@ -105,7 +105,7 @@ class DhtServer : public td::actor::Actor {
   td::actor::ActorOwn<tos::adnl::AdnlExtServer> control_ext_server_;
 
   std::string local_config_ = "";
-  std::string global_config_ = "ton-global.config";
+  std::string global_config_ = "tos-global.config";
   std::string config_file_;
   std::string temp_config_file() const {
     return config_file_ + ".tmp";

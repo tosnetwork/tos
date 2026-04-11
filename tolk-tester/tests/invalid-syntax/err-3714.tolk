@@ -1,8 +1,8 @@
 fun main(am: slice) {
-    return ton(am);
+    return tos(am);
 }
 
 /**
 @compilation_should_fail
-@stderr function `ton` requires a constant string, like `ton("0.05")`
+@stderr function `tos` requires a constant string, like `tos("0.05")`
  */

@@ -68,7 +68,7 @@ int main() {
                {"\"tl/tl_object_parse.h\"", "\"tl/tl_object_store.h\"", "\"td/utils/int_types.h\"",
                 "\"crypto/common/bitstring.h\""},
                {"<string>", "\"td/utils/buffer.h\"", "\"crypto/common/bitstring.h\""});
-  td::gen_json_converter(td::tl::read_tl_config_from_file("scheme/tos_api.tlo"), "auto/tl/ton_api_json", "tos_api",
+  td::gen_json_converter(td::tl::read_tl_config_from_file("scheme/tos_api.tlo"), "auto/tl/tos_api_json", "tos_api",
                          td::tl::TL_writer::Mode::All);
 
 #ifdef TOSLIB_ENABLE_JNI

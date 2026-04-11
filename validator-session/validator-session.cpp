@@ -533,7 +533,7 @@ void ValidatorSessionImpl::candidate_decision_ok(td::uint32 round, ValidatorSess
 
   LOG(INFO) << this << ": approved candidate " << hash;
 
-  auto obj = create_tl_object<tos_api::ton_blockIdApprove>(root_hash, file_hash);
+  auto obj = create_tl_object<tos_api::tos_blockIdApprove>(root_hash, file_hash);
   auto data = serialize_tl_object(obj, true);
 
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), print_id = print_id(), hash, ok_from,
@@ -867,7 +867,7 @@ void ValidatorSessionImpl::check_sign_slot() {
     } else {
       pending_sign_ = true;
 
-      auto obj = create_tl_object<tos_api::ton_blockId>(B->get_root_hash(), B->get_file_hash());
+      auto obj = create_tl_object<tos_api::tos_blockId>(B->get_root_hash(), B->get_file_hash());
       auto data = serialize_tl_object(obj, true);
 
       auto P =
@@ -1224,7 +1224,7 @@ void ValidatorSessionImpl::get_validator_group_info_for_litequery(
     auto candidate = create_tl_object<lite_api::liteServer_nonfinal_candidateInfo>();
 
     candidate->id_ = create_tl_object<lite_api::liteServer_nonfinal_candidateId>();
-    candidate->id_->block_id_ = create_tl_object<lite_api::tonNode_blockIdExt>();
+    candidate->id_->block_id_ = create_tl_object<lite_api::tosNode_blockIdExt>();
     candidate->id_->block_id_->root_hash_ =
         block->get_block()->get_root_hash();  // other fields will be filled in validator-group.cpp
     candidate->id_->block_id_->file_hash_ = block->get_block()->get_file_hash();

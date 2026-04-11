@@ -28,9 +28,9 @@ You might also build some extra utilities useful for smart-contract development:
 cmake --build . --target fift
 cmake --build . --target func
 
-4) Download the newest configuration file from https://ton.org/global-config.json :
+4) Download the newest configuration file from https://tos.org/global-config.json :
 
-wget https://ton.org/global-config.json
+wget https://tos.org/global-config.json
 
 5) Run the Lite Client:
 
@@ -47,4 +47,4 @@ Basic help info can be obtained by typing "help" into the Lite Client. Type "qui
 
 More details on these activities, including step-by-step instructions for creating a simple wallet smart contract (along with its source code), may be found in the HOWTO file included in this archive.
 
-7) Some documentation on the TOS Blockchain and TOS Virtual Machine may be found at the download page https://ton.org/docs/ . Be aware that this documentation may not be completely in sync with the version currently employed by the Test Network, because some minor implementation details are likely to be changed during the final development and testing phases.
+7) Some documentation on the TOS Blockchain and TOS Virtual Machine may be found at the download page https://tos.org/docs/ . Be aware that this documentation may not be completely in sync with the version currently employed by the Test Network, because some minor implementation details are likely to be changed during the final development and testing phases.

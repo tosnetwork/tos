@@ -15,7 +15,7 @@
     along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 */
 #include "adnl/adnl.h"
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "common/delay.h"
 #include "dht/dht.h"
 #include "overlay/overlays.h"
@@ -195,8 +195,8 @@ class StorageDaemon : public td::actor::Actor {
     }
     td::actor::send_closure(adnl_, &adnl::Adnl::register_dht_node, dht_.get());
 
-    rldp_ = ton_rldp::Rldp::create(adnl_.get());
-    td::actor::send_closure(rldp_, &ton_rldp::Rldp::add_id, local_id_);
+    rldp_ = tos_rldp::Rldp::create(adnl_.get());
+    td::actor::send_closure(rldp_, &tos_rldp::Rldp::add_id, local_id_);
     overlays_ = overlay::Overlays::create(db_root_, keyring_.get(), adnl_.get(), dht_.get());
   }
 
@@ -912,7 +912,7 @@ class StorageDaemon : public td::actor::Actor {
   td::actor::ActorOwn<adnl::AdnlNetworkManager> adnl_network_manager_;
   td::actor::ActorOwn<adnl::Adnl> adnl_;
   td::actor::ActorOwn<dht::Dht> dht_;
-  td::actor::ActorOwn<ton_rldp::Rldp> rldp_;
+  td::actor::ActorOwn<tos_rldp::Rldp> rldp_;
   td::actor::ActorOwn<overlay::Overlays> overlays_;
   td::actor::ActorOwn<adnl::AdnlExtServer> ext_server_;
 

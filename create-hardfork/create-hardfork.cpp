@@ -28,7 +28,7 @@
 */
 #include "adnl/adnl.h"
 #include "adnl/utils.hpp"
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "catchain/catchain.h"
 #include "common/errorlog.h"
 #include "crypto/block/block-db.h"

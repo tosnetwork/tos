@@ -184,7 +184,7 @@ void StateDb::get_async_serializer_state(td::Promise<AsyncSerializerState> promi
 void StateDb::update_hardforks(std::vector<BlockIdExt> blocks, td::Promise<td::Unit> promise) {
   auto key = create_hash_tl_object<tos_api::db_state_key_hardforks>();
 
-  std::vector<tl_object_ptr<tos_api::tonNode_blockIdExt>> vec;
+  std::vector<tl_object_ptr<tos_api::tosNode_blockIdExt>> vec;
 
   for (auto& e : blocks) {
     vec.push_back(create_tl_block_id(e));
@@ -290,7 +290,7 @@ void StateDb::add_persistent_state_description(td::Ref<PersistentStateDescriptio
   td::BufferSlice serialized_shards;
 
   if (can_be_stored_as_v1) {
-    std::vector<tl_object_ptr<tos_api::tonNode_blockIdExt>> shard_blocks;
+    std::vector<tl_object_ptr<tos_api::tosNode_blockIdExt>> shard_blocks;
     for (const auto& [block_id, _] : desc->shard_blocks) {
       shard_blocks.push_back(create_tl_block_id(block_id));
     }

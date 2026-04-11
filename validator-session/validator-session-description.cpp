@@ -90,7 +90,7 @@ ValidatorSessionCandidateId ValidatorSessionDescriptionImpl::candidate_id(
 td::Status ValidatorSessionDescriptionImpl::check_signature(ValidatorSessionRootHash root_hash,
                                                             ValidatorSessionFileHash file_hash, td::uint32 src_idx,
                                                             td::Slice signature) const {
-  auto obj = create_tl_object<tos_api::ton_blockId>(root_hash, file_hash);
+  auto obj = create_tl_object<tos_api::tos_blockId>(root_hash, file_hash);
   auto S = serialize_tl_object(obj, true);
 
   return sources_[src_idx].encryptor->check_signature(S.as_slice(), signature);
@@ -99,7 +99,7 @@ td::Status ValidatorSessionDescriptionImpl::check_signature(ValidatorSessionRoot
 td::Status ValidatorSessionDescriptionImpl::check_approve_signature(ValidatorSessionRootHash root_hash,
                                                                     ValidatorSessionFileHash file_hash,
                                                                     td::uint32 src_idx, td::Slice signature) const {
-  auto obj = create_tl_object<tos_api::ton_blockIdApprove>(root_hash, file_hash);
+  auto obj = create_tl_object<tos_api::tos_blockIdApprove>(root_hash, file_hash);
   auto S = serialize_tl_object(obj, true);
 
   return sources_[src_idx].encryptor->check_signature(S.as_slice(), signature);

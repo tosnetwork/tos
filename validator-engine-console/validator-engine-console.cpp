@@ -28,7 +28,7 @@
 */
 #include "adnl/adnl-ext-client.h"
 #include "auto/tl/lite_api.h"
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "block/block-auto.h"
 #include "block/block-db.h"
 #include "block/block-parse.h"

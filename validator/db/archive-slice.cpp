@@ -62,11 +62,11 @@ class PackageStatistics {
     ss.setf(std::ios::fixed);
     ss.precision(6);
 
-    ss << "ton.pack.open COUNT : " << open_count.exchange(0, std::memory_order_relaxed) << "\n";
-    ss << "ton.pack.close COUNT : " << close_count.exchange(0, std::memory_order_relaxed) << "\n";
+    ss << "tos.pack.open COUNT : " << open_count.exchange(0, std::memory_order_relaxed) << "\n";
+    ss << "tos.pack.close COUNT : " << close_count.exchange(0, std::memory_order_relaxed) << "\n";
 
-    ss << "ton.pack.read.bytes COUNT : " << read_bytes.exchange(0, std::memory_order_relaxed) << "\n";
-    ss << "ton.pack.write.bytes COUNT : " << write_bytes.exchange(0, std::memory_order_relaxed) << "\n";
+    ss << "tos.pack.read.bytes COUNT : " << read_bytes.exchange(0, std::memory_order_relaxed) << "\n";
+    ss << "tos.pack.write.bytes COUNT : " << write_bytes.exchange(0, std::memory_order_relaxed) << "\n";
 
     PercentileStats temp_read_time;
     {
@@ -74,7 +74,7 @@ class PackageStatistics {
       temp_read_time = std::move(read_time);
       read_time.clear();
     }
-    ss << "ton.pack.read.micros " << temp_read_time.to_string() << "\n";
+    ss << "tos.pack.read.micros " << temp_read_time.to_string() << "\n";
 
     PercentileStats temp_write_time;
     {
@@ -82,7 +82,7 @@ class PackageStatistics {
       temp_write_time = std::move(write_time);
       write_time.clear();
     }
-    ss << "ton.pack.write.micros " << temp_write_time.to_string() << "\n";
+    ss << "tos.pack.write.micros " << temp_write_time.to_string() << "\n";
 
     return ss.str();
   }

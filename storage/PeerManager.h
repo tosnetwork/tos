@@ -21,13 +21,13 @@
 
 #include "NodeActor.h"
 
-namespace ton_rldp = tos::rldp2;
+namespace tos_rldp = tos::rldp2;
 
 class PeerManager : public td::actor::Actor {
  public:
   PeerManager(tos::adnl::AdnlNodeIdShort adnl_id, tos::overlay::OverlayIdFull overlay_id, bool client_mode,
               td::actor::ActorId<tos::overlay::Overlays> overlays, td::actor::ActorId<tos::adnl::Adnl> adnl,
-              td::actor::ActorId<ton_rldp::Rldp> rldp)
+              td::actor::ActorId<tos_rldp::Rldp> rldp)
       : overlay_id_(std::move(overlay_id))
       , client_mode_(client_mode)
       , overlays_(std::move(overlays))
@@ -254,7 +254,7 @@ class PeerManager : public td::actor::Actor {
   bool client_mode_ = false;
   td::actor::ActorId<tos::overlay::Overlays> overlays_;
   td::actor::ActorId<tos::adnl::Adnl> adnl_;
-  td::actor::ActorId<ton_rldp::Rldp> rldp_;
+  td::actor::ActorId<tos_rldp::Rldp> rldp_;
 
   std::map<std::pair<tos::PeerId, tos::PeerId>, td::actor::ActorId<tos::PeerActor>> peers_;
   std::map<tos::PeerId, td::actor::ActorId<tos::NodeActor>> nodes_;

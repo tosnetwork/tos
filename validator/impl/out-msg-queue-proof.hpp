@@ -95,7 +95,7 @@ class BuildOutMsgQueueProof : public td::actor::Actor {
  public:
   BuildOutMsgQueueProof(ShardIdFull dst_shard, std::vector<BlockIdExt> blocks, block::ImportedMsgQueueLimits limits,
                         td::actor::ActorId<ValidatorManagerInterface> manager,
-                        td::Promise<tl_object_ptr<tos_api::tonNode_outMsgQueueProof>> promise)
+                        td::Promise<tl_object_ptr<tos_api::tosNode_outMsgQueueProof>> promise)
       : dst_shard_(dst_shard), limits_(limits), manager_(manager), promise_(std::move(promise)) {
     blocks_.resize(blocks.size());
     for (size_t i = 0; i < blocks_.size(); ++i) {
@@ -116,7 +116,7 @@ class BuildOutMsgQueueProof : public td::actor::Actor {
   block::ImportedMsgQueueLimits limits_;
 
   td::actor::ActorId<ValidatorManagerInterface> manager_;
-  td::Promise<tl_object_ptr<tos_api::tonNode_outMsgQueueProof>> promise_;
+  td::Promise<tl_object_ptr<tos_api::tosNode_outMsgQueueProof>> promise_;
 
   size_t pending = 0;
 };

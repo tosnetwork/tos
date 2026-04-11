@@ -45,7 +45,7 @@ EncryptedKey DecryptedKey::encrypt(td::Slice local_password, td::Slice old_secre
   td::SecureString decrypted_secret = SimpleEncryption::combine_secrets(secret, local_password);
 
   td::SecureString encryption_secret =
-      SimpleEncryption::kdf(as_slice(decrypted_secret), "TON local key", EncryptedKey::PBKDF_ITERATIONS);
+      SimpleEncryption::kdf(as_slice(decrypted_secret), "TOS local key", EncryptedKey::PBKDF_ITERATIONS);
 
   std::vector<td::SecureString> mnemonic_words_copy;
   for (auto &w : mnemonic_words) {

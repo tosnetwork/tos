@@ -25,21 +25,21 @@ namespace tos::validator::fullnode {
 
 class FullNodeFastSyncOverlay : public td::actor::Actor {
  public:
-  void process_broadcast(PublicKeyHash src, tos_api::tonNode_blockBroadcast& query);
-  void process_broadcast(PublicKeyHash src, tos_api::tonNode_blockBroadcastCompressed& query);
-  void process_broadcast(PublicKeyHash src, tos_api::tonNode_blockBroadcastCompressedV2& query);
-  void process_broadcast(PublicKeyHash src, tos_api::tonNode_outMsgQueueProofBroadcast& query);
-  void process_block_broadcast(PublicKeyHash src, tos_api::tonNode_Broadcast& query);
-  void obtain_state_for_decompression(PublicKeyHash src, tos_api::tonNode_blockBroadcastCompressedV2 query);
-  void process_block_broadcast_with_state(PublicKeyHash src, tos_api::tonNode_blockBroadcastCompressedV2 query,
+  void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcast& query);
+  void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressed& query);
+  void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressedV2& query);
+  void process_broadcast(PublicKeyHash src, tos_api::tosNode_outMsgQueueProofBroadcast& query);
+  void process_block_broadcast(PublicKeyHash src, tos_api::tosNode_Broadcast& query);
+  void obtain_state_for_decompression(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressedV2 query);
+  void process_block_broadcast_with_state(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressedV2 query,
                                           td::Ref<ShardState> state);
 
-  void process_broadcast(PublicKeyHash src, tos_api::tonNode_newShardBlockBroadcast& query);
+  void process_broadcast(PublicKeyHash src, tos_api::tosNode_newShardBlockBroadcast& query);
 
-  void process_broadcast(PublicKeyHash src, tos_api::tonNode_newBlockCandidateBroadcast& query);
-  void process_broadcast(PublicKeyHash src, tos_api::tonNode_newBlockCandidateBroadcastCompressed& query);
-  void process_broadcast(PublicKeyHash src, tos_api::tonNode_newBlockCandidateBroadcastCompressedV2& query);
-  void process_block_candidate_broadcast(PublicKeyHash src, tos_api::tonNode_Broadcast& query);
+  void process_broadcast(PublicKeyHash src, tos_api::tosNode_newBlockCandidateBroadcast& query);
+  void process_broadcast(PublicKeyHash src, tos_api::tosNode_newBlockCandidateBroadcastCompressed& query);
+  void process_broadcast(PublicKeyHash src, tos_api::tosNode_newBlockCandidateBroadcastCompressedV2& query);
+  void process_block_candidate_broadcast(PublicKeyHash src, tos_api::tosNode_Broadcast& query);
 
   void process_telemetry_broadcast(adnl::AdnlNodeIdShort src,
                                    const tl_object_ptr<tos_api::validator_telemetry>& telemetry);

@@ -270,16 +270,16 @@ ShardId::ShardId(tos::WorkchainId wc_id, unsigned long long sh_pfx) : workchain_
   init();
 }
 
-ShardId::ShardId(tos::ShardIdFull ton_shard_id) : workchain_id(ton_shard_id.workchain), shard_pfx(ton_shard_id.shard) {
+ShardId::ShardId(tos::ShardIdFull tos_shard_id) : workchain_id(tos_shard_id.workchain), shard_pfx(tos_shard_id.shard) {
   init();
 }
 
-ShardId::ShardId(tos::BlockId ton_block_id) : workchain_id(ton_block_id.workchain), shard_pfx(ton_block_id.shard) {
+ShardId::ShardId(tos::BlockId tos_block_id) : workchain_id(tos_block_id.workchain), shard_pfx(tos_block_id.shard) {
   init();
 }
 
-ShardId::ShardId(const tos::BlockIdExt& ton_block_id)
-    : workchain_id(ton_block_id.id.workchain), shard_pfx(ton_block_id.id.shard) {
+ShardId::ShardId(const tos::BlockIdExt& tos_block_id)
+    : workchain_id(tos_block_id.id.workchain), shard_pfx(tos_block_id.id.shard) {
   init();
 }
 

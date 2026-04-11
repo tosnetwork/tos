@@ -183,16 +183,16 @@ class BlockSignatureSetOrdinary : public BlockSignatureSetBase {
   }
 
   td::Result<td::BufferSlice> to_sign(tos::BlockIdExt block_id) const override {
-    return tos::create_serialize_tl_object<tos::tos_api::ton_blockId>(block_id.root_hash, block_id.file_hash);
+    return tos::create_serialize_tl_object<tos::tos_api::tos_blockId>(block_id.root_hash, block_id.file_hash);
   }
 
-  tos::tl_object_ptr<tos::tos_api::tonNode_SignatureSet> tl() const override {
-    auto f = tos::create_tl_object<tos::tos_api::tonNode_signatureSet_ordinary>();
+  tos::tl_object_ptr<tos::tos_api::tosNode_SignatureSet> tl() const override {
+    auto f = tos::create_tl_object<tos::tos_api::tosNode_signatureSet_ordinary>();
     f->cc_seqno_ = cc_seqno_;
     f->validator_set_hash_ = validator_set_hash_;
     for (auto& sig : signatures_) {
       f->signatures_.push_back(
-          tos::create_tl_object<tos::tos_api::tonNode_blockSignature>(sig.node, sig.signature.clone()));
+          tos::create_tl_object<tos::tos_api::tosNode_blockSignature>(sig.node, sig.signature.clone()));
     }
     return f;
   }
@@ -208,10 +208,10 @@ class BlockSignatureSetOrdinary : public BlockSignatureSetBase {
     return f;
   }
 
-  std::vector<tos::tl_object_ptr<tos::tos_api::tonNode_blockSignature>> tl_legacy() const override {
-    std::vector<tos::tl_object_ptr<tos::tos_api::tonNode_blockSignature>> f;
+  std::vector<tos::tl_object_ptr<tos::tos_api::tosNode_blockSignature>> tl_legacy() const override {
+    std::vector<tos::tl_object_ptr<tos::tos_api::tosNode_blockSignature>> f;
     for (auto& sig : signatures_) {
-      f.push_back(tos::create_tl_object<tos::tos_api::tonNode_blockSignature>(sig.node, sig.signature.clone()));
+      f.push_back(tos::create_tl_object<tos::tos_api::tosNode_blockSignature>(sig.node, sig.signature.clone()));
     }
     return f;
   }
@@ -282,13 +282,13 @@ class BlockSignatureSetSimplex : public BlockSignatureSetBase {
     return tos::create_serialize_tl_object<tos::tos_api::consensus_dataToSign>(session_id_, std::move(data));
   }
 
-  tos::tl_object_ptr<tos::tos_api::tonNode_SignatureSet> tl() const override {
-    auto f = tos::create_tl_object<tos::tos_api::tonNode_signatureSet_simplex>();
+  tos::tl_object_ptr<tos::tos_api::tosNode_SignatureSet> tl() const override {
+    auto f = tos::create_tl_object<tos::tos_api::tosNode_signatureSet_simplex>();
     f->cc_seqno_ = cc_seqno_;
     f->validator_set_hash_ = validator_set_hash_;
     for (auto& sig : signatures_) {
       f->signatures_.push_back(
-          tos::create_tl_object<tos::tos_api::tonNode_blockSignature>(sig.node, sig.signature.clone()));
+          tos::create_tl_object<tos::tos_api::tosNode_blockSignature>(sig.node, sig.signature.clone()));
     }
     f->session_id_ = session_id_;
     f->slot_ = slot_;
@@ -434,7 +434,7 @@ td::Result<td::Ref<BlockSignatureSet>> BlockSignatureSet::fetch(td::Ref<vm::Cell
 }
 
 td::Ref<BlockSignatureSet> BlockSignatureSet::fetch(
-    const std::vector<tos::tl_object_ptr<tos::tos_api::tonNode_blockSignature>>& f, tos::CatchainSeqno cc_seqno,
+    const std::vector<tos::tl_object_ptr<tos::tos_api::tosNode_blockSignature>>& f, tos::CatchainSeqno cc_seqno,
     td::uint32 validator_set_hash) {
   std::vector<tos::BlockSignature> signatures;
   for (auto& s : f) {
@@ -443,18 +443,18 @@ td::Ref<BlockSignatureSet> BlockSignatureSet::fetch(
   return create_ordinary(std::move(signatures), cc_seqno, validator_set_hash);
 }
 
-td::Ref<BlockSignatureSet> BlockSignatureSet::fetch(const tos::tl_object_ptr<tos::tos_api::tonNode_SignatureSet>& f) {
+td::Ref<BlockSignatureSet> BlockSignatureSet::fetch(const tos::tl_object_ptr<tos::tos_api::tosNode_SignatureSet>& f) {
   td::Ref<BlockSignatureSet> sig_set;
   tos::tos_api::downcast_call(
       *f, td::overloaded(
-              [&](const tos::tos_api::tonNode_signatureSet_ordinary& obj) {
+              [&](const tos::tos_api::tosNode_signatureSet_ordinary& obj) {
                 std::vector<tos::BlockSignature> signatures;
                 for (auto& s : obj.signatures_) {
                   signatures.emplace_back(s->who_, s->signature_.clone());
                 }
                 sig_set = create_ordinary(std::move(signatures), obj.cc_seqno_, obj.validator_set_hash_);
               },
-              [&](const tos::tos_api::tonNode_signatureSet_simplex& obj) {
+              [&](const tos::tos_api::tosNode_signatureSet_simplex& obj) {
                 std::vector<tos::BlockSignature> signatures;
                 for (auto& s : obj.signatures_) {
                   signatures.emplace_back(s->who_, s->signature_.clone());

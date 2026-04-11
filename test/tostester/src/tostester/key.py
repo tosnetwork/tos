@@ -2,7 +2,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from tonapi import tos_api
+from tosapi import tos_api
 
 from .install import Install
 

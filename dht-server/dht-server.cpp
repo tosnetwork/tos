@@ -165,7 +165,7 @@ tos::tl_object_ptr<tos::tos_api::engine_validator_config> Config::tl() const {
     control_vec.push_back(tos::create_tl_object<tos::tos_api::engine_controlInterface>(x.second.key.tl(), x.first,
                                                                                        std::move(control_proc_vec)));
   }
-  std::vector<tos::tl_object_ptr<tos::tos_api::tonNode_shardId>> shard_vec;
+  std::vector<tos::tl_object_ptr<tos::tos_api::tosNode_shardId>> shard_vec;
 
   auto gc_vec = tos::create_tl_object<tos::tos_api::engine_gc>(std::vector<td::Bits256>{});
   for (auto &id : gc) {

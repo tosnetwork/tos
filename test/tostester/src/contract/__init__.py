@@ -4,7 +4,7 @@ from .contract import (
     ContractView,
     Provider,
     StateReader,
-    ton,
+    tos,
 )
 from .wallet_v1 import (
     WalletState,
@@ -25,5 +25,5 @@ __all__ = [
     "WalletV1Blueprint",
     "WalletV1View",
     "WalletV1ViewBlueprint",
-    "ton",
+    "tos",
 ]

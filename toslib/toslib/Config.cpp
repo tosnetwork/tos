@@ -18,7 +18,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #include "adnl/adnl-node-id.hpp"
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "td/utils/JsonBuilder.h"
 #include "tos/tos-tl.hpp"
 

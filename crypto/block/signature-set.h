@@ -50,11 +50,11 @@ class BlockSignatureSet : public td::CntObject {
   }
 
   virtual td::Result<td::Ref<vm::Cell>> serialize(td::Ref<ValidatorSet> vset) const = 0;
-  virtual tos::tl_object_ptr<tos::tos_api::tonNode_SignatureSet> tl() const = 0;
+  virtual tos::tl_object_ptr<tos::tos_api::tosNode_SignatureSet> tl() const = 0;
   virtual tos::tl_object_ptr<tos::lite_api::liteServer_SignatureSet> tl_lite() const = 0;
 
   // ordinary signature set only (is_ordinary())
-  virtual std::vector<tos::tl_object_ptr<tos::tos_api::tonNode_blockSignature>> tl_legacy() const {
+  virtual std::vector<tos::tl_object_ptr<tos::tos_api::tosNode_blockSignature>> tl_legacy() const {
     UNREACHABLE();
   }
 
@@ -88,9 +88,9 @@ class BlockSignatureSet : public td::CntObject {
   static td::Result<td::Ref<BlockSignatureSet>> fetch(td::Ref<vm::Cell> cell, tos::ValidatorWeight& total_weight);
   static td::Result<td::Ref<BlockSignatureSet>> fetch(td::Ref<vm::Cell> cell, td::Ref<ValidatorSet> vset);
   static td::Ref<BlockSignatureSet> fetch(
-      const std::vector<tos::tl_object_ptr<tos::tos_api::tonNode_blockSignature>>& f, tos::CatchainSeqno cc_seqno,
+      const std::vector<tos::tl_object_ptr<tos::tos_api::tosNode_blockSignature>>& f, tos::CatchainSeqno cc_seqno,
       td::uint32 validator_set_hash);
-  static td::Ref<BlockSignatureSet> fetch(const tos::tl_object_ptr<tos::tos_api::tonNode_SignatureSet>& f);
+  static td::Ref<BlockSignatureSet> fetch(const tos::tl_object_ptr<tos::tos_api::tosNode_SignatureSet>& f);
   static td::Result<td::Ref<BlockSignatureSet>> fetch(
       const tos::tl_object_ptr<tos::lite_api::liteServer_SignatureSet>& f);
 

@@ -46,7 +46,7 @@ struct Neighbour {
 
   explicit Neighbour(adnl::AdnlNodeIdShort adnl_id) : adnl_id(std::move(adnl_id)) {
   }
-  void update_proto_version(tos_api::tonNode_capabilities &q);
+  void update_proto_version(tos_api::tosNode_capabilities &q);
   void query_success(double t);
   void query_failed();
   void update_roundtrip(double t);
@@ -101,76 +101,76 @@ class FullNodeShardImpl : public FullNodeShard {
   void process_query(adnl::AdnlNodeIdShort src, T &query, td::Promise<td::BufferSlice> promise) {
     promise.set_error(td::Status::Error(ErrorCode::error, "unknown query"));
   }
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::tonNode_getNextBlockDescription &query,
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_getNextBlockDescription &query,
                      td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::tonNode_prepareBlockProof &query,
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_prepareBlockProof &query,
                      td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::tonNode_prepareKeyBlockProof &query,
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_prepareKeyBlockProof &query,
                      td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::tonNode_downloadBlockProof &query,
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_downloadBlockProof &query,
                      td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::tonNode_downloadBlockProofLink &query,
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_downloadBlockProofLink &query,
                      td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::tonNode_downloadKeyBlockProof &query,
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_downloadKeyBlockProof &query,
                      td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::tonNode_downloadKeyBlockProofLink &query,
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_downloadKeyBlockProofLink &query,
                      td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::tonNode_prepareBlock &query,
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_prepareBlock &query,
                      td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::tonNode_downloadBlock &query,
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_downloadBlock &query,
                      td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::tonNode_downloadBlockFull &query,
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_downloadBlockFull &query,
                      td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::tonNode_downloadNextBlockFull &query,
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_downloadNextBlockFull &query,
                      td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::tonNode_prepareZeroState &query,
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_prepareZeroState &query,
                      td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::tonNode_preparePersistentState &query,
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_preparePersistentState &query,
                      td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::tonNode_getNextKeyBlockIds &query,
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_getNextKeyBlockIds &query,
                      td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::tonNode_downloadZeroState &query,
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_downloadZeroState &query,
                      td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::tonNode_getCapabilities &query,
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_getCapabilities &query,
                      td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::tonNode_getArchiveInfo &query,
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_getArchiveInfo &query,
                      td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::tonNode_getShardArchiveInfo &query,
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_getShardArchiveInfo &query,
                      td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::tonNode_getArchiveSlice &query,
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_getArchiveSlice &query,
                      td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::tonNode_getOutMsgQueueProof &query,
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_getOutMsgQueueProof &query,
                      td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::tonNode_downloadPersistentStateSliceV2 &query,
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_downloadPersistentStateSliceV2 &query,
                      td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::tonNode_getPersistentStateSizeV2 &query,
+  void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_getPersistentStateSizeV2 &query,
                      td::Promise<td::BufferSlice> promise);
   void receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice query, td::Promise<td::BufferSlice> promise);
   void receive_message(adnl::AdnlNodeIdShort src, td::BufferSlice data);
 
-  void process_broadcast(PublicKeyHash src, tos_api::tonNode_blockBroadcast &query);
-  void process_broadcast(PublicKeyHash src, tos_api::tonNode_blockBroadcastCompressed &query);
-  void process_broadcast(PublicKeyHash src, tos_api::tonNode_blockBroadcastCompressedV2 &query);
-  void process_block_broadcast(PublicKeyHash src, tos_api::tonNode_Broadcast &query);
-  void obtain_state_for_decompression(PublicKeyHash src, tos_api::tonNode_blockBroadcastCompressedV2 query);
-  void process_block_broadcast_with_state(PublicKeyHash src, tos_api::tonNode_blockBroadcastCompressedV2 query,
+  void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcast &query);
+  void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressed &query);
+  void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressedV2 &query);
+  void process_block_broadcast(PublicKeyHash src, tos_api::tosNode_Broadcast &query);
+  void obtain_state_for_decompression(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressedV2 query);
+  void process_block_broadcast_with_state(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressedV2 query,
                                           td::Ref<ShardState> state);
 
-  void process_broadcast(PublicKeyHash src, tos_api::tonNode_ihrMessageBroadcast &query);
-  void process_broadcast(PublicKeyHash src, tos_api::tonNode_externalMessageBroadcast &query);
-  void process_broadcast(PublicKeyHash src, tos_api::tonNode_newShardBlockBroadcast &query);
-  void process_broadcast(PublicKeyHash src, tos_api::tonNode_outMsgQueueProofBroadcast &query) {
+  void process_broadcast(PublicKeyHash src, tos_api::tosNode_ihrMessageBroadcast &query);
+  void process_broadcast(PublicKeyHash src, tos_api::tosNode_externalMessageBroadcast &query);
+  void process_broadcast(PublicKeyHash src, tos_api::tosNode_newShardBlockBroadcast &query);
+  void process_broadcast(PublicKeyHash src, tos_api::tosNode_outMsgQueueProofBroadcast &query) {
     LOG(ERROR) << "Ignore outMsgQueueProofBroadcast";
   }
 
-  void process_broadcast(PublicKeyHash src, tos_api::tonNode_newBlockCandidateBroadcast &query);
-  void process_broadcast(PublicKeyHash src, tos_api::tonNode_newBlockCandidateBroadcastCompressed &query);
-  void process_broadcast(PublicKeyHash src, tos_api::tonNode_newBlockCandidateBroadcastCompressedV2 &query);
-  void process_block_candidate_broadcast(PublicKeyHash src, tos_api::tonNode_Broadcast &query);
+  void process_broadcast(PublicKeyHash src, tos_api::tosNode_newBlockCandidateBroadcast &query);
+  void process_broadcast(PublicKeyHash src, tos_api::tosNode_newBlockCandidateBroadcastCompressed &query);
+  void process_broadcast(PublicKeyHash src, tos_api::tosNode_newBlockCandidateBroadcastCompressedV2 &query);
+  void process_block_candidate_broadcast(PublicKeyHash src, tos_api::tosNode_Broadcast &query);
 
   void receive_broadcast(PublicKeyHash src, td::BufferSlice query);
   void check_broadcast(PublicKeyHash src, td::BufferSlice query, td::Promise<td::Unit> promise);
-  void process_external_message_broadcast(tos_api::tonNode_externalMessageBroadcast &message,
+  void process_external_message_broadcast(tos_api::tosNode_externalMessageBroadcast &message,
                                           td::Promise<td::Unit> promise);
   void get_stats_extra(td::Promise<std::string> promise);
   void remove_neighbour(adnl::AdnlNodeIdShort id);

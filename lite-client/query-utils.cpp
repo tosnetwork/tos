@@ -72,7 +72,7 @@ QueryInfo get_query_info(td::Slice data) {
 QueryInfo get_query_info(const lite_api::Function& f) {
   QueryInfo info;
   info.query_id = f.get_id();
-  auto from_block_id = [&](const tl_object_ptr<lite_api::tonNode_blockIdExt>& id) {
+  auto from_block_id = [&](const tl_object_ptr<lite_api::tosNode_blockIdExt>& id) {
     BlockIdExt block_id = create_block_id(id);
     info.shard_id = block_id.shard_full();
     info.type = QueryInfo::t_seqno;

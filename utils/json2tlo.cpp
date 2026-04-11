@@ -33,7 +33,7 @@
 #include <string>
 
 #include "auto/tl/tos_api.h"
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "common/checksum.h"
 #include "common/io.hpp"
 #include "keys/encryptor.h"

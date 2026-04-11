@@ -254,7 +254,7 @@ set(ED25519_TEST_SOURCE
   PARENT_SCOPE
 )
 
-set(TONDB_TEST_SOURCE
+set(TOSDB_TEST_SOURCE
   ${CMAKE_CURRENT_SOURCE_DIR}/test/test-db.cpp
   PARENT_SCOPE
 )
@@ -264,7 +264,7 @@ set(CELLS_TEST_SOURCE
   PARENT_SCOPE
 )
 
-set(TONVM_TEST_SOURCE
+set(TOSVM_TEST_SOURCE
   ${CMAKE_CURRENT_SOURCE_DIR}/test/vm.cpp
   PARENT_SCOPE
 )
@@ -286,86 +286,86 @@ set(BIGINT_TEST_SOURCE
 
 set(USE_EMSCRIPTEN ${USE_EMSCRIPTEN} PARENT_SCOPE)
 
-add_library(ton_crypto_core STATIC ${TOS_CRYPTO_CORE_SOURCE})
-target_include_directories(ton_crypto_core PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+add_library(tos_crypto_core STATIC ${TOS_CRYPTO_CORE_SOURCE})
+target_include_directories(tos_crypto_core PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
-target_link_libraries(ton_crypto_core PUBLIC ${OPENSSL_CRYPTO_LIBRARY} tdutils tddb_utils)
+target_link_libraries(tos_crypto_core PUBLIC ${OPENSSL_CRYPTO_LIBRARY} tdutils tddb_utils)
 if (NOT WIN32)
-  target_link_libraries(ton_crypto_core PUBLIC ${CMAKE_DL_LIBS} ${ZLIB_LIBRARIES})
+  target_link_libraries(tos_crypto_core PUBLIC ${CMAKE_DL_LIBS} ${ZLIB_LIBRARIES})
 endif()
-target_include_directories(ton_crypto_core SYSTEM PUBLIC $<BUILD_INTERFACE:${OPENSSL_INCLUDE_DIR}>)
-# Ensure OpenSSL is built before ton_crypto_core
+target_include_directories(tos_crypto_core SYSTEM PUBLIC $<BUILD_INTERFACE:${OPENSSL_INCLUDE_DIR}>)
+# Ensure OpenSSL is built before tos_crypto_core
 if (TARGET OpenSSL)
-  add_dependencies(ton_crypto_core OpenSSL)
+  add_dependencies(tos_crypto_core OpenSSL)
 endif()
 
-add_library(ton_crypto STATIC ${TOS_CRYPTO_SOURCE})
-target_include_directories(ton_crypto PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
-target_link_libraries(ton_crypto PUBLIC ${OPENSSL_CRYPTO_LIBRARY} ton_crypto_core ton_block)
-# Ensure OpenSSL is built before ton_crypto
+add_library(tos_crypto STATIC ${TOS_CRYPTO_SOURCE})
+target_include_directories(tos_crypto PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
+target_link_libraries(tos_crypto PUBLIC ${OPENSSL_CRYPTO_LIBRARY} tos_crypto_core tos_block)
+# Ensure OpenSSL is built before tos_crypto
 if (TARGET OpenSSL)
-  add_dependencies(ton_crypto OpenSSL)
+  add_dependencies(tos_crypto OpenSSL)
 endif()
 if (USE_EMSCRIPTEN)
-  target_link_options(ton_crypto PRIVATE -fexceptions)
-  target_compile_options(ton_crypto PRIVATE -fexceptions)
+  target_link_options(tos_crypto PRIVATE -fexceptions)
+  target_compile_options(tos_crypto PRIVATE -fexceptions)
 endif()
 if (NOT WIN32)
   if (CMAKE_DL_LIBS)
-    target_link_libraries(ton_crypto PUBLIC ${CMAKE_DL_LIBS})
+    target_link_libraries(tos_crypto PUBLIC ${CMAKE_DL_LIBS})
   endif()
   if (ZLIB_LIBRARIES)
-    target_link_libraries(ton_crypto PUBLIC ${ZLIB_LIBRARIES})
+    target_link_libraries(tos_crypto PUBLIC ${ZLIB_LIBRARIES})
   endif()
 endif()
-target_include_directories(ton_crypto SYSTEM PUBLIC $<BUILD_INTERFACE:${OPENSSL_INCLUDE_DIR}>)
+target_include_directories(tos_crypto SYSTEM PUBLIC $<BUILD_INTERFACE:${OPENSSL_INCLUDE_DIR}>)
 
-add_dependencies(ton_crypto blst)
-add_dependencies(ton_crypto_core secp256k1)
+add_dependencies(tos_crypto blst)
+add_dependencies(tos_crypto_core secp256k1)
 if (TARGET zlib)
-  add_dependencies(ton_crypto zlib)
-  add_dependencies(ton_crypto_core zlib)
+  add_dependencies(tos_crypto zlib)
+  add_dependencies(tos_crypto_core zlib)
 endif()
 if (TARGET sodium)
-  add_dependencies(ton_crypto sodium)
-  add_dependencies(ton_crypto_core sodium)
+  add_dependencies(tos_crypto sodium)
+  add_dependencies(tos_crypto_core sodium)
 endif()
 
-target_include_directories(ton_crypto PRIVATE ${BLST_INCLUDE_DIR})
-target_link_libraries(ton_crypto PRIVATE ${BLST_LIB})
+target_include_directories(tos_crypto PRIVATE ${BLST_INCLUDE_DIR})
+target_link_libraries(tos_crypto PRIVATE ${BLST_LIB})
 
-target_include_directories(ton_crypto_core PUBLIC $<BUILD_INTERFACE:${SECP256K1_INCLUDE_DIR}>)
+target_include_directories(tos_crypto_core PUBLIC $<BUILD_INTERFACE:${SECP256K1_INCLUDE_DIR}>)
 
 if (MSVC)
   find_package(Sodium REQUIRED)
-  target_compile_definitions(ton_crypto PUBLIC SODIUM_STATIC)
-  target_link_libraries(ton_crypto_core PUBLIC ${SECP256K1_LIBRARY})
-  target_link_libraries(ton_crypto PUBLIC ${SECP256K1_LIBRARY})
+  target_compile_definitions(tos_crypto PUBLIC SODIUM_STATIC)
+  target_link_libraries(tos_crypto_core PUBLIC ${SECP256K1_LIBRARY})
+  target_link_libraries(tos_crypto PUBLIC ${SECP256K1_LIBRARY})
 elseif (EMSCRIPTEN)
-  target_link_libraries(ton_crypto_core PUBLIC $<BUILD_INTERFACE:${SECP256K1_LIBRARY}>)
-  target_link_libraries(ton_crypto PUBLIC $<BUILD_INTERFACE:${SECP256K1_LIBRARY}>)
+  target_link_libraries(tos_crypto_core PUBLIC $<BUILD_INTERFACE:${SECP256K1_LIBRARY}>)
+  target_link_libraries(tos_crypto PUBLIC $<BUILD_INTERFACE:${SECP256K1_LIBRARY}>)
 else()
   if (NOT SODIUM_FOUND)
     find_package(Sodium REQUIRED)
   else()
     message(STATUS "Using Sodium ${SODIUM_LIBRARY_RELEASE}")
   endif()
-  target_compile_definitions(ton_crypto PUBLIC SODIUM_STATIC)
-  target_link_libraries(ton_crypto_core PUBLIC ${SECP256K1_LIBRARY})
-  target_link_libraries(ton_crypto PUBLIC ${SECP256K1_LIBRARY})
+  target_compile_definitions(tos_crypto PUBLIC SODIUM_STATIC)
+  target_link_libraries(tos_crypto_core PUBLIC ${SECP256K1_LIBRARY})
+  target_link_libraries(tos_crypto PUBLIC ${SECP256K1_LIBRARY})
 endif()
 
-target_include_directories(ton_crypto_core PUBLIC $<BUILD_INTERFACE:${SODIUM_INCLUDE_DIR}>)
-target_link_libraries(ton_crypto PUBLIC ${SODIUM_LIBRARY_RELEASE})
+target_include_directories(tos_crypto_core PUBLIC $<BUILD_INTERFACE:${SODIUM_INCLUDE_DIR}>)
+target_link_libraries(tos_crypto PUBLIC ${SODIUM_LIBRARY_RELEASE})
 
 add_library(tos_db STATIC ${TOS_DB_SOURCE})
 target_include_directories(tos_db PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
 	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
-target_link_libraries(tos_db PUBLIC tdutils tddb ton_crypto)
+target_link_libraries(tos_db PUBLIC tdutils tddb tos_crypto)
 
 add_library(fift-lib STATIC ${FIFT_SOURCE})
 target_include_directories(fift-lib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
-target_link_libraries(fift-lib PUBLIC ton_crypto)
+target_link_libraries(fift-lib PUBLIC tos_crypto)
 
 if (USE_EMSCRIPTEN)
   target_link_options(fift-lib PRIVATE -fexceptions)
@@ -381,27 +381,27 @@ endif()
 
 add_library(src_parser ${PARSER_SOURCE})
 target_include_directories(src_parser PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
-target_link_libraries(src_parser PUBLIC ton_crypto_core)
+target_link_libraries(src_parser PUBLIC tos_crypto_core)
 
-add_library(ton_block STATIC ${BLOCK_SOURCE})
-target_include_directories(ton_block PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+add_library(tos_block STATIC ${BLOCK_SOURCE})
+target_include_directories(tos_block PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/block> $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
-target_link_libraries(ton_block PUBLIC ton_crypto_core tdactor tl_api)
+target_link_libraries(tos_block PUBLIC tos_crypto_core tdactor tl_api)
 if (MINGW)
-  # Resolve circular static linking between ton_block and ton_crypto on MinGW.
-  target_link_libraries(ton_block PUBLIC ton_crypto)
+  # Resolve circular static linking between tos_block and tos_crypto on MinGW.
+  target_link_libraries(tos_block PUBLIC tos_crypto)
 endif()
 if (USE_EMSCRIPTEN)
-  target_link_options(ton_block PRIVATE -fexceptions)
-  target_compile_options(ton_block PRIVATE -fexceptions)
+  target_link_options(tos_block PRIVATE -fexceptions)
+  target_compile_options(tos_block PRIVATE -fexceptions)
 endif()
 
 add_executable(func func/func-main.cpp ${FUNC_LIB_SOURCE})
 target_include_directories(func PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
-target_link_libraries(func PUBLIC ton_crypto src_parser git)
+target_link_libraries(func PUBLIC tos_crypto src_parser git)
 if (MINGW)
-  # Ensure ton_crypto appears after ton_block in link order to resolve VM symbols.
-  target_link_libraries(func PRIVATE ton_crypto)
+  # Ensure tos_crypto appears after tos_block in link order to resolve VM symbols.
+  target_link_libraries(func PRIVATE tos_crypto)
 endif()
 if (WINGETOPT_FOUND)
   target_link_libraries_system(func wingetopt)
@@ -441,11 +441,11 @@ if (WINGETOPT_FOUND)
 endif()
 
 add_executable(mintless-proof-generator util/mintless-proof-generator.cpp)
-target_link_libraries(mintless-proof-generator PRIVATE ton_crypto git ${JEMALLOC_LIBRARIES})
+target_link_libraries(mintless-proof-generator PRIVATE tos_crypto git ${JEMALLOC_LIBRARIES})
 
 if (JEMALLOC_FOUND)
   target_include_directories(mintless-proof-generator PRIVATE ${JEMALLOC_INCLUDE_DIR})
-  target_compile_definitions(mintless-proof-generator PRIVATE -DTON_USE_JEMALLOC=1)
+  target_compile_definitions(mintless-proof-generator PRIVATE -DTOS_USE_JEMALLOC=1)
 endif()
 
 file(MAKE_DIRECTORY smartcont/auto)
@@ -468,7 +468,7 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
     )
   endif()
   add_custom_target(tlb_generate_block DEPENDS ${TLB_BLOCK_AUTO})
-  add_dependencies(ton_block tlb_generate_block)
+  add_dependencies(tos_block tlb_generate_block)
 
   add_custom_target(gen_fif ALL)
   function(GenFif)
@@ -530,7 +530,7 @@ endif()
 
 add_library(smc-envelope STATIC ${SMC_ENVELOPE_SOURCE})
 target_include_directories(smc-envelope PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
-target_link_libraries(smc-envelope PUBLIC ton_crypto PRIVATE tdutils ton_block)
+target_link_libraries(smc-envelope PUBLIC tos_crypto PRIVATE tdutils tos_block)
 if (NOT CMAKE_CROSSCOMPILING)
   add_dependencies(smc-envelope gen_fif)
 endif()
@@ -539,12 +539,12 @@ add_executable(create-state block/create-state.cpp)
 target_include_directories(create-state PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
 if (INTERNAL_COMPILE)
-  target_link_libraries(create-state PUBLIC ton_crypto fift-lib toslib git)
+  target_link_libraries(create-state PUBLIC tos_crypto fift-lib toslib git)
 else()
   if (TOSLIB_COMPILE)
-    target_link_libraries(create-state PUBLIC ton_crypto fift-lib toslib git)
+    target_link_libraries(create-state PUBLIC tos_crypto fift-lib toslib git)
   else()
-    target_link_libraries(create-state PUBLIC ton_crypto fift-lib git)
+    target_link_libraries(create-state PUBLIC tos_crypto fift-lib git)
   endif()
 endif()
 if (WINGETOPT_FOUND)
@@ -554,7 +554,7 @@ endif()
 add_executable(dump-block block/dump-block.cpp)
 target_include_directories(dump-block PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
-target_link_libraries(dump-block PUBLIC ton_crypto fift-lib git)
+target_link_libraries(dump-block PUBLIC tos_crypto fift-lib git)
 if (WINGETOPT_FOUND)
   target_link_libraries_system(dump-block wingetopt)
 endif()
@@ -562,7 +562,7 @@ endif()
 add_executable(adjust-block block/adjust-block.cpp)
 target_include_directories(adjust-block PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
-target_link_libraries(adjust-block PUBLIC ton_crypto fift-lib git)
+target_link_libraries(adjust-block PUBLIC tos_crypto fift-lib git)
 if (WINGETOPT_FOUND)
   target_link_libraries_system(dump-block wingetopt)
   target_link_libraries_system(adjust-block wingetopt)
@@ -571,7 +571,7 @@ endif()
 add_executable(test-weight-distr block/test-weight-distr.cpp)
 target_include_directories(test-weight-distr PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
-target_link_libraries(test-weight-distr PUBLIC ton_crypto fift-lib git)
+target_link_libraries(test-weight-distr PUBLIC tos_crypto fift-lib git)
 if (WINGETOPT_FOUND)
   target_link_libraries_system(test-weight-distr wingetopt)
 endif()

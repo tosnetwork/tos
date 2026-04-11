@@ -31,7 +31,7 @@ static overlay::OverlayIdFull get_overlay_id(td::Bits256 hash) {
 
 StorageManager::StorageManager(adnl::AdnlNodeIdShort local_id, std::string db_root, td::unique_ptr<Callback> callback,
                                bool client_mode, td::actor::ActorId<adnl::Adnl> adnl,
-                               td::actor::ActorId<ton_rldp::Rldp> rldp, td::actor::ActorId<overlay::Overlays> overlays)
+                               td::actor::ActorId<tos_rldp::Rldp> rldp, td::actor::ActorId<overlay::Overlays> overlays)
     : local_id_(local_id)
     , db_root_(std::move(db_root))
     , callback_(std::move(callback))

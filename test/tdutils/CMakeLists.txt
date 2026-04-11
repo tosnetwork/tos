@@ -5,4 +5,4 @@ target_link_libraries(test-persistent-treap PRIVATE
     td-test-main
 )
 
-ton_test(test-persistent-treap)
+tos_test(test-persistent-treap)

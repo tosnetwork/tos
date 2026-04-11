@@ -5,7 +5,7 @@ import threading
 from pathlib import Path
 from typing import Protocol, TypedDict, cast, final
 
-from tonapi.tos_api import Consensus_stats_events, Consensus_stats_id
+from tosapi.tos_api import Consensus_stats_events, Consensus_stats_id
 from watchfiles._rust_notify import RustNotify
 
 from .models import GroupData, GroupInfo, UnnamedGroupInfo

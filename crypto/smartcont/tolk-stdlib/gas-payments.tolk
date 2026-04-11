@@ -13,7 +13,7 @@ fun getGasConsumedAtTheMoment(): int
 /// and "accept" it to blockchain.
 /// Without calling this function, an external message would be discarded.
 /// As an effect, the current smart contract agrees to buy some gas to finish the current transaction.
-/// For more details, check [accept_message effects](https://ton.org/docs/#/smart-contracts/accept).
+/// For more details, check [accept_message effects](https://tos.org/docs/#/smart-contracts/accept).
 fun acceptExternalMessage(): void
     asm "ACCEPT"
 
@@ -37,7 +37,7 @@ fun setGasLimit(limit: int): void
 fun calculateGasFee(workchain: int8, gasUsed: int): coins
     asm(gasUsed workchain) "GETGASFEE"
 
-/// Same as [calculateGasFee], but without flat price. [Docs about fees](https://docs.ton.org/develop/howto/fees-low-level)
+/// Same as [calculateGasFee], but without flat price. [Docs about fees](https://docs.tos.org/develop/howto/fees-low-level)
 @pure
 fun calculateGasFeeWithoutFlatPrice(workchain: int8, gasUsed: coins): coins
     asm(gasUsed workchain) "GETGASFEESIMPLE"
@@ -52,7 +52,7 @@ fun calculateStorageFee(workchain: int8, seconds: int, bits: int, cells: int): c
 fun calculateForwardFee(workchain: int8, bits: int, cells: int): coins
     asm(cells bits workchain) "GETFORWARDFEE"
 
-/// Same as [calculateForwardFee], but without lump price. [Docs about fees](https://docs.ton.org/develop/howto/fees-low-level)
+/// Same as [calculateForwardFee], but without lump price. [Docs about fees](https://docs.tos.org/develop/howto/fees-low-level)
 @pure
 fun calculateForwardFeeWithoutLumpPrice(workchain: int8, bits: int, cells: int): coins
     asm(cells bits workchain) "GETFORWARDFEESIMPLE"

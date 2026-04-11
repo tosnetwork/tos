@@ -636,7 +636,7 @@ std::string TD_TL_writer_jni_cpp::gen_basic_java_class_name(std::string name) co
 }
 
 std::string TD_TL_writer_jni_cpp::gen_java_class_name(std::string name) const {
-  return "(PSLICE() << package_name << \"/TonApi$" + gen_basic_java_class_name(name) + "\").c_str()";
+  return "(PSLICE() << package_name << \"/TosApi$" + gen_basic_java_class_name(name) + "\").c_str()";
 }
 
 std::string TD_TL_writer_jni_cpp::gen_type_signature(const tl::tl_tree_type *tree_type) const {
@@ -660,7 +660,7 @@ std::string TD_TL_writer_jni_cpp::gen_type_signature(const tl::tl_tree_type *tre
     const tl::tl_tree_type *child = static_cast<const tl::tl_tree_type *>(tree_type->children[0]);
     return "[" + gen_type_signature(child);
   } else {
-    return "L%PACKAGE_NAME%/TonApi$" + gen_basic_java_class_name(gen_main_class_name(t)) + ";";
+    return "L%PACKAGE_NAME%/TosApi$" + gen_basic_java_class_name(gen_main_class_name(t)) + ";";
   }
   assert(false);
   return "";

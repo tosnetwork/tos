@@ -198,9 +198,9 @@ void DownloadBlockNew::got_node_to_download(adnl::AdnlNodeIdShort node) {
 
   td::BufferSlice q;
   if (block_id_.is_valid()) {
-    q = create_serialize_tl_object<tos_api::tonNode_downloadBlockFull>(create_tl_block_id(block_id_));
+    q = create_serialize_tl_object<tos_api::tosNode_downloadBlockFull>(create_tl_block_id(block_id_));
   } else {
-    q = create_serialize_tl_object<tos_api::tonNode_downloadNextBlockFull>(create_tl_block_id(prev_id_));
+    q = create_serialize_tl_object<tos_api::tosNode_downloadNextBlockFull>(create_tl_block_id(prev_id_));
   }
   if (client_.empty()) {
     td::actor::send_closure(overlays_, &overlay::Overlays::send_query_via, download_from_, local_id_, overlay_id_,
@@ -208,13 +208,13 @@ void DownloadBlockNew::got_node_to_download(adnl::AdnlNodeIdShort node) {
                             FullNode::max_proof_size() + FullNode::max_block_size() + 128, rldp_);
   } else {
     td::actor::send_closure(client_, &adnl::AdnlExtClient::send_query, "get_block_full",
-                            create_serialize_tl_object_suffix<tos_api::tonNode_query>(std::move(q)),
+                            create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(q)),
                             td::Timestamp::in(15.0), std::move(P));
   }
 }
 
 void DownloadBlockNew::got_data(td::BufferSlice data) {
-  auto F = fetch_tl_object<tos_api::tonNode_DataFull>(std::move(data), true);
+  auto F = fetch_tl_object<tos_api::tosNode_DataFull>(std::move(data), true);
 
   if (F.is_error()) {
     abort_query(F.move_as_error_prefix("received invalid answer: "));
@@ -222,7 +222,7 @@ void DownloadBlockNew::got_data(td::BufferSlice data) {
   }
 
   auto f = F.move_as_ok();
-  if (f->get_id() == tos_api::tonNode_dataFullEmpty::ID) {
+  if (f->get_id() == tos_api::tosNode_dataFullEmpty::ID) {
     abort_query(td::Status::Error(ErrorCode::notready, "node doesn't have this block"));
     return;
   }
@@ -235,10 +235,10 @@ void DownloadBlockNew::got_data(td::BufferSlice data) {
   }
 
   if (R_requires_state.move_as_ok()) {
-    // Only tonNode_dataFullCompressedV2 may require state
+    // Only tosNode_dataFullCompressedV2 may require state
     tos_api::downcast_call(
         *f, td::overloaded(
-                [&](tos_api::tonNode_dataFullCompressedV2 &compressed_v2) {
+                [&](tos_api::tosNode_dataFullCompressedV2 &compressed_v2) {
                   BlockIdExt id = create_block_id(compressed_v2.id_);
 
                   auto R_prev_blocks = extract_prev_blocks_from_proof(compressed_v2.proof_.as_slice(), id);
@@ -269,7 +269,7 @@ void DownloadBlockNew::got_data(td::BufferSlice data) {
   got_ready_to_deserialize(std::move(f));
 }
 
-void DownloadBlockNew::got_ready_to_deserialize(tl_object_ptr<tos_api::tonNode_DataFull> data_full,
+void DownloadBlockNew::got_ready_to_deserialize(tl_object_ptr<tos_api::tosNode_DataFull> data_full,
                                                 td::Ref<ShardState> state) {
   td::Ref<vm::Cell> state_root;
   if (state.not_null()) {

@@ -345,7 +345,7 @@ void LiteQuery::continue_getMasterchainInfo(Ref<tos::validator::MasterchainState
     return;
   }
   auto zerostate_id = mc_state_q->get_zerostate_id();
-  auto zs_tl = create_tl_object<lite_api::tonNode_zeroStateIdExt>(zerostate_id.workchain, zerostate_id.root_hash,
+  auto zs_tl = create_tl_object<lite_api::tosNode_zeroStateIdExt>(zerostate_id.workchain, zerostate_id.root_hash,
                                                                   zerostate_id.file_hash);
   td::int32 now = static_cast<td::int32>(std::time(nullptr));
   auto b = (mode == -1) ? tos::create_serialize_tl_object<tos::lite_api::liteServer_masterchainInfo>(
@@ -1769,7 +1769,7 @@ void LiteQuery::finish_getTransactions() {
     fatal_error(res.move_as_error());
     return;
   }
-  std::vector<tos::tl_object_ptr<tos::lite_api::tonNode_blockIdExt>> a;
+  std::vector<tos::tl_object_ptr<tos::lite_api::tosNode_blockIdExt>> a;
   for (const auto& id : blk_ids_) {
     a.push_back(tos::create_tl_lite_block_id(id));
   }

@@ -42,7 +42,7 @@ void DNSResolver::start_up() {
 void DNSResolver::sync() {
   auto obj = toslib_api::make_object<toslib_api::sync>();
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](
-                                          td::Result<toslib_api::object_ptr<toslib_api::ton_blockIdExt>> R) {
+                                          td::Result<toslib_api::object_ptr<toslib_api::tos_blockIdExt>> R) {
     if (R.is_error()) {
       LOG(WARNING) << "Sync error: " << R.move_as_error();
       tos::delay_action([SelfId]() { td::actor::send_closure(SelfId, &DNSResolver::sync); }, td::Timestamp::in(5.0));

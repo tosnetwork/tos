@@ -1,4 +1,4 @@
-const ss = ton("0.0.0");
+const ss = tos("0.0.0");
 
 /**
 @compilation_should_fail

@@ -4,10 +4,10 @@ import traceback
 from typing import Callable, final
 
 from pytoniq_core import Address, Cell, MessageAny
-from tonapi import tos_api, toslib_api
+from tosapi import tos_api, toslib_api
 
 from .toslib_cdll import ToslibCDLL
-from .toslibjson import TonLib
+from .toslibjson import TosLib
 
 logger = logging.getLogger(__name__)
 
@@ -42,14 +42,14 @@ class ToslibClient:
         self._config: tos_api.Liteclient_config_global = config
         self._toslib: ToslibCDLL = toslib
         self._loop: asyncio.AbstractEventLoop | None = loop
-        self._toslib_wrapper: TonLib | None = None
+        self._toslib_wrapper: TosLib | None = None
 
     async def init(self) -> None:
         if self._toslib_wrapper:
             logger.warning("init is already done")
             return
         event_loop = self._loop or asyncio.get_running_loop()
-        self._toslib_wrapper = TonLib(event_loop, self._toslib)
+        self._toslib_wrapper = TosLib(event_loop, self._toslib)
 
         request = toslib_api.InitRequest(
             options=toslib_api.Options(
@@ -85,7 +85,7 @@ class ToslibClient:
     def __await__(self):
         return self.init().__await__()
 
-    async def sync_toslib(self) -> toslib_api.Ton_blockIdExt:
+    async def sync_toslib(self) -> toslib_api.Tos_blockIdExt:
         assert self._toslib_wrapper is not None
         request = toslib_api.SyncRequest()
         return request.parse_result(await self._toslib_wrapper.execute(request))
@@ -152,7 +152,7 @@ class ToslibClient:
             mode += 4
         request = toslib_api.Blocks_lookupBlockRequest(
             mode=mode,
-            id=toslib_api.Ton_blockId(
+            id=toslib_api.Tos_blockId(
                 workchain=workchain,
                 shard=shard,
                 seqno=seqno or 0,
@@ -162,13 +162,13 @@ class ToslibClient:
         )
         return request.parse_result(await self._toslib_wrapper.execute(request))
 
-    async def get_shards(self, block_id: toslib_api.Ton_blockIdExt) -> toslib_api.Blocks_shards:
+    async def get_shards(self, block_id: toslib_api.Tos_blockIdExt) -> toslib_api.Blocks_shards:
         assert self._toslib_wrapper is not None
         request = toslib_api.Blocks_getShardsRequest(id=block_id)
         return request.parse_result(await self._toslib_wrapper.execute(request))
 
     async def get_block_header(
-        self, block_id: toslib_api.Ton_blockIdExt
+        self, block_id: toslib_api.Tos_blockIdExt
     ) -> toslib_api.Blocks_header:
         assert self._toslib_wrapper is not None
         request = toslib_api.Blocks_getBlockHeaderRequest(id=block_id)
@@ -176,7 +176,7 @@ class ToslibClient:
 
     async def raw_get_block_transactions(
         self,
-        block_id: toslib_api.Ton_blockIdExt,
+        block_id: toslib_api.Tos_blockIdExt,
         count: int,
         after: toslib_api.Blocks_accountTransactionId | None = None,
     ) -> toslib_api.Blocks_transactions:
@@ -194,7 +194,7 @@ class ToslibClient:
 
     async def get_block_transactions(
         self,
-        block_id: toslib_api.Ton_blockIdExt,
+        block_id: toslib_api.Tos_blockIdExt,
     ) -> list[toslib_api.Blocks_shortTxId]:
         result: list[toslib_api.Blocks_shortTxId] = []
         after = None

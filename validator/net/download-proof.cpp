@@ -160,10 +160,10 @@ void DownloadProof::got_node_to_download(adnl::AdnlNodeIdShort node) {
 
   td::BufferSlice query;
   if (!is_key_block_) {
-    query = create_serialize_tl_object<tos_api::tonNode_prepareBlockProof>(create_tl_block_id(block_id_),
+    query = create_serialize_tl_object<tos_api::tosNode_prepareBlockProof>(create_tl_block_id(block_id_),
                                                                            allow_partial_proof_);
   } else {
-    query = create_serialize_tl_object<tos_api::tonNode_prepareKeyBlockProof>(create_tl_block_id(block_id_),
+    query = create_serialize_tl_object<tos_api::tosNode_prepareKeyBlockProof>(create_tl_block_id(block_id_),
                                                                               allow_partial_proof_);
   }
 
@@ -172,7 +172,7 @@ void DownloadProof::got_node_to_download(adnl::AdnlNodeIdShort node) {
                             "get_prepare", std::move(P), td::Timestamp::in(1.0), std::move(query));
   } else {
     td::actor::send_closure(client_, &adnl::AdnlExtClient::send_query, "get_prepare",
-                            create_serialize_tl_object_suffix<tos_api::tonNode_query>(std::move(query)),
+                            create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(query)),
                             td::Timestamp::in(1.0), std::move(P));
   }
 }
@@ -180,7 +180,7 @@ void DownloadProof::got_node_to_download(adnl::AdnlNodeIdShort node) {
 void DownloadProof::got_block_proof_description(td::BufferSlice proof_description) {
   VLOG(FULL_NODE_DEBUG) << "downloaded proof description for " << block_id_;
 
-  auto F = fetch_tl_object<tos_api::tonNode_PreparedProof>(std::move(proof_description), true);
+  auto F = fetch_tl_object<tos_api::tosNode_PreparedProof>(std::move(proof_description), true);
   if (F.is_error()) {
     abort_query(F.move_as_error());
     return;
@@ -190,7 +190,7 @@ void DownloadProof::got_block_proof_description(td::BufferSlice proof_descriptio
   tos_api::downcast_call(
       *F.move_as_ok().get(),
       td::overloaded(
-          [&](tos_api::tonNode_preparedProof &obj) {
+          [&](tos_api::tosNode_preparedProof &obj) {
             auto P = td::PromiseCreator::lambda([SelfId = actor_id(self)](td::Result<td::BufferSlice> R) {
               if (R.is_error()) {
                 td::actor::send_closure(SelfId, &DownloadProof::abort_query, R.move_as_error());
@@ -201,9 +201,9 @@ void DownloadProof::got_block_proof_description(td::BufferSlice proof_descriptio
 
             td::BufferSlice query;
             if (!is_key_block_) {
-              query = create_serialize_tl_object<tos_api::tonNode_downloadBlockProof>(create_tl_block_id(block_id_));
+              query = create_serialize_tl_object<tos_api::tosNode_downloadBlockProof>(create_tl_block_id(block_id_));
             } else {
-              query = create_serialize_tl_object<tos_api::tonNode_downloadKeyBlockProof>(create_tl_block_id(block_id_));
+              query = create_serialize_tl_object<tos_api::tosNode_downloadKeyBlockProof>(create_tl_block_id(block_id_));
             }
             if (client_.empty()) {
               td::actor::send_closure(overlays_, &overlay::Overlays::send_query_via, download_from_, local_id_,
@@ -211,11 +211,11 @@ void DownloadProof::got_block_proof_description(td::BufferSlice proof_descriptio
                                       std::move(query), FullNode::max_proof_size(), rldp_);
             } else {
               td::actor::send_closure(client_, &adnl::AdnlExtClient::send_query, "get_prepare",
-                                      create_serialize_tl_object_suffix<tos_api::tonNode_query>(std::move(query)),
+                                      create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(query)),
                                       td::Timestamp::in(3.0), std::move(P));
             }
           },
-          [&](tos_api::tonNode_preparedProofLink &obj) {
+          [&](tos_api::tosNode_preparedProofLink &obj) {
             if (!allow_partial_proof_) {
               abort_query(td::Status::Error(ErrorCode::protoviolation, "received partial proof, though did not allow"));
               return;
@@ -231,10 +231,10 @@ void DownloadProof::got_block_proof_description(td::BufferSlice proof_descriptio
             td::BufferSlice query;
             if (!is_key_block_) {
               query =
-                  create_serialize_tl_object<tos_api::tonNode_downloadBlockProofLink>(create_tl_block_id(block_id_));
+                  create_serialize_tl_object<tos_api::tosNode_downloadBlockProofLink>(create_tl_block_id(block_id_));
             } else {
               query =
-                  create_serialize_tl_object<tos_api::tonNode_downloadKeyBlockProofLink>(create_tl_block_id(block_id_));
+                  create_serialize_tl_object<tos_api::tosNode_downloadKeyBlockProofLink>(create_tl_block_id(block_id_));
             }
             if (client_.empty()) {
               td::actor::send_closure(overlays_, &overlay::Overlays::send_query_via, download_from_, local_id_,
@@ -242,11 +242,11 @@ void DownloadProof::got_block_proof_description(td::BufferSlice proof_descriptio
                                       std::move(query), FullNode::max_proof_size(), rldp_);
             } else {
               td::actor::send_closure(client_, &adnl::AdnlExtClient::send_query, "download block proof link",
-                                      create_serialize_tl_object_suffix<tos_api::tonNode_query>(std::move(query)),
+                                      create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(query)),
                                       td::Timestamp::in(3.0), std::move(P));
             }
           },
-          [&](tos_api::tonNode_preparedProofEmpty &obj) {
+          [&](tos_api::tosNode_preparedProofEmpty &obj) {
             abort_query(td::Status::Error(ErrorCode::notready, "proof not found"));
           }));
 }

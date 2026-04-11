@@ -16,7 +16,7 @@ set(HTTP_SOURCE
 
 add_library(toshttp STATIC ${HTTP_SOURCE})
 target_include_directories(toshttp PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
-target_link_libraries(toshttp PUBLIC tdactor ton_crypto tl_api tdnet metrics)
+target_link_libraries(toshttp PUBLIC tdactor tos_crypto tl_api tdnet metrics)
 
 add_executable(http-proxy http-proxy.cpp)
 target_include_directories(http-proxy PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)

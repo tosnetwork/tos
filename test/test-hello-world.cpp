@@ -29,7 +29,7 @@
 #include <iostream>
 
 #include "auto/tl/tos_api.h"
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "td/utils/Random.h"
 #include "tl/tl_json.h"
 

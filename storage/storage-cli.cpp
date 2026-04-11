@@ -24,7 +24,7 @@
 #include <set>
 
 #include "adnl/adnl.h"
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "common/bigint.hpp"
 #include "common/bitstring.h"
 #include "dht/dht.h"
@@ -77,7 +77,7 @@ class StorageCli : public td::actor::Actor {
   td::actor::ActorOwn<tos::adnl::Adnl> adnl_;
   td::actor::ActorOwn<tos::dht::Dht> dht_;
   td::actor::ActorOwn<tos::overlay::Overlays> overlays_;
-  td::actor::ActorOwn<ton_rldp::Rldp> rldp_;
+  td::actor::ActorOwn<tos_rldp::Rldp> rldp_;
   //tos::PublicKeyHash default_dht_node_ = tos::PublicKeyHash::zero();
   tos::PublicKey public_key_;
 
@@ -142,7 +142,7 @@ class StorageCli : public td::actor::Actor {
         tos::adnl::AdnlNetworkManager::create(td::narrow_cast<td::uint16>(options_.addr.get_port()));
     adnl_ = tos::adnl::Adnl::create(options_.db_root, keyring_.get());
     td::actor::send_closure(adnl_, &tos::adnl::Adnl::register_network_manager, adnl_network_manager_.get());
-    rldp_ = ton_rldp::Rldp::create(adnl_.get());
+    rldp_ = tos_rldp::Rldp::create(adnl_.get());
 
     auto key_path = options_.db_root + "/key.pub";
     auto r_public_key = td::read_file(key_path).move_fmap([](auto raw) { return tos::PublicKey::import(raw); });
@@ -183,7 +183,7 @@ class StorageCli : public td::actor::Actor {
     for (auto cat : cats) {
       td::actor::send_closure(adnl_, &tos::adnl::Adnl::add_id, tos::adnl::AdnlNodeIdFull{public_key_}, addr_lists_[cat],
                               static_cast<td::uint8>(cat));
-      td::actor::send_closure(rldp_, &ton_rldp::Rldp::add_id,
+      td::actor::send_closure(rldp_, &tos_rldp::Rldp::add_id,
                               tos::adnl::AdnlNodeIdFull{public_key_}.compute_short_id());
     }
 
@@ -612,7 +612,7 @@ int main(int argc, char *argv[]) {
 
   StorageCliOptions options;
   td::OptionParser p;
-  p.set_description("experimental cli for ton storage");
+  p.set_description("experimental cli for tos storage");
   p.add_option('h', "help", "prints_help", [&]() {
     std::cout << (PSLICE() << p).c_str();
     std::exit(2);
@@ -627,7 +627,7 @@ int main(int argc, char *argv[]) {
               << ", Date: " << GitMetadata::CommitDate() << "]\n";
     std::exit(0);
   });
-  p.add_option('C', "config", "set ton config", [&](td::Slice arg) { options.config = arg.str(); });
+  p.add_option('C', "config", "set tos config", [&](td::Slice arg) { options.config = arg.str(); });
   p.add_option('D', "db", "root for dbs", [&](td::Slice fname) { options.db_root = fname.str(); });
   p.add_checked_option('I', "ip", "set ip:port", [&](td::Slice arg) {
     td::IPAddress addr;

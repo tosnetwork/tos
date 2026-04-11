@@ -6,7 +6,7 @@ target_link_libraries(test-scheduler-stop PRIVATE
     td-test-main
 )
 
-ton_test(test-scheduler-stop)
+tos_test(test-scheduler-stop)
 
 add_executable(test-runtime test-runtime.cpp)
 
@@ -16,7 +16,7 @@ target_link_libraries(test-runtime PRIVATE
     td-test-main
 )
 
-ton_test(test-runtime)
+tos_test(test-runtime)
 
 add_executable(test-test-scheduler test-test-scheduler.cpp)
 
@@ -26,7 +26,7 @@ target_link_libraries(test-test-scheduler PRIVATE
     td-test-main
 )
 
-ton_test(test-test-scheduler)
+tos_test(test-test-scheduler)
 
 add_executable(test-backpressure-queue test-backpressure-queue.cpp)
 
@@ -36,4 +36,4 @@ target_link_libraries(test-backpressure-queue PRIVATE
     td-test-main
 )
 
-ton_test(test-backpressure-queue)
+tos_test(test-backpressure-queue)

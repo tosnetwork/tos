@@ -39,7 +39,7 @@ using PersistentStateType = td::Variant<UnsplitStateType, SplitAccountStateType,
 auto persistent_state_id_from_v1_query(const auto &query) {
   auto block = create_tl_block_id(create_block_id(query.block_));
   auto mc_block = create_tl_block_id(create_block_id(query.masterchain_block_));
-  return create_tl_object<tos_api::tonNode_persistentStateIdV2>(std::move(block), std::move(mc_block), 0);
+  return create_tl_object<tos_api::tosNode_persistentStateIdV2>(std::move(block), std::move(mc_block), 0);
 }
 
 auto persistent_state_from_v2_query(const auto &query) {

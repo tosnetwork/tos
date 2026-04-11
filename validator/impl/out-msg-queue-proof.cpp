@@ -105,13 +105,13 @@ static td::Result<std::vector<td::int32>> process_queue(
   return msg_count;
 }
 
-td::Result<tl_object_ptr<tos_api::tonNode_outMsgQueueProof>> OutMsgQueueProof::build(
+td::Result<tl_object_ptr<tos_api::tosNode_outMsgQueueProof>> OutMsgQueueProof::build(
     ShardIdFull dst_shard, std::vector<OneBlock> blocks, block::ImportedMsgQueueLimits limits) {
   if (!dst_shard.is_valid_ext()) {
     return td::Status::Error("invalid shard");
   }
   if (blocks.empty()) {
-    return create_tl_object<tos_api::tonNode_outMsgQueueProof>(td::BufferSlice{}, td::BufferSlice{},
+    return create_tl_object<tos_api::tosNode_outMsgQueueProof>(td::BufferSlice{}, td::BufferSlice{},
                                                                std::vector<td::int32>{});
   }
 
@@ -161,14 +161,14 @@ td::Result<tl_object_ptr<tos_api::tonNode_outMsgQueueProof>> OutMsgQueueProof::b
     state_proofs.push_back(vm::CellBuilder::create_merkle_proof(proof_raw));
   }
   TRY_RESULT(queue_proof, vm::std_boc_serialize_multi(state_proofs));
-  return create_tl_object<tos_api::tonNode_outMsgQueueProof>(std::move(queue_proof), std::move(block_state_proof),
+  return create_tl_object<tos_api::tosNode_outMsgQueueProof>(std::move(queue_proof), std::move(block_state_proof),
                                                              std::move(msg_count));
 }
 
 td::Result<std::vector<td::Ref<OutMsgQueueProof>>> OutMsgQueueProof::fetch(ShardIdFull dst_shard,
                                                                            std::vector<BlockIdExt> blocks,
                                                                            block::ImportedMsgQueueLimits limits,
-                                                                           const tos_api::tonNode_outMsgQueueProof& f) {
+                                                                           const tos_api::tosNode_outMsgQueueProof& f) {
   try {
     std::vector<td::Ref<OutMsgQueueProof>> res;
     TRY_RESULT(queue_proofs, vm::std_boc_deserialize_multi(f.queue_proofs_, (int)blocks.size()));

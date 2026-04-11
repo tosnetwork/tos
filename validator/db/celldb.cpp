@@ -683,7 +683,7 @@ void CellDbIn::flush_db_stats() {
   auto celldb_stats = prepare_stats();
   td::StringBuilder ss;
   for (auto& [key, value] : celldb_stats) {
-    ss << "ton.celldb." << key << " " << value << "\n";
+    ss << "tos.celldb." << key << " " << value << "\n";
   }
 
   auto stats =
@@ -994,7 +994,7 @@ void CellDb::update_stats(td::Result<std::vector<std::pair<std::string, std::str
 
 void CellDb::flush_db_stats(std::string stats) {
   for (auto& [k, v] : cell_db_statistics_.prepare_stats()) {
-    stats += PSTRING() << "ton.celldb." << k << " " << v << "\n";
+    stats += PSTRING() << "tos.celldb." << k << " " << v << "\n";
   }
   cell_db_statistics_.clear();
   delay_action(

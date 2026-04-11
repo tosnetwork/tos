@@ -55,7 +55,7 @@ td::SecureString Mnemonic::to_entropy() const {
 
 td::SecureString Mnemonic::to_seed() const {
   td::SecureString hash(64);
-  td::pbkdf2_sha512(as_slice(to_entropy()), "TON default seed", PBKDF_ITERATIONS, hash.as_mutable_slice());
+  td::pbkdf2_sha512(as_slice(to_entropy()), "TOS default seed", PBKDF_ITERATIONS, hash.as_mutable_slice());
   return hash;
 }
 
@@ -65,14 +65,14 @@ td::Ed25519::PrivateKey Mnemonic::to_private_key() const {
 
 bool Mnemonic::is_basic_seed() {
   td::SecureString hash(64);
-  td::pbkdf2_sha512(as_slice(to_entropy()), "TON seed version", td::max(1, PBKDF_ITERATIONS / 256),
+  td::pbkdf2_sha512(as_slice(to_entropy()), "TOS seed version", td::max(1, PBKDF_ITERATIONS / 256),
                     hash.as_mutable_slice());
   return hash.as_slice()[0] == 0;
 }
 
 bool Mnemonic::is_password_seed() {
   td::SecureString hash(64);
-  td::pbkdf2_sha512(as_slice(to_entropy()), "TON fast seed version", 1, hash.as_mutable_slice());
+  td::pbkdf2_sha512(as_slice(to_entropy()), "TOS fast seed version", 1, hash.as_mutable_slice());
   return hash.as_slice()[0] == 1;
 }
 

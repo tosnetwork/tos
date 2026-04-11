@@ -30,7 +30,7 @@
 #include <fstream>
 
 #include "auto/tl/tos_api.h"
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "keys/encryptor.h"
 #include "overlay/overlays.h"
 #include "td/utils/JsonBuilder.h"

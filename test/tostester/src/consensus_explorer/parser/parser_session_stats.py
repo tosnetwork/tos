@@ -9,7 +9,7 @@ from itertools import islice
 from pathlib import Path
 from typing import Callable, final, override
 
-from tonapi.tos_api import (
+from tosapi.tos_api import (
     Consensus_candidateId,
     Consensus_candidateParent,
     Consensus_candidateWithoutParents,
@@ -29,7 +29,7 @@ from tonapi.tos_api import (
     Consensus_stats_timestampedEvent,
     Consensus_stats_validationFinished,
     Consensus_stats_validationStarted,
-    TonNode_blockIdExt,
+    TosNode_blockIdExt,
     TypeConsensus_stats_Event,
 )
 
@@ -70,7 +70,7 @@ def format_candidate_id(id_: Consensus_candidateId):
     return f"{{{id_.slot}, {base64.b64encode(id_.hash).decode()}}}"
 
 
-def format_block_id(id_: TonNode_blockIdExt):
+def format_block_id(id_: TosNode_blockIdExt):
     return f"({id_.workchain},{_shard_to_hex(id_.shard)},{id_.seqno}):{id_.root_hash.hex().upper()}:{id_.file_hash.hex().upper()}"
 
 

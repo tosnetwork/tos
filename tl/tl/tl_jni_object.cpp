@@ -103,7 +103,7 @@ void init_vars(JNIEnv *env, const char *td_api_java_package) {
   LongClass = get_jclass(env, "java/lang/Long");
   DoubleClass = get_jclass(env, "java/lang/Double");
   StringClass = get_jclass(env, "java/lang/String");
-  ObjectClass = get_jclass(env, (PSLICE() << td_api_java_package << "/TonApi$Object").c_str());
+  ObjectClass = get_jclass(env, (PSLICE() << td_api_java_package << "/TosApi$Object").c_str());
   GetConstructorID = get_method_id(env, ObjectClass, "getConstructor", "()I");
   BooleanGetValueMethodID = get_method_id(env, BooleanClass, "booleanValue", "()Z");
   IntegerGetValueMethodID = get_method_id(env, IntegerClass, "intValue", "()I");

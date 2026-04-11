@@ -1,5 +1,5 @@
 fun main() {
-    return ton("0.1234567891");
+    return tos("0.1234567891");
 }
 
 /**

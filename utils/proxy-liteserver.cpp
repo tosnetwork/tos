@@ -26,7 +26,7 @@
 #include "adnl/adnl.h"
 #include "auto/tl/lite_api.h"
 #include "auto/tl/tos_api.h"
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "lite-client/ext-client.h"
 #include "td/actor/MultiPromise.h"
 #include "td/actor/actor.h"

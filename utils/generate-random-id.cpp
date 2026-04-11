@@ -32,7 +32,7 @@
 
 #include "adnl/utils.hpp"
 #include "auto/tl/tos_api.h"
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "dht/dht-node.hpp"
 #include "keys/encryptor.h"
 #include "td/utils/OptionParser.h"

@@ -37,7 +37,7 @@ class BlockFullSender : public td::actor::Actor {
       : block_id_(block_id), next_(next), manager_(manager), promise_(std::move(promise)) {
   }
   void abort_query(td::Status error) {
-    promise_.set_value(create_serialize_tl_object<tos_api::tonNode_dataFullEmpty>());
+    promise_.set_value(create_serialize_tl_object<tos_api::tosNode_dataFullEmpty>());
     stop();
   }
   void finish_query() {

@@ -1,8 +1,8 @@
 fun main() {
-    return ton(123);
+    return tos(123);
 }
 
 /**
 @compilation_should_fail
-@stderr function `ton` requires a constant string, like `ton("0.05")`
+@stderr function `tos` requires a constant string, like `tos("0.05")`
  */

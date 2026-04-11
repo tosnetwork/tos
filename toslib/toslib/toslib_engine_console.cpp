@@ -1,4 +1,4 @@
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "tl-utils/tl-utils.hpp"
 #include "tl/tl_json.h"
 

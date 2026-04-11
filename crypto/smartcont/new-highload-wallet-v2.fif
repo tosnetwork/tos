@@ -37,7 +37,7 @@ dup hashu wc swap 2dup 2constant wallet_addr
 ."Bounceable address (for later access): " 6 .Addr cr
 now timeout + 32 << 1- dup =: query_id
 ."Init query_id is " dup . ."(0x" X._ .")" cr
-<b subwallet-id 32 i, query_id 64 u, false 1 i, b>
+<b tos-global-id 32 i, subwallet-id 32 i, query_id 64 u, false 1 i, b>
 dup ."signing message: " <s csr. cr
 dup hashu wallet_pk ed25519_sign_uint rot
 <b b{1000100} s, wallet_addr addr, b{000010} s, swap <s s, b{0} s, swap B, swap <s s, b>

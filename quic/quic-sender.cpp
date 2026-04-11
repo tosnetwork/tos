@@ -433,7 +433,7 @@ td::actor::Task<> QuicSender::add_local_id_coro(adnl::AdnlNodeIdShort local_id) 
   auto server =
       co_await QuicServer::create(port, td::Ed25519::PrivateKey(local_keys_.at(local_id).as_octet_string()),
                                   std::make_unique<ServerCallback>(local_id, actor_id(this)),
-                                  get_local_id_mtu(local_id), "ton", "0.0.0.0", server_options_, std::move(peers_mtu));
+                                  get_local_id_mtu(local_id), "tos", "0.0.0.0", server_options_, std::move(peers_mtu));
   servers_[local_id] = std::move(server);
 
   co_return td::Unit{};
@@ -499,7 +499,7 @@ td::actor::Task<td::Unit> QuicSender::init_connection_inner(AdnlPath path, std::
 
   auto server = server_iter->second.get();
   auto connection_id =
-      co_await ask(server, &QuicServer::connect, peer_host, peer_port, std::move(client_key), td::Slice("ton"))
+      co_await ask(server, &QuicServer::connect, peer_host, peer_port, std::move(client_key), td::Slice("tos"))
           .trace("connect");
   conn->cid = connection_id;
   conn->path = path;

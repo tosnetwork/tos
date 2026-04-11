@@ -15,7 +15,7 @@
     along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "common/delay.h"
 #include "interfaces/validator-full-id.h"
 #include "td/utils/JsonBuilder.h"
@@ -34,15 +34,15 @@ constexpr const char *k_called_from_fast_sync = "fast-sync";
 
 }  // namespace
 
-void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tonNode_blockBroadcast &query) {
+void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcast &query) {
   process_block_broadcast(src, query);
 }
 
-void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tonNode_blockBroadcastCompressed &query) {
+void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressed &query) {
   process_block_broadcast(src, query);
 }
 
-void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tonNode_blockBroadcastCompressedV2 &query) {
+void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressedV2 &query) {
   auto R_requires_state = need_state_for_decompression(query);
   if (R_requires_state.is_error()) {
     LOG(DEBUG) << "Failed to check if state is required for broadcast: " << R_requires_state.move_as_error();
@@ -68,7 +68,7 @@ void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tonN
   process_block_broadcast(src, query);
 }
 
-void FullNodeFastSyncOverlay::process_block_broadcast(PublicKeyHash src, tos_api::tonNode_Broadcast &query) {
+void FullNodeFastSyncOverlay::process_block_broadcast(PublicKeyHash src, tos_api::tosNode_Broadcast &query) {
   auto B = deserialize_block_broadcast(query, overlay::Overlays::max_fec_broadcast_size(), k_called_from_fast_sync);
   if (B.is_error()) {
     LOG(DEBUG) << "dropped broadcast: " << B.move_as_error();
@@ -80,7 +80,7 @@ void FullNodeFastSyncOverlay::process_block_broadcast(PublicKeyHash src, tos_api
 }
 
 void FullNodeFastSyncOverlay::obtain_state_for_decompression(PublicKeyHash src,
-                                                             tos_api::tonNode_blockBroadcastCompressedV2 query) {
+                                                             tos_api::tosNode_blockBroadcastCompressedV2 query) {
   auto id = create_block_id(query.id_);
   auto R_prev = extract_prev_blocks_from_proof(query.proof_.as_slice(), id);
   if (R_prev.is_error()) {
@@ -102,7 +102,7 @@ void FullNodeFastSyncOverlay::obtain_state_for_decompression(PublicKeyHash src,
 }
 
 void FullNodeFastSyncOverlay::process_block_broadcast_with_state(PublicKeyHash src,
-                                                                 tos_api::tonNode_blockBroadcastCompressedV2 query,
+                                                                 tos_api::tosNode_blockBroadcastCompressedV2 query,
                                                                  td::Ref<ShardState> state) {
   auto B = deserialize_block_broadcast(query, overlay::Overlays::max_fec_broadcast_size(), k_called_from_fast_sync,
                                        state->root_cell());
@@ -116,39 +116,39 @@ void FullNodeFastSyncOverlay::process_block_broadcast_with_state(PublicKeyHash s
   td::actor::send_closure(full_node_, &FullNode::process_block_broadcast, B.move_as_ok(), true);
 }
 
-void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tonNode_outMsgQueueProofBroadcast &query) {
+void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tosNode_outMsgQueueProofBroadcast &query) {
   // Not supported yet
   /*if (src == local_id_.pubkey_hash()) {
     return;  // dropping broadcast from self
   }
   BlockIdExt block_id = create_block_id(query.block_);
   ShardIdFull shard_id = create_shard_id(query.dst_shard_);
-  if (query.proof_->get_id() != tos_api::tonNode_outMsgQueueProof::ID) {
-    LOG(ERROR) << "got tonNode.outMsgQueueProofBroadcast with proof not tonNode.outMsgQueueProof";
+  if (query.proof_->get_id() != tos_api::tosNode_outMsgQueueProof::ID) {
+    LOG(ERROR) << "got tosNode.outMsgQueueProofBroadcast with proof not tosNode.outMsgQueueProof";
     return;
   }
-  auto tl_proof = move_tl_object_as<tos_api::tonNode_outMsgQueueProof>(query.proof_);
+  auto tl_proof = move_tl_object_as<tos_api::tosNode_outMsgQueueProof>(query.proof_);
   auto R = OutMsgQueueProof::fetch(shard_id, {block_id},
                                    block::ImportedMsgQueueLimits{.max_bytes = td::uint32(query.limits_->max_bytes_),
                                                                  .max_msgs = td::uint32(query.limits_->max_msgs_)},
                                    *tl_proof);
   if (R.is_error()) {
-    LOG(ERROR) << "got tonNode.outMsgQueueProofBroadcast with invalid proof: " << R.error();
+    LOG(ERROR) << "got tosNode.outMsgQueueProofBroadcast with invalid proof: " << R.error();
     return;
   }
   if (R.ok().size() != 1) {
-    LOG(ERROR) << "got tonNode.outMsgQueueProofBroadcast with invalid proofs count=" << R.ok().size();
+    LOG(ERROR) << "got tosNode.outMsgQueueProofBroadcast with invalid proofs count=" << R.ok().size();
     return;
   }
   auto proof = std::move(R.move_as_ok()[0]);
 
-  LOG(INFO) << "got tonNode.outMsgQueueProofBroadcast to " << shard_id.to_str() << " from " << block_id.to_str()
+  LOG(INFO) << "got tosNode.outMsgQueueProofBroadcast to " << shard_id.to_str() << " from " << block_id.to_str()
             << ", msgs=" << proof->msg_count_ << ", size=" << tl_proof->queue_proofs_.size();
   td::actor::send_closure(validator_manager_, &ValidatorManagerInterface::add_out_msg_queue_proof, shard_id,
                           std::move(proof));*/
 }
 
-void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tonNode_newShardBlockBroadcast &query) {
+void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tosNode_newShardBlockBroadcast &query) {
   BlockIdExt block_id = create_block_id(query.block_->block_);
   VLOG(FULL_NODE_DEBUG) << "Received newShardBlockBroadcast in fast sync overlay from " << src << ": "
                         << block_id.to_str();
@@ -156,21 +156,21 @@ void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tonN
                           std::move(query.block_->data_));
 }
 
-void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tonNode_newBlockCandidateBroadcast &query) {
+void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tosNode_newBlockCandidateBroadcast &query) {
   process_block_candidate_broadcast(src, query);
 }
 
 void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src,
-                                                tos_api::tonNode_newBlockCandidateBroadcastCompressed &query) {
+                                                tos_api::tosNode_newBlockCandidateBroadcastCompressed &query) {
   process_block_candidate_broadcast(src, query);
 }
 
 void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src,
-                                                tos_api::tonNode_newBlockCandidateBroadcastCompressedV2 &query) {
+                                                tos_api::tosNode_newBlockCandidateBroadcastCompressedV2 &query) {
   process_block_candidate_broadcast(src, query);
 }
 
-void FullNodeFastSyncOverlay::process_block_candidate_broadcast(PublicKeyHash src, tos_api::tonNode_Broadcast &query) {
+void FullNodeFastSyncOverlay::process_block_candidate_broadcast(PublicKeyHash src, tos_api::tosNode_Broadcast &query) {
   BlockIdExt block_id;
   CatchainSeqno cc_seqno;
   td::uint32 validator_set_hash;
@@ -222,7 +222,7 @@ void FullNodeFastSyncOverlay::process_telemetry_broadcast(
 }
 
 void FullNodeFastSyncOverlay::receive_broadcast(PublicKeyHash src, td::BufferSlice broadcast) {
-  auto B = fetch_tl_object<tos_api::tonNode_Broadcast>(std::move(broadcast), true);
+  auto B = fetch_tl_object<tos_api::tosNode_Broadcast>(std::move(broadcast), true);
   if (B.is_error()) {
     if (collect_telemetry_ && src != local_id_.pubkey_hash()) {
       auto R = fetch_tl_prefix<tos_api::validator_telemetry>(broadcast, true);
@@ -241,8 +241,8 @@ void FullNodeFastSyncOverlay::send_shard_block_info(BlockIdExt block_id, Catchai
     return;
   }
   VLOG(FULL_NODE_DEBUG) << "Sending newShardBlockBroadcast in fast sync overlay: " << block_id.to_str();
-  auto B = create_serialize_tl_object<tos_api::tonNode_newShardBlockBroadcast>(
-      create_tl_object<tos_api::tonNode_newShardBlock>(create_tl_block_id(block_id), cc_seqno, std::move(data)));
+  auto B = create_serialize_tl_object<tos_api::tosNode_newShardBlockBroadcast>(
+      create_tl_object<tos_api::tosNode_newShardBlock>(create_tl_block_id(block_id), cc_seqno, std::move(data)));
   if (B.size() <= overlay::Overlays::max_simple_broadcast_size()) {
     td::actor::send_closure(overlays_, &overlay::Overlays::send_broadcast_ex, local_id_, overlay_id_,
                             local_id_.pubkey_hash(), overlay::Overlays::BroadcastFlagNoTwostep(), std::move(B));
@@ -315,10 +315,10 @@ void FullNodeFastSyncOverlay::send_out_msg_queue_proof_broadcast(td::Ref<OutMsgQ
   /*if (!inited_) {
     return;
   }
-  auto B = create_serialize_tl_object<tos_api::tonNode_outMsgQueueProofBroadcast>(
+  auto B = create_serialize_tl_object<tos_api::tosNode_outMsgQueueProofBroadcast>(
       create_tl_shard_id(broadcast->dst_shard), create_tl_block_id(broadcast->block_id),
-      create_tl_object<tos_api::tonNode_importedMsgQueueLimits>(broadcast->max_bytes, broadcast->max_msgs),
-      create_tl_object<tos_api::tonNode_outMsgQueueProof>(broadcast->queue_proofs.clone(),
+      create_tl_object<tos_api::tosNode_importedMsgQueueLimits>(broadcast->max_bytes, broadcast->max_msgs),
+      create_tl_object<tos_api::tosNode_outMsgQueueProof>(broadcast->queue_proofs.clone(),
                                                           broadcast->block_state_proofs.clone(),
                                                           std::vector<td::int32>(1, broadcast->msg_count)));
   VLOG(FULL_NODE_DEBUG) << "Sending outMsgQueueProof in fast sync overlay to " << broadcast->dst_shard.to_str()
@@ -329,7 +329,7 @@ void FullNodeFastSyncOverlay::send_out_msg_queue_proof_broadcast(td::Ref<OutMsgQ
 }
 
 void FullNodeFastSyncOverlay::start_up() {
-  auto X = create_hash_tl_object<tos_api::tonNode_fastSyncOverlayId>(zero_state_file_hash_, create_tl_shard_id(shard_));
+  auto X = create_hash_tl_object<tos_api::tosNode_fastSyncOverlayId>(zero_state_file_hash_, create_tl_shard_id(shard_));
   td::BufferSlice b{32};
   b.as_slice().copy_from(as_slice(X));
   overlay_id_full_ = overlay::OverlayIdFull{std::move(b)};

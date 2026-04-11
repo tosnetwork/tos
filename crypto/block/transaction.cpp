@@ -1333,7 +1333,7 @@ namespace transaction {
  * This config change also activates new behavior for special accounts in masterchain.
  *
  * In August 2024 it was decided to unlock other old highload wallets that got into the same situation.
- * See https://t.me/tondev_news/129
+ * See https://t.me/tosdev_news/129
  * It is activated by setting global version to 9.
  *
  * @param cfg The compute phase configuration.
@@ -1361,7 +1361,7 @@ static td::optional<td::uint64> override_gas_limit(const ComputePhaseConfig& cfg
     accounts[parse_addr("0:FFBFD8F5AE5B2E1C7C3614885CB02145483DFAEE575F0DD08A72C366369211CD")] = {
         .new_limit = 70'000'000, .from_version = 5, .until = 1709164800};
 
-    // Increase limit for multiple accounts (https://t.me/tondev_news/129) until 2025-03-01 00:00:00 UTC
+    // Increase limit for multiple accounts (https://t.me/tosdev_news/129) until 2025-03-01 00:00:00 UTC
     accounts[parse_addr("UQBeSl-dumOHieZ3DJkNKVkjeso7wZ0VpzR4LCbLGTQ8xr57")] = {
         .new_limit = 70'000'000, .from_version = 9, .until = 1740787200};
     accounts[parse_addr("EQC3VcQ-43klww9UfimR58TBjBzk7GPupXQ3CNuthoNp-uTR")] = {

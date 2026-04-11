@@ -14,7 +14,7 @@
     You should have received a copy of the GNU Lesser General Public License
     along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 */
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "common/checksum.h"
 #include "common/delay.h"
 #include "td/utils/JsonBuilder.h"
@@ -32,15 +32,15 @@ constexpr const char *k_called_from_custom = "custom";
 
 }  // namespace
 
-void FullNodeCustomOverlay::process_broadcast(PublicKeyHash src, tos_api::tonNode_blockBroadcast &query) {
+void FullNodeCustomOverlay::process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcast &query) {
   process_block_broadcast(src, query);
 }
 
-void FullNodeCustomOverlay::process_broadcast(PublicKeyHash src, tos_api::tonNode_blockBroadcastCompressed &query) {
+void FullNodeCustomOverlay::process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressed &query) {
   process_block_broadcast(src, query);
 }
 
-void FullNodeCustomOverlay::process_broadcast(PublicKeyHash src, tos_api::tonNode_blockBroadcastCompressedV2 &query) {
+void FullNodeCustomOverlay::process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressedV2 &query) {
   if (!block_senders_.count(adnl::AdnlNodeIdShort(src))) {
     VLOG(FULL_NODE_DEBUG) << "Dropping block broadcast in private overlay \"" << name_ << "\" from unauthorized sender "
                           << src;
@@ -72,7 +72,7 @@ void FullNodeCustomOverlay::process_broadcast(PublicKeyHash src, tos_api::tonNod
   process_block_broadcast(src, query);
 }
 
-void FullNodeCustomOverlay::process_block_broadcast(PublicKeyHash src, tos_api::tonNode_Broadcast &query) {
+void FullNodeCustomOverlay::process_block_broadcast(PublicKeyHash src, tos_api::tosNode_Broadcast &query) {
   if (!block_senders_.count(adnl::AdnlNodeIdShort(src))) {
     VLOG(FULL_NODE_DEBUG) << "Dropping block broadcast in private overlay \"" << name_ << "\" from unauthorized sender "
                           << src;
@@ -89,7 +89,7 @@ void FullNodeCustomOverlay::process_block_broadcast(PublicKeyHash src, tos_api::
 }
 
 void FullNodeCustomOverlay::obtain_state_for_decompression(PublicKeyHash src,
-                                                           tos_api::tonNode_blockBroadcastCompressedV2 query) {
+                                                           tos_api::tosNode_blockBroadcastCompressedV2 query) {
   auto id = create_block_id(query.id_);
   auto R_prev = extract_prev_blocks_from_proof(query.proof_.as_slice(), id);
   if (R_prev.is_error()) {
@@ -111,7 +111,7 @@ void FullNodeCustomOverlay::obtain_state_for_decompression(PublicKeyHash src,
 }
 
 void FullNodeCustomOverlay::process_block_broadcast_with_state(PublicKeyHash src,
-                                                               tos_api::tonNode_blockBroadcastCompressedV2 query,
+                                                               tos_api::tosNode_blockBroadcastCompressedV2 query,
                                                                td::Ref<ShardState> state) {
   td::Ref<vm::Cell> state_root = state->root_cell();
   auto B =
@@ -125,7 +125,7 @@ void FullNodeCustomOverlay::process_block_broadcast_with_state(PublicKeyHash src
   td::actor::send_closure(full_node_, &FullNode::process_block_broadcast, B.move_as_ok(), true);
 }
 
-void FullNodeCustomOverlay::process_broadcast(PublicKeyHash src, tos_api::tonNode_externalMessageBroadcast &query) {
+void FullNodeCustomOverlay::process_broadcast(PublicKeyHash src, tos_api::tosNode_externalMessageBroadcast &query) {
   auto it = msg_senders_.find(adnl::AdnlNodeIdShort{src});
   if (it == msg_senders_.end()) {
     VLOG(FULL_NODE_DEBUG) << "Dropping external message broadcast in custom overlay \"" << name_
@@ -139,21 +139,21 @@ void FullNodeCustomOverlay::process_broadcast(PublicKeyHash src, tos_api::tonNod
       .detach();
 }
 
-void FullNodeCustomOverlay::process_broadcast(PublicKeyHash src, tos_api::tonNode_newBlockCandidateBroadcast &query) {
+void FullNodeCustomOverlay::process_broadcast(PublicKeyHash src, tos_api::tosNode_newBlockCandidateBroadcast &query) {
   process_block_candidate_broadcast(src, query);
 }
 
 void FullNodeCustomOverlay::process_broadcast(PublicKeyHash src,
-                                              tos_api::tonNode_newBlockCandidateBroadcastCompressed &query) {
+                                              tos_api::tosNode_newBlockCandidateBroadcastCompressed &query) {
   process_block_candidate_broadcast(src, query);
 }
 
 void FullNodeCustomOverlay::process_broadcast(PublicKeyHash src,
-                                              tos_api::tonNode_newBlockCandidateBroadcastCompressedV2 &query) {
+                                              tos_api::tosNode_newBlockCandidateBroadcastCompressedV2 &query) {
   process_block_candidate_broadcast(src, query);
 }
 
-void FullNodeCustomOverlay::process_block_candidate_broadcast(PublicKeyHash src, tos_api::tonNode_Broadcast &query) {
+void FullNodeCustomOverlay::process_block_candidate_broadcast(PublicKeyHash src, tos_api::tosNode_Broadcast &query) {
   if (!block_senders_.count(adnl::AdnlNodeIdShort(src))) {
     VLOG(FULL_NODE_DEBUG) << "Dropping block candidate broadcast in private overlay \"" << name_
                           << "\" from unauthorized sender " << src;
@@ -183,7 +183,7 @@ void FullNodeCustomOverlay::process_block_candidate_broadcast(PublicKeyHash src,
                           validator_set_hash, std::move(data));
 }
 
-void FullNodeCustomOverlay::process_broadcast(PublicKeyHash src, tos_api::tonNode_newShardBlockBroadcast &query) {
+void FullNodeCustomOverlay::process_broadcast(PublicKeyHash src, tos_api::tosNode_newShardBlockBroadcast &query) {
   if (!block_senders_.count(adnl::AdnlNodeIdShort(src))) {
     VLOG(FULL_NODE_DEBUG) << "Dropping shard block description broadcast in private overlay \"" << name_
                           << "\" from unauthorized sender " << src;
@@ -200,7 +200,7 @@ void FullNodeCustomOverlay::receive_broadcast(PublicKeyHash src, td::BufferSlice
   if (adnl::AdnlNodeIdShort{src} == local_id_) {
     return;
   }
-  auto B = fetch_tl_object<tos_api::tonNode_Broadcast>(std::move(broadcast), true);
+  auto B = fetch_tl_object<tos_api::tosNode_Broadcast>(std::move(broadcast), true);
   if (B.is_error()) {
     return;
   }
@@ -212,8 +212,8 @@ void FullNodeCustomOverlay::send_external_message(td::BufferSlice data) {
     return;
   }
   VLOG(FULL_NODE_DEBUG) << "Sending external message to custom overlay \"" << name_ << "\"";
-  auto B = create_serialize_tl_object<tos_api::tonNode_externalMessageBroadcast>(
-      create_tl_object<tos_api::tonNode_externalMessage>(std::move(data)));
+  auto B = create_serialize_tl_object<tos_api::tosNode_externalMessageBroadcast>(
+      create_tl_object<tos_api::tosNode_externalMessage>(std::move(data)));
   td::actor::send_closure(overlays_, &overlay::Overlays::send_broadcast_fec_ex, local_id_, overlay_id_,
                           local_id_.pubkey_hash(), 0, std::move(B));
 }
@@ -252,8 +252,8 @@ void FullNodeCustomOverlay::send_block_candidate(BlockIdExt block_id, CatchainSe
 void FullNodeCustomOverlay::send_shard_block_info(BlockIdExt block_id, CatchainSeqno cc_seqno, td::BufferSlice data) {
   VLOG(FULL_NODE_DEBUG) << "Sending newShardBlockBroadcast in custom overlay \"" << name_
                         << "\": " << block_id.to_str();
-  auto B = create_serialize_tl_object<tos_api::tonNode_newShardBlockBroadcast>(
-      create_tl_object<tos_api::tonNode_newShardBlock>(create_tl_block_id(block_id), cc_seqno, std::move(data)));
+  auto B = create_serialize_tl_object<tos_api::tosNode_newShardBlockBroadcast>(
+      create_tl_object<tos_api::tosNode_newShardBlock>(create_tl_block_id(block_id), cc_seqno, std::move(data)));
   if (B.size() <= overlay::Overlays::max_simple_broadcast_size()) {
     td::actor::send_closure(overlays_, &overlay::Overlays::send_broadcast_ex, local_id_, overlay_id_,
                             local_id_.pubkey_hash(), 0, std::move(B));
@@ -270,7 +270,7 @@ void FullNodeCustomOverlay::start_up() {
   for (const adnl::AdnlNodeIdShort &id : nodes_) {
     nodes.push_back(id.bits256_value());
   }
-  auto X = create_hash_tl_object<tos_api::tonNode_customOverlayId>(zero_state_file_hash_, name_, std::move(nodes));
+  auto X = create_hash_tl_object<tos_api::tosNode_customOverlayId>(zero_state_file_hash_, name_, std::move(nodes));
   td::BufferSlice b{32};
   b.as_slice().copy_from(as_slice(X));
   overlay_id_full_ = overlay::OverlayIdFull{std::move(b)};

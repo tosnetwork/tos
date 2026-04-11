@@ -9,7 +9,7 @@
 namespace tos {
 class PrometheusExporter final : public td::actor::Actor, public virtual metrics::CollectorWrapper {
  public:
-  static td::actor::ActorOwn<PrometheusExporter> create(std::string prefix = "ton");
+  static td::actor::ActorOwn<PrometheusExporter> create(std::string prefix = "tos");
 
   void collect(metrics::MetricsPromise P) override;
 

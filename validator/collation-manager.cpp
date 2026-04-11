@@ -139,7 +139,7 @@ void CollationManager::collate_shard_block(ShardIdFull shard, BlockIdExt min_mas
     return;
   }
 
-  std::vector<tl_object_ptr<tos_api::tonNode_blockIdExt>> prev_blocks;
+  std::vector<tl_object_ptr<tos_api::tosNode_blockIdExt>> prev_blocks;
   BlockId next_block_id{shard, 0};
   for (const BlockIdExt& p : prev) {
     prev_blocks.push_back(create_tl_block_id(p));

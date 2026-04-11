@@ -18,6 +18,9 @@
 #if defined(__cplusplus) && (__cplusplus > 202002L)
 /* C++23 and future versions have std::unreachable() */
 #include <utility> /* std::unreachable() */
+#if !defined(__cpp_lib_unreachable)
+namespace std { [[noreturn]] inline void unreachable() { __builtin_unreachable(); } }
+#endif
 #endif
 #endif
 /* END RocksDB customizations */

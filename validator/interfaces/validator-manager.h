@@ -163,7 +163,7 @@ struct CollationStats {
   StorageStatCacheStats storage_stat_cache;
 
   tl_object_ptr<tos_api::validatorStats_collatedBlock> tl() const {
-    std::vector<tl_object_ptr<tos_api::tonNode_blockIdExt>> shards_obj;
+    std::vector<tl_object_ptr<tos_api::tosNode_blockIdExt>> shards_obj;
     for (const BlockIdExt& block_id : shard_configuration) {
       shards_obj.push_back(create_tl_block_id(block_id));
     }

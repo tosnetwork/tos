@@ -18,7 +18,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "auto/tl/toslib_api_json.h"
 #include "block/block-auto.h"
 #include "block/block.h"

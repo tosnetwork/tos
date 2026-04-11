@@ -27,7 +27,7 @@ namespace vm {
 
 class OpcodeTable;
 
-void register_ton_ops(OpcodeTable& cp0);
+void register_tos_ops(OpcodeTable& cp0);
 
 namespace util {
 

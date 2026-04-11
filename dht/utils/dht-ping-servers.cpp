@@ -31,7 +31,7 @@
 #include "adnl/adnl-network-manager.h"
 #include "adnl/adnl.h"
 #include "adnl/utils.hpp"
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "common/delay.h"
 #include "dht/dht.hpp"
 #include "keys/encryptor.h"
@@ -52,7 +52,7 @@ class AdnlNode : public td::actor::Actor {
   std::string host_ = "127.0.0.1";
   td::uint16 port_ = 2380;
 
-  std::string global_config_ = "ton-global.config";
+  std::string global_config_ = "tos-global.config";
 
   struct NodeInfo {
     tos::adnl::AdnlNodeIdShort id;

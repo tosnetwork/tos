@@ -40,7 +40,7 @@ const OpcodeTable* init_op_cp0(bool enable_debug) {
     register_cell_ops(*op_cp0);          // cellops.cpp
     register_continuation_ops(*op_cp0);  // contops.cpp
     register_dictionary_ops(*op_cp0);    // dictops.cpp
-    register_ton_ops(*op_cp0);           // tosops.cpp
+    register_tos_ops(*op_cp0);           // tosops.cpp
     register_debug_ops(*op_cp0);         // debugops.cpp
     register_codepage_ops(*op_cp0);      // contops.cpp
     op_cp0->finalize()->register_table(Codepage::test_cp);

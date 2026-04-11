@@ -12,5 +12,5 @@ foreach(TEST_NAME IN LISTS TOSLIB_TESTS)
 
     target_link_libraries(${TEST_NAME} PRIVATE td-test-main toslibjson_objects toslibjson_private_interface)
 
-    ton_test(${TEST_NAME})
+    tos_test(${TEST_NAME})
 endforeach()

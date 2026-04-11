@@ -20,7 +20,7 @@
 #include "adnl/adnl.h"
 #include "auto/tl/lite_api.h"
 #include "auto/tl/tos_api.h"
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "block/block-auto.h"
 #include "block/mc-config.h"
 #include "lite-client/ext-client.h"
@@ -111,7 +111,7 @@ class PrepareLsSliceConfig : public td::actor::Actor {
     td::actor::send_closure(
         client_, &liteclient::ExtClient::send_query, "q",
         create_query<lite_api::liteServer_lookupBlock>(
-            1, create_tl_object<lite_api::tonNode_blockId>(masterchainId, shardIdAll, seqno.value()), 0, 0),
+            1, create_tl_object<lite_api::tosNode_blockId>(masterchainId, shardIdAll, seqno.value()), 0, 0),
         td::Timestamp::in(5.0), [=, client = client_.get(), SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {
           auto mc_header = parse_response<lite_api::liteServer_blockHeader>(std::move(R));
           auto block_id = create_block_id(mc_header->id_);

@@ -341,7 +341,7 @@ tos::tl_object_ptr<tos::tos_api::engine_validator_config> Config::tl() const {
                                                                                        std::move(control_proc_vec)));
   }
 
-  std::vector<tos::tl_object_ptr<tos::tos_api::tonNode_shardId>> shards_vec;
+  std::vector<tos::tl_object_ptr<tos::tos_api::tosNode_shardId>> shards_vec;
   for (auto &shard : shards_to_monitor) {
     shards_vec.push_back(tos::create_tl_shard_id(shard));
   }
@@ -2651,7 +2651,7 @@ void ValidatorEngine::try_add_full_node_adnl_addr(tos::PublicKeyHash id, td::Pro
 
   if (!full_node_.empty() && id != full_node_id_.pubkey_hash()) {
     td::actor::send_closure(adnl_.get(), &tos::adnl::Adnl::unsubscribe, full_node_id_,
-                            tos::adnl::Adnl::int_to_bytestring(tos::tos_api::tonNode_newFastSyncMemberCertificate::ID));
+                            tos::adnl::Adnl::int_to_bytestring(tos::tos_api::tosNode_newFastSyncMemberCertificate::ID));
     full_node_id_ = tos::adnl::AdnlNodeIdShort{id};
     td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::update_adnl_id, full_node_id_,
                             [](td::Result<>) {});
@@ -2953,7 +2953,7 @@ void ValidatorEngine::register_fast_sync_certificate_callback() {
     }
     void receive_message(tos::adnl::AdnlNodeIdShort src, tos::adnl::AdnlNodeIdShort dst,
                          td::BufferSlice data) override {
-      auto R = tos::fetch_tl_object<tos::tos_api::tonNode_newFastSyncMemberCertificate>(std::move(data), true);
+      auto R = tos::fetch_tl_object<tos::tos_api::tosNode_newFastSyncMemberCertificate>(std::move(data), true);
       if (R.is_error()) {
         return;
       }
@@ -2962,7 +2962,7 @@ void ValidatorEngine::register_fast_sync_certificate_callback() {
       if (cert.empty()) {
         return;
       }
-      LOG(DEBUG) << "Received tonNode.newFastSyncMemberCertificate from " << src;
+      LOG(DEBUG) << "Received tosNode.newFastSyncMemberCertificate from " << src;
       td::actor::send_closure(validator_engine_, &ValidatorEngine::try_import_fast_sync_member_certificate, dst,
                               std::move(cert), td::PromiseCreator::lambda([](td::Result<> R) {
                                 if (R.is_error()) {
@@ -2978,7 +2978,7 @@ void ValidatorEngine::register_fast_sync_certificate_callback() {
     td::actor::ActorId<ValidatorEngine> validator_engine_;
   };
   td::actor::send_closure(adnl_.get(), &tos::adnl::Adnl::subscribe, full_node_id_,
-                          tos::adnl::Adnl::int_to_bytestring(tos::tos_api::tonNode_newFastSyncMemberCertificate::ID),
+                          tos::adnl::Adnl::int_to_bytestring(tos::tos_api::tosNode_newFastSyncMemberCertificate::ID),
                           std::make_unique<Callback>(actor_id(this)));
 }
 
@@ -3077,7 +3077,7 @@ void ValidatorEngine::issue_fast_sync_overlay_certificates() {
           LOG(INFO) << "Sending fast sync overlay certificate issued by " << cert.issued_by().compute_short_id()
                     << " to " << dst << " slot " << cert.slot();
           td::actor::send_closure(adnl, &tos::adnl::Adnl::send_message, src, dst,
-                                  tos::create_serialize_tl_object<tos::tos_api::tonNode_newFastSyncMemberCertificate>(
+                                  tos::create_serialize_tl_object<tos::tos_api::tosNode_newFastSyncMemberCertificate>(
                                       dst.bits256_value(), cert.tl()));
         });
   }

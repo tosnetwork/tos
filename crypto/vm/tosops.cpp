@@ -115,7 +115,7 @@ void register_basic_gas_ops(OpcodeTable& cp0) {
       .insert(OpcodeInstr::mksimple(0xf80f, 16, "COMMIT", exec_commit));
 }
 
-void register_ton_gas_ops(OpcodeTable& cp0) {
+void register_tos_gas_ops(OpcodeTable& cp0) {
   using namespace std::placeholders;
 }
 
@@ -455,7 +455,7 @@ int exec_get_extra_currency_balance(VmState* st) {
   return 0;
 }
 
-void register_ton_config_ops(OpcodeTable& cp0) {
+void register_tos_config_ops(OpcodeTable& cp0) {
   using namespace std::placeholders;
   cp0.insert(OpcodeInstr::mkfixedrange(0xf820, 0xf823, 16, 4, instr::dump_1c("GETPARAM "), exec_get_var_param))
       .insert(OpcodeInstr::mksimple(0xf823, 16, "NOW", std::bind(exec_get_param, _1, 3, "NOW")))
@@ -1385,7 +1385,7 @@ int exec_bls_push_r(VmState* st) {
   return 0;
 }
 
-void register_ton_crypto_ops(OpcodeTable& cp0) {
+void register_tos_crypto_ops(OpcodeTable& cp0) {
   using namespace std::placeholders;
   cp0.insert(OpcodeInstr::mksimple(0xf900, 16, "HASHCU", std::bind(exec_compute_hash, _1, 0)))
       .insert(OpcodeInstr::mksimple(0xf901, 16, "HASHSU", std::bind(exec_compute_hash, _1, 1)))
@@ -1487,7 +1487,7 @@ int exec_compute_data_size(VmState* st, int mode) {
   return 0;
 }
 
-void register_ton_misc_ops(OpcodeTable& cp0) {
+void register_tos_misc_ops(OpcodeTable& cp0) {
   using namespace std::placeholders;
   cp0.insert(OpcodeInstr::mksimple(0xf940, 16, "CDATASIZEQ", std::bind(exec_compute_data_size, _1, 1)))
       .insert(OpcodeInstr::mksimple(0xf941, 16, "CDATASIZE", std::bind(exec_compute_data_size, _1, 0)))
@@ -1954,7 +1954,7 @@ int exec_store_opt_std_address(VmState* st, bool quiet) {
   return 0;
 }
 
-void register_ton_currency_address_ops(OpcodeTable& cp0) {
+void register_tos_currency_address_ops(OpcodeTable& cp0) {
   using namespace std::placeholders;
   cp0.insert(OpcodeInstr::mksimple(0xfa00, 16, "LDGRAMS", std::bind(exec_load_var_integer, _1, 4, false, false)))
       .insert(OpcodeInstr::mksimple(0xfa01, 16, "LDVARINT16", std::bind(exec_load_var_integer, _1, 4, true, false)))
@@ -2374,7 +2374,7 @@ int exec_change_lib(VmState* st) {
   return install_output_action(st, cb.finalize());
 }
 
-void register_ton_message_ops(OpcodeTable& cp0) {
+void register_tos_message_ops(OpcodeTable& cp0) {
   using namespace std::placeholders;
   cp0.insert(OpcodeInstr::mksimple(0xfb00, 16, "SENDRAWMSG", exec_send_raw_message))
       .insert(OpcodeInstr::mksimple(0xfb02, 16, "RAWRESERVE", std::bind(exec_reserve_raw, _1, 0)))
@@ -2385,15 +2385,15 @@ void register_ton_message_ops(OpcodeTable& cp0) {
       .insert(OpcodeInstr::mksimple(0xfb08, 16, "SENDMSG", exec_send_message)->require_version(4));
 }
 
-void register_ton_ops(OpcodeTable& cp0) {
+void register_tos_ops(OpcodeTable& cp0) {
   register_basic_gas_ops(cp0);
-  register_ton_gas_ops(cp0);
+  register_tos_gas_ops(cp0);
   register_prng_ops(cp0);
-  register_ton_config_ops(cp0);
-  register_ton_crypto_ops(cp0);
-  register_ton_misc_ops(cp0);
-  register_ton_currency_address_ops(cp0);
-  register_ton_message_ops(cp0);
+  register_tos_config_ops(cp0);
+  register_tos_crypto_ops(cp0);
+  register_tos_misc_ops(cp0);
+  register_tos_currency_address_ops(cp0);
+  register_tos_message_ops(cp0);
 }
 
 namespace util {

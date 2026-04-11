@@ -154,7 +154,7 @@ enum class AnnotationKind {
 };
 
 enum class MatchArmKind {    // for `match` expression, each of arms `pattern => body` can be:
-  const_expression,          // `-1 => body` / `SOME_CONST + ton("0.05") => body` (any expr at parsing, resulting in const)
+  const_expression,          // `-1 => body` / `SOME_CONST + tos("0.05") => body` (any expr at parsing, resulting in const)
   exact_type,                // `int => body` / `User | slice => body`
   else_branch,               // `else => body`
 };

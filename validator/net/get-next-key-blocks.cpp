@@ -134,19 +134,19 @@ void GetNextKeyBlocks::got_node_to_download(adnl::AdnlNodeIdShort node) {
       td::actor::send_closure(SelfId, &GetNextKeyBlocks::got_result, R.move_as_ok());
     }
   });
-  auto query = create_serialize_tl_object<tos_api::tonNode_getNextKeyBlockIds>(create_tl_block_id(block_id_), limit_);
+  auto query = create_serialize_tl_object<tos_api::tosNode_getNextKeyBlockIds>(create_tl_block_id(block_id_), limit_);
   if (client_.empty()) {
     td::actor::send_closure(overlays_, &overlay::Overlays::send_query, download_from_, local_id_, overlay_id_,
                             "get_prepare", std::move(P), td::Timestamp::in(1.0), std::move(query));
   } else {
     td::actor::send_closure(client_, &adnl::AdnlExtClient::send_query, "get_prepare",
-                            create_serialize_tl_object_suffix<tos_api::tonNode_query>(std::move(query)),
+                            create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(query)),
                             td::Timestamp::in(1.0), std::move(P));
   }
 }
 
 void GetNextKeyBlocks::got_result(td::BufferSlice data) {
-  auto F = fetch_tl_object<tos_api::tonNode_keyBlocks>(std::move(data), true);
+  auto F = fetch_tl_object<tos_api::tosNode_keyBlocks>(std::move(data), true);
   if (F.is_error()) {
     abort_query(F.move_as_error_prefix("received bad answer: "));
     return;

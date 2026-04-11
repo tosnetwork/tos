@@ -20,7 +20,7 @@
 #include <set>
 
 #include "adnl/adnl-ext-client.h"
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "common/bitstring.h"
 #include "common/refint.h"
 #include "crypto/block/block.h"
@@ -1600,7 +1600,7 @@ class StorageDaemonCli : public td::actor::Actor {
                  td::TerminalIO::out() << "Total size: " << size_to_str(info->contracts_total_size_) << " / "
                                        << size_to_str(info->config_->max_total_size_) << "\n";
                  if (with_balances) {
-                   td::TerminalIO::out() << "Main contract balance: " << coins_to_str(info->balance_) << " TON\n";
+                   td::TerminalIO::out() << "Main contract balance: " << coins_to_str(info->balance_) << " TOS\n";
                  }
                  if (with_contracts) {
                    td::TerminalIO::out() << "Storage contracts: " << info->contracts_.size() << "\n";
@@ -1711,7 +1711,7 @@ class StorageDaemonCli : public td::actor::Actor {
                      continue;
                    }
                    td::TerminalIO::out() << "Withdrawing from " << contract->address_ << " (" << coins_to_str(remaining)
-                                         << " TON)\n";
+                                         << " TOS)\n";
                    addresses.push_back(contract->address_);
                  }
                  if (addresses.empty()) {

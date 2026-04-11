@@ -23,9 +23,9 @@ int SEND_MODE_PAY_FEE_SEPARATELY() asm "1 PUSHINT"; ;; means that the sender wan
 int SEND_MODE_IGNORE_ERRORS() asm "2 PUSHINT"; ;; means that any errors arising while processing this message during the action phase should be ignored
 int SEND_MODE_REMAINING_AMOUNT() asm "64 PUSHINT"; ;; is used for messages that carry all the remaining value of the inbound message in addition to the value initially indicated in the new message
 int ONE_TON() asm "1000000000 PUSHINT";
-int MIN_TONS_FOR_STORAGE() asm "10000000000 PUSHINT"; ;; 10 TON
+int MIN_TONS_FOR_STORAGE() asm "10000000000 PUSHINT"; ;; 10 TOS
 int DEPOSIT_PROCESSING_FEE() asm "1000000000 PUSHINT"; ;; 1 TOS
-int MIN_STAKE_TO_SEND() asm "500000000000 PUSHINT"; ;; 500 TON
+int MIN_STAKE_TO_SEND() asm "500000000000 PUSHINT"; ;; 500 TOS
 int VOTES_LIFETIME() asm "2592000 PUSHINT"; ;; 30 days
 
 int binary_log_ceil(int x) asm "UBITSIZE";
@@ -86,7 +86,7 @@ slice elector_address() inline_ref {
 int max_recommended_punishment_for_validator_misbehaviour(int stake) inline_ref {
     cell cp = config_param(40);
     if (cell_null?(cp)) {
-        return 101000000000; ;; 101 TON - https://github.com/tosnetwork/tos/blob/b38d227a469666d83ac535ad2eea80cb49d911b8/lite-client/lite-client.cpp#L3678
+        return 101000000000; ;; 101 TOS - https://github.com/tosnetwork/tos/blob/b38d227a469666d83ac535ad2eea80cb49d911b8/lite-client/lite-client.cpp#L3678
     }
 
     slice cs = cp.begin_parse();

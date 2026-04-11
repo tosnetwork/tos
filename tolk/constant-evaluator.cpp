@@ -44,7 +44,7 @@ static thread_local std::unordered_map<GlobalConstPtr, ConstValExpression> compu
 
 // parse address like "EQCRDM9h4k3UJdOePPuyX40mCgA4vxge5Dc5vjBR8djbEKC5"
 // based on unpack_std_smc_addr() from block.cpp
-// (which is not included to avoid linking with ton_crypto)
+// (which is not included to avoid linking with tos_crypto)
 static bool parse_friendly_address(const char packed[48], tos::WorkchainId& workchain, tos::StdSmcAddress& addr) {
   unsigned char buffer[36];
   if (!td::buff_base64_decode(td::MutableSlice{buffer, 36}, td::Slice{packed, 48}, true)) {
@@ -61,7 +61,7 @@ static bool parse_friendly_address(const char packed[48], tos::WorkchainId& work
 
 // parse address like "0:527964d55cfa6eb731f4bfc07e9d025098097ef8505519e853986279bd8400d8"
 // based on StdAddress::parse_addr() from block.cpp
-// (which is not included to avoid linking with ton_crypto)
+// (which is not included to avoid linking with tos_crypto)
 static bool parse_raw_address(std::string_view acc_string, int& workchain, tos::StdSmcAddress& addr) {
   size_t pos = acc_string.find(':');
   if (pos == std::string::npos) {   // workchain (before a colon) is mandatory
@@ -116,7 +116,7 @@ static void parse_any_std_address(std::string_view str, SrcRange range, unsigned
   td::bitstring::bits_memcpy(*data, 3 + 8, addr.bits().ptr, 0, tos::StdSmcAddress::size());
 }
 
-// internal helper: for `ton("0.05")`, parse string literal "0.05" to 50000000
+// internal helper: for `tos("0.05")`, parse string literal "0.05" to 50000000
 static td::RefInt256 parse_nanotons_as_floating_string(SrcRange range, std::string_view str) {
   bool is_negative = false;
   size_t i = 0;
@@ -230,7 +230,7 @@ static bool extract_string_literal_from_v(AnyExprV v, std::string& out) {
   return false;
 }
 
-// given `ton("0.05")` evaluate it to 50000000
+// given `tos("0.05")` evaluate it to 50000000
 // given `stringCrc32("some_str")` or `"some_str".crc32()` evaluate it
 // etc.
 static ConstValExpression parse_vertex_call_to_compile_time_function(V<ast_function_call> v, std::string_view f_name) {
@@ -320,13 +320,13 @@ static ConstValExpression parse_vertex_call_to_compile_time_function(V<ast_funct
 
   std::string str;
   if (!extract_string_literal_from_v(v_arg, str)) {
-    // ton(SOME_CONST) is not supported
-    // ton(0.05) is not supported (it can't be represented in AST even)
+    // tos(SOME_CONST) is not supported
+    // tos(0.05) is not supported (it can't be represented in AST even)
     // stringCrc32(SOME_CONST) / stringCrc32(some_var) also, it's compile-time literal-only
-    err_const_string_required(f_name, f_name == "ton" ? "0.05" : "some_str").fire(v);
+    err_const_string_required(f_name, f_name == "tos" ? "0.05" : "some_str").fire(v);
   }
 
-  if (f_name == "ton") {
+  if (f_name == "tos") {
     return create_const_cast(   // insert "50000000 as coins"
       ConstValInt{parse_nanotons_as_floating_string(v_arg->range, str)},
       TypeDataCoins::create()
@@ -479,7 +479,7 @@ class ConstExpressionEvaluator {
     return create_const_cast(std::move(val), cast_to);
   }
 
-  // `ton("0.05")` and other compile-time functions
+  // `tos("0.05")` and other compile-time functions
   static ConstValExpression handle_function_call(V<ast_function_call> v) {
     FunctionPtr fun_ref = v->fun_maybe;
     if (!fun_ref || !fun_ref->is_compile_time_const_val()) {
@@ -620,7 +620,7 @@ ConstValExpression eval_and_cache_const_init_val(GlobalConstPtr const_ref) {
   ConstValExpression v = ConstExpressionEvaluator::eval_any_v_or_fire(const_ref->init_value);
   // for `const A: coins = 10` or `const A: lisp_list<int> = []` insert a cast for correctness
   if (TypePtr cast_to = const_ref->declared_type) {
-    // but don't insert for obvious `const A: coins = ton("1")` or `const A: int = 1`
+    // but don't insert for obvious `const A: coins = tos("1")` or `const A: int = 1`
     const ConstValCastToType* already_cast = std::get_if<ConstValCastToType>(&v);
     const ConstValInt* already_int = std::get_if<ConstValInt>(&v);
     bool insert_cast = already_cast ? !already_cast->cast_to->equal_to(cast_to) : already_int ? cast_to != TypeDataInt::create() : true;
@@ -669,7 +669,7 @@ std::vector<td::RefInt256> calculate_enum_members_with_values(EnumDefPtr enum_re
   return values;
 }
 
-// for any constant expression: `1 + 2` / `ton("0.05")` / `SOME_STR.crc32()`, consteval them;
+// for any constant expression: `1 + 2` / `tos("0.05")` / `SOME_STR.crc32()`, consteval them;
 // a non-constant expression: `a + b` / `foo()`, will fire (and can be wrapped by try/catch)
 ConstValExpression eval_expression_if_const_or_fire(AnyExprV v) {
   return ConstExpressionEvaluator::eval_any_v_or_fire(v);

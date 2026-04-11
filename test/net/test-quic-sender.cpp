@@ -546,7 +546,7 @@ class RawQuicTestRunner final : public td::actor::Actor {
 
     auto callback = std::make_unique<RawQuicCallback>(state);
     auto* callback_ptr = callback.get();
-    auto server_result = tos::quic::QuicServer::create(port, clone_quic_key(key), std::move(callback), 4096, "ton",
+    auto server_result = tos::quic::QuicServer::create(port, clone_quic_key(key), std::move(callback), 4096, "tos",
                                                        "127.0.0.1", options);
     ASSERT_TRUE(server_result.is_ok());
     auto server = server_result.move_as_ok();
@@ -560,7 +560,7 @@ class RawQuicTestRunner final : public td::actor::Actor {
       RawQuicEndpoint& client, RawQuicEndpoint& server) {
     auto outbound_cid_result =
         co_await td::actor::ask(client.server, &tos::quic::QuicServer::connect, td::Slice("127.0.0.1"), server.port,
-                                clone_quic_key(client.key), td::Slice("ton"))
+                                clone_quic_key(client.key), td::Slice("tos"))
             .wrap();
     LOG_CHECK(outbound_cid_result.is_ok()) << "connect failed: " << outbound_cid_result.error();
     auto outbound_cid = outbound_cid_result.move_as_ok();

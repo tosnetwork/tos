@@ -15,7 +15,7 @@
     along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "auto/tl/ton_api_json.h"
+#include "auto/tl/tos_api_json.h"
 #include "block/block-auto.h"
 #include "common/delay.h"
 #include "td/actor/MultiPromise.h"
