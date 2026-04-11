@@ -158,7 +158,7 @@ Masterchain swap
  *
  */
 // version capabilities (aligned with production: version=13, capabilities=494)
-13 capCreateStats capBounceMsgBody or capReportVersion or capSplitMergeTransactions or capShortDequeue or capStoreOutMsgQueueSize or capMsgMetadata or capDeferMessages or config.version!
+13 capCreateStats capBounceMsgBody or capReportVersion or capShortDequeue or capStoreOutMsgQueueSize or capMsgMetadata or capDeferMessages or config.version!
 // ConfigParam 19: global_id (must match setglobalid above)
 <b globalid@ 32 i, b> 19 config!
 // max-validators max-main-validators min-validators
