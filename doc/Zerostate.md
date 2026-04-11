@@ -264,6 +264,40 @@ To create a custom network:
 
 **Important:** Once the network starts producing blocks, the zero state is immutable. Config parameters can only be changed through the on-chain governance mechanism after genesis.
 
+## TON Mainnet Zero State Reference
+
+The TON mainnet (global_id = -239) zero state is identified by:
+
+```
+root_hash: F6OpKZKqvqeFp6CQmFomXNMfMj2EnaUSOXN+Mh+wVWk=
+file_hash: XplPz01CXAps5qeSWUtxcyBfdAo5zVb1N979KLSKD24=
+```
+
+TON mainnet launched on November 15, 2019 (block 1 gen_utime = 1573822385). The following table shows the genesis config values used by TON, which serve as the recommended baseline for TOS mainnet:
+
+| Fift call | ConfigParam | TON Mainnet Value | TOS Recommendation |
+|-----------|-------------|-------------------|-------------------|
+| `setglobalid` | 19 | -239 | **1** (mainnet) |
+| `config.version!` | 8 | version=13, capabilities=494 | same |
+| `config.validator_num!` | 16 | max=400, main=100, min=75 | max=400, main=100, min=13 |
+| `config.validator_stake_limits!` | 17 | min=300K, max=10M, total=75M, factor=3x | min=10K, max=10M, total=500K, factor=3x |
+| `config.election_params!` | 15 | 65536 / 32768 / 8192 / 32768 | same |
+| `config.storage_prices!` | 18 | 1 / 500 / 1000 / 500000 | same |
+| `config.gas_prices!` | 21 | gas_price=26M, limit=1M, block=10M | same |
+| `config.mc_gas_prices!` | 20 | gas_price=655M, limit=1M, block=2.5M | same |
+| `config.fwd_prices!` | 25 | lump=400K, bit=26M, cell=2.6G | same |
+| `config.mc_fwd_prices!` | 24 | lump=10M, bit=655M, cell=65G | same |
+| `config.catchain_params!` | 28 | mc=250, shard=250, val=1000, num=7 | same |
+| `config.consensus_params!` | 29 | cand=3, timeout=16s, blocks=2MB | same |
+| `config.block_create_fees!` | 14 | mc=1.7 TON, base=1.0 TON | mc=1.7 TOS, base=1.0 TOS |
+
+**Key differences for TOS:**
+- **global_id**: TOS uses positive values (1=mainnet, 2=testnet, 3=dev) vs TON's negative values
+- **Validator thresholds**: TOS starts with lower min_validators (13) and min_stake (10K TOS) to enable bootstrapping with fewer validators
+- **Wallet signatures**: TOS wallet contracts include global_id in signatures ([anti-replay protection](../crypto/smartcont/wallet3-code.fc)), a security feature not present in TON
+
+All fee and gas parameters are recommended to match TON mainnet initially. They can be adjusted through on-chain governance after the network is running.
+
 ## Related Docs
 
 - [ConfigParam.md](ConfigParam.md) — Complete parameter reference
