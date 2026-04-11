@@ -1,8 +1,12 @@
-# Actor Model in TOS
+# Actor Model in TOS — Protocol Proposal (RFC)
 
-TOS uses the Actor Model as a first-principles design choice.
+**Status:** Draft proposal. Not an incremental patch — this is a hard-fork-level protocol redesign.
 
-## Core Idea
+**Scope:** This document describes a long-term direction for TOS's execution model.
+Implementation requires protocol-level changes to block format, state serialization,
+message routing, validation logic, and client tooling.
+
+## 1. Core Idea
 
 Each actor:
 
@@ -12,7 +16,7 @@ Each actor:
 
 This gives TOS a natural foundation for parallel execution, fault isolation, and modular system growth.
 
-## Why It Matters for the Node
+## 2. Why It Matters for the Node
 
 The C++ node already uses an actor-based runtime through `td::actor`, which means the system naturally maps to:
 
@@ -21,253 +25,59 @@ The C++ node already uses an actor-based runtime through `td::actor`, which mean
 - asynchronous scheduling
 - explicit ownership and lifecycle control
 
-## Why It Matters for the Chain
+## 3. Why It Matters for the Chain
 
 At the protocol level, the Actor Model supports:
 
 - high throughput through message-oriented execution
 - better separation between contracts and services
 - cleaner failure boundaries
-- a path toward parallel validation and execution
 
-## Practical Consequences
+## 4. Current Architecture (What We Have)
 
-- account and service interactions should be modeled as messages
-- blocking synchronous assumptions should be avoided
-- system services should expose explicit message contracts
-- operator tooling should assume asynchronous progress, not instant global state transitions
-
-## Design Direction
-
-TOS should continue to push toward:
-
-- more explicit actor boundaries in execution and validation
-- better queue-aware scheduling
-- improved parallelism where correctness boundaries are well defined
-
-## Related Docs
-
-- [README.md](../README.md)
-- [smc-guidelines.md](smc-guidelines.md)
-
-Two inviolable axioms:
-
-1. **Two execution units can run in parallel ⟺ their mutable state is completely disjoint**
-2. **Blockchain determinism ⟺ all validators agree on execution order and results**
-
-Conclusion:
-
-> To increase concurrency, an Account's data Cell must be split into multiple
-> independent state partitions, each with its own timeline, executing independently
-> and communicating via messages.
-
-### 2.1 Storage Model: Cell Retained Internally, KV API Exposed Externally
-
-Cell serves two roles simultaneously:
-
-| Role | Responsibility | Approach |
-|------|---------------|----------|
-| **Internal storage (Commitment)** | Merkle hash, state proofs, light client verification, consensus, deduplication | **Retain** — Cell's design is elegant, no replacement needed |
-| **Programming interface (Data Model)** | Contract developers directly manipulate Cell/Slice/Builder | **Encapsulate** — Hide behind KV Host API |
-
-Cell's problem is not its internal structure, but being exposed as a programming interface.
+One account = one execution unit:
 
 ```
-Current (problem): Developer ──direct manipulation──→ Cell/Slice/Builder  (manual bit widths, painful)
-Target (solution): Developer ──state_get/put──→ [Host API] ──internal ops──→ Cell  (transparent)
+Account (unique address)
+ +-- code: Cell         <- one contract
+ +-- data: Cell         <- one monolithic state tree
+ +-- balance: Coins
+ +-- last_trans_lt      <- one timeline -> forced serialization
 ```
 
-**Decision: Cell retained as internal storage structure, KV Host API as external programming interface.**
+All transactions for the same account are serialized because they share the
+same data Cell, balance, logical time, and storage state.
 
-This means:
-- Cell's Merkle proof capability fully preserved, no need to implement SMT from scratch
-- BOC encoding fully preserved, block/network/storage formats unchanged
-- Developers only see `state_get(key)` / `state_put(key, value)`
+Key code locations:
 
-Each Actor's KV state is internally stored using TOS's existing HashmapE (Cell-based dictionary).
-In C++ this corresponds to `vm::Dictionary` / `vm::AugmentedDictionary` (`crypto/vm/dict.h`).
+| Component | File | Lines |
+|-----------|------|-------|
+| Account struct | `crypto/block/transaction.h` | 262-321 |
+| Transaction execution | `validator/impl/collator.cpp` | 3431 (impl_create_ordinary_transaction) |
+| Collator state management | `validator/impl/collator.cpp` | 3395, 3743 |
+| Validation | `validator/impl/validate-query.cpp` | 7597 lines |
+| OutMsgQueue key | `crypto/block/output-queue-merger.h` | 30 |
 
-Host API is a thin wrapper:
+## 5. Proposed Architecture (Actor Model)
 
-```cpp
-// state_get: internally performs HashmapE lookup on the Actor's dictionary
-td::optional<td::BufferSlice> state_get(td::Slice key) {
-    auto key_hash = sha256(key);  // 256-bit key
-    auto result = actor_dict.lookup(key_hash, 256);
-    if (result.is_null()) return {};
-    return result->as_bytes();
-}
-
-// state_put: internally performs HashmapE set on the Actor's dictionary
-void state_put(td::Slice key, td::Slice value) {
-    auto key_hash = sha256(key);
-    vm::CellBuilder cb;
-    cb.store_bytes(value);
-    actor_dict.set(key_hash, 256, cb.as_cellslice_ref());
-    // Cell tree auto-updates → Merkle hash auto-updates
-}
-```
-
-Proof chain holds naturally (every layer is Cell, every layer has Merkle proof):
+### 5.1 Account Structure
 
 ```
-Block root (Cell)
-  → ShardState root (Cell)
-    → Account (Cell in ShardAccounts HashmapE)
-      → Actor data (Cell in Actor HashmapE)   ← new layer added here
-        → KV entry (Cell leaf in Actor HashmapE)
+Account (unique address)
+ +-- code: Cell             <- shared by all Actors
+ +-- actors: HashmapE       <- actor_id -> Actor state (Cell dict)
+ |    +-- actor_0: HashmapE <- independent KV state
+ |    +-- actor_1: HashmapE <- independent KV state
+ |    +-- ...
+ +-- actor_lt: HashmapE     <- actor_id -> independent logical time
+ +-- balance: Coins         <- SHARED — requires reservation model (see 5.4)
 ```
 
-## 3. Account Model vs Actor Model
+Each actor is identified by a two-level address:
+`workchain:account_id:actor_id`. The `actor_id` is
+deterministically derived: `actor_id = sha256(account_address || discriminator)`.
 
-| Dimension | Account Model (current) | Actor Model (target) |
-|-----------|------------------------|---------------------|
-| Minimum unit | Account (one address) | Actor (sub-entity under one address) |
-| State | One indivisible Cell tree | Each Actor has independent HashmapE (Cell internal, KV external) |
-| Timeline | One `last_trans_lt_` | Each Actor has independent lt |
-| Concurrency | N different addresses in parallel | N × M Actors in parallel (M = Actors per contract) |
-| Communication | Cross-Account async messages | Cross-Actor async messages (even within same Account) |
-| Internal storage | Cell tree | Cell tree (unchanged) |
-| Developer interface | Cell/Slice/Builder | state_get/put + actor_send() |
-
-## 4. Concrete Example: Token Contract
-
-### Current (one Account)
-
-```
-Token contract (one address)
-  data Cell = { total_supply, balances: HashMap<user, amount>, allowances: ... }
-
-  UserA transfer ─┐
-  UserB transfer ─┤→ All serial, because all modify the same balances HashMap
-  UserC transfer ─┘
-```
-
-### After transformation (multiple Actors)
-
-```
-Token Master Actor (address/0)
-  state = { total_supply, metadata }   ← internally a small HashmapE
-
-Token Balance Actor (address/hash(userA))
-  state = { balance: 100 }             ← internally a small HashmapE
-
-Token Balance Actor (address/hash(userB))
-  state = { balance: 200 }             ← internally a small HashmapE
-
-UserA transfer → Actor(address/hash(userA))  ─┐
-UserC query    → Actor(address/hash(userC))  ─┤ All parallel!
-UserB transfer → Actor(address/hash(userB))  ─┘
-```
-
-## 5. Three-Layer Transformation
-
-### 5.1 Layer 1: State Model — Introduce Sub-Actor Addressing
-
-**What changes**: `crypto/block/transaction.h` Account struct
-
-Address model extension:
-
-```
-Account Address (existing): workchain:account_id
-Actor Address (new):        workchain:account_id:actor_id
-```
-
-Core change — add Actor index to Account struct:
-
-```cpp
-// Current Account (crypto/block/transaction.h:262)
-struct Account {
-    int status;
-    tos::StdSmcAddress addr;
-    tos::LogicalTime last_trans_lt_;
-    block::CurrencyCollection balance;
-    Ref<vm::Cell> code, data, library;   // data = entire contract state
-    // ...
-};
-
-// After transformation
-struct Account {
-    int status;
-    tos::StdSmcAddress addr;
-    tos::LogicalTime last_trans_lt_;     // Account-level lt (retained)
-    block::CurrencyCollection balance;
-    Ref<vm::Cell> code, library;         // code retained (shared by all Actors)
-    vm::Dictionary actors;               // actor_id(256bit) → Actor data Cell
-    vm::Dictionary actor_lt;             // actor_id(256bit) → per-Actor lt(64bit)
-    // ...
-};
-```
-
-Each Actor's data is also a HashmapE (`vm::Dictionary`).
-
-State hierarchy (all Cell, all with Merkle proof):
-
-```
-ShardState root (Cell)
- └─ ShardAccounts: HashmapE
-      └─ Account (Cell)
-           ├─ code: Cell (contract code)
-           ├─ balance: CurrencyCollection
-           ├─ actors: HashmapE (Cell dictionary)
-           │    ├─ actor_0 data: HashmapE (Cell dictionary) ← accessed via Host API
-           │    ├─ actor_1 data: HashmapE (Cell dictionary) ← accessed via Host API
-           │    └─ ...
-           └─ actor_lt: HashmapE
-                ├─ actor_0 → lt: u64
-                └─ actor_1 → lt: u64
-```
-
-Light client proof chain (identical to existing Cell MerkleProof mechanism):
-
-```
-block_root → shard_state → account → actors → actor_data → key=value
-  (every step is a Cell Merkle proof, existing MerkleProof / check_account_proof all reusable)
-```
-
-### 5.2 Layer 2: Execution Model — Actor-Level Transactions
-
-**What changes**: `validator/impl/collator.cpp` `impl_create_ordinary_transaction`
-
-Current signature (`collator-impl.h:112`):
-
-```cpp
-static td::Result<std::unique_ptr<block::transaction::Transaction>>
-impl_create_ordinary_transaction(
-    Ref<vm::Cell> msg_root,
-    block::Account* acc,           // ← mutable pointer to entire Account
-    UnixTime utime, LogicalTime lt,
-    block::StoragePhaseConfig* storage_phase_cfg,
-    block::ComputePhaseConfig* compute_phase_cfg,
-    block::ActionPhaseConfig* action_phase_cfg,
-    block::SerializeConfig* serialize_cfg,
-    bool external, LogicalTime after_lt,
-    CollationStats* stats = nullptr);
-```
-
-After transformation:
-
-```cpp
-static td::Result<std::unique_ptr<block::transaction::Transaction>>
-impl_create_ordinary_transaction(
-    Ref<vm::Cell> msg_root,
-    const block::Account* acc,     // ← read-only (reads code and balance)
-    vm::Dictionary* actor_state,   // ← locks only target Actor's HashmapE
-    LogicalTime* actor_lt,         // ← Actor-level timeline
-    UnixTime utime, LogicalTime lt,
-    // ... rest unchanged
-    );
-```
-
-TVM-level changes:
-
-- **C4 register**: Instead of loading entire Account `data` Cell, load single Actor's
-  HashmapE root Cell. TVM's existing DICTGET/DICTSET instructions work directly.
-- **C7 (SmartContractInfo)**: Add `actor_id` field
-- **code**: All Actors share the same code Cell
-- **Gas / Action / Bounce**: Unchanged
-
-New Host API instructions (as TVM opcodes):
+### 5.2 New TVM Instructions
 
 ```
 STATEGET   key_hash:uint256 → value:slice       // wraps Dictionary::lookup
@@ -276,476 +86,304 @@ STATEDEL   key_hash:uint256 → bool               // wraps Dictionary::delete_k
 ACTORSEND  actor_id:uint256 body:cell → ()        // sends message to another Actor
 ```
 
-These instructions internally perform lookup/set on the HashmapE in C4 — no new data structures introduced.
-Implementation location: `crypto/vm/tonops.cpp` (TVM blockchain-specific instruction implementation).
+These instructions internally perform lookup/set on the HashmapE in C4.
 
-**Contracts can be written in three ways**:
+### 5.3 What This Changes at Protocol Level
 
-1. **Solidity-like** (primary target, for the wider developer community): Familiar syntax,
-   compiles to TVM bytecode using STATEGET/STATESET/ACTORSEND opcodes
-2. **FunC/Tolk** (for developers familiar with TOS): Use DICTGET/DICTSET on C4 directly,
-   or use the new simplified STATEGET/STATESET
-3. **Native C++** (built-in/system contracts only): Ships with the node binary, maximum performance
+**This is a hard fork.** The following protocol components must be upgraded together:
 
-### 5.3 Layer 3: Scheduling Model — Each On-Chain Actor IS a td::actor::Actor
+| Component | Change Required |
+|-----------|----------------|
+| Account state layout | Add `actors` and `actor_lt` HashmapE fields |
+| Account serialization (TL-B) | New schema for actor sub-structure |
+| Block format | ActorAddress in transaction records |
+| OutMsgQueue key | Extended with actor_id (see 5.6) |
+| Transaction execution | Actor-level state isolation |
+| Validation logic | Actor-level proof and consistency checks |
+| Merkle proofs | Extended proof path: block → shard → account → **actor** → key |
+| lite-client | Must understand ActorAddress and new proof format |
+| tonlib / SDKs | Must support ActorAddress parsing |
+| Block explorers | Must display actor-level transactions |
 
-**What changes**: `validator/impl/collator.cpp`
+The Cell/BOC encoding format itself is unchanged (Cells still work the same way),
+but the semantic structure stored in those Cells changes.
 
-Core idea: **Each on-chain Actor directly IS a `td::actor::Actor`, receiving messages,
-executing, and returning results on its own.** No coordinator + worker pattern needed —
-td::actor itself IS an Actor model, no one needs to "assign tasks".
+### 5.4 Shared Balance Problem (Open Design Issue)
 
-Current Collator executes all transactions synchronously:
+**This is the hardest unsolved problem in this proposal.**
 
-```cpp
-// Current — collator.cpp:3716 — synchronous serial
-auto trans_root = create_ordinary_transaction(msg.msg, msg.metadata, msg.lt, ...);
-// blocks until complete, then processes result in-place
+Current `impl_create_ordinary_transaction` (collator.cpp:3395-3743) modifies
+during a single transaction execution:
+
+- `account.balance` (gas deduction, value transfer, storage fees)
+- `account.last_trans_lt` / `last_trans_end_lt` / `last_trans_hash`
+- `account.storage_stat` (storage fee accounting)
+- Block-level accumulators: `last_proc_int_msg_`, block limits, `register_new_msgs()`, `update_max_lt()`, statistics
+
+If two Actors under the same Account execute in parallel, they will **concurrently
+modify the shared balance**, producing a non-deterministic result. This breaks consensus.
+
+**Proposed solution (needs detailed design):**
+
+Two-phase execution model:
+
+1. **Phase 1 — Speculative parallel execution:** Each Actor transaction executes
+   independently with a **reserved balance allocation**. The reservation is computed
+   before execution (e.g., message value + estimated gas). Actors cannot spend
+   more than their reservation.
+
+2. **Phase 2 — Deterministic merge/commit:** After all parallel executions complete,
+   a single-threaded merge step:
+   - Collects results in a deterministic order (by actor_id)
+   - Applies balance changes sequentially
+   - Assigns logical timestamps
+   - Updates block-level accumulators
+   - Rejects transactions that exceeded their reservation
+
+This two-phase model preserves determinism while allowing parallel execution
+of the compute-heavy phase.
+
+**Fields that are actor-local (can be parallel):**
+- Actor state (HashmapE)
+- Actor logical time
+- TVM compute phase
+
+**Fields that are account-global (must be sequential in merge phase):**
+- Balance
+- Storage fees
+- last_trans_lt / last_trans_hash
+- Outgoing message ordering
+- Block-level statistics
+
+### 5.5 Collator Changes
+
+The current collator executes transactions synchronously and updates global state
+after each one. This must change to support the two-phase model:
+
+```
+Current flow (serial):
+  for each message:
+    result = impl_create_ordinary_transaction(msg, account)
+    update_block_state(result)    // immediately modifies global state
+
+Proposed flow (parallel + merge):
+  // Phase 1: parallel speculative execution
+  for each message (can be parallel across actors):
+    reservation = compute_balance_reservation(msg)
+    result[actor_id] = impl_create_ordinary_transaction(msg, account_readonly, actor_state, reservation)
+
+  // Phase 2: deterministic merge (single-threaded)
+  sort results by (actor_id, actor_lt)
+  for each result in deterministic order:
+    if result.balance_used <= result.reservation:
+      apply_to_account(result)
+      update_block_state(result)
+    else:
+      reject_transaction(result)
 ```
 
-After transformation, each on-chain Actor is an independent td::actor::Actor:
+This is **not** a "40 lines of code change." It requires restructuring the core
+execution loop in collator.cpp (6707 lines) and the transaction creation in
+transaction.cpp (4325 lines).
 
-```cpp
-// Each on-chain Actor IS a td::actor::Actor — the minimum execution unit
-class OnChainActor : public td::actor::Actor {
-    const block::Account* acc_;      // read-only: shared contract code and balance
-    vm::Dictionary actor_state_;     // exclusive: this Actor's HashmapE
-    LogicalTime actor_lt_;           // exclusive: this Actor's timeline
-
-    void execute(Ref<vm::Cell> msg, td::Promise<Ref<vm::Cell>> promise) {
-        auto result = Collator::impl_create_ordinary_transaction(
-            msg, acc_, &actor_state_, &actor_lt_, ...);
-        promise.set_result(std::move(result));
-    }
-};
-```
-
-Collator's role is unchanged (select messages, enforce block limits, assemble block).
-The only change is transaction execution goes from synchronous call to sending a message to the Actor:
-
-```cpp
-// Collator's role is unchanged, only the execution method changes
-void Collator::process_message(msg) {
-    auto actor_addr = get_actor_address(msg);
-    auto& actor = get_or_create_actor(actor_addr);
-
-    // Send message directly to Actor (not "assigning a task")
-    td::actor::send_closure(actor, &OnChainActor::execute, msg.msg,
-        [this](auto result) { collect_transaction_result(result); });
-}
-```
-
-**Parallelism comes from td::actor Scheduler's natural capability**:
-- Different Actors' messages are scheduled in parallel across the thread pool
-- Same Actor's messages are serialized by ActorLocker
-- No additional concurrency control needed
-
-Message routing also changes:
+### 5.6 OutMsgQueue Key Change
 
 ```
-Current: OutMsgQueue key = workchain(32) | addr_prefix(64) | msg_hash(256)
-After:   OutMsgQueue key = workchain(32) | addr_prefix(64) | actor_id(64) | msg_hash(192)
+Current: workchain(32) | addr_prefix(64) | msg_hash(256)    = 352 bits
+Proposed: workchain(32) | addr_prefix(64) | actor_id(64) | msg_hash(256) = 416 bits
 ```
+
+The msg_hash is kept at full 256 bits (not truncated to 192 as previously proposed)
+to avoid introducing collision risk. The actor_id is 64 bits (not the full 256-bit
+hash) because it is derived from the account address + discriminator and 64 bits
+provides sufficient uniqueness within a single account.
+
+This changes the key length constant in `output-queue-merger.h:30` and affects
+all queue sorting, merging, and routing logic.
+
+### 5.7 Execution Paths
+
+Two execution paths, sharing the same state interface (vm::Dictionary / HashmapE):
+
+| Path | For | Performance | Safety |
+|------|-----|-------------|--------|
+| Native C++ | Built-in/system actors | Fastest | Trusted (ships with node) |
+| TVM | User-deployed contracts | Medium | TVM sandbox |
 
 ## 6. Key Design Decisions
 
 ### 6.1 Actor Creation Method
 
-- Option A: Explicit in-contract creation — contract code calls `ACTORCREATE`
-- Option B: Address derivation — Actor address deterministically derived from `(account_addr, discriminator)`
-- **Recommended B** — Deterministic, predictable, no on-chain registry needed
+- **Recommended: Address derivation** — Actor address deterministically derived from
+  `(account_addr, discriminator)`. Predictable, no on-chain registry needed.
 
 ### 6.2 Inter-Actor Balance Model
 
-- Option A: Each Actor has independent balance
-- Option B: Shared Account balance, Actors only have state, no balance
-- **Recommended B to start** — Simpler, balance management stays at Account level
+- **Account-level shared balance with reservation model** (see 5.4)
+- Each Actor does not have its own balance
+- Balance reservations computed before parallel execution
+- Final balance changes applied in deterministic merge phase
 
-### 6.3 Execution Engine (Incremental Strategy)
+### 6.3 Sharding Strategy
 
-**Two execution paths, sharing the same state interface (vm::Dictionary / HashmapE):**
+- All Actors of the same Account stay in the same shard (Phase 1)
+- Cross-shard Actor communication deferred to future work
 
-| Path | For | Performance | Safety | Available |
-|------|-----|-------------|--------|-----------|
-| **Native C++** | Built-in/system contracts (token standards, governance, etc.) | Fastest | Trusted — ships with node binary | Phase 1 |
-| **TVM** | User-deployed contracts (FunC/Tolk/Solidity-like) | Medium | TVM sandbox | Phase 1 |
+### 6.4 Storage Model
 
-Both paths operate on the same `vm::Dictionary` (HashmapE). Built-in Actors and
-user-deployed Actors can exchange messages freely because state format and message
-format are identical.
-
-**Native execution for built-in contracts** leverages the existing `precompiled_contracts_list`
-mechanism in the codebase. Currently it only skips TVM with fixed gas accounting;
-we extend it to dispatch to native C++ Actor implementations:
-
-```cpp
-class BuiltinActorRegistry {
-    std::map<uint256, std::unique_ptr<BuiltinActor>> registry_;
-    bool has(uint256 code_hash) const;
-    td::Result<ExecutionResult> execute(
-        uint256 code_hash,
-        vm::Dictionary* actor_state,   // same HashmapE API as TVM path
-        Ref<vm::Cell> msg);
-};
-```
-
-Collator selects execution path by code hash:
-
-```cpp
-void OnChainActor::execute(Ref<vm::Cell> msg, td::Promise<Ref<vm::Cell>> promise) {
-    auto code_hash = acc_->code->get_hash();
-    if (builtin_registry.has(code_hash)) {
-        // Path 1: built-in → native C++ (fastest)
-        auto result = builtin_registry.execute(code_hash, &actor_state_, msg);
-        promise.set_result(std::move(result));
-    } else {
-        // Path 2: user contract (FunC/Tolk/Solidity-like) → TVM sandbox
-        auto result = impl_create_ordinary_transaction(msg, acc_, &actor_state_, &actor_lt_, ...);
-        promise.set_result(std::move(result));
-    }
-}
-```
-
-**Why native built-in contracts matter:**
-- System contracts (token standards, DEX primitives, governance) are the hottest contracts
-- Native execution removes TVM overhead for the most critical path
-- Built-in Actors serve as reference implementations for user-deployed contracts
-- Development order: write built-in Token Actors in native C++ first to validate the entire
-  Actor architecture, then open TVM (FunC/Tolk/Solidity-like) to users
-
-**User-deployed contracts cannot run natively** because:
-- No sandboxing — native code can read process memory, steal keys, crash the node
-- No determinism guarantee — different platforms (x86/ARM), compilers, optimization levels
-  may produce different results, breaking validator consensus
-- No portability — x86 binary won't run on ARM validators
-
-Incremental timeline:
-1. **Short-term**: Native C++ built-in Actors + TVM with STATEGET/STATESET/ACTORSEND opcodes
-2. **Mid-term**: Solidity-like language compiling to TVM bytecode — familiar syntax for
-   the wider smart contract developer community
-3. **Long-term**: Evolve the Solidity-like language based on ecosystem feedback
-
-### 6.4 Shard Boundaries
-
-- **Recommended A to start**: All Actors of the same Account stay in the same shard
-- Concurrency improvement is already significant (parallelism within one Account goes from 1 to Actor count)
-
-### 6.5 Storage Model (Decided)
-
-- **Cell retained internally, KV Host API exposed externally**
-
-Rationale:
-1. Cell Merkle proof capability fully preserved, no SMT needed
-2. HashmapE / vm::Dictionary already has complete API, ready to use
-3. BOC / block format / network protocol / storage layer all unchanged
-4. MerkleProof code only needs extension, not rewrite
-5. FunC/Tolk fully compatible
-
-### 6.6 Serialization Format
-
-- **BOC retained unchanged**
-
-### 6.7 Implementation Language (Decided)
-
-- **C++ (based on tos-c)**
-
-Rationale:
-1. Unchanged parts (consensus/network/storage/TVM/validation) have 6 years of production validation
-2. td::actor framework naturally supports per-Actor splitting
-3. FunC/Tolk compiler, lite-client, tonlib all included
-4. Collator per-Actor split costs ~1 extra week, trading for 6 years of code maturity
-
-### 6.8 Smart Contract Language (Decided: Solidity-like as primary target)
-
-**Goal: developers write smart contracts in familiar Solidity-like syntax, compiling to TVM bytecode.**
-
-1. **Short-term**: Extend Tolk with Actor keywords (`stateGet`/`stateSet`/`actorSend`) as a
-   stepping stone — validates the new TVM opcodes work correctly (~2 weeks)
-2. **Primary target**: Solidity-like frontend compiler (Solidity syntax → Actor semantics → TVM bytecode) (~4-6 weeks)
-   - `actor` keyword instead of `contract`
-   - `mapping` maps to STATEGET/STATESET
-   - `uint64`/`uint128`/`uint256` standard types
-   - `other.send()` for async message passing (replaces synchronous `other.call()`)
-   - `require()` / `revert()` for error handling
-   - No reentrancy by design (messages are queued)
-   - Compile target: TVM bytecode (no WASM dependency)
-3. **FunC/Tolk remain supported** — existing developers can continue using them with
-   the new STATEGET/STATESET/ACTORSEND opcodes directly
-
-Example:
-
-```solidity
-actor TokenBalance {
-    uint64 balance;
-
-    function credit(uint64 amount) external {
-        balance += amount;
-    }
-
-    function transfer(uint256 recipient, uint64 amount) external {
-        require(balance >= amount, "insufficient");
-        balance -= amount;
-        recipient.send("credit", abi.encode(amount));
-    }
-}
-```
-
-This compiles to TVM bytecode using STATEGET/STATESET/ACTORSEND — no WASM runtime needed.
+- Cell retained internally, KV Host API exposed externally
+- HashmapE / vm::Dictionary already has complete API
+- Merkle proof path extended (not replaced)
 
 ## 7. Effort Estimate
 
-Line-level estimates based on actual call site analysis:
+**This is a hard-fork-level protocol redesign, not a local refactor.**
 
-| Layer | Specific Changes | Files Involved | Lines Changed | Effort |
-|-------|-----------------|----------------|---------------|--------|
-| Account struct | Add `actors`/`actor_lt` vm::Dictionary + serialization | `crypto/block/transaction.h` (484 lines), `transaction.cpp` (4325 lines), `block.cpp` | ~200 lines | 1-2 weeks |
-| Execution model | `impl_create_ordinary_transaction` signature + C4/C7 Actor-level | `validator/impl/collator.cpp:3431` | ~40 lines | 3-5 days |
-| OnChainActor + async | New `OnChainActor` class + 5 sync call sites → `send_closure` | `validator/impl/collator.cpp` (3716, 4083, 4312, 3565, 2381) | ~200 lines | 1-1.5 weeks |
-| TVM new instructions | STATEGET/STATESET/STATEDEL/ACTORSEND — four opcodes | `crypto/vm/tonops.cpp` (2565 lines) | ~150 lines | 3-5 days |
-| Message routing | OutMsgQueue key extension with actor_id | `crypto/block/output-queue-merger.*` (323 lines) | ~180 lines | 1-1.5 weeks |
-| Validation logic | Account/transaction/OutMsg validation adapted for Actor sub-structure | `validator/impl/validate-query.cpp` (7597 lines) | ~200 lines | 1-2 weeks |
-| Built-in Actor registry | Extend precompiled mechanism + BuiltinActorRegistry | `validator/impl/collator.cpp`, new header | ~100 lines | 3-5 days |
-| Built-in Token Actors | Native C++ Token Master/Balance/Allowance (reference Tako examples) | New source files | ~300 lines | 1 week |
-| Solidity-like compiler | Solidity syntax → Actor semantics → TVM bytecode | New compiler project | ~3000-5000 lines | 4-6 weeks |
+| Layer | Work | Complexity | Effort |
+|-------|------|-----------|--------|
+| Account struct + serialization | New TL-B schema, state migration | High | 3-4 weeks |
+| Two-phase execution model | Balance reservation, deterministic merge/commit | **Very High** | 4-6 weeks |
+| Collator restructuring | Serial→parallel dispatch, result collection ordering | High | 3-4 weeks |
+| TVM new instructions | 4 opcodes (STATEGET/STATESET/STATEDEL/ACTORSEND) | Medium | 1 week |
+| Message routing | OutMsgQueue key extension, queue merge logic | Medium | 2 weeks |
+| Validation logic | Actor-level proof, consistency checks | High | 3-4 weeks |
+| Proof/lite-client upgrade | Extended Merkle proof path, new query types | Medium | 2-3 weeks |
+| Built-in Token Actors | Native C++ Token Master/Balance/Allowance | Medium | 2 weeks |
+| Tola compiler | Solidity-like syntax → Actor semantics → TVM bytecode | High | 6-8 weeks |
+| Testing + integration | End-to-end validation, migration testing | High | 4-6 weeks |
 
-**Total: approximately 10-16 weeks for one person**, split into two deliverables:
-- **Actor infrastructure (Phases 1-3)**: ~6-10 weeks, ~1400 lines of node changes
-- **Solidity-like compiler (Phase 4)**: ~4-6 weeks, ~3000-5000 lines — independent project, can be parallelized
+**Total: approximately 6-9 months for a small team (2-3 engineers).**
 
-Why the effort is small:
-- Cell/BOC/block format all unchanged → serialization layer mostly unaffected
-- Each on-chain Actor directly IS a `td::actor::Actor` → no additional scheduling framework needed
-- Only 5 synchronous call sites in Collator need async conversion → not a full rewrite
-- TVM new instructions are just wrappers around existing `vm::Dictionary` API → no new concepts
-- Most of validate-query's 7597 lines are unrelated to Actor changes → only Account-structure-related parts change
-- Built-in Actor registry extends the existing `precompiled_contracts_list` mechanism → framework already exists
-- Built-in Token Actors closely follow Tako's proven examples (`../old_rtos/crates/tosnetwork/tako/src/builtin/application/token/`)
+The hardest parts are the deterministic commit model and collator restructuring.
+The TVM opcodes and Tola compiler are comparatively straightforward.
 
 ## 8. What Stays, What Changes, What's New
 
-### Unchanged
+### Unchanged (internal implementation)
 
-- **Cell data structure** — retained internally, all Merkle proof capability intact
-- **BOC encoding** — block/network/storage serialization format unchanged
-- **Block format** — Block/Transaction/Message Cell encoding unchanged
-- **MerkleProof** — existing `check_proof()` etc. reusable
-- **Network protocol** — ADNL/RLDP/DHT/QUIC transport unchanged
-- **Consensus layer** — Catchain/Simplex unaffected
-- **Sharding architecture** — address-prefix-based sharding unchanged
-- **td::actor framework** — continues in use, OnChainActor is a new Actor type
-- **Scheduling semantics** — multi-phase dispatch queue, fairness, backpressure
-- **Execution phases** — storage → credit → compute → action → bounce
-- **FunC/Tolk** — existing contract languages continue working
-- **lite-client / tonlib** — client tools continue working
-- **Storage layer** — CellDB / RocksDB unchanged
+- Cell data structure encoding
+- BOC serialization format
+- Consensus protocol (Catchain/Simplex)
+- Network transport (ADNL/RLDP/DHT/QUIC)
+- Sharding mechanism (address-prefix-based)
+- Storage engine (CellDB/RocksDB)
+- td::actor runtime framework
 
-### Changed
+### Changed (protocol-level, requires hard fork)
 
-| Before | After | Reason |
-|--------|-------|--------|
-| Account = minimum execution unit | Actor = minimum execution unit | Increase concurrency |
-| One Account, one data Cell | One Account, multiple Actors (each with independent HashmapE) | State isolation |
-| One Account, one lt timeline | Each Actor has independent lt | Enable parallelism |
-| Collator executes all transactions synchronously | Collator sends messages to OnChainActor, Actor executes autonomously | Parallel execution |
-| `impl_create_ordinary_transaction(acc*)` | `impl_create_ordinary_transaction(acc*, actor_state*, actor_lt*)` | Actor-level locking |
-| TVM C4 = Account data Cell | C4 = Actor data HashmapE root Cell | Actor-level state |
-| OutMsgQueue key without actor_id | Key includes actor_id | Actor-level message routing |
+| Before | After |
+|--------|-------|
+| Account = minimum execution unit | Actor = minimum execution unit |
+| One Account, one data Cell | One Account, multiple Actors (each with independent HashmapE) |
+| One Account, one lt timeline | Each Actor has independent lt |
+| Serial transaction execution | Two-phase: parallel speculative + deterministic merge |
+| Single balance per account | Shared balance with reservation model |
+| OutMsgQueue key: 352 bits | Extended to 416 bits (includes actor_id) |
+| Merkle proof: block→account→key | Extended: block→account→**actor**→key |
+| lite-client address format | Extended with ActorAddress |
 
 ### New
 
-| Component | Purpose | Implementation Location |
-|-----------|---------|------------------------|
-| `actors: vm::Dictionary` in Account | Manage multiple Actors under one Account | `crypto/block/transaction.h` |
-| `actor_lt: vm::Dictionary` in Account | Independent logical time per Actor | `crypto/block/transaction.h` |
-| `OnChainActor : td::actor::Actor` | On-chain Actor = td::actor, minimum execution unit | `validator/impl/collator.cpp` |
-| STATEGET/STATESET/STATEDEL opcodes | KV-style access to Actor's HashmapE | `crypto/vm/tonops.cpp` |
-| ACTORSEND opcode | Inter-Actor message sending | `crypto/vm/tonops.cpp` |
-| ActorAddress type | (AccountId, ActorId) two-level addressing | `crypto/block/block.h` |
-| BuiltinActorRegistry | Dispatch to native C++ Actors by code hash | `validator/impl/collator.cpp` |
-| Built-in Token Actors | Native C++ Token Master/Balance/Allowance | New source files (reference Tako examples) |
+| Component | Purpose |
+|-----------|---------|
+| `actors: HashmapE` in Account | Multiple Actor states per Account |
+| `actor_lt: HashmapE` in Account | Independent logical time per Actor |
+| Balance reservation model | Enable parallel execution with shared balance |
+| Deterministic merge/commit phase | Preserve consensus after parallel execution |
+| STATEGET/STATESET/STATEDEL/ACTORSEND | TVM opcodes for Actor-native programming |
+| ActorAddress | Two-level addressing (account_id, actor_id) |
+| Built-in Actor Registry | Native C++ Actor execution path |
+| Tola language | Solidity-like syntax compiling to TVM |
 
 ## 9. Risks
 
-1. **On-chain data format change** — Adding actors/actor_lt to Account means a hard fork
-2. **Validation logic consistency** — `validate-query.cpp` at 7597 lines is the most error-prone area
-3. **Balance contention** — Multiple OnChainActors sharing Account balance, parallel gas deduction needs atomic operations
-4. **State bloat** — Per-Actor lt and HashmapE metadata increase Cell storage overhead
-5. **Collator async conversion** — Changing from sync calls to send_closure + Promise callbacks across 6707-line collator.cpp requires careful result collection ordering
-6. **td::actor scheduling pressure** — Large numbers of OnChainActors may increase Scheduler overhead; consider keeping synchronous path optimization for small Accounts (single Actor)
+1. **Protocol-level hard fork** — Requires coordinated upgrade of all validators, lite-clients, SDKs, and explorers simultaneously
+2. **Deterministic commit model** — The two-phase execution model is the most complex and novel part; incorrect design breaks consensus
+3. **Balance contention** — Reservation model must handle edge cases: insufficient balance after parallel execution, gas refunds, bounce messages
+4. **Logical time ordering** — Actor-level lt must produce globally consistent ordering for cross-account message delivery
+5. **Validation complexity** — validate-query.cpp (7597 lines) needs significant changes; Actor-level proofs add new attack surface
+6. **State migration** — Existing accounts must be migrated to new format; requires migration protocol in the hard fork
+7. **Client compatibility** — All wallets, SDKs, and block explorers must upgrade to understand ActorAddress
 
-## 10. Incremental Implementation Roadmap
+## 10. Implementation Roadmap
 
-### Phase 1: Actor State Isolation + Built-in Actors (Goal: validate the architecture)
+### Phase 1: Design Validation (3-4 months)
 
-1. Add `actors` and `actor_lt` (`vm::Dictionary`) to Account struct
-2. Change `impl_create_ordinary_transaction` signature to Actor granularity
-3. Change TVM C4 to load Actor HashmapE
-4. Add STATEGET/STATESET/STATEDEL/ACTORSEND TVM instructions
-5. Extend `precompiled_contracts_list` into BuiltinActorRegistry for native C++ execution
-6. Implement built-in Token Actors in native C++ (Master/Balance/Allowance — reference Tako examples)
-7. **Validate entire Actor architecture end-to-end with built-in Token before opening to users**
+1. Formal specification of the two-phase execution model (reservation + merge)
+2. Prototype the deterministic commit model in isolation
+3. Design the Actor-level Merkle proof format
+4. Define the state migration protocol
+5. Write TL-B schema for new Account structure
 
-### Phase 2: Per-Actor Parallel Execution (Goal: concurrency improvement)
+### Phase 2: Core Implementation (3-4 months)
 
-1. Add `OnChainActor : td::actor::Actor` — each on-chain Actor IS a td::actor
-2. Change Collator's `create_ordinary_transaction` from sync call to `send_closure` message to Actor
-3. Different Actors under same Account naturally scheduled in parallel by Scheduler
-4. Results collected via `Promise` callbacks, block assembly remains in Collator
-5. Built-in Actors also run as td::actor instances, benefiting from same parallelism
+1. Implement Account struct changes + serialization
+2. Implement two-phase execution in collator
+3. Add TVM opcodes (STATEGET/STATESET/STATEDEL/ACTORSEND)
+4. Extend OutMsgQueue with actor_id
+5. Update validation logic
 
-### Phase 3: Message Routing Extension (Goal: Actor-to-Actor communication)
+### Phase 3: Ecosystem Upgrade (2-3 months)
 
-1. Add actor_id to OutMsgQueue key
-2. Extend message destination to ActorAddress
-3. Adapt `validate-query.cpp` for Actor-level validation
+1. Extend lite-client and tonlib for ActorAddress
+2. Update Merkle proof verification
+3. Build Actor-level block explorer
+4. Implement built-in Token Actors
+5. End-to-end integration testing
 
-### Phase 4: Solidity-Like Language (Goal: familiar developer experience)
+### Phase 4: Language + Developer Tools (parallel, 2-3 months)
 
-1. Build Solidity-subset compiler with Actor extensions (`actor` keyword, `send()` for async)
-2. Compile target: TVM bytecode — `mapping` compiles to STATEGET/STATESET, `send()` compiles to ACTORSEND
-3. No reentrancy by design — all cross-Actor calls are async messages
-4. Developers learn one new concept: calling others = sending messages, no synchronous return values
-5. FunC/Tolk/built-in contracts continue working alongside Solidity-like contracts
+1. Tola compiler (Solidity-like → TVM)
+2. Developer documentation and tutorials
+3. Test suite for standard Actor patterns
 
-## 11. Built-in Standard Actor Library (OpenZeppelin for TOS)
+## 11. Built-in Standard Actor Library
 
 ### 11.1 Philosophy
-
-Ethereum's OpenZeppelin library proved that **standardized, audited building blocks**
-are the single most impactful developer tool in a smart contract ecosystem. Over 10 years,
-the pattern is clear: 90% of on-chain applications are compositions of a few standard
-primitives (tokens, access control, governance, escrow).
-
-TOS takes this further. Instead of each project copying and redeploying the same library
-code (Ethereum's model), TOS ships standard actors as **native C++ built-ins compiled
-into the node binary**:
-
-| | Ethereum + OpenZeppelin | TOS Built-in Actors |
-|---|---|---|
-| Code location | Copied into each project, deployed per-project | One copy in node binary, shared by all |
-| Deployment cost | ~1M gas per ERC20 deployment | Zero — create Actor instance via message |
-| Audit burden | Each fork audited separately | Audited once, all users benefit |
-| Fragmentation | Thousands of ERC20 variants with subtle differences | One canonical implementation, identical behavior |
-| Upgrade path | Each project upgrades independently (or doesn't) | Node upgrade updates all validators simultaneously |
-| Performance | EVM bytecode interpretation | Native C++ execution (fastest path) |
-
-### 11.2 Standard Actor Library
-
-Extracted from 10 years of Ethereum/OpenZeppelin/DeFi ecosystem experience:
-
-**Token Layer (Phase 1 — ships with Actor launch)**
-
-| Actor Type | OpenZeppelin Equivalent | Purpose |
-|-----------|------------------------|---------|
-| TokenMaster | ERC20 (admin) | Mint, burn, metadata, total supply |
-| TokenBalance | ERC20 (per-user) | Hold balance, transfer, credit |
-| TokenAllowance | ERC20 (approval) | Approve, transferFrom |
-| NFTCollection | ERC721 (collection) | Mint, metadata, enumeration |
-| NFTItem | ERC721 (per-item) | Owner, transfer, approve |
-| MultiToken | ERC1155 | Multiple token types in one contract |
-
-**Access Control Layer**
-
-| Actor Type | OpenZeppelin Equivalent | Purpose |
-|-----------|------------------------|---------|
-| Ownable | OZ Ownable | Single-owner access control |
-| AccessControl | OZ AccessControl | Role-based permission management |
-| Multisig | Gnosis Safe | Multi-signature approval |
-| Timelock | OZ TimelockController | Delayed execution |
-
-**Governance Layer**
-
-| Actor Type | OpenZeppelin Equivalent | Purpose |
-|-----------|------------------------|---------|
-| Governor | OZ Governor | Proposal, voting, execution |
-| VoteActor | OZ Votes | Voting power snapshot, delegation |
-
-**DeFi Layer**
-
-| Actor Type | Equivalent | Purpose |
-|-----------|-----------|---------|
-| AMMPool | Uniswap V2 Pair | Reserve management, swap, LP |
-| LiquidityPosition | Uniswap V3 Position | Concentrated liquidity |
-| LendingPool | Aave/Compound | Borrow, lend, interest, liquidation |
-| Escrow | OZ Escrow | Custody, release (Tako example exists) |
-| Vesting | OZ VestingWallet | Token vesting schedule |
-| PaymentSplitter | OZ PaymentSplitter | Revenue splitting |
-
-**Infrastructure Layer**
-
-| Actor Type | Equivalent | Purpose |
-|-----------|-----------|---------|
-| Oracle | Chainlink Feed | Price feed interface |
-| Proxy | OZ Proxy | Upgradeable actor pattern |
-
-### 11.3 How Users Build with Standard Actors
-
-**Scenario 1: Launch a token (zero code)**
-
-User sends one message — no contract writing, no deployment, no audit needed:
-
-```
-User → System: "create TokenMaster, name=MyToken, symbol=MTK, supply=1000000"
-  → System auto-creates: TokenMaster Actor + TokenBalance Actor (holding initial supply)
-```
-
-**Scenario 2: Build a DEX (only write routing logic)**
-
-```tola
-// User only writes the business-specific routing logic.
-// AMM math, token transfers, LP accounting — all handled by built-in Actors.
-actor DEXRouter {
-    function swap(ActorId pool, ActorId userBalance, uint64 amountIn) external {
-        pool.send("swap", abi.encode(userBalance, amountIn));
-    }
-
-    function addLiquidity(ActorId pool, uint64 amountA, uint64 amountB) external {
-        pool.send("add_liquidity", abi.encode(msg.sender, amountA, amountB));
-    }
-}
-```
-
-**Scenario 3: Build an NFT marketplace (compose standard Actors)**
-
-```tola
-actor Marketplace {
-    function list(ActorId nftActor, uint64 price) external {
-        nftActor.send("transfer", abi.encode(self));   // NFT → escrow
-        stateSet("listing", abi.encode(msg.sender, price));
-    }
-
-    function buy(ActorId nftActor) external payable {
-        (ActorId seller, uint64 price) = abi.decode(stateGet("listing"));
-        require(msg.value >= price, "insufficient payment");
-        nftActor.send("transfer", abi.encode(msg.sender));   // NFT → buyer
-        seller.send("credit", abi.encode(price));              // payment → seller
-    }
-}
-```
-
-### 11.4 Design Principle
 
 > **Users write only the 10% that makes their business unique.**
 > **The other 90% (tokens, access control, escrow, AMM) is already built, audited, and running natively.**
 
-This is the core value proposition: the TOS built-in Actor library extracts a decade
-of Ethereum smart contract patterns into zero-deployment, zero-audit, native-performance
-standard components that any Tola contract can call with a single `.send()`.
+Instead of each project copying and redeploying library code, TOS ships standard
+actors as **native C++ built-ins compiled into the node binary**:
 
-## 12. References
+| | Copy-Deploy Model | TOS Built-in Actors |
+|---|---|---|
+| Code location | Copied per project | One copy in node binary |
+| Deployment cost | Per-project bytecode | Zero — create via message |
+| Audit burden | Each fork audited separately | Audited once, all benefit |
+| Upgrade | Each project independently | Node upgrade, all validators |
+| Performance | VM bytecode interpretation | Native C++ execution |
 
-- Tola Language Whitepaper: `./tola.md`
+### 11.2 Standard Actor Inventory
+
+**Token Layer:** TokenMaster, TokenBalance, TokenAllowance, NFTCollection, NFTItem, MultiToken
+
+**Access Control:** Ownable, AccessControl, Multisig, Timelock
+
+**Governance:** Governor, VoteActor
+
+**DeFi:** AMMPool, LiquidityPosition, LendingPool, Escrow, Vesting, PaymentSplitter
+
+**Infrastructure:** Oracle, Proxy
+
+## 12. Open Questions
+
+1. **Reservation model details:** How to compute gas reservation before execution? What happens when reservation is insufficient?
+2. **Cross-shard Actor messages:** How do Actors in different shards communicate? Does the message routing protocol need changes beyond OutMsgQueue key?
+3. **Actor lifecycle:** Can Actors be destroyed? What happens to an Actor's state when its Account is deleted?
+4. **Backward compatibility period:** How long do we run old and new formats in parallel during migration?
+5. **Actor count limits:** Maximum number of Actors per Account? Storage cost model for Actor metadata?
+
+## 13. References
+
+- Tola Language design: `./tola.md`
 - td::actor framework: `tdactor/td/actor/`
-  - Actor base class: `tdactor/td/actor/core/Actor.h`
-  - ActorMailbox: `tdactor/td/actor/core/ActorMailbox.h`
-  - ActorExecutor: `tdactor/td/actor/core/ActorExecutor.h`
-  - Scheduler: `tdactor/td/actor/core/Scheduler.h`
-  - create_actor / send_closure: `tdactor/td/actor/actor.h`
-- Collator Actor: `validator/impl/collator-impl.h:46`
 - Collator implementation: `validator/impl/collator.cpp` (6707 lines)
 - Account struct: `crypto/block/transaction.h:262-321`
-- Transaction execution: `validator/impl/collator.cpp:3431` (impl_create_ordinary_transaction)
+- Transaction execution: `validator/impl/collator.cpp:3431`
 - Validation logic: `validator/impl/validate-query.cpp` (7597 lines)
 - HashmapE / Dictionary: `crypto/vm/dict.h`
-- TVM instruction implementation: `crypto/vm/tonops.cpp`
+- TVM instruction implementation: `crypto/vm/tosops.cpp`
+- OutMsgQueue key: `crypto/block/output-queue-merger.h:30`
 - MerkleProof: `crypto/block/check-proof.cpp`
