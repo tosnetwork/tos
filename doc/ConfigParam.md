@@ -67,9 +67,36 @@ Each `BlockLimits` contains `underload`, `soft_limit`, `hard_limit` for bytes, g
 | 15 | `uint32 uint32 uint32` | Election timing: `validators_elected_for`, `elections_start_before`, `elections_end_before`, `stake_held_for` |
 | 16 | `uint32 uint32 uint32` | Validator count limits: `max_validators`, `max_main_validators`, `min_validators` |
 | 17 | `Tomis Tomis Tomis uint32` | Stake limits: `min_stake`, `max_stake`, `min_total_stake`, `max_stake_factor` |
-| 28 | `CatchainConfig` | Catchain parameters (mc/shard lifetimes, shard validators count, shuffle) |
-| 29 | `ConsensusConfig` | BFT consensus parameters (timeouts, attempts, block/collated size limits) |
+| 28 | `CatchainConfig` | Catchain parameters (see detailed breakdown below) |
+| 29 | `ConsensusConfig` | BFT consensus parameters (see detailed breakdown below) |
 | 30 | `NewConsensusConfigAll` | Simplex consensus parameters (if used) |
+
+**ConfigParam 28 — CatchainConfig fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `mc_catchain_lifetime` | uint32 | Masterchain catchain session lifetime (seconds). After this time, a new catchain group is formed. |
+| `shard_catchain_lifetime` | uint32 | Shard catchain session lifetime (seconds). |
+| `shard_validators_lifetime` | uint32 | How long a shard validator group stays assigned to a shard (seconds). |
+| `shard_validators_num` | uint32 | Number of validators assigned to each shard. Higher = more security per shard, but fewer shards can run in parallel. |
+| `shuffle_mc_validators` | bool | Whether to shuffle masterchain validator ordering each round. |
+
+**ConfigParam 29 — ConsensusConfig fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `flags` | uint8 | Bit flags (0 = default). |
+| `new_catchain_ids` | bool | Use new-style catchain session IDs. |
+| `round_candidates` | uint8 | Number of block candidates proposed per consensus round. More candidates = more redundancy but more network traffic. |
+| `next_candidate_delay_ms` | uint32 | Delay (ms) before proposing the next block candidate if the first one fails. |
+| `consensus_timeout_ms` | uint32 | Maximum time (ms) for a single consensus round before timeout. This is the primary parameter affecting block time. |
+| `fast_attempts` | uint32 | Number of fast consensus attempts before falling back to slower mode. |
+| `attempt_duration` | uint32 | Duration of each consensus attempt (in catchain time units). |
+| `catchain_max_deps` | uint32 | Maximum number of catchain block dependencies. Controls how "wide" the catchain DAG can be. |
+| `max_block_bytes` | uint32 | Maximum size of a block in bytes. |
+| `max_collated_bytes` | uint32 | Maximum size of collated data (proofs + data sent to validators for verification). |
+| `proto_version` | uint16 | Consensus protocol version. |
+| `catchain_max_blocks_coeff` | uint32 | Coefficient limiting catchain blocks per round. 0 = unlimited, 10000 = production default. |
 | 31 | `HashmapE 256 True` | Fundamental (special) smart contract addresses |
 | 32 | `ValidatorSet` | Previous validator set |
 | 33 | `ValidatorSet` | Previous temporary validator set |
@@ -199,36 +226,42 @@ The following values are the recommended baseline for TOS networks. Adjust as ne
 | 17 | min_total_stake | 500,000 TOS |
 | 17 | max_stake_factor | 196,608 (3x) |
 
-### Gas Prices
+### Gas Prices (ConfigParam 20 = masterchain, 21 = basechain)
 
-| Param | Field | Masterchain | Basechain |
-|-------|-------|-------------|-----------|
-| 20/21 | gas_price | 26,214,400 |
-| 20/21 | gas_limit | 1,000,000 |
-| 20/21 | special_gas_limit | 1,000,000 |
-| 20/21 | block_gas_limit | 10,000,000 |
-| 20/21 | flat_gas_limit | 100 |
-| 20/21 | flat_gas_price | 40,000 |
-| 20/21 | freeze_due_limit | 0.1 TOS | 0.1 TOS |
-| 20/21 | delete_due_limit | 1.0 TOS | 1.0 TOS |
+| Field | Masterchain (20) | Basechain (21) |
+|-------|-----------------|----------------|
+| gas_price | 655,360,000 | 26,214,400 |
+| gas_limit | 1,000,000 | 1,000,000 |
+| special_gas_limit | 70,000,000 | 1,000,000 |
+| gas_credit | 10,000 | 10,000 |
+| block_gas_limit | 2,500,000 | 10,000,000 |
+| freeze_due_limit | 0.1 TOS | 0.1 TOS |
+| delete_due_limit | 1.0 TOS | 1.0 TOS |
+| flat_gas_limit | 100 | 100 |
+| flat_gas_price | 1,000,000 | 40,000 |
 
-### Block Limits
+`gas_price` is in nanoTOS per 2^16 gas units. Masterchain is ~25x more expensive than basechain.
 
-| Param | Field | Masterchain | Basechain |
-|-------|-------|-------------|-----------|
-| 22/23 | bytes hard limit | 2 MB |
-| 22/23 | gas hard limit | 20,000,000 |
+### Block Limits (ConfigParam 22 = masterchain, 23 = basechain)
 
-### Message Forwarding Prices
+Each limit has three tiers: underload (triggers shard merge), soft (normal target), hard (absolute maximum).
 
-| Param | Field | Masterchain | Basechain |
-|-------|-------|-------------|-----------|
-| 24/25 | lump_price | 400,000 |
-| 24/25 | bit_price | 26,214,400 |
-| 24/25 | cell_price | 2,621,440,000 |
-| 24/25 | ihr_factor | 98,304 (1.5x) |
-| 24/25 | first_frac | 21,845 (1/3) |
-| 24/25 | next_frac | 21,845 (1/3) |
+| Field | Masterchain (22) | Basechain (23) |
+|-------|-----------------|----------------|
+| bytes: underload / soft / hard | 128 KB / 512 KB / 1 MB | 256 KB / 1 MB / 2 MB |
+| gas: underload / soft / hard | 500,000 / 1,000,000 / 2,500,000 | 2,000,000 / 10,000,000 / 20,000,000 |
+| lt: underload / soft / hard | 1,000 / 5,000 / 10,000 | 1,000 / 5,000 / 10,000 |
+
+### Message Forwarding Prices (ConfigParam 24 = masterchain, 25 = basechain)
+
+| Field | Masterchain (24) | Basechain (25) |
+|-------|-----------------|----------------|
+| lump_price | 10,000,000 | 400,000 |
+| bit_price | 655,360,000 | 26,214,400 |
+| cell_price | 65,536,000,000 | 2,621,440,000 |
+| ihr_factor | 98,304 (1.5x) | 98,304 (1.5x) |
+| first_frac | 21,845 (1/3) | 21,845 (1/3) |
+| next_frac | 21,845 (1/3) | 21,845 (1/3) |
 
 ### Storage Prices
 
@@ -239,17 +272,33 @@ The following values are the recommended baseline for TOS networks. Adjust as ne
 | 18 | mc_bit_price_ps | 1,000 |
 | 18 | mc_cell_price_ps | 500,000 |
 
-### Consensus and Catchain
+### Catchain (ConfigParam 28)
 
-| Param | Field | Value |
-|-------|-------|-------------|-----------------|
-| 28 | mc_catchain_lifetime | 250 |
-| 28 | shard_catchain_lifetime | 250 |
-| 28 | shard_validators_lifetime | 1,000 |
-| 29 | round_candidates | 3 |
-| 29 | consensus_timeout_ms | 16,000 |
-| 29 | max_block_bytes | 2 MB |
-| 29 | max_collated_bytes | 2 MB |
+| Field | Value | Notes |
+|-------|-------|-------|
+| mc_catchain_lifetime | 250 | Masterchain catchain session lifetime (seconds) |
+| shard_catchain_lifetime | 250 | Shard catchain session lifetime (seconds) |
+| shard_validators_lifetime | 1,000 | How long a shard validator group stays assigned (seconds) |
+| shard_validators_num | 7 | Validators per shard. Production networks with many validators use 23. Scale up as validator count grows. |
+| shuffle_mc_validators | true | Shuffle masterchain validator ordering |
+
+### Consensus (ConfigParam 29)
+
+| Field | Value | Notes |
+|-------|-------|-------|
+| round_candidates | 3 | Block candidates per round |
+| next_candidate_delay_ms | 2,000 | Delay before next candidate (ms) |
+| consensus_timeout_ms | 16,000 | Round timeout (ms). Primary factor in block time. |
+| fast_attempts | 3 | Fast consensus attempts before fallback |
+| attempt_duration | 8 | Duration per attempt (catchain time units) |
+| catchain_max_deps | 4 | Max catchain DAG dependencies |
+| max_block_bytes | 2,097,152 | 2 MB max block size |
+| max_collated_bytes | 2,097,152 | 2 MB max collated data |
+| proto_version | 5 | Consensus protocol version |
+| catchain_max_blocks_coeff | 10,000 | Catchain blocks-per-round limit. 0 = unlimited (dev only). |
+| new_catchain_ids | true | Use new-style catchain session IDs |
+
+**Effect on block time:** With `consensus_timeout_ms=16000` and 3 validators on a local network, typical block time is ~3-4 seconds. On a production network with more validators and network latency, block time is typically ~5 seconds.
 
 ### Block Creation Fees
 
