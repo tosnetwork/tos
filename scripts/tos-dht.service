@@ -1,0 +1,14 @@
+# DHT is handled by validator node 1 (fullnode key registered as DHT node).
+# This unit is a no-op placeholder for dependency ordering.
+# Validator nodes use Wants=tos-dht.service for startup ordering.
+
+[Unit]
+Description=TOS DHT (provided by validator node 1)
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+
+[Install]
+WantedBy=multi-user.target

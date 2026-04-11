@@ -1,0 +1,29 @@
+[Unit]
+Description=TOS Validator Node %i
+After=network-online.target tos-dht.service
+Wants=network-online.target tos-dht.service
+
+[Service]
+Type=simple
+User=tos
+Group=tos
+UMask=0077
+WorkingDirectory=/data/tos%i
+ExecStart=/usr/local/bin/tos-validator-engine \
+  -C /data/tos-global.json \
+  -c /data/tos%i/db/config.json \
+  -D /data/tos%i/db \
+  -f /usr/local/share/tos/fift/lib \
+  --session-logs /data/tos%i/session-logs \
+  -l /data/tos%i/log \
+  -t 4
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+ProtectSystem=full
+ProtectHome=true
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
