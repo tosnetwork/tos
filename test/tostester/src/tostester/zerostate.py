@@ -199,16 +199,14 @@ Masterchain swap
  * Configuration Parameters
  *
  */
-// version capabilities
+// version capabilities (aligned with production: version=13, capabilities=494)
 {global_version} capCreateStats capBounceMsgBody or capReportVersion or capShortDequeue or 64 or 128 or config.version!
 // max-validators max-main-validators min-validators
-1000 1000 1000 config.validator_num!
+1000 1000 1000 config.validator_num!  // DEV-SPECIFIC: allow any count for tests
 // min-stake max-stake min-total-stake max-factor
-GR$10000 GR$100000 GR$10000 sg~10 config.validator_stake_limits!
+GR$10000 GR$100000 GR$10000 sg~10 config.validator_stake_limits!  // DEV-SPECIFIC: low stakes for tests
 // elected-for elect-start-before elect-end-before stakes-frozen-for
-// 400000 200000 4000 400000 config.election_params!
-// 200 190 10 10 config.election_params!  // DEBUG
-2400 800 60 300 config.election_params!
+2400 800 60 300 config.election_params!  // DEV-SPECIFIC: fast elections for tests
 // config-addr = -1:5555...5555
 AllOnes 5 * constant config_addr
 config_addr config.config_smc!
@@ -219,10 +217,12 @@ elector_addr config.elector_smc!
 1 500 1000 500000 config.storage_prices!
 config.special!
 
-// gas_price gas_limit special_gas_limit gas_credit block_gas_limit freeze_due_limit delete_due_limit flat_gas_limit flat_gas_price --
+// gas_price gas_limit special_gas_limit gas_credit block_gas_limit freeze_due_limit delete_due_limit flat_gas_limit flat_gas_price
+// DEV-SPECIFIC: cheaper gas for tests (production: 26214400/655360000)
 10 sg* 1 *M dup   10000 1000 *M GR$0.1 GR$1.0 100 1000 config.gas_prices!
 10 sg* 1 *M 20 *M 10000 1000 *M GR$0.1 GR$1.0 100 1000 config.mc_gas_prices!
 // lump_price bit_price cell_price ihr_factor first_frac next_frac
+// DEV-SPECIFIC: cheaper forwarding for tests (production: 400000/10000000)
 100 10 sg* 10 sg* 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.fwd_prices!
 100 10 sg* 10 sg* 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.mc_fwd_prices!
 // mc-cc-lifetime sh-cc-lifetime sh-val-lifetime sh-val-num mc-shuffle
@@ -238,12 +238,11 @@ config.special!
   x{{d3}} s, 200000 32 u, 30 32 u, b>
 }} : make-block-limits-v2
 
-128 *Ki 512 *Ki {block_limit_mul} * 1 *Mi {block_limit_mul} * triple  // [ underload soft hard ] : block bytes limit
-2000000 100000000 100000000 triple  // gas limits
-1000 500000 1000000 triple        // lt limits
+// DEV-SPECIFIC: higher gas limits for tests (production: mc=2.5M, base=20M)
+128 *Ki 512 *Ki {block_limit_mul} * 1 *Mi {block_limit_mul} * triple  // bytes: underload soft hard
+2000000 100000000 100000000 triple  // gas: underload soft hard
+1000 500000 1000000 triple        // lt: underload soft hard
 triple dup
-// untriple make-block-limits-v2 22 config!
-// untriple make-block-limits-v2 23 config!
 untriple make-block-limits 22 config!
 untriple make-block-limits 23 config!
 
