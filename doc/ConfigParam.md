@@ -169,103 +169,97 @@ Critical parameters (listed in ConfigParam 10) require a higher approval thresho
 - Always record the previous value and hash before proposing a change.
 - Test in a local testnet first (see [Validator-Local.md](Validator-Local.md)).
 
-## TON Mainnet Reference Values (as of April 2026)
+## Recommended Settings
 
-The following values are from the TON mainnet (global_id = -239) and serve as recommended baseline settings for TOS. Adjust as needed for your network's requirements.
+The following values are the recommended baseline for TOS networks. Adjust as needed.
 
 ### Core Identity
 
-| Param | Field | TON Mainnet | TOS Recommended |
+| Param | Field | Value |
 |-------|-------|-------------|-----------------|
-| 0 | Config address | `-1:555...555` | `-1:555...555` (same convention) |
-| 1 | Elector address | `-1:333...333` | `-1:333...333` (same convention) |
-| 8 | Global version | 13 | 13 |
-| 8 | Capabilities | 494 | 494 |
-| 19 | global_id | -239 | **1** (mainnet), **2** (testnet), **3** (dev) |
+| 0 | Config address | `-1:555...555` (same convention) |
+| 1 | Elector address | `-1:333...333` (same convention) |
+| 8 | Global version | 13 |
+| 8 | Capabilities | 494 |
+| 19 | global_id | **1** (mainnet), **2** (testnet), **3** (dev) |
 
 ### Validator Parameters
 
-| Param | Field | TON Mainnet | TOS Recommended |
+| Param | Field | Value |
 |-------|-------|-------------|-----------------|
-| 15 | validators_elected_for | 65,536s (18.2h) | 65,536s |
-| 15 | elections_start_before | 32,768s (9.1h) | 32,768s |
-| 15 | elections_end_before | 8,192s (2.2h) | 8,192s |
-| 15 | stake_held_for | 32,768s (9.1h) | 32,768s |
-| 16 | max_validators | 400 | 400 |
-| 16 | max_main_validators | 100 | 100 |
-| 16 | min_validators | 75 | 13 (start small) |
-| 17 | min_stake | 300,000 TON | 10,000 TOS |
-| 17 | max_stake | 10,000,000 TON | 10,000,000 TOS |
-| 17 | min_total_stake | 75,000,000 TON | 500,000 TOS |
-| 17 | max_stake_factor | 196,608 (3x) | 196,608 (3x) |
+| 15 | validators_elected_for | 65,536s |
+| 15 | elections_start_before | 32,768s |
+| 15 | elections_end_before | 8,192s |
+| 15 | stake_held_for | 32,768s |
+| 16 | max_validators | 400 |
+| 16 | max_main_validators | 100 |
+| 16 | min_validators | 13 (start small) |
+| 17 | min_stake | 10,000 TOS |
+| 17 | max_stake | 10,000,000 TOS |
+| 17 | min_total_stake | 500,000 TOS |
+| 17 | max_stake_factor | 196,608 (3x) |
 
 ### Gas Prices
 
-| Param | Field | TON MC | TON Base | TOS Recommended (MC / Base) |
-|-------|-------|--------|----------|----------------------------|
-| 20/21 | gas_price | 655,360,000 | 26,214,400 | same |
-| 20/21 | gas_limit | 1,000,000 | 1,000,000 | same |
-| 20/21 | special_gas_limit | 70,000,000 | 1,000,000 | same |
-| 20/21 | block_gas_limit | 2,500,000 | 10,000,000 | same |
-| 20/21 | flat_gas_limit | 100 | 100 | same |
-| 20/21 | flat_gas_price | 1,000,000 | 40,000 | same |
-| 20/21 | freeze_due_limit | 0.1 TON | 0.1 TON | 0.1 TOS |
-| 20/21 | delete_due_limit | 1.0 TON | 1.0 TON | 1.0 TOS |
+| Param | Field | Masterchain | Basechain |
+|-------|-------|-------------|-----------|
+| 20/21 | gas_price | 26,214,400 |
+| 20/21 | gas_limit | 1,000,000 |
+| 20/21 | special_gas_limit | 1,000,000 |
+| 20/21 | block_gas_limit | 10,000,000 |
+| 20/21 | flat_gas_limit | 100 |
+| 20/21 | flat_gas_price | 40,000 |
+| 20/21 | freeze_due_limit | 0.1 TOS | 0.1 TOS |
+| 20/21 | delete_due_limit | 1.0 TOS | 1.0 TOS |
 
 ### Block Limits
 
-| Param | Field | TON MC | TON Base | TOS Recommended |
-|-------|-------|--------|----------|-----------------|
-| 22/23 | bytes hard limit | 1 MB | 2 MB | same |
-| 22/23 | gas hard limit | 2,500,000 | 20,000,000 | same |
+| Param | Field | Masterchain | Basechain |
+|-------|-------|-------------|-----------|
+| 22/23 | bytes hard limit | 2 MB |
+| 22/23 | gas hard limit | 20,000,000 |
 
 ### Message Forwarding Prices
 
-| Param | Field | TON MC | TON Base | TOS Recommended |
-|-------|-------|--------|----------|-----------------|
-| 24/25 | lump_price | 10,000,000 | 400,000 | same |
-| 24/25 | bit_price | 655,360,000 | 26,214,400 | same |
-| 24/25 | cell_price | 65,536,000,000 | 2,621,440,000 | same |
-| 24/25 | ihr_factor | 98,304 (1.5x) | 98,304 (1.5x) | same |
-| 24/25 | first_frac | 21,845 (1/3) | 21,845 (1/3) | same |
-| 24/25 | next_frac | 21,845 (1/3) | 21,845 (1/3) | same |
+| Param | Field | Masterchain | Basechain |
+|-------|-------|-------------|-----------|
+| 24/25 | lump_price | 400,000 |
+| 24/25 | bit_price | 26,214,400 |
+| 24/25 | cell_price | 2,621,440,000 |
+| 24/25 | ihr_factor | 98,304 (1.5x) |
+| 24/25 | first_frac | 21,845 (1/3) |
+| 24/25 | next_frac | 21,845 (1/3) |
 
 ### Storage Prices
 
-| Param | Field | TON Mainnet | TOS Recommended |
+| Param | Field | Value |
 |-------|-------|-------------|-----------------|
-| 18 | bit_price_ps | 1 | 1 |
-| 18 | cell_price_ps | 500 | 500 |
-| 18 | mc_bit_price_ps | 1,000 | 1,000 |
-| 18 | mc_cell_price_ps | 500,000 | 500,000 |
+| 18 | bit_price_ps | 1 |
+| 18 | cell_price_ps | 500 |
+| 18 | mc_bit_price_ps | 1,000 |
+| 18 | mc_cell_price_ps | 500,000 |
 
 ### Consensus and Catchain
 
-| Param | Field | TON Mainnet | TOS Recommended |
+| Param | Field | Value |
 |-------|-------|-------------|-----------------|
-| 28 | mc_catchain_lifetime | 250 | 250 |
-| 28 | shard_catchain_lifetime | 250 | 250 |
-| 28 | shard_validators_lifetime | 1,000 | 1,000 |
-| 29 | round_candidates | 3 | 3 |
-| 29 | consensus_timeout_ms | 16,000 | 16,000 |
-| 29 | max_block_bytes | 2 MB | 2 MB |
-| 29 | max_collated_bytes | 2 MB | 2 MB |
+| 28 | mc_catchain_lifetime | 250 |
+| 28 | shard_catchain_lifetime | 250 |
+| 28 | shard_validators_lifetime | 1,000 |
+| 29 | round_candidates | 3 |
+| 29 | consensus_timeout_ms | 16,000 |
+| 29 | max_block_bytes | 2 MB |
+| 29 | max_collated_bytes | 2 MB |
 
 ### Block Creation Fees
 
-| Param | Field | TON Mainnet | TOS Recommended |
+| Param | Field | Value |
 |-------|-------|-------------|-----------------|
-| 14 | masterchain_block_fee | 1.7 TON | 1.7 TOS |
-| 14 | basechain_block_fee | 1.0 TON | 1.0 TOS |
+| 14 | masterchain_block_fee | 1.7 TOS |
+| 14 | basechain_block_fee | 1.0 TOS |
 
-### Active Validators (TON reference)
 
-| Param | Field | TON Mainnet |
-|-------|-------|-------------|
-| 34 | total validators | 376 |
-| 34 | main validators | 100 |
-
-> **Note on TOS differences:** TOS uses positive global_id values (1/2/3) instead of TON's negative values (-239). TOS wallet contracts include global_id in message signatures for anti-replay protection, which TON does not have. All other protocol parameters are recommended to start at TON mainnet values and adjust based on network needs.
+> **Note:** TOS wallet contracts include global_id in message signatures for cross-chain anti-replay protection. ConfigParam 19 (global_id) should never change after genesis — it would invalidate all existing wallet signatures.
 
 ## Related Docs
 
