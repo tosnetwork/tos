@@ -98,7 +98,7 @@ PROGRAM{
     NULLSWAPIFNOT2	//  public_key start_at rdict cs stored_seqno _119 _118 _120
     NIP	//  public_key start_at rdict cs stored_seqno value found
     IF:<{	//  public_key start_at rdict cs stored_seqno value
-      LDGRAMS	//  public_key start_at rdict cs stored_seqno _122 _121
+      LDTOMIS	//  public_key start_at rdict cs stored_seqno _122 _121
       DROP	//  public_key start_at rdict cs stored_seqno _74
       2 PUSHINT	//  public_key start_at rdict cs stored_seqno _74 _76=2
       RAWRESERVE
@@ -159,7 +159,7 @@ PROGRAM{
     NULLSWAPIFNOT2	//  balance _36 _35 _37
     NIP	//  balance value found
     IF:<{	//  balance value
-      LDGRAMS	//  balance _39 _38
+      LDTOMIS	//  balance _39 _38
       DROP	//  balance _26
       SUB	//  _28
       0 PUSHINT	//  _28 _29=0

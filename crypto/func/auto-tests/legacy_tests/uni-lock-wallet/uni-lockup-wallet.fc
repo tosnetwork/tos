@@ -40,9 +40,9 @@ _ unpack_data() {
     cs~load_uint(256),
     cs~load_uint(256),
     cs~load_dict(),
-    cs~load_grams(),
+    cs~load_tomis(),
     cs~load_dict(),
-    cs~load_grams(),
+    cs~load_tomis(),
     cs~load_dict()
   );
   cs.end_parse();
@@ -57,25 +57,25 @@ locked, int total_restricted_value, cell restricted) {
     .store_uint(public_key, 256)
     .store_uint(config_public_key, 256)
     .store_dict(allowed_destinations)
-    .store_grams(total_locked_value)
+    .store_tomis(total_locked_value)
     .store_dict(locked)
-    .store_grams(total_restricted_value)
+    .store_tomis(total_restricted_value)
     .store_dict(restricted).end_cell();
 }
 
-(cell, int) lock_grams(cell locked, int total, int ts, int value) {
+(cell, int) lock_tomis(cell locked, int total, int ts, int value) {
   total += value;
   (slice found_cs, var found) = locked.udict_get?(32, ts);
   if (found) {
-    var found_value = found_cs~load_grams();
+    var found_value = found_cs~load_tomis();
     found_cs.end_parse();
     value += found_value;
   }
-  locked~udict_set_builder(32, ts, begin_cell().store_grams(value));
+  locked~udict_set_builder(32, ts, begin_cell().store_tomis(value));
   return (locked, total);
 }
 
-(cell, int) unlock_grams(cell locked, int total, int now_ts) {
+(cell, int) unlock_tomis(cell locked, int total, int now_ts) {
   do {
     var (locked', ts, value_cs, f) = locked.udict_delete_get_min(32);
     f~touch();
@@ -84,7 +84,7 @@ locked, int total_restricted_value, cell restricted) {
     }
     if (f) {
       locked = locked';
-      int value = value_cs~load_grams();
+      int value = value_cs~load_tomis();
       value_cs.end_parse();
       total -= value;
     }
@@ -126,9 +126,9 @@ locked, int total_restricted_value, cell restricted) {
   throw_unless(err:unknown_cmd(), cmd == cmd:restricted_transfer());
   var (only_restrict, ts) = (in_msg~load_uint(1), in_msg~load_uint(32));
   if (only_restrict) {
-    (restricted, total_restricted_value) = lock_grams(restricted, total_restricted_value, ts, msg_value);
+    (restricted, total_restricted_value) = lock_tomis(restricted, total_restricted_value, ts, msg_value);
   } else {
-    (locked, total_locked_value) = lock_grams(locked, total_locked_value, ts, msg_value);
+    (locked, total_locked_value) = lock_tomis(locked, total_locked_value, ts, msg_value);
   }
 
   set_data(pack_data(stored_seqno, stored_subwallet, public_key, config_public_key, allowed_destinations, total_locked_value, locked,
@@ -147,8 +147,8 @@ locked, int total_restricted_value, cell restricted) {
   throw_unless(err:wrong_signature(), check_signature(slice_hash(in_msg), signature, public_key));
   accept_message();
 
-  (restricted, total_restricted_value) = unlock_grams(restricted, total_restricted_value, now());
-  (locked, total_locked_value) = unlock_grams(locked, total_locked_value, now());
+  (restricted, total_restricted_value) = unlock_tomis(restricted, total_restricted_value, now());
+  (locked, total_locked_value) = unlock_tomis(locked, total_locked_value, now());
   int effectively_locked = total_locked_value;
   int can_use_restricted = 1;
   var cs_copy = cs;
@@ -198,8 +198,8 @@ int get_public_key() method_id {
 (int, int, int) get_balances_at(int time) method_id {
   var (stored_seqno, stored_subwallet, public_key, config_public_key, allowed_destinations, total_locked_value, locked,
        total_restricted_value, restricted) = unpack_data();
-  (restricted, total_restricted_value) = unlock_grams(restricted, total_restricted_value, time);
-  (locked, total_locked_value) = unlock_grams(locked, total_locked_value, time);
+  (restricted, total_restricted_value) = unlock_tomis(restricted, total_restricted_value, time);
+  (locked, total_locked_value) = unlock_tomis(locked, total_locked_value, time);
   int tos_balance = get_balance().pair_first();
   return ( tos_balance,
            total_restricted_value,

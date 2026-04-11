@@ -21,7 +21,7 @@ The canonical TL-B schema is in [block.tlb](../crypto/block/block.tlb). Initial 
 | Param | Type | Description |
 |-------|------|-------------|
 | 5 | `BurningConfig` | Fee burning configuration |
-| 6 | `Grams Grams` | Minting prices (mint_new, mint_add) |
+| 6 | `Tomis Tomis` | Minting prices (mint_new, mint_add) |
 | 7 | `ExtraCurrencyCollection` | Extra currencies to mint |
 | 8 | `GlobalVersion` | Global version and capability flags (see [GlobalVersions.md](GlobalVersions.md)) |
 | 9 | `Hashmap 32 True` | Mandatory config parameters (must always be present) |
@@ -66,7 +66,7 @@ Each `BlockLimits` contains `underload`, `soft_limit`, `hard_limit` for bytes, g
 |-------|------|-------------|
 | 15 | `uint32 uint32 uint32` | Election timing: `validators_elected_for`, `elections_start_before`, `elections_end_before`, `stake_held_for` |
 | 16 | `uint32 uint32 uint32` | Validator count limits: `max_validators`, `max_main_validators`, `min_validators` |
-| 17 | `Grams Grams Grams uint32` | Stake limits: `min_stake`, `max_stake`, `min_total_stake`, `max_stake_factor` |
+| 17 | `Tomis Tomis Tomis uint32` | Stake limits: `min_stake`, `max_stake`, `min_total_stake`, `max_stake_factor` |
 | 28 | `CatchainConfig` | Catchain parameters (mc/shard lifetimes, shard validators count, shuffle) |
 | 29 | `ConsensusConfig` | BFT consensus parameters (timeouts, attempts, block/collated size limits) |
 | 30 | `NewConsensusConfigAll` | Simplex consensus parameters (if used) |
@@ -140,11 +140,11 @@ Example calls in the zero state script:
 3 setglobalid                                    // ConfigParam 19
 13 cap... config.version!                        // ConfigParam 8
 1000 100 13 config.validator_num!                 // ConfigParam 16
-GR$10000 GR$10000000 GR$500000 sg~3              // ConfigParam 17
+TM$10000 TM$10000000 TM$500000 sg~3              // ConfigParam 17
   config.validator_stake_limits!
 65536 32768 8192 32768 config.election_params!    // ConfigParam 15
 1 500 1000 500000 config.storage_prices!          // ConfigParam 18
-1000 sg* 1 *M dup 10000 10 *M GR$0.1 GR$1.0     // ConfigParam 21
+1000 sg* 1 *M dup 10000 10 *M TM$0.1 TM$1.0     // ConfigParam 21
   1000 1000000 config.gas_prices!
 ```
 

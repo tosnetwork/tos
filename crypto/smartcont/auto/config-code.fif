@@ -170,7 +170,7 @@ PROGRAM{
     s1 s4 XCHG	//  cs _10=0 query_id _9=1313042276 dest_addr _14
     256 STU	//  cs _10=0 query_id _9=1313042276 _16
     30 PUSHPOW2	//  cs _10=0 query_id _9=1313042276 _16 _19
-    STGRAMS	//  cs _10=0 query_id _9=1313042276 _20
+    STTOMIS	//  cs _10=0 query_id _9=1313042276 _20
     s1 s3 XCHG	//  cs _9=1313042276 query_id _10=0 _20
     107 STU	//  cs _9=1313042276 query_id _34
     s1 s2 XCHG	//  cs query_id _9=1313042276 _34

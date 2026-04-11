@@ -62,7 +62,7 @@ _ load_data() {
         var msg = begin_cell()
             .store_uint(0x18, 6)
             .store_uint(4, 3).store_slice(dest_address)
-            .store_grams(0)
+            .store_tomis(0)
             .store_uint(4 + 2 + 1, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1)
             .store_ref(state_init)
             .store_ref(body);

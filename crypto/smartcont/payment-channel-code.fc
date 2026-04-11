@@ -68,7 +68,7 @@ _ unpack_config(cell config) {
     cs~load_ref().begin_parse(),
     cs~load_ref().begin_parse(),
     cs~load_uint(64),
-    cs~load_grams());
+    cs~load_tomis());
   cs.end_parse();
   return res;
 }
@@ -99,16 +99,16 @@ _ unpack_config(cell config) {
 
 ;; process message, give state is stateInit
 ;;
-;; stateInit signed_A?:Bool signed_B?:Bool min_A:Grams min_B:Grams expire_at:uint32 A:Grams B:Grams = State;
+;; stateInit signed_A?:Bool signed_B?:Bool min_A:Tomis min_B:Tomis expire_at:uint32 A:Tomis B:Tomis = State;
 _ unpack_state_init(slice state) {
   return (
     state~load_int(1),
     state~load_int(1),
-    state~load_grams(),
-    state~load_grams(),
+    state~load_tomis(),
+    state~load_tomis(),
     state~load_uint(32),
-    state~load_grams(),
-    state~load_grams());
+    state~load_tomis(),
+    state~load_tomis());
 
 }
 _ pack_state_init(int signed_A?, int signed_B?, int min_A, int min_B, int expire_at, int A, int B) {
@@ -116,23 +116,23 @@ _ pack_state_init(int signed_A?, int signed_B?, int min_A, int min_B, int expire
     .store_int(state:init(), 3)
     .store_int(signed_A?, 1)
     .store_int(signed_B?, 1)
-    .store_grams(min_A)
-    .store_grams(min_B)
+    .store_tomis(min_A)
+    .store_tomis(min_B)
     .store_uint(expire_at, 32)
-    .store_grams(A)
-    .store_grams(B).end_cell();
+    .store_tomis(A)
+    .store_tomis(B).end_cell();
 }
 
-;; stateClosing$10 signed_A?:bool signed_B?:Bool promise_A:Grams promise_B:Grams exipire_at:uint32 A:Grams B:Grams = State;
+;; stateClosing$10 signed_A?:bool signed_B?:Bool promise_A:Tomis promise_B:Tomis exipire_at:uint32 A:Tomis B:Tomis = State;
 _ unpack_state_close(slice state) {
   return (
     state~load_int(1),
     state~load_int(1),
-    state~load_grams(),
-    state~load_grams(),
+    state~load_tomis(),
+    state~load_tomis(),
     state~load_uint(32),
-    state~load_grams(),
-    state~load_grams());
+    state~load_tomis(),
+    state~load_tomis());
 }
 
 _ pack_state_close(int signed_A?, int signed_B?, int promise_A, int promise_B, int expire_at, int A, int B) {
@@ -140,18 +140,18 @@ _ pack_state_close(int signed_A?, int signed_B?, int promise_A, int promise_B, i
     .store_int(state:close(), 3)
     .store_int(signed_A?, 1)
     .store_int(signed_B?, 1)
-    .store_grams(promise_A)
-    .store_grams(promise_B)
+    .store_tomis(promise_A)
+    .store_tomis(promise_B)
     .store_uint(expire_at, 32)
-    .store_grams(A)
-    .store_grams(B).end_cell();
+    .store_tomis(A)
+    .store_tomis(B).end_cell();
 }
 
 _ send_payout(slice s_addr, int amount, int channel_id, int flags) impure {
   send_raw_message(begin_cell()
     .store_uint(0x10, 6)
     .store_slice(s_addr)
-    .store_grams(amount)
+    .store_tomis(amount)
     .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
     .store_uint(msg:payout(), 32)
     .store_uint(channel_id, 64)
@@ -177,14 +177,14 @@ cell do_payout(int promise_A, int promise_B, int A, int B, slice a_addr, slice b
 
   return begin_cell()
     .store_int(state:payout(), 3)
-    .store_grams(A)
-    .store_grams(B)
+    .store_tomis(A)
+    .store_tomis(B)
   .end_cell();
 }
 
 
 ;;
-;; init$000 inc_A:Grams inc_B:Grams min_A:Grams min_B:Grams = Message;
+;; init$000 inc_A:Tomis inc_B:Tomis min_A:Tomis min_B:Tomis = Message;
 ;;
 cell with_init(slice state, int msg_value, slice msg, int msg_signed_A?, int msg_signed_B?,
                slice a_addr, slice b_addr, int init_timeout, int channel_id, int min_A_extra) {
@@ -204,7 +204,7 @@ cell with_init(slice state, int msg_value, slice msg, int msg_signed_A?, int msg
 
   ;; unpack init message
   (int inc_A, int inc_B, int upd_min_A, int upd_min_B, int got_channel_id) =
-    (msg~load_grams(), msg~load_grams(), msg~load_grams(), msg~load_grams(), msg~load_uint(64));
+    (msg~load_tomis(), msg~load_tomis(), msg~load_tomis(), msg~load_tomis(), msg~load_uint(64));
   throw_unless(err:wrong_channel_id(), got_channel_id == channel_id);
 
   ;; TODO: we should reserve some part of the value for comission
@@ -236,7 +236,7 @@ cell with_init(slice state, int msg_value, slice msg, int msg_signed_A?, int msg
   return pack_state_init(signed_A?, signed_B?, min_A, min_B, expire_at, A, B);
 }
 
-;; close$001 extra_A:Grams extra_B:Grams sig:Maybe<int256> promise_A:Grams promise_B:Grams = Message;
+;; close$001 extra_A:Tomis extra_B:Tomis sig:Maybe<int256> promise_A:Tomis promise_B:Tomis = Message;
 
 cell with_close(slice cs, slice msg, int msg_signed_A?, int msg_signed_B?, int a_key, int b_key,
                 slice a_addr, slice b_addr, int expire_timeout, int channel_id) {
@@ -260,7 +260,7 @@ cell with_close(slice cs, slice msg, int msg_signed_A?, int msg_signed_B?, int a
   signed_B? |= msg_signed_B?;
 
   ;; unpack close message
-  (int extra_A, int extra_B) = (msg~load_grams(), msg~load_grams());
+  (int extra_A, int extra_B) = (msg~load_tomis(), msg~load_tomis());
   int has_sig = msg~load_int(1);
   if (has_sig) {
     slice sig = msg~load_ref().begin_parse().preload_bits(512);
@@ -278,7 +278,7 @@ cell with_close(slice cs, slice msg, int msg_signed_A?, int msg_signed_B?, int a
     extra_A = 0;
     extra_B = 0;
   }
-  (int got_channel_id, int update_promise_A, int update_promise_B) = (msg~load_uint(64), msg~load_grams(), msg~load_grams());
+  (int got_channel_id, int update_promise_A, int update_promise_B) = (msg~load_uint(64), msg~load_tomis(), msg~load_tomis());
   throw_unless(err:wrong_channel_id(), got_channel_id == channel_id);
 
 
@@ -301,7 +301,7 @@ cell with_close(slice cs, slice msg, int msg_signed_A?, int msg_signed_B?, int a
 () with_payout(slice cs, slice msg, slice a_addr, slice b_addr, int channel_id) impure {
   int op = msg~load_uint(32);
   throw_unless(err:expected_payout(), op == msg:payout());
-  (int A, int B) = (cs~load_grams(), cs~load_grams());
+  (int A, int B) = (cs~load_tomis(), cs~load_tomis());
   throw_unless(err:not_enough_fee(), A + B + 1000000000 < get_balance().pair_first());
   accept_message();
   send_payout(b_addr, B, channel_id, 3);

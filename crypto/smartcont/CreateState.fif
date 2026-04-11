@@ -20,9 +20,9 @@ variable @default-subwallet-id
 { @default-subwallet-id @ } : default-subwallet-id
 { @default-subwallet-id ! } : default-subwallet-id!
 
-// b x --> b'  ( serializes a Gram amount )
+// b x --> b'  ( serializes a Tomi amount )
 { -1 { 1+ 2dup 8 * ufits } until
-  rot over 4 u, -rot 8 * u, } : Gram,
+  rot over 4 u, -rot 8 * u, } : Tomi,
 
 // workchain-id -- wc-zero-state
 { <b x{9023afe2} s, globalid@ 32 i, 0 8 i, swap 32 i, 1 63 << 64 u,
@@ -57,7 +57,7 @@ variable @default-subwallet-id
 { swap rot <b swap 16 u, swap 16 u, swap 16 u, b> 16 config! } : config.validator_num!
 
 // min-stake max-stake min-total-stake max-factor --
-{ 4 0 reverse <b swap Gram, swap Gram, swap Gram, swap 32 u, b>
+{ 4 0 reverse <b swap Tomi, swap Tomi, swap Tomi, swap 32 u, b>
   17 config!
 } : config.validator_stake_limits!
 
@@ -135,7 +135,7 @@ variable special-dict
 { make-proposals-setup 11 config! } : config.param_proposals_setup!
 
 // deposit bit_pps cell_pps
-{ 3 0 reverse <b x{1a} s, swap Gram, swap Gram, swap Gram, b> } : create-complaint-pricing
+{ 3 0 reverse <b x{1a} s, swap Tomi, swap Tomi, swap Tomi, b> } : create-complaint-pricing
 { create-complaint-pricing 13 config! } : config.complaint_prices!
 
 // bit-pps cell-pps mc-bit-pps mc-cell-pps --
@@ -197,7 +197,7 @@ variable special-dict
 { make-block-limits-v2 23 config! } : config.block_limits_v2!
 
 // mc-block-create-fee bc-block-create-fee
-{ <b x{6b} s, rot Gram, swap Gram, b> } : make-block-create-fees
+{ <b x{6b} s, rot Tomi, swap Tomi, b> } : make-block-create-fees
 { make-block-create-fees 14 config! } : config.block_create_fees!
 
 { <b swap 256 u, b> } : make-smc-addr-cell
@@ -208,24 +208,24 @@ variable special-dict
 
 { <b swap dict, b> 7 config! } : config.to_mint!
 
-1000000000 constant Gram
+1000000000 constant Tomi
 1000000 constant mGram
 1000 constant uGram
 1 constant nGram
-{ Gram * } : Gram*
+{ Tomi * } : Tomi*
 { mGram * } : mGram*
 { uGram * } : uGram*
 'nop : nGram*
-{ Gram swap */r } : Gram*/
+{ Tomi swap */r } : Tomi*/
 { mGram swap */r } : mGram*/
 { uGram swap */r } : uGram*/
 { /r } : nGram*/
 
-// GR$.17 is equivalent to 170000000
-{ bl word (number) ?dup 0= abort"not a valid Gram amount"
-  1- { Gram swap */r } { Gram * } cond
+// TM$.17 is equivalent to 170000000
+{ bl word (number) ?dup 0= abort"not a valid Tomi amount"
+  1- { Tomi swap */r } { Tomi * } cond
   1 'nop
-} ::_ GR$
+} ::_ TM$
 
 { 10 << } : *Ki
 { 20 << } : *Mi
@@ -274,7 +274,7 @@ variable special-dict
 } : create-wallet1
 
 // pubkey amount
-{ over ."W0 Key " pubkey>$ type space dup .GR ." -> "
+{ over ."W0 Key " pubkey>$ type space dup .TM ." -> "
   WCode3  // code
   <b 0 32 u, default-subwallet-id 32 u, 3 roll 256 u, b>  // data
   empty_cell  // libs
@@ -284,7 +284,7 @@ variable special-dict
 } : create-wallet0
 
 // D x t -- D'
-{ <b rot Gram, swap rot 32 b>idict! not abort"cannot add value"
+{ <b rot Tomi, swap rot 32 b>idict! not abort"cannot add value"
 } : rdict-entry
 { 86400 * } : days*
 { 365 * days* } : years*
@@ -342,7 +342,7 @@ variable w3-addr
 
 // pubkey amount 'rdict --
 { 'make-rdict ! over precompute-wallet3-addr w3-addr !
-  over ."RW3 Key " pubkey>$ type space dup .GR ." -> "
+  over ."RW3 Key " pubkey>$ type space dup .TM ." -> "
   RWCode3  // code
   <b 1 32 u, default-subwallet-id 32 u, 3 roll 256 u, rwallet-start-at @ 32 u,
   2 pick make-rdict dict, b>  // data
@@ -360,7 +360,7 @@ variable w3-addr
 { ' make-rdict2 create-wallet3-internal } : create-wallet3b
 
 // pubkey amount
-{ over ."Key " pubkey>$ type space dup .GR ." -> "
+{ over ."Key " pubkey>$ type space dup .TM ." -> "
   WCode0  // code
   <b 1 32 u, 3 roll 256 u, b>  // data
   empty_cell  // libs

@@ -54,11 +54,11 @@ variable order#   order# 0!
   { drop swap ref, } { s, nip } cond
 } : append-msg-body
 // ng wc addr bounce body -- c
-{ <b b{01} s, rot 1 i, b{000100} s, 2swap addr, rot Gram,
+{ <b b{01} s, rot 1 i, b{000100} s, 2swap addr, rot Tomi,
   0 9 64 32 + + 1+ u, swap append-msg-body b>
 } : create-int-msg
 // ng wc addr bnc --
-{ ."Transferring " 3 roll .GR ."to account "
+{ ."Transferring " 3 roll .TM ."to account "
   -rot 2dup 4 pick 7 + .Addr ." = " .addr ." bounce=" . cr
 } : .transfer
 // addr$ ng -- c
@@ -71,7 +71,7 @@ variable order#   order# 0!
 
 // addr$ ng --
 { create-simple-transfer send-mode create-order add-order } : send
-{ bl word bl word $>GR send } : SEND
+{ bl word bl word $>TM send } : SEND
 
 // parse order file
 order-file include
@@ -81,7 +81,7 @@ now timeout + 32 << <b orders @ dict, b> hashu 32 1<<1- and + =: query_id
 <b tos-global-id 32 i, subwallet-id 32 i, query_id 64 u, orders @ dict, b>
 dup ."signing message: " <s csr. cr
 dup hashu wallet_pk ed25519_sign_uint
-<b b{1000100} s, wallet_addr addr, 0 Gram, b{00} s,
+<b b{1000100} s, wallet_addr addr, 0 Tomi, b{00} s,
    swap B, swap <s s, b>
 dup ."resulting external message: " <s csr. cr
 2 boc+>B dup Bx. cr

@@ -1443,13 +1443,13 @@ struct ValidateState {
     CHECK(self().rec.A.not_null());
   }
 
-  T& expect_grams(td::Ref<vm::CellSlice> cs, td::uint64 expected, td::Slice name) {
+  T& expect_tomis(td::Ref<vm::CellSlice> cs, td::uint64 expected, td::Slice name) {
     if (has_fatal_error_) {
       return self();
     }
     td::RefInt256 got;
     CHECK(cs.not_null());
-    CHECK(block::tlb::t_Grams.as_integer_to(cs, got));
+    CHECK(block::tlb::t_Tomis.as_integer_to(cs, got));
     if (got->cmp(expected) != 0) {
       on_error(td::Status::Error(PSLICE() << name << ": expected " << expected << ", got " << got->to_dec_string()));
     }
@@ -1498,11 +1498,11 @@ struct ValidateState {
 
 struct ValidateStatePayout : public ValidateState<ValidateStatePayout> {
   ValidateStatePayout& expect_A(td::uint64 a) {
-    expect_grams(rec.A, a, "A");
+    expect_tomis(rec.A, a, "A");
     return *this;
   }
   ValidateStatePayout& expect_B(td::uint64 b) {
-    expect_grams(rec.B, b, "B");
+    expect_tomis(rec.B, b, "B");
     return *this;
   }
 
@@ -1515,19 +1515,19 @@ struct ValidateStatePayout : public ValidateState<ValidateStatePayout> {
 
 struct ValidateStateInit : public ValidateState<ValidateStateInit> {
   ValidateStateInit& expect_A(td::uint64 a) {
-    expect_grams(rec.A, a, "A");
+    expect_tomis(rec.A, a, "A");
     return *this;
   }
   ValidateStateInit& expect_B(td::uint64 b) {
-    expect_grams(rec.B, b, "B");
+    expect_tomis(rec.B, b, "B");
     return *this;
   }
   ValidateStateInit& expect_min_A(td::uint64 a) {
-    expect_grams(rec.min_A, a, "min_A");
+    expect_tomis(rec.min_A, a, "min_A");
     return *this;
   }
   ValidateStateInit& expect_min_B(td::uint64 b) {
-    expect_grams(rec.min_B, b, "min_B");
+    expect_tomis(rec.min_B, b, "min_B");
     return *this;
   }
   ValidateStateInit& expect_expire_at(td::uint32 b) {
@@ -1552,19 +1552,19 @@ struct ValidateStateInit : public ValidateState<ValidateStateInit> {
 
 struct ValidateStateClose : public ValidateState<ValidateStateClose> {
   ValidateStateClose& expect_A(td::uint64 a) {
-    expect_grams(rec.A, a, "A");
+    expect_tomis(rec.A, a, "A");
     return *this;
   }
   ValidateStateClose& expect_B(td::uint64 b) {
-    expect_grams(rec.B, b, "B");
+    expect_tomis(rec.B, b, "B");
     return *this;
   }
   ValidateStateClose& expect_promise_A(td::uint64 a) {
-    expect_grams(rec.promise_A, a, "promise_A");
+    expect_tomis(rec.promise_A, a, "promise_A");
     return *this;
   }
   ValidateStateClose& expect_promise_B(td::uint64 b) {
-    expect_grams(rec.promise_B, b, "promise_B");
+    expect_tomis(rec.promise_B, b, "promise_B");
     return *this;
   }
   ValidateStateClose& expect_expire_at(td::uint32 b) {

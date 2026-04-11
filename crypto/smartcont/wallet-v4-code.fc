@@ -43,12 +43,12 @@ slice pack_plugin_key(int wc, int addr_hash) inline {
   var (_, found?) = plugins.dict_get?(264, key);
 
   if (found?) {
-    int ton_amount = in_msg_body~load_grams();
+    int ton_amount = in_msg_body~load_tomis();
     raw_reserve(ton_amount, 2);
     var msg = begin_cell()
       .store_uint(0x18, 6)
       .store_slice(sender)
-      .store_grams(0)
+      .store_tomis(0)
       .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
       .end_cell();
     send_raw_message(msg, 128);

@@ -24,7 +24,7 @@ cell udict_get_ref_(cell dict, int key_len, int index) asm(index dict key_len) "
   Data structure:
   Root cell: [OptRef<1b+1r?>:Hashmap<PfxDict:Slice->UInt<32b>,CatTable>:domains]
          [OptRef<1b+1r?>:Hashmap<UInt<160b>(Time|Hash128)->Slice(DomName)>:gc]
-         [UInt<32b>:stdperiod] [Gram:PPReg] [Gram:PPCell] [Gram:PPBit]
+         [UInt<32b>:stdperiod] [Tomi:PPReg] [Tomi:PPCell] [Tomi:PPBit]
          [UInt<32b>:lasthousekeeping]
   <CatTable> := HashmapE 256 (~~16~~) ^DNSRecord
 
@@ -44,9 +44,9 @@ cell udict_get_ref_(cell dict, int key_len, int index) asm(index dict key_len) "
     cs~load_dict(),       ;; pfx tree: domains data and exp
     cs~load_dict(),       ;; gc auxillary with expiration and 128-bit hash slice
     [ cs~load_uint(30),   ;; length of this period of time in seconds
-      cs~load_grams(),    ;; standard payment for registering a new subdomain
-      cs~load_grams(),    ;; price paid for each cell (PPC)
-      cs~load_grams() ],  ;;                 and bit  (PPB)
+      cs~load_tomis(),    ;; standard payment for registering a new subdomain
+      cs~load_tomis(),    ;; price paid for each cell (PPC)
+      cs~load_tomis() ],  ;;                 and bit  (PPB)
     cs~load_uint(32),     ;; next housekeeping to be done at
     cs~load_uint(32)      ;; last housekeeping done at
   );
@@ -55,7 +55,7 @@ cell udict_get_ref_(cell dict, int key_len, int index) asm(index dict key_len) "
 (int, int, int, int) load_prices() inline_ref {
   slice cs = get_data().begin_parse();
   (cs~load_ref(), cs~load_dict(), cs~load_dict());
-  return (cs~load_uint(30), cs~load_grams(), cs~load_grams(), cs~load_grams());
+  return (cs~load_uint(30), cs~load_tomis(), cs~load_tomis(), cs~load_tomis());
 }
 
 () store_data(cell ctl, cell dd, cell gc, prices, int nhk, int lhk) impure {
@@ -65,9 +65,9 @@ cell udict_get_ref_(cell dict, int key_len, int index) asm(index dict key_len) "
       .store_dict(dd) ;; domains data and exp
       .store_dict(gc) ;; keyed expiration time and 128-bit hash slice
       .store_uint(sp, 30) ;; standard period
-      .store_grams(ppr) ;; price per registration
-      .store_grams(ppc) ;; price per cell
-      .store_grams(ppb) ;; price per bit
+      .store_tomis(ppr) ;; price per registration
+      .store_tomis(ppc) ;; price per cell
+      .store_tomis(ppb) ;; price per bit
       .store_uint(nhk, 32) ;; next housekeeping
       .store_uint(lhk, 32) ;; last housekeeping
       .end_cell());
@@ -76,13 +76,13 @@ cell udict_get_ref_(cell dict, int key_len, int index) asm(index dict key_len) "
 global var query_info;
 
 () send_message(slice addr, int tag,   int query_id,
-                int   body, int grams, int mode) impure {
+                int   body, int tomis, int mode) impure {
   ;; int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
   ;;                src:MsgAddress -> 011000 0x18
   var msg = begin_cell()
     .store_uint (0x18, 6)
     .store_slice(addr)
-    .store_grams(grams)
+    .store_tomis(tomis)
     .store_uint (0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
     .store_uint (tag, 32)
     .store_uint (query_id, 64);
@@ -174,7 +174,7 @@ int check_owner(cell cat_table, cell owner_info, int src_wc, int src_addr, int s
                    8             4           2            1
     int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
     src:MsgAddressInt dest:MsgAddressInt
-    value:CurrencyCollection ihr_fee:Grams fwd_fee:Grams
+    value:CurrencyCollection ihr_fee:Tomis fwd_fee:Tomis
     created_lt:uint64 created_at:uint32
   Internal message data structure:
     [UInt<32b>:op] [UInt<64b>:query_id] [Ref<1r>:domain]
@@ -190,7 +190,7 @@ int check_owner(cell cat_table, cell owner_info, int src_wc, int src_addr, int s
     return send_error(0xee6f776e);
   }
   if (op == 0x43685072) {  ;; ChPr = Change Prices
-    var (stdper, ppr, ppc, ppb) = (in_msg~load_uint(32), in_msg~load_grams(), in_msg~load_grams(), in_msg~load_grams());
+    var (stdper, ppr, ppc, ppb) = (in_msg~load_uint(32), in_msg~load_tomis(), in_msg~load_tomis(), in_msg~load_tomis());
     in_msg.end_parse();
     ;; NB: stdper == 0 -> disable new actions
     store_data(ctl, domdata, gc, [stdper, ppr, ppc, ppb], nhk, lhk);
@@ -209,14 +209,14 @@ int check_owner(cell cat_table, cell owner_info, int src_wc, int src_addr, int s
     }
     return send_message(addr, 0xef6b6179, query_id, op, 0, 128 + 32);
   }
-  if (op == 0x54616b65) { ;; Take = take grams from the contract
-    var amount = in_msg~load_grams();
+  if (op == 0x54616b65) { ;; Take = take tomis from the contract
+    var amount = in_msg~load_tomis();
     return send_message(addr, 0xef6b6179, query_id, op, amount, 64);
   }
   return send_error(0xffffffff);
 }
 
-;; Must send at least GR$1 more for possible gas fees!
+;; Must send at least TM$1 more for possible gas fees!
 () recv_internal(int msg_value, cell in_msg_cell, slice in_msg) impure {
   ;; this time very interested in internal messages
   if (in_msg.slice_bits() < 32) {
@@ -353,7 +353,7 @@ int check_owner(cell cat_table, cell owner_info, int src_wc, int src_addr, int s
 
   ;; compute action price
   int price = calcprice_internal(domain, data, ppc, ppb) + (ppr & (qt != 4));
-  if (msg_value - (1 << 30) < price) { ;; gr<p: grams - GR$1 < price
+  if (msg_value - (1 << 30) < price) { ;; gr<p: tomis - TM$1 < price
     return send_error(0xe7723c70);
   }
 

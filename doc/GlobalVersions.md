@@ -196,7 +196,7 @@ This is required to help computing storage stats in the future, after collator-v
 ## Version 12
 
 ### Extra message flags and new bounce format
-Field `ihr_fee:Grams` in internal message is now called `extra_flags:(VarUInteger 16)` (it's the same format).
+Field `ihr_fee:Tomis` in internal message is now called `extra_flags:(VarUInteger 16)` (it's the same format).
 This field does not represent fees. `ihr_fee` is always zero since version 11, so this field was essentially unused.
 
 `(extra_flags & 1) = 1` enables the new bounce format for the message. The bounced message contains information about the transaction.

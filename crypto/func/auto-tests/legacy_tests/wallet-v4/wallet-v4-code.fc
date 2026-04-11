@@ -36,14 +36,14 @@
   var msg = begin_cell();
   if (op == 0x706c7567) { ;; request funds
 
-    (int r_toncoins, cell r_extra) = (in_msg~load_grams(), in_msg~load_dict());
+    (int r_toncoins, cell r_extra) = (in_msg~load_tomis(), in_msg~load_dict());
 
     [int my_balance, _] = get_balance();
     throw_unless(80, my_balance - msg_value >= r_toncoins);
 
     msg = msg.store_uint(0x18, 6)
              .store_slice(s_addr)
-             .store_grams(r_toncoins)
+             .store_tomis(r_toncoins)
              .store_dict(r_extra)
              .store_uint(0, 4 + 4 + 64 + 32 + 1 + 1)
              .store_uint(0x706c7567 | 0x80000000, 32)
@@ -61,7 +61,7 @@
     if (flags & 2) {
       msg = msg.store_uint(0x18, 6)
                .store_slice(s_addr)
-               .store_grams(0)
+               .store_tomis(0)
                .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
                .store_uint(0x64737472 | 0x80000000, 32)
                .store_uint(query_id, 64);
@@ -102,14 +102,14 @@
 
   if (op == 1) { ;; deploy and install plugin
     int plugin_workchain = cs~load_int(8);
-    int plugin_balance = cs~load_grams();
+    int plugin_balance = cs~load_tomis();
     (cell state_init, cell body) = (cs~load_ref(), cs~load_ref());
     int plugin_address = cell_hash(state_init);
     slice wc_n_address = begin_cell().store_int(plugin_workchain, 8).store_uint(plugin_address, 256).end_cell().begin_parse();
     var msg = begin_cell()
       .store_uint(0x18, 6)
       .store_uint(4, 3).store_slice(wc_n_address)
-      .store_grams(plugin_balance)
+      .store_tomis(plugin_balance)
       .store_uint(4 + 2 + 1, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1)
       .store_ref(state_init)
       .store_ref(body);
@@ -120,7 +120,7 @@
 
   if (op == 2) { ;; install plugin
     slice wc_n_address = cs~load_bits(8 + 256);
-    int amount = cs~load_grams();
+    int amount = cs~load_tomis();
     int query_id = cs~load_uint(64);
 
     (plugins, int success?) = plugins.dict_add_builder?(8 + 256, wc_n_address, begin_cell());
@@ -129,7 +129,7 @@
     builder msg = begin_cell()
       .store_uint(0x18, 6)
       .store_uint(4, 3).store_slice(wc_n_address)
-      .store_grams(amount)
+      .store_tomis(amount)
       .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
       .store_uint(0x6e6f7465, 32) ;; op
       .store_uint(query_id, 64);
@@ -138,7 +138,7 @@
 
   if (op == 3) { ;; remove plugin
     slice wc_n_address = cs~load_bits(8 + 256);
-    int amount = cs~load_grams();
+    int amount = cs~load_tomis();
     int query_id = cs~load_uint(64);
 
     (plugins, int success?) = plugins.dict_delete?(8 + 256, wc_n_address);
@@ -147,7 +147,7 @@
     builder msg = begin_cell()
       .store_uint(0x18, 6)
       .store_uint(4, 3).store_slice(wc_n_address)
-      .store_grams(amount)
+      .store_tomis(amount)
       .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
       .store_uint(0x64737472, 32) ;; op
       .store_uint(query_id, 64);

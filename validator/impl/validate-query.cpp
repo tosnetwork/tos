@@ -1152,15 +1152,15 @@ bool ValidateQuery::fetch_config_params() {
     serialize_cfg_.size_limits = size_limits;
   }
   {
-    // fetch block_grams_created
+    // fetch block_tomis_created
     auto cell = config_->get_config_param(14);
     if (cell.is_null()) {
       basechain_create_fee_ = masterchain_create_fee_ = td::zero_refint();
     } else {
       block::gen::BlockCreateFees::Record create_fees;
       if (!(tlb::unpack_cell(cell, create_fees) &&
-            block::tlb::t_Grams.as_integer_to(create_fees.masterchain_block_fee, masterchain_create_fee_) &&
-            block::tlb::t_Grams.as_integer_to(create_fees.basechain_block_fee, basechain_create_fee_))) {
+            block::tlb::t_Tomis.as_integer_to(create_fees.masterchain_block_fee, masterchain_create_fee_) &&
+            block::tlb::t_Tomis.as_integer_to(create_fees.basechain_block_fee, basechain_create_fee_))) {
         return fatal_error("cannot unpack BlockCreateFees from configuration parameter #14");
       }
     }
@@ -2934,7 +2934,7 @@ bool ValidateQuery::unpack_precheck_value_flow(Ref<vm::Cell> value_flow_root) {
                         " but the sum over all accounts present in the new state is " + cc.to_str());
   }
   auto msg_extra = in_msg_dict_->get_root_extra();
-  if (!(block::tlb::t_Grams.as_integer_skip_to(msg_extra.write(), import_fees_) && cc.unpack(std::move(msg_extra)))) {
+  if (!(block::tlb::t_Tomis.as_integer_skip_to(msg_extra.write(), import_fees_) && cc.unpack(std::move(msg_extra)))) {
     return reject_query("cannot unpack ImportFees from the augmentation of the InMsgDescr dictionary");
   }
   if (cc != value_flow_.imported) {
@@ -3879,11 +3879,11 @@ bool ValidateQuery::check_in_msg(td::ConstBitPtr key, Ref<vm::CellSlice> in_msg)
   Ref<vm::CellSlice> src, dest;
   Ref<vm::Cell> transaction;
   Ref<vm::Cell> msg, msg_env, tr_msg_env;
-  // msg_envelope#4 cur_addr:IntermediateAddress next_addr:IntermediateAddress fwd_fee_remaining:Grams msg:^(Message Any) = MsgEnvelope;
+  // msg_envelope#4 cur_addr:IntermediateAddress next_addr:IntermediateAddress fwd_fee_remaining:Tomis msg:^(Message Any) = MsgEnvelope;
   block::tlb::MsgEnvelope::Record_std env;
   // int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
   //   src:MsgAddressInt dest:MsgAddressInt
-  //   value:CurrencyCollection extra_flags:(VarUInteger 16) fwd_fee:Grams
+  //   value:CurrencyCollection extra_flags:(VarUInteger 16) fwd_fee:Tomis
   //   created_lt:uint64 created_at:uint32 = CommonMsgInfo;
   block::gen::CommonMsgInfo::Record_int_msg_info info;
   tos::AccountIdPrefixFull src_prefix, dest_prefix, cur_prefix, next_prefix;
@@ -3922,14 +3922,14 @@ bool ValidateQuery::check_in_msg(td::ConstBitPtr key, Ref<vm::CellSlice> in_msg)
       break;
     }
     case block::gen::InMsg::msg_import_imm: {
-      // msg_import_imm$011 in_msg:^MsgEnvelope transaction:^Transaction fwd_fee:Grams
+      // msg_import_imm$011 in_msg:^MsgEnvelope transaction:^Transaction fwd_fee:Tomis
       // importing and processing an internal message generated in this very block
       block::gen::InMsg::Record_msg_import_imm inp;
       unsigned long long created_lt = 0;
       REJECT_UNLESS(tlb::csr_unpack(in_msg, inp));
       REJECT_UNLESS(tlb::unpack_cell(inp.in_msg, env));
       REJECT_UNLESS(block::tlb::t_MsgEnvelope.get_emitted_lt(vm::load_cell_slice(inp.in_msg), created_lt));
-      REJECT_UNLESS((fwd_fee = block::tlb::t_Grams.as_integer(std::move(inp.fwd_fee))).not_null());
+      REJECT_UNLESS((fwd_fee = block::tlb::t_Tomis.as_integer(std::move(inp.fwd_fee))).not_null());
       transaction = std::move(inp.transaction);
       msg_env = std::move(inp.in_msg);
       msg = env.msg;
@@ -3940,12 +3940,12 @@ bool ValidateQuery::check_in_msg(td::ConstBitPtr key, Ref<vm::CellSlice> in_msg)
       break;
     }
     case block::gen::InMsg::msg_import_fin: {
-      // msg_import_fin$100 in_msg:^MsgEnvelope transaction:^Transaction fwd_fee:Grams
+      // msg_import_fin$100 in_msg:^MsgEnvelope transaction:^Transaction fwd_fee:Tomis
       // importing and processing an internal message with destination in this shard
       block::gen::InMsg::Record_msg_import_fin inp;
       REJECT_UNLESS(tlb::csr_unpack(in_msg, inp));
       REJECT_UNLESS(tlb::unpack_cell(inp.in_msg, env));
-      REJECT_UNLESS((fwd_fee = block::tlb::t_Grams.as_integer(std::move(inp.fwd_fee))).not_null());
+      REJECT_UNLESS((fwd_fee = block::tlb::t_Tomis.as_integer(std::move(inp.fwd_fee))).not_null());
       transaction = std::move(inp.transaction);
       msg_env = std::move(inp.in_msg);
       msg = env.msg;
@@ -3953,12 +3953,12 @@ bool ValidateQuery::check_in_msg(td::ConstBitPtr key, Ref<vm::CellSlice> in_msg)
       break;
     }
     case block::gen::InMsg::msg_import_tr: {
-      // msg_import_tr$101 in_msg:^MsgEnvelope out_msg:^MsgEnvelope transit_fee:Grams
+      // msg_import_tr$101 in_msg:^MsgEnvelope out_msg:^MsgEnvelope transit_fee:Tomis
       // importing and relaying a (transit) internal message with destination outside this shard
       block::gen::InMsg::Record_msg_import_tr inp;
       REJECT_UNLESS(tlb::csr_unpack(in_msg, inp));
       REJECT_UNLESS(tlb::unpack_cell(inp.in_msg, env));
-      REJECT_UNLESS((fwd_fee = block::tlb::t_Grams.as_integer(std::move(inp.transit_fee))).not_null());
+      REJECT_UNLESS((fwd_fee = block::tlb::t_Tomis.as_integer(std::move(inp.transit_fee))).not_null());
       msg_env = std::move(inp.in_msg);
       msg = env.msg;
       tr_msg_env = std::move(inp.out_msg);
@@ -3966,25 +3966,25 @@ bool ValidateQuery::check_in_msg(td::ConstBitPtr key, Ref<vm::CellSlice> in_msg)
       break;
     }
     case block::gen::InMsg::msg_import_ihr:
-      // msg_import_ihr$010 msg:^(Message Any) transaction:^Transaction ihr_fee:Grams proof_created:^Cell
+      // msg_import_ihr$010 msg:^(Message Any) transaction:^Transaction ihr_fee:Tomis proof_created:^Cell
       return reject_query("InMsg with key "s + key.to_hex(256) +
                           " is a msg_import_ihr, but IHR messages are not enabled in this version");
     case block::gen::InMsg::msg_discard_tr:
-      // msg_discard_tr$111 in_msg:^MsgEnvelope transaction_id:uint64 fwd_fee:Grams proof_delivered:^Cell
+      // msg_discard_tr$111 in_msg:^MsgEnvelope transaction_id:uint64 fwd_fee:Tomis proof_delivered:^Cell
       return reject_query("InMsg with key "s + key.to_hex(256) +
                           " is a msg_discard_tr, but IHR messages are not enabled in this version");
     case block::gen::InMsg::msg_discard_fin:
-      // msg_discard_fin$110 in_msg:^MsgEnvelope transaction_id:uint64 fwd_fee:Grams
+      // msg_discard_fin$110 in_msg:^MsgEnvelope transaction_id:uint64 fwd_fee:Tomis
       return reject_query("InMsg with key "s + key.to_hex(256) +
                           " is a msg_discard_fin, but IHR messages are not enabled in this version");
     case block::gen::InMsg::msg_import_deferred_fin: {
       from_dispatch_queue = true;
-      // msg_import_deferredfin$00100 in_msg:^MsgEnvelope transaction:^Transaction fwd_fee:Grams
+      // msg_import_deferredfin$00100 in_msg:^MsgEnvelope transaction:^Transaction fwd_fee:Tomis
       // importing and processing an internal message from DispatchQueue with destination in this shard
       block::gen::InMsg::Record_msg_import_deferred_fin inp;
       REJECT_UNLESS(tlb::csr_unpack(in_msg, inp));
       REJECT_UNLESS(tlb::unpack_cell(inp.in_msg, env));
-      REJECT_UNLESS((fwd_fee = block::tlb::t_Grams.as_integer(std::move(inp.fwd_fee))).not_null());
+      REJECT_UNLESS((fwd_fee = block::tlb::t_Tomis.as_integer(std::move(inp.fwd_fee))).not_null());
       transaction = std::move(inp.transaction);
       msg_env = std::move(inp.in_msg);
       msg = env.msg;
@@ -4086,7 +4086,7 @@ bool ValidateQuery::check_in_msg(td::ConstBitPtr key, Ref<vm::CellSlice> in_msg)
                           key.to_hex(256));
     }
     // unpack original forwarding fee
-    orig_fwd_fee = block::tlb::t_Grams.as_integer(info.fwd_fee);
+    orig_fwd_fee = block::tlb::t_Tomis.as_integer(info.fwd_fee);
     REJECT_UNLESS(orig_fwd_fee.not_null());
     if (env.fwd_fee_remaining > orig_fwd_fee) {
       return reject_query("inbound internal message with hash "s + key.to_hex(256) + " has remaining forwarding fee " +
@@ -4169,7 +4169,7 @@ bool ValidateQuery::check_in_msg(td::ConstBitPtr key, Ref<vm::CellSlice> in_msg)
   // continue checking inbound message
   switch (tag) {
     case block::gen::InMsg::msg_import_imm: {
-      // msg_import_imm$011 in_msg:^MsgEnvelope transaction:^Transaction fwd_fee:Grams
+      // msg_import_imm$011 in_msg:^MsgEnvelope transaction:^Transaction fwd_fee:Tomis
       // importing and processing an internal message generated in this very block
       if (cur_prefix != dest_prefix) {
         return reject_query("inbound internal message with hash "s + key.to_hex(256) +
@@ -4203,8 +4203,8 @@ bool ValidateQuery::check_in_msg(td::ConstBitPtr key, Ref<vm::CellSlice> in_msg)
       break;
     }
     case block::gen::InMsg::msg_import_fin: {
-      // msg_import_fin$100 in_msg:^MsgEnvelope transaction:^Transaction fwd_fee:Grams
-      // msg_import_deferred_fin$00100 in_msg:^MsgEnvelope transaction:^Transaction fwd_fee:Grams
+      // msg_import_fin$100 in_msg:^MsgEnvelope transaction:^Transaction fwd_fee:Tomis
+      // msg_import_deferred_fin$00100 in_msg:^MsgEnvelope transaction:^Transaction fwd_fee:Tomis
       // importing and processing an internal message with destination in this shard
       REJECT_UNLESS(transaction.not_null());
       REJECT_UNLESS(shard_contains(shard_, next_prefix));
@@ -4250,7 +4250,7 @@ bool ValidateQuery::check_in_msg(td::ConstBitPtr key, Ref<vm::CellSlice> in_msg)
     }
     case block::gen::InMsg::msg_import_deferred_tr:
     case block::gen::InMsg::msg_import_tr: {
-      // msg_import_tr$101 in_msg:^MsgEnvelope out_msg:^MsgEnvelope transit_fee:Grams
+      // msg_import_tr$101 in_msg:^MsgEnvelope out_msg:^MsgEnvelope transit_fee:Tomis
       // msg_import_deferred_tr$00101 in_msg:^MsgEnvelope out_msg:^MsgEnvelope
       // importing and relaying a (transit) internal message with destination outside this shard
       if (cur_prefix == dest_prefix && tag == block::gen::InMsg::msg_import_tr) {
@@ -4445,11 +4445,11 @@ bool ValidateQuery::check_out_msg(td::ConstBitPtr key, Ref<vm::CellSlice> out_ms
   Ref<vm::Cell> transaction;
   Ref<vm::Cell> msg, msg_env, tr_msg_env, reimport;
   td::Bits256 msg_env_hash;
-  // msg_envelope#4 cur_addr:IntermediateAddress next_addr:IntermediateAddress fwd_fee_remaining:Grams msg:^(Message Any) = MsgEnvelope;
+  // msg_envelope#4 cur_addr:IntermediateAddress next_addr:IntermediateAddress fwd_fee_remaining:Tomis msg:^(Message Any) = MsgEnvelope;
   block::tlb::MsgEnvelope::Record_std env;
   // int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
   //   src:MsgAddressInt dest:MsgAddressInt
-  //   value:CurrencyCollection extra_flags:(VarUInteger 16) fwd_fee:Grams
+  //   value:CurrencyCollection extra_flags:(VarUInteger 16) fwd_fee:Tomis
   //   created_lt:uint64 created_at:uint32 = CommonMsgInfo;
   block::gen::CommonMsgInfo::Record_int_msg_info info;
   tos::AccountIdPrefixFull src_prefix, dest_prefix, cur_prefix, next_prefix;
@@ -4689,7 +4689,7 @@ bool ValidateQuery::check_out_msg(td::ConstBitPtr key, Ref<vm::CellSlice> out_ms
                           " created in this shard");
     }
     // unpack original forwarding fee
-    orig_fwd_fee = block::tlb::t_Grams.as_integer(info.fwd_fee);
+    orig_fwd_fee = block::tlb::t_Tomis.as_integer(info.fwd_fee);
     REJECT_UNLESS(orig_fwd_fee.not_null());
     if (env.fwd_fee_remaining > orig_fwd_fee) {
       return reject_query("outbound internal message with hash "s + key.to_hex(256) + " has remaining forwarding fee " +
@@ -5556,7 +5556,7 @@ std::unique_ptr<block::Account> ValidateQuery::CheckAccountTxs::unpack_account(t
  */
 static td::RefInt256 get_ihr_fee(const block::gen::CommonMsgInfo::Record_int_msg_info& info, int global_version) {
   // Legacy: extra_flags was previously ihr_fee
-  return global_version >= 12 ? td::zero_refint() : block::tlb::t_Grams.as_integer(std::move(info.extra_flags));
+  return global_version >= 12 ? td::zero_refint() : block::tlb::t_Tomis.as_integer(std::move(info.extra_flags));
 }
 
 /**
@@ -6501,7 +6501,7 @@ bool ValidateQuery::check_special_message(Ref<vm::Cell> in_msg_root, const block
   if (env.fwd_fee_remaining->sgn()) {
     return reject_query("special message with hash "s + msg_hash.to_hex() + " has a non-zero fwd_fee_remaining");
   }
-  auto fwd_fee = block::tlb::t_Grams.as_integer(info.fwd_fee);
+  auto fwd_fee = block::tlb::t_Tomis.as_integer(info.fwd_fee);
   if (fwd_fee.is_null() || fwd_fee->sgn()) {
     return reject_query("special message with hash "s + msg_hash.to_hex() + " has a non-zero or invalid fwd_fee");
   }
@@ -6509,7 +6509,7 @@ bool ValidateQuery::check_special_message(Ref<vm::Cell> in_msg_root, const block
   if (ihr_fee.is_null() || ihr_fee->sgn()) {
     return reject_query("special message with hash "s + msg_hash.to_hex() + " has a non-zero or invalid ihr_fee");
   }
-  auto extra_flags = block::tlb::t_Grams.as_integer(info.extra_flags);
+  auto extra_flags = block::tlb::t_Tomis.as_integer(info.extra_flags);
   if (extra_flags.is_null() || extra_flags->sgn()) {
     return reject_query("special message with hash "s + msg_hash.to_hex() + " has a non-zero or invalid extra_flags");
   }

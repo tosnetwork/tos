@@ -1191,7 +1191,7 @@ static AsmOp compile_store_bool(std::vector<VarDescr>& res, std::vector<VarDescr
   return exec_op(origin, "1 STI", 2, 1);
 }
 
-// fun builder.storeCoins(mutate self, value: coins): self   asm "STGRAMS";
+// fun builder.storeCoins(mutate self, value: coins): self   asm "STTOMIS";
 static AsmOp compile_store_coins(std::vector<VarDescr>& res, std::vector<VarDescr>& args, AnyV origin) {
   tolk_assert(args.size() == 2 && res.size() == 1);
   auto& v = args[1];
@@ -1201,7 +1201,7 @@ static AsmOp compile_store_coins(std::vector<VarDescr>& res, std::vector<VarDesc
     v.unused();
     return AsmOp::Custom(origin, "MY_store_intU 0 4", 1);
   }
-  return exec_op(origin, "STGRAMS", 2, 1);
+  return exec_op(origin, "STTOMIS", 2, 1);
 }
 
 // fun slice.loadBits   (mutate self, len: int): self    asm(s len -> 1 0) "LDSLICEX"

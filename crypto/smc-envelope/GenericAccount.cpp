@@ -24,15 +24,15 @@
 namespace tos {
 
 namespace smc {
-td::Ref<vm::CellSlice> pack_grams(td::uint64 amount) {
+td::Ref<vm::CellSlice> pack_tomis(td::uint64 amount) {
   vm::CellBuilder cb;
-  block::tlb::t_Grams.store_integer_value(cb, td::BigInt256(amount));
+  block::tlb::t_Tomis.store_integer_value(cb, td::BigInt256(amount));
   return vm::load_cell_slice_ref(cb.finalize());
 }
 
-bool unpack_grams(td::Ref<vm::CellSlice> cs, td::uint64& amount) {
+bool unpack_tomis(td::Ref<vm::CellSlice> cs, td::uint64& amount) {
   td::RefInt256 got;
-  if (!block::tlb::t_Grams.as_integer_to(cs, got)) {
+  if (!block::tlb::t_Tomis.as_integer_to(cs, got)) {
     return false;
   }
   if (!got->unsigned_fits_bits(63)) {
@@ -74,7 +74,7 @@ void GenericAccount::store_int_message(vm::CellBuilder& cb, const block::StdAddr
       .store_zeroes(2)
       .store_long(dest_address.workchain, 8)
       .store_int256(dest_addr, 256);
-  block::tlb::t_Grams.store_integer_value(cb, td::BigInt256(gramms));
+  block::tlb::t_Tomis.store_integer_value(cb, td::BigInt256(gramms));
   cb.store_maybe_ref(extra_currencies);
   cb.store_zeroes(8 + 64 + 32);
 }
@@ -96,7 +96,7 @@ td::Ref<vm::Cell> GenericAccount::create_ext_message(const block::StdAddress& ad
     }
     /* import_fee */ {
       vm::CellBuilder cb;
-      block::tlb::t_Grams.store_integer_value(cb, td::BigInt256(0));
+      block::tlb::t_Tomis.store_integer_value(cb, td::BigInt256(0));
       info.import_fee = cb.as_cellslice_ref();
     }
 

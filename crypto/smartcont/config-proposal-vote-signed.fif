@@ -63,7 +63,7 @@ to_sign signature pubkey ed25519_chksign not abort"Ed25519 signature is invalid"
 now 32 << prop-hash 32 1<< mod + =: query-id
 
 <b internal? { x{566f7465} s, query-id 64 u, }
-   { b{1000100} s, config-addr addr, 0 Gram, b{00} s, } cond
+   { b{1000100} s, config-addr addr, 0 Tomi, b{00} s, } cond
    signature B, to_sign B, b>
 cr
 internal? { ."Internal message body is " } { ."External message is " } cond

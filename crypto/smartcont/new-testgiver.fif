@@ -27,7 +27,7 @@ def? $2 { @' $2 } { "new-testgiver" } cond constant file-base
    SWAP DUP SREFS          // cnt' cs msg?
    IF:<{
      8 LDU LDREF -ROT             // cnt'' cs mode msg
-     GR$20 INT 3 INT RAWRESERVE   // reserve all but 20 Grams from the balance
+     TM$20 INT 3 INT RAWRESERVE   // reserve all but 20 Tomis from the balance
      SWAP SENDRAWMSG
    }>
    ENDS INC NEWC 32 STU ENDC c4 POPCTR      // store cnt''

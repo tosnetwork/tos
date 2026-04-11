@@ -309,7 +309,7 @@ EMULATOR_EXPORT const char *tvm_emulator_send_external_message(void *tvm_emulato
  * @brief Send internal message
  * @param tvm_emulator Pointer to TVM emulator
  * @param message_body_boc Base64 encoded BoC serialized message body cell.
- * @param amount Amount of nanograms attached with internal message.
+ * @param amount Amount of nanotomis attached with internal message.
  * @return Json object with error:
  * {
  *   "success": false,

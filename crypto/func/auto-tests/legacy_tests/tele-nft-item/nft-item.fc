@@ -34,7 +34,7 @@ int send_money(int my_balance, slice address, int value) impure {
                     .store_slice(owner)
                     .store_int(0, 1)
                     .store_uint(op::teleitem_bid_info, 32)
-                    .store_grams(bid)
+                    .store_tomis(bid)
                     .store_uint(bid_ts, 32),
             1); ;; paying fees, revert on errors
 
@@ -60,7 +60,7 @@ int send_money(int my_balance, slice address, int value) impure {
         ;; for maybe_end_auction
         new_end_time = 0;
     }
-    ;; step is at least GR$1
+    ;; step is at least TM$1
     int new_min_bid = max(new_bid + one_ton, (new_bid * (100 + min_bid_step) + 99) / 100);
     ifnot (cell_null?(old_last_bid)) {
         (slice old_bidder_address, int old_bid, _) = unpack_last_bid(old_last_bid);
@@ -155,10 +155,10 @@ cell change_dns_record(cell dns, slice in_msg_body) {
     slice sender_address = cs~load_msg_addr();
 
     cs~load_msg_addr(); ;; skip dst
-    cs~load_grams(); ;; skip value
+    cs~load_tomis(); ;; skip value
     cs~load_maybe_ref(); ;; skip extracurrency collection
-    cs~load_grams(); ;; skip ihr_fee
-    int fwd_fee = muldiv(cs~load_grams(), 3, 2); ;; we use message fwd_:fee for estimation of forward_payload costs
+    cs~load_tomis(); ;; skip ihr_fee
+    int fwd_fee = muldiv(cs~load_tomis(), 3, 2); ;; we use message fwd_:fee for estimation of forward_payload costs
 
     int op = in_msg_body.slice_empty?() ? 0 : in_msg_body~load_uint(32);
 

@@ -95,7 +95,7 @@ struct Entry {
   td::Ref<vm::CellSlice> get_value() const {
     // _ amount:Coins start_from:uint48 expired_at:uint48 = AirdropItem;
     vm::CellBuilder cb;
-    bool ok = block::tlb::t_Grams.store_integer_value(cb, *amount) && cb.store_ulong_rchk_bool(start_from, 48) &&
+    bool ok = block::tlb::t_Tomis.store_integer_value(cb, *amount) && cb.store_ulong_rchk_bool(start_from, 48) &&
               cb.store_ulong_rchk_bool(expired_at, 48);
     LOG_CHECK(ok) << "Failed to serialize AirdropItem";
     return cb.as_cellslice_ref();
@@ -104,7 +104,7 @@ struct Entry {
   static Entry parse(const td::BitArray<KEY_LEN> &key, vm::CellSlice value) {
     Entry e;
     e.address = key_to_address(key);
-    bool ok = block::tlb::t_Grams.as_integer_skip_to(value, e.amount) && value.fetch_uint_to(48, e.start_from) &&
+    bool ok = block::tlb::t_Tomis.as_integer_skip_to(value, e.amount) && value.fetch_uint_to(48, e.start_from) &&
               value.fetch_uint_to(48, e.expired_at) && value.empty_ext();
     LOG_CHECK(ok) << "Failed to parse AirdropItem";
     return e;

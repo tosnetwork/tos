@@ -438,31 +438,31 @@ bool VarIntegerNz::store_integer_value(vm::CellBuilder& cb, const td::BigInt256&
          cb.store_int256_bool(value, (k + 7) & -8, true);
 }
 
-bool Grams::validate_skip(int* ops, vm::CellSlice& cs, bool weak) const {
+bool Tomis::validate_skip(int* ops, vm::CellSlice& cs, bool weak) const {
   return t_VarUInteger_16.validate_skip(ops, cs, weak);
 }
 
-td::RefInt256 Grams::as_integer_skip(vm::CellSlice& cs) const {
+td::RefInt256 Tomis::as_integer_skip(vm::CellSlice& cs) const {
   return t_VarUInteger_16.as_integer_skip(cs);
 }
 
-bool Grams::null_value(vm::CellBuilder& cb) const {
+bool Tomis::null_value(vm::CellBuilder& cb) const {
   return t_VarUInteger_16.null_value(cb);
 }
 
-bool Grams::store_integer_value(vm::CellBuilder& cb, const td::BigInt256& value) const {
+bool Tomis::store_integer_value(vm::CellBuilder& cb, const td::BigInt256& value) const {
   return t_VarUInteger_16.store_integer_value(cb, value);
 }
 
-unsigned Grams::precompute_size(const td::BigInt256& value) const {
+unsigned Tomis::precompute_size(const td::BigInt256& value) const {
   return t_VarUInteger_16.precompute_integer_size(value);
 }
 
-unsigned Grams::precompute_size(td::RefInt256 value) const {
+unsigned Tomis::precompute_size(td::RefInt256 value) const {
   return t_VarUInteger_16.precompute_integer_size(std::move(value));
 }
 
-const Grams t_Grams;
+const Tomis t_Tomis;
 
 const Unary t_Unary;
 
@@ -613,15 +613,15 @@ bool HashmapE::store_ref(vm::CellBuilder& cb, Ref<vm::Cell> arg) const {
 const ExtraCurrencyCollection t_ExtraCurrencyCollection;
 
 bool CurrencyCollection::validate_skip(int* ops, vm::CellSlice& cs, bool weak) const {
-  return t_Grams.validate_skip(ops, cs, weak) && t_ExtraCurrencyCollection.validate_skip(ops, cs, weak);
+  return t_Tomis.validate_skip(ops, cs, weak) && t_ExtraCurrencyCollection.validate_skip(ops, cs, weak);
 }
 
 bool CurrencyCollection::skip(vm::CellSlice& cs) const {
-  return t_Grams.skip(cs) && t_ExtraCurrencyCollection.skip(cs);
+  return t_Tomis.skip(cs) && t_ExtraCurrencyCollection.skip(cs);
 }
 
 td::RefInt256 CurrencyCollection::as_integer_skip(vm::CellSlice& cs) const {
-  auto res = t_Grams.as_integer_skip(cs);
+  auto res = t_Tomis.as_integer_skip(cs);
   if (res.not_null() && t_ExtraCurrencyCollection.skip(cs)) {
     return res;
   } else {
@@ -630,12 +630,12 @@ td::RefInt256 CurrencyCollection::as_integer_skip(vm::CellSlice& cs) const {
 }
 
 bool CurrencyCollection::add_values(vm::CellBuilder& cb, vm::CellSlice& cs1, vm::CellSlice& cs2) const {
-  return t_Grams.add_values(cb, cs1, cs2) && t_ExtraCurrencyCollection.add_values(cb, cs1, cs2);
+  return t_Tomis.add_values(cb, cs1, cs2) && t_ExtraCurrencyCollection.add_values(cb, cs1, cs2);
 }
 
 bool CurrencyCollection::unpack_special(vm::CellSlice& cs, td::RefInt256& balance, Ref<vm::Cell>& extra,
                                         bool inexact) const {
-  balance = t_Grams.as_integer_skip(cs);
+  balance = t_Tomis.as_integer_skip(cs);
   if (cs.fetch_ulong(1) == 1) {
     return balance.not_null() && cs.fetch_ref_to(extra) && (inexact || cs.empty_ext());
   } else {
@@ -645,27 +645,27 @@ bool CurrencyCollection::unpack_special(vm::CellSlice& cs, td::RefInt256& balanc
 }
 
 bool CurrencyCollection::unpack_special(vm::CellSlice& cs, block::CurrencyCollection& value, bool inexact) const {
-  return unpack_special(cs, value.grams, value.extra, inexact);
+  return unpack_special(cs, value.tomis, value.extra, inexact);
 }
 
 bool CurrencyCollection::pack_special(vm::CellBuilder& cb, td::RefInt256 balance, Ref<vm::Cell> extra) const {
-  return t_Grams.store_integer_ref(cb, std::move(balance)) && t_ExtraCurrencyCollection.store_ref(cb, std::move(extra));
+  return t_Tomis.store_integer_ref(cb, std::move(balance)) && t_ExtraCurrencyCollection.store_ref(cb, std::move(extra));
 }
 
 bool CurrencyCollection::pack_special(vm::CellBuilder& cb, const block::CurrencyCollection& value) const {
-  return value.is_valid() && pack_special(cb, value.grams, value.extra);
+  return value.is_valid() && pack_special(cb, value.tomis, value.extra);
 }
 
 bool CurrencyCollection::pack_special(vm::CellBuilder& cb, block::CurrencyCollection&& value) const {
-  return value.is_valid() && pack_special(cb, std::move(value.grams), std::move(value.extra));
+  return value.is_valid() && pack_special(cb, std::move(value.tomis), std::move(value.extra));
 }
 
 bool CurrencyCollection::unpack(vm::CellSlice& cs, block::CurrencyCollection& res) const {
-  return unpack_special(cs, res.grams, res.extra);
+  return unpack_special(cs, res.tomis, res.extra);
 }
 
 bool CurrencyCollection::pack(vm::CellBuilder& cb, const block::CurrencyCollection& res) const {
-  return res.is_valid() && pack_special(cb, res.grams, res.extra);
+  return res.is_valid() && pack_special(cb, res.tomis, res.extra);
 }
 
 const CurrencyCollection t_CurrencyCollection;
@@ -678,13 +678,13 @@ bool CommonMsgInfo::validate_skip(int* ops, vm::CellSlice& cs, bool weak) const 
              && t_MsgAddressInt.validate_skip(ops, cs, weak)       // src
              && t_MsgAddressInt.validate_skip(ops, cs, weak)       // dest
              && t_CurrencyCollection.validate_skip(ops, cs, weak)  // value
-             && t_Grams.validate_skip(ops, cs, weak)               // extra_flags
-             && t_Grams.validate_skip(ops, cs, weak)               // fwd_fee
+             && t_Tomis.validate_skip(ops, cs, weak)               // extra_flags
+             && t_Tomis.validate_skip(ops, cs, weak)               // fwd_fee
              && cs.advance(64 + 32);                               // created_lt:uint64 created_at:uint32
     case ext_in_msg_info:
       return cs.advance(2) && t_MsgAddressExt.validate_skip(ops, cs, weak)  // src
              && t_MsgAddressInt.validate_skip(ops, cs, weak)                // dest
-             && t_Grams.validate_skip(ops, cs, weak);                       // import_fee
+             && t_Tomis.validate_skip(ops, cs, weak);                       // import_fee
     case ext_out_msg_info:
       return cs.advance(2) && t_MsgAddressInt.validate_skip(ops, cs, weak)  // src
              && t_MsgAddressExt.validate_skip(ops, cs, weak)                // dest
@@ -697,7 +697,7 @@ bool CommonMsgInfo::unpack(vm::CellSlice& cs, CommonMsgInfo::Record_int_msg_info
   return get_tag(cs) == int_msg_info && cs.advance(1) && cs.fetch_bool_to(data.ihr_disabled) &&
          cs.fetch_bool_to(data.bounce) && cs.fetch_bool_to(data.bounced) && t_MsgAddressInt.fetch_to(cs, data.src) &&
          t_MsgAddressInt.fetch_to(cs, data.dest) && t_CurrencyCollection.fetch_to(cs, data.value) &&
-         t_Grams.fetch_to(cs, data.extra_flags) && t_Grams.fetch_to(cs, data.fwd_fee) &&
+         t_Tomis.fetch_to(cs, data.extra_flags) && t_Tomis.fetch_to(cs, data.fwd_fee) &&
          cs.fetch_uint_to(64, data.created_lt) && cs.fetch_uint_to(32, data.created_at);
 }
 
@@ -709,13 +709,13 @@ bool CommonMsgInfo::skip(vm::CellSlice& cs) const {
              && t_MsgAddressInt.skip(cs)       // src
              && t_MsgAddressInt.skip(cs)       // dest
              && t_CurrencyCollection.skip(cs)  // value
-             && t_Grams.skip(cs)               // extra_flags
-             && t_Grams.skip(cs)               // fwd_fee
+             && t_Tomis.skip(cs)               // extra_flags
+             && t_Tomis.skip(cs)               // fwd_fee
              && cs.advance(64 + 32);           // created_lt:uint64 created_at:uint32
     case ext_in_msg_info:
       return cs.advance(2) && t_MsgAddressExt.skip(cs)  // src
              && t_MsgAddressInt.skip(cs)                // dest
-             && t_Grams.skip(cs);                       // import_fee
+             && t_Tomis.skip(cs);                       // import_fee
     case ext_out_msg_info:
       return cs.advance(2) && t_MsgAddressInt.skip(cs)  // src
              && t_MsgAddressExt.skip(cs)                // dest
@@ -731,8 +731,8 @@ bool CommonMsgInfo::get_created_lt(vm::CellSlice& cs, unsigned long long& create
              && t_MsgAddressInt.skip(cs)             // src
              && t_MsgAddressInt.skip(cs)             // dest
              && t_CurrencyCollection.skip(cs)        // value
-             && t_Grams.skip(cs)                     // extra_flags
-             && t_Grams.skip(cs)                     // fwd_fee
+             && t_Tomis.skip(cs)                     // extra_flags
+             && t_Tomis.skip(cs)                     // fwd_fee
              && cs.fetch_ulong_bool(64, created_lt)  // created_lt:uint64
              && cs.advance(32);                      // created_at:uint32
     case ext_in_msg_info:
@@ -831,13 +831,13 @@ bool MsgEnvelope::validate_skip(int* ops, vm::CellSlice& cs, bool weak) const {
       return cs.fetch_ulong(4) == 4                                 // msg_envelope#4
              && t_IntermediateAddress.validate_skip(ops, cs, weak)  // cur_addr:IntermediateAddress
              && t_IntermediateAddress.validate_skip(ops, cs, weak)  // next_addr:IntermediateAddress
-             && t_Grams.validate_skip(ops, cs, weak)                // fwd_fee_remaining:Grams
+             && t_Tomis.validate_skip(ops, cs, weak)                // fwd_fee_remaining:Tomis
              && t_Ref_Message.validate_skip(ops, cs, weak);         // msg:^Message
     case 5:
       return cs.fetch_ulong(4) == 5                                      // msg_envelope_v2#5
              && t_IntermediateAddress.validate_skip(ops, cs, weak)       // cur_addr:IntermediateAddress
              && t_IntermediateAddress.validate_skip(ops, cs, weak)       // next_addr:IntermediateAddress
-             && t_Grams.validate_skip(ops, cs, weak)                     // fwd_fee_remaining:Grams
+             && t_Tomis.validate_skip(ops, cs, weak)                     // fwd_fee_remaining:Tomis
              && t_Ref_Message.validate_skip(ops, cs, weak)               // msg:^Message
              && Maybe<UInt>(64).validate_skip(ops, cs, weak)             // emitted_lt:(Maybe uint64)
              && Maybe<gen::MsgMetadata>().validate_skip(ops, cs, weak);  // metadata:(Maybe MsgMetadata)
@@ -852,13 +852,13 @@ bool MsgEnvelope::skip(vm::CellSlice& cs) const {
       return cs.advance(4)                      // msg_envelope#4
              && t_IntermediateAddress.skip(cs)  // cur_addr:IntermediateAddress
              && t_IntermediateAddress.skip(cs)  // next_addr:IntermediateAddress
-             && t_Grams.skip(cs)                // fwd_fee_remaining:Grams
+             && t_Tomis.skip(cs)                // fwd_fee_remaining:Tomis
              && t_Ref_Message.skip(cs);         // msg:^Message
     case 5:
       return cs.advance(4)                           // msg_envelope_v2#5
              && t_IntermediateAddress.skip(cs)       // cur_addr:IntermediateAddress
              && t_IntermediateAddress.skip(cs)       // next_addr:IntermediateAddress
-             && t_Grams.skip(cs)                     // fwd_fee_remaining:Grams
+             && t_Tomis.skip(cs)                     // fwd_fee_remaining:Tomis
              && t_Ref_Message.skip(cs)               // msg:^Message
              && Maybe<UInt>(64).skip(cs)             // emitted_lt:(Maybe uint64)
              && Maybe<gen::MsgMetadata>().skip(cs);  // metadata:(Maybe MsgMetadata)
@@ -868,7 +868,7 @@ bool MsgEnvelope::skip(vm::CellSlice& cs) const {
 }
 
 bool MsgEnvelope::extract_fwd_fees_remaining(vm::CellSlice& cs) const {
-  return t_IntermediateAddress.skip(cs) && t_IntermediateAddress.skip(cs) && t_Grams.extract(cs);
+  return t_IntermediateAddress.skip(cs) && t_IntermediateAddress.skip(cs) && t_Tomis.extract(cs);
 }
 
 bool MsgEnvelope::unpack(vm::CellSlice& cs, MsgEnvelope::Record& data) const {
@@ -877,13 +877,13 @@ bool MsgEnvelope::unpack(vm::CellSlice& cs, MsgEnvelope::Record& data) const {
       return cs.fetch_ulong(4) == 4                                 // msg_envelope#4
              && t_IntermediateAddress.fetch_to(cs, data.cur_addr)   // cur_addr:IntermediateAddress
              && t_IntermediateAddress.fetch_to(cs, data.next_addr)  // next_addr:IntermediateAddress
-             && t_Grams.fetch_to(cs, data.fwd_fee_remaining)        // fwd_fee_remaining:Grams
+             && t_Tomis.fetch_to(cs, data.fwd_fee_remaining)        // fwd_fee_remaining:Tomis
              && cs.fetch_ref_to(data.msg);                          // msg:^Message
     case 5:
       return cs.fetch_ulong(4) == 5                                 // msg_envelope_v2#5
              && t_IntermediateAddress.fetch_to(cs, data.cur_addr)   // cur_addr:IntermediateAddress
              && t_IntermediateAddress.fetch_to(cs, data.next_addr)  // next_addr:IntermediateAddress
-             && t_Grams.fetch_to(cs, data.fwd_fee_remaining)        // fwd_fee_remaining:Grams
+             && t_Tomis.fetch_to(cs, data.fwd_fee_remaining)        // fwd_fee_remaining:Tomis
              && cs.fetch_ref_to(data.msg)                           // msg:^Message
              && Maybe<UInt>(64).skip(cs)                            // emitted_lt:(Maybe uint64)
              && Maybe<gen::MsgMetadata>().skip(cs);                 // metadata:(Maybe MsgMetadata)
@@ -900,14 +900,14 @@ bool MsgEnvelope::unpack(vm::CellSlice& cs, MsgEnvelope::Record_std& data) const
       return cs.fetch_ulong(4) == 4                                      // msg_envelope#4
              && t_IntermediateAddress.fetch_regular(cs, data.cur_addr)   // cur_addr:IntermediateAddress
              && t_IntermediateAddress.fetch_regular(cs, data.next_addr)  // next_addr:IntermediateAddress
-             && t_Grams.as_integer_skip_to(cs, data.fwd_fee_remaining)   // fwd_fee_remaining:Grams
+             && t_Tomis.as_integer_skip_to(cs, data.fwd_fee_remaining)   // fwd_fee_remaining:Tomis
              && cs.fetch_ref_to(data.msg);                               // msg:^Message
     case 5: {
       bool with_metadata, with_emitted_lt;
       return cs.fetch_ulong(4) == 5                                      // msg_envelope_v2#5
              && t_IntermediateAddress.fetch_regular(cs, data.cur_addr)   // cur_addr:IntermediateAddress
              && t_IntermediateAddress.fetch_regular(cs, data.next_addr)  // next_addr:IntermediateAddress
-             && t_Grams.as_integer_skip_to(cs, data.fwd_fee_remaining)   // fwd_fee_remaining:Grams
+             && t_Tomis.as_integer_skip_to(cs, data.fwd_fee_remaining)   // fwd_fee_remaining:Tomis
              && cs.fetch_ref_to(data.msg)                                // msg:^Message
              && cs.fetch_bool_to(with_emitted_lt) &&
              (!with_emitted_lt || cs.fetch_uint_to(64, data.emitted_lt.value_force()))  // emitted_lt:(Maybe uint64)
@@ -924,7 +924,7 @@ bool MsgEnvelope::pack(vm::CellBuilder& cb, const Record_std& data) const {
   if (!(cb.store_long_bool(v2 ? 5 : 4, 4) &&                      // msg_envelope#4 / msg_envelope_v2#5
         cb.store_long_bool(data.cur_addr, 8) &&                   // cur_addr:IntermediateAddress
         cb.store_long_bool(data.next_addr, 8) &&                  // next_addr:IntermediateAddress
-        t_Grams.store_integer_ref(cb, data.fwd_fee_remaining) &&  // fwd_fee_remaining:Grams
+        t_Tomis.store_integer_ref(cb, data.fwd_fee_remaining) &&  // fwd_fee_remaining:Tomis
         cb.store_ref_bool(data.msg))) {                           // msg:^Message
     return false;
   }
@@ -954,11 +954,11 @@ bool MsgEnvelope::get_emitted_lt(const vm::CellSlice& cs, unsigned long long& em
   if (get_tag(cs) == 5) {
     vm::CellSlice cs2 = cs;
     // msg_envelope_v2#5 cur_addr:IntermediateAddress
-    //   next_addr:IntermediateAddress fwd_fee_remaining:Grams
+    //   next_addr:IntermediateAddress fwd_fee_remaining:Tomis
     //   msg:^(Message Any) emitted_lt:(Maybe uint64) ...
     bool have_emitted_lt;
     if (!(cs2.skip_first(4) && t_IntermediateAddress.skip(cs2) && t_IntermediateAddress.skip(cs2) &&
-          t_Grams.skip(cs2) && t_Ref_Message.skip(cs2) && cs2.fetch_bool_to(have_emitted_lt))) {
+          t_Tomis.skip(cs2) && t_Ref_Message.skip(cs2) && cs2.fetch_bool_to(have_emitted_lt))) {
       return false;
     }
     if (have_emitted_lt) {
@@ -984,7 +984,7 @@ bool StorageUsed::skip(vm::CellSlice& cs) const {
 
 const StorageUsed t_StorageUsed;
 
-const Maybe<Grams> t_Maybe_Grams;
+const Maybe<Tomis> t_Maybe_Tomis;
 
 bool StorageInfo::skip(vm::CellSlice& cs) const {
   int extra_tag = 0;
@@ -992,7 +992,7 @@ bool StorageInfo::skip(vm::CellSlice& cs) const {
          && cs.fetch_uint_to(3, extra_tag)       // storage_extra:StorageExtraInfo
          && (extra_tag == 0 || cs.advance(256))  // storage_extra_info$001 dict_hash:uint256 = StorageExtraInfo;
          && cs.advance(32)                       // last_paid:uint32
-         && t_Maybe_Grams.skip(cs);              // due_payment:(Maybe Grams)
+         && t_Maybe_Tomis.skip(cs);              // due_payment:(Maybe Tomis)
 }
 
 bool StorageInfo::validate_skip(int* ops, vm::CellSlice& cs, bool weak) const {
@@ -1002,7 +1002,7 @@ bool StorageInfo::validate_skip(int* ops, vm::CellSlice& cs, bool weak) const {
          && (extra_tag == 0 ||
              (extra_tag == 1 && cs.advance(256)))        // storage_extra_info$001 dict_hash:uint256 = StorageExtraInfo;
          && cs.advance(32)                               // last_paid:uint32
-         && t_Maybe_Grams.validate_skip(ops, cs, weak);  // due_payment:(Maybe Grams)
+         && t_Maybe_Tomis.validate_skip(ops, cs, weak);  // due_payment:(Maybe Tomis)
 }
 
 const StorageInfo t_StorageInfo;
@@ -1274,19 +1274,19 @@ const ShardAccounts t_ShardAccounts;
 const AccStatusChange t_AccStatusChange;
 
 bool TrStoragePhase::skip(vm::CellSlice& cs) const {
-  return t_Grams.skip(cs)                // storage_fees_collected:Grams
-         && t_Maybe_Grams.skip(cs)       // storage_fees_due:Grams
+  return t_Tomis.skip(cs)                // storage_fees_collected:Tomis
+         && t_Maybe_Tomis.skip(cs)       // storage_fees_due:Tomis
          && t_AccStatusChange.skip(cs);  // status_change:AccStatusChange
 }
 
 bool TrStoragePhase::validate_skip(int* ops, vm::CellSlice& cs, bool weak) const {
-  return t_Grams.validate_skip(ops, cs, weak)                // storage_fees_collected:Grams
-         && t_Maybe_Grams.validate_skip(ops, cs, weak)       // storage_fees_due:Grams
+  return t_Tomis.validate_skip(ops, cs, weak)                // storage_fees_collected:Tomis
+         && t_Maybe_Tomis.validate_skip(ops, cs, weak)       // storage_fees_due:Tomis
          && t_AccStatusChange.validate_skip(ops, cs, weak);  // status_change:AccStatusChange
 }
 
 bool TrStoragePhase::get_storage_fees(vm::CellSlice& cs, td::RefInt256& storage_fees) const {
-  return t_Grams.as_integer_skip_to(cs, storage_fees);  // storage_fees_collected:Grams
+  return t_Tomis.as_integer_skip_to(cs, storage_fees);  // storage_fees_collected:Tomis
 }
 
 bool TrStoragePhase::maybe_get_storage_fees(vm::CellSlice& cs, td::RefInt256& storage_fees) const {
@@ -1302,12 +1302,12 @@ bool TrStoragePhase::maybe_get_storage_fees(vm::CellSlice& cs, td::RefInt256& st
 const TrStoragePhase t_TrStoragePhase;
 
 bool TrCreditPhase::skip(vm::CellSlice& cs) const {
-  return t_Maybe_Grams.skip(cs)             // due_fees_collected:(Maybe Grams)
+  return t_Maybe_Tomis.skip(cs)             // due_fees_collected:(Maybe Tomis)
          && t_CurrencyCollection.skip(cs);  // credit:CurrencyCollection
 }
 
 bool TrCreditPhase::validate_skip(int* ops, vm::CellSlice& cs, bool weak) const {
-  return t_Maybe_Grams.validate_skip(ops, cs, weak)             // due_fees_collected:(Maybe Grams)
+  return t_Maybe_Tomis.validate_skip(ops, cs, weak)             // due_fees_collected:(Maybe Tomis)
          && t_CurrencyCollection.validate_skip(ops, cs, weak);  // credit:CurrencyCollection
 }
 
@@ -1344,7 +1344,7 @@ bool TrComputePhase::skip(vm::CellSlice& cs) const {
       return cs.advance(1) && t_ComputeSkipReason.skip(cs);
     case tr_phase_compute_vm:
       return cs.advance(1 + 3)    // tr_phase_compute_vm$1 success:Bool msg_state_used:Bool account_activated:Bool
-             && t_Grams.skip(cs)  // gas_fees:Grams
+             && t_Tomis.skip(cs)  // gas_fees:Tomis
              && t_Ref_TrComputeInternal1.skip(cs);  // ^[ gas_used:(..) .. ]
   }
   return false;
@@ -1356,7 +1356,7 @@ bool TrComputePhase::validate_skip(int* ops, vm::CellSlice& cs, bool weak) const
       return cs.advance(1) && t_ComputeSkipReason.validate_skip(ops, cs, weak);
     case tr_phase_compute_vm:
       return cs.advance(1 + 3)  // tr_phase_compute_vm$1 success:Bool msg_state_used:Bool account_activated:Bool
-             && t_Grams.validate_skip(ops, cs, weak)                    // gas_fees:Grams
+             && t_Tomis.validate_skip(ops, cs, weak)                    // gas_fees:Tomis
              && t_Ref_TrComputeInternal1.validate_skip(ops, cs, weak);  // ^[ gas_used:(..) .. ]
   }
   return false;
@@ -1367,8 +1367,8 @@ const TrComputePhase t_TrComputePhase;
 bool TrActionPhase::skip(vm::CellSlice& cs) const {
   return cs.advance(3)                  // success:Bool valid:Bool no_funds:Bool
          && t_AccStatusChange.skip(cs)  // status_change:AccStatusChange
-         && t_Maybe_Grams.skip(cs)      // total_fwd_fees:(Maybe Grams)
-         && t_Maybe_Grams.skip(cs)      // total_action_fees:(Maybe Grams)
+         && t_Maybe_Tomis.skip(cs)      // total_fwd_fees:(Maybe Tomis)
+         && t_Maybe_Tomis.skip(cs)      // total_action_fees:(Maybe Tomis)
          && cs.advance(32)              // result_code:int32
          && Maybe<Int>{32}.skip(cs)     // result_arg:(Maybe int32)
          && cs.advance(16 * 4 + 256)    // tot_actions:uint16 spec_actions:uint16
@@ -1380,8 +1380,8 @@ bool TrActionPhase::skip(vm::CellSlice& cs) const {
 bool TrActionPhase::validate_skip(int* ops, vm::CellSlice& cs, bool weak) const {
   return cs.advance(3)                                      // success:Bool valid:Bool no_funds:Bool
          && t_AccStatusChange.validate_skip(ops, cs, weak)  // status_change:AccStatusChange
-         && t_Maybe_Grams.validate_skip(ops, cs, weak)      // total_fwd_fees:(Maybe Grams)
-         && t_Maybe_Grams.validate_skip(ops, cs, weak)      // total_action_fees:(Maybe Grams)
+         && t_Maybe_Tomis.validate_skip(ops, cs, weak)      // total_fwd_fees:(Maybe Tomis)
+         && t_Maybe_Tomis.validate_skip(ops, cs, weak)      // total_action_fees:(Maybe Tomis)
          && cs.advance(32)                                  // result_code:int32
          && Maybe<Int>{32}.validate_skip(ops, cs, weak)     // result_arg:(Maybe int32)
          && cs.advance(16 * 4 + 256)                        // tot_actions:uint16 spec_actions:uint16
@@ -1399,12 +1399,12 @@ bool TrBouncePhase::skip(vm::CellSlice& cs) const {
     case tr_phase_bounce_nofunds:
       return cs.advance(2)              // tr_phase_bounce_nofunds$01
              && t_StorageUsed.skip(cs)  // msg_size:StorageUsed
-             && t_Grams.skip(cs);       // req_fwd_fees:Grams
+             && t_Tomis.skip(cs);       // req_fwd_fees:Tomis
     case tr_phase_bounce_ok:
       return cs.advance(1)              // tr_phase_bounce_ok$1
              && t_StorageUsed.skip(cs)  // msg_size:StorageUsed
-             && t_Grams.skip(cs)        // msg_fees:Grams
-             && t_Grams.skip(cs);       // fwd_fees:Grams
+             && t_Tomis.skip(cs)        // msg_fees:Tomis
+             && t_Tomis.skip(cs);       // fwd_fees:Tomis
   }
   return false;
 }
@@ -1416,12 +1416,12 @@ bool TrBouncePhase::validate_skip(int* ops, vm::CellSlice& cs, bool weak) const 
     case tr_phase_bounce_nofunds:
       return cs.advance(2)                                  // tr_phase_bounce_nofunds$01
              && t_StorageUsed.validate_skip(ops, cs, weak)  // msg_size:StorageUsed
-             && t_Grams.validate_skip(ops, cs, weak);       // req_fwd_fees:Grams
+             && t_Tomis.validate_skip(ops, cs, weak);       // req_fwd_fees:Tomis
     case tr_phase_bounce_ok:
       return cs.advance(1)                                  // tr_phase_bounce_ok$1
              && t_StorageUsed.validate_skip(ops, cs, weak)  // msg_size:StorageUsed
-             && t_Grams.validate_skip(ops, cs, weak)        // msg_fees:Grams
-             && t_Grams.validate_skip(ops, cs, weak);       // fwd_fees:Grams
+             && t_Tomis.validate_skip(ops, cs, weak)        // msg_fees:Tomis
+             && t_Tomis.validate_skip(ops, cs, weak);       // fwd_fees:Tomis
   }
   return false;
 }
@@ -1724,7 +1724,7 @@ bool AccountBlock::validate_skip(int* ops, vm::CellSlice& cs, bool weak) const {
 
 bool AccountBlock::get_total_fees(vm::CellSlice&& cs, block::CurrencyCollection& total_fees) const {
   return cs.advance(4 + 256)                         // acc_trans#5 account_addr:bits256
-         && t_AccountTransactions.extract_extra(cs)  // transactions:(HashmapAug 64 ^Transaction Grams)
+         && t_AccountTransactions.extract_extra(cs)  // transactions:(HashmapAug 64 ^Transaction Tomis)
          && total_fees.fetch(cs);
 }
 
@@ -1740,15 +1740,15 @@ const HashmapAugE t_ShardAccountBlocks{256,
                                        aug_ShardAccountBlocks};  // (HashmapAugE 256 AccountBlock CurrencyCollection)
 
 bool ImportFees::validate_skip(int* ops, vm::CellSlice& cs, bool weak) const {
-  return t_Grams.validate_skip(ops, cs, weak) && t_CurrencyCollection.validate_skip(ops, cs, weak);
+  return t_Tomis.validate_skip(ops, cs, weak) && t_CurrencyCollection.validate_skip(ops, cs, weak);
 }
 
 bool ImportFees::skip(vm::CellSlice& cs) const {
-  return t_Grams.skip(cs) && t_CurrencyCollection.skip(cs);
+  return t_Tomis.skip(cs) && t_CurrencyCollection.skip(cs);
 }
 
 bool ImportFees::add_values(vm::CellBuilder& cb, vm::CellSlice& cs1, vm::CellSlice& cs2) const {
-  return t_Grams.add_values(cb, cs1, cs2) && t_CurrencyCollection.add_values(cb, cs1, cs2);
+  return t_Tomis.add_values(cb, cs1, cs2) && t_CurrencyCollection.add_values(cb, cs1, cs2);
 }
 
 const ImportFees t_ImportFees;
@@ -1763,39 +1763,39 @@ bool InMsg::skip(vm::CellSlice& cs) const {
       return cs.advance(3)                  // msg_import_ihr$010
              && t_Ref_Message.skip(cs)      // msg:^Message
              && t_Ref_Transaction.skip(cs)  // transaction:^Transaction
-             && t_Grams.skip(cs)            // ihr_fee:Grams
+             && t_Tomis.skip(cs)            // ihr_fee:Tomis
              && t_RefCell.skip(cs);         // proof_created:^Cell
     case msg_import_imm:
       return cs.advance(3)                  // msg_import_imm$011
              && t_Ref_MsgEnvelope.skip(cs)  // in_msg:^MsgEnvelope
              && t_Ref_Transaction.skip(cs)  // transaction:^Transaction
-             && t_Grams.skip(cs);           // fwd_fee:Grams
+             && t_Tomis.skip(cs);           // fwd_fee:Tomis
     case msg_import_fin:
       return cs.advance(3)                  // msg_import_fin$100
              && t_Ref_MsgEnvelope.skip(cs)  // in_msg:^MsgEnvelope
              && t_Ref_Transaction.skip(cs)  // transaction:^Transaction
-             && t_Grams.skip(cs);           // fwd_fee:Grams
+             && t_Tomis.skip(cs);           // fwd_fee:Tomis
     case msg_import_tr:
       return cs.advance(3)                  // msg_import_tr$101
              && t_Ref_MsgEnvelope.skip(cs)  // in_msg:^MsgEnvelope
              && t_Ref_MsgEnvelope.skip(cs)  // out_msg:^MsgEnvelope
-             && t_Grams.skip(cs);           // transit_fee:Grams
+             && t_Tomis.skip(cs);           // transit_fee:Tomis
     case msg_discard_fin:
       return cs.advance(3)                  // msg_discard_fin$110
              && t_Ref_MsgEnvelope.skip(cs)  // in_msg:^MsgEnvelope
              && cs.advance(64)              // transaction_id:uint64
-             && t_Grams.skip(cs);           // fwd_fee:Grams
+             && t_Tomis.skip(cs);           // fwd_fee:Tomis
     case msg_discard_tr:
       return cs.advance(3)                  // msg_discard_tr$111
              && t_Ref_MsgEnvelope.skip(cs)  // in_msg:^MsgEnvelope
              && cs.advance(64)              // transaction_id:uint64
-             && t_Grams.skip(cs)            // fwd_fee:Grams
+             && t_Tomis.skip(cs)            // fwd_fee:Tomis
              && t_RefCell.skip(cs);         // proof_delivered:^Cell
     case msg_import_deferred_fin:
       return cs.advance(5)                  // msg_import_deferred_fin$00100
              && t_Ref_MsgEnvelope.skip(cs)  // in_msg:^MsgEnvelope
              && t_Ref_Transaction.skip(cs)  // transaction:^Transaction
-             && t_Grams.skip(cs);           // fwd_fee:Grams
+             && t_Tomis.skip(cs);           // fwd_fee:Tomis
     case msg_import_deferred_tr:
       return cs.advance(5)                   // msg_import_deferred_tr$00101
              && t_Ref_MsgEnvelope.skip(cs)   // in_msg:^MsgEnvelope
@@ -1814,39 +1814,39 @@ bool InMsg::validate_skip(int* ops, vm::CellSlice& cs, bool weak) const {
       return cs.advance(3)                                      // msg_import_ihr$010
              && t_Ref_Message.validate_skip(ops, cs, weak)      // msg:^Message
              && t_Ref_Transaction.validate_skip(ops, cs, weak)  // transaction:^Transaction
-             && t_Grams.validate_skip(ops, cs, weak)            // ihr_fee:Grams
+             && t_Tomis.validate_skip(ops, cs, weak)            // ihr_fee:Tomis
              && t_RefCell.validate_skip(ops, cs, weak);         // proof_created:^Cell
     case msg_import_imm:
       return cs.advance(3)                                      // msg_import_imm$011
              && t_Ref_MsgEnvelope.validate_skip(ops, cs, weak)  // in_msg:^MsgEnvelope
              && t_Ref_Transaction.validate_skip(ops, cs, weak)  // transaction:^Transaction
-             && t_Grams.validate_skip(ops, cs, weak);           // fwd_fee:Grams
+             && t_Tomis.validate_skip(ops, cs, weak);           // fwd_fee:Tomis
     case msg_import_fin:
       return cs.advance(3)                                      // msg_import_fin$100
              && t_Ref_MsgEnvelope.validate_skip(ops, cs, weak)  // in_msg:^MsgEnvelope
              && t_Ref_Transaction.validate_skip(ops, cs, weak)  // transaction:^Transaction
-             && t_Grams.validate_skip(ops, cs, weak);           // fwd_fee:Grams
+             && t_Tomis.validate_skip(ops, cs, weak);           // fwd_fee:Tomis
     case msg_import_tr:
       return cs.advance(3)                                      // msg_import_tr$101
              && t_Ref_MsgEnvelope.validate_skip(ops, cs, weak)  // in_msg:^MsgEnvelope
              && t_Ref_MsgEnvelope.validate_skip(ops, cs, weak)  // out_msg:^MsgEnvelope
-             && t_Grams.validate_skip(ops, cs, weak);           // transit_fee:Grams
+             && t_Tomis.validate_skip(ops, cs, weak);           // transit_fee:Tomis
     case msg_discard_fin:
       return cs.advance(3)                                      // msg_discard_fin$110
              && t_Ref_MsgEnvelope.validate_skip(ops, cs, weak)  // in_msg:^MsgEnvelope
              && cs.advance(64)                                  // transaction_id:uint64
-             && t_Grams.validate_skip(ops, cs, weak);           // fwd_fee:Grams
+             && t_Tomis.validate_skip(ops, cs, weak);           // fwd_fee:Tomis
     case msg_discard_tr:
       return cs.advance(3)                                      // msg_discard_tr$111
              && t_Ref_MsgEnvelope.validate_skip(ops, cs, weak)  // in_msg:^MsgEnvelope
              && cs.advance(64)                                  // transaction_id:uint64
-             && t_Grams.validate_skip(ops, cs, weak)            // fwd_fee:Grams
+             && t_Tomis.validate_skip(ops, cs, weak)            // fwd_fee:Tomis
              && t_RefCell.validate_skip(ops, cs, weak);         // proof_delivered:^Cell
     case msg_import_deferred_fin:
       return cs.advance(5)                                      // msg_import_deferred_fin$00100
              && t_Ref_MsgEnvelope.validate_skip(ops, cs, weak)  // in_msg:^MsgEnvelope
              && t_Ref_Transaction.validate_skip(ops, cs, weak)  // transaction:^Transaction
-             && t_Grams.validate_skip(ops, cs, weak);           // fwd_fee:Grams
+             && t_Tomis.validate_skip(ops, cs, weak);           // fwd_fee:Tomis
     case msg_import_deferred_tr:
       return cs.advance(5)                                       // msg_import_deferred_tr$00101
              && t_Ref_MsgEnvelope.validate_skip(ops, cs, weak)   // in_msg:^MsgEnvelope
@@ -1857,7 +1857,7 @@ bool InMsg::validate_skip(int* ops, vm::CellSlice& cs, bool weak) const {
 
 static td::RefInt256 get_ihr_fee(const CommonMsgInfo::Record_int_msg_info& info, int global_version) {
   // Legacy: extra_flags was previously ihr_fee
-  return global_version >= 12 ? td::zero_refint() : t_Grams.as_integer(std::move(info.extra_flags));
+  return global_version >= 12 ? td::zero_refint() : t_Tomis.as_integer(std::move(info.extra_flags));
 }
 
 bool InMsg::get_import_fees(vm::CellBuilder& cb, vm::CellSlice& cs, int global_version) const {
@@ -1871,7 +1871,7 @@ bool InMsg::get_import_fees(vm::CellBuilder& cb, vm::CellSlice& cs, int global_v
     case msg_import_imm:  // internal message re-imported from this very block
       if (cs.advance(3) && cs.size_refs() >= 2) {
         return cs.fetch_ref().not_null() && cs.fetch_ref().not_null() &&
-               cb.append_cellslice_bool(t_Grams.fetch(cs))  // fees_collected := fwd_fees
+               cb.append_cellslice_bool(t_Tomis.fetch(cs))  // fees_collected := fwd_fees
                && t_CurrencyCollection.null_value(cb);      // value_imported := 0
       }
       return false;
@@ -1880,10 +1880,10 @@ bool InMsg::get_import_fees(vm::CellBuilder& cb, vm::CellSlice& cs, int global_v
       if (cs.advance(tag == msg_import_fin ? 3 : 5) && cs.size_refs() >= 2) {
         auto msg_env_cs = load_cell_slice(cs.fetch_ref());
         MsgEnvelope::Record in_msg;
-        td::RefInt256 fwd_fee, fwd_fee_remaining, value_grams, ihr_fee;
+        td::RefInt256 fwd_fee, fwd_fee_remaining, value_tomis, ihr_fee;
         if (!(t_MsgEnvelope.unpack(msg_env_cs, in_msg) && cs.fetch_ref().not_null() &&
-              t_Grams.as_integer_skip_to(cs, fwd_fee) &&
-              (fwd_fee_remaining = t_Grams.as_integer(in_msg.fwd_fee_remaining)).not_null() &&
+              t_Tomis.as_integer_skip_to(cs, fwd_fee) &&
+              (fwd_fee_remaining = t_Tomis.as_integer(in_msg.fwd_fee_remaining)).not_null() &&
               !(cmp(fwd_fee, fwd_fee_remaining)))) {
           return false;
         }
@@ -1891,9 +1891,9 @@ bool InMsg::get_import_fees(vm::CellBuilder& cb, vm::CellSlice& cs, int global_v
         CommonMsgInfo::Record_int_msg_info msg_info;
         return t_Message.extract_info(msg_cs) && t_CommonMsgInfo.unpack(msg_cs, msg_info) &&
                cb.append_cellslice_bool(in_msg.fwd_fee_remaining)  // fees_collected := fwd_fee_remaining
-               && t_Grams.as_integer_skip_to(msg_info.value.write(), value_grams) &&
+               && t_Tomis.as_integer_skip_to(msg_info.value.write(), value_tomis) &&
                (ihr_fee = get_ihr_fee(msg_info, global_version)).not_null() &&
-               t_Grams.store_integer_ref(cb, value_grams + ihr_fee + fwd_fee_remaining) &&
+               t_Tomis.store_integer_ref(cb, value_tomis + ihr_fee + fwd_fee_remaining) &&
                cb.append_cellslice_bool(
                    msg_info.value.write());  // value_imported = msg.value + msg.ihr_fee + fwd_fee_remaining
       }
@@ -1903,20 +1903,20 @@ bool InMsg::get_import_fees(vm::CellBuilder& cb, vm::CellSlice& cs, int global_v
       if (cs.advance(tag == msg_import_tr ? 3 : 5) && cs.size_refs() >= 2) {
         auto msg_env_cs = load_cell_slice(cs.fetch_ref());
         MsgEnvelope::Record in_msg;
-        td::RefInt256 transit_fee = td::zero_refint(), fwd_fee_remaining, value_grams, ihr_fee;
+        td::RefInt256 transit_fee = td::zero_refint(), fwd_fee_remaining, value_tomis, ihr_fee;
         if (!(t_MsgEnvelope.unpack(msg_env_cs, in_msg) && cs.fetch_ref().not_null() &&
-              (tag == msg_import_deferred_tr || t_Grams.as_integer_skip_to(cs, transit_fee)) &&
-              (fwd_fee_remaining = t_Grams.as_integer(in_msg.fwd_fee_remaining)).not_null() &&
+              (tag == msg_import_deferred_tr || t_Tomis.as_integer_skip_to(cs, transit_fee)) &&
+              (fwd_fee_remaining = t_Tomis.as_integer(in_msg.fwd_fee_remaining)).not_null() &&
               cmp(transit_fee, fwd_fee_remaining) <= 0)) {
           return false;
         }
         auto msg_cs = load_cell_slice(in_msg.msg);
         CommonMsgInfo::Record_int_msg_info msg_info;
         return t_Message.extract_info(msg_cs) && t_CommonMsgInfo.unpack(msg_cs, msg_info) &&
-               t_Grams.store_integer_ref(cb, std::move(transit_fee))  // fees_collected := transit_fees
-               && t_Grams.as_integer_skip_to(msg_info.value.write(), value_grams) &&
+               t_Tomis.store_integer_ref(cb, std::move(transit_fee))  // fees_collected := transit_fees
+               && t_Tomis.as_integer_skip_to(msg_info.value.write(), value_tomis) &&
                (ihr_fee = get_ihr_fee(msg_info, global_version)).not_null() &&
-               t_Grams.store_integer_ref(cb, value_grams + ihr_fee + fwd_fee_remaining) &&
+               t_Tomis.store_integer_ref(cb, value_tomis + ihr_fee + fwd_fee_remaining) &&
                cb.append_cellslice_bool(
                    msg_info.value.write());  // value_imported = msg.value + msg.ihr_fee + fwd_fee_remaining
       }
@@ -1924,7 +1924,7 @@ bool InMsg::get_import_fees(vm::CellBuilder& cb, vm::CellSlice& cs, int global_v
     case msg_discard_fin:  // internal message discarded at its final destination because of previous IHR delivery
       if (cs.advance(3) && cs.size_refs() >= 1) {
         Ref<vm::CellSlice> fwd_fee;
-        return cs.fetch_ref().not_null() && cs.advance(64) && (fwd_fee = t_Grams.fetch(cs)).not_null() &&
+        return cs.fetch_ref().not_null() && cs.advance(64) && (fwd_fee = t_Tomis.fetch(cs)).not_null() &&
                cb.append_cellslice_bool(fwd_fee)  // fees_collected := fwd_fee
                && cb.append_cellslice_bool(std::move(fwd_fee)) &&
                t_ExtraCurrencyCollection.null_value(cb);  // value_imported := fwd_fee
@@ -1933,7 +1933,7 @@ bool InMsg::get_import_fees(vm::CellBuilder& cb, vm::CellSlice& cs, int global_v
     case msg_discard_tr:  // internal message discarded at an intermediate destination
       if (cs.advance(3) && cs.size_refs() >= 2) {
         Ref<vm::CellSlice> fwd_fee;
-        return cs.fetch_ref().not_null() && cs.advance(64) && (fwd_fee = t_Grams.fetch(cs)).not_null() &&
+        return cs.fetch_ref().not_null() && cs.advance(64) && (fwd_fee = t_Tomis.fetch(cs)).not_null() &&
                cs.fetch_ref().not_null() && cb.append_cellslice_bool(fwd_fee)  // fees_collected := fwd_fee
                && cb.append_cellslice_bool(std::move(fwd_fee)) &&
                t_ExtraCurrencyCollection.null_value(cb);  // value_imported := fwd_fee
@@ -2072,12 +2072,12 @@ bool OutMsg::get_export_value(vm::CellBuilder& cb, vm::CellSlice& cs, int global
         }
         auto msg_cs = load_cell_slice(std::move(out_msg.msg));
         CommonMsgInfo::Record_int_msg_info msg_info;
-        td::RefInt256 value_grams, ihr_fee, fwd_fee_remaining;
+        td::RefInt256 value_tomis, ihr_fee, fwd_fee_remaining;
         return t_Message.extract_info(msg_cs) && t_CommonMsgInfo.unpack(msg_cs, msg_info) &&
-               (value_grams = t_Grams.as_integer_skip(msg_info.value.write())).not_null() &&
+               (value_tomis = t_Tomis.as_integer_skip(msg_info.value.write())).not_null() &&
                (ihr_fee = get_ihr_fee(msg_info, global_version)).not_null() &&
-               (fwd_fee_remaining = t_Grams.as_integer(out_msg.fwd_fee_remaining)).not_null() &&
-               t_Grams.store_integer_ref(cb, value_grams + ihr_fee + fwd_fee_remaining) &&
+               (fwd_fee_remaining = t_Tomis.as_integer(out_msg.fwd_fee_remaining)).not_null() &&
+               t_Tomis.store_integer_ref(cb, value_tomis + ihr_fee + fwd_fee_remaining) &&
                cb.append_cellslice_bool(std::move(msg_info.value));
         // exported value = msg.value + msg.ihr_fee + fwd_fee_remaining
       }

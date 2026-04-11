@@ -41,7 +41,7 @@ int get_global_id() asm "GLOBALID";
   var ts = seconds_passed(start_at, now());
   var (_, value, found) = rdict.idict_get_preveq?(32, ts);
   if (found) {
-    raw_reserve(value~load_grams(), 2);
+    raw_reserve(value~load_tomis(), 2);
   }
   cs~touch();
   while (cs.slice_refs()) {
@@ -78,7 +78,7 @@ int compute_balance_at(int utime) inline_ref {
   var balance = get_balance().pair_first();
   var (_, value, found) = rdict.idict_get_preveq?(32, ts);
   if (found) {
-    balance = max(balance - value~load_grams(), 0);
+    balance = max(balance - value~load_tomis(), 0);
   }
   return balance;
 }

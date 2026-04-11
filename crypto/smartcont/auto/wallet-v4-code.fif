@@ -78,7 +78,7 @@ PROGRAM{
     NULLSWAPIFNOT	//  sender in_msg_body _80 _81
     NIP	//  sender in_msg_body found?
     IF:<{	//  sender in_msg_body
-      LDGRAMS	//  sender _83 _82
+      LDTOMIS	//  sender _83 _82
       DROP	//  sender ton_amount
       2 PUSHINT	//  sender ton_amount _40=2
       RAWRESERVE
@@ -89,7 +89,7 @@ PROGRAM{
       ROT	//  _43=0 _47 sender
       STSLICER	//  _43=0 _48
       OVER	//  _43=0 _48 _49=0
-      STGRAMS	//  _43=0 _50
+      STTOMIS	//  _43=0 _50
       107 STU	//  _64
       ENDC	//  msg
       7 PUSHPOW2	//  msg _66=128

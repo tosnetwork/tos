@@ -297,7 +297,7 @@ void FabricContractWrapper::do_send_external_message_cont(td::uint32 seqno, td::
     vm::CellBuilder b2;
     b2.store_long(3 << 2, 6);                      // 0 ihr_disabled:Bool bounce:Bool bounced:Bool src:MsgAddressInt
     b2.append_cellslice(msg.dest.to_cellslice());  // dest:MsgAddressInt
-    store_coins(b2, msg.value);                    // grams:Grams
+    store_coins(b2, msg.value);                    // tomis:Tomis
     b2.store_zeroes(1 + 4 + 4 + 64 + 32 + 1);      // extre, ihr_fee, fwd_fee, created_lt, created_at, init
     // body:(Either X ^X)
     if (b2.remaining_bits() >= 1 + msg.body.size() && b2.remaining_refs() >= msg.body.size_refs()) {

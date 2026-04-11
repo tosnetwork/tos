@@ -272,7 +272,7 @@ struct HashmapAugE final : TLB_Complex {
   }
 };
 
-struct Grams final : TLB_Complex {
+struct Tomis final : TLB_Complex {
   bool validate_skip(int* ops, vm::CellSlice& cs, bool weak = false) const override;
   td::RefInt256 as_integer_skip(vm::CellSlice& cs) const override;
   bool null_value(vm::CellBuilder& cb) const override;
@@ -281,7 +281,7 @@ struct Grams final : TLB_Complex {
   unsigned precompute_size(td::RefInt256 value) const;
 };
 
-extern const Grams t_Grams;
+extern const Tomis t_Tomis;
 
 struct MsgAddressInt final : TLB_Complex {
   enum { addr_std = 2, addr_var = 3 };
@@ -388,7 +388,7 @@ struct CurrencyCollection final : TLB_Complex {
   bool unpack(vm::CellSlice& cs, block::CurrencyCollection& res) const;
   bool pack(vm::CellBuilder& cb, const block::CurrencyCollection& res) const;
   unsigned precompute_size(td::RefInt256 balance, Ref<vm::Cell> extra) const {
-    return t_Grams.precompute_size(std::move(balance)) + t_ExtraCurrencyCollection.precompute_size(std::move(extra));
+    return t_Tomis.precompute_size(std::move(balance)) + t_ExtraCurrencyCollection.precompute_size(std::move(extra));
   }
 };
 

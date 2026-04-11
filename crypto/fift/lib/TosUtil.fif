@@ -75,29 +75,29 @@ library TosUtil // TOS Blockchain Fift Library
   rot b{110} s, 256 9 u, rot 32 i, swap 256 u, } cond
 } : Addr,
 
-// Gram utilities
-1000000000 constant Gram
-{ Gram swap */r } : Gram*/
-{ Gram * } : Gram*
-{ (number) dup { 1- ' Gram*/ ' Gram* cond true } if
-} : $>GR?
-// ( S -- nanograms )
-{ $>GR? not abort"not a valid Gram amount"
-} : $>GR
-{ bl word $>GR 1 'nop } ::_ GR$
-// ( nanograms -- S )
+// Tomi utilities
+1000000000 constant Tomi
+{ Tomi swap */r } : Tomi*/
+{ Tomi * } : Tomi*
+{ (number) dup { 1- ' Tomi*/ ' Tomi* cond true } if
+} : $>TM?
+// ( S -- nanotomis )
+{ $>TM? not abort"not a valid Tomi amount"
+} : $>TM
+{ bl word $>TM 1 'nop } ::_ TM$
+// ( nanotomis -- S )
 { dup abs <# ' # 9 times char . hold #s rot sign #>
-nip -trailing0 } : (.GR)
-{ (.GR) ."GR$" type } : .GR_
-{ .GR_ space } : .GR
+nip -trailing0 } : (.TM)
+{ (.TM) ."TM$" type } : .TM_
+{ .TM_ space } : .TM
 
-// b x -- b'  ( serializes a Gram amount )
+// b x -- b'  ( serializes a Tomi amount )
 { -1 { 1+ 2dup 8 * ufits } until
-  rot over 4 u, -rot 8 * u, } : Gram,
-// s -- x s'  ( deserializes a Gram amount )
-{ 4 u@+ swap 8 * u@+ } : Gram@+
+  rot over 4 u, -rot 8 * u, } : Tomi,
+// s -- x s'  ( deserializes a Tomi amount )
+{ 4 u@+ swap 8 * u@+ } : Tomi@+
 // s -- x
-{ 4 u@+ swap 8 * u@ } : Gram@
+{ 4 u@+ swap 8 * u@ } : Tomi@
 
 // currency collections
 // b x --> b'  ( serializes a VarUInteger32 )
@@ -158,16 +158,16 @@ forget val,  forget val@  forget .val
 // ( S -- x D -1 or 0 )  Parses a currency collection
 // e.g. "1.2+300*$2" means "1200000000ng plus 300 units of currency #2"
 { 0 swap dup "+" $pos dup 0< { drop dup
-      $>GR? { nip nip dictnew true } { end-parse-cc } cond
-    } { over swap $| swap $>GR? { 2swap 2drop swap 1 $| nip } { drop
+      $>TM? { nip nip dictnew true } { end-parse-cc } cond
+    } { over swap $| swap $>TM? { 2swap 2drop swap 1 $| nip } { drop
   } cond end-parse-cc } cond
 } : $>cc?
 { $>cc? not abort"invalid currency collection" } : $>cc
 { char } word dup $len { $>cc } { drop 0 dictnew } cond 2 'nop } ::_ CC{
 // ( x D -- )
-{ swap ?dup { .GR_ .+cc_ } { .cc_ } cond } : .GR+cc_
-{ .GR+cc_ space } : .GR+cc
-{ -rot Gram, swap dict, } : Gram+cc,
+{ swap ?dup { .TM_ .+cc_ } { .cc_ } cond } : .TM+cc_
+{ .TM+cc_ space } : .TM+cc
+{ -rot Tomi, swap dict, } : Tomi+cc,
 
 // Libraries
 // ( -- D )  New empty library collection

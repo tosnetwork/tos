@@ -84,7 +84,7 @@ inline td::Result<unsigned> read_uint(td::BitSlice& bs, unsigned bits) {
   return result;
 }
 
-// Decode DepthBalanceInfo and extract grams using TLB methods
+// Decode DepthBalanceInfo and extract tomis using TLB methods
 td::RefInt256 extract_balance_from_depth_balance_info(vm::CellSlice& cs) {
   // Check hashmap label is empty ('00')
   if (cs.size() < 2 || cs.fetch_ulong(2) != 0) {
@@ -103,7 +103,7 @@ td::RefInt256 extract_balance_from_depth_balance_info(vm::CellSlice& cs) {
     return td::RefInt256{};
   }
   auto balance_cs = balance_cs_ref.write();
-  auto res = block::tlb::t_Grams.as_integer_skip(balance_cs);
+  auto res = block::tlb::t_Tomis.as_integer_skip(balance_cs);
   if (balance_cs.size() != 1 || balance_cs.fetch_ulong(1) != 0) {
     return td::RefInt256{};
   }
@@ -460,12 +460,12 @@ td::Result<td::BufferSlice> boc_compress_improved_structure_lz4(const std::vecto
   return compressed_with_size;
 }
 
-// Helper: write ShardAccounts augmentation (DepthBalanceInfo with grams) into builder
-bool write_depth_balance_grams(vm::CellBuilder& cb, const td::RefInt256& grams) {
+// Helper: write ShardAccounts augmentation (DepthBalanceInfo with tomis) into builder
+bool write_depth_balance_tomis(vm::CellBuilder& cb, const td::RefInt256& tomis) {
   if (!cb.store_zeroes_bool(7)) {  // empty HmLabel and split_depth
     return false;
   }
-  if (!block::tlb::t_CurrencyCollection.pack_special(cb, grams, td::Ref<vm::Cell>())) {
+  if (!block::tlb::t_CurrencyCollection.pack_special(cb, tomis, td::Ref<vm::Cell>())) {
     return false;
   }
   return true;
@@ -903,19 +903,19 @@ td::Result<std::vector<td::Ref<vm::Cell>>> boc_decompress_improved_structure_lz4
     // If this vertex was depth-balance-compressed, reconstruct its data from left + children sum
     if (is_depth_balance[right_idx]) {
       if (left_idx == kNoNode) {
-        return td::Status::Error("BOC decompression failed: depth-balance left vertex has no grams");
+        return td::Status::Error("BOC decompression failed: depth-balance left vertex has no tomis");
       }
       vm::CellSlice cs_left(NoVm(), nodes[left_idx]);
-      td::RefInt256 left_grams = extract_balance_from_depth_balance_info(cs_left);
-      if (left_grams.is_null()) {
-        return td::Status::Error("BOC decompression failed: depth-balance left vertex has no grams");
+      td::RefInt256 left_tomis = extract_balance_from_depth_balance_info(cs_left);
+      if (left_tomis.is_null()) {
+        return td::Status::Error("BOC decompression failed: depth-balance left vertex has no tomis");
       }
-      td::RefInt256 expected_right_grams = left_grams;
-      expected_right_grams += sum_child_diff;
+      td::RefInt256 expected_right_tomis = left_tomis;
+      expected_right_tomis += sum_child_diff;
 
       vm::CellBuilder cb;
-      if (!write_depth_balance_grams(cb, expected_right_grams)) {
-        return td::Status::Error("BOC decompression failed: failed to write depth-balance grams");
+      if (!write_depth_balance_tomis(cb, expected_right_tomis)) {
+        return td::Status::Error("BOC decompression failed: failed to write depth-balance tomis");
       }
       cur_right_left_diff = sum_child_diff;
       TRY_STATUS(finalize_node_from_builder(right_idx, cb));

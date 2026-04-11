@@ -1497,7 +1497,7 @@ void register_tos_misc_ops(OpcodeTable& cp0) {
 
 int exec_load_var_integer(VmState* st, int len_bits, bool sgnd, bool quiet) {
   if (len_bits == 4 && !sgnd) {
-    VM_LOG(st) << "execute LDGRAMS" << (quiet ? "Q" : "");
+    VM_LOG(st) << "execute LDTOMIS" << (quiet ? "Q" : "");
   } else {
     VM_LOG(st) << "execute LDVAR" << (sgnd ? "" : "U") << "INT" << (1 << len_bits) << (quiet ? "Q" : "");
   }
@@ -1518,7 +1518,7 @@ int exec_load_var_integer(VmState* st, int len_bits, bool sgnd, bool quiet) {
 
 int exec_store_var_integer(VmState* st, int len_bits, bool sgnd, bool quiet) {
   if (len_bits == 4 && !sgnd) {
-    VM_LOG(st) << "execute STGRAMS" << (quiet ? "Q" : "");
+    VM_LOG(st) << "execute STTOMIS" << (quiet ? "Q" : "");
   } else {
     VM_LOG(st) << "execute STVAR" << (sgnd ? "" : "U") << "INT" << (1 << len_bits) << (quiet ? "Q" : "");
   }
@@ -1956,9 +1956,9 @@ int exec_store_opt_std_address(VmState* st, bool quiet) {
 
 void register_tos_currency_address_ops(OpcodeTable& cp0) {
   using namespace std::placeholders;
-  cp0.insert(OpcodeInstr::mksimple(0xfa00, 16, "LDGRAMS", std::bind(exec_load_var_integer, _1, 4, false, false)))
+  cp0.insert(OpcodeInstr::mksimple(0xfa00, 16, "LDTOMIS", std::bind(exec_load_var_integer, _1, 4, false, false)))
       .insert(OpcodeInstr::mksimple(0xfa01, 16, "LDVARINT16", std::bind(exec_load_var_integer, _1, 4, true, false)))
-      .insert(OpcodeInstr::mksimple(0xfa02, 16, "STGRAMS", std::bind(exec_store_var_integer, _1, 4, false, false)))
+      .insert(OpcodeInstr::mksimple(0xfa02, 16, "STTOMIS", std::bind(exec_store_var_integer, _1, 4, false, false)))
       .insert(OpcodeInstr::mksimple(0xfa03, 16, "STVARINT16", std::bind(exec_store_var_integer, _1, 4, true, false)))
       .insert(OpcodeInstr::mksimple(0xfa04, 16, "LDVARUINT32", std::bind(exec_load_var_integer, _1, 5, false, false)))
       .insert(OpcodeInstr::mksimple(0xfa05, 16, "LDVARINT32", std::bind(exec_load_var_integer, _1, 5, true, false)))
@@ -2094,13 +2094,13 @@ int exec_send_message(VmState* st) {
       throw VmError{Excno::unknown, "invalid message"};
     }
     have_extra_currencies = !extra.is_null();
-    user_fwd_fee = block::tlb::t_Grams.as_integer(info.fwd_fee);
+    user_fwd_fee = block::tlb::t_Tomis.as_integer(info.fwd_fee);
     if (st->get_global_version() >= 12) {
       user_ihr_fee = td::zero_refint();
       extra_flags_len = info.extra_flags->size();
     } else {
       // Legacy: extra_flags was previously ihr_fee
-      user_ihr_fee = block::tlb::t_Grams.as_integer(info.extra_flags);
+      user_ihr_fee = block::tlb::t_Tomis.as_integer(info.extra_flags);
     }
     if (user_fwd_fee.is_null()) {
       user_fwd_fee = td::zero_refint();
@@ -2131,7 +2131,7 @@ int exec_send_message(VmState* st) {
   }
   block::MsgPrices prices = r_prices.move_as_ok();
 
-  // msg_fwd_fees = (lump_price + ceil((bit_price * msg.bits + cell_price * msg.cells)/2^16)) nanograms
+  // msg_fwd_fees = (lump_price + ceil((bit_price * msg.bits + cell_price * msg.cells)/2^16)) nanotomis
   // bits in the root cell of a message are not included in msg.bits (lump_price pays for them)
   td::uint64 max_cells;
   if (st->get_global_version() >= 6) {
@@ -2171,11 +2171,11 @@ int exec_send_message(VmState* st) {
       if (balance.is_null()) {
         throw VmError{Excno::type_chk, "invalid param INCOMINGVALUE"};
       }
-      td::RefInt256 balance_grams = tuple_index(balance, 0).as_int();
-      if (balance_grams.is_null()) {
+      td::RefInt256 balance_tomis = tuple_index(balance, 0).as_int();
+      if (balance_tomis.is_null()) {
         throw VmError{Excno::type_chk, "invalid param INCOMINGVALUE"};
       }
-      value += balance_grams;
+      value += balance_tomis;
       if (st->get_global_version() < 10) {
         have_extra_currencies |= !tuple_index(balance, 1).as_cell().is_null();
       }
@@ -2282,7 +2282,7 @@ int exec_send_message(VmState* st) {
   return 0;
 }
 
-bool store_grams(CellBuilder& cb, td::RefInt256 value) {
+bool store_tomis(CellBuilder& cb, td::RefInt256 value) {
   int k = value->bit_size(false);
   return k <= 15 * 8 && cb.store_long_bool((k + 7) >> 3, 4) && cb.store_int256_bool(*value, (k + 7) & -8, false);
 }
@@ -2298,13 +2298,13 @@ int exec_reserve_raw(VmState* st, int mode) {
   }
   auto x = stack.pop_int_finite();
   if (td::sgn(x) < 0) {
-    throw VmError{Excno::range_chk, "amount of nanograms must be non-negative"};
+    throw VmError{Excno::range_chk, "amount of nanotomis must be non-negative"};
   }
   CellBuilder cb;
   if (!(cb.store_ref_bool(get_actions(st))     // out_list$_ {n:#} prev:^(OutList n)
         && cb.store_long_bool(0x36e6b809, 32)  // action_reserve_currency#36e6b809
         && cb.store_long_bool(f, 8)            // mode:(## 8)
-        && store_grams(cb, std::move(x))       //
+        && store_tomis(cb, std::move(x))       //
         && cb.store_maybe_ref(std::move(y)))) {
     throw VmError{Excno::cell_ov, "cannot serialize raw reserved currency amount into an output action cell"};
   }

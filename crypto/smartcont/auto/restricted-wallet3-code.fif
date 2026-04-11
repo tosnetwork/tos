@@ -111,7 +111,7 @@ PROGRAM{
     NULLSWAPIFNOT2	//  stored_subwallet public_key stored_seqno cs start_at rdict _158 _157 _159
     NIP	//  stored_subwallet public_key stored_seqno cs start_at rdict value found
     IF:<{	//  stored_subwallet public_key stored_seqno cs start_at rdict value
-      LDGRAMS	//  stored_subwallet public_key stored_seqno cs start_at rdict _161 _160
+      LDTOMIS	//  stored_subwallet public_key stored_seqno cs start_at rdict _161 _160
       DROP	//  stored_subwallet public_key stored_seqno cs start_at rdict _101
       2 PUSHINT	//  stored_subwallet public_key stored_seqno cs start_at rdict _101 _103=2
       RAWRESERVE
@@ -183,7 +183,7 @@ PROGRAM{
     NULLSWAPIFNOT2	//  balance _38 _37 _39
     NIP	//  balance value found
     IF:<{	//  balance value
-      LDGRAMS	//  balance _41 _40
+      LDTOMIS	//  balance _41 _40
       DROP	//  balance _28
       SUB	//  _30
       0 PUSHINT	//  _30 _31=0

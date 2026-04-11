@@ -12,7 +12,7 @@ $# 7 - -2 and ' usage if
 $1 parse-workchain-id =: wc    // set workchain id from command line argument
 $2 parse-int dup =: subwallet-id
   0= abort"giver-id must be non-zero"
-$3 $>GR =: amount
+$3 $>TM =: amount
 $4 parse-int dup =: interval
   dup 24 ufits and 0= abort"invalid interval"
 $5 parse-int dup =: min-cpl
@@ -29,7 +29,7 @@ subwallet-id (.) 1 ' $+ does : +subwallet
 
 ."Creating new proof-of-work testgiver in workchain " wc .
 ."with unique giver id " subwallet-id . cr
-."Designed to give " amount .GR ."approximately every " interval . ."seconds" cr
+."Designed to give " amount .TM ."approximately every " interval . ."seconds" cr
 ."Complexity (in SHA256 hashes): min=" min-cpl 1<< . ."init=" init-cpl 1<< . ."max=" max-cpl 1<< . cr
 
 "auto/pow-testgiver-code.fif" include  // code
@@ -39,7 +39,7 @@ subwallet-id (.) 1 ' $+ does : +subwallet
    newkeypair nip 16 B| drop B,  // seed
    256 init-cpl - 1<< 256 u,  // pow_complexity
    -1 32 i,  // last_success
-   <b amount Gram, interval 32 u, max-cpl cpl, min-cpl cpl, b> ref,
+   <b amount Tomi, interval 32 u, max-cpl cpl, min-cpl cpl, b> ref,
 b> // data
 null // no libraries
 <b b{0011} s, 3 roll ref, rot ref, swap dict, b>  // create StateInit

@@ -30,8 +30,8 @@
 #include "SmartContractCode.h"
 
 namespace tos {
-using smc::pack_grams;
-using smc::unpack_grams;
+using smc::pack_tomis;
+using smc::unpack_tomis;
 namespace pchan {
 
 td::Ref<vm::Cell> Config::serialize() const {
@@ -50,7 +50,7 @@ td::Ref<vm::Cell> Config::serialize() const {
   rec.init_timeout = init_timeout;
   rec.close_timeout = close_timeout;
   rec.channel_id = channel_id;
-  rec.min_A_extra = pack_grams(min_A_extra);
+  rec.min_A_extra = pack_tomis(min_A_extra);
 
   td::Ref<vm::Cell> res;
   CHECK(tlb::pack_cell(res, rec));
@@ -59,10 +59,10 @@ td::Ref<vm::Cell> Config::serialize() const {
 
 td::Ref<vm::Cell> MsgInit::serialize() const {
   block::gen::ChanMsg::Record_chan_msg_init rec;
-  rec.min_A = pack_grams(min_A);
-  rec.min_B = pack_grams(min_B);
-  rec.inc_A = pack_grams(inc_A);
-  rec.inc_B = pack_grams(inc_B);
+  rec.min_A = pack_tomis(min_A);
+  rec.min_B = pack_tomis(min_B);
+  rec.inc_A = pack_tomis(inc_A);
+  rec.inc_B = pack_tomis(inc_B);
   rec.channel_id = channel_id;
 
   td::Ref<vm::Cell> res;
@@ -73,8 +73,8 @@ td::Ref<vm::Cell> MsgInit::serialize() const {
 td::Ref<vm::Cell> Promise::serialize() const {
   block::gen::ChanPromise::Record rec;
   rec.channel_id = channel_id;
-  rec.promise_A = pack_grams(promise_A);
-  rec.promise_B = pack_grams(promise_B);
+  rec.promise_A = pack_tomis(promise_A);
+  rec.promise_B = pack_tomis(promise_B);
   td::Ref<vm::Cell> res;
   CHECK(tlb::pack_cell(res, rec));
   return res;
@@ -99,8 +99,8 @@ td::Ref<vm::CellSlice> maybe_ref(td::Ref<vm::Cell> msg) {
 
 td::Ref<vm::Cell> MsgClose::serialize() const {
   block::gen::ChanMsg::Record_chan_msg_close rec;
-  rec.extra_A = pack_grams(extra_A);
-  rec.extra_B = pack_grams(extra_B);
+  rec.extra_A = pack_tomis(extra_A);
+  rec.extra_B = pack_tomis(extra_B);
   rec.promise = signed_promise;
 
   td::Ref<vm::Cell> res;
@@ -154,10 +154,10 @@ bool SignedPromise::unpack(td::Ref<vm::Cell> cell) {
     return false;
   }
   promise.channel_id = rec_promise.channel_id;
-  if (!unpack_grams(rec_promise.promise_A, promise.promise_A)) {
+  if (!unpack_tomis(rec_promise.promise_A, promise.promise_A)) {
     return false;
   }
-  if (!unpack_grams(rec_promise.promise_B, promise.promise_B)) {
+  if (!unpack_tomis(rec_promise.promise_B, promise.promise_B)) {
     return false;
   }
   td::Ref<vm::Cell> sig_cell;
@@ -176,10 +176,10 @@ bool SignedPromise::unpack(td::Ref<vm::Cell> cell) {
 td::Ref<vm::Cell> StateInit::serialize() const {
   block::gen::ChanState::Record_chan_state_init rec;
   rec.expire_at = expire_at;
-  rec.min_A = pack_grams(min_A);
-  rec.min_B = pack_grams(min_B);
-  rec.A = pack_grams(A);
-  rec.B = pack_grams(B);
+  rec.min_A = pack_tomis(min_A);
+  rec.min_B = pack_tomis(min_B);
+  rec.A = pack_tomis(A);
+  rec.B = pack_tomis(B);
   rec.signed_A = signed_A;
   rec.signed_B = signed_B;
   td::Ref<vm::Cell> res;
@@ -228,8 +228,8 @@ td::Result<PaymentChannel::Info> PaymentChannel::get_info() const {
       if (!tlb::unpack_cell(data_rec.state, state_rec)) {
         return td::Status::Error("Can't unpack state");
       }
-      bool ok = unpack_grams(state_rec.A, state.A) && unpack_grams(state_rec.B, state.B) &&
-                unpack_grams(state_rec.min_A, state.min_A) && unpack_grams(state_rec.min_B, state.min_B);
+      bool ok = unpack_tomis(state_rec.A, state.A) && unpack_tomis(state_rec.B, state.B) &&
+                unpack_tomis(state_rec.min_A, state.min_A) && unpack_tomis(state_rec.min_B, state.min_B);
       state.expire_at = state_rec.expire_at;
       state.signed_A = state_rec.signed_A;
       state.signed_B = state_rec.signed_B;
@@ -245,9 +245,9 @@ td::Result<PaymentChannel::Info> PaymentChannel::get_info() const {
       if (!tlb::unpack_cell(data_rec.state, state_rec)) {
         return td::Status::Error("Can't unpack state");
       }
-      bool ok = unpack_grams(state_rec.A, state.A) && unpack_grams(state_rec.B, state.B) &&
-                unpack_grams(state_rec.promise_A, state.promise_A) &&
-                unpack_grams(state_rec.promise_B, state.promise_B);
+      bool ok = unpack_tomis(state_rec.A, state.A) && unpack_tomis(state_rec.B, state.B) &&
+                unpack_tomis(state_rec.promise_A, state.promise_A) &&
+                unpack_tomis(state_rec.promise_B, state.promise_B);
       state.expire_at = state_rec.expire_at;
       state.signed_A = state_rec.signed_A;
       state.signed_B = state_rec.signed_B;
@@ -263,7 +263,7 @@ td::Result<PaymentChannel::Info> PaymentChannel::get_info() const {
       if (!tlb::unpack_cell(data_rec.state, state_rec)) {
         return td::Status::Error("Can't unpack state");
       }
-      bool ok = unpack_grams(state_rec.A, state.A) && unpack_grams(state_rec.B, state.B);
+      bool ok = unpack_tomis(state_rec.A, state.A) && unpack_tomis(state_rec.B, state.B);
       if (!ok) {
         return td::Status::Error("Can't unpack state");
       }

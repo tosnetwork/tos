@@ -136,7 +136,7 @@ now timeout + 32 << actions-builder b> hashu 32 1<<1- and + =: query_id
 <b contract-id 32 i, query_id 64 u, actions-builder b+ b>
 dup ."signing message: " <s csr. cr
 dup hashu wallet_pk ed25519_sign_uint
-<b b{1000100} s, smc_addr addr, 0 Gram, b{00} s,
+<b b{1000100} s, smc_addr addr, 0 Tomi, b{00} s,
    swap B, swap <s s, b>
 dup ."resulting external message: " <s csr. cr
 2 boc+>B dup Bx. cr

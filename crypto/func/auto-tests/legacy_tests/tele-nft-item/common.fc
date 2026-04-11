@@ -130,7 +130,7 @@ cell pack_init_int_message(slice dest, cell state_init, cell body) inline {
     return begin_cell()
             .store_uint(0x18, 6) ;; 011000 tag=0, ihr_disabled=1, allow_bounces=1, bounced=0, add_none
             .store_slice(dest)
-            .store_grams(0) ;; grams
+            .store_tomis(0) ;; tomis
             .store_uint(4 + 2 + 1, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1)
             .store_ref(state_init)
             .store_ref(body)
@@ -141,7 +141,7 @@ cell pack_init_int_message(slice dest, cell state_init, cell body) inline {
     var msg = begin_cell()
             .store_uint(0x10, 6) ;; nobounce - int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool src:MsgAddress -> 010000
             .store_slice(to_address)
-            .store_grams(amount)
+            .store_tomis(amount)
             .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
             .store_uint(op, 32)
             .store_uint(query_id, 64);
@@ -267,7 +267,7 @@ cell pack_teleitem_msg_deploy(slice sender_address, int bid, cell info, cell con
     return begin_cell()
             .store_uint(op::teleitem_msg_deploy, 32)
             .store_slice(sender_address)
-            .store_grams(bid)
+            .store_tomis(bid)
             .store_ref(info)
             .store_ref(content)
             .store_ref(auction_config)
@@ -277,7 +277,7 @@ cell pack_teleitem_msg_deploy(slice sender_address, int bid, cell info, cell con
 
 (slice, int, cell, cell, cell, cell) unpack_teleitem_msg_deploy(slice cs) inline {
     return (cs~load_msg_addr(),
-            cs~load_grams(),
+            cs~load_tomis(),
             cs~load_ref(),
             cs~load_ref(),
             cs~load_ref(),
@@ -334,12 +334,12 @@ _ unpack_deploy_msg(slice cs) inline {
     return res;
 }
 
-;;teleitem_last_bid bidder_address:MsgAddressInt bid:Grams bid_ts:uint32 = TeleitemLastBid;
+;;teleitem_last_bid bidder_address:MsgAddressInt bid:Tomis bid_ts:uint32 = TeleitemLastBid;
 (slice, int, int) unpack_last_bid(cell c) inline {
     slice cs = c.begin_parse();
     var res = (
             cs~load_msg_addr(), ;; bidder_address
-            cs~load_grams(), ;; bid
+            cs~load_tomis(), ;; bid
             cs~load_uint(32) ;; bid_ts
     );
     cs.end_parse();
@@ -348,17 +348,17 @@ _ unpack_deploy_msg(slice cs) inline {
 cell pack_last_bid(slice bidder_address, int bid, int bid_ts) inline {
     return begin_cell()
             .store_slice(bidder_address)
-            .store_grams(bid)
+            .store_tomis(bid)
             .store_uint(bid_ts, 32)
             .end_cell();
 }
 
-;;teleitem_auction_state$_ last_bid:(Maybe ^TeleitemLastBid) min_bid:Grams end_time:uint32 = TeleitemAuctionState;
+;;teleitem_auction_state$_ last_bid:(Maybe ^TeleitemLastBid) min_bid:Tomis end_time:uint32 = TeleitemAuctionState;
 (cell, int, int) unpack_auction_state(cell c) inline {
     slice cs = c.begin_parse();
     var res = (
             cs~load_maybe_ref(), ;; maybe last_bid
-            cs~load_grams(), ;; min_bid
+            cs~load_tomis(), ;; min_bid
             cs~load_uint(32) ;; end_time
     );
     cs.end_parse();
@@ -367,7 +367,7 @@ cell pack_last_bid(slice bidder_address, int bid, int bid_ts) inline {
 cell pack_auction_state(cell last_bid, int min_bid, int end_time) inline {
     return begin_cell()
             .store_maybe_ref(last_bid)
-            .store_grams(min_bid)
+            .store_tomis(min_bid)
             .store_uint(end_time, 32)
             .end_cell();
 }
@@ -376,8 +376,8 @@ cell pack_auction_state(cell last_bid, int min_bid, int end_time) inline {
     slice cs = c.begin_parse();
     var res = (
             cs~load_msg_addr(), ;; beneficiary address
-            cs~load_grams(), ;; initial_min_bid
-            cs~load_grams(), ;; max_bid
+            cs~load_tomis(), ;; initial_min_bid
+            cs~load_tomis(), ;; max_bid
             cs~load_uint(8), ;; min_bid_step
             cs~load_uint(32), ;; min_extend_time
             cs~load_uint(32) ;; duration
@@ -410,7 +410,7 @@ cell pack_auction(cell state, cell config) inline {
             cs~load_msg_addr(),
             cs~load_msg_addr(),
             cs~load_maybe_ref(),
-            cs~load_grams(),
+            cs~load_tomis(),
             cs
     );
 }

@@ -113,28 +113,28 @@ var_uint$_ {n:#} len:(#< n) value:(uint (len * 8))
          = VarUInteger n;
 var_int$_ {n:#} len:(#< n) value:(int (len * 8))
         = VarInteger n;
-nanograms$_ amount:(VarUInteger 16) = Grams;
+nanotomis$_ amount:(VarUInteger 16) = Tomis;
 
-_ grams:Grams = Coins;
+_ tomis:Tomis = Coins;
 
 //
 extra_currencies$_ dict:(HashmapE 32 (VarUInteger 32))
                  = ExtraCurrencyCollection;
-currencies$_ grams:Grams other:ExtraCurrencyCollection
+currencies$_ tomis:Tomis other:ExtraCurrencyCollection
            = CurrencyCollection;
 //
 int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
   src:MsgAddressInt dest:MsgAddressInt
-  value:CurrencyCollection extra_flags:(VarUInteger 16) fwd_fee:Grams
+  value:CurrencyCollection extra_flags:(VarUInteger 16) fwd_fee:Tomis
   created_lt:uint64 created_at:uint32 = CommonMsgInfo;
 ext_in_msg_info$10 src:MsgAddressExt dest:MsgAddressInt
-  import_fee:Grams = CommonMsgInfo;
+  import_fee:Tomis = CommonMsgInfo;
 ext_out_msg_info$11 src:MsgAddressInt dest:MsgAddressExt
   created_lt:uint64 created_at:uint32 = CommonMsgInfo;
 
 int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
   src:MsgAddress dest:MsgAddressInt
-  value:CurrencyCollection extra_flags:(VarUInteger 16) fwd_fee:Grams
+  value:CurrencyCollection extra_flags:(VarUInteger 16) fwd_fee:Tomis
   created_lt:uint64 created_at:uint32 = CommonMsgInfoRelaxed;
 ext_out_msg_info$11 src:MsgAddress dest:MsgAddressExt
   created_lt:uint64 created_at:uint32 = CommonMsgInfoRelaxed;
@@ -182,11 +182,11 @@ interm_addr_simple$10 workchain_id:int8 addr_pfx:uint64
 interm_addr_ext$11 workchain_id:int32 addr_pfx:uint64
   = IntermediateAddress;
 msg_envelope#4 cur_addr:IntermediateAddress
-  next_addr:IntermediateAddress fwd_fee_remaining:Grams
+  next_addr:IntermediateAddress fwd_fee_remaining:Tomis
   msg:^(Message Any) = MsgEnvelope;
 msg_metadata#0 depth:uint32 initiator_addr:MsgAddressInt initiator_lt:uint64 = MsgMetadata;
 msg_envelope_v2#5 cur_addr:IntermediateAddress
-  next_addr:IntermediateAddress fwd_fee_remaining:Grams
+  next_addr:IntermediateAddress fwd_fee_remaining:Tomis
   msg:^(Message Any)
   emitted_lt:(Maybe uint64)
   metadata:(Maybe MsgMetadata) = MsgEnvelope;
@@ -194,22 +194,22 @@ msg_envelope_v2#5 cur_addr:IntermediateAddress
 msg_import_ext$000 msg:^(Message Any) transaction:^Transaction
               = InMsg;
 msg_import_ihr$010 msg:^(Message Any) transaction:^Transaction
-    ihr_fee:Grams proof_created:^Cell = InMsg;
+    ihr_fee:Tomis proof_created:^Cell = InMsg;
 msg_import_imm$011 in_msg:^MsgEnvelope
-    transaction:^Transaction fwd_fee:Grams = InMsg;
+    transaction:^Transaction fwd_fee:Tomis = InMsg;
 msg_import_fin$100 in_msg:^MsgEnvelope
-    transaction:^Transaction fwd_fee:Grams = InMsg;
+    transaction:^Transaction fwd_fee:Tomis = InMsg;
 msg_import_tr$101  in_msg:^MsgEnvelope out_msg:^MsgEnvelope
-    transit_fee:Grams = InMsg;
+    transit_fee:Tomis = InMsg;
 msg_discard_fin$110 in_msg:^MsgEnvelope transaction_id:uint64
-    fwd_fee:Grams = InMsg;
+    fwd_fee:Tomis = InMsg;
 msg_discard_tr$111 in_msg:^MsgEnvelope transaction_id:uint64
-    fwd_fee:Grams proof_delivered:^Cell = InMsg;
+    fwd_fee:Tomis proof_delivered:^Cell = InMsg;
 msg_import_deferred_fin$00100 in_msg:^MsgEnvelope
-    transaction:^Transaction fwd_fee:Grams = InMsg;
+    transaction:^Transaction fwd_fee:Tomis = InMsg;
 msg_import_deferred_tr$00101 in_msg:^MsgEnvelope out_msg:^MsgEnvelope = InMsg;
 //
-import_fees$_ fees_collected:Grams
+import_fees$_ fees_collected:Tomis
   value_imported:CurrencyCollection = ImportFees;
 
 _ (HashmapAugE 256 InMsg ImportFees) = InMsgDescr;
@@ -265,7 +265,7 @@ storage_extra_info$001 dict_hash:uint256 = StorageExtraInfo;
 storage_used$_ cells:(VarUInteger 7) bits:(VarUInteger 7) = StorageUsed;
 
 storage_info$_ used:StorageUsed storage_extra:StorageExtraInfo last_paid:uint32
-              due_payment:(Maybe Grams) = StorageInfo;
+              due_payment:(Maybe Tomis) = StorageInfo;
 
 account_none$0 = Account;
 account$1 addr:MsgAddressInt storage_stat:StorageInfo
@@ -312,8 +312,8 @@ acc_trans#5 account_addr:bits256
 
 _ (HashmapAugE 256 AccountBlock CurrencyCollection) = ShardAccountBlocks;
 //
-tr_phase_storage$_ storage_fees_collected:Grams
-  storage_fees_due:(Maybe Grams)
+tr_phase_storage$_ storage_fees_collected:Tomis
+  storage_fees_due:(Maybe Tomis)
   status_change:AccStatusChange
   = TrStoragePhase;
 
@@ -321,13 +321,13 @@ acst_unchanged$0 = AccStatusChange;  // x -> x
 acst_frozen$10 = AccStatusChange;    // init -> frozen
 acst_deleted$11 = AccStatusChange;   // frozen -> deleted
 
-tr_phase_credit$_ due_fees_collected:(Maybe Grams)
+tr_phase_credit$_ due_fees_collected:(Maybe Tomis)
   credit:CurrencyCollection = TrCreditPhase;
 
 tr_phase_compute_skipped$0 reason:ComputeSkipReason
   = TrComputePhase;
 tr_phase_compute_vm$1 success:Bool msg_state_used:Bool
-  account_activated:Bool gas_fees:Grams
+  account_activated:Bool gas_fees:Tomis
   ^[ gas_used:(VarUInteger 7)
   gas_limit:(VarUInteger 7) gas_credit:(Maybe (VarUInteger 3))
   mode:int8 exit_code:int32 exit_arg:(Maybe int32)
@@ -341,7 +341,7 @@ cskip_suspended$110 = ComputeSkipReason;
 
 tr_phase_action$_ success:Bool valid:Bool no_funds:Bool
   status_change:AccStatusChange
-  total_fwd_fees:(Maybe Grams) total_action_fees:(Maybe Grams)
+  total_fwd_fees:(Maybe Tomis) total_action_fees:(Maybe Tomis)
   result_code:int32 result_arg:(Maybe int32) tot_actions:uint16
   spec_actions:uint16 skipped_actions:uint16 msgs_created:uint16
   action_list_hash:bits256 tot_msg_size:StorageUsed
@@ -349,9 +349,9 @@ tr_phase_action$_ success:Bool valid:Bool no_funds:Bool
 
 tr_phase_bounce_negfunds$00 = TrBouncePhase;
 tr_phase_bounce_nofunds$01 msg_size:StorageUsed
-  req_fwd_fees:Grams = TrBouncePhase;
+  req_fwd_fees:Tomis = TrBouncePhase;
 tr_phase_bounce_ok$1 msg_size:StorageUsed
-  msg_fees:Grams fwd_fees:Grams = TrBouncePhase;
+  msg_fees:Tomis fwd_fees:Tomis = TrBouncePhase;
 //
 trans_ord$0000 credit_first:Bool
   storage_ph:(Maybe TrStoragePhase)
@@ -631,7 +631,7 @@ burning_config#01
   fee_burn_num:# fee_burn_denom:# { fee_burn_num <= fee_burn_denom } { fee_burn_denom >= 1 } = BurningConfig;
 _ BurningConfig = ConfigParam 5;
 
-_ mint_new_price:Grams mint_add_price:Grams = ConfigParam 6;
+_ mint_new_price:Tomis mint_add_price:Tomis = ConfigParam 6;
 _ to_mint:ExtraCurrencyCollection = ConfigParam 7;
 
 capabilities#c4 version:uint32 capabilities:uint64 = GlobalVersion;
@@ -682,10 +682,10 @@ workchain_v2#a7 enabled_since:uint32 monitor_min_split:(## 8)
 
 _ workchains:(HashmapE 32 WorkchainDescr) = ConfigParam 12;
 
-complaint_prices#1a deposit:Grams bit_price:Grams cell_price:Grams = ComplaintPricing;
+complaint_prices#1a deposit:Tomis bit_price:Tomis cell_price:Tomis = ComplaintPricing;
 _ ComplaintPricing = ConfigParam 13;
 
-block_grams_created#6b masterchain_block_fee:Grams basechain_block_fee:Grams
+block_tomis_created#6b masterchain_block_fee:Tomis basechain_block_fee:Tomis
   = BlockCreateFees;
 _ BlockCreateFees = ConfigParam 14;
 
@@ -699,7 +699,7 @@ _ max_validators:(## 16) max_main_validators:(## 16) min_validators:(## 16)
   { min_validators >= 1 }
   = ConfigParam 16;
 
-_ min_stake:Grams max_stake:Grams min_total_stake:Grams max_stake_factor:uint32 = ConfigParam 17;
+_ min_stake:Tomis max_stake:Tomis min_total_stake:Tomis max_stake_factor:uint32 = ConfigParam 17;
 
 _#cc utime_since:uint32 bit_price_ps:uint64 cell_price_ps:uint64
   mc_bit_price_ps:uint64 mc_cell_price_ps:uint64 = StoragePrices;
@@ -733,8 +733,8 @@ block_limits_v2#5e bytes:ParamLimits gas:ParamLimits lt_delta:ParamLimits
 config_mc_block_limits#_ BlockLimits = ConfigParam 22;
 config_block_limits#_ BlockLimits = ConfigParam 23;
 
-// msg_fwd_fees = (lump_price + ceil((bit_price * msg.bits + cell_price * msg.cells)/2^16)) nanograms
-// ihr_fwd_fees = ceil((msg_fwd_fees * ihr_price_factor)/2^16) nanograms
+// msg_fwd_fees = (lump_price + ceil((bit_price * msg.bits + cell_price * msg.cells)/2^16)) nanotomis
+// ihr_fwd_fees = ceil((msg_fwd_fees * ihr_price_factor)/2^16) nanotomis
 // bits in the root cell of a message are not included in msg.bits (lump_price pays for them)
 msg_forward_prices#ea lump_price:uint64 bit_price:uint64 cell_price:uint64
   ihr_price_factor:uint32 first_frac:uint16 next_frac:uint16 = MsgForwardPrices;
@@ -799,7 +799,7 @@ signed_temp_key#4 key:^ValidatorTempKey signature:CryptoSignature = ValidatorSig
 _ (HashmapE 256 ValidatorSignedTempKey) = ConfigParam 39;
 
 misbehaviour_punishment_config_v1#01
-  default_flat_fine:Grams default_proportional_fine:uint32
+  default_flat_fine:Tomis default_proportional_fine:uint32
   severity_flat_mult:uint16 severity_proportional_mult:uint16
   unpunishable_interval:uint16
   long_interval:uint16 long_flat_mult:uint16 long_proportional_mult:uint16
@@ -874,7 +874,7 @@ prod_info#34 utime:uint32 mc_blk_ref:ExtBlkRef state_proof:^(MERKLE_PROOF Block)
   prod_proof:^(MERKLE_PROOF ShardState) = ProducerInfo;
 no_blk_gen from_utime:uint32 prod_info:^ProducerInfo = ComplaintDescr;
 no_blk_gen_diff prod_info_old:^ProducerInfo prod_info_new:^ProducerInfo = ComplaintDescr;
-validator_complaint#bc validator_pubkey:bits256 description:^ComplaintDescr created_at:uint32 severity:uint8 reward_addr:uint256 paid:Grams suggested_fine:Grams suggested_fine_part:uint32 = ValidatorComplaint;
+validator_complaint#bc validator_pubkey:bits256 description:^ComplaintDescr created_at:uint32 severity:uint8 reward_addr:uint256 paid:Tomis suggested_fine:Tomis suggested_fine_part:uint32 = ValidatorComplaint;
 complaint_status#2d complaint:^ValidatorComplaint voters:(HashmapE 16 True) vset_id:uint256 weight_remaining:int64 = ValidatorComplaintStatus;
 
 //
@@ -957,17 +957,17 @@ dns_storage_address#7473 bag_id:bits256 = DNSRecord;
 //
 
 chan_config$_  init_timeout:uint32 close_timeout:uint32 a_key:bits256 b_key:bits256
-  a_addr:^MsgAddressInt b_addr:^MsgAddressInt channel_id:uint64 min_A_extra:Grams = ChanConfig;
+  a_addr:^MsgAddressInt b_addr:^MsgAddressInt channel_id:uint64 min_A_extra:Tomis = ChanConfig;
 
-chan_state_init$000  signed_A:Bool signed_B:Bool min_A:Grams min_B:Grams expire_at:uint32 A:Grams B:Grams = ChanState;
-chan_state_close$001 signed_A:Bool signed_B:Bool promise_A:Grams promise_B:Grams expire_at:uint32 A:Grams B:Grams = ChanState;
-chan_state_payout$010 A:Grams B:Grams = ChanState;
+chan_state_init$000  signed_A:Bool signed_B:Bool min_A:Tomis min_B:Tomis expire_at:uint32 A:Tomis B:Tomis = ChanState;
+chan_state_close$001 signed_A:Bool signed_B:Bool promise_A:Tomis promise_B:Tomis expire_at:uint32 A:Tomis B:Tomis = ChanState;
+chan_state_payout$010 A:Tomis B:Tomis = ChanState;
 
-chan_promise$_ channel_id:uint64 promise_A:Grams promise_B:Grams = ChanPromise;
+chan_promise$_ channel_id:uint64 promise_A:Tomis promise_B:Tomis = ChanPromise;
 chan_signed_promise#_ sig:(Maybe ^bits512) promise:ChanPromise = ChanSignedPromise;
 
-chan_msg_init#27317822 inc_A:Grams inc_B:Grams min_A:Grams min_B:Grams channel_id:uint64 = ChanMsg;
-chan_msg_close#f28ae183 extra_A:Grams extra_B:Grams promise:ChanSignedPromise  = ChanMsg;
+chan_msg_init#27317822 inc_A:Tomis inc_B:Tomis min_A:Tomis min_B:Tomis channel_id:uint64 = ChanMsg;
+chan_msg_close#f28ae183 extra_A:Tomis extra_B:Tomis promise:ChanSignedPromise  = ChanMsg;
 chan_msg_timeout#43278a28 = ChanMsg;
 chan_msg_payout#37fe7810 = ChanMsg;
 

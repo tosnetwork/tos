@@ -961,7 +961,7 @@ bool TestNode::show_help(std::string command) {
          "pastvalsets\tLists known past validator set ids and their hashes\n"
          "savecomplaints <election-id> <filename-pfx>\tSaves all complaints registered for specified validator set id "
          "into files <filename-pfx><complaint-hash>.boc\n"
-         "complaintprice <expires-in> <complaint-boc>\tComputes the price (in nanograms) for creating a complaint\n"
+         "complaintprice <expires-in> <complaint-boc>\tComputes the price (in nanotomis) for creating a complaint\n"
          "msgqueuesizes\tShows current sizes of outbound message queues in all shards\n"
          "dispatchqueueinfo <block-id>\tShows list of account dispatch queue of a block\n"
          "dispatchqueuemessages <block-id> <addr> [<after-lt>]\tShows deferred messages from account <addr>, lt > "
@@ -4108,10 +4108,10 @@ bool compute_punishment_default(int interval, bool severe, td::RefInt256& fine, 
   return true;  // todo: (tolya-yanot) temporary reduction of fine
 
   if (severe) {
-    fine = td::make_refint(2500 * 1000000000LL);  // GR$2500
+    fine = td::make_refint(2500 * 1000000000LL);  // TM$2500
     fine_part = (1 << 30);                        // 1/4 of stake
   } else {
-    fine = td::make_refint(1000 * 1000000000LL);  // GR$1000
+    fine = td::make_refint(1000 * 1000000000LL);  // TM$1000
     fine_part = (1 << 28);                        // 1/16 of stake
   }
   if (interval >= 80000) {
@@ -4141,7 +4141,7 @@ bool compute_punishment(int interval, bool severe, td::RefInt256& fine, unsigned
     return false;
   }
 
-  fine = block::tlb::t_Grams.as_integer(rec.default_flat_fine);
+  fine = block::tlb::t_Tomis.as_integer(rec.default_flat_fine);
   fine_part = rec.default_proportional_fine;
 
   if (severe) {
@@ -4219,8 +4219,8 @@ td::Status TestNode::write_val_create_proof(TestNode::ValidatorLoadInfo& info1, 
         && cb.store_long_bool(now(), 32)                               // created_at:uint32
         && cb.store_long_bool(severity, 8)                             // severity:uint8
         && cb.store_zeroes_bool(256)                                   // reward_addr:uint256
-        && cb.store_zeroes_bool(4)                                     // paid:Grams
-        && block::tlb::t_Grams.store_integer_ref(cb, std::move(fine))  // suggested_fine:Grams
+        && cb.store_zeroes_bool(4)                                     // paid:Tomis
+        && block::tlb::t_Tomis.store_integer_ref(cb, std::move(fine))  // suggested_fine:Tomis
         && cb.store_long_bool(fine_part, 32)                           // suggested_fine_part:uint32
         && cb.finalize_to(complaint))) {
     return td::Status::Error("cannot serialize ValidatorComplaint");
@@ -4511,7 +4511,7 @@ td::Status TestNode::continue_check_validator_load_proof(std::unique_ptr<Validat
       show_vote(root->get_hash().bits(), false);
       return td::Status::OK();
     }
-    auto suggested_fine = block::tlb::t_Grams.as_integer(rec.suggested_fine);
+    auto suggested_fine = block::tlb::t_Tomis.as_integer(rec.suggested_fine);
     if (suggested_fine.is_null()) {
       return td::Status::Error("cannot parse suggested fine");
     }

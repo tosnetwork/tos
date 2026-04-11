@@ -32,7 +32,7 @@
       var msg = begin_cell()
         .store_uint(0x10, 6)
         .store_slice(s_addr)
-        .store_grams(0)
+        .store_tomis(0)
         .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
       .end_cell();
       send_raw_message(msg, 128);
@@ -45,7 +45,7 @@
     .store_uint(flags, 4)
     .store_uint(0, 2)
     .store_slice(dst)
-    .store_grams(0)
+    .store_tomis(0)
     .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1);
 
   ;; Content

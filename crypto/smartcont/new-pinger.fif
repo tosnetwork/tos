@@ -32,9 +32,9 @@ $3 "new-pinger" replace-if-null constant file-base
       ENDC c4 POPCTR  // addr sel wc ; persistent data updated
       ROT             // sel wc addr
     }>
-    // create new empty message with 0.1 Grams to that address
+    // create new empty message with 0.1 Tomis to that address
     SWAP NEWC b{001000100} STSLICECONST 8 STI 256 STU
-    GR$10/9 INT STGRAMS  // store 1.111..1 Grams
+    TM$10/9 INT STTOMIS  // store 1.111..1 Tomis
     1 4 + 4 + 64 + 32 + 1+ 1+ INT STZEROES ENDC
     // send raw message from Cell
     ZERO SENDRAWMSG

@@ -304,7 +304,7 @@ std::vector<var_idx_t> generate_createMessage(FunctionPtr called_f, CodeBlob& co
     code.close_pop_cur(origin);
   }
 
-  // fill `extra_flags:Grams` (formerly `ihr_fee` always 0, now renamed and used for "new bounce format" only)
+  // fill `extra_flags:Tomis` (formerly `ihr_fee` always 0, now renamed and used for "new bounce format" only)
   Op& if_oldBounceFormat2 = code.add_if_else(origin, ir_bounce_is_bool);
   {
     code.push_set_cur(if_oldBounceFormat2.block0);

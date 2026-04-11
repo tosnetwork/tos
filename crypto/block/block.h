@@ -339,17 +339,17 @@ struct CurrencyCollection;
 
 struct CurrencyCollection {
   using type_class = block::tlb::CurrencyCollection;
-  td::RefInt256 grams;
+  td::RefInt256 tomis;
   Ref<vm::Cell> extra;
   CurrencyCollection() = default;
-  explicit CurrencyCollection(td::RefInt256 _grams, Ref<vm::Cell> _extra = {})
-      : grams(std::move(_grams)), extra(std::move(_extra)) {
+  explicit CurrencyCollection(td::RefInt256 _tomis, Ref<vm::Cell> _extra = {})
+      : tomis(std::move(_tomis)), extra(std::move(_extra)) {
   }
-  explicit CurrencyCollection(long long _grams, Ref<vm::Cell> _extra = {})
-      : grams(true, _grams), extra(std::move(_extra)) {
+  explicit CurrencyCollection(long long _tomis, Ref<vm::Cell> _extra = {})
+      : tomis(true, _tomis), extra(std::move(_extra)) {
   }
   bool set_zero() {
-    grams = td::RefInt256{true, 0};
+    tomis = td::RefInt256{true, 0};
     extra.clear();
     return true;
   }
@@ -357,17 +357,17 @@ struct CurrencyCollection {
     return CurrencyCollection(td::RefInt256{true, 0});
   }
   bool is_valid() const {
-    return grams.not_null();
+    return tomis.not_null();
   }
   bool is_zero() const {
-    return is_valid() && extra.is_null() && !td::sgn(grams);
+    return is_valid() && extra.is_null() && !td::sgn(tomis);
   }
   bool has_extra() const {
     return extra.not_null();
   }
   bool invalidate() {
     extra.clear();
-    grams.clear();
+    tomis.clear();
     return false;
   }
   bool validate(int max_cells = 1024) const;
@@ -376,11 +376,11 @@ struct CurrencyCollection {
   bool operator!=(const CurrencyCollection& other) const {
     return !operator==(other);
   }
-  bool operator==(td::RefInt256 other_grams) const {
-    return is_valid() && !has_extra() && !td::cmp(grams, other_grams);
+  bool operator==(td::RefInt256 other_tomis) const {
+    return is_valid() && !has_extra() && !td::cmp(tomis, other_tomis);
   }
-  bool operator!=(td::RefInt256 other_grams) const {
-    return !operator==(std::move(other_grams));
+  bool operator!=(td::RefInt256 other_tomis) const {
+    return !operator==(std::move(other_tomis));
   }
   bool operator>=(const CurrencyCollection& other) const;
   bool operator<=(const CurrencyCollection& other) const {
@@ -390,18 +390,18 @@ struct CurrencyCollection {
   static bool add(const CurrencyCollection& a, CurrencyCollection&& b, CurrencyCollection& c);
   CurrencyCollection& operator+=(const CurrencyCollection& other);
   CurrencyCollection& operator+=(CurrencyCollection&& other);
-  CurrencyCollection& operator+=(td::RefInt256 other_grams);
+  CurrencyCollection& operator+=(td::RefInt256 other_tomis);
   CurrencyCollection operator+(const CurrencyCollection& other) const;
   CurrencyCollection operator+(CurrencyCollection&& other) const;
-  CurrencyCollection operator+(td::RefInt256 other_grams);
+  CurrencyCollection operator+(td::RefInt256 other_tomis);
   static bool sub(const CurrencyCollection& a, const CurrencyCollection& b, CurrencyCollection& c);
   static bool sub(const CurrencyCollection& a, CurrencyCollection&& b, CurrencyCollection& c);
   CurrencyCollection& operator-=(const CurrencyCollection& other);
   CurrencyCollection& operator-=(CurrencyCollection&& other);
-  CurrencyCollection& operator-=(td::RefInt256 other_grams);
+  CurrencyCollection& operator-=(td::RefInt256 other_tomis);
   CurrencyCollection operator-(const CurrencyCollection& other) const;
   CurrencyCollection operator-(CurrencyCollection&& other) const;
-  CurrencyCollection operator-(td::RefInt256 other_grams) const;
+  CurrencyCollection operator-(td::RefInt256 other_tomis) const;
   bool clamp(const CurrencyCollection& other);
   bool check_extra_currency_limit(td::uint32 max_currencies) const;
   static bool remove_zero_extra_currencies(Ref<vm::Cell>& root, td::uint32 max_currencies);
@@ -417,7 +417,7 @@ struct CurrencyCollection {
   }
   Ref<vm::Tuple> as_vm_tuple() const {
     if (is_valid()) {
-      return vm::make_tuple_ref(grams, vm::StackEntry::maybe(extra));
+      return vm::make_tuple_ref(tomis, vm::StackEntry::maybe(extra));
     } else {
       return {};
     }
@@ -705,8 +705,8 @@ bool unpack_std_smc_addr(std::string packed, tos::WorkchainId& wc, tos::StdSmcAd
 
 bool store_UInt7(vm::CellBuilder& cb, unsigned long long value);
 bool store_UInt7(vm::CellBuilder& cb, unsigned long long value1, unsigned long long value2);
-bool store_Maybe_Grams(vm::CellBuilder& cb, td::RefInt256 value);
-bool store_Maybe_Grams_nz(vm::CellBuilder& cb, td::RefInt256 value);
+bool store_Maybe_Tomis(vm::CellBuilder& cb, td::RefInt256 value);
+bool store_Maybe_Tomis_nz(vm::CellBuilder& cb, td::RefInt256 value);
 bool store_CurrencyCollection(vm::CellBuilder& cb, td::RefInt256 value, Ref<vm::Cell> extra);
 bool fetch_CurrencyCollection(vm::CellSlice& cs, td::RefInt256& value, Ref<vm::Cell>& extra, bool inexact = false);
 bool unpack_CurrencyCollection(Ref<vm::CellSlice> csr, td::RefInt256& value, Ref<vm::Cell>& extra);

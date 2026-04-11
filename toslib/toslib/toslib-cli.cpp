@@ -59,15 +59,15 @@
 
 using toslib_api::make_object;
 
-// GR$<amount>
-struct Grams {
+// TM$<amount>
+struct Tomis {
   td::uint64 nano;
 };
 
-td::StringBuilder& operator<<(td::StringBuilder& sb, const Grams& grams) {
-  auto b = grams.nano % 1000000000;
-  auto a = grams.nano / 1000000000;
-  sb << "GR$" << a;
+td::StringBuilder& operator<<(td::StringBuilder& sb, const Tomis& tomis) {
+  auto b = tomis.nano % 1000000000;
+  auto a = tomis.nano / 1000000000;
+  sb << "TM$" << a;
   if (b != 0) {
     size_t sz = 9;
     while (b % 10 == 0) {
@@ -85,9 +85,9 @@ td::StringBuilder& operator<<(td::StringBuilder& sb, const Grams& grams) {
   return sb;
 }
 
-td::Result<Grams> parse_grams(td::Slice grams) {
-  td::ConstParser parser(grams);
-  if (parser.skip_start_with("GR$")) {
+td::Result<Tomis> parse_tomis(td::Slice tomis) {
+  td::ConstParser parser(tomis);
+  if (parser.skip_start_with("TM$")) {
     TRY_RESULT(a, td::to_integer_safe<td::uint32>(parser.read_till_nofail('.')));
     td::uint64 res = a;
     if (parser.try_skip('.')) {
@@ -102,13 +102,13 @@ td::Result<Grams> parse_grams(td::Slice grams) {
       res *= 1000000000;
     }
     if (!parser.empty()) {
-      return td::Status::Error(PSLICE() << "Failed to parse grams \"" << grams << "\", left \"" << parser.read_all()
+      return td::Status::Error(PSLICE() << "Failed to parse tomis \"" << tomis << "\", left \"" << parser.read_all()
                                         << "\"");
     }
-    return Grams{res};
+    return Tomis{res};
   }
-  TRY_RESULT(value, td::to_integer_safe<td::uint64>(grams));
-  return Grams{value};
+  TRY_RESULT(value, td::to_integer_safe<td::uint64>(tomis));
+  return Tomis{value};
 }
 
 // Temporary hack
@@ -550,7 +550,7 @@ class ToslibCli : public td::actor::Actor {
         break;
       }
       auto column_at = word.find(':');
-      TRY_RESULT_PROMISE(promise, value, parse_grams(word.substr(column_at + 1)));
+      TRY_RESULT_PROMISE(promise, value, parse_tomis(word.substr(column_at + 1)));
       TRY_RESULT_PROMISE(promise, seconds, td::to_integer_safe<td::int32>(word.substr(0, column_at)));
       limits.emplace_back(seconds, value.nano);
     }
@@ -796,8 +796,8 @@ class ToslibCli : public td::actor::Actor {
       promise.set_error(td::Status::Error("(A|B) expected"));
       return;
     }
-    TRY_RESULT_PROMISE_PREFIX(promise, promise_A, parse_grams(parser.read_word()), "A");
-    TRY_RESULT_PROMISE_PREFIX(promise, promise_B, parse_grams(parser.read_word()), "B");
+    TRY_RESULT_PROMISE_PREFIX(promise, promise_A, parse_tomis(parser.read_word()), "A");
+    TRY_RESULT_PROMISE_PREFIX(promise, promise_B, parse_tomis(parser.read_word()), "B");
 
     auto& chan = channels_[pchan_id];
     Address addr;
@@ -826,8 +826,8 @@ class ToslibCli : public td::actor::Actor {
       promise.set_error(td::Status::Error("(A|B) expected"));
       return;
     }
-    TRY_RESULT_PROMISE_PREFIX(promise, promise_A, parse_grams(parser.read_word()), "promise_A");
-    TRY_RESULT_PROMISE_PREFIX(promise, promise_B, parse_grams(parser.read_word()), "promise_B");
+    TRY_RESULT_PROMISE_PREFIX(promise, promise_A, parse_tomis(parser.read_word()), "promise_A");
+    TRY_RESULT_PROMISE_PREFIX(promise, promise_B, parse_tomis(parser.read_word()), "promise_B");
 
     auto& chan = channels_[pchan_id];
     std::string public_key = is_a ? chan.alice_public_key : chan.bob_public_key;
@@ -843,8 +843,8 @@ class ToslibCli : public td::actor::Actor {
   }
   void pchan_promise_pack(td::ConstParser& parser, td::Promise<td::Unit> promise) {
     TRY_RESULT_PROMISE_PREFIX(promise, channel_id, td::to_integer_safe<td::int64>(parser.read_word()), "pchan_id");
-    TRY_RESULT_PROMISE_PREFIX(promise, promise_A, parse_grams(parser.read_word()), "promise_A");
-    TRY_RESULT_PROMISE_PREFIX(promise, promise_B, parse_grams(parser.read_word()), "promise_B");
+    TRY_RESULT_PROMISE_PREFIX(promise, promise_A, parse_tomis(parser.read_word()), "promise_A");
+    TRY_RESULT_PROMISE_PREFIX(promise, promise_B, parse_tomis(parser.read_word()), "promise_B");
     TRY_RESULT_PROMISE_PREFIX(promise, signature, base64url_decode(parser.read_word()), "signature");
     send_query(make_object<toslib_api::pchan_packPromise>(make_object<toslib_api::pchan_promise>(
                    std::move(signature), promise_A.nano, promise_B.nano, channel_id)),
@@ -858,8 +858,8 @@ class ToslibCli : public td::actor::Actor {
     send_query(make_object<toslib_api::pchan_unpackPromise>(td::SecureString(packed_promise)),
                promise.wrap([](auto unpacked) {
                  td::TerminalIO::out() << "unpacked promise:\n"
-                                       << "promise_A: " << Grams{static_cast<td::uint64>(unpacked->promise_A_)} << "\n"
-                                       << "promise_B: " << Grams{static_cast<td::uint64>(unpacked->promise_B_)} << "\n"
+                                       << "promise_A: " << Tomis{static_cast<td::uint64>(unpacked->promise_A_)} << "\n"
+                                       << "promise_B: " << Tomis{static_cast<td::uint64>(unpacked->promise_B_)} << "\n"
                                        << "channel_id: " << unpacked->channel_id_ << "\n"
                                        << "signature: " << td::base64url_encode(unpacked->signature_) << "\n";
                  return td::Unit();
@@ -896,10 +896,10 @@ class ToslibCli : public td::actor::Actor {
 
   void pchan_init(td::int32 pchan_id, td::ConstParser& parser, td::Promise<td::Unit> promise) {
     TRY_RESULT_PROMISE_PREFIX(promise, addr, to_account_address(parser.read_word(), true), "key_id");
-    TRY_RESULT_PROMISE_PREFIX(promise, A, parse_grams(parser.read_word()), "A");
-    TRY_RESULT_PROMISE_PREFIX(promise, B, parse_grams(parser.read_word()), "B");
-    TRY_RESULT_PROMISE_PREFIX(promise, min_A, parse_grams(parser.read_word()), "min_A");
-    TRY_RESULT_PROMISE_PREFIX(promise, min_B, parse_grams(parser.read_word()), "min_B");
+    TRY_RESULT_PROMISE_PREFIX(promise, A, parse_tomis(parser.read_word()), "A");
+    TRY_RESULT_PROMISE_PREFIX(promise, B, parse_tomis(parser.read_word()), "B");
+    TRY_RESULT_PROMISE_PREFIX(promise, min_A, parse_tomis(parser.read_word()), "min_A");
+    TRY_RESULT_PROMISE_PREFIX(promise, min_B, parse_tomis(parser.read_word()), "min_B");
 
     auto action = make_object<toslib_api::actionPchan>(
         make_object<toslib_api::pchan_actionInit>(A.nano, B.nano, min_A.nano, min_B.nano));
@@ -1844,7 +1844,7 @@ class ToslibCli : public td::actor::Actor {
 
   static void print_full_account_state(const tos::tl_object_ptr<tos::toslib_api::fullAccountState>& state) {
     td::StringBuilder balance_str;
-    balance_str << "Balance: " << Grams{td::narrow_cast<td::uint64>(state->balance_ * (state->balance_ > 0))};
+    balance_str << "Balance: " << Tomis{td::narrow_cast<td::uint64>(state->balance_ * (state->balance_ > 0))};
     for (const auto& extra : state->extra_currencies_) {
       balance_str << " + " << extra->amount_ << ".$" << extra->id_;
     }
@@ -2052,9 +2052,9 @@ class ToslibCli : public td::actor::Actor {
                      }
                    }
                    if (balance >= 0) {
-                     sb << Grams{td::uint64(balance)};
+                     sb << Tomis{td::uint64(balance)};
                    } else {
-                     sb << "-" << Grams{td::uint64(-balance)};
+                     sb << "-" << Tomis{td::uint64(-balance)};
                    }
                    for (const auto& [id, amount] : extra_currencies) {
                      if (amount > 0) {
@@ -2063,7 +2063,7 @@ class ToslibCli : public td::actor::Actor {
                        sb << " - " << -amount << ".$" << id;
                      }
                    }
-                   sb << " Fee: " << Grams{td::uint64(t->fee_)};
+                   sb << " Fee: " << Tomis{td::uint64(t->fee_)};
                    if (t->in_msg_->source_->account_address_.empty()) {
                      sb << " External ";
                    } else {
@@ -2091,7 +2091,7 @@ class ToslibCli : public td::actor::Actor {
                      } else {
                        sb << " To " << ot->destination_->account_address_;
                      }
-                     sb << " " << Grams{td::uint64(ot->value_)};
+                     sb << " " << Tomis{td::uint64(ot->value_)};
                      for (const auto& extra : ot->extra_currencies_) {
                        sb << " + " << extra->amount_ << ".$" << extra->id_;
                      }
@@ -2145,13 +2145,13 @@ class ToslibCli : public td::actor::Actor {
     std::vector<toslib_api::object_ptr<toslib_api::msg_message>> messages;
     auto add_message = [&](td::ConstParser& parser) {
       auto to = parser.read_word();
-      auto grams = parser.read_word();
+      auto tomis = parser.read_word();
       parser.skip_whitespaces();
       auto message = parser.read_all();
 
       Message res;
       TRY_RESULT(address, to_account_address(to, false));
-      TRY_RESULT(amount, parse_grams(grams));
+      TRY_RESULT(amount, parse_tomis(tomis));
       toslib_api::object_ptr<toslib_api::msg_Data> data;
 
       if (use_encryption) {

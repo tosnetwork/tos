@@ -2,21 +2,21 @@
 
 #include "stdlib.fc";
 
-;; cur_elect credits past_elections grams active_id active_hash
+;; cur_elect credits past_elections tomis active_id active_hash
 (cell, cell, cell, int, int, int) load_data() inline_ref {
   var cs = get_data().begin_parse();
-  var res = (cs~load_dict(), cs~load_dict(), cs~load_dict(), cs~load_grams(), cs~load_uint(32), cs~load_uint(256));
+  var res = (cs~load_dict(), cs~load_dict(), cs~load_dict(), cs~load_tomis(), cs~load_uint(32), cs~load_uint(256));
   cs.end_parse();
   return res;
 }
 
-;; cur_elect credits past_elections grams active_id active_hash
-() store_data(elect, credits, past_elections, grams, active_id, active_hash) impure inline_ref {
+;; cur_elect credits past_elections tomis active_id active_hash
+() store_data(elect, credits, past_elections, tomis, active_id, active_hash) impure inline_ref {
   set_data(begin_cell()
     .store_dict(elect)
     .store_dict(credits)
     .store_dict(past_elections)
-    .store_grams(grams)
+    .store_tomis(tomis)
     .store_uint(active_id, 32)
     .store_uint(active_hash, 256)
   .end_cell());
@@ -25,7 +25,7 @@
 ;; elect -> elect_at elect_close min_stake total_stake members failed finished
 _ unpack_elect(elect) inline_ref {
   var es = elect.begin_parse();
-  var res = (es~load_uint(32), es~load_uint(32), es~load_grams(), es~load_grams(), es~load_dict(), es~load_int(1), es~load_int(1));
+  var res = (es~load_uint(32), es~load_uint(32), es~load_tomis(), es~load_tomis(), es~load_dict(), es~load_int(1), es~load_int(1));
   es.end_parse();
   return res;
 }
@@ -34,8 +34,8 @@ cell pack_elect(elect_at, elect_close, min_stake, total_stake, members, failed, 
   return begin_cell()
     .store_uint(elect_at, 32)
     .store_uint(elect_close, 32)
-    .store_grams(min_stake)
-    .store_grams(total_stake)
+    .store_tomis(min_stake)
+    .store_tomis(total_stake)
     .store_dict(members)
     .store_int(failed, 1)
     .store_int(finished, 1)
@@ -44,7 +44,7 @@ cell pack_elect(elect_at, elect_close, min_stake, total_stake, members, failed, 
 
 ;; slice -> unfreeze_at stake_held vset_hash frozen_dict total_stake bonuses complaints
 _ unpack_past_election(slice fs) inline_ref {
-  var res = (fs~load_uint(32), fs~load_uint(32), fs~load_uint(256), fs~load_dict(), fs~load_grams(), fs~load_grams(), fs~load_dict());
+  var res = (fs~load_uint(32), fs~load_uint(32), fs~load_uint(256), fs~load_dict(), fs~load_tomis(), fs~load_tomis(), fs~load_dict());
   fs.end_parse();
   return res;
 }
@@ -55,8 +55,8 @@ builder pack_past_election(int unfreeze_at, int stake_held, int vset_hash, cell 
       .store_uint(stake_held, 32)
       .store_uint(vset_hash, 256)
       .store_dict(frozen_dict)
-      .store_grams(total_stake)
-      .store_grams(bonuses)
+      .store_tomis(total_stake)
+      .store_tomis(bonuses)
       .store_dict(complaints);
 }
 
@@ -79,11 +79,11 @@ builder pack_complaint_status(cell complaint, cell voters, int vset_id, int weig
 }
 
 ;; validator_complaint#bc validator_pubkey:uint256 description:^ComplaintDescr
-;;   created_at:uint32 severity:uint8 reward_addr:uint256 paid:Grams suggested_fine:Grams
+;;   created_at:uint32 severity:uint8 reward_addr:uint256 paid:Tomis suggested_fine:Tomis
 ;;   suggested_fine_part:uint32 = ValidatorComplaint;
 _ unpack_complaint(slice cs) inline_ref {
   throw_unless(9, cs~load_int(8) == 0xbc - 0x100);
-  var res = (cs~load_uint(256), cs~load_ref(), cs~load_uint(32), cs~load_uint(8), cs~load_uint(256), cs~load_grams(), cs~load_grams(), cs~load_uint(32));
+  var res = (cs~load_uint(256), cs~load_ref(), cs~load_uint(32), cs~load_uint(8), cs~load_uint(256), cs~load_tomis(), cs~load_tomis(), cs~load_uint(32));
   cs.end_parse();
   return res;
 }
@@ -96,16 +96,16 @@ builder pack_complaint(int validator_pubkey, cell description, int created_at, i
     .store_uint(created_at, 32)
     .store_uint(severity, 8)
     .store_uint(reward_addr, 256)
-    .store_grams(paid)
-    .store_grams(suggested_fine)
+    .store_tomis(paid)
+    .store_tomis(suggested_fine)
     .store_uint(suggested_fine_part, 32);
 }
 
-;; complaint_prices#1a deposit:Grams bit_price:Grams cell_price:Grams = ComplaintPricing;
+;; complaint_prices#1a deposit:Tomis bit_price:Tomis cell_price:Tomis = ComplaintPricing;
 (int, int, int) parse_complaint_prices(cell info) inline {
   var cs = info.begin_parse();
   throw_unless(9, cs~load_uint(8) == 0x1a);
-  var res = (cs~load_grams(), cs~load_grams(), cs~load_grams());
+  var res = (cs~load_tomis(), cs~load_tomis(), cs~load_tomis());
   cs.end_parse();
   return res;
 }
@@ -152,12 +152,12 @@ builder pack_complaint(int validator_pubkey, cell description, int created_at, i
   return (cs~load_uint(256), cs~load_uint(64));
 }
 
-() send_message_back(addr, ans_tag, query_id, body, grams, mode) impure inline_ref {
+() send_message_back(addr, ans_tag, query_id, body, tomis, mode) impure inline_ref {
   ;; int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool src:MsgAddress -> 011000
   var msg = begin_cell()
     .store_uint(0x18, 6)
     .store_slice(addr)
-    .store_grams(grams)
+    .store_tomis(tomis)
     .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
     .store_uint(ans_tag, 32)
     .store_uint(query_id, 64);
@@ -179,7 +179,7 @@ builder pack_complaint(int validator_pubkey, cell description, int created_at, i
   var msg = begin_cell()
     .store_uint(0xc4ff, 17)   ;; 0 11000100 0xff
     .store_uint(config_addr, 256)
-    .store_grams(1 << 30)     ;; ~1 gram of value to process and obtain answer
+    .store_tomis(1 << 30)     ;; ~1 gram of value to process and obtain answer
     .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
     .store_uint(0x4e565354, 32)
     .store_uint(query_id, 64)
@@ -191,9 +191,9 @@ builder pack_complaint(int validator_pubkey, cell description, int created_at, i
 _ ~credit_to(credits, addr, amount) inline_ref {
   var (val, f) = credits.udict_get?(256, addr);
   if (f) {
-    amount += val~load_grams();
+    amount += val~load_tomis();
   }
-  credits~udict_set_builder(256, addr, begin_cell().store_grams(amount));
+  credits~udict_set_builder(256, addr, begin_cell().store_tomis(amount));
   return (credits, ());
 }
 
@@ -230,7 +230,7 @@ _ ~credit_to(credits, addr, amount) inline_ref {
   ;; parse current election data
   var (elect_at, elect_close, min_stake, total_stake, members, failed, finished) = elect.unpack_elect();
   ;; elect_at~dump();
-  msg_value -= 1000000000;   ;; deduct GR$1 for sending confirmation
+  msg_value -= 1000000000;   ;; deduct TM$1 for sending confirmation
   if ((msg_value << 12) < total_stake) {
     ;; stake smaller than 1/4096 of the total accumulated stakes, return
     return return_stake(s_addr, query_id, 2);
@@ -247,7 +247,7 @@ _ ~credit_to(credits, addr, amount) inline_ref {
   var (mem, found) = members.udict_get?(256, validator_pubkey);
   if (found) {
     ;; entry found, merge stakes
-    msg_value += mem~load_grams();
+    msg_value += mem~load_tomis();
     mem~load_uint(64);   ;; skip timestamp and max_factor
     found = (src_addr != mem~load_uint(256));
   }
@@ -263,7 +263,7 @@ _ ~credit_to(credits, addr, amount) inline_ref {
   accept_message();
   ;; store stake in the dictionary
   members~udict_set_builder(256, validator_pubkey, begin_cell()
-    .store_grams(msg_value)
+    .store_tomis(msg_value)
     .store_uint(now(), 32)
     .store_uint(max_factor, 32)
     .store_uint(src_addr, 256)
@@ -284,7 +284,7 @@ _ ~credit_to(credits, addr, amount) inline_ref {
   do {
     (pubkey, var cs, var f) = freeze_dict.udict_get_next?(256, pubkey);
     if (f) {
-      var (addr, weight, stake, banned) = (cs~load_uint(256), cs~load_uint(64), cs~load_grams(), cs~load_int(1));
+      var (addr, weight, stake, banned) = (cs~load_uint(256), cs~load_uint(64), cs~load_tomis(), cs~load_int(1));
       cs.end_parse();
       if (banned) {
         recovered += stake;
@@ -304,7 +304,7 @@ _ ~credit_to(credits, addr, amount) inline_ref {
   do {
     (pubkey, var cs, var f) = freeze_dict.udict_get_next?(256, pubkey);
     if (f) {
-      var (addr, weight, stake, banned) = (cs~load_uint(256), cs~load_uint(64), cs~load_grams(), cs~load_int(1));
+      var (addr, weight, stake, banned) = (cs~load_uint(256), cs~load_uint(64), cs~load_tomis(), cs~load_int(1));
       cs.end_parse();
       if (banned) {
         recovered += stake;
@@ -327,7 +327,7 @@ int stakes_sum(frozen_dict) inline_ref {
     (pubkey, var cs, var f) = frozen_dict.udict_get_next?(256, pubkey);
     if (f) {
       cs~skip_bits(256 + 64);
-      total += cs~load_grams();
+      total += cs~load_tomis();
     }
   } until (~ f);
   return total;
@@ -365,13 +365,13 @@ _ unfreeze_all(credits, past_elections, elect_id) inline_ref {
   accept_message();
   ifnot (ok) {
     ;; cancel elections, return stakes
-    var (credits, past_elections, grams) = (ds~load_dict(), ds~load_dict(), ds~load_grams());
+    var (credits, past_elections, tomis) = (ds~load_dict(), ds~load_dict(), ds~load_tomis());
     (credits, past_elections, var unused_prizes) = unfreeze_all(credits, past_elections, elect_at);
     set_data(begin_cell()
       .store_int(false, 1)
       .store_dict(credits)
       .store_dict(past_elections)
-      .store_grams(grams + unused_prizes)
+      .store_tomis(tomis + unused_prizes)
       .store_slice(ds)
     .end_cell());
   }
@@ -379,19 +379,19 @@ _ unfreeze_all(credits, past_elections, elect_id) inline_ref {
 }
 
 () process_simple_transfer(s_addr, msg_value) impure inline_ref {
-  var (elect, credits, past_elections, grams, active_id, active_hash) = load_data();
+  var (elect, credits, past_elections, tomis, active_id, active_hash) = load_data();
   (int src_wc, int src_addr) = parse_std_addr(s_addr);
   if (src_addr | (src_wc + 1) | (active_id == 0)) {
     ;; simple transfer to us (credit "nobody's" account)
     ;; (or no known active validator set)
-    grams += msg_value;
-    return store_data(elect, credits, past_elections, grams, active_id, active_hash);
+    tomis += msg_value;
+    return store_data(elect, credits, past_elections, tomis, active_id, active_hash);
   }
   ;; zero source address -1:00..00 (collecting validator fees)
   var (fs, f) = past_elections.udict_get?(32, active_id);
   ifnot (f) {
     ;; active validator set not found (?)
-    grams += msg_value;
+    tomis += msg_value;
   } else {
     ;; credit active validator set bonuses
     var (unfreeze_at, stake_held, hash, dict, total_stake, bonuses, complaints) = fs.unpack_past_election();
@@ -399,7 +399,7 @@ _ unfreeze_all(credits, past_elections, elect_id) inline_ref {
     past_elections~udict_set_builder(32, active_id,
       pack_past_election(unfreeze_at, stake_held, hash, dict, total_stake, bonuses, complaints));
   }
-  return store_data(elect, credits, past_elections, grams, active_id, active_hash);
+  return store_data(elect, credits, past_elections, tomis, active_id, active_hash);
 }
 
 () recover_stake(op, s_addr, cs, query_id) impure inline_ref {
@@ -415,7 +415,7 @@ _ unfreeze_all(credits, past_elections, elect_id) inline_ref {
     ;; no credit for sender, return error
     return send_message_back(s_addr, 0xfffffffe, query_id, op, 0, 64);
   }
-  var amount = cs~load_grams();
+  var amount = cs~load_tomis();
   cs.end_parse();
   ;; save data
   set_data(begin_cell().store_dict(elect).store_dict(credits).store_slice(ds).end_cell());
@@ -423,7 +423,7 @@ _ unfreeze_all(credits, past_elections, elect_id) inline_ref {
   send_raw_message(begin_cell()
     .store_uint(0x18, 6)
     .store_slice(s_addr)
-    .store_grams(amount)
+    .store_tomis(amount)
     .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
     .store_uint(0xf96f7324, 32)
     .store_uint(query_id, 64)
@@ -466,7 +466,7 @@ int register_complaint(s_addr, complaint, msg_value) {
   if (complaint.slice_depth() >= 128) {
     return -3;  ;; invalid complaint
   }
-  var (elect, credits, past_elections, grams, active_id, active_hash) = load_data();
+  var (elect, credits, past_elections, tomis, active_id, active_hash) = load_data();
   var election_id = complaint~load_uint(32);
   var (fs, f) = past_elections.udict_get?(32, election_id);
   ifnot (f) {  ;; election not found
@@ -495,7 +495,7 @@ int register_complaint(s_addr, complaint, msg_value) {
     return -6;
   }
   fs~skip_bits(256 + 64);   ;; addr weight
-  var validator_stake = fs~load_grams();
+  var validator_stake = fs~load_tomis();
   int fine = suggested_fine + muldiv(validator_stake, suggested_fine_part, 1 << 32);
   if (fine > validator_stake) {  ;; validator's stake is less than suggested fine
     return -7;
@@ -514,8 +514,8 @@ int register_complaint(s_addr, complaint, msg_value) {
   past_elections~udict_set_builder(32, election_id, pack_past_election(unfreeze_at, stake_held, vset_hash, frozen_dict, total_stake, bonuses, complaints));
   ;; pack persistent data
   ;; next line can be commented, but it saves a lot of stack manipulations
-  var (elect, credits, _, grams, active_id, active_hash) = load_data();
-  store_data(elect, credits, past_elections, grams, active_id, active_hash);
+  var (elect, credits, _, tomis, active_id, active_hash) = load_data();
+  store_data(elect, credits, past_elections, tomis, active_id, active_hash);
   return paid;
 }
 
@@ -526,14 +526,14 @@ int register_complaint(s_addr, complaint, msg_value) {
     ;; no validator to punish
     return (credits, frozen, 0, 0);
   }
-  var (addr, weight, stake, banned) = (cs~load_uint(256), cs~load_uint(64), cs~load_grams(), cs~load_int(1));
+  var (addr, weight, stake, banned) = (cs~load_uint(256), cs~load_uint(64), cs~load_tomis(), cs~load_int(1));
   cs.end_parse();
   int fine = min(stake, suggested_fine + muldiv(stake, suggested_fine_part, 1 << 32));
   stake -= fine;
   frozen~udict_set_builder(256, validator_pubkey, begin_cell()
     .store_uint(addr, 256)
     .store_uint(weight, 64)
-    .store_grams(stake)
+    .store_tomis(stake)
     .store_int(banned, 1));
   int reward = min(fine >> 3, paid * 8);
   credits~credit_to(reward_addr, reward);
@@ -581,7 +581,7 @@ int register_complaint(s_addr, complaint, msg_value) {
 }
 
 int proceed_register_vote(election_id, chash, idx, weight) impure inline_ref {
-  var (elect, credits, past_elections, grams, active_id, active_hash) = load_data();
+  var (elect, credits, past_elections, tomis, active_id, active_hash) = load_data();
   var (fs, f) = past_elections.udict_get?(32, election_id);
   ifnot (f) {  ;; election not found
     return -2;
@@ -593,11 +593,11 @@ int proceed_register_vote(election_id, chash, idx, weight) impure inline_ref {
   }
   ifnot (accepted_complaint.null?()) {
     (credits, frozen_dict, int fine_unalloc, int fine_collected) = punish(credits, frozen_dict, accepted_complaint);
-    grams += fine_unalloc;
+    tomis += fine_unalloc;
     total_stake -= fine_collected;
   }
   past_elections~udict_set_builder(32, election_id, pack_past_election(unfreeze_at, stake_held, vset_hash, frozen_dict, total_stake, bonuses, complaints));
-  store_data(elect, credits, past_elections, grams, active_id, active_hash);
+  store_data(elect, credits, past_elections, tomis, active_id, active_hash);
   return status;
 }
 
@@ -701,7 +701,7 @@ _ compute_total_stake(l, n, m_stake) inline_ref {
   do {
     (pubkey, var cs, var f) = members.udict_get_next?(256, pubkey);
     if (f) {
-      var (stake, time, max_factor, addr, adnl_addr) = (cs~load_grams(), cs~load_uint(32), cs~load_uint(32), cs~load_uint(256), cs~load_uint(256));
+      var (stake, time, max_factor, addr, adnl_addr) = (cs~load_tomis(), cs~load_uint(32), cs~load_uint(32), cs~load_uint(256), cs~load_uint(256));
       cs.end_parse();
       var key = begin_cell()
         .store_uint(stake, 128)
@@ -766,7 +766,7 @@ _ compute_total_stake(l, n, m_stake) inline_ref {
     ;; lookup source address first
     var (val, f) = members.udict_get?(256, pubkey);
     throw_unless(61, f);
-    (_, _, var src_addr) = (val~load_grams(), val~load_uint(64), val.preload_uint(256));
+    (_, _, var src_addr) = (val~load_tomis(), val~load_uint(64), val.preload_uint(256));
     if (i < m) {
       ;; one of the first m members, include into validator set
       var true_stake = min(stake, (max_f * m_stake) >> 16);
@@ -788,7 +788,7 @@ _ compute_total_stake(l, n, m_stake) inline_ref {
       frozen~udict_set_builder(256, pubkey, begin_cell()
         .store_uint(src_addr, 256)
         .store_uint(weight, 64)
-        .store_grams(true_stake)
+        .store_tomis(true_stake)
         .store_int(false, 1));
     }
     if (stake) {
@@ -812,9 +812,9 @@ int conduct_elections(ds, elect, credits) impure {
     return postpone_elections();
   }
   var cs = config_param(17).begin_parse();
-  min_stake = cs~load_grams();
-  var max_stake = cs~load_grams();
-  var min_total_stake = cs~load_grams();
+  min_stake = cs~load_tomis();
+  var max_stake = cs~load_tomis();
+  var min_total_stake = cs~load_tomis();
   var max_stake_factor = cs~load_uint(32);
   cs.end_parse();
   if (total_stake < min_total_stake) {
@@ -871,7 +871,7 @@ int conduct_elections(ds, elect, credits) impure {
 }
 
 int update_active_vset_id() impure {
-  var (elect, credits, past_elections, grams, active_id, active_hash) = load_data();
+  var (elect, credits, past_elections, tomis, active_id, active_hash) = load_data();
   var cur_hash = config_param(34).cell_hash();
   if (cur_hash == active_hash) {
     ;; validator set unchanged
@@ -900,18 +900,18 @@ int update_active_vset_id() impure {
       var (tm, hash) = (fs~load_uint(64), fs~load_uint(256));
       if (hash == cur_hash) {
         ;; parse more of this record
-        var (dict, total_stake, bonuses) = (fs~load_dict(), fs~load_grams(), fs~load_grams());
-        ;; transfer 1/8 of accumulated everybody's grams to this validator set as bonuses
-        var amount = (grams >> 3);
-        grams -= amount;
+        var (dict, total_stake, bonuses) = (fs~load_dict(), fs~load_tomis(), fs~load_tomis());
+        ;; transfer 1/8 of accumulated everybody's tomis to this validator set as bonuses
+        var amount = (tomis >> 3);
+        tomis -= amount;
         bonuses += amount;
         ;; serialize back
         past_elections~udict_set_builder(32, id, begin_cell()
           .store_uint(tm, 64)
           .store_uint(hash, 256)
           .store_dict(dict)
-          .store_grams(total_stake)
-          .store_grams(bonuses)
+          .store_tomis(total_stake)
+          .store_tomis(bonuses)
           .store_slice(fs));
         ;; found
         f = false;
@@ -920,7 +920,7 @@ int update_active_vset_id() impure {
   } until (~ f);
   active_id = (id.null?() ? 0 : id);
   active_hash = cur_hash;
-  store_data(elect, credits, past_elections, grams, active_id, active_hash);
+  store_data(elect, credits, past_elections, tomis, active_id, active_hash);
   return true;
 }
 
@@ -957,7 +957,7 @@ int validator_set_installed(ds, elect, credits) impure {
 }
 
 int check_unfreeze() impure {
-  var (elect, credits, past_elections, grams, active_id, active_hash) = load_data();
+  var (elect, credits, past_elections, tomis, active_id, active_hash) = load_data();
   int id = -1;
   do {
     (id, var fs, var f) = past_elections.udict_get_next?(32, id);
@@ -966,9 +966,9 @@ int check_unfreeze() impure {
       if ((unfreeze_at <= now()) & (id != active_id)) {
         ;; unfreeze!
         (credits, past_elections, var unused_prizes) = unfreeze_all(credits, past_elections, id);
-        grams += unused_prizes;
+        tomis += unused_prizes;
         ;; unfreeze only one at time, exit loop
-        store_data(elect, credits, past_elections, grams, active_id, active_hash);
+        store_data(elect, credits, past_elections, tomis, active_id, active_hash);
         ;; exit loop
         f = false;
       }
@@ -1007,7 +1007,7 @@ int announce_new_elections(ds, elect, credits) {
     t = t0;
   }
   ;; get stake parameters
-  (_, var min_stake) = config_param(17).begin_parse().load_grams();
+  (_, var min_stake) = config_param(17).begin_parse().load_tomis();
   ;; announce new elections
   var elect_at = t + elect_begin_before;
   ;; elect_at~dump();
@@ -1048,7 +1048,7 @@ int participates_in(int validator_pubkey) method_id {
   }
   var (elect_at, elect_close, min_stake, total_stake, members, failed, finished) = elect.unpack_elect();
   var (mem, found) = members.udict_get?(256, validator_pubkey);
-  return found ? mem~load_grams() : 0;
+  return found ? mem~load_tomis() : 0;
 }
 
 ;; returns the list of all participants of current elections with their stakes
@@ -1063,7 +1063,7 @@ _ participant_list() method_id {
   do {
     (id, var fs, var f) = members.udict_get_prev?(256, id);
     if (f) {
-      l = cons([id, fs~load_grams()], l);
+      l = cons([id, fs~load_tomis()], l);
     }
   } until (~ f);
   return l;
@@ -1081,7 +1081,7 @@ _ participant_list_extended() method_id {
   do {
     (id, var cs, var f) = members.udict_get_prev?(256, id);
     if (f) {
-      var (stake, time, max_factor, addr, adnl_addr) = (cs~load_grams(), cs~load_uint(32), cs~load_uint(32), cs~load_uint(256), cs~load_uint(256));
+      var (stake, time, max_factor, addr, adnl_addr) = (cs~load_tomis(), cs~load_uint(32), cs~load_uint(32), cs~load_uint(256), cs~load_uint(256));
       cs.end_parse();
       l = cons([id, [stake, max_factor, addr, adnl_addr]], l);
     }
@@ -1094,12 +1094,12 @@ int compute_returned_stake(int wallet_addr) method_id {
   var cs = get_data().begin_parse();
   (_, var credits) = (cs~load_dict(), cs~load_dict());
   var (val, f) = credits.udict_get?(256, wallet_addr);
-  return f ? val~load_grams() : 0;
+  return f ? val~load_tomis() : 0;
 }
 
 ;; returns the list of past election ids
 tuple past_election_ids() method_id {
-  var (elect, credits, past_elections, grams, active_id, active_hash) = load_data();
+  var (elect, credits, past_elections, tomis, active_id, active_hash) = load_data();
   var id = (1 << 32);
   var list = null();
   do {
@@ -1112,7 +1112,7 @@ tuple past_election_ids() method_id {
 }
 
 tuple past_elections() method_id {
-  var (elect, credits, past_elections, grams, active_id, active_hash) = load_data();
+  var (elect, credits, past_elections, tomis, active_id, active_hash) = load_data();
   var id = (1 << 32);
   var list = null();
   do {
@@ -1125,7 +1125,7 @@ tuple past_elections() method_id {
 }
 
 tuple past_elections_list() method_id {
-  var (elect, credits, past_elections, grams, active_id, active_hash) = load_data();
+  var (elect, credits, past_elections, tomis, active_id, active_hash) = load_data();
   var id = (1 << 32);
   var list = null();
   do {
@@ -1152,7 +1152,7 @@ _ complete_unpack_complaint(slice cs) inline_ref {
 }
 
 cell get_past_complaints(int election_id) inline_ref method_id {
-  var (elect, credits, past_elections, grams, active_id, active_hash) = load_data();
+  var (elect, credits, past_elections, tomis, active_id, active_hash) = load_data();
   var (fs, found?) = past_elections.udict_get?(32, election_id);
   ifnot (found?) {
     return null();

@@ -80,7 +80,7 @@ void PrecompiledSmartContract::send_raw_message(const td::Ref<Cell> &msg, int mo
 
 void PrecompiledSmartContract::raw_reserve(const td::RefInt256 &amount, int mode) {
   if (amount->sgn() < 0) {
-    throw VmError{Excno::range_chk, "amount of nanograms must be non-negative"};
+    throw VmError{Excno::range_chk, "amount of nanotomis must be non-negative"};
   }
   CellBuilder cb;
   if (!(cb.store_ref_bool(c5_)                             // out_list$_ {n:#} prev:^(OutList n)

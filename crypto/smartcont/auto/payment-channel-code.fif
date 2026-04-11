@@ -49,7 +49,7 @@ PROGRAM{
     CTOS	//  _4 _7 _10 _13 _18 cs _21
     SWAP	//  _4 _7 _10 _13 _18 _21 cs
     64 LDU	//  _4 _7 _10 _13 _18 _21 _22 cs
-    LDGRAMS	//  res res res res res res res res cs
+    LDTOMIS	//  res res res res res res res res cs
     ENDS
   }>
   unwrap_signatures PROC:<{
@@ -109,11 +109,11 @@ PROGRAM{
     //  state
     1 LDI	//  _1 state
     1 LDI	//  _1 _4 state
-    LDGRAMS	//  _1 _4 _7 state
-    LDGRAMS	//  _1 _4 _7 _9 state
+    LDTOMIS	//  _1 _4 _7 state
+    LDTOMIS	//  _1 _4 _7 _9 state
     32 LDU	//  _1 _4 _7 _9 _11 state
-    LDGRAMS	//  _1 _4 _7 _9 _11 _14 state
-    LDGRAMS	//  _1 _4 _7 _9 _11 _14 _31 _30
+    LDTOMIS	//  _1 _4 _7 _9 _11 _14 state
+    LDTOMIS	//  _1 _4 _7 _9 _11 _14 _31 _30
     DROP	//  _1 _4 _7 _9 _11 _14 _16
   }>
   pack_state_init PROC:<{
@@ -126,25 +126,25 @@ PROGRAM{
     s1 s5 XCHG	//  B A min_A min_B expire_at signed_B? _12
     1 STI	//  B A min_A min_B expire_at _14
     s0 s3 XCHG2	//  B A expire_at min_B _14 min_A
-    STGRAMS	//  B A expire_at min_B _15
+    STTOMIS	//  B A expire_at min_B _15
     SWAP	//  B A expire_at _15 min_B
-    STGRAMS	//  B A expire_at _16
+    STTOMIS	//  B A expire_at _16
     32 STU	//  B A _18
     SWAP	//  B _18 A
-    STGRAMS	//  B _19
+    STTOMIS	//  B _19
     SWAP	//  _19 B
-    STGRAMS	//  _20
+    STTOMIS	//  _20
     ENDC	//  _21
   }>
   unpack_state_close PROC:<{
     //  state
     1 LDI	//  _1 state
     1 LDI	//  _1 _4 state
-    LDGRAMS	//  _1 _4 _7 state
-    LDGRAMS	//  _1 _4 _7 _9 state
+    LDTOMIS	//  _1 _4 _7 state
+    LDTOMIS	//  _1 _4 _7 _9 state
     32 LDU	//  _1 _4 _7 _9 _11 state
-    LDGRAMS	//  _1 _4 _7 _9 _11 _14 state
-    LDGRAMS	//  _1 _4 _7 _9 _11 _14 _31 _30
+    LDTOMIS	//  _1 _4 _7 _9 _11 _14 state
+    LDTOMIS	//  _1 _4 _7 _9 _11 _14 _31 _30
     DROP	//  _1 _4 _7 _9 _11 _14 _16
   }>
   pack_state_close PROC:<{
@@ -157,14 +157,14 @@ PROGRAM{
     s1 s5 XCHG	//  B A promise_A promise_B expire_at signed_B? _12
     1 STI	//  B A promise_A promise_B expire_at _14
     s0 s3 XCHG2	//  B A expire_at promise_B _14 promise_A
-    STGRAMS	//  B A expire_at promise_B _15
+    STTOMIS	//  B A expire_at promise_B _15
     SWAP	//  B A expire_at _15 promise_B
-    STGRAMS	//  B A expire_at _16
+    STTOMIS	//  B A expire_at _16
     32 STU	//  B A _18
     SWAP	//  B _18 A
-    STGRAMS	//  B _19
+    STTOMIS	//  B _19
     SWAP	//  _19 B
-    STGRAMS	//  _20
+    STTOMIS	//  _20
     ENDC	//  _21
   }>
   send_payout PROC:<{
@@ -177,7 +177,7 @@ PROGRAM{
     s0 s6 XCHG2	//  _5=0 amount channel_id flags _4 _9 s_addr
     STSLICER	//  _5=0 amount channel_id flags _4 _10
     s0 s4 XCHG2	//  _5=0 _4 channel_id flags _10 amount
-    STGRAMS	//  _5=0 _4 channel_id flags _11
+    STTOMIS	//  _5=0 _4 channel_id flags _11
     s1 s4 XCHG	//  flags _4 channel_id _5=0 _11
     107 STU	//  flags _4 channel_id _25
     s1 s2 XCHG	//  flags channel_id _4 _25
@@ -221,9 +221,9 @@ PROGRAM{
     NEWC	//  A B _22 _23
     3 STI	//  A B _25
     ROT	//  B _25 A
-    STGRAMS	//  B _26
+    STTOMIS	//  B _26
     SWAP	//  _26 B
-    STGRAMS	//  _27
+    STTOMIS	//  _27
     ENDC	//  _28
   }>
   with_init PROC:<{
@@ -270,10 +270,10 @@ PROGRAM{
     EQUAL	//  min_A_extra msg_value A msg_signed_A? msg_signed_B? a_addr b_addr B channel_id signed_A? signed_B? min_A min_B expire_at _35 msg _37
     s1 s2 XCHG	//  min_A_extra msg_value A msg_signed_A? msg_signed_B? a_addr b_addr B channel_id signed_A? signed_B? min_A min_B expire_at msg _35 _37
     THROWANYIFNOT
-    LDGRAMS	//  min_A_extra msg_value A msg_signed_A? msg_signed_B? a_addr b_addr B channel_id signed_A? signed_B? min_A min_B expire_at _44 msg
-    LDGRAMS	//  min_A_extra msg_value A msg_signed_A? msg_signed_B? a_addr b_addr B channel_id signed_A? signed_B? min_A min_B expire_at _44 _46 msg
-    LDGRAMS	//  min_A_extra msg_value A msg_signed_A? msg_signed_B? a_addr b_addr B channel_id signed_A? signed_B? min_A min_B expire_at _44 _46 _48 msg
-    LDGRAMS	//  min_A_extra msg_value A msg_signed_A? msg_signed_B? a_addr b_addr B channel_id signed_A? signed_B? min_A min_B expire_at _44 _46 _48 _50 msg
+    LDTOMIS	//  min_A_extra msg_value A msg_signed_A? msg_signed_B? a_addr b_addr B channel_id signed_A? signed_B? min_A min_B expire_at _44 msg
+    LDTOMIS	//  min_A_extra msg_value A msg_signed_A? msg_signed_B? a_addr b_addr B channel_id signed_A? signed_B? min_A min_B expire_at _44 _46 msg
+    LDTOMIS	//  min_A_extra msg_value A msg_signed_A? msg_signed_B? a_addr b_addr B channel_id signed_A? signed_B? min_A min_B expire_at _44 _46 _48 msg
+    LDTOMIS	//  min_A_extra msg_value A msg_signed_A? msg_signed_B? a_addr b_addr B channel_id signed_A? signed_B? min_A min_B expire_at _44 _46 _48 _50 msg
     64 LDU	//  min_A_extra msg_value A msg_signed_A? msg_signed_B? a_addr b_addr B channel_id signed_A? signed_B? min_A min_B expire_at _44 _46 _48 _50 _106 _105
     DROP	//  min_A_extra msg_value A msg_signed_A? msg_signed_B? a_addr b_addr B channel_id signed_A? signed_B? min_A min_B expire_at inc_A inc_B upd_min_A upd_min_B got_channel_id
     39 PUSHINT	//  min_A_extra msg_value A msg_signed_A? msg_signed_B? a_addr b_addr B channel_id signed_A? signed_B? min_A min_B expire_at inc_A inc_B upd_min_A upd_min_B got_channel_id _55
@@ -412,8 +412,8 @@ PROGRAM{
     s4 s11 XCPU	//  channel_id A msg_signed_A? msg_signed_B? a_key b_key a_addr b_addr B msg signed_A? promise_A promise_B expire_at signed_B? msg_signed_B?
     OR	//  channel_id A msg_signed_A? msg_signed_B? a_key b_key a_addr b_addr B msg signed_A? promise_A promise_B expire_at signed_B?
     s0 s5 XCHG	//  channel_id A msg_signed_A? msg_signed_B? a_key b_key a_addr b_addr B signed_B? signed_A? promise_A promise_B expire_at msg
-    LDGRAMS	//  channel_id A msg_signed_A? msg_signed_B? a_key b_key a_addr b_addr B signed_B? signed_A? promise_A promise_B expire_at _46 msg
-    LDGRAMS	//  channel_id A msg_signed_A? msg_signed_B? a_key b_key a_addr b_addr B signed_B? signed_A? promise_A promise_B expire_at extra_A extra_B msg
+    LDTOMIS	//  channel_id A msg_signed_A? msg_signed_B? a_key b_key a_addr b_addr B signed_B? signed_A? promise_A promise_B expire_at _46 msg
+    LDTOMIS	//  channel_id A msg_signed_A? msg_signed_B? a_key b_key a_addr b_addr B signed_B? signed_A? promise_A promise_B expire_at extra_A extra_B msg
     1 LDI	//  channel_id A msg_signed_A? msg_signed_B? a_key b_key a_addr b_addr B signed_B? signed_A? promise_A promise_B expire_at extra_A extra_B has_sig msg
     SWAP	//  channel_id A msg_signed_A? msg_signed_B? a_key b_key a_addr b_addr B signed_B? signed_A? promise_A promise_B expire_at extra_A extra_B msg has_sig
     IF:<{	//  channel_id A msg_signed_A? msg_signed_B? a_key b_key a_addr b_addr B signed_B? signed_A? promise_A promise_B expire_at extra_A extra_B msg
@@ -472,8 +472,8 @@ PROGRAM{
     }>
     s0 s9 XCHG	//  channel_id A expire_at promise_B extra_A extra_B a_addr b_addr B signed_B? signed_A? promise_A msg
     64 LDU	//  channel_id A expire_at promise_B extra_A extra_B a_addr b_addr B signed_B? signed_A? promise_A _78 msg
-    LDGRAMS	//  channel_id A expire_at promise_B extra_A extra_B a_addr b_addr B signed_B? signed_A? promise_A _78 _81 msg
-    LDGRAMS	//  channel_id A expire_at promise_B extra_A extra_B a_addr b_addr B signed_B? signed_A? promise_A _78 _81 _118 _117
+    LDTOMIS	//  channel_id A expire_at promise_B extra_A extra_B a_addr b_addr B signed_B? signed_A? promise_A _78 _81 msg
+    LDTOMIS	//  channel_id A expire_at promise_B extra_A extra_B a_addr b_addr B signed_B? signed_A? promise_A _78 _81 _118 _117
     DROP	//  channel_id A expire_at promise_B extra_A extra_B a_addr b_addr B signed_B? signed_A? promise_A got_channel_id update_promise_A update_promise_B
     39 PUSHINT	//  channel_id A expire_at promise_B extra_A extra_B a_addr b_addr B signed_B? signed_A? promise_A got_channel_id update_promise_A update_promise_B _85
     s3 s15 XCPU	//  channel_id A expire_at promise_B extra_A extra_B a_addr b_addr B signed_B? signed_A? promise_A _85 update_promise_A update_promise_B got_channel_id channel_id
@@ -529,8 +529,8 @@ PROGRAM{
     EQUAL	//  cs channel_id a_addr b_addr _9 _11
     THROWANYIFNOT
     s0 s3 XCHG	//  b_addr channel_id a_addr cs
-    LDGRAMS	//  b_addr channel_id a_addr _15 cs
-    LDGRAMS	//  b_addr channel_id a_addr _15 _39 _38
+    LDTOMIS	//  b_addr channel_id a_addr _15 cs
+    LDTOMIS	//  b_addr channel_id a_addr _15 _39 _38
     DROP	//  b_addr channel_id a_addr A B
     41 PUSHINT	//  b_addr channel_id a_addr A B _19
     s2 s1 PUSH2	//  b_addr channel_id a_addr A B _19 A B

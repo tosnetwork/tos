@@ -58,7 +58,7 @@ td::Ref<vm::Cell> build_internal_message(td::RefInt256 amount, td::Ref<vm::CellS
   b.store_zeroes(256);
   b.append_cellslice(address);  // dest:MsgAddressInt
   unsigned len = (((unsigned)amount->bit_size(false) + 7) >> 3);
-  b.store_long_bool(len, 4) && b.store_int256_bool(*amount, len * 8, false);  // grams:Grams
+  b.store_long_bool(len, 4) && b.store_int256_bool(*amount, len * 8, false);  // tomis:Tomis
   b.store_zeroes(1 + 4 + 4 + 64 + 32 + 1);  // extra currencies, extra_flags, fwd_fee, created_lt, created_at, init
   // body:(Either X ^X)
   if (b.remaining_bits() >= 1 + body->size() && b.remaining_refs() >= body->size_refs()) {
@@ -83,7 +83,7 @@ td::Ref<vm::Cell> build_external_message(td::RefInt256 amount, td::Ref<vm::CellS
   vm::CellBuilder b;
   b.store_long(0b1000, 4);      // ext_in_msg_info$10 src:MsgAddressExt
   b.append_cellslice(address);  // dest:MsgAddressInt
-  b.store_zeroes(4);            //import_fee:Grams
+  b.store_zeroes(4);            //import_fee:Tomis
   b.store_zeroes(1);            // init
   // body:(Either X ^X)
   if (b.remaining_bits() >= 1 + (*body).size() && b.remaining_refs() >= (*body).size_refs()) {

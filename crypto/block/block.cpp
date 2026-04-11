@@ -1152,7 +1152,7 @@ td::Status ShardState::split(tos::ShardIdFull subshard) {
              << total_balance_.to_str();
   // 6. adjust total_fees
   LOG(DEBUG) << "split total validator fees (current value is " << total_validator_fees_.to_str() << ")";
-  total_validator_fees_.grams = (total_validator_fees_.grams + is_right_child(subshard)) >> 1;
+  total_validator_fees_.tomis = (total_validator_fees_.tomis + is_right_child(subshard)) >> 1;
   LOG(DEBUG) << "new total_validator_fees is " << total_validator_fees_.to_str();
   // NB: if total_fees_extra will be allowed to be non-empty, split it here too
   // 7. reset overload/underload history
@@ -1206,7 +1206,7 @@ int filter_out_msg_queue(vm::AugmentedDictionary& out_queue, tos::ShardIdFull ol
 }
 
 bool CurrencyCollection::validate(int max_cells) const {
-  return is_valid() && td::sgn(grams) >= 0 && validate_extra(max_cells);
+  return is_valid() && td::sgn(tomis) >= 0 && validate_extra(max_cells);
 }
 
 bool CurrencyCollection::validate_extra(int max_cells) const {
@@ -1218,13 +1218,13 @@ bool CurrencyCollection::validate_extra(int max_cells) const {
 }
 
 bool CurrencyCollection::add(const CurrencyCollection& a, const CurrencyCollection& b, CurrencyCollection& c) {
-  return (a.is_valid() && b.is_valid() && (c.grams = a.grams + b.grams).not_null() && c.grams->is_valid() &&
+  return (a.is_valid() && b.is_valid() && (c.tomis = a.tomis + b.tomis).not_null() && c.tomis->is_valid() &&
           add_extra_currency(a.extra, b.extra, c.extra)) ||
          c.invalidate();
 }
 
 bool CurrencyCollection::add(const CurrencyCollection& a, CurrencyCollection&& b, CurrencyCollection& c) {
-  return (a.is_valid() && b.is_valid() && (c.grams = a.grams + std::move(b.grams)).not_null() && c.grams->is_valid() &&
+  return (a.is_valid() && b.is_valid() && (c.tomis = a.tomis + std::move(b.tomis)).not_null() && c.tomis->is_valid() &&
           add_extra_currency(a.extra, std::move(b.extra), c.extra)) ||
          c.invalidate();
 }
@@ -1233,7 +1233,7 @@ CurrencyCollection& CurrencyCollection::operator+=(const CurrencyCollection& oth
   if (!is_valid()) {
     return *this;
   }
-  if (!(other.is_valid() && (grams += other.grams).not_null() && grams->is_valid() &&
+  if (!(other.is_valid() && (tomis += other.tomis).not_null() && tomis->is_valid() &&
         add_extra_currency(extra, other.extra, extra))) {
     invalidate();
   }
@@ -1244,18 +1244,18 @@ CurrencyCollection& CurrencyCollection::operator+=(CurrencyCollection&& other) {
   if (!is_valid()) {
     return *this;
   }
-  if (!(other.is_valid() && (grams += std::move(other.grams)).not_null() && grams->is_valid() &&
+  if (!(other.is_valid() && (tomis += std::move(other.tomis)).not_null() && tomis->is_valid() &&
         add_extra_currency(extra, std::move(other.extra), extra))) {
     invalidate();
   }
   return *this;
 }
 
-CurrencyCollection& CurrencyCollection::operator+=(td::RefInt256 other_grams) {
+CurrencyCollection& CurrencyCollection::operator+=(td::RefInt256 other_tomis) {
   if (!is_valid()) {
     return *this;
   }
-  if (!(other_grams.not_null() && (grams += other_grams).not_null())) {
+  if (!(other_tomis.not_null() && (tomis += other_tomis).not_null())) {
     invalidate();
   }
   return *this;
@@ -1273,11 +1273,11 @@ CurrencyCollection CurrencyCollection::operator+(CurrencyCollection&& other) con
   return res;
 }
 
-CurrencyCollection CurrencyCollection::operator+(td::RefInt256 other_grams) {
+CurrencyCollection CurrencyCollection::operator+(td::RefInt256 other_tomis) {
   if (!is_valid()) {
     return *this;
   }
-  auto sum = grams + other_grams;
+  auto sum = tomis + other_tomis;
   if (sum.not_null()) {
     return CurrencyCollection{std::move(sum), extra};
   } else {
@@ -1286,14 +1286,14 @@ CurrencyCollection CurrencyCollection::operator+(td::RefInt256 other_grams) {
 }
 
 bool CurrencyCollection::sub(const CurrencyCollection& a, const CurrencyCollection& b, CurrencyCollection& c) {
-  return (a.is_valid() && b.is_valid() && (c.grams = a.grams - b.grams).not_null() && c.grams->is_valid() &&
-          td::sgn(c.grams) >= 0 && sub_extra_currency(a.extra, b.extra, c.extra)) ||
+  return (a.is_valid() && b.is_valid() && (c.tomis = a.tomis - b.tomis).not_null() && c.tomis->is_valid() &&
+          td::sgn(c.tomis) >= 0 && sub_extra_currency(a.extra, b.extra, c.extra)) ||
          c.invalidate();
 }
 
 bool CurrencyCollection::sub(const CurrencyCollection& a, CurrencyCollection&& b, CurrencyCollection& c) {
-  return (a.is_valid() && b.is_valid() && (c.grams = a.grams - std::move(b.grams)).not_null() && c.grams->is_valid() &&
-          td::sgn(c.grams) >= 0 && sub_extra_currency(a.extra, std::move(b.extra), c.extra)) ||
+  return (a.is_valid() && b.is_valid() && (c.tomis = a.tomis - std::move(b.tomis)).not_null() && c.tomis->is_valid() &&
+          td::sgn(c.tomis) >= 0 && sub_extra_currency(a.extra, std::move(b.extra), c.extra)) ||
          c.invalidate();
 }
 
@@ -1301,7 +1301,7 @@ CurrencyCollection& CurrencyCollection::operator-=(const CurrencyCollection& oth
   if (!is_valid()) {
     return *this;
   }
-  if (!(other.is_valid() && (grams -= other.grams).not_null() && grams->is_valid() && td::sgn(grams) >= 0 &&
+  if (!(other.is_valid() && (tomis -= other.tomis).not_null() && tomis->is_valid() && td::sgn(tomis) >= 0 &&
         sub_extra_currency(extra, other.extra, extra))) {
     invalidate();
   }
@@ -1312,18 +1312,18 @@ CurrencyCollection& CurrencyCollection::operator-=(CurrencyCollection&& other) {
   if (!is_valid()) {
     return *this;
   }
-  if (!(other.is_valid() && (grams -= std::move(other.grams)).not_null() && grams->is_valid() && td::sgn(grams) >= 0 &&
+  if (!(other.is_valid() && (tomis -= std::move(other.tomis)).not_null() && tomis->is_valid() && td::sgn(tomis) >= 0 &&
         sub_extra_currency(extra, std::move(other.extra), extra))) {
     invalidate();
   }
   return *this;
 }
 
-CurrencyCollection& CurrencyCollection::operator-=(td::RefInt256 other_grams) {
+CurrencyCollection& CurrencyCollection::operator-=(td::RefInt256 other_tomis) {
   if (!is_valid()) {
     return *this;
   }
-  if (!(other_grams.not_null() && (grams -= other_grams).not_null() && td::sgn(grams) >= 0)) {
+  if (!(other_tomis.not_null() && (tomis -= other_tomis).not_null() && td::sgn(tomis) >= 0)) {
     invalidate();
   }
   return *this;
@@ -1341,11 +1341,11 @@ CurrencyCollection CurrencyCollection::operator-(CurrencyCollection&& other) con
   return res;
 }
 
-CurrencyCollection CurrencyCollection::operator-(td::RefInt256 other_grams) const {
-  if (!(is_valid() && other_grams.not_null())) {
+CurrencyCollection CurrencyCollection::operator-(td::RefInt256 other_tomis) const {
+  if (!(is_valid() && other_tomis.not_null())) {
     return {};
   }
-  auto x = grams - other_grams;
+  auto x = tomis - other_tomis;
   if (td::sgn(x) >= 0) {
     return CurrencyCollection{std::move(x), extra};
   } else {
@@ -1357,7 +1357,7 @@ bool CurrencyCollection::clamp(const CurrencyCollection& other) {
   if (!is_valid() || !other.is_valid()) {
     return invalidate();
   }
-  grams = std::min(grams, other.grams);
+  tomis = std::min(tomis, other.tomis);
   vm::Dictionary dict1{extra, 32}, dict2(other.extra, 32);
   bool ok = dict1.check_for_each([&](td::Ref<vm::CellSlice> cs1, td::ConstBitPtr key, int n) {
     CHECK(n == 32);
@@ -1413,19 +1413,19 @@ bool CurrencyCollection::remove_zero_extra_currencies(Ref<vm::Cell>& root, td::u
 }
 
 bool CurrencyCollection::operator==(const CurrencyCollection& other) const {
-  return is_valid() && other.is_valid() && !td::cmp(grams, other.grams) &&
+  return is_valid() && other.is_valid() && !td::cmp(tomis, other.tomis) &&
          (extra.not_null() == other.extra.not_null()) &&
          (extra.is_null() || extra->get_hash() == other.extra->get_hash());
 }
 
 bool CurrencyCollection::operator>=(const CurrencyCollection& other) const {
   Ref<vm::Cell> tmp;
-  return is_valid() && other.is_valid() && td::cmp(grams, other.grams) >= 0 &&
+  return is_valid() && other.is_valid() && td::cmp(tomis, other.tomis) >= 0 &&
          sub_extra_currency(extra, other.extra, tmp);
 }
 
 bool CurrencyCollection::store(vm::CellBuilder& cb) const {
-  return is_valid() && store_CurrencyCollection(cb, grams, extra);
+  return is_valid() && store_CurrencyCollection(cb, tomis, extra);
 }
 
 bool CurrencyCollection::store_or_zero(vm::CellBuilder& cb) const {
@@ -1441,12 +1441,12 @@ bool CurrencyCollection::fetch_exact(vm::CellSlice& cs) {
 }
 
 bool CurrencyCollection::unpack(Ref<vm::CellSlice> csr) {
-  return unpack_CurrencyCollection(std::move(csr), grams, extra) || invalidate();
+  return unpack_CurrencyCollection(std::move(csr), tomis, extra) || invalidate();
 }
 
 bool CurrencyCollection::validate_unpack(Ref<vm::CellSlice> csr, int max_cells) {
   return (csr.not_null() && block::tlb::t_CurrencyCollection.validate_upto(max_cells, *csr) &&
-          unpack_CurrencyCollection(std::move(csr), grams, extra)) ||
+          unpack_CurrencyCollection(std::move(csr), tomis, extra)) ||
          invalidate();
 }
 
@@ -1467,7 +1467,7 @@ bool CurrencyCollection::show(std::ostream& os) const {
   if (extra.not_null()) {
     os << '(';
   }
-  os << grams << "ng";
+  os << tomis << "ng";
   if (extra.not_null()) {
     vm::Dictionary dict{extra, 32};
     if (!dict.check_for_each([&os](Ref<vm::CellSlice> csr, td::ConstBitPtr key, int n) {
@@ -1801,19 +1801,19 @@ bool store_UInt7(vm::CellBuilder& cb, unsigned long long value1, unsigned long l
   return store_UInt7(cb, value1) && store_UInt7(cb, value2);
 }
 
-bool store_Maybe_Grams(vm::CellBuilder& cb, td::RefInt256 value) {
+bool store_Maybe_Tomis(vm::CellBuilder& cb, td::RefInt256 value) {
   if (value.is_null()) {
     return cb.store_long_bool(0, 1);
   } else {
-    return cb.store_long_bool(1, 1) && block::tlb::t_Grams.store_integer_ref(cb, std::move(value));
+    return cb.store_long_bool(1, 1) && block::tlb::t_Tomis.store_integer_ref(cb, std::move(value));
   }
 }
 
-bool store_Maybe_Grams_nz(vm::CellBuilder& cb, td::RefInt256 value) {
+bool store_Maybe_Tomis_nz(vm::CellBuilder& cb, td::RefInt256 value) {
   if (value.is_null() || !value->sgn()) {
     return cb.store_long_bool(0, 1);
   } else {
-    return cb.store_long_bool(1, 1) && block::tlb::t_Grams.store_integer_ref(cb, std::move(value));
+    return cb.store_long_bool(1, 1) && block::tlb::t_Tomis.store_integer_ref(cb, std::move(value));
   }
 }
 

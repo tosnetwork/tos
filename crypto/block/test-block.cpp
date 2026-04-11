@@ -80,11 +80,11 @@ void test1() {
   vm::CellSlice csl{std::move(cref)};
   std::cout << "ShardIdent.get_size() = " << block::tlb::t_ShardIdent.get_size(csl) << std::endl;
   std::cout << "MsgAddress.get_size() = " << block::tlb::t_MsgAddress.get_size(csl) << std::endl;
-  std::cout << "Grams.get_size() = " << block::tlb::t_Grams.get_size(csl) << std::endl;
-  std::cout << "Grams.as_integer() = " << block::tlb::t_Grams.as_integer(csl) << std::endl;
+  std::cout << "Tomis.get_size() = " << block::tlb::t_Tomis.get_size(csl) << std::endl;
+  std::cout << "Tomis.as_integer() = " << block::tlb::t_Tomis.as_integer(csl) << std::endl;
   (csl + 8).print_rec(std::cout);
-  std::cout << "Grams.get_size() = " << block::tlb::t_Grams.get_size(csl + 8) << std::endl;
-  std::cout << "Grams.as_integer() = " << block::tlb::t_Grams.as_integer(csl + 8) << std::endl;
+  std::cout << "Tomis.get_size() = " << block::tlb::t_Tomis.get_size(csl + 8) << std::endl;
+  std::cout << "Tomis.as_integer() = " << block::tlb::t_Tomis.as_integer(csl + 8) << std::endl;
 
   vm::CellSlice csl2{csl};
   block::gen::ShardIdent::Record sh_id;
@@ -113,22 +113,22 @@ void test1() {
   std::cout << "ShardIdent.skip_validate() = " << block::tlb::t_ShardIdent.validate_skip(csl) << std::endl;
   std::cout << "ShardIdent.skip_validate() = " << block::tlb::t_ShardIdent.validate_skip(csl) << std::endl;
   using namespace td::literals;
-  std::cout << "Grams.store_intval(239) = " << block::tlb::t_Grams.store_integer_value(cb, "239"_i256) << std::endl;
-  std::cout << "Grams.store_intval(17239) = " << block::tlb::t_Grams.store_integer_value(cb, "17239"_i256) << std::endl;
-  std::cout << "Grams.store_intval(-17) = " << block::tlb::t_Grams.store_integer_value(cb, "-17"_i256) << std::endl;
-  std::cout << "Grams.store_intval(0) = " << block::tlb::t_Grams.store_integer_value(cb, "0"_i256) << std::endl;
+  std::cout << "Tomis.store_intval(239) = " << block::tlb::t_Tomis.store_integer_value(cb, "239"_i256) << std::endl;
+  std::cout << "Tomis.store_intval(17239) = " << block::tlb::t_Tomis.store_integer_value(cb, "17239"_i256) << std::endl;
+  std::cout << "Tomis.store_intval(-17) = " << block::tlb::t_Tomis.store_integer_value(cb, "-17"_i256) << std::endl;
+  std::cout << "Tomis.store_intval(0) = " << block::tlb::t_Tomis.store_integer_value(cb, "0"_i256) << std::endl;
   std::cout << cb << std::endl;
   cs = td::Ref<vm::CellSlice>{true, cb.finalize()};
-  std::cout << "Grams.store_intval(666) = " << block::tlb::t_Grams.store_integer_value(cb, "666"_i256) << std::endl;
+  std::cout << "Tomis.store_intval(666) = " << block::tlb::t_Tomis.store_integer_value(cb, "666"_i256) << std::endl;
   std::cout << cb << std::endl;
   cs2 = td::Ref<vm::CellSlice>{true, cb.finalize()};
-  std::cout << "Grams.validate(cs) = " << block::tlb::t_Grams.validate(*cs) << std::endl;
-  std::cout << "Grams.validate(cs2) = " << block::tlb::t_Grams.validate(*cs2) << std::endl;
+  std::cout << "Tomis.validate(cs) = " << block::tlb::t_Tomis.validate(*cs) << std::endl;
+  std::cout << "Tomis.validate(cs2) = " << block::tlb::t_Tomis.validate(*cs2) << std::endl;
   //
   block::gen::SplitMergeInfo::Record data;
-  block::gen::Grams::Record data2;
-  std::cout << "block::gen::Grams.validate(cs) = " << block::gen::t_Grams.validate(*cs) << std::endl;
-  std::cout << "block::gen::Grams.validate(cs2) = " << block::gen::t_Grams.validate(*cs2) << std::endl;
+  block::gen::Tomis::Record data2;
+  std::cout << "block::gen::Tomis.validate(cs) = " << block::gen::t_Tomis.validate(*cs) << std::endl;
+  std::cout << "block::gen::Tomis.validate(cs2) = " << block::gen::t_Tomis.validate(*cs2) << std::endl;
   std::cout << "[cs = " << cs << "]" << std::endl;
   bool ok = tlb::csr_unpack_inexact(cs, data);
   std::cout << "block::gen::SplitMergeInfo.unpack(cs, data) = " << ok << std::endl;
@@ -137,7 +137,7 @@ void test1() {
               << "; this_addr = " << data.this_addr << "; sibling_addr = " << data.sibling_addr << std::endl;
   }
   ok = tlb::csr_unpack_inexact(cs, data2);
-  std::cout << "block::gen::Grams.unpack(cs, data2) = " << ok << std::endl;
+  std::cout << "block::gen::Tomis.unpack(cs, data2) = " << ok << std::endl;
   if (ok) {
     std::cout << "  amount = " << data2.amount << std::endl;
     block::gen::VarUInteger::Record data3;
@@ -177,7 +177,7 @@ void test1() {
     std::cout << std::endl;
   }
   */
-  std::cout << "Grams.add_values() = " << block::tlb::t_Grams.add_values(cb, cs.write(), cs2.write()) << std::endl;
+  std::cout << "Tomis.add_values() = " << block::tlb::t_Tomis.add_values(cb, cs.write(), cs2.write()) << std::endl;
   std::cout << cb << std::endl;
   std::cout << "block::gen::t_HashmapAug_64_...print_type() = "
             << block::gen::t_HashmapAug_64_Ref_Transaction_CurrencyCollection << std::endl;

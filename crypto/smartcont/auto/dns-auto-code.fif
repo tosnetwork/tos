@@ -31,9 +31,9 @@ PROGRAM{
     LDDICT	//  _3 _5 cs
     LDDICT	//  _3 _5 _7 cs
     30 LDU	//  _3 _5 _7 _10 cs
-    LDGRAMS	//  _3 _5 _7 _10 _13 cs
-    LDGRAMS	//  _3 _5 _7 _10 _13 _15 cs
-    LDGRAMS	//  _3 _5 _7 _10 _13 _15 _17 cs
+    LDTOMIS	//  _3 _5 _7 _10 _13 cs
+    LDTOMIS	//  _3 _5 _7 _10 _13 _15 cs
+    LDTOMIS	//  _3 _5 _7 _10 _13 _15 _17 cs
     4 -ROLL	//  _3 _5 _7 cs _10 _13 _15 _17
     4 TUPLE	//  _3 _5 _7 cs _9
     SWAP	//  _3 _5 _7 _9 cs
@@ -52,9 +52,9 @@ PROGRAM{
     LDDICT	//  _23 _22
     NIP	//  cs
     30 LDU	//  _9 cs
-    LDGRAMS	//  _9 _12 cs
-    LDGRAMS	//  _9 _12 _14 cs
-    LDGRAMS	//  _9 _12 _14 _31 _30
+    LDTOMIS	//  _9 _12 cs
+    LDTOMIS	//  _9 _12 _14 cs
+    LDTOMIS	//  _9 _12 _14 _31 _30
     DROP	//  _9 _12 _14 _16
   }>
   store_data PROC:<{
@@ -70,11 +70,11 @@ PROGRAM{
     STDICT	//  ppb ppc ppr lhk nhk sp _14
     30 STU	//  ppb ppc ppr lhk nhk _16
     s0 s3 XCHG2	//  ppb ppc nhk lhk _16 ppr
-    STGRAMS	//  ppb ppc nhk lhk _17
+    STTOMIS	//  ppb ppc nhk lhk _17
     s0 s3 XCHG2	//  ppb lhk nhk _17 ppc
-    STGRAMS	//  ppb lhk nhk _18
+    STTOMIS	//  ppb lhk nhk _18
     s0 s3 XCHG2	//  nhk lhk _18 ppb
-    STGRAMS	//  nhk lhk _19
+    STTOMIS	//  nhk lhk _19
     s1 s2 XCHG	//  lhk nhk _19
     32 STU	//  lhk _21
     32 STU	//  _23
@@ -82,15 +82,15 @@ PROGRAM{
     c4 POP
   }>
   send_message PROC:<{
-    //  addr tag query_id body grams mode
-    0 PUSHINT	//  addr tag query_id body grams mode _7=0
-    24 PUSHINT	//  addr tag query_id body grams mode _7=0 _8=24
-    NEWC	//  addr tag query_id body grams mode _7=0 _8=24 _9
-    6 STU	//  addr tag query_id body grams mode _7=0 _11
-    s0 s7 XCHG2	//  _7=0 tag query_id body grams mode _11 addr
-    STSLICER	//  _7=0 tag query_id body grams mode _12
-    ROT	//  _7=0 tag query_id body mode _12 grams
-    STGRAMS	//  _7=0 tag query_id body mode _13
+    //  addr tag query_id body tomis mode
+    0 PUSHINT	//  addr tag query_id body tomis mode _7=0
+    24 PUSHINT	//  addr tag query_id body tomis mode _7=0 _8=24
+    NEWC	//  addr tag query_id body tomis mode _7=0 _8=24 _9
+    6 STU	//  addr tag query_id body tomis mode _7=0 _11
+    s0 s7 XCHG2	//  _7=0 tag query_id body tomis mode _11 addr
+    STSLICER	//  _7=0 tag query_id body tomis mode _12
+    ROT	//  _7=0 tag query_id body mode _12 tomis
+    STTOMIS	//  _7=0 tag query_id body mode _13
     s1 s5 XCHG	//  mode tag query_id body _7=0 _13
     107 STU	//  mode tag query_id body _27
     s1 s3 XCHG	//  mode body query_id tag _27
@@ -308,9 +308,9 @@ PROGRAM{
       s6 POP	//  gc nhk lhk in_msg ctl domdata
       s0 s2 XCHG	//  gc nhk lhk domdata ctl in_msg
       32 LDU	//  gc nhk lhk domdata ctl _30 in_msg
-      LDGRAMS	//  gc nhk lhk domdata ctl _30 _33 in_msg
-      LDGRAMS	//  gc nhk lhk domdata ctl _30 _33 _35 in_msg
-      LDGRAMS	//  gc nhk lhk domdata ctl stdper ppr ppc ppb in_msg
+      LDTOMIS	//  gc nhk lhk domdata ctl _30 _33 in_msg
+      LDTOMIS	//  gc nhk lhk domdata ctl _30 _33 _35 in_msg
+      LDTOMIS	//  gc nhk lhk domdata ctl stdper ppr ppc ppb in_msg
       ENDS
       4 TUPLE	//  gc nhk lhk domdata ctl _40
       s0 s4 s4 XCHG3
@@ -366,7 +366,7 @@ PROGRAM{
     1415670629 PUSHINT	//  query_id op addr in_msg op _64=1415670629
     EQUAL	//  query_id op addr in_msg _65
     IFJMP:<{	//  query_id op addr in_msg
-      LDGRAMS	//  query_id op addr _102 _101
+      LDTOMIS	//  query_id op addr _102 _101
       DROP	//  query_id op addr amount
       s1 s3 XCHG
       4016791929 PUSHINT

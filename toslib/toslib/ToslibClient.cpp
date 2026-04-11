@@ -946,19 +946,19 @@ class Query {
     }
   }
 
-  static td::uint64 gas_bought_for(td::RefInt256 nanograms, td::RefInt256 max_gas_threshold,
+  static td::uint64 gas_bought_for(td::RefInt256 nanotomis, td::RefInt256 max_gas_threshold,
                                    const block::GasLimitsPrices& cfg) {
-    if (nanograms.is_null() || sgn(nanograms) < 0) {
+    if (nanotomis.is_null() || sgn(nanotomis) < 0) {
       return 0;
     }
-    if (nanograms >= max_gas_threshold) {
+    if (nanotomis >= max_gas_threshold) {
       return cfg.gas_limit;
     }
-    if (nanograms < cfg.flat_gas_price) {
+    if (nanotomis < cfg.flat_gas_price) {
       return 0;
     }
     auto gas_price256 = td::RefInt256{true, cfg.gas_price};
-    auto res = td::div((std::move(nanograms) - cfg.flat_gas_price) << 16, gas_price256);
+    auto res = td::div((std::move(nanotomis) - cfg.flat_gas_price) << 16, gas_price256);
     return res->to_long() + cfg.flat_gas_limit;
   }
 
@@ -1165,7 +1165,7 @@ class Query {
 
 td::Result<td::int64> to_balance_or_throw(td::Ref<vm::CellSlice> balance_ref) {
   vm::CellSlice balance_slice = *balance_ref;
-  auto balance = block::tlb::t_Grams.as_integer_skip(balance_slice);
+  auto balance = block::tlb::t_Tomis.as_integer_skip(balance_slice);
   if (balance.is_null()) {
     return td::Status::Error("Failed to unpack balance");
   }
@@ -1440,7 +1440,7 @@ class GetRawAccountState : public td::actor::Actor {
       if (storage_info.due_payment->prefetch_ulong(1) == 1) {
         vm::CellSlice& cs2 = storage_info.due_payment.write();
         cs2.advance(1);
-        due_payment = block::tlb::t_Grams.as_integer_skip(cs2);
+        due_payment = block::tlb::t_Tomis.as_integer_skip(cs2);
         if (due_payment.is_null() || !cs2.empty_ext()) {
           return td::Status::Error("Failed to upack due_payment");
         }
@@ -2303,7 +2303,7 @@ class RunEmulator : public ToslibQueryActor {
         RawAccountState raw = std::move(account_state_->raw());
         raw.block_id = block_id_.id;
         block::CurrencyCollection balance = account.get_balance();
-        raw.balance = balance.grams->to_long();
+        raw.balance = balance.tomis->to_long();
         raw.extra_currencies = balance.extra;
         raw.storage_last_paid = std::move(account.last_paid);
         raw.storage_used = account.storage_used;
@@ -3551,7 +3551,7 @@ td::Result<td::Bits256> get_ext_in_msg_hash_norm(td::Ref<vm::Cell> ext_in_msg_ce
   bool status = cb.store_long_bool(2, 2) &&  // message$_ -> info:CommonMsgInfo -> ext_in_msg_info$10
                 cb.store_long_bool(0, 2) &&  // message$_ -> info:CommonMsgInfo -> src:MsgAddressExt -> addr_none$00
                 cb.append_cellslice_bool(msg_info.dest) &&  // message$_ -> info:CommonMsgInfo -> dest:MsgAddressInt
-                cb.store_long_bool(0, 4) &&                 // message$_ -> info:CommonMsgInfo -> import_fee:Grams -> 0
+                cb.store_long_bool(0, 4) &&                 // message$_ -> info:CommonMsgInfo -> import_fee:Tomis -> 0
                 cb.store_long_bool(0, 1) &&  // message$_ -> init:(Maybe (Either StateInit ^StateInit)) -> nothing$0
                 cb.store_long_bool(1, 1) &&  // message$_ -> body:(Either X ^X) -> right$1
                 cb.store_ref_bool(body);

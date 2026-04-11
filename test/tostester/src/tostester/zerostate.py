@@ -124,7 +124,7 @@ Libs{{
   x{{ABACABADABACABA}} s>c public_lib
   x{{1234}} x{{5678}} |_ s>c private_lib
 }}Libs  // libraries
-GR$4999990000 // balance
+TM$4999990000 // balance
 0 // split_depth
 0 // ticktock
 AllOnes 0 * // address
@@ -144,17 +144,17 @@ PROGRAM{{
     c4 POPCTR
     // first 32 bits of persistent data have been increased
     // remaining 256 bits with an address have been fetched
-    // create new empty message with 0.1 Grams to that address
+    // create new empty message with 0.1 Tomis to that address
     NEWC b{{00100010011111111}} STSLICECONST TUCK 256 STU
-    100000000 INT STGRAMS  // store 0.1 Grams
+    100000000 INT STTOMIS  // store 0.1 Tomis
     1 4 + 4 + 64 + 32 + 1+ 1+ INT STZEROES ENDC
     // send raw message from Cell
     ZERO SENDRAWMSG
-    -17 INT 256 STIR 130000000 INT STGRAMS
+    -17 INT 256 STIR 130000000 INT STTOMIS
     107 INT STZEROES ENDC
-    ZERO // another message with 0.13 Grams to account -17
+    ZERO // another message with 0.13 Tomis to account -17
     NEWC b{{11000100100000}} "test" $>s |+ STSLICECONST
-    123456789 INT STGRAMS
+    123456789 INT STTOMIS
     107 INT STZEROES "Hello, world!" $>s STSLICECONST ENDC
     ZERO SENDRAWMSG SENDRAWMSG // external message to address "test"
   }}>
@@ -166,7 +166,7 @@ Libs{{
   x{{ABACABADABACABA}} s>c public_lib
   x{{1234}} x{{5678}} |_ s>c public_lib
 }}Libs  // libraries
-GR$1 // balance
+TM$1 // balance
 0 // split_depth
 3 // ticktock: tick
 2 // mode: create
@@ -181,9 +181,9 @@ dup make_special dup constant smc3_addr
  *
  */
 "auto/elector-code.fif" include   // code in separate source file
-<b 0 1 1+ 1+ 4 + 32 + u, 0 256 u, b>  // data: dict dict dict grams uint32 uint256
+<b 0 1 1+ 1+ 4 + 32 + u, 0 256 u, b>  // data: dict dict dict tomis uint32 uint256
 empty_cell  // libraries
-GR$10  // balance: 10 grams
+TM$10  // balance: 10 tomis
 0 // split_depth
 2 // ticktock: tick
 AllOnes 3 * // address: -1:333...333
@@ -204,7 +204,7 @@ Masterchain swap
 // max-validators max-main-validators min-validators
 1000 1000 1000 config.validator_num!  // DEV-SPECIFIC: allow any count for tests
 // min-stake max-stake min-total-stake max-factor
-GR$10000 GR$100000 GR$10000 sg~10 config.validator_stake_limits!  // DEV-SPECIFIC: low stakes for tests
+TM$10000 TM$100000 TM$10000 sg~10 config.validator_stake_limits!  // DEV-SPECIFIC: low stakes for tests
 // elected-for elect-start-before elect-end-before stakes-frozen-for
 2400 800 60 300 config.election_params!  // DEV-SPECIFIC: fast elections for tests
 // config-addr = -1:5555...5555
@@ -219,8 +219,8 @@ config.special!
 
 // gas_price gas_limit special_gas_limit gas_credit block_gas_limit freeze_due_limit delete_due_limit flat_gas_limit flat_gas_price
 // DEV-SPECIFIC: cheaper gas for tests (production: 26214400/655360000)
-10 sg* 1 *M dup   10000 1000 *M GR$0.1 GR$1.0 100 1000 config.gas_prices!
-10 sg* 1 *M 20 *M 10000 1000 *M GR$0.1 GR$1.0 100 1000 config.mc_gas_prices!
+10 sg* 1 *M dup   10000 1000 *M TM$0.1 TM$1.0 100 1000 config.gas_prices!
+10 sg* 1 *M 20 *M 10000 1000 *M TM$0.1 TM$1.0 100 1000 config.mc_gas_prices!
 // lump_price bit_price cell_price ihr_factor first_frac next_frac
 // DEV-SPECIFIC: cheaper forwarding for tests (production: 400000/10000000)
 100 10 sg* 10 sg* 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.fwd_prices!
@@ -246,7 +246,7 @@ triple dup
 untriple make-block-limits 22 config!
 untriple make-block-limits 23 config!
 
-GR$1.7 GR$1 config.block_create_fees!
+TM$1.7 TM$1 config.block_create_fees!
 // smc1_addr config.collector_smc!
 smc1_addr config.minter_smc!
 
@@ -262,7 +262,7 @@ _( 4 7 4 2 5000000 20000000 2 1000 )
 config.param_proposals_setup!
 
 // deposit bit_pps cell_pps
-GR$100 1 500 config.complaint_prices!
+TM$100 1 500 config.complaint_prices!
 
 {validators}
 now dup 3600 + {mc_validators} config.validators!
@@ -291,7 +291,7 @@ config.new_consensus_params_all!
    dictnew dict,   // vote dict
 b> // data
 empty_cell  // libraries
-GR$10  // balance
+TM$10  // balance
 0 1 config_addr 6 register_smc  // tock
 dup set_config_smc
 Masterchain swap

@@ -97,7 +97,7 @@ Each contract is registered with `register_smc`:
 <code_cell>
 <data_cell>
 <libraries>
-<balance>          // initial balance in nanograms
+<balance>          // initial balance in nanotomis
 <split_depth>
 <ticktock>         // 0=none, 2=tick, 3=tick+tock
 <address>          // or AllOnes * N for well-known addresses
@@ -127,7 +127,7 @@ All initial config values are set via Fift helper words:
 // max_validators max_main_validators min_validators
 
 // ConfigParam 17: stake limits
-GR$10000 GR$10000000 GR$500000 sg~3 config.validator_stake_limits!
+TM$10000 TM$10000000 TM$500000 sg~3 config.validator_stake_limits!
 // min_stake max_stake min_total_stake max_stake_factor
 
 // ConfigParam 15: election timing
@@ -142,13 +142,13 @@ elector_addr config.elector_smc!
 1 500 1000 500000 config.storage_prices!
 
 // ConfigParam 21: basechain gas prices
-1000 sg* 1 *M dup 10000 10 *M GR$0.1 GR$1.0 1000 1000000
+1000 sg* 1 *M dup 10000 10 *M TM$0.1 TM$1.0 1000 1000000
   config.gas_prices!
 // gas_price gas_limit special_gas_limit gas_credit block_gas_limit
 //   freeze_due_limit delete_due_limit flat_gas_limit flat_gas_price
 
 // ConfigParam 20: masterchain gas prices
-10000 sg* 1 *M 10 *M 10000 10 *M GR$0.1 GR$1.0 1000 10000000
+10000 sg* 1 *M 10 *M 10000 10 *M TM$0.1 TM$1.0 1000 10000000
   config.mc_gas_prices!
 
 // ConfigParam 25: basechain forwarding prices
@@ -173,7 +173,7 @@ elector_addr config.elector_smc!
 // lt: underload soft hard
 
 // ConfigParam 14: block creation fees
-GR$1.7 GR$1 config.block_create_fees!
+TM$1.7 TM$1 config.block_create_fees!
 
 // ConfigParam 9, 10: mandatory and critical params
 ( 0 1 9 10 12 14 15 16 17 18 20 21 22 23 24 25 28 34 )

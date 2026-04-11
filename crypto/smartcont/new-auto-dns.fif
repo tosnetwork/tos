@@ -30,7 +30,7 @@ $# 6 <> ' usage if
 $1 =: file-base
 $2 false parse-load-address drop 2=: ctl-addr
 $3 parse-int dup 0 10000000 in-range? ' usage ifnot =: reg-period
-$4 $>GR =: reg-price
+$4 $>TM =: reg-price
 $5 parse-int dup 0< ' usage if =: ng-pb
 $6 parse-int dup 0< ' usage if =: ng-pc
 contract-id 32 fits ' usage ifnot
@@ -40,7 +40,7 @@ contract-id 32 fits ' usage ifnot
 ."with random id " contract-id . cr
 ."Controlling wallet (smart contract) is " ctl-addr 6 .Addr cr
 ."Subdomain registration period is " reg-period . ."seconds" cr
-."Subdomain registration price is " reg-price .GR
+."Subdomain registration price is " reg-price .TM
 ."+ " ng-pc . ."per cell + " ng-pb . ."per bit" cr
 
 // Create new automatic DNS; source code included from `auto/dns-auto-code.fif`
@@ -48,7 +48,7 @@ contract-id 32 fits ' usage ifnot
 // code
 <b <b ctl-addr -rot 8 i, swap 256 u, contract-id 32 i, b> ref,  // ctl
    dns-dict @ dict, dictnew dict,   // dom_dict gc
-   reg-period 30 u, reg-price Gram, ng-pc Gram, ng-pb Gram,  // stdper ppc ppb
+   reg-period 30 u, reg-price Tomi, ng-pc Tomi, ng-pb Tomi,  // stdper ppc ppb
    0 64 u,  // nhk lhk
 b> // data
 null // no libraries

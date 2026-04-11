@@ -364,8 +364,8 @@ struct GasLimitsPrices {
   }
 };
 
-// msg_fwd_fees = (lump_price + ceil((bit_price * msg.bits + cell_price * msg.cells)/2^16)) nanograms
-// ihr_fwd_fees = ceil((msg_fwd_fees * ihr_price_factor)/2^16) nanograms
+// msg_fwd_fees = (lump_price + ceil((bit_price * msg.bits + cell_price * msg.cells)/2^16)) nanotomis
+// ihr_fwd_fees = ceil((msg_fwd_fees * ihr_price_factor)/2^16) nanotomis
 // bits in the root cell of a message are not included in msg.bits (lump_price pays for them)
 
 struct MsgPrices {
@@ -537,7 +537,7 @@ struct BurningConfig {
   }
 
   CurrencyCollection calculate_burned_fees(const CurrencyCollection& x) const {
-    return CurrencyCollection{calculate_burned_fees(x.grams)};
+    return CurrencyCollection{calculate_burned_fees(x.tomis)};
   }
 };
 

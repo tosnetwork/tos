@@ -33,7 +33,7 @@ dup <s csr. cr
 <b x{4e43ef05} s, seqno 32 u, now interval + 32 u, swap ref, b>
 dup ."signing message: " <s csr. cr
 dup hashu config_pk ed25519_sign_uint
-<b b{1000100} s, config_addr addr, 0 Gram, b{00} s,
+<b b{1000100} s, config_addr addr, 0 Tomi, b{00} s,
    swap B, swap <s s, b>
 dup ."resulting external message: " <s csr. cr
 2 boc+>B dup Bx. cr

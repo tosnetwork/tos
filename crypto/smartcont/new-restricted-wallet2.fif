@@ -10,14 +10,14 @@ $# 2- -2 and ' usage if
 
 -1 =: wc
 $1 parse-pubkey =: PubKey
-$2 $>GR =: amount
+$2 $>TM =: amount
 def? $3 { @' $3 } { "rwallet" } cond constant file-base
 
 ."Creating new restricted lockup wallet in workchain " wc . ."controlled by public key " PubKey .pubkey
-." with nominal amount " amount .GR cr
+." with nominal amount " amount .TM cr
 
 // D x t -- D'
-{ <b rot Gram, swap rot 16 b>idict! not abort"cannot add value"
+{ <b rot Tomi, swap rot 16 b>idict! not abort"cannot add value"
 } : rdict-entry
 // balance -- dict
 { dictnew

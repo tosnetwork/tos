@@ -37,7 +37,7 @@ $# dup 3 < swap 4 > or ' usage if
 
 $1 =: filename-base
 $2 parse-pubkey =: PubKey
-$3 $>GR =: amount
+$3 $>TM =: amount
 $4 "rwallet" replace-if-null =: savefile-base
 subwallet-id subwallet-base wc + replace-if-null =: subwallet-id
 expires-in now + =: expires-at
@@ -53,12 +53,12 @@ restrict-mode dup 0 < swap 2 > or abort"unknown restriction mode"
 filename-base +".pk" load-keypair =: init_pk =: init_pubkey
 
 ."Creating new restricted lockup wallet v3 in workchain " wc .
-."with restriction mode " restrict-mode . ."and nominal amount " amount .GR cr
+."with restriction mode " restrict-mode . ."and nominal amount " amount .TM cr
 ."controlled by public key " PubKey .pubkey ." and initialized by public key " init_pubkey 256 B>u@ .pubkey cr
 ."(subwallet id is " subwallet-id ._ .")" cr
 
 // D x t -- D'
-{ <b rot Gram, swap rot 32 b>idict! not abort"cannot add value"
+{ <b rot Tomi, swap rot 32 b>idict! not abort"cannot add value"
 } : rdict-entry
 { 86400 * } : days*
 { 365 * days* } : years*
@@ -90,7 +90,7 @@ restrict-mode ?dup {
 =: rdict
 
 ."Restrictions start at " start-at ._ .": " cr
-rdict 32 { swap . ."-> " Gram@ .GR cr true } idictforeach cr
+rdict 32 { swap . ."-> " Tomi@ .TM cr true } idictforeach cr
 
 // Create new restricted wallet v3; code taken from `auto/restricted-wallet3-code.fif`
 "auto/restricted-wallet3-code.fif" include  // code

@@ -36,7 +36,7 @@ PROGRAM{
     NEWC	//  merkle_hash file_size rate_per_mb_day max_span _11 _12 _13=0 _14=0 _15
     1 STI	//  merkle_hash file_size rate_per_mb_day max_span _11 _12 _13=0 _17
     OVER	//  merkle_hash file_size rate_per_mb_day max_span _11 _12 _13=0 _17 _18=0
-    STGRAMS	//  merkle_hash file_size rate_per_mb_day max_span _11 _12 _13=0 _19
+    STTOMIS	//  merkle_hash file_size rate_per_mb_day max_span _11 _12 _13=0 _19
     MYADDR	//  merkle_hash file_size rate_per_mb_day max_span _11 _12 _13=0 _19 _20
     STSLICER	//  merkle_hash file_size rate_per_mb_day max_span _11 _12 _13=0 _21
     s1 s7 XCHG	//  _13=0 file_size rate_per_mb_day max_span _11 _12 merkle_hash _21
@@ -46,7 +46,7 @@ PROGRAM{
     s1 s5 XCHG	//  _11 _12 rate_per_mb_day max_span _13=0 _25
     64 STU	//  _11 _12 rate_per_mb_day max_span _27
     ROT	//  _11 _12 max_span _27 rate_per_mb_day
-    STGRAMS	//  _11 _12 max_span _28
+    STTOMIS	//  _11 _12 max_span _28
     32 STU	//  _11 _12 _30
     32 STU	//  _11 _32
     STREF	//  _33
@@ -70,7 +70,7 @@ PROGRAM{
     LDSLICEX	//  client query_id file_size merkle_hash torrent_hash expected_rate expected_max_span _91 _90
     NIP	//  client query_id file_size merkle_hash torrent_hash expected_rate expected_max_span ds
     1 LDI	//  client query_id file_size merkle_hash torrent_hash expected_rate expected_max_span _23 ds
-    LDGRAMS	//  client query_id file_size merkle_hash torrent_hash expected_rate expected_max_span _23 _26 ds
+    LDTOMIS	//  client query_id file_size merkle_hash torrent_hash expected_rate expected_max_span _23 _26 ds
     32 LDU	//  client query_id file_size merkle_hash torrent_hash expected_rate expected_max_span _23 _26 _28 ds
     64 LDU	//  client query_id file_size merkle_hash torrent_hash expected_rate expected_max_span _23 _26 _28 _31 ds
     64 LDU	//  client query_id file_size merkle_hash torrent_hash expected_rate expected_max_span _23 _26 _28 _31 _101 _100
@@ -102,7 +102,7 @@ PROGRAM{
     calculate_address_by_stateinit CALLDICT	//  query_id state_init _54=3832843761 _57 _61 _62
     STSLICER	//  query_id state_init _54=3832843761 _57 _63
     0 PUSHINT	//  query_id state_init _54=3832843761 _57 _63 _64=0
-    STGRAMS	//  query_id state_init _54=3832843761 _57 _65
+    STTOMIS	//  query_id state_init _54=3832843761 _57 _65
     108 STU	//  query_id state_init _54=3832843761 _81
     s1 s2 XCHG	//  query_id _54=3832843761 state_init _81
     STREF	//  query_id _54=3832843761 _82
@@ -157,7 +157,7 @@ PROGRAM{
       DROP	//  query_id sender_address torrent_hash in_msg_body file_size
       SWAP	//  query_id sender_address torrent_hash file_size in_msg_body
       256 LDU	//  query_id sender_address torrent_hash file_size merkle_hash in_msg_body
-      LDGRAMS	//  query_id sender_address torrent_hash file_size merkle_hash expected_rate in_msg_body
+      LDTOMIS	//  query_id sender_address torrent_hash file_size merkle_hash expected_rate in_msg_body
       32 LDU	//  query_id sender_address torrent_hash file_size merkle_hash expected_rate _155 _154
       DROP	//  query_id sender_address torrent_hash file_size merkle_hash expected_rate expected_max_span
       s5 s6 XCHG
@@ -219,7 +219,7 @@ PROGRAM{
       DROP	//  in_msg_body wallet_data
       SWAP	//  wallet_data in_msg_body
       1 LDI	//  wallet_data _111 in_msg_body
-      LDGRAMS	//  wallet_data _111 _114 in_msg_body
+      LDTOMIS	//  wallet_data _111 _114 in_msg_body
       32 LDU	//  wallet_data _111 _114 _116 in_msg_body
       64 LDU	//  wallet_data _111 _114 _116 _119 in_msg_body
       64 LDU	//  wallet_data _111 _114 _116 _119 _173 _172
@@ -230,7 +230,7 @@ PROGRAM{
       s1 s4 XCHG	//  maximal_file_size minimal_file_size rate_per_mb_day max_span accept_new_contracts? _126
       1 STI	//  maximal_file_size minimal_file_size rate_per_mb_day max_span _128
       ROT	//  maximal_file_size minimal_file_size max_span _128 rate_per_mb_day
-      STGRAMS	//  maximal_file_size minimal_file_size max_span _129
+      STTOMIS	//  maximal_file_size minimal_file_size max_span _129
       32 STU	//  maximal_file_size minimal_file_size _131
       64 STU	//  maximal_file_size _133
       64 STU	//  _135
@@ -323,7 +323,7 @@ PROGRAM{
     LDSLICEX	//  _31 _30
     NIP	//  ds
     1 LDI	//  _16 ds
-    LDGRAMS	//  _16 _19 ds
+    LDTOMIS	//  _16 _19 ds
     32 LDU	//  _16 _19 _21 ds
     64 LDU	//  _16 _19 _21 _24 ds
     64 LDU	//  _16 _19 _21 _24 _41 _40

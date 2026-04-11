@@ -55,7 +55,7 @@ file-base +".pk" load-keypair nip constant wallet_pk
 def? body-boc-file { @' body-boc-file file>B B>boc } { comment simple-transfer-body } cond
 constant body-cell
 
-."Transferring " amount .GR+cc ."to account "
+."Transferring " amount .TM+cc ."to account "
 dest_addr 2dup bounce 7 + .Addr ." = " .addr
 ."subwallet-id=0x" subwallet-id x.
 ."timeout=" timeout . ."bounce=" bounce . cr
@@ -73,11 +73,11 @@ variable order#   order# 0!
   { drop swap ref, } { s, nip } cond
 } : append-msg-body
 // ng wc addr bounce body -- c
-{ <b b{01} s, rot 1 i, b{000100} s, 2swap addr, rot Gram,
+{ <b b{01} s, rot 1 i, b{000100} s, 2swap addr, rot Tomi,
   0 9 64 32 + + 1+ u, swap append-msg-body b>
 } : create-int-msg
 // ng wc addr bnc --
-{ ."Transferring " 3 roll .GR ."to account "
+{ ."Transferring " 3 roll .TM ."to account "
   -rot 2dup 4 pick 7 + .Addr ." = " .addr ." bounce=" . cr
 } : .transfer
 // addr$ ng -- c
@@ -90,10 +90,10 @@ variable order#   order# 0!
 
 // addr$ ng --
 { create-simple-transfer send-mode create-order add-order } : send
-{ bl word bl word $>GR send } : SEND
+{ bl word bl word $>TM send } : SEND
 
 // create internal message
-<b b{01} s, bounce 1 i, b{000} s, dest_addr Addr, amount Gram+cc, 0 9 64 32 + + u,
+<b b{01} s, bounce 1 i, b{000} s, dest_addr Addr, amount Tomi+cc, 0 9 64 32 + + u,
   body-cell <s 2dup 1 s-fits-with? not rot over 1 i, -rot { drop body-cell ref, } { s, } cond
 b>
 send-mode create-order add-order
@@ -103,7 +103,7 @@ now timeout + 32 << <b orders @ dict, b> hashu 32 1<<1- and + =: query_id
 <b subwallet-id 32 i, query_id 64 u, orders @ dict, b>
 dup ."signing message: " <s csr. cr
 dup hashu wallet_pk ed25519_sign_uint
-<b b{1000100} s, wallet_addr addr, 0 Gram, b{00} s,
+<b b{1000100} s, wallet_addr addr, 0 Tomi, b{00} s,
    swap B, swap <s s, b>
 dup ."resulting external message: " <s csr. cr
 2 boc+>B dup Bx. cr

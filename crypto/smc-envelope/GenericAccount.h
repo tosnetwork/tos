@@ -26,8 +26,8 @@
 
 namespace tos {
 namespace smc {
-td::Ref<vm::CellSlice> pack_grams(td::uint64 amount);
-bool unpack_grams(td::Ref<vm::CellSlice> cs, td::uint64& amount);
+td::Ref<vm::CellSlice> pack_tomis(td::uint64 amount);
+bool unpack_tomis(td::Ref<vm::CellSlice> cs, td::uint64& amount);
 }  // namespace smc
 class GenericAccount {
  public:

@@ -365,12 +365,12 @@ TEST(Emulator, wallet_int_and_ext_msg) {
       }
       {
         vm::CellBuilder cb;
-        block::tlb::t_Grams.store_integer_value(cb, td::BigInt256(int(0.03 * Tos)));
+        block::tlb::t_Tomis.store_integer_value(cb, td::BigInt256(int(0.03 * Tos)));
         msg_info.fwd_fee = cb.as_cellslice_ref();
       }
       {
         vm::CellBuilder cb;
-        block::tlb::t_Grams.store_integer_value(cb, td::BigInt256(0));
+        block::tlb::t_Tomis.store_integer_value(cb, td::BigInt256(0));
         msg_info.extra_flags = cb.as_cellslice_ref();
       }
       msg_info.created_lt = 0;

@@ -89,7 +89,7 @@ class RestrictedWallet : public WalletBase<RestrictedWallet, RestrictedWalletTra
           return ok;
         }
         td::uint64 value;
-        ok &= smc::unpack_grams(cs, value);
+        ok &= smc::unpack_tomis(cs, value);
         config.limits.emplace_back(r_seconds.ok(), value);
         return ok;
       });
@@ -133,7 +133,7 @@ class RestrictedWallet : public WalletBase<RestrictedWallet, RestrictedWalletTra
     auto add = [&](td::int32 till, td::uint64 value) {
       auto key = dict.integer_key(td::make_refint(till), 32, true);
       vm::CellBuilder gcb;
-      block::tlb::t_Grams.store_integer_value(gcb, td::BigInt256(value));
+      block::tlb::t_Tomis.store_integer_value(gcb, td::BigInt256(value));
       dict.set_builder(key.bits(), 32, gcb);
     };
     for (auto limit : config.limits) {

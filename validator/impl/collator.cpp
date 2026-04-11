@@ -2344,7 +2344,7 @@ bool Collator::init_value_create() {
     if (cell.is_null() || vm::load_cell_slice(cell).size_ext() != 0x100) {
       LOG(INFO) << "fee recovery disabled (no collector smart contract defined in configuration)";
       value_flow_.recovered.set_zero();
-    } else if (value_flow_.recovered.grams < 1 * 1000000000LL /* 1 Gram */) {
+    } else if (value_flow_.recovered.tomis < 1 * 1000000000LL /* 1 Tomi */) {
       LOG(INFO) << "fee recovery skipped (" << value_flow_.recovered.to_str() << ")";
       value_flow_.recovered.set_zero();
     }
@@ -3221,7 +3221,7 @@ bool Collator::create_special_transaction(block::CurrencyCollection amount, Ref<
         && cb.store_long_bool(0x4ff, 11)  // addr_std$10 anycast:(Maybe Anycast) workchain_id:int8
         && cb.store_bits_bool(addr)       //   address:bits256 => dest:MsgAddressInt
         && amount.store(cb)               // value:CurrencyCollection
-        && cb.store_zeroes_bool(4 + 4)    // extra_flags:(VarUInteger 16) fwd_fee:Grams
+        && cb.store_zeroes_bool(4 + 4)    // extra_flags:(VarUInteger 16) fwd_fee:Tomis
         && cb.store_long_bool(lt, 64)     // created_lt:uint64
         && cb.store_long_bool(now_, 32)   // created_at:uint32
         && cb.store_zeroes_bool(2)        // init:(Maybe ...) body:(Either X ^X) = Message X
@@ -3677,7 +3677,7 @@ int Collator::process_one_new_message(block::NewOutMsg msg, bool enqueue_only, R
       CHECK(from_dispatch_queue || (info.created_lt == msg.lt && info.created_at == now_));
       src = std::move(info.src);
       dest = std::move(info.dest);
-      fwd_fees = block::tlb::t_Grams.as_integer(info.fwd_fee);
+      fwd_fees = block::tlb::t_Tomis.as_integer(info.fwd_fee);
       CHECK(fwd_fees.not_null());
       external = false;
       enqueue = (enqueue_only || !is_our_address(dest));
@@ -3773,12 +3773,12 @@ int Collator::process_one_new_message(block::NewOutMsg msg, bool enqueue_only, R
     CHECK(cb.store_long_bool(0b00100, 5)                                         // msg_import_deferred_fin$00100
           && cb.store_ref_bool(msg_env)                                          // in_msg:^MsgEnvelope
           && cb.store_ref_bool(trans_root)                                       // transaction:^Transaction
-          && block::tlb::t_Grams.store_integer_ref(cb, env.fwd_fee_remaining));  // fwd_fee:Grams
+          && block::tlb::t_Tomis.store_integer_ref(cb, env.fwd_fee_remaining));  // fwd_fee:Tomis
   } else {
     CHECK(cb.store_long_bool(3, 3)                                  // msg_import_imm$011
           && cb.store_ref_bool(msg_env)                             // in_msg:^MsgEnvelope
           && cb.store_ref_bool(trans_root)                          // transaction:^Transaction
-          && block::tlb::t_Grams.store_integer_ref(cb, fwd_fees));  // fwd_fee:Grams
+          && block::tlb::t_Tomis.store_integer_ref(cb, fwd_fees));  // fwd_fee:Tomis
   }
   // 4. insert InMsg into InMsgDescr
   Ref<vm::Cell> in_msg = cb.finalize();
@@ -3869,7 +3869,7 @@ bool Collator::enqueue_transit_message(Ref<vm::Cell> msg, Ref<vm::Cell> old_msg_
     CHECK(cb.store_long_bool(5, 3)                                     // msg_import_tr$101
           && cb.store_ref_bool(old_msg_env)                            // in_msg:^MsgEnvelope
           && cb.store_ref_bool(msg_env)                                // out_msg:^MsgEnvelope
-          && block::tlb::t_Grams.store_integer_ref(cb, transit_fee));  // transit_fee:Grams
+          && block::tlb::t_Tomis.store_integer_ref(cb, transit_fee));  // transit_fee:Tomis
   }
   Ref<vm::Cell> in_msg = cb.finalize();
   // 5. create a new OutMsg
@@ -4035,7 +4035,7 @@ bool Collator::process_inbound_message(Ref<vm::CellSlice> enq_msg, tos::LogicalT
     return fatal_error("processing a message AFTER a newer message has been processed");
   }
   // 2.1. check fwd_fee and fwd_fee_remaining
-  td::RefInt256 orig_fwd_fee = block::tlb::t_Grams.as_integer(info.fwd_fee);
+  td::RefInt256 orig_fwd_fee = block::tlb::t_Tomis.as_integer(info.fwd_fee);
   if (env.fwd_fee_remaining > orig_fwd_fee) {
     LOG(ERROR) << "inbound internal message has fwd_fee_remaining=" << td::dec_string(env.fwd_fee_remaining)
                << " larger than original fwd_fee=" << td::dec_string(orig_fwd_fee);
@@ -4124,7 +4124,7 @@ bool Collator::process_inbound_message(Ref<vm::CellSlice> enq_msg, tos::LogicalT
   CHECK(cb.store_long_bool(4, 3)                                               // msg_import_fin$100
         && cb.store_ref_bool(msg_env)                                          // in_msg:^MsgEnvelope
         && cb.store_ref_bool(trans_root)                                       // transaction:^Transaction
-        && block::tlb::t_Grams.store_integer_ref(cb, env.fwd_fee_remaining));  // fwd_fee:Grams
+        && block::tlb::t_Tomis.store_integer_ref(cb, env.fwd_fee_remaining));  // fwd_fee:Tomis
   Ref<vm::Cell> in_msg = cb.finalize();
   if (our) {
     // if the message originates from the output queue of current shard, create a msg_export_deq_imm record
@@ -4650,7 +4650,7 @@ bool Collator::process_deferred_message(Ref<vm::CellSlice> enq_msg, StdSmcAddres
     return false;
   }
   // 2.1. check fwd_fee and fwd_fee_remaining
-  td::RefInt256 orig_fwd_fee = block::tlb::t_Grams.as_integer(info.fwd_fee);
+  td::RefInt256 orig_fwd_fee = block::tlb::t_Tomis.as_integer(info.fwd_fee);
   if (env.fwd_fee_remaining > orig_fwd_fee) {
     LOG(ERROR) << "internal message if DispatchQueue has fwd_fee_remaining=" << td::dec_string(env.fwd_fee_remaining)
                << " larger than original fwd_fee=" << td::dec_string(orig_fwd_fee);
@@ -6005,7 +6005,7 @@ bool Collator::compute_total_balance() {
       cs.print_rec(sb);
     };
   }
-  auto new_import_fees = block::tlb::t_Grams.as_integer_skip(cs);
+  auto new_import_fees = block::tlb::t_Tomis.as_integer_skip(cs);
   if (new_import_fees.is_null()) {
     LOG(ERROR) << "new_import_fees is null (?)";
     return false;

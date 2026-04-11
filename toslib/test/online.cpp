@@ -340,7 +340,7 @@ std::string read_text(toslib_api::msg_Data& data) {
   return text;
 }
 
-td::Status transfer_grams(Client& client, const Wallet& wallet, std::string address, td::int64 amount,
+td::Status transfer_tomis(Client& client, const Wallet& wallet, std::string address, td::int64 amount,
                           bool fast = false) {
   auto src_state = get_account_state(client, wallet.address);
   auto dst_state = get_account_state(client, address);
@@ -509,7 +509,7 @@ void test_back_and_forth_transfer(Client& client, const Wallet& giver_wallet, bo
   test_estimate_fees_without_key(client, giver_wallet, wallet_a);
 
   // transfer from giver to a
-  transfer_grams(client, giver_wallet, wallet_a.address, 1 * Gramm).ensure();
+  transfer_tomis(client, giver_wallet, wallet_a.address, 1 * Gramm).ensure();
   state = get_account_state(client, wallet_a.address);
   ASSERT_EQ(1 * Gramm, state.balance);
   ASSERT_EQ(AccountState::Empty, state.type);
@@ -518,7 +518,7 @@ void test_back_and_forth_transfer(Client& client, const Wallet& giver_wallet, bo
 
   if (flag) {
     // transfer from a to giver
-    transfer_grams(client, wallet_a, giver_wallet.address, 5 * Gramm / 10).ensure();
+    transfer_tomis(client, wallet_a, giver_wallet.address, 5 * Gramm / 10).ensure();
     state = get_account_state(client, wallet_a.address);
     ASSERT_TRUE(state.balance < 5 * Gramm / 10);
     ASSERT_EQ(AccountState::Wallet, state.type);
@@ -527,12 +527,12 @@ void test_back_and_forth_transfer(Client& client, const Wallet& giver_wallet, bo
   // Temporary turn off test of flag 128
   if (false) {
     // transfer all remaining balance (test flag 128)
-    transfer_grams(client, wallet_a, giver_wallet.address, state.balance).ensure();
+    transfer_tomis(client, wallet_a, giver_wallet.address, state.balance).ensure();
     state = get_account_state(client, wallet_a.address);
     ASSERT_TRUE(state.balance == 0);
     ASSERT_EQ(AccountState::Wallet, state.type);
   } else if (state.balance > 1 * Gramm / 10) {
-    transfer_grams(client, wallet_a, giver_wallet.address, state.balance - 1 * Gramm / 10).ensure();
+    transfer_tomis(client, wallet_a, giver_wallet.address, state.balance - 1 * Gramm / 10).ensure();
     state = get_account_state(client, wallet_a.address);
     ASSERT_TRUE(state.balance < 1 * Gramm / 10);
     ASSERT_EQ(AccountState::Wallet, state.type);
@@ -558,7 +558,7 @@ void test_multisig(Client& client, const Wallet& giver_wallet) {
   ms = tos::MultisigWallet::create(init_data);
   auto raw_address = ms->get_address(tos::basechainId);
   auto address = raw_address.rserialize();
-  transfer_grams(client, giver_wallet, address, 1 * Gramm).ensure();
+  transfer_tomis(client, giver_wallet, address, 1 * Gramm).ensure();
   auto init_state = ms->get_init_state();
 
   for (int i = 0; i < 2; i++) {
@@ -738,9 +738,9 @@ void test_dns(Client& client, const Wallet& giver_wallet) {
   auto A = create_empty_dns(client);
   auto A_B = create_empty_dns(client);
   auto A_B_C = create_empty_dns(client);
-  transfer_grams(client, giver_wallet, A.address, 1 * Gramm, true).ensure();
-  transfer_grams(client, giver_wallet, A_B.address, 1 * Gramm, true).ensure();
-  transfer_grams(client, giver_wallet, A_B_C.address, 1 * Gramm, true).ensure();
+  transfer_tomis(client, giver_wallet, A.address, 1 * Gramm, true).ensure();
+  transfer_tomis(client, giver_wallet, A_B.address, 1 * Gramm, true).ensure();
+  transfer_tomis(client, giver_wallet, A_B_C.address, 1 * Gramm, true).ensure();
 
   using namespace tos::toslib_api;
   std::vector<object_ptr<dns_Action>> actions;
@@ -834,7 +834,7 @@ int main(int argc, char* argv[]) {
   // not necessary, but synchronized will be trigged anyway later
   sync(client);
 
-  // give wallet with some test grams to run test
+  // give wallet with some test tomis to run test
   auto giver_wallet = import_wallet_from_pkey(client, giver_key_str, giver_key_pwd);
 
   test_paychan(client, giver_wallet);

@@ -283,7 +283,7 @@ bool Account::unpack_storage_info(vm::CellSlice& cs) {
   if (info.due_payment->prefetch_ulong(1) == 1) {
     vm::CellSlice& cs2 = info.due_payment.write();
     cs2.advance(1);
-    due_payment = block::tlb::t_Grams.as_integer_skip(cs2);
+    due_payment = block::tlb::t_Tomis.as_integer_skip(cs2);
     if (due_payment.is_null() || !cs2.empty_ext()) {
       return false;
     }
@@ -812,7 +812,7 @@ td::RefInt256 StoragePrices::compute_storage_fees(tos::UnixTime now, const std::
     }
     upto = valid_until;
   }
-  return td::rshift(total, 16, 1);  // divide by 2^16 with ceil rounding to obtain nanograms
+  return td::rshift(total, 16, 1);  // divide by 2^16 with ceil rounding to obtain nanotomis
 }
 
 /**
@@ -900,7 +900,7 @@ bool Transaction::unpack_input_msg(bool ihr_delivered, const ActionPhaseConfig* 
       td::RefInt256 ihr_fee;
       if (cfg->global_version >= 12) {
         ihr_fee = td::zero_refint();
-        in_msg_extra_flags = tlb::t_Grams.as_integer(in_msg_info.extra_flags);
+        in_msg_extra_flags = tlb::t_Tomis.as_integer(in_msg_info.extra_flags);
         if (in_msg_extra_flags.is_null()) {
           return false;
         }
@@ -908,7 +908,7 @@ bool Transaction::unpack_input_msg(bool ihr_delivered, const ActionPhaseConfig* 
         new_bounce_format_full_body = in_msg_extra_flags->get_bit(1);
       } else {
         // Legacy: extra_flags was previously ihr_fee
-        ihr_fee = tlb::t_Grams.as_integer(in_msg_info.extra_flags);
+        ihr_fee = tlb::t_Tomis.as_integer(in_msg_info.extra_flags);
         if (ihr_fee.is_null()) {
           return false;
         }
@@ -979,7 +979,7 @@ bool Transaction::unpack_input_msg(bool ihr_delivered, const ActionPhaseConfig* 
         fees_c.first = fees_c.second = 0;
       }
       in_fwd_fee = td::make_refint(fees_c.first);
-      if (balance.grams < in_fwd_fee) {
+      if (balance.tomis < in_fwd_fee) {
         LOG(DEBUG) << "cannot pay for importing this external message";
         return false;
       }
@@ -1038,9 +1038,9 @@ bool Transaction::unpack_input_msg(bool ihr_delivered, const ActionPhaseConfig* 
   total_fees += in_fwd_fee;
   if (account.workchain == tos::masterchainId && cfg->mc_blackhole_addr &&
       cfg->mc_blackhole_addr.value() == account.addr) {
-    blackhole_burned.grams = msg_balance_remaining.grams;
-    msg_balance_remaining.grams = td::zero_refint();
-    LOG(DEBUG) << "Burning " << blackhole_burned.grams << " nanoton (blackhole address)";
+    blackhole_burned.tomis = msg_balance_remaining.tomis;
+    msg_balance_remaining.tomis = td::zero_refint();
+    LOG(DEBUG) << "Burning " << blackhole_burned.tomis << " nanoton (blackhole address)";
   }
   return true;
 }
@@ -1067,7 +1067,7 @@ bool Transaction::prepare_storage_phase(const StoragePhaseConfig& cfg, bool forc
   last_paid = res->last_paid_updated = (res->is_special ? 0 : now);
   if (to_pay.is_null() || sgn(to_pay) == 0) {
     res->fees_collected = res->fees_due = td::zero_refint();
-  } else if (to_pay <= balance.grams) {
+  } else if (to_pay <= balance.tomis) {
     res->fees_collected = to_pay;
     res->fees_due = td::zero_refint();
     balance -= std::move(to_pay);
@@ -1079,9 +1079,9 @@ bool Transaction::prepare_storage_phase(const StoragePhaseConfig& cfg, bool forc
     res->last_paid_updated = (res->is_special ? 0 : account.last_paid);
     res->fees_collected = res->fees_due = td::zero_refint();
   } else {
-    res->fees_collected = balance.grams;
-    res->fees_due = std::move(to_pay) - std::move(balance.grams);
-    balance.grams = td::zero_refint();
+    res->fees_collected = balance.tomis;
+    res->fees_due = std::move(to_pay) - std::move(balance.tomis);
+    balance.tomis = td::zero_refint();
     if (!res->is_special) {
       auto total_due = res->fees_due;
       switch (acc_status) {
@@ -1115,8 +1115,8 @@ bool Transaction::prepare_storage_phase(const StoragePhaseConfig& cfg, bool forc
       }
     }
   }
-  if (adjust_msg_value && msg_balance_remaining.grams > balance.grams) {
-    msg_balance_remaining.grams = balance.grams;
+  if (adjust_msg_value && msg_balance_remaining.tomis > balance.tomis) {
+    msg_balance_remaining.tomis = balance.tomis;
   }
   total_fees += res->fees_collected;
   storage_phase = std::move(res);
@@ -1136,7 +1136,7 @@ bool Transaction::prepare_credit_phase() {
   credit_phase = std::make_unique<CreditPhase>();
   // Due payment is only collected in storage phase.
   // For messages with bounce flag, contract always receives the amount specified in message
-  // auto collected = std::min(msg_balance_remaining.grams, due_payment);
+  // auto collected = std::min(msg_balance_remaining.tomis, due_payment);
   // credit_phase->due_fees_collected = collected;
   // due_payment -= collected;
   // credit_phase->credit = msg_balance_remaining -= collected;
@@ -1286,23 +1286,23 @@ void ComputePhaseConfig::compute_threshold() {
 }
 
 /**
- * Computes the amount of gas that can be bought for a given amount of nanograms.
+ * Computes the amount of gas that can be bought for a given amount of nanotomis.
  *
- * @param nanograms The amount of nanograms to compute gas for.
+ * @param nanotomis The amount of nanotomis to compute gas for.
  *
  * @returns The amount of gas.
  */
-td::uint64 ComputePhaseConfig::gas_bought_for(td::RefInt256 nanograms) const {
-  if (nanograms.is_null() || sgn(nanograms) < 0) {
+td::uint64 ComputePhaseConfig::gas_bought_for(td::RefInt256 nanotomis) const {
+  if (nanotomis.is_null() || sgn(nanotomis) < 0) {
     return 0;
   }
-  if (nanograms >= max_gas_threshold) {
+  if (nanotomis >= max_gas_threshold) {
     return gas_limit;
   }
-  if (nanograms < flat_gas_price) {
+  if (nanotomis < flat_gas_price) {
     return 0;
   }
-  auto res = td::div((std::move(nanograms) - flat_gas_price) << 16, gas_price256);
+  auto res = td::div((std::move(nanotomis) - flat_gas_price) << 16, gas_price256);
   return res->to_long() + flat_gas_limit;
 }
 
@@ -1384,16 +1384,16 @@ static td::optional<td::uint64> override_gas_limit(const ComputePhaseConfig& cfg
 }
 
 /**
- * Computes the amount of gas that can be bought for a given amount of nanograms.
- * Usually equal to `cfg.gas_bought_for(nanograms)`
+ * Computes the amount of gas that can be bought for a given amount of nanotomis.
+ * Usually equal to `cfg.gas_bought_for(nanotomis)`
  * However, it overrides gas_limit from config in special cases.
  *
  * @param cfg The compute phase configuration.
- * @param nanograms The amount of nanograms to compute gas for.
+ * @param nanotomis The amount of nanotomis to compute gas for.
  *
  * @returns The amount of gas.
  */
-td::uint64 Transaction::gas_bought_for(const ComputePhaseConfig& cfg, td::RefInt256 nanograms) {
+td::uint64 Transaction::gas_bought_for(const ComputePhaseConfig& cfg, td::RefInt256 nanotomis) {
   if (auto new_limit = override_gas_limit(cfg, now, account)) {
     gas_limit_overridden = true;
     // Same as ComputePhaseConfig::gas_bought for, but with other gas_limit and max_gas_threshold
@@ -1402,19 +1402,19 @@ td::uint64 Transaction::gas_bought_for(const ComputePhaseConfig& cfg, td::RefInt
               << gas_limit;
     auto max_gas_threshold =
         compute_max_gas_threshold(cfg.gas_price256, gas_limit, cfg.flat_gas_limit, cfg.flat_gas_price);
-    if (nanograms.is_null() || sgn(nanograms) < 0) {
+    if (nanotomis.is_null() || sgn(nanotomis) < 0) {
       return 0;
     }
-    if (nanograms >= max_gas_threshold) {
+    if (nanotomis >= max_gas_threshold) {
       return gas_limit;
     }
-    if (nanograms < cfg.flat_gas_price) {
+    if (nanotomis < cfg.flat_gas_price) {
       return 0;
     }
-    auto res = td::div((std::move(nanograms) - cfg.flat_gas_price) << 16, cfg.gas_price256);
+    auto res = td::div((std::move(nanotomis) - cfg.flat_gas_price) << 16, cfg.gas_price256);
     return res->to_long() + cfg.flat_gas_limit;
   }
-  return cfg.gas_bought_for(nanograms);
+  return cfg.gas_bought_for(nanotomis);
 }
 
 /**
@@ -1430,7 +1430,7 @@ bool Transaction::compute_gas_limits(ComputePhase& cp, const ComputePhaseConfig&
   if (account.is_special) {
     cp.gas_max = cfg.special_gas_limit;
   } else {
-    cp.gas_max = gas_bought_for(cfg, balance.grams);
+    cp.gas_max = gas_bought_for(cfg, balance.tomis);
   }
   if (trans_type != tr_ord || (account.is_special && cfg.special_gas_full)) {
     // may use all gas that can be bought using remaining balance
@@ -1438,7 +1438,7 @@ bool Transaction::compute_gas_limits(ComputePhase& cp, const ComputePhaseConfig&
   } else {
     // originally use only gas bought using remaining message balance
     // if the message is "accepted" by the smart contract, the gas limit will be set to gas_max
-    cp.gas_limit = std::min(gas_bought_for(cfg, msg_balance_remaining.grams), cp.gas_max);
+    cp.gas_limit = std::min(gas_bought_for(cfg, msg_balance_remaining.tomis), cp.gas_max);
   }
   if (trans_type == tr_ord && !block::tlb::t_Message.is_internal(in_msg)) {
     // external messages carry no balance, give them some credit to check whether they are accepted
@@ -1466,14 +1466,14 @@ Ref<vm::Stack> Transaction::prepare_vm_stack(ComputePhase& cp) {
   switch (trans_type) {
     case tr_tick:
     case tr_tock:
-      stack.push_int(balance.grams);
+      stack.push_int(balance.tomis);
       stack.push_int(std::move(acc_addr));
       stack.push_bool(trans_type == tr_tock);
       stack.push_smallint(-2);
       return stack_ref;
     case tr_ord:
-      stack.push_int(balance.grams);
-      stack.push_int(msg_balance_remaining.grams);
+      stack.push_int(balance.tomis);
+      stack.push_int(msg_balance_remaining.tomis);
       stack.push_cell(in_msg);
       stack.push_cellslice(in_msg_body);
       stack.push_bool(in_msg_extern);
@@ -1597,13 +1597,13 @@ Ref<vm::Tuple> Transaction::prepare_in_msg_params_tuple(const gen::CommonMsgInfo
     in_msg_params[0] = td::make_refint(info->bounce ? -1 : 0);   // bounce
     in_msg_params[1] = td::make_refint(info->bounced ? -1 : 0);  // bounced
     in_msg_params[2] = info->src;                                // src_addr
-    in_msg_params[3] = info->fwd_fee.is_null() ? td::zero_refint() : tlb::t_Grams.as_integer(info->fwd_fee);  // fwd_fee
+    in_msg_params[3] = info->fwd_fee.is_null() ? td::zero_refint() : tlb::t_Tomis.as_integer(info->fwd_fee);  // fwd_fee
     in_msg_params[4] = td::make_refint(info->created_lt);  // created_lt
     in_msg_params[5] = td::make_refint(info->created_at);  // created_at
     auto value = info->value;
     in_msg_params[6] =
-        info->value.is_null() ? td::zero_refint() : tlb::t_Grams.as_integer_skip(value.write());  // original value
-    in_msg_params[7] = msg_balance_remaining.is_valid() ? msg_balance_remaining.grams : td::zero_refint();  // value
+        info->value.is_null() ? td::zero_refint() : tlb::t_Tomis.as_integer_skip(value.write());  // original value
+    in_msg_params[7] = msg_balance_remaining.is_valid() ? msg_balance_remaining.tomis : td::zero_refint();  // value
     in_msg_params[8] = msg_balance_remaining.is_valid() ? vm::StackEntry::maybe(msg_balance_remaining.extra)
                                                         : vm::StackEntry{};  // value extra
     in_msg_params[9] = vm::StackEntry::maybe(state_init);                    // state_init
@@ -1817,7 +1817,7 @@ bool Transaction::run_precompiled_contract(const ComputePhaseConfig& cfg, precom
     LOG(DEBUG) << "gas fees: " << cp.gas_fees->to_dec_string() << " = " << cfg.gas_price256->to_dec_string() << " * "
                << cp.gas_used << " /2^16 ; price=" << cfg.gas_price << "; flat rate=[" << cfg.flat_gas_price << " for "
                << cfg.flat_gas_limit << "]; remaining balance=" << balance.to_str();
-    FAIL_UNLESS(td::sgn(balance.grams) >= 0);
+    FAIL_UNLESS(td::sgn(balance.tomis) >= 0);
   }
   return true;
 }
@@ -1842,7 +1842,7 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
   } else {
     original_balance -= total_fees;
   }
-  if (td::sgn(balance.grams) <= 0) {
+  if (td::sgn(balance.tomis) <= 0) {
     // no gas
     cp.skip_reason = ComputePhase::sk_no_gas;
     return true;
@@ -2056,7 +2056,7 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     LOG(DEBUG) << "gas fees: " << cp.gas_fees->to_dec_string() << " = " << cfg.gas_price256->to_dec_string() << " * "
                << cp.gas_used << " /2^16 ; price=" << cfg.gas_price << "; flat rate=[" << cfg.flat_gas_price << " for "
                << cfg.flat_gas_limit << "]; remaining balance=" << balance.to_str();
-    FAIL_UNLESS(td::sgn(balance.grams) >= 0);
+    FAIL_UNLESS(td::sgn(balance.tomis) >= 0);
   }
   cp.vm_loaded_cells = vm.extract_loaded_cells();
   return true;
@@ -2230,9 +2230,9 @@ bool Transaction::prepare_action_phase(const ActionPhaseConfig& cfg) {
         return false;
       }
       if (cfg.action_fine_enabled) {
-        ap.action_fine = std::min(ap.action_fine, balance.grams);
+        ap.action_fine = std::min(ap.action_fine, balance.tomis);
         ap.total_action_fees = ap.action_fine;
-        balance.grams -= ap.action_fine;
+        balance.tomis -= ap.action_fine;
         total_fees += ap.action_fine;
       }
       if (ap.need_bounce_on_fail) {
@@ -2258,9 +2258,9 @@ bool Transaction::prepare_action_phase(const ActionPhaseConfig& cfg) {
     if (cfg.extra_currency_v2) {
       end_lt = ap.end_lt = start_lt + 1;
       if (cfg.action_fine_enabled) {
-        ap.action_fine = std::min(ap.action_fine, balance.grams);
+        ap.action_fine = std::min(ap.action_fine, balance.tomis);
         ap.total_action_fees = ap.action_fine;
-        balance.grams -= ap.action_fine;
+        balance.tomis -= ap.action_fine;
         total_fees += ap.action_fine;
       }
     }
@@ -2269,12 +2269,12 @@ bool Transaction::prepare_action_phase(const ActionPhaseConfig& cfg) {
 
   ap.result_arg = 0;
   ap.result_code = 0;
-  FAIL_UNLESS(ap.remaining_balance.grams->sgn() >= 0);
-  FAIL_UNLESS(ap.reserved_balance.grams->sgn() >= 0);
+  FAIL_UNLESS(ap.remaining_balance.tomis->sgn() >= 0);
+  FAIL_UNLESS(ap.reserved_balance.tomis->sgn() >= 0);
   ap.remaining_balance += ap.reserved_balance;
   FAIL_UNLESS(ap.remaining_balance.is_valid());
   if (ap.acc_delete_req) {
-    FAIL_UNLESS(cfg.extra_currency_v2 ? ap.remaining_balance.grams->sgn() == 0 : ap.remaining_balance.is_zero());
+    FAIL_UNLESS(cfg.extra_currency_v2 ? ap.remaining_balance.tomis->sgn() == 0 : ap.remaining_balance.is_zero());
     ap.acc_status_change = ActionPhase::acst_deleted;
     acc_status = (ap.remaining_balance.is_zero() ? Account::acc_deleted : Account::acc_uninit);
     was_deleted = true;
@@ -2391,8 +2391,8 @@ int Transaction::try_action_change_library(vm::CellSlice& cs, ActionPhase& ap, c
 /**
  * Computes the forward fees for a message based on the number of cells and bits.
  *
- * msg_fwd_fees = (lump_price + ceil((bit_price * msg.bits + cell_price * msg.cells)/2^16)) nanograms
- * ihr_fwd_fees = ceil((msg_fwd_fees * ihr_price_factor)/2^16) nanograms
+ * msg_fwd_fees = (lump_price + ceil((bit_price * msg.bits + cell_price * msg.cells)/2^16)) nanotomis
+ * ihr_fwd_fees = ceil((msg_fwd_fees * ihr_price_factor)/2^16) nanotomis
  * bits in the root cell of a message are not included in msg.bits (lump_price pays for them)
  *
  * @param cells The number of cells in the message.
@@ -2413,8 +2413,8 @@ td::uint64 MsgPrices::compute_fwd_fees(td::uint64 cells, td::uint64 bits) const 
  * Computes the forward fees for a message based on the number of cells and bits.
  * Return the result as td::RefInt256
  *
- * msg_fwd_fees = (lump_price + ceil((bit_price * msg.bits + cell_price * msg.cells)/2^16)) nanograms
- * ihr_fwd_fees = ceil((msg_fwd_fees * ihr_price_factor)/2^16) nanograms
+ * msg_fwd_fees = (lump_price + ceil((bit_price * msg.bits + cell_price * msg.cells)/2^16)) nanotomis
+ * ihr_fwd_fees = ceil((msg_fwd_fees * ihr_price_factor)/2^16) nanotomis
  * bits in the root cell of a message are not included in msg.bits (lump_price pays for them)
  *
  * @param cells The number of cells in the message.
@@ -2737,8 +2737,8 @@ int Transaction::try_action_send_msg(const vm::CellSlice& cs0, ActionPhase& ap, 
     if (cfg.disable_custom_fess) {
       fwd_fee = ihr_fee = td::zero_refint();
     } else {
-      fwd_fee = tlb::t_Grams.as_integer(info.fwd_fee);
-      ihr_fee = cfg.global_version >= 12 ? td::zero_refint() : tlb::t_Grams.as_integer(info.extra_flags);
+      fwd_fee = tlb::t_Tomis.as_integer(info.fwd_fee);
+      ihr_fee = cfg.global_version >= 12 ? td::zero_refint() : tlb::t_Tomis.as_integer(info.extra_flags);
       if (fwd_fee.is_null() || ihr_fee.is_null()) {
         return -1;
       }
@@ -2747,7 +2747,7 @@ int Transaction::try_action_send_msg(const vm::CellSlice& cs0, ActionPhase& ap, 
       info.ihr_disabled = true;
     }
     if (cfg.global_version >= 12) {
-      td::RefInt256 extra_flags = tlb::t_Grams.as_integer(info.extra_flags);
+      td::RefInt256 extra_flags = tlb::t_Tomis.as_integer(info.extra_flags);
       if (extra_flags.is_null() || td::cmp(extra_flags & td::make_refint(3), extra_flags) != 0) {
         LOG(DEBUG) << "invalid extra_flags in a proposed outbound message";
         return check_skip_invalid(45);
@@ -2796,7 +2796,7 @@ int Transaction::try_action_send_msg(const vm::CellSlice& cs0, ActionPhase& ap, 
   td::uint64 fine_per_cell = 0;
   if (cfg.action_fine_enabled && !account.is_special) {
     fine_per_cell = (msg_prices.cell_price >> 16) / 4;
-    td::RefInt256 funds = ap.remaining_balance.grams;
+    td::RefInt256 funds = ap.remaining_balance.tomis;
     if (!ext_msg && !(act_rec.mode & 0x80) && !(act_rec.mode & 1)) {
       if (!block::tlb::t_CurrencyCollection.validate_csr(info.value)) {
         LOG(DEBUG) << "invalid value:CurrencyCollection in proposed outbound message";
@@ -2804,11 +2804,11 @@ int Transaction::try_action_send_msg(const vm::CellSlice& cs0, ActionPhase& ap, 
       }
       block::CurrencyCollection value;
       FAIL_UNLESS_ERRCODE(value.unpack(info.value), ERRCODE_FAIL_ACTION_PHASE);
-      FAIL_UNLESS_ERRCODE(value.grams.not_null(), ERRCODE_FAIL_ACTION_PHASE);
-      td::RefInt256 new_funds = value.grams;
+      FAIL_UNLESS_ERRCODE(value.tomis.not_null(), ERRCODE_FAIL_ACTION_PHASE);
+      td::RefInt256 new_funds = value.tomis;
       if (act_rec.mode & 0x40) {
         if (msg_balance_remaining.is_valid()) {
-          new_funds += msg_balance_remaining.grams;
+          new_funds += msg_balance_remaining.tomis;
         }
         if (compute_phase) {
           new_funds -= compute_phase->gas_fees;
@@ -2845,11 +2845,11 @@ int Transaction::try_action_send_msg(const vm::CellSlice& cs0, ActionPhase& ap, 
   auto collect_fine = [&] {
     if (cfg.action_fine_enabled && !account.is_special) {
       td::uint64 fine = fine_per_cell * std::min<td::uint64>(max_cells, sstat.cells);
-      if (ap.remaining_balance.grams->cmp(fine) < 0) {
-        fine = ap.remaining_balance.grams->to_long();
+      if (ap.remaining_balance.tomis->cmp(fine) < 0) {
+        fine = ap.remaining_balance.tomis->to_long();
       }
       ap.action_fine += fine;
-      ap.remaining_balance.grams -= fine;
+      ap.remaining_balance.tomis -= fine;
     }
   };
   if (sstat.cells > max_cells && max_cells < cfg.size_limits.max_msg_cells) {
@@ -2906,12 +2906,12 @@ int Transaction::try_action_send_msg(const vm::CellSlice& cs0, ActionPhase& ap, 
     // extract value to be carried by the message
     block::CurrencyCollection req;
     FAIL_UNLESS_ERRCODE(req.unpack(info.value), ERRCODE_FAIL_ACTION_PHASE);
-    FAIL_UNLESS_ERRCODE(req.grams.not_null(), ERRCODE_FAIL_ACTION_PHASE);
+    FAIL_UNLESS_ERRCODE(req.tomis.not_null(), ERRCODE_FAIL_ACTION_PHASE);
 
     if (act_rec.mode & 0x80) {
       // attach all remaining balance to this message
       if (cfg.extra_currency_v2) {
-        req.grams = ap.remaining_balance.grams;
+        req.tomis = ap.remaining_balance.tomis;
       } else {
         req = ap.remaining_balance;
       }
@@ -2919,7 +2919,7 @@ int Transaction::try_action_send_msg(const vm::CellSlice& cs0, ActionPhase& ap, 
     } else if (act_rec.mode & 0x40) {
       // attach all remaining balance of the inbound message (in addition to the original value)
       if (cfg.extra_currency_v2) {
-        req.grams += msg_balance_remaining.grams;
+        req.tomis += msg_balance_remaining.tomis;
       } else {
         req += msg_balance_remaining;
       }
@@ -2937,29 +2937,29 @@ int Transaction::try_action_send_msg(const vm::CellSlice& cs0, ActionPhase& ap, 
       }
     }
 
-    // compute req_grams + fees
-    td::RefInt256 req_grams_brutto = req.grams;
+    // compute req_tomis + fees
+    td::RefInt256 req_grams_brutto = req.tomis;
     fees_total = fwd_fee + ihr_fee;
     if (act_rec.mode & 1) {
       // we are going to pay the fees
       req_grams_brutto += fees_total;
-    } else if (req.grams < fees_total) {
+    } else if (req.tomis < fees_total) {
       // receiver pays the fees (but cannot)
-      LOG(DEBUG) << "not enough value attached to the message to pay forwarding fees : have " << req.grams << ", need "
+      LOG(DEBUG) << "not enough value attached to the message to pay forwarding fees : have " << req.tomis << ", need "
                  << fees_total;
       collect_fine();
-      return check_skip_invalid(37);  // not enough grams
+      return check_skip_invalid(37);  // not enough tomis
     } else {
       // decrease message value
-      req.grams -= fees_total;
+      req.tomis -= fees_total;
     }
 
     // check that we have at least the required value
-    if (ap.remaining_balance.grams < req_grams_brutto) {
-      LOG(DEBUG) << "not enough grams to transfer with the message : remaining balance is "
+    if (ap.remaining_balance.tomis < req_grams_brutto) {
+      LOG(DEBUG) << "not enough tomis to transfer with the message : remaining balance is "
                  << ap.remaining_balance.to_str() << ", need " << req_grams_brutto << " (including forwarding fees)";
       collect_fine();
-      return check_skip_invalid(37);  // not enough grams
+      return check_skip_invalid(37);  // not enough tomis
     }
 
     if (cfg.extra_currency_v2 && !req.check_extra_currency_limit(cfg.size_limits.max_msg_extra_currencies)) {
@@ -2988,9 +2988,9 @@ int Transaction::try_action_send_msg(const vm::CellSlice& cs0, ActionPhase& ap, 
 
     // re-pack message value
     FAIL_UNLESS_ERRCODE(req.pack_to(info.value), ERRCODE_FAIL_ACTION_PHASE);
-    FAIL_UNLESS_ERRCODE(block::tlb::t_Grams.pack_integer(info.fwd_fee, fwd_fee_remain), ERRCODE_FAIL_ACTION_PHASE);
+    FAIL_UNLESS_ERRCODE(block::tlb::t_Tomis.pack_integer(info.fwd_fee, fwd_fee_remain), ERRCODE_FAIL_ACTION_PHASE);
     if (cfg.global_version < 12) {
-      FAIL_UNLESS_ERRCODE(block::tlb::t_Grams.pack_integer(info.extra_flags, ihr_fee), ERRCODE_FAIL_ACTION_PHASE);
+      FAIL_UNLESS_ERRCODE(block::tlb::t_Tomis.pack_integer(info.extra_flags, ihr_fee), ERRCODE_FAIL_ACTION_PHASE);
     }
 
     // serialize message
@@ -3011,7 +3011,7 @@ int Transaction::try_action_send_msg(const vm::CellSlice& cs0, ActionPhase& ap, 
     // clear msg_balance_remaining if it has been used
     if (act_rec.mode & 0xc0) {
       if (cfg.extra_currency_v2) {
-        msg_balance_remaining.grams = td::zero_refint();
+        msg_balance_remaining.tomis = td::zero_refint();
       } else {
         msg_balance_remaining.set_zero();
       }
@@ -3021,15 +3021,15 @@ int Transaction::try_action_send_msg(const vm::CellSlice& cs0, ActionPhase& ap, 
     ap.remaining_balance -= req_grams_brutto;
     ap.remaining_balance.extra = std::move(new_extra);
     FAIL_UNLESS_ERRCODE(ap.remaining_balance.is_valid(), ERRCODE_FAIL_ACTION_PHASE);
-    FAIL_UNLESS_ERRCODE(ap.remaining_balance.grams->sgn() >= 0, ERRCODE_FAIL_ACTION_PHASE);
+    FAIL_UNLESS_ERRCODE(ap.remaining_balance.tomis->sgn() >= 0, ERRCODE_FAIL_ACTION_PHASE);
     fees_total = fwd_fee + ihr_fee;
     fees_collected = fwd_fee_mine;
   } else {
     // external messages also have forwarding fees
-    if (ap.remaining_balance.grams < fwd_fee) {
+    if (ap.remaining_balance.tomis < fwd_fee) {
       LOG(DEBUG) << "not enough funds to pay for an outbound external message";
       collect_fine();
-      return check_skip_invalid(37);  // not enough grams
+      return check_skip_invalid(37);  // not enough tomis
     }
     // repack message
     // ext_out_msg_info$11 constructor of CommonMsgInfo
@@ -3055,7 +3055,7 @@ int Transaction::try_action_send_msg(const vm::CellSlice& cs0, ActionPhase& ap, 
     // update balance
     ap.remaining_balance -= fwd_fee;
     FAIL_UNLESS_ERRCODE(ap.remaining_balance.is_valid(), ERRCODE_FAIL_ACTION_PHASE);
-    FAIL_UNLESS_ERRCODE(td::sgn(ap.remaining_balance.grams) >= 0, ERRCODE_FAIL_ACTION_PHASE);
+    FAIL_UNLESS_ERRCODE(td::sgn(ap.remaining_balance.tomis) >= 0, ERRCODE_FAIL_ACTION_PHASE);
     fees_collected = fees_total = fwd_fee;
   }
 
@@ -3089,8 +3089,8 @@ int Transaction::try_action_send_msg(const vm::CellSlice& cs0, ActionPhase& ap, 
 
   if ((act_rec.mode & 0xa0) == 0xa0) {
     if (cfg.extra_currency_v2) {
-      FAIL_UNLESS_ERRCODE(ap.remaining_balance.grams->sgn() == 0, ERRCODE_FAIL_ACTION_PHASE);
-      ap.acc_delete_req = ap.reserved_balance.grams->sgn() == 0;
+      FAIL_UNLESS_ERRCODE(ap.remaining_balance.tomis->sgn() == 0, ERRCODE_FAIL_ACTION_PHASE);
+      ap.acc_delete_req = ap.reserved_balance.tomis->sgn() == 0;
     } else {
       FAIL_UNLESS_ERRCODE(ap.remaining_balance.is_zero(), ERRCODE_FAIL_ACTION_PHASE);
       ap.acc_delete_req = ap.reserved_balance.is_zero();
@@ -3140,13 +3140,13 @@ int Transaction::try_action_reserve_currency(vm::CellSlice& cs, ActionPhase& ap,
   if (mode & 4) {
     if (mode & 8) {
       if (cfg.extra_currency_v2) {
-        reserve.grams = original_balance.grams - reserve.grams;
+        reserve.tomis = original_balance.tomis - reserve.tomis;
       } else {
         reserve = original_balance - reserve;
       }
     } else {
       if (cfg.extra_currency_v2) {
-        reserve.grams += original_balance.grams;
+        reserve.tomis += original_balance.tomis;
       } else {
         reserve += original_balance;
       }
@@ -3155,7 +3155,7 @@ int Transaction::try_action_reserve_currency(vm::CellSlice& cs, ActionPhase& ap,
     LOG(DEBUG) << "invalid reserve mode " << mode;
     return -1;
   }
-  if (!reserve.is_valid() || td::sgn(reserve.grams) < 0) {
+  if (!reserve.is_valid() || td::sgn(reserve.tomis) < 0) {
     LOG(DEBUG) << "cannot reserve a negative amount: " << reserve.to_str();
     return -1;
   }
@@ -3166,13 +3166,13 @@ int Transaction::try_action_reserve_currency(vm::CellSlice& cs, ActionPhase& ap,
         return -1;
       }
     } else {
-      reserve.grams = std::min(reserve.grams, ap.remaining_balance.grams);
+      reserve.tomis = std::min(reserve.tomis, ap.remaining_balance.tomis);
     }
   }
-  if (reserve.grams > ap.remaining_balance.grams) {
-    LOG(DEBUG) << "cannot reserve " << reserve.grams << " nanograms : only " << ap.remaining_balance.grams
+  if (reserve.tomis > ap.remaining_balance.tomis) {
+    LOG(DEBUG) << "cannot reserve " << reserve.tomis << " nanotomis : only " << ap.remaining_balance.tomis
                << " available";
-    return 37;  // not enough grams
+    return 37;  // not enough tomis
   }
   if (!block::sub_extra_currency(ap.remaining_balance.extra, reserve.extra, newc.extra)) {
     LOG(DEBUG) << "not enough extra currency to reserve: " << block::CurrencyCollection{0, reserve.extra}.to_str()
@@ -3180,18 +3180,18 @@ int Transaction::try_action_reserve_currency(vm::CellSlice& cs, ActionPhase& ap,
                << " available";
     return 38;  // not enough (extra) funds
   }
-  newc.grams = ap.remaining_balance.grams - reserve.grams;
+  newc.tomis = ap.remaining_balance.tomis - reserve.tomis;
   if (mode & 1) {
-    // leave only res_grams, reserve everything else
+    // leave only res_tomis, reserve everything else
     if (cfg.extra_currency_v2) {
-      std::swap(newc.grams, reserve.grams);
+      std::swap(newc.tomis, reserve.tomis);
     } else {
       std::swap(newc, reserve);
     }
   }
-  // set remaining_balance to new_grams and new_extra
+  // set remaining_balance to new_tomis and new_extra
   ap.remaining_balance = std::move(newc);
-  // increase reserved_balance by res_grams and res_extra
+  // increase reserved_balance by res_tomis and res_extra
   ap.reserved_balance += std::move(reserve);
   FAIL_UNLESS_ERRCODE(ap.reserved_balance.is_valid(), ERRCODE_FAIL_ACTION_PHASE);
   FAIL_UNLESS_ERRCODE(ap.remaining_balance.is_valid(), ERRCODE_FAIL_ACTION_PHASE);
@@ -3403,13 +3403,13 @@ bool Transaction::prepare_bounce_phase(const ActionPhaseConfig& cfg) {
   // check whether the message has enough funds
   auto msg_balance = msg_balance_remaining;
   if (compute_phase && compute_phase->gas_fees.not_null()) {
-    msg_balance.grams -= compute_phase->gas_fees;
+    msg_balance.tomis -= compute_phase->gas_fees;
   }
   if (action_phase && action_phase->action_fine.not_null()) {
-    msg_balance.grams -= action_phase->action_fine;
+    msg_balance.tomis -= action_phase->action_fine;
   }
-  if ((msg_balance.grams < 0) ||
-      (msg_balance.grams->signed_fits_bits(64) && msg_balance.grams->to_long() < (long long)bp.fwd_fees)) {
+  if ((msg_balance.tomis < 0) ||
+      (msg_balance.tomis->signed_fits_bits(64) && msg_balance.tomis->to_long() < (long long)bp.fwd_fees)) {
     // not enough funds
     bp.nofunds = true;
     return true;
@@ -3431,9 +3431,9 @@ bool Transaction::prepare_bounce_phase(const ActionPhaseConfig& cfg) {
               && cb.append_cellslice_bool(info.src)   // src:MsgAddressInt
               && cb.append_cellslice_bool(info.dest)  // dest:MsgAddressInt
               && msg_balance.store(cb)                // value:CurrencyCollection
-              && block::tlb::t_Grams.store_integer_ref(
+              && block::tlb::t_Tomis.store_integer_ref(
                      cb, in_msg_extra_flags & td::make_refint(3))  // extra_flags:(VarUInteger 16)
-              && block::tlb::t_Grams.store_long(cb, bp.fwd_fees)   // fwd_fee:Grams
+              && block::tlb::t_Tomis.store_long(cb, bp.fwd_fees)   // fwd_fee:Tomis
               && cb.store_long_bool(info.created_lt, 64)           // created_lt:uint64
               && cb.store_long_bool(info.created_at, 32)           // created_at:uint32
               && cb.store_bool_bool(false));                       // init:(Maybe ...)
@@ -3669,8 +3669,8 @@ bool Transaction::compute_state(const SerializeConfig& cfg) {
               && (!new_storage_dict_hash || cb.store_bits_bool(new_storage_dict_hash.value()))  // dict_hash:uint256
               && cb.store_long_bool(last_paid, 32));                                            // last_paid:uint32
   if (due_payment.not_null() && td::sgn(due_payment) != 0) {
-    FAIL_UNLESS(cb.store_long_bool(1, 1) && block::tlb::t_Grams.store_integer_ref(cb, due_payment));
-    // due_payment:(Maybe Grams)
+    FAIL_UNLESS(cb.store_long_bool(1, 1) && block::tlb::t_Tomis.store_integer_ref(cb, due_payment));
+    // due_payment:(Maybe Tomis)
   } else {
     FAIL_UNLESS(cb.store_long_bool(0, 1));
   }
@@ -3818,14 +3818,14 @@ bool Transaction::serialize_storage_phase(vm::CellBuilder& cb) {
   }
   StoragePhase& sp = *storage_phase;
   bool ok;
-  // tr_phase_storage$_ storage_fees_collected:Grams
+  // tr_phase_storage$_ storage_fees_collected:Tomis
   if (sp.fees_collected.not_null()) {
-    ok = block::tlb::t_Grams.store_integer_ref(cb, sp.fees_collected);
+    ok = block::tlb::t_Tomis.store_integer_ref(cb, sp.fees_collected);
   } else {
-    ok = block::tlb::t_Grams.null_value(cb);
+    ok = block::tlb::t_Tomis.null_value(cb);
   }
-  // storage_fees_due:(Maybe Grams)
-  ok &= block::store_Maybe_Grams_nz(cb, sp.fees_due);
+  // storage_fees_due:(Maybe Tomis)
+  ok &= block::store_Maybe_Tomis_nz(cb, sp.fees_due);
   // status_change:AccStatusChange
   if (sp.deleted || sp.frozen) {
     ok &= cb.store_long_bool(sp.deleted ? 3 : 2, 2);  // acst_frozen$10 acst_deleted$11
@@ -3847,8 +3847,8 @@ bool Transaction::serialize_credit_phase(vm::CellBuilder& cb) {
     return false;
   }
   CreditPhase& cp = *credit_phase;
-  // tr_phase_credit$_ due_fees_collected:(Maybe Grams) credit:CurrencyCollection
-  return block::store_Maybe_Grams_nz(cb, cp.due_fees_collected) && cp.credit.store(cb);
+  // tr_phase_credit$_ due_fees_collected:(Maybe Tomis) credit:CurrencyCollection
+  return block::store_Maybe_Tomis_nz(cb, cp.due_fees_collected) && cp.credit.store(cb);
 }
 
 /**
@@ -3884,7 +3884,7 @@ bool Transaction::serialize_compute_phase(vm::CellBuilder& cb) {
        && cb.store_long_bool(cp.success, 1)                       // success:Bool
        && cb.store_long_bool(cp.msg_state_used, 1)                // msg_state_used:Bool
        && cb.store_long_bool(cp.account_activated, 1)             // account_activated:Bool
-       && block::tlb::t_Grams.store_integer_ref(cb, cp.gas_fees)  // gas_fees:Grams
+       && block::tlb::t_Tomis.store_integer_ref(cb, cp.gas_fees)  // gas_fees:Tomis
        && block::store_UInt7(cb2, cp.gas_used)                    // ^[ gas_used:(VarUInteger 7)
        && block::store_UInt7(cb2, cp.gas_limit)                   //    gas_limit:(VarUInteger 7)
        && cb2.store_long_bool(credit, 1)                          //    gas_credit:(Maybe (VarUInteger 3))
@@ -3917,8 +3917,8 @@ bool Transaction::serialize_action_phase(vm::CellBuilder& cb) {
        && cb.store_long_bool(ap.valid, 1)                                            // valid:Bool
        && cb.store_long_bool(ap.no_funds, 1)                                         // no_funds:Bool
        && cb.store_long_bool(ap.acc_status_change, (ap.acc_status_change >> 1) + 1)  // status_change:AccStatusChange
-       && block::store_Maybe_Grams_nz(cb, ap.total_fwd_fees)                         // total_fwd_fees:(Maybe Grams)
-       && block::store_Maybe_Grams_nz(cb, ap.total_action_fees)                      // total_action_fees:(Maybe Grams)
+       && block::store_Maybe_Tomis_nz(cb, ap.total_fwd_fees)                         // total_fwd_fees:(Maybe Tomis)
+       && block::store_Maybe_Tomis_nz(cb, ap.total_action_fees)                      // total_action_fees:(Maybe Tomis)
        && cb.store_long_bool(ap.result_code, 32)                                     // result_code:int32
        && cb.store_long_bool(arg, 1)                                                 // result_arg:(Maybe
        && (!arg || cb.store_long_bool(ap.result_arg, 32))                            //    uint32)
@@ -3949,12 +3949,12 @@ bool Transaction::serialize_bounce_phase(vm::CellBuilder& cb) {
   if (bp.nofunds) {
     return cb.store_long_bool(1, 2)                              // tr_phase_bounce_nofunds$01
            && block::store_UInt7(cb, bp.msg_cells, bp.msg_bits)  // msg_size:StorageUsed
-           && block::tlb::t_Grams.store_long(cb, bp.fwd_fees);   // req_fwd_fees:Grams
+           && block::tlb::t_Tomis.store_long(cb, bp.fwd_fees);   // req_fwd_fees:Tomis
   } else {
     return cb.store_long_bool(1, 1)                                      // tr_phase_bounce_ok$1
            && block::store_UInt7(cb, bp.msg_cells, bp.msg_bits)          // msg_size:StorageUsed
-           && block::tlb::t_Grams.store_long(cb, bp.fwd_fees_collected)  // msg_fees:Grams
-           && block::tlb::t_Grams.store_long(cb, bp.fwd_fees);           // fwd_fees:Grams
+           && block::tlb::t_Tomis.store_long(cb, bp.fwd_fees_collected)  // msg_fees:Tomis
+           && block::tlb::t_Tomis.store_long(cb, bp.fwd_fees);           // fwd_fees:Tomis
   }
 }
 
@@ -4142,7 +4142,7 @@ bool Account::create_account_block(vm::CellBuilder& cb) {
     }
   }
   Ref<vm::Cell> dict_root = std::move(dict).extract_root_cell();
-  // transactions:(HashmapAug 64 ^Transaction Grams)
+  // transactions:(HashmapAug 64 ^Transaction Tomis)
   if (dict_root.is_null() || !cb.append_cellslice_bool(vm::load_cell_slice(std::move(dict_root)))) {
     return false;
   }
@@ -4307,15 +4307,15 @@ td::Status FetchConfigParams::fetch_config_params(
     serialize_cfg->size_limits = size_limits;
   }
   {
-    // fetch block_grams_created
+    // fetch block_tomis_created
     auto cell = config.get_config_param(14);
     if (cell.is_null()) {
       *basechain_create_fee = *masterchain_create_fee = td::zero_refint();
     } else {
       block::gen::BlockCreateFees::Record create_fees;
       if (!(tlb::unpack_cell(cell, create_fees) &&
-            block::tlb::t_Grams.as_integer_to(create_fees.masterchain_block_fee, *masterchain_create_fee) &&
-            block::tlb::t_Grams.as_integer_to(create_fees.basechain_block_fee, *basechain_create_fee))) {
+            block::tlb::t_Tomis.as_integer_to(create_fees.masterchain_block_fee, *masterchain_create_fee) &&
+            block::tlb::t_Tomis.as_integer_to(create_fees.basechain_block_fee, *basechain_create_fee))) {
         return td::Status::Error(-668, "cannot unpack BlockCreateFees from configuration parameter #14");
       }
     }

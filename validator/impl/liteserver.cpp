@@ -1505,7 +1505,7 @@ void LiteQuery::finish_runSmcMethod(td::BufferSlice shard_proof, td::BufferSlice
   long long gas_limit = client_method_gas_limit;
   td::RefInt256 due_payment;
   if (storage_info.due_payment.write().fetch_long(1)) {
-    due_payment = block::tlb::t_Grams.as_integer(storage_info.due_payment);
+    due_payment = block::tlb::t_Tomis.as_integer(storage_info.due_payment);
   } else {
     due_payment = td::zero_refint();
   }

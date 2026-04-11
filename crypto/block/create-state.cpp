@@ -302,7 +302,7 @@ td::RefInt256 create_smartcontract(td::RefInt256 smc_addr, Ref<vm::Cell> code, R
   }
   cb.reset();
   PDO(cb.store_long_bool(0, 64)                                 // account_storage$_ last_trans_lt:uint64
-      && block::tlb::t_Grams.store_integer_value(cb, *balance)  // balance.grams:Grams
+      && block::tlb::t_Tomis.store_integer_value(cb, *balance)  // balance.tomis:Tomis
       && cb.store_long_bool(0, 1));                             // balance.other:ExtraCurrencyCollection
   if (mode == 1) {
     PDO(block::gen::t_AccountState.pack_account_uninit(cb));
@@ -346,7 +346,7 @@ td::RefInt256 create_smartcontract(td::RefInt256 smc_addr, Ref<vm::Cell> code, R
   THRERR("Cannot serialize used:StorageUsed of the new smart contract");
   PDO(cb.store_zeroes_bool(3));  // extra:StorageExtraInfo
   THRERR("Cannot serialize storage_extra:StorageExtraInfo of the new smart contract");
-  PDO(cb.store_long_bool(0, 33));          // last_paid:uint32 due_payment:(Maybe Grams)
+  PDO(cb.store_long_bool(0, 33));          // last_paid:uint32 due_payment:(Maybe Tomis)
   PDO(cb.append_data_cell_bool(storage));  // storage:AccountStorage
   THRERR("Cannot create Account of the new smart contract");
   smc.account = cb.finalize();

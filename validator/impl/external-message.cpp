@@ -70,7 +70,7 @@ td::Result<td::Bits256> get_ext_in_msg_hash_norm(td::Ref<vm::Cell> ext_in_msg_ce
   bool ok = cb.store_long_bool(2, 2) &&  // message$_ -> info:CommonMsgInfo -> ext_in_msg_info$10
             cb.store_long_bool(0, 2) &&  // message$_ -> info:CommonMsgInfo -> src:MsgAddressExt -> addr_none$00
             cb.append_cellslice_bool(msg_info.dest) &&  // message$_ -> info:CommonMsgInfo -> dest:MsgAddressInt
-            cb.store_long_bool(0, 4) &&                 // message$_ -> info:CommonMsgInfo -> import_fee:Grams -> 0
+            cb.store_long_bool(0, 4) &&                 // message$_ -> info:CommonMsgInfo -> import_fee:Tomis -> 0
             cb.store_long_bool(0, 1) &&  // message$_ -> init:(Maybe (Either StateInit ^StateInit)) -> nothing$0
             cb.store_long_bool(1, 1) &&  // message$_ -> body:(Either X ^X) -> right$1
             cb.store_ref_bool(body);

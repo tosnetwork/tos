@@ -59,7 +59,7 @@ PROGRAM{
     ENDS
     DUP	//  pow_complexity flags stored_seqno_sw public_key whom last_success xdata xdata
     CTOS	//  pow_complexity flags stored_seqno_sw public_key whom last_success xdata ds
-    LDGRAMS	//  pow_complexity flags stored_seqno_sw public_key whom last_success xdata _79 ds
+    LDTOMIS	//  pow_complexity flags stored_seqno_sw public_key whom last_success xdata _79 ds
     32 LDU	//  pow_complexity flags stored_seqno_sw public_key whom last_success xdata _79 _81 ds
     8 LDU	//  pow_complexity flags stored_seqno_sw public_key whom last_success xdata _79 _81 _84 ds
     8 LDU	//  pow_complexity flags stored_seqno_sw public_key whom last_success xdata amount target_delta min_cpl max_cpl ds
@@ -125,7 +125,7 @@ PROGRAM{
     8 STI	//  amount _138=0 whom _151
     256 STU	//  amount _138=0 _153
     ROT	//  _138=0 _153 amount
-    STGRAMS	//  _138=0 _154
+    STTOMIS	//  _138=0 _154
     107 STU	//  _168
     ENDC	//  _169
     3 PUSHINT	//  _169 _170=3
@@ -154,7 +154,7 @@ PROGRAM{
     29 THROWIFNOT
     s4 PUSH	//  xdata time skipped_data pow_complexity last_success xdata
     CTOS	//  xdata time skipped_data pow_complexity last_success ds
-    LDGRAMS	//  xdata time skipped_data pow_complexity last_success _108 _107
+    LDTOMIS	//  xdata time skipped_data pow_complexity last_success _108 _107
     NIP	//  xdata time skipped_data pow_complexity last_success ds
     32 LDU	//  xdata time skipped_data pow_complexity last_success target_delta ds
     s5 s2 PUXC	//  xdata time skipped_data pow_complexity ds target_delta time last_success
@@ -327,7 +327,7 @@ PROGRAM{
     256 LDU	//  _12 _15 ds
     PLDREF	//  seed pow_complexity xdata
     CTOS	//  seed pow_complexity ds
-    LDGRAMS	//  seed pow_complexity _20 ds
+    LDTOMIS	//  seed pow_complexity _20 ds
     32 PLDU	//  seed pow_complexity _20 _23
   }>
   get_public_key PROC:<{

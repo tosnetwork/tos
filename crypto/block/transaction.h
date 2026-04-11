@@ -141,7 +141,7 @@ struct ComputePhaseConfig {
     compute_threshold();
   }
   void compute_threshold();
-  td::uint64 gas_bought_for(td::RefInt256 nanograms) const;
+  td::uint64 gas_bought_for(td::RefInt256 nanotomis) const;
   td::RefInt256 compute_gas_price(td::uint64 gas_used) const;
   void set_gas_price(td::uint64 _gas_price) {
     gas_price = _gas_price;
@@ -419,7 +419,7 @@ struct Transaction {
   bool check_in_msg_state_hash(const ComputePhaseConfig& cfg);
   bool prepare_storage_phase(const StoragePhaseConfig& cfg, bool force_collect = true, bool adjust_msg_value = false);
   bool prepare_credit_phase();
-  td::uint64 gas_bought_for(const ComputePhaseConfig& cfg, td::RefInt256 nanograms);
+  td::uint64 gas_bought_for(const ComputePhaseConfig& cfg, td::RefInt256 nanotomis);
   bool compute_gas_limits(ComputePhase& cp, const ComputePhaseConfig& cfg);
   Ref<vm::Stack> prepare_vm_stack(ComputePhase& cp);
   std::vector<Ref<vm::Cell>> compute_vm_libraries(const ComputePhaseConfig& cfg);
