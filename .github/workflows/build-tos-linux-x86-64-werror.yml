@@ -20,8 +20,6 @@ jobs:
     steps:
     - name: Check out repository
       uses: actions/checkout@v6
-      with:
-        submodules: 'recursive'
 
     - name: Date Stamp
       shell: bash
@@ -42,15 +40,15 @@ jobs:
 
     # TODO: Preserve ccache cache between runs once we get rid of warning suppression mappings.
 
-    - name: Build TON
+    - name: Build TOS
       run: |
         cmake -S . -B build -G Ninja \
           -DCMAKE_C_COMPILER=clang-21 \
           -DCMAKE_CXX_COMPILER=clang++-21 \
           -DCMAKE_BUILD_TYPE=Release \
-          -DTON_USE_JEMALLOC=ON \
-          -DTON_USE_LLD=On \
-          -DTON_WERROR_BUILD=On
+          -DTOS_USE_JEMALLOC=ON \
+          -DTOS_USE_LLD=On \
+          -DTOS_WERROR_BUILD=On
         ninja -C build
 
     - name: Check spaces at EOL

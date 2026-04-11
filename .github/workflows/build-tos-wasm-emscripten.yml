@@ -1,4 +1,4 @@
-name: Emscripten TON build (wasm)
+name: Emscripten TOS build (wasm)
 
 on:
   pull_request:
@@ -20,9 +20,6 @@ jobs:
     steps:
     - name: Check out repository
       uses: actions/checkout@v6
-      with:
-        submodules: 'recursive'
-
     - name: Install system libraries
       run: |
         sudo apt-get update
@@ -42,10 +39,8 @@ jobs:
         path: 3pp_emscripten
         key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-22.04-3pp_em-${{ hashFiles('**/assembly/wasm/fift-func-wasm-build-ubuntu.sh') }}
 
-    - name: Build TON WASM artifacts
+    - name: Build TOS WASM artifacts
       run: |
-        git submodule sync --recursive
-        git submodule update
         cp assembly/wasm/fift-func-wasm-build-ubuntu.sh .
         chmod +x fift-func-wasm-build-ubuntu.sh
         ./fift-func-wasm-build-ubuntu.sh -a

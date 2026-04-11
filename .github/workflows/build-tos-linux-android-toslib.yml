@@ -20,9 +20,6 @@ jobs:
     steps:
     - name: Check out repository
       uses: actions/checkout@v6
-      with:
-        submodules: 'recursive'
-
     - name: Install system libraries
       run: |
         sudo apt-get update
@@ -44,10 +41,8 @@ jobs:
         path: android-ndk-r25b
         key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-22.04-cache-android-ndk-${{ hashFiles('**/assembly/android/build-android-toslib.sh') }}
 
-    - name: Build TON
+    - name: Build TOS
       run: |
-        git submodule sync --recursive
-        git submodule update
         cp assembly/android/build-android-toslib.sh .
         chmod +x build-android-toslib.sh
         ./build-android-toslib.sh -a

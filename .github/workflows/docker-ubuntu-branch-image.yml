@@ -16,8 +16,6 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-        with:
-          submodules: 'recursive'
 
       - name: Get tag as branch name
         id: tag
@@ -53,8 +51,6 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-        with:
-          submodules: 'recursive'
 
       - name: Get tag as branch name
         id: tag

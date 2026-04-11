@@ -1,4 +1,4 @@
-name: Ubuntu TON build (x86-64)
+name: Ubuntu TOS build (x86-64)
 
 on:
   pull_request:
@@ -23,9 +23,6 @@ jobs:
     steps:
     - name: Check out repository
       uses: actions/checkout@v6
-      with:
-        submodules: 'recursive'
-
     - name: Date Stamp
       shell: bash
       id: date-stamp
@@ -53,17 +50,15 @@ jobs:
         sudo apt -y update
         sudo apt install -y clang-21
 
-    - name: Restore cache TON
+    - name: Restore cache TOS
       uses: actions/cache@v4
       with:
         path: ~/.ccache
         key: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.os }}-shared-ccache-${{ steps.date-stamp.outputs.timestamp }}
         restore-keys: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.os }}-shared-ccache
 
-    - name: Build TON
+    - name: Build TOS
       run: |
-        git submodule sync --recursive
-        git submodule update
         cp assembly/native/build-ubuntu-shared.sh .
         chmod +x build-ubuntu-shared.sh
         ./build-ubuntu-shared.sh -t -c

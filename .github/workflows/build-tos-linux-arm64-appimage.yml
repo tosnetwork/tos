@@ -1,4 +1,4 @@
-name: Ubuntu TON build (AppImages, arm64)
+name: Ubuntu TOS build (AppImages, arm64)
 
 on:
   pull_request:
@@ -20,9 +20,6 @@ jobs:
     steps:
     - name: Check out repository
       uses: actions/checkout@v6
-      with:
-        submodules: 'recursive'
-
     - name: Date Stamp
       shell: bash
       id: date-stamp
@@ -43,23 +40,21 @@ jobs:
         sudo apt-get -y update
         sudo apt-get install -y clang-21
 
-    - name: Restore cache TON
+    - name: Restore cache TOS
       uses: actions/cache/restore@v4
       with:
         path: ~/.ccache
         key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-22.04-arm-portable-ccache-${{ steps.date-stamp.outputs.timestamp }}
         restore-keys: ${{ runner.os }}-${{ runner.arch }}-ubuntu-22.04-arm-portable-ccache
 
-    - name: Build TON
+    - name: Build TOS
       run: |
-        git submodule sync --recursive
-        git submodule update
         cp assembly/native/build-ubuntu-appimages.sh .
         chmod +x build-ubuntu-appimages.sh
         ./build-ubuntu-appimages.sh -a -c
         ccache -sp
 
-    - name: Save cache TON
+    - name: Save cache TOS
       uses: actions/cache/save@v4
       with:
         path: ~/.ccache
@@ -74,14 +69,14 @@ jobs:
         ./create-appimages.sh aarch64
         rm -rf artifacts
 
-    - name: Save/Restore cache TON libs
+    - name: Save/Restore cache TOS libs
       uses: actions/cache@v4
       with:
         path: ~/.ccache
         key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-22.04-arm-portable-libs-ccache-${{ steps.date-stamp.outputs.timestamp }}
         restore-keys: ${{ runner.os }}-${{ runner.arch }}-ubuntu-22.04-arm-portable-libs-ccache
 
-    - name: Build TON libs
+    - name: Build TOS libs
       run: |
         cp assembly/native/build-ubuntu-portable-libs.sh .
         chmod +x build-ubuntu-portable-libs.sh

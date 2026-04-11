@@ -1,4 +1,4 @@
-name: Windows TON build (portable, x86-64)
+name: Windows TOS build (portable, x86-64)
 
 on:
   pull_request:
@@ -29,9 +29,6 @@ jobs:
 
       - name: Check out current repository
         uses: actions/checkout@v6
-        with:
-          submodules: 'recursive'
-
       - name: Create directories
         run: |
           mkdir third_libs
@@ -43,10 +40,8 @@ jobs:
           path: third_libs
           key: ${{ runner.os }}-${{ runner.arch }}-windows-2022-3pp-${{ hashFiles('**/assembly/native/build-windows-2022.bat') }}
 
-      - name: Build TON
+      - name: Build TOS
         run: |
-          git submodule sync --recursive
-          git submodule update
           copy assembly\native\build-windows-github-2022.bat .
           copy assembly\native\build-windows-2022.bat .
           build-windows-github-2022.bat Enterprise
