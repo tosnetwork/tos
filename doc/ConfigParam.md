@@ -276,7 +276,7 @@ Three tiers: underload (triggers shard merge), soft (normal target), hard (absol
 | `mc_catchain_lifetime` | uint32 | **250** | Masterchain catchain session lifetime (seconds) |
 | `shard_catchain_lifetime` | uint32 | **250** | Shard catchain session lifetime (seconds) |
 | `shard_validators_lifetime` | uint32 | **1,000** | How long a shard validator group stays assigned (seconds) |
-| `shard_validators_num` | uint32 | **7** | Validators per shard. Scale to 23 as network grows. |
+| `shard_validators_num` | uint32 | **3** | Validators per shard. Scale up as network grows (e.g. 23 at 300+ validators). |
 | `shuffle_mc_validators` | Bool | **true** | Shuffle masterchain validator ordering each round |
 
 ## ConfigParam 29 — Consensus Config

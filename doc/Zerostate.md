@@ -161,7 +161,7 @@ elector_addr config.elector_smc!
   config.mc_fwd_prices!
 
 // ConfigParam 28: catchain params
-250 250 1000 7 true config.catchain_params!
+250 250 1000 3 true config.catchain_params!
 // mc_lifetime shard_lifetime shard_validators_count shard_val_num mc_shuffle
 
 // ConfigParam 29: consensus params
