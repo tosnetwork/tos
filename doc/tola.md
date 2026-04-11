@@ -33,8 +33,8 @@ At this stage, Tola should be read as a language direction and design document, 
 
 ## Related Docs
 
-- [actor.md](/home/tomi/tos/doc/actor.md)
-- [smc-guidelines.md](/home/tomi/tos/doc/smc-guidelines.md)
+- [actor.md](actor.md)
+- [smc-guidelines.md](smc-guidelines.md)
 
 All cross-actor communication is asynchronous. There are no synchronous calls.
 This eliminates reentrancy attacks by design.

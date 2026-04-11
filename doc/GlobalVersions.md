@@ -1,6 +1,6 @@
 # TOS Global Versions
 
-Global versioning is controlled by `ConfigParam 8`, defined in [block.tlb](/home/tomi/tos/crypto/block/block.tlb).
+Global versioning is controlled by `ConfigParam 8`, defined in [block.tlb](../crypto/block/block.tlb).
 
 It enables protocol capability bits and gates behavior across validators, contracts, and VM execution.
 
@@ -20,15 +20,15 @@ At a high level, the stored object includes:
 - protocol version
 - capability flags
 
-See [block.tlb](/home/tomi/tos/crypto/block/block.tlb) for the authoritative layout.
+See [block.tlb](../crypto/block/block.tlb) for the authoritative layout.
 
 ## How to Inspect It
 
 Use the lite client:
 
 ```bash
-cd /path/to/tos/build-clang21
-./lite-client/lite-client -C /path/to/tos-global.config.json -c "getconfig 8"
+cd build
+./lite-client/lite-client -C /data/tos-global.json -c "getconfig 8"
 ```
 
 ## Upgrade Guidance
@@ -40,8 +40,8 @@ cd /path/to/tos/build-clang21
 
 ## Related Docs
 
-- [ConfigParam.md](/home/tomi/tos/doc/ConfigParam.md)
-- [block.tlb](/home/tomi/tos/crypto/block/block.tlb)
+- [ConfigParam.md](ConfigParam.md)
+- [block.tlb](../crypto/block/block.tlb)
 * `GETGASFEE` (`gas_used is_mc - price`) - calculates gas fee.
 * `GETSTORAGEFEE` (`cells bits seconds is_mc - price`) - calculates storage fees (only current StoragePrices entry is used).
 * `GETFORWARDFEE` (`cells bits is_mc - price`) - calculates forward fee.

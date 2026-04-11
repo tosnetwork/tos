@@ -41,5 +41,5 @@ The main defenses are:
 
 ## Related Docs
 
-- [ConfigParam.md](/home/tomi/tos/doc/ConfigParam.md)
-- [Validator.md](/home/tomi/tos/doc/Validator.md)
+- [ConfigParam.md](ConfigParam.md)
+- [Validator.md](Validator.md)

@@ -47,8 +47,8 @@ TOS should continue to push toward:
 
 ## Related Docs
 
-- [README.md](/home/tomi/tos/README.md)
-- [smc-guidelines.md](/home/tomi/tos/doc/smc-guidelines.md)
+- [README.md](../README.md)
+- [smc-guidelines.md](smc-guidelines.md)
 
 Two inviolable axioms:
 

@@ -127,7 +127,7 @@ uv run test/tostester/generate_tl.py
 ### Step 1: Run the setup script
 
 ```bash
-sudo REPO_ROOT=/home/tomi/tos HOME=/home/tomi ./scripts/setup-testnet.sh --clean
+sudo REPO_ROOT=$(pwd) ./scripts/setup-testnet.sh --clean
 ```
 
 The `--clean` flag stops any running services and removes previous `/data/` contents.
@@ -406,7 +406,7 @@ b64_id = base64.b64encode(short_id).decode()                # config.json value
 
 ```bash
 ./scripts/testnet-ctl.sh stop
-sudo REPO_ROOT=/home/tomi/tos HOME=/home/tomi ./scripts/setup-testnet.sh --clean
+sudo REPO_ROOT=$(pwd) ./scripts/setup-testnet.sh --clean
 ./scripts/testnet-ctl.sh start
 ```
 

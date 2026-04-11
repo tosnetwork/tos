@@ -6,7 +6,7 @@ TOS Sites expose HTTP content through RLDP and ADNL rather than a traditional pu
 
 The operator and client entrypoint is:
 
-- [rldp-http-proxy](/home/tomi/tos/build-clang21/rldp-http-proxy/rldp-http-proxy)
+- [rldp-http-proxy](../build/rldp-http-proxy/rldp-http-proxy)
 
 ## Two Modes
 
@@ -18,12 +18,12 @@ The operator and client entrypoint is:
 Example pattern:
 
 ```bash
-cd /path/to/tos/build-clang21
+cd build
 ./rldp-http-proxy/rldp-http-proxy \
   -p 8080 \
   -c 3333 \
-  -C /path/to/tos-global.config.json \
-  -D /path/to/proxy-db
+  -C /data/tos-global.json \
+  -D ./proxy-db
 ```
 
 This runs a local HTTP proxy endpoint and resolves site addresses through the TOS network.
@@ -36,8 +36,8 @@ Example pattern:
 ./rldp-http-proxy/rldp-http-proxy \
   -a <public-ip>:3333 \
   -L <site-domain> \
-  -C /path/to/tos-global.config.json \
-  -D /path/to/proxy-db
+  -C /data/tos-global.json \
+  -D ./proxy-db
 ```
 
 ## Important Flags
@@ -55,8 +55,8 @@ Example pattern:
 
 TOS Sites depend on working DNS resolution when using named sites. Validate DNS first with:
 
-- [lite-client](/home/tomi/tos/build-clang21/lite-client/lite-client)
-- [toslib-cli](/home/tomi/tos/build-clang21/toslib/toslib-cli)
+- [lite-client](../build/lite-client/lite-client)
+- [toslib-cli](../build/toslib/toslib-cli)
 
 ## Operational Notes
 
@@ -66,5 +66,5 @@ TOS Sites depend on working DNS resolution when using named sites. Validate DNS 
 
 ## Related Docs
 
-- [DNS.md](/home/tomi/tos/doc/DNS.md)
-- [LiteClient.md](/home/tomi/tos/doc/LiteClient.md)
+- [DNS.md](DNS.md)
+- [LiteClient.md](LiteClient.md)

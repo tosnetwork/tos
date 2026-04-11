@@ -88,5 +88,5 @@ When in doubt, fail fast and leave state unchanged.
 
 ## Related Docs
 
-- [actor.md](/home/tomi/tos/doc/actor.md)
-- [tblkch.tex](/home/tomi/tos/doc/tblkch.tex)
+- [actor.md](actor.md)
+- [tblkch.tex](tblkch.tex)

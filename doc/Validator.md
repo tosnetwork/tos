@@ -4,9 +4,9 @@ This guide describes the operator view of the validator stack in this repository
 
 ## Main Components
 
-- [validator-engine](/home/tomi/tos/build-clang21/validator-engine/validator-engine)
-- [validator-engine-console](/home/tomi/tos/build-clang21/validator-engine-console/validator-engine-console)
-- [lite-client](/home/tomi/tos/build-clang21/lite-client/lite-client)
+- [validator-engine](../build/validator-engine/validator-engine)
+- [validator-engine-console](../build/validator-engine-console/validator-engine-console)
+- [lite-client](../build/lite-client/lite-client)
 
 ## Validator vs Full Node
 
@@ -24,12 +24,12 @@ This guide describes the operator view of the validator stack in this repository
 ## Starting the Validator Engine
 
 ```bash
-cd /path/to/tos/build-clang21
+cd build
 ./validator-engine/validator-engine \
   -C /data/tos/global-config.json \
   -c /data/tos/local-config.json \
   -D /data/tos/db \
-  -f /path/to/tos/crypto/fift/lib \
+  -f ./crypto/fift/lib \
   -I <public-ip>:<port> \
   -l /data/tos/logs/validator-engine.log
 ```
@@ -47,7 +47,7 @@ Useful options:
 Connect with:
 
 ```bash
-cd /path/to/tos/build-clang21
+cd build
 ./validator-engine-console/validator-engine-console \
   -a <server-address> \
   -k <client-private-key> \
@@ -71,6 +71,6 @@ Use the console for:
 
 ## Related Docs
 
-- [FullNode.md](/home/tomi/tos/doc/FullNode.md)
-- [ConfigParam.md](/home/tomi/tos/doc/ConfigParam.md)
-- [Tests.md](/home/tomi/tos/doc/Tests.md)
+- [FullNode.md](FullNode.md)
+- [ConfigParam.md](ConfigParam.md)
+- [Tests.md](Tests.md)

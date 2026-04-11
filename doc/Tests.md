@@ -4,12 +4,12 @@ This repository includes unit and integration-style binaries covering core crypt
 
 ## Build
 
-Use the verified build flow in [BUILD.md](/home/tomi/tos/BUILD.md).
+Use the verified build flow in [BUILD.md](../BUILD.md).
 
 If the tree is already configured:
 
 ```bash
-cd /path/to/tos/build-clang21
+cd build
 ninja -j128
 ```
 
@@ -18,14 +18,14 @@ ninja -j128
 List the registered tests:
 
 ```bash
-cd /path/to/tos/build-clang21
+cd build
 ctest -N
 ```
 
 ## Run the Full Suite
 
 ```bash
-cd /path/to/tos/build-clang21
+cd build
 ctest --output-on-failure -j128
 ```
 

@@ -10,7 +10,7 @@ This guide covers the direct binary workflow for running a TOS full node from th
 
 ## Before You Start
 
-- Build the project with [BUILD.md](/home/tomi/tos/BUILD.md)
+- Build the project with [BUILD.md](../BUILD.md)
 - Prepare a global config file
 - Prepare a local validator config file
 - Ensure the machine has stable storage, bandwidth, and public connectivity
@@ -31,12 +31,12 @@ Example structure:
 Start the node:
 
 ```bash
-cd /path/to/tos/build-clang21
+cd build
 ./validator-engine/validator-engine \
   -C /data/tos/global-config.json \
   -c /data/tos/local-config.json \
   -D /data/tos/db \
-  -f /path/to/tos/crypto/fift/lib \
+  -f ./crypto/fift/lib \
   -I <public-ip>:<port> \
   -l /data/tos/logs/validator-engine.log
 ```
@@ -84,6 +84,6 @@ Use the console and lite client to confirm:
 
 ## Related Docs
 
-- [Validator.md](/home/tomi/tos/doc/Validator.md)
-- [LiteClient.md](/home/tomi/tos/doc/LiteClient.md)
-- [Tests.md](/home/tomi/tos/doc/Tests.md)
+- [Validator.md](Validator.md)
+- [LiteClient.md](LiteClient.md)
+- [Tests.md](Tests.md)

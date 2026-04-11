@@ -12,17 +12,17 @@ The root resolver address is typically published in `ConfigParam 4`.
 
 ## Useful Tools
 
-- [lite-client](/home/tomi/tos/build-clang21/lite-client/lite-client)
-- [toslib-cli](/home/tomi/tos/build-clang21/toslib/toslib-cli)
-- [rldp-http-proxy](/home/tomi/tos/build-clang21/rldp-http-proxy/rldp-http-proxy)
+- [lite-client](../build/lite-client/lite-client)
+- [toslib-cli](../build/toslib/toslib-cli)
+- [rldp-http-proxy](../build/rldp-http-proxy/rldp-http-proxy)
 
 ## Inspecting DNS Data with Lite Client
 
 Start the lite client:
 
 ```bash
-cd /path/to/tos/build-clang21
-./lite-client/lite-client -C /path/to/tos-global.config.json
+cd build
+./lite-client/lite-client -C /data/tos-global.json
 ```
 
 Example commands:
@@ -40,7 +40,7 @@ Use category-specific lookups when you know the record type you need. Use catego
 `toslib-cli` is useful when you want a higher-level operator workflow:
 
 ```bash
-cd /path/to/tos/build-clang21
+cd build
 ./toslib/toslib-cli
 ```
 
@@ -72,6 +72,6 @@ This is normal. Do not assume every name resolves in one step.
 
 ## Related Docs
 
-- [LiteClient.md](/home/tomi/tos/doc/LiteClient.md)
-- [TosSites.md](/home/tomi/tos/doc/TosSites.md)
-- [ConfigParam.md](/home/tomi/tos/doc/ConfigParam.md)
+- [LiteClient.md](LiteClient.md)
+- [TosSites.md](TosSites.md)
+- [ConfigParam.md](ConfigParam.md)

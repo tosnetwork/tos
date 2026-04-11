@@ -4,11 +4,11 @@ The lite client is the fastest way to inspect chain state, configs, blocks, and 
 
 ## Build
 
-Use the verified build flow in [BUILD.md](/home/tomi/tos/BUILD.md).
+Use the verified build flow in [BUILD.md](../BUILD.md).
 
 The binary is:
 
-- [lite-client](/home/tomi/tos/build-clang21/lite-client/lite-client)
+- [lite-client](../build/lite-client/lite-client)
 
 ## Required Inputs
 
@@ -18,10 +18,10 @@ The binary is:
 ## Basic Launch
 
 ```bash
-cd /path/to/tos/build-clang21
+cd build
 ./lite-client/lite-client \
-  -C /path/to/tos-global.config.json \
-  -D /path/to/lite-client-db
+  -C /data/tos-global.json \
+  -D ./lite-client-db
 ```
 
 ## Useful Flags
@@ -52,8 +52,8 @@ For automation:
 
 ```bash
 ./lite-client/lite-client \
-  -C /path/to/tos-global.config.json \
-  -D /path/to/lite-client-db \
+  -C /data/tos-global.json \
+  -D ./lite-client-db \
   -c "getconfig 8"
 ```
 
@@ -68,6 +68,6 @@ If the client cannot connect:
 
 ## Related Docs
 
-- [DNS.md](/home/tomi/tos/doc/DNS.md)
-- [ConfigParam.md](/home/tomi/tos/doc/ConfigParam.md)
-- [FullNode.md](/home/tomi/tos/doc/FullNode.md)
+- [DNS.md](DNS.md)
+- [ConfigParam.md](ConfigParam.md)
+- [FullNode.md](FullNode.md)
