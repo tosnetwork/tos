@@ -1,0 +1,85 @@
+/*
+    This file is part of TOS Blockchain Library.
+
+    TOS Blockchain Library is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Lesser General Public License as published by
+    the Free Software Foundation, either version 2 of the License, or
+    (at your option) any later version.
+
+    TOS Blockchain Library is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
+
+    Copyright 2017-2020 Telegram Systems LLP
+    Copyright 2025-2026 TOS Blockchain Teams
+*/
+#pragma once
+
+#include "td/utils/Status.h"
+#include "td/utils/StringBuilder.h"
+#include "td/utils/common.h"
+#include "td/utils/logging.h"
+#include "td/utils/port/config.h"
+
+namespace td {
+
+extern int VERBOSITY_NAME(fd);
+
+class NativeFd {
+ public:
+#if TD_PORT_POSIX
+  using Fd = int;
+  using Socket = int;
+#elif TD_PORT_WINDOWS
+  using Fd = HANDLE;
+  using Socket = SOCKET;
+#endif
+  NativeFd() = default;
+  explicit NativeFd(Fd fd);
+  NativeFd(Fd fd, bool nolog);
+#if TD_PORT_WINDOWS
+  explicit NativeFd(Socket socket);
+#endif
+  NativeFd(const NativeFd &) = delete;
+  NativeFd &operator=(const NativeFd &) = delete;
+  NativeFd(NativeFd &&other) noexcept;
+  NativeFd &operator=(NativeFd &&other) noexcept;
+  ~NativeFd();
+
+  explicit operator bool() const noexcept;
+
+  Fd fd() const;
+  Socket socket() const;
+
+  Status set_is_blocking(bool is_blocking) const;
+
+  Status set_is_blocking_unsafe(bool is_blocking) const;  // may drop other Fd flags on non-Windows
+
+  Status duplicate(const NativeFd &to) const;
+
+  Result<uint32> maximize_snd_buffer(uint32 max_size = 0) const;
+  Result<uint32> maximize_rcv_buffer(uint32 max_size = 0) const;
+
+  void close();
+  Fd release();
+
+  Status validate() const;
+
+ private:
+  static Fd empty_fd();
+
+  Fd fd_ = empty_fd();
+#if TD_PORT_WINDOWS
+  bool is_socket_{false};
+#endif
+  static constexpr uint32 DEFAULT_MAX_SND_BUFFER_SIZE = (1 << 24);
+  static constexpr uint32 DEFAULT_MAX_RCV_BUFFER_SIZE = (1 << 24);
+};
+
+StringBuilder &operator<<(StringBuilder &sb, const NativeFd &fd);
+
+}  // namespace td

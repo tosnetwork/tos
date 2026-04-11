@@ -1,0 +1,35 @@
+__pycache__
+parser.out
+parsetab.py
+parsetab.pyc
+tdutils/generate/auto/
+tl/generate/auto/
+tl/generate/scheme/*.tlo
+compile_commands.json
+crypto/block/block-auto.cpp
+crypto/block/block-auto.h
+crypto/smartcont/auto/
+test/regression-tests.cache/
+*.swp
+**/*build*/
+.cache
+.idea
+.vscode
+.DS_Store
+dev/
+
+# Python files
+.venv
+.ruff_cache
+*.egg-info
+
+# Work directory for integration tests
+test/integration/.network
+
+test/tostester/tests/tl/generated
+test/tostester/src/tonapi
+build-mingw64/
+build-ucrt64/
+build/
+3pp_emscripten/
+/android-ndk-r27d-linux.zip

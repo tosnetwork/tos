@@ -1,0 +1,564 @@
+/*
+    This file is part of TOS Blockchain Library.
+
+    TOS Blockchain Library is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Lesser General Public License as published by
+    the Free Software Foundation, either version 2 of the License, or
+    (at your option) any later version.
+
+    TOS Blockchain Library is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
+
+    Copyright 2017-2020 Telegram Systems LLP
+    Copyright 2025-2026 TOS Blockchain Teams
+*/
+#include <limits>
+
+#include "td/utils/ConcurrentHashTable.h"
+#include "td/utils/crypto.h"
+#include "td/utils/format.h"
+#include "td/utils/misc.h"
+#include "td/utils/port/RwMutex.h"
+#include "vm/boc.h"
+#include "vm/cells/ExtCell.h"
+#include "vm/db/StaticBagOfCellsDb.h"
+
+namespace vm {
+//
+// Common interface
+//
+template <class ExtraT>
+class RootCell : public Cell {
+  struct PrivateTag {};
+
+ public:
+  td::Status set_data_cell(Ref<DataCell>&& data_cell) const override {
+    return cell_->set_data_cell(std::move(data_cell));
+  }
+  td::Result<LoadedCell> load_cell() const override {
+    return cell_->load_cell();
+  }
+  Ref<Cell> virtualize(td::uint32 effective_level) const override {
+    return cell_->virtualize(effective_level);
+  }
+  bool is_virtualized() const override {
+    return cell_->is_virtualized();
+  }
+  CellUsageTree::NodePtr get_tree_node() const override {
+    return cell_->get_tree_node();
+  }
+  bool is_loaded() const override {
+    return cell_->is_loaded();
+  }
+
+  // hash and level
+  LevelMask get_level_mask() const override {
+    return cell_->get_level_mask();
+  }
+
+  template <class T>
+  static Ref<Cell> create(Ref<Cell> cell, T&& extra) {
+    return Ref<RootCell>(true, std::move(cell), std::forward<T>(extra), PrivateTag{});
+  }
+  template <class T>
+  RootCell(Ref<Cell> cell, T&& extra, PrivateTag) : cell_(std::move(cell)), extra_(std::forward<T>(extra)) {
+  }
+
+ private:
+  Ref<Cell> cell_;
+  ExtraT extra_;
+  td::uint16 do_get_depth(td::uint32 level) const override {
+    return cell_->get_depth(level);
+  }
+  const Hash do_get_hash(td::uint32 level) const override {
+    return cell_->get_hash(level);
+  }
+};
+
+class DataCellCacheNoop {
+ public:
+  Ref<DataCell> store(int idx, Ref<DataCell> cell) {
+    return cell;
+  }
+  Ref<DataCell> load(int idx) {
+    return {};
+  }
+  void clear() {
+  }
+};
+class DataCellCacheMutex {
+ public:
+  Ref<DataCell> store(int idx, Ref<DataCell> cell) {
+    std::lock_guard lock(mutex_);
+    return cells_.emplace(idx, std::move(cell)).first->second;
+  }
+  Ref<DataCell> load(int idx) {
+    std::lock_guard lock(mutex_);
+    auto it = cells_.find(idx);
+    if (it != cells_.end()) {
+      return it->second;
+    }
+    return {};
+  }
+  void clear() {
+    std::lock_guard lock(mutex_);
+    cells_.clear();
+  }
+
+ private:
+  std::mutex mutex_;
+  // NB: in case of high contention, one should use multiple buckets with per bucket mutexes
+  td::HashMap<int, Ref<DataCell>> cells_;
+};
+
+class DataCellCacheTdlib {
+ public:
+  Ref<DataCell> store(int idx, Ref<DataCell> cell) {
+    return Ref<DataCell>(cells_.insert(as_key(idx), cell.get()));
+  }
+  Ref<DataCell> load(int idx) {
+    return Ref<DataCell>(cells_.find(as_key(idx), nullptr));
+  }
+
+  void clear() {
+    cells_.for_each([](auto key, auto value) { Ref<DataCell>{value}; });
+  }
+
+ private:
+  td::ConcurrentHashMap<td::uint32, const DataCell*> cells_;
+  td::uint32 as_key(int idx) {
+    td::uint32 key = static_cast<td::uint32>(idx + 1);
+    key *= 1000000007;
+    return key;
+  }
+};
+
+struct StaticBocExtCellExtra {
+  int idx;
+  std::weak_ptr<StaticBagOfCellsDb> deserializer;
+};
+
+class StaticBocLoader {
+ public:
+  static td::Result<Ref<DataCell>> load_data_cell(const Cell& cell, const StaticBocExtCellExtra& extra) {
+    auto deserializer = extra.deserializer.lock();
+    if (!deserializer) {
+      return td::Status::Error("StaticBocDb is already destroyed, cannot fetch cell");
+    }
+    return deserializer->load_by_idx(extra.idx);
+  }
+};
+using StaticBocExtCell = ExtCell<StaticBocExtCellExtra, StaticBocLoader>;
+using StaticBocRootCell = RootCell<std::shared_ptr<StaticBagOfCellsDb>>;
+
+td::Result<Ref<Cell>> StaticBagOfCellsDb::create_ext_cell(Cell::LevelMask level_mask, td::Slice hash, td::Slice depth,
+                                                          int idx) {
+  TRY_RESULT(res, StaticBocExtCell::create(PrunnedCellInfo{level_mask, hash, depth},
+                                           StaticBocExtCellExtra{idx, shared_from_this()}));
+  return std::move(res);
+}
+
+//
+// Baseline implementation
+//
+class StaticBagOfCellsDbBaselineImpl : public StaticBagOfCellsDb {
+ public:
+  explicit StaticBagOfCellsDbBaselineImpl(std::vector<Ref<Cell>> roots) : roots_(std::move(roots)) {
+  }
+  td::Result<size_t> get_root_count() override {
+    return roots_.size();
+  };
+  td::Result<Ref<Cell>> get_root_cell(size_t idx) override {
+    if (idx >= roots_.size()) {
+      return td::Status::Error(PSLICE() << "invalid root_cell index: " << idx);
+    }
+    return roots_[idx];
+  };
+
+ private:
+  std::vector<Ref<Cell>> roots_;
+
+  td::Result<Ref<DataCell>> load_by_idx(int idx) override {
+    UNREACHABLE();
+  }
+};
+
+td::Result<std::shared_ptr<StaticBagOfCellsDb>> StaticBagOfCellsDbBaseline::create(td::BlobView data) {
+  std::string buf(data.size(), '\0');
+  TRY_RESULT(slice, data.view(buf, 0));
+  return create(slice);
+}
+
+td::Result<std::shared_ptr<StaticBagOfCellsDb>> StaticBagOfCellsDbBaseline::create(td::Slice data) {
+  BagOfCells boc;
+  TRY_STATUS(boc.deserialize(data));
+  std::vector<Ref<Cell>> roots(boc.get_root_count());
+  for (int i = 0; i < boc.get_root_count(); i++) {
+    roots[i] = boc.get_root_cell(i);
+  }
+  return std::make_shared<StaticBagOfCellsDbBaselineImpl>(std::move(roots));
+}
+
+//
+// Main implementation
+//
+class StaticBagOfCellsDbLazyImpl : public StaticBagOfCellsDb {
+ public:
+  explicit StaticBagOfCellsDbLazyImpl(td::BlobView data, StaticBagOfCellsDbLazy::Options options)
+      : data_(std::move(data)), options_(std::move(options)) {
+    get_thread_safe_counter().add(1);
+  }
+  td::Result<size_t> get_root_count() override {
+    TRY_STATUS(check_status());
+    TRY_STATUS(check_result(load_header()));
+    return info_.root_count;
+  };
+  td::Result<Ref<Cell>> get_root_cell(size_t idx) override {
+    TRY_STATUS(check_status());
+    TRY_RESULT(root_count, get_root_count());
+    if (idx >= root_count) {
+      return td::Status::Error(PSLICE() << "invalid root_cell index: " << idx);
+    }
+    TRY_RESULT(cell_idx, load_root_idx(td::narrow_cast<int>(idx)));
+    // Load DataCell in order to ensure lower hashes correctness
+    // They will be valid for all non-root cell automaically
+    TRY_RESULT(data_cell, check_result(load_data_cell(td::narrow_cast<int>(cell_idx))));
+    return create_root_cell(std::move(data_cell));
+  };
+
+  ~StaticBagOfCellsDbLazyImpl() override {
+    //LOG(ERROR) << deserialize_cell_cnt_ << " " << deserialize_cell_hash_cnt_;
+    get_thread_safe_counter().add(-1);
+  }
+
+ private:
+  std::atomic<bool> should_cache_cells_{true};
+  td::BlobView data_;
+  StaticBagOfCellsDbLazy::Options options_;
+  bool has_info_{false};
+  BagOfCells::Info info_;
+
+  std::mutex index_i_mutex_;
+  std::mutex index_mutex_;
+  std::string index_data_;
+  std::atomic<int> index_i_{0};
+  size_t index_offset_{0};
+  DataCellCacheMutex cells_;
+  //DataCellCacheNoop cells_;
+  //DataCellCacheTdlib cells_;
+  int next_idx_{0};
+  Ref<Cell> empty_cell_;
+
+  //stats
+  td::ThreadSafeCounter deserialize_cell_cnt_;
+  td::ThreadSafeCounter deserialize_cell_hash_cnt_;
+
+  std::atomic<bool> has_error_{false};
+  std::mutex status_mutex_;
+  td::Status status_;
+
+  static td::NamedThreadSafeCounter::CounterRef get_thread_safe_counter() {
+    static auto res = td::NamedThreadSafeCounter::get_default().get_counter("StaticBagOfCellsDbLazy");
+    return res;
+  }
+
+  td::Status check_status() TD_WARN_UNUSED_RESULT {
+    if (has_error_.load(std::memory_order_relaxed)) {
+      std::lock_guard<std::mutex> guard(status_mutex_);
+      return status_.clone();
+    }
+    return td::Status::OK();
+  }
+  template <class T>
+  T check_result(T&& to_check) {
+    CHECK(!has_error_.load());
+    if (to_check.is_error()) {
+      std::lock_guard<std::mutex> guard(status_mutex_);
+      has_error_.store(true);
+      status_ = to_check.error().clone();
+    }
+    return std::forward<T>(to_check);
+  }
+
+  td::Result<Ref<DataCell>> load_by_idx(int idx) override {
+    TRY_STATUS(check_status());
+    return check_result(load_data_cell(idx));
+  }
+
+  struct Ptr {
+    td::MutableSlice as_slice() {
+      return data;
+    }
+    td::string data;
+  };
+  // May be optimized
+  auto alloc(size_t size) {
+    //return td::StackAllocator::alloc(size);
+    return Ptr{std::string(size, '\0')};
+  }
+
+  td::Result<size_t> load_idx_offset(int idx) {
+    if (idx < 0) {
+      return 0;
+    }
+    td::Slice offset_view;
+    if (info_.offset_byte_size > 8) {
+      return td::Status::Error(PSTRING() << "bag-of-cell error: invalid offset_byte_size " << info_.offset_byte_size);
+    }
+    char arr[8];
+    td::RwMutex::ReadLock guard;
+    if (info_.has_index) {
+      TRY_RESULT(new_offset_view, data_.view(td::MutableSlice(arr, info_.offset_byte_size),
+                                             info_.index_offset + (td::int64)idx * info_.offset_byte_size));
+      offset_view = new_offset_view;
+    } else {
+      std::lock_guard guard(index_mutex_);
+      offset_view = td::Slice(index_data_).substr((td::int64)idx * info_.offset_byte_size, info_.offset_byte_size);
+    }
+
+    if (offset_view.size() != (size_t)info_.offset_byte_size) {
+      return td::Status::Error(PSTRING() << "bag-of-cell error: invalid offset view size" << offset_view.size());
+    }
+    return td::narrow_cast<std::size_t>(info_.read_offset(offset_view.ubegin()));
+  }
+
+  td::Result<td::int64> load_root_idx(int root_i) {
+    if (root_i < 0 || root_i >= info_.root_count) {
+      return td::Status::Error(PSTRING() << "bag-of-cell error: invalid root index " << root_i);
+    }
+    if (!info_.has_roots) {
+      return 0;
+    }
+    char arr[8];
+    TRY_RESULT(idx_view, data_.view(td::MutableSlice(arr, info_.ref_byte_size),
+                                    info_.roots_offset + (td::int64)root_i * info_.ref_byte_size));
+    if (idx_view.size() != (size_t)info_.ref_byte_size) {
+      return td::Status::Error(PSTRING() << "bag-of-cell error: invalid idx_view size" << idx_view.size());
+    }
+    return info_.read_ref(idx_view.ubegin());
+  }
+
+  struct CellLocation {
+    std::size_t begin;
+    std::size_t end;
+    bool should_cache;
+  };
+  td::Result<CellLocation> get_cell_location(int idx) {
+    if (idx < 0 || idx >= info_.cell_count) {
+      return td::Status::Error(PSTRING() << "bag-of-cell error: invalid cell index " << idx);
+    }
+    TRY_STATUS(preload_index(idx));
+    TRY_RESULT(from, load_idx_offset(idx - 1));
+    TRY_RESULT(till, load_idx_offset(idx));
+    CellLocation res;
+    res.begin = from;
+    res.end = till;
+    res.should_cache = true;
+    if (info_.has_cache_bits) {
+      res.begin /= 2;
+      res.should_cache = res.end % 2 == 1;
+      res.end /= 2;
+    }
+    if (std::numeric_limits<std::size_t>::max() - res.begin < info_.data_offset ||
+        std::numeric_limits<std::size_t>::max() - res.end < info_.data_offset) {
+      return td::Status::Error(PSTRING() << "bag-of-cell error: invalid cell location (1) " << res.begin << ":"
+                                         << res.end);
+    }
+    res.begin += static_cast<std::size_t>(info_.data_offset);
+    res.end += static_cast<std::size_t>(info_.data_offset);
+    if (res.begin > res.end) {
+      return td::Status::Error(PSTRING() << "bag-of-cell error: invalid cell location (2) " << res.begin << ":"
+                                         << res.end);
+    }
+    return res;
+  }
+
+  td::Status load_header() {
+    if (has_info_) {
+      return td::Status::OK();
+    }
+    std::string header(1000, '\0');
+    TRY_RESULT(header_view, data_.view(td::MutableSlice(header).truncate(data_.size()), 0))
+    auto parse_res = info_.parse_serialized_header(header_view);
+    if (parse_res <= 0) {
+      return td::Status::Error("bag-of-cell error: failed to read header");
+    }
+    if (info_.total_size != data_.size()) {
+      return td::Status::Error("bag-of-cell error: wrong data size");
+    }
+    if (options_.check_crc32c && info_.has_crc32c) {
+      std::string buf(td::narrow_cast<std::size_t>(info_.total_size), '\0');
+      TRY_RESULT(data, data_.view(td::MutableSlice(buf), 0));
+      unsigned crc_computed = td::crc32c(td::Slice{data.ubegin(), data.uend() - 4});
+      unsigned crc_stored = td::as<unsigned>(data.uend() - 4);
+      if (crc_computed != crc_stored) {
+        return td::Status::Error(PSLICE()
+                                 << "bag-of-cells CRC32C mismatch: expected " << td::format::as_hex(crc_computed)
+                                 << ", found " << td::format::as_hex(crc_stored));
+      }
+    }
+    has_info_ = true;
+    return td::Status::OK();
+  }
+
+  td::Status preload_index(int idx) {
+    if (info_.has_index) {
+      return td::Status::OK();
+    }
+    if (index_i_.load(std::memory_order_relaxed) > idx) {
+      return td::Status::OK();
+    }
+
+    std::lock_guard<std::mutex> index_i_guard(index_i_mutex_);
+    std::array<char, 1024> buf;
+    auto buf_slice = td::MutableSlice(buf.data(), buf.size());
+    for (; index_i_ <= idx; index_i_++) {
+      auto offset = td::narrow_cast<size_t>(info_.data_offset + index_offset_);
+      if (data_.size() < offset) {
+        return td::Status::Error(PSLICE() << "bag-of-cells error: invalid offset " << offset
+                                          << " (size=" << data_.size() << ")");
+      }
+      TRY_RESULT(cell, data_.view(buf_slice.copy().truncate(data_.size() - offset), offset));
+      CellSerializationInfo cell_info;
+      TRY_STATUS(cell_info.init(cell, info_.ref_byte_size));
+      index_offset_ += cell_info.end_offset;
+      if ((unsigned)info_.offset_byte_size > 8) {
+        return td::Status::Error(PSTRING() << "bag-of-cell error: invalid offset_byte_size " << info_.offset_byte_size);
+      }
+      td::uint8 tmp[8];
+      info_.write_offset(tmp, index_offset_);
+      std::lock_guard guard(index_mutex_);
+      index_data_.append(reinterpret_cast<const char*>(tmp), info_.offset_byte_size);
+    }
+    return td::Status::OK();
+  }
+
+  Ref<Cell> get_any_cell(int idx) {
+    return get_data_cell(idx);
+  }
+
+  Ref<DataCell> get_data_cell(int idx) {
+    return cells_.load(idx);
+  }
+
+  Ref<DataCell> set_data_cell(int idx, Ref<DataCell> cell) {
+    if (/*idx >= info_.root_count || */ !should_cache_cells_.load(std::memory_order_relaxed)) {
+      return cell;
+    }
+    CHECK(cell.not_null());
+    return cells_.store(idx, std::move(cell));
+  }
+
+  Ref<Cell> set_any_cell(int idx, Ref<Cell> cell) {
+    auto data_cell = Ref<DataCell>(cell);
+    if (data_cell.is_null()) {
+      return cell;
+    }
+    return set_data_cell(idx, std::move(data_cell));
+  }
+
+  td::Result<Ref<Cell>> load_any_cell(int idx) {
+    {
+      auto cell = get_any_cell(idx);
+      if (cell.not_null()) {
+        return std::move(cell);
+      }
+    }
+
+    TRY_RESULT(cell_location, get_cell_location(idx));
+    auto buf = alloc(cell_location.end - cell_location.begin);
+    TRY_RESULT(cell_slice, data_.view(buf.as_slice(), cell_location.begin));
+    TRY_RESULT(res, deserialize_any_cell(idx, cell_slice, cell_location.should_cache));
+    return std::move(res);
+  }
+
+  td::Result<Ref<DataCell>> load_data_cell(int idx) {
+    {
+      auto cell = get_data_cell(idx);
+      if (cell.not_null()) {
+        return std::move(cell);
+      }
+    }
+
+    TRY_RESULT(cell_location, get_cell_location(idx));
+    auto buf = alloc(cell_location.end - cell_location.begin);
+    TRY_RESULT(cell_slice, data_.view(buf.as_slice(), cell_location.begin));
+    TRY_RESULT(res, deserialize_data_cell(idx, cell_slice, cell_location.should_cache));
+    return std::move(res);
+  }
+
+  td::Result<Ref<DataCell>> deserialize_data_cell(int idx, td::Slice cell_slice, bool should_cache) {
+    CellSerializationInfo cell_info;
+    TRY_STATUS(cell_info.init(cell_slice, info_.ref_byte_size));
+    if (cell_slice.size() != cell_info.end_offset) {
+      return td::Status::Error(PSLICE() << "unused space in cell #" << idx << " serialization");
+    }
+    return deserialize_data_cell(idx, cell_slice, cell_info, should_cache);
+  }
+
+  td::Result<Ref<DataCell>> deserialize_data_cell(int idx, td::Slice cell_slice, const CellSerializationInfo& cell_info,
+                                                  bool should_cache) {
+    deserialize_cell_cnt_.add(1);
+    Ref<Cell> refs[4];
+    if (cell_info.refs_cnt > 4) {
+      return td::Status::Error(PSLICE() << "invalid bag-of-cells cell #" << idx << " has " << cell_info.refs_cnt
+                                        << " refs");
+    }
+    auto* ref_ptr = cell_slice.ubegin() + cell_info.refs_offset;
+    for (int k = 0; k < cell_info.refs_cnt; k++, ref_ptr += info_.ref_byte_size) {
+      int ref_idx = td::narrow_cast<int>(info_.read_ref(ref_ptr));
+      if (ref_idx >= info_.cell_count) {
+        return td::Status::Error(PSLICE() << "invalid bag-of-cells cell #" << idx << " refers to cell #" << ref_idx
+                                          << " which is too big " << td::tag("cell_count", info_.cell_count));
+      }
+      if (idx >= ref_idx) {
+        return td::Status::Error(PSLICE() << "invalid bag-of-cells cell #" << idx << " refers to cell #" << ref_idx
+                                          << " which is a backward reference");
+      }
+      TRY_RESULT(ref, load_any_cell(ref_idx));
+      refs[k] = std::move(ref);
+    }
+
+    TRY_RESULT(data_cell, cell_info.create_data_cell(cell_slice, td::Span<Ref<Cell>>(refs, cell_info.refs_cnt)));
+    if (!should_cache) {
+      return std::move(data_cell);
+    }
+    return set_data_cell(idx, std::move(data_cell));
+  }
+
+  td::Result<Ref<Cell>> deserialize_any_cell(int idx, td::Slice cell_slice, bool should_cache) {
+    CellSerializationInfo cell_info;
+    TRY_STATUS(cell_info.init(cell_slice, info_.ref_byte_size));
+    if (cell_info.with_hashes) {
+      deserialize_cell_hash_cnt_.add(1);
+      int n = cell_info.level_mask.get_hashes_count();
+      return create_ext_cell(cell_info.level_mask, cell_slice.substr(cell_info.hashes_offset, n * Cell::hash_bytes),
+                             cell_slice.substr(cell_info.depth_offset, n * Cell::depth_bytes), idx);
+    }
+    TRY_RESULT(data_cell, deserialize_data_cell(idx, cell_slice, cell_info, should_cache));
+    return std::move(data_cell);
+  }
+  td::Result<Ref<Cell>> create_root_cell(Ref<DataCell> data_cell) {
+    return StaticBocRootCell::create(std::move(data_cell), shared_from_this());
+  }
+};
+
+td::Result<std::shared_ptr<StaticBagOfCellsDb>> StaticBagOfCellsDbLazy::create(td::BlobView data, Options options) {
+  return std::make_shared<StaticBagOfCellsDbLazyImpl>(std::move(data), std::move(options));
+}
+
+td::Result<std::shared_ptr<StaticBagOfCellsDb>> StaticBagOfCellsDbLazy::create(td::BufferSlice data, Options options) {
+  return std::make_shared<StaticBagOfCellsDbLazyImpl>(td::BufferSliceBlobView::create(std::move(data)),
+                                                      std::move(options));
+}
+
+td::Result<std::shared_ptr<StaticBagOfCellsDb>> StaticBagOfCellsDbLazy::create(std::string data, Options options) {
+  return create(td::BufferSliceBlobView::create(td::BufferSlice(data)), std::move(options));
+}
+
+}  // namespace vm

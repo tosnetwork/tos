@@ -1,0 +1,143 @@
+/*
+    This file is part of TOS Blockchain Library.
+
+    TOS Blockchain Library is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Lesser General Public License as published by
+    the Free Software Foundation, either version 2 of the License, or
+    (at your option) any later version.
+
+    TOS Blockchain Library is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
+
+    Copyright 2017-2020 Telegram Systems LLP
+    Copyright 2025-2026 TOS Blockchain Teams
+*/
+#pragma once
+
+#include <utility>
+#include <vector>
+
+#include "adnl/adnl-ext-client.h"
+#include "adnl/adnl.h"
+#include "dht/dht.h"
+#include "overlay/overlays.h"
+#include "quic/quic-sender.h"
+#include "rldp/rldp.h"
+#include "rldp2/rldp.h"
+#include "td/actor/actor.h"
+#include "tos/tos-types.h"
+#include "validator/validator.h"
+
+#include "types.h"
+
+namespace tos {
+
+namespace validator {
+
+namespace fullnode {
+
+constexpr int VERBOSITY_NAME(FULL_NODE_WARNING) = verbosity_WARNING;
+constexpr int VERBOSITY_NAME(FULL_NODE_BENCHMARK) = verbosity_WARNING;
+constexpr int VERBOSITY_NAME(FULL_NODE_NOTICE) = verbosity_INFO;
+constexpr int VERBOSITY_NAME(FULL_NODE_INFO) = verbosity_DEBUG;
+constexpr int VERBOSITY_NAME(FULL_NODE_DEBUG) = verbosity_DEBUG;
+constexpr int VERBOSITY_NAME(FULL_NODE_EXTRA_DEBUG) = verbosity_DEBUG + 1;
+
+struct FullNodeConfig {
+  FullNodeConfig() = default;
+  FullNodeConfig(const tl_object_ptr<tos_api::engine_validator_fullNodeConfig>& obj);
+  tl_object_ptr<tos_api::engine_validator_fullNodeConfig> tl() const;
+  bool operator==(const FullNodeConfig& rhs) const = default;
+
+  bool ext_messages_broadcast_disabled_ = false;
+};
+
+struct FullNodeOptions {
+  FullNodeConfig config_;
+  double public_broadcast_speed_multiplier_ = 1.0;
+  double private_broadcast_speed_multiplier_ = 1.0;
+  double fast_sync_broadcast_speed_multiplier_ = 1.0;
+  double initial_sync_delay_ = 60.0;
+  double ratelimit_window_size_ = 1.0;
+  size_t ratelimit_global_ = 96, ratelimit_heavy_ = 64, ratelimit_medium_ = 72;
+};
+
+struct CustomOverlayParams {
+  std::string name_;
+  std::vector<adnl::AdnlNodeIdShort> nodes_;
+  std::map<adnl::AdnlNodeIdShort, int> msg_senders_;
+  std::set<adnl::AdnlNodeIdShort> block_senders_;
+  std::vector<ShardIdFull> sender_shards_;
+  bool skip_public_msg_send_ = false;
+
+  bool send_shard(const ShardIdFull& shard) const;
+  static CustomOverlayParams fetch(const tos_api::engine_validator_customOverlay& f);
+};
+
+class FullNode : public td::actor::Actor {
+ public:
+  virtual ~FullNode() = default;
+
+  virtual void update_dht_node(td::actor::ActorId<dht::Dht> dht) = 0;
+
+  virtual void add_permanent_key(PublicKeyHash key, td::Promise<td::Unit> promise) = 0;
+  virtual void del_permanent_key(PublicKeyHash key, td::Promise<td::Unit> promise) = 0;
+  virtual void add_collator_adnl_id(adnl::AdnlNodeIdShort id) = 0;
+  virtual void del_collator_adnl_id(adnl::AdnlNodeIdShort id) = 0;
+
+  virtual void sign_shard_overlay_certificate(ShardIdFull shard_id, PublicKeyHash signed_key, td::uint32 expiry_at,
+                                              td::uint32 max_size, td::Promise<td::BufferSlice> promise) = 0;
+  virtual void import_shard_overlay_certificate(ShardIdFull shard_id, PublicKeyHash signed_key,
+                                                std::shared_ptr<tos::overlay::Certificate> cert,
+                                                td::Promise<td::Unit> promise) = 0;
+
+  virtual void update_adnl_id(adnl::AdnlNodeIdShort adnl_id, td::Promise<td::Unit> promise) = 0;
+  virtual void set_config(FullNodeConfig config) = 0;
+
+  virtual void add_custom_overlay(CustomOverlayParams params, td::Promise<td::Unit> promise) = 0;
+  virtual void del_custom_overlay(std::string name, td::Promise<td::Unit> promise) = 0;
+
+  virtual void process_block_broadcast(BlockBroadcast broadcast, bool signatures_checked = false) = 0;
+  virtual void process_block_candidate_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno,
+                                                 td::uint32 validator_set_hash, td::BufferSlice data) = 0;
+  virtual void process_shard_block_info_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno,
+                                                  td::BufferSlice data) = 0;
+  virtual void get_out_msg_queue_query_token(td::Promise<std::unique_ptr<ActionToken>> promise) = 0;
+
+  virtual void set_validator_telemetry_filename(std::string value) = 0;
+
+  virtual void import_fast_sync_member_certificate(adnl::AdnlNodeIdShort local_id,
+                                                   overlay::OverlayMemberCertificate cert) = 0;
+
+  static constexpr td::uint32 max_block_size() {
+    return 4 << 20;
+  }
+  static constexpr td::uint32 max_proof_size() {
+    return 4 << 20;
+  }
+  static constexpr td::uint64 max_zerostate_size() {
+    return 16 << 20;
+  }
+  enum { broadcast_mode_public = 1, broadcast_mode_fast_sync = 2, broadcast_mode_custom = 4 };
+
+  static constexpr td::int32 MAX_FAST_SYNC_OVERLAY_CLIENTS = 5;
+
+  static td::actor::ActorOwn<FullNode> create(
+      tos::PublicKeyHash local_id, adnl::AdnlNodeIdShort adnl_id, FileHash zero_state_file_hash, FullNodeOptions opts,
+      td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
+      td::actor::ActorId<rldp::Rldp> rldp, td::actor::ActorId<rldp2::Rldp> rldp2,
+      td::actor::ActorId<quic::QuicSender> quic, td::actor::ActorId<dht::Dht> dht,
+      td::actor::ActorId<overlay::Overlays> overlays, td::actor::ActorId<ValidatorManagerInterface> validator_manager,
+      td::actor::ActorId<adnl::AdnlExtClient> client, std::string db_root, td::Promise<td::Unit> started_promise);
+};
+
+}  // namespace fullnode
+
+}  // namespace validator
+
+}  // namespace tos

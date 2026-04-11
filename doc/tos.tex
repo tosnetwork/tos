@@ -1,0 +1,1051 @@
+\documentclass[12pt,oneside]{article}
+\usepackage[T1]{fontenc}
+\usepackage{amssymb, amsmath, amsfonts}
+\usepackage[mathscr]{euscript}
+\usepackage{theorem}
+\usepackage[english]{babel}
+\usepackage{bm}
+\usepackage[bookmarks=true,pdfauthor={Tomi Setsu},pdftitle={TOS: Actor-Oriented Blockchain}]{hyperref}
+\usepackage{fancyhdr}
+\usepackage{caption}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+%
+\setlength{\headheight}{15.2pt}
+\pagestyle{fancy}
+\renewcommand{\headrulewidth}{0.5pt}
+%
+\fancyhf{}
+\fancyfoot[C]{\thepage}
+\def\markbothsame#1{\fancyhead[C]{#1}}
+\def\mysection#1{\section{#1}\fancyhead[C]{\textsc{Chapter \textbf{\thesection.} #1}}}
+\def\mysubsection#1{\subsection{#1}\fancyhead[C]{\small{\textsc{\textrm{\thesubsection.} #1}}}}
+%
+\lstdefinelanguage{Tola}{
+  keywords={actor, abstract, function, external, internal, view, payable, pure,
+    returns, require, revert, emit, event, modifier, constructor,
+    if, else, for, while, do, repeat, return, import, is,
+    mapping, struct, enum, type, constant, immutable, try, catch,
+    unchecked, unsafe, cell, interface, library, bounce, tick, tock,
+    receive_external, selfdestruct, setCode},
+  keywordstyle=\color{blue}\bfseries,
+  ndkeywords={uint8, uint16, uint32, uint64, uint128, uint256,
+    int8, int16, int32, int64, int128, int256,
+    bool, bytes, bytes32, string, ActorId, SendMode, SendOptions, ReserveMode},
+  ndkeywordstyle=\color{teal}\bfseries,
+  sensitive=true,
+  comment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  commentstyle=\color{gray}\itshape,
+  stringstyle=\color{red},
+  morestring=[b]",
+}
+\lstset{
+  language=Tola,
+  basicstyle=\small\ttfamily,
+  breaklines=true,
+  frame=single,
+  xleftmargin=1em,
+  numbers=none,
+}
+%
+\hfuzz=0.8pt
+
+\title{\vspace{-1cm}\textbf{TOS: An Actor-Oriented Blockchain Platform}\\[0.5em]
+\large Parallel Execution, Native Standard Library, and Developer-First Design}
+\author{Tomi Setsu}
+\date{April 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+TOS is a high-performance blockchain platform designed from the ground
+up around the Actor Model. Every smart contract is a collection of
+fine-grained, independently-executing actors, giving TOS intra-contract
+parallelism that existing blockchains cannot achieve. The platform
+combines a Cell/BOC data layer---providing native Merkle proofs and
+compact serialization---with a simple key-value state interface exposed
+through a new Solidity-like language called Tola. TOS ships a native
+C++ standard actor library---analogous to Ethereum's OpenZeppelin but
+compiled into the node binary---enabling zero-deployment, zero-audit
+standard primitives for tokens, NFTs, governance, and DeFi.
+\end{abstract}
+
+\clearpage
+\tableofcontents
+
+\clearpage
+
+%=============================================================
+\mysection{Introduction and Motivation}\label{sect:intro}
+%=============================================================
+
+\mysubsection{The State of Blockchains in 2026}
+
+The blockchain landscape in 2026 is shaped by five converging forces:
+
+\begin{enumerate}
+\item \textbf{The AI agent economy.} Autonomous AI agents are
+  becoming first-class economic actors. By early 2026, agents hold
+  their own wallets, negotiate payments via standardized HTTP payment
+  protocols~\cite{x402}, and execute thousands of micro-transactions
+  per second without human intervention. Account abstraction and tool
+  invocation standards (such as the Model Context Protocol) are
+  maturing rapidly. This demands blockchains that can handle
+  \emph{massive volumes of small, autonomous, machine-to-machine
+  transactions} with low latency and predictable fees---requirements
+  that rollup-fragmented architectures and serial-execution VMs cannot
+  meet.
+
+\item \textbf{Throughput vs.\ decentralization.} High-throughput
+  chains achieve speed by concentrating hardware requirements, while
+  rollup-centric roadmaps fragment liquidity and user experience
+  across hundreds of Layer-2 networks. Recent industry efforts toward
+  parallel EVM execution and Verkle Tree state representations are
+  promising, but remain incremental patches to fundamentally serial
+  architectures designed a decade ago.
+
+\item \textbf{Parallel execution vs.\ developer simplicity.}
+  Object-based and resource-based parallel execution models have
+  emerged, but their programming paradigms require developers to learn
+  entirely new languages and mental models. Account-locking approaches
+  require manual specification of all state touched by a transaction,
+  creating friction and frequent failures. The vast majority of smart
+  contract developers remain trained on Solidity-style syntax.
+
+\item \textbf{Privacy as a first-class requirement.} Regulators
+  demand transparency while users demand confidentiality. The
+  zero-knowledge proof market is projected to reach \$7.6B by 2033.
+  Industry efforts have produced encrypted rollup transactions,
+  enterprise privacy sandboxes, and confidential compute frameworks
+  for smart contracts. Yet no Layer-1 platform offers privacy as a
+  \emph{native, per-actor capability} rather than an afterthought
+  bolted onto a transparent execution model.
+
+\item \textbf{The quantum threat.} Recent estimates suggest a
+  cryptographically-relevant quantum computer could break elliptic
+  curve signatures---the scheme securing the vast majority of
+  blockchains---in under nine minutes~\cite{QuantumThreat}. A
+  significant fraction of on-chain value has exposed public keys and
+  would be immediately vulnerable. NIST standardized post-quantum
+  signature schemes (SLH-DSA/FIPS~205, ML-DSA/FIPS~204) in 2024, and
+  the industry broadly targets 128-bit provable post-quantum security
+  by decade's end. Yet no shipping blockchain has a \emph{modular,
+  actor-level mechanism} for upgrading cryptographic primitives
+  without a network-wide hard fork.
+\end{enumerate}
+
+TOS addresses all five forces through a single architectural
+principle: the \textbf{Actor Model} applied at the smart contract
+level, with natural extension points for AI agent workloads, per-actor
+privacy, and post-quantum authentication.
+
+\mysubsection{The Actor Model Insight}
+
+Two axioms from first principles:
+
+\begin{enumerate}
+\item Two execution units can run in parallel \emph{if and only if}
+  their mutable state is completely disjoint.
+\item Blockchain determinism requires all validators to agree on
+  execution order and results.
+\end{enumerate}
+
+The conventional account model treats each smart contract as a
+monolithic state blob. A popular token contract with millions of
+users must serialize \emph{every} transfer because they all touch the
+same balance mapping. Sharding helps when different contracts are
+busy, but cannot help when one contract is the bottleneck.
+
+The Actor Model solves this by decomposing a contract's state into
+\textbf{independent actors}, each owning an isolated state partition
+with its own logical timeline. Actors within the same contract
+communicate via asynchronous messages, and---crucially---can execute
+\textbf{in parallel} because their state never overlaps.
+
+Crucially, the actor boundary is also a natural \textbf{privacy
+boundary} and a natural \textbf{cryptographic boundary}: each actor
+can independently adopt encrypted state, zero-knowledge proofs, or
+post-quantum signature schemes without affecting other actors or
+requiring a global protocol upgrade.
+
+\mysubsection{Design Principles}
+
+TOS is governed by seven design principles:
+
+\begin{enumerate}
+\item \textbf{Actor as the minimum execution unit.} Not accounts, not
+  transactions---actors. Each actor owns its state, processes one
+  message at a time, and communicates only through async messages.
+
+\item \textbf{Cell inside, KV outside.} Internally, TOS stores all
+  state in an elegant Cell/Merkle data structure that provides native
+  Merkle proofs and compact consensus encoding. Developers see only
+  \texttt{state\_get}/\texttt{state\_put}---a key-value interface.
+  Zero-cost abstraction: the compiler maps KV operations to Cell
+  dictionary operations transparently.
+
+\item \textbf{Native standard library.} The most-used contract
+  patterns (tokens, NFTs, access control, governance, DeFi primitives)
+  ship as native C++ built-in actors, compiled into the node binary.
+  Users instantiate actors via message, not deployment. Audited once,
+  shared by all.
+
+\item \textbf{Familiar syntax.} The Tola language uses widely-adopted
+  smart contract syntax conventions (\texttt{function}, \texttt{require},
+  \texttt{mapping}, \texttt{modifier}, \texttt{event}) so the largest
+  developer community can onboard with minimal learning. The single
+  new concept: cross-actor calls are \texttt{.send()}, not synchronous
+  function calls.
+
+\item \textbf{AI-agent ready.} Actors are the natural unit for agent
+  wallets: each agent is an actor with its own state, spending policy,
+  and message interface. The async messaging model matches the
+  request/response pattern of MCP and x402, enabling high-throughput
+  autonomous agent economies without blocking or reentrancy risks.
+
+\item \textbf{Privacy-extensible.} Because each actor's state is an
+  isolated HashmapE, a confidential actor can encrypt its state entries
+  and prove correct execution via zero-knowledge proofs without
+  touching any other actor's data. Privacy is a per-actor choice, not
+  a network-wide mode switch.
+
+\item \textbf{Quantum-resilient by design.} Actor-level authentication
+  means each actor can independently adopt post-quantum signature
+  schemes (e.g., SPHINCS+/SLH-DSA). A built-in \texttt{PostQuantumAuth}
+  actor module can replace ECDSA for any actor without a chain-wide
+  hard fork. The upgrade is granular: critical actors (treasuries,
+  bridges) can go post-quantum immediately while the rest of the
+  network migrates at its own pace.
+\end{enumerate}
+
+%=============================================================
+\mysection{Architecture Overview}\label{sect:arch}
+%=============================================================
+
+\mysubsection{The Actor as the Atomic Unit}
+
+The minimum addressable unit in TOS is not an account but an
+\textbf{actor}. An account is simply a deployment container that holds
+shared code and groups related actors together:
+
+\begin{verbatim}
+Account (unique address)
+ +-- code: Cell             <- shared by all actors in this account
+ +-- balance: Coins         <- shared (account-level)
+ +-- actors: HashmapE       <- actor_id -> actor state (Cell dict)
+ |    +-- actor_0: HashmapE <- independent KV state
+ |    +-- actor_1: HashmapE <- independent KV state
+ |    +-- ...
+ +-- actor_lt: HashmapE     <- actor_id -> independent logical time
+\end{verbatim}
+
+Each actor is identified by a three-part address:
+\texttt{workchain:account\_id:actor\_id}. The \texttt{actor\_id} is
+deterministically derived: $\texttt{actor\_id} = \text{sha256}(\texttt{account\_address} \| \texttt{discriminator})$.
+
+This design stands in contrast to conventional account-based chains
+where a single contract holds one monolithic state tree behind one
+logical timeline, forcing all operations to serialize.
+
+\mysubsection{Parallel Execution}
+
+Different actors under the same account execute in parallel because
+their state (HashmapE) is disjoint. The node's \texttt{td::actor}
+scheduler naturally handles this: each on-chain actor maps to a
+\texttt{td::actor::Actor} instance, and the scheduler's thread pool
+dispatches them concurrently. Same-actor messages remain serialized
+(\texttt{ActorLocker} guarantee).
+
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+& \textbf{Account Model} & \textbf{Actor Model (TOS)} \\
+\midrule
+Minimum unit & Account & Actor \\
+Parallelism & $N$ accounts & $N \times M$ actors \\
+Hot-contract throughput & 1$\times$ & $M\times$ (actors per contract) \\
+Reentrancy & Possible & Impossible by design \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\mysubsection{Cell Inside, KV Outside}
+
+TOS uses the Cell data structure as its internal storage layer.
+Every actor's state is a \texttt{HashmapE} (Cell-based dictionary).
+This yields three properties:
+
+\begin{itemize}
+\item \textbf{Native Merkle proofs.} The proof chain
+  \texttt{block\_root} $\to$ \texttt{shard\_state} $\to$
+  \texttt{account} $\to$ \texttt{actor} $\to$ \texttt{key=value} is
+  entirely Cell-based, giving every actor state entry a compact,
+  verifiable Merkle path.
+\item \textbf{Uniform BOC encoding.} Blocks, transactions, and
+  messages all use Cell encoding, providing a single serialization
+  format across the entire stack.
+\item \textbf{Developers see KV.} The new TVM opcodes
+  \texttt{STATEGET}/\texttt{STATESET}/\texttt{STATEDEL} wrap
+  \texttt{HashmapE::get}/\texttt{set}/\texttt{remove}. Developers
+  write \texttt{balance += amount}, and the compiler generates the
+  Cell dictionary operations.
+\end{itemize}
+
+%=============================================================
+\mysection{Execution Model}\label{sect:exec}
+%=============================================================
+
+\mysubsection{Two Execution Paths}
+
+TOS supports two execution paths sharing the same state interface
+(\texttt{vm::Dictionary} / \texttt{HashmapE}):
+
+\begin{center}
+\begin{tabular}{llll}
+\toprule
+\textbf{Path} & \textbf{For} & \textbf{Performance} & \textbf{Safety} \\
+\midrule
+Native C++ & Built-in/system actors & Fastest & Trusted (ships with node) \\
+TVM & User-deployed contracts & Medium & TVM sandbox \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Built-in actors and user-deployed actors can exchange messages freely
+because they share the same state format and message protocol.
+
+\mysubsection{TVM Extensions}
+
+Four new TVM opcodes enable actor-native programming:
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Opcode} & \textbf{Semantics} \\
+\midrule
+\texttt{STATEGET} & Read a key from the actor's HashmapE \\
+\texttt{STATESET} & Write a key-value pair to the actor's HashmapE \\
+\texttt{STATEDEL} & Delete a key from the actor's HashmapE \\
+\texttt{ACTORSEND} & Send an asynchronous message to another actor \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+These opcodes are implemented on top of \texttt{vm::Dictionary}
+operations---no new data structures are needed. The lower-level
+\texttt{DICTGET}/\texttt{DICTSET} instructions also work directly on
+the actor's C4 register for advanced use cases.
+
+\mysubsection{Transaction Execution}
+
+The collator dispatches messages to actors via
+\texttt{td::actor::send\_closure}. Each \texttt{OnChainActor} is a
+\texttt{td::actor::Actor} instance:
+
+\begin{lstlisting}[language=C++,basicstyle=\small\ttfamily]
+class OnChainActor : public td::actor::Actor {
+    const block::Account* acc_;       // read-only: shared code
+    vm::Dictionary actor_state_;      // exclusive: this actor's state
+    LogicalTime actor_lt_;            // exclusive: this actor's timeline
+
+    void execute(Ref<vm::Cell> msg,
+                 td::Promise<Ref<vm::Cell>> promise) {
+        auto result = impl_create_ordinary_transaction(
+            msg, acc_, &actor_state_, &actor_lt_, ...);
+        promise.set_result(std::move(result));
+    }
+};
+\end{lstlisting}
+
+The collator selects messages, enforces block limits, and assembles
+the block. Execution dispatch is asynchronous: the collator sends
+actor messages rather than invoking synchronous function calls.
+
+\mysubsection{Execution Phases}
+
+Each actor transaction follows a five-phase execution model:
+
+\begin{enumerate}
+\item \textbf{Storage phase} --- compute and deduct storage fees
+\item \textbf{Credit phase} --- credit inbound message value
+\item \textbf{Compute phase} --- execute contract code (TVM or native)
+\item \textbf{Action phase} --- process output actions (messages, reserves)
+\item \textbf{Bounce phase} --- generate bounce message on failure
+\end{enumerate}
+
+%=============================================================
+\mysection{The Tola Language}\label{sect:tola}
+%=============================================================
+
+\mysubsection{Design Goals}
+
+Tola is a statically-typed, Solidity-like smart contract language
+that compiles to TVM bytecode. Its design goals are:
+
+\begin{enumerate}
+\item \textbf{Familiar} --- reuses Solidity syntax conventions so
+  developers can onboard in hours, not weeks.
+\item \textbf{Actor-native} --- \texttt{actor} replaces
+  \texttt{contract}; \texttt{.send()} replaces synchronous
+  \texttt{.call()}.
+\item \textbf{Safe by default} --- checked arithmetic, no reentrancy
+  (impossible by design), no \texttt{delegatecall}, no
+  \texttt{tx.origin}.
+\item \textbf{100\% FunC coverage} --- every FunC primitive is
+  accessible, either natively or through \texttt{unsafe cell \{\}}
+  escape blocks.
+\end{enumerate}
+
+\mysubsection{Actor Declaration}
+
+\begin{lstlisting}
+actor TokenBalance {
+    uint64 balance;
+
+    function credit(uint64 amount) external {
+        balance += amount;
+    }
+
+    function transfer(ActorId recipient, uint64 amount) external {
+        require(balance >= amount, "insufficient");
+        balance -= amount;
+        recipient.send("credit", abi.encode(amount));
+    }
+}
+\end{lstlisting}
+
+Under the hood, \texttt{balance += amount} compiles to
+\texttt{STATEGET} $\to$ \texttt{ADD} $\to$ \texttt{STATESET}
+operating on the actor's \texttt{HashmapE}. The developer never sees
+Cell, Slice, or Builder.
+
+\mysubsection{ActorId and Asynchronous Messaging}
+
+\texttt{ActorId} is a 256-bit first-class type representing an actor's
+on-chain identity:
+
+\begin{lstlisting}
+ActorId bob = ActorId.derive(self, "bob");
+bob.send("credit", abi.encode(100));
+// async: fire and forget, result comes back as a separate message
+\end{lstlisting}
+
+Send mode flags provide full control over message delivery, covering
+all of FunC's \texttt{send\_raw\_message} mode bits:
+
+\begin{lstlisting}
+recipient.send("transfer", payload, SendOptions {
+    value: 1000,
+    mode: SendMode.PAY_FEES_SEPARATELY | SendMode.IGNORE_ERRORS,
+    bounce: true
+});
+\end{lstlisting}
+
+\mysubsection{External Messages, Gas Control, and System Hooks}
+
+Tola covers the full FunC feature set:
+
+\begin{itemize}
+\item \texttt{receive\_external} --- handle wallet/dApp messages
+  (FunC \texttt{recv\_external})
+\item \texttt{gas.accept()} --- accept external messages and pay gas
+  (FunC \texttt{accept\_message})
+\item \texttt{gas.commit()} --- mid-execution state commit (FunC
+  \texttt{commit})
+\item \texttt{reserve(amount, mode)} --- balance reservation (FunC
+  \texttt{raw\_reserve})
+\item \texttt{tick()}/\texttt{tock()} --- system actor lifecycle hooks
+  (FunC \texttt{run\_ticktock})
+\item \texttt{setCode()} --- on-chain code upgrade (FunC
+  \texttt{set\_code})
+\item \texttt{crypto.*} --- Ed25519 signatures, SHA-256, keccak-256
+\item \texttt{random.*} --- on-chain pseudorandom number generation
+\item \texttt{config.param()} --- read blockchain configuration
+  parameters
+\item \texttt{bounce()} handler --- explicit bounce recovery
+\item \texttt{try/catch} --- exception handling (maps to TVM
+  \texttt{TRY})
+\end{itemize}
+
+\mysubsection{Inheritance and Code Reuse}
+
+Tola supports familiar inheritance patterns via
+\texttt{abstract actor} and \texttt{is}:
+
+\begin{lstlisting}
+abstract actor Ownable {
+    ActorId owner;
+    modifier onlyOwner() {
+        require(msg.sender == owner, "not owner");
+        _;
+    }
+}
+
+actor TokenBalance is Ownable {
+    uint64 balance;
+    function transfer(ActorId to, uint64 amount) external onlyOwner {
+        require(balance >= amount);
+        balance -= amount;
+        to.send("credit", abi.encode(amount));
+    }
+}
+\end{lstlisting}
+
+\mysubsection{Raw Cell Escape Hatch}
+
+When interoperating with existing FunC contracts or performing
+low-level operations, Tola provides \texttt{unsafe cell} blocks with
+full access to Cell/Slice/Builder primitives:
+
+\begin{lstlisting}
+function handleLegacy(bytes rawBody) external {
+    uint32 op;
+    unsafe cell {
+        slice s = rawBody.toSlice();
+        op = s.loadUint(32);
+    }
+    if (op == 0x7362d09c) { processTransfer(); }
+}
+\end{lstlisting}
+
+This ensures 100\% FunC functionality coverage while keeping safe
+Tola as the default.
+
+%=============================================================
+\mysection{Built-in Standard Actor Library}\label{sect:stdlib}
+%=============================================================
+
+\mysubsection{Why Built-in Standard Actors}
+
+A decade of smart contract ecosystem development has demonstrated that
+standardized, audited building blocks are the single most impactful
+developer tool. The pattern is clear: 90\% of on-chain applications
+are compositions of a few standard primitives (tokens, access control,
+governance, escrow).
+
+The conventional approach---shipping libraries that each project
+copies, modifies, and deploys independently---creates fragmentation,
+redundant auditing, and thousands of subtly-different implementations
+of the same logic. TOS takes a fundamentally different approach:
+standard actors ship as \textbf{native C++ built-ins compiled into the
+node binary}:
+
+\begin{center}
+\begin{tabular}{lp{5.5cm}p{5.5cm}}
+\toprule
+& \textbf{Copy-Deploy Model} & \textbf{TOS Built-in Actors} \\
+\midrule
+Code location & Copied into each project & One copy in node binary \\
+Deployment cost & High (per-project bytecode) & Zero (create via message) \\
+Audit burden & Each fork audited separately & Audited once, all benefit \\
+Fragmentation & Thousands of variants & One canonical implementation \\
+Upgrade & Each project independently & Node upgrade, all validators \\
+Performance & VM bytecode interpretation & Native C++ execution \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\mysubsection{Standard Actor Inventory}
+
+Extracted from a decade of production smart contract ecosystem
+experience:
+
+\paragraph{Token layer (ships with launch).}
+TokenMaster, TokenBalance, TokenAllowance (fungible token standard);
+NFTCollection, NFTItem (non-fungible token standard); MultiToken
+(multi-asset standard).
+
+\paragraph{Access control layer.}
+Ownable, AccessControl (role-based), Multisig (multi-signature),
+Timelock (delayed execution).
+
+\paragraph{Governance layer.}
+Governor (proposal/voting/execution), VoteActor (voting power
+snapshots and delegation).
+
+\paragraph{DeFi layer.}
+AMMPool (constant-product swap), LiquidityPosition (concentrated
+liquidity), LendingPool (borrow/lend/liquidation), Escrow
+(custody/release), Vesting (token vesting schedules), PaymentSplitter
+(revenue distribution).
+
+\paragraph{Infrastructure layer.}
+Oracle (price feed interface), Proxy (upgradeable actor pattern).
+
+\mysubsection{Usage Model}
+
+Users write only the business logic that differentiates their
+application. Standard operations are handled by built-in actors:
+
+\begin{lstlisting}
+actor Crowdfund {
+    ActorId tokenMaster;
+    ActorId treasury;
+    uint64 goal;
+    uint64 raised;
+
+    function contribute() external payable {
+        raised += uint64(msg.value);
+        tokenMaster.send("mint_to", abi.encode(
+            ActorId.derive(tokenMaster, msg.sender),
+            msg.value * 10
+        ));
+    }
+
+    function finalize() external {
+        require(raised >= goal, "goal not met");
+        treasury.send("credit", abi.encode(raised));
+    }
+}
+\end{lstlisting}
+
+In this example, the developer writes 15 lines of crowdfunding
+logic. Token minting, balance management, and transfer semantics are
+handled entirely by the built-in \texttt{TokenMaster} and
+\texttt{TokenBalance} actors.
+
+%=============================================================
+\mysection{AI Agent Economy}\label{sect:ai}
+%=============================================================
+
+The rise of autonomous AI agents creates fundamentally new demands on
+blockchain infrastructure. By 2026, AI agents autonomously manage
+wallets, negotiate service payments, and execute thousands of
+micro-transactions per second. TOS's Actor Model is a natural fit:
+
+\mysubsection{Actors as Agent Wallets}
+
+Each AI agent maps to one or more actors. An agent's spending policy,
+authentication credentials, and transaction history are actor state---
+isolated, deterministic, and auditable. Unlike account-based chains
+where an agent must share state with a global contract, TOS actors
+give each agent its own execution context with guaranteed message
+ordering.
+
+\begin{lstlisting}
+actor AgentWallet is Ownable {
+    uint128 dailyLimit;
+    uint128 spentToday;
+    uint32 dayStart;
+
+    function pay(ActorId service, uint64 amount, bytes memo) external {
+        if (block.time > dayStart + 86400) {
+            spentToday = 0;
+            dayStart = block.time;
+        }
+        require(spentToday + amount <= dailyLimit, "daily limit");
+        spentToday += amount;
+        service.send("payment", abi.encode(self, amount, memo),
+            SendOptions { value: amount });
+    }
+}
+\end{lstlisting}
+
+\mysubsection{Throughput for Machine-to-Machine Economies}
+
+AI agents produce transaction volumes orders of magnitude higher than
+human users. Per-actor parallelism means thousands of agent wallets
+execute concurrently---each agent's transactions are independent and
+never contend with other agents' state. This is precisely the
+throughput model that agent-to-agent payment protocols (x402, MCP)
+require.
+
+\mysubsection{Verifiable Agent Behavior}
+
+Because actor state transitions are deterministic and recorded on-chain,
+any third party can verify an agent's complete behavioral history.
+Combined with ZK proofs (Section~\ref{sect:privacy}), agents can
+prove they followed their programmed policy without revealing the
+policy itself---critical for competitive trading agents and
+confidential service agreements.
+
+%=============================================================
+\mysection{Privacy at the Actor Level}\label{sect:privacy}
+%=============================================================
+
+\mysubsection{The Privacy Problem in Existing Blockchains}
+
+Current approaches to blockchain privacy fall into two categories:
+(1)~privacy-specific chains (Zcash, Monero) that sacrifice programmability,
+and (2)~privacy layers bolted onto transparent chains (Aztec on
+Ethereum, Tornado Cash) that are awkward, gas-expensive, and
+architecturally fragile.
+
+The fundamental issue is that privacy in account-based systems requires
+encrypting the \emph{entire} contract state or none of it. There is no
+natural boundary for partial confidentiality.
+
+\mysubsection{Actors as Natural Privacy Boundaries}
+
+TOS's Actor Model solves this by making each actor an independent
+privacy domain:
+
+\begin{itemize}
+\item Each actor's state is a separate HashmapE. Encrypting one
+  actor's state entries does not affect any other actor.
+\item A \textbf{confidential actor} stores encrypted key-value pairs
+  and attaches a zero-knowledge proof to each state transition,
+  proving that the transition is valid without revealing the state
+  itself.
+\item Other actors interact with the confidential actor through the
+  same \texttt{.send()} interface---they see the message but not the
+  internal state.
+\item Privacy is a \emph{per-actor opt-in}, not a network mode.
+  Public actors and confidential actors coexist in the same account,
+  the same shard, the same block.
+\end{itemize}
+
+\mysubsection{ZK-Verified Execution: Verify, Don't Re-Execute}
+
+The actor boundary also enables a shift from \emph{re-execution} to
+\emph{verification}:
+
+\begin{enumerate}
+\item The actor's owner (or a delegated prover) executes the
+  transaction off-chain and produces a succinct ZK proof of correct
+  state transition.
+\item Validators receive the proof and the new state commitment (the
+  HashmapE root hash).
+\item Validators \textbf{verify the proof} (a constant-time operation)
+  instead of re-executing the computation.
+\end{enumerate}
+
+This is architecturally different from ZK rollups, which batch
+hundreds of transactions into one proof for a separate L1.  In TOS,
+each \emph{individual actor} can independently choose ZK-verified
+execution. The result: validators do less work as more actors adopt
+ZK proofs, and the network scales by \emph{reducing per-transaction
+verification cost} rather than increasing hardware requirements.
+
+A built-in \texttt{ZKVerifier} actor module will provide standard
+proof verification for common proof systems (Groth16, PLONK, STARK),
+so application developers can attach proofs without implementing
+verifiers from scratch.
+
+%=============================================================
+\mysection{Post-Quantum Resilience}\label{sect:quantum}
+%=============================================================
+
+\mysubsection{The Threat}
+
+Shor's algorithm on a sufficiently powerful quantum computer can break
+ECDSA and Ed25519---the signature schemes securing the vast majority
+of existing blockchains, including TOS's current default---in
+polynomial time. Grover's algorithm weakens symmetric primitives like
+SHA-256, though this is addressable by doubling key lengths. The
+existential threat is to \emph{public-key cryptography}: any address
+whose public key has been exposed on-chain becomes immediately
+vulnerable the moment a cryptographically-relevant quantum computer
+is operational.
+
+The industry consensus in 2026 is that this threat is 3--10 years
+away. NIST has already standardized post-quantum algorithms: CRYSTALS-
+Kyber (ML-KEM, FIPS~203) for key encapsulation, CRYSTALS-Dilithium
+(ML-DSA, FIPS~204) for digital signatures, and SPHINCS+ (SLH-DSA,
+FIPS~205) as a hash-based fallback.
+
+\mysubsection{Actor-Level Cryptographic Agility}
+
+Most blockchains face a dilemma: migrating to post-quantum signatures
+requires a network-wide hard fork, new address formats, and mass
+migration of user funds---an enormously disruptive operation.
+
+TOS's Actor Model provides a modular alternative:
+
+\begin{itemize}
+\item \textbf{Per-actor authentication.} Each actor can independently
+  specify its signature scheme. A \texttt{PostQuantumAuth} built-in
+  actor module replaces ECDSA/Ed25519 verification with
+  SPHINCS+/SLH-DSA for any actor that opts in.
+\item \textbf{Gradual migration.} High-value actors (treasuries,
+  bridges, governance) can adopt post-quantum signatures immediately.
+  Low-value actors can migrate later. No chain-wide hard fork
+  required.
+\item \textbf{Hybrid signatures.} During the transition period, actors
+  can require \emph{both} a classical Ed25519 signature and a
+  post-quantum SLH-DSA signature, protecting against both current
+  attacks and future quantum attacks simultaneously.
+\item \textbf{Algorithm rotation.} If a post-quantum scheme is later
+  found to be weak, individual actors can rotate to a newer algorithm
+  without affecting the rest of the network.
+\end{itemize}
+
+\mysubsection{Hash-Based State Integrity}
+
+TOS's Cell/HashmapE infrastructure is built on hash trees (SHA-256 or
+BLAKE2). Against Grover's algorithm, these require only a doubling of
+hash output length (256-bit $\to$ 512-bit) to maintain equivalent
+security. This upgrade can be performed at the HashmapE level without
+changing the actor programming model---developers continue using
+\texttt{state\_get}/\texttt{state\_put} regardless of the underlying
+hash function.
+
+%=============================================================
+\mysection{Concrete Example: Parallel Token Transfers}\label{sect:example}
+%=============================================================
+
+Consider a token contract with millions of users. In the account
+model, every transfer serializes through one state tree:
+
+\begin{verbatim}
+UserA transfer --+
+UserB transfer --+--> Token Account (serial)
+UserC transfer --+
+\end{verbatim}
+
+In TOS's actor model, each user's balance is an independent actor:
+
+\begin{verbatim}
+UserA transfer --> BalanceActor(hash(A)) --+
+UserB transfer --> BalanceActor(hash(B)) --+--> all parallel
+UserC transfer --> BalanceActor(hash(C)) --+
+\end{verbatim}
+
+A transfer from Alice to Bob involves two actors:
+\begin{enumerate}
+\item \texttt{BalanceActor(Alice)} receives the transfer message,
+  debits Alice's balance, and sends a \texttt{credit} message to
+  \texttt{BalanceActor(Bob)}.
+\item \texttt{BalanceActor(Bob)} receives the credit message and
+  increments Bob's balance.
+\end{enumerate}
+
+Because Alice's and Bob's actors have disjoint state, a simultaneous
+transfer from Charlie to Dave executes \textbf{fully in parallel}
+with no contention.
+
+%=============================================================
+\mysection{Infrastructure Stack}\label{sect:infra}
+%=============================================================
+
+TOS's actor-oriented execution model is supported by a full
+infrastructure stack designed for high throughput, compact proofs, and
+decentralized networking:
+
+\begin{itemize}
+\item \textbf{Cell data structure} --- all state and messages are
+  encoded as directed acyclic graphs of Cells, providing native Merkle
+  proofs at every level of the hierarchy.
+\item \textbf{BOC encoding} --- a uniform Bag-of-Cells serialization
+  format is used across blocks, network messages, and persistent
+  storage.
+\item \textbf{Consensus} --- Catchain/Simplex BFT for fast finality
+  with Byzantine fault tolerance.
+\item \textbf{Networking} --- ADNL (Abstract Datagram Network Layer),
+  RLDP (Reliable Large Datagram Protocol), a Kademlia-based DHT, and
+  QUIC transport.
+\item \textbf{Dynamic sharding} --- address-prefix-based shard
+  splitting allows the network to scale horizontally as load increases.
+\item \textbf{Storage} --- CellDB backed by RocksDB for persistent
+  state.
+\item \textbf{Execution phases} --- storage $\to$ credit $\to$
+  compute $\to$ action $\to$ bounce, applied per actor transaction.
+\item \textbf{FunC/Tolk compatibility} --- contracts written in FunC
+  or Tolk run on TVM alongside Tola actors, sharing the same message
+  protocol.
+\item \textbf{Lite-client / Tonlib} --- lightweight client tools for
+  querying chain state and submitting transactions.
+\end{itemize}
+
+The actor model determines the \emph{granularity} of execution (the
+actor, not the account, is the scheduling unit) and the
+\emph{developer interface} (key-value state rather than raw
+Cell/Slice/Builder manipulation). The infrastructure layers below
+this boundary are optimized for the actor workload from the start.
+
+%=============================================================
+\mysection{Comparison with Existing Platforms}\label{sect:compare}
+%=============================================================
+
+\begin{center}
+\small
+\begin{tabular}{lccc}
+\toprule
+& \textbf{TOS} & \textbf{Serial-EVM Chains} & \textbf{Object/Resource Chains} \\
+\midrule
+Parallel execution & Actor-level & Planned / L2 only & Object/resource \\
+Developer language & Tola (Solidity-like) & Solidity & New language (Move) \\
+Learning curve & Low & Baseline & High \\
+Reentrancy & Impossible & Major risk & N/A \\
+Standard library & Native built-in & Copy-deploy per project & None standard \\
+Hot-contract scaling & $M\times$ (per-actor) & $1\times$ & $M\times$ (per-object) \\
+Privacy model & Per-actor ZK opt-in & L2 rollups only & None \\
+Post-quantum & Per-actor migration & Global hard fork & Global hard fork \\
+AI agent support & Native actor wallets & Add-on abstraction & None standard \\
+ZK verification & Per-actor verify & L2 proof batching & None \\
+Merkle proofs & Cell (built-in) & Trie-based & None \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Existing platforms address parallelism, privacy, quantum resilience,
+and agent support as separate problems with separate, layered
+solutions---rollups for scaling, privacy protocols for confidentiality,
+hard forks for cryptographic migration, account abstraction for agents.
+TOS starts from first principles: the actor is the unit of execution,
+privacy, and cryptographic identity. Parallelism, confidentiality,
+and quantum resilience are not features added to the architecture---
+they are \emph{consequences} of it.
+
+%=============================================================
+\mysection{Roadmap}\label{sect:roadmap}
+%=============================================================
+
+\begin{enumerate}
+\item \textbf{Phase 1: Actor State Isolation + Built-in Actors.}
+  Add actor sub-structure to accounts, implement TVM opcodes
+  (\texttt{STATEGET}/\texttt{STATESET}/\texttt{ACTORSEND}), build
+  native Token/NFT actors, validate architecture end-to-end.
+
+\item \textbf{Phase 2: Per-Actor Parallel Execution.}
+  Each on-chain actor becomes a \texttt{td::actor::Actor}. Collator
+  dispatches via \texttt{send\_closure}. Different actors under the
+  same account execute in parallel.
+
+\item \textbf{Phase 3: Message Routing + Tola Compiler.}
+  Add \texttt{actor\_id} to \texttt{OutMsgQueue} key. Ship the Tola
+  compiler (Solidity-like syntax $\to$ TVM bytecode). Full standard
+  actor library (DeFi, governance, access control).
+
+\item \textbf{Phase 4: Privacy Actors + ZK Verification.}
+  Built-in \texttt{ConfidentialActor} and \texttt{ZKVerifier} modules.
+  Per-actor opt-in encrypted state with ZK proof of correct state
+  transition. Validators verify proofs instead of re-executing.
+
+\item \textbf{Phase 5: Post-Quantum Authentication.}
+  Built-in \texttt{PostQuantumAuth} module (SPHINCS+/SLH-DSA).
+  Per-actor signature scheme migration. Hybrid classical+post-quantum
+  mode for the transition period.
+
+\item \textbf{Phase 6: AI Agent Economy.}
+  Built-in \texttt{AgentWallet} with spending policies, daily limits,
+  allowlists. Native integration with x402/MCP payment protocols.
+  High-throughput agent-to-agent settlement.
+\end{enumerate}
+
+%=============================================================
+\section*{Conclusion}
+\markbothsame{\textsc{Conclusion}}
+\addcontentsline{toc}{section}{Conclusion}
+%=============================================================
+
+Blockchains in 2026 face simultaneous demands for higher throughput,
+AI agent support, user privacy, and quantum resilience. Existing
+platforms address these as separate problems with separate solutions---
+rollups for scaling, privacy layers for confidentiality, hard forks
+for post-quantum migration, account abstraction for agents. The
+result is architectural complexity that grows with each new
+requirement.
+
+TOS takes a different approach. The Actor Model is not merely a
+scaling technique---it is an \emph{organizing principle} from which
+parallelism, privacy, quantum resilience, and agent support all emerge
+naturally:
+
+\begin{itemize}
+\item \textbf{Parallelism.} Hot contracts scale linearly with the number
+  of independent actors---a direct consequence of state isolation.
+\item \textbf{Privacy.} Each actor is an independent privacy domain.
+  Confidential actors encrypt their state and prove transitions via ZK
+  proofs---a direct consequence of actor boundaries.
+\item \textbf{Quantum resilience.} Each actor independently adopts
+  post-quantum signatures---a direct consequence of actor-level
+  authentication.
+\item \textbf{AI agents.} Each agent is an actor with its own wallet,
+  policy, and message interface---a direct consequence of the actor as
+  the minimum execution unit.
+\item \textbf{Verification, not re-execution.} Validators verify ZK
+  proofs instead of re-computing state transitions---a direct
+  consequence of per-actor proof attachment.
+\item \textbf{Developer simplicity.} Solidity-like syntax, one new
+  concept (\texttt{.send()} instead of \texttt{.call()}), and 90\% of
+  common functionality built-in and free to use.
+\item \textbf{Production-grade foundation.} Consensus, networking,
+  storage, and Merkle proofs built on proven, well-understood
+  techniques---Cell trees, BFT consensus, Kademlia DHT---chosen
+  specifically to complement the actor execution model.
+\end{itemize}
+
+The key architectural insight is that Cell infrastructure need not be
+replaced---only \emph{encapsulated}---and the actor boundary is not
+just a concurrency boundary but also a privacy boundary, a
+cryptographic boundary, and an economic boundary. One abstraction,
+many consequences.
+
+%=============================================================
+\clearpage
+\markbothsame{\textsc{References}}
+\begin{thebibliography}{99}
+
+\bibitem{Agha86}
+  {\sc G.~Agha}, {\sl Actors: A Model of Concurrent Computation in Distributed Systems},
+  MIT Press, 1986.
+
+\bibitem{Hewitt73}
+  {\sc C.~Hewitt, P.~Bishop, R.~Steiger}, {\sl A Universal Modular ACTOR Formalism for Artificial Intelligence},
+  IJCAI, 1973.
+
+\bibitem{TONOriginal}
+  {\sc N.~Durov}, {\sl Telegram Open Network},
+  2018.
+
+\bibitem{Wood14}
+  {\sc G.~Wood}, {\sl A Secure Decentralised Generalised Transaction Ledger},
+  2014 (updated 2024). Foundational work on serial-execution smart contract VMs.
+
+\bibitem{MoveLanguage}
+  {\sc S.~Blackshear et al.}, {\sl Move: A Language With Programmable Resources},
+  2020. Resource-oriented approach to parallel smart contract execution.
+
+\bibitem{PBFT}
+  {\sc M.~Castro, B.~Liskov}, {\sl Practical Byzantine Fault Tolerance},
+  OSDI, 1999.
+
+\bibitem{Kademlia}
+  {\sc P.~Maymounkov, D.~Mazi\`{e}res}, {\sl Kademlia: A Peer-to-peer Information System Based on the XOR Metric},
+  IPTPS, 2002.
+
+\bibitem{x402}
+  {\sc Linux Foundation}, {\sl x402: HTTP Payment Protocol for Agentic Commerce},
+  2026. Adopted by Visa, Stripe, AWS, Anthropic, and Google Cloud for
+  machine-to-machine payments.
+
+\bibitem{MCP}
+  {\sc Anthropic}, {\sl Model Context Protocol (MCP): Standardizing Agent Tool Invocation},
+  2025.
+
+\bibitem{QuantumThreat}
+  {\sc Google Quantum AI}, {\sl How a Quantum Computer Could Break Blockchain Cryptography},
+  reported in CoinDesk, April 2026.
+
+\bibitem{SPHINCS}
+  {\sc D.~Bernstein et al.}, {\sl SPHINCS+: Stateless Hash-Based Signatures},
+  NIST FIPS~205 (SLH-DSA), standardized August 2024.
+
+\bibitem{Dilithium}
+  {\sc L.~Ducas et al.}, {\sl CRYSTALS-Dilithium: Digital Signatures from Module Lattices},
+  NIST FIPS~204 (ML-DSA), standardized August 2024.
+
+\bibitem{Groth16}
+  {\sc J.~Groth}, {\sl On the Size of Pairing-Based Non-interactive Arguments},
+  EUROCRYPT, 2016.
+
+\bibitem{PLONK}
+  {\sc A.~Gabizon, Z.~Williamson, O.~Ciobotaru}, {\sl PLONK: Permutations over Lagrange-Bases for Oecumenical Noninteractive Arguments of Knowledge},
+  IACR ePrint 2019/953.
+
+\bibitem{ZKRollup}
+  {\sl Zero-Knowledge Rollups for Private Smart Contract Execution},
+  various implementations, 2023--2026.
+
+\bibitem{AcctAbstraction}
+  {\sl Account Abstraction for Programmable Wallets},
+  industry standard, 2023--2026.
+
+\end{thebibliography}
+
+\end{document}

@@ -1,0 +1,815 @@
+cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
+
+project(TOS VERSION 0.5 LANGUAGES C CXX)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# Define the two required variables before including the source code for watching a git repository.
+# Only set up git tracking if not already done at a higher level
+if(NOT TARGET git)
+  set(PRE_CONFIGURE_FILE "git.cc.in")
+  set(POST_CONFIGURE_FILE "${CMAKE_CURRENT_BINARY_DIR}/git.cc")
+  include(git_watcher.cmake)
+
+  # Create a library out of the compiled post-configure file.
+  add_library(git STATIC ${POST_CONFIGURE_FILE})
+  target_include_directories(git PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  add_dependencies(git check_git)
+endif()
+
+# Prevent in-source build
+get_filename_component(TOS_REAL_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}" REALPATH)
+get_filename_component(TOS_REAL_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}" REALPATH)
+
+if (TOS_REAL_BINARY_DIR STREQUAL TOS_REAL_SOURCE_DIR)
+  message("  Out-of-source build should be used to build TON.")
+  message("  You need to remove the files already created by CMake and")
+  message("  rerun CMake from a new directory:")
+  message("  rm -rf CMakeFiles CMakeCache.txt")
+  message("  mkdir build")
+  message("  cd build")
+  message("  cmake ..")
+  message(FATAL_ERROR "In-source build failed.")
+endif()
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
+set(CMAKE_CXX_EXTENSIONS FALSE)
+
+set(CMAKE_COLOR_DIAGNOSTICS TRUE)
+
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  set(GCC 1)
+elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  set(CLANG 1)
+elseif (CMAKE_CXX_COMPILER_ID STREQUAL "Intel")
+  set(INTEL 1)
+elseif (NOT MSVC)
+  message(FATAL_ERROR "Compiler isn't supported")
+endif()
+
+if (MINGW)
+  if (NOT CMAKE_AR OR NOT EXISTS "${CMAKE_AR}")
+    find_program(TOS_LLVM_AR NAMES llvm-ar)
+    if (TOS_LLVM_AR)
+      set(CMAKE_AR "${TOS_LLVM_AR}" CACHE FILEPATH "Archiver" FORCE)
+    endif()
+  endif()
+  if (NOT CMAKE_RANLIB OR NOT EXISTS "${CMAKE_RANLIB}")
+    find_program(TOS_LLVM_RANLIB NAMES llvm-ranlib ranlib)
+    if (TOS_LLVM_RANLIB)
+      set(CMAKE_RANLIB "${TOS_LLVM_RANLIB}" CACHE FILEPATH "Ranlib" FORCE)
+    endif()
+  endif()
+  # OpenSSL static libs need Windows socket/crypto system libs on MinGW.
+  link_libraries(ws2_32 crypt32)
+endif()
+
+#BEGIN internal
+option(BUILD_SHARED_LIBS "Use \"ON\" to build shared libraries instead of static where it's not specified (not recommended)" OFF)
+option(USE_EMSCRIPTEN "Use \"ON\" for config building wasm." OFF)
+option(TOS_ONLY_TOSLIB "Use \"ON\" to build only toslib." OFF)
+if (USE_EMSCRIPTEN)
+  set(TOS_ONLY_TOSLIB true)
+endif()
+if (TOS_ONLY_TOSLIB)
+  set(NOT_TON_ONLY_TOSLIB false)
+else()
+  set(NOT_TON_ONLY_TOSLIB true)
+endif()
+option(TOS_USE_ROCKSDB "Use \"ON\" to enable RocksDb." ${NOT_TON_ONLY_TOSLIB})
+option(TOS_USE_ABSEIL "Use \"ON\" to enable Abseil." ${NOT_TON_ONLY_TOSLIB})
+option(TOS_USE_JEMALLOC "Use \"ON\" to enable JeMalloc." OFF)
+#END internal
+
+option(TOSLIB_ENABLE_JNI "Use \"ON\" to enable JNI-compatible TonLib API.")
+option(TOS_USE_ASAN "Use \"ON\" to enable AddressSanitizer." OFF)
+option(TOS_USE_TSAN "Use \"ON\" to enable ThreadSanitizer." OFF)
+option(TOS_USE_UBSAN "Use \"ON\" to enable UndefinedBehaviorSanitizer." OFF)
+option(TOS_USE_COVERAGE "Use \"ON\" to enable code coverage with gcov." OFF)
+set(TOS_ARCH "native" CACHE STRING "Architecture, will be passed to -march=")
+
+option(TOS_PRINT_BACKTRACE_ON_CRASH "Attempt to print a backtrace when a fatal signal is caught" ON)
+option(TOS_INSERT_GDB_HOOKS "Insert GDB hooks" OFF)
+
+option(TOS_USE_LLD "Use LLD for linking" OFF)
+
+if (TOS_USE_LLD)
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fuse-ld=lld")
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fuse-ld=lld")
+    set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -fuse-ld=lld")
+endif()
+
+#BEGIN M1 support
+EXECUTE_PROCESS( COMMAND uname -m COMMAND tr -d '\n' OUTPUT_VARIABLE ARCHITECTURE )
+
+if ((ARCHITECTURE MATCHES "arm64") AND (CMAKE_SYSTEM_NAME STREQUAL "Darwin") AND
+    (CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13.0)) # only clang 13+ supports cpu=apple-m1
+    set(TOS_ARCH "apple-m1")
+endif()
+#END M1 support
+
+option(TOS_WERROR_BUILD "Use -Werror" OFF)
+
+# If we want to check -Werror build in CI, we want to use it for third party projects as well but we
+# don't want to force our warning options on them.
+if (TOS_WERROR_BUILD)
+  add_compile_options(-Werror)
+endif()
+
+# Ensure custom build modules (including OpenSSL/Sodium) are available early for QUIC/crypto checks.
+set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake" ${CMAKE_MODULE_PATH})
+include(BuildOpenSSL)
+include(BuildSodium)
+include(BuildLZ4)
+
+if (USE_EMSCRIPTEN OR EMSCRIPTEN)
+  set(SODIUM_ROOT_DIR ${CMAKE_BINARY_DIR}/3pp_emscripten/libsodium CACHE PATH "Sodium root directory" FORCE)
+  if (EXISTS ${SODIUM_ROOT_DIR}/lib/libsodium.a)
+    set(SODIUM_LIBRARY_PATH ${SODIUM_ROOT_DIR}/lib/libsodium.a)
+    set(SODIUM_INCLUDE_PATH ${SODIUM_ROOT_DIR}/include)
+  else()
+    set(SODIUM_LIBRARY_PATH ${SODIUM_ROOT_DIR}/src/libsodium/.libs/libsodium.a)
+    set(SODIUM_INCLUDE_PATH ${SODIUM_ROOT_DIR}/src/libsodium/include)
+  endif()
+  set(SODIUM_LIBRARY_RELEASE ${SODIUM_LIBRARY_PATH} CACHE FILEPATH "Sodium release library" FORCE)
+  set(SODIUM_LIBRARY_DEBUG ${SODIUM_LIBRARY_PATH} CACHE FILEPATH "Sodium debug library" FORCE)
+  set(SODIUM_INCLUDE_DIR ${SODIUM_INCLUDE_PATH} CACHE PATH "Sodium include directory" FORCE)
+  set(SODIUM_FOUND TRUE CACHE BOOL "Sodium found" FORCE)
+endif()
+
+#message("Add OpenSSL")
+#add_subdirectory(third-party/openssl EXCLUDE_FROM_ALL)
+
+if (TOS_USE_ROCKSDB)
+  message("Add rocksdb")
+  function(rocksdb_scope)
+    if (ANDROID)
+      set(PORTABLE ON CACHE BOOL "")
+    endif()
+    set(WITH_GFLAGS OFF CACHE BOOL "")
+    set(WITH_TESTS OFF CACHE BOOL "")
+    set(WITH_TOOLS OFF CACHE BOOL "")
+    set(USE_RTTI ON CACHE BOOL "")
+    set(FAIL_ON_WARNINGS OFF CACHE BOOL "")
+    set(WITH_ASAN ${TOS_USE_ASAN} CACHE BOOL "")
+    set(WITH_TSAN ${TOS_USE_TSAN} CACHE BOOL "")
+    set(WITH_UBSAN ${TOS_USE_UBSAN} CACHE BOOL "")
+    add_subdirectory(third-party/rocksdb EXCLUDE_FROM_ALL)
+    # Broken CMake in rocksdb alters properties it has no business changing.
+    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE)
+    set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK)
+  endfunction()
+  rocksdb_scope()
+endif()
+
+if (TOS_USE_ASAN)
+  add_compile_options(-fsanitize=address)
+  add_link_options(-fsanitize=address)
+  add_definitions(-DTD_USE_ASAN=1)
+endif()
+if (TOS_USE_TSAN)
+  add_compile_options(-fsanitize=thread)
+  add_link_options(-fsanitize=thread)
+endif()
+if (TOS_USE_UBSAN)
+  add_compile_options(-fsanitize=undefined)
+  add_link_options(-fsanitize=undefined)
+endif()
+
+if (TOS_USE_ABSEIL)
+  message("Add abseil-cpp")
+  function(abseil_scope)
+    set(ABSL_PROPAGATE_CXX_STD TRUE)
+    set(CMAKE_POLICY_VERSION_MINIMUM "3.10")
+    add_subdirectory(third-party/abseil-cpp EXCLUDE_FROM_ALL)
+  endfunction()
+  abseil_scope()
+  set(ABSL_FOUND 1)
+endif()
+
+if (WIN32)
+  message("Add wingetopt")
+  function(wingetopt_scope)
+    set(CMAKE_POLICY_VERSION_MINIMUM "3.10")
+    add_subdirectory(third-party/wingetopt EXCLUDE_FROM_ALL)
+  endfunction()
+  wingetopt_scope()
+  set(WINGETOPT_FOUND 1)
+endif()
+
+set(CRC32C_BUILD_TESTS OFF CACHE BOOL "Build CRC32C's unit tests")
+set(CRC32C_BUILD_BENCHMARKS OFF CACHE BOOL "Build CRC32C's benchmarks")
+set(CRC32C_USE_GLOG OFF CACHE BOOL "Build CRC32C's tests with Google Logging")
+set(CRC32C_INSTALL OFF CACHE BOOL "Install CRC32C's header and library")
+message("Add crc32c")
+function(crc32_scope)
+  set(CMAKE_POLICY_VERSION_MINIMUM "3.10")
+  if (NOT MSVC)
+    # fix aarch64 build @ crc32c/src/crc32c_arm64_linux_check.h
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-error=address")
+  endif()
+  add_subdirectory(third-party/crc32c EXCLUDE_FROM_ALL)
+endfunction()
+crc32_scope()
+set(CRC32C_FOUND 1)
+
+option(USE_LIBRAPTORQ "use libraptorq for tests" OFF)
+if (USE_LIBRAPTORQ)
+  set(USE_LZ4 OFF CACHE BOOL "use lz4")
+  if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(CLANG_STDLIB "ON") # for libraptorq
+  endif()
+  message("Add libraptorq")
+  add_subdirectory(third-party/libraptorq EXCLUDE_FROM_ALL)
+endif()
+
+option(USE_QUIC "use ngtcp2 QUIC library" ON)
+if (USE_QUIC)
+  # Set OpenSSL paths to use our custom-built OpenSSL with QUIC support
+  # Use CACHE variables to override find_package(OpenSSL) behavior
+  if (USE_EMSCRIPTEN OR EMSCRIPTEN)
+    set(OPENSSL_ROOT_DIR ${CMAKE_BINARY_DIR}/3pp_emscripten/openssl_em CACHE PATH "OpenSSL root directory" FORCE)
+    set(OPENSSL_INCLUDE_DIR ${OPENSSL_ROOT_DIR}/include CACHE PATH "OpenSSL include directory" FORCE)
+    set(OPENSSL_CRYPTO_LIBRARY ${OPENSSL_ROOT_DIR}/libcrypto.a CACHE FILEPATH "OpenSSL crypto library" FORCE)
+    set(OPENSSL_SSL_LIBRARY ${OPENSSL_ROOT_DIR}/libssl.a CACHE FILEPATH "OpenSSL SSL library" FORCE)
+  elseif (ANDROID)
+    include(AndroidThirdParty)
+    set(OPENSSL_ROOT_DIR ${CMAKE_BINARY_DIR}/third-party/openssl-android-${TOS_ANDROID_OPENSSL_DIR} CACHE PATH "OpenSSL root directory" FORCE)
+    set(OPENSSL_INCLUDE_DIR ${OPENSSL_ROOT_DIR}/include CACHE PATH "OpenSSL include directory" FORCE)
+    set(OPENSSL_CRYPTO_LIBRARY ${OPENSSL_ROOT_DIR}/libcrypto.a CACHE FILEPATH "OpenSSL crypto library" FORCE)
+    set(OPENSSL_SSL_LIBRARY ${OPENSSL_ROOT_DIR}/libssl.a CACHE FILEPATH "OpenSSL SSL library" FORCE)
+  elseif (MSVC)
+    set(OPENSSL_ROOT_DIR ${CMAKE_BINARY_DIR}/third-party/openssl CACHE PATH "OpenSSL root directory" FORCE)
+    set(OPENSSL_INCLUDE_DIR ${OPENSSL_ROOT_DIR}/include CACHE PATH "OpenSSL include directory" FORCE)
+    set(OPENSSL_CRYPTO_LIBRARY ${OPENSSL_ROOT_DIR}/lib/libcrypto.lib CACHE FILEPATH "OpenSSL crypto library" FORCE)
+    set(OPENSSL_SSL_LIBRARY ${OPENSSL_ROOT_DIR}/lib/libssl.lib CACHE FILEPATH "OpenSSL SSL library" FORCE)
+  else()
+    set(OPENSSL_ROOT_DIR ${CMAKE_BINARY_DIR}/third-party/openssl CACHE PATH "OpenSSL root directory" FORCE)
+    set(OPENSSL_INCLUDE_DIR ${CMAKE_BINARY_DIR}/third-party/openssl/include CACHE PATH "OpenSSL include directory" FORCE)
+    set(OPENSSL_CRYPTO_LIBRARY ${CMAKE_BINARY_DIR}/third-party/openssl/lib/libcrypto.a CACHE FILEPATH "OpenSSL crypto library" FORCE)
+    set(OPENSSL_SSL_LIBRARY ${CMAKE_BINARY_DIR}/third-party/openssl/lib/libssl.a CACHE FILEPATH "OpenSSL SSL library" FORCE)
+  endif()
+  set(OPENSSL_LIBRARIES ${OPENSSL_SSL_LIBRARY} ${OPENSSL_CRYPTO_LIBRARY} ${CMAKE_DL_LIBS} ${CMAKE_THREAD_LIBS_INIT}
+    CACHE STRING "OpenSSL libraries" FORCE)
+  if (MSVC)
+    set(OPENSSL_LIBRARIES ${OPENSSL_LIBRARIES} crypt32 CACHE STRING "OpenSSL libraries" FORCE)
+  endif()
+  set(OPENSSL_FOUND TRUE CACHE BOOL "OpenSSL found" FORCE)
+
+  function(ngtcp2_scope)
+    set(BUILD_TESTING OFF)
+    message("Add ngtcp2 with custom OpenSSL from ${OPENSSL_ROOT_DIR}")
+    if (MINGW)
+      # Assume QUIC support for the custom OpenSSL to avoid MSYS2 patching issues.
+      set(HAVE_SSL_SET_QUIC_TLS_CBS TRUE CACHE BOOL "OpenSSL QUIC support" FORCE)
+    endif()
+    add_subdirectory(third-party/ngtcp2 EXCLUDE_FROM_ALL)
+    set(NGTCP2_ROOT ${CMAKE_SOURCE_DIR}/third-party/ngtcp2)
+  endfunction()
+  ngtcp2_scope()
+
+  # Make sure ngtcp2 libraries depend on OpenSSL being built first
+  add_dependencies(ngtcp2 OpenSSL)
+  if (TARGET ngtcp2_crypto_quictls)
+    add_dependencies(ngtcp2_crypto_quictls OpenSSL)
+  endif()
+endif ()
+
+message("Add tl-parser")
+add_subdirectory(third-party/tl-parser EXCLUDE_FROM_ALL)
+
+message("Add ton")
+include(BuildBLST)
+include(BuildSECP256K1)
+include(BuildLibbacktrace)
+include(BuildMHD)
+include(BuildZlib)
+
+
+# Configure CCache if available
+find_program(CCACHE_FOUND ccache)
+if (CCACHE_FOUND)
+  if (NOT DEFINED CMAKE_C_COMPILER_LAUNCHER AND NOT DEFINED CMAKE_CXX_COMPILER_LAUNCHER)
+    message(STATUS "Using ccache")
+    set(CMAKE_C_COMPILER_LAUNCHER ccache)
+    set(CMAKE_CXX_COMPILER_LAUNCHER ccache)
+  endif()
+else()
+  message(STATUS "Could NOT find ccache")
+endif()
+
+include(CheckCXXCompilerFlag)
+
+set(CMAKE_THREAD_PREFER_PTHREAD ON)
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+find_package(PkgConfig REQUIRED)
+
+if (MINGW)
+  option(TOS_USE_STATIC_ZLIB "Prefer static zlib on MinGW to avoid runtime DLLs" ON)
+  if (TOS_USE_STATIC_ZLIB)
+    set(ZLIB_USE_STATIC_LIBS ON)
+  endif()
+endif()
+
+if (NOT ZLIB_FOUND)
+  find_package(ZLIB REQUIRED)
+  if (MINGW AND TOS_USE_STATIC_ZLIB AND ZLIB_LIBRARY MATCHES "\\.dll\\.a$")
+    get_filename_component(_zlib_lib_dir "${ZLIB_LIBRARY}" DIRECTORY)
+    if (EXISTS "${_zlib_lib_dir}/libz.a")
+      set(ZLIB_LIBRARY "${_zlib_lib_dir}/libz.a" CACHE FILEPATH "Zlib library" FORCE)
+      set(ZLIB_LIBRARIES "${ZLIB_LIBRARY}" CACHE STRING "Zlib libraries" FORCE)
+    endif()
+    unset(_zlib_lib_dir)
+  endif()
+else()
+  message(STATUS "Using zlib ${ZLIB_LIBRARIES}")
+endif()
+
+
+if (TOS_ARCH AND NOT MSVC)
+  CHECK_CXX_COMPILER_FLAG( "-march=${TOS_ARCH}" COMPILER_OPT_ARCH_SUPPORTED )
+  if (TOS_ARCH STREQUAL "apple-m1")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mcpu=${TOS_ARCH}")
+  elseif(COMPILER_OPT_ARCH_SUPPORTED)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=${TOS_ARCH}")
+  elseif(NOT TOS_ARCH STREQUAL "native")
+    message(FATAL_ERROR "Compiler doesn't support arch ${TOS_ARCH}")
+  endif()
+endif()
+if (THREADS_HAVE_PTHREAD_ARG)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
+endif()
+
+if (TOS_USE_JEMALLOC)
+  find_package(jemalloc REQUIRED)
+endif()
+
+if (NIX)
+  find_package(Secp256k1 REQUIRED)
+endif()
+
+
+set(MEMPROF "" CACHE STRING "Use one of \"ON\", \"FAST\" or \"SAFE\" to enable memory profiling. \
+Works under macOS and Linux when compiled using glibc. \
+In FAST mode stack is unwinded only using frame pointers, which may fail. \
+In SAFE mode stack is unwinded using backtrace function from execinfo.h, which may be very slow. \
+By default both methods are used to achieve maximum speed and accuracy")
+
+if (CLANG OR GCC)
+  if (MEMPROF)
+    check_cxx_compiler_flag(-no-pie CXX_NO_PIE_FLAG)
+    if (CXX_NO_PIE_FLAG)
+      set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -no-pie")
+    elseif (APPLE)
+      set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-no_pie")
+    endif()
+  endif()
+endif()
+
+if (MSVC)
+  if (CMAKE_CXX_FLAGS_DEBUG MATCHES "/RTC1")
+    string(REPLACE "/RTC1" " " CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
+  endif()
+  add_definitions(-D_SCL_SECURE_NO_WARNINGS -D_CRT_SECURE_NO_WARNINGS)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP /W4 /wd4100 /wd4127 /wd4324 /wd4456 /wd4457 /wd4458 /wd4505 /wd4702")
+elseif (CLANG OR GCC)
+  if (GCC)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fstrong-eval-order=some")
+  endif()
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer")
+  if (APPLE)
+    #use "-Wl,-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/export_list" for exported symbols
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fvisibility=hidden -Wl,-dead_strip,-x,-S")
+    set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} -fvisibility=hidden -Wl,-dead_strip,-x,-S")
+    # Generate dSYM bundles for proper stack traces with libbacktrace (for Ninja/Make generators)
+    if(NOT DSYMUTIL_LINK_CONFIGURED AND NOT CMAKE_GENERATOR MATCHES "Xcode" AND CMAKE_BUILD_TYPE MATCHES "Debug|RelWithDebInfo")
+      set(DSYMUTIL_LINK_CONFIGURED TRUE CACHE INTERNAL "dSYM generation configured in linker")
+      set(CMAKE_C_LINK_EXECUTABLE "${CMAKE_C_LINK_EXECUTABLE} && dsymutil <TARGET>")
+      set(CMAKE_CXX_LINK_EXECUTABLE "${CMAKE_CXX_LINK_EXECUTABLE} && dsymutil <TARGET>")
+    endif()
+  else()
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ffunction-sections -fdata-sections")
+    if (NOT USE_EMSCRIPTEN)
+      set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--gc-sections")
+      if (NOT MINGW)
+        set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--exclude-libs,ALL")
+      endif()
+    endif()
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections")
+    if (NOT TOS_USE_ASAN AND NOT TOS_USE_TSAN AND NOT TOS_USE_COVERAGE AND NOT MEMPROF)
+      if (NOT USE_EMSCRIPTEN)
+        if (NOT MINGW)
+          set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--exclude-libs,ALL")
+        endif()
+      endif()
+    endif()
+  endif()
+endif()
+
+if (WIN32)
+  add_definitions(-DNTDDI_VERSION=0x06020000 -DWINVER=0x0602 -D_WIN32_WINNT=0x0602 -DNOMINMAX -DUNICODE -D_UNICODE)
+endif()
+if (CYGWIN)
+  add_definitions(-D_DEFAULT_SOURCE=1 -DFD_SETSIZE=4096)
+endif()
+
+if (NOT ANDROID) # _FILE_OFFSET_BITS is broken in ndk r15 and r15b and doesn't work prior to Android 7.0
+  add_definitions(-D_FILE_OFFSET_BITS=64)
+endif()
+
+if (TOS_INSERT_GDB_HOOKS)
+  add_compile_definitions(-DTON_INSERT_GDB_HOOKS=1)
+endif()
+
+set(INTERNAL_COMPILE "0")
+#BEGIN internal
+  add_definitions(-D_INTERNAL_COMPILE=1)
+  set(INTERNAL_COMPILE "1")
+#END internal
+
+set(TOSLIB_COMPILE "0")
+#BEGIN toslib
+  add_definitions(-D_TOSLIB_COMPILE=1)
+  set(TOSLIB_COMPILE "1")
+#END toslib
+
+if (MSVC)
+  add_compile_options(/experimental:external /external:anglebrackets /external:W0)
+endif()
+
+if (GCC OR CLANG)
+  add_compile_options(-Wall)
+  add_compile_options(-Wextra)
+
+  add_compile_options(-Wpointer-arith)
+  add_compile_options(-Wcast-qual)
+  add_compile_options(-Wsign-compare)
+  add_compile_options(-Wpointer-arith)
+  add_compile_options(-Wvla)
+  add_compile_options(-Wnon-virtual-dtor)
+  add_compile_options(-Wconversion)
+
+  # TODO: Either justify all of these or remove.
+  add_compile_options(-Wno-tautological-compare)
+  add_compile_options(-Wno-unused-parameter)
+  add_compile_options(-Wno-sign-conversion)
+  add_compile_options(-Wno-unused-private-field)
+  add_compile_options(-Wno-redundant-move)
+
+  if (GCC)
+    add_compile_options(-Wimplicit-fallthrough=2)
+    add_compile_options(-Wduplicated-branches)
+    add_compile_options(-Wduplicated-cond)
+    add_compile_options(-Walloc-zero)
+    add_compile_options(-Wlogical-op)
+  endif()
+endif()
+
+if (GCC OR CLANG)
+  if (CMAKE_BUILD_TYPE MATCHES "RelWithDebInfo")
+    # For historical reasons, CMake falls back to -O2 optimization level when CMAKE_BUILD_TYPE is
+    # set to RelWithDebInfo.
+    add_compile_options(-O3)
+  endif()
+endif()
+
+if (TOS_USE_COVERAGE)
+  add_cxx_compiler_flag("-fprofile-arcs")
+  add_cxx_compiler_flag("-ftest-coverage")
+  add_cxx_compiler_flag("--coverage")
+  add_cxx_compiler_flag("-O0")
+  add_cxx_compiler_flag("-g")
+  add_cxx_compiler_flag("-fno-inline")
+  add_cxx_compiler_flag("-fno-inline-small-functions")
+  add_cxx_compiler_flag("-fno-default-inline")
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fprofile-arcs -ftest-coverage --coverage")
+  set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fprofile-arcs -ftest-coverage --coverage")
+endif()
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=thread")
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address")
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=undefined")
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=leak")
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -finstrument-functions")
+
+#Compilation database
+set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
+
+#BEGIN internal
+option(TOS_BUILD_DOCS "Build LaTeX/PDF documentation targets" OFF)
+find_package(LATEX)
+if (TOS_BUILD_DOCS AND LATEX_FOUND)
+  include(UseLATEX)
+  add_latex_document(doc/tvm.tex TARGET_NAME ton_vm_description)
+  add_latex_document(doc/tblkch.tex TARGET_NAME ton_blockchain_description)
+  add_latex_document(doc/fiftbase.tex TARGET_NAME fift_basic_description)
+  add_latex_document(doc/catchain.tex TARGET_NAME catchain_consensus_description)
+elseif (TOS_BUILD_DOCS)
+  message(STATUS "Could NOT find LATEX (this is NOT an error)")
+endif()
+#END internal
+
+if (NOT OPENSSL_FOUND)
+  find_package(OpenSSL REQUIRED)
+endif()
+
+function(target_link_libraries_system target)
+  set(libs ${ARGN})
+  foreach(lib ${libs})
+    get_target_property(lib_include_dirs ${lib} INTERFACE_INCLUDE_DIRECTORIES)
+    target_include_directories(${target} SYSTEM PUBLIC ${lib_include_dirs})
+    target_link_libraries(${target} PUBLIC ${lib})
+  endforeach(lib)
+endfunction(target_link_libraries_system)
+
+add_custom_target(all-tests)
+
+function(ton_test TEST_NAME)
+  add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME} ${ARGN})
+  add_dependencies(all-tests ${TEST_NAME})
+endfunction()
+
+enable_testing()
+
+set(TDUTILS_MIME_TYPE OFF CACHE BOOL "Generate mime type conversion")
+add_subdirectory(tdutils)
+if (TARGET lz4 AND TARGET tdutils)
+  add_dependencies(tdutils lz4)
+endif()
+add_subdirectory(memprof)
+add_subdirectory(metrics)
+add_subdirectory(tdactor)
+add_subdirectory(tdnet)
+if (TOS_USE_ROCKSDB)
+  option(TDDB_USE_ROCKSDB "Use rockdb" ON)
+endif()
+add_subdirectory(tddb)
+add_subdirectory(tdtl)
+add_subdirectory(tl)
+add_subdirectory(terminal)
+add_subdirectory(keys)
+add_subdirectory(tl-utils)
+add_subdirectory(adnl)
+add_subdirectory(crypto)
+add_subdirectory(lite-client)
+add_subdirectory(emulator)
+add_subdirectory(tolk)
+
+#BEGIN toslib
+add_subdirectory(toslib)
+#END toslib
+
+# Temporary (?) move those two targets in TOSLIB targets
+add_subdirectory(common)
+add_subdirectory(http)
+
+#BEGIN internal
+if (NOT TOS_ONLY_TOSLIB)
+add_subdirectory(tdfec)
+add_subdirectory(keyring)
+add_subdirectory(fec)
+add_subdirectory(rldp)
+add_subdirectory(rldp2)
+add_subdirectory(dht)
+add_subdirectory(overlay)
+add_subdirectory(catchain)
+add_subdirectory(validator-session)
+add_subdirectory(validator)
+if (NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
+  add_subdirectory(blockchain-explorer)
+endif()
+add_subdirectory(storage)
+add_subdirectory(validator-engine)
+add_subdirectory(validator-engine-console)
+add_subdirectory(create-hardfork)
+add_subdirectory(dht-server)
+add_subdirectory(utils)
+add_subdirectory(rldp-http-proxy)
+endif()
+#END internal
+
+if (USE_QUIC)
+  add_subdirectory(quic)
+endif ()
+
+if (NOT CMAKE_CROSSCOMPILING)
+  if (TDUTILS_MIME_TYPE)
+    set(TDMIME_AUTO tdmime_auto)
+  endif()
+  add_custom_target(prepare_cross_compiling DEPENDS tl_generate_common tlb_generate_block gen_fif ${TDMIME_AUTO})
+endif()
+
+#TESTS
+add_executable(test-ed25519 test/test-td-main.cpp ${ED25519_TEST_SOURCE})
+target_link_libraries(test-ed25519 PRIVATE ton_crypto)
+
+add_executable(test-vm test/test-td-main.cpp ${TONVM_TEST_SOURCE})
+target_link_libraries(test-vm PRIVATE ton_crypto fift-lib)
+
+add_executable(test-smartcont test/test-td-main.cpp ${SMARTCONT_TEST_SOURCE})
+target_link_libraries(test-smartcont PRIVATE smc-envelope fift-lib tos_db)
+
+add_executable(test-bigint ${BIGINT_TEST_SOURCE})
+target_link_libraries(test-bigint PRIVATE ton_crypto)
+
+if (WINGETOPT_FOUND)
+  target_link_libraries_system(test-bigint wingetopt)
+endif()
+
+add_executable(test-cells test/test-td-main.cpp ${CELLS_TEST_SOURCE})
+target_link_libraries(test-cells PRIVATE ton_crypto)
+
+add_executable(test-fift test/test-td-main.cpp ${FIFT_TEST_SOURCE})
+target_link_libraries(test-fift PRIVATE fift-lib)
+
+add_executable(test-tdutils test/test-td-main.cpp ${TDUTILS_TEST_SOURCE})
+target_link_libraries(test-tdutils PRIVATE tdutils ${CMAKE_THREAD_LIBS_INIT} memprof ${JEMALLOC_LIBRARIES})
+
+add_executable(test-tdactor test/test-td-main.cpp ${TDACTOR_TEST_SOURCE})
+target_link_libraries(test-tdactor PRIVATE tdactor ${CMAKE_THREAD_LIBS_INIT})
+
+add_executable(test-net test/test-td-main.cpp ${NET_TEST_SOURCE})
+target_link_libraries(test-net PRIVATE tdnet tdutils ${CMAKE_THREAD_LIBS_INIT})
+
+#BEGIN toslib
+add_executable(test-toslib ${TOSLIB_ONLINE_TEST_SOURCE})
+target_link_libraries(test-toslib tdactor adnllite tl_api ton_crypto tl_toslib_api toslib)
+
+add_executable(test-toslib-offline test/test-td-main.cpp ${TOSLIB_OFFLINE_TEST_SOURCE})
+target_link_libraries(test-toslib-offline tdactor adnllite tl_api ton_crypto fift-lib tl_toslib_api toslib)
+
+if (NOT CMAKE_CROSSCOMPILING)
+  add_dependencies(test-toslib-offline gen_fif)
+endif()
+#END toslib
+
+#BEGIN internal
+if (NOT TOS_ONLY_TOSLIB)
+add_executable(test-db test/test-td-main.cpp ${TONDB_TEST_SOURCE})
+target_link_libraries(test-db PRIVATE tos_db memprof tdfec)
+
+add_executable(test-storage test/test-td-main.cpp ${STORAGE_TEST_SOURCE})
+target_link_libraries(test-storage PRIVATE storage tos_db memprof tl_api tl-utils fec rldp2)
+
+add_executable(test-rocksdb test/test-rocksdb.cpp)
+target_link_libraries(test-rocksdb PRIVATE memprof tddb tdutils)
+
+add_executable(test-tddb test/test-td-main.cpp ${TDDB_TEST_SOURCE})
+target_link_libraries(test-tddb PRIVATE tdutils tddb ${CMAKE_THREAD_LIBS_INIT} memprof)
+
+add_executable(test-fec test/test-td-main.cpp ${FEC_TEST_SOURCE})
+target_link_libraries(test-fec PRIVATE tdfec tdutils ${CMAKE_THREAD_LIBS_INIT})
+if (USE_LIBRAPTORQ)
+  target_link_libraries(test-fec PRIVATE third_party_fec)
+  target_compile_definitions(test-fec PRIVATE "USE_LIBRAPTORQ=1")
+endif()
+
+add_executable(test-hello-world test/test-hello-world.cpp )
+target_link_libraries(test-hello-world tl_api ton_crypto)
+
+add_executable(test-adnl test/test-adnl.cpp)
+target_link_libraries(test-adnl adnl adnltest dht tl_api)
+add_executable(test-dht test/test-dht.cpp)
+target_link_libraries(test-dht adnl adnltest dht tl_api)
+add_executable(test-rldp test/test-rldp.cpp)
+target_link_libraries(test-rldp adnl adnltest dht rldp tl_api)
+add_executable(test-rldp2 test/test-rldp2.cpp)
+target_link_libraries(test-rldp2 adnl adnltest dht rldp2 tl_api)
+add_executable(bench-rldp test/net/bench-rldp.cpp)
+target_link_libraries(bench-rldp adnl adnltest dht rldp rldp2 tl_api quic metrics)
+add_executable(test-quic-sender test/net/test-quic-sender.cpp)
+target_link_libraries(test-quic-sender adnl dht tl_api quic)
+add_executable(test-validator-session-state test/test-validator-session-state.cpp)
+target_link_libraries(test-validator-session-state adnl dht rldp validatorsession tl_api)
+
+add_executable(test-overlay test/test-overlay.cpp)
+target_link_libraries(test-overlay overlay tdutils tdactor adnl adnltest tl_api dht )
+add_executable(test-catchain test/test-catchain.cpp)
+target_link_libraries(test-catchain overlay tdutils tdactor adnl adnltest rldp tl_api dht
+  catchain )
+add_executable(test-tos-collator test/test-tos-collator.cpp)
+target_link_libraries(test-tos-collator overlay tdutils tdactor adnl tl_api dht
+  catchain validatorsession validator-disk tos_validator validator-disk )
+
+add_executable(test-http test/test-http.cpp)
+target_link_libraries(test-http PRIVATE toshttp)
+
+add_executable(test-emulator test/test-td-main.cpp emulator/test/emulator-tests.cpp)
+target_link_libraries(test-emulator PRIVATE emulator)
+
+get_directory_property(HAS_PARENT PARENT_DIRECTORY)
+if (HAS_PARENT)
+  set(ALL_TEST_SOURCE
+          ${TDUTILS_TEST_SOURCE}
+          ${TDACTOR_TEST_SOURCE}
+          ${NET_TEST_SOURCE}
+          ${TDDB_TEST_SOURCE}
+          ${FEC_TEST_SOURCE}
+          ${ED25519_TEST_SOURCE}
+          ${TONDB_TEST_SOURCE}
+          ${BIGNUM_TEST_SOURCE}
+          ${CELLS_TEST_SOURCE}
+          PARENT_SCOPE)
+endif()
+add_library(all_tests INTERFACE)
+target_link_libraries(all_tests INTERFACE tdutils tdactor tdnet tdfec tos_db ton_crypto fift-lib)
+endif()
+#END internal
+
+set(TEST_OPTIONS "--regression ${CMAKE_CURRENT_SOURCE_DIR}/test/regression-tests.ans --filter -Bench")
+separate_arguments(TEST_OPTIONS)
+ton_test(test-ed25519)
+ton_test(test-bigint)
+ton_test(test-vm ${TEST_OPTIONS})
+ton_test(test-fift ${TEST_OPTIONS})
+ton_test(test-cells ${TEST_OPTIONS})
+ton_test(test-smartcont)
+ton_test(test-net)
+ton_test(test-tdactor)
+
+#BEGIN toslib
+ton_test(test-tdutils)
+ton_test(test-toslib-offline)
+#END toslib
+
+# FunC tests
+if (NOT NIX)
+    if (MSVC)
+      set(PYTHON_VER "python")
+    else()
+      set(PYTHON_VER "python3")
+    endif()
+    add_test(
+      NAME test-func
+      COMMAND ${PYTHON_VER} run_tests.py tests/
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests)
+    if (WIN32)
+        set_property(TEST test-func PROPERTY ENVIRONMENT
+          "FUNC_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/crypto/func.exe"
+          "FIFT_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/crypto/fift.exe"
+          "FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib/")
+    else()
+        set_property(TEST test-func PROPERTY ENVIRONMENT
+          "FUNC_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/crypto/func"
+          "FIFT_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/crypto/fift"
+          "FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib/")
+    endif()
+
+    add_test(
+      NAME test-func-legacy
+      COMMAND ${PYTHON_VER} legacy_tester.py
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests)
+    if (WIN32)
+        set_property(TEST test-func-legacy PROPERTY ENVIRONMENT
+          "FUNC_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/crypto/func.exe"
+          "FIFT_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/crypto/fift.exe"
+          "FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib/")
+    else()
+        set_property(TEST test-func-legacy PROPERTY ENVIRONMENT
+          "FUNC_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/crypto/func"
+          "FIFT_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/crypto/fift"
+          "FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib/")
+    endif()
+endif()
+
+# Tolk tests
+if (NOT NIX)
+    if (MSVC)
+      set(PYTHON_VER "python")
+    else()
+      set(PYTHON_VER "python3")
+    endif()
+    add_test(
+      NAME test-tolk
+      COMMAND ${PYTHON_VER} tolk-tester.py tests/
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tolk-tester)
+    if (WIN32)
+        set_property(TEST test-tolk PROPERTY ENVIRONMENT
+          "TOLK_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/tolk/tolk.exe"
+          "FIFT_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/crypto/fift.exe"
+          "FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib/")
+    else()
+        set_property(TEST test-tolk PROPERTY ENVIRONMENT
+          "TOLK_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/tolk/tolk"
+          "FIFT_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/crypto/fift"
+          "FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib/")
+    endif()
+endif()
+
+#BEGIN internal
+if (NOT TOS_ONLY_TOSLIB)
+ton_test(test-adnl)
+ton_test(test-dht)
+ton_test(test-rldp)
+ton_test(test-rldp2)
+ton_test(test-validator-session-state)
+ton_test(test-catchain)
+ton_test(test-emulator)
+
+ton_test(test-fec)
+ton_test(test-tddb ${TEST_OPTIONS})
+ton_test(test-db ${TEST_OPTIONS})
+
+add_subdirectory(test)
+endif()
+#END internal

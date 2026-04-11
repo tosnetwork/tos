@@ -1,0 +1,803 @@
+/*
+    This file is part of TOS Blockchain Library.
+
+    TOS Blockchain Library is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Lesser General Public License as published by
+    the Free Software Foundation, either version 2 of the License, or
+    (at your option) any later version.
+
+    TOS Blockchain Library is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
+
+    Copyright 2017-2020 Telegram Systems LLP
+    Copyright 2025-2026 TOS Blockchain Teams
+*/
+#pragma once
+#include <ostream>
+
+#include "common/refcnt.hpp"
+#include "td/utils/CancellationToken.h"
+#include "td/utils/StringBuilder.h"
+#include "td/utils/bits.h"
+#include "tl/tlblib.hpp"
+#include "tos/tos-types.h"
+#include "vm/boc.h"
+#include "vm/cells.h"
+#include "vm/cellslice.h"
+#include "vm/dict.h"
+#include "vm/stack.hpp"
+
+#include "signature-set.h"
+
+namespace block {
+
+using td::Ref;
+
+struct PublicKey {
+  std::string key;
+
+  static td::Result<PublicKey> from_bytes(td::Slice key);
+
+  static td::Result<PublicKey> parse(td::Slice key);
+
+  std::string serialize(bool base64_url = false);
+};
+
+struct StdAddress {
+  tos::WorkchainId workchain{tos::workchainInvalid};
+  bool bounceable{true};  // addresses must be bounceable by default
+  bool testnet{false};
+  tos::StdSmcAddress addr;
+  StdAddress() = default;
+  StdAddress(tos::WorkchainId _wc, const tos::StdSmcAddress& _addr, bool _bounce = true, bool _testnet = false)
+      : workchain(_wc), bounceable(_bounce), testnet(_testnet), addr(_addr) {
+  }
+  StdAddress(tos::WorkchainId _wc, td::ConstBitPtr _addr, bool _bounce = true, bool _testnet = false)
+      : workchain(_wc), bounceable(_bounce), testnet(_testnet), addr(_addr) {
+  }
+  explicit StdAddress(std::string serialized);
+  explicit StdAddress(td::Slice from);
+  bool is_valid() const {
+    return workchain != tos::workchainInvalid;
+  }
+  bool invalidate() {
+    workchain = tos::workchainInvalid;
+    return false;
+  }
+  std::string rserialize(bool base64_url = false) const;
+  bool rserialize_to(td::MutableSlice to, bool base64_url = false) const;
+  bool rserialize_to(char to[48], bool base64_url = false) const;
+  bool rdeserialize(td::Slice from);
+  bool rdeserialize(std::string from);
+  bool rdeserialize(const char from[48]);
+  bool parse_addr(td::Slice acc_string);
+  bool operator==(const StdAddress& other) const;
+
+  static td::Result<StdAddress> parse(td::Slice acc_string);
+};
+
+inline td::StringBuilder& operator<<(td::StringBuilder& sb, const StdAddress& addr) {
+  return sb << addr.workchain << " : " << addr.addr.to_hex();
+}
+
+bool parse_std_account_addr(td::Slice acc_string, tos::WorkchainId& wc, tos::StdSmcAddress& addr,
+                            bool* bounceable = nullptr, bool* testnet_only = nullptr);
+
+struct ShardId {
+  tos::WorkchainId workchain_id;
+  int shard_pfx_len;
+  unsigned long long shard_pfx;
+  ShardId(tos::WorkchainId wc_id = tos::workchainInvalid)
+      : workchain_id(wc_id), shard_pfx_len(0), shard_pfx(1ULL << 63) {
+  }
+  ShardId(tos::WorkchainId wc_id, unsigned long long sh_pfx);
+  ShardId(tos::ShardIdFull ton_shard);
+  ShardId(tos::BlockId ton_block);
+  ShardId(const tos::BlockIdExt& ton_block);
+  ShardId(tos::WorkchainId wc_id, unsigned long long sh_pfx, int sh_pfx_len);
+  ShardId(vm::CellSlice& cs) {
+    deserialize(cs);
+  }
+  ShardId(Ref<vm::CellSlice> cs_ref) {
+    vm::CellSlice cs{*cs_ref};
+    deserialize(cs);
+  }
+  explicit operator tos::ShardIdFull() const {
+    return tos::ShardIdFull{workchain_id, shard_pfx};
+  }
+  bool operator==(const ShardId& other) const {
+    return workchain_id == other.workchain_id && shard_pfx == other.shard_pfx;
+  }
+  void invalidate() {
+    workchain_id = tos::workchainInvalid;
+    shard_pfx_len = 0;
+  }
+  bool is_valid() const {
+    return workchain_id != tos::workchainInvalid;
+  }
+  void show(std::ostream& os) const;
+  std::string to_str() const;
+  bool serialize(vm::CellBuilder& cb) const;
+  bool deserialize(vm::CellSlice& cs);
+
+ private:
+  void init();
+};
+
+struct EnqueuedMsgDescr {
+  tos::AccountIdPrefixFull src_prefix_, cur_prefix_, next_prefix_, dest_prefix_;
+  tos::LogicalTime lt_;
+  tos::LogicalTime enqueued_lt_;
+  tos::Bits256 hash_;
+  Ref<vm::Cell> msg_;
+  Ref<vm::Cell> msg_env_;
+  EnqueuedMsgDescr() = default;
+  EnqueuedMsgDescr(tos::AccountIdPrefixFull cur_pfx, tos::AccountIdPrefixFull next_pfx, tos::LogicalTime lt,
+                   tos::LogicalTime enqueued_lt, td::ConstBitPtr hash)
+      : cur_prefix_(cur_pfx), next_prefix_(next_pfx), lt_(lt), enqueued_lt_(enqueued_lt), hash_(hash) {
+  }
+  bool is_valid() const {
+    return next_prefix_.is_valid();
+  }
+  bool check_key(td::ConstBitPtr key) const;
+  bool invalidate() {
+    next_prefix_.workchain = cur_prefix_.workchain = tos::workchainInvalid;
+    return false;
+  }
+  bool unpack(vm::CellSlice& cs);
+  bool same_workchain() const {
+    return cur_prefix_.workchain == next_prefix_.workchain;
+  }
+};
+
+using compute_shard_end_lt_func_t = std::function<tos::LogicalTime(tos::AccountIdPrefixFull)>;
+
+struct MsgProcessedUpto {
+  tos::ShardId shard;
+  tos::BlockSeqno mc_seqno;
+  tos::LogicalTime last_inmsg_lt;
+  tos::Bits256 last_inmsg_hash;
+  compute_shard_end_lt_func_t compute_shard_end_lt;
+  MsgProcessedUpto() = default;
+  MsgProcessedUpto(tos::ShardId _shard, tos::BlockSeqno _mcseqno, tos::LogicalTime _lt, td::ConstBitPtr _hash)
+      : shard(_shard), mc_seqno(_mcseqno), last_inmsg_lt(_lt), last_inmsg_hash(_hash) {
+  }
+  bool operator<(const MsgProcessedUpto& other) const& {
+    return shard < other.shard || (shard == other.shard && mc_seqno < other.mc_seqno);
+  }
+  bool contains(const MsgProcessedUpto& other) const&;
+  bool contains(tos::ShardId other_shard, tos::LogicalTime other_lt, td::ConstBitPtr other_hash,
+                tos::BlockSeqno other_mc_seqno) const&;
+  // NB: this is for checking whether we have already imported an internal message
+  bool already_processed(const EnqueuedMsgDescr& msg) const;
+  bool can_check_processed() const {
+    return (bool)compute_shard_end_lt;
+  }
+  std::ostream& print(std::ostream& os) const;
+  std::string to_str() const;
+};
+
+static inline std::ostream& operator<<(std::ostream& os, const MsgProcessedUpto& proc) {
+  return proc.print(os);
+}
+
+struct MsgProcessedUptoCollection {
+  tos::ShardIdFull owner;
+  bool valid{false};
+  std::vector<MsgProcessedUpto> list;
+  MsgProcessedUptoCollection(tos::ShardIdFull _owner) : owner(_owner) {
+  }
+  MsgProcessedUptoCollection(tos::ShardIdFull _owner, Ref<vm::CellSlice> cs_ref);
+  static std::unique_ptr<MsgProcessedUptoCollection> unpack(tos::ShardIdFull _owner, Ref<vm::CellSlice> cs_ref);
+  bool is_valid() const {
+    return valid;
+  }
+  bool insert(tos::BlockSeqno mc_seqno, tos::LogicalTime last_proc_lt, td::ConstBitPtr last_proc_hash);
+  bool insert_infty(tos::BlockSeqno mc_seqno, tos::LogicalTime last_proc_lt = ~0ULL);
+  bool compactify();
+  bool pack(vm::CellBuilder& cb);
+  bool is_reduced() const;
+  bool contains(const MsgProcessedUpto& other) const;
+  bool contains(const MsgProcessedUptoCollection& other) const;
+  const MsgProcessedUpto* is_simple_update_of(const MsgProcessedUptoCollection& other, bool& ok) const;
+  tos::BlockSeqno min_mc_seqno() const;
+  bool split(tos::ShardIdFull new_owner);
+  bool combine_with(const MsgProcessedUptoCollection& other);
+  // NB: this is for checking whether we have already imported an internal message
+  bool already_processed(const EnqueuedMsgDescr& msg) const;
+  bool can_check_processed() const;
+  bool for_each_mcseqno(std::function<bool(tos::BlockSeqno)>) const;
+  std::ostream& print(std::ostream& os) const;
+  std::string to_str() const;
+};
+
+static inline std::ostream& operator<<(std::ostream& os, const MsgProcessedUptoCollection& proc_coll) {
+  return proc_coll.print(os);
+}
+
+struct ImportedMsgQueueLimits {
+  // Default values
+  td::uint32 max_bytes = 1 << 16;
+  td::uint32 max_msgs = 100;
+  bool deserialize(vm::CellSlice& cs);
+  ImportedMsgQueueLimits operator*(td::uint32 x) const {
+    return {max_bytes * x, max_msgs * x};
+  }
+};
+
+struct ParamLimits {
+  enum { limits_cnt = 4 };
+  enum { cl_underload = 0, cl_normal = 1, cl_soft = 2, cl_medium = 3, cl_hard = 4 };
+  ParamLimits() = default;
+  ParamLimits(td::uint32 underload, td::uint32 soft_lim, td::uint32 hard_lim)
+      : limits_{underload, soft_lim, (soft_lim + hard_lim) / 2, hard_lim} {
+  }
+  td::uint32 underload() const {
+    return limits_[0];
+  }
+  td::uint32 soft() const {
+    return limits_[1];
+  }
+  td::uint32 hard() const {
+    return limits_[3];
+  }
+  td::uint32 limit(unsigned cls) const {
+    return limits_[cls];
+  }
+  bool compute_medium_limit() {
+    limits_[2] = soft() + ((hard() - soft()) >> 1);
+    return true;
+  }
+  bool deserialize(vm::CellSlice& cs);
+  int classify(td::uint64 value) const;
+  bool fits(unsigned cls, td::uint64 value) const;
+  void multiply_by(double x) {
+    CHECK(x > 0.0);
+    for (td::uint32& y : limits_) {
+      y = (td::uint32)std::min<double>(y * x, 1e9);
+    }
+  }
+
+ private:
+  std::array<td::uint32, limits_cnt> limits_;
+};
+
+struct BlockLimits {
+  ParamLimits bytes, gas, lt_delta, collated_data;
+  tos::LogicalTime start_lt{0};
+  ImportedMsgQueueLimits imported_msg_queue;
+  const vm::CellUsageTree* usage_tree{nullptr};
+  bool deserialize(vm::CellSlice& cs);
+  int classify_size(td::uint64 size) const;
+  int classify_gas(td::uint64 gas) const;
+  int classify_lt(tos::LogicalTime lt) const;
+  int classify_collated_data_size(td::uint64 size) const;
+  int classify(td::uint64 size, td::uint64 gas, tos::LogicalTime lt, td::uint64 collated_size) const;
+  bool fits(unsigned cls, td::uint64 size, td::uint64 gas, tos::LogicalTime lt, td::uint64 collated_size) const;
+};
+
+struct BlockLimitStatus {
+  const BlockLimits& limits;
+  tos::LogicalTime cur_lt;
+  td::uint64 gas_used{};
+  vm::NewCellStorageStat st_stat;
+  unsigned accounts{}, transactions{}, extra_out_msgs{};
+  td::uint64 collated_data_size_estimate = 0;
+  unsigned public_library_diff{};
+  BlockLimitStatus(const BlockLimits& limits_, tos::LogicalTime lt = 0)
+      : limits(limits_), cur_lt(std::max(limits_.start_lt, lt)) {
+  }
+  void reset() {
+    cur_lt = limits.start_lt;
+    st_stat.set_zero();
+    transactions = accounts = 0;
+    gas_used = 0;
+    extra_out_msgs = 0;
+    public_library_diff = 0;
+    collated_data_size_estimate = 0;
+  }
+  td::uint64 estimate_block_size(const vm::NewCellStorageStat::Stat* extra = nullptr) const;
+  int classify() const;
+  bool fits(unsigned cls) const;
+  bool would_fit(unsigned cls, tos::LogicalTime end_lt, td::uint64 more_gas,
+                 const vm::NewCellStorageStat::Stat* extra = nullptr) const;
+  double load_fraction(unsigned cls) const;
+  bool add_cell(Ref<vm::Cell> cell) {
+    st_stat.add_cell(std::move(cell));
+    return true;
+  }
+  bool add_proof(Ref<vm::Cell> cell) {
+    st_stat.add_proof(std::move(cell), limits.usage_tree);
+    return true;
+  }
+  bool update_lt(tos::LogicalTime lt) {
+    cur_lt = std::max(lt, cur_lt);
+    return true;
+  }
+  bool update_gas(td::uint64 more_gas) {
+    gas_used += more_gas;
+    return true;
+  }
+  bool add_transaction(unsigned cnt = 1) {
+    transactions += cnt;
+    return true;
+  }
+  bool add_account(unsigned cnt = 1) {
+    accounts += cnt;
+    return true;
+  }
+};
+
+namespace tlb {
+struct CurrencyCollection;
+}  // namespace tlb
+
+struct CurrencyCollection {
+  using type_class = block::tlb::CurrencyCollection;
+  td::RefInt256 grams;
+  Ref<vm::Cell> extra;
+  CurrencyCollection() = default;
+  explicit CurrencyCollection(td::RefInt256 _grams, Ref<vm::Cell> _extra = {})
+      : grams(std::move(_grams)), extra(std::move(_extra)) {
+  }
+  explicit CurrencyCollection(long long _grams, Ref<vm::Cell> _extra = {})
+      : grams(true, _grams), extra(std::move(_extra)) {
+  }
+  bool set_zero() {
+    grams = td::RefInt256{true, 0};
+    extra.clear();
+    return true;
+  }
+  static CurrencyCollection zero() {
+    return CurrencyCollection(td::RefInt256{true, 0});
+  }
+  bool is_valid() const {
+    return grams.not_null();
+  }
+  bool is_zero() const {
+    return is_valid() && extra.is_null() && !td::sgn(grams);
+  }
+  bool has_extra() const {
+    return extra.not_null();
+  }
+  bool invalidate() {
+    extra.clear();
+    grams.clear();
+    return false;
+  }
+  bool validate(int max_cells = 1024) const;
+  bool validate_extra(int max_cells = 1024) const;
+  bool operator==(const CurrencyCollection& other) const;
+  bool operator!=(const CurrencyCollection& other) const {
+    return !operator==(other);
+  }
+  bool operator==(td::RefInt256 other_grams) const {
+    return is_valid() && !has_extra() && !td::cmp(grams, other_grams);
+  }
+  bool operator!=(td::RefInt256 other_grams) const {
+    return !operator==(std::move(other_grams));
+  }
+  bool operator>=(const CurrencyCollection& other) const;
+  bool operator<=(const CurrencyCollection& other) const {
+    return other >= *this;
+  }
+  static bool add(const CurrencyCollection& a, const CurrencyCollection& b, CurrencyCollection& c);
+  static bool add(const CurrencyCollection& a, CurrencyCollection&& b, CurrencyCollection& c);
+  CurrencyCollection& operator+=(const CurrencyCollection& other);
+  CurrencyCollection& operator+=(CurrencyCollection&& other);
+  CurrencyCollection& operator+=(td::RefInt256 other_grams);
+  CurrencyCollection operator+(const CurrencyCollection& other) const;
+  CurrencyCollection operator+(CurrencyCollection&& other) const;
+  CurrencyCollection operator+(td::RefInt256 other_grams);
+  static bool sub(const CurrencyCollection& a, const CurrencyCollection& b, CurrencyCollection& c);
+  static bool sub(const CurrencyCollection& a, CurrencyCollection&& b, CurrencyCollection& c);
+  CurrencyCollection& operator-=(const CurrencyCollection& other);
+  CurrencyCollection& operator-=(CurrencyCollection&& other);
+  CurrencyCollection& operator-=(td::RefInt256 other_grams);
+  CurrencyCollection operator-(const CurrencyCollection& other) const;
+  CurrencyCollection operator-(CurrencyCollection&& other) const;
+  CurrencyCollection operator-(td::RefInt256 other_grams) const;
+  bool clamp(const CurrencyCollection& other);
+  bool check_extra_currency_limit(td::uint32 max_currencies) const;
+  static bool remove_zero_extra_currencies(Ref<vm::Cell>& root, td::uint32 max_currencies);
+  bool store(vm::CellBuilder& cb) const;
+  bool store_or_zero(vm::CellBuilder& cb) const;
+  bool fetch(vm::CellSlice& cs);
+  bool fetch_exact(vm::CellSlice& cs);
+  bool unpack(Ref<vm::CellSlice> csr);
+  bool validate_unpack(Ref<vm::CellSlice> csr, int max_cells = 1024);
+  Ref<vm::CellSlice> pack() const;
+  bool pack_to(Ref<vm::CellSlice>& csr) const {
+    return (csr = pack()).not_null();
+  }
+  Ref<vm::Tuple> as_vm_tuple() const {
+    if (is_valid()) {
+      return vm::make_tuple_ref(grams, vm::StackEntry::maybe(extra));
+    } else {
+      return {};
+    }
+  }
+  bool show(std::ostream& os) const;
+  std::string to_str() const;
+};
+
+std::ostream& operator<<(std::ostream& os, const CurrencyCollection& cc);
+
+struct ShardState {
+  enum { verbosity = 0 };
+  tos::BlockIdExt id_;
+  Ref<vm::Cell> root_;
+  int global_id_;
+  tos::UnixTime utime_;
+  tos::LogicalTime lt_;
+  tos::BlockSeqno mc_blk_seqno_, min_ref_mc_seqno_, vert_seqno_;
+  tos::BlockIdExt mc_blk_ref_;
+  tos::LogicalTime mc_blk_lt_;
+  bool before_split_{false};
+  std::unique_ptr<vm::AugmentedDictionary> account_dict_;
+  std::unique_ptr<vm::Dictionary> shard_libraries_;
+  Ref<vm::Cell> mc_state_extra_;
+  td::uint64 overload_history_{0}, underload_history_{0};
+  CurrencyCollection total_balance_, total_validator_fees_, global_balance_;
+  std::unique_ptr<vm::AugmentedDictionary> out_msg_queue_;
+  std::unique_ptr<vm::Dictionary> ihr_pending_;
+  std::unique_ptr<vm::Dictionary> block_create_stats_;
+  std::shared_ptr<block::MsgProcessedUptoCollection> processed_upto_;
+  std::unique_ptr<vm::AugmentedDictionary> dispatch_queue_;
+  td::optional<td::uint64> out_msg_queue_size_;
+
+  bool is_valid() const {
+    return id_.is_valid();
+  }
+  bool is_masterchain() const {
+    return id_.is_masterchain();
+  }
+  bool invalidate() {
+    id_.invalidate();
+    return false;
+  }
+  td::Status unpack_state(tos::BlockIdExt id, Ref<vm::Cell> state_root);
+  td::Status unpack_state_ext(tos::BlockIdExt id, Ref<vm::Cell> state_root, int global_id,
+                              tos::BlockSeqno prev_mc_block_seqno, bool after_split, bool clear_history,
+                              std::function<bool(tos::BlockSeqno)> for_each_mcseqno);
+  td::Status merge_with(ShardState& sib);
+  td::Result<std::unique_ptr<vm::AugmentedDictionary>> compute_split_out_msg_queue(tos::ShardIdFull subshard);
+  td::Result<std::shared_ptr<block::MsgProcessedUptoCollection>> compute_split_processed_upto(
+      tos::ShardIdFull subshard);
+  td::Status split(tos::ShardIdFull subshard);
+  td::Status unpack_out_msg_queue_info(Ref<vm::Cell> out_msg_queue_info);
+  bool clear_load_history() {
+    overload_history_ = underload_history_ = 0;
+    return true;
+  }
+  bool clear_load_history_if(bool cond) {
+    return !cond || clear_load_history();
+  }
+  td::Status check_before_split(bool before_split) const;
+  td::Status check_global_id(int req_global_id) const;
+  td::Status check_mc_blk_seqno(tos::BlockSeqno last_mc_block_seqno) const;
+  bool update_prev_utime_lt(tos::UnixTime& prev_utime, tos::LogicalTime& prev_lt) const;
+
+  bool for_each_mcseqno(std::function<bool(tos::BlockSeqno)> func) const {
+    return processed_upto_ && processed_upto_->for_each_mcseqno(std::move(func));
+  }
+};
+
+struct ValueFlow {
+  struct SetZero {};
+  CurrencyCollection from_prev_blk, to_next_blk, imported, exported, fees_collected, fees_imported, recovered, created,
+      minted, burned;
+  ValueFlow() = default;
+  ValueFlow(SetZero)
+      : from_prev_blk{0}
+      , to_next_blk{0}
+      , imported{0}
+      , exported{0}
+      , fees_collected{0}
+      , fees_imported{0}
+      , recovered{0}
+      , created{0}
+      , minted{0}
+      , burned{0} {
+  }
+  bool is_valid() const {
+    return from_prev_blk.is_valid() && minted.is_valid();
+  }
+  bool validate() const;
+  bool invalidate() {
+    return from_prev_blk.invalidate();
+  }
+  bool set_zero();
+  bool store(vm::CellBuilder& cb) const;
+  bool fetch(vm::CellSlice& cs);
+  bool unpack(Ref<vm::CellSlice> csr);
+  bool show(std::ostream& os) const;
+  std::string to_str() const;
+
+ private:
+  bool show_one(std::ostream& os, const char* str, const CurrencyCollection& cc) const;
+};
+
+std::ostream& operator<<(std::ostream& os, const ValueFlow& vflow);
+
+struct DiscountedCounter {
+  struct SetZero {};
+  bool valid;
+  tos::UnixTime last_updated;
+  td::uint64 total;
+  td::uint64 cnt2048;
+  td::uint64 cnt65536;
+  DiscountedCounter() : valid(false) {
+  }
+  DiscountedCounter(SetZero) : valid(true), last_updated(0), total(0), cnt2048(0), cnt65536(0) {
+  }
+  DiscountedCounter(tos::UnixTime _lastupd, td::uint64 _total, td::uint64 _cnt2048, td::uint64 _cnt65536)
+      : valid(true), last_updated(_lastupd), total(_total), cnt2048(_cnt2048), cnt65536(_cnt65536) {
+  }
+  static DiscountedCounter Zero() {
+    return SetZero();
+  }
+  bool is_valid() const {
+    return valid;
+  }
+  bool invalidate() {
+    return (valid = false);
+  }
+  bool set_zero() {
+    last_updated = 0;
+    total = cnt2048 = cnt65536 = 0;
+    return (valid = true);
+  }
+  bool is_zero() const {
+    return !total;
+  }
+  bool almost_zero() const {
+    return (cnt2048 | cnt65536) <= 1;
+  }
+  bool operator==(const DiscountedCounter& other) const {
+    return last_updated == other.last_updated && total == other.total && cnt2048 == other.cnt2048 &&
+           cnt65536 == other.cnt65536;
+  }
+  bool almost_equals(const DiscountedCounter& other) const {
+    return last_updated == other.last_updated && total == other.total && cnt2048 <= other.cnt2048 + 1 &&
+           other.cnt2048 <= cnt2048 + 1 && cnt65536 <= other.cnt65536 + 1 && other.cnt65536 <= cnt65536 + 1;
+  }
+  bool modified_since(tos::UnixTime utime) const {
+    return last_updated >= utime;
+  }
+  bool validate();
+  bool increase_by(unsigned count, tos::UnixTime now);
+  bool fetch(vm::CellSlice& cs);
+  bool unpack(Ref<vm::CellSlice> csr);
+  bool store(vm::CellBuilder& cb) const;
+  Ref<vm::CellSlice> pack() const;
+  bool show(std::ostream& os) const;
+  std::string to_str() const;
+};
+
+static inline std::ostream& operator<<(std::ostream& os, const DiscountedCounter& dcount) {
+  dcount.show(os);
+  return os;
+}
+
+bool fetch_CreatorStats(vm::CellSlice& cs, DiscountedCounter& mc_cnt, DiscountedCounter& shard_cnt);
+bool store_CreatorStats(vm::CellBuilder& cb, const DiscountedCounter& mc_cnt, const DiscountedCounter& shard_cnt);
+bool unpack_CreatorStats(Ref<vm::CellSlice> cs, DiscountedCounter& mc_cnt, DiscountedCounter& shard_cnt);
+
+struct BlockProofLink {
+  tos::BlockIdExt from, to;
+  bool is_key{false}, is_fwd{false};
+  Ref<vm::Cell> dest_proof, state_proof, proof;
+  Ref<BlockSignatureSet> sig_set;
+  BlockProofLink(tos::BlockIdExt _from, tos::BlockIdExt _to, bool _iskey = false)
+      : from(_from), to(_to), is_key(_iskey), is_fwd(to.seqno() > from.seqno()) {
+  }
+  bool incomplete() const {
+    return dest_proof.is_null();
+  }
+  td::Status validate(td::uint32* save_utime = nullptr) const;
+};
+
+struct BlockProofChain {
+  tos::BlockIdExt from, to;
+  int mode;
+  td::uint32 last_utime{0};
+  bool complete{false}, has_key_block{false}, has_utime{false}, valid{false};
+  tos::BlockIdExt key_blkid;
+  std::vector<BlockProofLink> links;
+  std::size_t link_count() const {
+    return links.size();
+  }
+  BlockProofChain(tos::BlockIdExt _from, tos::BlockIdExt _to, int _mode = 0) : from(_from), to(_to), mode(_mode) {
+  }
+  BlockProofLink& new_link(const tos::BlockIdExt& cur, const tos::BlockIdExt& next, bool iskey = false) {
+    links.emplace_back(cur, next, iskey);
+    return links.back();
+  }
+  const BlockProofLink& last_link() const {
+    return links.back();
+  }
+  BlockProofLink& last_link() {
+    return links.back();
+  }
+  bool last_link_incomplete() const {
+    return !links.empty() && last_link().incomplete();
+  }
+  td::Status validate(td::CancellationToken cancellation_token = {});
+};
+
+// compute the share of shardchain blocks generated by each validator using Monte Carlo method
+class MtCarloComputeShare {
+  int K, N;
+  long long iterations;
+  std::vector<double> W;
+  std::vector<double> CW, RW;
+  std::vector<std::pair<double, double>> H;
+  std::vector<int> A;
+  double R0;
+  bool ok;
+
+ public:
+  MtCarloComputeShare(int subset_size, const std::vector<double>& weights, long long iteration_count = 1000000)
+      : K(subset_size), N((int)weights.size()), iterations(iteration_count), W(weights), ok(false) {
+    compute();
+  }
+  MtCarloComputeShare(int subset_size, int set_size, const double* weights, long long iteration_count = 1000000)
+      : K(subset_size), N(set_size), iterations(iteration_count), W(weights, weights + set_size), ok(false) {
+    compute();
+  }
+  bool is_ok() const {
+    return ok;
+  }
+  const double* share_array() const {
+    return ok ? RW.data() : nullptr;
+  }
+  const double* weights_array() const {
+    return ok ? W.data() : nullptr;
+  }
+  double operator[](int i) const {
+    return ok ? RW.at(i) : -1.;
+  }
+  double share(int i) const {
+    return ok ? RW.at(i) : -1.;
+  }
+  double weight(int i) const {
+    return ok ? W.at(i) : -1.;
+  }
+  int size() const {
+    return N;
+  }
+  int subset_size() const {
+    return K;
+  }
+  long long performed_iterations() const {
+    return iterations;
+  }
+
+ private:
+  bool set_error() {
+    return ok = false;
+  }
+  bool compute();
+  void gen_vset();
+};
+
+int filter_out_msg_queue(vm::AugmentedDictionary& out_queue, tos::ShardIdFull old_shard, tos::ShardIdFull subshard,
+                         td::uint64* queue_size = nullptr);
+
+std::ostream& operator<<(std::ostream& os, const ShardId& shard_id);
+
+bool pack_std_smc_addr_to(char result[48], bool base64_url, tos::WorkchainId wc, const tos::StdSmcAddress& addr,
+                          bool bounceable, bool testnet);
+std::string pack_std_smc_addr(bool base64_url, tos::WorkchainId wc, const tos::StdSmcAddress& addr, bool bounceable,
+                              bool testnet);
+bool unpack_std_smc_addr(const char packed[48], tos::WorkchainId& wc, tos::StdSmcAddress& addr, bool& bounceable,
+                         bool& testnet);
+bool unpack_std_smc_addr(td::Slice packed, tos::WorkchainId& wc, tos::StdSmcAddress& addr, bool& bounceable,
+                         bool& testnet);
+bool unpack_std_smc_addr(std::string packed, tos::WorkchainId& wc, tos::StdSmcAddress& addr, bool& bounceable,
+                         bool& testnet);
+
+bool store_UInt7(vm::CellBuilder& cb, unsigned long long value);
+bool store_UInt7(vm::CellBuilder& cb, unsigned long long value1, unsigned long long value2);
+bool store_Maybe_Grams(vm::CellBuilder& cb, td::RefInt256 value);
+bool store_Maybe_Grams_nz(vm::CellBuilder& cb, td::RefInt256 value);
+bool store_CurrencyCollection(vm::CellBuilder& cb, td::RefInt256 value, Ref<vm::Cell> extra);
+bool fetch_CurrencyCollection(vm::CellSlice& cs, td::RefInt256& value, Ref<vm::Cell>& extra, bool inexact = false);
+bool unpack_CurrencyCollection(Ref<vm::CellSlice> csr, td::RefInt256& value, Ref<vm::Cell>& extra);
+
+bool valid_library_collection(Ref<vm::Cell> cell, bool catch_errors = true);
+
+bool valid_config_data(Ref<vm::Cell> cell, const td::BitArray<256>& addr, bool catch_errors = true,
+                       bool relax_par0 = false, Ref<vm::Cell> old_mparams = {});
+bool config_params_present(vm::Dictionary& dict, Ref<vm::Cell> param_dict_root);
+
+bool add_extra_currency(Ref<vm::Cell> extra1, Ref<vm::Cell> extra2, Ref<vm::Cell>& res);
+bool sub_extra_currency(Ref<vm::Cell> extra1, Ref<vm::Cell> extra2, Ref<vm::Cell>& res);
+
+tos::AccountIdPrefixFull interpolate_addr(const tos::AccountIdPrefixFull& src, const tos::AccountIdPrefixFull& dest,
+                                          int used_dest_bits);
+bool interpolate_addr_to(const tos::AccountIdPrefixFull& src, const tos::AccountIdPrefixFull& dest, int used_dest_bits,
+                         tos::AccountIdPrefixFull& res);
+// result: (transit_addr_dest_bits, nh_addr_dest_bits)
+std::pair<int, int> perform_hypercube_routing(tos::AccountIdPrefixFull src, tos::AccountIdPrefixFull dest,
+                                              tos::ShardIdFull cur, int used_dest_bits = 0);
+
+bool compute_out_msg_queue_key(Ref<vm::Cell> msg_env, td::BitArray<352>& key);
+
+bool unpack_block_prev_blk(Ref<vm::Cell> block_root, const tos::BlockIdExt& id, std::vector<tos::BlockIdExt>& prev,
+                           tos::BlockIdExt& mc_blkid, bool& after_split, tos::BlockIdExt* fetch_blkid = nullptr);
+td::Status unpack_block_prev_blk_ext(Ref<vm::Cell> block_root, const tos::BlockIdExt& id,
+                                     std::vector<tos::BlockIdExt>& prev, tos::BlockIdExt& mc_blkid, bool& after_split,
+                                     tos::BlockIdExt* fetch_blkid = nullptr);
+td::Status unpack_block_prev_blk_try(Ref<vm::Cell> block_root, const tos::BlockIdExt& id,
+                                     std::vector<tos::BlockIdExt>& prev, tos::BlockIdExt& mc_blkid, bool& after_split,
+                                     tos::BlockIdExt* fetch_blkid = nullptr);
+td::Status check_block_header(Ref<vm::Cell> block_root, const tos::BlockIdExt& id,
+                              tos::Bits256* store_shard_hash_to = nullptr);
+
+std::unique_ptr<vm::Dictionary> get_block_create_stats_dict(Ref<vm::Cell> state_root);
+
+std::unique_ptr<vm::AugmentedDictionary> get_prev_blocks_dict(Ref<vm::Cell> state_root);
+bool get_old_mc_block_id(vm::AugmentedDictionary* prev_blocks_dict, tos::BlockSeqno seqno, tos::BlockIdExt& blkid,
+                         tos::LogicalTime* end_lt = nullptr);
+bool get_old_mc_block_id(vm::AugmentedDictionary& prev_blocks_dict, tos::BlockSeqno seqno, tos::BlockIdExt& blkid,
+                         tos::LogicalTime* end_lt = nullptr);
+bool unpack_old_mc_block_id(Ref<vm::CellSlice> old_blk_info, tos::BlockSeqno seqno, tos::BlockIdExt& blkid,
+                            tos::LogicalTime* end_lt = nullptr);
+bool check_old_mc_block_id(vm::AugmentedDictionary* prev_blocks_dict, const tos::BlockIdExt& blkid);
+bool check_old_mc_block_id(vm::AugmentedDictionary& prev_blocks_dict, const tos::BlockIdExt& blkid);
+
+td::Result<Ref<vm::Cell>> get_block_transaction(Ref<vm::Cell> block_root, tos::WorkchainId workchain,
+                                                const tos::StdSmcAddress& addr, tos::LogicalTime lt);
+td::Result<Ref<vm::Cell>> get_block_transaction_try(Ref<vm::Cell> block_root, tos::WorkchainId workchain,
+                                                    const tos::StdSmcAddress& addr, tos::LogicalTime lt);
+
+bool get_transaction_in_msg(Ref<vm::Cell> trans_ref, Ref<vm::Cell>& in_msg);
+bool is_transaction_in_msg(Ref<vm::Cell> trans_ref, Ref<vm::Cell> msg);
+bool is_transaction_out_msg(Ref<vm::Cell> trans_ref, Ref<vm::Cell> msg);
+bool get_transaction_id(Ref<vm::Cell> trans_ref, tos::StdSmcAddress& account_addr, tos::LogicalTime& lt);
+bool get_transaction_owner(Ref<vm::Cell> trans_ref, tos::StdSmcAddress& addr);
+
+td::uint32 compute_validator_set_hash(tos::CatchainSeqno cc_seqno, tos::ShardIdFull from,
+                                      const std::vector<tos::ValidatorDescr>& nodes);
+
+td::Result<Ref<vm::Cell>> get_config_data_from_smc(Ref<vm::Cell> acc_root);
+td::Result<Ref<vm::Cell>> get_config_data_from_smc(Ref<vm::CellSlice> acc_csr);
+bool important_config_parameters_changed(Ref<vm::Cell> old_cfg_root, Ref<vm::Cell> new_cfg_root, bool coarse = false);
+
+bool is_public_library(td::ConstBitPtr key, Ref<vm::CellSlice> val);
+
+bool parse_hex_hash(const char* str, const char* end, td::Bits256& hash);
+bool parse_hex_hash(td::Slice str, td::Bits256& hash);
+
+bool parse_block_id_ext(const char* str, const char* end, tos::BlockIdExt& blkid);
+bool parse_block_id_ext(td::Slice str, tos::BlockIdExt& blkid);
+
+bool unpack_account_dispatch_queue(Ref<vm::CellSlice> csr, vm::Dictionary& dict, td::uint64& dict_size);
+Ref<vm::CellSlice> pack_account_dispatch_queue(const vm::Dictionary& dict, td::uint64 dict_size);
+Ref<vm::CellSlice> get_dispatch_queue_min_lt_account(const vm::AugmentedDictionary& dispatch_queue,
+                                                     tos::StdSmcAddress& addr);
+bool remove_dispatch_queue_entry(vm::AugmentedDictionary& dispatch_queue, const tos::StdSmcAddress& addr,
+                                 tos::LogicalTime lt);
+
+struct MsgMetadata {
+  td::uint32 depth;
+  tos::WorkchainId initiator_wc;
+  tos::StdSmcAddress initiator_addr;
+  tos::LogicalTime initiator_lt;
+
+  bool unpack(vm::CellSlice& cs);
+  bool pack(vm::CellBuilder& cb) const;
+  std::string to_str() const;
+
+  bool operator==(const MsgMetadata& other) const;
+  bool operator!=(const MsgMetadata& other) const;
+};
+
+}  // namespace block

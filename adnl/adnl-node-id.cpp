@@ -1,0 +1,36 @@
+/*
+    This file is part of TOS Blockchain Library.
+
+    TOS Blockchain Library is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Lesser General Public License as published by
+    the Free Software Foundation, either version 2 of the License, or
+    (at your option) any later version.
+
+    TOS Blockchain Library is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
+
+    Copyright 2017-2020 Telegram Systems LLP
+    Copyright 2025-2026 TOS Blockchain Teams
+*/
+
+#include "common/util.h"
+
+#include "adnl-node-id.hpp"
+
+namespace tos {
+namespace adnl {
+td::Result<AdnlNodeIdShort> AdnlNodeIdShort::parse(td::Slice id) {
+  TRY_RESULT(str, td::adnl_id_decode(id));
+  return AdnlNodeIdShort(str);
+}
+
+std::string AdnlNodeIdShort::serialize() {
+  return adnl_id_encode(hash_.as_slice()).move_as_ok();
+}
+}  // namespace adnl
+}  // namespace tos

@@ -1,0 +1,64 @@
+/*
+    This file is part of TOS Blockchain source code.
+
+    TOS Blockchain is free software; you can redistribute it and/or
+    modify it under the terms of the GNU General Public License
+    as published by the Free Software Foundation; either version 2
+    of the License, or (at your option) any later version.
+
+    TOS Blockchain is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with TOS Blockchain.  If not, see <http://www.gnu.org/licenses/>.
+
+    In addition, as a special exception, the copyright holders give permission
+    to link the code of portions of this program with the OpenSSL library.
+    You must obey the GNU General Public License in all respects for all
+    of the code used other than OpenSSL. If you modify file(s) with this
+    exception, you may extend this exception to your version of the file(s),
+    but you are not obligated to do so. If you do not wish to do so, delete this
+    exception statement from your version. If you delete this exception statement
+    from all source files in the program, then also delete it here.
+
+    Copyright 2017-2020 Telegram Systems LLP
+    Copyright 2025-2026 TOS Blockchain Teams
+*/
+#include <cassert>
+#include <cstring>
+#include <iomanip>
+#include <iostream>
+#include <string>
+
+#include "td/utils/OptionParser.h"
+#include "validator/db/fileref.hpp"
+#include "validator/db/package.hpp"
+
+void run(std::string filename) {
+  auto R = tos::Package::open(filename, true, false);
+  if (R.is_error()) {
+    std::cerr << "failed to open archive '" << filename << "': " << R.move_as_error().to_string();
+    std::_Exit(2);
+  }
+  auto p = R.move_as_ok();
+
+  auto S = p.iterate([&](std::string filename, td::BufferSlice data, td::uint64 offset) -> bool {
+    auto E = tos::validator::FileReference::create(filename);
+    if (E.is_error()) {
+      std::cout << "bad filename\n";
+    } else {
+      std::cout << filename << " " << data.size() << "\n";
+    }
+    return true;
+  });
+  if (S.is_error()) {
+    LOG(ERROR) << "Package error: " << S;
+  }
+}
+
+int main(int argc, char **argv) {
+  run(argv[1]);
+  return 0;
+}

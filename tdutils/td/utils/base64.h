@@ -1,0 +1,46 @@
+/*
+    This file is part of TOS Blockchain Library.
+
+    TOS Blockchain Library is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Lesser General Public License as published by
+    the Free Software Foundation, either version 2 of the License, or
+    (at your option) any later version.
+
+    TOS Blockchain Library is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
+
+    Copyright 2017-2020 Telegram Systems LLP
+    Copyright 2025-2026 TOS Blockchain Teams
+*/
+
+#pragma once
+
+#include "td/utils/SharedSlice.h"
+#include "td/utils/Slice.h"
+#include "td/utils/Status.h"
+#include "td/utils/common.h"
+
+namespace td {
+
+string base64_encode(Slice input);
+Result<string> base64_decode(Slice base64);
+Result<SecureString> base64_decode_secure(Slice base64);
+
+string base64url_encode(Slice input);
+Result<string> base64url_decode(Slice base64);
+
+bool is_base64(Slice input);
+bool is_base64url(Slice input);
+
+bool is_base64_characters(Slice input);
+bool is_base64url_characters(Slice input);
+
+string base64_filter(Slice input);
+string base32_encode(Slice input, bool upper_case = false);
+Result<string> base32_decode(Slice base32);
+}  // namespace td

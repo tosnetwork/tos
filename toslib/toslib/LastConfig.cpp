@@ -1,0 +1,164 @@
+/*
+    This file is part of TOS Blockchain Library.
+
+    TOS Blockchain Library is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Lesser General Public License as published by
+    the Free Software Foundation, either version 2 of the License, or
+    (at your option) any later version.
+
+    TOS Blockchain Library is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
+
+    Copyright 2017-2020 Telegram Systems LLP
+    Copyright 2025-2026 TOS Blockchain Teams
+*/
+#include "block/block-auto.h"
+#include "block/check-proof.h"
+#include "block/mc-config.h"
+#include "lite-client/lite-client-common.h"
+#include "tos/lite-tl.hpp"
+#include "toslib/LastConfig.h"
+#include "toslib/utils.h"
+
+#include "LastBlock.h"
+
+namespace toslib {
+
+// init_state <-> last_key_block
+// state.valitated_init_state
+// last_key_block ->
+//
+td::StringBuilder& operator<<(td::StringBuilder& sb, const LastConfigState& state) {
+  return sb;
+}
+
+LastConfig::LastConfig(ExtClientRef client, td::unique_ptr<Callback> callback) : callback_(std::move(callback)) {
+  client_.set_client(client);
+  VLOG(last_block) << "State: " << state_;
+}
+
+void LastConfig::get_last_config(td::Promise<LastConfigState> promise) {
+  if (promises_.empty() && get_config_state_ == QueryState::Done) {
+    VLOG(last_config) << "start";
+    VLOG(last_config) << "get_config: reset";
+    get_config_state_ = QueryState::Empty;
+  }
+
+  promises_.push_back(std::move(promise));
+  loop();
+}
+
+void LastConfig::with_last_block(td::Result<LastBlockState> r_last_block) {
+  if (r_last_block.is_error()) {
+    on_error(r_last_block.move_as_error());
+    return;
+  }
+
+  auto last_block = r_last_block.move_as_ok();
+  auto requested_block_id = last_block.last_block_id;
+  client_.send_query(
+      tos::lite_api::liteServer_getConfigAll(block::ConfigInfo::needPrevBlocks,
+                                             create_tl_lite_block_id(requested_block_id)),
+      [this, requested_block_id](auto r_config) { this->on_config(requested_block_id, std::move(r_config)); });
+}
+
+void LastConfig::on_config(tos::BlockIdExt requested_block_id,
+                           td::Result<tos::tos_api::object_ptr<tos::lite_api::liteServer_configInfo>> r_config) {
+  auto status = process_config(requested_block_id, std::move(r_config));
+  if (status.is_ok()) {
+    on_ok();
+    get_config_state_ = QueryState::Done;
+  } else {
+    on_error(std::move(status));
+    get_config_state_ = QueryState::Empty;
+  }
+}
+
+td::Status LastConfig::process_config(
+    const tos::BlockIdExt& requested_block_id,
+    td::Result<tos::tos_api::object_ptr<tos::lite_api::liteServer_configInfo>> r_config) {
+  TRY_RESULT(raw_config, std::move(r_config));
+  TRY_STATUS_PREFIX(TRY_VM(process_config_proof(requested_block_id, std::move(raw_config))),
+                    ToslibError::ValidateConfig());
+  return td::Status::OK();
+}
+
+td::Status LastConfig::process_config_proof(const tos::BlockIdExt& requested_block_id,
+                                            tos::tos_api::object_ptr<tos::lite_api::liteServer_configInfo> raw_config) {
+  if (!requested_block_id.is_masterchain_ext()) {
+    return td::Status::Error(PSLICE() << "reference block " << requested_block_id.to_str()
+                                      << " for the configuration is not a valid masterchain block");
+  }
+  auto response_block_id = create_block_id(raw_config->id_);
+  if (response_block_id != requested_block_id) {
+    return td::Status::Error(PSLICE() << "unexpected block in configuration response: expected "
+                                      << requested_block_id.to_str() << ", got " << response_block_id.to_str());
+  }
+  TRY_RESULT(state, block::check_extract_state_proof(requested_block_id, raw_config->state_proof_.as_slice(),
+                                                     raw_config->config_proof_.as_slice()));
+  TRY_RESULT(config, block::ConfigInfo::extract_config(
+                         std::move(state), requested_block_id,
+                         block::ConfigInfo::needPrevBlocks | block::ConfigInfo::needCapabilities));
+
+  for (auto i : params_) {
+    VLOG(last_config) << "ConfigParam(" << i << ") = ";
+    auto value = config->get_config_param(i);
+    if (value.is_null()) {
+      VLOG(last_config) << "(null)\n";
+    } else {
+      std::ostringstream os;
+      if (i >= 0) {
+        unsigned cfg_idx = static_cast<unsigned>(i);
+        block::gen::ConfigParam{cfg_idx}.print_ref(os, value);
+        os << std::endl;
+      }
+      vm::load_cell_slice(value).print_rec(os);
+      VLOG(last_config) << os.str();
+    }
+  }
+  TRY_RESULT_ASSIGN(state_.prev_blocks_info, config->get_prev_blocks_info());
+  state_.config.reset(config.release());
+  return td::Status::OK();
+}
+
+void LastConfig::loop() {
+  if (promises_.empty()) {
+    return;
+  }
+
+  if (get_config_state_ == QueryState::Empty) {
+    VLOG(last_block) << "get_config: start";
+    get_config_state_ = QueryState::Active;
+    client_.with_last_block(
+        [self = this](td::Result<LastBlockState> r_last_block) { self->with_last_block(std::move(r_last_block)); });
+  }
+}
+
+void LastConfig::on_ok() {
+  VLOG(last_block) << "ok " << state_;
+  for (auto& promise : promises_) {
+    auto state = state_;
+    promise.set_value(std::move(state));
+  }
+  promises_.clear();
+}
+
+void LastConfig::on_error(td::Status status) {
+  VLOG(last_config) << "error " << status;
+  for (auto& promise : promises_) {
+    promise.set_error(status.clone());
+  }
+  promises_.clear();
+  get_config_state_ = QueryState::Empty;
+}
+
+void LastConfig::tear_down() {
+  on_error(ToslibError::Cancelled());
+}
+
+}  // namespace toslib

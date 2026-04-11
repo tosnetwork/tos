@@ -1,0 +1,69 @@
+/*
+    This file is part of TOS Blockchain Library.
+
+    TOS Blockchain Library is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Lesser General Public License as published by
+    the Free Software Foundation, either version 2 of the License, or
+    (at your option) any later version.
+
+    TOS Blockchain Library is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
+
+    Copyright 2017-2020 Telegram Systems LLP
+    Copyright 2025-2026 TOS Blockchain Teams
+*/
+#pragma once
+
+#include <set>
+
+#include "td/actor/actor.h"
+#include "validator/interfaces/validator-manager.h"
+
+namespace tos {
+
+namespace validator {
+
+class TokenManager : public td::actor::Actor {
+ public:
+  TokenManager() {
+  }
+  explicit TokenManager(td::uint32 max_tokens)
+      : free_tokens_(max_tokens), free_priority_tokens_(max_tokens), max_priority_tokens_(max_tokens) {
+  }
+  void alarm() override;
+
+  void get_token(size_t size, td::uint32 priority, td::Timestamp timeout,
+                 td::Promise<std::unique_ptr<ActionToken>> promise);
+  void token_cleared(size_t size, td::uint32 priority);
+
+ private:
+  std::unique_ptr<ActionToken> gen_token(size_t size, td::uint32 priority);
+  struct PendingPromiseKey {
+    size_t size;
+    td::uint32 priority;
+    td::uint64 seqno;
+
+    bool operator<(const PendingPromiseKey &with) const {
+      return priority > with.priority || (priority == with.priority && seqno < with.seqno);
+    }
+  };
+  struct PendingPromise {
+    td::Timestamp timeout;
+    td::Promise<std::unique_ptr<ActionToken>> promise;
+  };
+  td::uint64 seqno_ = 0;
+  std::map<PendingPromiseKey, PendingPromise> pending_;
+
+  td::uint32 free_tokens_ = 16;
+  td::uint32 free_priority_tokens_ = 16;
+  td::uint32 max_priority_tokens_ = 16;
+};
+
+}  // namespace validator
+
+}  // namespace tos

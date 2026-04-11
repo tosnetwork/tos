@@ -1,0 +1,80 @@
+/*
+    This file is part of TOS Blockchain Library.
+
+    TOS Blockchain Library is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Lesser General Public License as published by
+    the Free Software Foundation, either version 2 of the License, or
+    (at your option) any later version.
+
+    TOS Blockchain Library is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
+
+    Copyright 2017-2020 Telegram Systems LLP
+    Copyright 2025-2026 TOS Blockchain Teams
+*/
+#pragma once
+#include <functional>
+#include <utility>
+
+#include "td/utils/buffer.h"
+#include "vm/cells/Cell.h"
+
+namespace vm {
+
+class MerkleProof {
+ public:
+  using IsPrunnedFunction = std::function<bool(const Ref<Cell> &)>;
+
+  // works with proofs wrapped in MerkleProof special cell
+  // cells must have zero level
+  static td::Result<Ref<Cell>> generate(Ref<Cell> cell, IsPrunnedFunction is_prunned);
+  static td::Result<Ref<Cell>> generate(Ref<Cell> cell, CellUsageTree *usage_tree);
+
+  // cell must have zero level and must be a MerkleProof
+  static td::Result<Ref<Cell>> virtualize(Ref<Cell> cell);
+
+  static td::Result<Ref<Cell>> combine(Ref<Cell> a, Ref<Cell> b);
+  static td::Result<Ref<Cell>> combine_fast(Ref<Cell> a, Ref<Cell> b);
+
+  // works with unwrapped proofs
+  // works fine with cell of non-zero level, but this is not supported (yet?) in MerkeProof special cell
+  static td::Result<Ref<Cell>> generate_raw(Ref<Cell> cell, IsPrunnedFunction is_prunned);
+  static td::Result<Ref<Cell>> generate_raw(Ref<Cell> cell, CellUsageTree *usage_tree);
+  static Ref<Cell> virtualize_raw(Ref<Cell> cell, td::uint32 effective_level);
+  static td::Result<Ref<Cell>> combine_raw(Ref<Cell> a, Ref<Cell> b);
+  static td::Result<Ref<Cell>> combine_fast_raw(Ref<Cell> a, Ref<Cell> b);
+};
+
+class MerkleProofBuilder {
+  std::shared_ptr<CellUsageTree> usage_tree;
+  Ref<vm::Cell> orig_root, usage_root;
+
+ public:
+  MerkleProofBuilder() = default;
+  explicit MerkleProofBuilder(Ref<Cell> root);
+  Ref<Cell> init(Ref<Cell> root);
+  bool clear();
+  Ref<Cell> root() const {
+    return usage_root;
+  }
+  Ref<Cell> original_root() const {
+    return orig_root;
+  }
+  td::Result<Ref<Cell>> extract_proof() const;
+  bool extract_proof_to(Ref<Cell> &proof_root) const;
+  td::Result<td::BufferSlice> extract_proof_boc() const;
+
+  void set_cell_load_callback(std::function<void(const LoadedCell &)> f) {
+    usage_tree->set_cell_load_callback(std::move(f));
+  }
+  const CellUsageTree &get_usage_tree() const {
+    return *usage_tree;
+  }
+};
+
+}  // namespace vm

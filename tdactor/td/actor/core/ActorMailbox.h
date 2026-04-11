@@ -1,0 +1,89 @@
+/*
+    This file is part of TOS Blockchain Library.
+
+    TOS Blockchain Library is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Lesser General Public License as published by
+    the Free Software Foundation, either version 2 of the License, or
+    (at your option) any later version.
+
+    TOS Blockchain Library is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
+
+    Copyright 2017-2020 Telegram Systems LLP
+    Copyright 2025-2026 TOS Blockchain Teams
+*/
+#pragma once
+
+#include "td/actor/core/ActorMessage.h"
+#include "td/utils/MpscLinkQueue.h"
+
+namespace td {
+namespace actor {
+namespace core {
+
+class ActorMailbox;
+
+namespace gdb {
+
+#ifdef TOS_INSERT_GDB_HOOKS
+[[gnu::noinline]] inline auto hook_message_pushed_to_mailbox(ActorMailbox &mailbox, ActorMessage &message,
+                                                             auto &&continuation) {
+  asm volatile("" : : "r"(&message) : "memory");
+  asm volatile("" : : "r"(&mailbox) : "memory");
+  return continuation();
+}
+#else
+inline auto hook_message_pushed_to_mailbox(ActorMailbox &, ActorMessage &, auto &&continuation) {
+  return continuation();
+}
+#endif
+
+}  // namespace gdb
+
+class ActorMailbox {
+ public:
+  ActorMailbox() = default;
+  ActorMailbox(const ActorMailbox &) = delete;
+  ActorMailbox &operator=(const ActorMailbox &) = delete;
+  ActorMailbox(ActorMailbox &&other) = delete;
+  ActorMailbox &operator=(ActorMailbox &&other) = delete;
+  ~ActorMailbox() {
+    clear();
+  }
+  void push(ActorMessage message) {
+    gdb::hook_message_pushed_to_mailbox(*this, message, [&] { queue_.push(std::move(message)); });
+  }
+  void push_unsafe(ActorMessage message) {
+    gdb::hook_message_pushed_to_mailbox(*this, message, [&] { queue_.push_unsafe(std::move(message)); });
+  }
+
+  td::MpscLinkQueue<ActorMessage>::Reader &reader() {
+    return reader_;
+  }
+
+  void pop_all() {
+    queue_.pop_all(reader_);
+  }
+  void pop_all_unsafe() {
+    queue_.pop_all_unsafe(reader_);
+  }
+
+  void clear() {
+    pop_all();
+    while (reader_.read()) {
+      // skip
+    }
+  }
+
+ private:
+  td::MpscLinkQueue<ActorMessage> queue_;
+  td::MpscLinkQueue<ActorMessage>::Reader reader_;
+};
+}  // namespace core
+}  // namespace actor
+}  // namespace td

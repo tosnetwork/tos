@@ -1,0 +1,70 @@
+/*
+    This file is part of TOS Blockchain Library.
+
+    TOS Blockchain Library is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Lesser General Public License as published by
+    the Free Software Foundation, either version 2 of the License, or
+    (at your option) any later version.
+
+    TOS Blockchain Library is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
+
+    Copyright 2017-2020 Telegram Systems LLP
+    Copyright 2025-2026 TOS Blockchain Teams
+*/
+#pragma once
+
+#include <memory>
+
+#include "td/utils/Slice.h"
+#include "td/utils/Status.h"
+#include "td/utils/port/SocketFd.h"
+#include "td/utils/port/detail/NativeFd.h"
+#include "td/utils/port/detail/PollableFd.h"
+
+namespace td {
+namespace detail {
+class ServerSocketFdImpl;
+class ServerSocketFdImplDeleter {
+ public:
+  void operator()(ServerSocketFdImpl *impl);
+};
+}  // namespace detail
+
+class ServerSocketFd {
+ public:
+  ServerSocketFd();
+  ServerSocketFd(const ServerSocketFd &) = delete;
+  ServerSocketFd &operator=(const ServerSocketFd &) = delete;
+  ServerSocketFd(ServerSocketFd &&) noexcept;
+  ServerSocketFd &operator=(ServerSocketFd &&) noexcept;
+  ~ServerSocketFd();
+
+  Result<uint32> maximize_snd_buffer(uint32 max_size = 0);
+  Result<uint32> maximize_rcv_buffer(uint32 max_size = 0);
+
+  static Result<ServerSocketFd> open(int32 port, CSlice addr = CSlice("0.0.0.0")) TD_WARN_UNUSED_RESULT;
+  static Result<ServerSocketFd> open_vsock(int32 svm_port) TD_WARN_UNUSED_RESULT;
+
+  PollableFdInfo &get_poll_info();
+  const PollableFdInfo &get_poll_info() const;
+
+  Status get_pending_error() TD_WARN_UNUSED_RESULT;
+
+  Result<SocketFd> accept() TD_WARN_UNUSED_RESULT;
+
+  void close();
+  bool empty() const;
+
+  const NativeFd &get_native_fd() const;
+
+ private:
+  std::unique_ptr<detail::ServerSocketFdImpl, detail::ServerSocketFdImplDeleter> impl_;
+  explicit ServerSocketFd(unique_ptr<detail::ServerSocketFdImpl> impl);
+};
+}  // namespace td

@@ -1,0 +1,53 @@
+/*
+    This file is part of TOS Blockchain Library.
+
+    TOS Blockchain Library is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Lesser General Public License as published by
+    the Free Software Foundation, either version 2 of the License, or
+    (at your option) any later version.
+
+    TOS Blockchain Library is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
+*/
+#pragma once
+#include "auto/tl/tos_api.h"
+#include "tos/tos-types.h"
+#include "vm/cells.h"
+
+#include "types.h"
+
+namespace tos::validator::fullnode {
+
+enum class StateUsage { None, DecompressOnly, CompressAndDecompress };
+
+td::Result<td::BufferSlice> serialize_block_broadcast(const BlockBroadcast& broadcast, std::string called_from);
+td::Result<BlockBroadcast> deserialize_block_broadcast(tos_api::tonNode_Broadcast& obj, int max_decompressed_data_size,
+                                                       std::string called_from,
+                                                       td::Ref<vm::Cell> state = td::Ref<vm::Cell>());
+BlockBroadcast get_block_broadcast_without_data(const tos_api::tonNode_blockBroadcastCompressedV2& obj);
+
+td::Result<std::vector<BlockIdExt>> extract_prev_blocks_from_proof(td::Slice proof, const BlockIdExt& block_id);
+
+td::Result<bool> need_state_for_decompression(tos_api::tonNode_Broadcast& broadcast);
+td::Result<bool> need_state_for_decompression(tos_api::tonNode_DataFull& data_full);
+
+td::Result<td::BufferSlice> serialize_block_full(const BlockIdExt& id, td::Slice proof, td::Slice data,
+                                                 bool is_proof_link, bool compression_enabled);
+td::Status deserialize_block_full(tos_api::tonNode_DataFull& obj, BlockIdExt& id, td::BufferSlice& proof,
+                                  td::BufferSlice& data, bool& is_proof_link, int max_decompressed_data_size,
+                                  td::Ref<vm::Cell> state = td::Ref<vm::Cell>());
+
+td::Result<td::BufferSlice> serialize_block_candidate_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno,
+                                                                td::uint32 validator_set_hash, td::Slice data,
+                                                                bool compression_enabled, std::string called_from);
+td::Status deserialize_block_candidate_broadcast(tos_api::tonNode_Broadcast& obj, BlockIdExt& block_id,
+                                                 CatchainSeqno& cc_seqno, td::uint32& validator_set_hash,
+                                                 td::BufferSlice& data, int max_decompressed_data_size,
+                                                 std::string called_from);
+
+}  // namespace tos::validator::fullnode

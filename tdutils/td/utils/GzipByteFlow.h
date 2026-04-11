@@ -1,0 +1,59 @@
+/*
+    This file is part of TOS Blockchain Library.
+
+    TOS Blockchain Library is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Lesser General Public License as published by
+    the Free Software Foundation, either version 2 of the License, or
+    (at your option) any later version.
+
+    TOS Blockchain Library is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
+
+    Copyright 2017-2020 Telegram Systems LLP
+    Copyright 2025-2026 TOS Blockchain Teams
+*/
+#pragma once
+
+#include <limits>
+
+#include "td/utils/ByteFlow.h"
+#include "td/utils/Gzip.h"
+
+namespace td {
+
+#if TD_HAVE_ZLIB
+class GzipByteFlow final : public ByteFlowBase {
+ public:
+  GzipByteFlow() = default;
+
+  explicit GzipByteFlow(Gzip::Mode mode) {
+    gzip_.init(mode).ensure();
+  }
+
+  void init_decode() {
+    gzip_.init_decode().ensure();
+  }
+
+  void init_encode() {
+    gzip_.init_encode().ensure();
+  }
+
+  void set_max_output_size(size_t max_output_size) {
+    max_output_size_ = max_output_size;
+  }
+
+  bool loop() final;
+
+ private:
+  Gzip gzip_;
+  size_t total_output_size_ = 0;
+  size_t max_output_size_ = std::numeric_limits<size_t>::max();
+};
+#endif
+
+}  // namespace td

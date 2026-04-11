@@ -1,0 +1,88 @@
+/*
+    This file is part of TOS Blockchain Library.
+
+    TOS Blockchain Library is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Lesser General Public License as published by
+    the Free Software Foundation, either version 2 of the License, or
+    (at your option) any later version.
+
+    TOS Blockchain Library is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
+
+    Copyright 2017-2020 Telegram Systems LLP
+    Copyright 2025-2026 TOS Blockchain Teams
+*/
+#pragma once
+
+#include "adnl/utils.hpp"
+#include "auto/tl/tos_api.h"
+#include "block/transaction.h"
+#include "interfaces/validator-manager.h"
+#include "validator/interfaces/external-message.h"
+
+namespace tos {
+
+namespace validator {
+
+class ExtMessageQ : public ExtMessage {
+  td::Ref<vm::Cell> root_;
+  AccountIdPrefixFull addr_prefix_;
+  td::BufferSlice data_;
+  Hash hash_;
+  Hash hash_norm_;
+  tos::WorkchainId wc_;
+  tos::StdSmcAddress addr_;
+
+ public:
+  AccountIdPrefixFull shard() const override {
+    return addr_prefix_;
+  }
+  td::BufferSlice serialize() const override {
+    return data_.clone();
+  }
+  td::Ref<vm::Cell> root_cell() const override {
+    return root_;
+  }
+  Hash hash() const override {
+    return hash_;
+  }
+  Hash hash_norm() const override {
+    return hash_norm_;
+  }
+  tos::WorkchainId wc() const override {
+    return wc_;
+  }
+
+  tos::StdSmcAddress addr() const override {
+    return addr_;
+  }
+
+  ExtMessageQ(td::BufferSlice data, td::Ref<vm::Cell> root, AccountIdPrefixFull shard, tos::WorkchainId wc,
+              tos::StdSmcAddress addr, Hash hash, Hash hash_norm);
+  static td::Result<td::Ref<ExtMessageQ>> create_ext_message(td::BufferSlice data,
+                                                             block::SizeLimitsConfig::ExtMsgLimits limits);
+  static td::Status run_message_on_account(tos::WorkchainId wc, block::Account* acc, UnixTime utime, LogicalTime lt,
+                                           td::Ref<vm::Cell> msg_root, std::unique_ptr<block::ConfigInfo> config);
+};
+
+td::Result<td::Bits256> get_ext_in_msg_hash_norm(td::Ref<vm::Cell> ext_in_msg_cell);
+
+class WalletMessageProcessor {
+ public:
+  virtual ~WalletMessageProcessor() = default;
+  virtual std::string name() const = 0;
+  virtual td::Result<std::pair<td::uint32, UnixTime>> parse_message(td::Ref<vm::Cell> msg_root) const = 0;
+  virtual td::Result<td::uint32> get_wallet_seqno(td::Ref<vm::Cell> data_root) const = 0;
+  virtual td::Result<td::Ref<vm::Cell>> set_wallet_seqno(td::Ref<vm::Cell> data_root, td::uint32 new_seqno) const = 0;
+
+  static const WalletMessageProcessor* get(td::Bits256 code_hash);
+};
+
+}  // namespace validator
+
+}  // namespace tos
