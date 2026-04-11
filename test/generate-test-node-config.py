@@ -8,7 +8,7 @@ import hashlib
 
 configname="server.list"
 
-binary="../ton-build/generate-random-id"
+binary="../tos-build/generate-random-id"
 
 ids=[]
 catchains=[]

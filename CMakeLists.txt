@@ -21,7 +21,7 @@ get_filename_component(TOS_REAL_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}" REALPAT
 get_filename_component(TOS_REAL_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}" REALPATH)
 
 if (TOS_REAL_BINARY_DIR STREQUAL TOS_REAL_SOURCE_DIR)
-  message("  Out-of-source build should be used to build TON.")
+  message("  Out-of-source build should be used to build TOS.")
   message("  You need to remove the files already created by CMake and")
   message("  rerun CMake from a new directory:")
   message("  rm -rf CMakeFiles CMakeCache.txt")
@@ -72,16 +72,16 @@ if (USE_EMSCRIPTEN)
   set(TOS_ONLY_TOSLIB true)
 endif()
 if (TOS_ONLY_TOSLIB)
-  set(NOT_TON_ONLY_TOSLIB false)
+  set(NOT_TOS_ONLY_TOSLIB false)
 else()
-  set(NOT_TON_ONLY_TOSLIB true)
+  set(NOT_TOS_ONLY_TOSLIB true)
 endif()
-option(TOS_USE_ROCKSDB "Use \"ON\" to enable RocksDb." ${NOT_TON_ONLY_TOSLIB})
-option(TOS_USE_ABSEIL "Use \"ON\" to enable Abseil." ${NOT_TON_ONLY_TOSLIB})
+option(TOS_USE_ROCKSDB "Use \"ON\" to enable RocksDb." ${NOT_TOS_ONLY_TOSLIB})
+option(TOS_USE_ABSEIL "Use \"ON\" to enable Abseil." ${NOT_TOS_ONLY_TOSLIB})
 option(TOS_USE_JEMALLOC "Use \"ON\" to enable JeMalloc." OFF)
 #END internal
 
-option(TOSLIB_ENABLE_JNI "Use \"ON\" to enable JNI-compatible TonLib API.")
+option(TOSLIB_ENABLE_JNI "Use \"ON\" to enable JNI-compatible TosLib API.")
 option(TOS_USE_ASAN "Use \"ON\" to enable AddressSanitizer." OFF)
 option(TOS_USE_TSAN "Use \"ON\" to enable ThreadSanitizer." OFF)
 option(TOS_USE_UBSAN "Use \"ON\" to enable UndefinedBehaviorSanitizer." OFF)
@@ -278,7 +278,7 @@ endif ()
 message("Add tl-parser")
 add_subdirectory(third-party/tl-parser EXCLUDE_FROM_ALL)
 
-message("Add ton")
+message("Add tos")
 include(BuildBLST)
 include(BuildSECP256K1)
 include(BuildLibbacktrace)
@@ -419,7 +419,7 @@ if (NOT ANDROID) # _FILE_OFFSET_BITS is broken in ndk r15 and r15b and doesn't w
 endif()
 
 if (TOS_INSERT_GDB_HOOKS)
-  add_compile_definitions(-DTON_INSERT_GDB_HOOKS=1)
+  add_compile_definitions(-DTOS_INSERT_GDB_HOOKS=1)
 endif()
 
 set(INTERNAL_COMPILE "0")
@@ -500,8 +500,8 @@ option(TOS_BUILD_DOCS "Build LaTeX/PDF documentation targets" OFF)
 find_package(LATEX)
 if (TOS_BUILD_DOCS AND LATEX_FOUND)
   include(UseLATEX)
-  add_latex_document(doc/tvm.tex TARGET_NAME ton_vm_description)
-  add_latex_document(doc/tblkch.tex TARGET_NAME ton_blockchain_description)
+  add_latex_document(doc/tvm.tex TARGET_NAME tos_vm_description)
+  add_latex_document(doc/tblkch.tex TARGET_NAME tos_blockchain_description)
   add_latex_document(doc/fiftbase.tex TARGET_NAME fift_basic_description)
   add_latex_document(doc/catchain.tex TARGET_NAME catchain_consensus_description)
 elseif (TOS_BUILD_DOCS)
@@ -524,7 +524,7 @@ endfunction(target_link_libraries_system)
 
 add_custom_target(all-tests)
 
-function(ton_test TEST_NAME)
+function(tos_test TEST_NAME)
   add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME} ${ARGN})
   add_dependencies(all-tests ${TEST_NAME})
 endfunction()
@@ -601,23 +601,23 @@ endif()
 
 #TESTS
 add_executable(test-ed25519 test/test-td-main.cpp ${ED25519_TEST_SOURCE})
-target_link_libraries(test-ed25519 PRIVATE ton_crypto)
+target_link_libraries(test-ed25519 PRIVATE tos_crypto)
 
-add_executable(test-vm test/test-td-main.cpp ${TONVM_TEST_SOURCE})
-target_link_libraries(test-vm PRIVATE ton_crypto fift-lib)
+add_executable(test-vm test/test-td-main.cpp ${TOSVM_TEST_SOURCE})
+target_link_libraries(test-vm PRIVATE tos_crypto fift-lib)
 
 add_executable(test-smartcont test/test-td-main.cpp ${SMARTCONT_TEST_SOURCE})
 target_link_libraries(test-smartcont PRIVATE smc-envelope fift-lib tos_db)
 
 add_executable(test-bigint ${BIGINT_TEST_SOURCE})
-target_link_libraries(test-bigint PRIVATE ton_crypto)
+target_link_libraries(test-bigint PRIVATE tos_crypto)
 
 if (WINGETOPT_FOUND)
   target_link_libraries_system(test-bigint wingetopt)
 endif()
 
 add_executable(test-cells test/test-td-main.cpp ${CELLS_TEST_SOURCE})
-target_link_libraries(test-cells PRIVATE ton_crypto)
+target_link_libraries(test-cells PRIVATE tos_crypto)
 
 add_executable(test-fift test/test-td-main.cpp ${FIFT_TEST_SOURCE})
 target_link_libraries(test-fift PRIVATE fift-lib)
@@ -633,10 +633,10 @@ target_link_libraries(test-net PRIVATE tdnet tdutils ${CMAKE_THREAD_LIBS_INIT})
 
 #BEGIN toslib
 add_executable(test-toslib ${TOSLIB_ONLINE_TEST_SOURCE})
-target_link_libraries(test-toslib tdactor adnllite tl_api ton_crypto tl_toslib_api toslib)
+target_link_libraries(test-toslib tdactor adnllite tl_api tos_crypto tl_toslib_api toslib)
 
 add_executable(test-toslib-offline test/test-td-main.cpp ${TOSLIB_OFFLINE_TEST_SOURCE})
-target_link_libraries(test-toslib-offline tdactor adnllite tl_api ton_crypto fift-lib tl_toslib_api toslib)
+target_link_libraries(test-toslib-offline tdactor adnllite tl_api tos_crypto fift-lib tl_toslib_api toslib)
 
 if (NOT CMAKE_CROSSCOMPILING)
   add_dependencies(test-toslib-offline gen_fif)
@@ -645,7 +645,7 @@ endif()
 
 #BEGIN internal
 if (NOT TOS_ONLY_TOSLIB)
-add_executable(test-db test/test-td-main.cpp ${TONDB_TEST_SOURCE})
+add_executable(test-db test/test-td-main.cpp ${TOSDB_TEST_SOURCE})
 target_link_libraries(test-db PRIVATE tos_db memprof tdfec)
 
 add_executable(test-storage test/test-td-main.cpp ${STORAGE_TEST_SOURCE})
@@ -665,7 +665,7 @@ if (USE_LIBRAPTORQ)
 endif()
 
 add_executable(test-hello-world test/test-hello-world.cpp )
-target_link_libraries(test-hello-world tl_api ton_crypto)
+target_link_libraries(test-hello-world tl_api tos_crypto)
 
 add_executable(test-adnl test/test-adnl.cpp)
 target_link_libraries(test-adnl adnl adnltest dht tl_api)
@@ -706,30 +706,30 @@ if (HAS_PARENT)
           ${TDDB_TEST_SOURCE}
           ${FEC_TEST_SOURCE}
           ${ED25519_TEST_SOURCE}
-          ${TONDB_TEST_SOURCE}
+          ${TOSDB_TEST_SOURCE}
           ${BIGNUM_TEST_SOURCE}
           ${CELLS_TEST_SOURCE}
           PARENT_SCOPE)
 endif()
 add_library(all_tests INTERFACE)
-target_link_libraries(all_tests INTERFACE tdutils tdactor tdnet tdfec tos_db ton_crypto fift-lib)
+target_link_libraries(all_tests INTERFACE tdutils tdactor tdnet tdfec tos_db tos_crypto fift-lib)
 endif()
 #END internal
 
 set(TEST_OPTIONS "--regression ${CMAKE_CURRENT_SOURCE_DIR}/test/regression-tests.ans --filter -Bench")
 separate_arguments(TEST_OPTIONS)
-ton_test(test-ed25519)
-ton_test(test-bigint)
-ton_test(test-vm ${TEST_OPTIONS})
-ton_test(test-fift ${TEST_OPTIONS})
-ton_test(test-cells ${TEST_OPTIONS})
-ton_test(test-smartcont)
-ton_test(test-net)
-ton_test(test-tdactor)
+tos_test(test-ed25519)
+tos_test(test-bigint)
+tos_test(test-vm ${TEST_OPTIONS})
+tos_test(test-fift ${TEST_OPTIONS})
+tos_test(test-cells ${TEST_OPTIONS})
+tos_test(test-smartcont)
+tos_test(test-net)
+tos_test(test-tdactor)
 
 #BEGIN toslib
-ton_test(test-tdutils)
-ton_test(test-toslib-offline)
+tos_test(test-tdutils)
+tos_test(test-toslib-offline)
 #END toslib
 
 # FunC tests
@@ -798,17 +798,17 @@ endif()
 
 #BEGIN internal
 if (NOT TOS_ONLY_TOSLIB)
-ton_test(test-adnl)
-ton_test(test-dht)
-ton_test(test-rldp)
-ton_test(test-rldp2)
-ton_test(test-validator-session-state)
-ton_test(test-catchain)
-ton_test(test-emulator)
+tos_test(test-adnl)
+tos_test(test-dht)
+tos_test(test-rldp)
+tos_test(test-rldp2)
+tos_test(test-validator-session-state)
+tos_test(test-catchain)
+tos_test(test-emulator)
 
-ton_test(test-fec)
-ton_test(test-tddb ${TEST_OPTIONS})
-ton_test(test-db ${TEST_OPTIONS})
+tos_test(test-fec)
+tos_test(test-tddb ${TEST_OPTIONS})
+tos_test(test-db ${TEST_OPTIONS})
 
 add_subdirectory(test)
 endif()

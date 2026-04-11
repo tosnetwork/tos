@@ -11,7 +11,7 @@
 The TOS node, whether it is validator or fullnode, requires a public IP address.
 If your server is within an internal network or kubernetes you have to make sure that the required ports are available from the outside.
 
-Also pay attention at [hardware requirements](https://docs.ton.org/participate/run-nodes/full-node) for TOS fullnodes and validators. Pods and StatefulSets in this guide imply these requirements.
+Also pay attention at [hardware requirements](https://docs.tos.network/participate/run-nodes/full-node) for TOS fullnodes and validators. Pods and StatefulSets in this guide imply these requirements.
 
 It is recommended to everyone to read Docker chapter first in order to get a better understanding about TOS Docker image and its parameters.
 
@@ -28,8 +28,8 @@ Below is the list of supported arguments and their default values:
 | Argument          | Description                                                                                                                                                                               | Mandatory? |                      Default value                      |
 |:------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------:|:-------------------------------------------------------:|
 | PUBLIC_IP         | This will be a public IP address of your TOS node. Normally it is the same IP address as your server's external IP. This also can be your proxy server or load balancer IP address.       |    yes     |                                                         |
-| GLOBAL_CONFIG_URL | TON global configuration file. Mainnet - https://ton.org/global-config.json, Testnet - https://ton.org/testnet-global.config.json                                                         |     no     | https://api.tontech.io/tos/wallet-mainnet.autoconf.json |
-| DUMP_URL          | URL to TON dump. Specify dump from https://dump.ton.org. If you are using testnet dump, make sure to download global config for testnet.                                                  |     no     |                                                         |
+| GLOBAL_CONFIG_URL | TOS global configuration file. Mainnet - https://tos.network/global-config.json, Testnet - https://tos.network/testnet-global.config.json                                                         |     no     | https://api.tontech.io/tos/wallet-mainnet.autoconf.json |
+| DUMP_URL          | URL to TOS dump. Specify dump from https://dump.tos.network. If you are using testnet dump, make sure to download global config for testnet.                                                  |     no     |                                                         |
 | VALIDATOR_PORT    | UDP port that must be available from the outside. Used for communication with other nodes.                                                                                                |     no     |                          30001                          |
 | CONSOLE_PORT      | This TCP port is used to access validator's console. Not necessarily to be opened for external access.                                                                                    |     no     |                          30002                          |
 | LITE_PORT         | Lite-server's TCP port. Used by lite-client.                                                                                                                                              |     no     |                          30003                          |
@@ -56,10 +56,10 @@ curl -4 ifconfig.me
 ```
 and replace it in the command below:
 ```
-docker run -d --name ton-node -v /data/db:/var/tos-work/db \
+docker run -d --name tos-node -v /data/db:/var/tos-work/db \
 -e "PUBLIC_IP=<PUBLIC_IP>" \
 -e "LITESERVER=true" \
--e "DUMP_URL=https://dump.ton.org/dumps/latest.tar.lz" \
+-e "DUMP_URL=https://dump.tos.network/dumps/latest.tar.lz" \
 --network host \
 -it ghcr.io/tosnetwork/tos
 ```
@@ -70,9 +70,9 @@ In production environments it is recommended to use **Port mapping** feature of 
 When you use port mapping, Docker allocates a specific port on the host to forward traffic to a port inside the container.
 This is ideal for running multiple containers with isolated networks on the same host.
 ```
-docker run -d --name ton-node -v /data/db:/var/tos-work/db \
+docker run -d --name tos-node -v /data/db:/var/tos-work/db \
 -e "PUBLIC_IP=<PUBLIC_IP>" \
--e "DUMP_URL=https://dump.ton.org/dumps/latest.tar.lz" \
+-e "DUMP_URL=https://dump.tos.network/dumps/latest.tar.lz" \
 -e "VALIDATOR_PORT=443" \
 -e "CONSOLE_PORT=88" \
 -e "LITE_PORT=443" \
@@ -88,7 +88,7 @@ Check your firewall configuration and make sure that customized ports (443/udp, 
 ### Verify if TOS node is operating correctly
 After executing above command check the log files:
 
-```docker logs ton-node```
+```docker logs tos-node```
 
 This is totally fine if in the log output for some time (up to 15 minutes) you see messages like:
 
@@ -111,7 +111,7 @@ Go inside this folder on your server and check if its size is growing (```sudo d
 
 Now connect to the running container:
 ```
-docker exec -ti ton-node /bin/bash
+docker exec -ti tos-node /bin/bash
 ```
 and try to connect and execute **getconfig** command via validator-engine-console:
 ```
@@ -142,24 +142,24 @@ zerostate id set to -1:823F81F306FF02694F935CF5021548E3CE2B86B529812AF6A12148879
 ```
 If you can't make it working, refer to the [Troubleshooting](#troubleshooting) section below.
 ### Use validator-engine-console
-```docker exec -ti ton-node /bin/bash```
+```docker exec -ti tos-node /bin/bash```
 
 ```validator-engine-console -k client -p server.pub -a 127.0.0.1:$(jq .control[].port <<< cat /var/tos-work/db/config.json)```
 
 ### Use lite-client
-```docker exec -ti ton-node /bin/bash```
+```docker exec -ti tos-node /bin/bash```
 
 ```lite-client -p liteserver.pub -a 127.0.0.1:$(jq .liteservers[].port <<< cat /var/tos-work/db/config.json)```
 
 If you use lite-client outside the Docker container, copy the **liteserver.pub** from the container:
 
-```docker cp ton-node:/var/tos-work/db/liteserver.pub /your/path```
+```docker cp tos-node:/var/tos-work/db/liteserver.pub /your/path```
 
 ```lite-client -p /your/path/liteserver.pub -a <PUBLIC_IP>:<LITE_PORT>```
 
-### Stop TON docker container
+### Stop TOS docker container
 ```
-docker stop ton-node
+docker stop tos-node
 ```
 
 ## Kubernetes
@@ -190,7 +190,7 @@ Now do the following:
 * Add a label to this particular node.
 * By this label our pod will know where to be deployed and what storage to use:
 ```
-kubectl label nodes <NODE_NAME> node_type=ton-validator
+kubectl label nodes <NODE_NAME> node_type=tos-validator
 ```
 * Replace **<PUBLIC_IP>** (and ports if needed) in file [tos-node-port.yaml](tos-node-port.yaml).
 * Replace **<LOCAL_STORAGE_PATH>** with a real path on host for Persistent Volume.
@@ -237,7 +237,7 @@ If you are running your Kubernetes cluster on-premises or in an environment wher
 Select the node where persistent storage will be located for TOS validator.
 * Add a label to this particular node. By this label our pod will know where to be deployed:
 ```
-kubectl label nodes <NODE_NAME> node_type=ton-validator
+kubectl label nodes <NODE_NAME> node_type=tos-validator
 ```
 * Replace **<PUBLIC_IP>** (and ports if needed) in file [tos-metal-lb.yaml](tos-metal-lb.yaml).
 * Replace **<LOCAL_STORAGE_PATH>** with a real path on host for Persistent Volume.
@@ -406,17 +406,17 @@ Execute inside the container ```nc -l 30003``` and test connection from another 
  ```
 nc -vz <PUBLIC_IP> <LITE_PORT>
 ```
-### How to see what traffic is generated inside the TON docker container?
+### How to see what traffic is generated inside the TOS docker container?
 There is available a traffic monitoring utility inside the container, just execute:
 ```
 iptraf-ng
 ```
 Other tools like **tcpdump**, **nc**, **wget**, **curl**, **ifconfig**, **pv**, **plzip**, **jq** and **netstat** are also available.
 
-### How to build TON docker image from sources?
+### How to build TOS docker image from sources?
 ```
 git clone --recursive https://github.com/tosnetwork/tos.git
-cd ton
+cd tos
 docker build .
 ```
 
@@ -432,7 +432,7 @@ Try to install AWS LoadBalancer using ```Helm``` way.
 
 ---
 
-#### After installing AWS LB and running ton node, service shows error:
+#### After installing AWS LB and running tos node, service shows error:
 
 ```k describe service validator-engine-srv```
 

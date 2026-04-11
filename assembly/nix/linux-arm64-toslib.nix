@@ -21,7 +21,7 @@ let
   });
 in
 pkgs.llvmPackages_16.stdenv.mkDerivation {
-  pname = "ton";
+  pname = "tos";
   version = "dev-lib";
 
   src = ./.;

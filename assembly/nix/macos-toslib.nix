@@ -6,7 +6,7 @@
 }:
 
 pkgs.llvmPackages_14.stdenv.mkDerivation {
-  pname = "ton";
+  pname = "tos";
   version = "dev-lib";
 
   src = ./.;

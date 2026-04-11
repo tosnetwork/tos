@@ -40,6 +40,6 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@master
         with:
-          name: ton-msys2-mingw64
+          name: tos-msys2-mingw64
           path: artifacts
           retention-days: 14

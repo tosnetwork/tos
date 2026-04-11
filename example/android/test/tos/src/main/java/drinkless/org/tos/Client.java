@@ -26,9 +26,9 @@ public final class Client implements Runnable {
         /**
          * Callback called on result of query to toslib or incoming update from toslib.
          *
-         * @param object Result of query or update of type TonApi.Update about new events.
+         * @param object Result of query or update of type TosApi.Update about new events.
          */
-        void onResult(TonApi.Object object);
+        void onResult(TosApi.Object object);
     }
 
     /**
@@ -50,14 +50,14 @@ public final class Client implements Runnable {
      *
      * @param query            Object representing a query to the toslib.
      * @param resultHandler    Result handler with onResult method which will be called with result
-     *                         of the query or with TonApi.Error as parameter. If it is null, nothing
+     *                         of the query or with TosApi.Error as parameter. If it is null, nothing
      *                         will be called.
      * @param exceptionHandler Exception handler with onException method which will be called on
      *                         exception thrown from resultHandler. If it is null, then
      *                         defaultExceptionHandler will be called.
      * @throws NullPointerException if query is null.
      */
-    public void send(TonApi.Function query, ResultHandler resultHandler, ExceptionHandler exceptionHandler) {
+    public void send(TosApi.Function query, ResultHandler resultHandler, ExceptionHandler exceptionHandler) {
         if (query == null) {
             throw new NullPointerException("query is null");
         }
@@ -66,7 +66,7 @@ public final class Client implements Runnable {
         try {
             if (isClientDestroyed) {
                 if (resultHandler != null) {
-                    handleResult(new TonApi.Error(500, "Client is closed"), resultHandler, exceptionHandler);
+                    handleResult(new TosApi.Error(500, "Client is closed"), resultHandler, exceptionHandler);
                 }
                 return;
             }
@@ -84,11 +84,11 @@ public final class Client implements Runnable {
      *
      * @param query         Object representing a query to the toslib.
      * @param resultHandler Result handler with onResult method which will be called with result
-     *                      of the query or with TonApi.Error as parameter. If it is null, then
+     *                      of the query or with TosApi.Error as parameter. If it is null, then
      *                      defaultExceptionHandler will be called.
      * @throws NullPointerException if query is null.
      */
-    public void send(TonApi.Function query, ResultHandler resultHandler) {
+    public void send(TosApi.Function query, ResultHandler resultHandler) {
         send(query, resultHandler, null);
     }
 
@@ -99,7 +99,7 @@ public final class Client implements Runnable {
      * @return request result.
      * @throws NullPointerException if query is null.
      */
-    public static TonApi.Object execute(TonApi.Function query) {
+    public static TosApi.Object execute(TosApi.Function query) {
         if (query == null) {
             throw new NullPointerException("query is null");
         }
@@ -171,7 +171,7 @@ public final class Client implements Runnable {
                 return;
             }
             if (!stopFlag) {
-                //send(new TonApi.Close(), null);
+                //send(new TosApi.Close(), null);
             }
             isClientDestroyed = true;
             while (!stopFlag) {
@@ -201,7 +201,7 @@ public final class Client implements Runnable {
 
     private static final int MAX_EVENTS = 1000;
     private final long[] eventIds = new long[MAX_EVENTS];
-    private final TonApi.Object[] events = new TonApi.Object[MAX_EVENTS];
+    private final TosApi.Object[] events = new TosApi.Object[MAX_EVENTS];
 
     private static class Handler {
         final ResultHandler resultHandler;
@@ -228,10 +228,10 @@ public final class Client implements Runnable {
         }
     }
 
-    private void processResult(long id, TonApi.Object object) {
+    private void processResult(long id, TosApi.Object object) {
         /*
-        if (object instanceof TonApi.UpdateAuthorizationState) {
-            if (((TonApi.UpdateAuthorizationState) object).authorizationState instanceof TonApi.AuthorizationStateClosed) {
+        if (object instanceof TosApi.UpdateAuthorizationState) {
+            if (((TosApi.UpdateAuthorizationState) object).authorizationState instanceof TosApi.AuthorizationStateClosed) {
                 stopFlag = true;
             }
         }
@@ -250,7 +250,7 @@ public final class Client implements Runnable {
         handleResult(object, handler.resultHandler, handler.exceptionHandler);
     }
 
-    private void handleResult(TonApi.Object object, ResultHandler resultHandler, ExceptionHandler exceptionHandler) {
+    private void handleResult(TosApi.Object object, ResultHandler resultHandler, ExceptionHandler exceptionHandler) {
         if (resultHandler == null) {
             return;
         }
@@ -280,11 +280,11 @@ public final class Client implements Runnable {
 
     private static native long createNativeClient();
 
-    private static native void nativeClientSend(long nativeClientId, long eventId, TonApi.Function function);
+    private static native void nativeClientSend(long nativeClientId, long eventId, TosApi.Function function);
 
-    private static native int nativeClientReceive(long nativeClientId, long[] eventIds, TonApi.Object[] events, double timeout);
+    private static native int nativeClientReceive(long nativeClientId, long[] eventIds, TosApi.Object[] events, double timeout);
 
-    private static native TonApi.Object nativeClientExecute(TonApi.Function function);
+    private static native TosApi.Object nativeClientExecute(TosApi.Function function);
 
     private static native void destroyNativeClient(long nativeClientId);
 }

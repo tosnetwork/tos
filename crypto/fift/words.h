@@ -24,7 +24,7 @@ namespace fift {
 
 void init_words_common(Dictionary& dictionary);
 void init_words_vm(Dictionary& dictionary, bool debug_enabled = false);
-void init_words_ton(Dictionary& dictionary);
+void init_words_tos(Dictionary& dictionary);
 
 void import_cmdline_args(Dictionary& d, std::string arg0, int n, const char* const argv[]);
 

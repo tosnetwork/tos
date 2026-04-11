@@ -13,7 +13,7 @@ spec:
               - key: node_type
                 operator: In
                 values:
-                  - ton-validator
+                  - tos-validator
   hostNetwork: true
   volumes:
     - name: validator-engine-pv
@@ -28,7 +28,7 @@ spec:
         - name: GLOBAL_CONFIG_URL
           value: "https://api.tontech.io/tos/wallet-mainnet.autoconf.json"
         - name: DUMP_URL
-          value: "https://dump.ton.org/dumps/latest.tar.lz"
+          value: "https://dump.tos.network/dumps/latest.tar.lz"
         - name: LITESERVER
           value: "true"
         - name: VALIDATOR_PORT
@@ -111,7 +111,7 @@ spec:
             - key: node_type
               operator: In
               values:
-                - ton-validator
+                - tos-validator
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

@@ -986,7 +986,7 @@ function riskyOperation() external {
 
 // Reserve balance (from FunC: raw_reserve)
 function safeReserve() external {
-    reserve(1_000_000, ReserveMode.ALL_BUT);  // keep at least 1 TON for storage
+    reserve(1_000_000, ReserveMode.ALL_BUT);  // keep at least 1 TOS for storage
     // subsequent sends cannot drain below this reserve
 }
 ```

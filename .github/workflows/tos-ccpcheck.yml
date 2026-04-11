@@ -30,6 +30,6 @@ jobs:
     - name: Upload report
       uses: actions/upload-artifact@master
       with:
-        name: ton-ccpcheck-report
+        name: tos-ccpcheck-report
         path: output
         retention-days: 14

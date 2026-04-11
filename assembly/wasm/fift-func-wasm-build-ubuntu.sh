@@ -28,14 +28,14 @@ EMSCRIPTEN_3PP_DIR="$ROOT_DIR/build/3pp_emscripten"
 
 echo `pwd`
 if [ "$scratch_new" = true ]; then
-  echo Compiling openssl zlib lz4 emsdk libsodium emsdk ton
+  echo Compiling openssl zlib lz4 emsdk libsodium emsdk tos
   rm -rf openssl zlib lz4 emsdk libsodium build openssl_em 3pp_emscripten
 fi
 
 if [ ! -d "build" ]; then
   mkdir build
   cd build
-  cmake -GNinja -DTON_USE_JEMALLOC=ON .. \
+  cmake -GNinja -DTOS_USE_JEMALLOC=ON .. \
   -DCMAKE_BUILD_TYPE=Release
 
   test $? -eq 0 || { echo "Can't configure TOS build"; exit 1; }

@@ -3388,7 +3388,7 @@ void init_words_common(Dictionary& d) {
   d.def_ctx_tail_word("$() ", interpret_get_cmdline_arg);
 }
 
-void init_words_ton(Dictionary& d) {
+void init_words_tos(Dictionary& d) {
   using namespace std::placeholders;
   d.def_stack_word("smca>$ ", interpret_pack_std_smc_addr);
   d.def_stack_word("$>smca ", interpret_unpack_std_smc_addr);

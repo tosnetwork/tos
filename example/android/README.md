@@ -5,7 +5,7 @@
 Prerequisite: installed Java and set environment variable JAVA_HOME.
 ```bash
 git clone --recursive https://github.com/tosnetwork/tos.git
-cd ton
+cd tos
 cp assembly/android/build-android-toslib.sh .
 chmod +x build-android-toslib.sh
 sudo -E ./build-android-toslib.sh
@@ -20,9 +20,9 @@ swift run builder --output ./build --clean
 ```
 5. Run command:
 ```bash
-echo ./build/TON.xcframework/* | xargs -n 1 cp -R ./Resources/Headers
+echo ./build/TOS.xcframework/* | xargs -n 1 cp -R ./Resources/Headers
 ````
-7. Import **OpenSSL.xcframework** and **TON.xcframework** in XCode in section _"Frameworks, Libraries, and Embedded Content"_
+7. Import **OpenSSL.xcframework** and **TOS.xcframework** in XCode in section _"Frameworks, Libraries, and Embedded Content"_
 8. Now you can start using Toslib client by importing it in C or Objective-C source files:
 ```objective-c
 #import <toslib/toslib_client_json.h>

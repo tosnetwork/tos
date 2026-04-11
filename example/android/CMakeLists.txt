@@ -7,7 +7,7 @@ cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
 
 project(TOS_ANDROID VERSION 0.5 LANGUAGES C CXX)
 
-option(TOSLIB_ENABLE_JNI "Enable JNI-compatible TonLib API" ON)
+option(TOSLIB_ENABLE_JNI "Enable JNI-compatible TosLib API" ON)
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Windows")
   string(APPEND CMAKE_CXX_FLAGS " -std=c++20 -fno-omit-frame-pointer -ffunction-sections -fdata-sections")
@@ -34,7 +34,7 @@ add_library( # Sets the name of the library.
 
 
 set(TOS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../..)
-add_subdirectory(${TOS_DIR} ton EXCLUDE_FROM_ALL)
+add_subdirectory(${TOS_DIR} tos EXCLUDE_FROM_ALL)
 target_link_libraries(native-lib toslibjson)
 target_link_libraries(native-lib toslib)
 
@@ -57,10 +57,10 @@ if (NOT CMAKE_CROSSCOMPILING)
   set(TOSLIB_API_TLO_PATH ${TOS_DIR}/tl/generate/scheme/toslib_api.tlo)
   set(TOSLIB_API_TL_PATH ${TOS_DIR}/tl/generate/scheme/toslib_api.tl)
   set(JAVADOC_TL_DOCUMENTATION_GENERATOR_PATH ${TOS_DIR}/tl/generate/JavadocTlDocumentationGenerator.php)
-  set(GENERATE_JAVA_CMD toslib_generate_java_api TonApi ${TOSLIB_API_TLO_PATH} ${TOSLIB_API_JAVA_PATH} ${TOSLIB_API_JAVA_PACKAGE})
+  set(GENERATE_JAVA_CMD toslib_generate_java_api TosApi ${TOSLIB_API_TLO_PATH} ${TOSLIB_API_JAVA_PATH} ${TOSLIB_API_JAVA_PACKAGE})
   if (PHP_EXECUTABLE)
     set(GENERATE_JAVA_CMD ${GENERATE_JAVA_CMD} && ${PHP_EXECUTABLE} ${JAVADOC_TL_DOCUMENTATION_GENERATOR_PATH}
-        ${TOSLIB_API_TL_PATH} ${TOSLIB_API_JAVA_PATH}/${TOSLIB_API_JAVA_PACKAGE}/TonApi.java androidx.annotation.Nullable @Nullable)
+        ${TOSLIB_API_TL_PATH} ${TOSLIB_API_JAVA_PATH}/${TOSLIB_API_JAVA_PACKAGE}/TosApi.java androidx.annotation.Nullable @Nullable)
   endif()
 
   add_custom_target(tl_generate_java

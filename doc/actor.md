@@ -447,7 +447,7 @@ Rationale:
 
 ### 6.7 Implementation Language (Decided)
 
-- **C++ (based on ton-c)**
+- **C++ (based on tos-c)**
 
 Rationale:
 1. Unchanged parts (consensus/network/storage/TVM/validation) have 6 years of production validation

@@ -6,18 +6,18 @@ import java.util.concurrent.CountDownLatch;
 import android.support.test.runner.AndroidJUnit4;
 import android.util.Log;
 import drinkless.org.tos.Client;
-import drinkless.org.tos.TonApi;
+import drinkless.org.tos.TosApi;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import static android.support.test.InstrumentationRegistry.getContext;
 
 @RunWith(AndroidJUnit4.class)
-public class TonTestJava {
+public class TosTestJava {
     class JavaClient {
         Client client = Client.create(null, null, null);
 
-        public Object send(TonApi.Function query) {
+        public Object send(TosApi.Function query) {
             Object[] result = new Object[1];
             CountDownLatch countDownLatch = new CountDownLatch(1);
 
@@ -30,9 +30,9 @@ public class TonTestJava {
                     this.countDownLatch = countDownLatch;
                 }
 
-                public void onResult(TonApi.Object object) {
-                    if (object instanceof TonApi.Error) {
-                        appendLog(((TonApi.Error) object).message);
+                public void onResult(TosApi.Object object) {
+                    if (object instanceof TosApi.Error) {
+                        appendLog(((TosApi.Error) object).message);
                     } else {
                         result[0] = object;
                     }
@@ -86,32 +86,32 @@ public class TonTestJava {
         String dir =  getContext().getExternalFilesDir(null) + "/";
         String[] words = getContext().getString(R.string.wallet_mnemonic_words).split(" ");
         JavaClient client = new JavaClient();
-        Object result = client.send(new TonApi.Init(new TonApi.Options(new TonApi.Config(config, "", false, false), new TonApi.KeyStoreTypeDirectory((dir)))));
-        if (!(result instanceof TonApi.OptionsInfo)) {
+        Object result = client.send(new TosApi.Init(new TosApi.Options(new TosApi.Config(config, "", false, false), new TosApi.KeyStoreTypeDirectory((dir)))));
+        if (!(result instanceof TosApi.OptionsInfo)) {
             appendLog("failed to set config");
             return;
         }
         appendLog("config set ok");
-        TonApi.OptionsInfo info = (TonApi.OptionsInfo)result;
-        TonApi.Key key = (TonApi.Key) client.send(new TonApi.CreateNewKey("local password".getBytes(), "mnemonic password".getBytes(), "".getBytes()));
-        TonApi.InputKey inputKey = new TonApi.InputKeyRegular(key, "local password".getBytes());
-        TonApi.AccountAddress walletAddress = (TonApi.AccountAddress)client.send(new TonApi.GetAccountAddress(new TonApi.WalletV3InitialAccountState(key.publicKey, info.configInfo.defaultWalletId), 1));
+        TosApi.OptionsInfo info = (TosApi.OptionsInfo)result;
+        TosApi.Key key = (TosApi.Key) client.send(new TosApi.CreateNewKey("local password".getBytes(), "mnemonic password".getBytes(), "".getBytes()));
+        TosApi.InputKey inputKey = new TosApi.InputKeyRegular(key, "local password".getBytes());
+        TosApi.AccountAddress walletAddress = (TosApi.AccountAddress)client.send(new TosApi.GetAccountAddress(new TosApi.WalletV3InitialAccountState(key.publicKey, info.configInfo.defaultWalletId), 1));
 
-        TonApi.Key giverKey = (TonApi.Key)client.send(new TonApi.ImportKey("local password".getBytes(), "".getBytes(), new TonApi.ExportedKey(words))) ;
-        TonApi.InputKey giverInputKey = new TonApi.InputKeyRegular(giverKey, "local password".getBytes());
-        TonApi.AccountAddress giverAddress = (TonApi.AccountAddress)client.send(new TonApi.GetAccountAddress(new TonApi.WalletV3InitialAccountState(giverKey.publicKey, info.configInfo.defaultWalletId), 1));
+        TosApi.Key giverKey = (TosApi.Key)client.send(new TosApi.ImportKey("local password".getBytes(), "".getBytes(), new TosApi.ExportedKey(words))) ;
+        TosApi.InputKey giverInputKey = new TosApi.InputKeyRegular(giverKey, "local password".getBytes());
+        TosApi.AccountAddress giverAddress = (TosApi.AccountAddress)client.send(new TosApi.GetAccountAddress(new TosApi.WalletV3InitialAccountState(giverKey.publicKey, info.configInfo.defaultWalletId), 1));
 
         appendLog("sending grams...");
-        TonApi.QueryInfo queryInfo = (TonApi.QueryInfo)client.send(new TonApi.CreateQuery(giverInputKey, giverAddress, 60, new TonApi.ActionMsg(new TonApi.MsgMessage[]{new TonApi.MsgMessage(walletAddress, "", 6660000000L, new TonApi.MsgDataText("Hello".getBytes()) )}, true)));
-        result = client.send(new TonApi.QuerySend(queryInfo.id));
-        if (!(result instanceof TonApi.Ok)) {
+        TosApi.QueryInfo queryInfo = (TosApi.QueryInfo)client.send(new TosApi.CreateQuery(giverInputKey, giverAddress, 60, new TosApi.ActionMsg(new TosApi.MsgMessage[]{new TosApi.MsgMessage(walletAddress, "", 6660000000L, new TosApi.MsgDataText("Hello".getBytes()) )}, true)));
+        result = client.send(new TosApi.QuerySend(queryInfo.id));
+        if (!(result instanceof TosApi.Ok)) {
             appendLog("failed to send grams");
             return;
         }
         appendLog("grams sent, getting balance");
 
         while (true) {
-            TonApi.FullAccountState state = (TonApi.FullAccountState) client.send(new TonApi.GetAccountState(walletAddress));
+            TosApi.FullAccountState state = (TosApi.FullAccountState) client.send(new TosApi.GetAccountState(walletAddress));
             if (state.balance <= 0L) {
                 try {
                     Thread.sleep(1000);

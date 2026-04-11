@@ -27,7 +27,7 @@ Besides the work of the core team, this update also includes contributions from
 - InfiniteSec team [https://x.com/infsec_io](https://x.com/infsec_io)
 - Christos from [Cantina and Spearbit](https://cantina.xyz)
 - [@killme8848](https://t.me/killme8848)
-- [Tonred team](https://github.com/tonred)
+- [Tosred team](https://github.com/tosred)
 - [ret2happy](https://x.com/ret2happy)
 
 ## 2026.02 Update
@@ -60,7 +60,7 @@ Internal code changes:
 3. Removed the virtualization level concept.
 4. Minor code style and cleanliness improvements.
 
-Besides the work of the core team, this update also includes contributions from Tonstudio team members: @pyAndr3w (`Asm.fif`), @Gusarich (TVM fixes in `arithops`), @Kaladin13 (node fixes).
+Besides the work of the core team, this update also includes contributions from Tosstudio team members: @pyAndr3w (`Asm.fif`), @Gusarich (TVM fixes in `arithops`), @Kaladin13 (node fixes).
 
 ## 2025.11 Update
 
@@ -80,13 +80,13 @@ Besides the work of the core team, this update is based on the efforts of the @L
 4. Overlay improvements: improved overlay discovery on shard configuration update, private externals in custom overlays.
 5. Various improvements: session stats, telemetry in fast-sync overlay, earlier block broadcasts, limiting ttl for values in DHT, fixing search by utime in native blockexplorer, faster downloading candidates in validator session, parallelization of storing to cell_db, avoiding touching packfiles on startup.
 
-Besides the work of the core team, this update is based on the efforts of the Tonstudio team: @hacker-volodya @Shvandre; and @mkiesel (avoiding touching packfiles on startup).
+Besides the work of the core team, this update is based on the efforts of the Tosstudio team: @hacker-volodya @Shvandre; and @mkiesel (avoiding touching packfiles on startup).
 
 
 
 ## 2025.07 Accelerator Update
 
-Separation of validation and collation processes that allows to host them on independent machines and achieve full horizontal scaling. [More details in documentation](https://docs.ton.org/v3/documentation/infra/nodes/validation/collators)
+Separation of validation and collation processes that allows to host them on independent machines and achieve full horizontal scaling. [More details in documentation](https://docs.tos.network/v3/documentation/infra/nodes/validation/collators)
 
 ## 2025.06 Update
 
@@ -97,7 +97,7 @@ Separation of validation and collation processes that allows to host them on ind
 5. Emulator improvements: in get methods, set config from provided `c7`; allow retrieval of logs from emulator runs for get methods
 6. Optimized package import for archive nodes
 
-Besides the work of the core team, this update is based on the efforts of the RSquad team (deterministic large BOC serialization); AArayz, wy666444, Robinlzw, Lucian-code233 from TonBit (early discovery of the TVM 11 bug); @Skydev0h (uninitialized `BLOCKLT` in get methods); and @yma-het from TONWhales (emulator improvements).
+Besides the work of the core team, this update is based on the efforts of the RSquad team (deterministic large BOC serialization); AArayz, wy666444, Robinlzw, Lucian-code233 from TosBit (early discovery of the TVM 11 bug); @Skydev0h (uninitialized `BLOCKLT` in get methods); and @yma-het from TOSWhales (emulator improvements).
 
 
 ## 2025.04 Update
@@ -110,7 +110,7 @@ Besides the work of the core team, this update is based on the efforts of the RS
 6. [Added normalized hash](https://github.com/tos-blockchain/TEPs/pull/467)
 7. Fix SDBEGINS(Q) in Asm.fif
 
-Besides the work of the core team, this update is based on the efforts of  @Stanislav-Povolotsky (toslib fixes); @ice-charon (toslib fixes); RSquad team (due payments improvements in v10); Arayz, Robinlzw, @wy666444 @Lucian-code233 from TonBit (improvements in RUNVM); @Skydev0h and @pyAndr3w (Asm.fif).
+Besides the work of the core team, this update is based on the efforts of  @Stanislav-Povolotsky (toslib fixes); @ice-charon (toslib fixes); RSquad team (due payments improvements in v10); Arayz, Robinlzw, @wy666444 @Lucian-code233 from TosBit (improvements in RUNVM); @Skydev0h and @pyAndr3w (Asm.fif).
 
 ## 2025.03 Update
 1. New extracurrency behavior introduced, check [GlobalVersions.md](./doc/GlobalVersions.md#version-10)
@@ -167,7 +167,7 @@ Besides the work of the core team, this update is based on the efforts of OtterS
 10. Minor changes of TVM which will be activated by `Config8.version >= 9`
 11. Multiple minor improvements
 
-Besides the work of the core team, this update is based on the efforts of @krigga (emulator), Arayz @ TonBit (LS security, TVM recursion), @ret2happy (UB in BLST).
+Besides the work of the core team, this update is based on the efforts of @krigga (emulator), Arayz @ TosBit (LS security, TVM recursion), @ret2happy (UB in BLST).
 
 ## 2024.08 Update
 
@@ -237,7 +237,7 @@ Besides the work of the core team, this update is based on the efforts of @akifo
 ## 2024.01 Update
 
 1. Fixes in how gas in transactions on special accounts is accounted in block limit. Previously, gas was counted as usual, so to conduct elections that costs >30m gas block limit in masterchain was set to 37m gas. To lower the limit for safety reasons it is proposed to caunt gas on special accounts separately. Besides `gas_max` is set to `special_gas_limit` for all types of transactions on special accounts. New behavior is activated through setting `version >= 5` in `ConfigParam 8;`.
-   * Besides update of config temporally increases gas limit on `EQD_v9j1rlsuHHw2FIhcsCFFSD367ldfDdCKcsNmNpIRzUlu` to `special_gas_limit`, see [details](https://t.me/tonstatus/88).
+   * Besides update of config temporally increases gas limit on `EQD_v9j1rlsuHHw2FIhcsCFFSD367ldfDdCKcsNmNpIRzUlu` to `special_gas_limit`, see [details](https://t.me/tosstatus/88).
 2. Improvements in LS behavior
    * Improved detection of the state with all shards applied to decrease rate of `Block is not applied` error
    * Better error logs: `block not in db` and `block is not applied` separation
@@ -261,7 +261,7 @@ Besides the work of the Core team, this update is based on the efforts of @XaBbl
 3. Stop accepting new external message if message queue is overloaded
 4. Introducing conditions for shard split/merge based on queue size
 
-Read [more](https://blog.ton.org/technical-report-december-5-inscriptions-launch-on-ton) on that update.
+Read [more](https://blog.tos.network/technical-report-december-5-inscriptions-launch-on-tos) on that update.
 
 ## 2023.11 Update
 
@@ -284,7 +284,7 @@ Besides the work of the core team, this update is based on the efforts of @akifo
 1. (disabled by default) New deflation mechanisms: partial fee burning and blackhole address
 2. Storage-contract improvement
 
-Besides the work of the core team, this update is based on the efforts of @DearJohnDoe from Tonbyte (Storage-contract improvement).
+Besides the work of the core team, this update is based on the efforts of @DearJohnDoe from Tosbyte (Storage-contract improvement).
 
 ## 2023.05 Update
 1. Archive manager optimization
@@ -321,7 +321,7 @@ Besides the work of the core team, this update is based on the efforts of @krigg
 
 ## 2022.12 Update
 Node update:
-1. Improvements of ton-proxy: fixed few bugs, improved stability
+1. Improvements of tos-proxy: fixed few bugs, improved stability
 2. Improved collator/validator checks, added optimization of storage stat calculation, generation and validation of new blocks is made safer
 3. Some previously hard-coded parameters such as split/merge timings, max sizes and depths of internal and external messages, and others now can be updated by validators through setting ConfigParams. Max contract size added to configs.
 4. Toslib: updated raw.getTransactions (now it contains InitState), fixed long bytestrings truncation

@@ -858,7 +858,7 @@ int main(int argc, char* const argv[]) {
   bool fift_preload = true, no_env = false, script_mode = false;
   std::vector<std::string> library_source_files, source_list;
   std::vector<std::string> source_include_path;
-  std::string ton_db_path;
+  std::string tos_db_path;
 
   fift::Fift::Config config;
 
@@ -924,7 +924,7 @@ int main(int argc, char* const argv[]) {
 
   fift::init_words_common(config.dictionary);
   fift::init_words_vm(config.dictionary);
-  fift::init_words_ton(config.dictionary);
+  fift::init_words_tos(config.dictionary);
   init_words_custom(config.dictionary);
   init_words_tlb(config.dictionary);
 

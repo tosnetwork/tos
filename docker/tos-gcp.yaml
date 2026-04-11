@@ -34,7 +34,7 @@ spec:
             - name: GLOBAL_CONFIG_URL
               value: "https://api.tontech.io/tos/wallet-mainnet.autoconf.json"
             - name: DUMP_URL
-              value: "https://dump.ton.org/dumps/latest.tar.lz"
+              value: "https://dump.tos.network/dumps/latest.tar.lz"
             - name: LITESERVER
               value: "true"
             - name: VALIDATOR_PORT

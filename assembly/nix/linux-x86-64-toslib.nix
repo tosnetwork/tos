@@ -39,7 +39,7 @@ let
 
 in
 stdenv227.mkDerivation {
-  pname = "ton";
+  pname = "tos";
   version = "dev-lib";
 
   src = ./.;

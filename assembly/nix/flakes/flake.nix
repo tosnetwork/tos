@@ -11,11 +11,11 @@
 
   outputs = { self, nixpkgs-stable, nixpkgs-trunk, flake-compat, flake-utils }:
     let
-      ton = { host, pkgs ? host, stdenv ? pkgs.stdenv, staticGlibc ? false
+      tos = { host, pkgs ? host, stdenv ? pkgs.stdenv, staticGlibc ? false
         , staticMusl ? false, staticExternalDeps ? staticGlibc }:
         with host.lib;
         stdenv.mkDerivation {
-          pname = "ton";
+          pname = "tos";
           version = "dev";
 
           src = ./.;
@@ -110,49 +110,49 @@
           in (host.overrideCC host.stdenv cc);
         in rec {
           packages = rec {
-            ton-normal = ton { inherit host; };
-            ton-static = ton {
+            tos-normal = tos { inherit host; };
+            tos-static = tos {
               inherit host;
               stdenv = host.makeStatic host.stdenv;
               staticGlibc = true;
             };
-            ton-musl =
+            tos-musl =
               let pkgs = nixpkgs-stable.legacyPackages.${system}.pkgsStatic;
-              in ton {
+              in tos {
                 inherit host;
                 inherit pkgs;
                 stdenv =
                   pkgs.gcc12Stdenv; # doesn't build on aarch64-linux w/default GCC 9
                 staticMusl = true;
               };
-            ton-oldglibc = (ton {
+            tos-oldglibc = (tos {
               inherit host;
               stdenv = stdenv227;
               staticExternalDeps = true;
             });
-            ton-oldglibc_staticbinaries = host.symlinkJoin {
-              name = "ton";
-              paths = [ ton-musl.bin ton-oldglibc.out ];
+            tos-oldglibc_staticbinaries = host.symlinkJoin {
+              name = "tos";
+              paths = [ tos-musl.bin tos-oldglibc.out ];
             };
           };
           devShells.default =
-            host.mkShell { inputsFrom = [ packages.ton-normal ]; };
+            host.mkShell { inputsFrom = [ packages.tos-normal ]; };
         })) (eachSystem (with system; [ x86_64-darwin aarch64-darwin ]) (system:
           let host = hostPkgs system;
           in rec {
             packages = rec {
-              ton-normal = ton { inherit host; };
-              ton-static = ton {
+              tos-normal = tos { inherit host; };
+              tos-static = tos {
                 inherit host;
                 stdenv = host.makeStatic host.stdenv;
                 staticExternalDeps = true;
               };
-              ton-staticbin-dylib = host.symlinkJoin {
-                name = "ton";
-                paths = [ ton-static.bin ton-static.out ];
+              tos-staticbin-dylib = host.symlinkJoin {
+                name = "tos";
+                paths = [ tos-static.bin tos-static.out ];
               };
             };
             devShells.default =
-              host.mkShell { inputsFrom = [ packages.ton-normal ]; };
+              host.mkShell { inputsFrom = [ packages.tos-normal ]; };
           })));
 }

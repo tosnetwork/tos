@@ -118,7 +118,7 @@ class MemoryFileLoader : public fift::FileLoader {
 };
 
 td::Result<fift::SourceLookup> create_source_lookup(std::string&& main, bool need_preamble = true, bool need_asm = true,
-                                                    bool need_ton_util = true, bool need_lisp = true,
+                                                    bool need_tos_util = true, bool need_lisp = true,
                                                     bool need_w3_code = true, bool need_fift_ext = true,
                                                     bool need_disasm = true, std::string dir = "") {
   auto loader = std::make_unique<MemoryFileLoader>();
@@ -131,7 +131,7 @@ td::Result<fift::SourceLookup> create_source_lookup(std::string&& main, bool nee
     TRY_RESULT(f, load_Asm_fif(dir));
     loader->add_file("/Asm.fif", std::move(f));
   }
-  if (need_ton_util) {
+  if (need_tos_util) {
     {
       TRY_RESULT(f, load_Lists_fif(dir));
       loader->add_file("/Lists.fif", std::move(f));
@@ -172,7 +172,7 @@ td::Result<fift::SourceLookup> run_fift(fift::SourceLookup source_lookup, std::o
   config.source_lookup = std::move(source_lookup);
   fift::init_words_common(config.dictionary);
   fift::init_words_vm(config.dictionary);
-  fift::init_words_ton(config.dictionary);
+  fift::init_words_tos(config.dictionary);
   config.error_stream = stream;
   config.output_stream = stream;
   if (args.size() != 0) {
@@ -209,9 +209,9 @@ td::Result<FiftOutput> mem_run_fift(SourceLookup source_lookup, std::vector<std:
   return std::move(res);
 }
 td::Result<fift::SourceLookup> create_mem_source_lookup(std::string main, std::string fift_dir, bool need_preamble,
-                                                        bool need_asm, bool need_ton_util, bool need_lisp,
+                                                        bool need_asm, bool need_tos_util, bool need_lisp,
                                                         bool need_w3_code) {
-  return create_source_lookup(std::move(main), need_preamble, need_asm, need_ton_util, need_lisp, need_w3_code, false,
+  return create_source_lookup(std::move(main), need_preamble, need_asm, need_tos_util, need_lisp, need_w3_code, false,
                               false, fift_dir);
 }
 

@@ -178,7 +178,7 @@ jobs:
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: artifacts/tos-x86-64-windows.zip
-          asset_name: ton-win-x86-64.zip
+          asset_name: tos-win-x86-64.zip
           tag: ${{ steps.tag.outputs.TAG }}
 
       - name: Upload Windows 2019 single artifact - fift
@@ -284,7 +284,7 @@ jobs:
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: artifacts/tos-x86_64-macos.zip
-          asset_name: ton-mac-x86-64.zip
+          asset_name: tos-mac-x86-64.zip
           tag: ${{ steps.tag.outputs.TAG }}
 
       - name: Upload Mac x86-64 single artifact - fift
@@ -391,7 +391,7 @@ jobs:
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: artifacts/tos-arm64-macos.zip
-          asset_name: ton-mac-arm64.zip
+          asset_name: tos-mac-arm64.zip
           tag: ${{ steps.tag.outputs.TAG }}
 
       - name: Upload Mac arm64 single artifact - fift
@@ -497,7 +497,7 @@ jobs:
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: artifacts/tos-x86_64-linux.zip
-          asset_name: ton-linux-x86_64.zip
+          asset_name: tos-linux-x86_64.zip
           tag: ${{ steps.tag.outputs.TAG }}
 
       - name: Upload generic smartcont+lib artifact
@@ -612,7 +612,7 @@ jobs:
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: artifacts/tos-arm64-linux.zip
-          asset_name: ton-linux-arm64.zip
+          asset_name: tos-linux-arm64.zip
           tag: ${{ steps.tag.outputs.TAG }}
 
       - name: Upload Linux arm64 single artifact - fift
@@ -725,5 +725,5 @@ jobs:
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: artifacts/tos-android-toslib.zip
-          asset_name: ton-android-toslib.zip
+          asset_name: tos-android-toslib.zip
           tag: ${{ steps.tag.outputs.TAG }}
