@@ -149,6 +149,8 @@ Every Actor in TOS V1 obeys:
 4. No implicit shared mutable memory
 5. No direct synchronous multi-actor state mutation
 
+**Abstraction level:** V1 provides **operational account abstraction, not protocol-atomic account abstraction**. The Wallet, Treasury, Policy, and Recovery actors are independent on-chain accounts. Fund allocation, policy checks, and recovery actions are all cross-account asynchronous messages. No multi-actor operation in V1 is atomic at the protocol level — each message is a separate transaction that may succeed or fail independently. V2 introduces protocol-level actor containers that enable tighter coordination, but V1 deliberately does not attempt this.
+
 ### 6.2 Virtual Account
 
 A Virtual Account is a human-facing logical account composed of multiple Actors. It is not a base-layer execution unit — it is a coordinated set of Actors under one user's control and presentation layer.
@@ -182,15 +184,15 @@ In V1, Treasury coordination is a contract-layer convention, not a consensus-enf
 
 ### 6.3.1 Default Native Coin Receiving Rule (Normative)
 
-The Primary Wallet Actor is the default externally visible address for a Virtual Account. External senders naturally send native coins to this address. The following rule defines how received funds are handled:
+The Primary Wallet Actor is the default externally visible address for a Virtual Account. External senders naturally send native coins to this address. The following rule defines how received funds are handled in the **baseline wallet profile**:
 
 1. The Primary Wallet Actor MUST accept inbound native coin transfers.
-2. Upon receiving native coins, the Primary Wallet Actor SHOULD auto-forward the received value to the Treasury Actor via an internal `DepositToTreasury` message. This is the **default behavior** unless the owner has configured a different routing policy.
+2. In the baseline wallet profile, upon receiving native coins the Primary Wallet Actor MUST auto-forward the received value to the Treasury Actor via an internal `DepositToTreasury` message, unless no Treasury Actor is currently registered.
 3. The auto-forward MUST be a separate internal message (not a synchronous state change) so that the Treasury Actor's balance is updated through normal message-driven execution.
 4. If no Treasury Actor is registered, the Primary Wallet Actor retains the funds in its own balance and emits an event or receipt indicating unrouted funds.
 5. The auto-forward gas cost is paid from the received value. If the received value is less than the minimum gas cost for forwarding, the funds are retained in the Primary Wallet Actor's balance.
 
-This rule closes the gap between "wallet address is the user-facing address" and "Treasury is the financial coordination center." External users always send to the wallet address; the wallet contract routes funds to Treasury automatically.
+This is the **baseline wallet profile**, not a universal protocol-level constraint. The baseline profile is the **interoperability default**: all standard wallet deployments, SDK integrations, and exchange deposit flows MUST assume the baseline profile unless explicitly configured otherwise. Alternative wallet profiles (e.g., a vault profile where the Wallet itself is the long-term custody address with Treasury used only for operational budgets) MAY disable auto-forwarding and retain funds in the Wallet balance. Such profiles MUST be explicitly named, documented, and communicated to integrators to prevent deposit-routing mismatches.
 
 SDK implementations MUST present the Primary Wallet address as the user's deposit address and MUST NOT require users to know the Treasury Actor address for normal deposits.
 
@@ -871,7 +873,7 @@ ActorDescriptor
 
 Each Actor has its own `behavior_ref` rather than sharing a single global code Cell. This is the baseline binding model: each actor carries an actor-local `behavior_ref` that points to its code. This is more faithful to Actor identity, enables cleaner modularity, and smooths migration from V1 where each Actor is already an independent contract with its own code.
 
-The `behavior_ref` binding model is a decided design choice. Per-actor `behavior_ref` is the baseline. A shared behavior registry optimization may be introduced later as a non-breaking protocol extension, but it is not part of the V2 baseline.
+The `behavior_ref` binding model is a decided design choice. Per-actor `behavior_ref` is the baseline. A shared behavior registry is **explicitly not part of the V2 baseline**. Any future introduction of a behavior registry MUST be treated as a separate protocol extension with its own specification, freeze checklist, and migration rules. V2 implementations MUST NOT assume or depend on a registry existing.
 
 ### 17.3 TL-B Schema
 
@@ -1560,11 +1562,11 @@ When V1 actors migrate from separate accounts into a single V2 container, the ol
 
 | Option | Mechanism | Pros | Cons |
 |--------|-----------|------|------|
-| Forwarding shell | Leave a minimal contract at the old address that forwards all messages to the new ActorAddress inside the container | Full backward compatibility; no protocol change needed | Gas overhead per forwarded message; old addresses remain occupied |
+| Forwarding shell | Leave a minimal contract at the old address that forwards all messages to the new ActorAddress inside the container | Inbound compatibility for old addresses; no protocol change needed | Gas overhead per forwarded message; old addresses remain occupied; receiving actors must implement wrapper verification; outbound sender identity NOT preserved (see 31.4.2) |
 | Protocol-level alias table | The protocol maintains a mapping from old addresses to new ActorAddresses | Zero-overhead forwarding; clean semantics | Requires additional protocol change; alias table is unbounded |
 | Deprecation with grace period | Old addresses stop working after a defined grace period; clients must update | Simplest long-term; no permanent overhead | Breaking change; requires coordinated client migration |
 
-**Recommended baseline: forwarding shell.** This requires no additional protocol changes, is fully backward compatible, and can be implemented as a standard V1 contract deployed before or during migration. The forwarding shell contract stores the target `ActorAddress` and re-routes all inbound messages (including value) to the container.
+**Recommended baseline: forwarding shell.** This requires no additional protocol changes, preserves inbound compatibility for legacy addresses, and can be implemented as a standard V1 contract deployed before or during migration. The forwarding shell contract stores the target `ActorAddress` and re-routes all inbound messages (including value) to the container.
 
 The gas overhead of forwarding is bounded (one additional message hop per forwarded message) and decreases over time as clients update to the new addresses.
 
@@ -1576,11 +1578,13 @@ When a V1 actor set migrates into a V2 container, the following rules govern mes
 
 2. **Token contract references:** V1 `TokenBalanceActor` contracts that reference the old Wallet or Treasury address (e.g., for transfer authorization) MUST continue to work through the forwarding shell. The forwarding shell re-routes the authorization message; the actor inside the container sees a message from the forwarding shell address and MUST accept it as equivalent to a message from the original V1 address. This is achieved by having the container-level registry map old V1 addresses to their corresponding actor_ids, enabling the receiving actor to verify provenance.
 
-3. **Third-party app references:** dApps and other contracts that hold the old V1 address as a stored reference will continue to function through forwarding shells without code changes. No on-chain state migration of third-party contracts is required.
+3. **Third-party app references:** dApps and other contracts that hold the old V1 address as a **destination-only** stored reference (i.e., they send messages to it but do not authenticate it as a sender) will continue to function through forwarding shells without code changes to the third-party contract itself. However, if the third-party contract authenticates the old address as a message sender (callback verification, access control), compatibility requires either wrapper verification on the receiving side or updating the third-party contract to recognize the new container address. See rule 6 below for the full compatibility scope.
 
 4. **Forwarding shell lifecycle:** Forwarding shells SHOULD remain active until monitoring shows that <1% of inbound messages use the old address over a sustained period. The shell may then be frozen or replaced with a permanent redirect bounce message indicating the new address.
 
 5. **Reverse path:** When a migrated actor inside a V2 container sends a message to an external address, the message originates from the container's account address (not the old V1 address). Recipients MUST be notified of the address change through off-chain channels (SDK updates, explorer annotations, wallet metadata).
+
+6. **Compatibility scope:** Old-address inbound compatibility through forwarding shells is **not pure infrastructure compatibility** — it is **application-protocol compatibility**. The forwarding shell includes the original sender in a wrapper cell, and the receiving actor inside the V2 container must implement shell-wrapper verification to authenticate provenance. Therefore, old-address compatibility is only effective for migrated actors that have been updated (or were originally written) to understand and verify the wrapper format. Actors that do not implement wrapper verification will see the forwarding shell address as the sender, not the original caller. Migration tooling MUST flag actors that lack wrapper verification as "inbound-compatibility-incomplete."
 
 ### 31.4.2 Outbound Identity Compatibility Rule (Normative)
 
@@ -1660,11 +1664,23 @@ When a V1 Treasury Actor (independent Account B) migrates into a V2 container, t
 
 For each V1 actor migrating into a V2 container:
 
-1. **Code**: The V1 contract code becomes the `behavior_ref` in the actor's descriptor. No code rewrite is required if the contract does not use actor-mode opcodes. Contracts that wish to use STATEGET/STATESET/STATEDEL must be recompiled for actor-mode.
+1. **Code**: The V1 contract code becomes the `behavior_ref` in the actor's descriptor. Some contracts may migrate without code rewrite if they do not depend on actor-mode opcodes, legacy address identity assumptions, or legacy account-context semantics. Migration tooling MUST perform a compatibility audit before reusing code unchanged. Contracts that wish to use STATEGET/STATESET/STATEDEL must be recompiled for actor-mode.
 2. **State**: The V1 contract's `data` Cell is mapped into the actor's `state_root` HashmapE. The mapping strategy depends on the contract's data layout -- flat data Cells are wrapped into a single HashmapE entry keyed by a well-known key (e.g., 0x00); structured HashmapE states are mapped directly.
 3. **Role**: The V1 role ID (from the Actor Registry) becomes the key in the container-level `registry_root` mapping to the migrated `actor_id`.
 
+### 31.6.1 Compatibility Audit (Migration Precondition)
+
+The compatibility audit is a **migration precondition**, not merely a tooling recommendation. No V1 actor may be migrated into a V2 container until the audit for that actor is complete and all findings are resolved.
+
 Migration tooling MUST verify that the post-migration actor state is functionally equivalent to the pre-migration account state by executing a set of reference transactions against both representations and comparing outputs.
+
+At minimum, the migration audit MUST check the following three categories for each migrated actor:
+
+1. **Address identity assumptions:** Does the contract logic branch on `my_address` or compare its own address against a stored value? If so, the migrated actor will observe a different address (the container address + actor_id) and may break. **Resolution:** update address references or deploy an address-translation shim.
+2. **Account context assumptions:** Does the contract read account-level fields (balance, code hash, last_trans_lt) that change meaning in actor-mode? If so, the contract must be updated to use actor-local equivalents (budget, behavior_ref hash, actor_lt). **Resolution:** recompile with actor-mode field mappings.
+3. **Message source/callback assumptions:** Does the contract authenticate inbound messages by checking `msg.sender` against a stored address, or does it send callback messages expecting the recipient to verify the sender? If the stored address is an old V1 address, the contract must be updated to accept messages via forwarding shell wrapper verification or to use the new container-level address. **Resolution:** implement wrapper verification or update stored addresses.
+
+An actor that fails any of the three audit categories MUST NOT be migrated until the issue is resolved. The audit result for each actor MUST be recorded and attached to the migration transaction as metadata.
 
 ## 31A. Migration Freeze (Normative Before V2 Rollout)
 
