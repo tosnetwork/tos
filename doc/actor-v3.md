@@ -1253,30 +1253,27 @@ This diagram summarizes the baseline visibility rule for actor-emitted messages 
 Color coding in this diagram is illustrative, not normative.
 
 ```mermaid
-sequenceDiagram
-  participant C as Collator
-  participant A as Actor A
-  participant Q as Outbound Queue
-  participant B as Actor B
+flowchart TD
+  N1["Block N / Phase 1:
+  Execute inbound message for Actor A"]
+  N2["Actor A emits outbound message to Actor B"]
+  N3["Record outbound message in block N"]
+  N4["Actor B cannot observe this message in block N"]
+  N5["Block N / Phase 2:
+  Materialize canonical outbound message"]
+  N6["Block N+1:
+  Deliver previously emitted message to Actor B"]
+  N7["Actor B executes the message in the next block only"]
 
-  rect rgb(255,247,237)
-    Note over C,A: Block N / Phase 1
-    C->>A: Execute inbound message for Actor A
-    A-->>C: Produce outbound message to Actor B
-    C->>Q: Record outbound message in block N
-    Note over B: Actor B cannot observe this message in block N
-  end
+  N1 --> N2 --> N3 --> N4 --> N5 --> N6 --> N7
 
-  rect rgb(245,243,255)
-    Note over C,Q,B: Block N / Phase 2
-    C->>Q: Materialize canonical outbound message
-  end
+  classDef phase1 fill:#fff7ed,stroke:#ea580c,color:#0f172a,stroke-width:1px;
+  classDef phase2 fill:#f5f3ff,stroke:#7c3aed,color:#0f172a,stroke-width:1px;
+  classDef nextblock fill:#f0fdf4,stroke:#16a34a,color:#0f172a,stroke-width:1px;
 
-  rect rgb(240,253,244)
-    Note over C,Q,B: Block N+1
-    C->>B: Deliver previously emitted message
-    B-->>C: Execute message in next block only
-  end
+  class N1,N2,N3,N4 phase1;
+  class N5 phase2;
+  class N6,N7 nextblock;
 ```
 
 ### 20.6 Deterministic Tertiary Ordering
