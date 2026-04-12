@@ -976,7 +976,7 @@ Legacy accounts use the existing `account_storage$_` tag with `AccountState` (wh
 | Account serialization (TL-B) | New schema for actor sub-structure |
 | Block format | ActorAddress in transaction records |
 | OutMsgQueue key | Extended from 352 to 608 bits with actor_id |
-| Transaction execution | Actor-level state isolation, two-phase model |
+| Transaction execution | Actor-level state isolation, admission + preview + canonical adopt model |
 | Validation logic | Actor-level proof and consistency checks |
 | Merkle proofs | Extended proof path: block -> shard -> account -> **actor** -> key |
 | lite-client / SDKs | Must understand ActorAddress and new proof format |
@@ -1041,18 +1041,18 @@ Account Container
 
 * Gas is deducted from the Actor's own `budget` -> no cross-actor contention
 * Value attached to outbound messages is deducted from the Actor's `budget` -> no contention
-* `shared_balance` is only mutated by `ACTORCLAIM` / `ACTORRELEASE` and storage fee deduction, all deferred to the sequential Phase 2
-* The TVM compute phase (the expensive part) runs in Phase 1 with **zero shared writes**
+* `shared_balance` is only mutated by `ACTORCLAIM` / `ACTORRELEASE` and storage fee deduction, all deferred to the sequential Canonical Merge and Adopt stage
+* The TVM compute phase (the expensive part) runs in Preview Execution with **zero shared writes**
 
 ### 19.2 Actor-Local vs Account-Global Fields
 
-**Actor-local (fully parallel in Phase 1):**
+**Actor-local (fully parallel in Preview Execution):**
 * Actor state (HashmapE)
 * Actor budget (gas deduction, value transfer)
 * Actor logical time (`actor_lt`)
 * TVM compute phase
 
-**Account-global (sequential in Phase 2):**
+**Account-global (sequential in Canonical Merge and Adopt):**
 * `shared_balance` (ACTORCLAIM / ACTORRELEASE commits, storage fees)
 * `last_trans_lt` / `last_trans_hash`
 * Outgoing message ordering and materialization
@@ -1075,19 +1075,62 @@ If a message targets a specific `actor_id` that does not exist in the account's 
 Storage fees are charged at the **account level**, not per-actor:
 
 * The total Cell tree size (including all Actor states) determines the storage fee.
-* Storage fees are deducted from `shared_balance` during Phase 2.
+* Storage fees are deducted from `shared_balance` during Canonical Merge and Adopt.
 * If `shared_balance` is insufficient, the Account enters the standard freeze/deletion path — all Actors are affected.
 * Actors are expected to periodically `ACTORRELEASE` surplus budget back to `shared_balance`. The protocol may enforce a minimum `shared_balance` threshold.
 
-Storage fees are charged once per account-container finalization, not once per committed actor result. Multiple actor transactions within the same block produce a single storage fee deduction during Phase 2, computed from the final aggregate state size after all actor commits.
+Storage fees are charged once per account-container finalization, not once per committed actor result. Multiple actor transactions within the same block produce a single storage fee deduction during Canonical Merge and Adopt, computed from the final aggregate state size after all actor commits.
 
 ## 20. Two-Phase Execution Model
 
 ### 20.1 Why Two Phases
 
-If multiple actors in one account execute in parallel and share account-global fields, immediate commit would create nondeterministic state races. Therefore execution is split into actor-local speculative execution and deterministic merge.
+If multiple actors in one account execute in parallel and share account-global fields, immediate commit would create nondeterministic state races. Therefore execution is split into explicit ingress and execution stages:
 
-### 20.1.1 Before / After Execution Flow Comparison
+- **Admission**: accept external actor-targeted work into an actor-aware pending layer without mutating canonical actor state
+- **Preview Execution**: execute selected actor work in a reversible, checkpointed mode
+- **Canonical Merge and Adopt**: commit only the accepted preview results into canonical state
+
+This follows the same first-principles discipline used in mature actor-lane designs: user ingress must not directly mutate canonical state, candidate execution must remain reversible, and canonical state must advance only when the enclosing block becomes canonical.
+
+### 20.1 Admission Boundary (Normative)
+
+External actor messages are **admission-only** at ingress.
+
+At admission time the node MUST:
+
+- authenticate and parse the external message
+- perform cheap stateless validation
+- deduplicate and apply replay-domain checks
+- store the request in an **actor-aware pending layer**
+- mark the request as accepted for execution eligibility
+
+At admission time the node MUST NOT:
+
+- execute actor code
+- mutate canonical actor state
+- mutate mailbox frontier state
+- allocate final logical time
+- materialize canonical outbound messages
+
+Admission is therefore a pending-layer operation, not an execution step.
+
+### 20.1.1 Runtime Separation (Normative)
+
+V2 implementations MUST keep the following execution surfaces logically distinct, even if the first implementation still fronts them behind one service boundary:
+
+- **Pending runtime** — admission-side and builder-side pending actor work, mailbox readiness, deferred backlog, and preview selection state
+- **Canonical runtime** — the only runtime whose state represents the current canonical chain head
+- **Replay runtime** — a scratch execution context used by validator replay and imported-block validation
+
+The following rules are mandatory:
+
+- Pending runtime state MUST NOT be treated as canonical state.
+- Replay runtime state MUST be initialized from canonical parent state.
+- Replay validation MUST NOT mutate canonical state unless validation succeeds.
+- Locally built preview results and imported replay results MUST be validated against canonical parent state, not against local pending-only heuristics.
+
+### 20.1.2 Before / After Execution Flow Comparison
 
 The table below summarizes the execution-path change introduced by V2 actor-native execution.
 See Figure 1 for the corresponding end-to-end flow.
@@ -1095,20 +1138,21 @@ See Figure 1 for the corresponding end-to-end flow.
 | Aspect | Before V2: Traditional Account-Centric Flow | After V2: Actor-Native Flow |
 |--------|---------------------------------------------|-----------------------------|
 | Smallest execution unit | One Account | One Actor inside an Account Container |
+| External ingress | Message enters immediate account execution path | Admission stores actor work in an actor-aware pending layer |
 | Message target | Account address | Account Container, then routed to `actor_id` |
 | Code / state layout | Single `AccountState` (`code` + `data`) | Per-actor `behavior_ref` + `state_root` |
 | Working balance during execution | Single shared account balance | Actor-local `budget` |
 | Shared funds | Same balance used for gas, value, storage | `shared_balance` used only for storage fees, inbound staging, claim/release settlement |
-| Execution ordering | Strictly serial for the whole account | Per-actor serial, cross-actor parallel in Phase 1 |
-| Commit model | Execute and commit immediately | Phase 1 tentative execution, then Phase 2 deterministic merge |
-| Logical time | One account-level `last_trans_lt` sequence | Per-actor `actor_lt` plus account-level final `lt` assigned in Phase 2 |
-| Outbound messages | Materialized immediately after execution | Collected tentatively in Phase 1, materialized only after Phase 2 commit |
-| Same-block actor-to-actor visibility | Not applicable; single execution context | Explicitly disallowed in baseline V2; new actor messages become executable in block `N+1` |
-| Validator replay | Replay linear account transactions | Replay Phase 1 actor execution plus Phase 2 merge |
+| Execution ordering | Strictly serial for the whole account | Per-wave, at most one mailbox item per actor; cross-actor parallel in Preview Execution |
+| Commit model | Execute and commit immediately | Preview Execution produces tentative results, then Canonical Merge and Adopt finalizes them |
+| Logical time | One account-level `last_trans_lt` sequence | Per-actor `actor_lt` plus account-level final `lt` assigned in Canonical Merge and Adopt |
+| Outbound messages | Materialized immediately after execution | Collected tentatively in Preview Execution, materialized only after Canonical Merge and Adopt |
+| Newly emitted actor messages | Not applicable; single execution context | Eligible only in a later wave, never in the same wave |
+| Validator replay | Replay linear account transactions | Replay Preview Execution plus Canonical Merge and Adopt |
 | Proof path | `block -> shard -> account -> state` | `block -> shard -> account container -> actor -> state` |
 | Client model | Account-oriented queries | Container-aware and actor-aware queries / proofs |
 
-### 20.1.2 Before / After Flow Diagram
+### 20.1.3 Before / After Flow Diagram
 
 **Figure 1. Before / After Block-Production Flow**
 
@@ -1145,26 +1189,26 @@ flowchart TD
   class B8,B9 queue;
 ```
 
-**Figure 1B. After V2: Actor-Native Two-Phase Flow**
+**Figure 1B. After V2: Actor-Native Preview / Canonical Flow**
 
 ```mermaid
 flowchart TD
   A1["Inbound Message"]
   A2["Resolve Account Container"]
   A3["Route To Target Actor ID"]
-  A4["Phase 1: Actor-Local Tentative Execution"]
+  A4["Preview Execution: Actor-Local Tentative Execution"]
   A5["Read And Write Actor State Root Only"]
   A6["Deduct Gas And Outbound Value From Actor Budget"]
   A7["Assign Tentative Actor LT"]
   A8["Record Tentative Outbound Messages And Balance Intents"]
-  A9["Collect Speculative Results From Multiple Actors"]
-  A10["Phase 2: Deterministic Merge"]
+  A9["Collect Speculative Results From Multiple Actors In One Wave"]
+  A10["Canonical Merge And Adopt"]
   A11["Sort By Actor ID, Actor LT, And Inbound Message Hash"]
   A12["Enforce Prefix Commit And Settle Shared Balance"]
   A13["Charge Storage Fee Once Per Container"]
   A14["Assign Final Account-Level LT And Transaction Hash"]
   A15["Materialize Outbound Messages And Commit Canonical State"]
-  A16["Messages Emitted In Block N Become Executable In Block N+1"]
+  A16["Messages Emitted In One Wave Become Eligible In A Later Wave"]
 
   A1 --> A2 --> A3 --> A4
   A4 --> A5 --> A6 --> A7 --> A8 --> A9 --> A10
@@ -1182,9 +1226,9 @@ flowchart TD
   class A15,A16 queue;
 ```
 
-### 20.2 Phase Boundary (Normative)
+### 20.2 Preview / Canonical Boundary (Normative)
 
-**Phase 1 (parallel, per-actor) produces tentative snapshots only:**
+**Preview Execution (parallel, per-actor) produces tentative snapshots only:**
 * Post-execution Actor state root (tentative, not yet committed)
 * Compute-phase status: success, revert, exception code
 * Gas deducted from Actor `budget` (tentative)
@@ -1192,26 +1236,40 @@ flowchart TD
 * Outbound message list in Actor-local order (tentative, not yet materialized)
 * Tentative `ACTORCLAIM` / `ACTORRELEASE` intents (recorded, not yet applied)
 
-**Phase 1 must NOT touch:**
-* `shared_balance` (mutated only in Phase 2)
+**Preview Execution must NOT touch:**
+* `shared_balance` (mutated only in Canonical Merge and Adopt)
 * `last_trans_lt` / `last_trans_end_lt` / `last_trans_hash` (account-global)
 * Account storage statistics
 * Block-level InMsg / OutMsg descriptors
 * Shard OutMsgQueue
 
-**Phase 2 (sequential, single-threaded) finalizes:**
+**Canonical Merge and Adopt (sequential, single-threaded) finalizes:**
 * Apply all `ACTORCLAIM` / `ACTORRELEASE` intents against `shared_balance` in deterministic order; reject any that would overdraw
 * Deduct storage fees from `shared_balance`
 * Assign final logical time and transaction hash (see 22)
-* Commit the tentative Actor state / Actor budget snapshot only for transactions that survive Phase 2 validation
+* Commit the tentative Actor state / Actor budget snapshot only for transactions that survive Canonical Merge and Adopt validation
 * Materialize outbound messages into block descriptors and queues
 * Update block-level accumulators
 
-No Phase-1 artifact is part of canonical state until Phase 2 accepts it.
+No Preview Execution artifact is part of canonical state until Canonical Merge and Adopt accepts it.
+
+### 20.2.1 Wave Discipline (Normative)
+
+V2 baseline is **queue-first and wave-based**.
+
+The builder/importer MUST obey the following discipline:
+
+- one wave executes at most one mailbox item per actor
+- newly emitted internal actor messages MUST NOT execute recursively inside the same actor step
+- newly emitted internal actor messages become eligible only in a **later wave**
+- a later wave may occur in the same block if block limits and scheduling rules allow it
+- if the builder stops opening new waves because of block limits or backlog pressure, the emitted work remains pending for a later block
+
+This means V2 baseline uses **next-wave visibility**, not mandatory next-block visibility.
 
 ### 20.3 Rollback Rule (Normative)
 
-If Phase 2 rejects a speculative result for any reason, all of its Phase-1 outputs must be discarded atomically:
+If Canonical Merge and Adopt rejects a speculative result for any reason, all of its Preview Execution outputs must be discarded atomically:
 
 * Tentative Actor state changes are dropped
 * Tentative Actor budget changes are dropped
@@ -1223,11 +1281,11 @@ This is an all-or-nothing rule. There is no partial commit of a speculative resu
 
 ### 20.4 Prefix Commit Rule (Normative)
 
-For any fixed `actor_id`, Phase 2 may commit only a **contiguous prefix** of that Actor's speculative results ordered by `actor_lt`.
+For any fixed `actor_id`, Canonical Merge and Adopt may commit only a **contiguous prefix** of that Actor's speculative results ordered by `actor_lt`.
 
 ```
 actor_7 speculative results: [lt=11, lt=12, lt=13]
-if lt=12 is rejected in Phase 2:
+if lt=12 is rejected during Canonical Merge and Adopt:
   - lt=11 may commit
   - lt=12 is rejected
   - lt=13 MUST also be rejected
@@ -1235,35 +1293,32 @@ if lt=12 is rejected in Phase 2:
 
 Later speculative results for the same Actor depend on the tentative post-state produced by earlier ones. Rejecting a middle result invalidates all later same-Actor snapshots. The merge phase tracks a per-actor "prefix still valid" bit; once a transaction is rejected, all later results for the same `actor_id` in the current block are discarded automatically.
 
-### 20.5 Same-Block Message Visibility (Normative)
+### 20.5 Later-Wave Visibility (Normative)
 
-Messages newly emitted by actors during block `N` are recorded in block `N` but become executable only from block `N+1`. No Actor may observe another Actor's newly emitted same-block message during its own Phase-1 execution.
-See Figure 2 for the block-boundary visibility rule.
+Messages newly emitted by actors during one wave are not executable in that same wave. They become eligible only in a **later wave**. No Actor may observe another Actor's newly emitted same-wave message during its own Preview Execution.
+See Figure 2 for the wave-boundary visibility rule.
 
-This trades latency for determinism: no same-block cyclic dependencies, no merge-order-dependent visibility, clean block boundary.
+This preserves determinism without forcing all follow-up actor work to wait until block `N+1`. A sender may execute in wave `n` and its emitted message may execute in wave `n+1` within the same block if block limits, queue state, and scheduling policy permit.
 
-Same-block actor-to-actor execution may be introduced as a future protocol extension with explicit topological scheduling rules.
+### 20.5.1 Wave N / Wave N+1 Visibility Diagram
 
-### 20.5.1 Block N / Block N+1 Visibility Diagram
+**Figure 2. Same-Wave Visibility Boundary**
 
-**Figure 2. Same-Block Visibility Boundary**
-
-This diagram summarizes the baseline visibility rule for actor-emitted messages across block boundaries.
+This diagram summarizes the baseline visibility rule for actor-emitted messages across wave boundaries.
 
 Color coding in this diagram is illustrative, not normative.
 
 ```mermaid
 flowchart TD
-  N1["Block N / Phase 1:
+  N1["Wave N / Preview Execution:
   Execute inbound message for Actor A"]
   N2["Actor A emits outbound message to Actor B"]
-  N3["Record outbound message in block N"]
-  N4["Actor B cannot observe this message in block N"]
-  N5["Block N / Phase 2:
-  Materialize canonical outbound message"]
-  N6["Block N+1:
-  Deliver previously emitted message to Actor B"]
-  N7["Actor B executes the message in the next block only"]
+  N3["Record outbound message in pending mailbox state"]
+  N4["Actor B cannot observe this message in Wave N"]
+  N5["Wave N+1 Or Later:
+  Select emitted message for a later wave"]
+  N6["If selected, execute Actor B in the later wave"]
+  N7["Canonical Merge And Adopt records accepted results for the block"]
 
   N1 --> N2 --> N3 --> N4 --> N5 --> N6 --> N7
 
@@ -1272,13 +1327,13 @@ flowchart TD
   classDef nextblock fill:#f0fdf4,stroke:#16a34a,color:#0f172a,stroke-width:1px;
 
   class N1,N2,N3,N4 phase1;
-  class N5 phase2;
-  class N6,N7 nextblock;
+  class N5,N6 nextblock;
+  class N7 phase2;
 ```
 
 ### 20.6 Deterministic Tertiary Ordering
 
-The primary sort key for Phase 2 merge is `(actor_id ASC, actor_lt ASC)`. When two speculative results have the same `actor_id` and the same `actor_lt` (which should not occur under correct collator behavior, but must be handled for deterministic validation), the tiebreaker is the hash of the inbound message that triggered the transaction, compared as unsigned 256-bit integers in ascending order.
+The primary sort key for Canonical Merge and Adopt is `(actor_id ASC, actor_lt ASC)`. When two speculative results have the same `actor_id` and the same `actor_lt` (which should not occur under correct collator behavior, but must be handled for deterministic validation), the tiebreaker is the hash of the inbound message that triggered the transaction, compared as unsigned 256-bit integers in ascending order.
 
 ```
 ORDER BY (actor_id ASC, actor_lt ASC, inbound_msg_hash ASC)
@@ -1288,7 +1343,7 @@ This ensures that even a buggy or adversarial collator that produces duplicate `
 
 ### 20.7 Canonical vs Tentative Artifacts
 
-| Artifact | Phase 1 Status | Phase 2 Status |
+| Artifact | Preview Execution Status | Canonical Merge and Adopt Status |
 |----------|---------------|---------------|
 | Actor state root | Tentative | Canonical (if committed) |
 | Actor budget | Tentative | Canonical (if committed) |
@@ -1299,7 +1354,7 @@ This ensures that even a buggy or adversarial collator that produces duplicate `
 | Transaction hash | Not assigned | Assigned |
 | Storage fee deduction | Not computed | Computed and applied |
 
-No tentative artifact may be referenced by any external system or proof until it transitions to canonical status via Phase 2 commit.
+No tentative artifact may be referenced by any external system or proof until it transitions to canonical status via Canonical Merge and Adopt.
 See Figure 3 for the tentative-to-canonical transition path.
 
 ### 20.7.1 Tentative-to-Canonical State Transition Diagram
@@ -1313,14 +1368,14 @@ Color coding in this diagram is illustrative, not normative.
 ```mermaid
 flowchart TD
   S0["Inbound Message For Actor ID"]
-  S1["Phase 1: Speculative Execution"]
+  S1["Preview Execution: Speculative Execution"]
   S2["Tentative Snapshot Created:
   - Tentative State Root
   - Tentative Budget
   - Tentative Actor LT
   - Tentative Outbound Messages
   - Tentative Claim And Release Intents"]
-  S3["Phase 2: Merge Examines Result"]
+  S3["Canonical Merge And Adopt Examines Result"]
   D1{"Is The Actor Prefix Still Valid?"}
   D2{"Do Shared Balance Settlement
   And Final Checks Succeed?"}
@@ -1362,21 +1417,21 @@ flowchart TD
 
 ### 20.8 Canonical Actor Transaction Record (Normative)
 
-After Phase 2 commits a speculative result, the following canonical actor transaction record MUST be constructed. This is the on-chain, provable, externally-visible transaction object for actor-mode transactions.
+After Canonical Merge and Adopt commits a speculative result, the following canonical actor transaction record MUST be constructed. This is the on-chain, provable, externally-visible transaction object for actor-mode transactions.
 
 ```
 ActorTransaction
  +-- account_addr:bits256          <- account container address
  +-- actor_id:bits256              <- target actor within the container
- +-- actor_lt:uint64               <- actor-local logical time (Phase 1, stable)
- +-- final_lt:uint64               <- account-global logical time (assigned in Phase 2)
+ +-- actor_lt:uint64               <- actor-local logical time (Preview Execution, stable)
+ +-- final_lt:uint64               <- account-global logical time (assigned in Canonical Merge and Adopt)
  +-- final_lt_end:uint64           <- account-global end logical time
- +-- tx_hash:bits256               <- canonical transaction hash (computed after Phase 2)
+ +-- tx_hash:bits256               <- canonical transaction hash (computed after Canonical Merge and Adopt)
  +-- prev_tx_hash:bits256          <- previous transaction hash for this actor
  +-- prev_tx_lt:uint64             <- previous transaction lt for this actor
  +-- execution_status:uint8        <- 0=success, 1=revert, 2=exception
  +-- exit_code:int32               <- VM exit code (0 if success)
- +-- gas_used:uint64               <- gas consumed during Phase 1 compute
+ +-- gas_used:uint64               <- gas consumed during Preview Execution compute
  +-- total_fees:CurrencyCollection <- total fees (gas + forwarding)
  +-- state_hash_before:bits256     <- actor state root hash before execution
  +-- state_hash_after:bits256      <- actor state root hash after execution
@@ -1384,7 +1439,7 @@ ActorTransaction
  +-- budget_after:CurrencyCollection   <- actor budget after execution
  +-- balance_requests:HashmapE(uint64 -> BalanceRequest)  <- ACTORCLAIM/ACTORRELEASE intents
  +-- in_msg:Maybe<^Message>        <- inbound message that triggered this transaction
- +-- out_msgs:HashmapE(uint15 -> ^Message)  <- outbound messages (materialized in Phase 2)
+ +-- out_msgs:HashmapE(uint15 -> ^Message)  <- outbound messages (materialized in Canonical Merge and Adopt)
  +-- out_msg_count:uint15          <- number of outbound messages
 ```
 
@@ -1409,9 +1464,9 @@ This record structure MUST be frozen before V2 implementation begins (see 30A.5)
 
 ## 21. VM Context Isolation (Normative)
 
-Phase 1 executes the TVM compute phase speculatively. The VM must be presented with a restricted execution context so that results remain valid after Phase 2 assigns final account-global values.
+Preview Execution runs the TVM compute phase speculatively. The VM must be presented with a restricted execution context so that results remain valid after Canonical Merge and Adopt assigns final account-global values.
 
-### 21.1 Available to the VM in Phase 1
+### 21.1 Available to the VM in Preview Execution
 
 | Field | Value | Source |
 |-------|-------|--------|
@@ -1424,23 +1479,23 @@ Phase 1 executes the TVM compute phase speculatively. The VM must be presented w
 | Unix timestamp | Block candidate time | c7[3] |
 | Actor-local lt | Tentative `actor_lt` | c7[5] (returns actor_lt, NOT account lt) |
 
-### 21.2 NOT Available to the VM in Phase 1
+### 21.2 NOT Available to the VM in Preview Execution
 
 | Field | Behavior | Reason |
 |-------|----------|--------|
 | Transaction hash | Returns 0 / sentinel / trap | Final hash depends on merge order |
-| Account-level lt (`last_trans_lt`) | NOT returned | Assigned only in Phase 2 |
-| `shared_balance` | NOT readable | Only mutated in Phase 2 |
-| Outbound message envelope lt | Placeholder | Overwritten in Phase 2 |
-| `last_trans_end_lt` / `last_trans_hash` | NOT returned | Account-global, Phase 2 only |
+| Account-level lt (`last_trans_lt`) | NOT returned | Assigned only in Canonical Merge and Adopt |
+| `shared_balance` | NOT readable | Only mutated in Canonical Merge and Adopt |
+| Outbound message envelope lt | Placeholder | Overwritten in Canonical Merge and Adopt |
+| `last_trans_end_lt` / `last_trans_hash` | NOT returned | Account-global, Canonical Merge and Adopt only |
 
 **Consequence:** Contracts must depend only on actor-local state, actor budget, and message content — not on account-global transaction metadata.
 
 ### 21.3 Getter/Opcode Compatibility Matrix
 
-V2 baseline returns sentinel values for forbidden reads unless explicitly marked trap-only. The following table defines the behavior for each relevant TVM instruction when executed in actor-mode Phase 1:
+V2 baseline returns sentinel values for forbidden reads unless explicitly marked trap-only. The following table defines the behavior for each relevant TVM instruction when executed in actor-mode Preview Execution:
 
-| Instruction | Legacy Behavior | Actor-Mode Phase 1 Behavior | Notes |
+| Instruction | Legacy Behavior | Actor-Mode Preview Execution Behavior | Notes |
 |-------------|----------------|----------------------------|-------|
 | GETBALANCE | Returns account balance | Returns actor `budget` | Semantic change: actor-local only |
 | LTIME | Returns `last_trans_lt` | Returns `actor_lt` | Actor-local logical time |
@@ -1461,16 +1516,16 @@ Contracts that depend on TXHASH for logic (rare but possible) MUST be rewritten 
 
 Each Actor maintains its own monotonic `actor_lt` counter, independently of the account-level `last_trans_lt`.
 
-**Phase 1:** The collator reads the current `actor_lt` and increments it to produce a tentative value. This value is stable within Phase 1. If multiple messages target the same Actor in one block, they are serialized per-actor with distinct ascending `actor_lt` values. `actor_lt` is used as the secondary sort key for the deterministic merge: `ORDER BY (actor_id ASC, actor_lt ASC)`.
+**Preview Execution:** The collator reads the current `actor_lt` and increments it to produce a tentative value. This value is stable within Preview Execution. If multiple messages target the same Actor in one block, they are serialized per-actor with distinct ascending `actor_lt` values. `actor_lt` is used as the secondary sort key for Canonical Merge and Adopt: `ORDER BY (actor_id ASC, actor_lt ASC)`.
 
-**Phase 2:** The merge phase iterates results in `(actor_id, actor_lt)` order. For each committed result, Phase 2 assigns a final account-level logical time from the account's global lt counter. The final account-level lt is strictly monotonically increasing across all committed transactions.
+**Canonical Merge and Adopt:** The merge engine iterates results in `(actor_id, actor_lt)` order. For each committed result, Canonical Merge and Adopt assigns a final account-level logical time from the account's global lt counter. The final account-level lt is strictly monotonically increasing across all committed transactions.
 
-The merge engine MUST use account-global final lt only after a speculative result has passed Phase 2 acceptance. No final lt value is assigned to a result that will be rejected; the global lt counter is not advanced for rejected results.
+The merge engine MUST use account-global final lt only after a speculative result has passed Canonical Merge and Adopt acceptance. No final lt value is assigned to a result that will be rejected; the global lt counter is not advanced for rejected results.
 
 ### 22.2 Relationship Between Timelines
 
 ```
-actor_lt (per-actor, Phase 1)     account lt (global, Phase 2)
+actor_lt (per-actor, Preview Execution)     account lt (global, Canonical Merge and Adopt)
 -----------------------------     ------------------------------
 actor_0: 100, 101                 -> final lt: 5000, 5001
 actor_1: 200                      -> final lt: 5002
@@ -1481,7 +1536,7 @@ actor_0: 102                      -> final lt: 5003
 
 ### 22.3 No-Gap Rule for Rejected Transactions
 
-A speculative transaction receives a tentative `actor_lt` in Phase 1. That value becomes canonical only if committed in Phase 2. If rejected, the tentative `actor_lt` is discarded. The persisted `actor_lt` advances only across committed transactions. No gaps.
+A speculative transaction receives a tentative `actor_lt` in Preview Execution. That value becomes canonical only if committed in Canonical Merge and Adopt. If rejected, the tentative `actor_lt` is discarded. The persisted `actor_lt` advances only across committed transactions. No gaps.
 
 ## 23. TVM Opcodes
 
@@ -1513,7 +1568,7 @@ The c7 tuple layout for actor-mode is frozen at the following indices:
 
 No additional c7 indices are allocated in the V2 baseline. Future extensions MUST use indices >= 19.
 
-The c6 register lifecycle is frozen as follows: c6 is initialized with the actor's `state_root` HashmapE at the start of Phase 1 compute. After compute completes, the c6 value is captured as the tentative post-state. If the transaction is committed in Phase 2, c6 becomes the new canonical `state_root`. If rejected, c6 is discarded.
+The c6 register lifecycle is frozen as follows: c6 is initialized with the actor's `state_root` HashmapE at the start of Preview Execution compute. After compute completes, the c6 value is captured as the tentative post-state. If the transaction is committed in Canonical Merge and Adopt, c6 becomes the new canonical `state_root`. If rejected, c6 is discarded.
 
 The new opcodes (0xFB09-0xFB0F) are valid only in actor-mode execution. If a legacy-mode (non-actor) contract attempts to execute any of these opcodes, the VM MUST throw an invalid-opcode exception. This is enforced by the `require_version(N)` gate and additionally by a runtime check that the account is in actor-mode.
 
@@ -1533,14 +1588,14 @@ The c6 register is a new data register for actor state HashmapE root (alongside 
 
 ### 23.3 ACTORCLAIM / ACTORRELEASE Semantics
 
-These instructions do **not** synchronously move funds during Phase 1. They append a **balance-transfer intent** to the current Actor transaction:
+These instructions do **not** synchronously move funds during Preview Execution. They append a **balance-transfer intent** to the current Actor transaction:
 
 * `ACTORCLAIM(amount)` records: "if committed, move `amount` from `shared_balance` to this Actor's `budget`"
 * `ACTORRELEASE(amount)` records: "if committed, move `amount` from this Actor's `budget` to `shared_balance`"
 
-The returned `request_id` is an opaque identifier for tracing/receipts only. It is **not** a success indicator. Success or failure is determined only in Phase 2. Contracts must treat claim/release as **deferred effects**, not synchronous conditionals.
+The returned `request_id` is an opaque identifier for tracing/receipts only. It is **not** a success indicator. Success or failure is determined only in Canonical Merge and Adopt. Contracts must treat claim/release as **deferred effects**, not synchronous conditionals.
 
-ACTORSEND failure semantics: if `ACTORSEND` targets an `actor_id` that does not exist within the same account container, the action is recorded in Phase 1 but rejected during Phase 2 action materialization. The entire transaction for the sending actor is rejected (rollback rule applies). Contracts SHOULD verify actor existence via registry lookup before sending.
+ACTORSEND failure semantics: if `ACTORSEND` targets an `actor_id` that does not exist within the same account container, the action is recorded in Preview Execution but rejected during Canonical Merge and Adopt action materialization. The entire transaction for the sending actor is rejected (rollback rule applies). Contracts SHOULD verify actor existence via registry lookup before sending.
 
 ### 23.4 New OutAction Variants
 
@@ -1561,13 +1616,21 @@ Current flow (serial):
     update_block_state(result)
 
 Proposed flow (parallel + merge):
-  // Phase 1: parallel execution (per-actor, no shared writes)
-  for each message (can be parallel across different actors):
-    actor = account.actors[msg.actor_id]
-    result[actor_id] = execute_actor_transaction(msg, actor)
-    // gas and value applied only to a tentative actor snapshot
+  // Admission: accept external work into actor-aware pending state
+  admit_external_messages_into_pending_layer()
 
-  // Phase 2: deterministic merge (single-threaded)
+  // Preview Execution: execute one wave at a time
+  while block_has_budget():
+    ready_wave = select_at_most_one_mailbox_item_per_actor()
+    if ready_wave.empty():
+      break
+    for each item in ready_wave (can be parallel across different actors):
+      actor = account.actors[item.actor_id]
+      result[item.actor_id] = execute_actor_transaction(item, actor)
+      // gas and value applied only to a tentative actor snapshot
+    enqueue_emitted_messages_for_later_wave()
+
+  // Canonical Merge and Adopt: deterministic merge (single-threaded)
   sort results by (actor_id ASC, actor_lt ASC)
   for each result in deterministic order:
     // 1. Apply ACTORCLAIM/ACTORRELEASE against shared_balance
@@ -1583,39 +1646,53 @@ Proposed flow (parallel + merge):
     update_block_state(result)
 ```
 
-Storage fees in Phase 2 are computed once per account-container finalization, not once per committed actor result. The `apply_storage_fees(account)` call above is executed once after all actor results have been processed, not inside the per-result loop. The pseudocode above is simplified for clarity.
+Storage fees in Canonical Merge and Adopt are computed once per account-container finalization, not once per committed actor result. The `apply_storage_fees(account)` call above is executed once after all actor results have been processed, not inside the per-result loop. The pseudocode above is simplified for clarity.
 
 ### 24.2 Hybrid Handling
 
-During the V1-to-V2 transition, the collator must support both legacy accounts (serial execution) and actor-mode accounts (two-phase execution) in the same block.
+During the V1-to-V2 transition, the collator must support both legacy accounts (serial execution) and actor-mode accounts (admission + preview + canonical adopt execution) in the same block.
 
-### 24.3 Same-Block Visibility Enforcement
+### 24.3 Pending / Canonical / Replay Runtime Separation
 
-The collator MUST enforce the same-block visibility rule (section 20.5) by partitioning inbound messages into two categories before Phase 1 begins:
+The implementation MUST preserve three distinct runtime views:
+
+- **pending runtime** for admitted but not yet canonically adopted work
+- **canonical runtime** for the current canonical actor state
+- **replay runtime** for imported-block validation and local replay checks
+
+These may initially be owned by one service boundary, but they MUST remain semantically distinct:
+
+- pending state is not canonical state
+- replay validation starts from canonical parent state
+- imported replay failure must not mutate canonical or pending state
+
+### 24.4 Later-Wave Visibility Enforcement
+
+The collator MUST enforce the later-wave visibility rule (section 20.5) by partitioning work into wave-frontier categories before each wave begins:
 Figure 2 shows the same rule from the block-production perspective.
 
-1. **Pre-existing messages**: messages that were in the InMsgQueue before this block's processing started. These are eligible for Phase 1 execution.
-2. **Newly emitted messages**: messages produced by actor transactions within the current block. These MUST NOT be delivered to any actor in the current block.
+1. **Wave-ready messages**: mailbox items that were already eligible before the current wave starts. These may be selected for the current wave.
+2. **Newly emitted messages**: messages produced during the current wave. These MUST NOT be delivered in the current wave.
 
-The collator achieves this by freezing the set of deliverable messages at the start of block production. Any `ACTORSEND` output produced during Phase 1 is added to the OutMsgQueue for the next block but is not added to the current block's deliverable set.
+The collator achieves this by freezing the set of deliverable mailbox items at the start of each wave. Any `ACTORSEND` output produced during Preview Execution is added to pending mailbox state for a later wave. If the builder stops opening new waves because of block limits or `enqueue_only` pressure, the message remains pending for a later block.
 
 ## 25. Validator Redesign
 
-Validators must be able to replay actor-mode Phase 1 execution and Phase 2 merge, producing identical results. They must verify:
+Validators must be able to replay actor-mode Preview Execution and Canonical Merge and Adopt, producing identical results. They must verify:
 
 1. `actor_lt` monotonicity per actor
 2. Deterministic merge ordering
 3. Prefix commit correctness
 4. Balance transfer correctness against `shared_balance`
 5. `shared_balance` solvency after all operations
-6. Same-block visibility rules (no same-block actor message consumption)
+6. Later-wave visibility rules (no same-wave actor message consumption)
 7. Canonical transaction outputs match
 
 ### 25.1 Replay Equivalence Requirement
 
 A validator's replay of any actor-mode block MUST produce bit-identical canonical state for every committed actor, bit-identical OutMsgQueue entries, and bit-identical account-level fields (shared_balance, last_trans_lt, last_trans_hash). If the validator's replay diverges from the collator's block in any of these fields, the block MUST be rejected.
 
-This requirement implies that the Phase 2 merge algorithm, storage fee computation, and final lt assignment are fully deterministic given the set of Phase 1 results and the pre-block account state. No collator-local randomness, timing, or ordering heuristic may influence the canonical output.
+This requirement implies that the Canonical Merge and Adopt algorithm, storage fee computation, and final lt assignment are fully deterministic given the set of Preview Execution results and the pre-block account state. No collator-local randomness, timing, or ordering heuristic may influence the canonical output.
 
 ## 26. OutMsgQueue Key Extension
 
@@ -1728,9 +1805,9 @@ Both execution paths MUST produce semantically equivalent results for the same a
 ## 29. V2 Risks
 
 1. **Protocol upgrade complexity** — requires coordinated upgrade of all validators, lite-clients, SDKs, and explorers
-2. **Two-phase execution correctness** — Phase 1/Phase 2 boundary must be correctly enforced; incorrect isolation breaks consensus
+2. **Two-stage execution correctness** — Preview Execution / Canonical Merge and Adopt boundary must be correctly enforced; incorrect isolation breaks consensus
 3. **Balance fragmentation** — per-actor budgets may lead to idle capital; need policies for minimum `shared_balance`
-4. **Shared balance overdraw** — multiple Actors issuing `ACTORCLAIM` in the same block may collectively overdraw; Phase 2 must reject deterministically
+4. **Shared balance overdraw** — multiple Actors issuing `ACTORCLAIM` in the same block may collectively overdraw; Canonical Merge and Adopt must reject deterministically
 5. **Prefix rejection cascades** — rejecting one speculative result forces rejection of later same-Actor results, reducing throughput in pathological cases
 6. **Validation complexity** — validate-query.cpp (7674 lines) needs significant changes; actor-level proofs add new attack surface
 7. **State transition** — deployed V1 contracts must transition to V2 containers; requires a transition protocol
@@ -1766,7 +1843,7 @@ The following baseline decisions are fixed for V2 unless explicitly amended by a
 
 **A. Behavior Binding** — V2 baseline uses **actor-local `behavior_ref`**. This is the canonical V2 behavior model. Account-wide shared code as the only model and behavior registry as the mandatory default are NOT baseline. Behavior registry MAY be introduced later as an optimization layer.
 
-**B. Execution Model** — V2 baseline uses: actor-local Phase 1 tentative execution, account-container Phase 2 deterministic merge, no same-block actor-to-actor re-entry, no protocol-level synchronous actor calls.
+**B. Execution Model** — V2 baseline uses: Admission -> Preview Execution -> Canonical Merge and Adopt, queue-first wave execution, one mailbox item per actor per wave, later-wave visibility for emitted messages, no protocol-level synchronous actor calls.
 
 **C. Queue Key** — V2 baseline queue key includes: workchain, shard prefix, actor_id, msg_hash.
 
@@ -1803,7 +1880,7 @@ Before V2 coding begins, a full compatibility matrix MUST be frozen for: getters
 For each item, the matrix MUST specify:
 
 1. legacy behavior
-2. V2 Phase 1 behavior
+2. V2 Preview Execution behavior
 3. V2 canonical behavior
 4. trap / sentinel / actor-local remap rule
 
@@ -1837,7 +1914,7 @@ The V2 merge engine MUST use a frozen deterministic ordering rule. The following
 
 The following baseline rule is frozen:
 
-> Messages emitted by an Actor during block N are not executable by another Actor until block N+1.
+> Messages emitted during one wave are not executable in that same wave. They become eligible only in a later wave.
 
 This rule applies to both collator behavior and validator replay.
 
@@ -1863,7 +1940,7 @@ Before coding starts, the following artifacts MUST exist:
 - frozen merge ordering rule
 - frozen queue key layout
 - frozen storage fee rule
-- frozen same-block visibility rule
+- frozen later-wave visibility rule
 
 ---
 
@@ -2140,7 +2217,7 @@ At minimum, transition tests MUST cover:
 |-------------|-------------|
 | Frozen TL-B schemas | Final `ActorDescriptor`, `account_storage_actor`, `ActorAddress` canonical encoding |
 | Frozen opcode table | Final 0xFB09-0xFB0F assignments, c6/c7 layout, actor-mode validity gate |
-| Frozen merge rules | Final Phase 2 ordering, prefix commit, rollback, tertiary tiebreaker |
+| Frozen merge rules | Final Canonical Merge and Adopt ordering, prefix commit, rollback, tertiary tiebreaker |
 | Frozen VM compatibility matrix | Final getter/opcode behavior table (section 21.3) |
 | Frozen queue key layout | Final 608-bit key format |
 | Frozen proof path | Final block -> shard -> container -> actor -> state -> key path |
@@ -2162,7 +2239,7 @@ At minimum, transition tests MUST cover:
 | `crypto/block/transaction.h:263-345` | Add Account fields: `actor_mode`, `shared_balance`, `actors_dict_root`, `current_actor_id/budget/state/lt` |
 | `crypto/block/transaction.h:348-481` | Add Transaction fields: `actor_mode`, `actor_id`, `actor_lt_start/end`, `actor_budget`, `actor_state`, `balance_requests`, `phase2_committed` |
 | `crypto/block/transaction.cpp:476-530` | `Account::unpack()` detects actor-mode; add `unpack_actor()` / `commit_actor()` |
-| `crypto/block/transaction.cpp:4022-4075` | `Transaction::commit()` actor-mode branch: write only actor-local fields, defer account-global to Phase 2 |
+| `crypto/block/transaction.cpp:4022-4075` | `Transaction::commit()` actor-mode branch: write only actor-local fields, defer account-global to Canonical Merge and Adopt |
 
 **Complexity:** HIGH | **Estimate:** 3-4 weeks
 
@@ -2182,45 +2259,45 @@ At minimum, transition tests MUST cover:
 
 ### Module C: Transaction Execution (Two-Phase)
 
-**Scope:** Split transaction execution into Phase 1 tentative + Phase 2 commit.
+**Scope:** Split transaction execution into Preview Execution + Canonical Merge and Adopt.
 
 | File | Changes |
 |------|---------|
 | `crypto/block/transaction.h` | Add `ActorTransactionResult` and `BalanceRequest` structs |
-| `crypto/block/transaction.cpp:~1020` | `prepare_storage_phase()`: actor-mode defers storage fees to Phase 2 |
+| `crypto/block/transaction.cpp:~1020` | `prepare_storage_phase()`: actor-mode defers storage fees to Canonical Merge and Adopt |
 | `crypto/block/transaction.cpp:~1135` | `prepare_credit_phase()`: actor-targeted value -> budget; legacy -> shared_balance |
 | `crypto/block/transaction.cpp:~1960` | `prepare_compute_phase()`: gas from budget; set c6=actor_state; c7 adjustments |
 | `crypto/block/transaction.cpp:~2150` | `prepare_action_phase()`: handle actor_send/claim/release actions |
 | `crypto/block/transaction.cpp:4022` | Split `commit()` into `commit_phase1()` + `commit_phase2()` |
-| New: `crypto/block/actor-merge.cpp` | Phase 2 merge: sort, prefix rule, balance requests, assign final lt |
+| New: `crypto/block/actor-merge.cpp` | Canonical Merge and Adopt: sort, prefix rule, balance requests, assign final lt |
 
 **Complexity:** HIGH | **Estimate:** 3-4 weeks
 
 ### Module D: Collator Restructuring
 
-**Scope:** Transform block production from serial to Phase 1 parallel + Phase 2 merge.
+**Scope:** Transform block production from serial to Preview Execution + Canonical Merge and Adopt.
 
 | File | Changes |
 |------|---------|
-| `validator/impl/collator-impl.h` | Add `pending_actor_results_`, `actor_lt_counters_`, `actor_prefix_valid_` |
-| `validator/impl/collator.cpp:2379` | `do_collate_inner()`: add Phase 2 merge step |
+| `validator/impl/collator-impl.h` | Add `pending_actor_results_`, `actor_lt_counters_`, `actor_prefix_valid_`, per-wave frontier tracking |
+| `validator/impl/collator.cpp:2379` | `do_collate_inner()`: add Canonical Merge and Adopt step |
 | `validator/impl/collator.cpp:3349` | `create_ordinary_transaction()`: actor-mode uses `execute_actor_transaction()` |
 | `validator/impl/collator.cpp:4184` | `process_inbound_internal_messages()`: identify actor-mode targets |
-| `validator/impl/collator.cpp:3654` | `process_one_new_message()`: defer actor_send to next block |
-| `validator/impl/collator.cpp:4945` | `register_new_msgs()`: actor-mode messages registered after Phase 2 only |
+| `validator/impl/collator.cpp:3654` | `process_one_new_message()`: enqueue emitted work for a later wave |
+| `validator/impl/collator.cpp:4945` | `register_new_msgs()`: actor-mode messages registered after Canonical Merge and Adopt only |
 | `validator/impl/collator.cpp:3061` | `combine_account_transactions()`: include actor_id |
 
 **Complexity:** HIGH | **Estimate:** 3-4 weeks
 
 ### Module E: Validation Logic
 
-**Scope:** Validators reproduce two-phase execution and verify results.
+**Scope:** Validators reproduce Preview Execution and Canonical Merge and Adopt and verify results.
 
 | File | Changes |
 |------|---------|
 | `validator/impl/validate-query.cpp:3098` | `precheck_account_updates()`: actor-mode diffs |
 | `validator/impl/validate-query.cpp:3291` | `precheck_account_transactions()`: actor_lt monotonicity, prefix rule |
-| `validator/impl/validate-query.cpp:5574` | `check_one_transaction()`: replay Phase 1 + Phase 2 |
+| `validator/impl/validate-query.cpp:5574` | `check_one_transaction()`: replay Preview Execution + Canonical Merge and Adopt |
 | `validator/impl/validate-query.cpp:3872` | `check_in_msg()`: intra-account actor messages |
 | `validator/impl/validate-query.cpp:4437` | `check_out_msg()`: 608-bit queue keys |
 | `validator/impl/validate-query.cpp:6412` | `check_message_processing_order()`: actor-mode ordering |
@@ -2306,8 +2383,8 @@ Caveat: these estimates exclude time spent on spec-freeze iteration (Module 0 fe
 | 0 | Spec Freeze Checklist (Appendix D) fully resolved; reference test vectors published and reviewed |
 | A | Compiles; tlbc generation passes; unpack/pack round-trip tests; golden serialization tests (canonical bit-exact encoding of ActorDescriptor, AccountStorage actor-mode, ActorAddress) |
 | B | Unit tests per opcode (normal + exception paths); Fift scripts; VM forbidden-field tests (verify sentinel/trap for TXHASH, account-level lt, shared_balance in actor-mode) |
-| C | Phase 1 tentative results correct; Phase 2 merge prefix and rollback rules |
-| D | Multi-actor parallel block production; same-block visibility; block limits; mixed legacy+actor-mode block tests (verify blocks containing both legacy serial transactions and actor-mode two-phase transactions produce correct state) |
+| C | Preview Execution tentative results correct; Canonical Merge and Adopt prefix and rollback rules |
+| D | Multi-actor parallel block production; later-wave visibility; block limits; mixed legacy+actor-mode block tests (verify blocks containing both legacy serial transactions and actor-mode two-stage transactions produce correct state) |
 | E | Validator passes validate-query on blocks produced by D |
 | F | Queue merge tests; 608-bit key sort correctness; golden sort-order tests (section 26) |
 | G | lite-client getActorState proof verification |
@@ -2346,15 +2423,20 @@ ACT_PROPOSE_OWNER=0x0C  ACT_COMMIT_OWNER=0x0D
 2. Two actors in one container executing in parallel
 3. One actor rejected causing same-actor prefix rejection
 4. `shared_balance` overdraw rejection
-5. No same-block actor-send consumption
+5. No same-wave actor-send consumption
 6. Actor-aware 608-bit queue key round-trip
 7. Actor proof verification
 8. Validator replay equals collator result
 9. Transition from V1 actor set to one V2 actor container
 10. Golden serialization round-trip for ActorDescriptor and actor-mode AccountStorage (bit-exact encoding/decoding)
-11. VM forbidden-field enforcement: TXHASH returns sentinel, account-level lt is not accessible, shared_balance is not readable in actor-mode Phase 1
-12. Mixed legacy+actor-mode block: a single block containing both legacy serial transactions and actor-mode two-phase transactions produces correct state for both account types
+11. VM forbidden-field enforcement: TXHASH returns sentinel, account-level lt is not accessible, shared_balance is not readable in actor-mode Preview Execution
+12. Mixed legacy+actor-mode block: a single block containing both legacy serial transactions and actor-mode Preview Execution / Canonical Merge and Adopt produces correct state for both account types
 13. Tertiary ordering tiebreaker: two speculative results with the same (actor_id, actor_lt) are ordered deterministically by inbound_msg_hash
+14. Admission-only ingress: external actor message admission does not execute actor code or mutate canonical state
+15. Next-wave ordering: sender actor executes in wave `n`, emitted message executes no earlier than wave `n+1`
+16. Replay runtime isolation: imported replay failure does not mutate canonical runtime or pending runtime
+17. One-mailbox-item-per-actor-per-wave: no actor consumes two mailbox items in one wave
+18. Defer-under-pressure: when wave/block budget is exhausted, newly emitted work remains pending for a later wave or later block without violating ordering
 
 ## Appendix D: V2 Spec Freeze Checklist
 
@@ -2365,7 +2447,7 @@ Before V2 coding begins, the following must be frozen:
 3. ActorAddress format
 4. actor_lt rules
 5. Merge ordering rules
-6. Same-block visibility rules
+6. Later-wave visibility rules
 7. VM context compatibility matrix (section 21)
 8. Tentative vs canonical transaction structures
 9. Queue key layout

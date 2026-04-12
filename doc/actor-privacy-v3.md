@@ -20,7 +20,7 @@ This document proposes:
 - **stealth-address-inspired receiving**
 - **proof-backed private writes**
 - separation between **public operational balances** and **private asset state**
-- compatibility with **Phase 1 tentative execution / Phase 2 canonical commit**
+- compatibility with **Admission / Preview Execution / Canonical Merge and Adopt**
 - a future path toward **zk-proven actor execution**
 
 ---
@@ -468,7 +468,7 @@ The design should support three independent proving layers over time:
 
 - **transaction privacy proof** — note correctness, nullifiers, commitments
 - **actor execution proof** — future proof that the Shielded Pool Actor executed correctly
-- **block validity proof** — future proof of Phase 1 + Phase 2 merge correctness
+- **block validity proof** — future proof of Preview Execution + Canonical Merge and Adopt correctness
 
 Version 1 of this design requires only the first layer.
 
@@ -518,37 +518,53 @@ The baseline recommendation for native coin and major fungible assets is:
 
 > use shared privacy pools plus account-container-local privacy control actors.
 
+Privacy execution in V2 follows the same runtime discipline as the main actor specification:
+
+- **Admission** stores privacy-targeted external work in an actor-aware pending layer
+- **Preview Execution** performs reversible actor-local proof verification and tentative state updates
+- **Canonical Merge and Adopt** commits only accepted privacy results into canonical actor state
+
+Privacy actors therefore inherit the same runtime separation requirements:
+
+- pending runtime
+- canonical runtime
+- replay runtime
+
+Privacy-specific logic MUST NOT collapse these boundaries.
+
 ---
 
-## 11. Interaction with Phase 1 / Phase 2
+## 11. Interaction with Admission / Preview / Canonical Adopt
 
 ### 11.0 Privacy Execution Integration Diagram
 
-**Figure 3. Privacy Actor Integration With Phase 1 / Phase 2**
+**Figure 3. Privacy Actor Integration With Admission / Preview / Canonical Adopt**
 
-This diagram summarizes how a privacy transaction is processed through speculative execution and canonical commit.
+This diagram summarizes how a privacy transaction is processed through admission, speculative execution, and canonical commit.
 
 Color coding in this diagram is illustrative, not normative.
 
 ```mermaid
 flowchart TD
   M["Inbound Privacy Transaction"]
-  P1["Phase 1: Actor-Local Privacy Execution"]
+  A0["Admission: Store Privacy Work In Pending Layer"]
+  P1["Preview Execution: Actor-Local Privacy Execution"]
   V1["Verify ZK Proof"]
   T1["Compute Tentative Nullifiers, Commitments, And Pool Root Update"]
   T2["Prepare Tentative Encrypted Output Records"]
-  P2["Phase 2: Canonical Merge"]
+  P2["Canonical Merge And Adopt"]
   D1{"Speculative Result Accepted?"}
   C1["Commit Canonical Shielded Pool State"]
   C2["Assign Final LT And Transaction Hash"]
   C3["Materialize Public Output For Unshield If Needed"]
   R1["Drop Tentative Privacy State Atomically"]
 
-  M --> P1 --> V1 --> T1 --> T2 --> P2 --> D1
+  M --> A0 --> P1 --> V1 --> T1 --> T2 --> P2 --> D1
   D1 -- "Yes" --> C1 --> C2 --> C3
   D1 -- "No" --> R1
 
   classDef inbound fill:#eef6ff,stroke:#1d4ed8,color:#0f172a,stroke-width:1px;
+  classDef admission fill:#ecfdf5,stroke:#059669,color:#0f172a,stroke-width:1px;
   classDef phase1 fill:#fff7ed,stroke:#ea580c,color:#0f172a,stroke-width:1px;
   classDef phase2 fill:#f5f3ff,stroke:#7c3aed,color:#0f172a,stroke-width:1px;
   classDef commit fill:#f0fdf4,stroke:#16a34a,color:#0f172a,stroke-width:1px;
@@ -556,6 +572,7 @@ flowchart TD
   classDef decision fill:#f8fafc,stroke:#475569,color:#0f172a,stroke-width:1px;
 
   class M inbound;
+  class A0 admission;
   class P1,V1,T1,T2 phase1;
   class P2 phase2;
   class C1,C2,C3 commit;
@@ -563,9 +580,25 @@ flowchart TD
   class D1 decision;
 ```
 
-### 11.1 Phase 1 Responsibilities
+### 11.1 Admission Responsibilities
 
-For privacy transactions, Phase 1 performs actor-local computation:
+For privacy transactions, Admission performs ingress-only handling:
+
+- authenticate and parse the privacy-targeted external message
+- perform cheap validation
+- store the request in the actor-aware pending layer
+- mark the request as eligible for future Preview Execution
+
+Admission MUST NOT:
+
+- execute proof verification
+- mutate canonical shielded pool state
+- mutate canonical nullifier state
+- materialize canonical public outputs
+
+### 11.2 Preview Execution Responsibilities
+
+For privacy transactions, Preview Execution performs actor-local computation:
 See Figure 3 for the full speculative-to-canonical execution path.
 
 - parse the privacy transaction
@@ -577,23 +610,31 @@ See Figure 3 for the full speculative-to-canonical execution path.
 
 These are actor-local operations and fit naturally into speculative execution.
 
-### 11.2 Phase 2 Responsibilities
+Privacy actors must obey the same queue-first and wave-based discipline as other actors:
 
-Phase 2 handles only the canonicalization boundary:
+- one wave executes at most one mailbox item per actor
+- newly emitted privacy-layer internal messages become eligible only in a later wave
+- same-wave recursive execution is forbidden
+- a later wave may still occur in the same block if block limits allow it
+
+### 11.3 Canonical Merge and Adopt Responsibilities
+
+Canonical Merge and Adopt handles only the canonicalization boundary:
 
 - commit the tentative Shielded Pool Actor state if validation passed
 - assign final account-level logical time
 - materialize public outputs for unshield operations
 - update block descriptors and proofs
 
-Phase 2 must not reinterpret confidential internals. It only decides whether the speculative actor result becomes canonical.
+Canonical Merge and Adopt must not reinterpret confidential internals. It only decides whether the speculative actor result becomes canonical.
 
-### 11.3 Why This Matters
+### 11.4 Why This Matters
 
 This separation preserves the core V2 invariant:
 
-- **Phase 1 does expensive local compute**
-- **Phase 2 does deterministic canonical merge**
+- **Admission accepts work without mutating canonical state**
+- **Preview Execution does expensive local compute**
+- **Canonical Merge and Adopt performs deterministic canonicalization**
 
 Privacy logic must respect that boundary.
 
@@ -754,7 +795,7 @@ Later:
 
 - make privacy actors proof-friendly by design
 - optionally prove actor execution
-- optionally prove Phase 1 + Phase 2 correctness
+- optionally prove Preview Execution + Canonical Merge and Adopt correctness
 
 This is where the architecture can evolve toward a zk-proven actor system rather than merely a privacy-enabled actor system.
 
@@ -768,8 +809,8 @@ The baseline recommendation of this document is:
 2. Implement private value as note commitments inside dedicated shielded pool actors.
 3. Use stealth-receive descriptors for recipient privacy.
 4. Make privacy control wallet-native through actor-based account abstraction.
-5. Verify privacy proofs in Phase 1 as actor-local execution.
-6. Keep Phase 2 free of privacy-specific semantics except canonical commit and public output materialization.
+5. Verify privacy proofs in Preview Execution as actor-local execution.
+6. Keep Canonical Merge and Adopt free of privacy-specific semantics except canonical commit and public output materialization.
 7. Design all privacy interfaces so they can later be proven by zk systems.
 
 ---
