@@ -1,6 +1,6 @@
 # TOS Actor Architecture — Unified Specification
 
-**Status:** Draft v3.0
+**Status:** Draft v3.1
 **Audience:** Protocol designers, smart contract engineers, wallet/SDK engineers, validator implementers, VM engineers
 
 ---
@@ -14,6 +14,19 @@ This document is the unified specification for the TOS Actor architecture. It de
 * **Phase V2 — Protocol-Native Actors:** the base protocol is redesigned so that one Account becomes a container holding multiple protocol-native Actors, each with isolated state, independent budget, and independent logical time. This is a hard-fork-level change.
 
 V1 delivers the practical benefits of the Actor Model today — isolation, modularity, message-driven design, parallelism across actors, and better wallet architecture — without the cost and risk of protocol redesign. V2 builds on V1 once the actor-oriented patterns are proven in production, making Actors the protocol-native execution unit and enabling intra-account parallel execution.
+
+V1 is the active engineering track. V2 is the protocol research-and-implementation track that starts only after V1 interfaces and actor patterns are proven in production.
+
+### Document Status Matrix
+
+| Part | Track | Normative Level | Status |
+|------|-------|----------------|--------|
+| Part I — Motivation | Both | Informational | Stable |
+| Part II — V1 | V1 | Normative (interfaces, encodings, role IDs) | Active engineering |
+| Part III — V2 | V2 | Partially normative / partially design-level | Research; blocked on V1 validation |
+| Part IV — Migration | Both | Design-level | Draft |
+| Part V — Implementation | V2 | Planning-level | Draft |
+| Appendices | Both | Reference | Maintained alongside Parts II-III |
 
 ---
 
@@ -50,6 +63,8 @@ Instead of attempting a single massive protocol redesign, TOS adopts a phased ap
 
 **V1 is the correct tradeoff for today.** V2 defines the long-term protocol direction.
 
+This document is normative for V1 where explicitly marked, and partially normative / partially design-level for V2.
+
 ## 4. Current Base-Layer Architecture
 
 One account = one execution unit:
@@ -76,6 +91,12 @@ Key code locations:
 | TL-B schema | `crypto/block/block.tlb` | 270-292 |
 | TVM instructions | `crypto/vm/tosops.cpp` | 2430+ lines |
 
+### 4.1 Design Boundary
+
+V1 operates entirely within the existing protocol surface. It does not introduce new transaction types, new block fields, or new consensus rules. All V1 constructs -- Virtual Accounts, Actor Registries, Treasury coordination, session authorization -- are contract-layer conventions enforced by smart contract logic and SDK tooling. The base-layer architecture described in this section is the immovable substrate on which V1 is built.
+
+V2 proposes changes to this substrate. No V2 change is activated, implemented, or testable until the V2 Spec Freeze Checklist (Appendix D) is fully resolved and the V1 interfaces have been validated in production.
+
 ---
 
 # Part II — V1: Account-as-Actor Architecture
@@ -92,8 +113,9 @@ Key code locations:
 6. Support actor-oriented token/application patterns
 7. Require no base protocol changes
 8. Be implementable using normal smart contracts, wallet tooling, and SDK code
+9. Produce interface-freeze-ready specifications (op codes, action encodings, role IDs, state layouts) that are stable enough to serve as the V2 migration baseline
 
-### 5.2 Explicit Non-Goals for V1
+### 5.2 Explicit Protocol Non-Goals for V1
 
 V1 does **not** attempt to provide:
 
@@ -148,6 +170,18 @@ There is no protocol-level shared balance pool in V1. Instead:
 
 This means V1 uses **logical budget orchestration**, not protocol-native shared balance settlement.
 
+In V1, Treasury coordination is a contract-layer convention, not a consensus-enforced balance-sharing mechanism.
+
+### 6.4 Virtual Account Discovery
+
+A Virtual Account is discoverable from any of its constituent Actors. Given the Primary Wallet Actor address, the full Virtual Account topology can be reconstructed by reading the Actor Registry stored in the Primary Wallet state. Given any non-primary Actor address, the reverse mapping is possible only if that Actor stores a backlink to its Primary Wallet address. Implementations SHOULD store a `primary_wallet:Address` field in every non-primary Actor's state to enable bidirectional discovery.
+
+SDK tooling MUST provide a `resolveVirtualAccount(address)` function that:
+
+1. Reads the Actor's state to determine whether it is a Primary Wallet or a subordinate Actor.
+2. If subordinate, follows the `primary_wallet` backlink to the Primary Wallet.
+3. Enumerates the Actor Registry to reconstruct the full Virtual Account graph.
+
 ## 7. Primary Wallet Actor Specification
 
 ### 7.1 Purpose
@@ -170,6 +204,8 @@ The Primary Wallet Actor is the control hub of one Virtual Account. It is the us
 ```
 wallet_id:uint32
 seqno:uint32
+registry_version:uint32
+config_version:uint32
 owner_pubkey:uint256
 pending_owner_pubkey:Maybe<uint256>
 mode:uint8                          // NORMAL=0, LOCKED=1, RECOVERY=2, FROZEN=3
@@ -182,28 +218,30 @@ treasury_actor:Maybe<Address>
 recovery_actor:Maybe<Address>
 ```
 
+`registry_version` is incremented on every registry mutation (register, unregister, replace). `config_version` is incremented on every configuration change (set treasury, set policy, set recovery, mode change, owner change). Both counters start at zero and never wrap.
+
 ### 7.4 External Interface
 
-**SignedRequest** — owner-authorized action bundle:
+**SignedRequest** -- owner-authorized action bundle:
 
 ```
 op:uint32  wallet_id:uint32  seqno:uint32  valid_until:uint32
 request_id:uint64  actions:^Cell  signature:bits512
 ```
 
-**ExtensionRequest** — message from a registered internal Actor:
+**ExtensionRequest** -- message from a registered internal Actor:
 
 ```
 op:uint32  role_id:uint16  actions:^Cell
 ```
 
-**RecoveryRequest** — recovery-specific control path:
+**RecoveryRequest** -- recovery-specific control path:
 
 ```
 op:uint32  subop:uint8  payload:^Cell
 ```
 
-**SessionRequest** — restricted, lower-risk delegated action:
+**SessionRequest** -- restricted, lower-risk delegated action:
 
 ```
 op:uint32  session_pubkey:uint256  session_nonce:uint32
@@ -219,6 +257,58 @@ ACT_ADD_SESSION=0x07  ACT_REVOKE_SESSION=0x08  ACT_LOCK=0x09
 ACT_UNLOCK=0x0A  ACT_FORWARD_TO_ACTOR=0x0B
 ACT_PROPOSE_OWNER=0x0C  ACT_COMMIT_OWNER=0x0D
 ```
+
+### 7.6 Authentication Matrix
+
+| Path | Can call |
+|------|----------|
+| SignedRequest (owner key) | All actions |
+| ExtensionRequest (registered Actor, ROLE_TREASURY) | ACT_SEND_MSG (treasury-routed only) |
+| ExtensionRequest (registered Actor, ROLE_RECOVERY) | ACT_LOCK, ACT_UNLOCK, ACT_PROPOSE_OWNER, ACT_REVOKE_SESSION |
+| ExtensionRequest (registered Actor, ROLE_POLICY) | None directly; consulted by wallet before executing policy-gated actions |
+| RecoveryRequest | ACT_LOCK, ACT_PROPOSE_OWNER, ACT_COMMIT_OWNER (with timelock) |
+| SessionRequest (valid session key) | ACT_SEND_MSG (within session scope), ACT_FORWARD_TO_ACTOR (within session scope) |
+
+Any request not matching a row in this matrix MUST be rejected with error code `ERR_UNAUTHORIZED`.
+
+### 7.7 Error Codes
+
+| Code | Name | Meaning |
+|------|------|---------|
+| 0x0001 | ERR_INVALID_SEQNO | Seqno mismatch (replay or stale) |
+| 0x0002 | ERR_EXPIRED | `valid_until` has passed |
+| 0x0003 | ERR_UNAUTHORIZED | Caller lacks permission for the requested action |
+| 0x0004 | ERR_INVALID_SIGNATURE | Signature verification failed |
+| 0x0005 | ERR_UNKNOWN_ACTION | Action opcode not recognized |
+| 0x0006 | ERR_LOCKED | Wallet is in LOCKED or FROZEN mode; action not permitted |
+| 0x0007 | ERR_ACTOR_NOT_FOUND | Referenced actor not in registry |
+| 0x0008 | ERR_ROLE_OCCUPIED | Attempting to register a role that already has an assigned actor |
+| 0x0009 | ERR_INSUFFICIENT_FUNDS | Attached value insufficient for the requested operation |
+| 0x000A | ERR_POLICY_DENIED | Policy Actor denied the action |
+
+### 7.8 Get Methods
+
+| Method | Signature | Returns |
+|--------|-----------|---------|
+| `get_wallet_data` | `() -> (int, int, int, int, int, cell, cell, cell)` | wallet_id, seqno, registry_version, config_version, owner_pubkey, registry_root, session_root, guardian_root |
+| `get_mode` | `() -> int` | Current wallet mode (NORMAL/LOCKED/RECOVERY/FROZEN) |
+| `get_actor_address` | `(int role_id) -> slice` | Address of the actor registered for the given role, or null |
+| `get_session` | `(int session_pubkey) -> (int, int, int, int, int)` | expires_at, spend_limit, allowed_roles_mask, nonce, flags |
+| `is_action_allowed` | `(int action_id, int caller_role) -> int` | 1 if the action is permitted for the caller role in the current mode, 0 otherwise |
+
+### 7.9 Action Encoding Rules
+
+Each action in the `actions:^Cell` list is encoded as a sequential chain of cells. Each action cell contains:
+
+```
+action_id:uint8  payload:remainder
+```
+
+Multiple actions are chained via cell references: the first action occupies the root cell, and each subsequent action is stored in the first reference of the previous cell. The chain terminates when there is no further reference.
+
+The wallet processes actions in chain order (root first). If any action fails, the entire request is reverted -- there is no partial execution of an action bundle. The wallet MUST validate all actions before executing any of them to avoid partial state mutations on revert.
+
+Maximum actions per bundle: 255 (limited by the uint8 action_id field and practical gas constraints).
 
 ## 8. Treasury Actor Specification
 
@@ -240,9 +330,40 @@ op:uint32  target_actor:Address  amount:Coins  budget_id:uint64  memo:Maybe<Cell
 op:uint32  source_actor:Address  amount:Coins  budget_id:uint64  memo:Maybe<Cell>
 ```
 
-**TreasuryTransfer** — treasury-initiated payment or routing.
+**TreasuryTransfer** -- treasury-initiated payment or routing.
 
 The Treasury Actor should optionally consult the Policy Actor before executing sensitive transfers.
+
+### 8.3 Treasury State
+
+```
+primary_wallet:Address
+total_allocated:Coins
+pending_allocations:HashmapE(budget_id:uint64 -> AllocationRecord)
+config_flags:uint32
+```
+
+`AllocationRecord`:
+
+```
+target_actor:Address  amount:Coins  allocated_at:uint32  memo:Maybe<Cell>
+```
+
+The Treasury tracks outstanding allocations so that budget returns can be matched and audited. `total_allocated` is the sum of all outstanding (not yet returned) allocations and MUST equal the sum of all `AllocationRecord.amount` values.
+
+### 8.4 Authorization Rules
+
+* Only the Primary Wallet Actor (verified by source address matching `primary_wallet`) may call `AllocateBudget` and `TreasuryTransfer`.
+* Any registered Actor may call `ReturnBudget`, but only for budget IDs that were previously allocated to that Actor.
+* If a Policy Actor is configured, the Treasury MUST forward policy-gated transfers to the Policy Actor for evaluation before execution. If the Policy Actor is unreachable or returns a deny verdict, the transfer MUST be rejected.
+
+### 8.5 Get Methods
+
+| Method | Signature | Returns |
+|--------|-----------|---------|
+| `get_treasury_data` | `() -> (slice, int, int, cell)` | primary_wallet, total_allocated, config_flags, pending_allocations |
+| `get_allocation` | `(int budget_id) -> (slice, int, int)` | target_actor, amount, allocated_at |
+| `get_balance` | `() -> int` | Current treasury contract balance |
 
 ## 9. Recovery Actor Specification
 
@@ -252,14 +373,63 @@ The Recovery Actor handles emergency governance and owner recovery flows.
 
 ### 9.2 Core Interfaces
 
-* **ProposeOwnerChange** — `new_owner_pubkey:uint256  recovery_id:uint64`
-* **FreezeWallet** — `reason_code:uint16`
-* **EnterRecoveryMode** — `recovery_id:uint64`
-* **CommitRecovery** — `recovery_id:uint64`
+* **ProposeOwnerChange** -- `new_owner_pubkey:uint256  recovery_id:uint64`
+* **FreezeWallet** -- `reason_code:uint16`
+* **EnterRecoveryMode** -- `recovery_id:uint64`
+* **CommitRecovery** -- `recovery_id:uint64`
 
 ### 9.3 Safety Requirements
 
 Recommended recovery capability set: freeze, propose owner change, revoke sessions, switch wallet mode. Not recommended as default: arbitrary treasury drain, arbitrary actor reconfiguration without timelock.
+
+### 9.4 Recovery State
+
+```
+primary_wallet:Address
+guardian_set:HashmapE(guardian_id:uint16 -> GuardianRecord)
+active_recovery:Maybe<RecoveryProposal>
+recovery_config:RecoveryConfig
+```
+
+`GuardianRecord`:
+
+```
+pubkey:uint256  weight:uint16  added_at:uint32
+```
+
+`RecoveryProposal`:
+
+```
+recovery_id:uint64  new_owner_pubkey:uint256  proposed_at:uint32
+approvals:HashmapE(guardian_id:uint16 -> approval_timestamp:uint32)
+total_weight:uint16  required_weight:uint16  timelock_until:uint32
+```
+
+`RecoveryConfig`:
+
+```
+timelock_seconds:uint32  required_weight:uint16  max_guardians:uint16
+```
+
+### 9.5 Recovery Authorization Model
+
+* **FreezeWallet** may be invoked by any single guardian. This is a safety-critical fast path -- no quorum required.
+* **ProposeOwnerChange** requires a single guardian to initiate, but does not execute until the approval threshold is met and the timelock expires.
+* **EnterRecoveryMode** requires guardian quorum (total approved weight >= required_weight).
+* **CommitRecovery** may only be called after: (a) the timelock period has expired, (b) the approval threshold is met, and (c) the wallet is in RECOVERY mode.
+* The Primary Wallet Actor verifies recovery requests by checking the source address against its registered ROLE_RECOVERY actor.
+
+### 9.6 Recovery Sequencing
+
+The full recovery flow proceeds in strict order:
+
+1. Guardian calls `FreezeWallet` -> wallet enters LOCKED mode.
+2. Guardian calls `ProposeOwnerChange` with new owner pubkey -> proposal recorded with timelock.
+3. Additional guardians call `ProposeOwnerChange` with the same recovery_id to add their approval weight.
+4. Once quorum is reached, any guardian calls `EnterRecoveryMode` -> wallet enters RECOVERY mode.
+5. After timelock expiry, any guardian calls `CommitRecovery` -> Recovery Actor sends `ACT_COMMIT_OWNER` to Primary Wallet -> wallet applies new owner pubkey and returns to NORMAL mode.
+
+If the existing owner regains access during the timelock period, they may cancel the recovery by calling `ACT_UNLOCK` from the Primary Wallet (requires valid owner signature). This resets the recovery state and returns the wallet to NORMAL mode.
 
 ## 10. Policy Actor Specification
 
@@ -278,6 +448,30 @@ target_actor:Address  value:Coins  context:^Cell
 
 **Response:** `allowed:bool  policy_code:uint16  extra_delay:uint32  memo:Maybe<Cell>`
 
+### 10.3 Policy Determinism Requirements
+
+The Policy Actor MUST be a deterministic function of its inputs and stored state. Given the same on-chain state and the same `EvaluateAction` message, the Policy Actor MUST return the same verdict. Side effects (e.g., updating a daily spend counter) are permissible only as part of the same transaction that produces the verdict.
+
+The Policy Actor MUST NOT depend on external oracles, off-chain state, or randomness for verdict computation. Any policy rule that requires external data (e.g., price feeds) must use on-chain data committed before the evaluation transaction.
+
+### 10.4 Policy Verdict Semantics
+
+The `allowed:bool` and `policy_code:uint16` fields together encode four verdict types:
+
+| Verdict | allowed | policy_code | Meaning |
+|---------|---------|-------------|---------|
+| ALLOW | true | 0x0000 | Action is permitted; execute immediately |
+| DENY | false | 0x0001-0x00FF | Action is permanently denied for the stated reason |
+| DELAY | true | 0x0100-0x01FF | Action is permitted but must wait `extra_delay` seconds before execution |
+| REQUIRE_SECONDARY_APPROVAL | false | 0x0200-0x02FF | Action is denied pending secondary approval from a guardian or co-signer |
+
+The Primary Wallet Actor interprets these verdicts as follows:
+
+* **ALLOW**: execute the action immediately.
+* **DENY**: reject the action and return ERR_POLICY_DENIED to the caller.
+* **DELAY**: store the action in a pending queue and execute it after `extra_delay` seconds have elapsed, unless cancelled by the owner.
+* **REQUIRE_SECONDARY_APPROVAL**: store the action in a pending queue and execute it only after an authorized secondary signer confirms it.
+
 ## 11. Session Authorization
 
 ### 11.1 Session Fields
@@ -290,15 +484,66 @@ nonce:uint32  flags:uint32
 
 ### 11.2 Session Rules
 
-Sessions must be: created by owner authority, revocable by owner and recovery authority, limited by time, scope, and replay-protected nonce. Sessions are for low-risk automation, app-level delegation, frequent small operations, and temporary device authorization — not full owner replacement.
+Sessions must be: created by owner authority, revocable by owner and recovery authority, limited by time, scope, and replay-protected nonce. Sessions are for low-risk automation, app-level delegation, frequent small operations, and temporary device authorization -- not full owner replacement.
+
+### 11.3 Session Enforcement Boundary
+
+Session authorization is enforced entirely within the Primary Wallet Actor. When a `SessionRequest` arrives, the wallet:
+
+1. Verifies the session_pubkey exists in `session_root` and has not expired.
+2. Verifies the session nonce matches the stored nonce for that session and increments it.
+3. Verifies each action in the bundle is permitted by the session's `allowed_roles_mask`.
+4. Verifies the total value of all actions does not exceed the session's remaining `spend_limit`.
+5. If all checks pass, executes the actions as if they were owner-signed, but with the session's scope restrictions.
+
+No Actor other than the Primary Wallet Actor needs to be aware of sessions. From the perspective of the Treasury, Recovery, and Policy Actors, a session-authorized message is indistinguishable from an owner-authorized message -- the Primary Wallet is the sender in both cases.
+
+### 11.4 Session Failure Codes
+
+| Code | Name | Meaning |
+|------|------|---------|
+| 0x0080 | ERR_SESSION_EXPIRED | Session has passed its `expires_at` timestamp |
+| 0x0081 | ERR_SESSION_NONCE | Nonce mismatch (replay or stale) |
+| 0x0082 | ERR_SESSION_SCOPE | Action not permitted by `allowed_roles_mask` |
+| 0x0083 | ERR_SESSION_SPEND_LIMIT | Transfer value exceeds remaining session spend limit |
+| 0x0084 | ERR_SESSION_NOT_FOUND | session_pubkey not present in `session_root` |
+| 0x0085 | ERR_SESSION_INVALID_SIG | Session signature verification failed |
+
+### 11.5 Session Revocation Semantics
+
+Sessions can be revoked through three paths:
+
+* **Owner revocation**: the owner sends `ACT_REVOKE_SESSION` via a `SignedRequest`. Immediate effect.
+* **Recovery revocation**: the Recovery Actor sends `ACT_REVOKE_SESSION` via an `ExtensionRequest` with ROLE_RECOVERY. Immediate effect. This path is available even when the wallet is in LOCKED or RECOVERY mode.
+* **Expiry**: the session's `expires_at` timestamp has passed. The session record MAY be garbage-collected lazily on the next wallet transaction, or eagerly by an explicit cleanup action.
+
+Revocation is final. A revoked session_pubkey MUST NOT be re-added without a new `ACT_ADD_SESSION` request from the owner. Implementations SHOULD maintain a revocation counter or tombstone to prevent replay of old `ACT_ADD_SESSION` messages that reference a previously revoked session_pubkey.
 
 ## 12. Actor Registry
 
-The Actor Registry maps semantic roles to concrete Actor addresses.
+### 12.1 Registry as Source of Truth
+
+The Actor Registry is the authoritative mapping from semantic roles to concrete Actor addresses within a Virtual Account. It is stored in the Primary Wallet Actor's `registry_root` Cell as a `HashmapE(uint16 -> Address)` keyed by `role_id`.
+
+The registry is the single source of truth for Virtual Account topology. All intra-account authorization decisions (e.g., "is this message from my Treasury?") are resolved by comparing the sender address against the registry entry for the expected role. No Actor should hardcode another Actor's address -- always resolve through the registry.
+
+### 12.2 Registry Mutation Rules
+
+* **Register**: assigns an Actor address to an unoccupied role. Fails with ERR_ROLE_OCCUPIED if the role already has an entry.
+* **Unregister**: removes the Actor address from a role. The role becomes unoccupied.
+* **Replace**: atomically removes the existing Actor from a role and registers a new one. This is equivalent to unregister + register but executes in a single action to avoid a window where the role is unoccupied.
+* **Lookup**: returns the Actor address for a given role_id, or null if unoccupied.
+* **Enumerate**: returns all (role_id, actor_address) pairs in the registry.
+
+Every mutation increments `registry_version`. The registry MUST reject mutations when the wallet is in FROZEN mode.
+
+### 12.3 Role Cardinality
+
+Each role_id maps to exactly one Actor address. There is no multi-actor-per-role support. If a use case requires multiple Actors for a logical function (e.g., multiple recovery guardians), the single registered Actor for that role acts as a coordinator and manages the sub-set internally.
 
 Required roles: `ROLE_PRIMARY=0`, `ROLE_TREASURY=1`, `ROLE_POLICY=2`, `ROLE_RECOVERY=3`, `ROLE_PRIVACY=4`.
 
-Registry data model: `role_id:uint16 -> actor_address:Address`.
+Role IDs 0-15 are reserved for protocol-defined roles. Role IDs 16-65535 are available for application-defined roles.
 
 Operations: register, unregister, replace, lookup, enumerate.
 
@@ -320,26 +565,104 @@ Token System
 4. Sender TokenBalanceActor sends credit message to recipient TokenBalanceActor
 5. Recipient TokenBalanceActor credits local balance
 
+### 13.3 TokenMasterActor Interface
+
+| Op | Name | Parameters | Auth |
+|----|------|-----------|------|
+| 0x0100 | `mint` | `to:Address  amount:Coins  memo:Maybe<Cell>` | Mint authority only |
+| 0x0101 | `burn_notification` | `from:Address  amount:Coins  response_to:Address` | Any TokenBalanceActor |
+| 0x0102 | `update_metadata` | `key:uint256  value:^Cell` | Admin authority only |
+| 0x0103 | `discover_wallet` | `owner:Address` | Anyone (get method) |
+
+Get methods: `get_jetton_data() -> (int total_supply, int mintable, slice admin, cell content, cell wallet_code)`, `get_wallet_address(slice owner) -> slice`.
+
+### 13.4 TokenBalanceActor Interface
+
+| Op | Name | Parameters | Auth |
+|----|------|-----------|------|
+| 0x0200 | `transfer` | `amount:Coins  to:Address  response_to:Address  forward_payload:Maybe<Cell>` | Owner or owner's Primary Wallet |
+| 0x0201 | `internal_transfer` | `amount:Coins  from:Address  response_to:Address  forward_payload:Maybe<Cell>` | Peer TokenBalanceActor only |
+| 0x0202 | `burn` | `amount:Coins  response_to:Address` | Owner or owner's Primary Wallet |
+
+Get methods: `get_wallet_data() -> (int balance, slice owner, slice master, cell code)`.
+
+### 13.5 Token Authorization Semantics
+
+A TokenBalanceActor MUST verify that transfer and burn requests originate from the owner's Primary Wallet Actor address or from the owner's direct external message (for standalone wallets not using the Virtual Account pattern). The `internal_transfer` op MUST be accepted only from addresses whose code hash matches the expected TokenBalanceActor code hash -- this is the standard Jetton wallet discovery pattern.
+
+V1 token implementation may reuse TON Jetton-compatible patterns where practical.
+
 ## 14. V1 Security Model
 
-Every specialized Actor is a separate fault domain. Rules:
+### 14.1 Wallet Security Domain
 
-* Primary Wallet Actor: minimal, deterministic, strongly replay-protected
-* Treasury Actor: no arbitrary budget requests without authentication and policy checks
-* Recovery Actor: narrowly scoped, not overpowered by default
-* Policy Actor: deterministic and side-effect predictable
-* Sessions: time-bounded, nonce-bound, scope-bound
+The Primary Wallet Actor is the security root of the Virtual Account. It MUST be:
+
+* Minimal: only action dispatch, replay protection, registry management, and mode transitions.
+* Deterministic: no randomness, no external oracle dependencies, no unbounded loops.
+* Strongly replay-protected: seqno for owner requests, nonce for session requests.
+* Mode-aware: actions are gated by the current wallet mode (NORMAL/LOCKED/RECOVERY/FROZEN).
+
+### 14.2 Treasury Security Domain
+
+The Treasury Actor is a separate fault domain from the Primary Wallet. Rules:
+
+* No arbitrary budget requests without authentication (source address must match registered Primary Wallet).
+* Policy Actor consultation is mandatory for transfers exceeding configurable thresholds.
+* Budget allocations are tracked and auditable; unmatched returns are rejected.
+
+### 14.3 Recovery Security Domain
+
+The Recovery Actor is a narrowly scoped emergency mechanism. Rules:
+
+* Recovery capabilities are limited to: freeze, propose owner change, revoke sessions, switch wallet mode.
+* Arbitrary treasury drain and arbitrary actor reconfiguration without timelock are NOT recommended as default recovery capabilities.
+* Guardian quorum and timelock provide defense-in-depth against compromised single guardians.
+
+### 14.4 Policy Security Domain
+
+The Policy Actor enforces risk rules deterministically. Rules:
+
+* Policy verdicts are final for the transaction in which they are issued.
+* The Policy Actor has no direct mutation authority over other Actors -- it only returns verdicts.
+* A compromised or buggy Policy Actor can deny legitimate actions (liveness risk) but cannot authorize actions beyond the caller's existing permissions (safety preservation).
+
+### 14.5 Session Security Domain
+
+Sessions are a delegated, restricted subset of owner authority. Rules:
+
+* Sessions are time-bounded, nonce-bound, and scope-bound.
+* Session compromise does not compromise owner keys.
+* Session revocation is immediate and available through both owner and recovery paths.
+
+### 14.6 Cross-Actor Security Invariants
+
+No V1 actor may assume synchronous finality of another actor's state update. Because all inter-actor communication is asynchronous (separate on-chain accounts, separate transactions), an actor that sends a message to another actor MUST NOT assume the message has been processed until it receives a confirmation reply. State reads across actors are always potentially stale.
+
+Every specialized Actor is a separate fault domain. Compromise of one Actor (e.g., a buggy application Actor) does not propagate to other Actors unless the compromised Actor holds registry-level authority.
 
 ## 15. V1 Roadmap
 
+### 15.1 Required Deliverables Per Phase
+
 | Phase | Deliverables |
 |-------|-------------|
-| Phase 0: Spec Freeze | Finalize interfaces, freeze op codes, action encodings, role IDs |
+| Phase 0: Spec Freeze | Finalize interfaces, freeze op codes, action encodings, role IDs; freeze wallet state layout; freeze error codes; freeze get method signatures; produce reference encoding test vectors |
 | Phase 1: Wallet Core | `wallet_v6.fc` MVP, owner-signed requests, seqno, registry, lock/recovery modes, TS client, tests |
 | Phase 2: Treasury & Recovery | Treasury Actor, Recovery Actor, Policy Actor MVP, budget allocation flow, recovery flow, cross-actor integration tests |
 | Phase 3: Session & SDK | Session authorization, Virtual Account SDK abstraction, actor registry helper, one-address UX wrapper |
 | Phase 4: Token Actors | TokenMasterActor, TokenBalanceActor, deployment scripts, mint/transfer/burn flows |
 | Phase 5: Hardening | Audits, policy edge cases, guardian enhancements, SDK stabilization, documentation |
+
+**Phase 0 Freeze Items:**
+
+* Op codes: all action IDs in section 7.5 and token ops in sections 13.3-13.4
+* Role IDs: Appendix A
+* Error codes: sections 7.7 and 11.4
+* State layouts: sections 7.3, 8.3, 9.4
+* Get method signatures: sections 7.8, 8.5, 13.3, 13.4
+* Action encoding rules: section 7.9
+* Authentication matrix: section 7.6
 
 ### First Engineering Milestone
 
@@ -355,6 +678,8 @@ V1 proves that actor-oriented architecture can be built on top of the existing p
 
 V2 assumes V1 is already deployed and validated. That means: Primary Wallet / Treasury / Recovery / Policy role separation already exists, actor registry semantics are established, developer familiarity with actor-oriented contract design is in place. V2 does not redefine those concepts — it makes them protocol-native.
 
+V2 MUST NOT begin implementation before the V2 Spec Freeze Checklist in Appendix D is fully resolved.
+
 ### Architectural Transition
 
 ```
@@ -362,10 +687,9 @@ V1:                                    V2:
 Virtual Account                        Account Container
  +-- Wallet Actor  (= Account A)        +-- shared_balance
  +-- Treasury Actor (= Account B)       +-- Wallet Actor
- +-- Recovery Actor (= Account C)       +-- Treasury Actor
- +-- Policy Actor   (= Account D)       +-- Recovery Actor
- +-- Token / App Actors (= separate)    +-- Policy Actor
-                                         +-- Token / App Actors
+ +-- Recovery Actor (= Account C)       +-- Recovery Actor
+ +-- Policy Actor   (= Account D)       +-- Policy Actor
+ +-- Token / App Actors (= separate)    +-- Token / App Actors
 ```
 
 V2 is a **hard-fork-level protocol redesign**. It requires changes to: block format, account serialization, transaction execution, validation logic, message routing, Merkle proofs, and client tooling. The Cell/BOC encoding format itself is unchanged — only the semantic structure stored in Cells changes.
@@ -381,7 +705,10 @@ AccountContainer
  +-- actors:HashmapE(actor_id -> ActorDescriptor)
  +-- account_flags:uint32
  +-- shared_state:Cell / metadata
+ +-- registry_root:Cell                <- actor registry (role_id -> actor_id) for intra-container discovery
 ```
+
+The `registry_root` carries the same semantic role as the V1 Actor Registry but is now stored at the container level rather than inside an individual actor's state. This enables the protocol to resolve role-based addressing without entering any actor's execution context.
 
 ### 17.2 Actor Descriptor
 
@@ -394,7 +721,9 @@ ActorDescriptor
  +-- actor_flags:uint32
 ```
 
-Each Actor has its own `behavior_ref` rather than sharing a single global code Cell. This is more faithful to Actor identity, enables cleaner modularity, and smooths migration from V1 where each Actor is already an independent contract with its own code.
+Each Actor has its own `behavior_ref` rather than sharing a single global code Cell. This is the baseline binding model: each actor carries an actor-local `behavior_ref` that points to its code. This is more faithful to Actor identity, enables cleaner modularity, and smooths migration from V1 where each Actor is already an independent contract with its own code.
+
+The `behavior_ref` binding model is a decided design choice. Per-actor `behavior_ref` is the baseline. A shared behavior registry optimization may be introduced later as a non-breaking protocol extension, but it is not part of the V2 baseline.
 
 ### 17.3 TL-B Schema
 
@@ -411,6 +740,7 @@ account_storage_actor$_ last_trans_lt:uint64                // actor-mode (tag=1
     shared_balance:CurrencyCollection
     actors:(HashmapE 256 ^ActorDescriptor)
     account_flags:uint32
+    registry_root:^Cell
     state:AccountState
   = AccountStorage;
 ```
@@ -421,7 +751,7 @@ Legacy accounts use the existing `account_storage$_` tag. Actor-mode accounts us
 
 | Component | Change Required |
 |-----------|----------------|
-| Account state layout | Add `actors` HashmapE (state + budget + actor_lt + behavior_ref per actor), replace `balance` with `shared_balance` |
+| Account state layout | Add `actors` HashmapE (state + budget + actor_lt + behavior_ref per actor), replace `balance` with `shared_balance`, add `registry_root` |
 | Account serialization (TL-B) | New schema for actor sub-structure |
 | Block format | ActorAddress in transaction records |
 | OutMsgQueue key | Extended from 352 to 608 bits with actor_id |
@@ -452,6 +782,24 @@ This is deterministic for predictable actor creation and external tooling.
 ### 18.2 ACTORSEND Scope
 
 `ACTORSEND` targets only Actors within the **same account container**. The `actor_id` operand is sufficient because `workchain` and `account_id` are implicitly inherited from the executing account context. Cross-account Actor messaging requires the full `ActorAddress` and is deferred to a future `ACTORSENDX` instruction.
+
+ACTORSENDX is outside the baseline V2 implementation scope. It will be specified as a separate protocol extension after the intra-account actor model is validated.
+
+### 18.3 ActorAddress Canonical Encoding
+
+The canonical serialization of an `ActorAddress` for hashing, signing, and external representation is:
+
+```
+workchain:int8  account_id:bits256  actor_id:bits256
+```
+
+Total: 521 bits (8 + 256 + 256). For human-readable encoding, the format is:
+
+```
+<workchain>:<account_id_hex>/<actor_id_hex>
+```
+
+Example: `0:a1b2...f3/00aa...bb`. When `actor_id` is zero (legacy account or account-level addressing), the `/<actor_id_hex>` suffix is omitted, preserving backward compatibility with existing address formats.
 
 ## 19. Hybrid Balance Model
 
@@ -499,6 +847,8 @@ When an external or internal message carrying value arrives at the Account:
 
 This ensures backward compatibility: existing wallets sending to an Account address still work.
 
+If a message targets a specific `actor_id` that does not exist in the account's actor dictionary, the message is bounced. The collator MUST NOT create a transaction for a nonexistent actor. This prevents value from being silently absorbed into an unreachable actor budget.
+
 ### 19.4 Storage Fee Attribution
 
 Storage fees are charged at the **account level**, not per-actor:
@@ -507,6 +857,8 @@ Storage fees are charged at the **account level**, not per-actor:
 * Storage fees are deducted from `shared_balance` during Phase 2.
 * If `shared_balance` is insufficient, the Account enters the standard freeze/deletion path — all Actors are affected.
 * Actors are expected to periodically `ACTORRELEASE` surplus budget back to `shared_balance`. The protocol may enforce a minimum `shared_balance` threshold.
+
+Storage fees are charged once per account-container finalization, not once per committed actor result. Multiple actor transactions within the same block produce a single storage fee deduction during Phase 2, computed from the final aggregate state size after all actor commits.
 
 ## 20. Two-Phase Execution Model
 
@@ -575,6 +927,31 @@ This trades latency for determinism: no same-block cyclic dependencies, no merge
 
 Same-block actor-to-actor execution may be introduced as a future protocol extension with explicit topological scheduling rules.
 
+### 20.6 Deterministic Tertiary Ordering
+
+The primary sort key for Phase 2 merge is `(actor_id ASC, actor_lt ASC)`. When two speculative results have the same `actor_id` and the same `actor_lt` (which should not occur under correct collator behavior, but must be handled for deterministic validation), the tiebreaker is the hash of the inbound message that triggered the transaction, compared as unsigned 256-bit integers in ascending order.
+
+```
+ORDER BY (actor_id ASC, actor_lt ASC, inbound_msg_hash ASC)
+```
+
+This ensures that even a buggy or adversarial collator that produces duplicate `actor_lt` values for the same actor cannot create ambiguous merge order. Validators use this tertiary key during replay to verify deterministic equivalence.
+
+### 20.7 Canonical vs Tentative Artifacts
+
+| Artifact | Phase 1 Status | Phase 2 Status |
+|----------|---------------|---------------|
+| Actor state root | Tentative | Canonical (if committed) |
+| Actor budget | Tentative | Canonical (if committed) |
+| actor_lt | Tentative | Canonical (if committed) |
+| Outbound messages | Tentative (not in queue) | Canonical (materialized into OutMsgQueue) |
+| ACTORCLAIM/ACTORRELEASE | Intent (not applied) | Applied to shared_balance (if committed) |
+| Account-level lt | Not assigned | Assigned |
+| Transaction hash | Not assigned | Assigned |
+| Storage fee deduction | Not computed | Computed and applied |
+
+No tentative artifact may be referenced by any external system or proof until it transitions to canonical status via Phase 2 commit.
+
 ## 21. VM Context Isolation (Normative)
 
 Phase 1 executes the TVM compute phase speculatively. The VM must be presented with a restricted execution context so that results remain valid after Phase 2 assigns final account-global values.
@@ -604,6 +981,25 @@ Phase 1 executes the TVM compute phase speculatively. The VM must be presented w
 
 **Consequence:** Contracts must depend only on actor-local state, actor budget, and message content — not on account-global transaction metadata.
 
+### 21.3 Getter/Opcode Compatibility Matrix
+
+V2 baseline returns sentinel values for forbidden reads unless explicitly marked trap-only. The following table defines the behavior for each relevant TVM instruction when executed in actor-mode Phase 1:
+
+| Instruction | Legacy Behavior | Actor-Mode Phase 1 Behavior | Notes |
+|-------------|----------------|----------------------------|-------|
+| GETBALANCE | Returns account balance | Returns actor `budget` | Semantic change: actor-local only |
+| LTIME | Returns `last_trans_lt` | Returns `actor_lt` | Actor-local logical time |
+| TXHASH | Returns last transaction hash | Returns 0x00 (sentinel) | Final hash not yet assigned |
+| GETPARAM(5) | Returns account lt | Returns `actor_lt` | Aliased to actor-local |
+| GETPARAM(7) | Returns account balance | Returns actor `budget` | Aliased to actor-local |
+| GETPARAM(8) | Returns account address | Returns account address (unchanged) | Account-level, not actor-level |
+| GETPARAM(18) | N/A (new) | Returns `actor_id` | New c7 tuple slot |
+| RANDSEED | Returns random seed | Returns random seed (unchanged) | Deterministic from block seed |
+| BLOCKLT | Returns block lt | Returns block lt (unchanged) | Block-level, not account-level |
+| NOW | Returns unix timestamp | Returns unix timestamp (unchanged) | Block-level |
+
+Contracts that depend on TXHASH for logic (rare but possible) MUST be rewritten for actor-mode. The sentinel value 0x00 is chosen to be obviously invalid rather than silently wrong.
+
 ## 22. Actor Logical Time Model (Normative)
 
 ### 22.1 actor_lt
@@ -613,6 +1009,8 @@ Each Actor maintains its own monotonic `actor_lt` counter, independently of the 
 **Phase 1:** The collator reads the current `actor_lt` and increments it to produce a tentative value. This value is stable within Phase 1. If multiple messages target the same Actor in one block, they are serialized per-actor with distinct ascending `actor_lt` values. `actor_lt` is used as the secondary sort key for the deterministic merge: `ORDER BY (actor_id ASC, actor_lt ASC)`.
 
 **Phase 2:** The merge phase iterates results in `(actor_id, actor_lt)` order. For each committed result, Phase 2 assigns a final account-level logical time from the account's global lt counter. The final account-level lt is strictly monotonically increasing across all committed transactions.
+
+The merge engine MUST use account-global final lt only after a speculative result has passed Phase 2 acceptance. No final lt value is assigned to a result that will be rejected; the global lt counter is not advanced for rejected results.
 
 ### 22.2 Relationship Between Timelines
 
@@ -651,6 +1049,19 @@ Using the 0xFB09-0xFB0F range (currently unoccupied). All gated behind `->requir
 0xFB0F  ACTORRELEASE  amount:coins -> request_id:uint64
 ```
 
+The c7 tuple layout for actor-mode is frozen at the following indices:
+
+| Index | Content |
+|-------|---------|
+| 0-17 | Standard TVM c7 layout (unchanged) |
+| 18 | `actor_id:uint256` |
+
+No additional c7 indices are allocated in the V2 baseline. Future extensions MUST use indices >= 19.
+
+The c6 register lifecycle is frozen as follows: c6 is initialized with the actor's `state_root` HashmapE at the start of Phase 1 compute. After compute completes, the c6 value is captured as the tentative post-state. If the transaction is committed in Phase 2, c6 becomes the new canonical `state_root`. If rejected, c6 is discarded.
+
+The new opcodes (0xFB09-0xFB0F) are valid only in actor-mode execution. If a legacy-mode (non-actor) contract attempts to execute any of these opcodes, the VM MUST throw an invalid-opcode exception. This is enforced by the `require_version(N)` gate and additionally by a runtime check that the account is in actor-mode.
+
 ### 23.2 Implementation Patterns
 
 | Opcode | Pattern |
@@ -673,6 +1084,8 @@ These instructions do **not** synchronously move funds during Phase 1. They appe
 * `ACTORRELEASE(amount)` records: "if committed, move `amount` from this Actor's `budget` to `shared_balance`"
 
 The returned `request_id` is an opaque identifier for tracing/receipts only. It is **not** a success indicator. Success or failure is determined only in Phase 2. Contracts must treat claim/release as **deferred effects**, not synchronous conditionals.
+
+ACTORSEND failure semantics: if `ACTORSEND` targets an `actor_id` that does not exist within the same account container, the action is recorded in Phase 1 but rejected during Phase 2 action materialization. The entire transaction for the sending actor is rejected (rollback rule applies). Contracts SHOULD verify actor existence via registry lookup before sending.
 
 ### 23.4 New OutAction Variants
 
@@ -715,9 +1128,20 @@ Proposed flow (parallel + merge):
     update_block_state(result)
 ```
 
+Storage fees in Phase 2 are computed once per account-container finalization, not once per committed actor result. The `apply_storage_fees(account)` call above is executed once after all actor results have been processed, not inside the per-result loop. The pseudocode above is simplified for clarity.
+
 ### 24.2 Hybrid Handling
 
 During migration, the collator must support both legacy accounts (serial execution) and actor-mode accounts (two-phase execution) in the same block.
+
+### 24.3 Same-Block Visibility Enforcement
+
+The collator MUST enforce the same-block visibility rule (section 20.5) by partitioning inbound messages into two categories before Phase 1 begins:
+
+1. **Pre-existing messages**: messages that were in the InMsgQueue before this block's processing started. These are eligible for Phase 1 execution.
+2. **Newly emitted messages**: messages produced by actor transactions within the current block. These MUST NOT be delivered to any actor in the current block.
+
+The collator achieves this by freezing the set of deliverable messages at the start of block production. Any `ACTORSEND` output produced during Phase 1 is added to the OutMsgQueue for the next block but is not added to the current block's deliverable set.
 
 ## 25. Validator Redesign
 
@@ -731,6 +1155,12 @@ Validators must be able to replay actor-mode Phase 1 execution and Phase 2 merge
 6. Same-block visibility rules (no same-block actor message consumption)
 7. Canonical transaction outputs match
 
+### 25.1 Replay Equivalence Requirement
+
+A validator's replay of any actor-mode block MUST produce bit-identical canonical state for every committed actor, bit-identical OutMsgQueue entries, and bit-identical account-level fields (shared_balance, last_trans_lt, last_trans_hash). If the validator's replay diverges from the collator's block in any of these fields, the block MUST be rejected.
+
+This requirement implies that the Phase 2 merge algorithm, storage fee computation, and final lt assignment are fully deterministic given the set of Phase 1 results and the pre-block account state. No collator-local randomness, timing, or ordering heuristic may influence the canonical output.
+
 ## 26. OutMsgQueue Key Extension
 
 ```
@@ -739,6 +1169,24 @@ New: workchain(32) | shard_prefix(64) | actor_id(256) | msg_hash(256)    = 608 b
 ```
 
 Both `actor_id` and `msg_hash` are kept at full 256 bits. For non-actor messages, `actor_id` is zero-filled to preserve sort order compatibility. This changes the key length constant in `output-queue-merger.h:30` and affects all queue sorting, merging, and routing logic.
+
+The test suite MUST include a golden sort-order test that verifies the following properties:
+
+1. Legacy messages (actor_id = 0x00...00) sort before all actor messages for the same shard prefix.
+2. Actor messages sort by actor_id first, then by msg_hash within the same actor_id.
+3. The 608-bit key round-trips correctly through pack/unpack.
+4. Queue merge across shards produces the same ordering as a single-shard sort of the union.
+
+Key examples:
+
+```
+Key A: wc=0 | shard=0x8000 | actor_id=0x00..00 | msg_hash=0xAA..AA  (legacy)
+Key B: wc=0 | shard=0x8000 | actor_id=0x00..01 | msg_hash=0x11..11  (actor)
+Key C: wc=0 | shard=0x8000 | actor_id=0x00..01 | msg_hash=0xFF..FF  (actor, same actor_id as B)
+Key D: wc=0 | shard=0xC000 | actor_id=0x00..00 | msg_hash=0x22..22  (different shard)
+
+Expected order: A < B < C < D
+```
 
 ## 27. Merkle Proof Extension
 
@@ -756,6 +1204,18 @@ block -> shard -> account container -> actor dictionary -> actor descriptor -> s
 
 Lite-clients must be able to verify: actor existence, actor-local state, actor-local transaction references, and actor-local proofs.
 
+### 27.1 Actor Proof Query Model
+
+Lite-clients request actor proofs using the `getActorState` query (see Module H). The response includes:
+
+1. A Merkle proof from the block root to the account container.
+2. A Merkle proof from the account container to the actor dictionary entry.
+3. A Merkle proof from the actor descriptor to the requested state key (if a specific key is requested).
+
+Each proof layer is independently verifiable. A client that already has a verified account container proof can request only the actor-level proof for subsequent queries, reducing bandwidth.
+
+Legacy proof queries (`getAccountState`) continue to work for actor-mode accounts. They return the full account container state (including all actors) as a single proof. This is less efficient but ensures backward compatibility with clients that have not been upgraded to understand actor-level proofs.
+
 ## 28. Execution Paths
 
 Two execution paths, sharing the same state interface (vm::Dictionary / HashmapE):
@@ -764,6 +1224,8 @@ Two execution paths, sharing the same state interface (vm::Dictionary / HashmapE
 |------|-----|-------------|--------|
 | Native C++ | Built-in/system actors | Fastest | Trusted (ships with node) |
 | TVM | User-deployed contracts | Medium | TVM sandbox |
+
+Both execution paths MUST produce semantically equivalent results for the same actor state and inbound message. The Native C++ path is an optimization, not a semantic divergence. Any discrepancy between the two paths for the same input is a consensus-critical bug.
 
 ## 29. V2 Risks
 
@@ -775,6 +1237,8 @@ Two execution paths, sharing the same state interface (vm::Dictionary / HashmapE
 6. **Validation complexity** — validate-query.cpp (7674 lines) needs significant changes; actor-level proofs add new attack surface
 7. **State migration** — existing accounts must be migrated; requires migration protocol
 8. **Client compatibility** — all wallets, SDKs, and block explorers must upgrade
+9. **Behavior binding lock-in** — per-actor `behavior_ref` as baseline means every actor carries its own code reference; if the ecosystem later converges on shared behaviors, migration to a behavior registry requires a non-trivial protocol extension and potential state migration
+10. **Migration aliasing** — V1 actors (separate accounts) migrated into a single V2 container may create address aliasing issues if external systems cache the old per-account addresses; the forwarding shell strategy (section 31.4) mitigates this but does not eliminate it for all cases
 
 ## 30. V2 Open Questions
 
@@ -786,7 +1250,9 @@ Two execution paths, sharing the same state interface (vm::Dictionary / HashmapE
 6. **Backward compatibility period:** How long do old and new formats run in parallel?
 7. **Actor count limits:** Maximum Actors per Account? Storage cost model for actor metadata?
 8. **VM forbidden-field enforcement:** Hard-trap vs sentinel when actor-mode code reads Phase-2-only fields?
-9. **Behavior binding model:** Per-actor `behavior_ref` vs shared code vs behavior registry — final decision needed before implementation.
+9. *(Resolved -- see section 17.2: per-actor behavior_ref is the baseline binding model.)*
+10. **Migration address alias strategy:** When V1 actors (each with their own account address) are migrated into a single V2 container, how are the old addresses handled? Options: forwarding shell, protocol-level alias table, or deprecation with grace period. See section 31.4 for the recommended baseline.
+11. **Targeted message to unknown actor:** When a message targets a specific actor_id that does not exist, should the message bounce, be absorbed into shared_balance, or trigger auto-creation of a default actor? Current baseline: bounce (see section 19.3).
 
 ---
 
@@ -822,11 +1288,62 @@ The following from V1 remain valid and should be reused in V2:
 
 Only the **protocol placement** of those concepts changes.
 
+### 31.4 Address Compatibility Strategy
+
+When V1 actors migrate from separate accounts into a single V2 container, the old per-account addresses must be handled. Three options:
+
+| Option | Mechanism | Pros | Cons |
+|--------|-----------|------|------|
+| Forwarding shell | Leave a minimal contract at the old address that forwards all messages to the new ActorAddress inside the container | Full backward compatibility; no protocol change needed | Gas overhead per forwarded message; old addresses remain occupied |
+| Protocol-level alias table | The protocol maintains a mapping from old addresses to new ActorAddresses | Zero-overhead forwarding; clean semantics | Requires additional protocol change; alias table is unbounded |
+| Deprecation with grace period | Old addresses stop working after a defined grace period; clients must update | Simplest long-term; no permanent overhead | Breaking change; requires coordinated client migration |
+
+**Recommended baseline: forwarding shell.** This requires no additional protocol changes, is fully backward compatible, and can be implemented as a standard V1 contract deployed before or during migration. The forwarding shell contract stores the target `ActorAddress` and re-routes all inbound messages (including value) to the container.
+
+The gas overhead of forwarding is bounded (one additional message hop per forwarded message) and decreases over time as clients update to the new addresses.
+
+### 31.5 Treasury Mapping Rule
+
+When a V1 Treasury Actor (independent Account B) migrates into a V2 container, the following state mapping applies:
+
+* The Treasury Actor's contract balance becomes its initial `budget` in the actor descriptor.
+* Outstanding `AllocateBudget` records are preserved in the actor's state.
+* The `primary_wallet` backlink is replaced by the container-level `registry_root` lookup for ROLE_PRIMARY.
+* If a forwarding shell is deployed at the old Treasury address, it MUST forward `ReturnBudget` messages from V1 actors that have not yet migrated.
+
+### 31.6 Role/Code/State Migration Rule
+
+For each V1 actor migrating into a V2 container:
+
+1. **Code**: The V1 contract code becomes the `behavior_ref` in the actor's descriptor. No code rewrite is required if the contract does not use actor-mode opcodes. Contracts that wish to use STATEGET/STATESET/STATEDEL must be recompiled for actor-mode.
+2. **State**: The V1 contract's `data` Cell is mapped into the actor's `state_root` HashmapE. The mapping strategy depends on the contract's data layout -- flat data Cells are wrapped into a single HashmapE entry keyed by a well-known key (e.g., 0x00); structured HashmapE states are mapped directly.
+3. **Role**: The V1 role ID (from the Actor Registry) becomes the key in the container-level `registry_root` mapping to the migrated `actor_id`.
+
+Migration tooling MUST verify that the post-migration actor state is functionally equivalent to the pre-migration account state by executing a set of reference transactions against both representations and comparing outputs.
+
 ---
 
 # Part V — Implementation Plan
 
 ## 32. Module Breakdown
+
+### Module 0: Spec Freeze
+
+**Scope:** Finalize and freeze all V2 normative specifications before any implementation begins.
+
+| Deliverable | Description |
+|-------------|-------------|
+| Frozen TL-B schemas | Final `ActorDescriptor`, `account_storage_actor`, `ActorAddress` canonical encoding |
+| Frozen opcode table | Final 0xFB09-0xFB0F assignments, c6/c7 layout, actor-mode validity gate |
+| Frozen merge rules | Final Phase 2 ordering, prefix commit, rollback, tertiary tiebreaker |
+| Frozen VM compatibility matrix | Final getter/opcode behavior table (section 21.3) |
+| Frozen queue key layout | Final 608-bit key format |
+| Frozen proof path | Final block -> shard -> container -> actor -> state -> key path |
+| Behavior binding decision | Per-actor `behavior_ref` confirmed as baseline (section 17.2) |
+| Reference test vectors | Golden serialization vectors for all frozen schemas |
+| V2 Spec Freeze Checklist | All items in Appendix D resolved and signed off |
+
+**Complexity:** MEDIUM | **Estimate:** 2-3 weeks
 
 ### Module A: TL-B Schema & Account Structure
 
@@ -945,14 +1462,15 @@ Only the **protocol placement** of those concepts changes.
 ## 33. Implementation Sequencing
 
 ```
-Week 1-4:   Module A (TL-B & Account)              <- foundation for all modules
-Week 3-5:   Module B (TVM Opcodes)                  <- depends on A
-Week 3-5:   Module F (OutMsgQueue Key)              <- depends on A, parallel with B
-Week 4-6:   Module G (Merkle Proofs)                <- depends on A, parallel
-Week 5-8:   Module C (Two-Phase Execution)          <- depends on A+B
-Week 7-11:  Module D (Collator Restructuring)       <- depends on A+B+C
-Week 9-13:  Module E (Validation Logic)             <- depends on A+C+D
-Week 10-13: Module H (Lite-Client / SDK)            <- depends on A+G
+Week 0-2:   Module 0 (Spec Freeze)                    <- must complete before implementation
+Week 3-6:   Module A (TL-B & Account)                  <- foundation for all modules
+Week 5-7:   Module B (TVM Opcodes)                     <- depends on A
+Week 5-7:   Module F (OutMsgQueue Key)                 <- depends on A, parallel with B
+Week 6-8:   Module G (Merkle Proofs)                   <- depends on A, parallel
+Week 7-10:  Module C (Two-Phase Execution)             <- depends on A+B
+Week 9-13:  Module D (Collator Restructuring)          <- depends on A+B+C
+Week 11-15: Module E (Validation Logic)                <- depends on A+C+D
+Week 12-15: Module H (Lite-Client / SDK)               <- depends on A+G
 ```
 
 Parallelizable module group: {B, F, G} can be developed simultaneously.
@@ -961,6 +1479,7 @@ Parallelizable module group: {B, F, G} can be developed simultaneously.
 
 | Layer | Complexity | Effort |
 |-------|-----------|--------|
+| Spec freeze (Module 0) | Medium | 2-3 weeks |
 | Account struct + serialization | High | 3-4 weeks |
 | Two-phase execution model | High | 3-4 weeks |
 | Collator restructuring | High | 3-4 weeks |
@@ -973,18 +1492,22 @@ Parallelizable module group: {B, F, G} can be developed simultaneously.
 
 **V2 total: approximately 6-9 months for a small team (2-3 engineers).**
 
+Caveat: these estimates exclude time spent on spec-freeze iteration (Module 0 feedback loops, design review, and revision). Spec freeze may require multiple rounds if open questions (section 30) surface new design constraints. Modules C, D, and E carry the highest implementation risk due to their deep integration with the existing collator/validator codebase and the difficulty of testing concurrent execution correctness.
+
 ## 35. Verification
 
 | Module | Method |
 |--------|--------|
-| A | Compiles; tlbc generation passes; unpack/pack round-trip tests |
-| B | Unit tests per opcode (normal + exception paths); Fift scripts |
+| 0 | Spec Freeze Checklist (Appendix D) fully resolved; reference test vectors published and reviewed |
+| A | Compiles; tlbc generation passes; unpack/pack round-trip tests; golden serialization tests (canonical bit-exact encoding of ActorDescriptor, AccountStorage actor-mode, ActorAddress) |
+| B | Unit tests per opcode (normal + exception paths); Fift scripts; VM forbidden-field tests (verify sentinel/trap for TXHASH, account-level lt, shared_balance in actor-mode) |
 | C | Phase 1 tentative results correct; Phase 2 merge prefix and rollback rules |
-| D | Multi-actor parallel block production; same-block visibility; block limits |
+| D | Multi-actor parallel block production; same-block visibility; block limits; mixed legacy+actor-mode block tests (verify blocks containing both legacy serial transactions and actor-mode two-phase transactions produce correct state) |
 | E | Validator passes validate-query on blocks produced by D |
-| F | Queue merge tests; 608-bit key sort correctness |
+| F | Queue merge tests; 608-bit key sort correctness; golden sort-order tests (section 26) |
 | G | lite-client getActorState proof verification |
 | H | lite-client actor state/list queries return correct results |
+| Migration | V1-to-V2 migration test: deploy V1 Virtual Account (Wallet + Treasury + Recovery), execute reference transactions, migrate to V2 container, verify post-migration state equivalence and functional equivalence |
 
 **End-to-end:** start local testnet -> deploy actor-mode contract -> multi-actor parallel transactions -> verify block consistency.
 
@@ -1023,12 +1546,16 @@ ACT_PROPOSE_OWNER=0x0C  ACT_COMMIT_OWNER=0x0D
 7. Actor proof verification
 8. Validator replay equals collator result
 9. Migration from V1 actor set to one V2 actor container
+10. Golden serialization round-trip for ActorDescriptor and actor-mode AccountStorage (bit-exact encoding/decoding)
+11. VM forbidden-field enforcement: TXHASH returns sentinel, account-level lt is not accessible, shared_balance is not readable in actor-mode Phase 1
+12. Mixed legacy+actor-mode block: a single block containing both legacy serial transactions and actor-mode two-phase transactions produces correct state for both account types
+13. Tertiary ordering tiebreaker: two speculative results with the same (actor_id, actor_lt) are ordered deterministically by inbound_msg_hash
 
 ## Appendix D: V2 Spec Freeze Checklist
 
 Before V2 coding begins, the following must be frozen:
 
-1. ActorDescriptor schema (including behavior_ref model)
+1. ActorDescriptor schema (including behavior_ref model and final behavior binding choice)
 2. AccountContainer schema
 3. ActorAddress format
 4. actor_lt rules
@@ -1038,6 +1565,8 @@ Before V2 coding begins, the following must be frozen:
 8. Tentative vs canonical transaction structures
 9. Queue key layout
 10. Proof path format
+11. c7 tuple index allocation for actor-mode (indices 18+ frozen)
+12. c6 register lifecycle (initialization, capture, commit/discard semantics frozen)
 
 ## Appendix E: Code References
 
@@ -1057,6 +1586,10 @@ Before V2 coding begins, the following must be frozen:
 | OutMsgQueue key | `crypto/block/output-queue-merger.h` | 30 (`max_key_len`) |
 | Queue key construction | `crypto/block/block.cpp` | 2008-2021 (`compute_out_msg_queue_key`) |
 | Merkle proofs | `crypto/block/check-proof.cpp` | 152-207 (`check_account_proof`) |
+| Proof declarations | `crypto/block/check-proof.h` | Actor proof extension |
 | Lite-client | `lite-client/lite-client.cpp` | 4723 lines |
 | Block-parse | `crypto/block/block-parse.h` | 522-528 |
 | Emulator | `emulator/transaction-emulator.h` | Transaction emulation |
+| VM core | `crypto/vm/vm.h` | 278-315 (c6 register addition) |
+| Continuation | `crypto/vm/continuation.h` | 39 (d[] array extension for c6) |
+| Lite API schema | `tl/generate/scheme/lite_api.tl` | getActorState, getActorList |
