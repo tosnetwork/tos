@@ -1081,7 +1081,7 @@ Storage fees are charged at the **account level**, not per-actor:
 
 Storage fees are charged once per account-container finalization, not once per committed actor result. Multiple actor transactions within the same block produce a single storage fee deduction during Canonical Merge and Adopt, computed from the final aggregate state size after all actor commits.
 
-## 20. Two-Phase Execution Model
+## 20. Admission, Preview Execution, and Canonical Merge and Adopt
 
 ### 20.1 Why Two Phases
 
@@ -2278,12 +2278,12 @@ At minimum, transition tests MUST cover:
 | `crypto/block/transaction.cpp:~1135` | `prepare_credit_phase()`: actor-targeted value -> budget; legacy -> shared_balance |
 | `crypto/block/transaction.cpp:~1960` | `prepare_compute_phase()`: gas from budget; set c6=actor_state; c7 adjustments |
 | `crypto/block/transaction.cpp:~2150` | `prepare_action_phase()`: handle actor_send/claim/release actions |
-| `crypto/block/transaction.cpp:4022` | Split `commit()` into `commit_phase1()` + `commit_phase2()` |
+| `crypto/block/transaction.cpp:4022` | Split `commit()` into a Preview-result path and a Canonical Merge and Adopt path; avoid account-global mutation during Preview Execution |
 | New: `crypto/block/actor-merge.cpp` | Canonical Merge and Adopt: sort, prefix rule, balance requests, assign final lt |
 
 **Complexity:** HIGH | **Estimate:** 3-4 weeks
 
-### Module D: Collator Restructuring
+### Module D: Collator Flow and Wave Scheduling
 
 **Scope:** Transform block production from serial to Preview Execution + Canonical Merge and Adopt.
 
@@ -2299,7 +2299,7 @@ At minimum, transition tests MUST cover:
 
 **Complexity:** HIGH | **Estimate:** 3-4 weeks
 
-### Module E: Validation Logic
+### Module E: Validator Replay and Validation
 
 **Scope:** Validators reproduce Preview Execution and Canonical Merge and Adopt and verify results.
 
@@ -2359,9 +2359,9 @@ Week 3-6:   Module A (TL-B & Account)                  <- foundation for all mod
 Week 5-7:   Module B (TVM Opcodes)                     <- depends on A
 Week 5-7:   Module F (OutMsgQueue Key)                 <- depends on A, parallel with B
 Week 6-8:   Module G (Merkle Proofs)                   <- depends on A, parallel
-Week 7-10:  Module C (Two-Phase Execution)             <- depends on A+B
-Week 9-13:  Module D (Collator Restructuring)          <- depends on A+B+C
-Week 11-15: Module E (Validation Logic)                <- depends on A+C+D
+Week 7-10:  Module C (Preview / Canonical Execution)   <- depends on A+B
+Week 9-13:  Module D (Collator Flow & Wave Scheduling) <- depends on A+B+C
+Week 11-15: Module E (Validator Replay & Validation)   <- depends on A+C+D
 Week 12-15: Module H (Lite-Client / SDK)               <- depends on A+G
 ```
 
@@ -2373,8 +2373,8 @@ Parallelizable module group: {B, F, G} can be developed simultaneously.
 |-------|-----------|--------|
 | Spec freeze (Module 0) | Medium | 2-3 weeks |
 | Account struct + serialization | High | 3-4 weeks |
-| Two-phase execution model | High | 3-4 weeks |
-| Collator restructuring | High | 3-4 weeks |
+| Preview / canonical execution model | High | 3-4 weeks |
+| Collator flow and wave scheduling | High | 3-4 weeks |
 | TVM new instructions (7 opcodes) | Medium | 1-2 weeks |
 | Message routing (OutMsgQueue) | Medium | 2 weeks |
 | Validation logic | High | 3-4 weeks |
@@ -2394,7 +2394,7 @@ Caveat: these estimates exclude time spent on spec-freeze iteration (Module 0 fe
 | A | Compiles; tlbc generation passes; unpack/pack round-trip tests; golden serialization tests (canonical bit-exact encoding of ActorDescriptor, AccountStorage actor-mode, ActorAddress) |
 | B | Unit tests per opcode (normal + exception paths); Fift scripts; VM forbidden-field tests (verify sentinel/trap for TXHASH, account-level lt, shared_balance in actor-mode) |
 | C | Preview Execution tentative results correct; Canonical Merge and Adopt prefix and rollback rules |
-| D | Multi-actor parallel block production; later-wave visibility; block limits; mixed legacy+actor-mode block tests (verify blocks containing both legacy serial transactions and actor-mode two-stage transactions produce correct state) |
+| D | Multi-actor parallel block production; later-wave visibility; block limits; mixed legacy+actor-mode block tests (verify blocks containing both legacy serial transactions and actor-mode preview / canonical transactions produce correct state) |
 | E | Validator passes validate-query on blocks produced by D |
 | F | Queue merge tests; 608-bit key sort correctness; golden sort-order tests (section 26) |
 | G | lite-client getActorState proof verification |
