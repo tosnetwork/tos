@@ -1112,65 +1112,74 @@ See Figure 1 for the corresponding end-to-end flow.
 
 **Figure 1. Before / After Block-Production Flow**
 
-This diagram summarizes the end-to-end block-production path before and after actor-native execution.
+These diagrams summarize the end-to-end block-production path before and after actor-native execution.
 
 Color coding in this diagram is illustrative, not normative.
 
+**Figure 1A. Before V2: Traditional Account-Centric Flow**
+
 ```mermaid
-flowchart TB
-  subgraph BEFORE["Before V2: Traditional Account-Centric Flow"]
-    B1["Inbound Message"]
-    B2["Resolve Target Account"]
-    B3["Execute Account Transaction"]
-    B4["Read And Write Account State"]
-    B5["Deduct Gas And Outbound Value From Account Balance"]
-    B6["Update Account Logical Time"]
-    B7["Commit Immediately"]
-    B8["Materialize Outbound Messages"]
-    B9["Update OutMsgQueue, Block Descriptors, And Accumulators"]
-    B10["Next Inbound Message"]
+flowchart TD
+  B1["Inbound Message"]
+  B2["Resolve Target Account"]
+  B3["Execute Account Transaction"]
+  B4["Read And Write Account State"]
+  B5["Deduct Gas And Outbound Value From Account Balance"]
+  B6["Update Account Logical Time"]
+  B7["Commit Immediately"]
+  B8["Materialize Outbound Messages"]
+  B9["Update OutMsgQueue, Block Descriptors, And Accumulators"]
+  B10["Next Inbound Message"]
 
-    B1 --> B2 --> B3
-    B3 --> B4
-    B4 --> B5 --> B6 --> B7 --> B8 --> B9 --> B10
-  end
-
-  subgraph AFTER["After V2: Actor-Native Two-Phase Flow"]
-    A1["Inbound Message"]
-    A2["Resolve Account Container"]
-    A3["Route To Target Actor ID"]
-    A4["Phase 1: Actor-Local Tentative Execution"]
-    A5["Read And Write Actor State Root Only"]
-    A6["Deduct Gas And Outbound Value From Actor Budget"]
-    A7["Assign Tentative Actor LT"]
-    A8["Record Tentative Outbound Messages And Balance Intents"]
-    A9["Collect Speculative Results From Multiple Actors"]
-    A10["Phase 2: Deterministic Merge"]
-    A11["Sort By Actor ID, Actor LT, And Inbound Message Hash"]
-    A12["Enforce Prefix Commit And Settle Shared Balance"]
-    A13["Charge Storage Fee Once Per Container"]
-    A14["Assign Final Account-Level LT And Transaction Hash"]
-    A15["Materialize Outbound Messages And Commit Canonical State"]
-    A16["Messages Emitted In Block N Become Executable In Block N+1"]
-
-    A1 --> A2 --> A3 --> A4
-    A4 --> A5 --> A6 --> A7 --> A8 --> A9 --> A10
-    A10 --> A11 --> A12 --> A13 --> A14 --> A15 --> A16
-  end
+  B1 --> B2 --> B3
+  B3 --> B4 --> B5 --> B6 --> B7 --> B8 --> B9 --> B10
 
   classDef inbound fill:#eef6ff,stroke:#1d4ed8,color:#0f172a,stroke-width:1px;
   classDef execution fill:#ecfdf5,stroke:#059669,color:#0f172a,stroke-width:1px;
+  classDef commit fill:#f0fdf4,stroke:#16a34a,color:#0f172a,stroke-width:1px;
+  classDef queue fill:#fefce8,stroke:#ca8a04,color:#0f172a,stroke-width:1px;
+
+  class B1 inbound;
+  class B2,B3,B4,B5,B6 execution;
+  class B7,B10 commit;
+  class B8,B9 queue;
+```
+
+**Figure 1B. After V2: Actor-Native Two-Phase Flow**
+
+```mermaid
+flowchart TD
+  A1["Inbound Message"]
+  A2["Resolve Account Container"]
+  A3["Route To Target Actor ID"]
+  A4["Phase 1: Actor-Local Tentative Execution"]
+  A5["Read And Write Actor State Root Only"]
+  A6["Deduct Gas And Outbound Value From Actor Budget"]
+  A7["Assign Tentative Actor LT"]
+  A8["Record Tentative Outbound Messages And Balance Intents"]
+  A9["Collect Speculative Results From Multiple Actors"]
+  A10["Phase 2: Deterministic Merge"]
+  A11["Sort By Actor ID, Actor LT, And Inbound Message Hash"]
+  A12["Enforce Prefix Commit And Settle Shared Balance"]
+  A13["Charge Storage Fee Once Per Container"]
+  A14["Assign Final Account-Level LT And Transaction Hash"]
+  A15["Materialize Outbound Messages And Commit Canonical State"]
+  A16["Messages Emitted In Block N Become Executable In Block N+1"]
+
+  A1 --> A2 --> A3 --> A4
+  A4 --> A5 --> A6 --> A7 --> A8 --> A9 --> A10
+  A10 --> A11 --> A12 --> A13 --> A14 --> A15 --> A16
+
+  classDef inbound fill:#eef6ff,stroke:#1d4ed8,color:#0f172a,stroke-width:1px;
   classDef phase1 fill:#fff7ed,stroke:#ea580c,color:#0f172a,stroke-width:1px;
   classDef phase2 fill:#f5f3ff,stroke:#7c3aed,color:#0f172a,stroke-width:1px;
   classDef commit fill:#f0fdf4,stroke:#16a34a,color:#0f172a,stroke-width:1px;
   classDef queue fill:#fefce8,stroke:#ca8a04,color:#0f172a,stroke-width:1px;
 
-  class B1,A1 inbound;
-  class B2,B3,B4,B5,B6 execution;
+  class A1 inbound;
   class A2,A3,A4,A5,A6,A7,A8,A9 phase1;
   class A10,A11,A12,A13,A14 phase2;
-  class B7,B10 commit;
-  class B8,B9,A15,A16 queue;
+  class A15,A16 queue;
 ```
 
 ### 20.2 Phase Boundary (Normative)
