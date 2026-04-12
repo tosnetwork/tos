@@ -54,7 +54,7 @@ The Actor Model provides a simpler and more composable foundation:
 * each Actor is internally serial
 * concurrency exists naturally across actors
 
-A TON-like execution environment already provides most of the required runtime properties: every Account has its own address, its own state, is triggered by messages, processes messages serially, and communicates asynchronously. The C++ node already uses an actor-based runtime through `td::actor`.
+The TOS execution environment already provides most of the required runtime properties: every Account has its own address, its own state, is triggered by messages, processes messages serially, and communicates asynchronously. The C++ node already uses an actor-based runtime through `td::actor`.
 
 ## 3. Two-Phase Rollout Strategy
 
@@ -614,7 +614,7 @@ Get methods: `get_wallet_data() -> (int balance, slice owner, slice master, cell
 
 A TokenBalanceActor MUST verify that transfer and burn requests originate from the owner's Primary Wallet Actor address or from the owner's direct external message (for standalone wallets not using the Virtual Account pattern). The `internal_transfer` op MUST be accepted only from addresses whose code hash matches the expected TokenBalanceActor code hash -- this is the standard Jetton wallet discovery pattern.
 
-V1 token implementation may reuse TON Jetton-compatible patterns where practical.
+V1 token implementation may reuse Jetton-compatible patterns where practical.
 
 ## 14. V1 Security Model
 
@@ -1032,9 +1032,9 @@ If two Actors under the same Account shared a single balance and executed in par
 
 ```
 Account Container
- +-- shared_balance: 2 TON          <- storage fees, inbound value, inter-actor pool
- +-- actor_0: { state, budget: 3 TON, actor_lt }
- +-- actor_1: { state, budget: 5 TON, actor_lt }
+ +-- shared_balance: 2 TOS          <- storage fees, inbound value, inter-actor pool
+ +-- actor_0: { state, budget: 3 TOS, actor_lt }
+ +-- actor_1: { state, budget: 5 TOS, actor_lt }
 ```
 
 **Why this works for parallel execution:**
