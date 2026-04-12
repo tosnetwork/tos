@@ -28,6 +28,14 @@ V1 is the active engineering track. V2 is the protocol research-and-implementati
 | Part V — Implementation | V2 | Planning-level | Draft |
 | Appendices | Both | Reference | Maintained alongside Parts II-III |
 
+### Freeze Sections Precedence Rule
+
+The following sections are implementation-freeze sections and take precedence over descriptive prose when conflicts arise:
+
+- **15A. V1 Interface Freeze** — authoritative for all V1 smart contract implementations
+- **30A. V2 Spec Freeze** — authoritative for all V2 protocol implementation decisions
+- **31A. Migration Freeze** — authoritative for all V1-to-V2 migration planning
+
 ---
 
 # Part I — Motivation and Design Philosophy
@@ -171,6 +179,20 @@ There is no protocol-level shared balance pool in V1. Instead:
 This means V1 uses **logical budget orchestration**, not protocol-native shared balance settlement.
 
 In V1, Treasury coordination is a contract-layer convention, not a consensus-enforced balance-sharing mechanism.
+
+### 6.3.1 Default Native Coin Receiving Rule (Normative)
+
+The Primary Wallet Actor is the default externally visible address for a Virtual Account. External senders naturally send native coins to this address. The following rule defines how received funds are handled:
+
+1. The Primary Wallet Actor MUST accept inbound native coin transfers.
+2. Upon receiving native coins, the Primary Wallet Actor SHOULD auto-forward the received value to the Treasury Actor via an internal `DepositToTreasury` message. This is the **default behavior** unless the owner has configured a different routing policy.
+3. The auto-forward MUST be a separate internal message (not a synchronous state change) so that the Treasury Actor's balance is updated through normal message-driven execution.
+4. If no Treasury Actor is registered, the Primary Wallet Actor retains the funds in its own balance and emits an event or receipt indicating unrouted funds.
+5. The auto-forward gas cost is paid from the received value. If the received value is less than the minimum gas cost for forwarding, the funds are retained in the Primary Wallet Actor's balance.
+
+This rule closes the gap between "wallet address is the user-facing address" and "Treasury is the financial coordination center." External users always send to the wallet address; the wallet contract routes funds to Treasury automatically.
+
+SDK implementations MUST present the Primary Wallet address as the user's deposit address and MUST NOT require users to know the Treasury Actor address for normal deposits.
 
 ### 6.4 Virtual Account Discovery
 
@@ -668,6 +690,132 @@ Every specialized Actor is a separate fault domain. Compromise of one Actor (e.g
 
 Complete when: deploy Primary Wallet -> deploy Treasury -> register in registry -> fund Treasury -> add session key -> owner transfer through treasury -> trigger recovery -> revoke session -> restore normal mode -> all integration tests pass.
 
+## 15A. V1 Interface Freeze (Normative)
+
+This section is normative for all V1 smart contract implementations.
+
+If any descriptive text in earlier V1 sections conflicts with this section, this section takes precedence.
+
+### 15A.1 Scope
+
+This freeze applies to the following V1 modules:
+
+- Primary Wallet Actor
+- Treasury Actor
+- Recovery Actor
+- Policy Actor
+- Session authorization
+- Actor Registry
+- TokenMasterActor
+- TokenBalanceActor
+
+### 15A.2 Message Schema Freeze
+
+All V1 contract interfaces MUST use explicitly versioned and opcode-stable message schemas.
+
+Each contract interface definition MUST specify:
+
+1. opcode
+2. request body schema
+3. response body schema (if any)
+4. failure / reject conditions
+5. get methods
+6. caller authorization rules
+
+### 15A.3 Authorization Matrix Freeze
+
+The following authorization matrix is the V1 baseline:
+
+| Path | Authority Level | Allowed Operations |
+|---|---|---|
+| Owner SignedRequest | highest | all wallet-admin and routing actions |
+| SessionRequest | limited | low-risk actions only, subject to session limits |
+| ExtensionRequest | internal-only | only role-authorized actor-origin actions |
+| RecoveryRequest | emergency/recovery | recovery mode, freeze, owner proposal, session revoke |
+
+Any implementation that expands authority beyond this matrix MUST be explicitly documented and versioned.
+
+### 15A.4 Required Wallet Get Methods
+
+The Primary Wallet Actor MUST expose at least:
+
+- `get_wallet_id`
+- `get_seqno`
+- `get_mode`
+- `get_owner_pubkey`
+- `get_pending_owner`
+- `get_actor(role_id)`
+- `get_session(session_pubkey)`
+
+### 15A.5 Required Treasury Get Methods
+
+The Treasury Actor MUST expose at least:
+
+- `get_treasury_state`
+- `get_budget_record(budget_id)`
+- `get_wallet_actor`
+- `get_policy_actor`
+
+### 15A.6 Required Recovery Get Methods
+
+The Recovery Actor MUST expose at least:
+
+- `get_recovery_state`
+- `get_guardian_set`
+- `get_pending_recovery`
+- `get_wallet_actor`
+
+### 15A.7 Required Policy Get Methods
+
+The Policy Actor MUST expose at least:
+
+- `get_policy_state`
+- `get_policy_version`
+- `evaluate_preview(...)` or equivalent simulation-safe read method if supported
+
+### 15A.8 Session Enforcement Baseline
+
+V1 baseline rule:
+
+> Session checks are enforced by the Primary Wallet Actor. Downstream Actors MAY perform secondary checks, but MUST NOT assume session validity unless explicitly passed and verified.
+
+### 15A.9 Error Code Freeze
+
+Each V1 contract MUST define stable error codes for at least:
+
+- invalid signature
+- invalid seqno / nonce
+- expired request
+- unauthorized caller
+- unknown action
+- locked mode violation
+- frozen mode violation
+- session expired
+- session scope violation
+- insufficient budget / balance
+- policy denial
+
+### 15A.10 Token Interface Freeze
+
+The V1 token baseline MUST expose:
+
+**TokenMasterActor:**
+- `Mint`
+- `Burn`
+- `GetWalletAddress(owner)`
+- `GetMetadata`
+- `GetTotalSupply`
+
+**TokenBalanceActor:**
+- `Transfer`
+- `Credit`
+- `Burn`
+- `GetBalance`
+
+### 15A.11 Implementation Rule
+
+Claude Code or any implementation workflow MUST treat this section as the authoritative V1 interface layer. No V1 module should be implemented from descriptive prose alone if this freeze section provides a more specific rule.
+
 ---
 
 # Part III — V2: Protocol-Native Actor Execution
@@ -704,8 +852,8 @@ AccountContainer
  +-- shared_balance:CurrencyCollection
  +-- actors:HashmapE(actor_id -> ActorDescriptor)
  +-- account_flags:uint32
- +-- shared_state:Cell / metadata
  +-- registry_root:Cell                <- actor registry (role_id -> actor_id) for intra-container discovery
+ +-- container_status:ContainerStatus  <- active or frozen (NOT AccountState; see 17.3)
 ```
 
 The `registry_root` carries the same semantic role as the V1 Actor Registry but is now stored at the container level rather than inside an individual actor's state. This enables the protocol to resolve role-based addressing without entering any actor's execution context.
@@ -741,11 +889,16 @@ account_storage_actor$_ last_trans_lt:uint64                // actor-mode (tag=1
     actors:(HashmapE 256 ^ActorDescriptor)
     account_flags:uint32
     registry_root:^Cell
-    state:AccountState
+    container_status:ContainerStatus
   = AccountStorage;
+
+container_status_active$1 = ContainerStatus;
+container_status_frozen$01 state_hash:bits256 = ContainerStatus;
 ```
 
-Legacy accounts use the existing `account_storage$_` tag. Actor-mode accounts use `account_storage_actor$_`. The parser branches on tag, ensuring backward compatibility.
+Legacy accounts use the existing `account_storage$_` tag with `AccountState` (which carries `code`, `data`, `library` semantics). Actor-mode accounts use `account_storage_actor$_` with `ContainerStatus` instead of `AccountState`.
+
+**Why `ContainerStatus` replaces `AccountState` in actor-mode:** In legacy accounts, `AccountState` holds code/data/library for the single execution unit. In actor-mode, each Actor has its own `behavior_ref` (code) and `state_root` (data) inside the `ActorDescriptor`. Reusing `AccountState` in actor-mode would create a canonical state ambiguity: the container-level `AccountState.code` would conflict with each actor's `behavior_ref`, and `AccountState.data` would conflict with each actor's `state_root`. `ContainerStatus` carries only the container's lifecycle status (active or frozen), not execution-level code/data. This distinction is critical for parser correctness, validator replay, proof verification, and lite-client interpretation.
 
 ### 17.4 Protocol Change Summary
 
@@ -1254,6 +1407,119 @@ Both execution paths MUST produce semantically equivalent results for the same a
 10. **Migration address alias strategy:** When V1 actors (each with their own account address) are migrated into a single V2 container, how are the old addresses handled? Options: forwarding shell, protocol-level alias table, or deprecation with grace period. See section 31.4 for the recommended baseline.
 11. **Targeted message to unknown actor:** When a message targets a specific actor_id that does not exist, should the message bounce, be absorbed into shared_balance, or trigger auto-creation of a default actor? Current baseline: bounce (see section 19.3).
 
+## 30A. V2 Spec Freeze (Required Before Coding)
+
+This section defines the minimum freeze conditions required before any V2 protocol implementation begins.
+
+V2 coding MUST NOT begin until all items in this section are resolved and marked frozen.
+
+If any descriptive text in Part III conflicts with this section, this section takes precedence.
+
+### 30A.1 Frozen Baseline Decisions
+
+The following baseline decisions are fixed for V2 unless explicitly amended by a later version of this document:
+
+**A. Behavior Binding** — V2 baseline uses **actor-local `behavior_ref`**. This is the canonical V2 behavior model. Account-wide shared code as the only model and behavior registry as the mandatory default are NOT baseline. Behavior registry MAY be introduced later as an optimization layer.
+
+**B. Execution Model** — V2 baseline uses: actor-local Phase 1 tentative execution, account-container Phase 2 deterministic merge, no same-block actor-to-actor re-entry, no protocol-level synchronous actor calls.
+
+**C. Queue Key** — V2 baseline queue key includes: workchain, shard prefix, actor_id, msg_hash.
+
+**D. Storage Fee Rule** — V2 baseline charges storage fees once per account-container finalization, not once per committed actor result.
+
+**E. Container State Model** — V2 actor-mode uses `ContainerStatus` (active/frozen) instead of `AccountState`. Per-actor code/data is carried in `ActorDescriptor.behavior_ref` and `ActorDescriptor.state_root`, not in container-level fields.
+
+### 30A.2 ActorDescriptor Freeze
+
+The ActorDescriptor schema MUST be finalized before coding begins. At minimum, the following fields MUST be frozen:
+
+- `state_root`
+- `budget`
+- `actor_lt`
+- `behavior_ref`
+- `actor_flags`
+
+No implementation may treat ActorDescriptor as partially open-ended during execution-layer development.
+
+### 30A.3 ActorAddress Freeze
+
+The following MUST be frozen:
+
+1. binary format
+2. text format
+3. actor_id size
+4. actor_id derivation rule
+5. container-level vs actor-level addressing distinction
+
+### 30A.4 VM Context Compatibility Matrix Freeze
+
+Before V2 coding begins, a full compatibility matrix MUST be frozen for: getters, runtime fields, message metadata, account-global values, actor-local values, forbidden fields.
+
+For each item, the matrix MUST specify:
+
+1. legacy behavior
+2. V2 Phase 1 behavior
+3. V2 canonical behavior
+4. trap / sentinel / actor-local remap rule
+
+### 30A.5 Canonical Actor Transaction Freeze
+
+A canonical V2 actor transaction record MUST be frozen before coding begins. At minimum, the record MUST define:
+
+- `account_addr`
+- `actor_id`
+- `actor_lt`
+- `final_lt`
+- `tx_hash`
+- `execution_status`
+- `gas_used`
+- `state_before` / `state_after` reference model
+- `budget_before` / `budget_after` reference model
+- `balance_request_summary`
+- `out_msg_refs`
+
+### 30A.6 Merge Ordering Freeze
+
+The V2 merge engine MUST use a frozen deterministic ordering rule. The following MUST be frozen:
+
+1. primary key
+2. secondary key
+3. tertiary tie-breaker
+4. rejection propagation rules
+5. prefix commit rules
+
+### 30A.7 Same-Block Visibility Freeze
+
+The following baseline rule is frozen:
+
+> Messages emitted by an Actor during block N are not executable by another Actor until block N+1.
+
+This rule applies to both collator behavior and validator replay.
+
+### 30A.8 Implementation Gating Rule
+
+The following modules MUST NOT begin implementation before this section is fully frozen:
+
+- V2 execution engine
+- V2 collator flow
+- V2 validator replay
+- V2 queue changes
+- V2 proof changes
+- V2 client actor APIs
+
+### 30A.9 Required Freeze Outputs
+
+Before coding starts, the following artifacts MUST exist:
+
+- frozen TL-B diff
+- frozen ActorAddress spec
+- frozen VM compatibility matrix
+- frozen canonical actor transaction schema
+- frozen merge ordering rule
+- frozen queue key layout
+- frozen storage fee rule
+- frozen same-block visibility rule
+
 ---
 
 # Part IV — Migration: V1 to V2
@@ -1302,6 +1568,20 @@ When V1 actors migrate from separate accounts into a single V2 container, the ol
 
 The gas overhead of forwarding is bounded (one additional message hop per forwarded message) and decreases over time as clients update to the new addresses.
 
+### 31.4.1 On-Chain Message Compatibility Rules (Normative)
+
+When a V1 actor set migrates into a V2 container, the following rules govern message handling for old addresses:
+
+1. **Forwarding shell behavior:** The forwarding shell deployed at the old V1 address MUST: (a) accept all inbound internal and external messages, (b) re-emit each message as an internal message to the corresponding `ActorAddress` inside the V2 container, preserving the original message body and attached value (minus forwarding gas), (c) include the original sender address in a wrapper cell so the target actor can authenticate the true source.
+
+2. **Token contract references:** V1 `TokenBalanceActor` contracts that reference the old Wallet or Treasury address (e.g., for transfer authorization) MUST continue to work through the forwarding shell. The forwarding shell re-routes the authorization message; the actor inside the container sees a message from the forwarding shell address and MUST accept it as equivalent to a message from the original V1 address. This is achieved by having the container-level registry map old V1 addresses to their corresponding actor_ids, enabling the receiving actor to verify provenance.
+
+3. **Third-party app references:** dApps and other contracts that hold the old V1 address as a stored reference will continue to function through forwarding shells without code changes. No on-chain state migration of third-party contracts is required.
+
+4. **Forwarding shell lifecycle:** Forwarding shells SHOULD remain active until monitoring shows that <1% of inbound messages use the old address over a sustained period. The shell may then be frozen or replaced with a permanent redirect bounce message indicating the new address.
+
+5. **Reverse path:** When a migrated actor inside a V2 container sends a message to an external address, the message originates from the container's account address (not the old V1 address). Recipients MUST be notified of the address change through off-chain channels (SDK updates, explorer annotations, wallet metadata).
+
 ### 31.5 Treasury Mapping Rule
 
 When a V1 Treasury Actor (independent Account B) migrates into a V2 container, the following state mapping applies:
@@ -1320,6 +1600,105 @@ For each V1 actor migrating into a V2 container:
 3. **Role**: The V1 role ID (from the Actor Registry) becomes the key in the container-level `registry_root` mapping to the migrated `actor_id`.
 
 Migration tooling MUST verify that the post-migration actor state is functionally equivalent to the pre-migration account state by executing a set of reference transactions against both representations and comparing outputs.
+
+## 31A. Migration Freeze (Normative Before V2 Rollout)
+
+This section is normative for any V1 -> V2 migration planning.
+
+No V2 rollout may begin until the migration rules in this section are frozen.
+
+If any descriptive text in Part IV conflicts with this section, this section takes precedence.
+
+### 31A.1 Migration Baseline
+
+The baseline migration assumption is:
+
+> V1 actor-oriented application architecture already exists. V2 protocol-native actor containers must preserve the semantics of that architecture as closely as possible.
+
+### 31A.2 Address Compatibility Freeze
+
+A V2 rollout MUST freeze one baseline address strategy. One of the following MUST be selected explicitly:
+
+- forwarding shell strategy
+- alias mapping strategy
+- direct container-address replacement strategy
+
+The chosen strategy MUST define:
+
+1. what existing V1 user-facing addresses continue to mean
+2. how old wallet addresses resolve after migration
+3. whether users must adopt new visible addresses
+4. how explorers and SDKs map old identities to new actor containers
+
+### 31A.3 Treasury Mapping Freeze
+
+The migration of V1 Treasury Actor funds MUST be frozen explicitly. The spec MUST define whether V1 Treasury balances become:
+
+- V2 `shared_balance`
+- Treasury Actor budget inside the container
+- a split of both
+
+No migration tool may infer this ad hoc.
+
+### 31A.4 Role Migration Freeze
+
+The following mappings MUST be frozen:
+
+- V1 Wallet Actor -> V2 Wallet Actor
+- V1 Treasury Actor -> V2 Treasury Actor
+- V1 Recovery Actor -> V2 Recovery Actor
+- V1 Policy Actor -> V2 Policy Actor
+- V1 Token / App Actors -> V2 actor placement rules
+
+### 31A.5 Code and State Migration Freeze
+
+The migration spec MUST define:
+
+1. how V1 contract code maps into V2 `behavior_ref`
+2. how V1 persistent state maps into actor-local state
+3. how role-specific metadata is preserved
+4. how registry information is reconstructed inside the container
+
+### 31A.6 Compatibility Window Freeze
+
+The migration plan MUST define:
+
+- whether legacy and actor-container accounts coexist
+- for how long they coexist
+- whether migration is opt-in or mandatory
+- whether new accounts only may use V2 initially
+
+### 31A.7 Migration Safety Requirements
+
+Any migration tooling MUST preserve at minimum:
+
+- ownership semantics
+- recovery semantics
+- policy semantics
+- treasury semantics
+- registry semantics
+- token actor linkage where applicable
+
+### 31A.8 Rollout Gating Rule
+
+No V2 public rollout may begin until the following are frozen and tested:
+
+- address compatibility strategy
+- treasury mapping rule
+- role migration rule
+- code/state migration rule
+- compatibility window rule
+
+### 31A.9 Required Migration Test Scenarios
+
+At minimum, migration tests MUST cover:
+
+1. V1 wallet actor to V2 wallet actor migration
+2. V1 treasury balance migration
+3. V1 recovery flow preserved after migration
+4. V1 registry semantics preserved after migration
+5. old user-facing address resolution after migration
+6. mixed legacy + migrated accounts in the same network
 
 ---
 
