@@ -2331,6 +2331,11 @@ void ValidatorEngine::start_validator() {
       tos::validator::ValidatorManagerFactory::create(validator_options_, db_root_, keyring_.get(), adnl_.get(),
                                                       rldp_.get(), rldp2_.get(), quic_.get(), overlay_manager_.get());
 
+  if (json_rpc_addr_) {
+    json_rpc_server_ = tos::JsonRpcServer::create(validator_manager_.get());
+    td::actor::send_closure(json_rpc_server_, &tos::JsonRpcServer::listen, json_rpc_addr_.value());
+  }
+
   for (auto &v : config_.validators) {
     td::actor::send_closure(validator_manager_, &tos::validator::ValidatorManagerInterface::add_permanent_key, v.first,
                             [](td::Result<>) {});
@@ -5388,6 +5393,11 @@ void ValidatorEngine::export_metrics(td::IPAddress address) {
   td::actor::send_closure(exporter_, &tos::PrometheusExporter::listen, address);
 }
 
+void ValidatorEngine::serve_json_rpc(td::IPAddress address) {
+  json_rpc_addr_ = address;
+  // Server will be created after validator_manager_ is initialized (in started())
+}
+
 void ValidatorEngine::get_current_validator_perm_key(td::Promise<std::pair<tos::PublicKey, size_t>> promise) {
   if (state_.is_null()) {
     promise.set_error(td::Status::Error(tos::ErrorCode::notready, "not started"));
@@ -5893,6 +5903,13 @@ int main(int argc, char *argv[]) {
     td::IPAddress addr;
     TRY_STATUS(addr.init_host_port(td::CSlice{buff.as_slice()}));
     acts.push_back([&x, addr] { td::actor::send_closure(x, &ValidatorEngine::export_metrics, addr); });
+    return td::Status::OK();
+  });
+  p.add_checked_option('\0', "json-rpc-address", "address to bind for JSON-RPC HTTP server", [&](td::Slice arg) {
+    td::BufferSlice buff{arg};
+    td::IPAddress addr;
+    TRY_STATUS(addr.init_host_port(td::CSlice{buff.as_slice()}));
+    acts.push_back([&x, addr] { td::actor::send_closure(x, &ValidatorEngine::serve_json_rpc, addr); });
     return td::Status::OK();
   });
   p.add_checked_option(

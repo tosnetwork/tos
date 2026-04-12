@@ -1,6 +1,8 @@
 set(VALIDATOR_ENGINE_SOURCE
   validator-engine.hpp
   validator-engine.cpp
+  json-rpc-server.h
+  json-rpc-server.cpp
 )
 
 add_executable(validator-engine ${VALIDATOR_ENGINE_SOURCE})

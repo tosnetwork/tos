@@ -36,6 +36,7 @@
 #include "auto/tl/tos_api_json.h"
 #include "dht/dht.h"
 #include "metrics/prometheus-exporter.h"
+#include "json-rpc-server.h"
 #include "quic/quic-sender.h"
 #include "rldp/rldp.h"
 #include "rldp2/rldp.h"
@@ -181,6 +182,8 @@ class ValidatorEngine : public td::actor::Actor {
   std::map<td::uint16, td::actor::ActorOwn<tos::validator::fullnode::FullNodeMaster>> full_node_masters_;
   td::actor::ActorOwn<tos::adnl::AdnlExtServer> control_ext_server_;
   td::actor::ActorOwn<tos::PrometheusExporter> exporter_;
+  td::actor::ActorOwn<tos::JsonRpcServer> json_rpc_server_;
+  td::optional<td::IPAddress> json_rpc_addr_;
 
   std::string local_config_ = "";
   std::string global_config_ = "tos-global.config";
@@ -489,6 +492,7 @@ class ValidatorEngine : public td::actor::Actor {
   void run();
 
   void export_metrics(td::IPAddress address);
+  void serve_json_rpc(td::IPAddress address);
 
   void get_current_validator_perm_key(td::Promise<std::pair<tos::PublicKey, size_t>> promise);
 
