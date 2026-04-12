@@ -1126,9 +1126,11 @@ V2 implementations MUST keep the following execution surfaces logically distinct
 The following rules are mandatory:
 
 - Pending runtime state MUST NOT be treated as canonical state.
+- Pending runtime state is **node-local and non-canonical**. It may be persisted for liveness and restart recovery, but it is not a consensus object and must be safely discardable or reconstructible without affecting canonical replay.
 - Replay runtime state MUST be initialized from canonical parent state.
 - Replay validation MUST NOT mutate canonical state unless validation succeeds.
 - Locally built preview results and imported replay results MUST be validated against canonical parent state, not against local pending-only heuristics.
+- The exact internal organization of pending queues and wave frontiers is implementation-local, provided that canonical adoption remains deterministic and validator replay of committed results remains equivalent.
 
 ### 20.1.2 Before / After Execution Flow Comparison
 
@@ -1264,6 +1266,14 @@ The builder/importer MUST obey the following discipline:
 - newly emitted internal actor messages become eligible only in a **later wave**
 - a later wave may occur in the same block if block limits and scheduling rules allow it
 - if the builder stops opening new waves because of block limits or backlog pressure, the emitted work remains pending for a later block
+
+A baseline wave lifecycle is frozen as follows:
+
+- a wave begins with a **frozen ready set** of mailbox items selected from the pending frontier
+- a wave ends only after every item selected into that ready set has either produced a tentative result, been deterministically rejected, or been deferred
+- messages emitted during the wave are not inserted into the current ready set; they become eligible only when constructing the next ready set
+
+Later-wave execution is therefore **eligible, not guaranteed**. Whether a newly eligible mailbox item is executed in a later wave of the same block or deferred to a later block depends on block limits, queue pressure, and scheduling policy.
 
 This means V2 baseline uses **next-wave visibility**, not mandatory next-block visibility.
 
@@ -2257,7 +2267,7 @@ At minimum, transition tests MUST cover:
 
 **Complexity:** MEDIUM | **Estimate:** 1-2 weeks
 
-### Module C: Transaction Execution (Two-Phase)
+### Module C: Transaction Execution (Admission + Preview Execution + Canonical Merge and Adopt)
 
 **Scope:** Split transaction execution into Preview Execution + Canonical Merge and Adopt.
 
@@ -2434,9 +2444,10 @@ ACT_PROPOSE_OWNER=0x0C  ACT_COMMIT_OWNER=0x0D
 13. Tertiary ordering tiebreaker: two speculative results with the same (actor_id, actor_lt) are ordered deterministically by inbound_msg_hash
 14. Admission-only ingress: external actor message admission does not execute actor code or mutate canonical state
 15. Next-wave ordering: sender actor executes in wave `n`, emitted message executes no earlier than wave `n+1`
-16. Replay runtime isolation: imported replay failure does not mutate canonical runtime or pending runtime
-17. One-mailbox-item-per-actor-per-wave: no actor consumes two mailbox items in one wave
-18. Defer-under-pressure: when wave/block budget is exhausted, newly emitted work remains pending for a later wave or later block without violating ordering
+16. Same-wave recursive self-send forbidden: if an actor emits a message to itself in wave `n`, that self-message executes no earlier than wave `n+1`
+17. Replay runtime isolation: imported replay failure does not mutate canonical runtime or pending runtime
+18. One-mailbox-item-per-actor-per-wave: no actor consumes two mailbox items in one wave
+19. Defer-under-pressure: when wave/block budget is exhausted, newly emitted work remains pending for a later wave or later block without violating ordering
 
 ## Appendix D: V2 Spec Freeze Checklist
 
