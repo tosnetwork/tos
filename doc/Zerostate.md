@@ -282,7 +282,7 @@ The following table maps Fift calls in the zero state script to their recommende
 | `config.mc_fwd_prices!` | 24 | lump=10M, bit=655M, cell=65G |
 | `config.catchain_params!` | 28 | mc=250, shard=250, val=1000, num=5 |
 | `config.consensus_params!` | 29 | cand=3, timeout=16s, blocks=2MB (Catchain fallback) |
-| `config.new_consensus_params_all!` | 30 | Simplex: target_rate=1000ms, slots=4, timeout=1000ms |
+| `config.new_consensus_params_all!` | 30 | Simplex: target_rate=400ms, slots=4, timeout=1000ms |
 | `config.block_create_fees!` | 14 | mc=1.7 TOS, base=1.0 TOS |
 
 **Design notes:**

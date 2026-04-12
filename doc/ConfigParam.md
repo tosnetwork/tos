@@ -308,7 +308,7 @@ Both `mc` and `shard` use the same `NewConsensusConfig`:
 | Field | Type | Value | Description |
 |-------|------|-------|-------------|
 | `use_quic` | Bool | **true** | Use QUIC transport |
-| `target_rate_ms` | uint32 | **1,000** | Target block interval (ms). **Primary block time setting.** |
+| `target_rate_ms` | uint32 | **400** | Target block interval (ms). **Primary block time setting.** |
 | `slots_per_leader_window` | uint32 | **4** | Blocks per leader before rotation |
 | `first_block_timeout_ms` | uint32 | **1,000** | Timeout for leader's first block |
 | `max_leader_window_desync` | uint32 | **2** | Max allowed desync between validators |
@@ -317,7 +317,7 @@ Noncritical parameters (tunable via governance without changing the config struc
 
 | Index | Field | Value | Description |
 |-------|-------|-------|-------------|
-| 0 | `target_rate` | **1,000ms** | Target block interval |
+| 0 | `target_rate` | **400ms** | Target block interval |
 | 1 | `first_block_timeout` | **1,000ms** | First block timeout |
 | 2 | `first_block_timeout_multiplier` | **1.2** | Exponential backoff multiplier |
 | 3 | `first_block_timeout_cap` | **100,000ms** | Maximum backoff |
@@ -333,7 +333,7 @@ Noncritical parameters (tunable via governance without changing the config struc
 | 13 | `min_block_interval` | **0ms** | Hard minimum between blocks (0 = no limit) |
 | 14 | `no_empty_blocks_on_error_timeout` | **15,000ms** | Suppress empty blocks after errors |
 
-**Block time:** With `target_rate=1000ms` and 40 validators in the same region, expected block time is ~1 second. With global distribution, ~1-1.5 seconds.
+**Block time:** With `target_rate=400ms` and 25+ validators in the same region (East Asia), expected block time is ~400ms. With 40 validators globally distributed, increase to 1000ms via governance. Actual computation per block is only ~3-5ms; the rest is the target_rate wait timer.
 
 ## ConfigParam 31 — Fundamental Addresses
 
