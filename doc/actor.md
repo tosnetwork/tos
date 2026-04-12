@@ -65,12 +65,17 @@ Key code locations:
 ```
 Account (unique address)
  +-- code: Cell             <- shared by all Actors
- +-- actors: HashmapE       <- actor_id -> Actor state (Cell dict)
- |    +-- actor_0: HashmapE <- independent KV state
- |    +-- actor_1: HashmapE <- independent KV state
+ +-- actors: HashmapE       <- actor_id -> Actor descriptor
+ |    +-- actor_0:
+ |    |    +-- state: HashmapE   <- independent KV state
+ |    |    +-- budget: Coins     <- actor-local working balance
+ |    |    +-- actor_lt: uint64  <- independent logical time
+ |    +-- actor_1:
+ |    |    +-- state: HashmapE
+ |    |    +-- budget: Coins
+ |    |    +-- actor_lt: uint64
  |    +-- ...
- +-- actor_lt: HashmapE     <- actor_id -> independent logical time
- +-- balance: Coins         <- SHARED — requires reservation model (see 5.4)
+ +-- shared_balance: Coins  <- account-level pool: storage fees, inbound value staging, inter-actor transfers
 ```
 
 Each actor is identified by a two-level address:
@@ -82,13 +87,46 @@ Account storage, transaction records, proofs, and OutMsgQueue keys.
 ### 5.2 New TVM Instructions
 
 ```
-STATEGET   key_hash:uint256 → value:slice       // wraps Dictionary::lookup
-STATESET   key_hash:uint256 value:slice → ()     // wraps Dictionary::set
-STATEDEL   key_hash:uint256 → bool               // wraps Dictionary::delete_key
-ACTORSEND  actor_id:uint256 body:cell → ()        // sends message to another Actor
+// State operations
+STATEGET     key_hash:uint256 → value:slice       // wraps Dictionary::lookup
+STATESET     key_hash:uint256 value:slice → ()     // wraps Dictionary::set
+STATEDEL     key_hash:uint256 → bool               // wraps Dictionary::delete_key
+
+// Messaging
+ACTORSEND    actor_id:uint256 body:cell → ()        // intra-account: sends message to another Actor within the SAME account
+
+// Balance operations
+BUDGETGET    → amount:coins                         // returns the executing Actor's current budget
+ACTORCLAIM   amount:coins → request_id:uint64       // record an intent to pull funds from shared_balance into this Actor's budget
+ACTORRELEASE amount:coins → request_id:uint64       // record an intent to return funds from this Actor's budget to shared_balance
 ```
 
-These instructions internally perform lookup/set on the HashmapE in C4.
+**ACTORSEND scope limitation:** `ACTORSEND` targets only Actors under the **same
+account** as the sender. The `actor_id` operand is sufficient because `workchain`
+and `account_id` are implicitly inherited from the executing account context. This
+is intentional — cross-account Actor messaging requires the full `ActorAddress`
+(`workchain:account_id:actor_id`) and is deferred to a future protocol extension
+(see §6.3). A future `ACTORSENDX` instruction may accept a full ActorAddress for
+cross-account / cross-shard delivery.
+
+**ACTORCLAIM / ACTORRELEASE:** These two instructions do **not** synchronously move
+funds during Phase 1. Instead, they append a **balance-transfer intent** to the
+current Actor transaction:
+
+- `ACTORCLAIM(amount)` records "if committed, move `amount` from `shared_balance`
+  to this Actor's `budget`"
+- `ACTORRELEASE(amount)` records "if committed, move `amount` from this Actor's
+  `budget` to `shared_balance`"
+
+The returned `request_id` is only an opaque identifier for tracing / receipts
+within the speculative execution result. It is **not** a success indicator.
+Success or failure is determined only in Phase 2 during deterministic merge.
+
+Therefore contracts in actor-mode must treat claim/release as **deferred effects**,
+not as synchronous conditionals. A contract must not branch on whether the transfer
+"already happened" inside the same Phase-1 execution.
+
+State and messaging instructions internally perform lookup/set on the HashmapE in C4.
 
 ### 5.3 What This Changes at Protocol Level
 
@@ -96,7 +134,7 @@ These instructions internally perform lookup/set on the HashmapE in C4.
 
 | Component | Change Required |
 |-----------|----------------|
-| Account state layout | Add `actors` and `actor_lt` HashmapE fields |
+| Account state layout | Add `actors` HashmapE (state + budget + actor_lt per actor), replace `balance` with `shared_balance` |
 | Account serialization (TL-B) | New schema for actor sub-structure |
 | Block format | ActorAddress in transaction records |
 | OutMsgQueue key | Extended with actor_id (see 5.6) |
@@ -110,9 +148,9 @@ These instructions internally perform lookup/set on the HashmapE in C4.
 The Cell/BOC encoding format itself is unchanged (Cells still work the same way),
 but the semantic structure stored in those Cells changes.
 
-### 5.4 Shared Balance Problem (Open Design Issue)
+### 5.4 Hybrid Balance Model
 
-**This is the hardest unsolved problem in this proposal.**
+#### 5.4.0 Design Rationale
 
 Current `impl_create_ordinary_transaction` (collator.cpp:3395-3743) modifies
 during a single transaction execution:
@@ -122,68 +160,199 @@ during a single transaction execution:
 - `account.storage_stat` (storage fee accounting)
 - Block-level accumulators: `last_proc_int_msg_`, block limits, `register_new_msgs()`, `update_max_lt()`, statistics
 
-If two Actors under the same Account execute in parallel, they will **concurrently
-modify the shared balance**, producing a non-deterministic result. This breaks consensus.
+If two Actors under the same Account shared a single balance and executed in parallel,
+they would **concurrently modify the shared balance**, producing a non-deterministic
+result. A pure reservation model solves this but adds significant complexity (see
+earlier drafts). A fully per-actor balance eliminates contention but fragments
+capital and complicates storage fee attribution.
 
-**Proposed solution (needs detailed design):**
+**Solution: hybrid balance model** — each Actor has its own `budget` for gas and
+value transfers, while the Account retains a `shared_balance` for storage fees,
+inbound value staging, and inter-actor fund movement.
 
-Two-phase execution model:
+```
+Account
+ +-- shared_balance: 2 TON          ← storage fees, inbound value, inter-actor pool
+ +-- actor_0: { state, budget: 3 TON, actor_lt }
+ +-- actor_1: { state, budget: 5 TON, actor_lt }
+```
 
-1. **Phase 1 — Speculative parallel execution:** Each Actor transaction executes
-   independently with a **reserved balance allocation**. The reservation is computed
-   before execution (e.g., message value + estimated gas). Actors cannot spend
-   more than their reservation.
+**Why this works for parallel execution:**
 
-2. **Phase 2 — Deterministic merge/commit:** After all parallel executions complete,
-   a single-threaded merge step:
-   - Collects results in a deterministic order (by actor_id)
-   - Applies balance changes sequentially
-   - Assigns logical timestamps
-   - Updates block-level accumulators
-   - Rejects transactions that exceeded their reservation
+- Gas is deducted from the Actor's own `budget` → no cross-actor contention
+- Value attached to outbound messages is deducted from the Actor's `budget` → no contention
+- `shared_balance` is only mutated by `ACTORCLAIM` / `ACTORRELEASE` and storage
+  fee deduction, all of which are deferred to the sequential Phase 2
+- TVM compute phase (the expensive part) runs in Phase 1 with **zero shared writes**
 
-This two-phase model preserves determinism while allowing parallel execution
-of the compute-heavy phase.
-
-**Fields that are actor-local (can be parallel):**
+**Fields that are actor-local (fully parallel in Phase 1):**
 - Actor state (HashmapE)
-- Actor logical time
+- Actor budget (gas deduction, value transfer)
+- Actor logical time (`actor_lt`)
 - TVM compute phase
 
-**Fields that are account-global (must be sequential in merge phase):**
-- Balance
-- Storage fees
-- last_trans_lt / last_trans_hash
-- Outgoing message ordering
+**Fields that are account-global (sequential in Phase 2):**
+- `shared_balance` (ACTORCLAIM / ACTORRELEASE commits, storage fees)
+- `last_trans_lt` / `last_trans_hash`
+- Outgoing message ordering and materialization
 - Block-level statistics
 
-### 5.4.1 Speculative Result Boundary (Normative Draft)
+#### 5.4.0.1 Inbound Value Routing
 
-To make Phase 1 reviewable, the speculative execution result must be restricted.
+When an external or internal message carrying value arrives at the Account:
 
-**Phase 1 may produce only actor-local tentative outputs:**
-- Tentative post-execution Actor state root
-- Tentative compute-phase status: success, revert, exception code
-- Gas used, gas refund candidate, storage delta estimate
-- Tentative outbound message list generated by the Actor, in Actor-local order
-- Read/write set summary for the Actor-local state
+1. If the message targets a specific `actor_id`, the value is credited directly
+   to that Actor's `budget`.
+2. If the message targets the Account without specifying an `actor_id` (legacy
+   message format), the value is credited to `shared_balance`.
+3. An Actor can later pull funds from `shared_balance` via `ACTORCLAIM`.
 
-**Phase 1 must not finalize any account-global outputs:**
-- No final balance deduction or refund
-- No final `last_trans_lt` / `last_trans_end_lt` / `last_trans_hash`
-- No direct mutation of account storage statistics
-- No insertion into block-level InMsg / OutMsg descriptors
-- No final emission into the shard OutMsgQueue
+This ensures backward compatibility: existing wallets sending to an Account
+address still work; the contract code decides how to distribute funds to Actors.
 
-**Phase 2 is the only committing phase.** It must:
-- Re-check the reservation constraint against the finalized account balance state
-- Recompute final fees from the already-produced gas/storage usage numbers
-- Assign final logical time and transaction hash in deterministic order
+#### 5.4.0.2 Storage Fee Attribution
+
+Storage fees are charged at the **account level**, not per-actor:
+
+- The total Cell tree size (including all Actor states) determines the storage fee.
+- Storage fees are deducted from `shared_balance` during Phase 2.
+- If `shared_balance` is insufficient, the Account enters the standard
+  freeze/deletion path — all Actors are affected.
+- Actors are expected to periodically `ACTORRELEASE` surplus budget back to
+  `shared_balance` to keep the account solvent. Alternatively, the protocol may
+  enforce a minimum `shared_balance` threshold.
+
+### 5.4.1 Phase Boundary: What Happens Where (Normative Draft)
+
+**Phase 1 (parallel, per-actor) produces tentative snapshots only:**
+- Post-execution Actor state root (tentative snapshot, not yet committed)
+- Compute-phase status: success, revert, exception code
+- Gas deducted from Actor `budget` (tentative)
+- Value transfers deducted from Actor `budget` (tentative)
+- Outbound message list in Actor-local order (tentative — not yet materialized)
+- Tentative `ACTORCLAIM` / `ACTORRELEASE` requests (recorded, not yet applied)
+
+**Phase 1 must NOT touch:**
+- `shared_balance` (mutated only in Phase 2)
+- `last_trans_lt` / `last_trans_end_lt` / `last_trans_hash` (account-global)
+- Account storage statistics
+- Block-level InMsg / OutMsg descriptors
+- Shard OutMsgQueue
+
+**Phase 2 (sequential, single-threaded) finalizes:**
+- Apply all `ACTORCLAIM` / `ACTORRELEASE` requests against `shared_balance`
+  in deterministic order; reject any that would overdraw
+- Deduct storage fees from `shared_balance`
+- Assign final logical time and transaction hash per §5.4.3
+- Commit the tentative Actor state / Actor budget snapshot only for transactions
+  that survive Phase 2 validation
 - Materialize outbound messages into block descriptors and queues
-- Either commit the whole transaction result or discard it as not included in this block
+- Update block-level accumulators
 
-This means speculative execution is closer to "deterministic pre-transaction evaluation"
-than to a fully committed transaction. A Phase-1 result is not a transaction yet.
+Because gas and value transfers are computed against the Actor's own tentative
+`budget` snapshot in Phase 1, Phase 2 is lighter than in a pure reservation model,
+but it is still the only committing phase. No Phase-1 artifact is part of canonical
+state until Phase 2 accepts it.
+
+### 5.4.1.1 Rollback Rule (Normative Draft)
+
+If Phase 2 rejects a speculative result for any reason, all of its Phase-1 outputs
+must be discarded atomically:
+
+- Tentative Actor state changes are dropped
+- Tentative Actor budget changes are dropped
+- Tentative outbound messages are dropped
+- Tentative claim/release intents are dropped
+- Tentative `actor_lt` advancement for that transaction is dropped unless the
+  protocol explicitly chooses gap-permitting actor lt (this RFC recommends no gaps;
+  see §5.4.3.1)
+
+This is an all-or-nothing rule. There is no partial commit of a speculative result.
+
+### 5.4.2 Speculative VM Context Isolation (Normative Draft)
+
+Phase 1 executes the TVM compute phase speculatively. The VM must be presented with
+a **restricted execution context** so that results remain valid after Phase 2 assigns
+final account-global values. The following rules define what the VM can and cannot
+observe during Phase 1:
+
+**Available to the VM in Phase 1 (stable, will not change after merge):**
+- Actor-local state (HashmapE for the executing actor_id)
+- Actor `budget` — `BUDGETGET` and `GETBALANCE` both return the Actor's own budget
+- Inbound message body, value, and source address
+- Account address (`workchain:account_id`)
+- Actor id (`actor_id`)
+- Current block reference (seqno, shard, workchain)
+- Unix timestamp of the block candidate
+- Actor-local logical time counter (`actor_lt`, see §5.4.3)
+
+**NOT available to the VM in Phase 1 (returns zero / placeholder):**
+- `LTIME` / logical time — returns the actor-local tentative lt, NOT the final
+  account-level `last_trans_lt`. The final lt is assigned only in Phase 2.
+- Transaction hash — undefined during Phase 1. Any instruction that would return
+  the current transaction hash (e.g., for replay protection) must return a
+  **sentinel value** (0) or trap. The final hash depends on the merge order.
+- Outbound message envelope fields (lt, created_lt) — these are placeholders in
+  Phase 1 and are overwritten by Phase 2 when messages are materialized.
+- `shared_balance` — not directly readable in Phase 1. The Actor sees only its
+  own `budget`. `ACTORCLAIM` / `ACTORRELEASE` are recorded as tentative requests
+  and resolved in Phase 2.
+- `last_trans_lt` / `last_trans_end_lt` / `last_trans_hash` of the account — these
+  are account-global fields updated only in Phase 2.
+
+**Consequence:** Any contract that branches on transaction hash, final lt, or
+`shared_balance` will observe different values in Phase 1 vs. a hypothetical serial
+execution. This is an intentional trade-off: contracts must be written to depend
+only on actor-local state, actor budget, and message content, not on account-global
+transaction metadata.
+
+### 5.4.3 Actor Logical Time Model (Normative Draft)
+
+The `actor_lt` stored in each Actor descriptor is a **per-actor monotonic
+counter** maintained independently of the account-level `last_trans_lt`.
+
+**Phase 1 behavior:**
+- Before executing an Actor transaction, the collator reads the current `actor_lt`
+  for the target `actor_id` and increments it to produce a **tentative actor lt**.
+- This tentative value is stable within Phase 1 — it does not change during merge.
+- If multiple messages target the same Actor in one block, they are serialized
+  per-actor and each receives a distinct, ascending `actor_lt`.
+- The `actor_lt` is used as the **secondary sort key** when ordering Phase-1 results
+  for the deterministic merge: `ORDER BY (actor_id ASC, actor_lt ASC)`.
+
+**Phase 2 behavior:**
+- The merge phase iterates results in `(actor_id, actor_lt)` order.
+- For each committed result, Phase 2 assigns a **final account-level logical time**
+  (`last_trans_lt` / `last_trans_end_lt`) from the account's global lt counter.
+- The final account-level lt is strictly monotonically increasing across all
+  committed transactions in the block, regardless of which Actor produced them.
+
+**Relationship between the two timelines:**
+
+```
+actor_lt (per-actor, Phase 1)     account lt (global, Phase 2)
+─────────────────────────────     ──────────────────────────────
+actor_0: 100, 101                 → final lt: 5000, 5001
+actor_1: 200                      → final lt: 5002
+actor_0: 102                      → final lt: 5003
+```
+
+- `actor_lt` provides a stable, per-actor ordering that is known before merge.
+- Account-level lt provides the global ordering required by the block format and
+  external observers (lite-clients, explorers).
+- Both are monotonic within their scope; neither is derivable from the other.
+
+### 5.4.3.1 Rejected Transaction and actor_lt Rule (Normative Draft)
+
+This RFC recommends **prefix-only actor_lt commitment with no gaps**:
+
+- A speculative transaction receives a tentative `actor_lt` in Phase 1
+- That `actor_lt` becomes canonical only if the transaction is committed in Phase 2
+- If the transaction is rejected in Phase 2, the tentative `actor_lt` is discarded
+- Therefore the persisted `actor_lt` in account state advances only across committed
+  transactions
+
+This avoids confusing gaps in per-actor timelines and keeps replay/audit semantics simple.
 
 ### 5.5 Collator Changes
 
@@ -197,24 +366,60 @@ Current flow (serial):
     update_block_state(result)    // immediately modifies global state
 
 Proposed flow (parallel + merge):
-  // Phase 1: parallel speculative execution
-  for each message (can be parallel across actors):
-    reservation = compute_balance_reservation(msg)
-    result[actor_id] = impl_create_ordinary_transaction(msg, account_readonly, actor_state, reservation)
+  // Phase 1: parallel execution (per-actor, no shared writes)
+  for each message (can be parallel across different actors):
+    actor = account.actors[msg.actor_id]
+    result[actor_id] = execute_actor_transaction(msg, actor)
+    // gas and value applied only to a tentative actor snapshot — no shared contention
 
-  // Phase 2: deterministic merge (single-threaded)
-  sort results by (actor_id, actor_lt)
+  // Phase 2: deterministic merge (single-threaded, lightweight)
+  sort results by (actor_id ASC, actor_lt ASC)   // actor_lt is the stable Phase-1 local counter
   for each result in deterministic order:
-    if result.balance_used <= result.reservation:
-      apply_to_account(result)
-      update_block_state(result)
-    else:
-      reject_transaction(result)
+    // 1. Apply ACTORCLAIM/ACTORRELEASE against shared_balance
+    for each claim_request in result.balance_requests:
+      if !apply_balance_request(claim_request, account.shared_balance):
+        reject_transaction(result); continue
+    // 2. Deduct storage fees from shared_balance
+    apply_storage_fees(account)
+    // 3. Commit tentative actor snapshot, assign final lt, materialize outbound messages
+    commit_actor_snapshot(result, account)
+    assign_final_lt(result, account)
+    materialize_outbound_messages(result, block)
+    update_block_state(result)
 ```
 
-This is **not** a "40 lines of code change." It requires restructuring the core
-execution loop in collator.cpp (6707 lines) and the transaction creation in
-transaction.cpp (4325 lines).
+Phase 2 is significantly simpler than in a pure reservation model: it does **not**
+recompute gas/value execution, but it still decides whether the speculative result
+is committed at all.
+
+### 5.5.0 Prefix Commit Rule for a Single Actor (Normative Draft)
+
+For any fixed `actor_id`, Phase 2 may commit only a **contiguous prefix** of that
+Actor's speculative results ordered by `actor_lt`.
+
+Example:
+
+```text
+actor_7 speculative results: [lt=11, lt=12, lt=13]
+if lt=12 is rejected in Phase 2:
+  - lt=11 may commit
+  - lt=12 is rejected
+  - lt=13 MUST also be rejected without commit
+```
+
+Rationale:
+- Later speculative results for the same Actor depend on the tentative post-state
+  produced by earlier ones
+- Rejecting a middle result invalidates all later same-Actor snapshots in the block
+
+Implementation consequence:
+- The merge phase tracks a per-actor "prefix still valid" bit
+- Once a transaction for `actor_id` is rejected, all later results for the same
+  `actor_id` in the current block are discarded automatically
+
+This still requires restructuring the core execution loop in collator.cpp (6707 lines)
+and the transaction creation in transaction.cpp (4325 lines), but the merge logic
+is less complex.
 
 ### 5.5.1 Same-Block Message Visibility Rule (Normative Draft)
 
@@ -275,12 +480,12 @@ Two execution paths, sharing the same state interface (vm::Dictionary / HashmapE
 - **Recommended: Address derivation** — Actor address deterministically derived from
   `(account_addr, discriminator)`. Predictable, no on-chain registry needed.
 
-### 6.2 Inter-Actor Balance Model
+### 6.2 Hybrid Balance Model
 
-- **Account-level shared balance with reservation model** (see 5.4)
-- Each Actor does not have its own balance
-- Balance reservations computed before parallel execution
-- Final balance changes applied in deterministic merge phase
+- **Per-actor `budget`** for gas and value transfers — enables contention-free parallel execution
+- **Account-level `shared_balance`** for storage fees, inbound value staging, and inter-actor fund movement
+- `ACTORCLAIM` / `ACTORRELEASE` move funds between `shared_balance` and actor `budget` (committed in Phase 2)
+- Gas and value transfers computed against actor `budget` in Phase 1 (tentative until Phase 2 commits) — no reservation needed
 
 ### 6.3 Sharding Strategy
 
@@ -299,10 +504,10 @@ Two execution paths, sharing the same state interface (vm::Dictionary / HashmapE
 
 | Layer | Work | Complexity | Effort |
 |-------|------|-----------|--------|
-| Account struct + serialization | New TL-B schema, state migration | High | 3-4 weeks |
-| Two-phase execution model | Balance reservation, deterministic merge/commit | **Very High** | 4-6 weeks |
+| Account struct + serialization | New TL-B schema (actor descriptor with budget), state migration | High | 3-4 weeks |
+| Two-phase execution model | Hybrid balance, lightweight Phase-2 merge | High | 3-4 weeks |
 | Collator restructuring | Serial→parallel dispatch, result collection ordering | High | 3-4 weeks |
-| TVM new instructions | 4 opcodes (STATEGET/STATESET/STATEDEL/ACTORSEND) | Medium | 1 week |
+| TVM new instructions | 7 opcodes (STATEGET/STATESET/STATEDEL/ACTORSEND/BUDGETGET/ACTORCLAIM/ACTORRELEASE) | Medium | 1-2 weeks |
 | Message routing | OutMsgQueue key extension, queue merge logic | Medium | 2 weeks |
 | Validation logic | Actor-level proof, consistency checks | High | 3-4 weeks |
 | Proof/lite-client upgrade | Extended Merkle proof path, new query types | Medium | 2-3 weeks |
@@ -312,8 +517,9 @@ Two execution paths, sharing the same state interface (vm::Dictionary / HashmapE
 
 **Total: approximately 6-9 months for a small team (2-3 engineers).**
 
-The hardest parts are the deterministic commit model and collator restructuring.
-The TVM opcodes and Tola compiler are comparatively straightforward.
+The hardest parts are the collator restructuring and validation logic.
+The hybrid balance model significantly reduces two-phase complexity compared
+to a pure reservation approach.
 
 ## 8. What Stays, What Changes, What's New
 
@@ -334,8 +540,8 @@ The TVM opcodes and Tola compiler are comparatively straightforward.
 | Account = minimum execution unit | Actor = minimum execution unit |
 | One Account, one data Cell | One Account, multiple Actors (each with independent HashmapE) |
 | One Account, one lt timeline | Each Actor has independent lt |
-| Serial transaction execution | Two-phase: parallel speculative + deterministic merge |
-| Single balance per account | Shared balance with reservation model |
+| Serial transaction execution | Two-phase: parallel compute (Phase 1) + lightweight merge (Phase 2) |
+| Single balance per account | Hybrid: per-actor `budget` + account `shared_balance` |
 | OutMsgQueue key: 352 bits | Extended to 608 bits (includes full 256-bit actor_id) |
 | Merkle proof: block→account→key | Extended: block→account→**actor**→key |
 | lite-client address format | Extended with ActorAddress |
@@ -344,11 +550,11 @@ The TVM opcodes and Tola compiler are comparatively straightforward.
 
 | Component | Purpose |
 |-----------|---------|
-| `actors: HashmapE` in Account | Multiple Actor states per Account |
-| `actor_lt: HashmapE` in Account | Independent logical time per Actor |
-| Balance reservation model | Enable parallel execution with shared balance |
-| Deterministic merge/commit phase | Preserve consensus after parallel execution |
-| STATEGET/STATESET/STATEDEL/ACTORSEND | TVM opcodes for Actor-native programming |
+| `actors: HashmapE` in Account | Actor descriptors: state + budget + actor_lt per Actor |
+| `shared_balance` in Account | Account-level pool for storage fees and inter-actor transfers |
+| Hybrid balance model | Per-actor budget eliminates balance contention in Phase 1 |
+| Lightweight Phase-2 merge | Reconcile shared_balance, assign global lt, materialize messages |
+| STATEGET/STATESET/STATEDEL/ACTORSEND/BUDGETGET/ACTORCLAIM/ACTORRELEASE | TVM opcodes for Actor-native programming |
 | ActorAddress | Two-level addressing (account_id, actor_id) |
 | Built-in Actor Registry | Native C++ Actor execution path |
 | Tola language | Solidity-like syntax compiling to TVM |
@@ -356,19 +562,21 @@ The TVM opcodes and Tola compiler are comparatively straightforward.
 ## 9. Risks
 
 1. **Protocol-level hard fork** — Requires coordinated upgrade of all validators, lite-clients, SDKs, and explorers simultaneously
-2. **Deterministic commit model** — The two-phase execution model is the most complex and novel part; incorrect design breaks consensus
-3. **Balance contention** — Reservation model must handle edge cases: insufficient balance after parallel execution, gas refunds, bounce messages
-4. **Message visibility semantics** — Same-block Actor messages are consensus-critical; visibility rules must remain simple and deterministic
-5. **Validation complexity** — validate-query.cpp (7597 lines) needs significant changes; Actor-level proofs add new attack surface
-6. **State migration** — Existing accounts must be migrated to new format; requires migration protocol in the hard fork
-7. **Client compatibility** — All wallets, SDKs, and block explorers must upgrade to understand ActorAddress
+2. **Two-phase execution model** — Phase 1/Phase 2 boundary must be correctly enforced; incorrect isolation breaks consensus
+3. **Balance fragmentation** — Per-actor budgets may lead to idle capital; need policies for minimum `shared_balance` and automatic rebalancing
+4. **Shared balance overdraw** — Multiple Actors issuing `ACTORCLAIM` in the same block may collectively overdraw `shared_balance`; Phase 2 must reject excess claims deterministically
+5. **Prefix rejection cascades** — Rejecting one speculative result may force rejection of later same-Actor results in the block, reducing throughput in pathological cases
+6. **Message visibility semantics** — Same-block Actor messages are consensus-critical; visibility rules must remain simple and deterministic
+7. **Validation complexity** — validate-query.cpp (7597 lines) needs significant changes; Actor-level proofs add new attack surface
+8. **State migration** — Existing accounts must be migrated to new format; requires migration protocol in the hard fork
+9. **Client compatibility** — All wallets, SDKs, and block explorers must upgrade to understand ActorAddress
 
 ## 10. Implementation Roadmap
 
 ### Phase 1: Design Validation (3-4 months)
 
-1. Formal specification of the two-phase execution model (reservation + merge)
-2. Prototype the deterministic commit model in isolation
+1. Formal specification of the hybrid balance model (per-actor budget + shared_balance)
+2. Prototype the two-phase execution model (parallel Phase 1 + lightweight Phase 2 merge)
 3. Design the Actor-level Merkle proof format
 4. Define the state migration protocol
 5. Write TL-B schema for new Account structure
@@ -377,7 +585,7 @@ The TVM opcodes and Tola compiler are comparatively straightforward.
 
 1. Implement Account struct changes + serialization
 2. Implement two-phase execution in collator
-3. Add TVM opcodes (STATEGET/STATESET/STATEDEL/ACTORSEND)
+3. Add TVM opcodes (STATEGET/STATESET/STATEDEL/ACTORSEND/BUDGETGET/ACTORCLAIM/ACTORRELEASE)
 4. Extend OutMsgQueue with actor_id
 5. Update validation logic
 
@@ -427,11 +635,14 @@ actors as **native C++ built-ins compiled into the node binary**:
 
 ## 12. Open Questions
 
-1. **Reservation model details:** How to compute gas reservation before execution? What happens when reservation is insufficient?
-2. **Cross-shard Actor messages:** How do Actors in different shards communicate? Does the message routing protocol need changes beyond OutMsgQueue key?
-3. **Actor lifecycle:** Can Actors be destroyed? What happens to an Actor's state when its Account is deleted?
-4. **Backward compatibility period:** How long do we run old and new formats in parallel during migration?
-5. **Actor count limits:** Maximum number of Actors per Account? Storage cost model for Actor metadata?
+1. **Initial budget allocation:** When an Actor is first created, what is its initial budget? Zero (must ACTORCLAIM first)? Or does the creation message's value seed it?
+2. **ACTORCLAIM conflict resolution:** This RFC now recommends whole-transaction rejection, not partial claim failure. Is that too restrictive for practical contract patterns?
+3. **Minimum shared_balance policy:** Should the protocol enforce a minimum `shared_balance` to cover N blocks of storage fees? Or leave it to contract logic?
+4. **Cross-account / cross-shard Actor messages:** `ACTORSEND` is scoped to intra-account only (§5.2). A future `ACTORSENDX` with full `ActorAddress` is needed for cross-account delivery. How does this interact with the existing external message routing? Does the message routing protocol need changes beyond OutMsgQueue key?
+5. **Actor lifecycle:** Can Actors be destroyed? What happens to remaining `budget` — auto-released to `shared_balance`?
+6. **Backward compatibility period:** How long do we run old and new formats in parallel during migration?
+7. **Actor count limits:** Maximum number of Actors per Account? Storage cost model for Actor metadata?
+8. **Speculative VM forbidden-field enforcement:** Should the VM hard-trap when actor-mode code reads a Phase-2-only field (tx hash, shared_balance, account lt), or silently return a sentinel? Trapping is safer but breaks legacy contract patterns; sentinels are permissive but risk subtle bugs.
 
 ## 13. References
 
