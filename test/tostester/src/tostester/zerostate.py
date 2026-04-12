@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import nacl.signing
@@ -29,12 +29,12 @@ class NetworkConfig:
     monitor_min_split: int = 0
     split: int = 0
     global_version: int = 13
-    shard_validators: int = 1
+    shard_validators: int = 3  # DEV-SPECIFIC: matches min_validators=3
     block_limit_mul: int = 1
     mc_valgroup_lifetime: int = 250
-    mc_consensus: SimplexConsensusConfig | None = None
+    mc_consensus: SimplexConsensusConfig | None = field(default_factory=SimplexConsensusConfig)  # Simplex enabled
     shard_valgroup_lifetime: int = 250
-    shard_consensus: SimplexConsensusConfig | None = None
+    shard_consensus: SimplexConsensusConfig | None = field(default_factory=SimplexConsensusConfig)  # Simplex enabled
 
 
 @dataclass
@@ -204,7 +204,7 @@ Masterchain swap
 // ConfigParam 19: global_id (must match setglobalid above)
 <b globalid@ 32 i, b> 19 config!
 // max-validators max-main-validators min-validators
-1000 1000 1000 config.validator_num!  // DEV-SPECIFIC: allow any count for tests
+40 20 3 config.validator_num!  // DEV-SPECIFIC: same as production limits
 // min-stake max-stake min-total-stake max-factor
 TM$10000 TM$100000 TM$10000 sg~10 config.validator_stake_limits!  // DEV-SPECIFIC: low stakes for tests
 // elected-for elect-start-before elect-end-before stakes-frozen-for
