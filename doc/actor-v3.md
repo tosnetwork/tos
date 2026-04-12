@@ -1582,6 +1582,71 @@ When a V1 actor set migrates into a V2 container, the following rules govern mes
 
 5. **Reverse path:** When a migrated actor inside a V2 container sends a message to an external address, the message originates from the container's account address (not the old V1 address). Recipients MUST be notified of the address change through off-chain channels (SDK updates, explorer annotations, wallet metadata).
 
+### 31.4.2 Outbound Identity Compatibility Rule (Normative)
+
+Forwarding shells solve **inbound** compatibility for old V1 addresses, but they do
+not automatically preserve **outbound sender identity**. Therefore the protocol and
+migration tooling MUST distinguish two compatibility classes:
+
+1. **Inbound-only compatibility**
+   Old addresses continue to receive messages through forwarding shells.
+
+2. **Bidirectional identity compatibility**
+   External systems not only send to the old address, but also expect replies,
+   callbacks, or authorization messages to appear as if they originated from that
+   same old address.
+
+The baseline V2 migration guarantee is **inbound-only compatibility**. Full
+bidirectional identity preservation is **NOT guaranteed by default**.
+
+The following rules apply:
+
+1. **Canonical sender after migration:** Once an actor is migrated into a V2 account
+   container, its canonical outbound sender is the **container account address**.
+   The protocol does not spoof old V1 addresses as native outbound senders.
+
+2. **No protocol-level sender aliasing in baseline V2:** The base protocol MUST NOT
+   introduce an implicit alias table that rewrites outbound sender identity from the
+   container address back to legacy V1 addresses. Such aliasing, if ever desired,
+   requires a separate protocol extension.
+
+3. **Compatibility promise to external integrations:** A migrated system MAY claim
+   "backward compatible" only for integrations that depend on the old address as an
+   **inbound destination**. It MUST NOT claim full backward compatibility for
+   integrations that authenticate the old address as an **outbound sender**, unless a
+   dedicated compatibility adapter is deployed and documented.
+
+4. **Required migration classification:** Before migration, every known dependency on
+   a V1 actor address MUST be classified as one of:
+   - destination-only reference
+   - sender-authenticated reference
+   - bidirectional callback reference
+
+5. **Handling sender-authenticated dependencies:** If an external contract, token, or
+   application authenticates the old V1 address as the sender, then one of the
+   following MUST be chosen explicitly:
+   - keep the V1 actor alive and unmigrated
+   - retain the V1 address as a permanent compatibility shell with custom outbound
+     adapter logic
+   - migrate the dependency itself to recognize the new container address
+   - accept a breaking change and schedule it via governance / upgrade coordination
+
+6. **Explorer and SDK disclosure:** Wallets, SDKs, and explorers MUST present the
+   migration state of an actor address explicitly:
+   - old V1 address still valid for inbound messages
+   - canonical outbound identity is now container address X
+   - old address preserved only as forwarding shell
+
+7. **Security rule:** A receiving actor inside the V2 container MUST NOT treat a
+   message as coming from the old V1 address merely because it arrived through a
+   forwarding shell. Provenance must be verified through the wrapper metadata defined
+   in §31.4.1, not by trusting `msg.sender` equality.
+
+In short:
+
+> Forwarding shells preserve **where messages can be sent to**.
+> They do not, by themselves, preserve **who messages come from**.
+
 ### 31.5 Treasury Mapping Rule
 
 When a V1 Treasury Actor (independent Account B) migrates into a V2 container, the following state mapping applies:
