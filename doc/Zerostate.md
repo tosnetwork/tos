@@ -272,7 +272,7 @@ The following table maps Fift calls in the zero state script to their recommende
 |-----------|-------------|-------------------|
 | `setglobalid` | 19 | **1** (mainnet), **-3** (testnet), **3** (dev) |
 | `config.version!` | 8 | version=13, capabilities=494 |
-| `config.validator_num!` | 16 | max=400, main=100, min=3 |
+| `config.validator_num!` | 16 | max=40, main=20, min=3 |
 | `config.validator_stake_limits!` | 17 | min=300K TOS, max=10M TOS, total=900K TOS, factor=3x |
 | `config.election_params!` | 15 | 65536 / 32768 / 8192 / 32768 |
 | `config.storage_prices!` | 18 | 1 / 500 / 1000 / 500000 |
@@ -280,8 +280,9 @@ The following table maps Fift calls in the zero state script to their recommende
 | `config.mc_gas_prices!` | 20 | gas_price=655M, limit=1M, block=2.5M |
 | `config.fwd_prices!` | 25 | lump=400K, bit=26M, cell=2.6G |
 | `config.mc_fwd_prices!` | 24 | lump=10M, bit=655M, cell=65G |
-| `config.catchain_params!` | 28 | mc=250, shard=250, val=1000, num=7 |
-| `config.consensus_params!` | 29 | cand=3, timeout=16s, blocks=2MB |
+| `config.catchain_params!` | 28 | mc=250, shard=250, val=1000, num=5 |
+| `config.consensus_params!` | 29 | cand=3, timeout=16s, blocks=2MB (Catchain fallback) |
+| `config.new_consensus_params_all!` | 30 | Simplex: target_rate=1000ms, slots=4, timeout=1000ms |
 | `config.block_create_fees!` | 14 | mc=1.7 TOS, base=1.0 TOS |
 
 **Design notes:**

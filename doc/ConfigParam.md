@@ -160,8 +160,8 @@ Each `WorkchainDescr` entry (keyed by workchain ID):
 
 | Field | Type | Value | Description |
 |-------|------|-------|-------------|
-| `max_validators` | uint32 | **400** | Maximum total validators |
-| `max_main_validators` | uint32 | **100** | Maximum masterchain validators |
+| `max_validators` | uint32 | **40** | Maximum total validators |
+| `max_main_validators` | uint32 | **20** | Maximum masterchain validators |
 | `min_validators` | uint32 | **3** | Minimum validators for network to operate |
 
 ## ConfigParam 17 — Stake Limits
@@ -276,10 +276,10 @@ Three tiers: underload (triggers shard merge), soft (normal target), hard (absol
 | `mc_catchain_lifetime` | uint32 | **250** | Masterchain catchain session lifetime (seconds) |
 | `shard_catchain_lifetime` | uint32 | **250** | Shard catchain session lifetime (seconds) |
 | `shard_validators_lifetime` | uint32 | **1,000** | How long a shard validator group stays assigned (seconds) |
-| `shard_validators_num` | uint32 | **3** | Validators per shard. Scale up as network grows (e.g. 23 at 300+ validators). |
+| `shard_validators_num` | uint32 | **5** | Validators per shard. 40 validators / 5 = up to 8 parallel shards. |
 | `shuffle_mc_validators` | Bool | **true** | Shuffle masterchain validator ordering each round |
 
-## ConfigParam 29 — Consensus Config
+## ConfigParam 29 — Consensus Config (Catchain BFT, fallback when Simplex is not enabled)
 
 | Field | Type | Value | Description |
 |-------|------|-------|-------------|
@@ -299,12 +299,41 @@ Three tiers: underload (triggers shard merge), soft (normal target), hard (absol
 
 Block time: ~3-4s on local testnet (3 validators), ~5s on production network.
 
-## ConfigParam 30 — Simplex Consensus (Optional)
+## ConfigParam 30 — Simplex Consensus
+
+Simplex replaces Catchain BFT as the primary consensus protocol. The leader produces blocks continuously without waiting for full BFT voting; notarization happens asynchronously.
+
+Both `mc` and `shard` use the same `NewConsensusConfig`:
 
 | Field | Type | Value | Description |
 |-------|------|-------|-------------|
-| `mc` | Maybe ^NewConsensusConfig | null | Masterchain simplex params (if used) |
-| `shard` | Maybe ^NewConsensusConfig | null | Shard simplex params (if used) |
+| `use_quic` | Bool | **true** | Use QUIC transport |
+| `target_rate_ms` | uint32 | **1,000** | Target block interval (ms). **Primary block time setting.** |
+| `slots_per_leader_window` | uint32 | **4** | Blocks per leader before rotation |
+| `first_block_timeout_ms` | uint32 | **1,000** | Timeout for leader's first block |
+| `max_leader_window_desync` | uint32 | **2** | Max allowed desync between validators |
+
+Noncritical parameters (tunable via governance without changing the config structure):
+
+| Index | Field | Value | Description |
+|-------|-------|-------|-------------|
+| 0 | `target_rate` | **1,000ms** | Target block interval |
+| 1 | `first_block_timeout` | **1,000ms** | First block timeout |
+| 2 | `first_block_timeout_multiplier` | **1.2** | Exponential backoff multiplier |
+| 3 | `first_block_timeout_cap` | **100,000ms** | Maximum backoff |
+| 4 | `candidate_resolve_timeout` | **1,000ms** | Timeout to resolve block candidate |
+| 5 | `candidate_resolve_timeout_multiplier` | **1.2** | Resolve timeout backoff |
+| 6 | `candidate_resolve_timeout_cap` | **10,000ms** | Maximum resolve timeout |
+| 7 | `candidate_resolve_cooldown` | **10ms** | Cooldown between resolve attempts |
+| 8 | `standstill_timeout` | **10,000ms** | Timeout before declaring standstill |
+| 9 | `standstill_max_egress_bytes_per_s` | **6,553,600** | Bandwidth limit during standstill |
+| 10 | `max_leader_window_desync` | **250** | Max desync (noncritical override) |
+| 11 | `bad_signature_ban_duration` | **5,000ms** | Ban duration for bad signatures |
+| 12 | `candidate_resolve_rate_limit` | **10** | Rate limit for candidate resolution |
+| 13 | `min_block_interval` | **0ms** | Hard minimum between blocks (0 = no limit) |
+| 14 | `no_empty_blocks_on_error_timeout` | **15,000ms** | Suppress empty blocks after errors |
+
+**Block time:** With `target_rate=1000ms` and 40 validators in the same region, expected block time is ~1 second. With global distribution, ~1-1.5 seconds.
 
 ## ConfigParam 31 — Fundamental Addresses
 
