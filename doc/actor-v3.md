@@ -818,6 +818,72 @@ The V1 token baseline MUST expose:
 
 Claude Code or any implementation workflow MUST treat this section as the authoritative V1 interface layer. No V1 module should be implemented from descriptive prose alone if this freeze section provides a more specific rule.
 
+### 15A.12 V1 Unified Interface Reference Table
+
+The following table is the single-lookup reference for all V1 contract interfaces. Each row defines one callable endpoint. The `Caller` column specifies who may invoke it. The `Section` column points to the detailed specification.
+
+**Primary Wallet Actor** (`wallet_v6`):
+
+| Op | Name | Caller | Request Schema | Response | Section |
+|----|------|--------|---------------|----------|---------|
+| 0x7369676E | SignedRequest | owner (external) | wallet_id:u32 seqno:u32 valid_until:u32 request_id:u64 actions:^Cell sig:b512 | none (actions executed) | 7.4 |
+| 0x6578746E | ExtensionRequest | registered actor (internal) | role_id:u16 actions:^Cell | none (actions executed) | 7.4 |
+| 0x7265636F | RecoveryRequest | recovery actor (internal) | subop:u8 payload:^Cell | none (action executed) | 7.4 |
+| 0x73657373 | SessionRequest | session key (external) | session_pubkey:u256 session_nonce:u32 valid_until:u32 actions:^Cell sig:b512 | none (actions executed) | 7.4 |
+
+Get methods: `get_wallet_id`, `get_seqno`, `get_mode`, `get_owner_pubkey`, `get_pending_owner`, `get_actor(role_id)`, `get_session(session_pubkey)` (see 15A.4).
+
+**Treasury Actor**:
+
+| Op | Name | Caller | Request Schema | Response | Section |
+|----|------|--------|---------------|----------|---------|
+| 0x616C6C6F | AllocateBudget | wallet actor (internal) | target_actor:Addr amount:Coins budget_id:u64 memo:Maybe<Cell> | ack/nack | 8.2 |
+| 0x72657462 | ReturnBudget | any registered actor (internal) | source_actor:Addr amount:Coins budget_id:u64 memo:Maybe<Cell> | ack | 8.2 |
+| 0x74786672 | TreasuryTransfer | wallet actor (internal) | dest:Addr amount:Coins memo:Maybe<Cell> | ack/nack (may consult Policy) | 8.2 |
+| 0x00000000 | ReceiveFunds | any (internal/external) | (empty or metadata) | none (balance credited) | 8.2 |
+
+Get methods: `get_treasury_state`, `get_budget_record(budget_id)`, `get_wallet_actor`, `get_policy_actor` (see 15A.5).
+
+**Recovery Actor**:
+
+| Op | Name | Caller | Request Schema | Response | Section |
+|----|------|--------|---------------|----------|---------|
+| 0x70726F70 | ProposeOwnerChange | guardian (external/internal) | new_owner_pubkey:u256 recovery_id:u64 | ack | 9.2 |
+| 0x667265657A | FreezeWallet | any guardian (external/internal) | reason_code:u16 | -> wallet LOCKED | 9.2 |
+| 0x656E7265 | EnterRecoveryMode | guardian quorum (internal) | recovery_id:u64 | -> wallet RECOVERY | 9.2 |
+| 0x636F6D6D | CommitRecovery | guardian (after timelock) | recovery_id:u64 | -> wallet new owner | 9.2 |
+
+Get methods: `get_recovery_state`, `get_guardian_set`, `get_pending_recovery`, `get_wallet_actor` (see 15A.6).
+
+**Policy Actor**:
+
+| Op | Name | Caller | Request Schema | Response | Section |
+|----|------|--------|---------------|----------|---------|
+| 0x6576616C | EvaluateAction | wallet or treasury (internal) | request_type:u16 request_id:u64 origin:Addr target:Addr value:Coins context:^Cell | verdict:u8 policy_code:u16 delay:u32 memo:Maybe<Cell> | 10.2 |
+
+Verdict values: `0x01`=allow, `0x02`=deny, `0x03`=delay, `0x04`=require_secondary_approval.
+
+Get methods: `get_policy_state`, `get_policy_version` (see 15A.7).
+
+**TokenMasterActor**:
+
+| Op | Name | Caller | Request Schema | Section |
+|----|------|--------|---------------|---------|
+| 0x6D696E74 | Mint | authorized minter | to:Addr amount:Coins | 13.3 |
+| 0x6275726E | Burn | authorized burner | from:Addr amount:Coins | 13.3 |
+
+Get methods: `GetWalletAddress(owner)`, `GetMetadata`, `GetTotalSupply` (see 15A.10).
+
+**TokenBalanceActor**:
+
+| Op | Name | Caller | Request Schema | Section |
+|----|------|--------|---------------|---------|
+| 0x74786672 | Transfer | owner wallet (internal) | to:Addr amount:Coins | 13.4 |
+| 0x63726564 | Credit | sender's TokenBalanceActor (internal) | from:Addr amount:Coins | 13.4 |
+| 0x6275726E | Burn | owner wallet or master (internal) | amount:Coins | 13.4 |
+
+Get methods: `GetBalance` (see 15A.10).
+
 ---
 
 # Part III — V2: Protocol-Native Actor Execution
@@ -1106,6 +1172,53 @@ This ensures that even a buggy or adversarial collator that produces duplicate `
 | Storage fee deduction | Not computed | Computed and applied |
 
 No tentative artifact may be referenced by any external system or proof until it transitions to canonical status via Phase 2 commit.
+
+### 20.8 Canonical Actor Transaction Record (Normative)
+
+After Phase 2 commits a speculative result, the following canonical actor transaction record MUST be constructed. This is the on-chain, provable, externally-visible transaction object for actor-mode transactions.
+
+```
+ActorTransaction
+ +-- account_addr:bits256          <- account container address
+ +-- actor_id:bits256              <- target actor within the container
+ +-- actor_lt:uint64               <- actor-local logical time (Phase 1, stable)
+ +-- final_lt:uint64               <- account-global logical time (assigned in Phase 2)
+ +-- final_lt_end:uint64           <- account-global end logical time
+ +-- tx_hash:bits256               <- canonical transaction hash (computed after Phase 2)
+ +-- prev_tx_hash:bits256          <- previous transaction hash for this actor
+ +-- prev_tx_lt:uint64             <- previous transaction lt for this actor
+ +-- execution_status:uint8        <- 0=success, 1=revert, 2=exception
+ +-- exit_code:int32               <- VM exit code (0 if success)
+ +-- gas_used:uint64               <- gas consumed during Phase 1 compute
+ +-- total_fees:CurrencyCollection <- total fees (gas + forwarding)
+ +-- state_hash_before:bits256     <- actor state root hash before execution
+ +-- state_hash_after:bits256      <- actor state root hash after execution
+ +-- budget_before:CurrencyCollection  <- actor budget before execution
+ +-- budget_after:CurrencyCollection   <- actor budget after execution
+ +-- balance_requests:HashmapE(uint64 -> BalanceRequest)  <- ACTORCLAIM/ACTORRELEASE intents
+ +-- in_msg:Maybe<^Message>        <- inbound message that triggered this transaction
+ +-- out_msgs:HashmapE(uint15 -> ^Message)  <- outbound messages (materialized in Phase 2)
+ +-- out_msg_count:uint15          <- number of outbound messages
+```
+
+`BalanceRequest`:
+
+```
+balance_request_claim$0 amount:Coins = BalanceRequest;
+balance_request_release$1 amount:Coins = BalanceRequest;
+```
+
+**Usage by subsystems:**
+
+| Subsystem | Fields consumed |
+|-----------|----------------|
+| Block explorer | account_addr, actor_id, final_lt, tx_hash, execution_status, gas_used, in_msg, out_msgs |
+| Lite-client transaction query | All fields; returned as proof-backed response |
+| Validator replay | All fields; compared against re-execution result |
+| Merkle proof | tx_hash, state_hash_before/after as proof anchors |
+| SDK / wallet | execution_status, budget_before/after, balance_requests, out_msg_count |
+
+This record structure MUST be frozen before V2 implementation begins (see 30A.5).
 
 ## 21. VM Context Isolation (Normative)
 
