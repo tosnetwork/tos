@@ -1087,6 +1087,92 @@ Storage fees are charged once per account-container finalization, not once per c
 
 If multiple actors in one account execute in parallel and share account-global fields, immediate commit would create nondeterministic state races. Therefore execution is split into actor-local speculative execution and deterministic merge.
 
+### 20.1.1 Before / After Execution Flow Comparison
+
+The table below summarizes the execution-path change introduced by V2 actor-native execution.
+See Figure 1 for the corresponding end-to-end flow.
+
+| Aspect | Before V2: Traditional Account-Centric Flow | After V2: Actor-Native Flow |
+|--------|---------------------------------------------|-----------------------------|
+| Smallest execution unit | One Account | One Actor inside an Account Container |
+| Message target | Account address | Account Container, then routed to `actor_id` |
+| Code / state layout | Single `AccountState` (`code` + `data`) | Per-actor `behavior_ref` + `state_root` |
+| Working balance during execution | Single shared account balance | Actor-local `budget` |
+| Shared funds | Same balance used for gas, value, storage | `shared_balance` used only for storage fees, inbound staging, claim/release settlement |
+| Execution ordering | Strictly serial for the whole account | Per-actor serial, cross-actor parallel in Phase 1 |
+| Commit model | Execute and commit immediately | Phase 1 tentative execution, then Phase 2 deterministic merge |
+| Logical time | One account-level `last_trans_lt` sequence | Per-actor `actor_lt` plus account-level final `lt` assigned in Phase 2 |
+| Outbound messages | Materialized immediately after execution | Collected tentatively in Phase 1, materialized only after Phase 2 commit |
+| Same-block actor-to-actor visibility | Not applicable; single execution context | Explicitly disallowed in baseline V2; new actor messages become executable in block `N+1` |
+| Validator replay | Replay linear account transactions | Replay Phase 1 actor execution plus Phase 2 merge |
+| Proof path | `block -> shard -> account -> state` | `block -> shard -> account container -> actor -> state` |
+| Client model | Account-oriented queries | Container-aware and actor-aware queries / proofs |
+
+### 20.1.2 Before / After Flow Diagram
+
+**Figure 1. Before / After Block-Production Flow**
+
+This diagram summarizes the end-to-end block-production path before and after actor-native execution.
+
+Color coding in this diagram is illustrative, not normative.
+
+```mermaid
+flowchart TB
+  subgraph BEFORE["Before V2: Traditional Account-Centric Flow"]
+    B1["Inbound Message"]
+    B2["Resolve Target Account"]
+    B3["Execute Account Transaction"]
+    B4["Read And Write Account State"]
+    B5["Deduct Gas And Outbound Value From Account Balance"]
+    B6["Update Account Logical Time"]
+    B7["Commit Immediately"]
+    B8["Materialize Outbound Messages"]
+    B9["Update OutMsgQueue, Block Descriptors, And Accumulators"]
+    B10["Next Inbound Message"]
+
+    B1 --> B2 --> B3
+    B3 --> B4
+    B4 --> B5 --> B6 --> B7 --> B8 --> B9 --> B10
+  end
+
+  subgraph AFTER["After V2: Actor-Native Two-Phase Flow"]
+    A1["Inbound Message"]
+    A2["Resolve Account Container"]
+    A3["Route To Target Actor ID"]
+    A4["Phase 1: Actor-Local Tentative Execution"]
+    A5["Read And Write Actor State Root Only"]
+    A6["Deduct Gas And Outbound Value From Actor Budget"]
+    A7["Assign Tentative Actor LT"]
+    A8["Record Tentative Outbound Messages And Balance Intents"]
+    A9["Collect Speculative Results From Multiple Actors"]
+    A10["Phase 2: Deterministic Merge"]
+    A11["Sort By Actor ID, Actor LT, And Inbound Message Hash"]
+    A12["Enforce Prefix Commit And Settle Shared Balance"]
+    A13["Charge Storage Fee Once Per Container"]
+    A14["Assign Final Account-Level LT And Transaction Hash"]
+    A15["Materialize Outbound Messages And Commit Canonical State"]
+    A16["Messages Emitted In Block N Become Executable In Block N+1"]
+
+    A1 --> A2 --> A3 --> A4
+    A4 --> A5 --> A6 --> A7 --> A8 --> A9 --> A10
+    A10 --> A11 --> A12 --> A13 --> A14 --> A15 --> A16
+  end
+
+  classDef inbound fill:#eef6ff,stroke:#1d4ed8,color:#0f172a,stroke-width:1px;
+  classDef execution fill:#ecfdf5,stroke:#059669,color:#0f172a,stroke-width:1px;
+  classDef phase1 fill:#fff7ed,stroke:#ea580c,color:#0f172a,stroke-width:1px;
+  classDef phase2 fill:#f5f3ff,stroke:#7c3aed,color:#0f172a,stroke-width:1px;
+  classDef commit fill:#f0fdf4,stroke:#16a34a,color:#0f172a,stroke-width:1px;
+  classDef queue fill:#fefce8,stroke:#ca8a04,color:#0f172a,stroke-width:1px;
+
+  class B1,A1 inbound;
+  class B2,B3,B4,B5,B6 execution;
+  class A2,A3,A4,A5,A6,A7,A8,A9 phase1;
+  class A10,A11,A12,A13,A14 phase2;
+  class B7,B10 commit;
+  class B8,B9,A15,A16 queue;
+```
+
 ### 20.2 Phase Boundary (Normative)
 
 **Phase 1 (parallel, per-actor) produces tentative snapshots only:**
@@ -1143,10 +1229,46 @@ Later speculative results for the same Actor depend on the tentative post-state 
 ### 20.5 Same-Block Message Visibility (Normative)
 
 Messages newly emitted by actors during block `N` are recorded in block `N` but become executable only from block `N+1`. No Actor may observe another Actor's newly emitted same-block message during its own Phase-1 execution.
+See Figure 2 for the block-boundary visibility rule.
 
 This trades latency for determinism: no same-block cyclic dependencies, no merge-order-dependent visibility, clean block boundary.
 
 Same-block actor-to-actor execution may be introduced as a future protocol extension with explicit topological scheduling rules.
+
+### 20.5.1 Block N / Block N+1 Visibility Diagram
+
+**Figure 2. Same-Block Visibility Boundary**
+
+This diagram summarizes the baseline visibility rule for actor-emitted messages across block boundaries.
+
+Color coding in this diagram is illustrative, not normative.
+
+```mermaid
+sequenceDiagram
+  participant C as Collator
+  participant A as Actor A
+  participant Q as Outbound Queue
+  participant B as Actor B
+
+  rect rgb(255,247,237)
+    Note over C,A: Block N / Phase 1
+    C->>A: Execute inbound message for Actor A
+    A-->>C: Produce outbound message to Actor B
+    C->>Q: Record outbound message in block N
+    Note over B: Actor B cannot observe this message in block N
+  end
+
+  rect rgb(245,243,255)
+    Note over C,Q,B: Block N / Phase 2
+    C->>Q: Materialize canonical outbound message
+  end
+
+  rect rgb(240,253,244)
+    Note over C,Q,B: Block N+1
+    C->>B: Deliver previously emitted message
+    B-->>C: Execute message in next block only
+  end
+```
 
 ### 20.6 Deterministic Tertiary Ordering
 
@@ -1172,6 +1294,65 @@ This ensures that even a buggy or adversarial collator that produces duplicate `
 | Storage fee deduction | Not computed | Computed and applied |
 
 No tentative artifact may be referenced by any external system or proof until it transitions to canonical status via Phase 2 commit.
+See Figure 3 for the tentative-to-canonical transition path.
+
+### 20.7.1 Tentative-to-Canonical State Transition Diagram
+
+**Figure 3. Tentative-To-Canonical State Transition**
+
+This diagram summarizes how a single actor result moves from speculative execution to canonical commit, including rollback and same-actor prefix invalidation.
+
+Color coding in this diagram is illustrative, not normative.
+
+```mermaid
+flowchart TD
+  S0["Inbound Message For Actor ID"]
+  S1["Phase 1: Speculative Execution"]
+  S2["Tentative Snapshot Created:
+  - Tentative State Root
+  - Tentative Budget
+  - Tentative Actor LT
+  - Tentative Outbound Messages
+  - Tentative Claim And Release Intents"]
+  S3["Phase 2: Merge Examines Result"]
+  D1{"Is The Actor Prefix Still Valid?"}
+  D2{"Do Shared Balance Settlement
+  And Final Checks Succeed?"}
+  C1["Canonical Commit:
+  - Persist Actor Snapshot
+  - Assign Final LT And Transaction Hash
+  - Materialize Outbound Messages
+  - Create Proof-Visible Transaction"]
+  R1["Atomic Rollback:
+  - Drop Tentative State
+  - Drop Tentative Budget Delta
+  - Drop Tentative Actor LT
+  - Drop Tentative Outbound Messages
+  - Drop Tentative Balance Intents"]
+  R2["Reject Result And Invalidate
+  All Later Speculative Results
+  For The Same Actor"]
+
+  S0 --> S1 --> S2 --> S3 --> D1
+  D1 -- "No" --> R2 --> R1
+  D1 -- "Yes" --> D2
+  D2 -- "Yes" --> C1
+  D2 -- "No" --> R2
+
+  classDef inbound fill:#eef6ff,stroke:#1d4ed8,color:#0f172a,stroke-width:1px;
+  classDef phase1 fill:#fff7ed,stroke:#ea580c,color:#0f172a,stroke-width:1px;
+  classDef phase2 fill:#f5f3ff,stroke:#7c3aed,color:#0f172a,stroke-width:1px;
+  classDef commit fill:#f0fdf4,stroke:#16a34a,color:#0f172a,stroke-width:1px;
+  classDef rollback fill:#fef2f2,stroke:#dc2626,color:#0f172a,stroke-width:1px;
+  classDef decision fill:#f8fafc,stroke:#475569,color:#0f172a,stroke-width:1px;
+
+  class S0 inbound;
+  class S1,S2 phase1;
+  class S3 phase2;
+  class C1 commit;
+  class R1,R2 rollback;
+  class D1,D2 decision;
+```
 
 ### 20.8 Canonical Actor Transaction Record (Normative)
 
@@ -1405,6 +1586,7 @@ During the V1-to-V2 transition, the collator must support both legacy accounts (
 ### 24.3 Same-Block Visibility Enforcement
 
 The collator MUST enforce the same-block visibility rule (section 20.5) by partitioning inbound messages into two categories before Phase 1 begins:
+Figure 2 shows the same rule from the block-production perspective.
 
 1. **Pre-existing messages**: messages that were in the InMsgQueue before this block's processing started. These are eligible for Phase 1 execution.
 2. **Newly emitted messages**: messages produced by actor transactions within the current block. These MUST NOT be delivered to any actor in the current block.
@@ -1475,6 +1657,7 @@ Lite-clients must be able to verify: actor existence, actor-local state, actor-l
 ### 27.1 Actor Proof Query Model
 
 Lite-clients request actor proofs using the `getActorState` query (see Module H). The response includes:
+See Figure 4 for the query path and proof layering.
 
 1. A Merkle proof from the block root to the account container.
 2. A Merkle proof from the account container to the actor dictionary entry.
@@ -1483,6 +1666,47 @@ Lite-clients request actor proofs using the `getActorState` query (see Module H)
 Each proof layer is independently verifiable. A client that already has a verified account container proof can request only the actor-level proof for subsequent queries, reducing bandwidth.
 
 Legacy proof queries (`getAccountState`) continue to work for actor-mode accounts. They return the full account container state (including all actors) as a single proof. This is less efficient but ensures compatibility with clients that have not yet been updated to understand actor-level proofs.
+
+### 27.1.1 Actor Proof Path Diagram
+
+**Figure 4. Actor-Level Query And Proof Path**
+
+This diagram summarizes the query path and proof layers for an actor-level state request.
+
+Color coding in this diagram is illustrative, not normative.
+
+```mermaid
+flowchart LR
+  C["Lite Client"]
+  Q["getActorState(Account ID, Actor ID, Key?)"]
+  LS["Lite Server"]
+  B["Block Root Proof"]
+  S["Shard Proof"]
+  AC["Account Container Proof"]
+  AD["Actor Dictionary Entry Proof"]
+  AX["Actor Descriptor Proof"]
+  SK["State Key Proof (Optional)"]
+  R["Verified Actor State Or Key Value"]
+  L["Legacy Path: getAccountState(Account ID)"]
+  LC["Full Container Proof Only"]
+
+  C --> Q --> LS
+  LS --> B --> S --> AC --> AD --> AX --> SK --> R
+  C -. Legacy Client .-> L --> LS
+  LS -. Compatibility Response .-> LC
+
+  classDef client fill:#eef6ff,stroke:#1d4ed8,color:#0f172a,stroke-width:1px;
+  classDef query fill:#fff7ed,stroke:#ea580c,color:#0f172a,stroke-width:1px;
+  classDef proof fill:#f5f3ff,stroke:#7c3aed,color:#0f172a,stroke-width:1px;
+  classDef result fill:#f0fdf4,stroke:#16a34a,color:#0f172a,stroke-width:1px;
+  classDef legacy fill:#fefce8,stroke:#ca8a04,color:#0f172a,stroke-width:1px;
+
+  class C client;
+  class Q,LS query;
+  class B,S,AC,AD,AX,SK proof;
+  class R result;
+  class L,LC legacy;
+```
 
 ## 28. Execution Paths
 
