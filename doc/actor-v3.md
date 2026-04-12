@@ -9,9 +9,9 @@
 
 This document is the unified specification for the TOS Actor architecture. It defines a two-phase rollout:
 
-* **Phase V1 — Account-as-Actor:** every existing on-chain Account is treated as a first-class Actor. A human-facing Virtual Account is constructed as a coordinated set of Actors. No base protocol changes are required.
+* **Phase V1 — Account-as-Actor:** every on-chain Account is treated as a first-class Actor. A human-facing Virtual Account is constructed as a coordinated set of Actors. No base protocol changes are required.
 
-* **Phase V2 — Protocol-Native Actors:** the base protocol is redesigned so that one Account becomes a container holding multiple protocol-native Actors, each with isolated state, independent budget, and independent logical time. This is a hard-fork-level change.
+* **Phase V2 — Protocol-Native Actors:** the base protocol is redesigned so that one Account becomes a container holding multiple protocol-native Actors, each with isolated state, independent budget, and independent logical time. This is a protocol-level change.
 
 V1 delivers the practical benefits of the Actor Model today — isolation, modularity, message-driven design, parallelism across actors, and better wallet architecture — without the cost and risk of protocol redesign. V2 builds on V1 once the actor-oriented patterns are proven in production, making Actors the protocol-native execution unit and enabling intra-account parallel execution.
 
@@ -24,7 +24,7 @@ V1 is the active engineering track. V2 is the protocol research-and-implementati
 | Part I — Motivation | Both | Informational | Stable |
 | Part II — V1 | V1 | Normative (interfaces, encodings, role IDs) | Active engineering |
 | Part III — V2 | V2 | Partially normative / partially design-level | Research; blocked on V1 validation |
-| Part IV — Migration | Both | Design-level | Draft |
+| Part IV — V1 to V2 Transition Path | Both | Design-level | Draft |
 | Part V — Implementation | V2 | Planning-level | Draft |
 | Appendices | Both | Reference | Maintained alongside Parts II-III |
 
@@ -34,7 +34,7 @@ The following sections are implementation-freeze sections and take precedence ov
 
 - **15A. V1 Interface Freeze** — authoritative for all V1 smart contract implementations
 - **30A. V2 Spec Freeze** — authoritative for all V2 protocol implementation decisions
-- **31A. Migration Freeze** — authoritative for all V1-to-V2 migration planning
+- **31A. Transition Freeze** — authoritative for all V1-to-V2 transition planning
 
 ---
 
@@ -63,7 +63,7 @@ Instead of attempting a single massive protocol redesign, TOS adopts a phased ap
 | | V1: Account-as-Actor | V2: Protocol-Native Actors |
 |---|---|---|
 | Core idea | Account = Actor | Account = Container, Actor = execution unit |
-| Protocol changes | None | Hard fork |
+| Protocol changes | None | Protocol upgrade |
 | Parallelism | Natural cross-Account (already exists) | Intra-Account across Actors |
 | Balance model | Each Account has own balance; Treasury Actor coordinates | Hybrid: per-actor budget + account shared_balance |
 | Implementation layer | Smart contracts + SDK | Protocol: validator, collator, block format, proofs |
@@ -121,7 +121,7 @@ V2 proposes changes to this substrate. No V2 change is activated, implemented, o
 6. Support actor-oriented token/application patterns
 7. Require no base protocol changes
 8. Be implementable using normal smart contracts, wallet tooling, and SDK code
-9. Produce interface-freeze-ready specifications (op codes, action encodings, role IDs, state layouts) that are stable enough to serve as the V2 migration baseline
+9. Produce interface-freeze-ready specifications (op codes, action encodings, role IDs, state layouts) that are stable enough to serve as the V2 transition baseline
 
 ### 5.2 Explicit Protocol Non-Goals for V1
 
@@ -908,7 +908,7 @@ Virtual Account                        Account Container
  +-- Token / App Actors (= separate)    +-- Token / App Actors
 ```
 
-V2 is a **hard-fork-level protocol redesign**. It requires changes to: block format, account serialization, transaction execution, validation logic, message routing, Merkle proofs, and client tooling. The Cell/BOC encoding format itself is unchanged — only the semantic structure stored in Cells changes.
+V2 is a **protocol-level redesign**. It requires changes to: block format, account serialization, transaction execution, validation logic, message routing, Merkle proofs, and client tooling. The Cell/BOC encoding format itself is unchanged — only the semantic structure stored in Cells changes.
 
 ## 17. Account Container Model
 
@@ -937,9 +937,9 @@ ActorDescriptor
  +-- actor_flags:uint32
 ```
 
-Each Actor has its own `behavior_ref` rather than sharing a single global code Cell. This is the baseline binding model: each actor carries an actor-local `behavior_ref` that points to its code. This is more faithful to Actor identity, enables cleaner modularity, and smooths migration from V1 where each Actor is already an independent contract with its own code.
+Each Actor has its own `behavior_ref` rather than sharing a single global code Cell. This is the baseline binding model: each actor carries an actor-local `behavior_ref` that points to its code. This is more faithful to Actor identity, enables cleaner modularity, and smooths the transition from V1 where each Actor is already an independent contract with its own code.
 
-The `behavior_ref` binding model is a decided design choice. Per-actor `behavior_ref` is the baseline. A shared behavior registry is **explicitly not part of the V2 baseline**. Any future introduction of a behavior registry MUST be treated as a separate protocol extension with its own specification, freeze checklist, and migration rules. V2 implementations MUST NOT assume or depend on a registry existing.
+The `behavior_ref` binding model is a decided design choice. Per-actor `behavior_ref` is the baseline. A shared behavior registry is **explicitly not part of the V2 baseline**. Any future introduction of a behavior registry MUST be treated as a separate protocol extension with its own specification, freeze checklist, and transition rules. V2 implementations MUST NOT assume or depend on a registry existing.
 
 ### 17.3 TL-B Schema
 
@@ -1020,7 +1020,7 @@ Total: 521 bits (8 + 256 + 256). For human-readable encoding, the format is:
 <workchain>:<account_id_hex>/<actor_id_hex>
 ```
 
-Example: `0:a1b2...f3/00aa...bb`. When `actor_id` is zero (legacy account or account-level addressing), the `/<actor_id_hex>` suffix is omitted, preserving backward compatibility with existing address formats.
+Example: `0:a1b2...f3/00aa...bb`. When `actor_id` is zero (legacy account or account-level addressing), the `/<actor_id_hex>` suffix is omitted, preserving compatibility with the V1 address format.
 
 ## 19. Hybrid Balance Model
 
@@ -1066,7 +1066,7 @@ When an external or internal message carrying value arrives at the Account:
 2. If the message targets the Account without specifying an `actor_id` (legacy format), the value is credited to `shared_balance`.
 3. An Actor can later pull funds from `shared_balance` via `ACTORCLAIM`.
 
-This ensures backward compatibility: existing wallets sending to an Account address still work.
+This ensures compatibility: V1 wallets sending to an Account address without specifying an actor_id still work.
 
 If a message targets a specific `actor_id` that does not exist in the account's actor dictionary, the message is bounced. The collator MUST NOT create a transaction for a nonexistent actor. This prevents value from being silently absorbed into an unreachable actor budget.
 
@@ -1300,7 +1300,7 @@ A speculative transaction receives a tentative `actor_lt` in Phase 1. That value
 
 ### 23.1 New Instructions
 
-Using the 0xFB09-0xFB0F range (currently unoccupied). All gated behind `->require_version(N)` for the hard-fork version.
+Using the 0xFB09-0xFB0F range (currently unoccupied). All gated behind `->require_version(N)` for the protocol upgrade version.
 
 ```
 // State operations (operate on actor-local HashmapE via c6 register)
@@ -1400,7 +1400,7 @@ Storage fees in Phase 2 are computed once per account-container finalization, no
 
 ### 24.2 Hybrid Handling
 
-During migration, the collator must support both legacy accounts (serial execution) and actor-mode accounts (two-phase execution) in the same block.
+During the V1-to-V2 transition, the collator must support both legacy accounts (serial execution) and actor-mode accounts (two-phase execution) in the same block.
 
 ### 24.3 Same-Block Visibility Enforcement
 
@@ -1482,7 +1482,7 @@ Lite-clients request actor proofs using the `getActorState` query (see Module H)
 
 Each proof layer is independently verifiable. A client that already has a verified account container proof can request only the actor-level proof for subsequent queries, reducing bandwidth.
 
-Legacy proof queries (`getAccountState`) continue to work for actor-mode accounts. They return the full account container state (including all actors) as a single proof. This is less efficient but ensures backward compatibility with clients that have not been upgraded to understand actor-level proofs.
+Legacy proof queries (`getAccountState`) continue to work for actor-mode accounts. They return the full account container state (including all actors) as a single proof. This is less efficient but ensures compatibility with clients that have not yet been updated to understand actor-level proofs.
 
 ## 28. Execution Paths
 
@@ -1497,16 +1497,16 @@ Both execution paths MUST produce semantically equivalent results for the same a
 
 ## 29. V2 Risks
 
-1. **Hard fork coordination** — requires simultaneous upgrade of all validators, lite-clients, SDKs, and explorers
+1. **Protocol upgrade complexity** — requires coordinated upgrade of all validators, lite-clients, SDKs, and explorers
 2. **Two-phase execution correctness** — Phase 1/Phase 2 boundary must be correctly enforced; incorrect isolation breaks consensus
 3. **Balance fragmentation** — per-actor budgets may lead to idle capital; need policies for minimum `shared_balance`
 4. **Shared balance overdraw** — multiple Actors issuing `ACTORCLAIM` in the same block may collectively overdraw; Phase 2 must reject deterministically
 5. **Prefix rejection cascades** — rejecting one speculative result forces rejection of later same-Actor results, reducing throughput in pathological cases
 6. **Validation complexity** — validate-query.cpp (7674 lines) needs significant changes; actor-level proofs add new attack surface
-7. **State migration** — existing accounts must be migrated; requires migration protocol
+7. **State transition** — deployed V1 contracts must transition to V2 containers; requires a transition protocol
 8. **Client compatibility** — all wallets, SDKs, and block explorers must upgrade
-9. **Behavior binding lock-in** — per-actor `behavior_ref` as baseline means every actor carries its own code reference; if the ecosystem later converges on shared behaviors, migration to a behavior registry requires a non-trivial protocol extension and potential state migration
-10. **Migration aliasing** — V1 actors (separate accounts) migrated into a single V2 container may create address aliasing issues if external systems cache the old per-account addresses; the forwarding shell strategy (section 31.4) mitigates this but does not eliminate it for all cases
+9. **Behavior binding lock-in** — per-actor `behavior_ref` as baseline means every actor carries its own code reference; if the ecosystem later converges on shared behaviors, transitioning to a behavior registry requires a non-trivial protocol extension and potential state migration of deployed contracts
+10. **Transition aliasing** — V1 actors (separate accounts) transitioned into a single V2 container may create address aliasing issues if external systems cache the old per-account addresses; the forwarding shell strategy (section 31.4) mitigates this but does not eliminate it for all cases
 
 ## 30. V2 Open Questions
 
@@ -1515,11 +1515,11 @@ Both execution paths MUST produce semantically equivalent results for the same a
 3. **Minimum shared_balance policy:** Protocol-enforced minimum to cover N blocks of storage fees, or left to contract logic?
 4. **Cross-account Actor messages:** `ACTORSEND` is intra-account only. Future `ACTORSENDX` needs design for cross-account / cross-shard delivery.
 5. **Actor lifecycle:** Can Actors be destroyed? Remaining `budget` auto-released to `shared_balance`?
-6. **Backward compatibility period:** How long do old and new formats run in parallel?
+6. **V1/V2 coexistence period:** How long do legacy and actor-mode formats run in parallel?
 7. **Actor count limits:** Maximum Actors per Account? Storage cost model for actor metadata?
 8. **VM forbidden-field enforcement:** Hard-trap vs sentinel when actor-mode code reads Phase-2-only fields?
 9. *(Resolved -- see section 17.2: per-actor behavior_ref is the baseline binding model.)*
-10. **Migration address alias strategy:** When V1 actors (each with their own account address) are migrated into a single V2 container, how are the old addresses handled? Options: forwarding shell, protocol-level alias table, or deprecation with grace period. See section 31.4 for the recommended baseline.
+10. **Transition address alias strategy:** When deployed V1 actors (each with their own account address) are transitioned into a single V2 container, how are the old addresses handled? Options: forwarding shell, protocol-level alias table, or deprecation with grace period. See section 31.4 for the recommended baseline.
 11. **Targeted message to unknown actor:** When a message targets a specific actor_id that does not exist, should the message bounce, be absorbed into shared_balance, or trigger auto-creation of a default actor? Current baseline: bounce (see section 19.3).
 
 ## 30A. V2 Spec Freeze (Required Before Coding)
@@ -1637,9 +1637,11 @@ Before coding starts, the following artifacts MUST exist:
 
 ---
 
-# Part IV — Migration: V1 to V2
+# Part IV — V1 to V2 Transition Path
 
-## 31. Migration Strategy
+## 31. Transition Strategy
+
+This section defines how V1 contracts deployed on the live network transition to V2 actor containers once V2 protocol support is implemented. The protocol itself does not need migration -- V2 can be designed in from the start. However, V1 contracts that are already deployed when V2 becomes available will need a transition path to take advantage of protocol-native actor containers.
 
 ### 31.1 Transition Mapping
 
@@ -1650,11 +1652,11 @@ Before coding starts, the following artifacts MUST exist:
 | Recovery Actor = independent Account C | Recovery Actor = actor inside same container |
 | Token / App Actors = separate Accounts | Token / App Actors = actors inside containers |
 
-### 31.2 Migration Options
+### 31.2 Transition Options
 
 * **Option A: New Accounts Only** — only newly created accounts use actor-mode. Recommended initial strategy.
-* **Option B: Opt-In Migration** — existing V1 actor sets may migrate into actor containers via explicit migration procedures.
-* **Option C: Full Network Migration** — all accounts eventually move to actor-mode. Long-term goal.
+* **Option B: Opt-In Transition** — deployed V1 actor sets may transition into actor containers via explicit transition procedures.
+* **Option C: Full Network Transition** — all accounts eventually move to actor-mode. Long-term goal.
 
 ### 31.3 What V1 Concepts Carry Forward
 
@@ -1671,21 +1673,21 @@ Only the **protocol placement** of those concepts changes.
 
 ### 31.4 Address Compatibility Strategy
 
-When V1 actors migrate from separate accounts into a single V2 container, the old per-account addresses must be handled. Three options:
+When deployed V1 actors transition from separate accounts into a single V2 container, the old per-account addresses must be handled. Three options:
 
 | Option | Mechanism | Pros | Cons |
 |--------|-----------|------|------|
 | Forwarding shell | Leave a minimal contract at the old address that forwards all messages to the new ActorAddress inside the container | Inbound compatibility for old addresses; no protocol change needed | Gas overhead per forwarded message; old addresses remain occupied; receiving actors must implement wrapper verification; outbound sender identity NOT preserved (see 31.4.2) |
 | Protocol-level alias table | The protocol maintains a mapping from old addresses to new ActorAddresses | Zero-overhead forwarding; clean semantics | Requires additional protocol change; alias table is unbounded |
-| Deprecation with grace period | Old addresses stop working after a defined grace period; clients must update | Simplest long-term; no permanent overhead | Breaking change; requires coordinated client migration |
+| Deprecation with grace period | Old addresses stop working after a defined grace period; clients must update | Simplest long-term; no permanent overhead | Breaking change; requires coordinated client update |
 
-**Recommended baseline: forwarding shell.** This requires no additional protocol changes, preserves inbound compatibility for legacy addresses, and can be implemented as a standard V1 contract deployed before or during migration. The forwarding shell contract stores the target `ActorAddress` and re-routes all inbound messages (including value) to the container.
+**Recommended baseline: forwarding shell.** This requires no additional protocol changes, preserves inbound compatibility for legacy addresses, and can be implemented as a standard V1 contract deployed before or during the transition. The forwarding shell contract stores the target `ActorAddress` and re-routes all inbound messages (including value) to the container.
 
 The gas overhead of forwarding is bounded (one additional message hop per forwarded message) and decreases over time as clients update to the new addresses.
 
 ### 31.4.1 On-Chain Message Compatibility Rules (Normative)
 
-When a V1 actor set migrates into a V2 container, the following rules govern message handling for old addresses:
+When a deployed V1 actor set transitions into a V2 container, the following rules govern message handling for old addresses:
 
 1. **Forwarding shell behavior:** The forwarding shell deployed at the old V1 address MUST: (a) accept all inbound internal and external messages, (b) re-emit each message as an internal message to the corresponding `ActorAddress` inside the V2 container, preserving the original message body and attached value (minus forwarding gas), (c) include the original sender address in a wrapper cell so the target actor can authenticate the true source.
 
@@ -1695,15 +1697,15 @@ When a V1 actor set migrates into a V2 container, the following rules govern mes
 
 4. **Forwarding shell lifecycle:** Forwarding shells SHOULD remain active until monitoring shows that <1% of inbound messages use the old address over a sustained period. The shell may then be frozen or replaced with a permanent redirect bounce message indicating the new address.
 
-5. **Reverse path:** When a migrated actor inside a V2 container sends a message to an external address, the message originates from the container's account address (not the old V1 address). Recipients MUST be notified of the address change through off-chain channels (SDK updates, explorer annotations, wallet metadata).
+5. **Reverse path:** When a transitioned actor inside a V2 container sends a message to an external address, the message originates from the container's account address (not the old V1 address). Recipients MUST be notified of the address change through off-chain channels (SDK updates, explorer annotations, wallet metadata).
 
-6. **Compatibility scope:** Old-address inbound compatibility through forwarding shells is **not pure infrastructure compatibility** — it is **application-protocol compatibility**. The forwarding shell includes the original sender in a wrapper cell, and the receiving actor inside the V2 container must implement shell-wrapper verification to authenticate provenance. Therefore, old-address compatibility is only effective for migrated actors that have been updated (or were originally written) to understand and verify the wrapper format. Actors that do not implement wrapper verification will see the forwarding shell address as the sender, not the original caller. Migration tooling MUST flag actors that lack wrapper verification as "inbound-compatibility-incomplete."
+6. **Compatibility scope:** Old-address inbound compatibility through forwarding shells is **not pure infrastructure compatibility** — it is **application-protocol compatibility**. The forwarding shell includes the original sender in a wrapper cell, and the receiving actor inside the V2 container must implement shell-wrapper verification to authenticate provenance. Therefore, old-address compatibility is only effective for transitioned actors that have been updated (or were originally written) to understand and verify the wrapper format. Actors that do not implement wrapper verification will see the forwarding shell address as the sender, not the original caller. Transition tooling MUST flag actors that lack wrapper verification as "inbound-compatibility-incomplete."
 
 ### 31.4.2 Outbound Identity Compatibility Rule (Normative)
 
 Forwarding shells solve **inbound** compatibility for old V1 addresses, but they do
 not automatically preserve **outbound sender identity**. Therefore the protocol and
-migration tooling MUST distinguish two compatibility classes:
+transition tooling MUST distinguish two compatibility classes:
 
 1. **Inbound-only compatibility**
    Old addresses continue to receive messages through forwarding shells.
@@ -1713,12 +1715,12 @@ migration tooling MUST distinguish two compatibility classes:
    callbacks, or authorization messages to appear as if they originated from that
    same old address.
 
-The baseline V2 migration guarantee is **inbound-only compatibility**. Full
+The baseline V2 transition guarantee is **inbound-only compatibility**. Full
 bidirectional identity preservation is **NOT guaranteed by default**.
 
 The following rules apply:
 
-1. **Canonical sender after migration:** Once an actor is migrated into a V2 account
+1. **Canonical sender after transition:** Once an actor is transitioned into a V2 account
    container, its canonical outbound sender is the **container account address**.
    The protocol does not spoof old V1 addresses as native outbound senders.
 
@@ -1727,13 +1729,13 @@ The following rules apply:
    container address back to legacy V1 addresses. Such aliasing, if ever desired,
    requires a separate protocol extension.
 
-3. **Compatibility promise to external integrations:** A migrated system MAY claim
+3. **Compatibility promise to external integrations:** A transitioned system MAY claim
    "backward compatible" only for integrations that depend on the old address as an
    **inbound destination**. It MUST NOT claim full backward compatibility for
    integrations that authenticate the old address as an **outbound sender**, unless a
    dedicated compatibility adapter is deployed and documented.
 
-4. **Required migration classification:** Before migration, every known dependency on
+4. **Required transition classification:** Before transition, every known dependency on
    a V1 actor address MUST be classified as one of:
    - destination-only reference
    - sender-authenticated reference
@@ -1742,14 +1744,14 @@ The following rules apply:
 5. **Handling sender-authenticated dependencies:** If an external contract, token, or
    application authenticates the old V1 address as the sender, then one of the
    following MUST be chosen explicitly:
-   - keep the V1 actor alive and unmigrated
+   - keep the V1 actor alive and untransitioned
    - retain the V1 address as a permanent compatibility shell with custom outbound
      adapter logic
-   - migrate the dependency itself to recognize the new container address
+   - update the dependency itself to recognize the new container address
    - accept a breaking change and schedule it via governance / upgrade coordination
 
 6. **Explorer and SDK disclosure:** Wallets, SDKs, and explorers MUST present the
-   migration state of an actor address explicitly:
+   transition state of an actor address explicitly:
    - old V1 address still valid for inbound messages
    - canonical outbound identity is now container address X
    - old address preserved only as forwarding shell
@@ -1766,46 +1768,46 @@ In short:
 
 ### 31.5 Treasury Mapping Rule
 
-When a V1 Treasury Actor (independent Account B) migrates into a V2 container, the following state mapping applies:
+When a V1 Treasury Actor (independent Account B) transitions into a V2 container, the following state mapping applies:
 
 * The Treasury Actor's contract balance becomes its initial `budget` in the actor descriptor.
 * Outstanding `AllocateBudget` records are preserved in the actor's state.
 * The `primary_wallet` backlink is replaced by the container-level `registry_root` lookup for ROLE_PRIMARY.
-* If a forwarding shell is deployed at the old Treasury address, it MUST forward `ReturnBudget` messages from V1 actors that have not yet migrated.
+* If a forwarding shell is deployed at the old Treasury address, it MUST forward `ReturnBudget` messages from V1 actors that have not yet transitioned.
 
-### 31.6 Role/Code/State Migration Rule
+### 31.6 Role/Code/State Transition Rule
 
-For each V1 actor migrating into a V2 container:
+For each deployed V1 actor transitioning into a V2 container:
 
-1. **Code**: The V1 contract code becomes the `behavior_ref` in the actor's descriptor. Some contracts may migrate without code rewrite if they do not depend on actor-mode opcodes, legacy address identity assumptions, or legacy account-context semantics. Migration tooling MUST perform a compatibility audit before reusing code unchanged. Contracts that wish to use STATEGET/STATESET/STATEDEL must be recompiled for actor-mode.
+1. **Code**: The V1 contract code becomes the `behavior_ref` in the actor's descriptor. Some contracts may transition without code rewrite if they do not depend on actor-mode opcodes, legacy address identity assumptions, or legacy account-context semantics. Transition tooling MUST perform a compatibility audit before reusing code unchanged. Contracts that wish to use STATEGET/STATESET/STATEDEL must be recompiled for actor-mode.
 2. **State**: The V1 contract's `data` Cell is mapped into the actor's `state_root` HashmapE. The mapping strategy depends on the contract's data layout -- flat data Cells are wrapped into a single HashmapE entry keyed by a well-known key (e.g., 0x00); structured HashmapE states are mapped directly.
-3. **Role**: The V1 role ID (from the Actor Registry) becomes the key in the container-level `registry_root` mapping to the migrated `actor_id`.
+3. **Role**: The V1 role ID (from the Actor Registry) becomes the key in the container-level `registry_root` mapping to the corresponding V2 `actor_id`.
 
-### 31.6.1 Compatibility Audit (Migration Precondition)
+### 31.6.1 Compatibility Audit (Transition Precondition)
 
-The compatibility audit is a **migration precondition**, not merely a tooling recommendation. No V1 actor may be migrated into a V2 container until the audit for that actor is complete and all findings are resolved.
+The compatibility audit is a **transition precondition**, not merely a tooling recommendation. No deployed V1 actor may be transitioned into a V2 container until the audit for that actor is complete and all findings are resolved.
 
-Migration tooling MUST verify that the post-migration actor state is functionally equivalent to the pre-migration account state by executing a set of reference transactions against both representations and comparing outputs.
+Transition tooling MUST verify that the post-transition actor state is functionally equivalent to the pre-transition account state by executing a set of reference transactions against both representations and comparing outputs.
 
-At minimum, the migration audit MUST check the following three categories for each migrated actor:
+At minimum, the transition audit MUST check the following three categories for each transitioned actor:
 
-1. **Address identity assumptions:** Does the contract logic branch on `my_address` or compare its own address against a stored value? If so, the migrated actor will observe a different address (the container address + actor_id) and may break. **Resolution:** update address references or deploy an address-translation shim.
+1. **Address identity assumptions:** Does the contract logic branch on `my_address` or compare its own address against a stored value? If so, the transitioned actor will observe a different address (the container address + actor_id) and may break. **Resolution:** update address references or deploy an address-translation shim.
 2. **Account context assumptions:** Does the contract read account-level fields (balance, code hash, last_trans_lt) that change meaning in actor-mode? If so, the contract must be updated to use actor-local equivalents (budget, behavior_ref hash, actor_lt). **Resolution:** recompile with actor-mode field mappings.
 3. **Message source/callback assumptions:** Does the contract authenticate inbound messages by checking `msg.sender` against a stored address, or does it send callback messages expecting the recipient to verify the sender? If the stored address is an old V1 address, the contract must be updated to accept messages via forwarding shell wrapper verification or to use the new container-level address. **Resolution:** implement wrapper verification or update stored addresses.
 
-An actor that fails any of the three audit categories MUST NOT be migrated until the issue is resolved. The audit result for each actor MUST be recorded and attached to the migration transaction as metadata.
+An actor that fails any of the three audit categories MUST NOT be transitioned until the issue is resolved. The audit result for each actor MUST be recorded and attached to the transition transaction as metadata.
 
-## 31A. Migration Freeze (Normative Before V2 Rollout)
+## 31A. Transition Freeze (Normative Before V2 Rollout)
 
-This section is normative for any V1 -> V2 migration planning.
+This section is normative for any V1 -> V2 transition planning.
 
-No V2 rollout may begin until the migration rules in this section are frozen.
+No V2 rollout may begin until the transition rules in this section are frozen.
 
 If any descriptive text in Part IV conflicts with this section, this section takes precedence.
 
-### 31A.1 Migration Baseline
+### 31A.1 Transition Baseline
 
-The baseline migration assumption is:
+The baseline transition assumption is:
 
 > V1 actor-oriented application architecture already exists. V2 protocol-native actor containers must preserve the semantics of that architecture as closely as possible.
 
@@ -1820,21 +1822,21 @@ A V2 rollout MUST freeze one baseline address strategy. One of the following MUS
 The chosen strategy MUST define:
 
 1. what existing V1 user-facing addresses continue to mean
-2. how old wallet addresses resolve after migration
+2. how old wallet addresses resolve after transition
 3. whether users must adopt new visible addresses
 4. how explorers and SDKs map old identities to new actor containers
 
 ### 31A.3 Treasury Mapping Freeze
 
-The migration of V1 Treasury Actor funds MUST be frozen explicitly. The spec MUST define whether V1 Treasury balances become:
+The transition of V1 Treasury Actor funds MUST be frozen explicitly. The spec MUST define whether V1 Treasury balances become:
 
 - V2 `shared_balance`
 - Treasury Actor budget inside the container
 - a split of both
 
-No migration tool may infer this ad hoc.
+No transition tool may infer this ad hoc.
 
-### 31A.4 Role Migration Freeze
+### 31A.4 Role Transition Freeze
 
 The following mappings MUST be frozen:
 
@@ -1844,9 +1846,9 @@ The following mappings MUST be frozen:
 - V1 Policy Actor -> V2 Policy Actor
 - V1 Token / App Actors -> V2 actor placement rules
 
-### 31A.5 Code and State Migration Freeze
+### 31A.5 Code and State Transition Freeze
 
-The migration spec MUST define:
+The transition spec MUST define:
 
 1. how V1 contract code maps into V2 `behavior_ref`
 2. how V1 persistent state maps into actor-local state
@@ -1855,16 +1857,16 @@ The migration spec MUST define:
 
 ### 31A.6 Compatibility Window Freeze
 
-The migration plan MUST define:
+The transition plan MUST define:
 
 - whether legacy and actor-container accounts coexist
 - for how long they coexist
-- whether migration is opt-in or mandatory
+- whether transition is opt-in or mandatory
 - whether new accounts only may use V2 initially
 
-### 31A.7 Migration Safety Requirements
+### 31A.7 Transition Safety Requirements
 
-Any migration tooling MUST preserve at minimum:
+Any transition tooling MUST preserve at minimum:
 
 - ownership semantics
 - recovery semantics
@@ -1879,20 +1881,20 @@ No V2 public rollout may begin until the following are frozen and tested:
 
 - address compatibility strategy
 - treasury mapping rule
-- role migration rule
-- code/state migration rule
+- role transition rule
+- code/state transition rule
 - compatibility window rule
 
-### 31A.9 Required Migration Test Scenarios
+### 31A.9 Required Transition Test Scenarios
 
-At minimum, migration tests MUST cover:
+At minimum, transition tests MUST cover:
 
-1. V1 wallet actor to V2 wallet actor migration
-2. V1 treasury balance migration
-3. V1 recovery flow preserved after migration
-4. V1 registry semantics preserved after migration
-5. old user-facing address resolution after migration
-6. mixed legacy + migrated accounts in the same network
+1. V1 wallet actor to V2 wallet actor transition
+2. V1 treasury balance transition
+3. V1 recovery flow preserved after transition
+4. V1 registry semantics preserved after transition
+5. old user-facing address resolution after transition
+6. mixed legacy + transitioned accounts in the same network
 
 ---
 
@@ -2080,7 +2082,7 @@ Caveat: these estimates exclude time spent on spec-freeze iteration (Module 0 fe
 | F | Queue merge tests; 608-bit key sort correctness; golden sort-order tests (section 26) |
 | G | lite-client getActorState proof verification |
 | H | lite-client actor state/list queries return correct results |
-| Migration | V1-to-V2 migration test: deploy V1 Virtual Account (Wallet + Treasury + Recovery), execute reference transactions, migrate to V2 container, verify post-migration state equivalence and functional equivalence |
+| Transition | V1-to-V2 transition test: deploy V1 Virtual Account (Wallet + Treasury + Recovery), execute reference transactions, transition to V2 container, verify post-transition state equivalence and functional equivalence |
 
 **End-to-end:** start local testnet -> deploy actor-mode contract -> multi-actor parallel transactions -> verify block consistency.
 
@@ -2118,7 +2120,7 @@ ACT_PROPOSE_OWNER=0x0C  ACT_COMMIT_OWNER=0x0D
 6. Actor-aware 608-bit queue key round-trip
 7. Actor proof verification
 8. Validator replay equals collator result
-9. Migration from V1 actor set to one V2 actor container
+9. Transition from V1 actor set to one V2 actor container
 10. Golden serialization round-trip for ActorDescriptor and actor-mode AccountStorage (bit-exact encoding/decoding)
 11. VM forbidden-field enforcement: TXHASH returns sentinel, account-level lt is not accessible, shared_balance is not readable in actor-mode Phase 1
 12. Mixed legacy+actor-mode block: a single block containing both legacy serial transactions and actor-mode two-phase transactions produces correct state for both account types
