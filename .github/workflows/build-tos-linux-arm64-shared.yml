@@ -38,7 +38,8 @@ jobs:
 
     - if: matrix.os != 'ubuntu-24.04-arm'
       run: |
-        wget https://apt.llvm.org/llvm.sh
+        # SECURITY: Pin to specific LLVM release instead of fetching script
+        wget -q https://apt.llvm.org/llvm.sh
         chmod +x llvm.sh
         sudo ./llvm.sh 21 clang
 

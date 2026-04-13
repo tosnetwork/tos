@@ -1,21 +1,7 @@
-FROM ubuntu:22.04 AS builder
-ARG DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && \
-        rm /var/lib/dpkg/info/libc-bin.* && \
-        apt-get clean && \
-        apt-get update && \
-        apt install libc-bin && \
-        apt-get install -y build-essential cmake clang gperf wget git \
-        ninja-build pkg-config autoconf automake libtool \
-        libjemalloc-dev lsb-release software-properties-common gnupg
-
-RUN wget https://apt.llvm.org/llvm.sh && \
-    chmod +x llvm.sh && \
-    ./llvm.sh 21 all && \
-    rm -rf /var/lib/apt/lists/*
-
-ENV CC=/usr/bin/clang-21
-ENV CXX=/usr/bin/clang++-21
+# Use pre-built builder image with Clang 21 already installed.
+# To rebuild: docker build -f Dockerfile.builder --target builder-22 -t ghcr.io/tosnetwork/tos-builder:ubuntu-22.04 .
+# No external script downloads at build time.
+FROM ghcr.io/tosnetwork/tos-builder:ubuntu-22.04 AS builder
 ENV CCACHE_DISABLE=1
 
 WORKDIR /
