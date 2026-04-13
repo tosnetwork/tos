@@ -39,6 +39,70 @@
 
 namespace tos {
 
+// ─── URL-decode + query-string → JSON helpers (for REST GET endpoints) ────
+
+static int hex_digit(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  return -1;
+}
+
+static std::string url_decode(const std::string &src) {
+  std::string out;
+  out.reserve(src.size());
+  for (size_t i = 0; i < src.size(); i++) {
+    if (src[i] == '+') {
+      out += ' ';
+    } else if (src[i] == '%' && i + 2 < src.size()) {
+      int hi = hex_digit(src[i + 1]);
+      int lo = hex_digit(src[i + 2]);
+      if (hi >= 0 && lo >= 0) {
+        out += static_cast<char>((hi << 4) | lo);
+        i += 2;
+      } else {
+        out += src[i];
+      }
+    } else {
+      out += src[i];
+    }
+  }
+  return out;
+}
+
+// Convert "key1=val1&key2=val2" into a JSON object string: {"key1":"val1","key2":"val2"}
+// All values are encoded as JSON strings; numeric coercion is handled by
+// get_required_int_field / get_optional_int_field which parse from string values.
+static std::string query_string_to_json(const std::string &qs) {
+  if (qs.empty()) return "{}";
+  td::StringBuilder sb;
+  sb << "{";
+  bool first = true;
+  size_t pos = 0;
+  while (pos < qs.size()) {
+    auto amp = qs.find('&', pos);
+    auto token = qs.substr(pos, amp == std::string::npos ? std::string::npos : amp - pos);
+    pos = amp == std::string::npos ? qs.size() : amp + 1;
+
+    if (token.empty()) continue;
+    auto eq = token.find('=');
+    std::string key, value;
+    if (eq == std::string::npos) {
+      key = url_decode(token);
+    } else {
+      key = url_decode(token.substr(0, eq));
+      value = url_decode(token.substr(eq + 1));
+    }
+    if (key.empty()) continue;
+
+    if (!first) sb << ",";
+    first = false;
+    sb << td::JsonString(td::Slice(key)) << ":" << td::JsonString(td::Slice(value));
+  }
+  sb << "}";
+  return sb.as_cslice().str();
+}
+
 // ─── Per-request timeout guard ────────────────────────────────────────────
 //
 // A tiny actor that wraps a td::Promise<td::BufferSlice> with a deadline.
@@ -139,10 +203,72 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     return;
   }
 
-  // Only POST is allowed for JSON-RPC
+  // ─── REST-style GET endpoints ────────────────────────────────────────────
+  // Maps GET /methodName?param1=val1&param2=val2 to the same handlers as
+  // POST JSON-RPC {"method":"methodName","params":{"param1":"val1",...}}.
+  if (method == "GET") {
+    auto path = url;
+    auto query_pos = path.find('?');
+    std::string query_string;
+    if (query_pos != std::string::npos) {
+      query_string = path.substr(query_pos + 1);
+      path = path.substr(0, query_pos);
+    }
+    // Strip trailing slash for uniform matching
+    if (path.size() > 1 && path.back() == '/') {
+      path.pop_back();
+    }
+
+    // Map path to method name (only read-only, high-value endpoints)
+    std::string rest_method;
+    if (path == "/getMasterchainInfo")    rest_method = "getMasterchainInfo";
+    else if (path == "/getAddressInformation")  rest_method = "getAddressInformation";
+    else if (path == "/getAddressBalance")      rest_method = "getAddressBalance";
+    else if (path == "/getAddressState")        rest_method = "getAddressState";
+    else if (path == "/getWalletInformation")   rest_method = "getWalletInformation";
+    else if (path == "/getTransactions")        rest_method = "getTransactions";
+    else if (path == "/getConfigParam")         rest_method = "getConfigParam";
+    else if (path == "/packAddress")            rest_method = "packAddress";
+    else if (path == "/unpackAddress")          rest_method = "unpackAddress";
+    else if (path == "/detectAddress")          rest_method = "detectAddress";
+    else if (path == "/lookupBlock")            rest_method = "lookupBlock";
+    else if (path == "/shards")                 rest_method = "shards";
+    else if (path == "/getBlockHeader")         rest_method = "getBlockHeader";
+    else if (path == "/getBlockTransactions")   rest_method = "getBlockTransactions";
+    else if (path == "/getExtendedAddressInformation") rest_method = "getExtendedAddressInformation";
+
+    if (!rest_method.empty()) {
+      // Build a JSON object from query parameters, parse it, and dispatch
+      auto json_str = query_string_to_json(query_string);
+      auto buf = td::BufferSlice(json_str);
+      auto json_r = td::json_decode(buf.as_slice());
+      if (json_r.is_error()) {
+        promise.set_value(make_json_error(-32602, "Invalid query parameters", "null",
+                                          opts_.cors_origin));
+        return;
+      }
+      auto json_val = json_r.move_as_ok();
+      if (json_val.type() != td::JsonValue::Type::Object) {
+        promise.set_value(make_json_error(-32602, "Invalid query parameters", "null",
+                                          opts_.cors_origin));
+        return;
+      }
+      dispatch_method(std::move(rest_method), json_val.get_object(),
+                      "null", std::move(promise));
+      return;
+    }
+
+    // Unknown GET path
+    promise.set_value(make_text_response(404, "Not Found",
+                                         "Unknown endpoint",
+                                         opts_.cors_origin));
+    return;
+  }
+
+  // Only POST is allowed for JSON-RPC beyond this point
   if (method != "POST") {
     promise.set_value(make_text_response(405, "Method Not Allowed",
-                                         "Only POST and OPTIONS are supported",
+                                         "Only POST, GET, and OPTIONS are supported",
                                          opts_.cors_origin));
     return;
   }
@@ -454,10 +580,26 @@ struct ParsedAccountState {
   td::uint32 sync_utime = 0;
   td::Ref<vm::Cell> code_cell;  // for wallet detection
 
+  // Block ID from liteserver response (for real block_id in JSON)
+  td::int32 blk_workchain = -1;
+  td::int64 blk_shard = static_cast<td::int64>(0x8000000000000000ULL);
+  td::uint32 blk_seqno = 0;
+  std::string blk_root_hash_b64;
+  std::string blk_file_hash_b64;
+
   static td::Result<ParsedAccountState> parse(
       tos::tl_object_ptr<tos::lite_api::liteServer_accountState>& f,
       const block::StdAddress& addr) {
     ParsedAccountState res;
+
+    // Capture block ID from the liteserver response
+    if (f->id_) {
+      res.blk_workchain = f->id_->workchain_;
+      res.blk_shard = f->id_->shard_;
+      res.blk_seqno = f->id_->seqno_;
+      res.blk_root_hash_b64 = td::base64_encode(f->id_->root_hash_.as_slice());
+      res.blk_file_hash_b64 = td::base64_encode(f->id_->file_hash_.as_slice());
+    }
 
     // Validate proof and extract last_trans_lt, last_trans_hash, gen_utime
     auto blk_id = tos::create_block_id(f->id_);
@@ -528,7 +670,12 @@ struct ParsedAccountState {
         << ",\"last_transaction_id\":{\"@type\":\"internal.transactionId\""
         << ",\"lt\":\"" << last_trans_lt << "\""
         << ",\"hash\":" << td::JsonString(td::Slice(last_trans_hash_b64)) << "}"
-        << ",\"block_id\":{\"@type\":\"tos.blockIdExt\",\"workchain\":-1,\"shard\":\"-9223372036854775808\",\"seqno\":0,\"root_hash\":\"\",\"file_hash\":\"\"}"
+        << ",\"block_id\":{\"@type\":\"ton.blockIdExt\""
+        << ",\"workchain\":" << blk_workchain
+        << ",\"shard\":\"" << blk_shard << "\""
+        << ",\"seqno\":" << blk_seqno
+        << ",\"root_hash\":\"" << blk_root_hash_b64 << "\""
+        << ",\"file_hash\":\"" << blk_file_hash_b64 << "\"}"
         << ",\"sync_utime\":" << sync_utime
         << ",\"extra_currencies\":[]"
         << ",\"state\":" << td::JsonString(td::Slice(state_str))
@@ -546,7 +693,12 @@ struct ParsedAccountState {
         << ",\"last_transaction_id\":{\"@type\":\"internal.transactionId\""
         << ",\"lt\":\"" << last_trans_lt << "\""
         << ",\"hash\":" << td::JsonString(td::Slice(last_trans_hash_b64)) << "}"
-        << ",\"block_id\":{\"@type\":\"tos.blockIdExt\",\"workchain\":-1,\"shard\":\"-9223372036854775808\",\"seqno\":0,\"root_hash\":\"\",\"file_hash\":\"\"}"
+        << ",\"block_id\":{\"@type\":\"ton.blockIdExt\""
+        << ",\"workchain\":" << blk_workchain
+        << ",\"shard\":\"" << blk_shard << "\""
+        << ",\"seqno\":" << blk_seqno
+        << ",\"root_hash\":\"" << blk_root_hash_b64 << "\""
+        << ",\"file_hash\":\"" << blk_file_hash_b64 << "\"}"
         << ",\"sync_utime\":" << sync_utime
         << ",\"account_state\":{\"@type\":\"raw.accountState\""
         << ",\"code\":" << td::JsonString(td::Slice(code_b64))
@@ -833,10 +985,26 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
             }
           }
 
+          // Build block_id from liteserver response
+          std::string block_id_json = "null";
+          if (f->id_) {
+            block_id_json = PSTRING()
+                << "{\"@type\":\"ton.blockIdExt\""
+                << ",\"workchain\":" << f->id_->workchain_
+                << ",\"shard\":\"" << f->id_->shard_ << "\""
+                << ",\"seqno\":" << f->id_->seqno_
+                << ",\"root_hash\":\"" << td::base64_encode(f->id_->root_hash_.as_slice()) << "\""
+                << ",\"file_hash\":\"" << td::base64_encode(f->id_->file_hash_.as_slice()) << "\""
+                << "}";
+          }
+
           auto result = PSTRING()
-              << "{\"exit_code\":" << f->exit_code_
-              << ",\"gas_used\":0"
-              << ",\"stack\":" << stack_json << "}";
+              << "{\"gas_used\":0"
+              << ",\"stack\":" << stack_json
+              << ",\"exit_code\":" << f->exit_code_
+              << ",\"last_transaction_id\":null"
+              << ",\"block_id\":" << block_id_json
+              << "}";
 
           promise.set_value(make_json_ok(result, req_id));
         }));
@@ -849,9 +1017,11 @@ static std::string build_wallet_json(bool is_wallet, td::int64 balance,
                                      const std::string& account_state,
                                      const std::string& wallet_type,
                                      td::int32 seqno,
-                                     td::uint64 last_lt, const std::string& last_hash_b64) {
+                                     td::uint64 last_lt, const std::string& last_hash_b64,
+                                     td::int64 wallet_id = -1) {
   td::StringBuilder sb;
-  sb << "{\"wallet\":" << (is_wallet ? "true" : "false")
+  sb << "{\"@type\":\"query.fees\""
+     << ",\"wallet\":" << (is_wallet ? "true" : "false")
      << ",\"balance\":" << td::JsonString(td::Slice(PSTRING() << balance))
      << ",\"account_state\":" << td::JsonString(td::Slice(account_state))
      << ",\"last_transaction_id\":{\"@type\":\"internal.transactionId\""
@@ -864,8 +1034,13 @@ static std::string build_wallet_json(bool is_wallet, td::int64 balance,
     } else {
       sb << ",\"seqno\":null";
     }
+    if (wallet_id >= 0) {
+      sb << ",\"wallet_id\":" << wallet_id;
+    } else {
+      sb << ",\"wallet_id\":null";
+    }
   } else {
-    sb << ",\"wallet_type\":null,\"seqno\":null";
+    sb << ",\"wallet_type\":null,\"seqno\":null,\"wallet_id\":null";
   }
   sb << "}";
   return sb.as_cslice().str();
