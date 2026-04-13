@@ -184,6 +184,7 @@ class ValidatorEngine : public td::actor::Actor {
   td::actor::ActorOwn<tos::PrometheusExporter> exporter_;
   td::actor::ActorOwn<tos::JsonRpcServer> json_rpc_server_;
   td::optional<td::IPAddress> json_rpc_addr_;
+  tos::JsonRpcServer::Options json_rpc_opts_;
 
   std::string local_config_ = "";
   std::string global_config_ = "tos-global.config";
@@ -493,6 +494,9 @@ class ValidatorEngine : public td::actor::Actor {
 
   void export_metrics(td::IPAddress address);
   void serve_json_rpc(td::IPAddress address);
+  void set_json_rpc_readonly(bool readonly);
+  void set_json_rpc_cors_origin(std::string origin);
+  void set_json_rpc_readyz_threshold(td::int32 threshold);
 
   void get_current_validator_perm_key(td::Promise<std::pair<tos::PublicKey, size_t>> promise);
 

@@ -27,13 +27,21 @@ namespace tos {
 
 class JsonRpcServer final : public td::actor::Actor {
  public:
+  struct Options {
+    bool readonly = false;           // disable sendBoc/sendBocReturnHash/sendQuery
+    std::string cors_origin = "*";   // Access-Control-Allow-Origin value
+    td::int32 readyz_threshold = 60; // sync lag threshold in seconds for /readyz
+  };
+
   static td::actor::ActorOwn<JsonRpcServer> create(
-      td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager);
+      td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager,
+      Options options);
 
   void listen(td::IPAddress addr);
 
-  explicit JsonRpcServer(
-      td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager);
+  JsonRpcServer(
+      td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager,
+      Options options);
 
  private:
   using RequestPtr = std::unique_ptr<http::HttpRequest>;
@@ -58,7 +66,7 @@ class JsonRpcServer final : public td::actor::Actor {
   void dispatch_method(std::string method, td::JsonObject &params,
                        std::string req_id, td::Promise<HttpReturn> promise);
 
-  // Method handlers
+  // Method handlers — existing
   void handle_sendBoc(td::JsonObject &params, std::string req_id,
                       td::Promise<HttpReturn> promise);
   void handle_getConfigParam(td::JsonObject &params, std::string req_id,
@@ -73,16 +81,61 @@ class JsonRpcServer final : public td::actor::Actor {
   void handle_getWalletInformation(td::JsonObject &params, std::string req_id,
                                    td::Promise<HttpReturn> promise);
 
+  // Method handlers — block/chain read APIs
+  void handle_getMasterchainInfo(td::JsonObject &params, std::string req_id,
+                                 td::Promise<HttpReturn> promise);
+  void handle_lookupBlock(td::JsonObject &params, std::string req_id,
+                          td::Promise<HttpReturn> promise);
+  void handle_shards(td::JsonObject &params, std::string req_id,
+                     td::Promise<HttpReturn> promise);
+  void handle_getBlockHeader(td::JsonObject &params, std::string req_id,
+                             td::Promise<HttpReturn> promise);
+  void handle_getBlockTransactions(td::JsonObject &params, std::string req_id,
+                                   td::Promise<HttpReturn> promise);
+  void handle_getTransactions(td::JsonObject &params, std::string req_id,
+                              td::Promise<HttpReturn> promise);
+  void handle_getBlockTransactionsExt(td::JsonObject &params, std::string req_id,
+                                      td::Promise<HttpReturn> promise);
+
+  // Method handlers — send family
+  void handle_sendBocReturnHash(td::JsonObject &params, std::string req_id,
+                                td::Promise<HttpReturn> promise);
+  void handle_sendQuery(td::JsonObject &params, std::string req_id,
+                        td::Promise<HttpReturn> promise);
+
+  // Method handlers — convenience / address APIs
+  void handle_getAddressBalance(td::JsonObject &params, std::string req_id,
+                                td::Promise<HttpReturn> promise);
+  void handle_getAddressState(td::JsonObject &params, std::string req_id,
+                              td::Promise<HttpReturn> promise);
+  void handle_packAddress(td::JsonObject &params, std::string req_id,
+                          td::Promise<HttpReturn> promise);
+  void handle_unpackAddress(td::JsonObject &params, std::string req_id,
+                            td::Promise<HttpReturn> promise);
+  void handle_detectAddress(td::JsonObject &params, std::string req_id,
+                            td::Promise<HttpReturn> promise);
+
+  // Readiness probe (async — queries liteserver for sync state)
+  void handle_readyz(td::Promise<HttpReturn> promise);
+
   // Send a TL-serialized liteserver query to the validator manager
   void send_liteserver_query(td::BufferSlice query,
                              td::Promise<td::BufferSlice> promise);
 
   // Utility: build JSON-RPC response
-  static HttpReturn make_json_ok(std::string result_json, std::string id);
-  static HttpReturn make_json_error(int code, std::string message, std::string id);
+  static HttpReturn make_json_ok(std::string result_json, std::string id,
+                                 const std::string& cors_origin = "*");
+  static HttpReturn make_json_error(int code, std::string message, std::string id,
+                                    const std::string& cors_origin = "*");
+  static HttpReturn make_health_ok(const std::string& cors_origin = "*");
+  static HttpReturn make_cors_preflight(const std::string& cors_origin = "*");
+  static HttpReturn make_text_response(int status_code, std::string status_text,
+                                       std::string body,
+                                       const std::string& cors_origin = "*");
 
   td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager_;
   td::actor::ActorOwn<http::HttpServer> http_;
+  Options opts_;
 };
 
 }  // namespace tos
