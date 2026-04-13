@@ -1,6 +1,6 @@
 # TOS North Star
 
-Version: v1.1
+Version: v1.2
 
 ## Purpose
 
@@ -108,6 +108,38 @@ The first winning use cases should be the ones where operational coherence and A
 
 This means TOS should not measure progress by the number of features it exposes.
 It should measure progress by whether these audiences can complete their most important jobs faster, more safely, and with less chain-specific glue.
+
+## Why TOS Wins
+
+TOS should not try to win by being merely comparable.
+It should win where coherence creates compounding advantage.
+
+The ecosystem should aim to be meaningfully better in a small number of areas:
+
+- operator workflows that are dramatically simpler and more automatable
+- public API surfaces that are dramatically more stable and easier to integrate
+- contract and wallet flows that are dramatically more coherent from estimate to send to observe
+
+TOS does not need to dominate every category.
+It does need to be obviously better where it chooses to compete.
+
+That also means TOS should be explicit about what it is not trying to be in the near term.
+Strategic focus is part of product quality.
+
+## Priority Order Across Target Users
+
+When tradeoffs appear, TOS should prioritize audiences in this order:
+
+1. infrastructure operators and validators
+2. wallet and backend integrators
+3. contract teams building reusable applications and services
+
+This ordering is intentional.
+If the operator path is fragile, the rest of the ecosystem inherits instability.
+If wallet and backend integrations remain expensive, user-facing adoption remains shallow.
+If those two layers are strong, contract teams inherit a more reliable foundation.
+
+This priority order should influence staffing, roadmap sequencing, and release criteria.
 
 ## What TOS Must Be
 
@@ -378,6 +410,16 @@ TOS should document and stabilize public standards at distinct layers:
 These standards should remain stable even when the underlying implementation evolves.
 This is how TOS can remain coherent without becoming closed.
 
+TOS should also define who owns change authority for each class of standard:
+
+- protocol standards
+- public RPC standards
+- wallet-facing standards
+- indexing and archival standards
+- account and permission standards
+
+Ownership should be explicit enough that ecosystem participants know where canonical decisions come from and how they can be challenged, reviewed, and updated.
+
 ### Direction 3. Make `tosctl` the canonical operator shell
 
 `tosctl` should become the default answer to operator questions such as:
@@ -479,6 +521,13 @@ TOS should publish a clear model for how different clients interact with trust a
 - trusted convenience APIs
 
 This allows wallets, SDKs, browsers, and infrastructure providers to choose the right trust-cost tradeoff without ambiguity.
+
+TOS should also publish recommended defaults by product type:
+
+- validators and critical infrastructure should prefer full verification
+- wallets should prefer light verification or proof-backed remote verification where feasible
+- browser and mobile clients should use the lightest model that still keeps trust assumptions explicit
+- explorers, dashboards, and analytics systems may use trusted indexed views, but should document that trust model clearly
 
 ### Direction 11. Make the account and permission model an ecosystem standard
 
@@ -649,6 +698,12 @@ TOS is meaningfully succeeding when these become measurable:
 - an application developer can build on standardized interfaces instead of chain-specific ad hoc conventions
 - validators, builders, and infrastructure providers can all identify a rational economic reason to keep participating
 
+TOS should also measure whether its chosen differentiators are becoming real:
+
+- operator workflows become substantially shorter and more automatable release over release
+- major wallet and backend integrations can complete against one canonical API surface
+- core product surfaces become more coherent rather than more feature-fragmented
+
 ## Non-Goals and Rethink Triggers
 
 For the near term, TOS should explicitly avoid optimizing for:
@@ -667,6 +722,14 @@ TOS should also define signals that require a strategic rethink, such as:
 - application teams repeatedly inventing custom account, signing, or event conventions
 - operators and integrators being unable to predict upgrade impact or compatibility windows
 - core participant groups lacking a rational economic reason to stay
+
+Where possible, these should be made quantitative. For example:
+
+- the median time from zero to a healthy node remains above one day for competent operators for two consecutive quarters
+- a mainstream wallet integration still requires more than one primary API surface after a published convergence milestone
+- automation coverage for critical operator workflows remains below an agreed threshold after a roadmap cycle dedicated to operator maturity
+- compatibility-breaking changes to canonical public surfaces occur more than once without a documented deprecation window
+- major ecosystem participants cannot identify a clear owner for standards or upgrade decisions during active change
 
 ## Final Rule
 
