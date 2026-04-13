@@ -7,7 +7,7 @@
 
 ## Abstract
 
-This document defines a privacy-preserving transfer model for the TOS Actor Architecture described in [actor-v3.md](/home/tomi/tos/doc/actor-v3.md). It introduces a shielded asset layer that fits both:
+This document defines a privacy-preserving transfer model for the TOS Actor Architecture described in [actor-v3.md](doc/actor-v3.md). It introduces a shielded asset layer that fits both:
 
 - **V1 Account-as-Actor**, where privacy is implemented as a coordinated set of contracts
 - **V2 Protocol-Native Actors**, where privacy becomes a first-class actor workload inside one account container

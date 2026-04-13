@@ -2,7 +2,7 @@
 
 **Status:** Draft v0.1  
 **Audience:** Claude Code / Codex / implementation engineers  
-**Source of truth:** [actor-v3.md](/home/tomi/tos/doc/actor-v3.md)
+**Source of truth:** [actor-v3.md](doc/actor-v3.md)
 
 ---
 
@@ -99,7 +99,7 @@ Freeze the normative inputs that later implementation modules must not reinterpr
 
 **Files**
 
-- [doc/actor-v3.md](/home/tomi/tos/doc/actor-v3.md)
+- [doc/actor-v3.md](doc/actor-v3.md)
 
 **Deliverable**
 
@@ -139,7 +139,7 @@ Freeze the normative inputs that later implementation modules must not reinterpr
 
 **Files**
 
-- [doc/actor-v3.md](/home/tomi/tos/doc/actor-v3.md)
+- [doc/actor-v3.md](doc/actor-v3.md)
 - optional generated matrix file under `doc/` or `test/fixtures/`
 
 **Deliverable**
@@ -167,7 +167,7 @@ Add actor-mode data structures and parsing/packing support.
 
 **Files**
 
-- [crypto/block/block.tlb](/home/tomi/tos/crypto/block/block.tlb)
+- [crypto/block/block.tlb](crypto/block/block.tlb)
 
 **Deliverable**
 
@@ -198,10 +198,10 @@ Add actor-mode data structures and parsing/packing support.
 
 **Files**
 
-- [crypto/block/block-parse.h](/home/tomi/tos/crypto/block/block-parse.h)
-- [crypto/block/block-parse.cpp](/home/tomi/tos/crypto/block/block-parse.cpp)
-- [crypto/block/transaction.h](/home/tomi/tos/crypto/block/transaction.h)
-- [crypto/block/transaction.cpp](/home/tomi/tos/crypto/block/transaction.cpp)
+- [crypto/block/block-parse.h](crypto/block/block-parse.h)
+- [crypto/block/block-parse.cpp](crypto/block/block-parse.cpp)
+- [crypto/block/transaction.h](crypto/block/transaction.h)
+- [crypto/block/transaction.cpp](crypto/block/transaction.cpp)
 
 **Deliverable**
 
@@ -218,8 +218,8 @@ Add actor-mode data structures and parsing/packing support.
 
 **Files**
 
-- [crypto/block/transaction.h](/home/tomi/tos/crypto/block/transaction.h)
-- [crypto/block/transaction.cpp](/home/tomi/tos/crypto/block/transaction.cpp)
+- [crypto/block/transaction.h](crypto/block/transaction.h)
+- [crypto/block/transaction.cpp](crypto/block/transaction.cpp)
 
 **Deliverable**
 
@@ -249,8 +249,8 @@ Implement actor-mode VM surface: c6 register, c7 additions, and actor opcodes.
 
 **Files**
 
-- [crypto/vm/vm.h](/home/tomi/tos/crypto/vm/vm.h)
-- [crypto/vm/continuation.h](/home/tomi/tos/crypto/vm/continuation.h)
+- [crypto/vm/vm.h](crypto/vm/vm.h)
+- [crypto/vm/continuation.h](crypto/vm/continuation.h)
 
 **Deliverable**
 
@@ -264,8 +264,8 @@ Implement actor-mode VM surface: c6 register, c7 additions, and actor opcodes.
 
 **Files**
 
-- [crypto/vm/tosops.cpp](/home/tomi/tos/crypto/vm/tosops.cpp)
-- [crypto/vm/tosops.h](/home/tomi/tos/crypto/vm/tosops.h)
+- [crypto/vm/tosops.cpp](crypto/vm/tosops.cpp)
+- [crypto/vm/tosops.h](crypto/vm/tosops.h)
 
 **Deliverable**
 
@@ -286,7 +286,7 @@ Implement actor-mode VM surface: c6 register, c7 additions, and actor opcodes.
 
 **Files**
 
-- [crypto/vm/tosops.cpp](/home/tomi/tos/crypto/vm/tosops.cpp)
+- [crypto/vm/tosops.cpp](crypto/vm/tosops.cpp)
 - any VM context plumbing files used by transaction execution
 
 **Deliverable**
@@ -303,7 +303,7 @@ Implement actor-mode VM surface: c6 register, c7 additions, and actor opcodes.
 
 **Files**
 
-- [crypto/block/block.tlb](/home/tomi/tos/crypto/block/block.tlb)
+- [crypto/block/block.tlb](crypto/block/block.tlb)
 - action handling code in `crypto/block/transaction.cpp`
 
 **Deliverable**
@@ -328,10 +328,10 @@ Extend queue keys from 352 bits to 608 bits and preserve deterministic ordering.
 
 **Files**
 
-- [crypto/block/output-queue-merger.h](/home/tomi/tos/crypto/block/output-queue-merger.h)
-- [crypto/block/output-queue-merger.cpp](/home/tomi/tos/crypto/block/output-queue-merger.cpp)
-- [crypto/block/block.cpp](/home/tomi/tos/crypto/block/block.cpp)
-- [crypto/block/block.h](/home/tomi/tos/crypto/block/block.h)
+- [crypto/block/output-queue-merger.h](crypto/block/output-queue-merger.h)
+- [crypto/block/output-queue-merger.cpp](crypto/block/output-queue-merger.cpp)
+- [crypto/block/block.cpp](crypto/block/block.cpp)
+- [crypto/block/block.h](crypto/block/block.h)
 
 **Deliverable**
 
@@ -347,8 +347,8 @@ Extend queue keys from 352 bits to 608 bits and preserve deterministic ordering.
 
 **Files**
 
-- [validator/impl/collator.cpp](/home/tomi/tos/validator/impl/collator.cpp)
-- [validator/impl/validate-query.cpp](/home/tomi/tos/validator/impl/validate-query.cpp)
+- [validator/impl/collator.cpp](validator/impl/collator.cpp)
+- [validator/impl/validate-query.cpp](validator/impl/validate-query.cpp)
 
 **Deliverable**
 
@@ -372,8 +372,8 @@ Add actor-level proof traversal.
 
 **Files**
 
-- [crypto/block/check-proof.cpp](/home/tomi/tos/crypto/block/check-proof.cpp)
-- [crypto/block/check-proof.h](/home/tomi/tos/crypto/block/check-proof.h)
+- [crypto/block/check-proof.cpp](crypto/block/check-proof.cpp)
+- [crypto/block/check-proof.h](crypto/block/check-proof.h)
 
 **Deliverable**
 
@@ -404,7 +404,7 @@ Implement actor-mode execution semantics inside the transaction engine.
 
 **Files**
 
-- [crypto/block/transaction.h](/home/tomi/tos/crypto/block/transaction.h)
+- [crypto/block/transaction.h](crypto/block/transaction.h)
 
 **Deliverable**
 
@@ -421,7 +421,7 @@ Implement actor-mode execution semantics inside the transaction engine.
 
 **Files**
 
-- [crypto/block/transaction.cpp](/home/tomi/tos/crypto/block/transaction.cpp)
+- [crypto/block/transaction.cpp](crypto/block/transaction.cpp)
 
 **Deliverable**
 
@@ -437,7 +437,7 @@ Implement actor-mode execution semantics inside the transaction engine.
 
 **Files**
 
-- [crypto/block/transaction.cpp](/home/tomi/tos/crypto/block/transaction.cpp)
+- [crypto/block/transaction.cpp](crypto/block/transaction.cpp)
 
 **Deliverable**
 
@@ -455,7 +455,7 @@ Implement actor-mode execution semantics inside the transaction engine.
 
 **Files**
 
-- [crypto/block/transaction.cpp](/home/tomi/tos/crypto/block/transaction.cpp)
+- [crypto/block/transaction.cpp](crypto/block/transaction.cpp)
 
 **Deliverable**
 
@@ -471,7 +471,7 @@ Implement actor-mode execution semantics inside the transaction engine.
 
 **Files**
 
-- [crypto/block/transaction.cpp](/home/tomi/tos/crypto/block/transaction.cpp)
+- [crypto/block/transaction.cpp](crypto/block/transaction.cpp)
 
 **Deliverable**
 
@@ -498,8 +498,8 @@ Implement Admission, wave-based Preview Execution, and Canonical Merge and Adopt
 
 **Files**
 
-- [validator/impl/collator-impl.h](/home/tomi/tos/validator/impl/collator-impl.h)
-- [validator/impl/collator.cpp](/home/tomi/tos/validator/impl/collator.cpp)
+- [validator/impl/collator-impl.h](validator/impl/collator-impl.h)
+- [validator/impl/collator.cpp](validator/impl/collator.cpp)
 
 **Deliverable**
 
@@ -517,7 +517,7 @@ Implement Admission, wave-based Preview Execution, and Canonical Merge and Adopt
 
 **Files**
 
-- collator ingress paths in [validator/impl/collator.cpp](/home/tomi/tos/validator/impl/collator.cpp)
+- collator ingress paths in [validator/impl/collator.cpp](validator/impl/collator.cpp)
 
 **Deliverable**
 
@@ -532,7 +532,7 @@ Implement Admission, wave-based Preview Execution, and Canonical Merge and Adopt
 
 **Files**
 
-- [validator/impl/collator.cpp](/home/tomi/tos/validator/impl/collator.cpp)
+- [validator/impl/collator.cpp](validator/impl/collator.cpp)
 
 **Deliverable**
 
@@ -552,7 +552,7 @@ Implement Admission, wave-based Preview Execution, and Canonical Merge and Adopt
 
 **Files**
 
-- [validator/impl/collator.cpp](/home/tomi/tos/validator/impl/collator.cpp)
+- [validator/impl/collator.cpp](validator/impl/collator.cpp)
 
 **Deliverable**
 
@@ -568,7 +568,7 @@ Implement Admission, wave-based Preview Execution, and Canonical Merge and Adopt
 
 **Files**
 
-- [validator/impl/collator.cpp](/home/tomi/tos/validator/impl/collator.cpp)
+- [validator/impl/collator.cpp](validator/impl/collator.cpp)
 - new helper such as `crypto/block/actor-merge.cpp`
 
 **Deliverable**
@@ -598,8 +598,8 @@ Make validator/import replay reproduce committed actor execution from canonical 
 
 **Files**
 
-- [validator/impl/validate-query.cpp](/home/tomi/tos/validator/impl/validate-query.cpp)
-- [validator/impl/validate-query.hpp](/home/tomi/tos/validator/impl/validate-query.hpp)
+- [validator/impl/validate-query.cpp](validator/impl/validate-query.cpp)
+- [validator/impl/validate-query.hpp](validator/impl/validate-query.hpp)
 
 **Deliverable**
 
@@ -615,7 +615,7 @@ Make validator/import replay reproduce committed actor execution from canonical 
 
 **Files**
 
-- validator replay path in [validator/impl/validate-query.cpp](/home/tomi/tos/validator/impl/validate-query.cpp)
+- validator replay path in [validator/impl/validate-query.cpp](validator/impl/validate-query.cpp)
 
 **Deliverable**
 
@@ -630,7 +630,7 @@ Make validator/import replay reproduce committed actor execution from canonical 
 
 **Files**
 
-- [validator/impl/validate-query.cpp](/home/tomi/tos/validator/impl/validate-query.cpp)
+- [validator/impl/validate-query.cpp](validator/impl/validate-query.cpp)
 
 **Deliverable**
 
@@ -645,7 +645,7 @@ Make validator/import replay reproduce committed actor execution from canonical 
 
 **Files**
 
-- [validator/impl/validate-query.cpp](/home/tomi/tos/validator/impl/validate-query.cpp)
+- [validator/impl/validate-query.cpp](validator/impl/validate-query.cpp)
 
 **Deliverable**
 
@@ -671,8 +671,8 @@ Expose actor-aware state and transaction APIs.
 
 **Files**
 
-- [tl/generate/scheme/lite_api.tl](/home/tomi/tos/tl/generate/scheme/lite_api.tl)
-- [lite-client/lite-client.cpp](/home/tomi/tos/lite-client/lite-client.cpp)
+- [tl/generate/scheme/lite_api.tl](tl/generate/scheme/lite_api.tl)
+- [lite-client/lite-client.cpp](lite-client/lite-client.cpp)
 
 **Deliverable**
 
@@ -688,7 +688,7 @@ Expose actor-aware state and transaction APIs.
 
 **Files**
 
-- [tl/generate/scheme/toslib_api.tl](/home/tomi/tos/tl/generate/scheme/toslib_api.tl)
+- [tl/generate/scheme/toslib_api.tl](tl/generate/scheme/toslib_api.tl)
 - SDK client code under `toslib` / `test/tostester`
 
 **Deliverable**
@@ -703,7 +703,7 @@ Expose actor-aware state and transaction APIs.
 
 **Files**
 
-- [emulator/transaction-emulator.h](/home/tomi/tos/emulator/transaction-emulator.h)
+- [emulator/transaction-emulator.h](emulator/transaction-emulator.h)
 - emulator implementation files
 
 **Deliverable**

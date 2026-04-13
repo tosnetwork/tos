@@ -71,7 +71,7 @@ from ipaddress import IPv4Address
 from tostester.install import Install
 from tostester.network import Network, FullNode
 
-REPO = Path(os.environ.get("REPO_ROOT", "/home/tomi/tos"))
+REPO = Path(os.environ.get("REPO_ROOT", Path.home() / "tos"))
 BUILD = REPO / "build"
 DATA = Path("/data")
 TESTNET = DATA / "testnet"

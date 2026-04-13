@@ -13,7 +13,7 @@ The goal is to answer:
 
 > What should TOS do first, what should it defer, and how should success be measured quarter by quarter?
 
-This roadmap assumes the strategic priorities defined in [tos-north-star.md](/home/tomi/tos/doc/tos-north-star.md).
+This roadmap assumes the strategic priorities defined in [tos-north-star.md](doc/tos-north-star.md).
 
 ## Roadmap Rule
 
@@ -179,7 +179,7 @@ Owns:
 - trust and verification primitives
 - protocol-facing and node-facing implementation work
 
-### `~/tosctl`
+### `~/tos/tosctl`
 
 Owns:
 

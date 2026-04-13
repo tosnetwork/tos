@@ -16,10 +16,10 @@ It is meant to make one design point explicit:
 
 This document complements:
 
-- [tos-north-star.md](/home/tomi/tos/doc/tos-north-star.md)
-- [tos-roadmap-12m.md](/home/tomi/tos/doc/tos-roadmap-12m.md)
-- [tos-standards-map.md](/home/tomi/tos/doc/tos-standards-map.md)
-- [tos-release-policy.md](/home/tomi/tos/doc/tos-release-policy.md)
+- [tos-north-star.md](doc/tos-north-star.md)
+- [tos-roadmap-12m.md](doc/tos-roadmap-12m.md)
+- [tos-standards-map.md](doc/tos-standards-map.md)
+- [tos-release-policy.md](doc/tos-release-policy.md)
 
 ## The Fragmented Pattern
 
@@ -191,7 +191,7 @@ Should own:
 - trust and verification primitives
 - data and protocol-facing primitives
 
-### `~/tosctl`
+### `~/tos/tosctl`
 
 Should own:
 

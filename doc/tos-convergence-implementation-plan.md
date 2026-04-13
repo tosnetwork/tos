@@ -12,11 +12,11 @@ It answers:
 
 This document complements:
 
-- [tos-north-star.md](/home/tomi/tos/doc/tos-north-star.md)
-- [tos-roadmap-12m.md](/home/tomi/tos/doc/tos-roadmap-12m.md)
-- [tos-standards-map.md](/home/tomi/tos/doc/tos-standards-map.md)
-- [tos-release-policy.md](/home/tomi/tos/doc/tos-release-policy.md)
-- [tos-vs-fragmented-architecture.md](/home/tomi/tos/doc/tos-vs-fragmented-architecture.md)
+- [tos-north-star.md](doc/tos-north-star.md)
+- [tos-roadmap-12m.md](doc/tos-roadmap-12m.md)
+- [tos-standards-map.md](doc/tos-standards-map.md)
+- [tos-release-policy.md](doc/tos-release-policy.md)
+- [tos-vs-fragmented-architecture.md](doc/tos-vs-fragmented-architecture.md)
 
 ## Convergence Goal
 
@@ -43,7 +43,7 @@ Should become the canonical source of:
 - node-native trust and verification primitives
 - protocol-facing and data-facing primitives required by canonical public surfaces
 
-### `~/tosctl`
+### `~/tos/tosctl`
 
 Should become the canonical source of:
 
@@ -89,7 +89,7 @@ Typical examples:
 - defining explicit trust-tier or proof-related primitives
 - providing canonical historical or indexed data primitives where the node must own them
 
-### Work That Belongs in `~/tosctl`
+### Work That Belongs in `~/tos/tosctl`
 
 Typical examples:
 
@@ -145,7 +145,7 @@ Primary repository:
 
 Dependent repository:
 
-- `~/tosctl`
+- `~/tos/tosctl`
 
 ### Workstream 2. Canonical Operator Path
 
@@ -163,7 +163,7 @@ Implementation themes:
 
 Primary repository:
 
-- `~/tosctl`
+- `~/tos/tosctl`
 
 Dependent repository:
 
@@ -185,7 +185,7 @@ Implementation themes:
 Primary repositories:
 
 - `~/tos`
-- `~/tosctl` for operator-facing workflows and diagnostics
+- `~/tos/tosctl` for operator-facing workflows and diagnostics
 
 ### Workstream 4. Canonical Data Contracts
 
@@ -227,7 +227,7 @@ Implementation themes:
 Primary repositories:
 
 - documentation across `~/tos`
-- implementation labeling in both `~/tos` and `~/tosctl`
+- implementation labeling in both `~/tos` and `~/tos/tosctl`
 
 ## Milestone Plan
 
@@ -245,7 +245,7 @@ Expected changes in `~/tos`:
 - health/readiness/metrics stabilization
 - structured node status exposure
 
-Expected changes in `~/tosctl`:
+Expected changes in `~/tos/tosctl`:
 
 - canonical command-group cleanup
 - config-path correctness
@@ -265,7 +265,7 @@ Expected changes in `~/tos`:
 - transaction and history semantics stabilization
 - trust-model and proof-boundary clarification
 
-Expected changes in `~/tosctl`:
+Expected changes in `~/tos/tosctl`:
 
 - diagnostics and operator tooling aligned with wallet/data standards where needed
 
@@ -281,7 +281,7 @@ Expected changes in `~/tos`:
 
 - RPC or protocol-facing support for canonical account and permission semantics
 
-Expected changes in `~/tosctl`:
+Expected changes in `~/tos/tosctl`:
 
 - operator workflows for account- or governance-related operations where needed
 
@@ -297,7 +297,7 @@ Expected changes in `~/tos`:
 
 - release-note and stability labeling discipline for node-facing surfaces
 
-Expected changes in `~/tosctl`:
+Expected changes in `~/tos/tosctl`:
 
 - release-note and stability labeling discipline for operator-facing surfaces
 
