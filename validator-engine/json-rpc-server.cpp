@@ -292,14 +292,19 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
           : server_(server), payload_(std::move(payload)), promise_(std::move(promise)) {}
       void run(size_t) override {}
       void completed() override {
+        if (fired_) {
+          return;
+        }
+        fired_ = true;
         // Do NOT read payload here (mutex deadlock). Defer to actor scheduler.
         td::actor::send_closure(server_, &JsonRpcServer::on_body_ready,
-                                std::move(payload_), std::move(promise_));
+                                payload_, std::move(promise_));
       }
      private:
       td::actor::ActorId<JsonRpcServer> server_;
       PayloadPtr payload_;
       td::Promise<HttpReturn> promise_;
+      bool fired_ = false;
     };
     payload->add_callback(std::make_unique<BodyWaiter>(
         actor_id(this), payload, std::move(promise)));
@@ -307,6 +312,11 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
 }
 
 void JsonRpcServer::on_body_ready(PayloadPtr payload, td::Promise<HttpReturn> promise) {
+  if (!payload) {
+    promise.set_value(make_json_error(-32603, "Internal error: missing request payload", "null",
+                                      opts_.cors_origin));
+    return;
+  }
   // Safe to call get_slice() here — we are in the actor scheduler, NOT inside
   // HttpPayload::parse()'s mutex. This breaks the deadlock chain.
   auto body = payload->get_slice(1 << 20);

@@ -22,6 +22,7 @@
 #include <list>
 #include <map>
 #include <mutex>
+#include <vector>
 
 #include "auto/tl/tos_api.h"
 #include "td/actor/PromiseFuture.h"
@@ -104,13 +105,11 @@ class HttpPayload {
   };
   void add_callback(std::unique_ptr<Callback> callback);
   void run_callbacks();
+  void run_callbacks(std::vector<Callback *> callbacks, bool completed, size_t ready_bytes);
 
   td::Status parse(td::ChainBufferReader &input);
   bool parse_completed() const;
-  void complete_parse() {
-    state_ = ParseState::completed;
-    run_callbacks();
-  }
+  void complete_parse();
   size_t ready_bytes() const {
     return ready_bytes_;
   }
@@ -173,6 +172,7 @@ class HttpPayload {
   bool is_flushing_ = false;
 
   std::list<std::unique_ptr<Callback>> callbacks_;
+  bool callbacks_completed_notified_ = false;
 
   std::atomic<ParseState> state_{ParseState::reading_chunk_header};
   std::mutex mutex_;
