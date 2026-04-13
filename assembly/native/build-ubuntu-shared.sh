@@ -1,4 +1,4 @@
-#/bin/bash
+#!/bin/bash
 
 #sudo apt-get update
 #sudo apt-get install -y build-essential git cmake ninja-build libjemalloc-dev ccache
