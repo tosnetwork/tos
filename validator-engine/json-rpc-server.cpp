@@ -27,8 +27,12 @@
 #include "block/block-parse.h"
 #include "block/check-proof.h"
 #include "block/mc-config.h"
+#include "smc-envelope/GenericAccount.h"
+#include "smc-envelope/SmartContract.h"
 #include "tos/lite-tl.hpp"
+#include "vm/cellops.h"
 #include "vm/cells/MerkleProof.h"
+#include "vm/dict.h"
 #include "vm/boc.h"
 #include "vm/cells/CellString.h"
 #include "vm/cp0.h"
@@ -36,6 +40,7 @@
 #include "td/utils/crypto.h"
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/base64.h"
+#include <limits>
 
 namespace tos {
 
@@ -222,6 +227,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     // Map path to method name (only read-only, high-value endpoints)
     std::string rest_method;
     if (path == "/getMasterchainInfo")    rest_method = "getMasterchainInfo";
+    else if (path == "/getConsensusBlock")      rest_method = "getConsensusBlock";
     else if (path == "/getAddressInformation")  rest_method = "getAddressInformation";
     else if (path == "/getAddressBalance")      rest_method = "getAddressBalance";
     else if (path == "/getAddressState")        rest_method = "getAddressState";
@@ -236,6 +242,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     else if (path == "/getBlockHeader")         rest_method = "getBlockHeader";
     else if (path == "/getBlockTransactions")   rest_method = "getBlockTransactions";
     else if (path == "/getExtendedAddressInformation") rest_method = "getExtendedAddressInformation";
+    else if (path == "/estimateFee")            rest_method = "estimateFee";
 
     if (!rest_method.empty()) {
       // Build a JSON object from query parameters, parse it, and dispatch
@@ -411,6 +418,8 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
   // Block/chain read APIs
   } else if (method == "getMasterchainInfo") {
     handle_getMasterchainInfo(params, std::move(req_id), std::move(promise));
+  } else if (method == "getConsensusBlock") {
+    handle_getConsensusBlock(params, std::move(req_id), std::move(promise));
   } else if (method == "lookupBlock") {
     handle_lookupBlock(params, std::move(req_id), std::move(promise));
   } else if (method == "shards") {
@@ -428,6 +437,8 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     handle_sendBocReturnHash(params, std::move(req_id), std::move(promise));
   } else if (method == "sendQuery") {
     handle_sendQuery(params, std::move(req_id), std::move(promise));
+  } else if (method == "estimateFee") {
+    handle_estimateFee(params, std::move(req_id), std::move(promise));
   // Convenience / address APIs
   } else if (method == "getAddressBalance") {
     handle_getAddressBalance(params, std::move(req_id), std::move(promise));
@@ -600,6 +611,11 @@ struct ParsedAccountState {
   std::string last_trans_hash_b64;
   td::uint32 sync_utime = 0;
   td::Ref<vm::Cell> code_cell;  // for wallet detection
+  td::Ref<vm::Cell> data_cell;
+  td::Ref<vm::Cell> extra_currencies_cell;
+  td::Ref<vm::Cell> state_cell;
+  tos::UnixTime storage_last_paid{0};
+  block::StorageUsed storage_used;
 
   // Block ID from liteserver response (for real block_id in JSON)
   td::int32 blk_workchain = -1;
@@ -642,28 +658,43 @@ struct ParsedAccountState {
       if (info.root.not_null()) {
         block::gen::Account::Record_account account;
         if (tlb::unpack_cell(info.root, account)) {
+          block::gen::StorageInfo::Record storage_info;
+          if (tlb::csr_unpack(account.storage_stat, storage_info)) {
+            res.storage_last_paid = storage_info.last_paid;
+            block::gen::StorageUsed::Record storage_used;
+            if (tlb::csr_unpack(storage_info.used, storage_used)) {
+              unsigned long long u = 0;
+              u |= res.storage_used.cells = block::tlb::t_VarUInteger_7.as_uint(*storage_used.cells);
+              u |= res.storage_used.bits = block::tlb::t_VarUInteger_7.as_uint(*storage_used.bits);
+              if (u == std::numeric_limits<td::uint64>::max()) {
+                return td::Status::Error("Failed to unpack StorageStat");
+              }
+            }
+          }
+
           block::gen::AccountStorage::Record storage;
           if (tlb::csr_unpack(account.storage, storage)) {
             auto balance_cs = storage.balance.write();
             auto coins = block::tlb::t_Tomis.as_integer_skip(balance_cs);
             if (coins.not_null()) res.balance = coins->to_long();
+            res.extra_currencies_cell = storage.balance->prefetch_ref();
 
             auto tag = block::gen::t_AccountState.get_tag(*storage.state);
             if (tag == block::gen::AccountState::account_active) {
               res.state_str = "active";
               block::gen::AccountState::Record_account_active active;
               if (tlb::csr_unpack(storage.state, active)) {
+                res.state_cell = vm::CellBuilder().append_cellslice(active.x).finalize();
                 block::gen::StateInit::Record si;
                 if (tlb::csr_unpack(active.x, si)) {
-                  td::Ref<vm::Cell> data_cell;
                   si.code->prefetch_maybe_ref(res.code_cell);
-                  si.data->prefetch_maybe_ref(data_cell);
+                  si.data->prefetch_maybe_ref(res.data_cell);
                   if (res.code_cell.not_null()) {
                     auto boc = vm::std_boc_serialize(res.code_cell);
                     if (boc.is_ok()) res.code_b64 = td::base64_encode(boc.ok().as_slice());
                   }
-                  if (data_cell.not_null()) {
-                    auto boc = vm::std_boc_serialize(data_cell);
+                  if (res.data_cell.not_null()) {
+                    auto boc = vm::std_boc_serialize(res.data_cell);
                     if (boc.is_ok()) res.data_b64 = td::base64_encode(boc.ok().as_slice());
                   }
                 }
@@ -737,6 +768,146 @@ static td::Result<block::StdAddress> parse_address_param(td::JsonObject& params)
   block::StdAddress addr;
   if (!addr.parse_addr(td::Slice(addr_r.ok()))) return td::Status::Error("Invalid address");
   return addr;
+}
+
+static td::Result<td::Ref<vm::Cell>> parse_optional_boc_field(td::JsonObject& params, const char* name) {
+  auto value_r = params.get_optional_string_field(td::Slice{name});
+  if (value_r.is_error() || value_r.ok().empty()) {
+    return td::Ref<vm::Cell>();
+  }
+  auto decoded_r = td::base64_decode(value_r.ok());
+  if (decoded_r.is_error()) {
+    return td::Status::Error(PSTRING() << "Invalid base64 in '" << name << "'");
+  }
+  auto cell_r = vm::std_boc_deserialize(td::Slice(decoded_r.ok()));
+  if (cell_r.is_error()) {
+    return td::Status::Error(PSTRING() << "Invalid BOC in '" << name << "'");
+  }
+  return cell_r.move_as_ok();
+}
+
+static td::RefInt256 estimate_compute_threshold(const block::GasLimitsPrices& cfg) {
+  auto gas_price256 = td::RefInt256{true, cfg.gas_price};
+  if (cfg.gas_limit > cfg.flat_gas_limit) {
+    return td::rshift(gas_price256 * (cfg.gas_limit - cfg.flat_gas_limit), 16, 1) +
+           td::make_refint(cfg.flat_gas_price);
+  }
+  return td::make_refint(cfg.flat_gas_price);
+}
+
+static td::uint64 estimate_gas_bought_for(td::RefInt256 nanotomis, td::RefInt256 max_gas_threshold,
+                                          const block::GasLimitsPrices& cfg) {
+  if (nanotomis.is_null() || sgn(nanotomis) < 0) {
+    return 0;
+  }
+  if (nanotomis >= max_gas_threshold) {
+    return cfg.gas_limit;
+  }
+  if (nanotomis < cfg.flat_gas_price) {
+    return 0;
+  }
+  auto gas_price256 = td::RefInt256{true, cfg.gas_price};
+  auto res = td::div((std::move(nanotomis) - cfg.flat_gas_price) << 16, gas_price256);
+  return res->to_long() + cfg.flat_gas_limit;
+}
+
+static td::RefInt256 estimate_compute_gas_price(td::uint64 gas_used, const block::GasLimitsPrices& cfg) {
+  auto gas_price256 = td::RefInt256{true, cfg.gas_price};
+  return gas_used <= cfg.flat_gas_limit
+             ? td::make_refint(cfg.flat_gas_price)
+             : td::rshift(gas_price256 * (gas_used - cfg.flat_gas_limit), 16, 1) + cfg.flat_gas_price;
+}
+
+static vm::GasLimits estimate_compute_gas_limits(td::RefInt256 balance, const block::GasLimitsPrices& cfg) {
+  vm::GasLimits res;
+  res.gas_max = estimate_gas_bought_for(balance, estimate_compute_threshold(cfg), cfg);
+  res.gas_credit = 0;
+  res.gas_limit = estimate_gas_bought_for(td::make_refint(0), estimate_compute_threshold(cfg), cfg);
+  res.gas_credit = std::min(static_cast<td::int64>(cfg.gas_credit), static_cast<td::int64>(res.gas_max));
+  return res;
+}
+
+static td::Result<td::int64> estimate_calc_fwd_fees(td::Ref<vm::Cell> list, block::MsgPrices** msg_prices,
+                                                    bool is_masterchain) {
+  td::int64 res = 0;
+  std::vector<td::Ref<vm::Cell>> actions;
+  int n = 0;
+  int max_actions = 20;
+  while (true) {
+    actions.push_back(list);
+    auto cs = load_cell_slice(std::move(list));
+    if (!cs.size_ext()) {
+      break;
+    }
+    if (!cs.have_refs()) {
+      return td::Status::Error("action list invalid: entry found with data but no next reference");
+    }
+    list = cs.prefetch_ref();
+    if (++n > max_actions) {
+      return td::Status::Error(PSTRING() << "action list too long: more than " << max_actions << " actions");
+    }
+  }
+  for (int i = n - 1; i >= 0; --i) {
+    vm::CellSlice cs = load_cell_slice(actions[i]);
+    CHECK(cs.fetch_ref().not_null());
+    int tag = block::gen::t_OutAction.get_tag(cs);
+    CHECK(tag >= 0);
+    switch (tag) {
+      case block::gen::OutAction::action_set_code:
+        return td::Status::Error("estimate_fee: action_set_code unsupported");
+      case block::gen::OutAction::action_send_msg: {
+        block::gen::OutAction::Record_action_send_msg act_rec;
+        if (!tlb::unpack_exact(cs, act_rec) || (act_rec.mode & ~0xf3) || (act_rec.mode & 0xc0) == 0xc0) {
+          return td::Status::Error("estimate_fee: can't parse send_msg");
+        }
+        block::gen::MessageRelaxed::Record msg;
+        if (!tlb::type_unpack_cell(act_rec.out_msg, block::gen::t_MessageRelaxed_Any, msg)) {
+          return td::Status::Error("estimate_fee: can't parse send_msg");
+        }
+
+        bool dest_is_masterchain = false;
+        if (block::gen::t_CommonMsgInfoRelaxed.get_tag(*msg.info) == block::gen::CommonMsgInfoRelaxed::int_msg_info) {
+          block::gen::CommonMsgInfoRelaxed::Record_int_msg_info info;
+          if (!tlb::csr_unpack(msg.info, info)) {
+            return td::Status::Error("estimate_fee: can't parse send_msg");
+          }
+          auto dest_addr = info.dest;
+          if (!dest_addr->prefetch_ulong(1)) {
+            return td::Status::Error("estimate_fee: messages with external addresses are unsupported");
+          }
+          int addr_tag = block::gen::t_MsgAddressInt.get_tag(*dest_addr);
+          if (addr_tag == block::gen::MsgAddressInt::addr_std) {
+            block::gen::MsgAddressInt::Record_addr_std recs;
+            if (!tlb::csr_unpack(dest_addr, recs)) {
+              return td::Status::Error("estimate_fee: can't parse send_msg");
+            }
+            dest_is_masterchain = recs.workchain_id == tos::masterchainId;
+          }
+        }
+
+        vm::CellStorageStat sstat;
+        sstat.add_used_storage(msg.init, true, 3);
+        sstat.add_used_storage(msg.body, true, 3);
+        res += msg_prices[is_masterchain || dest_is_masterchain]->compute_fwd_fees(sstat.cells, sstat.bits);
+        break;
+      }
+      case block::gen::OutAction::action_reserve_currency:
+        continue;
+    }
+  }
+  return res;
+}
+
+static std::string build_estimate_fee_json(td::int64 in_fwd_fee, td::int64 storage_fee,
+                                           td::int64 gas_fee, td::int64 fwd_fee) {
+  return PSTRING()
+      << "{\"@type\":\"query.fees\""
+      << ",\"source_fees\":{\"@type\":\"fees\""
+      << ",\"in_fwd_fee\":" << in_fwd_fee
+      << ",\"storage_fee\":" << storage_fee
+      << ",\"gas_fee\":" << gas_fee
+      << ",\"fwd_fee\":" << fwd_fee << "}"
+      << ",\"destination_fees\":[]}";
 }
 
 // Sends getMasterchainInfo + getAccountState, then calls callback with parsed result
@@ -1387,6 +1558,40 @@ void JsonRpcServer::handle_lookupBlock(td::JsonObject &params, std::string req_i
         auto lb = lb_r.move_as_ok();
         promise.set_value(make_json_ok(format_block_id_json(*lb->id_), req_id));
       });
+}
+
+// ─── getConsensusBlock ────────────────────────────────────────────────
+
+void JsonRpcServer::handle_getConsensusBlock(td::JsonObject &params, std::string req_id,
+                                             td::Promise<HttpReturn> promise) {
+  td::actor::send_closure(
+      validator_manager_, &validator::ValidatorManagerInterface::get_last_liteserver_state_block,
+      td::PromiseCreator::lambda(
+          [this, req_id = std::move(req_id), promise = std::move(promise)](
+              td::Result<std::pair<td::Ref<validator::MasterchainState>, BlockIdExt>> R) mutable {
+        if (R.is_error()) {
+          promise.set_value(make_json_error(-32603,
+              PSTRING() << "getConsensusBlock: " << R.error(), req_id));
+          return;
+        }
+        auto [state, block_id] = R.move_as_ok();
+        td::uint32 seqno = block_id.seqno();
+        if (consensus_block_seqno_ != seqno) {
+          consensus_block_seqno_ = seqno;
+          consensus_block_timestamp_ = static_cast<td::int64>(td::Clocks::system());
+        } else if (consensus_block_timestamp_ == 0) {
+          consensus_block_timestamp_ = static_cast<td::int64>(td::Clocks::system());
+        }
+
+        td::StringBuilder sb;
+        sb << "{\"consensus_block\":" << consensus_block_seqno_
+           << ",\"timestamp\":" << consensus_block_timestamp_;
+        if (state.not_null()) {
+          sb << ",\"last_block_utime\":" << state->get_unix_time();
+        }
+        sb << "}";
+        promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+      }));
 }
 
 // ─── shards ──────────────────────────────────────────────────────────
@@ -2215,6 +2420,237 @@ void JsonRpcServer::handle_sendQuery(td::JsonObject &params, std::string req_id,
             PSTRING() << "{\"status\":" << status->status_
                       << ",\"hash\":" << td::JsonString(td::Slice(msg_hash_b64)) << "}",
             req_id));
+      });
+}
+
+void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_id,
+                                       td::Promise<HttpReturn> promise) {
+  auto addr_r = parse_address_param(params);
+  if (addr_r.is_error()) {
+    promise.set_value(make_json_error(-32602, addr_r.error().message().str(), req_id));
+    return;
+  }
+  auto body_r = parse_optional_boc_field(params, "body");
+  if (body_r.is_error()) {
+    promise.set_value(make_json_error(-32602, body_r.error().message().str(), req_id));
+    return;
+  }
+  if (body_r.ok().is_null()) {
+    promise.set_value(make_json_error(-32602, "Missing 'body'", req_id));
+    return;
+  }
+  auto init_code_r = parse_optional_boc_field(params, "init_code");
+  if (init_code_r.is_error()) {
+    promise.set_value(make_json_error(-32602, init_code_r.error().message().str(), req_id));
+    return;
+  }
+  auto init_data_r = parse_optional_boc_field(params, "init_data");
+  if (init_data_r.is_error()) {
+    promise.set_value(make_json_error(-32602, init_data_r.error().message().str(), req_id));
+    return;
+  }
+  auto ignore_chksig_r = params.get_optional_bool_field("ignore_chksig", true);
+  if (ignore_chksig_r.is_error()) {
+    promise.set_value(make_json_error(-32602, "Invalid 'ignore_chksig'", req_id));
+    return;
+  }
+
+  auto addr = addr_r.move_as_ok();
+  auto body_cell = body_r.move_as_ok();
+  auto init_code = init_code_r.move_as_ok();
+  auto init_data = init_data_r.move_as_ok();
+  auto ignore_chksig = ignore_chksig_r.move_as_ok();
+
+  auto mc_inner = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
+  auto mc_query = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
+
+  auto self_id = actor_id(this);
+  send_liteserver_query(std::move(mc_query),
+      [self_id, addr, body_cell = std::move(body_cell), init_code = std::move(init_code),
+       init_data = std::move(init_data), ignore_chksig, req_id = std::move(req_id),
+       promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+        if (R.is_error()) {
+          promise.set_value(make_json_error(-32603,
+              PSTRING() << "getMasterchainInfo failed: " << R.error(), req_id));
+          return;
+        }
+        auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(R.move_as_ok(), true);
+        if (mc_r.is_error()) {
+          promise.set_value(make_json_error(-32603,
+              PSTRING() << "parse masterchainInfo: " << mc_r.error(), req_id));
+          return;
+        }
+        auto mc = mc_r.move_as_ok();
+        auto block_id = tos::create_block_id(mc->last_);
+        auto account_inner = tos::serialize_tl_object(
+            tos::create_tl_object<tos::lite_api::liteServer_getAccountState>(
+                tos::create_tl_lite_block_id(block_id),
+                tos::create_tl_object<tos::lite_api::liteServer_accountId>(addr.workchain, addr.addr)),
+            true);
+        auto account_query = tos::serialize_tl_object(
+            tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(account_inner)), true);
+
+        td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(account_query),
+            td::PromiseCreator::lambda(
+                [self_id, addr, block_id = std::move(block_id), body_cell = std::move(body_cell),
+                 init_code = std::move(init_code), init_data = std::move(init_data), ignore_chksig,
+                 req_id = std::move(req_id), promise = std::move(promise)](
+                    td::Result<td::BufferSlice> account_res) mutable {
+                  if (account_res.is_error()) {
+                    promise.set_value(make_json_error(-32603,
+                        PSTRING() << "getAccountState failed: " << account_res.error(), req_id));
+                    return;
+                  }
+                  auto account_r =
+                      tos::fetch_tl_object<tos::lite_api::liteServer_accountState>(account_res.move_as_ok(), true);
+                  if (account_r.is_error()) {
+                    promise.set_value(make_json_error(-32603,
+                        PSTRING() << "parse accountState: " << account_r.error(), req_id));
+                    return;
+                  }
+                  auto account = account_r.move_as_ok();
+                  auto parsed_r = ParsedAccountState::parse(account, addr);
+                  if (parsed_r.is_error()) {
+                    promise.set_value(make_json_error(-32603,
+                        PSTRING() << "parse account proof: " << parsed_r.error(), req_id));
+                    return;
+                  }
+                  auto parsed = parsed_r.move_as_ok();
+
+                  td::Ref<vm::Cell> effective_code = init_code.not_null() ? init_code : parsed.code_cell;
+                  td::Ref<vm::Cell> effective_data = init_data.not_null() ? init_data : parsed.data_cell;
+                  td::Ref<vm::Cell> new_state;
+                  if (effective_code.not_null() || effective_data.not_null()) {
+                    new_state = tos::GenericAccount::get_init_state(effective_code, effective_data);
+                  }
+                  if (effective_code.is_null()) {
+                    promise.set_value(make_json_error(-32603,
+                        "estimateFee requires deploy init_code/init_data or an active account state", req_id));
+                    return;
+                  }
+
+                  auto config_inner = tos::serialize_tl_object(
+                      tos::create_tl_object<tos::lite_api::liteServer_getConfigAll>(
+                          block::ConfigInfo::needPrevBlocks, tos::create_tl_lite_block_id(block_id)),
+                      true);
+                  auto config_query = tos::serialize_tl_object(
+                      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(config_inner)), true);
+
+                  td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(config_query),
+                      td::PromiseCreator::lambda(
+                          [addr, body_cell = std::move(body_cell), new_state = std::move(new_state),
+                           effective_code = std::move(effective_code), effective_data = std::move(effective_data),
+                           parsed = std::move(parsed), ignore_chksig, req_id = std::move(req_id),
+                           promise = std::move(promise)](td::Result<td::BufferSlice> config_res) mutable {
+                            if (config_res.is_error()) {
+                              promise.set_value(make_json_error(-32603,
+                                  PSTRING() << "getConfigAll failed: " << config_res.error(), req_id));
+                              return;
+                            }
+                            auto config_r =
+                                tos::fetch_tl_object<tos::lite_api::liteServer_configInfo>(config_res.move_as_ok(), true);
+                            if (config_r.is_error()) {
+                              promise.set_value(make_json_error(-32603,
+                                  PSTRING() << "parse configInfo: " << config_r.error(), req_id));
+                              return;
+                            }
+                            auto config_info = config_r.move_as_ok();
+                            auto requested_block_id = tos::create_block_id(config_info->id_);
+                            auto state_root_r = block::check_extract_state_proof(
+                                requested_block_id, config_info->state_proof_.as_slice(),
+                                config_info->config_proof_.as_slice());
+                            if (state_root_r.is_error()) {
+                              promise.set_value(make_json_error(-32603,
+                                  PSTRING() << "config proof error: " << state_root_r.error(), req_id));
+                              return;
+                            }
+                            auto cfg_r = block::ConfigInfo::extract_config(
+                                state_root_r.move_as_ok(), requested_block_id,
+                                block::ConfigInfo::needPrevBlocks | block::ConfigInfo::needCapabilities |
+                                    block::ConfigInfo::needLibraries);
+                            if (cfg_r.is_error()) {
+                              promise.set_value(make_json_error(-32603,
+                                  PSTRING() << "config extract error: " << cfg_r.error(), req_id));
+                              return;
+                            }
+                            auto cfg = cfg_r.move_as_ok();
+                            auto prev_blocks_r = cfg->get_prev_blocks_info();
+                            if (prev_blocks_r.is_error()) {
+                              promise.set_value(make_json_error(-32603,
+                                  PSTRING() << "prev_blocks_info error: " << prev_blocks_r.error(), req_id));
+                              return;
+                            }
+
+                            bool is_masterchain = addr.workchain == tos::masterchainId;
+                            auto gas_limits_prices_r = cfg->get_gas_limits_prices(is_masterchain);
+                            auto storage_prices_r = cfg->get_storage_prices();
+                            auto masterchain_msg_prices_r = cfg->get_msg_prices(true);
+                            auto basechain_msg_prices_r = cfg->get_msg_prices(false);
+                            if (gas_limits_prices_r.is_error() || storage_prices_r.is_error() ||
+                                masterchain_msg_prices_r.is_error() || basechain_msg_prices_r.is_error()) {
+                              promise.set_value(make_json_error(-32603, "fee config unavailable", req_id));
+                              return;
+                            }
+                            auto gas_limits_prices = gas_limits_prices_r.move_as_ok();
+                            auto storage_prices = storage_prices_r.move_as_ok();
+                            auto masterchain_msg_prices = masterchain_msg_prices_r.move_as_ok();
+                            auto basechain_msg_prices = basechain_msg_prices_r.move_as_ok();
+                            block::MsgPrices* msg_prices[2] = {&basechain_msg_prices, &masterchain_msg_prices};
+
+                            auto storage_fee_256 = block::StoragePrices::compute_storage_fees(
+                                parsed.sync_utime, storage_prices, parsed.storage_used,
+                                parsed.storage_last_paid, false, is_masterchain);
+                            auto storage_fee = storage_fee_256.is_null() ? 0 : storage_fee_256->to_long();
+
+                            auto message = tos::GenericAccount::create_ext_message(addr, new_state, body_cell);
+                            vm::CellStorageStat in_msg_stat;
+                            in_msg_stat.add_used_storage(message, true, 3);
+                            auto in_fwd_fee =
+                                msg_prices[is_masterchain]->compute_fwd_fees(in_msg_stat.cells, in_msg_stat.bits);
+
+                            vm::Dictionary libraries{256};
+                            if (cfg->get_libraries_root().not_null()) {
+                              libraries = vm::Dictionary(cfg->get_libraries_root(), 256);
+                            }
+
+                            auto prev_blocks_info = prev_blocks_r.move_as_ok();
+                            auto cfg_shared = std::shared_ptr<const block::Config>(cfg.release());
+                            auto smc = tos::SmartContract::create({effective_code, effective_data});
+                            auto gas_limits =
+                                estimate_compute_gas_limits(td::make_refint(parsed.balance), gas_limits_prices);
+                            auto run_res = smc.write().send_external_message(
+                                body_cell,
+                                tos::SmartContract::Args()
+                                    .set_limits(gas_limits)
+                                    .set_balance(parsed.balance)
+                                    .set_extra_currencies(parsed.extra_currencies_cell)
+                                    .set_now(parsed.sync_utime)
+                                    .set_ignore_chksig(ignore_chksig)
+                                    .set_address(addr)
+                                    .set_config(cfg_shared)
+                                    .set_prev_blocks_info(prev_blocks_info)
+                                    .set_libraries(std::move(libraries)));
+
+                            td::int64 fwd_fee = 0;
+                            if (run_res.success) {
+                              auto fwd_fee_r = estimate_calc_fwd_fees(run_res.actions, msg_prices, is_masterchain);
+                              if (fwd_fee_r.is_error()) {
+                                promise.set_value(make_json_error(-32603,
+                                    PSTRING() << "forward fee error: " << fwd_fee_r.error(), req_id));
+                                return;
+                              }
+                              fwd_fee = fwd_fee_r.move_as_ok();
+                            }
+
+                            auto gas_fee = run_res.accepted
+                                               ? estimate_compute_gas_price(run_res.gas_used, gas_limits_prices)->to_long()
+                                               : 0;
+                            promise.set_value(make_json_ok(
+                                build_estimate_fee_json(in_fwd_fee, storage_fee, gas_fee, fwd_fee), req_id));
+                          }));
+                }));
       });
 }
 

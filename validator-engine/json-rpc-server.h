@@ -87,6 +87,8 @@ class JsonRpcServer final : public td::actor::Actor {
   // Method handlers — block/chain read APIs
   void handle_getMasterchainInfo(td::JsonObject &params, std::string req_id,
                                  td::Promise<HttpReturn> promise);
+  void handle_getConsensusBlock(td::JsonObject &params, std::string req_id,
+                                td::Promise<HttpReturn> promise);
   void handle_lookupBlock(td::JsonObject &params, std::string req_id,
                           td::Promise<HttpReturn> promise);
   void handle_shards(td::JsonObject &params, std::string req_id,
@@ -105,6 +107,8 @@ class JsonRpcServer final : public td::actor::Actor {
                                 td::Promise<HttpReturn> promise);
   void handle_sendQuery(td::JsonObject &params, std::string req_id,
                         td::Promise<HttpReturn> promise);
+  void handle_estimateFee(td::JsonObject &params, std::string req_id,
+                          td::Promise<HttpReturn> promise);
 
   // Method handlers — convenience / address APIs
   void handle_getAddressBalance(td::JsonObject &params, std::string req_id,
@@ -139,6 +143,8 @@ class JsonRpcServer final : public td::actor::Actor {
   td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager_;
   td::actor::ActorOwn<http::HttpServer> http_;
   Options opts_;
+  td::uint32 consensus_block_seqno_{0};
+  td::int64 consensus_block_timestamp_{0};
 };
 
 }  // namespace tos
