@@ -280,7 +280,11 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     auto body = payload->get_slice(1 << 20);
     process_body(std::move(body), "", std::move(promise));
   } else {
-    // Body not yet fully received — register callback
+    // Body not yet fully received — register callback.
+    // IMPORTANT: completed() must NOT call payload_->get_slice() directly,
+    // because it runs inside HttpPayload::parse() which holds mutex_.
+    // get_slice() also takes mutex_ → deadlock on the same thread.
+    // Instead, send an actor message to read the body outside the lock.
     class BodyWaiter : public http::HttpPayload::Callback {
      public:
       BodyWaiter(td::actor::ActorId<JsonRpcServer> server, PayloadPtr payload,
@@ -288,9 +292,9 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
           : server_(server), payload_(std::move(payload)), promise_(std::move(promise)) {}
       void run(size_t) override {}
       void completed() override {
-        auto body = payload_->get_slice(1 << 20);
-        td::actor::send_closure(server_, &JsonRpcServer::process_body,
-                                std::move(body), std::string(), std::move(promise_));
+        // Do NOT read payload here (mutex deadlock). Defer to actor scheduler.
+        td::actor::send_closure(server_, &JsonRpcServer::on_body_ready,
+                                std::move(payload_), std::move(promise_));
       }
      private:
       td::actor::ActorId<JsonRpcServer> server_;
@@ -300,6 +304,13 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     payload->add_callback(std::make_unique<BodyWaiter>(
         actor_id(this), payload, std::move(promise)));
   }
+}
+
+void JsonRpcServer::on_body_ready(PayloadPtr payload, td::Promise<HttpReturn> promise) {
+  // Safe to call get_slice() here — we are in the actor scheduler, NOT inside
+  // HttpPayload::parse()'s mutex. This breaks the deadlock chain.
+  auto body = payload->get_slice(1 << 20);
+  process_body(std::move(body), "", std::move(promise));
 }
 
 void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,

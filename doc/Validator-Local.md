@@ -1,33 +1,33 @@
-# Local 3-Node TOS Testnet Setup Guide
+# Local 4-Node TOS Testnet Setup Guide
 
-This document records the exact steps used to configure and run a production-style local TOS testnet with 3 validator nodes on a single machine. This setup serves as the reference for future production deployments.
+This document records the exact steps used to configure and run a production-style local TOS testnet with 4 validator nodes on a single machine. This setup serves as the reference for future production deployments.
 
 ## Architecture
 
 ```
-                     ┌────────────────────────┐
-                     │  /data/tos-global.json  │  shared global config
-                     │  (DHT + zero_state +    │  (used by all nodes
-                     │   liteservers)          │   and lite-client)
-                     └───────────┬────────────┘
-            ┌────────────────────┼────────────────────┐
-            │                    │                     │
-    ┌───────▼────────┐  ┌───────▼────────┐  ┌────────▼───────┐
-    │  tos-validator  │  │  tos-validator  │  │  tos-validator  │
-    │     @1          │  │     @2          │  │     @3          │
-    │  /data/tos1/    │  │  /data/tos2/    │  │  /data/tos3/    │
-    │  UDP:2002       │  │  UDP:2005       │  │  UDP:2008       │
-    │  LS:2003        │  │  LS:2006        │  │  LS:2009        │
-    │  Console:2004   │  │  Console:2007   │  │  Console:2010   │
-    └────────────────┘  └────────────────┘  └────────────────┘
-            │                    │                     │
-            └────────────────────┼────────────────────┘
-                     ┌───────────▼────────────┐
-                     │     DHT bootstrap       │
-                     │  node0 (port 2001)      │
-                     │  (runs as part of       │
-                     │   validator @1 process) │
-                     └────────────────────────┘
+                          ┌────────────────────────┐
+                          │  /data/tos-global.json  │  shared global config
+                          │  (DHT + zero_state +    │  (used by all nodes
+                          │   liteservers)          │   and lite-client)
+                          └───────────┬────────────┘
+            ┌──────────────┬──────────┼──────────┬──────────────┐
+            │              │          │          │              │
+    ┌───────▼────────┐  ┌──▼─────────────┐  ┌───▼────────────┐  ┌───▼────────────┐
+    │  tos-validator  │  │  tos-validator  │  │  tos-validator  │  │  tos-validator  │
+    │     @1          │  │     @2          │  │     @3          │  │     @4          │
+    │  /data/tos1/    │  │  /data/tos2/    │  │  /data/tos3/    │  │  /data/tos4/    │
+    │  UDP:2002       │  │  UDP:2005       │  │  UDP:2008       │  │  UDP:2011       │
+    │  LS:2003        │  │  LS:2006        │  │  LS:2009        │  │  LS:2012        │
+    │  Console:2004   │  │  Console:2007   │  │  Console:2010   │  │  Console:2013   │
+    └────────────────┘  └────────────────┘  └────────────────┘  └────────────────┘
+            │              │          │          │              │
+            └──────────────┴──────────┼──────────┴──────────────┘
+                          ┌───────────▼────────────┐
+                          │     DHT bootstrap       │
+                          │  node0 (port 2001)      │
+                          │  (runs as part of       │
+                          │   validator @1 process) │
+                          └────────────────────────┘
 ```
 
 All nodes bind to `127.0.0.1`. The DHT bootstrap node runs inside the validator @1 process. Node 1 also acts as the DHT seed for peer discovery.
@@ -47,6 +47,7 @@ The setup creates two directory trees:
     static/                       # symlinks: file_hash -> .boc
   node2/                          # validator 2
   node3/                          # validator 3
+  node4/                          # validator 4
 ```
 
 **Service tree** (symlinked from working tree, used by systemd):
@@ -68,6 +69,7 @@ The setup creates two directory trees:
     ...                           # other runtime dirs created by validator-engine
   tos2/                           # same structure
   tos3/                           # same structure
+  tos4/                           # same structure
 ```
 
 ## Port Allocation
@@ -78,6 +80,7 @@ The setup creates two directory trees:
 | tos1 | 2002            | 2003             | 2004          |
 | tos2 | 2005            | 2006             | 2007          |
 | tos3 | 2008            | 2009             | 2010          |
+| tos4 | 2011            | 2012             | 2013          |
 
 Ports are auto-assigned by the `tostester.Network` class starting from base port 2000.
 
@@ -89,6 +92,7 @@ Ports are auto-assigned by the `tostester.Network` class starting from base port
 | `tos-validator@1` | `/etc/systemd/system/tos-validator@1.service` | Validator node 1 |
 | `tos-validator@2` | `/etc/systemd/system/tos-validator@2.service` | Validator node 2 |
 | `tos-validator@3` | `/etc/systemd/system/tos-validator@3.service` | Validator node 3 |
+| `tos-validator@4` | `/etc/systemd/system/tos-validator@4.service` | Validator node 4 |
 
 Service unit files are generated per-instance (not templates) because each node has unique ports and paths. All services run as system user `tos` with the following hardening:
 
@@ -148,15 +152,15 @@ The `--clean` flag stops any running services and removes previous `/data/` cont
 3. **Installs Fift libraries** to `/usr/local/share/tos/fift/lib/` and `/usr/local/share/tos/smartcont/`
 
 4. **Runs Python setup** using `uv run` with the `tostester.Network` class:
-   - Creates 1 DHT node + 3 full nodes via `network.create_dht_node()` and `network.create_full_node()`
-   - Marks all 3 as initial validators via `node.make_initial_validator()`
+   - Creates 1 DHT node + 4 full nodes via `network.create_dht_node()` and `network.create_full_node()`
+   - Marks all 4 as initial validators via `node.make_initial_validator()`
    - Each node announces itself to the DHT node via `node.announce_to(dht)`
    - Triggers zero state generation via `network._get_or_generate_zerostate()`
 
 5. **Zero state generation** (inside Python):
    - Uses `crypto/smartcont/gen-zerostate-test.fif` template
    - Sets `global_id = 3` (dev network)
-   - Embeds 3 validator public keys via `add-validator`
+   - Embeds 4 validator public keys via `add-validator`
    - Runs `build/crypto/create-state` with Fift include paths
    - Produces: `zerostate.boc`, `basestate0.boc`, hash files, wallet/elector/config addresses
 
@@ -202,6 +206,7 @@ All services started.
   tos-validator@1          active
   tos-validator@2          active
   tos-validator@3          active
+  tos-validator@4          active
 ```
 
 ### Step 4: Verify block production
@@ -227,20 +232,21 @@ tos-lite-client -C /data/tos-global.json -v 0 -c "time" -c "getconfig 34" -c "qu
 
 Expected output includes:
 ```
-cur_validators:(validators_ext ... total:3 main:3 total_weight:51
+cur_validators:(validators_ext ... total:4 main:4 total_weight:68
+  ... weight:17
   ... weight:17
   ... weight:17
   ... weight:17
 ```
 
-All 3 validators active with equal weight.
+All 4 validators active with equal weight.
 
 ## Management
 
 ### Service control
 
 ```bash
-./scripts/testnet-ctl.sh start      # start DHT + 3 validators
+./scripts/testnet-ctl.sh start      # start DHT + 4 validators
 ./scripts/testnet-ctl.sh stop       # graceful stop (validators first, then DHT)
 ./scripts/testnet-ctl.sh restart    # stop + start
 ./scripts/testnet-ctl.sh status     # show active/inactive for each service
@@ -396,7 +402,7 @@ b64_id = base64.b64encode(short_id).decode()                # config.json value
 | Parameter | Value | Config location |
 |-----------|-------|----------------|
 | `global_id` | 3 (dev) | zero state (`setglobalid`) |
-| Validators | 3 | zero state (`config.validators!`) |
+| Validators | 4 | zero state (`config.validators!`) |
 | Election period | 2400s elected-for, 800s start-before | zero state (`config.election_params!`) |
 | Min stake | 10,000 TOS | zero state (`config.validator_stake_limits!`) |
 | Block gas limit | 1,000,000 | zero state (`config.gas_prices!`) |
@@ -422,7 +428,7 @@ This generates new keys, new zero state, and fresh databases. All previous chain
 | ADNL timeout on all nodes | Missing `--initial-sync-delay` or `--quic-flood-control` launch params | Verify systemd ExecStart includes both flags (see below) |
 | "missing file" in log for static/ | Zero state .boc not in static dir | Check symlinks in `static/` point to valid .boc files |
 | DHT "failed to get from dht" | Nodes haven't discovered each other yet | Wait 5-10 seconds, DHT needs time to propagate |
-| Nodes not producing blocks | < 2/3 validators online | Ensure all 3 validator services are active |
+| Nodes not producing blocks | < 3/4 validators online | Ensure all 4 validator services are active |
 
 ## Files
 
@@ -468,6 +474,7 @@ For production, the following changes are needed:
 7. **Backup**: Regular backup of `/data/tosN/keyring/` (keys are irreplaceable)
 8. **Firewall**: Open only UDP validator ports and TCP liteserver ports
 9. **Key rotation**: Rotate validator keys periodically via validator console
+10. **JSON-RPC**: If running the embedded JSON-RPC HTTP server, use ports 8011-8014 (one per validator) to avoid collisions with the validator port range
 
 ## Related Docs
 

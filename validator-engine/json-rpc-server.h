@@ -62,6 +62,8 @@ class JsonRpcServer final : public td::actor::Actor {
 
   void on_request(RequestPtr request, PayloadPtr payload,
                   td::Promise<HttpReturn> promise);
+  // Called by BodyWaiter via actor message — reads payload OUTSIDE HttpPayload mutex.
+  void on_body_ready(PayloadPtr payload, td::Promise<HttpReturn> promise);
   void process_body(td::BufferSlice body, std::string req_id,
                     td::Promise<HttpReturn> promise);
   void dispatch_method(std::string method, td::JsonObject &params,

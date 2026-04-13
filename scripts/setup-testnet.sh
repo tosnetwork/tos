@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# setup-testnet.sh - Set up a local 3-node TOS testnet using the tested Python infrastructure.
+# setup-testnet.sh - Set up a local 4-node TOS testnet using the tested Python infrastructure.
 #
 # Usage:  sudo ./scripts/setup-testnet.sh [--clean]
 
@@ -28,7 +28,7 @@ if [ "${1:-}" = "--clean" ]; then
     echo "Stopping services..."
     "$REPO_ROOT/scripts/testnet-ctl.sh" stop 2>/dev/null || true
     echo "Cleaning $DATA/..."
-    for d in zerostate dht tos1 tos2 tos3 testnet; do rm -rf "${DATA:?}/$d"; done
+    for d in zerostate dht tos1 tos2 tos3 tos4 testnet; do rm -rf "${DATA:?}/$d"; done
     rm -f "${DATA:?}/tos-global.json"
 fi
 
@@ -85,7 +85,7 @@ async def setup():
 
         # Create 3 validators
         nodes = []
-        for _ in range(3):
+        for _ in range(4):
             node = network.create_full_node(threads=4)
             node.make_initial_validator()
             node.announce_to(dht)
@@ -226,7 +226,7 @@ WantedBy=multi-user.target
 SVCEOF
 
 # Validator services
-for i in 1 2 3; do
+for i in 1 2 3 4; do
     NODE_DIR="$DATA/tos$i"
     TESTNET_NODE_DIR=$(echo "$PORTS" | python3 -c "import json,sys; d=json.load(sys.stdin); n=[x for x in d['nodes'] if x['idx']==$i][0]; print(n)")
 
@@ -266,7 +266,7 @@ SVCEOF
 done
 
 systemctl daemon-reload
-systemctl enable tos-dht tos-validator@1 tos-validator@2 tos-validator@3
+systemctl enable tos-dht tos-validator@1 tos-validator@2 tos-validator@3 tos-validator@4
 
 echo ""
 echo "=========================================="

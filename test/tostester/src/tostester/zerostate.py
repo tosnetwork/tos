@@ -29,12 +29,13 @@ class NetworkConfig:
     monitor_min_split: int = 0
     split: int = 0
     global_version: int = 13
-    shard_validators: int = 3  # DEV-SPECIFIC: matches min_validators=3
+    shard_validators: int = 4  # DEV-SPECIFIC: matches min_validators=4
     block_limit_mul: int = 1
-    mc_valgroup_lifetime: int = 250
+    mc_valgroup_lifetime: int = 100000  # DEV: long lifetime for local testnet stability
     mc_consensus: SimplexConsensusConfig | None = field(default_factory=SimplexConsensusConfig)  # Simplex enabled
-    shard_valgroup_lifetime: int = 250
+    shard_valgroup_lifetime: int = 100000  # DEV: long lifetime for local testnet stability
     shard_consensus: SimplexConsensusConfig | None = field(default_factory=SimplexConsensusConfig)  # Simplex enabled
+    shard_validators_lifetime: int = 100000  # DEV: long lifetime for local testnet
 
 
 @dataclass
@@ -204,11 +205,11 @@ Masterchain swap
 // ConfigParam 19: global_id (must match setglobalid above)
 <b globalid@ 32 i, b> 19 config!
 // max-validators max-main-validators min-validators
-40 20 3 config.validator_num!  // DEV-SPECIFIC: same as production limits
+40 20 4 config.validator_num!  // DEV-SPECIFIC: same as production limits
 // min-stake max-stake min-total-stake max-factor
 TM$10000 TM$100000 TM$10000 sg~10 config.validator_stake_limits!  // DEV-SPECIFIC: low stakes for tests
 // elected-for elect-start-before elect-end-before stakes-frozen-for
-2400 800 60 300 config.election_params!  // DEV-SPECIFIC: fast elections for tests
+86400 4000 600 1000 config.election_params!  // DEV-SPECIFIC: 24h election cycle for local testnet
 // config-addr = -1:5555...5555
 AllOnes 5 * constant config_addr
 config_addr config.config_smc!
@@ -228,7 +229,7 @@ config.special!
 100 10 sg* 10 sg* 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.fwd_prices!
 100 10 sg* 10 sg* 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.mc_fwd_prices!
 // mc-cc-lifetime sh-cc-lifetime sh-val-lifetime sh-val-num mc-shuffle
-{mc_valgroup_lifetime} {shard_valgroup_lifetime} 1000 {shard_val} true config.catchain_params!
+{mc_valgroup_lifetime} {shard_valgroup_lifetime} {shard_validators_lifetime} {shard_val} true config.catchain_params!
 
 // round-candidates next-cand-delay-ms consensus-timeout-ms fast-attempts attempt-duration cc-max-deps max-block-size max-collated-size new-cc-ids
 // proto-version catchain-max-blocks-coeff
@@ -351,6 +352,7 @@ def create_zerostate(
             mc_validators=len(keys),
             mc_valgroup_lifetime=config.mc_valgroup_lifetime,
             shard_valgroup_lifetime=config.shard_valgroup_lifetime,
+            shard_validators_lifetime=config.shard_validators_lifetime,
             new_consensus_config=new_consensus_config,
         ),
         state_dir,
