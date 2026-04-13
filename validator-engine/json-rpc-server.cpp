@@ -1377,7 +1377,7 @@ void JsonRpcServer::handle_lookupBlock(td::JsonObject &params, std::string req_i
               PSTRING() << "lookupBlock: " << R.error(), req_id));
           return;
         }
-        auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_lookupBlockResult>(
+        auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
             R.move_as_ok(), true);
         if (lb_r.is_error()) {
           promise.set_value(make_json_error(-32603,
@@ -1400,7 +1400,7 @@ void JsonRpcServer::handle_shards(td::JsonObject &params, std::string req_id,
   }
   td::int32 seqno = seqno_r.ok();
 
-  // Step 1: lookup the masterchain block by seqno
+  // Step 1: lookup the exact masterchain block by seqno
   auto block_id = tos::create_tl_object<tos::lite_api::tosNode_blockId>(
       -1, static_cast<td::int64>(-1LL << 63), seqno);
   auto lookup_inner = tos::serialize_tl_object(
@@ -1419,7 +1419,7 @@ void JsonRpcServer::handle_shards(td::JsonObject &params, std::string req_id,
               PSTRING() << "lookupBlock: " << R.error(), req_id));
           return;
         }
-        auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_lookupBlockResult>(
+        auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
             R.move_as_ok(), true);
         if (lb_r.is_error()) {
           promise.set_value(make_json_error(-32603,
@@ -1428,43 +1428,71 @@ void JsonRpcServer::handle_shards(td::JsonObject &params, std::string req_id,
         }
         auto lb = lb_r.move_as_ok();
 
-        // Step 2: get all shards info for this MC block
-        auto inner = tos::serialize_tl_object(
-            tos::create_tl_object<tos::lite_api::liteServer_getAllShardsInfo>(
-                std::move(lb->id_)),
+        // Step 2: fetch a block header proof that includes BlockExtra and
+        // ShardHashes (mode = 16 | 32 = 48). This avoids total-state download
+        // limits and the broken getAllShardsInfo path while staying within the
+        // standard liteserver RPC surface.
+        auto header_inner = tos::serialize_tl_object(
+            tos::create_tl_object<tos::lite_api::liteServer_getBlockHeader>(
+                std::move(lb->id_), 48),
             true);
-        auto query = tos::serialize_tl_object(
-            tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
+        auto header_query = tos::serialize_tl_object(
+            tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(header_inner)), true);
 
-        td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
-            std::move(query),
+        td::actor::send_closure(
+            self_id, &JsonRpcServer::send_liteserver_query, std::move(header_query),
             td::PromiseCreator::lambda(
                 [req_id = std::move(req_id), promise = std::move(promise)](
                     td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
             promise.set_value(make_json_error(-32603,
-                PSTRING() << "getAllShardsInfo: " << R.error(), req_id));
+                PSTRING() << "getBlockHeader: " << R.error(), req_id));
             return;
           }
-          auto si_r = tos::fetch_tl_object<tos::lite_api::liteServer_allShardsInfo>(
+          auto hdr_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
               R.move_as_ok(), true);
-          if (si_r.is_error()) {
+          if (hdr_r.is_error()) {
             promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse allShardsInfo: " << si_r.error(), req_id));
+                PSTRING() << "parse blockHeader: " << hdr_r.error(), req_id));
             return;
           }
-          auto si = si_r.move_as_ok();
+          auto hdr = hdr_r.move_as_ok();
 
-          // Parse shard hashes from data BOC
-          auto root_r = vm::std_boc_deserialize(si->data_.as_slice());
-          if (root_r.is_error()) {
+          auto proof_root_r = vm::std_boc_deserialize(hdr->header_proof_.as_slice());
+          if (proof_root_r.is_error()) {
             promise.set_value(make_json_error(-32603,
-                PSTRING() << "deserialize shard data: " << root_r.error(), req_id));
+                PSTRING() << "deserialize header_proof: " << proof_root_r.error(), req_id));
+            return;
+          }
+          auto virt_r = vm::MerkleProof::virtualize(proof_root_r.move_as_ok());
+          if (virt_r.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "virtualize header_proof: " << virt_r.error(), req_id));
+            return;
+          }
+          auto block_root = virt_r.move_as_ok();
+          auto blk_id = tos::create_block_id(hdr->id_);
+          auto check_r = block::check_block_header_proof(block_root, blk_id);
+          if (check_r.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "header proof error: " << check_r, req_id));
+            return;
+          }
+
+          block::gen::Block::Record blk;
+          block::gen::BlockExtra::Record extra;
+          block::gen::McBlockExtra::Record mc_extra;
+          if (!tlb::unpack_cell(block_root, blk) || !tlb::unpack_cell(blk.extra, extra) ||
+              !extra.custom->have_refs() ||
+              !tlb::unpack_cell(extra.custom->prefetch_ref(), mc_extra)) {
+            promise.set_value(make_json_error(-32603,
+                "failed to extract shard hashes from block header proof", req_id));
             return;
           }
 
           block::ShardConfig sc;
-          if (!sc.unpack(root_r.move_as_ok())) {
+          if (!mc_extra.shard_hashes->have_refs() ||
+              !sc.unpack(mc_extra.shard_hashes->prefetch_ref())) {
             promise.set_value(make_json_error(-32603,
                 "failed to parse shard configuration", req_id));
             return;
@@ -1484,7 +1512,7 @@ void JsonRpcServer::handle_shards(td::JsonObject &params, std::string req_id,
                << ",\"root_hash\":\"" << td::base64_encode(blk.root_hash.as_slice()) << "\""
                << ",\"file_hash\":\"" << td::base64_encode(blk.file_hash.as_slice()) << "\""
                << "}";
-            return 0;  // continue
+            return 0;
           });
           sb << "]}";
           promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
@@ -1526,7 +1554,7 @@ void JsonRpcServer::handle_getBlockHeader(td::JsonObject &params, std::string re
               PSTRING() << "lookupBlock: " << R.error(), req_id));
           return;
         }
-        auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_lookupBlockResult>(
+        auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
             R.move_as_ok(), true);
         if (lb_r.is_error()) {
           promise.set_value(make_json_error(-32603,
@@ -1674,7 +1702,7 @@ void JsonRpcServer::handle_getBlockTransactions(td::JsonObject &params, std::str
               PSTRING() << "lookupBlock: " << R.error(), req_id));
           return;
         }
-        auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_lookupBlockResult>(
+        auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
             R.move_as_ok(), true);
         if (lb_r.is_error()) {
           promise.set_value(make_json_error(-32603,
@@ -1805,7 +1833,7 @@ void JsonRpcServer::handle_getBlockTransactionsExt(td::JsonObject &params, std::
               PSTRING() << "lookupBlock: " << R.error(), req_id));
           return;
         }
-        auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_lookupBlockResult>(
+        auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
             R.move_as_ok(), true);
         if (lb_r.is_error()) {
           promise.set_value(make_json_error(-32603,
@@ -2510,6 +2538,21 @@ void JsonRpcServer::send_liteserver_query(td::BufferSlice query,
           td::actor::send_closure(guard_id, &QueryTimeoutGuard::deliver, std::move(result));
         });
   }
+  promise = td::PromiseCreator::lambda(
+      [promise = std::move(promise)](td::Result<td::BufferSlice> result) mutable {
+        if (result.is_error()) {
+          promise.set_error(result.move_as_error());
+          return;
+        }
+        auto data = result.move_as_ok();
+        auto err_r = tos::fetch_tl_object<tos::lite_api::liteServer_error>(data.clone(), true);
+        if (err_r.is_ok()) {
+          auto err = err_r.move_as_ok();
+          promise.set_error(td::Status::Error(err->code_, err->message_));
+          return;
+        }
+        promise.set_value(std::move(data));
+      });
   td::actor::send_closure(validator_manager_,
                           &validator::ValidatorManagerInterface::run_ext_query,
                           std::move(query), std::move(promise));
