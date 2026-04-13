@@ -142,6 +142,20 @@ class JsonRpcServer final : public td::actor::Actor {
   void handle_getTokenData(td::JsonObject &params, std::string req_id,
                            td::Promise<HttpReturn> promise);
 
+  // Method handlers — new APIs (parity with ton-http-api-cpp)
+  void handle_detectHash(td::JsonObject &params, std::string req_id,
+                         td::Promise<HttpReturn> promise);
+  void handle_getOutMsgQueueSize(td::JsonObject &params, std::string req_id,
+                                 td::Promise<HttpReturn> promise);
+  void handle_getConfigAll(td::JsonObject &params, std::string req_id,
+                           td::Promise<HttpReturn> promise);
+  void handle_getTransactionsStd(td::JsonObject &params, std::string req_id,
+                                 td::Promise<HttpReturn> promise);
+  void handle_runGetMethodStd(td::JsonObject &params, std::string req_id,
+                              td::Promise<HttpReturn> promise);
+  void handle_sendBocReturnHashNoError(td::JsonObject &params, std::string req_id,
+                                       td::Promise<HttpReturn> promise);
+
   // Readiness probe (async — queries liteserver for sync state)
   void handle_readyz(td::Promise<HttpReturn> promise);
 
