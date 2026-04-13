@@ -102,6 +102,20 @@ class JsonRpcServer final : public td::actor::Actor {
   void handle_getBlockTransactionsExt(td::JsonObject &params, std::string req_id,
                                       td::Promise<HttpReturn> promise);
 
+  // Method handlers — transaction lookup APIs
+  void handle_tryLocateTx(td::JsonObject &params, std::string req_id,
+                          td::Promise<HttpReturn> promise);
+  void handle_tryLocateResultTx(td::JsonObject &params, std::string req_id,
+                                td::Promise<HttpReturn> promise);
+  void handle_tryLocateSourceTx(td::JsonObject &params, std::string req_id,
+                                td::Promise<HttpReturn> promise);
+
+  // Method handlers — block proof / signature APIs
+  void handle_getMasterchainBlockSignatures(td::JsonObject &params, std::string req_id,
+                                            td::Promise<HttpReturn> promise);
+  void handle_getShardBlockProof(td::JsonObject &params, std::string req_id,
+                                 td::Promise<HttpReturn> promise);
+
   // Method handlers — send family
   void handle_sendBocReturnHash(td::JsonObject &params, std::string req_id,
                                 td::Promise<HttpReturn> promise);
@@ -121,6 +135,12 @@ class JsonRpcServer final : public td::actor::Actor {
                             td::Promise<HttpReturn> promise);
   void handle_detectAddress(td::JsonObject &params, std::string req_id,
                             td::Promise<HttpReturn> promise);
+
+  // Method handlers — library & token data APIs
+  void handle_getLibraries(td::JsonObject &params, std::string req_id,
+                           td::Promise<HttpReturn> promise);
+  void handle_getTokenData(td::JsonObject &params, std::string req_id,
+                           td::Promise<HttpReturn> promise);
 
   // Readiness probe (async — queries liteserver for sync state)
   void handle_readyz(td::Promise<HttpReturn> promise);

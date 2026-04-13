@@ -243,6 +243,13 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     else if (path == "/getBlockTransactions")   rest_method = "getBlockTransactions";
     else if (path == "/getExtendedAddressInformation") rest_method = "getExtendedAddressInformation";
     else if (path == "/estimateFee")            rest_method = "estimateFee";
+    else if (path == "/tryLocateTx")            rest_method = "tryLocateTx";
+    else if (path == "/tryLocateResultTx")      rest_method = "tryLocateResultTx";
+    else if (path == "/tryLocateSourceTx")      rest_method = "tryLocateSourceTx";
+    else if (path == "/getMasterchainBlockSignatures") rest_method = "getMasterchainBlockSignatures";
+    else if (path == "/getShardBlockProof")     rest_method = "getShardBlockProof";
+    else if (path == "/getLibraries")           rest_method = "getLibraries";
+    else if (path == "/getTokenData")           rest_method = "getTokenData";
 
     if (!rest_method.empty()) {
       // Build a JSON object from query parameters, parse it, and dispatch
@@ -432,6 +439,18 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     handle_getTransactions(params, std::move(req_id), std::move(promise));
   } else if (method == "getBlockTransactionsExt") {
     handle_getBlockTransactionsExt(params, std::move(req_id), std::move(promise));
+  // Transaction lookup APIs
+  } else if (method == "tryLocateTx") {
+    handle_tryLocateTx(params, std::move(req_id), std::move(promise));
+  } else if (method == "tryLocateResultTx") {
+    handle_tryLocateResultTx(params, std::move(req_id), std::move(promise));
+  } else if (method == "tryLocateSourceTx") {
+    handle_tryLocateSourceTx(params, std::move(req_id), std::move(promise));
+  // Block proof / signature APIs
+  } else if (method == "getMasterchainBlockSignatures") {
+    handle_getMasterchainBlockSignatures(params, std::move(req_id), std::move(promise));
+  } else if (method == "getShardBlockProof") {
+    handle_getShardBlockProof(params, std::move(req_id), std::move(promise));
   // Send family
   } else if (method == "sendBocReturnHash") {
     handle_sendBocReturnHash(params, std::move(req_id), std::move(promise));
@@ -450,6 +469,11 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     handle_unpackAddress(params, std::move(req_id), std::move(promise));
   } else if (method == "detectAddress") {
     handle_detectAddress(params, std::move(req_id), std::move(promise));
+  // Library & token data APIs
+  } else if (method == "getLibraries") {
+    handle_getLibraries(params, std::move(req_id), std::move(promise));
+  } else if (method == "getTokenData") {
+    handle_getTokenData(params, std::move(req_id), std::move(promise));
   } else {
     promise.set_value(make_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
   }
@@ -1850,6 +1874,195 @@ void JsonRpcServer::handle_getBlockHeader(td::JsonObject &params, std::string re
       });
 }
 
+// ─── getMasterchainBlockSignatures ──────────────────────────────────────
+
+void JsonRpcServer::handle_getMasterchainBlockSignatures(td::JsonObject &params, std::string req_id,
+                                                         td::Promise<HttpReturn> promise) {
+  auto seqno_r = params.get_required_int_field("seqno");
+  if (seqno_r.is_error()) {
+    promise.set_value(make_json_error(-32602, "Missing 'seqno'", req_id));
+    return;
+  }
+  td::int32 seqno = seqno_r.ok();
+
+  // Step 1: lookup the masterchain block by seqno
+  auto block_id = tos::create_tl_object<tos::lite_api::tosNode_blockId>(
+      -1, static_cast<td::int64>(-1LL << 63), seqno);
+  auto lookup_inner = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_lookupBlock>(
+          1, std::move(block_id), 0, 0),
+      true);
+  auto lookup_query = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(lookup_inner)), true);
+
+  auto self_id = actor_id(this);
+  send_liteserver_query(std::move(lookup_query),
+      [req_id = std::move(req_id), self_id, promise = std::move(promise)](
+          td::Result<td::BufferSlice> R) mutable {
+        if (R.is_error()) {
+          promise.set_value(make_json_error(-32603,
+              PSTRING() << "lookupBlock: " << R.error(), req_id));
+          return;
+        }
+        auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
+            R.move_as_ok(), true);
+        if (lb_r.is_error()) {
+          promise.set_value(make_json_error(-32603,
+              PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id));
+          return;
+        }
+        auto lb = lb_r.move_as_ok();
+        auto resolved_id_json = format_block_id_json(*lb->id_);
+
+        // Step 2: getBlockProof with mode=0 (no target — proof from known block back to init).
+        // The proof chain contains forward links with validator signatures.
+        auto inner = tos::serialize_tl_object(
+            tos::create_tl_object<tos::lite_api::liteServer_getBlockProof>(
+                0, std::move(lb->id_), nullptr),
+            true);
+        auto query = tos::serialize_tl_object(
+            tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
+
+        td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
+            std::move(query),
+            td::PromiseCreator::lambda(
+                [req_id = std::move(req_id), id_json = std::move(resolved_id_json),
+                 promise = std::move(promise)](
+                    td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "getBlockProof: " << R.error(), req_id));
+            return;
+          }
+          auto proof_r = tos::fetch_tl_object<tos::lite_api::liteServer_partialBlockProof>(
+              R.move_as_ok(), true);
+          if (proof_r.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "parse blockProof: " << proof_r.error(), req_id));
+            return;
+          }
+          auto proof = proof_r.move_as_ok();
+
+          // Extract signatures from forward links in the proof chain.
+          // Forward links (liteServer_blockLinkForward) contain a SignatureSet
+          // with the validator signatures for the destination block.
+          td::StringBuilder sb;
+          sb << "{\"@type\":\"blocks.masterchainBlockSignatures\",\"id\":" << id_json
+             << ",\"signatures\":[";
+          bool first_sig = true;
+          for (auto& step : proof->steps_) {
+            if (step->get_id() == tos::lite_api::liteServer_blockLinkForward::ID) {
+              auto* fwd = static_cast<tos::lite_api::liteServer_blockLinkForward*>(step.get());
+              if (fwd->signatures_ &&
+                  fwd->signatures_->get_id() == tos::lite_api::liteServer_signatureSet_ordinary::ID) {
+                auto* sig_set = static_cast<tos::lite_api::liteServer_signatureSet_ordinary*>(
+                    fwd->signatures_.get());
+                for (auto& sig : sig_set->signatures_) {
+                  if (!first_sig) sb << ",";
+                  first_sig = false;
+                  sb << "{\"node_id_short\":\""
+                     << td::base64_encode(sig->node_id_short_.as_slice())
+                     << "\",\"signature\":\""
+                     << td::base64_encode(sig->signature_.as_slice())
+                     << "\"}";
+                }
+              }
+            }
+          }
+          sb << "]}";
+          promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+        }));
+      });
+}
+
+// ─── getShardBlockProof ─────────────────────────────────────────────────
+
+void JsonRpcServer::handle_getShardBlockProof(td::JsonObject &params, std::string req_id,
+                                              td::Promise<HttpReturn> promise) {
+  auto wc_r = params.get_required_int_field("workchain");
+  auto shard_r = params.get_required_string_field("shard");
+  auto seqno_r = params.get_required_int_field("seqno");
+  if (wc_r.is_error() || shard_r.is_error() || seqno_r.is_error()) {
+    promise.set_value(make_json_error(-32602,
+        "Missing 'workchain', 'shard', or 'seqno'", req_id));
+    return;
+  }
+  td::int32 workchain = wc_r.ok();
+  td::int64 shard = std::strtoll(shard_r.ok().c_str(), nullptr, 10);
+  td::int32 seqno = seqno_r.ok();
+
+  // Step 1: lookupBlock to resolve the full block ID
+  auto block_id = tos::create_tl_object<tos::lite_api::tosNode_blockId>(workchain, shard, seqno);
+  auto lookup_inner = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_lookupBlock>(
+          1, std::move(block_id), 0, 0),
+      true);
+  auto lookup_query = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(lookup_inner)), true);
+
+  auto self_id = actor_id(this);
+  send_liteserver_query(std::move(lookup_query),
+      [req_id = std::move(req_id), self_id, promise = std::move(promise)](
+          td::Result<td::BufferSlice> R) mutable {
+        if (R.is_error()) {
+          promise.set_value(make_json_error(-32603,
+              PSTRING() << "lookupBlock: " << R.error(), req_id));
+          return;
+        }
+        auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
+            R.move_as_ok(), true);
+        if (lb_r.is_error()) {
+          promise.set_value(make_json_error(-32603,
+              PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id));
+          return;
+        }
+        auto lb = lb_r.move_as_ok();
+
+        // Step 2: getShardBlockProof
+        auto inner = tos::serialize_tl_object(
+            tos::create_tl_object<tos::lite_api::liteServer_getShardBlockProof>(
+                std::move(lb->id_)),
+            true);
+        auto query = tos::serialize_tl_object(
+            tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
+
+        td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
+            std::move(query),
+            td::PromiseCreator::lambda(
+                [req_id = std::move(req_id), promise = std::move(promise)](
+                    td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "getShardBlockProof: " << R.error(), req_id));
+            return;
+          }
+          auto sbp_r = tos::fetch_tl_object<tos::lite_api::liteServer_shardBlockProof>(
+              R.move_as_ok(), true);
+          if (sbp_r.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "parse shardBlockProof: " << sbp_r.error(), req_id));
+            return;
+          }
+          auto sbp = sbp_r.move_as_ok();
+
+          td::StringBuilder sb;
+          sb << "{\"@type\":\"blocks.shardBlockProof\""
+             << ",\"masterchain_id\":" << format_block_id_json(*sbp->masterchain_id_)
+             << ",\"links\":[";
+          bool first = true;
+          for (auto& link : sbp->links_) {
+            if (!first) sb << ",";
+            first = false;
+            sb << "{\"id\":" << format_block_id_json(*link->id_)
+               << ",\"proof\":\"" << td::base64_encode(link->proof_.as_slice()) << "\""
+               << "}";
+          }
+          sb << "]}";
+          promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+        }));
+      });
+}
+
 // ─── getBlockTransactions ────────────────────────────────────────────────
 
 void JsonRpcServer::handle_getBlockTransactions(td::JsonObject &params, std::string req_id,
@@ -2231,6 +2444,603 @@ void JsonRpcServer::handle_getTransactions(td::JsonObject &params, std::string r
 
         sb << "]}";
         promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+      });
+}
+
+// ─── Transaction lookup helpers ─────────────────────────────────────────
+// Shared by tryLocateTx, tryLocateResultTx, tryLocateSourceTx.
+
+// Parse the three common parameters: source, destination, created_lt.
+struct LocateParams {
+  block::StdAddress source;
+  block::StdAddress destination;
+  td::uint64 created_lt;
+};
+
+static td::Result<LocateParams> parse_locate_params(td::JsonObject &params) {
+  auto src_r = params.get_required_string_field("source");
+  if (src_r.is_error()) return td::Status::Error("Missing 'source'");
+  auto dst_r = params.get_required_string_field("destination");
+  if (dst_r.is_error()) return td::Status::Error("Missing 'destination'");
+  auto lt_r = params.get_required_string_field("created_lt");
+  if (lt_r.is_error()) return td::Status::Error("Missing 'created_lt'");
+
+  LocateParams lp;
+  if (!lp.source.parse_addr(td::Slice(src_r.ok())))
+    return td::Status::Error("Invalid 'source' address");
+  if (!lp.destination.parse_addr(td::Slice(dst_r.ok())))
+    return td::Status::Error("Invalid 'destination' address");
+  lp.created_lt = std::strtoull(lt_r.ok().c_str(), nullptr, 10);
+  if (lp.created_lt == 0)
+    return td::Status::Error("Invalid 'created_lt' (must be > 0)");
+  return lp;
+}
+
+// Extract source address from a message cell.  Returns false if the message
+// is not an internal message or cannot be parsed.
+static bool msg_get_src_addr(td::Ref<vm::Cell> msg_cell, block::StdAddress &out) {
+  block::gen::Message::Record message;
+  if (!tlb::type_unpack_cell(msg_cell, block::gen::t_Message_Any, message)) return false;
+  auto tag = block::gen::CommonMsgInfo().get_tag(*message.info);
+  if (tag != block::gen::CommonMsgInfo::int_msg_info) return false;
+  block::gen::CommonMsgInfo::Record_int_msg_info info;
+  if (!tlb::csr_unpack(message.info, info)) return false;
+  block::gen::MsgAddressInt::Record_addr_std addr;
+  if (!tlb::csr_unpack(info.src, addr)) return false;
+  out.workchain = addr.workchain_id;
+  out.addr = addr.address;
+  return true;
+}
+
+// Extract destination address from a message cell.
+static bool msg_get_dst_addr(td::Ref<vm::Cell> msg_cell, block::StdAddress &out) {
+  block::gen::Message::Record message;
+  if (!tlb::type_unpack_cell(msg_cell, block::gen::t_Message_Any, message)) return false;
+  auto tag = block::gen::CommonMsgInfo().get_tag(*message.info);
+  if (tag != block::gen::CommonMsgInfo::int_msg_info) return false;
+  block::gen::CommonMsgInfo::Record_int_msg_info info;
+  if (!tlb::csr_unpack(message.info, info)) return false;
+  block::gen::MsgAddressInt::Record_addr_std addr;
+  if (!tlb::csr_unpack(info.dest, addr)) return false;
+  out.workchain = addr.workchain_id;
+  out.addr = addr.address;
+  return true;
+}
+
+// Extract created_lt from a message cell (internal messages only).
+static bool msg_get_created_lt(td::Ref<vm::Cell> msg_cell, td::uint64 &out) {
+  block::gen::Message::Record message;
+  if (!tlb::type_unpack_cell(msg_cell, block::gen::t_Message_Any, message)) return false;
+  auto tag = block::gen::CommonMsgInfo().get_tag(*message.info);
+  if (tag != block::gen::CommonMsgInfo::int_msg_info) return false;
+  block::gen::CommonMsgInfo::Record_int_msg_info info;
+  if (!tlb::csr_unpack(message.info, info)) return false;
+  out = info.created_lt;
+  return true;
+}
+
+// Build a "blocks.transaction" JSON result from a matching transaction root cell
+// and its block ID.
+static std::string format_located_tx_json(
+    const block::StdAddress &source,
+    const block::StdAddress &destination,
+    td::Ref<vm::Cell> tx_root,
+    const tos::lite_api::tosNode_blockIdExt &blk) {
+  block::gen::Transaction::Record tx;
+  td::uint64 lt = 0;
+  if (tlb::unpack_cell(tx_root, tx)) {
+    lt = tx.lt;
+  }
+  auto hash_b64 = td::base64_encode(tx_root->get_hash(0).as_slice());
+
+  return PSTRING()
+      << "{\"@type\":\"blocks.transaction\""
+      << ",\"source\":" << td::JsonString(td::Slice(source.rserialize(true)))
+      << ",\"destination\":" << td::JsonString(td::Slice(destination.rserialize(true)))
+      << ",\"lt\":\"" << lt << "\""
+      << ",\"hash\":\"" << hash_b64 << "\""
+      << ",\"block_id\":" << format_block_id_json(blk)
+      << "}";
+}
+
+// ─── tryLocateTx ────────────────────────────────────────────────────────
+// Locate a transaction on the destination account that has an incoming
+// message matching (source, created_lt).
+
+void JsonRpcServer::handle_tryLocateTx(td::JsonObject &params, std::string req_id,
+                                       td::Promise<HttpReturn> promise) {
+  auto lp_r = parse_locate_params(params);
+  if (lp_r.is_error()) {
+    promise.set_value(make_json_error(-32602, lp_r.error().message().str(), req_id));
+    return;
+  }
+  auto lp = lp_r.move_as_ok();
+
+  // Step 1: Get account state to find last transaction lt/hash
+  auto mc_inner = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
+  auto mc_query = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
+
+  auto self_id = actor_id(this);
+  send_liteserver_query(std::move(mc_query),
+      [lp, req_id = std::move(req_id), self_id,
+       promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+        if (R.is_error()) {
+          promise.set_value(make_json_error(-32603,
+              PSTRING() << "getMasterchainInfo: " << R.error(), req_id));
+          return;
+        }
+        auto mc = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(
+            R.move_as_ok(), true);
+        if (mc.is_error()) {
+          promise.set_value(make_json_error(-32603,
+              PSTRING() << "parse mcInfo: " << mc.error(), req_id));
+          return;
+        }
+
+        // Get account state for destination to find last transaction
+        auto inner = tos::serialize_tl_object(
+            tos::create_tl_object<tos::lite_api::liteServer_getAccountState>(
+                std::move(mc.ok()->last_),
+                tos::create_tl_object<tos::lite_api::liteServer_accountId>(
+                    lp.destination.workchain, lp.destination.addr)),
+            true);
+        auto query = tos::serialize_tl_object(
+            tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
+
+        td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
+            std::move(query),
+            td::PromiseCreator::lambda(
+                [lp, req_id = std::move(req_id), self_id,
+                 promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "getAccountState: " << R.error(), req_id));
+            return;
+          }
+          auto F = tos::fetch_tl_object<tos::lite_api::liteServer_accountState>(
+              R.move_as_ok(), true);
+          if (F.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "parse accountState: " << F.error(), req_id));
+            return;
+          }
+          auto f = F.move_as_ok();
+
+          // Validate and extract last_trans_lt, last_trans_hash
+          auto blk_id = tos::create_block_id(f->id_);
+          auto shard_blk_id = tos::create_block_id(f->shardblk_);
+          block::AccountState as;
+          as.blk = blk_id;
+          as.shard_blk = shard_blk_id;
+          as.shard_proof = f->shard_proof_.clone();
+          as.proof = f->proof_.clone();
+          as.state = f->state_.clone();
+          auto info_r = as.validate(blk_id, lp.destination);
+          if (info_r.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "validate account state: " << info_r.error(), req_id));
+            return;
+          }
+          auto info = info_r.move_as_ok();
+          if (info.last_trans_lt == 0) {
+            promise.set_value(make_json_error(-32603,
+                "Destination account has no transactions", req_id));
+            return;
+          }
+
+          // Step 2: Get last 20 transactions for the destination account
+          auto tx_inner = tos::serialize_tl_object(
+              tos::create_tl_object<tos::lite_api::liteServer_getTransactions>(
+                  20,
+                  tos::create_tl_object<tos::lite_api::liteServer_accountId>(
+                      lp.destination.workchain, lp.destination.addr),
+                  static_cast<td::int64>(info.last_trans_lt), info.last_trans_hash),
+              true);
+          auto tx_query = tos::serialize_tl_object(
+              tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(tx_inner)), true);
+
+          td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
+              std::move(tx_query),
+              td::PromiseCreator::lambda(
+                  [lp, req_id = std::move(req_id),
+                   promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+            if (R.is_error()) {
+              promise.set_value(make_json_error(-32603,
+                  PSTRING() << "getTransactions: " << R.error(), req_id));
+              return;
+            }
+            auto tl_r = tos::fetch_tl_object<tos::lite_api::liteServer_transactionList>(
+                R.move_as_ok(), true);
+            if (tl_r.is_error()) {
+              promise.set_value(make_json_error(-32603,
+                  PSTRING() << "parse transactionList: " << tl_r.error(), req_id));
+              return;
+            }
+            auto tl = tl_r.move_as_ok();
+
+            if (tl->transactions_.empty()) {
+              promise.set_value(make_json_error(-32603,
+                  "Transaction not found in recent history", req_id));
+              return;
+            }
+
+            auto roots_r = vm::std_boc_deserialize_multi(tl->transactions_.as_slice());
+            if (roots_r.is_error()) {
+              promise.set_value(make_json_error(-32603,
+                  "Failed to deserialize transactions BOC", req_id));
+              return;
+            }
+            auto roots = roots_r.move_as_ok();
+
+            // Search for a transaction whose in_msg has matching source + created_lt
+            for (size_t i = 0; i < roots.size() && i < tl->ids_.size(); i++) {
+              block::gen::Transaction::Record tx;
+              if (!tlb::unpack_cell(roots[i], tx)) continue;
+
+              // Check in_msg (Maybe ^Message)
+              auto is_just = tx.r1.in_msg->prefetch_long(1);
+              if (is_just != -1) continue;  // no in_msg
+
+              auto msg_cell = tx.r1.in_msg->prefetch_ref();
+              if (msg_cell.is_null()) continue;
+
+              block::StdAddress msg_src;
+              td::uint64 msg_lt = 0;
+              if (!msg_get_src_addr(msg_cell, msg_src)) continue;
+              if (!msg_get_created_lt(msg_cell, msg_lt)) continue;
+
+              if (msg_src.workchain == lp.source.workchain &&
+                  msg_src.addr == lp.source.addr &&
+                  msg_lt == lp.created_lt) {
+                // Found the matching transaction
+                promise.set_value(make_json_ok(
+                    format_located_tx_json(lp.source, lp.destination, roots[i], *tl->ids_[i]),
+                    req_id));
+                return;
+              }
+            }
+
+            promise.set_value(make_json_error(-32603,
+                "Transaction not found in recent history (searched 20 transactions)", req_id));
+          }));
+        }));
+      });
+}
+
+// ─── tryLocateResultTx ──────────────────────────────────────────────────
+// Given an outgoing message (source account sent at created_lt), find the
+// resulting transaction on the destination that processed it.
+
+void JsonRpcServer::handle_tryLocateResultTx(td::JsonObject &params, std::string req_id,
+                                             td::Promise<HttpReturn> promise) {
+  auto lp_r = parse_locate_params(params);
+  if (lp_r.is_error()) {
+    promise.set_value(make_json_error(-32602, lp_r.error().message().str(), req_id));
+    return;
+  }
+  auto lp = lp_r.move_as_ok();
+
+  // Step 1: Get account state for the DESTINATION to find its last transaction
+  auto mc_inner = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
+  auto mc_query = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
+
+  auto self_id = actor_id(this);
+  send_liteserver_query(std::move(mc_query),
+      [lp, req_id = std::move(req_id), self_id,
+       promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+        if (R.is_error()) {
+          promise.set_value(make_json_error(-32603,
+              PSTRING() << "getMasterchainInfo: " << R.error(), req_id));
+          return;
+        }
+        auto mc = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(
+            R.move_as_ok(), true);
+        if (mc.is_error()) {
+          promise.set_value(make_json_error(-32603,
+              PSTRING() << "parse mcInfo: " << mc.error(), req_id));
+          return;
+        }
+
+        // Get account state for destination
+        auto inner = tos::serialize_tl_object(
+            tos::create_tl_object<tos::lite_api::liteServer_getAccountState>(
+                std::move(mc.ok()->last_),
+                tos::create_tl_object<tos::lite_api::liteServer_accountId>(
+                    lp.destination.workchain, lp.destination.addr)),
+            true);
+        auto query = tos::serialize_tl_object(
+            tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
+
+        td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
+            std::move(query),
+            td::PromiseCreator::lambda(
+                [lp, req_id = std::move(req_id), self_id,
+                 promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "getAccountState: " << R.error(), req_id));
+            return;
+          }
+          auto F = tos::fetch_tl_object<tos::lite_api::liteServer_accountState>(
+              R.move_as_ok(), true);
+          if (F.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "parse accountState: " << F.error(), req_id));
+            return;
+          }
+          auto f = F.move_as_ok();
+
+          auto blk_id = tos::create_block_id(f->id_);
+          auto shard_blk_id = tos::create_block_id(f->shardblk_);
+          block::AccountState as;
+          as.blk = blk_id;
+          as.shard_blk = shard_blk_id;
+          as.shard_proof = f->shard_proof_.clone();
+          as.proof = f->proof_.clone();
+          as.state = f->state_.clone();
+          auto info_r = as.validate(blk_id, lp.destination);
+          if (info_r.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "validate account state: " << info_r.error(), req_id));
+            return;
+          }
+          auto info = info_r.move_as_ok();
+          if (info.last_trans_lt == 0) {
+            promise.set_value(make_json_error(-32603,
+                "Destination account has no transactions", req_id));
+            return;
+          }
+
+          // Step 2: Get destination transactions and search for one whose in_msg
+          // matches source + created_lt (same as tryLocateTx — the "result" tx is
+          // the transaction that RECEIVED the message sent from source at created_lt)
+          auto tx_inner = tos::serialize_tl_object(
+              tos::create_tl_object<tos::lite_api::liteServer_getTransactions>(
+                  20,
+                  tos::create_tl_object<tos::lite_api::liteServer_accountId>(
+                      lp.destination.workchain, lp.destination.addr),
+                  static_cast<td::int64>(info.last_trans_lt), info.last_trans_hash),
+              true);
+          auto tx_query = tos::serialize_tl_object(
+              tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(tx_inner)), true);
+
+          td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
+              std::move(tx_query),
+              td::PromiseCreator::lambda(
+                  [lp, req_id = std::move(req_id),
+                   promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+            if (R.is_error()) {
+              promise.set_value(make_json_error(-32603,
+                  PSTRING() << "getTransactions: " << R.error(), req_id));
+              return;
+            }
+            auto tl_r = tos::fetch_tl_object<tos::lite_api::liteServer_transactionList>(
+                R.move_as_ok(), true);
+            if (tl_r.is_error()) {
+              promise.set_value(make_json_error(-32603,
+                  PSTRING() << "parse transactionList: " << tl_r.error(), req_id));
+              return;
+            }
+            auto tl = tl_r.move_as_ok();
+
+            if (tl->transactions_.empty()) {
+              promise.set_value(make_json_error(-32603,
+                  "Transaction not found in recent history", req_id));
+              return;
+            }
+
+            auto roots_r = vm::std_boc_deserialize_multi(tl->transactions_.as_slice());
+            if (roots_r.is_error()) {
+              promise.set_value(make_json_error(-32603,
+                  "Failed to deserialize transactions BOC", req_id));
+              return;
+            }
+            auto roots = roots_r.move_as_ok();
+
+            // Search: the result tx is on destination with in_msg from source at created_lt
+            for (size_t i = 0; i < roots.size() && i < tl->ids_.size(); i++) {
+              block::gen::Transaction::Record tx;
+              if (!tlb::unpack_cell(roots[i], tx)) continue;
+
+              auto is_just = tx.r1.in_msg->prefetch_long(1);
+              if (is_just != -1) continue;
+
+              auto msg_cell = tx.r1.in_msg->prefetch_ref();
+              if (msg_cell.is_null()) continue;
+
+              block::StdAddress msg_src;
+              td::uint64 msg_lt = 0;
+              if (!msg_get_src_addr(msg_cell, msg_src)) continue;
+              if (!msg_get_created_lt(msg_cell, msg_lt)) continue;
+
+              if (msg_src.workchain == lp.source.workchain &&
+                  msg_src.addr == lp.source.addr &&
+                  msg_lt == lp.created_lt) {
+                promise.set_value(make_json_ok(
+                    format_located_tx_json(lp.source, lp.destination, roots[i], *tl->ids_[i]),
+                    req_id));
+                return;
+              }
+            }
+
+            promise.set_value(make_json_error(-32603,
+                "Result transaction not found in recent history (searched 20 transactions)", req_id));
+          }));
+        }));
+      });
+}
+
+// ─── tryLocateSourceTx ──────────────────────────────────────────────────
+// Given an incoming message (destination received at created_lt), find the
+// source transaction that sent it.  We search the source account's
+// transactions for one that has an outgoing message to destination with
+// matching created_lt.
+
+void JsonRpcServer::handle_tryLocateSourceTx(td::JsonObject &params, std::string req_id,
+                                             td::Promise<HttpReturn> promise) {
+  auto lp_r = parse_locate_params(params);
+  if (lp_r.is_error()) {
+    promise.set_value(make_json_error(-32602, lp_r.error().message().str(), req_id));
+    return;
+  }
+  auto lp = lp_r.move_as_ok();
+
+  // Step 1: Get account state for the SOURCE to find its last transaction
+  auto mc_inner = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
+  auto mc_query = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
+
+  auto self_id = actor_id(this);
+  send_liteserver_query(std::move(mc_query),
+      [lp, req_id = std::move(req_id), self_id,
+       promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+        if (R.is_error()) {
+          promise.set_value(make_json_error(-32603,
+              PSTRING() << "getMasterchainInfo: " << R.error(), req_id));
+          return;
+        }
+        auto mc = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(
+            R.move_as_ok(), true);
+        if (mc.is_error()) {
+          promise.set_value(make_json_error(-32603,
+              PSTRING() << "parse mcInfo: " << mc.error(), req_id));
+          return;
+        }
+
+        // Get account state for source
+        auto inner = tos::serialize_tl_object(
+            tos::create_tl_object<tos::lite_api::liteServer_getAccountState>(
+                std::move(mc.ok()->last_),
+                tos::create_tl_object<tos::lite_api::liteServer_accountId>(
+                    lp.source.workchain, lp.source.addr)),
+            true);
+        auto query = tos::serialize_tl_object(
+            tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
+
+        td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
+            std::move(query),
+            td::PromiseCreator::lambda(
+                [lp, req_id = std::move(req_id), self_id,
+                 promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "getAccountState: " << R.error(), req_id));
+            return;
+          }
+          auto F = tos::fetch_tl_object<tos::lite_api::liteServer_accountState>(
+              R.move_as_ok(), true);
+          if (F.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "parse accountState: " << F.error(), req_id));
+            return;
+          }
+          auto f = F.move_as_ok();
+
+          auto blk_id = tos::create_block_id(f->id_);
+          auto shard_blk_id = tos::create_block_id(f->shardblk_);
+          block::AccountState as;
+          as.blk = blk_id;
+          as.shard_blk = shard_blk_id;
+          as.shard_proof = f->shard_proof_.clone();
+          as.proof = f->proof_.clone();
+          as.state = f->state_.clone();
+          auto info_r = as.validate(blk_id, lp.source);
+          if (info_r.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "validate account state: " << info_r.error(), req_id));
+            return;
+          }
+          auto info = info_r.move_as_ok();
+          if (info.last_trans_lt == 0) {
+            promise.set_value(make_json_error(-32603,
+                "Source account has no transactions", req_id));
+            return;
+          }
+
+          // Step 2: Get source transactions and search for one whose out_msgs
+          // contains a message to destination with matching created_lt
+          auto tx_inner = tos::serialize_tl_object(
+              tos::create_tl_object<tos::lite_api::liteServer_getTransactions>(
+                  20,
+                  tos::create_tl_object<tos::lite_api::liteServer_accountId>(
+                      lp.source.workchain, lp.source.addr),
+                  static_cast<td::int64>(info.last_trans_lt), info.last_trans_hash),
+              true);
+          auto tx_query = tos::serialize_tl_object(
+              tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(tx_inner)), true);
+
+          td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
+              std::move(tx_query),
+              td::PromiseCreator::lambda(
+                  [lp, req_id = std::move(req_id),
+                   promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+            if (R.is_error()) {
+              promise.set_value(make_json_error(-32603,
+                  PSTRING() << "getTransactions: " << R.error(), req_id));
+              return;
+            }
+            auto tl_r = tos::fetch_tl_object<tos::lite_api::liteServer_transactionList>(
+                R.move_as_ok(), true);
+            if (tl_r.is_error()) {
+              promise.set_value(make_json_error(-32603,
+                  PSTRING() << "parse transactionList: " << tl_r.error(), req_id));
+              return;
+            }
+            auto tl = tl_r.move_as_ok();
+
+            if (tl->transactions_.empty()) {
+              promise.set_value(make_json_error(-32603,
+                  "Transaction not found in recent history", req_id));
+              return;
+            }
+
+            auto roots_r = vm::std_boc_deserialize_multi(tl->transactions_.as_slice());
+            if (roots_r.is_error()) {
+              promise.set_value(make_json_error(-32603,
+                  "Failed to deserialize transactions BOC", req_id));
+              return;
+            }
+            auto roots = roots_r.move_as_ok();
+
+            // Search: look for a source tx with an out_msg to destination at created_lt
+            for (size_t i = 0; i < roots.size() && i < tl->ids_.size(); i++) {
+              block::gen::Transaction::Record tx;
+              if (!tlb::unpack_cell(roots[i], tx)) continue;
+
+              if (tx.outmsg_cnt == 0) continue;
+
+              // Iterate out_msgs dictionary
+              vm::Dictionary dict{tx.r1.out_msgs, 15};
+              for (int k = 0; k < tx.outmsg_cnt && k < 100; k++) {
+                auto out_msg_ref = dict.lookup_ref(td::BitArray<15>{k});
+                if (out_msg_ref.is_null()) continue;
+
+                block::StdAddress msg_dst;
+                td::uint64 msg_lt = 0;
+                if (!msg_get_dst_addr(out_msg_ref, msg_dst)) continue;
+                if (!msg_get_created_lt(out_msg_ref, msg_lt)) continue;
+
+                if (msg_dst.workchain == lp.destination.workchain &&
+                    msg_dst.addr == lp.destination.addr &&
+                    msg_lt == lp.created_lt) {
+                  // Found: the source transaction that sent this message
+                  promise.set_value(make_json_ok(
+                      format_located_tx_json(lp.source, lp.destination, roots[i], *tl->ids_[i]),
+                      req_id));
+                  return;
+                }
+              }
+            }
+
+            promise.set_value(make_json_error(-32603,
+                "Source transaction not found in recent history (searched 20 transactions)", req_id));
+          }));
+        }));
       });
 }
 
@@ -2957,6 +3767,322 @@ void JsonRpcServer::handle_detectAddress(td::JsonObject &params, std::string req
      << ",\"test_only\":" << (addr.testnet ? "true" : "false")
      << "}";
   promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+}
+
+// ─── getLibraries ──────────────────────────────────────────────────────────
+
+void JsonRpcServer::handle_getLibraries(td::JsonObject &params, std::string req_id,
+                                        td::Promise<HttpReturn> promise) {
+  // Parse library_list — a JSON array of base64-encoded 256-bit hashes
+  auto list_val = params.extract_field("library_list");
+  if (list_val.type() != td::JsonValue::Type::Array) {
+    promise.set_value(make_json_error(-32602,
+        "Missing or invalid 'library_list' (expected JSON array)", req_id));
+    return;
+  }
+  auto &arr = list_val.get_array();
+  std::vector<td::Bits256> hashes;
+  hashes.reserve(arr.size());
+  for (auto &elem : arr) {
+    if (elem.type() != td::JsonValue::Type::String) {
+      promise.set_value(make_json_error(-32602,
+          "library_list entries must be base64 strings", req_id));
+      return;
+    }
+    auto decoded_r = td::base64_decode(elem.get_string());
+    if (decoded_r.is_error() || decoded_r.ok().size() != 32) {
+      promise.set_value(make_json_error(-32602,
+          "Invalid base64 hash in library_list (expected 32 bytes)", req_id));
+      return;
+    }
+    td::Bits256 hash;
+    hash.as_slice().copy_from(decoded_r.ok());
+    hashes.push_back(hash);
+  }
+
+  if (hashes.empty()) {
+    promise.set_value(make_json_ok(
+        "{\"@type\":\"smc.libraryResult\",\"result\":[]}", req_id));
+    return;
+  }
+
+  // Construct liteServer.getLibraries(library_list)
+  auto inner = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_getLibraries>(std::move(hashes)), true);
+  auto query = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
+
+  send_liteserver_query(std::move(query),
+      [req_id = std::move(req_id), promise = std::move(promise)](
+          td::Result<td::BufferSlice> R) mutable {
+        if (R.is_error()) {
+          promise.set_value(make_json_error(-32603,
+              PSTRING() << "getLibraries failed: " << R.error(), req_id));
+          return;
+        }
+        auto lib_r = tos::fetch_tl_object<tos::lite_api::liteServer_libraryResult>(
+            R.move_as_ok(), true);
+        if (lib_r.is_error()) {
+          promise.set_value(make_json_error(-32603,
+              PSTRING() << "parse libraryResult: " << lib_r.error(), req_id));
+          return;
+        }
+        auto lib = lib_r.move_as_ok();
+
+        td::StringBuilder sb;
+        sb << "{\"@type\":\"smc.libraryResult\",\"result\":[";
+        for (size_t i = 0; i < lib->result_.size(); i++) {
+          if (i > 0) sb << ",";
+          auto &entry = lib->result_[i];
+          auto hash_b64 = td::base64_encode(entry->hash_.as_slice());
+          auto data_b64 = td::base64_encode(entry->data_.as_slice());
+          sb << "{\"hash\":" << td::JsonString(td::Slice(hash_b64))
+             << ",\"data\":" << td::JsonString(td::Slice(data_b64)) << "}";
+        }
+        sb << "]}";
+        promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+      });
+}
+
+// ─── getTokenData ──────────────────────────────────────────────────────────
+// Convenience method: tries get_jetton_data, falls back to get_nft_data.
+
+void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_id,
+                                        td::Promise<HttpReturn> promise) {
+  auto addr_r = parse_address_param(params);
+  if (addr_r.is_error()) {
+    promise.set_value(make_json_error(-32602, addr_r.error().message().str(), req_id));
+    return;
+  }
+  auto addr = addr_r.move_as_ok();
+
+  // Serialize empty stack for runSmcMethod params
+  vm::CellBuilder cb;
+  vm::Stack empty_stack;
+  if (!empty_stack.serialize(cb)) {
+    promise.set_value(make_json_error(-32603, "stack serialize error", req_id));
+    return;
+  }
+  auto params_boc_r = vm::std_boc_serialize(cb.finalize());
+  if (params_boc_r.is_error()) {
+    promise.set_value(make_json_error(-32603, "params BOC error", req_id));
+    return;
+  }
+  auto params_boc = std::make_shared<td::BufferSlice>(params_boc_r.move_as_ok());
+
+  // Step 1: get latest mc block
+  auto mc_inner = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
+  auto mc_query = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
+
+  auto self_id = actor_id(this);
+  send_liteserver_query(std::move(mc_query),
+      [addr, params_boc, req_id = std::move(req_id), self_id,
+       promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+        if (R.is_error()) {
+          promise.set_value(make_json_error(-32603,
+              PSTRING() << "getMasterchainInfo: " << R.error(), req_id));
+          return;
+        }
+        auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(
+            R.move_as_ok(), true);
+        if (mc_r.is_error()) {
+          promise.set_value(make_json_error(-32603,
+              PSTRING() << "parse mcInfo: " << mc_r.error(), req_id));
+          return;
+        }
+        auto mc = mc_r.move_as_ok();
+
+        // Save block ID components for reuse in NFT fallback
+        auto saved_wc = mc->last_->workchain_;
+        auto saved_shard = mc->last_->shard_;
+        auto saved_seqno = mc->last_->seqno_;
+        auto saved_root = mc->last_->root_hash_;
+        auto saved_file = mc->last_->file_hash_;
+
+        // Step 2: try get_jetton_data
+        td::int64 jetton_method_id = (td::crc16(td::Slice("get_jetton_data")) & 0xffff) | 0x10000;
+        auto inner = tos::serialize_tl_object(
+            tos::create_tl_object<tos::lite_api::liteServer_runSmcMethod>(
+                0x04, std::move(mc->last_),
+                tos::create_tl_object<tos::lite_api::liteServer_accountId>(
+                    addr.workchain, addr.addr),
+                jetton_method_id, params_boc->clone()),
+            true);
+        auto query = tos::serialize_tl_object(
+            tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
+
+        td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
+            std::move(query),
+            td::PromiseCreator::lambda(
+                [addr, params_boc, self_id,
+                 saved_wc, saved_shard, saved_seqno, saved_root, saved_file,
+                 req_id = std::move(req_id), promise = std::move(promise)](
+                    td::Result<td::BufferSlice> R) mutable {
+          // Helper: parse address from a stack slice entry
+          auto parse_address_from_slice = [](const vm::StackEntry& entry) -> std::string {
+            if (entry.type() != vm::StackEntry::t_slice) return "";
+            auto cs = entry.as_slice();
+            if (cs->size() < 2) return "";
+            auto tag = cs->prefetch_ulong(2);
+            if (tag == 0) return "";      // addr_none
+            if (tag != 2) return "";      // not addr_std
+            vm::CellSlice tmp(*cs);
+            tmp.advance(2);
+            if (tmp.size() < 1) return "";
+            auto has_anycast = tmp.fetch_ulong(1);
+            if (has_anycast) {
+              if (tmp.size() < 5) return "";
+              auto depth = (int)tmp.fetch_ulong(5);
+              tmp.advance(depth);
+            }
+            if (tmp.size() < 8 + 256) return "";
+            auto workchain = (td::int8)tmp.fetch_long(8);
+            td::Bits256 address;
+            tmp.fetch_bits_to(address.bits(), 256);
+            block::StdAddress a(workchain, address);
+            a.bounceable = true;
+            a.testnet = false;
+            return a.rserialize(true);
+          };
+
+          // Helper: serialize a cell stack entry to base64 BOC
+          auto cell_to_b64 = [](const vm::StackEntry& entry) -> std::string {
+            if (!entry.is_cell()) return "";
+            auto boc = vm::std_boc_serialize(entry.as_cell());
+            if (boc.is_error()) return "";
+            return td::base64_encode(boc.ok().as_slice());
+          };
+
+          // Try to parse jetton result
+          if (R.is_ok()) {
+            auto F = tos::fetch_tl_object<tos::lite_api::liteServer_runMethodResult>(
+                R.move_as_ok(), true);
+            if (F.is_ok()) {
+              auto f = F.move_as_ok();
+              if (f->exit_code_ == 0 && !f->result_.empty()) {
+                auto cell_r = vm::std_boc_deserialize(f->result_.as_slice());
+                if (cell_r.is_ok()) {
+                  auto stk = td::make_ref<vm::Stack>();
+                  auto result_cell = cell_r.move_as_ok();
+                  vm::CellSlice cs = vm::load_cell_slice(result_cell);
+                  if (stk.write().deserialize(cs) && stk->depth() >= 5) {
+                    auto& total_supply_e = stk->at(0);
+                    auto& mintable_e = stk->at(1);
+                    auto& admin_addr_e = stk->at(2);
+                    auto& content_e = stk->at(3);
+                    auto& wallet_code_e = stk->at(4);
+
+                    if (total_supply_e.is_int()) {
+                      auto total_supply_str = total_supply_e.as_int()->to_dec_string();
+                      bool mintable = mintable_e.is_int() && mintable_e.as_int()->to_long() != 0;
+                      auto admin_addr_str = parse_address_from_slice(admin_addr_e);
+                      auto content_b64 = cell_to_b64(content_e);
+                      auto wallet_code_b64 = cell_to_b64(wallet_code_e);
+
+                      td::StringBuilder sb;
+                      sb << "{\"@type\":\"jetton.data\""
+                         << ",\"total_supply\":" << td::JsonString(td::Slice(total_supply_str))
+                         << ",\"mintable\":" << (mintable ? "true" : "false")
+                         << ",\"admin_address\":" << td::JsonString(td::Slice(admin_addr_str))
+                         << ",\"jetton_content\":" << td::JsonString(td::Slice(content_b64))
+                         << ",\"jetton_wallet_code\":" << td::JsonString(td::Slice(wallet_code_b64))
+                         << "}";
+                      promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+                      return;
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          // Jetton failed — try get_nft_data
+          auto blk = tos::create_tl_object<tos::lite_api::tosNode_blockIdExt>(
+              saved_wc, saved_shard, saved_seqno, saved_root, saved_file);
+          td::int64 nft_method_id = (td::crc16(td::Slice("get_nft_data")) & 0xffff) | 0x10000;
+          auto nft_inner = tos::serialize_tl_object(
+              tos::create_tl_object<tos::lite_api::liteServer_runSmcMethod>(
+                  0x04, std::move(blk),
+                  tos::create_tl_object<tos::lite_api::liteServer_accountId>(
+                      addr.workchain, addr.addr),
+                  nft_method_id, params_boc->clone()),
+              true);
+          auto nft_query = tos::serialize_tl_object(
+              tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(nft_inner)), true);
+
+          td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
+              std::move(nft_query),
+              td::PromiseCreator::lambda(
+                  [req_id = std::move(req_id), promise = std::move(promise),
+                   parse_address_from_slice, cell_to_b64](
+                      td::Result<td::BufferSlice> R2) mutable {
+            if (R2.is_error()) {
+              promise.set_value(make_json_error(-32603,
+                  PSTRING() << "getTokenData: both get_jetton_data and get_nft_data failed: "
+                            << R2.error(), req_id));
+              return;
+            }
+            auto F2 = tos::fetch_tl_object<tos::lite_api::liteServer_runMethodResult>(
+                R2.move_as_ok(), true);
+            if (F2.is_error()) {
+              promise.set_value(make_json_error(-32603,
+                  PSTRING() << "parse NFT runMethodResult: " << F2.error(), req_id));
+              return;
+            }
+            auto f2 = F2.move_as_ok();
+            if (f2->exit_code_ != 0) {
+              promise.set_value(make_json_error(-32603,
+                  PSTRING() << "getTokenData: contract is neither Jetton nor NFT (get_nft_data exit_code="
+                            << f2->exit_code_ << ")", req_id));
+              return;
+            }
+            if (f2->result_.empty()) {
+              promise.set_value(make_json_error(-32603,
+                  "getTokenData: get_nft_data returned empty result", req_id));
+              return;
+            }
+
+            auto cell_r = vm::std_boc_deserialize(f2->result_.as_slice());
+            if (cell_r.is_error()) {
+              promise.set_value(make_json_error(-32603,
+                  "getTokenData: failed to deserialize NFT result", req_id));
+              return;
+            }
+            auto stk = td::make_ref<vm::Stack>();
+            auto result_cell = cell_r.move_as_ok();
+            vm::CellSlice cs = vm::load_cell_slice(result_cell);
+            if (!stk.write().deserialize(cs) || stk->depth() < 5) {
+              promise.set_value(make_json_error(-32603,
+                  "getTokenData: get_nft_data returned fewer than 5 stack entries", req_id));
+              return;
+            }
+
+            auto& init_e = stk->at(0);
+            auto& index_e = stk->at(1);
+            auto& collection_e = stk->at(2);
+            auto& owner_e = stk->at(3);
+            auto& content_e = stk->at(4);
+
+            bool init_val = init_e.is_int() && init_e.as_int()->to_long() != 0;
+            td::int64 index_val = index_e.is_int() ? index_e.as_int()->to_long() : 0;
+            auto collection_str = parse_address_from_slice(collection_e);
+            auto owner_str = parse_address_from_slice(owner_e);
+            auto content_b64 = cell_to_b64(content_e);
+
+            td::StringBuilder sb;
+            sb << "{\"@type\":\"nft.data\""
+               << ",\"init\":" << (init_val ? "true" : "false")
+               << ",\"index\":" << index_val
+               << ",\"collection_address\":" << td::JsonString(td::Slice(collection_str))
+               << ",\"owner_address\":" << td::JsonString(td::Slice(owner_str))
+               << ",\"individual_content\":" << td::JsonString(td::Slice(content_b64))
+               << "}";
+            promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+          }));
+        }));
+      });
 }
 
 // ─── Liteserver query forwarding ──────────────────────────────────────────
