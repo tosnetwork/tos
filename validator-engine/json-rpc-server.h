@@ -31,6 +31,7 @@ class JsonRpcServer final : public td::actor::Actor {
     bool readonly = false;           // disable sendBoc/sendBocReturnHash/sendQuery
     std::string cors_origin = "*";   // Access-Control-Allow-Origin value
     td::int32 readyz_threshold = 60; // sync lag threshold in seconds for /readyz
+    double request_timeout = 30.0;   // per-request timeout in seconds (0 = no timeout)
   };
 
   static td::actor::ActorOwn<JsonRpcServer> create(

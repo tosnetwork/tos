@@ -497,6 +497,7 @@ class ValidatorEngine : public td::actor::Actor {
   void set_json_rpc_readonly(bool readonly);
   void set_json_rpc_cors_origin(std::string origin);
   void set_json_rpc_readyz_threshold(td::int32 threshold);
+  void set_json_rpc_request_timeout(double seconds);
 
   void get_current_validator_perm_key(td::Promise<std::pair<tos::PublicKey, size_t>> promise);
 

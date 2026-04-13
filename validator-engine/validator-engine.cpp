@@ -5410,6 +5410,10 @@ void ValidatorEngine::set_json_rpc_readyz_threshold(td::int32 threshold) {
   json_rpc_opts_.readyz_threshold = threshold;
 }
 
+void ValidatorEngine::set_json_rpc_request_timeout(double seconds) {
+  json_rpc_opts_.request_timeout = seconds;
+}
+
 void ValidatorEngine::get_current_validator_perm_key(td::Promise<std::pair<tos::PublicKey, size_t>> promise) {
   if (state_.is_null()) {
     promise.set_error(td::Status::Error(tos::ErrorCode::notready, "not started"));
@@ -5935,6 +5939,16 @@ int main(int argc, char *argv[]) {
   p.add_checked_option('\0', "json-rpc-readyz-threshold", "sync lag threshold in seconds for /readyz (default: 60)", [&](td::Slice arg) {
     TRY_RESULT(v, td::to_integer_safe<td::int32>(arg));
     acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_readyz_threshold, v); });
+    return td::Status::OK();
+  });
+  p.add_checked_option('\0', "json-rpc-request-timeout",
+      "per-request timeout in seconds for JSON-RPC liteserver queries (default: 30, 0 = no timeout)",
+      [&](td::Slice arg) {
+    auto v = td::to_double(arg);
+    if (v < 0) {
+      return td::Status::Error("timeout must be >= 0");
+    }
+    acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_request_timeout, v); });
     return td::Status::OK();
   });
   p.add_checked_option(

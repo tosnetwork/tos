@@ -39,6 +39,43 @@
 
 namespace tos {
 
+// ─── Per-request timeout guard ────────────────────────────────────────────
+//
+// A tiny actor that wraps a td::Promise<td::BufferSlice> with a deadline.
+// If deliver() is called before the alarm fires, the real promise gets the
+// result and the guard self-destructs.  If the alarm fires first, the guard
+// delivers a timeout error and any later deliver() call is a no-op.
+
+class QueryTimeoutGuard final : public td::actor::Actor {
+ public:
+  QueryTimeoutGuard(td::Promise<td::BufferSlice> inner, double timeout_seconds)
+      : inner_(std::move(inner)), timeout_seconds_(timeout_seconds) {
+  }
+
+  void start_up() override {
+    alarm_timestamp() = td::Timestamp::in(timeout_seconds_);
+  }
+
+  void alarm() override {
+    if (inner_) {
+      LOG(WARNING) << "json-rpc: liteserver query timed out after " << timeout_seconds_ << "s";
+      inner_.set_error(td::Status::Error(ErrorCode::timeout, "Request timeout"));
+    }
+    stop();
+  }
+
+  void deliver(td::Result<td::BufferSlice> result) {
+    if (inner_) {
+      inner_.set_result(std::move(result));
+    }
+    stop();
+  }
+
+ private:
+  td::Promise<td::BufferSlice> inner_;
+  double timeout_seconds_;
+};
+
 // ─── Actor lifecycle ──────────────────────────────────────────────────────
 
 td::actor::ActorOwn<JsonRpcServer> JsonRpcServer::create(
@@ -2266,6 +2303,17 @@ void JsonRpcServer::handle_detectAddress(td::JsonObject &params, std::string req
 
 void JsonRpcServer::send_liteserver_query(td::BufferSlice query,
                                           td::Promise<td::BufferSlice> promise) {
+  if (opts_.request_timeout > 0) {
+    auto guard = td::actor::create_actor<QueryTimeoutGuard>(
+        "rpc-timeout", std::move(promise), opts_.request_timeout);
+    auto guard_id = guard.release();
+    // The guard actor self-destructs via stop() after either deliver() or alarm().
+    // send_closure to a stopped actor is a safe no-op.
+    promise = td::PromiseCreator::lambda(
+        [guard_id](td::Result<td::BufferSlice> result) mutable {
+          td::actor::send_closure(guard_id, &QueryTimeoutGuard::deliver, std::move(result));
+        });
+  }
   td::actor::send_closure(validator_manager_,
                           &validator::ValidatorManagerInterface::run_ext_query,
                           std::move(query), std::move(promise));
