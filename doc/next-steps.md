@@ -54,7 +54,7 @@
 | 11 | REST transport endpoints | `~/tos` | 15 GET-style endpoints added alongside /jsonRPC. Query-string-to-JSON conversion reuses existing handlers. | ✅ Done |
 | 12 | `tosctl install wizard` | `~/tos/tosctl` | Interactive setup wizard: checks prerequisites, collects config, generates tosctl-config.json. | ✅ Done |
 | 13 | Policy documentation | `~/tos` | `doc/json-rpc-policy.md` — R6-R14 design decisions documented. | ✅ Done |
-| 14 | Advanced/explorer APIs | `~/tos` | E2–E9: getMasterchainBlockSignatures, getShardBlockProof, etc. | ❌ Deferred |
+| 14 | Advanced/explorer APIs | `~/tos` | All 7 implemented: getMasterchainBlockSignatures, getShardBlockProof, getLibraries, getTokenData, tryLocateTx, tryLocateResultTx, tryLocateSourceTx. JSON-RPC now 28 methods. | ✅ Done |
 
 ## Acceptance criteria for v1.0
 
