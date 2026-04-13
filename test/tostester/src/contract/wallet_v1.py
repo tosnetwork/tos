@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import ClassVar, override
 
 import nacl.signing
-from pytoniq_core import (
+from pytosiq_core import (
     Builder,
     Cell,
     CurrencyCollection,

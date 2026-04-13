@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Callable, ClassVar, Protocol
 
-from pytoniq_core import (
+from pytosiq_core import (
     Address,
     Cell,
     CurrencyCollection,
@@ -19,7 +19,7 @@ def tos(amount: int | float | str | Decimal) -> CurrencyCollection:
     nano = decimal_amount * Decimal("1000000000")
     if nano != nano.to_integral_value():
         raise ValueError(f"TOS amount must resolve to a whole number of nanatos: {amount!r}")
-    return CurrencyCollection(grams=int(nano))  # pytoniq_core uses 'grams' as param name
+    return CurrencyCollection(tomis=int(nano))
 
 
 class Provider(Protocol):

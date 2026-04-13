@@ -3,7 +3,7 @@ from pathlib import Path
 
 import nacl.signing
 from contract import Provider, WalletV1
-from pytoniq_core import Address
+from pytosiq_core import Address
 from tosapi import tos_api
 
 from .install import Install, run_fift

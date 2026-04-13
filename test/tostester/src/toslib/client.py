@@ -3,7 +3,7 @@ import logging
 import traceback
 from typing import Callable, final
 
-from pytoniq_core import Address, Cell, MessageAny
+from pytosiq_core import Address, Cell, MessageAny
 from tosapi import tos_api, toslib_api
 
 from .toslib_cdll import ToslibCDLL
