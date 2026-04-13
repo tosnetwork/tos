@@ -1,0 +1,17 @@
+[package]
+name = "contracts"
+version = "0.3.0"
+edition = "2024"
+license = 'GPL-3.0'
+
+[dependencies]
+anyhow = "1.0"
+async-trait = "0.1.89"
+common = { path = "../common" }
+chain_block = { path = "../../block" }
+hex = "0.4.3"
+tl_api = { version = "0.4.32", path = "../../tl/api" }
+chain-rpc-client = { path = "../chain-rpc-client" }
+
+[dev-dependencies]
+tokio = "1.48.0"

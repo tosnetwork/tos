@@ -1,0 +1,23 @@
+[package]
+name = "toscenter-rs"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "SDK for integrating Toscenter (TOS JSON-RPC) into Rust applications."
+repository = "https://github.com/tosnetwork/tosctl"
+readme = "README.md"
+categories = ["cryptography::cryptocurrencies", "web-programming::http-client"]
+keywords = ["blockchain", "tos", "toscenter"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+url = "2.5"
+log = "0.4"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+env_logger = "0.11"

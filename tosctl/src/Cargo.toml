@@ -1,0 +1,26 @@
+[workspace]
+members = [
+    'adnl',
+    'block',
+    'block-json',
+    'lockfree',
+    'node-control/commands',
+    'node-control/common',
+    'node-control/contracts',
+    'node-control/control-client',
+    'node-control/elections',
+    'node-control/nodectl',
+    'node-control/service',
+    'node-control/chain-rpc-client',
+    'secrets-vault',
+    'tl/api',
+    'toscenter-rs',
+]
+resolver = '2'
+
+[profile.bench]
+debug = true
+
+#Uncomment for profiling
+#[profile.release]
+#debug = 1

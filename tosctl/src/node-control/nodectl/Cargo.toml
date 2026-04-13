@@ -1,0 +1,15 @@
+[package]
+build = '../../common/build/build.rs'
+name = "tosctl"
+description = "Tool for managing TOS node operations"
+version = "0.3.0"
+edition = "2024"
+license = 'GPL-3.0'
+
+[dependencies]
+tokio = { version = "1.40", features = ["full"] }
+clap = { version = "4.4", features = ["derive"] }
+tracing = "0.1"
+anyhow = "1.0"
+common = { path = "../common" }
+commands = { path = "../commands" }

@@ -1,0 +1,4 @@
+[workspace]
+members = [ 'api', 'codegen' ]
+resolver = '2'
+
