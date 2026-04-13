@@ -158,6 +158,10 @@ JsonRpcServer::JsonRpcServer(
     td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager,
     Options options)
     : validator_manager_(std::move(validator_manager)), opts_(std::move(options)) {
+  // Arm periodic cache cleanup if caching is enabled
+  if (opts_.cache_ttl > 0) {
+    alarm_timestamp() = td::Timestamp::in(10.0);
+  }
 }
 
 void JsonRpcServer::listen(td::IPAddress addr) {
@@ -200,6 +204,11 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
   if (method == "GET" && (url == "/healthcheck" || url == "/healthcheck/")) {
     promise.set_value(make_health_ok(opts_.cors_origin));
     return;
+  }
+
+  // API key authentication (after CORS preflight and healthcheck, before all other routes)
+  if (!check_api_key(request, promise)) {
+    return;  // 401 already sent
   }
 
   // GET /readyz — readiness probe (queries liteserver for sync state)
@@ -271,8 +280,8 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
                                           opts_.cors_origin));
         return;
       }
-      dispatch_method(std::move(rest_method), json_val.get_object(),
-                      "null", std::move(promise));
+      cached_dispatch_method(std::move(rest_method), json_val.get_object(),
+                             "null", std::move(promise));
       return;
     }
 
@@ -397,8 +406,8 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
     return;
   }
 
-  dispatch_method(std::move(method), params_val.get_object(),
-                  std::move(req_id), std::move(promise));
+  cached_dispatch_method(std::move(method), params_val.get_object(),
+                         std::move(req_id), std::move(promise));
 }
 
 // ─── Method dispatch ──────────────────────────────────────────────────────
@@ -5075,6 +5084,204 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_text_response(int status_code,
   payload->complete_parse();
 
   return {std::move(response), std::move(payload)};
+}
+
+JsonRpcServer::HttpReturn JsonRpcServer::make_json_unauthorized(const std::string& cors_origin) {
+  std::string body =
+      "{\"ok\":false,\"jsonrpc\":\"2.0\",\"id\":null,"
+      "\"error\":\"Unauthorized: invalid or missing API key\",\"code\":-32000}";
+
+  auto response = http::HttpResponse::create("HTTP/1.1", 401, "Unauthorized",
+                                             false, false).move_as_ok();
+  response->add_header({"Content-Type", "application/json"});
+  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  response->add_header({"Transfer-Encoding", "Chunked"});
+  response->complete_parse_header();
+
+  auto payload = response->create_empty_payload().move_as_ok();
+  payload->add_chunk(td::BufferSlice(body));
+  payload->complete_parse();
+
+  return {std::move(response), std::move(payload)};
+}
+
+// ─── API key check ──────────────────────────────────────────────────────
+
+bool JsonRpcServer::check_api_key(const RequestPtr &request,
+                                  td::Promise<HttpReturn> &promise) {
+  if (opts_.api_key.empty()) {
+    return true;  // no auth configured
+  }
+
+  // Check X-API-Key header
+  auto key_header = request->get_header("X-API-Key");
+  if (!key_header.empty() && key_header == opts_.api_key) {
+    return true;
+  }
+
+  // Check api_key query parameter in URL
+  auto url = request->url();
+  auto qpos = url.find('?');
+  if (qpos != std::string::npos) {
+    std::string qs = url.substr(qpos + 1);
+    size_t pos = 0;
+    while (pos < qs.size()) {
+      auto amp = qs.find('&', pos);
+      auto token = qs.substr(pos, amp == std::string::npos ? std::string::npos : amp - pos);
+      pos = amp == std::string::npos ? qs.size() : amp + 1;
+      if (token.empty()) continue;
+      auto eq = token.find('=');
+      if (eq != std::string::npos) {
+        auto key = token.substr(0, eq);
+        auto val = token.substr(eq + 1);
+        if (key == "api_key" && val == opts_.api_key) {
+          return true;
+        }
+      }
+    }
+  }
+
+  // Auth failed
+  promise.set_value(make_json_unauthorized(opts_.cors_origin));
+  return false;
+}
+
+// ─── Response cache ─────────────────────────────────────────────────────
+
+const std::set<std::string> &JsonRpcServer::cacheable_methods() {
+  static const std::set<std::string> methods = {
+      "getMasterchainInfo", "getConfigParam", "getConfigAll",
+      "getAddressInformation", "getWalletInformation", "getAddressBalance",
+      "getAddressState", "getBlockHeader", "lookupBlock", "shards",
+      "getConsensusBlock", "getOutMsgQueueSize"
+  };
+  return methods;
+}
+
+void JsonRpcServer::alarm() {
+  // Periodic cache cleanup — remove expired entries
+  if (opts_.cache_ttl > 0 && !cache_.empty()) {
+    auto it = cache_.begin();
+    while (it != cache_.end()) {
+      if (it->second.expires_at.is_in_past()) {
+        it = cache_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+  // Re-arm alarm every 10 seconds if caching is enabled
+  if (opts_.cache_ttl > 0) {
+    alarm_timestamp() = td::Timestamp::in(10.0);
+  }
+}
+
+void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &params,
+                                           std::string req_id,
+                                           td::Promise<HttpReturn> promise) {
+  bool is_cacheable = opts_.cache_ttl > 0 && cacheable_methods().count(method);
+
+  if (!is_cacheable) {
+    dispatch_method(std::move(method), params, std::move(req_id), std::move(promise));
+    return;
+  }
+
+  // Build cache key: method|field1=val1&field2=val2 (sorted by name)
+  td::StringBuilder sb;
+  sb << method << "|";
+  // params.field_values_ is public — iterate and serialize
+  std::vector<std::pair<std::string, std::string>> kvs;
+  kvs.reserve(params.field_values_.size());
+  for (auto &fv : params.field_values_) {
+    // Use field name and a simple string representation of the value
+    std::string val;
+    switch (fv.second.type()) {
+      case td::JsonValue::Type::String:
+        val = fv.second.get_string().str();
+        break;
+      case td::JsonValue::Type::Number:
+        val = fv.second.get_number().str();
+        break;
+      case td::JsonValue::Type::Boolean:
+        val = fv.second.get_boolean() ? "true" : "false";
+        break;
+      case td::JsonValue::Type::Null:
+        val = "null";
+        break;
+      default:
+        val = "?";
+        break;
+    }
+    kvs.emplace_back(fv.first.str(), std::move(val));
+  }
+  std::sort(kvs.begin(), kvs.end());
+  for (size_t i = 0; i < kvs.size(); i++) {
+    if (i > 0) sb << "&";
+    sb << kvs[i].first << "=" << kvs[i].second;
+  }
+  std::string cache_key = sb.as_cslice().str();
+
+  // Check cache
+  auto it = cache_.find(cache_key);
+  if (it != cache_.end() && !it->second.expires_at.is_in_past()) {
+    // Cache hit — return cached response with the current request's id
+    promise.set_value(make_json_ok(it->second.response_json, req_id));
+    return;
+  }
+
+  // Cache miss — dispatch normally but wrap the promise to capture the result
+  auto ttl = opts_.cache_ttl;
+  auto cors = opts_.cors_origin;
+  auto cache_promise = td::PromiseCreator::lambda(
+      [this, cache_key = std::move(cache_key), ttl, req_id,
+       cors, orig_promise = std::move(promise)](td::Result<HttpReturn> R) mutable {
+        if (R.is_error()) {
+          orig_promise.set_error(R.move_as_error());
+          return;
+        }
+        auto result = R.move_as_ok();
+        // Only cache successful (200) responses with "ok":true in the body
+        if (result.first && result.first->code() == 200 && result.second) {
+          // Read the payload body for inspection.  get_slice() consumes it,
+          // so we must rebuild the response pair afterward.
+          auto body_slice = result.second->get_slice(1 << 20);
+          std::string body_str = body_slice.as_slice().str();
+
+          if (body_str.find("\"ok\":true") != std::string::npos) {
+            // Extract the "result" JSON value from the body.
+            // Body format: {"ok":true,"jsonrpc":"2.0","id":...,"result":...}
+            auto result_pos = body_str.find("\"result\":");
+            if (result_pos != std::string::npos) {
+              std::string result_json = body_str.substr(result_pos + 9);
+              // Remove the trailing }
+              if (!result_json.empty() && result_json.back() == '}') {
+                result_json.pop_back();
+              }
+              cache_[cache_key] = CacheEntry{std::move(result_json),
+                                             td::Timestamp::in(static_cast<double>(ttl))};
+              orig_promise.set_value(make_json_ok(cache_[cache_key].response_json,
+                                                  req_id, cors));
+              return;
+            }
+          }
+          // Could not extract result or not ok — rebuild and forward without caching
+          auto resp = http::HttpResponse::create("HTTP/1.1", 200, "OK",
+                                                 false, false).move_as_ok();
+          resp->add_header({"Content-Type", "application/json"});
+          resp->add_header({"Access-Control-Allow-Origin", cors});
+          resp->add_header({"Transfer-Encoding", "Chunked"});
+          resp->complete_parse_header();
+          auto pl = resp->create_empty_payload().move_as_ok();
+          pl->add_chunk(td::BufferSlice(body_str));
+          pl->complete_parse();
+          orig_promise.set_value({std::move(resp), std::move(pl)});
+          return;
+        }
+        // Non-200 or error — forward as-is, don't cache
+        orig_promise.set_value(std::move(result));
+      });
+
+  dispatch_method(std::move(method), params, std::move(req_id), std::move(cache_promise));
 }
 
 }  // namespace tos

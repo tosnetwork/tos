@@ -231,6 +231,25 @@ class HttpRequest {
     return method_ == "HEAD";
   }
 
+  // Lookup a request header by name (case-insensitive).
+  // Returns empty string if the header is not present.
+  std::string get_header(const std::string &name) const {
+    for (auto &h : options_) {
+      if (h.name.size() == name.size()) {
+        bool match = true;
+        for (size_t i = 0; i < name.size(); i++) {
+          if (std::tolower(static_cast<unsigned char>(h.name[i])) !=
+              std::tolower(static_cast<unsigned char>(name[i]))) {
+            match = false;
+            break;
+          }
+        }
+        if (match) return h.value;
+      }
+    }
+    return {};
+  }
+
   void set_keep_alive(bool value) {
     keep_alive_ = value;
   }

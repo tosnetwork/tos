@@ -21,7 +21,11 @@
 #include "http/http-server.h"
 #include "td/actor/actor.h"
 #include "td/utils/JsonBuilder.h"
+#include "td/utils/Time.h"
 #include "validator/validator.h"
+
+#include <set>
+#include <unordered_map>
 
 namespace tos {
 
@@ -32,6 +36,8 @@ class JsonRpcServer final : public td::actor::Actor {
     std::string cors_origin = "*";   // Access-Control-Allow-Origin value
     td::int32 readyz_threshold = 60; // sync lag threshold in seconds for /readyz
     double request_timeout = 30.0;   // per-request timeout in seconds (0 = no timeout)
+    std::string api_key;             // empty = no auth required
+    td::int32 cache_ttl = 0;        // seconds, 0 = disabled
   };
 
   static td::actor::ActorOwn<JsonRpcServer> create(
@@ -173,6 +179,29 @@ class JsonRpcServer final : public td::actor::Actor {
   static HttpReturn make_text_response(int status_code, std::string status_text,
                                        std::string body,
                                        const std::string& cors_origin = "*");
+  // Return HTTP 401 with JSON-RPC error body
+  static HttpReturn make_json_unauthorized(const std::string& cors_origin = "*");
+
+  // API key authentication helper — returns true if request is authorized.
+  // When false is returned, a 401 response has already been sent via promise.
+  bool check_api_key(const RequestPtr &request,
+                     td::Promise<HttpReturn> &promise);
+
+  // Cache-aware dispatch: checks cache for read-only methods, delegates to
+  // dispatch_method() on miss, and stores successful results.
+  void cached_dispatch_method(std::string method, td::JsonObject &params,
+                              std::string req_id, td::Promise<HttpReturn> promise);
+
+  void alarm() override;
+
+  // Response cache for read-only methods
+  struct CacheEntry {
+    std::string response_json;
+    td::Timestamp expires_at;
+  };
+  std::unordered_map<std::string, CacheEntry> cache_;
+
+  static const std::set<std::string> &cacheable_methods();
 
   td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager_;
   td::actor::ActorOwn<http::HttpServer> http_;

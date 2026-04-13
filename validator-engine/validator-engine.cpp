@@ -5414,6 +5414,14 @@ void ValidatorEngine::set_json_rpc_request_timeout(double seconds) {
   json_rpc_opts_.request_timeout = seconds;
 }
 
+void ValidatorEngine::set_json_rpc_api_key(std::string key) {
+  json_rpc_opts_.api_key = std::move(key);
+}
+
+void ValidatorEngine::set_json_rpc_cache_ttl(td::int32 seconds) {
+  json_rpc_opts_.cache_ttl = seconds;
+}
+
 void ValidatorEngine::get_current_validator_perm_key(td::Promise<std::pair<tos::PublicKey, size_t>> promise) {
   if (state_.is_null()) {
     promise.set_error(td::Status::Error(tos::ErrorCode::notready, "not started"));
@@ -5949,6 +5957,21 @@ int main(int argc, char *argv[]) {
       return td::Status::Error("timeout must be >= 0");
     }
     acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_request_timeout, v); });
+    return td::Status::OK();
+  });
+  p.add_checked_option('\0', "json-rpc-api-key", "require API key for JSON-RPC access", [&](td::Slice arg) {
+    std::string key{arg.data(), arg.size()};
+    acts.push_back([&x, key] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_api_key, key); });
+    return td::Status::OK();
+  });
+  p.add_checked_option('\0', "json-rpc-cache-ttl",
+      "cache TTL in seconds for read-only JSON-RPC methods (default: 0 = disabled)",
+      [&](td::Slice arg) {
+    TRY_RESULT(v, td::to_integer_safe<td::int32>(arg));
+    if (v < 0) {
+      return td::Status::Error("cache TTL must be >= 0");
+    }
+    acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_cache_ttl, v); });
     return td::Status::OK();
   });
   p.add_checked_option(
