@@ -72,6 +72,8 @@ class JsonRpcServer final : public td::actor::Actor {
   void on_body_ready(PayloadPtr payload, td::Promise<HttpReturn> promise);
   void process_body(td::BufferSlice body, std::string req_id,
                     td::Promise<HttpReturn> promise);
+  void process_rest_post_body(td::BufferSlice body, std::string method,
+                              td::Promise<HttpReturn> promise);
   void dispatch_method(std::string method, td::JsonObject &params,
                        std::string req_id, td::Promise<HttpReturn> promise);
 

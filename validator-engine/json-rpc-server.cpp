@@ -263,6 +263,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     else if (path == "/getOutMsgQueueSize")     rest_method = "getOutMsgQueueSize";
     else if (path == "/getConfigAll")           rest_method = "getConfigAll";
     else if (path == "/getTransactionsStd")     rest_method = "getTransactionsStd";
+    else if (path == "/getBlockTransactionsExt") rest_method = "getBlockTransactionsExt";
 
     if (!rest_method.empty()) {
       // Build a JSON object from query parameters, parse it, and dispatch
@@ -292,7 +293,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     return;
   }
 
-  // Only POST is allowed for JSON-RPC beyond this point
+  // Only POST is allowed beyond this point
   if (method != "POST") {
     promise.set_value(make_text_response(405, "Method Not Allowed",
                                          "Only POST, GET, and OPTIONS are supported",
@@ -300,8 +301,58 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     return;
   }
 
+  // POST REST-style endpoints: /runGetMethod, /sendBoc, etc.
+  // These use the POST body as params (same as JSON-RPC but without the envelope).
+  // Check if the URL path matches a known method name — if so, treat the POST body
+  // as the params object directly, without requiring jsonrpc/method/id envelope.
+  {
+    auto post_path = url;
+    auto qpos = post_path.find('?');
+    if (qpos != std::string::npos) post_path = post_path.substr(0, qpos);
+    while (!post_path.empty() && post_path.back() == '/') post_path.pop_back();
+
+    // Only match specific REST POST paths (not /jsonRPC which uses the standard envelope)
+    // POST REST paths — write methods + methods with complex body params.
+    // These accept POST body as the params JSON (no jsonrpc envelope).
+    // GET-accessible methods are handled above; this covers the remaining 6.
+    static const std::set<std::string> post_rest_paths = {
+        "/runGetMethod", "/runGetMethodStd",
+        "/sendBoc", "/sendBocReturnHash", "/sendBocReturnHashNoError",
+        "/sendQuery"
+    };
+    if (post_rest_paths.count(post_path)) {
+      std::string rest_method = post_path.substr(1);  // strip leading /
+      // Read body and dispatch as REST (body = params JSON object)
+      class PostRestWaiter : public http::HttpPayload::Callback {
+       public:
+        PostRestWaiter(td::actor::ActorId<JsonRpcServer> server, PayloadPtr payload,
+                       std::string method, td::Promise<HttpReturn> promise)
+            : server_(server), payload_(std::move(payload)),
+              method_(std::move(method)), promise_(std::move(promise)) {}
+        void run(size_t) override {}
+        void completed() override {
+          auto body = payload_->get_slice(1 << 20);
+          td::actor::send_closure(server_, &JsonRpcServer::process_rest_post_body,
+                                  std::move(body), std::move(method_), std::move(promise_));
+        }
+       private:
+        td::actor::ActorId<JsonRpcServer> server_;
+        PayloadPtr payload_;
+        std::string method_;
+        td::Promise<HttpReturn> promise_;
+      };
+      if (payload->parse_completed()) {
+        auto body = payload->get_slice(1 << 20);
+        process_rest_post_body(std::move(body), std::move(rest_method), std::move(promise));
+      } else {
+        payload->add_callback(std::make_unique<PostRestWaiter>(
+            actor_id(this), payload, std::move(rest_method), std::move(promise)));
+      }
+      return;
+    }
+  }
+
   // Accept POST on /jsonRPC (canonical) and any other path (backward compat)
-  // Future: restrict to /jsonRPC only after migration period
 
   if (payload->parse_completed()) {
     auto body = payload->get_slice(1 << 20);
@@ -408,6 +459,31 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
 
   cached_dispatch_method(std::move(method), params_val.get_object(),
                          std::move(req_id), std::move(promise));
+}
+
+// ─── POST REST body processing (body = params JSON, no jsonrpc envelope) ──
+
+void JsonRpcServer::process_rest_post_body(td::BufferSlice body, std::string method,
+                                           td::Promise<HttpReturn> promise) {
+  if (body.empty()) {
+    // Empty body → empty params
+    td::JsonObject empty_obj;
+    cached_dispatch_method(std::move(method), empty_obj, "null", std::move(promise));
+    return;
+  }
+  auto json_r = td::json_decode(body.as_slice());
+  if (json_r.is_error()) {
+    promise.set_value(make_json_error(-32700, "Parse error: invalid JSON body", "null",
+                                      opts_.cors_origin));
+    return;
+  }
+  auto json = json_r.move_as_ok();
+  if (json.type() != td::JsonValue::Type::Object) {
+    promise.set_value(make_json_error(-32602, "Body must be a JSON object", "null",
+                                      opts_.cors_origin));
+    return;
+  }
+  cached_dispatch_method(std::move(method), json.get_object(), "null", std::move(promise));
 }
 
 // ─── Method dispatch ──────────────────────────────────────────────────────
