@@ -1,0 +1,1697 @@
+openapi: 3.1.1
+info:
+  title: TOS JSON-RPC API
+  version: 1.0.0
+  description: >
+    JSON-RPC and REST API for the TOS Blockchain validator-engine embedded HTTP server.
+    All methods are available via POST /jsonRPC (standard JSON-RPC 2.0 envelope) and
+    via POST /{methodName} (body = params JSON object, no envelope).
+    Read-only methods also accept GET /{methodName}?param=value.
+  license:
+    name: GPL-3.0
+    url: https://www.gnu.org/licenses/gpl-3.0.html
+
+servers:
+  - url: http://localhost:8081
+    description: Local validator-engine JSON-RPC server
+
+security:
+  - ApiKeyAuth: []
+
+tags:
+  - name: utils
+    description: Address and hash utilities
+  - name: accounts
+    description: Account state queries
+  - name: blocks
+    description: Block and shard queries
+  - name: transactions
+    description: Transaction queries
+  - name: config
+    description: Blockchain configuration
+  - name: runmethod
+    description: Smart contract get-method execution
+  - name: send
+    description: Send external messages and estimate fees
+  - name: health
+    description: Health and readiness probes
+
+paths:
+  # ──────────────────────────────────────────────────────────────────────
+  # JSON-RPC endpoint
+  # ──────────────────────────────────────────────────────────────────────
+  /jsonRPC:
+    post:
+      operationId: jsonRpc
+      summary: JSON-RPC 2.0 endpoint
+      description: >
+        Standard JSON-RPC 2.0 endpoint. The "method" field selects which API
+        method to call; "params" is the parameter object.
+      tags: [utils]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [method]
+              properties:
+                jsonrpc: {type: string, enum: ['2.0']}
+                id: {description: 'Request ID (string or number)'}
+                method: {type: string, description: 'Method name'}
+                params: {type: object, description: 'Method parameters'}
+      responses:
+        '200':
+          description: JSON-RPC response
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - $ref: '#/components/schemas/ErrorResponse'
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Health
+  # ──────────────────────────────────────────────────────────────────────
+  /healthcheck:
+    get:
+      operationId: healthcheck
+      summary: Liveness probe
+      tags: [health]
+      security: []
+      responses:
+        '200':
+          description: Server is alive
+          content:
+            text/plain:
+              schema: {type: string, example: OK}
+
+  /readyz:
+    get:
+      operationId: readyz
+      summary: Readiness probe (checks liteserver sync state)
+      tags: [health]
+      responses:
+        '200':
+          description: Node is synced
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReadyzResult'}
+        '503':
+          description: Node is not synced
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReadyzResult'}
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Utils
+  # ──────────────────────────────────────────────────────────────────────
+  /detectAddress:
+    get:
+      operationId: detectAddress_get
+      summary: Detect address forms
+      tags: [utils]
+      parameters:
+        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+      responses:
+        '200': {$ref: '#/components/responses/DetectAddressResponse'}
+    post:
+      operationId: detectAddress_post
+      summary: Detect address forms
+      tags: [utils]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: {$ref: '#/components/schemas/TonAddr'}
+      responses:
+        '200': {$ref: '#/components/responses/DetectAddressResponse'}
+
+  /detectHash:
+    get:
+      operationId: detectHash_get
+      summary: Detect hash encodings (base64, base64url, hex)
+      tags: [utils]
+      parameters:
+        - {name: hash, in: query, required: true, schema: {$ref: '#/components/schemas/TonHash'}}
+      responses:
+        '200': {$ref: '#/components/responses/DetectHashResponse'}
+    post:
+      operationId: detectHash_post
+      summary: Detect hash encodings
+      tags: [utils]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hash]
+              properties:
+                hash: {$ref: '#/components/schemas/TonHash'}
+      responses:
+        '200': {$ref: '#/components/responses/DetectHashResponse'}
+
+  /packAddress:
+    get:
+      operationId: packAddress_get
+      summary: Pack raw address to user-friendly form
+      tags: [utils]
+      parameters:
+        - {name: address, in: query, required: true, schema: {type: string, description: 'Raw address (workchain:hex)'}}
+      responses:
+        '200': {$ref: '#/components/responses/StringResultResponse'}
+    post:
+      operationId: packAddress_post
+      summary: Pack raw address to user-friendly form
+      tags: [utils]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: {type: string}
+      responses:
+        '200': {$ref: '#/components/responses/StringResultResponse'}
+
+  /unpackAddress:
+    get:
+      operationId: unpackAddress_get
+      summary: Unpack user-friendly address to raw form
+      tags: [utils]
+      parameters:
+        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+      responses:
+        '200': {$ref: '#/components/responses/StringResultResponse'}
+    post:
+      operationId: unpackAddress_post
+      summary: Unpack user-friendly address to raw form
+      tags: [utils]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: {$ref: '#/components/schemas/TonAddr'}
+      responses:
+        '200': {$ref: '#/components/responses/StringResultResponse'}
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Accounts
+  # ──────────────────────────────────────────────────────────────────────
+  /getAddressInformation:
+    get:
+      operationId: getAddressInformation_get
+      summary: Get raw account state
+      tags: [accounts]
+      parameters:
+        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: seqno, in: query, schema: {type: integer, description: 'MC block seqno (optional, default latest)'}}
+      responses:
+        '200':
+          description: Account state
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/RawFullAccountState'}
+    post:
+      operationId: getAddressInformation_post
+      summary: Get raw account state
+      tags: [accounts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: {$ref: '#/components/schemas/TonAddr'}
+                seqno: {type: integer}
+      responses:
+        '200':
+          description: Account state
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/RawFullAccountState'}
+
+  /getExtendedAddressInformation:
+    get:
+      operationId: getExtendedAddressInformation_get
+      summary: Get extended account state
+      tags: [accounts]
+      parameters:
+        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: seqno, in: query, schema: {type: integer}}
+      responses:
+        '200':
+          description: Extended account state
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/FullAccountState'}
+    post:
+      operationId: getExtendedAddressInformation_post
+      summary: Get extended account state
+      tags: [accounts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: {$ref: '#/components/schemas/TonAddr'}
+                seqno: {type: integer}
+      responses:
+        '200':
+          description: Extended account state
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/FullAccountState'}
+
+  /getWalletInformation:
+    get:
+      operationId: getWalletInformation_get
+      summary: Get wallet information (type, seqno, balance)
+      tags: [accounts]
+      parameters:
+        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: seqno, in: query, schema: {type: integer}}
+      responses:
+        '200':
+          description: Wallet information
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/WalletInformation'}
+    post:
+      operationId: getWalletInformation_post
+      summary: Get wallet information
+      tags: [accounts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: {$ref: '#/components/schemas/TonAddr'}
+                seqno: {type: integer}
+      responses:
+        '200':
+          description: Wallet information
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/WalletInformation'}
+
+  /getAddressBalance:
+    get:
+      operationId: getAddressBalance_get
+      summary: Get account balance in nanotomis
+      tags: [accounts]
+      parameters:
+        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: seqno, in: query, schema: {type: integer}}
+      responses:
+        '200': {$ref: '#/components/responses/StringResultResponse'}
+    post:
+      operationId: getAddressBalance_post
+      summary: Get account balance in nanotomis
+      tags: [accounts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: {$ref: '#/components/schemas/TonAddr'}
+                seqno: {type: integer}
+      responses:
+        '200': {$ref: '#/components/responses/StringResultResponse'}
+
+  /getAddressState:
+    get:
+      operationId: getAddressState_get
+      summary: Get account state (active, uninitialized, frozen)
+      tags: [accounts]
+      parameters:
+        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: seqno, in: query, schema: {type: integer}}
+      responses:
+        '200': {$ref: '#/components/responses/StringResultResponse'}
+    post:
+      operationId: getAddressState_post
+      summary: Get account state
+      tags: [accounts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: {$ref: '#/components/schemas/TonAddr'}
+                seqno: {type: integer}
+      responses:
+        '200': {$ref: '#/components/responses/StringResultResponse'}
+
+  /getTokenData:
+    get:
+      operationId: getTokenData_get
+      summary: Get token (NFT/Jetton) metadata from a contract
+      tags: [accounts]
+      parameters:
+        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: seqno, in: query, schema: {type: integer}}
+      responses:
+        '200': {$ref: '#/components/responses/GenericOkResponse'}
+    post:
+      operationId: getTokenData_post
+      summary: Get token metadata from a contract
+      tags: [accounts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: {$ref: '#/components/schemas/TonAddr'}
+                seqno: {type: integer}
+      responses:
+        '200': {$ref: '#/components/responses/GenericOkResponse'}
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Blocks
+  # ──────────────────────────────────────────────────────────────────────
+  /getMasterchainInfo:
+    get:
+      operationId: getMasterchainInfo_get
+      summary: Get latest masterchain block info
+      tags: [blocks]
+      responses:
+        '200':
+          description: Masterchain info
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/MasterchainInfo'}
+    post:
+      operationId: getMasterchainInfo_post
+      summary: Get latest masterchain block info
+      tags: [blocks]
+      requestBody:
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        '200':
+          description: Masterchain info
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/MasterchainInfo'}
+
+  /getConsensusBlock:
+    get:
+      operationId: getConsensusBlock_get
+      summary: Get consensus block seqno and timestamp
+      tags: [blocks]
+      responses:
+        '200':
+          description: Consensus block
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/ConsensusBlock'}
+    post:
+      operationId: getConsensusBlock_post
+      summary: Get consensus block seqno and timestamp
+      tags: [blocks]
+      requestBody:
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        '200':
+          description: Consensus block
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/ConsensusBlock'}
+
+  /lookupBlock:
+    get:
+      operationId: lookupBlock_get
+      summary: Look up a block by seqno, lt, or utime
+      tags: [blocks]
+      parameters:
+        - {name: workchain, in: query, required: true, schema: {type: integer}}
+        - {name: shard, in: query, required: true, schema: {type: string}}
+        - {name: seqno, in: query, schema: {type: integer}}
+        - {name: lt, in: query, schema: {type: string, description: 'Logical time'}}
+        - {name: unixtime, in: query, schema: {type: integer}}
+      responses:
+        '200':
+          description: Resolved block ID
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/TonBlockIdExt'}
+    post:
+      operationId: lookupBlock_post
+      summary: Look up a block
+      tags: [blocks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workchain, shard]
+              properties:
+                workchain: {type: integer}
+                shard: {type: string}
+                seqno: {type: integer}
+                lt: {type: string}
+                unixtime: {type: integer}
+      responses:
+        '200':
+          description: Resolved block ID
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/TonBlockIdExt'}
+
+  /shards:
+    get:
+      operationId: shards_get
+      summary: Get shard block IDs for a masterchain seqno
+      tags: [blocks]
+      parameters:
+        - {name: seqno, in: query, schema: {type: integer, description: 'MC seqno (default latest)'}}
+      responses:
+        '200':
+          description: Shard list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result:
+                        type: object
+                        properties:
+                          '@type': {type: string, enum: ['blocks.shards']}
+                          shards:
+                            type: array
+                            items: {$ref: '#/components/schemas/TonBlockIdExt'}
+    post:
+      operationId: shards_post
+      summary: Get shard block IDs
+      tags: [blocks]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                seqno: {type: integer}
+      responses:
+        '200':
+          description: Shard list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result:
+                        type: object
+                        properties:
+                          '@type': {type: string, enum: ['blocks.shards']}
+                          shards:
+                            type: array
+                            items: {$ref: '#/components/schemas/TonBlockIdExt'}
+
+  /getBlockHeader:
+    get:
+      operationId: getBlockHeader_get
+      summary: Get block header info
+      tags: [blocks]
+      parameters:
+        - {name: workchain, in: query, required: true, schema: {type: integer}}
+        - {name: shard, in: query, required: true, schema: {type: string}}
+        - {name: seqno, in: query, required: true, schema: {type: integer}}
+      responses:
+        '200': {$ref: '#/components/responses/GenericOkResponse'}
+    post:
+      operationId: getBlockHeader_post
+      summary: Get block header info
+      tags: [blocks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workchain, shard, seqno]
+              properties:
+                workchain: {type: integer}
+                shard: {type: string}
+                seqno: {type: integer}
+      responses:
+        '200': {$ref: '#/components/responses/GenericOkResponse'}
+
+  /getMasterchainBlockSignatures:
+    get:
+      operationId: getMasterchainBlockSignatures_get
+      summary: Get validator signatures for a masterchain block
+      tags: [blocks]
+      parameters:
+        - {name: seqno, in: query, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Block signatures
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/BlockSignatures'}
+    post:
+      operationId: getMasterchainBlockSignatures_post
+      summary: Get validator signatures for a masterchain block
+      tags: [blocks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [seqno]
+              properties:
+                seqno: {type: integer}
+      responses:
+        '200':
+          description: Block signatures
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/BlockSignatures'}
+
+  /getShardBlockProof:
+    get:
+      operationId: getShardBlockProof_get
+      summary: Get proof linking a shard block to a masterchain block
+      tags: [blocks]
+      parameters:
+        - {name: workchain, in: query, required: true, schema: {type: integer}}
+        - {name: shard, in: query, required: true, schema: {type: string}}
+        - {name: seqno, in: query, required: true, schema: {type: integer}}
+      responses:
+        '200': {$ref: '#/components/responses/GenericOkResponse'}
+    post:
+      operationId: getShardBlockProof_post
+      summary: Get shard block proof
+      tags: [blocks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workchain, shard, seqno]
+              properties:
+                workchain: {type: integer}
+                shard: {type: string}
+                seqno: {type: integer}
+      responses:
+        '200': {$ref: '#/components/responses/GenericOkResponse'}
+
+  /getOutMsgQueueSize:
+    get:
+      operationId: getOutMsgQueueSize_get
+      summary: Get outbound message queue sizes
+      tags: [blocks]
+      responses:
+        '200': {$ref: '#/components/responses/GenericOkResponse'}
+    post:
+      operationId: getOutMsgQueueSize_post
+      summary: Get outbound message queue sizes
+      tags: [blocks]
+      requestBody:
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        '200': {$ref: '#/components/responses/GenericOkResponse'}
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Transactions
+  # ──────────────────────────────────────────────────────────────────────
+  /getBlockTransactions:
+    get:
+      operationId: getBlockTransactions_get
+      summary: List short transaction IDs in a block
+      tags: [transactions]
+      parameters:
+        - {name: workchain, in: query, required: true, schema: {type: integer}}
+        - {name: shard, in: query, required: true, schema: {type: string}}
+        - {name: seqno, in: query, required: true, schema: {type: integer}}
+        - {name: count, in: query, schema: {type: integer, default: 40, maximum: 256}}
+        - {name: after_lt, in: query, schema: {type: string, description: 'Pagination cursor: lt'}}
+        - {name: after_hash, in: query, schema: {type: string, description: 'Pagination cursor: account hash (base64)'}}
+      responses:
+        '200':
+          description: Block transactions
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/BlockTransactions'}
+    post:
+      operationId: getBlockTransactions_post
+      summary: List short transaction IDs in a block
+      tags: [transactions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workchain, shard, seqno]
+              properties:
+                workchain: {type: integer}
+                shard: {type: string}
+                seqno: {type: integer}
+                count: {type: integer, default: 40, maximum: 256}
+                after_lt: {type: string}
+                after_hash: {type: string}
+      responses:
+        '200':
+          description: Block transactions
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/BlockTransactions'}
+
+  /getBlockTransactionsExt:
+    get:
+      operationId: getBlockTransactionsExt_get
+      summary: List full transactions (with BOC data) in a block
+      tags: [transactions]
+      parameters:
+        - {name: workchain, in: query, required: true, schema: {type: integer}}
+        - {name: shard, in: query, required: true, schema: {type: string}}
+        - {name: seqno, in: query, required: true, schema: {type: integer}}
+        - {name: count, in: query, schema: {type: integer, default: 40, maximum: 256}}
+        - {name: after_lt, in: query, schema: {type: string}}
+        - {name: after_hash, in: query, schema: {type: string}}
+      responses:
+        '200': {$ref: '#/components/responses/GenericOkResponse'}
+    post:
+      operationId: getBlockTransactionsExt_post
+      summary: List full transactions in a block
+      tags: [transactions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workchain, shard, seqno]
+              properties:
+                workchain: {type: integer}
+                shard: {type: string}
+                seqno: {type: integer}
+                count: {type: integer, default: 40, maximum: 256}
+                after_lt: {type: string}
+                after_hash: {type: string}
+      responses:
+        '200': {$ref: '#/components/responses/GenericOkResponse'}
+
+  /getTransactions:
+    get:
+      operationId: getTransactions_get
+      summary: Get account transactions
+      description: >
+        Returns transactions for an account. If lt/hash are omitted,
+        starts from the latest transaction.
+      tags: [transactions]
+      parameters:
+        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: limit, in: query, schema: {type: integer, default: 10, maximum: 100}}
+        - {name: lt, in: query, schema: {type: string, description: 'Start from this logical time'}}
+        - {name: hash, in: query, schema: {type: string, description: 'Transaction hash at lt (base64 or hex)'}}
+      responses:
+        '200': {$ref: '#/components/responses/GenericOkResponse'}
+    post:
+      operationId: getTransactions_post
+      summary: Get account transactions
+      tags: [transactions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: {$ref: '#/components/schemas/TonAddr'}
+                limit: {type: integer, default: 10, maximum: 100}
+                lt: {type: string}
+                hash: {type: string}
+      responses:
+        '200': {$ref: '#/components/responses/GenericOkResponse'}
+
+  /getTransactionsStd:
+    get:
+      operationId: getTransactionsStd_get
+      summary: Get account transactions (standardized format)
+      tags: [transactions]
+      parameters:
+        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: limit, in: query, schema: {type: integer, default: 10, maximum: 100}}
+        - {name: lt, in: query, schema: {type: string}}
+        - {name: hash, in: query, schema: {type: string}}
+      responses:
+        '200':
+          description: Raw transactions
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/RawTransactions'}
+    post:
+      operationId: getTransactionsStd_post
+      summary: Get account transactions (standardized format)
+      tags: [transactions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: {$ref: '#/components/schemas/TonAddr'}
+                limit: {type: integer, default: 10, maximum: 100}
+                lt: {type: string}
+                hash: {type: string}
+      responses:
+        '200':
+          description: Raw transactions
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/RawTransactions'}
+
+  /tryLocateTx:
+    get:
+      operationId: tryLocateTx_get
+      summary: Locate a transaction by source, destination, and created_lt
+      tags: [transactions]
+      parameters:
+        - {name: source, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: destination, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: created_lt, in: query, required: true, schema: {type: string}}
+      responses:
+        '200': {$ref: '#/components/responses/GenericOkResponse'}
+    post:
+      operationId: tryLocateTx_post
+      summary: Locate a transaction
+      tags: [transactions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source, destination, created_lt]
+              properties:
+                source: {$ref: '#/components/schemas/TonAddr'}
+                destination: {$ref: '#/components/schemas/TonAddr'}
+                created_lt: {type: string}
+      responses:
+        '200': {$ref: '#/components/responses/GenericOkResponse'}
+
+  /tryLocateResultTx:
+    get:
+      operationId: tryLocateResultTx_get
+      summary: Locate the result (inbound) transaction
+      tags: [transactions]
+      parameters:
+        - {name: source, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: destination, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: created_lt, in: query, required: true, schema: {type: string}}
+      responses:
+        '200': {$ref: '#/components/responses/GenericOkResponse'}
+    post:
+      operationId: tryLocateResultTx_post
+      summary: Locate the result transaction
+      tags: [transactions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source, destination, created_lt]
+              properties:
+                source: {$ref: '#/components/schemas/TonAddr'}
+                destination: {$ref: '#/components/schemas/TonAddr'}
+                created_lt: {type: string}
+      responses:
+        '200': {$ref: '#/components/responses/GenericOkResponse'}
+
+  /tryLocateSourceTx:
+    get:
+      operationId: tryLocateSourceTx_get
+      summary: Locate the source (outbound) transaction
+      tags: [transactions]
+      parameters:
+        - {name: source, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: destination, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: created_lt, in: query, required: true, schema: {type: string}}
+      responses:
+        '200': {$ref: '#/components/responses/GenericOkResponse'}
+    post:
+      operationId: tryLocateSourceTx_post
+      summary: Locate the source transaction
+      tags: [transactions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source, destination, created_lt]
+              properties:
+                source: {$ref: '#/components/schemas/TonAddr'}
+                destination: {$ref: '#/components/schemas/TonAddr'}
+                created_lt: {type: string}
+      responses:
+        '200': {$ref: '#/components/responses/GenericOkResponse'}
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Config
+  # ──────────────────────────────────────────────────────────────────────
+  /getConfigParam:
+    get:
+      operationId: getConfigParam_get
+      summary: Get a single blockchain config parameter
+      tags: [config]
+      parameters:
+        - {name: param, in: query, required: true, schema: {type: integer, description: 'Config parameter ID'}}
+        - {name: seqno, in: query, schema: {type: integer, description: 'MC block seqno (default latest)'}}
+      responses:
+        '200':
+          description: Config parameter
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/ConfigInfo'}
+    post:
+      operationId: getConfigParam_post
+      summary: Get a single config parameter
+      tags: [config]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [param]
+              properties:
+                param: {type: integer, description: 'Config parameter ID (also accepts "config_id")'}
+                config_id: {type: integer, description: 'Alias for param'}
+                seqno: {type: integer}
+      responses:
+        '200':
+          description: Config parameter
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/ConfigInfo'}
+
+  /getConfigAll:
+    get:
+      operationId: getConfigAll_get
+      summary: Get all blockchain config parameters
+      tags: [config]
+      parameters:
+        - {name: seqno, in: query, schema: {type: integer}}
+      responses:
+        '200':
+          description: All config parameters
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/ConfigInfo'}
+    post:
+      operationId: getConfigAll_post
+      summary: Get all config parameters
+      tags: [config]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                seqno: {type: integer}
+      responses:
+        '200':
+          description: All config parameters
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/ConfigInfo'}
+
+  /getLibraries:
+    get:
+      operationId: getLibraries_get
+      summary: Get library cells by hash
+      tags: [config]
+      parameters:
+        - name: library_list
+          in: query
+          required: true
+          schema:
+            type: array
+            items: {type: string}
+          description: Array of base64-encoded 256-bit library hashes
+      responses:
+        '200': {$ref: '#/components/responses/GenericOkResponse'}
+    post:
+      operationId: getLibraries_post
+      summary: Get library cells by hash
+      tags: [config]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [library_list]
+              properties:
+                library_list:
+                  type: array
+                  items: {type: string}
+                  description: Array of base64-encoded 256-bit library hashes
+      responses:
+        '200': {$ref: '#/components/responses/GenericOkResponse'}
+
+  # ──────────────────────────────────────────────────────────────────────
+  # RunMethod
+  # ──────────────────────────────────────────────────────────────────────
+  /runGetMethod:
+    post:
+      operationId: runGetMethod_post
+      summary: Run a smart contract get-method
+      description: >
+        Executes a get-method on a smart contract. Stack entries use
+        legacy ["type", value] pair format (e.g. ["num", "123"],
+        ["cell", {"bytes": "..."}]).
+      tags: [runmethod]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, method]
+              properties:
+                address: {$ref: '#/components/schemas/TonAddr'}
+                method:
+                  type: string
+                  description: Get-method name (e.g. "seqno", "get_nft_data")
+                stack:
+                  type: array
+                  description: >
+                    Input stack as array of ["type", value] pairs.
+                    Types: "num"/"tvm.Number", "cell"/"tvm.Cell", "slice"/"tvm.Slice".
+                  items:
+                    type: array
+                    minItems: 2
+                    maxItems: 2
+                seqno: {type: integer, description: 'MC block seqno (default latest)'}
+      responses:
+        '200':
+          description: Get-method result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/RunResult'}
+
+  /runGetMethodStd:
+    post:
+      operationId: runGetMethodStd_post
+      summary: Run a get-method (standardized typed stack format)
+      description: >
+        Same as runGetMethod but returns TVM stack entries with typed
+        wrappers (tvm.stackEntryNumber, tvm.stackEntryCell, etc.)
+        instead of legacy ["type", value] pairs.
+      tags: [runmethod]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, method]
+              properties:
+                address: {$ref: '#/components/schemas/TonAddr'}
+                method: {type: string}
+                stack:
+                  type: array
+                  items:
+                    type: array
+                    minItems: 2
+                    maxItems: 2
+                seqno: {type: integer}
+      responses:
+        '200':
+          description: Get-method result (standardized stack)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/RunResult'}
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Send
+  # ──────────────────────────────────────────────────────────────────────
+  /sendBoc:
+    post:
+      operationId: sendBoc_post
+      summary: Send a serialized external message (BOC)
+      tags: [send]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [boc]
+              properties:
+                boc: {type: string, description: 'Base64-encoded BOC of the external message'}
+      responses:
+        '200':
+          description: Send status
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result:
+                        type: object
+                        properties:
+                          status: {type: integer}
+
+  /sendBocReturnHash:
+    post:
+      operationId: sendBocReturnHash_post
+      summary: Send BOC and return the message hash
+      tags: [send]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [boc]
+              properties:
+                boc: {type: string, description: 'Base64-encoded BOC'}
+      responses:
+        '200':
+          description: Send status with hash
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result:
+                        type: object
+                        properties:
+                          status: {type: integer}
+                          hash: {type: string, description: 'Base64-encoded message hash'}
+
+  /sendBocReturnHashNoError:
+    post:
+      operationId: sendBocReturnHashNoError_post
+      summary: Send BOC, return hash, suppress liteserver errors
+      description: >
+        Same as sendBocReturnHash but returns ok=true with status=-1
+        instead of an error if the liteserver rejects the message.
+      tags: [send]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [boc]
+              properties:
+                boc: {type: string}
+      responses:
+        '200':
+          description: Send status with hash (never errors)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result:
+                        type: object
+                        properties:
+                          status: {type: integer}
+                          hash: {type: string}
+
+  /sendQuery:
+    post:
+      operationId: sendQuery_post
+      summary: Build and send an external message from parts
+      tags: [send]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, body]
+              properties:
+                address: {$ref: '#/components/schemas/TonAddr'}
+                body: {type: string, description: 'Base64-encoded BOC of the message body'}
+                init_code: {type: string, description: 'Base64-encoded BOC of StateInit code (optional)'}
+                init_data: {type: string, description: 'Base64-encoded BOC of StateInit data (optional)'}
+      responses:
+        '200':
+          description: Send status with hash
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result:
+                        type: object
+                        properties:
+                          status: {type: integer}
+                          hash: {type: string}
+
+  /estimateFee:
+    post:
+      operationId: estimateFee_post
+      summary: Estimate transaction fees
+      tags: [send]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, body]
+              properties:
+                address: {$ref: '#/components/schemas/TonAddr'}
+                body: {type: string, description: 'Base64-encoded BOC of the message body'}
+                init_code: {type: string, description: 'Base64-encoded BOC (optional, for deploy)'}
+                init_data: {type: string, description: 'Base64-encoded BOC (optional, for deploy)'}
+                ignore_chksig: {type: boolean, default: true, description: 'Ignore signature checks during TVM execution'}
+      responses:
+        '200':
+          description: Fee estimate
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result:
+                        type: object
+                        properties:
+                          '@type': {type: string, enum: ['query.fees']}
+                          source_fees:
+                            type: object
+                            properties:
+                              '@type': {type: string, enum: ['fees']}
+                              in_fwd_fee: {type: integer}
+                              storage_fee: {type: integer}
+                              gas_fee: {type: integer}
+                              fwd_fee: {type: integer}
+                          destination_fees:
+                            type: array
+                            items: {type: object}
+
+  # ──────────────────────────────────────────────────────────────────────
+  # CORS preflight (any path)
+  # ──────────────────────────────────────────────────────────────────────
+  /:
+    options:
+      operationId: corsPreflight
+      summary: CORS preflight
+      description: Returns 204 with CORS headers for any path.
+      tags: [health]
+      security: []
+      responses:
+        '204':
+          description: No Content (CORS preflight)
+          headers:
+            Access-Control-Allow-Origin:
+              schema: {type: string}
+            Access-Control-Allow-Methods:
+              schema: {type: string, example: 'GET, POST, OPTIONS'}
+            Access-Control-Allow-Headers:
+              schema: {type: string, example: 'Content-Type, X-API-Key'}
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Optional API key. When the server is configured with an api_key, all requests (except healthcheck and CORS) require this header.
+
+  schemas:
+    # ── Shared primitives ──────────────────────────────────────────────
+    TonAddr:
+      type: string
+      description: TON address in any form (raw, friendly bounceable/non-bounceable)
+
+    TonHash:
+      type: string
+      description: 256-bit hash in hex or base64
+
+    TonBlockIdExt:
+      type: object
+      properties:
+        '@type': {type: string, enum: ['ton.blockIdExt']}
+        workchain: {type: integer}
+        shard: {type: string}
+        seqno: {type: integer}
+        root_hash: {type: string}
+        file_hash: {type: string}
+
+    InternalTransactionId:
+      type: object
+      properties:
+        '@type': {type: string, enum: ['internal.transactionId']}
+        lt: {type: string}
+        hash: {type: string}
+
+    # ── Response envelopes ─────────────────────────────────────────────
+    OkResponse:
+      type: object
+      properties:
+        ok: {type: boolean}
+        jsonrpc: {type: string}
+        id: {}
+        result: {}
+
+    ErrorResponse:
+      type: object
+      properties:
+        ok: {type: boolean, enum: [false]}
+        jsonrpc: {type: string}
+        error: {type: string}
+        code: {type: integer}
+
+    # ── Health ─────────────────────────────────────────────────────────
+    ReadyzResult:
+      type: object
+      properties:
+        ready: {type: boolean}
+        sync_lag_seconds: {type: integer}
+        last_block_utime: {type: integer}
+        node_time: {type: integer}
+        last_block: {$ref: '#/components/schemas/TonBlockIdExt'}
+        error: {type: string}
+
+    # ── Account results ────────────────────────────────────────────────
+    RawFullAccountState:
+      type: object
+      description: Raw account state (getAddressInformation result)
+      properties:
+        '@type': {type: string, enum: ['raw.fullAccountState']}
+        balance: {type: string, description: 'Balance in nanotomis'}
+        code: {type: string, description: 'Base64-encoded BOC of contract code'}
+        data: {type: string, description: 'Base64-encoded BOC of contract data'}
+        last_transaction_id: {$ref: '#/components/schemas/InternalTransactionId'}
+        block_id: {$ref: '#/components/schemas/TonBlockIdExt'}
+        sync_utime: {type: integer}
+        extra_currencies: {type: array, items: {type: object}}
+        state: {type: string, enum: [active, uninitialized, frozen]}
+        frozen_hash: {type: string}
+
+    FullAccountState:
+      type: object
+      description: Extended account state (getExtendedAddressInformation result)
+      properties:
+        '@type': {type: string, enum: ['fullAccountState']}
+        address:
+          type: object
+          properties:
+            '@type': {type: string, enum: ['accountAddress']}
+            account_address: {type: string}
+        balance: {type: integer, description: 'Balance in nanotomis (integer)'}
+        extra_currencies: {type: array, items: {type: object}}
+        last_transaction_id: {$ref: '#/components/schemas/InternalTransactionId'}
+        block_id: {$ref: '#/components/schemas/TonBlockIdExt'}
+        sync_utime: {type: integer}
+        account_state:
+          type: object
+          properties:
+            '@type': {type: string, enum: ['raw.accountState']}
+            code: {type: string}
+            data: {type: string}
+            frozen_hash: {type: string}
+        revision: {type: integer}
+
+    WalletInformation:
+      type: object
+      description: Wallet information (getWalletInformation result)
+      properties:
+        '@type': {type: string, enum: ['ext.accounts.walletInformation']}
+        wallet: {type: boolean, description: 'Whether the account is a known wallet contract'}
+        balance: {type: string, description: 'Balance in nanotomis'}
+        account_state: {type: string, enum: [active, uninitialized, frozen]}
+        last_transaction_id: {$ref: '#/components/schemas/InternalTransactionId'}
+        wallet_type:
+          type: string
+          nullable: true
+          description: 'Wallet type (e.g. "wallet v4 r2") or null if not a wallet'
+        seqno:
+          type: integer
+          nullable: true
+          description: 'Wallet seqno or null'
+        wallet_id:
+          type: integer
+          nullable: true
+
+    # ── Block results ──────────────────────────────────────────────────
+    MasterchainInfo:
+      type: object
+      description: Masterchain info (getMasterchainInfo result)
+      properties:
+        '@type': {type: string, enum: ['blocks.masterchainInfo']}
+        last: {$ref: '#/components/schemas/TonBlockIdExt'}
+        state_root_hash: {type: string}
+        init:
+          type: object
+          description: Zero state ID
+          properties:
+            '@type': {type: string, enum: ['ton.blockIdExt']}
+            workchain: {type: integer}
+            root_hash: {type: string}
+            file_hash: {type: string}
+
+    ConsensusBlock:
+      type: object
+      description: Consensus block info
+      properties:
+        '@type': {type: string, enum: ['ext.blocks.consensusBlock']}
+        consensus_block: {type: integer, description: 'Masterchain seqno'}
+        timestamp: {type: integer, description: 'Unix timestamp when this seqno was first seen'}
+        last_block_utime: {type: integer}
+
+    BlockSignatures:
+      type: object
+      description: Validator signatures for a masterchain block
+      properties:
+        '@type': {type: string, enum: ['blocks.blockSignatures']}
+        id: {$ref: '#/components/schemas/TonBlockIdExt'}
+        signatures:
+          type: array
+          items:
+            type: object
+            properties:
+              node_id_short: {type: string}
+              signature: {type: string}
+
+    # ── Transaction results ────────────────────────────────────────────
+    BlockTransactions:
+      type: object
+      description: Block transactions (getBlockTransactions result)
+      properties:
+        '@type': {type: string, enum: ['blocks.transactions']}
+        id: {$ref: '#/components/schemas/TonBlockIdExt'}
+        req_count: {type: integer}
+        incomplete: {type: boolean}
+        transactions:
+          type: array
+          items:
+            type: object
+            properties:
+              '@type': {type: string, enum: ['blocks.shortTxId']}
+              account: {type: string, description: 'Account address hex (256 bits)'}
+              lt: {type: string}
+              hash: {type: string}
+
+    RawTransactions:
+      type: object
+      description: Standardized transactions (getTransactionsStd result)
+      properties:
+        '@type': {type: string, enum: ['blocks.rawTransactions']}
+        transactions:
+          type: array
+          items:
+            type: object
+            properties:
+              '@type': {type: string, enum: ['raw.transaction']}
+              block_id: {$ref: '#/components/schemas/TonBlockIdExt'}
+              data: {type: string, description: 'Base64-encoded transaction BOC'}
+              utime: {type: integer}
+              transaction_id: {$ref: '#/components/schemas/InternalTransactionId'}
+        previous_transaction_id: {$ref: '#/components/schemas/InternalTransactionId'}
+
+    # ── Config results ─────────────────────────────────────────────────
+    ConfigInfo:
+      type: object
+      description: Config parameter(s) result
+      properties:
+        '@type': {type: string, enum: ['configInfo']}
+        config:
+          type: object
+          properties:
+            '@type': {type: string, enum: ['tvm.cell']}
+            bytes: {type: string, description: 'Base64-encoded BOC of the config cell'}
+        config_params:
+          type: object
+          description: >
+            Map of config param ID to {bytes: base64 BOC}.
+            Present only for getConfigAll.
+          additionalProperties:
+            type: object
+            properties:
+              bytes: {type: string}
+
+    # ── RunMethod results ──────────────────────────────────────────────
+    RunResult:
+      type: object
+      description: Smart contract get-method execution result
+      properties:
+        '@type': {type: string, enum: ['smc.runResult']}
+        gas_used: {type: integer}
+        exit_code: {type: integer}
+        stack:
+          type: array
+          description: >
+            Result stack. For runGetMethod: array of ["type", value] pairs.
+            For runGetMethodStd: array of typed objects (tvm.stackEntryNumber, etc.).
+          items: {}
+        last_transaction_id:
+          nullable: true
+          description: 'Present in runGetMethod, null in runGetMethodStd'
+        block_id:
+          nullable: true
+          description: 'Present in runGetMethod'
+
+    # ── Address detection result ───────────────────────────────────────
+    DetectedAddress:
+      type: object
+      properties:
+        raw_form: {type: string, description: 'workchain:hex'}
+        bounceable:
+          type: object
+          properties:
+            b64: {type: string}
+            b64url: {type: string}
+        non_bounceable:
+          type: object
+          properties:
+            b64: {type: string}
+            b64url: {type: string}
+        given_type: {type: string, enum: [friendly_bounceable, friendly_non_bounceable]}
+        test_only: {type: boolean}
+
+    DetectedHash:
+      type: object
+      properties:
+        '@type': {type: string, enum: ['ext.utils.detectedHash']}
+        b64: {type: string}
+        b64url: {type: string}
+        hex: {type: string}
+
+  responses:
+    GenericOkResponse:
+      description: Successful response
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: '#/components/schemas/OkResponse'
+              - $ref: '#/components/schemas/ErrorResponse'
+
+    StringResultResponse:
+      description: Result is a plain string
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/OkResponse'
+              - type: object
+                properties:
+                  result: {type: string}
+
+    DetectAddressResponse:
+      description: Address detection result
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/OkResponse'
+              - type: object
+                properties:
+                  result: {$ref: '#/components/schemas/DetectedAddress'}
+
+    DetectHashResponse:
+      description: Hash detection result
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/OkResponse'
+              - type: object
+                properties:
+                  result: {$ref: '#/components/schemas/DetectedHash'}

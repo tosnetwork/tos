@@ -685,7 +685,7 @@ For upgrades, backups, alerts, and destructive actions:
 
 ### Priority 8. Measure ecosystem success with hard metrics
 
-**Status: ❌ Not started**
+**Status: ⚠️ JSON-RPC Prometheus metrics implemented (per-method request/error counters, cache, uptime); higher-level ecosystem metrics pending**
 
 TOS should track concrete indicators such as:
 

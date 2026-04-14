@@ -64,7 +64,7 @@ The TOS standards map is organized into these families:
 
 ### Scope
 
-**Status: ✅ Implementation complete, formal Level 1 spec pending**
+**Status: ✅ Implementation complete, OpenAPI 3.1 spec published (doc/openapi.yaml)**
 
 RPC standards define how machine clients interact with chain state and transaction workflows.
 

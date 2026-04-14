@@ -59,6 +59,8 @@
 | 12 | `tosctl install wizard` | `~/tos/tosctl` | Interactive setup wizard: checks prerequisites, collects config, generates tosctl-config.json. | ✅ Done |
 | 13 | Policy documentation | `~/tos` | `doc/json-rpc-policy.md` — R6-R14 design decisions documented. | ✅ Done |
 | 14 | Advanced/explorer APIs | `~/tos` | All implemented: getMasterchainBlockSignatures, getShardBlockProof, getLibraries, getTokenData, tryLocateTx, tryLocateResultTx, tryLocateSourceTx, getConsensusBlock, getOutMsgQueueSize, getConfigAll, getTransactionsStd, getBlockTransactionsExt, runGetMethodStd, sendBocReturnHashNoError, detectHash. JSON-RPC now 35 methods. | ✅ Done |
+| 15 | JSON-RPC Prometheus metrics | `~/tos` | 9 metric families exported via `--exporter-address`: requests_total, errors_total, active_requests, cache_hits/misses, cache_entries, uptime, per-method request/error counters with `{method="..."}` labels. | ✅ Done |
+| 16 | OpenAPI 3.1 specification | `~/tos` | `doc/openapi.yaml` — machine-readable API contract for all 35 methods + healthcheck/readyz. | ✅ Done |
 
 ## Acceptance criteria for v1.0
 
