@@ -215,7 +215,7 @@ These must be intentional workflows, not emergent combinations of unrelated tool
 
 ### 5. A wallet-first ecosystem
 
-**Status: ⚠️ Core capabilities done, in_msg_hash tracking added, formal specs pending**
+**Status: ✅ Core APIs + in_msg_hash tracking + send-track spec published (doc/tos-wallet-send-track.md)**
 
 A chain does not become widely usable until wallet flows are stable and predictable.
 
@@ -248,7 +248,7 @@ The contract toolchain must be coherent across compiler, runtime, API, and opera
 
 ### 7. A data-availability and indexing-friendly ecosystem
 
-**Status: ❌ Not started**
+**Status: ✅ Transaction history spec published (doc/tos-transaction-history.md)**
 
 Applications and infrastructure do not scale on recent state alone.
 TOS must make it clear how the ecosystem accesses:
@@ -265,7 +265,7 @@ If every explorer, wallet backend, and analytics system must invent its own hist
 
 ### 8. An application-composability ecosystem
 
-**Status: ❌ Not started**
+**Status: ✅ TOS TEP token standards published (doc/tos-tep-token-standards.md)**
 
 The ecosystem should not only make contracts possible.
 It should make applications easy to compose with each other.
@@ -300,7 +300,7 @@ If the stack is technically elegant but economically hollow, adoption will remai
 
 ### 10. A clear trust-model ecosystem
 
-**Status: ❌ Not started**
+**Status: ✅ Trust tiers spec published (doc/tos-trust-tiers.md)**
 
 Not every user should need the same verification model.
 But every product surface should make its trust assumptions explicit.
@@ -463,7 +463,7 @@ The target is one obvious operator path.
 
 ### Direction 4. Treat indexed data as a first-class product surface
 
-**Status: ❌ Not started**
+**Status: ✅ Transaction history spec published (doc/tos-transaction-history.md)**
 
 Recent chain state is not enough.
 TOS should intentionally define how serious integrations obtain:
@@ -493,7 +493,7 @@ They should not remain the default operational path for normal workflows.
 
 ### Direction 6. Make application standards part of ecosystem policy
 
-**Status: ❌ Not started**
+**Status: ✅ TOS TEP token standards published (doc/tos-tep-token-standards.md)**
 
 TOS should publish and protect shared conventions for:
 
@@ -535,7 +535,7 @@ It must reinforce:
 
 ### Direction 9. Make governance and upgrade coordination a product surface
 
-**Status: ❌ Not started**
+**Status: ✅ Upgrade process spec published (doc/tos-upgrade-process.md)**
 
 Protocol governance is not separate from product quality.
 If upgrade coordination is fragile, interface stability will also be fragile.
@@ -553,7 +553,7 @@ This should be explicit enough that ecosystem participants can predict how chang
 
 ### Direction 10. Define verification tiers as part of public architecture
 
-**Status: ❌ Not started**
+**Status: ✅ Published doc/tos-trust-tiers.md with 4 tiers and 9 product-type defaults**
 
 TOS should publish a clear model for how different clients interact with trust and verification:
 
@@ -606,7 +606,7 @@ If these loops are broken, partial feature expansion is noise.
 
 ### Priority 2. Standardize the data model for serious integrations
 
-**Status: ❌ Not started**
+**Status: ✅ Transaction history spec published (doc/tos-transaction-history.md)**
 
 TOS should define stable expectations for:
 
@@ -646,7 +646,7 @@ For public APIs, TOS should maintain:
 
 ### Priority 5. Define and enforce application-facing standards
 
-**Status: ❌ Not started**
+**Status: ✅ TOS TEP token standards published (doc/tos-tep-token-standards.md)**
 
 TOS should standardize the surfaces that applications and wallets depend on most:
 
@@ -700,7 +700,7 @@ TOS should track concrete indicators such as:
 
 ### Priority 9. Reduce ambiguity about governance and change management
 
-**Status: ❌ Not started**
+**Status: ✅ Upgrade process spec published (doc/tos-upgrade-process.md)**
 
 TOS should make protocol and interface evolution legible to the ecosystem.
 
@@ -714,7 +714,7 @@ At minimum, operators and integrators should be able to answer:
 
 ### Priority 10. Standardize trust tiers and permission semantics
 
-**Status: ❌ Not started**
+**Status: ⚠️ Trust tiers published (doc/tos-trust-tiers.md); permission semantics pending**
 
 TOS should not postpone these decisions until wallets and applications have already fragmented.
 

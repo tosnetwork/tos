@@ -105,7 +105,7 @@ Optional or niche methods may remain Level 2 until ecosystem dependency is real.
 
 ### Scope
 
-**Status: ⚠️ Core APIs exist, formal spec pending**
+**Status: ✅ Send-track spec published (doc/tos-wallet-send-track.md)**
 
 Wallet standards define the stable user-facing and machine-facing transaction lifecycle.
 
@@ -145,7 +145,7 @@ Wallet convenience helpers that do not affect interoperability may remain Level 
 
 ### Scope
 
-**Status: ❌ Not started**
+**Status: ✅ Transaction history spec published (doc/tos-transaction-history.md)**
 
 Indexing and data standards define how integrators obtain historical, derived, and searchable views of chain activity.
 
@@ -265,7 +265,7 @@ Guided or partially automated flows should remain Level 2 until truly closed.
 
 ### Scope
 
-**Status: ❌ Not started**
+**Status: ✅ TOS TEP token standards published (doc/tos-tep-token-standards.md)**
 
 Contract and application standards define how reusable application-layer components compose.
 
@@ -302,7 +302,7 @@ Newer conventions may remain Level 2 while adoption is forming.
 
 ### Scope
 
-**Status: ❌ Not started**
+**Status: ✅ Trust tiers spec published (doc/tos-trust-tiers.md)**
 
 Trust and verification standards define what clients can verify, what they must trust, and what proofs are available.
 
