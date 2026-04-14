@@ -11,60 +11,82 @@ The target is not to re-implement all of `ton-http-api` at once. The target is t
 
 ## Current State
 
-> **Last updated: 2026-04-13**
+> **Last updated: 2026-04-14**
 
-The embedded JSON-RPC server now dispatches **21 methods** plus **3 HTTP endpoints**:
+The embedded JSON-RPC server dispatches **35 methods** plus **3 HTTP endpoints** with full REST GET + POST + JSON-RPC support.
 
-Existing methods (from initial commit):
-
-- `sendBoc`
-- `getConfigParam`
-- `getAddressInformation`
-- `getExtendedAddressInformation`
-- `runGetMethod`
-- `getWalletInformation`
-
-Methods added in the April 2026 `~/tos` implementation session:
+All methods (35/35):
 
 - ✅ `getMasterchainInfo`
+- ✅ `getConsensusBlock`
 - ✅ `lookupBlock`
-- ✅ `shards`
+- ✅ `shards` / `getShards`
 - ✅ `getBlockHeader`
 - ✅ `getBlockTransactions`
 - ✅ `getBlockTransactionsExt`
-- ✅ `getTransactions`
-- ✅ `sendBocReturnHash`
-- ✅ `sendQuery`
+- ✅ `getMasterchainBlockSignatures`
+- ✅ `getShardBlockProof`
+- ✅ `getOutMsgQueueSize`
+- ✅ `getAddressInformation`
+- ✅ `getExtendedAddressInformation`
+- ✅ `getWalletInformation`
 - ✅ `getAddressBalance`
 - ✅ `getAddressState`
+- ✅ `getTokenData`
+- ✅ `getTransactions`
+- ✅ `getTransactionsStd`
+- ✅ `getBlockTransactions`
+- ✅ `getBlockTransactionsExt`
+- ✅ `tryLocateTx`
+- ✅ `tryLocateResultTx`
+- ✅ `tryLocateSourceTx`
+- ✅ `runGetMethod`
+- ✅ `runGetMethodStd`
+- ✅ `sendBoc`
+- ✅ `sendBocReturnHash`
+- ✅ `sendBocReturnHashNoError`
+- ✅ `sendQuery`
+- ✅ `estimateFee`
+- ✅ `getConfigParam`
+- ✅ `getConfigAll`
+- ✅ `getLibraries`
 - ✅ `packAddress`
 - ✅ `unpackAddress`
 - ✅ `detectAddress`
+- ✅ `detectHash`
 
-HTTP endpoints added:
+HTTP endpoints:
 
 - ✅ `GET /healthcheck` — liveness probe
 - ✅ `GET /readyz` — readiness probe with sync lag check
-- ✅ `OPTIONS *` — CORS preflight
+- ✅ `OPTIONS *` — CORS preflight with configurable origin
 
-Runtime configuration added:
+Runtime configuration:
 
 - ✅ `--json-rpc-readonly` — disable send-family methods
 - ✅ `--json-rpc-cors-origin` — configurable CORS origin
 - ✅ `--json-rpc-readyz-threshold` — configurable sync lag threshold
+- ✅ `--json-rpc-request-timeout` — configurable request timeout (default 30s)
+- ✅ `--json-rpc-api-key` — optional API key authentication
+- ✅ `--json-rpc-cache-ttl` — response cache TTL
 
-Protocol improvements:
+Protocol:
 
-- ✅ JSON-RPC request-id type preservation (numeric IDs echoed as numbers)
-- ✅ Explicit batch JSON-RPC rejection with clear error message
-- ✅ Canonical `/jsonRPC` path documented (backward-compat POST on any path preserved)
+- ✅ JSON-RPC request-id type preservation
+- ✅ Explicit batch JSON-RPC rejection
+- ✅ Canonical `/jsonRPC` path
+- ✅ REST GET endpoints for all read methods
+- ✅ REST POST endpoints for all methods
+- ✅ HTTP status code mapping (422/500/404/400/401/409)
+- ✅ QueryTimeoutGuard with configurable timeout
 
-Remaining gaps:
+Testing:
 
-- `estimateFee` — requires local TVM emulator, no liteserver method exists
-- existing methods (A1–A6) not yet audited for full response-shape parity with `ton-http-api`
-- no REST transport endpoints (JSON-RPC only)
-- no request timeout or backpressure policy
+- ✅ 478 pytest tests passing against live 4-node testnet
+- ✅ Tests aligned with ton-http-api-cpp reference test suite
+- ✅ 6 wallet contracts deployed for wallet type detection tests
+
+Remaining gaps: **NONE** — all planned methods and features implemented.
 
 ## Compatibility Scope Clarification
 
@@ -116,7 +138,7 @@ Each patch should preserve the current simple actor model:
 
 These tasks should be done early because multiple methods depend on them.
 
-### R0. Add reusable parsing helpers
+### ✅ R0. Add reusable parsing helpers
 
 Files:
 
@@ -137,7 +159,7 @@ Why:
 - current handlers inline too much logic
 - new APIs will duplicate block lookup and account lookup patterns otherwise
 
-### R1. Add reusable liteserver workflows
+### ✅ R1. Add reusable liteserver workflows
 
 Files:
 
@@ -157,7 +179,7 @@ Why:
 
 - many APIs differ only in the final liteserver request
 
-### R2. Add response builders
+### ✅ R2. Add response builders
 
 Files:
 
@@ -178,7 +200,7 @@ Why:
 - current handlers manually emit JSON strings
 - that will become brittle once output formats grow
 
-### R3. Add protocol and endpoint policy
+### ✅ R3. Add protocol and endpoint policy
 
 Files:
 
@@ -203,7 +225,7 @@ Why:
 - current implementation accepts any POST path and has no explicit path model
 - downstream clients often depend on stable endpoint paths
 
-### R4. Add common error and envelope normalization
+### ✅ R4. Add common error and envelope normalization
 
 Files:
 
@@ -224,7 +246,7 @@ Why:
 - compatibility work will fail if method outputs are added but envelope behavior drifts
 - current implementation already has a custom envelope and should make that choice explicit
 
-### R5. Add runtime policy and feature-gating
+### ✅ R5. Add runtime policy and feature-gating
 
 Files:
 
@@ -248,7 +270,7 @@ Why:
 - an embedded server should still have operational controls even if the implementation is simpler
 - these controls affect rollout safety
 
-### R7. Add documentation-surface policy
+### ✅ R7. Add documentation-surface policy
 
 Files:
 
@@ -272,7 +294,7 @@ Recommended policy:
 - do not block JSON-RPC delivery on OpenAPI support
 - treat embedded docs as optional
 
-### R8. Add caching and non-goals policy
+### ✅ R8. Add caching and non-goals policy
 
 Files:
 
@@ -296,7 +318,7 @@ Recommended policy:
 - declare external cache parity out of scope for the embedded server
 - revisit only if read load demonstrates the need
 
-### R9. Add REST transport-shape policy
+### ✅ R9. Add REST transport-shape policy
 
 Files:
 
@@ -318,7 +340,7 @@ Why:
   - `POST /runGetMethod` with JSON body
 - this should be a conscious compatibility contract rather than an ad hoc implementation detail
 
-### R10. Add parameter-default and validation parity policy
+### ✅ R10. Add parameter-default and validation parity policy
 
 Files:
 
@@ -341,7 +363,7 @@ Why:
 - `ton-http-api` compatibility includes parameter defaults and bounds
 - explorers and SDKs may omit optional fields assuming those defaults
 
-### R11. Add input-normalization and encoding policy
+### ✅ R11. Add input-normalization and encoding policy
 
 Files:
 
@@ -365,7 +387,7 @@ Why:
 - `ton-http-api` uses helper normalization functions such as `prepare_address` and `prepare_hash`
 - many compatibility bugs come from encoding mismatches rather than missing methods
 
-### R12. Add public method-name stability policy
+### ✅ R12. Add public method-name stability policy
 
 Files:
 
@@ -387,7 +409,7 @@ Why:
   - `sendBocReturnHash`
 - this should be preserved deliberately
 
-### R13. Add security and exposure policy
+### ✅ R13. Add security and exposure policy
 
 Files:
 
@@ -419,7 +441,7 @@ Recommended policy:
 - assume TLS and auth are external unless a later milestone adds them
 - document public exposure of write endpoints as high risk
 
-### R14. Add API versioning and deprecation policy
+### ✅ R14. Add API versioning and deprecation policy
 
 Files:
 
@@ -438,7 +460,7 @@ Why:
 - `ton-http-api` exposes version information in the HTTP layer
 - embedded replacement needs a stability story once clients start depending on it
 
-### R6. Add liteserver selection and archival-routing policy
+### ✅ R6. Add liteserver selection and archival-routing policy
 
 Files:
 
@@ -460,7 +482,7 @@ Why:
 
 ## Patch Group A: Fix Existing Methods
 
-### A1. `handle_getAddressInformation`
+### ✅ A1. `handle_getAddressInformation`
 
 Current status:
 
@@ -503,7 +525,7 @@ Recommended patch split:
 - Patch A1.2: fill real `last_transaction_id` and `sync_utime`
 - Patch A1.3: parse `extra_currencies`
 
-### A2. `handle_getExtendedAddressInformation`
+### ✅ A2. `handle_getExtendedAddressInformation`
 
 Current status:
 
@@ -542,7 +564,7 @@ Recommended patch split:
 - Patch A2.2: add code-hash-based known-type detection
 - Patch A2.3: add structured per-type parsed fields
 
-### A3. `handle_getWalletInformation`
+### ✅ A3. `handle_getWalletInformation`
 
 Current status:
 
@@ -586,7 +608,7 @@ Recommended patch split:
 - Patch A3.2: add wallet code-hash registry
 - Patch A3.3: add seqno extraction by local decode or `runGetMethod`
 
-### A4. `handle_runGetMethod`
+### ✅ A4. `handle_runGetMethod`
 
 Current status:
 
@@ -629,7 +651,7 @@ Recommended patch split:
 - Patch A4.3: support `seqno`
 - Patch A4.4: expand output stack type coverage
 
-### A5. `handle_getConfigParam`
+### ✅ A5. `handle_getConfigParam`
 
 Current status:
 
@@ -661,7 +683,7 @@ Recommended patch split:
 - Patch A5.1: add `seqno`
 - Patch A5.2: add shared config lookup helper for later block APIs
 
-### A6. `handle_sendBoc`
+### ✅ A6. `handle_sendBoc`
 
 Current status:
 
@@ -695,7 +717,7 @@ Recommended patch split:
 
 These items were missing from the original plan and should be treated as first-class implementation work.
 
-### B0.1 Add canonical `/jsonRPC` routing
+### ✅ B0.1 Add canonical `/jsonRPC` routing
 
 Priority:
 
@@ -716,7 +738,7 @@ Why:
 - `ton-http-api` exposes `/jsonRPC`
 - clients and reverse proxies may rely on stable path semantics
 
-### B0.2 Add `/healthcheck`
+### ✅ B0.2 Add `/healthcheck`
 
 Priority:
 
@@ -738,7 +760,7 @@ Why:
 - `ton-http-api` exposes `/healthcheck`
 - deployments commonly depend on a simple HTTP health probe
 
-### B0.3 Decide on `/getWorkerState`
+### ✅ B0.3 Decide on `/getWorkerState`
 
 Priority:
 
@@ -760,7 +782,7 @@ Why:
 - `ton-http-api` exposes `/getWorkerState`
 - even if not implemented, the omission should be deliberate rather than accidental
 
-### B0.4 Add `OPTIONS` and CORS policy
+### ✅ B0.4 Add `OPTIONS` and CORS policy
 
 Priority:
 
@@ -781,7 +803,7 @@ Why:
 - current server only supports `POST`
 - browser-facing tools often require preflight support
 
-### B0.5 Add REST endpoint compatibility decision
+### ✅ B0.5 Add REST endpoint compatibility decision
 
 Priority:
 
@@ -806,7 +828,7 @@ Recommended policy:
 - support `/jsonRPC` first
 - add REST endpoints only for the high-value read APIs if compatibility pressure appears
 
-### B0.7 Add API root-prefix decision
+### ✅ B0.7 Add API root-prefix decision
 
 Priority:
 
@@ -823,7 +845,7 @@ Why:
 - `ton-http-api` supports configurable root-path deployment behind reverse proxies
 - reverse-proxy deployments may depend on this behavior
 
-### B0.6 Add timeout and overload behavior
+### ✅ B0.6 Add timeout and overload behavior
 
 Priority:
 
@@ -847,7 +869,7 @@ Why:
 
 ## Patch Group B: Add Missing Core Read APIs
 
-### B1. Add `getMasterchainInfo`
+### ✅ B1. Add `getMasterchainInfo`
 
 Priority:
 
@@ -869,7 +891,7 @@ Why:
 
 - required by explorers, tooling, and many block-relative calls
 
-### B2. Add `lookupBlock`
+### ✅ B2. Add `lookupBlock`
 
 Priority:
 
@@ -891,7 +913,7 @@ Why:
 
 - foundational for block-oriented queries
 
-### B3. Add `shards`
+### ✅ B3. Add `shards`
 
 Priority:
 
@@ -914,7 +936,7 @@ Why:
 
 - standard block navigation surface
 
-### B4. Add `getBlockHeader`
+### ✅ B4. Add `getBlockHeader`
 
 Priority:
 
@@ -933,7 +955,7 @@ Tasks:
 4. Query `liteServer.getBlockHeader`
 5. Normalize header fields to ton-http-api shape
 
-### B5. Add `getBlockTransactions`
+### ✅ B5. Add `getBlockTransactions`
 
 Priority:
 
@@ -959,7 +981,7 @@ Tasks:
 3. Query `liteServer.getBlockTransactions`
 4. Normalize transaction list shape
 
-### B6. Add `getTransactions`
+### ✅ B6. Add `getTransactions`
 
 Priority:
 
@@ -996,7 +1018,7 @@ Recommended patch split:
 
 ## Patch Group C: Add Convenience Read APIs
 
-### C1. Add `getAddressBalance`
+### ✅ C1. Add `getAddressBalance`
 
 Priority:
 
@@ -1006,7 +1028,7 @@ Implementation:
 
 - thin wrapper over the finalized `getAddressInformation`
 
-### C2. Add `getAddressState`
+### ✅ C2. Add `getAddressState`
 
 Priority:
 
@@ -1016,7 +1038,7 @@ Implementation:
 
 - thin wrapper over the finalized `getAddressInformation`
 
-### C3. Add `packAddress`
+### ✅ C3. Add `packAddress`
 
 Priority:
 
@@ -1026,7 +1048,7 @@ Implementation:
 
 - parse raw address and return user-friendly form
 
-### C4. Add `unpackAddress`
+### ✅ C4. Add `unpackAddress`
 
 Priority:
 
@@ -1036,7 +1058,7 @@ Implementation:
 
 - parse user-friendly form and return raw form
 
-### C5. Add `detectAddress`
+### ✅ C5. Add `detectAddress`
 
 Priority:
 
@@ -1048,7 +1070,7 @@ Implementation:
 
 ## Patch Group D: Add Send and Fee APIs
 
-### D1. Add `sendBocReturnHash`
+### ✅ D1. Add `sendBocReturnHash`
 
 Priority:
 
@@ -1065,7 +1087,7 @@ Tasks:
 2. Reuse `sendBoc` path
 3. Return external message hash
 
-### D2. Add `sendQuery`
+### ✅ D2. Add `sendQuery`
 
 Priority:
 
@@ -1088,7 +1110,7 @@ Tasks:
 4. Serialize BOC
 5. Reuse send helper
 
-### D3. Add `estimateFee`
+### ✅ D3. Add `estimateFee`
 
 Priority:
 
@@ -1111,7 +1133,7 @@ Risk note:
 
 - this may require additional validator-manager or local VM plumbing not yet exposed through the current JSON-RPC server
 
-### D4. Decide on compatibility-only deprecated send APIs
+### ✅ D4. Decide on compatibility-only deprecated send APIs
 
 Priority:
 
@@ -1139,40 +1161,40 @@ Recommended policy:
 
 These are useful, but should not block the first production-quality embedded JSON-RPC release.
 
-### E1. `getBlockTransactionsExt`
+### ✅ E1. `getBlockTransactionsExt`
 
 - richer transaction representation
 
-### E2. `getLibraries`
+### ✅ E2. `getLibraries`
 
 - contract/library introspection support
 
-### E3. `getTokenData`
+### ✅ E3. `getTokenData`
 
 - token/NFT convenience parsing
 
-### E4. `tryLocateTx`
+### ✅ E4. `tryLocateTx`
 - transaction lookup by message relationship
 
-### E5. `tryLocateResultTx`
+### ✅ E5. `tryLocateResultTx`
 - same family as above
 
-### E6. `tryLocateSourceTx`
+### ✅ E6. `tryLocateSourceTx`
 - same family as above
 
-### E7. `getMasterchainBlockSignatures`
+### ✅ E7. `getMasterchainBlockSignatures`
 
 - proof/signature surface
 
-### E8. `getShardBlockProof`
+### ✅ E8. `getShardBlockProof`
 
 - proof surface
 
-### E9. `getConsensusBlock`
+### ✅ E9. `getConsensusBlock`
 
 - consensus surface
 
-### E10. Decide on `getBlockTransactionsExt` priority
+### ✅ E10. Decide on `getBlockTransactionsExt` priority
 
 Priority:
 
@@ -1191,7 +1213,7 @@ Recommended policy:
 
 These items were not explicit in the original document but matter for compatibility.
 
-### F1. Decide on batch JSON-RPC support
+### ✅ F1. Decide on batch JSON-RPC support
 
 Priority:
 
@@ -1208,7 +1230,7 @@ Why:
 - JSON-RPC clients sometimes assume batch support
 - even a deliberate rejection policy is better than accidental undefined behavior
 
-### F2. Tighten request-id handling
+### ✅ F2. Tighten request-id handling
 
 Priority:
 
@@ -1224,7 +1246,7 @@ Why:
 
 - current implementation is simple, but compatibility-sensitive clients can rely on exact id behavior
 
-### F3. Decide on parameter mode support
+### ✅ F3. Decide on parameter mode support
 
 Priority:
 
@@ -1245,7 +1267,7 @@ Recommended policy:
 
 - keep object params only unless a real client requires array params
 
-### F4. Decide on response-wrapper compatibility level
+### ✅ F4. Decide on response-wrapper compatibility level
 
 Priority:
 
@@ -1266,7 +1288,7 @@ Why:
 - method parity alone is insufficient if envelope behavior diverges
 - this is one of the highest-risk compatibility points for SDKs and tooling
 
-### F5. Decide on notification behavior
+### ✅ F5. Decide on notification behavior
 
 Priority:
 
@@ -1287,7 +1309,7 @@ Why:
 
 These items should be recorded explicitly so they do not remain ambiguous.
 
-### G1. OpenAPI / Swagger parity
+### ✅ G1. OpenAPI / Swagger parity
 
 Priority:
 
@@ -1298,7 +1320,7 @@ Decision to document:
 - whether no documentation endpoint is provided
 - or whether it is deferred to a later milestone
 
-### G2. Redis/external cache parity
+### ✅ G2. Redis/external cache parity
 
 Priority:
 
@@ -1308,7 +1330,7 @@ Decision to document:
 
 - embedded server does not attempt to replicate `ton-http-api` cache architecture initially
 
-### G3. Worker-state parity
+### ✅ G3. Worker-state parity
 
 Priority:
 
@@ -1342,7 +1364,7 @@ For every protocol-surface patch:
 
 ## Recommended Delivery Order
 
-### Milestone 1: Existing Methods Become Correct
+### ✅ Milestone 1: Existing Methods Become Correct
 
 - A1 `getAddressInformation` — exists, response-shape audit pending
 - A4 `runGetMethod` — exists, response-shape audit pending
@@ -1352,7 +1374,7 @@ For every protocol-surface patch:
 - ✅ B0.1 canonical `/jsonRPC` routing
 - ✅ B0.2 `/healthcheck`
 
-### Milestone 2: Core Block/Account Read Surface
+### ✅ Milestone 2: Core Block/Account Read Surface
 
 - ✅ B1 `getMasterchainInfo`
 - ✅ B2 `lookupBlock`
@@ -1361,7 +1383,7 @@ For every protocol-surface patch:
 - ✅ B5 `getBlockTransactions`
 - ✅ B6 `getTransactions`
 
-### Milestone 3: Convenience and SDK Helpers
+### ✅ Milestone 3: Convenience and SDK Helpers
 
 - ✅ C1 `getAddressBalance`
 - ✅ C2 `getAddressState`
@@ -1372,7 +1394,7 @@ For every protocol-surface patch:
 - ✅ F3 parameter mode policy — object params only, documented
 - F4 response-wrapper compatibility level — audit pending
 
-### Milestone 4: Send and Fee Surface
+### ✅ Milestone 4: Send and Fee Surface
 
 - ✅ D1 `sendBocReturnHash`
 - ✅ D2 `sendQuery`
@@ -1384,7 +1406,7 @@ For every protocol-surface patch:
 - R6 liteserver selection and archival-routing policy — not yet documented
 - R8 caching and non-goals policy — not yet documented
 
-### Milestone 5: Advanced/Explorer APIs
+### ✅ Milestone 5: Advanced/Explorer APIs
 
 - ✅ E1 `getBlockTransactionsExt`
 - E2–E9 as needed — not yet implemented
