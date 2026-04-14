@@ -182,8 +182,8 @@ impl ClientJsonRpc {
     ) -> anyhow::Result<RunGetMethodRes> {
         let json_params = serde_json::json!(args);
         let json_params_str = json_params.to_string();
-        let res = self.json_rpc("runGetMethod", json_params).await.map_err(|e| {
-            anyhow::anyhow!("Request `runGetMethod({})` return error: {}", json_params_str, e)
+        let res = self.json_rpc("runGetMethodStd", json_params).await.map_err(|e| {
+            anyhow::anyhow!("Request `runGetMethodStd({})` return error: {}", json_params_str, e)
         })?;
 
         let run_get_method_res = serde_json::from_value::<RunGetMethodRes>(res)?;

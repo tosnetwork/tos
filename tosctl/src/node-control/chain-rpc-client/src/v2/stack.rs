@@ -422,9 +422,99 @@ impl<'de> serde::Deserialize<'de> for RPCStackEntry {
                     )),
                 }
             }
+
+            fn visit_map<A>(self, map: A) -> std::result::Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                // Handle runGetMethodStd {"@type":"tvm.stackEntry...", ...} format
+                let obj: serde_json::Value =
+                    serde::Deserialize::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+                let type_str = obj.get("@type").and_then(|v| v.as_str()).unwrap_or("");
+                match type_str {
+                    "tvm.stackEntryNumber" => {
+                        let num_str = obj.get("number")
+                            .and_then(|n| n.get("number"))
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("0");
+                        let inner = stackentry::StackEntryNumber {
+                            number: Number::Tvm_NumberDecimal(NumberDecimal {
+                                number: num_str.to_string(),
+                            }),
+                        };
+                        Ok(RPCStackEntry::Tvm_StackEntryNumber(inner))
+                    }
+                    "tvm.stackEntryCell" => {
+                        let b64 = obj.get("cell")
+                            .and_then(|c| c.get("bytes"))
+                            .and_then(|b| b.as_str())
+                            .unwrap_or("");
+                        let bytes = base64::engine::general_purpose::STANDARD.decode(b64)
+                            .map_err(|e| serde::de::Error::custom(format!("invalid base64: {e}")))?;
+                        let inner = stackentry::StackEntryCell { cell: TvmCell { bytes } };
+                        Ok(RPCStackEntry::Tvm_StackEntryCell(inner))
+                    }
+                    "tvm.stackEntrySlice" => {
+                        let b64 = obj.get("slice")
+                            .and_then(|s| s.get("bytes"))
+                            .and_then(|b| b.as_str())
+                            .unwrap_or("");
+                        let bytes = base64::engine::general_purpose::STANDARD.decode(b64)
+                            .map_err(|e| serde::de::Error::custom(format!("invalid base64: {e}")))?;
+                        let inner = stackentry::StackEntrySlice {
+                            slice: tl_api::tos::tvm::slice::Slice { bytes },
+                        };
+                        Ok(RPCStackEntry::Tvm_StackEntrySlice(inner))
+                    }
+                    "tvm.stackEntryList" => {
+                        let elements = obj.get("list")
+                            .and_then(|l| l.get("elements"))
+                            .and_then(|e| e.as_array())
+                            .cloned()
+                            .unwrap_or_default();
+                        let mut parsed = Vec::new();
+                        for el in elements {
+                            let entry: RPCStackEntry = serde_json::from_value(el)
+                                .map_err(|e| serde::de::Error::custom(format!("list element: {e}")))?;
+                            parsed.push(entry.into());
+                        }
+                        let inner = stackentry::StackEntryList {
+                            list: tl_api::tos::tvm::List::Tvm_List(tl_api::tos::tvm::list::List { elements: parsed }),
+                        };
+                        Ok(RPCStackEntry::Tvm_StackEntryList(inner))
+                    }
+                    "tvm.stackEntryTuple" => {
+                        let elements = obj.get("tuple")
+                            .and_then(|t| t.get("elements"))
+                            .and_then(|e| e.as_array())
+                            .cloned()
+                            .unwrap_or_default();
+                        let mut parsed = Vec::new();
+                        for el in elements {
+                            let entry: RPCStackEntry = serde_json::from_value(el)
+                                .map_err(|e| serde::de::Error::custom(format!("tuple element: {e}")))?;
+                            parsed.push(entry.into());
+                        }
+                        let inner = stackentry::StackEntryTuple {
+                            tuple: tl_api::tos::tvm::Tuple::Tvm_Tuple(tl_api::tos::tvm::tuple::Tuple { elements: parsed }),
+                        };
+                        Ok(RPCStackEntry::Tvm_StackEntryTuple(inner))
+                    }
+                    "tvm.stackEntryUnsupported" | "" => {
+                        Ok(RPCStackEntry::Tvm_StackEntryUnsupported)
+                    }
+                    other => Err(serde::de::Error::unknown_variant(
+                        other,
+                        &["tvm.stackEntryNumber", "tvm.stackEntryCell", "tvm.stackEntrySlice",
+                          "tvm.stackEntryList", "tvm.stackEntryTuple", "tvm.stackEntryUnsupported"],
+                    )),
+                }
+            }
         }
 
-        deserializer.deserialize_seq(StackEntryVisitor)
+        // Support both legacy array format ["type", value] and typed object
+        // format {"@type": "tvm.stackEntry...", ...} from runGetMethodStd
+        deserializer.deserialize_any(StackEntryVisitor)
     }
 }
 
