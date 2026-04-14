@@ -625,13 +625,12 @@ void JsonRpcServer::handle_sendBoc(td::JsonObject &params, std::string req_id,
 
 void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string req_id,
                                           td::Promise<HttpReturn> promise) {
-  auto config_id_r = params.get_required_int_field("config_id");
+  auto config_id_r = params.get_required_int_field("param");
   if (config_id_r.is_error()) {
-    // Try 'param' as alias
-    config_id_r = params.get_required_int_field("param");
+    config_id_r = params.get_required_int_field("config_id");
   }
   if (config_id_r.is_error()) {
-    promise.set_value(make_json_error(-32602, "Missing 'config_id' or 'param' parameter", req_id));
+    promise.set_value(make_json_error(-32602, "Missing 'param' parameter", req_id));
     return;
   }
   int config_id = config_id_r.ok();
@@ -1874,14 +1873,6 @@ void JsonRpcServer::handle_lookupBlock(td::JsonObject &params, std::string req_i
     }
   }
   if (mode == 0) {
-    auto utime_r = params.get_optional_int_field("utime");
-    if (utime_r.is_ok() && utime_r.ok() > 0) {
-      mode = 4;
-      utime = static_cast<td::int32>(utime_r.ok());
-    }
-  }
-  if (mode == 0) {
-    // Try 'unixtime' as alias for 'utime'
     auto unixtime_r = params.get_optional_int_field("unixtime");
     if (unixtime_r.is_ok() && unixtime_r.ok() > 0) {
       mode = 4;
@@ -2816,11 +2807,7 @@ static td::Result<LocateParams> parse_locate_params(td::JsonObject &params) {
   auto dst_r = params.get_required_string_field("destination");
   if (dst_r.is_error()) return td::Status::Error("Missing 'destination'");
   auto lt_r = params.get_required_string_field("created_lt");
-  if (lt_r.is_error()) {
-    // Try 'lt' as alias for 'created_lt'
-    lt_r = params.get_required_string_field("lt");
-  }
-  if (lt_r.is_error()) return td::Status::Error("Missing 'created_lt' or 'lt'");
+  if (lt_r.is_error()) return td::Status::Error("Missing 'created_lt'");
 
   LocateParams lp;
   if (!lp.source.parse_addr(td::Slice(src_r.ok())))
