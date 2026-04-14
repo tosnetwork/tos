@@ -292,20 +292,13 @@ class CurrencyCollection(TlbScheme):
     """
     currencies$_ tomis:Tomis other:ExtraCurrencyCollection = CurrencyCollection;
 
-    Adapted from pytosiq_core: grams→tomis for TOS compatibility.
-    The 'grams' kwarg is kept as an alias for backward compat.
     """
 
-    def __init__(self, tomis: int = 0, *, grams: int = 0, other: "ExtraCurrencyCollection" = None) -> None:
-        self.tomis = tomis or grams  # accept either name
+    def __init__(self, tomis: int = 0, *, other: "ExtraCurrencyCollection" = None) -> None:
+        self.tomis = tomis
         if other is None:
             other = ExtraCurrencyCollection({})
         self.other = other
-
-    @property
-    def grams(self) -> int:
-        """Backward-compatible alias for tomis."""
-        return self.tomis
 
     def serialize(self):
         return Builder().store_coins(self.tomis).store_cell(self.other.serialize()).end_cell()
