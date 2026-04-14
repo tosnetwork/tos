@@ -1,0 +1,19 @@
+[package]
+build = '../common/build/build.rs'
+edition = '2021'
+license = 'GPL-3.0'
+name = 'tos_sandbox'
+version = '0.1.0'
+description = 'Local blockchain simulator for TOS smart contract testing'
+
+[dependencies]
+anyhow = '1.0'
+log = '0.4'
+thiserror = '1.0'
+chain_block = { path = '../block' }
+tos_executor = { path = '../executor' }
+tos_vm = { path = '../vm' }
+tos_assembler = { path = '../assembler' }
+
+[dev-dependencies]
+pretty_assertions = '1.4'

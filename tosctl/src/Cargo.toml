@@ -19,6 +19,7 @@ members = [
     'tl/api',
     'toscenter-rs',
     'vm',
+    'sandbox',
 ]
 resolver = '2'
 
