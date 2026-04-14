@@ -9,6 +9,7 @@ description = 'Local blockchain simulator for TOS smart contract testing'
 [dependencies]
 anyhow = '1.0'
 log = '0.4'
+tempfile = '3'
 thiserror = '1.0'
 chain_block = { path = '../block' }
 tos_executor = { path = '../executor' }

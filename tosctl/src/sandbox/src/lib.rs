@@ -6,6 +6,7 @@
 //! TOS Sandbox — local blockchain simulator for smart contract testing.
 
 pub mod blockchain;
+pub mod compile;
 pub mod contract;
 pub mod error;
 pub mod message_builder;
@@ -16,6 +17,7 @@ pub mod treasury;
 mod tests;
 
 pub use blockchain::Blockchain;
+pub use compile::{compile_func, compile_func_with_stdlib};
 pub use contract::{ContractProvider, SandboxContract};
 pub use error::{SandboxError, SandboxResult};
 pub use message_builder::MessageBuilder;
