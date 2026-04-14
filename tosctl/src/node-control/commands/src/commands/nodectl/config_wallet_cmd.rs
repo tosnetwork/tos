@@ -21,7 +21,7 @@ use common::{
     app_config::{AppConfig, KeyConfig, PoolConfig, WalletConfig},
     task_cancellation::CancellationCtx,
     time_format,
-    chain_utils::{display_tons, tons_f64_to_nanotons},
+    chain_utils::{display_tos, tos_to_nanotos},
 };
 use contracts::{
     ElectorWrapper, ElectorWrapperImpl, NominatorWrapperImpl, Wallet, contract_provider,
@@ -239,7 +239,7 @@ async fn print_wallets_json(
                     Ok(info) => (
                         Some(address_str),
                         Some(info.account_state.to_string()),
-                        Some(display_tons(info.balance)),
+                        Some(display_tos(info.balance)),
                     ),
                     Err(_) => (Some(address_str), None, None),
                 }
@@ -289,7 +289,7 @@ async fn print_wallets_table(
                         Ok(info) => (
                             address_str.white(),
                             Cow::Owned(info.account_state.to_string().white()),
-                            Cow::Owned(display_tons(info.balance).white()),
+                            Cow::Owned(display_tos(info.balance).white()),
                         ),
                         Err(_) => (address_str.white(), red_dash.clone(), red_dash.clone()),
                     }
@@ -361,12 +361,12 @@ impl WalletSendCmd {
             wallet_info(rpc_client.clone(), from_wallet_cfg, vault.clone()).await?;
 
         if !(1..=from_wallet_info.balance.saturating_sub(WALLET_SEND_GAS))
-            .contains(&tons_f64_to_nanotons(self.amount))
+            .contains(&tos_to_nanotos(self.amount))
         {
             anyhow::bail!(
                 "Wrong amount value {} TOS. Wallet balance is {} TOS",
                 self.amount,
-                display_tons(from_wallet_info.balance)
+                display_tos(from_wallet_info.balance)
             )
         }
 
@@ -402,7 +402,7 @@ impl WalletSendCmd {
         let msg = from_wallet
             .build_message(
                 to_wallet_address,
-                tons_f64_to_nanotons(self.amount),
+                tos_to_nanotos(self.amount),
                 Cell::default(),
                 self.bounce,
                 None,
@@ -487,7 +487,7 @@ impl WalletStakeCmd {
             anyhow::bail!("Elections are already finished");
         }
 
-        let stake_nanotons = tons_f64_to_nanotons(self.amount);
+        let stake_nanotons = tos_to_nanotos(self.amount);
         if stake_nanotons < elections_info.min_stake {
             anyhow::bail!(
                 "Stake {:.4} TOS is below minimum {:.4} TOS",
@@ -588,7 +588,7 @@ impl WalletStakeCmd {
             anyhow::bail!(
                 "Insufficient wallet balance: required {:.4} TOS, available {:.4} TOS",
                 (fee + WALLET_COMPUTE_FEE) as f64 / 1_000_000_000.0,
-                display_tons(wallet_info_res.balance)
+                display_tos(wallet_info_res.balance)
             );
         }
         let msg = wallet.message(pool_address.clone(), fee, payload).await?;

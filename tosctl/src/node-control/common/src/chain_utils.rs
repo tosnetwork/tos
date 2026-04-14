@@ -42,26 +42,6 @@ pub fn display_tos_from_str(nanotos_str: &str) -> String {
 
 // ─── Backward-compatible aliases ───────────────────────��─────────────────
 
-#[doc(hidden)]
-pub use nanotos_to_dec_string as nanotons_to_dec_string;
-#[doc(hidden)]
-pub use tos_to_nanotos as tons_f64_to_nanotons;
-#[doc(hidden)]
-pub use nanotos_to_tos as nanotons_to_tons_f64;
-#[doc(hidden)]
-pub use display_tos as display_tons;
-#[doc(hidden)]
-pub use display_tos as display_coins;
-#[doc(hidden)]
-pub use display_tos_from_str as display_tons_from_str;
-#[doc(hidden)]
-pub use display_tos_from_str as display_coins_from_str;
-#[doc(hidden)]
-pub use nanotos_to_dec_string as nanocoins_to_dec_string;
-#[doc(hidden)]
-pub use tos_to_nanotos as coins_to_nanocoins;
-#[doc(hidden)]
-pub use nanotos_to_tos as nanocoins_to_coins;
 
 #[cfg(test)]
 mod tests {

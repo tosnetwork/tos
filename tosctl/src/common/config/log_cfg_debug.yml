@@ -48,7 +48,7 @@ loggers:
   quic:
     level: warn
 
-  ton_block:
+  tos_block:
     level: off
   executor:
     level: off

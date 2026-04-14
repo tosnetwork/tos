@@ -606,7 +606,7 @@ impl VoteComplaintLsCmd {
         use super::utils::try_create_rpc_client;
         use colored::Colorize;
         use common::app_config::AppConfig;
-        use common::chain_utils::display_tons;
+        use common::chain_utils::display_tos;
         use common::time_format::format_ts;
         use contracts::{
             DefaultChainProvider, ElectorWrapper, ElectorWrapperImpl, contract_provider_from,
@@ -656,7 +656,7 @@ impl VoteComplaintLsCmd {
                 i + 1,
                 election.election_id,
                 format_ts(election.unfreeze_at),
-                display_tons(election.total_stake),
+                display_tos(election.total_stake),
                 election.frozen_map.len(),
                 banned_count,
             );
@@ -683,7 +683,7 @@ impl VoteComplaintLsCmd {
                             election.election_id,
                             &pubkey_hex[..16],
                             &wallet_hex[..16],
-                            display_tons(frozen.stake),
+                            display_tos(frozen.stake),
                         );
                     }
                 }
@@ -924,7 +924,7 @@ impl VoteElectionLsCmd {
         use super::utils::try_create_rpc_client;
         use colored::Colorize;
         use common::app_config::AppConfig;
-        use common::chain_utils::display_tons;
+        use common::chain_utils::display_tos;
         use contracts::{DefaultChainProvider, ElectorWrapper, ElectorWrapperImpl, contract_provider_from};
         use std::path::Path;
         use std::sync::Arc;
@@ -962,15 +962,15 @@ impl VoteElectionLsCmd {
                     p.pub_key.iter().map(|b| format!("{:02x}", b)).collect();
                 serde_json::json!({
                     "public_key": pubkey_hex,
-                    "stake": display_tons(p.stake),
+                    "stake": display_tos(p.stake),
                     "max_factor": p.max_factor,
                 })
             }).collect();
             let obj = serde_json::json!({
                 "election_id": info.election_id,
                 "elect_close": info.elect_close,
-                "total_stake": display_tons(info.total_stake),
-                "min_stake": display_tons(info.min_stake),
+                "total_stake": display_tos(info.total_stake),
+                "min_stake": display_tos(info.min_stake),
                 "participants": participants,
             });
             println!("{}", serde_json::to_string_pretty(&obj)?);
@@ -980,8 +980,8 @@ impl VoteElectionLsCmd {
             println!("{}", "\u{2500}".repeat(90));
             println!("  {:<8} {}", "Election:".bold(), info.election_id);
             println!("  {:<8} {}", "Closes:".bold(), info.elect_close);
-            println!("  {:<8} {} TOS", "Total:".bold(), display_tons(info.total_stake));
-            println!("  {:<8} {} TOS", "Min:".bold(), display_tons(info.min_stake));
+            println!("  {:<8} {} TOS", "Total:".bold(), display_tos(info.total_stake));
+            println!("  {:<8} {} TOS", "Min:".bold(), display_tos(info.min_stake));
             println!();
             println!(
                 "  {:<4} {:<66} {:<16} {}",
@@ -1004,7 +1004,7 @@ impl VoteElectionLsCmd {
                     "  {:<4} {:<66} {:<16} {}",
                     i + 1,
                     pubkey_display,
-                    display_tons(p.stake),
+                    display_tos(p.stake),
                     p.max_factor,
                 );
             }
@@ -1020,7 +1020,7 @@ impl VoteElectionCastCmd {
         use super::utils::{load_config_vault_rpc_client, make_wallet, wallet_info};
         use anyhow::Context;
         use colored::Colorize;
-        use common::chain_utils::display_tons;
+        use common::chain_utils::display_tos;
         use contracts::{
             DefaultChainProvider, ElectorWrapper, ElectorWrapperImpl, SmartContract,
             Wallet, contract_provider_from, nominator,
@@ -1060,9 +1060,9 @@ impl VoteElectionCastCmd {
         );
 
         let elections_info = elector.elections_info().await?;
-        println!("  Total stake:    {} TOS", display_tons(elections_info.total_stake));
+        println!("  Total stake:    {} TOS", display_tos(elections_info.total_stake));
         println!("  Participants:   {}", elections_info.participants.len());
-        println!("  Min stake:      {} TOS", display_tons(elections_info.min_stake));
+        println!("  Min stake:      {} TOS", display_tos(elections_info.min_stake));
         println!("  Closes at:      {}", elections_info.elect_close);
 
         if self.dry_run {
@@ -1192,7 +1192,7 @@ impl VoteElectionCastCmd {
 
         println!("\n{}", "Building election bid...".cyan());
         println!("  Election ID:  {}", election_id);
-        println!("  Stake:        {} TOS", display_tons(stake_nanotons));
+        println!("  Stake:        {} TOS", display_tos(stake_nanotons));
         println!("  Max factor:   {}", self.max_factor);
         println!("  Wallet:       {}", wallet_address);
 
@@ -1237,7 +1237,7 @@ impl VoteElectionCastCmd {
             "OK".green().bold()
         );
         println!("  Election ID:  {}", election_id);
-        println!("  Stake:        {} TOS", display_tons(stake_nanotons));
+        println!("  Stake:        {} TOS", display_tos(stake_nanotons));
         println!("  Public key:   {}", hex::encode(&pub_key));
         println!("  ADNL addr:    {}", hex::encode(&adnl_key_hash));
         println!();

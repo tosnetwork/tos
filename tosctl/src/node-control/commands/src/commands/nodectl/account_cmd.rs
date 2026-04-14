@@ -11,7 +11,7 @@ use super::output_format::OutputFormat;
 use super::utils::{save_config, try_create_rpc_client};
 use chain_block::MsgAddressInt;
 use colored::Colorize;
-use common::{app_config::AppConfig, chain_utils::display_tons, time_format::format_ts};
+use common::{app_config::AppConfig, chain_utils::display_tos, time_format::format_ts};
 use std::{path::Path, str::FromStr};
 
 /// Top-level `tosctl account` command.
@@ -142,7 +142,7 @@ impl AccountStatusCmd {
 
         let info = rpc_client.get_address_information(&address).await?;
 
-        let balance_display = display_tons(info.balance);
+        let balance_display = display_tos(info.balance);
 
         let state_str = match info.state {
             chain_rpc_client::v2::data_models::AccountState::Active => "active",

@@ -16,7 +16,7 @@ use anyhow::Context;
 use colored::Colorize;
 use common::{
     app_config::WalletConfig,
-    chain_utils::{display_tons, tons_f64_to_nanotons},
+    chain_utils::{display_tos, tos_to_nanotos},
     task_cancellation::CancellationCtx,
 };
 use contracts::Wallet;
@@ -318,8 +318,8 @@ impl WalletActivateCmd {
                     "WARN".yellow().bold(),
                     name,
                     address,
-                    display_tons(info.balance),
-                    display_tons(Self::MIN_BALANCE),
+                    display_tos(info.balance),
+                    display_tos(Self::MIN_BALANCE),
                 );
                 continue;
             }
@@ -418,7 +418,7 @@ async fn print_wallets_json(
                         Ok(info) => (
                             Some(address_str),
                             Some(info.account_state.to_string()),
-                            Some(display_tons(info.balance)),
+                            Some(display_tos(info.balance)),
                             info.wallet_type.map(|t| t.to_string()),
                             info.seqno,
                         ),
@@ -475,7 +475,7 @@ async fn print_wallets_table(
                         Ok(info) => (
                             address_str.white(),
                             Cow::Owned(info.account_state.to_string().white()),
-                            Cow::Owned(display_tons(info.balance).white()),
+                            Cow::Owned(display_tos(info.balance).white()),
                             Cow::Owned(
                                 info.wallet_type
                                     .map(|t| t.to_string())
@@ -809,7 +809,7 @@ impl WalletSendCmd {
         let (from_wallet_address, from_wallet_info, from_secret) =
             wallet_info(rpc_client.clone(), wallet_cfg, vault.clone()).await?;
 
-        let amount_nanotons = tons_f64_to_nanotons(self.amount);
+        let amount_nanotons = tos_to_nanotos(self.amount);
 
         if !(1..=from_wallet_info.balance.saturating_sub(WALLET_SEND_GAS))
             .contains(&amount_nanotons)
@@ -817,7 +817,7 @@ impl WalletSendCmd {
             anyhow::bail!(
                 "Wrong amount value {} TOS. Wallet balance is {} TOS",
                 self.amount,
-                display_tons(from_wallet_info.balance)
+                display_tos(from_wallet_info.balance)
             );
         }
 

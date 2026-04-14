@@ -13,7 +13,7 @@ use crate::commands::nodectl::{
 use colored::Colorize;
 use common::{
     app_config::{KeyConfig, WalletConfig},
-    chain_utils::display_tons,
+    chain_utils::display_tos,
 };
 use secrets_vault::{types::secret::Secret, vault::SecretVault};
 use std::{path::Path, sync::Arc};
@@ -107,7 +107,7 @@ async fn print_master_wallet_json(
                 (
                     Some(address.to_string()),
                     Some(info.account_state.to_string()),
-                    Some(display_tons(info.balance)),
+                    Some(display_tos(info.balance)),
                     pk,
                 )
             }
@@ -138,7 +138,7 @@ async fn print_master_wallet_table(
             Ok((address, info, secret)) => (
                 address.to_string().white(),
                 info.account_state.to_string().white(),
-                display_tons(info.balance).white(),
+                display_tos(info.balance).white(),
                 if let Secret::KeyPair { keypair } = secret {
                     let public_key = keypair
                         .public_key()

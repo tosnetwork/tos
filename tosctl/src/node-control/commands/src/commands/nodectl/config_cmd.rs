@@ -20,7 +20,7 @@ use common::{
         ChainRpcConfig, WalletConfig,
     },
     task_cancellation::CancellationCtx,
-    chain_utils::tons_f64_to_nanotons,
+    chain_utils::tos_to_nanotos,
 };
 use std::{collections::HashMap, path::Path};
 
@@ -177,7 +177,7 @@ impl StakePolicyCmd {
         }
 
         let policy = if let Some(tons) = self.fixed {
-            StakePolicy::Fixed(tons_f64_to_nanotons(tons))
+            StakePolicy::Fixed(tos_to_nanotos(tons))
         } else if self.split50 {
             StakePolicy::Split50
         } else if self.minimum {

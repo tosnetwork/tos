@@ -17,7 +17,7 @@ use common::{
     },
     task_cancellation::CancellationCtx,
     time_format,
-    chain_utils::nanotons_to_dec_string,
+    chain_utils::nanotos_to_dec_string,
 };
 use contracts::{
     ElectionsInfo, ElectorWrapper, NominatorWrapper, Participant, Wallet,
@@ -443,9 +443,9 @@ impl ElectionRunner {
 
         let participants = Self::build_participants_snapshot(elections_info, &wallet_addrs);
         let participant_min_stake =
-            elections_info.participants.iter().map(|p| p.stake).min().map(nanotons_to_dec_string);
+            elections_info.participants.iter().map(|p| p.stake).min().map(nanotos_to_dec_string);
         let participant_max_stake =
-            elections_info.participants.iter().map(|p| p.stake).max().map(nanotons_to_dec_string);
+            elections_info.participants.iter().map(|p| p.stake).max().map(nanotos_to_dec_string);
 
         let validation_start = election_id;
         let validation_end = election_id + cfg15.validators_elected_for as u64;
@@ -475,10 +475,10 @@ impl ElectionRunner {
             finished: elections_info.finished,
             failed: elections_info.failed,
             participants_count: elections_info.participants.len() as u32,
-            min_stake: nanotons_to_dec_string(elections_info.min_stake),
+            min_stake: nanotos_to_dec_string(elections_info.min_stake),
             participant_min_stake,
             participant_max_stake,
-            total_stake: nanotons_to_dec_string(elections_info.total_stake),
+            total_stake: nanotos_to_dec_string(elections_info.total_stake),
             next_validation_range,
             elections_range,
             participants,
@@ -871,7 +871,7 @@ impl ElectionRunner {
                 ),
                 sender_addr: format!("-1:{}", hex::encode(&p.wallet_addr)),
                 is_controlled: wallet_addrs.contains(&p.wallet_addr),
-                stake: nanotons_to_dec_string(p.stake),
+                stake: nanotos_to_dec_string(p.stake),
                 max_factor: p.max_factor as f32 / 65536.0,
                 election_id: p.election_id,
             })
@@ -1028,7 +1028,7 @@ impl ElectionRunner {
                         )
                     })
                     .unwrap_or((None, None, None, None));
-            let stake = participant.map(|p| nanotons_to_dec_string(p.stake));
+            let stake = participant.map(|p| nanotos_to_dec_string(p.stake));
 
             let validator_index = validator_entry.as_ref().map(|(idx, _)| *idx);
             let weight = validator_entry.as_ref().map(|(_, entry)| entry.weight);
@@ -1139,7 +1139,7 @@ impl ElectionRunner {
                 .stake_submissions
                 .iter()
                 .map(|s| StakeSubmission {
-                    stake: nanotons_to_dec_string(s.stake),
+                    stake: nanotos_to_dec_string(s.stake),
                     max_factor: s.max_factor as f32 / 65536.0,
                     submission_time: s.submission_time,
                     submission_time_utc: time_format::format_ts(s.submission_time),
@@ -1148,8 +1148,8 @@ impl ElectionRunner {
 
             let fallback_sender_addr = format!("-1:{}", hex::encode(node.wallet_addr()));
             let accepted_stake = if node.stake_accepted {
-                node.accepted_stake_amount.map(nanotons_to_dec_string).or_else(|| {
-                    node.stake_submissions.last().map(|s| nanotons_to_dec_string(s.stake))
+                node.accepted_stake_amount.map(nanotos_to_dec_string).or_else(|| {
+                    node.stake_submissions.last().map(|s| nanotos_to_dec_string(s.stake))
                 })
             } else {
                 None

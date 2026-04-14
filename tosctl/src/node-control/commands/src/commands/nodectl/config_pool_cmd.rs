@@ -15,7 +15,7 @@ use crate::commands::nodectl::{
 use colored::Colorize;
 use common::{
     app_config::{AppConfig, PoolConfig},
-    chain_utils::display_tons,
+    chain_utils::display_tos,
 };
 use contracts::{NOMINATOR_POOL_WORKCHAIN, NominatorWrapperImpl};
 use secrets_vault::{vault::SecretVault, vault_builder::SecretVaultBuilder};
@@ -353,7 +353,7 @@ async fn resolve_pool_balance(
         (Ok(addr_str), Some(client)) => {
             let addr = MsgAddressInt::from_str(addr_str).map_err(|_| "invalid address")?;
             match client.get_address_information(&addr).await {
-                Ok(info) => Ok(display_tons(info.balance)),
+                Ok(info) => Ok(display_tos(info.balance)),
                 Err(e) => Err(format!("chain rpc failed: {e}")),
             }
         }

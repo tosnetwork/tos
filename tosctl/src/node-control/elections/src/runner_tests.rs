@@ -1520,10 +1520,10 @@ async fn test_build_elections_snapshot() {
     assert!(!snapshot.finished);
     assert!(!snapshot.failed);
     assert_eq!(snapshot.participants_count, 2);
-    assert_eq!(snapshot.min_stake, nanotons_to_dec_string(MIN_STAKE));
-    assert_eq!(snapshot.participant_min_stake, Some(nanotons_to_dec_string(MIN_STAKE)));
-    assert_eq!(snapshot.participant_max_stake, Some(nanotons_to_dec_string(MIN_STAKE * 2)));
-    assert_eq!(snapshot.total_stake, nanotons_to_dec_string(MIN_STAKE * 3));
+    assert_eq!(snapshot.min_stake, nanotos_to_dec_string(MIN_STAKE));
+    assert_eq!(snapshot.participant_min_stake, Some(nanotos_to_dec_string(MIN_STAKE)));
+    assert_eq!(snapshot.participant_max_stake, Some(nanotos_to_dec_string(MIN_STAKE * 2)));
+    assert_eq!(snapshot.total_stake, nanotos_to_dec_string(MIN_STAKE * 3));
 
     // Validation range
     assert_eq!(snapshot.next_validation_range.start, ELECTION_ID);
@@ -1553,7 +1553,7 @@ async fn test_build_elections_snapshot() {
         our_participant.pubkey,
         base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &PUB_KEY)
     );
-    assert_eq!(our_participant.stake, nanotons_to_dec_string(MIN_STAKE));
+    assert_eq!(our_participant.stake, nanotos_to_dec_string(MIN_STAKE));
 
     let other_participant = snapshot
         .participants

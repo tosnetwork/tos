@@ -10,7 +10,7 @@ use anyhow::Context;
 use colored::Colorize;
 use common::{
     app_config::{AppConfig, StakePolicy},
-    chain_utils::display_tons_from_str,
+    chain_utils::display_tos_from_str,
 };
 use std::{
     borrow::Cow,
@@ -563,7 +563,7 @@ fn print_validators_table(body: &str) -> anyhow::Result<()> {
             .unwrap_or_else(|| "-".to_string());
 
         let stake = node.get("stake").and_then(|v| v.as_str()).unwrap_or("-");
-        let stake_display = display_tons_from_str(stake);
+        let stake_display = display_tos_from_str(stake);
 
         let is_key_active = node.get("is_key_active").and_then(|v| v.as_bool());
         let key_status = match is_key_active {
@@ -639,21 +639,21 @@ fn print_elections_table(body: &str) -> anyhow::Result<()> {
     println!("  {} {}", format!("{:<26}", "Elections start:").bold(), elections_start);
     println!("  {} {}", format!("{:<26}", "Elections end:").bold(), elections_end);
     println!("  {} {}", format!("{:<26}", "Participants count:").bold(), participants_count);
-    println!("  {} {}", format!("{:<26}", "Min stake:").bold(), display_tons_from_str(min_stake));
+    println!("  {} {}", format!("{:<26}", "Min stake:").bold(), display_tos_from_str(min_stake));
     println!(
         "  {} {}",
         format!("{:<26}", "Participant min stake:").bold(),
-        display_tons_from_str(participant_min_stake)
+        display_tos_from_str(participant_min_stake)
     );
     println!(
         "  {} {}",
         format!("{:<26}", "Participant max stake:").bold(),
-        display_tons_from_str(participant_max_stake)
+        display_tos_from_str(participant_max_stake)
     );
     println!(
         "  {} {}",
         format!("{:<26}", "Total stake:").bold(),
-        display_tons_from_str(total_stake)
+        display_tos_from_str(total_stake)
     );
 
     let Some(participants) = value.get("our_participants").and_then(serde_json::Value::as_array)
@@ -740,8 +740,8 @@ fn print_elections_table(body: &str) -> anyhow::Result<()> {
             node,
             status,
             position,
-            display_tons_from_str(&submitted_stake),
-            display_tons_from_str(&accepted_stake),
+            display_tos_from_str(&submitted_stake),
+            display_tos_from_str(&accepted_stake),
             submitted_at,
             max_factor,
             pubkey,

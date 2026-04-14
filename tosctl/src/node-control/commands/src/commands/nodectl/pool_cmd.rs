@@ -578,7 +578,7 @@ impl PoolGetCmd {
         use colored::Colorize;
         use common::{
             app_config::{AppConfig, PoolConfig},
-            chain_utils::display_tons,
+            chain_utils::display_tos,
         };
         use std::path::Path;
         use std::str::FromStr;
@@ -604,7 +604,7 @@ impl PoolGetCmd {
                             .map_err(|_| anyhow::anyhow!("Invalid pool address in config: {}", addr_str))?;
                         obj["address"] = serde_json::json!(addr.to_string());
                         if let Ok(info) = rpc_client.get_address_information(&addr).await {
-                            obj["balance"] = serde_json::json!(display_tons(info.balance));
+                            obj["balance"] = serde_json::json!(display_tos(info.balance));
                             obj["state"] = serde_json::json!(info.state.to_string());
                         }
                     }
@@ -620,7 +620,7 @@ impl PoolGetCmd {
                             .map_err(|_| anyhow::anyhow!("Invalid pool address in config: {}", addr_str))?;
                         let mut entry = serde_json::json!({"address": addr.to_string()});
                         if let Ok(info) = rpc_client.get_address_information(&addr).await {
-                            entry["balance"] = serde_json::json!(display_tons(info.balance));
+                            entry["balance"] = serde_json::json!(display_tos(info.balance));
                             entry["state"] = serde_json::json!(info.state.to_string());
                         }
                         addrs_info.push(entry);
@@ -653,7 +653,7 @@ impl PoolGetCmd {
                             .map_err(|_| anyhow::anyhow!("Invalid pool address in config: {}", addr_str))?;
                         obj["address"] = serde_json::json!(addr.to_string());
                         if let Ok(info) = rpc_client.get_address_information(&addr).await {
-                            obj["balance"] = serde_json::json!(display_tons(info.balance));
+                            obj["balance"] = serde_json::json!(display_tos(info.balance));
                             obj["state"] = serde_json::json!(info.state.to_string());
                         }
                     }
@@ -676,7 +676,7 @@ impl PoolGetCmd {
                         println!("  {:<12} {}", "Address:".cyan(), addr);
 
                         let info = rpc_client.get_address_information(&addr).await?;
-                        println!("  {:<12} {}", "Balance:".cyan(), display_tons(info.balance));
+                        println!("  {:<12} {}", "Balance:".cyan(), display_tos(info.balance));
                         println!("  {:<12} {}", "State:".cyan(), info.state);
                     } else if let Some(owner_str) = owner {
                         println!(
@@ -698,7 +698,7 @@ impl PoolGetCmd {
                             .map_err(|_| anyhow::anyhow!("Invalid pool address in config: {}", addr_str))?;
                         let info = rpc_client.get_address_information(&addr).await?;
                         println!("  {:<18} {}", format!("Address[{}]:", i).cyan(), addr);
-                        println!("  {:<18} {}", format!("Balance[{}]:", i).cyan(), display_tons(info.balance));
+                        println!("  {:<18} {}", format!("Balance[{}]:", i).cyan(), display_tos(info.balance));
                         println!("  {:<18} {}", format!("State[{}]:", i).cyan(), info.state);
                     }
                     println!();
@@ -724,7 +724,7 @@ impl PoolGetCmd {
                         println!("  {:<24} {}", "Address:".cyan(), addr);
 
                         let info = rpc_client.get_address_information(&addr).await?;
-                        println!("  {:<24} {}", "Balance:".cyan(), display_tons(info.balance));
+                        println!("  {:<24} {}", "Balance:".cyan(), display_tos(info.balance));
                         println!("  {:<24} {}", "State:".cyan(), info.state);
                     } else if let Some(owner_str) = owner {
                         println!(
@@ -762,7 +762,7 @@ impl PoolNominatorCreateCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         use colored::Colorize;
         use common::app_config::PoolConfig;
-        use common::chain_utils::tons_f64_to_nanotons;
+        use common::chain_utils::tos_to_nanotos;
         use contracts::NominatorPoolWrapperImpl;
         use contracts::nominator::NOMINATOR_POOL_WORKCHAIN;
         use std::path::Path;
@@ -793,8 +793,8 @@ impl PoolNominatorCreateCmd {
             arr
         };
 
-        let min_validator_nanotons = tons_f64_to_nanotons(self.min_validator_stake);
-        let min_nominator_nanotons = tons_f64_to_nanotons(self.min_nominator_stake);
+        let min_validator_nanotons = tos_to_nanotos(self.min_validator_stake);
+        let min_nominator_nanotons = tos_to_nanotos(self.min_nominator_stake);
 
         // Calculate pool address from code + init data
         let pool_addr = NominatorPoolWrapperImpl::calculate_address(
@@ -861,7 +861,7 @@ impl PoolNominatorActivateCmd {
         use colored::Colorize;
         use common::{
             app_config::PoolConfig,
-            chain_utils::display_tons,
+            chain_utils::display_tos,
             task_cancellation::CancellationCtx,
         };
         use contracts::Wallet;
@@ -1000,7 +1000,7 @@ impl PoolNominatorActivateCmd {
         if pool_info.balance < 1_000_000_000 {
             anyhow::bail!(
                 "Pool balance {} is too low. Fund the pool address ({}) with at least 2 TOS before activating.",
-                display_tons(pool_info.balance),
+                display_tos(pool_info.balance),
                 pool_addr
             );
         }
@@ -1026,7 +1026,7 @@ impl PoolNominatorActivateCmd {
             "Min nominator stake:".cyan(),
             min_nominator_stake as f64 / 1_000_000_000.0
         );
-        println!("  {:<26} {}", "Balance:".cyan(), display_tons(pool_info.balance));
+        println!("  {:<26} {}", "Balance:".cyan(), display_tos(pool_info.balance));
         println!();
 
         println!(
@@ -1208,7 +1208,7 @@ impl PoolNominatorDepositCmd {
         use colored::Colorize;
         use common::{
             app_config::PoolConfig,
-            chain_utils::tons_f64_to_nanotons,
+            chain_utils::tos_to_nanotos,
             task_cancellation::CancellationCtx,
         };
         use contracts::Wallet;
@@ -1288,7 +1288,7 @@ impl PoolNominatorDepositCmd {
         b.append_raw(&[0x64], 8)?; // 'd'
         let body = b.into_cell()?;
 
-        let amount_nanotons = tons_f64_to_nanotons(self.amount);
+        let amount_nanotons = tos_to_nanotos(self.amount);
 
         let wallet = super::utils::make_wallet(
             rpc_client.clone(),
@@ -1540,7 +1540,7 @@ impl PoolSingleActivateCmd {
         use colored::Colorize;
         use common::{
             app_config::PoolConfig,
-            chain_utils::display_tons,
+            chain_utils::display_tos,
             task_cancellation::CancellationCtx,
         };
         use contracts::Wallet;
@@ -1640,7 +1640,7 @@ impl PoolSingleActivateCmd {
         if pool_info.balance < 1_000_000_000 {
             anyhow::bail!(
                 "Pool balance {} is too low. Fund the pool address ({}) with at least 2 TOS before activating.",
-                display_tons(pool_info.balance),
+                display_tos(pool_info.balance),
                 pool_addr
             );
         }
@@ -1712,7 +1712,7 @@ impl PoolSingleWithdrawCmd {
         use colored::Colorize;
         use common::{
             app_config::PoolConfig,
-            chain_utils::tons_f64_to_nanotons,
+            chain_utils::tos_to_nanotos,
             task_cancellation::CancellationCtx,
         };
         use contracts::Wallet;
@@ -1767,7 +1767,7 @@ impl PoolSingleWithdrawCmd {
         }
 
         // Build withdraw message body
-        let amount_nanotons = tons_f64_to_nanotons(self.amount);
+        let amount_nanotons = tos_to_nanotos(self.amount);
         let withdraw_payload = contracts::nominator::withdraw(1, amount_nanotons)?;
 
         let wallet = super::utils::make_wallet(
@@ -1835,7 +1835,7 @@ impl PoolLiquidCheckCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         use colored::Colorize;
         use common::app_config::{AppConfig, PoolConfig};
-        use common::chain_utils::display_tons;
+        use common::chain_utils::display_tos;
         use contracts::ControllerWrapperImpl;
         use contracts::liquid_controller::ControllerWrapper;
         use contracts::SmartContract;
@@ -1943,8 +1943,8 @@ impl PoolLiquidCheckCmd {
                         name,
                         status_icon,
                         state_label,
-                        display_tons(balance),
-                        display_tons(data.borrowed_amount),
+                        display_tos(balance),
+                        display_tos(data.borrowed_amount),
                     );
 
                     // Check for issues
@@ -1955,8 +1955,8 @@ impl PoolLiquidCheckCmd {
                         issues.push(format!(
                             "{}: controller is INSOLVENT (borrowed={} TOS, balance={} TOS)",
                             name,
-                            display_tons(data.borrowed_amount),
-                            display_tons(balance),
+                            display_tos(data.borrowed_amount),
+                            display_tos(balance),
                         ));
                     }
                     if !data.approved {
@@ -1969,8 +1969,8 @@ impl PoolLiquidCheckCmd {
                             issues.push(format!(
                                 "{}: balance ({} TOS) may be insufficient to repay loan ({} TOS)",
                                 name,
-                                display_tons(balance),
-                                display_tons(data.borrowed_amount),
+                                display_tos(balance),
+                                display_tos(data.borrowed_amount),
                             ));
                         }
                     }
@@ -1985,8 +1985,8 @@ impl PoolLiquidCheckCmd {
         println!();
         println!("{}", "\u{2500}".repeat(60).dimmed());
         println!("  {:<28} {}", "Controllers checked:".cyan(), controller_count);
-        println!("  {:<28} {} TOS", "Total balance:".cyan(), display_tons(total_balance));
-        println!("  {:<28} {} TOS", "Total borrowed:".cyan(), display_tons(total_borrowed));
+        println!("  {:<28} {} TOS", "Total balance:".cyan(), display_tos(total_balance));
+        println!("  {:<28} {} TOS", "Total borrowed:".cyan(), display_tos(total_borrowed));
         println!();
 
         if issues.is_empty() {
@@ -2253,7 +2253,7 @@ impl PoolLiquidControllerUpdateCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         use colored::Colorize;
         use common::app_config::{AppConfig, PoolConfig};
-        use common::chain_utils::display_tons;
+        use common::chain_utils::display_tos;
         use contracts::ControllerWrapperImpl;
         use contracts::liquid_controller::ControllerWrapper;
         use std::path::Path;
@@ -2309,7 +2309,7 @@ impl PoolLiquidControllerUpdateCmd {
                             state_label,
                             data.halted,
                             data.approved,
-                            display_tons(data.borrowed_amount),
+                            display_tos(data.borrowed_amount),
                         );
                     }
                     Err(e) => {
@@ -2379,7 +2379,7 @@ impl PoolLiquidControllerGetCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         use colored::Colorize;
         use common::app_config::{AppConfig, PoolConfig};
-        use common::chain_utils::display_tons;
+        use common::chain_utils::display_tos;
         use contracts::ControllerWrapperImpl;
         use contracts::liquid_controller::ControllerWrapper;
         use std::path::Path;
@@ -2428,7 +2428,7 @@ impl PoolLiquidControllerGetCmd {
         println!("  {:<28} {} ({})", "State:".cyan(), data.state, state_label);
         println!("  {:<28} {}", "Halted:".cyan(), data.halted);
         println!("  {:<28} {}", "Approved:".cyan(), data.approved);
-        println!("  {:<28} {}", "Stake amount sent:".cyan(), display_tons(data.stake_amount_sent));
+        println!("  {:<28} {}", "Stake amount sent:".cyan(), display_tos(data.stake_amount_sent));
         println!("  {:<28} {}", "Stake at:".cyan(), data.stake_at);
         println!(
             "  {:<28} {}",
@@ -2438,7 +2438,7 @@ impl PoolLiquidControllerGetCmd {
         println!("  {:<28} {}", "Validator set changes:".cyan(), data.validator_set_changes_count);
         println!("  {:<28} {}", "Validator set change time:".cyan(), data.validator_set_change_time);
         println!("  {:<28} {}", "Stake held for:".cyan(), data.stake_held_for);
-        println!("  {:<28} {}", "Borrowed amount:".cyan(), display_tons(data.borrowed_amount));
+        println!("  {:<28} {}", "Borrowed amount:".cyan(), display_tos(data.borrowed_amount));
         println!("  {:<28} {}", "Borrowing time:".cyan(), data.borrowing_time);
         println!();
 
@@ -2517,7 +2517,7 @@ impl PoolLiquidControllerStopCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         use colored::Colorize;
         use common::app_config::PoolConfig;
-        use common::chain_utils::display_tons;
+        use common::chain_utils::display_tos;
         use contracts::ControllerWrapperImpl;
         use contracts::liquid_controller::ControllerWrapper;
         use contracts::Wallet;
@@ -2571,7 +2571,7 @@ impl PoolLiquidControllerStopCmd {
         println!("  {:<28} {} ({})", "State:".cyan(), data.state, state_label);
         println!("  {:<28} {}", "Halted:".cyan(), data.halted);
         println!("  {:<28} {}", "Approved:".cyan(), data.approved);
-        println!("  {:<28} {} TOS", "Borrowed:".cyan(), display_tons(data.borrowed_amount));
+        println!("  {:<28} {} TOS", "Borrowed:".cyan(), display_tos(data.borrowed_amount));
         println!();
 
         // The liquid staking controller has no dedicated "stop" opcode.
@@ -2594,7 +2594,7 @@ impl PoolLiquidControllerStopCmd {
             // REST with outstanding loan: need to return it
             println!("  {}", "Controller has an outstanding loan.".yellow());
             println!("  Sending return_unused_loan to return {} TOS to the pool...",
-                display_tons(data.borrowed_amount));
+                display_tos(data.borrowed_amount));
             println!();
 
             // Send the return_unused_loan message
@@ -2682,7 +2682,7 @@ impl PoolLiquidControllerStopWithdrawCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         use colored::Colorize;
         use common::app_config::PoolConfig;
-        use common::chain_utils::display_tons;
+        use common::chain_utils::display_tos;
         use contracts::ControllerWrapperImpl;
         use contracts::liquid_controller::ControllerWrapper;
         use contracts::SmartContract;
@@ -2736,8 +2736,8 @@ impl PoolLiquidControllerStopWithdrawCmd {
         println!("  {:<28} {}", "Controller:".cyan(), self.name);
         println!("  {:<28} {}", "Address:".cyan(), controller_addr);
         println!("  {:<28} {} ({})", "State:".cyan(), data.state, state_label);
-        println!("  {:<28} {} TOS", "Balance:".cyan(), display_tons(balance));
-        println!("  {:<28} {} TOS", "Borrowed:".cyan(), display_tons(data.borrowed_amount));
+        println!("  {:<28} {} TOS", "Balance:".cyan(), display_tos(balance));
+        println!("  {:<28} {} TOS", "Borrowed:".cyan(), display_tos(data.borrowed_amount));
         println!();
 
         if data.state == 3 || data.state == 2 || data.state == 4 {
@@ -2802,7 +2802,7 @@ impl PoolLiquidControllerStopWithdrawCmd {
         // Step 1: return unused loan if borrowed
         if data.borrowed_amount > 0 {
             println!("  Step 1: Returning unused loan ({} TOS) to pool...",
-                display_tons(data.borrowed_amount));
+                display_tos(data.borrowed_amount));
 
             let wallet_info = rpc_client.get_wallet_information(&wallet_addr).await?;
             let payload =
@@ -2841,7 +2841,7 @@ impl PoolLiquidControllerStopWithdrawCmd {
 
         if withdrawable > 0 {
             println!("  Step 2: Withdrawing {} TOS from controller...",
-                display_tons(withdrawable));
+                display_tos(withdrawable));
 
             let wallet_info = rpc_client.get_wallet_information(&wallet_addr).await?;
             let payload =
@@ -2866,10 +2866,10 @@ impl PoolLiquidControllerStopWithdrawCmd {
             .await?;
 
             println!("  {} Withdrawal of {} TOS sent.", "OK".green().bold(),
-                display_tons(withdrawable));
+                display_tos(withdrawable));
         } else {
             println!("  Step 2: No funds available to withdraw (balance {} TOS, min storage {} TOS).",
-                display_tons(current_balance), display_tons(min_storage));
+                display_tos(current_balance), display_tos(min_storage));
         }
 
         println!(
@@ -2887,7 +2887,7 @@ impl PoolLiquidControllerDepositCmd {
         use colored::Colorize;
         use common::{
             app_config::PoolConfig,
-            chain_utils::tons_f64_to_nanotons,
+            chain_utils::tos_to_nanotos,
             task_cancellation::CancellationCtx,
         };
         use contracts::Wallet;
@@ -2959,7 +2959,7 @@ impl PoolLiquidControllerDepositCmd {
         // Build top_up payload (op=0, query_id=1)
         let payload = contracts::liquid_controller::controller_messages::top_up(1)?;
 
-        let amount_nanotons = tons_f64_to_nanotons(self.amount);
+        let amount_nanotons = tos_to_nanotos(self.amount);
 
         let wallet = super::utils::make_wallet(
             rpc_client.clone(),
@@ -3007,7 +3007,7 @@ impl PoolLiquidControllerWithdrawCmd {
         use colored::Colorize;
         use common::{
             app_config::PoolConfig,
-            chain_utils::tons_f64_to_nanotons,
+            chain_utils::tos_to_nanotos,
             task_cancellation::CancellationCtx,
         };
         use contracts::Wallet;
@@ -3077,7 +3077,7 @@ impl PoolLiquidControllerWithdrawCmd {
         }
 
         // Build withdraw payload (op=0x8efed779, query_id=1, amount)
-        let amount_nanotons = tons_f64_to_nanotons(self.amount);
+        let amount_nanotons = tos_to_nanotos(self.amount);
         let payload =
             contracts::liquid_controller::controller_messages::withdraw(1, amount_nanotons)?;
 
@@ -3241,7 +3241,7 @@ impl PoolLiquidControllerAprCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         use colored::Colorize;
         use common::app_config::PoolConfig;
-        use common::chain_utils::{display_tons, nanotos_to_tos};
+        use common::chain_utils::{display_tos, nanotos_to_tos};
         use contracts::ControllerWrapperImpl;
         use contracts::liquid_controller::ControllerWrapper;
         use contracts::SmartContract;
@@ -3294,9 +3294,9 @@ impl PoolLiquidControllerAprCmd {
         println!("  {:<28} {}", "Controller:".cyan(), self.name);
         println!("  {:<28} {}", "Address:".cyan(), controller_addr);
         println!("  {:<28} {} ({})", "State:".cyan(), data.state, state_label);
-        println!("  {:<28} {} TOS", "Balance:".cyan(), display_tons(balance));
-        println!("  {:<28} {} TOS", "Stake sent:".cyan(), display_tons(data.stake_amount_sent));
-        println!("  {:<28} {} TOS", "Borrowed:".cyan(), display_tons(data.borrowed_amount));
+        println!("  {:<28} {} TOS", "Balance:".cyan(), display_tos(balance));
+        println!("  {:<28} {} TOS", "Stake sent:".cyan(), display_tos(data.stake_amount_sent));
+        println!("  {:<28} {} TOS", "Borrowed:".cyan(), display_tos(data.borrowed_amount));
         println!("  {:<28} {}", "Borrowing time:".cyan(), data.borrowing_time);
         println!("  {:<28} {} TOS", "Stake held for:".cyan(), data.stake_held_for);
         println!();
@@ -3359,7 +3359,7 @@ impl PoolLiquidControllerAprCmd {
             }
         } else if data.state == 0 && data.borrowed_amount == 0 {
             println!("  {}", "Controller is idle (REST, no outstanding loan).".dimmed());
-            println!("  {:<28} {} TOS", "Available balance:".cyan(), display_tons(balance));
+            println!("  {:<28} {} TOS", "Available balance:".cyan(), display_tos(balance));
             println!();
             println!("  {}", "APR can be estimated after the next validation cycle.".dimmed());
             println!("  {}", "Historical APR requires comparing balance across cycles.".dimmed());
@@ -3378,7 +3378,7 @@ impl PoolLiquidControllerTestLoanCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         use colored::Colorize;
         use common::app_config::PoolConfig;
-        use common::chain_utils::{display_tons, tos_to_nanotos};
+        use common::chain_utils::{display_tos, tos_to_nanotos};
         use contracts::ControllerWrapperImpl;
         use contracts::liquid_controller::ControllerWrapper;
         use contracts::SmartContract;
@@ -3428,9 +3428,9 @@ impl PoolLiquidControllerTestLoanCmd {
         println!("{}", "\u{2500}".repeat(56).dimmed());
         println!("  {:<28} {}", "Controller:".cyan(), self.name);
         println!("  {:<28} {}", "Address:".cyan(), controller_addr);
-        println!("  {:<28} {} TOS", "Current balance:".cyan(), display_tons(balance));
+        println!("  {:<28} {} TOS", "Current balance:".cyan(), display_tos(balance));
         println!("  {:<28} {}", "Approved:".cyan(), data.approved);
-        println!("  {:<28} {} TOS", "Requested credit:".cyan(), display_tons(credit_nanotos));
+        println!("  {:<28} {} TOS", "Requested credit:".cyan(), display_tos(credit_nanotos));
         println!("  {:<28} {} bps ({:.4}%)", "Interest rate:".cyan(),
             self.interest, self.interest as f64 / 100.0);
         println!();
@@ -3443,7 +3443,7 @@ impl PoolLiquidControllerTestLoanCmd {
 
         if data.borrowed_amount > 0 {
             println!("  {} Controller already has an outstanding loan of {} TOS.",
-                "WARN".yellow().bold(), display_tons(data.borrowed_amount));
+                "WARN".yellow().bold(), display_tos(data.borrowed_amount));
             println!("  Multiple loans are prohibited; return the current loan first.");
             println!();
         }
@@ -3455,14 +3455,14 @@ impl PoolLiquidControllerTestLoanCmd {
 
                 println!("  {}", "Loan feasibility analysis:".yellow().bold());
                 println!("  {:<28} {} TOS", "Required balance:".cyan(),
-                    display_tons(result.required_balance));
+                    display_tos(result.required_balance));
                 println!("  {:<28} {} TOS", "Validator own funds:".cyan(),
-                    display_tons(result.validator_amount));
+                    display_tos(result.validator_amount));
                 println!("  {:<28} {} TOS", "Surplus / deficit:".cyan(),
                     if result.validator_amount >= result.required_balance {
-                        format!("+{}", display_tons(result.validator_amount - result.required_balance))
+                        format!("+{}", display_tos(result.validator_amount - result.required_balance))
                     } else {
-                        format!("-{}", display_tons(result.required_balance - result.validator_amount))
+                        format!("-{}", display_tos(result.required_balance - result.validator_amount))
                     });
                 println!();
 
@@ -3476,10 +3476,10 @@ impl PoolLiquidControllerTestLoanCmd {
                     println!(
                         "  {} Insufficient balance. Need {} TOS more.",
                         "NOT ELIGIBLE".red().bold(),
-                        display_tons(deficit),
+                        display_tos(deficit),
                     );
                     println!("  Top up the controller with at least {} TOS to qualify.",
-                        display_tons(deficit));
+                        display_tos(deficit));
                 }
             }
             Err(e) => {

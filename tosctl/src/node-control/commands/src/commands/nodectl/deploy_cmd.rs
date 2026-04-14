@@ -13,7 +13,7 @@ use colored::Colorize;
 use common::{
     WalletVersion,
     task_cancellation::CancellationCtx,
-    chain_utils::{nanotons_to_tons_f64, tons_f64_to_nanotons},
+    chain_utils::{nanotos_to_tos, tos_to_nanotos},
 };
 use contracts::{NominatorWrapperImpl, Wallet};
 use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc, sync::Arc};
@@ -345,12 +345,12 @@ impl DeployPoolCmd {
             return Ok(());
         }
 
-        let amount_to_send_nano = tons_f64_to_nanotons(self.amount);
+        let amount_to_send_nano = tos_to_nanotos(self.amount);
         if wallet_info.balance < amount_to_send_nano {
             return Err(set_err(anyhow::anyhow!(
                 "Wallet '{}' balance {:.4}_TOS is too low",
                 wallet_address,
-                nanotons_to_tons_f64(wallet_info.balance)
+                nanotos_to_tos(wallet_info.balance)
             )));
         }
 
