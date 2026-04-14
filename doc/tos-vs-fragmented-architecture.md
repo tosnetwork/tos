@@ -151,12 +151,12 @@ In the TOS model, complexity is absorbed once into the canonical path.
 
 The following surfaces should converge toward canonical status:
 
-- embedded JSON-RPC for read, estimate, send, and tracking flows
-- health, readiness, metrics, and structured node status
-- `tosctl` for node and validator operations
-- published historical and indexed data contracts
-- explicit trust-tier definitions
-- explicit account and permission semantics
+- ✅ embedded JSON-RPC for read, estimate, send, and tracking flows
+- ✅ health, readiness, metrics, and structured node status
+- ✅ `tosctl` for node and validator operations
+- ❌ published historical and indexed data contracts
+- ❌ explicit trust-tier definitions
+- ❌ explicit account and permission semantics
 
 The following may still exist, but should not remain the default path:
 
@@ -184,22 +184,22 @@ This architectural choice implies a clear repository boundary:
 
 Should own:
 
-- node-native APIs
-- embedded JSON-RPC
-- health, readiness, metrics
-- structured control-plane capability
-- trust and verification primitives
-- data and protocol-facing primitives
+- ✅ node-native APIs
+- ✅ embedded JSON-RPC
+- ✅ health, readiness, metrics
+- ✅ structured control-plane capability
+- ❌ trust and verification primitives
+- ❌ data and protocol-facing primitives
 
 ### `~/tos/tosctl`
 
 Should own:
 
-- canonical operator workflows
-- CLI structure and operator UX
-- config orchestration
-- automation ergonomics
-- truthful workflow documentation
+- ✅ canonical operator workflows
+- ✅ CLI structure and operator UX
+- ✅ config orchestration
+- ✅ automation ergonomics
+- ✅ truthful workflow documentation
 
 ### Shared Design Discipline
 

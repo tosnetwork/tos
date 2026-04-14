@@ -145,6 +145,8 @@ This priority order should influence staffing, roadmap sequencing, and release c
 
 ### 1. A node-first ecosystem
 
+**Status: ✅ Done**
+
 The node is the root of truth.
 Important capabilities should live in the node or be directly derived from it:
 
@@ -157,6 +159,8 @@ Important capabilities should live in the node or be directly derived from it:
 Critical workflows should not depend on sidecar glue unless the sidecar is intentionally part of the supported product.
 
 ### 2. An API-first ecosystem
+
+**Status: ✅ Done**
 
 Every important chain action should have a stable machine-facing interface.
 
@@ -173,6 +177,8 @@ Ecosystems scale through APIs.
 
 ### 3. A standards-first ecosystem, not a single-implementation ecosystem
 
+**Status: ⚠️ Framework defined, specs not yet published**
+
 TOS should standardize interfaces aggressively without requiring ecosystem monoculture.
 
 That means separating:
@@ -187,6 +193,8 @@ One mandatory implementation for every layer is not the goal.
 TOS should be strict about interface compatibility and loose about implementation diversity wherever diversity does not fragment the product.
 
 ### 4. An operator-first ecosystem
+
+**Status: ✅ Done**
 
 Validators and infrastructure operators are not a secondary audience.
 If operations are painful, the ecosystem slows down everywhere else.
@@ -207,6 +215,8 @@ These must be intentional workflows, not emergent combinations of unrelated tool
 
 ### 5. A wallet-first ecosystem
 
+**Status: ⚠️ Core capabilities done, tracking/signing specs pending**
+
 A chain does not become widely usable until wallet flows are stable and predictable.
 
 Wallet-facing primitives must be first-class:
@@ -222,6 +232,8 @@ Wallet integration should not depend on bespoke chain-specific guesswork.
 
 ### 6. A contract-first ecosystem
 
+**Status: ⚠️ Toolchain exists, unified workflow pending**
+
 Contracts are the application layer.
 Developers must be able to:
 
@@ -235,6 +247,8 @@ Developers must be able to:
 The contract toolchain must be coherent across compiler, runtime, API, and operator tooling.
 
 ### 7. A data-availability and indexing-friendly ecosystem
+
+**Status: ❌ Not started**
 
 Applications and infrastructure do not scale on recent state alone.
 TOS must make it clear how the ecosystem accesses:
@@ -250,6 +264,8 @@ The product boundary between node, archival service, and indexing service must b
 If every explorer, wallet backend, and analytics system must invent its own history model, TOS will remain expensive to integrate.
 
 ### 8. An application-composability ecosystem
+
+**Status: ❌ Not started**
 
 The ecosystem should not only make contracts possible.
 It should make applications easy to compose with each other.
@@ -267,6 +283,8 @@ Applications should build on shared standards first and custom glue second.
 
 ### 9. A sustainable economic ecosystem
 
+**Status: ❌ Not started**
+
 Technical coherence is necessary but not sufficient.
 TOS must also be economically coherent.
 
@@ -282,6 +300,8 @@ If the stack is technically elegant but economically hollow, adoption will remai
 
 ### 10. A clear trust-model ecosystem
 
+**Status: ❌ Not started**
+
 Not every user should need the same verification model.
 But every product surface should make its trust assumptions explicit.
 
@@ -296,6 +316,8 @@ The ecosystem should define which guarantees belong to each tier.
 Wallets, mobile clients, browser clients, operators, and analytics systems should not have to infer trust boundaries from implementation quirks.
 
 ### 11. An account-and-permission model that compounds ecosystem value
+
+**Status: ❌ Not started**
 
 Application growth depends heavily on the account model.
 TOS should treat this as a strategic layer, not a wallet implementation detail.
@@ -387,6 +409,8 @@ If a feature does not improve at least one of these meaningfully, its long-term 
 
 ### Direction 1. Make the node the canonical service boundary
 
+**Status: ✅ Done**
+
 The validator engine should expose the primary embedded service surface for:
 
 - JSON-RPC
@@ -398,6 +422,8 @@ The validator engine should expose the primary embedded service surface for:
 This reduces dependency on external compatibility shims and makes the node the stable product core.
 
 ### Direction 2. Define public standards separately from implementation ownership
+
+**Status: ⚠️ Framework defined**
 
 TOS should document and stabilize public standards at distinct layers:
 
@@ -422,6 +448,8 @@ Ownership should be explicit enough that ecosystem participants know where canon
 
 ### Direction 3. Make `tosctl` the canonical operator shell
 
+**Status: ✅ Done**
+
 `tosctl` should become the default answer to operator questions such as:
 
 - How do I set this up?
@@ -434,6 +462,8 @@ The target is not a large command tree for its own sake.
 The target is one obvious operator path.
 
 ### Direction 4. Treat indexed data as a first-class product surface
+
+**Status: ❌ Not started**
 
 Recent chain state is not enough.
 TOS should intentionally define how serious integrations obtain:
@@ -448,6 +478,8 @@ If this is left implicit, every explorer, wallet backend, compliance system, and
 
 ### Direction 5. Keep low-level binaries, but demote them
 
+**Status: ✅ Done**
+
 Expert tools may still exist.
 That is fine.
 
@@ -460,6 +492,8 @@ But they should be treated as:
 They should not remain the default operational path for normal workflows.
 
 ### Direction 6. Make application standards part of ecosystem policy
+
+**Status: ❌ Not started**
 
 TOS should publish and protect shared conventions for:
 
@@ -474,6 +508,8 @@ The goal is to let applications compose by default instead of discovering each o
 
 ### Direction 7. Treat compatibility as a migration tool, not a permanent excuse
 
+**Status: ✅ Done**
+
 Compatibility with existing public API shapes is strategically useful because it lowers adoption cost.
 But compatibility should feed into a coherent TOS-native product, not freeze fragmentation forever.
 
@@ -484,6 +520,8 @@ The correct sequence is:
 3. converge ecosystem usage onto the canonical TOS path
 
 ### Direction 8. Keep economic design tied to product reality
+
+**Status: ❌ Not started**
 
 TOS should evaluate fee markets, validator economics, developer incentives, and infrastructure incentives against actual product behavior.
 
@@ -496,6 +534,8 @@ It must reinforce:
 - application growth that compounds instead of churning
 
 ### Direction 9. Make governance and upgrade coordination a product surface
+
+**Status: ❌ Not started**
 
 Protocol governance is not separate from product quality.
 If upgrade coordination is fragile, interface stability will also be fragile.
@@ -512,6 +552,8 @@ TOS should define and publish expectations for:
 This should be explicit enough that ecosystem participants can predict how change happens before a crisis forces ad hoc coordination.
 
 ### Direction 10. Define verification tiers as part of public architecture
+
+**Status: ❌ Not started**
 
 TOS should publish a clear model for how different clients interact with trust and verification:
 
@@ -531,6 +573,8 @@ TOS should also publish recommended defaults by product type:
 
 ### Direction 11. Make the account and permission model an ecosystem standard
 
+**Status: ❌ Not started**
+
 TOS should not leave signing, delegation, and permission semantics to fragmented wallet behavior.
 
 The ecosystem should converge on clear standards for:
@@ -547,6 +591,8 @@ This is one of the highest-leverage areas for application UX and automation.
 
 ### Priority 1. Close the critical workflow loops
 
+**Status: ✅ Done**
+
 The following loops must be complete and reliable:
 
 - node startup to healthy serving state
@@ -559,6 +605,8 @@ The following loops must be complete and reliable:
 If these loops are broken, partial feature expansion is noise.
 
 ### Priority 2. Standardize the data model for serious integrations
+
+**Status: ❌ Not started**
 
 TOS should define stable expectations for:
 
@@ -573,6 +621,8 @@ Without this, application teams and infrastructure teams will keep rebuilding in
 
 ### Priority 3. Eliminate fragmented control surfaces
 
+**Status: ✅ Done**
+
 TOS should keep collapsing scattered capabilities into:
 
 - node-native APIs in the validator engine
@@ -581,6 +631,8 @@ TOS should keep collapsing scattered capabilities into:
 This is higher value than adding many new secondary tools.
 
 ### Priority 4. Standardize response shapes and error semantics
+
+**Status: ✅ Done**
 
 A healthy ecosystem depends on predictability.
 
@@ -594,6 +646,8 @@ For public APIs, TOS should maintain:
 
 ### Priority 5. Define and enforce application-facing standards
 
+**Status: ❌ Not started**
+
 TOS should standardize the surfaces that applications and wallets depend on most:
 
 - token interfaces
@@ -605,6 +659,8 @@ TOS should standardize the surfaces that applications and wallets depend on most
 This is necessary if TOS wants applications to compose instead of fork their own conventions.
 
 ### Priority 6. Build for automation, not only for interactive use
+
+**Status: ✅ Done**
 
 Every important operational workflow should be usable by:
 
@@ -618,6 +674,8 @@ If a workflow only works interactively, it is unfinished.
 
 ### Priority 7. Keep safety visible
 
+**Status: ✅ Done**
+
 For upgrades, backups, alerts, and destructive actions:
 
 - defaults must be conservative
@@ -626,6 +684,8 @@ For upgrades, backups, alerts, and destructive actions:
 - unsafe shortcuts must not be presented as production-grade workflows
 
 ### Priority 8. Measure ecosystem success with hard metrics
+
+**Status: ❌ Not started**
 
 TOS should track concrete indicators such as:
 
@@ -640,6 +700,8 @@ TOS should track concrete indicators such as:
 
 ### Priority 9. Reduce ambiguity about governance and change management
 
+**Status: ❌ Not started**
+
 TOS should make protocol and interface evolution legible to the ecosystem.
 
 At minimum, operators and integrators should be able to answer:
@@ -651,6 +713,8 @@ At minimum, operators and integrators should be able to answer:
 - what happens during emergency rollback or incident response
 
 ### Priority 10. Standardize trust tiers and permission semantics
+
+**Status: ❌ Not started**
 
 TOS should not postpone these decisions until wallets and applications have already fragmented.
 

@@ -54,6 +54,10 @@ By the end of this roadmap window, TOS should have one obvious answer for:
 
 ### Goals
 
+**Status: ✅ Complete**
+
+All exit criteria met: 35 JSON-RPC methods, 478 tests, tosctl 90 commands, operator docs aligned.
+
 - make the node the stable primary service boundary
 - make the operator path reliable enough for repeated use
 - remove obvious inconsistencies from public RPC behavior
@@ -84,6 +88,8 @@ By the end of this roadmap window, TOS should have one obvious answer for:
 
 ### Goals
 
+**Status: ❌ Not started**
+
 - make wallet integration predictable
 - publish the first stable data model for serious integrations
 - define trust tiers as product policy, not hidden architecture
@@ -113,6 +119,8 @@ By the end of this roadmap window, TOS should have one obvious answer for:
 
 ### Goals
 
+**Status: ❌ Not started**
+
 - reduce application-layer fragmentation
 - make upgrade and governance coordination legible
 - make ecosystem standards ownership explicit
@@ -139,6 +147,8 @@ By the end of this roadmap window, TOS should have one obvious answer for:
 ## Quarter 4: Ecosystem Hardening and Strategic Reassessment
 
 ### Goals
+
+**Status: ❌ Not started**
 
 - test whether TOS is actually reducing ecosystem friction
 - cut or defer surfaces that did not converge

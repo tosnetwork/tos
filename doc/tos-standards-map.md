@@ -64,6 +64,8 @@ The TOS standards map is organized into these families:
 
 ### Scope
 
+**Status: ✅ Implementation complete, formal Level 1 spec pending**
+
 RPC standards define how machine clients interact with chain state and transaction workflows.
 
 ### Surfaces
@@ -103,6 +105,8 @@ Optional or niche methods may remain Level 2 until ecosystem dependency is real.
 
 ### Scope
 
+**Status: ⚠️ Core APIs exist, formal spec pending**
+
 Wallet standards define the stable user-facing and machine-facing transaction lifecycle.
 
 ### Surfaces
@@ -140,6 +144,8 @@ Wallet convenience helpers that do not affect interoperability may remain Level 
 ## 3. Indexing and Data Standards
 
 ### Scope
+
+**Status: ❌ Not started**
 
 Indexing and data standards define how integrators obtain historical, derived, and searchable views of chain activity.
 
@@ -179,6 +185,8 @@ Experimental derived views may remain Level 2 or Level 3 until stabilized.
 
 ### Scope
 
+**Status: ❌ Not started**
+
 Account and permission standards define how authority works in TOS.
 
 ### Surfaces
@@ -216,6 +224,8 @@ More advanced permission features may begin as Level 2, but should not be left a
 ## 5. Operator Standards
 
 ### Scope
+
+**Status: ✅ Implementation complete, formal spec pending**
 
 Operator standards define the canonical path for node and validator operations.
 
@@ -255,6 +265,8 @@ Guided or partially automated flows should remain Level 2 until truly closed.
 
 ### Scope
 
+**Status: ❌ Not started**
+
 Contract and application standards define how reusable application-layer components compose.
 
 ### Surfaces
@@ -289,6 +301,8 @@ Newer conventions may remain Level 2 while adoption is forming.
 ## 7. Trust and Verification Standards
 
 ### Scope
+
+**Status: ❌ Not started**
 
 Trust and verification standards define what clients can verify, what they must trust, and what proofs are available.
 
