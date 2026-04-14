@@ -248,6 +248,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     else if (path == "/detectAddress")          rest_method = "detectAddress";
     else if (path == "/lookupBlock")            rest_method = "lookupBlock";
     else if (path == "/shards")                 rest_method = "shards";
+    else if (path == "/getShards")              rest_method = "shards";
     else if (path == "/getBlockHeader")         rest_method = "getBlockHeader";
     else if (path == "/getBlockTransactions")   rest_method = "getBlockTransactions";
     else if (path == "/getExtendedAddressInformation") rest_method = "getExtendedAddressInformation";
@@ -519,7 +520,7 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     handle_getConsensusBlock(params, std::move(req_id), std::move(promise));
   } else if (method == "lookupBlock") {
     handle_lookupBlock(params, std::move(req_id), std::move(promise));
-  } else if (method == "shards") {
+  } else if (method == "shards" || method == "getShards") {
     handle_shards(params, std::move(req_id), std::move(promise));
   } else if (method == "getBlockHeader") {
     handle_getBlockHeader(params, std::move(req_id), std::move(promise));
