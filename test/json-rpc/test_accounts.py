@@ -219,6 +219,44 @@ class TestGetWalletInformation:
                                    seqno=last_mc_seqno + 10000)
         assert response.json()["ok"] is False
 
+    def test_wallet_v1_detected(self, api_method_call):
+        """Deployed wallet v1 should be detected with correct type."""
+        import json
+        from pathlib import Path
+        deployed = Path(__file__).parent / "deployed_addresses.json"
+        if not deployed.exists():
+            pytest.skip("No deployed contracts")
+        addrs = json.loads(deployed.read_text())
+        addr = addrs.get("wallets", {}).get("wallet_v1", {}).get("address")
+        if not addr:
+            pytest.skip("wallet_v1 not deployed")
+        response = api_method_call(self.METHOD, address=addr)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        result = data["result"]
+        assert result["wallet"] is True
+        assert result["wallet_type"] == "wallet v1 r1"
+        assert "seqno" in result
+
+    def test_highload_wallets_not_regular(self, api_method_call):
+        """Highload wallets: detected as wallet type but reference flags wallet=False."""
+        import json
+        from pathlib import Path
+        deployed = Path(__file__).parent / "deployed_addresses.json"
+        if not deployed.exists():
+            pytest.skip("No deployed contracts")
+        addrs = json.loads(deployed.read_text())
+        for key in ("highload_v1", "highload_v2"):
+            addr = addrs.get("wallets", {}).get(key, {}).get("address")
+            if not addr:
+                continue
+            response = api_method_call(self.METHOD, address=addr)
+            assert response.status_code == 200
+            data = response.json()
+            assert data["ok"] is True
+            assert data["result"]["wallet_type"] is not None
+
     def test_wallet_v3_detected(self, api_method_call):
         """Deployed wallet v3 should be detected with correct type and seqno."""
         import json
@@ -307,16 +345,16 @@ class TestGetAddressBalance:
         assert response.json()["ok"] is False
 
     def test_balance_differs_across_blocks(self, api_method_call, last_mc_seqno):
-        """Elector balance at two different seqnos should normally differ."""
+        """Elector balance at two different seqnos should differ (active elector has txs every block)."""
         resp_new = api_method_call(self.METHOD, address=ELECTOR_FRIENDLY, seqno=last_mc_seqno)
         resp_old = api_method_call(self.METHOD, address=ELECTOR_FRIENDLY, seqno=last_mc_seqno - 10)
         assert resp_new.status_code == 200 and resp_old.status_code == 200
         data_new = resp_new.json()
         data_old = resp_old.json()
         assert data_new["ok"] is True and data_old["ok"] is True
-        # Balances may or may not differ on a quiet testnet; at least both are valid strings.
         assert isinstance(data_new["result"], str)
         assert isinstance(data_old["result"], str)
+        assert data_old["result"] != data_new["result"]
 
     def test_wrong_seqno(self, api_method_call):
         """Non-numeric seqno is silently ignored (optional field) — accept success or error."""
@@ -406,3 +444,4 @@ class TestGetTokenData:
         """Calling getTokenData on a non-token contract should return 409."""
         response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS)
         assert response.status_code == 409
+        assert response.json()["ok"] is False
