@@ -18,6 +18,15 @@
 */
 #include "json-rpc-server-internal.h"
 
+#include "auto/tl/lite_api.hpp"
+#include "tl/tl_object_parse.h"
+#include "block/block-auto.h"
+#include "block/block-parse.h"
+#include "td/utils/crypto.h"
+#include "vm/cp0.h"
+#include "vm/vm.h"
+#include "vm/cells/CellString.h"
+
 namespace tos {
 
 void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_id,

@@ -11,6 +11,7 @@ set(VALIDATOR_ENGINE_SOURCE
   json-rpc-server-send.cpp
   json-rpc-server-config.cpp
   json-rpc-server-utils.cpp
+  json-rpc-server-shared.cpp
 )
 
 add_executable(validator-engine ${VALIDATOR_ENGINE_SOURCE})

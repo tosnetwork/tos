@@ -300,6 +300,9 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     if (post_rest_paths.count(post_path)) {
       std::string rest_method = post_path.substr(1);  // strip leading /
       // Read body and dispatch as REST (body = params JSON object)
+      // IMPORTANT: completed() must NOT call payload_->get_slice() directly,
+      // because it runs inside HttpPayload::parse() which may hold mutex_.
+      // Defer body read to actor scheduler via send_closure, same fix as BodyWaiter.
       class PostRestWaiter : public http::HttpPayload::Callback {
        public:
         PostRestWaiter(td::actor::ActorId<JsonRpcServer> server, PayloadPtr payload,
@@ -308,15 +311,17 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
               method_(std::move(method)), promise_(std::move(promise)) {}
         void run(size_t) override {}
         void completed() override {
-          auto body = payload_->get_slice(1 << 20);
-          td::actor::send_closure(server_, &JsonRpcServer::process_rest_post_body,
-                                  std::move(body), std::move(method_), std::move(promise_));
+          if (fired_) return;  // one-shot guard
+          fired_ = true;
+          td::actor::send_closure(server_, &JsonRpcServer::on_post_rest_body_ready,
+                                  std::move(payload_), std::move(method_), std::move(promise_));
         }
        private:
         td::actor::ActorId<JsonRpcServer> server_;
         PayloadPtr payload_;
         std::string method_;
         td::Promise<HttpReturn> promise_;
+        bool fired_{false};
       };
       if (payload->parse_completed()) {
         auto body = payload->get_slice(1 << 20);
@@ -439,6 +444,14 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
 }
 
 // ─── POST REST body processing (body = params JSON, no jsonrpc envelope) ──
+
+void JsonRpcServer::on_post_rest_body_ready(PayloadPtr payload, std::string method,
+                                            td::Promise<HttpReturn> promise) {
+  // Safe to call get_slice() here — we are in the actor scheduler, NOT inside
+  // HttpPayload::parse()'s callback chain. Breaks the deadlock.
+  auto body = payload->get_slice(1 << 20);
+  process_rest_post_body(std::move(body), std::move(method), std::move(promise));
+}
 
 void JsonRpcServer::process_rest_post_body(td::BufferSlice body, std::string method,
                                            td::Promise<HttpReturn> promise) {

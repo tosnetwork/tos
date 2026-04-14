@@ -18,6 +18,21 @@
 */
 #include "json-rpc-server-internal.h"
 
+#include "auto/tl/lite_api.hpp"
+#include "tl/tl_object_parse.h"
+#include "block/block-auto.h"
+#include "block/block-parse.h"
+#include "td/utils/crypto.h"
+#include "vm/cp0.h"
+#include "vm/vm.h"
+#include "smc-envelope/GenericAccount.h"
+#include "smc-envelope/SmartContract.h"
+#include "vm/dict.h"
+#include "vm/cellops.h"
+#include "block/check-proof.h"
+#include "block/mc-config.h"
+#include <limits>
+
 namespace tos {
 
 void JsonRpcServer::handle_sendBoc(td::JsonObject &params, std::string req_id,
