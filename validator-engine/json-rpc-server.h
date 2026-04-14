@@ -205,11 +205,20 @@ class JsonRpcServer final : public td::actor::Actor {
 
   static const std::set<std::string> &cacheable_methods();
 
+  // Per-method cache TTL lookup (returns 0 when caching is disabled)
+  td::int32 cache_ttl_for_method(const std::string &method) const;
+
   td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager_;
   td::actor::ActorOwn<http::HttpServer> http_;
   Options opts_;
   td::uint32 consensus_block_seqno_{0};
   td::int64 consensus_block_timestamp_{0};
+
+  // Statistics counters
+  td::Timestamp start_time_;
+  td::uint64 requests_total_{0};
+  td::uint64 cache_hits_{0};
+  td::uint64 cache_misses_{0};
 };
 
 }  // namespace tos
