@@ -2,7 +2,7 @@
 
 **Status:** Draft v0.1  
 **Audience:** Claude Code / Codex / implementation engineers  
-**Source of truth:** [actor-v3.md](doc/actor-v3.md)
+**Source of truth:** [actor-v3.md](actor-v3.md)
 
 ---
 
@@ -99,7 +99,7 @@ Freeze the normative inputs that later implementation modules must not reinterpr
 
 **Files**
 
-- [doc/actor-v3.md](doc/actor-v3.md)
+- [doc/actor-v3.md](actor-v3.md)
 
 **Deliverable**
 
@@ -139,7 +139,7 @@ Freeze the normative inputs that later implementation modules must not reinterpr
 
 **Files**
 
-- [doc/actor-v3.md](doc/actor-v3.md)
+- [doc/actor-v3.md](actor-v3.md)
 - optional generated matrix file under `doc/` or `test/fixtures/`
 
 **Deliverable**

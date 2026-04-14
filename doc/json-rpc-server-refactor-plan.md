@@ -99,9 +99,9 @@ Retains the central entry and dispatch responsibilities:
 
 - ✅ HTTP request entry
 - ✅ `/healthcheck` and `/readyz`
-- ✅ REST-style GET path mapping (35 methods)
+- ✅ REST-style GET path mapping for supported query-parameter read methods
 - ✅ REST-style POST path mapping (35 methods)
-- ✅ JSON-RPC envelope parsing (`/jsonRPC`)
+- ✅ JSON-RPC envelope parsing on canonical `/jsonRPC`
 - ✅ `dispatch_method(...)` / `cached_dispatch_method(...)`
 - ✅ Top-level method routing
 - ✅ JSON success/error envelope helpers with HTTP status code mapping
@@ -142,8 +142,8 @@ Retains the central entry and dispatch responsibilities:
 
 ### ✅ `json-rpc-server-runmethod.cpp` (512 lines)
 
-- ✅ `runGetMethod` (stack input/output, seqno, @type)
-- ✅ `runGetMethodStd`
+- ✅ `runGetMethod` (POST-only; stack input/output, seqno, @type)
+- ✅ `runGetMethodStd` (POST-only)
 
 ### ✅ `json-rpc-server-send.cpp` (699 lines)
 

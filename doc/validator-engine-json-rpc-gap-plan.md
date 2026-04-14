@@ -74,8 +74,8 @@ Protocol:
 
 - ✅ JSON-RPC request-id type preservation
 - ✅ Explicit batch JSON-RPC rejection
-- ✅ Canonical `/jsonRPC` path
-- ✅ REST GET endpoints for all read methods
+- ✅ Canonical `/jsonRPC` path as the only JSON-RPC envelope endpoint
+- ✅ REST GET endpoints for supported query-parameter read methods
 - ✅ REST POST endpoints for all methods
 - ✅ HTTP status code mapping (422/500/404/400/401/409)
 - ✅ QueryTimeoutGuard with configurable timeout
@@ -730,8 +730,8 @@ Files:
 Tasks:
 
 1. Route JSON-RPC handling only for the canonical JSON-RPC path
-2. Decide whether the current "accept any POST URL" behavior should remain as a temporary compatibility mode
-3. Return a structured error for unsupported paths
+2. Reject unsupported POST paths rather than treating them as implicit JSON-RPC endpoints
+3. Keep direct REST-style POST endpoints only for explicitly registered method paths
 
 Why:
 

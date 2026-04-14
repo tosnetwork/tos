@@ -12,11 +12,11 @@ It answers:
 
 This document complements:
 
-- [tos-north-star.md](doc/tos-north-star.md)
-- [tos-roadmap-12m.md](doc/tos-roadmap-12m.md)
-- [tos-standards-map.md](doc/tos-standards-map.md)
-- [tos-release-policy.md](doc/tos-release-policy.md)
-- [tos-vs-fragmented-architecture.md](doc/tos-vs-fragmented-architecture.md)
+- [tos-north-star.md](tos-north-star.md)
+- [tos-roadmap-12m.md](tos-roadmap-12m.md)
+- [tos-standards-map.md](tos-standards-map.md)
+- [tos-release-policy.md](tos-release-policy.md)
+- [tos-vs-fragmented-architecture.md](tos-vs-fragmented-architecture.md)
 
 ## Convergence Goal
 

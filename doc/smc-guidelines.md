@@ -88,5 +88,5 @@ When in doubt, fail fast and leave state unchanged.
 
 ## Related Docs
 
-- [actor.md](actor.md)
+- [actor.md](actor-v3.md)
 - [tblkch.tex](tblkch.tex)

@@ -15,8 +15,8 @@ The goal is to answer:
 
 This document complements:
 
-- [tos-north-star.md](doc/tos-north-star.md)
-- [tos-roadmap-12m.md](doc/tos-roadmap-12m.md)
+- [tos-north-star.md](tos-north-star.md)
+- [tos-roadmap-12m.md](tos-roadmap-12m.md)
 
 ## Standards Rule
 

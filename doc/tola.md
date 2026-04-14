@@ -33,7 +33,7 @@ At this stage, Tola should be read as a language direction and design document, 
 
 ## Related Docs
 
-- [actor.md](actor.md)
+- [actor.md](actor-v3.md)
 - [smc-guidelines.md](smc-guidelines.md)
 
 All cross-actor communication is asynchronous. There are no synchronous calls.
