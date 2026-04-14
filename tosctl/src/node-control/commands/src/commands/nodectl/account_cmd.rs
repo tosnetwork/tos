@@ -10,6 +10,7 @@
 use super::output_format::OutputFormat;
 use super::utils::{save_config, try_create_rpc_client};
 use chain_block::MsgAddressInt;
+use chain_rpc_client::v2::{RPCStackEntry, data_models::RunGetMethodParams};
 use colored::Colorize;
 use common::{app_config::AppConfig, chain_utils::display_tos, time_format::format_ts};
 use std::{path::Path, str::FromStr};
@@ -40,6 +41,10 @@ pub enum AccountAction {
     Txs(AccountTxsCmd),
     /// Bookmark management
     Bookmark(AccountBookmarkCmd),
+    /// Run a get-method on a smart contract
+    RunMethod(AccountRunMethodCmd),
+    /// Send a raw BOC message
+    SendBoc(AccountSendBocCmd),
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +123,44 @@ pub struct AccountBookmarkRmCmd {
     name: String,
 }
 
+// ---------------------------------------------------------------------------
+// account run-method
+// ---------------------------------------------------------------------------
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Run a get-method on a smart contract")]
+pub struct AccountRunMethodCmd {
+    /// Contract address (raw or friendly format)
+    #[arg(long)]
+    address: String,
+
+    /// Method name (e.g. "seqno", "get_pool_data")
+    method: String,
+
+    /// Stack arguments as ["type","value"] pairs (e.g. '["num","123"]')
+    #[arg(trailing_var_arg = true)]
+    args: Vec<String>,
+
+    /// Output format
+    #[arg(short, long, default_value = "table")]
+    format: OutputFormat,
+}
+
+// ---------------------------------------------------------------------------
+// account send-boc
+// ---------------------------------------------------------------------------
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Send a raw BOC message to the blockchain")]
+pub struct AccountSendBocCmd {
+    /// Path to BOC file (binary or base64-encoded)
+    boc_file: String,
+
+    /// Output format
+    #[arg(short, long, default_value = "table")]
+    format: OutputFormat,
+}
+
 // ===========================================================================
 // Run implementations
 // ===========================================================================
@@ -128,6 +171,8 @@ impl AccountCmd {
             AccountAction::Status(cmd) => cmd.run(&self.config).await,
             AccountAction::Txs(cmd) => cmd.run(&self.config).await,
             AccountAction::Bookmark(cmd) => cmd.run(&self.config).await,
+            AccountAction::RunMethod(cmd) => cmd.run(&self.config).await,
+            AccountAction::SendBoc(cmd) => cmd.run(&self.config).await,
         }
     }
 }
@@ -283,6 +328,99 @@ impl AccountTxsCmd {
 
             println!();
         }
+        Ok(())
+    }
+}
+
+impl AccountRunMethodCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let config = AppConfig::load(Path::new(config_path))?;
+        let rpc_client = try_create_rpc_client(&config).await?;
+
+        // Validate address
+        MsgAddressInt::from_str(&self.address)
+            .map_err(|e| anyhow::anyhow!("Invalid address '{}': {}", self.address, e))?;
+
+        let stack = if self.args.is_empty() {
+            None
+        } else {
+            let entries: Vec<RPCStackEntry> = self
+                .args
+                .iter()
+                .map(|arg| {
+                    serde_json::from_str::<RPCStackEntry>(arg)
+                        .map_err(|e| anyhow::anyhow!("Invalid stack argument '{}': {}", arg, e))
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            Some(entries)
+        };
+
+        let params = RunGetMethodParams {
+            address: self.address.clone(),
+            method_id: self.method.clone(),
+            stack,
+            seqno: None,
+        };
+
+        let result = rpc_client.run_get_method(&params).await?;
+
+        if self.format == OutputFormat::Json {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        } else {
+            println!();
+            println!("  {}", "Run Get-Method Result".bold());
+            println!("  {}", "\u{2500}".repeat(40));
+            println!("  {:<18} {}", "Exit code:".dimmed(), result.exit_code);
+            println!("  {:<18} {}", "Gas used:".dimmed(), result.gas_used);
+            println!("  {:<18} {}", "Stack entries:".dimmed(), result.stack.len());
+            println!();
+            for (i, entry) in result.stack.iter().enumerate() {
+                let entry_json = serde_json::to_string(entry)
+                    .unwrap_or_else(|_| "<serialization error>".to_string());
+                println!("  [{}] {}", i, entry_json);
+            }
+            println!();
+        }
+
+        Ok(())
+    }
+}
+
+impl AccountSendBocCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let config = AppConfig::load(Path::new(config_path))?;
+        let rpc_client = try_create_rpc_client(&config).await?;
+
+        let raw_bytes = std::fs::read(&self.boc_file)
+            .map_err(|e| anyhow::anyhow!("Failed to read BOC file '{}': {}", self.boc_file, e))?;
+
+        // Detect binary vs base64: if all bytes are valid ASCII printable (base64
+        // charset), attempt base64 decode; otherwise treat as raw binary.
+        let boc_bytes = if raw_bytes.iter().all(|b| b.is_ascii_graphic() || b.is_ascii_whitespace())
+        {
+            let trimmed = String::from_utf8_lossy(&raw_bytes);
+            let trimmed = trimmed.trim();
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, trimmed)
+                .unwrap_or(raw_bytes)
+        } else {
+            raw_bytes
+        };
+
+        rpc_client.send_boc(&boc_bytes).await?;
+
+        if self.format == OutputFormat::Json {
+            let obj = serde_json::json!({ "status": "ok", "message": "BOC sent successfully" });
+            println!("{}", serde_json::to_string_pretty(&obj)?);
+        } else {
+            println!();
+            println!(
+                "  {} BOC sent successfully ({} bytes)",
+                "OK".green().bold(),
+                boc_bytes.len()
+            );
+            println!();
+        }
+
         Ok(())
     }
 }

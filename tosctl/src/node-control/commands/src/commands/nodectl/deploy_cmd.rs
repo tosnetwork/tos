@@ -9,6 +9,8 @@
 use crate::commands::nodectl::utils::{
     DEPLOY_TIMEOUT, load_config_vault_rpc_client, make_wallet, wait_for_deploy, wallet_info,
 };
+use crate::commands::nodectl::output_format::OutputFormat;
+use base64::Engine;
 use colored::Colorize;
 use common::{
     WalletVersion,
@@ -16,7 +18,7 @@ use common::{
     chain_utils::{nanotos_to_tos, tos_to_nanotos},
 };
 use contracts::{NominatorWrapperImpl, Wallet};
-use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc, str::FromStr, sync::Arc};
 use chain_block::{Cell, MsgAddressInt, write_boc};
 use chain_rpc_client::v2::data_models::AccountState;
 
@@ -31,6 +33,7 @@ pub struct DeployCmd {
 enum DeployAction {
     Wallet(DeployWalletsCmd),
     Pool(DeployPoolCmd),
+    Contract(DeployContractCmd),
 }
 
 #[derive(clap::Args, Clone)]
@@ -78,11 +81,42 @@ struct DeployPoolCmd {
     node: String,
 }
 
+#[derive(clap::Args, Clone)]
+#[command(about = "Deploy an arbitrary smart contract from a BOC file")]
+struct DeployContractCmd {
+    #[arg(
+        short = 'c',
+        long = "config",
+        help = "Path to the configuration file",
+        default_value = "tosctl-config.json",
+        env = "CONFIG_PATH",
+        global = true
+    )]
+    config: String,
+
+    /// Path to the BOC file containing the external message
+    #[arg(help = "Path to the BOC file (binary or base64-encoded)")]
+    boc_file: String,
+
+    /// Wait for the contract to become active after sending
+    #[arg(long, help = "Wait for contract to become active")]
+    wait: bool,
+
+    /// Contract address to monitor (required with --wait)
+    #[arg(long, help = "Address to watch (required with --wait)")]
+    address: Option<String>,
+
+    /// Output format
+    #[arg(short, long, default_value = "table")]
+    format: OutputFormat,
+}
+
 impl DeployCmd {
     pub async fn run(&self, cancellation_ctx: CancellationCtx) -> anyhow::Result<()> {
         match &self.action {
             DeployAction::Wallet(cmd) => cmd.run(cancellation_ctx).await,
             DeployAction::Pool(cmd) => cmd.run(cancellation_ctx).await,
+            DeployAction::Contract(cmd) => cmd.run(cancellation_ctx).await,
         }
     }
 }
@@ -387,6 +421,60 @@ impl DeployPoolCmd {
 
         res.borrow_mut().deployed = true;
         res.borrow_mut().account_state = AccountState::Active;
+
+        Ok(())
+    }
+}
+
+impl DeployContractCmd {
+    pub async fn run(&self, cancellation_ctx: CancellationCtx) -> anyhow::Result<()> {
+        let (_config, _vault, rpc_client) =
+            load_config_vault_rpc_client(Path::new(&self.config)).await?;
+
+        // Read BOC file
+        let file_bytes = std::fs::read(&self.boc_file)
+            .map_err(|e| anyhow::anyhow!("Failed to read BOC file '{}': {}", self.boc_file, e))?;
+
+        // Detect if base64 or raw binary
+        let boc_bytes = if file_bytes.iter().all(|b| b.is_ascii()) {
+            // Try base64 decode
+            let text = String::from_utf8_lossy(&file_bytes).trim().to_string();
+            base64::engine::general_purpose::STANDARD
+                .decode(&text)
+                .unwrap_or(file_bytes)
+        } else {
+            file_bytes
+        };
+
+        // Send
+        rpc_client.send_boc(&boc_bytes).await?;
+
+        if self.format == OutputFormat::Json {
+            let result = serde_json::json!({"status": "sent", "boc_file": self.boc_file});
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        } else {
+            println!("{}", "BOC sent successfully".green());
+        }
+
+        // If --wait, poll for contract activation
+        if self.wait {
+            let addr_str = self
+                .address
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("--address is required when using --wait"))?;
+            let address = MsgAddressInt::from_str(addr_str)
+                .map_err(|e| anyhow::anyhow!("Invalid address: {e}"))?;
+            println!("Waiting for contract to become active...");
+            wait_for_deploy(
+                rpc_client,
+                &address,
+                &cancellation_ctx,
+                true,
+                DEPLOY_TIMEOUT,
+            )
+            .await?;
+            println!("{}", "Contract is active!".green().bold());
+        }
 
         Ok(())
     }
