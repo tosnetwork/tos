@@ -627,7 +627,11 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
                                           td::Promise<HttpReturn> promise) {
   auto config_id_r = params.get_required_int_field("config_id");
   if (config_id_r.is_error()) {
-    promise.set_value(make_json_error(-32602, "Missing or invalid 'config_id' parameter", req_id));
+    // Try 'param' as alias
+    config_id_r = params.get_required_int_field("param");
+  }
+  if (config_id_r.is_error()) {
+    promise.set_value(make_json_error(-32602, "Missing 'config_id' or 'param' parameter", req_id));
     return;
   }
   int config_id = config_id_r.ok();
@@ -1306,9 +1310,70 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
   auto method_name = method_r.move_as_ok();
   td::int64 method_id = (td::crc16(td::Slice(method_name)) & 0xffff) | 0x10000;
 
-  // Serialize empty stack as params
-  vm::CellBuilder cb;
+  // Parse optional stack parameter (array of ["type", "value"] pairs)
   vm::Stack stack;
+  auto stack_r = params.extract_field("stack");
+  if (stack_r.type() == td::JsonValue::Type::Array) {
+    auto& arr = stack_r.get_array();
+    for (auto& entry : arr) {
+      if (entry.type() != td::JsonValue::Type::Array) continue;
+      auto& pair = entry.get_array();
+      if (pair.size() < 2) continue;
+      if (pair[0].type() != td::JsonValue::Type::String) continue;
+      auto type_str = pair[0].get_string().str();
+      if (type_str == "num" || type_str == "tvm.Number") {
+        std::string val_str;
+        if (pair[1].type() == td::JsonValue::Type::String) {
+          val_str = pair[1].get_string().str();
+        } else if (pair[1].type() == td::JsonValue::Type::Number) {
+          val_str = pair[1].get_number().str();
+        } else {
+          continue;
+        }
+        auto num = td::string_to_int256(val_str);
+        if (num.not_null()) {
+          stack.push(vm::StackEntry(std::move(num)));
+        }
+      } else if (type_str == "cell" || type_str == "tvm.Cell") {
+        std::string b64;
+        if (pair[1].type() == td::JsonValue::Type::Object) {
+          auto bytes_r = pair[1].get_object().get_required_string_field("bytes");
+          if (bytes_r.is_ok()) b64 = bytes_r.ok();
+        } else if (pair[1].type() == td::JsonValue::Type::String) {
+          b64 = pair[1].get_string().str();
+        }
+        if (!b64.empty()) {
+          auto decoded = td::base64_decode(b64);
+          if (decoded.is_ok()) {
+            auto cell = vm::std_boc_deserialize(td::Slice(decoded.ok()));
+            if (cell.is_ok()) {
+              stack.push(vm::StackEntry(cell.move_as_ok()));
+            }
+          }
+        }
+      } else if (type_str == "slice" || type_str == "tvm.Slice") {
+        std::string b64;
+        if (pair[1].type() == td::JsonValue::Type::Object) {
+          auto bytes_r = pair[1].get_object().get_required_string_field("bytes");
+          if (bytes_r.is_ok()) b64 = bytes_r.ok();
+        } else if (pair[1].type() == td::JsonValue::Type::String) {
+          b64 = pair[1].get_string().str();
+        }
+        if (!b64.empty()) {
+          auto decoded = td::base64_decode(b64);
+          if (decoded.is_ok()) {
+            auto cell = vm::std_boc_deserialize(td::Slice(decoded.ok()));
+            if (cell.is_ok()) {
+              stack.push(vm::StackEntry(vm::load_cell_slice_ref(cell.move_as_ok())));
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Serialize stack as params
+  vm::CellBuilder cb;
   if (!stack.serialize(cb)) {
     promise.set_value(make_json_error(-32603, "stack serialize error", req_id));
     return;
@@ -1816,6 +1881,14 @@ void JsonRpcServer::handle_lookupBlock(td::JsonObject &params, std::string req_i
     }
   }
   if (mode == 0) {
+    // Try 'unixtime' as alias for 'utime'
+    auto unixtime_r = params.get_optional_int_field("unixtime");
+    if (unixtime_r.is_ok() && unixtime_r.ok() > 0) {
+      mode = 4;
+      utime = static_cast<td::int32>(unixtime_r.ok());
+    }
+  }
+  if (mode == 0) {
     // Default to seqno lookup if none specified
     auto seqno2_r = params.get_optional_int_field("seqno");
     if (seqno2_r.is_ok()) {
@@ -1895,48 +1968,22 @@ void JsonRpcServer::handle_getConsensusBlock(td::JsonObject &params, std::string
 
 void JsonRpcServer::handle_shards(td::JsonObject &params, std::string req_id,
                                   td::Promise<HttpReturn> promise) {
-  auto seqno_r = params.get_required_int_field("seqno");
-  if (seqno_r.is_error()) {
-    promise.set_value(make_json_error(-32602, "Missing 'seqno'", req_id));
-    return;
-  }
-  td::int32 seqno = seqno_r.ok();
-
-  // Step 1: lookup the exact masterchain block by seqno
-  auto block_id = tos::create_tl_object<tos::lite_api::tosNode_blockId>(
-      -1, static_cast<td::int64>(-1LL << 63), seqno);
-  auto lookup_inner = tos::serialize_tl_object(
-      tos::create_tl_object<tos::lite_api::liteServer_lookupBlock>(
-          1, std::move(block_id), 0, 0),
-      true);
-  auto lookup_query = tos::serialize_tl_object(
-      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(lookup_inner)), true);
+  auto seqno_r = params.get_optional_int_field("seqno");
+  bool has_seqno = seqno_r.is_ok() && seqno_r.ok() > 0;
 
   auto self_id = actor_id(this);
-  send_liteserver_query(std::move(lookup_query),
-      [req_id = std::move(req_id), self_id, promise = std::move(promise)](
-          td::Result<td::BufferSlice> R) mutable {
-        if (R.is_error()) {
-          promise.set_value(make_json_error(-32603,
-              PSTRING() << "lookupBlock: " << R.error(), req_id));
-          return;
-        }
-        auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
-            R.move_as_ok(), true);
-        if (lb_r.is_error()) {
-          promise.set_value(make_json_error(-32603,
-              PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id));
-          return;
-        }
-        auto lb = lb_r.move_as_ok();
 
-        // Step 2: fetch a block header proof that includes BlockExtra and
+  // Step 2 lambda: given a resolved block ID, fetch shard hashes
+  auto do_get_shards = [self_id, req_id = std::move(req_id),
+                        promise = std::move(promise)](
+      tos::tl_object_ptr<tos::lite_api::tosNode_blockIdExt> resolved_block_id) mutable {
+        // Fetch a block header proof that includes BlockExtra and
         // ShardHashes (mode = 16 | 32 = 48). This avoids total-state download
         // limits and the broken getAllShardsInfo path while staying within the
         // standard liteserver RPC surface.
         auto header_inner = tos::serialize_tl_object(
             tos::create_tl_object<tos::lite_api::liteServer_getBlockHeader>(
-                std::move(lb->id_), 48),
+                std::move(resolved_block_id), 48),
             true);
         auto header_query = tos::serialize_tl_object(
             tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(header_inner)), true);
@@ -2019,7 +2066,40 @@ void JsonRpcServer::handle_shards(td::JsonObject &params, std::string req_id,
           sb << "]}";
           promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
         }));
-      });
+  };  // end of do_get_shards
+
+  // Step 1: resolve block
+  if (has_seqno) {
+    td::int32 seqno = static_cast<td::int32>(seqno_r.ok());
+    auto block_id = tos::create_tl_object<tos::lite_api::tosNode_blockId>(
+        -1, static_cast<td::int64>(-1LL << 63), seqno);
+    auto lookup_inner = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_lookupBlock>(
+            1, std::move(block_id), 0, 0),
+        true);
+    auto lookup_query = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(lookup_inner)), true);
+    send_liteserver_query(std::move(lookup_query),
+        [do_get_shards = std::move(do_get_shards)](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) return;
+          auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(R.move_as_ok(), true);
+          if (lb_r.is_error()) return;
+          do_get_shards(std::move(lb_r.move_as_ok()->id_));
+        });
+  } else {
+    // No seqno provided — query latest masterchain block
+    auto mc_inner = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
+    auto mc_query = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
+    send_liteserver_query(std::move(mc_query),
+        [do_get_shards = std::move(do_get_shards)](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) return;
+          auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(R.move_as_ok(), true);
+          if (mc_r.is_error()) return;
+          do_get_shards(std::move(mc_r.move_as_ok()->last_));
+        });
+  }
 }
 
 // ─── getBlockHeader ──────────────────────────────────────────────────
@@ -2736,7 +2816,11 @@ static td::Result<LocateParams> parse_locate_params(td::JsonObject &params) {
   auto dst_r = params.get_required_string_field("destination");
   if (dst_r.is_error()) return td::Status::Error("Missing 'destination'");
   auto lt_r = params.get_required_string_field("created_lt");
-  if (lt_r.is_error()) return td::Status::Error("Missing 'created_lt'");
+  if (lt_r.is_error()) {
+    // Try 'lt' as alias for 'created_lt'
+    lt_r = params.get_required_string_field("lt");
+  }
+  if (lt_r.is_error()) return td::Status::Error("Missing 'created_lt' or 'lt'");
 
   LocateParams lp;
   if (!lp.source.parse_addr(td::Slice(src_r.ok())))
@@ -5125,9 +5209,70 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
   auto method_name = method_r.move_as_ok();
   td::int64 method_id = (td::crc16(td::Slice(method_name)) & 0xffff) | 0x10000;
 
-  // Serialize empty stack as params
-  vm::CellBuilder cb;
+  // Parse optional stack parameter (array of ["type", "value"] pairs)
   vm::Stack stack;
+  auto stack_r = params.extract_field("stack");
+  if (stack_r.type() == td::JsonValue::Type::Array) {
+    auto& arr = stack_r.get_array();
+    for (auto& entry : arr) {
+      if (entry.type() != td::JsonValue::Type::Array) continue;
+      auto& pair = entry.get_array();
+      if (pair.size() < 2) continue;
+      if (pair[0].type() != td::JsonValue::Type::String) continue;
+      auto type_str = pair[0].get_string().str();
+      if (type_str == "num" || type_str == "tvm.Number") {
+        std::string val_str;
+        if (pair[1].type() == td::JsonValue::Type::String) {
+          val_str = pair[1].get_string().str();
+        } else if (pair[1].type() == td::JsonValue::Type::Number) {
+          val_str = pair[1].get_number().str();
+        } else {
+          continue;
+        }
+        auto num = td::string_to_int256(val_str);
+        if (num.not_null()) {
+          stack.push(vm::StackEntry(std::move(num)));
+        }
+      } else if (type_str == "cell" || type_str == "tvm.Cell") {
+        std::string b64;
+        if (pair[1].type() == td::JsonValue::Type::Object) {
+          auto bytes_r = pair[1].get_object().get_required_string_field("bytes");
+          if (bytes_r.is_ok()) b64 = bytes_r.ok();
+        } else if (pair[1].type() == td::JsonValue::Type::String) {
+          b64 = pair[1].get_string().str();
+        }
+        if (!b64.empty()) {
+          auto decoded = td::base64_decode(b64);
+          if (decoded.is_ok()) {
+            auto cell = vm::std_boc_deserialize(td::Slice(decoded.ok()));
+            if (cell.is_ok()) {
+              stack.push(vm::StackEntry(cell.move_as_ok()));
+            }
+          }
+        }
+      } else if (type_str == "slice" || type_str == "tvm.Slice") {
+        std::string b64;
+        if (pair[1].type() == td::JsonValue::Type::Object) {
+          auto bytes_r = pair[1].get_object().get_required_string_field("bytes");
+          if (bytes_r.is_ok()) b64 = bytes_r.ok();
+        } else if (pair[1].type() == td::JsonValue::Type::String) {
+          b64 = pair[1].get_string().str();
+        }
+        if (!b64.empty()) {
+          auto decoded = td::base64_decode(b64);
+          if (decoded.is_ok()) {
+            auto cell = vm::std_boc_deserialize(td::Slice(decoded.ok()));
+            if (cell.is_ok()) {
+              stack.push(vm::StackEntry(vm::load_cell_slice_ref(cell.move_as_ok())));
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Serialize stack as params
+  vm::CellBuilder cb;
   if (!stack.serialize(cb)) {
     promise.set_value(make_json_error(-32603, "stack serialize error", req_id));
     return;
