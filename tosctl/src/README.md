@@ -1,6 +1,6 @@
-# ton-node
+# tos-node
 
-TON node and validator implementation in Rust.
+TOS node and validator implementation in Rust.
 
 ## Crates
 
@@ -8,9 +8,9 @@ TON node and validator implementation in Rust.
 |---|---|
 | `node` | Node binary, collator, validator, storage, networking |
 | `adnl` | ADNL/RLDP/Overlay/DHT protocol stack |
-| `block` | TON blockchain data types (cells, messages, blocks) |
+| `block` | TOS blockchain data types (cells, messages, blocks) |
 | `block-json` | JSON serialization for blockchain types |
-| `vm` | TVM (TON Virtual Machine) |
+| `vm` | TVM (TOS Virtual Machine) |
 | `executor` | Transaction executor |
 | `assembler` | TVM assembler/disassembler |
 | `tl` | TL schema types and codegen |
