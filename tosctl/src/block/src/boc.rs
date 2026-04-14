@@ -500,7 +500,7 @@ macro_rules! define_BocWriter {
 
                 //
                 // In cpp node implementation, flag 'cell_info.is_root' is always false due to a bug.
-                // (see https://github.com/ton-blockchain/ton/blob/master/crypto/vm/boc.cpp#L305)
+                // (see https://github.com/tos-blockchain/tos/blob/master/crypto/vm/boc.cpp#L305)
                 // So BocFlags::TopHash flag is not work whenewer it set or not.
                 //
                 flags.remove(BocFlags::TopHash);

@@ -175,13 +175,13 @@ impl<D: BoxedDeserialize + AnyBoxedSerialize> BoxedDeserializeDynamic for D {
 pub struct DynamicDeserializer {
     id: u32,
     type_name: &'static str,
-    ton: fn(u32, &mut Deserializer) -> Result<TLObject>,
+    tos: fn(u32, &mut Deserializer) -> Result<TLObject>,
 }
 
 impl DynamicDeserializer {
     #[inline(always)]
     pub fn from<D: BoxedDeserializeDynamic>(id: u32, type_name: &'static str) -> Self {
-        DynamicDeserializer { id, type_name, ton: D::boxed_deserialize_to_box }
+        DynamicDeserializer { id, type_name, tos: D::boxed_deserialize_to_box }
     }
 }
 
@@ -350,7 +350,7 @@ impl BoxedDeserialize for TLObject {
     }
     fn deserialize_boxed(id: u32, de: &mut Deserializer) -> Result<Self> {
         match crate::tos::dynamic::BY_NUMBER.get(&id) {
-            Some(dynamic) => (dynamic.ton)(id, de),
+            Some(dynamic) => (dynamic.tos)(id, de),
             None => _invalid_id!(id),
         }
     }

@@ -34,8 +34,8 @@ fn load_var(engine: &mut Engine, name: &'static str, max_bytes: u8, sign: bool) 
     Ok(())
 }
 
-pub(super) fn execute_ldgrams(engine: &mut Engine) -> Status {
-    load_var(engine, "LDGRAMS", 16, false)
+pub(super) fn execute_ldtomis(engine: &mut Engine) -> Status {
+    load_var(engine, "LDTOMIS", 16, false)
 }
 pub(super) fn execute_ldvarint16(engine: &mut Engine) -> Status {
     load_var(engine, "LDVARINT16", 16, true)
@@ -86,8 +86,8 @@ fn store_var(engine: &mut Engine, name: &'static str, max_bits: usize, sign: boo
     }
 }
 
-pub(super) fn execute_stgrams(engine: &mut Engine) -> Status {
-    store_var(engine, "STGRAMS", 120, false)
+pub(super) fn execute_sttomis(engine: &mut Engine) -> Status {
+    store_var(engine, "STTOMIS", 120, false)
 }
 
 pub(super) fn execute_stvarint16(engine: &mut Engine) -> Status {

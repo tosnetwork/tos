@@ -292,7 +292,7 @@ impl Engine {
         FITS z = parse_const_u8_plus_one     => 0xB4, z
         FITSX                                => 0xB6, 0x00
         GASCONSUMED                          => 0xF8, 0x07
-        GASTOGRAM                            => 0xF8, 0x05
+        GASTOTOMI                            => 0xF8, 0x05
         GEQ                                  => 0xBE
         GETEXTRABALANCE                      => 0xf8, 0x80
         GETFORWARDFEE                        => 0xF8, 0x38
@@ -307,7 +307,7 @@ impl Engine {
         GETPRECOMPILEDGAS                    => 0xF8, 0x39
         GETSTORAGEFEE                        => 0xF8, 0x37
         GLOBALID                             => 0xF8, 0x35
-        GRAMTOGAS                            => 0xF8, 0x04
+        TOMITOGAS                            => 0xF8, 0x04
         GREATER                              => 0xBC
         GTINT z = parse_const_i8             => 0xC2, z
         HASHBU                               => 0xF9, 0x16
@@ -396,7 +396,7 @@ impl Engine {
         LDDICT                               => 0xF4, 0x04
         LDDICTS                              => 0xF4, 0x02
         LDDICTQ                              => 0xF4, 0x06
-        LDGRAMS                              => 0xFA, 0x00
+        LDTOMIS                              => 0xFA, 0x00
         LDILE4                               => 0xD7, 0x50
         LDILE4Q                              => 0xD7, 0x58
         LDILE8                               => 0xD7, 0x52
@@ -777,7 +777,7 @@ impl Engine {
         STBREFR                              => 0xCD
         STBREFRQ                             => 0xCF, 0x1D
         STBRQ                                => 0xCF, 0x1F
-        STGRAMS                              => 0xFA, 0x02
+        STTOMIS                              => 0xFA, 0x02
         STDICT                               => 0xF4, 0x00
         STDICTS                              => 0xCE
         STI z = parse_const_u8_plus_one      => 0xCA, z

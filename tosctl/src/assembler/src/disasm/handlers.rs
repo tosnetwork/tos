@@ -616,9 +616,9 @@ impl Handlers {
         self.add_subset(
             0xFA,
             Handlers::new()
-                .set(0x00, Loader::ldgrams)
+                .set(0x00, Loader::ldtomis)
                 .set(0x01, Loader::ldvarint16)
-                .set(0x02, Loader::stgrams)
+                .set(0x02, Loader::sttomis)
                 .set(0x03, Loader::stvarint16)
                 .set(0x04, Loader::ldvaruint32)
                 .set(0x05, Loader::ldvarint32)
@@ -811,8 +811,8 @@ impl Handlers {
                 .set(0x00, Loader::accept)
                 .set(0x01, Loader::setgaslimit)
                 .set(0x02, Loader::buygas)
-                .set(0x04, Loader::gramtogas)
-                .set(0x05, Loader::gastogram)
+                .set(0x04, Loader::tomitogas)
+                .set(0x05, Loader::gastotomi)
                 .set(0x07, Loader::gasconsumed)
                 .set(0x0F, Loader::commit)
                 .set(0x10, Loader::randu256)

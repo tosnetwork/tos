@@ -754,7 +754,7 @@ fn build_raw_quinn_client(key_bytes: &[u8; Ed25519KeyOption::PVT_KEY_SIZE]) -> q
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(AcceptAll))
         .with_client_cert_resolver(Arc::new(FixedCertResolver(certified)));
-    tls.alpn_protocols = vec![b"ton".to_vec()];
+    tls.alpn_protocols = vec![b"tos".to_vec()];
     let quic_crypto = quinn::crypto::rustls::QuicClientConfig::try_from(tls).unwrap();
     let mut client_cfg = quinn::ClientConfig::new(Arc::new(quic_crypto));
     let mut transport = quinn::TransportConfig::default();
@@ -948,7 +948,7 @@ fn test_quic_duplicate_inbound_same_address() {
 // Test 1b: Multiple keys from same address must coexist
 // ===========================================================================
 
-/// A TON node may have multiple connections to each peer — one for the
+/// A TOS node may have multiple connections to each peer — one for the
 /// current validator key and one for the next key. Both connections originate
 /// from the same source address but use different client Ed25519 keys.
 /// They must coexist: the server must NOT close one when the other arrives.
@@ -1400,7 +1400,7 @@ fn test_quic_reject_non_rpk_client() {
             .with_custom_certificate_verifier(Arc::new(AcceptAllServer))
             .with_client_auth_cert(vec![cert_der], key_der)
             .unwrap();
-        tls.alpn_protocols = vec![b"ton".to_vec()];
+        tls.alpn_protocols = vec![b"tos".to_vec()];
 
         // The handshake should fail because server requires RPK but client sends X.509.
         // Quinn wraps TLS alert as a ConnectionError.

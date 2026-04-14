@@ -1584,9 +1584,9 @@ impl Loader {
             .with_param(InstructionParameter::Pargs(p))
             .with_param(InstructionParameter::Rargs(r)))
     }
-    create_handler_2!(ldgrams, 0xfa00, "LDGRAMS");
+    create_handler_2!(ldtomis, 0xfa00, "LDTOMIS");
     create_handler_2!(ldvarint16, 0xfa01, "LDVARINT16");
-    create_handler_2!(stgrams, 0xfa02, "STGRAMS");
+    create_handler_2!(sttomis, 0xfa02, "STTOMIS");
     create_handler_2!(stvarint16, 0xfa03, "STVARINT16");
     create_handler_2!(ldvaruint32, 0xfa04, "LDVARUINT32");
     create_handler_2!(ldvarint32, 0xfa05, "LDVARINT32");
@@ -1826,9 +1826,9 @@ impl Loader {
     create_handler_2!(accept, 0xf800, "ACCEPT");
     create_handler_2!(setgaslimit, 0xf801, "SETGASLIMIT");
     create_handler_2!(buygas, 0xf802, "BUYGAS");
-    create_handler_2!(gramtogas, 0xf804, "GRAMTOGAS");
+    create_handler_2!(tomitogas, 0xf804, "TOMITOGAS");
     create_handler_2!(gasconsumed, 0xf807, "GASCONSUMED");
-    create_handler_2!(gastogram, 0xf805, "GASTOGRAM");
+    create_handler_2!(gastotomi, 0xf805, "GASTOTOMI");
     create_handler_2!(commit, 0xf80f, "COMMIT");
     create_handler_2!(randu256, 0xf810, "RANDU256");
     create_handler_2!(rand, 0xf811, "RAND");

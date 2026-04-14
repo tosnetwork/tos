@@ -22,7 +22,7 @@ use chain_block::{fail, ExceptionCode, Result, Status};
 
 pub mod gas_state;
 
-fn gramtogas(engine: &Engine, nanocoins: &IntegerData) -> Result<i64> {
+fn tomitogas(engine: &Engine, nanocoins: &IntegerData) -> Result<i64> {
     let gas_price = IntegerData::from_i64(engine.get_gas().get_gas_price());
     let gas = nanocoins.div::<Quiet>(&gas_price, Round::FloorToZero)?.0;
     let ret = gas.take_value_of(|x| i64::from_int(x).ok()).unwrap_or(i64::MAX);
@@ -57,20 +57,20 @@ pub fn execute_buygas(engine: &mut Engine) -> Status {
     engine.load_instruction(Instruction::new("BUYGAS"))?;
     fetch_stack(engine, 1)?;
     let nanocoins = engine.cmd.var(0).as_integer()?;
-    let gas_limit = gramtogas(engine, nanocoins)?;
+    let gas_limit = tomitogas(engine, nanocoins)?;
     setgaslimit(engine, gas_limit)
 }
 // Application-specific primitives - A.11; Gas-related primitives - A.11.2
-// GRAMTOGAS - F804
-pub fn execute_gramtogas(engine: &mut Engine) -> Status {
-    engine.load_instruction(Instruction::new("GRAMTOGAS"))?;
+// TOMITOGAS - F804
+pub fn execute_tomitogas(engine: &mut Engine) -> Status {
+    engine.load_instruction(Instruction::new("TOMITOGAS"))?;
     fetch_stack(engine, 1)?;
     let nanocoins_input = engine.cmd.var(0);
     let gas = if nanocoins_input.as_integer()?.is_neg() {
         0
     } else {
         let nanocoins = nanocoins_input.as_integer()?;
-        gramtogas(engine, nanocoins)?
+        tomitogas(engine, nanocoins)?
     };
     engine.cc.stack.push(int!(gas));
     Ok(())
@@ -85,9 +85,9 @@ pub fn execute_gasconsumed(engine: &mut Engine) -> Status {
 }
 
 // Application-specific primitives - A.10; Gas-related primitives - A.10.2
-// GASTOGRAM - F805
-pub fn execute_gastogram(engine: &mut Engine) -> Status {
-    engine.load_instruction(Instruction::new("GASTOGRAM"))?;
+// GASTOTOMI - F805
+pub fn execute_gastotomi(engine: &mut Engine) -> Status {
+    engine.load_instruction(Instruction::new("GASTOTOMI"))?;
     fetch_stack(engine, 1)?;
     let gas = engine.cmd.var(0).as_integer()?;
     let gas_price = engine.get_gas().get_gas_price();

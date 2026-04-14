@@ -1,5 +1,5 @@
 [package]
-description = 'Minimal wrappers for TON serialization using TL-schema'
+description = 'Minimal wrappers for TOS serialization using TL-schema'
 edition = '2021'
 license = 'GPL-3.0'
 name = 'tl_api'

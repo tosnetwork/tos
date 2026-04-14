@@ -12,4 +12,4 @@ To profile:
   (output is at target/criterion/<bench-name>/profile/flamegraph.svg)
 
 To benchmark the original VM:
-  TON=/tonlabs/ton hyperfine --warmup 10 "./run-fift.sh run-tiny-loop.fif"
+  TOS=/toslabs/tos hyperfine --warmup 10 "./run-fift.sh run-tiny-loop.fif"

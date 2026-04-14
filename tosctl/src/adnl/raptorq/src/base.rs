@@ -142,7 +142,7 @@ impl ObjectTransmissionInformation {
 
     #[deprecated(note = "\
         RFC 5052 wire format, only encodes symbol_size as u16. \
-        Not used in TON — TL serialization is used instead\
+        Not used in TOS — TL serialization is used instead\
     ")]
     pub fn deserialize(data: &[u8; 12]) -> ObjectTransmissionInformation {
         ObjectTransmissionInformation {
@@ -160,7 +160,7 @@ impl ObjectTransmissionInformation {
 
     #[deprecated(note = "\
         RFC 5052 wire format, only encodes symbol_size as u16. \
-        Not used in TON — TL serialization is used instead\
+        Not used in TOS — TL serialization is used instead\
     ")]
     pub fn serialize(&self) -> [u8; 12] {
         [

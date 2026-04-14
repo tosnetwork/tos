@@ -183,7 +183,7 @@ fn make_hash(fill: u8) -> [u8; 32] {
     [fill; 32]
 }
 
-/// Test vectors for tonNode.customOverlayId
+/// Test vectors for tosNode.customOverlayId
 #[test]
 fn test_custom_overlay_id() {
     // Test 1: zero hash, name="test_overlay", no nodes
@@ -216,7 +216,7 @@ fn test_custom_overlay_id() {
     );
 }
 
-/// Test vectors for tonNode.fastSyncOverlayId
+/// Test vectors for tosNode.fastSyncOverlayId
 #[test]
 fn test_fast_sync_overlay_id() {
     // Test 1: zero hash, masterchain, full shard

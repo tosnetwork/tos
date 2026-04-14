@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2024 TON Labs. All Rights Reserved.
+ * Copyright (C) 2019-2024 TOS Labs. All Rights Reserved.
  * Modifications Copyright (C) 2025-2026 RSquad Blockchain Lab.
  *
  * Licensed under the GNU General Public License v3.0.

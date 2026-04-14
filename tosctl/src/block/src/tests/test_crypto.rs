@@ -188,6 +188,6 @@ fn test_lz4() {
 }
 
 #[test]
-fn test_check_ton_method_id() {
-    assert_eq!(ton_method_id("seqno"), 0x14C97);
+fn test_check_tos_method_id() {
+    assert_eq!(tos_method_id("seqno"), 0x14C97);
 }

@@ -10,7 +10,7 @@
  */
 use std::{fs, io::Read, path, path::Path};
 
-const OUTPUT_DIR: &str = "api/src/ton";
+const OUTPUT_DIR: &str = "api/src/tos";
 const TL_DIR: &str = "api/tl";
 
 fn main() {

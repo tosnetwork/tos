@@ -10,7 +10,7 @@
  */
 use super::*;
 use chain_block::{
-    base64_decode, read_single_root_boc, ton_method_id, Coins, CurrencyCollection,
+    base64_decode, read_single_root_boc, tos_method_id, Coins, CurrencyCollection,
     InternalMessageHeader, Message, MsgAddressInt, ShardAccount,
 };
 
@@ -66,9 +66,9 @@ fn test_smart_contract_info_internal_message_info_uses_fwd_fee() {
 
 #[test]
 fn test_run_get_method_seqno_with_config() {
-    let mc_state_name = "../block/src/tests/data/free-ton-mc-state-61884";
+    let mc_state_name = "../block/src/tests/data/free-tos-mc-state-61884";
     let mc_state_cell = Cell::read_from_file(mc_state_name);
-    let method_id = ton_method_id("seqno");
+    let method_id = tos_method_id("seqno");
     assert_eq!(method_id, 0x14C97);
 
     let mc_state = ShardStateUnsplit::construct_from_cell(mc_state_cell.clone()).unwrap();
@@ -92,9 +92,9 @@ fn test_run_get_method_seqno_with_config() {
 
 #[test]
 fn test_run_get_method_seqno_with_elector() {
-    let mc_state_name = "../block/src/tests/data/free-ton-mc-state-61884";
+    let mc_state_name = "../block/src/tests/data/free-tos-mc-state-61884";
     let mc_state_cell = Cell::read_from_file(mc_state_name);
-    let method_id = ton_method_id("seqno");
+    let method_id = tos_method_id("seqno");
     assert_eq!(method_id, 0x14C97);
 
     let mc_state = ShardStateUnsplit::construct_from_cell(mc_state_cell.clone()).unwrap();
@@ -191,7 +191,7 @@ fn maybe_dump_external_boc_response(result: &tl_api::tos::smc::runresult::RunRes
         "exit_code": result.exit_code,
         "gas_used": result.gas_used,
         "method": "participant_list_extended",
-        "method_id": ton_method_id("participant_list_extended"),
+        "method_id": tos_method_id("participant_list_extended"),
         "stack": stack_to_json(&result.stack),
     });
     let pretty = serde_json::to_string_pretty(&payload).expect("serialize response to json");
@@ -215,7 +215,7 @@ fn load_elector_shard_account() -> ShardAccount {
 }
 
 fn load_mc_state_cell() -> Cell {
-    let mc_state_name = "../block/src/tests/data/free-ton-mc-state-61884";
+    let mc_state_name = "../block/src/tests/data/free-tos-mc-state-61884";
     Cell::read_from_file(mc_state_name)
 }
 
@@ -226,7 +226,7 @@ fn run_elector_method(
     let shard_account = load_elector_shard_account();
     let mc_state_cell = load_mc_state_cell();
     let mc_state = ShardStateUnsplit::construct_from_cell(mc_state_cell.clone()).unwrap();
-    let method_id = ton_method_id(method);
+    let method_id = tos_method_id(method);
     run_smc_method(
         &shard_account.read_account().unwrap(),
         mc_state_cell,
@@ -269,7 +269,7 @@ fn run_external_elector_method(
     let shard_account = load_external_elector_shard_account();
     let mc_state_cell = load_mc_state_cell();
     let mc_state = ShardStateUnsplit::construct_from_cell(mc_state_cell.clone()).unwrap();
-    let method_id = ton_method_id(method);
+    let method_id = tos_method_id(method);
     run_smc_method(
         &shard_account.read_account().unwrap(),
         mc_state_cell,

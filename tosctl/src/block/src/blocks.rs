@@ -975,7 +975,7 @@ impl Serializable for BlockExtra {
 ///   minted:CurrencyCollection
 ///   ] = ValueFlow;
 ///
-/// TON Blockchain 4.3.5:
+/// TOS Blockchain 4.3.5:
 /// The TL-B construct _:ˆ[...] describes a reference to a cell containing the fields
 /// listed inside the square brackets. In this way, several fields can be moved from
 /// a cell containing a large record into a separate subcell.

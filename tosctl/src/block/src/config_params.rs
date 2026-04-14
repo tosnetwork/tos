@@ -631,9 +631,9 @@ pub enum ConfigParamEnum {
     ConfigParam71(OracleBridgeParams), // Ethereum bridge
     ConfigParam72(OracleBridgeParams), // Binance Smart Chain bridge
     ConfigParam73(OracleBridgeParams), // Polygon bridge
-    ConfigParam79(JettonBridgeParams), // ETH->TON token bridge
-    ConfigParam81(JettonBridgeParams), // BNB->TON token bridge
-    ConfigParam82(JettonBridgeParams), // Polygon->TON token bridge
+    ConfigParam79(JettonBridgeParams), // ETH->TOS token bridge
+    ConfigParam81(JettonBridgeParams), // BNB->TOS token bridge
+    ConfigParam82(JettonBridgeParams), // Polygon->TOS token bridge
     ConfigParamAny(u32, Cell),
 }
 
@@ -3782,7 +3782,7 @@ const SIMPLEX_CONFIG_TAG: u8 = 0x21;
 const SIMPLEX_CONFIG_V2_TAG: u8 = 0x22;
 
 /// Named noncritical consensus parameters, mirroring the C++ `NoncriticalParams` struct
-/// defined via `ENUMERATE_NONCRITICAL_PARAMS` in `ton-types.h`.
+/// defined via `ENUMERATE_NONCRITICAL_PARAMS` in `tos-types.h`.
 ///
 /// All fields have concrete default values matching C++. For v1 configs the three
 /// on-chain fields (`target_rate_ms`, `first_block_timeout_ms`, `max_leader_window_desync`)
@@ -3890,7 +3890,7 @@ impl NoncriticalParams {
 /// produced by deserializing either `simplex_config#21` (v1) or
 /// `simplex_config_v2#22` (v2) from ConfigParam 30.
 ///
-/// Mirrors C++ `NewConsensusConfig` in `ton-types.h`: critical fields
+/// Mirrors C++ `NewConsensusConfig` in `tos-types.h`: critical fields
 /// (`use_quic`, `slots_per_leader_window`) live at top level; all tunable
 /// timing/rate parameters live inside `noncritical_params`.
 #[derive(Clone, Debug, Eq, PartialEq)]

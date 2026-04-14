@@ -27,7 +27,7 @@ pub struct RawFullAccountState {
     pub code: Option<String>,
     pub data: Option<String>,
     pub last_transaction_id: InternalTransactionId,
-    pub block_id: TonBlockIdExt,
+    pub block_id: TosBlockIdExt,
     pub frozen_hash: Option<String>,
     pub sync_utime: u64,
     #[serde(rename = "@extra")]
@@ -41,7 +41,7 @@ pub struct FullAccountState {
     pub address: AccountAddress,
     pub balance: String,
     pub last_transaction_id: InternalTransactionId,
-    pub block_id: TonBlockIdExt,
+    pub block_id: TosBlockIdExt,
     pub sync_utime: u64,
     pub account_state: AccountState,
     pub revision: i32,
@@ -71,9 +71,9 @@ pub struct InternalTransactionId {
     pub hash: String,
 }
 
-/// Represents `@type: ton.blockIdExt`.
+/// Represents `@type: tos.blockIdExt`.
 #[derive(Debug, Deserialize)]
-pub struct TonBlockIdExt {
+pub struct TosBlockIdExt {
     pub workchain: i32,
     pub shard: String,
     pub seqno: u32,
@@ -164,9 +164,9 @@ pub struct AddressFormat {
 /// Represents `@type: blocks.masterchainInfo`.
 #[derive(Debug, Deserialize)]
 pub struct BlocksMasterchainInfo {
-    pub last: TonBlockIdExt,
+    pub last: TosBlockIdExt,
     pub state_root_hash: String,
-    pub init: TonBlockIdExt,
+    pub init: TosBlockIdExt,
     #[serde(rename = "@extra")]
     pub extra: String,
 }
@@ -175,7 +175,7 @@ pub struct BlocksMasterchainInfo {
 pub struct MasterchainBlockSignatures {
     #[serde(rename = "@type")]
     pub type_field: String,
-    pub id: TonBlockIdExt,
+    pub id: TosBlockIdExt,
     pub signatures: Vec<BlocksSignature>,
     #[serde(rename = "@extra")]
     pub extra: String,
@@ -191,8 +191,8 @@ pub struct BlocksSignature {
 /// Represents `@type: blocks.shardBlockProof`.
 #[derive(Debug, Deserialize)]
 pub struct BlocksShardBlockProof {
-    pub from: TonBlockIdExt,
-    pub mc_id: TonBlockIdExt,
+    pub from: TosBlockIdExt,
+    pub mc_id: TosBlockIdExt,
     pub links: Vec<BlocksShardBlockLink>,
     pub mc_proof: Vec<BlocksBlockLinkBack>,
     #[serde(rename = "@extra")]
@@ -202,7 +202,7 @@ pub struct BlocksShardBlockProof {
 /// Represents `@type: blocks.shardBlockLink`.
 #[derive(Debug, Deserialize)]
 pub struct BlocksShardBlockLink {
-    pub id: TonBlockIdExt,
+    pub id: TosBlockIdExt,
     pub proof: String,
 }
 
@@ -210,8 +210,8 @@ pub struct BlocksShardBlockLink {
 #[derive(Debug, Deserialize)]
 pub struct BlocksBlockLinkBack {
     pub to_key_block: bool,
-    pub from: TonBlockIdExt,
-    pub to: TonBlockIdExt,
+    pub from: TosBlockIdExt,
+    pub to: TosBlockIdExt,
     pub dest_proof: String,
     pub proof: String,
     pub state_proof: String,
@@ -226,7 +226,7 @@ pub struct ConsensusBlock {
 /// Represents `@type: blocks.shards`.
 #[derive(Debug, Deserialize)]
 pub struct BlocksShards {
-    pub shards: Vec<TonBlockIdExt>,
+    pub shards: Vec<TosBlockIdExt>,
     #[serde(rename = "@extra")]
     pub extra: Option<String>,
 }
@@ -234,7 +234,7 @@ pub struct BlocksShards {
 /// Represents `@type: blocks.transactions`.
 #[derive(Debug, Deserialize)]
 pub struct BlocksTransactions {
-    pub id: TonBlockIdExt,
+    pub id: TosBlockIdExt,
     pub req_count: u32,
     pub incomplete: bool,
     pub transactions: Vec<BlocksShortTxId>,
@@ -254,7 +254,7 @@ pub struct BlocksShortTxId {
 /// Represents `@type: blocks.header`.
 #[derive(Debug, Deserialize)]
 pub struct BlocksHeader {
-    pub id: TonBlockIdExt,
+    pub id: TosBlockIdExt,
     pub global_id: i32,
     pub version: u32,
     pub flags: u32,
@@ -271,7 +271,7 @@ pub struct BlocksHeader {
     pub start_lt: String,
     pub end_lt: String,
     pub gen_utime: u64,
-    pub prev_blocks: Vec<TonBlockIdExt>,
+    pub prev_blocks: Vec<TosBlockIdExt>,
     #[serde(rename = "@extra")]
     pub extra: Option<String>,
 }

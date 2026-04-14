@@ -387,7 +387,7 @@ fn test_serialization_shard_fees() {
 
 #[test]
 fn test_get_next_prev_key_block() {
-    let bytes = std::fs::read("src/tests/data/free-ton-mc-state-61884").unwrap();
+    let bytes = std::fs::read("src/tests/data/free-tos-mc-state-61884").unwrap();
     let root = read_single_root_boc(&bytes).unwrap();
     let shard_state = ShardStateUnsplit::construct_from_cell(root).unwrap();
     let prev_blocks = &shard_state.read_custom().unwrap().unwrap().prev_blocks;

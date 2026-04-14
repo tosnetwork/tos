@@ -1,5 +1,5 @@
 /*
- * Copyright 2018-2022 TON DEV SOLUTIONS LTD.
+ * Copyright 2018-2022 TOS DEV SOLUTIONS LTD.
  * Modifications Copyright (C) 2025-2026 RSquad Blockchain Lab.
  *
  * Licensed under the Apache License, Version 2.0.

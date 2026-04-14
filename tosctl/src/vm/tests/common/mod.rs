@@ -22,7 +22,7 @@ use chain_block::{
 use tos_vm::stack::StackItem;
 
 pub static MC_STATE_ROOT: LazyLock<Cell> = LazyLock::new(|| {
-    let mc_state_name = "../block/src/tests/data/free-ton-mc-state-61884";
+    let mc_state_name = "../block/src/tests/data/free-tos-mc-state-61884";
     // this code to modify config params real state
     let mut mc_state = ShardStateUnsplit::construct_from_file(mc_state_name).unwrap();
     let mut extra = mc_state.read_custom().unwrap().unwrap();

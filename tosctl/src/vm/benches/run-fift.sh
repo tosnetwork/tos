@@ -1,2 +1,2 @@
 #!/bin/sh
-$TON/build/crypto/fift -I $TON/crypto/fift/lib $@
+$TOS/build/crypto/fift -I $TOS/crypto/fift/lib $@

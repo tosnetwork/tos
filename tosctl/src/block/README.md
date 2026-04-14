@@ -1,3 +1,3 @@
-# ton-block
+# tos-block
 
-Data types and operations for TON blockchain structures: blocks, messages, transactions, accounts, cells, dictionaries, Merkle proofs, and more.
+Data types and operations for TOS blockchain structures: blocks, messages, transactions, accounts, cells, dictionaries, Merkle proofs, and more.

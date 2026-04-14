@@ -175,7 +175,7 @@ pub struct OverlayUtils;
 
 impl OverlayUtils {
     /// Calculate overlay full ID for public shard overlay
-    /// SHA256(TL(tonNode.shardPublicOverlayId))
+    /// SHA256(TL(tosNode.shardPublicOverlayId))
     pub fn calc_overlay_id(
         workchain: i32,
         shard: i64,
@@ -190,7 +190,7 @@ impl OverlayUtils {
     }
 
     /// Calculate overlay short ID for public shard overlay
-    /// SHA256(TL(pub.overlay { name: SHA256(TL(tonNode.shardPublicOverlayId)) }))
+    /// SHA256(TL(pub.overlay { name: SHA256(TL(tosNode.shardPublicOverlayId)) }))
     pub fn calc_overlay_short_id(
         workchain: i32,
         shard: i64,
@@ -213,7 +213,7 @@ impl OverlayUtils {
     }
 
     /// Calculate overlay short ID for custom overlay
-    /// SHA256(TL(pub.overlay { name: SHA256(TL(tonNode.customOverlayId)) }))
+    /// SHA256(TL(pub.overlay { name: SHA256(TL(tosNode.customOverlayId)) }))
     pub fn calc_custom_overlay_short_id(
         zero_state_file_hash: &[u8; 32],
         name: &str,
@@ -232,7 +232,7 @@ impl OverlayUtils {
     }
 
     /// Calculate overlay short ID for fast sync overlay
-    /// SHA256(TL(pub.overlay { name: SHA256(TL(tonNode.fastSyncOverlayId)) }))
+    /// SHA256(TL(pub.overlay { name: SHA256(TL(tosNode.fastSyncOverlayId)) }))
     pub fn calc_fast_sync_overlay_short_id(
         zero_state_file_hash: &[u8; 32],
         workchain: i32,

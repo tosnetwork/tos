@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2022 TON Labs. All Rights Reserved.
+ * Copyright (C) 2019-2022 TOS Labs. All Rights Reserved.
  * Modifications Copyright (C) 2025-2026 RSquad Blockchain Lab.
  *
  * Licensed under the GNU General Public License v3.0.
@@ -25,9 +25,9 @@ fn get_value(cmd: &str, args: &[&str]) -> String {
     "Unknown".to_string()
 }
 
-const OUTPUT_DIR: &str = "src/ton";
+const OUTPUT_DIR: &str = "src/tos";
 const TL_DIR: &str = "tl";
-const TL_FILES: [&str; 3] = ["lite_api.tl", "ton_api.tl", "tonlib_api.tl"];
+const TL_FILES: [&str; 3] = ["lite_api.tl", "tos_api.tl", "toslib_api.tl"];
 
 fn main() {
     // TODO: This line was commented because of different behavior of cargo in rust ver 1.50.

@@ -854,7 +854,7 @@ where
     where
         T: IntoIterator<Item = S>,
     {
-        let mut tokens = quote!(crate::ton);
+        let mut tokens = quote!(crate::tos);
         let mut idents = vec![];
         let mut iter = iter.into_iter();
         if let Some(mut last_segment) = iter.next() {
@@ -1203,7 +1203,7 @@ impl TypeIR {
 
     fn contained(&self) -> (TokenStream, bool) {
         let Some((idents, bare)) = &self.contained else { panic!("Wrong type name") };
-        let mut tokens = quote!(crate::ton);
+        let mut tokens = quote!(crate::tos);
         for ident in idents {
             tokens = quote!(#tokens::#ident);
         }
@@ -1548,7 +1548,7 @@ impl Constructor<TypeIR, FieldIR> {
     fn as_signing_trait_impl(&self) -> TokenStream {
         for f in &self.fields {
             if f.name() == "signature" {
-                if f.ty.field_type().to_string() == "crate :: ton :: bytes" {
+                if f.ty.field_type().to_string() == "crate :: tos :: bytes" {
                     let name = self.variant_name();
                     return quote!(
                         impl crate::Signing for #name {
@@ -1660,7 +1660,7 @@ impl Constructor<TypeIR, FieldIR> {
     fn as_variant_type_struct(&self, config: &Option<Config>, matched: &str) -> TokenStream {
         if self.variant_name() == "BlockIdExt" {
             let tl_id = self.tl_id().unwrap();
-            if self.original_variant == "ton.blockIdExt" {
+            if self.original_variant == "tos.blockIdExt" {
                 return quote! {
                     pub(crate) type BlockIdExt = chain_block::BlockIdExt;
                 };
@@ -2256,7 +2256,7 @@ pub fn generate_code_for(config: Option<Config>, input: &str, path: &Path) {
     let prelude = quote! {
         #![allow(bare_trait_objects, unused_variables, unused_imports, non_snake_case)]
         #![allow(clippy::module_inception)]
-        pub use crate::ton_prelude::*;
+        pub use crate::tos_prelude::*;
     };
 
     constructors.print_tokens(&config, prelude, path);

@@ -5,7 +5,7 @@ use crate::models::{
     BlocksHeader, BlocksMasterchainInfo, BlocksShardBlockProof, BlocksShards, BlocksTransactions,
     ConfigInfo, ConsensusBlock, DetectAddressResult, FullAccountState, JsonRpcRequest,
     MasterchainBlockSignatures, QueryFees, RawExtMessageInfo, RawFullAccountState, RawTransaction,
-    SmcRunResult, Success, TokenData, TonBlockIdExt, WalletInformation,
+    SmcRunResult, Success, TokenData, TosBlockIdExt, WalletInformation,
 };
 
 pub struct ApiClientV2 {
@@ -27,7 +27,7 @@ impl ApiClientV2 {
     ///
     /// # Parameters
     ///
-    /// * `address` - Identifier of the target TON account in any form.
+    /// * `address` - Identifier of the target TOS account in any form.
     pub async fn get_address_information(
         &self,
         address: &str,
@@ -42,12 +42,12 @@ impl ApiClientV2 {
     /// Get extended information about the address.
     ///
     /// Similar to the previous method but tries to parse additional information for known contract types.
-    /// This method is based on tonlib's function `getAccountState`.
+    /// This method is based on toslib's function `getAccountState`.
     /// For detecting wallets, we recommend using `getWalletInformation`.
     ///
     /// # Parameters
     ///
-    /// * `address` - Identifier of the target TON account in any form.
+    /// * `address` - Identifier of the target TOS account in any form.
     pub async fn get_extended_address_information(
         &self,
         address: &str,
@@ -66,7 +66,7 @@ impl ApiClientV2 {
     ///
     /// # Parameters
     ///
-    /// * `address` - Identifier of the target TON account in any form.
+    /// * `address` - Identifier of the target TOS account in any form.
     pub async fn get_wallet_information(
         &self,
         address: &str,
@@ -82,7 +82,7 @@ impl ApiClientV2 {
     ///
     /// # Parameters
     ///
-    /// * `address` - Identifier of the target TON account in any form.
+    /// * `address` - Identifier of the target TOS account in any form.
     /// * `limit` - Maximum number of transactions in response (optional).
     /// * `lt` - Logical time of transaction to start with, must be sent with `hash` (optional).
     /// * `hash` - Hash of transaction to start with, in `base64` or `hex` encoding, must be sent with `lt` (optional).
@@ -122,11 +122,11 @@ impl ApiClientV2 {
             .await
     }
 
-    /// Get balance (in nanotons) of a given address.
+    /// Get balance (in nanotomis) of a given address.
     ///
     /// # Parameters
     ///
-    /// * `address` - Identifier of the target TON account in any form.
+    /// * `address` - Identifier of the target TOS account in any form.
     pub async fn get_address_balance(&self, address: &str) -> Result<String, ToscenterError> {
         let params = [("address", address)];
 
@@ -139,7 +139,7 @@ impl ApiClientV2 {
     ///
     /// # Parameters
     ///
-    /// * `address` - Identifier of the target TON account in any form.
+    /// * `address` - Identifier of the target TOS account in any form.
     pub async fn get_address_state(&self, address: &str) -> Result<String, ToscenterError> {
         let params = [("address", address)];
 
@@ -152,7 +152,7 @@ impl ApiClientV2 {
     ///
     /// # Parameters
     ///
-    /// * `address` - Identifier of the target TON account in raw form.
+    /// * `address` - Identifier of the target TOS account in raw form.
     pub async fn pack_address(&self, address: &str) -> Result<String, ToscenterError> {
         let params = [("address", address)];
 
@@ -165,7 +165,7 @@ impl ApiClientV2 {
     ///
     /// # Parameters
     ///
-    /// * `address` - Identifier of the target TON account in user-friendly form.
+    /// * `address` - Identifier of the target TOS account in user-friendly form.
     pub async fn unpack_address(&self, address: &str) -> Result<String, ToscenterError> {
         let params = [("address", address)];
 
@@ -191,7 +191,7 @@ impl ApiClientV2 {
     ///
     /// # Parameters
     ///
-    /// * `address` - Identifier of the target TON account in any form.
+    /// * `address` - Identifier of the target TOS account in any form.
     pub async fn detect_address(
         &self,
         address: &str,
@@ -207,7 +207,7 @@ impl ApiClientV2 {
     ///
     /// # Parameters
     ///
-    /// * `address` - Identifier of the target TON account in any form.
+    /// * `address` - Identifier of the target TOS account in any form.
     pub async fn get_masterchain_info(&self) -> Result<BlocksMasterchainInfo, ToscenterError> {
         self.base_client
             .get(&self.base_url, "getMasterchainInfo", &[])
@@ -288,7 +288,7 @@ impl ApiClientV2 {
         seqno: Option<u32>,
         lt: Option<u64>,
         unixtime: Option<u64>,
-    ) -> Result<TonBlockIdExt, ToscenterError> {
+    ) -> Result<TosBlockIdExt, ToscenterError> {
         let mut params: Vec<(&str, String)> = vec![
             ("workchain", workchain.to_string()),
             ("shard", shard.to_string()),

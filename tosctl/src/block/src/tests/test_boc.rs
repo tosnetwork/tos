@@ -364,7 +364,7 @@ fn test_number_of_bytes_to_fit() {
 
 #[test]
 fn test_crc_pure() {
-    // Some part of crc module's test from real ton sorces
+    // Some part of crc module's test from real tos sources
     assert_eq!(crc32_digest([0; 32]), 0x8a9136aa);
     assert_eq!(crc32_digest([0xff; 32]), 0x62a8ab43);
     let data = [

@@ -685,7 +685,7 @@ impl QuicNode {
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(QuicServerCertVerifier))
             .with_client_cert_resolver(Arc::new(QuicCertResolver(client_certified_key)));
-        client_tls.alpn_protocols = vec![b"ton".to_vec()];
+        client_tls.alpn_protocols = vec![b"tos".to_vec()];
 
         let mut quinn_client_config = quinn::ClientConfig::new(Arc::new(
             quinn::crypto::rustls::QuicClientConfig::try_from(client_tls)
@@ -1175,7 +1175,7 @@ impl QuicNode {
         let mut tls_config = rustls::ServerConfig::builder()
             .with_client_cert_verifier(verifier.clone())
             .with_cert_resolver(server_cert_resolver.clone());
-        tls_config.alpn_protocols = vec![b"ton".to_vec()];
+        tls_config.alpn_protocols = vec![b"tos".to_vec()];
 
         let mut quinn_server_config = quinn::ServerConfig::with_crypto(Arc::new(
             quinn::crypto::rustls::QuicServerConfig::try_from(tls_config)
@@ -1551,7 +1551,7 @@ impl QuicNode {
         let mut tls_config = rustls::ServerConfig::builder()
             .with_client_cert_verifier(verifier)
             .with_cert_resolver(resolver);
-        tls_config.alpn_protocols = vec![b"ton".to_vec()];
+        tls_config.alpn_protocols = vec![b"tos".to_vec()];
 
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(
             quinn::crypto::rustls::QuicServerConfig::try_from(tls_config)

@@ -1,4 +1,4 @@
-# RFC: TON BOC Improved Structure LZ4 Compression Format
+# RFC: TOS BOC Improved Structure LZ4 Compression Format
 
 **Date:** December 2025
 **Updated:** January 2026
@@ -6,7 +6,7 @@
 ## Abstract
 
 This document specifies the data format for the Improved Structure LZ4
-compression algorithm used to serialize and compress TON Bag of Cells (BOC)
+compression algorithm used to serialize and compress TOS Bag of Cells (BOC)
 structures. The format provides an optimized representation of cell graphs
 that achieves better compression ratios compared to baseline LZ4 compression
 by exploiting the structural properties of cell DAGs.
@@ -30,7 +30,7 @@ by exploiting the structural properties of cell DAGs.
 
 ## 1. Introduction
 
-The TON blockchain uses Bag of Cells (BOC) as a fundamental data structure
+The TOS blockchain uses Bag of Cells (BOC) as a fundamental data structure
 for representing hierarchical cell trees. Cells contain data bits and
 references to child cells, forming a directed acyclic graph (DAG).
 
@@ -55,7 +55,7 @@ This document covers:
 
 ## 2. Terminology
 
-**Cell**: A fundamental TON data structure containing up to 1023 data bits
+**Cell**: A fundamental TOS data structure containing up to 1023 data bits
 and up to 4 references to child cells.
 
 **BOC (Bag of Cells)**: A collection of cells with designated root cells.

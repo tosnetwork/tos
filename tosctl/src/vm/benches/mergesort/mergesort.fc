@@ -116,7 +116,7 @@ int itat(tuple tt, int idx) {
     return (arr, ());
 }
 
-;; ton/crypto/vm must be patched with vm.patch
+;; tos/crypto/vm must be patched with vm.patch
 () bench() impure asm "237 DEBUG";
 
 (tuple) main(int len, tuple arr) {

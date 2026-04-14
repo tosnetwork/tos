@@ -203,10 +203,10 @@ fn buygas_negative() {
 }
 
 #[test]
-fn gramtogas() {
+fn tomitogas() {
     test_case(
         "PUSHINT 10
-         GRAMTOGAS",
+         TOMITOGAS",
     )
     .with_gas(Gas::test_with_limit(1000))
     .skip_fift_check() // temporarily disable fift while no implementation
@@ -215,10 +215,10 @@ fn gramtogas() {
 }
 
 #[test]
-fn gramtogas_neg() {
+fn tomitogas_neg() {
     test_case(
         "PUSHINT -10
-         GRAMTOGAS",
+         TOMITOGAS",
     )
     .with_gas(Gas::test_with_limit(1000))
     .skip_fift_check() // temporarily disable fift while no implementation
@@ -227,11 +227,11 @@ fn gramtogas_neg() {
 }
 
 #[test]
-fn gramtogas_spec_limit() {
+fn tomitogas_spec_limit() {
     let bigint = (num::BigInt::from(i64::MAX) + 7) * 10;
     test_case(format!(
         "PUSHINT {}
-         GRAMTOGAS",
+         TOMITOGAS",
         bigint
     ))
     .with_gas(Gas::test_with_limit(1000))
@@ -241,8 +241,8 @@ fn gramtogas_spec_limit() {
 }
 
 #[test]
-fn gramtogas_fail_stack_underflow() {
-    test_case("GRAMTOGAS")
+fn tomitogas_fail_stack_underflow() {
+    test_case("TOMITOGAS")
         .with_gas(Gas::test_with_limit(1000))
         .skip_fift_check() // temporarily disable fift while no implementation
         .expect_gas(1000000000, 1000, 0, 924)
@@ -255,10 +255,10 @@ fn gasconsumed() {
 }
 
 #[test]
-fn gastogram() {
+fn gastotomi() {
     test_case(
         "PUSHINT 200
-         GASTOGRAM",
+         GASTOTOMI",
     )
     .with_gas(Gas::test_with_limit(1000))
     .skip_fift_check() // temporarily disable fift while no implementation
@@ -267,10 +267,10 @@ fn gastogram() {
 }
 
 #[test]
-fn gastogram_neg() {
+fn gastotomi_neg() {
     test_case(
         "PUSHINT -10
-         GASTOGRAM",
+         GASTOTOMI",
     )
     .with_gas(Gas::test_with_limit(1000))
     .skip_fift_check() // temporarily disable fift while no implementation
@@ -279,11 +279,11 @@ fn gastogram_neg() {
 }
 
 #[test]
-fn gastogram_max() {
+fn gastotomi_max() {
     test_case(format!(
         "
         PUSHINT {}
-        GASTOGRAM
+        GASTOTOMI
     ",
         i64::MAX
     ))
@@ -292,8 +292,8 @@ fn gastogram_max() {
 }
 
 #[test]
-fn gastogram_fail_stack_underflow() {
-    test_case("GASTOGRAM")
+fn gastotomi_fail_stack_underflow() {
+    test_case("GASTOTOMI")
         .with_gas(Gas::test_with_limit(1000))
         .skip_fift_check() // temporarily disable fift while no implementation
         .expect_gas(1000000000, 1000, 0, 924)
@@ -301,24 +301,24 @@ fn gastogram_fail_stack_underflow() {
 }
 
 #[test]
-fn gastogram_o_gramtogas_eq_identity() {
+fn gastotomi_o_tomitogas_eq_identity() {
     test_case(
         "
         PUSHINT 10000
-        GASTOGRAM
-        GRAMTOGAS",
+        GASTOTOMI
+        TOMITOGAS",
     )
     .skip_fift_check() // temporarily disable fift while no implementation
     .expect_item(int!(10000));
 }
 
 #[test]
-fn gramtogas_o_gastogram_eq_identity() {
+fn tomitogas_o_gastotomi_eq_identity() {
     test_case(
         "
         PUSHINT 1000000000
-        GRAMTOGAS
-        GASTOGRAM",
+        TOMITOGAS
+        GASTOTOMI",
     )
     .skip_fift_check() // temporarily disable fift while no implementation
     .expect_item(int!(1000000000));

@@ -8,7 +8,7 @@
  */
 //! # BOC Compression Module
 //!
-//! This module implements compression algorithms for TON Bag-of-Cells (BOC) serialization.
+//! This module implements compression algorithms for TOS Bag-of-Cells (BOC) serialization.
 //! It provides two compression algorithms:
 //!
 //! - **BaselineLZ4** (algorithm byte = 0x00): Simple LZ4 compression of standard BOC serialization.
@@ -67,7 +67,7 @@
 //! ## C++ Reference
 //!
 //! This implementation is designed to be wire-compatible with the C++ implementation in:
-//! `docs/ton-node-cpp/crypto/vm/boc-compression.cpp`
+//! `docs/tos-node-cpp/crypto/vm/boc-compression.cpp`
 //!
 //! Key C++ types and their Rust equivalents:
 //! - `td::BitSlice` / `td::BitString` → `BitSliceReader` / `BitStringWriter`
@@ -207,7 +207,7 @@ pub fn boc_decompress_baseline_lz4(compressed: Vec<u8>, max_size: usize) -> Resu
 //
 // This section implements the structure-aware BOC compression algorithm.
 // The C++ reference implementation is in:
-//   `docs/ton-node-cpp/crypto/vm/boc-compression.cpp`
+//   `docs/tos-node-cpp/crypto/vm/boc-compression.cpp`
 //
 // Key design principles:
 // 1. Cells are ordered by topological sort with specific tie-breaking rules
@@ -245,7 +245,7 @@ impl CellBits {
 // - `td::BitString` for writing
 //
 // Bit ordering: Within each byte, bit 0 is the MSB (byte >> 7), bit 7 is the LSB.
-// This matches the TON convention and C++ implementation.
+// This matches the TOS convention and C++ implementation.
 // ============================================================================
 
 /// MSB-first bit reader compatible with C++ `td::BitSlice`.
@@ -557,7 +557,7 @@ fn is_merkle_update_node(is_special: bool, builder: &BuilderData) -> bool {
 /// `Some(coins)` if the cell matches the expected format, `None` otherwise.
 ///
 /// # Note on Integer Size
-/// TON Coins is `VarUInteger 16` (up to 15 bytes = 120 bits), so `u128` is sufficient.
+/// TOS Coins is `VarUInteger 16` (up to 15 bytes = 120 bits), so `u128` is sufficient.
 /// Intermediate differences fit in `i128` since we only add/subtract coins values.
 fn extract_depth_balance_coins(cell: &Cell) -> Option<u128> {
     let mut cs = SliceData::load_cell_ref(cell).ok()?;
@@ -691,7 +691,7 @@ fn set_special_cell_type_from_data(builder: &mut BuilderData, is_special: bool) 
 /// td::Result<std::vector<td::Ref<vm::Cell>>>
 /// boc_decompress_improved_structure_lz4(td::Slice compressed, int max_decompressed_size)
 /// ```
-/// File: `docs/ton-node-cpp/crypto/vm/boc-compression.cpp`
+/// File: `docs/tos-node-cpp/crypto/vm/boc-compression.cpp`
 ///
 /// # Wire Format (after LZ4 decompression)
 ///
@@ -731,7 +731,7 @@ pub fn boc_decompress_improved_structure_lz4(
     compressed: Vec<u8>,
     max_size: usize,
 ) -> Result<Vec<Cell>> {
-    // Maximum cell data length in bits (TON limit)
+    // Maximum cell data length in bits (TOS limit)
     const K_MAX_CELL_DATA_LENGTH_BITS: usize = 1024;
     // Size of decompressed length header
     const K_DECOMPRESSED_SIZE_BYTES: usize = 4;
@@ -1209,7 +1209,7 @@ pub fn boc_decompress_improved_structure_lz4(
     // C++ reference: Lambda `build_right_under_mu` at line 695 in boc-compression.cpp
     //
     // Note on integer types:
-    // C++ uses `td::RefInt256` for arbitrary precision, but since TON Coins
+    // C++ uses `td::RefInt256` for arbitrary precision, but since TOS Coins
     // are limited to VarUInteger 16 (≤ 120 bits), we use `i128` which is
     // sufficient for sum/diff operations.
     // --------------------------------
@@ -1463,7 +1463,7 @@ pub fn boc_decompress_improved_structure_lz4(
 /// ```cpp
 /// const auto build_graph = [&](auto&& self, td::Ref<vm::Cell> cell, ...) -> td::Result<size_t>
 /// ```
-/// File: `docs/ton-node-cpp/crypto/vm/boc-compression.cpp`, lines 145-221
+/// File: `docs/tos-node-cpp/crypto/vm/boc-compression.cpp`, lines 145-221
 ///
 /// # Arguments
 /// * `cell` - The cell to process
@@ -1660,7 +1660,7 @@ fn build_graph_recursive(
 /// td::Result<td::BufferSlice>
 /// boc_compress_improved_structure_lz4(const std::vector<td::Ref<vm::Cell>>& boc_roots)
 /// ```
-/// File: `docs/ton-node-cpp/crypto/vm/boc-compression.cpp`, lines 122-422
+/// File: `docs/tos-node-cpp/crypto/vm/boc-compression.cpp`, lines 122-422
 ///
 /// # Encoder Notes
 /// - This encoder is wire-compatible with C++ including the MerkleUpdate optimization

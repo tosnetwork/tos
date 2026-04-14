@@ -323,7 +323,7 @@ pub fn keccak512_digest(data: impl AsRef<[u8]>) -> [u8; 64] {
 
 // CRC16 ----------------------------------------------------------------
 
-pub fn ton_method_id(method_id: &str) -> u32 {
+pub fn tos_method_id(method_id: &str) -> u32 {
     (crc16::State::<crc16::XMODEM>::calculate(method_id.as_bytes()) as u32 & 0xffff) | 0x10000
 }
 

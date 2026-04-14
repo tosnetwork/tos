@@ -23,7 +23,7 @@ use crate::{BuilderData, IBitstring, Serializable};
 // 4. Edge cases (special cells, bit alignment, large data)
 // 5. MerkleUpdate depth-balance reconstruction
 //
-// C++ Reference: docs/ton-node-cpp/crypto/vm/boc-compression.cpp
+// C++ Reference: docs/tos-node-cpp/crypto/vm/boc-compression.cpp
 // ============================================================================
 
 // ============================================

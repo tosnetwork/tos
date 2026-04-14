@@ -1,1 +1,1 @@
-use crate :: { Constructor , ConstructorOnly } ; use serde_derive :: { Serialize , Deserialize } ;pub (crate) type BlockIdExt = chain_block :: BlockIdExt ; pub (crate) const TL_TAG : u32 = 0x6752eb78 ;
+use crate :: { Constructor , ConstructorOnly } ; use serde_derive :: { Serialize , Deserialize } ;pub (crate) type BlockIdExt = chain_block :: BlockIdExt ; pub (crate) const TL_TAG : u32 = 0xb4ebeee3 ;

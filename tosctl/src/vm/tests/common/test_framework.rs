@@ -340,9 +340,9 @@ fn compare_with_fift(
     block_version: i32,
 ) {
     #[cfg(windows)]
-    let lib_name = "../../ton/build/crypto/Release/vm_run_shared.dll";
+    let lib_name = "../../tos/build/crypto/Release/vm_run_shared.dll";
     #[cfg(not(windows))]
-    let lib_name = "../../ton-node-cpp/build/crypto/libvm_run_shared.so";
+    let lib_name = "../../tos-node-cpp/build/crypto/libvm_run_shared.so";
     assert!(std::fs::exists(lib_name).unwrap());
     let lib = libloading::Library::new(lib_name).expect("no shared dll found");
     let code_cell = if bytecode != Cell::default() {

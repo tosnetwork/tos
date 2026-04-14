@@ -16,14 +16,14 @@ use tos_vm::{
     stack::{integer::IntegerData, Stack, StackItem},
 };
 
-mod ldgrams {
+mod ldtomis {
     use super::*;
 
     #[test]
     fn test_normal_flow() {
         test_case(
             "PUSHSLICE x1568_
-            LDGRAMS
+            LDTOMIS
             SEMPTY",
         )
         .expect_stack(Stack::new().push(int!(86)).push(boolean!(true)));
@@ -38,7 +38,7 @@ mod ldgrams {
         test_case(
             "PUSHSLICE x24856212348_
             LDVARUINT16
-            LDGRAMS
+            LDTOMIS
             SEMPTY",
         )
         .expect_stack(Stack::new().push(int!(18518)).push(int!(4660)).push(boolean!(true)));
@@ -48,7 +48,7 @@ mod ldgrams {
     fn test_cell_underflow() {
         test_case(
             "PUSHSLICE x158_
-            LDGRAMS",
+            LDTOMIS",
         )
         .expect_failure(ExceptionCode::CellUnderflow);
     }
@@ -98,7 +98,7 @@ mod ldvarint16 {
     }
 }
 
-mod stgrams {
+mod sttomis {
     use super::*;
 
     #[test]
@@ -106,11 +106,11 @@ mod stgrams {
         test_case(
             "NEWC
             PUSHINT 86
-            STGRAMS
+            STTOMIS
             ENDC
             CTOS
 
-            LDGRAMS
+            LDTOMIS
             SEMPTY",
         )
         .expect_stack(Stack::new().push(int!(86)).push(boolean!(true)));
@@ -118,7 +118,7 @@ mod stgrams {
         test_case(
             "NEWC
             PUSHINT 18518
-            STGRAMS
+            STTOMIS
             ENDC
             CTOS
 
@@ -130,14 +130,14 @@ mod stgrams {
         test_case(
             "NEWC
             PUSHINT 18518
-            STGRAMS
+            STTOMIS
             PUSHINT 4660
-            STGRAMS
+            STTOMIS
             ENDC
             CTOS
 
             LDVARUINT16
-            LDGRAMS
+            LDTOMIS
             SEMPTY",
         )
         .expect_stack(Stack::new().push(int!(18518)).push(int!(4660)).push(boolean!(true)));
@@ -148,7 +148,7 @@ mod stgrams {
         test_case(
             "NEWC
             PUSHINT -1
-            STGRAMS",
+            STTOMIS",
         )
         .expect_failure(ExceptionCode::RangeCheckError);
 
@@ -157,7 +157,7 @@ mod stgrams {
             PUSHINT 1
             PUSHINT 120
             LSHIFT
-            STGRAMS
+            STTOMIS
             ENDC",
         )
         .expect_failure(ExceptionCode::RangeCheckError);
@@ -168,7 +168,7 @@ mod stgrams {
             PUSHINT 120
             LSHIFT
             DEC
-            STGRAMS
+            STTOMIS
             ENDC",
         )
         .expect_success();
@@ -176,7 +176,7 @@ mod stgrams {
         test_case(
             "NEWC
             PUSHINT 0
-            STGRAMS",
+            STTOMIS",
         )
         .expect_success();
     }

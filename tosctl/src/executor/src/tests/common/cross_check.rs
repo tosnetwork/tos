@@ -87,11 +87,11 @@ pub(crate) fn cross_check(
     // assert!(extra.config.global_version() >= chain_block::SUPPORTED_VERSION, "global_version {} must be >= {}",
     //     config.global_version(), chain_block::SUPPORTED_VERSION);
     #[cfg(windows)]
-    let lib_name = "../../../ton/build/crypto/vm_run_shared.dll";
+    let lib_name = "../../../tos/build/crypto/vm_run_shared.dll";
     #[cfg(target_os = "linux")]
-    let lib_name = "../../ton-node-cpp/build/crypto/libvm_run_shared.so";
+    let lib_name = "../../tos-node-cpp/build/crypto/libvm_run_shared.so";
     #[cfg(target_os = "macos")]
-    let lib_name = "../../ton-node-cpp/build/crypto/libvm_run_shared.dylib";
+    let lib_name = "../../tos-node-cpp/build/crypto/libvm_run_shared.dylib";
 
     let lib = libloading::Library::new(lib_name).unwrap();
 
