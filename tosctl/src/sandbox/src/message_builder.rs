@@ -15,7 +15,7 @@ use chain_block::{
 /// # Examples
 ///
 /// ```ignore
-/// // Internal message with 1 TON and a body
+/// // Internal message with 1 TOS and a body
 /// let msg = MessageBuilder::internal(&src, &dst, 1_000_000_000)
 ///     .bounce(true)
 ///     .body(body_cell)
@@ -99,7 +99,8 @@ mod tests {
     use super::*;
 
     fn test_addr(wc: i8, id: u8) -> MsgAddressInt {
-        MsgAddressInt::standard(wc, [id; 32].into())
+        let account_id: chain_block::AccountId = [id; 32].into();
+        MsgAddressInt::standard(wc, account_id)
     }
 
     #[test]

@@ -12,6 +12,8 @@ pub mod message_builder;
 pub mod result;
 pub mod snapshot;
 pub mod treasury;
+#[cfg(test)]
+mod tests;
 
 pub use blockchain::Blockchain;
 pub use contract::{ContractProvider, SandboxContract};
