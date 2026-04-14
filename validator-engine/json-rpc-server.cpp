@@ -4194,6 +4194,11 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
   }
   auto addr = addr_r.move_as_ok();
 
+  // Optional seqno parameter (query token data at a specific MC block)
+  auto seqno_r = params.get_optional_int_field("seqno");
+  bool has_seqno = seqno_r.is_ok() && seqno_r.ok() > 0;
+  td::int32 seqno = has_seqno ? static_cast<td::int32>(seqno_r.ok()) : 0;
+
   // Serialize empty stack for runSmcMethod params
   vm::CellBuilder cb;
   vm::Stack empty_stack;
@@ -4208,42 +4213,25 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
   }
   auto params_boc = std::make_shared<td::BufferSlice>(params_boc_r.move_as_ok());
 
-  // Step 1: get latest mc block
-  auto mc_inner = tos::serialize_tl_object(
-      tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
-  auto mc_query = tos::serialize_tl_object(
-      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
+  // Step 2 lambda: given a resolved block, run get_jetton_data / get_nft_data
+  auto do_query_token = [addr, params_boc, req_id = std::move(req_id),
+                         self_id = actor_id(this), promise = std::move(promise)](
+      td::int32 blk_wc, td::int64 blk_shard, td::int32 blk_seqno,
+      td::Bits256 blk_root, td::Bits256 blk_file) mutable {
 
-  auto self_id = actor_id(this);
-  send_liteserver_query(std::move(mc_query),
-      [addr, params_boc, req_id = std::move(req_id), self_id,
-       promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
-        if (R.is_error()) {
-          promise.set_value(make_json_error(-32603,
-              PSTRING() << "getMasterchainInfo: " << R.error(), req_id));
-          return;
-        }
-        auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(
-            R.move_as_ok(), true);
-        if (mc_r.is_error()) {
-          promise.set_value(make_json_error(-32603,
-              PSTRING() << "parse mcInfo: " << mc_r.error(), req_id));
-          return;
-        }
-        auto mc = mc_r.move_as_ok();
-
-        // Save block ID components for reuse in NFT fallback
-        auto saved_wc = mc->last_->workchain_;
-        auto saved_shard = mc->last_->shard_;
-        auto saved_seqno = mc->last_->seqno_;
-        auto saved_root = mc->last_->root_hash_;
-        auto saved_file = mc->last_->file_hash_;
+        auto saved_wc = blk_wc;
+        auto saved_shard = blk_shard;
+        auto saved_seqno = blk_seqno;
+        auto saved_root = blk_root;
+        auto saved_file = blk_file;
 
         // Step 2: try get_jetton_data
         td::int64 jetton_method_id = (td::crc16(td::Slice("get_jetton_data")) & 0xffff) | 0x10000;
+        auto blk = tos::create_tl_object<tos::lite_api::tosNode_blockIdExt>(
+            blk_wc, blk_shard, blk_seqno, blk_root, blk_file);
         auto inner = tos::serialize_tl_object(
             tos::create_tl_object<tos::lite_api::liteServer_runSmcMethod>(
-                0x04, std::move(mc->last_),
+                0x04, std::move(blk),
                 tos::create_tl_object<tos::lite_api::liteServer_accountId>(
                     addr.workchain, addr.addr),
                 jetton_method_id, params_boc->clone()),
@@ -4420,7 +4408,51 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
             promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
           }));
         }));
-      });
+  };  // end of do_query_token lambda
+
+  // Step 1: resolve block (by seqno or latest)
+  auto self_id = actor_id(this);
+  if (has_seqno) {
+    auto block_id = tos::create_tl_object<tos::lite_api::tosNode_blockId>(
+        -1, static_cast<td::int64>(-1LL << 63), seqno);
+    auto lookup_inner = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_lookupBlock>(
+            1, std::move(block_id), 0, 0), true);
+    auto lookup_query = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(lookup_inner)), true);
+    send_liteserver_query(std::move(lookup_query),
+        [do_query_token = std::move(do_query_token)](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) {
+            // Cannot proceed — just drop the promise (timeout will handle it)
+            return;
+          }
+          auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(R.move_as_ok(), true);
+          if (lb_r.is_error()) {
+            return;
+          }
+          auto lb = lb_r.move_as_ok();
+          do_query_token(lb->id_->workchain_, lb->id_->shard_, lb->id_->seqno_,
+                         lb->id_->root_hash_, lb->id_->file_hash_);
+        });
+  } else {
+    auto mc_inner = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
+    auto mc_query = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
+    send_liteserver_query(std::move(mc_query),
+        [do_query_token = std::move(do_query_token)](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) {
+            return;
+          }
+          auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(R.move_as_ok(), true);
+          if (mc_r.is_error()) {
+            return;
+          }
+          auto mc = mc_r.move_as_ok();
+          do_query_token(mc->last_->workchain_, mc->last_->shard_, mc->last_->seqno_,
+                         mc->last_->root_hash_, mc->last_->file_hash_);
+        });
+  }
 }
 
 // ─── detectHash ──────────────────────────────────────────────────────────
