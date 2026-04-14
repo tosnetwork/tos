@@ -277,11 +277,13 @@ node collation-whitelist ...  Manage validator allowlist
 node overlay ...         Add, list, remove custom overlays
 ```
 
-### `tosctl account` -- Account inspection
+### `tosctl account` -- Account inspection and interaction
 
 ```
 account status           Account state and balance
 account txs              Transaction history
+account run-method       Run a get-method on a smart contract
+account send-boc         Send a raw BOC message to the blockchain
 account bookmark add|ls|rm  Manage address bookmarks
 ```
 
@@ -315,6 +317,7 @@ tosctl auth add|ls|rm|revoke  REST API user management
 tosctl auth set ttl           Configure token TTL per role
 tosctl deploy wallet          Deploy wallet contracts on-chain
 tosctl deploy pool            Deploy single-nominator pool contracts
+tosctl deploy contract        Deploy any smart contract from a BOC file
 tosctl service                Start the daemon (elections, voting, REST API)
 tosctl api health|elections|validators|task|stake-policy|login  Service API client
 tosctl config-param <ID>      Get chain config parameter (legacy alias)
@@ -380,6 +383,42 @@ tosctl deploy pool --node node0 --owner "-1:owner_address" --amount 1.5 --verbos
 
 # Verify pool state
 tosctl pool get
+```
+
+### Deploying an arbitrary smart contract
+
+```bash
+# Deploy a compiled contract BOC to the blockchain
+tosctl deploy contract /tmp/my_contract.boc
+
+# Deploy and wait for it to become active
+tosctl deploy contract /tmp/my_contract.boc --wait --address "0:abc...def"
+
+# Output as JSON
+tosctl deploy contract /tmp/my_contract.boc -f json
+```
+
+### Running a get-method on a contract
+
+```bash
+# Call 'seqno' on the elector contract
+tosctl account run-method --address "-1:333...333" seqno
+
+# Call a method with stack arguments
+tosctl account run-method --address "0:abc...def" get_pool_data '["num","0"]'
+
+# Output as JSON
+tosctl account run-method --address "-1:333...333" active_election_id -f json
+```
+
+### Sending a raw BOC message
+
+```bash
+# Send a pre-built BOC message to the blockchain
+tosctl account send-boc /tmp/external_message.boc
+
+# JSON output
+tosctl account send-boc /tmp/message.boc -f json
 ```
 
 ### Monitoring node status
@@ -591,19 +630,6 @@ tosctl config wallet ls --format json
 tosctl config bind ls --format json
 tosctl config elections show --format json
 ```
-
-## Further Reading
-
-- [Detailed CLI reference](src/node-control/README.md)
-- [End-to-end setup guide](src/node-control/docs/tosctl-setup.md)
-- [Security guide (JWT, roles, rate limiting)](src/node-control/docs/tosctl-security.md)
-- [HCP Vault setup](src/node-control/docs/hcp-vault-setup.md)
-- [File-based vault setup](src/node-control/docs/singlehost-vault-setup.md)
-- [Election automation audit](src/node-control/docs/tos-election-control-audit.md)
-- [RPC compatibility notes](src/node-control/docs/tos-rpc-compatibility.md)
-- [Control plane compatibility](src/node-control/docs/tos-control-plane-compatibility.md)
-- [Subcommand design (target command tree)](doc/tosctl-subcommand-design.md)
-- [mytonctrl parity mapping](doc/tosctl-mytonctrl-parity-design.md)
 
 ## License
 
