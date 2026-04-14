@@ -158,7 +158,7 @@ describe('Distributor NFT Collection', () => {
         else
           throw Error("Unexpected message destination.");
     }
-    async function distribute(asset: "TON" | "Jetton", _shares: Map<string, bigint>) {
+    async function distribute(asset: "TOS" | "Jetton", _shares: Map<string, bigint>) {
         // no snapshots, "inline". taken out to test again with a lot of NFTs
         const assetAmount = getRandomTon(100, 10000);
         const billBefore = await collection.getTotalBill();
@@ -166,7 +166,7 @@ describe('Distributor NFT Collection', () => {
         const collectionSmc = await blockchain.getContract(collection.address);
         const jwalletSmc = await blockchain.getContract(jwalletAddr);
         let res: SmartContractTransaction;
-        if (asset == "TON") {
+        if (asset == "TOS") {
             res = collectionSmc.receiveMessage(internal({
                 from: deployer.address,
                 to: collection.address,
@@ -232,7 +232,7 @@ describe('Distributor NFT Collection', () => {
 
             const expectedAssetShare = assetAmount * share / billBefore.totalBill;
 
-            if (asset == "TON") {
+            if (asset == "TOS") {
                 expect(dest.equals(owner)).toEqual(true);
 
                 expect(distributedAsset.info.value.coins).toBeGreaterThanOrEqual(expectedAssetShare - toNano("0.1"));
@@ -268,7 +268,7 @@ describe('Distributor NFT Collection', () => {
         expect(billAfter.billsCount).toEqual(0n);
         expect(billAfter.totalBill).toEqual(0n);
     }
-    describe("Distributing TONs", () => {
+    describe("Distributing TOSs", () => {
         beforeAll(async () => {
             initDistribution = {
                 active: false,
@@ -286,7 +286,7 @@ describe('Distributor NFT Collection', () => {
             snapshots.set("uninitialized", blockchain.snapshot());
         });
 
-        it("should deploy collection with ton distribution", deploy);
+        it("should deploy collection with tos distribution", deploy);
 
         it("should mint NFT", mint);
 
@@ -417,9 +417,9 @@ describe('Distributor NFT Collection', () => {
                 success: true,
             });
         });
-        it("should distribute TONs", async () => {
+        it("should distribute TOSs", async () => {
             await loadSnapshot("minted");
-            await distribute("TON", shares);
+            await distribute("TOS", shares);
             snapshots.set("distributed", blockchain.snapshot());
         });
         it("should not distribute again", async () => {
@@ -504,7 +504,7 @@ describe('Distributor NFT Collection', () => {
          it("should mint high amount of NFTs", mintExtended);
          it("should distribute correctly among many NFT owners", async () => {
              await loadSnapshot("minted_extended");
-             await distribute("TON", sharesExtended);
+             await distribute("TOS", sharesExtended);
          });
        }
     });
@@ -519,7 +519,7 @@ describe('Distributor NFT Collection', () => {
         });
         it("should deploy collection with jetton distribution", deploy);
         it("should mint NFT", mint)
-        it("should not start distribution of TONs", async () => {
+        it("should not start distribution of TOSs", async () => {
             await loadSnapshot("minted");
             const sendStartResult = await collection.sendStartDistribution(deployer.getSender(), toNano(1000));
             expect(sendStartResult.transactions).toHaveTransaction({

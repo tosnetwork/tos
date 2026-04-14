@@ -3,7 +3,7 @@ import { JettonMinter, JettonMinterContent, jettonContentToCell, jettonMinterCon
 import { compile, NetworkProvider, UIProvider} from '@ton-community/blueprint';
 import { promptAddress, promptBool, promptUrl } from '../wrappers/ui-utils';
 
-const formatUrl = "https://github.com/ton-blockchain/TEPs/blob/master/text/0064-token-data-standard.md#jetton-metadata-example-offchain";
+const formatUrl = "https://github.com/tos-blockchain/TEPs/blob/master/text/0064-token-data-standard.md#jetton-metadata-example-offchain";
 const urlPrompt = 'Please specify url pointing to jetton metadata (json):';
 
 export async function run(provider: NetworkProvider) {
@@ -22,7 +22,7 @@ export async function run(provider: NetworkProvider) {
     let contentUrl = await promptUrl(urlPrompt, ui);
     ui.write(`Jetton content url: ${contentUrl}`);
 
-    let asset = await ui.choose('What will be distributed?', ['TON', 'Jettons'], (c) => c);
+    let asset = await ui.choose('What will be distributed?', ['TOS', 'Jettons'], (c) => c);
     let isJetton = (asset == 'Jettons');
 
     let assetMinter  = undefined;
@@ -55,7 +55,7 @@ export async function run(provider: NetworkProvider) {
                 consigliere = await promptAddress(consiglierePrompt, ui, sender.address);
             }
             if(upd == 'Asset') {
-                asset = await ui.choose('What to distribute?', ['TON', 'Jettons'], (c) => c);
+                asset = await ui.choose('What to distribute?', ['TOS', 'Jettons'], (c) => c);
                 isJetton = (asset == 'Jettons');
                 if (isJetton) {
                     let assetMinterAddr = await promptAddress(`Please specify asset jetton minter address`, ui);

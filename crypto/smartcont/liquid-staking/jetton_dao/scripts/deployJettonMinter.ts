@@ -3,10 +3,10 @@ import { JettonMinter, JettonMinterContent, jettonContentToCell, jettonMinterCon
 import { compile, NetworkProvider, UIProvider} from '@ton-community/blueprint';
 import { promptAddress, promptBool, promptUrl } from '../wrappers/ui-utils';
 
-const formatUrl = "https://github.com/ton-blockchain/TEPs/blob/master/text/0064-token-data-standard.md#jetton-metadata-example-offchain";
+const formatUrl = "https://github.com/tos-blockchain/TEPs/blob/master/text/0064-token-data-standard.md#jetton-metadata-example-offchain";
 const exampleContent = {
-                          "name": "TON DAO",
-                          "description": "Sample of TON DAO Jetton",
+                          "name": "TOS DAO",
+                          "description": "Sample of TOS DAO Jetton",
                           "symbol": "VOTE",
                           "decimals": 0,
                           "image": "https://www.svgrepo.com/show/108295/vote.svg"

@@ -478,7 +478,7 @@ describe('Cotroller mock', () => {
       const notPool = differentAddress(poolAddress);
       const stateBefore  = await getContractData(controller.address);
       const borrowAmount = getRandomTon(100000, 200000)
-      // 2000 TON interest
+      // 2000 TOS interest
       const msgVal       = borrowAmount + toNano('2000');
       let res = await controller.sendCredit(bc.sender(notPool), borrowAmount, msgVal);
       expect(res.transactions).toHaveTransaction({

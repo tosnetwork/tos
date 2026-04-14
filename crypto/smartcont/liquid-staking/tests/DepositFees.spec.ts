@@ -205,18 +205,18 @@ describe('Deposit Fees Printer', () => {
         /*for (let i = 0; i < wallets.length; i++) {
             toPrint += `
               #${i + 1}
-                Sent for deposit: ${fromNano(depositAmount)} + ${fromNano(gasAttached)} TON
-                Balance decrease: ${fromNano(diffs[i])} TON
-                Deposited: ${fromNano(deposits[i])} TON
-                Deposit cost: ${fromNano(fees[i])} TON
+                Sent for deposit: ${fromNano(depositAmount)} + ${fromNano(gasAttached)} TOS
+                Balance decrease: ${fromNano(diffs[i])} TOS
+                Deposited: ${fromNano(deposits[i])} TOS
+                Deposit cost: ${fromNano(fees[i])} TOS
             `;
         }*/
         toPrint += `
           TOTAL
-            Sent for deposit: ${fromNano(totalAdded)} + ${fromNano(gasAttached * BigInt(wallets.length))} TON
-            Balance decrease: ${fromNano(totalDiff)} TON
-            Deposited: ${fromNano(totalAdded)} TON
-            Average Deposits cost: ${fromNano(totalFee/5n)} TON
+            Sent for deposit: ${fromNano(totalAdded)} + ${fromNano(gasAttached * BigInt(wallets.length))} TOS
+            Balance decrease: ${fromNano(totalDiff)} TOS
+            Deposited: ${fromNano(totalAdded)} TOS
+            Average Deposits cost: ${fromNano(totalFee/5n)} TOS
         `;
         console.log(toPrint);
     }
@@ -261,18 +261,18 @@ describe('Deposit Fees Printer', () => {
         /*for (let i = 0; i < wallets.length; i++) {
             toPrint += `
               #${i + 1}
-                Sent for deposit: ${fromNano(depositAmount)} + ${fromNano(gasAttached)} TON
-                Balance decrease: ${fromNano(diffs[i])} TON
-                Deposited: ${fromNano(deposits[i])} TON
-                Deposit cost: ${fromNano(fees[i])} TON
+                Sent for deposit: ${fromNano(depositAmount)} + ${fromNano(gasAttached)} TOS
+                Balance decrease: ${fromNano(diffs[i])} TOS
+                Deposited: ${fromNano(deposits[i])} TOS
+                Deposit cost: ${fromNano(fees[i])} TOS
             `;
         }*/
         toPrint += `
           TOTAL
-            Sent for deposit: ${fromNano(totalAdded)} + ${fromNano(gasAttached * BigInt(wallets.length))} TON
-            Balance decrease: ${fromNano(totalDiff)} TON
-            Deposited: ${fromNano(totalAdded)} TON
-            Average Deposits cost: ${fromNano(totalFee/5n)} TON
+            Sent for deposit: ${fromNano(totalAdded)} + ${fromNano(gasAttached * BigInt(wallets.length))} TOS
+            Balance decrease: ${fromNano(totalDiff)} TOS
+            Deposited: ${fromNano(totalAdded)} TOS
+            Average Deposits cost: ${fromNano(totalFee/5n)} TOS
         `;
         console.log(toPrint);
     }

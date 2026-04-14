@@ -5,7 +5,7 @@ import { JettonWallet } from '../wrappers/JettonWallet';
 import { promptBool, promptAmount, promptAddress, displayContentCell, waitForTransaction } from '../wrappers/ui-utils';
 let minterContract:OpenedContract<JettonMinter>;
 
-const adminActions = ['Mint', 'Change admin', 'Start TON Distribution', 'Start Jetton Distribution'];
+const adminActions = ['Mint', 'Change admin', 'Start TOS Distribution', 'Start Jetton Distribution'];
 const userActions = ['Distribution Data', 'Info', 'Quit'];
 
 
@@ -78,20 +78,20 @@ const mintAction = async (provider:NetworkProvider, ui:UIProvider) => {
     ui.write(`Minting transaction sent`);
 }
 
-const startTONDistributionAction = async (provider:NetworkProvider, ui:UIProvider) => {
+const startTOSDistributionAction = async (provider:NetworkProvider, ui:UIProvider) => {
     const sender = provider.sender();
     let retry:boolean;
-    let tonVolume:string;
+    let tosVolume:string;
 
     do {
         retry = false;
-        tonVolume = await promptAmount('Please provide distribution TON Amount in decimal form:', ui);
-        ui.write(`Start distribution with volume ${tonVolume}\n`);
+        tosVolume = await promptAmount('Please provide distribution TOS Amount in decimal form:', ui);
+        ui.write(`Start distribution with volume ${tosVolume}\n`);
         retry = !(await promptBool('Is it ok?(yes/no)', ['yes', 'no'], ui));
     } while(retry);
 
-    ui.write(`Starting distribution with volume ${tonVolume}\n`);
-    const nanoVolume = toNano(tonVolume);
+    ui.write(`Starting distribution with volume ${tosVolume}\n`);
+    const nanoVolume = toNano(tosVolume);
 
     const res = await minterContract.sendStartDistribution(sender, nanoVolume);
     ui.write(`Distribution transaction sent`);
@@ -187,8 +187,8 @@ export async function run(provider: NetworkProvider, args: string[]) {
             case 'Change admin':
                 await changeAdminAction(provider, ui);
                 break;
-            case 'Start TON Distribution':
-                await startTONDistributionAction(provider, ui);
+            case 'Start TOS Distribution':
+                await startTOSDistributionAction(provider, ui);
                 break;
             case 'Start Jetton Distribution':
                 await startJettonDistributionAction(provider, ui);

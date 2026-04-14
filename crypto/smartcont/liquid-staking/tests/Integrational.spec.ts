@@ -932,7 +932,7 @@ describe('Integrational tests', () => {
 
 
             const withdrawAddr = via.address!;
-            // Withdraw is burning pool jettons pTONs
+            // Withdraw is burning pool jettons pTOSs
             const withdrawJetton = bc.openContract(DAOWallet.createFromAddress(
                 await poolJetton.getWalletAddress(withdrawAddr)
             ));
@@ -1087,7 +1087,7 @@ describe('Integrational tests', () => {
             const loanAmount = totalProfit * Conf.shareBase / BigInt(poolData.interestRate); //Rounding errors?
             const creditable = await getCreditable();
             if(creditable < loanAmount)
-                throw(Error("Pool doesn't have enough ton to spare"));
+                throw(Error("Pool doesn't have enough tos to spare"));
 
             // Just in case
             await controller.sendUpdateHash(validator);
@@ -1148,7 +1148,7 @@ describe('Integrational tests', () => {
         snapStates.set('deployed', bc.snapshot());
     });
     describe('Simple', () => {
-    it('Two deposits with same amount should get same amount of depo jetons/pTONS/TONs', async () => {
+    it('Two deposits with same amount should get same amount of depo jetons/pTOSS/TOSs', async () => {
         const prevState  = bc.snapshot();
         const depoAmount = getRandomTon(10000, 20000);
         const [nm1, nm2] = await bc.createWallets(2);
@@ -1157,7 +1157,7 @@ describe('Integrational tests', () => {
         await pool.sendDonate(deployer.getSender(), Conf.finalizeRoundFee);
         const depoRes1   = await assertDeposit(nm1.getSender(), depoAmount, 0, true);
         const depoRes2   = await assertDeposit(nm2.getSender(), depoAmount, 1, false);
-        // expect(compareBalance(nm1, nm2)).toBe(true); // Those are actually different, because first one spends ton on minter deploy
+        // expect(compareBalance(nm1, nm2)).toBe(true); // Those are actually different, because first one spends tos on minter deploy
         expect(depoRes1.amount).toEqual(depoRes2.amount);
         expect(depoRes1.amount).toEqual(depoAmount - Conf.poolDepositFee);
         await nextRound();
@@ -1220,7 +1220,7 @@ describe('Integrational tests', () => {
         const poolData = await pool.getFullData();
         // Check if ir works anyways
         await nextRound();
-        // Will trigger the round finalization with pTON distribution
+        // Will trigger the round finalization with pTOS distribution
         const res = await pool.sendTouch(deployer.getSender());
         // Check results
         await assertRound(res.transactions,
@@ -1680,7 +1680,7 @@ describe('Integrational tests', () => {
             const minimalValue = 774578013n + 1n // fwd_fee + 2 * gas_consumption + burn_notification
             const burnAmount = 1n;
             const res = await catPton.sendBurnWithParams(cat.getSender(), minimalValue, burnAmount, cat.address, false, false);
-            // pTONs burned
+            // pTOSs burned
             expect(res.transactions).toHaveTransaction({
                 from: catPton.address,
                 to: poolJetton.address,
@@ -2194,7 +2194,7 @@ describe('Integrational tests', () => {
         expect(poolData.supply).toEqual(1n);
         // Next rotation we would have supply = 1 and balance 0
         // That might trigger division by zero error
-        // To trigger pTON distribution we need to deposit some more
+        // To trigger pTOS distribution we need to deposit some more
 
         await assertDeposit(depositor.getSender(), Conf.poolDepositFee + 1n, 0, true);
         await nextRound();
@@ -2228,7 +2228,7 @@ describe('Integrational tests', () => {
                 amount: 0n
             })
         });
-        // User should get his pTONs
+        // User should get his pTOSs
         expect(ptonBalance).toBeGreaterThan(0n);
     });
     });

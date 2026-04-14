@@ -226,7 +226,7 @@ describe('JettonWallet', () => {// return;
         let initialJettonBalance2 = await notDeployerJettonWallet.getJettonBalance();
         let sentAmount = toNano('0.5');
         let forwardAmount = toNano('0.05');
-        const sendResult = await deployerJettonWallet.sendTransfer(deployer.getSender(), toNano('0.15'), //tons
+        const sendResult = await deployerJettonWallet.sendTransfer(deployer.getSender(), toNano('0.15'), //toss
                sentAmount, notDeployer.address,
                deployer.address, null, forwardAmount, null);
         expect(sendResult.transactions).toHaveTransaction({ //excesses
@@ -251,7 +251,7 @@ describe('JettonWallet', () => {// return;
         const notDeployerJettonWallet = await userWallet(notDeployer.address);
         let initialJettonBalance2 = await notDeployerJettonWallet.getJettonBalance();
         let sentAmount = toNano('0.5');
-        const sendResult = await deployerJettonWallet.sendTransfer(notDeployer.getSender(), toNano('0.15'), //tons
+        const sendResult = await deployerJettonWallet.sendTransfer(notDeployer.getSender(), toNano('0.15'), //toss
                sentAmount, notDeployer.address,
                deployer.address, null, toNano('0.05'), null);
         expect(sendResult.transactions).toHaveTransaction({
@@ -272,7 +272,7 @@ describe('JettonWallet', () => {// return;
         let initialJettonBalance2 = await notDeployerJettonWallet.getJettonBalance();
         let sentAmount = initialJettonBalance + 1n;
         let forwardAmount = toNano('0.05');
-        const sendResult = await deployerJettonWallet.sendTransfer(deployer.getSender(), toNano('0.15'), //tons
+        const sendResult = await deployerJettonWallet.sendTransfer(deployer.getSender(), toNano('0.15'), //toss
                sentAmount, notDeployer.address,
                deployer.address, null, forwardAmount, null);
         expect(sendResult.transactions).toHaveTransaction({
@@ -323,7 +323,7 @@ describe('JettonWallet', () => {// return;
         let sentAmount = toNano('0.5');
         let forwardAmount = toNano('0.05');
         let forwardPayload = beginCell().storeUint(0x1234567890abcdefn, 128).endCell();
-        const sendResult = await deployerJettonWallet.sendTransfer(deployer.getSender(), toNano('0.15'), //tons
+        const sendResult = await deployerJettonWallet.sendTransfer(deployer.getSender(), toNano('0.15'), //toss
                sentAmount, notDeployer.address,
                deployer.address, null, forwardAmount, forwardPayload);
         expect(sendResult.transactions).toHaveTransaction({ //excesses
@@ -358,7 +358,7 @@ describe('JettonWallet', () => {// return;
         let sentAmount = toNano('0.5');
         let forwardAmount = 0n;
         let forwardPayload = beginCell().storeUint(0x1234567890abcdefn, 128).endCell();
-        const sendResult = await deployerJettonWallet.sendTransfer(deployer.getSender(), toNano('0.15'), //tons
+        const sendResult = await deployerJettonWallet.sendTransfer(deployer.getSender(), toNano('0.15'), //toss
                sentAmount, notDeployer.address,
                deployer.address, null, forwardAmount, forwardPayload);
         expect(sendResult.transactions).toHaveTransaction({ //excesses
@@ -374,14 +374,14 @@ describe('JettonWallet', () => {// return;
         expect(await notDeployerJettonWallet.getJettonBalance()).toEqual(initialJettonBalance2 + sentAmount);
     });
 
-    it('check revert on not enough tons for forward', async () => {
+    it('check revert on not enough toss for forward', async () => {
         const deployerJettonWallet = await userWallet(deployer.address);
         let initialJettonBalance = await deployerJettonWallet.getJettonBalance();
         await deployer.send({value:toNano('1'), bounce:false, to: deployerJettonWallet.address});
         let sentAmount = toNano('0.1');
         let forwardAmount = toNano('0.3');
         let forwardPayload = beginCell().storeUint(0x1234567890abcdefn, 128).endCell();
-        const sendResult = await deployerJettonWallet.sendTransfer(deployer.getSender(), forwardAmount, // not enough tons, no tons for gas
+        const sendResult = await deployerJettonWallet.sendTransfer(deployer.getSender(), forwardAmount, // not enough toss, no toss for gas
                sentAmount, notDeployer.address,
                deployer.address, null, forwardAmount, forwardPayload);
         expect(sendResult.transactions).toHaveTransaction({
@@ -395,7 +395,7 @@ describe('JettonWallet', () => {// return;
     });
 
     // implementation detail
-    it('works with minimal ton amount', async () => {
+    it('works with minimal tos amount', async () => {
         const deployerJettonWallet = await userWallet(deployer.address);
         let initialJettonBalance = await deployerJettonWallet.getJettonBalance();
         const someAddress = Address.parse("EQD__________________________________________0vo");
@@ -490,7 +490,7 @@ describe('JettonWallet', () => {// return;
             let initialJettonBalance = await deployerJettonWallet.getJettonBalance();
             let initialTotalSupply = await jettonMinter.getTotalSupply();
             let burnAmount = toNano('0.01');
-            const sendResult = await deployerJettonWallet.sendBurn(deployer.getSender(), toNano('0.8'), // ton amount
+            const sendResult = await deployerJettonWallet.sendBurn(deployer.getSender(), toNano('0.8'), // tos amount
                                  burnAmount, deployer.address, null); // amount, response address, custom payload
             expect(sendResult.transactions).toHaveTransaction({ //burn notification
                 from: deployerJettonWallet.address,
@@ -513,7 +513,7 @@ describe('JettonWallet', () => {// return;
             let initialTotalSupply = await jettonMinter.getTotalSupply();
             let burnAmount = toNano('0.01');
             const customPaylaod = beginCell().storeCoins(getRandomTon(1000, 2000)).endCell();
-            const sendResult = await deployerJettonWallet.sendBurn(deployer.getSender(), toNano('1'), // ton amount
+            const sendResult = await deployerJettonWallet.sendBurn(deployer.getSender(), toNano('1'), // tos amount
                                  burnAmount, deployer.address, customPaylaod); // amount, response address, custom payload
             expect(sendResult.transactions).toHaveTransaction({ //burn notification
                 from: deployerJettonWallet.address,
@@ -545,7 +545,7 @@ describe('JettonWallet', () => {// return;
               let initialJettonBalance = await deployerJettonWallet.getJettonBalance();
               let initialTotalSupply = await jettonMinter.getTotalSupply();
               let burnAmount = toNano('0.01');
-              const sendResult = await deployerJettonWallet.sendBurn(notDeployer.getSender(), toNano('1'), // ton amount
+              const sendResult = await deployerJettonWallet.sendBurn(notDeployer.getSender(), toNano('1'), // tos amount
                                     burnAmount, deployer.address, null); // amount, response address, custom payload
               expect(sendResult.transactions).toHaveTransaction({
                  from: notDeployer.address,
@@ -562,7 +562,7 @@ describe('JettonWallet', () => {// return;
                 let initialJettonBalance = await deployerJettonWallet.getJettonBalance();
                 let initialTotalSupply = await jettonMinter.getTotalSupply();
                 let burnAmount = initialJettonBalance + 1n;
-                const sendResult = await deployerJettonWallet.sendBurn(deployer.getSender(), toNano('1'), // ton amount
+                const sendResult = await deployerJettonWallet.sendBurn(deployer.getSender(), toNano('1'), // tos amount
                                         burnAmount, deployer.address, null); // amount, response address, custom payload
                 expect(sendResult.transactions).toHaveTransaction({
                      from: deployer.address,
@@ -583,7 +583,7 @@ describe('JettonWallet', () => {// return;
        let baseFee = toNano('0.75');
        let minimalFee   = baseFee + fwd_fee + 2n*gas_consumption;
 
-       const sendLow    = await deployerJettonWallet.sendBurn(deployer.getSender(), minimalFee, // ton amount
+       const sendLow    = await deployerJettonWallet.sendBurn(deployer.getSender(), minimalFee, // tos amount
                             burnAmount, deployer.address, null); // amount, response address, custom payload
 
        expect(sendLow.transactions).toHaveTransaction({
@@ -713,7 +713,7 @@ describe('JettonWallet', () => {// return;
          * Because here is what is stated in standard:
          * and either throw an exception if amount of incoming value is not enough to calculate wallet address
          * or response with message (sent with mode 64)
-         * https://github.com/ton-blockchain/TEPs/blob/master/text/0089-jetton-wallet-discovery.md
+         * https://github.com/tos-blockchain/TEPs/blob/master/text/0089-jetton-wallet-discovery.md
          * At least something like
          * expect(discoveryResult.hasTransaction({such and such}) ||
          * discoveryResult.hasTransaction({yada yada})).toBeTruethy()
@@ -765,7 +765,7 @@ describe('JettonWallet', () => {// return;
         });
     });
     // This test consume a lot of time: 18 sec
-    // and is needed only for measuring ton accruing
+    // and is needed only for measuring tos accruing
     it('jettonWallet can process 250 transfer', async () => {
         const deployerJettonWallet = await userWallet(deployer.address);
         let initialJettonBalance = await deployerJettonWallet.getJettonBalance();
@@ -788,7 +788,7 @@ describe('JettonWallet', () => {// return;
         let initialBalance =(await blockchain.getContract(deployerJettonWallet.address)).balance;
         let initialBalance2 = (await blockchain.getContract(notDeployerJettonWallet.address)).balance;
         for(let i = 0; i < count; i++) {
-            sendResult = await deployerJettonWallet.sendTransfer(deployer.getSender(), toNano('0.15'), //tons
+            sendResult = await deployerJettonWallet.sendTransfer(deployer.getSender(), toNano('0.15'), //toss
                    sentAmount, notDeployer.address,
                    deployer.address, null, forwardAmount, payload);
         }
@@ -810,7 +810,7 @@ describe('JettonWallet', () => {// return;
         let finalBalance2 = (await blockchain.getContract(notDeployerJettonWallet.address)).balance;
 
         // if it is not true, it's ok but gas_consumption constant is too high
-        // and excesses of TONs will be accrued on wallet
+        // and excesses of TOSs will be accrued on wallet
         expect(finalBalance).toBeLessThan(initialBalance + toNano('0.001'));
         expect(finalBalance2).toBeLessThan(initialBalance2 + toNano('0.001'));
         expect(finalBalance).toBeGreaterThan(initialBalance - toNano('0.001'));
@@ -823,7 +823,7 @@ describe('JettonWallet', () => {// return;
         const deployerJettonWallet = await userWallet(deployer.address);
         let sentAmount = toNano('0.5');
         let forwardAmount = toNano('0.05');
-        const sendResult = await deployerJettonWallet.sendTransfer(deployer.getSender(), toNano('0.15'), //tons
+        const sendResult = await deployerJettonWallet.sendTransfer(deployer.getSender(), toNano('0.15'), //toss
                sentAmount, Address.parse("Ef8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAU"),
                deployer.address, null, forwardAmount, null);
         expect(sendResult.transactions).toHaveTransaction({ //excesses
@@ -869,7 +869,7 @@ describe('JettonWallet', () => {// return;
         const deployerJettonWallet = await userWallet(deployer.address);
         let sentAmount = toNano('0.5');
         let forwardAmount = toNano('0.05');
-        await deployerJettonWallet.sendTransfer(deployer.getSender(), toNano('0.15'), //tons
+        await deployerJettonWallet.sendTransfer(deployer.getSender(), toNano('0.15'), //toss
                sentAmount, deployerJettonWallet.address,
                deployer.address, null, forwardAmount, null);
         const childJettonWallet = await userWallet(deployerJettonWallet.address);
@@ -887,7 +887,7 @@ describe('JettonWallet', () => {// return;
         const deployerJettonWallet = await userWallet(deployer.address);
         let sentAmount = toNano('0.5');
         let forwardAmount = toNano('0.05');
-        await deployerJettonWallet.sendTransfer(deployer.getSender(), toNano('0.15'), //tons
+        await deployerJettonWallet.sendTransfer(deployer.getSender(), toNano('0.15'), //toss
                sentAmount, deployerJettonWallet.address,
                deployer.address, null, forwardAmount, null);
         const childJettonWallet = await userWallet(deployerJettonWallet.address);

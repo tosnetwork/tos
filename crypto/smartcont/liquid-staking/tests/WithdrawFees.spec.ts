@@ -245,11 +245,11 @@ describe('Withdraw Fees Printer', () => {
             const cost = withdrawals[i] - received;
             toPrint += `
                #${i + 1}
-                Sent to burn: ${fromNano(gasAttached)} TON
+                Sent to burn: ${fromNano(gasAttached)} TOS
                 Pool jettons burned: ${fromNano(jAmounts[i])} / ${fromNano(jSupply)}
-                Balance increase: ${fromNano(received)} TON
-                Withdrawed amount: ${fromNano(withdrawals[i])} TON
-                Withdrawal cost is ${fromNano(cost)} TON
+                Balance increase: ${fromNano(received)} TOS
+                Withdrawed amount: ${fromNano(withdrawals[i])} TOS
+                Withdrawal cost is ${fromNano(cost)} TOS
            `;
         }
 
@@ -258,8 +258,8 @@ describe('Withdraw Fees Printer', () => {
 
         toPrint += `
           TOTAL
-            Total withdrawn: ${fromNano(totalWithdrawn)} TON
-            Service fees: ${fromNano(serviceFees)} TON
+            Total withdrawn: ${fromNano(totalWithdrawn)} TOS
+            Service fees: ${fromNano(serviceFees)} TOS
         `;
         console.log(toPrint);
     }

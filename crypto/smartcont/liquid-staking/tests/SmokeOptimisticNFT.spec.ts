@@ -245,7 +245,7 @@ describe('Pool', () => {
          let withdrawalAmount = 1n;
          let oldBalance = (await blockchain.getContract(deployer.address)).balance;
 
-         // rate is lower than 1, burning 1nanoJetton leads to issuing zero nanoTONs
+         // rate is lower than 1, burning 1nanoJetton leads to issuing zero nanoTOSs
          let burnResult = await myPoolJettonWallet.sendBurnWithParams(deployer.getSender(), toNano('1.0'), withdrawalAmount, deployer.address, false, false);
          expect(burnResult.transactions).toHaveTransaction({
             on: deployer.address,
@@ -255,7 +255,7 @@ describe('Pool', () => {
             on: deployer.address,
             op: Op.pool.withdrawal,
          });
-         // 1 nanoTON deposit -> ~1 nanoJetton issuing, should pass
+         // 1 nanoTOS deposit -> ~1 nanoJetton issuing, should pass
          depositResult = await pool.sendDeposit(deployer.getSender(), toNano('1') + 1n);
          expect(depositResult.transactions).toHaveTransaction({
             on: pool.address,
@@ -275,7 +275,7 @@ describe('Pool', () => {
          let withdrawalAmount = 0n;
          let oldBalance = (await blockchain.getContract(deployer.address)).balance;
 
-         // rate is lower than 1, burning 1nanoJetton leads to issuing zero nanoTONs
+         // rate is lower than 1, burning 1nanoJetton leads to issuing zero nanoTOSs
          let burnResult = await myPoolJettonWallet.sendBurnWithParams(deployer.getSender(), toNano('1.0'), withdrawalAmount, deployer.address, true, false);
          expect(burnResult.transactions).toHaveTransaction({
             on: deployer.address,
@@ -285,7 +285,7 @@ describe('Pool', () => {
             on: deployer.address,
             op: Op.nft.ownership_assigned,
          });
-         // 1 nanoTON deposit -> ~1 nanoJetton issuing, should pass
+         // 1 nanoTOS deposit -> ~1 nanoJetton issuing, should pass
          depositResult = await pool.sendDeposit(deployer.getSender(), toNano('1') + 1n);
          expect(depositResult.transactions).toHaveTransaction({
             on: deployer.address,

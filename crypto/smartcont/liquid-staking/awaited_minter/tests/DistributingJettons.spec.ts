@@ -117,14 +117,14 @@ describe('DistributingJettons', () => {
         noDistributionSnapshot = blockchain.snapshot();
     });
 
-    it('should not start distribution of tons', async () => {
+    it('should not start distribution of toss', async () => {
         const startResult = await jettonMinter.sendStartDistribution(deployer.getSender(), toNano('2000'));
 
         expect(startResult.transactions).toHaveTransaction({
             from: deployer.address,
             to: jettonMinter.address,
             aborted: true,
-            exitCode: 70  // error::cannot_distribute_tons
+            exitCode: 70  // error::cannot_distribute_toss
         });
     });
 
@@ -219,7 +219,7 @@ describe('DistributingJettons', () => {
 
         let sentAmount = toNano('2000');
         let forwardAmount = toNano('0.05');
-        const transferResult = await assetDeployerWallet.sendTransfer(deployer.getSender(), toNano('0.1'), //tons
+        const transferResult = await assetDeployerWallet.sendTransfer(deployer.getSender(), toNano('0.1'), //toss
                sentAmount, jettonMinter.address,
                deployer.address, Cell.EMPTY, forwardAmount, Cell.EMPTY);
 
@@ -256,7 +256,7 @@ describe('DistributingJettons', () => {
         const consigliereAssetWallet = await userWallet(consigliere.address, assetJettonMinter);
         const initialConsigliereWalletBalance = await consigliereJettonWallet.getJettonBalance();
 
-        const burnResult = await deployerJettonWallet.sendBurn(deployer.getSender(), toNano('0.1'), // ton amount
+        const burnResult = await deployerJettonWallet.sendBurn(deployer.getSender(), toNano('0.1'), // tos amount
                              initialDeployerWalletBalance, deployer.address, Cell.EMPTY); // amount, response address, custom payload
 
         await consigliereJettonWallet.sendBurn(consigliere.getSender(), toNano('0.1'),
@@ -287,9 +287,9 @@ describe('DistributingJettons', () => {
         const deployerAssetWallet = await userWallet(deployer.address, assetJettonMinter);
         const initialDeployerWalletBalance = await deployerJettonWallet.getJettonBalance();
 
-        const spentTON = toNano('0.1');
+        const spentTOS = toNano('0.1');
 
-        const burnResult = await deployerJettonWallet.sendBurn(consigliere.getSender(), spentTON, // ton amount
+        const burnResult = await deployerJettonWallet.sendBurn(consigliere.getSender(), spentTOS, // tos amount
                              initialDeployerWalletBalance, consigliere.address, null); // amount, response address (no matter - will be overwritten), custom payload
 
         expect(burnResult.transactions).toHaveTransaction({
@@ -310,7 +310,7 @@ describe('DistributingJettons', () => {
         expect(burnResult.transactions).toHaveTransaction({
             from: jettonMinter.address,
             to: consigliere.address,
-            value: (x) => x! > spentTON, // consigliere should get all the spent TONs + extra for fees
+            value: (x) => x! > spentTOS, // consigliere should get all the spent TOSs + extra for fees
             success: true,
             op: 0xd53276db
         });
@@ -323,7 +323,7 @@ describe('DistributingJettons', () => {
         expect(await deployerAssetWallet.getJettonBalance()).toEqual(initialDeployerWalletBalance * 2n);
     });
 
-    let stackedTONsSnapshot: BlockchainSnapshot;
+    let stackedTOSsSnapshot: BlockchainSnapshot;
     it('owner can withdraw jettons owned by JettonWallet', async () => {
         await blockchain.loadFrom(noDistributionSnapshot);
 
@@ -333,7 +333,7 @@ describe('DistributingJettons', () => {
         let forwardAmount = toNano('0.05');
 
         // transfer asset jettons to JettonWallet
-        await deployerAssetWallet.sendTransfer(deployer.getSender(), toNano('0.1'), // tons
+        await deployerAssetWallet.sendTransfer(deployer.getSender(), toNano('0.1'), // toss
                sentAmount, deployerJettonWallet.address,
                deployer.address, null, forwardAmount, null);
 
@@ -344,7 +344,7 @@ describe('DistributingJettons', () => {
 
         expect(initialChildJettonBalance).toEqual(sentAmount);
 
-        stackedTONsSnapshot = blockchain.snapshot();
+        stackedTOSsSnapshot = blockchain.snapshot();
 
         let withdrawResult = await deployerJettonWallet.sendWithdrawJettons(
                                     deployer.getSender(), childJettonWallet.address, toNano('0.4'));
@@ -362,7 +362,7 @@ describe('DistributingJettons', () => {
     });
 
     it('not owner can not withdraw jettons owned by JettonWallet', async () => {
-        await blockchain.loadFrom(stackedTONsSnapshot);
+        await blockchain.loadFrom(stackedTOSsSnapshot);
 
         const deployerJettonWallet = await userWallet(deployer.address, jettonMinter);
         const childJettonWallet = await userWallet(deployerJettonWallet.address, assetJettonMinter);
