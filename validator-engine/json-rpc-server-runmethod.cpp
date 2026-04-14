@@ -217,7 +217,8 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
           }
 
           auto result = PSTRING()
-              << "{\"gas_used\":0"
+              << "{\"@type\":\"smc.runResult\""
+              << ",\"gas_used\":0"
               << ",\"stack\":" << stack_json
               << ",\"exit_code\":" << f->exit_code_
               << ",\"last_transaction_id\":null"

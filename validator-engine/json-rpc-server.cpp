@@ -647,7 +647,26 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_error(int code, std::string m
       << ",\"error\":" << td::JsonString(td::Slice(message))
       << ",\"code\":" << code << "}";
 
-  auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
+  // Map JSON-RPC / application error codes to HTTP status codes
+  int http_status = 200;
+  std::string http_status_text = "OK";
+  if (code == -32602 || code == -32600) {
+    http_status = 422; http_status_text = "Unprocessable Entity";
+  } else if (code == -32603) {
+    http_status = 500; http_status_text = "Internal Server Error";
+  } else if (code == -32601) {
+    http_status = 404; http_status_text = "Not Found";
+  } else if (code == -32700) {
+    http_status = 400; http_status_text = "Bad Request";
+  } else if (code == -32000) {
+    http_status = 401; http_status_text = "Unauthorized";
+  } else if (code == 409) {
+    http_status = 409; http_status_text = "Conflict";
+  } else if (code < 0) {
+    http_status = 500; http_status_text = "Internal Server Error";
+  }
+
+  auto response = http::HttpResponse::create("HTTP/1.1", http_status, std::move(http_status_text), false, false).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
   response->add_header({"Access-Control-Allow-Origin", cors_origin});
   response->add_header({"Transfer-Encoding", "Chunked"});

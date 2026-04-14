@@ -115,7 +115,7 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
           auto b64 = td::base64_encode(boc_r.ok().as_slice());
 
           promise.set_value(make_json_ok(
-              PSTRING() << "{\"config\":{\"bytes\":" << td::JsonString(td::Slice(b64)) << "}}",
+              PSTRING() << "{\"@type\":\"configInfo\",\"config\":{\"@type\":\"tvm.cell\",\"bytes\":" << td::JsonString(td::Slice(b64)) << "}}",
               req_id));
         }));
   };  // end of do_query_config

@@ -173,7 +173,8 @@ void JsonRpcServer::handle_getConsensusBlock(td::JsonObject &params, std::string
         }
 
         td::StringBuilder sb;
-        sb << "{\"consensus_block\":" << consensus_block_seqno_
+        sb << "{\"@type\":\"ext.blocks.consensusBlock\""
+           << ",\"consensus_block\":" << consensus_block_seqno_
            << ",\"timestamp\":" << consensus_block_timestamp_;
         if (state.not_null()) {
           sb << ",\"last_block_utime\":" << state->get_unix_time();
@@ -519,7 +520,7 @@ void JsonRpcServer::handle_getMasterchainBlockSignatures(td::JsonObject &params,
           // Forward links (liteServer_blockLinkForward) contain a SignatureSet
           // with the validator signatures for the destination block.
           td::StringBuilder sb;
-          sb << "{\"@type\":\"blocks.masterchainBlockSignatures\",\"id\":" << id_json
+          sb << "{\"@type\":\"blocks.blockSignatures\",\"id\":" << id_json
              << ",\"signatures\":[";
           bool first_sig = true;
           for (auto& step : proof->steps_) {
@@ -532,7 +533,8 @@ void JsonRpcServer::handle_getMasterchainBlockSignatures(td::JsonObject &params,
                 for (auto& sig : sig_set->signatures_) {
                   if (!first_sig) sb << ",";
                   first_sig = false;
-                  sb << "{\"node_id_short\":\""
+                  sb << "{\"@type\":\"blocks.signature\""
+                     << ",\"node_id_short\":\""
                      << td::base64_encode(sig->node_id_short_.as_slice())
                      << "\",\"signature\":\""
                      << td::base64_encode(sig->signature_.as_slice())

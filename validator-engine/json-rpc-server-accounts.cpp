@@ -408,7 +408,7 @@ static std::string build_wallet_json(bool is_wallet, td::int64 balance,
                                      td::uint64 last_lt, const std::string& last_hash_b64,
                                      td::int64 wallet_id = -1) {
   td::StringBuilder sb;
-  sb << "{\"@type\":\"query.fees\""
+  sb << "{\"@type\":\"ext.accounts.walletInformation\""
      << ",\"wallet\":" << (is_wallet ? "true" : "false")
      << ",\"balance\":" << td::JsonString(td::Slice(PSTRING() << balance))
      << ",\"account_state\":" << td::JsonString(td::Slice(account_state))
@@ -437,21 +437,29 @@ static std::string build_wallet_json(bool is_wallet, td::int64 balance,
 // Known wallet code hashes -> type name strings
 static std::string detect_wallet_type(const vm::CellHash& code_hash) {
   static const std::map<std::string, std::string> known_wallets = {
-    {"89c890a6c9b5a3828b38570a93dfc93c792ee9147933de8f21f5840ae19ab1aa", "wallet v1 r1"},
-    {"27b5063ebdb6e5ecec073f57451a4be095eb68777496b65449b1b49fa09a43d9", "wallet v1 r2"},
-    {"1f08ebe871907c8b60aa1bb9c22a54cb095d1dc0e007a3d7af827d1c4de23910", "wallet v1 r3"},
-    {"8369fdda46a532a8302037d955d92d7a3308422eadf0074c497cecd209832c3a", "wallet v2 r1"},
-    {"9264711341ab55499665d16b4589a148ed6ab8a4aed3ae9fcf805295eee7b927", "wallet v2 r2"},
-    {"f475ec633ea8ec25b6872878b95996aeea061198bd1c86180d3984ea7e1e6fb4", "wallet v3 r1"},
-    {"09be881beffe710d6bb4bd030a2506bef85c10ff1ac44df93b0b29282945916f", "wallet v3 r2"},
-    {"6b5fd33048d2db82650b36f47ced9714a1c0b573aa08447e23f96629364dda2a", "wallet v4 r1"},
-    {"288014a04d551904d623c826512ffeb16ad4df6130195ea537050b35207e5fc3", "wallet v4 r2"},
-    {"7afa0eacbaf9e9eaa19ae93e61354540c9335b52f1add44e7a8e2d9089212b3e", "wallet v5 r1"},
-    {"643a1ab8e96cb40b9cd92599ea295a591d6c12730d53ce77a447e1fc1c9a8b41", "nominator pool v1"},
-    // tosctl verified hashes (may overlap; kept for belt-and-suspenders)
-    {"84dafa449f98a6987789ba232358072bc0f76dc4524002a5d0918b9a75d2d599", "wallet v3 r2"},
-    {"feb5ff6820e2ff0d9483e7e0d62c817d846789fb4ae580c878866d959dabd5c0", "wallet v4 r2"},
-    {"20834b7b72b112147e1b2fb457b84e74d1a30f04f737d4f62a668e9552d2b72f", "wallet v5 r1"},
+    // TON-originated wallet code hashes (uppercase — to_hex() returns uppercase)
+    {"89C890A6C9B5A3828B38570A93DFC93C792EE9147933DE8F21F5840AE19AB1AA", "wallet v1 r1"},
+    {"27B5063EBDB6E5ECEC073F57451A4BE095EB68777496B65449B1B49FA09A43D9", "wallet v1 r2"},
+    {"1F08EBE871907C8B60AA1BB9C22A54CB095D1DC0E007A3D7AF827D1C4DE23910", "wallet v1 r3"},
+    {"8369FDDA46A532A8302037D955D92D7A3308422EADF0074C497CECD209832C3A", "wallet v2 r1"},
+    {"9264711341AB55499665D16B4589A148ED6AB8A4AED3AE9FCF805295EEE7B927", "wallet v2 r2"},
+    {"F475EC633EA8EC25B6872878B95996AEEA061198BD1C86180D3984EA7E1E6FB4", "wallet v3 r1"},
+    {"09BE881BEFFE710D6BB4BD030A2506BEF85C10FF1AC44DF93B0B29282945916F", "wallet v3 r2"},
+    {"6B5FD33048D2DB82650B36F47CED9714A1C0B573AA08447E23F96629364DDA2A", "wallet v4 r1"},
+    {"288014A04D551904D623C826512FFEB16AD4DF6130195EA537050B35207E5FC3", "wallet v4 r2"},
+    {"7AFA0EACBAF9E9EAA19AE93E61354540C9335B52F1ADD44E7A8E2D9089212B3E", "wallet v5 r1"},
+    {"643A1AB8E96CB40B9CD92599EA295A591D6C12730D53CE77A447E1FC1C9A8B41", "nominator pool v1"},
+    // tosctl verified hashes
+    {"84DAFA449F98A6987789BA232358072BC0F76DC4524002A5D0918B9A75D2D599", "wallet v3 r2"},
+    {"FEB5FF6820E2FF0D9483E7E0D62C817D846789FB4AE580C878866D959DABD5C0", "wallet v4 r2"},
+    {"20834B7B72B112147E1B2FB457B84E74D1A30F04F737D4F62A668E9552D2B72F", "wallet v5 r1"},
+    // TOS-compiled wallet code hashes (from crypto/smartcont/auto/)
+    {"BCD75D29A1D932013CF31300C5D924A5F02EAA92CD830EC0330104FFBAD07928", "wallet v1 r1"},
+    {"6C6CAAF194AF3660E7AE4C584785C1BDA0D85FAFD80E947D725105947CD11D7D", "wallet v3 r2"},
+    {"E56EFC6C2C9E1DA65C36008E78BAEB9974D2779C05F29EDF4ADF39B4DBABD994", "wallet v4 r2"},
+    {"E6C006F19FBABCCD0D4852C1CC4CA3C6410914DC86F6611CCF8165CDCAAFC6E0", "wallet v5 r1"},
+    {"9CEC5155DCB2B37716C032C5EF85947C01E32C4405A2611EE8D1122AFFF0E0C1", "highload v1"},
+    {"DE7D8832DDC838811F940EF0CECBBC95C6CD2CEF83E9D22ABCE5E1A1DBA5638A", "highload v2"},
   };
   auto hex = code_hash.to_hex();
   auto it = known_wallets.find(hex);
@@ -1071,9 +1079,8 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
             }
             auto f2 = F2.move_as_ok();
             if (f2->exit_code_ != 0) {
-              promise.set_value(make_json_error(-32603,
-                  PSTRING() << "getTokenData: contract is neither Jetton nor NFT (get_nft_data exit_code="
-                            << f2->exit_code_ << ")", req_id));
+              promise.set_value(make_json_error(409,
+                  "Smart contract is not a Jetton or NFT", req_id));
               return;
             }
             if (f2->result_.empty()) {

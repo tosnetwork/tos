@@ -49,8 +49,6 @@ class TestDetectAddress:
 
     def test_no_address(self, api_method_call):
         response = api_method_call(self.METHOD)
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False
 
 
@@ -88,8 +86,6 @@ class TestDetectHash:
 
     def test_no_hash(self, api_method_call):
         response = api_method_call(self.METHOD)
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False
 
 
@@ -112,14 +108,10 @@ class TestPackAddress:
 
     def test_no_address(self, api_method_call):
         response = api_method_call(self.METHOD)
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False
 
     def test_invalid_address(self, api_method_call):
         response = api_method_call(self.METHOD, address="invalid")
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False
 
 
@@ -141,12 +133,8 @@ class TestUnpackAddress:
 
     def test_no_address(self, api_method_call):
         response = api_method_call(self.METHOD)
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False
 
     def test_invalid_address(self, api_method_call):
         response = api_method_call(self.METHOD, address="invalid")
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False

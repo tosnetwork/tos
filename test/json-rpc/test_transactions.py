@@ -45,14 +45,10 @@ class TestGetTransactions:
 
     def test_missing_address(self, api_method_call):
         response = api_method_call(self.METHOD, limit=5)
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False
 
     def test_invalid_address(self, api_method_call):
         response = api_method_call(self.METHOD, address="invalid", limit=5)
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False
 
     def test_with_lt_and_hash(self, api_method_call):
@@ -84,12 +80,13 @@ class TestGetTransactionsStd:
         assert response.status_code == 200, response.json().get("error")
         data = response.json()
         assert data["ok"] is True
-        assert isinstance(data["result"], list)
+        result = data["result"]
+        assert result["@type"] == "raw.transactions"
+        assert isinstance(result["transactions"], list)
+        assert "previous_transaction_id" in result
 
     def test_missing_address(self, api_method_call):
         response = api_method_call(self.METHOD, limit=5)
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False
 
 
@@ -113,15 +110,11 @@ class TestGetBlockTransactions:
     def test_wrong_workchain(self, api_method_call, last_mc_seqno):
         response = api_method_call(self.METHOD, workchain="invalid",
                                    shard=SHARD_ALL, seqno=last_mc_seqno)
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
         response = api_method_call(self.METHOD, workchain=-1, shard=SHARD_ALL,
                                    seqno=last_mc_seqno + 10000)
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False
 
 
@@ -143,8 +136,6 @@ class TestGetBlockTransactionsExt:
     def test_future_seqno(self, api_method_call, last_mc_seqno):
         response = api_method_call(self.METHOD, workchain=-1, shard=SHARD_ALL,
                                    seqno=last_mc_seqno + 10000)
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False
 
 
@@ -165,14 +156,15 @@ class TestTryLocateTx:
         tx = resp.json()["result"][0]
         lt = tx["transaction_id"]["lt"]
 
-        response = api_method_call(self.METHOD, source=ELECTOR_ADDRESS, created_lt=lt)
+        response = api_method_call(
+            self.METHOD, source=ELECTOR_ADDRESS,
+            destination=ELECTOR_ADDRESS, created_lt=lt,
+        )
         # tryLocateTx may return 200 or a reasonable error on local testnet.
-        assert response.status_code in {200, 500}
+        assert response.status_code in {200, 422, 500}
 
     def test_missing_params(self, api_method_call):
         response = api_method_call(self.METHOD)
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False
 
 
@@ -186,8 +178,6 @@ class TestTryLocateResultTx:
 
     def test_missing_params(self, api_method_call):
         response = api_method_call(self.METHOD)
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False
 
 
@@ -201,6 +191,4 @@ class TestTryLocateSourceTx:
 
     def test_missing_params(self, api_method_call):
         response = api_method_call(self.METHOD)
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False

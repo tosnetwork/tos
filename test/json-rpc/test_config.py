@@ -30,14 +30,10 @@ class TestGetConfigParam:
 
     def test_missing_param(self, api_method_call):
         response = api_method_call(self.METHOD)
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False
 
     def test_invalid_param(self, api_method_call):
         response = api_method_call(self.METHOD, param="invalid")
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False
 
     def test_nonexistent_param(self, api_method_call):

@@ -44,7 +44,7 @@ std::string format_zero_state_json(const tos::lite_api::tosNode_zeroStateIdExt& 
 
 struct ParsedAccountState {
   td::int64 balance = 0;
-  std::string state_str = "uninit";
+  std::string state_str = "uninitialized";
   std::string code_b64;
   std::string data_b64;
   std::string frozen_hash;

@@ -95,7 +95,7 @@ class TestBatchRejection:
         data = resp.json()
         if isinstance(data, dict):
             # Single error response
-            assert data.get("error", {}).get("code") == -32600 or data.get("ok") is False
+            assert data.get("code") == -32600 or data.get("ok") is False
         else:
             # If it returns a list, it should still signal an error somehow.
             pytest.fail("Batch requests should not be processed -- expected a single error response")
@@ -119,8 +119,8 @@ class TestMethodNotFound:
         resp = requests.post(url, json=payload, headers=headers)
         data = resp.json()
         # Should contain an error with code -32601
-        if "error" in data:
-            assert data["error"]["code"] == -32601
+        if "code" in data:
+            assert data["code"] == -32601
         else:
             assert data.get("ok") is False
 

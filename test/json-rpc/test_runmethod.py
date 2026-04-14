@@ -53,14 +53,10 @@ class TestRunGetMethod:
 
     def test_missing_address(self, api_method_call_no_get):
         response = api_method_call_no_get(self.METHOD, method="seqno", stack=[])
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False
 
     def test_missing_method(self, api_method_call_no_get):
         response = api_method_call_no_get(self.METHOD, address=ELECTOR_ADDRESS, stack=[])
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False
 
     def test_nonexistent_method(self, api_method_call_no_get):
@@ -112,6 +108,4 @@ class TestRunGetMethodStd:
 
     def test_missing_address(self, api_method_call_no_get):
         response = api_method_call_no_get(self.METHOD, method="seqno", stack=[])
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False

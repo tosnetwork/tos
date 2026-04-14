@@ -28,8 +28,6 @@ class TestSendBoc:
 
     def test_missing_boc(self, api_method_call_no_get):
         response = api_method_call_no_get(self.METHOD)
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False
 
     def test_invalid_boc(self, api_method_call_no_get):
@@ -50,8 +48,6 @@ class TestSendBocReturnHash:
 
     def test_missing_boc(self, api_method_call_no_get):
         response = api_method_call_no_get(self.METHOD)
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False
 
     def test_invalid_boc(self, api_method_call_no_get):
@@ -92,8 +88,6 @@ class TestSendQuery:
 
     def test_missing_params(self, api_method_call_no_get):
         response = api_method_call_no_get(self.METHOD)
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False
 
     def test_invalid_body(self, api_method_call_no_get):
@@ -116,8 +110,6 @@ class TestEstimateFee:
 
     def test_missing_params(self, api_method_call):
         response = api_method_call(self.METHOD)
-        assert response.status_code == 200
-        assert response.json()["ok"] is False
         assert response.json()["ok"] is False
 
     def test_with_address_and_body(self, api_method_call):
