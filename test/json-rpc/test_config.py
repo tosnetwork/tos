@@ -61,6 +61,18 @@ class TestGetConfigAll:
         assert result["config"]["@type"] == "tvm.cell"
         assert len(result["config"]["bytes"]) > 0
 
+    def test_has_config_params(self, api_method_call):
+        """getConfigAll should include individual config_params map."""
+        response = api_method_call(self.METHOD)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        result = data["result"]
+        assert "config_params" in result
+        assert isinstance(result["config_params"], dict)
+        # Should have at least a few known params
+        assert len(result["config_params"]) > 0
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  3. getLibraries

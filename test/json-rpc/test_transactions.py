@@ -66,6 +66,17 @@ class TestGetTransactions:
         assert resp2.status_code == 200
         assert resp2.json()["ok"] is True
 
+    def test_lt_without_hash(self, api_method_call):
+        """Providing lt without hash should return an error."""
+        response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS, lt="12345")
+        assert response.json()["ok"] is False
+
+    def test_hash_without_lt(self, api_method_call):
+        """Providing hash without lt should return an error."""
+        response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS,
+                                   hash="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+        assert response.json()["ok"] is False
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  2. getTransactionsStd  (TOS exclusive)
@@ -87,6 +98,11 @@ class TestGetTransactionsStd:
 
     def test_missing_address(self, api_method_call):
         response = api_method_call(self.METHOD, limit=5)
+        assert response.json()["ok"] is False
+
+    def test_lt_without_hash(self, api_method_call):
+        """Providing lt without hash should return an error."""
+        response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS, lt="12345")
         assert response.json()["ok"] is False
 
 

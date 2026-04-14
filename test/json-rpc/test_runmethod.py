@@ -86,6 +86,25 @@ class TestRunGetMethod:
         assert response.status_code == 200
         assert response.json()["ok"] is True
 
+    def test_result_fields(self, api_method_call_no_get):
+        """Result should contain gas_used, exit_code, stack, and block_id."""
+        response = api_method_call_no_get(
+            self.METHOD,
+            address=ELECTOR_ADDRESS,
+            method="active_election_id",
+            stack=[],
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        result = data["result"]
+        assert "gas_used" in result
+        assert "exit_code" in result
+        assert result["exit_code"] == 0
+        assert "stack" in result
+        assert isinstance(result["stack"], list)
+        assert "block_id" in result
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  2. runGetMethodStd  (TOS exclusive)

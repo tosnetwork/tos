@@ -56,6 +56,16 @@ class TestGetMasterchainBlockSignatures:
         if data["result"]["signatures"]:
             assert data["result"]["signatures"][0]["@type"] == "blocks.signature"
 
+    def test_response_has_id(self, api_method_call, last_mc_seqno):
+        """Response should include id field with the requested block."""
+        response = api_method_call(self.METHOD, seqno=last_mc_seqno)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert "id" in data["result"]
+        assert data["result"]["id"]["@type"] == "ton.blockIdExt"
+        assert data["result"]["id"]["seqno"] == last_mc_seqno
+
     def test_wrong_seqno(self, api_method_call):
         response = api_method_call(self.METHOD, seqno="invalid")
         assert response.json()["ok"] is False

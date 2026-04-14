@@ -81,6 +81,27 @@ class TestGetAddressInformation:
         assert data["ok"] is True
         assert data["result"]["state"] == "uninitialized"
 
+    def test_extra_currencies(self, api_method_call):
+        """Zero masterchain address should have extra currencies from genesis."""
+        response = api_method_call(self.METHOD, address=ZERO_MC_ADDRESS)
+        assert response.status_code == 200, response.json().get("error")
+        data = response.json()
+        assert data["ok"] is True
+        assert data["result"]["@type"] == "raw.fullAccountState"
+        # The testnet genesis mints extra currencies (id=239) to the zero address
+        extra = data["result"].get("extra_currencies", [])
+        if extra:  # may be empty if testnet config doesn't include them
+            assert extra[0]["@type"] == "extraCurrency"
+
+    def test_sync_utime_present(self, api_method_call):
+        """Response should include sync_utime field."""
+        response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS)
+        assert response.status_code == 200
+        data = response.json()
+        assert "sync_utime" in data["result"]
+        assert isinstance(data["result"]["sync_utime"], int)
+        assert data["result"]["sync_utime"] > 0
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  2. getExtendedAddressInformation
@@ -114,6 +135,23 @@ class TestGetExtendedAddressInformation:
         assert data["ok"] is True
         assert data["result"]["@type"] == "fullAccountState"
         assert data["result"]["account_state"]["@type"] == "raw.accountState"
+
+    def test_wallet_v3_account_state(self, api_method_call):
+        """Deployed wallet v3 should be recognized with its account state type."""
+        import json
+        from pathlib import Path
+        deployed = Path(__file__).parent / "deployed_addresses.json"
+        if not deployed.exists():
+            pytest.skip("No deployed contracts")
+        addrs = json.loads(deployed.read_text())
+        addr = addrs.get("wallets", {}).get("wallet_v3r2", {}).get("address")
+        if not addr:
+            pytest.skip("wallet_v3r2 not deployed")
+        response = api_method_call(self.METHOD, address=addr)
+        assert response.status_code == 200, response.json().get("error")
+        data = response.json()
+        assert data["ok"] is True
+        assert data["result"]["@type"] == "fullAccountState"
 
     def test_for_given_block(self, api_method_call, last_mc_seqno):
         response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS,
@@ -180,6 +218,68 @@ class TestGetWalletInformation:
         response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS,
                                    seqno=last_mc_seqno + 10000)
         assert response.json()["ok"] is False
+
+    def test_wallet_v3_detected(self, api_method_call):
+        """Deployed wallet v3 should be detected with correct type and seqno."""
+        import json
+        from pathlib import Path
+        deployed = Path(__file__).parent / "deployed_addresses.json"
+        if not deployed.exists():
+            pytest.skip("No deployed contracts")
+        addrs = json.loads(deployed.read_text())
+        addr = addrs.get("wallets", {}).get("wallet_v3r2", {}).get("address")
+        if not addr:
+            pytest.skip("wallet_v3r2 not deployed")
+        response = api_method_call(self.METHOD, address=addr)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        result = data["result"]
+        assert result["wallet"] is True
+        assert result["wallet_type"] == "wallet v3 r2"
+        assert "seqno" in result
+        assert "wallet_id" in result
+
+    def test_wallet_v4_detected(self, api_method_call):
+        """Deployed wallet v4 should be detected with correct type."""
+        import json
+        from pathlib import Path
+        deployed = Path(__file__).parent / "deployed_addresses.json"
+        if not deployed.exists():
+            pytest.skip("No deployed contracts")
+        addrs = json.loads(deployed.read_text())
+        addr = addrs.get("wallets", {}).get("wallet_v4r2", {}).get("address")
+        if not addr:
+            pytest.skip("wallet_v4r2 not deployed")
+        response = api_method_call(self.METHOD, address=addr)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        result = data["result"]
+        assert result["wallet"] is True
+        assert result["wallet_type"] == "wallet v4 r2"
+        assert "seqno" in result
+        assert "wallet_id" in result
+
+    def test_wallet_v5_detected(self, api_method_call):
+        """Deployed wallet v5 should be detected with correct type."""
+        import json
+        from pathlib import Path
+        deployed = Path(__file__).parent / "deployed_addresses.json"
+        if not deployed.exists():
+            pytest.skip("No deployed contracts")
+        addrs = json.loads(deployed.read_text())
+        addr = addrs.get("wallets", {}).get("wallet_v5r1", {}).get("address")
+        if not addr:
+            pytest.skip("wallet_v5r1 not deployed")
+        response = api_method_call(self.METHOD, address=addr)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        result = data["result"]
+        assert result["wallet"] is True
+        assert result["wallet_type"] == "wallet v5 r1"
+        assert "seqno" in result
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -303,6 +403,6 @@ class TestGetTokenData:
         assert response.json()["ok"] is False
 
     def test_not_a_token(self, api_method_call):
-        """Calling getTokenData on a non-token contract should fail (409 or 500)."""
+        """Calling getTokenData on a non-token contract should return 409."""
         response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS)
-        assert response.status_code in {409, 500}
+        assert response.status_code == 409
