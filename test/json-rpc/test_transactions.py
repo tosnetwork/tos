@@ -130,7 +130,7 @@ class TestGetBlockTransactions:
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
         response = api_method_call(self.METHOD, workchain=-1, shard=SHARD_ALL,
-                                   seqno=last_mc_seqno + 10000)
+                                   seqno=last_mc_seqno + 1000000)
         assert response.json()["ok"] is False
 
 
@@ -151,7 +151,7 @@ class TestGetBlockTransactionsExt:
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
         response = api_method_call(self.METHOD, workchain=-1, shard=SHARD_ALL,
-                                   seqno=last_mc_seqno + 10000)
+                                   seqno=last_mc_seqno + 1000000)
         assert response.json()["ok"] is False
 
 

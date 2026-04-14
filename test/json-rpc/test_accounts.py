@@ -71,7 +71,7 @@ class TestGetAddressInformation:
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
         response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS,
-                                   seqno=last_mc_seqno + 10000)
+                                   seqno=last_mc_seqno + 1000000)
         assert response.json()["ok"] is False
 
     def test_uninitialized_address(self, api_method_call):
@@ -170,7 +170,7 @@ class TestGetExtendedAddressInformation:
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
         response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS,
-                                   seqno=last_mc_seqno + 10000)
+                                   seqno=last_mc_seqno + 1000000)
         assert response.json()["ok"] is False
 
 
@@ -216,7 +216,7 @@ class TestGetWalletInformation:
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
         response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS,
-                                   seqno=last_mc_seqno + 10000)
+                                   seqno=last_mc_seqno + 1000000)
         assert response.json()["ok"] is False
 
     def test_wallet_v1_detected(self, api_method_call):
@@ -364,7 +364,7 @@ class TestGetAddressBalance:
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
         response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS,
-                                   seqno=last_mc_seqno + 10000)
+                                   seqno=last_mc_seqno + 1000000)
         assert response.json()["ok"] is False
 
 
@@ -412,7 +412,7 @@ class TestGetAddressState:
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
         response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS,
-                                   seqno=last_mc_seqno + 10000)
+                                   seqno=last_mc_seqno + 1000000)
         assert response.json()["ok"] is False
 
 

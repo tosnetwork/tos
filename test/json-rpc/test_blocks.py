@@ -71,7 +71,7 @@ class TestGetMasterchainBlockSignatures:
         assert response.json()["ok"] is False
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
-        response = api_method_call(self.METHOD, seqno=last_mc_seqno + 10000)
+        response = api_method_call(self.METHOD, seqno=last_mc_seqno + 1000000)
         assert response.json()["ok"] is False
 
 
@@ -121,7 +121,7 @@ class TestGetShardBlockProof:
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
         response = api_method_call(self.METHOD, workchain=-1, shard=SHARD_ALL,
-                                   seqno=last_mc_seqno + 10000)
+                                   seqno=last_mc_seqno + 1000000)
         assert response.json()["ok"] is False
 
     def test_negative_seqno(self, api_method_call):
@@ -178,7 +178,7 @@ class TestLookupBlock:
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
         response = api_method_call(self.METHOD, workchain=-1, shard=SHARD_ALL,
-                                   seqno=last_mc_seqno + 10000)
+                                   seqno=last_mc_seqno + 1000000)
         assert response.json()["ok"] is False
 
 
@@ -205,7 +205,7 @@ class TestGetShards:
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
         """A far-future seqno may return a JSON error or a timeout (502 with empty body)."""
-        response = api_method_call("shards", seqno=last_mc_seqno + 10000)
+        response = api_method_call("shards", seqno=last_mc_seqno + 1000000)
         if response.status_code == 502:
             pass  # liteserver timeout — acceptable
         else:
@@ -238,7 +238,7 @@ class TestGetBlockHeader:
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
         response = api_method_call(self.METHOD, workchain=-1, shard=SHARD_ALL,
-                                   seqno=last_mc_seqno + 10000)
+                                   seqno=last_mc_seqno + 1000000)
         assert response.json()["ok"] is False
 
 

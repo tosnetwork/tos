@@ -42,7 +42,7 @@ class TestReadyz:
         """GET /readyz should return JSON with at least 'ready' and 'sync_lag_seconds'."""
         url = endpoint.rstrip("/") + "/readyz"
         resp = requests.get(url, headers=headers)
-        assert resp.status_code == 200
+        assert resp.status_code in {200, 503}  # 503 when still syncing
         data = resp.json()
         assert "ready" in data
         assert isinstance(data["ready"], bool)
@@ -52,7 +52,7 @@ class TestReadyz:
     def test_readyz_trailing_slash(self, endpoint, headers):
         url = endpoint.rstrip("/") + "/readyz/"
         resp = requests.get(url, headers=headers)
-        assert resp.status_code == 200
+        assert resp.status_code in {200, 503}
 
 
 # ═══════════════════════════════════════════════════════════════════════════

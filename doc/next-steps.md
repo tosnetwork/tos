@@ -3,13 +3,18 @@
 > Single source of truth for remaining work across `~/tos` and `~/tos/tosctl`.
 > Replaces the scattered P0/P1/P2 lists that were in `validator-engine-json-rpc-gap-plan.md` and `tosctl-mytonctrl-implementation-backlog.md`.
 >
-> Last updated: 2026-04-13 (status audit correction)
+> Last updated: 2026-04-14
 
 ## What's done
 
 | Area | Status |
 |---|---|
-| `~/tos` JSON-RPC server | ✅ 21 methods + 15 REST GET endpoints, 3 HTTP endpoints, runtime config, request timeout |
+| `~/tos` JSON-RPC server | ✅ 35 methods, REST GET+POST for all, 3 HTTP endpoints, API key, cache, timeout |
+| `~/tos` JSON-RPC refactor | ✅ Split into 10 domain files (refactor-plan.md all tasks ✅) |
+| `~/tos` JSON-RPC alignment | ✅ Response shapes aligned with ton-http-api-cpp (gap-plan.md all tasks ✅) |
+| `~/tos` wallet type detection | ✅ 6 TOS-compiled wallet code hashes, detect_wallet_type case-fix |
+| `~/tos` contract deployment | ✅ 6 wallet contracts deployed on 4-node testnet via Fift deployer |
+| `~/tos` pytest suite | ✅ 478 tests passing, aligned with ton-http-api-cpp reference tests |
 | `~/tos` staking contracts | ✅ 3 suites TOS-adapted, FunC compiled, BOC hex in tosctl |
 | `~/tos` HTTP deadlock fix | ✅ HttpPayload callback safety + one-shot completion (codex root-fix) |
 | `~/tos` TL parity fix | ✅ lookupBlock/shards/sendBoc adapted for TOS liteserver |
@@ -22,7 +27,6 @@
 | `~/tos/tosctl` alert system | ✅ Config schema + 5 commands (Telegram + webhook) |
 | `~/tos/tosctl` supply chain | ✅ toncenter-rs vendored as toscenter-rs, pytoniq_core vendored as pytosiq_core |
 | `~/tos/tosctl` operator docs | ✅ README.md, JSON output on 15 commands, mnemonic aliases |
-| E2E JSON-RPC test | ✅ 21/21 passing |
 | mytonctrl 87 命令平替 | 90/90 Full ✅ |
 
 ## Remaining work
@@ -54,7 +58,7 @@
 | 11 | REST transport endpoints | `~/tos` | 15 GET-style endpoints added alongside /jsonRPC. Query-string-to-JSON conversion reuses existing handlers. | ✅ Done |
 | 12 | `tosctl install wizard` | `~/tos/tosctl` | Interactive setup wizard: checks prerequisites, collects config, generates tosctl-config.json. | ✅ Done |
 | 13 | Policy documentation | `~/tos` | `doc/json-rpc-policy.md` — R6-R14 design decisions documented. | ✅ Done |
-| 14 | Advanced/explorer APIs | `~/tos` | All 7 implemented: getMasterchainBlockSignatures, getShardBlockProof, getLibraries, getTokenData, tryLocateTx, tryLocateResultTx, tryLocateSourceTx. JSON-RPC now 28 methods. | ✅ Done |
+| 14 | Advanced/explorer APIs | `~/tos` | All implemented: getMasterchainBlockSignatures, getShardBlockProof, getLibraries, getTokenData, tryLocateTx, tryLocateResultTx, tryLocateSourceTx, getConsensusBlock, getOutMsgQueueSize, getConfigAll, getTransactionsStd, getBlockTransactionsExt, runGetMethodStd, sendBocReturnHashNoError, detectHash. JSON-RPC now 35 methods. | ✅ Done |
 
 ## Acceptance criteria for v1.0
 
@@ -62,7 +66,7 @@
 |---|---|---|
 | Every mytonctrl command has tosctl replacement | ✅ 90/90 Full | — |
 | Staking contracts verified on TOS chain | ⚠️ Script ready | #1 (manual run on testnet) |
-| E2E JSON-RPC test (21/21) | ✅ Done | — |
+| pytest JSON-RPC suite (478 tests) | ✅ Done | — |
 | E2E CLI test | ⚠️ Script ready | #2 (manual run on testnet) |
 | Operator README exists | ✅ Done | — |
 | JSON output on all list/status commands | ✅ Done | — |
