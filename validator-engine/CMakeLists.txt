@@ -2,7 +2,15 @@ set(VALIDATOR_ENGINE_SOURCE
   validator-engine.hpp
   validator-engine.cpp
   json-rpc-server.h
+  json-rpc-server-internal.h
   json-rpc-server.cpp
+  json-rpc-server-accounts.cpp
+  json-rpc-server-blocks.cpp
+  json-rpc-server-transactions.cpp
+  json-rpc-server-runmethod.cpp
+  json-rpc-server-send.cpp
+  json-rpc-server-config.cpp
+  json-rpc-server-utils.cpp
 )
 
 add_executable(validator-engine ${VALIDATOR_ENGINE_SOURCE})
