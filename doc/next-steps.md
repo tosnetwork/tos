@@ -38,7 +38,7 @@
 | # | Task | Repo | Description | Status |
 |---|---|---|---|---|
 | 1 | **Staking contract on-chain verification** | `~/tos` | Deploy single-nominator pool on TOS testnet, verify full lifecycle. | ⚠️ Requires vault setup for wallet/pool deploy |
-| 2 | **End-to-end testing on TOS testnet** | both | JSON-RPC: 21/21 ✅. CLI: 16/17 ✅ (1 known issue: vote offer ls parse). Auto-vault configured. | ✅ Done |
+| 2 | **End-to-end testing on TOS testnet** | both | JSON-RPC: 21/21 ✅. CLI: 17/17 ✅. Auto-vault configured. | ✅ Done |
 | 3 | **JSON-RPC request timeout** | `~/tos` | QueryTimeoutGuard actor wraps liteserver queries. Default 30s, configurable via `--json-rpc-request-timeout`. | ✅ Done |
 
 ### P1 — Required for operator onboarding
@@ -75,7 +75,7 @@
 | Every mytonctrl command has tosctl replacement | ✅ 90/90 Full | — |
 | Staking contracts verified on TOS chain | ⚠️ Needs vault | #1 (requires VAULT_URL for key management) |
 | pytest JSON-RPC suite (484 tests) | ✅ Done | — |
-| E2E CLI test | ✅ Done (JSON-RPC 21/21, CLI 16/17) | — |
+| E2E CLI test | ✅ Done (JSON-RPC 21/21, CLI 17/17) | — |
 | Operator README exists | ✅ Done | — |
 | JSON output on all list/status commands | ✅ Done | — |
 | No hung HTTP requests on chain stall | ✅ Done | — |
