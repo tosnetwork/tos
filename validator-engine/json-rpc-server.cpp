@@ -319,7 +319,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     static const std::set<std::string> post_rest_paths = {
         "/runGetMethod", "/runGetMethodStd",
         "/sendBoc", "/sendBocReturnHash", "/sendBocReturnHashNoError",
-        "/sendQuery"
+        "/sendQuery", "/estimateFee"
     };
     if (post_rest_paths.count(post_path)) {
       std::string rest_method = post_path.substr(1);  // strip leading /
@@ -632,35 +632,19 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
   }
   int config_id = config_id_r.ok();
 
-  // Step 1: Get masterchain info to obtain latest block ID
-  auto mc_inner = tos::serialize_tl_object(
-      tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
-  auto mc_query = tos::serialize_tl_object(
-      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
+  // Optional seqno: query config at a specific MC block
+  auto seqno_r = params.get_optional_int_field("seqno");
+  bool has_seqno = seqno_r.is_ok() && seqno_r.ok() > 0;
+  td::int32 seqno = has_seqno ? static_cast<td::int32>(seqno_r.ok()) : 0;
 
-  auto self_id = actor_id(this);
-  send_liteserver_query(std::move(mc_query),
-      [config_id, req_id = std::move(req_id), self_id, promise = std::move(promise)](
-          td::Result<td::BufferSlice> R) mutable {
-        if (R.is_error()) {
-          promise.set_value(make_json_error(-32603,
-              PSTRING() << "getMasterchainInfo failed: " << R.error(), req_id));
-          return;
-        }
-        auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(
-            R.move_as_ok(), true);
-        if (mc_r.is_error()) {
-          promise.set_value(make_json_error(-32603,
-              PSTRING() << "parse masterchainInfo: " << mc_r.error(), req_id));
-          return;
-        }
-        auto mc = mc_r.move_as_ok();
-
-        // Step 2: Query config with the real block ID
+  // Step 2 lambda: query config at a resolved block
+  auto do_query_config = [config_id, req_id = std::move(req_id),
+                          self_id = actor_id(this), promise = std::move(promise)](
+      tos::tl_object_ptr<tos::lite_api::tosNode_blockIdExt> block_id) mutable {
         std::vector<td::int32> param_list = {config_id};
         auto inner = tos::serialize_tl_object(
             tos::create_tl_object<tos::lite_api::liteServer_getConfigParams>(
-                0x10000, std::move(mc->last_), std::move(param_list)),
+                0x10000, std::move(block_id), std::move(param_list)),
             true);
         auto query = tos::serialize_tl_object(
             tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
@@ -724,7 +708,37 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
               PSTRING() << "{\"config\":{\"bytes\":" << td::JsonString(td::Slice(b64)) << "}}",
               req_id));
         }));
-      });
+  };  // end of do_query_config
+
+  // Step 1: resolve block
+  if (has_seqno) {
+    auto block_id = tos::create_tl_object<tos::lite_api::tosNode_blockId>(
+        -1, static_cast<td::int64>(-1LL << 63), seqno);
+    auto lookup_inner = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_lookupBlock>(
+            1, std::move(block_id), 0, 0), true);
+    auto lookup_query = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(lookup_inner)), true);
+    send_liteserver_query(std::move(lookup_query),
+        [do_query_config = std::move(do_query_config)](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) return;
+          auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(R.move_as_ok(), true);
+          if (lb_r.is_error()) return;
+          do_query_config(std::move(lb_r.move_as_ok()->id_));
+        });
+  } else {
+    auto mc_inner = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
+    auto mc_query = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
+    send_liteserver_query(std::move(mc_query),
+        [do_query_config = std::move(do_query_config)](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) return;
+          auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(R.move_as_ok(), true);
+          if (mc_r.is_error()) return;
+          do_query_config(std::move(mc_r.move_as_ok()->last_));
+        });
+  }
 }
 
 // ─── Parsed account state (shared by getAddressInformation, getExtendedAddressInformation, getWalletInformation)
@@ -1305,36 +1319,21 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
     return;
   }
 
-  // Step 1: get latest mc block
-  auto mc_inner = tos::serialize_tl_object(
-      tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
-  auto mc_query = tos::serialize_tl_object(
-      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
+  // Optional seqno: query at a specific MC block
+  auto seqno_r = params.get_optional_int_field("seqno");
+  bool has_seqno = seqno_r.is_ok() && seqno_r.ok() > 0;
+  td::int32 seqno = has_seqno ? static_cast<td::int32>(seqno_r.ok()) : 0;
 
-  auto self_id = actor_id(this);
   auto params_boc = params_boc_r.move_as_ok();
-  send_liteserver_query(std::move(mc_query),
-      [addr, method_id, params_boc = std::move(params_boc),
-       req_id = std::move(req_id), self_id, promise = std::move(promise)](
-          td::Result<td::BufferSlice> R) mutable {
-        if (R.is_error()) {
-          promise.set_value(make_json_error(-32603,
-              PSTRING() << "getMasterchainInfo: " << R.error(), req_id));
-          return;
-        }
-        auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(
-            R.move_as_ok(), true);
-        if (mc_r.is_error()) {
-          promise.set_value(make_json_error(-32603,
-              PSTRING() << "parse mcInfo: " << mc_r.error(), req_id));
-          return;
-        }
-        auto mc = mc_r.move_as_ok();
 
-        // Step 2: runSmcMethod (mode=4 → return result)
+  // Step 2 lambda: runSmcMethod at a resolved block
+  auto do_run_method = [addr, method_id, params_boc = std::move(params_boc),
+                        req_id = std::move(req_id), self_id = actor_id(this),
+                        promise = std::move(promise)](
+      tos::tl_object_ptr<tos::lite_api::tosNode_blockIdExt> block_id) mutable {
         auto inner = tos::serialize_tl_object(
             tos::create_tl_object<tos::lite_api::liteServer_runSmcMethod>(
-                0x04, std::move(mc->last_),
+                0x04, std::move(block_id),
                 tos::create_tl_object<tos::lite_api::liteServer_accountId>(
                     addr.workchain, addr.addr),
                 method_id, std::move(params_boc)),
@@ -1422,7 +1421,37 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
 
           promise.set_value(make_json_ok(result, req_id));
         }));
-      });
+  };  // end of do_run_method
+
+  // Step 1: resolve block
+  if (has_seqno) {
+    auto block_id = tos::create_tl_object<tos::lite_api::tosNode_blockId>(
+        -1, static_cast<td::int64>(-1LL << 63), seqno);
+    auto lookup_inner = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_lookupBlock>(
+            1, std::move(block_id), 0, 0), true);
+    auto lookup_query = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(lookup_inner)), true);
+    send_liteserver_query(std::move(lookup_query),
+        [do_run_method = std::move(do_run_method)](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) return;
+          auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(R.move_as_ok(), true);
+          if (lb_r.is_error()) return;
+          do_run_method(std::move(lb_r.move_as_ok()->id_));
+        });
+  } else {
+    auto mc_inner = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
+    auto mc_query = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
+    send_liteserver_query(std::move(mc_query),
+        [do_run_method = std::move(do_run_method)](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) return;
+          auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(R.move_as_ok(), true);
+          if (mc_r.is_error()) return;
+          do_run_method(std::move(mc_r.move_as_ok()->last_));
+        });
+  }
 }
 
 // ─── Wallet info JSON builder ─────────────────────────────────────────────
@@ -5109,35 +5138,21 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
     return;
   }
 
-  auto mc_inner = tos::serialize_tl_object(
-      tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
-  auto mc_query = tos::serialize_tl_object(
-      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
+  // Optional seqno: query at a specific MC block
+  auto seqno_r = params.get_optional_int_field("seqno");
+  bool has_seqno = seqno_r.is_ok() && seqno_r.ok() > 0;
+  td::int32 seqno = has_seqno ? static_cast<td::int32>(seqno_r.ok()) : 0;
 
-  auto self_id = actor_id(this);
   auto params_boc = params_boc_r.move_as_ok();
-  send_liteserver_query(std::move(mc_query),
-      [addr, method_id, params_boc = std::move(params_boc),
-       req_id = std::move(req_id), self_id, promise = std::move(promise)](
-          td::Result<td::BufferSlice> R) mutable {
-        if (R.is_error()) {
-          promise.set_value(make_json_error(-32603,
-              PSTRING() << "getMasterchainInfo: " << R.error(), req_id));
-          return;
-        }
-        auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(
-            R.move_as_ok(), true);
-        if (mc_r.is_error()) {
-          promise.set_value(make_json_error(-32603,
-              PSTRING() << "parse mcInfo: " << mc_r.error(), req_id));
-          return;
-        }
-        auto mc = mc_r.move_as_ok();
 
-        // runSmcMethod (mode=4 — return result)
+  // Step 2 lambda: runSmcMethod at a resolved block
+  auto do_run_method = [addr, method_id, params_boc = std::move(params_boc),
+                        req_id = std::move(req_id), self_id = actor_id(this),
+                        promise = std::move(promise)](
+      tos::tl_object_ptr<tos::lite_api::tosNode_blockIdExt> block_id) mutable {
         auto inner = tos::serialize_tl_object(
             tos::create_tl_object<tos::lite_api::liteServer_runSmcMethod>(
-                0x04, std::move(mc->last_),
+                0x04, std::move(block_id),
                 tos::create_tl_object<tos::lite_api::liteServer_accountId>(
                     addr.workchain, addr.addr),
                 method_id, std::move(params_boc)),
@@ -5236,7 +5251,37 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
 
           promise.set_value(make_json_ok(result, req_id));
         }));
-      });
+  };  // end of do_run_method
+
+  // Step 1: resolve block
+  if (has_seqno) {
+    auto block_id = tos::create_tl_object<tos::lite_api::tosNode_blockId>(
+        -1, static_cast<td::int64>(-1LL << 63), seqno);
+    auto lookup_inner = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_lookupBlock>(
+            1, std::move(block_id), 0, 0), true);
+    auto lookup_query = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(lookup_inner)), true);
+    send_liteserver_query(std::move(lookup_query),
+        [do_run_method = std::move(do_run_method)](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) return;
+          auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(R.move_as_ok(), true);
+          if (lb_r.is_error()) return;
+          do_run_method(std::move(lb_r.move_as_ok()->id_));
+        });
+  } else {
+    auto mc_inner = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
+    auto mc_query = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
+    send_liteserver_query(std::move(mc_query),
+        [do_run_method = std::move(do_run_method)](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) return;
+          auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(R.move_as_ok(), true);
+          if (mc_r.is_error()) return;
+          do_run_method(std::move(mc_r.move_as_ok()->last_));
+        });
+  }
 }
 
 // ─── sendBocReturnHashNoError ────────────────────────────────────────────
