@@ -6,7 +6,6 @@
 >
 > Planning docs:
 > - [Migration Audit](docs/tosctl-migration-audit.md)
-> - [Implementation Tasks](docs/tosctl-implementation-tasks.md)
 
 ## Table of Contents
 

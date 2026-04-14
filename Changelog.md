@@ -5,7 +5,7 @@
 3. Mempool changes that protect the collation process from external message overload
 
 
-Besides the work of the core team, this update also includes contributions from multiple bug-bounty hunters and [https://t.me/contest/447](contest) participants. The full list will be added to changelog and release note after contest result finalization.
+Besides the work of the core team, this update also includes contributions from multiple bug-bounty hunters and [contest](https://t.me/contest/447) participants. The full list will be added to changelog and release note after contest result finalization.
 
 
 ## 2026.03 Update
@@ -16,7 +16,7 @@ Besides the work of the core team, this update also includes contributions from 
 4. Expanded testing and tooling: stronger consensus tests, QUIC interoperability tests, and improvements in Tostester and toslib.
 5. Various fixes in node, compression, build and CI infrastructure.
 
-Besides the work of the core team, this update also includes contributions from multiple bug-bounty hunters and [https://t.me/contest/447](contest) participants. The full list will be added to changelog and release note after contest result finalization.
+Besides the work of the core team, this update also includes contributions from multiple bug-bounty hunters and [contest](https://t.me/contest/447) participants. The full list will be added to changelog and release note after contest result finalization.
 
 # 2026.02-1 Update
 
@@ -41,7 +41,7 @@ Besides the work of the core team, this update also includes contributions from
 7. Fixed a few performance and stability issues
 8. Added Tostester framework
 
-Besides the work of the core team, this update also includes contributions from Vahagn @vah13, InfiniteSec team [https://x.com/infsec_io](x.com/infsec_io) and Christos from [Cantina and Spearbit](cantina.xyz).
+Besides the work of the core team, this update also includes contributions from Vahagn @vah13, InfiniteSec team [https://x.com/infsec_io](https://x.com/infsec_io) and Christos from [Cantina and Spearbit](https://cantina.xyz).
 ## 2025.12 Update
 
 1. `celldb-v2` enabled by default.

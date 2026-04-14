@@ -602,7 +602,6 @@ tosctl config elections show --format json
 - [Election automation audit](src/node-control/docs/tos-election-control-audit.md)
 - [RPC compatibility notes](src/node-control/docs/tos-rpc-compatibility.md)
 - [Control plane compatibility](src/node-control/docs/tos-control-plane-compatibility.md)
-- [Contract compatibility audit](src/node-control/docs/tos-contract-compatibility-audit.md)
 - [Subcommand design (target command tree)](doc/tosctl-subcommand-design.md)
 - [mytonctrl parity mapping](doc/tosctl-mytonctrl-parity-design.md)
 
