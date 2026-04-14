@@ -29,6 +29,10 @@
     "jetton_master": {
       "address": "-1:109306a27fa0dc038c711076ca53f5533c689e838dd8e97b2388c73404c5db0f",
       "code_hash": "13f5d7a316c6d76e1053e88ac59b5de65a072a388451371dc5c5becbba13f50e"
+    },
+    "nft_collection": {
+      "address": "-1:aeceb8174968bf84c83cae2f433208d03f6a558b72a738f923c2071435ca9f0e",
+      "code_hash": "64bb2d4661b5f2dc1a83bf5cbbe09e92ac0b460a1b879a5519386fca4c348bca"
     }
   }
 }

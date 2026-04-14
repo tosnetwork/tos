@@ -9,12 +9,12 @@
 
 | Area | Status |
 |---|---|
-| `~/tos` JSON-RPC server | ✅ 35 methods, REST GET+POST for all, 3 HTTP endpoints, API key, cache, timeout |
+| `~/tos` JSON-RPC server | ✅ 35 methods, REST GET+POST, 3 HTTP endpoints, API key, cache, timeout, Prometheus metrics, OpenAPI spec, /api-info |
 | `~/tos` JSON-RPC refactor | ✅ Split into 10 domain files (refactor-plan.md all tasks ✅) |
 | `~/tos` JSON-RPC alignment | ✅ Response shapes aligned with ton-http-api-cpp (gap-plan.md all tasks ✅) |
 | `~/tos` wallet type detection | ✅ 6 TOS-compiled wallet code hashes, detect_wallet_type case-fix |
-| `~/tos` contract deployment | ✅ 6 wallet contracts deployed on 4-node testnet via Fift deployer |
-| `~/tos` pytest suite | ✅ 478 tests passing, aligned with ton-http-api-cpp reference tests |
+| `~/tos` contract deployment | ✅ 6 wallet + 1 Jetton master deployed on 4-node testnet via Fift deployer |
+| `~/tos` pytest suite | ✅ 481 tests passing, aligned with ton-http-api-cpp reference tests |
 | `~/tos` staking contracts | ✅ 3 suites TOS-adapted, FunC compiled, BOC hex in tosctl |
 | `~/tos` HTTP deadlock fix | ✅ HttpPayload callback safety + one-shot completion (codex root-fix) |
 | `~/tos` TL parity fix | ✅ lookupBlock/shards/sendBoc adapted for TOS liteserver |
@@ -68,7 +68,7 @@
 |---|---|---|
 | Every mytonctrl command has tosctl replacement | ✅ 90/90 Full | — |
 | Staking contracts verified on TOS chain | ⚠️ Script ready | #1 (manual run on testnet) |
-| pytest JSON-RPC suite (478 tests) | ✅ Done | — |
+| pytest JSON-RPC suite (481 tests) | ✅ Done | — |
 | E2E CLI test | ⚠️ Script ready | #2 (manual run on testnet) |
 | Operator README exists | ✅ Done | — |
 | JSON output on all list/status commands | ✅ Done | — |

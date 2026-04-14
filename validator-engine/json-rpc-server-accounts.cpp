@@ -1063,46 +1063,119 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
           td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
               std::move(nft_query),
               td::PromiseCreator::lambda(
-                  [req_id = std::move(req_id), promise = std::move(promise),
+                  [addr, params_boc, self_id,
+                   saved_wc, saved_shard, saved_seqno, saved_root, saved_file,
+                   req_id = std::move(req_id), promise = std::move(promise),
                    parse_address_from_slice, cell_to_b64](
                       td::Result<td::BufferSlice> R2) mutable {
+
+            // Helper: try get_collection_data as a third fallback
+            auto try_collection = [&addr, &params_boc, &self_id,
+                                   saved_wc, saved_shard, saved_seqno, saved_root, saved_file,
+                                   &parse_address_from_slice, &cell_to_b64](
+                std::string req_id, td::Promise<HttpReturn> promise) mutable {
+              auto blk3 = tos::create_tl_object<tos::lite_api::tosNode_blockIdExt>(
+                  saved_wc, saved_shard, saved_seqno, saved_root, saved_file);
+              td::int64 coll_method_id = (td::crc16(td::Slice("get_collection_data")) & 0xffff) | 0x10000;
+              auto coll_inner = tos::serialize_tl_object(
+                  tos::create_tl_object<tos::lite_api::liteServer_runSmcMethod>(
+                      0x04, std::move(blk3),
+                      tos::create_tl_object<tos::lite_api::liteServer_accountId>(
+                          addr.workchain, addr.addr),
+                      coll_method_id, params_boc->clone()),
+                  true);
+              auto coll_query = tos::serialize_tl_object(
+                  tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(coll_inner)), true);
+
+              td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
+                  std::move(coll_query),
+                  td::PromiseCreator::lambda(
+                      [req_id = std::move(req_id), promise = std::move(promise),
+                       parse_address_from_slice, cell_to_b64](
+                          td::Result<td::BufferSlice> R3) mutable {
+                if (R3.is_error()) {
+                  promise.set_value(make_json_error(409,
+                      "Smart contract is not a Jetton or NFT", req_id));
+                  return;
+                }
+                auto F3 = tos::fetch_tl_object<tos::lite_api::liteServer_runMethodResult>(
+                    R3.move_as_ok(), true);
+                if (F3.is_error()) {
+                  promise.set_value(make_json_error(409,
+                      "Smart contract is not a Jetton or NFT", req_id));
+                  return;
+                }
+                auto f3 = F3.move_as_ok();
+                if (f3->exit_code_ != 0 || f3->result_.empty()) {
+                  promise.set_value(make_json_error(409,
+                      "Smart contract is not a Jetton or NFT", req_id));
+                  return;
+                }
+                auto cell_r = vm::std_boc_deserialize(f3->result_.as_slice());
+                if (cell_r.is_error()) {
+                  promise.set_value(make_json_error(409,
+                      "Smart contract is not a Jetton or NFT", req_id));
+                  return;
+                }
+                auto stk = td::make_ref<vm::Stack>();
+                auto result_cell = cell_r.move_as_ok();
+                vm::CellSlice cs = vm::load_cell_slice(result_cell);
+                if (!stk.write().deserialize(cs) || stk->depth() < 3) {
+                  promise.set_value(make_json_error(409,
+                      "Smart contract is not a Jetton or NFT", req_id));
+                  return;
+                }
+
+                // get_collection_data returns (next_item_index, collection_content, owner_address)
+                // at(0) = top of stack = owner_address
+                auto& owner_e = stk->at(0);
+                auto& content_e = stk->at(1);
+                auto& next_item_e = stk->at(2);
+
+                td::int64 next_item_index = next_item_e.is_int() ? next_item_e.as_int()->to_long() : 0;
+                auto owner_str = parse_address_from_slice(owner_e);
+                auto content_b64 = cell_to_b64(content_e);
+
+                td::StringBuilder sb;
+                sb << "{\"@type\":\"ext.tokens.nftCollectionData\""
+                   << ",\"next_item_index\":" << next_item_index
+                   << ",\"collection_content\":" << td::JsonString(td::Slice(content_b64))
+                   << ",\"owner_address\":" << td::JsonString(td::Slice(owner_str))
+                   << "}";
+                promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+              }));
+            };
+
             if (R2.is_error()) {
-              promise.set_value(make_json_error(-32603,
-                  PSTRING() << "getTokenData: both get_jetton_data and get_nft_data failed: "
-                            << R2.error(), req_id));
+              try_collection(std::move(req_id), std::move(promise));
               return;
             }
             auto F2 = tos::fetch_tl_object<tos::lite_api::liteServer_runMethodResult>(
                 R2.move_as_ok(), true);
             if (F2.is_error()) {
-              promise.set_value(make_json_error(-32603,
-                  PSTRING() << "parse NFT runMethodResult: " << F2.error(), req_id));
+              try_collection(std::move(req_id), std::move(promise));
               return;
             }
             auto f2 = F2.move_as_ok();
             if (f2->exit_code_ != 0) {
-              promise.set_value(make_json_error(409,
-                  "Smart contract is not a Jetton or NFT", req_id));
+              try_collection(std::move(req_id), std::move(promise));
               return;
             }
             if (f2->result_.empty()) {
-              promise.set_value(make_json_error(-32603,
-                  "getTokenData: get_nft_data returned empty result", req_id));
+              try_collection(std::move(req_id), std::move(promise));
               return;
             }
 
             auto cell_r = vm::std_boc_deserialize(f2->result_.as_slice());
             if (cell_r.is_error()) {
-              promise.set_value(make_json_error(-32603,
-                  "getTokenData: failed to deserialize NFT result", req_id));
+              try_collection(std::move(req_id), std::move(promise));
               return;
             }
             auto stk = td::make_ref<vm::Stack>();
             auto result_cell = cell_r.move_as_ok();
             vm::CellSlice cs = vm::load_cell_slice(result_cell);
             if (!stk.write().deserialize(cs) || stk->depth() < 5) {
-              promise.set_value(make_json_error(-32603,
-                  "getTokenData: get_nft_data returned fewer than 5 stack entries", req_id));
+              try_collection(std::move(req_id), std::move(promise));
               return;
             }
 

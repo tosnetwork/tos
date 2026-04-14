@@ -462,3 +462,27 @@ class TestGetTokenData:
         data = response.json()
         assert data["ok"] is True
         assert data["result"]["@type"] == "ext.tokens.jettonMasterData"
+
+    def test_nft_collection_data(self, api_method_call):
+        """Deployed NFT collection should return nftCollectionData."""
+        import json
+        from pathlib import Path
+        deployed = Path(__file__).parent / "deployed_addresses.json"
+        if not deployed.exists():
+            pytest.skip("No deployed contracts")
+        addrs = json.loads(deployed.read_text())
+        addr = addrs.get("tokens", {}).get("nft_collection", {}).get("address")
+        if not addr:
+            pytest.skip("nft_collection not deployed")
+        response = api_method_call(self.METHOD, address=addr)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        result = data["result"]
+        assert result["@type"] == "ext.tokens.nftCollectionData"
+        assert "next_item_index" in result
+        assert isinstance(result["next_item_index"], int)
+        assert result["next_item_index"] >= 0
+        assert "collection_content" in result
+        assert "owner_address" in result
+        assert len(result["owner_address"]) > 0

@@ -177,7 +177,7 @@ Ecosystems scale through APIs.
 
 ### 3. A standards-first ecosystem, not a single-implementation ecosystem
 
-**Status: ⚠️ Framework defined, specs not yet published**
+**Status: ⚠️ OpenAPI 3.1 spec published, formal standard families pending**
 
 TOS should standardize interfaces aggressively without requiring ecosystem monoculture.
 
@@ -215,7 +215,7 @@ These must be intentional workflows, not emergent combinations of unrelated tool
 
 ### 5. A wallet-first ecosystem
 
-**Status: ⚠️ Core capabilities done, tracking/signing specs pending**
+**Status: ⚠️ Core capabilities done, in_msg_hash tracking added, formal specs pending**
 
 A chain does not become widely usable until wallet flows are stable and predictable.
 
@@ -423,7 +423,7 @@ This reduces dependency on external compatibility shims and makes the node the s
 
 ### Direction 2. Define public standards separately from implementation ownership
 
-**Status: ⚠️ Framework defined**
+**Status: ⚠️ OpenAPI 3.1 spec published, formal standard families pending**
 
 TOS should document and stabilize public standards at distinct layers:
 

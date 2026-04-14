@@ -56,7 +56,7 @@ By the end of this roadmap window, TOS should have one obvious answer for:
 
 **Status: ✅ Complete**
 
-All exit criteria met: 35 JSON-RPC methods, 478 tests, tosctl 90 commands, operator docs aligned.
+All exit criteria met: 35 methods, 481 tests, 90 tosctl commands, Prometheus metrics, OpenAPI spec, Jetton deployment.
 
 - make the node the stable primary service boundary
 - make the operator path reliable enough for repeated use
