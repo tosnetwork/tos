@@ -1,0 +1,4 @@
+# E2E test artifacts (auto-generated, never commit)
+e2e-config.json
+e2e-vault.json
+*.tar.gz

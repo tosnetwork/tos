@@ -1,20 +1,25 @@
 #!/bin/bash
-# End-to-end test suite for tosctl against a running 3-node TOS testnet.
+# End-to-end system test for tosctl against a running TOS testnet.
 #
 # Assumes:
-#   - Local testnet running with JSON-RPC on ports 2011-2013
-#     and console on ports 2004/2007/2010.
-#   - tosctl Rust workspace at /home/tomi/tos/tosctl/src/Cargo.toml.
+#   - Local testnet running with JSON-RPC enabled
+#   - tosctl Rust workspace at the default location
 #
 # Usage:
-#   ./e2e-test.sh                     # defaults
-#   RPC_URL=http://10.0.0.1:2011 ./e2e-test.sh   # override RPC endpoint
+#   ./e2e-test.sh                                    # defaults (port 8011)
+#   RPC_URL=http://10.0.0.1:8011 ./e2e-test.sh       # override RPC endpoint
 
 set -euo pipefail
 
-TOSCTL="${TOSCTL:-cargo run --manifest-path /home/tomi/tos/tosctl/src/Cargo.toml -p tosctl --}"
-RPC_URL="${RPC_URL:-http://127.0.0.1:2011}"
-CONFIG="/tmp/tosctl-e2e-config.json"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TESTDATA_DIR="$SCRIPT_DIR/testdata"
+
+TOSCTL="${TOSCTL:-cargo run --manifest-path $SCRIPT_DIR/../src/Cargo.toml -p tosctl --}"
+RPC_URL="${RPC_URL:-http://127.0.0.1:8011}"
+CONFIG="$TESTDATA_DIR/e2e-config.json"
+# File-based vault with a deterministic test master key (32 bytes hex)
+E2E_MASTER_KEY="0000000000000000000000000000000000000000000000000000000000000001"
+export VAULT_URL="${VAULT_URL:-file://$TESTDATA_DIR/e2e-vault.json?master_key=$E2E_MASTER_KEY}"
 
 PASS=0
 FAIL=0
@@ -42,7 +47,7 @@ cleanup() {
     echo ""
     echo "Cleaning up temporary artifacts..."
     $TOSCTL wallet rm -c "$CONFIG" -n test-wallet --yes 2>/dev/null || true
-    rm -f "$CONFIG" /tmp/tosctl_backup_*.tar.gz
+    rm -f "$CONFIG" "$TESTDATA_DIR/e2e-vault.json" "$TESTDATA_DIR"/tosctl_backup_*.tar.gz
 }
 trap cleanup EXIT
 
@@ -123,8 +128,8 @@ run "vote offer ls" $TOSCTL vote offer ls -c "$CONFIG" --format json
 # Test 8: backup create + verify
 # ---------------------------------------------------------------
 echo "[8/10] backup create + verify"
-run "backup create" $TOSCTL backup create -c "$CONFIG" -o /tmp
-BACKUP="$(ls -t /tmp/tosctl_backup_*.tar.gz 2>/dev/null | head -1 || true)"
+run "backup create" $TOSCTL backup create -c "$CONFIG" -o "$TESTDATA_DIR"
+BACKUP="$(ls -t "$TESTDATA_DIR"/tosctl_backup_*.tar.gz 2>/dev/null | head -1 || true)"
 if [ -n "$BACKUP" ]; then
     run "backup verify" $TOSCTL backup verify -f "$BACKUP"
 else
