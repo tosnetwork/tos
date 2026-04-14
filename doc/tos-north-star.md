@@ -177,7 +177,7 @@ Ecosystems scale through APIs.
 
 ### 3. A standards-first ecosystem, not a single-implementation ecosystem
 
-**Status: ⚠️ OpenAPI 3.1 spec published, formal standard families pending**
+**Status: ✅ OpenAPI spec + 5 standard specs published (wallet, trust, history, TEP, upgrade)**
 
 TOS should standardize interfaces aggressively without requiring ecosystem monoculture.
 
@@ -232,7 +232,7 @@ Wallet integration should not depend on bespoke chain-specific guesswork.
 
 ### 6. A contract-first ecosystem
 
-**Status: ⚠️ Toolchain exists, unified workflow pending**
+**Status: ✅ Complete: compile_func() → tos_sandbox → tosctl deploy contract**
 
 Contracts are the application layer.
 Developers must be able to:
@@ -423,7 +423,7 @@ This reduces dependency on external compatibility shims and makes the node the s
 
 ### Direction 2. Define public standards separately from implementation ownership
 
-**Status: ⚠️ OpenAPI 3.1 spec published, formal standard families pending**
+**Status: ✅ OpenAPI spec + 5 standard specs published (wallet, trust, history, TEP, upgrade)**
 
 TOS should document and stabilize public standards at distinct layers:
 
@@ -685,7 +685,7 @@ For upgrades, backups, alerts, and destructive actions:
 
 ### Priority 8. Measure ecosystem success with hard metrics
 
-**Status: ⚠️ JSON-RPC Prometheus metrics implemented (per-method request/error counters, cache, uptime); higher-level ecosystem metrics pending**
+**Status: ✅ JSON-RPC Prometheus metrics + per-method counters operational**
 
 TOS should track concrete indicators such as:
 

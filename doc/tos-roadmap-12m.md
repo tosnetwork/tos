@@ -56,7 +56,7 @@ By the end of this roadmap window, TOS should have one obvious answer for:
 
 **Status: ✅ Complete**
 
-All exit criteria met: 35 methods, 481 tests, 90 tosctl commands, Prometheus metrics, OpenAPI spec, Jetton deployment.
+All exit criteria met: 35 methods, 484 tests, 90 tosctl commands, Prometheus metrics, OpenAPI spec, Jetton deployment.
 
 - make the node the stable primary service boundary
 - make the operator path reliable enough for repeated use
@@ -88,7 +88,9 @@ All exit criteria met: 35 methods, 481 tests, 90 tosctl commands, Prometheus met
 
 ### Goals
 
-**Status: ❌ Not started**
+**Status: ⚠️ Partially complete**
+
+Trust tiers, wallet send-track, transaction history, TEP token standards, and upgrade process specs published. Account/permission model pending.
 
 - make wallet integration predictable
 - publish the first stable data model for serious integrations

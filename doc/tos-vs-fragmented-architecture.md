@@ -154,8 +154,8 @@ The following surfaces should converge toward canonical status:
 - ✅ embedded JSON-RPC for read, estimate, send, and tracking flows
 - ✅ health, readiness, metrics, and structured node status
 - ✅ `tosctl` for node and validator operations
-- ❌ published historical and indexed data contracts
-- ❌ explicit trust-tier definitions
+- ✅ published historical and indexed data contracts
+- ✅ explicit trust-tier definitions
 - ❌ explicit account and permission semantics
 
 The following may still exist, but should not remain the default path:
@@ -188,8 +188,8 @@ Should own:
 - ✅ embedded JSON-RPC
 - ✅ health, readiness, metrics
 - ✅ structured control-plane capability
-- ❌ trust and verification primitives
-- ❌ data and protocol-facing primitives
+- ✅ trust and verification primitives
+- ✅ data and protocol-facing primitives
 
 ### `~/tos/tosctl`
 

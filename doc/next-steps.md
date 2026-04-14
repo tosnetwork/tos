@@ -13,8 +13,8 @@
 | `~/tos` JSON-RPC refactor | ✅ Split into 10 domain files (refactor-plan.md all tasks ✅) |
 | `~/tos` JSON-RPC alignment | ✅ Response shapes aligned with tos-http-api-cpp (gap-plan.md all tasks ✅) |
 | `~/tos` wallet type detection | ✅ 6 TOS-compiled wallet code hashes, detect_wallet_type case-fix |
-| `~/tos` contract deployment | ✅ 6 wallet + 1 Jetton master deployed on 4-node testnet via Fift deployer |
-| `~/tos` pytest suite | ✅ 481 tests passing, aligned with tos-http-api-cpp reference tests |
+| `~/tos` contract deployment | ✅ 6 wallet + 1 Jetton + 1 NFT + tos_sandbox |
+| `~/tos` pytest suite | ✅ 484 tests passing, aligned with tos-http-api-cpp reference tests |
 | `~/tos` staking contracts | ✅ 3 suites TOS-adapted, FunC compiled, BOC hex in tosctl |
 | `~/tos` HTTP deadlock fix | ✅ HttpPayload callback safety + one-shot completion (codex root-fix) |
 | `~/tos` TL parity fix | ✅ lookupBlock/shards/sendBoc adapted for TOS liteserver |
@@ -27,6 +27,8 @@
 | `~/tos/tosctl` alert system | ✅ Config schema + 5 commands (Telegram + webhook) |
 | `~/tos/tosctl` supply chain | ✅ toncenter-rs vendored as toscenter-rs, pytoniq_core vendored as pytosiq_core |
 | `~/tos/tosctl` operator docs | ✅ README.md, JSON output on 15 commands, mnemonic aliases |
+| `~/tos/tosctl` Rust TVM stack | ✅ tos_vm + tos_executor + tos_assembler + tos_emulator + tos_sandbox (86K lines) |
+| `~/tos/tosctl` contract CLI | ✅ deploy contract, account run-method, account send-boc |
 | mytonctrl 87 命令平替 | 90/90 Full ✅ |
 
 ## Remaining work
@@ -61,6 +63,10 @@
 | 14 | Advanced/explorer APIs | `~/tos` | All implemented: getMasterchainBlockSignatures, getShardBlockProof, getLibraries, getTokenData, tryLocateTx, tryLocateResultTx, tryLocateSourceTx, getConsensusBlock, getOutMsgQueueSize, getConfigAll, getTransactionsStd, getBlockTransactionsExt, runGetMethodStd, sendBocReturnHashNoError, detectHash. JSON-RPC now 35 methods. | ✅ Done |
 | 15 | JSON-RPC Prometheus metrics | `~/tos` | 9 metric families exported via `--exporter-address`: requests_total, errors_total, active_requests, cache_hits/misses, cache_entries, uptime, per-method request/error counters with `{method="..."}` labels. | ✅ Done |
 | 16 | OpenAPI 3.1 specification | `~/tos` | `doc/openapi.yaml` — machine-readable API contract for all 35 methods + healthcheck/readyz. | ✅ Done |
+| 17 | Rust TVM crates | `~/tos/tosctl` | tos_vm (61K), tos_executor (15K), tos_assembler (7K), tos_emulator — ported from ton-rust, TOS-adapted. Full workspace compiles. | ✅ Done |
+| 18 | tos_sandbox (Rust Sandbox) | `~/tos/tosctl` | Local blockchain simulator: Blockchain, SandboxContract, Treasury, MessageBuilder, compile_func(), 13 tests passing. | ✅ Done |
+| 19 | tosctl contract CLI commands | `~/tos/tosctl` | `deploy contract`, `account run-method`, `account send-boc` — closes all 3 CLI gaps for contract dev/ops. | ✅ Done |
+| 20 | License unification | `~/tos` | Unified to GPL v3. Removed LGPL v2, GPLv2, LGPLv2. Third-party MIT/Apache retained. | ✅ Done |
 
 ## Acceptance criteria for v1.0
 
@@ -68,7 +74,7 @@
 |---|---|---|
 | Every mytonctrl command has tosctl replacement | ✅ 90/90 Full | — |
 | Staking contracts verified on TOS chain | ⚠️ Script ready | #1 (manual run on testnet) |
-| pytest JSON-RPC suite (481 tests) | ✅ Done | — |
+| pytest JSON-RPC suite (484 tests) | ✅ Done | — |
 | E2E CLI test | ⚠️ Script ready | #2 (manual run on testnet) |
 | Operator README exists | ✅ Done | — |
 | JSON output on all list/status commands | ✅ Done | — |
