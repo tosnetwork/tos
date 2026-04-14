@@ -288,11 +288,21 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     if (qpos != std::string::npos) post_path = post_path.substr(0, qpos);
     while (!post_path.empty() && post_path.back() == '/') post_path.pop_back();
 
-    // Only match specific REST POST paths (not /jsonRPC which uses the standard envelope)
-    // POST REST paths — write methods + methods with complex body params.
-    // These accept POST body as the params JSON (no jsonrpc envelope).
-    // GET-accessible methods are handled above; this covers the remaining 6.
+    // Match ANY known API method path for POST REST (body = params JSON, no envelope).
+    // This matches ton-http-api-cpp behavior where ALL methods accept POST.
+    // /jsonRPC is NOT matched here — it uses the standard JSON-RPC envelope.
     static const std::set<std::string> post_rest_paths = {
+        "/detectAddress", "/detectHash", "/packAddress", "/unpackAddress",
+        "/getAddressInformation", "/getExtendedAddressInformation",
+        "/getWalletInformation", "/getAddressBalance", "/getAddressState",
+        "/getTokenData",
+        "/getMasterchainInfo", "/getConsensusBlock", "/lookupBlock",
+        "/shards", "/getShards", "/getBlockHeader",
+        "/getMasterchainBlockSignatures", "/getShardBlockProof", "/getOutMsgQueueSize",
+        "/getBlockTransactions", "/getBlockTransactionsExt",
+        "/getTransactions", "/getTransactionsStd",
+        "/tryLocateTx", "/tryLocateResultTx", "/tryLocateSourceTx",
+        "/getConfigParam", "/getConfigAll", "/getLibraries",
         "/runGetMethod", "/runGetMethodStd",
         "/sendBoc", "/sendBocReturnHash", "/sendBocReturnHashNoError",
         "/sendQuery", "/estimateFee"
