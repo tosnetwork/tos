@@ -292,8 +292,8 @@ class CurrencyCollection(TlbScheme):
     """
     currencies$_ tomis:Tomis other:ExtraCurrencyCollection = CurrencyCollection;
 
-    Adapted from pytoniq_core: grams→tomis for TOS compatibility.
-    The 'grams' kwarg is kept as an alias for backward compatibility.
+    Adapted from pytosiq_core: grams→tomis for TOS compatibility.
+    The 'grams' kwarg is kept as an alias for backward compat.
     """
 
     def __init__(self, tomis: int = 0, *, grams: int = 0, other: "ExtraCurrencyCollection" = None) -> None:

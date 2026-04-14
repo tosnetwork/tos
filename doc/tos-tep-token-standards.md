@@ -6,7 +6,7 @@ Version: v1.0
 
 This document defines the canonical token standards for TOS: TOS-TEP-74 (Jetton / fungible tokens) and TOS-TEP-62 (NFT / non-fungible tokens).
 
-These are TOS adaptations of the proven TON TEP-74 and TEP-62 standards. The contract interfaces, operation codes, and get-method signatures are protocol-compatible with the original TON designs. TOS naming conventions apply: the native currency is "Tomi" (not "Gram" or "TON"), and internal field names use `tomis` (not `grams`).
+These are TOS adaptations of the proven TEP-74 and TEP-62 standards. The contract interfaces, operation codes, and get-method signatures are protocol-compatible with the original designs. TOS naming conventions apply: the native currency is "Tomi", and internal field names use `tomis`.
 
 This document is the authoritative reference for:
 

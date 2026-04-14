@@ -22,8 +22,8 @@ int NON_BOUNCEABLE() asm "0x10 PUSHINT";
 int SEND_MODE_PAY_FEE_SEPARATELY() asm "1 PUSHINT"; ;; means that the sender wants to pay transfer fees separately
 int SEND_MODE_IGNORE_ERRORS() asm "2 PUSHINT"; ;; means that any errors arising while processing this message during the action phase should be ignored
 int SEND_MODE_REMAINING_AMOUNT() asm "64 PUSHINT"; ;; is used for messages that carry all the remaining value of the inbound message in addition to the value initially indicated in the new message
-int ONE_TON() asm "1000000000 PUSHINT";
-int MIN_TONS_FOR_STORAGE() asm "10000000000 PUSHINT"; ;; 10 TOS
+int ONE_TOS() asm "1000000000 PUSHINT";
+int MIN_TOS_FOR_STORAGE() asm "10000000000 PUSHINT"; ;; 10 TOS
 int DEPOSIT_PROCESSING_FEE() asm "1000000000 PUSHINT"; ;; 1 TOS
 int MIN_STAKE_TO_SEND() asm "500000000000 PUSHINT"; ;; 500 TOS
 int VOTES_LIFETIME() asm "2592000 PUSHINT"; ;; 30 days
@@ -242,7 +242,7 @@ cell pack_config(int validator_address, int validator_reward_share, int max_nomi
     (int amount, int pending_deposit_amount) = unpack_nominator(nominator);
     int withdraw_amount = amount + pending_deposit_amount;
 
-    if (withdraw_amount > balance - MIN_TONS_FOR_STORAGE()) {
+    if (withdraw_amount > balance - MIN_TOS_FOR_STORAGE()) {
         return (nominators, withdraw_requests, balance, nominators_count);
     }
 
@@ -251,7 +251,7 @@ cell pack_config(int validator_address, int validator_reward_share, int max_nomi
     nominators_count -= 1;
     balance -= withdraw_amount;
 
-    if (withdraw_amount >= ONE_TON()) {
+    if (withdraw_amount >= ONE_TOS()) {
         send_msg(make_address(0, address), withdraw_amount, null(), NON_BOUNCEABLE(), 0); ;; non-bouneable, fee deducted from amount, revert on errors
     }
     return (nominators, withdraw_requests, balance, nominators_count);
@@ -409,7 +409,7 @@ cell distribute_share(int reward, cell nominators) inline_ref {
         if (action == 119) { ;; "w" - withdraw request (any time)
             if (state == 0) {
                 (nominators, withdraw_requests, int new_balance, nominators_count) = withdraw_nominator(sender_addr, nominators, withdraw_requests, balance, nominators_count);
-                if (new_balance - msg_value >= MIN_TONS_FOR_STORAGE()) {
+                if (new_balance - msg_value >= MIN_TOS_FOR_STORAGE()) {
                     send_excesses(sender_address);
                 }
             } else {
@@ -439,7 +439,7 @@ cell distribute_share(int reward, cell nominators) inline_ref {
 
             if (~ found) {
                 ;; require higher fee to prevent dictionary spam
-                int fee = ONE_TON();
+                int fee = ONE_TOS();
                 int power = cell_depth(config_proposal_votings);
                 repeat (power) {
                     fee = muldiv(fee, 15, 10);
@@ -521,7 +521,7 @@ cell distribute_share(int reward, cell nominators) inline_ref {
 
                 (nominators, withdraw_requests, nominators_count, int new_balance) = process_withdraw_requests(nominators, withdraw_requests, balance, nominators_count, limit);
 
-                if (new_balance - msg_value >= MIN_TONS_FOR_STORAGE()) {
+                if (new_balance - msg_value >= MIN_TOS_FOR_STORAGE()) {
                     send_excesses(sender_address);
                 }
             }
@@ -531,7 +531,7 @@ cell distribute_share(int reward, cell nominators) inline_ref {
                 (slice withdraw_request, int found) = withdraw_requests.udict_get?(ADDR_SIZE(), request_address);
                 throw_unless(71, found);
                 (nominators, withdraw_requests, int new_balance, nominators_count) = withdraw_nominator(request_address, nominators, withdraw_requests, balance, nominators_count);
-                if (new_balance - msg_value >= MIN_TONS_FOR_STORAGE()) {
+                if (new_balance - msg_value >= MIN_TOS_FOR_STORAGE()) {
                     send_excesses(sender_address);
                 }
             }
@@ -604,14 +604,14 @@ cell distribute_share(int reward, cell nominators) inline_ref {
 
                 int total_nominators_amount = calculate_total_nominators_amount(nominators);
                 ;; the validator can withdraw everything that does not belong to the nominators
-                throw_unless(76, request_amount <= balance - MIN_TONS_FOR_STORAGE() - total_nominators_amount);
+                throw_unless(76, request_amount <= balance - MIN_TOS_FOR_STORAGE() - total_nominators_amount);
                 validator_amount -= request_amount;
                 if (validator_amount < 0) {
                     validator_amount = 0;
                 }
                 send_msg(make_address(-1, validator_address), request_amount, null(), NON_BOUNCEABLE(), 0); ;; non-bouneable, fee deducted from amount, revert on errors
                 int new_balance = balance - request_amount;
-                if (new_balance - msg_value >= MIN_TONS_FOR_STORAGE()) {
+                if (new_balance - msg_value >= MIN_TOS_FOR_STORAGE()) {
                     send_excesses(sender_address);
                 }
             }
@@ -623,7 +623,7 @@ cell distribute_share(int reward, cell nominators) inline_ref {
 
                 throw_unless(80, query_id); ;; query_id must be greater then 0 to receive confirmation message from elector
 
-                throw_unless(86, msg_value >= ONE_TON()); ;; must be greater then new_stake sending to elector fee
+                throw_unless(86, msg_value >= ONE_TOS()); ;; must be greater then new_stake sending to elector fee
 
                 int value = in_msg_body~load_coins();
 
@@ -631,11 +631,11 @@ cell distribute_share(int reward, cell nominators) inline_ref {
 
                 stake_at = check_new_stake_msg(in_msg_body);
 
-                stake_amount_sent = value - ONE_TON();
+                stake_amount_sent = value - ONE_TOS();
 
                 throw_unless(81, value >= MIN_STAKE_TO_SEND());
 
-                throw_unless(82, value <= balance - MIN_TONS_FOR_STORAGE());
+                throw_unless(82, value <= balance - MIN_TOS_FOR_STORAGE());
 
                 throw_unless(83, validator_amount >= min_validator_stake);
 

@@ -1,6 +1,6 @@
-# TON Node Console
+# TOS Node Console
 
-Control server client for interacting with the TON node via ADNL protocol.
+Control server client for interacting with the TOS node via ADNL protocol.
 
 ## Usage
 

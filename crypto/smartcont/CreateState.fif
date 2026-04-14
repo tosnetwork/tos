@@ -209,17 +209,17 @@ variable special-dict
 { <b swap dict, b> 7 config! } : config.to_mint!
 
 1000000000 constant Tomi
-1000000 constant mGram
-1000 constant uGram
-1 constant nGram
+1000000 constant mTomi
+1000 constant uTomi
+1 constant nTomi
 { Tomi * } : Tomi*
-{ mGram * } : mGram*
-{ uGram * } : uGram*
-'nop : nGram*
+{ mTomi * } : mTomi*
+{ uTomi * } : uTomi*
+'nop : nTomi*
 { Tomi swap */r } : Tomi*/
-{ mGram swap */r } : mGram*/
-{ uGram swap */r } : uGram*/
-{ /r } : nGram*/
+{ mTomi swap */r } : mTomi*/
+{ uTomi swap */r } : uTomi*/
+{ /r } : nTomi*/
 
 // TM$.17 is equivalent to 170000000
 { bl word (number) ?dup 0= abort"not a valid Tomi amount"

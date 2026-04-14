@@ -79,8 +79,8 @@ PROGRAM{
     NIP	//  sender in_msg_body found?
     IF:<{	//  sender in_msg_body
       LDTOMIS	//  sender _83 _82
-      DROP	//  sender ton_amount
-      2 PUSHINT	//  sender ton_amount _40=2
+      DROP	//  sender tos_amount
+      2 PUSHINT	//  sender tos_amount _40=2
       RAWRESERVE
       0 PUSHINT	//  sender _43=0
       24 PUSHINT	//  sender _43=0 _44=24

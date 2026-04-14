@@ -1,5 +1,5 @@
 """
-This is quite an advanced level, so it is highly recommended that you first become familiar with https://docs.ton.org/tvm.pdf 3.1.2 - 3.1.7
+This is quite an advanced level, so it is highly recommended that you first become familiar with https://docs.tos.org/tvm.pdf 3.1.2 - 3.1.7
 """
 
 

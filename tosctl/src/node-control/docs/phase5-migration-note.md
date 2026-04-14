@@ -19,7 +19,7 @@ All operator-visible "TON" currency references updated to "TOS":
 
 ### Currency Utility Functions Renamed
 
-`common/src/chain_utils.rs` — all functions renamed from TON-specific to network-neutral:
+`common/src/chain_utils.rs` — all functions renamed from TOS-specific to network-neutral:
 
 | Old Name | New Name |
 |----------|----------|
@@ -65,6 +65,6 @@ Backward-compatible `#[doc(hidden)]` aliases preserve compilation of existing ca
 
 ## Known Risks
 
-- Gas fee constants are inherited from TON and marked for TOS testnet verification
+- Gas fee constants are inherited from TOS and marked for TOS testnet verification
 - TL schema compatibility assumed but not yet tested against live TOS nodes
 - Config params 15, 34, 36 format assumed identical — documented for verification

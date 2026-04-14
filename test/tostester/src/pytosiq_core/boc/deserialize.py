@@ -14,7 +14,7 @@ class BocError(Exception):
     pass
 
 
-# https://github.com/ton-blockchain/ton/blob/24dc184a2ea67f9c47042b4104bbb4d82289fac1/crypto/tl/boc.tlb#L25
+# https://github.com/tos-blockchain/tos/blob/24dc184a2ea67f9c47042b4104bbb4d82289fac1/crypto/tl/boc.tlb#L25
 SERIALIZED_BOC_IDX_CRC32C = b'\xac\xc3\xa7('  # LEAN_BOC_MAGIC_PREFIX_CRC acc3a728
 SERIALIZED_BOC_IDX_PREFIX = b'h\xffe\xf3'  # LEAN_BOC_MAGIC_PREFIX 68ff65f3
 SERIALIZED_BOC_PREFIX = b'\xb5\xee\x9cr'  # REACH_BOC_MAGIC_PREFIX b5ee9c72

@@ -3,7 +3,7 @@
 
 { ."usage: " @' $0 type ." withdraw_amount [<savefile>]" cr
   ."Creates withdraw request to validator-controller " cr
-  ."withdraw_amount is in TON" cr 
+  ."withdraw_amount is in TOS" cr
   1 halt
 } : usage
 $# dup 1 < swap 2 > or ' usage if

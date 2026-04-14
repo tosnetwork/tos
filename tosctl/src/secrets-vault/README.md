@@ -5,7 +5,7 @@ A Rust library for secure secret management with pluggable storage backends and 
 ## Features
 
 - **Pluggable storage backends** — encrypted local JSON files or remote HashiCorp Vault
-- **Pluggable cryptographic implementations** — `ed25519-dalek` (default) or `ton_block`- compatible implementation
+- **Pluggable cryptographic implementations** — `ed25519-dalek` (default) or `tos_block`- compatible implementation
 - **Protected memory** — page-aligned, mlock'd, mprotect'd buffers with automatic zeroing on drop
 - **Secret types** — Ed25519 key pairs, AES-256-GCM symmetric keys, arbitrary binary blobs
 - **Async API** — fully async with `tokio`
@@ -153,7 +153,7 @@ SecretVault
   +-- CryptoFactory (trait)
   |     +-- AutoCryptoFactory    (selects best available)
   |     +-- DefaultCryptoFactory (ed25519-dalek)
-  |     +-- BlockCryptoFactory   (ton_block)
+  |     +-- BlockCryptoFactory   (tos_block)
   |
   +-- CryptoImpl<B: Ed25519Backend>
   |     +-- DefaultEd25519  [feature: crypto-default]
@@ -170,7 +170,7 @@ SecretVault
 | `file-storage-json`  | Local encrypted JSON file storage          | Yes     |
 | `crypto-default`     | Ed25519 via `ed25519-dalek` + AES-GCM      | Yes     |
 | `with-base64`        | Base64 encoding support                    | Yes     |
-| `crypto-block`       | Ed25519 via `ton_block` (TON-compatible)   | No      |
+| `crypto-block`       | Ed25519 via `tos_block` (TOS-compatible)   | No      |
 | `hashicorp-storage`  | HashiCorp Vault remote backend             | No      |
 | `secrets-vault-cli`  | CLI binary                                 | No      |
 

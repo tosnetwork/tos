@@ -36,7 +36,7 @@ keeping health probes simple for load-balancer integration.
 
 `getTransactions` defaults `limit` to 10 (clamped to a maximum of 100).
 `getBlockTransactions` and `getBlockTransactionsExt` default `count` to 40.
-These defaults mirror the ton-http-api conventions so that clients migrating
+These defaults mirror the tos-http-api conventions so that clients migrating
 from that service see identical behavior without specifying explicit values.
 
 ## R11: Input normalization
@@ -45,12 +45,12 @@ The `address` parameter accepted by all address-bearing methods is parsed via
 `block::StdAddress::parse_addr`, which accepts both raw form
 (`workchain:hex_hash`) and user-friendly base64/base64url form.  This means
 callers never need to pre-convert addresses.  The choice follows the same
-normalization that ton-http-api provides, keeping client code portable.
+normalization that tos-http-api provides, keeping client code portable.
 
 ## R12: Method-name stability
 
 Public method names (`sendBoc`, `getAddressInformation`, `runGetMethod`, etc.)
-follow the ton-http-api naming exactly.  No aliases or renames are introduced.
+follow the tos-http-api naming exactly.  No aliases or renames are introduced.
 This allows existing client libraries (e.g. `tonweb`, `toncenter-sdk`) to
 target the embedded server with a URL change only, without code modifications.
 

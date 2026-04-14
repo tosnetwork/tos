@@ -63,6 +63,6 @@ The election automation is preserved and operates identically on TOS:
 | Single nominator staking flow | Compatible — same opcodes |
 | Validator key registration | Compatible — same ADNL control API |
 | Stake submission via wallet | Compatible — same message format |
-| Gas fee constants | Inherited from TON — flagged for TOS testnet verification |
+| Gas fee constants | Inherited from TOS — flagged for TOS testnet verification |
 
-All TON compatibility comments in election code are retained as they document the relationship and verification requirements.
+All TOS compatibility comments in election code are retained as they document the relationship and verification requirements.

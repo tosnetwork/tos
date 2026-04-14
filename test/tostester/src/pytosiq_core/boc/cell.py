@@ -127,7 +127,7 @@ class Cell(NullCell):
         return self._data_bytes
 
     def get_hash(self, lvl_mask) -> bytes:
-        # https://github.com/ton-blockchain/ton/blob/master/crypto/vm/cells/DataCell.cpp#L287
+        # https://github.com/tos-blockchain/tos/blob/master/crypto/vm/cells/DataCell.cpp#L287
         hash_index = self.level_mask.apply(lvl_mask).get_hash_index()
         if self.type_ == CellTypes.pruned_branch:
             pruned_hash_index = self.level_mask.get_hash_index()

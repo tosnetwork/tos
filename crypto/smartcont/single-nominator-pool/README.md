@@ -18,7 +18,7 @@ Simplified staking pool for a single validator owner. Separates cold wallet (own
 |---|---|
 | `single-nominator-code.fc` | Main FunC source (223 lines) |
 | `single-nominator.tlb` | TL-B type definitions |
-| `single-nominator-code.hex` | Pre-compiled BOC (from TON, needs TOS verification) |
+| `single-nominator-code.hex` | Pre-compiled BOC (needs TOS verification) |
 | `init.fif` | Contract initialization Fift script |
 | `withdraw.fif` | Withdrawal message builder |
 | Other `.fif` files | Helper scripts |

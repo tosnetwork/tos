@@ -91,7 +91,7 @@ TM$1000       // initial balance (1k test Tomis)
 0 0 AllOnes 6 * 6 register_smc
 dup make_special dup constant smc2_addr
 Masterchain over
-2dup ."free test gram giver address = " .addr cr 2dup 6 .Addr cr
+2dup ."free test tomi giver address = " .addr cr 2dup 6 .Addr cr
 "testgiver" +suffix +".addr" save-address-verbose
 
 // SmartContract #3

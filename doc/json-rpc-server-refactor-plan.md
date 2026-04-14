@@ -38,7 +38,7 @@ As the method surface grows, this concentration increases:
 
 ## Reference Observation
 
-The local reference project at `~/ton-http-api-cpp` uses clear internal separation between:
+The local reference project at `~/tos-http-api-cpp` uses clear internal separation between:
 
 - protocol entry
 - domain handlers

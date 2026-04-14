@@ -2,7 +2,7 @@
 
 ## Origin
 
-FunC source from [TON Blockchain](https://github.com/ton-blockchain/nominator-pool), copied from ton-c/crypto/func/auto-tests/legacy_tests/nominator-pool/.
+FunC source from [TOS Blockchain](https://github.com/tos-blockchain/nominator-pool), copied from tos-c/crypto/func/auto-tests/legacy_tests/nominator-pool/.
 
 ## Purpose
 

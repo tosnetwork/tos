@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines how `tosctl` should fully cover the operator command surface that TON operators currently associate with `mytonctrl`.
+This document defines how `tosctl` should fully cover the operator command surface that TOS operators currently associate with `mytonctrl`.
 
 The goal is not to preserve the old interactive Python shell. The goal is to preserve workflow coverage while migrating to a clearer Rust CLI model.
 
@@ -483,11 +483,11 @@ Some `mytonctrl` modules matter even without their own public console commands.
 - `tosctl observe metrics push`
 - config-backed exporter settings
 
-### TON HTTP API, LS Proxy, and TON Storage
+### TOS HTTP API, LS Proxy, and TOS Storage
 
-`mytonctrl` installer manages sidecar services such as `ton-http-api`, liteserver proxy, and TON storage. TOS should not clone these blindly, but the workflow must still exist:
+`mytonctrl` installer manages sidecar services such as `tos-http-api`, liteserver proxy, and TOS storage. TOS should not clone these blindly, but the workflow must still exist:
 
-- replace `ton-http-api` with embedded JSON-RPC in `validator-engine`
+- replace `tos-http-api` with embedded JSON-RPC in `validator-engine`
 - expose proxy and storage sidecars through `tosctl install` and `tosctl host mode`
 - keep sidecar lifecycle management inside `tosctl`, not in shell scripts
 

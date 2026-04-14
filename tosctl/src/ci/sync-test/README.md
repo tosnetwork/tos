@@ -1,6 +1,6 @@
 # Sync Test
 
-Automated mainnet sync test for the TON Rust Node. Builds a node image from the current commit, deploys it to Kubernetes via the public [`ton-rust-node`](https://github.com/rsquad/ton-rust-node) Helm chart, and waits for the node to fully sync with the network. Reports the result as a GitHub commit status on the triggering commit.
+Automated mainnet sync test for the TOS Rust Node. Builds a node image from the current commit, deploys it to Kubernetes via the public [`tos-rust-node`](https://github.com/rsquad/tos-rust-node) Helm chart, and waits for the node to fully sync with the network. Reports the result as a GitHub commit status on the triggering commit.
 
 ## How it works
 
@@ -8,13 +8,13 @@ Automated mainnet sync test for the TON Rust Node. Builds a node image from the 
 
 ```
 GitHub Actions (manual trigger, ~5 min)
-  1. Build node image → ghcr.io/rsquad/ton-node:sha-<commit>
+  1. Build node image → ghcr.io/rsquad/tos-node:sha-<commit>
   2. Set GitHub commit status → pending
-  3. helm upgrade --install → deploys to ton-synctest namespace
+  3. helm upgrade --install → deploys to tos-synctest namespace
   4. CI exits
 
 Kubernetes pod (runs for hours)
-  Container "ton-node": syncs with mainnet
+  Container "tos-node": syncs with mainnet
   Container "watcher":  polls metrics, reports result to GitHub
 ```
 
@@ -71,17 +71,17 @@ On failure (timeout or DB broken) the pod stays alive. Inspect logs:
 
 ```bash
 # Watcher log (sync progress)
-kubectl logs synctest-mainnet-0 -c watcher -n ton-synctest
+kubectl logs synctest-mainnet-0 -c watcher -n tos-synctest
 
 # Node log (last 200 lines)
-kubectl logs synctest-mainnet-0 -c ton-node -n ton-synctest --tail=200
+kubectl logs synctest-mainnet-0 -c tos-node -n tos-synctest --tail=200
 
 # Full node log file (written by log4rs)
-kubectl exec -it synctest-mainnet-0 -c ton-node -n ton-synctest -- tail -200 /logs/output.log
+kubectl exec -it synctest-mainnet-0 -c tos-node -n tos-synctest -- tail -200 /logs/output.log
 
 # Useful greps for node log
-kubectl exec synctest-mainnet-0 -c ton-node -n ton-synctest -- grep -e boot -e sync /logs/output.log | tail -20
-kubectl exec synctest-mainnet-0 -c ton-node -n ton-synctest -- grep Applied /logs/output.log | tail -20
+kubectl exec synctest-mainnet-0 -c tos-node -n tos-synctest -- grep -e boot -e sync /logs/output.log | tail -20
+kubectl exec synctest-mainnet-0 -c tos-node -n tos-synctest -- grep Applied /logs/output.log | tail -20
 ```
 
 ### Re-running
@@ -93,7 +93,7 @@ This means: if a sync test is still running and you trigger a new one, the old t
 ## How to run
 
 ```bash
-gh workflow run sync-test.yml -R RSquad/ton-node
+gh workflow run sync-test.yml -R RSquad/tos-node
 ```
 
 Or: GitHub UI > Actions > Sync Test > Run workflow.
@@ -101,7 +101,7 @@ Or: GitHub UI > Actions > Sync Test > Run workflow.
 Check current commit status:
 
 ```bash
-gh api repos/RSquad/ton-node/commits/<sha>/status \
+gh api repos/RSquad/tos-node/commits/<sha>/status \
   --jq '.statuses[] | select(.context=="sync-test/mainnet") | {state, description}'
 ```
 
@@ -110,19 +110,19 @@ gh api repos/RSquad/ton-node/commits/<sha>/status \
 | File | Purpose |
 |------|---------|
 | `.github/workflows/sync-test.yml` | CI workflow: build image, push to GHCR, helm deploy |
-| `ci/sync-test/values.yaml` | Helm values override for the `ton-rust-node` chart |
+| `ci/sync-test/values.yaml` | Helm values override for the `tos-rust-node` chart |
 | `ci/sync-test/watcher.sh` | Sidecar script: poll Prometheus metrics, set GitHub commit status |
 | `ci/sync-test/gen-node-config.sh` | Generates node config with random ADNL keys for given IP |
 | `ci/sync-test/README.md` | This file |
 
 ## Cluster setup from scratch
 
-All commands target cluster `velia-sgp1`. The namespace is `ton-synctest`.
+All commands target cluster `velia-sgp1`. The namespace is `tos-synctest`.
 
 ### 1. Create namespace
 
 ```bash
-kubectl create ns ton-synctest
+kubectl create ns tos-synctest
 ```
 
 ### 2. Image pull secret
@@ -130,7 +130,7 @@ kubectl create ns ton-synctest
 Required for pulling node images from GHCR.
 
 ```bash
-kubectl create secret docker-registry ghcr -n ton-synctest \
+kubectl create secret docker-registry ghcr -n tos-synctest \
   --docker-server=ghcr.io \
   --docker-username=<github-user> \
   --docker-password=<github-pat-with-packages-read>
@@ -141,11 +141,11 @@ kubectl create secret docker-registry ghcr -n ton-synctest \
 The watcher needs a token to set commit statuses from inside the K8s pod. Create a fine-grained PAT:
 
 1. Go to https://github.com/settings/tokens?type=beta
-2. Repository access: select `RSquad/ton-node`
+2. Repository access: select `RSquad/tos-node`
 3. Permissions: **Commit statuses > Read and write** (nothing else)
 
 ```bash
-kubectl create secret generic credentials -n ton-synctest \
+kubectl create secret generic credentials -n tos-synctest \
   --from-literal=GITHUB_TOKEN=github_pat_...
 ```
 
@@ -154,14 +154,14 @@ kubectl create secret generic credentials -n ton-synctest \
 The GitHub Actions runner needs kubectl/helm access to the cluster. Create a dedicated Rancher user with minimal permissions:
 
 1. **Rancher UI > Users & Authentication > Create**: username `synctest-ci`, global role `User-Base`
-2. **Create a Project** in cluster `velia-sgp1` containing namespace `ton-synctest`
+2. **Create a Project** in cluster `velia-sgp1` containing namespace `tos-synctest`
 3. **Add `synctest-ci` as Project Member** to that project
 4. **Download kubeconfig** for `synctest-ci` (login as that user in Rancher UI, or via Rancher API)
 
 Add to GitHub repo secrets (base64-encoded):
 
 ```bash
-cat kubeconfig.yaml | base64 | gh secret set SYNCTEST_VELIA_SGP1_KUBECONFIG -R RSquad/ton-node
+cat kubeconfig.yaml | base64 | gh secret set SYNCTEST_VELIA_SGP1_KUBECONFIG -R RSquad/tos-node
 ```
 
 ### 5. Node IP
@@ -169,18 +169,18 @@ cat kubeconfig.yaml | base64 | gh secret set SYNCTEST_VELIA_SGP1_KUBECONFIG -R R
 The external IP for the ADNL LoadBalancer. Must match an IP available in the MetalLB pool.
 
 ```bash
-gh secret set SYNCTEST_NODE_IP -R RSquad/ton-node -b "<ip>"
+gh secret set SYNCTEST_NODE_IP -R RSquad/tos-node -b "<ip>"
 ```
 
 CI uses this to generate the node config (ADNL address) and the MetalLB annotation.
 
 ### Summary of resources
 
-**Kubernetes (ton-synctest namespace):**
+**Kubernetes (tos-synctest namespace):**
 
 | Resource | Name | Purpose |
 |----------|------|---------|
-| Namespace | `ton-synctest` | Isolates sync test workloads |
+| Namespace | `tos-synctest` | Isolates sync test workloads |
 | Secret | `ghcr` | Image pull credentials for GHCR |
 | Secret | `credentials` | GitHub PAT for commit status API |
 | ConfigMap | `synctest-watcher` | Watcher script (created by CI) |
@@ -205,7 +205,7 @@ Set via GitHub Secret `SYNCTEST_NODE_IP`. CI uses it in both the node config (AD
 
 ### Helm chart version
 
-In `.github/workflows/sync-test.yml`, env `HELM_CHART_VERSION`. Must match a published version of `oci://ghcr.io/rsquad/ton-rust-node/helm/node`.
+In `.github/workflows/sync-test.yml`, env `HELM_CHART_VERSION`. Must match a published version of `oci://ghcr.io/rsquad/tos-rust-node/helm/node`.
 
 ### Resources
 

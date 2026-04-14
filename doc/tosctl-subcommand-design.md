@@ -18,7 +18,7 @@ This design assumes the long-term TOS model:
 
 It now also assumes an explicit migration goal:
 
-- `tosctl` must fully cover the operator command surface that TON operators currently get from `mytonctrl`
+- `tosctl` must fully cover the operator command surface that TOS operators currently get from `mytonctrl`
 
 Detailed parity mapping lives in:
 
@@ -926,4 +926,4 @@ The future `tosctl` UX should be organized around operator intent:
 - operate network-facing services with `site` and `net`
 - observe system behavior with `observe`
 
-This command model gives TOS a coherent operator CLI instead of inheriting the fragmented TON tool surface.
+This command model gives TOS a coherent operator CLI instead of inheriting a fragmented legacy tool surface.

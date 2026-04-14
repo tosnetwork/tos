@@ -1,6 +1,6 @@
 # tosctl Implementation Tasks
 
-**Scope:** migrate the imported TON Rust `node-control` stack into a TOS operator toolchain without dropping existing operations, wallet, pool, or election capabilities.
+**Scope:** migrate the imported TOS Rust `node-control` stack into a TOS operator toolchain without dropping existing operations, wallet, pool, or election capabilities.
 
 **Primary target:** produce a usable `tosctl` for TOS testnet and future mainnet operations.
 
@@ -19,7 +19,7 @@ When this task list is complete, `tosctl` should provide:
 - service mode with REST API and background tasks
 - a clear compatibility layer for chain RPC, contract wrappers, config params, and control-plane access
 
-The migration is **not** a rewrite. It is a staged adaptation of the imported TON Rust framework.
+The migration is **not** a rewrite. It is a staged adaptation of the imported TOS Rust framework.
 
 ---
 
@@ -41,7 +41,7 @@ Claude Code should follow these constraints in every phase:
 
 **Goal**
 
-Establish a stable migration baseline and record what currently builds and what still carries TON assumptions.
+Establish a stable migration baseline and record what currently builds and what still carries TOS assumptions.
 
 **Tasks**
 
@@ -82,7 +82,7 @@ Finish the first-step migration so all operator-facing entry points consistently
 
 **Goal**
 
-Separate chain access from TON-specific naming and assumptions without breaking existing functionality.
+Separate chain access from TOS-specific naming and assumptions without breaking existing functionality.
 
 **Completed work**
 

@@ -12,7 +12,7 @@
 
 - **OpenAPI description** updated to: "TOS node operations service API. Validator management, monitoring, elections, and staking."
 - **API title** was already `"tosctld API"` — no change needed
-- All endpoint descriptions, response schemas, and error messages were already TON-free
+- All endpoint descriptions, response schemas, and error messages were already TOS-free
 
 ### Service Mode
 

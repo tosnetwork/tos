@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **JWT-based authentication for REST API** — login, token revocation, auth middleware with login rate limiter, argon2 password hashing, and `TOSCTL_API_TOKEN` env support; new `auth` and `api login` CLI commands
 - **Election status dashboard** — `/v1/elections` API endpoint and `tosctl api elections` CLI table with participation lifecycle tracking (Idle → Participating → Submitted → Accepted → Elected → Validating), stake sums, and election metadata
 - **Validation keys listing** — `/v1/validators` API endpoint and `tosctl api validators` command displays validator information including validator key with election ID, created/expires timestamps, validator status, key ID, and ADNL address
-- **Kubernetes internal DNS support** — control server address now accepts DNS names (e.g. `validator-0-control.ton.svc.cluster.local`) in addition to IP addresses
+- **Kubernetes internal DNS support** — control server address now accepts DNS names (e.g. `validator-0-control.tos.svc.cluster.local`) in addition to IP addresses
 - **JWT authorization in Swagger UI** — added `bearerAuth` security scheme to OpenAPI spec; Swagger UI now shows an "Authorize" button for Bearer token authentication
 - **`--filter` for elections and validators API** — `tosctl api elections` and `tosctl api validators` accept `--filter=<name>` to limit output to specific nodes
 - **`--format=json|table` flag** — added `--format=json|table` flag to all `config ... ls` subcommands (`config bind ls`, `config elections ls`, `config log ls`, `config node ls`, `config pool ls`, `config wallet ls`, `master-wallet ls`)
@@ -43,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Wallet V4/V5 support** — added support for wallet contracts v4 and v5, including address verification and code hash validation
 - **Log file rotation and cleanup** — moved logging configuration into the JSON config file under a `log` section with support for size-based and time-based rotation, configurable max file count and size, and three output modes: `console`, `file`, `all`
-- **Multi-endpoint failover for ton-http-api** — round-robin failover across multiple RPC endpoints with per-endpoint API keys; new `ton-http-api add` CLI command to append failover endpoints
+- **Multi-endpoint failover for tos-http-api** — round-robin failover across multiple RPC endpoints with per-endpoint API keys; new `tos-http-api add` CLI command to append failover endpoints
 - **Pool address and balance display** — `config pool ls` resolves pool contract addresses and shows live balances via the RPC API; added pool and owner address validation
 - **Log settings CLI** — new `config log ls` and `config log set` commands for viewing and updating log level, rotation, output mode, and file path without editing the config file manually
 - **Control server connection status** — `config node ls` shows each node's control server connection status (e.g. "OK" or an error message), using concurrent ADNL pings with a 5-second timeout
@@ -55,7 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Migrated to Axum web framework** — replaced the previous web framework with Axum for the control HTTP server
 - **Removed `--verbose` and `--log-file` CLI flags** — log level can still be overridden via the `RUST_LOG` environment variable
-- **Backward-compatible config migration** — old `"url": "…"` field in ton-http-api config is transparently migrated to `urls` on first re-save
+- **Backward-compatible config migration** — old `"url": "…"` field in tos-http-api config is transparently migrated to `urls` on first re-save
 - Updated tosctl documentation to reflect current configuration and usage
 
 ### Fixed

@@ -1,6 +1,6 @@
 # TOS Contract Compatibility Audit
 
-This document audits all wallet, elector, and nominator contract code for TON-specific assumptions
+This document audits all wallet, elector, and nominator contract code for TOS-specific assumptions
 and assesses compatibility with TOS deployment.
 
 ---
@@ -23,8 +23,8 @@ and assesses compatibility with TOS deployment.
 
 **Compatibility Assessment: Needs verification**
 
-These are standard TON wallet contract bytecodes. If TOS uses the same TVM and accepts the same
-wallet contracts (which is expected since TOS is a TON fork), these should work unmodified. However,
+These are standard TOS wallet contract bytecodes. If TOS uses the same TVM and accepts the same
+wallet contracts (which is expected since TOS is a TOS fork), these should work unmodified. However,
 they must be verified against the actual TOS genesis/system contracts to confirm deployment is possible.
 
 **Required Action:**
@@ -52,7 +52,7 @@ renamed to `WalletVersion` with a backward-compatible `TonWalletVersion` alias.
 | `V4_OP_SIMPLE_SEND = 0` | `wallet_contract.rs` | 49 | V4 opcode |
 | `LIFETIME = 120` | `wallet_contract.rs` | 59 | Message TTL (2 minutes) |
 | `V5_PREFIX_SIGNED_EXTERNAL = 0x7369_676e` | `wallet_contract.rs` | 60 | V5 signature prefix |
-| Subwallet ID `698983191` | `wallet_contract.rs` | 424-446 (tests) | Default TON subwallet ID |
+| Subwallet ID `698983191` | `wallet_contract.rs` | 424-446 (tests) | Default TOS subwallet ID |
 
 **Compatibility Assessment: TOS-compatible**
 
@@ -61,7 +61,7 @@ Since the same wallet bytecode is used, these values remain correct.
 
 **Required Action:**
 - If TOS defines a different default subwallet ID, update test constants
-- The subwallet ID `698983191` (0x29A9A317) is the TON mainnet default; TOS may use a different value
+- The subwallet ID `698983191` (0x29A9A317) is the TOS mainnet default; TOS may use a different value
 
 ---
 
@@ -75,7 +75,7 @@ Since the same wallet bytecode is used, these values remain correct.
 
 **Compatibility Assessment: Needs verification**
 
-The elector address `-1:3333...` is a well-known system contract address on TON. TOS, as a fork,
+The elector address `-1:3333...` is a well-known system contract address on TOS. TOS, as a fork,
 is expected to preserve this convention, but it must be confirmed.
 
 **Required Action:**
@@ -183,7 +183,7 @@ These are ABI methods of the deployed nominator contract code, not network-level
 
 **Compatibility Assessment: Needs verification**
 
-Config params 15, 34, and 36 are fundamental to TON's proof-of-stake mechanism. TOS as a fork
+Config params 15, 34, and 36 are fundamental to TOS's proof-of-stake mechanism. TOS as a fork
 should preserve these parameters with the same structure, but values will differ.
 
 **Required Action:**
@@ -205,7 +205,7 @@ should preserve these parameters with the same structure, but values will differ
 **Compatibility Assessment: TOS-compatible**
 
 The provider is a thin wrapper around JSON-RPC calls (`runGetMethod`, `getAddressInformation`).
-These are standard TON HTTP API methods. TOS should expose the same API.
+These are standard TOS HTTP API methods. TOS should expose the same API.
 
 **Required Action:**
 - Verify TOS HTTP API supports `runGetMethod` and `getAddressInformation`

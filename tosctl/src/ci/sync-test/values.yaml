@@ -1,5 +1,5 @@
 image:
-  repository: ghcr.io/rsquad/ton-node
+  repository: ghcr.io/rsquad/tos-node
   tag: ""  # set by CI: --set image.tag=sha-xxx
   pullPolicy: Always
 

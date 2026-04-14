@@ -49,9 +49,9 @@
 
 ---
 
-## Remaining TON-Origin Names (Internal, Not Operator-Facing)
+## Remaining TOS-Origin Names (Internal, Not Operator-Facing)
 
-These internal names still carry TON-origin naming. They are not user-facing and are scheduled for later phases:
+These internal names still carry TOS-origin naming. They are not user-facing and are scheduled for later phases:
 
 - `commands/src/commands/nodectl/` — module directory name (Phase 8)
 - `chain-rpc-client` crate uses `chain_rpc_rs` dependency internally (Phase 2)

@@ -8,7 +8,7 @@
 
 ## Overview
 
-The `tosctl` control plane communicates with TOS validator nodes via the ADNL control protocol. This document records the compatibility assumptions between the imported TON control-client and TOS validator nodes.
+The `tosctl` control plane communicates with TOS validator nodes via the ADNL control protocol. This document records the compatibility assumptions between the imported TOS control-client and TOS validator nodes.
 
 ---
 
@@ -16,7 +16,7 @@ The `tosctl` control plane communicates with TOS validator nodes via the ADNL co
 
 ### ADNL Control Server
 
-TOS validator nodes expose the same ADNL control server interface as TON. The following TL RPC methods are used:
+TOS validator nodes expose the same ADNL control server interface as TOS. The following TL RPC methods are used:
 
 | Method | TL Type | Purpose | Status |
 |--------|---------|---------|--------|
@@ -33,7 +33,7 @@ TOS validator nodes expose the same ADNL control server interface as TON. The fo
 | GetConfigParams | `lite_server.GetConfigParams` | Fetch specific config params | Compatible |
 | SendMessage | `lite_server.SendMessage` | Broadcast messages | Compatible |
 
-**Compatibility basis:** TOS inherits the TON validator engine and uses the same TL schema for control-plane communication.
+**Compatibility basis:** TOS inherits the TOS validator engine and uses the same TL schema for control-plane communication.
 
 ### Config Parameters
 

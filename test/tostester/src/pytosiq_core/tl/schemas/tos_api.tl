@@ -358,98 +358,98 @@ hashable.validatorSession ts:int old_rounds:int cur_round:int = Hashable;
 ---types---
 
 
-tonNode.sessionId workchain:int shard:long cc_seqno:int opts_hash:int256 = tonNode.SessionId;
+tosNode.sessionId workchain:int shard:long cc_seqno:int opts_hash:int256 = tosNode.SessionId;
 
 
-tonNode.blockSignature who:int256 signature:bytes = tonNode.BlockSignature;
+tosNode.blockSignature who:int256 signature:bytes = tosNode.BlockSignature;
 
-tonNode.blockId workchain:int shard:long seqno:int = tonNode.BlockId;
-tonNode.blockIdExt workchain:int shard:long seqno:int root_hash:int256 file_hash:int256 = tonNode.BlockIdExt;
-tonNode.zeroStateIdExt workchain:int root_hash:int256 file_hash:int256 = tonNode.ZeroStateIdExt;
+tosNode.blockId workchain:int shard:long seqno:int = tosNode.BlockId;
+tosNode.blockIdExt workchain:int shard:long seqno:int root_hash:int256 file_hash:int256 = tosNode.BlockIdExt;
+tosNode.zeroStateIdExt workchain:int root_hash:int256 file_hash:int256 = tosNode.ZeroStateIdExt;
 
-tonNode.blockDescriptionEmpty = tonNode.BlockDescription;
-tonNode.blockDescription id:tonNode.blockIdExt = tonNode.BlockDescription;
-tonNode.blocksDescription ids:(vector tonNode.blockIdExt) incomplete:Bool = tonNode.BlocksDescription;
-tonNode.preparedProofEmpty = tonNode.PreparedProof;
-tonNode.preparedProof = tonNode.PreparedProof;
-tonNode.preparedProofLink = tonNode.PreparedProof;
-tonNode.preparedState = tonNode.PreparedState;
-tonNode.notFoundState = tonNode.PreparedState;
-tonNode.prepared = tonNode.Prepared;
-tonNode.notFound = tonNode.Prepared;
-tonNode.data data:bytes = tonNode.Data;
-//tonNode.preparedKeyBlockProofEmpty = tonNode.PreparedKeyBlockProof;
-//tonNode.preparedKeyBlockProof block_id:tonNode.blockIdExt = tonNode.PreparedKeyBlockProof;
+tosNode.blockDescriptionEmpty = tosNode.BlockDescription;
+tosNode.blockDescription id:tosNode.blockIdExt = tosNode.BlockDescription;
+tosNode.blocksDescription ids:(vector tosNode.blockIdExt) incomplete:Bool = tosNode.BlocksDescription;
+tosNode.preparedProofEmpty = tosNode.PreparedProof;
+tosNode.preparedProof = tosNode.PreparedProof;
+tosNode.preparedProofLink = tosNode.PreparedProof;
+tosNode.preparedState = tosNode.PreparedState;
+tosNode.notFoundState = tosNode.PreparedState;
+tosNode.prepared = tosNode.Prepared;
+tosNode.notFound = tosNode.Prepared;
+tosNode.data data:bytes = tosNode.Data;
+//tosNode.preparedKeyBlockProofEmpty = tosNode.PreparedKeyBlockProof;
+//tosNode.preparedKeyBlockProof block_id:tosNode.blockIdExt = tosNode.PreparedKeyBlockProof;
 
-tonNode.ihrMessage data:bytes = tonNode.IhrMessage;
-tonNode.externalMessage data:bytes = tonNode.ExternalMessage;
+tosNode.ihrMessage data:bytes = tosNode.IhrMessage;
+tosNode.externalMessage data:bytes = tosNode.ExternalMessage;
 
-tonNode.newShardBlock block:tonNode.blockIdExt cc_seqno:int data:bytes = tonNode.NewShardBlock;
+tosNode.newShardBlock block:tosNode.blockIdExt cc_seqno:int data:bytes = tosNode.NewShardBlock;
 
-tonNode.blockBroadcastCompressed.data signatures:(vector tonNode.blockSignature) proof_data:bytes = tonNode.blockBroadcaseCompressed.Data;
+tosNode.blockBroadcastCompressed.data signatures:(vector tosNode.blockSignature) proof_data:bytes = tosNode.blockBroadcaseCompressed.Data;
 
-tonNode.blockBroadcast id:tonNode.blockIdExt catchain_seqno:int validator_set_hash:int
-              signatures:(vector tonNode.blockSignature)
-              proof:bytes data:bytes = tonNode.Broadcast;
-tonNode.blockBroadcastCompressed id:tonNode.blockIdExt catchain_seqno:int validator_set_hash:int
-              flags:# compressed:bytes = tonNode.Broadcast;
-tonNode.ihrMessageBroadcast message:tonNode.ihrMessage = tonNode.Broadcast;
-tonNode.externalMessageBroadcast message:tonNode.externalMessage = tonNode.Broadcast;
-tonNode.newShardBlockBroadcast block:tonNode.newShardBlock = tonNode.Broadcast;
+tosNode.blockBroadcast id:tosNode.blockIdExt catchain_seqno:int validator_set_hash:int
+              signatures:(vector tosNode.blockSignature)
+              proof:bytes data:bytes = tosNode.Broadcast;
+tosNode.blockBroadcastCompressed id:tosNode.blockIdExt catchain_seqno:int validator_set_hash:int
+              flags:# compressed:bytes = tosNode.Broadcast;
+tosNode.ihrMessageBroadcast message:tosNode.ihrMessage = tosNode.Broadcast;
+tosNode.externalMessageBroadcast message:tosNode.externalMessage = tosNode.Broadcast;
+tosNode.newShardBlockBroadcast block:tosNode.newShardBlock = tosNode.Broadcast;
 
-tonNode.shardPublicOverlayId workchain:int shard:long zero_state_file_hash:int256 = tonNode.ShardPublicOverlayId;
+tosNode.shardPublicOverlayId workchain:int shard:long zero_state_file_hash:int256 = tosNode.ShardPublicOverlayId;
 
-tonNode.privateBlockOverlayId zero_state_file_hash:int256 nodes:(vector int256) = tonNode.PrivateBlockOverlayId;
-tonNode.customOverlayId zero_state_file_hash:int256 name:string nodes:(vector int256) = tonNode.CustomOverlayId;
+tosNode.privateBlockOverlayId zero_state_file_hash:int256 nodes:(vector int256) = tosNode.PrivateBlockOverlayId;
+tosNode.customOverlayId zero_state_file_hash:int256 name:string nodes:(vector int256) = tosNode.CustomOverlayId;
 
-tonNode.keyBlocks blocks:(vector tonNode.blockIdExt) incomplete:Bool error:Bool = tonNode.KeyBlocks;
+tosNode.keyBlocks blocks:(vector tosNode.blockIdExt) incomplete:Bool error:Bool = tosNode.KeyBlocks;
 
-ton.blockId root_cell_hash:int256 file_hash:int256 = ton.BlockId;
-ton.blockIdApprove root_cell_hash:int256 file_hash:int256 = ton.BlockId;
+tos.blockId root_cell_hash:int256 file_hash:int256 = tos.BlockId;
+tos.blockIdApprove root_cell_hash:int256 file_hash:int256 = tos.BlockId;
 
-tonNode.dataFull id:tonNode.blockIdExt proof:bytes block:bytes is_link:Bool = tonNode.DataFull;
-tonNode.dataFullCompressed id:tonNode.blockIdExt flags:# compressed:bytes is_link:Bool = tonNode.DataFull;
-tonNode.dataFullEmpty = tonNode.DataFull;
+tosNode.dataFull id:tosNode.blockIdExt proof:bytes block:bytes is_link:Bool = tosNode.DataFull;
+tosNode.dataFullCompressed id:tosNode.blockIdExt flags:# compressed:bytes is_link:Bool = tosNode.DataFull;
+tosNode.dataFullEmpty = tosNode.DataFull;
 
-tonNode.capabilities version:int capabilities:long = tonNode.Capabilities;
+tosNode.capabilities version:int capabilities:long = tosNode.Capabilities;
 
-tonNode.success = tonNode.Success;
+tosNode.success = tosNode.Success;
 
-tonNode.archiveNotFound = tonNode.ArchiveInfo;
-tonNode.archiveInfo id:long = tonNode.ArchiveInfo;
+tosNode.archiveNotFound = tosNode.ArchiveInfo;
+tosNode.archiveInfo id:long = tosNode.ArchiveInfo;
 
 ---functions---
 
-tonNode.getNextBlockDescription prev_block:tonNode.blockIdExt = tonNode.BlockDescription;
-tonNode.getNextBlocksDescription prev_block:tonNode.blockIdExt limit:int = tonNode.BlocksDescription;
-tonNode.getPrevBlocksDescription next_block:tonNode.blockIdExt limit:int cutoff_seqno:int = tonNode.BlocksDescription;
-tonNode.prepareBlockProof block:tonNode.blockIdExt allow_partial:Bool = tonNode.PreparedProof;
-tonNode.prepareKeyBlockProof block:tonNode.blockIdExt allow_partial:Bool = tonNode.PreparedProof;
-tonNode.prepareBlockProofs blocks:(vector tonNode.blockIdExt) allow_partial:Bool = tonNode.PreparedProof;
-tonNode.prepareKeyBlockProofs blocks:(vector tonNode.blockIdExt) allow_partial:Bool = tonNode.PreparedProof;
-tonNode.prepareBlock block:tonNode.blockIdExt = tonNode.Prepared;
-tonNode.prepareBlocks blocks:(vector tonNode.blockIdExt) = tonNode.Prepared;
-tonNode.preparePersistentState block:tonNode.blockIdExt masterchain_block:tonNode.blockIdExt = tonNode.PreparedState;
-tonNode.prepareZeroState block:tonNode.blockIdExt = tonNode.PreparedState;
-tonNode.getNextKeyBlockIds block:tonNode.blockIdExt max_size:int = tonNode.KeyBlocks;
-tonNode.downloadNextBlockFull prev_block:tonNode.blockIdExt = tonNode.DataFull;
-tonNode.downloadBlockFull block:tonNode.blockIdExt = tonNode.DataFull;
-tonNode.downloadBlock block:tonNode.blockIdExt = tonNode.Data;
-tonNode.downloadPersistentState block:tonNode.blockIdExt masterchain_block:tonNode.blockIdExt = tonNode.Data;
-tonNode.downloadPersistentStateSlice block:tonNode.blockIdExt masterchain_block:tonNode.blockIdExt offset:long max_size:long = tonNode.Data;
-tonNode.downloadZeroState block:tonNode.blockIdExt = tonNode.Data;
-tonNode.downloadBlockProof block:tonNode.blockIdExt = tonNode.Data;
-tonNode.downloadKeyBlockProof block:tonNode.blockIdExt = tonNode.Data;
-tonNode.downloadBlockProofLink block:tonNode.blockIdExt = tonNode.Data;
-tonNode.downloadKeyBlockProofLink block:tonNode.blockIdExt = tonNode.Data;
-tonNode.getArchiveInfo masterchain_seqno:int = tonNode.ArchiveInfo;
-tonNode.getArchiveSlice archive_id:long offset:long max_size:int = tonNode.Data;
+tosNode.getNextBlockDescription prev_block:tosNode.blockIdExt = tosNode.BlockDescription;
+tosNode.getNextBlocksDescription prev_block:tosNode.blockIdExt limit:int = tosNode.BlocksDescription;
+tosNode.getPrevBlocksDescription next_block:tosNode.blockIdExt limit:int cutoff_seqno:int = tosNode.BlocksDescription;
+tosNode.prepareBlockProof block:tosNode.blockIdExt allow_partial:Bool = tosNode.PreparedProof;
+tosNode.prepareKeyBlockProof block:tosNode.blockIdExt allow_partial:Bool = tosNode.PreparedProof;
+tosNode.prepareBlockProofs blocks:(vector tosNode.blockIdExt) allow_partial:Bool = tosNode.PreparedProof;
+tosNode.prepareKeyBlockProofs blocks:(vector tosNode.blockIdExt) allow_partial:Bool = tosNode.PreparedProof;
+tosNode.prepareBlock block:tosNode.blockIdExt = tosNode.Prepared;
+tosNode.prepareBlocks blocks:(vector tosNode.blockIdExt) = tosNode.Prepared;
+tosNode.preparePersistentState block:tosNode.blockIdExt masterchain_block:tosNode.blockIdExt = tosNode.PreparedState;
+tosNode.prepareZeroState block:tosNode.blockIdExt = tosNode.PreparedState;
+tosNode.getNextKeyBlockIds block:tosNode.blockIdExt max_size:int = tosNode.KeyBlocks;
+tosNode.downloadNextBlockFull prev_block:tosNode.blockIdExt = tosNode.DataFull;
+tosNode.downloadBlockFull block:tosNode.blockIdExt = tosNode.DataFull;
+tosNode.downloadBlock block:tosNode.blockIdExt = tosNode.Data;
+tosNode.downloadPersistentState block:tosNode.blockIdExt masterchain_block:tosNode.blockIdExt = tosNode.Data;
+tosNode.downloadPersistentStateSlice block:tosNode.blockIdExt masterchain_block:tosNode.blockIdExt offset:long max_size:long = tosNode.Data;
+tosNode.downloadZeroState block:tosNode.blockIdExt = tosNode.Data;
+tosNode.downloadBlockProof block:tosNode.blockIdExt = tosNode.Data;
+tosNode.downloadKeyBlockProof block:tosNode.blockIdExt = tosNode.Data;
+tosNode.downloadBlockProofLink block:tosNode.blockIdExt = tosNode.Data;
+tosNode.downloadKeyBlockProofLink block:tosNode.blockIdExt = tosNode.Data;
+tosNode.getArchiveInfo masterchain_seqno:int = tosNode.ArchiveInfo;
+tosNode.getArchiveSlice archive_id:long offset:long max_size:int = tosNode.Data;
 
-tonNode.getCapabilities = tonNode.Capabilities;
+tosNode.getCapabilities = tosNode.Capabilities;
 
-tonNode.slave.sendExtMessage message:tonNode.externalMessage = tonNode.Success;
+tosNode.slave.sendExtMessage message:tosNode.externalMessage = tosNode.Success;
 
-tonNode.query = Object;
+tosNode.query = Object;
 
 ---types---
 
@@ -459,7 +459,7 @@ tonNode.query = Object;
 // bit 3 - archived
 // bit 4 - disabled
 
-db.root.dbDescription version:int first_masterchain_block_id:tonNode.blockIdExt flags:int = db.root.DbDescription;
+db.root.dbDescription version:int first_masterchain_block_id:tosNode.blockIdExt flags:int = db.root.DbDescription;
 
 db.root.key.cellDb version:int = db.root.Key;
 db.root.key.blockDb version:int = db.root.Key;
@@ -467,46 +467,46 @@ db.root.key.blockDb version:int = db.root.Key;
 db.root.config celldb_version:int blockdb_version:int = db.root.Config;
 db.root.key.config = db.root.Key;
 
-db.celldb.value block_id:tonNode.blockIdExt prev:int256 next:int256 root_hash:int256 = db.celldb.Value;
+db.celldb.value block_id:tosNode.blockIdExt prev:int256 next:int256 root_hash:int256 = db.celldb.Value;
 db.celldb.key.value hash:int256 = db.celldb.key.Value;
 
-db.block.info#4ac6e727 id:tonNode.blockIdExt flags:# prev_left:flags.1?tonNode.blockIdExt
-                                            prev_right:flags.2?tonNode.blockIdExt
-                                            next_left:flags.3?tonNode.blockIdExt
-                                            next_right:flags.4?tonNode.blockIdExt
+db.block.info#4ac6e727 id:tosNode.blockIdExt flags:# prev_left:flags.1?tosNode.blockIdExt
+                                            prev_right:flags.2?tosNode.blockIdExt
+                                            next_left:flags.3?tosNode.blockIdExt
+                                            next_right:flags.4?tosNode.blockIdExt
                                             lt:flags.13?long
                                             ts:flags.14?int
                                             state:flags.17?int256
                                             masterchain_ref_seqno:flags.23?int = db.block.Info;
-db.block.packedInfo id:tonNode.blockIdExt unixtime:int offset:long = db.block.Info;
-db.block.archivedInfo id:tonNode.blockIdExt flags:# next:flags.0?tonNode.blockIdExt = db.block.Info;
+db.block.packedInfo id:tosNode.blockIdExt unixtime:int offset:long = db.block.Info;
+db.block.archivedInfo id:tosNode.blockIdExt flags:# next:flags.0?tosNode.blockIdExt = db.block.Info;
 
-db.blockdb.value next:tonNode.blockIdExt data:bytes = db.blockdb.Value;
-db.blockdb.lru id:tonNode.blockIdExt prev:int256 next:int256 = db.blockdb.Lru;
-db.blockdb.key.lru id:tonNode.blockIdExt = db.blockdb.Key;
-db.blockdb.key.value id:tonNode.blockIdExt = db.blockdb.Key;
+db.blockdb.value next:tosNode.blockIdExt data:bytes = db.blockdb.Value;
+db.blockdb.lru id:tosNode.blockIdExt prev:int256 next:int256 = db.blockdb.Lru;
+db.blockdb.key.lru id:tosNode.blockIdExt = db.blockdb.Key;
+db.blockdb.key.value id:tosNode.blockIdExt = db.blockdb.Key;
 
-db.candidate source:PublicKey id:tonNode.blockIdExt data:bytes collated_data:bytes = db.Candidate;
-db.candidate.id source:PublicKey id:tonNode.blockIdExt collated_data_file_hash:int256 = db.candidate.Id;
+db.candidate source:PublicKey id:tosNode.blockIdExt data:bytes collated_data:bytes = db.Candidate;
+db.candidate.id source:PublicKey id:tosNode.blockIdExt collated_data_file_hash:int256 = db.candidate.Id;
 
 db.filedb.key.empty = db.filedb.Key;
-db.filedb.key.blockFile block_id:tonNode.blockIdExt = db.filedb.Key;
-db.filedb.key.zeroStateFile block_id:tonNode.blockIdExt = db.filedb.Key;
-db.filedb.key.persistentStateFile block_id:tonNode.blockIdExt masterchain_block_id:tonNode.blockIdExt = db.filedb.Key;
-db.filedb.key.proof block_id:tonNode.blockIdExt = db.filedb.Key;
-db.filedb.key.proofLink block_id:tonNode.blockIdExt = db.filedb.Key;
-db.filedb.key.signatures block_id:tonNode.blockIdExt = db.filedb.Key;
+db.filedb.key.blockFile block_id:tosNode.blockIdExt = db.filedb.Key;
+db.filedb.key.zeroStateFile block_id:tosNode.blockIdExt = db.filedb.Key;
+db.filedb.key.persistentStateFile block_id:tosNode.blockIdExt masterchain_block_id:tosNode.blockIdExt = db.filedb.Key;
+db.filedb.key.proof block_id:tosNode.blockIdExt = db.filedb.Key;
+db.filedb.key.proofLink block_id:tosNode.blockIdExt = db.filedb.Key;
+db.filedb.key.signatures block_id:tosNode.blockIdExt = db.filedb.Key;
 db.filedb.key.candidate id:db.candidate.id = db.filedb.Key;
-db.filedb.key.blockInfo block_id:tonNode.blockIdExt = db.filedb.Key;
+db.filedb.key.blockInfo block_id:tosNode.blockIdExt = db.filedb.Key;
 
 db.filedb.value key:db.filedb.Key prev:int256 next:int256 file_hash:int256 = db.filedb.Value;
 
 db.state.destroyedSessions sessions:(vector int256) = db.state.DestroyedSessions;
-db.state.initBlockId block:tonNode.blockIdExt = db.state.InitBlockId;
-db.state.gcBlockId block:tonNode.blockIdExt = db.state.GcBlockId;
-db.state.shardClient block:tonNode.blockIdExt = db.state.ShardClient;
-db.state.asyncSerializer block:tonNode.blockIdExt last:tonNode.blockIdExt last_ts:int = db.state.AsyncSerializer;
-db.state.hardforks blocks:(vector tonNode.blockIdExt) = db.state.Hardforks;
+db.state.initBlockId block:tosNode.blockIdExt = db.state.InitBlockId;
+db.state.gcBlockId block:tosNode.blockIdExt = db.state.GcBlockId;
+db.state.shardClient block:tosNode.blockIdExt = db.state.ShardClient;
+db.state.asyncSerializer block:tosNode.blockIdExt last:tosNode.blockIdExt last_ts:int = db.state.AsyncSerializer;
+db.state.hardforks blocks:(vector tosNode.blockIdExt) = db.state.Hardforks;
 db.state.dbVersion version:int = db.state.DbVersion;
 
 db.state.key.destroyedSessions = db.state.Key;
@@ -521,7 +521,7 @@ db.lt.el.key workchain:int shard:long idx:int = db.lt.Key;
 db.lt.desc.key workchain:int shard:long = db.lt.Key;
 db.lt.shard.key idx:int = db.lt.Key;
 db.lt.status.key = db.lt.Key;
-db.lt.el.value id:tonNode.blockIdExt lt:long ts:int = db.lt.el.Value;
+db.lt.el.value id:tosNode.blockIdExt lt:long ts:int = db.lt.el.Value;
 db.lt.desc.value first_idx:int last_idx:int last_seqno:int last_lt:long last_ts:int = db.lt.desc.Value;
 db.lt.shard.value workchain:int shard:long = db.lt.shard.Value;
 db.lt.status.value total_shards:int = db.lt.status.Value;
@@ -564,7 +564,7 @@ dht.config.global_v2 static_nodes:dht.nodes k:int a:int network_id:int = dht.con
 adnl.config.global static_nodes:adnl.nodes = adnl.config.Global;
 catchain.config.global tag:int256 nodes:(vector PublicKey) = catchain.config.Global;
 dummyworkchain0.config.global zero_state_hash:int256 = dummyworkchain0.config.Global;
-validator.config.global zero_state:tonNode.blockIdExt init_block:tonNode.blockIdExt hardforks:(vector tonNode.blockIdExt) = validator.config.Global;
+validator.config.global zero_state:tosNode.blockIdExt init_block:tosNode.blockIdExt hardforks:(vector tosNode.blockIdExt) = validator.config.Global;
 config.global adnl:adnl.config.global dht:dht.config.Global validator:validator.config.global = config.Global;
 
 liteserver.desc id:PublicKey ip:int port:int = liteserver.Desc;
@@ -699,7 +699,7 @@ engine.validator.signShardOverlayCertificate workchain:int shard:long signed_key
 engine.validator.importShardOverlayCertificate workchain:int shard:long signed_key:engine.validator.KeyHash cert:overlay.Certificate = engine.validator.Success;
 
 engine.validator.getPerfTimerStats name:string = engine.validator.PerfTimerStats;
-engine.validator.getShardOutQueueSize flags:# block_id:tonNode.blockId dest_wc:flags.0?int dest_shard:flags.0?long = engine.validator.ShardOutQueueSize;
+engine.validator.getShardOutQueueSize flags:# block_id:tosNode.blockId dest_wc:flags.0?int dest_shard:flags.0?long = engine.validator.ShardOutQueueSize;
 engine.validator.setExtMessagesBroadcastDisabled disabled:Bool = engine.validator.Success;
 
 engine.validator.addCustomOverlay overlay:engine.validator.customOverlay = engine.validator.Success;
@@ -756,7 +756,7 @@ validatorSession.statsProducer id:int256 candidate_id:int256 block_status:int bl
 
 validatorSession.statsRound timestamp:long producers:(vector validatorSession.statsProducer) = validatorSession.StatsRound;
 
-validatorSession.stats success:Bool id:tonNode.blockIdExt timestamp:long self:int256 session_id:int256 cc_seqno:int
+validatorSession.stats success:Bool id:tosNode.blockIdExt timestamp:long self:int256 session_id:int256 cc_seqno:int
     creator:int256 total_validators:int total_weight:long
     signatures:int signatures_weight:long approve_signatures:int approve_signatures_weight:long
     first_round:int rounds:(vector validatorSession.statsRound) = validatorSession.Stats;

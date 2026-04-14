@@ -1,6 +1,6 @@
 # tosctl -- TOS Node Operator Tool
 
-`tosctl` is the operator CLI and automation daemon for TOS validator nodes. It replaces `mytonctrl` and the scattered collection of legacy TON shell scripts, Python utilities, and standalone binaries with a single Rust tool.
+`tosctl` is the operator CLI and automation daemon for TOS validator nodes. It replaces `mytonctrl` and the scattered collection of legacy shell scripts, Python utilities, and standalone binaries with a single Rust tool.
 
 `tosctl` manages nodes, wallets, pools, elections, voting, backups, alerts, and observability from one configuration file and one binary.
 
@@ -456,7 +456,7 @@ tosctl api stake-policy --node node0 --fixed 500000000000
 
 1. **ADNL control protocol** (e.g., `127.0.0.1:2004`) -- used for live node operations: key generation, validator registration, collator management, overlay configuration. This is the same protocol that `validator-engine-console` uses. Keys for this connection are stored in the vault and referenced by `client_key` in the node config.
 
-2. **HTTP JSON-RPC** (e.g., `127.0.0.1:2011`) -- used for chain reads and transaction submission. This is the embedded JSON-RPC server enabled by starting validator-engine with `--json-rpc-address 127.0.0.1:2011`. It replaces the external `ton-http-api` service entirely.
+2. **HTTP JSON-RPC** (e.g., `127.0.0.1:2011`) -- used for chain reads and transaction submission. This is the embedded JSON-RPC server enabled by starting validator-engine with `--json-rpc-address 127.0.0.1:2011`. It replaces the external `tos-http-api` service entirely.
 
 The chain RPC URL is set once:
 

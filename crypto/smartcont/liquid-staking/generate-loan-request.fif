@@ -3,7 +3,7 @@
 
 { ."usage: " @' $0 type ." min_loan max_loan max_interest [<savefile>]" cr
   ."Creates msg body for send_request_loan request to validator-controller " cr
-  ."min_loan and max_loan are in TON" cr 
+  ."min_loan and max_loan are in TOS" cr
   ."max_interest is maximal interest is share of loan, controller ready to pay per round as 16777216 based rational" cr 1 halt
 } : usage
 $# dup 3 < swap 4 > or ' usage if

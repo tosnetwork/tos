@@ -33,7 +33,7 @@ The SHA256 hash of the serialized transaction cell. Represented as a base64-enco
 
 The hash of the inbound message cell that triggered the transaction. Represented as a base64-encoded string. Used for send-track correlation: the hash returned by `sendBocReturnHash` matches the `in_msg_hash` of the resulting on-chain transaction.
 
-`in_msg_hash` is a TOS extension not present in standard TON HTTP API responses.
+`in_msg_hash` is a TOS extension not present in standard legacy HTTP API responses.
 
 ### Block ID
 
@@ -47,7 +47,7 @@ The block containing the transaction, identified by five fields:
 | `root_hash` | string | Base64-encoded root hash of the block |
 | `file_hash` | string | Base64-encoded file hash of the block |
 
-The `@type` of a block ID object is `"ton.blockIdExt"`.
+The `@type` of a block ID object is `"tos.blockIdExt"`.
 
 ### Uniqueness
 
@@ -77,7 +77,7 @@ The `transaction_id` object has `@type` `"internal.transactionId"` and contains:
 | `lt` | string | Logical time (int64 as string) |
 | `hash` | string | Base64-encoded transaction hash |
 
-The `data` field contains the full serialized transaction. Clients that need to inspect outbound messages, compute phases, action phases, or TVM exit codes must deserialize this BOC using a TOS/TON SDK. The JSON-RPC API does not parse the transaction body into structured fields.
+The `data` field contains the full serialized transaction. Clients that need to inspect outbound messages, compute phases, action phases, or TVM exit codes must deserialize this BOC using a TOS SDK. The JSON-RPC API does not parse the transaction body into structured fields.
 
 ### `getTransactionsStd` response
 
@@ -180,7 +180,7 @@ Response:
   "ok": true,
   "result": {
     "@type": "blocks.transactions",
-    "id": { "@type": "ton.blockIdExt", ... },
+    "id": { "@type": "tos.blockIdExt", ... },
     "req_count": 40,
     "incomplete": false,
     "transactions": [
@@ -323,7 +323,7 @@ The JSON-RPC API does not parse these fields out of the `data` BOC. Clients must
 
 To determine whether a transaction succeeded:
 
-1. Deserialize the `data` BOC using a TOS/TON SDK.
+1. Deserialize the `data` BOC using a TOS SDK.
 2. Check the compute phase exit code. Exit code 0 or 1 means TVM execution succeeded.
 3. Check the action phase result code. Result code 0 means all actions (outbound messages) were processed successfully.
 4. If both phases succeeded, the transaction executed as intended.

@@ -73,7 +73,7 @@ If TOS introduces its own RPC protocol:
 
 ---
 
-## Remaining TON-Specific Internals
+## Remaining TOS-Specific Internals
 
 These are implementation details behind the `ChainProvider` abstraction:
 

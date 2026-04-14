@@ -1397,7 +1397,7 @@ components:
     # ── Shared primitives ──────────────────────────────────────────────
     TonAddr:
       type: string
-      description: TON address in any form (raw, friendly bounceable/non-bounceable)
+      description: TOS address in any form (raw, friendly bounceable/non-bounceable)
 
     TonHash:
       type: string
@@ -1406,7 +1406,7 @@ components:
     TonBlockIdExt:
       type: object
       properties:
-        '@type': {type: string, enum: ['ton.blockIdExt']}
+        '@type': {type: string, enum: ['tos.blockIdExt']}
         workchain: {type: integer}
         shard: {type: string}
         seqno: {type: integer}
@@ -1521,7 +1521,7 @@ components:
           type: object
           description: Zero state ID
           properties:
-            '@type': {type: string, enum: ['ton.blockIdExt']}
+            '@type': {type: string, enum: ['tos.blockIdExt']}
             workchain: {type: integer}
             root_hash: {type: string}
             file_hash: {type: string}

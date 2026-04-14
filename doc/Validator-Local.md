@@ -175,7 +175,7 @@ The `--clean` flag stops any running services and removes previous `/data/` cont
    - Produces a signed DHT node entry with public key, address, and Ed25519 signature
 
 8. **Global config** (`/data/tos-global.json`):
-   - Format matches [ton.org/global-config.json](https://ton.org/global-config.json)
+   - Format matches [tos.network/global-config.json](https://tos.network/global-config.json)
    - Contains: `dht` (with signed static_nodes), `validator` (with zero_state block ID), `liteservers` (array of ip+port+pubkey)
    - `liteservers` field is added manually (not part of TL `config.global` type, but needed by lite-client)
 
@@ -291,7 +291,7 @@ tos-validator-console \
 
 ## Global Config Format
 
-The global config follows the same structure as [ton.org/global-config.json](https://ton.org/global-config.json):
+The global config follows the same structure as [tos.network/global-config.json](https://tos.network/global-config.json):
 
 ```json
 {

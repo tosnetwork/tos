@@ -60,7 +60,7 @@ cont bless(slice s) impure asm "BLESS";
 () accept_message() impure asm "ACCEPT";
 () set_gas_limit(int limit) impure asm "SETGASLIMIT";
 () commit() impure asm "COMMIT";
-() buy_gas(int gram) impure asm "BUYGAS";
+() buy_gas(int tomi) impure asm "BUYGAS";
 
 int min(int x, int y) asm "MIN";
 int max(int x, int y) asm "MAX";

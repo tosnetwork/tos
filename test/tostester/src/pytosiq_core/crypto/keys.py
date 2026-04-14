@@ -35,7 +35,7 @@ def get_secure_random_number(min_v, max_v):
 
 
 def is_basic_seed(entropy):
-    seed = hashlib.pbkdf2_hmac("sha512", entropy, 'TON seed version'.encode(
+    seed = hashlib.pbkdf2_hmac("sha512", entropy, 'TOS seed version'.encode(
         'utf-8'), max(1, math.floor(PBKDF_ITERATIONS / 256)))
     return seed[0] == 0
 
@@ -65,7 +65,7 @@ def mnemonic_to_private_key(mnemo_words: List[str], password: Optional[str] = No
     :rtype: (bytes(public_key), bytes(secret_key))
     """
     seed = mnemonic_to_seed(
-        mnemo_words, 'TON default seed'.encode('utf-8'), password)
+        mnemo_words, 'TOS default seed'.encode('utf-8'), password)
     return crypto_sign_seed_keypair(seed[:32])
 
 

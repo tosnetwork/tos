@@ -1,4 +1,4 @@
-const int one_ton = 1000000000;
+const int one_tos = 1000000000;
 const int dns_next_resolver_prefix = 0xba93; ;; dns_next_resolver prefix - https://github.com/tosnetwork/tos/blob/7e3df93ca2ab336716a230fceb1726d81bac0a06/crypto/block/block.tlb#L819
 
 const int op::fill_up = 0x370fec51;
@@ -53,7 +53,7 @@ const int err::incorrect_workchain = 333;
 const int err::no_first_zero_byte = 413;
 const int err::bad_subdomain_length = 70;
 
-const int min_tons_for_storage = one_ton;
+const int min_tos_for_storage = one_tos;
 const int workchain = 0;
 
 int equal_slices(slice a, slice b) asm "SDEQ";

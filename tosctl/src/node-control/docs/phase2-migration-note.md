@@ -32,7 +32,7 @@ The `ChainProvider` trait (introduced earlier) is now the primary RPC abstractio
 
 ### Compatibility Decision Documented
 
-- **`docs/tos-rpc-compatibility.md`** — documents the decision to use TON-compatible JSON-RPC as the temporary backend, lists all RPC methods used, compatibility assumptions, and migration path to a TOS-native RPC
+- **`docs/tos-rpc-compatibility.md`** — documents the decision to use TOS-compatible JSON-RPC as the temporary backend, lists all RPC methods used, compatibility assumptions, and migration path to a TOS-native RPC
 
 ---
 
@@ -68,4 +68,4 @@ The `ChainProvider` trait (introduced earlier) is now the primary RPC abstractio
 ## Known Risks
 
 - The `rpc_client()` method on `RuntimeConfig` is kept for backward compatibility but should be deprecated in Phase 8.
-- If TOS RPC diverges from TON JSON-RPC, only `DefaultChainProvider` and `ClientJsonRpc` need updating — no higher-level code is affected.
+- If TOS RPC diverges from TOS JSON-RPC, only `DefaultChainProvider` and `ClientJsonRpc` need updating — no higher-level code is affected.

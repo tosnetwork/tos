@@ -2,7 +2,7 @@
 
 **tosctl** is the TOS fork of the original `nodectl` framework. It is the starting point for managing TOS nodes, monitoring node state, handling operator keys, and automating future testnet/mainnet node operations.
 
-> **Transition note:** this fork is migrating from TON Rust tooling to TOS tooling. User-facing entry points use `tosctl` and `tosctl-config.json`. The config JSON field for RPC is `chain_rpc`. Some internal module names may still carry TON-origin naming during the transition and will be migrated incrementally.
+> **Transition note:** this fork is migrating from TOS Rust tooling to TOS tooling. User-facing entry points use `tosctl` and `tosctl-config.json`. The config JSON field for RPC is `chain_rpc`. Some internal module names may still carry TOS-origin naming during the transition and will be migrated incrementally.
 >
 > Planning docs:
 > - [Migration Audit](docs/tosctl-migration-audit.md)

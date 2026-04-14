@@ -121,7 +121,7 @@ class TestGetBlockTransactions:
         data = response.json()
         assert data["ok"] is True
         assert data["result"]["@type"] == "blocks.transactions"
-        assert data["result"]["id"]["@type"] == "ton.blockIdExt"
+        assert data["result"]["id"]["@type"] == "tos.blockIdExt"
 
     def test_wrong_workchain(self, api_method_call, last_mc_seqno):
         response = api_method_call(self.METHOD, workchain="invalid",

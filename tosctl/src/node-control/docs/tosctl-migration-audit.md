@@ -1,7 +1,7 @@
 # tosctl Migration Audit
 
 **Scope:** `src/node-control/*` in the TOS fork  
-**Goal:** classify which parts of the imported TON Rust `nodectl` stack can be kept as-is, which require only naming cleanup, which require protocol adaptation for TOS, and which are high-risk because they embed TON election assumptions.
+**Goal:** classify which parts of the imported TOS Rust `nodectl` stack can be kept as-is, which require only naming cleanup, which require protocol adaptation for TOS, and which are high-risk because they embed TOS election assumptions.
 
 ---
 
@@ -18,12 +18,12 @@ Current state:
   - ADNL control client structure
   - background service model
   - REST API / auth / snapshot machinery
-- The **protocol-facing business logic** is still TON-oriented:
+- The **protocol-facing business logic** is still TOS-oriented:
   - `ton_http_api` naming and RPC assumptions
   - Elector wrapper
   - single nominator pool wrapper
   - validator set parsing from config params `15/34/36`
-  - wallet defaults and deployment flows built around TON wallet semantics
+  - wallet defaults and deployment flows built around TOS wallet semantics
 
 Recommended migration rule:
 
@@ -50,7 +50,7 @@ These modules are structural and can remain largely unchanged in the first TOS m
 Reason:
 
 - generic process/service infrastructure
-- no deep TON-specific protocol coupling
+- no deep TOS-specific protocol coupling
 
 #### `service`
 
@@ -82,13 +82,13 @@ Reason:
 
 Reason:
 
-- if TOS validator control server remains TON-compatible or near-compatible, this layer is a strong reuse candidate
+- if TOS validator control server remains TOS-compatible or near-compatible, this layer is a strong reuse candidate
 
 ---
 
 ### 2.2 Rename Only
 
-These parts are mostly valid but still carry TON-facing names or docs.
+These parts are mostly valid but still carry TOS-facing names or docs.
 
 #### User-facing names
 
@@ -110,8 +110,8 @@ Status:
 Required changes:
 
 - rename operator-facing examples to `tosctl`
-- refer to TOS nodes / TOS testnet instead of TON nodes
-- clearly mark temporary internal TON naming where still present
+- refer to TOS nodes / TOS testnet instead of TOS nodes
+- clearly mark temporary internal TOS naming where still present
 
 #### Module names that can stay temporarily but should eventually be renamed
 
@@ -143,7 +143,7 @@ Files:
 
 Current assumption:
 
-- chain access happens through TON-style JSON-RPC / JSON-RPC compatible interfaces
+- chain access happens through TOS-style JSON-RPC / JSON-RPC compatible interfaces
 - config field is explicitly `ton_http_api`
 - default endpoint is `http://127.0.0.1:3301/`
 
@@ -154,7 +154,7 @@ Risk:
 Migration target:
 
 - abstract this into a TOS chain RPC provider
-- keep a compatibility adapter if TOS initially reuses TON-style JSON-RPC
+- keep a compatibility adapter if TOS initially reuses TOS-style JSON-RPC
 
 #### B. Wallet layer
 
@@ -165,13 +165,13 @@ Files:
 
 Current assumption:
 
-- TON wallet versions `V1R3`, `V3R2`, `V4R2`, `V5R1`
-- known TON wallet code cells are embedded directly in code
-- deploy/send flows are derived from TON wallet message layout
+- TOS wallet versions `V1R3`, `V3R2`, `V4R2`, `V5R1`
+- known TOS wallet code cells are embedded directly in code
+- deploy/send flows are derived from TOS wallet message layout
 
 Risk:
 
-- if TOS keeps TON wallet contracts, this can remain mostly valid
+- if TOS keeps TOS wallet contracts, this can remain mostly valid
 - if TOS has diverged wallet code or address derivation, this becomes incorrect quickly
 
 Migration target:
@@ -188,11 +188,11 @@ Files:
 
 Current assumption:
 
-- validator/election logic is derived from TON config params:
+- validator/election logic is derived from TOS config params:
   - `15`
   - `34`
   - `36`
-- JSON structure of those params is TON-specific
+- JSON structure of those params is TOS-specific
 
 Risk:
 
@@ -213,8 +213,8 @@ Files:
 
 Current assumption:
 
-- `run_get_method` RPC exists and returns TON-style TVM stack entries
-- account balance lookup is TON-style
+- `run_get_method` RPC exists and returns TOS-style TVM stack entries
+- account balance lookup is TOS-style
 
 Risk:
 
@@ -222,7 +222,7 @@ Risk:
 
 Migration target:
 
-- add a TOS provider trait and keep the current provider as a TON-compatible implementation
+- add a TOS provider trait and keep the current provider as a TOS-compatible implementation
 
 ---
 
@@ -246,7 +246,7 @@ Hard-coded assumptions:
   - `compute_returned_stake`
   - `participant_list_extended`
   - `past_elections`
-- stack parsing logic follows TON elector return layouts exactly
+- stack parsing logic follows TOS elector return layouts exactly
 
 Risk:
 
@@ -255,7 +255,7 @@ Risk:
 Required action:
 
 - verify TOS elector address and getter ABI
-- if TOS cloned TON unchanged, keep wrapper and document compatibility
+- if TOS cloned TOS unchanged, keep wrapper and document compatibility
 - otherwise create a TOS elector wrapper and parser
 
 #### B. Single nominator pool wrapper
@@ -266,8 +266,8 @@ Files:
 
 Hard-coded assumptions:
 
-- embedded TON single-nominator contract code
-- TON workchain default:
+- embedded TOS single-nominator contract code
+- TOS workchain default:
   - `NOMINATOR_POOL_WORKCHAIN = -1`
 - `get_roles` / `get_pool_data` stack layout is fixed
 
@@ -278,7 +278,7 @@ Risk:
 
 Required action:
 
-- decide whether TOS standardizes the TON single-nominator contract unchanged
+- decide whether TOS standardizes the TOS single-nominator contract unchanged
 
 #### C. Election runner
 
@@ -345,19 +345,19 @@ Tasks:
 
 Goal:
 
-- stop hard-coding TON RPC vocabulary as the only chain access path
+- stop hard-coding TOS RPC vocabulary as the only chain access path
 
 Tasks:
 
 - introduce TOS-facing naming in config and command layer
-- decide whether TOS chain RPC remains TON JSON-RPC compatible
+- decide whether TOS chain RPC remains TOS JSON-RPC compatible
 - adapt `chain-rpc-client` or wrap it
 
 ### Phase 3 — Protocol Compatibility Audit
 
 Goal:
 
-- validate whether TOS reuses TON contracts and config params unchanged
+- validate whether TOS reuses TOS contracts and config params unchanged
 
 Tasks:
 
@@ -376,7 +376,7 @@ Goal:
 
 Tasks:
 
-- add TOS-specific wrappers/parsers where TON compatibility is broken
+- add TOS-specific wrappers/parsers where TOS compatibility is broken
 - keep generic service/CLI/auth/vault infrastructure unchanged
 
 ---
@@ -392,7 +392,7 @@ Tasks:
    - Config params `15/34/36`
    - ADNL control server methods
 4. Add a top-level compatibility mode decision:
-   - `TON-compatible TOS`
+   - `TOS-compatible TOS`
    - or `TOS-native with adapters`
 
 ---

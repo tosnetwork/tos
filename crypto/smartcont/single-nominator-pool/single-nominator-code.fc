@@ -8,8 +8,8 @@
 
 const BOUNCEABLE = 0x18;
 const ADDRESS_SIZE = 256;
-const MIN_TON_FOR_STORAGE = 1000000000; ;; 1 TOS - 10% from nominator-pool since we have a single cell
-const MIN_TON_FOR_SEND_MSG = 1200000000; ;; 1.2 TOS - covers elector message fees
+const MIN_TOS_FOR_STORAGE = 1000000000; ;; 1 TOS - 10% from nominator-pool since we have a single cell
+const MIN_TOS_FOR_SEND_MSG = 1200000000; ;; 1.2 TOS - covers elector message fees
 
 ;; owner ops
 const OP::WITHDRAW = 0x1000;
@@ -87,7 +87,7 @@ int check_new_stake_msg(slice cs) impure inline_ref;
 		op = OP::WITHDRAW;
 		;; in few lines, amount to withdraw is loaded from in_msg_body,
 		;; so we set it to the maximum avaliable balance
-		in_msg_body = begin_cell().store_coins(my_balance - msg_value - MIN_TON_FOR_STORAGE).end_cell().begin_parse();
+		in_msg_body = begin_cell().store_coins(my_balance - msg_value - MIN_TOS_FOR_STORAGE).end_cell().begin_parse();
 	} else {
 		query_id = in_msg_body~load_uint(64);
 	}
@@ -98,7 +98,7 @@ int check_new_stake_msg(slice cs) impure inline_ref;
 		;; allow owner to withdraw funds - take the money home and stop validating with it
 		if (op == OP::WITHDRAW) {
 			int amount = in_msg_body~load_coins();
-			amount = min(amount, my_balance - msg_value - MIN_TON_FOR_STORAGE);
+			amount = min(amount, my_balance - msg_value - MIN_TOS_FOR_STORAGE);
 			throw_unless(ERROR::INSUFFICIENT_BALANCE, amount > 0);
 			send_msg(owner_address, amount, null(), BOUNCEABLE, MODE::SEND_MODE_REMAINING_AMOUNT); ;; owner pays gas fees
 		}
@@ -134,11 +134,11 @@ int check_new_stake_msg(slice cs) impure inline_ref;
 			throw_unless(ERROR::WRONG_VALIDATOR_WC, sender_wc == -1); ;; for voting purpose
 			throw_unless(ERROR::WRONG_NOMINATOR_WC, my_wc == -1); ;; must be deployed on masterchain
 			throw_unless(ERROR::WRONG_QUERY_ID, query_id); ;; query_id must be greater then 0 to receive confirmation message from elector
-			throw_unless(ERROR::INSUFFICIENT_ELECTOR_FEE, msg_value >= MIN_TON_FOR_SEND_MSG); ;; must be greater then new_stake sending to elector fee
+			throw_unless(ERROR::INSUFFICIENT_ELECTOR_FEE, msg_value >= MIN_TOS_FOR_SEND_MSG); ;; must be greater then new_stake sending to elector fee
 			int stake_amount = in_msg_body~load_coins();
 			slice msg = in_msg_body;
 			check_new_stake_msg(in_msg_body);
-			throw_unless(ERROR::INSUFFICIENT_BALANCE, stake_amount <= my_balance - msg_value - MIN_TON_FOR_STORAGE);
+			throw_unless(ERROR::INSUFFICIENT_BALANCE, stake_amount <= my_balance - msg_value - MIN_TOS_FOR_STORAGE);
 
 			send_msg(elector_address(), stake_amount, begin_cell().store_uint(OP::NEW_STAKE, 32).store_uint(query_id, 64).store_slice(msg).end_cell(), BOUNCEABLE, MODE::SEND_MODE_REMAINING_AMOUNT); ;; bounceable, validator pays gas fees
 		}

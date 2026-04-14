@@ -47,10 +47,10 @@ unpackedAccountAddress workchain_id:int32 bounceable:Bool testnet:Bool addr:byte
 
 internal.transactionId lt:int64 hash:bytes = internal.TransactionId;
 
-ton.blockId workchain:int32 shard:int64 seqno:int32 = internal.BlockId;
-ton.blockIdExt workchain:int32 shard:int64 seqno:int32 root_hash:bytes file_hash:bytes = ton.BlockIdExt;
+tos.blockId workchain:int32 shard:int64 seqno:int32 = internal.BlockId;
+tos.blockIdExt workchain:int32 shard:int64 seqno:int32 root_hash:bytes file_hash:bytes = tos.BlockIdExt;
 
-raw.fullAccountState balance:int64 code:bytes data:bytes last_transaction_id:internal.transactionId block_id:ton.blockIdExt frozen_hash:bytes sync_utime:int53 = raw.FullAccountState;
+raw.fullAccountState balance:int64 code:bytes data:bytes last_transaction_id:internal.transactionId block_id:tos.blockIdExt frozen_hash:bytes sync_utime:int53 = raw.FullAccountState;
 raw.message source:accountAddress destination:accountAddress value:int64 fwd_fee:int64 ihr_fee:int64 created_lt:int64 body_hash:bytes msg_data:msg.Data = raw.Message;
 raw.transaction address:accountAddress utime:int53 data:bytes transaction_id:internal.transactionId fee:int64 storage_fee:int64 other_fee:int64 in_msg:raw.message out_msgs:vector<raw.message> = raw.Transaction;
 raw.transactions transactions:vector<raw.transaction> previous_transaction_id:internal.transactionId = raw.Transactions;
@@ -85,7 +85,7 @@ pchan.statePayout A:int64 B:int64 = pchan.State;
 pchan.accountState config:pchan.config state:pchan.State description:string = AccountState;
 uninited.accountState frozen_hash:bytes = AccountState;
 
-fullAccountState address:accountAddress balance:int64 last_transaction_id:internal.transactionId block_id:ton.blockIdExt sync_utime:int53 account_state:AccountState revision:int32 = FullAccountState;
+fullAccountState address:accountAddress balance:int64 last_transaction_id:internal.transactionId block_id:tos.blockIdExt sync_utime:int53 account_state:AccountState revision:int32 = FullAccountState;
 
 accountRevisionList revisions:vector<fullAccountState> = AccountRevisionList;
 accountList accounts:vector<fullAccountState> = AccountList;
@@ -187,22 +187,22 @@ smc.libraryResult result:(vector smc.libraryEntry) = smc.LibraryResult;
 updateSendLiteServerQuery id:int64 data:bytes = Update;
 updateSyncState sync_state:SyncState = Update;
 
-//@class LogStream @description Describes a stream to which tonlib internal log is written
+//@class LogStream @description Describes a stream to which toslib internal log is written
 
 //@description The log is written to stderr or an OS specific log
 logStreamDefault = LogStream;
 
-//@description The log is written to a file @path Path to the file to where the internal tonlib log will be written @max_file_size Maximum size of the file to where the internal tonlib log is written before the file will be auto-rotated
+//@description The log is written to a file @path Path to the file to where the internal toslib log will be written @max_file_size Maximum size of the file to where the internal toslib log is written before the file will be auto-rotated
 logStreamFile path:string max_file_size:int53 = LogStream;
 
 //@description The log is written nowhere
 logStreamEmpty = LogStream;
 
 
-//@description Contains a tonlib internal log verbosity level @verbosity_level Log verbosity level
+//@description Contains a toslib internal log verbosity level @verbosity_level Log verbosity level
 logVerbosityLevel verbosity_level:int32 = LogVerbosityLevel;
 
-//@description Contains a list of available tonlib internal log tags @tags List of log tags
+//@description Contains a list of available toslib internal log tags @tags List of log tags
 logTags tags:vector<string> = LogTags;
 
 data bytes:secureBytes = Data;
@@ -210,20 +210,20 @@ data bytes:secureBytes = Data;
 liteServer.info now:int53 version:int32 capabilities:int64 = liteServer.Info;
 
 
-blocks.masterchainInfo last:ton.BlockIdExt state_root_hash:bytes init:ton.BlockIdExt = blocks.MasterchainInfo;
-blocks.shards shards:vector<ton.BlockIdExt> = blocks.Shards;
+blocks.masterchainInfo last:tos.BlockIdExt state_root_hash:bytes init:tos.BlockIdExt = blocks.MasterchainInfo;
+blocks.shards shards:vector<tos.BlockIdExt> = blocks.Shards;
 blocks.accountTransactionId account:bytes lt:int64 = blocks.AccountTransactionId;
 blocks.shortTxId mode:# account:mode.0?bytes lt:mode.1?int64 hash:mode.2?bytes = liteServer.TransactionId;
-blocks.transactions id:ton.blockIdExt req_count:int32 incomplete:Bool transactions:vector<blocks.shortTxId> = blocks.Transactions;
-blocks.transactionsExt id:ton.blockIdExt req_count:int32 incomplete:Bool transactions:vector<raw.transaction> = blocks.TransactionsExt;
-blocks.header id:ton.blockIdExt global_id:int32 version:int32 flags:# after_merge:Bool after_split:Bool before_split:Bool want_merge:Bool want_split:Bool validator_list_hash_short:int32 catchain_seqno:int32 min_ref_mc_seqno:int32 is_key_block:Bool prev_key_block_seqno:int32 start_lt:int64 end_lt:int64 gen_utime:int53 vert_seqno:# prev_blocks:vector<ton.blockIdExt> = blocks.Header;
+blocks.transactions id:tos.blockIdExt req_count:int32 incomplete:Bool transactions:vector<blocks.shortTxId> = blocks.Transactions;
+blocks.transactionsExt id:tos.blockIdExt req_count:int32 incomplete:Bool transactions:vector<raw.transaction> = blocks.TransactionsExt;
+blocks.header id:tos.blockIdExt global_id:int32 version:int32 flags:# after_merge:Bool after_split:Bool before_split:Bool want_merge:Bool want_split:Bool validator_list_hash_short:int32 catchain_seqno:int32 min_ref_mc_seqno:int32 is_key_block:Bool prev_key_block_seqno:int32 start_lt:int64 end_lt:int64 gen_utime:int53 vert_seqno:# prev_blocks:vector<tos.blockIdExt> = blocks.Header;
 //blocks.shortData header:blocks.Header transactions:blocks.Header = blocks.BlockData;
 
 blocks.signature node_id_short:int256 signature:bytes = blocks.Signature;
-blocks.blockSignatures id:ton.blockIdExt signatures:(vector blocks.signature) = blocks.BlockSignatures;
-blocks.shardBlockLink id:ton.blockIdExt proof:bytes = blocks.ShardBlockLink;
-blocks.blockLinkBack to_key_block:Bool from:ton.blockIdExt to:ton.blockIdExt dest_proof:bytes proof:bytes state_proof:bytes = blocks.BlockLinkBack;
-blocks.shardBlockProof from:ton.blockIdExt mc_id:ton.blockIdExt links:(vector blocks.shardBlockLink) mc_proof:(vector blocks.blockLinkBack) = blocks.ShardBlockProof;
+blocks.blockSignatures id:tos.blockIdExt signatures:(vector blocks.signature) = blocks.BlockSignatures;
+blocks.shardBlockLink id:tos.blockIdExt proof:bytes = blocks.ShardBlockLink;
+blocks.blockLinkBack to_key_block:Bool from:tos.blockIdExt to:tos.blockIdExt dest_proof:bytes proof:bytes state_proof:bytes = blocks.BlockLinkBack;
+blocks.shardBlockProof from:tos.blockIdExt mc_id:tos.blockIdExt links:(vector blocks.shardBlockLink) mc_proof:(vector blocks.blockLinkBack) = blocks.ShardBlockProof;
 
 configInfo config:tvm.cell = ConfigInfo;
 
@@ -266,7 +266,7 @@ raw.sendMessageReturnHash body:bytes = raw.ExtMessageInfo;
 raw.createAndSendMessage destination:accountAddress initial_account_state:bytes data:bytes = Ok;
 raw.createQuery destination:accountAddress init_code:bytes init_data:bytes body:bytes = query.Info;
 
-sync = ton.BlockIdExt;
+sync = tos.BlockIdExt;
 
 // revision = 0 -- use default revision
 // revision = x (x > 0) -- use revision x
@@ -317,46 +317,46 @@ pchan.unpackPromise data:secureBytes = pchan.Promise;
 
 
 blocks.getMasterchainInfo = blocks.MasterchainInfo;
-blocks.getShards id:ton.blockIdExt = blocks.Shards;
-blocks.lookupBlock mode:int32 id:ton.blockId lt:int64 utime:int32 = ton.BlockIdExt;
-blocks.getTransactions id:ton.blockIdExt mode:# count:# after:blocks.accountTransactionId = blocks.Transactions;
-blocks.getTransactionsExt id:ton.blockIdExt mode:# count:# after:blocks.accountTransactionId = blocks.TransactionsExt;
-blocks.getBlockHeader id:ton.blockIdExt = blocks.Header;
+blocks.getShards id:tos.blockIdExt = blocks.Shards;
+blocks.lookupBlock mode:int32 id:tos.blockId lt:int64 utime:int32 = tos.BlockIdExt;
+blocks.getTransactions id:tos.blockIdExt mode:# count:# after:blocks.accountTransactionId = blocks.Transactions;
+blocks.getTransactionsExt id:tos.blockIdExt mode:# count:# after:blocks.accountTransactionId = blocks.TransactionsExt;
+blocks.getBlockHeader id:tos.blockIdExt = blocks.Header;
 blocks.getMasterchainBlockSignatures seqno:int32 = blocks.BlockSignatures;
-blocks.getShardBlockProof id:ton.blockIdExt mode:# from:mode.0?ton.blockIdExt = blocks.ShardBlockProof;
+blocks.getShardBlockProof id:tos.blockIdExt mode:# from:mode.0?tos.blockIdExt = blocks.ShardBlockProof;
 
 onLiteServerQueryResult id:int64 bytes:bytes = Ok;
 onLiteServerQueryError id:int64 error:error = Ok;
 
-withBlock id:ton.blockIdExt function:Function = Object;
+withBlock id:tos.blockIdExt function:Function = Object;
 
 runTests dir:string = Ok;
 
 liteServer.getInfo = liteServer.Info;
 
-//@description Sets new log stream for internal logging of tonlib. This is an offline method. Can be called before authorization. Can be called synchronously @log_stream New log stream
+//@description Sets new log stream for internal logging of toslib. This is an offline method. Can be called before authorization. Can be called synchronously @log_stream New log stream
 setLogStream log_stream:LogStream = Ok;
 
-//@description Returns information about currently used log stream for internal logging of tonlib. This is an offline method. Can be called before authorization. Can be called synchronously
+//@description Returns information about currently used log stream for internal logging of toslib. This is an offline method. Can be called before authorization. Can be called synchronously
 getLogStream = LogStream;
 
-//@description Sets the verbosity level of the internal logging of tonlib. This is an offline method. Can be called before authorization. Can be called synchronously
+//@description Sets the verbosity level of the internal logging of toslib. This is an offline method. Can be called before authorization. Can be called synchronously
 //@new_verbosity_level New value of the verbosity level for logging. Value 0 corresponds to fatal errors, value 1 corresponds to errors, value 2 corresponds to warnings and debug warnings, value 3 corresponds to informational, value 4 corresponds to debug, value 5 corresponds to verbose debug, value greater than 5 and up to 1023 can be used to enable even more logging
 setLogVerbosityLevel new_verbosity_level:int32 = Ok;
 
-//@description Returns current verbosity level of the internal logging of tonlib. This is an offline method. Can be called before authorization. Can be called synchronously
+//@description Returns current verbosity level of the internal logging of toslib. This is an offline method. Can be called before authorization. Can be called synchronously
 getLogVerbosityLevel = LogVerbosityLevel;
 
-//@description Returns list of available tonlib internal log tags, for example, ["actor", "binlog", "connections", "notifications", "proxy"]. This is an offline method. Can be called before authorization. Can be called synchronously
+//@description Returns list of available toslib internal log tags, for example, ["actor", "binlog", "connections", "notifications", "proxy"]. This is an offline method. Can be called before authorization. Can be called synchronously
 getLogTags = LogTags;
 
-//@description Sets the verbosity level for a specified tonlib internal log tag. This is an offline method. Can be called before authorization. Can be called synchronously
+//@description Sets the verbosity level for a specified toslib internal log tag. This is an offline method. Can be called before authorization. Can be called synchronously
 //@tag Logging tag to change verbosity level @new_verbosity_level New verbosity level; 1-1024
 setLogTagVerbosityLevel tag:string new_verbosity_level:int32 = Ok;
 
-//@description Returns current verbosity level for a specified tonlib internal log tag. This is an offline method. Can be called before authorization. Can be called synchronously @tag Logging tag to change verbosity level
+//@description Returns current verbosity level for a specified toslib internal log tag. This is an offline method. Can be called before authorization. Can be called synchronously @tag Logging tag to change verbosity level
 getLogTagVerbosityLevel tag:string = LogVerbosityLevel;
 
-//@description Adds a message to tonlib internal log. This is an offline method. Can be called before authorization. Can be called synchronously
+//@description Adds a message to toslib internal log. This is an offline method. Can be called before authorization. Can be called synchronously
 //@verbosity_level Minimum verbosity level needed for the message to be logged, 0-1023 @text Text of a message to log
 addLogMessage verbosity_level:int32 text:string = Ok;

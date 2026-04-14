@@ -2,7 +2,7 @@
 #
 # Sync test watcher
 #
-# Runs as a sidecar alongside the TON node. Polls Prometheus metrics
+# Runs as a sidecar alongside the TOS node. Polls Prometheus metrics
 # every 60 seconds and decides whether the node has synced, failed,
 # or timed out. Reports the result as a GitHub commit status.
 #
@@ -30,7 +30,7 @@
 #   timeout  → set GitHub commit status "failure", then sleep forever
 #
 # On failure the pod stays alive so engineers can inspect logs:
-#   kubectl exec -it <pod> -c ton-node -n ton-synctest -- tail -100 /logs/output.log
+#   kubectl exec -it <pod> -c tos-node -n tos-synctest -- tail -100 /logs/output.log
 #
 # The next workflow run replaces the pod via `helm upgrade`.
 #

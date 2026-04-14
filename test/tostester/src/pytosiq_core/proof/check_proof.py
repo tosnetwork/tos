@@ -29,7 +29,7 @@ def check_proof(cell: "Cell", hash_: bytes) -> None:
     return
 
 
-# https://github.com/ton-blockchain/ton/blob/master/crypto/block/check-proof.cpp
+# https://github.com/tos-blockchain/tos/blob/master/crypto/block/check-proof.cpp
 def check_block_header_proof(root_cell: "Cell", block_hash: bytes, store_state_hash=False):
     root_hash = root_cell.get_hash(0)
     if root_hash != block_hash:

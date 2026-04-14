@@ -2,12 +2,12 @@
 
 ## Goal
 
-TOS inherited a fragmented operator toolchain from the TON ecosystem. Core operational workflows are currently split across:
+TOS inherited a fragmented operator toolchain from the legacy ecosystem. Core operational workflows are currently split across:
 
 - standalone C++ binaries in `~/tos`
 - Python test and bootstrap utilities
 - shell scripts for installation and service control
-- an external TON-style HTTP API service
+- an external legacy-style HTTP API service
 - the Rust operator tool `~/tos/tosctl`
 
 The goal is to consolidate operator-facing workflows into two primary surfaces:
@@ -19,7 +19,7 @@ This document defines what should be absorbed, what should remain as low-level i
 
 An additional explicit goal is now required:
 
-3. `tosctl` must reach functional coverage of the operator command surface that TON operators currently expect from `mytonctrl`
+3. `tosctl` must reach functional coverage of the operator command surface that TOS operators currently expect from `mytonctrl`
 
 This does not mean copying the original interactive UX or preserving every short alias verbatim. It means:
 
@@ -54,7 +54,7 @@ The current TOS operator experience is spread across the following categories.
 ### Read-Only Chain Inspection
 
 - `lite-client`
-- external TON-compatible HTTP API deployments
+- external TOS-compatible HTTP API deployments
 - partial overlap with `toslib-cli`
 
 ### Bootstrap and Deployment
@@ -85,7 +85,7 @@ The current TOS operator experience is spread across the following categories.
 - `show-validator-set`
 - log parsing and validator-set inspection tools
 
-### TON Legacy Operator Surface
+### Legacy Operator Surface
 
 - `mytonctrl` host lifecycle commands
 - wallet and pool management commands
@@ -104,7 +104,7 @@ These capabilities belong inside the node because they are node-native read serv
 
 #### 1. Embedded JSON-RPC
 
-`validator-engine` should expose the standard read path that currently requires an external TON-compatible HTTP API process.
+`validator-engine` should expose the standard read path that currently requires an external TOS-compatible HTTP API process.
 
 Expected scope:
 
@@ -117,7 +117,7 @@ Expected scope:
 
 Result:
 
-- external `ton-http-api` becomes optional or deprecated for normal deployments
+- external `tos-http-api` becomes optional or deprecated for normal deployments
 - node operators no longer need a separate Python/Docker bridge just to expose HTTP/JSON-RPC
 
 #### 2. Read-Only Lite Query Backend
@@ -175,7 +175,7 @@ Expected `tosctl` ownership:
 
 This removes the current shell plus Python dependency chain for normal operator setup.
 
-The same `tosctl` surface should also absorb the host-oriented install and mode-management workflows that TON operators currently perform through `mytonctrl`.
+The same `tosctl` surface should also absorb the host-oriented install and mode-management workflows that TOS operators currently perform through `mytonctrl`.
 
 #### 3. Key, Zerostate, and Config Generation
 
@@ -242,7 +242,7 @@ The current Python test-tool placement under `test/` is not an appropriate long-
 
 #### 8. MyTonCtrl Workflow Parity
 
-`tosctl` should absorb the practical command families that make `mytonctrl` the de facto TON operator shell today.
+`tosctl` should absorb the practical command families that make `mytonctrl` the de facto TOS operator shell today.
 
 Required parity domains:
 
@@ -312,7 +312,7 @@ They should remain available for protocol engineering, contract development, for
 ### P2
 
 - consensus explorer migration into `tosctl` observability surface
-- gradual deprecation of external `ton-http-api`
+- gradual deprecation of external `tos-http-api`
 - rationalization of remaining legacy support binaries
 
 ## Proposed End State
@@ -332,7 +332,7 @@ They should remain available for protocol engineering, contract development, for
 - manual shell orchestration
 - Python-based bootstrap as the normal install path
 - direct `validator-engine-console` use for routine operations
-- external TON HTTP API as the default HTTP access layer
+- external TOS HTTP API as the default HTTP access layer
 - routine dependence on `lite-client` for operator workflows
 
 ## Non-Goals
@@ -348,6 +348,6 @@ TOS should converge on a simple model:
 
 - `validator-engine` serves node-native APIs
 - `tosctl` owns operator workflows
-- legacy TON-style helper binaries become hidden dependencies or fallback tools
+- legacy helper binaries become hidden dependencies or fallback tools
 
-This consolidation reduces operator error, removes duplicated interfaces, and makes TOS operationally coherent instead of inheriting the fragmented TON tooling surface.
+This consolidation reduces operator error, removes duplicated interfaces, and makes TOS operationally coherent instead of inheriting a fragmented legacy tooling surface.

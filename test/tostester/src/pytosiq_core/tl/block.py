@@ -3,7 +3,7 @@ import typing
 
 class BlockId:
     """
-    tonNode.blockId workchain:int shard:long seqno:int = tonNode.BlockId;
+    tosNode.blockId workchain:int shard:long seqno:int = tosNode.BlockId;
     """
     def __init__(self, workchain: int, shard: typing.Optional[int], seqno: int):
         if shard is None:
@@ -22,7 +22,7 @@ class BlockId:
 
 class BlockIdExt:
     """
-    tonNode.blockIdExt workchain:int shard:long seqno:int root_hash:int256 file_hash:int256 = tonNode.BlockIdExt;
+    tosNode.blockIdExt workchain:int shard:long seqno:int root_hash:int256 file_hash:int256 = tosNode.BlockIdExt;
     """
 
     def __init__(self, workchain: int, shard: typing.Optional[int], seqno: int,

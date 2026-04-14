@@ -630,7 +630,7 @@ The service updates binding statuses in the config file automatically. You can o
 # Minimum required stake
 tosctl config elections stake-policy --minimum
 
-# Fixed amount in TON
+# Fixed amount in TOS
 tosctl config elections stake-policy --fixed 100
 
 # Split available balance 50/50 (default)

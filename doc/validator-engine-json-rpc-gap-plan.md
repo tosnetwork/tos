@@ -7,7 +7,7 @@ This document converts the current JSON-RPC gap analysis into a concrete impleme
 - `~/tos/validator-engine/json-rpc-server.h`
 - `~/tos/validator-engine/json-rpc-server.cpp`
 
-The target is not to re-implement all of `ton-http-api` at once. The target is to define a clean, incremental patch plan that can be implemented in small reviewable steps.
+The target is not to re-implement all of `tos-http-api` at once. The target is to define a clean, incremental patch plan that can be implemented in small reviewable steps.
 
 ## Current State
 
@@ -83,7 +83,7 @@ Protocol:
 Testing:
 
 - ✅ 478 pytest tests passing against live 4-node testnet
-- ✅ Tests aligned with ton-http-api-cpp reference test suite
+- ✅ Tests aligned with tos-http-api-cpp reference test suite
 - ✅ 6 wallet contracts deployed for wallet type detection tests
 
 Remaining gaps: **NONE** — all planned methods and features implemented.
@@ -132,7 +132,7 @@ Each patch should preserve the current simple actor model:
 - build liteserver TL query or local VM execution request
 - forward through `ValidatorManagerInterface::run_ext_query`
 - parse the reply
-- normalize response into ton-http-api-compatible JSON shape
+- normalize response into tos-http-api-compatible JSON shape
 
 ## Shared Refactoring Tasks
 
@@ -210,7 +210,7 @@ Files:
 Define and document:
 
 - canonical JSON-RPC path, preferably `/jsonRPC`
-- optional API root prefix compatibility, comparable to `TON_API_ROOT_PATH`
+- optional API root prefix compatibility, comparable to `TOS_API_ROOT_PATH`
 - whether non-JSON-RPC REST endpoints will be supported
 - health endpoint path, preferably `/healthcheck`
 - worker/debug endpoint policy
@@ -221,7 +221,7 @@ Define and document:
 
 Why:
 
-- `ton-http-api` compatibility is not just a method list
+- `tos-http-api` compatibility is not just a method list
 - current implementation accepts any POST path and has no explicit path model
 - downstream clients often depend on stable endpoint paths
 
@@ -266,7 +266,7 @@ Define and document runtime policy for:
 
 Why:
 
-- `ton-http-api` explicitly exposes feature gates such as JSON-RPC and get-method toggles
+- `tos-http-api` explicitly exposes feature gates such as JSON-RPC and get-method toggles
 - an embedded server should still have operational controls even if the implementation is simpler
 - these controls affect rollout safety
 
@@ -285,7 +285,7 @@ Define and document:
 
 Why:
 
-- `ton-http-api` exposes a documentation surface by default
+- `tos-http-api` exposes a documentation surface by default
 - the embedded server may intentionally choose not to do so
 - this should be a documented compatibility decision rather than an accidental omission
 
@@ -305,11 +305,11 @@ Define and document:
 
 - whether response caching exists in the embedded server
 - whether Redis-style external cache integration is in scope
-- whether cache parity with `ton-http-api` is explicitly out of scope
+- whether cache parity with `tos-http-api` is explicitly out of scope
 
 Why:
 
-- `ton-http-api` includes optional cache infrastructure
+- `tos-http-api` includes optional cache infrastructure
 - embedded `validator-engine` may reasonably reject that complexity
 - the omission should be deliberate and recorded
 
@@ -329,12 +329,12 @@ Define and document:
 
 - if REST endpoints are added, which methods use `GET` with query params
 - which methods use `POST` with JSON bodies
-- whether REST parameter names exactly mirror `ton-http-api`
+- whether REST parameter names exactly mirror `tos-http-api`
 - whether REST and JSON-RPC responses share the same normalized result payloads
 
 Why:
 
-- `ton-http-api` compatibility is not only about endpoint names
+- `tos-http-api` compatibility is not only about endpoint names
 - clients may rely on concrete transport conventions such as:
   - `GET /getAddressInformation?address=...`
   - `POST /runGetMethod` with JSON body
@@ -360,7 +360,7 @@ Define and document:
 
 Why:
 
-- `ton-http-api` compatibility includes parameter defaults and bounds
+- `tos-http-api` compatibility includes parameter defaults and bounds
 - explorers and SDKs may omit optional fields assuming those defaults
 
 ### ✅ R11. Add input-normalization and encoding policy
@@ -384,7 +384,7 @@ Define and document:
 
 Why:
 
-- `ton-http-api` uses helper normalization functions such as `prepare_address` and `prepare_hash`
+- `tos-http-api` uses helper normalization functions such as `prepare_address` and `prepare_hash`
 - many compatibility bugs come from encoding mismatches rather than missing methods
 
 ### ✅ R12. Add public method-name stability policy
@@ -396,7 +396,7 @@ Files:
 
 Define and document:
 
-- that public JSON-RPC method names must follow `ton-http-api` compatibility names exactly
+- that public JSON-RPC method names must follow `tos-http-api` compatibility names exactly
 - that internal helper or backend naming must not leak into the public API
 - whether any compatibility aliases are supported
 
@@ -431,7 +431,7 @@ Define and document:
 
 Why:
 
-- `ton-http-api` is a separate service and can be isolated operationally
+- `tos-http-api` is a separate service and can be isolated operationally
 - an embedded API inside `validator-engine` changes the risk profile
 - this must be a design decision, not an accident of implementation
 
@@ -451,13 +451,13 @@ Files:
 Define and document:
 
 - whether the embedded API exposes a version header such as `X-API-Version`
-- how compatibility with `ton-http-api` versions is described
+- how compatibility with `tos-http-api` versions is described
 - how deprecated methods are labeled
 - how behavior changes are rolled out without breaking `tosctl` and external clients
 
 Why:
 
-- `ton-http-api` exposes version information in the HTTP layer
+- `tos-http-api` exposes version information in the HTTP layer
 - embedded replacement needs a stability story once clients start depending on it
 
 ### ✅ R6. Add liteserver selection and archival-routing policy
@@ -477,7 +477,7 @@ Define and document:
 
 Why:
 
-- `ton-http-api` has explicit `archival` semantics for transaction history
+- `tos-http-api` has explicit `archival` semantics for transaction history
 - this is a compatibility-sensitive behavioral decision, not just an implementation detail
 
 ## Patch Group A: Fix Existing Methods
@@ -511,7 +511,7 @@ Required changes:
    - `last_transaction_id`
    - `sync_utime`
 4. Preserve current `state`, `code`, `data`, `frozen_hash`
-5. Keep output aligned with `ton-http-api` shape
+5. Keep output aligned with `tos-http-api` shape
 
 Dependencies:
 
@@ -546,11 +546,11 @@ Required changes:
 1. Stop delegating directly to `getAddressInformation`
 2. Build on the same account state fetch path
 3. Add contract code/data inspection for recognized contract families
-4. Return extended state object in a shape compatible with ton-http-api expectations
+4. Return extended state object in a shape compatible with tos-http-api expectations
 
 Scope note:
 
-- this does not need to support every historical TON contract immediately
+- this does not need to support every historical TOS contract immediately
 - start with the contract families TOS actually uses
 
 Dependencies:
@@ -635,7 +635,7 @@ Required changes:
 3. Accept optional `seqno`
 4. Serialize input stack to BOC
 5. Resolve correct reference block
-6. Parse returned stack into ton-http-api-compatible stack items
+6. Parse returned stack into tos-http-api-compatible stack items
 7. Return real `gas_used` if available from the response
 
 Dependencies:
@@ -735,7 +735,7 @@ Tasks:
 
 Why:
 
-- `ton-http-api` exposes `/jsonRPC`
+- `tos-http-api` exposes `/jsonRPC`
 - clients and reverse proxies may rely on stable path semantics
 
 ### ✅ B0.2 Add `/healthcheck`
@@ -757,7 +757,7 @@ Tasks:
 
 Why:
 
-- `ton-http-api` exposes `/healthcheck`
+- `tos-http-api` exposes `/healthcheck`
 - deployments commonly depend on a simple HTTP health probe
 
 ### ✅ B0.3 Decide on `/getWorkerState`
@@ -779,7 +779,7 @@ Tasks:
 
 Why:
 
-- `ton-http-api` exposes `/getWorkerState`
+- `tos-http-api` exposes `/getWorkerState`
 - even if not implemented, the omission should be deliberate rather than accidental
 
 ### ✅ B0.4 Add `OPTIONS` and CORS policy
@@ -820,7 +820,7 @@ Tasks:
 
 Why:
 
-- `ton-http-api` supports both REST and JSON-RPC entrypoints
+- `tos-http-api` supports both REST and JSON-RPC entrypoints
 - this is an architectural compatibility decision, not just an implementation detail
 
 Recommended policy:
@@ -842,7 +842,7 @@ Tasks:
 
 Why:
 
-- `ton-http-api` supports configurable root-path deployment behind reverse proxies
+- `tos-http-api` supports configurable root-path deployment behind reverse proxies
 - reverse-proxy deployments may depend on this behavior
 
 ### ✅ B0.6 Add timeout and overload behavior
@@ -864,7 +864,7 @@ Tasks:
 
 Why:
 
-- `ton-http-api` exposes request-timeout policy operationally
+- `tos-http-api` exposes request-timeout policy operationally
 - embedded mode still needs predictable failure behavior
 
 ## Patch Group B: Add Missing Core Read APIs
@@ -885,7 +885,7 @@ Tasks:
 1. Add dispatcher entry
 2. Add method handler declaration
 3. Query `liteServer.getMasterchainInfo`
-4. Return ton-http-api-compatible block id structure
+4. Return tos-http-api-compatible block id structure
 
 Why:
 
@@ -930,7 +930,7 @@ Tasks:
 2. Accept masterchain `seqno`
 3. Resolve masterchain block
 4. Query `liteServer.getShards`
-5. Return shard list in ton-http-api-compatible shape
+5. Return shard list in tos-http-api-compatible shape
 
 Why:
 
@@ -953,7 +953,7 @@ Tasks:
 2. Accept block coordinates
 3. Resolve block id
 4. Query `liteServer.getBlockHeader`
-5. Normalize header fields to ton-http-api shape
+5. Normalize header fields to tos-http-api shape
 
 ### ✅ B5. Add `getBlockTransactions`
 
@@ -1003,7 +1003,7 @@ Tasks:
    - `to_lt`
    - optional `archival`
 3. Reuse account transaction pagination logic already present elsewhere in the codebase where possible
-4. Normalize result to ton-http-api-compatible transaction list
+4. Normalize result to tos-http-api-compatible transaction list
 
 Risk note:
 
@@ -1127,7 +1127,7 @@ Tasks:
 2. Accept same message parts as `sendQuery`
 3. Build external message candidate
 4. Route through fee-estimation path
-5. Return ton-http-api-compatible fee object
+5. Return tos-http-api-compatible fee object
 
 Risk note:
 
@@ -1139,7 +1139,7 @@ Priority:
 
 - P2
 
-Methods from `ton-http-api` not covered in the original document:
+Methods from `tos-http-api` not covered in the original document:
 
 - `sendBocUnsafe`
 - `sendCellSimple`
@@ -1150,7 +1150,7 @@ Tasks:
 
 1. Decide which of these should be implemented
 2. Prefer documenting them as compatibility-only or explicitly unsupported
-3. Avoid letting deprecated TON-era helper methods pollute the clean embedded API unless required by existing clients
+3. Avoid letting deprecated legacy-era helper methods pollute the clean embedded API unless required by existing clients
 
 Recommended policy:
 
@@ -1202,7 +1202,7 @@ Priority:
 
 Why this needs explicit mention:
 
-- it is already present in `ton-http-api`
+- it is already present in `tos-http-api`
 - some explorer integrations prefer the richer transaction representation over `getBlockTransactions`
 
 Recommended policy:
@@ -1281,7 +1281,7 @@ Tasks:
    - `id`
    - `result|error|code`
 2. Compare this to what existing TOS clients expect
-3. Document whether exact `ton-http-api` JSON envelope parity is required or approximate compatibility is sufficient
+3. Document whether exact `tos-http-api` JSON envelope parity is required or approximate compatibility is sufficient
 
 Why:
 
@@ -1328,7 +1328,7 @@ Priority:
 
 Decision to document:
 
-- embedded server does not attempt to replicate `ton-http-api` cache architecture initially
+- embedded server does not attempt to replicate `tos-http-api` cache architecture initially
 
 ### ✅ G3. Worker-state parity
 
@@ -1429,7 +1429,7 @@ Every milestone should include:
 
 - positive-path JSON-RPC requests
 - invalid-params coverage
-- parity checks against `ton-http-api` for the same node state when possible
+- parity checks against `tos-http-api` for the same node state when possible
 - explicit checks for response shape compatibility
 
 Minimum parity tests for Milestone 1 and 2:
@@ -1452,7 +1452,7 @@ Additional protocol-surface tests that were missing from the original document:
 
 ## Summary
 
-The immediate priority is not to add every `ton-http-api` method. The immediate priority is:
+The immediate priority is not to add every `tos-http-api` method. The immediate priority is:
 
 1. make the existing embedded methods actually compatible
 2. add the missing core read APIs that explorers, `tosctl`, and SDKs need

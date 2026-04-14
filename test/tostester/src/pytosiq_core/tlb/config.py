@@ -87,7 +87,7 @@ class ConfigParam3(TlbScheme):
 
 class ConfigParam4(TlbScheme):
     """
-    _ dns_root_addr:bits256 = ConfigParam 4;  // root TON DNS resolver
+    _ dns_root_addr:bits256 = ConfigParam 4;  // root TOS DNS resolver
     """
     def __init__(self, dns_root_addr: bytes):
         self.dns_root_addr = dns_root_addr
@@ -1705,7 +1705,7 @@ class JettonBridgeParams(TlbScheme):
 
 class ConfigParam79(JettonBridgeParams):
     """
-    _ JettonBridgeParams = ConfigParam 79; // ETH->TON token bridge
+    _ JettonBridgeParams = ConfigParam 79; // ETH->TOS token bridge
     """
 
     def __init__(self, **kwargs):
@@ -1722,7 +1722,7 @@ class ConfigParam79(JettonBridgeParams):
 
 class ConfigParam81(JettonBridgeParams):
     """
-    _ JettonBridgeParams = ConfigParam 81; // BNB->TON token bridge
+    _ JettonBridgeParams = ConfigParam 81; // BNB->TOS token bridge
     """
 
     def __init__(self, **kwargs):
@@ -1739,7 +1739,7 @@ class ConfigParam81(JettonBridgeParams):
 
 class ConfigParam82(JettonBridgeParams):
     """
-    _ JettonBridgeParams = ConfigParam 82; // Polygon->TON token bridge
+    _ JettonBridgeParams = ConfigParam 82; // Polygon->TOS token bridge
     """
 
     def __init__(self, **kwargs):

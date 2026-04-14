@@ -1,5 +1,5 @@
 ;; TOS Nominator Pool Contract
-;; Adapted from the TON nominator-pool for the TOS network.
+;; Adapted from the TOS nominator-pool for the TOS network.
 ;;
 ;; The validator has his own wallet in the masterchain, on which he holds his own coins for operating.
 ;; From this wallet he sends commands to this nominator pool (mostly `new_stake`, `update_validator_set` and `recover_stake`).
@@ -11,7 +11,7 @@
 
 #include "stdlib.fc";
 
-int op::new_stake() asm "0x4e73744b PUSHINT"; ;; see elector-code.fc (TOS adapted from ton-blockchain)
+int op::new_stake() asm "0x4e73744b PUSHINT"; ;; see elector-code.fc (TOS adapted from tos-blockchain)
 int op::new_stake_error() asm "0xee6f454c PUSHINT"; ;; return_stake - see elector-code.fc
 int op::new_stake_ok() asm "0xf374484c PUSHINT"; ;; send_confirmation - see elector-code.fc
 
@@ -33,7 +33,7 @@ int VOTES_LIFETIME() asm "2592000 PUSHINT"; ;; 30 days
 
 int binary_log_ceil(int x) asm "UBITSIZE";
 
-;; hex parse (adapted from TON bridge-func text_utils.fc)
+;; hex parse (adapted from TOS bridge-func text_utils.fc)
 (slice, int) ~load_hex_symbol(slice comment) {
     int n = comment~load_uint(8);
     n = n - 48;
@@ -75,7 +75,7 @@ slice make_address(int wc, int addr) inline_ref {
            .store_uint(4, 3).store_int(wc, 8).store_uint(addr, ADDR_SIZE()).end_cell().begin_parse();
 }
 
-;; see block.tlb (TOS adapted from TON)
+;; see block.tlb (TOS adapted)
 int is_elector_address(int wc, int addr) inline_ref {
   return (wc == -1) & (config_param(1).begin_parse().preload_uint(ADDR_SIZE()) == addr);
 }
@@ -85,7 +85,7 @@ slice elector_address() inline_ref {
     return make_address(-1, elector);
 }
 
-;; see block.tlb (TOS adapted from TON)
+;; see block.tlb (TOS adapted)
 int max_recommended_punishment_for_validator_misbehaviour(int stake) inline_ref {
     cell cp = config_param(40);
     if (cell_null?(cp)) {
@@ -106,7 +106,7 @@ int max_recommended_punishment_for_validator_misbehaviour(int stake) inline_ref 
          cs~load_uint(16), cs~load_uint(16), cs~load_uint(16)
         );
 
-     ;; see lite-client.cpp (TOS adapted from TON)
+     ;; see lite-client.cpp (TOS adapted)
      int fine = default_flat_fine;
      int fine_part = default_proportional_fine;
 
@@ -119,18 +119,18 @@ int max_recommended_punishment_for_validator_misbehaviour(int stake) inline_ref 
      return min(stake, fine + muldiv(stake, fine_part, 1 << 32)); ;; see elector-code.fc
 }
 
-;; see block.tlb and elector-code.fc (TOS adapted from TON)
+;; see block.tlb and elector-code.fc (TOS adapted)
 int get_validator_config() inline_ref {
     slice cs = config_param(15).begin_parse();
     (int validators_elected_for, int elections_start_before, int elections_end_before, int stake_held_for) = (cs~load_uint(32), cs~load_uint(32), cs~load_uint(32), cs.preload_uint(32));
     return stake_held_for;
 }
 
-;; see block.tlb (TOS adapted from TON)
+;; see block.tlb (TOS adapted)
 (int, int, cell) get_current_validator_set() inline_ref {
     cell vset = config_param(34); ;; current validator set
     slice cs = vset.begin_parse();
-    ;; see block.tlb and config-code.fc (TOS adapted from TON)
+    ;; see block.tlb and config-code.fc (TOS adapted)
     throw_unless(9, cs~load_uint(8) == 0x12);  ;; validators_ext#12 only
     int utime_since = cs~load_uint(32); ;; actual start unixtime of current validation round
     int utime_until = cs~load_uint(32); ;; supposed end unixtime of current validation round (utime_until = utime_since + validators_elected_for); unfreeze_at = utime_until + stake_held_for

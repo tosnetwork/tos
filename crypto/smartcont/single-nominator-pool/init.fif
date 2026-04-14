@@ -20,7 +20,7 @@ filename file>B dup
 B>boc =: new-code-boc
 
 -1 =: wc // masterchain
-1 Tomi* =: ton-amount
+1 Tomi* =: tos-amount
 
 <b owner-addr Addr,
    validator-addr Addr, b> // data

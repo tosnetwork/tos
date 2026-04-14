@@ -1,7 +1,7 @@
 ;; Wallet V5 smart contract with global_id anti-replay protection
 ;;
 ;; Based on wallet-contract-v5 by Tonkeeper (MIT License)
-;; Original source: https://github.com/ton-blockchain/wallet-contract-v5
+;; Original source: https://github.com/tos-blockchain/wallet-contract-v5
 ;; Copyright (c) 2023 Tonkeeper
 ;;
 ;; Adapted for TOS Blockchain with global_id anti-replay protection.

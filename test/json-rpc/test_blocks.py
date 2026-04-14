@@ -30,8 +30,8 @@ class TestGetMasterchainInfo:
         data = response.json()
         assert data["ok"] is True
         assert data["result"]["@type"] == "blocks.masterchainInfo"
-        assert data["result"]["last"]["@type"] == "ton.blockIdExt"
-        assert data["result"]["init"]["@type"] == "ton.blockIdExt"
+        assert data["result"]["last"]["@type"] == "tos.blockIdExt"
+        assert data["result"]["init"]["@type"] == "tos.blockIdExt"
 
     def test_last_seqno_positive(self, api_method_call):
         response = api_method_call(self.METHOD)
@@ -63,7 +63,7 @@ class TestGetMasterchainBlockSignatures:
         data = response.json()
         assert data["ok"] is True
         assert "id" in data["result"]
-        assert data["result"]["id"]["@type"] == "ton.blockIdExt"
+        assert data["result"]["id"]["@type"] == "tos.blockIdExt"
         assert data["result"]["id"]["seqno"] == last_mc_seqno
 
     def test_wrong_seqno(self, api_method_call):
@@ -91,7 +91,7 @@ class TestGetShardBlockProof:
         data = response.json()
         assert data["ok"] is True
         assert data["result"]["@type"] == "blocks.shardBlockProof"
-        assert data["result"]["masterchain_id"]["@type"] == "ton.blockIdExt"
+        assert data["result"]["masterchain_id"]["@type"] == "tos.blockIdExt"
         assert isinstance(data["result"]["links"], list)
 
     def test_wrong_workchain(self, api_method_call):
@@ -164,7 +164,7 @@ class TestLookupBlock:
         assert response.status_code == 200, response.json().get("error")
         data = response.json()
         assert data["ok"] is True
-        assert data["result"]["@type"] == "ton.blockIdExt"
+        assert data["result"]["@type"] == "tos.blockIdExt"
         assert data["result"]["workchain"] == -1
         assert data["result"]["seqno"] == last_mc_seqno
 
@@ -227,7 +227,7 @@ class TestGetBlockHeader:
         data = response.json()
         assert data["ok"] is True
         assert data["result"]["@type"] == "blocks.header"
-        assert data["result"]["id"]["@type"] == "ton.blockIdExt"
+        assert data["result"]["id"]["@type"] == "tos.blockIdExt"
         assert data["result"]["id"]["workchain"] == -1
         assert data["result"]["id"]["seqno"] == last_mc_seqno
 

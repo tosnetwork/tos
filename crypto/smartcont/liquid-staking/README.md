@@ -2,7 +2,7 @@
 
 ## Origin
 
-- FunC source from [TON Blockchain liquid-staking-contract](https://github.com/ton-blockchain/liquid-staking-contract)
+- FunC source from [TOS Blockchain liquid-staking-contract](https://github.com/tos-blockchain/liquid-staking-contract)
 - Fift deployment scripts from [igroman787/jetton_pool](https://github.com/igroman787/jetton_pool) (used by mytonctrl)
 
 ## Purpose
@@ -64,7 +64,7 @@ Liquid staking system where validators borrow from a pool to increase their stak
 | `withdraw-controller.fif` | Withdraw from controller |
 
 ### Tests (`tests/*.ts`)
-TypeScript test suite (requires Blueprint/TON testing framework):
+TypeScript test suite (requires Blueprint/TOS testing framework):
 - Controller.spec.ts, ControllerPool.spec.ts
 - Governor.spec.ts, Integrational.spec.ts
 - SmokeNFT.spec.ts, DepositFees.spec.ts, WithdrawFees.spec.ts, etc.

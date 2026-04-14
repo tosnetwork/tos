@@ -11,10 +11,10 @@
 |---|---|
 | `~/tos` JSON-RPC server | ✅ 35 methods, REST GET+POST, 3 HTTP endpoints, API key, cache, timeout, Prometheus metrics, OpenAPI spec, /api-info |
 | `~/tos` JSON-RPC refactor | ✅ Split into 10 domain files (refactor-plan.md all tasks ✅) |
-| `~/tos` JSON-RPC alignment | ✅ Response shapes aligned with ton-http-api-cpp (gap-plan.md all tasks ✅) |
+| `~/tos` JSON-RPC alignment | ✅ Response shapes aligned with tos-http-api-cpp (gap-plan.md all tasks ✅) |
 | `~/tos` wallet type detection | ✅ 6 TOS-compiled wallet code hashes, detect_wallet_type case-fix |
 | `~/tos` contract deployment | ✅ 6 wallet + 1 Jetton master deployed on 4-node testnet via Fift deployer |
-| `~/tos` pytest suite | ✅ 481 tests passing, aligned with ton-http-api-cpp reference tests |
+| `~/tos` pytest suite | ✅ 481 tests passing, aligned with tos-http-api-cpp reference tests |
 | `~/tos` staking contracts | ✅ 3 suites TOS-adapted, FunC compiled, BOC hex in tosctl |
 | `~/tos` HTTP deadlock fix | ✅ HttpPayload callback safety + one-shot completion (codex root-fix) |
 | `~/tos` TL parity fix | ✅ lookupBlock/shards/sendBoc adapted for TOS liteserver |

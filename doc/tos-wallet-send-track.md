@@ -147,7 +147,7 @@ The `in_msg_hash` field is a TOS extension. It is the base64-encoded hash of the
 
 This field is present in the response of both `getTransactions` and `getTransactionsStd`.
 
-Standard TON API implementations do not include `in_msg_hash` in the `getTransactions` response. Wallets targeting TOS should use this field for tracking. Wallets targeting both TOS and standard TON may need to fall back to seqno-based detection on non-TOS nodes.
+Standard legacy API implementations do not include `in_msg_hash` in the `getTransactions` response. Wallets targeting TOS should use this field for tracking. Wallets targeting both TOS and other networks may need to fall back to seqno-based detection on non-TOS nodes.
 
 ## 5. Transaction Details
 
@@ -175,7 +175,7 @@ The response is a JSON array of transaction objects:
   {
     "@type": "raw.transaction",
     "block_id": {
-      "@type": "ton.blockIdExt",
+      "@type": "tos.blockIdExt",
       "workchain": -1,
       "shard": "-9223372036854775808",
       "seqno": 12345,
@@ -209,7 +209,7 @@ The response is a JSON array of transaction objects:
 | `account`         | string | 256-bit account address in hex                            |
 | `in_msg_hash`     | string | Hash of the inbound message that triggered this transaction |
 
-The `data` field contains the full transaction BOC. Clients that need to inspect outbound messages, compute phases, or action phases should deserialize this BOC using a TOS/TON SDK.
+The `data` field contains the full transaction BOC. Clients that need to inspect outbound messages, compute phases, or action phases should deserialize this BOC using a TOS SDK.
 
 The `transaction_id` (`lt` + `hash`) uniquely identifies a transaction on-chain. Use these values for pagination, deduplication, and cross-referencing with block explorers.
 
@@ -395,7 +395,7 @@ This send-and-track flow is **Level 2 (Supported Surface)** per `tos-standards-m
 
 - Method names (`estimateFee`, `sendBocReturnHash`, `getTransactions`, `getWalletInformation`) are stable and will not be renamed or removed without a documented deprecation period.
 - Response field names and types described in this document are stable.
-- The `in_msg_hash` field in `getTransactions` responses is a TOS extension not present in the standard TON HTTP API. Clients building for TOS can rely on it. Clients building for cross-network compatibility should implement a fallback tracking strategy.
+- The `in_msg_hash` field in `getTransactions` responses is a TOS extension not present in the standard legacy HTTP API. Clients building for TOS can rely on it. Clients building for cross-network compatibility should implement a fallback tracking strategy.
 - Error codes and their meanings are stable.
 
 ### Path to Level 1

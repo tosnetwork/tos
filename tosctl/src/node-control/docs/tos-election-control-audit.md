@@ -4,7 +4,7 @@
 
 This document audits the election automation system and control client for TOS
 (The Open Source) network compatibility. The codebase was originally built for
-TON (The Open Network) and is being adapted for TOS.
+TOS (The Open Source) and is being adapted for TOS.
 
 ---
 
@@ -29,22 +29,22 @@ TON (The Open Network) and is being adapted for TOS.
 | 13 | **Publish snapshot** | `runner.rs:publish_snapshot()` | Updates in-memory snapshot store with election/validator status for HTTP API. |
 | 14 | **Binding status callback** | `runner.rs:run_loop()` | Reports binding status changes to the service for config persistence. |
 
-### TON-specific assumptions at each step
+### TOS-specific assumptions at each step
 
 | Step | Assumption | Risk Level |
 |------|-----------|------------|
-| 2 | Config params 34/36 use TON validator set format (`ValidatorSet` with `utime_since`, `utime_until`, `main`, `list`) | **Low** - TOS inherits same config param structure |
-| 4 | Config param 15 uses TON format (`validators_elected_for`, `elections_start_before`, `elections_end_before`, `stake_held_for`) | **Low** - TOS inherits same structure |
+| 2 | Config params 34/36 use TOS validator set format (`ValidatorSet` with `utime_since`, `utime_until`, `main`, `list`) | **Low** - TOS inherits same config param structure |
+| 4 | Config param 15 uses TOS format (`validators_elected_for`, `elections_start_before`, `elections_end_before`, `stake_held_for`) | **Low** - TOS inherits same structure |
 | 5 | Elector contract at standard address with `get_active_election_id` getter | **Medium** - TOS must deploy compatible elector |
 | 6 | Elector `elections_info` getter returns `ElectionsInfo` struct | **Medium** - Same elector contract dependency |
 | 7 | Elector `compute_returned_stake` getter and recover message format | **Medium** - Same elector contract dependency |
-| 8-10 | ADNL control protocol for key management (TON validator engine protocol) | **Low** - TOS node uses same engine |
+| 8-10 | ADNL control protocol for key management (TOS validator engine protocol) | **Low** - TOS node uses same engine |
 | 11 | Stake message magic `0x654C5074` and payload format matches elector ABI | **High** - Must match TOS elector exactly |
-| 12 | BOC format and wallet message construction are TON-standard | **Low** - TOS uses same BOC/cell format |
+| 12 | BOC format and wallet message construction are TOS-standard | **Low** - TOS uses same BOC/cell format |
 
 ### TOS Compatibility Assessment
 
-- **COMPATIBLE**: Steps 1-4, 8-10, 12-14 use infrastructure-level protocols that TOS inherits directly from TON.
+- **COMPATIBLE**: Steps 1-4, 8-10, 12-14 use infrastructure-level protocols that TOS inherits directly from TOS.
 - **REQUIRES VERIFICATION**: Steps 5-7, 11 depend on the elector smart contract interface. TOS must deploy an elector contract with the same ABI or these steps need adaptation.
 - **KEY RISK**: The election stake message magic (`0x654C5074`) and elector getters must be identical on TOS.
 
@@ -106,7 +106,7 @@ TON (The Open Network) and is being adapted for TOS.
 
 ### TOS Compatibility Status
 
-All config params use the same numeric IDs and data format on TOS as on TON. The parsing logic in `config_params.rs` is fully compatible.
+All config params use the same numeric IDs and data format on TOS as on TOS. The parsing logic in `config_params.rs` is fully compatible.
 
 ---
 
@@ -161,9 +161,9 @@ All config params use the same numeric IDs and data format on TOS as on TON. The
 3. **Nominator pool contracts** - If TOS uses different nominator pool contracts, the `new_stake` and `recover_stake` message formats in the `contracts` crate may need adaptation.
 
 ### Low Risk
-4. **Config param format** - Minor JSON structure differences could break parsing (unlikely as TOS inherits TON format).
+4. **Config param format** - Minor JSON structure differences could break parsing (unlikely as TOS inherits TOS format).
 5. **ADNL protocol** - TOS uses the same ADNL stack; no incompatibilities expected.
-6. **BOC/Cell encoding** - Standard across TON/TOS.
+6. **BOC/Cell encoding** - Standard across TOS.
 
 ---
 
