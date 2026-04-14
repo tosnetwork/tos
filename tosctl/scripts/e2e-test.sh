@@ -41,7 +41,7 @@ run() {
 cleanup() {
     echo ""
     echo "Cleaning up temporary artifacts..."
-    $TOSCTL -c "$CONFIG" wallet rm -n test-wallet --yes 2>/dev/null || true
+    $TOSCTL wallet rm -c "$CONFIG" -n test-wallet --yes 2>/dev/null || true
     rm -f "$CONFIG" /tmp/tosctl_backup_*.tar.gz
 }
 trap cleanup EXIT
@@ -54,14 +54,17 @@ echo ""
 # ---------------------------------------------------------------
 # Generate a test config and point it at the local RPC endpoint
 # ---------------------------------------------------------------
-$TOSCTL config generate -c "$CONFIG"
-# Patch chain_rpc URL into the generated config if python3 is available
+$TOSCTL config generate -o "$CONFIG" --force
+# Patch chain_rpc URL into the generated config
 if command -v python3 &>/dev/null && [ -f "$CONFIG" ]; then
     python3 -c "
-import json, sys
+import json
 with open('$CONFIG') as f:
     cfg = json.load(f)
-cfg['chain_rpc'] = '$RPC_URL'
+if isinstance(cfg.get('chain_rpc'), dict):
+    cfg['chain_rpc']['urls'] = ['$RPC_URL/']
+else:
+    cfg['chain_rpc'] = {'urls': ['$RPC_URL/'], 'api_key': None}
 with open('$CONFIG', 'w') as f:
     json.dump(cfg, f, indent=2)
 " 2>/dev/null || true
@@ -71,14 +74,14 @@ fi
 # Test 1: host commands
 # ---------------------------------------------------------------
 echo "[1/10] host commands"
-run "host about"  $TOSCTL -c "$CONFIG" host about
-run "host status" $TOSCTL -c "$CONFIG" host status --format json
+run "host about"  $TOSCTL host about -c "$CONFIG"
+run "host status" $TOSCTL host status -c "$CONFIG" --format json
 
 # ---------------------------------------------------------------
 # Test 2: node commands
 # ---------------------------------------------------------------
 echo "[2/10] node status"
-run "node status" $TOSCTL -c "$CONFIG" node status --format json
+run "node status" $TOSCTL node status -c "$CONFIG" --format json
 
 # ---------------------------------------------------------------
 # Test 3: JSON-RPC health endpoints
@@ -95,32 +98,32 @@ run "getMasterchainInfo" curl -sf --max-time 10 -X POST "$RPC_URL/jsonRPC" \
 # ---------------------------------------------------------------
 echo "[4/10] account status (elector)"
 ELECTOR="-1:3333333333333333333333333333333333333333333333333333333333333333"
-run "account status" $TOSCTL -c "$CONFIG" account status --address "$ELECTOR" --format json
+run "account status" $TOSCTL account status -c "$CONFIG" --address="$ELECTOR" --format json
 
 # ---------------------------------------------------------------
 # Test 5: observe commands
 # ---------------------------------------------------------------
 echo "[5/10] observe validators"
-run "observe validators" $TOSCTL -c "$CONFIG" observe validators --format json
+run "observe validators" $TOSCTL observe validators -c "$CONFIG" --format json
 
 # ---------------------------------------------------------------
 # Test 6: wallet create + ls
 # ---------------------------------------------------------------
 echo "[6/10] wallet create + ls"
-run "wallet create" $TOSCTL -c "$CONFIG" wallet create -n test-wallet -v V3R2
-run "wallet ls"     $TOSCTL -c "$CONFIG" wallet ls --format json
+run "wallet create" $TOSCTL wallet create -c "$CONFIG" -n test-wallet -v V3R2
+run "wallet ls"     $TOSCTL wallet ls -c "$CONFIG" --format json
 
 # ---------------------------------------------------------------
 # Test 7: vote offer ls
 # ---------------------------------------------------------------
 echo "[7/10] vote offer ls"
-run "vote offer ls" $TOSCTL -c "$CONFIG" vote offer ls --format json
+run "vote offer ls" $TOSCTL vote offer ls -c "$CONFIG" --format json
 
 # ---------------------------------------------------------------
 # Test 8: backup create + verify
 # ---------------------------------------------------------------
 echo "[8/10] backup create + verify"
-run "backup create" $TOSCTL -c "$CONFIG" backup create -o /tmp
+run "backup create" $TOSCTL backup create -c "$CONFIG" -o /tmp
 BACKUP="$(ls -t /tmp/tosctl_backup_*.tar.gz 2>/dev/null | head -1 || true)"
 if [ -n "$BACKUP" ]; then
     run "backup verify" $TOSCTL backup verify -f "$BACKUP"
@@ -132,15 +135,15 @@ fi
 # Test 9: bookmarks
 # ---------------------------------------------------------------
 echo "[9/10] bookmarks"
-run "bookmark add" $TOSCTL -c "$CONFIG" account bookmark add --name elector --address "$ELECTOR"
-run "bookmark ls"  $TOSCTL -c "$CONFIG" account bookmark ls --format json
-run "bookmark rm"  $TOSCTL -c "$CONFIG" account bookmark rm --name elector
+run "bookmark add" $TOSCTL account bookmark add -c "$CONFIG" --name elector --address="$ELECTOR"
+run "bookmark ls"  $TOSCTL account bookmark ls -c "$CONFIG" --format json
+run "bookmark rm"  $TOSCTL account bookmark rm -c "$CONFIG" --name elector
 
 # ---------------------------------------------------------------
 # Test 10: (cleanup handled by trap)
 # ---------------------------------------------------------------
 echo "[10/10] cleanup"
-run "wallet rm" $TOSCTL -c "$CONFIG" wallet rm -n test-wallet --yes
+run "wallet rm" $TOSCTL wallet rm -c "$CONFIG" -n test-wallet --yes
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

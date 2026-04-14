@@ -58,7 +58,7 @@ rpc_expect_error() {
     local payload
     payload=$(printf '{"jsonrpc":"2.0","method":"%s","params":%s,"id":1}' "$method" "$params")
     local result
-    result=$(curl -sf --max-time 30 -X POST "$RPC/jsonRPC" \
+    result=$(curl -s --max-time 30 -X POST "$RPC/jsonRPC" \
         -H "Content-Type: application/json" \
         -H "Connection: close" \
         -d "$payload" 2>&1) || true
