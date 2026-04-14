@@ -176,8 +176,8 @@ impl StakePolicyCmd {
             return Ok(());
         }
 
-        let policy = if let Some(tons) = self.fixed {
-            StakePolicy::Fixed(tos_to_nanotos(tons))
+        let policy = if let Some(tos) = self.fixed {
+            StakePolicy::Fixed(tos_to_nanotos(tos))
         } else if self.split50 {
             StakePolicy::Split50
         } else if self.minimum {

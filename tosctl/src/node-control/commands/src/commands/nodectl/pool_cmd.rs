@@ -793,8 +793,8 @@ impl PoolNominatorCreateCmd {
             arr
         };
 
-        let min_validator_nanotons = tos_to_nanotos(self.min_validator_stake);
-        let min_nominator_nanotons = tos_to_nanotos(self.min_nominator_stake);
+        let min_validator_nanotos = tos_to_nanotos(self.min_validator_stake);
+        let min_nominator_nanotos = tos_to_nanotos(self.min_nominator_stake);
 
         // Calculate pool address from code + init data
         let pool_addr = NominatorPoolWrapperImpl::calculate_address(
@@ -802,8 +802,8 @@ impl PoolNominatorCreateCmd {
             &validator_addr_bytes,
             self.validator_reward_share,
             self.max_nominators,
-            min_validator_nanotons,
-            min_nominator_nanotons,
+            min_validator_nanotos,
+            min_nominator_nanotos,
         )?;
         let pool_addr_str = pool_addr.to_string();
 
@@ -832,8 +832,8 @@ impl PoolNominatorCreateCmd {
             owner: Some(self.owner.clone()),
             validator_reward_share: self.validator_reward_share,
             max_nominators: self.max_nominators,
-            min_validator_stake: min_validator_nanotons,
-            min_nominator_stake: min_nominator_nanotons,
+            min_validator_stake: min_validator_nanotos,
+            min_nominator_stake: min_nominator_nanotos,
         };
         config.pools.insert(self.name.clone(), pool_config);
         super::utils::save_config(&config, config_path)?;
@@ -1288,7 +1288,7 @@ impl PoolNominatorDepositCmd {
         b.append_raw(&[0x64], 8)?; // 'd'
         let body = b.into_cell()?;
 
-        let amount_nanotons = tos_to_nanotos(self.amount);
+        let amount_nanotos = tos_to_nanotos(self.amount);
 
         let wallet = super::utils::make_wallet(
             rpc_client.clone(),
@@ -1304,7 +1304,7 @@ impl PoolNominatorDepositCmd {
         );
 
         let msg = wallet
-            .message(pool_addr.clone(), amount_nanotons, body)
+            .message(pool_addr.clone(), amount_nanotos, body)
             .await?;
 
         let boc = write_boc(&msg)?;
@@ -1767,8 +1767,8 @@ impl PoolSingleWithdrawCmd {
         }
 
         // Build withdraw message body
-        let amount_nanotons = tos_to_nanotos(self.amount);
-        let withdraw_payload = contracts::nominator::withdraw(1, amount_nanotons)?;
+        let amount_nanotos = tos_to_nanotos(self.amount);
+        let withdraw_payload = contracts::nominator::withdraw(1, amount_nanotos)?;
 
         let wallet = super::utils::make_wallet(
             rpc_client.clone(),
@@ -2959,7 +2959,7 @@ impl PoolLiquidControllerDepositCmd {
         // Build top_up payload (op=0, query_id=1)
         let payload = contracts::liquid_controller::controller_messages::top_up(1)?;
 
-        let amount_nanotons = tos_to_nanotos(self.amount);
+        let amount_nanotos = tos_to_nanotos(self.amount);
 
         let wallet = super::utils::make_wallet(
             rpc_client.clone(),
@@ -2975,7 +2975,7 @@ impl PoolLiquidControllerDepositCmd {
         );
 
         let msg = wallet
-            .message(controller_addr.clone(), amount_nanotons, payload)
+            .message(controller_addr.clone(), amount_nanotos, payload)
             .await?;
 
         let boc = write_boc(&msg)?;
@@ -3077,9 +3077,9 @@ impl PoolLiquidControllerWithdrawCmd {
         }
 
         // Build withdraw payload (op=0x8efed779, query_id=1, amount)
-        let amount_nanotons = tos_to_nanotos(self.amount);
+        let amount_nanotos = tos_to_nanotos(self.amount);
         let payload =
-            contracts::liquid_controller::controller_messages::withdraw(1, amount_nanotons)?;
+            contracts::liquid_controller::controller_messages::withdraw(1, amount_nanotos)?;
 
         let wallet = super::utils::make_wallet(
             rpc_client.clone(),

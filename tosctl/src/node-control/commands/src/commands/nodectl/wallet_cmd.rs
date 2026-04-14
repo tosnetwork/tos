@@ -809,10 +809,10 @@ impl WalletSendCmd {
         let (from_wallet_address, from_wallet_info, from_secret) =
             wallet_info(rpc_client.clone(), wallet_cfg, vault.clone()).await?;
 
-        let amount_nanotons = tos_to_nanotos(self.amount);
+        let amount_nanotos = tos_to_nanotos(self.amount);
 
         if !(1..=from_wallet_info.balance.saturating_sub(WALLET_SEND_GAS))
-            .contains(&amount_nanotons)
+            .contains(&amount_nanotos)
         {
             anyhow::bail!(
                 "Wrong amount value {} TOS. Wallet balance is {} TOS",
@@ -861,7 +861,7 @@ impl WalletSendCmd {
         let msg = wallet
             .build_message(
                 dest_addr,
-                amount_nanotons,
+                amount_nanotos,
                 body,
                 false,
                 None,

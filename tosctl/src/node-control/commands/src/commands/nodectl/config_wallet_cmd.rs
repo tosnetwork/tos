@@ -487,8 +487,8 @@ impl WalletStakeCmd {
             anyhow::bail!("Elections are already finished");
         }
 
-        let stake_nanotons = tos_to_nanotos(self.amount);
-        if stake_nanotons < elections_info.min_stake {
+        let stake_nanotos = tos_to_nanotos(self.amount);
+        if stake_nanotos < elections_info.min_stake {
             anyhow::bail!(
                 "Stake {:.4} TOS is below minimum {:.4} TOS",
                 self.amount,
@@ -572,7 +572,7 @@ impl WalletStakeCmd {
         // Build NEW_STAKE payload for nominator pool
         let payload = nominator::new_stake(&nominator::NewStakeParams {
             query_id: time_format::now(),
-            stake_amount: stake_nanotons,
+            stake_amount: stake_nanotos,
             validator_pubkey: &pub_key,
             stake_at: election_id as u32,
             max_factor: max_factor_raw,
@@ -638,7 +638,7 @@ impl WalletStakeCmd {
             .find(|p| p.pub_key == pub_key)
             .map(|p| p.stake)
             .unwrap_or(0);
-        let expected_stake = previous_stake + stake_nanotons;
+        let expected_stake = previous_stake + stake_nanotos;
 
         let stake_timeout = tokio::time::Duration::from_secs(60);
         wait_for_stake_accepted(

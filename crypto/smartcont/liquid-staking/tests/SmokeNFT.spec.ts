@@ -212,7 +212,7 @@ describe('NFT Payouts', () => {
 
     });
 
-    it('should pay out tons', async () => {
+    it('should pay out tos', async () => {
 
         let payout = blockchain.openContract(await pool.getWithdrawalMinter());
 

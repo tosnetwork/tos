@@ -657,7 +657,7 @@ describe('Integrational tests', () => {
             // console.log(`Supply:${supply}`);
             // console.log(`Balance:${balance}`);
             // console.log(`Withdraw amount:${amount}`);
-            // Check tons sent for distribution
+            // Check tos sent for distribution
             const distrTx = findTransaction(txs, {
                 from: pool.address,
                 to: minterAddr,
@@ -984,8 +984,8 @@ describe('Integrational tests', () => {
                 const inValue       = inMsg.info.value.coins;
                 const outMsg        = reqTx.outMessages.get(1)!;
                 const fundsAvailabe = poolBalance - inValue - Conf.minStoragePool;
-                const tonAmount = amount * balance / supply;
-                if(tonAmount == 0n) {
+                const tosAmount = amount * balance / supply;
+                if(tosAmount == 0n) {
                     expect(computedGeneric(reqTx).success).toBe(false);
                     // Expect to mint back burned amount
                     await assertPoolJettonMint(res.transactions, amount, withdrawAddr);
@@ -993,16 +993,16 @@ describe('Integrational tests', () => {
                     expect(balance).toEqual(poolAfter.totalBalance);
                     return {burnt: 0n, distributed: 0n} as any;
                 }
-                if(fundsAvailabe > tonAmount) {
+                if(fundsAvailabe > tosAmount) {
                     expect(res.transactions).toHaveTransaction({
                         from: pool.address,
                         to: withdrawAddr,
                         op: Op.pool.withdrawal,
-                        value: tonAmount + inValue - bcConf.lumpPrice - computedGeneric(reqTx).gasFees
+                        value: tosAmount + inValue - bcConf.lumpPrice - computedGeneric(reqTx).gasFees
                     });
-                    expect(poolAfter.totalBalance).toEqual(poolBefore.totalBalance - tonAmount);
+                    expect(poolAfter.totalBalance).toEqual(poolBefore.totalBalance - tosAmount);
                     expect(poolAfter.supply).toEqual(poolBefore.supply - amount);
-                    return {burnt: amount, distributed: tonAmount} as DistributionComplete;
+                    return {burnt: amount, distributed: tosAmount} as DistributionComplete;
                }
             }
             if(fill_or_kill) {
@@ -1173,7 +1173,7 @@ describe('Integrational tests', () => {
         await nextRound();
         const balanceBefore1 = await nm1.getBalance();
         const balanceBefore2 = await nm2.getBalance();
-        // Should send withdrawn tons
+        // Should send withdrawn tos
         await pool.sendTouch(deployer.getSender());
         const balanceAfter1 = await nm1.getBalance();
         const balanceAfter2 = await nm2.getBalance();

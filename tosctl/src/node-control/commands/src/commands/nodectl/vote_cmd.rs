@@ -1174,8 +1174,8 @@ impl VoteElectionCastCmd {
 
         let wallet = make_wallet(rpc_client.clone(), wallet_cfg, secret, wallet_name).await?;
 
-        // Calculate stake in nanotons
-        let stake_nanotons: u64 = if let Some(stake_tos) = self.stake {
+        // Calculate stake in nanotos
+        let stake_nanotos: u64 = if let Some(stake_tos) = self.stake {
             stake_tos * 1_000_000_000
         } else {
             // Use minimum stake from the elector if available, otherwise fail
@@ -1192,7 +1192,7 @@ impl VoteElectionCastCmd {
 
         println!("\n{}", "Building election bid...".cyan());
         println!("  Election ID:  {}", election_id);
-        println!("  Stake:        {} TOS", display_tos(stake_nanotons));
+        println!("  Stake:        {} TOS", display_tos(stake_nanotos));
         println!("  Max factor:   {}", self.max_factor);
         println!("  Wallet:       {}", wallet_address);
 
@@ -1216,7 +1216,7 @@ impl VoteElectionCastCmd {
         // --- Build the stake message payload ---
         let payload = nominator::new_stake(&nominator::NewStakeParams {
             query_id: UnixTime::now(),
-            stake_amount: stake_nanotons,
+            stake_amount: stake_nanotos,
             validator_pubkey: pub_key.as_slice(),
             stake_at: election_id as u32,
             max_factor: max_factor_u32,
@@ -1227,7 +1227,7 @@ impl VoteElectionCastCmd {
         // --- Send the bid via wallet ---
         println!("{}", "Sending election bid...".cyan());
         let elector_addr = elector.address();
-        let send_value = stake_nanotons + 1_000_000_000; // stake + elector fee
+        let send_value = stake_nanotos + 1_000_000_000; // stake + elector fee
         let msg_cell = wallet.message(elector_addr, send_value, payload).await?;
         let boc = write_boc(&msg_cell)?;
         client.send_boc(&boc).await.context("send election bid BOC")?;
@@ -1237,7 +1237,7 @@ impl VoteElectionCastCmd {
             "OK".green().bold()
         );
         println!("  Election ID:  {}", election_id);
-        println!("  Stake:        {} TOS", display_tos(stake_nanotons));
+        println!("  Stake:        {} TOS", display_tos(stake_nanotos));
         println!("  Public key:   {}", hex::encode(&pub_key));
         println!("  ADNL addr:    {}", hex::encode(&adnl_key_hash));
         println!();
