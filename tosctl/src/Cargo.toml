@@ -1,8 +1,11 @@
 [workspace]
 members = [
     'adnl',
+    'assembler',
     'block',
     'block-json',
+    'emulator',
+    'executor',
     'lockfree',
     'node-control/commands',
     'node-control/common',
@@ -15,6 +18,7 @@ members = [
     'secrets-vault',
     'tl/api',
     'toscenter-rs',
+    'vm',
 ]
 resolver = '2'
 

@@ -1,0 +1,21 @@
+[package]
+build = '../common/build/build.rs'
+edition = "2021"
+license = 'GPL-3.0'
+name = "tos_emulator"
+version = "0.1.0"
+
+[lib]
+name = "tos_emulator"
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = '1.0'
+log = '0.4'
+log4rs = '1.2'
+serde_json = '1.0'
+thiserror = '1.0'
+chain_block = { path = '../block' }
+chain_block_json = { path = '../block-json' }
+tos_executor = { path = '../executor' }
+tos_vm = { path = '../vm' }
