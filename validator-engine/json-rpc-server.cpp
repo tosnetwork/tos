@@ -182,6 +182,37 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     return;
   }
 
+  // GET /api-info — machine-readable API metadata (no auth required)
+  if (method == "GET" && (url == "/api-info" || url == "/api-info/")) {
+    std::string body =
+        "{\n"
+        "  \"name\": \"TOS JSON-RPC API\",\n"
+        "  \"version\": \"1.0.0\",\n"
+        "  \"methods_count\": 35,\n"
+        "  \"endpoints\": {\n"
+        "    \"jsonrpc\": \"/jsonRPC\",\n"
+        "    \"health\": \"/healthcheck\",\n"
+        "    \"readyz\": \"/readyz\",\n"
+        "    \"api_info\": \"/api-info\",\n"
+        "    \"metrics\": \"http://localhost:9100/metrics\"\n"
+        "  },\n"
+        "  \"openapi_spec\": \"https://github.com/tosnetwork/tos/blob/main/doc/openapi.yaml\"\n"
+        "}";
+
+    auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
+    response->add_header({"Content-Type", "application/json"});
+    response->add_header({"Access-Control-Allow-Origin", opts_.cors_origin});
+    response->add_header({"Transfer-Encoding", "Chunked"});
+    response->complete_parse_header();
+
+    auto resp_payload = response->create_empty_payload().move_as_ok();
+    resp_payload->add_chunk(td::BufferSlice(body));
+    resp_payload->complete_parse();
+
+    promise.set_value({std::move(response), std::move(resp_payload)});
+    return;
+  }
+
   // API key authentication (after CORS preflight and healthcheck, before all other routes)
   if (!check_api_key(request, promise)) {
     return;  // 401 already sent

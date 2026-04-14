@@ -445,3 +445,20 @@ class TestGetTokenData:
         response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS)
         assert response.status_code == 409
         assert response.json()["ok"] is False
+
+    def test_jetton_master_data(self, api_method_call):
+        """Deployed Jetton master should return jettonMasterData."""
+        import json
+        from pathlib import Path
+        deployed = Path(__file__).parent / "deployed_addresses.json"
+        if not deployed.exists():
+            pytest.skip("No deployed contracts")
+        addrs = json.loads(deployed.read_text())
+        addr = addrs.get("tokens", {}).get("jetton_master", {}).get("address")
+        if not addr:
+            pytest.skip("jetton_master not deployed")
+        response = api_method_call(self.METHOD, address=addr)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert data["result"]["@type"] == "ext.tokens.jettonMasterData"

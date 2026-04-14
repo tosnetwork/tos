@@ -1014,11 +1014,13 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
                   auto result_cell = cell_r.move_as_ok();
                   vm::CellSlice cs = vm::load_cell_slice(result_cell);
                   if (stk.write().deserialize(cs) && stk->depth() >= 5) {
-                    auto& total_supply_e = stk->at(0);
-                    auto& mintable_e = stk->at(1);
+                    // get_jetton_data returns (total_supply, mintable, admin_address, content, wallet_code)
+                    // at(0) = top of stack = last return value (wallet_code)
+                    auto& wallet_code_e = stk->at(0);
+                    auto& content_e = stk->at(1);
                     auto& admin_addr_e = stk->at(2);
-                    auto& content_e = stk->at(3);
-                    auto& wallet_code_e = stk->at(4);
+                    auto& mintable_e = stk->at(3);
+                    auto& total_supply_e = stk->at(4);
 
                     if (total_supply_e.is_int()) {
                       auto total_supply_str = total_supply_e.as_int()->to_dec_string();
@@ -1028,7 +1030,7 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
                       auto wallet_code_b64 = cell_to_b64(wallet_code_e);
 
                       td::StringBuilder sb;
-                      sb << "{\"@type\":\"jetton.data\""
+                      sb << "{\"@type\":\"ext.tokens.jettonMasterData\""
                          << ",\"total_supply\":" << td::JsonString(td::Slice(total_supply_str))
                          << ",\"mintable\":" << (mintable ? "true" : "false")
                          << ",\"admin_address\":" << td::JsonString(td::Slice(admin_addr_str))
@@ -1104,11 +1106,13 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
               return;
             }
 
-            auto& init_e = stk->at(0);
-            auto& index_e = stk->at(1);
+            // get_nft_data returns (init?, index, collection_address, owner_address, individual_content)
+            // at(0) = top of stack = last return value (individual_content)
+            auto& content_e = stk->at(0);
+            auto& owner_e = stk->at(1);
             auto& collection_e = stk->at(2);
-            auto& owner_e = stk->at(3);
-            auto& content_e = stk->at(4);
+            auto& index_e = stk->at(3);
+            auto& init_e = stk->at(4);
 
             bool init_val = init_e.is_int() && init_e.as_int()->to_long() != 0;
             td::int64 index_val = index_e.is_int() ? index_e.as_int()->to_long() : 0;
@@ -1117,7 +1121,7 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
             auto content_b64 = cell_to_b64(content_e);
 
             td::StringBuilder sb;
-            sb << "{\"@type\":\"nft.data\""
+            sb << "{\"@type\":\"ext.tokens.nftItemData\""
                << ",\"init\":" << (init_val ? "true" : "false")
                << ",\"index\":" << index_val
                << ",\"collection_address\":" << td::JsonString(td::Slice(collection_str))

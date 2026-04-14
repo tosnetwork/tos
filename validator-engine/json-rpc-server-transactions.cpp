@@ -293,6 +293,19 @@ void JsonRpcServer::handle_getBlockTransactionsExt(td::JsonObject &params, std::
                      << ",\"utime\":" << tx.now;
                   auto hash = roots[i]->get_hash(0);
                   sb << ",\"hash\":\"" << td::base64_encode(hash.as_slice()) << "\"";
+                  // Parsed fields for wallet tracking
+                  block::CurrencyCollection total_fees;
+                  if (total_fees.unpack(tx.total_fees)) {
+                    sb << ",\"fee\":\"" << total_fees.tomis->to_dec_string() << "\"";
+                  }
+                  auto is_just = tx.r1.in_msg->prefetch_long(1);
+                  if (is_just == -1) {  // has in_msg
+                    auto msg_cell = tx.r1.in_msg->prefetch_ref();
+                    if (msg_cell.not_null()) {
+                      auto msg_hash = msg_cell->get_hash(0);
+                      sb << ",\"in_msg_hash\":\"" << td::base64_encode(msg_hash.as_slice()) << "\"";
+                    }
+                  }
                 }
                 sb << "}";
               }
@@ -387,6 +400,20 @@ void JsonRpcServer::handle_getTransactions(td::JsonObject &params, std::string r
             sb << ",\"transaction_id\":{\"@type\":\"internal.transactionId\""
                << ",\"lt\":\"" << tx.lt << "\""
                << ",\"hash\":\"" << td::base64_encode(hash.as_slice()) << "\"}";
+            // Parsed fields for wallet tracking
+            block::CurrencyCollection total_fees;
+            if (total_fees.unpack(tx.total_fees)) {
+              sb << ",\"fee\":\"" << total_fees.tomis->to_dec_string() << "\"";
+            }
+            sb << ",\"account\":\"" << tx.account_addr.to_hex() << "\"";
+            auto is_just = tx.r1.in_msg->prefetch_long(1);
+            if (is_just == -1) {  // has in_msg
+              auto msg_cell = tx.r1.in_msg->prefetch_ref();
+              if (msg_cell.not_null()) {
+                auto msg_hash = msg_cell->get_hash(0);
+                sb << ",\"in_msg_hash\":\"" << td::base64_encode(msg_hash.as_slice()) << "\"";
+              }
+            }
           }
           sb << "}";
         }
@@ -1201,6 +1228,20 @@ void JsonRpcServer::handle_getTransactionsStd(td::JsonObject &params, std::strin
             sb << ",\"transaction_id\":{\"@type\":\"internal.transactionId\""
                << ",\"lt\":\"" << tx.lt << "\""
                << ",\"hash\":\"" << td::base64_encode(tx_hash.as_slice()) << "\"}";
+            // Parsed fields for wallet tracking
+            block::CurrencyCollection total_fees;
+            if (total_fees.unpack(tx.total_fees)) {
+              sb << ",\"fee\":\"" << total_fees.tomis->to_dec_string() << "\"";
+            }
+            sb << ",\"account\":\"" << tx.account_addr.to_hex() << "\"";
+            auto is_just = tx.r1.in_msg->prefetch_long(1);
+            if (is_just == -1) {  // has in_msg
+              auto msg_cell = tx.r1.in_msg->prefetch_ref();
+              if (msg_cell.not_null()) {
+                auto msg_hash = msg_cell->get_hash(0);
+                sb << ",\"in_msg_hash\":\"" << td::base64_encode(msg_hash.as_slice()) << "\"";
+              }
+            }
             if (i == roots.size() - 1 || i == tl->ids_.size() - 1) {
               prev_lt = tx.prev_trans_lt;
               prev_hash_b64 = td::base64_encode(tx.prev_trans_hash.as_slice());

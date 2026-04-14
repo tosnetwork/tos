@@ -175,7 +175,7 @@ _TRANSFER_TEMPLATE_V2 = """\
   0 64 u,                    // created_lt
   0 32 u,                    // created_at
   {state_init_code}
-  b{{0}} s,                  // body: empty
+  b{{0}} s,                  // body: inline, empty
 b> constant int_msg
 
 // Payload: seqno(32) + mode(8) + internal_msg_ref
@@ -185,10 +185,9 @@ dup hashu mw_pk ed25519_sign_uint constant signature
 
 // External message to main wallet (-1:000...000)
 <b b{{1000100}} s,
-   -1 Masterchain 0 addr,
+   -1 0 addr,
    0 Tomi, b{{00}} s,
-   b{{1}} s,
-   <b signature B, payload <s s, b> ref,
+   signature B, payload <s s,
 b>
 2 boc+>B dup ."BOC:" Bx. cr
 """
