@@ -12,7 +12,7 @@ sudo -E ./build-android-toslib.sh
 ```
 # Generation of Toslib libraries for iOS in Xcode
 
-1. Clone repository https://github.com/labraburn/toslib-xcframework
+1. Clone repository https://github.com/labraburn/tonlib-xcframework
 2. Open repository directory in Terminal
 3. Run command:
 ```bash

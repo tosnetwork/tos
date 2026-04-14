@@ -71,7 +71,7 @@ Operations for working with Merkle proofs, where cells can have non-zero level a
 ## Version 7
 __Enabled in mainnet on 2024-04-18__
 
-[Explicitly nullify](https://github.com/tosnetwork/tos/pull/957/files) `due_payment` after due reimbursment.
+[Explicitly nullify](https://github.com/ton-blockchain/ton/pull/957/files) `due_payment` after due reimbursment.
 
 ## Version 8
 __Enabled in mainnet on 2024-08-25__

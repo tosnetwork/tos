@@ -1,6 +1,6 @@
 # Sync Test
 
-Automated mainnet sync test for the TOS Rust Node. Builds a node image from the current commit, deploys it to Kubernetes via the public [`tos-rust-node`](https://github.com/rsquad/tos-rust-node) Helm chart, and waits for the node to fully sync with the network. Reports the result as a GitHub commit status on the triggering commit.
+Automated mainnet sync test for the TOS Rust Node. Builds a node image from the current commit, deploys it to Kubernetes via the public [`tos-rust-node`](https://github.com/rsquad/ton-rust-node) Helm chart, and waits for the node to fully sync with the network. Reports the result as a GitHub commit status on the triggering commit.
 
 ## How it works
 
@@ -205,7 +205,7 @@ Set via GitHub Secret `SYNCTEST_NODE_IP`. CI uses it in both the node config (AD
 
 ### Helm chart version
 
-In `.github/workflows/sync-test.yml`, env `HELM_CHART_VERSION`. Must match a published version of `oci://ghcr.io/rsquad/tos-rust-node/helm/node`.
+In `.github/workflows/sync-test.yml`, env `HELM_CHART_VERSION`. Must match a published version of `oci://ghcr.io/rsquad/ton-rust-node/helm/node`.
 
 ### Resources
 

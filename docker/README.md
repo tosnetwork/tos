@@ -11,7 +11,7 @@
 The TOS node, whether it is validator or fullnode, requires a public IP address.
 If your server is within an internal network or kubernetes you have to make sure that the required ports are available from the outside.
 
-Also pay attention at [hardware requirements](https://docs.tos.network/participate/run-nodes/full-node) for TOS fullnodes and validators. Pods and StatefulSets in this guide imply these requirements.
+Also pay attention at [hardware requirements](https://docs.ton.org/participate/run-nodes/full-node) for TOS fullnodes and validators. Pods and StatefulSets in this guide imply these requirements.
 
 It is recommended to everyone to read Docker chapter first in order to get a better understanding about TOS Docker image and its parameters.
 
@@ -28,7 +28,7 @@ Below is the list of supported arguments and their default values:
 | Argument          | Description                                                                                                                                                                               | Mandatory? |                      Default value                      |
 |:------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------:|:-------------------------------------------------------:|
 | PUBLIC_IP         | This will be a public IP address of your TOS node. Normally it is the same IP address as your server's external IP. This also can be your proxy server or load balancer IP address.       |    yes     |                                                         |
-| GLOBAL_CONFIG_URL | TOS global configuration file. Mainnet - https://tos.network/global-config.json, Testnet - https://tos.network/testnet-global.config.json                                                         |     no     | https://api.tontech.io/tos/wallet-mainnet.autoconf.json |
+| GLOBAL_CONFIG_URL | TOS global configuration file. Mainnet - https://tos.network/global-config.json, Testnet - https://tos.network/testnet-global.config.json                                                         |     no     | https://api.tontech.io/ton/wallet-mainnet.autoconf.json |
 | DUMP_URL          | URL to TOS dump. Specify dump from https://dump.tos.network. If you are using testnet dump, make sure to download global config for testnet.                                                  |     no     |                                                         |
 | VALIDATOR_PORT    | UDP port that must be available from the outside. Used for communication with other nodes.                                                                                                |     no     |                          30001                          |
 | CONSOLE_PORT      | This TCP port is used to access validator's console. Not necessarily to be opened for external access.                                                                                    |     no     |                          30002                          |
