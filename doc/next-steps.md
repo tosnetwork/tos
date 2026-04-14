@@ -85,4 +85,4 @@
 | All CLI commands fully implemented | ✅ 90/90 Full | — |
 | Simplex consensus design document | ✅ Done | — |
 | Supply chain hardening (both repos) | ✅ Done | — |
-| CI builder image | ✅ Done (needs first manual trigger) | — |
+| CI builder image | ✅ Done | — |
