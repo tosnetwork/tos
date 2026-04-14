@@ -2334,6 +2334,9 @@ void ValidatorEngine::start_validator() {
   if (json_rpc_addr_) {
     json_rpc_server_ = tos::JsonRpcServer::create(validator_manager_.get(), json_rpc_opts_);
     td::actor::send_closure(json_rpc_server_, &tos::JsonRpcServer::listen, json_rpc_addr_.value());
+    // Register JSON-RPC server as a Prometheus metrics collector
+    td::actor::send_closure(exporter_.get(), &tos::PrometheusExporter::register_collector<tos::JsonRpcServer>,
+                            json_rpc_server_.get());
   }
 
   for (auto &v : config_.validators) {

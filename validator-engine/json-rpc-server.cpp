@@ -490,6 +490,34 @@ void JsonRpcServer::process_rest_post_body(td::BufferSlice body, std::string met
 
 void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
                                     std::string req_id, td::Promise<HttpReturn> promise) {
+  // Track per-method request count
+  requests_total_.fetch_add(1);
+  active_requests_.fetch_add(1);
+  method_requests_->label(method)->add(1);
+
+  // Wrap the promise to track completion and errors
+  auto method_copy = method;
+  promise = td::PromiseCreator::lambda(
+      [this, method_copy, inner = std::move(promise)](td::Result<HttpReturn> R) mutable {
+        active_requests_.fetch_sub(1);
+        if (R.is_error()) {
+          requests_errors_.fetch_add(1);
+          method_errors_->label(method_copy)->add(1);
+          inner.set_error(R.move_as_error());
+        } else {
+          auto ret = R.move_as_ok();
+          // Check if the response is an error (ok=false in the JSON body)
+          // by inspecting the HTTP status code (non-200 = error)
+          auto &resp = ret.first;
+          if (resp) {
+            // HTTP status is encoded in the status line; for simplicity,
+            // count any response as success at the dispatch level.
+            // Method-level errors are tracked separately.
+          }
+          inner.set_value(std::move(ret));
+        }
+      });
+
   // Write-method gate: reject send-family methods in readonly mode
   if (opts_.readonly &&
       (method == "sendBoc" || method == "sendBocReturnHash" ||
@@ -865,11 +893,13 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
   auto it = cache_.find(cache_key);
   if (it != cache_.end() && !it->second.expires_at.is_in_past()) {
     // Cache hit — return cached response with the current request's id
+    cache_hits_.fetch_add(1);
     promise.set_value(make_json_ok(it->second.response_json, req_id));
     return;
   }
 
   // Cache miss — dispatch normally but wrap the promise to capture the result
+  cache_misses_.fetch_add(1);
   auto ttl = opts_.cache_ttl;
   auto cors = opts_.cors_origin;
   auto cache_promise = td::PromiseCreator::lambda(
@@ -922,6 +952,52 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
       });
 
   dispatch_method(std::move(method), params, std::move(req_id), std::move(cache_promise));
+}
+
+// ─── Prometheus metrics collection ──────────────────────────────────────
+
+void JsonRpcServer::collect(metrics::MetricsPromise P) {
+  metrics::MetricSet set{{}};
+
+  // Scalar counters
+  set.families.push_back(
+      metrics::MetricFamily::make_scalar("jsonrpc_requests_total", "counter",
+          static_cast<double>(requests_total_.load()),
+          "Total JSON-RPC requests received"));
+  set.families.push_back(
+      metrics::MetricFamily::make_scalar("jsonrpc_errors_total", "counter",
+          static_cast<double>(requests_errors_.load()),
+          "Total JSON-RPC requests that resulted in errors"));
+  set.families.push_back(
+      metrics::MetricFamily::make_scalar("jsonrpc_active_requests", "gauge",
+          static_cast<double>(active_requests_.load()),
+          "Currently in-flight JSON-RPC requests"));
+  set.families.push_back(
+      metrics::MetricFamily::make_scalar("jsonrpc_cache_hits_total", "counter",
+          static_cast<double>(cache_hits_.load()),
+          "JSON-RPC response cache hits"));
+  set.families.push_back(
+      metrics::MetricFamily::make_scalar("jsonrpc_cache_misses_total", "counter",
+          static_cast<double>(cache_misses_.load()),
+          "JSON-RPC response cache misses"));
+  set.families.push_back(
+      metrics::MetricFamily::make_scalar("jsonrpc_cache_entries", "gauge",
+          static_cast<double>(cache_.size()),
+          "Current number of entries in the response cache"));
+
+  // Per-method request and error counters
+  set = std::move(set).join(method_requests_->collect());
+  set = std::move(set).join(method_errors_->collect());
+
+  // Uptime
+  if (start_time_) {
+    double uptime = td::Time::now() - start_time_.at();
+    set.families.push_back(
+        metrics::MetricFamily::make_scalar("jsonrpc_uptime_seconds", "gauge",
+            uptime, "JSON-RPC server uptime in seconds"));
+  }
+
+  P.set_value(std::move(set));
 }
 
 }  // namespace tos

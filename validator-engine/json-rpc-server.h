@@ -19,6 +19,7 @@
 #pragma once
 
 #include "http/http-server.h"
+#include "metrics/metrics-collectors.h"
 #include "td/actor/actor.h"
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/Time.h"
@@ -29,7 +30,7 @@
 
 namespace tos {
 
-class JsonRpcServer final : public td::actor::Actor {
+class JsonRpcServer final : public td::actor::Actor, public virtual metrics::AsyncCollector {
  public:
   struct Options {
     bool readonly = false;           // disable sendBoc/sendBocReturnHash/sendQuery
@@ -45,6 +46,7 @@ class JsonRpcServer final : public td::actor::Actor {
       Options options);
 
   void listen(td::IPAddress addr);
+  void collect(metrics::MetricsPromise P) override;
 
   JsonRpcServer(
       td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager,
@@ -199,7 +201,7 @@ class JsonRpcServer final : public td::actor::Actor {
 
   void alarm() override;
 
-  // Response cache for read-only methods
+  // ── Response cache ───────────────────────────────────────────────────
   struct CacheEntry {
     std::string response_json;
     td::Timestamp expires_at;
@@ -207,8 +209,6 @@ class JsonRpcServer final : public td::actor::Actor {
   std::unordered_map<std::string, CacheEntry> cache_;
 
   static const std::set<std::string> &cacheable_methods();
-
-  // Per-method cache TTL lookup (returns 0 when caching is disabled)
   td::int32 cache_ttl_for_method(const std::string &method) const;
 
   td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager_;
@@ -217,11 +217,21 @@ class JsonRpcServer final : public td::actor::Actor {
   td::uint32 consensus_block_seqno_{0};
   td::int64 consensus_block_timestamp_{0};
 
-  // Statistics counters
+  // ── Statistics ───────────────────────────────────────────────────────
   td::Timestamp start_time_;
-  td::uint64 requests_total_{0};
-  td::uint64 cache_hits_{0};
-  td::uint64 cache_misses_{0};
+  std::atomic<td::uint64> requests_total_{0};
+  std::atomic<td::uint64> requests_errors_{0};
+  std::atomic<td::uint64> cache_hits_{0};
+  std::atomic<td::uint64> cache_misses_{0};
+  std::atomic<td::uint64> active_requests_{0};
+
+  // Per-method request count (method name → count)
+  metrics::Labeled<std::string, metrics::AtomicCounter<td::uint64>>::Ptr
+      method_requests_ = metrics::Labeled<std::string, metrics::AtomicCounter<td::uint64>>::make(
+          "method", "jsonrpc_method_requests_total", std::optional<std::string>("JSON-RPC requests by method"));
+  metrics::Labeled<std::string, metrics::AtomicCounter<td::uint64>>::Ptr
+      method_errors_ = metrics::Labeled<std::string, metrics::AtomicCounter<td::uint64>>::make(
+          "method", "jsonrpc_method_errors_total", std::optional<std::string>("JSON-RPC errors by method"));
 };
 
 }  // namespace tos
