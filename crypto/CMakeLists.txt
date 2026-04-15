@@ -518,6 +518,7 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   GenFif(DEST smartcont/auto/restricted-wallet-code SOURCE smartcont/restricted-wallet-code.fc NAME restricted-wallet)
   GenFif(DEST smartcont/auto/restricted-wallet2-code SOURCE smartcont/restricted-wallet2-code.fc NAME restricted-wallet2)
   GenFif(DEST smartcont/auto/restricted-wallet3-code SOURCE smartcont/restricted-wallet3-code.fc NAME restricted-wallet3)
+  GenFif(DEST smartcont/auto/session-wallet-code SOURCE smartcont/session-wallet-code.fc NAME session-wallet)
   GenFif(DEST smartcont/auto/pow-testgiver-code SOURCE smartcont/pow-testgiver-code.fc NAME pow-testgiver)
 
   GenFif(DEST smartcont/auto/dns-manual-code SOURCE smartcont/dns-manual-code.fc NAME dns-manual)

@@ -14,7 +14,7 @@ use chain_rpc_client::v2::{
     RPCStackEntry,
     data_models::{
         AccountAgentCapability, AccountDelegationGrant, AccountSessionCapability,
-        RunGetMethodParams,
+        LifecycleGrantRequest, LifecycleRevokeRequest, RunGetMethodParams,
     },
 };
 use colored::Colorize;
@@ -59,6 +59,18 @@ pub enum AccountAction {
     RunMethod(AccountRunMethodCmd),
     /// Send a raw BOC message
     SendBoc(AccountSendBocCmd),
+    /// Grant a delegation to an account
+    DelegationGrant(AccountDelegationGrantCmd),
+    /// Revoke a delegation from an account
+    DelegationRevoke(AccountDelegationRevokeCmd),
+    /// Grant a session capability to an account
+    SessionGrant(AccountSessionGrantCmd),
+    /// Revoke a session capability from an account
+    SessionRevoke(AccountSessionRevokeCmd),
+    /// Grant an agent capability to an account
+    AgentGrant(AccountAgentGrantCmd),
+    /// Revoke an agent capability from an account
+    AgentRevoke(AccountAgentRevokeCmd),
 }
 
 // ---------------------------------------------------------------------------
@@ -230,6 +242,100 @@ pub struct AccountSendBocCmd {
     format: OutputFormat,
 }
 
+// ---------------------------------------------------------------------------
+// account delegation-grant / delegation-revoke
+// ---------------------------------------------------------------------------
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Grant a delegation (lifecycle mutation)")]
+pub struct AccountDelegationGrantCmd {
+    #[arg(long)]
+    address: String,
+    #[arg(long)]
+    grantee: String,
+    #[arg(long)]
+    scope: String,
+    #[arg(long, default_value = "{}")]
+    constraints: String,
+    #[arg(long)]
+    expires_at: Option<u64>,
+    #[arg(long, default_value_t = false)]
+    revocable: bool,
+    #[arg(short, long, default_value = "json")]
+    format: OutputFormat,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Revoke a delegation (lifecycle mutation)")]
+pub struct AccountDelegationRevokeCmd {
+    #[arg(long)]
+    address: String,
+    #[arg(long)]
+    permission_id: String,
+    #[arg(short, long, default_value = "json")]
+    format: OutputFormat,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Grant a session capability (lifecycle mutation)")]
+pub struct AccountSessionGrantCmd {
+    #[arg(long)]
+    address: String,
+    #[arg(long)]
+    grantee: String,
+    #[arg(long)]
+    scope: String,
+    #[arg(long, default_value = "{}")]
+    constraints: String,
+    #[arg(long)]
+    expires_at: Option<u64>,
+    #[arg(long, default_value_t = false)]
+    revocable: bool,
+    #[arg(short, long, default_value = "json")]
+    format: OutputFormat,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Revoke a session capability (lifecycle mutation)")]
+pub struct AccountSessionRevokeCmd {
+    #[arg(long)]
+    address: String,
+    #[arg(long)]
+    permission_id: String,
+    #[arg(short, long, default_value = "json")]
+    format: OutputFormat,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Grant an agent capability (lifecycle mutation)")]
+pub struct AccountAgentGrantCmd {
+    #[arg(long)]
+    address: String,
+    #[arg(long)]
+    grantee: String,
+    #[arg(long)]
+    scope: String,
+    #[arg(long, default_value = "{}")]
+    constraints: String,
+    #[arg(long)]
+    expires_at: Option<u64>,
+    #[arg(long, default_value_t = false)]
+    revocable: bool,
+    #[arg(short, long, default_value = "json")]
+    format: OutputFormat,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Revoke an agent capability (lifecycle mutation)")]
+pub struct AccountAgentRevokeCmd {
+    #[arg(long)]
+    address: String,
+    #[arg(long)]
+    permission_id: String,
+    #[arg(short, long, default_value = "json")]
+    format: OutputFormat,
+}
+
 // ===========================================================================
 // Run implementations
 // ===========================================================================
@@ -246,6 +352,12 @@ impl AccountCmd {
             AccountAction::Bookmark(cmd) => cmd.run(&self.config).await,
             AccountAction::RunMethod(cmd) => cmd.run(&self.config).await,
             AccountAction::SendBoc(cmd) => cmd.run(&self.config).await,
+            AccountAction::DelegationGrant(cmd) => cmd.run(&self.config).await,
+            AccountAction::DelegationRevoke(cmd) => cmd.run(&self.config).await,
+            AccountAction::SessionGrant(cmd) => cmd.run(&self.config).await,
+            AccountAction::SessionRevoke(cmd) => cmd.run(&self.config).await,
+            AccountAction::AgentGrant(cmd) => cmd.run(&self.config).await,
+            AccountAction::AgentRevoke(cmd) => cmd.run(&self.config).await,
         }
     }
 }
@@ -335,28 +447,32 @@ fn print_permission_objects_json<T: serde::Serialize>(items: &[T]) -> anyhow::Re
 fn print_delegations_table(items: &[AccountDelegationGrant]) {
     println!();
     println!("  {}", "Account Delegations".bold());
-    println!("  {}", "\u{2500}".repeat(92));
+    println!("  {}", "\u{2500}".repeat(110));
     println!(
-        "  {:<18} {:<16} {:<12} {:<12} {}",
+        "  {:<18} {:<18} {:<16} {:<12} {:<12} {}",
         "ID".bold(),
+        "Account".bold(),
         "Grantee".bold(),
         "Scope".bold(),
         "Status".bold(),
         "Expires".bold(),
     );
-    println!("  {}", "\u{2500}".repeat(92));
+    println!("  {}", "\u{2500}".repeat(110));
     if items.is_empty() {
         println!("  (no delegations)");
     } else {
         for item in items {
+            let account_raw = item.account.as_deref().unwrap_or("-");
+            let account = if account_raw.len() > 16 { &account_raw[..16] } else { account_raw };
             let grantee = if item.grantee.len() > 16 { &item.grantee[..16] } else { &item.grantee };
             let expires = item
                 .expires_at
                 .map(format_ts)
                 .unwrap_or_else(|| "-".to_string());
             println!(
-                "  {:<18} {:<16} {:<12} {:<12} {}",
+                "  {:<18} {:<18} {:<16} {:<12} {:<12} {}",
                 item.id,
+                account,
                 grantee,
                 item.scope,
                 item.status,
@@ -370,20 +486,23 @@ fn print_delegations_table(items: &[AccountDelegationGrant]) {
 fn print_sessions_table(items: &[AccountSessionCapability]) {
     println!();
     println!("  {}", "Account Sessions".bold());
-    println!("  {}", "\u{2500}".repeat(88));
+    println!("  {}", "\u{2500}".repeat(106));
     println!(
-        "  {:<18} {:<16} {:<18} {:<12} {}",
+        "  {:<18} {:<18} {:<16} {:<18} {:<12} {}",
         "Session ID".bold(),
+        "Account".bold(),
         "Principal".bold(),
         "Scope".bold(),
         "Status".bold(),
         "Expires".bold(),
     );
-    println!("  {}", "\u{2500}".repeat(88));
+    println!("  {}", "\u{2500}".repeat(106));
     if items.is_empty() {
         println!("  (no sessions)");
     } else {
         for item in items {
+            let account_raw = item.account.as_deref().unwrap_or("-");
+            let account = if account_raw.len() > 16 { &account_raw[..16] } else { account_raw };
             let principal =
                 if item.principal.len() > 16 { &item.principal[..16] } else { &item.principal };
             let expires = item
@@ -391,8 +510,9 @@ fn print_sessions_table(items: &[AccountSessionCapability]) {
                 .map(format_ts)
                 .unwrap_or_else(|| "-".to_string());
             println!(
-                "  {:<18} {:<16} {:<18} {:<12} {}",
+                "  {:<18} {:<18} {:<16} {:<18} {:<12} {}",
                 item.session_id,
+                account,
                 principal,
                 item.scope,
                 item.status,
@@ -406,20 +526,23 @@ fn print_sessions_table(items: &[AccountSessionCapability]) {
 fn print_agents_table(items: &[AccountAgentCapability]) {
     println!();
     println!("  {}", "Account Agents".bold());
-    println!("  {}", "\u{2500}".repeat(88));
+    println!("  {}", "\u{2500}".repeat(106));
     println!(
-        "  {:<18} {:<16} {:<18} {:<12} {}",
+        "  {:<18} {:<18} {:<16} {:<18} {:<12} {}",
         "Agent ID".bold(),
+        "Account".bold(),
         "Principal".bold(),
         "Scope".bold(),
         "Status".bold(),
         "Expires".bold(),
     );
-    println!("  {}", "\u{2500}".repeat(88));
+    println!("  {}", "\u{2500}".repeat(106));
     if items.is_empty() {
         println!("  (no agents)");
     } else {
         for item in items {
+            let account_raw = item.account.as_deref().unwrap_or("-");
+            let account = if account_raw.len() > 16 { &account_raw[..16] } else { account_raw };
             let principal =
                 if item.principal.len() > 16 { &item.principal[..16] } else { &item.principal };
             let expires = item
@@ -427,8 +550,9 @@ fn print_agents_table(items: &[AccountAgentCapability]) {
                 .map(format_ts)
                 .unwrap_or_else(|| "-".to_string());
             println!(
-                "  {:<18} {:<16} {:<18} {:<12} {}",
+                "  {:<18} {:<18} {:<16} {:<18} {:<12} {}",
                 item.agent_id,
+                account,
                 principal,
                 item.scope,
                 item.status,
@@ -437,6 +561,48 @@ fn print_agents_table(items: &[AccountAgentCapability]) {
         }
     }
     println!();
+}
+
+fn format_json_value_inline(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => "-".to_string(),
+        serde_json::Value::Bool(v) => v.to_string(),
+        serde_json::Value::Number(v) => v.to_string(),
+        serde_json::Value::String(v) => v.clone(),
+        _ => serde_json::to_string(value).unwrap_or_else(|_| "<invalid-json>".to_string()),
+    }
+}
+
+fn print_lifecycle_json_section(title: &str, value: &serde_json::Value) {
+    println!("  {}", title.bold());
+    match value {
+        serde_json::Value::Object(map) if !map.is_empty() => {
+            let mut entries: Vec<_> = map.iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(b.0));
+            for (key, field_value) in entries {
+                println!("  {:<22} {}", format!("{key}:").dimmed(), format_json_value_inline(field_value));
+            }
+        }
+        _ => {
+            println!("  {}", "(none)".dimmed());
+        }
+    }
+    println!();
+}
+
+fn print_lifecycle_result_table(
+    title: &str,
+    result: &chain_rpc_client::v2::data_models::LifecycleMutationResultRes,
+) {
+    println!();
+    println!("  {}", title.bold());
+    println!("  {}", "\u{2500}".repeat(56));
+    println!("  {:<22} {}", "Method:".dimmed(), result.method);
+    println!("  {:<22} {}", "Account model:".dimmed(), result.account_model);
+    println!("  {:<22} {}", "Accepted:".dimmed(), result.accepted);
+    println!();
+    print_lifecycle_json_section("Mutation Intent", &result.mutation_intent);
+    print_lifecycle_json_section("Affected Preview", &result.affected_object_preview);
 }
 
 impl AccountCapabilityCmd {
@@ -779,6 +945,135 @@ impl AccountBookmarkRmCmd {
 
         save_config(&config, config_path)?;
         println!("OK Bookmark '{}' removed", self.name);
+        Ok(())
+    }
+}
+
+impl AccountDelegationGrantCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let config = AppConfig::load(Path::new(config_path))?;
+        let rpc_client = try_create_rpc_client(&config).await?;
+        let address = parse_account_address(&self.address)?;
+        let constraints: serde_json::Value = serde_json::from_str(&self.constraints)?;
+        let req = LifecycleGrantRequest {
+            address: address.to_string(),
+            grantee: self.grantee.clone(),
+            scope: self.scope.clone(),
+            constraints,
+            expires_at: self.expires_at,
+            revocable: self.revocable,
+        };
+        let result = rpc_client.grant_account_delegation(&req).await?;
+        if self.format == OutputFormat::Json {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        } else {
+            print_lifecycle_result_table("Delegation Grant Result", &result);
+        }
+        Ok(())
+    }
+}
+
+impl AccountDelegationRevokeCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let config = AppConfig::load(Path::new(config_path))?;
+        let rpc_client = try_create_rpc_client(&config).await?;
+        let address = parse_account_address(&self.address)?;
+        let req = LifecycleRevokeRequest {
+            address: address.to_string(),
+            permission_id: self.permission_id.clone(),
+        };
+        let result = rpc_client.revoke_account_delegation(&req).await?;
+        if self.format == OutputFormat::Json {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        } else {
+            print_lifecycle_result_table("Delegation Revoke Result", &result);
+        }
+        Ok(())
+    }
+}
+
+impl AccountSessionGrantCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let config = AppConfig::load(Path::new(config_path))?;
+        let rpc_client = try_create_rpc_client(&config).await?;
+        let address = parse_account_address(&self.address)?;
+        let constraints: serde_json::Value = serde_json::from_str(&self.constraints)?;
+        let req = LifecycleGrantRequest {
+            address: address.to_string(),
+            grantee: self.grantee.clone(),
+            scope: self.scope.clone(),
+            constraints,
+            expires_at: self.expires_at,
+            revocable: self.revocable,
+        };
+        let result = rpc_client.grant_account_session(&req).await?;
+        if self.format == OutputFormat::Json {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        } else {
+            print_lifecycle_result_table("Session Grant Result", &result);
+        }
+        Ok(())
+    }
+}
+
+impl AccountSessionRevokeCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let config = AppConfig::load(Path::new(config_path))?;
+        let rpc_client = try_create_rpc_client(&config).await?;
+        let address = parse_account_address(&self.address)?;
+        let req = LifecycleRevokeRequest {
+            address: address.to_string(),
+            permission_id: self.permission_id.clone(),
+        };
+        let result = rpc_client.revoke_account_session(&req).await?;
+        if self.format == OutputFormat::Json {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        } else {
+            print_lifecycle_result_table("Session Revoke Result", &result);
+        }
+        Ok(())
+    }
+}
+
+impl AccountAgentGrantCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let config = AppConfig::load(Path::new(config_path))?;
+        let rpc_client = try_create_rpc_client(&config).await?;
+        let address = parse_account_address(&self.address)?;
+        let constraints: serde_json::Value = serde_json::from_str(&self.constraints)?;
+        let req = LifecycleGrantRequest {
+            address: address.to_string(),
+            grantee: self.grantee.clone(),
+            scope: self.scope.clone(),
+            constraints,
+            expires_at: self.expires_at,
+            revocable: self.revocable,
+        };
+        let result = rpc_client.grant_account_agent(&req).await?;
+        if self.format == OutputFormat::Json {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        } else {
+            print_lifecycle_result_table("Agent Grant Result", &result);
+        }
+        Ok(())
+    }
+}
+
+impl AccountAgentRevokeCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let config = AppConfig::load(Path::new(config_path))?;
+        let rpc_client = try_create_rpc_client(&config).await?;
+        let address = parse_account_address(&self.address)?;
+        let req = LifecycleRevokeRequest {
+            address: address.to_string(),
+            permission_id: self.permission_id.clone(),
+        };
+        let result = rpc_client.revoke_account_agent(&req).await?;
+        if self.format == OutputFormat::Json {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        } else {
+            print_lifecycle_result_table("Agent Revoke Result", &result);
+        }
         Ok(())
     }
 }

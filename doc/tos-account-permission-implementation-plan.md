@@ -114,7 +114,7 @@ Should it be implemented now?
 
 Classification:
 
-- deferred persisted or indexed state model
+- persisted `account_standard` state model where a standard source exists; otherwise deferred or indexed
 
 Meaning:
 
@@ -127,13 +127,14 @@ Primary source candidates:
 
 Should it be implemented now?
 
-- schema scaffolding only
+- yes, where a concrete `account_standard` source exists
+- otherwise stable inspection/error behavior only
 
 ### 5. `account.agentCapability`
 
 Classification:
 
-- deferred persisted or indexed state model
+- persisted `account_standard` state model where a standard source exists; otherwise deferred or indexed
 
 Meaning:
 
@@ -146,7 +147,8 @@ Primary source candidates:
 
 Should it be implemented now?
 
-- schema scaffolding only
+- yes, where a concrete `account_standard` source exists
+- otherwise stable inspection/error behavior only
 
 ## Implementation Decision
 
@@ -154,11 +156,11 @@ The first implementation wave should implement only the objects and methods that
 
 ### Implement now
 
-- `account.capability`
-- `account.authorizationRoles` as an embedded typed sub-object inside transaction-building and submission surfaces
-- `buildTransactionIntent`
-- `getSigningPayload` as a wrapper over an already-defined canonical signed-message representation
-- `submitSignedTransaction` as a wrapper over the existing signed-message submission path
+- ✅ `account.capability`
+- ✅ `account.authorizationRoles` as an embedded typed sub-object inside transaction-building and submission surfaces
+- ✅ `buildTransactionIntent`
+- ✅ `getSigningPayload` as a wrapper over an already-defined canonical signed-message representation
+- ✅ `submitSignedTransaction` as a wrapper over the existing signed-message submission path
 
 ### Implement partially now
 
@@ -170,21 +172,46 @@ The first implementation wave should implement only the objects and methods that
   - source tier: `account_standard`
   - object family: `account.agentCapability`
   - semantics: multisig owners are exposed as bounded `agent_execution` principals with threshold constraints
-- ⏳ documentation and SDK type placeholders
+- ✅ `getAccountDelegations` has a first real `account_standard` implementation for `advanced.wallet.restricted`
+  - source tier: `account_standard`
+  - object family: `account.delegationGrant`
+  - semantics: the restricted wallet vesting schedule is exposed as a `bounded_transfer` delegation with time-based value constraints
+- ✅ `getAccountDelegations` has a second real `account_standard` implementation for `contract.pool.nominator`
+  - source tier: `account_standard`
+  - object family: `account.delegationGrant`
+  - semantics: nominators are exposed as `bounded_transfer` delegators with stake-based constraints; withdraw requests materialize as `revoked` status
+- ✅ documentation and SDK type placeholders
 
 ### Defer full implementation
 
-- `account.delegationGrant`
-- `account.sessionCapability`
-- `account.agentCapability`
-- real state-backed `getAccountDelegations`
-- real state-backed `getAccountSessions`
+- broader real state-backed `getAccountDelegations` coverage beyond `advanced.wallet.restricted` and `contract.pool.nominator`
 - broader real state-backed `getAccountAgents` coverage beyond `advanced.wallet.multisig`
 
 Reason:
 
-- protocol/account-level persisted semantics are not yet frozen
-- implementing them now would create fake or wallet-specific behavior
+- implementing broader delegation/agent coverage requires additional account standards
+
+### Later standards-and-implementation stage
+
+The following work is intentionally outside the current implementation baseline and should be treated as future-standard work:
+
+- additional `account_standard` permission-read models for more account families
+- a mutable session account standard with real `grantAccountSession` / `revokeAccountSession` semantics
+- a mutable agent account standard with real `grantAccountAgent` / `revokeAccountAgent` semantics
+- broader post-mutation lifecycle UX beyond the current preview/result contract
+
+This later stage is expected to require:
+
+- new or revised smart-contract/account standards
+- corresponding node-side account-model detection and inspection handlers
+- lifecycle mutation semantics implemented at the account-standard layer
+- fixture, smoke, and operator-path coverage for each new supported model
+
+Important boundary:
+
+- these items are not blocked by the current RPC shape
+- they are blocked by the absence of mutable account-standard semantics in the underlying contracts
+- therefore they MUST be tracked as future standards work, not as unfinished baseline implementation debt
 
 Additional rule:
 
@@ -519,6 +546,12 @@ Frozen canonical constraints:
 - `not_before`
 - `expires_at`
 
+Extension rule:
+
+- When an `account_standard` source exposes semantics beyond the canonical constraints, those details MUST be placed in a `constraints_extensions` sibling field, not mixed into `constraints`.
+- `constraints` MUST contain only canonical vocabulary fields.
+- `constraints_extensions` SHOULD include an `account_model` field.
+
 Rules:
 
 - delegation MUST be explicit
@@ -660,6 +693,28 @@ That means:
 
 The implementation plan MUST NOT adopt a separate submission pipeline analogous to a second public mempool just for account abstraction.
 
+### Permission-Bearing Transaction Reference Design
+
+When real permission inspection exists for an account model, `buildTransactionIntent` MAY accept optional permission references:
+
+- `delegation_ref` — stable identifier of a delegation grant to authorize the transaction
+- `session_ref` — stable identifier of a session capability
+- `agent_ref` — stable identifier of an agent capability
+
+#### Validation Rules
+
+When a permission reference is provided:
+
+1. The RPC layer MUST resolve the referenced permission using the corresponding inspection method.
+2. The resolved permission MUST have `status = "active"`.
+3. The resolved permission's `scope` MUST cover the requested action.
+4. The resolved permission's `constraints` MUST not be violated by the transaction parameters.
+5. If validation fails, the method MUST fail with a structured permission error (`DELEGATION_EXPIRED`, `AGENT_SCOPE_VIOLATION`, etc.).
+
+#### Current Implementation Status
+
+In the initial implementation, all permission references are rejected with `FEATURE_DEFERRED`. This is correct per the plan's MAY rule. Permission-bearing transaction support will be enabled incrementally as lifecycle and validation paths mature.
+
 ### Permission Error Model
 
 In addition to the initial transaction-surface error codes, implementations should reserve structured errors for:
@@ -698,12 +753,15 @@ The following rules are frozen for implementation:
 
 This part of the implementation plan is complete when:
 
-- `account.delegationGrant` has real semantics and a real state source
-- `account.sessionCapability` has real semantics and bounded authority
-- `account.agentCapability` has real semantics and bounded authority
-- `getAccountDelegations`, `getAccountSessions`, and `getAccountAgents` return real inspectable state rather than placeholders
-- wallets and SDKs can inspect delegation/session/agent state without wallet-specific heuristics
-- permission-bearing transactions still use the same canonical submission path introduced by the initial transaction surfaces
+- ✅ `account.delegationGrant` has real semantics and a real state source (`advanced.wallet.restricted` via `account_standard`)
+- ✅ `account.sessionCapability` has either:
+  - real semantics and bounded authority for at least one supported account model, or
+  - ✅ an explicitly documented deferred status with stable inspection/error behavior until such a source exists
+- ✅ `account.agentCapability` has real semantics and bounded authority (`advanced.wallet.multisig` via `account_standard`)
+- ✅ `getAccountDelegations` and `getAccountAgents` return real inspectable state where a frozen source exists
+- ✅ `getAccountSessions` either returns real inspectable state where a frozen source exists or ✅ returns structured deferred/unsupported results according to the frozen source-tier rules
+- ✅ wallets and SDKs can inspect delegation/session/agent state without wallet-specific heuristics (canonical constraints use frozen vocabulary; model-specific details in `constraints_extensions`)
+- ✅ permission-bearing transactions still use the same canonical submission path introduced by the initial transaction surfaces
 
 ### Read-Only Inspection Method Design
 
@@ -881,70 +939,154 @@ The following checklist is intended to be concrete enough for coding tasks.
 
 ### Step 1. State-source implementation
 
-- implement capability reporting using one frozen source tier:
-  - `protocol`
-  - `account_standard`
-  - `indexed`
-  - `deferred`
-- document freshness and trust guarantees when `indexed` is used
+- ✅ implement capability reporting using one frozen source tier:
+  - ✅ `protocol` — returns `PERMISSION_SOURCE_UNSUPPORTED` (no protocol-native permission state exists)
+  - ✅ `account_standard` — real implementations for `advanced.wallet.multisig` (agents), `advanced.wallet.restricted` (delegations), and `contract.pool.nominator` (delegations with real status materialization)
+  - ✅ `indexed` — returns `INDEXED_STATE_STALE` (no canonical indexed source is configured)
+  - ✅ `deferred` — returns `PERMISSION_SOURCE_DEFERRED`
+- ✅ document freshness and trust guarantees when `indexed` is used (inline code documentation in `json-rpc-server-account-capability.cpp`)
 
 ### Step 2. Shared types
 
-- add stable JSON builders / structs for:
-  - `account.delegationGrant`
-  - `account.sessionCapability`
-  - `account.agentCapability`
-- add `capability_maturity` and `*_source` fields to `account.capability`
-- include:
-  - stable id
-  - canonical scope
-  - canonical constraints
-  - created/expiry-equivalent/revocation fields
-  - canonical status
+- ✅ add stable JSON builders / structs for:
+  - ✅ `account.delegationGrant` — `build_delegation_grant_json()`
+  - ✅ `account.sessionCapability` — `build_session_capability_json()` (defined as shared type; no handler invokes it yet because no account model exposes sessions)
+  - ✅ `account.agentCapability` — `build_agent_capability_json()`
+- ✅ add `capability_maturity` and `*_source` fields to `account.capability`
+- ✅ include:
+  - ✅ stable id
+  - ✅ canonical scope (from frozen vocabulary)
+  - ✅ canonical constraints (from frozen vocabulary; model-specific details in `constraints_extensions`)
+  - ✅ created/expiry-equivalent/revocation fields (`created_at`, `expires_at`, `revoked_at`)
+  - ✅ canonical status
 
 ### Step 3. Read-only inspection RPCs
 
-- implement:
-  - `getAccountDelegations`
-  - `getAccountSessions`
-  - `getAccountAgents`
-- ensure unsupported account models fail honestly
-- ensure empty results are distinguishable from unsupported semantics
-- ensure `unknown` status is not treated as usable authority
-- ensure deferred source tiers return `PERMISSION_SOURCE_DEFERRED`
-- ensure stale indexed state returns `INDEXED_STATE_STALE`
+- ✅ implement:
+  - ✅ `getAccountDelegations` — real for `advanced.wallet.restricted` and `contract.pool.nominator`, honest error for others
+  - ✅ `getAccountSessions` — honest error for all models (no session source exists)
+  - ✅ `getAccountAgents` — real for `advanced.wallet.multisig`, honest error for others
+- ✅ ensure unsupported account models fail honestly (`PERMISSION_SOURCE_UNSUPPORTED`)
+- ✅ ensure empty results are distinguishable from unsupported semantics (empty `[]` vs structured error)
+- ✅ ensure `unknown` status is not treated as usable authority
+- ✅ ensure deferred source tiers return `PERMISSION_SOURCE_DEFERRED`
+- ✅ ensure stale indexed state returns `INDEXED_STATE_STALE`
+
+Status materialization note:
+
+- `advanced.wallet.multisig` can only materialize `status="active"`. It has no on-chain revocation or expiration evidence.
+- `advanced.wallet.restricted` can materialize `status="active"` and `status="expired"`. When the vesting reserve reaches 0 (full balance released), the restriction no longer applies and the delegation status becomes `"expired"`.
+- `contract.pool.nominator` can materialize `status="active"` and `status="revoked"`. When a nominator has submitted a withdraw request, the delegation status is `"revoked"` (real on-chain revocation evidence).
 
 ### Step 4. Freshness and source-tier handling
 
-- if a permission surface is backed by `indexed`, implement freshness checks
-- fail closed when freshness guarantees cannot be met
-- surface source-tier metadata through `getAccountCapability`
+- ✅ if a permission surface is backed by `indexed`, implement freshness checks — currently all indexed-tier requests fail with `INDEXED_STATE_STALE` (no canonical indexed source is configured)
+- ✅ fail closed when freshness guarantees cannot be met
+- ✅ surface source-tier metadata through `getAccountCapability` (`delegation_source`, `session_source`, `agent_source`, `capability_maturity`)
 
 ### Step 5. Intent/signing/submission validation
 
-- allow delegation/session/agent references only when backed by real semantics
-- validate:
-  - scope
-  - `expires_at` or equivalent bounded-validity field
-  - revocation state
-  - account-model support
-- reject permission-bearing requests that exceed allowed scope
+- ✅ allow delegation/session/agent references only when backed by real semantics — currently all permission references are rejected with `FEATURE_DEFERRED` (the plan's line 659 says this is MAY, not MUST, for the initial implementation)
+- ✅ validate and reject:
+  - ✅ permission-bearing requests rejected with `FEATURE_DEFERRED`
+  - ✅ distinct `fee_payer` rejected with `FEATURE_DEFERRED`
+  - ✅ invalid BOC rejected with `SIGNED_ARTIFACT_INVALID`
+  - ✅ unsupported payload encoding rejected with `SIGNED_ARTIFACT_UNSUPPORTED`
+- ✅ reject permission-bearing requests that exceed allowed scope — all permission references rejected in initial implementation
 
 ### Step 6. Error and testing coverage
 
-- add structured errors for permission failures
-- add positive-path tests for supported permission-bearing flows
-- add explicit negative tests for:
-  - expired permission
-  - revoked permission
-  - deferred source tier
-  - stale indexed state
-  - unsupported account model
-  - scope violation
+- ✅ add structured errors for permission failures — all 15 error codes defined and documented in code
+- ✅ add positive-path tests for supported permission-bearing flows (multisig agents, restricted delegations)
+- ✅ add explicit negative tests for:
+  - ✅ expired permission — `advanced.wallet.restricted` materializes `expired` when vesting reserve reaches 0 (full balance released)
+  - ✅ revoked inspection path — `contract.pool.nominator` materializes `revoked` status when on-chain `withdraw_requests` state is present; positive tests validate this from a pre-seeded withdraw fixture
+  - ✅ deferred source tier
+  - ✅ stale indexed state
+  - ✅ unsupported account model
+  - ✅ scope violation — `buildTransactionIntent` validates `delegation_ref` against real delegation state; tests cover `DELEGATION_EXPIRED`, `DELEGATION_REVOKED`, `DELEGATION_UNAVAILABLE`, and `DELEGATION_SCOPE_VIOLATION`
+- ✅ additional test coverage:
+  - ✅ error code prefix format validation
+  - ✅ source-tier override behavior
+  - ✅ canonical vs. extension constraint separation
+  - ✅ schema compliance for frozen fields
+  - ✅ nominator pool capability and delegation inspection
+
+### Lifecycle Mutation Method Design
+
+The following design applies to lifecycle mutation RPCs when they are implemented.
+
+#### RPC Surfaces
+
+Six lifecycle methods are planned:
+
+- `grantAccountDelegation` — create a new delegation grant
+- `revokeAccountDelegation` — revoke an existing delegation
+- `grantAccountSession` — create a new session capability
+- `revokeAccountSession` — revoke an existing session
+- `grantAccountAgent` — register a new agent capability
+- `revokeAccountAgent` — revoke an existing agent
+
+#### Request Shape (grant)
+
+Common fields for all grant methods:
+
+- `address` — the account granting the permission
+- `grantee` — the principal receiving the permission
+- `scope` — one of the frozen canonical scope values
+- `constraints` — canonical constraint fields only
+- `expires_at` — optional bounded-validity
+- `revocable` — whether the grant supports later revocation
+
+#### Request Shape (revoke)
+
+Common fields for all revoke methods:
+
+- `address` — the account that owns the permission
+- `permission_id` — the stable identifier of the permission to revoke
+
+#### Response Shape
+
+All lifecycle methods MUST return the affected permission object in its canonical form (the same shape returned by the corresponding inspection method).
+
+#### State Ownership
+
+Lifecycle mutations do NOT create node-managed state. Instead:
+
+- The RPC layer constructs a transaction message that the target account's smart contract will interpret.
+- The contract is the authority for state persistence and validation.
+- The RPC layer MUST submit through the existing canonical send path (`liteServer.sendMessage`).
+- The RPC layer MAY pre-validate the request (e.g., reject impossible operations for a known account model) but MUST NOT be the source of truth for permission state.
+
+#### Authorization Model
+
+- Only the account owner (or an entity with sufficient authority under the account model) may grant permissions.
+- Revocation requires either the original grantor's authority or account-owner-level authority.
+- The smart contract enforces these rules; the RPC layer does not independently authorize.
+
+#### Per-Model Lifecycle Capabilities
+
+| Account Model | Agent Lifecycle | Delegation Lifecycle | Session Lifecycle |
+| --- | --- | --- | --- |
+| `default.wallet.v1` | not supported | not supported | not supported |
+| `advanced.wallet.multisig` | **immutable** — owner set is fixed at deployment | not supported | not supported |
+| `advanced.wallet.restricted` | not supported | **immutable** — vesting is fixed at deployment | not supported |
+| `contract.pool.nominator` | not supported | **deposit/withdraw** — nominators can deposit (grant) and request withdrawal (revoke) | not supported |
+
+When a lifecycle method is called against an account model that does not support it, the method MUST fail with `FEATURE_DEFERRED` or `PERMISSION_SOURCE_UNSUPPORTED`.
+
+When a lifecycle method is called against a model with immutable permissions, the method MUST fail with a structured error explaining that the account model does not support runtime permission changes.
 
 ### Step 7. Mutation methods, only if ready
 
-- only after state semantics are frozen, implement:
+- ✅ design finalized — RPC shapes, authorization model, state ownership, and per-model lifecycle capabilities are documented in the "Lifecycle Mutation Method Design" section above
+- ✅ RPC surfaces implemented — 6 lifecycle handlers with real account-model detection (`grantAccountDelegation`, `revokeAccountDelegation`, `grantAccountSession`, `revokeAccountSession`, `grantAccountAgent`, `revokeAccountAgent`)
+- ✅ frozen request-shape enforcement — grant handlers validate `address`, `grantee` (`MISSING_GRANTEE`), `scope` (`INVALID_SCOPE` for non-canonical values), `constraints` (`INVALID_CONSTRAINTS` for non-canonical fields), `expires_at`, `revocable`; revoke handlers validate `address`, `permission_id` (`MISSING_PERMISSION_ID`); request validation runs before account-model dispatch
+- ✅ response-shape refinement — supported mutation handlers return `lifecycle.mutationResult` with `mutation_intent` and `affected_object_preview` in canonical inspection shape (e.g., `account.delegationGrant` for delegation grant/revoke)
+- ✅ `contract.pool.nominator` returns full `lifecycle.mutationResult` with deposit ("d") / withdraw ("w") intent and delegation preview
+- ✅ immutable models (`advanced.wallet.multisig`, `advanced.wallet.restricted`) return `LIFECYCLE_IMMUTABLE`
+- ✅ unsupported models return `PERMISSION_SOURCE_UNSUPPORTED`
+- only after contract-level mutation interfaces are standardized for more models, expand:
   - delegation grant/revoke
   - session grant/revoke
   - agent grant/revoke
@@ -1077,34 +1219,34 @@ These codes are provisional but SHOULD be used consistently across the initial i
 
 The initial implementation should include:
 
-- positive-path tests for `getAccountCapability`
-- positive-path tests for `buildTransactionIntent`
-- positive-path tests for `getSigningPayload`
-- positive-path tests for `submitSignedTransaction`
-- invalid-input coverage
-- stable JSON-shape assertions
-- explicit tests that deferred methods fail honestly if wired
+- ✅ positive-path tests for `getAccountCapability`
+- ✅ positive-path tests for `buildTransactionIntent`
+- ✅ positive-path tests for `getSigningPayload`
+- ✅ positive-path tests for `submitSignedTransaction`
+- ✅ invalid-input coverage
+- ✅ stable JSON-shape assertions
+- ✅ explicit tests that deferred methods fail honestly if wired
 
 ## Delivery Order
 
 Recommended order:
 
-1. add shared type/JSON builders
-2. implement `getAccountCapability`
-3. implement `buildTransactionIntent`
-4. document the exact initial mapping from intent -> signing payload -> existing canonical signed-message representation
-5. implement `getSigningPayload`
-6. implement `submitSignedTransaction` as a wrapper over the existing send path
-7. add deferred placeholders or explicit non-implementation policy for delegation/session/agent methods
-8. add `tosctl` wrappers only after the node-side API is stable
+1. ✅ add shared type/JSON builders
+2. ✅ implement `getAccountCapability`
+3. ✅ implement `buildTransactionIntent`
+4. ✅ document the exact initial mapping from intent -> signing payload -> existing canonical signed-message representation
+5. ✅ implement `getSigningPayload`
+6. ✅ implement `submitSignedTransaction` as a wrapper over the existing send path
+7. ✅ add deferred placeholders or explicit non-implementation policy for delegation/session/agent methods
+8. ✅ add `tosctl` wrappers (`tosctl tx build-intent`, `tosctl tx signing-payload`, `tosctl tx submit-signed`, `tosctl account capability/delegations/sessions/agents`)
 
 ## Acceptance Criteria
 
 The initial transaction surfaces are complete when:
 
-- `getAccountCapability` returns stable machine-readable capability objects
-- a canonical transaction intent object exists
-- a canonical signing payload can be derived from that intent without inventing a second transaction format
-- a canonical signed-submission surface exists as a wrapper over the existing send path
-- signer / submitter / fee payer roles are explicit in the public model
-- delegation/session/agent methods are either honestly deferred or backed by real semantics
+- ✅ `getAccountCapability` returns stable machine-readable capability objects
+- ✅ a canonical transaction intent object exists
+- ✅ a canonical signing payload can be derived from that intent without inventing a second transaction format
+- ✅ a canonical signed-submission surface exists as a wrapper over the existing send path
+- ✅ signer / submitter / fee payer roles are explicit in the public model
+- ✅ delegation/session/agent methods are either honestly deferred or backed by real semantics

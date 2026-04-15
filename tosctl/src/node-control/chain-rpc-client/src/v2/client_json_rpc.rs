@@ -10,7 +10,9 @@ use crate::v2::data_models::{
     AccountAgentCapability, AccountCapabilityRes, AccountDelegationGrant, AccountSessionCapability,
     GetAddressInformationRes, GetBlockTransactionsRes, GetExtendedAddressInformationRes,
     GetMasterchainInfoRes, GetShardsRes, GetTransactionsRes, GetWalletInformationRes,
-    RunGetMethodParams, RunGetMethodRes,
+    LifecycleGrantRequest, LifecycleMutationResultRes, LifecycleRevokeRequest,
+    RunGetMethodParams, RunGetMethodRes, SigningPayloadRes, SubmissionResultRes,
+    TransactionIntentRes,
 };
 use anyhow::Context;
 use base64::Engine;
@@ -408,6 +410,136 @@ impl ClientJsonRpc {
             )
             .await
             .context("getBlockTransactions")?;
+        Ok(serde_json::from_value(res)?)
+    }
+
+    // ─── Transaction surface methods ────────────────────────────────
+
+    pub async fn build_transaction_intent(
+        &self,
+        address: &str,
+        body: &str,
+        init_code: Option<&str>,
+        init_data: Option<&str>,
+    ) -> anyhow::Result<TransactionIntentRes> {
+        let mut json_params = serde_json::json!({
+            "address": address,
+            "body": body,
+        });
+        if let Some(code) = init_code {
+            json_params["init_code"] = serde_json::json!(code);
+        }
+        if let Some(data) = init_data {
+            json_params["init_data"] = serde_json::json!(data);
+        }
+        let res = self
+            .json_rpc("buildTransactionIntent", json_params)
+            .await
+            .context("buildTransactionIntent")?;
+        Ok(serde_json::from_value(res)?)
+    }
+
+    pub async fn get_signing_payload(
+        &self,
+        address: &str,
+        body: &str,
+        init_code: Option<&str>,
+        init_data: Option<&str>,
+    ) -> anyhow::Result<SigningPayloadRes> {
+        let mut json_params = serde_json::json!({
+            "address": address,
+            "body": body,
+        });
+        if let Some(code) = init_code {
+            json_params["init_code"] = serde_json::json!(code);
+        }
+        if let Some(data) = init_data {
+            json_params["init_data"] = serde_json::json!(data);
+        }
+        let res = self
+            .json_rpc("getSigningPayload", json_params)
+            .await
+            .context("getSigningPayload")?;
+        Ok(serde_json::from_value(res)?)
+    }
+
+    pub async fn submit_signed_transaction(
+        &self,
+        boc: &str,
+        signer: Option<&str>,
+    ) -> anyhow::Result<SubmissionResultRes> {
+        let mut json_params = serde_json::json!({
+            "boc": boc,
+        });
+        if let Some(s) = signer {
+            json_params["signer"] = serde_json::json!(s);
+        }
+        let res = self
+            .json_rpc("submitSignedTransaction", json_params)
+            .await
+            .context("submitSignedTransaction")?;
+        Ok(serde_json::from_value(res)?)
+    }
+
+    // ─── Lifecycle mutation methods ────────────────────────────────────
+
+    pub async fn grant_account_delegation(
+        &self,
+        req: &LifecycleGrantRequest,
+    ) -> anyhow::Result<LifecycleMutationResultRes> {
+        let json_params = serde_json::to_value(req)?;
+        let res = self.json_rpc("grantAccountDelegation", json_params).await
+            .context("grantAccountDelegation")?;
+        Ok(serde_json::from_value(res)?)
+    }
+
+    pub async fn revoke_account_delegation(
+        &self,
+        req: &LifecycleRevokeRequest,
+    ) -> anyhow::Result<LifecycleMutationResultRes> {
+        let json_params = serde_json::to_value(req)?;
+        let res = self.json_rpc("revokeAccountDelegation", json_params).await
+            .context("revokeAccountDelegation")?;
+        Ok(serde_json::from_value(res)?)
+    }
+
+    pub async fn grant_account_session(
+        &self,
+        req: &LifecycleGrantRequest,
+    ) -> anyhow::Result<LifecycleMutationResultRes> {
+        let json_params = serde_json::to_value(req)?;
+        let res = self.json_rpc("grantAccountSession", json_params).await
+            .context("grantAccountSession")?;
+        Ok(serde_json::from_value(res)?)
+    }
+
+    pub async fn revoke_account_session(
+        &self,
+        req: &LifecycleRevokeRequest,
+    ) -> anyhow::Result<LifecycleMutationResultRes> {
+        let json_params = serde_json::to_value(req)?;
+        let res = self.json_rpc("revokeAccountSession", json_params).await
+            .context("revokeAccountSession")?;
+        Ok(serde_json::from_value(res)?)
+    }
+
+    pub async fn grant_account_agent(
+        &self,
+        req: &LifecycleGrantRequest,
+    ) -> anyhow::Result<LifecycleMutationResultRes> {
+        let json_params = serde_json::to_value(req)?;
+        let res = self.json_rpc("grantAccountAgent", json_params).await
+            .context("grantAccountAgent")?;
+        Ok(serde_json::from_value(res)?)
+    }
+
+    pub async fn revoke_account_agent(
+        &self,
+        req: &LifecycleRevokeRequest,
+    ) -> anyhow::Result<LifecycleMutationResultRes> {
+        let json_params = serde_json::to_value(req)?;
+        let res = self.json_rpc("revokeAccountAgent", json_params).await
+            .context("revokeAccountAgent")?;
         Ok(serde_json::from_value(res)?)
     }
 

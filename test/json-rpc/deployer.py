@@ -8,6 +8,7 @@ scripts + the JSON-RPC ``sendBoc`` endpoint — no lite-client needed.
 import base64
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import time
@@ -80,6 +81,42 @@ def wait_active(endpoint: str, address: str, timeout: int = 30) -> bool:
             return True
         time.sleep(0.5)
     return False
+
+
+def _read_cache() -> dict:
+    if not CACHE_FILE.exists():
+        return {}
+    return json.loads(CACHE_FILE.read_text())
+
+
+def _is_success_entry(entry: object) -> bool:
+    return isinstance(entry, dict) and bool(entry.get("address"))
+
+
+def _merge_category_results(previous: dict, current: dict) -> dict:
+    merged = {}
+    for key in set(previous.keys()) | set(current.keys()):
+        cur = current.get(key)
+        prev = previous.get(key)
+        if _is_success_entry(cur):
+            merged[key] = cur
+        elif cur is None and prev is not None:
+            merged[key] = prev
+        elif not _is_success_entry(cur) and _is_success_entry(prev):
+            # Preserve last known-good address instead of overwriting it with None/error.
+            # Attach the latest deployment error for visibility.
+            merged[key] = dict(prev)
+            if isinstance(cur, dict) and cur.get("error"):
+                merged[key]["last_deploy_error"] = cur["error"]
+        else:
+            merged[key] = cur if cur is not None else prev
+    return merged
+
+
+def _write_cache_atomic(data: dict) -> None:
+    tmp_path = CACHE_FILE.with_suffix(".json.tmp")
+    tmp_path.write_text(json.dumps(data, indent=2))
+    tmp_path.replace(CACHE_FILE)
 
 
 # ── Main wallet transfer ─────────────────────────────────────────────────
@@ -469,6 +506,51 @@ def deploy_all_wallets(endpoint: str) -> dict:
     except Exception as e:
         print(f"  FAILED: {e}")
         results["multisig"] = {"address": None, "code_hash": None, "error": str(e)}
+
+    print("Deploying restricted wallet...")
+    try:
+        info = deploy_restricted_wallet(endpoint, dest_wc=0)
+        results["restricted"] = info
+        print(f"  -> {info['address']}  (code_hash={info['code_hash'][:16]}...)")
+    except Exception as e:
+        print(f"  FAILED: {e}")
+        results["restricted"] = {"address": None, "code_hash": None, "error": str(e)}
+
+    print("Deploying restricted wallet (expired)...")
+    try:
+        info = deploy_restricted_wallet_expired(endpoint, dest_wc=0)
+        results["restricted_expired"] = info
+        print(f"  -> {info['address']}  (code_hash={info['code_hash'][:16]}...)")
+    except Exception as e:
+        print(f"  FAILED: {e}")
+        results["restricted_expired"] = {"address": None, "code_hash": None, "error": str(e)}
+
+    print("Deploying nominator pool...")
+    try:
+        info = deploy_nominator_pool(endpoint, dest_wc=0)
+        results["nominator_pool"] = info
+        print(f"  -> {info['address']}  (code_hash={info['code_hash'][:16]}...)")
+    except Exception as e:
+        print(f"  FAILED: {e}")
+        results["nominator_pool"] = {"address": None, "code_hash": None, "error": str(e)}
+
+    print("Deploying nominator pool (with withdraw request)...")
+    try:
+        info = deploy_nominator_pool_with_withdraw(endpoint, dest_wc=0)
+        results["nominator_pool_withdraw"] = info
+        print(f"  -> {info['address']}  (code_hash={info['code_hash'][:16]}...)")
+    except Exception as e:
+        print(f"  FAILED: {e}")
+        results["nominator_pool_withdraw"] = {"address": None, "code_hash": None, "error": str(e)}
+
+    print("Deploying session wallet...")
+    try:
+        info = deploy_session_wallet(endpoint, dest_wc=0)
+        results["session_wallet"] = info
+        print(f"  -> {info['address']}  (code_hash={info['code_hash'][:16]}...)")
+    except Exception as e:
+        print(f"  FAILED: {e}")
+        results["session_wallet"] = {"address": None, "code_hash": None, "error": str(e)}
     return results
 
 
@@ -505,12 +587,12 @@ def deploy_generic_contract(
 ) -> dict:
     """Deploy an arbitrary contract given code and data as Fift expressions."""
     working_dir = Path(tempfile.mkdtemp(prefix="tos_contract_"))
-    import shutil
     shutil.copy(str(MAIN_WALLET_PK), str(working_dir / "main-wallet.pk"))
 
     # Copy compiled BOC files for code references
     for boc in ["/tmp/jetton-minter-code.boc", "/tmp/jetton-wallet-code.boc",
-                "/tmp/nft-collection-code.boc", "/tmp/nft-item-code.boc"]:
+                "/tmp/nft-collection-code.boc", "/tmp/nft-item-code.boc",
+                "/tmp/pool-code.boc"]:
         if os.path.exists(boc):
             shutil.copy(boc, str(working_dir / os.path.basename(boc)))
 
@@ -641,6 +723,318 @@ b>""".format(
     return info
 
 
+def deploy_restricted_wallet(
+    endpoint: str,
+    dest_wc: int = 0,
+    amount_nano: int = 1_000_000_000,
+    start_at: int = 0,
+    reserve_amount: int = 500_000_000,  # 0.5 TOS in nanotomi
+) -> dict:
+    """
+    Deploy a restricted wallet v3 in already-initialized state.
+
+    Builds the data cell with seqno=1 (post-init), a generated public key,
+    start_at, and a single-entry vesting dict reserving *reserve_amount*.
+
+    Returns {"address": ..., "code_hash": ..., "start_at": ..., "reserve_amount": ...}.
+    """
+    # Build data cell via Fift.
+    # After initialization the restricted-wallet3 data layout is:
+    #   seqno(32) + subwallet_id(32) + public_key(256) + start_at(32) + rdict
+    # The vesting dict maps int32 elapsed-seconds -> Tomi-encoded reserve.
+    data_fift = f"""\
+"restricted-test" load-generate-keypair constant rw_pk constant rw_pub
+{{ <b rot Tomi, swap rot 32 b>idict! not abort"cannot add value" }} : rdict-entry
+dictnew
+{reserve_amount} 0 rdict-entry
+constant rdict
+<b
+  1 32 u,
+  0 32 u,
+  rw_pub 256 B>u@ 256 u,
+  {start_at} 32 u,
+  rdict dict,
+b>"""
+
+    info = deploy_generic_contract(
+        endpoint,
+        code_fift='"auto/restricted-wallet3-code.fif" include',
+        data_fift=data_fift,
+        dest_wc=dest_wc,
+        amount_nano=amount_nano,
+    )
+
+    info["start_at"] = start_at
+    info["reserve_amount"] = reserve_amount
+    return info
+
+
+def deploy_restricted_wallet_expired(
+    endpoint: str,
+    dest_wc: int = 0,
+    amount_nano: int = 1_000_000_000,
+    start_at: int = 0,
+) -> dict:
+    """
+    Deploy a restricted wallet v3 with fully-elapsed vesting (reserve == 0).
+
+    The single vesting dict entry has time offset 0 and reserve amount 0,
+    meaning the restriction is fully released from the start. The delegation
+    status should materialize as "expired".
+
+    Returns {"address": ..., "code_hash": ..., "start_at": ..., "reserve_amount": 0}.
+    """
+    data_fift = f"""\
+"restricted-expired" load-generate-keypair constant rw_pk constant rw_pub
+{{ <b rot Tomi, swap rot 32 b>idict! not abort"cannot add value" }} : rdict-entry
+dictnew
+0 0 rdict-entry
+constant rdict
+<b
+  1 32 u,
+  0 32 u,
+  rw_pub 256 B>u@ 256 u,
+  {start_at} 32 u,
+  rdict dict,
+b>"""
+
+    info = deploy_generic_contract(
+        endpoint,
+        code_fift='"auto/restricted-wallet3-code.fif" include',
+        data_fift=data_fift,
+        dest_wc=dest_wc,
+        amount_nano=amount_nano,
+    )
+
+    info["start_at"] = start_at
+    info["reserve_amount"] = 0
+    return info
+
+
+# ── Nominator pool deployment ───────────────────────────────────────────
+
+POOL_SRC = TOS_ROOT / "crypto/smartcont/nominator-pool"
+_POOL_FIF = Path("/tmp/pool.fif")
+_POOL_BOC = Path("/tmp/pool-code.boc")
+
+
+def _ensure_pool_compiled() -> None:
+    """Compile the nominator pool FunC source into a Fift include and then a BOC."""
+    if not _POOL_FIF.exists():
+        result = subprocess.run(
+            [str(FUNC_EXE), "-SPA", "-o", str(_POOL_FIF), "pool.fc"],
+            cwd=str(POOL_SRC),
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"func compile failed: {result.stderr}")
+
+    if not _POOL_BOC.exists():
+        fift_script = """\
+"TosUtil.fif" include
+"Asm.fif" include
+"%s" include
+2 boc+>B "%s" B>file
+""" % (str(_POOL_FIF), str(_POOL_BOC))
+        run_fift(fift_script)
+
+
+def deploy_nominator_pool(
+    endpoint: str,
+    dest_wc: int = 0,
+    amount_nano: int = 2_000_000_000,
+    validator_reward_share: int = 4000,   # 40%
+    max_nominators: int = 40,
+    min_validator_stake: int = 1_000_000_000,
+    min_nominator_stake: int = 100_000_000,
+) -> dict:
+    """
+    Deploy a nominator pool with one pre-seeded nominator in the dictionary.
+
+    The pre-seeded nominator uses a deterministic address so the delegation
+    inspection test can verify list output even without sending a real deposit.
+
+    Returns {"address": ..., "code_hash": ..., "nominators_count": 1,
+             "validator_reward_share": ..., "max_nominators": ...,
+             "min_validator_stake": ..., "min_nominator_stake": ...}.
+    """
+    _ensure_pool_compiled()
+
+    # Build data cell.
+    # Storage layout (from pool.fc save_data):
+    #   state(8) + nominators_count(16) + stake_amount_sent(Grams) +
+    #   validator_amount(Grams) + config(ref) + nominators(dict) +
+    #   withdraw_requests(dict) + stake_at(32) + saved_validator_set_hash(256) +
+    #   validator_set_changes_count(8) + validator_set_change_time(32) +
+    #   stake_held_for(32) + config_proposal_votings(dict)
+    #
+    # Config cell:
+    #   validator_address(256) + validator_reward_share(16) +
+    #   max_nominators_count(16) + min_validator_stake(Grams) +
+    #   min_nominator_stake(Grams)
+    #
+    # Nominator dict: udict keyed by 256-bit address, value = coins(amount) +
+    #   coins(pending_deposit_amount).
+
+    # Pre-seed one nominator so delegation inspection has data to return.
+    # Use a deterministic address (0xABCD...0001) with 1 TOS staked.
+    nominator_addr_hex = "ABCD" + "0" * 59 + "1"
+    nominator_amount = 1_000_000_000  # 1 TOS in nanotomi
+
+    data_fift = f"""\
+// Build nominators dict with one pre-seeded entry
+dictnew
+<b {nominator_amount} Tomi, 0 Tomi, b> <s
+0x{nominator_addr_hex} rot 256 udict! not abort"cannot seed nominator"
+constant nominators_dict
+
+<b
+  0 8 u,                             // state = 0 (idle/accepting deposits)
+  1 16 u,                            // nominators_count = 1
+  0 Tomi,                            // stake_amount_sent = 0
+  0 Tomi,                            // validator_amount = 0
+  <b                                  // config cell
+    0 256 u,                          // validator_address (zero hash = fake)
+    {validator_reward_share} 16 u,
+    {max_nominators} 16 u,
+    {min_validator_stake} Tomi,
+    {min_nominator_stake} Tomi,
+  b> ref,
+  nominators_dict dict,              // nominators (pre-seeded)
+  null dict,                         // withdraw_requests (empty)
+  0 32 u,                            // stake_at = 0
+  0 256 u,                           // saved_validator_set_hash = 0
+  0 8 u,                             // validator_set_changes_count = 0
+  0 32 u,                            // validator_set_change_time = 0
+  0 32 u,                            // stake_held_for = 0
+  null dict,                         // config_proposal_votings (empty)
+b>"""
+
+    code_fift = f'"{_POOL_BOC}" file>B B>boc'
+
+    info = deploy_generic_contract(
+        endpoint,
+        code_fift=code_fift,
+        data_fift=data_fift,
+        dest_wc=dest_wc,
+        amount_nano=amount_nano,
+    )
+
+    info["nominators_count"] = 1
+    info["validator_reward_share"] = validator_reward_share
+    info["max_nominators"] = max_nominators
+    info["min_validator_stake"] = min_validator_stake
+    info["min_nominator_stake"] = min_nominator_stake
+    return info
+
+
+def deploy_nominator_pool_with_withdraw(
+    endpoint: str,
+    dest_wc: int = 0,
+    amount_nano: int = 2_000_000_000,
+) -> dict:
+    """
+    Deploy a nominator pool with one nominator AND a withdraw request for that
+    nominator.  This creates the on-chain state that causes list_nominators()
+    to return withdraw_requested = -1 (true) for the pre-seeded address.
+
+    The withdraw_requests dict uses the same 256-bit address key as the
+    nominators dict.  The value is an empty cell (begin_cell() in FunC).
+    """
+    _ensure_pool_compiled()
+
+    nominator_addr_hex = "ABCD" + "0" * 59 + "2"  # different from the non-withdraw pool
+    nominator_amount = 1_000_000_000  # 1 TOS
+
+    data_fift = f"""\
+// Build nominators dict with one pre-seeded entry
+dictnew
+<b {nominator_amount} Tomi, 0 Tomi, b> <s
+0x{nominator_addr_hex} rot 256 udict! not abort"cannot seed nominator"
+constant nominators_dict
+
+// Build withdraw_requests dict with the SAME address (marks withdraw requested)
+dictnew
+<b b> <s
+0x{nominator_addr_hex} rot 256 udict! not abort"cannot seed withdraw request"
+constant withdraw_dict
+
+<b
+  0 8 u,                             // state = 0 (idle)
+  1 16 u,                            // nominators_count = 1
+  0 Tomi,                            // stake_amount_sent = 0
+  0 Tomi,                            // validator_amount = 0
+  <b
+    0 256 u,                          // validator_address (fake)
+    4000 16 u,
+    40 16 u,
+    1000000000 Tomi,
+    100000000 Tomi,
+  b> ref,
+  nominators_dict dict,              // nominators (pre-seeded)
+  withdraw_dict dict,                // withdraw_requests (pre-seeded!)
+  0 32 u,
+  0 256 u,
+  0 8 u,
+  0 32 u,
+  0 32 u,
+  null dict,
+b>"""
+
+    code_fift = f'"{_POOL_BOC}" file>B B>boc'
+
+    info = deploy_generic_contract(
+        endpoint,
+        code_fift=code_fift,
+        data_fift=data_fift,
+        dest_wc=dest_wc,
+        amount_nano=amount_nano,
+    )
+    info["nominators_count"] = 1
+    info["has_withdraw_request"] = True
+    return info
+
+
+# ── Session wallet deployment ──────────────────────────────────────────
+
+
+def deploy_session_wallet(
+    endpoint: str,
+    dest_wc: int = 0,
+    amount_nano: int = 500_000_000,
+) -> dict:
+    """Deploy a minimal session wallet with pre-seeded sessions.
+
+    Session entry format: principal(256) + scope(8) + created_at(32) +
+    expires_at(32) + revoked(1).
+
+    Two sessions are seeded:
+      1. Active, scope=1 (bounded_transfer), expires 2000000000, not revoked.
+      2. Revoked, scope=0 (submit_only), revoked=1.
+    """
+    principal1_hex = "A" * 64
+    principal2_hex = "B" * 64
+
+    data_fift = f"""\
+dictnew
+<b 0x{principal1_hex} 256 u, 1 8 u, 1000000 32 u, 2000000000 32 u, 0 1 u, b> <s
+1 rot 32 udict! not abort"cannot add session 1"
+<b 0x{principal2_hex} 256 u, 0 8 u, 1000000 32 u, 2000000000 32 u, 1 1 u, b> <s
+2 rot 32 udict! not abort"cannot add session 2"
+<b swap dict, b>"""
+
+    info = deploy_generic_contract(
+        endpoint,
+        code_fift='"auto/session-wallet-code.fif" include',
+        data_fift=data_fift,
+        dest_wc=dest_wc,
+        amount_nano=amount_nano,
+    )
+    info["session_count"] = 2
+    return info
+
+
 # ── Token deployment (Jetton + NFT) ─────────────────────────────────────
 
 JETTON_MINTER_SRC = TOS_ROOT / "crypto/func/auto-tests/legacy_tests/jetton-minter"
@@ -726,7 +1120,7 @@ def deploy_all_tokens(endpoint: str) -> dict:
     results = {}
 
     # Use the first deployed wallet as admin/owner
-    cache = json.loads(CACHE_FILE.read_text()) if CACHE_FILE.exists() else {}
+    cache = _read_cache()
     wallets = cache.get("wallets", {})
     admin_addr = None
     for w in wallets.values():
@@ -765,18 +1159,21 @@ CACHE_FILE = Path(__file__).parent / "deployed_addresses.json"
 def deploy_all(endpoint: str, force: bool = False) -> dict:
     """Deploy all test contracts, caching results to deployed_addresses.json."""
     if CACHE_FILE.exists() and not force:
-        return json.loads(CACHE_FILE.read_text())
+        return _read_cache()
 
+    previous = _read_cache()
     all_contracts = {}
 
     # 1. Wallets
-    all_contracts["wallets"] = deploy_all_wallets(endpoint)
+    wallets_result = deploy_all_wallets(endpoint)
+    all_contracts["wallets"] = _merge_category_results(previous.get("wallets", {}), wallets_result)
 
     # 2. Tokens (Jetton + NFT)
-    all_contracts["tokens"] = deploy_all_tokens(endpoint)
+    tokens_result = deploy_all_tokens(endpoint)
+    all_contracts["tokens"] = _merge_category_results(previous.get("tokens", {}), tokens_result)
 
-    # Save cache
-    CACHE_FILE.write_text(json.dumps(all_contracts, indent=2))
+    # Save cache without clobbering last-known-good fixtures with failed deploys.
+    _write_cache_atomic(all_contracts)
     print(f"\nSaved deployed addresses to {CACHE_FILE}")
     return all_contracts
 

@@ -249,6 +249,12 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     else if (path == "/getAccountDelegations")  rest_method = "getAccountDelegations";
     else if (path == "/getAccountSessions")     rest_method = "getAccountSessions";
     else if (path == "/getAccountAgents")       rest_method = "getAccountAgents";
+    else if (path == "/grantAccountDelegation")   rest_method = "grantAccountDelegation";
+    else if (path == "/revokeAccountDelegation")  rest_method = "revokeAccountDelegation";
+    else if (path == "/grantAccountSession")      rest_method = "grantAccountSession";
+    else if (path == "/revokeAccountSession")     rest_method = "revokeAccountSession";
+    else if (path == "/grantAccountAgent")        rest_method = "grantAccountAgent";
+    else if (path == "/revokeAccountAgent")       rest_method = "revokeAccountAgent";
     else if (path == "/getAddressBalance")      rest_method = "getAddressBalance";
     else if (path == "/getAddressState")        rest_method = "getAddressState";
     else if (path == "/getWalletInformation")   rest_method = "getWalletInformation";
@@ -342,7 +348,10 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
         "/runGetMethod", "/runGetMethodStd",
         "/sendBoc", "/sendBocReturnHash", "/sendBocReturnHashNoError",
         "/sendQuery", "/estimateFee",
-        "/buildTransactionIntent", "/getSigningPayload", "/submitSignedTransaction"
+        "/buildTransactionIntent", "/getSigningPayload", "/submitSignedTransaction",
+        "/grantAccountDelegation", "/revokeAccountDelegation",
+        "/grantAccountSession", "/revokeAccountSession",
+        "/grantAccountAgent", "/revokeAccountAgent"
     };
     if (post_rest_paths.count(post_path)) {
       std::string rest_method = post_path.substr(1);  // strip leading /
@@ -582,6 +591,18 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     handle_getAccountSessions(params, std::move(req_id), std::move(promise));
   } else if (method == "getAccountAgents") {
     handle_getAccountAgents(params, std::move(req_id), std::move(promise));
+  } else if (method == "grantAccountDelegation") {
+    handle_grantAccountDelegation(params, std::move(req_id), std::move(promise));
+  } else if (method == "revokeAccountDelegation") {
+    handle_revokeAccountDelegation(params, std::move(req_id), std::move(promise));
+  } else if (method == "grantAccountSession") {
+    handle_grantAccountSession(params, std::move(req_id), std::move(promise));
+  } else if (method == "revokeAccountSession") {
+    handle_revokeAccountSession(params, std::move(req_id), std::move(promise));
+  } else if (method == "grantAccountAgent") {
+    handle_grantAccountAgent(params, std::move(req_id), std::move(promise));
+  } else if (method == "revokeAccountAgent") {
+    handle_revokeAccountAgent(params, std::move(req_id), std::move(promise));
   } else if (method == "runGetMethod") {
     handle_runGetMethod(params, std::move(req_id), std::move(promise));
   } else if (method == "getWalletInformation") {
@@ -873,6 +894,9 @@ const std::set<std::string> &JsonRpcServer::cacheable_methods() {
       "getMasterchainInfo", "getConfigParam", "getConfigAll",
       "getAddressInformation", "getAccountCapability",
       "getAccountDelegations", "getAccountSessions", "getAccountAgents",
+      "grantAccountDelegation", "revokeAccountDelegation",
+      "grantAccountSession", "revokeAccountSession",
+      "grantAccountAgent", "revokeAccountAgent",
       "getWalletInformation", "getAddressBalance",
       "getAddressState", "getBlockHeader", "lookupBlock", "shards",
       "getConsensusBlock", "getOutMsgQueueSize"

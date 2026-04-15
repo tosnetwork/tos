@@ -31,6 +31,7 @@
 #include "vm/cellops.h"
 #include "block/check-proof.h"
 #include "block/mc-config.h"
+#include <array>
 #include <limits>
 
 namespace tos {
@@ -223,7 +224,31 @@ struct InitialIntentInput {
   std::string signer;
   std::string submitter;
   std::string fee_payer;
+  std::string delegation_ref;
 };
+
+static std::string extract_delegation_ref(td::JsonObject& obj) {
+  for (auto key : {"delegation_ref", "delegation", "delegation_grant"}) {
+    auto r = obj.get_optional_string_field(td::Slice{key});
+    if (r.is_ok() && !r.ok().empty()) {
+      return r.ok();
+    }
+  }
+  return "";
+}
+
+static bool has_non_delegation_permission_reference(td::JsonObject& obj) {
+  static const std::array<const char*, 5> keys = {
+      "session", "session_capability", "session_ref",
+      "agent", "agent_capability"
+  };
+  for (auto key : keys) {
+    if (obj.has_field(td::Slice{key})) {
+      return true;
+    }
+  }
+  return false;
+}
 
 static td::Result<std::string> get_required_address_alias(td::JsonObject &params) {
   auto from_r = params.get_optional_string_field("from");
@@ -256,9 +281,22 @@ static td::Result<td::Ref<vm::Cell>> parse_optional_boc_string(const std::string
 static td::Result<InitialIntentInput> parse_initial_intent_input(td::JsonObject &params) {
   InitialIntentInput out;
 
+  if (has_non_delegation_permission_reference(params)) {
+    return td::Status::Error(
+        "FEATURE_DEFERRED: session/agent references are not yet supported");
+  }
+  out.delegation_ref = extract_delegation_ref(params);
+
   auto intent_v = params.extract_field("intent");
   if (intent_v.type() == td::JsonValue::Type::Object) {
     auto &intent = intent_v.get_object();
+    if (has_non_delegation_permission_reference(intent)) {
+      return td::Status::Error(
+          "FEATURE_DEFERRED: session/agent references are not yet supported");
+    }
+    if (out.delegation_ref.empty()) {
+      out.delegation_ref = extract_delegation_ref(intent);
+    }
     auto from_r = get_required_address_alias(intent);
     if (from_r.is_error()) {
       return from_r.move_as_error();
@@ -336,6 +374,10 @@ static td::Result<InitialIntentInput> parse_initial_intent_input(td::JsonObject 
   if (out.fee_payer.empty()) out.fee_payer = out.address;
   if (out.account_model.empty()) out.account_model = "unknown";
   if (out.authorization_version.empty()) out.authorization_version = "unknown";
+  if (out.fee_payer != out.signer) {
+    return td::Status::Error(
+        "FEATURE_DEFERRED: distinct fee_payer semantics are not supported in the initial implementation");
+  }
   return out;
 }
 
@@ -353,24 +395,28 @@ static std::string build_authorization_roles_json(const std::string& signer,
 }
 
 static std::string build_transaction_intent_json(const InitialIntentInput& in) {
-  return PSTRING()
-      << "{\"@type\":\"transaction.intent\""
-      << ",\"from\":" << td::JsonString(td::Slice(in.address))
-      << ",\"account_model\":" << td::JsonString(td::Slice(in.account_model))
-      << ",\"authorization_version\":" << td::JsonString(td::Slice(in.authorization_version))
-      << ",\"action\":{\"@type\":\"transaction.action.externalMessage\""
-      << ",\"address\":" << td::JsonString(td::Slice(in.address))
-      << ",\"body\":" << td::JsonString(td::Slice(in.body_b64))
-      << ",\"init_code\":" << td::JsonString(td::Slice(in.init_code_b64))
-      << ",\"init_data\":" << td::JsonString(td::Slice(in.init_data_b64))
-      << "}"
-      << ",\"authorization_roles\":" << build_authorization_roles_json(in.signer, in.submitter, in.fee_payer)
-      << ",\"fee_intent\":{\"@type\":\"transaction.feeIntent\""
-      << ",\"mode\":" << td::JsonString(td::Slice(in.fee_payer == in.address ? "self_paid" : "third_party_requested"))
-      << "}"
-      << ",\"replay_protection\":{\"@type\":\"transaction.replayProtection\""
-      << ",\"mode\":\"contract_defined\"}"
-      << "}";
+  td::StringBuilder sb;
+  sb << "{\"@type\":\"transaction.intent\""
+     << ",\"from\":" << td::JsonString(td::Slice(in.address))
+     << ",\"account_model\":" << td::JsonString(td::Slice(in.account_model))
+     << ",\"authorization_version\":" << td::JsonString(td::Slice(in.authorization_version))
+     << ",\"action\":{\"@type\":\"transaction.action.externalMessage\""
+     << ",\"address\":" << td::JsonString(td::Slice(in.address))
+     << ",\"body\":" << td::JsonString(td::Slice(in.body_b64))
+     << ",\"init_code\":" << td::JsonString(td::Slice(in.init_code_b64))
+     << ",\"init_data\":" << td::JsonString(td::Slice(in.init_data_b64))
+     << "}"
+     << ",\"authorization_roles\":" << build_authorization_roles_json(in.signer, in.submitter, in.fee_payer)
+     << ",\"fee_intent\":{\"@type\":\"transaction.feeIntent\""
+     << ",\"mode\":" << td::JsonString(td::Slice(in.fee_payer == in.address ? "self_paid" : "third_party_requested"))
+     << "}"
+     << ",\"replay_protection\":{\"@type\":\"transaction.replayProtection\""
+     << ",\"mode\":\"contract_defined\"}";
+  if (!in.delegation_ref.empty()) {
+    sb << ",\"delegation_ref\":" << td::JsonString(td::Slice(in.delegation_ref));
+  }
+  sb << "}";
+  return sb.as_cslice().str();
 }
 
 static td::Result<td::Ref<vm::Cell>> build_external_message_cell(const InitialIntentInput& in) {
@@ -502,13 +548,36 @@ void JsonRpcServer::handle_buildTransactionIntent(td::JsonObject &params, std::s
         PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: " << input_r.error().message(), req_id));
     return;
   }
-  auto msg_r = build_external_message_cell(input_r.ok());
+  auto input = input_r.move_as_ok();
+
+  // If delegation_ref is present, validate it asynchronously
+  if (!input.delegation_ref.empty()) {
+    block::StdAddress addr;
+    if (!addr.parse_addr(td::Slice(input.address))) {
+      promise.set_value(make_json_error(-32602, "DELEGATION_UNAVAILABLE: invalid address", req_id));
+      return;
+    }
+    auto msg_r = build_external_message_cell(input);
+    if (msg_r.is_error()) {
+      promise.set_value(make_json_error(-32602,
+          PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: " << msg_r.error().message(), req_id));
+      return;
+    }
+    auto intent_json = build_transaction_intent_json(input);
+    validate_delegation_and_return_intent(
+        addr, input.address, input.delegation_ref,
+        std::move(intent_json), std::move(req_id), std::move(promise));
+    return;
+  }
+
+  // No delegation_ref — existing sync path
+  auto msg_r = build_external_message_cell(input);
   if (msg_r.is_error()) {
     promise.set_value(make_json_error(-32602,
         PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: " << msg_r.error().message(), req_id));
     return;
   }
-  promise.set_value(make_json_ok(build_transaction_intent_json(input_r.ok()), req_id));
+  promise.set_value(make_json_ok(build_transaction_intent_json(input), req_id));
 }
 
 void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string req_id,
@@ -519,7 +588,46 @@ void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string
         PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << input_r.error().message(), req_id));
     return;
   }
-  auto msg_r = build_external_message_cell(input_r.ok());
+  auto input = input_r.move_as_ok();
+
+  // If delegation_ref is present, validate it before building the signing payload.
+  // On success the delegation validation path builds and returns the signing payload
+  // using the same async chain as the non-delegation path below.
+  if (!input.delegation_ref.empty()) {
+    block::StdAddress addr;
+    if (!addr.parse_addr(td::Slice(input.address))) {
+      promise.set_value(make_json_error(-32602, "DELEGATION_UNAVAILABLE: invalid address", req_id));
+      return;
+    }
+    auto msg_r = build_external_message_cell(input);
+    if (msg_r.is_error()) {
+      promise.set_value(make_json_error(-32602,
+          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << msg_r.error().message(), req_id));
+      return;
+    }
+    auto payload_b64_r = serialize_cell_b64(msg_r.ok());
+    if (payload_b64_r.is_error()) {
+      promise.set_value(make_json_error(-32603,
+          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << payload_b64_r.error().message(), req_id));
+      return;
+    }
+    // Build the signing payload JSON that will be returned on successful validation
+    auto intent_json = PSTRING()
+        << "{\"@type\":\"transaction.signingPayload\""
+        << ",\"payload_version\":1"
+        << ",\"payload_encoding\":\"boc_base64\""
+        << ",\"payload\":" << td::JsonString(td::Slice(payload_b64_r.ok()))
+        << ",\"delegation_ref\":" << td::JsonString(td::Slice(input.delegation_ref))
+        << ",\"replay_protection\":{\"@type\":\"transaction.replayProtection\""
+        << ",\"mode\":\"contract_defined\"}"
+        << "}";
+    validate_delegation_and_return_intent(
+        addr, input.address, input.delegation_ref,
+        std::move(intent_json), std::move(req_id), std::move(promise));
+    return;
+  }
+
+  auto msg_r = build_external_message_cell(input);
   if (msg_r.is_error()) {
     promise.set_value(make_json_error(-32602,
         PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << msg_r.error().message(), req_id));
@@ -539,7 +647,7 @@ void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string
       tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
 
   send_liteserver_query(std::move(mc_query),
-      [self_id, input = input_r.move_as_ok(), payload_b64 = payload_b64_r.move_as_ok(),
+      [self_id, input = std::move(input), payload_b64 = payload_b64_r.move_as_ok(),
        req_id = std::move(req_id), promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
           promise.set_value(make_json_error(-32603,

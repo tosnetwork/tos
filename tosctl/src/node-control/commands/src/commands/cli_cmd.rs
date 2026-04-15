@@ -11,7 +11,7 @@ use crate::commands::{
         account_cmd::AccountCmd, admin_cmd::AdminCmd, auth_cmd::AuthCmd, backup_cmd::BackupCmd,
         config_cmd::ConfigCmd, deploy_cmd::DeployCmd, host_cmd::HostCmd, install_cmd::InstallCmd,
         key_cmd::KeyCmd, node_cmd::NodeCmd, observe_cmd::ObserveCmd, pool_cmd::PoolCmd,
-        service_api_cmd::ApiCmd, service_cmd::ServiceCmd, vote_cmd::VoteCmd,
+        service_api_cmd::ApiCmd, service_cmd::ServiceCmd, tx_cmd::TxCmd, vote_cmd::VoteCmd,
         wallet_cmd::WalletCmd,
     },
     chain_rpc::get_config_param_cmd::GetConfigParamCmd,
@@ -64,6 +64,9 @@ pub enum Commands {
     /// Account inspection and bookmarks
     #[command(name = "account", visible_alias = "ac")]
     Account(AccountCmd),
+    /// Transaction build, sign, and submit operations
+    #[command(name = "tx")]
+    Tx(TxCmd),
     /// Validators, efficiency, alerts, metrics
     #[command(name = "observe", visible_alias = "ob")]
     Observe(ObserveCmd),

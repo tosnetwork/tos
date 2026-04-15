@@ -57,14 +57,45 @@ The initial account/permission transaction surfaces derived from this model are 
 - ✅ `getSigningPayload`
 - ✅ `submitSignedTransaction`
 
-Still not implemented as real permission-state semantics:
+Permission-state inspection status:
 
-- ⏳ `account.delegationGrant` inspection and lifecycle
-- ⏳ `account.sessionCapability` inspection and lifecycle
-- ⏳ `account.agentCapability` inspection and lifecycle is only partially implemented
-- ✅ `getAccountDelegations` RPC surface added, but still returns structured deferred/unsupported status
-- ✅ `getAccountSessions` RPC surface added, but still returns structured deferred/unsupported status
-- ✅ `getAccountAgents` RPC surface added; `advanced.wallet.multisig` now has a real `account_standard` read path, while other models still return structured deferred/unsupported status
+- ✅ `getAccountDelegations` — real `account_standard` read path for `advanced.wallet.restricted` (vesting-based `bounded_transfer` delegation with canonical `max_value`/`not_before` constraints and model-specific `constraints_extensions`) and `contract.pool.nominator` (nominators as `bounded_transfer` delegators with stake-based constraints; withdraw requests materialize as `revoked` status); other models return structured deferred/unsupported status
+- ✅ `getAccountSessions` — real `account_standard` read path for `advanced.wallet.session` (`account.sessionCapability` objects with canonical `not_before`/`expires_at` constraints and status materialization `revoked > expired > active`); other models return structured deferred/unsupported status
+- ✅ `getAccountAgents` — real `account_standard` read path for `advanced.wallet.multisig` (owners as `agent_execution` principals with threshold semantics in `constraints_extensions`); other models return structured deferred/unsupported status
+- ✅ All 15 permission error codes defined and documented (source-tier, permission-object, transaction-surface categories)
+- ✅ Constraint vocabulary alignment: canonical `constraints` use only frozen vocabulary fields; model-specific details in `constraints_extensions` with `account_model` tag
+- ✅ Status materialization: `advanced.wallet.multisig` materializes `active` only; `advanced.wallet.restricted` materializes `active` and `expired` (vesting fully released when reserve = 0); `contract.pool.nominator` materializes `active` and `revoked` (withdraw request = real on-chain revocation evidence)
+- ✅ `tosctl` operator CLI: `account capability/delegations/sessions/agents/delegation-grant/delegation-revoke` + `tx build-intent/signing-payload/submit-signed`
+- ✅ Lifecycle mutation surfaces: 6 RPC handlers with real account-model detection; `contract.pool.nominator` returns deposit/withdraw `lifecycle.mutationResult` with `mutation_intent` and canonical `affected_object_preview`; immutable models return `LIFECYCLE_IMMUTABLE`; unsupported models return `PERMISSION_SOURCE_UNSUPPORTED`
+- ✅ `account.sessionCapability` real state source: `advanced.wallet.session` contract with `get_sessions` get-method; `getAccountSessions` returns real `account_standard` session objects with status materialization (revoked > expired > active)
+- ✅ Scope violation: `buildTransactionIntent` validates `delegation_ref` against real delegation state; `DELEGATION_EXPIRED`, `DELEGATION_REVOKED`, `DELEGATION_UNAVAILABLE`, `DELEGATION_SCOPE_VIOLATION` errors implemented and tested
+
+## Next-Stage Standard Evolution
+
+The current model revision is sufficient for:
+
+- capability discovery
+- read-only permission inspection
+- initial transaction intent / signing / submission surfaces
+- lifecycle RPC surface definition with honest supported / immutable / unsupported behavior
+
+The following items belong to a later standards-and-implementation stage rather than the current baseline:
+
+- broader `account_standard` coverage for additional account models beyond the first implemented set
+- mutable session-account standards with real grant / revoke semantics
+- mutable agent-account standards with real grant / revoke semantics
+- richer operator and wallet UX around lifecycle previews and post-mutation inspection
+
+These items SHOULD be treated as additive evolution work, not as blockers on the current baseline.
+
+In particular:
+
+- `advanced.wallet.session` currently proves the session inspection path and state materialization path
+- it does not yet imply a mutable session lifecycle standard
+- `advanced.wallet.multisig` currently proves a real `agent_execution` inspection path
+- it does not yet imply runtime agent lifecycle mutation support
+
+If TOS later promotes mutable session or agent permissions to first-class standards, that work MUST be driven by new or revised account standards rather than by RPC-only wrappers.
 
 ## First-Principles Questions
 
@@ -701,6 +732,18 @@ Rules:
 - `not_before` sets the earliest valid use time.
 - `expires_at` sets the latest valid use time.
 - Unrecognized constraint fields MUST cause conservative handling in generic wallets and SDKs unless explicitly standardized later.
+
+### Account-Standard Constraint Extensions
+
+When an `account_standard` source exposes semantics that go beyond the canonical constraint vocabulary, implementations SHOULD use a layered approach:
+
+- The `constraints` field MUST contain only canonical constraint fields from the frozen vocabulary above.
+- A sibling field `constraints_extensions` MAY carry additional account-model-specific semantics that are not part of the canonical vocabulary.
+- `constraints_extensions` SHOULD include an `account_model` field identifying which account standard produced the extension data.
+- Generic wallets and SDKs MUST be able to safely parse and display permission objects using only canonical `constraints` fields, ignoring `constraints_extensions` entirely.
+- Account-model-aware tools MAY use `constraints_extensions` to provide richer inspection and display.
+
+This design preserves stable canonical parsing while allowing real account-model semantics to remain inspectable.
 
 ## Canonical Revocation and Status Semantics
 

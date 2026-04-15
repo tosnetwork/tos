@@ -24,6 +24,7 @@
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/Time.h"
 #include "validator/validator.h"
+#include "block/block.h"
 
 #include <set>
 #include <unordered_map>
@@ -170,6 +171,28 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
                                 td::Promise<HttpReturn> promise);
   void handle_submitSignedTransaction(td::JsonObject &params, std::string req_id,
                                       td::Promise<HttpReturn> promise);
+
+  // Method handlers — account/permission lifecycle surfaces
+  void handle_grantAccountDelegation(td::JsonObject &params, std::string req_id,
+                                      td::Promise<HttpReturn> promise);
+  void handle_revokeAccountDelegation(td::JsonObject &params, std::string req_id,
+                                       td::Promise<HttpReturn> promise);
+  void handle_grantAccountSession(td::JsonObject &params, std::string req_id,
+                                    td::Promise<HttpReturn> promise);
+  void handle_revokeAccountSession(td::JsonObject &params, std::string req_id,
+                                     td::Promise<HttpReturn> promise);
+  void handle_grantAccountAgent(td::JsonObject &params, std::string req_id,
+                                  td::Promise<HttpReturn> promise);
+  void handle_revokeAccountAgent(td::JsonObject &params, std::string req_id,
+                                   td::Promise<HttpReturn> promise);
+
+  // Delegation reference validation for permission-bearing intents
+  void validate_delegation_and_return_intent(
+      block::StdAddress addr, std::string addr_str,
+      std::string delegation_ref,
+      std::string intent_json,
+      std::string req_id,
+      td::Promise<HttpReturn> promise);
 
   // Method handlers — new APIs (parity with ton-http-api-cpp)
   void handle_detectHash(td::JsonObject &params, std::string req_id,
