@@ -1724,15 +1724,15 @@ The SDK is ready for public use when:
 - [x] `@tos/core` passes all Cell/BOC serialization round-trip tests against C++ reference ✅ 158 tests pass, incl. 30 BOC reference vectors from ton-core
 - [x] `@tos/crypto` generates keys compatible with existing TOS wallets ✅ verified against @ton/crypto test vectors
 - [x] `@tos/client` covers all 42 JSON-RPC methods with typed responses matching C++ wire format ✅ all 42 methods implemented
-- [x] `@tos/client` can query a live TOS node end-to-end ✅ live-client.test.ts with 13 integration tests (skip if no node)
+- [x] `@tos/client` can query a live TOS node end-to-end ✅ 13 tests passed on live 4-node testnet (127.0.0.1:8011)
 - [x] `@tos/client` response types use snake_case matching C++ JSON output ✅ all types use snake_case
-- [x] `@tos/wallets` can create, sign, and submit a transfer on testnet ✅ live-wallet.test.ts with self-transfer + seqno verification (skip if no TEST_MNEMONIC)
+- [x] `@tos/wallets` can create, sign, and submit a transfer on testnet ✅ self-transfer on live 4-node testnet, seqno increment verified
 - [x] `@tos/wallets` offline signing produces identical BOC to C++ reference ✅ 77 tests: signature verification, message structure, BOC round-trip for all 4 wallet types
 - [x] `@tos/wallets` `contractAddress()` matches C++ address derivation ✅ 8 tests verifying contractAddress() matches wallet.address
-- [x] `@tos/contracts` can mint and transfer a Jetton on testnet ✅ live-jetton.test.ts with end-to-end flow (skip if no TEST_JETTON_MINTER)
+- [ ] `@tos/contracts` can mint and transfer a Jetton on testnet — test script ready, pending Jetton contract deployment on local testnet
 - [x] `waitForTransaction` works reliably with polling ✅ implemented with configurable timeout/interval
 - [x] `comment()` helper produces correct op=0 text body ✅ 4 tests: opcode 0, UTF-8, empty, BOC round-trip
-- [x] Jetton transfer flow works end-to-end (find wallet → check balance → transfer) ✅ live-jetton.test.ts covers full flow
+- [ ] Jetton transfer flow works end-to-end (find wallet → check balance → transfer) — test script ready, pending Jetton contract deployment on local testnet
 - [x] Transaction pagination (load more) works with lt/hash cursors ✅ getTransactions accepts lt/hash/limit
 - [x] Fee estimation returns correct source_fees before send ✅ estimateFee implemented with ignoreChksig
 - [x] `Networks.testnet` / `Networks.mainnet` connect without extra config ✅ Networks constant with 3 presets
