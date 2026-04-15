@@ -246,6 +246,9 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     else if (path == "/getConsensusBlock")      rest_method = "getConsensusBlock";
     else if (path == "/getAddressInformation")  rest_method = "getAddressInformation";
     else if (path == "/getAccountCapability")   rest_method = "getAccountCapability";
+    else if (path == "/getAccountDelegations")  rest_method = "getAccountDelegations";
+    else if (path == "/getAccountSessions")     rest_method = "getAccountSessions";
+    else if (path == "/getAccountAgents")       rest_method = "getAccountAgents";
     else if (path == "/getAddressBalance")      rest_method = "getAddressBalance";
     else if (path == "/getAddressState")        rest_method = "getAddressState";
     else if (path == "/getWalletInformation")   rest_method = "getWalletInformation";
@@ -326,7 +329,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     static const std::set<std::string> post_rest_paths = {
         "/detectAddress", "/detectHash", "/packAddress", "/unpackAddress",
         "/getAddressInformation", "/getExtendedAddressInformation",
-        "/getAccountCapability",
+        "/getAccountCapability", "/getAccountDelegations", "/getAccountSessions", "/getAccountAgents",
         "/getWalletInformation", "/getAddressBalance", "/getAddressState",
         "/getTokenData",
         "/getMasterchainInfo", "/getConsensusBlock", "/lookupBlock",
@@ -573,6 +576,12 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     handle_getExtendedAddressInformation(params, std::move(req_id), std::move(promise));
   } else if (method == "getAccountCapability") {
     handle_getAccountCapability(params, std::move(req_id), std::move(promise));
+  } else if (method == "getAccountDelegations") {
+    handle_getAccountDelegations(params, std::move(req_id), std::move(promise));
+  } else if (method == "getAccountSessions") {
+    handle_getAccountSessions(params, std::move(req_id), std::move(promise));
+  } else if (method == "getAccountAgents") {
+    handle_getAccountAgents(params, std::move(req_id), std::move(promise));
   } else if (method == "runGetMethod") {
     handle_runGetMethod(params, std::move(req_id), std::move(promise));
   } else if (method == "getWalletInformation") {
@@ -863,6 +872,7 @@ const std::set<std::string> &JsonRpcServer::cacheable_methods() {
   static const std::set<std::string> methods = {
       "getMasterchainInfo", "getConfigParam", "getConfigAll",
       "getAddressInformation", "getAccountCapability",
+      "getAccountDelegations", "getAccountSessions", "getAccountAgents",
       "getWalletInformation", "getAddressBalance",
       "getAddressState", "getBlockHeader", "lookupBlock", "shards",
       "getConsensusBlock", "getOutMsgQueueSize"

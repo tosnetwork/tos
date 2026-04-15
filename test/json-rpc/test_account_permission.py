@@ -135,3 +135,20 @@ class TestSubmitSignedTransaction:
     def test_invalid_boc(self, api_method_call_no_get):
         response = api_method_call_no_get(self.METHOD, boc="dGVzdA==")
         assert response.json()["ok"] is False
+
+
+@pytest.mark.parametrize(
+    "method_name",
+    ["getAccountDelegations", "getAccountSessions", "getAccountAgents"],
+)
+class TestDeferredPermissionInspection:
+    def test_deferred(self, api_method_call, method_name):
+        response = api_method_call(method_name, address=ELECTOR_ADDRESS)
+        data = response.json()
+        assert data["ok"] is False
+        assert "FEATURE_DEFERRED" in data["error"]
+
+    def test_invalid_address(self, api_method_call, method_name):
+        response = api_method_call(method_name, address="invalid")
+        data = response.json()
+        assert data["ok"] is False

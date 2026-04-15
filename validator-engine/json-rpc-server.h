@@ -158,6 +158,12 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   // Method handlers — account/permission initial surfaces
   void handle_getAccountCapability(td::JsonObject &params, std::string req_id,
                                    td::Promise<HttpReturn> promise);
+  void handle_getAccountDelegations(td::JsonObject &params, std::string req_id,
+                                    td::Promise<HttpReturn> promise);
+  void handle_getAccountSessions(td::JsonObject &params, std::string req_id,
+                                 td::Promise<HttpReturn> promise);
+  void handle_getAccountAgents(td::JsonObject &params, std::string req_id,
+                               td::Promise<HttpReturn> promise);
   void handle_buildTransactionIntent(td::JsonObject &params, std::string req_id,
                                      td::Promise<HttpReturn> promise);
   void handle_getSigningPayload(td::JsonObject &params, std::string req_id,

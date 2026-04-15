@@ -253,6 +253,45 @@ void JsonRpcServer::handle_getAccountCapability(td::JsonObject &params, std::str
   }
 }
 
+void JsonRpcServer::handle_getAccountDelegations(td::JsonObject &params, std::string req_id,
+                                                 td::Promise<HttpReturn> promise) {
+  auto addr_r = parse_address_param(params);
+  if (addr_r.is_error()) {
+    promise.set_value(make_json_error(-32602, addr_r.error().message().str(), req_id));
+    return;
+  }
+  promise.set_value(make_json_error(
+      -32603,
+      "FEATURE_DEFERRED: getAccountDelegations requires frozen permission-state semantics before implementation",
+      req_id));
+}
+
+void JsonRpcServer::handle_getAccountSessions(td::JsonObject &params, std::string req_id,
+                                              td::Promise<HttpReturn> promise) {
+  auto addr_r = parse_address_param(params);
+  if (addr_r.is_error()) {
+    promise.set_value(make_json_error(-32602, addr_r.error().message().str(), req_id));
+    return;
+  }
+  promise.set_value(make_json_error(
+      -32603,
+      "FEATURE_DEFERRED: getAccountSessions requires frozen permission-state semantics before implementation",
+      req_id));
+}
+
+void JsonRpcServer::handle_getAccountAgents(td::JsonObject &params, std::string req_id,
+                                            td::Promise<HttpReturn> promise) {
+  auto addr_r = parse_address_param(params);
+  if (addr_r.is_error()) {
+    promise.set_value(make_json_error(-32602, addr_r.error().message().str(), req_id));
+    return;
+  }
+  promise.set_value(make_json_error(
+      -32603,
+      "FEATURE_DEFERRED: getAccountAgents requires frozen permission-state semantics before implementation",
+      req_id));
+}
+
 void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::string req_id,
                                                 td::Promise<HttpReturn> promise) {
   auto addr_r = parse_address_param(params);
