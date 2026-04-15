@@ -162,10 +162,14 @@ The first implementation wave should implement only the objects and methods that
 
 ### Implement partially now
 
-- ✅ RPC surfaces added with structured deferred responses for:
+- ✅ RPC surfaces added with source-aware structured responses for:
   - `getAccountDelegations`
   - `getAccountSessions`
   - `getAccountAgents`
+- ✅ `getAccountAgents` has a first real `account_standard` implementation for `advanced.wallet.multisig`
+  - source tier: `account_standard`
+  - object family: `account.agentCapability`
+  - semantics: multisig owners are exposed as bounded `agent_execution` principals with threshold constraints
 - ⏳ documentation and SDK type placeholders
 
 ### Defer full implementation
@@ -175,7 +179,7 @@ The first implementation wave should implement only the objects and methods that
 - `account.agentCapability`
 - real state-backed `getAccountDelegations`
 - real state-backed `getAccountSessions`
-- real state-backed `getAccountAgents`
+- broader real state-backed `getAccountAgents` coverage beyond `advanced.wallet.multisig`
 
 Reason:
 

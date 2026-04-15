@@ -10,6 +10,7 @@ Covers:
 import pytest
 
 ELECTOR_ADDRESS = "-1:3333333333333333333333333333333333333333333333333333333333333333"
+UNINITIALIZED_ADDRESS = "-1:1111111111111111111111111111111111111111111111111111111111111111"
 VALID_EMPTY_CELL_BOC = "te6ccgEBAQEAAgAAAA=="
 
 
@@ -29,6 +30,10 @@ class TestGetAccountCapability:
         assert "supports_delegation" in result
         assert "supports_sessions" in result
         assert "supports_agents" in result
+        assert "delegation_source" in result
+        assert "session_source" in result
+        assert "agent_source" in result
+        assert "capability_maturity" in result
         assert "account_state" in result
         assert "revision" in result
 
@@ -59,6 +64,29 @@ class TestBuildTransactionIntent:
     def test_missing_body(self, api_method_call_no_get):
         response = api_method_call_no_get(self.METHOD, address=ELECTOR_ADDRESS)
         assert response.json()["ok"] is False
+
+    def test_delegation_reference_rejected(self, api_method_call_no_get):
+        response = api_method_call_no_get(
+            self.METHOD,
+            address=ELECTOR_ADDRESS,
+            body=VALID_EMPTY_CELL_BOC,
+            delegation_ref="example",
+        )
+        data = response.json()
+        assert data["ok"] is False
+        assert "FEATURE_DEFERRED" in data["error"]
+
+    def test_distinct_fee_payer_rejected(self, api_method_call_no_get):
+        response = api_method_call_no_get(
+            self.METHOD,
+            address=ELECTOR_ADDRESS,
+            body=VALID_EMPTY_CELL_BOC,
+            signer=ELECTOR_ADDRESS,
+            fee_payer="-1:1111111111111111111111111111111111111111111111111111111111111111",
+        )
+        data = response.json()
+        assert data["ok"] is False
+        assert "FEATURE_DEFERRED" in data["error"]
 
 
 class TestGetSigningPayload:
@@ -104,6 +132,19 @@ class TestGetSigningPayload:
         assert response.status_code == 200, response.json().get("error")
         assert response.json()["ok"] is True
 
+    def test_permission_reference_rejected(self, api_method_call_no_get):
+        response = api_method_call_no_get(
+            self.METHOD,
+            intent={
+                "from": ELECTOR_ADDRESS,
+                "body": VALID_EMPTY_CELL_BOC,
+                "delegation_ref": "example",
+            },
+        )
+        data = response.json()
+        assert data["ok"] is False
+        assert "FEATURE_DEFERRED" in data["error"]
+
 
 class TestSubmitSignedTransaction:
     METHOD = "submitSignedTransaction"
@@ -142,11 +183,33 @@ class TestSubmitSignedTransaction:
     ["getAccountDelegations", "getAccountSessions", "getAccountAgents"],
 )
 class TestDeferredPermissionInspection:
-    def test_deferred(self, api_method_call, method_name):
+    def test_deferred_for_advanced_unknown(self, api_method_call, method_name):
         response = api_method_call(method_name, address=ELECTOR_ADDRESS)
         data = response.json()
         assert data["ok"] is False
-        assert "FEATURE_DEFERRED" in data["error"]
+        assert "PERMISSION_SOURCE_DEFERRED" in data["error"]
+
+    def test_unsupported_for_uninitialized_account(self, api_method_call, method_name):
+        response = api_method_call(method_name, address=UNINITIALIZED_ADDRESS)
+        data = response.json()
+        assert data["ok"] is False
+        assert "PERMISSION_SOURCE_UNSUPPORTED" in data["error"]
+
+    def test_indexed_source_requires_fresh_index(self, api_method_call, method_name):
+        response = api_method_call(method_name, address=ELECTOR_ADDRESS, source_tier="indexed")
+        data = response.json()
+        assert data["ok"] is False
+        assert "INDEXED_STATE_STALE" in data["error"]
+
+    def test_invalid_status_filter(self, api_method_call, method_name):
+        response = api_method_call(method_name, address=ELECTOR_ADDRESS, status="bad")
+        data = response.json()
+        assert data["ok"] is False
+
+    def test_invalid_source_tier(self, api_method_call, method_name):
+        response = api_method_call(method_name, address=ELECTOR_ADDRESS, source_tier="bogus")
+        data = response.json()
+        assert data["ok"] is False
 
     def test_invalid_address(self, api_method_call, method_name):
         response = api_method_call(method_name, address="invalid")

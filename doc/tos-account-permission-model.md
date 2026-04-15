@@ -48,6 +48,24 @@ This document should eventually define:
 - sponsorship / fee-payer semantics if supported
 - how these decisions surface in wallets, SDKs, RPCs, and contracts
 
+## Implementation Status
+
+The initial account/permission transaction surfaces derived from this model are now implemented in `validator-engine`:
+
+- ✅ `getAccountCapability`
+- ✅ `buildTransactionIntent`
+- ✅ `getSigningPayload`
+- ✅ `submitSignedTransaction`
+
+Still not implemented as real permission-state semantics:
+
+- ⏳ `account.delegationGrant` inspection and lifecycle
+- ⏳ `account.sessionCapability` inspection and lifecycle
+- ⏳ `account.agentCapability` inspection and lifecycle is only partially implemented
+- ✅ `getAccountDelegations` RPC surface added, but still returns structured deferred/unsupported status
+- ✅ `getAccountSessions` RPC surface added, but still returns structured deferred/unsupported status
+- ✅ `getAccountAgents` RPC surface added; `advanced.wallet.multisig` now has a real `account_standard` read path, while other models still return structured deferred/unsupported status
+
 ## First-Principles Questions
 
 The final model must answer:
@@ -150,7 +168,9 @@ Open questions:
 
 Decisions:
 
-- `TBD`
+- v1 baseline direction chosen:
+  - one canonical default account model for mainstream wallets and SDKs
+  - advanced account variants deferred to later additive standards
 
 Recommended options:
 
@@ -200,7 +220,9 @@ Open questions:
 
 Decisions:
 
-- `TBD`
+- v1 baseline direction chosen:
+  - one canonical signing payload model
+  - exact binary and transport details to be frozen by a later API / protocol-facing spec
 
 Recommended options:
 
@@ -258,7 +280,9 @@ Open questions:
 
 Decisions:
 
-- `TBD`
+- v1 baseline direction chosen:
+  - signer, submitter, and fee payer are distinct public roles
+  - relayed or delegated submission must fit the same public transaction model
 
 Recommended options:
 
@@ -312,7 +336,7 @@ Open questions:
 
 Decisions:
 
-- `TBD`
+- decision status: baseline direction chosen for v1; exact persisted delegation source deferred to a later standard revision
 
 Recommended options:
 
@@ -331,15 +355,15 @@ Proposed baseline:
   - scope
   - optional target restrictions
   - optional amount or rate limits
-  - expiry
+  - expires_at or equivalent bounded-validity field
   - revocation capability
 
 Recommended minimum delegation scopes:
 
-- submit-only
-- spend within bounded limit
-- call-contract within bounded scope
-- session-limited interaction permission
+- `submit_only`
+- `bounded_transfer`
+- `bounded_contract_call`
+- `session_issuance`
 
 Rules:
 
@@ -351,7 +375,7 @@ Normative baseline:
 
 - Delegation MUST be explicit.
 - Delegation MUST have bounded scope.
-- Delegation MUST support expiry or an equivalent bounded-validity mechanism.
+- Delegation MUST support `expires_at` or an equivalent bounded-validity mechanism.
 - Delegation MUST support revocation.
 - Delegation semantics MUST be machine-readable enough for wallets and SDKs to inspect and display meaningfully.
 
@@ -372,7 +396,7 @@ Open questions:
 
 Decisions:
 
-- `TBD`
+- decision status: baseline direction chosen for v1; exact session and agent state representation deferred to a later standard revision
 
 Recommended options:
 
@@ -396,7 +420,7 @@ Recommended model:
 Both should support:
 
 - explicit scope
-- expiry
+- `expires_at` or equivalent bounded-validity semantics
 - revocation
 - bounded authority
 
@@ -411,7 +435,7 @@ Normative baseline:
 - Session permissions MUST be modeled as constrained delegations.
 - Agent permissions MUST be modeled as constrained delegations.
 - Session and agent permissions MUST NOT silently escalate to owner-equivalent authority.
-- Wallets and SDKs SHOULD expose bounded authority, expiry, and revocation clearly when these permissions exist.
+- Wallets and SDKs SHOULD expose bounded authority, `expires_at` or equivalent bounded-validity semantics, and revocation clearly when these permissions exist.
 
 ### 6. Sponsorship and Fee Payer Semantics
 
@@ -430,7 +454,9 @@ Open questions:
 
 Decisions:
 
-- `TBD`
+- v1 baseline direction chosen:
+  - sponsorship is out of scope for the base standard
+  - vocabulary for a future distinct fee payer may be reserved without making it active in v1
 
 Recommended options:
 
@@ -474,7 +500,7 @@ Open questions:
 
 Decisions:
 
-- `TBD`
+- decision status: baseline direction chosen for v1; minimum capability discovery is required, while exact smart-account convention details remain for later standardization
 
 Recommended options:
 
@@ -557,18 +583,26 @@ Minimum fields:
 - `supports_delegation`
 - `supports_sessions`
 - `supports_agents`
+
+Optional / experimental field:
+
 - `supports_sponsorship`
 
 ### DelegationGrant
 
 Minimum fields:
 
+- `id`
 - `grantor`
 - `grantee`
 - `scope`
 - `constraints`
-- `expiry`
+- `created_at`
+- `expires_at`
+- `revoked_at`
+- `revocable`
 - `revocation_reference`
+- `status`
 
 ### SessionCapability
 
@@ -577,8 +611,12 @@ Minimum fields:
 - `session_id`
 - `principal`
 - `scope`
-- `expiry`
+- `constraints`
+- `created_at`
+- `expires_at`
+- `revoked_at`
 - `revocable`
+- `status`
 
 ### AgentCapability
 
@@ -588,10 +626,114 @@ Minimum fields:
 - `principal`
 - `scope`
 - `constraints`
-- `expiry`
+- `created_at`
+- `expires_at`
+- `revoked_at`
 - `revocable`
+- `status`
 
 These names are conceptual and MAY evolve, but their semantics SHOULD remain stable once standardized.
+
+## Canonical Permission State Source
+
+The v1 baseline freezes the canonical truth model for delegation, session, and agent permissions as follows:
+
+1. The canonical source of truth MUST be standardized on-chain account or account-linked contract/query semantics.
+2. Node APIs MAY expose a canonically indexed derived view for performance and inspection convenience, but that derived view MUST reflect the same underlying on-chain semantics.
+3. Wallet-private state, app-private state, and off-chain convenience caches MUST NOT be treated as canonical permission truth.
+
+Canonical source tiers:
+
+- `protocol`
+- `account_standard`
+- `indexed`
+- `deferred`
+
+Rules:
+
+- Real permission-state inspection methods MUST only report stable permission objects when the source tier is `protocol`, `account_standard`, or `indexed`.
+- If the source remains `deferred`, implementations MUST fail honestly rather than fabricate empty or guessed permission state.
+
+## Canonical Scope Vocabulary
+
+The v1 baseline freezes one minimum portable scope vocabulary.
+
+Every `scope` MUST be represented as one of:
+
+- `submit_only`
+- `bounded_transfer`
+- `bounded_contract_call`
+- `session_issuance`
+- `agent_execution`
+
+Interpretation:
+
+- `submit_only`
+  - may submit an already-authorized artifact, but may not alter its logical action
+- `bounded_transfer`
+  - may authorize value transfer only within declared constraints
+- `bounded_contract_call`
+  - may authorize contract calls only within declared constraints
+- `session_issuance`
+  - may create or refresh a bounded session capability if the account model supports it
+- `agent_execution`
+  - may act as an automation principal only within declared constraints
+
+The base v1 standard MUST NOT require a general-purpose policy language.
+
+## Canonical Constraint Model
+
+The v1 baseline freezes the minimum portable constraint vocabulary.
+
+Recognized constraint fields are:
+
+- `target_allowlist`
+- `max_value`
+- `max_uses`
+- `not_before`
+- `expires_at`
+
+Rules:
+
+- `target_allowlist` limits allowed destination accounts or contracts.
+- `max_value` limits transferable value where the selected scope permits value movement.
+- `max_uses` limits the number of successful actions authorized by the permission object.
+- `not_before` sets the earliest valid use time.
+- `expires_at` sets the latest valid use time.
+- Unrecognized constraint fields MUST cause conservative handling in generic wallets and SDKs unless explicitly standardized later.
+
+## Canonical Revocation and Status Semantics
+
+The v1 baseline freezes a minimum revocation and status model for:
+
+- `account.delegationGrant`
+- `account.sessionCapability`
+- `account.agentCapability`
+
+Every permission object MUST have a stable identifier and MUST evaluate to exactly one of:
+
+- `active`
+- `expired`
+- `revoked`
+- `unknown`
+
+Status precedence:
+
+1. `revoked`
+2. `expired`
+3. `active`
+4. `unknown`
+
+Rules:
+
+- `revoked` means canonical revocation evidence exists.
+- `expired` means no revocation is known, but bounded-validity semantics have ended.
+- `active` means the object is known, currently valid, and within frozen semantics.
+- `unknown` means the object cannot be classified safely from canonical evidence.
+- Permission objects MUST be revocable either by explicit revocation state or by a standardized supersession/version rule.
+- `revoked_at` MUST be populated when explicit revocation evidence exists.
+- `revocation_reference` SHOULD identify the canonical revocation record, object id, or superseding reference when available.
+- Unknown status MUST fail closed for authorization decisions.
 
 ## Security Requirements
 
@@ -605,7 +747,7 @@ The final model should explicitly define:
 
 Security requirements:
 
-- `TBD`
+- decision status: baseline security direction chosen for v1; detailed protocol-level enforcement and serialization rules remain for later spec documents
 
 Minimum expected guarantees:
 
@@ -664,7 +806,7 @@ The final version should define metrics such as:
 
 Metrics:
 
-- `TBD`
+- decision status: initial success metrics chosen for v1 guidance; final ecosystem metrics remain to be frozen in a later standards/release review
 
 Recommended initial metrics:
 
@@ -678,10 +820,8 @@ Recommended initial metrics:
 Initial open decisions:
 
 1. Which exact replay-protection primitive becomes the canonical freshness field?
-2. Which delegated scopes are mandatory in v1 versus optional later?
-3. How much of session and agent semantics are protocol-native versus standard-convention-native?
-4. Which APIs expose account capability discovery?
-5. When sponsorship is added later, how is the fee payer represented without breaking the v1 signing model?
+2. Which APIs expose account capability discovery?
+3. When sponsorship is added later, how is the fee payer represented without breaking the v1 signing model?
 
 ## Draft Decision Checklist
 

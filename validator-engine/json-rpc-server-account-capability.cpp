@@ -22,6 +22,8 @@
 #include "tl/tl_object_parse.h"
 #include "block/block-auto.h"
 #include "block/block-parse.h"
+#include "crypto/smc-envelope/SmartContractCode.h"
+#include "vm/dict.h"
 #include "vm/cp0.h"
 #include "vm/vm.h"
 #include <limits>
@@ -92,7 +94,28 @@ static std::string detect_wallet_type(const vm::CellHash& code_hash) {
 static std::string detect_account_model(const ParsedAccountState& parsed,
                                         const std::string& wallet_type) {
   if (!wallet_type.empty()) {
+    if (wallet_type.rfind("wallet ", 0) == 0) {
+      return "default.wallet.v1";
+    }
+    if (wallet_type.rfind("highload", 0) == 0) {
+      return "advanced.wallet.highload";
+    }
+    if (wallet_type.rfind("nominator pool", 0) == 0) {
+      return "contract.pool.nominator";
+    }
     return "default.wallet.v1";
+  }
+  if (parsed.code_cell.not_null()) {
+    auto code_hash = parsed.code_cell->get_hash(0);
+    auto multisig_hash = tos::SmartContractCode::get_code(tos::SmartContractCode::Type::Multisig)->get_hash(0);
+    if (code_hash == multisig_hash) {
+      return "advanced.wallet.multisig";
+    }
+    auto restricted_hash =
+        tos::SmartContractCode::get_code(tos::SmartContractCode::Type::RestrictedWallet)->get_hash(0);
+    if (code_hash == restricted_hash) {
+      return "advanced.wallet.restricted";
+    }
   }
   if (parsed.state_str == "uninitialized") {
     return "state.uninitialized";
@@ -113,12 +136,398 @@ static std::string detect_authorization_version(const std::string& wallet_type) 
   return "unknown";
 }
 
+struct AccountCapabilityContext {
+  block::StdAddress addr;
+  std::string addr_str;
+  ParsedAccountState parsed;
+  std::string wallet_type;
+  std::string account_model;
+  std::string authorization_version;
+};
+
+struct MultisigAgentView {
+  int threshold_n{0};
+  int threshold_k{0};
+  std::vector<std::string> principals;
+};
+
+enum class PermissionKind { Delegation, Session, Agent };
+
+enum class RequestedPermissionSourceTier { Default, Protocol, AccountStandard, Indexed, Deferred };
+
+struct PermissionInspectionQuery {
+  bool include_inactive{false};
+  td::optional<std::string> status_filter;
+  RequestedPermissionSourceTier source_tier{RequestedPermissionSourceTier::Default};
+};
+
+static td::Slice permission_method_name(PermissionKind kind) {
+  switch (kind) {
+    case PermissionKind::Delegation:
+      return "getAccountDelegations";
+    case PermissionKind::Session:
+      return "getAccountSessions";
+    case PermissionKind::Agent:
+      return "getAccountAgents";
+  }
+  UNREACHABLE();
+  return td::Slice();
+}
+
+static td::Result<PermissionInspectionQuery> parse_permission_inspection_query(td::JsonObject &params) {
+  PermissionInspectionQuery query;
+
+  auto include_inactive_r = params.get_optional_bool_field("include_inactive", false);
+  if (include_inactive_r.is_error()) {
+    return td::Status::Error("invalid include_inactive");
+  }
+  query.include_inactive = include_inactive_r.ok();
+
+  auto status_r = params.get_optional_string_field("status");
+  if (status_r.is_ok()) {
+    auto status = status_r.ok();
+    if (status != "active" && status != "expired" && status != "revoked" && status != "unknown") {
+      return td::Status::Error("invalid status filter");
+    }
+    query.status_filter = std::move(status);
+  }
+
+  auto source_r = params.get_optional_string_field("source_tier");
+  if (source_r.is_ok()) {
+    auto source = source_r.ok();
+    if (source == "protocol") {
+      query.source_tier = RequestedPermissionSourceTier::Protocol;
+    } else if (source == "account_standard") {
+      query.source_tier = RequestedPermissionSourceTier::AccountStandard;
+    } else if (source == "indexed") {
+      query.source_tier = RequestedPermissionSourceTier::Indexed;
+    } else if (source == "deferred") {
+      query.source_tier = RequestedPermissionSourceTier::Deferred;
+    } else {
+      return td::Status::Error("invalid source_tier");
+    }
+  }
+
+  return query;
+}
+
+static bool supports_account_standard_agents(const std::string& account_model) {
+  return account_model == "advanced.wallet.multisig";
+}
+
+static bool permission_state_deferred_for_account_model(const std::string& account_model) {
+  return account_model == "advanced.unknown";
+}
+
+static std::string permission_source_error_prefix(const std::string& account_model) {
+  return permission_state_deferred_for_account_model(account_model)
+      ? "PERMISSION_SOURCE_DEFERRED"
+      : "PERMISSION_SOURCE_UNSUPPORTED";
+}
+
+static std::string permission_source_error_message(const char* method_name,
+                                                   const AccountCapabilityContext& ctx) {
+  auto prefix = permission_source_error_prefix(ctx.account_model);
+  td::StringBuilder sb;
+  sb << prefix << ": " << method_name
+     << " is not available for account_model=" << ctx.account_model;
+  if (permission_state_deferred_for_account_model(ctx.account_model)) {
+    sb << " until permission-state semantics are implemented";
+  } else {
+    sb << " because this account model does not expose a frozen permission-state source";
+  }
+  return sb.as_cslice().str();
+}
+
+static std::string indexed_state_stale_message(PermissionKind kind,
+                                               const AccountCapabilityContext& ctx) {
+  td::StringBuilder sb;
+  sb << "INDEXED_STATE_STALE: " << permission_method_name(kind)
+     << " has no fresh indexed permission state for account_model=" << ctx.account_model
+     << " (no canonical indexed permission source is configured yet)";
+  return sb.as_cslice().str();
+}
+
+static std::string forced_source_error_message(PermissionKind kind,
+                                               RequestedPermissionSourceTier source_tier,
+                                               const AccountCapabilityContext& ctx) {
+  if (source_tier == RequestedPermissionSourceTier::Indexed) {
+    return indexed_state_stale_message(kind, ctx);
+  }
+  if (source_tier == RequestedPermissionSourceTier::Deferred) {
+    td::StringBuilder sb;
+    sb << "PERMISSION_SOURCE_DEFERRED: " << permission_method_name(kind)
+       << " was forced to deferred source_tier for account_model=" << ctx.account_model;
+    return sb.as_cslice().str();
+  }
+
+  td::StringBuilder sb;
+  sb << "PERMISSION_SOURCE_UNSUPPORTED: " << permission_method_name(kind)
+     << " has no " << (source_tier == RequestedPermissionSourceTier::Protocol ? "protocol" : "account_standard")
+     << " permission source for account_model=" << ctx.account_model;
+  return sb.as_cslice().str();
+}
+
+template <class SendQueryFn>
+static void run_get_method_latest(SendQueryFn&& send_query, const block::StdAddress& addr,
+                                  td::Slice method_name, td::Promise<td::Ref<vm::Stack>> promise) {
+  td::int64 method_id = (td::crc16(method_name) & 0xffff) | 0x10000;
+
+  vm::CellBuilder cb;
+  vm::Stack empty_stack;
+  if (!empty_stack.serialize(cb)) {
+    promise.set_error(td::Status::Error("stack serialize error"));
+    return;
+  }
+  auto params_boc_r = vm::std_boc_serialize(cb.finalize());
+  if (params_boc_r.is_error()) {
+    promise.set_error(td::Status::Error("params BOC error"));
+    return;
+  }
+  auto params_boc = params_boc_r.move_as_ok();
+
+  auto do_run = [addr, method_id, params_boc = std::move(params_boc), &send_query](
+                    tos::tl_object_ptr<tos::lite_api::tosNode_blockIdExt> block_id,
+                    td::Promise<td::Ref<vm::Stack>> promise_inner) mutable {
+    auto inner = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_runSmcMethod>(
+            0x04, std::move(block_id),
+            tos::create_tl_object<tos::lite_api::liteServer_accountId>(addr.workchain, addr.addr),
+            method_id, std::move(params_boc)),
+        true);
+    auto query = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
+
+    send_query(
+        std::move(query),
+        td::PromiseCreator::lambda(
+            [promise_inner = std::move(promise_inner)](td::Result<td::BufferSlice> R) mutable {
+              if (R.is_error()) {
+                promise_inner.set_error(
+                    td::Status::Error(PSTRING() << "runSmcMethod: " << R.error().message()));
+                return;
+              }
+              auto F = tos::fetch_tl_object<tos::lite_api::liteServer_runMethodResult>(
+                  R.move_as_ok(), true);
+              if (F.is_error()) {
+                promise_inner.set_error(td::Status::Error(
+                    PSTRING() << "parse runMethodResult: " << F.error().message()));
+                return;
+              }
+              auto f = F.move_as_ok();
+              if (f->exit_code_ != 0) {
+                promise_inner.set_error(
+                    td::Status::Error(PSTRING() << "runSmcMethod exit_code=" << f->exit_code_));
+                return;
+              }
+              auto cell_r = vm::std_boc_deserialize(f->result_.as_slice());
+              if (cell_r.is_error()) {
+                promise_inner.set_error(td::Status::Error("result BOC parse error"));
+                return;
+              }
+              auto stk = td::make_ref<vm::Stack>();
+              auto result_cell = cell_r.move_as_ok();
+              vm::CellSlice cs = vm::load_cell_slice(result_cell);
+              if (!stk.write().deserialize(cs)) {
+                promise_inner.set_error(td::Status::Error("result stack deserialize error"));
+                return;
+              }
+              promise_inner.set_value(std::move(stk));
+            }));
+  };
+
+  auto mc_inner =
+      tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
+  auto mc_query =
+      tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
+  send_query(
+      std::move(mc_query),
+      td::PromiseCreator::lambda(
+          [do_run = std::move(do_run), promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+            if (R.is_error()) {
+              promise.set_error(
+                  td::Status::Error(PSTRING() << "getMasterchainInfo: " << R.error().message()));
+              return;
+            }
+            auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(
+                R.move_as_ok(), true);
+            if (mc_r.is_error()) {
+              promise.set_error(
+                  td::Status::Error(PSTRING() << "parse mcInfo: " << mc_r.error().message()));
+              return;
+            }
+            do_run(std::move(mc_r.move_as_ok()->last_), std::move(promise));
+          }));
+}
+
+template <class SendQueryFn>
+static void fetch_multisig_agent_view(SendQueryFn&& send_query, const AccountCapabilityContext& ctx,
+                                      td::Promise<MultisigAgentView> promise) {
+  run_get_method_latest(
+      send_query, ctx.addr, "get_public_keys",
+      td::PromiseCreator::lambda(
+          [send_query, addr = ctx.addr, promise = std::move(promise)](td::Result<td::Ref<vm::Stack>> R) mutable {
+            if (R.is_error()) {
+              promise.set_error(R.move_as_error());
+              return;
+            }
+
+            auto public_keys_stack = R.move_as_ok();
+            if (public_keys_stack->depth() == 0 || !public_keys_stack->at(0).is_cell()) {
+              promise.set_error(td::Status::Error("get_public_keys returned unexpected stack"));
+              return;
+            }
+            auto dict_root = public_keys_stack.write().pop_cell();
+            vm::Dictionary dict(std::move(dict_root), 8);
+
+            MultisigAgentView view;
+            dict.check_for_each([&](auto cs, auto, auto) {
+              td::SecureString key(32);
+              cs->prefetch_bytes(key.as_mutable_slice().ubegin(), td::narrow_cast<int>(key.size()));
+              view.principals.push_back(PSTRING() << "ed25519:" << td::hex_encode(key.as_slice()));
+              return true;
+            });
+
+            run_get_method_latest(
+                send_query, addr, "get_n_k",
+                td::PromiseCreator::lambda(
+                    [view = std::move(view), promise = std::move(promise)](
+                        td::Result<td::Ref<vm::Stack>> R2) mutable {
+                      if (R2.is_error()) {
+                        promise.set_error(R2.move_as_error());
+                        return;
+                      }
+                      auto nk_stack = R2.move_as_ok();
+                      if (nk_stack->depth() < 2 || !nk_stack->at(0).is_int() || !nk_stack->at(1).is_int()) {
+                        promise.set_error(td::Status::Error("get_n_k returned unexpected stack"));
+                        return;
+                      }
+                      auto view2 = std::move(view);
+                      view2.threshold_k = static_cast<int>(nk_stack.write().pop_smallint_range(128));
+                      view2.threshold_n = static_cast<int>(nk_stack.write().pop_smallint_range(128));
+                      promise.set_value(std::move(view2));
+                    }));
+          }));
+}
+
+template <class SendQueryFn>
+static void fetch_account_capability_context(SendQueryFn&& send_query,
+                                             block::StdAddress addr, std::string addr_str,
+                                             bool has_seqno, td::int32 seqno,
+                                             td::Promise<AccountCapabilityContext> promise) {
+  auto do_get_account = [addr, addr_str = std::move(addr_str), &send_query](
+                            tos::tl_object_ptr<tos::lite_api::tosNode_blockIdExt> block_id,
+                            td::Promise<AccountCapabilityContext> promise_inner) mutable {
+    auto inner = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_getAccountState>(
+            std::move(block_id),
+            tos::create_tl_object<tos::lite_api::liteServer_accountId>(addr.workchain, addr.addr)),
+        true);
+    auto query = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
+
+    send_query(
+        std::move(query),
+        td::PromiseCreator::lambda(
+            [addr, addr_str = std::move(addr_str), promise_inner = std::move(promise_inner)](
+                td::Result<td::BufferSlice> R) mutable {
+              if (R.is_error()) {
+                promise_inner.set_error(td::Status::Error(
+                    PSTRING() << "getAccountState: " << R.error().message()));
+                return;
+              }
+              auto account_state_fetch = tos::fetch_tl_object<tos::lite_api::liteServer_accountState>(
+                  R.move_as_ok(), true);
+              if (account_state_fetch.is_error()) {
+                promise_inner.set_error(
+                    td::Status::Error(PSTRING() << "parse accountState: "
+                                                << account_state_fetch.error().message()));
+                return;
+              }
+              auto f = account_state_fetch.move_as_ok();
+              auto parsed_r = ParsedAccountState::parse(f, addr);
+              if (parsed_r.is_error()) {
+                promise_inner.set_error(
+                    td::Status::Error(PSTRING() << "parse account: " << parsed_r.error().message()));
+                return;
+              }
+              auto parsed = parsed_r.move_as_ok();
+              std::string wallet_type;
+              if (parsed.code_cell.not_null()) {
+                wallet_type = detect_wallet_type(parsed.code_cell->get_hash(0));
+              }
+              AccountCapabilityContext ctx;
+              ctx.addr = addr;
+              ctx.addr_str = std::move(addr_str);
+              ctx.wallet_type = std::move(wallet_type);
+              ctx.account_model = detect_account_model(parsed, ctx.wallet_type);
+              ctx.authorization_version = detect_authorization_version(ctx.wallet_type);
+              ctx.parsed = std::move(parsed);
+              promise_inner.set_value(std::move(ctx));
+            }));
+  };
+
+  if (has_seqno) {
+    auto block_id = tos::create_tl_object<tos::lite_api::tosNode_blockId>(
+        -1, static_cast<td::int64>(-1LL << 63), seqno);
+    auto lookup_inner = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_lookupBlock>(1, std::move(block_id), 0, 0),
+        true);
+    auto lookup_query = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(lookup_inner)), true);
+    send_query(
+        std::move(lookup_query),
+        td::PromiseCreator::lambda(
+            [do_get_account = std::move(do_get_account), promise = std::move(promise)](
+                td::Result<td::BufferSlice> R) mutable {
+              if (R.is_error()) {
+                promise.set_error(
+                    td::Status::Error(PSTRING() << "lookupBlock: " << R.error().message()));
+                return;
+              }
+              auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
+                  R.move_as_ok(), true);
+              if (lb_r.is_error()) {
+                promise.set_error(
+                    td::Status::Error(PSTRING() << "parse lookupBlock: " << lb_r.error().message()));
+                return;
+              }
+              do_get_account(std::move(lb_r.move_as_ok()->id_), std::move(promise));
+            }));
+  } else {
+    auto mc_inner =
+        tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
+    auto mc_query =
+        tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
+    send_query(
+        std::move(mc_query),
+        td::PromiseCreator::lambda(
+            [do_get_account = std::move(do_get_account), promise = std::move(promise)](
+                td::Result<td::BufferSlice> R) mutable {
+              if (R.is_error()) {
+                promise.set_error(
+                    td::Status::Error(PSTRING() << "getMasterchainInfo: " << R.error().message()));
+                return;
+              }
+              auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(
+                  R.move_as_ok(), true);
+              if (mc_r.is_error()) {
+                promise.set_error(
+                    td::Status::Error(PSTRING() << "parse mcInfo: " << mc_r.error().message()));
+                return;
+              }
+              do_get_account(std::move(mc_r.move_as_ok()->last_), std::move(promise));
+            }));
+  }
+}
+
 static std::string build_account_capability_json(const std::string& address,
                                                  const ParsedAccountState& parsed,
                                                  const std::string& account_model,
                                                  const std::string& authorization_version,
                                                  bool supports_sponsorship,
                                                  bool include_sponsorship) {
+  bool supports_agents = supports_account_standard_agents(account_model);
   td::StringBuilder sb;
   sb << "{\"@type\":\"account.capability\""
      << ",\"address\":" << td::JsonString(td::Slice(address))
@@ -126,7 +535,11 @@ static std::string build_account_capability_json(const std::string& address,
      << ",\"authorization_version\":" << td::JsonString(td::Slice(authorization_version))
      << ",\"supports_delegation\":false"
      << ",\"supports_sessions\":false"
-     << ",\"supports_agents\":false"
+     << ",\"supports_agents\":" << (supports_agents ? "true" : "false")
+     << ",\"delegation_source\":\"deferred\""
+     << ",\"session_source\":\"deferred\""
+     << ",\"agent_source\":" << td::JsonString(td::Slice(supports_agents ? "account_standard" : "deferred"))
+     << ",\"capability_maturity\":" << td::JsonString(td::Slice(supports_agents ? "supported" : "initial"))
      << ",\"account_state\":" << td::JsonString(td::Slice(parsed.state_str))
      << ",\"revision\":1";
   if (include_sponsorship) {
@@ -151,145 +564,203 @@ void JsonRpcServer::handle_getAccountCapability(td::JsonObject &params, std::str
   auto include_experimental_r = params.get_optional_bool_field("include_experimental", false);
   bool include_experimental = include_experimental_r.is_ok() && include_experimental_r.ok();
 
-  auto self_id = actor_id(this);
-  auto do_get_account = [addr, addr_str = std::move(addr_str), include_experimental, self_id](
-      tos::tl_object_ptr<tos::lite_api::tosNode_blockIdExt> block_id,
-      std::string req_id_inner, td::Promise<HttpReturn> promise_inner) mutable {
-    auto inner = tos::serialize_tl_object(
-        tos::create_tl_object<tos::lite_api::liteServer_getAccountState>(
-            std::move(block_id),
-            tos::create_tl_object<tos::lite_api::liteServer_accountId>(
-                addr.workchain, addr.addr)),
-        true);
-    auto query = tos::serialize_tl_object(
-        tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
-
-    td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
-        std::move(query),
-        td::PromiseCreator::lambda(
-            [addr, addr_str = std::move(addr_str), include_experimental,
-             req_id_inner = std::move(req_id_inner),
-             promise_inner = std::move(promise_inner)](td::Result<td::BufferSlice> R) mutable {
-              if (R.is_error()) {
-                promise_inner.set_value(make_json_error(
-                    -32603, PSTRING() << "getAccountState: " << R.error(), req_id_inner));
-                return;
-              }
-              auto F = tos::fetch_tl_object<tos::lite_api::liteServer_accountState>(
-                  R.move_as_ok(), true);
-              if (F.is_error()) {
-                promise_inner.set_value(make_json_error(
-                    -32603, PSTRING() << "parse accountState: " << F.error(), req_id_inner));
-                return;
-              }
-              auto f = F.move_as_ok();
-              auto parsed_r = ParsedAccountState::parse(f, addr);
-              if (parsed_r.is_error()) {
-                promise_inner.set_value(make_json_error(
-                    -32603, PSTRING() << "parse account: " << parsed_r.error(), req_id_inner));
-                return;
-              }
-              auto parsed = parsed_r.move_as_ok();
-              std::string wallet_type;
-              if (parsed.code_cell.not_null()) {
-                wallet_type = detect_wallet_type(parsed.code_cell->get_hash(0));
-              }
-              auto account_model = detect_account_model(parsed, wallet_type);
-              auto authorization_version = detect_authorization_version(wallet_type);
-              promise_inner.set_value(make_json_ok(
-                  build_account_capability_json(addr_str, parsed, account_model,
-                                                authorization_version,
-                                                false, include_experimental),
-                  req_id_inner));
-            }));
+  auto send_query = [this](td::BufferSlice query, td::Promise<td::BufferSlice> promise_inner) {
+    this->send_liteserver_query(std::move(query), std::move(promise_inner));
   };
-
-  if (has_seqno) {
-    auto block_id = tos::create_tl_object<tos::lite_api::tosNode_blockId>(
-        -1, static_cast<td::int64>(-1LL << 63), seqno);
-    auto lookup_inner = tos::serialize_tl_object(
-        tos::create_tl_object<tos::lite_api::liteServer_lookupBlock>(1, std::move(block_id), 0, 0), true);
-    auto lookup_query = tos::serialize_tl_object(
-        tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(lookup_inner)), true);
-    send_liteserver_query(std::move(lookup_query),
-        [req_id = std::move(req_id), promise = std::move(promise),
-         do_get_account = std::move(do_get_account)](td::Result<td::BufferSlice> R) mutable {
-          if (R.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "lookupBlock: " << R.error(), req_id));
-            return;
-          }
-          auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
-              R.move_as_ok(), true);
-          if (lb_r.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id));
-            return;
-          }
-          do_get_account(std::move(lb_r.move_as_ok()->id_), std::move(req_id), std::move(promise));
-        });
-  } else {
-    auto mc_inner = tos::serialize_tl_object(
-        tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
-    auto mc_query = tos::serialize_tl_object(
-        tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
-    send_liteserver_query(std::move(mc_query),
-        [req_id = std::move(req_id), promise = std::move(promise),
-         do_get_account = std::move(do_get_account)](td::Result<td::BufferSlice> R) mutable {
-          if (R.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "getMasterchainInfo: " << R.error(), req_id));
-            return;
-          }
-          auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(
-              R.move_as_ok(), true);
-          if (mc_r.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse mcInfo: " << mc_r.error(), req_id));
-            return;
-          }
-          do_get_account(std::move(mc_r.move_as_ok()->last_), std::move(req_id), std::move(promise));
-        });
-  }
+  fetch_account_capability_context(
+      send_query, addr, std::move(addr_str), has_seqno, seqno,
+      td::PromiseCreator::lambda(
+          [include_experimental, req_id = std::move(req_id),
+           promise = std::move(promise)](td::Result<AccountCapabilityContext> R) mutable {
+            if (R.is_error()) {
+              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id));
+              return;
+            }
+            auto ctx = R.move_as_ok();
+            promise.set_value(make_json_ok(
+                build_account_capability_json(ctx.addr_str, ctx.parsed, ctx.account_model,
+                                              ctx.authorization_version, false,
+                                              include_experimental),
+                req_id));
+          }));
 }
 
 void JsonRpcServer::handle_getAccountDelegations(td::JsonObject &params, std::string req_id,
                                                  td::Promise<HttpReturn> promise) {
+  auto query_r = parse_permission_inspection_query(params);
+  if (query_r.is_error()) {
+    promise.set_value(make_json_error(-32602, query_r.move_as_error().message().str(), req_id));
+    return;
+  }
+  auto query_opts = query_r.move_as_ok();
+
   auto addr_r = parse_address_param(params);
   if (addr_r.is_error()) {
     promise.set_value(make_json_error(-32602, addr_r.error().message().str(), req_id));
     return;
   }
-  promise.set_value(make_json_error(
-      -32603,
-      "FEATURE_DEFERRED: getAccountDelegations requires frozen permission-state semantics before implementation",
-      req_id));
+  auto addr = addr_r.move_as_ok();
+  auto addr_str = params.get_required_string_field("address").ok();
+  auto send_query = [this](td::BufferSlice query, td::Promise<td::BufferSlice> promise_inner) {
+    this->send_liteserver_query(std::move(query), std::move(promise_inner));
+  };
+  fetch_account_capability_context(
+      send_query, addr, std::move(addr_str), false, 0,
+      td::PromiseCreator::lambda(
+          [query_opts = std::move(query_opts), req_id = std::move(req_id), promise = std::move(promise)](
+              td::Result<AccountCapabilityContext> R) mutable {
+            if (R.is_error()) {
+              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id));
+              return;
+            }
+            auto ctx = R.move_as_ok();
+            if (query_opts.source_tier != RequestedPermissionSourceTier::Default) {
+              promise.set_value(make_json_error(
+                  -32603,
+                  forced_source_error_message(PermissionKind::Delegation, query_opts.source_tier, ctx),
+                  req_id));
+              return;
+            }
+            promise.set_value(make_json_error(
+                -32603, permission_source_error_message("getAccountDelegations", ctx), req_id));
+          }));
 }
 
 void JsonRpcServer::handle_getAccountSessions(td::JsonObject &params, std::string req_id,
                                               td::Promise<HttpReturn> promise) {
+  auto query_r = parse_permission_inspection_query(params);
+  if (query_r.is_error()) {
+    promise.set_value(make_json_error(-32602, query_r.move_as_error().message().str(), req_id));
+    return;
+  }
+  auto query_opts = query_r.move_as_ok();
+
   auto addr_r = parse_address_param(params);
   if (addr_r.is_error()) {
     promise.set_value(make_json_error(-32602, addr_r.error().message().str(), req_id));
     return;
   }
-  promise.set_value(make_json_error(
-      -32603,
-      "FEATURE_DEFERRED: getAccountSessions requires frozen permission-state semantics before implementation",
-      req_id));
+  auto addr = addr_r.move_as_ok();
+  auto addr_str = params.get_required_string_field("address").ok();
+  auto send_query = [this](td::BufferSlice query, td::Promise<td::BufferSlice> promise_inner) {
+    this->send_liteserver_query(std::move(query), std::move(promise_inner));
+  };
+  fetch_account_capability_context(
+      send_query, addr, std::move(addr_str), false, 0,
+      td::PromiseCreator::lambda(
+          [query_opts = std::move(query_opts), req_id = std::move(req_id), promise = std::move(promise)](
+              td::Result<AccountCapabilityContext> R) mutable {
+            if (R.is_error()) {
+              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id));
+              return;
+            }
+            auto ctx = R.move_as_ok();
+            if (query_opts.source_tier != RequestedPermissionSourceTier::Default) {
+              promise.set_value(make_json_error(
+                  -32603,
+                  forced_source_error_message(PermissionKind::Session, query_opts.source_tier, ctx),
+                  req_id));
+              return;
+            }
+            promise.set_value(make_json_error(
+                -32603, permission_source_error_message("getAccountSessions", ctx), req_id));
+          }));
 }
 
 void JsonRpcServer::handle_getAccountAgents(td::JsonObject &params, std::string req_id,
                                             td::Promise<HttpReturn> promise) {
+  auto query_r = parse_permission_inspection_query(params);
+  if (query_r.is_error()) {
+    promise.set_value(make_json_error(-32602, query_r.move_as_error().message().str(), req_id));
+    return;
+  }
+  auto query_opts = query_r.move_as_ok();
+
   auto addr_r = parse_address_param(params);
   if (addr_r.is_error()) {
     promise.set_value(make_json_error(-32602, addr_r.error().message().str(), req_id));
     return;
   }
-  promise.set_value(make_json_error(
-      -32603,
-      "FEATURE_DEFERRED: getAccountAgents requires frozen permission-state semantics before implementation",
-      req_id));
+  auto addr = addr_r.move_as_ok();
+  auto addr_str = params.get_required_string_field("address").ok();
+  auto send_query = [this](td::BufferSlice query, td::Promise<td::BufferSlice> promise_inner) {
+    this->send_liteserver_query(std::move(query), std::move(promise_inner));
+  };
+  fetch_account_capability_context(
+      send_query, addr, std::move(addr_str), false, 0,
+      td::PromiseCreator::lambda(
+          [this, query_opts = std::move(query_opts), req_id = std::move(req_id), promise = std::move(promise)](
+              td::Result<AccountCapabilityContext> R) mutable {
+            if (R.is_error()) {
+              promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id));
+              return;
+            }
+            auto ctx = R.move_as_ok();
+            if (supports_account_standard_agents(ctx.account_model)) {
+              if (query_opts.source_tier == RequestedPermissionSourceTier::Protocol ||
+                  query_opts.source_tier == RequestedPermissionSourceTier::Indexed ||
+                  query_opts.source_tier == RequestedPermissionSourceTier::Deferred) {
+                promise.set_value(make_json_error(
+                    -32603,
+                    forced_source_error_message(PermissionKind::Agent, query_opts.source_tier, ctx),
+                    req_id));
+                return;
+              }
+
+              auto self_id = actor_id(this);
+              auto send_query = [self_id](td::BufferSlice query,
+                                          td::Promise<td::BufferSlice> promise_inner) mutable {
+                td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
+                                        std::move(query), std::move(promise_inner));
+              };
+              fetch_multisig_agent_view(
+                  send_query, ctx,
+                  td::PromiseCreator::lambda(
+                      [ctx = std::move(ctx), query_opts = std::move(query_opts),
+                       req_id = std::move(req_id), promise = std::move(promise)](
+                          td::Result<MultisigAgentView> R2) mutable {
+                        if (R2.is_error()) {
+                          promise.set_value(make_json_error(
+                              -32603, PSTRING() << "getAccountAgents: " << R2.error().message(), req_id));
+                          return;
+                        }
+                        auto view = R2.move_as_ok();
+                        if (query_opts.status_filter && query_opts.status_filter.value() != "active") {
+                          promise.set_value(make_json_ok("[]", req_id));
+                          return;
+                        }
+                        td::StringBuilder sb;
+                        sb << "[";
+                        for (size_t i = 0; i < view.principals.size(); i++) {
+                          if (i > 0) {
+                            sb << ",";
+                          }
+                          sb << "{\"@type\":\"account.agentCapability\""
+                             << ",\"agent_id\":" << td::JsonString(td::Slice(
+                                    PSTRING() << ctx.addr_str << ":multisig-owner:" << i))
+                             << ",\"principal\":" << td::JsonString(td::Slice(view.principals[i]))
+                             << ",\"scope\":\"agent_execution\""
+                             << ",\"constraints\":{\"threshold_n\":" << view.threshold_n
+                             << ",\"threshold_k\":" << view.threshold_k << "}"
+                             << ",\"expiry\":null"
+                             << ",\"revocable\":false"
+                             << ",\"status\":\"active\"}";
+                        }
+                        sb << "]";
+                        promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+                      }));
+              return;
+            }
+            if (query_opts.source_tier != RequestedPermissionSourceTier::Default) {
+              promise.set_value(make_json_error(
+                  -32603,
+                  forced_source_error_message(PermissionKind::Agent, query_opts.source_tier, ctx),
+                  req_id));
+              return;
+            }
+            promise.set_value(make_json_error(
+                -32603, permission_source_error_message("getAccountAgents", ctx), req_id));
+          }));
 }
 
 void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::string req_id,
