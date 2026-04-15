@@ -38,6 +38,7 @@ export {
   StackReaderImpl,
   // Functions
   open,
+  setCoreParser,
   waitForTransaction,
   waitForSeqnoChange,
   // Constants
@@ -115,6 +116,10 @@ export {
   JettonWallet,
   NftCollection,
   NftItem,
+  JETTON_MINTER_CODE_HEX,
+  JETTON_WALLET_CODE_HEX,
+  NFT_COLLECTION_CODE_HEX,
+  NFT_ITEM_CODE_HEX,
 } from "@tos/contracts";
 
 export type {
