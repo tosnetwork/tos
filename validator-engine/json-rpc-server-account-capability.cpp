@@ -186,25 +186,29 @@ static td::Result<PermissionInspectionQuery> parse_permission_inspection_query(t
   auto status_r = params.get_optional_string_field("status");
   if (status_r.is_ok()) {
     auto status = status_r.ok();
-    if (status != "active" && status != "expired" && status != "revoked" && status != "unknown") {
-      return td::Status::Error("invalid status filter");
+    if (!status.empty()) {
+      if (status != "active" && status != "expired" && status != "revoked" && status != "unknown") {
+        return td::Status::Error("invalid status filter");
+      }
+      query.status_filter = std::move(status);
     }
-    query.status_filter = std::move(status);
   }
 
   auto source_r = params.get_optional_string_field("source_tier");
   if (source_r.is_ok()) {
     auto source = source_r.ok();
-    if (source == "protocol") {
-      query.source_tier = RequestedPermissionSourceTier::Protocol;
-    } else if (source == "account_standard") {
-      query.source_tier = RequestedPermissionSourceTier::AccountStandard;
-    } else if (source == "indexed") {
-      query.source_tier = RequestedPermissionSourceTier::Indexed;
-    } else if (source == "deferred") {
-      query.source_tier = RequestedPermissionSourceTier::Deferred;
-    } else {
-      return td::Status::Error("invalid source_tier");
+    if (!source.empty()) {
+      if (source == "protocol") {
+        query.source_tier = RequestedPermissionSourceTier::Protocol;
+      } else if (source == "account_standard") {
+        query.source_tier = RequestedPermissionSourceTier::AccountStandard;
+      } else if (source == "indexed") {
+        query.source_tier = RequestedPermissionSourceTier::Indexed;
+      } else if (source == "deferred") {
+        query.source_tier = RequestedPermissionSourceTier::Deferred;
+      } else {
+        return td::Status::Error("invalid source_tier");
+      }
     }
   }
 
@@ -271,6 +275,7 @@ static std::string forced_source_error_message(PermissionKind kind,
 template <class SendQueryFn>
 static void run_get_method_latest(SendQueryFn&& send_query, const block::StdAddress& addr,
                                   td::Slice method_name, td::Promise<td::Ref<vm::Stack>> promise) {
+  auto send_query_ptr = std::make_shared<std::decay_t<SendQueryFn>>(std::forward<SendQueryFn>(send_query));
   td::int64 method_id = (td::crc16(method_name) & 0xffff) | 0x10000;
 
   vm::CellBuilder cb;
@@ -286,7 +291,7 @@ static void run_get_method_latest(SendQueryFn&& send_query, const block::StdAddr
   }
   auto params_boc = params_boc_r.move_as_ok();
 
-  auto do_run = [addr, method_id, params_boc = std::move(params_boc), &send_query](
+  auto do_run = [addr, method_id, params_boc = std::move(params_boc), send_query_ptr](
                     tos::tl_object_ptr<tos::lite_api::tosNode_blockIdExt> block_id,
                     td::Promise<td::Ref<vm::Stack>> promise_inner) mutable {
     auto inner = tos::serialize_tl_object(
@@ -298,7 +303,7 @@ static void run_get_method_latest(SendQueryFn&& send_query, const block::StdAddr
     auto query = tos::serialize_tl_object(
         tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
 
-    send_query(
+    (*send_query_ptr)(
         std::move(query),
         td::PromiseCreator::lambda(
             [promise_inner = std::move(promise_inner)](td::Result<td::BufferSlice> R) mutable {
@@ -340,7 +345,7 @@ static void run_get_method_latest(SendQueryFn&& send_query, const block::StdAddr
       tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
   auto mc_query =
       tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
-  send_query(
+  (*send_query_ptr)(
       std::move(mc_query),
       td::PromiseCreator::lambda(
           [do_run = std::move(do_run), promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
@@ -415,7 +420,8 @@ static void fetch_account_capability_context(SendQueryFn&& send_query,
                                              block::StdAddress addr, std::string addr_str,
                                              bool has_seqno, td::int32 seqno,
                                              td::Promise<AccountCapabilityContext> promise) {
-  auto do_get_account = [addr, addr_str = std::move(addr_str), &send_query](
+  auto send_query_ptr = std::make_shared<std::decay_t<SendQueryFn>>(std::forward<SendQueryFn>(send_query));
+  auto do_get_account = [addr, addr_str = std::move(addr_str), send_query_ptr](
                             tos::tl_object_ptr<tos::lite_api::tosNode_blockIdExt> block_id,
                             td::Promise<AccountCapabilityContext> promise_inner) mutable {
     auto inner = tos::serialize_tl_object(
@@ -426,7 +432,7 @@ static void fetch_account_capability_context(SendQueryFn&& send_query,
     auto query = tos::serialize_tl_object(
         tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
 
-    send_query(
+    (*send_query_ptr)(
         std::move(query),
         td::PromiseCreator::lambda(
             [addr, addr_str = std::move(addr_str), promise_inner = std::move(promise_inner)](
@@ -475,7 +481,7 @@ static void fetch_account_capability_context(SendQueryFn&& send_query,
         true);
     auto lookup_query = tos::serialize_tl_object(
         tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(lookup_inner)), true);
-    send_query(
+    (*send_query_ptr)(
         std::move(lookup_query),
         td::PromiseCreator::lambda(
             [do_get_account = std::move(do_get_account), promise = std::move(promise)](
@@ -499,7 +505,7 @@ static void fetch_account_capability_context(SendQueryFn&& send_query,
         tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
     auto mc_query =
         tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
-    send_query(
+    (*send_query_ptr)(
         std::move(mc_query),
         td::PromiseCreator::lambda(
             [do_get_account = std::move(do_get_account), promise = std::move(promise)](
@@ -683,13 +689,14 @@ void JsonRpcServer::handle_getAccountAgents(td::JsonObject &params, std::string 
   }
   auto addr = addr_r.move_as_ok();
   auto addr_str = params.get_required_string_field("address").ok();
+  auto self_id = actor_id(this);
   auto send_query = [this](td::BufferSlice query, td::Promise<td::BufferSlice> promise_inner) {
     this->send_liteserver_query(std::move(query), std::move(promise_inner));
   };
   fetch_account_capability_context(
       send_query, addr, std::move(addr_str), false, 0,
       td::PromiseCreator::lambda(
-          [this, query_opts = std::move(query_opts), req_id = std::move(req_id), promise = std::move(promise)](
+          [self_id, query_opts = std::move(query_opts), req_id = std::move(req_id), promise = std::move(promise)](
               td::Result<AccountCapabilityContext> R) mutable {
             if (R.is_error()) {
               promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id));
@@ -707,7 +714,6 @@ void JsonRpcServer::handle_getAccountAgents(td::JsonObject &params, std::string 
                 return;
               }
 
-              auto self_id = actor_id(this);
               auto send_query = [self_id](td::BufferSlice query,
                                           td::Promise<td::BufferSlice> promise_inner) mutable {
                 td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
@@ -736,6 +742,7 @@ void JsonRpcServer::handle_getAccountAgents(td::JsonObject &params, std::string 
                             sb << ",";
                           }
                           sb << "{\"@type\":\"account.agentCapability\""
+                             << ",\"account\":" << td::JsonString(td::Slice(ctx.addr_str))
                              << ",\"agent_id\":" << td::JsonString(td::Slice(
                                     PSTRING() << ctx.addr_str << ":multisig-owner:" << i))
                              << ",\"principal\":" << td::JsonString(td::Slice(view.principals[i]))

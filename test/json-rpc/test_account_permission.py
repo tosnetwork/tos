@@ -8,6 +8,7 @@ Covers:
   - submitSignedTransaction
 """
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,23 @@ def _load_deployed() -> dict:
     if not DEPLOYED_FILE.exists():
         return {}
     return json.loads(DEPLOYED_FILE.read_text())
+
+
+def _call_until_ok(call, *, retries: int = 12, delay_s: float = 1.0):
+    last = None
+    for _ in range(retries):
+        last = call()
+        try:
+            data = last.json()
+        except Exception:
+            time.sleep(delay_s)
+            continue
+        if last.status_code == 200 and data.get("ok") is True:
+            return last
+        if "block (" not in str(data.get("error", "")) or "is not applied" not in str(data.get("error", "")):
+            return last
+        time.sleep(delay_s)
+    return last
 
 
 @pytest.fixture(scope="module")
@@ -61,7 +79,7 @@ class TestGetAccountCapability:
         info = wallets.get("multisig")
         if not info or not info.get("address"):
             pytest.skip("multisig not deployed")
-        response = api_method_call(self.METHOD, address=info["address"])
+        response = _call_until_ok(lambda: api_method_call(self.METHOD, address=info["address"]))
         assert response.status_code == 200, response.json().get("error")
         data = response.json()
         assert data["ok"] is True
@@ -255,7 +273,7 @@ class TestAccountStandardAgentInspection:
         if not info or not info.get("address"):
             pytest.skip("multisig not deployed")
 
-        response = api_method_call(self.METHOD, address=info["address"])
+        response = _call_until_ok(lambda: api_method_call(self.METHOD, address=info["address"]))
         assert response.status_code == 200, response.json().get("error")
         data = response.json()
         assert data["ok"] is True
