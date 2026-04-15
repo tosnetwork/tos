@@ -43,7 +43,7 @@ function getEntry<T>(key: string): CacheEntry<T> {
   const fresh: CacheEntry<T> = {
     data: undefined,
     error: null,
-    isLoading: true,
+    isLoading: false,
     generation: 0,
   };
   cache.set(key, fresh as CacheEntry);

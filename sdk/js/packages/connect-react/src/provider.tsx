@@ -211,7 +211,11 @@ export function TosConnectProvider({
   );
 
   // ---- Resolved theme ----
-  const resolvedTheme = useMemo(() => resolveTheme(theme), [theme]);
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => resolveTheme(theme));
+
+  useEffect(() => {
+    setResolvedTheme(resolveTheme(theme));
+  }, [theme]);
 
   useEffect(() => {
     applyThemeVariables(resolvedTheme);
@@ -240,6 +244,7 @@ export function TosConnectProvider({
     const handler = () => {
       const updated = resolveTheme(theme);
       applyThemeVariables(updated);
+      setResolvedTheme(updated);
     };
     mql.addEventListener("change", handler);
     return () => mql.removeEventListener("change", handler);
@@ -266,6 +271,11 @@ export function TosConnectProvider({
 
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
+
+    setConnector(null);
+    setWallet(null);
+    setConnecting(false);
+    connectorRef.current = null;
 
     createConnector(configRef.current)
       .then((instance) => {
@@ -295,8 +305,10 @@ export function TosConnectProvider({
           // Restoration failed silently — user will need to reconnect.
         });
       })
-      .catch(() => {
-        // TosConnect failed to initialise — all hooks return disconnected state.
+      .catch((err) => {
+        if (!cancelled) {
+          console.warn("[TOS Connect] Failed to initialize connector:", err);
+        }
       });
 
     return () => {

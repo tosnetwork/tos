@@ -74,8 +74,9 @@ export function shortenAddress(address: string, prefixLen = 4, suffixLen = 3): s
 export function formatBalance(nanotons: string | bigint, decimals = 2): string {
   const value = typeof nanotons === "string" ? BigInt(nanotons) : nanotons;
   const NANO = 1_000_000_000n;
+  const absValue = value < 0n ? -value : value;
   const whole = value / NANO;
-  const frac = value % NANO;
+  const frac = absValue % NANO;
 
   const wholeStr = whole.toLocaleString("en-US");
 

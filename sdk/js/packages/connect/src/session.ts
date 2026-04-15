@@ -131,6 +131,14 @@ export async function loadSession(
     return null;
   }
 
+  // Validate required fields
+  if (typeof data.secretKey !== 'string' || typeof data.clientId !== 'string' ||
+      typeof data.walletPublicKey !== 'string' || typeof data.bridgeUrl !== 'string' ||
+      typeof data.createdAt !== 'number' || typeof data.ttl !== 'number' || !data.wallet) {
+    await clearSession(storage);
+    return null;
+  }
+
   // Check TTL
   const elapsed = (Date.now() - data.createdAt) / 1000;
   if (elapsed >= data.ttl) {

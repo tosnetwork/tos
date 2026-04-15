@@ -111,6 +111,8 @@ export class TosConnectUI {
   private readonly modalStateChangeCallbacks: Array<(state: "opened" | "closed") => void> = [];
   private readonly walletList: WalletInfo[];
 
+  private _domReadyHandler: (() => void) | null = null;
+  private _balanceAbort: AbortController | null = null;
   private destroyed = false;
 
   constructor(options: TosConnectUIOptions) {
@@ -131,9 +133,8 @@ export class TosConnectUI {
     if (options.buttonRootId && isBrowser()) {
       // Defer mount to allow DOM to be ready
       if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", () => {
-          this.mountButton(options.buttonRootId!);
-        }, { once: true });
+        this._domReadyHandler = () => { this.mountButton(options.buttonRootId!); };
+        document.addEventListener("DOMContentLoaded", this._domReadyHandler, { once: true });
       } else {
         this.mountButton(options.buttonRootId);
       }
@@ -323,9 +324,7 @@ export class TosConnectUI {
     if (!modal) return;
     this.modal = null;
     this.setModalState("closed");
-    modal.close().catch(() => {
-      modal.destroy();
-    });
+    modal.destroy(); // synchronous cleanup, skip animation
   }
 
   /** Current modal state. */
@@ -362,6 +361,10 @@ export class TosConnectUI {
   /** Destroy the UI, removing all DOM elements and event listeners. */
   destroy(): void {
     this.destroyed = true;
+    if (this._domReadyHandler) {
+      document.removeEventListener("DOMContentLoaded", this._domReadyHandler);
+      this._domReadyHandler = null;
+    }
     this.stopBalancePolling();
     this.button?.destroy();
     this.button = null;
@@ -615,6 +618,8 @@ export class TosConnectUI {
   private startBalancePolling(address: string): void {
     this.stopBalancePolling();
 
+    this._balanceAbort = new AbortController();
+
     const fetchBalance = async (): Promise<void> => {
       try {
         const endpoint = this.bridgeUrl?.replace("/bridge", "") ?? "https://rpc.tos.network";
@@ -633,6 +638,7 @@ export class TosConnectUI {
             method: "getAddressBalance",
             params: { address },
           }),
+          signal: this._balanceAbort?.signal,
         });
 
         if (res.ok) {
@@ -663,6 +669,8 @@ export class TosConnectUI {
       clearInterval(this._balanceTimer);
       this._balanceTimer = null;
     }
+    this._balanceAbort?.abort();
+    this._balanceAbort = null;
     this._balance = null;
   }
 

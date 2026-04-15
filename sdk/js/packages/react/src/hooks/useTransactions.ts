@@ -89,7 +89,15 @@ export function useTransactions(
         const cursor = cursorRef.current;
         const txns = await client.getTransactions(addrStr, limit, cursor ? { lt: cursor.lt, hash: cursor.hash } : undefined);
 
-        const list = Array.isArray(txns) ? txns : [];
+        const items = Array.isArray(txns) ? txns : [];
+
+        // getTransactions returns results inclusive of the cursor, so when
+        // paginating the first item of the new page duplicates the last item
+        // of the previous page. Drop it to avoid duplicates.
+        const list = cursorRef.current && items.length > 0 &&
+          items[0]?.transaction_id?.lt === cursorRef.current.lt &&
+          items[0]?.transaction_id?.hash === cursorRef.current.hash
+            ? items.slice(1) : items;
 
         if (list.length > 0) {
           const last = list[list.length - 1]!;

@@ -70,7 +70,7 @@ export function useContractRead<T = RunResult>(
       "contractRead",
       addrStr,
       String(method),
-      JSON.stringify(contractArgs?.args ?? []),
+      JSON.stringify(contractArgs?.args ?? [], (_k, v) => typeof v === "bigint" ? v.toString() : v),
     ],
     queryFn: async () => {
       const result = await client.runGetMethod(

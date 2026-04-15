@@ -87,6 +87,7 @@ export function useMutation<TArgs, TResult>(
   );
 
   const reset = useCallback(() => {
+    inflightId.current++;
     setState({ status: "idle", data: undefined, error: null });
   }, []);
 

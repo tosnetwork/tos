@@ -99,6 +99,8 @@ export class BridgeClient {
     recipientPublicKey?: Uint8Array,
     ttl?: number,
   ): Promise<void> {
+    if (this._closed) return;
+
     const target = recipientPublicKey ?? this.walletPublicKey;
     if (!target) {
       throw new TosConnectError(
@@ -150,11 +152,14 @@ export class BridgeClient {
     if (this._closed) return;
     this.closeEventSource();
 
-    const url = `${this.bridgeUrl}/events?client_id=${this.clientId}`;
+    const sseUrl = new URL(`${this.bridgeUrl}/events`);
+    sseUrl.searchParams.set("client_id", this.clientId);
+    const url = sseUrl.toString();
 
     // EventSource is only available in browser-like environments.
     if (typeof EventSource === "undefined") {
-      for (const handler of this.errorHandlers) {
+      const errorHandlers = [...this.errorHandlers];
+      for (const handler of errorHandlers) {
         handler(new Error("EventSource is not available in this environment"));
       }
       return;
@@ -188,7 +193,8 @@ export class BridgeClient {
         const decoded = new TextDecoder().decode(decrypted);
         const msg: BridgeMessage = { from: raw.from, data: decoded };
 
-        for (const handler of this.messageHandlers) {
+        const handlers = [...this.messageHandlers];
+        for (const handler of handlers) {
           handler(msg);
         }
       } catch {
@@ -270,7 +276,8 @@ export class BridgeClient {
   private scheduleReconnect(): void {
     if (!this.reconnectEnabled) return;
     if (this.reconnectAttempt >= this.maxRetries) {
-      for (const handler of this.errorHandlers) {
+      const errorHandlers = [...this.errorHandlers];
+      for (const handler of errorHandlers) {
         handler(
           bridgeUnreachableError(
             `SSE reconnect failed after ${this.maxRetries} attempts`,

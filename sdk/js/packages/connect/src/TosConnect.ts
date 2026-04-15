@@ -476,12 +476,15 @@ export class TosConnect {
         request,
       );
 
+      if (!this.injectedBridge) return; // torn down during connect
+
       this.setConnectedWallet(wallet);
 
       // Listen for disconnect events.
-      this.injectedBridge!.startListening((event: WalletEvent) => {
+      if (!this.injectedBridge) return; // torn down during connect
+      this.injectedBridge.startListening((event: WalletEvent) => {
         if (event.event === "disconnect") {
-          void clearSession(this.storage);
+          void clearSession(this.storage).catch(() => {});
           this._wallet = null;
           this.notifyStatusChange(null);
         }
@@ -606,7 +609,7 @@ export class TosConnect {
           this.activeBridgeUrl!,
           wallet,
           this.sessionTtl,
-        );
+        ).catch(() => {});
 
         this.notifyStatusChange(wallet);
         break;
@@ -625,7 +628,7 @@ export class TosConnect {
       }
 
       case "disconnect": {
-        void clearSession(this.storage);
+        void clearSession(this.storage).catch(() => {});
         this._wallet = null;
         this.notifyStatusChange(null);
         break;
