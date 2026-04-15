@@ -132,11 +132,19 @@ run_retry "delegation grant nominator" \
     --constraints='{}' \
     --format json
 
+# Verify grant took effect
+run_retry "verify post-grant delegations" \
+  $TOSCTL account delegations -c "$CONFIG" --address="$NOMINATOR" --format json
+
 run_retry "delegation revoke nominator" \
   $TOSCTL account delegation-revoke -c "$CONFIG" \
     --address="$NOMINATOR" \
     --permission-id="${NOMINATOR}:nominator-stake:0" \
     --format json
+
+# Verify revoke took effect
+run_retry "verify post-revoke delegations" \
+  $TOSCTL account delegations -c "$CONFIG" --address="$NOMINATOR" --format json
 
 echo "[4/5] Unsupported/immutable lifecycle"
 run_expect_fail "session grant session-wallet unsupported" \

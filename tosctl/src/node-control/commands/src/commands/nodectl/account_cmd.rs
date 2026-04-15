@@ -954,10 +954,11 @@ impl AccountDelegationGrantCmd {
         let config = AppConfig::load(Path::new(config_path))?;
         let rpc_client = try_create_rpc_client(&config).await?;
         let address = parse_account_address(&self.address)?;
+        let grantee_address = parse_account_address(&self.grantee)?;
         let constraints: serde_json::Value = serde_json::from_str(&self.constraints)?;
         let req = LifecycleGrantRequest {
             address: address.to_string(),
-            grantee: self.grantee.clone(),
+            grantee: grantee_address.to_string(),
             scope: self.scope.clone(),
             constraints,
             expires_at: self.expires_at,
@@ -997,10 +998,11 @@ impl AccountSessionGrantCmd {
         let config = AppConfig::load(Path::new(config_path))?;
         let rpc_client = try_create_rpc_client(&config).await?;
         let address = parse_account_address(&self.address)?;
+        let grantee_address = parse_account_address(&self.grantee)?;
         let constraints: serde_json::Value = serde_json::from_str(&self.constraints)?;
         let req = LifecycleGrantRequest {
             address: address.to_string(),
-            grantee: self.grantee.clone(),
+            grantee: grantee_address.to_string(),
             scope: self.scope.clone(),
             constraints,
             expires_at: self.expires_at,
@@ -1040,10 +1042,11 @@ impl AccountAgentGrantCmd {
         let config = AppConfig::load(Path::new(config_path))?;
         let rpc_client = try_create_rpc_client(&config).await?;
         let address = parse_account_address(&self.address)?;
+        let grantee_address = parse_account_address(&self.grantee)?;
         let constraints: serde_json::Value = serde_json::from_str(&self.constraints)?;
         let req = LifecycleGrantRequest {
             address: address.to_string(),
-            grantee: self.grantee.clone(),
+            grantee: grantee_address.to_string(),
             scope: self.scope.clone(),
             constraints,
             expires_at: self.expires_at,

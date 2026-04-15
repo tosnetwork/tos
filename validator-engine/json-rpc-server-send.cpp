@@ -36,6 +36,8 @@
 
 namespace tos {
 
+static constexpr size_t kMaxBocSize = 64 * 1024;  // 64 KiB
+
 void JsonRpcServer::handle_sendBoc(td::JsonObject &params, std::string req_id,
                                    td::Promise<HttpReturn> promise) {
   auto boc_r = params.get_required_string_field("boc");
@@ -47,6 +49,10 @@ void JsonRpcServer::handle_sendBoc(td::JsonObject &params, std::string req_id,
   auto decoded_r = td::base64_decode(boc_b64);
   if (decoded_r.is_error()) {
     promise.set_value(make_json_error(-32602, "Invalid base64 in 'boc'", req_id));
+    return;
+  }
+  if (decoded_r.ok().size() > kMaxBocSize) {
+    promise.set_value(make_json_error(-32602, "BOC payload exceeds maximum allowed size", req_id));
     return;
   }
   auto body = td::BufferSlice(decoded_r.move_as_ok());
@@ -502,6 +508,11 @@ void JsonRpcServer::handle_sendBocReturnHash(td::JsonObject &params, std::string
   }
   auto decoded = decoded_r.move_as_ok();
 
+  if (decoded.size() > kMaxBocSize) {
+    promise.set_value(make_json_error(-32602, "BOC payload exceeds maximum allowed size", req_id));
+    return;
+  }
+
   // Compute the external message hash before sending
   auto cell_r = vm::std_boc_deserialize(td::Slice(decoded));
   std::string msg_hash_b64;
@@ -729,6 +740,10 @@ void JsonRpcServer::handle_submitSignedTransaction(td::JsonObject &params, std::
     promise.set_value(make_json_error(-32602, "SIGNED_ARTIFACT_INVALID: invalid base64", req_id));
     return;
   }
+  if (decoded_r.ok().size() > kMaxBocSize) {
+    promise.set_value(make_json_error(-32602, "BOC payload exceeds maximum allowed size", req_id));
+    return;
+  }
   auto cell_r = vm::std_boc_deserialize(td::Slice(decoded_r.ok()));
   if (cell_r.is_error()) {
     promise.set_value(make_json_error(-32602, "SIGNED_ARTIFACT_INVALID: invalid BOC", req_id));
@@ -809,18 +824,30 @@ void JsonRpcServer::handle_sendQuery(td::JsonObject &params, std::string req_id,
   auto code_r = params.get_optional_string_field("init_code");
   if (code_r.is_ok() && !code_r.ok().empty()) {
     auto dec = td::base64_decode(code_r.ok());
-    if (dec.is_ok()) {
-      auto cell = vm::std_boc_deserialize(td::Slice(dec.ok()));
-      if (cell.is_ok()) init_code = cell.move_as_ok();
+    if (dec.is_error()) {
+      promise.set_value(make_json_error(-32602, "invalid base64 in init_code", req_id));
+      return;
     }
+    auto cell = vm::std_boc_deserialize(td::Slice(dec.ok()));
+    if (cell.is_error()) {
+      promise.set_value(make_json_error(-32602, "invalid BOC in init_code", req_id));
+      return;
+    }
+    init_code = cell.move_as_ok();
   }
   auto data_r = params.get_optional_string_field("init_data");
   if (data_r.is_ok() && !data_r.ok().empty()) {
     auto dec = td::base64_decode(data_r.ok());
-    if (dec.is_ok()) {
-      auto cell = vm::std_boc_deserialize(td::Slice(dec.ok()));
-      if (cell.is_ok()) init_data = cell.move_as_ok();
+    if (dec.is_error()) {
+      promise.set_value(make_json_error(-32602, "invalid base64 in init_data", req_id));
+      return;
     }
+    auto cell = vm::std_boc_deserialize(td::Slice(dec.ok()));
+    if (cell.is_error()) {
+      promise.set_value(make_json_error(-32602, "invalid BOC in init_data", req_id));
+      return;
+    }
+    init_data = cell.move_as_ok();
   }
 
   // Build external inbound message
@@ -1160,6 +1187,11 @@ void JsonRpcServer::handle_sendBocReturnHashNoError(td::JsonObject &params, std:
     return;
   }
   auto decoded = decoded_r.move_as_ok();
+
+  if (decoded.size() > kMaxBocSize) {
+    promise.set_value(make_json_error(-32602, "BOC payload exceeds maximum allowed size", req_id));
+    return;
+  }
 
   // Compute the external message hash before sending
   auto cell_r = vm::std_boc_deserialize(td::Slice(decoded));

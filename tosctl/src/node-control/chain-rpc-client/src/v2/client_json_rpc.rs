@@ -372,7 +372,9 @@ impl ClientJsonRpc {
             .await
             .context("getAddressBalance")?;
         // Response is just a quoted string like "1234567"
-        Ok(res.as_str().unwrap_or("0").to_string())
+        res.as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow::anyhow!("get_address_balance: expected string response, got: {}", res))
     }
 
     pub async fn get_address_state(&self, address: &MsgAddressInt) -> anyhow::Result<String> {
@@ -380,7 +382,9 @@ impl ClientJsonRpc {
             .json_rpc("getAddressState", serde_json::json!({"address": address.to_string()}))
             .await
             .context("getAddressState")?;
-        Ok(res.as_str().unwrap_or("uninit").to_string())
+        res.as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow::anyhow!("get_address_state: expected string response, got: {}", res))
     }
 
     pub async fn get_shards(&self, seqno: u32) -> anyhow::Result<GetShardsRes> {

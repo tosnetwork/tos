@@ -498,8 +498,13 @@ static void fetch_multisig_agent_view(SendQueryFn&& send_query, const AccountCap
                         return;
                       }
                       auto view2 = std::move(view);
-                      view2.threshold_k = static_cast<int>(nk_stack.write().pop_smallint_range(128));
-                      view2.threshold_n = static_cast<int>(nk_stack.write().pop_smallint_range(128));
+                      try {
+                        view2.threshold_k = static_cast<int>(nk_stack.write().pop_smallint_range(128));
+                        view2.threshold_n = static_cast<int>(nk_stack.write().pop_smallint_range(128));
+                      } catch (vm::VmError& err) {
+                        view2.threshold_k = 0;
+                        view2.threshold_n = 0;
+                      }
                       promise.set_value(std::move(view2));
                     }));
           }));
@@ -614,8 +619,11 @@ static void fetch_nominator_pool_delegation_view(SendQueryFn&& send_query,
             }
 
             // Parse the cons-list of tuple4
+            constexpr int kMaxListEntries = 10000;
+            int list_count = 0;
             auto entry = stack->at(0);
             while (entry.is_tuple()) {
+              if (++list_count > kMaxListEntries) break;
               auto cons = entry.as_tuple();
               if (cons->size() < 2) break;
 
@@ -670,8 +678,11 @@ static void fetch_session_wallet_view(SendQueryFn&& send_query,
             }
 
             // Parse the cons-list of tuples (same pattern as nominator pool's list_nominators)
+            constexpr int kMaxListEntries = 10000;
+            int list_count = 0;
             auto entry = stack->at(0);
             while (entry.is_tuple()) {
+              if (++list_count > kMaxListEntries) break;
               auto cons = entry.as_tuple();
               if (cons->size() < 2) break;
 
@@ -1621,9 +1632,9 @@ static td::Result<GrantRequest> parse_grant_request(td::JsonObject &params) {
     for (auto &field : cobj.field_values_) {
       if (!first) sb << ",";
       first = false;
-      sb << "\"" << field.first << "\":";
+      sb << td::JsonString(td::Slice(field.first)) << ":";
       if (field.second.type() == td::JsonValue::Type::String) {
-        sb << "\"" << field.second.get_string() << "\"";
+        sb << td::JsonString(td::Slice(field.second.get_string()));
       } else if (field.second.type() == td::JsonValue::Type::Number) {
         sb << field.second.get_number();
       } else if (field.second.type() == td::JsonValue::Type::Boolean) {
@@ -1644,6 +1655,9 @@ static td::Result<GrantRequest> parse_grant_request(td::JsonObject &params) {
   // expires_at (optional)
   auto expires_r = params.get_optional_int_field("expires_at");
   if (expires_r.is_ok() && expires_r.ok() > 0) {
+    if (expires_r.ok() < 0 || expires_r.ok() > static_cast<td::int64>(std::numeric_limits<td::uint32>::max())) {
+      return td::Status::Error("INVALID_EXPIRES_AT: value out of uint32 range");
+    }
     req.expires_at = static_cast<td::uint32>(expires_r.ok());
     req.has_expires_at = true;
   }

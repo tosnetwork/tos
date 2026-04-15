@@ -568,7 +568,10 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
   if (opts_.readonly &&
       (method == "sendBoc" || method == "sendBocReturnHash" ||
        method == "sendBocReturnHashNoError" || method == "sendQuery" ||
-       method == "submitSignedTransaction")) {
+       method == "submitSignedTransaction" ||
+       method == "grantAccountDelegation" || method == "revokeAccountDelegation" ||
+       method == "grantAccountSession" || method == "revokeAccountSession" ||
+       method == "grantAccountAgent" || method == "revokeAccountAgent")) {
     promise.set_value(make_json_error(-32601,
         "Write methods are disabled (server is in readonly mode)", req_id));
     return;
@@ -848,6 +851,15 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_unauthorized(const std::strin
 
 // ─── API key check ──────────────────────────────────────────────────────
 
+static bool constant_time_compare(const std::string &a, const std::string &b) {
+  if (a.size() != b.size()) return false;
+  volatile unsigned char result = 0;
+  for (size_t i = 0; i < a.size(); i++) {
+    result |= static_cast<unsigned char>(a[i]) ^ static_cast<unsigned char>(b[i]);
+  }
+  return result == 0;
+}
+
 bool JsonRpcServer::check_api_key(const RequestPtr &request,
                                   td::Promise<HttpReturn> &promise) {
   if (opts_.api_key.empty()) {
@@ -856,7 +868,7 @@ bool JsonRpcServer::check_api_key(const RequestPtr &request,
 
   // Check X-API-Key header
   auto key_header = request->get_header("X-API-Key");
-  if (!key_header.empty() && key_header == opts_.api_key) {
+  if (!key_header.empty() && constant_time_compare(key_header, opts_.api_key)) {
     return true;
   }
 
@@ -875,7 +887,7 @@ bool JsonRpcServer::check_api_key(const RequestPtr &request,
       if (eq != std::string::npos) {
         auto key = token.substr(0, eq);
         auto val = token.substr(eq + 1);
-        if (key == "api_key" && val == opts_.api_key) {
+        if (key == "api_key" && constant_time_compare(val, opts_.api_key)) {
           return true;
         }
       }
@@ -894,9 +906,6 @@ const std::set<std::string> &JsonRpcServer::cacheable_methods() {
       "getMasterchainInfo", "getConfigParam", "getConfigAll",
       "getAddressInformation", "getAccountCapability",
       "getAccountDelegations", "getAccountSessions", "getAccountAgents",
-      "grantAccountDelegation", "revokeAccountDelegation",
-      "grantAccountSession", "revokeAccountSession",
-      "grantAccountAgent", "revokeAccountAgent",
       "getWalletInformation", "getAddressBalance",
       "getAddressState", "getBlockHeader", "lookupBlock", "shards",
       "getConsensusBlock", "getOutMsgQueueSize"

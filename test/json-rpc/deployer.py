@@ -52,7 +52,11 @@ def run_fift(script: str, working_dir: Optional[Path] = None) -> str:
 
 
 def get_seqno(endpoint: str, address: str) -> int:
-    """Get a wallet's seqno via runGetMethod."""
+    """Get a wallet's seqno via runGetMethod.
+
+    Raises RuntimeError if the RPC call fails or returns an unexpected result,
+    so callers never silently proceed with a wrong seqno.
+    """
     resp = requests.post(
         f"{endpoint}runGetMethod",
         json={"address": address, "method": "seqno", "stack": []},
@@ -62,7 +66,9 @@ def get_seqno(endpoint: str, address: str) -> int:
         stack = data["result"]["stack"]
         if stack:
             return int(stack[0][1])
-    return 0
+    raise RuntimeError(
+        f"Failed to fetch seqno for {address}: {data}"
+    )
 
 
 def send_boc(endpoint: str, boc_b64: str) -> dict:
