@@ -138,7 +138,7 @@ run_retry "verify post-grant delegations" \
 
 # Discover the real principal-based permission ID from inspection
 PERM_ID=$($TOSCTL account delegations -c "$CONFIG" --address="$NOMINATOR" --format json 2>/dev/null \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['result'][0]['permission_id'] if d.get('ok') and d.get('result') else '')" 2>/dev/null || echo "")
+  | python3 -c "import sys,json; d=json.load(sys.stdin); items = d if isinstance(d, list) else (d.get('result') if isinstance(d, dict) else None); first = items[0] if items else {}; print((first.get('permission_id') or first.get('id') or '') if isinstance(first, dict) else '')" 2>/dev/null || echo "")
 
 if [ -z "$PERM_ID" ]; then
   echo "  WARN: could not discover delegation permission_id, using fallback"
