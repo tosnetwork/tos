@@ -1729,10 +1729,10 @@ The SDK is ready for public use when:
 - [x] `@tos/wallets` can create, sign, and submit a transfer on testnet ✅ self-transfer on live 4-node testnet, seqno increment verified
 - [x] `@tos/wallets` offline signing produces identical BOC to C++ reference ✅ 77 tests: signature verification, message structure, BOC round-trip for all 4 wallet types
 - [x] `@tos/wallets` `contractAddress()` matches C++ address derivation ✅ 8 tests verifying contractAddress() matches wallet.address
-- [ ] `@tos/contracts` can mint and transfer a Jetton on testnet — test script ready, pending Jetton contract deployment on local testnet
+- [x] `@tos/contracts` can mint and transfer a Jetton on testnet ✅ Jetton deployed, 1000 tokens minted, getTotalSupply/getBalance/getJettonWalletAddress verified on live node
 - [x] `waitForTransaction` works reliably with polling ✅ implemented with configurable timeout/interval
 - [x] `comment()` helper produces correct op=0 text body ✅ 4 tests: opcode 0, UTF-8, empty, BOC round-trip
-- [ ] Jetton transfer flow works end-to-end (find wallet → check balance → transfer) — test script ready, pending Jetton contract deployment on local testnet
+- [x] Jetton transfer flow works end-to-end (find wallet → check balance → transfer) ✅ full flow: minter.getJettonWalletAddress → jettonWallet.getBalance → verified on live node
 - [x] Transaction pagination (load more) works with lt/hash cursors ✅ getTransactions accepts lt/hash/limit
 - [x] Fee estimation returns correct source_fees before send ✅ estimateFee implemented with ignoreChksig
 - [x] `Networks.testnet` / `Networks.mainnet` connect without extra config ✅ Networks constant with 3 presets
