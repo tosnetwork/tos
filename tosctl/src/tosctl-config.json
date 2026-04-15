@@ -1,0 +1,49 @@
+{
+  "nodes": {},
+  "wallets": {},
+  "pools": {},
+  "bindings": {},
+  "chain_rpc": {
+    "urls": [
+      "http://127.0.0.1:3301/"
+    ],
+    "api_key": null
+  },
+  "elections": {
+    "policy": "split50",
+    "policy_overrides": {},
+    "max_factor": 3.0,
+    "tick_interval": 40
+  },
+  "http": {
+    "bind": "0.0.0.0:8080",
+    "enable_swagger": true,
+    "auth": {
+      "operator_token_ttl": 2592000,
+      "nominator_token_ttl": 86400,
+      "min_password_length": 8
+    }
+  },
+  "master_wallet": {
+    "key": {
+      "name": "master-wallet-secret"
+    },
+    "version": "V3R2",
+    "subwallet_id": 42,
+    "workchain": 0
+  },
+  "tick_interval": 40,
+  "log": {
+    "max_size_mb": 50,
+    "max_files": 10,
+    "rotation": "daily",
+    "level": "INFO",
+    "output": "console"
+  },
+  "bookmarks": {},
+  "alerts": {
+    "enabled": false,
+    "channels": [],
+    "rules": []
+  }
+}

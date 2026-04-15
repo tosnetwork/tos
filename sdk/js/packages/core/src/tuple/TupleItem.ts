@@ -1,0 +1,22 @@
+/**
+ * TupleItem discriminated union types for TVM stack values.
+ */
+
+import type { Cell } from '../boc/Cell';
+
+export type TupleItemNull = { type: 'null' };
+export type TupleItemInt = { type: 'int'; value: bigint };
+export type TupleItemNaN = { type: 'nan' };
+export type TupleItemCell = { type: 'cell'; cell: Cell };
+export type TupleItemSlice = { type: 'slice'; cell: Cell };
+export type TupleItemBuilder = { type: 'builder'; cell: Cell };
+export type Tuple = { type: 'tuple'; items: TupleItem[] };
+
+export type TupleItem =
+    | TupleItemNull
+    | TupleItemInt
+    | TupleItemNaN
+    | TupleItemCell
+    | TupleItemSlice
+    | TupleItemBuilder
+    | Tuple;
