@@ -1,0 +1,630 @@
+/**
+ * @tos/connect-ui — Main Stylesheet
+ *
+ * All styles are scoped inside shadow DOM. These CSS custom properties
+ * can be overridden on the host element for customization.
+ */
+
+/* ---------------------------------------------------------------------------
+ * CSS Custom Properties (defaults — light theme)
+ * ------------------------------------------------------------------------ */
+
+:host {
+  --tos-connect-accent: #0088CC;
+  --tos-connect-bg: #ffffff;
+  --tos-connect-text: #1a1a2e;
+  --tos-connect-border: #e5e7eb;
+  --tos-connect-modal-bg: #ffffff;
+  --tos-connect-button-bg: #0088CC;
+  --tos-connect-button-text: #ffffff;
+  --tos-connect-radius: 12px;
+  --tos-connect-secondary-bg: #f5f5f7;
+  --tos-connect-secondary-text: #6b7280;
+  --tos-connect-hover-bg: #f0f0f2;
+  --tos-connect-overlay: rgba(0, 0, 0, 0.5);
+  --tos-connect-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  --tos-connect-success: #10b981;
+  --tos-connect-error: #ef4444;
+
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--tos-connect-text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ---------------------------------------------------------------------------
+ * Dark theme overrides
+ * ------------------------------------------------------------------------ */
+
+:host([data-tos-theme="dark"]) {
+  --tos-connect-accent: #0098e1;
+  --tos-connect-bg: #1a1a2e;
+  --tos-connect-text: #f0f0f0;
+  --tos-connect-border: #2d2d44;
+  --tos-connect-modal-bg: #1a1a2e;
+  --tos-connect-button-bg: #0098e1;
+  --tos-connect-button-text: #ffffff;
+  --tos-connect-secondary-bg: #232340;
+  --tos-connect-secondary-text: #9ca3af;
+  --tos-connect-hover-bg: #2d2d44;
+  --tos-connect-overlay: rgba(0, 0, 0, 0.7);
+  --tos-connect-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --tos-connect-success: #34d399;
+  --tos-connect-error: #f87171;
+}
+
+/* ---------------------------------------------------------------------------
+ * Reset inside shadow DOM
+ * ------------------------------------------------------------------------ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * Connect Button
+ * ------------------------------------------------------------------------ */
+
+.tos-connect-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border: none;
+  border-radius: var(--tos-connect-radius);
+  background: var(--tos-connect-button-bg);
+  color: var(--tos-connect-button-text);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background-color 0.2s ease, transform 0.1s ease, box-shadow 0.2s ease;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+  outline: none;
+  position: relative;
+  overflow: hidden;
+}
+
+.tos-connect-button:hover {
+  filter: brightness(1.1);
+  box-shadow: 0 2px 8px rgba(0, 136, 204, 0.3);
+}
+
+.tos-connect-button:active {
+  transform: scale(0.97);
+}
+
+.tos-connect-button:focus-visible {
+  outline: 2px solid var(--tos-connect-accent);
+  outline-offset: 2px;
+}
+
+.tos-connect-button--connected {
+  background: var(--tos-connect-secondary-bg);
+  color: var(--tos-connect-text);
+  border: 1px solid var(--tos-connect-border);
+  padding: 8px 16px;
+}
+
+.tos-connect-button--connected:hover {
+  filter: none;
+  background: var(--tos-connect-hover-bg);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.tos-connect-button__icon {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tos-connect-button__icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.tos-connect-button__wallet-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.tos-connect-button__address {
+  font-weight: 500;
+  font-size: 13px;
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+}
+
+.tos-connect-button__diamond {
+  color: var(--tos-connect-accent);
+  font-size: 12px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Modal Overlay
+ * ------------------------------------------------------------------------ */
+
+.tos-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 999999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--tos-connect-overlay);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  padding: 16px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Modal Container
+ * ------------------------------------------------------------------------ */
+
+.tos-modal {
+  position: relative;
+  width: 100%;
+  max-width: 400px;
+  max-height: calc(100vh - 32px);
+  background: var(--tos-connect-modal-bg);
+  border-radius: calc(var(--tos-connect-radius) + 4px);
+  box-shadow: var(--tos-connect-shadow);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------------------------------------------------------------------------
+ * Modal Header
+ * ------------------------------------------------------------------------ */
+
+.tos-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 12px;
+  gap: 12px;
+}
+
+.tos-modal__title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--tos-connect-text);
+  flex: 1;
+}
+
+.tos-modal__back-btn,
+.tos-modal__close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  background: var(--tos-connect-secondary-bg);
+  color: var(--tos-connect-secondary-text);
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.tos-modal__back-btn:hover,
+.tos-modal__close-btn:hover {
+  background: var(--tos-connect-hover-bg);
+  color: var(--tos-connect-text);
+}
+
+.tos-modal__back-btn:focus-visible,
+.tos-modal__close-btn:focus-visible {
+  outline: 2px solid var(--tos-connect-accent);
+  outline-offset: 2px;
+}
+
+.tos-modal__back-btn svg,
+.tos-modal__close-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Modal Body (scrollable)
+ * ------------------------------------------------------------------------ */
+
+.tos-modal__body {
+  padding: 8px 24px 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* ---------------------------------------------------------------------------
+ * Wallet Grid
+ * ------------------------------------------------------------------------ */
+
+.tos-wallet-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.tos-wallet-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--tos-connect-border);
+  border-radius: var(--tos-connect-radius);
+  background: var(--tos-connect-bg);
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease,
+    transform 0.1s ease;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.tos-wallet-item:hover {
+  background: var(--tos-connect-hover-bg);
+  border-color: var(--tos-connect-accent);
+}
+
+.tos-wallet-item:active {
+  transform: scale(0.98);
+}
+
+.tos-wallet-item:focus-visible {
+  outline: 2px solid var(--tos-connect-accent);
+  outline-offset: 2px;
+}
+
+.tos-wallet-item__icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--tos-connect-secondary-bg);
+}
+
+.tos-wallet-item__info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.tos-wallet-item__name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--tos-connect-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tos-wallet-item__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--tos-connect-success);
+  width: fit-content;
+}
+
+.tos-wallet-item__badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* ---------------------------------------------------------------------------
+ * QR Code View
+ * ------------------------------------------------------------------------ */
+
+.tos-qr-view {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  padding: 8px 0 0;
+}
+
+.tos-qr-view__container {
+  position: relative;
+  width: 260px;
+  height: 260px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
+  border-radius: var(--tos-connect-radius);
+  padding: 16px;
+}
+
+.tos-qr-view__container svg {
+  width: 100%;
+  height: 100%;
+}
+
+.tos-qr-view__logo {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 48px;
+  height: 48px;
+  background: #ffffff;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.tos-qr-view__logo svg {
+  width: 32px;
+  height: 32px;
+}
+
+.tos-qr-view__hint {
+  font-size: 13px;
+  color: var(--tos-connect-secondary-text);
+  text-align: center;
+}
+
+.tos-qr-view__deeplink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 20px;
+  border: none;
+  border-radius: var(--tos-connect-radius);
+  background: var(--tos-connect-accent);
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.15s ease;
+  text-decoration: none;
+}
+
+.tos-qr-view__deeplink:hover {
+  filter: brightness(1.1);
+}
+
+.tos-qr-view__deeplink:focus-visible {
+  outline: 2px solid var(--tos-connect-accent);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Connecting state
+ * ------------------------------------------------------------------------ */
+
+.tos-connecting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 32px 0;
+}
+
+.tos-connecting__spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--tos-connect-border);
+  border-top-color: var(--tos-connect-accent);
+  border-radius: 50%;
+  animation: tos-spin 0.8s linear infinite;
+}
+
+.tos-connecting__text {
+  font-size: 14px;
+  color: var(--tos-connect-secondary-text);
+}
+
+/* ---------------------------------------------------------------------------
+ * Account Menu (dropdown)
+ * ------------------------------------------------------------------------ */
+
+.tos-account-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 280px;
+  background: var(--tos-connect-modal-bg);
+  border: 1px solid var(--tos-connect-border);
+  border-radius: var(--tos-connect-radius);
+  box-shadow: var(--tos-connect-shadow);
+  overflow: hidden;
+  z-index: 999998;
+}
+
+.tos-account-menu__header {
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid var(--tos-connect-border);
+}
+
+.tos-account-menu__chain {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.tos-account-menu__chain--mainnet {
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--tos-connect-success);
+}
+
+.tos-account-menu__chain--testnet {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--tos-connect-error);
+}
+
+.tos-account-menu__address-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tos-account-menu__address {
+  flex: 1;
+  font-size: 12px;
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  color: var(--tos-connect-text);
+  word-break: break-all;
+  line-height: 1.6;
+}
+
+.tos-account-menu__copy-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 6px;
+  background: var(--tos-connect-secondary-bg);
+  color: var(--tos-connect-secondary-text);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.tos-account-menu__copy-btn:hover {
+  background: var(--tos-connect-hover-bg);
+  color: var(--tos-connect-text);
+}
+
+.tos-account-menu__copy-btn:focus-visible {
+  outline: 2px solid var(--tos-connect-accent);
+  outline-offset: 2px;
+}
+
+.tos-account-menu__copy-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.tos-account-menu__copy-btn--copied {
+  color: var(--tos-connect-success);
+}
+
+.tos-account-menu__actions {
+  padding: 8px;
+}
+
+.tos-account-menu__disconnect {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--tos-connect-error);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.tos-account-menu__disconnect:hover {
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.tos-account-menu__disconnect:focus-visible {
+  outline: 2px solid var(--tos-connect-error);
+  outline-offset: -2px;
+}
+
+.tos-account-menu__disconnect svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Button wrapper (for positioning the account menu)
+ * ------------------------------------------------------------------------ */
+
+.tos-button-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+/* ---------------------------------------------------------------------------
+ * Utility
+ * ------------------------------------------------------------------------ */
+
+.tos-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * Responsive
+ * ------------------------------------------------------------------------ */
+
+@media (max-width: 480px) {
+  .tos-modal {
+    max-width: 100%;
+    max-height: 85vh;
+    border-radius: var(--tos-connect-radius) var(--tos-connect-radius) 0 0;
+    margin-top: auto;
+  }
+
+  .tos-modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .tos-qr-view__container {
+    width: 220px;
+    height: 220px;
+  }
+
+  .tos-account-menu {
+    position: fixed;
+    top: auto;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    min-width: 100%;
+    border-radius: var(--tos-connect-radius) var(--tos-connect-radius) 0 0;
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "name": "@tos/connect-react",
+  "version": "0.1.0",
+  "description": "All-in-one React integration for TOS Blockchain — connect, UI, and hooks in a single package",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./styles.css": "./dist/styles.css"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --external react --external react-dom && cp src/styles/*.css dist/",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tos/connect": "workspace:*",
+    "@tos/connect-ui": "workspace:*",
+    "@tos/react": "workspace:*",
+    "@tos/core": "workspace:*",
+    "@tos/client": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": ">=18.0.0",
+    "react-dom": ">=18.0.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0"
+  },
+  "license": "MIT"
+}
