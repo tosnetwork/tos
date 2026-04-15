@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { Cell, Address, Dictionary, beginCell } from "@tos/core";
+import { Cell, Address, Dictionary } from "@tos/core";
 import { keyPairFromSeed, signVerify } from "@tos/crypto";
 import { HighloadWalletV2, createQueryId } from "./HighloadWalletV2.js";
 

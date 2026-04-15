@@ -117,11 +117,6 @@ describe("WalletV3R2", () => {
 
     // The signature should be verifiable against the signing message hash
     // Rebuild the signing message to verify
-    const signingMsg = beginCell()
-      .storeUint(walletId, 32)
-      .storeUint(validUntil, 32)
-      .storeUint(seqno, 32);
-
     // There should be at least one ref (the internal message)
     expect(slice.remainingRefs).toBeGreaterThanOrEqual(1);
   });
