@@ -25,7 +25,7 @@ describe("ConnectErrorCodes", () => {
     expect(ConnectErrorCodes.BRIDGE_UNREACHABLE).toBe(400);
     expect(ConnectErrorCodes.SESSION_EXPIRED).toBe(401);
     expect(ConnectErrorCodes.SESSION_RESTORE_FAILED).toBe(402);
-    expect(ConnectErrorCodes.TX_REJECTED).toBe(300);
+    expect(ConnectErrorCodes.TX_REJECTED).toBe(301);
     expect(ConnectErrorCodes.TX_TIMEOUT).toBe(500);
     expect(ConnectErrorCodes.TX_INVALID).toBe(501);
     expect(ConnectErrorCodes.PROTOCOL_VERSION_MISMATCH).toBe(600);

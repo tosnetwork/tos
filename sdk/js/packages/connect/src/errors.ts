@@ -15,7 +15,7 @@ export const ConnectErrorCodes = {
   /** Restoring a previous session failed. */
   SESSION_RESTORE_FAILED: 402,
   /** The user rejected the transaction. */
-  TX_REJECTED: 300,
+  TX_REJECTED: 301,
   /** Timed out waiting for the wallet to respond. */
   TX_TIMEOUT: 500,
   /** The transaction request was malformed. */

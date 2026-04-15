@@ -66,17 +66,17 @@ export function getInjectedProviders(): InjectedTosProvider[] {
  * Check if a specific wallet (by jsBridgeKey) has an injected provider.
  */
 export function isWalletInjected(wallet: WalletInfo): boolean {
-  if (!isBrowser() || !wallet.jsBridgeKey) return false;
-  // A wallet is "injected" if we can find a provider matching its jsBridgeKey.
+  if (!isBrowser()) return false;
+  if (wallet.injected === true) return true;
+  if (!wallet.jsBridgeKey) return false;
+  // Check keyed providers map for a provider matching this wallet's jsBridgeKey.
   const providers = window.tos?.providers as
     | Record<string, InjectedTosProvider>
-    | InjectedTosProvider[]
     | undefined;
-  if (providers && !Array.isArray(providers) && (providers as Record<string, InjectedTosProvider>)[wallet.jsBridgeKey]) {
+  if (providers && providers[wallet.jsBridgeKey]) {
     return true;
   }
-  // Fall back to the single default provider.
-  return window.tos?.provider !== undefined;
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -245,12 +245,10 @@ export function findInjectedProvider(
   // Check keyed providers map first.
   const providers = window.tos?.providers as
     | Record<string, InjectedTosProvider>
-    | InjectedTosProvider[]
     | undefined;
-  if (providers && !Array.isArray(providers) && (providers as Record<string, InjectedTosProvider>)[wallet.jsBridgeKey]) {
-    return (providers as Record<string, InjectedTosProvider>)[wallet.jsBridgeKey]!;
+  if (providers && providers[wallet.jsBridgeKey]) {
+    return providers[wallet.jsBridgeKey]!;
   }
 
-  // Fall back to the single default provider.
-  return window.tos?.provider ?? null;
+  return null;
 }
