@@ -18,9 +18,9 @@ Version 1.0 | Generated from ~/tos monorepo analysis | 2026-04
 
 ### TOS (Consolidated)
 
-- Compatible with existing wallets — no SDK modification needed
-- Method names aligned with tonweb/toncenter, clients only need to change URL
-- New `account.capability` API provides standardized capability discovery
+- ✅ Compatible with existing wallets — no SDK modification needed
+- ✅ Method names aligned with tonweb/toncenter, clients only need to change URL
+- ✅ New `account.capability` API provides standardized capability discovery
 
 ---
 
@@ -37,11 +37,11 @@ Version 1.0 | Generated from ~/tos monorepo analysis | 2026-04
 
 ### TOS (Consolidated)
 
-| Library | Language | Approach |
-|---------|----------|----------|
-| toscenter-rs | Rust | Vendored into monorepo, supply chain controlled, version synced with node |
-| pytosiq_core | Python | Vendored into monorepo, no external dependency, unified test coverage |
-| chain-rpc-client | Rust | Native Rust RPC client, used internally by tosctl, JSON output support |
+| Library | Language | Approach | Status |
+|---------|----------|----------|--------|
+| toscenter-rs | Rust | Vendored into monorepo, supply chain controlled, version synced with node | ✅ |
+| pytosiq_core | Python | Vendored into monorepo, no external dependency, unified test coverage | ✅ |
+| chain-rpc-client | Rust | Native Rust RPC client, used internally by tosctl, JSON output support | ✅ |
 
 ---
 
@@ -59,14 +59,14 @@ Version 1.0 | Generated from ~/tos monorepo analysis | 2026-04
 
 **tosctl** — Rust CLI, single binary, 90 subcommands:
 
-| Module | Capability |
-|--------|------------|
-| node-control | Node management (start/stop/status/logs/config) |
-| elections | Staking/elections/nomination pools (SingleNominator/NominatorPool/Liquid) |
-| contracts | Contract deployment and interaction wrappers |
-| secrets-vault | Key management (file + HashiCorp Vault backend) |
-| daemon | Daemon process + Telegram/Webhook alerting |
-| JSON output | 15 commands support --json, consumable by CI/CD |
+| Module | Capability | Status |
+|--------|------------|--------|
+| node-control | Node management (start/stop/status/logs/config) | ✅ |
+| elections | Staking/elections/nomination pools (SingleNominator/NominatorPool/Liquid) | ✅ |
+| contracts | Contract deployment and interaction wrappers | ✅ |
+| secrets-vault | Key management (file + HashiCorp Vault backend) | ✅ |
+| daemon | Daemon process + Telegram/Webhook alerting | ✅ |
+| JSON output | 15 commands support --json, consumable by CI/CD | ✅ |
 
 ---
 
@@ -84,14 +84,14 @@ Version 1.0 | Generated from ~/tos monorepo analysis | 2026-04
 
 **JSON-RPC Server** — 35 methods, embedded, zero external dependencies:
 
-| Domain | Methods |
-|--------|---------|
-| accounts | 6 methods (getAddressInfo/Wallet/Balance/State/TokenData) |
-| blocks | 8 methods (getMasterchainInfo/lookupBlock/shards/signatures) |
-| transactions | 5 methods (getTransactions/tryLocate*/BlockTxExt) |
-| send | 5 methods (sendBoc/ReturnHash/NoError/sendQuery/estimateFee) |
-| runmethod + config + utils | 11 methods |
-| Infrastructure | REST GET + POST + OpenAPI 3.1 + Prometheus + API Key + Response cache |
+| Domain | Methods | Status |
+|--------|---------|--------|
+| accounts | 6 methods (getAddressInfo/Wallet/Balance/State/TokenData) | ✅ |
+| blocks | 8 methods (getMasterchainInfo/lookupBlock/shards/signatures) | ✅ |
+| transactions | 5 methods (getTransactions/tryLocate*/BlockTxExt) | ✅ |
+| send | 5 methods (sendBoc/ReturnHash/NoError/sendQuery/estimateFee) | ✅ |
+| runmethod + config + utils | 11 methods | ✅ |
+| Infrastructure | REST GET + POST + OpenAPI 3.1 + Prometheus + API Key + Response cache | ✅ |
 
 ---
 
@@ -106,11 +106,11 @@ Version 1.0 | Generated from ~/tos monorepo analysis | 2026-04
 
 ### TOS (Consolidated)
 
-| Component | Approach |
-|-----------|----------|
-| validator-engine (C++, embedded JSON-RPC) | Consensus (Catchain BFT) + block execution + Liteserver + embedded JSON-RPC — single process, no external API needed |
-| blockchain-explorer | HTTP block explorer |
-| lite-client + console | Query tool + console, tosctl replaces most use cases |
+| Component | Approach | Status |
+|-----------|----------|--------|
+| validator-engine (C++, embedded JSON-RPC) | Consensus (Catchain BFT) + block execution + Liteserver + embedded JSON-RPC — single process, no external API needed | ✅ |
+| blockchain-explorer | HTTP block explorer | ✅ |
+| lite-client + console | Query tool + console, tosctl replaces most use cases | ✅ |
 
 ---
 
@@ -130,25 +130,25 @@ Version 1.0 | Generated from ~/tos monorepo analysis | 2026-04
 
 **C++ Stack (native):**
 
-| Module | Purpose |
-|--------|---------|
-| crypto/ | Cryptographic primitives |
-| vm/ | TVM virtual machine |
-| block/ | Block format |
-| emulator/ | Transaction emulation |
-| tolk/ | New compiler |
-| catchain/ | Consensus protocol |
+| Module | Purpose | Status |
+|--------|---------|--------|
+| crypto/ | Cryptographic primitives | ✅ |
+| vm/ | TVM virtual machine | ✅ |
+| block/ | Block format | ✅ |
+| emulator/ | Transaction emulation | ✅ |
+| tolk/ | New compiler | ✅ |
+| catchain/ | Consensus protocol | ✅ |
 
 **Rust Stack (86K lines ported, inside tosctl):**
 
-| Module | Purpose |
-|--------|---------|
-| vm/ | TVM interpreter |
-| executor/ | Transaction executor |
-| assembler/ | TVM assembler |
-| emulator/ | Rust emulator |
-| block/ | Block parsing |
-| sandbox/ | Local chain simulator |
+| Module | Purpose | Status |
+|--------|---------|--------|
+| vm/ | TVM interpreter | ✅ |
+| executor/ | Transaction executor | ✅ |
+| assembler/ | TVM assembler | ✅ |
+| emulator/ | Rust emulator | ✅ |
+| block/ | Block parsing | ✅ |
+| sandbox/ | Local chain simulator | ✅ |
 
 ---
 
@@ -160,19 +160,19 @@ Version 1.0 | Generated from ~/tos monorepo analysis | 2026-04
 
 ### TOS (Consolidated)
 
-- ADNL (C++ + Rust dual implementation) + RLDP/RLDP2 + DHT + QUIC + FEC
-- Rust ADNL enables tosctl to perform P2P communication independently
+- ✅ ADNL (C++ + Rust dual implementation) + RLDP/RLDP2 + DHT + QUIC + FEC
+- ✅ Rust ADNL enables tosctl to perform P2P communication independently
 
 ---
 
 ## Summary: Key Differences
 
-| Dimension | TON Ecosystem | TOS Consolidated |
-|-----------|---------------|------------------|
-| API Layer | 3+ independent projects (toncenter/tonapi/cpp) | Embedded in validator-engine, single process |
-| Ops Tooling | mytonctrl (Python) + scattered scripts | tosctl (Rust, 90 commands, single binary) |
-| SDKs | Each language in independent repo, versions diverge | Vendored (toscenter-rs/pytosiq), supply chain controlled |
-| Virtual Machine | C++ only | C++ + Rust dual-stack (86K lines) |
-| Permission Model | None (wallets guess) | account.capability + role separation (planned) |
-| Repo Structure | 10+ independent repos | 1 monorepo |
-| Deploy Complexity | Node + API + ops tools deployed separately | validator-engine single process + tosctl |
+| Dimension | TON Ecosystem | TOS Consolidated | Status |
+|-----------|---------------|------------------|--------|
+| API Layer | 3+ independent projects (toncenter/tonapi/cpp) | Embedded in validator-engine, single process | ✅ |
+| Ops Tooling | mytonctrl (Python) + scattered scripts | tosctl (Rust, 90 commands, single binary) | ✅ |
+| SDKs | Each language in independent repo, versions diverge | Vendored (toscenter-rs/pytosiq), supply chain controlled | ✅ |
+| Virtual Machine | C++ only | C++ + Rust dual-stack (86K lines) | ✅ |
+| Permission Model | None (wallets guess) | account.capability + role separation (planned) | 🔧 In progress |
+| Repo Structure | 10+ independent repos | 1 monorepo | ✅ |
+| Deploy Complexity | Node + API + ops tools deployed separately | validator-engine single process + tosctl | ✅ |
