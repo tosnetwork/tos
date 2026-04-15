@@ -7,11 +7,13 @@ Covers:
   - getSigningPayload
   - submitSignedTransaction
 """
+import base64
 import json
 import time
 from pathlib import Path
 
 import pytest
+import requests
 
 ELECTOR_ADDRESS = "-1:3333333333333333333333333333333333333333333333333333333333333333"
 UNINITIALIZED_ADDRESS = "-1:1111111111111111111111111111111111111111111111111111111111111111"
@@ -434,6 +436,51 @@ class TestPermissionErrorCodeFormat:
         assert "TRANSACTION_INTENT_UNSUPPORTED" in data["error"]
 
 
+class TestSecurityLimits:
+    """Verify input validation and security limits on RPC surfaces."""
+
+    def test_boc_exceeds_max_size_rejected(self, api_method_call_no_get):
+        """A BOC payload exceeding 64 KB must be rejected."""
+        oversized_boc = base64.b64encode(b"\x00" * 65537).decode()
+        response = api_method_call_no_get(
+            "submitSignedTransaction",
+            boc=oversized_boc,
+            signer=ELECTOR_ADDRESS,
+        )
+        data = response.json()
+        assert data["ok"] is False
+        assert "exceeds maximum allowed size" in data["error"]
+
+    def test_expires_at_overflow_rejected(self, api_method_call_no_get, wallets):
+        """expires_at above UINT32_MAX must be rejected with INVALID_EXPIRES_AT."""
+        info = wallets.get("nominator_pool")
+        if not info or not info.get("address"):
+            pytest.skip("nominator pool not deployed")
+        response = api_method_call_no_get(
+            "grantAccountDelegation",
+            address=info["address"],
+            grantee="0:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+            scope="bounded_transfer",
+            expires_at=4294967296,
+        )
+        data = response.json()
+        assert data["ok"] is False
+        assert "INVALID_EXPIRES_AT" in data["error"]
+
+    def test_malformed_init_code_rejected(self, api_method_call_no_get):
+        """init_code with invalid base64 must be rejected."""
+        response = api_method_call_no_get(
+            "buildTransactionIntent",
+            address=ELECTOR_ADDRESS,
+            body=VALID_EMPTY_CELL_BOC,
+            init_code="not-valid-base64!!!",
+        )
+        data = response.json()
+        assert data["ok"] is False
+        error_lower = data["error"].lower()
+        assert "invalid base64" in error_lower
+
+
 class TestSourceTierOverride:
     """Verify source-tier override behavior for real implementations."""
 
@@ -734,15 +781,34 @@ class TestLifecycleMutationRPCs:
         assert data["ok"] is False
         assert "LIFECYCLE_IMMUTABLE" in data["error"]
 
+    def test_revoke_agent_deferred_for_elector(self, api_method_call_no_get):
+        """revokeAccountAgent on elector should fail with deferred/unsupported."""
+        response = api_method_call_no_get("revokeAccountAgent", address=ELECTOR_ADDRESS)
+        data = response.json()
+        assert data["ok"] is False
+        assert "PERMISSION_SOURCE_DEFERRED" in data["error"] or "PERMISSION_SOURCE_UNSUPPORTED" in data["error"]
+
+    def test_revoke_agent_immutable_for_multisig(self, api_method_call_no_get, wallets):
+        """revokeAccountAgent on multisig should fail with LIFECYCLE_IMMUTABLE."""
+        info = wallets.get("multisig")
+        if not info or not info.get("address"):
+            pytest.skip("multisig not deployed")
+        response = _call_until_ok(lambda: api_method_call_no_get("revokeAccountAgent", address=info["address"]))
+        data = response.json()
+        assert data["ok"] is False
+        assert "LIFECYCLE_IMMUTABLE" in data["error"]
+
     def test_grant_session_unsupported(self, api_method_call_no_get):
         response = api_method_call_no_get("grantAccountSession", address=ELECTOR_ADDRESS)
         data = response.json()
         assert data["ok"] is False
 
     def test_revoke_session_unsupported(self, api_method_call_no_get):
+        """revokeAccountSession on elector should fail with unsupported/deferred error."""
         response = api_method_call_no_get("revokeAccountSession", address=ELECTOR_ADDRESS)
         data = response.json()
         assert data["ok"] is False
+        assert "PERMISSION_SOURCE_UNSUPPORTED" in data["error"] or "PERMISSION_SOURCE_DEFERRED" in data["error"]
 
 
 class TestLifecycleRequestEnforcement:
@@ -1158,3 +1224,38 @@ class TestSessionWalletInspection:
         assert data["ok"] is True
         assert len(data["result"]) == 1
         assert data["result"][0]["status"] == "revoked"
+
+
+class TestAPIKeyRejection:
+    """Verify that a wrong API key is rejected.
+
+    This test bypasses the shared fixtures to send a request with an
+    intentionally invalid API key.  It only runs when the server is
+    expected to enforce key-based authentication (i.e., when the
+    --apikey option is provided, implying the server has API-key
+    enforcement enabled).
+    """
+
+    # TODO: This test can only verify 401 rejection when the TOS server is
+    # configured with API-key enforcement.  When --apikey is not provided
+    # (the default), the server likely runs without key checks and the test
+    # is skipped.  If the test infrastructure gains the ability to spin up
+    # a server with enforced API keys, remove the skip and make this
+    # unconditional.
+
+    def test_wrong_api_key_rejected(self, endpoint, api_key):
+        """A request with an invalid API key should receive HTTP 401."""
+        if not api_key:
+            pytest.skip(
+                "API key enforcement not testable: --apikey not provided. "
+                "TODO: add server-managed API key fixture."
+            )
+        bad_headers = {"X-API-Key": "definitely-wrong-key-value"}
+        response = requests.get(
+            endpoint + "getAccountCapability",
+            params={"address": ELECTOR_ADDRESS},
+            headers=bad_headers,
+        )
+        assert response.status_code == 401, (
+            f"Expected 401 for wrong API key, got {response.status_code}"
+        )

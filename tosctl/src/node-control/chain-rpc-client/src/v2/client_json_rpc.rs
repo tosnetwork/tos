@@ -278,11 +278,19 @@ impl ClientJsonRpc {
         &self,
         address: &MsgAddressInt,
         include_inactive: bool,
+        status: Option<&str>,
+        source_tier: Option<&str>,
     ) -> anyhow::Result<Vec<AccountDelegationGrant>> {
-        let json_params = serde_json::json!({
+        let mut json_params = serde_json::json!({
             "address": address.to_string(),
             "include_inactive": include_inactive,
         });
+        if let Some(s) = status {
+            json_params["status"] = serde_json::json!(s);
+        }
+        if let Some(t) = source_tier {
+            json_params["source_tier"] = serde_json::json!(t);
+        }
         let json_params_str = json_params.to_string();
         let res = self.json_rpc("getAccountDelegations", json_params).await.map_err(|e| {
             anyhow::anyhow!(
@@ -298,11 +306,19 @@ impl ClientJsonRpc {
         &self,
         address: &MsgAddressInt,
         include_inactive: bool,
+        status: Option<&str>,
+        source_tier: Option<&str>,
     ) -> anyhow::Result<Vec<AccountSessionCapability>> {
-        let json_params = serde_json::json!({
+        let mut json_params = serde_json::json!({
             "address": address.to_string(),
             "include_inactive": include_inactive,
         });
+        if let Some(s) = status {
+            json_params["status"] = serde_json::json!(s);
+        }
+        if let Some(t) = source_tier {
+            json_params["source_tier"] = serde_json::json!(t);
+        }
         let json_params_str = json_params.to_string();
         let res = self.json_rpc("getAccountSessions", json_params).await.map_err(|e| {
             anyhow::anyhow!(
@@ -318,11 +334,19 @@ impl ClientJsonRpc {
         &self,
         address: &MsgAddressInt,
         include_inactive: bool,
+        status: Option<&str>,
+        source_tier: Option<&str>,
     ) -> anyhow::Result<Vec<AccountAgentCapability>> {
-        let json_params = serde_json::json!({
+        let mut json_params = serde_json::json!({
             "address": address.to_string(),
             "include_inactive": include_inactive,
         });
+        if let Some(s) = status {
+            json_params["status"] = serde_json::json!(s);
+        }
+        if let Some(t) = source_tier {
+            json_params["source_tier"] = serde_json::json!(t);
+        }
         let json_params_str = json_params.to_string();
         let res = self.json_rpc("getAccountAgents", json_params).await.map_err(|e| {
             anyhow::anyhow!(

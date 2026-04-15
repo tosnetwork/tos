@@ -113,6 +113,12 @@ pub struct AccountDelegationsCmd {
     #[arg(long, default_value_t = false)]
     include_inactive: bool,
 
+    #[clap(long, help = "Filter by status: active, expired, revoked")]
+    pub status: Option<String>,
+
+    #[clap(long, help = "Override source tier: protocol, indexed, account_standard, deferred")]
+    pub source_tier: Option<String>,
+
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
 }
@@ -126,6 +132,12 @@ pub struct AccountSessionsCmd {
     #[arg(long, default_value_t = false)]
     include_inactive: bool,
 
+    #[clap(long, help = "Filter by status: active, expired, revoked")]
+    pub status: Option<String>,
+
+    #[clap(long, help = "Override source tier: protocol, indexed, account_standard, deferred")]
+    pub source_tier: Option<String>,
+
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
 }
@@ -138,6 +150,12 @@ pub struct AccountAgentsCmd {
 
     #[arg(long, default_value_t = false)]
     include_inactive: bool,
+
+    #[clap(long, help = "Filter by status: active, expired, revoked")]
+    pub status: Option<String>,
+
+    #[clap(long, help = "Override source tier: protocol, indexed, account_standard, deferred")]
+    pub source_tier: Option<String>,
 
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
@@ -444,20 +462,79 @@ fn print_permission_objects_json<T: serde::Serialize>(items: &[T]) -> anyhow::Re
     Ok(())
 }
 
+/// Extract compact notes from `constraints_extensions` for display in the Notes column.
+fn extension_notes(ext: &Option<serde_json::Value>) -> String {
+    let Some(val) = ext else { return String::new() };
+    let Some(obj) = val.as_object() else { return String::new() };
+    let mut parts: Vec<String> = Vec::new();
+    // nominator: pending_deposit / pending_withdraw
+    if let Some(pd) = obj.get("pending_deposit") {
+        let s = format_json_value_inline(pd);
+        if s != "0" && s != "-" {
+            parts.push(format!("pending_deposit:{}", s));
+        }
+    }
+    if let Some(pw) = obj.get("pending_withdraw") {
+        let s = format_json_value_inline(pw);
+        if s != "0" && s != "-" {
+            parts.push(format!("pending_withdraw:{}", s));
+        }
+    }
+    // multisig: threshold
+    if let Some(thresh) = obj.get("threshold") {
+        if let Some(total) = obj.get("total_signers") {
+            parts.push(format!("threshold:{}/{}", format_json_value_inline(thresh), format_json_value_inline(total)));
+        } else {
+            parts.push(format!("threshold:{}", format_json_value_inline(thresh)));
+        }
+    }
+    // Fallback: show up to 2 keys for unrecognized extensions
+    if parts.is_empty() {
+        for (i, (k, v)) in obj.iter().enumerate() {
+            if i >= 2 { break; }
+            let vs = format_json_value_inline(v);
+            let vs_trunc = if vs.len() > 20 { format!("{}...", &vs[..20]) } else { vs };
+            parts.push(format!("{}:{}", k, vs_trunc));
+        }
+    }
+    parts.join("; ")
+}
+
 fn print_delegations_table(items: &[AccountDelegationGrant]) {
+    let has_notes = items.iter().any(|i| {
+        i.constraints_extensions.as_ref().map_or(false, |v| v.is_object() && !v.as_object().unwrap().is_empty())
+    });
+    let width = if has_notes { 160 } else { 138 };
     println!();
     println!("  {}", "Account Delegations".bold());
-    println!("  {}", "\u{2500}".repeat(110));
-    println!(
-        "  {:<18} {:<18} {:<16} {:<12} {:<12} {}",
-        "ID".bold(),
-        "Account".bold(),
-        "Grantee".bold(),
-        "Scope".bold(),
-        "Status".bold(),
-        "Expires".bold(),
-    );
-    println!("  {}", "\u{2500}".repeat(110));
+    println!("  {}", "\u{2500}".repeat(width));
+    if has_notes {
+        println!(
+            "  {:<18} {:<18} {:<16} {:<12} {:<12} {:<10} {:<20} {:<12} {}",
+            "ID".bold(),
+            "Account".bold(),
+            "Grantee".bold(),
+            "Scope".bold(),
+            "Status".bold(),
+            "Revocable".bold(),
+            "Created".bold(),
+            "Expires".bold(),
+            "Notes".bold(),
+        );
+    } else {
+        println!(
+            "  {:<18} {:<18} {:<16} {:<12} {:<12} {:<10} {:<20} {}",
+            "ID".bold(),
+            "Account".bold(),
+            "Grantee".bold(),
+            "Scope".bold(),
+            "Status".bold(),
+            "Revocable".bold(),
+            "Created".bold(),
+            "Expires".bold(),
+        );
+    }
+    println!("  {}", "\u{2500}".repeat(width));
     if items.is_empty() {
         println!("  (no delegations)");
     } else {
@@ -465,38 +542,80 @@ fn print_delegations_table(items: &[AccountDelegationGrant]) {
             let account_raw = item.account.as_deref().unwrap_or("-");
             let account = if account_raw.len() > 16 { &account_raw[..16] } else { account_raw };
             let grantee = if item.grantee.len() > 16 { &item.grantee[..16] } else { &item.grantee };
+            let revocable = if item.revocable { "yes" } else { "no" };
+            let created = item
+                .created_at
+                .map(format_ts)
+                .unwrap_or_else(|| "-".to_string());
             let expires = item
                 .expires_at
                 .map(format_ts)
                 .unwrap_or_else(|| "-".to_string());
-            println!(
-                "  {:<18} {:<18} {:<16} {:<12} {:<12} {}",
-                item.id,
-                account,
-                grantee,
-                item.scope,
-                item.status,
-                expires,
-            );
+            if has_notes {
+                let notes = extension_notes(&item.constraints_extensions);
+                println!(
+                    "  {:<18} {:<18} {:<16} {:<12} {:<12} {:<10} {:<20} {:<12} {}",
+                    item.id,
+                    account,
+                    grantee,
+                    item.scope,
+                    item.status,
+                    revocable,
+                    created,
+                    expires,
+                    notes,
+                );
+            } else {
+                println!(
+                    "  {:<18} {:<18} {:<16} {:<12} {:<12} {:<10} {:<20} {}",
+                    item.id,
+                    account,
+                    grantee,
+                    item.scope,
+                    item.status,
+                    revocable,
+                    created,
+                    expires,
+                );
+            }
         }
     }
     println!();
 }
 
 fn print_sessions_table(items: &[AccountSessionCapability]) {
+    let has_notes = items.iter().any(|i| {
+        i.constraints_extensions.as_ref().map_or(false, |v| v.is_object() && !v.as_object().unwrap().is_empty())
+    });
+    let width = if has_notes { 150 } else { 128 };
     println!();
     println!("  {}", "Account Sessions".bold());
-    println!("  {}", "\u{2500}".repeat(106));
-    println!(
-        "  {:<18} {:<18} {:<16} {:<18} {:<12} {}",
-        "Session ID".bold(),
-        "Account".bold(),
-        "Principal".bold(),
-        "Scope".bold(),
-        "Status".bold(),
-        "Expires".bold(),
-    );
-    println!("  {}", "\u{2500}".repeat(106));
+    println!("  {}", "\u{2500}".repeat(width));
+    if has_notes {
+        println!(
+            "  {:<18} {:<18} {:<16} {:<18} {:<12} {:<20} {:<12} {}",
+            "Session ID".bold(),
+            "Account".bold(),
+            "Principal".bold(),
+            "Scope".bold(),
+            "Status".bold(),
+            "Created".bold(),
+            "Expires".bold(),
+            "Notes".bold(),
+        );
+    } else {
+        println!(
+            "  {:<18} {:<18} {:<16} {:<18} {:<12} {:<20} {}",
+            "Session ID".bold(),
+            "Account".bold(),
+            "Principal".bold(),
+            "Scope".bold(),
+            "Status".bold(),
+            "Created".bold(),
+            "Expires".bold(),
+        );
+    }
+    println!("  {}", "\u{2500}".repeat(width));
     if items.is_empty() {
         println!("  (no sessions)");
     } else {
@@ -505,38 +624,77 @@ fn print_sessions_table(items: &[AccountSessionCapability]) {
             let account = if account_raw.len() > 16 { &account_raw[..16] } else { account_raw };
             let principal =
                 if item.principal.len() > 16 { &item.principal[..16] } else { &item.principal };
+            let created = item
+                .created_at
+                .map(format_ts)
+                .unwrap_or_else(|| "-".to_string());
             let expires = item
                 .expires_at
                 .map(format_ts)
                 .unwrap_or_else(|| "-".to_string());
-            println!(
-                "  {:<18} {:<18} {:<16} {:<18} {:<12} {}",
-                item.session_id,
-                account,
-                principal,
-                item.scope,
-                item.status,
-                expires,
-            );
+            if has_notes {
+                let notes = extension_notes(&item.constraints_extensions);
+                println!(
+                    "  {:<18} {:<18} {:<16} {:<18} {:<12} {:<20} {:<12} {}",
+                    item.session_id,
+                    account,
+                    principal,
+                    item.scope,
+                    item.status,
+                    created,
+                    expires,
+                    notes,
+                );
+            } else {
+                println!(
+                    "  {:<18} {:<18} {:<16} {:<18} {:<12} {:<20} {}",
+                    item.session_id,
+                    account,
+                    principal,
+                    item.scope,
+                    item.status,
+                    created,
+                    expires,
+                );
+            }
         }
     }
     println!();
 }
 
 fn print_agents_table(items: &[AccountAgentCapability]) {
+    let has_notes = items.iter().any(|i| {
+        i.constraints_extensions.as_ref().map_or(false, |v| v.is_object() && !v.as_object().unwrap().is_empty())
+    });
+    let width = if has_notes { 150 } else { 128 };
     println!();
     println!("  {}", "Account Agents".bold());
-    println!("  {}", "\u{2500}".repeat(106));
-    println!(
-        "  {:<18} {:<18} {:<16} {:<18} {:<12} {}",
-        "Agent ID".bold(),
-        "Account".bold(),
-        "Principal".bold(),
-        "Scope".bold(),
-        "Status".bold(),
-        "Expires".bold(),
-    );
-    println!("  {}", "\u{2500}".repeat(106));
+    println!("  {}", "\u{2500}".repeat(width));
+    if has_notes {
+        println!(
+            "  {:<18} {:<18} {:<16} {:<18} {:<12} {:<20} {:<12} {}",
+            "Agent ID".bold(),
+            "Account".bold(),
+            "Principal".bold(),
+            "Scope".bold(),
+            "Status".bold(),
+            "Created".bold(),
+            "Expires".bold(),
+            "Notes".bold(),
+        );
+    } else {
+        println!(
+            "  {:<18} {:<18} {:<16} {:<18} {:<12} {:<20} {}",
+            "Agent ID".bold(),
+            "Account".bold(),
+            "Principal".bold(),
+            "Scope".bold(),
+            "Status".bold(),
+            "Created".bold(),
+            "Expires".bold(),
+        );
+    }
+    println!("  {}", "\u{2500}".repeat(width));
     if items.is_empty() {
         println!("  (no agents)");
     } else {
@@ -545,19 +703,39 @@ fn print_agents_table(items: &[AccountAgentCapability]) {
             let account = if account_raw.len() > 16 { &account_raw[..16] } else { account_raw };
             let principal =
                 if item.principal.len() > 16 { &item.principal[..16] } else { &item.principal };
+            let created = item
+                .created_at
+                .map(format_ts)
+                .unwrap_or_else(|| "-".to_string());
             let expires = item
                 .expires_at
                 .map(format_ts)
                 .unwrap_or_else(|| "-".to_string());
-            println!(
-                "  {:<18} {:<18} {:<16} {:<18} {:<12} {}",
-                item.agent_id,
-                account,
-                principal,
-                item.scope,
-                item.status,
-                expires,
-            );
+            if has_notes {
+                let notes = extension_notes(&item.constraints_extensions);
+                println!(
+                    "  {:<18} {:<18} {:<16} {:<18} {:<12} {:<20} {:<12} {}",
+                    item.agent_id,
+                    account,
+                    principal,
+                    item.scope,
+                    item.status,
+                    created,
+                    expires,
+                    notes,
+                );
+            } else {
+                println!(
+                    "  {:<18} {:<18} {:<16} {:<18} {:<12} {:<20} {}",
+                    item.agent_id,
+                    account,
+                    principal,
+                    item.scope,
+                    item.status,
+                    created,
+                    expires,
+                );
+            }
         }
     }
     println!();
@@ -651,7 +829,14 @@ impl AccountDelegationsCmd {
         let config = AppConfig::load(Path::new(config_path))?;
         let rpc_client = try_create_rpc_client(&config).await?;
         let address = parse_account_address(&self.address)?;
-        let items = rpc_client.get_account_delegations(&address, self.include_inactive).await?;
+        let items = rpc_client
+            .get_account_delegations(
+                &address,
+                self.include_inactive,
+                self.status.as_deref(),
+                self.source_tier.as_deref(),
+            )
+            .await?;
         if self.format == OutputFormat::Json {
             print_permission_objects_json(&items)?;
         } else {
@@ -666,7 +851,14 @@ impl AccountSessionsCmd {
         let config = AppConfig::load(Path::new(config_path))?;
         let rpc_client = try_create_rpc_client(&config).await?;
         let address = parse_account_address(&self.address)?;
-        let items = rpc_client.get_account_sessions(&address, self.include_inactive).await?;
+        let items = rpc_client
+            .get_account_sessions(
+                &address,
+                self.include_inactive,
+                self.status.as_deref(),
+                self.source_tier.as_deref(),
+            )
+            .await?;
         if self.format == OutputFormat::Json {
             print_permission_objects_json(&items)?;
         } else {
@@ -681,7 +873,14 @@ impl AccountAgentsCmd {
         let config = AppConfig::load(Path::new(config_path))?;
         let rpc_client = try_create_rpc_client(&config).await?;
         let address = parse_account_address(&self.address)?;
-        let items = rpc_client.get_account_agents(&address, self.include_inactive).await?;
+        let items = rpc_client
+            .get_account_agents(
+                &address,
+                self.include_inactive,
+                self.status.as_deref(),
+                self.source_tier.as_deref(),
+            )
+            .await?;
         if self.format == OutputFormat::Json {
             print_permission_objects_json(&items)?;
         } else {

@@ -88,6 +88,7 @@ pub struct GetExtendedAddressInformationRes {
     pub r#type: String,
 
     pub address: AccountAddress,
+    #[serde(with = "serde_utils::u64_as_str_or_num")]
     pub balance: u64,
     pub extra_currencies: Vec<serde_json::Value>,
 
@@ -142,14 +143,14 @@ pub struct RawAccountState {
     #[serde(rename = "@type")]
     pub r#type: String,
 
-    #[serde(with = "serde_utils::b64")]
-    pub code: Vec<u8>,
+    #[serde(default, with = "serde_utils::option_b64")]
+    pub code: Option<Vec<u8>>,
 
-    #[serde(with = "serde_utils::b64")]
-    pub data: Vec<u8>,
+    #[serde(default, with = "serde_utils::option_b64")]
+    pub data: Option<Vec<u8>>,
 
-    #[serde(with = "serde_utils::b64")]
-    pub frozen_hash: Vec<u8>,
+    #[serde(default, with = "serde_utils::option_b64")]
+    pub frozen_hash: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Eq, PartialEq, serde::Deserialize, serde::Serialize)]

@@ -183,13 +183,9 @@ impl TxSigningPayloadCmd {
             );
             println!("  {:<22} {}", "Chain ID:".dimmed(), result.chain_id);
             println!(
-                "  {:<22} {}...",
+                "  {:<22} {}",
                 "Payload:".dimmed(),
-                if result.payload.len() > 40 {
-                    &result.payload[..40]
-                } else {
-                    &result.payload
-                }
+                result.payload
             );
             println!();
         }

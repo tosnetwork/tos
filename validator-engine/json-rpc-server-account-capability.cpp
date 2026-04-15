@@ -105,7 +105,7 @@ static std::string detect_account_model(const ParsedAccountState& parsed,
     if (wallet_type.rfind("nominator pool", 0) == 0) {
       return "contract.pool.nominator";
     }
-    return "default.wallet.v1";
+    return "unknown.wallet";
   }
   if (parsed.code_cell.not_null()) {
     auto code_hash = parsed.code_cell->get_hash(0);
@@ -641,8 +641,18 @@ static void fetch_nominator_pool_delegation_view(SendQueryFn&& send_query,
                     nom.principal = "0:" + td::hex_encode(td::Slice(
                         reinterpret_cast<const char*>(addr_bytes), 32));
                   }
-                  nom.amount = (*elem)[1].as_int()->to_long();
-                  nom.pending_deposit = (*elem)[2].is_int() ? (*elem)[2].as_int()->to_long() : 0;
+                  {
+                    auto v = (*elem)[1].as_int();
+                    nom.amount = (v->sgn() >= 0 && v->fits_bits(63)) ? v->to_long() : -1;
+                  }
+                  {
+                    if ((*elem)[2].is_int()) {
+                      auto v = (*elem)[2].as_int();
+                      nom.pending_deposit = (v->sgn() >= 0 && v->fits_bits(63)) ? v->to_long() : -1;
+                    } else {
+                      nom.pending_deposit = 0;
+                    }
+                  }
                   nom.withdraw_requested = (*elem)[3].is_int() && (*elem)[3].as_int()->to_long() != 0;
                   if (!nom.principal.empty()) {
                     view.nominators.push_back(std::move(nom));
@@ -835,7 +845,7 @@ static td::Slice session_scope_name(int scope) {
     case 0: return "submit_only";
     case 1: return "bounded_transfer";
     case 2: return "bounded_contract_call";
-    default: return "submit_only";
+    default: return "unknown";
   }
 }
 
@@ -1065,8 +1075,12 @@ void JsonRpcServer::handle_getAccountDelegations(td::JsonObject &params, std::st
                           for (size_t i = 0; i < view.nominators.size(); i++) {
                             const auto& nom = view.nominators[i];
                             std::string status = nom.withdraw_requested ? "revoked" : "active";
-                            if (query_opts.status_filter &&
-                                query_opts.status_filter.value() != status) {
+                            if (query_opts.status_filter) {
+                              if (query_opts.status_filter.value() != status) {
+                                continue;
+                              }
+                            } else if (!query_opts.include_inactive &&
+                                       (status == "expired" || status == "revoked")) {
                               continue;
                             }
                             if (!first) {
@@ -1082,7 +1096,7 @@ void JsonRpcServer::handle_getAccountDelegations(td::JsonObject &params, std::st
                                 << "}";
                             sb << build_delegation_grant_json(
                                 ctx.addr_str,
-                                PSTRING() << ctx.addr_str << ":nominator-stake:" << i,
+                                PSTRING() << ctx.addr_str << ":nominator-stake:" << nom.principal,
                                 nom.principal,
                                 ctx.addr_str,
                                 "bounded_transfer",
@@ -1124,8 +1138,13 @@ void JsonRpcServer::handle_getAccountDelegations(td::JsonObject &params, std::st
                         } else {
                           materialized_status = "active";
                         }
-                        if (query_opts.status_filter &&
-                            query_opts.status_filter.value() != materialized_status) {
+                        if (query_opts.status_filter) {
+                          if (query_opts.status_filter.value() != materialized_status) {
+                            promise.set_value(make_json_ok("[]", req_id));
+                            return;
+                          }
+                        } else if (!query_opts.include_inactive &&
+                                   (materialized_status == "expired" || materialized_status == "revoked")) {
                           promise.set_value(make_json_ok("[]", req_id));
                           return;
                         }
@@ -1247,8 +1266,12 @@ void JsonRpcServer::handle_getAccountSessions(td::JsonObject &params, std::strin
                           } else {
                             status = "active";
                           }
-                          if (query_opts.status_filter &&
-                              query_opts.status_filter.value() != status) {
+                          if (query_opts.status_filter) {
+                            if (query_opts.status_filter.value() != status) {
+                              continue;
+                            }
+                          } else if (!query_opts.include_inactive &&
+                                     (status == "expired" || status == "revoked")) {
                             continue;
                           }
                           if (!first) {
@@ -1356,8 +1379,13 @@ void JsonRpcServer::handle_getAccountAgents(td::JsonObject &params, std::string 
                         // revocation or expiration evidence. The only status this source
                         // can materialize is "active".
                         std::string materialized_status = "active";
-                        if (query_opts.status_filter &&
-                            query_opts.status_filter.value() != materialized_status) {
+                        if (query_opts.status_filter) {
+                          if (query_opts.status_filter.value() != materialized_status) {
+                            promise.set_value(make_json_ok("[]", req_id));
+                            return;
+                          }
+                        } else if (!query_opts.include_inactive &&
+                                   (materialized_status == "expired" || materialized_status == "revoked")) {
                           promise.set_value(make_json_ok("[]", req_id));
                           return;
                         }
@@ -1497,7 +1525,7 @@ void JsonRpcServer::validate_delegation_and_return_intent(
                         // Find the delegation matching the ref
                         bool found = false;
                         for (size_t i = 0; i < view.nominators.size(); i++) {
-                          auto expected_id = PSTRING() << ctx.addr_str << ":nominator-stake:" << i;
+                          auto expected_id = PSTRING() << ctx.addr_str << ":nominator-stake:" << view.nominators[i].principal;
                           if (delegation_ref == expected_id) {
                             found = true;
                             if (view.nominators[i].withdraw_requested) {
@@ -1860,12 +1888,10 @@ void JsonRpcServer::handle_revokeAccountDelegation(td::JsonObject &params, std::
                       }
                       auto view = R2.move_as_ok();
                       const NominatorDelegation* matched = nullptr;
-                      size_t matched_index = 0;
                       for (size_t i = 0; i < view.nominators.size(); i++) {
-                        auto expected_id = PSTRING() << ctx.addr_str << ":nominator-stake:" << i;
+                        auto expected_id = PSTRING() << ctx.addr_str << ":nominator-stake:" << view.nominators[i].principal;
                         if (revoke.permission_id == expected_id) {
                           matched = &view.nominators[i];
-                          matched_index = i;
                           break;
                         }
                       }
@@ -1898,7 +1924,7 @@ void JsonRpcServer::handle_revokeAccountDelegation(td::JsonObject &params, std::
                           << "}";
                       auto preview = build_delegation_grant_json(
                           ctx.addr_str,
-                          PSTRING() << ctx.addr_str << ":nominator-stake:" << matched_index,
+                          PSTRING() << ctx.addr_str << ":nominator-stake:" << matched->principal,
                           matched->principal,
                           ctx.addr_str,
                           "bounded_transfer",

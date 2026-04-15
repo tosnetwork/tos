@@ -19,6 +19,10 @@
 
 tuple get_sessions() method_id {
   slice ds = get_data().begin_parse();
+  if (ds.slice_bits() == 0) {
+    ;; empty data cell — return empty list to avoid cell underflow
+    return null();
+  }
   cell sessions = ds~load_dict();
   var list = null();
   int id = -1;

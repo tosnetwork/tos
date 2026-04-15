@@ -51,6 +51,24 @@ static std::string url_decode(const std::string &src) {
   return out;
 }
 
+// Strip api_key from query string before passing to handler/cache
+static std::string strip_api_key_param(const std::string &qs) {
+  std::string result;
+  size_t pos = 0;
+  while (pos < qs.size()) {
+    auto amp = qs.find('&', pos);
+    auto token = qs.substr(pos, amp == std::string::npos ? std::string::npos : amp - pos);
+    pos = amp == std::string::npos ? qs.size() : amp + 1;
+    if (token.empty()) continue;
+    auto eq = token.find('=');
+    auto key = eq == std::string::npos ? token : token.substr(0, eq);
+    if (key == "api_key") continue;  // skip
+    if (!result.empty()) result += '&';
+    result += token;
+  }
+  return result;
+}
+
 // Convert "key1=val1&key2=val2" into a JSON object string: {"key1":"val1","key2":"val2"}
 // All values are encoded as JSON strings; numeric coercion is handled by
 // get_required_int_field / get_optional_int_field which parse from string values.
@@ -90,6 +108,12 @@ static std::string query_string_to_json(const std::string &qs) {
 // If deliver() is called before the alarm fires, the real promise gets the
 // result and the guard self-destructs.  If the alarm fires first, the guard
 // delivers a timeout error and any later deliver() call is a no-op.
+//
+// NOTE: This guard wraps individual liteserver queries.  Handlers that
+// chain N sequential queries can take up to N × timeout_seconds total
+// wall-clock time.  A request-level timeout should be added at the
+// dispatch layer for defense-in-depth against slow-loris-style attacks
+// on multi-query handlers (e.g., getAccountAgents chains up to 6 queries).
 
 class QueryTimeoutGuard final : public td::actor::Actor {
  public:
@@ -188,7 +212,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
         "{\n"
         "  \"name\": \"TOS JSON-RPC API\",\n"
         "  \"version\": \"1.0.0\",\n"
-        "  \"methods_count\": 35,\n"
+        "  \"methods_count\": 47,\n"
         "  \"endpoints\": {\n"
         "    \"jsonrpc\": \"/jsonRPC\",\n"
         "    \"health\": \"/healthcheck\",\n"
@@ -249,12 +273,6 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     else if (path == "/getAccountDelegations")  rest_method = "getAccountDelegations";
     else if (path == "/getAccountSessions")     rest_method = "getAccountSessions";
     else if (path == "/getAccountAgents")       rest_method = "getAccountAgents";
-    else if (path == "/grantAccountDelegation")   rest_method = "grantAccountDelegation";
-    else if (path == "/revokeAccountDelegation")  rest_method = "revokeAccountDelegation";
-    else if (path == "/grantAccountSession")      rest_method = "grantAccountSession";
-    else if (path == "/revokeAccountSession")     rest_method = "revokeAccountSession";
-    else if (path == "/grantAccountAgent")        rest_method = "grantAccountAgent";
-    else if (path == "/revokeAccountAgent")       rest_method = "revokeAccountAgent";
     else if (path == "/getAddressBalance")      rest_method = "getAddressBalance";
     else if (path == "/getAddressState")        rest_method = "getAddressState";
     else if (path == "/getWalletInformation")   rest_method = "getWalletInformation";
@@ -285,7 +303,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
 
     if (!rest_method.empty()) {
       // Build a JSON object from query parameters, parse it, and dispatch
-      auto json_str = query_string_to_json(query_string);
+      auto json_str = query_string_to_json(strip_api_key_param(query_string));
       auto buf = td::BufferSlice(json_str);
       auto json_r = td::json_decode(buf.as_slice());
       if (json_r.is_error()) {
@@ -442,23 +460,23 @@ void JsonRpcServer::on_body_ready(PayloadPtr payload, td::Promise<HttpReturn> pr
 void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
                                  td::Promise<HttpReturn> promise) {
   if (body.empty()) {
-    promise.set_value(make_json_error(-32700, "Empty request body", req_id));
+    promise.set_value(make_json_error(-32700, "Empty request body", req_id, opts_.cors_origin));
     return;
   }
 
   auto json_r = td::json_decode(body.as_slice());
   if (json_r.is_error()) {
-    promise.set_value(make_json_error(-32700, "Parse error: invalid JSON", req_id));
+    promise.set_value(make_json_error(-32700, "Parse error: invalid JSON", req_id, opts_.cors_origin));
     return;
   }
 
   auto json = json_r.move_as_ok();
   if (json.type() == td::JsonValue::Type::Array) {
-    promise.set_value(make_json_error(-32600, "Batch requests are not supported", req_id));
+    promise.set_value(make_json_error(-32600, "Batch requests are not supported", req_id, opts_.cors_origin));
     return;
   }
   if (json.type() != td::JsonValue::Type::Object) {
-    promise.set_value(make_json_error(-32600, "Invalid request: expected JSON object", req_id));
+    promise.set_value(make_json_error(-32600, "Invalid request: expected JSON object", req_id, opts_.cors_origin));
     return;
   }
 
@@ -801,7 +819,7 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_cors_preflight(const std::string& 
   auto response = http::HttpResponse::create("HTTP/1.1", 204, "No Content", false, false).move_as_ok();
   response->add_header({"Access-Control-Allow-Origin", cors_origin});
   response->add_header({"Access-Control-Allow-Methods", "POST, GET, OPTIONS"});
-  response->add_header({"Access-Control-Allow-Headers", "Content-Type"});
+  response->add_header({"Access-Control-Allow-Headers", "Content-Type, X-API-Key"});
   response->add_header({"Access-Control-Max-Age", "86400"});
   response->add_header({"Content-Length", "0"});
   response->complete_parse_header();

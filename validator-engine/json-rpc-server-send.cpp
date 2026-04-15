@@ -727,6 +727,12 @@ void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string
       });
 }
 
+// NOTE: submitSignedTransaction accepts any valid external message BOC.
+// There is no server-side binding between buildTransactionIntent /
+// getSigningPayload and this handler — the delegation validation in
+// buildTransactionIntent is advisory only.  The on-chain smart contract
+// (not the RPC layer) is the authoritative enforcer of signature and
+// permission checks.
 void JsonRpcServer::handle_submitSignedTransaction(td::JsonObject &params, std::string req_id,
                                                    td::Promise<HttpReturn> promise) {
   auto signed_b64_r = extract_signed_artifact_b64(params);
@@ -812,6 +818,10 @@ void JsonRpcServer::handle_sendQuery(td::JsonObject &params, std::string req_id,
     promise.set_value(make_json_error(-32602, "Invalid base64 in 'body'", req_id));
     return;
   }
+  if (body_decoded_r.ok().size() > kMaxBocSize) {
+    promise.set_value(make_json_error(-32602, "BOC payload exceeds maximum allowed size", req_id));
+    return;
+  }
   auto body_cell_r = vm::std_boc_deserialize(td::Slice(body_decoded_r.ok()));
   if (body_cell_r.is_error()) {
     promise.set_value(make_json_error(-32602, "Invalid BOC in 'body'", req_id));
@@ -828,6 +838,10 @@ void JsonRpcServer::handle_sendQuery(td::JsonObject &params, std::string req_id,
       promise.set_value(make_json_error(-32602, "invalid base64 in init_code", req_id));
       return;
     }
+    if (dec.ok().size() > kMaxBocSize) {
+      promise.set_value(make_json_error(-32602, "BOC payload exceeds maximum allowed size", req_id));
+      return;
+    }
     auto cell = vm::std_boc_deserialize(td::Slice(dec.ok()));
     if (cell.is_error()) {
       promise.set_value(make_json_error(-32602, "invalid BOC in init_code", req_id));
@@ -840,6 +854,10 @@ void JsonRpcServer::handle_sendQuery(td::JsonObject &params, std::string req_id,
     auto dec = td::base64_decode(data_r.ok());
     if (dec.is_error()) {
       promise.set_value(make_json_error(-32602, "invalid base64 in init_data", req_id));
+      return;
+    }
+    if (dec.ok().size() > kMaxBocSize) {
+      promise.set_value(make_json_error(-32602, "BOC payload exceeds maximum allowed size", req_id));
       return;
     }
     auto cell = vm::std_boc_deserialize(td::Slice(dec.ok()));
