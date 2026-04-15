@@ -27,6 +27,7 @@ function loadEnvTest(): Record<string, string> {
 }
 
 export default defineConfig({
+  root: __dirname,
   resolve: {
     alias: {
       "@tos/core": resolve(__dirname, "packages/core/src/index.ts"),
@@ -40,7 +41,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
-    include: ["packages/*/src/**/*.test.ts"],
+    include: ["./packages/*/src/**/*.test.ts"],
     env: loadEnvTest(),
   },
 });

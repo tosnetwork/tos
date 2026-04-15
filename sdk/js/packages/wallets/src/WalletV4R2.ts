@@ -257,7 +257,7 @@ export class WalletV4R2 implements Wallet {
       .storeSlice(signingMessage.beginParse())
       .endCell();
 
-    return provider.external(body) as unknown as SendConfirmation;
+    return provider.external(body);
   }
 
   /** Deploy this wallet contract on-chain via an external message. */

@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { TosClient, Networks, open, setCoreParser } from "../index.js";
+import { TosClient, Networks, open, setCoreParser, TosRpcError } from "../index.js";
 
 // Use @tos/* package imports (resolved via pnpm workspace links).
 import { Address, Cell, toNano } from "@tos/core";
@@ -44,6 +44,10 @@ async function isNodeUp(): Promise<boolean> {
 
 const nodeAvailable = await isNodeUp();
 const canRun = nodeAvailable && !!jettonMinterAddress;
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -114,19 +118,32 @@ describe.skipIf(!canRun)("Jetton live integration", () => {
       const signer = new KeyPairSigner(keyPair, openedWallet as any);
 
       // Transfer 1 jetton unit back to self
-      try {
-        await openedJettonWallet.sendTransfer(signer, {
-          to: walletAddress,
-          amount: 1n,
-          value: toNano("0.05"),
-        });
-        // If we got here without throwing, the external message was accepted
-        expect(true).toBe(true);
-      } catch (e: unknown) {
-        // sendQuery-based external messages may fail on some node configs;
-        // the read path (getTotalSupply, getBalance, getJettonWalletAddress)
-        // is the critical verification — transfer is best-effort.
-        console.warn("Jetton transfer RPC failed (non-critical):", (e as Error).message);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          await openedJettonWallet.sendTransfer(signer, {
+            to: walletAddress,
+            amount: 1n,
+            value: toNano("0.05"),
+          });
+          expect(true).toBe(true);
+          return;
+        } catch (e: unknown) {
+          // The full live suite also runs live-wallet.test.ts, which submits a
+          // self-transfer from the same TEST_MNEMONIC wallet. If both files race
+          // on seqno, the first attempt here can fail transiently even though the
+          // wrapper is correct. Retry once after a short delay before downgrading
+          // to a non-critical warning.
+          if (attempt === 0 && e instanceof TosRpcError) {
+            await sleep(1500);
+            continue;
+          }
+
+          // sendQuery-based external messages may still fail on some node configs;
+          // the read path (getTotalSupply, getBalance, getJettonWalletAddress)
+          // is the critical verification — transfer is best-effort.
+          console.warn("Jetton transfer RPC failed (non-critical):", (e as Error).message);
+          return;
+        }
       }
     });
   });

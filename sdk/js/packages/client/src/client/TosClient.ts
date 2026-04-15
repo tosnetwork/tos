@@ -192,7 +192,8 @@ export class TosClient implements TosProvider {
           clearTimeout(timer);
         }
 
-        const json = (await response.json()) as JsonRpcResponse;
+        const responseText = await response.text();
+        const json = parseJsonRpcResponse(response, responseText);
 
         if (json.error) {
           const rpcErr = new TosRpcError(
@@ -212,6 +213,10 @@ export class TosClient implements TosProvider {
 
         // Do not retry on RPC errors (they are deterministic).
         if (err instanceof TosRpcError) {
+          throw err;
+        }
+
+        if (err instanceof TosError && !isRetryableError(err)) {
           throw err;
         }
 
@@ -584,15 +589,15 @@ export class TosClient implements TosProvider {
   // -----------------------------------------------------------------------
 
   async buildTransactionIntent(request: TransactionIntentRequest): Promise<TransactionIntent> {
-    return this.rawCall<TransactionIntent>("buildTransactionIntent", request as unknown as Record<string, unknown>);
+    return this.rawCall<TransactionIntent>("buildTransactionIntent", { ...request });
   }
 
   async getSigningPayload(request: SigningPayloadRequest): Promise<SigningPayload> {
-    return this.rawCall<SigningPayload>("getSigningPayload", request as unknown as Record<string, unknown>);
+    return this.rawCall<SigningPayload>("getSigningPayload", { ...request });
   }
 
   async submitSignedTransaction(request: SubmitSignedRequest): Promise<SubmissionResult> {
-    return this.rawCall<SubmissionResult>("submitSignedTransaction", request as unknown as Record<string, unknown>);
+    return this.rawCall<SubmissionResult>("submitSignedTransaction", { ...request });
   }
 
   // -----------------------------------------------------------------------
@@ -647,6 +652,51 @@ interface JsonRpcResponse {
     message: string;
     data?: unknown;
   };
+}
+
+function parseJsonRpcResponse(response: Response, responseText: string): JsonRpcResponse {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(responseText) as unknown;
+  } catch (cause) {
+    throw new TosError(
+      `Invalid JSON response (${response.status}) from ${response.url || "RPC endpoint"}`,
+      ErrorCodes.INVALID_RESPONSE,
+      cause instanceof Error ? cause : undefined,
+    );
+  }
+
+  if (!isJsonRpcResponse(parsed)) {
+    throw new TosError(
+      `Invalid JSON-RPC response (${response.status}) from ${response.url || "RPC endpoint"}`,
+      ErrorCodes.INVALID_RESPONSE,
+    );
+  }
+
+  if (!response.ok) {
+    if (parsed.error) {
+      return parsed;
+    }
+    throw new TosError(
+      `HTTP ${response.status} ${response.statusText || "request failed"}`,
+      ErrorCodes.NETWORK_ERROR,
+    );
+  }
+
+  return parsed;
+}
+
+function isJsonRpcResponse(value: unknown): value is JsonRpcResponse {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return candidate["jsonrpc"] === "2.0"
+    && ("result" in candidate || "error" in candidate);
+}
+
+function isRetryableError(error: TosError): boolean {
+  return error.code === ErrorCodes.NETWORK_ERROR || error.code === ErrorCodes.TIMEOUT;
 }
 
 // ---------------------------------------------------------------------------

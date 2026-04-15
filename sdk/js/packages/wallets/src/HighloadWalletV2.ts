@@ -309,7 +309,7 @@ export class HighloadWalletV2 implements Wallet {
       .storeRef(signingMessage)
       .endCell();
 
-    return provider.external(body) as unknown as SendConfirmation;
+    return provider.external(body);
   }
 
   async sendDeploy(

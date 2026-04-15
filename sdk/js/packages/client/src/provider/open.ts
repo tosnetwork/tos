@@ -21,6 +21,7 @@
  * ```
  */
 
+import { Cell } from "@tos/core";
 import type { TosProvider, AddressLike, CellLike } from "./TosProvider.js";
 import type { ContractProvider, ContractGetResult, ContractState, SendConfirmation, SenderArguments, StackReader as IStackReader } from "./ContractProvider.js";
 import type { TupleItemLike } from "./TosProvider.js";
@@ -45,15 +46,8 @@ export function setCoreParser(CellClass: {
   _addressFromCell = (b64: string) => CellClass.fromBase64(b64).beginParse().loadAddress();
 }
 
-// Auto-detect @tos/core if available (CJS environments)
-try {
-  const g = globalThis as Record<string, unknown>;
-  const r = g["require"] as ((m: string) => Record<string, unknown>) | undefined;
-  if (typeof r === "function") {
-    const core = r("@tos/core") as Record<string, unknown>;
-    if (core?.Cell) setCoreParser(core.Cell as Parameters<typeof setCoreParser>[0]);
-  }
-} catch { /* @tos/core not available at load time */ }
+// Initialize RichStackReader with the concrete @tos/core parser by default.
+setCoreParser(Cell);
 
 // ---------------------------------------------------------------------------
 // Minimal Contract shape (avoid importing @tos/core at runtime)
@@ -190,7 +184,7 @@ export function open<T extends ContractLike>(
       }
       // Return a wrapper that injects the ContractProvider as the first arg.
       return (...args: unknown[]) =>
-        (value as Function).call(target, contractProvider, ...args);
+        Reflect.apply(value as (...innerArgs: unknown[]) => unknown, target, [contractProvider, ...args]);
     },
   }) as unknown as OpenedContract<T>;
 }

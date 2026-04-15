@@ -11,10 +11,11 @@
  *   subwallet number rather than a simple integer
  *
  * External signing message format:
- *   walletId:uint32  validUntil:uint32  seqno:uint32  actions:^Cell
+ *   opcode:uint32  walletId:uint32  validUntil:uint32  seqno:uint32
+ *   inner_request:(Maybe ^OutList, has_extended_actions=false)
  *
  * External message body:
- *   signature:bits512  signingMessage
+ *   signingMessage  signature:bits512
  *
  * Initial data layout:
  *   isSignatureAllowed:bool  seqno:uint32  walletId:uint32
@@ -68,6 +69,8 @@ const DEFAULT_SUBWALLET_NUMBER = 0;
 
 /** Action opcode for sending a message */
 const ACTION_SEND_MSG = 0x0ec3c86d;
+/** External signed request opcode */
+const AUTH_SIGNED_EXTERNAL = 0x7369676e;
 
 /** Maximum number of outgoing messages per transfer */
 const MAX_MESSAGES = 255;
@@ -116,24 +119,15 @@ function encodeWalletId(
  * The chain terminates with an empty cell.
  */
 function buildActionList(messages: OutMessage[]): Cell {
-  // Start with an empty cell (end of action chain)
-  let actions = beginCell().endCell();
-
-  // Build in reverse order so the first message is at the top
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i]!;
-    const mode = msg.mode ?? 3; // default send mode
-    const internalMsg = createInternalMessage(msg);
-
-    actions = beginCell()
-      .storeUint(ACTION_SEND_MSG, 32) // action opcode
-      .storeUint(mode, 8)             // send mode
-      .storeRef(internalMsg)           // outgoing message
-      .storeRef(actions)               // link to next action (or empty)
-      .endCell();
-  }
-
-  return actions;
+  return messages.reduce(
+    (actions, msg) => beginCell()
+      .storeRef(actions)
+      .storeUint(ACTION_SEND_MSG, 32)
+      .storeUint(msg.mode ?? 3, 8)
+      .storeRef(createInternalMessage(msg))
+      .endCell(),
+    beginCell().endCell(),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -259,7 +253,8 @@ export class WalletV5R1 implements Wallet {
   /**
    * Build a signing message for an external auth transfer.
    *
-   * V5 format: walletId:int32 validUntil:uint32 seqno:uint32 actions:^Cell
+   * V5 format: opcode:uint32 walletId:int32 validUntil:uint32 seqno:uint32
+   *            out_actions:(Maybe ^OutList) has_extended_actions:Bool(false)
    */
   private buildSigningMessage(
     seqno: number,
@@ -276,10 +271,12 @@ export class WalletV5R1 implements Wallet {
     const actionList = buildActionList(messages);
 
     return beginCell()
+      .storeUint(AUTH_SIGNED_EXTERNAL, 32)
       .storeInt(this.walletId, 32)
       .storeUint(until, 32)
       .storeUint(seqno, 32)
-      .storeRef(actionList)
+      .storeMaybeRef(actionList)
+      .storeBit(false)
       .endCell();
   }
 
@@ -294,8 +291,8 @@ export class WalletV5R1 implements Wallet {
     const signature = sign(signingMessage.hash(), args.secretKey);
 
     return beginCell()
-      .storeBuffer(signature)
       .storeSlice(signingMessage.beginParse())
+      .storeBuffer(signature)
       .endCell();
   }
 
@@ -310,8 +307,8 @@ export class WalletV5R1 implements Wallet {
     const signature = await args.signer(signingMessage.hash());
 
     return beginCell()
-      .storeBuffer(signature)
       .storeSlice(signingMessage.beginParse())
+      .storeBuffer(signature)
       .endCell();
   }
 
@@ -331,11 +328,11 @@ export class WalletV5R1 implements Wallet {
     const signature = await via.sign(signingMessage.hash());
 
     const body = beginCell()
-      .storeBuffer(signature)
       .storeSlice(signingMessage.beginParse())
+      .storeBuffer(signature)
       .endCell();
 
-    return provider.external(body) as unknown as SendConfirmation;
+    return provider.external(body);
   }
 
   /** Deploy this wallet contract on-chain via an external message. */
@@ -344,21 +341,20 @@ export class WalletV5R1 implements Wallet {
     via: Signer,
     _value: bigint,
   ): Promise<void> {
-    // Deploy with seqno=0 and an empty action list
-    const emptyActions = beginCell().endCell();
-
     const deployMessage = beginCell()
+      .storeUint(AUTH_SIGNED_EXTERNAL, 32)
       .storeInt(this.walletId, 32)
       .storeUint(0xFFFFFFFF, 32) // validUntil = max
       .storeUint(0, 32)          // seqno = 0
-      .storeRef(emptyActions)     // no actions
+      .storeMaybeRef(null)        // no out actions
+      .storeBit(false)            // no extended actions
       .endCell();
 
     const signature = await via.sign(deployMessage.hash());
 
     const body = beginCell()
-      .storeBuffer(signature)
       .storeSlice(deployMessage.beginParse())
+      .storeBuffer(signature)
       .endCell();
 
     await provider.external(body);

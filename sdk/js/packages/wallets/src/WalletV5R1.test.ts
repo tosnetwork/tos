@@ -18,6 +18,8 @@ const DEST = new Address(0, new Uint8Array(32));
 
 /** ACTION_SEND_MSG opcode used by V5 */
 const ACTION_SEND_MSG = 0x0ec3c86d;
+/** External signed request opcode used by V5 */
+const AUTH_SIGNED_EXTERNAL = 0x7369676e;
 
 describe("WalletV5R1", () => {
   // -----------------------------------------------------------------------
@@ -95,9 +97,8 @@ describe("WalletV5R1", () => {
 
     const slice = transfer.beginParse();
 
-    // 512 bits = 64-byte signature
-    const signature = slice.loadBuffer(64);
-    expect(signature.length).toBe(64);
+    const opcode = slice.loadUint(32);
+    expect(opcode).toBe(AUTH_SIGNED_EXTERNAL);
 
     // walletId:int32 (V5 uses signed int)
     const walletId = slice.loadInt(32);
@@ -111,10 +112,15 @@ describe("WalletV5R1", () => {
     const loadedSeqno = slice.loadUint(32);
     expect(loadedSeqno).toBe(seqno);
 
-    // actions:^Cell (should be a ref)
-    expect(slice.remainingRefs).toBe(1);
-    const actionsCell = slice.loadRef();
+    const actionsCell = slice.loadMaybeRef();
     expect(actionsCell).toBeInstanceOf(Cell);
+
+    const hasExtendedActions = slice.loadBit();
+    expect(hasExtendedActions).toBe(false);
+
+    // 512 bits = 64-byte signature
+    const signature = slice.loadBuffer(64);
+    expect(signature.length).toBe(64);
   });
 
   it("actions list contains ACTION_SEND_MSG entries for each message", () => {
@@ -130,30 +136,32 @@ describe("WalletV5R1", () => {
     });
 
     const extSlice = transfer.beginParse();
-    extSlice.loadBuffer(64); // skip signature
+    extSlice.loadUint(32);   // opcode
     extSlice.loadInt(32);    // walletId
     extSlice.loadUint(32);   // validUntil
     extSlice.loadUint(32);   // seqno
+    extSlice.loadBit();      // maybe-ref out_actions = true
 
     // Walk the actions linked list
     let actionCell = extSlice.loadRef();
     let messageCount = 0;
 
-    // The chain is: actionCell → (opcode, mode, ref:msg, ref:nextAction) → ... → empty
+    // The chain is: actionCell → ref(prev) + action_send_msg opcode + mode + ref(msg)
     while (actionCell.bits.length > 0) {
       const actionSlice = actionCell.beginParse();
+      const previousAction = actionSlice.loadRef();
       const opcode = actionSlice.loadUint(32);
       expect(opcode).toBe(ACTION_SEND_MSG);
 
       const mode = actionSlice.loadUint(8);
       expect(mode).toBe(3); // default mode
 
-      // Ref 0: the internal message
+      // Ref 1: the internal message
       const internalMsg = actionSlice.loadRef();
       expect(internalMsg).toBeInstanceOf(Cell);
 
-      // Ref 1: next action in the chain (or empty cell)
-      actionCell = actionSlice.loadRef();
+      // Follow the prev link until we reach the empty terminator cell.
+      actionCell = previousAction;
       messageCount++;
     }
 
@@ -170,9 +178,22 @@ describe("WalletV5R1", () => {
     });
 
     const slice = transfer.beginParse();
+    const opcode = slice.loadUint(32);
+    const walletId = slice.loadInt(32);
+    const validUntil = slice.loadUint(32);
+    const seqno = slice.loadUint(32);
+    const outActions = slice.loadMaybeRef();
+    const hasExtendedActions = slice.loadBit();
     const signature = slice.loadBuffer(64);
 
-    const msgCell = beginCell().storeSlice(slice).endCell();
+    const msgCell = beginCell()
+      .storeUint(opcode, 32)
+      .storeInt(walletId, 32)
+      .storeUint(validUntil, 32)
+      .storeUint(seqno, 32)
+      .storeMaybeRef(outActions)
+      .storeBit(hasExtendedActions)
+      .endCell();
     expect(signVerify(msgCell.hash(), signature, KEY_PAIR.publicKey)).toBe(true);
   });
 

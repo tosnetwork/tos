@@ -282,7 +282,7 @@ export class WalletV3R2 implements Wallet {
       .storeSlice(signingMessage.beginParse())
       .endCell();
 
-    return provider.external(body) as unknown as SendConfirmation;
+    return provider.external(body);
   }
 
   /**

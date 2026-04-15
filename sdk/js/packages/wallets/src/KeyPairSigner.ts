@@ -9,16 +9,60 @@
  * 3. Submits the signed BOC via the provider
  */
 
-import { type Address, type Cell, type StateInit } from "@tos/core";
+import { Address, Cell, type StateInit } from "@tos/core";
 import type { KeyPair } from "@tos/crypto";
 import { sign } from "@tos/crypto";
 import type {
   Signer,
   SenderArguments,
-  OpenedContract,
+  SendConfirmation,
 } from "@tos/client";
-// Wallet type used via OpenedContract<any> to avoid ContractLike index signature mismatch
-// import type { Wallet } from "./types.js";
+import type { SendTransferArgs } from "./types.js";
+
+interface TransferCapableWallet {
+  readonly address: Address;
+  sendTransfer(via: Signer, args: SendTransferArgs): Promise<SendConfirmation>;
+}
+
+function toAddress(address: SenderArguments["to"]): Address {
+  if (typeof address === "string") {
+    return Address.parse(address);
+  }
+  if (!(address instanceof Address)) {
+    throw new TypeError("KeyPairSigner.send expects a concrete Address instance");
+  }
+  return address;
+}
+
+function toBody(body: SenderArguments["body"]): Cell | undefined {
+  if (body == null) {
+    return undefined;
+  }
+  if (!(body instanceof Cell)) {
+    throw new TypeError("KeyPairSigner.send expects body to be a Cell when used with wallet transfers");
+  }
+  return body;
+}
+
+function toStateInit(init: SenderArguments["init"]): StateInit | undefined {
+  if (init == null) {
+    return undefined;
+  }
+
+  const code = init.code;
+  const data = init.data;
+  if (code == null || data == null) {
+    throw new TypeError("KeyPairSigner.send expects init to include both code and data Cells");
+  }
+  if (!(code instanceof Cell) || !(data instanceof Cell)) {
+    throw new TypeError("KeyPairSigner.send expects init.code/init.data to be Cells when used with wallet transfers");
+  }
+
+  return {
+    code,
+    data,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // KeyPairSigner
@@ -50,7 +94,7 @@ import type {
 export class KeyPairSigner implements Signer {
   readonly address: Address;
   private readonly keyPair: KeyPair;
-  private readonly wallet: OpenedContract<any>;
+  private readonly wallet: TransferCapableWallet;
 
   /**
    * Create a new KeyPairSigner.
@@ -58,7 +102,7 @@ export class KeyPairSigner implements Signer {
    * @param keyPair - Ed25519 key pair (publicKey: 32 bytes, secretKey: 64 bytes)
    * @param wallet  - An opened wallet contract instance (already bound to a provider)
    */
-  constructor(keyPair: KeyPair, wallet: OpenedContract<any>) {
+  constructor(keyPair: KeyPair, wallet: TransferCapableWallet) {
     this.keyPair = keyPair;
     this.wallet = wallet;
     this.address = wallet.address;
@@ -87,11 +131,11 @@ export class KeyPairSigner implements Signer {
     await this.wallet.sendTransfer(this, {
       messages: [
         {
-          to: args.to as unknown as Address,
+          to: toAddress(args.to),
           value: args.value,
-          body: (args.body ?? undefined) as Cell | undefined,
+          body: toBody(args.body),
           bounce: args.bounce ?? undefined,
-          init: (args.init ?? undefined) as StateInit | undefined,
+          init: toStateInit(args.init),
           mode: args.sendMode ?? undefined,
         },
       ],
