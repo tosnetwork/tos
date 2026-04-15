@@ -1454,6 +1454,13 @@ void JsonRpcServer::validate_delegation_and_return_intent(
                           return;
                         }
                         auto view = R2.move_as_ok();
+                        auto expected_id = PSTRING() << ctx.addr_str << ":restricted-vesting:0";
+                        if (delegation_ref != expected_id) {
+                          promise.set_value(make_json_error(-32603,
+                              PSTRING() << "DELEGATION_UNAVAILABLE: delegation_ref=" << delegation_ref
+                                  << " does not match the restricted delegation id", req_id));
+                          return;
+                        }
                         if (view.available_balance >= view.full_balance) {
                           promise.set_value(make_json_error(-32603,
                               "DELEGATION_EXPIRED: the restricted wallet vesting has fully released", req_id));
@@ -1576,6 +1583,22 @@ struct RevokeRequest {
   std::string permission_id;
 };
 
+static td::Result<td::Unit> validate_nominator_lifecycle_grant(const GrantRequest& grant) {
+  if (grant.scope != "bounded_transfer") {
+    return td::Status::Error(
+        "DELEGATION_SCOPE_VIOLATION: contract.pool.nominator only supports bounded_transfer");
+  }
+  if (grant.constraints_json != "{}") {
+    return td::Status::Error(
+        "INVALID_CONSTRAINTS: contract.pool.nominator does not support caller-supplied constraints");
+  }
+  if (grant.has_expires_at) {
+    return td::Status::Error(
+        "INVALID_CONSTRAINTS: contract.pool.nominator does not support expires_at");
+  }
+  return td::Unit();
+}
+
 static td::Result<GrantRequest> parse_grant_request(td::JsonObject &params) {
   GrantRequest req;
 
@@ -1642,8 +1665,8 @@ static td::Result<GrantRequest> parse_grant_request(td::JsonObject &params) {
       } else if (field.second.type() == td::JsonValue::Type::Null) {
         sb << "null";
       } else {
-        // For arrays/objects, use null placeholder
-        sb << "null";
+        return td::Status::Error(PSTRING() << "INVALID_CONSTRAINTS: field '" << field.first
+            << "' must be a scalar or null value");
       }
     }
     sb << "}";
@@ -1748,6 +1771,12 @@ void JsonRpcServer::handle_grantAccountDelegation(td::JsonObject &params, std::s
                   lifecycle_unsupported_message("grantAccountDelegation", ctx), req_id));
               return;
             }
+            auto validation_r = validate_nominator_lifecycle_grant(grant);
+            if (validation_r.is_error()) {
+              promise.set_value(make_json_error(
+                  -32602, validation_r.move_as_error().message().str(), req_id));
+              return;
+            }
 
             // Nominator pool: deposit is a standard wallet transfer with text comment "d"
             // grantor = the nominator (grant.grantee from request), grantee = the pool
@@ -1762,11 +1791,11 @@ void JsonRpcServer::handle_grantAccountDelegation(td::JsonObject &params, std::s
                 grant.grantee,
                 ctx.addr_str,
                 grant.scope,
-                grant.constraints_json,
+                "{}",
                 "",
                 false, 0,
-                grant.has_expires_at, grant.expires_at,
-                grant.revocable,
+                false, 0,
+                true,
                 "active");
 
             auto result = build_mutation_result_json(
@@ -1793,10 +1822,11 @@ void JsonRpcServer::handle_revokeAccountDelegation(td::JsonObject &params, std::
   auto send_query = [this](td::BufferSlice query, td::Promise<td::BufferSlice> p) {
     this->send_liteserver_query(std::move(query), std::move(p));
   };
+  auto self_id = actor_id(this);
   fetch_account_capability_context(
       send_query, addr, revoke.address, false, 0,
       td::PromiseCreator::lambda(
-          [revoke = std::move(revoke), req_id = std::move(req_id),
+          [self_id, revoke = std::move(revoke), req_id = std::move(req_id),
            promise = std::move(promise)](td::Result<AccountCapabilityContext> R) mutable {
             if (R.is_error()) {
               promise.set_value(make_json_error(-32603, R.move_as_error().message().str(), req_id));
@@ -1813,31 +1843,77 @@ void JsonRpcServer::handle_revokeAccountDelegation(td::JsonObject &params, std::
                   lifecycle_unsupported_message("revokeAccountDelegation", ctx), req_id));
               return;
             }
+            auto send_query2 = [self_id](td::BufferSlice query, td::Promise<td::BufferSlice> p) mutable {
+              td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
+                                      std::move(query), std::move(p));
+            };
+            fetch_nominator_pool_delegation_view(
+                send_query2, ctx,
+                td::PromiseCreator::lambda(
+                    [ctx = std::move(ctx), revoke = std::move(revoke),
+                     req_id = std::move(req_id), promise = std::move(promise)](
+                        td::Result<NominatorPoolDelegationView> R2) mutable {
+                      if (R2.is_error()) {
+                        promise.set_value(make_json_error(
+                            -32603, PSTRING() << "DELEGATION_UNAVAILABLE: " << R2.error().message(), req_id));
+                        return;
+                      }
+                      auto view = R2.move_as_ok();
+                      const NominatorDelegation* matched = nullptr;
+                      size_t matched_index = 0;
+                      for (size_t i = 0; i < view.nominators.size(); i++) {
+                        auto expected_id = PSTRING() << ctx.addr_str << ":nominator-stake:" << i;
+                        if (revoke.permission_id == expected_id) {
+                          matched = &view.nominators[i];
+                          matched_index = i;
+                          break;
+                        }
+                      }
+                      if (!matched) {
+                        promise.set_value(make_json_error(
+                            -32603,
+                            PSTRING() << "DELEGATION_UNAVAILABLE: permission_id=" << revoke.permission_id
+                                      << " not found in pool",
+                            req_id));
+                        return;
+                      }
+                      if (matched->withdraw_requested) {
+                        promise.set_value(make_json_error(
+                            -32603,
+                            "DELEGATION_REVOKED: the nominator has already submitted a withdraw request",
+                            req_id));
+                        return;
+                      }
 
-            // Nominator pool: withdrawal is a standard wallet transfer with text comment "w"
-            std::string intent_json = PSTRING()
-                << "{\"type\":\"internal_transfer\""
-                << ",\"destination\":" << td::JsonString(td::Slice(ctx.addr_str))
-                << ",\"body_comment\":\"w\"}";
+                      std::string intent_json = PSTRING()
+                          << "{\"type\":\"internal_transfer\""
+                          << ",\"destination\":" << td::JsonString(td::Slice(ctx.addr_str))
+                          << ",\"body_comment\":\"w\"}";
+                      std::string constraints_json = PSTRING()
+                          << "{\"max_value\":\"" << matched->amount << "\"}";
+                      std::string extensions_json = PSTRING()
+                          << "{\"account_model\":\"contract.pool.nominator\""
+                          << ",\"pending_deposit\":\"" << matched->pending_deposit << "\""
+                          << ",\"withdraw_requested\":true"
+                          << "}";
+                      auto preview = build_delegation_grant_json(
+                          ctx.addr_str,
+                          PSTRING() << ctx.addr_str << ":nominator-stake:" << matched_index,
+                          matched->principal,
+                          ctx.addr_str,
+                          "bounded_transfer",
+                          constraints_json,
+                          extensions_json,
+                          false, 0,
+                          false, 0,
+                          true,
+                          "revoked");
 
-            // Build revoked preview using the permission_id from the request
-            auto preview = build_delegation_grant_json(
-                ctx.addr_str,
-                revoke.permission_id,
-                "",       // grantor not resolved for revoke
-                ctx.addr_str,
-                "bounded_transfer",
-                "{}",
-                "",
-                false, 0,
-                false, 0,
-                true,
-                "revoked");
-
-            auto result = build_mutation_result_json(
-                "revokeAccountDelegation", ctx.account_model,
-                intent_json, preview);
-            promise.set_value(make_json_ok(result, req_id));
+                      auto result = build_mutation_result_json(
+                          "revokeAccountDelegation", ctx.account_model,
+                          intent_json, preview);
+                      promise.set_value(make_json_ok(result, req_id));
+                    }));
           }));
 }
 

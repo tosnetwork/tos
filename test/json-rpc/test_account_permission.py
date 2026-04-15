@@ -136,7 +136,7 @@ class TestBuildTransactionIntent:
         )
         data = response.json()
         assert data["ok"] is False
-        assert "FEATURE_DEFERRED" in data["error"]
+        assert "DELEGATION_UNAVAILABLE" in data["error"]
 
     def test_distinct_fee_payer_rejected(self, api_method_call_no_get):
         response = api_method_call_no_get(
@@ -777,6 +777,21 @@ class TestLifecycleRequestEnforcement:
         assert data["ok"] is False
         assert "INVALID_SCOPE" in data["error"]
 
+    def test_grant_model_scope_violation(self, api_method_call_no_get, wallets):
+        """Nominator lifecycle must reject canonical scopes outside bounded_transfer."""
+        info = wallets.get("nominator_pool")
+        if not info or not info.get("address"):
+            pytest.skip("nominator pool not deployed")
+        response = api_method_call_no_get(
+            "grantAccountDelegation",
+            address=info["address"],
+            grantee="0:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+            scope="agent_execution",
+        )
+        data = response.json()
+        assert data["ok"] is False
+        assert "DELEGATION_SCOPE_VIOLATION" in data["error"]
+
     def test_grant_missing_scope(self, api_method_call_no_get, wallets):
         """Grant without scope must fail with INVALID_SCOPE."""
         info = wallets.get("nominator_pool")
@@ -804,6 +819,22 @@ class TestLifecycleRequestEnforcement:
         assert data["ok"] is False
         assert "MISSING_PERMISSION_ID" in data["error"]
 
+    def test_grant_rejects_structured_constraint_values(self, api_method_call_no_get, wallets):
+        """Canonical constraint fields must not silently accept array/object payloads."""
+        info = wallets.get("nominator_pool")
+        if not info or not info.get("address"):
+            pytest.skip("nominator pool not deployed")
+        response = api_method_call_no_get(
+            "grantAccountDelegation",
+            address=info["address"],
+            grantee="0:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+            scope="bounded_transfer",
+            constraints={"target_allowlist": ["0:abcdef"]},
+        )
+        data = response.json()
+        assert data["ok"] is False
+        assert "INVALID_CONSTRAINTS" in data["error"]
+
     def test_grant_canonical_scope_accepted(self, api_method_call_no_get, wallets):
         """Grant with valid canonical scope on supported model should succeed."""
         info = wallets.get("nominator_pool")
@@ -817,6 +848,20 @@ class TestLifecycleRequestEnforcement:
         ))
         data = response.json()
         assert data["ok"] is True
+
+    def test_revoke_unknown_permission_id_rejected(self, api_method_call_no_get, wallets):
+        """Revoke must fail if permission_id does not resolve to current pool state."""
+        info = wallets.get("nominator_pool")
+        if not info or not info.get("address"):
+            pytest.skip("nominator pool not deployed")
+        response = api_method_call_no_get(
+            "revokeAccountDelegation",
+            address=info["address"],
+            permission_id=f"{info['address']}:nominator-stake:9999",
+        )
+        data = response.json()
+        assert data["ok"] is False
+        assert "DELEGATION_UNAVAILABLE" in data["error"]
 
     def test_revoke_with_permission_id_accepted(self, api_method_call_no_get, wallets):
         """Revoke with valid permission_id on supported model should succeed."""
@@ -944,11 +989,11 @@ class TestDelegationScopeValidation:
     METHOD = "buildTransactionIntent"
 
     def test_active_delegation_ref_accepted(self, api_method_call_no_get, wallets):
-        """An active delegation_ref on a restricted wallet should be accepted."""
-        info = wallets.get("restricted")
+        """An active delegation_ref on a supported model should be accepted."""
+        info = wallets.get("nominator_pool")
         if not info or not info.get("address"):
-            pytest.skip("restricted wallet not deployed")
-        delegation_id = f"{info['address']}:restricted-vesting:0"
+            pytest.skip("nominator pool not deployed")
+        delegation_id = f"{info['address']}:nominator-stake:0"
         response = _call_until_ok(lambda: api_method_call_no_get(
             self.METHOD,
             address=info["address"],
@@ -1016,6 +1061,21 @@ class TestDelegationScopeValidation:
             address=info["address"],
             body=VALID_EMPTY_CELL_BOC,
             delegation_ref="nonexistent-id",
+        ))
+        data = response.json()
+        assert data["ok"] is False
+        assert "DELEGATION_UNAVAILABLE" in data["error"]
+
+    def test_restricted_wrong_delegation_ref_rejected(self, api_method_call_no_get, wallets):
+        """Restricted wallets must reject delegation_ref values that do not match the real id."""
+        info = wallets.get("restricted")
+        if not info or not info.get("address"):
+            pytest.skip("restricted wallet not deployed")
+        response = _call_until_ok(lambda: api_method_call_no_get(
+            self.METHOD,
+            address=info["address"],
+            body=VALID_EMPTY_CELL_BOC,
+            delegation_ref=f"{info['address']}:restricted-vesting:999",
         ))
         data = response.json()
         assert data["ok"] is False
