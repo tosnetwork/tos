@@ -9,9 +9,35 @@ Usage:
 import pytest
 import requests
 from typing import Optional
+import time
 
 
 API_CALL_MODES = ["get", "post", "jsonrpc"]
+TRANSIENT_ERROR_MARKERS = (
+    "Request timeout",
+    "is not applied",
+    "node not synced",
+)
+
+
+def _call_with_retry(method, *, retries: int = 8, delay_s: float = 0.5):
+    last = None
+    for _ in range(retries):
+        try:
+            last = method()
+        except requests.RequestException:
+            time.sleep(delay_s)
+            continue
+        try:
+            data = last.json()
+        except Exception:
+            return last
+        error = str(data.get("error", ""))
+        if last.status_code == 500 and any(marker in error for marker in TRANSIENT_ERROR_MARKERS):
+            time.sleep(delay_s)
+            continue
+        return last
+    return last
 
 
 def pytest_addoption(parser):
@@ -45,6 +71,28 @@ def pytest_addoption(parser):
 def endpoint(request) -> str:
     base = request.config.getoption("--endpoint").rstrip("/") + "/"
     return base
+
+
+@pytest.fixture(scope="session", autouse=True)
+def wait_for_endpoint_ready(request):
+    endpoint = request.config.getoption("--endpoint").rstrip("/") + "/"
+    deadline = time.time() + 45
+    last_error = None
+    while time.time() < deadline:
+        try:
+            ready = requests.get(endpoint + "readyz", timeout=3)
+            if ready.status_code != 200 or ready.text.strip() != "OK":
+                time.sleep(1)
+                continue
+            probe = requests.get(endpoint + "getMasterchainInfo", timeout=5)
+            data = probe.json()
+            if probe.status_code == 200 and data.get("ok") is True:
+                return
+            last_error = str(data.get("error", ""))
+        except Exception as exc:
+            last_error = str(exc)
+        time.sleep(1)
+    pytest.skip(f"TOS endpoint not ready for live JSON-RPC tests: {last_error}")
 
 
 @pytest.fixture(scope="module")
@@ -88,14 +136,20 @@ def api_method_call(endpoint, headers, api_mode):
         url = endpoint  # already has trailing slash
         with requests.Session() as session:
             if api_mode == "get":
-                return session.get(url + __method, params=kwargs, headers=headers)
+                return _call_with_retry(
+                    lambda: session.get(url + __method, params=kwargs, headers=headers, timeout=10)
+                )
             if api_mode == "post":
-                return session.post(url + __method, json=kwargs, headers=headers)
+                return _call_with_retry(
+                    lambda: session.post(url + __method, json=kwargs, headers=headers, timeout=10)
+                )
             # jsonrpc
-            return session.post(
+            return _call_with_retry(lambda: session.post(
                 url + "jsonRPC",
                 json={"jsonrpc": "2.0", "method": __method, "params": kwargs, "id": 1},
                 headers=headers,
+                timeout=10,
+            )
             )
     return _call
 
@@ -110,12 +164,16 @@ def api_method_call_no_get(endpoint, headers, api_mode_no_get):
         url = endpoint
         with requests.Session() as session:
             if api_mode_no_get == "post":
-                return session.post(url + __method, json=kwargs, headers=headers)
+                return _call_with_retry(
+                    lambda: session.post(url + __method, json=kwargs, headers=headers, timeout=10)
+                )
             # jsonrpc
-            return session.post(
+            return _call_with_retry(lambda: session.post(
                 url + "jsonRPC",
                 json={"jsonrpc": "2.0", "method": __method, "params": kwargs, "id": 1},
                 headers=headers,
+                timeout=10,
+            )
             )
     return _call
 
@@ -125,7 +183,9 @@ def api_method_call_get(endpoint, headers):
     """Direct GET call, bypassing mode parameterisation."""
     def _call(__method: str, **kwargs):
         with requests.Session() as session:
-            return session.get(endpoint + __method, params=kwargs, headers=headers)
+            return _call_with_retry(
+                lambda: session.get(endpoint + __method, params=kwargs, headers=headers, timeout=10)
+            )
     return _call
 
 

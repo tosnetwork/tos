@@ -713,7 +713,7 @@ When a permission reference is provided:
 
 #### Current Implementation Status
 
-In the initial implementation, all permission references are rejected with `FEATURE_DEFERRED`. This is correct per the plan's MAY rule. Permission-bearing transaction support will be enabled incrementally as lifecycle and validation paths mature.
+In the initial implementation, `session_ref` and `agent_ref` are rejected with `FEATURE_DEFERRED`. `delegation_ref` is accepted only when it can be resolved against a real permission source and validated against current delegation state. Permission-bearing transaction support is enabled incrementally as lifecycle and validation paths mature.
 
 ### Permission Error Model
 
@@ -986,9 +986,9 @@ Status materialization note:
 
 ### Step 5. Intent/signing/submission validation
 
-- ✅ allow delegation/session/agent references only when backed by real semantics — currently all permission references are rejected with `FEATURE_DEFERRED` (the plan's line 659 says this is MAY, not MUST, for the initial implementation)
+- ✅ allow delegation/session/agent references only when backed by real semantics — `delegation_ref` is now validated against real state where supported; `session_ref` and `agent_ref` remain `FEATURE_DEFERRED`
 - ✅ validate and reject:
-  - ✅ permission-bearing requests rejected with `FEATURE_DEFERRED`
+  - ✅ unsupported permission-bearing requests rejected honestly (`session_ref` / `agent_ref` -> `FEATURE_DEFERRED`; invalid or stale `delegation_ref` -> structured delegation errors)
   - ✅ distinct `fee_payer` rejected with `FEATURE_DEFERRED`
   - ✅ invalid BOC rejected with `SIGNED_ARTIFACT_INVALID`
   - ✅ unsupported payload encoding rejected with `SIGNED_ARTIFACT_UNSUPPORTED`
@@ -1047,7 +1047,14 @@ Common fields for all revoke methods:
 
 #### Response Shape
 
-All lifecycle methods MUST return the affected permission object in its canonical form (the same shape returned by the corresponding inspection method).
+Lifecycle methods MUST return an `affected_object_preview` using the canonical object schema of the corresponding inspection method.
+
+If the underlying account model has not yet materialized a stable on-chain permission object identity at mutation-construction time, the RPC MAY return a projected preview instead of a fully bound canonical object. In that case:
+
+- the preview MUST remain schema-compatible with the inspection object type
+- the preview MUST carry `projected=true`
+- the response MUST include a `preview_note` explaining the projection boundary
+- clients MUST treat the preview as advisory until a later inspection call returns a real persisted object
 
 #### State Ownership
 
@@ -1082,7 +1089,7 @@ When a lifecycle method is called against a model with immutable permissions, th
 - ✅ design finalized — RPC shapes, authorization model, state ownership, and per-model lifecycle capabilities are documented in the "Lifecycle Mutation Method Design" section above
 - ✅ RPC surfaces implemented — 6 lifecycle handlers with real account-model detection (`grantAccountDelegation`, `revokeAccountDelegation`, `grantAccountSession`, `revokeAccountSession`, `grantAccountAgent`, `revokeAccountAgent`)
 - ✅ frozen request-shape enforcement — grant handlers validate `address`, `grantee` (`MISSING_GRANTEE`), `scope` (`INVALID_SCOPE` for non-canonical values), `constraints` (`INVALID_CONSTRAINTS` for non-canonical fields), `expires_at`, `revocable`; revoke handlers validate `address`, `permission_id` (`MISSING_PERMISSION_ID`); request validation runs before account-model dispatch
-- ✅ response-shape refinement — supported mutation handlers return `lifecycle.mutationResult` with `mutation_intent` and `affected_object_preview` in canonical inspection shape (e.g., `account.delegationGrant` for delegation grant/revoke)
+- ✅ response-shape refinement — supported mutation handlers return `lifecycle.mutationResult` with `mutation_intent` and `affected_object_preview` in canonical inspection shape; where a model cannot yet bind preview identity to on-chain state at construction time (currently `contract.pool.nominator` grant), the preview is explicitly marked `projected=true` with a `preview_note`
 - ✅ `contract.pool.nominator` returns full `lifecycle.mutationResult` with deposit ("d") / withdraw ("w") intent and delegation preview
 - ✅ immutable models (`advanced.wallet.multisig`, `advanced.wallet.restricted`) return `LIFECYCLE_IMMUTABLE`
 - ✅ unsupported models return `PERMISSION_SOURCE_UNSUPPORTED`
