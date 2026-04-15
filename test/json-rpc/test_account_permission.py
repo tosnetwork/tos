@@ -780,10 +780,21 @@ class TestLifecycleMutationRPCs:
         info = wallets.get("nominator_pool")
         if not info or not info.get("address"):
             pytest.skip("nominator pool not deployed")
+        # First, discover the actual principal-based delegation ID
+        inspect_resp = _call_until_ok(lambda: api_method_call_no_get(
+            "getAccountDelegations",
+            address=info["address"],
+            include_inactive=True,
+        ))
+        inspect_data = inspect_resp.json()
+        if not inspect_data.get("ok") or not inspect_data["result"]:
+            pytest.skip("no delegations found in nominator pool")
+        real_permission_id = inspect_data["result"][0]["permission_id"]
+        # Now revoke using the real ID
         response = _call_until_ok(lambda: api_method_call_no_get(
             "revokeAccountDelegation",
             address=info["address"],
-            permission_id=f"{info['address']}:nominator-stake:0",
+            permission_id=real_permission_id,
         ))
         data = response.json()
         assert data["ok"] is True

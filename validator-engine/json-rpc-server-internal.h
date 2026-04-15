@@ -74,4 +74,24 @@ struct ParsedAccountState {
   std::string to_extended_info_json(const std::string& addr_str) const;
 };
 
+// ─── Shared: wallet/account-model detection ───────────────────────────
+// Defined in json-rpc-server-account-capability.cpp; called from
+// json-rpc-server-send.cpp for capability auto-discovery.
+
+std::string detect_wallet_type(const vm::CellHash& code_hash);
+std::string detect_account_model(const ParsedAccountState& parsed,
+                                 const std::string& wallet_type);
+std::string detect_authorization_version(const std::string& wallet_type);
+
+// ─── Shared: AccountCapabilityContext ──────────────────────────────────
+
+struct AccountCapabilityContext {
+  block::StdAddress addr;
+  std::string addr_str;
+  ParsedAccountState parsed;
+  std::string wallet_type;
+  std::string account_model;
+  std::string authorization_version;
+};
+
 }  // namespace tos

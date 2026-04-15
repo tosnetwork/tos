@@ -64,7 +64,7 @@ static std::string build_wallet_json(bool is_wallet, td::int64 balance,
   return sb.as_cslice().str();
 }
 
-static std::string detect_wallet_type(const vm::CellHash& code_hash) {
+std::string detect_wallet_type(const vm::CellHash& code_hash) {
   static const std::map<std::string, std::string> known_wallets = {
     {"89C890A6C9B5A3828B38570A93DFC93C792EE9147933DE8F21F5840AE19AB1AA", "wallet v1 r1"},
     {"27B5063EBDB6E5ECEC073F57451A4BE095EB68777496B65449B1B49FA09A43D9", "wallet v1 r2"},
@@ -93,8 +93,8 @@ static std::string detect_wallet_type(const vm::CellHash& code_hash) {
   return it != known_wallets.end() ? it->second : "";
 }
 
-static std::string detect_account_model(const ParsedAccountState& parsed,
-                                        const std::string& wallet_type) {
+std::string detect_account_model(const ParsedAccountState& parsed,
+                                 const std::string& wallet_type) {
   if (!wallet_type.empty()) {
     if (wallet_type.rfind("wallet ", 0) == 0) {
       return "default.wallet.v1";
@@ -136,21 +136,14 @@ static std::string detect_account_model(const ParsedAccountState& parsed,
   return "unknown";
 }
 
-static std::string detect_authorization_version(const std::string& wallet_type) {
+std::string detect_authorization_version(const std::string& wallet_type) {
   if (!wallet_type.empty()) {
     return "auth.external_message.ed25519.v1";
   }
   return "unknown";
 }
 
-struct AccountCapabilityContext {
-  block::StdAddress addr;
-  std::string addr_str;
-  ParsedAccountState parsed;
-  std::string wallet_type;
-  std::string account_model;
-  std::string authorization_version;
-};
+// AccountCapabilityContext is declared in json-rpc-server-internal.h
 
 struct MultisigAgentView {
   int threshold_n{0};
@@ -859,7 +852,8 @@ static std::string build_delegation_grant_json(const std::string& account,
                                                 bool has_created_at, td::uint32 created_at,
                                                 bool has_expires_at, td::uint32 expires_at,
                                                 bool revocable,
-                                                const std::string& status) {
+                                                const std::string& status,
+                                                bool projected = false) {
   td::StringBuilder sb;
   sb << "{\"@type\":\"account.delegationGrant\""
      << ",\"account\":" << td::JsonString(td::Slice(account))
@@ -876,8 +870,11 @@ static std::string build_delegation_grant_json(const std::string& account,
      << ",\"revoked_at\":null"
      << ",\"revocable\":" << (revocable ? "true" : "false")
      << ",\"revocation_reference\":null"
-     << ",\"status\":" << td::JsonString(td::Slice(status))
-     << "}";
+     << ",\"status\":" << td::JsonString(td::Slice(status));
+  if (projected) {
+    sb << ",\"projected\":true";
+  }
+  sb << "}";
   return sb.as_cslice().str();
 }
 
@@ -1748,15 +1745,19 @@ static td::Result<RevokeRequest> parse_revoke_request(td::JsonObject &params) {
 static std::string build_mutation_result_json(const std::string& method,
                                                 const std::string& account_model,
                                                 const std::string& mutation_intent_json,
-                                                const std::string& affected_preview_json) {
+                                                const std::string& affected_preview_json,
+                                                const std::string& preview_note = "") {
   td::StringBuilder sb;
   sb << "{\"@type\":\"lifecycle.mutationResult\""
      << ",\"method\":" << td::JsonString(td::Slice(method))
      << ",\"account_model\":" << td::JsonString(td::Slice(account_model))
      << ",\"accepted\":true"
      << ",\"mutation_intent\":" << mutation_intent_json
-     << ",\"affected_object_preview\":" << affected_preview_json
-     << "}";
+     << ",\"affected_object_preview\":" << affected_preview_json;
+  if (!preview_note.empty()) {
+    sb << ",\"preview_note\":" << td::JsonString(td::Slice(preview_note));
+  }
+  sb << "}";
   return sb.as_cslice().str();
 }
 
@@ -1824,11 +1825,13 @@ void JsonRpcServer::handle_grantAccountDelegation(td::JsonObject &params, std::s
                 false, 0,
                 false, 0,
                 true,
-                "active");
+                "active",
+                true);
 
             auto result = build_mutation_result_json(
                 "grantAccountDelegation", ctx.account_model,
-                intent_json, preview);
+                intent_json, preview,
+                "projected: principal is derived from request grantee, not from on-chain state");
             promise.set_value(make_json_ok(result, req_id));
           }));
 }
