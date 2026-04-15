@@ -56,7 +56,7 @@ export type OpenedContract<T extends ContractLike> = {
 // ContractProvider adapter (bridges TosProvider ↔ ContractProvider)
 // ---------------------------------------------------------------------------
 
-function makeContractProvider(address: AddressLike, client: TosProvider): ContractProvider {
+function makeContractProvider(address: AddressLike, client: TosProvider, contract?: ContractLike): ContractProvider {
   const addrString = typeof address === "string"
     ? address
     : address.toRawString();
@@ -101,8 +101,18 @@ function makeContractProvider(address: AddressLike, client: TosProvider): Contra
     },
 
     async external(message: CellLike | Uint8Array | string): Promise<SendConfirmation> {
-      const result = await client.sendBoc(message as CellLike);
-      return { status: result.status };
+      // Wrap the body into a full ext_in_msg_info external message via sendQuery.
+      // sendQuery on the C++ side builds the external message envelope (address, init, body).
+      const init = (contract as Record<string, unknown>)?.["init"] as
+        | { code?: CellLike; data?: CellLike }
+        | undefined;
+      const result = await client.sendQuery({
+        address: addrString,
+        body: message as CellLike | string,
+        ...(init?.code ? { init_code: init.code } : {}),
+        ...(init?.data ? { init_data: init.data } : {}),
+      });
+      return { hash: result.hash };
     },
   };
 }
@@ -140,7 +150,7 @@ export function open<T extends ContractLike>(
   contract: T,
   provider: TosProvider,
 ): OpenedContract<T> {
-  const contractProvider = makeContractProvider(contract.address, provider);
+  const contractProvider = makeContractProvider(contract.address, provider, contract);
 
   return new Proxy(contract, {
     get(target, prop, receiver) {
