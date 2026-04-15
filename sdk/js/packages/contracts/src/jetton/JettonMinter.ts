@@ -205,10 +205,7 @@ function parseJettonContent(cell: Cell): JettonContent {
     const prefix = slice.loadUint(8);
 
     if (prefix === 0x01) {
-        // Off-chain content: remaining data is a UTF-8 URI
-        const uriBytes = slice.loadBuffer(slice.remainingBits / 8);
-        const uri = new TextDecoder().decode(uriBytes);
-        return { uri };
+        return { uri: slice.loadStringTail() };
     }
 
     // On-chain (0x00) or unknown prefix — return empty content

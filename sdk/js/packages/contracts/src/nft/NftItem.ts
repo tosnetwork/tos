@@ -66,7 +66,7 @@ export class NftItem implements Contract {
         const initialized = result.stack.readBoolean();
         const index = result.stack.readBigNumber();
         const collectionAddress = result.stack.readAddress() as Address;
-        const ownerAddress = result.stack.readAddress() as Address;
+        const ownerAddress = result.stack.readAddress() as Address | null;
         const content = result.stack.readCell() as Cell;
 
         return { initialized, index, collectionAddress, ownerAddress, content };

@@ -22,8 +22,8 @@ export interface NftItemData {
     index: bigint;
     /** Address of the parent collection (or zero-address for standalone items). */
     collectionAddress: Address;
-    /** Current owner of the NFT. */
-    ownerAddress: Address;
+    /** Current owner of the NFT, or null for an uninitialized item. */
+    ownerAddress: Address | null;
     /** Raw individual content cell. */
     content: Cell;
 }

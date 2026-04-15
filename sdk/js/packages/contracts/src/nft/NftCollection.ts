@@ -163,8 +163,7 @@ function parseOffchainUri(cell: Cell): string {
     const prefix = slice.loadUint(8);
 
     if (prefix === 0x01) {
-        const uriBytes = slice.loadBuffer(slice.remainingBits / 8);
-        return new TextDecoder().decode(uriBytes);
+        return slice.loadStringTail();
     }
 
     // If not off-chain, return an empty string — callers can inspect the
