@@ -404,16 +404,16 @@ class TestPermissionErrorCodeFormat:
         assert data["error"].startswith("INDEXED_STATE_STALE:")
 
     def test_delegation_unavailable_error_uses_prefix(self, api_method_call_no_get):
-        """DELEGATION_UNAVAILABLE must appear as a prefix when delegation_ref is set on unsupported model."""
+        """DELEGATION_UNAVAILABLE must appear as a structured prefix via getSigningPayload."""
         response = api_method_call_no_get(
-            "buildTransactionIntent",
+            "getSigningPayload",
             address=ELECTOR_ADDRESS,
             body=VALID_EMPTY_CELL_BOC,
             delegation_ref="example",
         )
         data = response.json()
         assert data["ok"] is False
-        assert "DELEGATION_UNAVAILABLE" in data["error"]
+        assert data["error"].startswith("SIGNING_PAYLOAD_UNAVAILABLE: DELEGATION_UNAVAILABLE")
 
     def test_signed_artifact_invalid_prefix(self, api_method_call_no_get):
         """SIGNED_ARTIFACT_INVALID must appear for malformed submissions."""
