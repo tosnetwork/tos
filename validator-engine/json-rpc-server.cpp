@@ -245,6 +245,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     if (path == "/getMasterchainInfo")    rest_method = "getMasterchainInfo";
     else if (path == "/getConsensusBlock")      rest_method = "getConsensusBlock";
     else if (path == "/getAddressInformation")  rest_method = "getAddressInformation";
+    else if (path == "/getAccountCapability")   rest_method = "getAccountCapability";
     else if (path == "/getAddressBalance")      rest_method = "getAddressBalance";
     else if (path == "/getAddressState")        rest_method = "getAddressState";
     else if (path == "/getWalletInformation")   rest_method = "getWalletInformation";
@@ -325,6 +326,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     static const std::set<std::string> post_rest_paths = {
         "/detectAddress", "/detectHash", "/packAddress", "/unpackAddress",
         "/getAddressInformation", "/getExtendedAddressInformation",
+        "/getAccountCapability",
         "/getWalletInformation", "/getAddressBalance", "/getAddressState",
         "/getTokenData",
         "/getMasterchainInfo", "/getConsensusBlock", "/lookupBlock",
@@ -336,7 +338,8 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
         "/getConfigParam", "/getConfigAll", "/getLibraries",
         "/runGetMethod", "/runGetMethodStd",
         "/sendBoc", "/sendBocReturnHash", "/sendBocReturnHashNoError",
-        "/sendQuery", "/estimateFee"
+        "/sendQuery", "/estimateFee",
+        "/buildTransactionIntent", "/getSigningPayload", "/submitSignedTransaction"
     };
     if (post_rest_paths.count(post_path)) {
       std::string rest_method = post_path.substr(1);  // strip leading /
@@ -552,7 +555,8 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
   // Write-method gate: reject send-family methods in readonly mode
   if (opts_.readonly &&
       (method == "sendBoc" || method == "sendBocReturnHash" ||
-       method == "sendBocReturnHashNoError" || method == "sendQuery")) {
+       method == "sendBocReturnHashNoError" || method == "sendQuery" ||
+       method == "submitSignedTransaction")) {
     promise.set_value(make_json_error(-32601,
         "Write methods are disabled (server is in readonly mode)", req_id));
     return;
@@ -567,6 +571,8 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     handle_getAddressInformation(params, std::move(req_id), std::move(promise));
   } else if (method == "getExtendedAddressInformation") {
     handle_getExtendedAddressInformation(params, std::move(req_id), std::move(promise));
+  } else if (method == "getAccountCapability") {
+    handle_getAccountCapability(params, std::move(req_id), std::move(promise));
   } else if (method == "runGetMethod") {
     handle_runGetMethod(params, std::move(req_id), std::move(promise));
   } else if (method == "getWalletInformation") {
@@ -607,6 +613,12 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     handle_sendQuery(params, std::move(req_id), std::move(promise));
   } else if (method == "estimateFee") {
     handle_estimateFee(params, std::move(req_id), std::move(promise));
+  } else if (method == "buildTransactionIntent") {
+    handle_buildTransactionIntent(params, std::move(req_id), std::move(promise));
+  } else if (method == "getSigningPayload") {
+    handle_getSigningPayload(params, std::move(req_id), std::move(promise));
+  } else if (method == "submitSignedTransaction") {
+    handle_submitSignedTransaction(params, std::move(req_id), std::move(promise));
   // Convenience / address APIs
   } else if (method == "getAddressBalance") {
     handle_getAddressBalance(params, std::move(req_id), std::move(promise));
@@ -850,7 +862,8 @@ bool JsonRpcServer::check_api_key(const RequestPtr &request,
 const std::set<std::string> &JsonRpcServer::cacheable_methods() {
   static const std::set<std::string> methods = {
       "getMasterchainInfo", "getConfigParam", "getConfigAll",
-      "getAddressInformation", "getWalletInformation", "getAddressBalance",
+      "getAddressInformation", "getAccountCapability",
+      "getWalletInformation", "getAddressBalance",
       "getAddressState", "getBlockHeader", "lookupBlock", "shards",
       "getConsensusBlock", "getOutMsgQueueSize"
   };

@@ -466,6 +466,170 @@ static std::string detect_wallet_type(const vm::CellHash& code_hash) {
   return it != known_wallets.end() ? it->second : "";
 }
 
+static std::string detect_account_model(const ParsedAccountState& parsed,
+                                        const std::string& wallet_type) {
+  if (!wallet_type.empty()) {
+    return "default.wallet.v1";
+  }
+  if (parsed.state_str == "uninitialized") {
+    return "state.uninitialized";
+  }
+  if (parsed.state_str == "frozen") {
+    return "state.frozen";
+  }
+  if (parsed.state_str == "active") {
+    return parsed.code_cell.not_null() ? "advanced.unknown" : "state.active";
+  }
+  return "unknown";
+}
+
+static std::string detect_authorization_version(const std::string& wallet_type) {
+  if (!wallet_type.empty()) {
+    return "auth.external_message.ed25519.v1";
+  }
+  return "unknown";
+}
+
+static std::string build_account_capability_json(const std::string& address,
+                                                 const ParsedAccountState& parsed,
+                                                 const std::string& account_model,
+                                                 const std::string& authorization_version,
+                                                 bool supports_sponsorship,
+                                                 bool include_sponsorship) {
+  td::StringBuilder sb;
+  sb << "{\"@type\":\"account.capability\""
+     << ",\"address\":" << td::JsonString(td::Slice(address))
+     << ",\"account_model\":" << td::JsonString(td::Slice(account_model))
+     << ",\"authorization_version\":" << td::JsonString(td::Slice(authorization_version))
+     << ",\"supports_delegation\":false"
+     << ",\"supports_sessions\":false"
+     << ",\"supports_agents\":false"
+     << ",\"account_state\":" << td::JsonString(td::Slice(parsed.state_str))
+     << ",\"revision\":1";
+  if (include_sponsorship) {
+    sb << ",\"supports_sponsorship\":" << (supports_sponsorship ? "true" : "false");
+  }
+  sb << "}";
+  return sb.as_cslice().str();
+}
+
+void JsonRpcServer::handle_getAccountCapability(td::JsonObject &params, std::string req_id,
+                                                td::Promise<HttpReturn> promise) {
+  auto addr_r = parse_address_param(params);
+  if (addr_r.is_error()) {
+    promise.set_value(make_json_error(-32602, addr_r.error().message().str(), req_id));
+    return;
+  }
+  auto addr = addr_r.move_as_ok();
+  auto addr_str = params.get_required_string_field("address").ok();
+  auto seqno_r = params.get_optional_int_field("seqno");
+  bool has_seqno = seqno_r.is_ok() && seqno_r.ok() > 0;
+  td::int32 seqno = has_seqno ? static_cast<td::int32>(seqno_r.ok()) : 0;
+  auto include_experimental_r = params.get_optional_bool_field("include_experimental", false);
+  bool include_experimental = include_experimental_r.is_ok() && include_experimental_r.ok();
+
+  auto self_id = actor_id(this);
+  auto do_get_account = [addr, addr_str = std::move(addr_str), include_experimental, self_id](
+      tos::tl_object_ptr<tos::lite_api::tosNode_blockIdExt> block_id,
+      std::string req_id_inner, td::Promise<HttpReturn> promise_inner) mutable {
+    auto inner = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_getAccountState>(
+            std::move(block_id),
+            tos::create_tl_object<tos::lite_api::liteServer_accountId>(
+                addr.workchain, addr.addr)),
+        true);
+    auto query = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
+
+    td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
+        std::move(query),
+        td::PromiseCreator::lambda(
+            [addr, addr_str = std::move(addr_str), include_experimental,
+             req_id_inner = std::move(req_id_inner),
+             promise_inner = std::move(promise_inner)](td::Result<td::BufferSlice> R) mutable {
+              if (R.is_error()) {
+                promise_inner.set_value(make_json_error(
+                    -32603, PSTRING() << "getAccountState: " << R.error(), req_id_inner));
+                return;
+              }
+              auto F = tos::fetch_tl_object<tos::lite_api::liteServer_accountState>(
+                  R.move_as_ok(), true);
+              if (F.is_error()) {
+                promise_inner.set_value(make_json_error(
+                    -32603, PSTRING() << "parse accountState: " << F.error(), req_id_inner));
+                return;
+              }
+              auto f = F.move_as_ok();
+              auto parsed_r = ParsedAccountState::parse(f, addr);
+              if (parsed_r.is_error()) {
+                promise_inner.set_value(make_json_error(
+                    -32603, PSTRING() << "parse account: " << parsed_r.error(), req_id_inner));
+                return;
+              }
+              auto parsed = parsed_r.move_as_ok();
+              std::string wallet_type;
+              if (parsed.code_cell.not_null()) {
+                wallet_type = detect_wallet_type(parsed.code_cell->get_hash(0));
+              }
+              auto account_model = detect_account_model(parsed, wallet_type);
+              auto authorization_version = detect_authorization_version(wallet_type);
+              promise_inner.set_value(make_json_ok(
+                  build_account_capability_json(addr_str, parsed, account_model,
+                                                authorization_version,
+                                                false, include_experimental),
+                  req_id_inner));
+            }));
+  };
+
+  if (has_seqno) {
+    auto block_id = tos::create_tl_object<tos::lite_api::tosNode_blockId>(
+        -1, static_cast<td::int64>(-1LL << 63), seqno);
+    auto lookup_inner = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_lookupBlock>(1, std::move(block_id), 0, 0), true);
+    auto lookup_query = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(lookup_inner)), true);
+    send_liteserver_query(std::move(lookup_query),
+        [req_id = std::move(req_id), promise = std::move(promise),
+         do_get_account = std::move(do_get_account)](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "lookupBlock: " << R.error(), req_id));
+            return;
+          }
+          auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
+              R.move_as_ok(), true);
+          if (lb_r.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id));
+            return;
+          }
+          do_get_account(std::move(lb_r.move_as_ok()->id_), std::move(req_id), std::move(promise));
+        });
+  } else {
+    auto mc_inner = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
+    auto mc_query = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
+    send_liteserver_query(std::move(mc_query),
+        [req_id = std::move(req_id), promise = std::move(promise),
+         do_get_account = std::move(do_get_account)](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "getMasterchainInfo: " << R.error(), req_id));
+            return;
+          }
+          auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(
+              R.move_as_ok(), true);
+          if (mc_r.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "parse mcInfo: " << mc_r.error(), req_id));
+            return;
+          }
+          do_get_account(std::move(mc_r.move_as_ok()->last_), std::move(req_id), std::move(promise));
+        });
+  }
+}
+
 void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::string req_id,
                                                 td::Promise<HttpReturn> promise) {
   auto addr_r = parse_address_param(params);

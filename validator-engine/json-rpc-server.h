@@ -33,7 +33,7 @@ namespace tos {
 class JsonRpcServer final : public td::actor::Actor, public virtual metrics::AsyncCollector {
  public:
   struct Options {
-    bool readonly = false;           // disable sendBoc/sendBocReturnHash/sendQuery
+    bool readonly = false;           // disable sendBoc/sendBocReturnHash/sendQuery/submitSignedTransaction
     std::string cors_origin = "*";   // Access-Control-Allow-Origin value
     td::int32 readyz_threshold = 60; // sync lag threshold in seconds for /readyz
     double request_timeout = 30.0;   // per-request timeout in seconds (0 = no timeout)
@@ -154,6 +154,16 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
                            td::Promise<HttpReturn> promise);
   void handle_getTokenData(td::JsonObject &params, std::string req_id,
                            td::Promise<HttpReturn> promise);
+
+  // Method handlers — account/permission initial surfaces
+  void handle_getAccountCapability(td::JsonObject &params, std::string req_id,
+                                   td::Promise<HttpReturn> promise);
+  void handle_buildTransactionIntent(td::JsonObject &params, std::string req_id,
+                                     td::Promise<HttpReturn> promise);
+  void handle_getSigningPayload(td::JsonObject &params, std::string req_id,
+                                td::Promise<HttpReturn> promise);
+  void handle_submitSignedTransaction(td::JsonObject &params, std::string req_id,
+                                      td::Promise<HttpReturn> promise);
 
   // Method handlers — new APIs (parity with ton-http-api-cpp)
   void handle_detectHash(td::JsonObject &params, std::string req_id,
