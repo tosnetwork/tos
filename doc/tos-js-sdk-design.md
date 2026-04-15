@@ -1,6 +1,6 @@
 # TOS JS SDK Design
 
-Version: v0.4-draft
+Version: v0.6-draft
 
 ## Purpose
 
@@ -91,16 +91,42 @@ Monorepo workspace using pnpm workspaces. Each package is independently publisha
 
 ### Dependency rules
 
-- `@tos/core` depends on nothing (except `@tos/crypto` as peer dependency for hashing)
-- `@tos/crypto` depends on nothing (pure crypto primitives)
-- `@tos/client` depends on `@tos/core`
-- `@tos/wallets` depends on `@tos/core`, `@tos/crypto`, `@tos/client`
-- `@tos/contracts` depends on `@tos/core`, `@tos/client`
+- `@tos/crypto` depends on nothing (pure crypto primitives: Ed25519, SHA, Mnemonic)
+- `@tos/core` depends on `@tos/crypto` (Cell.hash() needs sha256)
+- `@tos/client` depends on `@tos/core` (provides `TosProvider`, `Signer` interface, `ContractProvider`, `open()`)
+- `@tos/wallets` depends on `@tos/core`, `@tos/crypto`, `@tos/client` (provides wallet impls, `KeyPairSigner`)
+- `@tos/contracts` depends on `@tos/core`, `@tos/client` (does NOT depend on @tos/wallets or @tos/crypto)
 - `@tos/sdk` re-exports all of the above
+
+```
+@tos/crypto  ←─  @tos/core  ←─  @tos/client  ←─  @tos/wallets
+                                      ↑
+                               @tos/contracts
+```
 
 ---
 
 ## Layer 1: @tos/core
+
+### Exports Summary
+
+```typescript
+// Types
+export { Address, ExternalAddress, Cell, Slice, Builder, BitString };
+export { Dictionary };
+export { Contract, StateInit };
+export { TupleItem, TupleReader };
+export { SendMode, CellType };
+
+// Functions
+export { beginCell, contractAddress, comment };
+export { toNano, fromNano };
+export { packAddress, unpackAddress, detectAddress, detectHash };
+export { base64ToBytes, bytesToBase64, hexToBytes, bytesToHex };
+
+// Types only (interfaces)
+export type { AddressInfo, HashInfo, ExtraCurrency };
+```
 
 ### Address
 
@@ -290,6 +316,37 @@ class TupleReader {
 }
 ```
 
+### Contract Base Types
+
+These live in `@tos/core` (not wallets) because `contractAddress()` and `open()` depend on them:
+
+```typescript
+interface StateInit {
+  code: Cell;
+  data: Cell;
+}
+
+interface Contract {
+  readonly address: Address;
+  readonly init?: StateInit;
+}
+```
+
+### SendMode
+
+Lives in `@tos/core` because both wallets and client use it:
+
+```typescript
+enum SendMode {
+  CARRY_ALL_REMAINING_BALANCE = 128,
+  CARRY_ALL_REMAINING_INCOMING_VALUE = 64,
+  DESTROY_ACCOUNT_IF_ZERO = 32,
+  PAY_GAS_SEPARATELY = 1,
+  IGNORE_ERRORS = 2,
+  NONE = 0,
+}
+```
+
 ### Contract Address Derivation
 
 Deterministic address from code + data (no RPC needed):
@@ -371,6 +428,13 @@ function sha512(data: Uint8Array): Promise<Uint8Array>;
 function mnemonicToHDSeed(mnemonic: string[]): Promise<Uint8Array>;
 function deriveEd25519Path(seed: Uint8Array, path: number[]): KeyPair;
 ```
+
+### Crypto Backend Strategy
+
+- `sha256` / `sha512` — use Web Crypto API (`crypto.subtle`) natively in browsers; Node.js `crypto` module in Node
+- `sign` / `signVerify` — use tweetnacl (Ed25519 not available in Web Crypto); ~10KB gzipped
+- `pbkdf2` — use Web Crypto API natively
+- No `Buffer` dependency — all functions accept and return `Uint8Array`
 
 ---
 
@@ -506,9 +570,12 @@ interface TosProvider {
   getOutMsgQueueSize(): Promise<OutMsgQueueSize>;
   isReady(): Promise<ReadyzResult>;
 
-  // ── Convenience (SDK-level, not RPC) ──────────────────────
-  waitForTransaction(address: Address, hash: string, opts?: WaitOpts): Promise<Transaction | null>;
 }
+
+// Convenience utilities — SDK-level, NOT part of TosProvider interface (not RPC methods).
+// Implemented as standalone functions in @tos/client:
+//   waitForTransaction(client, address, hash, opts?)
+//   waitForSeqnoChange(wallet, currentSeqno, opts?)
 ```
 
 ### RPC Coverage Map
@@ -544,7 +611,7 @@ Every C++ JSON-RPC method maps to a typed SDK method:
 | `runGetMethodStd` | `runGetMethod()` | Same method, format option |
 | `sendBoc` | `sendBoc()` | |
 | `sendBocReturnHash` | `sendBocReturnHash()` | |
-| `sendBocReturnHashNoError` | `sendBocReturnHash()` | Merged; SDK never throws on send, returns status |
+| `sendBocReturnHashNoError` | `sendBocReturnHash()` | Merged; C++ variant swallows errors — SDK always returns structured result |
 | `sendQuery` | `sendQuery()` | Exposed — needed for contract deploy and external messages |
 | `estimateFee` | `estimateFee()` | Includes `ignoreChksig` option |
 | `buildTransactionIntent` | `buildTransactionIntent()` | TOS-native |
@@ -586,6 +653,17 @@ class TosClient implements TosProvider {
   // Current endpoint info
   readonly endpoint: string;
 }
+
+// Network presets (like ethers.js getDefaultProvider)
+const Networks = {
+  mainnet: { endpoint: "https://rpc.tos.network" },
+  testnet: { endpoint: "https://testnet-rpc.tos.network" },
+  local:   { endpoint: "http://localhost:8081" },
+} as const;
+
+// Usage:
+const mainnet = new TosClient(Networks.mainnet);
+const testnet = new TosClient(Networks.testnet);
 ```
 
 ### Shared Response Types
@@ -612,6 +690,12 @@ interface AccountInfo {
   sync_utime: number;
   state: "active" | "frozen" | "uninitialized";
   frozen_hash: string;
+  extra_currencies: ExtraCurrency[];   // TOS supports extra currencies
+}
+
+interface ExtraCurrency {
+  id: number;
+  amount: string;
 }
 
 // Wallet info response (getWalletInformation)
@@ -705,10 +789,10 @@ type TokenData =
   | { "@type": "ext.tokens.nftCollectionData";
       next_item_index: string; owner_address: string; collection_content: string };
 
-// Config response
+// Config response — SDK parses C++ {bytes: b64} into Cell objects
 interface ConfigAll {
-  config: Cell;          // full config cell
-  config_params: Record<string, Cell | null>;  // individual params by ID
+  config: Cell;                                  // full config cell (parsed from BOC)
+  config_params: Record<number, Cell | null>;    // individual params by ID; null = param not set
 }
 
 // Library entry (from getLibraries)
@@ -819,14 +903,21 @@ interface AgentCapability {
 
 ```typescript
 interface AccountCapability {
-  address: string;
-  account_model: string;         // "wallet.v3r2" | "wallet.v4r2" | "wallet.v5r1" | "unknown"
-  authorization_version: string; // "auth.v1"
+  // Fields from C++ getAccountCapability response
+  wallet: boolean;                // is this a recognized wallet?
+  wallet_type: string | null;     // "wallet v4 r2", "wallet v5 r1", etc.
+  balance: string;                // nanotomis as string
+  account_state: "active" | "uninitialized" | "frozen";
+  seqno: number | null;           // wallet sequence number
+  wallet_id: number | null;
+  last_transaction_id: { lt: string; hash: string };
+  // TOS-native capability extensions
+  account_model: string;          // "wallet.v4r2" | "unknown"
+  authorization_version: string;  // "auth.v1"
   supports_delegation: boolean;
   supports_sessions: boolean;
   supports_agents: boolean;
   supports_sponsorship: boolean;
-  account_state: "active" | "uninitialized" | "frozen";
   revision: number;
 }
 ```
@@ -926,8 +1017,14 @@ interface ContractProvider {
     body?: Cell;
     sendMode?: SendMode;
     bounce?: boolean;
-  }): Promise<void>;
-  external(message: Cell): Promise<void>;
+  }): Promise<SendConfirmation>;
+  external(message: Cell): Promise<SendConfirmation>;
+}
+
+// Improvement over @ton/core which returns void — we return tracking info
+interface SendConfirmation {
+  hash: string;            // external message BOC hash (base64)
+  seqnoBefore: number;     // wallet seqno before send (for waitForSeqnoChange)
 }
 
 interface ContractState {
@@ -947,13 +1044,17 @@ interface ContractGetResult {
 
 ### Signer (abstract)
 
-Inspired by ethers.js Signer — async-friendly for hardware wallets:
+Inspired by ethers.js Signer — async-friendly for hardware wallets.
+
+The `Signer` combines signing and sending (like ethers.js, unlike viem which separates them).
+This is intentional: TOS external messages require the wallet's seqno and structure,
+so the Signer must coordinate with the wallet contract to build the full message.
 
 ```typescript
 interface Signer {
   readonly address: Address;
-  sign(message: Uint8Array): Promise<Uint8Array>;
-  send(args: SenderArguments): Promise<void>;
+  sign(message: Uint8Array): Promise<Uint8Array>;   // pure crypto — can run offline
+  send(args: SenderArguments): Promise<void>;        // build ext msg + submit — requires provider
 }
 
 interface SenderArguments {
@@ -968,13 +1069,17 @@ interface SenderArguments {
 
 ### Concrete Signer: KeyPairSigner
 
+`KeyPairSigner` lives in `@tos/wallets` (not client) to avoid circular dependency.
+It takes a `KeyPair` and an opened wallet — the wallet knows how to build + submit the external message.
+
 ```typescript
+// @tos/wallets — depends on @tos/client, not the other way around
 class KeyPairSigner implements Signer {
   constructor(keyPair: KeyPair, wallet: OpenedContract<Wallet>);
 
-  readonly address: Address;
+  readonly address: Address;     // derived from wallet
   sign(message: Uint8Array): Promise<Uint8Array>;
-  send(args: SenderArguments): Promise<void>;
+  send(args: SenderArguments): Promise<void>;  // builds ext msg via wallet, submits via provider
 }
 ```
 
@@ -991,15 +1096,25 @@ type OpenedContract<T extends Contract> = {
 
 function open<T extends Contract>(contract: T, provider: TosProvider): OpenedContract<T>;
 
-// Usage:
+// Usage — provider is auto-injected, no need to pass it:
 const wallet = open(WalletV4R2.create({ publicKey, workchain: 0 }), client);
-const balance = await wallet.getBalance();  // no need to pass provider
+const balance = await wallet.getBalance();
+const seqno = await wallet.getSeqno();
+
+// Send with Signer:
 await wallet.sendTransfer(signer, { messages: [...] });
+
+// Send with secretKey (shorthand):
+await wallet.sendTransfer(keys.secretKey, { to: "0:...", value: toNano("1") });
 ```
 
-### waitForTransaction
+> **Implementation note:** TypeScript mapped types only capture the last overload signature.
+> The implementation uses a union parameter type internally:
+> `sendTransfer(signerOrKey: Signer | Uint8Array, args: ...)` with runtime discrimination.
 
-Essential for DApp UX — inspired by ethers.js:
+### Transaction Confirmation
+
+Two patterns for waiting — choose based on your flow:
 
 ```typescript
 interface WaitOpts {
@@ -1007,38 +1122,53 @@ interface WaitOpts {
   pollInterval?: number;  // ms, default 1500
 }
 
-// Returns the matching transaction, or throws WAIT_TIMEOUT
-await client.waitForTransaction(address, txHash);
-await client.waitForTransaction(address, txHash, { timeout: 30000, pollInterval: 2000 });
+// Pattern 1: Wait for seqno change (idiomatic TOS — most common)
+// Use after sendTransfer() which returns void
+const seqnoBefore = await wallet.getSeqno();
+await wallet.sendTransfer(signer, { messages: [...] });
+await waitForSeqnoChange(wallet, seqnoBefore, { timeout: 30000 });
+
+// Pattern 2: Wait for specific transaction hash (when you have the hash)
+// Use after sendBocReturnHash() which returns { hash }
+const { hash } = await client.sendBocReturnHash(boc);
+const tx = await client.waitForTransaction(wallet.address, hash);
+```
+
+Both are SDK-level utilities (not RPC methods) — implemented via polling `getSeqno()` or `getTransactions()`.
+
+```typescript
+// SDK utility functions
+function waitForSeqnoChange(
+  wallet: OpenedContract<Wallet>,
+  currentSeqno: number,
+  opts?: WaitOpts,
+): Promise<void>;
+
+function waitForTransaction(
+  client: TosProvider,
+  address: Address,
+  hash: string,
+  opts?: WaitOpts,
+): Promise<Transaction>;
 ```
 
 ---
 
 ## Layer 3: @tos/wallets
 
-### Contract Base Interface
-
-```typescript
-interface Contract {
-  readonly address: Address;
-  readonly init?: StateInit;
-}
-
-interface StateInit {
-  code: Cell;
-  data: Cell;
-}
-```
-
 ### Wallet Interface
+
+`Contract` and `StateInit` are defined in `@tos/core` (see Layer 1).
 
 ```typescript
 interface Wallet extends Contract {
   // Read methods (require ContractProvider)
   getSeqno(provider: ContractProvider): Promise<number>;
   getBalance(provider: ContractProvider): Promise<bigint>;
+  getPublicKey(provider: ContractProvider): Promise<Uint8Array>;  // read from on-chain state
 
-  // Build a signed external message (offline, pure)
+  // Build a signed external message (offline)
+  // Sync variant — for software keys (secretKey directly available)
   createTransfer(args: {
     seqno: number;
     secretKey: Uint8Array;
@@ -1047,12 +1177,21 @@ interface Wallet extends Contract {
     validUntil?: number;      // unix timestamp; message expires after this time
   }): Cell;
 
+  // Async variant — for hardware wallets / external signers
+  createTransferAsync(args: {
+    seqno: number;
+    signer: (message: Uint8Array) => Promise<Uint8Array>;  // sign function
+    messages: OutMessage[];
+    sendMode?: SendMode;
+    validUntil?: number;
+  }): Promise<Cell>;
+
   // Send via provider (online) — full form with Signer
   sendTransfer(provider: ContractProvider, via: Signer, args: {
     messages: OutMessage[];
     sendMode?: SendMode;
-    timeout?: number;
-  }): Promise<void>;
+    validUntil?: number;    // unix timestamp; message expires after this time
+  }): Promise<SendConfirmation>;
 
   // Send via provider — shorthand for single transfer (ethers.js-like simplicity)
   // When called via OpenedContract, provider is auto-injected:
@@ -1063,7 +1202,7 @@ interface Wallet extends Contract {
     body?: Cell;
     bounce?: boolean;
     sendMode?: SendMode;
-  }): Promise<void>;
+  }): Promise<SendConfirmation>;
 
   // Deploy (first-time init)
   sendDeploy(provider: ContractProvider, via: Signer, value: bigint): Promise<void>;
@@ -1073,18 +1212,11 @@ interface OutMessage {
   to: Address;
   value: bigint;
   body?: Cell;
-  bounce?: boolean;
-  init?: StateInit;
+  bounce?: boolean;  // default: true for contracts, false for uninitialized
+  init?: StateInit;  // for deploying contracts via transfer
 }
 
-enum SendMode {
-  CARRY_ALL_REMAINING_BALANCE = 128,
-  CARRY_ALL_REMAINING_INCOMING_VALUE = 64,
-  DESTROY_ACCOUNT_IF_ZERO = 32,
-  PAY_GAS_SEPARATELY = 1,
-  IGNORE_ERRORS = 2,
-  NONE = 0,
-}
+// SendMode is defined in @tos/core (see Layer 1)
 ```
 
 ### Wallet Implementations
@@ -1159,6 +1291,7 @@ const wallet = open(
 const signer = new KeyPairSigner(keyPair, wallet);
 
 // 4. Send transfer with comment
+const seqno = await wallet.getSeqno();  // save seqno before send
 await wallet.sendTransfer(signer, {
   messages: [{
     to: Address.parse("0:abc...def"),
@@ -1167,8 +1300,13 @@ await wallet.sendTransfer(signer, {
   }],
 });
 
-// 5. Wait for confirmation
-const tx = await client.waitForTransaction(wallet.address, txHash);
+// 5. Wait for seqno to increment (confirms tx was processed)
+await waitForSeqnoChange(wallet, seqno);  // SDK utility
+
+// Alternative: build + send manually to get the BOC hash
+const transfer = wallet.createTransfer({ seqno, secretKey: keyPair.secretKey, messages: [...] });
+const { hash } = await client.sendBocReturnHash(transfer.toBoc());
+const tx = await client.waitForTransaction(wallet.address, hash);
 
 // 6. Check account capability (TOS-native)
 const cap = await client.getAccountCapability(wallet.address);
@@ -1176,27 +1314,97 @@ console.log(cap.account_model);        // "wallet.v4r2"
 console.log(cap.supports_delegation);  // false
 ```
 
+### Estimate Fee Before Send
+
+```typescript
+const fees = await client.estimateFee(
+  wallet.address,
+  beginCell().storeUint(0, 32).storeStringTail("test").endCell(),
+);
+console.log(fees.source_fees.gas_fee);     // gas cost in nanotomis
+console.log(fees.source_fees.fwd_fee);     // forward fee
+const totalFee = fees.source_fees.gas_fee + fees.source_fees.storage_fee
+               + fees.source_fees.in_fwd_fee + fees.source_fees.fwd_fee;
+```
+
+### Jetton Transfer Flow
+
+```typescript
+import { JettonMinter, JettonWallet } from "@tos/contracts";
+
+// 1. Find user's Jetton wallet address
+const minter = open(JettonMinter.create(Address.parse("0:jetton_master...")), client);
+const jettonWalletAddr = await minter.getJettonWalletAddress(wallet.address);
+
+// 2. Open the Jetton wallet
+const jettonWallet = open(JettonWallet.create(jettonWalletAddr), client);
+
+// 3. Check balance
+const jettonBalance = await jettonWallet.getBalance();
+console.log(fromNano(jettonBalance));  // e.g. "1000.0"
+
+// 4. Transfer Jettons
+await jettonWallet.sendTransfer(signer, {
+  to: Address.parse("0:recipient..."),
+  amount: toNano("100"),
+  forwardAmount: toNano("0.01"),   // for notification
+  forwardPayload: comment("Jetton payment"),
+});
+```
+
+### Pagination (Load More Transactions)
+
+```typescript
+let allTxs: Transaction[] = [];
+let lt: string | undefined;
+let hash: string | undefined;
+
+while (true) {
+  const batch = await client.getTransactions(address, { limit: 20, lt, hash });
+  if (batch.length === 0) break;
+  allTxs.push(...batch);
+  // Use last tx's lt/hash as cursor for next page
+  const last = batch[batch.length - 1];
+  lt = last.transaction_id.lt;
+  hash = last.transaction_id.hash;
+}
+```
+
 ### Offline Signing Flow (hardware wallets, air-gapped)
 
 ```typescript
-// Step 1: Build intent (online)
-const intent = await client.buildTransactionIntent({
-  from: wallet.address,
-  messages: [{ to: dest, value: toNano("1.0") }],
-});
+import { sign } from "@tos/crypto";
+import { base64ToBytes, beginCell, Cell } from "@tos/core";
 
-// Step 2: Get signing payload (online)
-const payload = await client.getSigningPayload(intent);
+// Step 1: Build external message body offline
+const body = beginCell()
+  .storeUint(0, 32)
+  .storeStringTail("transfer")
+  .endCell();
+
+// Step 2: Get signing payload from node (online)
+const payload = await client.getSigningPayload({
+  from: wallet.address,
+  body: body,
+});
 
 // Step 3: Sign offline (air-gapped device / hardware wallet)
-const payloadBytes = base64ToBytes(payload.payload);  // SDK utility
-const signature = sign(payloadBytes, secretKey);
+const payloadBytes = base64ToBytes(payload.payload);
+const signature = sign(payloadBytes, secretKey);  // 64-byte Ed25519 signature
 
-// Step 4: Submit signed BOC (online)
-const signedBoc = buildSignedBoc(payloadBytes, signature);  // SDK utility
+// Step 4: Construct signed external message
+// The signed BOC = signature (512 bits) prepended to the message body
+const signedCell = beginCell()
+  .storeBuffer(signature)    // 64 bytes = 512 bits
+  .storeSlice(Cell.fromBoc(payloadBytes)[0].beginParse())
+  .endCell();
+
+// Step 5: Submit (online)
 const result = await client.submitSignedTransaction({
-  signedBoc: signedBoc,
+  signedBoc: signedCell.toBoc(),
 });
+console.log(result.accepted);            // true
+console.log(result.transaction_hash);    // base64
 ```
 
 ---
@@ -1281,6 +1489,28 @@ class NftItem implements Contract {
 }
 ```
 
+### Message Body Parsing
+
+DApp developers frequently need to decode transaction bodies:
+
+```typescript
+// Parse a transaction's in_msg body
+const tx = (await client.getTransactions(address, { limit: 1 }))[0];
+const txCell = Cell.fromBase64(tx.data);
+const body = txCell.beginParse();  // parse the transaction cell
+
+// Common pattern: check opcode
+const opcode = body.loadUint(32);
+if (opcode === 0) {
+  const text = body.loadStringTail();  // text comment
+} else if (opcode === 0x0f8a7ea5) {
+  // Jetton transfer notification
+  const queryId = body.loadUint(64);
+  const amount = body.loadCoins();
+  const sender = body.loadAddress();
+}
+```
+
 ### Token Data (via RPC)
 
 ```typescript
@@ -1303,11 +1533,22 @@ export * from "@tos/wallets";
 export * from "@tos/contracts";
 ```
 
-Usage for developers who want simplicity:
+For quick prototyping and scripts — import everything from one place:
 
 ```typescript
 import { TosClient, WalletV4R2, toNano, mnemonicToPrivateKey, open } from "@tos/sdk";
 ```
+
+For production DApps — import from specific packages for optimal bundle size:
+
+```typescript
+import { TosClient, open } from "@tos/client";
+import { WalletV4R2 } from "@tos/wallets";
+import { toNano, Address } from "@tos/core";
+```
+
+> **Tree-shaking note:** Modern bundlers (webpack 5, Vite, esbuild) can tree-shake `@tos/sdk` re-exports.
+> But direct package imports guarantee minimal bundles regardless of bundler configuration.
 
 ---
 
@@ -1382,6 +1623,10 @@ const ErrorCodes = {
 | waitForTransaction | Not available | Built-in polling with timeout |
 | Entry point | `new TonWeb(provider)` god object | Composable imports, tree-shakeable |
 | Address utilities | RPC-only | Offline in `@tos/core` |
+| Network presets | Manual URL | `Networks.mainnet` / `Networks.testnet` built-in |
+| Workchain guidance | Undocumented | Explicit guide for Ethereum developers |
+| Message parsing | Manual | Opcode-based parsing examples in docs |
+| Migration guide | N/A | TON → TOS migration table |
 | Build target | JS source (tonweb), TS compiled (@ton) | TypeScript source, ESM + CJS dual output |
 
 ## TOS-Specific Extensions (vs TON SDK)
@@ -1398,6 +1643,27 @@ These are capabilities unique to TOS that the SDK must surface:
 
 ---
 
+## Workchain Guide
+
+For Ethereum developers: TOS has multiple workchains, not one global state.
+
+| Workchain | ID | Usage |
+|-----------|-----|-------|
+| Basechain | `0` | User wallets, DApp contracts, tokens — **default for all DApp development** |
+| Masterchain | `-1` | System contracts (elector, config) — validators only |
+
+```typescript
+// DApp developers should always use workchain 0
+const wallet = WalletV4R2.create({ publicKey: keys.publicKey, workchain: 0 });  // default
+
+// System contracts live on masterchain -1
+const elector = Address.parse("-1:333...333");
+```
+
+Default `workchain` is `0` in all wallet `create()` methods — DApp developers rarely need to think about this.
+
+---
+
 ## Build & Tooling
 
 | Concern | Choice | Rationale |
@@ -1410,6 +1676,27 @@ These are capabilities unique to TOS that the SDK must surface:
 | Monorepo tool | pnpm workspaces | No extra tool needed |
 | Linting | Biome | Fast, replaces ESLint + Prettier |
 | CI | GitHub Actions | Standard for the TOS monorepo |
+
+---
+
+## Versioning Strategy
+
+- All packages in the workspace share the same version number (e.g., `0.1.0`).
+- A single `pnpm changeset` produces coordinated releases.
+- Semver: `0.x.y` = pre-stable (breaking changes allowed); `1.0.0` = stable API.
+- When C++ adds new RPC methods, the SDK adds them in a minor version bump.
+- Response type changes from C++ are breaking → SDK major version bump (after 1.0).
+
+### Migration from TON SDKs
+
+| TON | TOS | Notes |
+|-----|-----|-------|
+| `new TonWeb(provider)` | `new TosClient({ endpoint })` | No god object |
+| `tonweb.getBalance(addr)` | `client.getBalance(addr)` | Same concept |
+| `TonClient.create({ endpoint })` | `new TosClient({ endpoint })` | Constructor, not factory |
+| `tonweb.wallet.create({...})` | `WalletV4R2.create({...})` | Explicit version |
+| `contract.methods.seqno().call()` | `wallet.getSeqno()` | Direct method call |
+| `Cell.oneFromBoc(b64)` | `Cell.fromBase64(b64)` | Simplified name |
 
 ---
 
@@ -1443,6 +1730,11 @@ The SDK is ready for public use when:
 - [ ] `@tos/contracts` can mint and transfer a Jetton on testnet
 - [ ] `waitForTransaction` works reliably with polling
 - [ ] `comment()` helper produces correct op=0 text body
+- [ ] Jetton transfer flow works end-to-end (find wallet → check balance → transfer)
+- [ ] Transaction pagination (load more) works with lt/hash cursors
+- [ ] Fee estimation returns correct source_fees before send
+- [ ] `Networks.testnet` / `Networks.mainnet` connect without extra config
+- [ ] All encoding utilities are isomorphic (no Buffer dependency)
 - [ ] Bundle size < 100KB gzipped for `@tos/core` + `@tos/client`
 - [ ] Works in Node.js 18+, Chrome 90+, Firefox 90+, Safari 15+
 - [ ] Zero `any` types in public API surface
@@ -1497,3 +1789,43 @@ The SDK is ready for public use when:
 | 41 | createTransfer `timeout` misleading | Named `timeout` but is a unix timestamp (validUntil), not a duration | Renamed to `validUntil` with clear doc comment |
 | 42 | Buffer.from in offline example | `Buffer.from()` is Node-only; breaks isomorphic principle | Replaced with SDK's `base64ToBytes()` utility |
 | 43 | Missing encoding utilities | No base64/hex conversion functions; needed everywhere, must be isomorphic | Added `base64ToBytes`, `bytesToBase64`, `hexToBytes`, `bytesToHex`, `base64UrlToBytes`, `bytesToBase64Url` |
+| 44 | Circular dependency | `StateInit` and `Contract` defined in @tos/wallets but needed by @tos/core's `contractAddress()` and @tos/client's `open()` | Moved both to @tos/core; removed duplicate in wallets section |
+| 45 | sendTransfer timeout inconsistency | Signer overload still had `timeout` after `createTransfer` was renamed to `validUntil` | Renamed to `validUntil` in Signer overload too |
+| 46 | Offline signing example params wrong | `buildTransactionIntent` called with `messages: [...]` but its interface takes `body: Cell` | Rewrote example to use correct `body: Cell` parameter |
+| 47 | No estimate-before-send example | The #1 DApp pattern (estimate fee → send) was not shown | Added full estimate fee example with field breakdown |
+| 48 | No Jetton transfer example | The #1 token operation was not shown end-to-end | Added complete Jetton flow: find wallet → check balance → transfer |
+| 49 | No network presets | ethers.js has `getDefaultProvider("mainnet")`; SDK had only raw endpoint URL | Added `Networks` constant with mainnet/testnet/local presets |
+| 50 | AccountCapability incomplete | C++ returns wallet/balance/wallet_type/seqno fields that were missing | Added all C++ response fields to AccountCapability type |
+| 51 | AccountCapability missing @type | C++ response includes wallet info fields not in the type | Restructured to include both wallet info and TOS capability extensions |
+| 52 | No message body parsing | DApp devs need to decode transaction bodies (identify transfers by opcode) | Added message parsing section with opcode-based example |
+| 53 | No workchain guidance | Ethereum devs don't know about workchains 0 vs -1 | Added Workchain Guide section with table and examples |
+| 54 | sendBocReturnHashNoError note misleading | Said "SDK never throws" but network errors still throw | Clarified: "C++ variant swallows errors — SDK always returns structured result" |
+| 55 | Missing getPublicKey on wallet | Common operation for address verification | Added `getPublicKey()` to Wallet interface |
+| 56 | Extra currencies missing | C++ AccountInfo includes `extra_currencies: []` but SDK type didn't have it | Added `extra_currencies: ExtraCurrency[]` and `ExtraCurrency` interface |
+| 57 | ConfigAll config_params type wrong | Had `Record<string, Cell \| null>` but keys are numbers, and C++ returns `{bytes: b64}` | Fixed to `Record<number, Cell \| null>` with parse note |
+| 58 | No @tos/core exports summary | Most important package had no clear export list | Added full Exports Summary with all types, functions, and type-only exports |
+| 59 | SendMode in wrong package | Defined in @tos/wallets but needed by @tos/client's ContractProvider | Moved to @tos/core; removed duplicate in wallets section |
+| 60 | Broken code block | Networks block had `/ Usage:` (missing `/`) and double ``` closure | Fixed syntax and removed duplicate closure |
+| 61 | Differences table incomplete | Missing network presets, workchain guidance, message parsing, migration guide entries | Added 4 new rows to comparison table |
+| 62 | No versioning strategy | No guidance on how packages are versioned together or how breaking changes work | Added Versioning Strategy section with semver rules |
+| 63 | No TON→TOS migration guide | Ethereum devs may come from TON; no mapping shown | Added Migration from TON SDKs table with 6 common patterns |
+| 64 | Missing acceptance criteria | New features (Jetton flow, pagination, fees, presets) had no test criteria | Added 5 new acceptance criteria items |
+| 65 | OutMessage.bounce undocumented | Default behavior (true for contracts, false for uninitialized) not explained | Added inline comment explaining default |
+| 66 | No pagination example | "Load more transactions" is a basic DApp pattern; not shown | Added full pagination loop example with lt/hash cursors |
+| 67 | Jetton forward fields | JettonWallet.sendTransfer had `forwardPayload` but DApp devs also need `forwardAmount` for notification | Already present — verified consistency |
+| 68 | OutMessage.init undocumented | Deploying contracts via transfer uses init field but purpose not explained | Added inline comment: "for deploying contracts via transfer" |
+| 69 | KeyPairSigner circular dep | `KeyPairSigner` in @tos/client takes `OpenedContract<Wallet>` — creates circular: client→wallets | Moved KeyPairSigner to @tos/wallets; clarified in doc |
+| 70 | createTransfer sync-only | Takes `secretKey` synchronously — incompatible with hardware wallets | Added `createTransferAsync()` with `signer: (msg) => Promise<sig>` callback |
+| 71 | OpenedContract overload bug | TypeScript mapped types only capture last overload; `sendTransfer` has two | Documented limitation; implementation uses union param + runtime discrimination |
+| 72 | txHash never assigned | Full Usage example used `txHash` that was never defined (sendTransfer returns void) | Rewrote to show seqno-based wait + manual BOC hash alternative |
+| 73 | waitForTransaction assumes hash | Typical TOS flow doesn't produce a hash; seqno change is idiomatic | Added `waitForSeqnoChange()` as primary pattern; `waitForTransaction()` as secondary |
+| 74 | Signer conflates sign + send | Combines crypto (sign) and I/O (send) — unlike viem's clean separation | Documented design choice: TOS external messages require wallet coordination |
+| 75 | @tos/sdk defeats tree-shaking | Umbrella re-export loads everything | Added guidance: use `@tos/sdk` for prototyping, direct imports for production |
+| 76 | Crypto bundle size | Bundling tweetnacl in browser when WebCrypto has SHA | Added Crypto Backend Strategy: WebCrypto for hashing, tweetnacl only for Ed25519 |
+| 77 | ContractProvider.internal returns void | No way to track what was sent after send — known @ton/core pain point | Returns `SendConfirmation { hash, seqnoBefore }` instead of void |
+| 78 | @tos/core → @tos/crypto dependency | Was "peer dependency" but Cell.hash() won't work without it | Changed to hard dependency; package must work standalone |
+| 79 | Offline signing BOC construction wrong | Step 4 submitted unsigned payload bytes as signed BOC | Fixed: construct signed cell with signature prepended to message body |
+| 80 | Wrong import in offline example | `base64ToBytes` imported from @tos/crypto but defined in @tos/core | Fixed import to `@tos/core` |
+| 81 | waitForTransaction in TosProvider | SDK-level polling utility was mixed into RPC provider interface | Moved out of TosProvider; now standalone functions in @tos/client |
+| 82 | Dependency graph unclear | Which package owns Signer vs KeyPairSigner wasn't clear | Added ASCII dependency graph; documented ownership per package |
+| 83 | sendTransfer return type inconsistent | ContractProvider.internal returns SendConfirmation but sendTransfer returned void | Changed sendTransfer to also return SendConfirmation |
