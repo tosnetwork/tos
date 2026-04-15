@@ -81,7 +81,7 @@ export interface ConnectItem {
 
 /** The request body sent to the wallet during connect. */
 export interface ConnectRequest {
-  /** Protocol version (always 2). */
+  /** URL of the DApp's manifest.json. */
   manifestUrl: string;
   items: ConnectItem[];
 }

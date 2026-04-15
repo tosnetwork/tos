@@ -5,7 +5,7 @@
  * cursor from `getTransactions`.
  */
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Address } from "@tos/core";
 import type { Transaction } from "@tos/client";
 import { TosError } from "@tos/client";
@@ -63,11 +63,9 @@ export function useTransactions(
 
   const cursorRef = useRef<Cursor | null>(null);
   const initialFetchDone = useRef(false);
-  const activeAddr = useRef(addrStr);
 
   // Reset when address changes.
-  if (activeAddr.current !== addrStr) {
-    activeAddr.current = addrStr;
+  useEffect(() => {
     cursorRef.current = null;
     initialFetchDone.current = false;
     setData([]);
@@ -75,7 +73,7 @@ export function useTransactions(
     setHasNextPage(true);
     setIsLoading(false);
     setIsFetchingNextPage(false);
-  }
+  }, [addrStr]);
 
   const fetchPage = useCallback(
     async (isInitial: boolean) => {
@@ -125,11 +123,15 @@ export function useTransactions(
   );
 
   // Auto-fetch first page when enabled and not yet loaded.
-  if (enabled && !initialFetchDone.current) {
+  useEffect(() => {
+    if (!enabled || initialFetchDone.current) return;
     initialFetchDone.current = true;
-    // Fire in a microtask to avoid setState during render.
-    void Promise.resolve().then(() => fetchPage(true));
-  }
+    let isCancelled = false;
+    void (async () => {
+      if (!isCancelled) await fetchPage(true);
+    })();
+    return () => { isCancelled = true; };
+  }, [enabled, fetchPage]);
 
   const fetchNextPage = useCallback(() => {
     if (!hasNextPage || isFetchingNextPage) return;

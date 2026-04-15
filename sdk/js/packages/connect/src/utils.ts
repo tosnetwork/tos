@@ -72,11 +72,8 @@ export function buildUniversalLink(
   // Only add bridge URL if it differs from the default
   url.searchParams.set("ret", "back");
 
-  // Encode the bridge URL
-  const encodedBridge = encodeURIComponent(bridgeUrl);
-  // Use a direct param rather than nested encoding
-  const separator = url.search ? "&" : "?";
-  return `${url.toString()}${separator}bridge=${encodedBridge}`;
+  url.searchParams.set("bridge", bridgeUrl);
+  return url.toString();
 }
 
 // ---------------------------------------------------------------------------

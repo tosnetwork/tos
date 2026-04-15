@@ -1,4 +1,3 @@
-import React from "react";
 import { describe, it, expect, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { TosClientContext } from "../context.js";
@@ -142,7 +141,7 @@ describe("useContractRead", () => {
   it("auto-pauses when address is empty", async () => {
     const client = createMockClient();
 
-    const { result } = renderHook(
+    renderHook(
       () =>
         useContractRead({
           address: "",
@@ -159,7 +158,7 @@ describe("useContractRead", () => {
   it("auto-pauses when method is empty", async () => {
     const client = createMockClient();
 
-    const { result } = renderHook(
+    renderHook(
       () =>
         useContractRead({
           address: "0:addr",

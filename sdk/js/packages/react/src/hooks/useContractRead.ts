@@ -114,11 +114,8 @@ function parseRawStack(raw: unknown[]): TupleItem[] {
 
     switch (kind) {
       case "num": {
-        const str = String(value);
-        // "num" values come as hex-prefixed strings.
-        const n = str.startsWith("0x") || str.startsWith("-0x")
-          ? BigInt(str)
-          : BigInt(str);
+        // "num" values come as hex-prefixed or decimal strings — BigInt handles both.
+        const n = BigInt(String(value));
         return { type: "int", value: n };
       }
       case "cell": {

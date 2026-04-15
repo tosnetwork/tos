@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ThemeManager, type ThemeMode } from "./theme.js";
+import { ThemeManager } from "./theme.js";
 
 // jsdom does not implement matchMedia; stub it globally
 beforeEach(() => {

@@ -8,9 +8,8 @@
  * useQuery is also tested indirectly (via useBalance, useContractRead, etc.)
  * where each hook test file exercises the full lifecycle with waitFor.
  */
-import React from "react";
 import { describe, it, expect, vi } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook } from "@testing-library/react";
 import { TosClientContext } from "../context.js";
 import { useQuery } from "./useQuery.js";
 import * as store from "../store.js";
@@ -61,7 +60,7 @@ async function pollStore(check: () => boolean, timeoutMs = 2000): Promise<void> 
 // ---------------------------------------------------------------------------
 
 describe("useQuery", () => {
-  it("returns isLoading=true on initial render with correct field types", () => {
+  it("returns isLoading=false on initial synchronous render (before effect fires)", () => {
     const client = createMockClient();
     const queryFn = vi.fn().mockResolvedValue("data");
 
@@ -74,7 +73,8 @@ describe("useQuery", () => {
       { wrapper: createWrapper(client) },
     );
 
-    expect(result.current.isLoading).toBe(true);
+    // Before the useEffect fires, getSnapshot returns the frozen EMPTY_ENTRY
+    expect(result.current.isLoading).toBe(false);
     expect(result.current.data).toBeUndefined();
     expect(result.current.error).toBeNull();
     expect(typeof result.current.refetch).toBe("function");

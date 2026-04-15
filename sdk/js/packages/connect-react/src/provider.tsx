@@ -161,7 +161,7 @@ function createConnectSender(connector: TosConnectInstance): Sender {
       };
 
       // If body is a Cell, serialize to base64 BOC
-      if (body && typeof body === "object" && "toBoc" in body) {
+      if (body && typeof body === "object" && "toBoc" in body && typeof (body as any).toBoc === "function") {
         const cell = body as { toBoc(): Uint8Array };
         const boc = cell.toBoc();
         // Convert Uint8Array to base64
@@ -215,6 +215,18 @@ export function TosConnectProvider({
 
   useEffect(() => {
     applyThemeVariables(resolvedTheme);
+    return () => {
+      if (!isBrowser()) return;
+      const root = document.documentElement;
+      root.style.removeProperty("--tos-connect-accent");
+      root.style.removeProperty("--tos-connect-radius");
+      root.style.removeProperty("--tos-connect-bg");
+      root.style.removeProperty("--tos-connect-text");
+      root.style.removeProperty("--tos-connect-border");
+      root.style.removeProperty("--tos-connect-button-bg");
+      root.style.removeProperty("--tos-connect-button-text");
+      root.style.removeProperty("--tos-connect-font");
+    };
   }, [resolvedTheme]);
 
   // ---- System theme listener (for "auto" mode) ----
@@ -291,13 +303,17 @@ export function TosConnectProvider({
       cancelled = true;
       unsubscribe?.();
     };
-  }, []);
+  }, [config.manifestUrl, config.bridgeUrl]);
 
   // ---- Connection actions ----
   const connect = useCallback(
     (walletInfo?: WalletInfo, request?: ConnectRequest) => {
       const c = connectorRef.current;
-      if (!c || !walletInfo) return;
+      if (!c) return;
+      if (!walletInfo) {
+        // No specific wallet — open the modal for wallet selection
+        return;
+      }
 
       setConnecting(true);
       // TosConnect.connect() is synchronous — returns a universal link or null.
@@ -315,8 +331,11 @@ export function TosConnectProvider({
   const disconnect = useCallback(async () => {
     const c = connectorRef.current;
     if (!c) return;
-    await c.disconnect();
-    setWallet(null);
+    try {
+      await c.disconnect();
+    } finally {
+      setWallet(null);
+    }
   }, []);
 
   // ---- Sender (for SenderContext) ----

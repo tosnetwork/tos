@@ -1,4 +1,3 @@
-import React from "react";
 import { describe, it, expect, vi } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useMutation } from "./useMutation.js";
@@ -44,7 +43,7 @@ describe("useMutation", () => {
 
   it("mutateAsync() returns a promise that resolves with the result", async () => {
     const mutationFn = vi.fn().mockResolvedValue(42);
-    const { result } = renderHook(() => useMutation({ mutationFn }));
+    const { result } = renderHook(() => useMutation<string, number>({ mutationFn }));
 
     let resolved: number | undefined;
 

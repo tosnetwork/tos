@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState } from "react";
 import { describe, it, expect, vi } from "vitest";
 import { renderHook, act, render, screen, fireEvent } from "@testing-library/react";
 import { useOnDisconnect } from "./useOnDisconnect.js";

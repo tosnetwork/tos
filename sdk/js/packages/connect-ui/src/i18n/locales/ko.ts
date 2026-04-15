@@ -4,7 +4,7 @@ export const ko: TranslationKeys = {
   connectWallet: "\uc9c0\uac11 \uc5f0\uacb0",
   disconnect: "\uc5f0\uacb0 \ud574\uc81c",
   chooseWallet: "\uc9c0\uac11 \uc120\ud0dd",
-  scanQR: "QR \ucf54\ub4dc \uc2a4\ucf54",
+  scanQR: "QR \ucf54\ub4dc \uc2a4\uce94",
   openInWalletApp: "\uc9c0\uac11 \uc571\uc5d0\uc11c \uc5f4\uae30",
   copyAddress: "\uc8fc\uc18c \ubcf5\uc0ac",
   copied: "\ubcf5\uc0ac\ub428!",

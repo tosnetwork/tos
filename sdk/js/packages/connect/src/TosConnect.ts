@@ -29,6 +29,7 @@ import type {
 } from "./types.js";
 import {
   TosConnectError,
+  ConnectErrorCodes,
   bridgeUnreachableError,
   sessionExpiredError,
   sessionRestoreFailedError,
@@ -397,7 +398,15 @@ export class TosConnect {
     opts?.onRequestSent?.();
 
     const resultStr = await resultPromise;
-    return { boc: resultStr };
+    try {
+      return JSON.parse(resultStr) as SendTransactionResponse;
+    } catch {
+      throw new TosConnectError(
+        "Failed to parse sendTransaction response",
+        "TX_INVALID",
+        ConnectErrorCodes.TX_INVALID,
+      );
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -431,8 +440,15 @@ export class TosConnect {
     await this.bridgeClient!.send(rpcMessage);
 
     const resultStr = await resultPromise;
-    const parsed = JSON.parse(resultStr) as SignDataResponse;
-    return parsed;
+    try {
+      return JSON.parse(resultStr) as SignDataResponse;
+    } catch {
+      throw new TosConnectError(
+        "Failed to parse signData response",
+        "TX_INVALID",
+        ConnectErrorCodes.TX_INVALID,
+      );
+    }
   }
 
   // -----------------------------------------------------------------------

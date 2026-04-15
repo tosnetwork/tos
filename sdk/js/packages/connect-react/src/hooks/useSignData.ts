@@ -7,7 +7,7 @@
  * @packageDocumentation
  */
 
-import { useCallback, useContext, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { TosError } from "@tos/client";
 import type { SignDataRequest, SignDataResponse } from "@tos/connect";
 import { ConnectContext } from "../context.js";
@@ -34,6 +34,10 @@ export function useSignData(): UseSignDataResult {
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<TosError | null>(null);
 
+  // Guard against state updates after unmount
+  const mountedRef = useRef(true);
+  useEffect(() => { return () => { mountedRef.current = false; }; }, []);
+
   // Ref to the latest connector so the callbacks are always current
   const connectorRef = useRef(ctx?.connector ?? null);
   connectorRef.current = ctx?.connector ?? null;
@@ -48,13 +52,17 @@ export function useSignData(): UseSignDataResult {
         throw new TosError("Wallet does not support signData", "UNSUPPORTED_FEATURE");
       }
 
-      setIsPending(true);
-      setError(null);
+      if (mountedRef.current) {
+        setIsPending(true);
+        setError(null);
+      }
 
       try {
         const result = await connector.signData(request);
-        setData(result);
-        setIsPending(false);
+        if (mountedRef.current) {
+          setData(result);
+          setIsPending(false);
+        }
         return result;
       } catch (err: unknown) {
         const tosErr =
@@ -65,8 +73,10 @@ export function useSignData(): UseSignDataResult {
                 "SIGN_DATA_ERROR",
                 err instanceof Error ? err : undefined,
               );
-        setError(tosErr);
-        setIsPending(false);
+        if (mountedRef.current) {
+          setError(tosErr);
+          setIsPending(false);
+        }
         throw tosErr;
       }
     },

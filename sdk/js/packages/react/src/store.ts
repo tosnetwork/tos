@@ -26,6 +26,8 @@ interface CacheEntry<T = unknown> {
 
 type Listener = () => void;
 
+const EMPTY_ENTRY: CacheEntry = Object.freeze({ data: undefined, isLoading: false, error: null, generation: 0 });
+
 const cache = new Map<string, CacheEntry>();
 const listeners = new Set<Listener>();
 
@@ -62,7 +64,7 @@ export function subscribe(listener: Listener): () => void {
 
 /** Read a snapshot of the cache entry (for useSyncExternalStore). */
 export function getSnapshot<T>(key: string): CacheEntry<T> {
-  return getEntry<T>(key);
+  return (cache.get(key) as CacheEntry<T> | undefined) ?? (EMPTY_ENTRY as CacheEntry<T>);
 }
 
 /** Mark a key as loading. */
@@ -114,5 +116,5 @@ export function invalidate(key: string): void {
 
 /** Serialise an array of key segments into a single cache key. */
 export function serializeKey(parts: string[]): string {
-  return parts.join(":");
+  return parts.join("\0");
 }

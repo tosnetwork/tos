@@ -256,7 +256,10 @@ export class ConnectModal {
       deeplink.setAttribute("href", universalLink);
       deeplink.setAttribute("target", "_blank");
       deeplink.setAttribute("rel", "noopener noreferrer");
-      deeplink.innerHTML = `${LINK_ICON}<span>${this.i18n.t("openInWalletApp")}</span>`;
+      deeplink.innerHTML = LINK_ICON;
+      const linkLabel = document.createElement("span");
+      linkLabel.textContent = this.i18n.t("openInWalletApp");
+      deeplink.appendChild(linkLabel);
       qrView.appendChild(deeplink);
     }
 

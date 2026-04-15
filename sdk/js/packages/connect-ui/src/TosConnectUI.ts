@@ -218,8 +218,11 @@ export class TosConnectUI {
     try {
       const stored = localStorage.getItem("@tos/connect-ui:wallet");
       if (stored) {
-        const wallet = JSON.parse(stored) as ConnectedWallet;
-        this.setWallet(wallet);
+        const wallet = JSON.parse(stored);
+        if (!wallet?.account?.address || typeof wallet.account.address !== 'string' || !wallet?.account?.chain || !wallet?.device) {
+          return; // invalid stored data
+        }
+        this.setWallet(wallet as ConnectedWallet);
       }
     } catch {
       // Silently fail — no session to restore
@@ -316,15 +319,13 @@ export class TosConnectUI {
 
   /** Close the wallet selection modal. */
   closeModal(): void {
-    if (!this.modal) return;
-
-    this.modal.close().catch(() => {
-      // Ensure cleanup even if animation fails
-      this.modal?.destroy();
-    });
-
+    const modal = this.modal;
+    if (!modal) return;
     this.modal = null;
     this.setModalState("closed");
+    modal.close().catch(() => {
+      modal.destroy();
+    });
   }
 
   /** Current modal state. */
@@ -405,7 +406,7 @@ export class TosConnectUI {
   /** Build the combined wallet list with injected detection. */
   private buildWalletList(customWallets?: WalletInfo[]): WalletInfo[] {
     const injected = this.detectInjectedWallets();
-    const defaults = [...DEFAULT_WALLETS];
+    const defaults = DEFAULT_WALLETS.map(w => ({ ...w }));
     const custom = customWallets ?? [];
 
     // Mark default wallets as injected if they match

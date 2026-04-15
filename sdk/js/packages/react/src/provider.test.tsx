@@ -1,4 +1,3 @@
-import React from "react";
 import { describe, it, expect } from "vitest";
 import { renderHook, render, screen } from "@testing-library/react";
 import { TosProvider } from "./provider.js";
@@ -12,7 +11,7 @@ import { useClient } from "./hooks/useClient.js";
 describe("TosProvider", () => {
   it("renders children", () => {
     const config = createTosConfig();
-    const { container } = render(
+    render(
       <TosProvider config={config}>
         <div data-testid="child">Hello</div>
       </TosProvider>,

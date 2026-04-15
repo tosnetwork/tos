@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   serializeKey,
   setLoading,
@@ -15,8 +15,8 @@ import {
  */
 
 describe("serializeKey", () => {
-  it("joins parts with colons", () => {
-    expect(serializeKey(["balance", "0:abc"])).toBe("balance:0:abc");
+  it("joins parts with null-byte separator", () => {
+    expect(serializeKey(["balance", "0:abc"])).toBe("balance\x000:abc");
   });
 
   it("produces a stable string for the same inputs", () => {
@@ -35,23 +35,25 @@ describe("serializeKey", () => {
 });
 
 describe("getSnapshot", () => {
-  it("returns a fresh entry with isLoading=true for unknown keys", () => {
+  it("returns the frozen EMPTY_ENTRY with isLoading=false for unknown keys", () => {
     const entry = getSnapshot("test:fresh:" + Math.random());
     expect(entry.data).toBeUndefined();
     expect(entry.error).toBeNull();
-    expect(entry.isLoading).toBe(true);
+    expect(entry.isLoading).toBe(false);
     expect(entry.generation).toBe(0);
+    // Sentinel must be frozen — no cache mutation on read
+    expect(Object.isFrozen(entry)).toBe(true);
   });
 });
 
 describe("setLoading", () => {
   it("marks an entry as loading and bumps generation", () => {
     const key = "test:setLoading:" + Math.random();
-    // First access creates the entry with isLoading=true, generation=0
+    // getSnapshot for unknown key returns frozen EMPTY_ENTRY (isLoading=false)
     const before = getSnapshot(key);
-    expect(before.isLoading).toBe(true);
+    expect(before.isLoading).toBe(false);
 
-    // Set data to flip isLoading off, then set loading again
+    // Set data to create a real entry, then set loading
     setData(key, "value");
     const afterData = getSnapshot(key);
     expect(afterData.isLoading).toBe(false);
@@ -67,10 +69,11 @@ describe("setLoading", () => {
     const listener = vi.fn();
     const unsub = subscribe(listener);
 
-    // Fresh entry is already loading, so setLoading should be a no-op
-    getSnapshot(key); // ensure entry exists
+    // Create an entry that is already loading
+    setLoading(key);
     listener.mockClear();
 
+    // Second setLoading should be a no-op
     setLoading(key);
     expect(listener).not.toHaveBeenCalled();
 
@@ -132,7 +135,7 @@ describe("invalidate", () => {
     invalidate(key);
     const fresh = getSnapshot(key);
     expect(fresh.data).toBeUndefined();
-    expect(fresh.isLoading).toBe(true);
+    expect(fresh.isLoading).toBe(false);
     expect(fresh.generation).toBe(0);
   });
 

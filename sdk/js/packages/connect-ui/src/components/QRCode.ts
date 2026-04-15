@@ -44,14 +44,19 @@ export interface QRCodeOptions {
  * logo overlay without impacting scannability.
  */
 export function generateQRCodeSVG(options: QRCodeOptions): string {
+  const safeColor = (c: string) => /^#[0-9a-fA-F]{3,8}$/.test(c) ? c : "#000000";
+
   const {
     value,
     size = 260,
     showLogo = true,
     errorCorrectionLevel = "M",
-    fgColor = "#1a1a2e",
-    bgColor = "#ffffff",
+    fgColor: rawFg = "#1a1a2e",
+    bgColor: rawBg = "#ffffff",
   } = options;
+
+  const fgColor = safeColor(rawFg);
+  const bgColor = safeColor(rawBg);
 
   // Generate QR data
   const qr = qrGenerator(0, errorCorrectionLevel);

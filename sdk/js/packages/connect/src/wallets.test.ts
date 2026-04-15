@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { defaultWallets, fetchWalletList } from "./wallets.js";
 import type { WalletInfo } from "./types.js";
 

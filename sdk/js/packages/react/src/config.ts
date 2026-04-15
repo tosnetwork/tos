@@ -48,8 +48,8 @@ export interface TosConfig {
  */
 export function createTosConfig(options: CreateTosConfigOptions = {}): TosConfig {
   const endpoint =
-    options.endpoint ??
-    Networks[options.network ?? "mainnet"].endpoint;
+    (options.endpoint ??
+    Networks[options.network ?? "mainnet"].endpoint).replace(/\/+$/, "");
 
   const client = new TosClient({
     endpoint,

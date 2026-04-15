@@ -4,7 +4,7 @@ import { renderHook } from "@testing-library/react";
 import { useWalletInfo } from "./useWalletInfo.js";
 import { ConnectContext } from "../context.js";
 import type { ConnectContextValue } from "../types.js";
-import type { ConnectedWallet, WalletFeature } from "@tos/connect";
+import type { ConnectedWallet } from "@tos/connect";
 
 // ---------------------------------------------------------------------------
 // Helpers

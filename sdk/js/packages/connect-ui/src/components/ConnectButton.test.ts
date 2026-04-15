@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ConnectButton, type ConnectButtonCallbacks } from "./ConnectButton.js";
 import { I18nManager } from "../i18n/index.js";
 import { ThemeManager } from "../styles/theme.js";
-import type { ConnectedWallet, ConnectedAccount } from "@tos/connect";
+import type { ConnectedWallet } from "@tos/connect";
 
 // jsdom does not implement matchMedia; stub it globally
 beforeEach(() => {

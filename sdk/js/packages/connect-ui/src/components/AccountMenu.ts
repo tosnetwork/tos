@@ -121,7 +121,10 @@ export class AccountMenu {
     const disconnectBtn = createElement("button", "tos-account-menu__disconnect");
     disconnectBtn.setAttribute("type", "button");
     disconnectBtn.setAttribute("role", "menuitem");
-    disconnectBtn.innerHTML = `${DISCONNECT_ICON}<span>${this.i18n.t("disconnect")}</span>`;
+    disconnectBtn.innerHTML = DISCONNECT_ICON;
+    const label = document.createElement("span");
+    label.textContent = this.i18n.t("disconnect");
+    disconnectBtn.appendChild(label);
 
     const handleDisconnect = (): void => {
       callbacks.onDisconnect();
@@ -134,7 +137,7 @@ export class AccountMenu {
 
     // Click outside to close
     const handleClickOutside = (e: MouseEvent): void => {
-      if (menu.contains(e.target as Node)) return;
+      if (e.composedPath().includes(menu)) return;
       callbacks.onClose();
     };
 

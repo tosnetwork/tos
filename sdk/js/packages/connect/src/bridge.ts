@@ -112,7 +112,10 @@ export class BridgeClient {
     const body = toBase64Url(encrypted);
 
     const recipientId = bytesToHex(target);
-    const url = `${this.bridgeUrl}/message?client_id=${this.clientId}&to=${recipientId}&ttl=${ttl ?? this.defaultTtl}`;
+    const url = new URL(`${this.bridgeUrl}/message`);
+    url.searchParams.set("client_id", this.clientId);
+    url.searchParams.set("to", recipientId);
+    url.searchParams.set("ttl", String(ttl ?? this.defaultTtl));
 
     let response: Response;
     try {
@@ -277,7 +280,7 @@ export class BridgeClient {
       return;
     }
 
-    const delay = this.backoffMs * Math.pow(2, this.reconnectAttempt);
+    const delay = this.backoffMs * Math.pow(2, this.reconnectAttempt) * (0.5 + Math.random() * 0.5);
     this.reconnectAttempt++;
 
     this.reconnectTimer = setTimeout(() => {

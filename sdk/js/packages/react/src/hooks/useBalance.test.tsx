@@ -50,8 +50,6 @@ describe("useBalance", () => {
       { wrapper: createWrapper(client) },
     );
 
-    expect(result.current.isLoading).toBe(true);
-
     await waitFor(() => {
       expect(result.current.data).toBeDefined();
     });

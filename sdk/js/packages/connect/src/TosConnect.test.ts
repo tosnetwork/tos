@@ -7,7 +7,7 @@ import { defaultWallets } from "./wallets.js";
 // Helpers
 // ---------------------------------------------------------------------------
 
-function createInstance(overrides?: Partial<Parameters<typeof TosConnect.prototype.getWallets>[0]>) {
+function createInstance(overrides?: Partial<ConstructorParameters<typeof TosConnect>[0]>) {
   return new TosConnect({
     manifestUrl: "https://example.com/manifest.json",
     storage: new MemoryStorageAdapter(),
