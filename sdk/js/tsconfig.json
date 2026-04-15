@@ -1,8 +1,10 @@
 {
   "compilerOptions": {
+    "rootDir": ".",
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "baseUrl": ".",
     "lib": ["ES2022"],
     "strict": true,
     "esModuleInterop": true,
@@ -12,6 +14,18 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
+    "paths": {
+      "@tos/core": ["packages/core/src/index.ts"],
+      "@tos/crypto": ["packages/crypto/src/index.ts"],
+      "@tos/client": ["packages/client/src/index.ts"],
+      "@tos/wallets": ["packages/wallets/src/index.ts"],
+      "@tos/contracts": ["packages/contracts/src/index.ts"],
+      "@tos/sdk": ["packages/sdk/src/index.ts"],
+      "@tos/connect": ["packages/connect/src/index.ts"],
+      "@tos/connect-ui": ["packages/connect-ui/src/index.ts"],
+      "@tos/react": ["packages/react/src/index.ts"],
+      "@tos/connect-react": ["packages/connect-react/src/index.ts"]
+    },
     "noUncheckedIndexedAccess": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,

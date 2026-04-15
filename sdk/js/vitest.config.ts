@@ -35,6 +35,8 @@ const isPackageCwd =
 const include = isPackageCwd
   ? [`./${cwdFromRepoRoot}/src/**/*.test.{ts,tsx}`]
   : ["./packages/*/src/**/*.test.{ts,tsx}"];
+const runLiveTests = process.env.RUN_LIVE_TESTS === "1";
+const exclude = runLiveTests ? undefined : ["./packages/*/src/**/live-*.test.{ts,tsx}"];
 
 export default defineConfig({
   root: repoRoot,
@@ -60,6 +62,7 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include,
+    exclude,
     env: loadEnvTest(),
     environmentMatchGlobs: [
       ["packages/react/**", "jsdom"],
