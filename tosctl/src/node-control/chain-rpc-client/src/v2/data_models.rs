@@ -88,6 +88,7 @@ pub struct GetExtendedAddressInformationRes {
     pub r#type: String,
 
     pub address: AccountAddress,
+    #[serde(with = "serde_utils::u64_as_str_or_num")]
     pub balance: u64,
     pub extra_currencies: Vec<serde_json::Value>,
 
@@ -142,14 +143,14 @@ pub struct RawAccountState {
     #[serde(rename = "@type")]
     pub r#type: String,
 
-    #[serde(with = "serde_utils::b64")]
-    pub code: Vec<u8>,
+    #[serde(default, with = "serde_utils::option_b64")]
+    pub code: Option<Vec<u8>>,
 
-    #[serde(with = "serde_utils::b64")]
-    pub data: Vec<u8>,
+    #[serde(default, with = "serde_utils::option_b64")]
+    pub data: Option<Vec<u8>>,
 
-    #[serde(with = "serde_utils::b64")]
-    pub frozen_hash: Vec<u8>,
+    #[serde(default, with = "serde_utils::option_b64")]
+    pub frozen_hash: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -208,6 +209,158 @@ pub struct GetWalletInformationRes {
     pub wallet_type: Option<WalletType>,
     pub seqno: Option<u32>,
     pub wallet_id: Option<u64>,
+}
+
+// ─── account capability / permission inspection responses ───────────
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+pub struct AccountCapabilityRes {
+    #[serde(rename = "@type")]
+    pub r#type: Option<String>,
+    pub address: String,
+    pub account_model: String,
+    pub authorization_version: String,
+    pub supports_delegation: bool,
+    pub supports_sessions: bool,
+    pub supports_agents: bool,
+    pub delegation_source: String,
+    pub session_source: String,
+    pub agent_source: String,
+    pub capability_maturity: String,
+    pub account_state: String,
+    pub revision: i64,
+    #[serde(default)]
+    pub supports_sponsorship: Option<bool>,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+pub struct AccountDelegationGrant {
+    #[serde(rename = "@type")]
+    pub r#type: Option<String>,
+    #[serde(default)]
+    pub account: Option<String>,
+    pub id: String,
+    pub grantor: String,
+    pub grantee: String,
+    pub scope: String,
+    pub constraints: serde_json::Value,
+    #[serde(default)]
+    pub constraints_extensions: Option<serde_json::Value>,
+    pub created_at: Option<u64>,
+    pub expires_at: Option<u64>,
+    pub revoked_at: Option<u64>,
+    pub revocable: bool,
+    pub revocation_reference: Option<String>,
+    pub status: String,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+pub struct AccountSessionCapability {
+    #[serde(rename = "@type")]
+    pub r#type: Option<String>,
+    #[serde(default)]
+    pub account: Option<String>,
+    pub session_id: String,
+    pub principal: String,
+    pub scope: String,
+    pub constraints: serde_json::Value,
+    #[serde(default)]
+    pub constraints_extensions: Option<serde_json::Value>,
+    pub created_at: Option<u64>,
+    pub expires_at: Option<u64>,
+    pub revoked_at: Option<u64>,
+    pub revocable: bool,
+    pub status: String,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+pub struct AccountAgentCapability {
+    #[serde(rename = "@type")]
+    pub r#type: Option<String>,
+    #[serde(default)]
+    pub account: Option<String>,
+    pub agent_id: String,
+    pub principal: String,
+    pub scope: String,
+    pub constraints: serde_json::Value,
+    #[serde(default)]
+    pub constraints_extensions: Option<serde_json::Value>,
+    pub created_at: Option<u64>,
+    pub expires_at: Option<u64>,
+    pub revoked_at: Option<u64>,
+    pub revocable: bool,
+    pub status: String,
+}
+
+// ─── lifecycle mutation requests / responses ────────────────────────────
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+pub struct LifecycleGrantRequest {
+    pub address: String,
+    pub grantee: String,
+    pub scope: String,
+    #[serde(default)]
+    pub constraints: serde_json::Value,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<u64>,
+    #[serde(default)]
+    pub revocable: bool,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+pub struct LifecycleRevokeRequest {
+    pub address: String,
+    pub permission_id: String,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+pub struct LifecycleMutationResultRes {
+    #[serde(rename = "@type")]
+    pub r#type: Option<String>,
+    pub method: String,
+    pub account_model: String,
+    pub accepted: bool,
+    pub mutation_intent: serde_json::Value,
+    pub affected_object_preview: serde_json::Value,
+}
+
+// ─── transaction surface responses ──────────────────────────────────────
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+pub struct TransactionIntentRes {
+    #[serde(rename = "@type")]
+    pub r#type: Option<String>,
+    pub from: String,
+    pub account_model: String,
+    pub authorization_version: String,
+    pub action: serde_json::Value,
+    pub authorization_roles: serde_json::Value,
+    pub fee_intent: Option<serde_json::Value>,
+    pub replay_protection: Option<serde_json::Value>,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+pub struct SigningPayloadRes {
+    #[serde(rename = "@type")]
+    pub r#type: Option<String>,
+    pub payload_version: u32,
+    pub payload_encoding: String,
+    pub payload: String,
+    pub chain_id: i64,
+    pub replay_protection: Option<serde_json::Value>,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+pub struct SubmissionResultRes {
+    #[serde(rename = "@type")]
+    pub r#type: Option<String>,
+    pub accepted: bool,
+    pub transaction_hash: String,
+    pub submission_id: String,
+    #[serde(default)]
+    pub status: Option<i32>,
+    pub authorization_roles: Option<serde_json::Value>,
 }
 
 // ─── getMasterchainInfo response ─────────────────────────────────────

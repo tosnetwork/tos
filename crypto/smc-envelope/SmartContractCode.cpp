@@ -47,6 +47,7 @@ const auto& get_map() {
 #include "smartcont/auto/restricted-wallet3-code.cpp"
 #include "smartcont/auto/wallet-code.cpp"
 
+#include "smartcont/auto/session-wallet-code.cpp"
 #include "smartcont/auto/wallet3-code.cpp"
 #include "smartcont/auto/wallet-v4-code.cpp"
 #include "smartcont/auto/wallet-v5-code.cpp"
@@ -103,6 +104,10 @@ td::Span<int> SmartContractCode::get_revisions(Type type) {
       static int res[] = {-1};
       return res;
     }
+    case Type::SessionWallet: {
+      static int res[] = {-1};
+      return res;
+    }
   }
   UNREACHABLE();
 }
@@ -148,6 +153,8 @@ td::Ref<vm::Cell> SmartContractCode::get_code(Type type, int ext_revision) {
         return "wallet_v4";
       case Type::WalletV5:
         return "wallet_v5";
+      case Type::SessionWallet:
+        return "session-wallet";
     }
     UNREACHABLE();
   }(type);

@@ -29,6 +29,7 @@ pub(crate) mod output_format;
 pub(crate) mod pool_cmd;
 pub(crate) mod service_api_cmd;
 pub(crate) mod service_cmd;
+pub(crate) mod tx_cmd;
 pub(crate) mod vote_cmd;
 pub(crate) mod wallet_cmd;
 mod utils;

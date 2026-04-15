@@ -31,9 +31,12 @@
 #include "vm/cellops.h"
 #include "block/check-proof.h"
 #include "block/mc-config.h"
+#include <array>
 #include <limits>
 
 namespace tos {
+
+static constexpr size_t kMaxBocSize = 64 * 1024;  // 64 KiB
 
 void JsonRpcServer::handle_sendBoc(td::JsonObject &params, std::string req_id,
                                    td::Promise<HttpReturn> promise) {
@@ -46,6 +49,10 @@ void JsonRpcServer::handle_sendBoc(td::JsonObject &params, std::string req_id,
   auto decoded_r = td::base64_decode(boc_b64);
   if (decoded_r.is_error()) {
     promise.set_value(make_json_error(-32602, "Invalid base64 in 'boc'", req_id));
+    return;
+  }
+  if (decoded_r.ok().size() > kMaxBocSize) {
+    promise.set_value(make_json_error(-32602, "BOC payload exceeds maximum allowed size", req_id));
     return;
   }
   auto body = td::BufferSlice(decoded_r.move_as_ok());
@@ -81,6 +88,9 @@ static td::Result<td::Ref<vm::Cell>> parse_optional_boc_field(td::JsonObject& pa
   auto decoded_r = td::base64_decode(value_r.ok());
   if (decoded_r.is_error()) {
     return td::Status::Error(PSTRING() << "Invalid base64 in '" << name << "'");
+  }
+  if (decoded_r.ok().size() > kMaxBocSize) {
+    return td::Status::Error("BOC payload exceeds maximum allowed size");
   }
   auto cell_r = vm::std_boc_deserialize(td::Slice(decoded_r.ok()));
   if (cell_r.is_error()) {
@@ -213,6 +223,279 @@ static std::string build_estimate_fee_json(td::int64 in_fwd_fee, td::int64 stora
       << ",\"destination_fees\":[]}";
 }
 
+struct InitialIntentInput {
+  std::string address;
+  std::string body_b64;
+  std::string init_code_b64;
+  std::string init_data_b64;
+  std::string account_model;
+  std::string authorization_version;
+  std::string signer;
+  std::string submitter;
+  std::string fee_payer;
+  std::string delegation_ref;
+};
+
+static std::string extract_delegation_ref(td::JsonObject& obj) {
+  for (auto key : {"delegation_ref", "delegation", "delegation_grant"}) {
+    auto r = obj.get_optional_string_field(td::Slice{key});
+    if (r.is_ok() && !r.ok().empty()) {
+      return r.ok();
+    }
+  }
+  return "";
+}
+
+static bool has_non_delegation_permission_reference(td::JsonObject& obj) {
+  static const std::array<const char*, 5> keys = {
+      "session", "session_capability", "session_ref",
+      "agent", "agent_capability"
+  };
+  for (auto key : keys) {
+    if (obj.has_field(td::Slice{key})) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static td::Result<std::string> get_required_address_alias(td::JsonObject &params) {
+  auto from_r = params.get_optional_string_field("from");
+  if (from_r.is_ok() && !from_r.ok().empty()) {
+    return from_r.ok();
+  }
+  auto addr_r = params.get_optional_string_field("address");
+  if (addr_r.is_ok() && !addr_r.ok().empty()) {
+    return addr_r.ok();
+  }
+  return td::Status::Error("Missing 'from' or 'address'");
+}
+
+static td::Result<td::Ref<vm::Cell>> parse_optional_boc_string(const std::string& value,
+                                                               const char* name) {
+  if (value.empty()) {
+    return td::Ref<vm::Cell>();
+  }
+  auto decoded_r = td::base64_decode(value);
+  if (decoded_r.is_error()) {
+    return td::Status::Error(PSTRING() << "Invalid base64 in '" << name << "'");
+  }
+  if (decoded_r.ok().size() > kMaxBocSize) {
+    return td::Status::Error("BOC payload exceeds maximum allowed size");
+  }
+  auto cell_r = vm::std_boc_deserialize(td::Slice(decoded_r.ok()));
+  if (cell_r.is_error()) {
+    return td::Status::Error(PSTRING() << "Invalid BOC in '" << name << "'");
+  }
+  return cell_r.move_as_ok();
+}
+
+static td::Result<InitialIntentInput> parse_initial_intent_input(td::JsonObject &params) {
+  InitialIntentInput out;
+
+  if (has_non_delegation_permission_reference(params)) {
+    return td::Status::Error(
+        "FEATURE_DEFERRED: session/agent references are not yet supported");
+  }
+  out.delegation_ref = extract_delegation_ref(params);
+
+  auto intent_v = params.extract_field("intent");
+  if (intent_v.type() == td::JsonValue::Type::Object) {
+    auto &intent = intent_v.get_object();
+    if (has_non_delegation_permission_reference(intent)) {
+      return td::Status::Error(
+          "FEATURE_DEFERRED: session/agent references are not yet supported");
+    }
+    if (out.delegation_ref.empty()) {
+      out.delegation_ref = extract_delegation_ref(intent);
+    }
+    auto from_r = get_required_address_alias(intent);
+    if (from_r.is_error()) {
+      return from_r.move_as_error();
+    }
+    out.address = from_r.move_as_ok();
+    auto am_r = intent.get_optional_string_field("account_model");
+    if (am_r.is_ok()) out.account_model = am_r.ok();
+    auto av_r = intent.get_optional_string_field("authorization_version");
+    if (av_r.is_ok()) out.authorization_version = av_r.ok();
+
+    auto action_v = intent.extract_field("action");
+    if (action_v.type() == td::JsonValue::Type::Object) {
+      auto &action = action_v.get_object();
+      auto addr_r = action.get_optional_string_field("address");
+      if (addr_r.is_ok() && !addr_r.ok().empty()) out.address = addr_r.ok();
+      auto body_r = action.get_required_string_field("body");
+      if (body_r.is_error()) return td::Status::Error("Missing 'body' in action");
+      out.body_b64 = body_r.ok();
+      auto code_r = action.get_optional_string_field("init_code");
+      if (code_r.is_ok()) out.init_code_b64 = code_r.ok();
+      auto data_r = action.get_optional_string_field("init_data");
+      if (data_r.is_ok()) out.init_data_b64 = data_r.ok();
+    } else {
+      auto body_r = intent.get_required_string_field("body");
+      if (body_r.is_error()) return td::Status::Error("Missing 'body'");
+      out.body_b64 = body_r.ok();
+      auto code_r = intent.get_optional_string_field("init_code");
+      if (code_r.is_ok()) out.init_code_b64 = code_r.ok();
+      auto data_r = intent.get_optional_string_field("init_data");
+      if (data_r.is_ok()) out.init_data_b64 = data_r.ok();
+    }
+
+    auto roles_v = intent.extract_field("authorization_roles");
+    if (roles_v.type() == td::JsonValue::Type::Object) {
+      auto &roles = roles_v.get_object();
+      auto signer_r = roles.get_optional_string_field("signer");
+      if (signer_r.is_ok()) out.signer = signer_r.ok();
+      auto submitter_r = roles.get_optional_string_field("submitter");
+      if (submitter_r.is_ok()) out.submitter = submitter_r.ok();
+      auto fee_payer_r = roles.get_optional_string_field("fee_payer");
+      if (fee_payer_r.is_ok()) out.fee_payer = fee_payer_r.ok();
+    }
+  } else {
+    auto addr_r = get_required_address_alias(params);
+    if (addr_r.is_error()) {
+      return addr_r.move_as_error();
+    }
+    out.address = addr_r.move_as_ok();
+    auto body_r = params.get_required_string_field("body");
+    if (body_r.is_error()) {
+      return td::Status::Error("Missing 'body'");
+    }
+    out.body_b64 = body_r.ok();
+    auto code_r = params.get_optional_string_field("init_code");
+    if (code_r.is_ok()) out.init_code_b64 = code_r.ok();
+    auto data_r = params.get_optional_string_field("init_data");
+    if (data_r.is_ok()) out.init_data_b64 = data_r.ok();
+    auto am_r = params.get_optional_string_field("account_model");
+    if (am_r.is_ok()) out.account_model = am_r.ok();
+    auto av_r = params.get_optional_string_field("authorization_version");
+    if (av_r.is_ok()) out.authorization_version = av_r.ok();
+    auto signer_r = params.get_optional_string_field("signer");
+    if (signer_r.is_ok()) out.signer = signer_r.ok();
+    auto submitter_r = params.get_optional_string_field("submitter");
+    if (submitter_r.is_ok()) out.submitter = submitter_r.ok();
+    auto fee_payer_r = params.get_optional_string_field("fee_payer");
+    if (fee_payer_r.is_ok()) out.fee_payer = fee_payer_r.ok();
+  }
+
+  if (out.body_b64.empty()) {
+    return td::Status::Error("Missing 'body'");
+  }
+  if (out.signer.empty()) out.signer = out.address;
+  if (out.submitter.empty()) out.submitter = out.address;
+  if (out.fee_payer.empty()) out.fee_payer = out.address;
+  if (out.account_model.empty()) out.account_model = "unknown";
+  if (out.authorization_version.empty()) out.authorization_version = "unknown";
+  if (out.fee_payer != out.signer) {
+    return td::Status::Error(
+        "FEATURE_DEFERRED: distinct fee_payer semantics are not supported in the initial implementation");
+  }
+  return out;
+}
+
+static std::string build_authorization_roles_json(const std::string& signer,
+                                                  const std::string& submitter,
+                                                  const std::string& fee_payer) {
+  return PSTRING()
+      << "{\"@type\":\"account.authorizationRoles\""
+      << ",\"signer\":" << td::JsonString(td::Slice(signer))
+      << ",\"submitter\":" << td::JsonString(td::Slice(submitter))
+      << ",\"fee_payer\":" << td::JsonString(td::Slice(fee_payer))
+      << ",\"is_self_submitted\":" << (signer == submitter ? "true" : "false")
+      << ",\"is_self_paid\":" << (signer == fee_payer ? "true" : "false")
+      << "}";
+}
+
+static std::string build_transaction_intent_json(const InitialIntentInput& in) {
+  td::StringBuilder sb;
+  sb << "{\"@type\":\"transaction.intent\""
+     << ",\"from\":" << td::JsonString(td::Slice(in.address))
+     << ",\"account_model\":" << td::JsonString(td::Slice(in.account_model))
+     << ",\"authorization_version\":" << td::JsonString(td::Slice(in.authorization_version))
+     << ",\"action\":{\"@type\":\"transaction.action.externalMessage\""
+     << ",\"address\":" << td::JsonString(td::Slice(in.address))
+     << ",\"body\":" << td::JsonString(td::Slice(in.body_b64))
+     << ",\"init_code\":" << td::JsonString(td::Slice(in.init_code_b64))
+     << ",\"init_data\":" << td::JsonString(td::Slice(in.init_data_b64))
+     << "}"
+     << ",\"authorization_roles\":" << build_authorization_roles_json(in.signer, in.submitter, in.fee_payer)
+     << ",\"fee_intent\":{\"@type\":\"transaction.feeIntent\""
+     << ",\"mode\":" << td::JsonString(td::Slice(in.fee_payer == in.address ? "self_paid" : "third_party_requested"))
+     << "}"
+     << ",\"replay_protection\":{\"@type\":\"transaction.replayProtection\""
+     << ",\"mode\":\"contract_defined\"}";
+  if (!in.delegation_ref.empty()) {
+    sb << ",\"delegation_ref\":" << td::JsonString(td::Slice(in.delegation_ref));
+  }
+  sb << "}";
+  return sb.as_cslice().str();
+}
+
+static td::Result<td::Ref<vm::Cell>> build_external_message_cell(const InitialIntentInput& in) {
+  block::StdAddress addr;
+  if (!addr.parse_addr(td::Slice(in.address))) {
+    return td::Status::Error("Invalid address");
+  }
+  auto body_r = parse_optional_boc_string(in.body_b64, "body");
+  if (body_r.is_error()) return body_r.move_as_error();
+  if (body_r.ok().is_null()) return td::Status::Error("Missing 'body'");
+  auto init_code_r = parse_optional_boc_string(in.init_code_b64, "init_code");
+  if (init_code_r.is_error()) return init_code_r.move_as_error();
+  auto init_data_r = parse_optional_boc_string(in.init_data_b64, "init_data");
+  if (init_data_r.is_error()) return init_data_r.move_as_error();
+
+  td::Ref<vm::Cell> new_state;
+  auto init_code = init_code_r.move_as_ok();
+  auto init_data = init_data_r.move_as_ok();
+  if (init_code.not_null() || init_data.not_null()) {
+    new_state = tos::GenericAccount::get_init_state(init_code, init_data);
+  }
+  return tos::GenericAccount::create_ext_message(addr, new_state, body_r.move_as_ok());
+}
+
+static td::Result<std::string> serialize_cell_b64(td::Ref<vm::Cell> cell) {
+  auto boc_r = vm::std_boc_serialize(cell);
+  if (boc_r.is_error()) {
+    return td::Status::Error(PSTRING() << "BOC serialize error: " << boc_r.error());
+  }
+  return td::base64_encode(boc_r.ok().as_slice());
+}
+
+static td::Result<std::string> extract_signed_artifact_b64(td::JsonObject& params) {
+  auto boc_r = params.get_optional_string_field("signed_message_boc");
+  if (boc_r.is_ok() && !boc_r.ok().empty()) {
+    return boc_r.ok();
+  }
+  auto alt_r = params.get_optional_string_field("boc");
+  if (alt_r.is_ok() && !alt_r.ok().empty()) {
+    return alt_r.ok();
+  }
+  auto payload_r = params.get_optional_string_field("payload");
+  if (payload_r.is_ok() && !payload_r.ok().empty()) {
+    auto enc_r = params.get_optional_string_field("payload_encoding");
+    if (enc_r.is_ok() && !enc_r.ok().empty() && enc_r.ok() != "boc_base64") {
+      return td::Status::Error("SIGNED_ARTIFACT_UNSUPPORTED: unsupported payload_encoding");
+    }
+    return payload_r.ok();
+  }
+  return td::Status::Error("Missing 'signed_message_boc', 'boc', or 'payload'");
+}
+
+static std::string build_submission_result_json(bool accepted, const std::string& hash_b64,
+                                                td::int32 status,
+                                                const std::string& signer,
+                                                const std::string& submitter,
+                                                const std::string& fee_payer) {
+  return PSTRING()
+      << "{\"@type\":\"transaction.submissionResult\""
+      << ",\"accepted\":" << (accepted ? "true" : "false")
+      << ",\"transaction_hash\":" << td::JsonString(td::Slice(hash_b64))
+      << ",\"submission_id\":" << td::JsonString(td::Slice(hash_b64))
+      << ",\"status\":" << status
+      << ",\"authorization_roles\":" << build_authorization_roles_json(signer, submitter, fee_payer)
+      << "}";
+}
+
 
 // ─── sendBocReturnHash ──────────────────────────────────────────────────
 
@@ -230,6 +513,11 @@ void JsonRpcServer::handle_sendBocReturnHash(td::JsonObject &params, std::string
     return;
   }
   auto decoded = decoded_r.move_as_ok();
+
+  if (decoded.size() > kMaxBocSize) {
+    promise.set_value(make_json_error(-32602, "BOC payload exceeds maximum allowed size", req_id));
+    return;
+  }
 
   // Compute the external message hash before sending
   auto cell_r = vm::std_boc_deserialize(td::Slice(decoded));
@@ -269,6 +557,422 @@ void JsonRpcServer::handle_sendBocReturnHash(td::JsonObject &params, std::string
       });
 }
 
+void JsonRpcServer::handle_buildTransactionIntent(td::JsonObject &params, std::string req_id,
+                                                  td::Promise<HttpReturn> promise) {
+  auto input_r = parse_initial_intent_input(params);
+  if (input_r.is_error()) {
+    promise.set_value(make_json_error(-32602,
+        PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: " << input_r.error().message(), req_id));
+    return;
+  }
+  auto input = input_r.move_as_ok();
+
+  // Continuation: build and return the transaction intent.  Extracted as a
+  // shared lambda so both the sync and async-discovery paths converge here.
+  auto do_finish = [this](InitialIntentInput input, std::string req_id,
+                          td::Promise<HttpReturn> promise) mutable {
+    if (!input.delegation_ref.empty()) {
+      block::StdAddress addr;
+      if (!addr.parse_addr(td::Slice(input.address))) {
+        promise.set_value(make_json_error(-32602, "DELEGATION_UNAVAILABLE: invalid address", req_id));
+        return;
+      }
+      auto msg_r = build_external_message_cell(input);
+      if (msg_r.is_error()) {
+        promise.set_value(make_json_error(-32602,
+            PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: " << msg_r.error().message(), req_id));
+        return;
+      }
+      auto intent_json = build_transaction_intent_json(input);
+      validate_delegation_and_return_intent(
+          addr, input.address, input.delegation_ref,
+          std::move(intent_json), std::move(req_id), std::move(promise));
+      return;
+    }
+
+    auto msg_r = build_external_message_cell(input);
+    if (msg_r.is_error()) {
+      promise.set_value(make_json_error(-32602,
+          PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: " << msg_r.error().message(), req_id));
+      return;
+    }
+    promise.set_value(make_json_ok(build_transaction_intent_json(input), req_id));
+  };
+
+  // When account_model is "unknown" (caller didn't supply it), perform async
+  // capability discovery so the intent carries the correct on-chain model.
+  if (input.account_model == "unknown") {
+    block::StdAddress addr;
+    if (!addr.parse_addr(td::Slice(input.address))) {
+      promise.set_value(make_json_error(-32602,
+          "TRANSACTION_INTENT_UNSUPPORTED: invalid address for capability discovery", req_id));
+      return;
+    }
+    auto self_id = actor_id(this);
+    auto mc_inner = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
+    auto mc_query = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
+
+    send_liteserver_query(std::move(mc_query),
+        [self_id, addr, input = std::move(input), do_finish = std::move(do_finish),
+         req_id = std::move(req_id), promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: getMasterchainInfo: " << R.error(), req_id));
+            return;
+          }
+          auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(R.move_as_ok(), true);
+          if (mc_r.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: parse mcInfo: " << mc_r.error(), req_id));
+            return;
+          }
+          auto block_id = tos::create_block_id(mc_r.ok()->last_);
+          auto account_inner = tos::serialize_tl_object(
+              tos::create_tl_object<tos::lite_api::liteServer_getAccountState>(
+                  tos::create_tl_lite_block_id(block_id),
+                  tos::create_tl_object<tos::lite_api::liteServer_accountId>(addr.workchain, addr.addr)),
+              true);
+          auto account_query = tos::serialize_tl_object(
+              tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(account_inner)), true);
+
+          td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(account_query),
+              td::PromiseCreator::lambda(
+                  [self_id, addr, input = std::move(input), do_finish = std::move(do_finish),
+                   req_id = std::move(req_id), promise = std::move(promise)](
+                      td::Result<td::BufferSlice> account_res) mutable {
+                    if (account_res.is_error()) {
+                      promise.set_value(make_json_error(-32603,
+                          PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: getAccountState: " << account_res.error(), req_id));
+                      return;
+                    }
+                    auto account_r = tos::fetch_tl_object<tos::lite_api::liteServer_accountState>(
+                        account_res.move_as_ok(), true);
+                    if (account_r.is_error()) {
+                      promise.set_value(make_json_error(-32603,
+                          PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: parse accountState: " << account_r.error(), req_id));
+                      return;
+                    }
+                    auto account = account_r.move_as_ok();
+                    auto parsed_r = ParsedAccountState::parse(account, addr);
+                    if (parsed_r.is_error()) {
+                      promise.set_value(make_json_error(-32603,
+                          PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: parse account: " << parsed_r.error(), req_id));
+                      return;
+                    }
+                    auto parsed = parsed_r.move_as_ok();
+
+                    // Detect wallet type and account model from on-chain state
+                    std::string wallet_type;
+                    if (parsed.code_cell.not_null()) {
+                      wallet_type = detect_wallet_type(parsed.code_cell->get_hash(0));
+                    }
+                    input.account_model = detect_account_model(parsed, wallet_type);
+                    if (input.authorization_version == "unknown") {
+                      input.authorization_version = detect_authorization_version(wallet_type);
+                    }
+
+                    // Build the intent with the discovered model.
+                    // do_finish captures 'this' from the member function and is
+                    // invoked here inside a callback — the actor framework
+                    // guarantees single-threaded execution so this is safe.
+                    do_finish(std::move(input), std::move(req_id), std::move(promise));
+                  }));
+        });
+    return;
+  }
+
+  // account_model was explicitly provided — proceed synchronously
+  do_finish(std::move(input), std::move(req_id), std::move(promise));
+}
+
+void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string req_id,
+                                             td::Promise<HttpReturn> promise) {
+  auto input_r = parse_initial_intent_input(params);
+  if (input_r.is_error()) {
+    promise.set_value(make_json_error(-32602,
+        PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << input_r.error().message(), req_id));
+    return;
+  }
+  auto input = input_r.move_as_ok();
+
+  // Continuation: build and return the signing payload.  Extracted as a
+  // shared lambda so both the sync and async-discovery paths converge here.
+  auto self_id = actor_id(this);
+  auto do_finish = [this, self_id](InitialIntentInput input, std::string req_id,
+                                   td::Promise<HttpReturn> promise) mutable {
+    if (!input.delegation_ref.empty()) {
+      block::StdAddress addr;
+      if (!addr.parse_addr(td::Slice(input.address))) {
+        promise.set_value(make_json_error(-32602, "DELEGATION_UNAVAILABLE: invalid address", req_id));
+        return;
+      }
+      auto msg_r = build_external_message_cell(input);
+      if (msg_r.is_error()) {
+        promise.set_value(make_json_error(-32602,
+            PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << msg_r.error().message(), req_id));
+        return;
+      }
+      auto payload_b64_r = serialize_cell_b64(msg_r.ok());
+      if (payload_b64_r.is_error()) {
+        promise.set_value(make_json_error(-32603,
+            PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << payload_b64_r.error().message(), req_id));
+        return;
+      }
+      auto intent_json = PSTRING()
+          << "{\"@type\":\"transaction.signingPayload\""
+          << ",\"payload_version\":1"
+          << ",\"payload_encoding\":\"boc_base64\""
+          << ",\"payload\":" << td::JsonString(td::Slice(payload_b64_r.ok()))
+          << ",\"delegation_ref\":" << td::JsonString(td::Slice(input.delegation_ref))
+          << ",\"replay_protection\":{\"@type\":\"transaction.replayProtection\""
+          << ",\"mode\":\"contract_defined\"}"
+          << "}";
+      validate_delegation_and_return_intent(
+          addr, input.address, input.delegation_ref,
+          std::move(intent_json), std::move(req_id), std::move(promise));
+      return;
+    }
+
+    auto msg_r = build_external_message_cell(input);
+    if (msg_r.is_error()) {
+      promise.set_value(make_json_error(-32602,
+          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << msg_r.error().message(), req_id));
+      return;
+    }
+    auto payload_b64_r = serialize_cell_b64(msg_r.ok());
+    if (payload_b64_r.is_error()) {
+      promise.set_value(make_json_error(-32603,
+          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << payload_b64_r.error().message(), req_id));
+      return;
+    }
+
+    auto mc_inner = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
+    auto mc_query = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
+
+    send_liteserver_query(std::move(mc_query),
+        [self_id, input = std::move(input), payload_b64 = payload_b64_r.move_as_ok(),
+         req_id = std::move(req_id), promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << R.error(), req_id));
+            return;
+          }
+          auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(R.move_as_ok(), true);
+          if (mc_r.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << mc_r.error(), req_id));
+            return;
+          }
+          auto block_id = tos::create_block_id(mc_r.ok()->last_);
+          auto config_inner = tos::serialize_tl_object(
+              tos::create_tl_object<tos::lite_api::liteServer_getConfigAll>(
+                  block::ConfigInfo::needPrevBlocks, tos::create_tl_lite_block_id(block_id)),
+              true);
+          auto config_query = tos::serialize_tl_object(
+              tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(config_inner)), true);
+
+          td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(config_query),
+              td::PromiseCreator::lambda(
+                  [input = std::move(input), payload_b64 = std::move(payload_b64),
+                   req_id = std::move(req_id), promise = std::move(promise)](td::Result<td::BufferSlice> cfg_res) mutable {
+                    if (cfg_res.is_error()) {
+                      promise.set_value(make_json_error(-32603,
+                          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << cfg_res.error(), req_id));
+                      return;
+                    }
+                    auto cfg_info_r =
+                        tos::fetch_tl_object<tos::lite_api::liteServer_configInfo>(cfg_res.move_as_ok(), true);
+                    if (cfg_info_r.is_error()) {
+                      promise.set_value(make_json_error(-32603,
+                          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << cfg_info_r.error(), req_id));
+                      return;
+                    }
+                    auto cfg_info = cfg_info_r.move_as_ok();
+                    auto blk_id = tos::create_block_id(cfg_info->id_);
+                    auto state_r = block::check_extract_state_proof(
+                        blk_id, cfg_info->state_proof_.as_slice(), cfg_info->config_proof_.as_slice());
+                    if (state_r.is_error()) {
+                      promise.set_value(make_json_error(-32603,
+                          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << state_r.error(), req_id));
+                      return;
+                    }
+                    auto cfg_r = block::ConfigInfo::extract_config(
+                        state_r.move_as_ok(), blk_id, block::ConfigInfo::needPrevBlocks);
+                    if (cfg_r.is_error()) {
+                      promise.set_value(make_json_error(-32603,
+                          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << cfg_r.error(), req_id));
+                      return;
+                    }
+                    auto cfg = cfg_r.move_as_ok();
+                    auto chain_id = cfg->get_global_blockchain_id();
+                    auto result_json = PSTRING()
+                        << "{\"@type\":\"transaction.signingPayload\""
+                        << ",\"payload_version\":1"
+                        << ",\"payload_encoding\":\"boc_base64\""
+                        << ",\"payload\":" << td::JsonString(td::Slice(payload_b64))
+                        << ",\"chain_id\":" << chain_id
+                        << ",\"replay_protection\":{\"@type\":\"transaction.replayProtection\""
+                        << ",\"mode\":\"contract_defined\"}"
+                        << "}";
+                    promise.set_value(make_json_ok(result_json, req_id));
+                  }));
+        });
+  };
+
+  // When account_model is "unknown" (caller didn't supply it), perform async
+  // capability discovery so the signing payload carries the correct on-chain model.
+  if (input.account_model == "unknown") {
+    block::StdAddress addr;
+    if (!addr.parse_addr(td::Slice(input.address))) {
+      promise.set_value(make_json_error(-32602,
+          "SIGNING_PAYLOAD_UNAVAILABLE: invalid address for capability discovery", req_id));
+      return;
+    }
+    auto mc_inner = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
+    auto mc_query = tos::serialize_tl_object(
+        tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
+
+    send_liteserver_query(std::move(mc_query),
+        [self_id, addr, input = std::move(input), do_finish = std::move(do_finish),
+         req_id = std::move(req_id), promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: getMasterchainInfo: " << R.error(), req_id));
+            return;
+          }
+          auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(R.move_as_ok(), true);
+          if (mc_r.is_error()) {
+            promise.set_value(make_json_error(-32603,
+                PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: parse mcInfo: " << mc_r.error(), req_id));
+            return;
+          }
+          auto block_id = tos::create_block_id(mc_r.ok()->last_);
+          auto account_inner = tos::serialize_tl_object(
+              tos::create_tl_object<tos::lite_api::liteServer_getAccountState>(
+                  tos::create_tl_lite_block_id(block_id),
+                  tos::create_tl_object<tos::lite_api::liteServer_accountId>(addr.workchain, addr.addr)),
+              true);
+          auto account_query = tos::serialize_tl_object(
+              tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(account_inner)), true);
+
+          td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(account_query),
+              td::PromiseCreator::lambda(
+                  [self_id, addr, input = std::move(input), do_finish = std::move(do_finish),
+                   req_id = std::move(req_id), promise = std::move(promise)](
+                      td::Result<td::BufferSlice> account_res) mutable {
+                    if (account_res.is_error()) {
+                      promise.set_value(make_json_error(-32603,
+                          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: getAccountState: " << account_res.error(), req_id));
+                      return;
+                    }
+                    auto account_r = tos::fetch_tl_object<tos::lite_api::liteServer_accountState>(
+                        account_res.move_as_ok(), true);
+                    if (account_r.is_error()) {
+                      promise.set_value(make_json_error(-32603,
+                          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: parse accountState: " << account_r.error(), req_id));
+                      return;
+                    }
+                    auto account = account_r.move_as_ok();
+                    auto parsed_r = ParsedAccountState::parse(account, addr);
+                    if (parsed_r.is_error()) {
+                      promise.set_value(make_json_error(-32603,
+                          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: parse account: " << parsed_r.error(), req_id));
+                      return;
+                    }
+                    auto parsed = parsed_r.move_as_ok();
+
+                    // Detect wallet type and account model from on-chain state
+                    std::string wallet_type;
+                    if (parsed.code_cell.not_null()) {
+                      wallet_type = detect_wallet_type(parsed.code_cell->get_hash(0));
+                    }
+                    input.account_model = detect_account_model(parsed, wallet_type);
+                    if (input.authorization_version == "unknown") {
+                      input.authorization_version = detect_authorization_version(wallet_type);
+                    }
+
+                    do_finish(std::move(input), std::move(req_id), std::move(promise));
+                  }));
+        });
+    return;
+  }
+
+  // account_model was explicitly provided — proceed directly
+  do_finish(std::move(input), std::move(req_id), std::move(promise));
+}
+
+// NOTE: submitSignedTransaction accepts any valid external message BOC.
+// There is no server-side binding between buildTransactionIntent /
+// getSigningPayload and this handler — the delegation validation in
+// buildTransactionIntent is advisory only.  The on-chain smart contract
+// (not the RPC layer) is the authoritative enforcer of signature and
+// permission checks.
+void JsonRpcServer::handle_submitSignedTransaction(td::JsonObject &params, std::string req_id,
+                                                   td::Promise<HttpReturn> promise) {
+  auto signed_b64_r = extract_signed_artifact_b64(params);
+  if (signed_b64_r.is_error()) {
+    promise.set_value(make_json_error(-32602,
+        PSTRING() << "SIGNED_ARTIFACT_INVALID: " << signed_b64_r.error().message(), req_id));
+    return;
+  }
+  auto decoded_r = td::base64_decode(signed_b64_r.ok());
+  if (decoded_r.is_error()) {
+    promise.set_value(make_json_error(-32602, "SIGNED_ARTIFACT_INVALID: invalid base64", req_id));
+    return;
+  }
+  if (decoded_r.ok().size() > kMaxBocSize) {
+    promise.set_value(make_json_error(-32602, "BOC payload exceeds maximum allowed size", req_id));
+    return;
+  }
+  auto cell_r = vm::std_boc_deserialize(td::Slice(decoded_r.ok()));
+  if (cell_r.is_error()) {
+    promise.set_value(make_json_error(-32602, "SIGNED_ARTIFACT_INVALID: invalid BOC", req_id));
+    return;
+  }
+  auto hash_b64 = td::base64_encode(cell_r.ok()->get_hash(0).as_slice());
+
+  auto signer_r = params.get_optional_string_field("signer");
+  auto submitter_r = params.get_optional_string_field("submitter");
+  auto fee_payer_r = params.get_optional_string_field("fee_payer");
+  std::string signer = signer_r.is_ok() ? signer_r.ok() : "";
+  std::string submitter = submitter_r.is_ok() ? submitter_r.ok() : signer;
+  std::string fee_payer = fee_payer_r.is_ok() ? fee_payer_r.ok() : signer;
+
+  auto body = td::BufferSlice(decoded_r.move_as_ok());
+  auto inner = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_sendMessage>(std::move(body)), true);
+  auto query = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
+
+  send_liteserver_query(std::move(query),
+      [req_id = std::move(req_id), hash_b64 = std::move(hash_b64), signer = std::move(signer),
+       submitter = std::move(submitter), fee_payer = std::move(fee_payer),
+       promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+        if (R.is_error()) {
+          promise.set_value(make_json_error(-32603,
+              PSTRING() << "SIGNED_ARTIFACT_UNSUPPORTED: " << R.error(), req_id));
+          return;
+        }
+        auto status_r = tos::fetch_tl_object<tos::lite_api::liteServer_sendMsgStatus>(
+            R.move_as_ok(), true);
+        if (status_r.is_error()) {
+          promise.set_value(make_json_error(-32603,
+              PSTRING() << "SIGNED_ARTIFACT_UNSUPPORTED: " << status_r.error(), req_id));
+          return;
+        }
+        auto status = status_r.move_as_ok();
+        promise.set_value(make_json_ok(
+            build_submission_result_json(true, hash_b64, status->status_,
+                                         signer, submitter, fee_payer),
+            req_id));
+      });
+}
+
 // ─── sendQuery ──────────────────────────────────────────────────────────
 // Build external message from address + body + optional init, then send
 
@@ -293,6 +997,10 @@ void JsonRpcServer::handle_sendQuery(td::JsonObject &params, std::string req_id,
     promise.set_value(make_json_error(-32602, "Invalid base64 in 'body'", req_id));
     return;
   }
+  if (body_decoded_r.ok().size() > kMaxBocSize) {
+    promise.set_value(make_json_error(-32602, "BOC payload exceeds maximum allowed size", req_id));
+    return;
+  }
   auto body_cell_r = vm::std_boc_deserialize(td::Slice(body_decoded_r.ok()));
   if (body_cell_r.is_error()) {
     promise.set_value(make_json_error(-32602, "Invalid BOC in 'body'", req_id));
@@ -305,18 +1013,38 @@ void JsonRpcServer::handle_sendQuery(td::JsonObject &params, std::string req_id,
   auto code_r = params.get_optional_string_field("init_code");
   if (code_r.is_ok() && !code_r.ok().empty()) {
     auto dec = td::base64_decode(code_r.ok());
-    if (dec.is_ok()) {
-      auto cell = vm::std_boc_deserialize(td::Slice(dec.ok()));
-      if (cell.is_ok()) init_code = cell.move_as_ok();
+    if (dec.is_error()) {
+      promise.set_value(make_json_error(-32602, "invalid base64 in init_code", req_id));
+      return;
     }
+    if (dec.ok().size() > kMaxBocSize) {
+      promise.set_value(make_json_error(-32602, "BOC payload exceeds maximum allowed size", req_id));
+      return;
+    }
+    auto cell = vm::std_boc_deserialize(td::Slice(dec.ok()));
+    if (cell.is_error()) {
+      promise.set_value(make_json_error(-32602, "invalid BOC in init_code", req_id));
+      return;
+    }
+    init_code = cell.move_as_ok();
   }
   auto data_r = params.get_optional_string_field("init_data");
   if (data_r.is_ok() && !data_r.ok().empty()) {
     auto dec = td::base64_decode(data_r.ok());
-    if (dec.is_ok()) {
-      auto cell = vm::std_boc_deserialize(td::Slice(dec.ok()));
-      if (cell.is_ok()) init_data = cell.move_as_ok();
+    if (dec.is_error()) {
+      promise.set_value(make_json_error(-32602, "invalid base64 in init_data", req_id));
+      return;
     }
+    if (dec.ok().size() > kMaxBocSize) {
+      promise.set_value(make_json_error(-32602, "BOC payload exceeds maximum allowed size", req_id));
+      return;
+    }
+    auto cell = vm::std_boc_deserialize(td::Slice(dec.ok()));
+    if (cell.is_error()) {
+      promise.set_value(make_json_error(-32602, "invalid BOC in init_data", req_id));
+      return;
+    }
+    init_data = cell.move_as_ok();
   }
 
   // Build external inbound message
@@ -656,6 +1384,11 @@ void JsonRpcServer::handle_sendBocReturnHashNoError(td::JsonObject &params, std:
     return;
   }
   auto decoded = decoded_r.move_as_ok();
+
+  if (decoded.size() > kMaxBocSize) {
+    promise.set_value(make_json_error(-32602, "BOC payload exceeds maximum allowed size", req_id));
+    return;
+  }
 
   // Compute the external message hash before sending
   auto cell_r = vm::std_boc_deserialize(td::Slice(decoded));

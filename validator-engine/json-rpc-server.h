@@ -24,6 +24,7 @@
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/Time.h"
 #include "validator/validator.h"
+#include "block/block.h"
 
 #include <set>
 #include <unordered_map>
@@ -33,7 +34,7 @@ namespace tos {
 class JsonRpcServer final : public td::actor::Actor, public virtual metrics::AsyncCollector {
  public:
   struct Options {
-    bool readonly = false;           // disable sendBoc/sendBocReturnHash/sendQuery
+    bool readonly = false;           // disable sendBoc/sendBocReturnHash/sendQuery/submitSignedTransaction
     std::string cors_origin = "*";   // Access-Control-Allow-Origin value
     td::int32 readyz_threshold = 60; // sync lag threshold in seconds for /readyz
     double request_timeout = 30.0;   // per-request timeout in seconds (0 = no timeout)
@@ -155,6 +156,44 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   void handle_getTokenData(td::JsonObject &params, std::string req_id,
                            td::Promise<HttpReturn> promise);
 
+  // Method handlers — account/permission initial surfaces
+  void handle_getAccountCapability(td::JsonObject &params, std::string req_id,
+                                   td::Promise<HttpReturn> promise);
+  void handle_getAccountDelegations(td::JsonObject &params, std::string req_id,
+                                    td::Promise<HttpReturn> promise);
+  void handle_getAccountSessions(td::JsonObject &params, std::string req_id,
+                                 td::Promise<HttpReturn> promise);
+  void handle_getAccountAgents(td::JsonObject &params, std::string req_id,
+                               td::Promise<HttpReturn> promise);
+  void handle_buildTransactionIntent(td::JsonObject &params, std::string req_id,
+                                     td::Promise<HttpReturn> promise);
+  void handle_getSigningPayload(td::JsonObject &params, std::string req_id,
+                                td::Promise<HttpReturn> promise);
+  void handle_submitSignedTransaction(td::JsonObject &params, std::string req_id,
+                                      td::Promise<HttpReturn> promise);
+
+  // Method handlers — account/permission lifecycle surfaces
+  void handle_grantAccountDelegation(td::JsonObject &params, std::string req_id,
+                                      td::Promise<HttpReturn> promise);
+  void handle_revokeAccountDelegation(td::JsonObject &params, std::string req_id,
+                                       td::Promise<HttpReturn> promise);
+  void handle_grantAccountSession(td::JsonObject &params, std::string req_id,
+                                    td::Promise<HttpReturn> promise);
+  void handle_revokeAccountSession(td::JsonObject &params, std::string req_id,
+                                     td::Promise<HttpReturn> promise);
+  void handle_grantAccountAgent(td::JsonObject &params, std::string req_id,
+                                  td::Promise<HttpReturn> promise);
+  void handle_revokeAccountAgent(td::JsonObject &params, std::string req_id,
+                                   td::Promise<HttpReturn> promise);
+
+  // Delegation reference validation for permission-bearing intents
+  void validate_delegation_and_return_intent(
+      block::StdAddress addr, std::string addr_str,
+      std::string delegation_ref,
+      std::string intent_json,
+      std::string req_id,
+      td::Promise<HttpReturn> promise);
+
   // Method handlers — new APIs (parity with ton-http-api-cpp)
   void handle_detectHash(td::JsonObject &params, std::string req_id,
                          td::Promise<HttpReturn> promise);
@@ -209,7 +248,6 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   std::unordered_map<std::string, CacheEntry> cache_;
 
   static const std::set<std::string> &cacheable_methods();
-  td::int32 cache_ttl_for_method(const std::string &method) const;
 
   td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager_;
   td::actor::ActorOwn<http::HttpServer> http_;

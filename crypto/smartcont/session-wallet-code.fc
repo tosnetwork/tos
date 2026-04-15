@@ -1,0 +1,41 @@
+;; Minimal session-wallet contract for TOS permission-model testing.
+;; Storage layout:
+;;   sessions_dict (HashmapE 32 -> session_data)
+;;
+;; Session data per entry:
+;;   principal (256 bits)
+;;   scope (8 bits): 0=submit_only, 1=bounded_transfer, 2=bounded_contract_call
+;;   created_at (32 bits)
+;;   expires_at (32 bits)
+;;   revoked (1 bit)
+;;
+;; This contract does NOT process any messages — it is a minimal read-only
+;; account standard used to prove the session inspection path works.
+
+() recv_internal(slice in_msg) impure { }
+() recv_external(slice in_msg) impure { }
+
+;; ─── Get methods ─────────────────────────────────────────────────────
+
+tuple get_sessions() method_id {
+  slice ds = get_data().begin_parse();
+  if (ds.slice_bits() == 0) {
+    ;; empty data cell — return empty list to avoid cell underflow
+    return null();
+  }
+  cell sessions = ds~load_dict();
+  var list = null();
+  int id = -1;
+  do {
+    (id, slice sd, int found) = sessions.udict_get_next?(32, id);
+    if (found) {
+      int principal = sd~load_uint(256);
+      int scope = sd~load_uint(8);
+      int created_at = sd~load_uint(32);
+      int expires_at = sd~load_uint(32);
+      int revoked = sd~load_uint(1);
+      list = cons([id, principal, scope, created_at, expires_at, revoked], list);
+    }
+  } until (~ found);
+  return list;
+}

@@ -51,6 +51,24 @@ static std::string url_decode(const std::string &src) {
   return out;
 }
 
+// Strip api_key from query string before passing to handler/cache
+static std::string strip_api_key_param(const std::string &qs) {
+  std::string result;
+  size_t pos = 0;
+  while (pos < qs.size()) {
+    auto amp = qs.find('&', pos);
+    auto token = qs.substr(pos, amp == std::string::npos ? std::string::npos : amp - pos);
+    pos = amp == std::string::npos ? qs.size() : amp + 1;
+    if (token.empty()) continue;
+    auto eq = token.find('=');
+    auto key = eq == std::string::npos ? token : token.substr(0, eq);
+    if (key == "api_key") continue;  // skip
+    if (!result.empty()) result += '&';
+    result += token;
+  }
+  return result;
+}
+
 // Convert "key1=val1&key2=val2" into a JSON object string: {"key1":"val1","key2":"val2"}
 // All values are encoded as JSON strings; numeric coercion is handled by
 // get_required_int_field / get_optional_int_field which parse from string values.
@@ -90,6 +108,12 @@ static std::string query_string_to_json(const std::string &qs) {
 // If deliver() is called before the alarm fires, the real promise gets the
 // result and the guard self-destructs.  If the alarm fires first, the guard
 // delivers a timeout error and any later deliver() call is a no-op.
+//
+// NOTE: This guard wraps individual liteserver queries.  Handlers that
+// chain N sequential queries can take up to N × timeout_seconds total
+// wall-clock time.  A request-level timeout should be added at the
+// dispatch layer for defense-in-depth against slow-loris-style attacks
+// on multi-query handlers (e.g., getAccountAgents chains up to 6 queries).
 
 class QueryTimeoutGuard final : public td::actor::Actor {
  public:
@@ -188,7 +212,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
         "{\n"
         "  \"name\": \"TOS JSON-RPC API\",\n"
         "  \"version\": \"1.0.0\",\n"
-        "  \"methods_count\": 35,\n"
+        "  \"methods_count\": 47,\n"
         "  \"endpoints\": {\n"
         "    \"jsonrpc\": \"/jsonRPC\",\n"
         "    \"health\": \"/healthcheck\",\n"
@@ -245,6 +269,10 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     if (path == "/getMasterchainInfo")    rest_method = "getMasterchainInfo";
     else if (path == "/getConsensusBlock")      rest_method = "getConsensusBlock";
     else if (path == "/getAddressInformation")  rest_method = "getAddressInformation";
+    else if (path == "/getAccountCapability")   rest_method = "getAccountCapability";
+    else if (path == "/getAccountDelegations")  rest_method = "getAccountDelegations";
+    else if (path == "/getAccountSessions")     rest_method = "getAccountSessions";
+    else if (path == "/getAccountAgents")       rest_method = "getAccountAgents";
     else if (path == "/getAddressBalance")      rest_method = "getAddressBalance";
     else if (path == "/getAddressState")        rest_method = "getAddressState";
     else if (path == "/getWalletInformation")   rest_method = "getWalletInformation";
@@ -275,7 +303,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
 
     if (!rest_method.empty()) {
       // Build a JSON object from query parameters, parse it, and dispatch
-      auto json_str = query_string_to_json(query_string);
+      auto json_str = query_string_to_json(strip_api_key_param(query_string));
       auto buf = td::BufferSlice(json_str);
       auto json_r = td::json_decode(buf.as_slice());
       if (json_r.is_error()) {
@@ -325,6 +353,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     static const std::set<std::string> post_rest_paths = {
         "/detectAddress", "/detectHash", "/packAddress", "/unpackAddress",
         "/getAddressInformation", "/getExtendedAddressInformation",
+        "/getAccountCapability", "/getAccountDelegations", "/getAccountSessions", "/getAccountAgents",
         "/getWalletInformation", "/getAddressBalance", "/getAddressState",
         "/getTokenData",
         "/getMasterchainInfo", "/getConsensusBlock", "/lookupBlock",
@@ -336,7 +365,11 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
         "/getConfigParam", "/getConfigAll", "/getLibraries",
         "/runGetMethod", "/runGetMethodStd",
         "/sendBoc", "/sendBocReturnHash", "/sendBocReturnHashNoError",
-        "/sendQuery", "/estimateFee"
+        "/sendQuery", "/estimateFee",
+        "/buildTransactionIntent", "/getSigningPayload", "/submitSignedTransaction",
+        "/grantAccountDelegation", "/revokeAccountDelegation",
+        "/grantAccountSession", "/revokeAccountSession",
+        "/grantAccountAgent", "/revokeAccountAgent"
     };
     if (post_rest_paths.count(post_path)) {
       std::string rest_method = post_path.substr(1);  // strip leading /
@@ -427,23 +460,23 @@ void JsonRpcServer::on_body_ready(PayloadPtr payload, td::Promise<HttpReturn> pr
 void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
                                  td::Promise<HttpReturn> promise) {
   if (body.empty()) {
-    promise.set_value(make_json_error(-32700, "Empty request body", req_id));
+    promise.set_value(make_json_error(-32700, "Empty request body", req_id, opts_.cors_origin));
     return;
   }
 
   auto json_r = td::json_decode(body.as_slice());
   if (json_r.is_error()) {
-    promise.set_value(make_json_error(-32700, "Parse error: invalid JSON", req_id));
+    promise.set_value(make_json_error(-32700, "Parse error: invalid JSON", req_id, opts_.cors_origin));
     return;
   }
 
   auto json = json_r.move_as_ok();
   if (json.type() == td::JsonValue::Type::Array) {
-    promise.set_value(make_json_error(-32600, "Batch requests are not supported", req_id));
+    promise.set_value(make_json_error(-32600, "Batch requests are not supported", req_id, opts_.cors_origin));
     return;
   }
   if (json.type() != td::JsonValue::Type::Object) {
-    promise.set_value(make_json_error(-32600, "Invalid request: expected JSON object", req_id));
+    promise.set_value(make_json_error(-32600, "Invalid request: expected JSON object", req_id, opts_.cors_origin));
     return;
   }
 
@@ -552,7 +585,11 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
   // Write-method gate: reject send-family methods in readonly mode
   if (opts_.readonly &&
       (method == "sendBoc" || method == "sendBocReturnHash" ||
-       method == "sendBocReturnHashNoError" || method == "sendQuery")) {
+       method == "sendBocReturnHashNoError" || method == "sendQuery" ||
+       method == "submitSignedTransaction" ||
+       method == "grantAccountDelegation" || method == "revokeAccountDelegation" ||
+       method == "grantAccountSession" || method == "revokeAccountSession" ||
+       method == "grantAccountAgent" || method == "revokeAccountAgent")) {
     promise.set_value(make_json_error(-32601,
         "Write methods are disabled (server is in readonly mode)", req_id));
     return;
@@ -567,6 +604,26 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     handle_getAddressInformation(params, std::move(req_id), std::move(promise));
   } else if (method == "getExtendedAddressInformation") {
     handle_getExtendedAddressInformation(params, std::move(req_id), std::move(promise));
+  } else if (method == "getAccountCapability") {
+    handle_getAccountCapability(params, std::move(req_id), std::move(promise));
+  } else if (method == "getAccountDelegations") {
+    handle_getAccountDelegations(params, std::move(req_id), std::move(promise));
+  } else if (method == "getAccountSessions") {
+    handle_getAccountSessions(params, std::move(req_id), std::move(promise));
+  } else if (method == "getAccountAgents") {
+    handle_getAccountAgents(params, std::move(req_id), std::move(promise));
+  } else if (method == "grantAccountDelegation") {
+    handle_grantAccountDelegation(params, std::move(req_id), std::move(promise));
+  } else if (method == "revokeAccountDelegation") {
+    handle_revokeAccountDelegation(params, std::move(req_id), std::move(promise));
+  } else if (method == "grantAccountSession") {
+    handle_grantAccountSession(params, std::move(req_id), std::move(promise));
+  } else if (method == "revokeAccountSession") {
+    handle_revokeAccountSession(params, std::move(req_id), std::move(promise));
+  } else if (method == "grantAccountAgent") {
+    handle_grantAccountAgent(params, std::move(req_id), std::move(promise));
+  } else if (method == "revokeAccountAgent") {
+    handle_revokeAccountAgent(params, std::move(req_id), std::move(promise));
   } else if (method == "runGetMethod") {
     handle_runGetMethod(params, std::move(req_id), std::move(promise));
   } else if (method == "getWalletInformation") {
@@ -607,6 +664,12 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     handle_sendQuery(params, std::move(req_id), std::move(promise));
   } else if (method == "estimateFee") {
     handle_estimateFee(params, std::move(req_id), std::move(promise));
+  } else if (method == "buildTransactionIntent") {
+    handle_buildTransactionIntent(params, std::move(req_id), std::move(promise));
+  } else if (method == "getSigningPayload") {
+    handle_getSigningPayload(params, std::move(req_id), std::move(promise));
+  } else if (method == "submitSignedTransaction") {
+    handle_submitSignedTransaction(params, std::move(req_id), std::move(promise));
   // Convenience / address APIs
   } else if (method == "getAddressBalance") {
     handle_getAddressBalance(params, std::move(req_id), std::move(promise));
@@ -756,7 +819,7 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_cors_preflight(const std::string& 
   auto response = http::HttpResponse::create("HTTP/1.1", 204, "No Content", false, false).move_as_ok();
   response->add_header({"Access-Control-Allow-Origin", cors_origin});
   response->add_header({"Access-Control-Allow-Methods", "POST, GET, OPTIONS"});
-  response->add_header({"Access-Control-Allow-Headers", "Content-Type"});
+  response->add_header({"Access-Control-Allow-Headers", "Content-Type, X-API-Key"});
   response->add_header({"Access-Control-Max-Age", "86400"});
   response->add_header({"Content-Length", "0"});
   response->complete_parse_header();
@@ -806,6 +869,15 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_unauthorized(const std::strin
 
 // ─── API key check ──────────────────────────────────────────────────────
 
+static bool constant_time_compare(const std::string &a, const std::string &b) {
+  if (a.size() != b.size()) return false;
+  volatile unsigned char result = 0;
+  for (size_t i = 0; i < a.size(); i++) {
+    result |= static_cast<unsigned char>(a[i]) ^ static_cast<unsigned char>(b[i]);
+  }
+  return result == 0;
+}
+
 bool JsonRpcServer::check_api_key(const RequestPtr &request,
                                   td::Promise<HttpReturn> &promise) {
   if (opts_.api_key.empty()) {
@@ -814,7 +886,7 @@ bool JsonRpcServer::check_api_key(const RequestPtr &request,
 
   // Check X-API-Key header
   auto key_header = request->get_header("X-API-Key");
-  if (!key_header.empty() && key_header == opts_.api_key) {
+  if (!key_header.empty() && constant_time_compare(key_header, opts_.api_key)) {
     return true;
   }
 
@@ -833,7 +905,7 @@ bool JsonRpcServer::check_api_key(const RequestPtr &request,
       if (eq != std::string::npos) {
         auto key = token.substr(0, eq);
         auto val = token.substr(eq + 1);
-        if (key == "api_key" && val == opts_.api_key) {
+        if (key == "api_key" && constant_time_compare(val, opts_.api_key)) {
           return true;
         }
       }
@@ -850,7 +922,9 @@ bool JsonRpcServer::check_api_key(const RequestPtr &request,
 const std::set<std::string> &JsonRpcServer::cacheable_methods() {
   static const std::set<std::string> methods = {
       "getMasterchainInfo", "getConfigParam", "getConfigAll",
-      "getAddressInformation", "getWalletInformation", "getAddressBalance",
+      "getAddressInformation", "getAccountCapability",
+      "getAccountDelegations", "getAccountSessions", "getAccountAgents",
+      "getWalletInformation", "getAddressBalance",
       "getAddressState", "getBlockHeader", "lookupBlock", "shards",
       "getConsensusBlock", "getOutMsgQueueSize"
   };
@@ -923,7 +997,8 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
   // Check cache
   auto it = cache_.find(cache_key);
   if (it != cache_.end() && !it->second.expires_at.is_in_past()) {
-    // Cache hit — return cached response with the current request's id
+    // Cache hit — rebuild HTTP response from the cached body string, substituting
+    // the current request's id so that each caller gets the correct "id" field.
     cache_hits_.fetch_add(1);
     promise.set_value(make_json_ok(it->second.response_json, req_id));
     return;
@@ -949,20 +1024,22 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
           std::string body_str = body_slice.as_slice().str();
 
           if (body_str.find("\"ok\":true") != std::string::npos) {
-            // Extract the "result" JSON value from the body.
-            // Body format: {"ok":true,"jsonrpc":"2.0","id":...,"result":...}
-            auto result_pos = body_str.find("\"result\":");
-            if (result_pos != std::string::npos) {
-              std::string result_json = body_str.substr(result_pos + 9);
-              // Remove the trailing }
-              if (!result_json.empty() && result_json.back() == '}') {
-                result_json.pop_back();
+            // Extract the "result" JSON value using the td::JsonValue parser
+            // instead of fragile string searching.  This is safe even when
+            // the result payload itself contains a literal "result": string.
+            auto json_r = td::json_decode(td::MutableSlice(body_str));
+            if (json_r.is_ok() && json_r.ok().type() == td::JsonValue::Type::Object) {
+              auto &obj = json_r.ok_ref().get_object();
+              for (auto &fv : obj.field_values_) {
+                if (fv.first == "result") {
+                  auto encoded = td::json_encode<std::string>(fv.second);
+                  cache_[cache_key] = CacheEntry{std::move(encoded),
+                                                 td::Timestamp::in(static_cast<double>(ttl))};
+                  orig_promise.set_value(make_json_ok(cache_[cache_key].response_json,
+                                                      req_id, cors));
+                  return;
+                }
               }
-              cache_[cache_key] = CacheEntry{std::move(result_json),
-                                             td::Timestamp::in(static_cast<double>(ttl))};
-              orig_promise.set_value(make_json_ok(cache_[cache_key].response_json,
-                                                  req_id, cors));
-              return;
             }
           }
           // Could not extract result or not ok — rebuild and forward without caching

@@ -75,6 +75,10 @@ impl CommandManager {
                 cmd.run().await?;
                 Ok(None)
             }
+            Commands::Tx(cmd) => {
+                cmd.run().await?;
+                Ok(None)
+            }
             Commands::Observe(cmd) => {
                 cmd.run().await?;
                 Ok(None)

@@ -5,11 +5,13 @@ set(VALIDATOR_ENGINE_SOURCE
   json-rpc-server-internal.h
   json-rpc-server.cpp
   json-rpc-server-accounts.cpp
+  json-rpc-server-account-capability.cpp
   json-rpc-server-blocks.cpp
   json-rpc-server-transactions.cpp
   json-rpc-server-runmethod.cpp
   json-rpc-server-send.cpp
   json-rpc-server-config.cpp
+  json-rpc-server-token.cpp
   json-rpc-server-utils.cpp
   json-rpc-server-shared.cpp
 )

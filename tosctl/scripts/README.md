@@ -26,6 +26,21 @@ lifecycle, bookmarks, backup create/verify, and vote inspection.
 RPC_URL=http://10.0.0.1:2011 ./scripts/e2e-test.sh
 ```
 
+### `e2e-account-permission.sh`
+
+Deploys account-permission fixtures through the JSON-RPC deployer, then exercises:
+- `tosctl account capability/delegations/sessions/agents`
+- `tosctl account delegation-grant/delegation-revoke`
+- unsupported / immutable lifecycle behavior for session and agent mutations
+
+```bash
+# Run with defaults (RPC at 127.0.0.1:8011)
+./scripts/e2e-account-permission.sh
+
+# Override the RPC endpoint
+RPC_URL=http://10.0.0.1:8011 ./scripts/e2e-account-permission.sh
+```
+
 ### `e2e-jsonrpc-test.sh`
 
 Tests every JSON-RPC method exposed by the validator-engine embedded HTTP
