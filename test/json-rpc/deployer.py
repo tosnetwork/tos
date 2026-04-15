@@ -460,6 +460,15 @@ def deploy_all_wallets(endpoint: str) -> dict:
         except Exception as e:
             print(f"  FAILED: {e}")
             results[name] = {"address": None, "code_hash": None, "error": str(e)}
+
+    print("Deploying multisig...")
+    try:
+        info = deploy_multisig_contract(endpoint, dest_wc=0)
+        results["multisig"] = info
+        print(f"  -> {info['address']}  (code_hash={info['code_hash'][:16]}...)")
+    except Exception as e:
+        print(f"  FAILED: {e}")
+        results["multisig"] = {"address": None, "code_hash": None, "error": str(e)}
     return results
 
 
@@ -575,6 +584,61 @@ b>
     # Cleanup
     shutil.rmtree(str(working_dir))
     return {"address": full_addr, "code_hash": code_hash}
+
+
+def deploy_multisig_contract(
+    endpoint: str,
+    dest_wc: int = 0,
+    amount_nano: int = 1_000_000_000,
+    wallet_id: int = 0x4D534947,
+    n: int = 3,
+    k: int = 2,
+) -> dict:
+    """Deploy a minimal multisig contract with generated owner keys."""
+    if n <= 0 or k <= 0 or k > n:
+        raise ValueError("invalid multisig parameters")
+
+    owners_init = []
+    for idx in range(n):
+        key_name = f"multisig-owner-{idx}"
+        owners_init.append(
+            f'"{key_name}" load-generate-keypair constant owner{idx}_pk constant owner{idx}_pub'
+        )
+
+    owner_dict_build = ["dictnew"]
+    for idx in range(n):
+        owner_dict_build.append(f"{idx} owner{idx}_pub 256 B>u@ add-owner")
+
+    data_fift = """\
+{{ <b swap 256 u, 0 8 u, b> <s swap rot 8 udict! not abort"cannot add owner" }} : add-owner
+{owners_init}
+{owner_dict_build}
+<b
+  {wallet_id} 32 u,
+  {n} 8 u,
+  {k} 8 u,
+  0 64 u,
+  swap dict,
+  null dict,
+b>""".format(
+        owners_init="\n".join(owners_init),
+        owner_dict_build="\n".join(owner_dict_build),
+        wallet_id=wallet_id,
+        n=n,
+        k=k,
+    )
+
+    info = deploy_generic_contract(
+        endpoint,
+        code_fift='"auto/multisig-code.fif" include',
+        data_fift=data_fift,
+        dest_wc=dest_wc,
+        amount_nano=amount_nano,
+    )
+
+    info["n"] = n
+    info["k"] = k
+    return info
 
 
 # ── Token deployment (Jetton + NFT) ─────────────────────────────────────

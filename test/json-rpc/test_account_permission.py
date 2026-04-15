@@ -7,11 +7,27 @@ Covers:
   - getSigningPayload
   - submitSignedTransaction
 """
+import json
+from pathlib import Path
+
 import pytest
 
 ELECTOR_ADDRESS = "-1:3333333333333333333333333333333333333333333333333333333333333333"
 UNINITIALIZED_ADDRESS = "-1:1111111111111111111111111111111111111111111111111111111111111111"
 VALID_EMPTY_CELL_BOC = "te6ccgEBAQEAAgAAAA=="
+DEPLOYED_FILE = Path(__file__).parent / "deployed_addresses.json"
+
+
+def _load_deployed() -> dict:
+    if not DEPLOYED_FILE.exists():
+        return {}
+    return json.loads(DEPLOYED_FILE.read_text())
+
+
+@pytest.fixture(scope="module")
+def wallets():
+    data = _load_deployed()
+    return data.get("wallets", {})
 
 
 class TestGetAccountCapability:
@@ -40,6 +56,20 @@ class TestGetAccountCapability:
     def test_invalid_address(self, api_method_call):
         response = api_method_call(self.METHOD, address="invalid")
         assert response.json()["ok"] is False
+
+    def test_multisig_account_standard_support(self, api_method_call, wallets):
+        info = wallets.get("multisig")
+        if not info or not info.get("address"):
+            pytest.skip("multisig not deployed")
+        response = api_method_call(self.METHOD, address=info["address"])
+        assert response.status_code == 200, response.json().get("error")
+        data = response.json()
+        assert data["ok"] is True
+        result = data["result"]
+        assert result["account_model"] == "advanced.wallet.multisig"
+        assert result["supports_agents"] is True
+        assert result["agent_source"] == "account_standard"
+        assert result["capability_maturity"] == "supported"
 
 
 class TestBuildTransactionIntent:
@@ -215,3 +245,29 @@ class TestDeferredPermissionInspection:
         response = api_method_call(method_name, address="invalid")
         data = response.json()
         assert data["ok"] is False
+
+
+class TestAccountStandardAgentInspection:
+    METHOD = "getAccountAgents"
+
+    def test_multisig_agents(self, api_method_call, wallets):
+        info = wallets.get("multisig")
+        if not info or not info.get("address"):
+            pytest.skip("multisig not deployed")
+
+        response = api_method_call(self.METHOD, address=info["address"])
+        assert response.status_code == 200, response.json().get("error")
+        data = response.json()
+        assert data["ok"] is True
+        result = data["result"]
+        assert isinstance(result, list)
+        assert len(result) == info.get("n", 3)
+
+        for agent in result:
+            assert agent["@type"] == "account.agentCapability"
+            assert agent["account"] == info["address"]
+            assert agent["scope"] == "agent_execution"
+            assert agent["status"] == "active"
+            assert agent["constraints"]["threshold_n"] == info.get("n", 3)
+            assert agent["constraints"]["threshold_k"] == info.get("k", 2)
+            assert agent["principal"].startswith("ed25519:")
