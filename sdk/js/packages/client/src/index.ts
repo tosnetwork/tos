@@ -95,7 +95,7 @@ export type {
 } from "./provider/Signer.js";
 
 // open() and OpenedContract
-export { open } from "./provider/open.js";
+export { open, setCoreParser } from "./provider/open.js";
 export type { OpenedContract, ContractLike } from "./provider/open.js";
 
 // Client

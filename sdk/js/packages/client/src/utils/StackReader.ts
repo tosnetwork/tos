@@ -66,8 +66,8 @@ function cellBytesFromEntry(entry: unknown): string {
     return String(cell?.["bytes"] ?? "");
   }
 
-  // Compact-array: ["cell", { "bytes": "..." }]
-  if (Array.isArray(entry) && entry[0] === "cell") {
+  // Compact-array: ["cell", { "bytes": "..." }] or ["slice", { "bytes": "..." }]
+  if (Array.isArray(entry) && (entry[0] === "cell" || entry[0] === "slice")) {
     const cell = entry[1] as Record<string, unknown>;
     return String(cell?.["bytes"] ?? "");
   }

@@ -27,6 +27,16 @@ function loadEnvTest(): Record<string, string> {
 }
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@tos/core": resolve(__dirname, "packages/core/src/index.ts"),
+      "@tos/crypto": resolve(__dirname, "packages/crypto/src/index.ts"),
+      "@tos/client": resolve(__dirname, "packages/client/src/index.ts"),
+      "@tos/wallets": resolve(__dirname, "packages/wallets/src/index.ts"),
+      "@tos/contracts": resolve(__dirname, "packages/contracts/src/index.ts"),
+      "@tos/sdk": resolve(__dirname, "packages/sdk/src/index.ts"),
+    },
+  },
   test: {
     globals: true,
     environment: "node",

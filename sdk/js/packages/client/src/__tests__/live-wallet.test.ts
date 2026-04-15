@@ -13,14 +13,15 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { TosClient, Networks, open, waitForSeqnoChange } from "../index.js";
+import { TosClient, Networks, open, waitForSeqnoChange, setCoreParser } from "../index.js";
 
-// Cross-package imports via relative paths (workspace packages are not
-// declared as dependencies of @tos/client, so bare specifiers don't resolve
-// in Vite's module graph).
-import { mnemonicToPrivateKey } from "../../../crypto/src/index.js";
-import { WalletV4R2, KeyPairSigner } from "../../../wallets/src/index.js";
-import { toNano } from "../../../core/src/index.js";
+import { mnemonicToPrivateKey } from "@tos/crypto";
+import { Cell } from "@tos/core";
+
+// Register Cell parser for RichStackReader
+setCoreParser(Cell);
+import { WalletV4R2, KeyPairSigner } from "@tos/wallets";
+import { toNano } from "@tos/core";
 
 // ---------------------------------------------------------------------------
 // Setup

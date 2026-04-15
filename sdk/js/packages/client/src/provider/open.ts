@@ -22,9 +22,38 @@
  */
 
 import type { TosProvider, AddressLike, CellLike } from "./TosProvider.js";
-import type { ContractProvider, ContractGetResult, ContractState, SendConfirmation, SenderArguments } from "./ContractProvider.js";
+import type { ContractProvider, ContractGetResult, ContractState, SendConfirmation, SenderArguments, StackReader as IStackReader } from "./ContractProvider.js";
 import type { TupleItemLike } from "./TosProvider.js";
 import { StackReaderImpl } from "../utils/StackReader.js";
+
+// Cell/Address parser for RichStackReader. Injected via setCoreParser().
+let _cellFromBase64: ((b64: string) => unknown) | null = null;
+let _addressFromCell: ((b64: string) => unknown) | null = null;
+
+/**
+ * Inject @tos/core parsing functions so the RichStackReader can convert
+ * base64 BOC strings into actual Cell and Address objects.
+ * Call this once at app startup:
+ *   import { Cell } from "@tos/core";
+ *   import { setCoreParser } from "@tos/client";
+ *   setCoreParser(Cell);
+ */
+export function setCoreParser(CellClass: {
+  fromBase64(b64: string): { beginParse(): { loadAddress(): unknown } };
+}): void {
+  _cellFromBase64 = (b64: string) => CellClass.fromBase64(b64);
+  _addressFromCell = (b64: string) => CellClass.fromBase64(b64).beginParse().loadAddress();
+}
+
+// Auto-detect @tos/core if available (CJS environments)
+try {
+  const g = globalThis as Record<string, unknown>;
+  const r = g["require"] as ((m: string) => Record<string, unknown>) | undefined;
+  if (typeof r === "function") {
+    const core = r("@tos/core") as Record<string, unknown>;
+    if (core?.Cell) setCoreParser(core.Cell as Parameters<typeof setCoreParser>[0]);
+  }
+} catch { /* @tos/core not available at load time */ }
 
 // ---------------------------------------------------------------------------
 // Minimal Contract shape (avoid importing @tos/core at runtime)
@@ -88,7 +117,8 @@ function makeContractProvider(address: AddressLike, client: TosProvider, contrac
       return {
         gasUsed: result.gas_used,
         exitCode: result.exit_code,
-        stack: new StackReaderImpl(result.stack),
+        // C++ JSON-RPC returns stack top-first; reverse to bottom-first for sequential reading
+        stack: new RichStackReader(new StackReaderImpl([...result.stack].reverse())),
       };
     },
 
@@ -177,4 +207,35 @@ function base64ToBytes(b64: string): Uint8Array {
     bytes[i] = binary.charCodeAt(i);
   }
   return bytes;
+}
+
+/**
+ * Wraps a raw StackReaderImpl to parse base64 cell/slice entries into actual
+ * @tos/core Cell and Address objects using the injected parser.
+ */
+class RichStackReader implements IStackReader {
+  private inner: StackReaderImpl;
+  constructor(inner: StackReaderImpl) { this.inner = inner; }
+
+  get remaining(): number { return this.inner.remaining; }
+  readBigNumber(): bigint { return this.inner.readBigNumber(); }
+  readNumber(): number { return this.inner.readNumber(); }
+  readBoolean(): boolean { return this.inner.readBoolean(); }
+  readTuple(): IStackReader { return new RichStackReader(this.inner.readTuple() as StackReaderImpl); }
+
+  readCell(): unknown {
+    const b64 = this.inner.readCell() as string;
+    return _cellFromBase64 ? _cellFromBase64(b64) : b64;
+  }
+
+  readCellOpt(): unknown | null {
+    const val = this.inner.readCellOpt();
+    if (val === null) return null;
+    return (_cellFromBase64 && typeof val === "string") ? _cellFromBase64(val) : val;
+  }
+
+  readAddress(): unknown {
+    const b64 = this.inner.readAddress() as string;
+    return _addressFromCell ? _addressFromCell(b64) : b64;
+  }
 }
