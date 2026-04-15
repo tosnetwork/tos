@@ -7,6 +7,7 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use crate::v2::data_models::{
+    AccountAgentCapability, AccountCapabilityRes, AccountDelegationGrant, AccountSessionCapability,
     GetAddressInformationRes, GetBlockTransactionsRes, GetExtendedAddressInformationRes,
     GetMasterchainInfoRes, GetShardsRes, GetTransactionsRes, GetWalletInformationRes,
     RunGetMethodParams, RunGetMethodRes,
@@ -243,6 +244,92 @@ impl ClientJsonRpc {
         })?;
         let address_info = serde_json::from_value::<GetAddressInformationRes>(res)?;
         Ok(address_info)
+    }
+
+    pub async fn get_account_capability(
+        &self,
+        address: &MsgAddressInt,
+        seqno: Option<u32>,
+        include_experimental: bool,
+    ) -> anyhow::Result<AccountCapabilityRes> {
+        let mut json_params = serde_json::json!({
+            "address": address.to_string(),
+        });
+        if let Some(seqno) = seqno {
+            json_params["seqno"] = serde_json::json!(seqno);
+        }
+        if include_experimental {
+            json_params["include_experimental"] = serde_json::json!(true);
+        }
+        let json_params_str = json_params.to_string();
+        let res = self.json_rpc("getAccountCapability", json_params).await.map_err(|e| {
+            anyhow::anyhow!(
+                "Request `getAccountCapability({})` return error: {}",
+                json_params_str,
+                e
+            )
+        })?;
+        Ok(serde_json::from_value::<AccountCapabilityRes>(res)?)
+    }
+
+    pub async fn get_account_delegations(
+        &self,
+        address: &MsgAddressInt,
+        include_inactive: bool,
+    ) -> anyhow::Result<Vec<AccountDelegationGrant>> {
+        let json_params = serde_json::json!({
+            "address": address.to_string(),
+            "include_inactive": include_inactive,
+        });
+        let json_params_str = json_params.to_string();
+        let res = self.json_rpc("getAccountDelegations", json_params).await.map_err(|e| {
+            anyhow::anyhow!(
+                "Request `getAccountDelegations({})` return error: {}",
+                json_params_str,
+                e
+            )
+        })?;
+        Ok(serde_json::from_value::<Vec<AccountDelegationGrant>>(res)?)
+    }
+
+    pub async fn get_account_sessions(
+        &self,
+        address: &MsgAddressInt,
+        include_inactive: bool,
+    ) -> anyhow::Result<Vec<AccountSessionCapability>> {
+        let json_params = serde_json::json!({
+            "address": address.to_string(),
+            "include_inactive": include_inactive,
+        });
+        let json_params_str = json_params.to_string();
+        let res = self.json_rpc("getAccountSessions", json_params).await.map_err(|e| {
+            anyhow::anyhow!(
+                "Request `getAccountSessions({})` return error: {}",
+                json_params_str,
+                e
+            )
+        })?;
+        Ok(serde_json::from_value::<Vec<AccountSessionCapability>>(res)?)
+    }
+
+    pub async fn get_account_agents(
+        &self,
+        address: &MsgAddressInt,
+        include_inactive: bool,
+    ) -> anyhow::Result<Vec<AccountAgentCapability>> {
+        let json_params = serde_json::json!({
+            "address": address.to_string(),
+            "include_inactive": include_inactive,
+        });
+        let json_params_str = json_params.to_string();
+        let res = self.json_rpc("getAccountAgents", json_params).await.map_err(|e| {
+            anyhow::anyhow!(
+                "Request `getAccountAgents({})` return error: {}",
+                json_params_str,
+                e
+            )
+        })?;
+        Ok(serde_json::from_value::<Vec<AccountAgentCapability>>(res)?)
     }
 
     // ─── New methods for P0 operator commands ──────────────────────────

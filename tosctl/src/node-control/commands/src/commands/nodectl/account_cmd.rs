@@ -10,7 +10,13 @@
 use super::output_format::OutputFormat;
 use super::utils::{save_config, try_create_rpc_client};
 use chain_block::MsgAddressInt;
-use chain_rpc_client::v2::{RPCStackEntry, data_models::RunGetMethodParams};
+use chain_rpc_client::v2::{
+    RPCStackEntry,
+    data_models::{
+        AccountAgentCapability, AccountDelegationGrant, AccountSessionCapability,
+        RunGetMethodParams,
+    },
+};
 use colored::Colorize;
 use common::{app_config::AppConfig, chain_utils::display_tos, time_format::format_ts};
 use std::{path::Path, str::FromStr};
@@ -37,6 +43,14 @@ pub struct AccountCmd {
 pub enum AccountAction {
     /// Account status and summary
     Status(AccountStatusCmd),
+    /// Account capability discovery
+    Capability(AccountCapabilityCmd),
+    /// Account delegations inspection
+    Delegations(AccountDelegationsCmd),
+    /// Account sessions inspection
+    Sessions(AccountSessionsCmd),
+    /// Account agents inspection
+    Agents(AccountAgentsCmd),
     /// Account transaction history
     Txs(AccountTxsCmd),
     /// Bookmark management
@@ -58,6 +72,61 @@ pub struct AccountStatusCmd {
     address: String,
 
     /// Output format: table or json
+    #[arg(short, long, default_value = "table")]
+    format: OutputFormat,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Inspect account capability")]
+pub struct AccountCapabilityCmd {
+    #[arg(long)]
+    address: String,
+
+    #[arg(long)]
+    seqno: Option<u32>,
+
+    #[arg(long, default_value_t = false)]
+    include_experimental: bool,
+
+    #[arg(short, long, default_value = "table")]
+    format: OutputFormat,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Inspect account delegations")]
+pub struct AccountDelegationsCmd {
+    #[arg(long)]
+    address: String,
+
+    #[arg(long, default_value_t = false)]
+    include_inactive: bool,
+
+    #[arg(short, long, default_value = "table")]
+    format: OutputFormat,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Inspect account sessions")]
+pub struct AccountSessionsCmd {
+    #[arg(long)]
+    address: String,
+
+    #[arg(long, default_value_t = false)]
+    include_inactive: bool,
+
+    #[arg(short, long, default_value = "table")]
+    format: OutputFormat,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(about = "Inspect account agents")]
+pub struct AccountAgentsCmd {
+    #[arg(long)]
+    address: String,
+
+    #[arg(long, default_value_t = false)]
+    include_inactive: bool,
+
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
 }
@@ -169,6 +238,10 @@ impl AccountCmd {
     pub async fn run(&self) -> anyhow::Result<()> {
         match &self.action {
             AccountAction::Status(cmd) => cmd.run(&self.config).await,
+            AccountAction::Capability(cmd) => cmd.run(&self.config).await,
+            AccountAction::Delegations(cmd) => cmd.run(&self.config).await,
+            AccountAction::Sessions(cmd) => cmd.run(&self.config).await,
+            AccountAction::Agents(cmd) => cmd.run(&self.config).await,
             AccountAction::Txs(cmd) => cmd.run(&self.config).await,
             AccountAction::Bookmark(cmd) => cmd.run(&self.config).await,
             AccountAction::RunMethod(cmd) => cmd.run(&self.config).await,
@@ -245,6 +318,209 @@ impl AccountStatusCmd {
             println!();
         }
 
+        Ok(())
+    }
+}
+
+fn parse_account_address(address: &str) -> anyhow::Result<MsgAddressInt> {
+    MsgAddressInt::from_str(address)
+        .map_err(|e| anyhow::anyhow!("Invalid address '{}': {}", address, e))
+}
+
+fn print_permission_objects_json<T: serde::Serialize>(items: &[T]) -> anyhow::Result<()> {
+    println!("{}", serde_json::to_string_pretty(items)?);
+    Ok(())
+}
+
+fn print_delegations_table(items: &[AccountDelegationGrant]) {
+    println!();
+    println!("  {}", "Account Delegations".bold());
+    println!("  {}", "\u{2500}".repeat(92));
+    println!(
+        "  {:<18} {:<16} {:<12} {:<12} {}",
+        "ID".bold(),
+        "Grantee".bold(),
+        "Scope".bold(),
+        "Status".bold(),
+        "Expires".bold(),
+    );
+    println!("  {}", "\u{2500}".repeat(92));
+    if items.is_empty() {
+        println!("  (no delegations)");
+    } else {
+        for item in items {
+            let grantee = if item.grantee.len() > 16 { &item.grantee[..16] } else { &item.grantee };
+            let expires = item
+                .expires_at
+                .map(format_ts)
+                .unwrap_or_else(|| "-".to_string());
+            println!(
+                "  {:<18} {:<16} {:<12} {:<12} {}",
+                item.id,
+                grantee,
+                item.scope,
+                item.status,
+                expires,
+            );
+        }
+    }
+    println!();
+}
+
+fn print_sessions_table(items: &[AccountSessionCapability]) {
+    println!();
+    println!("  {}", "Account Sessions".bold());
+    println!("  {}", "\u{2500}".repeat(88));
+    println!(
+        "  {:<18} {:<16} {:<18} {:<12} {}",
+        "Session ID".bold(),
+        "Principal".bold(),
+        "Scope".bold(),
+        "Status".bold(),
+        "Expires".bold(),
+    );
+    println!("  {}", "\u{2500}".repeat(88));
+    if items.is_empty() {
+        println!("  (no sessions)");
+    } else {
+        for item in items {
+            let principal =
+                if item.principal.len() > 16 { &item.principal[..16] } else { &item.principal };
+            let expires = item
+                .expires_at
+                .map(format_ts)
+                .unwrap_or_else(|| "-".to_string());
+            println!(
+                "  {:<18} {:<16} {:<18} {:<12} {}",
+                item.session_id,
+                principal,
+                item.scope,
+                item.status,
+                expires,
+            );
+        }
+    }
+    println!();
+}
+
+fn print_agents_table(items: &[AccountAgentCapability]) {
+    println!();
+    println!("  {}", "Account Agents".bold());
+    println!("  {}", "\u{2500}".repeat(88));
+    println!(
+        "  {:<18} {:<16} {:<18} {:<12} {}",
+        "Agent ID".bold(),
+        "Principal".bold(),
+        "Scope".bold(),
+        "Status".bold(),
+        "Expires".bold(),
+    );
+    println!("  {}", "\u{2500}".repeat(88));
+    if items.is_empty() {
+        println!("  (no agents)");
+    } else {
+        for item in items {
+            let principal =
+                if item.principal.len() > 16 { &item.principal[..16] } else { &item.principal };
+            let expires = item
+                .expires_at
+                .map(format_ts)
+                .unwrap_or_else(|| "-".to_string());
+            println!(
+                "  {:<18} {:<16} {:<18} {:<12} {}",
+                item.agent_id,
+                principal,
+                item.scope,
+                item.status,
+                expires,
+            );
+        }
+    }
+    println!();
+}
+
+impl AccountCapabilityCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let config = AppConfig::load(Path::new(config_path))?;
+        let rpc_client = try_create_rpc_client(&config).await?;
+        let address = parse_account_address(&self.address)?;
+        let capability = rpc_client
+            .get_account_capability(&address, self.seqno, self.include_experimental)
+            .await?;
+
+        if self.format == OutputFormat::Json {
+            println!("{}", serde_json::to_string_pretty(&capability)?);
+        } else {
+            println!();
+            println!("  {}", "Account Capability".bold());
+            println!("  {}", "\u{2500}".repeat(36));
+            println!("  {:<22} {}", "Address:".dimmed(), capability.address);
+            println!("  {:<22} {}", "Account model:".dimmed(), capability.account_model);
+            println!(
+                "  {:<22} {}",
+                "Authorization ver.:".dimmed(),
+                capability.authorization_version
+            );
+            println!("  {:<22} {}", "Account state:".dimmed(), capability.account_state);
+            println!("  {:<22} {}", "Revision:".dimmed(), capability.revision);
+            println!("  {:<22} {}", "Delegation support:".dimmed(), capability.supports_delegation);
+            println!("  {:<22} {}", "Session support:".dimmed(), capability.supports_sessions);
+            println!("  {:<22} {}", "Agent support:".dimmed(), capability.supports_agents);
+            println!("  {:<22} {}", "Delegation source:".dimmed(), capability.delegation_source);
+            println!("  {:<22} {}", "Session source:".dimmed(), capability.session_source);
+            println!("  {:<22} {}", "Agent source:".dimmed(), capability.agent_source);
+            println!("  {:<22} {}", "Capability maturity:".dimmed(), capability.capability_maturity);
+            if let Some(supported) = capability.supports_sponsorship {
+                println!("  {:<22} {}", "Sponsorship support:".dimmed(), supported);
+            }
+            println!();
+        }
+
+        Ok(())
+    }
+}
+
+impl AccountDelegationsCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let config = AppConfig::load(Path::new(config_path))?;
+        let rpc_client = try_create_rpc_client(&config).await?;
+        let address = parse_account_address(&self.address)?;
+        let items = rpc_client.get_account_delegations(&address, self.include_inactive).await?;
+        if self.format == OutputFormat::Json {
+            print_permission_objects_json(&items)?;
+        } else {
+            print_delegations_table(&items);
+        }
+        Ok(())
+    }
+}
+
+impl AccountSessionsCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let config = AppConfig::load(Path::new(config_path))?;
+        let rpc_client = try_create_rpc_client(&config).await?;
+        let address = parse_account_address(&self.address)?;
+        let items = rpc_client.get_account_sessions(&address, self.include_inactive).await?;
+        if self.format == OutputFormat::Json {
+            print_permission_objects_json(&items)?;
+        } else {
+            print_sessions_table(&items);
+        }
+        Ok(())
+    }
+}
+
+impl AccountAgentsCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        let config = AppConfig::load(Path::new(config_path))?;
+        let rpc_client = try_create_rpc_client(&config).await?;
+        let address = parse_account_address(&self.address)?;
+        let items = rpc_client.get_account_agents(&address, self.include_inactive).await?;
+        if self.format == OutputFormat::Json {
+            print_permission_objects_json(&items)?;
+        } else {
+            print_agents_table(&items);
+        }
         Ok(())
     }
 }

@@ -210,6 +210,75 @@ pub struct GetWalletInformationRes {
     pub wallet_id: Option<u64>,
 }
 
+// ─── account capability / permission inspection responses ───────────
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+pub struct AccountCapabilityRes {
+    #[serde(rename = "@type")]
+    pub r#type: Option<String>,
+    pub address: String,
+    pub account_model: String,
+    pub authorization_version: String,
+    pub supports_delegation: bool,
+    pub supports_sessions: bool,
+    pub supports_agents: bool,
+    pub delegation_source: String,
+    pub session_source: String,
+    pub agent_source: String,
+    pub capability_maturity: String,
+    pub account_state: String,
+    pub revision: i64,
+    #[serde(default)]
+    pub supports_sponsorship: Option<bool>,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+pub struct AccountDelegationGrant {
+    #[serde(rename = "@type")]
+    pub r#type: Option<String>,
+    pub id: String,
+    pub grantor: String,
+    pub grantee: String,
+    pub scope: String,
+    pub constraints: serde_json::Value,
+    pub created_at: Option<u64>,
+    pub expires_at: Option<u64>,
+    pub revoked_at: Option<u64>,
+    pub revocable: bool,
+    pub revocation_reference: Option<String>,
+    pub status: String,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+pub struct AccountSessionCapability {
+    #[serde(rename = "@type")]
+    pub r#type: Option<String>,
+    pub session_id: String,
+    pub principal: String,
+    pub scope: String,
+    pub constraints: serde_json::Value,
+    pub created_at: Option<u64>,
+    pub expires_at: Option<u64>,
+    pub revoked_at: Option<u64>,
+    pub revocable: bool,
+    pub status: String,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+pub struct AccountAgentCapability {
+    #[serde(rename = "@type")]
+    pub r#type: Option<String>,
+    pub agent_id: String,
+    pub principal: String,
+    pub scope: String,
+    pub constraints: serde_json::Value,
+    pub created_at: Option<u64>,
+    pub expires_at: Option<u64>,
+    pub revoked_at: Option<u64>,
+    pub revocable: bool,
+    pub status: String,
+}
+
 // ─── getMasterchainInfo response ─────────────────────────────────────
 
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
