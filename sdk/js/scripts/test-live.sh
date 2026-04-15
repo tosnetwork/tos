@@ -12,7 +12,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-echo "Testing against local node at http://localhost:8081..."
+echo "Testing against local node at http://127.0.0.1:8011..."
 echo ""
 
 pnpm vitest run 'packages/client/src/__tests__/live'

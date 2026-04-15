@@ -7,4 +7,5 @@ export type { JettonData, JettonContent } from './jetton/types';
 // NFT (TEP-62)
 export { NftCollection } from './nft/NftCollection';
 export { NftItem } from './nft/NftItem';
+export { NFT_COLLECTION_CODE_HEX, NFT_ITEM_CODE_HEX } from './nft/codes';
 export type { NftCollectionData, NftItemData } from './nft/types';
