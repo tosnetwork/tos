@@ -299,15 +299,21 @@ export class BitReader {
         const type = Number(this._preloadUint(2, this._offset));
         if (type !== 2) throw new Error('Invalid address');
 
-        // Skip anycast
-        if (this._preloadUint(1, this._offset + 2) !== 0n) {
-            const rewriteDepth = Number(this._preloadUint(5, this._offset + 3));
-            this._offset += 5 + rewriteDepth;
+        let off = this._offset + 2; // skip type bits (2)
+
+        // Anycast: 1-bit flag, then anycast_info if set
+        const anycast = Number(this._preloadUint(1, off));
+        off += 1;
+        if (anycast !== 0) {
+            const rewriteDepth = Number(this._preloadUint(5, off));
+            off += 5 + rewriteDepth; // skip depth(5) + rewrite_pfx(depth)
         }
 
-        const wc = Number(this._preloadInt(8, this._offset + 3));
-        const hash = this._preloadBuffer(32, this._offset + 11);
-        this._offset += 267;
+        const wc = Number(this._preloadInt(8, off));
+        off += 8;
+        const hash = this._preloadBuffer(32, off);
+        off += 256;
+        this._offset = off;
         return new Address(wc, hash);
     }
 

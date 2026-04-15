@@ -28,7 +28,7 @@ export class BitBuilder {
 
     writeBit(value: boolean | number): void {
         const n = this._length;
-        if (n > this._buffer.length * 8) {
+        if (n >= this._buffer.length * 8) {
             throw new Error('BitBuilder overflow');
         }
         if (

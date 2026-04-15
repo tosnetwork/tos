@@ -52,8 +52,10 @@ export async function waitForTransaction(
   while (Date.now() < deadline) {
     try {
       const result = await client.getTransactions(address, 10);
-      const found = result.transactions?.find(
-        (tx) => tx.transaction_id?.hash === hash,
+      // C++ RPC may return a raw array or a { transactions: [...] } wrapper
+      const txns = Array.isArray(result) ? result : ((result as unknown as Record<string, unknown>).transactions as unknown[] ?? []);
+      const found = (txns as Array<Record<string, unknown>>).find(
+        (tx) => (tx.transaction_id as Record<string, unknown>)?.hash === hash,
       );
       if (found) return found;
     } catch {

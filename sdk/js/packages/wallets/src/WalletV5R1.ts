@@ -64,7 +64,7 @@ import { createInternalMessage, defaultValidUntil } from "./utils.js";
  * We use a simplified numeric walletId for consistency.
  */
 const DEFAULT_NETWORK_GLOBAL_ID = -239;
-const DEFAULT_WALLET_VERSION = 0;
+// DEFAULT_WALLET_VERSION removed — TOS V5 uses plain subwallet_id, not packed context
 const DEFAULT_SUBWALLET_NUMBER = 0;
 
 /** Action opcode for sending a message */
@@ -80,32 +80,12 @@ const MAX_MESSAGES = 255;
 // ---------------------------------------------------------------------------
 
 /**
- * Encode the V5-style wallet ID from its component parts.
+ * Default wallet ID (subwallet number) for V5.
  *
- * The wallet ID is a 32-bit value computed as:
- *   (networkGlobalId ^ context)
- * where context encodes workchain, version, and subwallet.
- *
- * In practice, the V5 walletId is stored as a 32-bit signed integer
- * that packs all the identity components.
+ * The TOS V5 contract stores wallet_id as a plain uint32 subwallet number.
+ * The global_id (network anti-replay) is a separate field in the signed message,
+ * checked against the on-chain GLOBALID TVM primitive.
  */
-function encodeWalletId(
-  networkGlobalId: number,
-  workchain: number,
-  walletVersion: number = DEFAULT_WALLET_VERSION,
-  subwalletNumber: number = DEFAULT_SUBWALLET_NUMBER,
-): number {
-  // V5 walletId encoding: globalId is used alongside a context value
-  // context = walletVersion * 2^24 + workchain_adjusted * 2^16 + subwalletNumber
-  // The final walletId = networkGlobalId XOR context
-  // Simplified: we store the components packed into 32 bits
-  const workchainByte = workchain & 0xFF;
-  const context =
-    ((walletVersion & 0xFF) << 24) |
-    ((workchainByte & 0xFF) << 16) |
-    (subwalletNumber & 0xFFFF);
-  return networkGlobalId ^ context;
-}
 
 // ---------------------------------------------------------------------------
 // Action list builder
@@ -153,6 +133,7 @@ export class WalletV5R1 implements Wallet {
   readonly address: Address;
   readonly init: StateInit;
   readonly walletId: number;
+  readonly networkGlobalId: number;
   readonly publicKey: Uint8Array;
 
   private constructor(
@@ -160,11 +141,13 @@ export class WalletV5R1 implements Wallet {
     init: StateInit,
     publicKey: Uint8Array,
     walletId: number,
+    networkGlobalId: number,
   ) {
     this.address = address;
     this.init = init;
     this.publicKey = publicKey;
     this.walletId = walletId;
+    this.networkGlobalId = networkGlobalId;
   }
 
   /**
@@ -189,30 +172,21 @@ export class WalletV5R1 implements Wallet {
     publicKey: Uint8Array;
     workchain?: number;
     networkGlobalId?: number;
-    walletVersion?: number;
     subwalletNumber?: number;
   }): WalletV5R1 {
     const workchain = args.workchain ?? 0;
     const networkGlobalId = args.networkGlobalId ?? DEFAULT_NETWORK_GLOBAL_ID;
-    const walletVersion = args.walletVersion ?? DEFAULT_WALLET_VERSION;
-    const subwalletNumber = args.subwalletNumber ?? DEFAULT_SUBWALLET_NUMBER;
-
-    const walletId = encodeWalletId(
-      networkGlobalId,
-      workchain,
-      walletVersion,
-      subwalletNumber,
-    );
+    const walletId = args.subwalletNumber ?? DEFAULT_SUBWALLET_NUMBER;
 
     const code = Cell.fromBoc(hexToBytes(WALLET_V5R1_CODE))[0]!;
 
-    // Initial data:
+    // Initial data layout (matches TOS V5 contract):
     //   isSignatureAllowed:bool(1)  seqno:uint32(0)
-    //   walletId:int32  publicKey:bits256  extensions:dict(empty)
+    //   walletId:uint32  publicKey:bits256  extensions:dict(empty)
     const data = beginCell()
       .storeBit(true)                // isSignatureAllowed = true
       .storeUint(0, 32)             // seqno = 0
-      .storeInt(walletId, 32)       // walletId (signed)
+      .storeUint(walletId, 32)      // walletId (unsigned, plain subwallet number)
       .storeBuffer(args.publicKey)   // 256-bit public key
       .storeUint(0, 1)             // empty extensions dict
       .endCell();
@@ -220,7 +194,7 @@ export class WalletV5R1 implements Wallet {
     const init: StateInit = { code, data };
     const address = contractAddress(workchain, init);
 
-    return new WalletV5R1(address, init, args.publicKey, walletId);
+    return new WalletV5R1(address, init, args.publicKey, walletId, networkGlobalId);
   }
 
   // -------------------------------------------------------------------------
@@ -253,8 +227,11 @@ export class WalletV5R1 implements Wallet {
   /**
    * Build a signing message for an external auth transfer.
    *
-   * V5 format: opcode:uint32 walletId:int32 validUntil:uint32 seqno:uint32
-   *            out_actions:(Maybe ^OutList) has_extended_actions:Bool(false)
+   * TOS V5 signed message format:
+   *   opcode:uint32  global_id:int32  wallet_id:uint32
+   *   valid_until:uint32  seqno:uint32
+   *   out_actions:(Maybe ^OutList)  has_extended_actions:Bool(false)
+   *   (signature appended after this body)
    */
   private buildSigningMessage(
     seqno: number,
@@ -272,7 +249,8 @@ export class WalletV5R1 implements Wallet {
 
     return beginCell()
       .storeUint(AUTH_SIGNED_EXTERNAL, 32)
-      .storeInt(this.walletId, 32)
+      .storeInt(this.networkGlobalId, 32)  // global_id (anti-replay, checked via GLOBALID TVM)
+      .storeUint(this.walletId, 32)        // wallet_id (plain subwallet number, unsigned)
       .storeUint(until, 32)
       .storeUint(seqno, 32)
       .storeMaybeRef(actionList)
@@ -343,11 +321,12 @@ export class WalletV5R1 implements Wallet {
   ): Promise<void> {
     const deployMessage = beginCell()
       .storeUint(AUTH_SIGNED_EXTERNAL, 32)
-      .storeInt(this.walletId, 32)
-      .storeUint(0xFFFFFFFF, 32) // validUntil = max
-      .storeUint(0, 32)          // seqno = 0
-      .storeMaybeRef(null)        // no out actions
-      .storeBit(false)            // no extended actions
+      .storeInt(this.networkGlobalId, 32) // global_id
+      .storeUint(this.walletId, 32)       // wallet_id (unsigned)
+      .storeUint(0xFFFFFFFF, 32)          // validUntil = max
+      .storeUint(0, 32)                   // seqno = 0
+      .storeMaybeRef(null)                // no out actions
+      .storeBit(false)                    // no extended actions
       .endCell();
 
     const signature = await via.sign(deployMessage.hash());

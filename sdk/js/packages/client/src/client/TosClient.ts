@@ -730,13 +730,14 @@ function serializeStack(stack: TupleItemLike[]): unknown[] {
   return stack.map((item) => {
     switch (item.type) {
       case "int":
-        return ["num", item.value.toString()];
+        // C++ expects hex-prefixed string for integer stack entries
+        return ["num", "0x" + item.value.toString(16)];
       case "cell":
-        return ["tvm.Cell", toBocString(item.cell)];
+        return ["cell", { bytes: toBocString(item.cell) }];
       case "slice":
-        return ["tvm.Slice", toBocString(item.cell)];
+        return ["slice", { bytes: toBocString(item.cell) }];
       case "builder":
-        return ["tvm.Builder", toBocString(item.cell)];
+        return ["builder", { bytes: toBocString(item.cell) }];
       case "null":
         return ["null", ""];
       default:

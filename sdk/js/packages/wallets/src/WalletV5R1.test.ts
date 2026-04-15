@@ -100,8 +100,12 @@ describe("WalletV5R1", () => {
     const opcode = slice.loadUint(32);
     expect(opcode).toBe(AUTH_SIGNED_EXTERNAL);
 
-    // walletId:int32 (V5 uses signed int)
-    const walletId = slice.loadInt(32);
+    // global_id:int32 (TOS V5 anti-replay)
+    const globalId = slice.loadInt(32);
+    expect(globalId).toBe(wallet.networkGlobalId);
+
+    // walletId:uint32 (plain subwallet number)
+    const walletId = slice.loadUint(32);
     expect(walletId).toBe(wallet.walletId);
 
     // validUntil:uint32
@@ -137,7 +141,8 @@ describe("WalletV5R1", () => {
 
     const extSlice = transfer.beginParse();
     extSlice.loadUint(32);   // opcode
-    extSlice.loadInt(32);    // walletId
+    extSlice.loadInt(32);    // global_id
+    extSlice.loadUint(32);   // walletId
     extSlice.loadUint(32);   // validUntil
     extSlice.loadUint(32);   // seqno
     extSlice.loadBit();      // maybe-ref out_actions = true
@@ -179,16 +184,19 @@ describe("WalletV5R1", () => {
 
     const slice = transfer.beginParse();
     const opcode = slice.loadUint(32);
-    const walletId = slice.loadInt(32);
+    const globalId = slice.loadInt(32);
+    const walletId = slice.loadUint(32);
     const validUntil = slice.loadUint(32);
     const seqno = slice.loadUint(32);
     const outActions = slice.loadMaybeRef();
     const hasExtendedActions = slice.loadBit();
     const signature = slice.loadBuffer(64);
 
+    // Reconstruct the signing message and verify signature
     const msgCell = beginCell()
       .storeUint(opcode, 32)
-      .storeInt(walletId, 32)
+      .storeInt(globalId, 32)
+      .storeUint(walletId, 32)
       .storeUint(validUntil, 32)
       .storeUint(seqno, 32)
       .storeMaybeRef(outActions)

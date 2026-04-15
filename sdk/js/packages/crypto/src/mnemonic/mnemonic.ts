@@ -68,7 +68,9 @@ async function mnemonicToSeed(
   password?: string | null,
 ): Promise<Uint8Array> {
   const entropy = await mnemonicToEntropy(mnemonicArray, password);
-  return pbkdf2_sha512(entropy, salt, PBKDF_ITERATIONS, 64);
+  const seed = await pbkdf2_sha512(entropy, salt, PBKDF_ITERATIONS, 64);
+  entropy.fill(0); // wipe intermediate secret
+  return seed;
 }
 
 // ---------------------------------------------------------------------------
@@ -92,6 +94,7 @@ function getRandomBytes(size: number): Uint8Array {
  * Generate a secure random integer in [min, max).
  */
 async function getSecureRandomNumber(min: number, max: number): Promise<number> {
+  if (min >= max) throw new Error("min must be less than max");
   const range = max - min;
   const bitsNeeded = Math.ceil(Math.log2(range));
   if (bitsNeeded > 53) {
@@ -223,7 +226,9 @@ export async function mnemonicToPrivateKey(
 ): Promise<KeyPair> {
   const normalized = normalizeMnemonic(mnemonic);
   const seed = await mnemonicToSeed(normalized, "TON default seed", password);
-  return keyPairFromSeed(seed.slice(0, 32));
+  const kp = keyPairFromSeed(seed.slice(0, 32));
+  seed.fill(0); // wipe sensitive seed material
+  return kp;
 }
 
 /**
