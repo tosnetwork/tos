@@ -1,6 +1,6 @@
 # TOS Connect & DApp Kit Design
 
-Version: v0.1-draft
+Version: v0.2-draft
 
 ## Purpose
 
@@ -10,12 +10,12 @@ This layer enables DApp developers to connect user wallets, request transaction 
 
 ## Scope
 
-| Package | npm Name | Purpose |
-|---------|----------|---------|
-| `@tos/connect` | Wallet-DApp communication protocol | Core protocol, session management, bridge |
-| `@tos/connect-ui` | Vanilla JS UI components | Connect button, modal, QR code |
-| `@tos/connect-react` | React hooks + components | `useWallet()`, `<ConnectButton />`, provider |
-| `@tos/react` | React hooks for chain data | `useBalance()`, `useSendTransaction()`, contract hooks |
+| npm Package | Purpose |
+|-------------|---------|
+| `@tos/connect` | Wallet-DApp communication protocol — session management, bridge, encryption |
+| `@tos/connect-ui` | Vanilla JS UI — connect button, wallet modal, QR code (no React) |
+| `@tos/react` | React hooks for chain data — `useBalance()`, `useSendTransaction()`, contract hooks |
+| `@tos/connect-react` | All-in-one React integration — `<ConnectButton />`, `<TosConnectProvider />` |
 
 ## Design Principles
 
@@ -117,6 +117,12 @@ class TosConnect {
     bridgeUrl?: string;         // default: "https://bridge.tos.network"
     storage?: ConnectStorage;   // session persistence (default: localStorage)
     walletsListSource?: string; // wallet registry URL or inline list
+    sessionTtl?: number;        // session TTL in seconds (default: 86400 = 24h)
+    reconnect?: {               // auto-reconnect on bridge connection drop
+      enabled?: boolean;        // default: true
+      maxRetries?: number;      // default: 5
+      backoffMs?: number;       // default: 2000 (exponential)
+    };
   });
 
   // ── Connection state ──────────────────────────────────
@@ -124,10 +130,16 @@ class TosConnect {
   readonly account: ConnectedAccount | null;
   readonly wallet: ConnectedWallet | null;
 
+  // ── Protocol ───────────────────────────────────────────
+  static readonly PROTOCOL_VERSION = 2;
+
   // ── Lifecycle ─────────────────────────────────────────
-  connect(wallet: WalletInfo, request?: ConnectRequest): string;  // returns universal link
+  connect(wallet: WalletInfo, request?: ConnectRequest): string | null;
+  // Returns universal link (HTTP bridge) or null (injected wallet connects immediately)
   restoreConnection(): Promise<void>;    // restore from storage on page load
   disconnect(): Promise<void>;
+  pauseConnection(): void;               // stop listening (e.g., app backgrounded)
+  unpauseConnection(): Promise<void>;    // resume listening
 
   // ── Status ────────────────────────────────────────────
   onStatusChange(
@@ -137,6 +149,9 @@ class TosConnect {
 
   // ── Transaction requests ──────────────────────────────
   sendTransaction(request: SendTransactionRequest): Promise<SendTransactionResponse>;
+
+  // ── Data signing (authentication / "Sign in with TOS") ──
+  signData(request: SignDataRequest): Promise<SignDataResponse>;
 
   // ── Wallet discovery ──────────────────────────────────
   getWallets(): Promise<WalletInfo[]>;
@@ -211,13 +226,51 @@ interface SendTransactionRequest {
 
 interface TransactionMessage {
   address: string;         // destination
-  amount: string;          // nanotomis as string
+  amount: string;          // nanotomis as string (wire format; SDK hooks accept bigint and convert)
   payload?: string;        // message body BOC (base64)
   stateInit?: string;      // deploy StateInit BOC (base64)
 }
+// Note: SDK hooks like useSendTransaction accept `value: bigint` and convert
+// to string internally. The wire protocol uses strings for cross-platform compat.
 
 interface SendTransactionResponse {
   boc: string;             // signed transaction BOC (base64)
+}
+
+// ── Data signing (authentication) ───────────────────────
+interface SignDataRequest {
+  type: "text" | "binary" | "cell";
+  data: string;            // text content, hex bytes, or base64 BOC
+  domain?: string;         // signing domain for replay protection
+}
+
+interface SignDataResponse {
+  signature: string;       // base64 Ed25519 signature
+  address: string;         // signer address
+  timestamp: number;       // unix timestamp
+  domain?: string;
+  payload: string;         // original data
+}
+
+// ── Connect item replies (from wallet) ──────────────────
+type ConnectItemReply = TonAddressItemReply | TonProofItemReply;
+
+interface TonAddressItemReply {
+  name: "ton_addr";
+  address: string;         // raw form
+  network: string;         // chain ID
+  publicKey: string;       // hex Ed25519 public key
+  walletStateInit: string; // base64 BOC
+}
+
+interface TonProofItemReply {
+  name: "ton_proof";
+  proof: {
+    timestamp: number;
+    domain: { lengthBytes: number; value: string };
+    payload: string;
+    signature: string;     // base64
+  };
 }
 
 // ── Session storage ─────────────────────────────────────
@@ -227,6 +280,21 @@ interface ConnectStorage {
   removeItem(key: string): Promise<void>;
 }
 ```
+
+### Bridge Server
+
+TOS provides a public bridge server at `https://bridge.tos.network/bridge` (default).
+
+The bridge is a stateless message relay — it does NOT:
+- Store or decrypt messages (all messages are end-to-end encrypted)
+- Authenticate DApps or wallets
+- Require registration or API keys
+
+Bridge API:
+- `POST /message?client_id={id}&to={walletId}&ttl={seconds}` — send encrypted message
+- `GET /events?client_id={id}` — SSE stream for receiving encrypted messages
+
+Anyone can run their own bridge server. The bridge protocol is open and permissionless.
 
 ### Session Security
 
@@ -363,8 +431,12 @@ function App() {
 
 ### Account Hooks
 
+`useWallet` lives in `@tos/connect-react` (requires connect protocol).
+`@tos/react` provides data hooks (`useBalance`, `useSendTransaction`, etc.) that work with any address — connected or not.
+
 ```typescript
-// Current connected wallet (from @tos/connect integration)
+// Current connected wallet — only available inside <TosConnectProvider>
+// Re-exported from @tos/connect-react, NOT from @tos/react
 function useWallet(): {
   connected: boolean;
   address: Address | null;
@@ -374,8 +446,11 @@ function useWallet(): {
   disconnect: () => Promise<void>;
 };
 
-// Account balance
-function useBalance(address?: Address | string): {
+// Account balance (auto-refreshes every 10 seconds by default)
+function useBalance(address?: Address | string, opts?: {
+  enabled?: boolean;        // default: true; set false to skip query
+  refetchInterval?: number; // ms, default: 10000
+}): {
   data: bigint | undefined;
   isLoading: boolean;
   error: TosError | null;
@@ -401,6 +476,11 @@ function useAccountCapability(address?: Address | string): {
 
 ```typescript
 // Send TOS (mutation hook — like wagmi useSendTransaction)
+//
+// When used inside <TosConnectProvider>: routes through connect protocol —
+//   the wallet app shows a confirmation dialog, user approves, wallet signs and submits.
+// When used inside <TosProvider> without connect: requires a Signer (see Layer 5).
+//
 function useSendTransaction(): {
   sendTransaction: (args: {
     to: Address | string;
@@ -438,27 +518,67 @@ function useTransactions(address?: Address | string, opts?: { limit?: number }):
 function useEstimateFee(args: {
   address: Address | string;
   body: Cell;
+  enabled?: boolean;       // set to false until body is ready
 }): {
   data: FeeEstimate | undefined;
   isLoading: boolean;
   error: TosError | null;
 };
+
+// Example: estimate fee as user types amount, then send
+function SendWithFee() {
+  const [amount, setAmount] = useState("");
+  const body = useMemo(() =>
+    amount ? beginCell().storeUint(0, 32).storeCoins(toNano(amount)).endCell() : null,
+    [amount]
+  );
+  const { data: fees } = useEstimateFee({
+    address: wallet.address,
+    body: body!,
+    enabled: !!body,           // only estimate when body is ready
+  });
+  const { sendTransactionAsync, isPending, isSuccess, error } = useSendTransaction();
+
+  return (
+    <div>
+      <input value={amount} onChange={e => setAmount(e.target.value)} />
+      {fees && <p>Fee: ~{fromNano(BigInt(fees.source_fees.gas_fee))} TOS</p>}
+      {error && <p>Error: {error.code} — {error.message}</p>}
+      <button
+        disabled={isPending || !amount}
+        onClick={() => sendTransactionAsync({ to: dest, value: toNano(amount) })}
+      >
+        {isPending ? "Confirming in wallet..." : "Send"}
+      </button>
+      {isSuccess && <p>Sent!</p>}
+    </div>
+  );
+}
 ```
 
 ### Contract Hooks
 
 ```typescript
 // Read contract state (like wagmi useReadContract)
-function useContractRead<T>(args: {
+function useContractRead<T = TupleReader>(args: {
   address: Address | string;
   method: string;
   args?: TupleItem[];
+  parse?: (stack: TupleReader) => T;  // custom parser; default: returns raw TupleReader
+  enabled?: boolean;                   // default: true
 }): {
-  data: T | undefined;        // parsed via provided decoder
+  data: T | undefined;
   isLoading: boolean;
   error: TosError | null;
   refetch: () => void;
 };
+
+// Example: read Jetton total supply with custom parser
+const { data: totalSupply } = useContractRead({
+  address: jettonMaster,
+  method: "get_jetton_data",
+  parse: (stack) => stack.readBigNumber(),  // parse first stack item as bigint
+});
 
 // Write to contract (like wagmi useWriteContract)
 function useContractWrite(): {
@@ -484,6 +604,24 @@ function useJettonBalance(args: {
 };
 ```
 
+### Token Hooks
+
+```typescript
+// Token data via getTokenData RPC (works for Jetton, NFT, NFT Collection)
+function useTokenData(address?: Address | string): {
+  data: TokenData | undefined;   // discriminated union by @type
+  isLoading: boolean;
+  error: TosError | null;
+};
+
+// NFT item data (convenience)
+function useNftData(address?: Address | string): {
+  data: NftItemData | undefined;
+  isLoading: boolean;
+  error: TosError | null;
+};
+```
+
 ### Network Hooks
 
 ```typescript
@@ -492,15 +630,56 @@ function useMasterchainInfo(): {
   isLoading: boolean;
 };
 
-function useClient(): TosClient;  // access the raw client
+function useBlockSeqno(): {
+  data: number | undefined;      // latest masterchain block seqno
+  isLoading: boolean;
+};
+
+function useClient(): TosClient;  // access the raw TosClient for advanced use
+
+// Sign arbitrary data (authentication, not transactions)
+function useSignData(): {
+  signData: (request: SignDataRequest) => void;
+  signDataAsync: (request: SignDataRequest) => Promise<SignDataResponse>;
+  data: SignDataResponse | undefined;
+  isPending: boolean;
+  error: TosError | null;
+};
 ```
 
-### State Management
+### State Management & Caching
 
 - Internal store using `useSyncExternalStore` (React 18 native)
 - No external state library required (no zustand, no Redux)
-- Query results cached with configurable TTL (default: 10 seconds for balance, 30 seconds for account info)
-- Mutations track pending/success/error state
+- Query results cached with configurable TTL:
+
+| Hook | Default refetch interval | Configurable |
+|------|------------------------|--------------|
+| `useBalance` | 10 seconds | `refetchInterval` option |
+| `useAccountInfo` | 30 seconds | `refetchInterval` option |
+| `useBlockSeqno` | 5 seconds | `refetchInterval` option |
+| `useContractRead` | no auto-refetch | `refetchInterval` option |
+| `useTransactions` | no auto-refetch | manual `refetch()` |
+| `useTokenData` | 60 seconds | `refetchInterval` option |
+
+- All query hooks accept `enabled?: boolean` (default: true)
+- All query hooks return `refetch()` for manual refresh
+- Mutations track pending/success/error lifecycle
+- `useTransactions` manages lt/hash cursors internally for infinite scroll:
+
+```tsx
+function TransactionList() {
+  const { address } = useWallet();
+  const { data: txs, fetchNextPage, hasNextPage, isLoading } = useTransactions(address);
+
+  return (
+    <div>
+      {txs?.map(tx => <TxRow key={tx.transaction_id.hash} tx={tx} />)}
+      {hasNextPage && <button onClick={fetchNextPage}>Load more</button>}
+    </div>
+  );
+}
+```
 
 ---
 
@@ -512,7 +691,7 @@ Combines `@tos/connect` + `@tos/connect-ui` + `@tos/react` into a single React i
 
 This is the **recommended entry point** for React DApp developers.
 
-### Quick Start (3-line integration)
+### Quick Start (minimal integration)
 
 ```tsx
 // 1. Configure (once)
@@ -539,7 +718,7 @@ export default function Page() {
 }
 ```
 
-**That's it.** The DApp now has:
+**That's all the code needed.** The DApp now has:
 - Wallet discovery and connection
 - QR code for mobile wallets
 - Session persistence across page reloads
@@ -550,31 +729,54 @@ export default function Page() {
 ### ConnectButton Component
 
 ```tsx
+// Simple usage — zero-config
+<ConnectButton />
+
+// With options
 <ConnectButton
-  // Display options
   showBalance={true}                    // show TOS balance next to address
   accountStatus="full"                  // "full" | "avatar" | "address"
   label="Connect Wallet"               // button text when disconnected
+/>
 
-  // Advanced: custom rendering
-  children={(props) => (
-    <button onClick={props.openConnectModal}>
-      {props.connected
-        ? `${props.address.slice(0, 6)}...${props.address.slice(-4)}`
+// Custom rendering (render prop pattern)
+<ConnectButton.Custom>
+  {({ connected, address, openConnectModal, openAccountModal }) => (
+    <button onClick={connected ? openAccountModal : openConnectModal}>
+      {connected
+        ? `${address!.toString().slice(0, 8)}...`
         : "Connect"}
     </button>
   )}
-/>
+</ConnectButton.Custom>
+```
+
+```typescript
+// ConnectButton.Custom render prop types
+interface ConnectButtonRenderProps {
+  connected: boolean;
+  address: Address | null;
+  balance: bigint | null;
+  walletName: string | null;
+  walletIcon: string | null;
+  openConnectModal: () => void;
+  openAccountModal: () => void;
+  disconnect: () => Promise<void>;
+}
+```
 ```
 
 ### TosConnectProvider
 
+Internally composes: `TosProvider` (Layer 5 client) + `TosConnect` (protocol) + UI context.
+DApp developers only need this one provider — it replaces separate `TosProvider` + connect setup.
+
 ```tsx
 <TosConnectProvider
   config={{
-    manifestUrl: string;               // required
+    manifestUrl: string;               // required — your DApp manifest URL
     network?: "mainnet" | "testnet";   // default: "mainnet"
-    endpoint?: string;                 // custom RPC endpoint
+    endpoint?: string;                 // custom RPC endpoint (overrides network)
     bridgeUrl?: string;                // custom bridge server
     wallets?: WalletInfo[];            // override default wallet list
   }}
@@ -585,12 +787,26 @@ export default function Page() {
 </TosConnectProvider>
 ```
 
+### SSR Support (Next.js / Remix)
+
+```tsx
+// next.js: mark as client component
+"use client";
+import { TosConnectProvider, ConnectButton } from "@tos/connect-react";
+
+// TosConnectProvider automatically handles:
+// - No localStorage access on server
+// - No window.tos.provider detection on server
+// - Hydration-safe connection state restoration
+```
+
 ### Connection Hooks
 
 ```typescript
 // Connect/disconnect
 function useConnect(): {
-  connect: (wallet?: WalletInfo) => void;  // opens modal if no wallet specified
+  connect: (wallet?: WalletInfo, request?: ConnectRequest) => void;
+  // wallet=undefined → opens modal; request=ConnectRequest → adds ton_proof etc.
   disconnect: () => Promise<void>;
   connected: boolean;
   connecting: boolean;
@@ -603,12 +819,22 @@ function useConnectModal(): {
   isOpen: boolean;
 };
 
-// Access connected wallet
+// Access connected wallet + connection info
 function useWallet(): {
   connected: boolean;
   address: Address | null;
   publicKey: Uint8Array | null;
+  chain: string | null;             // "-239" (mainnet) or "-3" (testnet)
   wallet: ConnectedWallet | null;
+  disconnect: () => Promise<void>;
+};
+
+// Wallet metadata (name, icon, platform)
+function useWalletInfo(): {
+  name: string | null;              // "TOS Wallet", "Tonkeeper", etc.
+  icon: string | null;              // wallet icon URL
+  platform: string | null;          // "ios" | "android" | "browser" | ...
+  features: WalletFeature[] | null; // supported capabilities
 };
 ```
 
@@ -638,6 +864,35 @@ function MyComponent() {
       </button>
     </div>
   );
+}
+```
+
+### "Sign in with TOS" Authentication
+
+```tsx
+import { useWallet, useConnect } from "@tos/connect-react";
+
+function SignInButton() {
+  const { connect } = useConnect();
+  const { connected, wallet } = useWallet();
+
+  const handleSignIn = () => {
+    // Request address + ownership proof on connect
+    connect(undefined, {
+      items: [
+        { name: "ton_addr" },
+        { name: "ton_proof", payload: "my-server-nonce-" + Date.now() },
+      ],
+    });
+  };
+
+  if (connected && wallet?.connectItems) {
+    const proof = wallet.connectItems.find(i => i.name === "ton_proof");
+    // Send proof.proof to your backend for verification
+    return <p>Signed in as {wallet.account.address}</p>;
+  }
+
+  return <button onClick={handleSignIn}>Sign in with TOS</button>;
 }
 ```
 
@@ -791,6 +1046,30 @@ const ConnectErrorCodes = {
 
 ---
 
+## React Native Support
+
+`@tos/connect` and `@tos/react` work in React Native with minor configuration:
+
+```typescript
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+// Use AsyncStorage instead of localStorage
+const connect = new TosConnect({
+  manifestUrl: "https://myapp.com/manifest.json",
+  storage: {
+    getItem: (key) => AsyncStorage.getItem(key),
+    setItem: (key, value) => AsyncStorage.setItem(key, value),
+    removeItem: (key) => AsyncStorage.removeItem(key),
+  },
+});
+```
+
+- `@tos/connect-ui` (vanilla JS DOM) does NOT work in React Native — use `@tos/connect` + custom UI
+- `@tos/react` hooks work in React Native
+- Connection via deeplinks (universal links) — no injected JS bridge in native apps
+
+---
+
 ## Build & Tooling
 
 | Concern | Choice | Rationale |
@@ -858,3 +1137,51 @@ Phase 1-2 can be developed in parallel. Phase 3-4 depend on Phase 1.
 - [ ] Works in Chrome 90+, Firefox 90+, Safari 15+
 - [ ] Bundle size < 50KB gzipped for `@tos/connect-react` (excluding React)
 - [ ] All hooks clean up subscriptions on unmount (no memory leaks)
+- [ ] `signData()` can sign text payload and return valid Ed25519 signature
+- [ ] `ton_proof` authentication flow works end-to-end (connect → verify on backend)
+- [ ] SSR (Next.js) renders without errors (no window/localStorage on server)
+- [ ] React Native connection via deeplinks works with AsyncStorage
+- [ ] `useTransactions` infinite scroll works with automatic lt/hash cursor management
+- [ ] `useEstimateFee` with `enabled: false` does not fire query
+
+---
+
+## Review Log
+
+| Round | Angle | Issue | Fix |
+|-------|-------|-------|-----|
+| 1 | Scope table format | "npm Name" column had descriptions, not package names | Fixed to single "npm Package" + "Purpose" columns |
+| 2 | Missing signData | TON Connect supports data signing (authentication); not in TosConnect | Added `signData()` method + `SignDataRequest`/`SignDataResponse` types |
+| 3 | ConnectItemReply undefined | `ConnectedWallet` referenced `ConnectItemReply[]` — never defined | Added `TonAddressItemReply` and `TonProofItemReply` types |
+| 4 | connect() return type | Returns `string` but injected wallets don't produce a link | Changed to `string \| null` with documentation |
+| 5 | No protocol version | Wire protocol needs versioning for future evolution | Added `static readonly PROTOCOL_VERSION = 2` |
+| 6 | Missing pause/unpause | App backgrounded → should stop bridge polling | Added `pauseConnection()` and `unpauseConnection()` |
+| 7 | Session TTL hardcoded | 24h not configurable; too short for some DApps | Added `sessionTtl` option to constructor |
+| 8 | No auto-reconnect | Bridge connection drops silently | Added `reconnect` config with `maxRetries` and `backoffMs` |
+| 9 | "3-line" claim inaccurate | Example is actually ~10 lines of code | Changed to "minimal integration" |
+| 10 | No auth example | `ton_proof` for "Sign in with TOS" not shown | Added full authentication example with proof verification |
+| 11 | useSendTransaction routing unclear | Connect protocol vs direct RPC — not explained | Added comment explaining routing based on provider context |
+| 12 | useWallet defined twice | In both @tos/react and @tos/connect-react | Clarified: useWallet is @tos/connect-react only; data hooks are @tos/react |
+| 13 | No `enabled` option | wagmi hooks have `enabled` to conditionally skip queries | Added `enabled?: boolean` to useBalance, useEstimateFee, useContractRead |
+| 14 | No NFT hooks | `useJettonBalance` exists but no NFT equivalent | Added `useNftData` and `useTokenData` hooks |
+| 15 | useContractRead no parser | Generic `T` but no way to specify how to parse TupleReader | Added `parse?: (stack: TupleReader) => T` option with example |
+| 16 | No SSR guidance | Next.js DApps break without SSR handling | Added SSR section with "use client" pattern |
+| 17 | TosConnectProvider unclear | Relationship to TosProvider not documented | Documented: internally composes TosProvider + TosConnect + UI |
+| 18 | No refetch intervals | Balance auto-refresh behavior not specified | Added caching table with default intervals per hook |
+| 19 | No transactions infinite scroll | `useTransactions` has `fetchNextPage` but cursor management not shown | Added example with automatic lt/hash cursor management |
+| 20 | Missing useConnect request param | Can't pass ton_proof request during connect | Added `request?: ConnectRequest` param to `connect()` |
+| 21 | No wallet metadata hook | After connection, can't access wallet name/icon | Added `useWalletInfo()` hook |
+| 22 | Amount string/bigint mismatch | Protocol uses string, SDK hooks use bigint | Documented: hooks accept bigint, convert internally |
+| 23 | ConnectButton.Custom typing | `children` render prop had weak typing | Replaced with `ConnectButton.Custom` + typed `ConnectButtonRenderProps` |
+| 24 | No bridge server spec | Bridge server mentioned but not described | Added Bridge Server section with API, security, and self-hosting info |
+| 25 | No useBlockSeqno | Common for freshness indicators; wagmi has useBlockNumber | Added `useBlockSeqno()` hook |
+| 26 | No useSignData | signData method exists but no React hook | Added `useSignData()` mutation hook |
+| 27 | useWallet missing chain field | Connected wallet has chain info but hook didn't expose it | Added `chain: string \| null` to useWallet return |
+| 28 | No React Native guidance | Design principles say "multi-platform" but no RN docs | Added React Native Support section with AsyncStorage example |
+| 29 | No fee estimation UI example | Common pattern: show fee before send | Added full `SendWithFee` component example |
+| 30 | No error handling in examples | DApp examples ignore errors | Added error display in fee estimation example |
+| 31 | useEstimateFee no enabled | Can't conditionally skip fee estimation | Added `enabled` option |
+| 32 | useWallet missing disconnect | Hook returns wallet state but no action | Added `disconnect` to useWallet return |
+| 33 | No useWaitForTransaction | Layer 5 has waitForTransaction but no hook | Added `useWaitForTransaction` (already defined in transaction hooks section) |
+| 34 | Acceptance criteria incomplete | Missing signData, auth, SSR, RN, infinite scroll criteria | Added 6 new acceptance criteria |
+| 35 | No review log | Document had no audit trail | Added review log |
