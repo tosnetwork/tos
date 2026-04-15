@@ -1,6 +1,7 @@
 // Jetton (TEP-74)
 export { JettonMinter } from './jetton/JettonMinter';
 export { JettonWallet } from './jetton/JettonWallet';
+export { JETTON_MINTER_CODE_HEX, JETTON_WALLET_CODE_HEX } from './jetton/codes';
 export type { JettonData, JettonContent } from './jetton/types';
 
 // NFT (TEP-62)
