@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Cell } from './Cell';
 import { beginCell } from './Builder';
-import { hexToBytes, bytesToHex, base64ToBytes, bytesToBase64 } from '../utils/encoding';
 
 describe('Cell', () => {
     // ---- Basic build/serialize/deserialize ----

@@ -37,7 +37,7 @@ import type {
   SubmissionResult,
   BlockTransactions,
   BlockTransactionsExt,
-  TransactionList,
+  Transaction,
   SendBocResult,
   SendBocHashResult,
   SendQueryResult,
@@ -411,8 +411,8 @@ export class TosClient implements TosProvider {
     address: AddressLike | string,
     limit: number,
     opts?: { lt?: string; hash?: string; to_lt?: string; archival?: boolean },
-  ): Promise<TransactionList> {
-    return this.rawCall<TransactionList>("getTransactions", {
+  ): Promise<Transaction[]> {
+    return this.rawCall<Transaction[]>("getTransactions", {
       address: toAddrString(address),
       limit,
       ...(opts?.lt != null ? { lt: opts.lt } : {}),
@@ -677,9 +677,13 @@ function parseJsonRpcResponse(response: Response, responseText: string): JsonRpc
     if (parsed.error) {
       return parsed;
     }
+    // 4xx = client error (not retryable), 5xx = server error (retryable)
+    const code = response.status >= 400 && response.status < 500
+      ? ErrorCodes.CLIENT_ERROR
+      : ErrorCodes.NETWORK_ERROR;
     throw new TosError(
       `HTTP ${response.status} ${response.statusText || "request failed"}`,
-      ErrorCodes.NETWORK_ERROR,
+      code,
     );
   }
 

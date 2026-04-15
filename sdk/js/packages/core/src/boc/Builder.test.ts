@@ -1,8 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { beginCell, Builder } from './Builder';
-import { Cell } from './Cell';
+import { beginCell } from './Builder';
 import { Address } from '../address/Address';
-import { BitString } from './BitString';
 
 describe('Builder', () => {
     // ---- storeUint ----

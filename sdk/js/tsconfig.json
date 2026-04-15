@@ -16,8 +16,7 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "exactOptionalPropertyTypes": false,
-    "outDir": "dist",
-    "rootDir": "src"
+    "outDir": "dist"
   },
   "exclude": ["node_modules", "dist"]
 }

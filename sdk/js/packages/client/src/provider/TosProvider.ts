@@ -42,7 +42,7 @@ import type {
   SubmissionResult,
   BlockTransactions,
   BlockTransactionsExt,
-  TransactionList,
+  Transaction,
   SendBocResult,
   SendBocHashResult,
   SendQueryResult,
@@ -121,7 +121,7 @@ export interface TransactionActions {
     address: AddressLike | string,
     limit: number,
     opts?: { lt?: string; hash?: string; to_lt?: string; archival?: boolean },
-  ): Promise<TransactionList>;
+  ): Promise<Transaction[]>;
   getBlockTransactions(
     workchain: number,
     shard: string,

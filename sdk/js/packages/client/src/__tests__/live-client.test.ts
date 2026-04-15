@@ -19,7 +19,7 @@ import type {
   AccountInfo,
   ConfigAll,
   RunResult,
-  TransactionList,
+  Transaction,
   ShardInfo,
 } from "../index.js";
 
@@ -194,13 +194,13 @@ describe.skipIf(!nodeAvailable)("TosClient live integration", () => {
 
   // ----- Transactions -----
 
-  it("getTransactions(address, 5) returns a TransactionList", async () => {
-    const result: TransactionList = await client.getTransactions(ELECTOR_ADDRESS, 5);
+  it("getTransactions(address, 5) returns a Transaction[]", async () => {
+    const result: Transaction[] = await client.getTransactions(ELECTOR_ADDRESS, 5);
     expect(result).toBeDefined();
     // C++ returns an array directly, not a wrapper object
     expect(Array.isArray(result)).toBe(true);
     if (Array.isArray(result) && result.length > 0) {
-      expect(result[0]["@type"]).toBe("raw.transaction");
+      expect(result[0]!["@type"]).toBe("raw.transaction");
     }
   });
 

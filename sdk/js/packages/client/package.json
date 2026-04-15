@@ -16,7 +16,7 @@
   "files": ["dist"],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts",
-    "test": "vitest run",
+    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
@@ -24,6 +24,9 @@
     "@tos/core": "workspace:*"
   },
   "devDependencies": {
+    "@tos/contracts": "workspace:*",
+    "@tos/crypto": "workspace:*",
+    "@tos/wallets": "workspace:*",
     "tsup": "^8.3.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"

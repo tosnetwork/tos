@@ -165,9 +165,17 @@ export interface ReadyzResult {
 // Queue size
 // ---------------------------------------------------------------------------
 
-export interface OutMsgQueueSize {
-  "@type": "outMsgQueueSize";
+/** A single shard's outbound message queue size. */
+export interface OutMsgQueueSizeShard {
+  "@type": "blocks.outMsgQueueSize";
+  id: BlockIdExt;
   size: number;
+}
+
+/** Response from getOutMsgQueueSize (blocks.outMsgQueueSizes). */
+export interface OutMsgQueueSize {
+  "@type": "blocks.outMsgQueueSizes";
+  shards: OutMsgQueueSizeShard[];
   ext_msg_queue_size_limit: number;
 }
 
@@ -319,9 +327,13 @@ export interface AccountCapability {
   account_model: string;
   authorization_version: string;
   balance: string;
-  state: string;
+  account_state: string;
   wallet_type: string | null;
   seqno: number | null;
+  supports_delegation: boolean;
+  supports_sessions: boolean;
+  supports_agents: boolean;
+  revision: number;
   delegation_count: number;
   session_count: number;
   agent_count: number;
@@ -363,53 +375,41 @@ export interface AgentCapability {
 // Intent types (buildTransactionIntent / getSigningPayload / submitSignedTransaction)
 // ---------------------------------------------------------------------------
 
-/** Authorization roles for transaction intents. */
+/** Authorization roles returned in a transaction intent. */
 export interface AuthorizationRoles {
-  role: "owner" | "delegate" | "session" | "agent";
-  delegation_ref?: string;
-  session_id?: number;
+  signer: string;
+  submitter: string;
 }
 
 /** Request body for buildTransactionIntent. */
 export interface TransactionIntentRequest {
   address: string;
-  messages: Array<{
-    to: string;
-    amount: string;
-    payload?: string;       // base64 BOC
-    state_init?: string;    // base64 BOC
-  }>;
-  authorization?: AuthorizationRoles;
-  valid_until?: number;
+  body: string;             // base64 BOC
 }
 
 /** Response from buildTransactionIntent. */
 export interface TransactionIntent {
-  "@type": "intent.transaction";
-  intent_id: string;
-  address: string;
-  messages: Array<{
-    to: string;
-    amount: string;
-    payload?: string;
-    state_init?: string;
-  }>;
-  authorization: AuthorizationRoles;
-  valid_until: number;
-  estimated_fee: string;
+  "@type": "transaction.intent";
+  from: string;
+  account_model: string;
+  authorization_version: string;
+  action: unknown;
+  authorization_roles: AuthorizationRoles;
 }
 
 /** Request body for getSigningPayload. */
 export interface SigningPayloadRequest {
-  intent_id: string;
+  address: string;
+  body: string;             // base64 BOC
 }
 
 /** Response from getSigningPayload. */
 export interface SigningPayload {
-  "@type": "intent.signingPayload";
-  intent_id: string;
-  payload: string;          // base64 bytes to sign
-  expires_at: number;
+  "@type": "transaction.signingPayload";
+  payload_version: number;
+  payload_encoding: string;
+  payload: string;          // encoded bytes to sign
+  chain_id: number;
 }
 
 /** Request body for submitSignedTransaction. */

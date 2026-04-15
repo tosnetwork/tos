@@ -27,6 +27,15 @@ importers:
         specifier: workspace:*
         version: link:../core
     devDependencies:
+      '@tos/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@tos/crypto':
+        specifier: workspace:*
+        version: link:../crypto
+      '@tos/wallets':
+        specifier: workspace:*
+        version: link:../wallets
       tsup:
         specifier: ^8.3.0
         version: 8.5.1(postcss@8.5.9)(typescript@5.9.3)

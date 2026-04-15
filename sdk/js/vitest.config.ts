@@ -1,6 +1,6 @@
 import { defineConfig } from "vitest/config";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 
 // Load .env.test for test-only environment variables (TEST_MNEMONIC, etc.)
 function loadEnvTest(): Record<string, string> {
@@ -26,22 +26,32 @@ function loadEnvTest(): Record<string, string> {
   }
 }
 
+const repoRoot = __dirname;
+const cwdFromRepoRoot = relative(repoRoot, process.cwd());
+const isPackageCwd =
+  cwdFromRepoRoot !== "" &&
+  !cwdFromRepoRoot.startsWith("..") &&
+  cwdFromRepoRoot.startsWith("packages/");
+const include = isPackageCwd
+  ? [`./${cwdFromRepoRoot}/src/**/*.test.ts`]
+  : ["./packages/*/src/**/*.test.ts"];
+
 export default defineConfig({
-  root: __dirname,
+  root: repoRoot,
   resolve: {
     alias: {
-      "@tos/core": resolve(__dirname, "packages/core/src/index.ts"),
-      "@tos/crypto": resolve(__dirname, "packages/crypto/src/index.ts"),
-      "@tos/client": resolve(__dirname, "packages/client/src/index.ts"),
-      "@tos/wallets": resolve(__dirname, "packages/wallets/src/index.ts"),
-      "@tos/contracts": resolve(__dirname, "packages/contracts/src/index.ts"),
-      "@tos/sdk": resolve(__dirname, "packages/sdk/src/index.ts"),
+      "@tos/core": resolve(repoRoot, "packages/core/src/index.ts"),
+      "@tos/crypto": resolve(repoRoot, "packages/crypto/src/index.ts"),
+      "@tos/client": resolve(repoRoot, "packages/client/src/index.ts"),
+      "@tos/wallets": resolve(repoRoot, "packages/wallets/src/index.ts"),
+      "@tos/contracts": resolve(repoRoot, "packages/contracts/src/index.ts"),
+      "@tos/sdk": resolve(repoRoot, "packages/sdk/src/index.ts"),
     },
   },
   test: {
     globals: true,
     environment: "node",
-    include: ["./packages/*/src/**/*.test.ts"],
+    include,
     env: loadEnvTest(),
   },
 });

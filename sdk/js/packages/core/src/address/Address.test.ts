@@ -5,7 +5,7 @@ import {
     unpackAddress,
     detectAddress,
 } from './utils';
-import { hexToBytes, bytesToHex } from '../utils/encoding';
+import { bytesToHex } from '../utils/encoding';
 
 const RAW =
     '0:2cf55953e92efbeadab7ba725c3f93a0b23f842cbba72d7b8e6f510a70e422e3';

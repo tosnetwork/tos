@@ -81,6 +81,7 @@ export type {
   LocateResult,
   ReadyzResult,
   OutMsgQueueSize,
+  OutMsgQueueSizeShard,
   ShortTransaction,
   Transaction,
   TokenData,

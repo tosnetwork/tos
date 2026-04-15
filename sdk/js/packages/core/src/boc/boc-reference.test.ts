@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { Cell } from './Cell';
 import { beginCell } from './Builder';
-import { hexToBytes, bytesToHex, base64ToBytes, bytesToBase64 } from '../utils/encoding';
+import { hexToBytes, bytesToHex } from '../utils/encoding';
 
 // Wallet contract BOC hex strings from ton-core reference tests
 const walletBocs: string[] = [
