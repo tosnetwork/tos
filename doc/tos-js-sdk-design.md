@@ -1700,6 +1700,82 @@ Default `workchain` is `0` in all wallet `create()` methods — DApp developers 
 
 ---
 
+## Development & Testing Setup
+
+### Prerequisites
+
+- Node.js 18+
+- pnpm 9+
+- Local TOS 4-node testnet running (JSON-RPC at `127.0.0.1:8011`)
+
+### Quick Start
+
+```bash
+cd sdk/js
+
+# Install dependencies
+pnpm install
+
+# Build all packages (dependency order: crypto → core → client → wallets/contracts → sdk)
+pnpm run build
+
+# Run unit tests (no network required)
+pnpm vitest run
+```
+
+### Local Testnet Integration Tests
+
+The SDK includes live integration tests that run against the local 4-node testnet. A one-click setup script initializes the full test environment:
+
+```bash
+# One-click setup: fund wallet + deploy wallet + deploy Jetton + write .env.test
+sudo -E npx tsx scripts/setup-testnet.ts
+```
+
+This script:
+1. Reads the genesis wallet key from `/data/testnet/state/main-wallet.pk`
+2. Generates a test wallet (WalletV4R2) or uses existing `TEST_MNEMONIC`
+3. Funds the test wallet with 10 TOS from the genesis account (`-1:000...000`)
+4. Deploys the WalletV4R2 contract on-chain
+5. Deploys a standard TEP-74 Jetton Minter and mints 1000 test tokens
+6. Writes all env vars to `sdk/js/.env.test`
+
+After setup, run the full test suite (unit + integration):
+
+```bash
+pnpm vitest run
+```
+
+### Test Environment Variables
+
+Stored in `sdk/js/.env.test` (auto-loaded by Vitest):
+
+| Variable | Description |
+|----------|-------------|
+| `TEST_MNEMONIC` | 24-word mnemonic for the funded WalletV4R2 test wallet |
+| `TEST_JETTON_MINTER` | Raw address of the deployed Jetton Minter contract |
+
+### Available Scripts
+
+| Script | Usage | Description |
+|--------|-------|-------------|
+| `scripts/setup-testnet.ts` | `sudo -E npx tsx scripts/setup-testnet.ts` | One-click full test environment setup |
+| `scripts/deploy-test-jetton.ts` | `npx tsx scripts/deploy-test-jetton.ts` | Deploy a Jetton Minter only (requires funded wallet) |
+| `scripts/test-live.sh` | `./scripts/test-live.sh` | Run only the live integration tests |
+
+### Bundled Contract Codes
+
+Standard compiled contract codes are exported from `@tos/contracts` for deployment:
+
+| Export | Standard | Description |
+|--------|----------|-------------|
+| `JETTON_MINTER_CODE_HEX` | TEP-74 | Jetton Minter compiled FunC code |
+| `JETTON_WALLET_CODE_HEX` | TEP-74 | Jetton Wallet compiled FunC code |
+| `NFT_COLLECTION_CODE_HEX` | TEP-62 | NFT Collection (editable) compiled FunC code |
+| `NFT_ITEM_CODE_HEX` | TEP-62 | NFT Item compiled FunC code |
+
+---
+
 ## Implementation Order
 
 | Phase | Package | Scope | Depends on | Status |
