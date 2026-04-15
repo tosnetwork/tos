@@ -997,7 +997,8 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
   // Check cache
   auto it = cache_.find(cache_key);
   if (it != cache_.end() && !it->second.expires_at.is_in_past()) {
-    // Cache hit — return cached response with the current request's id
+    // Cache hit — rebuild HTTP response from the cached body string, substituting
+    // the current request's id so that each caller gets the correct "id" field.
     cache_hits_.fetch_add(1);
     promise.set_value(make_json_ok(it->second.response_json, req_id));
     return;
@@ -1023,20 +1024,22 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
           std::string body_str = body_slice.as_slice().str();
 
           if (body_str.find("\"ok\":true") != std::string::npos) {
-            // Extract the "result" JSON value from the body.
-            // Body format: {"ok":true,"jsonrpc":"2.0","id":...,"result":...}
-            auto result_pos = body_str.find("\"result\":");
-            if (result_pos != std::string::npos) {
-              std::string result_json = body_str.substr(result_pos + 9);
-              // Remove the trailing }
-              if (!result_json.empty() && result_json.back() == '}') {
-                result_json.pop_back();
+            // Extract the "result" JSON value using the td::JsonValue parser
+            // instead of fragile string searching.  This is safe even when
+            // the result payload itself contains a literal "result": string.
+            auto json_r = td::json_decode(td::MutableSlice(body_str));
+            if (json_r.is_ok() && json_r.ok().type() == td::JsonValue::Type::Object) {
+              auto &obj = json_r.ok_ref().get_object();
+              for (auto &fv : obj.field_values_) {
+                if (fv.first == "result") {
+                  auto encoded = td::json_encode<std::string>(fv.second);
+                  cache_[cache_key] = CacheEntry{std::move(encoded),
+                                                 td::Timestamp::in(static_cast<double>(ttl))};
+                  orig_promise.set_value(make_json_ok(cache_[cache_key].response_json,
+                                                      req_id, cors));
+                  return;
+                }
               }
-              cache_[cache_key] = CacheEntry{std::move(result_json),
-                                             td::Timestamp::in(static_cast<double>(ttl))};
-              orig_promise.set_value(make_json_ok(cache_[cache_key].response_json,
-                                                  req_id, cors));
-              return;
             }
           }
           // Could not extract result or not ok — rebuild and forward without caching

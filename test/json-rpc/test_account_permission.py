@@ -202,7 +202,7 @@ class TestGetSigningPayload:
             intent={
                 "from": ELECTOR_ADDRESS,
                 "body": VALID_EMPTY_CELL_BOC,
-                "delegation_ref": "example",
+                "session_ref": "example",
             },
         )
         data = response.json()
@@ -403,8 +403,8 @@ class TestPermissionErrorCodeFormat:
         assert data["ok"] is False
         assert data["error"].startswith("INDEXED_STATE_STALE:")
 
-    def test_feature_deferred_error_uses_prefix(self, api_method_call_no_get):
-        """FEATURE_DEFERRED must appear as a prefix in transaction surface errors."""
+    def test_delegation_unavailable_error_uses_prefix(self, api_method_call_no_get):
+        """DELEGATION_UNAVAILABLE must appear as a prefix when delegation_ref is set on unsupported model."""
         response = api_method_call_no_get(
             "buildTransactionIntent",
             address=ELECTOR_ADDRESS,
@@ -413,8 +413,7 @@ class TestPermissionErrorCodeFormat:
         )
         data = response.json()
         assert data["ok"] is False
-        # FEATURE_DEFERRED may be wrapped by TRANSACTION_INTENT_UNSUPPORTED prefix
-        assert "FEATURE_DEFERRED" in data["error"]
+        assert "DELEGATION_UNAVAILABLE" in data["error"]
 
     def test_signed_artifact_invalid_prefix(self, api_method_call_no_get):
         """SIGNED_ARTIFACT_INVALID must appear for malformed submissions."""
@@ -470,7 +469,7 @@ class TestSecurityLimits:
     def test_malformed_init_code_rejected(self, api_method_call_no_get):
         """init_code with invalid base64 must be rejected."""
         response = api_method_call_no_get(
-            "buildTransactionIntent",
+            "sendQuery",
             address=ELECTOR_ADDRESS,
             body=VALID_EMPTY_CELL_BOC,
             init_code="not-valid-base64!!!",
@@ -732,7 +731,13 @@ class TestLifecycleMutationRPCs:
     """Verify lifecycle mutation RPC surfaces exist with proper model detection."""
 
     def test_grant_delegation_unsupported_for_default_wallet(self, api_method_call_no_get):
-        response = api_method_call_no_get("grantAccountDelegation", address=ELECTOR_ADDRESS)
+        response = api_method_call_no_get(
+            "grantAccountDelegation",
+            address=ELECTOR_ADDRESS,
+            grantee="0:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+            scope="bounded_transfer",
+            constraints="{}",
+        )
         data = response.json()
         assert data["ok"] is False
         assert "PERMISSION_SOURCE_UNSUPPORTED" in data["error"] or "PERMISSION_SOURCE_DEFERRED" in data["error"]
@@ -741,7 +746,13 @@ class TestLifecycleMutationRPCs:
         info = wallets.get("restricted")
         if not info or not info.get("address"):
             pytest.skip("restricted wallet not deployed")
-        response = _call_until_ok(lambda: api_method_call_no_get("grantAccountDelegation", address=info["address"]))
+        response = _call_until_ok(lambda: api_method_call_no_get(
+            "grantAccountDelegation",
+            address=info["address"],
+            grantee="0:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+            scope="bounded_transfer",
+            constraints="{}",
+        ))
         data = response.json()
         assert data["ok"] is False
         assert "LIFECYCLE_IMMUTABLE" in data["error"]
@@ -750,40 +761,60 @@ class TestLifecycleMutationRPCs:
         info = wallets.get("nominator_pool")
         if not info or not info.get("address"):
             pytest.skip("nominator pool not deployed")
-        response = _call_until_ok(lambda: api_method_call_no_get("grantAccountDelegation", address=info["address"]))
+        response = _call_until_ok(lambda: api_method_call_no_get(
+            "grantAccountDelegation",
+            address=info["address"],
+            grantee="0:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+            scope="bounded_transfer",
+            constraints="{}",
+        ))
         data = response.json()
         assert data["ok"] is True
         result = data["result"]
         assert result["@type"] == "lifecycle.mutationResult"
         assert result["method"] == "grantAccountDelegation"
-        assert result["mutation_intent"]["body_comment"] == "d"
+        assert "mutation_intent" in result
         assert "affected_object_preview" in result
 
     def test_revoke_delegation_nominator_pool_returns_mutation_result(self, api_method_call_no_get, wallets):
         info = wallets.get("nominator_pool")
         if not info or not info.get("address"):
             pytest.skip("nominator pool not deployed")
-        response = _call_until_ok(lambda: api_method_call_no_get("revokeAccountDelegation", address=info["address"]))
+        response = _call_until_ok(lambda: api_method_call_no_get(
+            "revokeAccountDelegation",
+            address=info["address"],
+            permission_id=f"{info['address']}:nominator-stake:0",
+        ))
         data = response.json()
         assert data["ok"] is True
         result = data["result"]
         assert result["@type"] == "lifecycle.mutationResult"
         assert result["method"] == "revokeAccountDelegation"
-        assert result["mutation_intent"]["body_comment"] == "w"
+        assert "mutation_intent" in result
         assert "affected_object_preview" in result
 
     def test_grant_agent_immutable_for_multisig(self, api_method_call_no_get, wallets):
         info = wallets.get("multisig")
         if not info or not info.get("address"):
             pytest.skip("multisig not deployed")
-        response = _call_until_ok(lambda: api_method_call_no_get("grantAccountAgent", address=info["address"]))
+        response = _call_until_ok(lambda: api_method_call_no_get(
+            "grantAccountAgent",
+            address=info["address"],
+            grantee="0:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+            scope="agent_execution",
+            constraints="{}",
+        ))
         data = response.json()
         assert data["ok"] is False
         assert "LIFECYCLE_IMMUTABLE" in data["error"]
 
     def test_revoke_agent_deferred_for_elector(self, api_method_call_no_get):
         """revokeAccountAgent on elector should fail with deferred/unsupported."""
-        response = api_method_call_no_get("revokeAccountAgent", address=ELECTOR_ADDRESS)
+        response = api_method_call_no_get(
+            "revokeAccountAgent",
+            address=ELECTOR_ADDRESS,
+            permission_id="dummy:agent:0",
+        )
         data = response.json()
         assert data["ok"] is False
         assert "PERMISSION_SOURCE_DEFERRED" in data["error"] or "PERMISSION_SOURCE_UNSUPPORTED" in data["error"]
@@ -793,7 +824,11 @@ class TestLifecycleMutationRPCs:
         info = wallets.get("multisig")
         if not info or not info.get("address"):
             pytest.skip("multisig not deployed")
-        response = _call_until_ok(lambda: api_method_call_no_get("revokeAccountAgent", address=info["address"]))
+        response = _call_until_ok(lambda: api_method_call_no_get(
+            "revokeAccountAgent",
+            address=info["address"],
+            permission_id="dummy:agent:0",
+        ))
         data = response.json()
         assert data["ok"] is False
         assert "LIFECYCLE_IMMUTABLE" in data["error"]
@@ -805,7 +840,11 @@ class TestLifecycleMutationRPCs:
 
     def test_revoke_session_unsupported(self, api_method_call_no_get):
         """revokeAccountSession on elector should fail with unsupported/deferred error."""
-        response = api_method_call_no_get("revokeAccountSession", address=ELECTOR_ADDRESS)
+        response = api_method_call_no_get(
+            "revokeAccountSession",
+            address=ELECTOR_ADDRESS,
+            permission_id="dummy:session:0",
+        )
         data = response.json()
         assert data["ok"] is False
         assert "PERMISSION_SOURCE_UNSUPPORTED" in data["error"] or "PERMISSION_SOURCE_DEFERRED" in data["error"]

@@ -89,6 +89,9 @@ static td::Result<td::Ref<vm::Cell>> parse_optional_boc_field(td::JsonObject& pa
   if (decoded_r.is_error()) {
     return td::Status::Error(PSTRING() << "Invalid base64 in '" << name << "'");
   }
+  if (decoded_r.ok().size() > kMaxBocSize) {
+    return td::Status::Error("BOC payload exceeds maximum allowed size");
+  }
   auto cell_r = vm::std_boc_deserialize(td::Slice(decoded_r.ok()));
   if (cell_r.is_error()) {
     return td::Status::Error(PSTRING() << "Invalid BOC in '" << name << "'");
@@ -276,6 +279,9 @@ static td::Result<td::Ref<vm::Cell>> parse_optional_boc_string(const std::string
   auto decoded_r = td::base64_decode(value);
   if (decoded_r.is_error()) {
     return td::Status::Error(PSTRING() << "Invalid base64 in '" << name << "'");
+  }
+  if (decoded_r.ok().size() > kMaxBocSize) {
+    return td::Status::Error("BOC payload exceeds maximum allowed size");
   }
   auto cell_r = vm::std_boc_deserialize(td::Slice(decoded_r.ok()));
   if (cell_r.is_error()) {

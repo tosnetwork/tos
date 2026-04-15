@@ -653,7 +653,7 @@ static void fetch_nominator_pool_delegation_view(SendQueryFn&& send_query,
                       nom.pending_deposit = 0;
                     }
                   }
-                  nom.withdraw_requested = (*elem)[3].is_int() && (*elem)[3].as_int()->to_long() != 0;
+                  nom.withdraw_requested = (*elem)[3].is_int() && (*elem)[3].as_int()->sgn() > 0;
                   if (!nom.principal.empty()) {
                     view.nominators.push_back(std::move(nom));
                   }
@@ -1706,7 +1706,7 @@ static td::Result<GrantRequest> parse_grant_request(td::JsonObject &params) {
   // expires_at (optional)
   auto expires_r = params.get_optional_int_field("expires_at");
   if (expires_r.is_ok() && expires_r.ok() > 0) {
-    if (expires_r.ok() < 0 || expires_r.ok() > static_cast<td::int64>(std::numeric_limits<td::uint32>::max())) {
+    if (expires_r.ok() > static_cast<td::int64>(std::numeric_limits<td::uint32>::max())) {
       return td::Status::Error("INVALID_EXPIRES_AT: value out of uint32 range");
     }
     req.expires_at = static_cast<td::uint32>(expires_r.ok());

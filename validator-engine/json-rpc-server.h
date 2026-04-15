@@ -248,7 +248,6 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   std::unordered_map<std::string, CacheEntry> cache_;
 
   static const std::set<std::string> &cacheable_methods();
-  td::int32 cache_ttl_for_method(const std::string &method) const;
 
   td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager_;
   td::actor::ActorOwn<http::HttpServer> http_;
