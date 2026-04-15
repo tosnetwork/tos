@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { renderHook, render, screen } from "@testing-library/react";
 import { TosProvider } from "./provider.js";
 import { createTosConfig } from "./config.js";
@@ -38,10 +38,15 @@ describe("TosProvider", () => {
 
 describe("useClient", () => {
   it("throws when used outside TosProvider", () => {
-    // renderHook will catch the error thrown during render
-    expect(() => {
-      renderHook(() => useClient());
-    }).toThrow(/useClient must be used within a <TosProvider>/);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // renderHook will catch the error thrown during render
+      expect(() => {
+        renderHook(() => useClient());
+      }).toThrow(/useClient must be used within a <TosProvider>/);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("returns the same client instance on re-renders", () => {

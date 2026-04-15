@@ -9,10 +9,9 @@
  * where each hook test file exercises the full lifecycle with waitFor.
  */
 import { describe, it, expect, vi } from "vitest";
-import { renderHook } from "@testing-library/react";
+import { renderHook, waitFor, act } from "@testing-library/react";
 import { TosClientContext } from "../context.js";
 import { useQuery } from "./useQuery.js";
-import * as store from "../store.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -44,17 +43,6 @@ function createWrapper(client: any) {
   };
 }
 
-/** Poll the store until `check` returns true (or timeout). */
-async function pollStore(check: () => boolean, timeoutMs = 2000): Promise<void> {
-  const start = Date.now();
-  while (!check()) {
-    if (Date.now() - start > timeoutMs) {
-      throw new Error("pollStore timed out");
-    }
-    await new Promise((r) => setTimeout(r, 10));
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -69,6 +57,7 @@ describe("useQuery", () => {
         useQuery({
           queryKey: ["sync-check", String(Math.random())],
           queryFn,
+          enabled: false,
         }),
       { wrapper: createWrapper(client) },
     );
@@ -101,47 +90,44 @@ describe("useQuery", () => {
   it("calls queryFn and stores resolved data", async () => {
     const client = createMockClient();
     const key = ["data-store", String(Math.random())];
-    const serialized = store.serializeKey(key);
     const queryFn = vi.fn().mockResolvedValue("stored-value");
 
-    renderHook(
+    const { result } = renderHook(
       () => useQuery({ queryKey: key, queryFn }),
       { wrapper: createWrapper(client) },
     );
 
-    await pollStore(() => store.getSnapshot(serialized).data === "stored-value");
+    await waitFor(() => {
+      expect(result.current.data).toBe("stored-value");
+    });
 
-    const snap = store.getSnapshot(serialized);
-    expect(snap.data).toBe("stored-value");
-    expect(snap.isLoading).toBe(false);
-    expect(snap.error).toBeNull();
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.error).toBeNull();
     expect(queryFn).toHaveBeenCalledTimes(1);
   });
 
   it("stores error when queryFn rejects", async () => {
     const client = createMockClient();
     const key = ["err-store", String(Math.random())];
-    const serialized = store.serializeKey(key);
     const queryFn = vi.fn().mockRejectedValue(new Error("boom"));
 
-    renderHook(
+    const { result } = renderHook(
       () => useQuery({ queryKey: key, queryFn }),
       { wrapper: createWrapper(client) },
     );
 
-    await pollStore(() => store.getSnapshot(serialized).error !== null);
+    await waitFor(() => {
+      expect(result.current.error).not.toBeNull();
+    });
 
-    const snap = store.getSnapshot(serialized);
-    expect(snap.error).not.toBeNull();
-    expect(snap.error!.message).toBe("boom");
-    expect(snap.isLoading).toBe(false);
+    expect(result.current.error!.message).toBe("boom");
+    expect(result.current.isLoading).toBe(false);
   });
 
   it("refetch() calls queryFn again and updates the store", async () => {
     const client = createMockClient();
     let c = 0;
     const key = ["refetch-store", String(Math.random())];
-    const serialized = store.serializeKey(key);
     const queryFn = vi.fn().mockImplementation(async () => `v${++c}`);
 
     const { result } = renderHook(
@@ -149,12 +135,17 @@ describe("useQuery", () => {
       { wrapper: createWrapper(client) },
     );
 
-    await pollStore(() => store.getSnapshot(serialized).data === "v1");
+    await waitFor(() => {
+      expect(result.current.data).toBe("v1");
+    });
 
-    // Trigger refetch
-    result.current.refetch();
+    act(() => {
+      result.current.refetch();
+    });
 
-    await pollStore(() => store.getSnapshot(serialized).data === "v2");
+    await waitFor(() => {
+      expect(result.current.data).toBe("v2");
+    });
     expect(queryFn).toHaveBeenCalledTimes(2);
   });
 
@@ -163,34 +154,36 @@ describe("useQuery", () => {
     let c = 0;
     const queryFn = vi.fn().mockImplementation(async () => `k${++c}`);
     const rand = String(Math.random());
-    const key1 = store.serializeKey(["rekey", "a", rand]);
-    const key2 = store.serializeKey(["rekey", "b", rand]);
-
-    const { rerender } = renderHook(
+    const { result, rerender } = renderHook(
       ({ k }: { k: string }) =>
         useQuery({ queryKey: ["rekey", k, rand], queryFn }),
       { wrapper: createWrapper(client), initialProps: { k: "a" } },
     );
 
-    await pollStore(() => store.getSnapshot(key1).data === "k1");
+    await waitFor(() => {
+      expect(result.current.data).toBe("k1");
+    });
 
     rerender({ k: "b" });
 
-    await pollStore(() => store.getSnapshot(key2).data === "k2");
+    await waitFor(() => {
+      expect(result.current.data).toBe("k2");
+    });
   });
 
   it("unmounting cleans up without errors", async () => {
     const client = createMockClient();
     const key = ["unmount-test", String(Math.random())];
-    const serialized = store.serializeKey(key);
     const queryFn = vi.fn().mockResolvedValue("clean");
 
-    const { unmount } = renderHook(
+    const { result, unmount } = renderHook(
       () => useQuery({ queryKey: key, queryFn }),
       { wrapper: createWrapper(client) },
     );
 
-    await pollStore(() => store.getSnapshot(serialized).data === "clean");
+    await waitFor(() => {
+      expect(result.current.data).toBe("clean");
+    });
 
     // Unmount should not throw
     unmount();

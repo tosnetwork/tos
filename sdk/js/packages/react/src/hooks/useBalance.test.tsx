@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, it, expect, vi } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { renderHook, waitFor, act } from "@testing-library/react";
 import { TosClientContext } from "../context.js";
 import { useBalance } from "./useBalance.js";
 
@@ -121,8 +121,9 @@ describe("useBalance", () => {
       expect(result.current.data).toBe(1000000000n);
     });
 
-    // Trigger refetch
-    result.current.refetch();
+    act(() => {
+      result.current.refetch();
+    });
 
     await waitFor(() => {
       expect(result.current.data).toBe(2000000000n);
