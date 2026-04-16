@@ -7,6 +7,9 @@ dependencies = [
     "plotly",
     # pytoniq-core vendored as pytosiq_core (in src/pytosiq_core/)
     "watchfiles>=1.1.1",
+    "bitarray",
+    "pynacl",
+    "pycryptodome",
 ]
 
 [project.scripts]
