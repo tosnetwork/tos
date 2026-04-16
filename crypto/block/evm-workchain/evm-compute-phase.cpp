@@ -43,6 +43,15 @@ bool run_evm_compute_phase(
     auto block = make_evm_block(block_seqno, timestamp, rand_seed, gas_limit);
     const auto& config = evm_chain_config();
 
+    // Compute EIP-1559 base fee from parent block (same logic as RPC path)
+    auto parent_blk = state.get_block_copy(block_seqno > 0 ? block_seqno - 1 : 0);
+    if (state.has_block(block_seqno > 0 ? block_seqno - 1 : 0)) {
+        block.header.base_fee_per_gas = calc_base_fee(
+            parent_blk.base_fee_per_gas, parent_blk.gas_used, parent_blk.gas_limit);
+    } else {
+        block.header.base_fee_per_gas = intx::uint256{kInitialBaseFee};
+    }
+
     // --- Step 4: Execute the transaction ---
     auto exec_result = execute_evm_transaction(decoded.txn, block, state, config);
 

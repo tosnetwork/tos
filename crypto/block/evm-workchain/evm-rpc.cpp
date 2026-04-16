@@ -120,6 +120,9 @@ static bool parse_hex_bytes(const std::string& hex, silkworm::Bytes& out) {
     return true;
 }
 
+// Forward declarations
+static std::vector<std::vector<evmc::bytes32>> parse_topics_array(const std::string& params);
+
 // ---------------------------------------------------------------------------
 // Method handlers
 // ---------------------------------------------------------------------------
@@ -262,11 +265,14 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
     stored_block.parent_hash = parent_block ? parent_block->hash : evmc::bytes32{};
 
     // Compute block hash deterministically
-    ethash::hash256 hash_input;
+    // Block hash = keccak256(block_number || parent_hash || timestamp)
+    uint8_t hash_input[32 + 32 + 8];
     auto bn_be = intx::be::store<evmc::uint256be>(intx::uint256{bn});
-    std::memcpy(hash_input.bytes, bn_be.bytes, 32);
-    stored_block.hash = evmc::bytes32{};
-    auto h = ethash::keccak256(reinterpret_cast<const uint8_t*>(&bn_be), 32);
+    std::memcpy(hash_input, bn_be.bytes, 32);
+    std::memcpy(hash_input + 32, stored_block.parent_hash.bytes, 32);
+    uint64_t ts_be = __builtin_bswap64(stored_block.timestamp);
+    std::memcpy(hash_input + 64, &ts_be, 8);
+    auto h = ethash::keccak256(hash_input, sizeof(hash_input));
     std::memcpy(stored_block.hash.bytes, h.bytes, 32);
 
     evm_state.store_block(stored_block);
@@ -607,6 +613,9 @@ static RpcResult handle_get_logs(const std::string& params, const std::string& i
         }
     }
 
+    // Parse topics
+    topics = parse_topics_array(params);
+
     // Query logs
     auto logs = global_evm_state().get_logs(from_block, to_block, addresses, topics);
 
@@ -798,6 +807,8 @@ static RpcResult handle_eth_subscribe(const std::string& params, const std::stri
                 filter.addresses.push_back(addr);
             }
         }
+        // Parse optional topics filter
+        filter.topics = parse_topics_array(params);
     } else {
         type = SubscriptionType::NewPendingTransactions;
     }
@@ -869,7 +880,19 @@ static RpcResult handle_get_block_receipts(const std::string& params, const std:
         arr += "\"gasUsed\":" + to_hex_quantity(receipt->gas_used) + ",";
         arr += "\"cumulativeGasUsed\":" + to_hex_quantity(receipt->gas_used) + ",";
         arr += "\"status\":" + to_hex_quantity(receipt->success ? uint64_t{1} : uint64_t{0}) + ",";
-        arr += "\"logs\":[],";
+        arr += "\"logs\":[";
+        for (size_t li = 0; li < receipt->logs.size(); ++li) {
+            if (li > 0) arr += ",";
+            const auto& log = receipt->logs[li];
+            arr += "{\"address\":" + to_hex_addr(log.address) + ",";
+            arr += "\"topics\":[";
+            for (size_t j = 0; j < log.topics.size(); ++j) {
+                if (j > 0) arr += ",";
+                arr += to_hex_data(log.topics[j].bytes, 32);
+            }
+            arr += "],\"data\":" + to_hex_data(log.data.data(), log.data.size()) + "}";
+        }
+        arr += "],";
         arr += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(i)) + ",";
         arr += "\"blockHash\":" + to_hex_data(blk.hash.bytes, 32) + ",";
         arr += "\"type\":\"0x0\"";
@@ -997,10 +1020,19 @@ static RpcResult handle_get_block_by_hash(const std::string& params, const std::
 // - max_age: expire idle filters
 // - mutex: thread-safe
 
+// --- Filter storage (bounded, with expiry, stores criteria, returns real changes) ---
+// Pattern: ~/s/silkworm/rpc/core/filter_storage.hpp
+
+enum class FilterType { Logs, Blocks, PendingTx };
+
 struct FilterEntry {
-    uint64_t last_block;
-    uint64_t created_at;  // seconds since epoch
-    uint64_t last_access; // seconds since epoch
+    FilterType type{FilterType::Logs};
+    uint64_t last_polled_block{0};
+    uint64_t created_at{0};
+    uint64_t last_access{0};
+    // Log filter criteria (only for FilterType::Logs)
+    std::vector<evmc::address> addresses;
+    std::vector<std::vector<evmc::bytes32>> topics;
 };
 
 static constexpr size_t kMaxFilters = 1024;
@@ -1027,65 +1059,167 @@ static void cleanup_expired_filters() {
     }
 }
 
-static uint64_t create_filter() {
+static uint64_t create_filter(FilterType type,
+                               const std::vector<evmc::address>& addresses = {},
+                               const std::vector<std::vector<evmc::bytes32>>& topics = {}) {
     std::lock_guard<std::mutex> lock(g_filter_mutex);
     cleanup_expired_filters();
-    if (g_filters.size() >= kMaxFilters) {
-        return 0;  // reject: too many filters
-    }
+    if (g_filters.size() >= kMaxFilters) return 0;
     uint64_t fid = g_next_filter_id++;
     uint64_t now = static_cast<uint64_t>(std::time(nullptr));
-    g_filters[fid] = FilterEntry{
-        .last_block = global_evm_state().block_number(),
-        .created_at = now,
-        .last_access = now,
-    };
+    FilterEntry entry;
+    entry.type = type;
+    entry.last_polled_block = global_evm_state().block_number();
+    entry.created_at = now;
+    entry.last_access = now;
+    entry.addresses = addresses;
+    entry.topics = topics;
+    g_filters[fid] = std::move(entry);
     return fid;
 }
 
-static RpcResult handle_new_filter(const std::string& /*params*/, const std::string& id) {
-    uint64_t fid = create_filter();
+// Parse topics array from JSON: [["0xddf2..."], null, ["0x00...","0x01..."]]
+static std::vector<std::vector<evmc::bytes32>> parse_topics_array(const std::string& params) {
+    std::vector<std::vector<evmc::bytes32>> result;
+    auto pos = params.find("\"topics\"");
+    if (pos == std::string::npos) return result;
+    auto arr_start = params.find('[', pos + 8);
+    if (arr_start == std::string::npos) return result;
+    // Simple parser: find each "0x..." within the topics array
+    size_t depth = 0;
+    size_t i = arr_start;
+    std::vector<evmc::bytes32> current_set;
+    bool in_sub_array = false;
+    while (i < params.size()) {
+        if (params[i] == '[') {
+            depth++;
+            if (depth == 2) { in_sub_array = true; current_set.clear(); }
+        } else if (params[i] == ']') {
+            if (depth == 2 && in_sub_array) {
+                result.push_back(current_set);
+                in_sub_array = false;
+            }
+            depth--;
+            if (depth == 0) break;
+        } else if (params[i] == 'n' && params.substr(i, 4) == "null" && depth == 1) {
+            result.push_back({});  // null = match any
+            i += 3;
+        } else if (params[i] == '0' && i + 1 < params.size() && params[i+1] == 'x' && in_sub_array) {
+            // Parse a 32-byte topic hash
+            evmc::bytes32 topic{};
+            silkworm::Bytes tb;
+            if (parse_hex_bytes(params.substr(i - 1), tb) && tb.size() == 32) {
+                std::memcpy(topic.bytes, tb.data(), 32);
+                current_set.push_back(topic);
+            }
+            i += 65;  // skip past "0x" + 64 hex chars
+            continue;
+        }
+        i++;
+    }
+    return result;
+}
+
+static RpcResult handle_new_filter(const std::string& params, const std::string& id) {
+    // Parse filter criteria: {"fromBlock":"0x1","toBlock":"latest","address":"0x...","topics":[...]}
+    std::vector<evmc::address> addresses;
+    std::string addr_hex = extract_json_string_value(params, "address");
+    if (!addr_hex.empty()) {
+        evmc::address addr{};
+        if (parse_hex_address(addr_hex, addr)) addresses.push_back(addr);
+    }
+    auto topics = parse_topics_array(params);
+
+    uint64_t fid = create_filter(FilterType::Logs, addresses, topics);
     if (fid == 0) return {make_error(id, -32000, "too many filters"), true};
     return {make_result(id, to_hex_quantity(fid)), false};
 }
 
 static RpcResult handle_new_block_filter(const std::string& id) {
-    uint64_t fid = create_filter();
+    uint64_t fid = create_filter(FilterType::Blocks);
     if (fid == 0) return {make_error(id, -32000, "too many filters"), true};
     return {make_result(id, to_hex_quantity(fid)), false};
+}
+
+static std::string format_log_json(const IndexedLog& il) {
+    std::string r = "{\"address\":" + to_hex_addr(il.log.address) + ",";
+    r += "\"topics\":[";
+    for (size_t j = 0; j < il.log.topics.size(); ++j) {
+        if (j > 0) r += ",";
+        r += to_hex_data(il.log.topics[j].bytes, 32);
+    }
+    r += "],";
+    r += "\"data\":" + to_hex_data(il.log.data.data(), il.log.data.size()) + ",";
+    r += "\"blockNumber\":" + to_hex_quantity(il.block_number) + ",";
+    r += "\"transactionHash\":" + to_hex_data(il.tx_hash.bytes, 32) + ",";
+    r += "\"logIndex\":" + to_hex_quantity(static_cast<uint64_t>(il.log_index)) + ",";
+    r += "\"blockHash\":\"0x" + std::string(64, '0') + "\",";
+    r += "\"transactionIndex\":\"0x0\",\"removed\":false}";
+    return r;
 }
 
 static RpcResult handle_get_filter_changes(const std::string& params, const std::string& id) {
     uint64_t fid = parse_hex_uint64(extract_json_string_value(params, ""));
     if (fid == 0) {
         auto pos = params.find("0x");
-        if (pos != std::string::npos) {
+        if (pos != std::string::npos)
             fid = std::strtoull(params.c_str() + pos + 2, nullptr, 16);
-        }
     }
+
     std::lock_guard<std::mutex> lock(g_filter_mutex);
     auto it = g_filters.find(fid);
     if (it == g_filters.end()) {
         return {make_error(id, -32000, "filter not found"), true};
     }
-    it->second.last_access = static_cast<uint64_t>(std::time(nullptr));
-    it->second.last_block = global_evm_state().block_number();
-    return {make_result(id, "[]"), false};
+    auto& f = it->second;
+    f.last_access = static_cast<uint64_t>(std::time(nullptr));
+
+    uint64_t current_block = global_evm_state().block_number();
+    uint64_t from_block = f.last_polled_block + 1;
+    f.last_polled_block = current_block;
+
+    if (from_block > current_block) {
+        return {make_result(id, "[]"), false};
+    }
+
+    std::string arr = "[";
+    if (f.type == FilterType::Logs) {
+        auto logs = global_evm_state().get_logs(from_block, current_block,
+                                                 f.addresses, f.topics);
+        for (size_t i = 0; i < logs.size(); ++i) {
+            if (i > 0) arr += ",";
+            arr += format_log_json(logs[i]);
+        }
+    } else if (f.type == FilterType::Blocks) {
+        // Return block hashes for new blocks
+        for (uint64_t bn = from_block; bn <= current_block; ++bn) {
+            auto hash = global_evm_state().get_block_hash(bn);
+            bool is_zero = true;
+            for (auto b : hash.bytes) { if (b != 0) { is_zero = false; break; } }
+            if (!is_zero) {
+                if (arr.size() > 1) arr += ",";
+                arr += to_hex_data(hash.bytes, 32);
+            }
+        }
+    } else if (f.type == FilterType::PendingTx) {
+        // Pending tx filter: return empty (we execute immediately, no mempool)
+    }
+    arr += "]";
+    return {make_result(id, arr), false};
 }
 
 static RpcResult handle_uninstall_filter(const std::string& params, const std::string& id) {
     uint64_t fid = 0;
     auto pos = params.find("0x");
-    if (pos != std::string::npos) {
+    if (pos != std::string::npos)
         fid = std::strtoull(params.c_str() + pos + 2, nullptr, 16);
-    }
     std::lock_guard<std::mutex> lock(g_filter_mutex);
     bool removed = g_filters.erase(fid) > 0;
     return {make_result(id, removed ? "true" : "false"), false};
 }
 
 static RpcResult handle_new_pending_transaction_filter(const std::string& id) {
-    uint64_t fid = create_filter();
+    uint64_t fid = create_filter(FilterType::PendingTx);
     if (fid == 0) return {make_error(id, -32000, "too many filters"), true};
     return {make_result(id, to_hex_quantity(fid)), false};
 }

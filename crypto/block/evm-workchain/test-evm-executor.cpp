@@ -2523,6 +2523,8 @@ int main() {
     test_concurrent_eth_send_and_receipts();
     test_concurrent_filters();
 
-    printf("All tests passed.\n");
-    return 0;
+    // Scan stdout for FAILED to determine exit code
+    // (Individual tests print PASSED or FAILED)
+    printf("All tests completed.\n");
+    return 0;  // TODO: accumulate per-test pass/fail for proper CI exit code
 }
