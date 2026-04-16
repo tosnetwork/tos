@@ -42,6 +42,32 @@ static ExecutionResult run_evm(
     silkworm::EVM evm(block, state, config);
     auto rev = evm.revision();
 
+    // --- Transaction validation (Yellow Paper §6.2) ---
+    // Skip validation for read-only calls (commit_state=false)
+    if (commit_state) {
+        // Nonce check: sender nonce must match transaction nonce
+        if (txn.to.has_value()) {
+            uint64_t sender_nonce = state.get_nonce(sender);
+            if (sender_nonce != txn.nonce) {
+                result.error_message = "nonce mismatch: expected " +
+                    std::to_string(sender_nonce) + ", got " + std::to_string(txn.nonce);
+                result.gas_used = 0;
+                return result;
+            }
+        }
+
+        // Balance check: sender must have enough for value + gas
+        const intx::uint256 bf = block.header.base_fee_per_gas.value_or(0);
+        const intx::uint256 egp = txn.effective_gas_price(bf);
+        const intx::uint512 max_cost = intx::uint512{txn.gas_limit} * intx::uint512{egp} +
+                                        intx::uint512{txn.value};
+        if (intx::uint512{state.get_balance(sender)} < max_cost) {
+            result.error_message = "insufficient funds for gas + value";
+            result.gas_used = 0;
+            return result;
+        }
+    }
+
     // Compute intrinsic gas.
     auto intrinsic = silkworm::protocol::intrinsic_gas(txn, rev);
     if (intrinsic > static_cast<intx::uint128>(txn.gas_limit)) {

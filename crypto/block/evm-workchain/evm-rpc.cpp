@@ -759,6 +759,51 @@ static RpcResult handle_debug_trace_transaction(const std::string& params, const
     return {make_result(id, result), false};
 }
 
+static RpcResult handle_get_block_receipts(const std::string& params, const std::string& id) {
+    // Parse block number
+    uint64_t bn = global_evm_state().block_number();
+    auto pos = params.find("0x");
+    if (pos != std::string::npos) {
+        auto end = params.find_first_of("\",]}", pos);
+        std::string bn_str = params.substr(pos, end - pos);
+        if (bn_str != "latest" && bn_str != "pending") {
+            bn = parse_hex_uint64(bn_str);
+        }
+    }
+
+    // Get the block to find its transaction hashes
+    auto* blk = global_evm_state().get_block(bn);
+    if (!blk) {
+        return {make_result(id, "[]"), false};
+    }
+
+    // Build receipts array
+    std::string arr = "[";
+    for (size_t i = 0; i < blk->transaction_hashes.size(); ++i) {
+        if (i > 0) arr += ",";
+        const auto& tx_hash = blk->transaction_hashes[i];
+        const auto* receipt = global_evm_state().get_receipt(tx_hash);
+        if (!receipt) continue;
+
+        arr += "{";
+        arr += "\"transactionHash\":" + to_hex_data(tx_hash.bytes, 32) + ",";
+        arr += "\"blockNumber\":" + to_hex_quantity(receipt->block_number) + ",";
+        arr += "\"from\":" + to_hex_addr(receipt->from) + ",";
+        arr += receipt->to ? "\"to\":" + to_hex_addr(*receipt->to) + "," : "\"to\":null,";
+        arr += receipt->contract_address ? "\"contractAddress\":" + to_hex_addr(*receipt->contract_address) + "," : "\"contractAddress\":null,";
+        arr += "\"gasUsed\":" + to_hex_quantity(receipt->gas_used) + ",";
+        arr += "\"cumulativeGasUsed\":" + to_hex_quantity(receipt->gas_used) + ",";
+        arr += "\"status\":" + to_hex_quantity(receipt->success ? uint64_t{1} : uint64_t{0}) + ",";
+        arr += "\"logs\":[],";
+        arr += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(i)) + ",";
+        arr += "\"blockHash\":" + to_hex_data(blk->hash.bytes, 32) + ",";
+        arr += "\"type\":\"0x0\"";
+        arr += "}";
+    }
+    arr += "]";
+    return {make_result(id, arr), false};
+}
+
 static RpcResult handle_mining(const std::string& id) {
     return {make_result(id, "false"), false};
 }
@@ -949,7 +994,8 @@ bool is_eth_rpc_method(const std::string& method) noexcept {
            method == "net_listening" ||
            method == "net_peerCount" ||
            method == "web3_clientVersion" ||
-           method == "debug_traceTransaction";
+           method == "debug_traceTransaction" ||
+           method == "eth_getBlockReceipts";
 }
 
 std::optional<RpcResult> handle_eth_rpc(
@@ -983,6 +1029,7 @@ std::optional<RpcResult> handle_eth_rpc(
     if (method == "eth_getFilterChanges")     return handle_get_filter_changes(params, id);
     if (method == "eth_uninstallFilter")      return handle_uninstall_filter(params, id);
     if (method == "debug_traceTransaction")  return handle_debug_trace_transaction(params, id);
+    if (method == "eth_getBlockReceipts")    return handle_get_block_receipts(params, id);
     if (method == "eth_sendRawTransaction")   return handle_send_raw_transaction(params, id);
     if (method == "eth_getTransactionReceipt") return handle_get_transaction_receipt(params, id);
     if (method == "eth_call")                 return handle_call(params, id);

@@ -1647,6 +1647,145 @@ static void test_bridge() {
     printf("  %s\n\n", ok ? "PASSED" : "FAILED");
 }
 
+static void test_gold_delegatecall() {
+    printf("=== test_gold_delegatecall (Silkworm 'DELEGATECALL') ===\n");
+
+    // Gold data from ~/s/silkworm/core/execution/evm_test.cpp "DELEGATECALL"
+    // Caller delegate-calls callee. Callee writes ADDRESS to storage[0].
+    // With DELEGATECALL, ADDRESS returns the caller's address (not callee's).
+
+    auto caller_addr = hex_to_addr("0x8e4d1ea201b908ab5e1f5a1c3f9f1b4f6c1e9cf1");
+    auto callee_addr = hex_to_addr("0x3589d05a1ec4af9f65b0e5554e645707775ee43c");
+
+    // Callee: ADDRESS, PUSH1 0, SSTORE = 30600055
+    Bytes callee_code = hex_to_bytes("0x30600055");
+
+    // Caller: delegate-calls calldataload(0) = 6000808080803561eeeef4
+    Bytes caller_code = hex_to_bytes("0x6000808080803561eeeef4");
+
+    EvmState state;
+    state.seed_account(caller_addr, intx::uint256{1'000'000'000'000'000'000u}, 0);
+
+    // Pre-deploy both contracts
+    auto deploy_code = [&](const evmc::address& addr, const Bytes& code) {
+        silkworm::Account acct;
+        acct.nonce = 1;
+        auto h = ethash::keccak256(code.data(), code.size());
+        std::memcpy(acct.code_hash.bytes, h.bytes, 32);
+        acct.incarnation = 1;
+        state.state().update_account(addr, std::nullopt, acct);
+        state.state().update_account_code(addr, 1, acct.code_hash,
+            silkworm::ByteView(code.data(), code.size()));
+    };
+    deploy_code(caller_addr, caller_code);
+    deploy_code(callee_addr, callee_code);
+
+    // Call: caller calls itself with callee_addr as calldata
+    // The caller will DELEGATECALL to callee, which stores ADDRESS
+    evmc::bytes32 callee_as_bytes32{};
+    std::memcpy(callee_as_bytes32.bytes + 12, callee_addr.bytes, 20);
+
+    Transaction txn;
+    txn.type = TransactionType::kLegacy;
+    txn.chain_id = kEvmChainId;
+    txn.nonce = 1;  // account nonce is 1 (set by deploy_code)
+    txn.gas_limit = 1'000'000;
+    txn.to = caller_addr;
+    txn.data = Bytes(callee_as_bytes32.bytes, callee_as_bytes32.bytes + 32);
+    txn.set_sender(caller_addr);
+
+    uint8_t rs[32] = {};
+    auto blk = make_evm_block(1'639'560, 1700000000, rs);
+    auto result = execute_evm_transaction(txn, blk, state, evm_chain_config());
+
+    printf("  delegatecall: %s (gas=%lu)\n", result.success ? "ok" : "FAIL",
+           (unsigned long)result.gas_used);
+
+    // With DELEGATECALL, storage[0] on caller should be caller_addr (not callee_addr)
+    auto stored = state.state().read_storage(caller_addr, 1, evmc::bytes32{});
+    evmc::address stored_addr{};
+    std::memcpy(stored_addr.bytes, stored.bytes + 12, 20);
+
+    bool addr_match = (stored_addr == caller_addr);
+    printf("  storage[0] = 0x");
+    for (auto b : stored_addr.bytes) printf("%02x", b);
+    printf(" (expect caller: %s)\n", addr_match ? "YES" : "NO");
+
+    bool ok = result.success && addr_match;
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_gold_create_returndatasize() {
+    printf("=== test_gold_create_returndatasize (Silkworm 'CREATE should only return on failure') ===\n");
+
+    // Gold data from ~/s/silkworm/core/execution/evm_test.cpp
+    // EIP-211: CREATE should only return data on failure, RETURNDATASIZE should be 0 after success.
+
+    auto caller = hex_to_addr("0xf466859ead1932d743d622cb74fc058882e8648a");
+    Bytes code = hex_to_bytes(
+        "0x602180601360003960006000f0503d600055006211223360005260206000602060006000600461900"
+        "0f1503d60005560206000f3");
+
+    EvmState state;
+    state.seed_account(caller, intx::uint256{1'000'000'000'000'000'000u}, 0);
+
+    Transaction txn;
+    txn.type = TransactionType::kLegacy;
+    txn.chain_id = kEvmChainId;
+    txn.nonce = 0;
+    txn.gas_limit = 150'000;
+    txn.data = code;  // CREATE transaction
+    txn.set_sender(caller);
+
+    uint8_t rs[32] = {};
+    auto blk = make_evm_block(4'575'910, 1700000000, rs);
+    auto result = execute_evm_transaction(txn, blk, state, evm_chain_config());
+
+    printf("  create+call: %s (gas=%lu)\n", result.success ? "ok" : "FAIL",
+           (unsigned long)result.gas_used);
+
+    // After successful CREATE, RETURNDATASIZE should be 0 (stored at slot 0)
+    auto contract_addr = silkworm::create_address(caller, 0);
+    auto stored = state.state().read_storage(contract_addr, 1, evmc::bytes32{});
+    bool is_zero = true;
+    for (auto b : stored.bytes) { if (b != 0) { is_zero = false; break; } }
+
+    printf("  RETURNDATASIZE after CREATE: %s (expect zero)\n", is_zero ? "zero" : "non-zero");
+
+    bool ok = result.success && is_zero;
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_nonce_validation() {
+    printf("=== test_nonce_validation ===\n");
+
+    EvmState state;
+    auto sender = hex_to_addr("0x0a6bb546b9208cfab9e8fa2b9b2c042b18df7030");
+    auto recipient = hex_to_addr("0x8b299e2b7d7f43c0ce3068263545309ff4ffb521");
+    state.seed_account(sender, intx::uint256{10'000'000'000'000'000'000u}, 5);  // nonce=5
+
+    // Try with wrong nonce (3 instead of 5)
+    auto txn = make_transfer_txn(sender, recipient, intx::uint256{1000}, 3, 50000);
+
+    uint8_t rs[32] = {};
+    auto blk = make_evm_block(1, 1700000000, rs);
+    auto result = execute_evm_transaction(txn, blk, state, evm_chain_config());
+
+    printf("  wrong nonce (3, expect 5): success=%s error='%s'\n",
+           result.success ? "true" : "false", result.error_message.c_str());
+
+    bool nonce_rejected = !result.success && result.error_message.find("nonce") != std::string::npos;
+
+    // Try with correct nonce
+    auto txn2 = make_transfer_txn(sender, recipient, intx::uint256{1000}, 5, 50000);
+    auto result2 = execute_evm_transaction(txn2, blk, state, evm_chain_config());
+
+    printf("  correct nonce (5): success=%s\n", result2.success ? "true" : "false");
+
+    bool ok = nonce_rejected && result2.success;
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -1667,6 +1806,9 @@ int main() {
     test_bridge();
     test_gold_chainid();
     test_gold_selfdestruct();
+    test_gold_delegatecall();
+    test_gold_create_returndatasize();
+    test_nonce_validation();
 
     printf("All tests passed.\n");
     return 0;
