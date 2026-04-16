@@ -286,8 +286,7 @@ include(BuildMHD)
 include(BuildZlib)
 
 # --- EVM Workchain third-party dependencies ---
-option(TOS_EVM_WORKCHAIN "Build EVM workchain support" ON)
-if (TOS_EVM_WORKCHAIN AND NOT TOS_ONLY_TOSLIB)
+if (NOT TOS_ONLY_TOSLIB)
   message("Add EVM workchain dependencies (intx, ethash, evmone)")
   function(evm_deps_scope)
     # intx: extended precision integer library (header-only)

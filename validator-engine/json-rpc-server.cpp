@@ -18,9 +18,7 @@
 */
 #include "json-rpc-server-internal.h"
 
-#ifdef EVM_WORKCHAIN_ENABLED
 #include "evm-rpc.h"
-#endif
 
 namespace tos {
 
@@ -513,12 +511,10 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
     params_val = td::JsonValue::make_object(td::JsonObject());
   }
 
-#ifdef EVM_WORKCHAIN_ENABLED
   // Ethereum JSON-RPC sends params as arrays.  Handle eth_* methods with
   // array params directly, before the object-params check.
   if (params_val.type() == td::JsonValue::Type::Array &&
       evm_workchain::is_eth_rpc_method(method)) {
-    // Serialize the array back to string for the EVM RPC handler.
     td::JsonBuilder jb;
     jb.enter_value() << params_val;
     std::string params_str = jb.string_builder().as_cslice().str();
@@ -531,7 +527,6 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
     }
     return;
   }
-#endif
 
   if (params_val.type() != td::JsonValue::Type::Object) {
     promise.set_value(make_json_error(-32602, "'params' must be an object", req_id));
@@ -725,17 +720,12 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
   } else if (method == "sendBocReturnHashNoError") {
     handle_sendBocReturnHashNoError(params, std::move(req_id), std::move(promise));
   }
-#ifdef EVM_WORKCHAIN_ENABLED
   // --- EVM Workchain: Ethereum JSON-RPC methods ---
   else if (evm_workchain::is_eth_rpc_method(method)) {
-    // Serialize params back to string for the EVM RPC handler.
     std::string params_str = "[]";
     if (params.get_count() > 0) {
-      // Build a minimal JSON array from the params object fields.
-      // For the first slice, pass the raw method params as-is.
       td::JsonBuilder jb;
       auto arr = jb.enter_array();
-      // Re-serialize each param
       for (int i = 0; i < params.get_count(); ++i) {
         auto& kv = params.get_key_value_pairs()[i];
         arr.enter_value() << kv.second;
@@ -750,7 +740,6 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
       promise.set_value(make_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
     }
   }
-#endif
   else {
     promise.set_value(make_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
   }

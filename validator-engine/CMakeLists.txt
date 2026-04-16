@@ -21,10 +21,7 @@ target_link_libraries(validator-engine metrics overlay tdutils tdactor adnl tl_a
   rldp rldp2 quic catchain validatorsession full-node validator tos_validator validator
   fift-lib memprof git ${JEMALLOC_LIBRARIES})
 
-if (TOS_EVM_WORKCHAIN)
-  target_link_libraries(validator-engine evm_workchain)
-  target_compile_definitions(validator-engine PRIVATE EVM_WORKCHAIN_ENABLED=1)
-endif()
+target_link_libraries(validator-engine evm_workchain)
 if (JEMALLOC_FOUND)
   target_include_directories(validator-engine PRIVATE ${JEMALLOC_INCLUDE_DIR})
   target_compile_definitions(validator-engine PRIVATE -DTOS_USE_JEMALLOC=1)

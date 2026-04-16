@@ -399,7 +399,7 @@ if (USE_EMSCRIPTEN)
 endif()
 
 # --- EVM Workchain module ---
-if (TOS_EVM_WORKCHAIN AND NOT TOS_ONLY_TOSLIB)
+if (NOT TOS_ONLY_TOSLIB)
   add_subdirectory(block/evm-workchain)
 endif()
 
