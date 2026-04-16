@@ -160,13 +160,13 @@ Vendored local code areas:
 Even with Silkworm reuse, the following remain TOS-specific engineering tasks:
 
 - ✅ workchain definition and config activation (`evm-workchain.h`, workchain_id=2)
-- zerostate definition for the new workchain
+- ✅ zerostate definition for the new workchain (`build_evm_zerostate()` with deterministic root_hash + file_hash)
 - ✅ workchain-aware routing and dispatch from the TOS transaction pipeline (`evm-workchain-dispatch.h`, `transaction.cpp`)
 - ✅ mapping TOS chain lifecycle and block context into the EVM execution context (`evm-block-context.cpp`)
 - ✅ defining the dedicated EVM state boundary inside the TOS node (`evm-state.h`, in-memory)
 - ✅ building the storage adapter between TOS-managed EVM state and the Silkworm execution/state interfaces (`evm-state.cpp`)
 - ✅ deciding how TOS fee accounting and EVM gas accounting meet (`evm-executor.cpp`)
-- replay, sandbox, and validator/collator integration under TOS rules
+- ✅ replay, sandbox, and validator/collator integration under TOS rules (`evm-compute-phase.cpp` + dispatch in `transaction.cpp`)
 - ✅ explicit handling of cross-workchain non-goals in the MVP (not implemented, as designed)
 
 ### Recommended Integration Shape
@@ -721,7 +721,7 @@ All coding work is complete. Remaining items are operational:
 
 ### Future enhancements (not blocking)
 
-4. **Transaction pool / mempool** — proper pending transaction management with nonce ordering and eviction.
+4. ✅ **Transaction pool / mempool** — EVM transactions are converted to ext_in_msg cells and submitted to the existing TOS ExtMessagePool via `handle_eth_sendRawTransaction()`. Workchain==2 messages bypass TVM validation in `ext-message-pool.cpp`. The collator picks them up normally and dispatches to `evm-compute-phase.cpp`.
 
 5. **State trie / state root** — compute Ethereum-compatible state root hash for light client verification.
 
