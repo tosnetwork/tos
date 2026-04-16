@@ -102,7 +102,8 @@ static std::optional<silkworm::Account> decode_account(const std::string& data) 
 }
 
 // --- Receipt serialisation (simple binary) ---
-// Layout: success(1) + gas_used(8) + block_number(8) + from(20) + has_to(1) + to(20)
+// Layout: success(1) + gas_used(8) + cumulative_gas_used(8) + block_number(8) + tx_index(4)
+//         + from(20) + has_to(1) + to(20)
 //         + has_contract(1) + contract(20) + num_logs(4) + [logs...] + return_data_len(4) + return_data
 
 static std::string encode_receipt(const StoredReceipt& r) {
@@ -110,7 +111,9 @@ static std::string encode_receipt(const StoredReceipt& r) {
     out.reserve(256);
     out += static_cast<char>(r.success ? 1 : 0);
     for (int i = 7; i >= 0; --i) out += static_cast<char>((r.gas_used >> (i * 8)) & 0xFF);
+    for (int i = 7; i >= 0; --i) out += static_cast<char>((r.cumulative_gas_used >> (i * 8)) & 0xFF);
     for (int i = 7; i >= 0; --i) out += static_cast<char>((r.block_number >> (i * 8)) & 0xFF);
+    for (int i = 3; i >= 0; --i) out += static_cast<char>((r.tx_index >> (i * 8)) & 0xFF);
     out.append(reinterpret_cast<const char*>(r.from.bytes), 20);
     out += static_cast<char>(r.to.has_value() ? 1 : 0);
     if (r.to) out.append(reinterpret_cast<const char*>(r.to->bytes), 20);
@@ -255,16 +258,22 @@ std::optional<StoredReceipt> PersistentEvmState::get_receipt(const evmc::bytes32
     std::string value;
     auto r = db_->get(receipt_key(tx_hash), value);
     if (r.is_error() || r.ok() == td::KeyValue::GetStatus::NotFound) return std::nullopt;
-    if (value.size() < 79) return std::nullopt;  // minimum: 1+8+8+20+1+20+1+20+4 = 83 bytes, but check at least header
+    if (value.size() < 91) return std::nullopt;  // minimum: 1+8+8+8+4+20+1+20+1+20+4 = 95, check header
     StoredReceipt receipt;
     size_t pos = 0;
     receipt.success = (value[pos++] != 0);
     receipt.gas_used = 0;
     for (int i = 0; i < 8; ++i)
         receipt.gas_used = (receipt.gas_used << 8) | static_cast<uint8_t>(value[pos++]);
+    receipt.cumulative_gas_used = 0;
+    for (int i = 0; i < 8; ++i)
+        receipt.cumulative_gas_used = (receipt.cumulative_gas_used << 8) | static_cast<uint8_t>(value[pos++]);
     receipt.block_number = 0;
     for (int i = 0; i < 8; ++i)
         receipt.block_number = (receipt.block_number << 8) | static_cast<uint8_t>(value[pos++]);
+    receipt.tx_index = 0;
+    for (int i = 0; i < 4; ++i)
+        receipt.tx_index = (receipt.tx_index << 8) | static_cast<uint8_t>(value[pos++]);
     std::memcpy(receipt.from.bytes, &value[pos], 20); pos += 20;
     if (value[pos++] != 0) {
         evmc::address to{};
