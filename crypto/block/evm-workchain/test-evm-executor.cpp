@@ -1932,6 +1932,139 @@ static void test_gold_insufficient_balance_create() {
     printf("  %s\n\n", ok ? "PASSED" : "FAILED");
 }
 
+static void test_gold_two_blocks() {
+    printf("=== test_gold_two_blocks (Silkworm 'Execute two blocks') ===\n");
+
+    // Gold data from ~/s/silkworm/core/execution/execution_test.cpp "Execute two blocks"
+    // Block 1: deploy contract that sets storage[0]=0x2a, storage[1]=0x01c9
+    // Block 2: call contract to update storage[0]=0x3e
+    // Canonical Ethereum addresses from the test suite.
+
+    auto miner = hex_to_addr("0x5a0b54d5dc17e0aadc383d2db43b0a0d3e029c4c");
+    auto sender = hex_to_addr("0xb685342b8c54347aad148e1f22eff3eb3eb29391");
+
+    // Contract code: CALLDATALOAD(0) PUSH1 0 SSTORE = 600035600055
+    Bytes contract_code = hex_to_bytes("0x600035600055");
+
+    // Deployment code: sets storage[0]=0x2a, storage[1]=0x01c9, deploys contract_code
+    // 602a6000556101c960015560068060166000396000f3 + contract_code
+    Bytes deployment_code = hex_to_bytes("0x602a6000556101c960015560068060166000396000f3");
+    deployment_code.insert(deployment_code.end(), contract_code.begin(), contract_code.end());
+
+    EvmState state;
+    state.seed_account(sender, intx::uint256{1'000'000'000'000'000'000u}, 0);
+
+    // --- Block 1: deploy contract ---
+    Transaction txn1;
+    txn1.type = TransactionType::kLegacy;
+    txn1.chain_id = kEvmChainId;
+    txn1.nonce = 0;
+    txn1.max_fee_per_gas = 20'000'000'000u;
+    txn1.max_priority_fee_per_gas = 0;
+    txn1.gas_limit = 100'000;
+    txn1.data = deployment_code;
+    txn1.set_sender(sender);
+
+    uint8_t rs[32] = {};
+    auto blk1 = make_evm_block(1, 1700000000, rs, 100'000, miner);
+    auto res1 = execute_evm_transaction(txn1, blk1, state, evm_chain_config());
+
+    auto contract_addr = silkworm::create_address(sender, 0);
+    printf("  block 1 deploy: %s (gas=%lu)\n", res1.success ? "ok" : "FAIL",
+           (unsigned long)res1.gas_used);
+
+    // Verify storage[0] = 0x2a
+    auto storage0 = state.state().read_storage(contract_addr, 1, evmc::bytes32{});
+    uint8_t val0 = storage0.bytes[31];
+    printf("  storage[0] = 0x%02x (expect 0x2a)\n", val0);
+
+    // Verify storage[1] = 0x01c9
+    evmc::bytes32 key1{};
+    key1.bytes[31] = 0x01;
+    auto storage1 = state.state().read_storage(contract_addr, 1, key1);
+    uint16_t val1 = (static_cast<uint16_t>(storage1.bytes[30]) << 8) | storage1.bytes[31];
+    printf("  storage[1] = 0x%04x (expect 0x01c9)\n", val1);
+
+    // --- Block 2: call contract with new value 0x3e ---
+    Bytes new_val = hex_to_bytes("0x000000000000000000000000000000000000000000000000000000000000003e");
+
+    Transaction txn2;
+    txn2.type = TransactionType::kLegacy;
+    txn2.chain_id = kEvmChainId;
+    txn2.nonce = 1;
+    txn2.max_fee_per_gas = 20'000'000'000u;
+    txn2.max_priority_fee_per_gas = 20'000'000'000u;
+    txn2.gas_limit = 50'000;
+    txn2.to = contract_addr;
+    txn2.data = new_val;
+    txn2.set_sender(sender);
+
+    auto blk2 = make_evm_block(2, 1700000001, rs, 100'000, miner);
+    auto res2 = execute_evm_transaction(txn2, blk2, state, evm_chain_config());
+
+    printf("  block 2 call: %s (gas=%lu)\n", res2.success ? "ok" : "FAIL",
+           (unsigned long)res2.gas_used);
+
+    // Verify storage[0] is now 0x3e
+    auto storage0_after = state.state().read_storage(contract_addr, 1, evmc::bytes32{});
+    uint8_t val0_after = storage0_after.bytes[31];
+    printf("  storage[0] after = 0x%02x (expect 0x3e)\n", val0_after);
+
+    // Verify storage[1] unchanged
+    auto storage1_after = state.state().read_storage(contract_addr, 1, key1);
+    uint16_t val1_after = (static_cast<uint16_t>(storage1_after.bytes[30]) << 8) | storage1_after.bytes[31];
+    printf("  storage[1] after = 0x%04x (expect 0x01c9)\n", val1_after);
+
+    bool ok = res1.success && res2.success &&
+              val0 == 0x2a && val1 == 0x01c9 &&
+              val0_after == 0x3e && val1_after == 0x01c9;
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_gold_value_transfer_insufficient() {
+    printf("=== test_gold_value_transfer_insufficient (Silkworm 'Value transfer' edge case) ===\n");
+
+    // Gold from ~/s/silkworm/core/execution/evm_test.cpp "Value transfer"
+    // Transfer with insufficient balance should fail with EVMC_INSUFFICIENT_BALANCE
+
+    auto from = hex_to_addr("0x0a6bb546b9208cfab9e8fa2b9b2c042b18df7030");
+    auto to = hex_to_addr("0x8b299e2b7d7f43c0ce3068263545309ff4ffb521");
+    intx::uint256 value{10'200'000'000'000'000u};  // 0.0102 ETH
+
+    EvmState state;
+    // Sender has 0 balance — transfer should fail
+    state.seed_account(from, intx::uint256{0}, 0);
+
+    Transaction txn;
+    txn.type = TransactionType::kLegacy;
+    txn.chain_id = kEvmChainId;
+    txn.nonce = 0;
+    txn.gas_limit = 50'000;
+    txn.to = to;
+    txn.value = value;
+    txn.set_sender(from);
+
+    uint8_t rs[32] = {};
+    auto blk = make_evm_block(10'336'006, 1700000000, rs);
+    auto result = execute_evm_transaction(txn, blk, state, evm_chain_config());
+
+    printf("  transfer with 0 balance: success=%s\n", result.success ? "true" : "false");
+    printf("  error: %s\n", result.error_message.c_str());
+
+    // Now fund the sender and retry
+    state.seed_account(from, intx::uint256{1'000'000'000'000'000'000u}, 0);
+    auto result2 = execute_evm_transaction(txn, blk, state, evm_chain_config());
+
+    printf("  transfer with 1 ETH: success=%s\n", result2.success ? "true" : "false");
+
+    auto to_bal = state.get_balance(to);
+    printf("  recipient balance: %s (expect %s)\n",
+           intx::to_string(to_bal).c_str(), intx::to_string(value).c_str());
+
+    bool ok = !result.success && result2.success && to_bal == value;
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -1958,6 +2091,8 @@ int main() {
     test_gold_contract_overwrite();
     test_gold_eip3541();
     test_gold_insufficient_balance_create();
+    test_gold_two_blocks();
+    test_gold_value_transfer_insufficient();
 
     printf("All tests passed.\n");
     return 0;
