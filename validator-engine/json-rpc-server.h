@@ -216,6 +216,8 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
                              td::Promise<td::BufferSlice> promise);
 
   // Utility: build JSON-RPC response
+  static HttpReturn make_raw_json_response(const std::string& json_body,
+                                            const std::string& cors_origin = "*");
   static HttpReturn make_json_ok(std::string result_json, std::string id,
                                  const std::string& cors_origin = "*");
   static HttpReturn make_json_error(int code, std::string message, std::string id,

@@ -521,7 +521,9 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
 
     auto result = evm_workchain::handle_eth_rpc(method, params_str, req_id);
     if (result) {
-      promise.set_value(td::BufferSlice(result->json));
+      // The EVM RPC handler returns a complete JSON-RPC response string.
+      // Wrap it in a raw HTTP response.
+      promise.set_value(make_raw_json_response(result->json, opts_.cors_origin));
     } else {
       promise.set_value(make_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
     }
@@ -723,11 +725,10 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
   // --- EVM Workchain: Ethereum JSON-RPC methods ---
   else if (evm_workchain::is_eth_rpc_method(method)) {
     std::string params_str = "[]";
-    if (params.get_count() > 0) {
+    if (params.field_count() > 0) {
       td::JsonBuilder jb;
       auto arr = jb.enter_array();
-      for (int i = 0; i < params.get_count(); ++i) {
-        auto& kv = params.get_key_value_pairs()[i];
+      for (auto& kv : params.field_values_) {
         arr.enter_value() << kv.second;
       }
       arr.leave();
@@ -735,7 +736,7 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     }
     auto result = evm_workchain::handle_eth_rpc(method, params_str, req_id);
     if (result) {
-      promise.set_value(td::BufferSlice(result->json));
+      promise.set_value(make_raw_json_response(result->json, opts_.cors_origin));
     } else {
       promise.set_value(make_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
     }
@@ -781,6 +782,19 @@ void JsonRpcServer::send_liteserver_query(td::BufferSlice query,
 }
 
 // ─── JSON response construction ───────────────────────────────────────────
+
+JsonRpcServer::HttpReturn JsonRpcServer::make_raw_json_response(const std::string& json_body,
+                                                                const std::string& cors_origin) {
+  auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
+  response->add_header({"Content-Type", "application/json"});
+  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  response->add_header({"Transfer-Encoding", "Chunked"});
+  response->complete_parse_header();
+  auto payload = response->create_empty_payload().move_as_ok();
+  payload->add_chunk(td::BufferSlice(json_body));
+  payload->complete_parse();
+  return {std::move(response), std::move(payload)};
+}
 
 JsonRpcServer::HttpReturn JsonRpcServer::make_json_ok(std::string result_json, std::string id,
                                                       const std::string& cors_origin) {
