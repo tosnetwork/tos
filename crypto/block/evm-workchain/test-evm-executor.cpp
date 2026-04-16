@@ -25,6 +25,7 @@
 #include "evm-rpc.h"
 #include "evm-persistent-state.h"
 #include "evm-config-param.h"
+#include "evm-bridge.h"
 
 #include <silkworm/core/types/transaction.hpp>
 #include <silkworm/core/types/address.hpp>
@@ -1489,6 +1490,163 @@ static void test_gold_selfdestruct() {
     printf("  %s\n\n", ok ? "PASSED" : "FAILED");
 }
 
+static void test_gold_precompiles() {
+    printf("=== test_gold_precompiles (Silkworm precompile_test.cpp gold vectors) ===\n");
+
+    // All test vectors from ~/s/silkworm/core/execution/precompile_test.cpp
+    // These are canonical Ethereum test data.
+
+    EvmState state;
+    evmc::address caller = hex_to_addr("0x0a6bb546b9208cfab9e8fa2b9b2c042b18df7030");
+    state.seed_account(caller, intx::uint256{10'000'000'000'000'000'000u}, 0);
+    int pass = 0, fail = 0;
+
+    auto test_precompile = [&](const char* name, uint8_t precompile_addr,
+                                const char* input_hex, const char* expected_hex) {
+        Bytes input = hex_to_bytes(input_hex);
+        Bytes expected = hex_to_bytes(expected_hex);
+
+        // Build EVM code: CALLDATACOPY to memory, STATICCALL precompile, RETURNDATACOPY, RETURN
+        // Simpler: use eth_call with data to the precompile address
+        evmc::address precompile{};
+        precompile.bytes[19] = precompile_addr;
+
+        Transaction txn;
+        txn.type = TransactionType::kLegacy;
+        txn.chain_id = kEvmChainId;
+        txn.gas_limit = 1'000'000;
+        txn.to = precompile;
+        txn.data = input;
+        txn.set_sender(caller);
+
+        uint8_t rs[32] = {};
+        auto blk = make_evm_block(1, 1700000000, rs);
+        auto result = call_evm_transaction(txn, blk, state, evm_chain_config());
+
+        bool ok = result.success && result.return_data == expected;
+        if (ok) {
+            printf("  %-12s PASS\n", name);
+            pass++;
+        } else {
+            printf("  %-12s FAIL (success=%d, got %zu bytes, expected %zu)\n",
+                   name, result.success, result.return_data.size(), expected.size());
+            if (result.return_data.size() > 0 && result.return_data.size() <= 64) {
+                printf("              got: ");
+                for (auto b : result.return_data) printf("%02x", b);
+                printf("\n");
+            }
+            fail++;
+        }
+    };
+
+    // --- ecrecover (0x01) ---
+    // Gold: Silkworm precompile_test.cpp "Ecrecover"
+    // Input: hash + v + r + s → recovers 0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b
+    test_precompile("ecrecover", 0x01,
+        "0x18c547e4f7b0f325ad1e56f57e26c745b09a3e503d86e00e5255ff7f715d3d1c"
+        "000000000000000000000000000000000000000000000000000000000000001c"
+        "73b1693892219d736caba55bdb67216e485557ea6b6af75f37096c9aa6a5a75f"
+        "eeb940b1d03b21e36b0e47e79769f095fe2ab855bd91e3a38756b7d75a9c4549",
+        "0x000000000000000000000000a94f5374fce5edbc8e2a8697c15331677e6ebf0b");
+
+    // --- bn_add (0x06) ---
+    // Gold: Silkworm "BN_ADD" — G(1,2) + G(1,2) = 2G
+    test_precompile("bn_add", 0x06,
+        "0x0000000000000000000000000000000000000000000000000000000000000001"
+        "0000000000000000000000000000000000000000000000000000000000000002"
+        "0000000000000000000000000000000000000000000000000000000000000001"
+        "0000000000000000000000000000000000000000000000000000000000000002",
+        "0x030644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd3"
+        "15ed738c0e0a7c92e7845f96b2ae9c0a68a6a449e3538fc7ff3ebf7a5a18a2c4");
+
+    // --- bn_mul (0x07) ---
+    // Gold: Silkworm "BN_MUL" — point * 9
+    test_precompile("bn_mul", 0x07,
+        "0x1a87b0584ce92f4593d161480614f2989035225609f08058ccfa3d0f940febe3"
+        "1a2f3c951f6dadcc7ee9007dff81504b0fcd6d7cf59996efdc33d92bf7f9f8f6"
+        "0000000000000000000000000000000000000000000000000000000000000009",
+        "0x1dbad7d39dbc56379f78fac1bca147dc8e66de1b9d183c7b167351bfe0aeab74"
+        "2cd757d51289cd8dbd0acf9e673ad67d0f0a89f912af47ed1be53664f5692575");
+
+    // --- modexp (0x05) ---
+    // Gold: Silkworm "EXPMOD" — 3^(secp256k1_n-1) mod secp256k1_n = 1 (Fermat's little theorem)
+    test_precompile("modexp", 0x05,
+        "0x0000000000000000000000000000000000000000000000000000000000000001"
+        "0000000000000000000000000000000000000000000000000000000000000020"
+        "0000000000000000000000000000000000000000000000000000000000000020"
+        "03"
+        "fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2e"
+        "fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f",
+        "0x0000000000000000000000000000000000000000000000000000000000000001");
+
+    printf("  result: %d passed, %d failed\n", pass, fail);
+    printf("  %s\n\n", fail == 0 ? "PASSED" : "FAILED");
+}
+
+static void test_bridge() {
+    printf("=== test_bridge (deposit + transfer + withdrawal request) ===\n");
+
+    EvmState state;
+
+    // Gold addresses from Silkworm
+    evmc::address alice = hex_to_addr("0x0a6bb546b9208cfab9e8fa2b9b2c042b18df7030");
+    evmc::address bob = hex_to_addr("0x8b299e2b7d7f43c0ce3068263545309ff4ffb521");
+
+    // 1. Deposit 5 ETH to alice (simulates basechain → EVM bridge)
+    intx::uint256 deposit_amount{5'000'000'000'000'000'000u};
+    bool dep_ok = bridge_deposit(state, alice, deposit_amount);
+    printf("  deposit 5 ETH to alice: %s\n", dep_ok ? "ok" : "FAIL");
+
+    auto alice_bal = state.get_balance(alice);
+    printf("  alice balance: %s (expect 5 ETH)\n", intx::to_string(alice_bal).c_str());
+
+    // 2. Alice transfers 1 ETH to bob via EVM transaction
+    Transaction txn;
+    txn.type = TransactionType::kLegacy;
+    txn.chain_id = kEvmChainId;
+    txn.nonce = 0;
+    txn.max_fee_per_gas = 1'000'000'000;
+    txn.max_priority_fee_per_gas = 1'000'000'000;
+    txn.gas_limit = 50'000;
+    txn.to = bob;
+    txn.value = intx::uint256{1'000'000'000'000'000'000u};  // 1 ETH
+    txn.set_sender(alice);
+
+    uint8_t rs[32] = {};
+    auto blk = make_evm_block(1, 1700000000, rs);
+    auto result = execute_evm_transaction(txn, blk, state, evm_chain_config());
+    printf("  transfer 1 ETH alice→bob: %s (gas=%lu)\n",
+           result.success ? "ok" : "FAIL", (unsigned long)result.gas_used);
+
+    auto bob_bal = state.get_balance(bob);
+    printf("  bob balance: %s\n", intx::to_string(bob_bal).c_str());
+
+    // 3. Bob records a withdrawal request (EVM → basechain)
+    evmc::bytes32 fake_tx_hash{};
+    fake_tx_hash.bytes[31] = 0x01;
+    record_withdrawal(bob, "EQDrjaLahLkMB-hN5wGt5EHgT0_E9EXFTzCrhdtDxn9nRbVR",
+                      intx::uint256{500'000'000'000'000'000u},  // 0.5 ETH
+                      1, fake_tx_hash);
+
+    auto& pending = get_pending_withdrawals();
+    printf("  pending withdrawals: %zu\n", pending.size());
+    bool withdrawal_ok = pending.size() == 1 &&
+                         pending[0].amount == intx::uint256{500'000'000'000'000'000u} &&
+                         pending[0].evm_sender == bob;
+
+    // 4. Clear withdrawals (simulates relayer confirming)
+    clear_withdrawals();
+    printf("  after clear: %zu pending\n", get_pending_withdrawals().size());
+
+    bool ok = dep_ok && result.success &&
+              alice_bal == deposit_amount &&
+              bob_bal == intx::uint256{1'000'000'000'000'000'000u} &&
+              withdrawal_ok &&
+              get_pending_withdrawals().empty();
+
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -1505,6 +1663,8 @@ int main() {
     test_event_logs();
     test_erc20_token();
     test_gold_deploy_and_call();
+    test_gold_precompiles();
+    test_bridge();
     test_gold_chainid();
     test_gold_selfdestruct();
 
