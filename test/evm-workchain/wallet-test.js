@@ -184,6 +184,62 @@ async function main() {
         failed++;
     }
 
+    // 12. eth_feeHistory (MetaMask gas estimation)
+    try {
+        const feeHistory = await jsonRpc('eth_feeHistory', ['0x1', 'latest', [25, 75]]);
+        console.log(`eth_feeHistory: baseFee=${feeHistory?.baseFeePerGas?.[0]}`);
+        check('feeHistory has baseFeePerGas', feeHistory && Array.isArray(feeHistory.baseFeePerGas));
+    } catch (e) {
+        console.log(`eth_feeHistory: FAILED - ${e.message}`);
+        failed++;
+    }
+
+    // 13. eth_maxPriorityFeePerGas
+    try {
+        const maxPriority = await jsonRpc('eth_maxPriorityFeePerGas');
+        console.log(`eth_maxPriorityFeePerGas: ${maxPriority}`);
+        check('maxPriorityFee is a hex value', typeof maxPriority === 'string' && maxPriority.startsWith('0x'));
+    } catch (e) {
+        console.log(`eth_maxPriorityFeePerGas: FAILED - ${e.message}`);
+        failed++;
+    }
+
+    // 14. eth_getStorageAt
+    try {
+        const storage = await jsonRpc('eth_getStorageAt', [
+            '0x0000000000000000000000000000000000000000',
+            '0x0',
+            'latest'
+        ]);
+        console.log(`eth_getStorageAt: ${storage}`);
+        check('storage is 32 bytes hex', typeof storage === 'string' && storage.length === 66);
+    } catch (e) {
+        console.log(`eth_getStorageAt: FAILED - ${e.message}`);
+        failed++;
+    }
+
+    // 15. net_listening
+    try {
+        const listening = await jsonRpc('net_listening');
+        console.log(`net_listening: ${listening}`);
+        check('listening is true', listening === true);
+    } catch (e) {
+        console.log(`net_listening: FAILED - ${e.message}`);
+        failed++;
+    }
+
+    // 16. eth_newBlockFilter + eth_getFilterChanges + eth_uninstallFilter
+    try {
+        const filterId = await jsonRpc('eth_newBlockFilter');
+        const changes = await jsonRpc('eth_getFilterChanges', [filterId]);
+        const uninstalled = await jsonRpc('eth_uninstallFilter', [filterId]);
+        console.log(`eth_newBlockFilter: ${filterId}, changes: ${JSON.stringify(changes)}, uninstall: ${uninstalled}`);
+        check('filter lifecycle works', filterId && Array.isArray(changes) && uninstalled === true);
+    } catch (e) {
+        console.log(`filter lifecycle: FAILED - ${e.message}`);
+        failed++;
+    }
+
     // Summary
     console.log(`\n========================================`);
     console.log(`Results: ${passed} passed, ${failed} failed`);

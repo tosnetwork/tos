@@ -18,6 +18,7 @@ set(EVM_WORKCHAIN_SRC
   evm-rpc.cpp
   evm-persistent-state.cpp
   evm-config-param.cpp
+  evm-external-message.cpp
 )
 
 add_library(evm_workchain STATIC ${EVM_WORKCHAIN_SRC})

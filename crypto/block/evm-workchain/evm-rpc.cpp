@@ -576,6 +576,114 @@ static RpcResult handle_syncing(const std::string& id) {
     return {make_result(id, "false"), false};
 }
 
+// --- MetaMask-required methods ---
+
+static RpcResult handle_get_storage_at(const std::string& params, const std::string& id) {
+    // params: [address, slot, block]
+    evmc::address addr{};
+    if (!parse_hex_address(params, addr)) {
+        return {make_error(id, -32602, "invalid address parameter"), true};
+    }
+
+    // Parse storage slot (second hex param after the address)
+    evmc::bytes32 slot{};
+    auto second_0x = params.find("0x", params.find("0x") + 1);
+    if (second_0x != std::string::npos) {
+        silkworm::Bytes slot_bytes;
+        if (parse_hex_bytes(params.substr(second_0x - 1), slot_bytes) && slot_bytes.size() <= 32) {
+            // Left-pad to 32 bytes
+            size_t offset = 32 - slot_bytes.size();
+            std::memcpy(slot.bytes + offset, slot_bytes.data(), slot_bytes.size());
+        }
+    }
+
+    auto acct = global_evm_state().state().read_account(addr);
+    if (!acct) {
+        return {make_result(id, "\"0x" + std::string(64, '0') + "\""), false};
+    }
+    auto value = global_evm_state().state().read_storage(addr, acct->incarnation, slot);
+    return {make_result(id, to_hex_data(value.bytes, 32)), false};
+}
+
+static RpcResult handle_fee_history(const std::string& /*params*/, const std::string& id) {
+    // Simplified: return minimal fee history that MetaMask accepts.
+    // baseFeePerGas = [0, 0], gasUsedRatio = [0], reward = [[0]]
+    auto bn = global_evm_state().block_number();
+    std::string r = "{";
+    r += "\"oldestBlock\":" + to_hex_quantity(bn > 0 ? bn - 1 : 0) + ",";
+    r += "\"baseFeePerGas\":[\"0x0\",\"0x0\"],";
+    r += "\"gasUsedRatio\":[0],";
+    r += "\"reward\":[[\"0x0\"]]";
+    r += "}";
+    return {make_result(id, r), false};
+}
+
+static RpcResult handle_max_priority_fee(const std::string& id) {
+    // Return 1 gwei as the suggested priority fee
+    return {make_result(id, to_hex_quantity(uint64_t{1'000'000'000})), false};
+}
+
+static RpcResult handle_get_block_by_hash(const std::string& /*params*/, const std::string& id) {
+    // Simplified: return same minimal block as getBlockByNumber
+    auto bn = global_evm_state().block_number();
+    std::string block_json = "{";
+    block_json += "\"number\":" + to_hex_quantity(bn) + ",";
+    block_json += "\"hash\":\"0x" + std::string(64, '0') + "\",";
+    block_json += "\"parentHash\":\"0x" + std::string(64, '0') + "\",";
+    block_json += "\"timestamp\":" + to_hex_quantity(static_cast<uint64_t>(std::time(nullptr))) + ",";
+    block_json += "\"gasLimit\":" + to_hex_quantity(uint64_t{30000000}) + ",";
+    block_json += "\"gasUsed\":" + to_hex_quantity(uint64_t{0}) + ",";
+    block_json += "\"miner\":\"0x" + std::string(40, '0') + "\",";
+    block_json += "\"baseFeePerGas\":\"0x0\",";
+    block_json += "\"transactions\":[]";
+    block_json += "}";
+    return {make_result(id, block_json), false};
+}
+
+// Filter IDs are simple incrementing integers
+static uint64_t g_next_filter_id = 1;
+static std::unordered_map<uint64_t, uint64_t> g_filter_last_block;  // filter_id → last polled block
+
+static RpcResult handle_new_filter(const std::string& /*params*/, const std::string& id) {
+    uint64_t fid = g_next_filter_id++;
+    g_filter_last_block[fid] = global_evm_state().block_number();
+    return {make_result(id, to_hex_quantity(fid)), false};
+}
+
+static RpcResult handle_new_block_filter(const std::string& id) {
+    uint64_t fid = g_next_filter_id++;
+    g_filter_last_block[fid] = global_evm_state().block_number();
+    return {make_result(id, to_hex_quantity(fid)), false};
+}
+
+static RpcResult handle_get_filter_changes(const std::string& params, const std::string& id) {
+    uint64_t fid = parse_hex_uint64(extract_json_string_value(params, ""));
+    if (fid == 0) {
+        // Try direct hex parse from params array: ["0x1"]
+        auto pos = params.find("0x");
+        if (pos != std::string::npos) {
+            fid = std::strtoull(params.c_str() + pos + 2, nullptr, 16);
+        }
+    }
+    auto it = g_filter_last_block.find(fid);
+    if (it == g_filter_last_block.end()) {
+        return {make_error(id, -32000, "filter not found"), true};
+    }
+    // Return empty changes (simplified)
+    it->second = global_evm_state().block_number();
+    return {make_result(id, "[]"), false};
+}
+
+static RpcResult handle_uninstall_filter(const std::string& /*params*/, const std::string& id) {
+    return {make_result(id, "true"), false};
+}
+
+static RpcResult handle_new_pending_transaction_filter(const std::string& id) {
+    uint64_t fid = g_next_filter_id++;
+    g_filter_last_block[fid] = global_evm_state().block_number();
+    return {make_result(id, to_hex_quantity(fid)), false};
+}
+
 // ---------------------------------------------------------------------------
 // Public interface
 // ---------------------------------------------------------------------------
@@ -587,17 +695,28 @@ bool is_eth_rpc_method(const std::string& method) noexcept {
            method == "eth_getBalance" ||
            method == "eth_getTransactionCount" ||
            method == "eth_getCode" ||
+           method == "eth_getStorageAt" ||
            method == "eth_sendRawTransaction" ||
            method == "eth_getTransactionReceipt" ||
+           method == "eth_getTransactionByHash" ||
            method == "eth_call" ||
            method == "eth_estimateGas" ||
+           method == "eth_feeHistory" ||
+           method == "eth_maxPriorityFeePerGas" ||
            method == "eth_accounts" ||
            method == "eth_getBlockByNumber" ||
-           method == "eth_getTransactionByHash" ||
+           method == "eth_getBlockByHash" ||
            method == "eth_getLogs" ||
+           method == "eth_newFilter" ||
+           method == "eth_newBlockFilter" ||
+           method == "eth_newPendingTransactionFilter" ||
+           method == "eth_getFilterChanges" ||
+           method == "eth_uninstallFilter" ||
            method == "eth_mining" ||
            method == "eth_syncing" ||
            method == "net_version" ||
+           method == "net_listening" ||
+           method == "net_peerCount" ||
            method == "web3_clientVersion";
 }
 
@@ -608,18 +727,29 @@ std::optional<RpcResult> handle_eth_rpc(
 
     if (method == "eth_chainId")              return handle_chain_id(id);
     if (method == "net_version")              return handle_net_version(id);
+    if (method == "net_listening")            return RpcResult{make_result(id, "true"), false};
+    if (method == "net_peerCount")            return RpcResult{make_result(id, "\"0x0\""), false};
     if (method == "web3_clientVersion")       return handle_client_version(id);
     if (method == "eth_blockNumber")          return handle_block_number(id);
     if (method == "eth_gasPrice")             return handle_gas_price(id);
+    if (method == "eth_maxPriorityFeePerGas") return handle_max_priority_fee(id);
+    if (method == "eth_feeHistory")           return handle_fee_history(params, id);
     if (method == "eth_accounts")             return handle_accounts(id);
     if (method == "eth_mining")               return handle_mining(id);
     if (method == "eth_syncing")              return handle_syncing(id);
     if (method == "eth_getBalance")           return handle_get_balance(params, id);
     if (method == "eth_getTransactionCount")  return handle_get_transaction_count(params, id);
     if (method == "eth_getCode")              return handle_get_code(params, id);
+    if (method == "eth_getStorageAt")         return handle_get_storage_at(params, id);
     if (method == "eth_getBlockByNumber")     return handle_get_block_by_number(params, id);
+    if (method == "eth_getBlockByHash")       return handle_get_block_by_hash(params, id);
     if (method == "eth_getTransactionByHash") return handle_get_transaction_by_hash(params, id);
     if (method == "eth_getLogs")              return handle_get_logs(params, id);
+    if (method == "eth_newFilter")            return handle_new_filter(params, id);
+    if (method == "eth_newBlockFilter")       return handle_new_block_filter(id);
+    if (method == "eth_newPendingTransactionFilter") return handle_new_pending_transaction_filter(id);
+    if (method == "eth_getFilterChanges")     return handle_get_filter_changes(params, id);
+    if (method == "eth_uninstallFilter")      return handle_uninstall_filter(params, id);
     if (method == "eth_sendRawTransaction")   return handle_send_raw_transaction(params, id);
     if (method == "eth_getTransactionReceipt") return handle_get_transaction_receipt(params, id);
     if (method == "eth_call")                 return handle_call(params, id);
