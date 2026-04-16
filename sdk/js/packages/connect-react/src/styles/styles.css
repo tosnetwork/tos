@@ -1,0 +1,163 @@
+/**
+ * @tos/connect-react — ConnectButton styles.
+ *
+ * Uses CSS custom properties injected by TosConnectProvider:
+ *   --tos-connect-accent       Primary accent color
+ *   --tos-connect-bg           Surface background
+ *   --tos-connect-text         Text color
+ *   --tos-connect-border       Border color
+ *   --tos-connect-button-bg    Button background (defaults to accent)
+ *   --tos-connect-button-text  Button text color
+ *   --tos-connect-radius       Border radius
+ *   --tos-connect-font         Font family
+ */
+
+/* ---------------------------------------------------------------------------
+ * Reset & base
+ * ------------------------------------------------------------------------- */
+
+.tos-connect-button {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-radius: var(--tos-connect-radius, 16px);
+  background: var(--tos-connect-button-bg, #0098EA);
+  color: var(--tos-connect-button-text, #FFFFFF);
+  font-family: var(
+    --tos-connect-font,
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif
+  );
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition: opacity 150ms ease, transform 100ms ease, box-shadow 150ms ease;
+}
+
+.tos-connect-button:hover {
+  opacity: 0.88;
+}
+
+.tos-connect-button:active {
+  transform: scale(0.97);
+}
+
+.tos-connect-button:focus-visible {
+  outline: 2px solid var(--tos-connect-accent, #0098EA);
+  outline-offset: 2px;
+}
+
+.tos-connect-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * Connected variant
+ * ------------------------------------------------------------------------- */
+
+.tos-connect-button--connected {
+  background: var(--tos-connect-bg, #FFFFFF);
+  color: var(--tos-connect-text, #1A1A2E);
+  border: 1px solid var(--tos-connect-border, rgba(0, 0, 0, 0.08));
+  padding: 8px 16px;
+}
+
+.tos-connect-button--connected:hover {
+  opacity: 1;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+/* ---------------------------------------------------------------------------
+ * Inner elements
+ * ------------------------------------------------------------------------- */
+
+.tos-connect-button__label {
+  display: inline-flex;
+  align-items: center;
+}
+
+.tos-connect-button__wallet-name {
+  font-weight: 500;
+  font-size: 13px;
+  opacity: 0.7;
+}
+
+.tos-connect-button__balance {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.tos-connect-button__address {
+  font-family: "SF Mono", "Fira Code", "Fira Mono", "Roboto Mono", monospace;
+  font-size: 13px;
+  font-weight: 500;
+  opacity: 0.85;
+  letter-spacing: 0.02em;
+}
+
+.tos-connect-button__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--tos-connect-accent, #0098EA);
+  color: var(--tos-connect-button-text, #FFFFFF);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * Responsive: on small screens, tighten up
+ * ------------------------------------------------------------------------- */
+
+@media (max-width: 480px) {
+  .tos-connect-button {
+    padding: 8px 14px;
+    font-size: 13px;
+    gap: 6px;
+  }
+
+  .tos-connect-button--connected {
+    padding: 6px 12px;
+  }
+
+  .tos-connect-button__wallet-name {
+    display: none;
+  }
+
+  .tos-connect-button__balance {
+    font-size: 13px;
+  }
+
+  .tos-connect-button__avatar {
+    width: 24px;
+    height: 24px;
+    font-size: 10px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Reduced motion
+ * ------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .tos-connect-button {
+    transition: none;
+  }
+
+  .tos-connect-button:active {
+    transform: none;
+  }
+}

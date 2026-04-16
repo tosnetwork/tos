@@ -1,9 +1,14 @@
+import sys
 from pathlib import Path
+
+repo_root = Path(__file__).resolve().parents[2]
+tostester_src = repo_root / "test/tostester/src"
+if str(tostester_src) not in sys.path:
+    sys.path.insert(0, str(tostester_src))
 
 import tl
 
 if __name__ == "__main__":
-    repo_root = Path(__file__).resolve().parents[2]
     schemas_root = repo_root / "tl/generate/scheme"
 
     schemas = [

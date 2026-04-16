@@ -33,8 +33,10 @@ const isPackageCwd =
   !cwdFromRepoRoot.startsWith("..") &&
   cwdFromRepoRoot.startsWith("packages/");
 const include = isPackageCwd
-  ? [`./${cwdFromRepoRoot}/src/**/*.test.ts`]
-  : ["./packages/*/src/**/*.test.ts"];
+  ? [`./${cwdFromRepoRoot}/src/**/*.test.{ts,tsx}`]
+  : ["./packages/*/src/**/*.test.{ts,tsx}"];
+const runLiveTests = process.env.RUN_LIVE_TESTS === "1";
+const exclude = runLiveTests ? undefined : ["./packages/*/src/**/live-*.test.{ts,tsx}"];
 
 export default defineConfig({
   root: repoRoot,
@@ -46,12 +48,26 @@ export default defineConfig({
       "@tos/wallets": resolve(repoRoot, "packages/wallets/src/index.ts"),
       "@tos/contracts": resolve(repoRoot, "packages/contracts/src/index.ts"),
       "@tos/sdk": resolve(repoRoot, "packages/sdk/src/index.ts"),
+      "@tos/connect": resolve(repoRoot, "packages/connect/src/index.ts"),
+      "@tos/connect-ui": resolve(repoRoot, "packages/connect-ui/src/index.ts"),
+      "@tos/react": resolve(repoRoot, "packages/react/src/index.ts"),
+      "@tos/connect-react": resolve(repoRoot, "packages/connect-react/src/index.ts"),
+      // Pin react to the hoisted v18 to avoid dual-version conflicts with
+      // @testing-library/react@16 (which pulls react 19 as a dependency).
+      "react": resolve(repoRoot, "node_modules/react"),
+      "react-dom": resolve(repoRoot, "node_modules/react-dom"),
     },
   },
   test: {
     globals: true,
     environment: "node",
     include,
+    exclude,
     env: loadEnvTest(),
+    environmentMatchGlobs: [
+      ["packages/react/**", "jsdom"],
+      ["packages/connect-react/**", "jsdom"],
+      ["packages/connect-ui/**", "jsdom"],
+    ],
   },
 });

@@ -1,0 +1,35 @@
+{
+  "name": "@tos/connect-ui",
+  "version": "0.1.0",
+  "description": "Framework-agnostic UI components for TOS wallet connection — vanilla JS + CSS",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./styles.css": "./dist/styles.css"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts && cat src/styles/index.css src/styles/animations.css > dist/styles.css",
+    "test": "vitest run --config ../../vitest.config.ts --passWithNoTests",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@tos/connect": "workspace:*",
+    "@tos/core": "workspace:*",
+    "qrcode-generator": "^1.4.4"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "license": "MIT"
+}
