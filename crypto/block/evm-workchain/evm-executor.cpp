@@ -18,14 +18,17 @@
 #include <silkworm/core/protocol/intrinsic_gas.hpp>
 #include <silkworm/core/protocol/param.hpp>
 #include <silkworm/core/state/intra_block_state.hpp>
+#include <silkworm/core/types/address.hpp>
 
 namespace evm_workchain {
 
-ExecutionResult execute_evm_transaction(
+// Shared execution logic used by both execute (mutable) and call (read-only).
+static ExecutionResult run_evm(
     const silkworm::Transaction& txn,
     const silkworm::Block& block,
-    EvmState& evm_state,
-    const silkworm::ChainConfig& config) {
+    silkworm::IntraBlockState& state,
+    const silkworm::ChainConfig& config,
+    bool commit_state) {
 
     ExecutionResult result;
 
@@ -36,12 +39,7 @@ ExecutionResult execute_evm_transaction(
     }
     const auto& sender = *sender_opt;
 
-    // Create the IntraBlockState for this execution.
-    silkworm::IntraBlockState state(evm_state.state());
-
-    // Create the EVM instance.
     silkworm::EVM evm(block, state, config);
-
     auto rev = evm.revision();
 
     // Compute intrinsic gas.
@@ -53,20 +51,19 @@ ExecutionResult execute_evm_transaction(
     }
     uint64_t execution_gas = txn.gas_limit - static_cast<uint64_t>(intrinsic);
 
-    // Gas price: with base_fee=0, effective = min(max_fee, base + priority) = min(max_fee, priority)
     const intx::uint256 base_fee = block.header.base_fee_per_gas.value_or(0);
     const intx::uint256 effective_gas_price = txn.effective_gas_price(base_fee);
 
-    // 1. Deduct upfront gas cost from sender (Yellow Paper §6).
+    // 1. Deduct upfront gas cost.
     const intx::uint256 upfront_gas_cost = intx::uint256{txn.gas_limit} * effective_gas_price;
     state.subtract_from_balance(sender, upfront_gas_cost);
 
-    // 2. Increment sender nonce (for CALL transactions; CREATE increments internally).
+    // 2. Increment sender nonce (CALL only; CREATE increments internally).
     if (txn.to.has_value()) {
         state.set_nonce(sender, state.get_nonce(sender) + 1);
     }
 
-    // 3. Warm up sender and recipient (EIP-2929).
+    // 3. Warm up access lists (EIP-2929).
     state.access_account(sender);
     if (txn.to.has_value()) {
         state.access_account(*txn.to);
@@ -80,14 +77,19 @@ ExecutionResult execute_evm_transaction(
     }
 
     // 4. Execute the EVM.
-    // The EVM internally handles value transfer, CREATE address derivation,
-    // and nonce increment for CREATE.
     auto call_result = evm.execute(txn, execution_gas);
 
     result.success = (call_result.status == EVMC_SUCCESS);
     result.return_data = std::move(call_result.data);
     if (!result.success) {
         result.error_message = call_result.error_message;
+    }
+
+    // For CREATE: compute the contract address.
+    if (!txn.to.has_value() && result.success) {
+        uint64_t sender_nonce = state.get_nonce(sender);
+        // CREATE uses nonce - 1 because the EVM already incremented it.
+        result.contract_address = silkworm::create_address(sender, sender_nonce > 0 ? sender_nonce - 1 : 0);
     }
 
     // 5. Calculate gas used and refund.
@@ -101,20 +103,49 @@ ExecutionResult execute_evm_transaction(
     uint64_t gas_remaining = txn.gas_limit - gas_used;
     state.add_to_balance(sender, intx::uint256{gas_remaining} * effective_gas_price);
 
-    // 7. Pay base fee portion to beneficiary (priority fee in a more complete impl).
+    // 7. Pay fee to beneficiary.
     state.add_to_balance(block.header.beneficiary,
                          intx::uint256{gas_used} * effective_gas_price);
 
     // Collect logs.
     result.logs = state.logs();
 
-    // Finalize the transaction state.
+    // Finalize.
     state.finalize_transaction(rev);
 
-    // Write in-block state changes to the underlying state store.
-    state.write_to_db(block.header.number);
+    // Commit state changes only for real execution (not eth_call).
+    if (commit_state) {
+        state.write_to_db(block.header.number);
+    }
 
     return result;
+}
+
+ExecutionResult execute_evm_transaction(
+    const silkworm::Transaction& txn,
+    const silkworm::Block& block,
+    EvmState& evm_state,
+    const silkworm::ChainConfig& config) {
+
+    silkworm::IntraBlockState ibs(evm_state.state());
+    return run_evm(txn, block, ibs, config, /*commit_state=*/true);
+}
+
+ExecutionResult call_evm_transaction(
+    const silkworm::Transaction& txn,
+    const silkworm::Block& block,
+    const EvmState& evm_state,
+    const silkworm::ChainConfig& config) {
+
+    // Create a temporary mutable copy of the state for the read-only call.
+    // IntraBlockState doesn't commit because commit_state=false.
+    silkworm::InMemoryState temp_state;
+
+    // Copy relevant accounts from the real state by wrapping it.
+    // For simplicity, use the real state directly (IntraBlockState won't commit).
+    auto& real_state = const_cast<silkworm::InMemoryState&>(evm_state.state());
+    silkworm::IntraBlockState ibs(real_state);
+    return run_evm(txn, block, ibs, config, /*commit_state=*/false);
 }
 
 }  // namespace evm_workchain

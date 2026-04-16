@@ -130,9 +130,7 @@ static RpcResult handle_net_version(const std::string& id) {
 }
 
 static RpcResult handle_block_number(const std::string& id) {
-    // First slice: return 0 (no blocks processed yet in the MVP)
-    // Later: track the latest EVM workchain block seqno
-    return {make_result(id, to_hex_quantity(uint64_t{0})), false};
+    return {make_result(id, to_hex_quantity(global_evm_state().block_number())), false};
 }
 
 static RpcResult handle_gas_price(const std::string& id) {
@@ -175,45 +173,191 @@ static RpcResult handle_get_code(const std::string& params, const std::string& i
 }
 
 static RpcResult handle_send_raw_transaction(const std::string& params, const std::string& id) {
-    // Extract raw hex transaction from params
     silkworm::Bytes raw_tx;
     if (!parse_hex_bytes(params, raw_tx)) {
         return {make_error(id, -32602, "invalid hex transaction data"), true};
     }
 
-    // Decode the transaction
     auto decode_result = decode_evm_transaction(raw_tx);
     if (auto* err = std::get_if<TxDecodeError>(&decode_result)) {
         return {make_error(id, -32000, err->reason), true};
     }
     auto& decoded = std::get<DecodedTransaction>(decode_result);
 
-    // Execute it
+    auto& evm_state = global_evm_state();
+    evm_state.increment_block_number();
+
     uint8_t rand_seed[32] = {};
-    auto block = make_evm_block(0, static_cast<uint64_t>(std::time(nullptr)), rand_seed);
+    auto block = make_evm_block(
+        evm_state.block_number(),
+        static_cast<uint64_t>(std::time(nullptr)),
+        rand_seed);
     const auto& config = evm_chain_config();
 
-    auto result = execute_evm_transaction(decoded.txn, block, global_evm_state(), config);
+    auto exec_result = execute_evm_transaction(decoded.txn, block, evm_state, config);
 
-    // Return the transaction hash
+    // Store receipt
     auto tx_hash = decoded.txn.hash();
+    StoredReceipt receipt;
+    receipt.success = exec_result.success;
+    receipt.gas_used = exec_result.gas_used;
+    receipt.block_number = evm_state.block_number();
+    receipt.from = decoded.sender;
+    receipt.to = decoded.txn.to;
+    receipt.contract_address = exec_result.contract_address;
+    receipt.logs = exec_result.logs;
+    receipt.return_data = exec_result.return_data;
+    evm_state.store_receipt(tx_hash, std::move(receipt));
+
     return {make_result(id, to_hex_data(tx_hash.bytes, 32)), false};
 }
 
-static RpcResult handle_get_transaction_receipt(const std::string& /*params*/, const std::string& id) {
-    // First slice: receipts are not persisted yet
-    return {make_result(id, "null"), false};
+static RpcResult handle_get_transaction_receipt(const std::string& params, const std::string& id) {
+    // Parse tx hash from params
+    silkworm::Bytes hash_bytes;
+    if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
+        return {make_error(id, -32602, "invalid transaction hash"), true};
+    }
+
+    evmc::bytes32 tx_hash;
+    std::memcpy(tx_hash.bytes, hash_bytes.data(), 32);
+
+    const auto* receipt = global_evm_state().get_receipt(tx_hash);
+    if (!receipt) {
+        return {make_result(id, "null"), false};
+    }
+
+    // Build receipt JSON
+    std::string r = "{";
+    r += "\"transactionHash\":" + to_hex_data(tx_hash.bytes, 32) + ",";
+    r += "\"blockNumber\":" + to_hex_quantity(receipt->block_number) + ",";
+    r += "\"from\":" + to_hex_addr(receipt->from) + ",";
+    if (receipt->to) {
+        r += "\"to\":" + to_hex_addr(*receipt->to) + ",";
+    } else {
+        r += "\"to\":null,";
+    }
+    if (receipt->contract_address) {
+        r += "\"contractAddress\":" + to_hex_addr(*receipt->contract_address) + ",";
+    } else {
+        r += "\"contractAddress\":null,";
+    }
+    r += "\"gasUsed\":" + to_hex_quantity(receipt->gas_used) + ",";
+    r += "\"cumulativeGasUsed\":" + to_hex_quantity(receipt->gas_used) + ",";
+    r += "\"status\":" + to_hex_quantity(receipt->success ? uint64_t{1} : uint64_t{0}) + ",";
+    r += "\"logs\":[";
+    for (size_t i = 0; i < receipt->logs.size(); ++i) {
+        if (i > 0) r += ",";
+        const auto& log = receipt->logs[i];
+        r += "{\"address\":" + to_hex_addr(log.address) + ",";
+        r += "\"topics\":[";
+        for (size_t j = 0; j < log.topics.size(); ++j) {
+            if (j > 0) r += ",";
+            r += to_hex_data(log.topics[j].bytes, 32);
+        }
+        r += "],";
+        r += "\"data\":" + to_hex_data(log.data.data(), log.data.size()) + ",";
+        r += "\"logIndex\":" + to_hex_quantity(static_cast<uint64_t>(i)) + ",";
+        r += "\"blockNumber\":" + to_hex_quantity(receipt->block_number) + ",";
+        r += "\"transactionHash\":" + to_hex_data(tx_hash.bytes, 32);
+        r += "}";
+    }
+    r += "],";
+    r += "\"logsBloom\":\"0x" + std::string(512, '0') + "\",";
+    r += "\"type\":\"0x0\",";
+    r += "\"transactionIndex\":\"0x0\",";
+    r += "\"blockHash\":\"0x" + std::string(64, '0') + "\"";
+    r += "}";
+
+    return {make_result(id, r), false};
 }
 
-static RpcResult handle_call(const std::string& /*params*/, const std::string& id) {
-    // First slice: eth_call requires parsing the call object from params
-    // Stub: return empty data
-    return {make_result(id, "\"0x\""), false};
+// Parse a call object: {"from":"0x...", "to":"0x...", "data":"0x...", "value":"0x...", "gas":"0x..."}
+static silkworm::Transaction parse_call_object(const std::string& params) {
+    silkworm::Transaction txn;
+    txn.type = silkworm::TransactionType::kLegacy;
+    txn.chain_id = kEvmChainId;
+    txn.gas_limit = 10'000'000;  // default high gas limit for eth_call
+    txn.max_fee_per_gas = 0;
+    txn.max_priority_fee_per_gas = 0;
+
+    // Parse "from"
+    evmc::address from_addr{};
+    auto from_pos = params.find("\"from\"");
+    if (from_pos != std::string::npos) {
+        parse_hex_address(params.substr(from_pos), from_addr);
+    }
+    txn.set_sender(from_addr);
+
+    // Parse "to"
+    auto to_pos = params.find("\"to\"");
+    if (to_pos != std::string::npos) {
+        evmc::address to_addr{};
+        if (parse_hex_address(params.substr(to_pos), to_addr)) {
+            txn.to = to_addr;
+        }
+    }
+
+    // Parse "data" or "input"
+    for (const char* key : {"\"data\"", "\"input\""}) {
+        auto data_pos = params.find(key);
+        if (data_pos != std::string::npos) {
+            auto colon = params.find(':', data_pos);
+            if (colon != std::string::npos) {
+                parse_hex_bytes(params.substr(colon), txn.data);
+                break;
+            }
+        }
+    }
+
+    // Parse "gas"
+    auto gas_pos = params.find("\"gas\"");
+    if (gas_pos != std::string::npos) {
+        auto colon = params.find("0x", gas_pos);
+        if (colon != std::string::npos) {
+            txn.gas_limit = std::strtoull(params.c_str() + colon + 2, nullptr, 16);
+        }
+    }
+
+    return txn;
 }
 
-static RpcResult handle_estimate_gas(const std::string& /*params*/, const std::string& id) {
-    // First slice: return a reasonable default
-    return {make_result(id, to_hex_quantity(uint64_t{21000})), false};
+static RpcResult handle_call(const std::string& params, const std::string& id) {
+    auto txn = parse_call_object(params);
+
+    uint8_t rand_seed[32] = {};
+    auto block = make_evm_block(
+        global_evm_state().block_number(),
+        static_cast<uint64_t>(std::time(nullptr)),
+        rand_seed);
+    const auto& config = evm_chain_config();
+
+    auto result = call_evm_transaction(txn, block, global_evm_state(), config);
+
+    if (!result.success && !result.error_message.empty()) {
+        return {make_error(id, 3, result.error_message), true};
+    }
+
+    return {make_result(id, to_hex_data(result.return_data.data(), result.return_data.size())), false};
+}
+
+static RpcResult handle_estimate_gas(const std::string& params, const std::string& id) {
+    auto txn = parse_call_object(params);
+
+    uint8_t rand_seed[32] = {};
+    auto block = make_evm_block(
+        global_evm_state().block_number(),
+        static_cast<uint64_t>(std::time(nullptr)),
+        rand_seed);
+    const auto& config = evm_chain_config();
+
+    auto result = call_evm_transaction(txn, block, global_evm_state(), config);
+
+    // Add 10% buffer for safety
+    uint64_t estimated = result.gas_used + result.gas_used / 10;
+    if (estimated < 21000) estimated = 21000;
+
+    return {make_result(id, to_hex_quantity(estimated)), false};
 }
 
 // ---------------------------------------------------------------------------

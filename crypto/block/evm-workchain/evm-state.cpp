@@ -25,4 +25,13 @@ uint64_t EvmState::get_nonce(const evmc::address& addr) const {
     return acct ? acct->nonce : 0;
 }
 
+void EvmState::store_receipt(const evmc::bytes32& tx_hash, StoredReceipt receipt) {
+    receipts_[tx_hash] = std::move(receipt);
+}
+
+const StoredReceipt* EvmState::get_receipt(const evmc::bytes32& tx_hash) const {
+    auto it = receipts_.find(tx_hash);
+    return it != receipts_.end() ? &it->second : nullptr;
+}
+
 }  // namespace evm_workchain

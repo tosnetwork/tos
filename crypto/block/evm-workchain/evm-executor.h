@@ -39,6 +39,7 @@ struct ExecutionResult {
     silkworm::Bytes return_data;
     std::vector<silkworm::Log> logs;
     std::string error_message;
+    std::optional<evmc::address> contract_address;  // set for CREATE
 };
 
 /// Execute a single EVM transaction against the workchain state.
@@ -56,6 +57,16 @@ ExecutionResult execute_evm_transaction(
     const silkworm::Transaction& txn,
     const silkworm::Block& block,
     EvmState& state,
+    const silkworm::ChainConfig& config);
+
+/// Read-only EVM execution for eth_call / eth_estimateGas.
+///
+/// Runs the transaction against a snapshot of the state — no state is
+/// modified.  Returns the execution result with return data and gas used.
+ExecutionResult call_evm_transaction(
+    const silkworm::Transaction& txn,
+    const silkworm::Block& block,
+    const EvmState& state,
     const silkworm::ChainConfig& config);
 
 }  // namespace evm_workchain
