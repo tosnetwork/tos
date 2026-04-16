@@ -1786,6 +1786,152 @@ static void test_nonce_validation() {
     printf("  %s\n\n", ok ? "PASSED" : "FAILED");
 }
 
+static void test_gold_contract_overwrite() {
+    printf("=== test_gold_contract_overwrite (Silkworm 'Contract overwrite' EIP-684) ===\n");
+
+    // Gold data from ~/s/silkworm/core/execution/evm_test.cpp "Contract overwrite"
+    // Deploy to an address that already has code → should fail with EVMC_INVALID_INSTRUCTION
+
+    auto caller = hex_to_addr("0x92a1d964b8fc79c5694343cc943c27a94a3be131");
+    Bytes old_code = hex_to_bytes("0x6000");  // PUSH1 0
+    Bytes new_code = hex_to_bytes("0x6001");  // PUSH1 1
+
+    auto contract_addr = silkworm::create_address(caller, 0);
+
+    EvmState state;
+    state.seed_account(caller, intx::uint256{1'000'000'000'000'000'000u}, 0);
+
+    // Pre-deploy old code at the CREATE address
+    silkworm::Account contract_acct;
+    contract_acct.nonce = 1;
+    auto h = ethash::keccak256(old_code.data(), old_code.size());
+    std::memcpy(contract_acct.code_hash.bytes, h.bytes, 32);
+    contract_acct.incarnation = 1;
+    state.state().update_account(contract_addr, std::nullopt, contract_acct);
+    state.state().update_account_code(contract_addr, 1, contract_acct.code_hash,
+        silkworm::ByteView(old_code.data(), old_code.size()));
+
+    // Try to CREATE over it
+    Transaction txn;
+    txn.type = TransactionType::kLegacy;
+    txn.chain_id = kEvmChainId;
+    txn.nonce = 0;
+    txn.gas_limit = 100'000;
+    txn.data = new_code;
+    txn.set_sender(caller);
+
+    uint8_t rs[32] = {};
+    auto blk = make_evm_block(7'753'545, 1700000000, rs);
+    auto result = execute_evm_transaction(txn, blk, state, evm_chain_config());
+
+    // Should fail — can't overwrite existing contract (EIP-684)
+    printf("  create over existing: success=%s (expect false)\n", result.success ? "true" : "false");
+
+    bool ok = !result.success;
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_gold_eip3541() {
+    printf("=== test_gold_eip3541 (Silkworm 'EIP-3541: Reject 0xEF byte') ===\n");
+
+    // Gold data from ~/s/silkworm/core/execution/evm_test.cpp "EIP-3541"
+    // Contracts starting with 0xEF should be rejected (London+).
+    // Test cases from https://eips.ethereum.org/EIPS/eip-3541#test-cases
+
+    auto caller = hex_to_addr("0x1000000000000000000000000000000000000000");
+    EvmState state;
+    state.seed_account(caller, intx::uint256{10'000'000'000'000'000'000u} * 10, 0);  // 100 ETH
+
+    int pass = 0, fail = 0;
+
+    auto test_ef = [&](const char* label, const char* init_hex, bool expect_fail) {
+        Bytes initcode = hex_to_bytes(init_hex);
+        Transaction txn;
+        txn.type = TransactionType::kLegacy;
+        txn.chain_id = kEvmChainId;
+        txn.nonce = state.get_nonce(caller);
+        txn.gas_limit = 50'000;
+        txn.data = initcode;
+        txn.set_sender(caller);
+
+        uint8_t rs[32] = {};
+        auto blk = make_evm_block(13'500'000, 1700000000, rs);
+        auto result = execute_evm_transaction(txn, blk, state, evm_chain_config());
+
+        bool ok = (expect_fail ? !result.success : result.success);
+        printf("  %-30s %s\n", label, ok ? "PASS" : "FAIL");
+        if (ok) pass++; else fail++;
+    };
+
+    // EIP-3541 test cases: contracts returning 0xEF as first byte
+    test_ef("0xEF + 01 byte (reject)", "0x60ef60005360016000f3", true);
+    test_ef("0xEF + 02 bytes (reject)", "0x60ef60005360026000f3", true);
+    test_ef("0xEF + 03 bytes (reject)", "0x60ef60005360036000f3", true);
+    test_ef("0xEF + 32 bytes (reject)", "0x60ef60005360206000f3", true);
+
+    // Accept case: fresh state to avoid nonce interference from rejected txns
+    // (Silkworm's test also uses a fresh state for each case)
+    {
+        EvmState state2;
+        auto caller2 = hex_to_addr("0x2000000000000000000000000000000000000000");
+        state2.seed_account(caller2, intx::uint256{10'000'000'000'000'000'000u}, 0);
+
+        Bytes initcode = hex_to_bytes("0x60fe60005360016000f3");
+        Transaction txn2;
+        txn2.type = TransactionType::kLegacy;
+        txn2.chain_id = kEvmChainId;
+        txn2.nonce = 0;
+        txn2.gas_limit = 60'000;  // Shanghai intrinsic gas for CREATE is ~53K
+        txn2.data = initcode;
+        txn2.set_sender(caller2);
+
+        uint8_t rs2[32] = {};
+        auto blk2 = make_evm_block(13'500'000, 1700000000, rs2);
+        auto result2 = execute_evm_transaction(txn2, blk2, state2, evm_chain_config());
+        bool ok2 = result2.success;
+        if (!ok2) printf("  accept error: '%s' gas=%lu\n", result2.error_message.c_str(), (unsigned long)result2.gas_used);
+        printf("  %-30s %s\n", "0xFE + 01 byte (accept)", ok2 ? "PASS" : "FAIL");
+        if (ok2) pass++; else fail++;
+    }
+
+    printf("  result: %d passed, %d failed\n", pass, fail);
+    printf("  %s\n\n", fail == 0 ? "PASSED" : "FAILED");
+}
+
+static void test_gold_insufficient_balance_create() {
+    printf("=== test_gold_insufficient_balance_create (Silkworm gold) ===\n");
+
+    // Gold data from ~/s/silkworm/core/execution/evm_test.cpp
+    // "Smart contract creation w/ insufficient balance"
+    // CREATE with value=1 but sender has balance=0 → EVMC_INSUFFICIENT_BALANCE
+
+    auto caller = hex_to_addr("0x0a6bb546b9208cfab9e8fa2b9b2c042b18df7030");
+    Bytes code = hex_to_bytes("0x602a5f556101c960015560048060135f395ff35f355f55");
+
+    EvmState state;
+    // Seed with just enough for gas, but not enough for value transfer
+    state.seed_account(caller, intx::uint256{1'000'000'000'000'000'000u}, 0);
+
+    Transaction txn;
+    txn.type = TransactionType::kLegacy;
+    txn.chain_id = kEvmChainId;
+    txn.nonce = 0;
+    txn.gas_limit = 50'000;
+    txn.data = code;
+    txn.value = intx::uint256{2'000'000'000'000'000'000u};  // 2 ETH — more than balance
+    txn.set_sender(caller);
+
+    uint8_t rs[32] = {};
+    auto blk = make_evm_block(1, 1700000000, rs);
+    auto result = execute_evm_transaction(txn, blk, state, evm_chain_config());
+
+    printf("  create with insufficient balance: success=%s error='%s'\n",
+           result.success ? "true" : "false", result.error_message.c_str());
+
+    bool ok = !result.success;
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -1809,6 +1955,9 @@ int main() {
     test_gold_delegatecall();
     test_gold_create_returndatasize();
     test_nonce_validation();
+    test_gold_contract_overwrite();
+    test_gold_eip3541();
+    test_gold_insufficient_balance_create();
 
     printf("All tests passed.\n");
     return 0;
