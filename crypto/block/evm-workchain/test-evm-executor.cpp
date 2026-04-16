@@ -918,6 +918,117 @@ static void test_deterministic_replay() {
     printf("  %s\n\n", ok ? "PASSED" : "FAILED");
 }
 
+static void test_event_logs() {
+    printf("=== test_event_logs (LOG opcode + eth_getLogs) ===\n");
+
+    // Deploy a contract that emits an event, then query logs.
+    //
+    // Solidity-equivalent:
+    //   event Transfer(address indexed from, address indexed to, uint256 value);
+    //   function emit() { emit Transfer(msg.sender, address(0), 42); }
+    //
+    // Runtime bytecode for emit():
+    //   PUSH1 42         // value (non-indexed data)
+    //   PUSH1 0 MSTORE   // store at mem[0]
+    //   PUSH20 0x00..00  // topic2: "to" address = zero
+    //   CALLER           // topic1: "from" = msg.sender
+    //   PUSH32 <sig>     // topic0: keccak256("Transfer(address,address,uint256)")
+    //                    //       = 0xddf252ad...
+    //   PUSH1 32         // data size
+    //   PUSH1 0          // data offset
+    //   LOG3             // emit log with 3 topics
+    //   STOP
+
+    // Transfer(address,address,uint256) signature
+    // keccak256 = 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef
+    uint8_t event_sig[32] = {
+        0xdd, 0xf2, 0x52, 0xad, 0x1b, 0xe2, 0xc8, 0x9b,
+        0x69, 0xc2, 0xb0, 0x68, 0xfc, 0x37, 0x8d, 0xaa,
+        0x95, 0x2b, 0xa7, 0xf1, 0x63, 0xc4, 0xa1, 0x16,
+        0x28, 0xf5, 0x5a, 0x4d, 0xf5, 0x23, 0xb3, 0xef
+    };
+
+    Bytes code;
+    // PUSH1 42, PUSH1 0, MSTORE
+    code.insert(code.end(), {0x60, 0x2a, 0x60, 0x00, 0x52});
+    // PUSH20 0x00...00 (to address = zero, topic2)
+    code.push_back(0x73);
+    code.insert(code.end(), 20, 0x00);
+    // CALLER (from = msg.sender, topic1)
+    code.push_back(0x33);
+    // PUSH32 event_sig (topic0)
+    code.push_back(0x7f);
+    code.insert(code.end(), event_sig, event_sig + 32);
+    // PUSH1 32 (data size), PUSH1 0 (data offset), LOG3, STOP
+    code.insert(code.end(), {0x60, 0x20, 0x60, 0x00, 0xa3, 0x00});
+
+    EvmState state;
+    evmc::address deployer{};
+    deployer.bytes[19] = 0x70;
+    state.seed_account(deployer, intx::uint256{10'000'000'000'000'000'000u}, 0);
+
+    // Deploy
+    uint8_t rlen = static_cast<uint8_t>(code.size());
+    Bytes initcode = {0x60, rlen, 0x60, 0x0c, 0x60, 0x00, 0x39, 0x60, rlen, 0x60, 0x00, 0xf3};
+    initcode.insert(initcode.end(), code.begin(), code.end());
+
+    Transaction deploy_txn;
+    deploy_txn.type = TransactionType::kLegacy;
+    deploy_txn.chain_id = kEvmChainId;
+    deploy_txn.nonce = 0;
+    deploy_txn.max_fee_per_gas = 1'000'000'000;
+    deploy_txn.max_priority_fee_per_gas = 1'000'000'000;
+    deploy_txn.gas_limit = 500'000;
+    deploy_txn.to = std::nullopt;
+    deploy_txn.data = initcode;
+    deploy_txn.set_sender(deployer);
+
+    uint8_t rs[32] = {};
+    auto blk = make_evm_block(1, 1700000000, rs);
+    auto deploy_res = execute_evm_transaction(deploy_txn, blk, state, evm_chain_config());
+    auto contract = silkworm::create_address(deployer, 0);
+    printf("  deploy: %s\n", deploy_res.success ? "ok" : "FAIL");
+
+    // Call the contract to emit the event
+    Transaction call_txn;
+    call_txn.type = TransactionType::kLegacy;
+    call_txn.chain_id = kEvmChainId;
+    call_txn.nonce = 1;
+    call_txn.max_fee_per_gas = 1'000'000'000;
+    call_txn.max_priority_fee_per_gas = 1'000'000'000;
+    call_txn.gas_limit = 100'000;
+    call_txn.to = contract;
+    call_txn.set_sender(deployer);
+
+    auto blk2 = make_evm_block(2, 1700000001, rs);
+    auto call_res = execute_evm_transaction(call_txn, blk2, state, evm_chain_config());
+    printf("  emit call: %s  logs=%zu\n", call_res.success ? "ok" : "FAIL", call_res.logs.size());
+
+    // Store logs in state for eth_getLogs
+    if (!call_res.logs.empty()) {
+        auto tx_hash = call_txn.hash();
+        state.store_logs(2, tx_hash, call_res.logs);
+    }
+
+    // Query logs
+    auto logs = state.get_logs(0, 10);
+    printf("  get_logs(0..10): %zu logs\n", logs.size());
+
+    bool ok = deploy_res.success && call_res.success && call_res.logs.size() == 1 && logs.size() == 1;
+    if (ok) {
+        printf("  log.address: 0x");
+        for (auto b : logs[0].log.address.bytes) printf("%02x", b);
+        printf("\n  log.topics: %zu\n", logs[0].log.topics.size());
+        printf("  log.data: %zu bytes\n", logs[0].log.data.size());
+
+        // Verify the data is 42 (0x2a) as uint256
+        ok = logs[0].log.data.size() == 32 && logs[0].log.data[31] == 0x2a;
+        printf("  data value: 0x%02x (expect 0x2a)\n", logs[0].log.data[31]);
+    }
+
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -931,6 +1042,7 @@ int main() {
     test_config_param();
     test_bn254_precompile();
     test_deterministic_replay();
+    test_event_logs();
 
     printf("All tests passed.\n");
     return 0;

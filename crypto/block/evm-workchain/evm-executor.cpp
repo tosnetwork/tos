@@ -128,7 +128,14 @@ ExecutionResult execute_evm_transaction(
     const silkworm::ChainConfig& config) {
 
     silkworm::IntraBlockState ibs(evm_state.state());
-    return run_evm(txn, block, ibs, config, /*commit_state=*/true);
+    auto result = run_evm(txn, block, ibs, config, /*commit_state=*/true);
+
+    // Store the block for BLOCKHASH opcode support.
+    // insert_block makes read_header available for future EVM executions.
+    auto block_hash = intx::be::store<evmc::bytes32>(intx::uint256{block.header.number});
+    evm_state.state().insert_block(block, block_hash);
+
+    return result;
 }
 
 ExecutionResult call_evm_transaction(

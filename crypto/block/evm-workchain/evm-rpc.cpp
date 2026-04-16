@@ -196,18 +196,45 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
 
     auto exec_result = execute_evm_transaction(decoded.txn, block, evm_state, config);
 
-    // Store receipt
     auto tx_hash = decoded.txn.hash();
+    uint64_t bn = evm_state.block_number();
+
+    // Store receipt
     StoredReceipt receipt;
     receipt.success = exec_result.success;
     receipt.gas_used = exec_result.gas_used;
-    receipt.block_number = evm_state.block_number();
+    receipt.block_number = bn;
     receipt.from = decoded.sender;
     receipt.to = decoded.txn.to;
     receipt.contract_address = exec_result.contract_address;
     receipt.logs = exec_result.logs;
     receipt.return_data = exec_result.return_data;
     evm_state.store_receipt(tx_hash, std::move(receipt));
+
+    // Store transaction for eth_getTransactionByHash
+    StoredTransaction stored_tx;
+    stored_tx.from = decoded.sender;
+    stored_tx.to = decoded.txn.to;
+    stored_tx.value = decoded.txn.value;
+    stored_tx.data = decoded.txn.data;
+    stored_tx.nonce = decoded.txn.nonce;
+    stored_tx.gas_limit = decoded.txn.gas_limit;
+    stored_tx.gas_price = decoded.txn.max_fee_per_gas;
+    stored_tx.block_number = bn;
+    stored_tx.tx_index = 0;
+    evm_state.store_transaction(tx_hash, std::move(stored_tx));
+
+    // Store logs for eth_getLogs
+    if (!exec_result.logs.empty()) {
+        evm_state.store_logs(bn, tx_hash, exec_result.logs);
+    }
+
+    // Store block hash for BLOCKHASH opcode
+    // Use keccak of (block_number || timestamp) as a simple block hash
+    evmc::bytes32 block_hash{};
+    auto bn_bytes = intx::be::store<evmc::uint256be>(intx::uint256{bn});
+    std::memcpy(block_hash.bytes, bn_bytes.bytes, 32);  // simplified: hash = padded block number
+    evm_state.store_block_hash(bn, block_hash);
 
     return {make_result(id, to_hex_data(tx_hash.bytes, 32)), false};
 }
@@ -451,9 +478,94 @@ static RpcResult handle_get_block_by_number(const std::string& /*params*/, const
     return {make_result(id, block_json), false};
 }
 
-static RpcResult handle_get_logs(const std::string& /*params*/, const std::string& id) {
-    // First slice: no log indexing yet.  Return empty array.
-    return {make_result(id, "[]"), false};
+static RpcResult handle_get_logs(const std::string& params, const std::string& id) {
+    // Parse filter: {"fromBlock":"0x1","toBlock":"latest","address":"0x...","topics":[...]}
+    uint64_t from_block = 0;
+    uint64_t to_block = global_evm_state().block_number();
+    std::vector<evmc::address> addresses;
+    std::vector<std::vector<evmc::bytes32>> topics;
+
+    // Parse fromBlock
+    std::string fb_hex = extract_json_string_value(params, "fromBlock");
+    if (!fb_hex.empty() && fb_hex != "latest" && fb_hex != "pending" && fb_hex != "earliest") {
+        from_block = parse_hex_uint64(fb_hex);
+    }
+    // Parse toBlock
+    std::string tb_hex = extract_json_string_value(params, "toBlock");
+    if (!tb_hex.empty() && tb_hex != "latest" && tb_hex != "pending") {
+        if (tb_hex == "earliest") to_block = 0;
+        else to_block = parse_hex_uint64(tb_hex);
+    }
+    // Parse address (single or array)
+    std::string addr_hex = extract_json_string_value(params, "address");
+    if (!addr_hex.empty()) {
+        evmc::address addr{};
+        if (parse_hex_address(addr_hex, addr)) {
+            addresses.push_back(addr);
+        }
+    }
+
+    // Query logs
+    auto logs = global_evm_state().get_logs(from_block, to_block, addresses, topics);
+
+    // Build JSON array
+    std::string arr = "[";
+    for (size_t i = 0; i < logs.size(); ++i) {
+        if (i > 0) arr += ",";
+        const auto& il = logs[i];
+        arr += "{\"address\":" + to_hex_addr(il.log.address) + ",";
+        arr += "\"topics\":[";
+        for (size_t j = 0; j < il.log.topics.size(); ++j) {
+            if (j > 0) arr += ",";
+            arr += to_hex_data(il.log.topics[j].bytes, 32);
+        }
+        arr += "],";
+        arr += "\"data\":" + to_hex_data(il.log.data.data(), il.log.data.size()) + ",";
+        arr += "\"blockNumber\":" + to_hex_quantity(il.block_number) + ",";
+        arr += "\"transactionHash\":" + to_hex_data(il.tx_hash.bytes, 32) + ",";
+        arr += "\"logIndex\":" + to_hex_quantity(static_cast<uint64_t>(il.log_index)) + ",";
+        arr += "\"blockHash\":\"0x" + std::string(64, '0') + "\",";
+        arr += "\"transactionIndex\":\"0x0\",";
+        arr += "\"removed\":false}";
+    }
+    arr += "]";
+    return {make_result(id, arr), false};
+}
+
+static RpcResult handle_get_transaction_by_hash(const std::string& params, const std::string& id) {
+    silkworm::Bytes hash_bytes;
+    if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
+        return {make_error(id, -32602, "invalid transaction hash"), true};
+    }
+    evmc::bytes32 tx_hash;
+    std::memcpy(tx_hash.bytes, hash_bytes.data(), 32);
+
+    const auto* tx = global_evm_state().get_transaction(tx_hash);
+    if (!tx) {
+        return {make_result(id, "null"), false};
+    }
+
+    std::string r = "{";
+    r += "\"hash\":" + to_hex_data(tx_hash.bytes, 32) + ",";
+    r += "\"from\":" + to_hex_addr(tx->from) + ",";
+    if (tx->to) {
+        r += "\"to\":" + to_hex_addr(*tx->to) + ",";
+    } else {
+        r += "\"to\":null,";
+    }
+    r += "\"value\":" + to_hex_quantity(tx->value) + ",";
+    r += "\"input\":" + to_hex_data(tx->data.data(), tx->data.size()) + ",";
+    r += "\"nonce\":" + to_hex_quantity(tx->nonce) + ",";
+    r += "\"gas\":" + to_hex_quantity(tx->gas_limit) + ",";
+    r += "\"gasPrice\":" + to_hex_quantity(tx->gas_price) + ",";
+    r += "\"blockNumber\":" + to_hex_quantity(tx->block_number) + ",";
+    r += "\"blockHash\":\"0x" + std::string(64, '0') + "\",";
+    r += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(tx->tx_index)) + ",";
+    r += "\"type\":\"0x0\",";
+    r += "\"v\":\"0x0\",\"r\":\"0x0\",\"s\":\"0x0\"";
+    r += "}";
+
+    return {make_result(id, r), false};
 }
 
 static RpcResult handle_mining(const std::string& id) {
@@ -481,6 +593,7 @@ bool is_eth_rpc_method(const std::string& method) noexcept {
            method == "eth_estimateGas" ||
            method == "eth_accounts" ||
            method == "eth_getBlockByNumber" ||
+           method == "eth_getTransactionByHash" ||
            method == "eth_getLogs" ||
            method == "eth_mining" ||
            method == "eth_syncing" ||
@@ -505,6 +618,7 @@ std::optional<RpcResult> handle_eth_rpc(
     if (method == "eth_getTransactionCount")  return handle_get_transaction_count(params, id);
     if (method == "eth_getCode")              return handle_get_code(params, id);
     if (method == "eth_getBlockByNumber")     return handle_get_block_by_number(params, id);
+    if (method == "eth_getTransactionByHash") return handle_get_transaction_by_hash(params, id);
     if (method == "eth_getLogs")              return handle_get_logs(params, id);
     if (method == "eth_sendRawTransaction")   return handle_send_raw_transaction(params, id);
     if (method == "eth_getTransactionReceipt") return handle_get_transaction_receipt(params, id);

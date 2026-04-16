@@ -18,6 +18,7 @@
 #include <optional>
 #include <unordered_map>
 #include <vector>
+#include <map>
 
 #include <silkworm/core/state/in_memory_state.hpp>
 #include <silkworm/core/state/state.hpp>
@@ -38,18 +39,34 @@ struct StoredReceipt {
     silkworm::Bytes return_data;
 };
 
+/// Stored transaction for eth_getTransactionByHash.
+struct StoredTransaction {
+    evmc::address from;
+    std::optional<evmc::address> to;
+    intx::uint256 value;
+    silkworm::Bytes data;
+    uint64_t nonce{0};
+    uint64_t gas_limit{0};
+    intx::uint256 gas_price;
+    uint64_t block_number{0};
+    uint32_t tx_index{0};
+};
+
+/// Log entry with block metadata for eth_getLogs.
+struct IndexedLog {
+    uint64_t block_number;
+    evmc::bytes32 tx_hash;
+    uint32_t log_index;
+    silkworm::Log log;
+};
+
 /// EVM workchain state facade.
-///
-/// Wraps a silkworm::State backend (in-memory or persistent) and provides
-/// EVM-workchain-specific helpers for genesis initialisation, state
-/// inspection, receipt storage, and block tracking.
 class EvmState {
   public:
-    /// Construct with in-memory backend (volatile — for tests and first slice).
+    /// Construct with in-memory backend (volatile — for tests).
     EvmState();
 
     /// Construct with an external State backend (e.g. PersistentEvmState).
-    /// Takes ownership of the backend.
     explicit EvmState(std::unique_ptr<silkworm::State> backend);
 
     /// Access the underlying silkworm State (used by the executor).
@@ -72,14 +89,40 @@ class EvmState {
     void set_block_number(uint64_t n) noexcept { block_number_ = n; }
     void increment_block_number() noexcept { ++block_number_; }
 
+    /// --- Block hash history (for BLOCKHASH opcode) ---
+    void store_block_hash(uint64_t block_num, const evmc::bytes32& hash);
+    evmc::bytes32 get_block_hash(uint64_t block_num) const;
+
     /// --- Receipt storage ---
     void store_receipt(const evmc::bytes32& tx_hash, StoredReceipt receipt);
     const StoredReceipt* get_receipt(const evmc::bytes32& tx_hash) const;
 
+    /// --- Transaction storage ---
+    void store_transaction(const evmc::bytes32& tx_hash, StoredTransaction tx);
+    const StoredTransaction* get_transaction(const evmc::bytes32& tx_hash) const;
+
+    /// --- Log index (for eth_getLogs) ---
+    void store_logs(uint64_t block_number, const evmc::bytes32& tx_hash,
+                    const std::vector<silkworm::Log>& logs);
+
+    /// Query logs by block range with optional address and topic filters.
+    /// Matching semantics follow Ethereum spec:
+    ///   - addresses: log.address must be in the set (empty = match all)
+    ///   - topics: topics[i] is a set of acceptable values for log.topics[i]
+    ///             (empty set at position i = match any)
+    std::vector<IndexedLog> get_logs(
+        uint64_t from_block, uint64_t to_block,
+        const std::vector<evmc::address>& addresses = {},
+        const std::vector<std::vector<evmc::bytes32>>& topics = {}) const;
+
   private:
     std::unique_ptr<silkworm::State> backend_;
     uint64_t block_number_{0};
+
     std::unordered_map<evmc::bytes32, StoredReceipt> receipts_;
+    std::unordered_map<evmc::bytes32, StoredTransaction> transactions_;
+    std::map<uint64_t, evmc::bytes32> block_hashes_;               // block_num → hash
+    std::map<uint64_t, std::vector<IndexedLog>> block_logs_;       // block_num → logs
 };
 
 }  // namespace evm_workchain
