@@ -123,6 +123,39 @@ static bool parse_hex_bytes(const std::string& hex, silkworm::Bytes& out) {
 // Forward declarations
 static std::vector<std::vector<evmc::bytes32>> parse_topics_array(const std::string& params);
 
+// Look up the real block hash for a given block number, return hex or zeros if not found.
+static std::string lookup_block_hash_hex(uint64_t block_num) {
+    auto hash = global_evm_state().get_block_hash(block_num);
+    bool is_zero = true;
+    for (auto b : hash.bytes) { if (b != 0) { is_zero = false; break; } }
+    if (is_zero) return "\"0x" + std::string(64, '0') + "\"";
+    return to_hex_data(hash.bytes, 32);
+}
+
+// Compute a simplified Ethereum logs bloom (2048-bit / 256-byte).
+// For each log: hash(address) and hash(each topic) contribute 3 bits each to the bloom.
+// Reference: ~/s/silkworm/core/types/bloom.cpp
+static std::string compute_logs_bloom_hex(const std::vector<silkworm::Log>& logs) {
+    uint8_t bloom[256] = {};
+    for (const auto& log : logs) {
+        // Add address to bloom
+        auto ah = ethash::keccak256(log.address.bytes, 20);
+        for (int i = 0; i < 6; i += 2) {
+            uint16_t bit = (static_cast<uint16_t>(ah.bytes[i]) << 8 | ah.bytes[i + 1]) & 0x7FF;
+            bloom[bit / 8] |= (1 << (bit % 8));
+        }
+        // Add each topic to bloom
+        for (const auto& topic : log.topics) {
+            auto th = ethash::keccak256(topic.bytes, 32);
+            for (int i = 0; i < 6; i += 2) {
+                uint16_t bit = (static_cast<uint16_t>(th.bytes[i]) << 8 | th.bytes[i + 1]) & 0x7FF;
+                bloom[bit / 8] |= (1 << (bit % 8));
+            }
+        }
+    }
+    return to_hex_data(bloom, 256);
+}
+
 // ---------------------------------------------------------------------------
 // Method handlers
 // ---------------------------------------------------------------------------
@@ -186,6 +219,10 @@ static RpcResult handle_get_code(const std::string& params, const std::string& i
     return {make_result(id, to_hex_data(code.data(), code.size())), false};
 }
 
+// Synchronous execution path — used by test-evm-executor only.
+// In the real node, eth_sendRawTransaction is intercepted by
+// JsonRpcServer::handle_eth_sendRawTransaction() which submits
+// to the ExtMessagePool asynchronously.
 static RpcResult handle_send_raw_transaction(const std::string& params, const std::string& id) {
     silkworm::Bytes raw_tx;
     if (!parse_hex_bytes(params, raw_tx)) {
@@ -339,10 +376,10 @@ static RpcResult handle_get_transaction_receipt(const std::string& params, const
         r += "}";
     }
     r += "],";
-    r += "\"logsBloom\":\"0x" + std::string(512, '0') + "\",";
+    r += "\"logsBloom\":" + compute_logs_bloom_hex(receipt->logs) + ",";
     r += "\"type\":\"0x0\",";
     r += "\"transactionIndex\":\"0x0\",";
-    r += "\"blockHash\":\"0x" + std::string(64, '0') + "\"";
+    r += "\"blockHash\":" + lookup_block_hash_hex(receipt->block_number);
     r += "}";
 
     return {make_result(id, r), false};
@@ -635,7 +672,7 @@ static RpcResult handle_get_logs(const std::string& params, const std::string& i
         arr += "\"blockNumber\":" + to_hex_quantity(il.block_number) + ",";
         arr += "\"transactionHash\":" + to_hex_data(il.tx_hash.bytes, 32) + ",";
         arr += "\"logIndex\":" + to_hex_quantity(static_cast<uint64_t>(il.log_index)) + ",";
-        arr += "\"blockHash\":\"0x" + std::string(64, '0') + "\",";
+        arr += "\"blockHash\":" + lookup_block_hash_hex(il.block_number) + ",";
         arr += "\"transactionIndex\":\"0x0\",";
         arr += "\"removed\":false}";
     }
@@ -670,7 +707,7 @@ static RpcResult handle_get_transaction_by_hash(const std::string& params, const
     r += "\"gas\":" + to_hex_quantity(tx->gas_limit) + ",";
     r += "\"gasPrice\":" + to_hex_quantity(tx->gas_price) + ",";
     r += "\"blockNumber\":" + to_hex_quantity(tx->block_number) + ",";
-    r += "\"blockHash\":\"0x" + std::string(64, '0') + "\",";
+    r += "\"blockHash\":" + lookup_block_hash_hex(tx->block_number) + ",";
     r += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(tx->tx_index)) + ",";
     r += "\"type\":\"0x0\",";
     r += "\"v\":\"0x0\",\"r\":\"0x0\",\"s\":\"0x0\"";
@@ -1153,7 +1190,7 @@ static std::string format_log_json(const IndexedLog& il) {
     r += "\"blockNumber\":" + to_hex_quantity(il.block_number) + ",";
     r += "\"transactionHash\":" + to_hex_data(il.tx_hash.bytes, 32) + ",";
     r += "\"logIndex\":" + to_hex_quantity(static_cast<uint64_t>(il.log_index)) + ",";
-    r += "\"blockHash\":\"0x" + std::string(64, '0') + "\",";
+    r += "\"blockHash\":" + lookup_block_hash_hex(il.block_number) + ",";
     r += "\"transactionIndex\":\"0x0\",\"removed\":false}";
     return r;
 }
