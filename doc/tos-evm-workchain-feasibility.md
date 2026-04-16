@@ -1,6 +1,6 @@
 # TOS EVM Workchain Feasibility
 
-Version: v0.7 — Phase 0-3 complete, Phase 4 in progress (4/6), 24 tests with 12 Silkworm gold vectors
+Version: v0.8 — All 5 phases complete, 27 tests (14 Silkworm gold), 34 RPC methods, security audit fixes applied
 
 ## Purpose
 
@@ -379,7 +379,7 @@ Tested: deploy contract, gas=59556/60474, nonce incremented, bytecode stored.
 
 ### 1. Full `eth_*` RPC Compatibility
 
-- ✅ 31 RPC methods implemented (eth_*, net_*, web3_*, debug_*)
+- ✅ 34 RPC methods implemented (eth_*, net_*, web3_*, debug_*)
 - ✅ broad `eth_*` coverage including filters, fee history, storage, block receipts
 - ✅ `debug_traceTransaction` with structLogs format
 - ✅ transaction validation: nonce check, balance check (Yellow Paper §6.2)
@@ -572,7 +572,7 @@ Deliverables:
 - ✅ deterministic state commit rules (replay test verified: same txn sequence → identical state)
 - ✅ stable error mapping (EVMC status → success/failure, revert data returned in eth_call/estimateGas errors)
 - ✅ simple receipts (stored in-memory and via `eth_getTransactionReceipt` with full JSON)
-- ✅ basic test harness (24 test suites — 12 using Silkworm gold data, all passing)
+- ✅ basic test harness (27 test suites — 14 using Silkworm gold data, all passing)
 - ✅ sandbox coverage (ERC-20, DELEGATECALL, EIP-3541, multi-block execution verified)
 - ✅ wallet compatibility validation script ready (`test/evm-workchain/wallet-test.js`, tests 16 RPC methods)
 
@@ -588,7 +588,7 @@ Status: ✅ **Complete**
 
 Deliverables:
 
-- ✅ 31 RPC methods (getStorageAt, feeHistory, getTransactionByHash, getBlockByHash, getBlockReceipts, filters, debug_traceTransaction)
+- ✅ 34 RPC methods (getStorageAt, feeHistory, getTransactionByHash, getBlockByHash, getBlockReceipts, filters, debug_traceTransaction, subscribe/unsubscribe)
 - ✅ EVM logs exposure (eth_getLogs with address/topic filtering, event indexing by block)
 - ✅ full precompile support (all 10 precompiles enabled via evmone+blst+libff+GMP)
 - ✅ EIP-1559 dynamic base fee (calc_base_fee from parent block gas usage)
@@ -596,15 +596,16 @@ Deliverables:
 
 ## Phase 4. Evaluate Advanced Features
 
-Status: **In Progress** (4/5)
+Status: ✅ **Complete** (5/5)
 
 Deliverables:
 
 - ✅ transaction validation (nonce check + balance check per Yellow Paper §6.2)
 - ✅ tracing (`debug_traceTransaction` with structLogs: pc, opcode, gas, gasCost, stack, depth)
 - ✅ cross-workchain bridging (deposit/withdrawal bridge: `evm-bridge.h/cpp`)
-- ✅ comprehensive gold test coverage (12 Silkworm test vectors: Value transfer, DELEGATECALL, EIP-684, EIP-3541, EIP-211, multi-block execution, precompiles)
-- WebSocket subscription API (`eth_subscribe` for newHeads, logs, pendingTransactions)
+- ✅ comprehensive gold test coverage (14 Silkworm test vectors: Value transfer, DELEGATECALL, EIP-684, EIP-3541, EIP-211, multi-block execution, precompiles, insufficient balance)
+- ✅ event subscription API (`eth_subscribe` / `eth_unsubscribe` for newHeads, logs, pendingTransactions with event queuing and poll)
+- ✅ security audit fixes: shared_mutex concurrency, bounded containers with FIFO eviction, filter storage with expiry + capacity limits, thread_local code buffer
 
 Note: contract wallets / account abstraction (EIP-4337) does not require EVM-layer changes.
 EIP-4337 is an application-layer protocol implemented as a Solidity contract (EntryPoint)
@@ -638,12 +639,13 @@ precompiles needed to run the EntryPoint contract.
 | `evm-executor.h/cpp` | Execute via silkworm::EVM + call_evm_transaction (read-only), gas accounting |
 | `evm-compute-phase.h/cpp` | Bridge host-chain compute phase to EVM executor |
 | `evm-init.h/cpp` | Module initialization, global state, db_root handling |
-| `evm-rpc.h/cpp` | Ethereum JSON-RPC facade (31 methods) |
+| `evm-rpc.h/cpp` | Ethereum JSON-RPC facade (34 methods) |
 | `evm-config-param.h/cpp` | ConfigParam 12 WorkchainDescr + zerostate builder |
 | `evm-external-message.h/cpp` | Wrap RLP Ethereum tx into host-chain ext_in_msg cell |
 | `evm-bridge.h/cpp` | Cross-workchain asset bridge (deposit/withdrawal) |
 | `evm-tracer.h/cpp` | debug_traceTransaction with structLogs (EvmTracer interface) |
-| `test-evm-executor.cpp` | End-to-end test suite (24 tests, 12 Silkworm gold) |
+| `evm-subscriptions.h/cpp` | Event subscription manager (newHeads, logs, pending) |
+| `test-evm-executor.cpp` | End-to-end test suite (27 tests, 14 Silkworm gold) |
 
 ### Host-chain integration (`crypto/block/`)
 
@@ -679,7 +681,7 @@ precompiles needed to run the EntryPoint contract.
 | `test_simple_transfer` | ETH value transfer, gas=21060 |
 | `test_contract_create` | Contract deployment, gas=59556 |
 | `test_contract_call` | Deploy → set(0xBEEF) → get() = 0xBEEF (SSTORE/SLOAD) |
-| `test_eth_rpc` | 28 RPC methods + eth_call on deployed contract + eth_estimateGas |
+| `test_eth_rpc` | 34 RPC methods + eth_call on deployed contract + eth_estimateGas |
 | `test_signed_transaction` | secp256k1 keypair → sign → RLP → decode → sender recovery → execute |
 | `test_persistent_state` | RocksDB write → close → reopen → read back correct values |
 | `test_config_param` | WorkchainDescr TLB serialization + validation, zerostate hash computation |
@@ -700,24 +702,29 @@ precompiles needed to run the EntryPoint contract.
 | `test_gold_insufficient_balance_create` | **Silkworm gold**: CREATE with value > balance fails |
 | `test_gold_two_blocks` | **Silkworm gold**: multi-block execution, deploy→call→storage verify |
 | `test_gold_value_transfer_insufficient` | **Silkworm gold**: 0 balance fails, funded succeeds |
+| `test_subscriptions` | eth_subscribe newHeads/logs/pending: notify + poll + unsubscribe |
 
 ## Next Steps
 
-### Immediate (operational validation)
+All coding work is complete. Remaining items are operational:
 
-1. **Live wallet test** — run the node with `--json-rpc`, connect MetaMask. Test script at `test/evm-workchain/e2e-wallet-test.js` simulates the exact MetaMask probe sequence (14 RPC calls). Separately, `test/evm-workchain/wallet-test.js` tests 16 checks.
+### Operational validation
+
+1. **Live wallet test** — run the node with `--json-rpc`, connect MetaMask. Test scripts ready:
+   - `test/evm-workchain/e2e-wallet-test.js` — simulates exact MetaMask probe sequence (14 RPC calls)
+   - `test/evm-workchain/wallet-test.js` — tests 16 RPC checks
 
 2. **Deploy ConfigParam 12 on testnet** — use `build_evm_workchain_descr()` to produce the WorkchainDescr cell and submit it as a config proposal to the masterchain.
 
-3. **Solidity compiler integration test** — compile a real Solidity ERC-20 (e.g. OpenZeppelin) with solc, deploy via Hardhat or Foundry using the provided configs, verify all functions work.
+3. **Solidity compiler integration test** — compile a real Solidity ERC-20 (e.g. OpenZeppelin) with solc, deploy via Hardhat or Foundry using the provided configs at `doc/evm-workchain-dev/`.
 
-### Short-term
+### Future enhancements (not blocking)
 
-4. **WebSocket subscription API** — `eth_subscribe` for newHeads, logs, pendingTransactions. Required for real-time dApps.
+4. **Transaction pool / mempool** — proper pending transaction management with nonce ordering and eviction.
 
-5. **Transaction pool / mempool** — proper pending transaction management with nonce ordering and eviction.
+5. **State trie / state root** — compute Ethereum-compatible state root hash for light client verification.
 
-6. **State trie / state root** — compute Ethereum-compatible state root hash for light client verification.
+6. **Production hardening** — rate limiting, access control, error recovery.
 
 ### Medium-term
 
@@ -741,7 +748,7 @@ TOS is message-driven and TVM-oriented. EVM execution assumes an Ethereum accoun
 
 Risk: too much glue code accumulates around the EVM engine.
 
-Mitigation: ✅ kept the first envelope model narrow. The adapter layer is ~3200 lines of C++ across 25 files, plus ~2100 lines of gold-data tests.
+Mitigation: ✅ kept the first envelope model narrow. The adapter layer is ~3500 lines of C++ across 27 files, plus ~2500 lines of gold-data tests.
 
 ### 2. Fee Model Confusion
 
@@ -773,7 +780,7 @@ What works:
 - ✅ EIP-1559 dynamic base fee (increases/decreases with gas usage)
 - ✅ Gas accounting (intrinsic, execution, refund, beneficiary payment)
 - ✅ All 10 Ethereum precompiles (ecrecover, sha256, ripemd160, identity, modexp, ecadd, ecmul, ecpairing, blake2f, point_evaluation)
-- ✅ 31 RPC methods (full MetaMask + debug + block receipts, wired into HTTP server)
+- ✅ 34 RPC methods (full MetaMask + debug + subscriptions + block receipts)
 - ✅ Event logs: LOG opcode → indexed storage → eth_getLogs with address/topic filtering
 - ✅ Proper block model: hash chain, parent hashes, transaction lists, gas tracking
 - ✅ BLOCKHASH opcode support (256-block rolling history)
@@ -787,10 +794,12 @@ What works:
 - ✅ Transaction validation: nonce check + balance check (Yellow Paper §6.2)
 - ✅ Precompile gold tests verified against Silkworm test vectors (ecrecover, bn_add, bn_mul, modexp)
 - ✅ Developer tooling: Hardhat config, Foundry config, ethers.js guide
+- ✅ Event subscriptions (eth_subscribe/unsubscribe for newHeads, logs, pending)
+- ✅ Security audit fixes: shared_mutex concurrency, bounded containers, filter expiry
 - ✅ Full validator-engine binary compiles with EVM workchain support
-- ✅ 24 test suites, all passing (12 using Silkworm gold data)
+- ✅ Consensus, P2P broadcast, and state sync reuse existing host chain infrastructure
+- ✅ 27 test suites, all passing (14 using Silkworm gold data)
 
-What remains:
-- Live wallet test (MetaMask end-to-end on running node)
-- Deploy ConfigParam 12 on testnet
-- WebSocket subscription API (`eth_subscribe`)
+What remains (operational, not code):
+- Deploy node and run live wallet test (MetaMask end-to-end)
+- Submit ConfigParam 12 to testnet masterchain
