@@ -203,6 +203,8 @@ set(BLOCK_SOURCE
   block/account-storage-stat.h
   block/account-storage-stat.cpp
   block/precompiled-smc/PrecompiledSmartContract.cpp
+  block/evm-workchain-dispatch.cpp
+  block/evm-workchain-dispatch.h
   ${TLB_BLOCK_AUTO}
 
   block/block-binlog.h
@@ -394,6 +396,11 @@ endif()
 if (USE_EMSCRIPTEN)
   target_link_options(tos_block PRIVATE -fexceptions)
   target_compile_options(tos_block PRIVATE -fexceptions)
+endif()
+
+# --- EVM Workchain module ---
+if (TOS_EVM_WORKCHAIN AND NOT TOS_ONLY_TOSLIB)
+  add_subdirectory(block/evm-workchain)
 endif()
 
 add_executable(func func/func-main.cpp ${FUNC_LIB_SOURCE})

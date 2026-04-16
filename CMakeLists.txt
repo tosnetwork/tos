@@ -285,6 +285,28 @@ include(BuildLibbacktrace)
 include(BuildMHD)
 include(BuildZlib)
 
+# --- EVM Workchain third-party dependencies ---
+option(TOS_EVM_WORKCHAIN "Build EVM workchain support" ON)
+if (TOS_EVM_WORKCHAIN AND NOT TOS_ONLY_TOSLIB)
+  message("Add EVM workchain dependencies (intx, ethash, evmone)")
+  function(evm_deps_scope)
+    # intx: extended precision integer library (header-only)
+    add_subdirectory(third-party/intx EXCLUDE_FROM_ALL)
+    # ethash: keccak hashing
+    set(ETHASH_BUILD_GLOBAL_CONTEXT OFF CACHE BOOL "" FORCE)
+    set(ETHASH_BUILD_ETHASH ON CACHE BOOL "" FORCE)
+    set(ETHASH_TESTING OFF CACHE BOOL "" FORCE)
+    add_subdirectory(third-party/ethash EXCLUDE_FROM_ALL)
+    # evmone: EVM implementation (includes evmc)
+    add_subdirectory(third-party/evmone EXCLUDE_FROM_ALL)
+  endfunction()
+  evm_deps_scope()
+
+  # silkworm-core: Ethereum execution types, state, EVM wrapper
+  message("Add silkworm-core (Ethereum execution engine)")
+  add_subdirectory(third-party/silkworm/core EXCLUDE_FROM_ALL)
+endif()
+
 
 # Configure CCache if available
 find_program(CCACHE_FOUND ccache)

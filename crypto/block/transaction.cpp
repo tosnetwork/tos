@@ -21,6 +21,7 @@
 #include "block/block-parse.h"
 #include "block/block.h"
 #include "block/transaction.h"
+#include "block/evm-workchain-dispatch.h"
 #include "crypto/openssl/rand.hpp"
 #include "td/utils/Timer.h"
 #include "td/utils/bits.h"
@@ -1857,6 +1858,32 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     cp.skip_reason = ComputePhase::sk_no_gas;
     return true;
   }
+
+  // --- EVM Workchain dispatch ---
+  // If the account belongs to the EVM workchain and a handler is registered,
+  // route to the EVM executor instead of TVM.
+  if (evm_workchain_dispatch::has_evm_compute_handler() &&
+      account.workchain == 2 /* evm_workchain::kWorkchainId — avoid header dep */) {
+    if (in_msg_body.is_null()) {
+      cp.skip_reason = ComputePhase::sk_bad_state;
+      return true;
+    }
+    vm::CellSlice body_cs{*in_msg_body};
+    bool ok = evm_workchain_dispatch::invoke_evm_compute(
+        cp, body_cs, cp.gas_limit,
+        static_cast<td::uint64>(account.block_lt),       // block_seqno
+        static_cast<td::uint64>(account.now_),            // timestamp
+        cfg.block_rand_seed.as_array().data());             // rand_seed
+    if (!ok) {
+      compute_phase.reset();
+      return false;
+    }
+    // Gas fee accounting for EVM execution
+    cp.gas_fees = cfg.compute_gas_price(cp.gas_used);
+    return true;
+  }
+  // --- End EVM Workchain dispatch ---
+
   if (in_msg_state.not_null()) {
     LOG(DEBUG) << "HASH(in_msg_state) = " << in_msg_state->get_hash().bits().to_hex(256)
                << ", account_state_hash = " << account.state_hash.to_hex();
