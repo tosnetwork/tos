@@ -360,6 +360,47 @@ static RpcResult handle_estimate_gas(const std::string& params, const std::strin
     return {make_result(id, to_hex_quantity(estimated)), false};
 }
 
+// --- Additional methods for wallet/dApp compatibility ---
+
+static RpcResult handle_accounts(const std::string& id) {
+    // No server-side accounts — wallets manage their own keys.
+    return {make_result(id, "[]"), false};
+}
+
+static RpcResult handle_client_version(const std::string& id) {
+    return {make_result(id, "\"evm-workchain/0.1.0\""), false};
+}
+
+static RpcResult handle_get_block_by_number(const std::string& /*params*/, const std::string& id) {
+    auto bn = global_evm_state().block_number();
+    // Minimal block object — enough for wallets to not error.
+    std::string block_json = "{";
+    block_json += "\"number\":" + to_hex_quantity(bn) + ",";
+    block_json += "\"hash\":\"0x" + std::string(64, '0') + "\",";
+    block_json += "\"parentHash\":\"0x" + std::string(64, '0') + "\",";
+    block_json += "\"timestamp\":" + to_hex_quantity(static_cast<uint64_t>(std::time(nullptr))) + ",";
+    block_json += "\"gasLimit\":" + to_hex_quantity(uint64_t{30000000}) + ",";
+    block_json += "\"gasUsed\":" + to_hex_quantity(uint64_t{0}) + ",";
+    block_json += "\"miner\":\"0x" + std::string(40, '0') + "\",";
+    block_json += "\"baseFeePerGas\":" + to_hex_quantity(uint64_t{0}) + ",";
+    block_json += "\"transactions\":[]";
+    block_json += "}";
+    return {make_result(id, block_json), false};
+}
+
+static RpcResult handle_get_logs(const std::string& /*params*/, const std::string& id) {
+    // First slice: no log indexing yet.  Return empty array.
+    return {make_result(id, "[]"), false};
+}
+
+static RpcResult handle_mining(const std::string& id) {
+    return {make_result(id, "false"), false};
+}
+
+static RpcResult handle_syncing(const std::string& id) {
+    return {make_result(id, "false"), false};
+}
+
 // ---------------------------------------------------------------------------
 // Public interface
 // ---------------------------------------------------------------------------
@@ -375,7 +416,13 @@ bool is_eth_rpc_method(const std::string& method) noexcept {
            method == "eth_getTransactionReceipt" ||
            method == "eth_call" ||
            method == "eth_estimateGas" ||
-           method == "net_version";
+           method == "eth_accounts" ||
+           method == "eth_getBlockByNumber" ||
+           method == "eth_getLogs" ||
+           method == "eth_mining" ||
+           method == "eth_syncing" ||
+           method == "net_version" ||
+           method == "web3_clientVersion";
 }
 
 std::optional<RpcResult> handle_eth_rpc(
@@ -385,17 +432,23 @@ std::optional<RpcResult> handle_eth_rpc(
 
     if (method == "eth_chainId")              return handle_chain_id(id);
     if (method == "net_version")              return handle_net_version(id);
+    if (method == "web3_clientVersion")       return handle_client_version(id);
     if (method == "eth_blockNumber")          return handle_block_number(id);
     if (method == "eth_gasPrice")             return handle_gas_price(id);
+    if (method == "eth_accounts")             return handle_accounts(id);
+    if (method == "eth_mining")               return handle_mining(id);
+    if (method == "eth_syncing")              return handle_syncing(id);
     if (method == "eth_getBalance")           return handle_get_balance(params, id);
     if (method == "eth_getTransactionCount")  return handle_get_transaction_count(params, id);
     if (method == "eth_getCode")              return handle_get_code(params, id);
+    if (method == "eth_getBlockByNumber")     return handle_get_block_by_number(params, id);
+    if (method == "eth_getLogs")              return handle_get_logs(params, id);
     if (method == "eth_sendRawTransaction")   return handle_send_raw_transaction(params, id);
     if (method == "eth_getTransactionReceipt") return handle_get_transaction_receipt(params, id);
     if (method == "eth_call")                 return handle_call(params, id);
     if (method == "eth_estimateGas")          return handle_estimate_gas(params, id);
 
-    return std::nullopt;  // not handled
+    return std::nullopt;
 }
 
 }  // namespace evm_workchain
