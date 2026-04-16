@@ -24,6 +24,7 @@
 #include "evm-transaction.h"
 #include "evm-rpc.h"
 #include "evm-persistent-state.h"
+#include "evm-config-param.h"
 
 #include <silkworm/core/types/transaction.hpp>
 #include <silkworm/core/types/address.hpp>
@@ -718,6 +719,34 @@ static void test_persistent_state() {
     std::system(("rm -rf " + db_path).c_str());
 }
 
+static void test_config_param() {
+    printf("=== test_config_param (WorkchainDescr + zerostate) ===\n");
+
+    // Build zerostate
+    tos::RootHash root_hash;
+    tos::FileHash file_hash;
+    auto zerostate = build_evm_zerostate(root_hash, file_hash);
+
+    printf("  zerostate: %s\n", zerostate.not_null() ? "created" : "FAILED");
+    if (zerostate.is_null()) {
+        printf("  FAILED\n\n");
+        return;
+    }
+
+    printf("  root_hash: %s\n", root_hash.to_hex().c_str());
+    printf("  file_hash: %s\n", file_hash.to_hex().c_str());
+
+    // Build WorkchainDescr
+    auto descr = build_evm_workchain_descr(root_hash, file_hash, 0);
+    printf("  descr: %s\n", descr.not_null() ? "created + TLB validated" : "FAILED");
+
+    if (zerostate.not_null() && descr.not_null()) {
+        printf("  PASSED\n\n");
+    } else {
+        printf("  FAILED\n\n");
+    }
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -728,6 +757,7 @@ int main() {
     test_eth_rpc();
     test_signed_transaction();
     test_persistent_state();
+    test_config_param();
 
     printf("All tests passed.\n");
     return 0;
