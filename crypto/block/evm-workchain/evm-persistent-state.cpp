@@ -255,26 +255,67 @@ std::optional<StoredReceipt> PersistentEvmState::get_receipt(const evmc::bytes32
     std::string value;
     auto r = db_->get(receipt_key(tx_hash), value);
     if (r.is_error() || r.ok() == td::KeyValue::GetStatus::NotFound) return std::nullopt;
-    // Decode receipt (simplified — just return success/gas for now, full decode later)
-    if (value.size() < 17) return std::nullopt;
+    if (value.size() < 79) return std::nullopt;  // minimum: 1+8+8+20+1+20+1+20+4 = 83 bytes, but check at least header
     StoredReceipt receipt;
-    receipt.success = (value[0] != 0);
+    size_t pos = 0;
+    receipt.success = (value[pos++] != 0);
     receipt.gas_used = 0;
     for (int i = 0; i < 8; ++i)
-        receipt.gas_used = (receipt.gas_used << 8) | static_cast<uint8_t>(value[1 + i]);
+        receipt.gas_used = (receipt.gas_used << 8) | static_cast<uint8_t>(value[pos++]);
     receipt.block_number = 0;
     for (int i = 0; i < 8; ++i)
-        receipt.block_number = (receipt.block_number << 8) | static_cast<uint8_t>(value[9 + i]);
-    std::memcpy(receipt.from.bytes, &value[17], 20);
-    if (value[37] != 0) {
+        receipt.block_number = (receipt.block_number << 8) | static_cast<uint8_t>(value[pos++]);
+    std::memcpy(receipt.from.bytes, &value[pos], 20); pos += 20;
+    if (value[pos++] != 0) {
         evmc::address to{};
-        std::memcpy(to.bytes, &value[38], 20);
+        std::memcpy(to.bytes, &value[pos], 20);
         receipt.to = to;
     }
-    if (value[58] != 0) {
+    pos += 20;
+    if (value[pos++] != 0) {
         evmc::address ca{};
-        std::memcpy(ca.bytes, &value[59], 20);
+        std::memcpy(ca.bytes, &value[pos], 20);
         receipt.contract_address = ca;
+    }
+    pos += 20;
+    // Decode logs
+    if (pos + 4 <= value.size()) {
+        uint32_t num_logs = 0;
+        for (int i = 0; i < 4; ++i)
+            num_logs = (num_logs << 8) | static_cast<uint8_t>(value[pos++]);
+        for (uint32_t li = 0; li < num_logs && pos < value.size(); ++li) {
+            silkworm::Log log;
+            if (pos + 20 > value.size()) break;
+            std::memcpy(log.address.bytes, &value[pos], 20); pos += 20;
+            if (pos + 4 > value.size()) break;
+            uint32_t nt = 0;
+            for (int i = 0; i < 4; ++i)
+                nt = (nt << 8) | static_cast<uint8_t>(value[pos++]);
+            for (uint32_t ti = 0; ti < nt && pos + 32 <= value.size(); ++ti) {
+                evmc::bytes32 topic{};
+                std::memcpy(topic.bytes, &value[pos], 32); pos += 32;
+                log.topics.push_back(topic);
+            }
+            if (pos + 4 > value.size()) break;
+            uint32_t dl = 0;
+            for (int i = 0; i < 4; ++i)
+                dl = (dl << 8) | static_cast<uint8_t>(value[pos++]);
+            if (pos + dl > value.size()) break;
+            log.data.assign(reinterpret_cast<const uint8_t*>(&value[pos]),
+                            reinterpret_cast<const uint8_t*>(&value[pos]) + dl);
+            pos += dl;
+            receipt.logs.push_back(std::move(log));
+        }
+    }
+    // Decode return data
+    if (pos + 4 <= value.size()) {
+        uint32_t rdl = 0;
+        for (int i = 0; i < 4; ++i)
+            rdl = (rdl << 8) | static_cast<uint8_t>(value[pos++]);
+        if (pos + rdl <= value.size()) {
+            receipt.return_data.assign(reinterpret_cast<const uint8_t*>(&value[pos]),
+                                       reinterpret_cast<const uint8_t*>(&value[pos]) + rdl);
+        }
     }
     return receipt;
 }

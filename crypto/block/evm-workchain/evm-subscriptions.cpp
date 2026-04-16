@@ -43,18 +43,20 @@ std::vector<SubscriptionEvent> SubscriptionManager::poll(uint64_t sub_id) {
 // --- Helper: format hex ---
 
 static std::string hex_addr(const evmc::address& addr) {
-    char buf[43];
+    char buf[46];  // "0x" + 40 hex + quote + quote + null = 45
     snprintf(buf, sizeof(buf), "\"0x");
     for (int i = 0; i < 20; i++) snprintf(buf + 3 + i*2, 3, "%02x", addr.bytes[i]);
-    strcat(buf, "\"");
+    buf[43] = '"';
+    buf[44] = '\0';
     return buf;
 }
 
 static std::string hex_bytes32(const evmc::bytes32& h) {
-    char buf[67];
+    char buf[70];  // "0x" + 64 hex + quote + quote + null = 69
     snprintf(buf, sizeof(buf), "\"0x");
     for (int i = 0; i < 32; i++) snprintf(buf + 3 + i*2, 3, "%02x", h.bytes[i]);
-    strcat(buf, "\"");
+    buf[67] = '"';
+    buf[68] = '\0';
     return buf;
 }
 
@@ -63,6 +65,16 @@ static std::string hex_u64(uint64_t v) {
     if (v == 0) return "\"0x0\"";
     snprintf(buf, sizeof(buf), "\"0x%lx\"", (unsigned long)v);
     return buf;
+}
+
+// Cap pending events per subscription (drop oldest if over limit).
+static void cap_events(Subscription& sub) {
+    if (sub.pending_events.size() > kMaxPendingEventsPerSub) {
+        sub.pending_events.erase(
+            sub.pending_events.begin(),
+            sub.pending_events.begin() +
+                static_cast<ptrdiff_t>(sub.pending_events.size() - kMaxPendingEventsPerSub));
+    }
 }
 
 // --- Notifications ---
@@ -84,6 +96,7 @@ void SubscriptionManager::notify_new_head(const StoredBlock& block) {
     for (auto& [id, sub] : subscriptions_) {
         if (sub.type == SubscriptionType::NewHeads) {
             sub.pending_events.push_back(SubscriptionEvent{json});
+            cap_events(sub);
         }
     }
 }
@@ -141,6 +154,7 @@ void SubscriptionManager::notify_logs(uint64_t block_number,
             if (sub.type == SubscriptionType::Logs &&
                 log_matches_filter(log, sub.log_filter)) {
                 sub.pending_events.push_back(SubscriptionEvent{json});
+                cap_events(sub);
             }
         }
     }
@@ -153,6 +167,7 @@ void SubscriptionManager::notify_new_pending_transaction(const evmc::bytes32& tx
     for (auto& [id, sub] : subscriptions_) {
         if (sub.type == SubscriptionType::NewPendingTransactions) {
             sub.pending_events.push_back(SubscriptionEvent{json});
+            cap_events(sub);
         }
     }
 }

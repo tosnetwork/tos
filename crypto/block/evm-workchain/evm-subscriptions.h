@@ -32,6 +32,9 @@
 
 namespace evm_workchain {
 
+/// Max queued events per subscription before oldest are dropped.
+constexpr size_t kMaxPendingEventsPerSub = 10'000;
+
 enum class SubscriptionType {
     NewHeads,
     Logs,

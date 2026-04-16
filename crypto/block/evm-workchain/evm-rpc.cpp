@@ -414,7 +414,7 @@ static RpcResult handle_get_transaction_receipt(const std::string& params, const
     r += "],";
     r += "\"logsBloom\":" + compute_logs_bloom_hex(receipt->logs) + ",";
     r += "\"type\":\"0x0\",";
-    r += "\"transactionIndex\":\"0x0\",";
+    r += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(receipt->tx_index)) + ",";
     r += "\"blockHash\":" + lookup_block_hash_hex(receipt->block_number);
     r += "}";
 
