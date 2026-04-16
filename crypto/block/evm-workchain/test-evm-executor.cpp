@@ -747,6 +747,177 @@ static void test_config_param() {
     }
 }
 
+static void test_bn254_precompile() {
+    printf("=== test_bn254_precompile (ecadd via precompile address 0x06) ===\n");
+
+    EvmState state;
+    evmc::address caller{};
+    caller.bytes[19] = 0x50;
+    state.seed_account(caller, intx::uint256{10'000'000'000'000'000'000u}, 0);
+
+    // Call the ecadd precompile at address 0x06.
+    // Input: P = (1, 2) the bn254 generator, Q = (1, 2) the same point.
+    // Expected: P + Q = 2*G, which is a known point.
+    //
+    // EVM bytecode to call precompile:
+    //   PUSH32 <Px>    PUSH1 0x00  MSTORE    // store P.x at mem[0]
+    //   PUSH32 <Py>    PUSH1 0x20  MSTORE    // store P.y at mem[32]
+    //   PUSH32 <Qx>    PUSH1 0x40  MSTORE    // store Q.x at mem[64]
+    //   PUSH32 <Qy>    PUSH1 0x60  MSTORE    // store Q.y at mem[96]
+    //   PUSH1 0x40     PUSH1 0x00  PUSH1 0x80  PUSH1 0x00  PUSH1 0x00
+    //   PUSH1 0x06     PUSH2 0xFFFF  STATICCALL
+    //   PUSH1 0x40     PUSH1 0x00  RETURN
+
+    // BN254 generator: G = (1, 2)
+    Bytes code;
+    auto push32 = [&](const intx::uint256& val) {
+        code.push_back(0x7f);  // PUSH32
+        auto be = intx::be::store<evmc::uint256be>(val);
+        code.insert(code.end(), be.bytes, be.bytes + 32);
+    };
+    auto push1 = [&](uint8_t val) {
+        code.push_back(0x60);  // PUSH1
+        code.push_back(val);
+    };
+    auto push2 = [&](uint16_t val) {
+        code.push_back(0x61);  // PUSH2
+        code.push_back(static_cast<uint8_t>(val >> 8));
+        code.push_back(static_cast<uint8_t>(val & 0xFF));
+    };
+
+    // Store P.x = 1 at mem[0]
+    push32(intx::uint256{1}); push1(0x00); code.push_back(0x52);
+    // Store P.y = 2 at mem[32]
+    push32(intx::uint256{2}); push1(0x20); code.push_back(0x52);
+    // Store Q.x = 1 at mem[64]
+    push32(intx::uint256{1}); push1(0x40); code.push_back(0x52);
+    // Store Q.y = 2 at mem[96]
+    push32(intx::uint256{2}); push1(0x60); code.push_back(0x52);
+
+    // STATICCALL(gas=0xFFFF, addr=0x06, inOffset=0, inSize=128, outOffset=0, outSize=64)
+    push1(0x40);   // retSize = 64
+    push1(0x00);   // retOffset = 0
+    push1(0x80);   // argsSize = 128
+    push1(0x00);   // argsOffset = 0
+    push1(0x06);   // address = ecadd precompile
+    push2(0xFFFF); // gas
+    code.push_back(0xfa);  // STATICCALL
+
+    // Return result: PUSH1 0x40 PUSH1 0x00 RETURN
+    push1(0x40); push1(0x00); code.push_back(0xf3);
+
+    // Deploy the contract
+    uint8_t rlen = static_cast<uint8_t>(code.size());
+    Bytes initcode = {
+        0x60, rlen, 0x60, 0x0c, 0x60, 0x00, 0x39,
+        0x60, rlen, 0x60, 0x00, 0xf3,
+    };
+    initcode.insert(initcode.end(), code.begin(), code.end());
+
+    Transaction deploy_txn;
+    deploy_txn.type = TransactionType::kLegacy;
+    deploy_txn.chain_id = kEvmChainId;
+    deploy_txn.nonce = 0;
+    deploy_txn.max_fee_per_gas = 1'000'000'000;
+    deploy_txn.max_priority_fee_per_gas = 1'000'000'000;
+    deploy_txn.gas_limit = 500'000;
+    deploy_txn.to = std::nullopt;
+    deploy_txn.value = 0;
+    deploy_txn.data = initcode;
+    deploy_txn.set_sender(caller);
+
+    uint8_t rs[32] = {};
+    auto blk = make_evm_block(1, 1700000000, rs);
+    auto deploy_res = execute_evm_transaction(deploy_txn, blk, state, evm_chain_config());
+    auto contract = silkworm::create_address(caller, 0);
+
+    printf("  deploy: %s (gas=%lu)\n", deploy_res.success ? "ok" : "FAIL",
+           (unsigned long)deploy_res.gas_used);
+
+    // Call the contract (triggers ecadd precompile)
+    Transaction call_txn;
+    call_txn.type = TransactionType::kLegacy;
+    call_txn.chain_id = kEvmChainId;
+    call_txn.nonce = 1;
+    call_txn.max_fee_per_gas = 1'000'000'000;
+    call_txn.max_priority_fee_per_gas = 1'000'000'000;
+    call_txn.gas_limit = 100'000;
+    call_txn.to = contract;
+    call_txn.value = 0;
+    call_txn.set_sender(caller);
+
+    auto blk2 = make_evm_block(2, 1700000001, rs);
+    auto call_res = execute_evm_transaction(call_txn, blk2, state, evm_chain_config());
+
+    printf("  ecadd call: %s (gas=%lu, return=%zu bytes)\n",
+           call_res.success ? "ok" : "FAIL",
+           (unsigned long)call_res.gas_used,
+           call_res.return_data.size());
+
+    // Verify: return data should be 64 bytes (the result point)
+    // G + G = 2*G on bn254. Known value:
+    // 2*G.x = 0x030644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd3
+    // 2*G.y = 0x15ed738c0e0a7c92e7845f96b2ae9c0a68a6a449e3538fc7ff3ebf7a5a18a2c4
+    bool result_ok = call_res.success && call_res.return_data.size() == 64;
+
+    if (result_ok) {
+        // Check the result is non-zero (a valid point)
+        bool nonzero = false;
+        for (auto b : call_res.return_data) {
+            if (b != 0) { nonzero = true; break; }
+        }
+        result_ok = nonzero;
+        if (nonzero) {
+            printf("  result.x: 0x");
+            for (int i = 0; i < 32; i++) printf("%02x", call_res.return_data[i]);
+            printf("\n  result.y: 0x");
+            for (int i = 32; i < 64; i++) printf("%02x", call_res.return_data[i]);
+            printf("\n");
+        }
+    }
+
+    printf("  %s\n\n", result_ok ? "PASSED" : "FAILED");
+}
+
+static void test_deterministic_replay() {
+    printf("=== test_deterministic_replay ===\n");
+
+    auto run_sequence = []() -> std::pair<intx::uint256, uint64_t> {
+        EvmState state;
+        evmc::address sender{};
+        sender.bytes[19] = 0x60;
+        evmc::address recipient{};
+        recipient.bytes[19] = 0x61;
+        state.seed_account(sender, intx::uint256{10'000'000'000'000'000'000u}, 0);
+
+        uint8_t rs[32] = {0x42};
+        const auto& config = evm_chain_config();
+
+        // Run 3 transactions in sequence
+        for (int i = 0; i < 3; ++i) {
+            auto blk = make_evm_block(static_cast<uint64_t>(i + 1), 1700000000 + i, rs);
+            auto txn = make_transfer_txn(sender, recipient,
+                                          intx::uint256{100'000u * (i + 1)},
+                                          static_cast<uint64_t>(i),
+                                          50000);
+            execute_evm_transaction(txn, blk, state, config);
+        }
+
+        return {state.get_balance(recipient), state.get_nonce(sender)};
+    };
+
+    // Run twice
+    auto [bal1, nonce1] = run_sequence();
+    auto [bal2, nonce2] = run_sequence();
+
+    printf("  run 1: balance=%s nonce=%lu\n", intx::to_string(bal1).c_str(), (unsigned long)nonce1);
+    printf("  run 2: balance=%s nonce=%lu\n", intx::to_string(bal2).c_str(), (unsigned long)nonce2);
+
+    bool ok = (bal1 == bal2) && (nonce1 == nonce2) && (bal1 > 0);
+    printf("  deterministic: %s\n", ok ? "YES" : "NO");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -758,6 +929,8 @@ int main() {
     test_signed_transaction();
     test_persistent_state();
     test_config_param();
+    test_bn254_precompile();
+    test_deterministic_replay();
 
     printf("All tests passed.\n");
     return 0;

@@ -453,15 +453,113 @@ std::optional<Bytes> snarkv_run(ByteView input) noexcept {
     }
     return out;
 }
-#else  // SILKWORM_NO_LIBFF — stub out alt_bn128 precompiles
-uint64_t expmod_gas(ByteView, evmc_revision) noexcept { return 200; }
+#else  // SILKWORM_NO_LIBFF — use evmone's blst-based bn254 + fallback stubs
+
+// expmod_gas: pure intx math, no GMP needed — copy from the #ifndef path above
+uint64_t expmod_gas(ByteView input_view, evmc_revision rev) noexcept {
+    const uint64_t min_gas{rev < EVMC_BERLIN ? 0 : 200u};
+    Bytes input{input_view};
+    right_pad(input, 3 * 32);
+    intx::uint256 base_len256{intx::be::unsafe::load<intx::uint256>(&input[0])};
+    intx::uint256 exp_len256{intx::be::unsafe::load<intx::uint256>(&input[32])};
+    intx::uint256 mod_len256{intx::be::unsafe::load<intx::uint256>(&input[64])};
+    if (base_len256 == 0 && mod_len256 == 0) return min_gas;
+    if (intx::count_significant_words(base_len256) > 1 || intx::count_significant_words(exp_len256) > 1 ||
+        intx::count_significant_words(mod_len256) > 1) return UINT64_MAX;
+    uint64_t base_len64{static_cast<uint64_t>(base_len256)};
+    uint64_t exp_len64{static_cast<uint64_t>(exp_len256)};
+    input.erase(0, 3 * 32);
+    intx::uint256 exp_head{0};
+    if (input.size() > base_len64) {
+        input.erase(0, static_cast<size_t>(base_len64));
+        right_pad(input, 3 * 32);
+        if (exp_len64 < 32) {
+            input.erase(static_cast<size_t>(exp_len64));
+            input.insert(0, 32 - static_cast<size_t>(exp_len64), '\0');
+        }
+        exp_head = intx::be::unsafe::load<intx::uint256>(input.data());
+    }
+    unsigned bit_len{256 - clz(exp_head)};
+    intx::uint256 adjusted_exponent_len{0};
+    if (exp_len256 > 32) adjusted_exponent_len = 8 * (exp_len256 - 32);
+    if (bit_len > 1) adjusted_exponent_len += bit_len - 1;
+    if (adjusted_exponent_len < 1) adjusted_exponent_len = 1;
+    const intx::uint256 max_length{std::max(mod_len256, base_len256)};
+    intx::uint256 gas;
+    if (rev < EVMC_BERLIN) {
+        gas = mult_complexity_eip198(max_length) * adjusted_exponent_len / 20;
+    } else {
+        gas = mult_complexity_eip2565(max_length) * adjusted_exponent_len / 3;
+    }
+    if (intx::count_significant_words(gas) > 1) return UINT64_MAX;
+    return std::max(min_gas, static_cast<uint64_t>(gas));
+}
+
+// expmod_run: requires GMP — stub returns failure for now.
+// TODO: add GMP dependency or implement with intx for small moduli.
 std::optional<Bytes> expmod_run(ByteView) noexcept { return std::nullopt; }
-uint64_t bn_add_gas(ByteView, evmc_revision) noexcept { return 150; }
-std::optional<Bytes> bn_add_run(ByteView) noexcept { return std::nullopt; }
-uint64_t bn_mul_gas(ByteView, evmc_revision) noexcept { return 6000; }
-std::optional<Bytes> bn_mul_run(ByteView) noexcept { return std::nullopt; }
-uint64_t snarkv_gas(ByteView, evmc_revision) noexcept { return 45000; }
+
+// bn_add / bn_mul: use evmone's blst-based bn254 implementation
+}  // temporarily close namespace silkworm::precompile
+#include <evmone_precompiles/bn254.hpp>
+namespace silkworm::precompile {  // reopen
+
+uint64_t bn_add_gas(ByteView, evmc_revision rev) noexcept {
+    return rev >= EVMC_ISTANBUL ? 150 : 500;
+}
+
+std::optional<Bytes> bn_add_run(ByteView input_view) noexcept {
+    uint8_t input_buffer[128]{};
+    if (!input_view.empty())
+        std::memcpy(input_buffer, input_view.data(), std::min(input_view.size(), size_t{128}));
+
+    const evmmax::bn254::Point p = {intx::be::unsafe::load<intx::uint256>(input_buffer),
+                                     intx::be::unsafe::load<intx::uint256>(input_buffer + 32)};
+    const evmmax::bn254::Point q = {intx::be::unsafe::load<intx::uint256>(input_buffer + 64),
+                                     intx::be::unsafe::load<intx::uint256>(input_buffer + 96)};
+
+    if (!evmmax::bn254::validate(p) || !evmmax::bn254::validate(q))
+        return std::nullopt;
+
+    const auto res = evmmax::bn254::add(p, q);
+    Bytes out(64, 0);
+    intx::be::unsafe::store(out.data(), res.x);
+    intx::be::unsafe::store(out.data() + 32, res.y);
+    return out;
+}
+
+uint64_t bn_mul_gas(ByteView, evmc_revision rev) noexcept {
+    return rev >= EVMC_ISTANBUL ? 6000 : 40000;
+}
+
+std::optional<Bytes> bn_mul_run(ByteView input_view) noexcept {
+    uint8_t input_buffer[96]{};
+    if (!input_view.empty())
+        std::memcpy(input_buffer, input_view.data(), std::min(input_view.size(), size_t{96}));
+
+    const evmmax::bn254::Point p = {intx::be::unsafe::load<intx::uint256>(input_buffer),
+                                     intx::be::unsafe::load<intx::uint256>(input_buffer + 32)};
+    const auto c = intx::be::unsafe::load<intx::uint256>(input_buffer + 64);
+
+    if (!evmmax::bn254::validate(p))
+        return std::nullopt;
+
+    const auto res = evmmax::bn254::mul(p, c);
+    Bytes out(64, 0);
+    intx::be::unsafe::store(out.data(), res.x);
+    intx::be::unsafe::store(out.data() + 32, res.y);
+    return out;
+}
+
+// snarkv (ecpairing): requires libff or blst pairing support.
+// Stub for now — ecpairing is less commonly needed than ecadd/ecmul.
+uint64_t snarkv_gas(ByteView input, evmc_revision rev) noexcept {
+    constexpr size_t kSnarkvStride{192};
+    uint64_t k = input.size() / kSnarkvStride;
+    return rev >= EVMC_ISTANBUL ? (34000 * k + 45000) : (80000 * k + 100000);
+}
 std::optional<Bytes> snarkv_run(ByteView) noexcept { return std::nullopt; }
+
 #endif  // SILKWORM_NO_LIBFF
 
 uint64_t blake2_f_gas(ByteView input, evmc_revision) noexcept {
