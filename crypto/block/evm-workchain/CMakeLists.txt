@@ -23,6 +23,7 @@ set(EVM_WORKCHAIN_SRC
   evm-bridge.cpp
   evm-tracer.cpp
   evm-subscriptions.cpp
+  evm-incremental-trie.cpp
 )
 
 add_library(evm_workchain STATIC ${EVM_WORKCHAIN_SRC})

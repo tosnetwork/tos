@@ -26,6 +26,7 @@
 #include <silkworm/core/state/state.hpp>
 #include <silkworm/core/types/account.hpp>
 #include <silkworm/core/types/log.hpp>
+#include <silkworm/core/trie/prefix_set.hpp>
 
 namespace evm_workchain {
 
@@ -75,8 +76,9 @@ struct StoredBlock {
     std::vector<evmc::bytes32> transaction_hashes;
     // Block-level derived fields
     uint8_t logs_bloom[256]{};          // Ethereum logs bloom (2048-bit)
-    evmc::bytes32 transactions_root{};  // keccak256(concatenated tx hashes)
-    evmc::bytes32 receipts_root{};      // keccak256(receipt status+gas+bloom)
+    evmc::bytes32 state_root{};         // Incremental MPT state root
+    evmc::bytes32 transactions_root{};  // MPT root of RLP-encoded transactions
+    evmc::bytes32 receipts_root{};      // MPT root of RLP-encoded receipts
 };
 
 /// Log entry with block metadata for eth_getLogs.
@@ -155,6 +157,20 @@ class EvmState {
         const std::vector<evmc::address>& addresses = {},
         const std::vector<std::vector<evmc::bytes32>>& topics = {}) const;
 
+    /// --- Change tracking for incremental trie ---
+    /// Track that an account was modified (computes keccak256(addr) and inserts nibbled key).
+    void track_account_change(const evmc::address& addr);
+    /// Track that a storage slot was modified (computes keccak256(addr)+keccak256(slot) nibbled keys).
+    void track_storage_change(const evmc::address& addr, const evmc::bytes32& slot);
+    /// Access the accumulated account change set.
+    silkworm::trie::PrefixSet& account_changes() { return account_changes_; }
+    const silkworm::trie::PrefixSet& account_changes() const { return account_changes_; }
+    /// Access the accumulated storage change set.
+    silkworm::trie::PrefixSet& storage_changes() { return storage_changes_; }
+    const silkworm::trie::PrefixSet& storage_changes() const { return storage_changes_; }
+    /// Clear all tracked changes (typically after trie root computation).
+    void clear_change_tracking();
+
   private:
     void evict_oldest_receipts();
     void evict_oldest_transactions();
@@ -173,6 +189,10 @@ class EvmState {
     // Insertion order tracking for eviction (FIFO when at capacity)
     std::vector<evmc::bytes32> receipt_insertion_order_;
     std::vector<evmc::bytes32> transaction_insertion_order_;
+
+    // Change tracking for incremental trie root computation
+    silkworm::trie::PrefixSet account_changes_;
+    silkworm::trie::PrefixSet storage_changes_;
 
     mutable std::shared_mutex mutex_;
 };

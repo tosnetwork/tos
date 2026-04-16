@@ -11,17 +11,25 @@
 #include "td/db/RocksDb.h"
 #include "td/utils/logging.h"
 
+#include <ethash/keccak.hpp>
 #include <silkworm/core/common/endian.hpp>
+#include <silkworm/core/trie/nibbles.hpp>
 #include <cstring>
 
 namespace evm_workchain {
 
-// --- Key prefixes ---
+// --- Key prefixes (plain state) ---
 static constexpr char kPrefixAccount  = 'A';
 static constexpr char kPrefixStorage  = 'S';
 static constexpr char kPrefixCode     = 'C';
 static constexpr char kPrefixReceipt  = 'R';
 static constexpr char kPrefixMeta     = 'M';
+
+// --- Key prefixes (hashed state / trie cache) ---
+static const std::string kPrefixHashedAccount  = "H";    // "H" + hashed_addr(32)
+static const std::string kPrefixHashedStorage  = "HS";   // "HS" + hashed_addr(32) + incarnation(8) + hashed_slot(32)
+static const std::string kPrefixTrieAccount    = "TA";   // "TA" + nibbled_key
+static const std::string kPrefixTrieStorage    = "TS";   // "TS" + hashed_addr(32) + incarnation(8) + nibbled_key
 
 // --- Key builders ---
 
@@ -60,6 +68,97 @@ static std::string receipt_key(const evmc::bytes32& tx_hash) {
 
 static std::string meta_key(const std::string& name) {
     return std::string(1, kPrefixMeta) + name;
+}
+
+// --- Helper: write big-endian uint64 into a string at offset ---
+static void write_be64(std::string& s, size_t offset, uint64_t val) {
+    for (int i = 7; i >= 0; --i)
+        s[offset + (7 - i)] = static_cast<char>((val >> (i * 8)) & 0xFF);
+}
+
+// --- Hashed state key builders (static methods) ---
+
+std::string PersistentEvmState::hashed_account_key(const evmc::bytes32& hashed_addr) {
+    std::string k;
+    k.reserve(kPrefixHashedAccount.size() + 32);
+    k += kPrefixHashedAccount;
+    k.append(reinterpret_cast<const char*>(hashed_addr.bytes), 32);
+    return k;
+}
+
+std::string PersistentEvmState::hashed_storage_key(const evmc::bytes32& hashed_addr,
+                                                    uint64_t incarnation,
+                                                    const evmc::bytes32& hashed_slot) {
+    // "HS" + hashed_addr(32) + incarnation(8) + hashed_slot(32) = 2 + 32 + 8 + 32 = 74
+    std::string k(kPrefixHashedStorage.size() + 32 + 8 + 32, '\0');
+    size_t pos = 0;
+    std::memcpy(&k[pos], kPrefixHashedStorage.data(), kPrefixHashedStorage.size());
+    pos += kPrefixHashedStorage.size();
+    std::memcpy(&k[pos], hashed_addr.bytes, 32);
+    pos += 32;
+    write_be64(k, pos, incarnation);
+    pos += 8;
+    std::memcpy(&k[pos], hashed_slot.bytes, 32);
+    return k;
+}
+
+std::string PersistentEvmState::trie_account_key(const silkworm::Bytes& nibbled_key) {
+    std::string k;
+    k.reserve(kPrefixTrieAccount.size() + nibbled_key.size());
+    k += kPrefixTrieAccount;
+    k.append(reinterpret_cast<const char*>(nibbled_key.data()), nibbled_key.size());
+    return k;
+}
+
+std::string PersistentEvmState::trie_storage_key(const evmc::bytes32& hashed_addr,
+                                                  uint64_t incarnation,
+                                                  const silkworm::Bytes& nibbled_key) {
+    // "TS" + hashed_addr(32) + incarnation(8) + nibbled_key
+    std::string k(kPrefixTrieStorage.size() + 32 + 8 + nibbled_key.size(), '\0');
+    size_t pos = 0;
+    std::memcpy(&k[pos], kPrefixTrieStorage.data(), kPrefixTrieStorage.size());
+    pos += kPrefixTrieStorage.size();
+    std::memcpy(&k[pos], hashed_addr.bytes, 32);
+    pos += 32;
+    write_be64(k, pos, incarnation);
+    pos += 8;
+    std::memcpy(&k[pos], nibbled_key.data(), nibbled_key.size());
+    return k;
+}
+
+// --- Hashed account encoding ---
+// Same layout as plain account: nonce(8) + balance(32) + code_hash(32) + incarnation(8) = 80 bytes.
+// Re-uses the same fixed format so that decode_account() works for both.
+
+std::string PersistentEvmState::encode_hashed_account(const silkworm::Account& acct) {
+    std::string out(80, '\0');
+    // nonce (big-endian)
+    write_be64(out, 0, acct.nonce);
+    // balance (big-endian uint256 -> 32 bytes)
+    auto bal = intx::be::store<evmc::uint256be>(acct.balance);
+    std::memcpy(&out[8], bal.bytes, 32);
+    // code_hash
+    std::memcpy(&out[40], acct.code_hash.bytes, 32);
+    // incarnation (big-endian)
+    write_be64(out, 72, acct.incarnation);
+    return out;
+}
+
+std::optional<silkworm::Account> PersistentEvmState::decode_hashed_account(const std::string& data) {
+    // Same format as plain account
+    if (data.size() != 80) return std::nullopt;
+    silkworm::Account acct;
+    acct.nonce = 0;
+    for (int i = 0; i < 8; ++i)
+        acct.nonce = (acct.nonce << 8) | static_cast<uint8_t>(data[i]);
+    evmc::uint256be bal_be;
+    std::memcpy(bal_be.bytes, &data[8], 32);
+    acct.balance = intx::be::load<intx::uint256>(bal_be);
+    std::memcpy(acct.code_hash.bytes, &data[40], 32);
+    acct.incarnation = 0;
+    for (int i = 0; i < 8; ++i)
+        acct.incarnation = (acct.incarnation << 8) | static_cast<uint8_t>(data[72 + i]);
+    return acct;
 }
 
 // --- Account serialisation (simple fixed layout) ---
@@ -228,6 +327,16 @@ void PersistentEvmState::update_account(const evmc::address& address,
     } else {
         db_->erase(account_key(address));
     }
+
+    // Mirror to hashed state table for incremental trie computation
+    auto hashed = ethash::keccak256(address.bytes, 20);
+    evmc::bytes32 hashed_addr;
+    std::memcpy(hashed_addr.bytes, hashed.bytes, 32);
+    if (current) {
+        db_->set(hashed_account_key(hashed_addr), encode_hashed_account(*current));
+    } else {
+        db_->erase(hashed_account_key(hashed_addr));
+    }
 }
 
 void PersistentEvmState::update_account_code(const evmc::address& /*address*/, uint64_t /*incarnation*/,
@@ -244,6 +353,22 @@ void PersistentEvmState::update_storage(const evmc::address& address, uint64_t i
         db_->erase(storage_key(address, incarnation, location));
     } else {
         db_->set(storage_key(address, incarnation, location),
+                 td::Slice(reinterpret_cast<const char*>(current.bytes), 32));
+    }
+
+    // Mirror to hashed storage table for incremental trie computation
+    auto addr_hash = ethash::keccak256(address.bytes, 20);
+    evmc::bytes32 hashed_addr;
+    std::memcpy(hashed_addr.bytes, addr_hash.bytes, 32);
+
+    auto slot_hash = ethash::keccak256(location.bytes, 32);
+    evmc::bytes32 hashed_slot;
+    std::memcpy(hashed_slot.bytes, slot_hash.bytes, 32);
+
+    if (current == zero) {
+        db_->erase(hashed_storage_key(hashed_addr, incarnation, hashed_slot));
+    } else {
+        db_->set(hashed_storage_key(hashed_addr, incarnation, hashed_slot),
                  td::Slice(reinterpret_cast<const char*>(current.bytes), 32));
     }
 }
@@ -348,6 +473,123 @@ void PersistentEvmState::set_block_number(uint64_t n) {
     for (int i = 7; i >= 0; --i)
         val[7 - i] = static_cast<char>((n >> (i * 8)) & 0xFF);
     db_->set(meta_key("block_number"), val);
+}
+
+// --- Hashed state iteration ---
+
+void PersistentEvmState::for_each_hashed_account(
+    std::function<void(const evmc::bytes32& hashed_addr,
+                       const silkworm::Account& acct)> callback) const {
+    // Range: "H" (exclusive upper bound = "H" + 0xFF*32 + 1 byte beyond)
+    // We use "H" as begin and compute an end that is just past the last
+    // possible "H" + 32 bytes key.  Since all hashed account keys are
+    // exactly prefix_len + 32 bytes, we use prefix "I" as upper bound
+    // (next byte after 'H' in ASCII).
+    std::string begin = kPrefixHashedAccount;
+    std::string end = kPrefixHashedAccount;
+    // Increment last byte to get exclusive upper bound
+    end.back() = static_cast<char>(end.back() + 1);
+
+    db_->for_each_in_range(begin, end, [&](td::Slice key, td::Slice value) -> td::Status {
+        if (key.size() != static_cast<size_t>(kPrefixHashedAccount.size() + 32)) {
+            return td::Status::OK();  // skip malformed keys
+        }
+        evmc::bytes32 hashed_addr{};
+        std::memcpy(hashed_addr.bytes, key.data() + kPrefixHashedAccount.size(), 32);
+
+        auto acct = decode_hashed_account(value.str());
+        if (acct) {
+            callback(hashed_addr, *acct);
+        }
+        return td::Status::OK();
+    });
+}
+
+void PersistentEvmState::for_each_hashed_storage(
+    const evmc::bytes32& hashed_addr, uint64_t incarnation,
+    std::function<void(const evmc::bytes32& hashed_slot,
+                       const evmc::bytes32& value)> callback) const {
+    // Build the prefix: "HS" + hashed_addr(32) + incarnation(8)
+    std::string prefix(kPrefixHashedStorage.size() + 32 + 8, '\0');
+    size_t pos = 0;
+    std::memcpy(&prefix[pos], kPrefixHashedStorage.data(), kPrefixHashedStorage.size());
+    pos += kPrefixHashedStorage.size();
+    std::memcpy(&prefix[pos], hashed_addr.bytes, 32);
+    pos += 32;
+    write_be64(prefix, pos, incarnation);
+
+    // Upper bound: prefix with last byte incremented
+    std::string end = prefix;
+    // Increment the prefix to get an exclusive upper bound.
+    // Since incarnation is big-endian, incrementing the last byte works.
+    for (int i = static_cast<int>(end.size()) - 1; i >= 0; --i) {
+        if (static_cast<unsigned char>(end[i]) < 0xFF) {
+            end[i] = static_cast<char>(static_cast<unsigned char>(end[i]) + 1);
+            break;
+        }
+        end[i] = '\0';
+    }
+
+    db_->for_each_in_range(prefix, end, [&](td::Slice key, td::Slice val) -> td::Status {
+        // Expected key length: prefix + 32 (hashed_slot)
+        if (key.size() != prefix.size() + 32) {
+            return td::Status::OK();  // skip malformed keys
+        }
+        evmc::bytes32 hashed_slot{};
+        std::memcpy(hashed_slot.bytes, key.data() + prefix.size(), 32);
+
+        evmc::bytes32 storage_val{};
+        if (val.size() == 32) {
+            std::memcpy(storage_val.bytes, val.data(), 32);
+        }
+        callback(hashed_slot, storage_val);
+        return td::Status::OK();
+    });
+}
+
+// --- Trie node cache ---
+
+void PersistentEvmState::write_trie_account_node(const silkworm::Bytes& nibbled_key,
+                                                   const silkworm::Bytes& encoded_node) {
+    db_->set(trie_account_key(nibbled_key),
+             td::Slice(reinterpret_cast<const char*>(encoded_node.data()), encoded_node.size()));
+}
+
+void PersistentEvmState::delete_trie_account_node(const silkworm::Bytes& nibbled_key) {
+    db_->erase(trie_account_key(nibbled_key));
+}
+
+std::optional<silkworm::Bytes> PersistentEvmState::read_trie_account_node(
+    const silkworm::Bytes& nibbled_key) const {
+    std::string value;
+    auto r = db_->get(trie_account_key(nibbled_key), value);
+    if (r.is_error() || r.ok() == td::KeyValue::GetStatus::NotFound) return std::nullopt;
+    return silkworm::Bytes(reinterpret_cast<const uint8_t*>(value.data()),
+                           reinterpret_cast<const uint8_t*>(value.data()) + value.size());
+}
+
+void PersistentEvmState::write_trie_storage_node(const evmc::bytes32& hashed_addr,
+                                                   uint64_t incarnation,
+                                                   const silkworm::Bytes& nibbled_key,
+                                                   const silkworm::Bytes& encoded_node) {
+    db_->set(trie_storage_key(hashed_addr, incarnation, nibbled_key),
+             td::Slice(reinterpret_cast<const char*>(encoded_node.data()), encoded_node.size()));
+}
+
+void PersistentEvmState::delete_trie_storage_node(const evmc::bytes32& hashed_addr,
+                                                    uint64_t incarnation,
+                                                    const silkworm::Bytes& nibbled_key) {
+    db_->erase(trie_storage_key(hashed_addr, incarnation, nibbled_key));
+}
+
+std::optional<silkworm::Bytes> PersistentEvmState::read_trie_storage_node(
+    const evmc::bytes32& hashed_addr, uint64_t incarnation,
+    const silkworm::Bytes& nibbled_key) const {
+    std::string value;
+    auto r = db_->get(trie_storage_key(hashed_addr, incarnation, nibbled_key), value);
+    if (r.is_error() || r.ok() == td::KeyValue::GetStatus::NotFound) return std::nullopt;
+    return silkworm::Bytes(reinterpret_cast<const uint8_t*>(value.data()),
+                           reinterpret_cast<const uint8_t*>(value.data()) + value.size());
 }
 
 }  // namespace evm_workchain

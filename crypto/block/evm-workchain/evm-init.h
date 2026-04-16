@@ -13,16 +13,15 @@
 namespace evm_workchain {
 
 class EvmState;
+class IncrementalTrieCalculator;
 
 /// Register the EVM compute phase handler with the host chain.
-///
-/// @param db_root  Path to the node's database directory.  If non-empty,
-///                 persistent RocksDB state is used at {db_root}/evm-state.
-///                 If empty, in-memory state is used (volatile).
 void init_evm_workchain(const std::string& db_root = "");
 
 /// Access the global EVM workchain state singleton.
-/// Available after init_evm_workchain() has been called.
 EvmState& global_evm_state();
+
+/// Access the global incremental trie calculator.
+IncrementalTrieCalculator& global_trie_calculator();
 
 }  // namespace evm_workchain

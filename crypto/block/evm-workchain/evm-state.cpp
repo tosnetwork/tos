@@ -6,6 +6,9 @@
 */
 #include "evm-state.h"
 
+#include <ethash/keccak.hpp>
+#include <silkworm/core/trie/nibbles.hpp>
+
 namespace evm_workchain {
 
 EvmState::EvmState()
@@ -268,6 +271,46 @@ std::vector<IndexedLog> EvmState::get_logs(
         }
     }
     return result;
+}
+
+// --- Change tracking for incremental trie ---
+
+void EvmState::track_account_change(const evmc::address& addr) {
+    // Compute keccak256(address) and convert to nibbles for PrefixSet.
+    // NOTE: no locking here — caller must hold unique_lock (e.g. execute_evm_transaction),
+    // or call from a single-threaded context (e.g. handle_send_raw_transaction).
+    auto hashed = ethash::keccak256(addr.bytes, 20);
+    silkworm::Bytes hash_bytes(hashed.bytes, hashed.bytes + 32);
+    silkworm::Bytes nibbled = silkworm::trie::unpack_nibbles(hash_bytes);
+    account_changes_.insert(std::move(nibbled));
+}
+
+void EvmState::track_storage_change(const evmc::address& addr, const evmc::bytes32& slot) {
+    // For storage changes we track the combined nibbled key:
+    // nibbles(keccak256(address)) + nibbles(keccak256(slot))
+    auto addr_hash = ethash::keccak256(addr.bytes, 20);
+    auto slot_hash = ethash::keccak256(slot.bytes, 32);
+
+    silkworm::Bytes addr_bytes(addr_hash.bytes, addr_hash.bytes + 32);
+    silkworm::Bytes slot_bytes(slot_hash.bytes, slot_hash.bytes + 32);
+
+    silkworm::Bytes nibbled_addr = silkworm::trie::unpack_nibbles(addr_bytes);
+    silkworm::Bytes nibbled_slot = silkworm::trie::unpack_nibbles(slot_bytes);
+
+    // Combine: the storage PrefixSet key is nibbled_addr + nibbled_slot
+    silkworm::Bytes combined;
+    combined.reserve(nibbled_addr.size() + nibbled_slot.size());
+    combined.insert(combined.end(), nibbled_addr.begin(), nibbled_addr.end());
+    combined.insert(combined.end(), nibbled_slot.begin(), nibbled_slot.end());
+
+    // No locking — caller must hold unique_lock or be in single-threaded context.
+    storage_changes_.insert(std::move(combined));
+}
+
+void EvmState::clear_change_tracking() {
+    // No locking — caller must hold unique_lock or be in single-threaded context.
+    account_changes_.clear();
+    storage_changes_.clear();
 }
 
 }  // namespace evm_workchain

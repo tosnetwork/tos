@@ -21,6 +21,7 @@
 #include "evm-tracer.h"
 #include "evm-subscriptions.h"
 #include "evm-state-root.h"
+#include "evm-incremental-trie.h"
 
 #include <silkworm/core/common/util.hpp>
 #include <ethash/keccak.hpp>
@@ -411,6 +412,15 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
     stored_block.receipts_root = compute_receipts_root(
         stored_block.transaction_hashes, evm_state);
 
+    // Compute incremental state root (Erigon-style MPT)
+    // Needs lock since compute_state_root reads from InMemoryState.
+    {
+        std::unique_lock trie_lock(evm_state.mutex());
+        stored_block.state_root = global_trie_calculator().compute_state_root(
+            evm_state, &evm_state.account_changes(), &evm_state.storage_changes());
+        evm_state.clear_change_tracking();
+    }
+
     evm_state.store_block(stored_block);
 
     // Notify subscribers
@@ -719,11 +729,7 @@ static std::string format_block_json(const StoredBlock& blk, bool full_transacti
     r += "\"extraData\":\"0x\",";
     r += "\"size\":\"0x0\",";
     r += "\"mixHash\":\"0x" + std::string(64, '0') + "\",";
-    // stateRoot: remains zeros for now. Computing a full Ethereum state root
-    // requires iterating all accounts and building an MPT over (address -> RLP(account)),
-    // which is expensive and not yet implemented. transactionsRoot and receiptsRoot below
-    // are proper MPT roots computed via silkworm::trie::root_hash().
-    r += "\"stateRoot\":\"0x" + std::string(64, '0') + "\",";
+    r += "\"stateRoot\":" + to_hex_data(blk.state_root.bytes, 32) + ",";
     r += "\"transactionsRoot\":" + to_hex_data(blk.transactions_root.bytes, 32) + ",";
     r += "\"receiptsRoot\":" + to_hex_data(blk.receipts_root.bytes, 32) + ",";
     r += "\"logsBloom\":" + to_hex_data(blk.logs_bloom, 256) + ",";

@@ -13,15 +13,21 @@
 #include "evm-compute-phase.h"
 #include "evm-state.h"
 #include "evm-persistent-state.h"
+#include "evm-incremental-trie.h"
 
 #include "td/utils/logging.h"
 
 namespace evm_workchain {
 
 static std::unique_ptr<EvmState> g_evm_state;
+static std::unique_ptr<IncrementalTrieCalculator> g_trie_calc;
 
 EvmState& global_evm_state() {
     return *g_evm_state;
+}
+
+IncrementalTrieCalculator& global_trie_calculator() {
+    return *g_trie_calc;
 }
 
 void init_evm_workchain(const std::string& db_root) {
@@ -55,6 +61,8 @@ void init_evm_workchain(const std::string& db_root) {
                 *g_evm_state,
                 block_seqno, timestamp, rand_seed);
         });
+
+    g_trie_calc = std::make_unique<IncrementalTrieCalculator>();
 
     LOG(WARNING) << "evm-workchain: handler registered";
 }

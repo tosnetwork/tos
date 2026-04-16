@@ -160,9 +160,22 @@ ExecutionResult execute_evm_transaction(
     auto result = run_evm(txn, block, ibs, config, /*commit_state=*/true);
 
     // Store the block for BLOCKHASH opcode support.
-    // insert_block makes read_header available for future EVM executions.
     auto block_hash = intx::be::store<evmc::bytes32>(intx::uint256{block.header.number});
     evm_state.state().insert_block(block, block_hash);
+
+    // Track changed accounts for incremental state root computation.
+    // Sender, recipient, and beneficiary are always touched.
+    if (auto s = txn.sender()) {
+        evm_state.track_account_change(*s);
+    }
+    if (txn.to) {
+        evm_state.track_account_change(*txn.to);
+    }
+    evm_state.track_account_change(block.header.beneficiary);
+    // For CREATE: the new contract address is also changed.
+    if (result.contract_address) {
+        evm_state.track_account_change(*result.contract_address);
+    }
 
     return result;
 }

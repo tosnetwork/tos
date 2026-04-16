@@ -5,20 +5,29 @@
     {db_root}/evm-state.  Accounts, storage slots, code, receipts, and
     block metadata survive process restarts.
 
-    Key schema:
-      "A" + address(20)                        → RLP-encoded Account
+    Key schema (plain state):
+      "A" + address(20)                        → encoded Account
       "S" + address(20) + incarnation(8) + key(32)  → bytes32 value
       "C" + code_hash(32)                      → bytecode
       "R" + tx_hash(32)                        → serialised StoredReceipt
       "M" + meta_key                           → metadata values
 
+    Key schema (hashed state — for incremental state root):
+      "H"  + keccak256(address)(32)                                     → encoded Account
+      "HS" + keccak256(address)(32) + incarnation(8) + keccak256(slot)(32) → bytes32 value
+      "TA" + nibbled_key                                                → encoded trie node
+      "TS" + keccak256(address)(32) + incarnation(8) + nibbled_key      → encoded trie node
+
     Source: TOS-specific adapter (not copied from ~/s).
 */
 #pragma once
 
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 
+#include <silkworm/core/common/bytes.hpp>
 #include <silkworm/core/state/state.hpp>
 #include <silkworm/core/types/account.hpp>
 #include <silkworm/core/types/block.hpp>
@@ -71,6 +80,48 @@ class PersistentEvmState : public silkworm::State {
     // --- Block number ---
     uint64_t block_number() const;
     void set_block_number(uint64_t n);
+
+    // --- Hashed state key builders ---
+    static std::string hashed_account_key(const evmc::bytes32& hashed_addr);
+    static std::string hashed_storage_key(const evmc::bytes32& hashed_addr,
+                                           uint64_t incarnation,
+                                           const evmc::bytes32& hashed_slot);
+    static std::string trie_account_key(const silkworm::Bytes& nibbled_key);
+    static std::string trie_storage_key(const evmc::bytes32& hashed_addr,
+                                         uint64_t incarnation,
+                                         const silkworm::Bytes& nibbled_key);
+
+    // --- Hashed state encoding ---
+    static std::string encode_hashed_account(const silkworm::Account& acct);
+    static std::optional<silkworm::Account> decode_hashed_account(const std::string& data);
+
+    // --- Hashed state iteration ---
+    void for_each_hashed_account(
+        std::function<void(const evmc::bytes32& hashed_addr,
+                           const silkworm::Account& acct)> callback) const;
+
+    void for_each_hashed_storage(
+        const evmc::bytes32& hashed_addr, uint64_t incarnation,
+        std::function<void(const evmc::bytes32& hashed_slot,
+                           const evmc::bytes32& value)> callback) const;
+
+    // --- Trie node cache ---
+    void write_trie_account_node(const silkworm::Bytes& nibbled_key,
+                                  const silkworm::Bytes& encoded_node);
+    void delete_trie_account_node(const silkworm::Bytes& nibbled_key);
+    std::optional<silkworm::Bytes> read_trie_account_node(
+        const silkworm::Bytes& nibbled_key) const;
+
+    void write_trie_storage_node(const evmc::bytes32& hashed_addr,
+                                  uint64_t incarnation,
+                                  const silkworm::Bytes& nibbled_key,
+                                  const silkworm::Bytes& encoded_node);
+    void delete_trie_storage_node(const evmc::bytes32& hashed_addr,
+                                   uint64_t incarnation,
+                                   const silkworm::Bytes& nibbled_key);
+    std::optional<silkworm::Bytes> read_trie_storage_node(
+        const evmc::bytes32& hashed_addr, uint64_t incarnation,
+        const silkworm::Bytes& nibbled_key) const;
 
   private:
     explicit PersistentEvmState(std::unique_ptr<td::RocksDb> db);
