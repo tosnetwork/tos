@@ -44,14 +44,14 @@ td::actor::Task<> BlockArchiver::run() {
   }
   promise_.set_result(std::move(result));
   stop();
-  co_return {};
+  co_return td::Unit{};
 }
 
 td::actor::Task<> BlockArchiver::run_inner() {
   VLOG(VALIDATOR_DEBUG) << "started block archiver for " << handle_->id().to_str();
   if (handle_->moved_to_archive()) {
     VLOG(VALIDATOR_DEBUG) << "already moved";
-    co_return {};
+    co_return td::Unit{};
   }
   if (handle_->id().is_masterchain()) {
     auto state = td::Ref<MasterchainState>{co_await td::actor::ask(db_, &Db::get_block_state, handle_)};
@@ -78,7 +78,7 @@ td::actor::Task<> BlockArchiver::run_inner() {
   std::vector<std::pair<FileReference, td::BufferSlice>> files = co_await td::actor::all(std::move(tasks));
   VLOG(VALIDATOR_DEBUG) << "loaded data";
   co_await td::actor::ask(archive_, &ArchiveManager::move_block_to_archive, handle_, std::move(files));
-  co_return {};
+  co_return td::Unit{};
 }
 
 }  // namespace validator

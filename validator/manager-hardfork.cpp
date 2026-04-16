@@ -386,7 +386,7 @@ void ValidatorManagerImpl::get_external_messages(ShardIdFull shard, std::unique_
         co_await callback->queue.try_push(std::make_pair(x, 0));
       }
       callback->queue.close();
-      co_return {};
+      co_return td::Unit{};
     };
     task(ext_messages_, std::move(callback)).start().detach();
   }

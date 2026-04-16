@@ -1099,7 +1099,7 @@ class CoroSpec final : public td::actor::Actor {
         std::vector<td::actor::StartedTask<>> tasks;
         tasks.push_back(td::actor::ask(b_, &B::run));
         co_await td::actor::all(std::move(tasks));
-        co_return {};
+        co_return td::Unit{};
       }
 
       td::actor::ActorOwn<B> b_;
@@ -1112,19 +1112,19 @@ class CoroSpec final : public td::actor::Actor {
     co_return td::Unit{};
   }
 
-  // Test that co_return {}; works correctly for Task<Unit>
-  // Bug: co_return {}; was equivalent to co_return td::Status::Error(-1);
+  // Test that co_return td::Unit{}; works correctly for Task<Unit>
+  // Bug: co_return td::Unit{}; was equivalent to co_return td::Status::Error(-1);
   // because {} matched ExternalResult via aggregate initialization
   Task<td::Unit> co_return_empty_braces() {
     LOG(INFO) << "=== co_return_empty_braces ===";
 
-    // Test co_return {}; in Task<Unit> - should succeed, not return error
+    // Test co_return td::Unit{}; in Task<Unit> - should succeed, not return error
     auto test_task = []() -> Task<td::Unit> {
-      co_return {};  // This was buggy - was equivalent to co_return td::Status::Error(-1);
+      co_return td::Unit{};  // This was buggy - was equivalent to co_return td::Status::Error(-1);
     };
 
     auto result = co_await test_task().wrap();
-    expect_true(result.is_ok(), "co_return {}; should succeed for Task<Unit>");
+    expect_true(result.is_ok(), "co_return td::Unit{}; should succeed for Task<Unit>");
 
     // Also verify co_return td::Unit{}; still works
     auto test_task2 = []() -> Task<td::Unit> { co_return td::Unit{}; };

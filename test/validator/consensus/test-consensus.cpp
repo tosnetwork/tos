@@ -485,10 +485,10 @@ class TestDbImpl : public consensus::Db {
     co_await td::actor::coro_sleep(td::Timestamp::in(td::Random::fast(DB_DELAY.first, DB_DELAY.second)));
     std::scoped_lock lock(db_->mutex);
     db_->map[std::move(key)] = std::move(value);
-    co_return {};
+    co_return td::Unit{};
   }
   td::actor::Task<> close() override {
-    co_return {};
+    co_return td::Unit{};
   }
 
  private:
@@ -535,18 +535,18 @@ class TestConsensus : public td::actor::Actor {
         }
       }
     }
-    co_return {};
+    co_return td::Unit{};
   }
 
   td::actor::Task<> wait_block_accepted(BlockIdExt block_id) {
     if (block_id == FIRST_PARENT) {
-      co_return {};
+      co_return td::Unit{};
     }
     td::Timestamp timeout = td::Timestamp::in(10.0);
     while (!timeout.is_in_past()) {
       auto it = accepted_blocks_.find(block_id.seqno());
       if (it != accepted_blocks_.end() && it->second->block_id() == block_id) {
-        co_return {};
+        co_return td::Unit{};
       }
       co_await td::actor::coro_sleep(td::Timestamp::in(0.1));
     }
@@ -646,7 +646,7 @@ class TestConsensus : public td::actor::Actor {
       LOG(ERROR) << s;
       co_await td::actor::coro_sleep(td::Timestamp::in(1.0));
     }
-    co_return {};
+    co_return td::Unit{};
   }
 
   void start_instance(size_t node_idx, size_t instance_idx) {
@@ -724,7 +724,7 @@ class TestConsensus : public td::actor::Actor {
       promise.set_value(td::Unit{});
     }
     inst.extra_stop_waiters.clear();
-    co_return {};
+    co_return td::Unit{};
   }
 
   td::actor::Task<> run_gremlin() {
@@ -735,12 +735,12 @@ class TestConsensus : public td::actor::Actor {
         run_gremlin_once().start().detach();
       }
     }
-    co_return {};
+    co_return td::Unit{};
   }
 
   td::actor::Task<> run_gremlin_once() {
     if (finishing_) {
-      co_return {};
+      co_return td::Unit{};
     }
     size_t kill_node_idx = 0, kill_inst_idx = 0;
     int cnt = 0;
@@ -760,16 +760,16 @@ class TestConsensus : public td::actor::Actor {
       }
     }
     if (cnt == 0) {
-      co_return {};
+      co_return td::Unit{};
     }
     co_await stop_instance(kill_node_idx, kill_inst_idx);
     co_await td::actor::coro_sleep(
         td::Timestamp::in(td::Random::fast(GREMLIN_DOWNTIME.first, GREMLIN_DOWNTIME.second)));
     if (finishing_) {
-      co_return {};
+      co_return td::Unit{};
     }
     start_instance(kill_node_idx, kill_inst_idx);
-    co_return {};
+    co_return td::Unit{};
   }
 
   td::actor::Task<> run_net_gremlin() {
@@ -781,12 +781,12 @@ class TestConsensus : public td::actor::Actor {
         run_net_gremlin_once().start().detach();
       }
     }
-    co_return {};
+    co_return td::Unit{};
   }
 
   td::actor::Task<> run_net_gremlin_once() {
     if (finishing_) {
-      co_return {};
+      co_return td::Unit{};
     }
     size_t selected_node_idx = 0, selected_inst_idx = 0;
     int cnt = 0;
@@ -806,7 +806,7 @@ class TestConsensus : public td::actor::Actor {
       }
     }
     if (cnt == 0) {
-      co_return {};
+      co_return td::Unit{};
     }
     nodes_[selected_node_idx].instances[selected_inst_idx].net_gremlin_active = true;
     co_await td::actor::ask(test_overlay, &TestOverlay::set_instance_disabled, selected_node_idx, selected_inst_idx,
@@ -816,7 +816,7 @@ class TestConsensus : public td::actor::Actor {
     co_await td::actor::ask(test_overlay, &TestOverlay::set_instance_disabled, selected_node_idx, selected_inst_idx,
                             false);
     nodes_[selected_node_idx].instances[selected_inst_idx].net_gremlin_active = false;
-    co_return {};
+    co_return td::Unit{};
   }
 
   td::actor::Task<> finalize() {

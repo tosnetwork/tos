@@ -81,7 +81,7 @@ void ExtMessagePool::install_collator_queue(ShardIdFull shard, std::unique_ptr<E
     for (auto &[priority, treap] : snapshot) {
       while (!treap.empty()) {
         if (token.check().is_error()) {
-          co_return {};
+          co_return td::Unit{};
         }
         size_t idx = td::Random::fast_uint32() % treap.size();
         auto [key, msg] = treap.at(idx);
@@ -91,14 +91,14 @@ void ExtMessagePool::install_collator_queue(ShardIdFull shard, std::unique_ptr<E
         }
         bool ok = co_await queue.push(std::make_pair(msg->message, priority));
         if (!ok) {
-          co_return {};
+          co_return td::Unit{};
         }
         ++pushed;
       }
     }
     LOG(WARNING) << "install_collator_queue: pushed " << pushed << " existing messages to shard " << shard.to_str()
                  << " in " << t.elapsed() << "s";
-    co_return {};
+    co_return td::Unit{};
   };
   push_existing(callback->queue, callback->cancellation_token, shard, std::move(snapshot), callback->sync_only)
       .start()

@@ -2373,7 +2373,7 @@ td::actor::Task<> Collator::do_collate() {
     fatal_error(result.error().clone());
   }
   token.finish(result.move_as_status());
-  co_return {};
+  co_return td::Unit{};
 }
 
 td::actor::Task<> Collator::do_collate_inner() {
@@ -2500,7 +2500,7 @@ td::actor::Task<> Collator::do_collate_inner() {
     co_return td::Status::Error("cannot serialize a new Block candidate");
   }
   post_ext_token.finish(td::Result<td::Unit>(td::Unit()));
-  co_return {};
+  co_return td::Unit{};
 }
 
 /**
@@ -4298,7 +4298,7 @@ td::actor::Task<> Collator::process_external_and_new_messages() {
       break;
     }
   }
-  co_return {};
+  co_return td::Unit{};
 }
 
 /**
@@ -6682,7 +6682,7 @@ td::actor::Task<> Collator::wait_for_external_message(td::Timestamp timeout) {
     co_return result.move_as_error();
   }
   pending_ext_msg_ = result.move_as_ok();
-  co_return {};
+  co_return td::Unit{};
 }
 
 /**

@@ -87,7 +87,7 @@ class BlockProducerImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
 
     auto window = current_leader_window_;
     if (window == std::nullopt) {
-      co_return {};
+      co_return td::Unit{};
     }
 
     ChainStateRef state = event->state;
@@ -217,7 +217,7 @@ class BlockProducerImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       current_leader_window_ = std::nullopt;
     }
 
-    co_return {};
+    co_return td::Unit{};
   }
 
   std::optional<td::uint32> current_leader_window_;

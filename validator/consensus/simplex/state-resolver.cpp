@@ -156,7 +156,7 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
                                     std::optional<CandidateRef> final_candidate) {
     FinalizedBlock& state = finalized_blocks_[id];
     if (state.done) {
-      co_return {};
+      co_return td::Unit{};
     }
     auto [task, promise] = td::actor::StartedTask<td::Unit>::make_bridge();
     state.waiters.push_back(std::move(promise));
@@ -181,7 +181,7 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     auto& bus = *owning_bus();
 
     if (!final_cert && bus.shard.is_masterchain()) {
-      co_return {};
+      co_return td::Unit{};
     }
 
     auto [candidate, notar_cert] = co_await owning_bus().publish<ResolveCandidate>(id);
@@ -210,7 +210,7 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
 
     auto key = create_serialize_tl_object<tl::db_key_finalizedBlock>(id.to_tl());
     co_await bus.db->set(std::move(key), td::BufferSlice());
-    co_return {};
+    co_return td::Unit{};
   }
 };
 

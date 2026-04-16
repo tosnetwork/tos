@@ -202,12 +202,12 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
     }
 
     if (current_window_ != start_slot / slots_per_leader_window_) {
-      co_return {};
+      co_return td::Unit{};
     }
 
     owning_bus().publish<OurLeaderWindowStarted>(base, parent.state, start_slot, start_slot + slots_per_leader_window_,
                                                  start_time);
-    co_return {};
+    co_return td::Unit{};
   }
 
   td::actor::Task<> try_notarize(State::SlotRef slot) {
@@ -217,7 +217,7 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
     auto maybe_misbehavior = co_await owning_bus().publish<WaitForParent>(candidate);
     if (maybe_misbehavior) {
       owning_bus().publish<MisbehaviorReport>(candidate->leader, *maybe_misbehavior);
-      co_return {};
+      co_return td::Unit{};
     }
 
     auto parent = co_await owning_bus().publish<ResolveState>(candidate->parent_id);
@@ -235,7 +235,7 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
       LOG(WARNING) << "Candidate " << candidate->id
                    << " is rejected: " << validation_result.get<CandidateReject>().reason;
       // FIXME: Report misbehavior
-      co_return {};
+      co_return td::Unit{};
     }
     co_await std::move(store_candidate);
 
@@ -243,13 +243,13 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
 
     owning_bus().publish<BroadcastVote>(NotarizeVote{candidate->id}).start().detach();
     try_vote_final(slot);  // If we've observed NotarCert already, it might be possible to vote final.
-    co_return {};
+    co_return td::Unit{};
   }
 
   td::actor::Task<> process_notarization_observed(BusHandle, std::shared_ptr<const NotarizationObserved> event) {
     auto slot = state_->slot_at(event->id.slot);
     if (!slot.has_value()) {
-      co_return {};
+      co_return td::Unit{};
     }
 
     if (timeout_slot_ <= event->id.slot + 1) {
@@ -272,7 +272,7 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
 
     slot->state->notar_cert = event->id;
     try_vote_final(*slot);
-    co_return {};
+    co_return td::Unit{};
   }
 
   void try_vote_final(State::SlotRef slot) {

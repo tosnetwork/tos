@@ -402,7 +402,7 @@ td::actor::Task<> ArchiveSlice::add_block(BlockHandle handle,
   add_handle(handle, std::move(promise));
   co_await std::move(task);
   co_await commit_transaction_coro();
-  co_return {};
+  co_return td::Unit{};
 }
 
 void ArchiveSlice::add_file(BlockHandle handle, FileReference ref_id, td::BufferSlice data,

@@ -63,7 +63,7 @@ class ManagerFacadeImpl : public ManagerFacade {
       send_broadcast_mode = 0;
       co_await td::actor::coro_sleep(td::Timestamp::in(1.0));
     }
-    co_return {};
+    co_return td::Unit{};
   }
 
   td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(BlockIdExt block_id, td::Timestamp timeout) override {
@@ -314,7 +314,7 @@ class BridgeImpl final : public IValidatorGroup {
     auto state = co_await ChainState::from_manager(manager_facade_.get(), params_.shard, blocks, min_mc_block_id);
     start_event_ = std::make_shared<Start>(state);
     maybe_start_group();
-    co_return {};
+    co_return td::Unit{};
   }
 
   void maybe_start_group() {

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
 
-# Prefer clang if available — GCC 11 has C++20 coroutine bugs.
+# Prefer clang — GCC has C++20 compatibility issues with this codebase.
 if(NOT DEFINED CMAKE_C_COMPILER AND NOT DEFINED CMAKE_CXX_COMPILER)
   find_program(_CLANG_C   clang)
   find_program(_CLANG_CXX clang++)
@@ -8,8 +8,6 @@ if(NOT DEFINED CMAKE_C_COMPILER AND NOT DEFINED CMAKE_CXX_COMPILER)
     set(CMAKE_C_COMPILER   "${_CLANG_C}"   CACHE FILEPATH "C compiler"   FORCE)
     set(CMAKE_CXX_COMPILER "${_CLANG_CXX}" CACHE FILEPATH "C++ compiler" FORCE)
   endif()
-  unset(_CLANG_C)
-  unset(_CLANG_CXX)
 endif()
 
 project(TOS VERSION 0.5 LANGUAGES C CXX)
