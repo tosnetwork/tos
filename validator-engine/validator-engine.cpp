@@ -62,6 +62,10 @@
 #include "tos/tos-types.h"
 
 #include "errorcode.h"
+
+#ifdef EVM_WORKCHAIN_ENABLED
+#include "evm-init.h"
+#endif
 #include "overlay-manager.h"
 #include "overlays.h"
 #include "validator-engine.hpp"
@@ -2330,6 +2334,10 @@ void ValidatorEngine::start_validator() {
   validator_manager_ =
       tos::validator::ValidatorManagerFactory::create(validator_options_, db_root_, keyring_.get(), adnl_.get(),
                                                       rldp_.get(), rldp2_.get(), quic_.get(), overlay_manager_.get());
+
+#ifdef EVM_WORKCHAIN_ENABLED
+  evm_workchain::init_evm_workchain();
+#endif
 
   if (json_rpc_addr_) {
     json_rpc_server_ = tos::JsonRpcServer::create(validator_manager_.get(), json_rpc_opts_);

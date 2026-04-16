@@ -15,6 +15,7 @@ set(EVM_WORKCHAIN_SRC
   evm-executor.cpp
   evm-compute-phase.cpp
   evm-init.cpp
+  evm-rpc.cpp
 )
 
 add_library(evm_workchain STATIC ${EVM_WORKCHAIN_SRC})
