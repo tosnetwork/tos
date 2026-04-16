@@ -2968,6 +2968,61 @@ void test_state_hash_includes_evm() {
     printf("  %s\n\n", pass ? "PASSED" : "FAILED");
 }
 
+void test_sync_to_dict() {
+    printf("=== test_sync_to_dict (collator hook: copy EVM → external dict) ===\n");
+    // Phase 3 collator integration helper: CellEvmState replicates its
+    // accounts into an external dict (which the collator wraps in proper
+    // ShardAccount cells for its ShardState). Verifies the bridge works.
+
+    CellEvmState cell_state;
+
+    evmc::address alice{}, bob{};
+    alice.bytes[19] = 0x11;
+    bob.bytes[19] = 0x22;
+
+    silkworm::Account a;
+    a.nonce = 7;
+    a.balance = intx::uint256{1'000'000};
+    cell_state.update_account(alice, std::nullopt, a);
+
+    silkworm::Account b;
+    b.nonce = 0;
+    b.balance = intx::uint256{500};
+    cell_state.update_account(bob, std::nullopt, b);
+
+    evmc::bytes32 slot{};
+    slot.bytes[31] = 0x01;
+    evmc::bytes32 value{};
+    value.bytes[31] = 0xFE;
+    cell_state.update_storage(alice, 0, slot, evmc::bytes32{}, value);
+
+    // Sync to a fresh Dictionary (simulates collator's external dict)
+    vm::Dictionary target(256);
+    bool pre_empty = target.get_root_cell().is_null();
+
+    size_t synced = cell_state.sync_to_dict(target);
+    auto post_sync_root = target.get_root_cell();
+
+    bool synced_count_ok = (synced == 2);
+    bool dict_now_populated = post_sync_root.not_null();
+
+    unsigned char alice_key[32], bob_key[32];
+    address_to_key(alice, alice_key);
+    address_to_key(bob, bob_key);
+    bool alice_present = target.lookup(td::ConstBitPtr{alice_key}, 256).not_null();
+    bool bob_present = target.lookup(td::ConstBitPtr{bob_key}, 256).not_null();
+
+    printf("  pre-sync dict empty: %s\n", pre_empty ? "yes" : "no");
+    printf("  accounts synced: %zu (expect 2)\n", synced);
+    printf("  post-sync dict populated: %s\n", dict_now_populated ? "yes" : "no");
+    printf("  alice present in target: %s\n", alice_present ? "yes" : "no");
+    printf("  bob present in target: %s\n", bob_present ? "yes" : "no");
+
+    bool pass = pre_empty && synced_count_ok && dict_now_populated &&
+                alice_present && bob_present;
+    printf("  %s\n\n", pass ? "PASSED" : "FAILED");
+}
+
 void test_no_separate_evm_db() {
     printf("=== test_no_separate_evm_db (no second RocksDB created) ===\n");
     // Verify init_evm_workchain with a db_root does NOT create the old
@@ -3028,6 +3083,7 @@ int main() {
     test_storage_dict_persistence();
     test_state_hash_includes_evm();
     test_no_separate_evm_db();
+    test_sync_to_dict();
 
     // Scan stdout for FAILED to determine exit code
     // (Individual tests print PASSED or FAILED)

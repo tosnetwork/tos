@@ -74,11 +74,13 @@ void init_evm_workchain(const std::string& db_root) {
            uint64_t gas_limit,
            uint64_t block_seqno,
            uint64_t timestamp,
-           const uint8_t rand_seed[32]) -> bool {
+           const uint8_t rand_seed[32],
+           vm::Dictionary* shard_accounts) -> bool {
             return run_evm_compute_phase(
                 cp, in_msg_body, gas_limit,
                 *g_evm_state,
-                block_seqno, timestamp, rand_seed);
+                block_seqno, timestamp, rand_seed,
+                shard_accounts);
         });
 
     g_trie_calc = std::make_unique<IncrementalTrieCalculator>();

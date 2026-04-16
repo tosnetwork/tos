@@ -9,6 +9,7 @@
 #include "evm-executor.h"
 #include "evm-state-root.h"
 #include "evm-incremental-trie.h"
+#include "evm-cell-state.h"
 #include "evm-init.h"
 #include "evm-subscriptions.h"
 
@@ -26,7 +27,8 @@ bool run_evm_compute_phase(
     EvmState& state,
     uint64_t block_seqno,
     uint64_t timestamp,
-    const uint8_t rand_seed[32]) {
+    const uint8_t rand_seed[32],
+    vm::Dictionary* shard_accounts) {
 
     // --- Step 1: Extract the raw Ethereum transaction from the message body ---
     auto payload_opt = extract_evm_payload(in_msg_body);
@@ -103,11 +105,37 @@ bool run_evm_compute_phase(
         state.clear_change_tracking();
     }
 
-    // --- Step 5c: Embed stateRoot in ComputePhase for TOS account cell ---
-    // This cell becomes the account's `data` field in StateInit, making the
-    // EVM stateRoot part of the ShardState cell tree and thus the block state_hash.
+    // --- Step 5c: Embed FULL EVM state cell tree in TOS account data cell ---
+    //
+    // First-principles atomicity: cp.new_data references the entire
+    // CellEvmState root cell. When TOS computes state_hash by hashing
+    // ShardState → ShardAccounts → Account → StateInit.data, it transitively
+    // hashes the EVM state cell tree. Any EVM state divergence between
+    // validators produces a different cell hash, which produces a different
+    // TOS state_hash, which fails consensus.
+    //
+    // Layout: data cell = magic(24) + Maybe ^EvmStateRootCell + 256-bit Ethereum stateRoot
+    //   - magic 0x45564D ("EVM") identifies EVM-workchain accounts
+    //   - reference: full CellEvmState root (covers all accounts/storage/code)
+    //   - 256 bits: Ethereum-format MPT stateRoot (for RPC compatibility)
     {
+        td::Ref<vm::Cell> evm_state_cell;
+        {
+            std::unique_lock root_lock(state.mutex());
+            auto* cs = dynamic_cast<CellEvmState*>(&state.state());
+            if (cs) {
+                evm_state_cell = cs->serialize_to_cell();
+            }
+        }
         vm::CellBuilder data_cb;
+        data_cb.store_long(0x45564Dll, 24);  // EVM magic
+        if (evm_state_cell.not_null()) {
+            data_cb.store_long(1, 1);
+            data_cb.store_ref(evm_state_cell);
+        } else {
+            data_cb.store_long(0, 1);
+        }
+        // 256-bit Ethereum-format stateRoot (informational, for RPC parity)
         data_cb.store_bytes(reinterpret_cast<const char*>(evm_state_root.bytes), 32);
         cp.new_data = data_cb.finalize();
     }
@@ -115,6 +143,20 @@ bool run_evm_compute_phase(
     {
         vm::CellBuilder actions_cb;
         cp.actions = actions_cb.finalize();
+    }
+
+    // --- Step 5c-bis: Sync EVM state into collator's ShardAccounts dict ---
+    //
+    // When the collator passes its ShardAccounts dict, replicate every EVM
+    // account (with full StateInit) into that dict so the collator's atomic
+    // ShardState commit transitively persists EVM state. When null (test
+    // path), only the cp.new_data embedding is used.
+    if (shard_accounts != nullptr) {
+        std::unique_lock sync_lock(state.mutex());
+        auto* cs = dynamic_cast<CellEvmState*>(&state.state());
+        if (cs) {
+            cs->sync_to_dict(*shard_accounts);
+        }
     }
 
     // --- Step 5d: Build and store block for RPC queries (first tx only) ---

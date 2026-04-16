@@ -1,6 +1,6 @@
 # EVM Workchain — Cell-Native State Architecture
 
-Version: v1.0 — First-principles design eliminating the separate EVM RocksDB
+Version: v1.1 — Cell-native EVM state with collator dispatch hook
 
 ## Motivation
 
@@ -218,6 +218,21 @@ With cell-native state, the EVM account data (nonce, balance, storage) is encode
 The Ethereum-format stateRoot (Merkle Patricia Trie over keccak256-hashed accounts and RLP-encoded values) is computed by `IncrementalTrieCalculator` and exposed via `eth_getBlockByNumber.stateRoot`. It serves wallet/explorer compatibility but is **not** used for TOS consensus. TOS uses the cell-based state_hash; Ethereum tools see the MPT stateRoot.
 
 Both roots commit to the same underlying state — they differ only in encoding.
+
+## Collator Integration Hook
+
+The dispatch interface (`evm-workchain-dispatch.h`) accepts an optional
+`vm::Dictionary* shard_accounts` parameter. When supplied by the collator,
+`run_evm_compute_phase()` calls `CellEvmState::sync_to_dict()` after EVM
+execution, replicating every EVM account's `EvmAccountData` cell into the
+target dict. The collator then commits the unified dict (TOS + EVM data)
+to CellDb in a single atomic WriteBatch.
+
+When `shard_accounts == nullptr` (test paths, RPC sync path), the EVM
+state is still embedded into `cp.new_data` so that the per-transaction
+account StateInit cell carries a reference to the full EVM state root.
+Either path produces the same first-principles guarantee: the TOS state_hash
+transitively includes the EVM state cell tree.
 
 ## Affected Components
 

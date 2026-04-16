@@ -22,8 +22,10 @@ bool invoke_evm_compute(
     uint64_t gas_limit,
     uint64_t block_seqno,
     uint64_t timestamp,
-    const uint8_t rand_seed[32]) {
-    return g_handler(cp, in_msg_body, gas_limit, block_seqno, timestamp, rand_seed);
+    const uint8_t rand_seed[32],
+    vm::Dictionary* shard_accounts) {
+    return g_handler(cp, in_msg_body, gas_limit, block_seqno, timestamp,
+                     rand_seed, shard_accounts);
 }
 
 }  // namespace evm_workchain_dispatch

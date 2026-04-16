@@ -233,6 +233,23 @@ td::Ref<vm::Cell> CellEvmState::account_dict_root() const {
     return account_dict_.get_root_cell();
 }
 
+size_t CellEvmState::sync_to_dict(vm::Dictionary& target) const {
+    size_t count = 0;
+    for_each_account([&](const unsigned char key[32], const silkworm::Account& acct) {
+        evmc::address addr{};
+        std::memcpy(addr.bytes, key + 12, 20);
+        auto storage_root = get_storage_root(addr);
+        auto data_cell = encode_evm_account_data(acct, storage_root);
+
+        // Dict value: single ref to the EvmAccountData cell.
+        vm::CellBuilder val_cb;
+        val_cb.store_ref(data_cell);
+        target.set_builder(td::ConstBitPtr{key}, 256, val_cb);
+        ++count;
+    });
+    return count;
+}
+
 void CellEvmState::clear_block_cache() {
     canonical_.clear();
 }
