@@ -18,6 +18,7 @@
 #include "evm-block-context.h"
 #include "evm-executor.h"
 #include "evm-transaction.h"
+#include "evm-tracer.h"
 
 #include <silkworm/core/common/util.hpp>
 #include <ethash/keccak.hpp>
@@ -661,6 +662,103 @@ static RpcResult handle_get_transaction_by_hash(const std::string& params, const
     return {make_result(id, r), false};
 }
 
+// --- Ethereum opcode names (subset for trace output) ---
+static const char* opcode_name(uint8_t op) {
+    static const char* names[256] = {};
+    static bool init = false;
+    if (!init) {
+        for (int i = 0; i < 256; i++) names[i] = "UNKNOWN";
+        names[0x00]="STOP"; names[0x01]="ADD"; names[0x02]="MUL"; names[0x03]="SUB";
+        names[0x04]="DIV"; names[0x05]="SDIV"; names[0x06]="MOD"; names[0x07]="SMOD";
+        names[0x08]="ADDMOD"; names[0x09]="MULMOD"; names[0x0a]="EXP"; names[0x0b]="SIGNEXTEND";
+        names[0x10]="LT"; names[0x11]="GT"; names[0x12]="SLT"; names[0x13]="SGT";
+        names[0x14]="EQ"; names[0x15]="ISZERO"; names[0x16]="AND"; names[0x17]="OR";
+        names[0x18]="XOR"; names[0x19]="NOT"; names[0x1a]="BYTE"; names[0x1b]="SHL";
+        names[0x1c]="SHR"; names[0x1d]="SAR";
+        names[0x20]="KECCAK256";
+        names[0x30]="ADDRESS"; names[0x31]="BALANCE"; names[0x32]="ORIGIN";
+        names[0x33]="CALLER"; names[0x34]="CALLVALUE"; names[0x35]="CALLDATALOAD";
+        names[0x36]="CALLDATASIZE"; names[0x37]="CALLDATACOPY"; names[0x38]="CODESIZE";
+        names[0x39]="CODECOPY"; names[0x3a]="GASPRICE"; names[0x3b]="EXTCODESIZE";
+        names[0x3d]="RETURNDATASIZE"; names[0x3e]="RETURNDATACOPY";
+        names[0x40]="BLOCKHASH"; names[0x41]="COINBASE"; names[0x42]="TIMESTAMP";
+        names[0x43]="NUMBER"; names[0x44]="DIFFICULTY"; names[0x45]="GASLIMIT";
+        names[0x46]="CHAINID"; names[0x47]="SELFBALANCE"; names[0x48]="BASEFEE";
+        names[0x50]="POP"; names[0x51]="MLOAD"; names[0x52]="MSTORE"; names[0x53]="MSTORE8";
+        names[0x54]="SLOAD"; names[0x55]="SSTORE"; names[0x56]="JUMP"; names[0x57]="JUMPI";
+        names[0x58]="PC"; names[0x59]="MSIZE"; names[0x5a]="GAS"; names[0x5b]="JUMPDEST";
+        names[0x5f]="PUSH0";
+        for (int i = 0; i < 32; i++) { static char buf[33][8]; snprintf(buf[i], 8, "PUSH%d", i+1); names[0x60+i] = buf[i]; }
+        for (int i = 0; i < 16; i++) { static char buf[16][8]; snprintf(buf[i], 8, "DUP%d", i+1); names[0x80+i] = buf[i]; }
+        for (int i = 0; i < 16; i++) { static char buf[16][8]; snprintf(buf[i], 8, "SWAP%d", i+1); names[0x90+i] = buf[i]; }
+        for (int i = 0; i < 5; i++) { static char buf[5][8]; snprintf(buf[i], 8, "LOG%d", i); names[0xa0+i] = buf[i]; }
+        names[0xf0]="CREATE"; names[0xf1]="CALL"; names[0xf2]="CALLCODE";
+        names[0xf3]="RETURN"; names[0xf4]="DELEGATECALL"; names[0xf5]="CREATE2";
+        names[0xfa]="STATICCALL"; names[0xfd]="REVERT"; names[0xfe]="INVALID"; names[0xff]="SELFDESTRUCT";
+        init = true;
+    }
+    return names[op];
+}
+
+static RpcResult handle_debug_trace_transaction(const std::string& params, const std::string& id) {
+    // Parse tx hash
+    silkworm::Bytes hash_bytes;
+    if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
+        return {make_error(id, -32602, "invalid transaction hash"), true};
+    }
+    evmc::bytes32 tx_hash;
+    std::memcpy(tx_hash.bytes, hash_bytes.data(), 32);
+
+    // Look up the stored transaction to re-execute with tracing
+    const auto* stored_tx = global_evm_state().get_transaction(tx_hash);
+    if (!stored_tx) {
+        return {make_error(id, -32000, "transaction not found"), true};
+    }
+
+    // Reconstruct the transaction
+    silkworm::Transaction txn;
+    txn.type = silkworm::TransactionType::kLegacy;
+    txn.chain_id = kEvmChainId;
+    txn.nonce = stored_tx->nonce;
+    txn.max_fee_per_gas = stored_tx->gas_price;
+    txn.max_priority_fee_per_gas = stored_tx->gas_price;
+    txn.gas_limit = stored_tx->gas_limit;
+    txn.to = stored_tx->to;
+    txn.value = stored_tx->value;
+    txn.data = stored_tx->data;
+    txn.set_sender(stored_tx->from);
+
+    uint8_t rs[32] = {};
+    auto block = make_evm_block(stored_tx->block_number, 0, rs);
+    auto trace = trace_evm_transaction(txn, block, global_evm_state(), evm_chain_config());
+
+    // Build the structLogs JSON
+    std::string logs = "[";
+    for (size_t i = 0; i < trace.steps.size(); ++i) {
+        if (i > 0) logs += ",";
+        const auto& s = trace.steps[i];
+        logs += "{\"pc\":" + std::to_string(s.pc);
+        logs += ",\"op\":\"" + std::string(opcode_name(s.op)) + "\"";
+        logs += ",\"gas\":" + std::to_string(s.gas);
+        logs += ",\"gasCost\":" + std::to_string(s.gas_cost);
+        logs += ",\"depth\":" + std::to_string(s.depth);
+        logs += ",\"stack\":[";
+        for (size_t j = 0; j < s.stack.size(); ++j) {
+            if (j > 0) logs += ",";
+            logs += "\"" + intx::hex(s.stack[j]) + "\"";
+        }
+        logs += "]}";
+    }
+    logs += "]";
+
+    std::string result = "{\"gas\":" + std::to_string(trace.gas_used) +
+        ",\"failed\":" + (trace.success ? "false" : "true") +
+        ",\"returnValue\":" + to_hex_data(trace.return_data.data(), trace.return_data.size()) +
+        ",\"structLogs\":" + logs + "}";
+
+    return {make_result(id, result), false};
+}
+
 static RpcResult handle_mining(const std::string& id) {
     return {make_result(id, "false"), false};
 }
@@ -850,7 +948,8 @@ bool is_eth_rpc_method(const std::string& method) noexcept {
            method == "net_version" ||
            method == "net_listening" ||
            method == "net_peerCount" ||
-           method == "web3_clientVersion";
+           method == "web3_clientVersion" ||
+           method == "debug_traceTransaction";
 }
 
 std::optional<RpcResult> handle_eth_rpc(
@@ -883,6 +982,7 @@ std::optional<RpcResult> handle_eth_rpc(
     if (method == "eth_newPendingTransactionFilter") return handle_new_pending_transaction_filter(id);
     if (method == "eth_getFilterChanges")     return handle_get_filter_changes(params, id);
     if (method == "eth_uninstallFilter")      return handle_uninstall_filter(params, id);
+    if (method == "debug_traceTransaction")  return handle_debug_trace_transaction(params, id);
     if (method == "eth_sendRawTransaction")   return handle_send_raw_transaction(params, id);
     if (method == "eth_getTransactionReceipt") return handle_get_transaction_receipt(params, id);
     if (method == "eth_call")                 return handle_call(params, id);
