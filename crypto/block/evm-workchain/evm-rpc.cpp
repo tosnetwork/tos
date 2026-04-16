@@ -992,47 +992,96 @@ static RpcResult handle_get_block_by_hash(const std::string& params, const std::
     return {make_result(id, "null"), false};
 }
 
-// Filter IDs are simple incrementing integers
+// --- Filter storage (bounded, with expiry) ---
+// Pattern: ~/s/silkworm/rpc/core/filter_storage.hpp
+// - max_filters: reject new filters when full
+// - max_age: expire idle filters
+// - mutex: thread-safe
+
+struct FilterEntry {
+    uint64_t last_block;
+    uint64_t created_at;  // seconds since epoch
+    uint64_t last_access; // seconds since epoch
+};
+
+static constexpr size_t kMaxFilters = 1024;
+static constexpr uint64_t kMaxFilterAgeSec = 900;  // 15 minutes
+
+static std::mutex g_filter_mutex;
 static uint64_t g_next_filter_id = 1;
-static std::unordered_map<uint64_t, uint64_t> g_filter_last_block;  // filter_id → last polled block
+static std::unordered_map<uint64_t, FilterEntry> g_filters;
+
+static void cleanup_expired_filters() {
+    uint64_t now = static_cast<uint64_t>(std::time(nullptr));
+    for (auto it = g_filters.begin(); it != g_filters.end(); ) {
+        if (now - it->second.last_access > kMaxFilterAgeSec) {
+            it = g_filters.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+static uint64_t create_filter() {
+    std::lock_guard<std::mutex> lock(g_filter_mutex);
+    cleanup_expired_filters();
+    if (g_filters.size() >= kMaxFilters) {
+        return 0;  // reject: too many filters
+    }
+    uint64_t fid = g_next_filter_id++;
+    uint64_t now = static_cast<uint64_t>(std::time(nullptr));
+    g_filters[fid] = FilterEntry{
+        .last_block = global_evm_state().block_number(),
+        .created_at = now,
+        .last_access = now,
+    };
+    return fid;
+}
 
 static RpcResult handle_new_filter(const std::string& /*params*/, const std::string& id) {
-    uint64_t fid = g_next_filter_id++;
-    g_filter_last_block[fid] = global_evm_state().block_number();
+    uint64_t fid = create_filter();
+    if (fid == 0) return {make_error(id, -32000, "too many filters"), true};
     return {make_result(id, to_hex_quantity(fid)), false};
 }
 
 static RpcResult handle_new_block_filter(const std::string& id) {
-    uint64_t fid = g_next_filter_id++;
-    g_filter_last_block[fid] = global_evm_state().block_number();
+    uint64_t fid = create_filter();
+    if (fid == 0) return {make_error(id, -32000, "too many filters"), true};
     return {make_result(id, to_hex_quantity(fid)), false};
 }
 
 static RpcResult handle_get_filter_changes(const std::string& params, const std::string& id) {
     uint64_t fid = parse_hex_uint64(extract_json_string_value(params, ""));
     if (fid == 0) {
-        // Try direct hex parse from params array: ["0x1"]
         auto pos = params.find("0x");
         if (pos != std::string::npos) {
             fid = std::strtoull(params.c_str() + pos + 2, nullptr, 16);
         }
     }
-    auto it = g_filter_last_block.find(fid);
-    if (it == g_filter_last_block.end()) {
+    std::lock_guard<std::mutex> lock(g_filter_mutex);
+    auto it = g_filters.find(fid);
+    if (it == g_filters.end()) {
         return {make_error(id, -32000, "filter not found"), true};
     }
-    // Return empty changes (simplified)
-    it->second = global_evm_state().block_number();
+    it->second.last_access = static_cast<uint64_t>(std::time(nullptr));
+    it->second.last_block = global_evm_state().block_number();
     return {make_result(id, "[]"), false};
 }
 
-static RpcResult handle_uninstall_filter(const std::string& /*params*/, const std::string& id) {
-    return {make_result(id, "true"), false};
+static RpcResult handle_uninstall_filter(const std::string& params, const std::string& id) {
+    uint64_t fid = 0;
+    auto pos = params.find("0x");
+    if (pos != std::string::npos) {
+        fid = std::strtoull(params.c_str() + pos + 2, nullptr, 16);
+    }
+    std::lock_guard<std::mutex> lock(g_filter_mutex);
+    bool removed = g_filters.erase(fid) > 0;
+    return {make_result(id, removed ? "true" : "false"), false};
 }
 
 static RpcResult handle_new_pending_transaction_filter(const std::string& id) {
-    uint64_t fid = g_next_filter_id++;
-    g_filter_last_block[fid] = global_evm_state().block_number();
+    uint64_t fid = create_filter();
+    if (fid == 0) return {make_error(id, -32000, "too many filters"), true};
     return {make_result(id, to_hex_quantity(fid)), false};
 }
 

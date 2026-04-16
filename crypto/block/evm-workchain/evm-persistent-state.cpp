@@ -171,9 +171,12 @@ silkworm::ByteView PersistentEvmState::read_code(const evmc::address& /*address*
     std::string value;
     auto r = db_->get(code_key(code_hash), value);
     if (r.is_error() || r.ok() == td::KeyValue::GetStatus::NotFound) return {};
-    code_read_buf_.assign(reinterpret_cast<const uint8_t*>(value.data()),
-                          reinterpret_cast<const uint8_t*>(value.data()) + value.size());
-    return code_read_buf_;
+    // Use thread_local buffer to avoid data race on shared mutable member.
+    // Pattern from ~/s: each state instance caches code privately.
+    thread_local silkworm::Bytes tl_code_buf;
+    tl_code_buf.assign(reinterpret_cast<const uint8_t*>(value.data()),
+                       reinterpret_cast<const uint8_t*>(value.data()) + value.size());
+    return tl_code_buf;
 }
 
 evmc::bytes32 PersistentEvmState::read_storage(const evmc::address& address, uint64_t incarnation, const evmc::bytes32& location) const noexcept {

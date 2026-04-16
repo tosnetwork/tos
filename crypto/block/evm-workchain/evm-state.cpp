@@ -1,5 +1,7 @@
 /*
     EVM Workchain — state adapter implementation.
+    Thread-safe with shared_mutex (readers–writer lock).
+    Bounded containers with FIFO eviction at capacity limits.
     Source: TOS-specific adapter (not copied from ~/s).
 */
 #include "evm-state.h"
@@ -15,77 +17,149 @@ EvmState::EvmState(std::unique_ptr<silkworm::State> backend)
 void EvmState::seed_account(const evmc::address& addr,
                             const intx::uint256& balance,
                             uint64_t nonce) {
+    std::unique_lock lock(mutex_);
     silkworm::Account acct;
     acct.balance = balance;
     acct.nonce = nonce;
-    backend_->update_account(addr, /*initial=*/std::nullopt, acct);
+    backend_->update_account(addr, std::nullopt, acct);
 }
 
 intx::uint256 EvmState::get_balance(const evmc::address& addr) const {
+    std::shared_lock lock(mutex_);
     auto acct = backend_->read_account(addr);
     return acct ? acct->balance : intx::uint256{0};
 }
 
 uint64_t EvmState::get_nonce(const evmc::address& addr) const {
+    std::shared_lock lock(mutex_);
     auto acct = backend_->read_account(addr);
     return acct ? acct->nonce : 0;
 }
 
-// --- Block chain ---
+// --- Block tracking ---
+
+uint64_t EvmState::block_number() const noexcept {
+    std::shared_lock lock(mutex_);
+    return block_number_;
+}
+
+void EvmState::set_block_number(uint64_t n) noexcept {
+    std::unique_lock lock(mutex_);
+    block_number_ = n;
+}
+
+void EvmState::increment_block_number() noexcept {
+    std::unique_lock lock(mutex_);
+    ++block_number_;
+}
+
+// --- Block chain (bounded: kMaxCachedBlocks) ---
 
 void EvmState::store_block(const StoredBlock& block) {
+    std::unique_lock lock(mutex_);
     blocks_[block.number] = block;
     hash_to_block_[block.hash] = block.number;
-    // Keep only last 256 blocks for BLOCKHASH
-    while (blocks_.size() > 256) {
+    while (blocks_.size() > kMaxCachedBlocks) {
         auto oldest = blocks_.begin();
         hash_to_block_.erase(oldest->second.hash);
+        block_logs_.erase(oldest->first);  // also evict logs for this block
         blocks_.erase(oldest);
     }
 }
 
 const StoredBlock* EvmState::get_block(uint64_t block_num) const {
+    // No lock — caller must hold shared_lock or unique_lock
     auto it = blocks_.find(block_num);
     return it != blocks_.end() ? &it->second : nullptr;
 }
 
+StoredBlock EvmState::get_block_copy(uint64_t block_num) const {
+    std::shared_lock lock(mutex_);
+    auto it = blocks_.find(block_num);
+    return it != blocks_.end() ? it->second : StoredBlock{};
+}
+
+bool EvmState::has_block(uint64_t block_num) const {
+    std::shared_lock lock(mutex_);
+    return blocks_.count(block_num) > 0;
+}
+
 const StoredBlock* EvmState::get_block_by_hash(const evmc::bytes32& hash) const {
+    // No lock — caller must hold lock
     auto it = hash_to_block_.find(hash);
     if (it == hash_to_block_.end()) return nullptr;
     return get_block(it->second);
 }
 
-evmc::bytes32 EvmState::get_block_hash(uint64_t block_num) const {
-    auto blk = get_block(block_num);
-    return blk ? blk->hash : evmc::bytes32{};
+StoredBlock EvmState::get_block_by_hash_copy(const evmc::bytes32& hash) const {
+    std::shared_lock lock(mutex_);
+    auto it = hash_to_block_.find(hash);
+    if (it == hash_to_block_.end()) return StoredBlock{};
+    auto bit = blocks_.find(it->second);
+    return bit != blocks_.end() ? bit->second : StoredBlock{};
 }
 
-// --- Receipt storage ---
+evmc::bytes32 EvmState::get_block_hash(uint64_t block_num) const {
+    std::shared_lock lock(mutex_);
+    auto it = blocks_.find(block_num);
+    return it != blocks_.end() ? it->second.hash : evmc::bytes32{};
+}
+
+// --- Receipt storage (bounded: kMaxCachedReceipts) ---
+
+void EvmState::evict_oldest_receipts() {
+    while (receipts_.size() > kMaxCachedReceipts && !receipt_insertion_order_.empty()) {
+        receipts_.erase(receipt_insertion_order_.front());
+        receipt_insertion_order_.erase(receipt_insertion_order_.begin());
+    }
+}
 
 void EvmState::store_receipt(const evmc::bytes32& tx_hash, StoredReceipt receipt) {
+    std::unique_lock lock(mutex_);
     receipts_[tx_hash] = std::move(receipt);
+    receipt_insertion_order_.push_back(tx_hash);
+    evict_oldest_receipts();
 }
 
 const StoredReceipt* EvmState::get_receipt(const evmc::bytes32& tx_hash) const {
+    std::shared_lock lock(mutex_);
     auto it = receipts_.find(tx_hash);
     return it != receipts_.end() ? &it->second : nullptr;
 }
 
-// --- Transaction storage ---
+// --- Transaction storage (bounded: kMaxCachedTransactions) ---
+
+void EvmState::evict_oldest_transactions() {
+    while (transactions_.size() > kMaxCachedTransactions && !transaction_insertion_order_.empty()) {
+        transactions_.erase(transaction_insertion_order_.front());
+        transaction_insertion_order_.erase(transaction_insertion_order_.begin());
+    }
+}
 
 void EvmState::store_transaction(const evmc::bytes32& tx_hash, StoredTransaction tx) {
+    std::unique_lock lock(mutex_);
     transactions_[tx_hash] = std::move(tx);
+    transaction_insertion_order_.push_back(tx_hash);
+    evict_oldest_transactions();
 }
 
 const StoredTransaction* EvmState::get_transaction(const evmc::bytes32& tx_hash) const {
+    std::shared_lock lock(mutex_);
     auto it = transactions_.find(tx_hash);
     return it != transactions_.end() ? &it->second : nullptr;
 }
 
-// --- Log index ---
+// --- Log index (bounded: kMaxCachedLogBlocks) ---
+
+void EvmState::evict_oldest_log_blocks() {
+    while (block_logs_.size() > kMaxCachedLogBlocks) {
+        block_logs_.erase(block_logs_.begin());
+    }
+}
 
 void EvmState::store_logs(uint64_t block_number, const evmc::bytes32& tx_hash,
                           const std::vector<silkworm::Log>& logs) {
+    std::unique_lock lock(mutex_);
     auto& block_log_vec = block_logs_[block_number];
     for (uint32_t i = 0; i < logs.size(); ++i) {
         block_log_vec.push_back(IndexedLog{
@@ -95,11 +169,12 @@ void EvmState::store_logs(uint64_t block_number, const evmc::bytes32& tx_hash,
             .log = logs[i],
         });
     }
+    evict_oldest_log_blocks();
 }
 
 static bool matches_address(const silkworm::Log& log,
                              const std::vector<evmc::address>& addresses) {
-    if (addresses.empty()) return true;  // no filter = match all
+    if (addresses.empty()) return true;
     for (const auto& addr : addresses) {
         if (log.address == addr) return true;
     }
@@ -110,8 +185,8 @@ static bool matches_topics(const silkworm::Log& log,
                             const std::vector<std::vector<evmc::bytes32>>& topic_filters) {
     for (size_t i = 0; i < topic_filters.size(); ++i) {
         const auto& filter_set = topic_filters[i];
-        if (filter_set.empty()) continue;  // empty = match any at this position
-        if (i >= log.topics.size()) return false;  // log doesn't have this topic position
+        if (filter_set.empty()) continue;
+        if (i >= log.topics.size()) return false;
         bool found = false;
         for (const auto& acceptable : filter_set) {
             if (log.topics[i] == acceptable) { found = true; break; }
@@ -126,6 +201,7 @@ std::vector<IndexedLog> EvmState::get_logs(
     const std::vector<evmc::address>& addresses,
     const std::vector<std::vector<evmc::bytes32>>& topics) const {
 
+    std::shared_lock lock(mutex_);
     std::vector<IndexedLog> result;
     auto it_begin = block_logs_.lower_bound(from_block);
     auto it_end = block_logs_.upper_bound(to_block);

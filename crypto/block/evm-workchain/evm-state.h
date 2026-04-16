@@ -1,21 +1,23 @@
 /*
     EVM Workchain — state adapter.
 
-    This module provides the storage boundary between the EVM workchain and the
-    host chain.  It wraps a silkworm::State backend so that the executor can
-    read/write EVM account state without knowing about the underlying storage.
+    Thread safety: EvmState is accessed concurrently by the block execution
+    path and the JSON-RPC handler threads.  All public methods are protected
+    by a shared_mutex (readers–writer lock).  Read-only methods acquire a
+    shared_lock; mutating methods acquire a unique_lock.
 
-    Two backends:
-      - InMemoryState  — fast, volatile (default for tests)
-      - PersistentEvmState — RocksDB-backed, survives restarts
+    Pattern follows ~/s/silkworm/db/kv/api/state_cache.hpp which uses
+    std::shared_mutex for concurrent read access.
 
     Source: TOS-specific adapter (not copied from ~/s).
 */
 #pragma once
 
+#include <cstddef>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <shared_mutex>
 #include <unordered_map>
 #include <vector>
 #include <map>
@@ -27,6 +29,12 @@
 
 namespace evm_workchain {
 
+// Capacity limits (following ~/s LruCache pattern: fixed max_size)
+constexpr size_t kMaxCachedReceipts      = 10'000;
+constexpr size_t kMaxCachedTransactions  = 10'000;
+constexpr size_t kMaxCachedBlocks        = 256;
+constexpr size_t kMaxCachedLogBlocks     = 256;
+
 /// Stored receipt for a processed transaction.
 struct StoredReceipt {
     bool success{false};
@@ -34,7 +42,7 @@ struct StoredReceipt {
     uint64_t block_number{0};
     evmc::address from;
     std::optional<evmc::address> to;
-    std::optional<evmc::address> contract_address;  // for CREATE
+    std::optional<evmc::address> contract_address;
     std::vector<silkworm::Log> logs;
     silkworm::Bytes return_data;
 };
@@ -73,72 +81,85 @@ struct IndexedLog {
     silkworm::Log log;
 };
 
-/// EVM workchain state facade.
+/// EVM workchain state facade — thread-safe.
+///
+/// All public methods are protected by a shared_mutex:
+///   - Read methods: shared_lock (multiple concurrent readers allowed)
+///   - Write methods: unique_lock (exclusive access)
 class EvmState {
   public:
-    /// Construct with in-memory backend (volatile — for tests).
     EvmState();
-
-    /// Construct with an external State backend (e.g. PersistentEvmState).
     explicit EvmState(std::unique_ptr<silkworm::State> backend);
 
-    /// Access the underlying silkworm State (used by the executor).
+    /// Access the underlying silkworm State.
+    /// WARNING: caller must hold the lock via lock_shared() / lock_unique().
     silkworm::State& state() noexcept { return *backend_; }
     const silkworm::State& state() const noexcept { return *backend_; }
 
-    /// Seed an account with an initial balance (e.g. for genesis / testing).
+    /// Explicit locking for callers that need to hold the lock across
+    /// multiple operations (e.g. execute_evm_transaction).
+    std::shared_mutex& mutex() const noexcept { return mutex_; }
+
     void seed_account(const evmc::address& addr,
                       const intx::uint256& balance,
                       uint64_t nonce = 0);
 
-    /// Read the current balance of an account.  Returns 0 for non-existent.
     intx::uint256 get_balance(const evmc::address& addr) const;
-
-    /// Read the current nonce of an account.  Returns 0 for non-existent.
     uint64_t get_nonce(const evmc::address& addr) const;
 
     /// --- Block tracking ---
-    uint64_t block_number() const noexcept { return block_number_; }
-    void set_block_number(uint64_t n) noexcept { block_number_ = n; }
-    void increment_block_number() noexcept { ++block_number_; }
+    uint64_t block_number() const noexcept;
+    void set_block_number(uint64_t n) noexcept;
+    void increment_block_number() noexcept;
 
     /// --- Block chain ---
     void store_block(const StoredBlock& block);
-    const StoredBlock* get_block(uint64_t block_num) const;
-    const StoredBlock* get_block_by_hash(const evmc::bytes32& hash) const;
+    StoredBlock get_block_copy(uint64_t block_num) const;
+    bool has_block(uint64_t block_num) const;
+    StoredBlock get_block_by_hash_copy(const evmc::bytes32& hash) const;
     evmc::bytes32 get_block_hash(uint64_t block_num) const;
 
-    /// --- Receipt storage ---
+    // Non-locking access for internal use (caller must hold lock)
+    const StoredBlock* get_block(uint64_t block_num) const;
+    const StoredBlock* get_block_by_hash(const evmc::bytes32& hash) const;
+
+    /// --- Receipt storage (bounded: oldest evicted at kMaxCachedReceipts) ---
     void store_receipt(const evmc::bytes32& tx_hash, StoredReceipt receipt);
     const StoredReceipt* get_receipt(const evmc::bytes32& tx_hash) const;
 
-    /// --- Transaction storage ---
+    /// --- Transaction storage (bounded: oldest evicted at kMaxCachedTransactions) ---
     void store_transaction(const evmc::bytes32& tx_hash, StoredTransaction tx);
     const StoredTransaction* get_transaction(const evmc::bytes32& tx_hash) const;
 
-    /// --- Log index (for eth_getLogs) ---
+    /// --- Log index (bounded: kMaxCachedLogBlocks blocks) ---
     void store_logs(uint64_t block_number, const evmc::bytes32& tx_hash,
                     const std::vector<silkworm::Log>& logs);
 
-    /// Query logs by block range with optional address and topic filters.
-    /// Matching semantics follow Ethereum spec:
-    ///   - addresses: log.address must be in the set (empty = match all)
-    ///   - topics: topics[i] is a set of acceptable values for log.topics[i]
-    ///             (empty set at position i = match any)
     std::vector<IndexedLog> get_logs(
         uint64_t from_block, uint64_t to_block,
         const std::vector<evmc::address>& addresses = {},
         const std::vector<std::vector<evmc::bytes32>>& topics = {}) const;
 
   private:
+    void evict_oldest_receipts();
+    void evict_oldest_transactions();
+    void evict_oldest_log_blocks();
+
     std::unique_ptr<silkworm::State> backend_;
     uint64_t block_number_{0};
 
+    // All containers below are bounded by capacity constants.
     std::unordered_map<evmc::bytes32, StoredReceipt> receipts_;
     std::unordered_map<evmc::bytes32, StoredTransaction> transactions_;
-    std::map<uint64_t, StoredBlock> blocks_;                       // block_num → block
-    std::unordered_map<evmc::bytes32, uint64_t> hash_to_block_;    // block_hash → block_num
-    std::map<uint64_t, std::vector<IndexedLog>> block_logs_;       // block_num → logs
+    std::map<uint64_t, StoredBlock> blocks_;
+    std::unordered_map<evmc::bytes32, uint64_t> hash_to_block_;
+    std::map<uint64_t, std::vector<IndexedLog>> block_logs_;
+
+    // Insertion order tracking for eviction (FIFO when at capacity)
+    std::vector<evmc::bytes32> receipt_insertion_order_;
+    std::vector<evmc::bytes32> transaction_insertion_order_;
+
+    mutable std::shared_mutex mutex_;
 };
 
 }  // namespace evm_workchain

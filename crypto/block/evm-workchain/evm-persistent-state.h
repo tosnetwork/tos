@@ -76,7 +76,6 @@ class PersistentEvmState : public silkworm::State {
     explicit PersistentEvmState(std::unique_ptr<td::RocksDb> db);
 
     std::unique_ptr<td::RocksDb> db_;
-    mutable silkworm::Bytes code_read_buf_;  // reusable buffer for read_code
 };
 
 }  // namespace evm_workchain
