@@ -311,6 +311,36 @@ over:
 
 The design goal is logical and operational separation, even if some lower-level storage infrastructure is shared.
 
+## Native Message Routing vs VM Interoperability
+
+TOS already has native intra-chain message routing across shards and workchains. This is an important starting point, but it should not be confused with full interoperability between different execution environments.
+
+Native workchain routing already helps with:
+
+- delivering messages to accounts in another shard or workchain
+- maintaining chain-level routing and queue semantics
+- respecting workchain activation and message acceptance policy
+
+However, native routing alone does not solve:
+
+- TVM-to-EVM call translation
+- EVM-to-TVM call translation
+- address and sender identity mapping across execution models
+- asset representation changes across execution domains
+- asynchronous result handling across different VM semantics
+
+This distinction matters for the `evm-workchain` design:
+
+- the transport path for cross-workchain delivery can reuse native TOS routing infrastructure
+- the semantic bridge between TVM and EVM still requires explicit design
+
+In practice, this means the project should assume:
+
+- native routing exists
+- heterogeneous VM interoperability does not exist yet
+
+If cross-workchain interoperability is added later, it should be modeled as a dedicated bridge or gateway layer on top of native routing, not as a property that appears automatically once the new workchain exists.
+
 ## External Compatibility Goal
 
 The first implementation wave should make the `evm-workchain` look like a normal EVM chain to existing wallets and standard client libraries.
