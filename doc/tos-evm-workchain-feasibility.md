@@ -159,7 +159,7 @@ Vendored local code areas:
 
 Even with Silkworm reuse, the following remain TOS-specific engineering tasks:
 
-- ✅ workchain definition and config activation (`evm-workchain.h`, workchain_id=2)
+- ✅ workchain definition and config activation (`evm-workchain.h`, workchain_id=1)
 - ✅ zerostate definition for the new workchain (`build_evm_zerostate()` with deterministic root_hash + file_hash)
 - ✅ workchain-aware routing and dispatch from the TOS transaction pipeline (`evm-workchain-dispatch.h`, `transaction.cpp`)
 - ✅ mapping TOS chain lifecycle and block context into the EVM execution context (`evm-block-context.cpp`)
@@ -199,7 +199,7 @@ The current repository already has several useful boundaries:
 
 ✅ Workchain descriptors already contain `vm_version` and `vm_mode`.
 
-Defined: `workchain_id=2`, `vm_version=0x45564D` ("EVM"), `chainId=0x544F53`.
+Defined: `workchain_id=1`, `vm_version=0x45564D` ("EVM"), `chainId=0x544F53`.
 
 ### 2. Transaction Execution Pipeline
 
@@ -445,7 +445,7 @@ Tested: deploy contract, gas=59556/60474, nonce incremented, bytecode stored.
 
 ✅ Add a new workchain descriptor with:
 
-- ✅ a dedicated workchain id (`2`)
+- ✅ a dedicated workchain id (`1`)
 - ✅ a dedicated zerostate (`build_evm_zerostate()` with root_hash + file_hash)
 - ✅ `vm_version` / `vm_mode` values reserved for EVM execution (`0x45564D` / `0`)
 
@@ -487,7 +487,7 @@ The adapter supports:
 ✅ Add a branch in the compute path:
 
 - ✅ if destination account belongs to standard TVM workchain: existing path
-- ✅ if destination account belongs to `evm-workchain` (workchain 2): route to evmone
+- ✅ if destination account belongs to `evm-workchain` (workchain 1): route to evmone
 
 Implemented in `crypto/block/transaction.cpp` via `evm_workchain_dispatch::invoke_evm_compute()`.
 
@@ -524,7 +524,7 @@ Status: ✅ **Complete**
 
 Deliverables:
 
-- ✅ workchain id choice — `2`
+- ✅ workchain id choice — `1`
 - ✅ EVM `chainId` choice — `0x544F53`
 - ✅ account state schema — `silkworm::Account` (nonce, balance, code_hash, incarnation)
 - ✅ external address model — standard 20-byte Ethereum `0x` addresses
@@ -539,7 +539,7 @@ Status: ✅ **Complete**
 
 Deliverables:
 
-- ✅ new workchain definition (`evm-workchain.h`, workchain_id=2)
+- ✅ new workchain definition (`evm-workchain.h`, workchain_id=1)
 - ✅ zerostate entry (`build_evm_zerostate` generates zerostate cell, computes root_hash + file_hash)
 - ✅ evmone integration (vendored, compiles and runs)
 - ✅ account database adapter (`EvmState` with `PersistentEvmState` RocksDB backend)
@@ -615,7 +615,7 @@ precompiles needed to run the EntryPoint contract.
 
 ## Proposed Acceptance Criteria for the Prototype
 
-1. ✅ A new workchain can be activated and recognized by the node. (workchain_id=2, dispatch works)
+1. ✅ A new workchain can be activated and recognized by the node. (workchain_id=1, dispatch works)
 2. ✅ The workchain exposes a valid EVM `chainId` and Ethereum-compatible `0x` addresses.
 3. An existing EVM wallet can derive and display an EOA account correctly. (wallet test script ready, pending live node test)
 4. ✅ An EOA can submit a signed Ethereum-compatible transaction into that workchain.
@@ -632,7 +632,7 @@ precompiles needed to run the EntryPoint contract.
 
 | File | Purpose |
 |------|---------|
-| `evm-workchain.h` | Workchain constants (id=2, chainId, vm_version) |
+| `evm-workchain.h` | Workchain constants (id=1, chainId, vm_version) |
 | `evm-transaction.h/cpp` | Decode RLP Ethereum tx from host-chain message |
 | `evm-state.h/cpp` | State adapter with pluggable backend, receipt storage |
 | `evm-persistent-state.h/cpp` | RocksDB-backed State implementation |
@@ -721,7 +721,7 @@ All coding work is complete. Remaining items are operational:
 
 ### Future enhancements (not blocking)
 
-4. ✅ **Transaction pool / mempool** — EVM transactions are converted to ext_in_msg cells and submitted to the existing TOS ExtMessagePool via `handle_eth_sendRawTransaction()`. Workchain==2 messages bypass TVM validation in `ext-message-pool.cpp`. The collator picks them up normally and dispatches to `evm-compute-phase.cpp`.
+4. ✅ **Transaction pool / mempool** — EVM transactions are converted to ext_in_msg cells and submitted to the existing TOS ExtMessagePool via `handle_eth_sendRawTransaction()`. Workchain==1 messages bypass TVM validation in `ext-message-pool.cpp`. The collator picks them up normally and dispatches to `evm-compute-phase.cpp`.
 
 5. **State trie / state root** — compute Ethereum-compatible state root hash for light client verification.
 

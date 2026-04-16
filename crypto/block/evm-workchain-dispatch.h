@@ -34,7 +34,7 @@ namespace evm_workchain_dispatch {
 ///   block_seqno  — host-chain block sequence number
 ///   timestamp    — host-chain block Unix timestamp
 ///   rand_seed    — 256-bit block random seed
-///   shard_accounts — (optional) collator's ShardAccounts dict for wc=2;
+///   shard_accounts — (optional) collator's ShardAccounts dict for wc=1;
 ///                    when non-null, the EVM module syncs its state into this
 ///                    dict so the collator's MERKLE_UPDATE includes EVM state
 ///                    atomically with the rest of the shard. When null

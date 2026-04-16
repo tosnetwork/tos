@@ -461,6 +461,126 @@ ExecStart=tos-validator-engine \
 
 These parameters are set automatically by `setup-testnet.sh` in the generated systemd units. If you create units manually, ensure they are included.
 
+## EVM Workchain (Workchain 1)
+
+The local testnet supports an EVM workchain at `workchain_id = 1` (alongside masterchain `-1` and basechain `0`). When enabled, validators execute Ethereum-compatible transactions via the embedded evmone EVM and expose a standard `eth_*` JSON-RPC surface.
+
+### Architecture
+
+```
+EVM transaction (via MetaMask, ethers.js, etc.)
+   │
+   ├── eth_sendRawTransaction (HTTP JSON-RPC, ports 8011-8014)
+   │      ↓
+   │   handle_eth_sendRawTransaction → build ext_in_msg cell
+   │      ↓
+   │   liteServer_sendMessage → ExtMessagePool (workchain==1: skips TVM validation)
+   │      ↓
+   │   Collator picks up message → routes to evm_workchain dispatch
+   │      ↓
+   │   evm-compute-phase.cpp executes via evmone
+   │      ↓
+   │   CellEvmState commits to TOS CellDb (single atomic WriteBatch)
+   │      ↓
+   │   Block produced → EVM state included in TOS state_hash
+   │
+   └── eth_getBalance / eth_getTransactionReceipt / eth_call (read-only)
+          ↓
+       global_evm_state (in-memory cell dict, optionally persisted to BoC)
+```
+
+### Constants
+
+| Item | Value | Source |
+|------|-------|--------|
+| `workchain_id` | `1` | `crypto/block/evm-workchain/evm-workchain.h` (`kWorkchainId`) |
+| `chainId` (Ethereum) | `0x544F53` (5,525,331) | `kEvmChainId` — exposed via `eth_chainId` |
+| `vm_version` | `0x45564D` ("EVM") | `kVmVersion` — used in WorkchainDescr |
+| `vm_mode` | `0` | reserved for future use |
+
+### Initialization in validator-engine
+
+`validator-engine.cpp` calls `evm_workchain::init_evm_workchain(db_root_)` at startup. This:
+
+1. Constructs a `CellEvmState` (cell-native, no separate RocksDB)
+2. Loads any prior state from `{db_root}/evm-state.boc` if present
+3. Registers the EVM compute-phase handler with the host-chain dispatch
+4. Initializes the global `IncrementalTrieCalculator` for Ethereum-format MPT stateRoot computation
+
+No additional CLI flags are needed — EVM workchain is built in.
+
+### Activating the EVM Workchain on the Network
+
+To make a running TOS network process EVM workchain blocks, the `WorkchainDescr` for `wc=1` must be added to `ConfigParam 12`. Two paths:
+
+**Path A: Include in zerostate (clean network)**
+
+Edit `crypto/smartcont/gen-zerostate.fif` to register the EVM workchain alongside the basechain:
+
+```fift
+add-std-workchain-v2  // basechain (workchain 0)
+add-evm-workchain     // NEW: registers wc=1 with vm_version=0x45564D
+```
+
+(See `crypto/block/evm-workchain/evm-config-param.cpp::build_evm_workchain_descr()` for the cell layout the zerostate generator must produce.)
+
+Then re-run `setup-testnet.sh` (which regenerates zerostate). New zerostate files have the EVM workchain enabled from block 0.
+
+**Path B: Submit ConfigParam 12 update (existing network)**
+
+A masterchain governance proposal containing the new ConfigParam 12 with the EVM workchain descriptor. This is the production path; it does not require a zerostate reset.
+
+### Verification
+
+After the network is running with EVM enabled:
+
+```bash
+# Sanity: chain ID
+curl -s -X POST http://127.0.0.1:8011 \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}'
+# Expected: {"jsonrpc":"2.0","id":1,"result":"0x544f53"}
+
+# Latest block on the EVM workchain
+curl -s -X POST http://127.0.0.1:8011 \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
+
+# Get balance of an address (zero for unfunded)
+curl -s -X POST http://127.0.0.1:8011 \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"eth_getBalance","params":["0x0000000000000000000000000000000000000001","latest"],"id":1}'
+```
+
+### Connecting MetaMask
+
+1. Add custom network in MetaMask:
+   - Network name: `TOS EVM Local`
+   - RPC URL: `http://127.0.0.1:8011` (or any of 8012/8013/8014)
+   - Chain ID: `5525331` (decimal of `0x544F53`)
+   - Currency symbol: `TOS`
+
+2. Send a test transaction (the address will be funded via the bridge — see `evm-bridge.h` for cross-workchain deposit)
+
+### Persistent State
+
+EVM state is part of the TOS ShardState cell tree (atomic with TOS state) once the collator integration lands. In the current implementation:
+
+- During node operation: `CellEvmState` keeps the cell-native state in memory
+- On clean shutdown: state can be serialized to `{db_root}/evm-state.boc` (development mode)
+- On restart: the BoC is loaded if present
+
+The atomic single-WriteBatch commit (TOS + EVM together) is the production target. See `doc/evm-workchain-cell-native-state.md` for the full architecture.
+
+### Troubleshooting EVM
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `eth_chainId` returns nothing | JSON-RPC server not enabled | Add `--json-rpc <port>` to validator-engine CLI |
+| Transaction stays pending | EVM workchain not in ConfigParam 12 | Activate via Path A or Path B above |
+| `state_hash` mismatch on validators | Some nodes have EVM enabled, others don't | All validators must run the same evm-workchain binary version |
+| BoC load failure on restart | Schema mismatch | Delete `{db_root}/evm-state.boc` to start fresh |
+
 ## Production Deployment Notes
 
 For production, the following changes are needed:

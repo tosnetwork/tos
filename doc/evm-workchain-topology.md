@@ -138,7 +138,7 @@ Transactions also enter via the host chain's normal block flow:
 │  ✅ process_external_    │     │  ✅ Consensus voting      │
 │     message() entry      │     │     (existing infra)     │
 │  ✅ EVM dispatch branch  │     │  ✅ Block confirmation    │
-│     (workchain==2)       │     │     (existing infra)     │
+│     (workchain==1)       │     │     (existing infra)     │
 │  ✅ prepare_compute_     │     │                          │
 │     phase() → EVM        │     │  Workchain-agnostic:     │
 │  ✅ evm-workchain-       │     │  operates per-shard,     │
@@ -178,7 +178,7 @@ Transactions also enter via the host chain's normal block flow:
 │  ✅ Zerostate generation │
 │     (root_hash +         │
 │      file_hash)          │
-│  ✅ workchain_id = 2     │
+│  ✅ workchain_id = 1     │
 │  ✅ vm_version = "EVM"   │
 │  ✅ chainId = 0x544F53   │
 │  ⬜ Submit to testnet    │
@@ -228,7 +228,7 @@ Node database storage:
   ✅ thread_local code buffer   (no shared mutable state)
 
 Node-to-node propagation:
-  ✅ Collator EVM dispatch      (our code: workchain==2 branch)
+  ✅ Collator EVM dispatch      (our code: workchain==1 branch)
   ✅ External message builder   (our code: RLP → ext_in_msg cell)
   ✅ Consensus / broadcast / sync (existing host chain infrastructure,
      workchain-agnostic, operates per-shard)

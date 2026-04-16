@@ -10,7 +10,7 @@
 
     For EVM workchain messages:
       - src: addr_none (external source)
-      - dest: workchain=2, address=sha256(sender_address padded to 256 bits)
+      - dest: workchain=1, address=sha256(sender_address padded to 256 bits)
       - body: raw RLP bytes of the signed Ethereum transaction
 
     Source: TOS-specific adapter (not copied from ~/s).

@@ -2,7 +2,7 @@
     EVM Workchain — cross-workchain asset bridge.
 
     Defines the interface for moving native assets between the basechain
-    (workchain 0) and the EVM workchain (workchain 2).
+    (workchain 0) and the EVM workchain (workchain 1).
 
     Bridge operations:
       Deposit:  basechain → EVM workchain

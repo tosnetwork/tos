@@ -33,7 +33,7 @@ The fix is not to add coordination between two stores. The fix is to remove the 
 ```
 TOS CellDb (single source of truth)
 └── ShardState (per workchain, per shard)
-    ├── shard_id: ShardIdent { workchain=2, shard=0x8000... }
+    ├── shard_id: ShardIdent { workchain=1, shard=0x8000... }
     ├── accounts: ^ShardAccounts (HashmapAugE 256 ShardAccount)
     │   └── EVM Account (e.g., 0x1234...)
     │       └── ShardAccount cell
@@ -59,7 +59,7 @@ TOS CellDb (single source of truth)
 `block.tlb` is **not** modified. The existing `data:(Maybe ^Cell)` field in StateInit accepts arbitrary cells — TOS treats it as opaque. We define the cell format via convention:
 
 ```tlb
-// Cell stored inside StateInit.data for EVM workchain (wc=2) accounts
+// Cell stored inside StateInit.data for EVM workchain (wc=1) accounts
 evm_account_data#45564d
   nonce:uint64
   balance:uint256

@@ -1863,7 +1863,7 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
   // If the account belongs to the EVM workchain and a handler is registered,
   // route to the EVM executor instead of TVM.
   if (evm_workchain_dispatch::has_evm_compute_handler() &&
-      account.workchain == 2 /* evm_workchain::kWorkchainId — avoid header dep */) {
+      account.workchain == 1 /* evm_workchain::kWorkchainId — avoid header dep */) {
     if (in_msg_body.is_null()) {
       cp.skip_reason = ComputePhase::sk_bad_state;
       return true;

@@ -39,7 +39,7 @@ namespace evm_workchain {
 /// @param block_seqno Host-chain block sequence number.
 /// @param timestamp   Host-chain block Unix timestamp.
 /// @param rand_seed   Host-chain 256-bit block random seed.
-/// @param shard_accounts (optional) collator's ShardAccounts dict for wc=2.
+/// @param shard_accounts (optional) collator's ShardAccounts dict for wc=1.
 ///                    When non-null, after EVM execution the cell-native EVM
 ///                    state is synced into this dict so the collator's
 ///                    MERKLE_UPDATE includes EVM state changes atomically.

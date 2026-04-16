@@ -17,8 +17,8 @@ namespace evm_workchain {
 // ---------------------------------------------------------------------------
 
 /// Workchain id registered in ConfigParam 12.
-/// Value 2 is chosen to avoid collision with masterchain (-1) and basechain (0).
-constexpr tos::WorkchainId kWorkchainId = 2;
+/// Value 1 is the next available slot after masterchain (-1) and basechain (0).
+constexpr tos::WorkchainId kWorkchainId = 1;
 
 /// EVM chainId exposed to wallets and JSON-RPC (eth_chainId).
 /// This is the Ethereum-style network identifier, not the internal workchain id.

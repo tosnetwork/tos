@@ -35,7 +35,7 @@ IncrementalTrieCalculator& global_trie_calculator() {
 }
 
 void init_evm_workchain(const std::string& db_root) {
-    LOG(WARNING) << "evm-workchain: initialising (workchain_id=2, chain_id="
+    LOG(WARNING) << "evm-workchain: initialising (workchain_id=1, chain_id="
                  << kEvmChainId << ")";
 
     // Cell-native state. The dictionary lives entirely in cells; the root

@@ -131,6 +131,35 @@ Each `WorkchainDescr` entry (keyed by workchain ID):
 | `accept_msgs` | Bool | true | Accepts messages |
 | `zerostate_root_hash` | bits256 | (computed) | Root hash of workchain zero state |
 | `zerostate_file_hash` | bits256 | (computed) | File hash of workchain zero state |
+| `version` | uint32 | 0 | Workchain descriptor version |
+| `format` | wfmt_basic / wfmt_ext | wfmt_basic | Workchain VM format selector |
+
+### Workchain VM Format
+
+For `wfmt_basic` (TVM workchain, e.g. basechain wc=0):
+
+| Subfield | Value | Description |
+|----------|-------|-------------|
+| `vm_version` | int32 = 0 | TVM, default version |
+| `vm_mode` | uint64 = 0 | reserved |
+
+For the EVM workchain (`wc=1`):
+
+| Subfield | Value | Description |
+|----------|-------|-------------|
+| `vm_version` | int32 = `0x45564D` ("EVM") | Selects evmone executor in `prepare_compute_phase` |
+| `vm_mode` | uint64 = 0 | reserved |
+
+The workchain id `1` is the next slot after masterchain (`-1`) and basechain (`0`). Builder code: `crypto/block/evm-workchain/evm-config-param.cpp::build_evm_workchain_descr()`. The cell passes `block::gen::t_WorkchainDescr.validate_ref()`.
+
+### Activating the EVM workchain
+
+Two paths:
+
+1. **Zerostate (clean network)**: edit `crypto/smartcont/gen-zerostate.fif` to register the EVM workchain alongside the basechain at genesis. New zerostate generation includes `wc=1`.
+2. **Governance proposal (existing network)**: submit a ConfigParam 12 update containing the new descriptor. Validators that have the `evm_workchain` module compiled into their `validator-engine` binary begin processing wc=1 messages on the next epoch.
+
+See `doc/Validator-Local.md#evm-workchain-workchain-1` for end-to-end activation steps in a local 4-node testnet.
 
 ## ConfigParam 13 — Complaint Pricing
 
