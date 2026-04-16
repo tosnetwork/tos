@@ -18,6 +18,8 @@
 */
 #pragma once
 
+#include <cstddef>
+
 #include "http/http-server.h"
 #include "metrics/metrics-collectors.h"
 #include "td/actor/actor.h"
@@ -26,6 +28,7 @@
 #include "validator/validator.h"
 #include "block/block.h"
 
+#include <list>
 #include <set>
 #include <unordered_map>
 
@@ -40,6 +43,8 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
     double request_timeout = 30.0;   // per-request timeout in seconds (0 = no timeout)
     std::string api_key;             // empty = no auth required
     td::int32 cache_ttl = 0;        // seconds, 0 = disabled
+    std::size_t cache_max_entries = 1024;
+    std::size_t cache_max_body_bytes = 8 << 20;
   };
 
   static td::actor::ActorOwn<JsonRpcServer> create(
@@ -52,6 +57,15 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   JsonRpcServer(
       td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager,
       Options options);
+
+  // Cache test helpers. The production actor model serializes access; these
+  // are intended for white-box unit tests only.
+  void cache_store_for_test(const std::string& key, std::string response_json,
+                            td::int32 ttl_seconds);
+  std::optional<std::string> cache_lookup_for_test(const std::string& key);
+  void cache_clear_for_test();
+  std::size_t cache_entries_for_test() const noexcept;
+  std::size_t cache_body_bytes_for_test() const noexcept;
 
  private:
   using RequestPtr = std::unique_ptr<http::HttpRequest>;
@@ -246,8 +260,16 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   struct CacheEntry {
     std::string response_json;
     td::Timestamp expires_at;
+    std::size_t size_bytes{0};
+    std::list<std::string>::iterator lru_it;
   };
+  void erase_cache_entry(std::unordered_map<std::string, CacheEntry>::iterator it);
+  void touch_cache_entry(std::unordered_map<std::string, CacheEntry>::iterator it);
+  void evict_expired_cache_entries();
+  void evict_cache_to_budget();
   std::unordered_map<std::string, CacheEntry> cache_;
+  std::list<std::string> cache_lru_;
+  std::size_t cache_body_bytes_{0};
 
   static const std::set<std::string> &cacheable_methods();
 

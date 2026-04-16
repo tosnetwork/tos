@@ -75,6 +75,7 @@ ExecutionTrace trace_evm_transaction(
     }
 
     // Create a read-only state for tracing
+    std::unique_lock lock(evm_state.mutex());
     auto& mutable_state = const_cast<silkworm::State&>(evm_state.state());
     silkworm::IntraBlockState ibs(mutable_state);
     silkworm::EVM evm(block, ibs, config);

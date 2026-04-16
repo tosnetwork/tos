@@ -36,6 +36,23 @@ uint64_t EvmState::get_nonce(const evmc::address& addr) const {
     return acct ? acct->nonce : 0;
 }
 
+std::optional<silkworm::Account> EvmState::read_account(const evmc::address& addr) const {
+    std::shared_lock lock(mutex_);
+    return backend_->read_account(addr);
+}
+
+silkworm::Bytes EvmState::read_code_copy(const evmc::address& addr, const evmc::bytes32& code_hash) const {
+    std::shared_lock lock(mutex_);
+    auto code = backend_->read_code(addr, code_hash);
+    return silkworm::Bytes{code.begin(), code.end()};
+}
+
+evmc::bytes32 EvmState::read_storage_copy(const evmc::address& addr, uint64_t incarnation,
+                                          const evmc::bytes32& location) const {
+    std::shared_lock lock(mutex_);
+    return backend_->read_storage(addr, incarnation, location);
+}
+
 // --- Block tracking ---
 
 uint64_t EvmState::block_number() const noexcept {
@@ -51,6 +68,18 @@ void EvmState::set_block_number(uint64_t n) noexcept {
 void EvmState::increment_block_number() noexcept {
     std::unique_lock lock(mutex_);
     ++block_number_;
+}
+
+uint64_t EvmState::allocate_next_block_number(std::optional<StoredBlock>& parent_block) noexcept {
+    std::unique_lock lock(mutex_);
+    ++block_number_;
+    auto it = blocks_.find(block_number_ - 1);
+    if (it != blocks_.end()) {
+        parent_block = it->second;
+    } else {
+        parent_block.reset();
+    }
+    return block_number_;
 }
 
 // --- Block chain (bounded: kMaxCachedBlocks) ---
@@ -116,8 +145,10 @@ void EvmState::evict_oldest_receipts() {
 
 void EvmState::store_receipt(const evmc::bytes32& tx_hash, StoredReceipt receipt) {
     std::unique_lock lock(mutex_);
+    if (receipts_.find(tx_hash) == receipts_.end()) {
+        receipt_insertion_order_.push_back(tx_hash);
+    }
     receipts_[tx_hash] = std::move(receipt);
-    receipt_insertion_order_.push_back(tx_hash);
     evict_oldest_receipts();
 }
 
@@ -125,6 +156,15 @@ const StoredReceipt* EvmState::get_receipt(const evmc::bytes32& tx_hash) const {
     std::shared_lock lock(mutex_);
     auto it = receipts_.find(tx_hash);
     return it != receipts_.end() ? &it->second : nullptr;
+}
+
+std::optional<StoredReceipt> EvmState::get_receipt_copy(const evmc::bytes32& tx_hash) const {
+    std::shared_lock lock(mutex_);
+    auto it = receipts_.find(tx_hash);
+    if (it == receipts_.end()) {
+        return std::nullopt;
+    }
+    return it->second;
 }
 
 // --- Transaction storage (bounded: kMaxCachedTransactions) ---
@@ -138,8 +178,10 @@ void EvmState::evict_oldest_transactions() {
 
 void EvmState::store_transaction(const evmc::bytes32& tx_hash, StoredTransaction tx) {
     std::unique_lock lock(mutex_);
+    if (transactions_.find(tx_hash) == transactions_.end()) {
+        transaction_insertion_order_.push_back(tx_hash);
+    }
     transactions_[tx_hash] = std::move(tx);
-    transaction_insertion_order_.push_back(tx_hash);
     evict_oldest_transactions();
 }
 
@@ -147,6 +189,15 @@ const StoredTransaction* EvmState::get_transaction(const evmc::bytes32& tx_hash)
     std::shared_lock lock(mutex_);
     auto it = transactions_.find(tx_hash);
     return it != transactions_.end() ? &it->second : nullptr;
+}
+
+std::optional<StoredTransaction> EvmState::get_transaction_copy(const evmc::bytes32& tx_hash) const {
+    std::shared_lock lock(mutex_);
+    auto it = transactions_.find(tx_hash);
+    if (it == transactions_.end()) {
+        return std::nullopt;
+    }
+    return it->second;
 }
 
 // --- Log index (bounded: kMaxCachedLogBlocks) ---

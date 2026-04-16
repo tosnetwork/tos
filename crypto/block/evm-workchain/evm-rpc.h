@@ -52,4 +52,7 @@ std::optional<RpcResult> handle_eth_rpc(
 /// Returns true if the given method name is an eth_* method handled by this facade.
 bool is_eth_rpc_method(const std::string& method) noexcept;
 
+/// Test helper: reset in-memory filter state to a clean slate.
+void reset_evm_rpc_filter_state_for_test();
+
 }  // namespace evm_workchain

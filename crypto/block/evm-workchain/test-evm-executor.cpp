@@ -15,6 +15,12 @@
 #include <cstdio>
 #include <cstring>
 #include <cassert>
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <mutex>
+#include <thread>
+#include <unordered_set>
 
 #include "evm-workchain.h"
 #include "evm-init.h"
@@ -68,6 +74,129 @@ static evmc::address hex_to_addr(const char* hex) {
     auto bytes = hex_to_bytes(hex);
     if (bytes.size() == 20) std::memcpy(addr.bytes, bytes.data(), 20);
     return addr;
+}
+
+static std::string bytes_to_hex0x(const Bytes& bytes) {
+    static const char* hex = "0123456789abcdef";
+    std::string out = "0x";
+    out.resize(2 + bytes.size() * 2);
+    for (size_t i = 0; i < bytes.size(); ++i) {
+        out[2 + i * 2] = hex[(bytes[i] >> 4) & 0x0f];
+        out[2 + i * 2 + 1] = hex[bytes[i] & 0x0f];
+    }
+    return out;
+}
+
+static std::string extract_json_result_string(const std::string& json) {
+    const std::string key = "\"result\":\"";
+    auto pos = json.find(key);
+    if (pos == std::string::npos) return {};
+    pos += key.size();
+    auto end = json.find('"', pos);
+    if (end == std::string::npos) return {};
+    return json.substr(pos, end - pos);
+}
+
+static bool json_result_is_null(const std::string& json) {
+    return json.find("\"result\":null") != std::string::npos;
+}
+
+static bool json_result_is_true(const std::string& json) {
+    return json.find("\"result\":true") != std::string::npos;
+}
+
+static bool json_result_is_false(const std::string& json) {
+    return json.find("\"result\":false") != std::string::npos;
+}
+
+static evmc::address address_from_privkey_seed(uint32_t seed) {
+    secp256k1_context* ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
+    uint8_t privkey[32] = {};
+    privkey[28] = static_cast<uint8_t>((seed >> 24) & 0xff);
+    privkey[29] = static_cast<uint8_t>((seed >> 16) & 0xff);
+    privkey[30] = static_cast<uint8_t>((seed >> 8) & 0xff);
+    privkey[31] = static_cast<uint8_t>(seed & 0xff);
+    if (seed == 0) privkey[31] = 1;
+
+    secp256k1_pubkey pubkey;
+    secp256k1_ec_pubkey_create(ctx, &pubkey, privkey);
+    uint8_t pub_serialized[65];
+    size_t pub_len = 65;
+    secp256k1_ec_pubkey_serialize(ctx, pub_serialized, &pub_len, &pubkey, SECP256K1_EC_UNCOMPRESSED);
+    auto pub_hash = ethash::keccak256(pub_serialized + 1, 64);
+    evmc::address sender{};
+    std::memcpy(sender.bytes, pub_hash.bytes + 12, 20);
+    secp256k1_context_destroy(ctx);
+    return sender;
+}
+
+struct SignedRawTransaction {
+    Bytes raw_rlp;
+    evmc::address sender;
+    evmc::bytes32 hash;
+};
+
+static std::optional<SignedRawTransaction> make_signed_raw_transfer(
+    uint32_t key_seed,
+    uint64_t nonce,
+    const evmc::address& recipient,
+    const intx::uint256& value = intx::uint256{1'000'000},
+    uint64_t gas_limit = 50'000) {
+
+    secp256k1_context* ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
+    uint8_t privkey[32] = {};
+    privkey[28] = static_cast<uint8_t>((key_seed >> 24) & 0xff);
+    privkey[29] = static_cast<uint8_t>((key_seed >> 16) & 0xff);
+    privkey[30] = static_cast<uint8_t>((key_seed >> 8) & 0xff);
+    privkey[31] = static_cast<uint8_t>(key_seed & 0xff);
+    if (key_seed == 0) privkey[31] = 1;
+
+    secp256k1_pubkey pubkey;
+    if (!secp256k1_ec_pubkey_create(ctx, &pubkey, privkey)) {
+        secp256k1_context_destroy(ctx);
+        return std::nullopt;
+    }
+    uint8_t pub_serialized[65];
+    size_t pub_len = 65;
+    secp256k1_ec_pubkey_serialize(ctx, pub_serialized, &pub_len, &pubkey, SECP256K1_EC_UNCOMPRESSED);
+    auto pub_hash = ethash::keccak256(pub_serialized + 1, 64);
+    evmc::address sender{};
+    std::memcpy(sender.bytes, pub_hash.bytes + 12, 20);
+
+    silkworm::Transaction txn;
+    txn.type = silkworm::TransactionType::kLegacy;
+    txn.chain_id = kEvmChainId;
+    txn.nonce = nonce;
+    txn.max_fee_per_gas = 1'000'000'000;
+    txn.max_priority_fee_per_gas = 1'000'000'000;
+    txn.gas_limit = gas_limit;
+    txn.to = recipient;
+    txn.value = value;
+
+    silkworm::Bytes signing_data;
+    txn.encode_for_signing(signing_data);
+    auto msg_hash = ethash::keccak256(signing_data.data(), signing_data.size());
+
+    secp256k1_ecdsa_recoverable_signature sig;
+    if (!secp256k1_ecdsa_sign_recoverable(ctx, &sig, msg_hash.bytes, privkey, nullptr, nullptr)) {
+        secp256k1_context_destroy(ctx);
+        return std::nullopt;
+    }
+
+    uint8_t sig_bytes[64];
+    int recovery_id = 0;
+    secp256k1_ecdsa_recoverable_signature_serialize_compact(ctx, sig_bytes, &recovery_id, &sig);
+
+    txn.r = intx::be::unsafe::load<intx::uint256>(sig_bytes);
+    txn.s = intx::be::unsafe::load<intx::uint256>(sig_bytes + 32);
+    txn.odd_y_parity = (recovery_id == 1);
+    txn.set_v(intx::uint256{kEvmChainId * 2 + 35 + recovery_id});
+
+    silkworm::Bytes raw_rlp;
+    silkworm::rlp::encode(raw_rlp, txn);
+    auto tx_hash = txn.hash();
+    secp256k1_context_destroy(ctx);
+    return SignedRawTransaction{std::move(raw_rlp), sender, tx_hash};
 }
 
 /// Helper: build a simple ETH value transfer transaction (pre-signed).
@@ -1629,7 +1758,7 @@ static void test_bridge() {
                       intx::uint256{500'000'000'000'000'000u},  // 0.5 ETH
                       1, fake_tx_hash);
 
-    auto& pending = get_pending_withdrawals();
+    auto pending = get_pending_withdrawals();
     printf("  pending withdrawals: %zu\n", pending.size());
     bool withdrawal_ok = pending.size() == 1 &&
                          pending[0].amount == intx::uint256{500'000'000'000'000'000u} &&
@@ -2141,6 +2270,254 @@ static void test_subscriptions() {
     printf("  %s\n\n", ok ? "PASSED" : "FAILED");
 }
 
+static void test_concurrent_eth_send_and_receipts() {
+    printf("=== test_concurrent_eth_send_and_receipts ===\n");
+
+    init_evm_workchain();
+
+    constexpr int kSenderThreads = 8;
+    constexpr int kTxPerSender = 8;
+    constexpr int kReceiptReaders = 4;
+    constexpr int kExpectedTxs = kSenderThreads * kTxPerSender;
+
+    for (uint32_t i = 0; i < static_cast<uint32_t>(kSenderThreads); ++i) {
+        auto sender = address_from_privkey_seed(100 + i);
+        global_evm_state().seed_account(sender, intx::uint256{10'000'000'000'000'000'000u}, 0);
+    }
+
+    std::atomic<bool> start{false};
+    std::atomic<bool> send_done{false};
+    std::atomic<bool> failed{false};
+    std::atomic<size_t> receipt_hits{0};
+    std::atomic<size_t> send_success{0};
+    std::mutex hashes_mutex;
+    std::vector<std::string> tx_hashes;
+    tx_hashes.reserve(kExpectedTxs);
+
+    std::vector<std::thread> readers;
+    for (int i = 0; i < kReceiptReaders; ++i) {
+        readers.emplace_back([&, i]() {
+            while (!start.load()) std::this_thread::yield();
+            size_t idle_rounds = 0;
+            while (!send_done.load() || idle_rounds < 64) {
+                std::vector<std::string> snapshot;
+                {
+                    std::lock_guard<std::mutex> lock(hashes_mutex);
+                    snapshot = tx_hashes;
+                }
+                if (snapshot.empty()) {
+                    ++idle_rounds;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    continue;
+                }
+                idle_rounds = 0;
+                for (size_t j = i; j < snapshot.size(); j += kReceiptReaders) {
+                    auto receipt = handle_eth_rpc("eth_getTransactionReceipt",
+                                                  "[\"" + snapshot[j] + "\"]",
+                                                  std::to_string(10'000 + i));
+                    if (!receipt || receipt->is_error) {
+                        failed.store(true);
+                        break;
+                    }
+                    if (!json_result_is_null(receipt->json)) {
+                        receipt_hits.fetch_add(1);
+                    }
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        });
+    }
+
+    std::vector<std::thread> senders;
+    for (int thread_idx = 0; thread_idx < kSenderThreads; ++thread_idx) {
+        senders.emplace_back([&, thread_idx]() {
+            while (!start.load()) std::this_thread::yield();
+            for (int nonce = 0; nonce < kTxPerSender; ++nonce) {
+                evmc::address recipient{};
+                recipient.bytes[18] = static_cast<uint8_t>(thread_idx);
+                recipient.bytes[19] = static_cast<uint8_t>(nonce + 1);
+
+                auto signed_tx = make_signed_raw_transfer(100 + thread_idx,
+                                                          static_cast<uint64_t>(nonce),
+                                                          recipient);
+                if (!signed_tx) {
+                    failed.store(true);
+                    return;
+                }
+
+                auto rpc = handle_eth_rpc("eth_sendRawTransaction",
+                                          "[\"" + bytes_to_hex0x(signed_tx->raw_rlp) + "\"]",
+                                          std::to_string(thread_idx * 100 + nonce));
+                if (!rpc || rpc->is_error) {
+                    failed.store(true);
+                    return;
+                }
+
+                auto tx_hash = extract_json_result_string(rpc->json);
+                if (tx_hash.empty()) {
+                    failed.store(true);
+                    return;
+                }
+
+                {
+                    std::lock_guard<std::mutex> lock(hashes_mutex);
+                    tx_hashes.push_back(tx_hash);
+                }
+                send_success.fetch_add(1);
+
+                auto receipt = handle_eth_rpc("eth_getTransactionReceipt",
+                                              "[\"" + tx_hash + "\"]",
+                                              std::to_string(20'000 + thread_idx * 100 + nonce));
+                if (!receipt || receipt->is_error || json_result_is_null(receipt->json)) {
+                    failed.store(true);
+                    return;
+                }
+            }
+        });
+    }
+
+    start.store(true);
+    for (auto& thread : senders) thread.join();
+    send_done.store(true);
+    for (auto& thread : readers) thread.join();
+
+    std::unordered_set<std::string> unique_hashes(tx_hashes.begin(), tx_hashes.end());
+    size_t final_receipts_ok = 0;
+    for (const auto& tx_hash : tx_hashes) {
+        auto receipt = handle_eth_rpc("eth_getTransactionReceipt",
+                                      "[\"" + tx_hash + "\"]",
+                                      "30000");
+        if (receipt && !receipt->is_error && !json_result_is_null(receipt->json)) {
+            ++final_receipts_ok;
+        }
+    }
+
+    bool ok = !failed.load() &&
+              send_success.load() == kExpectedTxs &&
+              tx_hashes.size() == kExpectedTxs &&
+              unique_hashes.size() == kExpectedTxs &&
+              final_receipts_ok == static_cast<size_t>(kExpectedTxs) &&
+              receipt_hits.load() > 0;
+
+    printf("  sends:        %zu/%d\n", send_success.load(), kExpectedTxs);
+    printf("  unique hashes:%zu\n", unique_hashes.size());
+    printf("  receipt hits: %zu\n", receipt_hits.load());
+    printf("  final checks: %zu/%d\n", final_receipts_ok, kExpectedTxs);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_concurrent_filters() {
+    printf("=== test_concurrent_filters ===\n");
+
+    reset_evm_rpc_filter_state_for_test();
+
+    constexpr int kThreads = 32;
+    constexpr int kCreatesPerThread = 48;
+    constexpr int kAttempts = kThreads * kCreatesPerThread;
+
+    std::atomic<bool> start{false};
+    std::atomic<size_t> created{0};
+    std::atomic<size_t> rejected{0};
+    std::atomic<size_t> change_ok{0};
+    std::atomic<size_t> uninstall_ok{0};
+    std::atomic<bool> failed{false};
+    std::mutex ids_mutex;
+    std::vector<std::string> filter_ids;
+
+    std::vector<std::thread> creators;
+    for (int i = 0; i < kThreads; ++i) {
+        creators.emplace_back([&, i]() {
+            while (!start.load()) std::this_thread::yield();
+            for (int j = 0; j < kCreatesPerThread; ++j) {
+                const std::string method =
+                    (j % 3 == 0) ? "eth_newFilter" :
+                    (j % 3 == 1) ? "eth_newBlockFilter" :
+                                   "eth_newPendingTransactionFilter";
+                auto result = handle_eth_rpc(method, "[]", std::to_string(40'000 + i * 100 + j));
+                if (!result) {
+                    failed.store(true);
+                    return;
+                }
+                if (result->is_error) {
+                    ++rejected;
+                    continue;
+                }
+                auto fid = extract_json_result_string(result->json);
+                if (fid.empty()) {
+                    failed.store(true);
+                    return;
+                }
+                {
+                    std::lock_guard<std::mutex> lock(ids_mutex);
+                    filter_ids.push_back(fid);
+                }
+                ++created;
+            }
+        });
+    }
+
+    start.store(true);
+    for (auto& thread : creators) thread.join();
+
+    std::atomic<size_t> next_index{0};
+    std::vector<std::thread> workers;
+    for (int i = 0; i < kThreads; ++i) {
+        workers.emplace_back([&, i]() {
+            for (;;) {
+                size_t idx = next_index.fetch_add(1);
+                if (idx >= filter_ids.size()) break;
+                const auto& fid = filter_ids[idx];
+                auto changes = handle_eth_rpc("eth_getFilterChanges",
+                                              "[\"" + fid + "\"]",
+                                              std::to_string(50'000 + i));
+                if (!changes || changes->is_error) {
+                    failed.store(true);
+                    return;
+                }
+                ++change_ok;
+
+                auto removed = handle_eth_rpc("eth_uninstallFilter",
+                                              "[\"" + fid + "\"]",
+                                              std::to_string(60'000 + i));
+                if (!removed || removed->is_error || !json_result_is_true(removed->json)) {
+                    failed.store(true);
+                    return;
+                }
+                ++uninstall_ok;
+            }
+        });
+    }
+    for (auto& thread : workers) thread.join();
+
+    bool capacity_ok = created.load() <= 1024 && rejected.load() == kAttempts - created.load();
+    bool cleanup_ok = change_ok.load() == created.load() && uninstall_ok.load() == created.load();
+
+    bool removed_error_ok = true;
+    if (!filter_ids.empty()) {
+        auto removed_again = handle_eth_rpc("eth_uninstallFilter",
+                                            "[\"" + filter_ids.front() + "\"]",
+                                            "70000");
+        auto changes_after = handle_eth_rpc("eth_getFilterChanges",
+                                            "[\"" + filter_ids.front() + "\"]",
+                                            "70001");
+        removed_error_ok = removed_again && !removed_again->is_error &&
+                           json_result_is_false(removed_again->json) &&
+                           changes_after && changes_after->is_error;
+    }
+
+    auto recreated = handle_eth_rpc("eth_newFilter", "[]", "70002");
+    bool recreate_ok = recreated && !recreated->is_error &&
+                       !extract_json_result_string(recreated->json).empty();
+
+    bool ok = !failed.load() && capacity_ok && cleanup_ok && removed_error_ok && recreate_ok;
+
+    printf("  created:      %zu\n", created.load());
+    printf("  rejected:     %zu\n", rejected.load());
+    printf("  getChanges ok:%zu\n", change_ok.load());
+    printf("  uninstall ok: %zu\n", uninstall_ok.load());
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -2170,6 +2547,8 @@ int main() {
     test_gold_two_blocks();
     test_gold_value_transfer_insufficient();
     test_subscriptions();
+    test_concurrent_eth_send_and_receipts();
+    test_concurrent_filters();
 
     printf("All tests passed.\n");
     return 0;

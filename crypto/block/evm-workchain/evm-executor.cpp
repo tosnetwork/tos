@@ -153,6 +153,7 @@ ExecutionResult execute_evm_transaction(
     EvmState& evm_state,
     const silkworm::ChainConfig& config) {
 
+    std::unique_lock lock(evm_state.mutex());
     silkworm::IntraBlockState ibs(evm_state.state());
     auto result = run_evm(txn, block, ibs, config, /*commit_state=*/true);
 
@@ -174,6 +175,7 @@ ExecutionResult call_evm_transaction(
     // writes to its internal journal.  With commit_state=false we never
     // call write_to_db(), so the underlying State is not mutated.
     // The const_cast is safe because we guarantee no writes reach the DB.
+    std::unique_lock lock(evm_state.mutex());
     auto& mutable_state = const_cast<silkworm::State&>(evm_state.state());
     silkworm::IntraBlockState ibs(mutable_state);
     return run_evm(txn, block, ibs, config, /*commit_state=*/false);

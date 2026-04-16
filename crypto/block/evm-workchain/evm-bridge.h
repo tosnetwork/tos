@@ -62,8 +62,8 @@ bool bridge_deposit(EvmState& state,
                     const evmc::address& to,
                     const intx::uint256& amount);
 
-/// Get the list of pending withdrawal requests.
-const std::vector<WithdrawalRequest>& get_pending_withdrawals();
+/// Get a snapshot of pending withdrawal requests.
+std::vector<WithdrawalRequest> get_pending_withdrawals();
 
 /// Record a withdrawal request.
 /// Called when a user burns tokens on the EVM workchain side.

@@ -106,11 +106,16 @@ class EvmState {
 
     intx::uint256 get_balance(const evmc::address& addr) const;
     uint64_t get_nonce(const evmc::address& addr) const;
+    std::optional<silkworm::Account> read_account(const evmc::address& addr) const;
+    silkworm::Bytes read_code_copy(const evmc::address& addr, const evmc::bytes32& code_hash) const;
+    evmc::bytes32 read_storage_copy(const evmc::address& addr, uint64_t incarnation,
+                                    const evmc::bytes32& location) const;
 
     /// --- Block tracking ---
     uint64_t block_number() const noexcept;
     void set_block_number(uint64_t n) noexcept;
     void increment_block_number() noexcept;
+    uint64_t allocate_next_block_number(std::optional<StoredBlock>& parent_block) noexcept;
 
     /// --- Block chain ---
     void store_block(const StoredBlock& block);
@@ -126,10 +131,12 @@ class EvmState {
     /// --- Receipt storage (bounded: oldest evicted at kMaxCachedReceipts) ---
     void store_receipt(const evmc::bytes32& tx_hash, StoredReceipt receipt);
     const StoredReceipt* get_receipt(const evmc::bytes32& tx_hash) const;
+    std::optional<StoredReceipt> get_receipt_copy(const evmc::bytes32& tx_hash) const;
 
     /// --- Transaction storage (bounded: oldest evicted at kMaxCachedTransactions) ---
     void store_transaction(const evmc::bytes32& tx_hash, StoredTransaction tx);
     const StoredTransaction* get_transaction(const evmc::bytes32& tx_hash) const;
+    std::optional<StoredTransaction> get_transaction_copy(const evmc::bytes32& tx_hash) const;
 
     /// --- Log index (bounded: kMaxCachedLogBlocks blocks) ---
     void store_logs(uint64_t block_number, const evmc::bytes32& tx_hash,

@@ -138,11 +138,12 @@ static RpcResult handle_block_number(const std::string& id) {
 
 static RpcResult handle_gas_price(const std::string& id) {
     // Return current base fee + suggested priority fee (1 gwei)
-    auto* latest = global_evm_state().get_block(global_evm_state().block_number());
+    const auto latest_bn = global_evm_state().block_number();
+    auto latest = global_evm_state().get_block_copy(latest_bn);
     intx::uint256 base_fee{kInitialBaseFee};
-    if (latest) {
-        base_fee = calc_base_fee(latest->base_fee_per_gas,
-                                  latest->gas_used, latest->gas_limit);
+    if (global_evm_state().has_block(latest_bn)) {
+        base_fee = calc_base_fee(latest.base_fee_per_gas,
+                                  latest.gas_used, latest.gas_limit);
     }
     intx::uint256 suggested = base_fee + intx::uint256{1'000'000'000};  // base + 1 gwei priority
     return {make_result(id, to_hex_quantity(suggested)), false};
@@ -171,11 +172,11 @@ static RpcResult handle_get_code(const std::string& params, const std::string& i
     if (!parse_hex_address(params, addr)) {
         return {make_error(id, -32602, "invalid address parameter"), true};
     }
-    auto acct = global_evm_state().state().read_account(addr);
+    auto acct = global_evm_state().read_account(addr);
     if (!acct) {
         return {make_result(id, "\"0x\""), false};
     }
-    auto code = global_evm_state().state().read_code(addr, acct->code_hash);
+    auto code = global_evm_state().read_code_copy(addr, acct->code_hash);
     if (code.empty()) {
         return {make_result(id, "\"0x\""), false};
     }
@@ -195,20 +196,20 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
     auto& decoded = std::get<DecodedTransaction>(decode_result);
 
     auto& evm_state = global_evm_state();
-    evm_state.increment_block_number();
+    std::optional<StoredBlock> parent_block;
+    uint64_t bn = evm_state.allocate_next_block_number(parent_block);
 
     // Compute EIP-1559 base fee from parent block
     intx::uint256 base_fee{kInitialBaseFee};
-    auto* parent_blk = evm_state.get_block(evm_state.block_number() - 1);
-    if (parent_blk) {
-        base_fee = calc_base_fee(parent_blk->base_fee_per_gas,
-                                  parent_blk->gas_used,
-                                  parent_blk->gas_limit);
+    if (parent_block) {
+        base_fee = calc_base_fee(parent_block->base_fee_per_gas,
+                                  parent_block->gas_used,
+                                  parent_block->gas_limit);
     }
 
     uint8_t rand_seed[32] = {};
     auto block = make_evm_block(
-        evm_state.block_number(),
+        bn,
         static_cast<uint64_t>(std::time(nullptr)),
         rand_seed);
     // Set the computed base fee on the block header
@@ -218,7 +219,6 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
     auto exec_result = execute_evm_transaction(decoded.txn, block, evm_state, config);
 
     auto tx_hash = decoded.txn.hash();
-    uint64_t bn = evm_state.block_number();
 
     // Store receipt
     StoredReceipt receipt;
@@ -259,8 +259,7 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
     stored_block.transaction_hashes.push_back(tx_hash);
 
     // Block hash = keccak256(block_number || parent_hash || timestamp)
-    auto parent = evm_state.get_block(bn - 1);
-    stored_block.parent_hash = parent ? parent->hash : evmc::bytes32{};
+    stored_block.parent_hash = parent_block ? parent_block->hash : evmc::bytes32{};
 
     // Compute block hash deterministically
     ethash::hash256 hash_input;
@@ -293,7 +292,7 @@ static RpcResult handle_get_transaction_receipt(const std::string& params, const
     evmc::bytes32 tx_hash;
     std::memcpy(tx_hash.bytes, hash_bytes.data(), 32);
 
-    const auto* receipt = global_evm_state().get_receipt(tx_hash);
+    auto receipt = global_evm_state().get_receipt_copy(tx_hash);
     if (!receipt) {
         return {make_result(id, "null"), false};
     }
@@ -574,9 +573,9 @@ static RpcResult handle_get_block_by_number(const std::string& params, const std
         else bn = parse_hex_uint64(bn_str);
     }
 
-    auto* blk = global_evm_state().get_block(bn);
-    if (blk) {
-        return {make_result(id, format_block_json(*blk)), false};
+    auto blk = global_evm_state().get_block_copy(bn);
+    if (global_evm_state().has_block(bn)) {
+        return {make_result(id, format_block_json(blk)), false};
     }
     return {make_result(id, format_empty_block_json(bn)), false};
 }
@@ -643,7 +642,7 @@ static RpcResult handle_get_transaction_by_hash(const std::string& params, const
     evmc::bytes32 tx_hash;
     std::memcpy(tx_hash.bytes, hash_bytes.data(), 32);
 
-    const auto* tx = global_evm_state().get_transaction(tx_hash);
+    auto tx = global_evm_state().get_transaction_copy(tx_hash);
     if (!tx) {
         return {make_result(id, "null"), false};
     }
@@ -719,7 +718,7 @@ static RpcResult handle_debug_trace_transaction(const std::string& params, const
     std::memcpy(tx_hash.bytes, hash_bytes.data(), 32);
 
     // Look up the stored transaction to re-execute with tracing
-    const auto* stored_tx = global_evm_state().get_transaction(tx_hash);
+    auto stored_tx = global_evm_state().get_transaction_copy(tx_hash);
     if (!stored_tx) {
         return {make_error(id, -32000, "transaction not found"), true};
     }
@@ -848,17 +847,17 @@ static RpcResult handle_get_block_receipts(const std::string& params, const std:
     }
 
     // Get the block to find its transaction hashes
-    auto* blk = global_evm_state().get_block(bn);
-    if (!blk) {
+    auto blk = global_evm_state().get_block_copy(bn);
+    if (!global_evm_state().has_block(bn)) {
         return {make_result(id, "[]"), false};
     }
 
     // Build receipts array
     std::string arr = "[";
-    for (size_t i = 0; i < blk->transaction_hashes.size(); ++i) {
+    for (size_t i = 0; i < blk.transaction_hashes.size(); ++i) {
         if (i > 0) arr += ",";
-        const auto& tx_hash = blk->transaction_hashes[i];
-        const auto* receipt = global_evm_state().get_receipt(tx_hash);
+        const auto& tx_hash = blk.transaction_hashes[i];
+        auto receipt = global_evm_state().get_receipt_copy(tx_hash);
         if (!receipt) continue;
 
         arr += "{";
@@ -872,7 +871,7 @@ static RpcResult handle_get_block_receipts(const std::string& params, const std:
         arr += "\"status\":" + to_hex_quantity(receipt->success ? uint64_t{1} : uint64_t{0}) + ",";
         arr += "\"logs\":[],";
         arr += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(i)) + ",";
-        arr += "\"blockHash\":" + to_hex_data(blk->hash.bytes, 32) + ",";
+        arr += "\"blockHash\":" + to_hex_data(blk.hash.bytes, 32) + ",";
         arr += "\"type\":\"0x0\"";
         arr += "}";
     }
@@ -909,11 +908,11 @@ static RpcResult handle_get_storage_at(const std::string& params, const std::str
         }
     }
 
-    auto acct = global_evm_state().state().read_account(addr);
+    auto acct = global_evm_state().read_account(addr);
     if (!acct) {
         return {make_result(id, "\"0x" + std::string(64, '0') + "\""), false};
     }
-    auto value = global_evm_state().state().read_storage(addr, acct->incarnation, slot);
+    auto value = global_evm_state().read_storage_copy(addr, acct->incarnation, slot);
     return {make_result(id, to_hex_data(value.bytes, 32)), false};
 }
 
@@ -937,11 +936,11 @@ static RpcResult handle_fee_history(const std::string& params, const std::string
         if (i > oldest) { gas_ratios += ","; rewards += ","; }
         if (i > oldest) base_fees += ",";
 
-        auto* blk = global_evm_state().get_block(i);
-        if (blk) {
-            base_fees += to_hex_quantity(blk->base_fee_per_gas);
-            double ratio = blk->gas_limit > 0
-                ? static_cast<double>(blk->gas_used) / blk->gas_limit : 0.0;
+        auto blk = global_evm_state().get_block_copy(i);
+        if (global_evm_state().has_block(i)) {
+            base_fees += to_hex_quantity(blk.base_fee_per_gas);
+            double ratio = blk.gas_limit > 0
+                ? static_cast<double>(blk.gas_used) / blk.gas_limit : 0.0;
             char ratio_buf[32];
             snprintf(ratio_buf, sizeof(ratio_buf), "%.6f", ratio);
             gas_ratios += ratio_buf;
@@ -952,11 +951,11 @@ static RpcResult handle_fee_history(const std::string& params, const std::string
         rewards += "[\"0x0\"]";
     }
     // One extra base fee for the next block
-    auto* last_blk = global_evm_state().get_block(newest);
+    auto last_blk = global_evm_state().get_block_copy(newest);
     intx::uint256 next_base_fee{kInitialBaseFee};
-    if (last_blk) {
-        next_base_fee = calc_base_fee(last_blk->base_fee_per_gas,
-                                       last_blk->gas_used, last_blk->gas_limit);
+    if (global_evm_state().has_block(newest)) {
+        next_base_fee = calc_base_fee(last_blk.base_fee_per_gas,
+                                       last_blk.gas_used, last_blk.gas_limit);
     }
     base_fees += "," + to_hex_quantity(next_base_fee);
     base_fees += "]";
@@ -985,9 +984,9 @@ static RpcResult handle_get_block_by_hash(const std::string& params, const std::
     evmc::bytes32 block_hash;
     std::memcpy(block_hash.bytes, hash_bytes.data(), 32);
 
-    auto* blk = global_evm_state().get_block_by_hash(block_hash);
-    if (blk) {
-        return {make_result(id, format_block_json(*blk)), false};
+    auto blk = global_evm_state().get_block_by_hash_copy(block_hash);
+    if (blk.number != 0 || blk.hash != evmc::bytes32{}) {
+        return {make_result(id, format_block_json(blk)), false};
     }
     return {make_result(id, "null"), false};
 }
@@ -1010,6 +1009,12 @@ static constexpr uint64_t kMaxFilterAgeSec = 900;  // 15 minutes
 static std::mutex g_filter_mutex;
 static uint64_t g_next_filter_id = 1;
 static std::unordered_map<uint64_t, FilterEntry> g_filters;
+
+void reset_evm_rpc_filter_state_for_test() {
+    std::lock_guard<std::mutex> lock(g_filter_mutex);
+    g_next_filter_id = 1;
+    g_filters.clear();
+}
 
 static void cleanup_expired_filters() {
     uint64_t now = static_cast<uint64_t>(std::time(nullptr));
