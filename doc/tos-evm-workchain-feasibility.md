@@ -596,16 +596,20 @@ Deliverables:
 
 ## Phase 4. Evaluate Advanced Features
 
-Status: **In Progress** (4/6)
+Status: **In Progress** (4/5)
 
-Candidates:
+Deliverables:
 
-- contract wallets
-- account abstraction
 - ✅ transaction validation (nonce check + balance check per Yellow Paper §6.2)
 - ✅ tracing (`debug_traceTransaction` with structLogs: pc, opcode, gas, gasCost, stack, depth)
 - ✅ cross-workchain bridging (deposit/withdrawal bridge: `evm-bridge.h/cpp`)
 - ✅ comprehensive gold test coverage (12 Silkworm test vectors: Value transfer, DELEGATECALL, EIP-684, EIP-3541, EIP-211, multi-block execution, precompiles)
+- WebSocket subscription API (`eth_subscribe` for newHeads, logs, pendingTransactions)
+
+Note: contract wallets / account abstraction (EIP-4337) does not require EVM-layer changes.
+EIP-4337 is an application-layer protocol implemented as a Solidity contract (EntryPoint)
+plus an off-chain Bundler service. Our EVM implementation already supports the opcodes and
+precompiles needed to run the EntryPoint contract.
 
 ## Proposed Acceptance Criteria for the Prototype
 
@@ -789,5 +793,4 @@ What works:
 What remains:
 - Live wallet test (MetaMask end-to-end on running node)
 - Deploy ConfigParam 12 on testnet
-- WebSocket subscription API (eth_subscribe)
-- Contract wallets / account abstraction (EIP-4337)
+- WebSocket subscription API (`eth_subscribe`)
