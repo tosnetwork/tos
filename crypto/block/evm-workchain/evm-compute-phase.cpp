@@ -7,6 +7,12 @@
 #include "evm-transaction.h"
 #include "evm-block-context.h"
 #include "evm-executor.h"
+#include "evm-state-root.h"
+#include "evm-incremental-trie.h"
+#include "evm-init.h"
+#include "evm-subscriptions.h"
+
+#include <ethash/keccak.hpp>
 
 #include "td/utils/logging.h"
 
@@ -85,6 +91,76 @@ bool run_evm_compute_phase(
 
     if (!exec_result.logs.empty()) {
         state.store_logs(block_seqno, tx_hash, exec_result.logs);
+    }
+
+    // --- Step 5b: Build and store block for RPC queries ---
+    // This ensures eth_getBlockByNumber returns real data for collator-produced blocks.
+    if (!state.has_block(block_seqno)) {
+        StoredBlock stored_block;
+        stored_block.number = block_seqno;
+        stored_block.timestamp = timestamp;
+        stored_block.gas_used = exec_result.gas_used;
+        stored_block.gas_limit = block.header.gas_limit;
+        stored_block.base_fee_per_gas = block.header.base_fee_per_gas.value_or(0);
+        stored_block.transaction_hashes.push_back(tx_hash);
+
+        // Parent hash
+        auto parent_num = block_seqno > 0 ? block_seqno - 1 : 0;
+        stored_block.parent_hash = state.get_block_hash(parent_num);
+
+        // Block hash = keccak256(block_number || parent_hash || timestamp)
+        uint8_t hash_input[32 + 32 + 8];
+        auto bn_be = intx::be::store<evmc::uint256be>(intx::uint256{block_seqno});
+        std::memcpy(hash_input, bn_be.bytes, 32);
+        std::memcpy(hash_input + 32, stored_block.parent_hash.bytes, 32);
+        uint64_t ts_be = __builtin_bswap64(timestamp);
+        std::memcpy(hash_input + 64, &ts_be, 8);
+        auto h = ethash::keccak256(hash_input, sizeof(hash_input));
+        std::memcpy(stored_block.hash.bytes, h.bytes, 32);
+
+        // Logs bloom
+        {
+            uint8_t bloom[256] = {};
+            for (const auto& log : exec_result.logs) {
+                auto ah = ethash::keccak256(log.address.bytes, 20);
+                for (int i = 0; i < 6; i += 2) {
+                    uint16_t bit = (static_cast<uint16_t>(ah.bytes[i]) << 8 | ah.bytes[i + 1]) & 0x7FF;
+                    bloom[bit / 8] |= (1 << (bit % 8));
+                }
+                for (const auto& topic : log.topics) {
+                    auto th = ethash::keccak256(topic.bytes, 32);
+                    for (int i = 0; i < 6; i += 2) {
+                        uint16_t bit = (static_cast<uint16_t>(th.bytes[i]) << 8 | th.bytes[i + 1]) & 0x7FF;
+                        bloom[bit / 8] |= (1 << (bit % 8));
+                    }
+                }
+            }
+            std::memcpy(stored_block.logs_bloom, bloom, 256);
+        }
+
+        // Ethereum-compatible MPT roots (for RPC)
+        stored_block.transactions_root = compute_transactions_root(
+            stored_block.transaction_hashes, state);
+        stored_block.receipts_root = compute_receipts_root(
+            stored_block.transaction_hashes, state);
+
+        // Incremental state root
+        {
+            std::unique_lock trie_lock(state.mutex());
+            stored_block.state_root = global_trie_calculator().compute_state_root(
+                state, &state.account_changes(), &state.storage_changes());
+            state.clear_change_tracking();
+        }
+
+        state.store_block(stored_block);
+
+        // Notify subscribers
+        auto& sub_mgr = global_subscription_manager();
+        sub_mgr.notify_new_head(stored_block);
+        sub_mgr.notify_new_pending_transaction(tx_hash);
+        if (!exec_result.logs.empty()) {
+            sub_mgr.notify_logs(block_seqno, tx_hash, exec_result.logs, stored_block.hash);
+        }
     }
 
     // --- Step 6: Map results back into the host-chain ComputePhase ---
