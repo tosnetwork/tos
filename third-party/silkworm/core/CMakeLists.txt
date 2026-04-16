@@ -93,10 +93,17 @@ endif()
 target_link_libraries(silkworm_core PRIVATE secp256k1_imported)
 target_include_directories(silkworm_core PRIVATE ${SECP256K1_INCLUDE_DIR})
 
-# libff (alt_bn128) is not available in the first slice — guard it out.
+# libff for alt_bn128 pairing + GMP for modexp
+if(TARGET ff)
+  target_link_libraries(silkworm_core PRIVATE ff)
+  message(STATUS "silkworm_core: libff + GMP enabled (full precompile support)")
+else()
+  target_compile_definitions(silkworm_core PRIVATE SILKWORM_NO_LIBFF=1)
+  message(STATUS "silkworm_core: libff not available (bn254 pairing/modexp stubbed)")
+endif()
+
 # nlohmann_json not available — guard JSON serialization.
 target_compile_definitions(silkworm_core PRIVATE
-  SILKWORM_NO_LIBFF=1
   SILKWORM_NO_JSON=1
 )
 

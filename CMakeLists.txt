@@ -311,6 +311,10 @@ if (NOT TOS_ONLY_TOSLIB)
   endfunction()
   evm_deps_scope()
 
+  # libff: finite field library for alt_bn128 pairing / modexp
+  message("Add libff (alt_bn128 precompiles)")
+  add_subdirectory(third-party/libff EXCLUDE_FROM_ALL)
+
   # silkworm-core: Ethereum execution types, state, EVM wrapper
   message("Add silkworm-core (Ethereum execution engine)")
   add_subdirectory(third-party/silkworm/core EXCLUDE_FROM_ALL)
