@@ -2,7 +2,7 @@
 
 The Open System (TOS) is a multichain blockchain system built around a tightly integrated node, operator, wallet, and API surface.
 
-TOS keeps the original strengths of the TON architecture such as workchains, shardchains, message-driven execution, and high-throughput design, while reorganizing the product around clearer standards, stronger operator workflows, and a more coherent developer experience.
+TOS is built around workchains, shardchains, message-driven execution, and high-throughput design, while organizing the product around clearer standards, stronger operator workflows, and a more coherent developer experience.
 
 The project direction is simple:
 
@@ -54,14 +54,6 @@ TOS is organized around a few core principles:
 - External users should see an integrated system, not a collection of loosely connected tools.
 
 At the protocol level, TOS continues to build on a multichain model with heterogeneous execution domains. That includes the TVM-based base system and an explicit design path for an EVM workchain.
-
-## Repository Highlights
-
-- [`validator-engine`](validator-engine) — node runtime, consensus, networking, and embedded JSON-RPC
-- [`tosctl`](tosctl) — canonical operator CLI and automation surface
-- [`doc/`](doc) — product, standards, architecture, roadmap, and protocol-adjacent documentation
-- [`rldp-http-proxy`](rldp-http-proxy) — TOS Sites / RLDP-facing HTTP proxy tooling
-- [`BUILD.md`](BUILD.md) — build instructions
 
 ## Build
 
