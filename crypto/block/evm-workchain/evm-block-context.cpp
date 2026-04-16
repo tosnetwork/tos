@@ -65,4 +65,35 @@ const silkworm::ChainConfig& evm_chain_config() noexcept {
     return config;
 }
 
+intx::uint256 calc_base_fee(
+    const intx::uint256& parent_base_fee,
+    uint64_t parent_gas_used,
+    uint64_t parent_gas_limit) {
+
+    if (parent_base_fee == 0) {
+        return intx::uint256{kInitialBaseFee};
+    }
+
+    const uint64_t parent_gas_target = parent_gas_limit / kElasticityMultiplier;
+
+    if (parent_gas_used == parent_gas_target) {
+        return parent_base_fee;
+    }
+
+    if (parent_gas_used > parent_gas_target) {
+        const intx::uint256 gas_used_delta{parent_gas_used - parent_gas_target};
+        intx::uint256 delta = parent_base_fee * gas_used_delta / parent_gas_target / kBaseFeeMaxChangeDenominator;
+        if (delta < 1) delta = 1;
+        return parent_base_fee + delta;
+    }
+
+    // parent_gas_used < parent_gas_target
+    const intx::uint256 gas_used_delta{parent_gas_target - parent_gas_used};
+    intx::uint256 delta = parent_base_fee * gas_used_delta / parent_gas_target / kBaseFeeMaxChangeDenominator;
+    if (parent_base_fee > delta) {
+        return parent_base_fee - delta;
+    }
+    return 0;
+}
+
 }  // namespace evm_workchain

@@ -20,6 +20,7 @@
 #include "evm-transaction.h"
 
 #include <silkworm/core/common/util.hpp>
+#include <ethash/keccak.hpp>
 #include <silkworm/core/types/address.hpp>
 #include <intx/intx.hpp>
 
@@ -134,8 +135,15 @@ static RpcResult handle_block_number(const std::string& id) {
 }
 
 static RpcResult handle_gas_price(const std::string& id) {
-    // Simple fixed gas price: 1 gwei
-    return {make_result(id, to_hex_quantity(uint64_t{1'000'000'000})), false};
+    // Return current base fee + suggested priority fee (1 gwei)
+    auto* latest = global_evm_state().get_block(global_evm_state().block_number());
+    intx::uint256 base_fee{kInitialBaseFee};
+    if (latest) {
+        base_fee = calc_base_fee(latest->base_fee_per_gas,
+                                  latest->gas_used, latest->gas_limit);
+    }
+    intx::uint256 suggested = base_fee + intx::uint256{1'000'000'000};  // base + 1 gwei priority
+    return {make_result(id, to_hex_quantity(suggested)), false};
 }
 
 static RpcResult handle_get_balance(const std::string& params, const std::string& id) {
@@ -187,11 +195,22 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
     auto& evm_state = global_evm_state();
     evm_state.increment_block_number();
 
+    // Compute EIP-1559 base fee from parent block
+    intx::uint256 base_fee{kInitialBaseFee};
+    auto* parent_blk = evm_state.get_block(evm_state.block_number() - 1);
+    if (parent_blk) {
+        base_fee = calc_base_fee(parent_blk->base_fee_per_gas,
+                                  parent_blk->gas_used,
+                                  parent_blk->gas_limit);
+    }
+
     uint8_t rand_seed[32] = {};
     auto block = make_evm_block(
         evm_state.block_number(),
         static_cast<uint64_t>(std::time(nullptr)),
         rand_seed);
+    // Set the computed base fee on the block header
+    block.header.base_fee_per_gas = base_fee;
     const auto& config = evm_chain_config();
 
     auto exec_result = execute_evm_transaction(decoded.txn, block, evm_state, config);
@@ -229,12 +248,27 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
         evm_state.store_logs(bn, tx_hash, exec_result.logs);
     }
 
-    // Store block hash for BLOCKHASH opcode
-    // Use keccak of (block_number || timestamp) as a simple block hash
-    evmc::bytes32 block_hash{};
-    auto bn_bytes = intx::be::store<evmc::uint256be>(intx::uint256{bn});
-    std::memcpy(block_hash.bytes, bn_bytes.bytes, 32);  // simplified: hash = padded block number
-    evm_state.store_block_hash(bn, block_hash);
+    // Build and store the block
+    StoredBlock stored_block;
+    stored_block.number = bn;
+    stored_block.timestamp = static_cast<uint64_t>(std::time(nullptr));
+    stored_block.gas_used = exec_result.gas_used;
+    stored_block.base_fee_per_gas = base_fee;
+    stored_block.transaction_hashes.push_back(tx_hash);
+
+    // Block hash = keccak256(block_number || parent_hash || timestamp)
+    auto parent = evm_state.get_block(bn - 1);
+    stored_block.parent_hash = parent ? parent->hash : evmc::bytes32{};
+
+    // Compute block hash deterministically
+    ethash::hash256 hash_input;
+    auto bn_be = intx::be::store<evmc::uint256be>(intx::uint256{bn});
+    std::memcpy(hash_input.bytes, bn_be.bytes, 32);
+    stored_block.hash = evmc::bytes32{};
+    auto h = ethash::keccak256(reinterpret_cast<const uint8_t*>(&bn_be), 32);
+    std::memcpy(stored_block.hash.bytes, h.bytes, 32);
+
+    evm_state.store_block(stored_block);
 
     return {make_result(id, to_hex_data(tx_hash.bytes, 32)), false};
 }
@@ -461,21 +495,67 @@ static RpcResult handle_client_version(const std::string& id) {
     return {make_result(id, "\"evm-workchain/0.1.0\""), false};
 }
 
-static RpcResult handle_get_block_by_number(const std::string& /*params*/, const std::string& id) {
-    auto bn = global_evm_state().block_number();
-    // Minimal block object — enough for wallets to not error.
-    std::string block_json = "{";
-    block_json += "\"number\":" + to_hex_quantity(bn) + ",";
-    block_json += "\"hash\":\"0x" + std::string(64, '0') + "\",";
-    block_json += "\"parentHash\":\"0x" + std::string(64, '0') + "\",";
-    block_json += "\"timestamp\":" + to_hex_quantity(static_cast<uint64_t>(std::time(nullptr))) + ",";
-    block_json += "\"gasLimit\":" + to_hex_quantity(uint64_t{30000000}) + ",";
-    block_json += "\"gasUsed\":" + to_hex_quantity(uint64_t{0}) + ",";
-    block_json += "\"miner\":\"0x" + std::string(40, '0') + "\",";
-    block_json += "\"baseFeePerGas\":" + to_hex_quantity(uint64_t{0}) + ",";
-    block_json += "\"transactions\":[]";
-    block_json += "}";
-    return {make_result(id, block_json), false};
+static std::string format_block_json(const StoredBlock& blk) {
+    std::string r = "{";
+    r += "\"number\":" + to_hex_quantity(blk.number) + ",";
+    r += "\"hash\":" + to_hex_data(blk.hash.bytes, 32) + ",";
+    r += "\"parentHash\":" + to_hex_data(blk.parent_hash.bytes, 32) + ",";
+    r += "\"timestamp\":" + to_hex_quantity(blk.timestamp) + ",";
+    r += "\"gasLimit\":" + to_hex_quantity(blk.gas_limit) + ",";
+    r += "\"gasUsed\":" + to_hex_quantity(blk.gas_used) + ",";
+    r += "\"miner\":" + to_hex_addr(blk.miner) + ",";
+    r += "\"baseFeePerGas\":" + to_hex_quantity(blk.base_fee_per_gas) + ",";
+    r += "\"nonce\":\"0x0000000000000000\",";
+    r += "\"difficulty\":\"0x0\",";
+    r += "\"totalDifficulty\":\"0x0\",";
+    r += "\"extraData\":\"0x\",";
+    r += "\"size\":\"0x0\",";
+    r += "\"mixHash\":\"0x" + std::string(64, '0') + "\",";
+    r += "\"stateRoot\":\"0x" + std::string(64, '0') + "\",";
+    r += "\"transactionsRoot\":\"0x" + std::string(64, '0') + "\",";
+    r += "\"receiptsRoot\":\"0x" + std::string(64, '0') + "\",";
+    r += "\"logsBloom\":\"0x" + std::string(512, '0') + "\",";
+    r += "\"sha3Uncles\":\"0x" + std::string(64, '0') + "\",";
+    r += "\"uncles\":[],";
+    r += "\"transactions\":[";
+    for (size_t i = 0; i < blk.transaction_hashes.size(); ++i) {
+        if (i > 0) r += ",";
+        r += to_hex_data(blk.transaction_hashes[i].bytes, 32);
+    }
+    r += "]}";
+    return r;
+}
+
+static std::string format_empty_block_json(uint64_t bn) {
+    StoredBlock blk;
+    blk.number = bn;
+    blk.timestamp = static_cast<uint64_t>(std::time(nullptr));
+    return format_block_json(blk);
+}
+
+static RpcResult handle_get_block_by_number(const std::string& params, const std::string& id) {
+    uint64_t bn = global_evm_state().block_number();
+
+    // Parse block number from params
+    std::string bn_str = extract_json_string_value(params, "");
+    if (bn_str.empty()) {
+        // Try array format: ["0x1", false]
+        auto pos = params.find("0x");
+        if (pos != std::string::npos) {
+            auto end = params.find_first_of("\",]}", pos);
+            bn_str = params.substr(pos, end - pos);
+        }
+    }
+    if (!bn_str.empty() && bn_str != "latest" && bn_str != "pending") {
+        if (bn_str == "earliest") bn = 0;
+        else bn = parse_hex_uint64(bn_str);
+    }
+
+    auto* blk = global_evm_state().get_block(bn);
+    if (blk) {
+        return {make_result(id, format_block_json(*blk)), false};
+    }
+    return {make_result(id, format_empty_block_json(bn)), false};
 }
 
 static RpcResult handle_get_logs(const std::string& params, const std::string& id) {
@@ -605,15 +685,57 @@ static RpcResult handle_get_storage_at(const std::string& params, const std::str
     return {make_result(id, to_hex_data(value.bytes, 32)), false};
 }
 
-static RpcResult handle_fee_history(const std::string& /*params*/, const std::string& id) {
-    // Simplified: return minimal fee history that MetaMask accepts.
-    // baseFeePerGas = [0, 0], gasUsedRatio = [0], reward = [[0]]
-    auto bn = global_evm_state().block_number();
+static RpcResult handle_fee_history(const std::string& params, const std::string& id) {
+    // Parse block count from params: [blockCount, newestBlock, rewardPercentiles]
+    uint64_t block_count = 1;
+    auto pos = params.find("0x");
+    if (pos != std::string::npos) {
+        block_count = std::max(uint64_t{1}, parse_hex_uint64(params.substr(pos)));
+    }
+    if (block_count > 1024) block_count = 1024;
+
+    uint64_t newest = global_evm_state().block_number();
+    uint64_t oldest = newest >= block_count ? newest - block_count + 1 : 0;
+
+    std::string base_fees = "[";
+    std::string gas_ratios = "[";
+    std::string rewards = "[";
+
+    for (uint64_t i = oldest; i <= newest; ++i) {
+        if (i > oldest) { gas_ratios += ","; rewards += ","; }
+        if (i > oldest) base_fees += ",";
+
+        auto* blk = global_evm_state().get_block(i);
+        if (blk) {
+            base_fees += to_hex_quantity(blk->base_fee_per_gas);
+            double ratio = blk->gas_limit > 0
+                ? static_cast<double>(blk->gas_used) / blk->gas_limit : 0.0;
+            char ratio_buf[32];
+            snprintf(ratio_buf, sizeof(ratio_buf), "%.6f", ratio);
+            gas_ratios += ratio_buf;
+        } else {
+            base_fees += to_hex_quantity(intx::uint256{kInitialBaseFee});
+            gas_ratios += "0";
+        }
+        rewards += "[\"0x0\"]";
+    }
+    // One extra base fee for the next block
+    auto* last_blk = global_evm_state().get_block(newest);
+    intx::uint256 next_base_fee{kInitialBaseFee};
+    if (last_blk) {
+        next_base_fee = calc_base_fee(last_blk->base_fee_per_gas,
+                                       last_blk->gas_used, last_blk->gas_limit);
+    }
+    base_fees += "," + to_hex_quantity(next_base_fee);
+    base_fees += "]";
+    gas_ratios += "]";
+    rewards += "]";
+
     std::string r = "{";
-    r += "\"oldestBlock\":" + to_hex_quantity(bn > 0 ? bn - 1 : 0) + ",";
-    r += "\"baseFeePerGas\":[\"0x0\",\"0x0\"],";
-    r += "\"gasUsedRatio\":[0],";
-    r += "\"reward\":[[\"0x0\"]]";
+    r += "\"oldestBlock\":" + to_hex_quantity(oldest) + ",";
+    r += "\"baseFeePerGas\":" + base_fees + ",";
+    r += "\"gasUsedRatio\":" + gas_ratios + ",";
+    r += "\"reward\":" + rewards;
     r += "}";
     return {make_result(id, r), false};
 }
@@ -623,21 +745,19 @@ static RpcResult handle_max_priority_fee(const std::string& id) {
     return {make_result(id, to_hex_quantity(uint64_t{1'000'000'000})), false};
 }
 
-static RpcResult handle_get_block_by_hash(const std::string& /*params*/, const std::string& id) {
-    // Simplified: return same minimal block as getBlockByNumber
-    auto bn = global_evm_state().block_number();
-    std::string block_json = "{";
-    block_json += "\"number\":" + to_hex_quantity(bn) + ",";
-    block_json += "\"hash\":\"0x" + std::string(64, '0') + "\",";
-    block_json += "\"parentHash\":\"0x" + std::string(64, '0') + "\",";
-    block_json += "\"timestamp\":" + to_hex_quantity(static_cast<uint64_t>(std::time(nullptr))) + ",";
-    block_json += "\"gasLimit\":" + to_hex_quantity(uint64_t{30000000}) + ",";
-    block_json += "\"gasUsed\":" + to_hex_quantity(uint64_t{0}) + ",";
-    block_json += "\"miner\":\"0x" + std::string(40, '0') + "\",";
-    block_json += "\"baseFeePerGas\":\"0x0\",";
-    block_json += "\"transactions\":[]";
-    block_json += "}";
-    return {make_result(id, block_json), false};
+static RpcResult handle_get_block_by_hash(const std::string& params, const std::string& id) {
+    silkworm::Bytes hash_bytes;
+    if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
+        return {make_result(id, "null"), false};
+    }
+    evmc::bytes32 block_hash;
+    std::memcpy(block_hash.bytes, hash_bytes.data(), 32);
+
+    auto* blk = global_evm_state().get_block_by_hash(block_hash);
+    if (blk) {
+        return {make_result(id, format_block_json(*blk)), false};
+    }
+    return {make_result(id, "null"), false};
 }
 
 // Filter IDs are simple incrementing integers

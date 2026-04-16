@@ -48,4 +48,23 @@ silkworm::Block make_evm_block(
 /// chain provides finality.
 const silkworm::ChainConfig& evm_chain_config() noexcept;
 
+// --- EIP-1559 base fee calculation ---
+
+/// EIP-1559 constants for the EVM workchain.
+constexpr uint64_t kInitialBaseFee = 1'000'000'000;         // 1 gwei
+constexpr uint64_t kBaseFeeMaxChangeDenominator = 8;
+constexpr uint64_t kElasticityMultiplier = 2;
+
+/// Calculate the expected base fee for the next block given the parent block's
+/// gas usage. Follows the EIP-1559 formula.
+///
+/// @param parent_base_fee   Base fee of the parent block (0 for genesis).
+/// @param parent_gas_used   Gas used in the parent block.
+/// @param parent_gas_limit  Gas limit of the parent block.
+/// @return                  Expected base fee for the next block.
+intx::uint256 calc_base_fee(
+    const intx::uint256& parent_base_fee,
+    uint64_t parent_gas_used,
+    uint64_t parent_gas_limit);
+
 }  // namespace evm_workchain

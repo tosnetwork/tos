@@ -52,6 +52,19 @@ struct StoredTransaction {
     uint32_t tx_index{0};
 };
 
+/// Stored block header for eth_getBlockByNumber / eth_getBlockByHash.
+struct StoredBlock {
+    uint64_t number{0};
+    evmc::bytes32 hash;
+    evmc::bytes32 parent_hash;
+    uint64_t timestamp{0};
+    uint64_t gas_limit{30'000'000};
+    uint64_t gas_used{0};
+    evmc::address miner;
+    intx::uint256 base_fee_per_gas;
+    std::vector<evmc::bytes32> transaction_hashes;
+};
+
 /// Log entry with block metadata for eth_getLogs.
 struct IndexedLog {
     uint64_t block_number;
@@ -89,8 +102,10 @@ class EvmState {
     void set_block_number(uint64_t n) noexcept { block_number_ = n; }
     void increment_block_number() noexcept { ++block_number_; }
 
-    /// --- Block hash history (for BLOCKHASH opcode) ---
-    void store_block_hash(uint64_t block_num, const evmc::bytes32& hash);
+    /// --- Block chain ---
+    void store_block(const StoredBlock& block);
+    const StoredBlock* get_block(uint64_t block_num) const;
+    const StoredBlock* get_block_by_hash(const evmc::bytes32& hash) const;
     evmc::bytes32 get_block_hash(uint64_t block_num) const;
 
     /// --- Receipt storage ---
@@ -121,7 +136,8 @@ class EvmState {
 
     std::unordered_map<evmc::bytes32, StoredReceipt> receipts_;
     std::unordered_map<evmc::bytes32, StoredTransaction> transactions_;
-    std::map<uint64_t, evmc::bytes32> block_hashes_;               // block_num → hash
+    std::map<uint64_t, StoredBlock> blocks_;                       // block_num → block
+    std::unordered_map<evmc::bytes32, uint64_t> hash_to_block_;    // block_hash → block_num
     std::map<uint64_t, std::vector<IndexedLog>> block_logs_;       // block_num → logs
 };
 

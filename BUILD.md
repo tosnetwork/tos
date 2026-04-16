@@ -1,18 +1,16 @@
 # Build
 
-This document describes the Linux build flow that was verified in this repository on Ubuntu 22.04.
+This document describes the build flow verified on Ubuntu 22.04.
 
 ## Verified Environment
 
 - OS: Ubuntu 22.04
-- Generator: `Ninja`
-- Build system: `CMake`
-- Compiler: `clang-21` / `clang++-21`
-- Build directory: out-of-source, for example `build-clang21`
+- Generator: `Ninja` or `Make`
+- Build system: `CMake` 3.16+
+- Compiler: `clang-21` / `clang++-21` (auto-detected by CMakeLists)
+- Build directory: out-of-source
 
 ## Install Dependencies
-
-Install the base toolchain and libraries:
 
 ```bash
 sudo apt update
@@ -35,6 +33,7 @@ sudo apt install -y \
   libblas-dev \
   libgslcblas0 \
   libjemalloc-dev \
+  libgmp-dev \
   gawk \
   wget \
   lsb-release \
@@ -42,7 +41,7 @@ sudo apt install -y \
   gnupg
 ```
 
-Install `clang-21` if it is not already available:
+Install `clang-21` if not already available:
 
 ```bash
 cd /tmp
@@ -52,7 +51,7 @@ chmod +x llvm.sh
 sudo ./llvm.sh 21
 ```
 
-Verify the compiler:
+Verify:
 
 ```bash
 clang-21 --version
@@ -61,81 +60,105 @@ clang++-21 --version
 
 ## Configure
 
-Always use an out-of-source build:
+The build system auto-detects clang if available. No need to specify the compiler explicitly.
 
 ```bash
 cd /path/to/tos
-rm -rf build-clang21
-mkdir -p build-clang21
-cd build-clang21
+mkdir -p build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+```
 
-cmake .. \
-  -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release \
+If you want to use a specific compiler:
+
+```bash
+cmake .. -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER=clang-21 \
   -DCMAKE_CXX_COMPILER=clang++-21
 ```
 
 ## Build
 
-This project builds successfully with `clang-21`.
-
-Example with a fixed parallelism of `128` jobs:
-
 ```bash
-cd /path/to/tos/build-clang21
-ninja -j128
+cd build
+make -j$(nproc)
 ```
 
-If you want to size parallelism to the machine, using about two thirds of CPU threads is a reasonable default:
+Or with Ninja:
 
 ```bash
-JOBS=$(( $(nproc) * 2 / 3 ))
-cd /path/to/tos/build-clang21
-ninja -j"${JOBS}"
+cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release
+ninja -j$(nproc)
 ```
 
-## Test
+## EVM Workchain Tests
 
-List available tests:
+Run the EVM workchain test suite (10 tests):
 
 ```bash
-cd /path/to/tos/build-clang21
-ctest -N
+cd build
+./crypto/block/evm-workchain/test-evm-executor
 ```
 
-Run the test suite:
+Expected output: `All tests passed.`
+
+Tests cover:
+- ETH value transfer
+- Contract CREATE and CALL with SSTORE/SLOAD
+- 28 eth_* RPC methods including eth_call and eth_estimateGas
+- secp256k1 signed transaction (full RLP encode → decode → sender recovery → execute)
+- Persistent state (RocksDB write → close → reopen → read)
+- ConfigParam 12 WorkchainDescr TLB validation
+- bn254 ecadd precompile (G+G = correct 2*G)
+- Deterministic replay (same tx sequence → identical state)
+- Event LOG emission and log indexing
+
+## Full Test Suite
 
 ```bash
-cd /path/to/tos/build-clang21
-ctest --output-on-failure -j128
+cd build
+ctest --output-on-failure -j$(nproc)
 ```
 
-Or use the same two-thirds parallelism rule:
+## Wallet Integration Test
+
+With the node running (validator-engine with `--json-rpc`):
 
 ```bash
-JOBS=$(( $(nproc) * 2 / 3 ))
-cd /path/to/tos/build-clang21
-ctest --output-on-failure -j"${JOBS}"
+node test/evm-workchain/wallet-test.js http://127.0.0.1:8081
 ```
 
-## Verified Result
+Tests 16 RPC methods that MetaMask probes during connection.
 
-The following flow was verified successfully in this repository:
+## Dependencies
 
-```bash
-cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21
-ninja -j128
-ctest --output-on-failure -j128
-```
+### System packages
 
-Observed result:
+| Package | Purpose |
+|---------|---------|
+| `libgmp-dev` | GMP big integer library (modexp precompile, libff) |
+| `libreadline-dev` | Fift/FunC interactive tools |
+| `libjemalloc-dev` | Optional memory allocator |
 
-- Build: success
-- Tests: `31/31` passed
+### Vendored third-party (no external downloads needed)
 
-## Notes
+| Directory | Source | Purpose |
+|-----------|--------|---------|
+| `third-party/evmone/` | erigontech/evmone | EVM bytecode execution (evmone 0.11.0) |
+| `third-party/intx/` | chfast/intx | 256-bit integer arithmetic |
+| `third-party/ethash/` | chfast/ethash | Keccak hashing |
+| `third-party/silkworm/core/` | erigontech/silkworm | Ethereum types, RLP, state, execution |
+| `third-party/libff/` | erigontech/libff | alt_bn128 pairing (ecpairing precompile) |
+| `third-party/compat/` | local | Shims for magic_enum, GSL, tl-expected, nlohmann_json |
+| `third-party/rocksdb/` | facebook/rocksdb | Key-value storage (original dependency) |
+| `third-party/secp256k1/` | bitcoin-core/secp256k1 | ECDSA signature recovery (original dependency) |
+| `third-party/blst/` | supranational/blst | BLS/bn254 elliptic curve (original dependency) |
 
-- The build downloads or builds several bundled dependencies from `third-party` during configuration and compilation.
-- `clang-14` was not sufficient for this tree; `clang-21` was used for the verified build.
-- If you have already modified branding or file names in the source tree, keep include paths and Fift library names consistent before building.
+All vendored code is physically embedded — no git submodules, no external fetching during build.
+
+## Compiler Notes
+
+- **clang 21+**: Recommended. The CMakeLists auto-detects and prefers clang.
+- **GCC 11**: Not supported. C++20 coroutine bug (`co_return {}` ambiguity).
+- **GCC 12**: Not supported. Same coroutine issue + constexpr bug.
+- **GCC 15**: Partial. Coroutine fix applied (`co_return td::Unit{}`), but has template strictness issues in upstream modules.

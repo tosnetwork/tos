@@ -31,19 +31,33 @@ uint64_t EvmState::get_nonce(const evmc::address& addr) const {
     return acct ? acct->nonce : 0;
 }
 
-// --- Block hash history ---
+// --- Block chain ---
 
-void EvmState::store_block_hash(uint64_t block_num, const evmc::bytes32& hash) {
-    block_hashes_[block_num] = hash;
-    // Keep only the last 256 block hashes (EVM BLOCKHASH spec)
-    while (block_hashes_.size() > 256) {
-        block_hashes_.erase(block_hashes_.begin());
+void EvmState::store_block(const StoredBlock& block) {
+    blocks_[block.number] = block;
+    hash_to_block_[block.hash] = block.number;
+    // Keep only last 256 blocks for BLOCKHASH
+    while (blocks_.size() > 256) {
+        auto oldest = blocks_.begin();
+        hash_to_block_.erase(oldest->second.hash);
+        blocks_.erase(oldest);
     }
 }
 
+const StoredBlock* EvmState::get_block(uint64_t block_num) const {
+    auto it = blocks_.find(block_num);
+    return it != blocks_.end() ? &it->second : nullptr;
+}
+
+const StoredBlock* EvmState::get_block_by_hash(const evmc::bytes32& hash) const {
+    auto it = hash_to_block_.find(hash);
+    if (it == hash_to_block_.end()) return nullptr;
+    return get_block(it->second);
+}
+
 evmc::bytes32 EvmState::get_block_hash(uint64_t block_num) const {
-    auto it = block_hashes_.find(block_num);
-    return it != block_hashes_.end() ? it->second : evmc::bytes32{};
+    auto blk = get_block(block_num);
+    return blk ? blk->hash : evmc::bytes32{};
 }
 
 // --- Receipt storage ---
