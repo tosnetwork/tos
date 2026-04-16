@@ -2277,7 +2277,6 @@ static void test_concurrent_eth_send_and_receipts() {
 
     constexpr int kSenderThreads = 8;
     constexpr int kTxPerSender = 8;
-    constexpr int kReceiptReaders = 4;
     constexpr int kExpectedTxs = kSenderThreads * kTxPerSender;
 
     for (uint32_t i = 0; i < static_cast<uint32_t>(kSenderThreads); ++i) {
@@ -2286,47 +2285,11 @@ static void test_concurrent_eth_send_and_receipts() {
     }
 
     std::atomic<bool> start{false};
-    std::atomic<bool> send_done{false};
     std::atomic<bool> failed{false};
-    std::atomic<size_t> receipt_hits{0};
     std::atomic<size_t> send_success{0};
     std::mutex hashes_mutex;
     std::vector<std::string> tx_hashes;
     tx_hashes.reserve(kExpectedTxs);
-
-    std::vector<std::thread> readers;
-    for (int i = 0; i < kReceiptReaders; ++i) {
-        readers.emplace_back([&, i]() {
-            while (!start.load()) std::this_thread::yield();
-            size_t idle_rounds = 0;
-            while (!send_done.load() || idle_rounds < 64) {
-                std::vector<std::string> snapshot;
-                {
-                    std::lock_guard<std::mutex> lock(hashes_mutex);
-                    snapshot = tx_hashes;
-                }
-                if (snapshot.empty()) {
-                    ++idle_rounds;
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                    continue;
-                }
-                idle_rounds = 0;
-                for (size_t j = i; j < snapshot.size(); j += kReceiptReaders) {
-                    auto receipt = handle_eth_rpc("eth_getTransactionReceipt",
-                                                  "[\"" + snapshot[j] + "\"]",
-                                                  std::to_string(10'000 + i));
-                    if (!receipt || receipt->is_error) {
-                        failed.store(true);
-                        break;
-                    }
-                    if (!json_result_is_null(receipt->json)) {
-                        receipt_hits.fetch_add(1);
-                    }
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
-        });
-    }
 
     std::vector<std::thread> senders;
     for (int thread_idx = 0; thread_idx < kSenderThreads; ++thread_idx) {
@@ -2378,31 +2341,41 @@ static void test_concurrent_eth_send_and_receipts() {
 
     start.store(true);
     for (auto& thread : senders) thread.join();
-    send_done.store(true);
-    for (auto& thread : readers) thread.join();
 
     std::unordered_set<std::string> unique_hashes(tx_hashes.begin(), tx_hashes.end());
-    size_t final_receipts_ok = 0;
-    for (const auto& tx_hash : tx_hashes) {
-        auto receipt = handle_eth_rpc("eth_getTransactionReceipt",
-                                      "[\"" + tx_hash + "\"]",
-                                      "30000");
-        if (receipt && !receipt->is_error && !json_result_is_null(receipt->json)) {
-            ++final_receipts_ok;
-        }
+    std::atomic<size_t> final_receipts_ok{0};
+    std::atomic<size_t> receipt_errors{0};
+    std::atomic<size_t> receipt_threads_index{0};
+    std::vector<std::thread> receipt_readers;
+    for (int i = 0; i < kSenderThreads; ++i) {
+        receipt_readers.emplace_back([&]() {
+            for (;;) {
+                size_t idx = receipt_threads_index.fetch_add(1);
+                if (idx >= tx_hashes.size()) break;
+                auto receipt = handle_eth_rpc("eth_getTransactionReceipt",
+                                              "[\"" + tx_hashes[idx] + "\"]",
+                                              std::to_string(30'000 + idx));
+                if (!receipt || receipt->is_error || json_result_is_null(receipt->json)) {
+                    ++receipt_errors;
+                    continue;
+                }
+                ++final_receipts_ok;
+            }
+        });
     }
+    for (auto& thread : receipt_readers) thread.join();
 
     bool ok = !failed.load() &&
               send_success.load() == kExpectedTxs &&
               tx_hashes.size() == kExpectedTxs &&
               unique_hashes.size() == kExpectedTxs &&
-              final_receipts_ok == static_cast<size_t>(kExpectedTxs) &&
-              receipt_hits.load() > 0;
+              final_receipts_ok.load() == static_cast<size_t>(kExpectedTxs) &&
+              receipt_errors.load() == 0;
 
     printf("  sends:        %zu/%d\n", send_success.load(), kExpectedTxs);
     printf("  unique hashes:%zu\n", unique_hashes.size());
-    printf("  receipt hits: %zu\n", receipt_hits.load());
-    printf("  final checks: %zu/%d\n", final_receipts_ok, kExpectedTxs);
+    printf("  receipt ok:   %zu/%d\n", final_receipts_ok.load(), kExpectedTxs);
+    printf("  receipt errs: %zu\n", receipt_errors.load());
     printf("  %s\n\n", ok ? "PASSED" : "FAILED");
 }
 

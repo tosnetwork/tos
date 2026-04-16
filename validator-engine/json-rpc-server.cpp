@@ -22,43 +22,6 @@
 
 namespace tos {
 
-void JsonRpcServer::erase_cache_entry(std::unordered_map<std::string, CacheEntry>::iterator it) {
-  cache_body_bytes_ -= it->second.size_bytes;
-  cache_lru_.erase(it->second.lru_it);
-  cache_.erase(it);
-}
-
-void JsonRpcServer::touch_cache_entry(std::unordered_map<std::string, CacheEntry>::iterator it) {
-  cache_lru_.splice(cache_lru_.begin(), cache_lru_, it->second.lru_it);
-}
-
-void JsonRpcServer::evict_expired_cache_entries() {
-  auto it = cache_.begin();
-  while (it != cache_.end()) {
-    if (it->second.expires_at.is_in_past()) {
-      auto erase_it = it++;
-      erase_cache_entry(erase_it);
-    } else {
-      ++it;
-    }
-  }
-}
-
-void JsonRpcServer::evict_cache_to_budget() {
-  while ((opts_.cache_max_entries > 0 && cache_.size() > opts_.cache_max_entries) ||
-         (opts_.cache_max_body_bytes > 0 && cache_body_bytes_ > opts_.cache_max_body_bytes)) {
-    if (cache_lru_.empty()) {
-      break;
-    }
-    auto it = cache_.find(cache_lru_.back());
-    if (it == cache_.end()) {
-      cache_lru_.pop_back();
-      continue;
-    }
-    erase_cache_entry(it);
-  }
-}
-
 // ─── URL-decode + query-string → JSON helpers (for REST GET endpoints) ────
 
 static int hex_digit(char c) {
@@ -196,56 +159,13 @@ td::actor::ActorOwn<JsonRpcServer> JsonRpcServer::create(
 JsonRpcServer::JsonRpcServer(
     td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager,
     Options options)
-    : validator_manager_(std::move(validator_manager)), opts_(std::move(options)) {
+    : validator_manager_(std::move(validator_manager)),
+      opts_(std::move(options)),
+      cache_(opts_.cache_max_entries, opts_.cache_max_body_bytes) {
   // Arm periodic cache cleanup if caching is enabled
   if (opts_.cache_ttl > 0) {
     alarm_timestamp() = td::Timestamp::in(10.0);
   }
-}
-
-void JsonRpcServer::cache_store_for_test(const std::string& key, std::string response_json,
-                                         td::int32 ttl_seconds) {
-  evict_expired_cache_entries();
-  if (opts_.cache_max_body_bytes > 0 && response_json.size() > opts_.cache_max_body_bytes) {
-    return;
-  }
-  auto cache_it = cache_.find(key);
-  if (cache_it != cache_.end()) {
-    erase_cache_entry(cache_it);
-  }
-  cache_lru_.push_front(key);
-  cache_body_bytes_ += response_json.size();
-  cache_.emplace(key, CacheEntry{std::move(response_json),
-                                 td::Timestamp::in(static_cast<double>(ttl_seconds)),
-                                 cache_lru_.front().size(),
-                                 cache_lru_.begin()});
-  auto inserted_it = cache_.find(key);
-  inserted_it->second.size_bytes = inserted_it->second.response_json.size();
-  evict_cache_to_budget();
-}
-
-std::optional<std::string> JsonRpcServer::cache_lookup_for_test(const std::string& key) {
-  evict_expired_cache_entries();
-  auto it = cache_.find(key);
-  if (it == cache_.end() || it->second.expires_at.is_in_past()) {
-    return std::nullopt;
-  }
-  touch_cache_entry(it);
-  return it->second.response_json;
-}
-
-void JsonRpcServer::cache_clear_for_test() {
-  cache_.clear();
-  cache_lru_.clear();
-  cache_body_bytes_ = 0;
-}
-
-std::size_t JsonRpcServer::cache_entries_for_test() const noexcept {
-  return cache_.size();
-}
-
-std::size_t JsonRpcServer::cache_body_bytes_for_test() const noexcept {
-  return cache_body_bytes_;
 }
 
 void JsonRpcServer::listen(td::IPAddress addr) {
@@ -1070,8 +990,7 @@ const std::set<std::string> &JsonRpcServer::cacheable_methods() {
 
 void JsonRpcServer::alarm() {
   if (opts_.cache_ttl > 0 && !cache_.empty()) {
-    evict_expired_cache_entries();
-    evict_cache_to_budget();
+    cache_.evict_expired();
   }
   // Re-arm alarm every 10 seconds if caching is enabled
   if (opts_.cache_ttl > 0) {
@@ -1125,14 +1044,12 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
   std::string cache_key = sb.as_cslice().str();
 
   // Check cache
-  evict_expired_cache_entries();
-  auto it = cache_.find(cache_key);
-  if (it != cache_.end() && !it->second.expires_at.is_in_past()) {
+  auto cached = cache_.lookup(cache_key);
+  if (cached.has_value()) {
     // Cache hit — rebuild HTTP response from the cached body string, substituting
     // the current request's id so that each caller gets the correct "id" field.
-    touch_cache_entry(it);
     cache_hits_.fetch_add(1);
-    promise.set_value(make_json_ok(it->second.response_json, req_id));
+    promise.set_value(make_json_ok(*cached, req_id));
     return;
   }
 
@@ -1165,26 +1082,11 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
               for (auto &fv : obj.field_values_) {
                 if (fv.first == "result") {
                   auto encoded = td::json_encode<std::string>(fv.second);
-                  if (opts_.cache_max_body_bytes == 0 || encoded.size() <= opts_.cache_max_body_bytes) {
-                    const auto encoded_size = encoded.size();
-                    auto cache_it = cache_.find(cache_key);
-                    if (cache_it != cache_.end()) {
-                      erase_cache_entry(cache_it);
-                    }
-                    cache_lru_.push_front(cache_key);
-                    cache_body_bytes_ += encoded_size;
-                    auto [inserted_it, inserted] = cache_.emplace(
-                        cache_key,
-                        CacheEntry{encoded,
-                                   td::Timestamp::in(static_cast<double>(ttl)),
-                                   encoded_size,
-                                   cache_lru_.begin()});
-                    (void)inserted;
-                    evict_cache_to_budget();
-                    auto response_it = cache_.find(cache_key);
-                    if (response_it != cache_.end()) {
-                      orig_promise.set_value(make_json_ok(response_it->second.response_json,
-                                                          req_id, cors));
+                  if (cache_.store(cache_key, encoded,
+                                   td::Timestamp::in(static_cast<double>(ttl)))) {
+                    auto cached_value = cache_.lookup(cache_key);
+                    if (cached_value.has_value()) {
+                      orig_promise.set_value(make_json_ok(*cached_value, req_id, cors));
                       return;
                     }
                   }

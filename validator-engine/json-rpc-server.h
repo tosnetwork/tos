@@ -34,6 +34,110 @@
 
 namespace tos {
 
+class JsonRpcResponseCache {
+ public:
+  JsonRpcResponseCache(std::size_t max_entries, std::size_t max_body_bytes)
+      : max_entries_(max_entries), max_body_bytes_(max_body_bytes) {
+  }
+
+  bool empty() const noexcept {
+    return entries_.empty();
+  }
+
+  std::size_t size() const noexcept {
+    return entries_.size();
+  }
+
+  std::size_t body_bytes() const noexcept {
+    return body_bytes_;
+  }
+
+  void clear() {
+    entries_.clear();
+    lru_.clear();
+    body_bytes_ = 0;
+  }
+
+  void evict_expired() {
+    auto it = entries_.begin();
+    while (it != entries_.end()) {
+      if (it->second.expires_at.is_in_past()) {
+        auto erase_it = it++;
+        erase(erase_it);
+      } else {
+        ++it;
+      }
+    }
+  }
+
+  std::optional<std::string> lookup(const std::string& key) {
+    evict_expired();
+    auto it = entries_.find(key);
+    if (it == entries_.end()) {
+      return std::nullopt;
+    }
+    touch(it);
+    return it->second.response_json;
+  }
+
+  bool store(const std::string& key, std::string response_json, td::Timestamp expires_at) {
+    evict_expired();
+    if (max_body_bytes_ > 0 && response_json.size() > max_body_bytes_) {
+      return false;
+    }
+    auto existing = entries_.find(key);
+    if (existing != entries_.end()) {
+      erase(existing);
+    }
+    lru_.push_front(key);
+    body_bytes_ += response_json.size();
+    entries_.emplace(key, Entry{std::move(response_json), expires_at, 0, lru_.begin()});
+    auto inserted = entries_.find(key);
+    inserted->second.size_bytes = inserted->second.response_json.size();
+    evict_to_budget();
+    return entries_.find(key) != entries_.end();
+  }
+
+ private:
+  struct Entry {
+    std::string response_json;
+    td::Timestamp expires_at;
+    std::size_t size_bytes{0};
+    std::list<std::string>::iterator lru_it;
+  };
+
+  void erase(std::unordered_map<std::string, Entry>::iterator it) {
+    body_bytes_ -= it->second.size_bytes;
+    lru_.erase(it->second.lru_it);
+    entries_.erase(it);
+  }
+
+  void touch(std::unordered_map<std::string, Entry>::iterator it) {
+    lru_.splice(lru_.begin(), lru_, it->second.lru_it);
+  }
+
+  void evict_to_budget() {
+    while ((max_entries_ > 0 && entries_.size() > max_entries_) ||
+           (max_body_bytes_ > 0 && body_bytes_ > max_body_bytes_)) {
+      if (lru_.empty()) {
+        break;
+      }
+      auto it = entries_.find(lru_.back());
+      if (it == entries_.end()) {
+        lru_.pop_back();
+        continue;
+      }
+      erase(it);
+    }
+  }
+
+  std::size_t max_entries_{0};
+  std::size_t max_body_bytes_{0};
+  std::unordered_map<std::string, Entry> entries_;
+  std::list<std::string> lru_;
+  std::size_t body_bytes_{0};
+};
+
 class JsonRpcServer final : public td::actor::Actor, public virtual metrics::AsyncCollector {
  public:
   struct Options {
@@ -57,15 +161,6 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   JsonRpcServer(
       td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager,
       Options options);
-
-  // Cache test helpers. The production actor model serializes access; these
-  // are intended for white-box unit tests only.
-  void cache_store_for_test(const std::string& key, std::string response_json,
-                            td::int32 ttl_seconds);
-  std::optional<std::string> cache_lookup_for_test(const std::string& key);
-  void cache_clear_for_test();
-  std::size_t cache_entries_for_test() const noexcept;
-  std::size_t cache_body_bytes_for_test() const noexcept;
 
  private:
   using RequestPtr = std::unique_ptr<http::HttpRequest>;
@@ -256,20 +351,7 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
 
   void alarm() override;
 
-  // ── Response cache ───────────────────────────────────────────────────
-  struct CacheEntry {
-    std::string response_json;
-    td::Timestamp expires_at;
-    std::size_t size_bytes{0};
-    std::list<std::string>::iterator lru_it;
-  };
-  void erase_cache_entry(std::unordered_map<std::string, CacheEntry>::iterator it);
-  void touch_cache_entry(std::unordered_map<std::string, CacheEntry>::iterator it);
-  void evict_expired_cache_entries();
-  void evict_cache_to_budget();
-  std::unordered_map<std::string, CacheEntry> cache_;
-  std::list<std::string> cache_lru_;
-  std::size_t cache_body_bytes_{0};
+  JsonRpcResponseCache cache_;
 
   static const std::set<std::string> &cacheable_methods();
 
