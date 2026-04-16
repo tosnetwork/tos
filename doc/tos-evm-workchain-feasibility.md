@@ -1,6 +1,6 @@
 # TOS EVM Workchain Feasibility
 
-Version: v0.8 — All 5 phases complete, 27 tests (14 Silkworm gold), 34 RPC methods, security audit fixes applied
+Version: v0.9 — All 5 phases complete, 27 tests (14 Silkworm gold), 34 RPC methods, 5 rounds of deep code audit completed
 
 ## Purpose
 
@@ -287,7 +287,7 @@ The project should explicitly target compatibility with:
 - ✅ assign an EVM `chainId` (`0x544F53`)
 - ✅ expose the minimum JSON-RPC set required for wallet connectivity
 
-Implemented RPC methods (31), wired into the HTTP server:
+Implemented RPC methods (34), wired into the HTTP server:
 
 - ✅ `eth_chainId`
 - ✅ `eth_blockNumber`
@@ -299,13 +299,13 @@ Implemented RPC methods (31), wired into the HTTP server:
 - ✅ `eth_maxPriorityFeePerGas`
 - ✅ `eth_feeHistory` (real per-block base fees and gas ratios)
 - ✅ `eth_sendRawTransaction` (secp256k1 sender recovery, stores receipt + tx + logs + block)
-- ✅ `eth_getTransactionReceipt` (full receipt with logs, status, contractAddress)
+- ✅ `eth_getTransactionReceipt` (full receipt with logs, status, contractAddress, effectiveGasPrice, logsBloom)
 - ✅ `eth_getTransactionByHash` (full transaction object)
 - ✅ `eth_getCode`
 - ✅ `eth_getStorageAt`
 - ✅ `eth_accounts`
-- ✅ `eth_getBlockByNumber` (real block data with tx hashes, parent hash chain)
-- ✅ `eth_getBlockByHash`
+- ✅ `eth_getBlockByNumber` (full block data, supports fullTransactions boolean, safe/finalized/latest/earliest tags)
+- ✅ `eth_getBlockByHash` (supports fullTransactions boolean)
 - ✅ `eth_getLogs` (indexed by block, filtered by address and topics)
 - ✅ `eth_newFilter` / `eth_newBlockFilter` / `eth_newPendingTransactionFilter`
 - ✅ `eth_getFilterChanges`
@@ -606,6 +606,7 @@ Deliverables:
 - ✅ comprehensive gold test coverage (14 Silkworm test vectors: Value transfer, DELEGATECALL, EIP-684, EIP-3541, EIP-211, multi-block execution, precompiles, insufficient balance)
 - ✅ event subscription API (`eth_subscribe` / `eth_unsubscribe` for newHeads, logs, pendingTransactions with event queuing and poll)
 - ✅ security audit fixes: shared_mutex concurrency, bounded containers with FIFO eviction, filter storage with expiry + capacity limits, thread_local code buffer
+- ✅ 5 rounds of deep code audit (encode/decode symmetry, thread safety, memory safety, spec compliance, edge-case arithmetic) — all issues resolved
 
 Note: contract wallets / account abstraction (EIP-4337) does not require EVM-layer changes.
 EIP-4337 is an application-layer protocol implemented as a Solidity contract (EntryPoint)

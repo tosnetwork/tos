@@ -63,7 +63,7 @@ static std::string hex_bytes32(const evmc::bytes32& h) {
 static std::string hex_u64(uint64_t v) {
     char buf[32];
     if (v == 0) return "\"0x0\"";
-    snprintf(buf, sizeof(buf), "\"0x%lx\"", (unsigned long)v);
+    snprintf(buf, sizeof(buf), "\"0x%llx\"", (unsigned long long)v);
     return buf;
 }
 
@@ -126,7 +126,8 @@ static bool log_matches_filter(const silkworm::Log& log,
 
 void SubscriptionManager::notify_logs(uint64_t block_number,
                                        const evmc::bytes32& tx_hash,
-                                       const std::vector<silkworm::Log>& logs) {
+                                       const std::vector<silkworm::Log>& logs,
+                                       const evmc::bytes32& block_hash) {
     std::lock_guard<std::mutex> lock(mutex_);
 
     for (size_t log_idx = 0; log_idx < logs.size(); ++log_idx) {
@@ -147,6 +148,8 @@ void SubscriptionManager::notify_logs(uint64_t block_number,
         json += "\"blockNumber\":" + hex_u64(block_number) + ",";
         json += "\"transactionHash\":" + hex_bytes32(tx_hash) + ",";
         json += "\"logIndex\":" + hex_u64(static_cast<uint64_t>(log_idx)) + ",";
+        json += "\"transactionIndex\":\"0x0\",";
+        json += "\"blockHash\":" + hex_bytes32(block_hash) + ",";
         json += "\"removed\":false";
         json += "}";
 

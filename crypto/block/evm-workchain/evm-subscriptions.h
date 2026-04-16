@@ -80,7 +80,8 @@ class SubscriptionManager {
 
     /// Notify matching logs subscribers about new logs.
     void notify_logs(uint64_t block_number, const evmc::bytes32& tx_hash,
-                     const std::vector<silkworm::Log>& logs);
+                     const std::vector<silkworm::Log>& logs,
+                     const evmc::bytes32& block_hash = {});
 
     /// Notify all newPendingTransactions subscribers about a new tx.
     void notify_new_pending_transaction(const evmc::bytes32& tx_hash);

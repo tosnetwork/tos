@@ -352,7 +352,7 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
     sub_mgr.notify_new_head(stored_block);
     sub_mgr.notify_new_pending_transaction(tx_hash);
     if (!exec_result.logs.empty()) {
-        sub_mgr.notify_logs(bn, tx_hash, exec_result.logs);
+        sub_mgr.notify_logs(bn, tx_hash, exec_result.logs, stored_block.hash);
     }
 
     return {make_result(id, to_hex_data(tx_hash.bytes, 32)), false};
