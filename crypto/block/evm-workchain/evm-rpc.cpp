@@ -19,6 +19,7 @@
 #include "evm-executor.h"
 #include "evm-transaction.h"
 #include "evm-tracer.h"
+#include "evm-subscriptions.h"
 
 #include <silkworm/core/common/util.hpp>
 #include <ethash/keccak.hpp>
@@ -270,6 +271,14 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
     std::memcpy(stored_block.hash.bytes, h.bytes, 32);
 
     evm_state.store_block(stored_block);
+
+    // Notify subscribers
+    auto& sub_mgr = global_subscription_manager();
+    sub_mgr.notify_new_head(stored_block);
+    sub_mgr.notify_new_pending_transaction(tx_hash);
+    if (!exec_result.logs.empty()) {
+        sub_mgr.notify_logs(bn, tx_hash, exec_result.logs);
+    }
 
     return {make_result(id, to_hex_data(tx_hash.bytes, 32)), false};
 }
@@ -759,6 +768,73 @@ static RpcResult handle_debug_trace_transaction(const std::string& params, const
     return {make_result(id, result), false};
 }
 
+static RpcResult handle_eth_subscribe(const std::string& params, const std::string& id) {
+    // Parse subscription type: ["newHeads"], ["logs", {filter}], ["newPendingTransactions"]
+    std::string type_str;
+    auto pos = params.find("\"newHeads\"");
+    if (pos != std::string::npos) type_str = "newHeads";
+    if (type_str.empty()) {
+        pos = params.find("\"logs\"");
+        if (pos != std::string::npos) type_str = "logs";
+    }
+    if (type_str.empty()) {
+        pos = params.find("\"newPendingTransactions\"");
+        if (pos != std::string::npos) type_str = "newPendingTransactions";
+    }
+    if (type_str.empty()) {
+        return {make_error(id, -32602, "invalid subscription type"), true};
+    }
+
+    SubscriptionType type;
+    LogSubscriptionFilter filter;
+    if (type_str == "newHeads") {
+        type = SubscriptionType::NewHeads;
+    } else if (type_str == "logs") {
+        type = SubscriptionType::Logs;
+        // Parse optional address filter
+        std::string addr_hex = extract_json_string_value(params, "address");
+        if (!addr_hex.empty()) {
+            evmc::address addr{};
+            if (parse_hex_address(addr_hex, addr)) {
+                filter.addresses.push_back(addr);
+            }
+        }
+    } else {
+        type = SubscriptionType::NewPendingTransactions;
+    }
+
+    uint64_t sub_id = global_subscription_manager().subscribe(type, filter);
+    return {make_result(id, to_hex_quantity(sub_id)), false};
+}
+
+static RpcResult handle_eth_unsubscribe(const std::string& params, const std::string& id) {
+    // Parse subscription ID
+    uint64_t sub_id = 0;
+    auto pos = params.find("0x");
+    if (pos != std::string::npos) {
+        sub_id = std::strtoull(params.c_str() + pos + 2, nullptr, 16);
+    }
+    bool ok = global_subscription_manager().unsubscribe(sub_id);
+    return {make_result(id, ok ? "true" : "false"), false};
+}
+
+static RpcResult handle_eth_get_subscription(const std::string& params, const std::string& id) {
+    // Custom method: poll subscription events (for HTTP clients without WebSocket)
+    uint64_t sub_id = 0;
+    auto pos = params.find("0x");
+    if (pos != std::string::npos) {
+        sub_id = std::strtoull(params.c_str() + pos + 2, nullptr, 16);
+    }
+    auto events = global_subscription_manager().poll(sub_id);
+    std::string arr = "[";
+    for (size_t i = 0; i < events.size(); ++i) {
+        if (i > 0) arr += ",";
+        arr += events[i].json;
+    }
+    arr += "]";
+    return {make_result(id, arr), false};
+}
+
 static RpcResult handle_get_block_receipts(const std::string& params, const std::string& id) {
     // Parse block number
     uint64_t bn = global_evm_state().block_number();
@@ -995,7 +1071,10 @@ bool is_eth_rpc_method(const std::string& method) noexcept {
            method == "net_peerCount" ||
            method == "web3_clientVersion" ||
            method == "debug_traceTransaction" ||
-           method == "eth_getBlockReceipts";
+           method == "eth_getBlockReceipts" ||
+           method == "eth_subscribe" ||
+           method == "eth_unsubscribe" ||
+           method == "eth_getSubscription";
 }
 
 std::optional<RpcResult> handle_eth_rpc(
@@ -1030,6 +1109,9 @@ std::optional<RpcResult> handle_eth_rpc(
     if (method == "eth_uninstallFilter")      return handle_uninstall_filter(params, id);
     if (method == "debug_traceTransaction")  return handle_debug_trace_transaction(params, id);
     if (method == "eth_getBlockReceipts")    return handle_get_block_receipts(params, id);
+    if (method == "eth_subscribe")           return handle_eth_subscribe(params, id);
+    if (method == "eth_unsubscribe")         return handle_eth_unsubscribe(params, id);
+    if (method == "eth_getSubscription")     return handle_eth_get_subscription(params, id);
     if (method == "eth_sendRawTransaction")   return handle_send_raw_transaction(params, id);
     if (method == "eth_getTransactionReceipt") return handle_get_transaction_receipt(params, id);
     if (method == "eth_call")                 return handle_call(params, id);

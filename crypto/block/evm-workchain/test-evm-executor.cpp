@@ -26,6 +26,7 @@
 #include "evm-persistent-state.h"
 #include "evm-config-param.h"
 #include "evm-bridge.h"
+#include "evm-subscriptions.h"
 
 #include <silkworm/core/types/transaction.hpp>
 #include <silkworm/core/types/address.hpp>
@@ -2065,6 +2066,81 @@ static void test_gold_value_transfer_insufficient() {
     printf("  %s\n\n", ok ? "PASSED" : "FAILED");
 }
 
+static void test_subscriptions() {
+    printf("=== test_subscriptions (eth_subscribe newHeads + logs) ===\n");
+
+    auto& mgr = global_subscription_manager();
+
+    // Create subscriptions
+    uint64_t heads_sub = mgr.subscribe(SubscriptionType::NewHeads);
+    uint64_t logs_sub = mgr.subscribe(SubscriptionType::Logs);
+    uint64_t pending_sub = mgr.subscribe(SubscriptionType::NewPendingTransactions);
+
+    printf("  subscriptions: heads=%lu, logs=%lu, pending=%lu\n",
+           (unsigned long)heads_sub, (unsigned long)logs_sub, (unsigned long)pending_sub);
+
+    // Simulate a new block notification
+    StoredBlock block;
+    block.number = 42;
+    block.timestamp = 1700000000;
+    block.gas_used = 21000;
+    evmc::bytes32 block_hash{};
+    block_hash.bytes[31] = 0x42;
+    block.hash = block_hash;
+    mgr.notify_new_head(block);
+
+    // Simulate a log notification
+    silkworm::Log log;
+    log.address.bytes[19] = 0xAA;
+    log.topics.push_back(evmc::bytes32{});
+    log.topics[0].bytes[31] = 0xBB;
+    log.data = {0x01, 0x02, 0x03};
+    evmc::bytes32 tx_hash{};
+    tx_hash.bytes[31] = 0x01;
+    mgr.notify_logs(42, tx_hash, {log});
+
+    // Simulate a pending tx notification
+    evmc::bytes32 pending_hash{};
+    pending_hash.bytes[31] = 0xFF;
+    mgr.notify_new_pending_transaction(pending_hash);
+
+    // Poll events
+    auto head_events = mgr.poll(heads_sub);
+    auto log_events = mgr.poll(logs_sub);
+    auto pending_events = mgr.poll(pending_sub);
+
+    printf("  newHeads events: %zu (expect 1)\n", head_events.size());
+    printf("  logs events: %zu (expect 1)\n", log_events.size());
+    printf("  pending events: %zu (expect 1)\n", pending_events.size());
+
+    // Verify head event contains block number 42
+    bool head_ok = head_events.size() == 1 &&
+                   head_events[0].json.find("0x2a") != std::string::npos;  // 42 = 0x2a
+
+    // Verify log event contains the address
+    bool log_ok = log_events.size() == 1 &&
+                  log_events[0].json.find("00aa") != std::string::npos;
+
+    // Verify pending event contains tx hash
+    bool pending_ok = pending_events.size() == 1 &&
+                      pending_events[0].json.find("ff") != std::string::npos;
+
+    // Poll again — should be empty
+    auto empty = mgr.poll(heads_sub);
+    bool empty_ok = empty.empty();
+
+    // Unsubscribe
+    bool unsub_ok = mgr.unsubscribe(heads_sub);
+    bool unsub2_ok = !mgr.unsubscribe(999);  // non-existent returns false
+
+    // Cleanup remaining
+    mgr.unsubscribe(logs_sub);
+    mgr.unsubscribe(pending_sub);
+
+    bool ok = head_ok && log_ok && pending_ok && empty_ok && unsub_ok && unsub2_ok;
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -2093,6 +2169,7 @@ int main() {
     test_gold_insufficient_balance_create();
     test_gold_two_blocks();
     test_gold_value_transfer_insufficient();
+    test_subscriptions();
 
     printf("All tests passed.\n");
     return 0;

@@ -21,6 +21,7 @@ set(EVM_WORKCHAIN_SRC
   evm-external-message.cpp
   evm-bridge.cpp
   evm-tracer.cpp
+  evm-subscriptions.cpp
 )
 
 add_library(evm_workchain STATIC ${EVM_WORKCHAIN_SRC})
