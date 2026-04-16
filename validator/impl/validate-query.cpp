@@ -1112,6 +1112,17 @@ bool ValidateQuery::fetch_config_params() {
     compute_phase_cfg_.precompiled_contracts = config_->get_precompiled_contracts_config();
     compute_phase_cfg_.allow_external_unfreeze = compute_phase_cfg_.global_version >= 8;
     compute_phase_cfg_.disable_anycast = config_->get_global_version() >= 10;
+
+    // EVM workchain (wc=1): mirror dict so the validator's re-execution
+    // produces the same EVM-encoded ShardAccounts entries the collator did.
+    // Equality of this dict's root with the collator's is implicitly checked
+    // via the overall ShardState hash comparison.
+    if (workchain() == 1 /* evm_workchain::kWorkchainId */) {
+      evm_state_mirror_dict_ = std::make_unique<vm::Dictionary>(256);
+      compute_phase_cfg_.evm_shard_accounts = evm_state_mirror_dict_.get();
+    } else {
+      compute_phase_cfg_.evm_shard_accounts = nullptr;
+    }
   }
   {
     // compute action_phase_cfg

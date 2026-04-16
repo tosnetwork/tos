@@ -2257,6 +2257,18 @@ bool Collator::fetch_config_params() {
                                                      compute_phase_cfg_.size_limits.defer_out_queue_size_limit);
   // This one is checked in validate-query
   hard_defer_out_queue_size_limit_ = compute_phase_cfg_.size_limits.defer_out_queue_size_limit;
+
+  // EVM workchain (wc=1): allocate a mirror dict and expose it to
+  // ComputePhaseConfig. CellEvmState::sync_to_dict() will populate it after
+  // each EVM transaction so the cell-encoded EVM state is included in the
+  // collator's atomic block commit.
+  if (workchain() == 1 /* evm_workchain::kWorkchainId */) {
+    evm_state_mirror_dict_ = std::make_unique<vm::Dictionary>(256);
+    compute_phase_cfg_.evm_shard_accounts = evm_state_mirror_dict_.get();
+  } else {
+    compute_phase_cfg_.evm_shard_accounts = nullptr;
+  }
+
   return true;
 }
 

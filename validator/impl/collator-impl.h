@@ -255,6 +255,14 @@ class Collator final : public td::actor::Actor {
   std::set<td::Bits256> account_dict_estimator_added_accounts_;
   unsigned account_dict_ops_{0};
 
+  // EVM workchain (wc=1) state mirror.
+  // For EVM workchain collators, this dict is populated by CellEvmState
+  // (via run_evm_compute_phase → sync_to_dict) so the EVM account state
+  // becomes part of the collator's atomic block commit. The pointer is
+  // exposed to ComputePhaseConfig::evm_shard_accounts so transaction.cpp
+  // can hand it to the EVM dispatch.
+  std::unique_ptr<vm::Dictionary> evm_state_mirror_dict_;
+
   bool msg_metadata_enabled_ = false;
   bool deferring_messages_enabled_ = false;
   bool store_out_msg_queue_size_ = false;

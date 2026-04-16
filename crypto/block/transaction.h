@@ -137,6 +137,14 @@ struct ComputePhaseConfig {
   bool allow_external_unfreeze{false};
   bool disable_anycast{false};
 
+  // EVM workchain (wc=1) integration: when this collator is producing an EVM
+  // workchain block, the collator points this at its ShardAccounts dict (or a
+  // dedicated copy). transaction.cpp's EVM dispatch passes it to
+  // invoke_evm_compute, which runs CellEvmState::sync_to_dict() so that the
+  // collator's atomic ShardState commit transitively persists EVM state.
+  // Null in all non-EVM contexts (basechain, masterchain, validator-side).
+  vm::Dictionary* evm_shard_accounts = nullptr;
+
   ComputePhaseConfig() : gas_price(0), gas_limit(0), special_gas_limit(0), gas_credit(0) {
     compute_threshold();
   }
