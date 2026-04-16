@@ -276,6 +276,16 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
   }
   acc.block_lt = lt;
 
+  // EVM workchain (workchain 2): skip TVM validation.
+  // EVM accounts have no TVM code — signature and nonce validation
+  // happens in the EVM executor during the collator's compute phase.
+  // Structural validation (BOC/TLB) and rate-limiting still apply.
+  if (wc == 2 /* evm_workchain::kWorkchainId */) {
+    auto [wait, promise] = td::actor::StartedTask<>::make_bridge();
+    promise.set_value(td::Unit{});
+    co_return CheckResult{.message = message, .wait_allow_broadcast = std::move(wait)};
+  }
+
   auto [wait_allow_broadcast, allow_broadcast_promise] = td::actor::StartedTask<>::make_bridge();
   CheckResult check_result{.message = message, .wait_allow_broadcast = std::move(wait_allow_broadcast)};
 

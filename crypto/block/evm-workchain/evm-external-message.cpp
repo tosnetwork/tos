@@ -1,5 +1,18 @@
 /*
     EVM Workchain — external message builder implementation.
+
+    Builds a TLB-compliant ext_in_msg cell that passes:
+      - block::gen::t_Message_Any.validate_ref()
+      - block::tlb::t_Message.validate_ref()
+
+    TLB schema (block.tlb):
+      message$_ {X:Type} info:CommonMsgInfo
+        init:(Maybe (Either StateInit ^StateInit))
+        body:(Either X ^X) = Message X;
+
+      ext_in_msg_info$10 src:MsgAddressExt dest:MsgAddressInt
+        import_fee:Grams = CommonMsgInfo;
+
     Source: TOS-specific adapter (not copied from ~/s).
 */
 #include "evm-external-message.h"
@@ -24,17 +37,17 @@ td::Ref<vm::Cell> build_evm_external_message(
 
     if (!raw_rlp || rlp_size == 0) return {};
 
-    // Build the external message cell:
-    //   ext_in_msg_info$10
-    //     src:addr_none$00
-    //     dest:addr_std$10 anycast:(Maybe Anycast) = Nothing$0
-    //          workchain_id:int8 address:bits256
-    //     import_fee:Grams = 0
-    //   body: raw RLP bytes
+    // --- Build body cell first (raw RLP bytes) ---
+    vm::CellBuilder body_cb;
+    for (size_t i = 0; i < rlp_size; ++i) {
+        body_cb.store_long(raw_rlp[i], 8);
+    }
+    auto body_cell = body_cb.finalize();
 
+    // --- Build the message cell ---
     vm::CellBuilder cb;
 
-    // CommonMsgInfo tag: ext_in_msg_info$10
+    // CommonMsgInfo: ext_in_msg_info$10
     cb.store_long(0b10, 2);
 
     // src: addr_none$00
@@ -46,32 +59,19 @@ td::Ref<vm::Cell> build_evm_external_message(
     // workchain_id: int8
     cb.store_long(kWorkchainId, 8);
 
-    // address: bits256 (Ethereum address zero-padded to 256 bits)
+    // address: bits256
     td::Bits256 internal_addr = eth_addr_to_internal(sender_addr);
     cb.store_bits(internal_addr.as_bitslice());
 
-    // import_fee: Grams (var_uint 4 bits length prefix + value)
-    // 0 Grams = 0b0000 (length=0)
+    // import_fee: Grams = 0  (VarUInteger 16: 4-bit length = 0)
     cb.store_long(0, 4);
 
-    // Body: raw RLP bytes
-    // Store as a reference cell to handle large transactions
-    vm::CellBuilder body_cb;
-    for (size_t i = 0; i < rlp_size; ++i) {
-        body_cb.store_long(raw_rlp[i], 8);
-    }
+    // init: Maybe (Either StateInit ^StateInit) = nothing$0
+    cb.store_long(0, 1);
 
-    // If body fits in the remaining bits, store inline; otherwise as reference
-    if (cb.remaining_bits() >= rlp_size * 8) {
-        // Store body bits inline
-        for (size_t i = 0; i < rlp_size; ++i) {
-            cb.store_long(raw_rlp[i], 8);
-        }
-    } else {
-        // Store body as a reference
-        cb.store_long(0, 1);  // either$0 — body in reference (bit=0 means in ref)
-        cb.store_ref(body_cb.finalize());
-    }
+    // body: Either X ^X = right$1 (body as reference cell)
+    cb.store_long(1, 1);
+    cb.store_ref(body_cell);
 
     return cb.finalize();
 }

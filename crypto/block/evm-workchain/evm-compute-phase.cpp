@@ -55,7 +55,37 @@ bool run_evm_compute_phase(
     // --- Step 4: Execute the transaction ---
     auto exec_result = execute_evm_transaction(decoded.txn, block, state, config);
 
-    // --- Step 5: Map results back into the host-chain ComputePhase ---
+    // --- Step 5: Store receipt/transaction/logs for RPC queries ---
+    auto tx_hash = decoded.txn.hash();
+
+    StoredReceipt receipt;
+    receipt.success = exec_result.success;
+    receipt.gas_used = exec_result.gas_used;
+    receipt.block_number = block_seqno;
+    receipt.from = decoded.sender;
+    receipt.to = decoded.txn.to;
+    receipt.contract_address = exec_result.contract_address;
+    receipt.logs = exec_result.logs;
+    receipt.return_data = exec_result.return_data;
+    state.store_receipt(tx_hash, std::move(receipt));
+
+    StoredTransaction stored_tx;
+    stored_tx.from = decoded.sender;
+    stored_tx.to = decoded.txn.to;
+    stored_tx.value = decoded.txn.value;
+    stored_tx.data = decoded.txn.data;
+    stored_tx.nonce = decoded.txn.nonce;
+    stored_tx.gas_limit = decoded.txn.gas_limit;
+    stored_tx.gas_price = decoded.txn.max_fee_per_gas;
+    stored_tx.block_number = block_seqno;
+    stored_tx.tx_index = 0;
+    state.store_transaction(tx_hash, std::move(stored_tx));
+
+    if (!exec_result.logs.empty()) {
+        state.store_logs(block_seqno, tx_hash, exec_result.logs);
+    }
+
+    // --- Step 6: Map results back into the host-chain ComputePhase ---
     cp.success = exec_result.success;
     cp.accepted = true;
     cp.gas_used = exec_result.gas_used;
@@ -63,9 +93,8 @@ bool run_evm_compute_phase(
     cp.gas_credit = 0;
     cp.gas_max = gas_limit;
     cp.exit_code = exec_result.success ? 0 : 1;
-    cp.vm_steps = 0;  // EVM doesn't report "steps" in the TVM sense
+    cp.vm_steps = 0;
 
-    // Clear VM state hashes — not applicable for EVM execution.
     cp.vm_init_state_hash.set_zero();
     cp.vm_final_state_hash.set_zero();
 
@@ -75,7 +104,8 @@ bool run_evm_compute_phase(
 
     LOG(INFO) << "evm-workchain: execution " << (exec_result.success ? "success" : "revert")
               << ", gas_used=" << exec_result.gas_used
-              << ", logs=" << exec_result.logs.size();
+              << ", logs=" << exec_result.logs.size()
+              << ", tx_hash=0x" << std::hex << tx_hash.bytes[0] << tx_hash.bytes[1];
 
     return true;
 }

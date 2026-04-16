@@ -195,6 +195,8 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   // Method handlers — existing
   void handle_sendBoc(td::JsonObject &params, std::string req_id,
                       td::Promise<HttpReturn> promise);
+  void handle_eth_sendRawTransaction(td::JsonValue &params_val, std::string req_id,
+                                      td::Promise<HttpReturn> promise);
   void handle_getConfigParam(td::JsonObject &params, std::string req_id,
                              td::Promise<HttpReturn> promise);
   void handle_getAddressInformation(td::JsonObject &params, std::string req_id,

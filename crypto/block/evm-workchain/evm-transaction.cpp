@@ -38,17 +38,46 @@ decode_evm_transaction(silkworm::ByteView raw_rlp) noexcept {
 
 std::optional<silkworm::Bytes>
 extract_evm_payload(vm::CellSlice& body) noexcept {
-    // Convention: the message body contains the raw RLP bytes directly
-    // as the remaining data bits of the cell slice, packed as 8-bit bytes.
+    // The message body follows TLB: init:(Maybe ...) body:(Either X ^X)
+    // After ext_in_msg_info is parsed, the remaining slice contains:
+    //   init_bit(1) [+ init if 1] + either_bit(1) + inline_or_ref
     //
-    // For the first slice we read all remaining bits as a byte string.
-    // A more robust version would support multi-cell payloads via references.
+    // For EVM messages built by build_evm_external_message():
+    //   init = nothing$0 (1 bit)
+    //   body = right$1 ^X (1 bit + reference)
+    //
+    // But when called from the compute phase, the body CellSlice may
+    // already be positioned at the raw body content (after TLB unpacking).
+    // We handle both cases.
 
+    // Case 1: body has references — try reading from reference
+    // (This is the standard TLB format from build_evm_external_message)
+    if (body.size() >= 2 && body.have_refs()) {
+        unsigned init_bit = static_cast<unsigned>(body.fetch_ulong(1));
+        if (init_bit == 0) {
+            // init = nothing, next bit is either tag
+            unsigned either_bit = static_cast<unsigned>(body.fetch_ulong(1));
+            if (either_bit == 1 && body.have_refs()) {
+                // body is in reference cell
+                auto ref = body.fetch_ref();
+                auto ref_cs = vm::load_cell_slice(ref);
+                unsigned bits = ref_cs.size();
+                if (bits == 0 || (bits % 8) != 0) return std::nullopt;
+                unsigned byte_count = bits / 8;
+                silkworm::Bytes out(byte_count, 0);
+                if (!ref_cs.fetch_bytes(out.data(), byte_count)) return std::nullopt;
+                return out;
+            }
+            // either_bit == 0: inline body, fall through to inline read
+        }
+        // init_bit == 1: has init, not our format — try inline read of remaining
+    }
+
+    // Case 2: raw bytes directly in the cell slice (legacy / direct call)
     unsigned bits = body.size();
     if (bits == 0 || (bits % 8) != 0) {
         return std::nullopt;
     }
-
     unsigned byte_count = bits / 8;
     silkworm::Bytes out(byte_count, 0);
     if (!body.fetch_bytes(out.data(), byte_count)) {

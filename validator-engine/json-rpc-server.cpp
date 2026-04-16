@@ -513,6 +513,12 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
     params_val = td::JsonValue::make_object(td::JsonObject());
   }
 
+  // eth_sendRawTransaction: route to async handler (submits to ExtMessagePool)
+  if (method == "eth_sendRawTransaction") {
+    handle_eth_sendRawTransaction(params_val, std::move(req_id), std::move(promise));
+    return;
+  }
+
   // Ethereum JSON-RPC sends params as arrays.  Handle eth_* methods with
   // array params directly, before the object-params check.
   if (params_val.type() == td::JsonValue::Type::Array &&
