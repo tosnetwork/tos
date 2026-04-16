@@ -39,3 +39,4 @@ target_link_libraries(evm_workchain
 # --- Test executable ---
 add_executable(test-evm-executor test-evm-executor.cpp)
 target_link_libraries(test-evm-executor PRIVATE evm_workchain)
+target_include_directories(test-evm-executor PRIVATE ${SECP256K1_INCLUDE_DIR})

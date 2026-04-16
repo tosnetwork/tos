@@ -272,7 +272,48 @@ static RpcResult handle_get_transaction_receipt(const std::string& params, const
     return {make_result(id, r), false};
 }
 
-// Parse a call object: {"from":"0x...", "to":"0x...", "data":"0x...", "value":"0x...", "gas":"0x..."}
+// Extract the string value after a JSON key, e.g. for "to":"0xabc..." returns "0xabc..."
+// Returns empty string if key not found or value is null.
+static std::string extract_json_string_value(const std::string& json, const std::string& key) {
+    auto key_pos = json.find("\"" + key + "\"");
+    if (key_pos == std::string::npos) return "";
+    auto colon = json.find(':', key_pos + key.size() + 2);
+    if (colon == std::string::npos) return "";
+    // Skip whitespace
+    size_t start = colon + 1;
+    while (start < json.size() && (json[start] == ' ' || json[start] == '\t')) ++start;
+    if (start >= json.size()) return "";
+    // Check for null
+    if (json.substr(start, 4) == "null") return "";
+    // Find quoted string
+    if (json[start] != '"') return "";
+    size_t end = json.find('"', start + 1);
+    if (end == std::string::npos) return "";
+    return json.substr(start + 1, end - start - 1);
+}
+
+static uint64_t parse_hex_uint64(const std::string& hex_str) {
+    if (hex_str.empty()) return 0;
+    size_t start = 0;
+    if (hex_str.size() >= 2 && hex_str[0] == '0' && (hex_str[1] == 'x' || hex_str[1] == 'X'))
+        start = 2;
+    return std::strtoull(hex_str.c_str() + start, nullptr, 16);
+}
+
+static intx::uint256 parse_hex_uint256(const std::string& hex_str) {
+    if (hex_str.empty()) return 0;
+    std::string hex = hex_str;
+    if (hex.size() >= 2 && hex[0] == '0' && (hex[1] == 'x' || hex[1] == 'X'))
+        hex = hex.substr(2);
+    if (hex.empty()) return 0;
+    // Pad to 64 chars for intx parsing
+    while (hex.size() < 64) hex = "0" + hex;
+    return intx::from_string<intx::uint256>("0x" + hex);
+}
+
+// Parse a call object from JSON-RPC params:
+//   [{"from":"0x...", "to":"0x...", "data":"0x...", "value":"0x...", "gas":"0x..."}, "latest"]
+// All fields are optional per Ethereum spec.
 static silkworm::Transaction parse_call_object(const std::string& params) {
     silkworm::Transaction txn;
     txn.type = silkworm::TransactionType::kLegacy;
@@ -281,42 +322,52 @@ static silkworm::Transaction parse_call_object(const std::string& params) {
     txn.max_fee_per_gas = 0;
     txn.max_priority_fee_per_gas = 0;
 
-    // Parse "from"
+    // Parse "from" (optional — zero address if missing)
+    std::string from_hex = extract_json_string_value(params, "from");
     evmc::address from_addr{};
-    auto from_pos = params.find("\"from\"");
-    if (from_pos != std::string::npos) {
-        parse_hex_address(params.substr(from_pos), from_addr);
+    if (!from_hex.empty()) {
+        parse_hex_address(from_hex, from_addr);
     }
     txn.set_sender(from_addr);
 
-    // Parse "to"
-    auto to_pos = params.find("\"to\"");
-    if (to_pos != std::string::npos) {
+    // Parse "to" (optional — nullopt means CREATE)
+    std::string to_hex = extract_json_string_value(params, "to");
+    if (!to_hex.empty()) {
         evmc::address to_addr{};
-        if (parse_hex_address(params.substr(to_pos), to_addr)) {
+        if (parse_hex_address(to_hex, to_addr)) {
             txn.to = to_addr;
         }
     }
 
-    // Parse "data" or "input"
-    for (const char* key : {"\"data\"", "\"input\""}) {
-        auto data_pos = params.find(key);
-        if (data_pos != std::string::npos) {
-            auto colon = params.find(':', data_pos);
-            if (colon != std::string::npos) {
-                parse_hex_bytes(params.substr(colon), txn.data);
-                break;
-            }
-        }
+    // Parse "data" or "input" (optional)
+    std::string data_hex = extract_json_string_value(params, "data");
+    if (data_hex.empty()) {
+        data_hex = extract_json_string_value(params, "input");
+    }
+    if (!data_hex.empty()) {
+        parse_hex_bytes(data_hex, txn.data);
     }
 
-    // Parse "gas"
-    auto gas_pos = params.find("\"gas\"");
-    if (gas_pos != std::string::npos) {
-        auto colon = params.find("0x", gas_pos);
-        if (colon != std::string::npos) {
-            txn.gas_limit = std::strtoull(params.c_str() + colon + 2, nullptr, 16);
-        }
+    // Parse "value" (optional — 0 if missing)
+    std::string value_hex = extract_json_string_value(params, "value");
+    if (!value_hex.empty()) {
+        txn.value = parse_hex_uint256(value_hex);
+    }
+
+    // Parse "gas" or "gasLimit" (optional)
+    std::string gas_hex = extract_json_string_value(params, "gas");
+    if (gas_hex.empty()) {
+        gas_hex = extract_json_string_value(params, "gasLimit");
+    }
+    if (!gas_hex.empty()) {
+        txn.gas_limit = parse_hex_uint64(gas_hex);
+    }
+
+    // Parse "gasPrice" / "maxFeePerGas" (optional)
+    std::string gp_hex = extract_json_string_value(params, "gasPrice");
+    if (gp_hex.empty()) gp_hex = extract_json_string_value(params, "maxFeePerGas");
+    if (!gp_hex.empty()) {
+        txn.max_fee_per_gas = parse_hex_uint256(gp_hex);
     }
 
     return txn;
@@ -324,6 +375,10 @@ static silkworm::Transaction parse_call_object(const std::string& params) {
 
 static RpcResult handle_call(const std::string& params, const std::string& id) {
     auto txn = parse_call_object(params);
+
+    // For eth_call, gas price should be 0 (no balance needed for simulation).
+    txn.max_fee_per_gas = 0;
+    txn.max_priority_fee_per_gas = 0;
 
     uint8_t rand_seed[32] = {};
     auto block = make_evm_block(
@@ -343,6 +398,14 @@ static RpcResult handle_call(const std::string& params, const std::string& id) {
 
 static RpcResult handle_estimate_gas(const std::string& params, const std::string& id) {
     auto txn = parse_call_object(params);
+
+    // For estimation, gas price = 0 so no balance requirement.
+    txn.max_fee_per_gas = 0;
+    txn.max_priority_fee_per_gas = 0;
+    // Use a generous gas limit if not specified.
+    if (txn.gas_limit == 10'000'000) {
+        txn.gas_limit = 30'000'000;
+    }
 
     uint8_t rand_seed[32] = {};
     auto block = make_evm_block(

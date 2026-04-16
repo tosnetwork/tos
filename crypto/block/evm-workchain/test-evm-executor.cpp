@@ -28,6 +28,11 @@
 #include <silkworm/core/types/transaction.hpp>
 #include <silkworm/core/types/address.hpp>
 #include <silkworm/core/rlp/encode.hpp>
+#include <silkworm/core/crypto/ecdsa.h>
+#include <ethash/keccak.hpp>
+#include <secp256k1.h>
+#include <secp256k1_recovery.h>
+#include <silkworm/core/rlp/encode.hpp>
 #include <silkworm/core/common/util.hpp>
 #include <intx/intx.hpp>
 
@@ -445,11 +450,222 @@ static void test_eth_rpc() {
     bool nonce_ok = r6 && r6->json.find("0x2a") != std::string::npos;  // 42 = 0x2a
     printf("  nonce check:   %s\n", nonce_ok ? "correct" : "WRONG");
 
-    if (all_ok && balance_ok && nonce_ok) {
+    // --- eth_call test: call get() on a deployed contract ---
+    // First, deploy a contract into the global state
+    evmc::address deployer{};
+    deployer.bytes[19] = 0xCC;
+    global_evm_state().seed_account(deployer, intx::uint256{10'000'000'000'000'000'000u}, 0);
+
+    // Deploy the same storage contract as test_contract_call
+    Bytes runtime = {
+        0x63, 0x6d, 0x4c, 0xe6, 0x3c,
+        0x60, 0x00, 0x35, 0x60, 0xe0, 0x1c, 0x14,
+        0x60, 0x16, 0x57,
+        0x60, 0x04, 0x35, 0x60, 0x00, 0x55, 0x00,
+        0x5b, 0x60, 0x00, 0x54, 0x60, 0x00, 0x52,
+        0x60, 0x20, 0x60, 0x00, 0xf3,
+    };
+    uint8_t rlen = static_cast<uint8_t>(runtime.size());
+    Bytes initcode = {
+        0x60, rlen, 0x60, 0x0c, 0x60, 0x00, 0x39,
+        0x60, rlen, 0x60, 0x00, 0xf3,
+    };
+    initcode.insert(initcode.end(), runtime.begin(), runtime.end());
+
+    Transaction deploy_txn;
+    deploy_txn.type = TransactionType::kLegacy;
+    deploy_txn.chain_id = kEvmChainId;
+    deploy_txn.nonce = 0;
+    deploy_txn.max_fee_per_gas = 1'000'000'000;
+    deploy_txn.max_priority_fee_per_gas = 1'000'000'000;
+    deploy_txn.gas_limit = 200'000;
+    deploy_txn.to = std::nullopt;
+    deploy_txn.value = 0;
+    deploy_txn.data = initcode;
+    deploy_txn.set_sender(deployer);
+
+    uint8_t rs[32] = {};
+    auto blk = make_evm_block(1, 1700000000, rs);
+    execute_evm_transaction(deploy_txn, blk, global_evm_state(), evm_chain_config());
+    evmc::address contract = silkworm::create_address(deployer, 0);
+
+    // set(0x1234) via direct execution
+    Bytes set_cd(36, 0);
+    set_cd[0]=0x60; set_cd[1]=0xfe; set_cd[2]=0x47; set_cd[3]=0xb1;
+    set_cd[35]=0x34; set_cd[34]=0x12;
+    Transaction set_txn;
+    set_txn.type = TransactionType::kLegacy;
+    set_txn.chain_id = kEvmChainId;
+    set_txn.nonce = 1;
+    set_txn.max_fee_per_gas = 1'000'000'000;
+    set_txn.max_priority_fee_per_gas = 1'000'000'000;
+    set_txn.gas_limit = 100'000;
+    set_txn.to = contract;
+    set_txn.value = 0;
+    set_txn.data = set_cd;
+    set_txn.set_sender(deployer);
+    auto blk2 = make_evm_block(2, 1700000001, rs);
+    execute_evm_transaction(set_txn, blk2, global_evm_state(), evm_chain_config());
+
+    // Now call get() via eth_call RPC
+    char contract_hex[43];
+    snprintf(contract_hex, sizeof(contract_hex), "0x");
+    for (int i = 0; i < 20; ++i)
+        snprintf(contract_hex + 2 + i*2, 3, "%02x", contract.bytes[i]);
+
+    std::string call_params = "[{\"to\":\"";
+    call_params += contract_hex;
+    call_params += "\",\"data\":\"0x6d4ce63c\"},\"latest\"]";
+
+    auto r_call = handle_eth_rpc("eth_call", call_params, "10");
+    printf("  eth_call get(): %s\n", r_call ? r_call->json.c_str() : "NOT HANDLED");
+
+    // Verify it returns 0x1234 as uint256 (last 2 bytes of 32-byte result)
+    bool call_ok = r_call && r_call->json.find("1234") != std::string::npos;
+    printf("  eth_call check: %s\n", call_ok ? "correct" : "WRONG");
+
+    // --- eth_estimateGas test ---
+    auto r_est = handle_eth_rpc("eth_estimateGas", call_params, "11");
+    printf("  eth_estimateGas: %s\n", r_est ? r_est->json.c_str() : "NOT HANDLED");
+    bool est_ok = r_est && r_est->json.find("0x") != std::string::npos && !r_est->is_error;
+    printf("  estimateGas check: %s\n", est_ok ? "correct" : "WRONG");
+
+    if (all_ok && balance_ok && nonce_ok && call_ok && est_ok) {
         printf("  PASSED\n\n");
     } else {
-        printf("  FAILED\n\n");
+        printf("  FAILED (all=%d bal=%d nonce=%d call=%d est=%d)\n\n",
+               all_ok, balance_ok, nonce_ok, call_ok, est_ok);
     }
+}
+
+static void test_signed_transaction() {
+    printf("=== test_signed_transaction (real secp256k1 signing + RLP decode) ===\n");
+
+    EvmState state;
+
+    // --- Generate a keypair ---
+    secp256k1_context* ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
+
+    // Fixed private key for deterministic test (DO NOT use in production)
+    uint8_t privkey[32] = {};
+    privkey[31] = 1;  // private key = 1
+    // Derive the public key → address
+    secp256k1_pubkey pubkey;
+    secp256k1_ec_pubkey_create(ctx, &pubkey, privkey);
+    uint8_t pub_serialized[65];
+    size_t pub_len = 65;
+    secp256k1_ec_pubkey_serialize(ctx, pub_serialized, &pub_len, &pubkey, SECP256K1_EC_UNCOMPRESSED);
+
+    // address = keccak256(pubkey[1:])[12:]
+    auto pub_hash = ethash::keccak256(pub_serialized + 1, 64);
+    evmc::address sender_addr{};
+    std::memcpy(sender_addr.bytes, pub_hash.bytes + 12, 20);
+
+    printf("  sender addr: 0x");
+    for (auto b : sender_addr.bytes) printf("%02x", b);
+    printf("\n");
+
+    // Seed the sender with balance
+    state.seed_account(sender_addr, intx::uint256{10'000'000'000'000'000'000u}, 0);
+
+    // --- Build and sign a legacy transaction ---
+    silkworm::Transaction txn;
+    txn.type = silkworm::TransactionType::kLegacy;
+    txn.chain_id = kEvmChainId;
+    txn.nonce = 0;
+    txn.max_fee_per_gas = 1'000'000'000;
+    txn.max_priority_fee_per_gas = 1'000'000'000;
+    txn.gas_limit = 50'000;
+    evmc::address recipient{};
+    recipient.bytes[19] = 0xFF;
+    txn.to = recipient;
+    txn.value = 1'000'000;  // 1M wei
+
+    // Encode for signing (EIP-155: RLP([nonce, gasPrice, gasLimit, to, value, data, chainId, 0, 0]))
+    silkworm::Bytes signing_data;
+    txn.encode_for_signing(signing_data);
+
+    // Hash the signing data
+    auto msg_hash = ethash::keccak256(signing_data.data(), signing_data.size());
+
+    // Sign with secp256k1
+    secp256k1_ecdsa_recoverable_signature sig;
+    secp256k1_ecdsa_sign_recoverable(ctx, &sig, msg_hash.bytes, privkey, nullptr, nullptr);
+
+    // Serialize the signature
+    uint8_t sig_bytes[64];
+    int recovery_id = 0;
+    secp256k1_ecdsa_recoverable_signature_serialize_compact(ctx, sig_bytes, &recovery_id, &sig);
+
+    // Set r, s, and v on the transaction
+    txn.r = intx::be::unsafe::load<intx::uint256>(sig_bytes);
+    txn.s = intx::be::unsafe::load<intx::uint256>(sig_bytes + 32);
+    // EIP-155: v = chain_id * 2 + 35 + recovery_id
+    txn.odd_y_parity = (recovery_id == 1);
+    // For legacy: set_v computes from chain_id
+    txn.set_v(intx::uint256{kEvmChainId * 2 + 35 + recovery_id});
+
+    printf("  r: %s\n", intx::hex(txn.r).c_str());
+    printf("  s: %s\n", intx::hex(txn.s).c_str());
+    printf("  recovery_id: %d\n", recovery_id);
+
+    // Verify sender recovery works
+    auto recovered = txn.sender();
+    if (recovered.has_value()) {
+        printf("  recovered: 0x");
+        for (auto b : recovered->bytes) printf("%02x", b);
+        printf("\n");
+        bool match = (*recovered == sender_addr);
+        printf("  sender match: %s\n", match ? "YES" : "NO");
+        if (!match) {
+            printf("  FAILED (sender mismatch)\n\n");
+            secp256k1_context_destroy(ctx);
+            return;
+        }
+    } else {
+        printf("  FAILED (sender recovery returned nullopt)\n\n");
+        secp256k1_context_destroy(ctx);
+        return;
+    }
+
+    // --- RLP encode the signed transaction ---
+    silkworm::Bytes raw_rlp;
+    silkworm::rlp::encode(raw_rlp, txn);
+    printf("  raw RLP: %zu bytes\n", raw_rlp.size());
+
+    // --- Decode it back via our canonical path ---
+    auto decode_result = decode_evm_transaction(raw_rlp);
+    if (auto* err = std::get_if<TxDecodeError>(&decode_result)) {
+        printf("  decode error: %s\n", err->reason.c_str());
+        printf("  FAILED\n\n");
+        secp256k1_context_destroy(ctx);
+        return;
+    }
+    auto& decoded = std::get<DecodedTransaction>(decode_result);
+
+    bool sender_ok = (decoded.sender == sender_addr);
+    printf("  decoded sender match: %s\n", sender_ok ? "YES" : "NO");
+
+    // --- Execute the decoded transaction ---
+    uint8_t rand_seed[32] = {};
+    auto block = make_evm_block(1, 1700000000, rand_seed);
+    auto exec_result = execute_evm_transaction(decoded.txn, block, state, evm_chain_config());
+
+    printf("  exec success: %s  gas=%lu\n",
+           exec_result.success ? "true" : "false",
+           (unsigned long)exec_result.gas_used);
+
+    auto recipient_bal = state.get_balance(recipient);
+    printf("  recipient balance: %s\n", intx::to_string(recipient_bal).c_str());
+
+    bool exec_ok = exec_result.success && recipient_bal == intx::uint256{1'000'000};
+    if (sender_ok && exec_ok) {
+        printf("  PASSED\n\n");
+    } else {
+        printf("  FAILED (sender=%d exec=%d)\n\n", sender_ok, exec_ok);
+    }
+
+    secp256k1_context_destroy(ctx);
 }
 
 static void test_persistent_state() {
@@ -510,6 +726,7 @@ int main() {
     test_contract_create();
     test_contract_call();
     test_eth_rpc();
+    test_signed_transaction();
     test_persistent_state();
 
     printf("All tests passed.\n");
