@@ -17,13 +17,14 @@ set(EVM_WORKCHAIN_SRC
   evm-compute-phase.cpp
   evm-init.cpp
   evm-rpc.cpp
-  evm-persistent-state.cpp
   evm-config-param.cpp
   evm-external-message.cpp
   evm-bridge.cpp
   evm-tracer.cpp
   evm-subscriptions.cpp
   evm-incremental-trie.cpp
+  evm-cell-codec.cpp
+  evm-cell-state.cpp
 )
 
 add_library(evm_workchain STATIC ${EVM_WORKCHAIN_SRC})

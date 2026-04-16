@@ -29,7 +29,9 @@
 #include "evm-executor.h"
 #include "evm-transaction.h"
 #include "evm-rpc.h"
-#include "evm-persistent-state.h"
+#include "evm-cell-state.h"
+#include "evm-cell-codec.h"
+#include "vm/boc.h"
 #include "evm-config-param.h"
 #include "evm-bridge.h"
 #include "evm-subscriptions.h"
@@ -825,53 +827,68 @@ static void test_signed_transaction() {
 }
 
 static void test_persistent_state() {
-    printf("=== test_persistent_state (RocksDB write + read back) ===\n");
+    printf("=== test_persistent_state (cell-native: BoC serialize + deserialize) ===\n");
+    // First-principles persistence: serialize the entire EVM state to a
+    // single cell (BoC), reload it from that cell, verify equivalence.
+    // Production persistence will route the same root cell into TOS CellDb.
 
-    const std::string db_path = "/tmp/evm-workchain-test-db";
+    td::Ref<vm::Cell> root_cell;
 
-    // Clean up any previous test run
-    std::system(("rm -rf " + db_path).c_str());
-
-    // Phase 1: write state
+    // Phase 1: build state, serialize to cell
     {
-        auto persistent = PersistentEvmState::open(db_path);
-        if (!persistent) {
-            printf("  FAILED (could not open DB)\n\n");
-            return;
-        }
-        EvmState state(std::move(persistent));
-
+        CellEvmState cell_state;
         evmc::address addr{};
         addr.bytes[19] = 0xBB;
 
-        state.seed_account(addr, intx::uint256{7'000'000'000'000'000'000u}, 5);
-        printf("  wrote account: balance=7 ETH, nonce=5\n");
+        silkworm::Account acct;
+        acct.balance = intx::uint256{7'000'000'000'000'000'000u};
+        acct.nonce = 5;
+        cell_state.update_account(addr, std::nullopt, acct);
+
+        // Add a storage slot too — verifies storage subtree is preserved
+        evmc::bytes32 slot{};
+        slot.bytes[31] = 0x42;
+        evmc::bytes32 value{};
+        value.bytes[31] = 0xCC;
+        cell_state.update_storage(addr, 0, slot, evmc::bytes32{}, value);
+
+        root_cell = cell_state.serialize_to_cell();
+        printf("  wrote: balance=7 ETH, nonce=5, storage[0x42]=0xCC\n");
+        printf("  serialized cell hash: 0x");
+        if (root_cell.not_null()) {
+            auto h = root_cell->get_hash().as_array();
+            for (int i = 0; i < 8; i++) printf("%02x", h[i]);
+        }
+        printf("...\n");
     }
-    // State object destroyed — DB closed
 
-    // Phase 2: read it back from a fresh open
+    // Phase 2: load from cell into a fresh state, read back
     {
-        auto persistent = PersistentEvmState::open(db_path);
-        if (!persistent) {
-            printf("  FAILED (could not reopen DB)\n\n");
-            return;
-        }
-        EvmState state(std::move(persistent));
+        CellEvmState cell_state;
+        cell_state.load_from_cell(root_cell);
 
         evmc::address addr{};
         addr.bytes[19] = 0xBB;
 
-        auto balance = state.get_balance(addr);
-        auto nonce = state.get_nonce(addr);
-        printf("  read back: balance=%s, nonce=%lu\n",
-               intx::to_string(balance).c_str(), (unsigned long)nonce);
+        auto acct = cell_state.read_account(addr);
+        evmc::bytes32 slot{};
+        slot.bytes[31] = 0x42;
+        auto value = cell_state.read_storage(addr, 0, slot);
 
-        bool ok = (balance == intx::uint256{7'000'000'000'000'000'000u}) && (nonce == 5);
+        bool acct_ok = acct.has_value() &&
+                       acct->balance == intx::uint256{7'000'000'000'000'000'000u} &&
+                       acct->nonce == 5;
+        bool storage_ok = (value.bytes[31] == 0xCC);
+
+        printf("  read back: balance=%s, nonce=%lu, storage[0x42]=0x%02x\n",
+               acct.has_value() ? intx::to_string(acct->balance).c_str() : "(missing)",
+               (unsigned long)(acct.has_value() ? acct->nonce : 0),
+               value.bytes[31]);
+
+        bool ok = acct_ok && storage_ok;
         printf("  %s\n\n", ok ? "PASSED" : "FAILED");
     }
 
-    // Cleanup
-    std::system(("rm -rf " + db_path).c_str());
 }
 
 static void test_config_param() {
@@ -2818,6 +2835,157 @@ void test_state_root_cell_format() {
     printf("  %s\n\n", pass ? "PASSED" : "FAILED");
 }
 
+// =============================================================================
+// Cell-native state tests (Phase 6)
+// =============================================================================
+
+void test_cell_codec_roundtrip() {
+    printf("=== test_cell_codec_roundtrip (encode/decode EvmAccountData) ===\n");
+    // Verify a non-trivial account encodes and decodes losslessly.
+    silkworm::Account in;
+    in.nonce = 0x123456789abcdef0ULL;
+    in.balance = intx::uint256{0xdeadbeefULL};
+    in.balance = (in.balance << 128) | intx::uint256{0xcafebabeULL};
+    for (int i = 0; i < 32; i++) in.code_hash.bytes[i] = static_cast<uint8_t>(i * 7 + 1);
+    in.incarnation = 0;  // not part of cell schema
+
+    // Build a non-empty storage root (a cell with some data) for the test
+    vm::CellBuilder storage_cb;
+    storage_cb.store_long(0xAABBCCDD, 32);
+    auto storage_root = storage_cb.finalize();
+
+    auto cell = encode_evm_account_data(in, storage_root);
+
+    silkworm::Account out;
+    td::Ref<vm::Cell> out_storage_root;
+    bool ok = decode_evm_account_data(cell, out, out_storage_root);
+
+    bool fields_match = ok &&
+        in.nonce == out.nonce &&
+        in.balance == out.balance &&
+        in.code_hash == out.code_hash;
+    bool storage_match = out_storage_root.not_null() &&
+        out_storage_root->get_hash() == storage_root->get_hash();
+
+    printf("  decode ok: %s\n", ok ? "yes" : "no");
+    printf("  fields match: %s\n", fields_match ? "yes" : "no");
+    printf("  storage root preserved: %s\n", storage_match ? "yes" : "no");
+
+    bool pass = ok && fields_match && storage_match;
+    printf("  %s\n\n", pass ? "PASSED" : "FAILED");
+}
+
+void test_storage_dict_persistence() {
+    printf("=== test_storage_dict_persistence (SSTORE → cell → SLOAD round-trip) ===\n");
+    CellEvmState state;
+    evmc::address addr{};
+    addr.bytes[19] = 0xAB;
+
+    // Seed account
+    silkworm::Account acct;
+    acct.nonce = 1;
+    acct.balance = intx::uint256{42};
+    state.update_account(addr, std::nullopt, acct);
+
+    // Write 5 storage slots
+    for (int i = 1; i <= 5; i++) {
+        evmc::bytes32 slot{};
+        slot.bytes[31] = static_cast<uint8_t>(i);
+        evmc::bytes32 value{};
+        value.bytes[31] = static_cast<uint8_t>(i * 17);
+        state.update_storage(addr, 0, slot, evmc::bytes32{}, value);
+    }
+
+    // Serialize the full state and reload
+    auto root = state.serialize_to_cell();
+    CellEvmState reloaded;
+    reloaded.load_from_cell(root);
+
+    // Verify all slots round-trip
+    bool all_match = true;
+    for (int i = 1; i <= 5; i++) {
+        evmc::bytes32 slot{};
+        slot.bytes[31] = static_cast<uint8_t>(i);
+        auto v = reloaded.read_storage(addr, 0, slot);
+        if (v.bytes[31] != static_cast<uint8_t>(i * 17)) {
+            all_match = false;
+            printf("  slot %d: expected 0x%02x, got 0x%02x\n",
+                   i, i * 17, v.bytes[31]);
+        }
+    }
+    auto a = reloaded.read_account(addr);
+    bool acct_ok = a.has_value() && a->nonce == 1 && a->balance == intx::uint256{42};
+
+    printf("  account round-trip: %s\n", acct_ok ? "yes" : "no");
+    printf("  all 5 storage slots: %s\n", all_match ? "yes" : "no");
+    printf("  %s\n\n", (acct_ok && all_match) ? "PASSED" : "FAILED");
+}
+
+void test_state_hash_includes_evm() {
+    printf("=== test_state_hash_includes_evm (modify EVM → cell hash changes) ===\n");
+    // First-principles atomicity: the cell-tree hash must reflect EVM state.
+    // Without this property, TOS state_hash would not commit to EVM data.
+
+    CellEvmState state;
+    evmc::address addr{};
+    addr.bytes[19] = 0x88;
+    silkworm::Account acct;
+    acct.nonce = 1;
+    acct.balance = intx::uint256{100};
+    state.update_account(addr, std::nullopt, acct);
+
+    auto root1 = state.serialize_to_cell();
+    auto hash1 = root1->get_hash().as_array();
+
+    // Change the balance
+    silkworm::Account acct2 = acct;
+    acct2.balance = intx::uint256{200};
+    state.update_account(addr, acct, acct2);
+
+    auto root2 = state.serialize_to_cell();
+    auto hash2 = root2->get_hash().as_array();
+
+    // The same modifications applied independently must produce the same hash
+    CellEvmState state3;
+    state3.update_account(addr, std::nullopt, acct2);
+    auto root3 = state3.serialize_to_cell();
+    auto hash3 = root3->get_hash().as_array();
+
+    bool hash_changed = !std::equal(hash1.begin(), hash1.end(), hash2.begin());
+    bool deterministic = std::equal(hash2.begin(), hash2.end(), hash3.begin());
+
+    printf("  hash before: 0x");
+    for (int i = 0; i < 8; i++) printf("%02x", hash1[i]);
+    printf("...\n");
+    printf("  hash after:  0x");
+    for (int i = 0; i < 8; i++) printf("%02x", hash2[i]);
+    printf("...\n");
+    printf("  modification changed hash: %s\n", hash_changed ? "yes" : "no");
+    printf("  same-state independent build matches: %s\n",
+           deterministic ? "yes" : "no");
+
+    bool pass = hash_changed && deterministic;
+    printf("  %s\n\n", pass ? "PASSED" : "FAILED");
+}
+
+void test_no_separate_evm_db() {
+    printf("=== test_no_separate_evm_db (no second RocksDB created) ===\n");
+    // Verify init_evm_workchain with a db_root does NOT create the old
+    // {db_root}/evm-state/ RocksDB directory.
+    const std::string tmp_root = "/tmp/evm-cell-native-test";
+    std::system(("rm -rf " + tmp_root).c_str());
+    std::system(("mkdir -p " + tmp_root).c_str());
+
+    init_evm_workchain(tmp_root);
+
+    bool old_dir_absent = (std::system(("test ! -d " + tmp_root + "/evm-state").c_str()) == 0);
+
+    printf("  no /evm-state RocksDB directory: %s\n", old_dir_absent ? "yes" : "NO!");
+    printf("  %s\n\n", old_dir_absent ? "PASSED" : "FAILED");
+
+    std::system(("rm -rf " + tmp_root).c_str());
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -2856,6 +3024,10 @@ int main() {
     test_transactions_root_empty();
     test_block_has_state_root();
     test_state_root_cell_format();
+    test_cell_codec_roundtrip();
+    test_storage_dict_persistence();
+    test_state_hash_includes_evm();
+    test_no_separate_evm_db();
 
     // Scan stdout for FAILED to determine exit code
     // (Individual tests print PASSED or FAILED)

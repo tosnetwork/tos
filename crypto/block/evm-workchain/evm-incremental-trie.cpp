@@ -9,6 +9,7 @@
     Source: TOS-specific adapter (not copied from ~/s).
 */
 #include "evm-incremental-trie.h"
+#include "evm-cell-state.h"
 
 #include <algorithm>
 #include <cstring>
@@ -95,8 +96,21 @@ std::map<evmc::bytes32, std::pair<evmc::address, silkworm::Account>>
 IncrementalTrieCalculator::collect_hashed_accounts(EvmState& state) {
     std::map<evmc::bytes32, std::pair<evmc::address, silkworm::Account>> result;
 
-    // Try to access InMemoryState's accounts() for direct iteration.
-    // This is the fast path when the backend is InMemoryState.
+    // Cell-native path: iterate via CellEvmState's account dictionary.
+    auto* cell_state = dynamic_cast<CellEvmState*>(&state.state());
+    if (cell_state) {
+        cell_state->for_each_account(
+            [&result](const unsigned char key[32], const silkworm::Account& acct) {
+                // Reconstruct EVM address from the last 20 bytes of the 32-byte key
+                evmc::address addr{};
+                std::memcpy(addr.bytes, key + 12, 20);
+                auto hashed = keccak_address(addr);
+                result[hashed] = {addr, acct};
+            });
+        return result;
+    }
+
+    // Fallback: InMemoryState (used in tests that construct EvmState directly).
     auto* in_mem = dynamic_cast<silkworm::InMemoryState*>(&state.state());
     if (in_mem) {
         for (const auto& [addr, acct] : in_mem->accounts()) {
@@ -104,10 +118,6 @@ IncrementalTrieCalculator::collect_hashed_accounts(EvmState& state) {
             result[hashed] = {addr, acct};
         }
     }
-    // If not InMemoryState, we cannot enumerate accounts without the
-    // hashed-state tables that the other agent is implementing.
-    // For now, return empty -- the caller should ensure InMemoryState is used
-    // or that hashed-state iteration is available.
     return result;
 }
 
@@ -118,6 +128,20 @@ IncrementalTrieCalculator::collect_hashed_storage(
     uint64_t incarnation) {
     std::map<evmc::bytes32, evmc::bytes32> result;
 
+    // Cell-native path
+    auto* cell_state = dynamic_cast<CellEvmState*>(&state.state());
+    if (cell_state) {
+        cell_state->for_each_storage(address,
+            [&result](const evmc::bytes32& slot, const evmc::bytes32& value) {
+                if (!bytes32_is_zero(value)) {
+                    auto hashed_loc = keccak_bytes32(slot);
+                    result[hashed_loc] = value;
+                }
+            });
+        return result;
+    }
+
+    // Fallback: InMemoryState
     auto* in_mem = dynamic_cast<silkworm::InMemoryState*>(&state.state());
     if (in_mem) {
         const auto& all_storage = in_mem->storage();
