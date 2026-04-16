@@ -1,6 +1,6 @@
 # EVM Workchain — Cell-Native State Architecture
 
-Version: v1.1 — Cell-native EVM state with collator dispatch hook
+Version: v1.2 — Cell-native EVM state with collator dispatch hook + zkVM compatibility rationale
 
 ## Motivation
 
@@ -213,11 +213,27 @@ With cell-native state, the EVM account data (nonce, balance, storage) is encode
 - An incorrect EVM execution (bug, malicious behavior) produces a different cell tree and different state_hash → caught by consensus
 - No "deterministic execution" assumption needed; consensus is enforced by hash equality
 
-### Ethereum stateRoot Becomes RPC-Only
+### Ethereum stateRoot is Mandatory for zkVM Roadmap
 
-The Ethereum-format stateRoot (Merkle Patricia Trie over keccak256-hashed accounts and RLP-encoded values) is computed by `IncrementalTrieCalculator` and exposed via `eth_getBlockByNumber.stateRoot`. It serves wallet/explorer compatibility but is **not** used for TOS consensus. TOS uses the cell-based state_hash; Ethereum tools see the MPT stateRoot.
+The Ethereum-format stateRoot (Merkle Patricia Trie over keccak256-hashed accounts and RLP-encoded values) is computed by `IncrementalTrieCalculator` and exposed via `eth_getBlockByNumber.stateRoot`. It is **not** used for TOS consensus — TOS state_hash already covers EVM state. So why keep computing it every block?
 
-Both roots commit to the same underlying state — they differ only in encoding.
+**zkVM compatibility.** The roadmap includes adding zk proofs (zkEVM-style) to EVM workchain blocks. Every production zkEVM circuit (Scroll, Polygon zkEVM, Linea, zkSync, Risc Zero zkEVM, SP1) consumes Ethereum MPT stateRoot as the canonical state commitment. Custom hash schemes (TOS cell-tree sha256) are not supported by any existing zkEVM verification circuit, and rebuilding circuits for cell-tree hashes would be a multi-million-dollar engineering effort.
+
+Therefore:
+- **Every block must have its Ethereum stateRoot computed and stored** (not lazy, not on-demand)
+- The algorithm must be deterministic across validators (it is — sorted by `keccak256(address)`)
+- The result becomes the input/output for the future zkEVM proof generator
+
+Secondary benefits even before zkVM:
+- `eth_getProof` works (some bridges and DeFi protocols depend on it)
+- Light clients can verify state without running a full node
+- Cross-chain bridges to Ethereum can verify TOS state via standard MPT proofs
+
+**Rejected alternatives:**
+- *Drop stateRoot computation entirely*: incompatible with zkVM roadmap, breaks `eth_getProof`
+- *Lazy computation (on RPC request)*: non-deterministic — different validators might cache different intermediate states, breaking zkEVM proof aggregation
+
+Both consensus root (TOS state_hash) and Ethereum stateRoot commit to the same underlying state — they differ only in encoding. Both are computed and stored every block.
 
 ## Collator Integration Hook
 

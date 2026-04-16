@@ -1,6 +1,6 @@
 # TOS EVM Workchain Feasibility
 
-Version: v0.9 — All 5 phases complete, 27 tests (14 Silkworm gold), 34 RPC methods, 5 rounds of deep code audit completed
+Version: v1.0 — Cell-native state, wc=1, 39 tests, live local testnet with 4 validators serving eth_chainId=0x544f53; zkVM roadmap captured
 
 ## Purpose
 
@@ -723,7 +723,7 @@ All coding work is complete. Remaining items are operational:
 
 4. ✅ **Transaction pool / mempool** — EVM transactions are converted to ext_in_msg cells and submitted to the existing TOS ExtMessagePool via `handle_eth_sendRawTransaction()`. Workchain==1 messages bypass TVM validation in `ext-message-pool.cpp`. The collator picks them up normally and dispatches to `evm-compute-phase.cpp`.
 
-5. **State trie / state root** — compute Ethereum-compatible state root hash for light client verification.
+5. ✅ **State trie / state root** — Ethereum-format MPT stateRoot computed every block by `IncrementalTrieCalculator`, exposed via `eth_getBlockByNumber.stateRoot`. Kept (not lazy) because the zkVM roadmap (item 10) requires it. See `doc/evm-workchain-cell-native-state.md` "Ethereum stateRoot is Mandatory for zkVM Roadmap".
 
 6. **Production hardening** — rate limiting, access control, error recovery.
 
@@ -734,6 +734,8 @@ All coding work is complete. Remaining items are operational:
 8. **Broader block explorer support** — `eth_getBlockTransactionCountByNumber`, `eth_getUncleCountByBlockNumber`.
 
 9. **Production hardening** — rate limiting, access control, error recovery.
+
+10. **zkEVM proofs** — generate per-block zk proofs over the state transition (`prev_stateRoot, txs → new_stateRoot`). Existing zkEVM circuits (Scroll/Polygon zkEVM/Linea/zkSync/Risc Zero) consume Ethereum-format MPT stateRoot directly, which is why we keep computing it every block even though TOS consensus already covers EVM state via cell-tree state_hash.
 
 ## Build Requirements
 
