@@ -55,4 +55,12 @@ bool is_eth_rpc_method(const std::string& method) noexcept;
 /// Test helper: reset in-memory filter state to a clean slate.
 void reset_evm_rpc_filter_state_for_test();
 
+/// Enable or disable RPC rate limiting.
+/// Rate limiting is disabled by default (for test harnesses).
+/// Production code should call enable_evm_rpc_rate_limit(true) at startup.
+void enable_evm_rpc_rate_limit(bool enable);
+
+/// Test helper: reset rate limiter token buckets to full capacity.
+void reset_evm_rpc_rate_limit_for_test();
+
 }  // namespace evm_workchain

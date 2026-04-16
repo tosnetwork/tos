@@ -20,6 +20,7 @@
 #include "evm-transaction.h"
 #include "evm-tracer.h"
 #include "evm-subscriptions.h"
+#include "evm-state-root.h"
 
 #include <silkworm/core/common/util.hpp>
 #include <ethash/keccak.hpp>
@@ -29,8 +30,91 @@
 #include <cstdio>
 #include <cstring>
 #include <sstream>
+#include <chrono>
 
 namespace evm_workchain {
+
+// ---------------------------------------------------------------------------
+// Rate limiting constants
+// ---------------------------------------------------------------------------
+
+static constexpr uint64_t kMaxRpcRequestsPerSec = 100;   // refill rate (tokens/sec)
+static constexpr uint64_t kMaxRpcBurst = 1000;            // bucket capacity
+static constexpr uint64_t kMaxGetLogsRequestsPerSec = 10; // tighter refill for eth_getLogs
+static constexpr uint64_t kMaxGetLogsBurst = 50;          // tighter burst for eth_getLogs
+static constexpr uint64_t kMaxGetLogsBlockRange = 10000;  // max toBlock - fromBlock
+static constexpr size_t   kMaxRpcParamsSize = 1 << 20;    // 1 MB
+
+// ---------------------------------------------------------------------------
+// Token-bucket rate limiter
+// ---------------------------------------------------------------------------
+
+struct RateLimiter {
+    std::mutex mutex;
+    uint64_t tokens;
+    uint64_t max_tokens;
+    uint64_t refill_rate;     // tokens per second
+    uint64_t last_refill;     // steady_clock seconds since epoch
+
+    RateLimiter(uint64_t max_tok, uint64_t rate)
+        : tokens(max_tok)
+        , max_tokens(max_tok)
+        , refill_rate(rate)
+        , last_refill(static_cast<uint64_t>(
+              std::chrono::duration_cast<std::chrono::seconds>(
+                  std::chrono::steady_clock::now().time_since_epoch())
+                  .count())) {}
+
+    void refill() {
+        uint64_t now = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        if (now > last_refill) {
+            uint64_t elapsed = now - last_refill;
+            uint64_t added = elapsed * refill_rate;
+            tokens = std::min(tokens + added, max_tokens);
+            last_refill = now;
+        }
+    }
+
+    bool try_consume() {
+        std::lock_guard<std::mutex> lock(mutex);
+        refill();
+        if (tokens == 0) return false;
+        --tokens;
+        return true;
+    }
+
+    void reset() {
+        std::lock_guard<std::mutex> lock(mutex);
+        tokens = max_tokens;
+        last_refill = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+    }
+};
+
+static RateLimiter g_rpc_limiter{kMaxRpcBurst, kMaxRpcRequestsPerSec};
+static RateLimiter g_getlogs_limiter{kMaxGetLogsBurst, kMaxGetLogsRequestsPerSec};
+
+// Rate limiting is disabled by default so that test harnesses are not
+// affected.  Production code enables it via enable_evm_rpc_rate_limit().
+static bool g_rate_limit_enabled = false;
+
+void enable_evm_rpc_rate_limit(bool enable) {
+    g_rate_limit_enabled = enable;
+    if (enable) {
+        g_rpc_limiter.reset();
+        g_getlogs_limiter.reset();
+    }
+}
+
+void reset_evm_rpc_rate_limit_for_test() {
+    g_rpc_limiter.reset();
+    g_getlogs_limiter.reset();
+}
 
 // ---------------------------------------------------------------------------
 // Hex encoding helpers (Ethereum canonical format: 0x-prefixed, no leading zeros)
@@ -320,30 +404,12 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
     // Compute block-level logs bloom from all transaction logs
     compute_logs_bloom(exec_result.logs, stored_block.logs_bloom);
 
-    // Compute transactionsRoot = keccak256(concatenated tx hashes)
-    if (!stored_block.transaction_hashes.empty()) {
-        size_t total = stored_block.transaction_hashes.size() * 32;
-        std::vector<uint8_t> buf(total);
-        for (size_t ti = 0; ti < stored_block.transaction_hashes.size(); ++ti) {
-            std::memcpy(buf.data() + ti * 32,
-                        stored_block.transaction_hashes[ti].bytes, 32);
-        }
-        auto tr = ethash::keccak256(buf.data(), buf.size());
-        std::memcpy(stored_block.transactions_root.bytes, tr.bytes, 32);
-    }
-
-    // Compute receiptsRoot (simplified: no MPT available, use keccak256 of receipt data)
-    {
-        std::vector<uint8_t> buf;
-        buf.push_back(exec_result.success ? 1 : 0);
-        uint64_t gu_be = __builtin_bswap64(exec_result.gas_used);
-        buf.insert(buf.end(), reinterpret_cast<uint8_t*>(&gu_be),
-                   reinterpret_cast<uint8_t*>(&gu_be) + 8);
-        buf.insert(buf.end(), stored_block.logs_bloom,
-                   stored_block.logs_bloom + 256);
-        auto rr = ethash::keccak256(buf.data(), buf.size());
-        std::memcpy(stored_block.receipts_root.bytes, rr.bytes, 32);
-    }
+    // Compute transactionsRoot and receiptsRoot using proper Merkle Patricia Trie.
+    // The trie root functions read from evm_state, which already has the stored tx/receipt.
+    stored_block.transactions_root = compute_transactions_root(
+        stored_block.transaction_hashes, evm_state);
+    stored_block.receipts_root = compute_receipts_root(
+        stored_block.transaction_hashes, evm_state);
 
     evm_state.store_block(stored_block);
 
@@ -653,6 +719,10 @@ static std::string format_block_json(const StoredBlock& blk, bool full_transacti
     r += "\"extraData\":\"0x\",";
     r += "\"size\":\"0x0\",";
     r += "\"mixHash\":\"0x" + std::string(64, '0') + "\",";
+    // stateRoot: remains zeros for now. Computing a full Ethereum state root
+    // requires iterating all accounts and building an MPT over (address -> RLP(account)),
+    // which is expensive and not yet implemented. transactionsRoot and receiptsRoot below
+    // are proper MPT roots computed via silkworm::trie::root_hash().
     r += "\"stateRoot\":\"0x" + std::string(64, '0') + "\",";
     r += "\"transactionsRoot\":" + to_hex_data(blk.transactions_root.bytes, 32) + ",";
     r += "\"receiptsRoot\":" + to_hex_data(blk.receipts_root.bytes, 32) + ",";
@@ -745,6 +815,12 @@ static RpcResult handle_get_logs(const std::string& params, const std::string& i
         if (tb_hex == "earliest") to_block = 0;
         else to_block = parse_hex_uint64(tb_hex);
     }
+    // Enforce maximum block range to prevent expensive scans
+    if (to_block > from_block && (to_block - from_block) > kMaxGetLogsBlockRange) {
+        return {make_error(id, -32005, "query exceeds max block range of " +
+                           std::to_string(kMaxGetLogsBlockRange)), true};
+    }
+
     // Parse address (single string or array of strings)
     addresses = parse_address_param(params);
 
@@ -1136,6 +1212,152 @@ static RpcResult handle_max_priority_fee(const std::string& id) {
     return {make_result(id, to_hex_quantity(uint64_t{1'000'000'000})), false};
 }
 
+// ---------------------------------------------------------------------------
+// Block explorer RPC helpers
+// ---------------------------------------------------------------------------
+
+// Parse a block number tag from the first param in an array:
+//   ["latest"] / ["earliest"] / ["safe"] / ["finalized"] / ["pending"] / ["0x1"]
+// Returns the resolved uint64_t block number.
+static uint64_t parse_block_number_param(const std::string& params) {
+    uint64_t bn = global_evm_state().block_number();
+    // Check for named tags first
+    if (params.find("\"latest\"") != std::string::npos ||
+        params.find("\"pending\"") != std::string::npos ||
+        params.find("\"safe\"") != std::string::npos ||
+        params.find("\"finalized\"") != std::string::npos) {
+        return bn;
+    }
+    if (params.find("\"earliest\"") != std::string::npos) {
+        return 0;
+    }
+    // Otherwise parse hex
+    auto pos = params.find("0x");
+    if (pos != std::string::npos) {
+        auto end = params.find_first_of("\",]}", pos);
+        std::string hex_str = params.substr(pos, end - pos);
+        return parse_hex_uint64(hex_str);
+    }
+    return bn;
+}
+
+// Parse a 32-byte hash from the first hex param in the params string.
+static bool parse_hash_param(const std::string& params, evmc::bytes32& out) {
+    silkworm::Bytes hash_bytes;
+    if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
+        return false;
+    }
+    std::memcpy(out.bytes, hash_bytes.data(), 32);
+    return true;
+}
+
+// Parse the second hex param (transaction index) from params like ["0x1", "0x0"].
+static uint64_t parse_second_hex_param(const std::string& params) {
+    // Find first 0x, skip past it, then find the second 0x
+    auto first = params.find("0x");
+    if (first == std::string::npos) return 0;
+    auto second = params.find("0x", first + 2);
+    if (second == std::string::npos) return 0;
+    auto end = params.find_first_of("\",]}", second);
+    std::string hex_str = params.substr(second, end - second);
+    return parse_hex_uint64(hex_str);
+}
+
+// Format a full transaction object JSON (same as handle_get_transaction_by_hash output).
+static std::string format_transaction_json(const evmc::bytes32& tx_hash, const StoredTransaction& tx) {
+    std::string r = "{";
+    r += "\"hash\":" + to_hex_data(tx_hash.bytes, 32) + ",";
+    r += "\"from\":" + to_hex_addr(tx.from) + ",";
+    if (tx.to) {
+        r += "\"to\":" + to_hex_addr(*tx.to) + ",";
+    } else {
+        r += "\"to\":null,";
+    }
+    r += "\"value\":" + to_hex_quantity(tx.value) + ",";
+    r += "\"input\":" + to_hex_data(tx.data.data(), tx.data.size()) + ",";
+    r += "\"nonce\":" + to_hex_quantity(tx.nonce) + ",";
+    r += "\"gas\":" + to_hex_quantity(tx.gas_limit) + ",";
+    r += "\"gasPrice\":" + to_hex_quantity(tx.gas_price) + ",";
+    r += "\"blockNumber\":" + to_hex_quantity(tx.block_number) + ",";
+    r += "\"blockHash\":" + lookup_block_hash_hex(tx.block_number) + ",";
+    r += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(tx.tx_index)) + ",";
+    r += "\"type\":\"0x0\",";
+    r += "\"v\":\"0x0\",\"r\":\"0x0\",\"s\":\"0x0\"";
+    r += "}";
+    return r;
+}
+
+static RpcResult handle_get_block_tx_count_by_number(const std::string& params, const std::string& id) {
+    uint64_t bn = parse_block_number_param(params);
+    if (!global_evm_state().has_block(bn)) {
+        return {make_result(id, "\"0x0\""), false};
+    }
+    auto blk = global_evm_state().get_block_copy(bn);
+    return {make_result(id, to_hex_quantity(static_cast<uint64_t>(blk.transaction_hashes.size()))), false};
+}
+
+static RpcResult handle_get_block_tx_count_by_hash(const std::string& params, const std::string& id) {
+    evmc::bytes32 block_hash{};
+    if (!parse_hash_param(params, block_hash)) {
+        return {make_result(id, "null"), false};
+    }
+    auto blk = global_evm_state().get_block_by_hash_copy(block_hash);
+    if (blk.number == 0 && blk.hash == evmc::bytes32{}) {
+        return {make_result(id, "null"), false};
+    }
+    return {make_result(id, to_hex_quantity(static_cast<uint64_t>(blk.transaction_hashes.size()))), false};
+}
+
+static RpcResult handle_get_uncle_count_by_block_number(const std::string& /*params*/, const std::string& id) {
+    // PoS chain has no uncles — always return 0
+    return {make_result(id, "\"0x0\""), false};
+}
+
+static RpcResult handle_get_tx_by_block_number_and_index(const std::string& params, const std::string& id) {
+    uint64_t bn = parse_block_number_param(params);
+    uint64_t tx_index = parse_second_hex_param(params);
+
+    if (!global_evm_state().has_block(bn)) {
+        return {make_result(id, "null"), false};
+    }
+    auto blk = global_evm_state().get_block_copy(bn);
+    if (tx_index >= blk.transaction_hashes.size()) {
+        return {make_result(id, "null"), false};
+    }
+
+    const auto& tx_hash = blk.transaction_hashes[tx_index];
+    auto tx = global_evm_state().get_transaction_copy(tx_hash);
+    if (!tx) {
+        return {make_result(id, "null"), false};
+    }
+
+    return {make_result(id, format_transaction_json(tx_hash, *tx)), false};
+}
+
+static RpcResult handle_get_tx_by_block_hash_and_index(const std::string& params, const std::string& id) {
+    evmc::bytes32 block_hash{};
+    if (!parse_hash_param(params, block_hash)) {
+        return {make_result(id, "null"), false};
+    }
+    uint64_t tx_index = parse_second_hex_param(params);
+
+    auto blk = global_evm_state().get_block_by_hash_copy(block_hash);
+    if (blk.number == 0 && blk.hash == evmc::bytes32{}) {
+        return {make_result(id, "null"), false};
+    }
+    if (tx_index >= blk.transaction_hashes.size()) {
+        return {make_result(id, "null"), false};
+    }
+
+    const auto& tx_hash = blk.transaction_hashes[tx_index];
+    auto tx = global_evm_state().get_transaction_copy(tx_hash);
+    if (!tx) {
+        return {make_result(id, "null"), false};
+    }
+
+    return {make_result(id, format_transaction_json(tx_hash, *tx)), false};
+}
+
 static RpcResult handle_get_block_by_hash(const std::string& params, const std::string& id) {
     silkworm::Bytes hash_bytes;
     if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
@@ -1402,13 +1624,37 @@ bool is_eth_rpc_method(const std::string& method) noexcept {
            method == "eth_getBlockReceipts" ||
            method == "eth_subscribe" ||
            method == "eth_unsubscribe" ||
-           method == "eth_getSubscription";
+           method == "eth_getSubscription" ||
+           method == "eth_getBlockTransactionCountByNumber" ||
+           method == "eth_getBlockTransactionCountByHash" ||
+           method == "eth_getUncleCountByBlockNumber" ||
+           method == "eth_getTransactionByBlockNumberAndIndex" ||
+           method == "eth_getTransactionByBlockHashAndIndex";
 }
 
 std::optional<RpcResult> handle_eth_rpc(
     const std::string& method,
     const std::string& params,
     const std::string& id) {
+
+    // --- Production hardening: request size validation ---
+    if (params.size() > kMaxRpcParamsSize) {
+        return RpcResult{make_error(id, -32600, "request params exceed max size"), true};
+    }
+
+    // --- Production hardening: rate limiting ---
+    if (g_rate_limit_enabled) {
+        // Method-level rate limit for expensive queries
+        if (method == "eth_getLogs") {
+            if (!g_getlogs_limiter.try_consume()) {
+                return RpcResult{make_error(id, -32005, "eth_getLogs rate limit exceeded"), true};
+            }
+        }
+        // Global rate limit for all methods
+        if (!g_rpc_limiter.try_consume()) {
+            return RpcResult{make_error(id, -32005, "rate limit exceeded"), true};
+        }
+    }
 
     if (method == "eth_chainId")              return handle_chain_id(id);
     if (method == "net_version")              return handle_net_version(id);
@@ -1428,6 +1674,11 @@ std::optional<RpcResult> handle_eth_rpc(
     if (method == "eth_getStorageAt")         return handle_get_storage_at(params, id);
     if (method == "eth_getBlockByNumber")     return handle_get_block_by_number(params, id);
     if (method == "eth_getBlockByHash")       return handle_get_block_by_hash(params, id);
+    if (method == "eth_getBlockTransactionCountByNumber") return handle_get_block_tx_count_by_number(params, id);
+    if (method == "eth_getBlockTransactionCountByHash")   return handle_get_block_tx_count_by_hash(params, id);
+    if (method == "eth_getUncleCountByBlockNumber")       return handle_get_uncle_count_by_block_number(params, id);
+    if (method == "eth_getTransactionByBlockNumberAndIndex") return handle_get_tx_by_block_number_and_index(params, id);
+    if (method == "eth_getTransactionByBlockHashAndIndex")  return handle_get_tx_by_block_hash_and_index(params, id);
     if (method == "eth_getTransactionByHash") return handle_get_transaction_by_hash(params, id);
     if (method == "eth_getLogs")              return handle_get_logs(params, id);
     if (method == "eth_newFilter")            return handle_new_filter(params, id);

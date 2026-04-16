@@ -11,6 +11,7 @@
 set(EVM_WORKCHAIN_SRC
   evm-transaction.cpp
   evm-state.cpp
+  evm-state-root.cpp
   evm-block-context.cpp
   evm-executor.cpp
   evm-compute-phase.cpp

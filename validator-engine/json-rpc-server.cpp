@@ -170,6 +170,8 @@ JsonRpcServer::JsonRpcServer(
 
 void JsonRpcServer::listen(td::IPAddress addr) {
   CHECK(http_.empty());
+  // Enable EVM RPC rate limiting for the production server
+  evm_workchain::enable_evm_rpc_rate_limit(true);
   auto callback = std::make_shared<HttpCallback>(actor_id(this));
   http_ = td::actor::create_actor<http::HttpServer>(
       PSTRING() << "JsonRPC@" << addr, addr, std::move(callback));
