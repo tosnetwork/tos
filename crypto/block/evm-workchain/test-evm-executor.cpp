@@ -40,6 +40,34 @@
 using namespace evm_workchain;
 using namespace silkworm;
 
+// --- Hex decode helpers ---
+
+static uint8_t hex_val(char c) {
+    if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0');
+    if (c >= 'a' && c <= 'f') return static_cast<uint8_t>(c - 'a' + 10);
+    if (c >= 'A' && c <= 'F') return static_cast<uint8_t>(c - 'A' + 10);
+    return 0;
+}
+
+static Bytes hex_to_bytes(const char* hex) {
+    Bytes out;
+    const char* p = hex;
+    if (p[0] == '0' && p[1] == 'x') p += 2;
+    size_t len = strlen(p);
+    out.reserve(len / 2);
+    for (size_t i = 0; i + 1 < len; i += 2) {
+        out.push_back(static_cast<uint8_t>((hex_val(p[i]) << 4) | hex_val(p[i+1])));
+    }
+    return out;
+}
+
+static evmc::address hex_to_addr(const char* hex) {
+    evmc::address addr{};
+    auto bytes = hex_to_bytes(hex);
+    if (bytes.size() == 20) std::memcpy(addr.bytes, bytes.data(), 20);
+    return addr;
+}
+
 /// Helper: build a simple ETH value transfer transaction (pre-signed).
 /// For testing we construct the Transaction directly rather than going
 /// through RLP decode, since we don't have a secp256k1 signing function
@@ -68,16 +96,15 @@ static Transaction make_transfer_txn(
 }
 
 static void test_simple_transfer() {
-    printf("=== test_simple_transfer ===\n");
+    printf("=== test_simple_transfer (gold: Silkworm 'Value transfer') ===\n");
 
-    // --- Setup ---
+    // Gold data from ~/s/silkworm/core/execution/evm_test.cpp "Value transfer"
+    // Uses canonical Ethereum addresses from the test suite.
     EvmState state;
 
-    evmc::address sender{};
-    sender.bytes[19] = 0x01;  // 0x0000...0001
-
-    evmc::address recipient{};
-    recipient.bytes[19] = 0x02;  // 0x0000...0002
+    // Canonical addresses from Silkworm evm_test.cpp
+    evmc::address sender = hex_to_addr("0x0a6bb546b9208cfab9e8fa2b9b2c042b18df7030");
+    evmc::address recipient = hex_to_addr("0x8b299e2b7d7f43c0ce3068263545309ff4ffb521");
 
     const intx::uint256 initial_balance = 10'000'000'000'000'000'000u;  // 10 ETH in wei
     state.seed_account(sender, initial_balance, /*nonce=*/0);
@@ -136,29 +163,20 @@ static void test_simple_transfer() {
 }
 
 static void test_contract_create() {
-    printf("=== test_contract_create ===\n");
+    printf("=== test_contract_create (gold: Silkworm 'No refund on error' bytecode) ===\n");
 
+    // Gold data from ~/s/silkworm/core/execution/processor_test.cpp "No refund on error"
+    // Bytecode: 602a60005560098060106000396000f36000358060005531
+    // This contract initially sets storage[0]=0x2a, when called sets storage[0]=input[0:32]
     EvmState state;
 
-    evmc::address deployer{};
-    deployer.bytes[19] = 0x10;
+    evmc::address deployer = hex_to_addr("0x834e9b529ac9fa63b39a06f8d8c9b0d6791fa5df");
 
     const intx::uint256 initial_balance = 10'000'000'000'000'000'000u;
     state.seed_account(deployer, initial_balance, /*nonce=*/0);
 
-    // Minimal contract: PUSH1 0x42, PUSH1 0x00, MSTORE, PUSH1 0x20, PUSH1 0x00, RETURN
-    // This returns 32 bytes with 0x42 at position 31.
-    // Runtime bytecode: 60 42 60 00 52 60 20 60 00 f3
-    // Init code wraps it: PUSH10 <runtime>, PUSH1 0, CODECOPY, PUSH1 10, PUSH1 0, RETURN
-    // Simpler: just use raw init code that stores and returns
-    Bytes initcode = {
-        0x60, 0x42,       // PUSH1 0x42
-        0x60, 0x00,       // PUSH1 0x00
-        0x52,             // MSTORE
-        0x60, 0x20,       // PUSH1 0x20
-        0x60, 0x00,       // PUSH1 0x00
-        0xf3              // RETURN
-    };
+    // Canonical Ethereum test bytecode from CoinCulture/evm-tools
+    Bytes initcode = hex_to_bytes("0x602a60005560098060106000396000f36000358060005531");
 
     Transaction txn;
     txn.type = TransactionType::kLegacy;
@@ -195,12 +213,12 @@ static void test_contract_create() {
 }
 
 static void test_contract_call() {
-    printf("=== test_contract_call (deploy + SSTORE + SLOAD) ===\n");
+    printf("=== test_contract_call (gold addresses, deploy + SSTORE + SLOAD) ===\n");
 
     EvmState state;
 
-    evmc::address deployer{};
-    deployer.bytes[19] = 0x20;
+    // Gold address from Silkworm evm_test.cpp "Smart contract with storage"
+    evmc::address deployer = hex_to_addr("0x0a6bb546b9208cfab9e8fa2b9b2c042b18df7030");
 
     const intx::uint256 initial_balance = 10'000'000'000'000'000'000u;
     state.seed_account(deployer, initial_balance, /*nonce=*/0);
@@ -1293,33 +1311,6 @@ static void test_erc20_token() {
 // Source: ~/s/silkworm/core/execution/processor_test.cpp
 // These use canonical addresses and bytecode from the Ethereum test suite.
 // =====================================================================
-
-static uint8_t hex_val(char c) {
-    if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0');
-    if (c >= 'a' && c <= 'f') return static_cast<uint8_t>(c - 'a' + 10);
-    if (c >= 'A' && c <= 'F') return static_cast<uint8_t>(c - 'A' + 10);
-    return 0;
-}
-
-// Helper to decode hex strings like Silkworm's from_hex
-static Bytes hex_to_bytes(const char* hex) {
-    Bytes out;
-    const char* p = hex;
-    if (p[0] == '0' && p[1] == 'x') p += 2;
-    size_t len = strlen(p);
-    out.reserve(len / 2);
-    for (size_t i = 0; i + 1 < len; i += 2) {
-        out.push_back(static_cast<uint8_t>((hex_val(p[i]) << 4) | hex_val(p[i+1])));
-    }
-    return out;
-}
-
-static evmc::address hex_to_addr(const char* hex) {
-    evmc::address addr{};
-    auto bytes = hex_to_bytes(hex);
-    if (bytes.size() == 20) std::memcpy(addr.bytes, bytes.data(), 20);
-    return addr;
-}
 
 static void test_gold_deploy_and_call() {
     printf("=== test_gold_deploy_and_call (Ethereum test vector: deploy + SSTORE + refund) ===\n");
