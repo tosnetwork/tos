@@ -450,8 +450,13 @@ static RpcResult handle_call(const std::string& params, const std::string& id) {
 
     auto result = call_evm_transaction(txn, block, global_evm_state(), config);
 
-    if (!result.success && !result.error_message.empty()) {
-        return {make_error(id, 3, result.error_message), true};
+    if (!result.success) {
+        // Return revert data in the error response (EIP-3668 compatible)
+        std::string revert_hex = to_hex_data(result.return_data.data(), result.return_data.size());
+        std::string err_body = "{\"jsonrpc\":\"2.0\",\"id\":" + id +
+            ",\"error\":{\"code\":3,\"message\":\"execution reverted\"" +
+            ",\"data\":" + revert_hex + "}}";
+        return {err_body, true};
     }
 
     return {make_result(id, to_hex_data(result.return_data.data(), result.return_data.size())), false};
@@ -476,6 +481,14 @@ static RpcResult handle_estimate_gas(const std::string& params, const std::strin
     const auto& config = evm_chain_config();
 
     auto result = call_evm_transaction(txn, block, global_evm_state(), config);
+
+    if (!result.success) {
+        std::string revert_hex = to_hex_data(result.return_data.data(), result.return_data.size());
+        std::string err_body = "{\"jsonrpc\":\"2.0\",\"id\":" + id +
+            ",\"error\":{\"code\":3,\"message\":\"execution reverted\"" +
+            ",\"data\":" + revert_hex + "}}";
+        return {err_body, true};
+    }
 
     // Add 10% buffer for safety
     uint64_t estimated = result.gas_used + result.gas_used / 10;

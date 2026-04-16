@@ -1029,6 +1029,265 @@ static void test_event_logs() {
     printf("  %s\n\n", ok ? "PASSED" : "FAILED");
 }
 
+static void test_erc20_token() {
+    printf("=== test_erc20_token (deploy + mint + transfer + balanceOf) ===\n");
+
+    // Minimal ERC-20-like token contract:
+    //
+    // Storage layout:
+    //   slot[keccak256(abi.encode(address, 0))] = balanceOf[address]
+    //   (standard Solidity mapping at position 0)
+    //
+    // But for simplicity we use direct address-based slots:
+    //   slot[address] = balance  (non-standard but tests the same EVM ops)
+    //
+    // Runtime bytecode implements:
+    //   Function selector dispatch on first 4 bytes of calldata:
+    //     0x70a08231 = balanceOf(address) → SLOAD(address)
+    //     0xa9059cbb = transfer(address,uint256) → SLOAD sender, check, sub, SSTORE sender, add, SSTORE recipient
+    //
+    // Constructor mints 1000000 tokens to msg.sender:
+    //   CALLER PUSH3 0x0F4240 (1000000) SSTORE
+    //
+    // This is a simplified model but exercises SSTORE/SLOAD/CALLER/CALLDATALOAD
+    // across multiple transactions — the same opcodes a real ERC-20 uses.
+
+    Bytes runtime;
+    auto emit = [&](std::initializer_list<uint8_t> bytes) {
+        runtime.insert(runtime.end(), bytes);
+    };
+    auto push1 = [&](uint8_t v) { emit({0x60, v}); };
+    auto push3 = [&](uint32_t v) { emit({0x62, uint8_t(v >> 16), uint8_t(v >> 8), uint8_t(v)}); };
+    auto push4 = [&](uint32_t v) { emit({0x63, uint8_t(v >> 24), uint8_t(v >> 16), uint8_t(v >> 8), uint8_t(v)}); };
+
+    // CALLDATALOAD(0), SHR 224 → selector
+    push1(0x00); emit({0x35});     // CALLDATALOAD(0)
+    push1(0xe0); emit({0x1c});     // SHR 224
+
+    // DUP1, PUSH4 0x70a08231, EQ, PUSH1 <balanceOf_offset>, JUMPI
+    emit({0x80});                  // DUP1
+    push4(0x70a08231);             // balanceOf selector
+    emit({0x14});                  // EQ
+    uint8_t balanceof_target = 0;  // placeholder, fill later
+    size_t balanceof_jump_pos = runtime.size();
+    push1(0x00);                   // placeholder for jump target
+    emit({0x57});                  // JUMPI
+
+    // DUP1, PUSH4 0xa9059cbb, EQ, PUSH1 <transfer_offset>, JUMPI
+    emit({0x80});                  // DUP1
+    push4(0xa9059cbb);             // transfer selector
+    emit({0x14});                  // EQ
+    size_t transfer_jump_pos = runtime.size();
+    push1(0x00);                   // placeholder
+    emit({0x57});                  // JUMPI
+
+    // Fallback: REVERT
+    push1(0x00); push1(0x00); emit({0xfd}); // REVERT(0,0)
+
+    // --- balanceOf(address) ---
+    size_t balanceof_offset = runtime.size();
+    emit({0x5b});                  // JUMPDEST
+    emit({0x50});                  // POP (remove selector)
+    push1(0x04); emit({0x35});     // CALLDATALOAD(4) → address
+    // Mask to 20 bytes: AND with 0xFF..FF (160 bits)
+    // For simplicity, use raw value as storage key
+    emit({0x54});                  // SLOAD(address)
+    push1(0x00); emit({0x52});     // MSTORE(0, balance)
+    push1(0x20); push1(0x00); emit({0xf3}); // RETURN(0, 32)
+
+    // --- transfer(address,uint256) ---
+    size_t transfer_offset = runtime.size();
+    emit({0x5b});                  // JUMPDEST
+    emit({0x50});                  // POP (remove selector)
+    push1(0x04); emit({0x35});     // CALLDATALOAD(4) → to_address
+    push1(0x24); emit({0x35});     // CALLDATALOAD(36) → amount
+
+    // Stack: [to_addr, amount]
+    // Load sender balance: CALLER SLOAD
+    emit({0x33});                  // CALLER
+    emit({0x54});                  // SLOAD(caller) → sender_balance
+
+    // Check sender_balance >= amount: DUP1, DUP3, GT → if amount > balance, revert
+    emit({0x80});                  // DUP1 (sender_balance)
+    emit({0x82});                  // DUP3 (amount)
+    emit({0x11});                  // GT (amount > sender_balance?)
+    size_t revert_jump_pos = runtime.size();
+    push1(0x00);                   // placeholder for revert target
+    emit({0x57});                  // JUMPI → revert if insufficient
+
+    // Stack: [to_addr, amount, sender_balance]
+    // sender_balance -= amount: SUB pops (top - second) = sender_balance - amount
+    emit({0x03});                  // SUB → new_sender_balance
+    // Stack: [to_addr, new_sender_balance]
+    emit({0x33});                  // CALLER
+    emit({0x55});                  // SSTORE(caller, new_sender_balance)
+    // Stack: [to_addr]
+
+    // Load recipient balance, add amount, store
+    // Reload amount from calldata since it was consumed by SUB
+    emit({0x80});                  // DUP1 (to_addr)
+    emit({0x54});                  // SLOAD(to_addr) → recipient_balance
+    push1(0x24); emit({0x35});     // CALLDATALOAD(36) → amount
+    emit({0x01});                  // ADD → new_recipient_balance
+    emit({0x90});                  // SWAP1 (to_addr on top)
+    emit({0x55});                  // SSTORE(to_addr, new_recipient_balance)
+
+    // Return true (1)
+    push1(0x01); push1(0x00); emit({0x52}); // MSTORE(0, 1)
+    push1(0x20); push1(0x00); emit({0xf3}); // RETURN(0, 32)
+
+    // --- revert target ---
+    size_t revert_offset = runtime.size();
+    emit({0x5b});                  // JUMPDEST
+    push1(0x00); push1(0x00); emit({0xfd}); // REVERT(0,0)
+
+    // Patch jump targets
+    runtime[balanceof_jump_pos + 1] = static_cast<uint8_t>(balanceof_offset);
+    runtime[transfer_jump_pos + 1] = static_cast<uint8_t>(transfer_offset);
+    runtime[revert_jump_pos + 1] = static_cast<uint8_t>(revert_offset);
+
+    // --- Init code: mint 1000000 to deployer, then return runtime ---
+    Bytes initcode;
+    // CALLER, PUSH3 1000000 (0x0F4240), SSTORE
+    initcode.insert(initcode.end(), {0x33});  // CALLER
+    initcode.insert(initcode.end(), {0x62, 0x0F, 0x42, 0x40}); // PUSH3 1000000
+    initcode.insert(initcode.end(), {0x90}); // SWAP1 (key=caller on top)
+    initcode.insert(initcode.end(), {0x55}); // SSTORE(caller, 1000000)
+    // CODECOPY runtime to memory, RETURN
+    uint8_t init_prefix_len = static_cast<uint8_t>(initcode.size() + 6); // +6 for PUSH1+PUSH1+PUSH1+CODECOPY+PUSH1+PUSH1+RETURN
+    // Actually let me compute more carefully
+    // After SSTORE we need: PUSH1 rlen, PUSH1 offset, PUSH1 0, CODECOPY, PUSH1 rlen, PUSH1 0, RETURN
+    // = 2 + 2 + 2 + 1 + 2 + 2 + 1 = 12 bytes
+    init_prefix_len = static_cast<uint8_t>(initcode.size() + 12);
+    uint8_t rlen = static_cast<uint8_t>(runtime.size());
+    initcode.insert(initcode.end(), {0x60, rlen}); // PUSH1 runtime_len
+    initcode.insert(initcode.end(), {0x60, init_prefix_len}); // PUSH1 init_prefix_len
+    initcode.insert(initcode.end(), {0x60, 0x00}); // PUSH1 0
+    initcode.push_back(0x39); // CODECOPY
+    initcode.insert(initcode.end(), {0x60, rlen}); // PUSH1 runtime_len
+    initcode.insert(initcode.end(), {0x60, 0x00}); // PUSH1 0
+    initcode.push_back(0xf3); // RETURN
+    initcode.insert(initcode.end(), runtime.begin(), runtime.end());
+
+    printf("  runtime: %zu bytes, initcode: %zu bytes\n", runtime.size(), initcode.size());
+
+    // --- Deploy ---
+    EvmState state;
+    evmc::address deployer{};
+    deployer.bytes[19] = 0x80;
+    state.seed_account(deployer, intx::uint256{10'000'000'000'000'000'000u}, 0);
+
+    evmc::address alice{};
+    alice.bytes[19] = 0x81;
+    state.seed_account(alice, intx::uint256{10'000'000'000'000'000'000u}, 0);
+
+    Transaction deploy_txn;
+    deploy_txn.type = TransactionType::kLegacy;
+    deploy_txn.chain_id = kEvmChainId;
+    deploy_txn.nonce = 0;
+    deploy_txn.max_fee_per_gas = 1'000'000'000;
+    deploy_txn.max_priority_fee_per_gas = 1'000'000'000;
+    deploy_txn.gas_limit = 1'000'000;
+    deploy_txn.to = std::nullopt;
+    deploy_txn.data = initcode;
+    deploy_txn.set_sender(deployer);
+
+    uint8_t rs[32] = {};
+    auto blk = make_evm_block(1, 1700000000, rs);
+    auto deploy_res = execute_evm_transaction(deploy_txn, blk, state, evm_chain_config());
+    auto token = silkworm::create_address(deployer, 0);
+    printf("  deploy: %s (gas=%lu)\n", deploy_res.success ? "ok" : "FAIL",
+           (unsigned long)deploy_res.gas_used);
+
+    if (!deploy_res.success) {
+        printf("  FAILED (deploy)\n\n");
+        return;
+    }
+
+    // --- Check deployer balance via balanceOf ---
+    // balanceOf(deployer) → should be 1000000
+    Bytes bal_cd(36, 0);
+    bal_cd[0]=0x70; bal_cd[1]=0xa0; bal_cd[2]=0x82; bal_cd[3]=0x31; // balanceOf selector
+    // address at bytes 16..35 (right-aligned in 32 bytes, byte 4+12=16)
+    std::memcpy(&bal_cd[4 + 12], deployer.bytes, 20);
+
+    Transaction bal_txn;
+    bal_txn.type = TransactionType::kLegacy;
+    bal_txn.chain_id = kEvmChainId;
+    bal_txn.gas_limit = 100'000;
+    bal_txn.to = token;
+    bal_txn.data = bal_cd;
+    bal_txn.set_sender(deployer);
+
+    auto blk2 = make_evm_block(2, 1700000001, rs);
+    auto bal_res = call_evm_transaction(bal_txn, blk2, state, evm_chain_config());
+    uint64_t deployer_bal = 0;
+    if (bal_res.success && bal_res.return_data.size() == 32) {
+        // Read last 8 bytes as uint64
+        for (int i = 24; i < 32; ++i)
+            deployer_bal = (deployer_bal << 8) | bal_res.return_data[i];
+    }
+    printf("  deployer balanceOf: %lu (expect 1000000)\n", (unsigned long)deployer_bal);
+
+    // --- Transfer 500 tokens from deployer to alice ---
+    Bytes xfer_cd(68, 0);
+    xfer_cd[0]=0xa9; xfer_cd[1]=0x05; xfer_cd[2]=0x9c; xfer_cd[3]=0xbb; // transfer selector
+    std::memcpy(&xfer_cd[4 + 12], alice.bytes, 20); // to address
+    xfer_cd[67] = 0xF4; xfer_cd[66] = 0x01; // 500 = 0x01F4
+
+    Transaction xfer_txn;
+    xfer_txn.type = TransactionType::kLegacy;
+    xfer_txn.chain_id = kEvmChainId;
+    xfer_txn.nonce = 1;
+    xfer_txn.max_fee_per_gas = 1'000'000'000;
+    xfer_txn.max_priority_fee_per_gas = 1'000'000'000;
+    xfer_txn.gas_limit = 100'000;
+    xfer_txn.to = token;
+    xfer_txn.data = xfer_cd;
+    xfer_txn.set_sender(deployer);
+
+    auto blk3 = make_evm_block(3, 1700000002, rs);
+    auto xfer_res = execute_evm_transaction(xfer_txn, blk3, state, evm_chain_config());
+    printf("  transfer(alice, 500): %s (gas=%lu)\n",
+           xfer_res.success ? "ok" : "FAIL", (unsigned long)xfer_res.gas_used);
+
+    // --- Check alice balance ---
+    Bytes alice_bal_cd(36, 0);
+    alice_bal_cd[0]=0x70; alice_bal_cd[1]=0xa0; alice_bal_cd[2]=0x82; alice_bal_cd[3]=0x31;
+    std::memcpy(&alice_bal_cd[4 + 12], alice.bytes, 20);
+
+    Transaction alice_bal_txn;
+    alice_bal_txn.type = TransactionType::kLegacy;
+    alice_bal_txn.chain_id = kEvmChainId;
+    alice_bal_txn.gas_limit = 100'000;
+    alice_bal_txn.to = token;
+    alice_bal_txn.data = alice_bal_cd;
+    alice_bal_txn.set_sender(alice);
+
+    auto blk4 = make_evm_block(4, 1700000003, rs);
+    auto alice_bal_res = call_evm_transaction(alice_bal_txn, blk4, state, evm_chain_config());
+    uint64_t alice_bal = 0;
+    if (alice_bal_res.success && alice_bal_res.return_data.size() == 32) {
+        for (int i = 24; i < 32; ++i)
+            alice_bal = (alice_bal << 8) | alice_bal_res.return_data[i];
+    }
+    printf("  alice balanceOf: %lu (expect 500)\n", (unsigned long)alice_bal);
+
+    // --- Check deployer balance after transfer ---
+    auto blk5 = make_evm_block(5, 1700000004, rs);
+    auto deployer_bal_res = call_evm_transaction(bal_txn, blk5, state, evm_chain_config());
+    uint64_t deployer_bal_after = 0;
+    if (deployer_bal_res.success && deployer_bal_res.return_data.size() == 32) {
+        for (int i = 24; i < 32; ++i)
+            deployer_bal_after = (deployer_bal_after << 8) | deployer_bal_res.return_data[i];
+    }
+    printf("  deployer balanceOf after: %lu (expect 999500)\n", (unsigned long)deployer_bal_after);
+
+    bool ok = deploy_res.success && xfer_res.success &&
+              deployer_bal == 1000000 && alice_bal == 500 && deployer_bal_after == 999500;
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -1043,6 +1302,7 @@ int main() {
     test_bn254_precompile();
     test_deterministic_replay();
     test_event_logs();
+    test_erc20_token();
 
     printf("All tests passed.\n");
     return 0;
