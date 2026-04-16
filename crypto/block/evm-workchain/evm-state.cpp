@@ -209,7 +209,8 @@ void EvmState::evict_oldest_log_blocks() {
 }
 
 void EvmState::store_logs(uint64_t block_number, const evmc::bytes32& tx_hash,
-                          const std::vector<silkworm::Log>& logs) {
+                          const std::vector<silkworm::Log>& logs,
+                          uint32_t tx_index) {
     std::unique_lock lock(mutex_);
     auto& block_log_vec = block_logs_[block_number];
     for (uint32_t i = 0; i < logs.size(); ++i) {
@@ -217,6 +218,7 @@ void EvmState::store_logs(uint64_t block_number, const evmc::bytes32& tx_hash,
             .block_number = block_number,
             .tx_hash = tx_hash,
             .log_index = static_cast<uint32_t>(block_log_vec.size()),
+            .tx_index = tx_index,
             .log = logs[i],
         });
     }

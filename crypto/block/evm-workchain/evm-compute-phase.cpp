@@ -61,7 +61,9 @@ bool run_evm_compute_phase(
     StoredReceipt receipt;
     receipt.success = exec_result.success;
     receipt.gas_used = exec_result.gas_used;
+    receipt.cumulative_gas_used = exec_result.gas_used;  // TODO: accumulate across block txns
     receipt.block_number = block_seqno;
+    receipt.tx_index = 0;  // TODO: set from collator tx ordering
     receipt.from = decoded.sender;
     receipt.to = decoded.txn.to;
     receipt.contract_address = exec_result.contract_address;

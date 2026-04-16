@@ -39,7 +39,9 @@ constexpr size_t kMaxCachedLogBlocks     = 256;
 struct StoredReceipt {
     bool success{false};
     uint64_t gas_used{0};
+    uint64_t cumulative_gas_used{0};  // running total within block
     uint64_t block_number{0};
+    uint32_t tx_index{0};
     evmc::address from;
     std::optional<evmc::address> to;
     std::optional<evmc::address> contract_address;
@@ -71,6 +73,10 @@ struct StoredBlock {
     evmc::address miner;
     intx::uint256 base_fee_per_gas;
     std::vector<evmc::bytes32> transaction_hashes;
+    // Block-level derived fields
+    uint8_t logs_bloom[256]{};          // Ethereum logs bloom (2048-bit)
+    evmc::bytes32 transactions_root{};  // keccak256(concatenated tx hashes)
+    evmc::bytes32 receipts_root{};      // keccak256(receipt status+gas+bloom)
 };
 
 /// Log entry with block metadata for eth_getLogs.
@@ -78,6 +84,7 @@ struct IndexedLog {
     uint64_t block_number;
     evmc::bytes32 tx_hash;
     uint32_t log_index;
+    uint32_t tx_index{0};
     silkworm::Log log;
 };
 
@@ -140,7 +147,8 @@ class EvmState {
 
     /// --- Log index (bounded: kMaxCachedLogBlocks blocks) ---
     void store_logs(uint64_t block_number, const evmc::bytes32& tx_hash,
-                    const std::vector<silkworm::Log>& logs);
+                    const std::vector<silkworm::Log>& logs,
+                    uint32_t tx_index = 0);
 
     std::vector<IndexedLog> get_logs(
         uint64_t from_block, uint64_t to_block,

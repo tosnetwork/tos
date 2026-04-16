@@ -132,19 +132,17 @@ static std::string lookup_block_hash_hex(uint64_t block_num) {
     return to_hex_data(hash.bytes, 32);
 }
 
-// Compute a simplified Ethereum logs bloom (2048-bit / 256-byte).
+// Compute Ethereum logs bloom (2048-bit / 256-byte) into caller-provided buffer.
 // For each log: hash(address) and hash(each topic) contribute 3 bits each to the bloom.
 // Reference: ~/s/silkworm/core/types/bloom.cpp
-static std::string compute_logs_bloom_hex(const std::vector<silkworm::Log>& logs) {
-    uint8_t bloom[256] = {};
+static void compute_logs_bloom(const std::vector<silkworm::Log>& logs, uint8_t bloom[256]) {
+    std::memset(bloom, 0, 256);
     for (const auto& log : logs) {
-        // Add address to bloom
         auto ah = ethash::keccak256(log.address.bytes, 20);
         for (int i = 0; i < 6; i += 2) {
             uint16_t bit = (static_cast<uint16_t>(ah.bytes[i]) << 8 | ah.bytes[i + 1]) & 0x7FF;
             bloom[bit / 8] |= (1 << (bit % 8));
         }
-        // Add each topic to bloom
         for (const auto& topic : log.topics) {
             auto th = ethash::keccak256(topic.bytes, 32);
             for (int i = 0; i < 6; i += 2) {
@@ -153,6 +151,11 @@ static std::string compute_logs_bloom_hex(const std::vector<silkworm::Log>& logs
             }
         }
     }
+}
+
+static std::string compute_logs_bloom_hex(const std::vector<silkworm::Log>& logs) {
+    uint8_t bloom[256];
+    compute_logs_bloom(logs, bloom);
     return to_hex_data(bloom, 256);
 }
 
@@ -264,7 +267,9 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
     StoredReceipt receipt;
     receipt.success = exec_result.success;
     receipt.gas_used = exec_result.gas_used;
+    receipt.cumulative_gas_used = exec_result.gas_used;  // first (only) tx in sync-path block
     receipt.block_number = bn;
+    receipt.tx_index = 0;
     receipt.from = decoded.sender;
     receipt.to = decoded.txn.to;
     receipt.contract_address = exec_result.contract_address;
@@ -312,6 +317,34 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
     auto h = ethash::keccak256(hash_input, sizeof(hash_input));
     std::memcpy(stored_block.hash.bytes, h.bytes, 32);
 
+    // Compute block-level logs bloom from all transaction logs
+    compute_logs_bloom(exec_result.logs, stored_block.logs_bloom);
+
+    // Compute transactionsRoot = keccak256(concatenated tx hashes)
+    if (!stored_block.transaction_hashes.empty()) {
+        size_t total = stored_block.transaction_hashes.size() * 32;
+        std::vector<uint8_t> buf(total);
+        for (size_t ti = 0; ti < stored_block.transaction_hashes.size(); ++ti) {
+            std::memcpy(buf.data() + ti * 32,
+                        stored_block.transaction_hashes[ti].bytes, 32);
+        }
+        auto tr = ethash::keccak256(buf.data(), buf.size());
+        std::memcpy(stored_block.transactions_root.bytes, tr.bytes, 32);
+    }
+
+    // Compute receiptsRoot (simplified: no MPT available, use keccak256 of receipt data)
+    {
+        std::vector<uint8_t> buf;
+        buf.push_back(exec_result.success ? 1 : 0);
+        uint64_t gu_be = __builtin_bswap64(exec_result.gas_used);
+        buf.insert(buf.end(), reinterpret_cast<uint8_t*>(&gu_be),
+                   reinterpret_cast<uint8_t*>(&gu_be) + 8);
+        buf.insert(buf.end(), stored_block.logs_bloom,
+                   stored_block.logs_bloom + 256);
+        auto rr = ethash::keccak256(buf.data(), buf.size());
+        std::memcpy(stored_block.receipts_root.bytes, rr.bytes, 32);
+    }
+
     evm_state.store_block(stored_block);
 
     // Notify subscribers
@@ -356,7 +389,7 @@ static RpcResult handle_get_transaction_receipt(const std::string& params, const
         r += "\"contractAddress\":null,";
     }
     r += "\"gasUsed\":" + to_hex_quantity(receipt->gas_used) + ",";
-    r += "\"cumulativeGasUsed\":" + to_hex_quantity(receipt->gas_used) + ",";
+    r += "\"cumulativeGasUsed\":" + to_hex_quantity(receipt->cumulative_gas_used) + ",";
     r += "\"status\":" + to_hex_quantity(receipt->success ? uint64_t{1} : uint64_t{0}) + ",";
     r += "\"logs\":[";
     for (size_t i = 0; i < receipt->logs.size(); ++i) {
@@ -372,7 +405,10 @@ static RpcResult handle_get_transaction_receipt(const std::string& params, const
         r += "\"data\":" + to_hex_data(log.data.data(), log.data.size()) + ",";
         r += "\"logIndex\":" + to_hex_quantity(static_cast<uint64_t>(i)) + ",";
         r += "\"blockNumber\":" + to_hex_quantity(receipt->block_number) + ",";
-        r += "\"transactionHash\":" + to_hex_data(tx_hash.bytes, 32);
+        r += "\"transactionHash\":" + to_hex_data(tx_hash.bytes, 32) + ",";
+        r += "\"blockHash\":" + lookup_block_hash_hex(receipt->block_number) + ",";
+        r += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(receipt->tx_index)) + ",";
+        r += "\"removed\":false";
         r += "}";
     }
     r += "],";
@@ -422,6 +458,42 @@ static intx::uint256 parse_hex_uint256(const std::string& hex_str) {
     // Pad to 64 chars for intx parsing
     while (hex.size() < 64) hex = "0" + hex;
     return intx::from_string<intx::uint256>("0x" + hex);
+}
+
+// Parse "address" param: accepts single string or array of strings.
+// Ethereum spec: "address": "0x..." OR "address": ["0x...", "0x..."]
+static std::vector<evmc::address> parse_address_param(const std::string& params) {
+    std::vector<evmc::address> result;
+    auto key_pos = params.find("\"address\"");
+    if (key_pos == std::string::npos) return result;
+    auto colon = params.find(':', key_pos + 9);
+    if (colon == std::string::npos) return result;
+    size_t start = colon + 1;
+    while (start < params.size() && (params[start] == ' ' || params[start] == '\t')) ++start;
+    if (start >= params.size()) return result;
+
+    if (params[start] == '"') {
+        // Single address string
+        evmc::address addr{};
+        if (parse_hex_address(params.substr(start), addr)) {
+            result.push_back(addr);
+        }
+    } else if (params[start] == '[') {
+        // Array of addresses — scan for each 0x within the array
+        size_t bracket_end = params.find(']', start);
+        if (bracket_end == std::string::npos) return result;
+        size_t pos = start + 1;
+        while (pos < bracket_end) {
+            auto hex_start = params.find("0x", pos);
+            if (hex_start == std::string::npos || hex_start >= bracket_end) break;
+            evmc::address addr{};
+            if (parse_hex_address(params.substr(hex_start), addr)) {
+                result.push_back(addr);
+            }
+            pos = hex_start + 42;  // skip past 0x + 40 hex chars
+        }
+    }
+    return result;
 }
 
 // Parse a call object from JSON-RPC params:
@@ -577,9 +649,9 @@ static std::string format_block_json(const StoredBlock& blk) {
     r += "\"size\":\"0x0\",";
     r += "\"mixHash\":\"0x" + std::string(64, '0') + "\",";
     r += "\"stateRoot\":\"0x" + std::string(64, '0') + "\",";
-    r += "\"transactionsRoot\":\"0x" + std::string(64, '0') + "\",";
-    r += "\"receiptsRoot\":\"0x" + std::string(64, '0') + "\",";
-    r += "\"logsBloom\":\"0x" + std::string(512, '0') + "\",";
+    r += "\"transactionsRoot\":" + to_hex_data(blk.transactions_root.bytes, 32) + ",";
+    r += "\"receiptsRoot\":" + to_hex_data(blk.receipts_root.bytes, 32) + ",";
+    r += "\"logsBloom\":" + to_hex_data(blk.logs_bloom, 256) + ",";
     r += "\"sha3Uncles\":\"0x" + std::string(64, '0') + "\",";
     r += "\"uncles\":[],";
     r += "\"transactions\":[";
@@ -641,14 +713,8 @@ static RpcResult handle_get_logs(const std::string& params, const std::string& i
         if (tb_hex == "earliest") to_block = 0;
         else to_block = parse_hex_uint64(tb_hex);
     }
-    // Parse address (single or array)
-    std::string addr_hex = extract_json_string_value(params, "address");
-    if (!addr_hex.empty()) {
-        evmc::address addr{};
-        if (parse_hex_address(addr_hex, addr)) {
-            addresses.push_back(addr);
-        }
-    }
+    // Parse address (single string or array of strings)
+    addresses = parse_address_param(params);
 
     // Parse topics
     topics = parse_topics_array(params);
@@ -673,7 +739,7 @@ static RpcResult handle_get_logs(const std::string& params, const std::string& i
         arr += "\"transactionHash\":" + to_hex_data(il.tx_hash.bytes, 32) + ",";
         arr += "\"logIndex\":" + to_hex_quantity(static_cast<uint64_t>(il.log_index)) + ",";
         arr += "\"blockHash\":" + lookup_block_hash_hex(il.block_number) + ",";
-        arr += "\"transactionIndex\":\"0x0\",";
+        arr += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(il.tx_index)) + ",";
         arr += "\"removed\":false}";
     }
     arr += "]";
@@ -836,14 +902,8 @@ static RpcResult handle_eth_subscribe(const std::string& params, const std::stri
         type = SubscriptionType::NewHeads;
     } else if (type_str == "logs") {
         type = SubscriptionType::Logs;
-        // Parse optional address filter
-        std::string addr_hex = extract_json_string_value(params, "address");
-        if (!addr_hex.empty()) {
-            evmc::address addr{};
-            if (parse_hex_address(addr_hex, addr)) {
-                filter.addresses.push_back(addr);
-            }
-        }
+        // Parse optional address filter (single or array)
+        filter.addresses = parse_address_param(params);
         // Parse optional topics filter
         filter.topics = parse_topics_array(params);
     } else {
@@ -915,8 +975,9 @@ static RpcResult handle_get_block_receipts(const std::string& params, const std:
         arr += receipt->to ? "\"to\":" + to_hex_addr(*receipt->to) + "," : "\"to\":null,";
         arr += receipt->contract_address ? "\"contractAddress\":" + to_hex_addr(*receipt->contract_address) + "," : "\"contractAddress\":null,";
         arr += "\"gasUsed\":" + to_hex_quantity(receipt->gas_used) + ",";
-        arr += "\"cumulativeGasUsed\":" + to_hex_quantity(receipt->gas_used) + ",";
+        arr += "\"cumulativeGasUsed\":" + to_hex_quantity(receipt->cumulative_gas_used) + ",";
         arr += "\"status\":" + to_hex_quantity(receipt->success ? uint64_t{1} : uint64_t{0}) + ",";
+        arr += "\"logsBloom\":" + compute_logs_bloom_hex(receipt->logs) + ",";
         arr += "\"logs\":[";
         for (size_t li = 0; li < receipt->logs.size(); ++li) {
             if (li > 0) arr += ",";
@@ -927,7 +988,14 @@ static RpcResult handle_get_block_receipts(const std::string& params, const std:
                 if (j > 0) arr += ",";
                 arr += to_hex_data(log.topics[j].bytes, 32);
             }
-            arr += "],\"data\":" + to_hex_data(log.data.data(), log.data.size()) + "}";
+            arr += "],";
+            arr += "\"data\":" + to_hex_data(log.data.data(), log.data.size()) + ",";
+            arr += "\"logIndex\":" + to_hex_quantity(static_cast<uint64_t>(li)) + ",";
+            arr += "\"blockNumber\":" + to_hex_quantity(receipt->block_number) + ",";
+            arr += "\"transactionHash\":" + to_hex_data(tx_hash.bytes, 32) + ",";
+            arr += "\"blockHash\":" + to_hex_data(blk.hash.bytes, 32) + ",";
+            arr += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(i)) + ",";
+            arr += "\"removed\":false}";
         }
         arr += "],";
         arr += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(i)) + ",";
@@ -1141,13 +1209,19 @@ static std::vector<std::vector<evmc::bytes32>> parse_topics_array(const std::str
         } else if (params[i] == 'n' && params.substr(i, 4) == "null" && depth == 1) {
             result.push_back({});  // null = match any
             i += 3;
-        } else if (params[i] == '0' && i + 1 < params.size() && params[i+1] == 'x' && in_sub_array) {
+        } else if (params[i] == '0' && i + 1 < params.size() && params[i+1] == 'x' &&
+                   (in_sub_array || depth == 1)) {
             // Parse a 32-byte topic hash
             evmc::bytes32 topic{};
             silkworm::Bytes tb;
             if (parse_hex_bytes(params.substr(i - 1), tb) && tb.size() == 32) {
                 std::memcpy(topic.bytes, tb.data(), 32);
-                current_set.push_back(topic);
+                if (in_sub_array) {
+                    current_set.push_back(topic);
+                } else {
+                    // Bare string at outer array level (most common eth_getLogs format)
+                    result.push_back({topic});
+                }
             }
             i += 65;  // skip past "0x" + 64 hex chars
             continue;
@@ -1159,12 +1233,7 @@ static std::vector<std::vector<evmc::bytes32>> parse_topics_array(const std::str
 
 static RpcResult handle_new_filter(const std::string& params, const std::string& id) {
     // Parse filter criteria: {"fromBlock":"0x1","toBlock":"latest","address":"0x...","topics":[...]}
-    std::vector<evmc::address> addresses;
-    std::string addr_hex = extract_json_string_value(params, "address");
-    if (!addr_hex.empty()) {
-        evmc::address addr{};
-        if (parse_hex_address(addr_hex, addr)) addresses.push_back(addr);
-    }
+    auto addresses = parse_address_param(params);
     auto topics = parse_topics_array(params);
 
     uint64_t fid = create_filter(FilterType::Logs, addresses, topics);
@@ -1191,7 +1260,7 @@ static std::string format_log_json(const IndexedLog& il) {
     r += "\"transactionHash\":" + to_hex_data(il.tx_hash.bytes, 32) + ",";
     r += "\"logIndex\":" + to_hex_quantity(static_cast<uint64_t>(il.log_index)) + ",";
     r += "\"blockHash\":" + lookup_block_hash_hex(il.block_number) + ",";
-    r += "\"transactionIndex\":\"0x0\",\"removed\":false}";
+    r += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(il.tx_index)) + ",\"removed\":false}";
     return r;
 }
 

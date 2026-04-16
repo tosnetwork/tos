@@ -45,8 +45,10 @@ static ExecutionResult run_evm(
     // --- Transaction validation (Yellow Paper §6.2) ---
     // Skip validation for read-only calls (commit_state=false)
     if (commit_state) {
-        // Nonce check: sender nonce must match transaction nonce
-        if (txn.to.has_value()) {
+        // Nonce check: sender nonce must match transaction nonce.
+        // Applies to both CALL and CREATE — Ethereum validates nonce for all tx types.
+        // (CREATE address derivation depends on correct nonce.)
+        {
             uint64_t sender_nonce = state.get_nonce(sender);
             if (sender_nonce != txn.nonce) {
                 result.error_message = "nonce mismatch: expected " +
