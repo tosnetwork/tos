@@ -536,7 +536,7 @@ class FullNode(Network.Node):
         if not self._static_populated:
             static_dir = self._directory / "static"
             static_dir.mkdir()
-            for state in (zerostate.masterchain, zerostate.shardchain):
+            for state in (zerostate.masterchain, zerostate.shardchain, zerostate.evmchain):
                 (static_dir / state.file_hash.hex().upper()).symlink_to(state.file)
             self._static_populated = True
 

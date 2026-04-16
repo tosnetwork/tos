@@ -28,6 +28,27 @@ hashu dup =: basestate0_rhash
 
 // root-hash file-hash start-at actual-min-split min-split-depth max-split-depth wc-id
 basestate0_rhash basestate0_fhash now 0 4 8 0 add-std-workchain
+
+// Initial state of Workchain 1 (EVM workchain)
+// Same empty ShardState shape as basechain — actual EVM accounts are
+// created at runtime via eth_sendRawTransaction. The vm_version=0x45564D
+// in the WorkchainDescr (set by add-evm-workchain) selects the evmone
+// executor in Transaction::prepare_compute_phase for wc=1 messages.
+
+1 mkemptyShardState
+
+cr ."initial EVM workchain state is:" cr dup <s csr. cr
+dup dup 31 boc+>B dup Bx. cr
+dup "evmstate1" +suffix +".boc" tuck B>file
+."(Initial EVM workchain state saved to file " type .")" cr
+Bhashu dup =: evmstate1_fhash
+."file hash=" dup 64x. space 256 u>B dup B>base64url type cr
+"evmstate1" +suffix +".fhash" B>file
+hashu dup =: evmstate1_rhash
+."root hash=" dup 64x. space 256 u>B dup B>base64url type cr
+"evmstate1" +suffix +".rhash" B>file
+
+evmstate1_rhash evmstate1_fhash now 0 4 8 1 add-evm-workchain
 config.workchains!
 
 /*
