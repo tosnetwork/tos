@@ -511,24 +511,40 @@ No additional CLI flags are needed — EVM workchain is built in.
 
 ### Activating the EVM Workchain on the Network
 
-To make a running TOS network process EVM workchain blocks, the `WorkchainDescr` for `wc=1` must be added to `ConfigParam 12`. Two paths:
+The EVM workchain (`wc=1`) is **already wired into the build**: `gen-zerostate.fif` registers it via `add-evm-workchain` (CreateState.fif), and the tostester pipeline used by `setup-testnet.sh` produces the matching `evmstate1.boc`. The bash setup script symlinks all three workchain states (master, base, evm) into each node's `static/` directory and adds `--json-rpc-address 127.0.0.1:801N` to the systemd ExecStart.
 
-**Path A: Include in zerostate (clean network)**
+**To deploy from scratch (clean network — destroys existing state):**
 
-Edit `crypto/smartcont/gen-zerostate.fif` to register the EVM workchain alongside the basechain:
+```bash
+# 0. Build and install the latest binaries
+cd ~/tos
+cmake --build build -j$(nproc) --target validator-engine create-state lite-client dht-server
+sudo install -m755 build/validator-engine/validator-engine /usr/local/bin/tos-validator-engine
+sudo install -m755 build/lite-client/lite-client /usr/local/bin/tos-lite-client
+sudo install -m755 build/dht-server/dht-server /usr/local/bin/tos-dht-server
+sudo install -m755 build/crypto/create-state /usr/local/bin/tos-create-state
+# (and any other binaries used by the systemd units)
 
-```fift
-add-std-workchain-v2  // basechain (workchain 0)
-add-evm-workchain     // NEW: registers wc=1 with vm_version=0x45564D
+# 1. Stop existing testnet (if any)
+sudo ./scripts/testnet-ctl.sh stop || true
+
+# 2. Wipe old chain state (zerostate + per-node DBs)
+sudo rm -rf /data/testnet /data/dht /data/tos1 /data/tos2 /data/tos3 /data/tos4 \
+            /data/tos-global.json /data/testnet-ports.json
+
+# 3. Re-run setup — this regenerates zerostate WITH wc=1 and writes new
+#    systemd units that include --json-rpc-address.
+sudo ./scripts/setup-testnet.sh
+
+# 4. Start
+sudo ./scripts/testnet-ctl.sh start
+
+# 5. Wait ~10 s for sync, then verify (see "Verification" below)
 ```
 
-(See `crypto/block/evm-workchain/evm-config-param.cpp::build_evm_workchain_descr()` for the cell layout the zerostate generator must produce.)
+**To activate on an existing chain (no reset, governance path):**
 
-Then re-run `setup-testnet.sh` (which regenerates zerostate). New zerostate files have the EVM workchain enabled from block 0.
-
-**Path B: Submit ConfigParam 12 update (existing network)**
-
-A masterchain governance proposal containing the new ConfigParam 12 with the EVM workchain descriptor. This is the production path; it does not require a zerostate reset.
+A masterchain proposal containing the new ConfigParam 12 with the EVM workchain descriptor. This is the production path; it does not require a zerostate reset. The `WorkchainDescr` cell can be built by `crypto/block/evm-workchain/evm-config-param.cpp::build_evm_workchain_descr()` and submitted via the standard config update flow. Validators must already be running the binary that contains the `evm_workchain` module.
 
 ### Verification
 
