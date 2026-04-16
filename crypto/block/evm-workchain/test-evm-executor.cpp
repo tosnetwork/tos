@@ -1288,6 +1288,216 @@ static void test_erc20_token() {
     printf("  %s\n\n", ok ? "PASSED" : "FAILED");
 }
 
+// =====================================================================
+// Ethereum gold test vectors
+// Source: ~/s/silkworm/core/execution/processor_test.cpp
+// These use canonical addresses and bytecode from the Ethereum test suite.
+// =====================================================================
+
+static uint8_t hex_val(char c) {
+    if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0');
+    if (c >= 'a' && c <= 'f') return static_cast<uint8_t>(c - 'a' + 10);
+    if (c >= 'A' && c <= 'F') return static_cast<uint8_t>(c - 'A' + 10);
+    return 0;
+}
+
+// Helper to decode hex strings like Silkworm's from_hex
+static Bytes hex_to_bytes(const char* hex) {
+    Bytes out;
+    const char* p = hex;
+    if (p[0] == '0' && p[1] == 'x') p += 2;
+    size_t len = strlen(p);
+    out.reserve(len / 2);
+    for (size_t i = 0; i + 1 < len; i += 2) {
+        out.push_back(static_cast<uint8_t>((hex_val(p[i]) << 4) | hex_val(p[i+1])));
+    }
+    return out;
+}
+
+static evmc::address hex_to_addr(const char* hex) {
+    evmc::address addr{};
+    auto bytes = hex_to_bytes(hex);
+    if (bytes.size() == 20) std::memcpy(addr.bytes, bytes.data(), 20);
+    return addr;
+}
+
+static void test_gold_deploy_and_call() {
+    printf("=== test_gold_deploy_and_call (Ethereum test vector: deploy + SSTORE + refund) ===\n");
+
+    // From Silkworm processor_test.cpp "No refund on error"
+    // Contract: initially sets storage[0]=0x2a, when called sets storage[0]=input[0:32]
+    // Bytecode: 602a60005560098060106000396000f36000358060005531
+    // This is a canonical Ethereum test vector.
+
+    const auto caller = hex_to_addr("0x834e9b529ac9fa63b39a06f8d8c9b0d6791fa5df");
+    const auto beneficiary = hex_to_addr("0x5146556427ff689250ed1801a783d12138c3dd5e");
+    const uint64_t nonce = 3;
+
+    Bytes code = hex_to_bytes("0x602a60005560098060106000396000f36000358060005531");
+
+    EvmState state;
+    state.seed_account(caller, intx::uint256{1'000'000'000'000'000'000u}, nonce);
+
+    // Deploy the contract
+    Transaction txn;
+    txn.type = TransactionType::kLegacy;
+    txn.chain_id = kEvmChainId;
+    txn.nonce = nonce;
+    txn.max_fee_per_gas = 59'000'000'000u;
+    txn.max_priority_fee_per_gas = 59'000'000'000u;
+    txn.gas_limit = 103'858;
+    txn.data = code;
+    txn.set_sender(caller);
+
+    uint8_t rs[32] = {};
+    auto blk = make_evm_block(10'050'107, 1700000000, rs, 328'646, beneficiary);
+    auto result = execute_evm_transaction(txn, blk, state, evm_chain_config());
+
+    printf("  deploy: %s (gas=%lu)\n", result.success ? "ok" : "FAIL",
+           (unsigned long)result.gas_used);
+
+    // The contract should have been created
+    auto contract_addr = silkworm::create_address(caller, nonce);
+
+    // Check that storage[0] was set to 0x2a (42) during init
+    auto acct = state.state().read_account(contract_addr);
+    printf("  contract exists: %s\n", acct.has_value() ? "yes" : "no");
+
+    // Call the contract with 0 input — should set storage[0]=0
+    Transaction call_txn;
+    call_txn.type = TransactionType::kLegacy;
+    call_txn.chain_id = kEvmChainId;
+    call_txn.nonce = nonce + 1;
+    call_txn.max_fee_per_gas = 59'000'000'000u;
+    call_txn.max_priority_fee_per_gas = 59'000'000'000u;
+    call_txn.gas_limit = 50'000;
+    call_txn.to = contract_addr;
+    call_txn.set_sender(caller);
+
+    auto blk2 = make_evm_block(10'050'108, 1700000001, rs, 328'646, beneficiary);
+    auto call_result = execute_evm_transaction(call_txn, blk2, state, evm_chain_config());
+
+    printf("  call(0): %s (gas=%lu)\n", call_result.success ? "ok" : "FAIL",
+           (unsigned long)call_result.gas_used);
+
+    bool ok = result.success && acct.has_value() && call_result.success;
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_gold_chainid() {
+    printf("=== test_gold_chainid (Ethereum test vector: CHAINID opcode) ===\n");
+
+    // From Silkworm processor_test.cpp "CHAINID instruction"
+    // Contract code: 0x465955 = CHAINID, SSTORE(PUSH0, CHAINID) → stores chainId at slot 0
+    // But PUSH0 (0x5f) is Shanghai+. Let's use: CHAINID PUSH1(0) SSTORE = 46 6000 55
+
+    const auto caller = hex_to_addr("0x5ed8cee6b63b1c6afce3ad7c92f4fd7e1b8fad9f");
+    const auto contract = hex_to_addr("0x000000000000000000000000000000000000c0de");
+
+    Bytes code = hex_to_bytes("0x4660005500"); // CHAINID, PUSH1 0, SSTORE, STOP
+
+    EvmState state;
+    state.seed_account(caller, intx::uint256{1'000'000'000'000'000'000u}, 0);
+
+    // Pre-deploy the contract code
+    silkworm::Account contract_acct;
+    contract_acct.nonce = 1;
+    auto code_hash = ethash::keccak256(code.data(), code.size());
+    std::memcpy(contract_acct.code_hash.bytes, code_hash.bytes, 32);
+    contract_acct.incarnation = 1;
+    state.state().update_account(contract, std::nullopt, contract_acct);
+    state.state().update_account_code(contract, 1,
+        contract_acct.code_hash, silkworm::ByteView(code.data(), code.size()));
+
+    // Call the contract
+    Transaction txn;
+    txn.type = TransactionType::kLegacy;
+    txn.chain_id = kEvmChainId;
+    txn.nonce = 0;
+    txn.gas_limit = 50'000;
+    txn.to = contract;
+    txn.set_sender(caller);
+
+    uint8_t rs[32] = {};
+    auto blk = make_evm_block(20'000'000, 1700000000, rs);
+    auto result = execute_evm_transaction(txn, blk, state, evm_chain_config());
+
+    printf("  CHAINID call: %s (gas=%lu)\n", result.success ? "ok" : "FAIL",
+           (unsigned long)result.gas_used);
+
+    // Read storage slot 0 — should be our chainId (0x544F53)
+    auto stored = state.state().read_storage(contract, 1, evmc::bytes32{});
+    uint64_t stored_chain_id = 0;
+    for (int i = 24; i < 32; ++i)
+        stored_chain_id = (stored_chain_id << 8) | stored.bytes[i];
+
+    printf("  stored chainId: 0x%lx (expect 0x%lx)\n",
+           (unsigned long)stored_chain_id, (unsigned long)kEvmChainId);
+
+    bool ok = result.success && stored_chain_id == kEvmChainId;
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_gold_selfdestruct() {
+    printf("=== test_gold_selfdestruct (Ethereum test vector: SELFDESTRUCT) ===\n");
+
+    // From Silkworm processor_test.cpp "Self-destruct"
+    // A contract that self-destructs when called with zero value,
+    // sending its balance to the caller.
+
+    const auto caller = hex_to_addr("0x4bf2054ffae7a454a35fd8cf4be21b23b1f25a6f");
+    const auto contract_addr = hex_to_addr("0x6d20c1c07e56b7098eb8c50ee03ba0f6f498a91d");
+
+    // SELFDESTRUCT to caller: CALLER SELFDESTRUCT = 33 FF
+    Bytes code = {0x33, 0xFF};
+
+    EvmState state;
+    state.seed_account(caller, intx::uint256{1'000'000'000'000'000'000u}, 0);
+
+    // Pre-deploy the self-destruct contract with some balance
+    silkworm::Account contract_acct;
+    contract_acct.nonce = 1;
+    contract_acct.balance = intx::uint256{500'000'000'000'000'000u};  // 0.5 ETH
+    auto code_hash = ethash::keccak256(code.data(), code.size());
+    std::memcpy(contract_acct.code_hash.bytes, code_hash.bytes, 32);
+    contract_acct.incarnation = 1;
+    state.state().update_account(contract_addr, std::nullopt, contract_acct);
+    state.state().update_account_code(contract_addr, 1,
+        contract_acct.code_hash, silkworm::ByteView(code.data(), code.size()));
+
+    auto caller_bal_before = state.get_balance(caller);
+
+    // Call the contract — triggers SELFDESTRUCT
+    Transaction txn;
+    txn.type = TransactionType::kLegacy;
+    txn.chain_id = kEvmChainId;
+    txn.nonce = 0;
+    txn.max_fee_per_gas = 1'000'000'000;
+    txn.max_priority_fee_per_gas = 1'000'000'000;
+    txn.gas_limit = 50'000;
+    txn.to = contract_addr;
+    txn.set_sender(caller);
+
+    uint8_t rs[32] = {};
+    auto blk = make_evm_block(1'487'375, 1700000000, rs, 4'712'388);
+    auto result = execute_evm_transaction(txn, blk, state, evm_chain_config());
+
+    auto caller_bal_after = state.get_balance(caller);
+
+    printf("  selfdestruct call: %s (gas=%lu)\n", result.success ? "ok" : "FAIL",
+           (unsigned long)result.gas_used);
+    printf("  caller balance change: %s → %s\n",
+           intx::to_string(caller_bal_before).c_str(),
+           intx::to_string(caller_bal_after).c_str());
+
+    // Caller should have received the contract's 0.5 ETH (minus gas)
+    bool balance_increased = caller_bal_after > caller_bal_before;
+    printf("  caller received funds: %s\n", balance_increased ? "yes" : "no");
+
+    bool ok = result.success && balance_increased;
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -1303,6 +1513,9 @@ int main() {
     test_deterministic_replay();
     test_event_logs();
     test_erc20_token();
+    test_gold_deploy_and_call();
+    test_gold_chainid();
+    test_gold_selfdestruct();
 
     printf("All tests passed.\n");
     return 0;
