@@ -35,7 +35,10 @@
 #include "evm-subscriptions.h"
 #include "evm-incremental-trie.h"
 #include "evm-state-root.h"
+#include "evm-compute-phase.h"
+#include "evm-external-message.h"
 #include <silkworm/core/common/empty_hashes.hpp>
+#include "vm/cells/CellBuilder.h"
 
 #include <silkworm/core/types/transaction.hpp>
 #include <silkworm/core/types/address.hpp>
@@ -2773,6 +2776,48 @@ void test_block_has_state_root() {
     printf("  %s\n\n", ok ? "PASSED" : "FAILED");
 }
 
+void test_state_root_cell_format() {
+    printf("=== test_state_root_cell_format (stateRoot → cell → read back) ===\n");
+    // Verify that the stateRoot cell format (32 bytes, 256 bits, 0 refs)
+    // round-trips correctly — this is the format used by cp.new_data to embed
+    // the EVM stateRoot into the TOS account data cell.
+
+    // Compute a real stateRoot from a state with accounts
+    EvmState state;
+    evmc::address alice{};
+    alice.bytes[19] = 0x77;
+    state.seed_account(alice, intx::uint256{5'000'000'000'000'000'000u});
+
+    IncrementalTrieCalculator calc;
+    auto root = calc.compute_state_root(state);
+
+    // Build the cell exactly as evm-compute-phase.cpp does
+    vm::CellBuilder data_cb;
+    data_cb.store_bytes(reinterpret_cast<const char*>(root.bytes), 32);
+    auto cell = data_cb.finalize();
+
+    // Read back and verify
+    auto cs = vm::load_cell_slice(cell);
+    bool size_ok = (cs.size() == 256 && cs.size_refs() == 0);
+
+    evmc::bytes32 readback{};
+    if (size_ok) {
+        cs.fetch_bytes(reinterpret_cast<unsigned char*>(readback.bytes), 32);
+    }
+    bool match = (readback == root);
+    bool nonzero = (root != evmc::bytes32{});
+
+    printf("  stateRoot: 0x");
+    for (int i = 0; i < 8; i++) printf("%02x", root.bytes[i]);
+    printf("...\n");
+    printf("  cell: 256 bits, 0 refs: %s\n", size_ok ? "YES" : "NO");
+    printf("  round-trip match: %s\n", match ? "YES" : "NO");
+    printf("  non-zero: %s\n", nonzero ? "YES" : "NO");
+
+    bool pass = size_ok && match && nonzero;
+    printf("  %s\n\n", pass ? "PASSED" : "FAILED");
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -2810,6 +2855,7 @@ int main() {
     test_state_root_with_storage();
     test_transactions_root_empty();
     test_block_has_state_root();
+    test_state_root_cell_format();
 
     // Scan stdout for FAILED to determine exit code
     // (Individual tests print PASSED or FAILED)

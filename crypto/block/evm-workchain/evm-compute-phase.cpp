@@ -13,6 +13,7 @@
 #include "evm-subscriptions.h"
 
 #include <ethash/keccak.hpp>
+#include "vm/cells/CellBuilder.h"
 
 #include "td/utils/logging.h"
 
@@ -93,8 +94,30 @@ bool run_evm_compute_phase(
         state.store_logs(block_seqno, tx_hash, exec_result.logs);
     }
 
-    // --- Step 5b: Build and store block for RPC queries ---
-    // This ensures eth_getBlockByNumber returns real data for collator-produced blocks.
+    // --- Step 5b: Compute EVM stateRoot (always, for cp.new_data) ---
+    evmc::bytes32 evm_state_root;
+    {
+        std::unique_lock trie_lock(state.mutex());
+        evm_state_root = global_trie_calculator().compute_state_root(
+            state, &state.account_changes(), &state.storage_changes());
+        state.clear_change_tracking();
+    }
+
+    // --- Step 5c: Embed stateRoot in ComputePhase for TOS account cell ---
+    // This cell becomes the account's `data` field in StateInit, making the
+    // EVM stateRoot part of the ShardState cell tree and thus the block state_hash.
+    {
+        vm::CellBuilder data_cb;
+        data_cb.store_bytes(reinterpret_cast<const char*>(evm_state_root.bytes), 32);
+        cp.new_data = data_cb.finalize();
+    }
+    // Empty actions cell (action phase runs with 0 actions → succeeds)
+    {
+        vm::CellBuilder actions_cb;
+        cp.actions = actions_cb.finalize();
+    }
+
+    // --- Step 5d: Build and store block for RPC queries (first tx only) ---
     if (!state.has_block(block_seqno)) {
         StoredBlock stored_block;
         stored_block.number = block_seqno;
@@ -103,12 +126,11 @@ bool run_evm_compute_phase(
         stored_block.gas_limit = block.header.gas_limit;
         stored_block.base_fee_per_gas = block.header.base_fee_per_gas.value_or(0);
         stored_block.transaction_hashes.push_back(tx_hash);
+        stored_block.state_root = evm_state_root;
 
-        // Parent hash
         auto parent_num = block_seqno > 0 ? block_seqno - 1 : 0;
         stored_block.parent_hash = state.get_block_hash(parent_num);
 
-        // Block hash = keccak256(block_number || parent_hash || timestamp)
         uint8_t hash_input[32 + 32 + 8];
         auto bn_be = intx::be::store<evmc::uint256be>(intx::uint256{block_seqno});
         std::memcpy(hash_input, bn_be.bytes, 32);
@@ -138,23 +160,13 @@ bool run_evm_compute_phase(
             std::memcpy(stored_block.logs_bloom, bloom, 256);
         }
 
-        // Ethereum-compatible MPT roots (for RPC)
         stored_block.transactions_root = compute_transactions_root(
             stored_block.transaction_hashes, state);
         stored_block.receipts_root = compute_receipts_root(
             stored_block.transaction_hashes, state);
 
-        // Incremental state root
-        {
-            std::unique_lock trie_lock(state.mutex());
-            stored_block.state_root = global_trie_calculator().compute_state_root(
-                state, &state.account_changes(), &state.storage_changes());
-            state.clear_change_tracking();
-        }
-
         state.store_block(stored_block);
 
-        // Notify subscribers
         auto& sub_mgr = global_subscription_manager();
         sub_mgr.notify_new_head(stored_block);
         sub_mgr.notify_new_pending_transaction(tx_hash);

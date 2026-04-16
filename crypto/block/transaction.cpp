@@ -1880,6 +1880,28 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     }
     // Gas fee accounting for EVM execution
     cp.gas_fees = cfg.compute_gas_price(cp.gas_used);
+
+    // Embed EVM stateRoot in TOS account state.
+    // cp.new_data contains a cell with the 32-byte EVM stateRoot.
+    // Propagate to Transaction::new_data so compute_state() packs it
+    // into the account's StateInit data cell, making it part of the
+    // ShardState cell tree and thus the block state_hash.
+    if (cp.new_data.not_null()) {
+      new_data = cp.new_data;
+    }
+    // Activate the account if currently uninit (first message to this address).
+    // StateInit requires acc_active for compute_state() to pack code+data.
+    if (acc_status == Account::acc_uninit) {
+      acc_status = Account::acc_active;
+      was_activated = true;
+    }
+    // Set a minimal code cell if none exists (EVM account marker: 0x45 = 'E').
+    if (new_code.is_null()) {
+      vm::CellBuilder code_cb;
+      code_cb.store_long(0x45, 8);
+      new_code = code_cb.finalize();
+    }
+
     return true;
   }
   // --- End EVM Workchain dispatch ---
