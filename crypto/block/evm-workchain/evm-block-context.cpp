@@ -75,6 +75,9 @@ intx::uint256 calc_base_fee(
     }
 
     const uint64_t parent_gas_target = parent_gas_limit / kElasticityMultiplier;
+    if (parent_gas_target == 0) {
+        return parent_base_fee;  // avoid division by zero on zero-limit blocks
+    }
 
     if (parent_gas_used == parent_gas_target) {
         return parent_base_fee;

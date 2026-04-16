@@ -390,6 +390,11 @@ static RpcResult handle_get_transaction_receipt(const std::string& params, const
     }
     r += "\"gasUsed\":" + to_hex_quantity(receipt->gas_used) + ",";
     r += "\"cumulativeGasUsed\":" + to_hex_quantity(receipt->cumulative_gas_used) + ",";
+    // effectiveGasPrice: look up from stored transaction (required by EIP-1559 wallets)
+    {
+        auto stored_tx = global_evm_state().get_transaction_copy(tx_hash);
+        r += "\"effectiveGasPrice\":" + to_hex_quantity(stored_tx ? stored_tx->gas_price : intx::uint256{0}) + ",";
+    }
     r += "\"status\":" + to_hex_quantity(receipt->success ? uint64_t{1} : uint64_t{0}) + ",";
     r += "\"logs\":[";
     for (size_t i = 0; i < receipt->logs.size(); ++i) {
@@ -632,7 +637,7 @@ static RpcResult handle_client_version(const std::string& id) {
     return {make_result(id, "\"evm-workchain/0.1.0\""), false};
 }
 
-static std::string format_block_json(const StoredBlock& blk) {
+static std::string format_block_json(const StoredBlock& blk, bool full_transactions = false) {
     std::string r = "{";
     r += "\"number\":" + to_hex_quantity(blk.number) + ",";
     r += "\"hash\":" + to_hex_data(blk.hash.bytes, 32) + ",";
@@ -657,7 +662,28 @@ static std::string format_block_json(const StoredBlock& blk) {
     r += "\"transactions\":[";
     for (size_t i = 0; i < blk.transaction_hashes.size(); ++i) {
         if (i > 0) r += ",";
-        r += to_hex_data(blk.transaction_hashes[i].bytes, 32);
+        const auto& th = blk.transaction_hashes[i];
+        if (full_transactions) {
+            auto tx = global_evm_state().get_transaction_copy(th);
+            if (tx) {
+                r += "{\"hash\":" + to_hex_data(th.bytes, 32) + ",";
+                r += "\"from\":" + to_hex_addr(tx->from) + ",";
+                r += tx->to ? "\"to\":" + to_hex_addr(*tx->to) + "," : "\"to\":null,";
+                r += "\"value\":" + to_hex_quantity(tx->value) + ",";
+                r += "\"input\":" + to_hex_data(tx->data.data(), tx->data.size()) + ",";
+                r += "\"nonce\":" + to_hex_quantity(tx->nonce) + ",";
+                r += "\"gas\":" + to_hex_quantity(tx->gas_limit) + ",";
+                r += "\"gasPrice\":" + to_hex_quantity(tx->gas_price) + ",";
+                r += "\"blockNumber\":" + to_hex_quantity(blk.number) + ",";
+                r += "\"blockHash\":" + to_hex_data(blk.hash.bytes, 32) + ",";
+                r += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(i)) + ",";
+                r += "\"type\":\"0x0\",\"v\":\"0x0\",\"r\":\"0x0\",\"s\":\"0x0\"}";
+            } else {
+                r += to_hex_data(th.bytes, 32);
+            }
+        } else {
+            r += to_hex_data(th.bytes, 32);
+        }
     }
     r += "]}";
     return r;
@@ -672,6 +698,7 @@ static std::string format_empty_block_json(uint64_t bn) {
 
 static RpcResult handle_get_block_by_number(const std::string& params, const std::string& id) {
     uint64_t bn = global_evm_state().block_number();
+    bool full_transactions = false;
 
     // Parse block number from params
     std::string bn_str = extract_json_string_value(params, "");
@@ -683,14 +710,19 @@ static RpcResult handle_get_block_by_number(const std::string& params, const std
             bn_str = params.substr(pos, end - pos);
         }
     }
-    if (!bn_str.empty() && bn_str != "latest" && bn_str != "pending") {
+    if (!bn_str.empty() && bn_str != "latest" && bn_str != "pending" &&
+        bn_str != "safe" && bn_str != "finalized") {
         if (bn_str == "earliest") bn = 0;
         else bn = parse_hex_uint64(bn_str);
+    }
+    // Parse fullTransactions boolean (second param)
+    if (params.find("true") != std::string::npos) {
+        full_transactions = true;
     }
 
     auto blk = global_evm_state().get_block_copy(bn);
     if (global_evm_state().has_block(bn)) {
-        return {make_result(id, format_block_json(blk)), false};
+        return {make_result(id, format_block_json(blk, full_transactions)), false};
     }
     return {make_result(id, format_empty_block_json(bn)), false};
 }
@@ -1112,9 +1144,11 @@ static RpcResult handle_get_block_by_hash(const std::string& params, const std::
     evmc::bytes32 block_hash;
     std::memcpy(block_hash.bytes, hash_bytes.data(), 32);
 
+    bool full_transactions = (params.find("true") != std::string::npos);
+
     auto blk = global_evm_state().get_block_by_hash_copy(block_hash);
     if (blk.number != 0 || blk.hash != evmc::bytes32{}) {
-        return {make_result(id, format_block_json(blk)), false};
+        return {make_result(id, format_block_json(blk, full_transactions)), false};
     }
     return {make_result(id, "null"), false};
 }

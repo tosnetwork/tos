@@ -258,7 +258,7 @@ std::optional<StoredReceipt> PersistentEvmState::get_receipt(const evmc::bytes32
     std::string value;
     auto r = db_->get(receipt_key(tx_hash), value);
     if (r.is_error() || r.ok() == td::KeyValue::GetStatus::NotFound) return std::nullopt;
-    if (value.size() < 91) return std::nullopt;  // minimum: 1+8+8+8+4+20+1+20+1+20+4 = 95, check header
+    if (value.size() < 95) return std::nullopt;  // minimum: 1+8+8+8+4+20+1+20+1+20+4 = 95
     StoredReceipt receipt;
     size_t pos = 0;
     receipt.success = (value[pos++] != 0);
@@ -287,11 +287,12 @@ std::optional<StoredReceipt> PersistentEvmState::get_receipt(const evmc::bytes32
         receipt.contract_address = ca;
     }
     pos += 20;
-    // Decode logs
+    // Decode logs (cap at 10K to prevent OOM from corrupted data)
     if (pos + 4 <= value.size()) {
         uint32_t num_logs = 0;
         for (int i = 0; i < 4; ++i)
             num_logs = (num_logs << 8) | static_cast<uint8_t>(value[pos++]);
+        if (num_logs > 10'000) num_logs = 10'000;
         for (uint32_t li = 0; li < num_logs && pos < value.size(); ++li) {
             silkworm::Log log;
             if (pos + 20 > value.size()) break;
