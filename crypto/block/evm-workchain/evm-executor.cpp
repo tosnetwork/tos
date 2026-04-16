@@ -137,14 +137,12 @@ ExecutionResult call_evm_transaction(
     const EvmState& evm_state,
     const silkworm::ChainConfig& config) {
 
-    // Create a temporary mutable copy of the state for the read-only call.
-    // IntraBlockState doesn't commit because commit_state=false.
-    silkworm::InMemoryState temp_state;
-
-    // Copy relevant accounts from the real state by wrapping it.
-    // For simplicity, use the real state directly (IntraBlockState won't commit).
-    auto& real_state = const_cast<silkworm::InMemoryState&>(evm_state.state());
-    silkworm::IntraBlockState ibs(real_state);
+    // IntraBlockState reads from the underlying State lazily and only
+    // writes to its internal journal.  With commit_state=false we never
+    // call write_to_db(), so the underlying State is not mutated.
+    // The const_cast is safe because we guarantee no writes reach the DB.
+    auto& mutable_state = const_cast<silkworm::State&>(evm_state.state());
+    silkworm::IntraBlockState ibs(mutable_state);
     return run_evm(txn, block, ibs, config, /*commit_state=*/false);
 }
 

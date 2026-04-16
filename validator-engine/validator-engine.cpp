@@ -2333,7 +2333,7 @@ void ValidatorEngine::start_validator() {
       tos::validator::ValidatorManagerFactory::create(validator_options_, db_root_, keyring_.get(), adnl_.get(),
                                                       rldp_.get(), rldp2_.get(), quic_.get(), overlay_manager_.get());
 
-  evm_workchain::init_evm_workchain();
+  evm_workchain::init_evm_workchain(db_root_);
 
   if (json_rpc_addr_) {
     json_rpc_server_ = tos::JsonRpcServer::create(validator_manager_.get(), json_rpc_opts_);

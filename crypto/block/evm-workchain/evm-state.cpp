@@ -6,22 +6,28 @@
 
 namespace evm_workchain {
 
+EvmState::EvmState()
+    : backend_(std::make_unique<silkworm::InMemoryState>()) {}
+
+EvmState::EvmState(std::unique_ptr<silkworm::State> backend)
+    : backend_(std::move(backend)) {}
+
 void EvmState::seed_account(const evmc::address& addr,
                             const intx::uint256& balance,
                             uint64_t nonce) {
     silkworm::Account acct;
     acct.balance = balance;
     acct.nonce = nonce;
-    state_.update_account(addr, /*initial=*/std::nullopt, acct);
+    backend_->update_account(addr, /*initial=*/std::nullopt, acct);
 }
 
 intx::uint256 EvmState::get_balance(const evmc::address& addr) const {
-    auto acct = state_.read_account(addr);
+    auto acct = backend_->read_account(addr);
     return acct ? acct->balance : intx::uint256{0};
 }
 
 uint64_t EvmState::get_nonce(const evmc::address& addr) const {
-    auto acct = state_.read_account(addr);
+    auto acct = backend_->read_account(addr);
     return acct ? acct->nonce : 0;
 }
 

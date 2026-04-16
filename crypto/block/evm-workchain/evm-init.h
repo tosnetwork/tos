@@ -8,13 +8,18 @@
 */
 #pragma once
 
+#include <string>
+
 namespace evm_workchain {
 
 class EvmState;
 
 /// Register the EVM compute phase handler with the host chain.
-/// Must be called once before any EVM workchain transactions are processed.
-void init_evm_workchain();
+///
+/// @param db_root  Path to the node's database directory.  If non-empty,
+///                 persistent RocksDB state is used at {db_root}/evm-state.
+///                 If empty, in-memory state is used (volatile).
+void init_evm_workchain(const std::string& db_root = "");
 
 /// Access the global EVM workchain state singleton.
 /// Available after init_evm_workchain() has been called.

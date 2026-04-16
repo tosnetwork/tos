@@ -2,23 +2,25 @@
     EVM Workchain — state adapter.
 
     This module provides the storage boundary between the EVM workchain and the
-    host chain.  It implements silkworm::State so that the Silkworm execution
-    engine can read/write EVM account state without knowing about host-chain
-    internals.
+    host chain.  It wraps a silkworm::State backend so that the executor can
+    read/write EVM account state without knowing about the underlying storage.
 
-    First-slice implementation: in-memory state backed by hash maps.
-    Future: adapter to host-chain persistent storage (RocksDB column family
-    or dedicated namespace).
+    Two backends:
+      - InMemoryState  — fast, volatile (default for tests)
+      - PersistentEvmState — RocksDB-backed, survives restarts
 
     Source: TOS-specific adapter (not copied from ~/s).
 */
 #pragma once
 
+#include <memory>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
 #include <silkworm/core/state/in_memory_state.hpp>
+#include <silkworm/core/state/state.hpp>
 #include <silkworm/core/types/account.hpp>
 #include <silkworm/core/types/log.hpp>
 
@@ -36,14 +38,23 @@ struct StoredReceipt {
     silkworm::Bytes return_data;
 };
 
-/// In-memory EVM state for the first implementation slice.
+/// EVM workchain state facade.
+///
+/// Wraps a silkworm::State backend (in-memory or persistent) and provides
+/// EVM-workchain-specific helpers for genesis initialisation, state
+/// inspection, receipt storage, and block tracking.
 class EvmState {
   public:
-    EvmState() = default;
+    /// Construct with in-memory backend (volatile — for tests and first slice).
+    EvmState();
+
+    /// Construct with an external State backend (e.g. PersistentEvmState).
+    /// Takes ownership of the backend.
+    explicit EvmState(std::unique_ptr<silkworm::State> backend);
 
     /// Access the underlying silkworm State (used by the executor).
-    silkworm::InMemoryState& state() noexcept { return state_; }
-    const silkworm::InMemoryState& state() const noexcept { return state_; }
+    silkworm::State& state() noexcept { return *backend_; }
+    const silkworm::State& state() const noexcept { return *backend_; }
 
     /// Seed an account with an initial balance (e.g. for genesis / testing).
     void seed_account(const evmc::address& addr,
@@ -57,25 +68,17 @@ class EvmState {
     uint64_t get_nonce(const evmc::address& addr) const;
 
     /// --- Block tracking ---
-
-    /// Current block number (incremented on each tx for now; later per-block).
     uint64_t block_number() const noexcept { return block_number_; }
     void set_block_number(uint64_t n) noexcept { block_number_ = n; }
     void increment_block_number() noexcept { ++block_number_; }
 
     /// --- Receipt storage ---
-
-    /// Store a receipt keyed by transaction hash.
     void store_receipt(const evmc::bytes32& tx_hash, StoredReceipt receipt);
-
-    /// Look up a receipt by transaction hash.
     const StoredReceipt* get_receipt(const evmc::bytes32& tx_hash) const;
 
   private:
-    silkworm::InMemoryState state_;
+    std::unique_ptr<silkworm::State> backend_;
     uint64_t block_number_{0};
-
-    // tx_hash → receipt  (in-memory, lost on restart)
     std::unordered_map<evmc::bytes32, StoredReceipt> receipts_;
 };
 

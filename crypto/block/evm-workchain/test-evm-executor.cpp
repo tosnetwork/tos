@@ -23,6 +23,7 @@
 #include "evm-executor.h"
 #include "evm-transaction.h"
 #include "evm-rpc.h"
+#include "evm-persistent-state.h"
 
 #include <silkworm/core/types/transaction.hpp>
 #include <silkworm/core/types/address.hpp>
@@ -451,6 +452,56 @@ static void test_eth_rpc() {
     }
 }
 
+static void test_persistent_state() {
+    printf("=== test_persistent_state (RocksDB write + read back) ===\n");
+
+    const std::string db_path = "/tmp/evm-workchain-test-db";
+
+    // Clean up any previous test run
+    std::system(("rm -rf " + db_path).c_str());
+
+    // Phase 1: write state
+    {
+        auto persistent = PersistentEvmState::open(db_path);
+        if (!persistent) {
+            printf("  FAILED (could not open DB)\n\n");
+            return;
+        }
+        EvmState state(std::move(persistent));
+
+        evmc::address addr{};
+        addr.bytes[19] = 0xBB;
+
+        state.seed_account(addr, intx::uint256{7'000'000'000'000'000'000u}, 5);
+        printf("  wrote account: balance=7 ETH, nonce=5\n");
+    }
+    // State object destroyed — DB closed
+
+    // Phase 2: read it back from a fresh open
+    {
+        auto persistent = PersistentEvmState::open(db_path);
+        if (!persistent) {
+            printf("  FAILED (could not reopen DB)\n\n");
+            return;
+        }
+        EvmState state(std::move(persistent));
+
+        evmc::address addr{};
+        addr.bytes[19] = 0xBB;
+
+        auto balance = state.get_balance(addr);
+        auto nonce = state.get_nonce(addr);
+        printf("  read back: balance=%s, nonce=%lu\n",
+               intx::to_string(balance).c_str(), (unsigned long)nonce);
+
+        bool ok = (balance == intx::uint256{7'000'000'000'000'000'000u}) && (nonce == 5);
+        printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+    }
+
+    // Cleanup
+    std::system(("rm -rf " + db_path).c_str());
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -459,6 +510,7 @@ int main() {
     test_contract_create();
     test_contract_call();
     test_eth_rpc();
+    test_persistent_state();
 
     printf("All tests passed.\n");
     return 0;

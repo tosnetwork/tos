@@ -16,6 +16,7 @@ set(EVM_WORKCHAIN_SRC
   evm-compute-phase.cpp
   evm-init.cpp
   evm-rpc.cpp
+  evm-persistent-state.cpp
 )
 
 add_library(evm_workchain STATIC ${EVM_WORKCHAIN_SRC})
@@ -32,6 +33,7 @@ target_link_libraries(evm_workchain
   PUBLIC
     silkworm_core
     tos_crypto   # host-chain crypto library (cells, vm types, block types)
+    tddb         # RocksDB wrapper for persistent EVM state
 )
 
 # --- Test executable ---
