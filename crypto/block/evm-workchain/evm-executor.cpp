@@ -45,6 +45,20 @@ static ExecutionResult run_evm(
     // --- Transaction validation (Yellow Paper §6.2) ---
     // Skip validation for read-only calls (commit_state=false)
     if (commit_state) {
+        // EIP-3607 (London+): reject txs from accounts that have code.
+        // An EOA with a code_hash != kEmptyHash is really a contract,
+        // and signed txs from such an address are almost always a sign
+        // of a private-key collision or a misconfigured library.
+        if (rev >= EVMC_LONDON) {
+            auto sender_code_hash = state.get_code_hash(sender);
+            if (sender_code_hash != silkworm::kEmptyHash &&
+                sender_code_hash != evmc::bytes32{}) {
+                result.error_message = "EIP-3607: sender has code";
+                result.gas_used = 0;
+                return result;
+            }
+        }
+
         // Nonce check: sender nonce must match transaction nonce.
         // Applies to both CALL and CREATE — Ethereum validates nonce for all tx types.
         // (CREATE address derivation depends on correct nonce.)
