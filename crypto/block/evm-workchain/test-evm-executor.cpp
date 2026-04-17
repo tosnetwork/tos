@@ -3612,6 +3612,17 @@ static void test_state_test_runner_walk_curated() {
         "stWalletTest",
         "stZeroKnowledge",
         "stZeroKnowledge2",
+        // Phase G.1 expansion v2 — 8 more subdirs. Skipped on purpose:
+        //   stMemoryStressTest, stQuadraticComplexityTest, stTimeConsuming
+        // (all slow / quadratic / on silkworm's kSlowTests list).
+        "stAttackTest",
+        "stBugs",
+        "stExpectSection",
+        "stRandom2",
+        "stSystemOperationsTest",
+        "stTransactionTest",
+        "stZeroCallsRevert",
+        "VMTests",
     };
     size_t total_p = 0, total_f = 0, total_s = 0, total_u = 0;
     for (const auto& d : dirs) {
