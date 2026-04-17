@@ -3451,6 +3451,19 @@ static void test_state_test_runner_walk_curated() {
         "stZeroCallsTest",
         "stCallCodes",
         "stRefundTest",
+        "stCreate2",
+        "stCreateTest",
+        "stInitCodeTest",
+        "stRevertTest",
+        "stCallCreateCallCodeTest",
+        "stRandom",
+        "stMemoryTest",
+        "stSolidityTest",
+        "stStackTests",
+        "stStaticCall",
+        "stStaticFlagEnabled",
+        "stBadOpcode",
+        "stTransitionTest",
     };
     size_t total_p = 0, total_f = 0, total_s = 0;
     for (const auto& d : dirs) {
