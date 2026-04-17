@@ -1,6 +1,16 @@
 # TOS EVM Workchain Feasibility
 
-Version: v1.1 — Cell-native state, wc=1, 39 tests, 58 RPC methods (full Ethereum surface), live local testnet with 4 validators serving eth_chainId=0x544f53; zkVM roadmap captured
+Version: v1.4 — Cell-native state (Phase B) + Fift-zerostate pre-fund (Phase C) + dead-code cleanup (Phase D) + **single-executor admission model with bytecode embedded in `EvmAccountData`** (Phase E.1/E.2/E.4). wc=1, 40 unit tests, 61 RPC methods, live 4-validator testnet, zkVM roadmap captured, two e2e restart-survival proof tests green.
+
+### Revision history
+
+| version | date        | change |
+|---------|-------------|--------|
+| v1.0    | 2025-Q3     | Initial C++/Silkworm/evmone feasibility analysis; 17-method RPC floor; RocksDB `{db_root}/evm-state` sidecar |
+| v1.1    | 2026-Q1     | Cell-native state + wc=1 dispatch hook + 39 tests + 58 RPC; zkVM roadmap captured |
+| v1.2    | 2026-Q1     | Phase B — ShardState becomes authoritative, `evm-state.boc` sidecar removed, state hydrates from canonical ShardAccounts |
+| v1.3    | 2026-Q1     | Phase C — test EOA pre-fund moves from C++ seed into the Fift zerostate so it's part of chain genesis |
+| v1.4    | 2026-04-17  | Phase D (remove unreachable mirror-era bootstrap) + Phase E (single-executor admission + bytecode embedded in `EvmAccountData.code`). Two proof tests assert transfer **and** contract bytecode survive validator restart |
 
 ## Purpose
 
@@ -246,16 +256,37 @@ That means:
 
 ## State Storage Boundary
 
-✅ The `evm-workchain` is implemented as a separate execution-state domain within the TOS node.
+✅ EVM state is **cells**, stored in the same TOS CellDb (RocksDB) that holds all other chain state, committed atomically per block via the standard `rocksdb::WriteBatch`. There is no second database.
 
 In practice:
 
 - ✅ chain-level metadata remains under the TOS node
 - ✅ block production, routing, finalization, and workchain coordination remain under the TOS node
-- ✅ the EVM workchain gets its own state storage boundary (`EvmState` class)
-- ✅ the EVM workchain state uses a dedicated RocksDB instance at `{db_root}/evm-state`
+- ✅ every EVM account, every storage slot, every contract's bytecode is a cell inside the TOS cell tree
+- ✅ consensus `state_hash` transitively hashes the EVM state — any EVM divergence produces a different ShardState hash and fails consensus
+- ✅ no `{db_root}/evm-state/` RocksDB directory exists at runtime (verified by `test_no_separate_evm_db`)
+- ✅ no `evm-state.boc` sidecar (Phase B deleted it)
 
-Current state: `PersistentEvmState` backed by `td::RocksDb`. Accounts, code, storage slots, and receipts survive process restarts. EVM state is fully isolated from TVM state.
+### Topology: single-executor admission (Phase E.1)
+
+Every external EVM transaction is wrapped in an `ext_in_msg` whose destination is the **fixed executor account** at `wc=1, addr=0x00…01` (`kEvmExecutorAddress`). That account's `StateInit.data` holds `cp.new_data`, which references the entire `CellEvmState` root:
+
+```
+cp.new_data = magic 0x45564D (24b)
+            + Maybe ^CellEvmState               — full account_dict (per-EVM-address)
+            + bits256 Ethereum-format stateRoot — for zkVM / eth_getProof
+```
+
+Only the executor account produces an `AccountBlock` per block, so validate-query's `precheck_one_account_update` invariant (every `ShardAccounts` delta must have a matching `AccountBlock`) is satisfied by construction. Individual EVM accounts are entries in the `CellEvmState.account_dict_` referenced from `cp.new_data` — they do **not** each own a `ShardAccount`.
+
+### Bytecode persistence (Phase E.4)
+
+Contract bytecode lives **inside** the per-account `EvmAccountData` cell via an embedded `code:(Maybe ^EvmBytecodeChunk)` ref — not in a separate `StateInit.code` slot (which no longer exists per-account under single-executor). Since it's part of the same cell tree referenced by `cp.new_data`, bytecode survives validator restart through `CellEvmState::load_from_cell`. Two proof tests assert the full cycle:
+
+- `test/evm-workchain/proof-mirror-not-canonical.sh` — transfer nonce + recipient balance survive restart.
+- `test/evm-workchain/proof-bytecode-survives-restart.sh` — deployed contract's `eth_getCode` and `eth_call` survive restart.
+
+See `doc/evm-workchain-cell-native-state.md` (v1.3) for the TLB schema and `doc/evm-workchain-transaction-admission-and-single-executor.md` (v2.0) for the admission-model rationale.
 
 ## External Compatibility Goal
 
@@ -287,7 +318,7 @@ The project should explicitly target compatibility with:
 - ✅ assign an EVM `chainId` (`0x544F53`)
 - ✅ expose the minimum JSON-RPC set required for wallet connectivity
 
-Implemented RPC methods (34), wired into the HTTP server:
+Implemented RPC methods (61 unique method names, wired into the HTTP server — covers the MetaMask/ethers/viem probe set plus filters, subscriptions, debug tracing and block receipts):
 
 - ✅ `eth_chainId`
 - ✅ `eth_blockNumber`
@@ -460,20 +491,23 @@ This workchain must be:
 
 ### Layer 2. EVM Account State Model
 
-✅ Define a TOS-side state representation for EVM accounts that can store:
+✅ EVM account state is encoded as a TOS cell per account:
 
-- ✅ nonce
-- ✅ balance
-- ✅ code hash or code cell reference
-- ✅ storage root or equivalent storage handle
+```tlb
+evm_account_data#45564d
+  nonce:uint64
+  balance:uint256
+  code_hash:bits256
+  storage:(Maybe ^Cell)                 // HashmapE 256 ^EvmStorageEntry
+  code:(Maybe ^EvmBytecodeChunk)        // Phase E.4: embedded bytecode
+  = EvmAccountData;
+```
 
-Implemented via `silkworm::InMemoryState` with `silkworm::Account` (nonce, balance, code_hash, incarnation).
+Every EVM account is an entry in `CellEvmState.account_dict_` (a `vm::Dictionary` keyed by 256-bit padded address), which is itself a subtree of the executor account's `cp.new_data`. `silkworm::Account` remains the in-memory handle silkworm executes against, but the canonical, hash-committed representation is the cell.
 
 ### Layer 3. Database Adapter
 
-✅ Implement a database adapter that maps the EVM workchain state storage into the execution engine's database interface.
-
-Implemented: `EvmState` wraps `silkworm::InMemoryState` which implements `silkworm::State`.
+✅ `CellEvmState : silkworm::State` (`crypto/block/evm-workchain/evm-cell-state.{h,cpp}`) implements the silkworm `State` interface directly on top of TOS cells — no second RocksDB, no BoC sidecar, no custom KV. `EvmState` wraps `CellEvmState` with a `shared_mutex` for concurrent RPC read access and hosts the non-consensus RPC caches (receipts / transactions / blocks / logs — bounded LRUs, RAM only).
 
 The adapter supports:
 
@@ -551,7 +585,7 @@ Deliverables:
 - ✅ native balance (balance tracking, debit/credit tested)
 - ✅ basic gas charge (intrinsic gas, execution gas, refund, beneficiary payment)
 - ✅ validator-engine compiles with full EVM workchain support (clang 21)
-- ✅ persistent state survives restarts (RocksDB at `{db_root}/evm-state`)
+- ✅ persistent state survives restarts — cell-native, committed in the same WriteBatch as the rest of ShardState; two e2e proof tests assert transfer and bytecode both survive `systemctl restart tos-validator@1`
 
 Exit criteria status:
 
@@ -613,6 +647,42 @@ EIP-4337 is an application-layer protocol implemented as a Solidity contract (En
 plus an off-chain Bundler service. Our EVM implementation already supports the opcodes and
 precompiles needed to run the EntryPoint contract.
 
+## Phase 5. Cell-Native State & Single-Executor Admission
+
+Status: ✅ **Complete**
+
+This phase was the deepest architectural reshape after Phase 4. It ran as four sub-phases (B → C → D → E) and resolved the atomicity gap and the restart-survival bugs that Phase 1-4 had left open. Details live in the sub-docs; summary here:
+
+### Phase B — Cell-native state (single source of truth)
+
+- ✅ `CellEvmState : silkworm::State` replaces the old `PersistentEvmState` RocksDB adapter.
+- ✅ EVM account dict is a `vm::Dictionary` whose root cell is hashed into TOS `state_hash`.
+- ✅ `{db_root}/evm-state/` RocksDB directory and the `evm-state.boc` sidecar are gone.
+- ✅ Block commit is one atomic `WriteBatch` — no cross-DB coordination, no recovery scan.
+- ✅ On process start, state hydrates from canonical ShardAccounts (`populate_state_from_shard_accounts`).
+
+### Phase C — Fift zerostate pre-fund
+
+- ✅ The 10 Hardhat/Anvil test EOAs (`kTestAccounts`) are now injected at genesis via the Fift zerostate builder (`build_evm_zerostate_accounts_cell`) — not by a C++ runtime seed.
+- ✅ Consequence: the zerostate BoC hash depends on the test-account list, so any divergence in `kTestAccounts` across binaries produces a loud zerostate-mismatch failure at network join (security property — verified).
+
+### Phase D — Dead-code cleanup (mirror-era residue)
+
+- ✅ Deleted `copy_test_accounts_into_dict` (bootstrap was a no-op after Phase C — zerostate already had the entries).
+- ✅ Deleted the `precheck_one_account_update` "wc=1 EVM bootstrap acceptance" branch (unreachable on any post-Phase-C chain).
+- ✅ Decision captured: `seed_test_accounts(*g_evm_state)` stays as a ~10s startup fallback during the pre-first-block window (removable when RPC reads are decoupled from `g_evm_state` in a future Phase F).
+
+### Phase E — Single-executor admission & bytecode
+
+- ✅ **E.1** — `ext_in_msg.dst` is the fixed executor at `wc=1, addr=0x00…01` (not per-sender). Every EVM tx produces exactly one `AccountBlock` (on the executor), satisfying the `precheck_one_account_update` invariant. `cp.new_data = magic + Maybe ^CellEvmState + stateRoot` carries the full world in a single cell reference.
+- ✅ **E.2** — Removed the now-unreachable mirror merge, `evm_state_mirror_dict_` members, `CellEvmState::sync_to_dict`, the `shard_accounts` dispatch parameter, and the D.2 per-account bytecode-in-`StateInit.code` path (net −312 lines).
+- ✅ **E.4** — Added `code:(Maybe ^EvmBytecodeChunk)` to `EvmAccountData` so bytecode lives inside the same cell tree that `cp.new_data` hashes; `CellEvmState::load_from_cell` rebuilds the in-RAM `code_` map from the embedded cells after restart. Proved by `proof-bytecode-survives-restart.sh` (deploy 10-byte contract → restart validator → `eth_getCode` + `eth_call` both return the correct bytes).
+
+Out of scope / deferred to a hypothetical Phase F:
+- Drop the `g_evm_state` process singleton and extract `EvmRpcCache` (receipts / blocks / logs — currently RAM-only LRUs).
+- Reconcile `IncrementalTrieCalculator` with the cell root (intentionally kept for zkVM compatibility).
+- Remove `seed_test_accounts` entirely once nothing reads from `g_evm_state` before first-block hydration.
+
 ## Proposed Acceptance Criteria for the Prototype
 
 1. ✅ A new workchain can be activated and recognized by the node. (workchain_id=1, dispatch works)
@@ -632,21 +702,26 @@ precompiles needed to run the EntryPoint contract.
 
 | File | Purpose |
 |------|---------|
-| `evm-workchain.h` | Workchain constants (id=1, chainId, vm_version) |
-| `evm-transaction.h/cpp` | Decode RLP Ethereum tx from host-chain message |
-| `evm-state.h/cpp` | State adapter with pluggable backend, receipt storage |
-| `evm-persistent-state.h/cpp` | RocksDB-backed State implementation |
+| `evm-workchain.h` | Workchain constants (id=1, chainId=0x544F53, executor address 0x00…01, `kTestAccounts`) |
+| `evm-transaction.h/cpp` | Decode RLP Ethereum tx from host-chain message (legacy, EIP-2930, EIP-1559) |
+| `evm-state.h/cpp` | `EvmState` wrapper: `CellEvmState` + `shared_mutex` + RPC caches (receipts / blocks / logs / subscriptions) |
+| `evm-cell-state.h/cpp` | `CellEvmState : silkworm::State` — cell-native storage adapter; `load_from_cell` / `serialize_to_cell` |
+| `evm-cell-codec.h/cpp` | Encode/decode `EvmAccountData` cell + `encode/decode_evm_bytecode` chunk chain |
 | `evm-block-context.h/cpp` | Map host-chain block context to silkworm Block + ChainConfig |
-| `evm-executor.h/cpp` | Execute via silkworm::EVM + call_evm_transaction (read-only), gas accounting |
-| `evm-compute-phase.h/cpp` | Bridge host-chain compute phase to EVM executor |
-| `evm-init.h/cpp` | Module initialization, global state, db_root handling |
-| `evm-rpc.h/cpp` | Ethereum JSON-RPC facade (34 methods) |
+| `evm-executor.h/cpp` | Execute via silkworm::EVM + `call_evm_transaction` (read-only), gas accounting |
+| `evm-compute-phase.h/cpp` | Build `cp.new_data` = magic + Maybe ^CellEvmState + stateRoot |
+| `evm-init.h/cpp` | Module init; `populate_state_from_shard_accounts` hydration; `build_evm_shard_account_cell` (executor only) |
+| `evm-rpc.h/cpp` | Ethereum JSON-RPC facade (61 methods) |
 | `evm-config-param.h/cpp` | ConfigParam 12 WorkchainDescr + zerostate builder |
-| `evm-external-message.h/cpp` | Wrap RLP Ethereum tx into host-chain ext_in_msg cell |
+| `evm-external-message.h/cpp` | Wrap RLP Ethereum tx into host-chain ext_in_msg cell with `dst = kEvmExecutorAddress` |
 | `evm-bridge.h/cpp` | Cross-workchain asset bridge (deposit/withdrawal) |
-| `evm-tracer.h/cpp` | debug_traceTransaction with structLogs (EvmTracer interface) |
+| `evm-tracer.h/cpp` | `debug_traceTransaction` with structLogs (EvmTracer interface) |
+| `evm-access-list-tracer.h/cpp` | `eth_createAccessList` tracer |
 | `evm-subscriptions.h/cpp` | Event subscription manager (newHeads, logs, pending) |
-| `test-evm-executor.cpp` | End-to-end test suite (27 tests, 14 Silkworm gold) |
+| `evm-mpt-prover.h/cpp` | `eth_getProof` — Ethereum MPT proofs over the canonical state |
+| `evm-incremental-trie.h/cpp` | Per-block Ethereum-format stateRoot (for zkVM + `eth_getProof`) |
+| `evm-state-root.h/cpp` | Ethereum-format state-root helpers |
+| `test-evm-executor.cpp` | Unit test suite (40 tests, 14+ Silkworm gold) |
 
 ### Host-chain integration (`crypto/block/`)
 
@@ -677,14 +752,16 @@ precompiles needed to run the EntryPoint contract.
 
 ### Test coverage
 
+Unit tests (40 total, run via `./build/crypto/block/evm-workchain/test-evm-executor`):
+
 | Test | What it proves |
 |------|---------------|
 | `test_simple_transfer` | ETH value transfer, gas=21060 |
 | `test_contract_create` | Contract deployment, gas=59556 |
 | `test_contract_call` | Deploy → set(0xBEEF) → get() = 0xBEEF (SSTORE/SLOAD) |
-| `test_eth_rpc` | 34 RPC methods + eth_call on deployed contract + eth_estimateGas |
+| `test_eth_rpc` | RPC methods + eth_call on deployed contract + eth_estimateGas |
 | `test_signed_transaction` | secp256k1 keypair → sign → RLP → decode → sender recovery → execute |
-| `test_persistent_state` | RocksDB write → close → reopen → read back correct values |
+| `test_persistent_state` | Cell-native: BoC serialize + deserialize |
 | `test_config_param` | WorkchainDescr TLB serialization + validation, zerostate hash computation |
 | `test_bn254_precompile` | ecadd precompile: G+G returns correct 2*G coordinates on bn254 curve |
 | `test_deterministic_replay` | Same 3-tx sequence twice → identical balances and nonces |
@@ -704,6 +781,19 @@ precompiles needed to run the EntryPoint contract.
 | `test_gold_two_blocks` | **Silkworm gold**: multi-block execution, deploy→call→storage verify |
 | `test_gold_value_transfer_insufficient` | **Silkworm gold**: 0 balance fails, funded succeeds |
 | `test_subscriptions` | eth_subscribe newHeads/logs/pending: notify + poll + unsubscribe |
+| `test_cell_codec_roundtrip` | Encode/decode `EvmAccountData` cell — all fields preserved (incl. code) |
+| `test_storage_dict_persistence` | SSTORE → cell update → SLOAD returns same value |
+| `test_state_hash_includes_evm` | Modifying EVM state changes ShardState cell hash |
+| `test_no_separate_evm_db` | Runtime check: `{db_root}/evm-state` is never created |
+| `test_bytecode_roundtrip` | `encode_evm_bytecode` → `decode_evm_bytecode` on 1024-byte input |
+| `test_bytecode_marker_distinguished` | Code marker cell hash ≠ any real bytecode chain hash |
+
+E2E restart-survival proof tests (`test/evm-workchain/`, require sudo for systemctl):
+
+| Test | What it proves |
+|------|---------------|
+| `proof-mirror-not-canonical.sh` | Transfer → `systemctl restart tos-validator@1` → sender nonce + recipient balance survive (Phase E.1) |
+| `proof-bytecode-survives-restart.sh` | Deploy 10-byte contract → restart → `eth_getCode` and `eth_call` both return correct bytes (Phase E.4) |
 
 ## Next Steps
 
@@ -769,11 +859,17 @@ Mitigation: ✅ declared MVP scope, deferred compatibility layers intentionally.
 
 If the prototype uses a temporary state schema, later migration may be expensive.
 
-Mitigation: ✅ using `silkworm::Account` (nonce, balance, code_hash, incarnation) which is the standard Ethereum account model, persisted in RocksDB with a stable key schema. This schema should survive beyond the prototype.
+Mitigation: ✅ resolved by Phase B/E. `silkworm::Account` (nonce / balance / code_hash / incarnation) is still the in-memory handle silkworm executes against, but the canonical commitment is an `EvmAccountData` TLB cell stored in the shared CellDb. The current `EvmAccountData` schema is versioned (decoder accepts both v1.2 and v1.3/E.4 cells), and any future field addition is a minor TLB extension rather than a schema migration.
+
+### 5. Admission / Consensus Invariant Mismatch (resolved)
+
+Early Phase A attempted a per-account "mirror" that wrote multiple `ShardAccounts` deltas per block. TOS `validate-query.cpp::precheck_one_account_update` rejects any `ShardAccounts` delta that lacks a matching `AccountBlock`, so those writes were silently dropped from accepted state — balances and bytecode vanished on restart. Documented root cause in `doc/evm-workchain-transaction-admission-and-single-executor.md` v2.0.
+
+Mitigation: ✅ Phase E.1 collapses all EVM state into **one** outer TOS account (the executor at `0x00…01`). Exactly one `AccountBlock` per block, invariant satisfied by construction. Verified by both proof tests.
 
 ## Bottom-Line Assessment
 
-Embedding evmone into TOS for a new `evm-workchain` is feasible — and the implementation is now **functional and tested end-to-end**.
+Embedding evmone into TOS as a cell-native `evm-workchain` is feasible — and the implementation is now **functional, restart-safe, and tested end-to-end**. Every consensus-relevant byte (nonce, balance, storage, contract bytecode) lives in the same CellDb as the rest of TOS, committed atomically per block. Two restart-survival proof tests run green against a live 4-validator testnet.
 
 What works:
 - ✅ ETH value transfer (secp256k1 signed, RLP encoded, sender recovered)
@@ -783,11 +879,11 @@ What works:
 - ✅ EIP-1559 dynamic base fee (increases/decreases with gas usage)
 - ✅ Gas accounting (intrinsic, execution, refund, beneficiary payment)
 - ✅ All 10 Ethereum precompiles (ecrecover, sha256, ripemd160, identity, modexp, ecadd, ecmul, ecpairing, blake2f, point_evaluation)
-- ✅ 34 RPC methods (full MetaMask + debug + subscriptions + block receipts)
+- ✅ 61 RPC methods (full MetaMask + debug + subscriptions + block receipts + `eth_getProof`)
 - ✅ Event logs: LOG opcode → indexed storage → eth_getLogs with address/topic filtering
 - ✅ Proper block model: hash chain, parent hashes, transaction lists, gas tracking
 - ✅ BLOCKHASH opcode support (256-block rolling history)
-- ✅ Persistent state (RocksDB, survives restarts)
+- ✅ Cell-native state in the shared CellDb (no second RocksDB, no sidecar); full world survives `systemctl restart`
 - ✅ Deterministic replay (same tx sequence → identical state)
 - ✅ Revert reason in eth_call/eth_estimateGas error responses
 - ✅ ConfigParam 12 WorkchainDescr builder (TLB validated)
@@ -801,8 +897,13 @@ What works:
 - ✅ Security audit fixes: shared_mutex concurrency, bounded containers, filter expiry
 - ✅ Full validator-engine binary compiles with EVM workchain support
 - ✅ Consensus, P2P broadcast, and state sync reuse existing host chain infrastructure
-- ✅ 27 test suites, all passing (14 using Silkworm gold data)
+- ✅ 40 unit tests, all passing (14+ using Silkworm gold data)
+- ✅ 2 end-to-end restart-survival proof tests, both PASS against the 4-validator testnet:
+   - `proof-mirror-not-canonical.sh` — transfer nonce + recipient balance survive validator restart
+   - `proof-bytecode-survives-restart.sh` — deployed contract code survives validator restart
+- ✅ Single-executor admission model: one `AccountBlock` per block, validate-query invariant satisfied by construction
 
 What remains (operational, not code):
 - Deploy node and run live wallet test (MetaMask end-to-end)
 - Submit ConfigParam 12 to testnet masterchain
+- Phase F (optional future): drop the `g_evm_state` singleton in favor of a non-singleton `EvmRpcCache`; persist receipts / blocks / logs across restart
