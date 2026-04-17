@@ -148,9 +148,16 @@ void EvmState::evict_oldest_receipts() {
 
 void EvmState::store_receipt(const evmc::bytes32& tx_hash, StoredReceipt receipt) {
     std::unique_lock lock(mutex_);
-    if (receipts_.find(tx_hash) == receipts_.end()) {
-        receipt_insertion_order_.push_back(tx_hash);
+    // First-write-wins: g_evm_state is shared between the collator's
+    // authoritative execution and validate-query's verification re-run. The
+    // re-run sees post-state (nonce already incremented) and would record a
+    // failed receipt that overwrites the real one. The collator always wins
+    // the race because it executes first; subsequent stores for the same hash
+    // are silently dropped.
+    if (receipts_.find(tx_hash) != receipts_.end()) {
+        return;
     }
+    receipt_insertion_order_.push_back(tx_hash);
     receipts_[tx_hash] = std::move(receipt);
     evict_oldest_receipts();
 }
