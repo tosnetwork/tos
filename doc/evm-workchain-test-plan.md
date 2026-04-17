@@ -12,7 +12,7 @@ Version: v1.1 — 2026-04-17 (status snapshot)
 
 | Phase | State | Headline |
 |-------|-------|----------|
-| G.1 — State-test harness (GeneralStateTests) | 🚧 in progress | Runner + walker ✅ over **47 subdirs**, **2088/2128 pass (98.1%)**, **34 fail** to investigate, **4 upstream-skipped** (silkworm `kFailingTests`), **6 real consensus bugs** already found and fixed |
+| G.1 — State-test harness (GeneralStateTests) | 🚧 in progress | Runner + walker ✅ over **47 subdirs**, **2098/2124 pass (98.8%)**, **24 fail** to investigate, **4 upstream-skipped** (silkworm `kFailingTests`), **7 real bugs** already found and fixed (6 consensus + 1 adapter-glue) |
 | G.2 — execution-spec-tests (Pyspec) | 📋 planned | Same runner as G.1; extend to new fixture dir |
 | G.3 — Hive (`rpc-compat`) | 📋 planned | Dockerize validator, write hive client stub |
 | G.4 — Continuous differential CI | 🚧 runner ✅, CI 📋 | One-shot `differential_geth.py` lives; continuous CI not yet stood up |
@@ -27,6 +27,7 @@ Version: v1.1 — 2026-04-17 (status snapshot)
 | `eth_sendRawTransaction` DoS: oversized RLP crashed validator | `fdcebdc1` | DoS (remote-reachable) |
 | `eth_sendRawTransaction` DoS: foreign-chainId txs piled up, crashed collator | `fdcebdc1` | DoS (remote-reachable) |
 | `eth_call` DoS: invalid hex in `value`/`gas`/`gasPrice` crashed validator via `intx::from_string` throw | `f53c356a` | DoS (remote-reachable, found by Phase G.5 fuzzer) |
+| State-test runner: PREVRANDAO fed zero to silkworm (`env.currentRandom` ignored) — 10 fixtures diverged | (this commit) | Adapter glue (runner-only; prod collator already wires `block.prev_randao` correctly) |
 
 ## Purpose
 

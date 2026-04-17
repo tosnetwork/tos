@@ -3277,7 +3277,19 @@ static bool run_one_state_test_cancun(const std::string& path, bool& ran) {
     intx::uint256 base_fee = 0;
     if (auto* f = field(env, "currentBaseFee")) base_fee = hex0x_to_u256(str(*f));
 
+    // Post-merge (Paris / Cancun): opcode 0x44 is PREVRANDAO and
+    // reads block.prev_randao. Fixtures set this via env.currentRandom
+    // — use it rather than zero, otherwise any test that SSTOREs
+    // PREVRANDAO diverges (e.g. stExample/mergeTest).
     uint8_t rs[32] = {};
+    if (auto* f = field(env, "currentRandom")) {
+        auto rand_bytes = hex0x_to_bytes(str(*f));
+        if (rand_bytes.size() <= 32) {
+            std::memcpy(rs + (32 - rand_bytes.size()), rand_bytes.data(), rand_bytes.size());
+        } else {
+            std::memcpy(rs, rand_bytes.data() + (rand_bytes.size() - 32), 32);
+        }
+    }
     auto blk = evm_workchain::make_evm_block(block_num, timestamp, rs, gas_limit, coinbase);
     blk.header.base_fee_per_gas = base_fee;
 
