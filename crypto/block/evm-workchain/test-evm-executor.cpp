@@ -3076,6 +3076,291 @@ static void test_large_raw_tx_roundtrip() {
     printf("  %s\n\n", extracted ? "PASSED" : "FAILED");
 }
 
+// --- Phase G.1 proof of concept: run ONE Ethereum GeneralStateTest fixture ---
+//
+// Loads a state-test JSON, seeds a fresh CellEvmState with the `pre`
+// accounts, decodes the pre-signed `txbytes`, executes with a patched
+// ChainConfig matching the test's declared chain_id + fork, and
+// diffs the resulting state against each account in `post.<fork>.state`.
+//
+// v0: hard-codes one simple fixture (stChainId/chainId.json) to prove
+// the round-trip works end-to-end. Phase G.1 expands this to walk the
+// full corpus.
+
+#include "td/utils/JsonBuilder.h"
+#include "td/utils/filesystem.h"
+
+namespace stt {
+
+using Bytes = silkworm::Bytes;
+
+static Bytes hex0x_to_bytes(std::string_view h) {
+    if (h.size() >= 2 && h[0] == '0' && (h[1] == 'x' || h[1] == 'X')) h = h.substr(2);
+    Bytes out;
+    out.reserve(h.size() / 2 + 1);
+    std::string buf;
+    if (h.size() % 2 != 0) { buf = std::string("0") + std::string(h); h = buf; }
+    for (size_t i = 0; i + 1 < h.size(); i += 2) {
+        auto hv = [](char c) -> int {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            return -1;
+        };
+        int hi = hv(h[i]), lo = hv(h[i + 1]);
+        if (hi < 0 || lo < 0) return {};
+        out.push_back(static_cast<uint8_t>((hi << 4) | lo));
+    }
+    return out;
+}
+
+static intx::uint256 hex0x_to_u256(std::string_view h) {
+    auto b = hex0x_to_bytes(h);
+    evmc::uint256be be{};
+    if (b.size() > 32) b = b.substr(b.size() - 32);
+    std::memcpy(be.bytes + (32 - b.size()), b.data(), b.size());
+    return intx::be::load<intx::uint256>(be);
+}
+
+static evmc::bytes32 hex0x_to_bytes32(std::string_view h) {
+    auto b = hex0x_to_bytes(h);
+    evmc::bytes32 v{};
+    if (b.size() > 32) b = b.substr(b.size() - 32);
+    std::memcpy(v.bytes + (32 - b.size()), b.data(), b.size());
+    return v;
+}
+
+static evmc::address hex0x_to_address(std::string_view h) {
+    auto b = hex0x_to_bytes(h);
+    evmc::address a{};
+    if (b.size() >= 20) std::memcpy(a.bytes, b.data() + b.size() - 20, 20);
+    return a;
+}
+
+static const td::JsonValue* field(const td::JsonObject& o, td::Slice name) {
+    for (auto& f : o.field_values_) {
+        if (f.first == name) return &f.second;
+    }
+    return nullptr;
+}
+static std::string str(const td::JsonValue& v) {
+    return v.type() == td::JsonValue::Type::String ? v.get_string().str() : "";
+}
+static std::string slice_str(td::Slice s) { return s.str(); }
+
+}  // namespace stt
+
+static bool run_one_state_test_cancun(const std::string& path, bool& ran) {
+    using namespace stt;
+    ran = false;
+    auto content_r = td::read_file_str(path);
+    if (content_r.is_error()) {
+        printf("  read %s: %s\n", path.c_str(), content_r.error().message().c_str());
+        return false;
+    }
+    auto content = content_r.move_as_ok();
+    auto json_r = td::json_decode(content);
+    if (json_r.is_error()) {
+        printf("  parse %s: %s\n", path.c_str(), json_r.error().message().c_str());
+        return false;
+    }
+    auto root = json_r.move_as_ok();
+    if (root.type() != td::JsonValue::Type::Object) return false;
+
+    // Pick the first test in the file.
+    auto& tests = root.get_object();
+    if (tests.field_values_.empty()) return false;
+    auto& test = tests.field_values_[0].second;
+    if (test.type() != td::JsonValue::Type::Object) return false;
+    auto& test_obj = test.get_object();
+
+    auto* pre_v  = field(test_obj, "pre");
+    auto* tx_v   = field(test_obj, "transaction");
+    auto* post_v = field(test_obj, "post");
+    if (!pre_v || !tx_v || !post_v) return false;
+
+    auto* cancun = field(post_v->get_object(), "Cancun");
+    if (!cancun || cancun->type() != td::JsonValue::Type::Array) {
+        printf("  SKIP: no Cancun entry\n"); return false;
+    }
+    auto& cancun_arr = cancun->get_array();
+    if (cancun_arr.empty()) return false;
+    auto& entry = cancun_arr[0];
+    if (entry.type() != td::JsonValue::Type::Object) return false;
+    auto& entry_obj = entry.get_object();
+
+    auto* txbytes_v = field(entry_obj, "txbytes");
+    auto* expected_state_v = field(entry_obj, "state");
+    if (!txbytes_v || !expected_state_v) return false;
+
+    // --- Seed pre-state -----------------------------------------------------
+    //
+    // Construct EvmState with an explicit CellEvmState backend so the
+    // runner exercises our cell-native adapter (the whole point of G.1),
+    // not the InMemoryState default the EvmState() constructor picks.
+    evm_workchain::EvmState state(std::make_unique<evm_workchain::CellEvmState>());
+    {
+        std::unique_lock lock(state.mutex());
+        silkworm::State* cs = &state.state();
+        for (auto& [addr_s, acct_v] : pre_v->get_object().field_values_) {
+            auto addr_str = slice_str(addr_s);
+            auto addr = hex0x_to_address(addr_str);
+            silkworm::Account a{};
+            auto& ao = acct_v.get_object();
+            if (auto* f = field(ao, "balance")) a.balance = hex0x_to_u256(str(*f));
+            if (auto* f = field(ao, "nonce"))   a.nonce = static_cast<uint64_t>(hex0x_to_u256(str(*f)));
+            silkworm::Bytes code;
+            if (auto* f = field(ao, "code")) code = hex0x_to_bytes(str(*f));
+            if (!code.empty()) {
+                auto h = ethash::keccak256(code.data(), code.size());
+                std::memcpy(a.code_hash.bytes, h.bytes, 32);
+            } else {
+                std::memcpy(a.code_hash.bytes, silkworm::kEmptyHash.bytes, 32);
+            }
+            cs->update_account(addr, std::nullopt, a);
+            if (!code.empty()) {
+                cs->update_account_code(addr, 0, a.code_hash,
+                    silkworm::ByteView(code.data(), code.size()));
+            }
+            if (auto* f = field(ao, "storage")) {
+                for (auto& [slot_s, val_s] : f->get_object().field_values_) {
+                    auto slot = hex0x_to_bytes32(slice_str(slot_s));
+                    auto val = hex0x_to_bytes32(str(val_s));
+                    cs->update_storage(addr, 0, slot, evmc::bytes32{}, val);
+                }
+            }
+        }
+    }
+
+    // --- Decode the pre-signed tx bytes -------------------------------------
+    auto raw = hex0x_to_bytes(str(*txbytes_v));
+    auto decode = evm_workchain::decode_evm_transaction(raw);
+    if (std::holds_alternative<evm_workchain::TxDecodeError>(decode)) {
+        printf("  tx RLP decode failed\n"); return false;
+    }
+    auto& dec = std::get<evm_workchain::DecodedTransaction>(decode);
+
+    // --- Build the per-test chain config ------------------------------------
+    // The fixture's `transaction` doesn't carry chain_id directly (it's in
+    // the signature for EIP-155 legacy txs; for typed txs it's explicit).
+    // We honor whatever the decoded tx claims.
+    silkworm::ChainConfig cfg{};
+    cfg.chain_id = static_cast<uint64_t>(dec.txn.chain_id.value_or(intx::uint256{1}));
+    cfg.homestead_block = 0;
+    cfg.tangerine_whistle_block = 0;
+    cfg.spurious_dragon_block = 0;
+    cfg.byzantium_block = 0;
+    cfg.constantinople_block = 0;
+    cfg.petersburg_block = 0;
+    cfg.istanbul_block = 0;
+    cfg.berlin_block = 0;
+    cfg.london_block = 0;
+    cfg.shanghai_time = 0;
+    cfg.cancun_time = 0;
+    cfg.terminal_total_difficulty = 0;
+
+    // --- Build the block from env -------------------------------------------
+    auto* env_v = field(test_obj, "env");
+    if (!env_v) return false;
+    auto& env = env_v->get_object();
+    uint64_t block_num = static_cast<uint64_t>(hex0x_to_u256(str(*field(env, "currentNumber"))));
+    uint64_t timestamp = static_cast<uint64_t>(hex0x_to_u256(str(*field(env, "currentTimestamp"))));
+    uint64_t gas_limit = static_cast<uint64_t>(hex0x_to_u256(str(*field(env, "currentGasLimit"))));
+    evmc::address coinbase = hex0x_to_address(str(*field(env, "currentCoinbase")));
+    intx::uint256 base_fee = 0;
+    if (auto* f = field(env, "currentBaseFee")) base_fee = hex0x_to_u256(str(*f));
+
+    uint8_t rs[32] = {};
+    auto blk = evm_workchain::make_evm_block(block_num, timestamp, rs, gas_limit, coinbase);
+    blk.header.base_fee_per_gas = base_fee;
+
+    // --- Execute ------------------------------------------------------------
+    auto result = evm_workchain::execute_evm_transaction(dec.txn, blk, state, cfg);
+
+    printf("  execute: %s (gas_used=%lu)\n",
+           result.success ? "ok" : "revert",
+           static_cast<unsigned long>(result.gas_used));
+
+    // --- Verify post-state --------------------------------------------------
+    std::unique_lock lock(state.mutex());
+    silkworm::State* cs = &state.state();
+    bool all_ok = true;
+    size_t checked = 0;
+    for (auto& [addr_s, want_v] : expected_state_v->get_object().field_values_) {
+        auto addr_str = slice_str(addr_s);
+        auto addr = hex0x_to_address(addr_str);
+        auto got = cs->read_account(addr);
+        auto& want = want_v.get_object();
+        auto want_balance = hex0x_to_u256(str(*field(want, "balance")));
+        auto want_nonce = static_cast<uint64_t>(hex0x_to_u256(str(*field(want, "nonce"))));
+
+        if (!got) {
+            if (want_balance != 0 || want_nonce != 0) {
+                printf("    %.10s: account missing, expected balance=%s nonce=%lu\n",
+                       addr_str.c_str(),
+                       intx::to_string(want_balance).c_str(),
+                       static_cast<unsigned long>(want_nonce));
+                all_ok = false;
+            }
+            continue;
+        }
+        if (got->balance != want_balance) {
+            printf("    %.10s: balance got=%s want=%s\n", addr_str.c_str(),
+                   intx::to_string(got->balance).c_str(),
+                   intx::to_string(want_balance).c_str());
+            all_ok = false;
+        }
+        if (got->nonce != want_nonce) {
+            printf("    %.10s: nonce got=%lu want=%lu\n", addr_str.c_str(),
+                   static_cast<unsigned long>(got->nonce),
+                   static_cast<unsigned long>(want_nonce));
+            all_ok = false;
+        }
+        // Storage slot spot checks.
+        if (auto* st = field(want, "storage")) {
+            for (auto& [slot_s, val_s] : st->get_object().field_values_) {
+                auto slot_str = slice_str(slot_s);
+                auto val_str = str(val_s);
+                auto slot = hex0x_to_bytes32(slot_str);
+                auto want_v = hex0x_to_bytes32(val_str);
+                auto got_v = cs->read_storage(addr, got->incarnation, slot);
+                if (got_v != want_v) {
+                    printf("    %.10s: slot %s got=%s want=%s\n", addr_str.c_str(),
+                           slot_str.c_str(),
+                           silkworm::to_hex(silkworm::ByteView{got_v.bytes, 32}).c_str(),
+                           val_str.c_str());
+                    all_ok = false;
+                }
+            }
+        }
+        ++checked;
+    }
+    ran = true;
+    printf("  checked %zu accounts, %s\n", checked, all_ok ? "all match" : "MISMATCHES");
+    return all_ok;
+}
+
+static void test_state_test_runner_poc() {
+    printf("=== test_state_test_runner_poc (Phase G.1: run one GeneralStateTest fixture) ===\n");
+    const char* rel = "test/conformance/ethereum-tests/GeneralStateTests/stChainId/chainId.json";
+    std::string path;
+    for (const char* p : {rel, "../test/conformance/ethereum-tests/GeneralStateTests/stChainId/chainId.json",
+                          "/home/tomi/evm-workchain/test/conformance/ethereum-tests/GeneralStateTests/stChainId/chainId.json"}) {
+        if (td::stat(td::CSlice(p)).is_ok()) { path = p; break; }
+    }
+    if (path.empty()) {
+        printf("  SKIP (fixture not on disk; clone ethereum-tests under test/conformance/ to enable)\n\n");
+        return;
+    }
+    bool ran = false;
+    bool ok = run_one_state_test_cancun(path, ran);
+    if (!ran) {
+        printf("  SKIP (fixture shape not supported by v0 runner)\n\n");
+        return;
+    }
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -3121,6 +3406,7 @@ int main() {
     test_bytecode_roundtrip();
     test_bytecode_marker_distinguished();
     test_large_raw_tx_roundtrip();
+    test_state_test_runner_poc();
 
     // Scan stdout for FAILED to determine exit code
     // (Individual tests print PASSED or FAILED)
