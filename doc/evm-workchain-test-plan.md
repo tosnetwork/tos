@@ -7,12 +7,12 @@ Version: v1.1 — 2026-04-17 (status snapshot)
 | Gate | State | Notes |
 |------|-------|-------|
 | **Gate T — Testnet** | ✅ PASS | All 6 rows green. Last-known-good `57bf20cb`. |
-| **Gate P — Private mainnet** | 🚧 in progress | 1 of 6 rows fully green (G.1 at **100%** on 47-dir curated subset, 2121/2121 pass, 0 fail). |
+| **Gate P — Private mainnet** | 🚧 in progress | 1 of 6 rows fully green (G.1 at **100%** on 55-dir curated subset, 2533/2533 pass, 0 fail). |
 | **Gate M — Public mainnet** | 📋 planned | Depends on Gates T + P + Phase G.2/G.3/G.4/G.5 + third-party audit. |
 
 | Phase | State | Headline |
 |-------|-------|----------|
-| G.1 — State-test harness (GeneralStateTests) | ✅ done (47 dirs, 100% pass) | Runner + walker ✅ over **47 subdirs**, **2121/2121 pass (100%)**, **0 fail**, 5 upstream-skipped (silkworm `kFailingTests` + EIP-684/7610 grey zone), 2 silkworm-asserted skips. **9 real bugs** found and fixed (7 consensus + 2 adapter-glue) |
+| G.1 — State-test harness (GeneralStateTests) | ✅ done (55 dirs, 100% pass) | Runner + walker ✅ over **55 subdirs**, **2533/2533 pass (100%)**, **0 fail**, 5 upstream-skipped (silkworm `kFailingTests` + EIP-684/7610 grey zone), 2 silkworm-asserted skips. **10 real bugs** found and fixed (5 consensus + 3 DoS + 2 adapter-glue) |
 | G.2 — execution-spec-tests (Pyspec) | 📋 planned | Same runner as G.1; extend to new fixture dir |
 | G.3 — Hive (`rpc-compat`) | 📋 planned | Dockerize validator, write hive client stub |
 | G.4 — Continuous differential CI | 🚧 runner ✅, CI 📋 | One-shot `differential_geth.py` lives; continuous CI not yet stood up |
