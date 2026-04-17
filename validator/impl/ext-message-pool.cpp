@@ -268,6 +268,19 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
                                                                            td::optional<td::uint32> &msg_seqno) {
   WorkchainId wc = message->wc();
   StdSmcAddress addr = message->addr();
+
+  // EVM workchain (workchain 1): skip TVM validation entirely.
+  // EVM accounts have no TVM code — signature and nonce validation
+  // happens in the EVM executor during the collator's compute phase.
+  // Structural validation (BOC/TLB) and rate-limiting still apply.
+  // Must short-circuit BEFORE run_fetch_account_state(), which expects
+  // the workchain's block storage to be populated by a TVM-style collator.
+  if (wc == 1 /* evm_workchain::kWorkchainId */) {
+    auto [wait, promise] = td::actor::StartedTask<>::make_bridge();
+    promise.set_value(td::Unit{});
+    co_return CheckResult{.message = message, .wait_allow_broadcast = std::move(wait)};
+  }
+
   auto [shard_acc, utime, lt, config] = co_await run_fetch_account_state(wc, addr, manager_);
   bool special = wc == masterchainId && config->is_special_smartcontract(addr);
   block::Account acc;
@@ -275,16 +288,6 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
     co_return td::Status::Error(PSLICE() << "Failed to unpack account state");
   }
   acc.block_lt = lt;
-
-  // EVM workchain (workchain 1): skip TVM validation.
-  // EVM accounts have no TVM code — signature and nonce validation
-  // happens in the EVM executor during the collator's compute phase.
-  // Structural validation (BOC/TLB) and rate-limiting still apply.
-  if (wc == 1 /* evm_workchain::kWorkchainId */) {
-    auto [wait, promise] = td::actor::StartedTask<>::make_bridge();
-    promise.set_value(td::Unit{});
-    co_return CheckResult{.message = message, .wait_allow_broadcast = std::move(wait)};
-  }
 
   auto [wait_allow_broadcast, allow_broadcast_promise] = td::actor::StartedTask<>::make_bridge();
   CheckResult check_result{.message = message, .wait_allow_broadcast = std::move(wait_allow_broadcast)};

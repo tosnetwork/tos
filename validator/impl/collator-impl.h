@@ -126,7 +126,9 @@ class Collator final : public td::actor::Actor {
 
   void tear_down() override {
     ext_msg_cancellation_.cancel();
-    ext_msg_queue_.close();
+    if (ext_msg_queue_initialized_) {
+      ext_msg_queue_.close();
+    }
   }
 
   int verbosity{3 * 0};
@@ -206,6 +208,7 @@ class Collator final : public td::actor::Actor {
 
   std::set<td::Bits256> registered_ext_msgs_;
   ExtMsgQueue ext_msg_queue_;
+  bool ext_msg_queue_initialized_{false};
   std::optional<std::pair<td::Ref<ExtMessage>, int>> pending_ext_msg_;
   td::CancellationTokenSource ext_msg_cancellation_;
 

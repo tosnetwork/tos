@@ -25,6 +25,7 @@
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/block.h"
+#include "block/evm-workchain/evm-workchain.h"
 #include "block/mc-config.h"
 #include "block/validator-set.h"
 #include "crypto/openssl/rand.hpp"
@@ -149,8 +150,9 @@ void Collator::start_up() {
     is_key_block_ = true;
   }
   // 1. check validity of parameters, especially prev_blocks, shard and min_mc_block_id
-  if (workchain() != tos::masterchainId && workchain() != tos::basechainId) {
-    fatal_error(-667, "can create block candidates only for masterchain (-1) and base workchain (0)");
+  if (workchain() != tos::masterchainId && workchain() != tos::basechainId &&
+      workchain() != evm_workchain::kWorkchainId) {
+    fatal_error(-667, "can create block candidates only for masterchain (-1), base workchain (0), and EVM workchain (1)");
     return;
   }
   if (is_busy()) {
@@ -242,6 +244,7 @@ void Collator::start_up() {
   if (!params_.is_hardfork) {
     LOG(DEBUG) << "installing external message queue";
     ext_msg_queue_ = ExtMsgQueue("ext_msg_queue", 500);
+    ext_msg_queue_initialized_ = true;
     auto callback = std::make_unique<ExtMsgCallback>();
     callback->shard = shard_;
     callback->cancellation_token = ext_msg_cancellation_.get_cancellation_token();
