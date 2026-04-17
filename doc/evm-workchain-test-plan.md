@@ -16,7 +16,7 @@ Version: v1.1 — 2026-04-17 (status snapshot)
 | G.2 — execution-spec-tests (Pyspec) | 📋 planned | Same runner as G.1; extend to new fixture dir |
 | G.3 — Hive (`rpc-compat`) | 📋 planned | Dockerize validator, write hive client stub |
 | G.4 — Continuous differential CI | 🚧 runner ✅, CI 📋 | One-shot `differential_geth.py` lives; continuous CI not yet stood up |
-| G.5 — Fuzz + stress | 📋 planned | Harness to be written |
+| G.5 — Fuzz + stress | 🚧 runner ✅, 24h soak 📋 | `test/conformance/fuzz_eth.py` ✅ landed; found 1 DoS (eth_call hex-parse) fixed in `f53c356a`; 60s reruns clean; 24-hour soak + stress-throughput still pending |
 
 | Consensus bugs found via external-oracle testing | Commit | Severity |
 |--------------------------------------------------|--------|----------|
@@ -26,6 +26,7 @@ Version: v1.1 — 2026-04-17 (status snapshot)
 | EIP-2681 tx with nonce == 2^64-1 executed instead of rejected | `474f45f6` | Consensus (silent nonce overflow) |
 | `eth_sendRawTransaction` DoS: oversized RLP crashed validator | `fdcebdc1` | DoS (remote-reachable) |
 | `eth_sendRawTransaction` DoS: foreign-chainId txs piled up, crashed collator | `fdcebdc1` | DoS (remote-reachable) |
+| `eth_call` DoS: invalid hex in `value`/`gas`/`gasPrice` crashed validator via `intx::from_string` throw | `f53c356a` | DoS (remote-reachable, found by Phase G.5 fuzzer) |
 
 ## Purpose
 
