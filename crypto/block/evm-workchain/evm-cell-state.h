@@ -149,6 +149,15 @@ class CellEvmState : public silkworm::State {
     /// Convenience: drop all blocks from the cache (for tests).
     void clear_block_cache();
 
+    /// Used by `populate_state_from_shard_accounts` to re-attach a storage
+    /// root cell to an account that was just hydrated via update_account()
+    /// (silkworm's update_account drops the storage_root field). Public
+    /// hydration-only entry point for the otherwise-private set_storage_root.
+    void set_storage_root_for_hydration(const evmc::address& address,
+                                         td::Ref<vm::Cell> root) {
+        set_storage_root(address, std::move(root));
+    }
+
     // ----- Free helpers (used outside CellEvmState) -----
 
   private:

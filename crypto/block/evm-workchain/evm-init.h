@@ -8,6 +8,7 @@
 */
 #pragma once
 
+#include <cstddef>
 #include <string>
 
 #include "td/utils/Slice.h"
@@ -15,6 +16,7 @@
 
 namespace vm {
 class Dictionary;
+class AugmentedDictionary;
 }
 
 namespace evm_workchain {
@@ -62,5 +64,34 @@ void copy_test_accounts_into_dict(vm::Dictionary& target);
 td::Ref<vm::Cell> build_evm_shard_account_cell(
     const td::Bits256& addr_bits,
     const td::Ref<vm::Cell>& evm_account_data_cell);
+
+/// Walk an `AugmentedDictionary` of `ShardAccount` entries (i.e. the wc=1
+/// `account_dict` loaded from a previously-committed `ShardState`), and
+/// for each entry whose `StateInit.data` decodes as `EvmAccountData`, push
+/// the account (nonce + balance + code_hash) and its storage slots into
+/// `target`'s in-RAM CellEvmState.
+///
+/// Used at the start of every wc=1 block by the collator and validate-query
+/// to rehydrate `g_evm_state` from canonical state when the process is
+/// fresh (`EvmState::is_empty() == true`). Replaces the obsolete
+/// `evm-state.boc` sidecar load path.
+///
+/// Idempotent and side-effect-free on the input dict. Returns the number
+/// of accounts hydrated (zero if `shard_accounts` is empty or contains no
+/// EVM-shaped entries).
+size_t populate_state_from_shard_accounts(
+    EvmState& target,
+    vm::AugmentedDictionary& shard_accounts);
+
+/// Convenience wrapper used from `tos_validator` (collator + validate-query).
+///
+/// If the process-global `g_evm_state` is empty AND `shard_accounts` is
+/// non-empty, calls `populate_state_from_shard_accounts(global_evm_state(),
+/// shard_accounts)` and returns the count. Otherwise returns 0.
+///
+/// Provided so call sites in collator.cpp / validate-query.cpp don't have to
+/// `#include "evm-state.h"` (which would pull silkworm headers into the
+/// validator library's include surface).
+size_t hydrate_global_state_if_empty(vm::AugmentedDictionary& shard_accounts);
 
 }  // namespace evm_workchain

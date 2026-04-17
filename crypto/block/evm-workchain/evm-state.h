@@ -114,6 +114,19 @@ class EvmState {
                       const intx::uint256& balance,
                       uint64_t nonce = 0);
 
+    /// True iff no EVM accounts are stored. Used by the collator/validator
+    /// hydration hook to detect a fresh process start that needs to be
+    /// rebuilt from the canonical ShardAccounts. Cheap (dict-size check).
+    bool is_empty() const;
+
+    /// One-shot flag: true at process start, becomes false after the first
+    /// successful hydration from canonical ShardAccounts. Used by
+    /// hydrate_global_state_if_empty() so the trigger fires once per process
+    /// even when seed_test_accounts has populated the singleton with a few
+    /// initial entries.
+    bool needs_initial_hydration() const;
+    void mark_initial_hydration_done();
+
     intx::uint256 get_balance(const evmc::address& addr) const;
     uint64_t get_nonce(const evmc::address& addr) const;
     std::optional<silkworm::Account> read_account(const evmc::address& addr) const;
@@ -194,6 +207,8 @@ class EvmState {
     // Change tracking for incremental trie root computation
     silkworm::trie::PrefixSet account_changes_;
     silkworm::trie::PrefixSet storage_changes_;
+
+    bool needs_initial_hydration_{true};
 
     mutable std::shared_mutex mutex_;
 };

@@ -1124,6 +1124,17 @@ bool ValidateQuery::fetch_config_params() {
       evm_state_mirror_dict_ = std::make_unique<vm::Dictionary>(256);
       compute_phase_cfg_.evm_shard_accounts = evm_state_mirror_dict_.get();
       compute_phase_cfg_.evm_block_seqno = static_cast<td::uint64>(id_.id.seqno);
+      // Phase B: rehydrate g_evm_state from canonical ShardAccounts when
+      // re-validating after a process restart. Mirrors the collator-side
+      // hydration; consensus relies on both sides observing identical
+      // silkworm::State on every replay.
+      if (id_.id.seqno > 1 && ps_.account_dict_) {
+        auto hydrated = evm_workchain::hydrate_global_state_if_empty(*ps_.account_dict_);
+        if (hydrated > 0) {
+          LOG(WARNING) << "evm-workchain: hydrated " << hydrated
+                       << " accounts from wc=1 ShardAccounts (validate-query restart recovery)";
+        }
+      }
       // Bootstrap on the first wc=1 block — same deterministic seed as collator.
       // After re-execution, the post-state ShardAccounts entries (built via
       // build_evm_shard_account_cell) must match what the collator published.

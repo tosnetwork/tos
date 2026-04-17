@@ -9,6 +9,8 @@
 #include "evm-init.h"
 #include "evm-workchain.h"
 
+#include "block/block-auto.h"
+#include "block/block-parse.h"
 #include "block/evm-workchain-dispatch.h"
 #include "evm-cell-codec.h"
 #include "evm-compute-phase.h"
@@ -23,7 +25,7 @@
 #include <silkworm/core/types/account.hpp>
 
 #include <cstdio>
-#include <fstream>
+#include <cstring>
 
 #include "td/utils/logging.h"
 
@@ -159,38 +161,111 @@ void copy_test_accounts_into_dict(vm::Dictionary& target) {
     }
 }
 
-void init_evm_workchain(const std::string& db_root) {
+size_t populate_state_from_shard_accounts(
+    EvmState& target,
+    vm::AugmentedDictionary& shard_accounts) {
+    size_t count = 0;
+    // check_for_each_extra walks the augmented dict; we only need the leaf
+    // value (the ShardAccount cell slice), not the augmentation extra.
+    shard_accounts.check_for_each_extra(
+        [&target, &count](td::Ref<vm::CellSlice> cs_ref,
+                          td::Ref<vm::CellSlice> /*extra*/,
+                          td::ConstBitPtr key, int n) -> bool {
+            if (n != 256) return true;  // skip malformed entries
+
+            // ShardAccount value layout: ^Account + last_trans_hash:bits256 + last_trans_lt:uint64
+            td::Ref<vm::Cell> account_cell;
+            if (!block::tlb::t_ShardAccount.extract_account_state(cs_ref, account_cell) ||
+                account_cell.is_null()) {
+                return true;
+            }
+
+            // Account → AccountStorage → AccountState (active) → StateInit
+            block::gen::Account::Record_account acc_rec;
+            if (!tlb::unpack_cell(account_cell, acc_rec)) return true;
+
+            unsigned long long last_trans_lt;
+            td::Ref<vm::CellSlice> balance_cs, state_cs;
+            if (!block::gen::t_AccountStorage.unpack_account_storage(
+                    acc_rec.storage.write(), last_trans_lt, balance_cs, state_cs)) {
+                return true;
+            }
+
+            td::Ref<vm::CellSlice> state_init_cs;
+            if (!block::gen::t_AccountState.unpack_account_active(state_cs.write(), state_init_cs)) {
+                return true;  // not an active EVM account; skip
+            }
+
+            block::gen::StateInit::Record si_rec;
+            if (!block::gen::t_StateInit.unpack(state_init_cs.write(), si_rec)) return true;
+
+            // data:Maybe ^Cell — must be present and reference an EvmAccountData cell.
+            if (si_rec.data.is_null() || !si_rec.data->have(1) ||
+                si_rec.data->prefetch_ulong(1) != 1) {
+                return true;
+            }
+            auto data_slice = si_rec.data;
+            data_slice.write().advance(1);  // skip Maybe tag
+            td::Ref<vm::Cell> evm_data_cell;
+            if (!data_slice->prefetch_ref_to(evm_data_cell)) return true;
+
+            silkworm::Account decoded;
+            td::Ref<vm::Cell> storage_root;
+            if (!decode_evm_account_data(evm_data_cell, decoded, storage_root)) {
+                return true;  // not an EvmAccountData cell (wrong magic) — skip
+            }
+
+            // Reconstruct the EVM address from the 256-bit dict key
+            // (lower 20 bytes are the EVM address; upper 12 are zero pad).
+            evmc::address addr{};
+            td::Bits256 key_bits;
+            key_bits.bits().copy_from(key, 256);
+            std::memcpy(addr.bytes, key_bits.data() + 12, 20);
+
+            // Push to target via update_account (storage_root handled separately
+            // because silkworm::State::update_account doesn't carry it).
+            {
+                std::unique_lock lock(target.mutex());
+                target.state().update_account(addr, std::nullopt, decoded);
+                if (storage_root.not_null()) {
+                    if (auto* cs = dynamic_cast<CellEvmState*>(&target.state())) {
+                        cs->set_storage_root_for_hydration(addr, storage_root);
+                    }
+                }
+            }
+            ++count;
+            return true;
+        });
+    return count;
+}
+
+size_t hydrate_global_state_if_empty(vm::AugmentedDictionary& shard_accounts) {
+    if (!g_evm_state) return 0;
+    // One-shot per process. After init_evm_workchain calls
+    // seed_test_accounts the state isn't strictly empty, but it's still in
+    // the "fresh process" state that needs canonical-state hydration.
+    if (!g_evm_state->needs_initial_hydration()) return 0;
+    if (shard_accounts.is_empty()) return 0;
+    auto count = populate_state_from_shard_accounts(*g_evm_state, shard_accounts);
+    g_evm_state->mark_initial_hydration_done();
+    return count;
+}
+
+void init_evm_workchain(const std::string& /*db_root*/) {
+    // db_root used to point at the legacy evm-state.boc sidecar location.
+    // After Phase B that file is no longer read or written; canonical state
+    // is rehydrated from the wc=1 ShardAccounts at first block load. The
+    // parameter remains for backward source compatibility with the existing
+    // callers in validator-engine and tests.
     LOG(WARNING) << "evm-workchain: initialising (workchain_id=1, chain_id="
                  << kEvmChainId << ")";
 
-    // Cell-native state. The dictionary lives entirely in cells; the root
-    // can be serialized to / loaded from a BoC file at {db_root}/evm-state.boc
-    // for development persistence. Production persistence will route through
-    // the collator's ShardAccounts → CellDb (single atomic WriteBatch).
+    // Cell-native state. The dictionary starts empty here; the canonical
+    // wc=1 ShardAccounts (loaded by the collator/validate-query from CellDb)
+    // is what populates this state via populate_state_from_shard_accounts()
+    // on the first wc=1 block load. The previous evm-state.boc sidecar load
+    // path was removed in Phase B — there is no second store anymore.
     auto cell_state = std::make_unique<CellEvmState>();
-
-    if (!db_root.empty()) {
-        std::string boc_path = db_root + "/evm-state.boc";
-        std::ifstream in(boc_path, std::ios::binary);
-        if (in.good()) {
-            std::string data((std::istreambuf_iterator<char>(in)),
-                             std::istreambuf_iterator<char>());
-            auto cell_r = vm::std_boc_deserialize(td::Slice{data});
-            if (cell_r.is_ok()) {
-                cell_state->load_from_cell(cell_r.move_as_ok());
-                LOG(WARNING) << "evm-workchain: loaded cell-native state from " << boc_path;
-            } else {
-                LOG(WARNING) << "evm-workchain: failed to deserialize "
-                             << boc_path << ", starting empty";
-            }
-        } else {
-            LOG(WARNING) << "evm-workchain: no existing state at " << boc_path
-                         << ", starting empty";
-        }
-    } else {
-        LOG(WARNING) << "evm-workchain: in-memory state only (no db_root)";
-    }
-
     g_evm_state = std::make_unique<EvmState>(std::move(cell_state));
 
     // Seed Hardhat/Anvil standard test accounts (idempotent: skips if already seeded).

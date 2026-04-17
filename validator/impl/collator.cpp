@@ -2270,6 +2270,21 @@ bool Collator::fetch_config_params() {
     evm_state_mirror_dict_ = std::make_unique<vm::Dictionary>(256);
     compute_phase_cfg_.evm_shard_accounts = evm_state_mirror_dict_.get();
     compute_phase_cfg_.evm_block_seqno = static_cast<td::uint64>(new_block_seqno);
+    // Phase B: rehydrate g_evm_state from canonical ShardAccounts on the
+    // first wc=1 block load after process start. Replaces the obsolete
+    // evm-state.boc sidecar reload. The trigger is intentionally narrow:
+    //   - g_evm_state is empty (i.e. fresh process), AND
+    //   - the loaded input account_dict already has entries (i.e. not a
+    //     fresh chain at block 1, where the bootstrap path will run instead).
+    // After hydration, every subsequent block's compute phase sees the
+    // correct silkworm::State for tx admission.
+    if (account_dict) {
+      auto hydrated = evm_workchain::hydrate_global_state_if_empty(*account_dict);
+      if (hydrated > 0) {
+        LOG(WARNING) << "evm-workchain: hydrated " << hydrated
+                     << " accounts from wc=1 ShardAccounts (post-restart recovery)";
+      }
+    }
     // First wc=1 block: deterministically pre-fund the test EOAs so they
     // appear as canonical ShardAccount entries from block 1 onward. The
     // post-loop merge below will wrap each entry into a ShardAccount cell.

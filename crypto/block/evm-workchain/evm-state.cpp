@@ -5,6 +5,7 @@
     Source: TOS-specific adapter (not copied from ~/s).
 */
 #include "evm-state.h"
+#include "evm-cell-state.h"  // dynamic_cast in is_empty()
 
 #include <ethash/keccak.hpp>
 #include <silkworm/core/trie/nibbles.hpp>
@@ -25,6 +26,30 @@ void EvmState::seed_account(const evmc::address& addr,
     acct.balance = balance;
     acct.nonce = nonce;
     backend_->update_account(addr, std::nullopt, acct);
+}
+
+bool EvmState::needs_initial_hydration() const {
+    std::shared_lock lock(mutex_);
+    return needs_initial_hydration_;
+}
+
+void EvmState::mark_initial_hydration_done() {
+    std::unique_lock lock(mutex_);
+    needs_initial_hydration_ = false;
+}
+
+bool EvmState::is_empty() const {
+    std::shared_lock lock(mutex_);
+    // Production path: CellEvmState. The internal account dict's root cell
+    // is null iff no accounts are stored.
+    if (auto* cs = dynamic_cast<const CellEvmState*>(backend_.get())) {
+        return cs->account_dict_root().is_null();
+    }
+    // Non-cell backend (tests use silkworm::InMemoryState): no public empty
+    // check, but the hydration hook only runs in production where the
+    // backend is always CellEvmState. Returning false is the safe default
+    // (skips hydration in tests).
+    return false;
 }
 
 intx::uint256 EvmState::get_balance(const evmc::address& addr) const {
