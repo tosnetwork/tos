@@ -149,6 +149,8 @@ class CellEvmState : public silkworm::State {
     /// Convenience: drop all blocks from the cache (for tests).
     void clear_block_cache();
 
+    // ----- Free helpers (used outside CellEvmState) -----
+
   private:
     /// Read the storage dict root cell for an account. Returns null if account
     /// has no storage.

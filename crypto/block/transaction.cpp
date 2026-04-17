@@ -45,6 +45,12 @@
   FAIL_UNLESS_ERRCODE_MSG(condition, err, PSTRING() << "Transaction check falied: " << #condition)
 
 namespace {
+constexpr tos::WorkchainId kEvmWorkchainId = 1;
+
+bool is_evm_workchain(tos::WorkchainId wc) {
+  return wc == kEvmWorkchainId;
+}
+
 /**
  * Logger that stores the tail of log messages.
  *
@@ -979,13 +985,20 @@ bool Transaction::unpack_input_msg(bool ihr_delivered, const ActionPhaseConfig* 
         LOG(DEBUG) << "computed fwd fees set to zero for special account";
         fees_c.first = fees_c.second = 0;
       }
-      in_fwd_fee = td::make_refint(fees_c.first);
-      if (balance.tomis < in_fwd_fee) {
-        LOG(DEBUG) << "cannot pay for importing this external message";
-        return false;
+      if (is_evm_workchain(account.workchain)) {
+        // EVM workchain uses its own balance/gas accounting inside the EVM
+        // executor. Do not require a mirrored TON balance just to admit the
+        // external message into compute.
+        in_fwd_fee = td::zero_refint();
+      } else {
+        in_fwd_fee = td::make_refint(fees_c.first);
+        if (balance.tomis < in_fwd_fee) {
+          LOG(DEBUG) << "cannot pay for importing this external message";
+          return false;
+        }
+        // (tentatively) debit account for importing this external message
+        balance -= in_fwd_fee;
       }
-      // (tentatively) debit account for importing this external message
-      balance -= in_fwd_fee;
       msg_balance_remaining.set_zero();  // external messages cannot carry value
       // ...
       break;
@@ -1427,6 +1440,16 @@ td::uint64 Transaction::gas_bought_for(const ComputePhaseConfig& cfg, td::RefInt
  * @returns True if the gas limits were successfully computed, false otherwise.
  */
 bool Transaction::compute_gas_limits(ComputePhase& cp, const ComputePhaseConfig& cfg) {
+  if (is_evm_workchain(account.workchain) && trans_type == tr_ord) {
+    // EVM workchain transactions buy gas from the sender's EVM balance inside
+    // the EVM executor. Keep TON-side gas admission out of the way.
+    cp.gas_max = cfg.gas_limit;
+    cp.gas_limit = cfg.gas_limit;
+    cp.gas_credit = 0;
+    LOG(DEBUG) << "EVM workchain gas limits: max=" << cp.gas_max << ", limit=" << cp.gas_limit
+               << ", credit=" << cp.gas_credit;
+    return true;
+  }
   // Compute gas limits
   if (account.is_special) {
     cp.gas_max = cfg.special_gas_limit;
@@ -1835,6 +1858,7 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
   // ...
   compute_phase = std::make_unique<ComputePhase>();
   ComputePhase& cp = *(compute_phase.get());
+  const bool evm_ord = is_evm_workchain(account.workchain) && trans_type == tr_ord;
   if (cfg.global_version >= 9) {
     original_balance = balance;
     if (msg_balance_remaining.is_valid()) {
@@ -1843,7 +1867,7 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
   } else {
     original_balance -= total_fees;
   }
-  if (td::sgn(balance.tomis) <= 0) {
+  if (!evm_ord && td::sgn(balance.tomis) <= 0) {
     // no gas
     cp.skip_reason = ComputePhase::sk_no_gas;
     return true;
@@ -1896,11 +1920,11 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
       acc_status = Account::acc_active;
       was_activated = true;
     }
-    // Set a minimal code cell if none exists (EVM account marker: 0x45 = 'E').
+    // Set a minimal code cell if none exists. The same canonical marker is
+    // used by the wc=1 ShardAccount wrapper in evm-cell-state.cpp, so all
+    // EVM accounts share one code cell hash and CellDb deduplicates it.
     if (new_code.is_null()) {
-      vm::CellBuilder code_cb;
-      code_cb.store_long(0x45, 8);
-      new_code = code_cb.finalize();
+      new_code = evm_workchain_dispatch::get_evm_code_marker_cell();
     }
 
     return true;

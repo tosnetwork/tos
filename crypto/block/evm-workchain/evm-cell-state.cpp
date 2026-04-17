@@ -4,10 +4,14 @@
 */
 #include "evm-cell-state.h"
 #include "evm-cell-codec.h"
+#include "evm-workchain.h"
 
 #include <silkworm/core/common/empty_hashes.hpp>
 #include <ethash/keccak.hpp>
 
+#include "block/block.h"             // store_UInt7, CurrencyCollection
+#include "block/block-auto.h"        // block::gen::t_AccountState, t_Account
+#include "block/evm-workchain-dispatch.h"  // get_evm_code_marker_cell
 #include "vm/cells/CellBuilder.h"
 #include "vm/cells/CellSlice.h"
 
@@ -284,6 +288,79 @@ void CellEvmState::set_storage_root(const evmc::address& address,
     vm::CellBuilder cb;
     cb.store_ref(data_cell);
     account_dict_.set_builder(td::ConstBitPtr{key}, 256, cb);
+}
+
+// ---------------------------------------------------------------------------
+// Free helper: build a wc=1 ShardAccount inner Account cell wrapping an
+// EvmAccountData cell as StateInit.data.
+// ---------------------------------------------------------------------------
+//
+// Schema (block.tlb):
+//   account$1 addr:MsgAddressInt storage_stat:StorageInfo storage:AccountStorage
+//   AccountStorage = last_trans_lt:uint64 balance:CurrencyCollection state:AccountState
+//   StateInit = split_depth:Maybe special:Maybe code:Maybe ^Cell data:Maybe ^Cell library:Maybe ^Cell
+//   StorageInfo = used:StorageUsed extra:StorageExtraInfo last_paid:uint32 due_payment:Maybe
+//   StorageUsed = cells:VarUInteger7 bits:VarUInteger7
+//
+// Phase A choices:
+//   - outer balance = 0 (EVM balance lives in EvmAccountData; avoids double-counting in masterchain global balance)
+//   - code = canonical 0x45 marker cell (deduplicated via CellDb)
+//   - library = nothing
+//   - last_paid = 0, due_payment = nothing
+//   - last_trans_lt (in AccountStorage) = 0
+//
+// Determinism: all field stores are in fixed order with literal values; the
+// only inputs are the address and the EvmAccountData cell. Cell hash is a
+// pure function of these.
+td::Ref<vm::Cell> build_evm_shard_account_cell(
+    const td::Bits256& addr_bits,
+    const td::Ref<vm::Cell>& evm_account_data_cell) {
+    using td::make_refint;
+
+    // 1. StateInit = split_depth:nothing special:nothing code:Just ^marker
+    //                data:Just ^evm_data library:nothing
+    vm::CellBuilder si_cb;
+    si_cb.store_long_bool(0, 1);  // split_depth: nothing
+    si_cb.store_long_bool(0, 1);  // special: nothing
+    si_cb.store_maybe_ref(evm_workchain_dispatch::get_evm_code_marker_cell());
+    si_cb.store_maybe_ref(evm_account_data_cell);
+    si_cb.store_maybe_ref({});    // library: nothing
+    auto state_init_cell = si_cb.finalize();
+
+    // 2. AccountStorage = last_trans_lt:0 balance:zero state:account_active$1 StateInit
+    vm::CellBuilder as_cb;
+    as_cb.store_long_bool(0, 64);                                  // last_trans_lt
+    bool ok = block::CurrencyCollection{make_refint(0)}.store(as_cb);  // balance
+    CHECK(ok);
+    ok = block::gen::t_AccountState.pack_account_active(
+        as_cb, vm::load_cell_slice_ref(state_init_cell));         // state
+    CHECK(ok);
+    auto storage_cell = as_cb.finalize();
+
+    // 3. StorageInfo.used = computed from the storage cell (deterministic)
+    vm::CellStorageStat stats;
+    auto stat_status = stats.compute_used_storage(td::Ref<vm::Cell>(storage_cell));
+    CHECK(stat_status.is_ok());
+
+    // 4. Account = account$1 addr:addr_std$10 wc=1 addr storage_stat storage
+    vm::CellBuilder acc_cb;
+    acc_cb.store_long_bool(1, 1);                                  // account$1
+    acc_cb.store_long_bool(2, 2);                                  // addr_std$10
+    acc_cb.store_long_bool(0, 1);                                  // anycast: nothing
+    acc_cb.store_long_rchk_bool(kWorkchainId, 8);                  // workchain_id (1)
+    acc_cb.store_bits_bool(addr_bits.bits(), 256);                 // address
+    // storage_stat:StorageInfo
+    ok = block::store_UInt7(acc_cb, stats.cells)                    // used.cells
+         && block::store_UInt7(acc_cb, stats.bits);                 // used.bits
+    CHECK(ok);
+    acc_cb.store_zeroes_bool(3);                                    // extra:StorageExtraInfo (regular$0 = 3 bits 0)
+    acc_cb.store_long_bool(0, 33);                                  // last_paid:uint32 + due_payment:nothing
+    acc_cb.append_data_cell_bool(storage_cell);                     // storage:AccountStorage
+    auto account_cell = acc_cb.finalize();
+
+    // Validate (catches encoding bugs early in dev; cheap in release).
+    CHECK(block::gen::t_Account.validate_ref(account_cell));
+    return account_cell;
 }
 
 }  // namespace evm_workchain

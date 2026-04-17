@@ -10,12 +10,17 @@
 #include "evm-workchain.h"
 
 #include "block/evm-workchain-dispatch.h"
+#include "evm-cell-codec.h"
 #include "evm-compute-phase.h"
 #include "evm-state.h"
 #include "evm-cell-state.h"
 #include "evm-incremental-trie.h"
 
 #include "vm/boc.h"
+#include "vm/cells/CellBuilder.h"
+#include "vm/dict.h"
+
+#include <silkworm/core/types/account.hpp>
 
 #include <cstdio>
 #include <fstream>
@@ -128,6 +133,31 @@ void seed_test_accounts(EvmState& state) {
 }
 
 }  // anonymous namespace
+
+void copy_test_accounts_into_dict(vm::Dictionary& target) {
+    // 10,000 TOS = 10000 × 10^18 wei (matches seed_test_accounts).
+    intx::uint256 amount{kSeedAmountTos};
+    for (int i = 0; i < 18; ++i) amount *= intx::uint256{10};
+
+    for (const auto& a : kTestAccounts) {
+        evmc::address addr{};
+        if (!parse_hex_address(a.address, addr)) continue;
+
+        silkworm::Account acct{};
+        acct.nonce = 0;
+        acct.balance = amount;
+        // code_hash defaults to silkworm::kEmptyHash (no code) — fine for EOAs
+
+        auto data_cell = encode_evm_account_data(acct, /*storage_root=*/{});
+
+        unsigned char key[32];
+        address_to_key(addr, key);
+
+        vm::CellBuilder val_cb;
+        val_cb.store_ref(data_cell);
+        target.set_builder(td::ConstBitPtr{key}, 256, val_cb);
+    }
+}
 
 void init_evm_workchain(const std::string& db_root) {
     LOG(WARNING) << "evm-workchain: initialising (workchain_id=1, chain_id="

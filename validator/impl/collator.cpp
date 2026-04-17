@@ -25,6 +25,7 @@
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/block.h"
+#include "block/evm-workchain/evm-init.h"
 #include "block/evm-workchain/evm-workchain.h"
 #include "block/mc-config.h"
 #include "block/validator-set.h"
@@ -2264,10 +2265,17 @@ bool Collator::fetch_config_params() {
   // EVM workchain (wc=1): allocate a mirror dict and expose it to
   // ComputePhaseConfig. CellEvmState::sync_to_dict() will populate it after
   // each EVM transaction so the cell-encoded EVM state is included in the
-  // collator's atomic block commit.
-  if (workchain() == 1 /* evm_workchain::kWorkchainId */) {
+  // collator's atomic block commit (see combine_account_transactions()).
+  if (workchain() == evm_workchain::kWorkchainId) {
     evm_state_mirror_dict_ = std::make_unique<vm::Dictionary>(256);
     compute_phase_cfg_.evm_shard_accounts = evm_state_mirror_dict_.get();
+    // First wc=1 block: deterministically pre-fund the test EOAs so they
+    // appear as canonical ShardAccount entries from block 1 onward. The
+    // post-loop merge below will wrap each entry into a ShardAccount cell.
+    // Idempotent: only fires when new_block_seqno == 1.
+    if (new_block_seqno == 1) {
+      evm_workchain::copy_test_accounts_into_dict(*evm_state_mirror_dict_);
+    }
   } else {
     compute_phase_cfg_.evm_shard_accounts = nullptr;
   }
@@ -3171,6 +3179,52 @@ bool Collator::combine_account_transactions() {
       }
     }
   }
+
+  // -------------------------------------------------------------------------
+  // EVM workchain (wc=1): merge the cell-encoded EVM state into the canonical
+  // ShardAccounts dict.
+  //
+  // CellEvmState::sync_to_dict() has populated evm_state_mirror_dict_ with one
+  // entry per touched EVM account (key = padded 256-bit address, value = single
+  // ref to an EvmAccountData cell). For the canonical ShardAccounts container
+  // we wrap each EvmAccountData inside a TLB-valid Account cell and store
+  // (^Account + 320 zero bits for last_trans_hash + last_trans_lt) at the same
+  // key. SetMode::Replace overrides any stub the per-account loop above may
+  // have written for accounts that did go through impl_create_ordinary_transaction.
+  //
+  // Determinism: vm::Dictionary::check_for_each iterates in 256-bit-key order;
+  // build_evm_shard_account_cell is a pure function of (addr, evm_data_cell);
+  // the wrapped cell's hash is therefore identical across all validators.
+  if (workchain() == evm_workchain::kWorkchainId && evm_state_mirror_dict_) {
+    bool merge_ok = true;
+    evm_state_mirror_dict_->check_for_each(
+        [this, &merge_ok](Ref<vm::CellSlice> val, td::ConstBitPtr key, int n) -> bool {
+          if (n != 256 || val->size_refs() == 0) {
+            merge_ok = false;
+            return false;
+          }
+          auto evm_data_cell = val->prefetch_ref(0);
+          td::Bits256 addr_bits;
+          addr_bits.bits().copy_from(key, 256);
+          auto account_cell = evm_workchain::build_evm_shard_account_cell(
+              addr_bits, evm_data_cell);
+          vm::CellBuilder vcb;
+          if (!vcb.store_ref_bool(account_cell) ||
+              !vcb.store_zeroes_bool(256 + 64)) {
+            merge_ok = false;
+            return false;
+          }
+          if (!account_dict->set_builder(key, 256, vcb)) {
+            merge_ok = false;
+            return false;
+          }
+          return true;
+        });
+    if (!merge_ok) {
+      return fatal_error("cannot merge EVM mirror dict into ShardAccounts");
+    }
+  }
+
   vm::CellBuilder cb;
   if (!(cb.append_cellslice_bool(std::move(dict).extract_root()) && cb.finalize_to(shard_account_blocks_))) {
     return fatal_error("cannot serialize ShardAccountBlocks");

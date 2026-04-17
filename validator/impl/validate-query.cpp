@@ -24,6 +24,8 @@
 #include "block/block-db.h"
 #include "block/block-parse.h"
 #include "block/block.h"
+#include "block/evm-workchain/evm-init.h"
+#include "block/evm-workchain/evm-workchain.h"
 #include "block/output-queue-merger.h"
 #include "block/validator-set.h"
 #include "common/errorlog.h"
@@ -288,8 +290,9 @@ void ValidateQuery::start_up() {
                                 << " different from current shard " << shard_.to_str());
     return;
   }
-  if (workchain() != tos::masterchainId && workchain() != tos::basechainId) {
-    soft_reject_query("can validate block candidates only for masterchain (-1) and base workchain (0)");
+  if (workchain() != tos::masterchainId && workchain() != tos::basechainId &&
+      workchain() != evm_workchain::kWorkchainId) {
+    soft_reject_query("can validate block candidates only for masterchain (-1), base workchain (0), and EVM workchain (1)");
     return;
   }
   if (!shard_.is_valid_ext()) {
@@ -1117,9 +1120,15 @@ bool ValidateQuery::fetch_config_params() {
     // produces the same EVM-encoded ShardAccounts entries the collator did.
     // Equality of this dict's root with the collator's is implicitly checked
     // via the overall ShardState hash comparison.
-    if (workchain() == 1 /* evm_workchain::kWorkchainId */) {
+    if (workchain() == evm_workchain::kWorkchainId) {
       evm_state_mirror_dict_ = std::make_unique<vm::Dictionary>(256);
       compute_phase_cfg_.evm_shard_accounts = evm_state_mirror_dict_.get();
+      // Bootstrap on the first wc=1 block — same deterministic seed as collator.
+      // After re-execution, the post-state ShardAccounts entries (built via
+      // build_evm_shard_account_cell) must match what the collator published.
+      if (id_.id.seqno == 1) {
+        evm_workchain::copy_test_accounts_into_dict(*evm_state_mirror_dict_);
+      }
     } else {
       compute_phase_cfg_.evm_shard_accounts = nullptr;
     }
@@ -3046,6 +3055,31 @@ bool ValidateQuery::precheck_one_account_update(td::ConstBitPtr acc_id, Ref<vm::
   old_value = ps_.account_dict_->extract_value(std::move(old_value));
   new_value = ns_.account_dict_->extract_value(std::move(new_value));
   auto acc_blk_root = account_blocks_dict_->lookup(acc_id, 256);
+  // wc=1 EVM workchain: accept "no AccountBlock" updates that match the
+  // deterministic bootstrap mirror. The first block's pre-funded test EOAs
+  // appear in the new ShardAccounts without a transaction; every validator
+  // independently reproduces the same wrapped ShardAccount cell from
+  // copy_test_accounts_into_dict, so a byte-equal match against new_value
+  // proves the collator did not inject anything outside the canonical set.
+  if (acc_blk_root.is_null() && workchain() == evm_workchain::kWorkchainId &&
+      old_value.is_null() && new_value.not_null() && evm_state_mirror_dict_) {
+    td::Bits256 addr_bits;
+    addr_bits.bits().copy_from(acc_id, 256);
+    auto mirror_val = evm_state_mirror_dict_->lookup(acc_id, 256);
+    if (mirror_val.not_null() && mirror_val->size_refs() > 0) {
+      auto evm_data_cell = mirror_val->prefetch_ref(0);
+      auto expected_account = evm_workchain::build_evm_shard_account_cell(addr_bits, evm_data_cell);
+      // The announced ShardAccount value layout is:
+      //   ^Account + last_trans_hash:bits256 + last_trans_lt:uint64
+      // Extract the inner Account cell and compare hashes.
+      Ref<vm::Cell> announced_account;
+      if (block::tlb::t_ShardAccount.extract_account_state(new_value, announced_account) &&
+          announced_account.not_null() &&
+          announced_account->get_hash() == expected_account->get_hash()) {
+        return true;
+      }
+    }
+  }
   if (acc_blk_root.is_null()) {
     if (verbosity >= 3 * 0) {
       FLOG(INFO) {

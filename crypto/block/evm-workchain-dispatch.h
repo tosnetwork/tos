@@ -13,6 +13,8 @@
 #include <cstdint>
 #include <functional>
 
+#include "td/utils/Slice.h"
+#include "vm/cells/Cell.h"
 #include "vm/cells/CellSlice.h"
 
 namespace vm {
@@ -69,5 +71,17 @@ bool invoke_evm_compute(
     uint64_t timestamp,
     const uint8_t rand_seed[32],
     vm::Dictionary* shard_accounts = nullptr);
+
+/// Canonical "EVM activated account" code marker cell.
+///
+/// A single-byte cell containing 0x45 ('E'). Used as the StateInit.code cell
+/// for every wc=1 ShardAccount in Phase A of the cell-native mirror — bytecode
+/// itself lives in EvmAccountData.code_hash, so the outer code cell only needs
+/// to satisfy the "account_active" requirement.
+///
+/// Returns the same Ref<vm::Cell> on every call (cached singleton). All
+/// validators produce the same cell hash, which CellDb will deduplicate
+/// across every EVM account.
+td::Ref<vm::Cell> get_evm_code_marker_cell();
 
 }  // namespace evm_workchain_dispatch
