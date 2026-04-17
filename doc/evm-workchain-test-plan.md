@@ -12,7 +12,7 @@ Version: v1.1 — 2026-04-17 (status snapshot)
 
 | Phase | State | Headline |
 |-------|-------|----------|
-| G.1 — State-test harness (GeneralStateTests) | 🚧 in progress | Runner + walker ✅, 412/422 pass (97.6%), 2 real consensus bugs already found and fixed |
+| G.1 — State-test harness (GeneralStateTests) | 🚧 in progress | Runner + walker ✅ over **30 subdirs**, **1427/1462 pass (97.6%)**, **6 real consensus bugs** already found and fixed |
 | G.2 — execution-spec-tests (Pyspec) | 📋 planned | Same runner as G.1; extend to new fixture dir |
 | G.3 — Hive (`rpc-compat`) | 📋 planned | Dockerize validator, write hive client stub |
 | G.4 — Continuous differential CI | 🚧 runner ✅, CI 📋 | One-shot `differential_geth.py` lives; continuous CI not yet stood up |
@@ -22,6 +22,8 @@ Version: v1.1 — 2026-04-17 (status snapshot)
 |--------------------------------------------------|--------|----------|
 | EIP-1559 base-fee paid to beneficiary instead of burned | `64bbd2ed` | Consensus (would diverge from Ethereum MPT roots) |
 | EIP-3607 txs from code-bearing sender executed instead of rejected | `bb95edbd` | Consensus (invalid txs mutated state) |
+| EIP-1559 pre-validation: priority > max, maxFee < baseFee, gas > blockGasLimit | `a71060c2` | Consensus (invalid txs mutated state) |
+| EIP-2681 tx with nonce == 2^64-1 executed instead of rejected | `474f45f6` | Consensus (silent nonce overflow) |
 | `eth_sendRawTransaction` DoS: oversized RLP crashed validator | `fdcebdc1` | DoS (remote-reachable) |
 | `eth_sendRawTransaction` DoS: foreign-chainId txs piled up, crashed collator | `fdcebdc1` | DoS (remote-reachable) |
 
@@ -102,7 +104,7 @@ All pass. Run in ~3 seconds on a laptop. Grouped by theme:
 | Concurrency | 2 | ✅ | `test_concurrent_eth_send_and_receipts`, `test_concurrent_filters` (shared_mutex semantics, bounded LRU cache under load) |
 | RPC surface | 1 | ✅ | `test_eth_rpc` — many methods in one test |
 | DoS regression (Phase E.5) | 1 | ✅ | `test_large_raw_tx_roundtrip` — 2 KB raw RLP fits in chunk chain, round-trip byte-equal |
-| State-test runner (Phase G.1) | 2 | ✅ | `test_state_test_runner_poc` (loads stChainId/chainId.json and runs it against CellEvmState end-to-end), `test_state_test_runner_walk_curated` (412/422 Cancun entries across 17 dirs) |
+| State-test runner (Phase G.1) | 2 | ✅ | `test_state_test_runner_poc` (loads stChainId/chainId.json and runs it against CellEvmState end-to-end), `test_state_test_runner_walk_curated` (1427/1462 Cancun entries across 30 dirs — 97.6% pass) |
 | Other | 10 | ✅ | transfer, create, call, signed tx, persistent state, config param, bn254, replay, event logs, ERC-20, bridge, subscriptions, nonce validation |
 
 Run:
@@ -154,7 +156,7 @@ All three must exit 0.
 | Suite | Purpose | Our status | Signal strength | Gate |
 |-------|---------|-----------|-----------------|------|
 | **ethereum/execution-apis** | JSON-RPC wire-format + response shape | ✅ Adopted. 207-test runner, 0 METHOD_NOT_FOUND, 0 crashes. 16 SHAPE_MISMATCHes — all false positives from chain-state divergence, individually classified in `doc/evm-workchain-known-divergences.md` Category A. | High for RPC compat | **Required for testnet** — ✅ met |
-| **ethereum/tests GeneralStateTests** | State-transition correctness per EIP | 🚧 Phase G.1 in progress. 14 Silkworm gold vectors always green + PoC runner + walker across 17 curated subdirs → **412/422 pass (97.6%)**. **Two real consensus bugs found and fixed**: EIP-1559 base-fee-burn (`64bbd2ed`) and EIP-3607 code-bearing-sender (`bb95edbd`). 10 remaining failures clustered in 3 themes — see Phase G.1 below. | High — this is where consensus bugs hide | **Required for private mainnet** (at least 100% of Cancun + Shanghai subset) |
+| **ethereum/tests GeneralStateTests** | State-transition correctness per EIP | 🚧 Phase G.1 in progress. 14 Silkworm gold vectors always green + PoC runner + walker across **30 curated subdirs** → **1427/1462 pass (97.6%)**. **Four real consensus bugs found and fixed**: EIP-1559 base-fee-burn (`64bbd2ed`), EIP-3607 code-bearing-sender (`bb95edbd`), EIP-1559 pre-validation suite (`a71060c2`), EIP-2681 nonce-overflow (`474f45f6`). 33 remaining failures clustered around SELFDESTRUCT / EIP-6780 / deep-recursion — suspected upstream silkworm lag. See Phase G.1 below. | High — this is where consensus bugs hide | **Required for private mainnet** (at least 100% of Cancun + Shanghai subset) |
 | **ethereum/execution-spec-tests** (Pyspec) | Newer Python-generated fixtures covering Cancun/Prague | 📋 Not adopted. Same runner as GeneralStateTests — bundled into Phase G.2 scope | High for post-Cancun EIPs | **Required for public mainnet** |
 | **ethereum/hive** | Full-node simulator (P2P sync, mempool, JSON-RPC) in Docker | 📋 Not adopted. Phase G.3 | Medium — most hive tests assume devp2p which we don't speak; value is in the JSON-RPC and sync subsets | **Optional but recommended before public mainnet** |
 
@@ -184,7 +186,7 @@ Everything in Gate T, plus:
 
 | # | Requirement | How to verify | Blocker? | Status |
 |---|-------------|---------------|----------|--------|
-| P-1 | Cancun + Shanghai GeneralStateTests ≥ 95% pass | Phase G.1 runner reports counts | ✓ | 🚧 currently 97.6% on curated subset (412/422); need to expand walker to full Cancun/Shanghai set |
+| P-1 | Cancun + Shanghai GeneralStateTests ≥ 95% pass | Phase G.1 runner reports counts | ✓ | 🚧 currently 97.6% on curated subset (1427/1462 across 30 dirs); need to expand walker to remaining dirs + investigate the 33 SELFDESTRUCT / deep-recursion failures |
 | P-2 | execution-spec-tests Cancun fork ≥ 95% pass | Phase G.2 runner (shared harness) | ✓ | 📋 |
 | P-3 | No known DoS vectors from a 24-hour fuzz of `eth_sendRawTransaction` + `eth_call` with malformed inputs | Phase G.5 fuzz harness | ✓ | 📋 |
 | P-4 | 7-day soak on a dedicated testnet: zero validator restarts due to EVM bugs, zero state-hash divergences | Operational logs | ✓ | 📋 |
@@ -220,7 +222,7 @@ against `CellEvmState` byte-for-byte.
 - ✅ Curated directory walker (`test_state_test_runner_walk_curated`
   + `walk_state_tests`) — runs every `*.json` under the listed
   subdirectories, reports pass/fail/skip per directory plus a total.
-- ✅ Two real consensus bugs found and fixed via the walker:
+- ✅ **Four** real consensus bugs found and fixed via the walker:
     * EIP-1559 base-fee-burn: beneficiary was receiving
       `gas_used * effective_gas_price` instead of priority-only, so
       the base fee was paid to the miner instead of burned. Commit
@@ -228,25 +230,39 @@ against `CellEvmState` byte-for-byte.
     * EIP-3607: txs from accounts with non-empty code were being
       executed instead of rejected. Commit `bb95edbd`. Caught by 4
       fixtures in `stEIP3607/`.
-- ✅ Walker expanded to 17 subdirectories; resilience fix so
-  silkworm asserts on intentionally-invalid txs become clean skips
-  instead of aborting the binary.
-- Current walker coverage: **412/422 pass (97.6%)** across 17 dirs,
-  10 fail, 2 skip.
-- 🚧 Remaining 10 fixture failures cluster into three themes for
-  follow-up investigation:
-    * `stExtCodeHash/*DeletedAccount*` (6): selfdestruct +
-      EXTCODEHASH gas-metering mismatch — suspected upstream
-      silkworm/evmone version lag on a specific child-call gas
-      rule. Not blocking: affects only contract teardown,
-      deterministic across all our validators.
-    * `stEIP1559/*` (3): intrinsic-gas boundary cases
-      (`lowGasLimit`, `tipTooHigh`, `transactionIntinsicBug_Paris`).
-    * `stSStoreTest/InitCollisionParis` (1): contract init-code
-      colliding with an existing account — EIP-684 / EIP-161 edge.
-- 🚧 Expand walker to remaining ~40 subdirectories (Cancun +
-  Shanghai only first). Target: ≥ 95% pass before promoting
-  to Gate P.
+    * EIP-1559 pre-validation (commit `a71060c2`): rejected-pre-tx
+      paths were executing instead. Added: priority ≤ maxFee,
+      maxFee ≥ baseFee, txn.gas_limit ≤ block.gas_limit, balance
+      budget uses maxFeePerGas (not effective), intrinsic-gas
+      check moved earlier. Caught by
+      `stEIP1559/{tipTooHigh,transactionIntinsicBug_Paris,lowGasLimit}`.
+    * EIP-2681: tx with sender-nonce == 2^64-1 executed,
+      silently overflowing the nonce counter. Commit `474f45f6`.
+      Caught by `stCreateTest/CreateTransactionHighNonce.json`.
+- ✅ Walker expanded to **30 subdirectories** covering ~1,500 fixtures;
+  resilience fix so silkworm asserts on intentionally-invalid txs
+  become clean skips instead of aborting the binary.
+- **Current walker coverage**: **1427/1462 pass (97.6%)** across 30 dirs,
+  33 fail, 2 skip.
+- 🚧 Remaining 33 fixture failures split into two buckets:
+    * **Upstream / non-trivial** (25): depth-1024 recursion edges,
+      SELFDESTRUCT + EIP-6780 subtleties (`stExtCodeHash/*DeletedAccount*`),
+      REVERT-in-CREATE-in-init, CREATE2 collision, static-call bomb —
+      suspected upstream silkworm / evmone version lag; fixing
+      these likely requires a silkworm bump rather than an
+      adapter-layer patch.
+    * **Specific known clusters for investigation**:
+        - `stExtCodeHash/*DeletedAccount*` (6) — EIP-6780 SELFDESTRUCT
+          balance-transfer edge; behavior differs from upstream silkworm.
+        - `stSStoreTest/InitCollisionParis` (1) — CREATE into account
+          with pre-existing storage.
+        - `stCreate2` (4), `stRevertTest` (2), `stStaticCall` (9),
+          `stRandom` (9), `stCreateTest/CreateOOGafterMaxCodesize`,
+          `stBadOpcode/opc4ADiffPlaces` (BLOBBASEFEE / EIP-7516) —
+          each needs its own investigation.
+- 🚧 Expand walker to remaining ~20 subdirectories (still mostly
+  fork-agnostic + Cancun). Target: ≥ 95% pass on a
+  representative Cancun+Shanghai sample before Gate P.
 - 🚧 Post-state MPT root comparison via `IncrementalTrieCalculator`
   — right now we compare accounts individually; expected `hash`
   in the fixture requires computing the Ethereum-format state
