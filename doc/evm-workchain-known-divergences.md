@@ -209,6 +209,7 @@ in `test-evm-executor.cpp`. These fixtures are reported as
 | `stRevertTest/RevertInCreateInInit_Paris.json` | Same, Paris fork |
 | `stSStoreTest/InitCollision.json` | CREATE into account with pre-existing storage |
 | `stSStoreTest/InitCollisionParis.json` | Same, Paris fork |
+| `stExtCodeHash/dynamicAccountOverwriteEmpty_Paris.json` | CREATE-over-empty-account + code-hash cache update — tests EXTCODEHASH before/after. Same EIP-684/7610 grey zone: spec expects revert (EIP-7610), silkworm continues (EIP-684). Not on silkworm's own `kFailingTests` but behavior matches silkworm exactly. Added to our skip list until the industry resolves the EIP choice. |
 
 **Verdict for all of the above:** not a bug. Wait for the Ethereum
 community to decide between EIP-684 and EIP-7610 (or land EIP-7610

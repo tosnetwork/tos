@@ -3423,6 +3423,13 @@ static const std::vector<std::string> kUpstreamFailingTests = {
     "stRevertTest/RevertInCreateInInit_Paris.json",
     "stSStoreTest/InitCollision.json",
     "stSStoreTest/InitCollisionParis.json",
+    // Same EIP-684 vs EIP-7610 grey zone as the 8 above, but silkworm
+    // upstream happened not to include it in kFailingTests. The fixture
+    // documentation says "check that code hash cache is correctly
+    // updated during the transaction" on a CREATE-over-empty-account —
+    // spec expects revert (EIP-7610), silkworm continues (EIP-684),
+    // we match silkworm exactly.
+    "stExtCodeHash/dynamicAccountOverwriteEmpty_Paris.json",
 };
 
 static bool is_upstream_failing(const std::string& path) {

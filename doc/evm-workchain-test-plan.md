@@ -7,12 +7,12 @@ Version: v1.1 — 2026-04-17 (status snapshot)
 | Gate | State | Notes |
 |------|-------|-------|
 | **Gate T — Testnet** | ✅ PASS | All 6 rows green. Last-known-good `57bf20cb`. |
-| **Gate P — Private mainnet** | 🚧 in progress | 1 of 6 rows partially green (G.1 at **99.81%** on 47-dir curated subset, 2120/2124 pass, 2 fail). |
+| **Gate P — Private mainnet** | 🚧 in progress | 1 of 6 rows partially green (G.1 at **99.95%** on 47-dir curated subset, 2120/2121 pass, 1 fail — BLOBBASEFEE opcode edge). |
 | **Gate M — Public mainnet** | 📋 planned | Depends on Gates T + P + Phase G.2/G.3/G.4/G.5 + third-party audit. |
 
 | Phase | State | Headline |
 |-------|-------|----------|
-| G.1 — State-test harness (GeneralStateTests) | 🚧 in progress | Runner + walker ✅ over **47 subdirs**, **2120/2124 pass (99.81%)**, **2 fail** remaining, **4 upstream-skipped** (silkworm `kFailingTests`), **8 real bugs** already found and fixed (7 consensus + 1 adapter-glue — incl. a non-obvious `CellEvmState::read_code` non-owning-ByteView bug that silently corrupted 22 fixtures) |
+| G.1 — State-test harness (GeneralStateTests) | 🚧 in progress | Runner + walker ✅ over **47 subdirs**, **2120/2121 pass (99.95%)**, **1 fail** (BLOBBASEFEE opcode edge, `stBadOpcode/opc4ADiffPlaces`), **5 upstream-skipped** (silkworm `kFailingTests` + EIP-684/7610 grey zone), **8 real bugs** already found and fixed (7 consensus + 1 adapter-glue — incl. the `CellEvmState::read_code` non-owning-ByteView bug that silently corrupted 22 fixtures) |
 | G.2 — execution-spec-tests (Pyspec) | 📋 planned | Same runner as G.1; extend to new fixture dir |
 | G.3 — Hive (`rpc-compat`) | 📋 planned | Dockerize validator, write hive client stub |
 | G.4 — Continuous differential CI | 🚧 runner ✅, CI 📋 | One-shot `differential_geth.py` lives; continuous CI not yet stood up |
