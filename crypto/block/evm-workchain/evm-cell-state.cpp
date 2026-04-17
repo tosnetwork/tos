@@ -48,9 +48,14 @@ silkworm::ByteView CellEvmState::read_code(
     if (code_hash == silkworm::kEmptyHash) return {};
     auto it = code_.find(code_hash);
     if (it == code_.end()) return {};
-    // Use thread_local buffer — caller may copy
-    tl_code_buf_ = it->second;
-    return tl_code_buf_;
+    // Return a ByteView pointing **into** the map entry's stable storage.
+    // Earlier we copied into a single `tl_code_buf_` thread_local — that
+    // was a bug: silkworm's IntraBlockState caches the ByteView in its
+    // `existing_code_` map, and the next read_code() for a different
+    // code_hash overwrote tl_code_buf_, invalidating the cached pointer.
+    // Recursive contracts that bounce between two code_hashes saw
+    // garbage. Surfaced by Phase G.1 stStaticCall recursive-bomb tests.
+    return silkworm::ByteView{it->second.data(), it->second.size()};
 }
 
 evmc::bytes32 CellEvmState::read_storage(const evmc::address& address,
