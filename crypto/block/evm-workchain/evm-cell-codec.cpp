@@ -12,7 +12,8 @@
 namespace evm_workchain {
 
 td::Ref<vm::Cell> encode_evm_account_data(const silkworm::Account& acct,
-                                          const td::Ref<vm::Cell>& storage_root) {
+                                          const td::Ref<vm::Cell>& storage_root,
+                                          const td::Ref<vm::Cell>& code_root) {
     vm::CellBuilder cb;
     // magic#45564d (24 bits)
     cb.store_long(static_cast<long long>(kEvmAccountMagic), kEvmMagicBits);
@@ -23,11 +24,17 @@ td::Ref<vm::Cell> encode_evm_account_data(const silkworm::Account& acct,
     cb.store_bytes(bal_be.bytes, 32);
     // code_hash (256 bits)
     cb.store_bytes(acct.code_hash.bytes, 32);
-    // storage: HashmapE 256 ^EvmStorageEntry
-    // = Maybe ^Cell  → 1 bit + ^Cell (if present)
+    // storage: Maybe ^Cell  (1 bit + optional ref)
     if (storage_root.not_null()) {
         cb.store_long(1, 1);
         cb.store_ref(storage_root);
+    } else {
+        cb.store_long(0, 1);
+    }
+    // code: Maybe ^EvmBytecodeChunk  (1 bit + optional ref)
+    if (code_root.not_null()) {
+        cb.store_long(1, 1);
+        cb.store_ref(code_root);
     } else {
         cb.store_long(0, 1);
     }
@@ -36,7 +43,10 @@ td::Ref<vm::Cell> encode_evm_account_data(const silkworm::Account& acct,
 
 bool decode_evm_account_data(td::Ref<vm::Cell> cell,
                              silkworm::Account& acct,
-                             td::Ref<vm::Cell>& storage_root) {
+                             td::Ref<vm::Cell>& storage_root,
+                             td::Ref<vm::Cell>& code_root) {
+    storage_root = {};
+    code_root = {};
     if (cell.is_null()) return false;
     auto cs = vm::load_cell_slice(cell);
     // magic
@@ -60,8 +70,13 @@ bool decode_evm_account_data(td::Ref<vm::Cell> cell,
     if (!cs.fetch_long_bool(1, has_storage)) return false;
     if (has_storage) {
         if (!cs.fetch_ref_to(storage_root)) return false;
-    } else {
-        storage_root = td::Ref<vm::Cell>{};
+    }
+    // code Maybe ^Cell — optional; absent in legacy cells, so tolerate EOF.
+    if (cs.size() >= 1) {
+        long long has_code = 0;
+        if (cs.fetch_long_bool(1, has_code) && has_code) {
+            cs.fetch_ref_to(code_root);
+        }
     }
     // incarnation is not part of cell schema (always 0 in our model)
     acct.incarnation = 0;

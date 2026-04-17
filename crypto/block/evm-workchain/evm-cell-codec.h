@@ -8,7 +8,8 @@
         nonce:uint64
         balance:uint256
         code_hash:bits256
-        storage:(HashmapE 256 ^EvmStorageEntry)
+        storage:(Maybe ^Cell)
+        code:(Maybe ^EvmBytecodeChunk)
         = EvmAccountData;
 
       evm_storage_entry#_ value:bits256 = EvmStorageEntry;
@@ -27,16 +28,27 @@ namespace evm_workchain {
 constexpr unsigned long long kEvmAccountMagic = 0x45564Dull;  // "EVM"
 constexpr int kEvmMagicBits = 24;
 
-/// Encode a silkworm::Account plus its storage root cell into an EvmAccountData cell.
-/// storage_root may be null (no storage).
+/// Encode a silkworm::Account plus its storage root and (optional) bytecode
+/// chain into an EvmAccountData cell. Either ref may be null.
 td::Ref<vm::Cell> encode_evm_account_data(const silkworm::Account& acct,
-                                          const td::Ref<vm::Cell>& storage_root);
+                                          const td::Ref<vm::Cell>& storage_root,
+                                          const td::Ref<vm::Cell>& code_root = {});
 
-/// Decode an EvmAccountData cell back into a silkworm::Account and its storage root cell.
-/// Returns true on success. storage_root may be set to null if account has no storage.
+/// Decode an EvmAccountData cell back into a silkworm::Account plus its
+/// storage and code root cells. Either output ref may be null. Returns true
+/// on success. Accepts both the new schema (with code:Maybe^Cell) and the
+/// legacy one-field-only schema, to survive rolling upgrades / old zerostate.
 bool decode_evm_account_data(td::Ref<vm::Cell> cell,
                              silkworm::Account& acct,
-                             td::Ref<vm::Cell>& storage_root);
+                             td::Ref<vm::Cell>& storage_root,
+                             td::Ref<vm::Cell>& code_root);
+
+inline bool decode_evm_account_data(td::Ref<vm::Cell> cell,
+                                    silkworm::Account& acct,
+                                    td::Ref<vm::Cell>& storage_root) {
+    td::Ref<vm::Cell> code_root;
+    return decode_evm_account_data(std::move(cell), acct, storage_root, code_root);
+}
 
 /// Encode a 32-byte storage value into a cell (256 data bits, 0 refs).
 td::Ref<vm::Cell> encode_storage_value(const evmc::bytes32& value);

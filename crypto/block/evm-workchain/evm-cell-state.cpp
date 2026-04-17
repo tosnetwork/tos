@@ -137,22 +137,48 @@ void CellEvmState::update_account(const evmc::address& address,
         return;
     }
 
-    // Preserve existing storage root when updating an existing account.
-    auto storage_root = get_storage_root(address);
+    // Preserve existing storage + code refs when updating an existing account.
+    td::Ref<vm::Cell> storage_root, code_root;
+    {
+        auto cs = account_dict_.lookup(td::ConstBitPtr{key}, 256);
+        if (cs.not_null() && cs->size_refs() > 0) {
+            silkworm::Account prev;
+            decode_evm_account_data(cs->prefetch_ref(0), prev, storage_root, code_root);
+        }
+    }
 
-    auto data_cell = encode_evm_account_data(*current, storage_root);
+    auto data_cell = encode_evm_account_data(*current, storage_root, code_root);
     // Wrap the EvmAccountData cell as a single-ref CellSlice (the dict value).
     vm::CellBuilder cb;
     cb.store_ref(data_cell);
     account_dict_.set_builder(td::ConstBitPtr{key}, 256, cb);
 }
 
-void CellEvmState::update_account_code(const evmc::address& /*address*/,
+void CellEvmState::update_account_code(const evmc::address& address,
                                         uint64_t /*incarnation*/,
                                         const evmc::bytes32& code_hash,
                                         silkworm::ByteView code) {
     if (code_hash == silkworm::kEmptyHash) return;
     code_[code_hash] = silkworm::Bytes{code.begin(), code.end()};
+
+    // Also embed the bytecode in the account's EvmAccountData cell so it
+    // survives restart via cp.new_data → populate_state_from_shard_accounts.
+    unsigned char key[32];
+    address_to_key(address, key);
+    auto cs = account_dict_.lookup(td::ConstBitPtr{key}, 256);
+    silkworm::Account acct{};
+    td::Ref<vm::Cell> storage_root;
+    if (cs.not_null() && cs->size_refs() > 0) {
+        td::Ref<vm::Cell> _old_code;
+        decode_evm_account_data(cs->prefetch_ref(0), acct, storage_root, _old_code);
+    }
+    acct.code_hash = code_hash;
+    auto code_cell = encode_evm_bytecode(
+        td::Slice(reinterpret_cast<const char*>(code.data()), code.size()));
+    auto data_cell = encode_evm_account_data(acct, storage_root, code_cell);
+    vm::CellBuilder vcb;
+    vcb.store_ref(data_cell);
+    account_dict_.set_builder(td::ConstBitPtr{key}, 256, vcb);
 }
 
 void CellEvmState::update_storage(const evmc::address& address,
@@ -227,9 +253,27 @@ td::Ref<vm::Cell> CellEvmState::serialize_to_cell() const {
 bool CellEvmState::load_from_cell(td::Ref<vm::Cell> root) {
     if (root.is_null()) {
         account_dict_ = vm::Dictionary(256);
-    } else {
-        account_dict_ = vm::Dictionary(root, 256);
+        code_.clear();
+        return true;
     }
+    account_dict_ = vm::Dictionary(root, 256);
+    // Re-populate the bytecode map from the embedded code cells so that
+    // silkworm's read_code(address, code_hash) keeps working after restart.
+    code_.clear();
+    account_dict_.check_for_each([this](td::Ref<vm::CellSlice> value,
+                                         td::ConstBitPtr /*key*/, int n) -> bool {
+        if (n != 256 || value.is_null() || value->size_refs() == 0) return true;
+        silkworm::Account acct;
+        td::Ref<vm::Cell> storage_root, code_root;
+        if (!decode_evm_account_data(value->prefetch_ref(0), acct, storage_root, code_root)) {
+            return true;
+        }
+        if (code_root.is_null() || acct.code_hash == silkworm::kEmptyHash) return true;
+        auto bytes = decode_evm_bytecode(code_root);
+        if (bytes.empty()) return true;
+        code_[acct.code_hash] = silkworm::Bytes{bytes.begin(), bytes.end()};
+        return true;
+    });
     return true;
 }
 
@@ -263,11 +307,12 @@ void CellEvmState::set_storage_root(const evmc::address& address,
     address_to_key(address, key);
     auto cs = account_dict_.lookup(td::ConstBitPtr{key}, 256);
     silkworm::Account acct{};
+    td::Ref<vm::Cell> code_root;
     if (cs.not_null() && cs->size_refs() > 0) {
-        td::Ref<vm::Cell> old_root;
-        decode_evm_account_data(cs->prefetch_ref(0), acct, old_root);
+        td::Ref<vm::Cell> old_storage;
+        decode_evm_account_data(cs->prefetch_ref(0), acct, old_storage, code_root);
     }
-    auto data_cell = encode_evm_account_data(acct, root);
+    auto data_cell = encode_evm_account_data(acct, root, code_root);
     vm::CellBuilder cb;
     cb.store_ref(data_cell);
     account_dict_.set_builder(td::ConstBitPtr{key}, 256, cb);
