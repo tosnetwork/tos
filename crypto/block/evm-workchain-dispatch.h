@@ -17,10 +17,6 @@
 #include "vm/cells/Cell.h"
 #include "vm/cells/CellSlice.h"
 
-namespace vm {
-class Dictionary;
-}
-
 namespace block {
 struct ComputePhase;
 }
@@ -33,14 +29,9 @@ namespace evm_workchain_dispatch {
 ///   cp           — ComputePhase to populate with results
 ///   in_msg_body  — body cell slice containing the RLP payload
 ///   gas_limit    — max gas for this execution
-///   block_seqno  — host-chain block sequence number
+///   block_seqno  — host-chain block sequence number (for block.number)
 ///   timestamp    — host-chain block Unix timestamp
 ///   rand_seed    — 256-bit block random seed
-///   shard_accounts — (optional) collator's ShardAccounts dict for wc=1;
-///                    when non-null, the EVM module syncs its state into this
-///                    dict so the collator's MERKLE_UPDATE includes EVM state
-///                    atomically with the rest of the shard. When null
-///                    (testing/RPC paths), only the global EvmState is used.
 ///
 /// Returns true if the phase completed (even on revert), false on infra error.
 using EvmComputeHandler = std::function<bool(
@@ -49,8 +40,7 @@ using EvmComputeHandler = std::function<bool(
     uint64_t gas_limit,
     uint64_t block_seqno,
     uint64_t timestamp,
-    const uint8_t rand_seed[32],
-    vm::Dictionary* shard_accounts)>;
+    const uint8_t rand_seed[32])>;
 
 /// Register the EVM compute phase handler.
 /// Called once by the evm_workchain module during initialisation.
@@ -61,16 +51,13 @@ bool has_evm_compute_handler() noexcept;
 
 /// Invoke the registered EVM compute handler.
 /// Precondition: has_evm_compute_handler() == true.
-/// shard_accounts may be nullptr (testing); when supplied, the EVM module
-/// will sync its state into this dict for atomic block commit.
 bool invoke_evm_compute(
     block::ComputePhase& cp,
     vm::CellSlice& in_msg_body,
     uint64_t gas_limit,
     uint64_t block_seqno,
     uint64_t timestamp,
-    const uint8_t rand_seed[32],
-    vm::Dictionary* shard_accounts = nullptr);
+    const uint8_t rand_seed[32]);
 
 /// Canonical "EVM activated account" code marker cell.
 ///

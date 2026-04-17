@@ -133,19 +133,6 @@ class CellEvmState : public silkworm::State {
     /// Useful for collator integration (sync to ShardAccounts).
     td::Ref<vm::Cell> account_dict_root() const;
 
-    /// Sync this state's account dictionary into a target dict.
-    /// For each EVM account in our internal dict, copies the EvmAccountData
-    /// cell reference into the target at the 256-bit address key.
-    ///
-    /// This is the bridge between the cell-native CellEvmState and any
-    /// external dict (collator's ShardAccounts, RPC mirror, etc.). The dict
-    /// type is the base Dictionary (no augmentation); production collator
-    /// integration may wrap this in a proper ShardAccounts dict by building
-    /// full Account cells around each EvmAccountData.
-    ///
-    /// Returns the number of accounts synced.
-    size_t sync_to_dict(vm::Dictionary& target) const;
-
     /// Convenience: drop all blocks from the cache (for tests).
     void clear_block_cache();
 

@@ -27,8 +27,7 @@ bool run_evm_compute_phase(
     EvmState& state,
     uint64_t block_seqno,
     uint64_t timestamp,
-    const uint8_t rand_seed[32],
-    vm::Dictionary* shard_accounts) {
+    const uint8_t rand_seed[32]) {
 
     // --- Step 1: Extract the raw Ethereum transaction from the message body ---
     auto payload_opt = extract_evm_payload(in_msg_body);
@@ -144,20 +143,6 @@ bool run_evm_compute_phase(
     {
         vm::CellBuilder actions_cb;
         cp.actions = actions_cb.finalize();
-    }
-
-    // --- Step 5c-bis: Sync EVM state into collator's ShardAccounts dict ---
-    //
-    // When the collator passes its ShardAccounts dict, replicate every EVM
-    // account (with full StateInit) into that dict so the collator's atomic
-    // ShardState commit transitively persists EVM state. When null (test
-    // path), only the cp.new_data embedding is used.
-    if (shard_accounts != nullptr) {
-        std::unique_lock sync_lock(state.mutex());
-        auto* cs = dynamic_cast<CellEvmState*>(&state.state());
-        if (cs) {
-            cs->sync_to_dict(*shard_accounts);
-        }
     }
 
     // --- Step 5d: Build and store block for RPC queries (first tx only) ---

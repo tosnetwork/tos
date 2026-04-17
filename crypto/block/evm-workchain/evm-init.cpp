@@ -237,115 +237,6 @@ size_t populate_state_from_shard_accounts(
     return 1;
 }
 
-// Legacy code path removed: the old per-account walker is replaced by the
-// single-executor lookup above. Kept this comment as a marker so anyone
-// bisecting understands the intent.
-#if 0
-size_t populate_state_from_shard_accounts_legacy(
-    EvmState& target,
-    vm::AugmentedDictionary& shard_accounts) {
-    size_t count = 0;
-    // check_for_each_extra walks the augmented dict; we only need the leaf
-    // value (the ShardAccount cell slice), not the augmentation extra.
-    shard_accounts.check_for_each_extra(
-        [&target, &count](td::Ref<vm::CellSlice> cs_ref,
-                          td::Ref<vm::CellSlice> /*extra*/,
-                          td::ConstBitPtr key, int n) -> bool {
-            if (n != 256) return true;  // skip malformed entries
-
-            // ShardAccount value layout: ^Account + last_trans_hash:bits256 + last_trans_lt:uint64
-            td::Ref<vm::Cell> account_cell;
-            if (!block::tlb::t_ShardAccount.extract_account_state(cs_ref, account_cell) ||
-                account_cell.is_null()) {
-                return true;
-            }
-
-            // Account → AccountStorage → AccountState (active) → StateInit
-            block::gen::Account::Record_account acc_rec;
-            if (!tlb::unpack_cell(account_cell, acc_rec)) return true;
-
-            unsigned long long last_trans_lt;
-            td::Ref<vm::CellSlice> balance_cs, state_cs;
-            if (!block::gen::t_AccountStorage.unpack_account_storage(
-                    acc_rec.storage.write(), last_trans_lt, balance_cs, state_cs)) {
-                return true;
-            }
-
-            td::Ref<vm::CellSlice> state_init_cs;
-            if (!block::gen::t_AccountState.unpack_account_active(state_cs.write(), state_init_cs)) {
-                return true;  // not an active EVM account; skip
-            }
-
-            block::gen::StateInit::Record si_rec;
-            if (!block::gen::t_StateInit.unpack(state_init_cs.write(), si_rec)) return true;
-
-            // data:Maybe ^Cell — must be present and reference an EvmAccountData cell.
-            if (si_rec.data.is_null() || !si_rec.data->have(1) ||
-                si_rec.data->prefetch_ulong(1) != 1) {
-                return true;
-            }
-            auto data_slice = si_rec.data;
-            data_slice.write().advance(1);  // skip Maybe tag
-            td::Ref<vm::Cell> evm_data_cell;
-            if (!data_slice->prefetch_ref_to(evm_data_cell)) return true;
-
-            silkworm::Account decoded;
-            td::Ref<vm::Cell> storage_root;
-            if (!decode_evm_account_data(evm_data_cell, decoded, storage_root)) {
-                return true;  // not an EvmAccountData cell (wrong magic) — skip
-            }
-
-            // Reconstruct the EVM address from the 256-bit dict key
-            // (lower 20 bytes are the EVM address; upper 12 are zero pad).
-            evmc::address addr{};
-            td::Bits256 key_bits;
-            key_bits.bits().copy_from(key, 256);
-            std::memcpy(addr.bytes, key_bits.data() + 12, 20);
-
-            // Phase D.2: for contract accounts, recover the bytecode bytes
-            // from the StateInit.code chain so RPCs (eth_getCode, eth_call)
-            // work post-restart without waiting for the contract to be
-            // re-executed. Skip the canonical EVM marker cell (its hash is
-            // fixed and unique).
-            std::string recovered_bytecode;
-            if (decoded.code_hash != silkworm::kEmptyHash &&
-                si_rec.code.not_null() && si_rec.code->have(1) &&
-                si_rec.code->prefetch_ulong(1) == 1) {
-                auto code_slice = si_rec.code;
-                code_slice.write().advance(1);
-                td::Ref<vm::Cell> code_cell;
-                if (code_slice->prefetch_ref_to(code_cell) && code_cell.not_null() &&
-                    code_cell->get_hash() !=
-                        evm_workchain_dispatch::get_evm_code_marker_cell()->get_hash()) {
-                    recovered_bytecode = decode_evm_bytecode(code_cell);
-                }
-            }
-
-            // Push to target via update_account (storage_root handled separately
-            // because silkworm::State::update_account doesn't carry it).
-            {
-                std::unique_lock lock(target.mutex());
-                target.state().update_account(addr, std::nullopt, decoded);
-                if (storage_root.not_null()) {
-                    if (auto* cs = dynamic_cast<CellEvmState*>(&target.state())) {
-                        cs->set_storage_root_for_hydration(addr, storage_root);
-                    }
-                }
-                if (!recovered_bytecode.empty()) {
-                    target.state().update_account_code(
-                        addr, /*incarnation=*/0, decoded.code_hash,
-                        silkworm::ByteView{
-                            reinterpret_cast<const uint8_t*>(recovered_bytecode.data()),
-                            recovered_bytecode.size()});
-                }
-            }
-            ++count;
-            return true;
-        });
-    return count;
-}
-#endif  // end of legacy per-account populate_state_from_shard_accounts
-
 td::Ref<vm::Cell> build_evm_zerostate_accounts_cell() {
     // Single-executor zerostate: the wc=1 ShardAccounts dict contains exactly
     // one entry, the executor account. Its StateInit.data is a cp.new_data-
@@ -400,29 +291,6 @@ td::Ref<vm::Cell> build_evm_zerostate_accounts_cell() {
     return cb.finalize();
 }
 
-td::Ref<vm::Cell> lookup_and_encode_evm_bytecode(
-    const td::Bits256& addr_bits,
-    const td::Ref<vm::Cell>& evm_account_data_cell) {
-    if (!g_evm_state || evm_account_data_cell.is_null()) return {};
-
-    silkworm::Account decoded;
-    td::Ref<vm::Cell> storage_root;
-    if (!decode_evm_account_data(evm_account_data_cell, decoded, storage_root)) {
-        return {};
-    }
-    if (decoded.code_hash == silkworm::kEmptyHash) return {};  // EOA
-
-    // Extract the 20-byte EVM address from the lower bytes of the dict key.
-    evmc::address addr{};
-    std::memcpy(addr.bytes, addr_bits.data() + 12, 20);
-
-    auto bytecode = g_evm_state->read_code_copy(addr, decoded.code_hash);
-    if (bytecode.empty()) return {};
-
-    return encode_evm_bytecode(td::Slice{
-        reinterpret_cast<const char*>(bytecode.data()), bytecode.size()});
-}
-
 size_t hydrate_global_state_if_empty(vm::AugmentedDictionary& shard_accounts) {
     if (!g_evm_state) return 0;
     // One-shot per process. After init_evm_workchain calls
@@ -463,13 +331,11 @@ void init_evm_workchain(const std::string& /*db_root*/) {
            uint64_t gas_limit,
            uint64_t block_seqno,
            uint64_t timestamp,
-           const uint8_t rand_seed[32],
-           vm::Dictionary* shard_accounts) -> bool {
+           const uint8_t rand_seed[32]) -> bool {
             return run_evm_compute_phase(
                 cp, in_msg_body, gas_limit,
                 *g_evm_state,
-                block_seqno, timestamp, rand_seed,
-                shard_accounts);
+                block_seqno, timestamp, rand_seed);
         });
 
     g_trie_calc = std::make_unique<IncrementalTrieCalculator>();

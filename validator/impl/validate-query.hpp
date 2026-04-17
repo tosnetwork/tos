@@ -241,10 +241,6 @@ class ValidateQuery : public td::actor::Actor {
   block::tlb::OutMsgDescr t_OutMsgDescr{0};
   std::unique_ptr<vm::AugmentedDictionary> in_msg_dict_, out_msg_dict_, account_blocks_dict_;
 
-  // EVM workchain (wc=1) state mirror for validation re-execution; see
-  // collator-impl.h for the matching collator-side member.
-  std::unique_ptr<vm::Dictionary> evm_state_mirror_dict_;
-
   block::ValueFlow value_flow_;
   block::CurrencyCollection import_created_, transaction_fees_, total_burned_{0}, fees_burned_{0};
   td::RefInt256 import_fees_;

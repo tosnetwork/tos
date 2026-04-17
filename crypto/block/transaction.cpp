@@ -1897,8 +1897,7 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
         cp, body_cs, cp.gas_limit,
         cfg.evm_block_seqno,                              // block.number — wc=1 shard seqno
         static_cast<td::uint64>(account.now_),            // timestamp (block gen_utime)
-        cfg.block_rand_seed.as_array().data(),            // rand_seed
-        cfg.evm_shard_accounts);                            // collator's ShardAccounts dict (nullable)
+        cfg.block_rand_seed.as_array().data());           // rand_seed
     if (!ok) {
       compute_phase.reset();
       return false;
