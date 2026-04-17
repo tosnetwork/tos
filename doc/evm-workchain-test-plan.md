@@ -121,7 +121,7 @@ Both must exit 0.
 
 | Suite | Purpose | Our status | Signal strength | Gate |
 |-------|---------|-----------|-----------------|------|
-| **ethereum/execution-apis** | JSON-RPC wire-format + response shape | ✓ Adopted. 207-test runner, 0 METHOD_NOT_FOUND, 0 crashes. 16 SHAPE_MISMATCHes — all false positives from chain-state divergence, confirmed manually. | High for RPC compat | **Required for testnet** |
+| **ethereum/execution-apis** | JSON-RPC wire-format + response shape | ✓ Adopted. 207-test runner, 0 METHOD_NOT_FOUND, 0 crashes. 16 SHAPE_MISMATCHes — all false positives from chain-state divergence, individually classified in `doc/evm-workchain-known-divergences.md` Category A. | High for RPC compat | **Required for testnet** |
 | **ethereum/tests GeneralStateTests** | State-transition correctness per EIP | Partial (14 Silkworm gold vectors); full corpus (~2,642 files / ~8K entries) scoped in Phase G.1 below | High — this is where consensus bugs hide | **Required for private mainnet** (at least 100% of Cancun + Shanghai subset) |
 | **ethereum/execution-spec-tests** (Pyspec) | Newer Python-generated fixtures covering Cancun/Prague | Not adopted. Same runner as GeneralStateTests — bundled into Phase G.1 scope | High for post-Cancun EIPs | **Required for public mainnet** |
 | **ethereum/hive** | Full-node simulator (P2P sync, mempool, JSON-RPC) in Docker | Not adopted. Phase G.3 | Medium — most hive tests assume devp2p which we don't speak; value is in the JSON-RPC and sync subsets | **Optional but recommended before public mainnet** |
@@ -138,10 +138,10 @@ Each row is a binary: green = go, red or yellow = stop. Each next stage is a str
 |---|-------------|---------------|----------|
 | T-1 | 41/41 unit tests pass | `./build/crypto/block/evm-workchain/test-evm-executor` | ✓ |
 | T-2 | Both restart-survival proofs pass | `sudo bash test/evm-workchain/proof-*.sh` | ✓ |
-| T-3 | execution-apis suite: 0 METHOD_NOT_FOUND, 0 crashes | `SKIP_CRASHERS=0 python3 test/conformance/run_execution_apis.py` | ✓ |
+| T-3 | execution-apis suite: 0 METHOD_NOT_FOUND, 0 crashes, every SHAPE_MISMATCH and OUR_ERROR accounted for in `doc/evm-workchain-known-divergences.md` | `SKIP_CRASHERS=0 python3 test/conformance/run_execution_apis.py` | ✓ |
 | T-4 | 4 validators stay up through the full suite | systemd shows all `tos-validator@{1..4}` `active` post-run | ✓ |
 | T-5 | Basic wallet probes work | `node test/evm-workchain/wallet-test.js`, `full-rpc-test.js` | ✓ |
-| T-6 | Differential vs. geth: no unexplained diverges | `python3 test/conformance/differential_geth.py` — known diverges documented | ✓ |
+| T-6 | Differential vs. geth: every diverge listed in `doc/evm-workchain-known-divergences.md` Category B | `python3 test/conformance/differential_geth.py` | ✓ |
 
 **Current status: PASS.** Commit `7449b586` is the last-known-good.
 
@@ -291,6 +291,9 @@ at 10K tx/s with memory plateau and no validator restarts.
 
 ## References
 
+- `doc/evm-workchain-known-divergences.md` — v1.0, registry of
+  acceptable RPC response differences (so runners don't re-flag them
+  as bugs)
 - `doc/tos-evm-workchain-feasibility.md` — v1.4, ships-all-phases
   summary + phase history
 - `doc/evm-workchain-cell-native-state.md` — v1.3, cell schema incl.
