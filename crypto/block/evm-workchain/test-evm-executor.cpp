@@ -3389,10 +3389,9 @@ static void walk_state_tests(const std::string& dir,
         g_state_test_verbose = verbose_saved;
         if (!ran) { ++skipped; continue; }
         if (ok) ++passed; else { ++failed;
-            // Print the failure so we can iterate on it.
             auto rel = path.find("GeneralStateTests/");
-            printf("    FAIL: %s\n",
-                path.substr(rel == std::string::npos ? 0 : rel).c_str());
+            std::string shown = path.substr(rel == std::string::npos ? 0 : rel);
+            printf("    FAIL: %s\n", shown.c_str());
         }
     }
     pclose(pp);

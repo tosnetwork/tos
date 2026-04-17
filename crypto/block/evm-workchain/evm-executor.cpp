@@ -14,6 +14,8 @@
 */
 #include "evm-executor.h"
 
+#include <limits>
+
 #include <silkworm/core/execution/evm.hpp>
 #include <silkworm/core/protocol/intrinsic_gas.hpp>
 #include <silkworm/core/protocol/param.hpp>
@@ -107,6 +109,15 @@ static ExecutionResult run_evm(
             if (sender_nonce != txn.nonce) {
                 result.error_message = "nonce mismatch: expected " +
                     std::to_string(sender_nonce) + ", got " + std::to_string(txn.nonce);
+                result.gas_used = 0;
+                return result;
+            }
+            // EIP-2681 (Istanbul+): tx with nonce == 2^64 - 1 is
+            // rejected because executing it would overflow the nonce
+            // counter to 2^64. The spec's TransactionException code is
+            // NONCE_IS_MAX.
+            if (sender_nonce == std::numeric_limits<uint64_t>::max()) {
+                result.error_message = "EIP-2681: nonce at max";
                 result.gas_used = 0;
                 return result;
             }
