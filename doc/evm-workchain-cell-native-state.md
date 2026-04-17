@@ -1,6 +1,15 @@
 # EVM Workchain — Cell-Native State Architecture
 
-Version: v1.2 — Cell-native EVM state with collator dispatch hook + zkVM compatibility rationale
+Version: v1.3 — Bytecode embedded in EvmAccountData (Phase E.4)
+
+### Revision history
+
+| version | date       | change |
+|---------|------------|--------|
+| v1.0    | 2025-Q4    | Initial cell-native design; EvmAccountData with nonce/balance/code_hash/storage; bytecode in `StateInit.code` per account |
+| v1.1    | 2026-Q1    | Added Ethereum MPT stateRoot alongside cell root (zkVM compatibility rationale) |
+| v1.2    | 2026-Q1    | Collator dispatch hook for unified WriteBatch |
+| v1.3    | 2026-04-17 | Phase E.4: bytecode moves **into** `EvmAccountData` as `code:(Maybe ^EvmBytecodeChunk)`. Consequence of the single-executor design (see `doc/evm-workchain-transaction-admission-and-single-executor.md` v2.0): individual EVM accounts no longer own per-account `ShardAccounts` entries, so there is no per-account `StateInit.code` slot to store bytecode in. Embedding it in the account data cell keeps bytecode inside the same cell tree that `cp.new_data` references, so it survives restart through `CellEvmState::load_from_cell`. |
 
 ## Motivation
 
@@ -32,26 +41,31 @@ The fix is not to add coordination between two stores. The fix is to remove the 
 
 ```
 TOS CellDb (single source of truth)
-└── ShardState (per workchain, per shard)
-    ├── shard_id: ShardIdent { workchain=1, shard=0x8000... }
-    ├── accounts: ^ShardAccounts (HashmapAugE 256 ShardAccount)
-    │   └── EVM Account (e.g., 0x1234...)
-    │       └── ShardAccount cell
-    │           └── ^Account
-    │               └── AccountStorage
-    │                   └── AccountState (account_active$1)
-    │                       └── StateInit
-    │                           ├── code: ^Cell
-    │                           │   └── EVM bytecode (raw bytes in cell)
-    │                           └── data: ^Cell
-    │                               └── EvmAccountData cell
-    │                                   ├── magic: 0x45564D
-    │                                   ├── nonce: uint64
-    │                                   ├── balance: uint256
-    │                                   ├── code_hash: bits256
-    │                                   └── storage: HashmapE 256 ^EvmStorageEntry
-    │                                       └── slot_hash → value cell
-    └── ... other workchain metadata ...
+└── ShardState (workchain=1, shard=0x8000…)
+    └── accounts: ^ShardAccounts (HashmapAugE 256 ShardAccount)
+        └── executor @ 0x00…01  (single entry — the only TOS account for wc=1)
+            └── ShardAccount → ^Account → AccountStorage → AccountState
+                └── StateInit
+                    ├── code: ^Cell          (canonical 1-byte marker 0x45)
+                    └── data: ^Cell          (cp.new_data, rebuilt each block)
+                        ├── magic 0x45564D (24 bits)
+                        ├── Maybe ^account_dict_root   ◀─ CellEvmState root
+                        │     └── HashmapE 256 ShardAccountStub
+                        │         └── per EVM address (padded to 256b)
+                        │             └── ^EvmAccountData  ──┐
+                        └── bits256 Ethereum stateRoot       │
+                                                             │
+                                                             ▼
+                                           EvmAccountData cell
+                                             ├── magic 0x45564D
+                                             ├── nonce:uint64
+                                             ├── balance:uint256
+                                             ├── code_hash:bits256
+                                             ├── storage:(Maybe ^Cell)
+                                             │    └── HashmapE 256 ^EvmStorageEntry
+                                             │        └── slot_hash → value cell
+                                             └── code:(Maybe ^EvmBytecodeChunk)  ◀── v1.3 (E.4)
+                                                  └── 127-byte chunks, Maybe next
 ```
 
 ### TLB Schema (Documented, Not Modified)
@@ -59,18 +73,31 @@ TOS CellDb (single source of truth)
 `block.tlb` is **not** modified. The existing `data:(Maybe ^Cell)` field in StateInit accepts arbitrary cells — TOS treats it as opaque. We define the cell format via convention:
 
 ```tlb
-// Cell stored inside StateInit.data for EVM workchain (wc=1) accounts
+// Cell stored inside the executor account's StateInit.data (wc=1, addr=0x00…01).
+// One EvmAccountData entry per EVM account, keyed by 256-bit address in the
+// account_dict that lives under cp.new_data's Maybe ^Cell ref.
 evm_account_data#45564d
   nonce:uint64
   balance:uint256
   code_hash:bits256
-  storage:(HashmapE 256 ^EvmStorageEntry)
+  storage:(Maybe ^Cell)                 // HashmapE 256 ^EvmStorageEntry
+  code:(Maybe ^EvmBytecodeChunk)        // v1.3 (Phase E.4): embedded bytecode
   = EvmAccountData;
+
+// Linear chain of up-to-127-byte cells holding arbitrary contract bytecode.
+evm_bytecode_chunk$_ {n:#}
+  bytes:(n * Bit) { n <= 1016 }
+  next:(Maybe ^EvmBytecodeChunk)
+  = EvmBytecodeChunk;
 
 evm_storage_entry#_ value:bits256 = EvmStorageEntry;
 ```
 
-The `0x45564D` magic ("EVM" in ASCII) lets validators identify EVM accounts when scanning ShardAccounts.
+The `0x45564D` magic ("EVM" in ASCII) lets validators identify EVM accounts when walking the account dict. The decoder tolerates v1.0/v1.2 cells that omit the `code` field, so old zerostate BoCs remain readable during rolling upgrades.
+
+**Why embed bytecode per account instead of in `StateInit.code`?** Under the single-executor model (see `doc/evm-workchain-transaction-admission-and-single-executor.md`), the only TOS account that owns a `ShardAccount` entry for the EVM workchain is the executor (`0x00…01`). Individual EVM accounts are entries in the account dict referenced by that executor's `cp.new_data`, so there is no per-account `StateInit.code` slot available. Placing bytecode inside `EvmAccountData` lets each account's full state — nonce, balance, storage root, and code — ride along in the same cell subtree that `cp.new_data` hashes into the block's state root.
+
+**Dedup behavior.** Identical bytecode produces identical `encode_evm_bytecode` chain cell hashes. Two contracts deploying the same bytes resolve to the same chain root cell — CellDb content-addressing deduplicates them automatically.
 
 ### silkworm::State Adapter
 
@@ -123,35 +150,41 @@ read_storage(addr, inc, loc):
   5. Parse to bytes32, cache, return
 
 read_code(addr, code_hash):
-  1. Check code_cache_ → return if hit
-  2. Read account → get StateInit.code cell
-  3. Extract bytes from cell, cache by code_hash, return
+  1. Check code_ map (code_hash → Bytes, RAM) → return if hit
+  2. Miss ⇒ the map was wiped (fresh process). Either a restart happened
+     (then load_from_cell rebuilds the map from each EvmAccountData's
+     embedded code chain) or the code hasn't been deployed yet. Return
+     empty ByteView — silkworm treats that as "no code" and execution
+     naturally fails if the caller expected bytecode.
 ```
+
+Prior to Phase E.4 (v1.2 and earlier), step 2 would read `StateInit.code` on the per-account `ShardAccount`. Under single-executor there is no per-account `StateInit.code`, so the bytecode map is instead rebuilt from each account's embedded `code:(Maybe ^EvmBytecodeChunk)` ref during `CellEvmState::load_from_cell`.
 
 ### Write Path
 
 ```
 update_account(addr, initial, current):
   1. If current is null → account deleted → account_dict_.lookup_delete(addr)
-  2. Else build new ShardAccount cell with EvmAccountData encoded:
-     - Build EvmAccountData cell: magic + nonce + balance + code_hash + storage_dict_ref
-     - Wrap in StateInit { code: bytecode_cell, data: evm_account_data }
-     - Wrap in AccountStorage, Account, ShardAccount
-     - account_dict_.set_builder(addr, cb, SetMode::Set)
-  3. Update hot_accounts_ cache
+  2. Else preserve prior storage_root AND code_root by decoding the
+     existing EvmAccountData cell (if any), then re-encode with the new
+     Account fields:
+       encode_evm_account_data(current, storage_root, code_root)
+     → account_dict_.set_builder(addr, cb) with the fresh cell as its ref.
 
 update_storage(addr, inc, loc, initial, current):
-  1. Load current storage dict cell from account
+  1. Load current storage dict root from the account cell
   2. vm::Dictionary storage(root, 256)
-  3. If current is zero → storage.lookup_delete(loc, 256)
-  4. Else storage.set_builder(loc, builder_with_value, SetMode::Set)
-  5. Update account's storage_root reference (triggers update_account)
-  6. Update hot_storage_ cache
+  3. current == 0 → storage.lookup_delete(loc, 256)
+     else          → storage.set_builder(loc, value_builder)
+  4. set_storage_root(addr, storage.get_root_cell())  — which re-encodes
+     the account cell, preserving its existing code_root
 
-update_account_code(addr, inc, code_hash, code):
-  1. Build cell containing the bytecode bytes
-  2. Cache by code_hash for fast lookup
-  3. Will be assigned to StateInit.code on next update_account
+update_account_code(addr, inc, code_hash, code):   // v1.3 (Phase E.4)
+  1. code_[code_hash] = Bytes{code}                // RAM map for fast reads
+  2. Decode the existing EvmAccountData (nonce/balance/storage_root).
+  3. code_cell = encode_evm_bytecode(code)          // 127-byte chunk chain
+  4. Re-encode: encode_evm_account_data(acct, storage_root, code_cell)
+  5. account_dict_.set_builder(addr, new_cell_ref)
 ```
 
 ### Atomicity Guarantee
@@ -254,7 +287,7 @@ transitively includes the EVM state cell tree.
 
 ### New
 
-- `crypto/block/evm-workchain/evm-cell-codec.h/.cpp` — encode/decode EvmAccountData cells
+- `crypto/block/evm-workchain/evm-cell-codec.h/.cpp` — encode/decode EvmAccountData cells (+ `encode_evm_bytecode` / `decode_evm_bytecode` chunk-chain helpers for the v1.3 `code` field)
 - `crypto/block/evm-workchain/evm-cell-state.h/.cpp` — `CellEvmState : silkworm::State`
 
 ### Modified
