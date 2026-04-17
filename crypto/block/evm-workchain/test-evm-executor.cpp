@@ -3292,6 +3292,19 @@ static bool run_one_state_test_cancun(const std::string& path, bool& ran) {
     }
     auto blk = evm_workchain::make_evm_block(block_num, timestamp, rs, gas_limit, coinbase);
     blk.header.base_fee_per_gas = base_fee;
+    // Cancun (EIP-4844): opcode 0x4a (BLOBBASEFEE) reads
+    // header.blob_gas_price(), which returns nullopt → 0 unless
+    // excess_blob_gas is engaged. The fixture supplies
+    // env.currentExcessBlobGas (often 0); we must propagate it as an
+    // engaged optional so silkworm computes
+    // calc_blob_gas_price(0, Cancun) = MIN_BLOB_GASPRICE = 1, not 0.
+    // Otherwise contracts that branch on `ISZERO(BLOBBASEFEE)` revert
+    // (e.g. stBadOpcode/opc4ADiffPlaces).
+    if (auto* f = field(env, "currentExcessBlobGas")) {
+        blk.header.excess_blob_gas = static_cast<uint64_t>(hex0x_to_u256(str(*f)));
+    } else {
+        blk.header.excess_blob_gas = 0;  // engaged optional with value 0
+    }
 
     // EIP-4788 pre-block hook (Cancun+): silkworm's ExecutionProcessor
     // normally invokes a system-contract call to kBeaconRootsAddress
@@ -3329,10 +3342,48 @@ static bool run_one_state_test_cancun(const std::string& path, bool& ran) {
         return true;  // not a fail — just not runnable by v0
     }
 
+    // --- Optional opcode tracer (set TRACE_FIXTURE=1 to enable) ------------
+    struct DumpTracer : silkworm::EvmTracer {
+        bool enabled{false};
+        size_t count{0};
+        void on_execution_start(evmc_revision rev, const evmc_message& msg, evmone::bytes_view) noexcept override {
+            if (!enabled) return;
+            printf("  TRACE on_execution_start: rev=%d depth=%d gas=%ld kind=%d\n",
+                   (int)rev, msg.depth, (long)msg.gas, (int)msg.kind);
+        }
+        void on_instruction_start(uint32_t pc, const intx::uint256* /*stack_top*/, int stack_height,
+                                   int64_t gas, const evmone::ExecutionState& es,
+                                   const silkworm::IntraBlockState&) noexcept override {
+            if (!enabled) return;
+            if (count++ < 200) {
+                uint8_t op = es.original_code[pc];
+                printf("    pc=%4u op=0x%02x stack=%d gas=%ld\n", pc, op, stack_height, (long)gas);
+            }
+        }
+        void on_execution_end(const evmc_result& result, const silkworm::IntraBlockState&) noexcept override {
+            if (!enabled) return;
+            printf("  TRACE on_execution_end: status=%d gas_left=%ld output_size=%zu\n",
+                   (int)result.status_code, (long)result.gas_left, result.output_size);
+        }
+    };
+    DumpTracer tracer;
+    tracer.enabled = (std::getenv("TRACE_FIXTURE") != nullptr);
+
     // --- Execute ------------------------------------------------------------
     evm_workchain::ExecutionResult result;
     try {
-        result = evm_workchain::execute_evm_transaction(dec.txn, blk, state, cfg);
+        if (tracer.enabled) {
+            // Inline silkworm EVM run so we can attach the tracer.
+            std::unique_lock lock(state.mutex());
+            silkworm::IntraBlockState ibs(state.state());
+            silkworm::EVM evm(blk, ibs, cfg);
+            evm.add_tracer(tracer);
+            auto cr = evm.execute(dec.txn, dec.txn.gas_limit);
+            result.success = (cr.status == EVMC_SUCCESS);
+            result.gas_used = dec.txn.gas_limit - cr.gas_left;
+        } else {
+            result = evm_workchain::execute_evm_transaction(dec.txn, blk, state, cfg);
+        }
     } catch (const std::exception& e) {
         printf("  SKIP (silkworm threw: %s)\n", e.what());
         ran = false;

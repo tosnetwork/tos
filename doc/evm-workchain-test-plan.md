@@ -7,12 +7,12 @@ Version: v1.1 — 2026-04-17 (status snapshot)
 | Gate | State | Notes |
 |------|-------|-------|
 | **Gate T — Testnet** | ✅ PASS | All 6 rows green. Last-known-good `57bf20cb`. |
-| **Gate P — Private mainnet** | 🚧 in progress | 1 of 6 rows partially green (G.1 at **99.95%** on 47-dir curated subset, 2120/2121 pass, 1 fail — BLOBBASEFEE opcode edge). |
+| **Gate P — Private mainnet** | 🚧 in progress | 1 of 6 rows fully green (G.1 at **100%** on 47-dir curated subset, 2121/2121 pass, 0 fail). |
 | **Gate M — Public mainnet** | 📋 planned | Depends on Gates T + P + Phase G.2/G.3/G.4/G.5 + third-party audit. |
 
 | Phase | State | Headline |
 |-------|-------|----------|
-| G.1 — State-test harness (GeneralStateTests) | 🚧 in progress | Runner + walker ✅ over **47 subdirs**, **2120/2121 pass (99.95%)**, **1 fail** (BLOBBASEFEE opcode edge, `stBadOpcode/opc4ADiffPlaces`), **5 upstream-skipped** (silkworm `kFailingTests` + EIP-684/7610 grey zone), **8 real bugs** already found and fixed (7 consensus + 1 adapter-glue — incl. the `CellEvmState::read_code` non-owning-ByteView bug that silently corrupted 22 fixtures) |
+| G.1 — State-test harness (GeneralStateTests) | ✅ done (47 dirs, 100% pass) | Runner + walker ✅ over **47 subdirs**, **2121/2121 pass (100%)**, **0 fail**, 5 upstream-skipped (silkworm `kFailingTests` + EIP-684/7610 grey zone), 2 silkworm-asserted skips. **9 real bugs** found and fixed (7 consensus + 2 adapter-glue) |
 | G.2 — execution-spec-tests (Pyspec) | 📋 planned | Same runner as G.1; extend to new fixture dir |
 | G.3 — Hive (`rpc-compat`) | 📋 planned | Dockerize validator, write hive client stub |
 | G.4 — Continuous differential CI | 🚧 runner ✅, CI 📋 | One-shot `differential_geth.py` lives; continuous CI not yet stood up |
@@ -28,7 +28,8 @@ Version: v1.1 — 2026-04-17 (status snapshot)
 | `eth_sendRawTransaction` DoS: foreign-chainId txs piled up, crashed collator | `fdcebdc1` | DoS (remote-reachable) |
 | `eth_call` DoS: invalid hex in `value`/`gas`/`gasPrice` crashed validator via `intx::from_string` throw | `f53c356a` | DoS (remote-reachable, found by Phase G.5 fuzzer) |
 | State-test runner: PREVRANDAO fed zero to silkworm (`env.currentRandom` ignored) — 10 fixtures diverged | `23fe9c88` | Adapter glue (runner-only; prod collator already wires `block.prev_randao` correctly) |
-| `CellEvmState::read_code`: returned ByteView into a shared thread_local buffer, overwritten on every call. silkworm caches the ByteView in `IntraBlockState::existing_code_`, so any recursive contract ping-ponging between two code_hashes corrupted the cache → wrong bytecode executed | (this commit) | **Consensus bug** — affects any tx that touches ≥2 contracts and recursion. Cleared 22 state-test fixtures at once. |
+| `CellEvmState::read_code`: returned ByteView into a shared thread_local buffer, overwritten on every call. silkworm caches the ByteView in `IntraBlockState::existing_code_`, so any recursive contract ping-ponging between two code_hashes corrupted the cache → wrong bytecode executed | `8a929b44` | **Consensus bug** — affects any tx that touches ≥2 contracts and recursion. Cleared 22 state-test fixtures at once. |
+| State-test runner: `excess_blob_gas` left as `nullopt` on the block header → `blob_gas_price()` returned `nullopt` → `BLOBBASEFEE` opcode (EIP-7516, Cancun) returned 0 instead of `MIN_BLOB_GASPRICE = 1`. Contracts that branched on `ISZERO(BLOBBASEFEE)` reverted | (this commit) | Adapter glue (runner-only; production block builder doesn't have blob txs yet). Cleared the last failing fixture. |
 
 ## Purpose
 
