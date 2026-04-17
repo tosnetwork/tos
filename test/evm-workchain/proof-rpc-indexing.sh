@@ -12,6 +12,8 @@
 #   - eth_getTransactionByBlockHashAndIndex
 #   - eth_getTransactionByBlockNumberAndIndex
 #   - eth_getBlockReceipts
+#   - eth_getBlockByHash
+#   - eth_createAccessList
 #
 # The execution-apis conformance suite flags these methods as
 # SHAPE_MISMATCH when queried against hashes that don't exist on our
@@ -251,10 +253,51 @@ else
   fail "expected receipt[0].transactionHash=$TX_HASH, got $BLOCK_RCPTS"
 fi
 
+# 3i. eth_getBlockByHash — full block object, with our tx in `transactions`.
+log "  3i. eth_getBlockByHash($BLOCK_HASH, false)"
+BLOCK_BY_HASH=$(rpc eth_getBlockByHash "[\"$BLOCK_HASH\",false]" | python3 -c "
+import json,sys
+r = json.load(sys.stdin).get('result')
+if not isinstance(r, dict):
+  print('NOT_A_DICT'); exit()
+num = r.get('number', 'missing')
+hash = r.get('hash', 'missing')
+txs = r.get('transactions', [])
+print(num, hash, len(txs), (txs[0] if txs else 'none'))")
+B_NUM=$(echo "$BLOCK_BY_HASH" | awk '{print $1}')
+B_HASH=$(echo "$BLOCK_BY_HASH" | awk '{print $2}')
+B_TXCOUNT=$(echo "$BLOCK_BY_HASH" | awk '{print $3}')
+B_FIRST_TX=$(echo "$BLOCK_BY_HASH" | awk '{print $4}')
+if [ "$B_NUM" = "$BLOCK_NUM" ] && [ "$B_HASH" = "$BLOCK_HASH" ] && \
+   [ "$B_TXCOUNT" -ge 1 ] 2>/dev/null && [ "$B_FIRST_TX" = "$TX_HASH" ]; then
+  log "      OK (number=$B_NUM hash matches, tx[0]=$TX_HASH)"
+else
+  fail "expected number=$BLOCK_NUM hash=$BLOCK_HASH txs≥1 first=$TX_HASH, got num=$B_NUM hash=$B_HASH count=$B_TXCOUNT first=$B_FIRST_TX"
+fi
+
+# 3j. eth_createAccessList — simulate a trivial transfer from SENDER
+#     and assert the response is success-shaped (accessList + gasUsed).
+log "  3j. eth_createAccessList(SENDER → RECIPIENT, no data)"
+ACL=$(rpc eth_createAccessList "[{\"from\":\"$SENDER\",\"to\":\"$RECIPIENT\",\"value\":\"0x0\"}]" | python3 -c "
+import json,sys
+r = json.load(sys.stdin).get('result')
+if not isinstance(r, dict):
+  print('NOT_A_DICT'); exit()
+has_al = isinstance(r.get('accessList'), list)
+has_gu = isinstance(r.get('gasUsed'), str)
+print('ok' if has_al and has_gu else 'bad', r.get('gasUsed', '?'))")
+ACL_STATUS=$(echo "$ACL" | awk '{print $1}')
+ACL_GAS=$(echo "$ACL" | awk '{print $2}')
+if [ "$ACL_STATUS" = "ok" ]; then
+  log "      OK (gasUsed=$ACL_GAS)"
+else
+  fail "expected {accessList:[],gasUsed:<hex>}, got status='$ACL_STATUS'"
+fi
+
 # --- Stage 4: verdict -------------------------------------------------------
 log "Stage 4: verdict"
 if [ "$FAILED" -eq 0 ]; then
-  log "PASS: all 8 indexing RPC methods returned correct data for the seeded tx."
+  log "PASS: all 10 indexing RPC methods returned correct data for the seeded tx."
   log "       → execution-apis Category A false positives are now covered by this proof."
   exit 0
 fi

@@ -73,9 +73,14 @@ The correct way to test the affected methods against *our* chain is
 to seed our chain with a known transaction/block first, then query
 the hash we just observed.
 `test/evm-workchain/proof-rpc-indexing.sh` does exactly that for the
-eight block/tx indexing methods above — it sends one transfer,
-waits for the receipt, then asserts that each method returns the
-expected tx / block when queried by the freshly-observed hashes.
+ten block/tx indexing methods above — it sends one transfer, waits
+for the receipt, then asserts that each method returns the expected
+tx / block when queried by the freshly-observed hashes
+(`debug_getRawTransaction/Header/Block/Receipts`,
+`eth_getBlockTransactionCountByHash`,
+`eth_getTransactionByBlockHashAndIndex`,
+`eth_getTransactionByBlockNumberAndIndex`,
+`eth_getBlockReceipts`, `eth_getBlockByHash`, `eth_createAccessList`).
 The other two proofs (`proof-mirror-not-canonical.sh`,
 `proof-bytecode-survives-restart.sh`) and the JS wallet probes cover
 the remaining balance / code / log / call methods the same way.

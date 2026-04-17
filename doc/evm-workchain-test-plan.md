@@ -92,7 +92,7 @@ the observable state survived.
 |--------|----------|-------------------|
 | `proof-mirror-not-canonical.sh` | Hardhat account 0 → account 1 transfer | sender nonce 0x1 and recipient balance both survive restart |
 | `proof-bytecode-survives-restart.sh` | Deploy 10-byte runtime contract | `eth_getCode` returns the same bytecode post-restart; `eth_call` to the contract returns the expected 32-byte result |
-| `proof-rpc-indexing.sh` | Send one transfer, then probe 8 block / tx / receipt indexing methods by the freshly-observed hashes | `debug_getRawTransaction`, `debug_getRawHeader`, `debug_getRawBlock`, `debug_getRawReceipts`, `eth_getBlockTransactionCountByHash`, `eth_getTransactionByBlockHashAndIndex`, `eth_getTransactionByBlockNumberAndIndex`, `eth_getBlockReceipts` all return the expected tx/block. Closes the "weak coverage" gap for Category A methods in `known-divergences.md`. |
+| `proof-rpc-indexing.sh` | Send one transfer, then probe 10 block / tx / receipt indexing methods by the freshly-observed hashes | `debug_getRawTransaction`, `debug_getRawHeader`, `debug_getRawBlock`, `debug_getRawReceipts`, `eth_getBlockTransactionCountByHash`, `eth_getTransactionByBlockHashAndIndex`, `eth_getTransactionByBlockNumberAndIndex`, `eth_getBlockReceipts`, `eth_getBlockByHash`, `eth_createAccessList` all return the expected tx/block. Closes the "weak coverage" gap for Category A methods in `known-divergences.md`. |
 
 Run (requires sudo + systemctl):
 ```
