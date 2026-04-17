@@ -735,7 +735,9 @@ static std::string format_block_json(const StoredBlock& blk, bool full_transacti
     r += "\"baseFeePerGas\":" + to_hex_quantity(blk.base_fee_per_gas) + ",";
     r += "\"nonce\":\"0x0000000000000000\",";
     r += "\"difficulty\":\"0x0\",";
-    r += "\"totalDifficulty\":\"0x0\",";
+    // totalDifficulty is omitted for post-merge blocks (geth, erigon,
+    // reth all do this starting with the merge). Keeping it as a
+    // deprecated-but-present field confuses newer clients.
     r += "\"extraData\":\"0x\",";
     r += "\"size\":\"0x0\",";
     r += "\"mixHash\":\"0x" + std::string(64, '0') + "\",";
@@ -754,6 +756,8 @@ static std::string format_block_json(const StoredBlock& blk, bool full_transacti
     // Shanghai (EIP-4895) withdrawals — not supported, emit empty.
     r += "\"withdrawals\":[],";
     r += "\"withdrawalsRoot\":\"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\",";  // keccak256(rlp([]))
+    // Prague (EIP-7685) execution-layer requests — empty root = sha256(0x00).
+    r += "\"requestsHash\":\"0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",";
     r += "\"uncles\":[],";
     r += "\"transactions\":[";
     for (size_t i = 0; i < blk.transaction_hashes.size(); ++i) {
@@ -1210,12 +1214,20 @@ static RpcResult handle_fee_history(const std::string& params, const std::string
             base_fees += to_hex_quantity(blk.base_fee_per_gas);
             double ratio = blk.gas_limit > 0
                 ? static_cast<double>(blk.gas_used) / blk.gas_limit : 0.0;
-            char ratio_buf[32];
-            snprintf(ratio_buf, sizeof(ratio_buf), "%.6f", ratio);
-            gas_ratios += ratio_buf;
+            // Emit integer when exact 0 or 1 (matches geth/erigon);
+            // otherwise print as float with 6 decimals.
+            if (ratio == 0.0) {
+                gas_ratios += "0";
+            } else if (ratio == 1.0) {
+                gas_ratios += "1";
+            } else {
+                char ratio_buf[32];
+                snprintf(ratio_buf, sizeof(ratio_buf), "%.6f", ratio);
+                gas_ratios += ratio_buf;
+            }
         } else {
             base_fees += to_hex_quantity(intx::uint256{kInitialBaseFee});
-            gas_ratios += "0.0";
+            gas_ratios += "0";
         }
         blob_base_fees += "\"0x0\"";
         blob_gas_ratios += "0";  // spec: integer when exactly 0
@@ -1958,14 +1970,32 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
             if (h == std::string::npos || h >= kend) break;
             auto e = params.find_first_of("\",]", h);
             if (e == std::string::npos || e > kend) break;
-            silkworm::Bytes b;
             // Keys can be any length ≤ 32 bytes per the spec ("0x0", "0x00",
-            // "0x0000...0000" are all the zero slot). Left-pad to 32 bytes.
-            if (parse_hex_bytes(params.substr(h - 1, e - h + 2), b) && b.size() <= 32) {
-                evmc::bytes32 s{};
-                std::memcpy(s.bytes + (32 - b.size()), b.data(), b.size());
-                slots.push_back(s);
+            // "0x0000...0000" are all the zero slot). parse_hex_bytes rejects
+            // odd-length hex, but "0x0" is odd (1 nibble = half-byte). Handle
+            // both even and odd by reading hex nibbles manually.
+            // h points to the '0' of "0x", e is past the hex digits.
+            size_t hex_start = h + 2;  // past "0x"
+            size_t hex_end = e;
+            size_t hex_len = hex_end - hex_start;
+            if (hex_len == 0 || hex_len > 64) {
+                scan = e + 1; continue;
             }
+            evmc::bytes32 s{};
+            size_t nibble_offset = 64 - hex_len;  // left-pad nibbles
+            bool ok = true;
+            for (size_t i = 0; i < hex_len; ++i) {
+                uint8_t n;
+                if (!parse_hex_byte(params[hex_start + i], n)) { ok = false; break; }
+                size_t tgt_nibble = nibble_offset + i;
+                size_t byte = tgt_nibble / 2;
+                if (tgt_nibble % 2 == 0) {
+                    s.bytes[byte] = static_cast<uint8_t>(n << 4);
+                } else {
+                    s.bytes[byte] |= n;
+                }
+            }
+            if (ok) slots.push_back(s);
             scan = e + 1;
         }
     }
