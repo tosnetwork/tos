@@ -37,9 +37,9 @@ deployment or it doesn't.
                               └──────────────────────────┘
                         ┌────────────────────────────────────┐
                         │  Ethereum conformance suites       │
-                        │    • execution-apis   ✓ adopted    │
-                        │    • GeneralStateTests  G.1 PLANNED│
-                        │    • execution-spec-tests G.2 PLAN │
+                        │    • execution-apis        ✅ done │
+                        │    • GeneralStateTests     🚧 G.1  │
+                        │    • execution-spec-tests  G.2 PLAN│
                         └────────────────────────────────────┘
                   ┌──────────────────────────────────────────────┐
                   │  Restart-survival proofs (e2e, testnet)      │
@@ -124,7 +124,7 @@ All three must exit 0.
 | Suite | Purpose | Our status | Signal strength | Gate |
 |-------|---------|-----------|-----------------|------|
 | **ethereum/execution-apis** | JSON-RPC wire-format + response shape | ✓ Adopted. 207-test runner, 0 METHOD_NOT_FOUND, 0 crashes. 16 SHAPE_MISMATCHes — all false positives from chain-state divergence, individually classified in `doc/evm-workchain-known-divergences.md` Category A. | High for RPC compat | **Required for testnet** |
-| **ethereum/tests GeneralStateTests** | State-transition correctness per EIP | Partial (14 Silkworm gold vectors); full corpus (~2,642 files / ~8K entries) scoped in Phase G.1 below | High — this is where consensus bugs hide | **Required for private mainnet** (at least 100% of Cancun + Shanghai subset) |
+| **ethereum/tests GeneralStateTests** | State-transition correctness per EIP | 🚧 In progress. 14 Silkworm gold vectors always green + Phase G.1 PoC + walker running against two curated subdirs (stChainId, stSelfBalance) — 8/8 Cancun entries pass. First real consensus bug already surfaced and fixed (EIP-1559 base-fee-to-beneficiary, commit `64bbd2ed`). Full corpus (~2,642 files / ~8K entries) walker continues in this phase. | High — this is where consensus bugs hide | **Required for private mainnet** (at least 100% of Cancun + Shanghai subset) |
 | **ethereum/execution-spec-tests** (Pyspec) | Newer Python-generated fixtures covering Cancun/Prague | Not adopted. Same runner as GeneralStateTests — bundled into Phase G.1 scope | High for post-Cancun EIPs | **Required for public mainnet** |
 | **ethereum/hive** | Full-node simulator (P2P sync, mempool, JSON-RPC) in Docker | Not adopted. Phase G.3 | Medium — most hive tests assume devp2p which we don't speak; value is in the JSON-RPC and sync subsets | **Optional but recommended before public mainnet** |
 
@@ -136,16 +136,17 @@ Each row is a binary: green = go, red or yellow = stop. Each next stage is a str
 
 ### Gate T — Testnet (local / regional)
 
-| # | Requirement | How to verify | Blocker? |
-|---|-------------|---------------|----------|
-| T-1 | 41/41 unit tests pass | `./build/crypto/block/evm-workchain/test-evm-executor` | ✓ |
-| T-2 | All three `proof-*.sh` scripts pass | `sudo bash test/evm-workchain/proof-*.sh` (restart-survival + rpc-indexing) | ✓ |
-| T-3 | execution-apis suite: 0 METHOD_NOT_FOUND, 0 crashes, every SHAPE_MISMATCH and OUR_ERROR accounted for in `doc/evm-workchain-known-divergences.md` | `SKIP_CRASHERS=0 python3 test/conformance/run_execution_apis.py` | ✓ |
-| T-4 | 4 validators stay up through the full suite | systemd shows all `tos-validator@{1..4}` `active` post-run | ✓ |
-| T-5 | Basic wallet probes work | `node test/evm-workchain/wallet-test.js`, `full-rpc-test.js` | ✓ |
-| T-6 | Differential vs. geth: every diverge listed in `doc/evm-workchain-known-divergences.md` Category B | `python3 test/conformance/differential_geth.py` | ✓ |
+| # | Requirement | How to verify | Blocker? | Status |
+|---|-------------|---------------|----------|--------|
+| T-1 | 43/43 unit tests pass | `./build/crypto/block/evm-workchain/test-evm-executor` | ✓ | ✅ |
+| T-2 | All three `proof-*.sh` scripts pass | `sudo bash test/evm-workchain/proof-*.sh` (restart-survival + rpc-indexing) | ✓ | ✅ |
+| T-3 | execution-apis suite: 0 METHOD_NOT_FOUND, 0 crashes, every SHAPE_MISMATCH and OUR_ERROR accounted for in `doc/evm-workchain-known-divergences.md` | `SKIP_CRASHERS=0 python3 test/conformance/run_execution_apis.py` | ✓ | ✅ |
+| T-4 | 4 validators stay up through the full suite | systemd shows all `tos-validator@{1..4}` `active` post-run | ✓ | ✅ |
+| T-5 | Basic wallet probes work | `node test/evm-workchain/wallet-test.js`, `full-rpc-test.js` | ✓ | ✅ |
+| T-6 | Differential vs. geth: every diverge listed in `doc/evm-workchain-known-divergences.md` Category B | `python3 test/conformance/differential_geth.py` | ✓ | ✅ |
 
-**Current status: PASS.** Commit `7449b586` is the last-known-good.
+**Current status: PASS.** Commit `64bbd2ed` is the last-known-good
+(includes the EIP-1559 base-fee-burn fix).
 
 ### Gate P — Private mainnet (limited allowlisted validators + RPCs)
 
@@ -176,29 +177,46 @@ Everything in Gates T + P, plus:
 
 ## Phase roadmap (G.1 – G.5)
 
-### Phase G.1 — State-test harness
+### Phase G.1 — State-test harness 🚧 in progress
 
 **Goal:** run ethereum/tests GeneralStateTests + execution-spec-tests
 against `CellEvmState` byte-for-byte.
 
 **Scope:**
-- Vendor `silkworm/cmd/consensus/consensus.cpp` (~550 lines) into
-  `test/conformance/state-test-runner/` and adapt to use
-  `CellEvmState` + `serialize_to_cell` / `load_from_cell` between
-  blocks, so we exercise the real persistence path.
-- Add a CMake target `state-test-runner` that depends on
-  `evm_workchain` + silkworm_core.
-- Script to walk `test/conformance/ethereum-tests/GeneralStateTests/`
-  and `.../Cancun/`, `.../Shanghai/` — count pass/fail per fork.
-- Report in the style of `run_execution_apis.py`.
+- ✅ Minimal JSON fixture loader + executor in `test-evm-executor.cpp`
+  (`run_one_state_test_cancun`) — loads `pre`, decodes `txbytes`, runs
+  `execute_evm_transaction` with a per-test `ChainConfig`, diffs every
+  account in `post.Cancun.state` (balance, nonce, storage slots).
+- ✅ Curated directory walker (`test_state_test_runner_walk_curated`
+  + `walk_state_tests`) — runs every `*.json` under the listed
+  subdirectories, reports pass/fail/skip per directory plus a total.
+- ✅ First real bug found and fixed: beneficiary was receiving
+  `gas_used * effective_gas_price` instead of
+  `gas_used * priority_fee_per_gas`, i.e. base fee was not burned
+  (EIP-1559 violation). Commit `64bbd2ed`. Caught by
+  `stSelfBalance/diffPlaces.json`.
+- Current walker coverage: 8/8 pass across `stChainId` +
+  `stSelfBalance` (Cancun entries only).
+- 🚧 Expand walker to more fork-agnostic subdirectories (`stArgsZeroOneBalance`,
+  `stChainId`, `stEIP1559`, `stEIP2930`, `stEIP3540`, `stPreCompiled*`,
+  `stReturnDataTest`, `stSelfBalance`, `stSLoadTest`, `stSStoreTest`,
+  `stZeroCallsTest`, etc.). Target: ≥ 500 Cancun entries green
+  before promoting to Gate P.
+- 🚧 Post-state MPT root comparison via `IncrementalTrieCalculator`
+  — right now we compare accounts individually; expected `hash` in
+  the fixture requires computing the Ethereum-format state root
+  over the post-state and diffing against the JSON's `hash`.
+- Deferred: vendoring Silkworm's `cmd/consensus/consensus.cpp`
+  (~550 lines) into a standalone binary. The in-process runner is
+  sufficient for PoC + curated walker; the standalone binary is
+  only needed once we want to parallelize across forks.
 
 **Acceptance:**
 - Phase P gate — Cancun + Shanghai ≥ 95% pass.
 - Phase M gate — 100% on all supported forks.
 
 **Estimate:** 5-7 engineering days (runner + debugging first
-divergences). Most time goes into diagnosing any real adapter bugs
-surfaced by the corpus, not writing the harness itself.
+divergences). First day already landed PoC + 1 real consensus bug.
 
 ### Phase G.2 — execution-spec-tests (Pyspec)
 
