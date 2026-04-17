@@ -3,6 +3,7 @@
     Source: TOS-specific adapter (not copied from ~/s).
 */
 #include "evm-transaction.h"
+#include "evm-cell-codec.h"
 
 #include <silkworm/core/rlp/decode.hpp>
 
@@ -38,51 +39,39 @@ decode_evm_transaction(silkworm::ByteView raw_rlp) noexcept {
 
 std::optional<silkworm::Bytes>
 extract_evm_payload(vm::CellSlice& body) noexcept {
-    // The message body follows TLB: init:(Maybe ...) body:(Either X ^X)
-    // After ext_in_msg_info is parsed, the remaining slice contains:
-    //   init_bit(1) [+ init if 1] + either_bit(1) + inline_or_ref
+    // `body` is the inbound message body slice as prepared by the
+    // collator (transaction.cpp:1046): already past the ext_in_msg
+    // init:(Maybe …) body:(Either X ^X) TLB, positioned at the
+    // contents of the body cell itself. For EVM external messages,
+    // build_evm_external_message stores those contents as the first
+    // cell of an EvmBytecodeChunk chain:
     //
-    // For EVM messages built by build_evm_external_message():
-    //   init = nothing$0 (1 bit)
-    //   body = right$1 ^X (1 bit + reference)
+    //   bytes:(n * Bit) { n <= 1016 }
+    //   next:(Maybe ^EvmBytecodeChunk)
     //
-    // But when called from the compute phase, the body CellSlice may
-    // already be positioned at the raw body content (after TLB unpacking).
-    // We handle both cases.
+    // Walk the chain: read the inline data bytes, read the Maybe tag,
+    // if set recurse into the next chunk via decode_evm_bytecode.
 
-    // Case 1: body has references — try reading from reference
-    // (This is the standard TLB format from build_evm_external_message)
-    if (body.size() >= 2 && body.have_refs()) {
-        unsigned init_bit = static_cast<unsigned>(body.fetch_ulong(1));
-        if (init_bit == 0) {
-            // init = nothing, next bit is either tag
-            unsigned either_bit = static_cast<unsigned>(body.fetch_ulong(1));
-            if (either_bit == 1 && body.have_refs()) {
-                // body is in reference cell
-                auto ref = body.fetch_ref();
-                auto ref_cs = vm::load_cell_slice(ref);
-                unsigned bits = ref_cs.size();
-                if (bits == 0 || (bits % 8) != 0) return std::nullopt;
-                unsigned byte_count = bits / 8;
-                silkworm::Bytes out(byte_count, 0);
-                if (!ref_cs.fetch_bytes(out.data(), byte_count)) return std::nullopt;
-                return out;
-            }
-            // either_bit == 0: inline body, fall through to inline read
-        }
-        // init_bit == 1: has init, not our format — try inline read of remaining
-    }
-
-    // Case 2: raw bytes directly in the cell slice (legacy / direct call)
     unsigned bits = body.size();
-    if (bits == 0 || (bits % 8) != 0) {
+    if (bits < 1) return std::nullopt;
+    // Data bits are everything except the last (Maybe-tag) bit.
+    if ((bits - 1) % 8 != 0) return std::nullopt;
+    unsigned data_bytes = (bits - 1) / 8;
+
+    silkworm::Bytes out;
+    out.resize(data_bytes);
+    if (data_bytes > 0 && !body.fetch_bytes(out.data(), data_bytes)) {
         return std::nullopt;
     }
-    unsigned byte_count = bits / 8;
-    silkworm::Bytes out(byte_count, 0);
-    if (!body.fetch_bytes(out.data(), byte_count)) {
-        return std::nullopt;
+    unsigned has_next = static_cast<unsigned>(body.fetch_ulong(1));
+    if (has_next == 1) {
+        if (!body.have_refs()) return std::nullopt;
+        auto next = body.fetch_ref();
+        auto more = decode_evm_bytecode(next);
+        if (more.empty()) return std::nullopt;
+        out.insert(out.end(), more.begin(), more.end());
     }
+    if (out.empty()) return std::nullopt;
     return out;
 }
 

@@ -37,6 +37,8 @@
 // EVM workchain headers for eth_sendRawTransaction
 #include "evm-transaction.h"
 #include "evm-external-message.h"
+#include "evm-workchain.h"
+#include <sstream>
 
 namespace tos {
 
@@ -1490,19 +1492,63 @@ void JsonRpcServer::handle_eth_sendRawTransaction(td::JsonValue &params_val,
     return;
   }
   auto& decoded = std::get<evm_workchain::DecodedTransaction>(decode_result);
+
+  // Reject txs that target a foreign chainId. Ethereum mainnet rejects
+  // these at eth_sendRawTransaction with a clear error, and accepting
+  // them at the RPC layer only to have the collator reject them
+  // downstream just wastes mempool space (and, historically, has
+  // proven to be a DoS surface when enough pile up).
+  //   - Post-EIP-155 legacy txs carry chain_id in v.
+  //   - EIP-2930 / 1559 / 4844 typed txs embed chain_id explicitly.
+  //   - Pre-EIP-155 legacy txs omit chain_id (std::nullopt) — we accept
+  //     those because they're not bound to any specific chain.
+  if (decoded.txn.chain_id.has_value() &&
+      *decoded.txn.chain_id != evm_workchain::kEvmChainId) {
+    std::ostringstream msg;
+    msg << "invalid chain id: got " << *decoded.txn.chain_id
+        << ", expected 0x" << std::hex << evm_workchain::kEvmChainId << std::dec;
+    promise.set_value(make_json_error(-32000, msg.str(), req_id));
+    return;
+  }
+
   auto tx_hash = decoded.txn.hash();
 
-  // 4. Build ext_in_msg cell
-  auto ext_msg = evm_workchain::build_evm_external_message(
-      reinterpret_cast<const uint8_t*>(raw_bytes.data()), raw_bytes.size(),
-      decoded.sender);
+  // 4. Build ext_in_msg cell. CellBuilder operations throw on range
+  // overflow — catch here so a malformed oversized payload returns
+  // a polite JSON-RPC error instead of terminating the process.
+  td::Ref<vm::Cell> ext_msg;
+  try {
+    ext_msg = evm_workchain::build_evm_external_message(
+        reinterpret_cast<const uint8_t*>(raw_bytes.data()), raw_bytes.size(),
+        decoded.sender);
+  } catch (const std::exception& e) {
+    promise.set_value(make_json_error(-32000,
+        PSTRING() << "Failed to build external message cell: " << e.what(),
+        req_id));
+    return;
+  } catch (...) {
+    promise.set_value(make_json_error(-32000,
+        "Failed to build external message cell: unknown error", req_id));
+    return;
+  }
   if (ext_msg.is_null()) {
     promise.set_value(make_json_error(-32000, "Failed to build external message cell", req_id));
     return;
   }
 
   // 5. Serialize cell to BOC
-  auto boc_r = vm::std_boc_serialize(ext_msg);
+  td::Result<td::BufferSlice> boc_r;
+  try {
+    boc_r = vm::std_boc_serialize(ext_msg);
+  } catch (const std::exception& e) {
+    promise.set_value(make_json_error(-32000,
+        PSTRING() << "BOC serialization threw: " << e.what(), req_id));
+    return;
+  } catch (...) {
+    promise.set_value(make_json_error(-32000,
+        "BOC serialization threw: unknown error", req_id));
+    return;
+  }
   if (boc_r.is_error()) {
     promise.set_value(make_json_error(-32000, PSTRING() << "BOC serialization failed: " << boc_r.error(), req_id));
     return;

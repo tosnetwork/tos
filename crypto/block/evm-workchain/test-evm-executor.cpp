@@ -3021,6 +3021,61 @@ void test_no_separate_evm_db() {
     std::system(("rm -rf " + tmp_root).c_str());
 }
 
+// --- DoS regression (Phase E.5): build_evm_external_message must handle
+// oversized raw-tx payloads without throwing / exiting the process.
+// Before the fix, build_evm_external_message wrote all bytes into one
+// CellBuilder which overflows at >127 bytes and throws — the caller in
+// validator-engine didn't catch it, so the process exited with status=1.
+static void test_large_raw_tx_roundtrip() {
+    printf("=== test_large_raw_tx_roundtrip (oversized RLP → chunk chain → decode) ===\n");
+
+    // Pick a size bigger than a single cell (1023 bits = 127 bytes) and
+    // bigger than the largest realistic tx: a 2 KB blob that would 100%
+    // have thrown on the old path.
+    std::vector<uint8_t> payload(2048);
+    for (size_t i = 0; i < payload.size(); ++i) {
+        payload[i] = static_cast<uint8_t>((i * 31 + 7) & 0xFF);
+    }
+
+    evmc::address sender{};
+    sender.bytes[19] = 0x42;
+
+    td::Ref<vm::Cell> ext_msg;
+    bool threw = false;
+    try {
+        ext_msg = evm_workchain::build_evm_external_message(
+            payload.data(), payload.size(), sender);
+    } catch (...) {
+        threw = true;
+    }
+    printf("  build threw: %s\n", threw ? "yes (FAIL)" : "no");
+    printf("  cell non-null: %s\n", ext_msg.not_null() ? "yes" : "no");
+
+    if (threw || ext_msg.is_null()) {
+        printf("  FAILED\n\n");
+        return;
+    }
+
+    // Round-trip: mirror transaction.cpp's ext_in_msg parse, then
+    // hand the body cell's slice to extract_evm_payload — same as the
+    // collator does.
+    auto cs = vm::load_cell_slice(ext_msg);
+    unsigned header_bits = 2 + 2 + 3 + 8 + 256 + 4;  // info+src+dest+wc+addr+fee
+    cs.advance(header_bits);
+    unsigned init_bit = static_cast<unsigned>(cs.fetch_ulong(1));
+    (void)init_bit;  // expected 0 (nothing)
+    unsigned either_bit = static_cast<unsigned>(cs.fetch_ulong(1));
+    (void)either_bit;  // expected 1 (right — ref)
+    auto body_cell = cs.fetch_ref();
+    auto body = vm::load_cell_slice(body_cell);
+    auto extracted_opt = evm_workchain::extract_evm_payload(body);
+    bool extracted = extracted_opt.has_value() &&
+                     extracted_opt->size() == payload.size() &&
+                     std::equal(extracted_opt->begin(), extracted_opt->end(), payload.begin());
+    printf("  round-trip byte-equal: %s\n", extracted ? "yes" : "no");
+    printf("  %s\n\n", extracted ? "PASSED" : "FAILED");
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -3065,6 +3120,7 @@ int main() {
     test_no_separate_evm_db();
     test_bytecode_roundtrip();
     test_bytecode_marker_distinguished();
+    test_large_raw_tx_roundtrip();
 
     // Scan stdout for FAILED to determine exit code
     // (Individual tests print PASSED or FAILED)

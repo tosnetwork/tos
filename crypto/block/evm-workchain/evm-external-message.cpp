@@ -16,6 +16,7 @@
     Source: TOS-specific adapter (not copied from ~/s).
 */
 #include "evm-external-message.h"
+#include "evm-cell-codec.h"
 #include "evm-workchain.h"
 
 #include "vm/cellslice.h"
@@ -37,12 +38,19 @@ td::Ref<vm::Cell> build_evm_external_message(
 
     if (!raw_rlp || rlp_size == 0) return {};
 
-    // --- Build body cell first (raw RLP bytes) ---
-    vm::CellBuilder body_cb;
-    for (size_t i = 0; i < rlp_size; ++i) {
-        body_cb.store_long(raw_rlp[i], 8);
-    }
-    auto body_cell = body_cb.finalize();
+    // --- Build body cell ---
+    //
+    // A single cell holds at most 1023 bits (~127 bytes). Ethereum raw
+    // transactions routinely exceed that — a dynamic-fee / access-list /
+    // blob tx is 200+ bytes. We chunk the bytes across a cell chain
+    // using the same `EvmBytecodeChunk` encoding defined in
+    // `evm-cell-codec.h` (127 bytes inline + Maybe ^next).
+    //
+    // The reader (`extract_evm_payload`) walks the chain via
+    // `decode_evm_bytecode`.
+    auto body_cell = encode_evm_bytecode(
+        td::Slice(reinterpret_cast<const char*>(raw_rlp), rlp_size));
+    if (body_cell.is_null()) return {};
 
     // --- Build the message cell ---
     vm::CellBuilder cb;
