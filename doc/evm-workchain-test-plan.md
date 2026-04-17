@@ -248,9 +248,22 @@ against `CellEvmState` byte-for-byte.
   Category D).
 - ✅ Silkworm is verified byte-identical to upstream HEAD
   (`erigontech/silkworm` @ `aeb2302`, 2025-05-21). The 29 remaining
-  failures are therefore not snapshot-lag; they are genuine
-  silkworm-level gaps or our runner's GeneralStateTests-format
-  handling divergences from silkworm's BlockchainTests-format runner.
+  failures are therefore not snapshot-lag; they are either genuine
+  silkworm-level EVM edges or artifacts of the `GeneralStateTests`
+  fixture format itself.
+- ✅ EIP-4788 beacon-roots pre-block hook added to the runner so
+  that fixtures warming addresses via the Cancun system call don't
+  observe an empty pre-state. (Didn't move the 29-fail count —
+  confirms these failures are not about EIP-4788 warming.)
+- 📋 Deferred: porting the walker to the `BlockchainTests` fixture
+  format silkworm's own CI uses. That format wraps each state test
+  in an RLP-encoded block + genesis-RLP + expected block-hash
+  chain; it would exercise the full `ExecutionProcessor` path
+  (including the beacon-roots predeploy, block rewards, uncle
+  checks, etc). Estimate: 2-3 days for a minimal runner.
+  Hypothesis: most of the 29 remaining failures land in silkworm's
+  per-block hooks that our GST-format runner bypasses — porting
+  would narrow the gap to upstream silkworm gaps only.
 - 🚧 Remaining 29 fixture failures cluster into themes for
   follow-up investigation:
     * `stExtCodeHash/*DeletedAccount*` (6) — SELFDESTRUCT + EIP-6780

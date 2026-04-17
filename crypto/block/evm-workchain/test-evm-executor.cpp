@@ -3093,6 +3093,10 @@ static void test_large_raw_tx_roundtrip() {
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/filesystem.h"
 
+#include <silkworm/core/execution/evm.hpp>
+#include <silkworm/core/state/intra_block_state.hpp>
+#include <silkworm/core/protocol/param.hpp>
+
 namespace stt {
 
 using Bytes = silkworm::Bytes;
@@ -3276,6 +3280,31 @@ static bool run_one_state_test_cancun(const std::string& path, bool& ran) {
     uint8_t rs[32] = {};
     auto blk = evm_workchain::make_evm_block(block_num, timestamp, rs, gas_limit, coinbase);
     blk.header.base_fee_per_gas = base_fee;
+
+    // EIP-4788 pre-block hook (Cancun+): silkworm's ExecutionProcessor
+    // normally invokes a system-contract call to kBeaconRootsAddress
+    // before the first user tx. We replicate the hook here so the
+    // fixture's pre-state warming matches silkworm's own runner. If
+    // the beacon-roots predeploy isn't in `pre`, the call silently
+    // no-ops (call to an address with empty code), which is fine.
+    {
+        blk.header.parent_beacon_block_root = evmc::bytes32{};
+        silkworm::Transaction sys_txn{};
+        sys_txn.type = silkworm::TransactionType::kSystem;
+        sys_txn.to = silkworm::protocol::kBeaconRootsAddress;
+        sys_txn.data = silkworm::Bytes(32, 0);
+        sys_txn.set_sender(silkworm::protocol::kSystemAddress);
+        std::unique_lock sys_lock(state.mutex());
+        silkworm::IntraBlockState sys_ibs(state.state());
+        silkworm::EVM sys_evm(blk, sys_ibs, cfg);
+        try {
+            sys_evm.execute(sys_txn, silkworm::protocol::kSystemCallGasLimit);
+            sys_ibs.destruct_touched_dead();
+            sys_ibs.write_to_db(block_num);
+        } catch (...) {
+            // Pre-Cancun or beacon-root address not predeployed — skip.
+        }
+    }
 
     // --- Pre-validate to skip silkworm-asserted invalid txs. ---------------
     // Silkworm's Transaction::effective_gas_price() asserts that
