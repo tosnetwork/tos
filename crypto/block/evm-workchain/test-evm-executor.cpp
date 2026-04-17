@@ -3198,7 +3198,11 @@ static bool run_one_state_test_cancun(const std::string& path, bool& ran) {
 
     auto* txbytes_v = field(entry_obj, "txbytes");
     auto* expected_state_v = field(entry_obj, "state");
-    if (!txbytes_v || !expected_state_v) return false;
+    auto* expected_hash_v  = field(entry_obj, "hash");
+    // ethereum/tests fixtures carry per-account `state` (full diff). Pyspec
+    // (execution-spec-tests) fixtures carry only the post-state-root `hash`.
+    // Either is acceptable; we need txbytes plus at least one verifier.
+    if (!txbytes_v || (!expected_state_v && !expected_hash_v)) return false;
 
     // --- Seed pre-state -----------------------------------------------------
     //
@@ -3399,58 +3403,77 @@ static bool run_one_state_test_cancun(const std::string& path, bool& ran) {
     silkworm::State* cs = &state.state();
     bool all_ok = true;
     size_t checked = 0;
-    for (auto& [addr_s, want_v] : expected_state_v->get_object().field_values_) {
-        auto addr_str = slice_str(addr_s);
-        auto addr = hex0x_to_address(addr_str);
-        auto got = cs->read_account(addr);
-        auto& want = want_v.get_object();
-        auto want_balance = hex0x_to_u256(str(*field(want, "balance")));
-        auto want_nonce = static_cast<uint64_t>(hex0x_to_u256(str(*field(want, "nonce"))));
+    if (expected_state_v) {
+        // ethereum/tests path: per-account diff check.
+        for (auto& [addr_s, want_v] : expected_state_v->get_object().field_values_) {
+            auto addr_str = slice_str(addr_s);
+            auto addr = hex0x_to_address(addr_str);
+            auto got = cs->read_account(addr);
+            auto& want = want_v.get_object();
+            auto want_balance = hex0x_to_u256(str(*field(want, "balance")));
+            auto want_nonce = static_cast<uint64_t>(hex0x_to_u256(str(*field(want, "nonce"))));
 
-        if (!got) {
-            if (want_balance != 0 || want_nonce != 0) {
-                printf("    %.10s: account missing, expected balance=%s nonce=%lu\n",
-                       addr_str.c_str(),
-                       intx::to_string(want_balance).c_str(),
+            if (!got) {
+                if (want_balance != 0 || want_nonce != 0) {
+                    printf("    %.10s: account missing, expected balance=%s nonce=%lu\n",
+                           addr_str.c_str(),
+                           intx::to_string(want_balance).c_str(),
+                           static_cast<unsigned long>(want_nonce));
+                    all_ok = false;
+                }
+                continue;
+            }
+            if (got->balance != want_balance) {
+                printf("    %.10s: balance got=%s want=%s\n", addr_str.c_str(),
+                       intx::to_string(got->balance).c_str(),
+                       intx::to_string(want_balance).c_str());
+                all_ok = false;
+            }
+            if (got->nonce != want_nonce) {
+                printf("    %.10s: nonce got=%lu want=%lu\n", addr_str.c_str(),
+                       static_cast<unsigned long>(got->nonce),
                        static_cast<unsigned long>(want_nonce));
                 all_ok = false;
             }
-            continue;
-        }
-        if (got->balance != want_balance) {
-            printf("    %.10s: balance got=%s want=%s\n", addr_str.c_str(),
-                   intx::to_string(got->balance).c_str(),
-                   intx::to_string(want_balance).c_str());
-            all_ok = false;
-        }
-        if (got->nonce != want_nonce) {
-            printf("    %.10s: nonce got=%lu want=%lu\n", addr_str.c_str(),
-                   static_cast<unsigned long>(got->nonce),
-                   static_cast<unsigned long>(want_nonce));
-            all_ok = false;
-        }
-        // Storage slot spot checks.
-        if (auto* st = field(want, "storage")) {
-            for (auto& [slot_s, val_s] : st->get_object().field_values_) {
-                auto slot_str = slice_str(slot_s);
-                auto val_str = str(val_s);
-                auto slot = hex0x_to_bytes32(slot_str);
-                auto want_v = hex0x_to_bytes32(val_str);
-                auto got_v = cs->read_storage(addr, got->incarnation, slot);
-                if (got_v != want_v) {
-                    printf("    %.10s: slot %s got=%s want=%s\n", addr_str.c_str(),
-                           slot_str.c_str(),
-                           silkworm::to_hex(silkworm::ByteView{got_v.bytes, 32}).c_str(),
-                           val_str.c_str());
-                    all_ok = false;
+            // Storage slot spot checks.
+            if (auto* st = field(want, "storage")) {
+                for (auto& [slot_s, val_s] : st->get_object().field_values_) {
+                    auto slot_str = slice_str(slot_s);
+                    auto val_str = str(val_s);
+                    auto slot = hex0x_to_bytes32(slot_str);
+                    auto want_v = hex0x_to_bytes32(val_str);
+                    auto got_v = cs->read_storage(addr, got->incarnation, slot);
+                    if (got_v != want_v) {
+                        printf("    %.10s: slot %s got=%s want=%s\n", addr_str.c_str(),
+                               slot_str.c_str(),
+                               silkworm::to_hex(silkworm::ByteView{got_v.bytes, 32}).c_str(),
+                               val_str.c_str());
+                        all_ok = false;
+                    }
                 }
             }
+            ++checked;
         }
-        ++checked;
+        ran = true;
+        printf("  checked %zu accounts, %s\n", checked, all_ok ? "all match" : "MISMATCHES");
+        return all_ok;
+    }
+    // Pyspec path: verify by post-state-root hash. We unlock first
+    // because IncrementalTrieCalculator reaches into EvmState through
+    // its own access pattern (EvmState exposes its own locking).
+    lock.unlock();
+    IncrementalTrieCalculator calc;
+    auto got_root = calc.compute_state_root(state);
+    auto want_root = hex0x_to_bytes32(str(*expected_hash_v));
+    bool root_ok = (got_root == want_root);
+    if (!root_ok) {
+        printf("    state root mismatch:\n      got = 0x%s\n      want= 0x%s\n",
+               silkworm::to_hex(silkworm::ByteView{got_root.bytes, 32}).c_str(),
+               silkworm::to_hex(silkworm::ByteView{want_root.bytes, 32}).c_str());
     }
     ran = true;
-    printf("  checked %zu accounts, %s\n", checked, all_ok ? "all match" : "MISMATCHES");
-    return all_ok;
+    printf("  state root %s\n", root_ok ? "match" : "MISMATCH");
+    return root_ok;
 }
 
 // Silence per-test output during the bulk walker — only print a summary.
@@ -3643,6 +3666,63 @@ static void test_state_test_runner_walk_curated() {
     printf("  %s\n\n", (total_f == 0 && total_p > 0) ? "PASSED" : "FAILED");
 }
 
+// Phase G.2: walk ethereum/execution-spec-tests (Pyspec) state-test
+// fixtures. The fixture JSON shape is the same as ethereum/tests
+// GeneralStateTests except the post-state is verified by Merkle root
+// (entry.hash) rather than per-account diff (entry.state). Our
+// run_one_state_test_cancun() helper now handles both.
+//
+// Source: https://github.com/ethereum/execution-spec-tests releases
+// (fixtures_stable.tar.gz). Layout: fixtures/state_tests/<fork>/<feature>/...
+//
+// We walk only the Cancun subtree for now; Prague support is a future
+// fork for evm-workchain.
+static void test_state_test_runner_pyspec_walk() {
+    printf("=== test_state_test_runner_pyspec_walk (Phase G.2: walk Pyspec state_tests/cancun) ===\n");
+    const std::string root = "/home/tomi/evm-workchain/test/conformance/execution-spec-tests/fixtures/state_tests/cancun";
+    if (td::stat(td::CSlice(root)).is_error()) {
+        printf("  SKIP (execution-spec-tests fixtures not on disk;\n");
+        printf("        download fixtures_stable.tar.gz from\n");
+        printf("        https://github.com/ethereum/execution-spec-tests/releases\n");
+        printf("        and extract under test/conformance/execution-spec-tests/)\n\n");
+        return;
+    }
+    // Pyspec ships per-feature subdirs (one per EIP). Walk all of them.
+    std::vector<std::string> features;
+    {
+        std::string cmd = "ls -1 '" + root + "' 2>/dev/null";
+        FILE* pp = popen(cmd.c_str(), "r");
+        if (pp) {
+            char line[1024];
+            while (fgets(line, sizeof(line), pp)) {
+                std::string s = line;
+                if (!s.empty() && s.back() == '\n') s.pop_back();
+                if (!s.empty()) features.push_back(s);
+            }
+            pclose(pp);
+        }
+    }
+    if (features.empty()) {
+        printf("  SKIP (no features under %s)\n\n", root.c_str());
+        return;
+    }
+    size_t total_p = 0, total_f = 0, total_s = 0, total_u = 0;
+    for (const auto& f : features) {
+        size_t p, fl, s, u;
+        walk_state_tests(root + "/" + f, p, fl, s, u);
+        if (u > 0) {
+            printf("  %-32s  pass=%zu  fail=%zu  skip=%zu  upstream_skip=%zu\n",
+                   f.c_str(), p, fl, s, u);
+        } else {
+            printf("  %-32s  pass=%zu  fail=%zu  skip=%zu\n", f.c_str(), p, fl, s);
+        }
+        total_p += p; total_f += fl; total_s += s; total_u += u;
+    }
+    printf("  Pyspec Cancun  pass=%zu  fail=%zu  skip=%zu  upstream_skip=%zu\n",
+           total_p, total_f, total_s, total_u);
+    printf("  %s\n\n", (total_f == 0 && total_p > 0) ? "PASSED" : "FAILED");
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -3690,6 +3770,7 @@ int main() {
     test_large_raw_tx_roundtrip();
     test_state_test_runner_poc();
     test_state_test_runner_walk_curated();
+    test_state_test_runner_pyspec_walk();
 
     // Scan stdout for FAILED to determine exit code
     // (Individual tests print PASSED or FAILED)
