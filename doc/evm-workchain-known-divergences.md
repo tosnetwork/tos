@@ -71,9 +71,14 @@ as `CHAIN_STATE_FALSE_POSITIVE` (distinct from `SHAPE_MISMATCH`).
 
 The correct way to test the affected methods against *our* chain is
 to seed our chain with a known transaction/block first, then query
-the hash we just observed — which is exactly what
-`test/evm-workchain/full-rpc-test.js` and the two `proof-*.sh`
-scripts already do.
+the hash we just observed.
+`test/evm-workchain/proof-rpc-indexing.sh` does exactly that for the
+eight block/tx indexing methods above — it sends one transfer,
+waits for the receipt, then asserts that each method returns the
+expected tx / block when queried by the freshly-observed hashes.
+The other two proofs (`proof-mirror-not-canonical.sh`,
+`proof-bytecode-survives-restart.sh`) and the JS wallet probes cover
+the remaining balance / code / log / call methods the same way.
 
 ## Category B — Intentional behavioral differences (vs. geth)
 

@@ -92,13 +92,15 @@ the observable state survived.
 |--------|----------|-------------------|
 | `proof-mirror-not-canonical.sh` | Hardhat account 0 → account 1 transfer | sender nonce 0x1 and recipient balance both survive restart |
 | `proof-bytecode-survives-restart.sh` | Deploy 10-byte runtime contract | `eth_getCode` returns the same bytecode post-restart; `eth_call` to the contract returns the expected 32-byte result |
+| `proof-rpc-indexing.sh` | Send one transfer, then probe 8 block / tx / receipt indexing methods by the freshly-observed hashes | `debug_getRawTransaction`, `debug_getRawHeader`, `debug_getRawBlock`, `debug_getRawReceipts`, `eth_getBlockTransactionCountByHash`, `eth_getTransactionByBlockHashAndIndex`, `eth_getTransactionByBlockNumberAndIndex`, `eth_getBlockReceipts` all return the expected tx/block. Closes the "weak coverage" gap for Category A methods in `known-divergences.md`. |
 
 Run (requires sudo + systemctl):
 ```
 sudo bash test/evm-workchain/proof-mirror-not-canonical.sh
 sudo bash test/evm-workchain/proof-bytecode-survives-restart.sh
+sudo bash test/evm-workchain/proof-rpc-indexing.sh
 ```
-Both must exit 0.
+All three must exit 0.
 
 ### Conformance — `test/conformance/`
 
@@ -137,7 +139,7 @@ Each row is a binary: green = go, red or yellow = stop. Each next stage is a str
 | # | Requirement | How to verify | Blocker? |
 |---|-------------|---------------|----------|
 | T-1 | 41/41 unit tests pass | `./build/crypto/block/evm-workchain/test-evm-executor` | ✓ |
-| T-2 | Both restart-survival proofs pass | `sudo bash test/evm-workchain/proof-*.sh` | ✓ |
+| T-2 | All three `proof-*.sh` scripts pass | `sudo bash test/evm-workchain/proof-*.sh` (restart-survival + rpc-indexing) | ✓ |
 | T-3 | execution-apis suite: 0 METHOD_NOT_FOUND, 0 crashes, every SHAPE_MISMATCH and OUR_ERROR accounted for in `doc/evm-workchain-known-divergences.md` | `SKIP_CRASHERS=0 python3 test/conformance/run_execution_apis.py` | ✓ |
 | T-4 | 4 validators stay up through the full suite | systemd shows all `tos-validator@{1..4}` `active` post-run | ✓ |
 | T-5 | Basic wallet probes work | `node test/evm-workchain/wallet-test.js`, `full-rpc-test.js` | ✓ |
