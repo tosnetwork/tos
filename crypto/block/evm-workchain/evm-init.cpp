@@ -136,7 +136,112 @@ void seed_test_accounts(EvmState& state) {
 
 }  // anonymous namespace
 
+// Decode a cp.new_data-shaped cell (see evm-compute-phase.cpp:118-141) into
+// the state_root cell and Ethereum MPT root. Layout:
+//   magic:24 bits (0x45564D)
+//   has_state_root:1 bit
+//   [state_root:^Cell]   if has_state_root
+//   eth_state_root:bits256
+//
+// Returns true if the cell parses as cp.new_data format. state_root may
+// be null (for the has_state_root=0 case, which shouldn't occur in
+// practice but is valid per the compute-phase encoder).
+static bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
+                               td::Ref<vm::Cell>& state_root_out,
+                               evmc::bytes32& eth_state_root_out) {
+    if (cell.is_null()) return false;
+    auto cs = vm::load_cell_slice(cell);
+    if (cs.size() < kEvmMagicBits + 1 + 256) return false;
+    auto magic = cs.fetch_ulong(kEvmMagicBits);
+    if (magic != kEvmAccountMagic) return false;
+    auto has_root = cs.fetch_ulong(1);
+    state_root_out = {};
+    if (has_root == 1) {
+        if (cs.size_refs() == 0) return false;
+        state_root_out = cs.fetch_ref();
+    }
+    if (cs.size() < 256) return false;
+    cs.fetch_bytes(eth_state_root_out.bytes, 32);
+    return true;
+}
+
 size_t populate_state_from_shard_accounts(
+    EvmState& target,
+    vm::AugmentedDictionary& shard_accounts) {
+    // Single-executor: the entire EVM world state lives inside the one
+    // executor account's StateInit.data (cp.new_data format). Look up
+    // kEvmExecutorAddress, decode the state_root ref, and load it into
+    // the target's CellEvmState. Returns 1 on success, 0 otherwise.
+    auto exec_value = shard_accounts.lookup(
+        td::ConstBitPtr{kEvmExecutorAddressBytes}, 256);
+    if (exec_value.is_null()) return 0;
+
+    td::Ref<vm::Cell> account_cell;
+    if (!block::tlb::t_ShardAccount.extract_account_state(exec_value, account_cell) ||
+        account_cell.is_null()) {
+        return 0;
+    }
+
+    block::gen::Account::Record_account acc_rec;
+    if (!tlb::unpack_cell(account_cell, acc_rec)) return 0;
+
+    unsigned long long last_trans_lt;
+    td::Ref<vm::CellSlice> balance_cs, state_cs;
+    if (!block::gen::t_AccountStorage.unpack_account_storage(
+            acc_rec.storage.write(), last_trans_lt, balance_cs, state_cs)) {
+        return 0;
+    }
+
+    td::Ref<vm::CellSlice> state_init_cs;
+    if (!block::gen::t_AccountState.unpack_account_active(state_cs.write(), state_init_cs)) {
+        return 0;
+    }
+
+    block::gen::StateInit::Record si_rec;
+    if (!block::gen::t_StateInit.unpack(state_init_cs.write(), si_rec)) return 0;
+
+    if (si_rec.data.is_null() || !si_rec.data->have(1) ||
+        si_rec.data->prefetch_ulong(1) != 1) {
+        return 0;
+    }
+    auto data_slice = si_rec.data;
+    data_slice.write().advance(1);
+    td::Ref<vm::Cell> cp_new_data_cell;
+    if (!data_slice->prefetch_ref_to(cp_new_data_cell)) return 0;
+
+    td::Ref<vm::Cell> state_root;
+    evmc::bytes32 eth_state_root{};
+    if (!decode_cp_new_data(cp_new_data_cell, state_root, eth_state_root)) {
+        LOG(WARNING) << "evm-workchain: executor StateInit.data does not decode as cp.new_data";
+        return 0;
+    }
+    if (state_root.is_null()) {
+        LOG(WARNING) << "evm-workchain: executor cp.new_data has no inner state_root ref";
+        return 0;
+    }
+
+    {
+        std::unique_lock lock(target.mutex());
+        auto* cs = dynamic_cast<CellEvmState*>(&target.state());
+        if (!cs) {
+            LOG(ERROR) << "evm-workchain: hydration target is not a CellEvmState";
+            return 0;
+        }
+        if (!cs->load_from_cell(state_root)) {
+            LOG(ERROR) << "evm-workchain: CellEvmState::load_from_cell failed during hydration";
+            return 0;
+        }
+    }
+    LOG(WARNING) << "evm-workchain: hydrated world state from executor cell (eth_state_root="
+                 << td::Bits256{eth_state_root.bytes}.to_hex() << ")";
+    return 1;
+}
+
+// Legacy code path removed: the old per-account walker is replaced by the
+// single-executor lookup above. Kept this comment as a marker so anyone
+// bisecting understands the intent.
+#if 0
+size_t populate_state_from_shard_accounts_legacy(
     EvmState& target,
     vm::AugmentedDictionary& shard_accounts) {
     size_t count = 0;
@@ -239,31 +344,56 @@ size_t populate_state_from_shard_accounts(
         });
     return count;
 }
+#endif  // end of legacy per-account populate_state_from_shard_accounts
 
 td::Ref<vm::Cell> build_evm_zerostate_accounts_cell() {
-    vm::AugmentedDictionary accounts(256, block::tlb::aug_ShardAccounts);
+    // Single-executor zerostate: the wc=1 ShardAccounts dict contains exactly
+    // one entry, the executor account. Its StateInit.data is a cp.new_data-
+    // shaped cell (magic + Maybe ^state_root + bits256 eth_state_root)
+    // holding a pre-populated CellEvmState with the 10 test EOAs.
+    //
+    // Layout matches what evm-compute-phase.cpp:118-141 produces every block
+    // so hydration reads exactly the same format whether the chain is at
+    // genesis or at block N.
+
+    CellEvmState cell_state;
     intx::uint256 amount{kSeedAmountTos};
     for (int i = 0; i < 18; ++i) amount *= intx::uint256{10};
-
     for (const auto& a : kTestAccounts) {
         evmc::address addr{};
         if (!parse_hex_address(a.address, addr)) continue;
-
         silkworm::Account acct{};
         acct.balance = amount;
-        // code_hash defaults to silkworm::kEmptyHash for EOAs (encoder handles it)
-        auto data_cell = encode_evm_account_data(acct, /*storage_root=*/{});
-
-        td::Bits256 addr_bits;
-        addr_bits.set_zero();
-        std::memcpy(addr_bits.data() + 12, addr.bytes, 20);
-
-        auto account_cell = build_evm_shard_account_cell(addr_bits, data_cell);
-        vm::CellBuilder vcb;
-        vcb.store_ref_bool(account_cell);
-        vcb.store_zeroes_bool(256 + 64);  // last_trans_hash + last_trans_lt
-        accounts.set_builder(addr_bits.bits(), 256, vcb);
+        cell_state.update_account(addr, std::nullopt, acct);
     }
+    auto state_root = cell_state.serialize_to_cell();
+
+    // Build cp.new_data-shaped cell: magic + has_root:1 + ^state_root + bits256:eth_root.
+    // eth_state_root at genesis is left as zero; the first tx's compute
+    // phase will recompute via IncrementalTrieCalculator. eth_state_root
+    // is RPC-facing only (eth_getProof); consensus uses the ^state_root
+    // cell hash via the surrounding Account cell hash.
+    vm::CellBuilder data_cb;
+    data_cb.store_long(static_cast<long long>(kEvmAccountMagic), kEvmMagicBits);
+    if (state_root.not_null()) {
+        data_cb.store_long(1, 1);
+        data_cb.store_ref(state_root);
+    } else {
+        data_cb.store_long(0, 1);
+    }
+    data_cb.store_zeroes(256);  // eth_state_root = 0 at genesis
+    auto cp_new_data_cell = data_cb.finalize();
+
+    // Wrap as executor ShardAccount and insert as sole entry.
+    td::Bits256 exec_addr_bits;
+    exec_addr_bits.bits().copy_from(td::ConstBitPtr{kEvmExecutorAddressBytes}, 256);
+    auto account_cell = build_evm_shard_account_cell(exec_addr_bits, cp_new_data_cell);
+
+    vm::AugmentedDictionary accounts(256, block::tlb::aug_ShardAccounts);
+    vm::CellBuilder vcb;
+    vcb.store_ref_bool(account_cell);
+    vcb.store_zeroes_bool(256 + 64);  // last_trans_hash + last_trans_lt
+    accounts.set_builder(exec_addr_bits.bits(), 256, vcb);
 
     vm::CellBuilder cb;
     accounts.append_dict_to_bool(cb);

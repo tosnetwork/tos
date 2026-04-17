@@ -56,4 +56,22 @@ inline bool is_evm_workchain(tos::WorkchainId wc) noexcept {
     return wc == kWorkchainId;
 }
 
+// ---------------------------------------------------------------------------
+// Single-executor account (see doc/evm-workchain-transaction-admission-and-single-executor.md)
+// ---------------------------------------------------------------------------
+
+/// Fixed wc=1 TOS outer account that carries the entire EVM world state.
+///
+/// Every EVM external message is routed to this address. Its `StateInit.data`
+/// is a cell in `cp.new_data` format (magic 0x45564D + Maybe ^CellEvmState
+/// root + bits256 eth_state_root). On every block the compute phase
+/// updates this cell to reflect the post-execution world state.
+///
+/// 256-bit address = all zeros except the low bit set to 1:
+///   0x0000000000000000000000000000000000000000000000000000000000000001
+constexpr unsigned char kEvmExecutorAddressBytes[32] = {
+    0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,
+    0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 1,
+};
+
 }  // namespace evm_workchain

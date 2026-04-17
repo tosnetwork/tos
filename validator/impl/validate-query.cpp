@@ -1116,27 +1116,19 @@ bool ValidateQuery::fetch_config_params() {
     compute_phase_cfg_.allow_external_unfreeze = compute_phase_cfg_.global_version >= 8;
     compute_phase_cfg_.disable_anycast = config_->get_global_version() >= 10;
 
-    // EVM workchain (wc=1): mirror dict so the validator's re-execution
-    // produces the same EVM-encoded ShardAccounts entries the collator did.
-    // Equality of this dict's root with the collator's is implicitly checked
-    // via the overall ShardState hash comparison.
+    // EVM workchain (wc=1): single-executor design. No mirror dict is
+    // allocated; the validator's re-execution runs the same compute
+    // dispatch and deterministically produces identical cp.new_data cell
+    // hashes, so the announced ShardState new_hash matches by construction.
     if (workchain() == evm_workchain::kWorkchainId) {
-      evm_state_mirror_dict_ = std::make_unique<vm::Dictionary>(256);
-      compute_phase_cfg_.evm_shard_accounts = evm_state_mirror_dict_.get();
       compute_phase_cfg_.evm_block_seqno = static_cast<td::uint64>(id_.id.seqno);
-      // Phase B: rehydrate g_evm_state from canonical ShardAccounts when
-      // re-validating after a process restart. Mirrors the collator-side
-      // hydration; consensus relies on both sides observing identical
-      // silkworm::State on every replay.
       if (id_.id.seqno > 1 && ps_.account_dict_) {
         auto hydrated = evm_workchain::hydrate_global_state_if_empty(*ps_.account_dict_);
         if (hydrated > 0) {
-          LOG(WARNING) << "evm-workchain: hydrated " << hydrated
-                       << " accounts from wc=1 ShardAccounts (validate-query restart recovery)";
+          LOG(WARNING) << "evm-workchain: hydrated world state from executor account (validate-query)";
         }
       }
     } else {
-      compute_phase_cfg_.evm_shard_accounts = nullptr;
       compute_phase_cfg_.evm_block_seqno = 0;
     }
   }

@@ -2262,31 +2262,25 @@ bool Collator::fetch_config_params() {
   // This one is checked in validate-query
   hard_defer_out_queue_size_limit_ = compute_phase_cfg_.size_limits.defer_out_queue_size_limit;
 
-  // EVM workchain (wc=1): allocate a mirror dict and expose it to
-  // ComputePhaseConfig. CellEvmState::sync_to_dict() will populate it after
-  // each EVM transaction so the cell-encoded EVM state is included in the
-  // collator's atomic block commit (see combine_account_transactions()).
+  // EVM workchain (wc=1): single-executor design. No mirror dict is
+  // allocated — every EVM tx produces exactly one AccountBlock (for the
+  // fixed executor account) so there is no need for a side channel to
+  // smuggle multi-account changes past validate-query.
+  //
+  // On a fresh process the g_evm_state singleton starts empty (modulo
+  // the legacy seed_test_accounts in init_evm_workchain). Rehydration
+  // reads the executor's StateInit.data as a cp.new_data cell and loads
+  // the ^state_root ref directly into CellEvmState. One dict lookup, no
+  // per-account walk.
   if (workchain() == evm_workchain::kWorkchainId) {
-    evm_state_mirror_dict_ = std::make_unique<vm::Dictionary>(256);
-    compute_phase_cfg_.evm_shard_accounts = evm_state_mirror_dict_.get();
     compute_phase_cfg_.evm_block_seqno = static_cast<td::uint64>(new_block_seqno);
-    // Phase B: rehydrate g_evm_state from canonical ShardAccounts on the
-    // first wc=1 block load after process start. Replaces the obsolete
-    // evm-state.boc sidecar reload. The trigger is intentionally narrow:
-    //   - g_evm_state is empty (i.e. fresh process), AND
-    //   - the loaded input account_dict already has entries (i.e. not a
-    //     fresh chain at block 1, where the bootstrap path will run instead).
-    // After hydration, every subsequent block's compute phase sees the
-    // correct silkworm::State for tx admission.
     if (account_dict) {
       auto hydrated = evm_workchain::hydrate_global_state_if_empty(*account_dict);
       if (hydrated > 0) {
-        LOG(WARNING) << "evm-workchain: hydrated " << hydrated
-                     << " accounts from wc=1 ShardAccounts (post-restart recovery)";
+        LOG(WARNING) << "evm-workchain: hydrated world state from executor account";
       }
     }
   } else {
-    compute_phase_cfg_.evm_shard_accounts = nullptr;
     compute_phase_cfg_.evm_block_seqno = 0;
   }
 
@@ -3190,55 +3184,9 @@ bool Collator::combine_account_transactions() {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // EVM workchain (wc=1): merge the cell-encoded EVM state into the canonical
-  // ShardAccounts dict.
-  //
-  // CellEvmState::sync_to_dict() has populated evm_state_mirror_dict_ with one
-  // entry per touched EVM account (key = padded 256-bit address, value = single
-  // ref to an EvmAccountData cell). For the canonical ShardAccounts container
-  // we wrap each EvmAccountData inside a TLB-valid Account cell and store
-  // (^Account + 320 zero bits for last_trans_hash + last_trans_lt) at the same
-  // key. SetMode::Replace overrides any stub the per-account loop above may
-  // have written for accounts that did go through impl_create_ordinary_transaction.
-  //
-  // Determinism: vm::Dictionary::check_for_each iterates in 256-bit-key order;
-  // build_evm_shard_account_cell is a pure function of (addr, evm_data_cell);
-  // the wrapped cell's hash is therefore identical across all validators.
-  if (workchain() == evm_workchain::kWorkchainId && evm_state_mirror_dict_) {
-    bool merge_ok = true;
-    evm_state_mirror_dict_->check_for_each(
-        [this, &merge_ok](Ref<vm::CellSlice> val, td::ConstBitPtr key, int n) -> bool {
-          if (n != 256 || val->size_refs() == 0) {
-            merge_ok = false;
-            return false;
-          }
-          auto evm_data_cell = val->prefetch_ref(0);
-          td::Bits256 addr_bits;
-          addr_bits.bits().copy_from(key, 256);
-          // Phase D.2: contract accounts get real bytecode in StateInit.code
-          // (looked up by code_hash from g_evm_state); EOAs get nullptr →
-          // build_evm_shard_account_cell falls back to the canonical marker.
-          auto code_cell = evm_workchain::lookup_and_encode_evm_bytecode(
-              addr_bits, evm_data_cell);
-          auto account_cell = evm_workchain::build_evm_shard_account_cell(
-              addr_bits, evm_data_cell, code_cell);
-          vm::CellBuilder vcb;
-          if (!vcb.store_ref_bool(account_cell) ||
-              !vcb.store_zeroes_bool(256 + 64)) {
-            merge_ok = false;
-            return false;
-          }
-          if (!account_dict->set_builder(key, 256, vcb)) {
-            merge_ok = false;
-            return false;
-          }
-          return true;
-        });
-    if (!merge_ok) {
-      return fatal_error("cannot merge EVM mirror dict into ShardAccounts");
-    }
-  }
+  // wc=1 post-loop merge deleted: single-executor design writes the sole
+  // executor AccountBlock via the normal per-account loop above. There is
+  // no mirror to merge.
 
   vm::CellBuilder cb;
   if (!(cb.append_cellslice_bool(std::move(dict).extract_root()) && cb.finalize_to(shard_account_blocks_))) {
