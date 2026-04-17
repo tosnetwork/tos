@@ -12,7 +12,7 @@ Version: v1.1 — 2026-04-17 (status snapshot)
 
 | Phase | State | Headline |
 |-------|-------|----------|
-| G.1 — State-test harness (GeneralStateTests) | 🚧 in progress | Runner + walker ✅ over **30 subdirs**, **1427/1462 pass (97.6%)**, **6 real consensus bugs** already found and fixed |
+| G.1 — State-test harness (GeneralStateTests) | 🚧 in progress | Runner + walker ✅ over **30 subdirs**, **1427/1458 pass (97.9%)**, **29 fail** to investigate, **4 upstream-skipped** (silkworm `kFailingTests`), **6 real consensus bugs** already found and fixed |
 | G.2 — execution-spec-tests (Pyspec) | 📋 planned | Same runner as G.1; extend to new fixture dir |
 | G.3 — Hive (`rpc-compat`) | 📋 planned | Dockerize validator, write hive client stub |
 | G.4 — Continuous differential CI | 🚧 runner ✅, CI 📋 | One-shot `differential_geth.py` lives; continuous CI not yet stood up |
@@ -104,7 +104,7 @@ All pass. Run in ~3 seconds on a laptop. Grouped by theme:
 | Concurrency | 2 | ✅ | `test_concurrent_eth_send_and_receipts`, `test_concurrent_filters` (shared_mutex semantics, bounded LRU cache under load) |
 | RPC surface | 1 | ✅ | `test_eth_rpc` — many methods in one test |
 | DoS regression (Phase E.5) | 1 | ✅ | `test_large_raw_tx_roundtrip` — 2 KB raw RLP fits in chunk chain, round-trip byte-equal |
-| State-test runner (Phase G.1) | 2 | ✅ | `test_state_test_runner_poc` (loads stChainId/chainId.json and runs it against CellEvmState end-to-end), `test_state_test_runner_walk_curated` (1427/1462 Cancun entries across 30 dirs — 97.6% pass) |
+| State-test runner (Phase G.1) | 2 | ✅ | `test_state_test_runner_poc` (loads stChainId/chainId.json and runs it against CellEvmState end-to-end), `test_state_test_runner_walk_curated` (1427/1458 Cancun entries across 30 dirs — 97.9% pass, 4 upstream-skip matching silkworm `kFailingTests`) |
 | Other | 10 | ✅ | transfer, create, call, signed tx, persistent state, config param, bn254, replay, event logs, ERC-20, bridge, subscriptions, nonce validation |
 
 Run:
@@ -156,7 +156,7 @@ All three must exit 0.
 | Suite | Purpose | Our status | Signal strength | Gate |
 |-------|---------|-----------|-----------------|------|
 | **ethereum/execution-apis** | JSON-RPC wire-format + response shape | ✅ Adopted. 207-test runner, 0 METHOD_NOT_FOUND, 0 crashes. 16 SHAPE_MISMATCHes — all false positives from chain-state divergence, individually classified in `doc/evm-workchain-known-divergences.md` Category A. | High for RPC compat | **Required for testnet** — ✅ met |
-| **ethereum/tests GeneralStateTests** | State-transition correctness per EIP | 🚧 Phase G.1 in progress. 14 Silkworm gold vectors always green + PoC runner + walker across **30 curated subdirs** → **1427/1462 pass (97.6%)**. **Four real consensus bugs found and fixed**: EIP-1559 base-fee-burn (`64bbd2ed`), EIP-3607 code-bearing-sender (`bb95edbd`), EIP-1559 pre-validation suite (`a71060c2`), EIP-2681 nonce-overflow (`474f45f6`). 33 remaining failures clustered around SELFDESTRUCT / EIP-6780 / deep-recursion — suspected upstream silkworm lag. See Phase G.1 below. | High — this is where consensus bugs hide | **Required for private mainnet** (at least 100% of Cancun + Shanghai subset) |
+| **ethereum/tests GeneralStateTests** | State-transition correctness per EIP | 🚧 Phase G.1 in progress. 14 Silkworm gold vectors always green + PoC runner + walker across **30 curated subdirs** → **1427/1458 pass (97.9%)**, **29 fail**, **4 upstream_skip** (mirror of silkworm's own `kFailingTests`, see `known-divergences.md` Category D). **Four real consensus bugs found and fixed**: EIP-1559 base-fee-burn (`64bbd2ed`), EIP-3607 code-bearing-sender (`bb95edbd`), EIP-1559 pre-validation suite (`a71060c2`), EIP-2681 nonce-overflow (`474f45f6`). Silkworm verified byte-identical to upstream HEAD (`aeb2302`, 2025-05-21). 29 remaining failures cluster around SELFDESTRUCT / deep-recursion / random-bytecode — most are silkworm-internal EVM edges, likely flush out with a BlockchainTests-format runner swap. See Phase G.1 below. | High — this is where consensus bugs hide | **Required for private mainnet** (at least 100% of Cancun + Shanghai subset) |
 | **ethereum/execution-spec-tests** (Pyspec) | Newer Python-generated fixtures covering Cancun/Prague | 📋 Not adopted. Same runner as GeneralStateTests — bundled into Phase G.2 scope | High for post-Cancun EIPs | **Required for public mainnet** |
 | **ethereum/hive** | Full-node simulator (P2P sync, mempool, JSON-RPC) in Docker | 📋 Not adopted. Phase G.3 | Medium — most hive tests assume devp2p which we don't speak; value is in the JSON-RPC and sync subsets | **Optional but recommended before public mainnet** |
 
@@ -186,7 +186,7 @@ Everything in Gate T, plus:
 
 | # | Requirement | How to verify | Blocker? | Status |
 |---|-------------|---------------|----------|--------|
-| P-1 | Cancun + Shanghai GeneralStateTests ≥ 95% pass | Phase G.1 runner reports counts | ✓ | 🚧 currently 97.6% on curated subset (1427/1462 across 30 dirs); need to expand walker to remaining dirs + investigate the 33 SELFDESTRUCT / deep-recursion failures |
+| P-1 | Cancun + Shanghai GeneralStateTests ≥ 95% pass | Phase G.1 runner reports counts | ✓ | 🚧 currently 97.9% on curated subset (1427/1458 across 30 dirs; 4 upstream-skip matching silkworm `kFailingTests`); need to expand walker to remaining dirs + investigate 29 SELFDESTRUCT / deep-recursion failures |
 | P-2 | execution-spec-tests Cancun fork ≥ 95% pass | Phase G.2 runner (shared harness) | ✓ | 📋 |
 | P-3 | No known DoS vectors from a 24-hour fuzz of `eth_sendRawTransaction` + `eth_call` with malformed inputs | Phase G.5 fuzz harness | ✓ | 📋 |
 | P-4 | 7-day soak on a dedicated testnet: zero validator restarts due to EVM bugs, zero state-hash divergences | Operational logs | ✓ | 📋 |
@@ -242,24 +242,34 @@ against `CellEvmState` byte-for-byte.
 - ✅ Walker expanded to **30 subdirectories** covering ~1,500 fixtures;
   resilience fix so silkworm asserts on intentionally-invalid txs
   become clean skips instead of aborting the binary.
-- **Current walker coverage**: **1427/1462 pass (97.6%)** across 30 dirs,
-  33 fail, 2 skip.
-- 🚧 Remaining 33 fixture failures split into two buckets:
-    * **Upstream / non-trivial** (25): depth-1024 recursion edges,
-      SELFDESTRUCT + EIP-6780 subtleties (`stExtCodeHash/*DeletedAccount*`),
-      REVERT-in-CREATE-in-init, CREATE2 collision, static-call bomb —
-      suspected upstream silkworm / evmone version lag; fixing
-      these likely requires a silkworm bump rather than an
-      adapter-layer patch.
-    * **Specific known clusters for investigation**:
-        - `stExtCodeHash/*DeletedAccount*` (6) — EIP-6780 SELFDESTRUCT
-          balance-transfer edge; behavior differs from upstream silkworm.
-        - `stSStoreTest/InitCollisionParis` (1) — CREATE into account
-          with pre-existing storage.
-        - `stCreate2` (4), `stRevertTest` (2), `stStaticCall` (9),
-          `stRandom` (9), `stCreateTest/CreateOOGafterMaxCodesize`,
-          `stBadOpcode/opc4ADiffPlaces` (BLOBBASEFEE / EIP-7516) —
-          each needs its own investigation.
+- **Current walker coverage**: **1427/1458 pass (97.9%)** across 30 dirs,
+  29 fail, 2 skip (silkworm asserts), **4 upstream_skip** (mirror of
+  silkworm's own `kFailingTests` — see `known-divergences.md`
+  Category D).
+- ✅ Silkworm is verified byte-identical to upstream HEAD
+  (`erigontech/silkworm` @ `aeb2302`, 2025-05-21). The 29 remaining
+  failures are therefore not snapshot-lag; they are genuine
+  silkworm-level gaps or our runner's GeneralStateTests-format
+  handling divergences from silkworm's BlockchainTests-format runner.
+- 🚧 Remaining 29 fixture failures cluster into themes for
+  follow-up investigation:
+    * `stExtCodeHash/*DeletedAccount*` (6) — SELFDESTRUCT + EIP-6780
+      balance-transfer semantics; silkworm passes these in its own
+      BlockchainTests runner but our raw-GeneralStateTests runner
+      shows diffs — worth checking whether silkworm's `created()`
+      tracking differs between the two entry points.
+    * `stStaticCall/*RecursiveBomb*`, `stCreate2/OnDepth102x`
+      (11 total) — 1024-depth call-stack + gas-forwarding edge
+      cases, inside silkworm::EVM.
+    * `stRandom/*` (9) — randomly-generated bytecode, various
+      opcode edge triggers.
+    * `stCreateTest/CreateOOGafterMaxCodesize` (1) — EIP-170 24KB
+      code-size gas accounting.
+    * `stBadOpcode/opc4ADiffPlaces` (1) — BLOBBASEFEE (EIP-7516)
+      opcode semantics; silkworm has the field but this specific
+      test may exercise a corner.
+    * `stRevertTest/LoopCallsDepthThenRevert` (1) — recursive depth
+      with REVERT.
 - 🚧 Expand walker to remaining ~20 subdirectories (still mostly
   fork-agnostic + Cancun). Target: ≥ 95% pass on a
   representative Cancun+Shanghai sample before Gate P.

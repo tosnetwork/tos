@@ -175,6 +175,51 @@ path hits both cases; our behavior is the more forgiving of the two.
 **Verdict:** accept our behavior. It matches the execution-apis
 spec description of the method.
 
+## Category D — Upstream silkworm known-failing tests
+
+These are `GeneralStateTests` fixtures that silkworm itself maintains
+on its `kFailingTests` allow-list in `cmd/test/ethereum.cpp`. Silkworm
+upstream acknowledges it does not pass them, and the Ethereum
+community hasn't reached consensus on the correct behavior.
+
+All of them live in the EIP-684 (clear-storage-on-CREATE-into-shell)
+vs. EIP-7610 (revert-CREATE-on-non-empty-storage) grey zone.
+Silkworm's comment (verbatim):
+
+> Silkworm follows the older EIP-684 and clears the created account
+> storage if not empty, evmone tries to follow the newer EIP-7610 to
+> revert the creation, however Silkworm is not able to provide enough
+> information to evmone to identify non-empty storage, in the result
+> the non-empty storage remains unchanged.
+>
+> **This scenario don't happen in real networks. The desired behavior
+> for implementations is still being discussed.**
+
+Our walker honors silkworm's allow-list via `kUpstreamFailingTests`
+in `test-evm-executor.cpp`. These fixtures are reported as
+`upstream_skip=N` rather than `fail=N`.
+
+| Fixture | Reason |
+|---------|--------|
+| `stCreate2/create2collisionStorage.json` | EIP-684 vs EIP-7610 |
+| `stCreate2/create2collisionStorageParis.json` | Same, Paris fork |
+| `stCreate2/RevertInCreateInInitCreate2.json` | REVERT inside CREATE init on non-empty storage |
+| `stCreate2/RevertInCreateInInitCreate2Paris.json` | Same, Paris fork |
+| `stRevertTest/RevertInCreateInInit.json` | REVERT inside CREATE init on non-empty storage |
+| `stRevertTest/RevertInCreateInInit_Paris.json` | Same, Paris fork |
+| `stSStoreTest/InitCollision.json` | CREATE into account with pre-existing storage |
+| `stSStoreTest/InitCollisionParis.json` | Same, Paris fork |
+
+**Verdict for all of the above:** not a bug. Wait for the Ethereum
+community to decide between EIP-684 and EIP-7610 (or land EIP-7610
+with proper `storage_is_empty()` plumbing). If we later get a
+silkworm update that supports EIP-7610 fully, remove them from
+`kUpstreamFailingTests` and expect them to pass.
+
+**Maintenance:** when silkworm's upstream `kFailingTests` list changes
+(add or remove entries), mirror the change into both
+`test-evm-executor.cpp::kUpstreamFailingTests` and this table.
+
 ## Category C — Previously-real bugs, now fixed
 
 Kept here for traceability so reviewers don't chase ghosts.
