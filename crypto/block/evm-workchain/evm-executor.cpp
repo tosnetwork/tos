@@ -42,13 +42,14 @@ static ExecutionResult run_evm(
     silkworm::EVM evm(block, state, config);
     auto rev = evm.revision();
 
-    // --- Transaction validation (Yellow Paper §6.2) ---
-    // Skip validation for read-only calls (commit_state=false)
+    // --- Transaction validation (Yellow Paper §6.2 + EIP-1559) ---
+    //
+    // All checks in this block are *pre-execution* — a failing check
+    // means the tx never enters the mempool / block, so no state
+    // mutation occurs (nonce stays, balance stays, gas is not burned).
+    // Skip entirely for read-only calls (eth_call / eth_estimateGas).
     if (commit_state) {
         // EIP-3607 (London+): reject txs from accounts that have code.
-        // An EOA with a code_hash != kEmptyHash is really a contract,
-        // and signed txs from such an address are almost always a sign
-        // of a private-key collision or a misconfigured library.
         if (rev >= EVMC_LONDON) {
             auto sender_code_hash = state.get_code_hash(sender);
             if (sender_code_hash != silkworm::kEmptyHash &&
@@ -59,9 +60,48 @@ static ExecutionResult run_evm(
             }
         }
 
+        // EIP-1559 (London+): max_priority_fee_per_gas must be
+        // ≤ max_fee_per_gas. A higher tip than max-cost is nonsensical;
+        // the Ethereum mempool rejects these.
+        if (rev >= EVMC_LONDON &&
+            txn.type != silkworm::TransactionType::kLegacy &&
+            txn.max_priority_fee_per_gas > txn.max_fee_per_gas) {
+            result.error_message = "priority fee exceeds max fee";
+            result.gas_used = 0;
+            return result;
+        }
+
+        // EIP-1559: max_fee_per_gas must cover the current base fee.
+        // Otherwise the tx would pay the miner less than the protocol
+        // minimum.
+        const intx::uint256 bf = block.header.base_fee_per_gas.value_or(0);
+        if (rev >= EVMC_LONDON && txn.max_fee_per_gas < bf) {
+            result.error_message = "max fee per gas below base fee";
+            result.gas_used = 0;
+            return result;
+        }
+
+        // Block-gas-limit check: txn.gas_limit must not exceed the
+        // block's gas allowance. Ethereum rejects these at the
+        // mempool; a miner that included one would produce an invalid
+        // block.
+        if (txn.gas_limit > block.header.gas_limit) {
+            result.error_message = "tx gas limit exceeds block gas limit";
+            result.gas_used = 0;
+            return result;
+        }
+
+        // Intrinsic gas check BEFORE state mutation. A tx with
+        // gas_limit < intrinsic_gas fails pre-validation with no
+        // balance charged and no nonce bump.
+        auto intrinsic_pre = silkworm::protocol::intrinsic_gas(txn, rev);
+        if (intrinsic_pre > static_cast<intx::uint128>(txn.gas_limit)) {
+            result.error_message = "intrinsic gas exceeds gas limit";
+            result.gas_used = 0;
+            return result;
+        }
+
         // Nonce check: sender nonce must match transaction nonce.
-        // Applies to both CALL and CREATE — Ethereum validates nonce for all tx types.
-        // (CREATE address derivation depends on correct nonce.)
         {
             uint64_t sender_nonce = state.get_nonce(sender);
             if (sender_nonce != txn.nonce) {
@@ -72,10 +112,17 @@ static ExecutionResult run_evm(
             }
         }
 
-        // Balance check: sender must have enough for value + gas
-        const intx::uint256 bf = block.header.base_fee_per_gas.value_or(0);
-        const intx::uint256 egp = txn.effective_gas_price(bf);
-        const intx::uint512 max_cost = intx::uint512{txn.gas_limit} * intx::uint512{egp} +
+        // EIP-1559 balance check: sender must be able to afford
+        //   gas_limit * max_fee_per_gas + value
+        // even if the effective_gas_price (after base-fee deduction)
+        // ends up lower. The Yellow-Paper / Berlin check used
+        // effective_gas_price; London+ tightened it to max_fee_per_gas
+        // as the upfront-budget ceiling.
+        const intx::uint256 max_gas_price = (rev >= EVMC_LONDON &&
+                                               txn.type != silkworm::TransactionType::kLegacy)
+            ? txn.max_fee_per_gas
+            : txn.effective_gas_price(bf);
+        const intx::uint512 max_cost = intx::uint512{txn.gas_limit} * intx::uint512{max_gas_price} +
                                         intx::uint512{txn.value};
         if (intx::uint512{state.get_balance(sender)} < max_cost) {
             result.error_message = "insufficient funds for gas + value";
@@ -84,9 +131,12 @@ static ExecutionResult run_evm(
         }
     }
 
-    // Compute intrinsic gas.
+    // Compute intrinsic gas (also consumed in the execution_gas math
+    // below; above we only used it as a pre-validation gate).
     auto intrinsic = silkworm::protocol::intrinsic_gas(txn, rev);
     if (intrinsic > static_cast<intx::uint128>(txn.gas_limit)) {
+        // Already rejected above when commit_state=true; this branch
+        // only runs for read-only calls where we mirror spec semantics.
         result.error_message = "intrinsic gas exceeds gas limit";
         result.gas_used = txn.gas_limit;
         return result;
