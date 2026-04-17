@@ -131,9 +131,15 @@ static ExecutionResult run_evm(
     uint64_t gas_remaining = txn.gas_limit - gas_used;
     state.add_to_balance(sender, intx::uint256{gas_remaining} * effective_gas_price);
 
-    // 7. Pay fee to beneficiary.
+    // 7. Pay the *priority fee* portion to the beneficiary. The
+    // base-fee portion is burned (EIP-1559): it's subtracted from the
+    // sender via the upfront_gas_cost above but never credited
+    // anywhere. Paying the full effective_gas_price to the beneficiary
+    // is a consensus bug — Ethereum state-tests (e.g. stSelfBalance/
+    // diffPlaces.json) catch it as a beneficiary balance mismatch.
+    const intx::uint256 priority_fee_per_gas = txn.priority_fee_per_gas(base_fee);
     state.add_to_balance(block.header.beneficiary,
-                         intx::uint256{gas_used} * effective_gas_price);
+                         intx::uint256{gas_used} * priority_fee_per_gas);
 
     // Collect logs.
     result.logs = state.logs();

@@ -3340,6 +3340,43 @@ static bool run_one_state_test_cancun(const std::string& path, bool& ran) {
     return all_ok;
 }
 
+// Silence per-test output during the bulk walker — only print a summary.
+static bool g_state_test_verbose = true;
+
+// v0 runner that walks every `*.json` under a directory and runs the
+// Cancun entry from each. Returns (pass_count, fail_count, skip_count).
+static void walk_state_tests(const std::string& dir,
+                              size_t& passed, size_t& failed, size_t& skipped,
+                              size_t limit = SIZE_MAX) {
+    passed = failed = skipped = 0;
+    // Enumerate via `find` since td::walk_path is overkill.
+    std::string cmd = "find '" + dir + "' -type f -name '*.json' | sort";
+    FILE* pp = popen(cmd.c_str(), "r");
+    if (!pp) { printf("  SKIP: cannot enumerate %s\n", dir.c_str()); return; }
+    char line[4096];
+    size_t total = 0;
+    while (fgets(line, sizeof(line), pp)) {
+        if (total >= limit) break;
+        std::string path = line;
+        if (!path.empty() && path.back() == '\n') path.pop_back();
+        if (path.empty()) continue;
+        ++total;
+        bool ran = false;
+        bool verbose_saved = g_state_test_verbose;
+        g_state_test_verbose = false;
+        bool ok = run_one_state_test_cancun(path, ran);
+        g_state_test_verbose = verbose_saved;
+        if (!ran) { ++skipped; continue; }
+        if (ok) ++passed; else { ++failed;
+            // Print the failure so we can iterate on it.
+            auto rel = path.find("GeneralStateTests/");
+            printf("    FAIL: %s\n",
+                path.substr(rel == std::string::npos ? 0 : rel).c_str());
+        }
+    }
+    pclose(pp);
+}
+
 static void test_state_test_runner_poc() {
     printf("=== test_state_test_runner_poc (Phase G.1: run one GeneralStateTest fixture) ===\n");
     const char* rel = "test/conformance/ethereum-tests/GeneralStateTests/stChainId/chainId.json";
@@ -3359,6 +3396,37 @@ static void test_state_test_runner_poc() {
         return;
     }
     printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// Walks a small, curated set of GeneralStateTests subdirectories to
+// demonstrate the runner scales. This intentionally doesn't walk the
+// full corpus (2,642 files) because many pre-Cancun fixtures need
+// earlier fork semantics the runner doesn't yet honor — those are a
+// Phase G.1 next step.
+static void test_state_test_runner_walk_curated() {
+    printf("=== test_state_test_runner_walk_curated (Phase G.1: walk curated GeneralStateTests dirs) ===\n");
+    const std::string root = "/home/tomi/evm-workchain/test/conformance/ethereum-tests/GeneralStateTests";
+    if (td::stat(td::CSlice(root)).is_error()) {
+        printf("  SKIP (ethereum-tests corpus not on disk)\n\n");
+        return;
+    }
+    // Pick directories that are (a) Cancun-era or fork-agnostic,
+    // (b) touch only opcodes the v0 runner supports.
+    const std::vector<std::string> dirs = {
+        "stChainId",
+        "stSelfBalance",
+    };
+    size_t total_p = 0, total_f = 0, total_s = 0;
+    for (const auto& d : dirs) {
+        size_t p, f, s;
+        walk_state_tests(root + "/" + d, p, f, s);
+        printf("  %-20s  pass=%zu  fail=%zu  skip=%zu\n", d.c_str(), p, f, s);
+        total_p += p; total_f += f; total_s += s;
+    }
+    printf("  TOTAL                 pass=%zu  fail=%zu  skip=%zu\n", total_p, total_f, total_s);
+    // Accept pass > 0 AND fail == 0 as PASSED (we want green; skips are
+    // expected because many fixtures have no Cancun section yet).
+    printf("  %s\n\n", (total_f == 0 && total_p > 0) ? "PASSED" : "FAILED");
 }
 
 int main() {
@@ -3407,6 +3475,7 @@ int main() {
     test_bytecode_marker_distinguished();
     test_large_raw_tx_roundtrip();
     test_state_test_runner_poc();
+    test_state_test_runner_walk_curated();
 
     // Scan stdout for FAILED to determine exit code
     // (Individual tests print PASSED or FAILED)
