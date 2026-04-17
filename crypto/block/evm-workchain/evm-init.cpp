@@ -239,6 +239,36 @@ size_t populate_state_from_shard_accounts(
     return count;
 }
 
+td::Ref<vm::Cell> build_evm_zerostate_accounts_cell() {
+    vm::AugmentedDictionary accounts(256, block::tlb::aug_ShardAccounts);
+    intx::uint256 amount{kSeedAmountTos};
+    for (int i = 0; i < 18; ++i) amount *= intx::uint256{10};
+
+    for (const auto& a : kTestAccounts) {
+        evmc::address addr{};
+        if (!parse_hex_address(a.address, addr)) continue;
+
+        silkworm::Account acct{};
+        acct.balance = amount;
+        // code_hash defaults to silkworm::kEmptyHash for EOAs (encoder handles it)
+        auto data_cell = encode_evm_account_data(acct, /*storage_root=*/{});
+
+        td::Bits256 addr_bits;
+        addr_bits.set_zero();
+        std::memcpy(addr_bits.data() + 12, addr.bytes, 20);
+
+        auto account_cell = build_evm_shard_account_cell(addr_bits, data_cell);
+        vm::CellBuilder vcb;
+        vcb.store_ref_bool(account_cell);
+        vcb.store_zeroes_bool(256 + 64);  // last_trans_hash + last_trans_lt
+        accounts.set_builder(addr_bits.bits(), 256, vcb);
+    }
+
+    vm::CellBuilder cb;
+    accounts.append_dict_to_bool(cb);
+    return cb.finalize();
+}
+
 size_t hydrate_global_state_if_empty(vm::AugmentedDictionary& shard_accounts) {
     if (!g_evm_state) return 0;
     // One-shot per process. After init_evm_workchain calls

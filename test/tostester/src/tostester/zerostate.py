@@ -105,9 +105,23 @@ Bhashu dup =: basestate0_fhash 256 u>B "basestate0.fhash" B>file
 hashu dup =: basestate0_rhash 256 u>B "basestate0.rhash" B>file
 basestate0_rhash basestate0_fhash now {monitor_min_split} {split} dup 0 add-std-workchain-v2
 
-// Initial EVM workchain (wc=1) state — empty ShardState; EVM accounts created
-// at runtime via eth_sendRawTransaction routed through ext-message-pool.
-1 mkemptyShardState
+// EVM workchain (wc=1) zerostate: ShardState whose accounts:^ShardAccounts ref
+// is pre-populated with the 10 Hardhat/Anvil test EOAs (10000 TOS each). The
+// accounts cell is built deterministically by the C++ word
+// `evm-zerostate-accounts-cell` registered in create-state.cpp; this glue
+// re-builds the ShardState shell exactly like `mkemptyShardState` except it
+// substitutes that cell for the otherwise-empty accounts ref.
+//
+// ( accounts_ref wc -- shard_state_cell )
+{{ <b x{{9023afe2}} s, globalid@ 32 i, 0 8 i,
+  swap 32 i, 1 63 << 64 u, 0 64 i, now 32 u, 0 64 i, -1 32 i,
+  <b 0 67 u, b> ref, 0 1 u,
+  swap ref,
+  <b 0 128 10 + 1+ 1+ u, b> ref, 0 1 u, b>
+  dup isShardState? not abort"invalid ShardState created"
+}} : mkShardStateWithAccounts
+
+evm-zerostate-accounts-cell 1 mkShardStateWithAccounts
 dup dup 31 boc+>B dup "evmstate1.boc" B>file
 Bhashu dup =: evmstate1_fhash 256 u>B "evmstate1.fhash" B>file
 hashu dup =: evmstate1_rhash 256 u>B "evmstate1.rhash" B>file

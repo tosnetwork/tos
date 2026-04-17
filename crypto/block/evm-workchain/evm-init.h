@@ -94,4 +94,16 @@ size_t populate_state_from_shard_accounts(
 /// validator library's include surface).
 size_t hydrate_global_state_if_empty(vm::AugmentedDictionary& shard_accounts);
 
+/// Build a ShardAccounts dict cell containing the 10 pre-funded test EOAs.
+///
+/// Used at zerostate generation (Phase C): the wc=1 zerostate's
+/// `accounts:^ShardAccounts` field is set to this cell, so every chain
+/// generated from this commit has the test accounts present from genesis.
+/// Returns a cell suitable to be stored as the `^ShardAccounts` ref of a
+/// ShardState whose accounts dict contains 10 EVM EOAs each holding 10000 TOS.
+///
+/// Deterministic: same inputs (the constexpr kTestAccounts list and the
+/// EvmAccountData encoder) → byte-identical cell hash on every binary.
+td::Ref<vm::Cell> build_evm_zerostate_accounts_cell();
+
 }  // namespace evm_workchain

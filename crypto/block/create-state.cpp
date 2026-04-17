@@ -58,6 +58,7 @@
 #include "block-auto.h"
 #include "block-parse.h"
 #include "block.h"
+#include "evm-workchain/evm-init.h"  // build_evm_zerostate_accounts_cell (Phase C)
 #include "git.h"
 #include "mc-config.h"
 
@@ -571,6 +572,20 @@ void interpret_create_state(vm::Stack& stack) {
   stack.push(std::move(state));
 }
 
+// Phase C: returns the wc=1 ShardAccounts cell pre-populated with the 10
+// pre-funded EOAs. Used by zerostate.py's Fift template to seed the wc=1
+// zerostate accounts ref (replacing the empty 11-bit cell mkemptyShardState
+// would otherwise produce). Pure function — same content on every binary.
+//
+// Stack: ( -- accounts_cell )
+void interpret_evm_zerostate_accounts_cell(vm::Stack& stack) {
+  Ref<vm::Cell> cell = evm_workchain::build_evm_zerostate_accounts_cell();
+  if (cell.is_null()) {
+    throw fift::IntError{"could not build EVM zerostate accounts cell"};
+  }
+  stack.push_cell(std::move(cell));
+}
+
 void interpret_get_config_dict(vm::Stack& stack) {
   Ref<vm::Cell> value = config_dict.get_root_cell();
   if (value.is_null()) {
@@ -709,6 +724,8 @@ void init_words_custom(fift::Dictionary& d) {
   d.def_stack_word("register_smc ", interpret_register_smartcontract);
   d.def_stack_word("set_config_smc ", interpret_set_config_smartcontract);
   d.def_stack_word("create_state ", interpret_create_state);
+  // Phase C — EVM workchain zerostate seeding
+  d.def_stack_word("evm-zerostate-accounts-cell ", interpret_evm_zerostate_accounts_cell);
   d.def_stack_word("isShardState? ", interpret_is_shard_state);
   d.def_stack_word("isWorkchainDescr? ", interpret_is_workchain_descr);
   d.def_stack_word("CC+? ", interpret_add_extra_currencies);
