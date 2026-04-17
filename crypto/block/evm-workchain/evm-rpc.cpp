@@ -532,11 +532,26 @@ static std::string extract_json_string_value(const std::string& json, const std:
     return json.substr(start + 1, end - start - 1);
 }
 
+// Hex-char validator used by the numeric parsers below. Returns true
+// iff `c` is a valid hex digit (case-insensitive).
+static bool is_hex_char(char c) {
+    return (c >= '0' && c <= '9') ||
+           (c >= 'a' && c <= 'f') ||
+           (c >= 'A' && c <= 'F');
+}
+
 static uint64_t parse_hex_uint64(const std::string& hex_str) {
     if (hex_str.empty()) return 0;
     size_t start = 0;
     if (hex_str.size() >= 2 && hex_str[0] == '0' && (hex_str[1] == 'x' || hex_str[1] == 'X'))
         start = 2;
+    // Validate all remaining chars are hex. strtoull happily returns 0 on
+    // leading junk but consumes partial input on trailing junk — we'd
+    // rather detect malformed input cleanly so upstream parsers can
+    // default to 0 (caller-specific semantic).
+    for (size_t i = start; i < hex_str.size(); ++i) {
+        if (!is_hex_char(hex_str[i])) return 0;
+    }
     return std::strtoull(hex_str.c_str() + start, nullptr, 16);
 }
 
@@ -546,9 +561,23 @@ static intx::uint256 parse_hex_uint256(const std::string& hex_str) {
     if (hex.size() >= 2 && hex[0] == '0' && (hex[1] == 'x' || hex[1] == 'X'))
         hex = hex.substr(2);
     if (hex.empty()) return 0;
-    // Pad to 64 chars for intx parsing
+    // Reject invalid hex before handing to intx::from_string, which
+    // throws `std::invalid_argument` on any non-hex character. An
+    // uncaught throw here would propagate through the RPC dispatch
+    // loop and terminate the whole validator — i.e. a remote-reachable
+    // DoS (found by Phase G.5 fuzz, e.g. value="0xZZ" crashed the
+    // node in ~1s). Reject → return 0 → caller sees a zero-value
+    // param and the request proceeds harmlessly.
+    if (hex.size() > 64) return 0;  // uint256 is at most 64 hex digits
+    for (char c : hex) {
+        if (!is_hex_char(c)) return 0;
+    }
     while (hex.size() < 64) hex = "0" + hex;
-    return intx::from_string<intx::uint256>("0x" + hex);
+    try {
+        return intx::from_string<intx::uint256>("0x" + hex);
+    } catch (...) {
+        return 0;  // defense-in-depth if intx adds new throw paths
+    }
 }
 
 // Parse "address" param: accepts single string or array of strings.
