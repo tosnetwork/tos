@@ -1123,6 +1123,7 @@ bool ValidateQuery::fetch_config_params() {
     if (workchain() == evm_workchain::kWorkchainId) {
       evm_state_mirror_dict_ = std::make_unique<vm::Dictionary>(256);
       compute_phase_cfg_.evm_shard_accounts = evm_state_mirror_dict_.get();
+      compute_phase_cfg_.evm_block_seqno = static_cast<td::uint64>(id_.id.seqno);
       // Bootstrap on the first wc=1 block — same deterministic seed as collator.
       // After re-execution, the post-state ShardAccounts entries (built via
       // build_evm_shard_account_cell) must match what the collator published.
@@ -1131,6 +1132,7 @@ bool ValidateQuery::fetch_config_params() {
       }
     } else {
       compute_phase_cfg_.evm_shard_accounts = nullptr;
+      compute_phase_cfg_.evm_block_seqno = 0;
     }
   }
   {

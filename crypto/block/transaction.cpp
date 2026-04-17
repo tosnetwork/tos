@@ -1895,8 +1895,8 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     vm::CellSlice body_cs{*in_msg_body};
     bool ok = evm_workchain_dispatch::invoke_evm_compute(
         cp, body_cs, cp.gas_limit,
-        static_cast<td::uint64>(account.block_lt),       // block_seqno
-        static_cast<td::uint64>(account.now_),            // timestamp
+        cfg.evm_block_seqno,                              // block.number — wc=1 shard seqno
+        static_cast<td::uint64>(account.now_),            // timestamp (block gen_utime)
         cfg.block_rand_seed.as_array().data(),            // rand_seed
         cfg.evm_shard_accounts);                            // collator's ShardAccounts dict (nullable)
     if (!ok) {

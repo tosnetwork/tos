@@ -2269,6 +2269,7 @@ bool Collator::fetch_config_params() {
   if (workchain() == evm_workchain::kWorkchainId) {
     evm_state_mirror_dict_ = std::make_unique<vm::Dictionary>(256);
     compute_phase_cfg_.evm_shard_accounts = evm_state_mirror_dict_.get();
+    compute_phase_cfg_.evm_block_seqno = static_cast<td::uint64>(new_block_seqno);
     // First wc=1 block: deterministically pre-fund the test EOAs so they
     // appear as canonical ShardAccount entries from block 1 onward. The
     // post-loop merge below will wrap each entry into a ShardAccount cell.
@@ -2278,6 +2279,7 @@ bool Collator::fetch_config_params() {
     }
   } else {
     compute_phase_cfg_.evm_shard_accounts = nullptr;
+    compute_phase_cfg_.evm_block_seqno = 0;
   }
 
   return true;

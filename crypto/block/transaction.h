@@ -145,6 +145,12 @@ struct ComputePhaseConfig {
   // Null in all non-EVM contexts (basechain, masterchain, validator-side).
   vm::Dictionary* evm_shard_accounts = nullptr;
 
+  // EVM workchain (wc=1): the wc=1 shard block sequence number being
+  // produced/validated. Used as `block.number` inside silkworm so EVM
+  // contracts and receipts see a monotonic, deterministic value identical
+  // across collator and validate-query passes. Zero for non-EVM contexts.
+  td::uint64 evm_block_seqno = 0;
+
   ComputePhaseConfig() : gas_price(0), gas_limit(0), special_gas_limit(0), gas_credit(0) {
     compute_threshold();
   }
