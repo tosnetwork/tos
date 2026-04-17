@@ -25,6 +25,7 @@ set(EVM_WORKCHAIN_SRC
   evm-incremental-trie.cpp
   evm-cell-codec.cpp
   evm-cell-state.cpp
+  evm-access-list-tracer.cpp
 )
 
 add_library(evm_workchain STATIC ${EVM_WORKCHAIN_SRC})
