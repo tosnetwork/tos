@@ -1810,6 +1810,9 @@ static void test_gold_delegatecall() {
 
     auto caller_addr = hex_to_addr("0x8e4d1ea201b908ab5e1f5a1c3f9f1b4f6c1e9cf1");
     auto callee_addr = hex_to_addr("0x3589d05a1ec4af9f65b0e5554e645707775ee43c");
+    // Separate EOA to originate the tx. Post-EIP-3607 we cannot use
+    // caller_addr as the tx sender because caller_addr has code.
+    auto eoa_addr = hex_to_addr("0x1111111111111111111111111111111111111111");
 
     // Callee: ADDRESS, PUSH1 0, SSTORE = 30600055
     Bytes callee_code = hex_to_bytes("0x30600055");
@@ -1818,7 +1821,7 @@ static void test_gold_delegatecall() {
     Bytes caller_code = hex_to_bytes("0x6000808080803561eeeef4");
 
     EvmState state;
-    state.seed_account(caller_addr, intx::uint256{1'000'000'000'000'000'000u}, 0);
+    state.seed_account(eoa_addr, intx::uint256{1'000'000'000'000'000'000u}, 0);
 
     // Pre-deploy both contracts
     auto deploy_code = [&](const evmc::address& addr, const Bytes& code) {
@@ -1834,19 +1837,19 @@ static void test_gold_delegatecall() {
     deploy_code(caller_addr, caller_code);
     deploy_code(callee_addr, callee_code);
 
-    // Call: caller calls itself with callee_addr as calldata
-    // The caller will DELEGATECALL to callee, which stores ADDRESS
+    // Call: EOA → caller (contract) with callee_addr as calldata.
+    // The caller will DELEGATECALL to callee, which stores ADDRESS.
     evmc::bytes32 callee_as_bytes32{};
     std::memcpy(callee_as_bytes32.bytes + 12, callee_addr.bytes, 20);
 
     Transaction txn;
     txn.type = TransactionType::kLegacy;
     txn.chain_id = kEvmChainId;
-    txn.nonce = 1;  // account nonce is 1 (set by deploy_code)
+    txn.nonce = 0;
     txn.gas_limit = 1'000'000;
     txn.to = caller_addr;
     txn.data = Bytes(callee_as_bytes32.bytes, callee_as_bytes32.bytes + 32);
-    txn.set_sender(caller_addr);
+    txn.set_sender(eoa_addr);
 
     uint8_t rs[32] = {};
     auto blk = make_evm_block(1'639'560, 1700000000, rs);
@@ -3399,8 +3402,8 @@ static void test_state_test_runner_poc() {
     printf("=== test_state_test_runner_poc (Phase G.1: run one GeneralStateTest fixture) ===\n");
     const char* rel = "test/conformance/ethereum-tests/GeneralStateTests/stChainId/chainId.json";
     std::string path;
-    for (const char* p : {rel, "../test/conformance/ethereum-tests/GeneralStateTests/stChainId/chainId.json",
-                          "/home/tomi/evm-workchain/test/conformance/ethereum-tests/GeneralStateTests/stChainId/chainId.json"}) {
+    std::string abs_path = std::string("/home/tomi/evm-workchain/") + rel;
+    for (const char* p : {rel, abs_path.c_str()}) {
         if (td::stat(td::CSlice(p)).is_ok()) { path = p; break; }
     }
     if (path.empty()) {

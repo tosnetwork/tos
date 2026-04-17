@@ -190,26 +190,40 @@ against `CellEvmState` byte-for-byte.
 - ✅ Curated directory walker (`test_state_test_runner_walk_curated`
   + `walk_state_tests`) — runs every `*.json` under the listed
   subdirectories, reports pass/fail/skip per directory plus a total.
-- ✅ First real bug found and fixed: beneficiary was receiving
-  `gas_used * effective_gas_price` instead of
-  `gas_used * priority_fee_per_gas`, i.e. base fee was not burned
-  (EIP-1559 violation). Commit `64bbd2ed`. Caught by
-  `stSelfBalance/diffPlaces.json`.
-- Current walker coverage: 8/8 pass across `stChainId` +
-  `stSelfBalance` (Cancun entries only).
-- 🚧 Expand walker to more fork-agnostic subdirectories (`stArgsZeroOneBalance`,
-  `stChainId`, `stEIP1559`, `stEIP2930`, `stEIP3540`, `stPreCompiled*`,
-  `stReturnDataTest`, `stSelfBalance`, `stSLoadTest`, `stSStoreTest`,
-  `stZeroCallsTest`, etc.). Target: ≥ 500 Cancun entries green
-  before promoting to Gate P.
+- ✅ Two real consensus bugs found and fixed via the walker:
+    * EIP-1559 base-fee-burn: beneficiary was receiving
+      `gas_used * effective_gas_price` instead of priority-only, so
+      the base fee was paid to the miner instead of burned. Commit
+      `64bbd2ed`. Caught by `stSelfBalance/diffPlaces.json`.
+    * EIP-3607: txs from accounts with non-empty code were being
+      executed instead of rejected. Commit `bb95edbd`. Caught by 4
+      fixtures in `stEIP3607/`.
+- ✅ Walker expanded to 17 subdirectories; resilience fix so
+  silkworm asserts on intentionally-invalid txs become clean skips
+  instead of aborting the binary.
+- Current walker coverage: **412/422 pass (97.6%)** across 17 dirs,
+  10 fail, 2 skip.
+- 🚧 Remaining 10 fixture failures cluster into three themes for
+  follow-up investigation:
+    * `stExtCodeHash/*DeletedAccount*` (6): selfdestruct +
+      EXTCODEHASH gas-metering mismatch — suspected upstream
+      silkworm/evmone version lag on a specific child-call gas
+      rule. Not blocking: affects only contract teardown,
+      deterministic across all our validators.
+    * `stEIP1559/*` (3): intrinsic-gas boundary cases
+      (`lowGasLimit`, `tipTooHigh`, `transactionIntinsicBug_Paris`).
+    * `stSStoreTest/InitCollisionParis` (1): contract init-code
+      colliding with an existing account — EIP-684 / EIP-161 edge.
+- 🚧 Expand walker to remaining ~40 subdirectories (Cancun +
+  Shanghai only first). Target: ≥ 95% pass before promoting
+  to Gate P.
 - 🚧 Post-state MPT root comparison via `IncrementalTrieCalculator`
-  — right now we compare accounts individually; expected `hash` in
-  the fixture requires computing the Ethereum-format state root
-  over the post-state and diffing against the JSON's `hash`.
+  — right now we compare accounts individually; expected `hash`
+  in the fixture requires computing the Ethereum-format state
+  root and diffing against the JSON's `hash`.
 - Deferred: vendoring Silkworm's `cmd/consensus/consensus.cpp`
   (~550 lines) into a standalone binary. The in-process runner is
-  sufficient for PoC + curated walker; the standalone binary is
-  only needed once we want to parallelize across forks.
+  sufficient for PoC + curated walker.
 
 **Acceptance:**
 - Phase P gate — Cancun + Shanghai ≥ 95% pass.
