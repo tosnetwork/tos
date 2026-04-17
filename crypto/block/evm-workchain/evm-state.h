@@ -61,6 +61,7 @@ struct StoredTransaction {
     intx::uint256 gas_price;
     uint64_t block_number{0};
     uint32_t tx_index{0};
+    silkworm::Bytes raw_rlp;  // original signed RLP (for eth_getRawTransactionByHash)
 };
 
 /// Stored block header for eth_getBlockByNumber / eth_getBlockByHash.

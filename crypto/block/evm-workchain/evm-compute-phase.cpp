@@ -90,6 +90,7 @@ bool run_evm_compute_phase(
     stored_tx.gas_price = decoded.txn.max_fee_per_gas;
     stored_tx.block_number = block_seqno;
     stored_tx.tx_index = 0;
+    stored_tx.raw_rlp = silkworm::Bytes{(*payload_opt).begin(), (*payload_opt).end()};
     state.store_transaction(tx_hash, std::move(stored_tx));
 
     if (!exec_result.logs.empty()) {

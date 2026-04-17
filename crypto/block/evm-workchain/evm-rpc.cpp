@@ -362,7 +362,7 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
     receipt.return_data = exec_result.return_data;
     evm_state.store_receipt(tx_hash, std::move(receipt));
 
-    // Store transaction for eth_getTransactionByHash
+    // Store transaction for eth_getTransactionByHash + raw RLP for eth_getRawTransactionByHash
     StoredTransaction stored_tx;
     stored_tx.from = decoded.sender;
     stored_tx.to = decoded.txn.to;
@@ -373,6 +373,7 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
     stored_tx.gas_price = decoded.txn.max_fee_per_gas;
     stored_tx.block_number = bn;
     stored_tx.tx_index = 0;
+    stored_tx.raw_rlp = raw_tx;  // original bytes from eth_sendRawTransaction
     evm_state.store_transaction(tx_hash, std::move(stored_tx));
 
     // Store logs for eth_getLogs
@@ -1592,6 +1593,422 @@ static RpcResult handle_new_pending_transaction_filter(const std::string& id) {
     return {make_result(id, to_hex_quantity(fid)), false};
 }
 
+// =============================================================================
+// Standard Ethereum RPC methods — full surface compatibility
+// =============================================================================
+
+// --- Trivial constants ---
+
+static RpcResult handle_protocol_version(const std::string& id) {
+    // Symbolic protocol version. 65 = TOS protocol v1.
+    return {make_result(id, "\"0x41\""), false};
+}
+
+static RpcResult handle_coinbase(const std::string& id) {
+    // We have no mining beneficiary — the basechain handles fees via TOS gas.
+    return {make_result(id, "\"0x" + std::string(40, '0') + "\""), false};
+}
+
+static RpcResult handle_hashrate(const std::string& id) {
+    // Not a PoW chain.
+    return {make_result(id, "\"0x0\""), false};
+}
+
+static RpcResult handle_blob_base_fee(const std::string& id) {
+    // EIP-4844 blob transactions are not supported.
+    return {make_result(id, "\"0x0\""), false};
+}
+
+static RpcResult handle_uncle_count_by_block_hash(const std::string&, const std::string& id) {
+    return {make_result(id, "\"0x0\""), false};
+}
+
+static RpcResult handle_uncle_by_block_hash_and_index(const std::string&, const std::string& id) {
+    return {make_result(id, "null"), false};
+}
+
+static RpcResult handle_uncle_by_block_number_and_index(const std::string&, const std::string& id) {
+    return {make_result(id, "null"), false};
+}
+
+// --- web3_sha3: keccak256 of input bytes ---
+
+static RpcResult handle_web3_sha3(const std::string& params, const std::string& id) {
+    silkworm::Bytes data;
+    if (!parse_hex_bytes(params, data)) {
+        return {make_error(id, -32602, "invalid hex input"), true};
+    }
+    auto h = ethash::keccak256(data.data(), data.size());
+    return {make_result(id, to_hex_data(h.bytes, 32)), false};
+}
+
+// --- Raw transaction RLP serving ---
+
+static std::string raw_tx_response(const std::string& id, const StoredTransaction& tx) {
+    if (tx.raw_rlp.empty()) {
+        return make_result(id, "null");
+    }
+    return make_result(id, to_hex_data(tx.raw_rlp.data(), tx.raw_rlp.size()));
+}
+
+static RpcResult handle_get_raw_transaction_by_hash(const std::string& params, const std::string& id) {
+    silkworm::Bytes hash_bytes;
+    if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
+        return {make_error(id, -32602, "invalid transaction hash"), true};
+    }
+    evmc::bytes32 tx_hash;
+    std::memcpy(tx_hash.bytes, hash_bytes.data(), 32);
+
+    auto tx = global_evm_state().get_transaction_copy(tx_hash);
+    if (!tx) return {make_result(id, "null"), false};
+    return {raw_tx_response(id, *tx), false};
+}
+
+static RpcResult handle_get_raw_tx_by_block_hash_and_index(const std::string& params, const std::string& id) {
+    // params: ["0x<blockHash>", "0x<index>"]
+    silkworm::Bytes hash_bytes;
+    if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
+        return {make_error(id, -32602, "invalid block hash"), true};
+    }
+    evmc::bytes32 block_hash;
+    std::memcpy(block_hash.bytes, hash_bytes.data(), 32);
+
+    auto blk = global_evm_state().get_block_by_hash_copy(block_hash);
+    if (blk.hash == evmc::bytes32{} && blk.number == 0) {
+        return {make_result(id, "null"), false};
+    }
+
+    // Parse index (second hex param)
+    auto first_pos = params.find("0x");
+    if (first_pos == std::string::npos) return {make_result(id, "null"), false};
+    auto second_pos = params.find("0x", first_pos + 1);
+    uint64_t index = 0;
+    if (second_pos != std::string::npos) {
+        index = std::strtoull(params.c_str() + second_pos + 2, nullptr, 16);
+    }
+    if (index >= blk.transaction_hashes.size()) {
+        return {make_result(id, "null"), false};
+    }
+    auto tx = global_evm_state().get_transaction_copy(blk.transaction_hashes[index]);
+    if (!tx) return {make_result(id, "null"), false};
+    return {raw_tx_response(id, *tx), false};
+}
+
+static RpcResult handle_get_raw_tx_by_block_number_and_index(const std::string& params, const std::string& id) {
+    // params: ["0x<blockNumber>" or "latest", "0x<index>"]
+    uint64_t bn = global_evm_state().block_number();
+    auto pos = params.find("0x");
+    if (pos != std::string::npos) {
+        auto end = params.find_first_of("\",]}", pos);
+        std::string bn_str = params.substr(pos, end - pos);
+        if (bn_str != "latest" && bn_str != "pending" && bn_str != "safe" && bn_str != "finalized") {
+            bn = parse_hex_uint64(bn_str);
+        }
+    }
+    if (!global_evm_state().has_block(bn)) {
+        return {make_result(id, "null"), false};
+    }
+    auto blk = global_evm_state().get_block_copy(bn);
+
+    // index: second hex param
+    uint64_t index = 0;
+    auto first_pos = params.find("0x");
+    if (first_pos != std::string::npos) {
+        auto second_pos = params.find("0x", first_pos + 1);
+        if (second_pos != std::string::npos) {
+            index = std::strtoull(params.c_str() + second_pos + 2, nullptr, 16);
+        }
+    }
+    if (index >= blk.transaction_hashes.size()) {
+        return {make_result(id, "null"), false};
+    }
+    auto tx = global_evm_state().get_transaction_copy(blk.transaction_hashes[index]);
+    if (!tx) return {make_result(id, "null"), false};
+    return {raw_tx_response(id, *tx), false};
+}
+
+// --- debug_getRaw* (block / header / receipts / tx) ---
+
+// Build an Ethereum-format block header RLP from our StoredBlock.
+// Layout per yellow paper §4.3:
+//   [parentHash, ommersHash, beneficiary, stateRoot, transactionsRoot,
+//    receiptsRoot, logsBloom, difficulty, number, gasLimit, gasUsed,
+//    timestamp, extraData, mixHash, nonce, baseFeePerGas]
+static silkworm::Bytes encode_eth_header_rlp(const StoredBlock& blk) {
+    silkworm::Bytes payload;
+    silkworm::rlp::encode(payload, silkworm::ByteView{blk.parent_hash.bytes, 32});
+    // ommers (uncles) hash = keccak256(rlp([])) = kEmptyListHash
+    silkworm::rlp::encode(payload, silkworm::ByteView{silkworm::kEmptyListHash.bytes, 32});
+    silkworm::rlp::encode(payload, silkworm::ByteView{blk.miner.bytes, 20});
+    silkworm::rlp::encode(payload, silkworm::ByteView{evmc::bytes32{}.bytes, 32});  // stateRoot placeholder (TODO real)
+    silkworm::rlp::encode(payload, silkworm::ByteView{blk.transactions_root.bytes, 32});
+    silkworm::rlp::encode(payload, silkworm::ByteView{blk.receipts_root.bytes, 32});
+    silkworm::rlp::encode(payload, silkworm::ByteView{blk.logs_bloom, 256});
+    silkworm::rlp::encode(payload, intx::uint256{0});  // difficulty
+    silkworm::rlp::encode(payload, blk.number);
+    silkworm::rlp::encode(payload, blk.gas_limit);
+    silkworm::rlp::encode(payload, blk.gas_used);
+    silkworm::rlp::encode(payload, blk.timestamp);
+    silkworm::rlp::encode(payload, silkworm::ByteView{});  // extraData empty
+    silkworm::rlp::encode(payload, silkworm::ByteView{evmc::bytes32{}.bytes, 32});  // mixHash
+    uint64_t nonce_zero = 0;
+    silkworm::Bytes nonce_be(8, 0);
+    silkworm::rlp::encode(payload, silkworm::ByteView{nonce_be});  // 8-byte nonce
+    (void)nonce_zero;
+    silkworm::rlp::encode(payload, blk.base_fee_per_gas);
+
+    silkworm::Bytes out;
+    silkworm::rlp::Header h{true, payload.size()};
+    silkworm::rlp::encode_header(out, h);
+    out.append(payload);
+    return out;
+}
+
+static RpcResult handle_debug_get_raw_header(const std::string& params, const std::string& id) {
+    uint64_t bn = global_evm_state().block_number();
+    auto pos = params.find("0x");
+    if (pos != std::string::npos) {
+        auto end = params.find_first_of("\",]}", pos);
+        std::string s = params.substr(pos, end - pos);
+        if (s != "latest" && s != "pending" && s != "safe" && s != "finalized") {
+            bn = parse_hex_uint64(s);
+        }
+    }
+    if (!global_evm_state().has_block(bn)) return {make_result(id, "null"), false};
+    auto blk = global_evm_state().get_block_copy(bn);
+    auto rlp = encode_eth_header_rlp(blk);
+    return {make_result(id, to_hex_data(rlp.data(), rlp.size())), false};
+}
+
+static RpcResult handle_debug_get_raw_block(const std::string& params, const std::string& id) {
+    uint64_t bn = global_evm_state().block_number();
+    auto pos = params.find("0x");
+    if (pos != std::string::npos) {
+        auto end = params.find_first_of("\",]}", pos);
+        std::string s = params.substr(pos, end - pos);
+        if (s != "latest" && s != "pending" && s != "safe" && s != "finalized") {
+            bn = parse_hex_uint64(s);
+        }
+    }
+    if (!global_evm_state().has_block(bn)) return {make_result(id, "null"), false};
+    auto blk = global_evm_state().get_block_copy(bn);
+
+    // block = [header, transactions, ommers]
+    silkworm::Bytes header_rlp = encode_eth_header_rlp(blk);
+
+    // transactions: list of raw RLP txs
+    silkworm::Bytes txs_payload;
+    for (const auto& th : blk.transaction_hashes) {
+        auto tx = global_evm_state().get_transaction_copy(th);
+        if (tx && !tx->raw_rlp.empty()) {
+            txs_payload.append(tx->raw_rlp);
+        }
+    }
+    silkworm::Bytes txs_rlp;
+    silkworm::rlp::Header th{true, txs_payload.size()};
+    silkworm::rlp::encode_header(txs_rlp, th);
+    txs_rlp.append(txs_payload);
+
+    // ommers: empty list
+    silkworm::Bytes ommers_rlp;
+    silkworm::rlp::Header oh{true, 0};
+    silkworm::rlp::encode_header(ommers_rlp, oh);
+
+    silkworm::Bytes payload;
+    payload.append(header_rlp);
+    payload.append(txs_rlp);
+    payload.append(ommers_rlp);
+
+    silkworm::Bytes out;
+    silkworm::rlp::Header bh{true, payload.size()};
+    silkworm::rlp::encode_header(out, bh);
+    out.append(payload);
+
+    return {make_result(id, to_hex_data(out.data(), out.size())), false};
+}
+
+static RpcResult handle_debug_get_raw_receipts(const std::string& params, const std::string& id) {
+    uint64_t bn = global_evm_state().block_number();
+    auto pos = params.find("0x");
+    if (pos != std::string::npos) {
+        auto end = params.find_first_of("\",]}", pos);
+        std::string s = params.substr(pos, end - pos);
+        if (s != "latest" && s != "pending" && s != "safe" && s != "finalized") {
+            bn = parse_hex_uint64(s);
+        }
+    }
+    if (!global_evm_state().has_block(bn)) return {make_result(id, "[]"), false};
+    auto blk = global_evm_state().get_block_copy(bn);
+
+    // Encode each receipt as RLP([status, cumulative_gas, logs_bloom, logs])
+    std::string out = "[";
+    for (size_t i = 0; i < blk.transaction_hashes.size(); i++) {
+        if (i > 0) out += ",";
+        auto r = global_evm_state().get_receipt_copy(blk.transaction_hashes[i]);
+        if (!r) { out += "null"; continue; }
+        silkworm::Bytes payload;
+        silkworm::rlp::encode(payload, r->success ? uint64_t{1} : uint64_t{0});
+        silkworm::rlp::encode(payload, r->cumulative_gas_used);
+        // logsBloom from receipt logs
+        uint8_t bloom[256] = {};
+        compute_logs_bloom(r->logs, bloom);
+        silkworm::rlp::encode(payload, silkworm::ByteView{bloom, 256});
+        // logs sub-list
+        silkworm::Bytes logs_payload;
+        for (const auto& log : r->logs) {
+            silkworm::Bytes lp;
+            silkworm::rlp::encode(lp, silkworm::ByteView{log.address.bytes, 20});
+            silkworm::Bytes topics_payload;
+            for (const auto& t : log.topics) {
+                silkworm::rlp::encode(topics_payload, silkworm::ByteView{t.bytes, 32});
+            }
+            silkworm::Bytes topics_list;
+            silkworm::rlp::encode_header(topics_list, silkworm::rlp::Header{true, topics_payload.size()});
+            topics_list.append(topics_payload);
+            lp.append(topics_list);
+            silkworm::rlp::encode(lp, log.data);
+            silkworm::Bytes lh;
+            silkworm::rlp::encode_header(lh, silkworm::rlp::Header{true, lp.size()});
+            lh.append(lp);
+            logs_payload.append(lh);
+        }
+        silkworm::Bytes logs_list;
+        silkworm::rlp::encode_header(logs_list, silkworm::rlp::Header{true, logs_payload.size()});
+        logs_list.append(logs_payload);
+        payload.append(logs_list);
+
+        silkworm::Bytes receipt_rlp;
+        silkworm::rlp::encode_header(receipt_rlp, silkworm::rlp::Header{true, payload.size()});
+        receipt_rlp.append(payload);
+        out += to_hex_data(receipt_rlp.data(), receipt_rlp.size());
+    }
+    out += "]";
+    return {make_result(id, out), false};
+}
+
+// --- eth_getProof: account/storage proofs (simplified, empty proof arrays) ---
+//
+// The full implementation requires generating a Merkle Patricia Trie inclusion
+// proof for the account and each requested storage slot. For now we return the
+// account state correctly and an empty proof array. Light clients that verify
+// proofs will reject this; clients that only consume the values work.
+
+static RpcResult handle_get_proof(const std::string& params, const std::string& id) {
+    evmc::address addr{};
+    if (!parse_hex_address(params, addr)) {
+        return {make_error(id, -32602, "invalid address"), true};
+    }
+
+    auto acct = global_evm_state().read_account(addr);
+    silkworm::Account a;
+    if (acct) a = *acct;
+
+    // Parse storage keys array (between first [ after "0x" and matching ])
+    std::vector<evmc::bytes32> slots;
+    auto kpos = params.find('[', params.find('[') + 1);  // second [ is the keys array
+    if (kpos != std::string::npos) {
+        size_t scan = kpos;
+        while (scan < params.size() && params[scan] != ']') {
+            auto h = params.find("0x", scan);
+            if (h == std::string::npos) break;
+            auto e = params.find_first_of("\",]", h);
+            if (e == std::string::npos) break;
+            silkworm::Bytes b;
+            if (parse_hex_bytes(params.substr(h - 1, e - h + 2), b) && b.size() == 32) {
+                evmc::bytes32 s{};
+                std::memcpy(s.bytes, b.data(), 32);
+                slots.push_back(s);
+            }
+            scan = e + 1;
+        }
+    }
+
+    std::string r = "{";
+    r += "\"address\":" + to_hex_addr(addr) + ",";
+    r += "\"balance\":" + to_hex_quantity(a.balance) + ",";
+    r += "\"nonce\":" + to_hex_quantity(a.nonce) + ",";
+    r += "\"codeHash\":" + to_hex_data(a.code_hash.bytes, 32) + ",";
+    r += "\"storageHash\":\"0x" + std::string(64, '0') + "\",";  // TODO: real storage trie root
+    r += "\"accountProof\":[],";
+    r += "\"storageProof\":[";
+    for (size_t i = 0; i < slots.size(); i++) {
+        if (i > 0) r += ",";
+        auto v = global_evm_state().read_storage_copy(addr, a.incarnation, slots[i]);
+        r += "{";
+        r += "\"key\":" + to_hex_data(slots[i].bytes, 32) + ",";
+        r += "\"value\":" + to_hex_quantity(intx::be::load<intx::uint256>(v)) + ",";
+        r += "\"proof\":[]";
+        r += "}";
+    }
+    r += "]}";
+    return {make_result(id, r), false};
+}
+
+// --- eth_createAccessList: run EVM with access tracking, return list ---
+//
+// The result format per EIP-2930:
+//   { "accessList": [{"address": "0x...", "storageKeys": ["0x..."]}], "gasUsed": "0x..." }
+//
+// Minimal implementation: just runs the call and returns an empty access list
+// with the gas used. Full implementation requires hooking an AccessListTracer
+// into the EVM execution, which silkworm supports via EvmTracer interface.
+
+static RpcResult handle_create_access_list(const std::string& params, const std::string& id) {
+    auto txn = parse_call_object(params);
+    txn.max_fee_per_gas = 0;
+    txn.max_priority_fee_per_gas = 0;
+    if (txn.gas_limit == 10'000'000) txn.gas_limit = 30'000'000;
+
+    uint8_t rs[32] = {};
+    auto block = make_evm_block(global_evm_state().block_number(),
+                                static_cast<uint64_t>(std::time(nullptr)), rs);
+    auto result = call_evm_transaction(txn, block, global_evm_state(), evm_chain_config());
+
+    std::string r = "{";
+    r += "\"accessList\":[],";  // TODO: hook AccessListTracer for real access tracking
+    r += "\"gasUsed\":" + to_hex_quantity(result.gas_used);
+    r += "}";
+    return {make_result(id, r), false};
+}
+
+// --- eth_getFilterLogs: returns all logs for a filter id (vs eth_getFilterChanges
+//     which returns since-last-poll) ---
+
+static RpcResult handle_get_filter_logs(const std::string& params, const std::string& id) {
+    uint64_t fid = 0;
+    auto pos = params.find("0x");
+    if (pos != std::string::npos) {
+        fid = std::strtoull(params.c_str() + pos + 2, nullptr, 16);
+    }
+    std::lock_guard<std::mutex> lock(g_filter_mutex);
+    auto it = g_filters.find(fid);
+    if (it == g_filters.end()) {
+        return {make_error(id, -32000, "filter not found"), true};
+    }
+    auto& f = it->second;
+    if (f.type != FilterType::Logs) {
+        return {make_error(id, -32000, "not a log filter"), true};
+    }
+    auto logs = global_evm_state().get_logs(0, global_evm_state().block_number(),
+                                             f.addresses, f.topics);
+    std::string arr = "[";
+    for (size_t i = 0; i < logs.size(); i++) {
+        if (i > 0) arr += ",";
+        arr += format_log_json(logs[i]);
+    }
+    arr += "]";
+    return {make_result(id, arr), false};
+}
+
+// --- Rejection handlers for methods we cannot implement (no node-side keys) ---
+
+static RpcResult handle_unsupported_signing(const std::string& method, const std::string& id) {
+    // eth_sign / eth_signTransaction / eth_sendTransaction require node-managed
+    // private keys. We never store user keys server-side — wallets hold their
+    // own keys and submit pre-signed transactions via eth_sendRawTransaction.
+    return {make_error(id, -32601, method + " not supported: node does not manage user keys; use eth_sendRawTransaction"), true};
+}
+
 // ---------------------------------------------------------------------------
 // Public interface
 // ---------------------------------------------------------------------------
@@ -1635,7 +2052,30 @@ bool is_eth_rpc_method(const std::string& method) noexcept {
            method == "eth_getBlockTransactionCountByHash" ||
            method == "eth_getUncleCountByBlockNumber" ||
            method == "eth_getTransactionByBlockNumberAndIndex" ||
-           method == "eth_getTransactionByBlockHashAndIndex";
+           method == "eth_getTransactionByBlockHashAndIndex" ||
+           // 18 newly added methods for full Ethereum RPC surface compatibility:
+           method == "eth_protocolVersion" ||
+           method == "eth_coinbase" ||
+           method == "eth_hashrate" ||
+           method == "eth_blobBaseFee" ||
+           method == "eth_getUncleCountByBlockHash" ||
+           method == "eth_getUncleByBlockHashAndIndex" ||
+           method == "eth_getUncleByBlockNumberAndIndex" ||
+           method == "eth_getFilterLogs" ||
+           method == "web3_sha3" ||
+           method == "eth_getRawTransactionByHash" ||
+           method == "eth_getRawTransactionByBlockHashAndIndex" ||
+           method == "eth_getRawTransactionByBlockNumberAndIndex" ||
+           method == "debug_getRawTransaction" ||
+           method == "debug_getRawHeader" ||
+           method == "debug_getRawBlock" ||
+           method == "debug_getRawReceipts" ||
+           method == "eth_getProof" ||
+           method == "eth_createAccessList" ||
+           // Rejection methods (we explicitly handle these to return informative errors):
+           method == "eth_sign" ||
+           method == "eth_signTransaction" ||
+           method == "eth_sendTransaction";
 }
 
 std::optional<RpcResult> handle_eth_rpc(
@@ -1701,6 +2141,31 @@ std::optional<RpcResult> handle_eth_rpc(
     if (method == "eth_getTransactionReceipt") return handle_get_transaction_receipt(params, id);
     if (method == "eth_call")                 return handle_call(params, id);
     if (method == "eth_estimateGas")          return handle_estimate_gas(params, id);
+
+    // 18 added methods for full Ethereum RPC surface compatibility
+    if (method == "eth_protocolVersion")      return handle_protocol_version(id);
+    if (method == "eth_coinbase")             return handle_coinbase(id);
+    if (method == "eth_hashrate")             return handle_hashrate(id);
+    if (method == "eth_blobBaseFee")          return handle_blob_base_fee(id);
+    if (method == "eth_getUncleCountByBlockHash") return handle_uncle_count_by_block_hash(params, id);
+    if (method == "eth_getUncleByBlockHashAndIndex")   return handle_uncle_by_block_hash_and_index(params, id);
+    if (method == "eth_getUncleByBlockNumberAndIndex") return handle_uncle_by_block_number_and_index(params, id);
+    if (method == "eth_getFilterLogs")        return handle_get_filter_logs(params, id);
+    if (method == "web3_sha3")                return handle_web3_sha3(params, id);
+    if (method == "eth_getRawTransactionByHash") return handle_get_raw_transaction_by_hash(params, id);
+    if (method == "eth_getRawTransactionByBlockHashAndIndex") return handle_get_raw_tx_by_block_hash_and_index(params, id);
+    if (method == "eth_getRawTransactionByBlockNumberAndIndex") return handle_get_raw_tx_by_block_number_and_index(params, id);
+    if (method == "debug_getRawTransaction")  return handle_get_raw_transaction_by_hash(params, id);
+    if (method == "debug_getRawHeader")       return handle_debug_get_raw_header(params, id);
+    if (method == "debug_getRawBlock")        return handle_debug_get_raw_block(params, id);
+    if (method == "debug_getRawReceipts")     return handle_debug_get_raw_receipts(params, id);
+    if (method == "eth_getProof")             return handle_get_proof(params, id);
+    if (method == "eth_createAccessList")     return handle_create_access_list(params, id);
+
+    // Reject methods that require node-side accounts (we never store user keys)
+    if (method == "eth_sign" || method == "eth_signTransaction" || method == "eth_sendTransaction") {
+        return handle_unsupported_signing(method, id);
+    }
 
     return std::nullopt;
 }

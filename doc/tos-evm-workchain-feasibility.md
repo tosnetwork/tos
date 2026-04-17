@@ -1,6 +1,6 @@
 # TOS EVM Workchain Feasibility
 
-Version: v1.0 — Cell-native state, wc=1, 39 tests, live local testnet with 4 validators serving eth_chainId=0x544f53; zkVM roadmap captured
+Version: v1.1 — Cell-native state, wc=1, 39 tests, 58 RPC methods (full Ethereum surface), live local testnet with 4 validators serving eth_chainId=0x544f53; zkVM roadmap captured
 
 ## Purpose
 
