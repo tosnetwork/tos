@@ -2285,13 +2285,6 @@ bool Collator::fetch_config_params() {
                      << " accounts from wc=1 ShardAccounts (post-restart recovery)";
       }
     }
-    // First wc=1 block: deterministically pre-fund the test EOAs so they
-    // appear as canonical ShardAccount entries from block 1 onward. The
-    // post-loop merge below will wrap each entry into a ShardAccount cell.
-    // Idempotent: only fires when new_block_seqno == 1.
-    if (new_block_seqno == 1) {
-      evm_workchain::copy_test_accounts_into_dict(*evm_state_mirror_dict_);
-    }
   } else {
     compute_phase_cfg_.evm_shard_accounts = nullptr;
     compute_phase_cfg_.evm_block_seqno = 0;
@@ -3223,8 +3216,13 @@ bool Collator::combine_account_transactions() {
           auto evm_data_cell = val->prefetch_ref(0);
           td::Bits256 addr_bits;
           addr_bits.bits().copy_from(key, 256);
-          auto account_cell = evm_workchain::build_evm_shard_account_cell(
+          // Phase D.2: contract accounts get real bytecode in StateInit.code
+          // (looked up by code_hash from g_evm_state); EOAs get nullptr →
+          // build_evm_shard_account_cell falls back to the canonical marker.
+          auto code_cell = evm_workchain::lookup_and_encode_evm_bytecode(
               addr_bits, evm_data_cell);
+          auto account_cell = evm_workchain::build_evm_shard_account_cell(
+              addr_bits, evm_data_cell, code_cell);
           vm::CellBuilder vcb;
           if (!vcb.store_ref_bool(account_cell) ||
               !vcb.store_zeroes_bool(256 + 64)) {

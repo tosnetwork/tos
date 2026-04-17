@@ -93,4 +93,73 @@ void bytes32_to_key(const evmc::bytes32& v, unsigned char out[32]) {
     std::memcpy(out, v.bytes, 32);
 }
 
+// ---------------------------------------------------------------------------
+// EVM bytecode cell chain (Phase D.2)
+// ---------------------------------------------------------------------------
+
+td::Ref<vm::Cell> encode_evm_bytecode(td::Slice code) {
+    if (code.empty()) return {};
+
+    // Build chunks tail-first so the head is the cell whose `next` ref
+    // points to the second chunk, etc. Walking the chain at decode time
+    // reads in the same order chunks were produced — bytecode reads
+    // left-to-right.
+    td::Ref<vm::Cell> next;
+    size_t total = code.size();
+    // Number of chunks (ceiling division).
+    size_t n_chunks = (total + kEvmBytecodeChunkBytes - 1) / kEvmBytecodeChunkBytes;
+    for (size_t i = n_chunks; i-- > 0;) {
+        size_t start = i * kEvmBytecodeChunkBytes;
+        size_t end = std::min(start + kEvmBytecodeChunkBytes, total);
+        size_t len = end - start;
+
+        vm::CellBuilder cb;
+        cb.store_bytes(code.data() + start, len);
+        if (next.not_null()) {
+            cb.store_long(1, 1);
+            cb.store_ref(next);
+        } else {
+            cb.store_long(0, 1);
+        }
+        next = cb.finalize();
+    }
+    return next;
+}
+
+std::string decode_evm_bytecode(td::Ref<vm::Cell> root) {
+    if (root.is_null()) return {};
+
+    std::string out;
+    auto cell = root;
+    // Bound the walk so a malicious cell tree cannot DoS via cycles: 24 KB
+    // EIP-170 max + headroom = ~256 chunks at 127 bytes/chunk.
+    constexpr size_t kMaxChunks = 1024;
+    for (size_t i = 0; i < kMaxChunks; ++i) {
+        if (cell.is_null()) break;
+        auto cs = vm::load_cell_slice(cell);
+        unsigned bits = cs.size();
+        if (bits < 1 || (bits - 1) % 8 != 0) {
+            // Last bit is the Maybe tag; data must be byte-aligned.
+            return {};
+        }
+        unsigned data_bytes = (bits - 1) / 8;
+        if (data_bytes > 0) {
+            size_t off = out.size();
+            out.resize(off + data_bytes);
+            cs.fetch_bytes(reinterpret_cast<unsigned char*>(out.data() + off), data_bytes);
+        } else {
+            // Skip zero data bytes (just the Maybe tag in this cell).
+            cs.advance(0);
+        }
+        unsigned has_next = static_cast<unsigned>(cs.fetch_ulong(1));
+        if (has_next == 0) {
+            return out;
+        }
+        if (cs.size_refs() == 0) return {};
+        cell = cs.prefetch_ref(0);
+    }
+    // Cycle / oversize — reject defensively.
+    return {};
+}
+
 }  // namespace evm_workchain

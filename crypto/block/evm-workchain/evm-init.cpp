@@ -136,31 +136,6 @@ void seed_test_accounts(EvmState& state) {
 
 }  // anonymous namespace
 
-void copy_test_accounts_into_dict(vm::Dictionary& target) {
-    // 10,000 TOS = 10000 × 10^18 wei (matches seed_test_accounts).
-    intx::uint256 amount{kSeedAmountTos};
-    for (int i = 0; i < 18; ++i) amount *= intx::uint256{10};
-
-    for (const auto& a : kTestAccounts) {
-        evmc::address addr{};
-        if (!parse_hex_address(a.address, addr)) continue;
-
-        silkworm::Account acct{};
-        acct.nonce = 0;
-        acct.balance = amount;
-        // code_hash defaults to silkworm::kEmptyHash (no code) — fine for EOAs
-
-        auto data_cell = encode_evm_account_data(acct, /*storage_root=*/{});
-
-        unsigned char key[32];
-        address_to_key(addr, key);
-
-        vm::CellBuilder val_cb;
-        val_cb.store_ref(data_cell);
-        target.set_builder(td::ConstBitPtr{key}, 256, val_cb);
-    }
-}
-
 size_t populate_state_from_shard_accounts(
     EvmState& target,
     vm::AugmentedDictionary& shard_accounts) {
@@ -222,6 +197,25 @@ size_t populate_state_from_shard_accounts(
             key_bits.bits().copy_from(key, 256);
             std::memcpy(addr.bytes, key_bits.data() + 12, 20);
 
+            // Phase D.2: for contract accounts, recover the bytecode bytes
+            // from the StateInit.code chain so RPCs (eth_getCode, eth_call)
+            // work post-restart without waiting for the contract to be
+            // re-executed. Skip the canonical EVM marker cell (its hash is
+            // fixed and unique).
+            std::string recovered_bytecode;
+            if (decoded.code_hash != silkworm::kEmptyHash &&
+                si_rec.code.not_null() && si_rec.code->have(1) &&
+                si_rec.code->prefetch_ulong(1) == 1) {
+                auto code_slice = si_rec.code;
+                code_slice.write().advance(1);
+                td::Ref<vm::Cell> code_cell;
+                if (code_slice->prefetch_ref_to(code_cell) && code_cell.not_null() &&
+                    code_cell->get_hash() !=
+                        evm_workchain_dispatch::get_evm_code_marker_cell()->get_hash()) {
+                    recovered_bytecode = decode_evm_bytecode(code_cell);
+                }
+            }
+
             // Push to target via update_account (storage_root handled separately
             // because silkworm::State::update_account doesn't carry it).
             {
@@ -231,6 +225,13 @@ size_t populate_state_from_shard_accounts(
                     if (auto* cs = dynamic_cast<CellEvmState*>(&target.state())) {
                         cs->set_storage_root_for_hydration(addr, storage_root);
                     }
+                }
+                if (!recovered_bytecode.empty()) {
+                    target.state().update_account_code(
+                        addr, /*incarnation=*/0, decoded.code_hash,
+                        silkworm::ByteView{
+                            reinterpret_cast<const uint8_t*>(recovered_bytecode.data()),
+                            recovered_bytecode.size()});
                 }
             }
             ++count;
@@ -267,6 +268,29 @@ td::Ref<vm::Cell> build_evm_zerostate_accounts_cell() {
     vm::CellBuilder cb;
     accounts.append_dict_to_bool(cb);
     return cb.finalize();
+}
+
+td::Ref<vm::Cell> lookup_and_encode_evm_bytecode(
+    const td::Bits256& addr_bits,
+    const td::Ref<vm::Cell>& evm_account_data_cell) {
+    if (!g_evm_state || evm_account_data_cell.is_null()) return {};
+
+    silkworm::Account decoded;
+    td::Ref<vm::Cell> storage_root;
+    if (!decode_evm_account_data(evm_account_data_cell, decoded, storage_root)) {
+        return {};
+    }
+    if (decoded.code_hash == silkworm::kEmptyHash) return {};  // EOA
+
+    // Extract the 20-byte EVM address from the lower bytes of the dict key.
+    evmc::address addr{};
+    std::memcpy(addr.bytes, addr_bits.data() + 12, 20);
+
+    auto bytecode = g_evm_state->read_code_copy(addr, decoded.code_hash);
+    if (bytecode.empty()) return {};
+
+    return encode_evm_bytecode(td::Slice{
+        reinterpret_cast<const char*>(bytecode.data()), bytecode.size()});
 }
 
 size_t hydrate_global_state_if_empty(vm::AugmentedDictionary& shard_accounts) {

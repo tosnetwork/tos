@@ -314,15 +314,20 @@ void CellEvmState::set_storage_root(const evmc::address& address,
 // pure function of these.
 td::Ref<vm::Cell> build_evm_shard_account_cell(
     const td::Bits256& addr_bits,
-    const td::Ref<vm::Cell>& evm_account_data_cell) {
+    const td::Ref<vm::Cell>& evm_account_data_cell,
+    const td::Ref<vm::Cell>& code_cell) {
     using td::make_refint;
 
-    // 1. StateInit = split_depth:nothing special:nothing code:Just ^marker
+    // 1. StateInit = split_depth:nothing special:nothing
+    //                code:Just ^(real bytecode if contract, else marker)
     //                data:Just ^evm_data library:nothing
+    auto code_to_store = code_cell.not_null()
+                             ? code_cell
+                             : evm_workchain_dispatch::get_evm_code_marker_cell();
     vm::CellBuilder si_cb;
     si_cb.store_long_bool(0, 1);  // split_depth: nothing
     si_cb.store_long_bool(0, 1);  // special: nothing
-    si_cb.store_maybe_ref(evm_workchain_dispatch::get_evm_code_marker_cell());
+    si_cb.store_maybe_ref(code_to_store);
     si_cb.store_maybe_ref(evm_account_data_cell);
     si_cb.store_maybe_ref({});    // library: nothing
     auto state_init_cell = si_cb.finalize();

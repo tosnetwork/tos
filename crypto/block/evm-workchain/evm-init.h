@@ -33,19 +33,6 @@ EvmState& global_evm_state();
 /// Access the global incremental trie calculator.
 IncrementalTrieCalculator& global_trie_calculator();
 
-/// Populate `target` with one entry per pre-funded test account.
-///
-/// Each entry has key = padded 256-bit EVM address and value = a single ref
-/// to a freshly-encoded `EvmAccountData` cell (nonce=0, balance=10000 TOS,
-/// empty code/storage). The encoding is identical to what the silkworm-side
-/// `seed_test_accounts` produces — so the host-chain ShardAccounts mirror
-/// and the EVM in-RAM state stay in sync at first-block bootstrap time.
-///
-/// Used by collator and validate-query on the very first wc=1 block. The
-/// iteration order is the source-order of `kTestAccounts`, identical across
-/// all validator binaries → consensus-deterministic.
-void copy_test_accounts_into_dict(vm::Dictionary& target);
-
 /// Build the inner Account cell for a wc=1 EVM account.
 ///
 /// The returned cell is a TLB-valid `Account` whose `StateInit.data` references
@@ -62,6 +49,27 @@ void copy_test_accounts_into_dict(vm::Dictionary& target);
 /// (not evm-cell-state.h) so callers in tos_validator can use it without
 /// pulling in silkworm headers.
 td::Ref<vm::Cell> build_evm_shard_account_cell(
+    const td::Bits256& addr_bits,
+    const td::Ref<vm::Cell>& evm_account_data_cell,
+    const td::Ref<vm::Cell>& code_cell = {});
+
+/// Look up the bytecode for an EVM contract account in `g_evm_state.code_`
+/// (populated either by a recent CREATE/CREATE2 or by Phase B's hydration
+/// from `StateInit.code`) and return it encoded as an EvmBytecodeChunk
+/// chain. Returns null cell if the account is an EOA (no code), if no
+/// bytecode is registered for the given code_hash, or if `evm_data_cell`
+/// is malformed.
+///
+/// Used by the collator and validate-query post-loop merge to embed real
+/// bytecode in `StateInit.code` for contract ShardAccount entries. EOAs
+/// pass through unchanged (`build_evm_shard_account_cell` then uses the
+/// canonical 0x45 marker).
+///
+/// The `addr_bits` is the 256-bit ShardAccounts dict key (12 zero pad +
+/// 20-byte EVM address). The function extracts the EVM address and queries
+/// `g_evm_state` directly — keeps callers in tos_validator from needing
+/// a silkworm header dependency.
+td::Ref<vm::Cell> lookup_and_encode_evm_bytecode(
     const td::Bits256& addr_bits,
     const td::Ref<vm::Cell>& evm_account_data_cell);
 

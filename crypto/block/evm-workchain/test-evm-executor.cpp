@@ -31,6 +31,7 @@
 #include "evm-rpc.h"
 #include "evm-cell-state.h"
 #include "evm-cell-codec.h"
+#include "block/evm-workchain-dispatch.h"
 #include "vm/boc.h"
 #include "evm-config-param.h"
 #include "evm-bridge.h"
@@ -3023,6 +3024,40 @@ void test_sync_to_dict() {
     printf("  %s\n\n", pass ? "PASSED" : "FAILED");
 }
 
+void test_bytecode_roundtrip() {
+    printf("=== test_bytecode_roundtrip (encode/decode_evm_bytecode chain) ===\n");
+    // 1024 bytes of pseudo-random bytecode (deterministic seed for test repeatability).
+    std::string code(1024, '\0');
+    for (size_t i = 0; i < code.size(); ++i) {
+        code[i] = static_cast<char>((i * 131 + 7) & 0xFF);
+    }
+    auto cell = encode_evm_bytecode(td::Slice{code});
+    bool nonnull = cell.not_null();
+    printf("  encode produced cell: %s\n", nonnull ? "yes" : "NO!");
+
+    auto recovered = decode_evm_bytecode(cell);
+    bool len_ok = recovered.size() == code.size();
+    bool bytes_ok = nonnull && len_ok && std::memcmp(recovered.data(), code.data(), code.size()) == 0;
+    printf("  decoded length: %zu (expect %zu)\n", recovered.size(), code.size());
+    printf("  byte-equal: %s\n", bytes_ok ? "yes" : "NO!");
+    printf("  %s\n\n", (nonnull && bytes_ok) ? "PASSED" : "FAILED");
+}
+
+void test_bytecode_marker_distinguished() {
+    printf("=== test_bytecode_marker_distinguished (marker cell != bytecode) ===\n");
+    auto marker = evm_workchain_dispatch::get_evm_code_marker_cell();
+    auto decoded = decode_evm_bytecode(marker);
+    bool empty_or_nonpoison = decoded.empty();  // marker has no Maybe tag → malformed → empty
+    printf("  decode_evm_bytecode(marker) → length: %zu (expect 0)\n", decoded.size());
+    // Also: encoding a single 0x45 byte must produce a DIFFERENT cell hash than the marker.
+    char one_byte = 0x45;
+    auto encoded_one = encode_evm_bytecode(td::Slice{&one_byte, 1});
+    bool distinct = encoded_one.not_null() &&
+                    encoded_one->get_hash() != marker->get_hash();
+    printf("  encoded(1-byte 0x45).hash != marker.hash: %s\n", distinct ? "yes" : "NO!");
+    printf("  %s\n\n", (empty_or_nonpoison && distinct) ? "PASSED" : "FAILED");
+}
+
 void test_no_separate_evm_db() {
     printf("=== test_no_separate_evm_db (no second RocksDB created) ===\n");
     // Verify init_evm_workchain with a db_root does NOT create the old
@@ -3084,6 +3119,8 @@ int main() {
     test_state_hash_includes_evm();
     test_no_separate_evm_db();
     test_sync_to_dict();
+    test_bytecode_roundtrip();
+    test_bytecode_marker_distinguished();
 
     // Scan stdout for FAILED to determine exit code
     // (Individual tests print PASSED or FAILED)

@@ -51,4 +51,34 @@ void address_to_key(const evmc::address& addr, unsigned char out[32]);
 /// Convert a bytes32 directly to a 256-bit key (identity copy into out).
 void bytes32_to_key(const evmc::bytes32& v, unsigned char out[32]);
 
+// ---------------------------------------------------------------------------
+// EVM bytecode cell encoding (Phase D.2)
+// ---------------------------------------------------------------------------
+//
+// Schema:
+//   evm_bytecode_chunk$_ {n:#}
+//     bytes:(n * Bit) { n <= 1016 }
+//     next:(Maybe ^Cell)
+//     = EvmBytecodeChunk;
+//
+// Linear chain: each cell stores up to 127 bytes (1016 bits) inline + a
+// Maybe-tagged ref to the next chunk. A 24 KB EIP-170 max contract uses
+// ~190 cells; typical 5–15 KB contracts use 40–120 cells.
+
+/// Maximum bytes stored inline per chunk cell.
+constexpr unsigned kEvmBytecodeChunkBytes = 127;
+
+/// Encode arbitrary EVM bytecode into a chain of cells. Returns null cell
+/// when `code` is empty. Deterministic — identical input bytes produce
+/// identical cell hashes on every binary.
+td::Ref<vm::Cell> encode_evm_bytecode(td::Slice code);
+
+/// Walk a bytecode chain and return concatenated bytes. Returns empty on:
+///   - null root cell
+///   - cell shaped like `kEvmCodeMarker` (callers should never invoke this
+///     for accounts whose code_hash == silkworm::kEmptyHash; if they do,
+///     this function refuses to misinterpret the marker as 1-byte bytecode)
+///   - any malformed chunk (logs nothing; just returns empty)
+std::string decode_evm_bytecode(td::Ref<vm::Cell> root);
+
 }  // namespace evm_workchain
