@@ -3524,6 +3524,24 @@ static void test_state_test_runner_walk_curated() {
         "stStaticFlagEnabled",
         "stBadOpcode",
         "stTransitionTest",
+        // Phase G.1 expansion — 17 additional subdirs (see commit msg).
+        "stCallDelegateCodesCallCodeHomestead",
+        "stCallDelegateCodesHomestead",
+        "stCodeSizeLimit",
+        "stDelegatecallTestHomestead",
+        "stEIP150singleCodeGasPrices",
+        "stEIP150Specific",
+        "stEIP158Specific",
+        "stExample",
+        "stHomesteadSpecific",
+        "stMemExpandingEIP150Calls",
+        "stPreCompiledContracts",
+        "stPreCompiledContracts2",
+        "stRecursiveCreate",
+        "stSpecialTest",
+        "stWalletTest",
+        "stZeroKnowledge",
+        "stZeroKnowledge2",
     };
     size_t total_p = 0, total_f = 0, total_s = 0, total_u = 0;
     for (const auto& d : dirs) {
