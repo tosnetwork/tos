@@ -744,6 +744,16 @@ static std::string format_block_json(const StoredBlock& blk, bool full_transacti
     r += "\"receiptsRoot\":" + to_hex_data(blk.receipts_root.bytes, 32) + ",";
     r += "\"logsBloom\":" + to_hex_data(blk.logs_bloom, 256) + ",";
     r += "\"sha3Uncles\":\"0x" + std::string(64, '0') + "\",";
+    // Cancun (EIP-4844 / EIP-4788) fields — always emitted because
+    // block explorers and indexers (Etherscan, Blockscout, The Graph)
+    // assume every modern RPC returns them. We don't support blobs or
+    // the beacon root today, so emit zero values.
+    r += "\"blobGasUsed\":\"0x0\",";
+    r += "\"excessBlobGas\":\"0x0\",";
+    r += "\"parentBeaconBlockRoot\":\"0x" + std::string(64, '0') + "\",";
+    // Shanghai (EIP-4895) withdrawals — not supported, emit empty.
+    r += "\"withdrawals\":[],";
+    r += "\"withdrawalsRoot\":\"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\",";  // keccak256(rlp([]))
     r += "\"uncles\":[],";
     r += "\"transactions\":[";
     for (size_t i = 0; i < blk.transaction_hashes.size(); ++i) {
@@ -1181,12 +1191,19 @@ static RpcResult handle_fee_history(const std::string& params, const std::string
     uint64_t oldest = newest >= block_count ? newest - block_count + 1 : 0;
 
     std::string base_fees = "[";
+    std::string blob_base_fees = "[";
     std::string gas_ratios = "[";
+    std::string blob_gas_ratios = "[";
     std::string rewards = "[";
 
     for (uint64_t i = oldest; i <= newest; ++i) {
-        if (i > oldest) { gas_ratios += ","; rewards += ","; }
-        if (i > oldest) base_fees += ",";
+        if (i > oldest) {
+            gas_ratios += ",";
+            blob_gas_ratios += ",";
+            rewards += ",";
+            base_fees += ",";
+            blob_base_fees += ",";
+        }
 
         auto blk = global_evm_state().get_block_copy(i);
         if (global_evm_state().has_block(i)) {
@@ -1198,11 +1215,13 @@ static RpcResult handle_fee_history(const std::string& params, const std::string
             gas_ratios += ratio_buf;
         } else {
             base_fees += to_hex_quantity(intx::uint256{kInitialBaseFee});
-            gas_ratios += "0";
+            gas_ratios += "0.0";
         }
+        blob_base_fees += "\"0x0\"";
+        blob_gas_ratios += "0";  // spec: integer when exactly 0
         rewards += "[\"0x0\"]";
     }
-    // One extra base fee for the next block
+    // One extra base fee (and blob fee) for the next block.
     auto last_blk = global_evm_state().get_block_copy(newest);
     intx::uint256 next_base_fee{kInitialBaseFee};
     if (global_evm_state().has_block(newest)) {
@@ -1211,13 +1230,17 @@ static RpcResult handle_fee_history(const std::string& params, const std::string
     }
     base_fees += "," + to_hex_quantity(next_base_fee);
     base_fees += "]";
+    blob_base_fees += ",\"0x0\"]";
     gas_ratios += "]";
+    blob_gas_ratios += "]";
     rewards += "]";
 
     std::string r = "{";
     r += "\"oldestBlock\":" + to_hex_quantity(oldest) + ",";
     r += "\"baseFeePerGas\":" + base_fees + ",";
+    r += "\"baseFeePerBlobGas\":" + blob_base_fees + ",";
     r += "\"gasUsedRatio\":" + gas_ratios + ",";
+    r += "\"blobGasUsedRatio\":" + blob_gas_ratios + ",";
     r += "\"reward\":" + rewards;
     r += "}";
     return {make_result(id, r), false};
@@ -1921,20 +1944,26 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
     silkworm::Account a;
     if (acct) a = *acct;
 
-    // Parse storage keys array
+    // Parse storage keys array. params has the shape
+    //   ["0x<addr>", [ "0x<key1>", "0x<key2>", ... ], "<blockTag>"]
+    // Find the INNER array and scan only within its bounds so a later
+    // blockhash string isn't mis-read as a storage key.
     std::vector<evmc::bytes32> slots;
     auto kpos = params.find('[', params.find('[') + 1);
-    if (kpos != std::string::npos) {
+    auto kend = (kpos != std::string::npos) ? params.find(']', kpos + 1) : std::string::npos;
+    if (kpos != std::string::npos && kend != std::string::npos && kend > kpos) {
         size_t scan = kpos;
-        while (scan < params.size() && params[scan] != ']') {
+        while (scan < kend) {
             auto h = params.find("0x", scan);
-            if (h == std::string::npos) break;
+            if (h == std::string::npos || h >= kend) break;
             auto e = params.find_first_of("\",]", h);
-            if (e == std::string::npos) break;
+            if (e == std::string::npos || e > kend) break;
             silkworm::Bytes b;
-            if (parse_hex_bytes(params.substr(h - 1, e - h + 2), b) && b.size() == 32) {
+            // Keys can be any length ≤ 32 bytes per the spec ("0x0", "0x00",
+            // "0x0000...0000" are all the zero slot). Left-pad to 32 bytes.
+            if (parse_hex_bytes(params.substr(h - 1, e - h + 2), b) && b.size() <= 32) {
                 evmc::bytes32 s{};
-                std::memcpy(s.bytes, b.data(), 32);
+                std::memcpy(s.bytes + (32 - b.size()), b.data(), b.size());
                 slots.push_back(s);
             }
             scan = e + 1;
@@ -2217,7 +2246,16 @@ static RpcResult handle_create_access_list(const std::string& params, const std:
         }
         r += "]}";
     }
-    r += "],\"gasUsed\":" + to_hex_quantity(gas_used) + "}";
+    r += "],\"gasUsed\":" + to_hex_quantity(gas_used);
+    // Per execution-apis, when the simulated call reverts we return the
+    // error string alongside the access list. Successful calls omit the
+    // field — we emit "" for parity with the spec's shape (clients that
+    // check truthiness get an empty string and know there was no error).
+    r += ",\"error\":\"";
+    if (call_result.status != EVMC_SUCCESS) {
+        r += "execution reverted";
+    }
+    r += "\"}";
     return {make_result(id, r), false};
 }
 

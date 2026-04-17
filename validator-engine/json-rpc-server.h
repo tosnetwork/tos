@@ -333,6 +333,13 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
                                  const std::string& cors_origin = "*");
   static HttpReturn make_json_error(int code, std::string message, std::string id,
                                     const std::string& cors_origin = "*");
+  // Standards-compliant JSON-RPC 2.0 error (nested `error:{code,message}`,
+  // HTTP 200). Use for every `eth_*` / `net_*` / `web3_*` / `debug_*`
+  // handler. `make_json_error` is retained for TVM JSON-RPC methods
+  // whose existing tests depend on `{ok, error:<string>, code}` at
+  // top level and on mapped HTTP status codes.
+  static HttpReturn make_eth_json_error(int code, std::string message, std::string id,
+                                        const std::string& cors_origin = "*");
   static HttpReturn make_health_ok(const std::string& cors_origin = "*");
   static HttpReturn make_cors_preflight(const std::string& cors_origin = "*");
   static HttpReturn make_text_response(int status_code, std::string status_text,

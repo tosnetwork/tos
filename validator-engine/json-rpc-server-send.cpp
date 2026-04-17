@@ -1452,7 +1452,7 @@ void JsonRpcServer::handle_eth_sendRawTransaction(td::JsonValue &params_val,
     }
   }
   if (raw_hex.empty()) {
-    promise.set_value(make_json_error(-32602, "Missing raw transaction hex parameter", req_id));
+    promise.set_value(make_eth_json_error(-32602, "Missing raw transaction hex parameter", req_id));
     return;
   }
 
@@ -1462,7 +1462,7 @@ void JsonRpcServer::handle_eth_sendRawTransaction(td::JsonValue &params_val,
     hex = hex.substr(2);
   }
   if (hex.size() % 2 != 0) {
-    promise.set_value(make_json_error(-32602, "Invalid hex: odd length", req_id));
+    promise.set_value(make_eth_json_error(-32602, "Invalid hex: odd length", req_id));
     return;
   }
   std::string raw_bytes;
@@ -1477,7 +1477,7 @@ void JsonRpcServer::handle_eth_sendRawTransaction(td::JsonValue &params_val,
     };
     int h = hv(hi), l = hv(lo);
     if (h < 0 || l < 0) {
-      promise.set_value(make_json_error(-32602, "Invalid hex character", req_id));
+      promise.set_value(make_eth_json_error(-32602, "Invalid hex character", req_id));
       return;
     }
     raw_bytes.push_back(static_cast<char>((h << 4) | l));
@@ -1488,7 +1488,7 @@ void JsonRpcServer::handle_eth_sendRawTransaction(td::JsonValue &params_val,
                              reinterpret_cast<const uint8_t*>(raw_bytes.data()) + raw_bytes.size());
   auto decode_result = evm_workchain::decode_evm_transaction(rlp_bytes);
   if (auto* err = std::get_if<evm_workchain::TxDecodeError>(&decode_result)) {
-    promise.set_value(make_json_error(-32000, PSTRING() << "RLP decode failed: " << err->reason, req_id));
+    promise.set_value(make_eth_json_error(-32000, PSTRING() << "RLP decode failed: " << err->reason, req_id));
     return;
   }
   auto& decoded = std::get<evm_workchain::DecodedTransaction>(decode_result);
@@ -1507,7 +1507,7 @@ void JsonRpcServer::handle_eth_sendRawTransaction(td::JsonValue &params_val,
     std::ostringstream msg;
     msg << "invalid chain id: got " << *decoded.txn.chain_id
         << ", expected 0x" << std::hex << evm_workchain::kEvmChainId << std::dec;
-    promise.set_value(make_json_error(-32000, msg.str(), req_id));
+    promise.set_value(make_eth_json_error(-32000, msg.str(), req_id));
     return;
   }
 
@@ -1522,17 +1522,17 @@ void JsonRpcServer::handle_eth_sendRawTransaction(td::JsonValue &params_val,
         reinterpret_cast<const uint8_t*>(raw_bytes.data()), raw_bytes.size(),
         decoded.sender);
   } catch (const std::exception& e) {
-    promise.set_value(make_json_error(-32000,
+    promise.set_value(make_eth_json_error(-32000,
         PSTRING() << "Failed to build external message cell: " << e.what(),
         req_id));
     return;
   } catch (...) {
-    promise.set_value(make_json_error(-32000,
+    promise.set_value(make_eth_json_error(-32000,
         "Failed to build external message cell: unknown error", req_id));
     return;
   }
   if (ext_msg.is_null()) {
-    promise.set_value(make_json_error(-32000, "Failed to build external message cell", req_id));
+    promise.set_value(make_eth_json_error(-32000, "Failed to build external message cell", req_id));
     return;
   }
 
@@ -1541,16 +1541,16 @@ void JsonRpcServer::handle_eth_sendRawTransaction(td::JsonValue &params_val,
   try {
     boc_r = vm::std_boc_serialize(ext_msg);
   } catch (const std::exception& e) {
-    promise.set_value(make_json_error(-32000,
+    promise.set_value(make_eth_json_error(-32000,
         PSTRING() << "BOC serialization threw: " << e.what(), req_id));
     return;
   } catch (...) {
-    promise.set_value(make_json_error(-32000,
+    promise.set_value(make_eth_json_error(-32000,
         "BOC serialization threw: unknown error", req_id));
     return;
   }
   if (boc_r.is_error()) {
-    promise.set_value(make_json_error(-32000, PSTRING() << "BOC serialization failed: " << boc_r.error(), req_id));
+    promise.set_value(make_eth_json_error(-32000, PSTRING() << "BOC serialization failed: " << boc_r.error(), req_id));
     return;
   }
   auto boc = boc_r.move_as_ok();
@@ -1574,7 +1574,7 @@ void JsonRpcServer::handle_eth_sendRawTransaction(td::JsonValue &params_val,
       [req_id = std::move(req_id), tx_hash_hex = std::move(tx_hash_hex),
        promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
-          promise.set_value(make_json_error(-32000,
+          promise.set_value(make_eth_json_error(-32000,
               PSTRING() << "Transaction submission failed: " << R.error(), req_id));
           return;
         }

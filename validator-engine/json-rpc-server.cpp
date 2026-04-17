@@ -535,7 +535,7 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
       // Wrap it in a raw HTTP response.
       promise.set_value(make_raw_json_response(result->json, opts_.cors_origin));
     } else {
-      promise.set_value(make_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
+      promise.set_value(make_eth_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
     }
     return;
   }
@@ -809,6 +809,9 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_raw_json_response(const std::strin
 JsonRpcServer::HttpReturn JsonRpcServer::make_json_ok(std::string result_json, std::string id,
                                                       const std::string& cors_origin) {
   if (id.empty()) id = "null";
+  // TVM convention: `{ok, jsonrpc, id, result}` — the `ok` field is a
+  // convenience wrapper the Python/JS test suite depends on. Ethereum
+  // JSON-RPC callers (ethers/viem/web3.py) ignore it.
   std::string body = PSTRING()
       << "{\"ok\":true,\"jsonrpc\":\"2.0\",\"id\":" << id
       << ",\"result\":" << result_json << "}";
@@ -829,12 +832,16 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_ok(std::string result_json, s
 JsonRpcServer::HttpReturn JsonRpcServer::make_json_error(int code, std::string message, std::string id,
                                                          const std::string& cors_origin) {
   if (id.empty()) id = "null";
+  // TVM convention: `{ok: false, jsonrpc, id, error:<string>, code}` +
+  // a mapped HTTP status code. The Python test suite
+  // (test/json-rpc/*.py) asserts on both `ok` and the HTTP status.
+  // For Ethereum RPC use `make_eth_json_error` instead — it emits
+  // the JSON-RPC 2.0 nested error shape with HTTP 200.
   std::string body = PSTRING()
       << "{\"ok\":false,\"jsonrpc\":\"2.0\",\"id\":" << id
       << ",\"error\":" << td::JsonString(td::Slice(message))
       << ",\"code\":" << code << "}";
 
-  // Map JSON-RPC / application error codes to HTTP status codes
   int http_status = 200;
   std::string http_status_text = "OK";
   if (code == -32602 || code == -32600) {
@@ -875,6 +882,30 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_health_ok(const std::string& cors_
 
   auto payload = response->create_empty_payload().move_as_ok();
   payload->add_chunk(td::BufferSlice("OK"));
+  payload->complete_parse();
+
+  return {std::move(response), std::move(payload)};
+}
+
+JsonRpcServer::HttpReturn JsonRpcServer::make_eth_json_error(int code, std::string message, std::string id,
+                                                              const std::string& cors_origin) {
+  if (id.empty()) id = "null";
+  // JSON-RPC 2.0 error: `{jsonrpc, id, error:{code, message}}`, HTTP
+  // 200 always. Matches the Ethereum execution-apis contract that
+  // ethers / viem / web3.py all assume.
+  std::string body = PSTRING()
+      << "{\"jsonrpc\":\"2.0\",\"id\":" << id
+      << ",\"error\":{\"code\":" << code
+      << ",\"message\":" << td::JsonString(td::Slice(message)) << "}}";
+
+  auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
+  response->add_header({"Content-Type", "application/json"});
+  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  response->add_header({"Transfer-Encoding", "Chunked"});
+  response->complete_parse_header();
+
+  auto payload = response->create_empty_payload().move_as_ok();
+  payload->add_chunk(td::BufferSlice(body));
   payload->complete_parse();
 
   return {std::move(response), std::move(payload)};
