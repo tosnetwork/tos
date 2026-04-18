@@ -176,3 +176,35 @@ cd /home/tomi/evm-workchain/test/conformance
 python3 run_execution_apis.py        # skips crashers by default
 SKIP_CRASHERS=0 python3 run_execution_apis.py   # full suite, crashes node
 ```
+
+## Update 2026-04-18 — sendRawTransaction crashers fixed; differential vs geth
+
+Re-ran with `SKIP_CRASHERS=0`: the four prior validator-killing payloads
+now reject cleanly with `invalid chain id` (`f53c356a` invalid-hex/DoS
+hardening + `fdcebdc1` chunked-RLP + chainId reject). The fifth
+(`send-blob-tx.io`) still times out on submit but does not crash.
+
+`createAccessList` regression on `value-transfer.io` (was the 1 OK,
+now SHAPE_MISMATCH) traced to `bfb6b5c0` always-emitting `error:""` on
+success — the spec only includes the field on revert. Fixed in the
+followup commit; binary restart deferred to after the in-flight 4h
+fuzz soak.
+
+**G.4 differential vs local geth** (`differential_geth.py`, 25 methods):
+20/25 OK, 5 minor divergences:
+- `eth_mining` — geth dropped (-32601), ours returns `false`. We're
+  more spec-compliant; leave alone.
+- `eth_syncing` — geth returns rich sync-stats object, ours returns
+  bool `false`. Both are spec-allowed; geth's shape is the modern
+  convention but our minimal shape is fine for explorers.
+- `eth_accounts` — geth returns one dev-mode account, ours returns
+  empty array (we never manage user keys). Working as intended.
+- `eth_estimateGas` for value transfer from an unfunded sender
+  (`{from:0x...01, to:0x...02, value:0x1}`) — geth returns gas estimate,
+  ours rejects `execution reverted`. Geth bypasses balance enforcement
+  during estimation; we run the real EVM. Real wallet UX gap, not
+  consensus. Worth fixing in a follow-up by inflating sender balance
+  during the simulation only.
+- `eth_createAccessList` for the same payload — same `0x...01` →
+  `0x...02` value-transfer case; both diverge differently from each
+  other and from spec. Mostly subsumed by the estimateGas fix above.
