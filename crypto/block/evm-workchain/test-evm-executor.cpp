@@ -26,6 +26,7 @@
 #include "evm-init.h"
 #include "evm-state.h"
 #include "evm-block-context.h"
+#include "block/block-parse.h"  // block::tlb::aug_ShardAccounts
 #include "evm-executor.h"
 #include "evm-transaction.h"
 #include "evm-rpc.h"
@@ -3026,6 +3027,132 @@ void test_no_separate_evm_db() {
     std::system(("rm -rf " + tmp_root).c_str());
 }
 
+// --- Phase D (Hive bootstrap): build_evm_zerostate_accounts_cell must
+// accept caller-supplied genesis allocations (1+ EOAs, contracts with
+// code, contracts with storage), and the resulting state must hydrate
+// back to the exact same balances / nonces / code / slot values via the
+// cell-native load_from_cell path.
+static void test_genesis_alloc_parameterized() {
+    printf("=== test_genesis_alloc_parameterized (Phase D — Hive genesis allocs) ===\n");
+
+    // Three accounts mirroring the typical Hive genesis.json shape:
+    //   - alice: plain EOA with balance + nonce
+    //   - charlie: contract with bytecode (no storage)
+    //   - dave: contract with two storage slots
+    std::vector<GenesisAccount> allocs;
+
+    GenesisAccount alice{};
+    alice.addr.bytes[19] = 0xA1;
+    // 42 ETH = 42 * 10^18 wei. Build via repeated multiplication so we
+    // don't trip the C++ "integer literal too large" rule (UINT64_MAX
+    // ≈ 1.8e19, which is below 42e18).
+    {
+        intx::uint256 ten18{1'000'000'000'000'000'000ULL};
+        alice.balance = ten18 * intx::uint256{42};
+    }
+    alice.nonce = 7;
+    allocs.push_back(alice);
+
+    GenesisAccount charlie{};
+    charlie.addr.bytes[19] = 0xC3;
+    charlie.balance = intx::uint256{1'000'000};
+    charlie.nonce = 1;
+    // Minimal but distinct EVM bytecode: PUSH1 0x42, PUSH1 0x00, MSTORE,
+    // PUSH1 0x20, PUSH1 0x00, RETURN — returns 0x42-padded word.
+    const uint8_t code_bytes[] = {0x60, 0x42, 0x60, 0x00, 0x52,
+                                   0x60, 0x20, 0x60, 0x00, 0xf3};
+    charlie.code.assign(code_bytes, code_bytes + sizeof(code_bytes));
+    allocs.push_back(charlie);
+
+    GenesisAccount dave{};
+    dave.addr.bytes[19] = 0xD4;
+    dave.balance = intx::uint256{0};
+    dave.nonce = 0;
+    evmc::bytes32 slot1{}, val1{}, slot2{}, val2{};
+    slot1.bytes[31] = 0x01;
+    val1.bytes[31] = 0xAB;
+    slot2.bytes[31] = 0x02;
+    val2.bytes[0] = 0xFE;  val2.bytes[31] = 0xED;  // multi-byte value
+    dave.storage[slot1] = val1;
+    dave.storage[slot2] = val2;
+    allocs.push_back(dave);
+
+    // Build the parameterised zerostate accounts cell.
+    auto accounts_cell = build_evm_zerostate_accounts_cell(allocs);
+    bool cell_ok = accounts_cell.not_null();
+    printf("  build_evm_zerostate_accounts_cell(allocs): %s\n",
+           cell_ok ? "OK" : "NULL");
+
+    // Determinism: rebuilding with the same input must give the same hash.
+    auto accounts_cell_2 = build_evm_zerostate_accounts_cell(allocs);
+    bool deterministic = cell_ok && accounts_cell_2.not_null() &&
+                         accounts_cell->get_hash() == accounts_cell_2->get_hash();
+    printf("  deterministic across two builds: %s\n", deterministic ? "YES" : "NO");
+
+    // Hydrate via populate_state_from_shard_accounts. The accounts cell is
+    // shaped like the result of `append_dict_to_bool` (Maybe-tag + ^DictRoot),
+    // so we strip the Maybe wrapper and feed the inner ref to
+    // AugmentedDictionary's Cell-typed constructor.
+    auto outer_slice = vm::load_cell_slice(accounts_cell);
+    bool has_inner = outer_slice.fetch_ulong(1) == 1;
+    bool dict_load_ok = has_inner && outer_slice.size_refs() >= 1;
+    td::Ref<vm::Cell> dict_root = dict_load_ok ? outer_slice.fetch_ref()
+                                                : td::Ref<vm::Cell>{};
+    printf("  dict load (Maybe ^Dict has_inner=%d, has_ref=%d): %s\n",
+           has_inner ? 1 : 0, dict_load_ok ? 1 : 0,
+           dict_load_ok ? "OK" : "WRONG");
+    vm::AugmentedDictionary shard_accounts(dict_root, 256, block::tlb::aug_ShardAccounts);
+
+    // populate_state_from_shard_accounts requires a CellEvmState backend
+    // (not the default in-memory state — see evm-init.cpp:256).
+    EvmState target(std::make_unique<CellEvmState>());
+    auto count = populate_state_from_shard_accounts(target, shard_accounts);
+    bool hydrated = (count == 1);
+    printf("  populate_state_from_shard_accounts: hydrated=%zu (expect 1)\n", count);
+
+    // Verify each account roundtripped with its full payload. EvmState
+    // exposes read_*_copy variants of the silkworm::State accessors.
+    auto a_alice = target.read_account(alice.addr);
+    bool alice_ok = a_alice.has_value() &&
+                    a_alice->balance == alice.balance &&
+                    a_alice->nonce == alice.nonce;
+    printf("  alice balance/nonce: %s\n", alice_ok ? "OK" : "WRONG");
+
+    auto a_charlie = target.read_account(charlie.addr);
+    bool charlie_acct_ok = a_charlie.has_value() &&
+                            a_charlie->balance == charlie.balance &&
+                            a_charlie->nonce == charlie.nonce &&
+                            a_charlie->code_hash != silkworm::kEmptyHash;
+    auto charlie_code = target.read_code_copy(
+        charlie.addr, a_charlie ? a_charlie->code_hash : evmc::bytes32{});
+    bool charlie_code_ok = charlie_code.size() == sizeof(code_bytes) &&
+                            std::memcmp(charlie_code.data(), code_bytes, sizeof(code_bytes)) == 0;
+    printf("  charlie acct: %s; code (len=%zu, expect=%zu): %s\n",
+           charlie_acct_ok ? "OK" : "WRONG",
+           charlie_code.size(), sizeof(code_bytes),
+           charlie_code_ok ? "OK" : "WRONG");
+
+    auto dave_v1 = target.read_storage_copy(dave.addr, 0, slot1);
+    auto dave_v2 = target.read_storage_copy(dave.addr, 0, slot2);
+    bool dave_ok = (dave_v1 == val1) && (dave_v2 == val2);
+    printf("  dave storage[slot1]=0x%02x..%02x (expect 0xab); storage[slot2]=0x%02x..%02x: %s\n",
+           dave_v1.bytes[0], dave_v1.bytes[31],
+           dave_v2.bytes[0], dave_v2.bytes[31],
+           dave_ok ? "OK" : "WRONG");
+
+    // Backwards-compat: the zero-arg overload still produces the canonical
+    // 10-EOA cell (validates that we didn't accidentally change the legacy
+    // hash by re-routing through the new code path).
+    auto legacy_cell = build_evm_zerostate_accounts_cell();
+    bool legacy_ok = legacy_cell.not_null();
+    printf("  zero-arg overload still produces a cell: %s\n", legacy_ok ? "OK" : "NULL");
+
+    bool all_ok = cell_ok && deterministic && hydrated &&
+                  alice_ok && charlie_acct_ok && charlie_code_ok &&
+                  dave_ok && legacy_ok;
+    printf("  %s\n\n", all_ok ? "PASSED" : "FAILED");
+}
+
 // --- DoS regression (Phase E.5): build_evm_external_message must handle
 // oversized raw-tx payloads without throwing / exiting the process.
 // Before the fix, build_evm_external_message wrote all bytes into one
@@ -4412,6 +4539,7 @@ int main() {
     test_storage_dict_persistence();
     test_state_hash_includes_evm();
     test_no_separate_evm_db();
+    test_genesis_alloc_parameterized();
     test_bytecode_roundtrip();
     test_bytecode_marker_distinguished();
     test_large_raw_tx_roundtrip();

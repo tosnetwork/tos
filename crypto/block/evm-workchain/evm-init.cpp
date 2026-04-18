@@ -25,6 +25,9 @@
 #include "vm/dict.h"
 
 #include <silkworm/core/types/account.hpp>
+#include <silkworm/core/common/empty_hashes.hpp>
+
+#include <ethash/keccak.hpp>
 
 #include <cstdio>
 #include <cstdlib>
@@ -263,25 +266,53 @@ size_t populate_state_from_shard_accounts(
     return 1;
 }
 
-td::Ref<vm::Cell> build_evm_zerostate_accounts_cell() {
-    // Single-executor zerostate: the wc=1 ShardAccounts dict contains exactly
-    // one entry, the executor account. Its StateInit.data is a cp.new_data-
-    // shaped cell (magic + Maybe ^state_root + bits256 eth_state_root)
-    // holding a pre-populated CellEvmState with the 10 test EOAs.
+td::Ref<vm::Cell> build_evm_zerostate_accounts_cell(
+    const std::vector<GenesisAccount>& accounts) {
+    // Phase D — parameterised version. Same single-executor wrapper as the
+    // zero-arg overload (the wc=1 ShardAccounts dict contains exactly one
+    // entry, the executor, whose StateInit.data is a cp.new_data v2 cell
+    // referencing a CellEvmState root); the only thing that varies is which
+    // accounts are pre-populated inside that state.
     //
-    // Layout matches what evm-compute-phase.cpp:118-141 produces every block
-    // so hydration reads exactly the same format whether the chain is at
+    // Layout matches what evm-compute-phase.cpp produces every block so
+    // hydration reads exactly the same format whether the chain is at
     // genesis or at block N.
 
     CellEvmState cell_state;
-    intx::uint256 amount{kSeedAmountTos};
-    for (int i = 0; i < 18; ++i) amount *= intx::uint256{10};
-    for (const auto& a : kTestAccounts) {
-        evmc::address addr{};
-        if (!parse_hex_address(a.address, addr)) continue;
+
+    // Walk caller-supplied allocs in input order. Each entry produces a
+    // sequence of silkworm::State writes that mirror what would happen if
+    // the genesis tx synthetically funded / created the account.
+    for (const auto& a : accounts) {
+        // 1. Account header (balance + nonce). update_account() preserves
+        //    storage_root/code_root if the account already exists, so this
+        //    is safe to call before update_account_code/update_storage.
         silkworm::Account acct{};
-        acct.balance = amount;
-        cell_state.update_account(addr, std::nullopt, acct);
+        acct.balance = a.balance;
+        acct.nonce = a.nonce;
+        cell_state.update_account(a.addr, std::nullopt, acct);
+
+        // 2. Code (only if non-empty — empty bytes ⇒ EOA, code_hash stays
+        //    silkworm::kEmptyHash). update_account_code computes the code
+        //    hash internally and embeds the bytecode chain via
+        //    encode_evm_bytecode().
+        if (!a.code.empty()) {
+            auto code_hash_be = ethash::keccak256(a.code.data(), a.code.size());
+            evmc::bytes32 code_hash{};
+            std::memcpy(code_hash.bytes, code_hash_be.bytes, 32);
+            cell_state.update_account_code(
+                a.addr, /*incarnation=*/0, code_hash,
+                silkworm::ByteView{a.code.data(), a.code.size()});
+        }
+
+        // 3. Storage slots. Iterate in the caller's std::map order (key-
+        //    sorted) so the output is deterministic across runs; values of
+        //    zero are no-ops by the silkworm contract.
+        static const evmc::bytes32 zero{};
+        for (const auto& [slot, value] : a.storage) {
+            if (value == zero) continue;
+            cell_state.update_storage(a.addr, /*incarnation=*/0, slot, zero, value);
+        }
     }
     auto state_root = cell_state.serialize_to_cell();
 
@@ -306,15 +337,34 @@ td::Ref<vm::Cell> build_evm_zerostate_accounts_cell() {
     exec_addr_bits.bits().copy_from(td::ConstBitPtr{kEvmExecutorAddressBytes}, 256);
     auto account_cell = build_evm_shard_account_cell(exec_addr_bits, cp_new_data_cell);
 
-    vm::AugmentedDictionary accounts(256, block::tlb::aug_ShardAccounts);
+    vm::AugmentedDictionary accounts_dict(256, block::tlb::aug_ShardAccounts);
     vm::CellBuilder vcb;
     vcb.store_ref_bool(account_cell);
     vcb.store_zeroes_bool(256 + 64);  // last_trans_hash + last_trans_lt
-    accounts.set_builder(exec_addr_bits.bits(), 256, vcb);
+    accounts_dict.set_builder(exec_addr_bits.bits(), 256, vcb);
 
     vm::CellBuilder cb;
-    accounts.append_dict_to_bool(cb);
+    accounts_dict.append_dict_to_bool(cb);
     return cb.finalize();
+}
+
+td::Ref<vm::Cell> build_evm_zerostate_accounts_cell() {
+    // Backwards-compatible zero-arg overload: seeds the 10 Hardhat/Anvil
+    // standard test EOAs with kSeedAmountTos TOS each. Internally translates
+    // to a GenesisAccount vector and forwards to the parameterised overload.
+    intx::uint256 amount{kSeedAmountTos};
+    for (int i = 0; i < 18; ++i) amount *= intx::uint256{10};
+
+    std::vector<GenesisAccount> accounts;
+    accounts.reserve(std::size(kTestAccounts));
+    for (const auto& a : kTestAccounts) {
+        GenesisAccount g{};
+        if (!parse_hex_address(a.address, g.addr)) continue;
+        g.balance = amount;
+        g.nonce = 0;
+        accounts.push_back(std::move(g));
+    }
+    return build_evm_zerostate_accounts_cell(accounts);
 }
 
 size_t hydrate_global_state_if_empty(vm::AugmentedDictionary& shard_accounts) {

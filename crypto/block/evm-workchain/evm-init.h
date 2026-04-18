@@ -9,10 +9,17 @@
 #pragma once
 
 #include <cstddef>
+#include <map>
 #include <string>
+#include <vector>
 
 #include "td/utils/Slice.h"
 #include "vm/cells/Cell.h"
+
+#include <evmc/evmc.hpp>
+#include <intx/intx.hpp>
+#include <silkworm/core/common/base.hpp>
+#include <silkworm/core/common/bytes.hpp>
 
 namespace vm {
 class Dictionary;
@@ -93,5 +100,44 @@ size_t hydrate_global_state_if_empty(vm::AugmentedDictionary& shard_accounts);
 /// Deterministic: same inputs (the constexpr kTestAccounts list and the
 /// EvmAccountData encoder) → byte-identical cell hash on every binary.
 td::Ref<vm::Cell> build_evm_zerostate_accounts_cell();
+
+// =============================================================================
+// Phase D — parameterised genesis allocations
+// =============================================================================
+//
+// Allows zerostate to be built from arbitrary Ethereum-style allocs (the
+// `alloc` field of a Hive `genesis.json`, the EELS / execution-apis fixture
+// pre-state, an EIP-4788 predeploy seed, etc.) instead of the hard-coded
+// 10 Hardhat EOAs.
+//
+// The data shape mirrors Ethereum's GenesisAccount JSON:
+//   address  → evmc::address
+//   balance  → intx::uint256 (wei)
+//   nonce    → uint64_t
+//   code     → silkworm::Bytes (raw EVM bytecode; empty = EOA)
+//   storage  → ordered map<bytes32, bytes32> (slot → value pairs)
+//
+// All fields are optional except `addr`. An entry with empty `code` and empty
+// `storage` is functionally equivalent to a `seed_account()` call.
+
+struct GenesisAccount {
+    evmc::address addr{};
+    intx::uint256 balance{0};
+    uint64_t nonce{0};
+    silkworm::Bytes code{};
+    std::map<evmc::bytes32, evmc::bytes32> storage{};
+};
+
+/// Parameterised version of build_evm_zerostate_accounts_cell. Builds a
+/// CellEvmState seeded with the supplied allocations, wraps it the same
+/// way the zero-arg version does (single executor ShardAccount whose
+/// StateInit.data is a cp.new_data v2 cell), and returns the
+/// ShardAccounts cell.
+///
+/// Deterministic: same `accounts` vector → byte-identical cell hash.
+/// The zero-arg overload simply calls this with the hard-coded 10
+/// Hardhat/Anvil EOAs.
+td::Ref<vm::Cell> build_evm_zerostate_accounts_cell(
+    const std::vector<GenesisAccount>& accounts);
 
 }  // namespace evm_workchain
