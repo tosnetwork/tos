@@ -89,6 +89,29 @@ size_t populate_state_from_shard_accounts(
 /// validator library's include surface).
 size_t hydrate_global_state_if_empty(vm::AugmentedDictionary& shard_accounts);
 
+/// Cancun pre-fork prep — see Category E in
+/// `doc/evm-workchain-known-divergences.md`. The two helpers below are
+/// invoked from `init_evm_workchain` on every node startup. They are
+/// idempotent and safe to call against a Shanghai-revision config; they
+/// only become load-bearing once `cancun_time = 0` is flipped in
+/// `evm_chain_config()`.
+
+/// Deploy the EIP-4788 beacon-roots system contract at the magic address
+/// `0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02`. Sets nonce=1, balance=0,
+/// and writes the canonical 200-byte runtime bytecode from the EIP. No-op
+/// when the contract is already in state with the correct code_hash, so
+/// it's safe to call on every node startup. Exposed publicly so the
+/// state-test runner and unit tests can re-invoke it on a fresh EvmState.
+void seed_eip4788_predeploy(EvmState& state);
+
+/// Run the EIP-4844 spec test vector through the KZG point-evaluation
+/// precompile (silkworm `precompile::point_evaluation_run`). Logs WARNING
+/// on success, ERROR if the precompile fails (which would be a build-time
+/// issue — the trusted setup is bundled as a constexpr in evmone, so
+/// failure here means the precompile is missing/unlinked). Does not
+/// terminate the process; serves as a startup-time canary.
+void verify_kzg_setup_loaded();
+
 /// Build a ShardAccounts dict cell containing the 10 pre-funded test EOAs.
 ///
 /// Used at zerostate generation (Phase C): the wc=1 zerostate's

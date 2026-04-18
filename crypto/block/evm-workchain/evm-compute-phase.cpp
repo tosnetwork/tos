@@ -18,6 +18,13 @@
 #include <ethash/keccak.hpp>
 #include "vm/cells/CellBuilder.h"
 
+#include <silkworm/core/execution/evm.hpp>
+#include <silkworm/core/protocol/param.hpp>
+#include <silkworm/core/state/intra_block_state.hpp>
+#include <silkworm/core/types/transaction.hpp>
+
+#include <atomic>
+
 #include "td/utils/logging.h"
 
 namespace evm_workchain {
@@ -60,6 +67,58 @@ bool run_evm_compute_phase(
             parent_blk.base_fee_per_gas, parent_blk.gas_used, parent_blk.gas_limit);
     } else {
         block.header.base_fee_per_gas = intx::uint256{kInitialBaseFee};
+    }
+
+    // --- Step 3b: EIP-4788 beacon-roots system call (Cancun+, per-block) ---
+    //
+    // Cancun's MergeRuleSet::initialize() invokes a system contract call to
+    // kBeaconRootsAddress at the start of every block, before user txs. We
+    // execute_evm_transaction() directly (bypassing rule-set wiring) so the
+    // hook must be reproduced here. The check is gated on the current chain
+    // config's revision: while cancun_time is unset (today's Shanghai
+    // baseline) `revision()` returns EVMC_SHANGHAI and this block is a
+    // no-op. Once `cancun_time = 0` flips it activates per-block.
+    //
+    // Per-block-once semantics: the compute-phase handler is invoked once
+    // per transaction. To run the hook only on the first tx of each block
+    // we keep a process-local high-water mark of the last block we hooked
+    // for. Validators replay deterministically (each starts the run with
+    // last_hooked_block = 0 and sweeps forward), so this matches across
+    // nodes. After a restart the marker resets to 0, but the hook is
+    // idempotent at the contract level (writes to a ring buffer keyed on
+    // timestamp) so re-firing for blocks already processed is safe.
+    {
+        const auto rev = config.revision(block_seqno, timestamp);
+        if (rev >= EVMC_CANCUN) {
+            static std::atomic<uint64_t> s_last_hooked_block{0};
+            uint64_t prev = s_last_hooked_block.load(std::memory_order_relaxed);
+            if (block_seqno > prev &&
+                s_last_hooked_block.compare_exchange_strong(prev, block_seqno,
+                                                            std::memory_order_relaxed)) {
+                // Build the system tx exactly as silkworm's MergeRuleSet does.
+                block.header.parent_beacon_block_root = evmc::bytes32{};
+                silkworm::Transaction sys_txn{};
+                sys_txn.type = silkworm::TransactionType::kSystem;
+                sys_txn.to = silkworm::protocol::kBeaconRootsAddress;
+                sys_txn.data = silkworm::Bytes(32, 0);
+                sys_txn.set_sender(silkworm::protocol::kSystemAddress);
+                std::unique_lock sys_lock(state.mutex());
+                silkworm::IntraBlockState sys_ibs(state.state());
+                silkworm::EVM sys_evm(block, sys_ibs, config);
+                try {
+                    sys_evm.execute(sys_txn, silkworm::protocol::kSystemCallGasLimit);
+                    sys_ibs.destruct_touched_dead();
+                    sys_ibs.write_to_db(block_seqno);
+                } catch (const std::exception& e) {
+                    LOG(ERROR) << "evm-workchain: EIP-4788 system call threw at block "
+                               << block_seqno << ": " << e.what()
+                               << " (continuing — predeploy may be missing)";
+                } catch (...) {
+                    LOG(ERROR) << "evm-workchain: EIP-4788 system call threw at block "
+                               << block_seqno << " (unknown exception)";
+                }
+            }
+        }
     }
 
     // --- Step 4: Execute the transaction ---

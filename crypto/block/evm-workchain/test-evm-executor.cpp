@@ -55,6 +55,8 @@
 #include <secp256k1_recovery.h>
 #include <silkworm/core/rlp/encode.hpp>
 #include <silkworm/core/common/util.hpp>
+#include <silkworm/core/execution/precompile.hpp>
+#include <silkworm/core/protocol/param.hpp>
 #include <intx/intx.hpp>
 
 using namespace evm_workchain;
@@ -4328,6 +4330,7 @@ static void test_runtime_chain_id_override() {
     printf("  %s\n\n", all_ok ? "PASSED" : "FAILED");
 }
 
+<<<<<<< HEAD
 // -----------------------------------------------------------------------------
 // test_eth_get_proof_non_existence
 //
@@ -4496,6 +4499,127 @@ static void test_eth_get_proof_non_existence() {
     printf("  %s\n\n", pass ? "PASSED" : "FAILED");
 }
 
+// =============================================================================
+// Cancun pre-fork prep tests (Category E in known-divergences)
+// =============================================================================
+
+static void test_kzg_precompile_active() {
+    printf("=== test_kzg_precompile_active (EIP-4844 0x0a, spec vector) ===\n");
+
+    // Canonical EIP-4844 spec test vector lifted verbatim from
+    // silkworm/core/execution/precompile_test.cpp::POINT_EVALUATION.
+    // versioned_hash || z || y || commitment || proof  (32+32+32+48+48 = 192).
+    static constexpr uint8_t kIn[192] = {
+        0x01,0x4e,0xdf,0xed,0x85,0x47,0x66,0x1f,0x6c,0xb4,0x16,0xeb,0xa5,0x30,0x61,0xa2,
+        0xf6,0xdc,0xe8,0x72,0xc0,0x49,0x7e,0x6d,0xd4,0x85,0xa8,0x76,0xfe,0x25,0x67,0xf1,
+        0x56,0x4c,0x0a,0x11,0xa0,0xf7,0x04,0xf4,0xfc,0x3e,0x8a,0xcf,0xe0,0xf8,0x24,0x5f,
+        0x0a,0xd1,0x34,0x7b,0x37,0x8f,0xbf,0x96,0xe2,0x06,0xda,0x11,0xa5,0xd3,0x63,0x06,
+        0x6d,0x92,0x8e,0x13,0xfe,0x44,0x3e,0x95,0x7d,0x82,0xe3,0xe7,0x1d,0x48,0xcb,0x65,
+        0xd5,0x10,0x28,0xeb,0x44,0x83,0xe7,0x19,0xbf,0x8e,0xfc,0xdf,0x12,0xf7,0xc3,0x21,
+        0xa4,0x21,0xe2,0x29,0x56,0x59,0x52,0xcf,0xff,0x4e,0xf3,0x51,0x71,0x00,0xa9,0x7d,
+        0xa1,0xd4,0xfe,0x57,0x95,0x6f,0xa5,0x0a,0x44,0x2f,0x92,0xaf,0x03,0xb1,0xbf,0x37,
+        0xad,0xac,0xc8,0xad,0x4e,0xd2,0x09,0xb3,0x12,0x87,0xea,0x5b,0xb9,0x4d,0x9d,0x06,
+        0xa4,0x44,0xd6,0xbb,0x5a,0xad,0xc3,0xce,0xb6,0x15,0xb5,0x0d,0x66,0x06,0xbd,0x54,
+        0xbf,0xe5,0x29,0xf5,0x92,0x47,0x98,0x7c,0xd1,0xab,0x84,0x8d,0x19,0xde,0x59,0x9a,
+        0x90,0x52,0xf1,0x83,0x5f,0xb0,0xd0,0xd4,0x4c,0xf7,0x01,0x83,0xe1,0x9a,0x68,0xc9,
+    };
+
+    auto out = silkworm::precompile::point_evaluation_run(
+        silkworm::ByteView{kIn, sizeof(kIn)});
+    bool size_ok = out.has_value() && out->size() == 64;
+    printf("  precompile returned: %s (%zu bytes)\n",
+           out.has_value() ? "ok" : "EMPTY",
+           out.has_value() ? out->size() : 0u);
+
+    // Per the EIP-4844 spec, the success blob is:
+    //   FIELD_ELEMENTS_PER_BLOB (4096) || BLS_MODULUS  (each as 32-byte BE).
+    bool field_elements_ok = false;
+    bool modulus_ok = false;
+    if (size_ok) {
+        intx::uint256 fe = intx::be::unsafe::load<intx::uint256>(out->data());
+        intx::uint256 bm = intx::be::unsafe::load<intx::uint256>(out->data() + 32);
+        field_elements_ok = (fe == intx::uint256{4096});
+        const intx::uint256 expected_modulus = intx::from_string<intx::uint256>(
+            "52435875175126190479447740508185965837690552500527637822603658699938581184513");
+        modulus_ok = (bm == expected_modulus);
+        printf("  field_elements_per_blob=%lu (expected 4096) %s\n",
+               (unsigned long)fe[0], field_elements_ok ? "OK" : "WRONG");
+        printf("  bls_modulus matches expected: %s\n", modulus_ok ? "OK" : "WRONG");
+    }
+
+    // Sanity: the gas cost is the EIP-4844 fixed 50000.
+    auto gas = silkworm::precompile::point_evaluation_gas(
+        silkworm::ByteView{kIn, sizeof(kIn)}, EVMC_CANCUN);
+    bool gas_ok = (gas == 50000);
+    printf("  gas: %lu (expected 50000) %s\n",
+           (unsigned long)gas, gas_ok ? "OK" : "WRONG");
+
+    // Negative case: corrupt the versioned hash byte → must reject.
+    uint8_t bad[192];
+    std::memcpy(bad, kIn, 192);
+    bad[0] = 0x02;  // wrong KZG version marker
+    auto bad_out = silkworm::precompile::point_evaluation_run(
+        silkworm::ByteView{bad, sizeof(bad)});
+    bool reject_ok = !bad_out.has_value();
+    printf("  rejects corrupted versioned-hash: %s\n", reject_ok ? "OK" : "WRONG");
+
+    bool all_ok = size_ok && field_elements_ok && modulus_ok && gas_ok && reject_ok;
+    printf("  %s\n\n", all_ok ? "PASSED" : "FAILED");
+}
+
+static void test_eip4788_predeploy_seeded() {
+    printf("=== test_eip4788_predeploy_seeded (beacon-roots magic address) ===\n");
+
+    // Use a CellEvmState backend so update_account_code goes through the
+    // production code path (in-memory state in unit tests has the same API
+    // but the cell-state path is what runs on validators).
+    auto cell_state = std::make_unique<CellEvmState>();
+    EvmState state(std::move(cell_state));
+    seed_eip4788_predeploy(state);
+
+    const evmc::address addr = silkworm::protocol::kBeaconRootsAddress;
+    auto acct = state.read_account(addr);
+    bool present = acct.has_value();
+    printf("  account at 0x000f...beac02: %s\n", present ? "present" : "ABSENT");
+
+    bool nonce_ok = present && acct->nonce == 1;
+    bool balance_ok = present && acct->balance == 0;
+    printf("  nonce=%lu (expected 1) %s\n",
+           present ? (unsigned long)acct->nonce : 0ul,
+           nonce_ok ? "OK" : "WRONG");
+    printf("  balance=0: %s\n", balance_ok ? "OK" : "WRONG");
+
+    // Verify the bytecode matches the EIP-4788 fixed runtime: 97 bytes,
+    // first opcode 0x33 (CALLER), terminating in `STOP` (0x00). The
+    // 97-byte length is what the deployment transaction's constructor
+    // (`60618060095f395ff3`) RETURNs after stripping its 9-byte init
+    // prefix from the on-chain `input` field.
+    bool code_ok = false;
+    if (present) {
+        auto code = state.read_code_copy(addr, acct->code_hash);
+        constexpr size_t kExpectedRuntimeLen = 97;
+        code_ok = (code.size() == kExpectedRuntimeLen);
+        bool first_op_ok = !code.empty() && code[0] == 0x33;  // CALLER opcode
+        bool last_op_ok = !code.empty() && code.back() == 0x00;  // STOP
+        printf("  code length=%zu (expected %zu) %s, first opcode 0x%02x (expected 0x33) %s, last opcode 0x%02x (expected 0x00) %s\n",
+               code.size(), kExpectedRuntimeLen,
+               code_ok ? "OK" : "WRONG",
+               code.empty() ? 0 : code[0], first_op_ok ? "OK" : "WRONG",
+               code.empty() ? 0 : code.back(), last_op_ok ? "OK" : "WRONG");
+        code_ok = code_ok && first_op_ok && last_op_ok;
+    }
+
+    // Idempotency: a second call must not change state.
+    seed_eip4788_predeploy(state);
+    auto acct2 = state.read_account(addr);
+    bool idempotent = acct2.has_value() && acct2->code_hash == acct->code_hash &&
+                      acct2->nonce == acct->nonce;
+    printf("  idempotent re-seed: %s\n", idempotent ? "OK" : "WRONG");
+
+    bool all_ok = present && nonce_ok && balance_ok && code_ok && idempotent;
+    printf("  %s\n\n", all_ok ? "PASSED" : "FAILED");
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -4553,6 +4677,11 @@ int main() {
     test_state_test_runner_pyspec_walk();
     test_state_test_runner_pyspec_walk_shanghai();
     test_state_test_runner_pyspec_walk_prague();
+
+    // Cancun pre-fork prep (Category E in known-divergences). Appended at
+    // the end so existing test ordering is preserved.
+    test_kzg_precompile_active();
+    test_eip4788_predeploy_seeded();
 
     // Scan stdout for FAILED to determine exit code
     // (Individual tests print PASSED or FAILED)

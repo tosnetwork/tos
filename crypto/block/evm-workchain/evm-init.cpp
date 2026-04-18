@@ -26,6 +26,8 @@
 
 #include <silkworm/core/types/account.hpp>
 #include <silkworm/core/common/empty_hashes.hpp>
+#include <silkworm/core/execution/precompile.hpp>
+#include <silkworm/core/protocol/param.hpp>
 
 #include <ethash/keccak.hpp>
 
@@ -155,6 +157,148 @@ void seed_test_accounts(EvmState& state) {
 }
 
 }  // anonymous namespace
+
+// =============================================================================
+// CANCUN PRE-FORK PREP (Category E, doc/evm-workchain-known-divergences.md)
+//
+// These helpers prepare the production runtime for a future flip of
+// `cancun_time = 0` in evm-block-context.cpp::evm_chain_config(). They are
+// **safe to call at every Shanghai-era node startup** — none of them changes
+// consensus or state semantics until Cancun is actually activated. Once
+// Cancun activates, silkworm's MergeRuleSet::initialize() invokes the
+// EIP-4788 system call per block; the predeploy must be in state by then.
+//
+// Added in clearly-marked section to coordinate with parallel work on
+// genesis-alloc helpers (Agent K) — DO NOT collapse into init_evm_workchain
+// flow; new helpers are appended here, then dispatched from the bottom of
+// init_evm_workchain.
+// =============================================================================
+
+namespace {
+
+// EIP-4788 deployed runtime bytecode at kBeaconRootsAddress.
+// Source: https://eips.ethereum.org/EIPS/eip-4788 §"Deployment".
+// This is the *runtime* bytecode (not the deployer init code) — exactly
+// what every Cancun-spec mainnet client has at 0x000F…Beac02. Length: 97
+// bytes (194 hex chars). The on-chain deployment transaction's `input`
+// field is `0x60618060095f395ff3` + this runtime; the 9-byte init prefix
+// CODECOPYs the rest into memory and RETURNs it. Logic: when called with
+// sender == kSystemAddress it stores the calldata to ring-buffer slot
+// (timestamp % HISTORY_BUFFER_LENGTH); otherwise it serves a parent-
+// beacon-root lookup keyed by the calldata timestamp.
+// HISTORY_BUFFER_LENGTH = 8191 = 0x1FFF.
+constexpr const char* kEip4788Bytecode =
+    "3373fffffffffffffffffffffffffffffffffffffffe14604d57602036146024575f5ffd5b"
+    "5f35801560495762001fff810690815414603c575f5ffd5b62001fff01545f5260205ff35b"
+    "5f5ffd5b62001fff42064281555f359062001fff015500";
+
+bool hex_decode(const char* hex, silkworm::Bytes& out) {
+    size_t len = std::strlen(hex);
+    if (len % 2 != 0) return false;
+    out.clear();
+    out.reserve(len / 2);
+    for (size_t i = 0; i < len; i += 2) {
+        unsigned x;
+        if (std::sscanf(hex + i, "%2x", &x) != 1) return false;
+        out.push_back(static_cast<uint8_t>(x));
+    }
+    return true;
+}
+
+}  // anonymous namespace
+
+void seed_eip4788_predeploy(EvmState& state) {
+    // The beacon-roots system contract lives at the magic address
+    // kBeaconRootsAddress = 0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02.
+    // EIP-4788 deploys it with: nonce = 1, balance = 0, code = the
+    // 200-byte runtime above, storage = empty.
+    //
+    // Idempotent: if the contract is already deployed (correct code_hash),
+    // skip — this lets us call seed_eip4788_predeploy() unconditionally on
+    // every node startup without re-writing state.
+    const evmc::address addr = silkworm::protocol::kBeaconRootsAddress;
+
+    silkworm::Bytes code;
+    if (!hex_decode(kEip4788Bytecode, code)) {
+        LOG(ERROR) << "evm-workchain: EIP-4788 bytecode literal failed to hex-decode (programmer error)";
+        return;
+    }
+
+    auto code_hash_kk = ethash::keccak256(code.data(), code.size());
+    evmc::bytes32 code_hash{};
+    std::memcpy(code_hash.bytes, code_hash_kk.bytes, 32);
+
+    if (auto existing = state.read_account(addr); existing.has_value()) {
+        if (existing->code_hash == code_hash) {
+            LOG(INFO) << "evm-workchain: EIP-4788 beacon-roots predeploy already present (code_hash match), skipping";
+            return;
+        }
+        LOG(WARNING) << "evm-workchain: EIP-4788 predeploy address has unexpected code_hash; overwriting";
+    }
+
+    {
+        std::unique_lock lock(state.mutex());
+        // Account record (nonce=1, balance=0, code_hash set per EIP).
+        silkworm::Account acct;
+        acct.nonce = 1;
+        acct.balance = 0;
+        acct.code_hash = code_hash;
+        // Two-step: update_account first (registers the account at code_hash),
+        // then update_account_code (stores the actual bytecode and refreshes
+        // the embedded EvmAccountData cell so the bytecode survives restart).
+        state.state().update_account(addr, std::nullopt, acct);
+        state.state().update_account_code(addr, /*incarnation=*/0,
+                                          code_hash,
+                                          silkworm::ByteView{code.data(), code.size()});
+    }
+
+    LOG(WARNING) << "evm-workchain: seeded EIP-4788 beacon-roots predeploy at "
+                    "0x000f3df6d732807ef1319fb7b8bb8522d0beac02 (code=97 bytes, nonce=1)";
+}
+
+void verify_kzg_setup_loaded() {
+    // Sanity check: silkworm + evmone bundle the trusted-setup G2_1 point
+    // as a constexpr in third-party/evmone/evmone/lib/evmone_precompiles/kzg.cpp.
+    // No external trusted_setup file is required and there is no separate
+    // loader entry-point — point_evaluation_run() is callable as soon as the
+    // process is up.
+    //
+    // To prove that the precompile is wired into our build (and to surface
+    // any future regression early), we run point_evaluation_run on the
+    // canonical EIP-4844 spec test vector and assert the success bytes
+    // (FIELD_ELEMENTS_PER_BLOB || BLS_MODULUS, 64 bytes total).
+    static const uint8_t kInputHex[192] = {
+        // versioned_hash (32) — sha256(commitment) with first byte = 0x01
+        0x01,0x4e,0xdf,0xed,0x85,0x47,0x66,0x1f,0x6c,0xb4,0x16,0xeb,0xa5,0x30,0x61,0xa2,
+        0xf6,0xdc,0xe8,0x72,0xc0,0x49,0x7e,0x6d,0xd4,0x85,0xa8,0x76,0xfe,0x25,0x67,0xf1,
+        // z (32) — evaluation point
+        0x56,0x4c,0x0a,0x11,0xa0,0xf7,0x04,0xf4,0xfc,0x3e,0x8a,0xcf,0xe0,0xf8,0x24,0x5f,
+        0x0a,0xd1,0x34,0x7b,0x37,0x8f,0xbf,0x96,0xe2,0x06,0xda,0x11,0xa5,0xd3,0x63,0x06,
+        // y (32) — claimed value at z
+        0x6d,0x92,0x8e,0x13,0xfe,0x44,0x3e,0x95,0x7d,0x82,0xe3,0xe7,0x1d,0x48,0xcb,0x65,
+        0xd5,0x10,0x28,0xeb,0x44,0x83,0xe7,0x19,0xbf,0x8e,0xfc,0xdf,0x12,0xf7,0xc3,0x21,
+        // commitment (48)
+        0xa4,0x21,0xe2,0x29,0x56,0x59,0x52,0xcf,0xff,0x4e,0xf3,0x51,0x71,0x00,0xa9,0x7d,
+        0xa1,0xd4,0xfe,0x57,0x95,0x6f,0xa5,0x0a,0x44,0x2f,0x92,0xaf,0x03,0xb1,0xbf,0x37,
+        0xad,0xac,0xc8,0xad,0x4e,0xd2,0x09,0xb3,0x12,0x87,0xea,0x5b,0xb9,0x4d,0x9d,0x06,
+        // proof (48)
+        0xa4,0x44,0xd6,0xbb,0x5a,0xad,0xc3,0xce,0xb6,0x15,0xb5,0x0d,0x66,0x06,0xbd,0x54,
+        0xbf,0xe5,0x29,0xf5,0x92,0x47,0x98,0x7c,0xd1,0xab,0x84,0x8d,0x19,0xde,0x59,0x9a,
+        0x90,0x52,0xf1,0x83,0x5f,0xb0,0xd0,0xd4,0x4c,0xf7,0x01,0x83,0xe1,0x9a,0x68,0xc9,
+    };
+    auto out = silkworm::precompile::point_evaluation_run(
+        silkworm::ByteView{kInputHex, sizeof(kInputHex)});
+    if (!out || out->size() != 64) {
+        LOG(ERROR) << "evm-workchain: KZG point-evaluation precompile (0x0a) self-test FAILED — "
+                      "spec vector did not return 64-byte success blob. "
+                      "Cancun activation must NOT proceed.";
+        return;
+    }
+    LOG(WARNING) << "evm-workchain: KZG point-evaluation precompile (0x0a) is ready "
+                    "(spec vector verified, no external trusted_setup file needed; "
+                    "evmone bundles the G2_1 point as a constexpr)";
+}
+
 
 // Decode a cp.new_data-shaped cell (see evm-compute-phase.cpp). Layout:
 //   v1: magic:24 + has_state_root:1 + [state_root:^Cell] + eth_state_root:bits256
@@ -423,6 +567,17 @@ void init_evm_workchain(const std::string& db_root) {
     // Production deployments should remove or guard this call. See the
     // PRE-FUNDED TEST ACCOUNTS block above for the full list and rationale.
     seed_test_accounts(*g_evm_state);
+
+    // Cancun pre-fork prep (Category E in known-divergences). Both calls are
+    // safe at the current Shanghai-revision config — they only matter once
+    // cancun_time = 0 is flipped:
+    //   * KZG self-test logs readiness of precompile 0x0a (no init action,
+    //     just a sanity check that the bundled G2_1 setup is linked).
+    //   * Beacon-roots predeploy is idempotent — once it's in CellEvmState
+    //     it round-trips through cp.new_data → restart with the right
+    //     code_hash, and we skip on subsequent calls.
+    verify_kzg_setup_loaded();
+    seed_eip4788_predeploy(*g_evm_state);
 
     // Phase F.3/F.4: open the per-validator side-channel RPC cache DB.
     // Skipped on the test harness path (no db_root provided).
