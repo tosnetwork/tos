@@ -619,9 +619,9 @@ pub enum Result<T, E> {
 \end{verbatim}
 
 Wire-format and stack-layout are fixed canonically:
-\verb|Option<T>| is bit-compatible with TL-B \verb|Maybe X|; \verb|Result<T,
-E>| uses a 1-bit tag. See Sections~\ref{sec:cd-stack-enum} and
-\ref{sec:cd-wire-enum}.
+\verb|Option<T>| is bit-compatible with TL-B \verb|Maybe X|;
+\verb|Result<T, E>| uses a 1-bit tag. See
+Sections~\ref{sec:cd-stack-enum} and \ref{sec:cd-wire-enum}.
 
 These types are not library afterthoughts. They are core to ordinary contract
 authoring:
@@ -1011,8 +1011,9 @@ requested \verb|T|, the wrapper exits successfully without invoking the user
 body. No state is written, no messages are sent. This preserves the TOS
 convention that unrecognized ops do not cause bounce-refund gas drain.
 \item \verb|entry external|: decoding is lazy. The wrapper exposes
-\verb|ctx.body_slice: Slice| and a user-invoked \verb|ctx.parse_body<T>()
--> Result<T, ParseError>|. The wrapper does \emph{not} decode eagerly,
+\verb|ctx.body_slice: Slice| and a user-invoked
+\verb|ctx.parse_body<T>() -> Result<T, ParseError>|.
+The wrapper does \emph{not} decode eagerly,
 because the external-message gas limit (typically 10\,000 gas before
 \verb|accept_message|) may be exhausted by decoding a large body. Authors
 must call \verb|accept_message| first, then parse.
@@ -2050,10 +2051,10 @@ Precedence summary (highest to lowest):
 10 & \verb|<<|  \verb|>>| & left \\ \hline
  9 & \verb|&| & left \\ \hline
  8 & \verb|^| & left \\ \hline
- 7 & \verb|{|} & left \\ \hline
+ 7 & \verb+|+ & left \\ \hline
  6 & \verb|==| \verb|!=| \verb|<| \verb|>| \verb|<=| \verb|>=| \verb|<=>| & non-associative \\ \hline
  5 & \verb|&&| & left (short-circuit) \\ \hline
- 4 & \verb|{|}\verb|{|} & left (short-circuit) \\ \hline
+ 4 & \verb+||+ & left (short-circuit) \\ \hline
  2 & \verb|=| and compound assignments & right \\ \hline
 \end{tabular}
 \end{center}
@@ -2065,8 +2066,8 @@ Notes:
 \item \verb|?| binds tighter than method-call dot: \verb|x?.foo()| means
 \verb|(x?).foo()|. Writing \verb|x.foo()?| propagates after calling.
 \item \verb|as| takes a type, not an expression, on the right.
-\item Bitwise \verb|&|/\verb|||/\verb|^| coexist with logical
-\verb|&&|/\verb|||| at separate precedences. Logical operators require
+\item Bitwise \verb|&|/\verb+|+/\verb|^| coexist with logical
+\verb|&&|/\verb+||+ at separate precedences. Logical operators require
 \verb|bool| operands and short-circuit; bitwise operators work on
 integer types only.
 \end{itemize}
