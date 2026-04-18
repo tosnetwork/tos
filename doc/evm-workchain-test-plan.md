@@ -7,13 +7,13 @@ Version: v1.1 — 2026-04-17 (status snapshot)
 | Gate | State | Notes |
 |------|-------|-------|
 | **Gate T — Testnet** | ✅ PASS | All 6 rows green. Last-known-good `57bf20cb`. |
-| **Gate P — Private mainnet** | 🚧 in progress | 2 of 6 rows fully green (G.1 at **100%** on 55-dir GeneralStateTests / 2533 pass; G.2 Pyspec at **100%** on Cancun / 43 pass). |
+| **Gate P — Private mainnet** | 🚧 in progress | 2 of 6 rows fully green (G.1 GeneralStateTests **100%** / 2533 pass; G.2 Pyspec Cancun+Shanghai **100%** / 54 pass). |
 | **Gate M — Public mainnet** | 📋 planned | Depends on Gates T + P + Phase G.2/G.3/G.4/G.5 + third-party audit. |
 
 | Phase | State | Headline |
 |-------|-------|----------|
 | G.1 — State-test harness (GeneralStateTests) | ✅ done (55 dirs, 100% pass) | Runner + walker ✅ over **55 subdirs**, **2533/2533 pass (100%)**, **0 fail**, 5 upstream-skipped (silkworm `kFailingTests` + EIP-684/7610 grey zone), 2 silkworm-asserted skips. **10 real bugs** found and fixed (5 consensus + 3 DoS + 2 adapter-glue) |
-| G.2 — execution-spec-tests (Pyspec) | ✅ done (Cancun, 100% pass) | Walker added in `eef094bf`. Pyspec stable v3.0.0 fixtures, **43/43 pass**, 13 skipped (Shanghai-only entries). 1 new bug class found and fixed: EIP-4844 blob-fee burn missing + 2 blob-tx pre-validation rules (zero-blobs, bad version byte). |
+| G.2 — execution-spec-tests (Pyspec) | ✅ done (Cancun + Shanghai, 100% pass; Prague stub awaiting fixtures) | Walkers landed in `eef094bf` + `f6d1f83a`. Pyspec stable v3.0.0 fixtures: **Cancun 43/43**, **Shanghai 11/11**, Prague stub ready (no `prague/` dir in current release; future drop activates without code change). 1 new bug class found and fixed: EIP-4844 blob-fee burn missing + 2 blob-tx pre-validation rules. |
 | G.3 — Hive (`rpc-compat`) | 🚧 scaffold ✅, real run 📋 | `test/conformance/hive/` ✅ landed in `132a9787`: Dockerfile (2-stage ubuntu:22.04 build, validated `docker build --check`), hive client wrapper + `tos.cmd` + `mapper.jq` stub + README. ~4 engineer-days remain to wire real genesis-translation and per-test re-init before the simulator goes green. |
 | G.4 — Continuous differential CI | 🚧 runner ✅, CI 📋 | One-shot `differential_geth.py` lives; continuous CI not yet stood up |
 | G.5 — Fuzz + stress | 🚧 runner ✅, 10-min soak ✅, 24h soak 📋 | `test/conformance/fuzz_eth.py` ✅ landed; found 1 DoS (eth_call hex-parse) fixed in `f53c356a`. Latest soak: **26,374 mutated RPC requests, 0 genuine crashes** (a 10-min run; was scheduled for 30 but a parallel proof-test ran concurrently and the fuzzer's connection-refused detector tripped on operator restart, not on fuzz). 24-hour run + 10K-tx/s stress harness still pending. |
