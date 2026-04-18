@@ -2283,6 +2283,16 @@ static RpcResult handle_create_access_list(const std::string& params, const std:
     if (txn.to) ibs.access_account(*txn.to);
     ibs.access_account(block.header.beneficiary);
 
+    // Mirror geth/erigon: top up sender balance so the value-transfer
+    // leg doesn't revert when sender.balance < value. The override lives
+    // only in this read-only IBS.
+    if (sender && txn.value > 0) {
+        const auto current = ibs.get_balance(*sender);
+        if (current < txn.value) {
+            ibs.add_to_balance(*sender, txn.value - current);
+        }
+    }
+
     auto call_result = evm.execute(txn, exec_gas);
 
     // Optimize per EIP-2930 (drop addresses whose listing isn't profitable)
