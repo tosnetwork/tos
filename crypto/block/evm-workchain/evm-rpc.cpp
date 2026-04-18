@@ -32,6 +32,10 @@
 #include <silkworm/core/trie/hash_builder.hpp>
 #include <silkworm/core/trie/nibbles.hpp>
 #include <silkworm/core/common/empty_hashes.hpp>
+#include <silkworm/core/types/block.hpp>
+#include <silkworm/core/types/receipt.hpp>
+#include <silkworm/core/types/bloom.hpp>
+#include <silkworm/core/rlp/encode_vector.hpp>
 
 #include <silkworm/core/common/util.hpp>
 #include <ethash/keccak.hpp>
@@ -1986,159 +1990,160 @@ static RpcResult handle_get_raw_tx_by_block_number_and_index(const std::string& 
 }
 
 // --- debug_getRaw* (block / header / receipts / tx) ---
+//
+// These RPCs return canonical Ethereum-wire RLP for the block, header, or
+// receipts, suitable for replay into a stock execution-layer client. The
+// canonical layout is delegated to silkworm's `silkworm::rlp::encode`
+// overloads for `BlockHeader`, `Block`, and `Receipt` so that we match the
+// upstream encoders byte-for-byte (including all post-merge / Shanghai /
+// Cancun / Prague optional trailing fields).
 
-// Build an Ethereum-format block header RLP from our StoredBlock.
-// Layout per yellow paper §4.3:
-//   [parentHash, ommersHash, beneficiary, stateRoot, transactionsRoot,
-//    receiptsRoot, logsBloom, difficulty, number, gasLimit, gasUsed,
-//    timestamp, extraData, mixHash, nonce, baseFeePerGas]
-static silkworm::Bytes encode_eth_header_rlp(const StoredBlock& blk) {
-    silkworm::Bytes payload;
-    silkworm::rlp::encode(payload, silkworm::ByteView{blk.parent_hash.bytes, 32});
-    // ommers (uncles) hash = keccak256(rlp([])) = kEmptyListHash
-    silkworm::rlp::encode(payload, silkworm::ByteView{silkworm::kEmptyListHash.bytes, 32});
-    silkworm::rlp::encode(payload, silkworm::ByteView{blk.miner.bytes, 20});
-    silkworm::rlp::encode(payload, silkworm::ByteView{evmc::bytes32{}.bytes, 32});  // stateRoot placeholder (TODO real)
-    silkworm::rlp::encode(payload, silkworm::ByteView{blk.transactions_root.bytes, 32});
-    silkworm::rlp::encode(payload, silkworm::ByteView{blk.receipts_root.bytes, 32});
-    silkworm::rlp::encode(payload, silkworm::ByteView{blk.logs_bloom, 256});
-    silkworm::rlp::encode(payload, intx::uint256{0});  // difficulty
-    silkworm::rlp::encode(payload, blk.number);
-    silkworm::rlp::encode(payload, blk.gas_limit);
-    silkworm::rlp::encode(payload, blk.gas_used);
-    silkworm::rlp::encode(payload, blk.timestamp);
-    silkworm::rlp::encode(payload, silkworm::ByteView{});  // extraData empty
-    silkworm::rlp::encode(payload, silkworm::ByteView{evmc::bytes32{}.bytes, 32});  // mixHash
-    uint64_t nonce_zero = 0;
-    silkworm::Bytes nonce_be(8, 0);
-    silkworm::rlp::encode(payload, silkworm::ByteView{nonce_be});  // 8-byte nonce
-    (void)nonce_zero;
-    silkworm::rlp::encode(payload, blk.base_fee_per_gas);
+// Parse the block-tag argument shared by the three block-keyed handlers.
+// Accepts "latest" / "pending" / "safe" / "finalized" (resolves to the
+// current head) or any 0x-prefixed hex block number. Returns the resolved
+// block number.
+static uint64_t parse_block_tag_param(const std::string& params) {
+    uint64_t bn = global_evm_state().block_number();
+    auto pos = params.find("0x");
+    if (pos != std::string::npos) {
+        auto end = params.find_first_of("\",]}", pos);
+        std::string s = params.substr(pos, end - pos);
+        if (s != "latest" && s != "pending" && s != "safe" && s != "finalized") {
+            bn = parse_hex_uint64(s);
+        }
+    }
+    return bn;
+}
 
-    silkworm::Bytes out;
-    silkworm::rlp::Header h{true, payload.size()};
-    silkworm::rlp::encode_header(out, h);
-    out.append(payload);
-    return out;
+// Map our `StoredBlock` (the indexed-for-RPC view) to the silkworm
+// `BlockHeader` shape. Every Ethereum-yellow-paper field is populated; the
+// optional trailing fields (base_fee, withdrawals_root, blob_*, beacon
+// root, requests_hash) are emitted with their canonical post-Cancun /
+// post-Prague empty values so the resulting RLP matches what the
+// `eth_getBlockByNumber` JSON view advertises (see ~line 900 above).
+static silkworm::BlockHeader build_silkworm_header(const StoredBlock& blk) {
+    silkworm::BlockHeader h;
+    h.parent_hash = blk.parent_hash;
+    h.ommers_hash = silkworm::kEmptyListHash;          // no uncles, post-merge
+    h.beneficiary = blk.miner;
+    h.state_root = blk.state_root;
+    h.transactions_root = blk.transactions_root;
+    h.receipts_root = blk.receipts_root;
+    std::memcpy(h.logs_bloom.data(), blk.logs_bloom, 256);
+    h.difficulty = 0;                                   // post-merge
+    h.number = blk.number;
+    h.gas_limit = blk.gas_limit;
+    h.gas_used = blk.gas_used;
+    h.timestamp = blk.timestamp;
+    // extra_data left empty
+    // prev_randao (mix hash) left zero
+    // nonce left all-zero (8 bytes)
+    h.base_fee_per_gas = blk.base_fee_per_gas;          // EIP-1559
+    h.withdrawals_root = silkworm::kEmptyRoot;          // EIP-4895, no withdrawals
+    h.blob_gas_used = uint64_t{0};                       // EIP-4844
+    h.excess_blob_gas = uint64_t{0};                     // EIP-4844
+    h.parent_beacon_block_root = evmc::bytes32{};       // EIP-4788
+    // EIP-7685 empty requests-hash = sha256(""):
+    //   e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+    static constexpr uint8_t kEmptyRequestsHash[32] = {
+        0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14,
+        0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f, 0xb9, 0x24,
+        0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c,
+        0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52, 0xb8, 0x55,
+    };
+    evmc::bytes32 req_hash{};
+    std::memcpy(req_hash.bytes, kEmptyRequestsHash, 32);
+    h.requests_hash = req_hash;
+    return h;
+}
+
+// Decode the stored raw_rlp into a `silkworm::Transaction`. Returns
+// nullopt on decode failure (which would mean the indexed raw_rlp is
+// malformed — should be impossible, but guarded so the RPC doesn't crash).
+static std::optional<silkworm::Transaction> decode_stored_tx_rlp(const StoredTransaction& tx) {
+    if (tx.raw_rlp.empty()) return std::nullopt;
+    silkworm::Transaction txn;
+    silkworm::ByteView view{tx.raw_rlp.data(), tx.raw_rlp.size()};
+    auto res = silkworm::rlp::decode_transaction(view, txn,
+                                                 silkworm::rlp::Eip2718Wrapping::kBoth);
+    if (!res) return std::nullopt;
+    return txn;
 }
 
 static RpcResult handle_debug_get_raw_header(const std::string& params, const std::string& id) {
-    uint64_t bn = global_evm_state().block_number();
-    auto pos = params.find("0x");
-    if (pos != std::string::npos) {
-        auto end = params.find_first_of("\",]}", pos);
-        std::string s = params.substr(pos, end - pos);
-        if (s != "latest" && s != "pending" && s != "safe" && s != "finalized") {
-            bn = parse_hex_uint64(s);
-        }
-    }
+    uint64_t bn = parse_block_tag_param(params);
     if (!global_evm_state().has_block(bn)) return {make_result(id, "null"), false};
     auto blk = global_evm_state().get_block_copy(bn);
-    auto rlp = encode_eth_header_rlp(blk);
-    return {make_result(id, to_hex_data(rlp.data(), rlp.size())), false};
+    auto header = build_silkworm_header(blk);
+    silkworm::Bytes out;
+    silkworm::rlp::encode(out, header);
+    return {make_result(id, to_hex_data(out.data(), out.size())), false};
 }
 
 static RpcResult handle_debug_get_raw_block(const std::string& params, const std::string& id) {
-    uint64_t bn = global_evm_state().block_number();
-    auto pos = params.find("0x");
-    if (pos != std::string::npos) {
-        auto end = params.find_first_of("\",]}", pos);
-        std::string s = params.substr(pos, end - pos);
-        if (s != "latest" && s != "pending" && s != "safe" && s != "finalized") {
-            bn = parse_hex_uint64(s);
-        }
-    }
+    uint64_t bn = parse_block_tag_param(params);
     if (!global_evm_state().has_block(bn)) return {make_result(id, "null"), false};
     auto blk = global_evm_state().get_block_copy(bn);
 
-    // block = [header, transactions, ommers]
-    silkworm::Bytes header_rlp = encode_eth_header_rlp(blk);
-
-    // transactions: list of raw RLP txs
-    silkworm::Bytes txs_payload;
+    silkworm::Block sw_block;
+    sw_block.header = build_silkworm_header(blk);
+    sw_block.transactions.reserve(blk.transaction_hashes.size());
     for (const auto& th : blk.transaction_hashes) {
-        auto tx = global_evm_state().get_transaction_copy(th);
-        if (tx && !tx->raw_rlp.empty()) {
-            txs_payload.append(tx->raw_rlp);
-        }
+        auto stored = global_evm_state().get_transaction_copy(th);
+        if (!stored) continue;
+        auto decoded = decode_stored_tx_rlp(*stored);
+        if (!decoded) continue;
+        sw_block.transactions.push_back(std::move(*decoded));
     }
-    silkworm::Bytes txs_rlp;
-    silkworm::rlp::Header th{true, txs_payload.size()};
-    silkworm::rlp::encode_header(txs_rlp, th);
-    txs_rlp.append(txs_payload);
-
-    // ommers: empty list
-    silkworm::Bytes ommers_rlp;
-    silkworm::rlp::Header oh{true, 0};
-    silkworm::rlp::encode_header(ommers_rlp, oh);
-
-    silkworm::Bytes payload;
-    payload.append(header_rlp);
-    payload.append(txs_rlp);
-    payload.append(ommers_rlp);
+    // ommers: empty (post-merge), already default-empty.
+    // withdrawals: empty list (Shanghai+) — present so the BlockBody RLP
+    // includes the trailing `[]` slot, matching the header's
+    // `withdrawals_root = kEmptyRoot`.
+    sw_block.withdrawals = std::vector<silkworm::Withdrawal>{};
 
     silkworm::Bytes out;
-    silkworm::rlp::Header bh{true, payload.size()};
-    silkworm::rlp::encode_header(out, bh);
-    out.append(payload);
-
+    silkworm::rlp::encode(out, sw_block);
     return {make_result(id, to_hex_data(out.data(), out.size())), false};
 }
 
 static RpcResult handle_debug_get_raw_receipts(const std::string& params, const std::string& id) {
-    uint64_t bn = global_evm_state().block_number();
-    auto pos = params.find("0x");
-    if (pos != std::string::npos) {
-        auto end = params.find_first_of("\",]}", pos);
-        std::string s = params.substr(pos, end - pos);
-        if (s != "latest" && s != "pending" && s != "safe" && s != "finalized") {
-            bn = parse_hex_uint64(s);
-        }
-    }
+    uint64_t bn = parse_block_tag_param(params);
     if (!global_evm_state().has_block(bn)) return {make_result(id, "[]"), false};
     auto blk = global_evm_state().get_block_copy(bn);
 
-    // Encode each receipt as RLP([status, cumulative_gas, logs_bloom, logs])
+    // The spec returns an array with one hex string per transaction:
+    //   ["0x<rlp_receipt_0>", "0x<rlp_receipt_1>", ...]
+    // For typed receipts (EIP-2718), the encoding is `type_byte || rlp(...)`
+    // and is NOT wrapped in an outer RLP byte-string (matches go-ethereum
+    // and silkworm::rlp::encode(Bytes&, const Receipt&)).
     std::string out = "[";
-    for (size_t i = 0; i < blk.transaction_hashes.size(); i++) {
+    for (size_t i = 0; i < blk.transaction_hashes.size(); ++i) {
         if (i > 0) out += ",";
-        auto r = global_evm_state().get_receipt_copy(blk.transaction_hashes[i]);
+        const auto& th = blk.transaction_hashes[i];
+        auto r = global_evm_state().get_receipt_copy(th);
         if (!r) { out += "null"; continue; }
-        silkworm::Bytes payload;
-        silkworm::rlp::encode(payload, r->success ? uint64_t{1} : uint64_t{0});
-        silkworm::rlp::encode(payload, r->cumulative_gas_used);
-        // logsBloom from receipt logs
-        uint8_t bloom[256] = {};
-        compute_logs_bloom(r->logs, bloom);
-        silkworm::rlp::encode(payload, silkworm::ByteView{bloom, 256});
-        // logs sub-list
-        silkworm::Bytes logs_payload;
-        for (const auto& log : r->logs) {
-            silkworm::Bytes lp;
-            silkworm::rlp::encode(lp, silkworm::ByteView{log.address.bytes, 20});
-            silkworm::Bytes topics_payload;
-            for (const auto& t : log.topics) {
-                silkworm::rlp::encode(topics_payload, silkworm::ByteView{t.bytes, 32});
-            }
-            silkworm::Bytes topics_list;
-            silkworm::rlp::encode_header(topics_list, silkworm::rlp::Header{true, topics_payload.size()});
-            topics_list.append(topics_payload);
-            lp.append(topics_list);
-            silkworm::rlp::encode(lp, log.data);
-            silkworm::Bytes lh;
-            silkworm::rlp::encode_header(lh, silkworm::rlp::Header{true, lp.size()});
-            lh.append(lp);
-            logs_payload.append(lh);
-        }
-        silkworm::Bytes logs_list;
-        silkworm::rlp::encode_header(logs_list, silkworm::rlp::Header{true, logs_payload.size()});
-        logs_list.append(logs_payload);
-        payload.append(logs_list);
 
-        silkworm::Bytes receipt_rlp;
-        silkworm::rlp::encode_header(receipt_rlp, silkworm::rlp::Header{true, payload.size()});
-        receipt_rlp.append(payload);
-        out += to_hex_data(receipt_rlp.data(), receipt_rlp.size());
+        // Recover the transaction's EIP-2718 type from its raw RLP so
+        // typed-receipt prefixes match the corresponding tx type. Falls
+        // back to legacy (no prefix) if the tx isn't indexed or fails to
+        // decode.
+        silkworm::TransactionType tx_type = silkworm::TransactionType::kLegacy;
+        if (auto stored_tx = global_evm_state().get_transaction_copy(th)) {
+            if (auto decoded = decode_stored_tx_rlp(*stored_tx)) {
+                tx_type = decoded->type;
+            }
+        }
+
+        silkworm::Receipt sw_receipt;
+        sw_receipt.type = tx_type;
+        sw_receipt.success = r->success;
+        sw_receipt.cumulative_gas_used = r->cumulative_gas_used;
+        sw_receipt.bloom = silkworm::logs_bloom(r->logs);
+        sw_receipt.logs = r->logs;
+
+        silkworm::Bytes rlp_out;
+        silkworm::rlp::encode(rlp_out, sw_receipt);
+        out += to_hex_data(rlp_out.data(), rlp_out.size());
     }
     out += "]";
     return {make_result(id, out), false};

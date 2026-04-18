@@ -66,6 +66,13 @@ SHAPE_METHODS = {
     "eth_newFilter",
     "eth_newBlockFilter",
     "eth_newPendingTransactionFilter",
+    # debug_getRaw* return chain-state-dependent RLP whose exact bytes
+    # change every block; we only assert the response is a non-null hex
+    # string (or list of them).
+    "debug_getRawBlock",
+    "debug_getRawHeader",
+    "debug_getRawReceipts",
+    "debug_getRawTransaction",
 }
 
 
