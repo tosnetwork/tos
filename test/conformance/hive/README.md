@@ -5,7 +5,7 @@ dockerize validator, write hive client stub*. This directory ships
 artifacts that let `ethereum/hive`'s `rpc-compat` simulator drive our
 JSON-RPC surface end-to-end.
 
-**Status (2026-04-18, post sprint #3):** the Hive client wiring is
+**Status (2026-04-18, post sprint #4):** the Hive client wiring is
 functional in **proxy mode**: a thin container forwards Hive's 8545
 traffic to an already-running TOS RPC endpoint. Against the spec's
 `execution-apis/tests/*.io` fixtures, this delivers **35 PASSes** out
@@ -14,6 +14,44 @@ of 207 sub-tests when the upstream is the live 4-validator testnet
 --normalize-not-found`. Remaining 172 fail because they assert on
 specific hashes / state from a 45-block seeded chain we don't have
 (see *Gap* below).
+
+What changed in sprint #4 (count is still 35 — the new code paves
+ground for the future 4-validator-in-container bootstrap that would
+break that ceiling):
+
+- **C++ parameterised zerostate**:
+  `evm_workchain::build_evm_zerostate_accounts_cell(const std::vector<GenesisAccount>&)`
+  in `crypto/block/evm-workchain/evm-init.{h,cpp}` now accepts arbitrary
+  Ethereum-style allocations (address, balance, nonce, code, storage).
+  The zero-arg overload (which seeds the 10 Hardhat EOAs) now delegates
+  to the new path, so behaviour is bit-identical for the existing chain.
+  Covered by `test_genesis_alloc_parameterized` in
+  `crypto/block/evm-workchain/test-evm-executor.cpp`.
+- **Fift bridge word `evm-zerostate-from-alloc`** in
+  `crypto/block/create-state.cpp`. Pops a tuple of 5-tuples
+  `(addr_int, balance_int, nonce_int, code_bytes, storage_pairs_tuple)`
+  and returns a ShardAccounts cell. Smoke-tested via direct invocation
+  through `tos-create-state`; deterministic across rebuilds.
+- **Genesis JSON translator**
+  (`clients/tos/translate-genesis.py`): stdlib-only Python that reads a
+  Hive `/genesis.json` and emits a Fift include calling
+  `evm-zerostate-from-alloc` with the spec's allocs (chain id is
+  side-channelled through `/tmp/chain_id.txt`). Round-tripped through
+  Fift on the spec's 26-account `execution-apis/tests/genesis.json`
+  (chain id 0xc72dd9d5e883e); resulting cell hash is deterministic.
+- **`tos.cmd` orchestration update**: invokes `translate-genesis.py`
+  whenever `/genesis.json` is present, prefers the spec chain id over
+  the default 5525331 when no `HIVE_CHAIN_ID` was set, and adds a
+  `TOS_BOOTSTRAP_LOCAL=1` flag that runs an in-container Fift sanity
+  build of the alloc cell so CI catches regressions in the
+  C++/Fift glue without paying the network warm-up.
+
+The end-to-end goal — a single container that builds a fresh chain from
+the spec's genesis, replays `chain.rlp` against it, and reaches >=50
+sub-test passes — still requires the 4-validator-in-container
+bootstrap (see *Gap A* below). All other prerequisites for that
+bootstrap (genesis decoding, alloc encoding, chain id propagation,
+chain.rlp replay tool) are now in place.
 
 What changed in sprint #3 (was 21 → now 35):
 
@@ -72,10 +110,11 @@ test/conformance/hive/
 ├── run-rpc-compat-local.sh           # local fixture replay (no hive needed); now speconly-aware + multi-roundtrip
 └── clients/tos/
     ├── Dockerfile                    # hive-discovered wrapper (FROM canonical)
-    ├── tos.cmd                       # entrypoint shim: env -> launch
+    ├── tos.cmd                       # entrypoint shim: env -> launch (calls translate-genesis.py if /genesis.json present)
     ├── tos-rpc-proxy.py              # tiny stdlib HTTP forwarder for proxy mode
     ├── chain-rlp-replay.py           # stdlib RLP decoder + sendRawTransaction driver
-    ├── mapper.jq                     # hive geth-genesis.json -> tos zerostate JSON
+    ├── translate-genesis.py          # geth genesis.json -> Fift include (sprint #4); calls evm-zerostate-from-alloc
+    ├── mapper.jq                     # hive geth-genesis.json -> tos zerostate JSON (legacy: kept for proxy-mode debug logs)
     └── genesis.tmpl.json             # fallback when hive provides no /genesis.json
 ```
 
@@ -161,9 +200,14 @@ preview — see *Gap* below.
 | `tos-rpc-proxy.py --normalize-not-found`                  | OK     | rewrites placeholder blocks → `null` |
 | `chain-rlp-replay.py` decodes chain.rlp                   | OK     | 45 blocks / 160 txs, exit code semantics documented in script header |
 | `mapper.jq` translates geth genesis -> our intermediate JSON | OK | Tested against execution-apis/tests/genesis.json |
+| `translate-genesis.py` translates geth genesis -> Fift include | OK (sprint #4) | Round-tripped through tos-create-state on the spec's 26-account genesis |
+| C++ `build_evm_zerostate_accounts_cell(allocs)` overload  | OK (sprint #4) | Covered by `test_genesis_alloc_parameterized` |
+| Fift word `evm-zerostate-from-alloc`                       | OK (sprint #4) | Smoke-tested via `tos-create-state`; deterministic |
+| `tos.cmd` calls translate-genesis + chain-id propagation   | OK (sprint #4) | Spec chain id from `/genesis.json` overrides the default 5525331 |
+| `tos.cmd` `TOS_BOOTSTRAP_LOCAL=1` sanity build of alloc cell | OK (sprint #4) | Catches Fift/C++ regressions without paying network warm-up |
 | Local runner: speconly + multi-roundtrip                  | OK     | Mirrors hive `checkJSONStructure` |
 | 35 `rpc-compat` fixtures pass via proxy mode              | OK     | See list below |
-| Single-node validator bootstrap inside container          | TODO   | Needs zerostate + key + DHT init — **see *Gap* below** |
+| Single-node validator bootstrap inside container          | TODO (smaller now) | Genesis decoding + alloc encoding now done; remaining: keyring + DHT + 4-validator wiring inside one container — **see *Gap* below** |
 | chain.rlp replay actually runs end-to-end                 | BLOCKED | Requires single-node bootstrap first; current attempt against live testnet rejects every tx with `invalid chain id` |
 
 ### The 35 sub-tests passing today (proxy mode against live testnet)
@@ -255,16 +299,26 @@ Replicating this entirely **inside** a single container means:
    systemd or `useradd` — start the 4 validator processes as
    background subprocesses of `tos.cmd`, supervise with `wait`, and
    forward all stderr to the container's stdout.
-3. Bake the spec's `genesis.json` `alloc` into the Fift zerostate
+3. ~~Bake the spec's `genesis.json` `alloc` into the Fift zerostate
    template so the prefunded accounts match. The current Fift template
    only knows about TOS-internal smart contracts (wallet, elector,
    config); there is **no path** to inject arbitrary EOA balances
    without extending `crypto/block/create-state.cpp` (out of our scope
-   in this directory).
+   in this directory).~~ — **DONE in sprint #4**: see
+   `evm-zerostate-from-alloc` in `crypto/block/create-state.cpp`,
+   `build_evm_zerostate_accounts_cell(const std::vector<GenesisAccount>&)`
+   in `crypto/block/evm-workchain/evm-init.cpp`, and
+   `clients/tos/translate-genesis.py` for the Hive-genesis-to-Fift
+   translator. To wire into a container, the next step is a
+   `gen-zerostate-evm.fif` template (analogous to
+   `crypto/smartcont/gen-zerostate.fif` but using the new word) that
+   `include`s `/tmp/genesis-alloc.fif` and lets the resulting cell flow
+   into `mkShardStateWithAccounts` (already defined in
+   `test/tostester/src/tostester/zerostate.py:122`).
 
-Realistic effort to reach a green single-validator-in-container:
-**3-5 engineer-days**, primarily for the create-state.cpp extension
-that injects EVM `alloc[]` into the zerostate.
+Realistic remaining effort to reach a green single-validator-in-container:
+**1-2 engineer-days**, primarily for the network/keyring/DHT setup
+inside the container (steps 1 & 2 above; step 3 is now done).
 
 Workaround attempted but rejected: 1-validator topology by patching
 `shard_validators=1` and `min_validators=1`. The TOS catchain code

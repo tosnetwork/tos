@@ -84,13 +84,22 @@ for unsupported in HIVE_FORK_PRAGUE HIVE_FORK_CANCUN HIVE_FORK_SHANGHAI; do
 done
 
 # -----------------------------------------------------------------------------
-# 1) Translate hive's geth-format /genesis.json into our intermediate JSON.
-#    The intermediate JSON documents what the future tos-create-state init
-#    helper would consume; for now mapper.jq writes it to disk and we log
-#    its summary so debugging the gap is easier.
+# 1) Translate hive's geth-format /genesis.json into our intermediate JSON
+#    (legacy mapper.jq output) AND into a Fift include the new C++ word
+#    `evm-zerostate-from-alloc` consumes. The two paths are kept side-by-side
+#    so the existing proxy-mode code keeps working unchanged while the new
+#    bootstrap path (TOS_BOOTSTRAP_LOCAL=1) has direct access to the alloc
+#    in the form tos-create-state expects.
+#
+#    Phase D additions:
+#      - translate-genesis.py writes /tmp/genesis-alloc.fif and /tmp/chain_id.txt
+#      - When /genesis.json is present, /tmp/chain_id.txt overrides HIVE_CHAIN_ID
+#        (the spec's chain id is canonical for the fixtures we're driving).
 # -----------------------------------------------------------------------------
 GENESIS_IN="${HIVE_GENESIS_PATH:-/genesis.json}"
 ZEROSTATE_OUT="$DATA/zerostate.json"
+GENESIS_ALLOC_FIF="${TOS_GENESIS_ALLOC_FIF:-/tmp/genesis-alloc.fif}"
+GENESIS_CHAIN_ID_TXT="${TOS_GENESIS_CHAIN_ID_TXT:-/tmp/chain_id.txt}"
 
 if [ -f "$GENESIS_IN" ]; then
     log "Mapping hive genesis $GENESIS_IN -> $ZEROSTATE_OUT"
@@ -100,12 +109,59 @@ if [ -f "$GENESIS_IN" ]; then
         "$GENESIS_IN" > "$ZEROSTATE_OUT"
     log "  chain_id=$CHAIN_ID_DEC network_id=$NETWORK_ID_DEC"
     log "  alloc_count=$(jq '.alloc | length' "$ZEROSTATE_OUT")"
+
+    # Phase D: emit a Fift include the new C++ word consumes. Even if we're
+    # not running the local-bootstrap path, this is cheap (<1s on the spec's
+    # 26-account genesis) and gives us early visibility on parse errors.
+    if [ -x /usr/local/bin/tos-translate-genesis ]; then
+        log "Emitting Fift alloc snippet via translate-genesis.py..."
+        /usr/local/bin/tos-translate-genesis \
+            --genesis "$GENESIS_IN" \
+            --out-fif "$GENESIS_ALLOC_FIF" \
+            --out-chain-id "$GENESIS_CHAIN_ID_TXT" \
+            --print-summary 2>&1 | sed 's/^/[translate-genesis] /' >&2 || \
+                log "WARNING: translate-genesis.py failed (continuing with proxy-mode defaults)"
+
+        # If the translator extracted a chain id and the env didn't already
+        # pin one to a non-default, prefer the spec chain id. This keeps
+        # `--override-chain-id` in proxy mode honest with what `chain.rlp`
+        # was signed against.
+        if [ -f "$GENESIS_CHAIN_ID_TXT" ] && [ "$CHAIN_ID_DEC" = "5525331" ]; then
+            SPEC_CHAIN_ID="$(tr -d '[:space:]' < "$GENESIS_CHAIN_ID_TXT")"
+            if [ -n "$SPEC_CHAIN_ID" ] && [ "$SPEC_CHAIN_ID" != "5525331" ]; then
+                log "  spec chain id from genesis -> $SPEC_CHAIN_ID (overrides default 5525331)"
+                CHAIN_ID_DEC="$SPEC_CHAIN_ID"
+                NETWORK_ID_DEC="$SPEC_CHAIN_ID"
+            fi
+        fi
+    fi
 else
     log "No $GENESIS_IN provided; using built-in single-validator template (chainId=$CHAIN_ID_DEC)"
     jq --arg chain_id "$CHAIN_ID_DEC" \
        --arg network_id "$NETWORK_ID_DEC" \
        '.chain_id = ($chain_id | tonumber) | .network_id = ($network_id | tonumber) | .fork_config.chainId = ($chain_id | tonumber)' \
        /etc/tos/genesis.tmpl.json > "$ZEROSTATE_OUT"
+fi
+
+# -----------------------------------------------------------------------------
+# 1b) TOS_BOOTSTRAP_LOCAL=1 — sanity-check the C++/Fift bootstrap pipeline
+#     by building a zerostate cell from the translated alloc (without
+#     actually launching validators). Useful in CI to catch regressions in
+#     the parameterised `evm-zerostate-from-alloc` path without paying the
+#     ~30s of network warm-up. Logs cell hash + alloc count.
+# -----------------------------------------------------------------------------
+if [ "${TOS_BOOTSTRAP_LOCAL:-0}" = "1" ] && [ -f "$GENESIS_ALLOC_FIF" ] && \
+   [ -x /usr/local/bin/tos-create-state ]; then
+    log "TOS_BOOTSTRAP_LOCAL=1 — running tos-create-state sanity build of alloc cell"
+    SANITY_FIF="/tmp/tos-bootstrap-sanity.fif"
+    cat > "$SANITY_FIF" <<EOF
+"$GENESIS_ALLOC_FIF" include
+." [bootstrap-sanity] alloc accounts cell hash: " hashB Bx. cr
+." [bootstrap-sanity] OK" cr
+EOF
+    FIFTPATH="${TOS_FIFT_DIR}:/usr/local/share/tos/smartcont" \
+        /usr/local/bin/tos-create-state "$SANITY_FIF" 2>&1 | sed 's/^/[bootstrap-sanity] /' >&2 || \
+            log "WARNING: bootstrap sanity build failed (see above)"
 fi
 
 # -----------------------------------------------------------------------------

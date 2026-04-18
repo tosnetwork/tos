@@ -109,11 +109,13 @@ COPY --from=build /tos/crypto/smartcont      /usr/local/share/tos/smartcont
 COPY test/conformance/hive/clients/tos/tos.cmd               /usr/local/bin/tos.cmd
 COPY test/conformance/hive/clients/tos/tos-rpc-proxy.py      /usr/local/bin/tos-rpc-proxy.py
 COPY test/conformance/hive/clients/tos/chain-rlp-replay.py   /usr/local/bin/tos-chain-rlp-replay
+COPY test/conformance/hive/clients/tos/translate-genesis.py  /usr/local/bin/tos-translate-genesis
 COPY test/conformance/hive/clients/tos/mapper.jq             /etc/tos/mapper.jq
 COPY test/conformance/hive/clients/tos/genesis.tmpl.json     /etc/tos/genesis.tmpl.json
 RUN chmod +x /usr/local/bin/tos.cmd \
              /usr/local/bin/tos-rpc-proxy.py \
-             /usr/local/bin/tos-chain-rlp-replay
+             /usr/local/bin/tos-chain-rlp-replay \
+             /usr/local/bin/tos-translate-genesis
 
 # Hive's expected JSON-RPC port. Engine API (8551) and devp2p (30303) are NOT
 # exposed — see README.md "What's still missing".
