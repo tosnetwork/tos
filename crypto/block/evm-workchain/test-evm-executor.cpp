@@ -31,6 +31,7 @@
 #include "evm-rpc.h"
 #include "evm-cell-state.h"
 #include "evm-cell-codec.h"
+#include "evm-rpc-cache-codec.h"
 #include "block/evm-workchain-dispatch.h"
 #include "vm/boc.h"
 #include "evm-config-param.h"
@@ -3788,6 +3789,155 @@ static void test_state_test_runner_pyspec_walk_prague() {
     run_pyspec_walk_for_fork("prague", "Prague", "Prague");
 }
 
+// ---------------------------------------------------------------------------
+// Phase F (RPC cache persistence) — codec roundtrip scaffold.
+// See doc/evm-workchain-rpc-cache-persistence.md for the broader design.
+// This test only covers the isolated codec; it does NOT yet wire the
+// persisted store into the live receipt path.
+// ---------------------------------------------------------------------------
+static void test_persisted_receipt_roundtrip() {
+    printf("=== test_persisted_receipt_roundtrip (Phase F scaffold) ===\n");
+
+    // Smoke-test the empty-receipt case first to localise crashes.
+    {
+        StoredReceipt empty;
+        empty.success = false;
+        empty.gas_used = 0;
+        empty.cumulative_gas_used = 0;
+        empty.block_number = 0;
+        empty.tx_index = 0;
+        // from defaults to all zero
+        auto cell = encode_persisted_receipt(empty);
+        StoredReceipt out;
+        bool ok = decode_persisted_receipt(cell, out);
+        printf("  empty receipt round-trip: %s\n", ok ? "yes" : "no");
+        if (!ok) {
+            printf("  FAILED (empty case)\n\n");
+            return;
+        }
+    }
+
+    // Build a non-trivial StoredReceipt that exercises every field:
+    //   - both optional address fields populated
+    //   - non-empty return_data crossing the 127-byte chunk boundary
+    //   - multiple logs with different topic counts and non-empty data
+    StoredReceipt in;
+    in.success = true;
+    in.gas_used = 0x1234567890ABCDEFULL;
+    in.cumulative_gas_used = 0xFEDCBA9876543210ULL;
+    in.block_number = 999'000'001ULL;
+    in.tx_index = 0xDEADBEEFu;
+    for (int i = 0; i < 20; ++i) in.from.bytes[i] = static_cast<uint8_t>(0x10 + i);
+
+    evmc::address to_addr{};
+    for (int i = 0; i < 20; ++i) to_addr.bytes[i] = static_cast<uint8_t>(0xA0 + i);
+    in.to = to_addr;
+
+    evmc::address contract_addr{};
+    for (int i = 0; i < 20; ++i) contract_addr.bytes[i] = static_cast<uint8_t>(0x40 + i);
+    in.contract_address = contract_addr;
+
+    // 300 bytes of return data — exceeds one 127-byte chunk, exercises chain.
+    in.return_data.resize(300);
+    for (size_t i = 0; i < in.return_data.size(); ++i) {
+        in.return_data[i] = static_cast<uint8_t>((i * 13 + 7) & 0xff);
+    }
+
+    // 3 logs:
+    //   log[0]: 0 topics, no data
+    //   log[1]: 4 topics (LOG4 max), 32 bytes of data
+    //   log[2]: 2 topics, 200 bytes of data (chunk-spanning)
+    silkworm::Log lg0;
+    for (int i = 0; i < 20; ++i) lg0.address.bytes[i] = static_cast<uint8_t>(i);
+
+    silkworm::Log lg1;
+    for (int i = 0; i < 20; ++i) lg1.address.bytes[i] = static_cast<uint8_t>(0xAA);
+    lg1.topics.resize(4);
+    for (int t = 0; t < 4; ++t) {
+        for (int j = 0; j < 32; ++j) {
+            lg1.topics[t].bytes[j] = static_cast<uint8_t>(t * 32 + j);
+        }
+    }
+    lg1.data.resize(32);
+    for (int j = 0; j < 32; ++j) lg1.data[j] = static_cast<uint8_t>(0xC0 + j);
+
+    silkworm::Log lg2;
+    for (int i = 0; i < 20; ++i) lg2.address.bytes[i] = static_cast<uint8_t>(0x55);
+    lg2.topics.resize(2);
+    for (int t = 0; t < 2; ++t) {
+        for (int j = 0; j < 32; ++j) {
+            lg2.topics[t].bytes[j] = static_cast<uint8_t>(t * 8 + j);
+        }
+    }
+    lg2.data.resize(200);
+    for (size_t j = 0; j < lg2.data.size(); ++j) {
+        lg2.data[j] = static_cast<uint8_t>((j * 31 + 17) & 0xff);
+    }
+
+    in.logs.push_back(lg0);
+    in.logs.push_back(lg1);
+    in.logs.push_back(lg2);
+
+    // Encode → decode → compare every field.
+    auto cell = encode_persisted_receipt(in);
+    bool encoded = cell.not_null();
+    printf("  encode produced cell: %s\n", encoded ? "yes" : "no");
+
+    StoredReceipt out;
+    bool decoded = decode_persisted_receipt(cell, out);
+    printf("  decode ok: %s\n", decoded ? "yes" : "no");
+
+    bool scalars_ok = decoded &&
+        out.success == in.success &&
+        out.gas_used == in.gas_used &&
+        out.cumulative_gas_used == in.cumulative_gas_used &&
+        out.block_number == in.block_number &&
+        out.tx_index == in.tx_index;
+    printf("  scalars match: %s\n", scalars_ok ? "yes" : "no");
+
+    bool from_ok = decoded && std::memcmp(in.from.bytes, out.from.bytes, 20) == 0;
+    bool to_ok = decoded && out.to.has_value() &&
+                 std::memcmp(in.to->bytes, out.to->bytes, 20) == 0;
+    bool contract_ok = decoded && out.contract_address.has_value() &&
+                       std::memcmp(in.contract_address->bytes,
+                                   out.contract_address->bytes, 20) == 0;
+    printf("  addresses match: from=%s to=%s contract=%s\n",
+           from_ok ? "yes" : "no", to_ok ? "yes" : "no", contract_ok ? "yes" : "no");
+
+    bool return_ok = decoded &&
+        in.return_data.size() == out.return_data.size() &&
+        std::memcmp(in.return_data.data(), out.return_data.data(), in.return_data.size()) == 0;
+    printf("  return_data match (%zu bytes): %s\n",
+           in.return_data.size(), return_ok ? "yes" : "no");
+
+    bool logs_ok = decoded && in.logs.size() == out.logs.size();
+    if (logs_ok) {
+        for (size_t i = 0; i < in.logs.size(); ++i) {
+            const auto& a = in.logs[i];
+            const auto& b = out.logs[i];
+            if (std::memcmp(a.address.bytes, b.address.bytes, 20) != 0) { logs_ok = false; break; }
+            if (a.topics.size() != b.topics.size()) { logs_ok = false; break; }
+            for (size_t t = 0; t < a.topics.size(); ++t) {
+                if (a.topics[t] != b.topics[t]) { logs_ok = false; break; }
+            }
+            if (!logs_ok) break;
+            if (a.data != b.data) { logs_ok = false; break; }
+        }
+    }
+    printf("  logs match (%zu entries): %s\n",
+           in.logs.size(), logs_ok ? "yes" : "no");
+
+    // Determinism: encoding twice must produce byte-equal cells.
+    auto cell2 = encode_persisted_receipt(in);
+    bool deterministic = encoded && cell2.not_null() &&
+                         cell->get_hash() == cell2->get_hash();
+    printf("  deterministic re-encode: %s\n", deterministic ? "yes" : "no");
+
+    bool pass = encoded && decoded && scalars_ok && from_ok && to_ok &&
+                contract_ok && return_ok && logs_ok && deterministic;
+    printf("  %s\n\n", pass ? "PASSED" : "FAILED");
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -3833,6 +3983,7 @@ int main() {
     test_bytecode_roundtrip();
     test_bytecode_marker_distinguished();
     test_large_raw_tx_roundtrip();
+    test_persisted_receipt_roundtrip();
     test_state_test_runner_poc();
     test_state_test_runner_walk_curated();
     test_state_test_runner_pyspec_walk();

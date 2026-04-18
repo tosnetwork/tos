@@ -25,6 +25,7 @@ set(EVM_WORKCHAIN_SRC
   evm-incremental-trie.cpp
   evm-cell-codec.cpp
   evm-cell-state.cpp
+  evm-rpc-cache-codec.cpp
   evm-access-list-tracer.cpp
   evm-mpt-prover.cpp
 )
