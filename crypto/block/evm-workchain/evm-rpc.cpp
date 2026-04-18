@@ -2256,10 +2256,29 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
         }
     }
 
-    // Account proof for the target address
+    // Account proof for the target address.
+    //
+    // generate_mpt_proof() walks the trie root → leaf even when the target
+    // is absent ("exclusion proof"): the walk terminates at the deepest
+    // node along the keccak(addr) path, demonstrating divergence (different
+    // leaf, missing branch slot, or extension mismatch). The only case it
+    // returns an empty list is when the underlying trie itself is empty —
+    // i.e. our chain has no accounts at all, which only happens at genesis.
+    //
+    // The eth_getProof spec mandates accountProof be `list<string>` (never
+    // `list[]`); for the empty-trie case we fall back to a single-node
+    // proof of `0x80` (RLP encoding of the empty string), which is the
+    // canonical serialisation of the empty trie root node. Its keccak256
+    // is silkworm::kEmptyRoot, satisfying the "first node hashes to root"
+    // invariant a verifier checks.
     auto target_hash = ethash::keccak256(addr.bytes, 20);
     silkworm::Bytes target_key(target_hash.bytes, target_hash.bytes + 32);
     auto account_proof = generate_mpt_proof(account_kv, target_key);
+    if (account_proof.empty()) {
+        // Empty trie → emit the canonical empty-trie node so the proof
+        // shape matches geth's (list<str>, never list[]).
+        account_proof.push_back(silkworm::Bytes{0x80});
+    }
 
     // Helper to format a list of RLP node bytes as JSON array of hex strings
     auto format_proof = [](const std::vector<silkworm::Bytes>& proof) -> std::string {
@@ -2272,6 +2291,11 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
         return out;
     };
 
+    // For non-existent accounts geth still surfaces canonical defaults
+    // (empty-code hash, empty-trie storage root), not zero hashes. Our
+    // silkworm::Account default-constructs with code_hash = kEmptyHash and
+    // we already initialise storage_hash to kEmptyRoot above, so emitting
+    // those fields directly produces the expected JSON.
     std::string r = "{";
     r += "\"address\":" + to_hex_addr(addr) + ",";
     r += "\"balance\":" + to_hex_quantity(a.balance) + ",";
@@ -2283,10 +2307,16 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
     for (size_t i = 0; i < slots.size(); i++) {
         if (i > 0) r += ",";
         auto v = state.read_storage_copy(addr, a.incarnation, slots[i]);
-        // Per-slot proof
+        // Per-slot proof. Same exclusion-proof reasoning as accountProof:
+        // when the storage trie is empty (no slots, or account doesn't
+        // exist so storage_kv was never populated), we emit the canonical
+        // empty-trie root node 0x80 so the proof shape is list<str>.
         auto sh = ethash::keccak256(slots[i].bytes, 32);
         silkworm::Bytes slot_key(sh.bytes, sh.bytes + 32);
         auto slot_proof = generate_mpt_proof(storage_kv, slot_key);
+        if (slot_proof.empty()) {
+            slot_proof.push_back(silkworm::Bytes{0x80});
+        }
         r += "{";
         r += "\"key\":" + to_hex_data(slots[i].bytes, 32) + ",";
         r += "\"value\":" + to_hex_quantity(intx::be::load<intx::uint256>(v)) + ",";
