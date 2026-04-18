@@ -349,6 +349,31 @@ inline void sar(StackTop stack) noexcept
     x = (x >> y) | (sign_mask << mask_shift);
 }
 
+// EIP-7939 (Fusaka): Count Leading Zeros of the top stack item.
+// Result is the number of leading-zero bits in the 256-bit word; 256 when
+// the input is zero.
+inline void clz(StackTop stack) noexcept
+{
+    auto& x = stack.top();
+    if (x == 0)
+    {
+        x = 256;
+        return;
+    }
+    // intx::uint256 stores 4 × uint64_t in little-endian word order, so the
+    // most-significant word is x[3].
+    unsigned count;
+    if (x[3] != 0)
+        count = static_cast<unsigned>(__builtin_clzll(x[3]));
+    else if (x[2] != 0)
+        count = 64 + static_cast<unsigned>(__builtin_clzll(x[2]));
+    else if (x[1] != 0)
+        count = 128 + static_cast<unsigned>(__builtin_clzll(x[1]));
+    else
+        count = 192 + static_cast<unsigned>(__builtin_clzll(x[0]));
+    x = count;
+}
+
 inline Result keccak256(StackTop stack, int64_t gas_left, ExecutionState& state) noexcept
 {
     const auto& index = stack.pop();
