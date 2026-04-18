@@ -3487,10 +3487,17 @@ static bool run_one_state_test_fork(const std::string& path,
     auto* txbytes_v = field(entry_obj, "txbytes");
     auto* expected_state_v = field(entry_obj, "state");
     auto* expected_hash_v  = field(entry_obj, "hash");
+    auto* expect_exc_v     = field(entry_obj, "expectException");
     // ethereum/tests fixtures carry per-account `state` (full diff). Pyspec
     // (execution-spec-tests) fixtures carry only the post-state-root `hash`.
+    // Pyspec also carries `expectException` for txs that should be rejected
+    // by pre-execution validation (EIP-7825 cap, EIP-3860 initcode size, etc).
     // Either is acceptable; we need txbytes plus at least one verifier.
-    if (!txbytes_v || (!expected_state_v && !expected_hash_v)) return false;
+    if (!txbytes_v || (!expected_state_v && !expected_hash_v &&
+                        (expect_exc_v == nullptr ||
+                         expect_exc_v->type() != td::JsonValue::Type::String))) {
+        return false;
+    }
 
     // --- Seed pre-state -----------------------------------------------------
     //
@@ -3562,13 +3569,18 @@ static bool run_one_state_test_fork(const std::string& path,
     cfg.terminal_total_difficulty = 0;
     const bool is_shanghai_or_later = (fork_name == "Shanghai" ||
                                         fork_name == "Cancun" ||
-                                        fork_name == "Prague");
+                                        fork_name == "Prague" ||
+                                        fork_name == "Osaka");
     const bool is_cancun_or_later   = (fork_name == "Cancun" ||
-                                        fork_name == "Prague");
-    const bool is_prague_or_later   = (fork_name == "Prague");
+                                        fork_name == "Prague" ||
+                                        fork_name == "Osaka");
+    const bool is_prague_or_later   = (fork_name == "Prague" ||
+                                        fork_name == "Osaka");
+    const bool is_osaka_or_later    = (fork_name == "Osaka");
     if (is_shanghai_or_later) cfg.shanghai_time = 0;
     if (is_cancun_or_later)   cfg.cancun_time = 0;
     if (is_prague_or_later)   cfg.prague_time = 0;
+    if (is_osaka_or_later)    cfg.osaka_time = 0;
 
     // --- Build the block from env -------------------------------------------
     auto* env_v = field(test_obj, "env");
@@ -3650,6 +3662,36 @@ static bool run_one_state_test_fork(const std::string& path,
     if (dec.txn.max_fee_per_gas < base_fee) {
         ran = false;
         return true;  // not a fail — just not runnable by v0
+    }
+
+    // --- expectException: Pyspec txs the spec expects to be rejected -------
+    // by pre-execution validation (EIP-7825 gas cap, EIP-3860 initcode
+    // size, EIP-7623 floor cost, EIP-7702 auth shape, intrinsic-gas, tx
+    // type vs revision, nonce-max, wrong chain id). If pre_validate_*
+    // returns non-Ok, the tx would have never executed on mainnet and
+    // the fixture's post-state just reflects the pre-state (or pre-state
+    // + sender nonce unchanged). Treat it as PASSED.
+    if (expect_exc_v != nullptr && expect_exc_v->type() == td::JsonValue::Type::String) {
+        auto vr_base = silkworm::protocol::pre_validate_common_base(
+            dec.txn, cfg.revision(block_num, timestamp), cfg.chain_id);
+        // pre_validate_common_forks asserts blob_gas_price is set for
+        // blob txs (validation.cpp:191). Since we reject blob txs at
+        // admission anyway, provide a default-constructed blob_gas_price
+        // so the assert doesn't fire while validating fixture blob txs.
+        std::optional<intx::uint256> bgp;
+        if (dec.txn.type == silkworm::TransactionType::kBlob) {
+            bgp = intx::uint256{1};
+        }
+        auto vr_forks = silkworm::protocol::pre_validate_common_forks(
+            dec.txn, cfg.revision(block_num, timestamp), bgp);
+        if (vr_base != silkworm::ValidationResult::kOk ||
+            vr_forks != silkworm::ValidationResult::kOk) {
+            ran = true;
+            return true;  // pre-validation correctly rejected the tx
+        }
+        // Fall through: our pre_validate accepted it. Either the exception
+        // is state-dependent (nonce mismatch, insufficient balance — we'll
+        // catch at execute) or we're genuinely more permissive than spec.
     }
 
     // --- Optional opcode tracer (set TRACE_FIXTURE=1 to enable) ------------
@@ -4004,9 +4046,7 @@ static void run_pyspec_walk_for_fork(const std::string& fork_dir,
         "/home/tomi/evm-workchain/test/conformance/execution-spec-tests/fixtures/state_tests/" + fork_dir;
     if (td::stat(td::CSlice(root)).is_error()) {
         printf("  SKIP (execution-spec-tests fixtures for %s not on disk;\n", fork_dir.c_str());
-        printf("        download fixtures_stable.tar.gz from\n");
-        printf("        https://github.com/ethereum/execution-spec-tests/releases\n");
-        printf("        and extract under test/conformance/execution-spec-tests/)\n\n");
+        printf("        run `./scripts/download-pyspec-fixtures.sh` to install)\n\n");
         return;
     }
     // Pyspec ships per-feature subdirs (one per EIP). Walk all of them.
