@@ -1,14 +1,14 @@
 # EVM Workchain — Test Plan
 
-Version: v1.8 — 2026-04-18 (fifth 2-agent sprint: P-6 server bugs fixed + Hive 4-validator container)
+Version: v1.9 — 2026-04-18 (sixth 2-agent sprint: eth_blockNumber lag + debug_getRaw* implementation)
 
 ## Status at a glance
 
 | Gate | State | Notes |
 |------|-------|-------|
-| **Gate T — Testnet** | ✅ PASS | All 6 rows green. Last-known-good HEAD includes JSON-RPC 2.0 batch support + spec error envelope + Hive 4-validator container bootstrap. |
-| **Gate P — Private mainnet** | 🚧 in progress | **4 of 6** rows fully green (P-1 + P-2 + P-5 + **P-6 closed by `d48d110a`+`03bf955b`** — Blockscout 9.0.2 syncs end-to-end without normalize-proxy shim, zero crashes, indexer reaches `finished_indexing:true` in ~90s). P-3 24h fuzz + P-4 7-day soak still gated on operational time only. |
-| **Gate M — Public mainnet** | 🚧 progressing | Hive `rpc-compat`: **40 sub-tests pass via single-container 4-validator bootstrap** (`496f8ac6`, was 35 in proxy mode). `bootstrap-validators.sh` brings up 1 DHT + 4 validators + DEV-mode catchain on localhost using deterministic keys, runs `tos-create-state` with Agent K's genesis-alloc translator, then chain.rlp replay. Hive M-3 is now an "incremental closure" — each remaining failure is documented as a specific gap (eth_blockNumber lag, debug API gaps, blob support). M-1/M-2 effectively done (Cancun+Shanghai 100%). Cancun pre-fork prep done (`6d311e8e`+`bb56f43e`+`ca8cc59b`): `cancun_time = 0` flip remains intentional defer. |
+| **Gate T — Testnet** | ✅ PASS | All 6 rows green. Last-known-good HEAD adds `eth_blockNumber` head-tracking fix + 4 debug_getRaw* RPC implementations (canonical silkworm RLP). |
+| **Gate P — Private mainnet** | 🚧 in progress | **4 of 6** rows fully green (P-1 + P-2 + P-5 + P-6). P-3 24h fuzz + P-4 7-day soak gated on operational time. |
+| **Gate M — Public mainnet** | 🚧 progressing | Hive `rpc-compat` 40 sub-tests pass via 4-validator container; eth_blockNumber lag fixed (`48e2c374`) so chain.rlp replay no longer needs `--skip-block-wait` workaround; debug_getRaw{Block,Header,Receipts,Transaction} now return canonical silkworm RLP (`7dca45f5`). Next Hive bumps need block-hash convergence with geth or per-test override. M-1/M-2 effectively done (Cancun+Shanghai 100%). Cancun pre-fork prep done; `cancun_time = 0` flip remains intentional defer. |
 
 | Phase | State | Headline |
 |-------|-------|----------|
@@ -54,6 +54,8 @@ Version: v1.8 — 2026-04-18 (fifth 2-agent sprint: P-6 server bugs fixed + Hive
 | `eth_getProof` non-existence proof was a `0x80` placeholder for empty-trie cases; now a real Yellow Paper Appendix D walk for missing accounts/slots when the trie is non-empty | `f82a0c4b` | New `verify_mpt_proof()` cryptographic verifier in `evm-mpt-prover.{h,cpp}`. Test `test_eth_get_proof_non_existence` confirms `keccak(proof[0]) == stateRoot`, walks the proof along `keccak(target)` nibble path, terminates at divergence with `MptProofResult::kValidNonExistence`. Existence-proof + empty-trie cases also self-verify. The `0x80` empty-trie sentinel is preserved for the genuinely-empty-trie edge case |
 | Blockscout 9.0.2 indexer install + sync revealed 2 hard-blocking RPC bugs in TOS JSON-RPC server: (1) error envelope shape is `{ok:false, error:str, code:N}` instead of spec `{error:{code:N, message:str}}` — crashes Indexer.Block.Catchup.MissingRangesCollector; (2) batch JSON arrays rejected — Blockscout always batches its catchup fetches | `d652576e` (catalog) + `d48d110a` (envelope fix) + `03bf955b` (batch support) | **FIXED.** validator-engine/json-rpc-server.cpp now emits spec envelope universally and dispatches batch arrays per JSON-RPC 2.0 (with order preservation, notification handling, empty-batch rejection, 100-element cap). Blockscout 9.0.2 syncs DIRECT (no normalize-proxy shim), `finished_indexing:true` in ~90s, zero crashes. Manual-rpc suite extended to 23 fixtures (4 new: 2 error_shape + 2 batch). Side fix: secondary "params must be an object" bug for unknown-method-with-array-params now correctly returns `-32601 Method not found` |
 | Hive M-3: single-container 4-validator bootstrap built end-to-end. New `test/conformance/hive/clients/tos/bootstrap-validators.sh` (~450 lines bash + Python) generates 21 deterministic ed25519 keys, synthesises configs, inlines a Fift zerostate template with Agent K's `evm-zerostate-from-alloc` for the spec's 26-account allocation, runs `tos-create-state`, distributes BOCs, launches 1 DHT + 4 validators on localhost with QUIC, runs chain.rlp replay | `496f8ac6` | Verified: container produces a chain at the spec's chainId `0xc72dd9d5e883e`, prefunded balances match (e.g. `0x0c2c…7508` has 1e29 wei), chain.rlp replays. **Hive rpc-compat 35 → 40 PASS** in the local harness. Remaining 167 failures categorised: block-hash mismatches (geth-spec-vs-TOS-collator divergence — out of scope), eth_blockNumber lag (separate server-side fix), blob/4844, debug_getRaw* (geth-only API), Engine API methods (out of scope) |
+| `eth_blockNumber` returned `0x0` even after txs mined into wc=1 blocks (e.g. `eth_getTransactionByHash` returned `blockNumber=0xa` while `eth_blockNumber` still said `0x0`). Root cause: `EvmState::store_block` updated the in-RAM `blocks_` map but never moved `block_number_`. The field was only advanced by `set_block_number()` which the live JSON-RPC path never called (it routes async through ExtMessagePool → compute-phase → store_block). Symptom forced Agent P to add `--skip-block-wait` workaround in chain-rlp-replay.py | `48e2c374` | Single bottleneck — added `if (block.number > block_number_) block_number_ = block.number;` under the existing unique_lock in `EvmState::store_block`. Monotonic max so out-of-order calls never walk the head backwards. Covers compute-phase live execution, RPC cache hydration on startup, and the test harness sync path. Verified live: `eth_blockNumber` now advances correctly (0xebc8 after sustained mining); `eth_feeHistory("latest")` uses real head; `eth_getBlockByNumber("latest")` returns real latest block. New regression script `test/evm-workchain/proof-block-number-tracks-head.sh` |
+| `debug_getRaw{Block, Header, Receipts, Transaction}` returned `null` for all queries — handlers existed as stubs but had hand-rolled RLP encoders with several bugs (state_root placeholder, missing Cancun/Prague trailing fields, transactions not EIP-2718-wrapped, receipts always serialised as legacy). Geth/erigon-style indexers and Hive's `debug_*` sub-tests fail | `7dca45f5` | Replaced with calls to silkworm's canonical `silkworm::rlp::encode(BlockHeader \| Block \| Receipt)` overloads. `debug_getRawTransaction` already shared the `eth_getRawTransactionByHash` dispatcher (returns `StoredTransaction.raw_rlp` directly). Factored block-tag parsing into `parse_block_tag_param`. New manual-rpc fixtures (4): one per debug method; manual-rpc count 23 → **27**. All 4 verified live: `debug_getRawHeader("latest")` returns 611-byte canonical RLP that round-trips through silkworm's decoder |
 
 ## Purpose
 
@@ -208,11 +210,12 @@ Each row is a binary: green = go, red or yellow = stop. Each next stage is a str
 | T-5 | Basic wallet probes work | `node test/evm-workchain/wallet-test.js`, `full-rpc-test.js` | ✓ | ✅ |
 | T-6 | Differential vs. geth: every diverge listed in `doc/evm-workchain-known-divergences.md` Category B | `python3 test/conformance/differential_geth.py` | ✓ | ✅ |
 
-**Current status: PASS.** HEAD includes the fifth 2-agent sprint
-results (JSON-RPC 2.0 batch + spec error envelope — closes P-6 via
-Blockscout direct sync without shim; single-container 4-validator
-Hive bootstrap — 35 → 40 rpc-compat sub-tests). **50/50** unit
-tests pass; **OUR_ERROR=0** across 202 conformance fixtures.
+**Current status: PASS.** HEAD includes the sixth 2-agent sprint
+results (`eth_blockNumber` head-tracking lag fixed — single-bottleneck
+hook in `EvmState::store_block`; debug_getRaw{Block,Header,Receipts,
+Transaction} now return canonical silkworm RLP). **50/50** unit
+tests pass; **OUR_ERROR=0** across 202 conformance fixtures;
+manual-rpc 27/27.
 
 ### Gate P — Private mainnet (limited allowlisted validators + RPCs)
 
