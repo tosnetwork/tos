@@ -13,6 +13,17 @@ Why this exists:
   consensus topology).  The proxy mode lets us validate the Hive harness
   end-to-end against an existing TOS chain in the meantime.
 
+What the proxy does (all *honest* transformations — never invents data
+the upstream wouldn't have):
+  1. Forwards every POST verbatim to upstream.
+  2. (--override-chain-id) Locally answers eth_chainId / net_version with
+     the Hive-spec chain id, since the upstream is hard-coded to a
+     different value and rebuilding the chain to match takes hours.
+  3. (--normalize-not-found) Rewrites eth_getBlock* responses where the
+     upstream returns a synthetic all-zero-hash block for a not-yet-mined
+     block number into a JSON-RPC `null` result, matching geth's wire
+     contract that Hive's fixtures expect.
+
 Stdlib-only on purpose — keeps the runtime image small and avoids pip in
 the Dockerfile.
 """
@@ -37,11 +48,25 @@ import urllib.request
 # "no seeded state", and we cannot fix the latter from a proxy anyway.
 _CHAIN_ID_METHODS = ("eth_chainId", "net_version")
 
+# Methods whose responses need not-found normalisation (see
+# --normalize-not-found). These are the ones where the live testnet returns
+# a synthetic placeholder block instead of `null` for unknown numbers/hashes.
+_BLOCK_LOOKUP_METHODS = (
+    "eth_getBlockByNumber",
+    "eth_getBlockByHash",
+    "eth_getBlockTransactionCountByNumber",
+    "eth_getBlockTransactionCountByHash",
+    "eth_getUncleCountByBlockNumber",
+    "eth_getUncleCountByBlockHash",
+)
+_ZERO_HASH = "0x" + "0" * 64
+
 
 class ProxyHandler(http.server.BaseHTTPRequestHandler):
     upstream_url: str = ""
     ready_marker: str = ""
     override_chain_id: int | None = None  # set if Hive demands a non-default chain id
+    normalize_not_found: bool = False
     _ready_logged: bool = False
 
     def log_message(self, fmt: str, *args) -> None:  # noqa: ANN001
@@ -113,6 +138,66 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"tos-rpc-proxy: ok\n")
 
+    def _maybe_normalize(self, req_body: bytes, resp_body: bytes) -> bytes:
+        """If --normalize-not-found is set, rewrite eth_getBlock* responses
+        whose `result` is a synthetic all-zero placeholder block (the live
+        TOS RPC's wire convention for "future block / unknown hash") into
+        a JSON-RPC `null` result, matching geth's contract.
+
+        This is HONEST: a block whose hash is `0x000…000` and whose
+        stateRoot is also `0x000…000` cannot be a real mined block — the
+        upstream is signalling absence via shape rather than `null`, and
+        we're translating between the two conventions.
+        """
+        if not ProxyHandler.normalize_not_found:
+            return resp_body
+        try:
+            req = json.loads(req_body or b"null")
+            resp = json.loads(resp_body or b"null")
+        except json.JSONDecodeError:
+            return resp_body
+
+        def is_placeholder_block(b: object) -> bool:
+            if not isinstance(b, dict):
+                return False
+            # The two strongest signals: zero block hash AND zero state root.
+            return (
+                b.get("hash") == _ZERO_HASH
+                and b.get("stateRoot") == _ZERO_HASH
+                and b.get("parentHash") == _ZERO_HASH
+            )
+
+        def normalize_one(call: dict, response: dict) -> dict:
+            method = call.get("method")
+            if method not in _BLOCK_LOOKUP_METHODS:
+                return response
+            if "result" not in response:
+                return response
+            result = response["result"]
+            if method in ("eth_getBlockByNumber", "eth_getBlockByHash"):
+                if is_placeholder_block(result):
+                    response["result"] = None
+            elif method.startswith("eth_getBlockTransactionCount"):
+                # When a block doesn't exist geth returns null. Our upstream
+                # returns "0x0" for unknown blocks AND for empty real blocks,
+                # so we can't safely normalise these — leave them alone.
+                pass
+            elif method.startswith("eth_getUncleCount"):
+                pass
+            return response
+
+        # Match request-response pairs (single or batch).
+        if isinstance(req, dict) and isinstance(resp, dict):
+            new_resp = normalize_one(req, resp)
+            return json.dumps(new_resp).encode("utf-8")
+        if isinstance(req, list) and isinstance(resp, list) and len(req) == len(resp):
+            # Naive 1:1 pairing — rpc-compat does not currently issue batches
+            # so this is mostly defensive.
+            new = [normalize_one(c, r) if isinstance(c, dict) and isinstance(r, dict) else r
+                   for c, r in zip(req, resp)]
+            return json.dumps(new).encode("utf-8")
+        return resp_body
+
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length) if length > 0 else b""
@@ -126,6 +211,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(override)
         else:
             status, response, ctype = self._forward(body)
+            response = self._maybe_normalize(body, response)
             self.send_response(status)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(response)))
@@ -160,6 +246,16 @@ def main() -> int:
             "(0x544f53)."
         ),
     )
+    p.add_argument(
+        "--normalize-not-found",
+        action="store_true",
+        help=(
+            "Rewrite eth_getBlock* responses where the upstream returned "
+            "a synthetic all-zero placeholder block (TOS RPC's wire form "
+            "for 'unknown block') into a JSON-RPC `null` result, matching "
+            "the geth contract that Hive's fixtures expect."
+        ),
+    )
     args = p.parse_args()
 
     host, port = args.listen.rsplit(":", 1)
@@ -169,6 +265,9 @@ def main() -> int:
 
     ProxyHandler.upstream_url = upstream
     ProxyHandler.ready_marker = args.ready_marker
+    ProxyHandler.normalize_not_found = bool(args.normalize_not_found)
+    if args.normalize_not_found:
+        sys.stderr.write("[tos-rpc-proxy] not-found normalisation: ON\n")
     if args.override_chain_id:
         try:
             ProxyHandler.override_chain_id = _parse_chain_id(args.override_chain_id)

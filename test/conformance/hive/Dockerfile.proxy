@@ -34,11 +34,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Entrypoint shim + helpers.
-COPY tos.cmd            /usr/local/bin/tos.cmd
-COPY tos-rpc-proxy.py   /usr/local/bin/tos-rpc-proxy.py
-COPY mapper.jq          /etc/tos/mapper.jq
-COPY genesis.tmpl.json  /etc/tos/genesis.tmpl.json
-RUN chmod +x /usr/local/bin/tos.cmd /usr/local/bin/tos-rpc-proxy.py
+COPY tos.cmd               /usr/local/bin/tos.cmd
+COPY tos-rpc-proxy.py      /usr/local/bin/tos-rpc-proxy.py
+COPY chain-rlp-replay.py   /usr/local/bin/tos-chain-rlp-replay
+COPY mapper.jq             /etc/tos/mapper.jq
+COPY genesis.tmpl.json     /etc/tos/genesis.tmpl.json
+RUN chmod +x /usr/local/bin/tos.cmd \
+             /usr/local/bin/tos-rpc-proxy.py \
+             /usr/local/bin/tos-chain-rlp-replay
 
 WORKDIR /data
 ENV TOS_DATA=/data \

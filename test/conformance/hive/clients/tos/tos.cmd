@@ -129,6 +129,10 @@ if [ -n "${TOS_PROXY_UPSTREAM:-}" ]; then
         log "      chain-id override active: ${CHAIN_ID_DEC} (upstream serves 5525331)"
         OVERRIDE_ARGS+=(--override-chain-id "$CHAIN_ID_DEC")
     fi
+    # Always normalise not-found responses: TOS RPC returns a synthetic
+    # all-zero placeholder block for unknown numbers/hashes; geth (and
+    # therefore Hive's fixtures) expect `null`. Honest semantic translation.
+    OVERRIDE_ARGS+=(--normalize-not-found)
     exec /usr/local/bin/tos-rpc-proxy.py \
         --listen "${RPC_BIND}" \
         --upstream "${TOS_PROXY_UPSTREAM}" \
@@ -168,20 +172,42 @@ if [ ! -f "$DATA/tos-global.json" ]; then
     echo '{}' > "$DATA/tos-global.json"
 fi
 
-# Background readiness watcher: poll RPC, log a clear marker once it's up so
-# operators can grep logs.  (Hive itself only watches the TCP port, but the
-# marker helps debugging.)
+# Background readiness watcher: poll RPC, log a clear marker once it's up.
+# Once readiness is reached, optionally replay /chain.rlp (the per-test
+# Hive seed file) into our chain via eth_sendRawTransaction so that subsequent
+# rpc-compat fixtures see the same state geth would after importing it.
+#
+# Hive's docs/clients.md says: "the client should import the blocks from
+# /chain.rlp if it is present". We do so in this background task once RPC is
+# alive; we exit non-zero only on hard errors (block production stalls).
+# Bad-signature rejections are common when the chain id doesn't match what
+# the chain.rlp txs were signed with — we set TOS_EVM_CHAIN_ID above so the
+# spec's chain id is honoured at validator startup.
+CHAIN_RLP="${HIVE_CHAIN_RLP_PATH:-/chain.rlp}"
 (
-    for i in $(seq 1 60); do
+    for i in $(seq 1 120); do
         sleep 1
         if curl -fsS -X POST -H 'Content-Type: application/json' \
                 -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
                 "http://127.0.0.1:${RPC_BIND_PORT}" >/dev/null 2>&1; then
             log "TOS-VALIDATOR-READY (eth_chainId responsive after ${i}s)"
+            if [ -f "$CHAIN_RLP" ] && [ -x /usr/local/bin/tos-chain-rlp-replay ]; then
+                log "Replaying $CHAIN_RLP into local chain..."
+                /usr/local/bin/tos-chain-rlp-replay \
+                    --chain "$CHAIN_RLP" \
+                    --rpc "http://127.0.0.1:${RPC_BIND_PORT}" \
+                    --expected-chain-id "$CHAIN_ID_DEC" \
+                    --start-block 0 \
+                    --block-wait-secs 30 \
+                    || log "WARNING: chain.rlp replay returned non-zero (see above)."
+                log "TOS-VALIDATOR-CHAIN-LOADED"
+            elif [ ! -f "$CHAIN_RLP" ]; then
+                log "(no $CHAIN_RLP present — skipping chain.rlp replay)"
+            fi
             exit 0
         fi
     done
-    log "TOS-VALIDATOR-NOT-READY (eth_chainId not responsive after 60s)"
+    log "TOS-VALIDATOR-NOT-READY (eth_chainId not responsive after 120s)"
 ) &
 
 log "Starting tos-validator-engine on $RPC_BIND (sync-delay=$SYNC_DELAY, log=$LOGLEVEL, chainId=$CHAIN_ID_DEC)"

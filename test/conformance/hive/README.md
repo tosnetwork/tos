@@ -5,26 +5,45 @@ dockerize validator, write hive client stub*. This directory ships
 artifacts that let `ethereum/hive`'s `rpc-compat` simulator drive our
 JSON-RPC surface end-to-end.
 
-**Status (2026-04-18):** the Hive client wiring is functional in
-**proxy mode**: a thin container forwards Hive's 8545 traffic to an
-already-running TOS RPC endpoint.  Against the spec's
-`execution-apis/tests/*.io` fixtures (which is the same fixture set
-`rpc-compat` consumes), this delivers **21 PASSes** out of 204
-single-roundtrip sub-tests when the upstream is the live 4-validator
-testnet *and* the proxy is launched with `--override-chain-id` set to
-the spec's expected value (`0xc72dd9d5e883e`).  The remaining 183 fail
-because they assert on values from a specific seeded chain we don't
-have — see *Gap* below.
+**Status (2026-04-18, post sprint #3):** the Hive client wiring is
+functional in **proxy mode**: a thin container forwards Hive's 8545
+traffic to an already-running TOS RPC endpoint. Against the spec's
+`execution-apis/tests/*.io` fixtures, this delivers **35 PASSes** out
+of 207 sub-tests when the upstream is the live 4-validator testnet
+*and* the proxy is launched with `--override-chain-id 0xc72dd9d5e883e
+--normalize-not-found`. Remaining 172 fail because they assert on
+specific hashes / state from a 45-block seeded chain we don't have
+(see *Gap* below).
 
-The validator binary itself now also honours `TOS_EVM_CHAIN_ID` at
-startup (consumed by `evm_workchain::init_evm_workchain`), so a
-fresh-chain single-node bootstrap can serve the spec's chain id end-to-
-end without a recompile. See `crypto/block/evm-workchain/evm-init.cpp`.
+What changed in sprint #3 (was 21 → now 35):
 
-The full single-node validator path is **not yet functional** — the TOS
-validator requires a 4-node consensus topology and a pre-built
-zerostate, neither of which we synthesise from a Hive `genesis.json`
-yet.  See *Gap* below.
+- **Local fixture runner** (`run-rpc-compat-local.sh`) now mirrors the
+  real Hive `rpc-compat` semantics:
+  1. honours `// speconly:` markers (recursive shape check, mirroring
+     `checkJSONStructure` in [hive/simulators/ethereum/rpc-compat/main.go]
+     (https://github.com/ethereum/hive/blob/master/simulators/ethereum/rpc-compat/main.go));
+  2. supports multi-roundtrip `.io` files (each `>>` / `<<` pair is
+     replayed in order, fail-fast on first mismatch).
+- **Proxy** (`tos-rpc-proxy.py`) gained `--normalize-not-found`: when the
+  upstream returns a synthetic all-zero placeholder block for an unknown
+  number/hash (TOS's wire convention), the proxy rewrites the response
+  to `{"result":null}` to match geth's contract.
+- **chain.rlp replay tool** (`chain-rlp-replay.py`) added: a
+  stdlib-only RLP decoder + `eth_sendRawTransaction` driver that reads
+  Hive's per-test `/chain.rlp` and replays its 160 transactions across
+  45 blocks into our chain.  Wired into `tos.cmd` for the
+  single-validator path; not yet runnable end-to-end against the proxy
+  because the chain id mismatch causes signature recovery failure on
+  every tx.
+
+The validator binary itself honours `TOS_EVM_CHAIN_ID` at startup
+(consumed by `evm_workchain::init_evm_workchain` — commit `02b791ef`),
+so a fresh-chain single-node bootstrap can serve the spec's chain id
+end-to-end without a recompile. See `crypto/block/evm-workchain/evm-init.cpp`.
+
+The full single-node validator path is **not yet functional** — see
+*Gap: single-validator container bootstrap* below for the (substantial)
+remaining work.
 
 ## Why hive?
 
@@ -47,29 +66,30 @@ client that speaks devp2p / Engine API.  We do neither.  Out of scope.
 
 ```
 test/conformance/hive/
-├── Dockerfile                       # canonical 2-stage image (compiles validator)
-├── Dockerfile.proxy                 # SLIM image: proxy-mode only (works today)
-├── README.md                        # this file
-├── run-rpc-compat-local.sh          # local fixture replay (no hive needed)
+├── Dockerfile                        # canonical 2-stage image (compiles validator + ships replay tools)
+├── Dockerfile.proxy                  # SLIM image: proxy-mode only (works today)
+├── README.md                         # this file
+├── run-rpc-compat-local.sh           # local fixture replay (no hive needed); now speconly-aware + multi-roundtrip
 └── clients/tos/
-    ├── Dockerfile                   # hive-discovered wrapper (FROM canonical)
-    ├── tos.cmd                      # entrypoint shim: env -> launch
-    ├── tos-rpc-proxy.py             # tiny stdlib HTTP forwarder for proxy mode
-    ├── mapper.jq                    # hive geth-genesis.json -> tos zerostate JSON
-    └── genesis.tmpl.json            # fallback when hive provides no /genesis.json
+    ├── Dockerfile                    # hive-discovered wrapper (FROM canonical)
+    ├── tos.cmd                       # entrypoint shim: env -> launch
+    ├── tos-rpc-proxy.py              # tiny stdlib HTTP forwarder for proxy mode
+    ├── chain-rlp-replay.py           # stdlib RLP decoder + sendRawTransaction driver
+    ├── mapper.jq                     # hive geth-genesis.json -> tos zerostate JSON
+    └── genesis.tmpl.json             # fallback when hive provides no /genesis.json
 ```
 
 The `clients/tos/` layout mirrors hive's existing client conventions
 (see e.g. `ethereum/hive/clients/{nethermind,geth,reth}/`).
 
-## Quick win: run rpc-compat fixtures via the proxy container
+## Quick win: run rpc-compat fixtures via the proxy (35 PASS)
 
 This is the fastest way to see end-to-end traffic flow through the Hive
 client wiring.  Requires the live testnet on `127.0.0.1:8011` (which is
 where `tos-validator@1.service` binds).
 
 ```bash
-# 1. Build the slim proxy image (~10s).
+# 1. (Optional) Build the slim proxy image (~10s).
 docker build -f test/conformance/hive/Dockerfile.proxy \
              -t tos/validator-hive:proxy \
              test/conformance/hive/clients/tos/
@@ -78,6 +98,7 @@ docker build -f test/conformance/hive/Dockerfile.proxy \
 docker run -d --name tos-hive --network host \
     -e TOS_PROXY_UPSTREAM=127.0.0.1:8011 \
     -e TOS_JSONRPC_BIND=127.0.0.1:18546 \
+    -e HIVE_CHAIN_ID=0xc72dd9d5e883e \
     tos/validator-hive:proxy
 
 # 3. Confirm the readiness signal.
@@ -87,26 +108,17 @@ docker logs tos-hive | grep TOS-VALIDATOR-READY
 RPC_URL=http://127.0.0.1:18546 \
 TESTS_ROOT=test/conformance/execution-apis/tests \
 bash test/conformance/hive/run-rpc-compat-local.sh
-# => PASS=19  FAIL=185  SKIP=3 (multi-roundtrip)
+# => PASS=35  FAIL=172  SKIP=0   [speconly: 6]
 ```
 
-To pick up the two extra `eth_chainId` / `net_version` fixtures (PASS=21),
-launch the proxy with `HIVE_CHAIN_ID` set to the spec value:
-
-```bash
-docker run -d --name tos-hive --network host \
-    -e TOS_PROXY_UPSTREAM=127.0.0.1:8011 \
-    -e TOS_JSONRPC_BIND=127.0.0.1:18546 \
-    -e HIVE_CHAIN_ID=0xc72dd9d5e883e \
-    tos/validator-hive:proxy
-```
-
-Or, without docker, run the proxy script directly with `--override-chain-id`:
+Or, without docker, run the proxy script directly:
 
 ```bash
 python3 test/conformance/hive/clients/tos/tos-rpc-proxy.py \
     --listen 127.0.0.1:18546 --upstream 127.0.0.1:8011 \
-    --override-chain-id 0xc72dd9d5e883e --ready-marker TOS-READY
+    --override-chain-id 0xc72dd9d5e883e \
+    --normalize-not-found \
+    --ready-marker TOS-READY
 ```
 
 ## How to run real Hive against us (full path — not yet wired)
@@ -131,36 +143,46 @@ ln -s "$OLDPWD/test/conformance/hive/clients/tos" clients/tos
 ./hive --client tos --sim ethereum/rpc-compat
 ```
 
-Today this run will only pass the 19 chainless / unknown-account /
-error-path fixtures — same set as the proxy-mode preview above —
-because the validator inside the container can't honour an arbitrary
-chainId from `/genesis.json`.
+Today this run will only pass the same 35 sub-tests as the proxy-mode
+preview — see *Gap* below.
 
 ## What works in this scaffold
 
-| Capability                                    | Status | Notes |
-|-----------------------------------------------|--------|-------|
-| Hive client discovery (`clients/tos/Dockerfile`) | OK   | Mirrors geth/reth conventions |
-| Slim proxy image (`Dockerfile.proxy`)         | OK     | Builds in ~10s |
-| Canonical builder image (`Dockerfile`)        | Buildable | ~30 min cold compile |
+| Capability                                                | Status | Notes |
+|-----------------------------------------------------------|--------|-------|
+| Hive client discovery (`clients/tos/Dockerfile`)          | OK     | Mirrors geth/reth conventions |
+| Slim proxy image (`Dockerfile.proxy`)                     | OK     | Builds in ~10s |
+| Canonical builder image (`Dockerfile`)                    | Buildable | ~30 min cold compile |
 | `tos.cmd` env handling: HIVE_CHAIN_ID (hex/dec), HIVE_NETWORK_ID, HIVE_LOGLEVEL, HIVE_CHECK_LIVE_PORT | OK | |
-| `tos.cmd` rejects unsupported forks (Pragu/Cancun/Shanghai) with exit 64 | OK | TOS_FORK_RELAX=1 to override |
+| `tos.cmd` rejects unsupported forks (Prague/Cancun/Shanghai) with exit 64 | OK | TOS_FORK_RELAX=1 to override |
 | `tos.cmd` ready signal: `TOS-VALIDATOR-READY` to stderr + 8545 TCP open | OK | |
-| `mapper.jq` translates geth genesis -> our intermediate JSON | OK     | Tested against execution-apis/tests/genesis.json |
-| 19 `rpc-compat` fixtures pass via proxy mode | OK     | See list below |
-| Single-node validator bootstrap inside container | TODO | Needs zerostate + key + DHT init |
-| Per-test re-init when HIVE_GENESIS_* changes | TODO   | Needs working init first |
+| `tos.cmd` invokes `tos-chain-rlp-replay` after readiness when `/chain.rlp` exists | OK | Run path; gated on chain id sanity check |
+| `tos-rpc-proxy.py --override-chain-id`                    | OK     | eth_chainId / net_version short-circuited locally |
+| `tos-rpc-proxy.py --normalize-not-found`                  | OK     | rewrites placeholder blocks → `null` |
+| `chain-rlp-replay.py` decodes chain.rlp                   | OK     | 45 blocks / 160 txs, exit code semantics documented in script header |
+| `mapper.jq` translates geth genesis -> our intermediate JSON | OK | Tested against execution-apis/tests/genesis.json |
+| Local runner: speconly + multi-roundtrip                  | OK     | Mirrors hive `checkJSONStructure` |
+| 35 `rpc-compat` fixtures pass via proxy mode              | OK     | See list below |
+| Single-node validator bootstrap inside container          | TODO   | Needs zerostate + key + DHT init — **see *Gap* below** |
+| chain.rlp replay actually runs end-to-end                 | BLOCKED | Requires single-node bootstrap first; current attempt against live testnet rejects every tx with `invalid chain id` |
 
-### The 21 sub-tests passing today (proxy mode against live testnet, chain-id override)
+### The 35 sub-tests passing today (proxy mode against live testnet)
 
 ```
 debug_getRawReceipts/get-genesis
 debug_getRawTransaction/get-invalid-hash             (both errored)
-eth_chainId/get-chain-id                              (only with --override-chain-id)
+eth_chainId/get-chain-id                             (with --override-chain-id)
+eth_createAccessList/create-al-contract               (speconly)
+eth_createAccessList/create-al-contract-eip1559      (speconly)
 eth_createAccessList/create-al-value-transfer
+eth_estimateGas/estimate-successful-call             (speconly)
+eth_estimateGas/estimate-with-eip4844                (speconly)
+eth_estimateGas/estimate-with-eip7702                (speconly, 2 roundtrips)
+eth_feeHistory/fee-history                            (speconly)
 eth_getBalance/get-balance-unknown-account
 eth_getBlockByHash/get-block-by-empty-hash
 eth_getBlockByHash/get-block-by-notfound-hash
+eth_getBlockByNumber/get-block-notfound              (with --normalize-not-found)
 eth_getBlockReceipts/get-block-receipts-0
 eth_getBlockReceipts/get-block-receipts-earliest
 eth_getBlockTransactionCountByNumber/get-genesis
@@ -173,73 +195,167 @@ eth_getTransactionByHash/get-notfound-tx
 eth_getTransactionCount/get-nonce-unknown-account
 eth_getTransactionReceipt/get-empty-tx
 eth_getTransactionReceipt/get-notfound-tx
+eth_simulateV1/ethSimulate-add-more-non-defined-BlockStateCalls-than-fit
+eth_simulateV1/ethSimulate-big-block-state-calls-array
+eth_simulateV1/ethSimulate-block-num-order-38020
+eth_simulateV1/ethSimulate-block-override-reflected-in-contract  (both errored)
+eth_simulateV1/ethSimulate-block-timestamp-auto-increment        (both errored)
+eth_simulateV1/ethSimulate-block-timestamp-non-increment
+eth_simulateV1/ethSimulate-block-timestamp-order-38021
 eth_syncing/check-syncing
-net_version/get-network-id                            (only with --override-chain-id)
+net_version/get-network-id                           (with --override-chain-id)
 ```
 
-These fall into three categories:
+These fall into four categories:
 1. **Schema-only** queries that work on any node (`eth_syncing`).
 2. **Unknown-account / unknown-tx** queries that correctly return
    `null` / `0x0` regardless of seeded chain.
 3. **Error-path** queries where the spec expects an error and we
    return one (codes/messages are not compared, per Hive policy).
+4. **Speconly** queries where Hive only checks response shape (we now
+   support this in the local runner).
 
-## Gap: what blocks the other ~183 sub-tests
+## Gap: single-validator container bootstrap (root blocker)
 
-The remaining fixtures fall into two buckets:
+The remaining 172 sub-tests all fall into one bucket: **the spec
+pre-mines a 45-block / 160-transaction chain with specific
+contracts/balances/storage, and asserts on hashes/receipts/storage
+derived from that chain**. We need to import `chain.rlp` into a fresh
+TOS chain whose genesis matches the spec's. Two sub-problems:
 
-1. **Chain-id mismatch (2 sub-tests, FIXED)**:
-   `eth_chainId/get-chain-id` and `net_version/get-network-id`. The
-   spec's chain id is `0xc72dd9d5e883e` (3503995874084926); ours is
-   `0x544f53`.  The validator now honours `TOS_EVM_CHAIN_ID` at
-   startup (consumed by `evm_workchain::init_evm_workchain`), and the
-   proxy script honours `--override-chain-id` for setups where the
-   upstream is the live testnet.  **Caveat:** the validator override
-   MUST be applied to a fresh chain — EIP-155 v-recovery and stored
-   receipts both assume a stable chain id, so changing it on an
-   existing chain invalidates every signed transaction in state.
+### A. Bootstrap a TOS chain inside one container
 
-2. **Seeded chain expectations (~everything else)**: the spec
-   pre-mines a 36-block chain with specific txs/logs/contracts and
-   the fixtures assert on hashes/receipts/storage from that chain.
-   We cannot satisfy these without ingesting `chain.rlp` —
-   functionally equivalent to running the spec's transactions
-   through `eth_sendRawTransaction` post-genesis.  **Fix:** wire a
-   `chain.rlp` -> `eth_sendRawTransaction` replay step inside
-   `tos.cmd` after the validator goes live.  Blocked by current
-   `eth_sendRawTransaction` instability (see
-   `test/conformance/CONFORMANCE-FINDINGS.md`).
+The TOS validator network requires:
+- a **zerostate.boc** — a binary BOC built by `tos-create-state`
+  (the Fift interpreter) from `crypto/smartcont/gen-zerostate.fif`,
+  which embeds validator keys, masterchain config, EVM workchain shell,
+  and the spec's prefunded EOAs;
+- a **DHT bootstrap node** + at least 4 validators (the minimum the
+  zerostate hard-codes via `40 20 4 config.validator_num!` and
+  `shard_validators=4`); reducing to 1 validator requires re-tuning
+  several Fift constants and is risky;
+- per-validator **keyrings** (4 ed25519 keys per node generated via
+  `generate-random-id`), stored under each `keyring/` dir and referenced
+  by hex-uppercase id;
+- a global **tos-global.json** pointing at the DHT and listing all
+  liteservers;
+- a per-node **config.json** describing local addrs/adnl/control;
+- ~30s of warm-up after launch before consensus produces the first
+  EVM block (catchain handshake + validator-set election).
 
-### Realistic estimate to first-green real-Hive `rpc-compat` run
+The canonical bootstrap is `scripts/setup-testnet.sh`, which uses the
+Python `tostester.network.Network` infrastructure (depends on
+`toslib` C library, `tos_api` TL bindings, `nacl`, `pytosiq_core`).
+Replicating this entirely **inside** a single container means:
 
-| Task | Effort |
-|------|--------|
-| Wire `mapper.jq` output into `tos-create-state` to bake chain id | 1-2 d |
-| Wire single-node DHT + 1-validator zerostate at image build time | 1 d |
-| Wire `chain.rlp` replay inside `tos.cmd` after RPC up | 1 d |
-| Stabilise `eth_sendRawTransaction` (separate workstream) | unknown |
-| Tighten validator `--initial-sync-delay 0` + skip-key-sync flow | 0.5 d |
-| Round-trip Hive a couple of times to flush shape mismatches | 0.5 d |
+1. Add to the Dockerfile: Python 3.10+, `uv`, `nacl`, `pytosiq_core`,
+   the `tostester` package itself, plus all transitive C-library deps
+   (we already ship `toslib`).
+2. Rewrite the bash wrapper of `setup-testnet.sh` so it doesn't need
+   systemd or `useradd` — start the 4 validator processes as
+   background subprocesses of `tos.cmd`, supervise with `wait`, and
+   forward all stderr to the container's stdout.
+3. Bake the spec's `genesis.json` `alloc` into the Fift zerostate
+   template so the prefunded accounts match. The current Fift template
+   only knows about TOS-internal smart contracts (wallet, elector,
+   config); there is **no path** to inject arbitrary EOA balances
+   without extending `crypto/block/create-state.cpp` (out of our scope
+   in this directory).
 
-Realistic estimate to first-green `rpc-compat` run: **~4 engineer-days**
-on top of this wiring, plus whatever it takes to stabilise
-`eth_sendRawTransaction`.
+Realistic effort to reach a green single-validator-in-container:
+**3-5 engineer-days**, primarily for the create-state.cpp extension
+that injects EVM `alloc[]` into the zerostate.
+
+Workaround attempted but rejected: 1-validator topology by patching
+`shard_validators=1` and `min_validators=1`. The TOS catchain code
+(`validator-session/`) has hard-coded asserts that depend on
+`validators ≥ 4` for some branches (`is_initial_validator` consensus
+path), and changing those is Agent J's domain.
+
+### B. chain.rlp replay actually executes
+
+Once (A) is done and the container's chain id matches
+`0xc72dd9d5e883e`, replay is a simple loop. We've already shipped
+`chain-rlp-replay.py` which:
+
+- decodes chain.rlp at top level (concatenated blocks, NOT a single
+  outer list — verified against the spec's 54 KB / 45-block file);
+- extracts each block's `transactions[]` field;
+- broadcasts each via `eth_sendRawTransaction`;
+- waits for `eth_blockNumber` to advance before sending the next batch;
+- exits with a meaningful code (0=ok, 2=tx rejected, 3=stalled).
+
+Verified end-to-end *as far as decoding goes*:
+
+```bash
+$ python3 test/conformance/hive/clients/tos/chain-rlp-replay.py \
+      --chain test/conformance/execution-apis/tests/chain.rlp \
+      --rpc http://127.0.0.1:8011 \
+      --expected-chain-id 0xc72dd9d5e883e \
+      --start-block 0 --max-block 0
+[chain-rlp-replay] decoded 45 blocks (54615 bytes)
+[chain-rlp-replay] total 160 transactions across 45 blocks
+[chain-rlp-replay] CHAIN ID MISMATCH — upstream=0x544f53 expected=0xc72dd9d5e883e.
+                  All transactions in chain.rlp are signed with chain id
+                  0xc72dd9d5e883e; sending them to a chain reporting
+                  0x544f53 will be rejected with bad signature. Set
+                  TOS_EVM_CHAIN_ID before launching the validator.
+EXIT=2
+```
+
+The chain id sanity check fires before sending any tx, so this is safe
+to run in CI (no state mutation against the live testnet).
+
+### Why even a full chain.rlp replay won't push the count past ~50
+
+Even with (A) and (B) both complete, fixtures that assert on **block
+hashes** (`eth_getBlockByNumber/get-genesis`, `eth_getBlockByHash/*`,
+all of `eth_simulateV1` that includes the block's `parentHash` /
+`hash` / `stateRoot` field — that's most of them) will continue to
+fail. TOS produces blocks via its own collator with its own
+`extraData`/`coinbase`/`timestamp`/`mixHash`, so our block hashes are
+deterministic but **different from geth's**. To match geth's hashes we
+would need to reproduce geth's block-production rules byte-for-byte —
+out of scope for this workchain.
+
+The fixtures that **would** start passing post-replay (rough estimate
+from inspecting fixture shapes):
+
+| Method                         | Currently | After full replay (estimate) |
+|--------------------------------|-----------|------------------------------|
+| `eth_getBalance`               | 1 / 3     | 2-3 / 3   (balances are deterministic) |
+| `eth_getCode`                  | 1 / 3     | 2-3 / 3   (deployed bytecode is deterministic) |
+| `eth_getStorageAt`             | 1 / 4     | 3-4 / 4 |
+| `eth_getTransactionCount`      | 1 / 3     | 2-3 / 3 |
+| `eth_call` (no block-hash dep) | 0 / 6     | 4 / 6 |
+| `eth_estimateGas`              | 3 / 6     | 5 / 6 |
+| Everything else (block-hash)   | n/a       | unchanged |
+
+Total estimated upper bound after full replay: **~50-55 PASSes**, which
+is roughly the practical ceiling without re-implementing geth's block
+producer.
 
 ## Files (where to look)
 
 - `Dockerfile` — canonical builder image (compiles validator from source).
 - `Dockerfile.proxy` — slim image, proxy mode only, builds in seconds.
-- `clients/tos/tos.cmd` — entrypoint shim.  Two modes: proxy /
-  full-validator.  Reads `HIVE_*` env, rejects unsupported forks,
-  signals readiness via `TOS-VALIDATOR-READY` log line.
+- `clients/tos/tos.cmd` — entrypoint shim. Two modes: proxy /
+  full-validator. Reads `HIVE_*` env, rejects unsupported forks,
+  signals readiness via `TOS-VALIDATOR-READY`, and (in validator
+  mode) invokes `tos-chain-rlp-replay` after readiness if
+  `/chain.rlp` is present.
 - `clients/tos/tos-rpc-proxy.py` — stdlib-only HTTP forwarder used by
-  proxy mode.
+  proxy mode. Honours `--override-chain-id` and `--normalize-not-found`.
+- `clients/tos/chain-rlp-replay.py` — stdlib-only RLP decoder +
+  `eth_sendRawTransaction` driver. Decodes 45 blocks / 160 txs from
+  the spec's chain.rlp; exits with documented codes.
 - `clients/tos/mapper.jq` — geth-genesis -> tos-zerostate-JSON
-  translator.  Output is consumed by the (TODO) `tos-create-state`
+  translator. Output is consumed by the (TODO) `tos-create-state`
   init helper.
 - `clients/tos/genesis.tmpl.json` — fallback when Hive provides no
   `/genesis.json`.
 - `clients/tos/Dockerfile` — Hive-discovered wrapper that pulls from
   `tos/validator-hive:latest`.
 - `run-rpc-compat-local.sh` — replays `*.io` fixtures locally; lets us
-  iterate without the 30-min Hive Go build cycle.
+  iterate without the 30-min Hive Go build cycle. Now mirrors hive's
+  `speconly` and multi-roundtrip semantics.
