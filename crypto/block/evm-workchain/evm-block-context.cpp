@@ -78,18 +78,27 @@ const silkworm::ChainConfig& evm_chain_config() noexcept {
         c.cancun_time       = 0;
         // Pectra/Prague (EIP-2537/2935/6110/7002/7251/7549/7623/7685/7702)
         // active from time 0. Mainnet activated 2025-05-07. Pre-fork
-        // prep landed today (2026-04-18):
+        // prep landed earlier (2026-04-18):
         //   - EIP-2935 history-storage predeploy seeded at startup
         //     (seed_eip2935_predeploy in evm-init.cpp)
         //   - EIP-2935 system call hook in compute-phase, gated on
         //     revision() >= EVMC_PRAGUE
         //   - EIP-7702 set-code (type-4) tx admission already supported
         //     by silkworm; passes through transparently
-        // NOT YET WIRED in this commit (Phase B follow-up):
-        //   - EIP-2537 BLS12-381 precompiles (0x0b–0x11). silkworm's
-        //     kContracts[] table only exposes through 0x0a; evmone has
-        //     bls.cpp implementation. Phase B extends the table.
+        //   - EIP-2537 BLS12-381 precompiles (0x0b–0x11) wired into
+        //     silkworm dispatch via evmone's bls.cpp (Phase B).
         c.prague_time       = 0;
+        // Osaka/Fusaka (EIPs 7825/7883/7823/7939/7951/7935). Mainnet
+        // activated 2025-12-03. Code changes landed today (2026-04-18)
+        // across silkworm + evmone:
+        //   - EIP-7939 CLZ opcode (0x1e) in evmone.
+        //   - EIP-7951 secp256r1 P-256 precompile at 0x100 via OpenSSL.
+        //   - EIP-7823 MODEXP input cap 8192 B / parameter.
+        //   - EIP-7883 MODEXP gas increase (min 500, 16×/2× multipliers).
+        //   - EIP-7825 per-tx gas cap 2^24 = 16,777,216.
+        //   - EIP-7935 default block gas limit 60M — operational (set
+        //     per genesis/runtime gas_limit), no silkworm change needed.
+        c.osaka_time        = 0;
 
         // PoW → PoS terminal difficulty set to 0 (merged from genesis).
         c.terminal_total_difficulty = 0;
