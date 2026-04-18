@@ -171,6 +171,12 @@ class EvmState {
         const std::vector<evmc::address>& addresses = {},
         const std::vector<std::vector<evmc::bytes32>>& topics = {}) const;
 
+    /// Snapshot of all IndexedLog entries for a single block. Returns an
+    /// empty vector if the block has no logs (or never existed). Used by the
+    /// RPC-cache write hook to re-serialize the block's full log set after
+    /// every per-tx store_logs call.
+    std::vector<IndexedLog> get_logs_for_block_copy(uint64_t block_number) const;
+
     /// --- Change tracking for incremental trie ---
     /// Track that an account was modified (computes keccak256(addr) and inserts nibbled key).
     void track_account_change(const evmc::address& addr);

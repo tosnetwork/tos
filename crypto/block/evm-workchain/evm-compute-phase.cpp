@@ -114,10 +114,44 @@ bool run_evm_compute_phase(
     stored_tx.block_number = block_seqno;
     stored_tx.tx_index = 0;
     stored_tx.raw_rlp = silkworm::Bytes{(*payload_opt).begin(), (*payload_opt).end()};
+
+    // Phase F.6: persist transaction to side-channel cache db. Same
+    // `receipt.success` filter as the receipt put — validate-block re-runs
+    // against post-state and would write a garbage tx (with the wrong sender
+    // recovered from the post-nonce state) over the real one.
+    if (auto* cache = evm_rpc_cache_db(); cache && exec_result.success) {
+        td::Bits256 tx_hash_bits;
+        std::memcpy(tx_hash_bits.data(), tx_hash.bytes, 32);
+        auto cell = encode_persisted_transaction(stored_tx);
+        auto put_status = cache->put_transaction(tx_hash_bits, cell);
+        if (put_status.is_error()) {
+            LOG(WARNING) << "evm-rpc-cache: put_transaction failed for "
+                         << tx_hash_bits.to_hex() << ": "
+                         << put_status.message();
+        }
+    }
     state.store_transaction(tx_hash, std::move(stored_tx));
 
     if (!exec_result.logs.empty()) {
         state.store_logs(block_seqno, tx_hash, exec_result.logs);
+
+        // Phase F.6: re-serialize the FULL block log set after each per-tx
+        // store_logs and overwrite the persisted entry. Idempotent and
+        // last-write-wins — works for blocks with N txs because the final
+        // tx of the block produces the complete set. We only persist for
+        // successful executions (validate-block re-runs would otherwise
+        // re-append duplicate entries via the unconditional store_logs
+        // call above; that's a pre-existing bug we leave alone, but we at
+        // least avoid baking the duplication into the cache).
+        if (auto* cache = evm_rpc_cache_db(); cache && exec_result.success) {
+            auto block_logs = state.get_logs_for_block_copy(block_seqno);
+            auto cell = encode_persisted_logs_for_block(block_logs);
+            auto put_status = cache->put_logs_for_block(block_seqno, cell);
+            if (put_status.is_error()) {
+                LOG(WARNING) << "evm-rpc-cache: put_logs_for_block failed for #"
+                             << block_seqno << ": " << put_status.message();
+            }
+        }
     }
 
     // --- Step 5b: Compute EVM stateRoot (always, for cp.new_data) ---
@@ -227,6 +261,27 @@ bool run_evm_compute_phase(
             stored_block.transaction_hashes, state);
 
         state.store_block(stored_block);
+
+        // Phase F.6: persist block to side-channel cache db. Inside the
+        // `if (!state.has_block)` guard so validate-block — which sees the
+        // collator's already-stored block and skips this branch — doesn't
+        // re-write. Two indexes keep the same payload (~2 KB redundancy
+        // per block; pruning policy is the operator's lever).
+        if (auto* cache = evm_rpc_cache_db()) {
+            auto cell = encode_persisted_block(stored_block);
+            auto put_n_status = cache->put_block_by_number(block_seqno, cell);
+            if (put_n_status.is_error()) {
+                LOG(WARNING) << "evm-rpc-cache: put_block_by_number failed for #"
+                             << block_seqno << ": " << put_n_status.message();
+            }
+            td::Bits256 hash_bits;
+            std::memcpy(hash_bits.data(), stored_block.hash.bytes, 32);
+            auto put_h_status = cache->put_block_by_hash(hash_bits, cell);
+            if (put_h_status.is_error()) {
+                LOG(WARNING) << "evm-rpc-cache: put_block_by_hash failed for "
+                             << hash_bits.to_hex() << ": " << put_h_status.message();
+            }
+        }
 
         auto& sub_mgr = global_subscription_manager();
         sub_mgr.notify_new_head(stored_block);

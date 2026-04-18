@@ -72,6 +72,9 @@ constexpr int kPersistedTransactionMagicBits = 32;
 constexpr unsigned long long kPersistedBlockMagic = 0x424c4b5full;  // "BLK_"
 constexpr int kPersistedBlockMagicBits = 32;
 
+constexpr unsigned long long kPersistedIndexedLogMagic = 0x494c4f47ull;  // "ILOG"
+constexpr int kPersistedIndexedLogMagicBits = 32;
+
 /// Encode a StoredReceipt into a single cell tree (returns the root).
 ///
 /// The encoding is deterministic — identical input produces identical cell
@@ -93,5 +96,15 @@ bool decode_persisted_transaction(td::Ref<vm::Cell> cell, StoredTransaction& out
 /// Encode/decode a StoredBlock (eth_getBlockByNumber / *_byHash payload).
 td::Ref<vm::Cell> encode_persisted_block(const StoredBlock& block);
 bool decode_persisted_block(td::Ref<vm::Cell> cell, StoredBlock& out);
+
+/// Encode/decode the per-block IndexedLog vector (eth_getLogs payload).
+///
+/// Each IndexedLog adds (block_number, tx_hash, log_index, tx_index) to the
+/// silkworm::Log fields already covered by the existing PersistedLog cell.
+/// We store them as a chunked chain: each chunk holds up to 3 ref slots for
+/// IndexedLog cells + 1 continuation ref. The head cell carries the total
+/// count (32 bits — well beyond any plausible per-block log count).
+td::Ref<vm::Cell> encode_persisted_logs_for_block(const std::vector<IndexedLog>& logs);
+bool decode_persisted_logs_for_block(td::Ref<vm::Cell> cell, std::vector<IndexedLog>& out);
 
 }  // namespace evm_workchain

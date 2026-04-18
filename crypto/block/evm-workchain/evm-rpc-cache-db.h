@@ -54,6 +54,33 @@ class EvmRpcCacheDb {
     /// Number of persisted receipts (best-effort, may be expensive).
     td::Result<size_t> count_receipts();
 
+    /// --- Phase F.6: transactions ---
+    td::Status put_transaction(const td::Bits256& tx_hash, td::Ref<vm::Cell> cell);
+    td::Result<td::Ref<vm::Cell>> get_transaction(const td::Bits256& tx_hash);
+    td::Status for_each_transaction(
+        std::function<td::Status(const td::Bits256&, td::Ref<vm::Cell>)> cb);
+
+    /// --- Phase F.6: blocks (two parallel indexes) ---
+    /// Block-by-number key uses big-endian 8-byte uint64 so RocksDB iteration
+    /// returns blocks in chain order (1, 2, 3, ...). The two indexes carry
+    /// independent copies of the same block payload (~2 KB per block, fine for
+    /// the workloads we target — pruning is the operator's lever).
+    td::Status put_block_by_number(uint64_t block_number, td::Ref<vm::Cell> cell);
+    td::Result<td::Ref<vm::Cell>> get_block_by_number(uint64_t block_number);
+    td::Status for_each_block_by_number(
+        std::function<td::Status(uint64_t, td::Ref<vm::Cell>)> cb);
+
+    td::Status put_block_by_hash(const td::Bits256& block_hash, td::Ref<vm::Cell> cell);
+    td::Result<td::Ref<vm::Cell>> get_block_by_hash(const td::Bits256& block_hash);
+    td::Status for_each_block_by_hash(
+        std::function<td::Status(const td::Bits256&, td::Ref<vm::Cell>)> cb);
+
+    /// --- Phase F.6: logs (per-block IndexedLog vector) ---
+    td::Status put_logs_for_block(uint64_t block_number, td::Ref<vm::Cell> cell);
+    td::Result<td::Ref<vm::Cell>> get_logs_for_block(uint64_t block_number);
+    td::Status for_each_block_logs(
+        std::function<td::Status(uint64_t, td::Ref<vm::Cell>)> cb);
+
     EvmRpcCacheDb(EvmRpcCacheDb&&);
     ~EvmRpcCacheDb();
 

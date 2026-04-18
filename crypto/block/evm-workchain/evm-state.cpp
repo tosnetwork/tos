@@ -305,6 +305,13 @@ std::vector<IndexedLog> EvmState::get_logs(
     return result;
 }
 
+std::vector<IndexedLog> EvmState::get_logs_for_block_copy(uint64_t block_number) const {
+    std::shared_lock lock(mutex_);
+    auto it = block_logs_.find(block_number);
+    if (it == block_logs_.end()) return {};
+    return it->second;
+}
+
 // --- Change tracking for incremental trie ---
 
 void EvmState::track_account_change(const evmc::address& addr) {

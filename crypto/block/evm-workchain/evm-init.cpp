@@ -372,6 +372,109 @@ void init_evm_workchain(const std::string& db_root) {
                              << " receipts from rpc cache db"
                              << (decode_fails > 0 ? " (skipped " + std::to_string(decode_fails) + " corrupt entries)" : "");
             }
+
+            // Phase F.6: hydrate transactions, blocks (both indexes) and
+            // per-block log vectors. Each walk is independent and uses the
+            // same EvmState mutators that compute-phase calls; they are all
+            // idempotent for replays.
+            size_t txs_hydrated = 0, tx_decode_fails = 0;
+            auto tx_walk = evm_rpc_cache_db()->for_each_transaction(
+                [&txs_hydrated, &tx_decode_fails](const td::Bits256& tx_hash,
+                            td::Ref<vm::Cell> cell) -> td::Status {
+                    StoredTransaction t;
+                    if (!decode_persisted_transaction(cell, t)) {
+                        ++tx_decode_fails;
+                        return td::Status::OK();
+                    }
+                    evmc::bytes32 tx_hash_be{};
+                    std::memcpy(tx_hash_be.bytes, tx_hash.data(), 32);
+                    g_evm_state->store_transaction(tx_hash_be, std::move(t));
+                    ++txs_hydrated;
+                    return td::Status::OK();
+                });
+            if (tx_walk.is_error()) {
+                LOG(ERROR) << "evm-workchain: rpc cache tx walk failed: "
+                           << tx_walk.message();
+            } else {
+                LOG(WARNING) << "evm-workchain: hydrated " << txs_hydrated
+                             << " transactions from rpc cache db"
+                             << (tx_decode_fails > 0 ? " (skipped " + std::to_string(tx_decode_fails) + " corrupt entries)" : "");
+            }
+
+            size_t blocks_hydrated = 0, block_decode_fails = 0;
+            // Walk by-number first so chain-order iteration populates
+            // hash_to_block_ alongside blocks_; the by-hash walk is then a
+            // safety-net (no-op if both indexes were written together).
+            auto block_walk = evm_rpc_cache_db()->for_each_block_by_number(
+                [&blocks_hydrated, &block_decode_fails](
+                    uint64_t /*block_number*/, td::Ref<vm::Cell> cell) -> td::Status {
+                    StoredBlock b;
+                    if (!decode_persisted_block(cell, b)) {
+                        ++block_decode_fails;
+                        return td::Status::OK();
+                    }
+                    g_evm_state->store_block(b);
+                    ++blocks_hydrated;
+                    return td::Status::OK();
+                });
+            if (block_walk.is_error()) {
+                LOG(ERROR) << "evm-workchain: rpc cache block walk failed: "
+                           << block_walk.message();
+            } else {
+                LOG(WARNING) << "evm-workchain: hydrated " << blocks_hydrated
+                             << " blocks from rpc cache db"
+                             << (block_decode_fails > 0 ? " (skipped " + std::to_string(block_decode_fails) + " corrupt entries)" : "");
+            }
+
+            // Logs walk: each entry is the full IndexedLog vector for a
+            // block. The state's store_logs() appends per-tx entries with a
+            // log_index derived from the existing vector size, which would
+            // mis-number if we replayed per-tx; instead we write directly into
+            // the block_logs_ slot via repeated store_logs grouped by tx_hash.
+            size_t log_blocks_hydrated = 0;
+            size_t log_decode_fails = 0;
+            auto logs_walk = evm_rpc_cache_db()->for_each_block_logs(
+                [&log_blocks_hydrated, &log_decode_fails](
+                    uint64_t block_number, td::Ref<vm::Cell> cell) -> td::Status {
+                    std::vector<IndexedLog> logs;
+                    if (!decode_persisted_logs_for_block(cell, logs)) {
+                        ++log_decode_fails;
+                        return td::Status::OK();
+                    }
+                    // Re-group by tx_hash preserving order so store_logs
+                    // recreates the original log_index sequence. Each
+                    // store_logs call appends `logs.size()` entries with
+                    // log_index continuing from the current vector size.
+                    std::vector<silkworm::Log> bucket;
+                    evmc::bytes32 cur_tx{};
+                    uint32_t cur_tx_index = 0;
+                    bool first = true;
+                    auto flush = [&]() {
+                        if (bucket.empty()) return;
+                        g_evm_state->store_logs(block_number, cur_tx, bucket, cur_tx_index);
+                        bucket.clear();
+                    };
+                    for (const auto& il : logs) {
+                        if (first || il.tx_hash != cur_tx) {
+                            flush();
+                            cur_tx = il.tx_hash;
+                            cur_tx_index = il.tx_index;
+                            first = false;
+                        }
+                        bucket.push_back(il.log);
+                    }
+                    flush();
+                    ++log_blocks_hydrated;
+                    return td::Status::OK();
+                });
+            if (logs_walk.is_error()) {
+                LOG(ERROR) << "evm-workchain: rpc cache logs walk failed: "
+                           << logs_walk.message();
+            } else {
+                LOG(WARNING) << "evm-workchain: hydrated logs for "
+                             << log_blocks_hydrated << " blocks from rpc cache db"
+                             << (log_decode_fails > 0 ? " (skipped " + std::to_string(log_decode_fails) + " corrupt entries)" : "");
+            }
         }
     }
 

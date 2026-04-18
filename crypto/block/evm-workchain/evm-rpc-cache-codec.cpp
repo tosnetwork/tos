@@ -595,6 +595,142 @@ bool decode_persisted_block(td::Ref<vm::Cell> cell, StoredBlock& out) {
     return decode_persisted_block_impl(cell, out);
 }
 
+// ---------------------------------------------------------------------------
+// PersistedLogsForBlock — chunked chain of IndexedLog cells (eth_getLogs).
+//
+//   indexed_log#494c4f47
+//     block_number:uint64
+//     tx_hash:bits256
+//     log_index:uint32
+//     tx_index:uint32
+//     log:^PersistedLog
+//     = IndexedLog;
+//
+//   indexed_log_list_chunk#_
+//     count:uint32              // populated only on the head chunk
+//     entries:(n * ^IndexedLog) // n in [0, 3]
+//     next:(Maybe ^Chunk)
+//     = IndexedLogListChunk;
+// ---------------------------------------------------------------------------
+
+namespace {
+constexpr size_t kIndexedLogsPerChunk = 3;
+
+td::Ref<vm::Cell> encode_one_indexed_log(const IndexedLog& il) {
+    vm::CellBuilder cb;
+    cb.store_long(static_cast<long long>(kPersistedIndexedLogMagic),
+                  kPersistedIndexedLogMagicBits);
+    cb.store_long(static_cast<long long>(il.block_number), 64);
+    cb.store_bytes(il.tx_hash.bytes, 32);
+    cb.store_long(static_cast<long long>(il.log_index), 32);
+    cb.store_long(static_cast<long long>(il.tx_index), 32);
+    cb.store_ref(encode_one_log(il.log));
+    return cb.finalize();
+}
+
+bool decode_one_indexed_log(td::Ref<vm::Cell> cell, IndexedLog& out) {
+    if (cell.is_null()) return false;
+    auto cs = vm::load_cell_slice(cell);
+    long long magic = 0;
+    if (!cs.fetch_long_bool(kPersistedIndexedLogMagicBits, magic) ||
+        static_cast<unsigned long long>(magic) != kPersistedIndexedLogMagic) {
+        return false;
+    }
+    long long block_number = 0, log_index = 0, tx_index = 0;
+    if (!cs.fetch_long_bool(64, block_number)) return false;
+    if (!cs.fetch_bytes(out.tx_hash.bytes, 32)) return false;
+    if (!cs.fetch_long_bool(32, log_index)) return false;
+    if (!cs.fetch_long_bool(32, tx_index)) return false;
+    out.block_number = static_cast<uint64_t>(block_number);
+    out.log_index = static_cast<uint32_t>(log_index);
+    out.tx_index = static_cast<uint32_t>(tx_index);
+    if (cs.size_refs() == 0) return false;
+    return decode_one_log(cs.fetch_ref(), out.log);
+}
+
+td::Ref<vm::Cell> encode_indexed_log_list(const std::vector<IndexedLog>& logs) {
+    auto count = static_cast<unsigned>(logs.size());
+    if (count > 0xffffffffu) count = 0xffffffffu;
+
+    if (logs.empty()) {
+        vm::CellBuilder cb;
+        cb.store_long(0, 32);
+        cb.store_long(0, 1);
+        return cb.finalize();
+    }
+
+    std::vector<td::Ref<vm::Cell>> il_cells;
+    il_cells.reserve(logs.size());
+    for (const auto& il : logs) {
+        il_cells.push_back(encode_one_indexed_log(il));
+    }
+
+    td::Ref<vm::Cell> next;
+    size_t i = il_cells.size();
+    while (i > 0) {
+        size_t take = std::min<size_t>(kIndexedLogsPerChunk, i);
+        size_t start = i - take;
+        bool is_head = (start == 0);
+
+        vm::CellBuilder cb;
+        cb.store_long(is_head ? count : 0u, 32);
+        for (size_t k = 0; k < take; ++k) {
+            cb.store_ref(il_cells[start + k]);
+        }
+        if (next.not_null()) {
+            cb.store_long(1, 1);
+            cb.store_ref(next);
+        } else {
+            cb.store_long(0, 1);
+        }
+        next = cb.finalize();
+        i = start;
+    }
+    return next;
+}
+
+bool decode_indexed_log_list(td::Ref<vm::Cell> root, std::vector<IndexedLog>& out) {
+    out.clear();
+    if (root.is_null()) return false;
+
+    long long total = -1;
+    auto cell = root;
+    constexpr size_t kMaxChunks = 1 << 20;
+    for (size_t step = 0; step < kMaxChunks; ++step) {
+        if (cell.is_null()) return false;
+        auto cs = vm::load_cell_slice(cell);
+        long long count_field = 0;
+        if (!cs.fetch_long_bool(32, count_field)) return false;
+        if (total < 0) {
+            total = count_field;
+            out.reserve(static_cast<size_t>(total));
+        }
+        unsigned nrefs = cs.size_refs();
+        long long has_next = 0;
+        if (!cs.fetch_long_bool(1, has_next)) return false;
+        unsigned cont_refs = (has_next != 0) ? 1u : 0u;
+        if (cont_refs > nrefs) return false;
+        unsigned log_refs = nrefs - cont_refs;
+        for (unsigned r = 0; r < log_refs; ++r) {
+            IndexedLog il;
+            if (!decode_one_indexed_log(cs.prefetch_ref(r), il)) return false;
+            out.push_back(std::move(il));
+        }
+        if (!has_next) break;
+        cell = cs.prefetch_ref(log_refs);
+    }
+    if (total < 0) return false;
+    return out.size() == static_cast<size_t>(total);
+}
+}  // anonymous namespace (Phase F.6 indexed-log helpers)
+
+td::Ref<vm::Cell> encode_persisted_logs_for_block(const std::vector<IndexedLog>& logs) {
+    return encode_indexed_log_list(logs);
+}
+bool decode_persisted_logs_for_block(td::Ref<vm::Cell> cell, std::vector<IndexedLog>& out) {
+    return decode_indexed_log_list(cell, out);
+}
+
 td::Ref<vm::Cell> encode_persisted_receipt(const StoredReceipt& receipt) {
     vm::CellBuilder cb;
     cb.store_long(static_cast<long long>(kPersistedReceiptMagic), kPersistedReceiptMagicBits);

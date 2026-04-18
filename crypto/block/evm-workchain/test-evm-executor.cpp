@@ -4072,6 +4072,86 @@ static void test_persisted_block_roundtrip() {
                        empty_ok && deterministic) ? "PASSED" : "FAILED");
 }
 
+static void test_persisted_logs_roundtrip() {
+    printf("=== test_persisted_logs_roundtrip (Phase F.6) ===\n");
+
+    // Build 7 IndexedLogs spanning multiple txs in a block — exercises the
+    // chunk chain (kIndexedLogsPerChunk = 3, so 3 chunks: 2 of 3 + 1 of 1).
+    std::vector<IndexedLog> in;
+    in.reserve(7);
+    for (uint32_t i = 0; i < 7; ++i) {
+        IndexedLog il;
+        il.block_number = 0xCAFEBABEull + i / 3;  // straddle two block numbers
+        for (int j = 0; j < 32; ++j) {
+            il.tx_hash.bytes[j] = static_cast<uint8_t>((i * 11 + j) & 0xff);
+        }
+        il.log_index = i;
+        il.tx_index = i / 2;
+        // Pack a small Log: address + 2 topics + 32-byte data.
+        for (int j = 0; j < 20; ++j) {
+            il.log.address.bytes[j] = static_cast<uint8_t>((0x40 + j + i) & 0xff);
+        }
+        il.log.topics.resize(2);
+        for (int t = 0; t < 2; ++t) {
+            for (int j = 0; j < 32; ++j) {
+                il.log.topics[t].bytes[j] = static_cast<uint8_t>((i * 7 + t * 13 + j) & 0xff);
+            }
+        }
+        il.log.data.resize(32);
+        for (size_t j = 0; j < il.log.data.size(); ++j) {
+            il.log.data[j] = static_cast<uint8_t>((i * 5 + j * 3) & 0xff);
+        }
+        in.push_back(std::move(il));
+    }
+
+    auto cell = encode_persisted_logs_for_block(in);
+    std::vector<IndexedLog> out;
+    bool ok = decode_persisted_logs_for_block(cell, out);
+
+    bool count_ok = ok && out.size() == in.size();
+    bool fields_ok = count_ok;
+    if (count_ok) {
+        for (size_t i = 0; i < in.size(); ++i) {
+            const auto& a = in[i];
+            const auto& b = out[i];
+            if (a.block_number != b.block_number ||
+                std::memcmp(a.tx_hash.bytes, b.tx_hash.bytes, 32) != 0 ||
+                a.log_index != b.log_index ||
+                a.tx_index != b.tx_index ||
+                std::memcmp(a.log.address.bytes, b.log.address.bytes, 20) != 0 ||
+                a.log.topics.size() != b.log.topics.size() ||
+                a.log.data != b.log.data) {
+                fields_ok = false;
+                break;
+            }
+            for (size_t t = 0; t < a.log.topics.size(); ++t) {
+                if (std::memcmp(a.log.topics[t].bytes, b.log.topics[t].bytes, 32) != 0) {
+                    fields_ok = false;
+                    break;
+                }
+            }
+            if (!fields_ok) break;
+        }
+    }
+
+    auto cell2 = encode_persisted_logs_for_block(in);
+    bool deterministic = ok && cell2.not_null() && cell->get_hash() == cell2->get_hash();
+
+    // Empty list round-trip.
+    std::vector<IndexedLog> empty_in;
+    auto empty_cell = encode_persisted_logs_for_block(empty_in);
+    std::vector<IndexedLog> empty_out;
+    bool empty_ok = decode_persisted_logs_for_block(empty_cell, empty_out) &&
+                    empty_out.empty();
+
+    printf("  count match: %s (in=%zu out=%zu)\n",
+           count_ok ? "yes" : "no", in.size(), out.size());
+    printf("  fields match: %s\n", fields_ok ? "yes" : "no");
+    printf("  empty list round-trip: %s\n", empty_ok ? "yes" : "no");
+    printf("  deterministic re-encode: %s\n", deterministic ? "yes" : "no");
+    printf("  %s\n\n", (count_ok && fields_ok && empty_ok && deterministic) ? "PASSED" : "FAILED");
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -4120,6 +4200,7 @@ int main() {
     test_persisted_receipt_roundtrip();
     test_persisted_transaction_roundtrip();
     test_persisted_block_roundtrip();
+    test_persisted_logs_roundtrip();
     test_state_test_runner_poc();
     test_state_test_runner_walk_curated();
     test_state_test_runner_pyspec_walk();
