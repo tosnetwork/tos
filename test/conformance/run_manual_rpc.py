@@ -75,7 +75,26 @@ def post(payload, timeout=5):
         RPC, data=data, headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as f:
-            return json.loads(f.read())
+            body = f.read()
+            status = f.status
+            # Batch responses (JSON arrays), HTTP 204 with empty body, and
+            # all-notification batches all need to round-trip through this
+            # function unscathed.  We always return a dict shape so the
+            # comparator can inspect it uniformly.
+            if not body:
+                return {"__http_status__": status, "__empty_body__": True}
+            try:
+                parsed = json.loads(body)
+            except json.JSONDecodeError:
+                return {"__http_status__": status,
+                        "__raw_body__": body.decode("utf-8", "replace")}
+            if isinstance(parsed, list):
+                # Batch response — wrap in a sentinel dict so callers know.
+                return {"__http_status__": status, "__batch__": parsed}
+            if isinstance(parsed, dict):
+                parsed["__http_status__"] = status
+                return parsed
+            return {"__http_status__": status, "__raw_body__": parsed}
     except Exception as e:
         return {"__transport_error__": str(e)}
 
@@ -95,6 +114,12 @@ def parse_io(path):
                 resp = json.loads(line[2:].strip())
                 if pending_req is None:
                     raise ValueError(f"{path}: << without preceding >>")
+                # Wrap a raw list expected-response in the batch sentinel
+                # so compare_step's batch path is taken.  Authors can also
+                # write `{"__batch__": [...]}` explicitly if they want to
+                # also assert on __http_status__.
+                if isinstance(resp, list):
+                    resp = {"__http_status__": 200, "__batch__": resp}
                 steps.append((pending_req, resp))
                 pending_req = None
     return steps
@@ -145,14 +170,43 @@ def compare_step(method, ours, expected):
     """Return (ok: bool, detail: str)."""
     if "__transport_error__" in ours:
         return False, f"transport error: {ours['__transport_error__']}"
+
+    # Special: HTTP-status-only assertions (e.g. 204 No Content for an
+    # all-notification batch).  When the expected payload includes
+    # __http_status__ we match it against the actual status code rather
+    # than against a JSON body.
+    if "__http_status__" in expected:
+        exp_status = expected["__http_status__"]
+        our_status = ours.get("__http_status__")
+        if our_status != exp_status:
+            return False, f"HTTP status differs: ours={our_status} expected={exp_status}"
+        if expected.get("__empty_body__"):
+            if not ours.get("__empty_body__"):
+                return False, f"expected empty body, got: {json.dumps(ours)[:200]}"
+            return True, None
+        # Fall through to normal comparison if more keys are set.
+
+    # Special: batch (JSON array) response.  Compare element-by-element.
+    if "__batch__" in expected:
+        if "__batch__" not in ours:
+            return False, f"expected batch (JSON array) response, got: {json.dumps(ours)[:200]}"
+        ob, eb = ours["__batch__"], expected["__batch__"]
+        if len(ob) != len(eb):
+            return False, f"batch length differs: ours={len(ob)} expected={len(eb)}"
+        for i, (o, e) in enumerate(zip(ob, eb)):
+            ok, detail = compare_step(method, o, e)
+            if not ok:
+                return False, f"batch[{i}]: {detail}"
+        return True, None
+
     if "error" in ours and "error" not in expected:
         return False, f"unexpected error: {ours['error']}"
     if "error" in expected and "error" not in ours:
         return False, "expected error, got result"
     if "error" in ours and "error" in expected:
         # Match error code if expected has one.
-        oc = ours["error"].get("code")
-        ec = expected["error"].get("code")
+        oc = ours["error"].get("code") if isinstance(ours["error"], dict) else None
+        ec = expected["error"].get("code") if isinstance(expected["error"], dict) else None
         if ec is not None and oc != ec:
             return False, f"error code differs: ours={oc} expected={ec}"
         return True, None
@@ -198,7 +252,15 @@ def run_file(path):
     file_ok = True
     for req, expected in steps:
         req = substitute(req, prior_results)
-        method = req.get("method", "<none>")
+        if isinstance(req, list):
+            # Batch — synthesize a method label from the first element.
+            method = "batch:" + ",".join(
+                e.get("method", "<none>") if isinstance(e, dict) else "<non-obj>"
+                for e in req[:3])
+            if len(req) > 3:
+                method += "..."
+        else:
+            method = req.get("method", "<none>")
         ours = post(req)
         ok, detail = compare_step(method, ours, expected)
         rows.append((method, ok, detail))

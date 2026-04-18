@@ -184,6 +184,18 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   void on_body_ready(PayloadPtr payload, td::Promise<HttpReturn> promise);
   void process_body(td::BufferSlice body, std::string req_id,
                     td::Promise<HttpReturn> promise);
+  // JSON-RPC 2.0 single object dispatch: parses id/method/params from `req`
+  // and dispatches.  `req` must be a JSON Object — callers (process_body and
+  // the batch handler) enforce this.
+  void process_single_object_request(td::JsonValue req,
+                                     td::Promise<HttpReturn> promise);
+  // JSON-RPC 2.0 batch dispatch: array of element requests becomes an array
+  // of element responses (notifications omitted).  See process_batch.
+  struct BatchState;
+  void process_batch(std::vector<td::JsonValue> elements,
+                     td::Promise<HttpReturn> promise);
+  void process_batch_step(std::shared_ptr<BatchState> state);
+  void finalize_batch(std::shared_ptr<BatchState> state);
   void process_rest_post_body(td::BufferSlice body, std::string method,
                               td::Promise<HttpReturn> promise);
   // Called by PostRestWaiter via actor message — reads payload OUTSIDE mutex.
@@ -340,6 +352,16 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   // top level and on mapped HTTP status codes.
   static HttpReturn make_eth_json_error(int code, std::string message, std::string id,
                                         const std::string& cors_origin = "*");
+  // HTTP 204 No Content with CORS — used for batch-of-only-notifications.
+  static HttpReturn make_no_content(const std::string& cors_origin = "*");
+  // HTTP 200 wrapping a literal JSON body (e.g. a JSON array of batch
+  // element responses).  Identical to make_raw_json_response but with an
+  // explicit name to clarify intent at call sites.
+  static HttpReturn make_json_array_response(std::string body,
+                                              const std::string& cors_origin = "*");
+  // Extract the response body bytes from an HttpReturn.  Consumes the
+  // payload — caller must not use `ret.second` afterwards.
+  static std::string extract_response_body(HttpReturn& ret);
   static HttpReturn make_health_ok(const std::string& cors_origin = "*");
   static HttpReturn make_cors_preflight(const std::string& cors_origin = "*");
   static HttpReturn make_text_response(int status_code, std::string status_text,

@@ -6,11 +6,35 @@ ships a minimal Docker-Compose stack that launches Blockscout 9.0.2 against
 the live 4-validator TOS testnet (validator @1, RPC port 8011) and the
 diagnostics that catalogue every warning / RPC rejection seen during sync.
 
-**Status (2026-04-18, first run):** Blockscout reaches `finished_indexing:
-true, indexed_blocks_ratio: 1` against TOS in under 90 seconds, **but only
-through a normalising proxy** (`normalize-proxy.py`) that papers over two
-TOS-side wire-shape gaps. The raw indexer crashes on the first batch
-request without it. See [Issues found](#issues-found-categorised) below.
+**Status (2026-04-18, second run):** Blockscout 9.0.2 reaches
+`finished_indexing: true, indexed_blocks_ratio: 1` **directly against the
+TOS validator-engine** in under 90 seconds. The two original BUGs (#1
+non-spec error envelope, #2 batch-rejection) are **fixed in the
+validator-engine** as of:
+
+- `fix(json-rpc-server): emit spec-compliant error envelope` — every
+  `/jsonRPC`-envelope error now uses `{jsonrpc, id, error:{code,
+  message}}` with HTTP 200 (was: `{ok:false, error:<str>, code:N}` with
+  mapped HTTP status).  Blockscout's `EthereumJSONRPC.HTTP.standardize_error/1`
+  decodes this without crashing.
+- `feat(json-rpc-server): JSON-RPC 2.0 batch request support` — the
+  server now parses JSON arrays, dispatches each element through the
+  existing single-request handler, and returns the response array
+  preserving order.  Notification elements (no `id`) are dropped from
+  the output per spec; an all-notification batch returns HTTP 204; an
+  empty array returns a single `-32600 Invalid Request`; arrays larger
+  than 100 elements are rejected with `-32600 Batch too large` (DoS
+  guard).
+
+The `normalize-proxy.py` shim is **retained but no longer wired in**
+(see [Files](#files)) — older validator-engine binaries from before the
+fix still need it, so we keep the workaround documented. To switch back
+to it (e.g. when bisecting a regression), set
+`ETHEREUM_JSONRPC_HTTP_URL=http://normalize-proxy:9545/` etc. in
+`blockscout.env` and `docker-compose down -v && docker-compose up -d`.
+
+See [Issues found](#issues-found-categorised) below for the categorised
+list (BUG #1 / BUG #2 entries are now marked **FIXED**).
 
 The chain currently has 1 block (genesis); steady-state polling exercises
 3 RPC methods (`eth_blockNumber`, `eth_getBlockByNumber`, `txpool_content`)
@@ -29,13 +53,7 @@ class. See [Future runs](#future-runs).
 | tos-rpc-forwarder|<-----------------------------------------------+
 | (socat, host net)|                                                |
 +--------+---------+                                                |
-         | 172.17.0.1:18011                                         |
-         v                                                          |
-+--------+---------+                                                |
-| normalize-proxy  |  rewrites error shape (BUG #1),                |
-| (python stdlib)  |  fans out batch requests (BUG #2)              |
-+--------+---------+                                                |
-         | normalize-proxy:9545                                     |
+         | 172.17.0.1:18011 (host.docker.internal:18011)            |
          v                                                          |
 +--------+---------+    +-------+    +------------+                 |
 | blockscout       |--->|  db   |    |  redis-db  |                 |
@@ -44,6 +62,16 @@ class. See [Future runs](#future-runs).
          | host port 4001 (API)                                     |
          v                                                          |
 operator $ curl http://localhost:4001/api/v2/...
+
+(Optional, only for bisecting against pre-fix binaries:)
+
++------------------+
+| normalize-proxy  |  rewrites error shape (legacy),
+| (python stdlib)  |  fans out batch requests (legacy)
++--------+---------+
+         normalize-proxy:9545
+         (set ETHEREUM_JSONRPC_HTTP_URL to route through this instead
+         of host.docker.internal:18011)
 ```
 
 The TOS validator binds RPC on `127.0.0.1:8011`. Bridge-mode containers
@@ -158,14 +186,14 @@ crashed. No blocks were indexed.
 
 **Fix:** commit `fix(json-rpc-server): emit spec-compliant error
 envelope` switched the JSON-RPC envelope path
-(`process_body` and the dispatcher's last-resort method-not-found) to
-use `make_eth_json_error()`.  That helper emits the spec shape
-`{jsonrpc, id, error:{code, message}}` with HTTP 200 — the same shape
-`evm_workchain::handle_eth_rpc()` already used for in-EVM errors.  The
-legacy `make_json_error()` (`{ok:false, error:<str>, code}` + mapped
-HTTP status) is retained for the dedicated REST endpoints
-(`POST /getMasterchainInfo`, etc.) whose pytest suite under
-`test/json-rpc/` still depends on it.
+(`process_body`/`process_single_object_request` and the dispatcher's
+last-resort method-not-found) to use `make_eth_json_error()`.  That
+helper emits the spec shape `{jsonrpc, id, error:{code, message}}` with
+HTTP 200 — the same shape `evm_workchain::handle_eth_rpc()` already
+used for in-EVM errors.  The legacy `make_json_error()` (`{ok:false,
+error:<str>, code}` + mapped HTTP status) is retained for the dedicated
+REST endpoints (`POST /getMasterchainInfo`, etc.) whose pytest suite
+under `test/json-rpc/` still depends on it.
 
 **Verification:** `test/conformance/manual-rpc/error_shape/*.io` pins
 the new shape on the wire.  Direct probe:
@@ -186,25 +214,56 @@ substitute an empty params object and let the dispatcher emit
 `Method not found` (or per-handler missing-field error) via the spec
 shape.
 
-### BUG #2 — Batch JSON-RPC unsupported
+### BUG #2 — Batch JSON-RPC unsupported — **FIXED**
 
-**Symptom:** TOS rejects any JSON-array request body with the malformed
-single-error shape from BUG #1 plus message
+**Original symptom:** TOS rejected any JSON-array request body with the
+malformed single-error shape from BUG #1 plus message
 `"Batch requests are not supported"`.
 
-**Severity:** **HARD BLOCKER**. Blockscout always batches its block
-catchup fetch (10–50 calls per HTTP roundtrip). Without batch support
-the entire catchup pipeline fails on the first request.
+**Original severity:** **HARD BLOCKER**. Blockscout always batches its
+block catchup fetch (10–50 calls per HTTP roundtrip). Without batch
+support the entire catchup pipeline failed on the first request.
 
-**Workaround in this stack:** `normalize-proxy.py` detects an array
-body, fans out to N parallel single-call requests upstream
-(`fanout-concurrency=16`), and reassembles the array of normalised
-results. Costs 10–50× the HTTP overhead per batch but unblocks indexing.
+**Fix:** commit `feat(json-rpc-server): JSON-RPC 2.0 batch request
+support` added the spec-compliant batch dispatcher.  Implementation:
+`process_body` peeks at the parsed JSON; on Array it hands off to
+`process_batch`, which iterates elements sequentially through
+`process_single_object_request` (the same code path used for single
+requests) and accumulates response bodies into an output array.
 
-**Real fix (TOS side):** implement the batch dispatcher per RFC. Loosely:
-parse outer array, dispatch each element through the existing single-call
-handler (in parallel or sequentially), serialise the result array. ~1
-day of work.
+Per-spec edge cases:
+
+- **Empty array** → single `-32600 Invalid Request: empty batch`
+  response (NOT an empty array).
+- **Notification** (element with no `id` field) → response is dropped
+  from the output array.
+- **All notifications** → HTTP 204 No Content with empty body.
+- **Per-element invalid request** (non-Object) → spec-shape `-32600`
+  error in that array slot with `id: null`.
+- **Batch over 100 elements** → single `-32600 Batch too large` error
+  (DoS guard; aligned with ethers BatchProvider / web3.js defaults).
+- **Order preserved** (not strictly required by spec but matches
+  client expectations).
+
+**Verification:** `test/conformance/manual-rpc/batch/*.io` pins the
+contract.  Direct probe:
+
+```bash
+$ curl -s -X POST http://127.0.0.1:8011/jsonRPC \
+    -H 'Content-Type: application/json' \
+    -d '[{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]},
+         {"jsonrpc":"2.0","id":2,"method":"eth_chainId","params":[]}]'
+[{"jsonrpc":"2.0","id":1,"result":"0x544f53"},
+ {"jsonrpc":"2.0","id":2,"result":"0x544f53"}]
+```
+
+**Note on serial dispatch:** the batch is processed one element at a
+time (each waits for the previous to complete before starting).  This
+keeps memory usage and the in-flight liteserver-query count bounded
+(one per batch instead of N), and avoids racing `cache_misses_` /
+`active_requests_` counters.  With the 100-element cap, worst-case
+batch latency is ~100× per-method service time, well under the 30 s
+request_timeout.
 
 ### MISSING — `txpool_content`
 
@@ -310,14 +369,19 @@ hash like any other block.
 
 ## What Blockscout actually exercised in this run
 
-Per-method tally from `normalize-proxy` after ~6 min steady-state on
-an empty (1-block) chain:
+Per-method tally from the second-run direct-pipe (no normalize-proxy)
+after ~3 min steady-state on the still-empty (1-block) chain.  The
+shape changes (BUG #1 / #2 fixed) mean we no longer have a per-method
+tally from a proxy — the validator-engine itself exposes per-method
+counters at `:9100/metrics` (Prometheus), e.g.
+`jsonrpc_method_requests_total{method="eth_blockNumber"}`.  Methods
+exercised under continuous polling on this empty chain:
 
-| Method | Calls | Result |
-|--------|------:|--------|
-| `eth_blockNumber` | 31 | OK |
-| `eth_getBlockByNumber` | 90 | OK |
-| `txpool_content` | 90 | err — `Method not found` (BUG-shape) |
+| Method | Result |
+|--------|--------|
+| `eth_blockNumber` | OK |
+| `eth_getBlockByNumber` | OK |
+| `txpool_content` | err — `-32601 Method not found` (spec-shape, decoded by Blockscout) |
 
 Methods exercised at startup but not in steady-state:
 `eth_chainId`, `net_version`, `web3_clientVersion`, `eth_syncing`,

@@ -477,6 +477,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
       if (payload->parse_completed()) {
         auto body_r = drain_payload_body(payload);
         if (body_r.is_error()) {
+          // REST POST endpoint — TVM-style error envelope (HTTP 422)
           promise.set_value(make_json_error(-32600, "Request body too large",
                                             "null", opts_.cors_origin));
           return;
@@ -551,6 +552,12 @@ void JsonRpcServer::on_body_ready(PayloadPtr payload, td::Promise<HttpReturn> pr
   process_body(body_r.move_as_ok(), "", std::move(promise));
 }
 
+// JSON-RPC 2.0 batch request cap.  Anything larger gets rejected with
+// -32600 "Batch too large".  100 mirrors what most production indexers
+// (ethers BatchProvider, web3.js BatchRequest) settle on; Blockscout's
+// catchup uses ~50.
+static constexpr std::size_t kJsonRpcMaxBatchSize = 100;
+
 void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
                                  td::Promise<HttpReturn> promise) {
   // NOTE: All JSON-RPC envelope errors below use `make_eth_json_error`
@@ -572,24 +579,52 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
   }
 
   auto json = json_r.move_as_ok();
+
+  // ── JSON-RPC 2.0 batch request ──────────────────────────────────────
   if (json.type() == td::JsonValue::Type::Array) {
-    // Batch dispatch added in a follow-up commit; pre-fix behaviour kept
-    // here so this commit is a pure error-shape fix with no behavioural
-    // change for non-batch traffic.
-    promise.set_value(make_eth_json_error(-32600, "Batch requests are not supported",
-                                          req_id, opts_.cors_origin));
+    auto &arr = json.get_array();
+    // Per spec: empty array → single -32600 error response (NOT an
+    // empty array).
+    if (arr.empty()) {
+      promise.set_value(make_eth_json_error(-32600, "Invalid Request: empty batch",
+                                            "null", opts_.cors_origin));
+      return;
+    }
+    if (arr.size() > kJsonRpcMaxBatchSize) {
+      promise.set_value(make_eth_json_error(
+          -32600,
+          PSTRING() << "Batch too large: max " << kJsonRpcMaxBatchSize
+                    << " requests, got " << arr.size(),
+          "null", opts_.cors_origin));
+      return;
+    }
+    std::vector<td::JsonValue> elements;
+    elements.reserve(arr.size());
+    for (auto &e : arr) {
+      elements.push_back(std::move(e));
+    }
+    process_batch(std::move(elements), std::move(promise));
     return;
   }
+
   if (json.type() != td::JsonValue::Type::Object) {
-    promise.set_value(make_eth_json_error(-32600, "Invalid request: expected JSON object",
+    promise.set_value(make_eth_json_error(-32600, "Invalid Request: expected JSON object or array",
                                           req_id, opts_.cors_origin));
     return;
   }
 
-  auto &obj = json.get_object();
+  process_single_object_request(std::move(json), std::move(promise));
+}
+
+// JSON-RPC 2.0 single object dispatch — extracted from process_body so the
+// batch handler can re-use it.  `req` MUST be a JSON Object (caller checks).
+void JsonRpcServer::process_single_object_request(td::JsonValue req,
+                                                   td::Promise<HttpReturn> promise) {
+  auto &obj = req.get_object();
 
   // Extract request ID — store as JSON literal to preserve type in response
-  // (JSON-RPC 2.0 requires echoing the id type exactly)
+  // (JSON-RPC 2.0 requires echoing the id type exactly).
+  std::string req_id;
   {
     auto id_val = obj.extract_field("id");
     if (id_val.type() == td::JsonValue::Type::String) {
@@ -597,6 +632,10 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
     } else if (id_val.type() == td::JsonValue::Type::Number) {
       req_id = id_val.get_number().str();  // numeric literal, no quotes
     } else {
+      // Null id, missing id, or non-stringy/numeric id → echo as JSON
+      // null per spec.  Note: in single-request mode this still emits
+      // a response.  In batch mode the batch driver detects "no id"
+      // (notification) by re-checking the original element.
       req_id = "null";
     }
   }
@@ -656,6 +695,129 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
 
   cached_dispatch_method(std::move(method), params_val.get_object(),
                          std::move(req_id), std::move(promise));
+}
+
+// ── JSON-RPC 2.0 batch dispatch ────────────────────────────────────────
+//
+// The batch is processed sequentially: dispatch element N, on completion
+// dispatch element N+1, and on completion of the last element emit the
+// JSON array of responses.  Sequential dispatch keeps memory bounded
+// (one in-flight liteserver query per batch instead of N) and avoids
+// racing the cache_misses_/active_requests_ counters.  The 100-element
+// cap (kJsonRpcMaxBatchSize) means worst-case latency is ~100×
+// per-method service time, well under the 30 s request_timeout.
+//
+// Notifications (request elements with no `id` field) are dispatched
+// like any other request, but their response is dropped from the output
+// array per spec.  If every element is a notification the response is
+// HTTP 204 No Content.
+
+struct JsonRpcServer::BatchState {
+  std::vector<td::JsonValue> elements;
+  std::vector<bool> is_notification;
+  std::vector<std::string> responses;  // empty = notification, dropped
+  std::size_t cursor{0};
+  td::Promise<HttpReturn> final_promise;
+  std::string cors;
+};
+
+void JsonRpcServer::process_batch(std::vector<td::JsonValue> elements,
+                                  td::Promise<HttpReturn> promise) {
+  // Per-element notification flag.  A request is a notification iff its
+  // `id` field is absent (NOT iff it's null — null is a valid id).  We
+  // detect this BEFORE process_single_object_request consumes the field.
+  std::vector<bool> is_notification;
+  is_notification.reserve(elements.size());
+  for (auto &el : elements) {
+    if (el.type() != td::JsonValue::Type::Object) {
+      // Spec: per-element invalid request → an error response with id null
+      // in the output array.  We synthesize one below in the loop.
+      is_notification.push_back(false);
+      continue;
+    }
+    auto &obj = el.get_object();
+    bool has_id = false;
+    for (auto &fv : obj.field_values_) {
+      if (fv.first == "id") { has_id = true; break; }
+    }
+    is_notification.push_back(!has_id);
+  }
+
+  auto state = std::make_shared<BatchState>();
+  state->elements = std::move(elements);
+  state->is_notification = std::move(is_notification);
+  state->responses.resize(state->elements.size());
+  state->final_promise = std::move(promise);
+  state->cors = opts_.cors_origin;
+
+  process_batch_step(state);
+}
+
+void JsonRpcServer::process_batch_step(std::shared_ptr<BatchState> state) {
+  // Drain synchronous (non-Object) elements.
+  while (state->cursor < state->elements.size()) {
+    std::size_t i = state->cursor;
+    auto &el = state->elements[i];
+    if (el.type() != td::JsonValue::Type::Object) {
+      auto err = make_eth_json_error(
+          -32600, "Invalid Request: batch element is not a JSON object",
+          "null", state->cors);
+      state->responses[i] = extract_response_body(err);
+      state->cursor++;
+      continue;
+    }
+
+    bool is_notif = state->is_notification[i];
+    auto self = actor_id(this);
+    auto sub_promise = td::PromiseCreator::lambda(
+        [self, state, i, is_notif](td::Result<HttpReturn> R) mutable {
+          if (R.is_error()) {
+            // Internal error becomes an element-level error with null id.
+            auto err = JsonRpcServer::make_eth_json_error(
+                -32603, R.error().message().str(), "null", state->cors);
+            state->responses[i] = JsonRpcServer::extract_response_body(err);
+          } else {
+            auto ret = R.move_as_ok();
+            std::string body = JsonRpcServer::extract_response_body(ret);
+            if (is_notif) {
+              state->responses[i] = "";  // dropped from output array
+            } else {
+              state->responses[i] = std::move(body);
+            }
+          }
+          state->cursor++;
+          // Re-enter on the actor scheduler — keeps the stack flat and
+          // ordering deterministic.
+          td::actor::send_closure(self, &JsonRpcServer::process_batch_step, state);
+        });
+
+    auto el_moved = std::move(el);
+    process_single_object_request(std::move(el_moved), std::move(sub_promise));
+    return;  // wait for sub_promise to fire
+  }
+  // All elements done — emit the result array (or 204 if all-notifications).
+  finalize_batch(std::move(state));
+}
+
+void JsonRpcServer::finalize_batch(std::shared_ptr<BatchState> state) {
+  // Filter notifications out of the output.
+  std::string body = "[";
+  bool first = true;
+  for (std::size_t i = 0; i < state->responses.size(); i++) {
+    if (state->responses[i].empty()) continue;  // dropped notification
+    if (!first) body += ",";
+    first = false;
+    body += state->responses[i];
+  }
+  body += "]";
+
+  if (first) {
+    // All elements were notifications — spec says return nothing.  HTTP
+    // 204 No Content with an empty body is the canonical interpretation.
+    state->final_promise.set_value(make_no_content(state->cors));
+    return;
+  }
+  state->final_promise.set_value(make_json_array_response(std::move(body), state->cors));
 }
 
 // ─── POST REST body processing (body = params JSON, no jsonrpc envelope) ──
@@ -1026,6 +1188,45 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_eth_json_error(int code, std::stri
   payload->complete_parse();
 
   return {std::move(response), std::move(payload)};
+}
+
+JsonRpcServer::HttpReturn JsonRpcServer::make_no_content(const std::string& cors_origin) {
+  auto response = http::HttpResponse::create("HTTP/1.1", 204, "No Content", false, false).move_as_ok();
+  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  response->add_header({"Content-Length", "0"});
+  response->complete_parse_header();
+
+  auto payload = response->create_empty_payload().move_as_ok();
+  payload->complete_parse();
+
+  return {std::move(response), std::move(payload)};
+}
+
+JsonRpcServer::HttpReturn JsonRpcServer::make_json_array_response(std::string body,
+                                                                   const std::string& cors_origin) {
+  auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
+  response->add_header({"Content-Type", "application/json"});
+  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  response->add_header({"Transfer-Encoding", "Chunked"});
+  response->complete_parse_header();
+
+  auto payload = response->create_empty_payload().move_as_ok();
+  payload->add_chunk(td::BufferSlice(std::move(body)));
+  payload->complete_parse();
+
+  return {std::move(response), std::move(payload)};
+}
+
+std::string JsonRpcServer::extract_response_body(HttpReturn& ret) {
+  std::string out;
+  if (!ret.second) return out;
+  // HttpPayload returns ONE chunk per get_slice() call — loop until drained.
+  while (true) {
+    auto chunk = ret.second->get_slice(1u << 20);
+    if (chunk.empty()) break;
+    out.append(chunk.as_slice().begin(), chunk.size());
+  }
+  return out;
 }
 
 JsonRpcServer::HttpReturn JsonRpcServer::make_cors_preflight(const std::string& cors_origin) {

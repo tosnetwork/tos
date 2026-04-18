@@ -5,8 +5,8 @@ Covers:
   - GET /healthcheck   -> 200 OK text
   - GET /readyz        -> JSON with ready, sync_lag_seconds
   - OPTIONS (any path) -> 204 with CORS headers
-  - Batch JSON-RPC rejection -> error -32600
-  - Method not found -> error -32601
+  - Batch JSON-RPC support (spec-compliant array → array)
+  - Method not found -> error -32601 (spec-compliant `error.code`)
 """
 import pytest
 import requests
@@ -78,27 +78,60 @@ class TestCORS:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  4. Batch request rejection
+#  4. Batch request support (JSON-RPC 2.0)
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestBatchRejection:
+class TestBatch:
 
-    def test_batch_array_rejected(self, endpoint, headers):
-        """Sending a JSON-RPC batch (array) should be rejected with -32600."""
+    def test_batch_returns_array(self, endpoint, headers):
+        """A JSON-RPC batch must be processed and return an array of responses
+        (spec section 6).  Pre-fix the server rejected batches with a single
+        error -- that broke Blockscout's catchup pipeline.  See
+        test/conformance/blockscout/README.md BUG #2."""
         url = endpoint.rstrip("/") + "/jsonRPC"
         batch = [
             {"jsonrpc": "2.0", "method": "getMasterchainInfo", "params": {}, "id": 1},
             {"jsonrpc": "2.0", "method": "getConsensusBlock", "params": {}, "id": 2},
         ]
         resp = requests.post(url, json=batch, headers=headers)
-        # The server should return an error, not process both requests.
+        assert resp.status_code == 200
         data = resp.json()
-        if isinstance(data, dict):
-            # Single error response
-            assert data.get("code") == -32600 or data.get("ok") is False
-        else:
-            # If it returns a list, it should still signal an error somehow.
-            pytest.fail("Batch requests should not be processed -- expected a single error response")
+        assert isinstance(data, list), f"expected JSON array, got {type(data).__name__}"
+        assert len(data) == 2
+        # Each element is a spec-shape JSON-RPC response.
+        for elem, src in zip(data, batch):
+            assert elem.get("jsonrpc") == "2.0"
+            assert elem.get("id") == src["id"]
+            # Must contain either result or error -- not both.
+            assert ("result" in elem) ^ ("error" in elem)
+
+    def test_empty_batch_returns_invalid_request(self, endpoint, headers):
+        """Per spec, an empty batch must return a single -32600 error."""
+        url = endpoint.rstrip("/") + "/jsonRPC"
+        resp = requests.post(url, json=[], headers=headers)
+        data = resp.json()
+        assert isinstance(data, dict)
+        # Spec error shape: error.code == -32600
+        assert data.get("error", {}).get("code") == -32600
+
+    def test_batch_notification_returns_204(self, endpoint, headers):
+        """An all-notification batch (no `id` fields) must produce no body."""
+        url = endpoint.rstrip("/") + "/jsonRPC"
+        batch = [{"jsonrpc": "2.0", "method": "eth_chainId", "params": []}]
+        resp = requests.post(url, json=batch, headers=headers)
+        assert resp.status_code == 204
+        assert resp.text == ""
+
+    def test_batch_too_large_rejected(self, endpoint, headers):
+        """Batches over the 100-element cap are rejected with -32600."""
+        url = endpoint.rstrip("/") + "/jsonRPC"
+        batch = [{"jsonrpc": "2.0", "id": i, "method": "eth_chainId", "params": []}
+                 for i in range(150)]
+        resp = requests.post(url, json=batch, headers=headers)
+        data = resp.json()
+        assert isinstance(data, dict)
+        assert data.get("error", {}).get("code") == -32600
+        assert "too large" in data.get("error", {}).get("message", "").lower()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -108,7 +141,7 @@ class TestBatchRejection:
 class TestMethodNotFound:
 
     def test_unknown_method_jsonrpc(self, endpoint, headers):
-        """An unknown method via JSON-RPC should return -32601."""
+        """An unknown method via JSON-RPC must return spec-shape -32601."""
         url = endpoint.rstrip("/") + "/jsonRPC"
         payload = {
             "jsonrpc": "2.0",
@@ -117,18 +150,28 @@ class TestMethodNotFound:
             "id": 1,
         }
         resp = requests.post(url, json=payload, headers=headers)
+        # Spec shape: HTTP 200, body has nested error.code/error.message
+        assert resp.status_code == 200
         data = resp.json()
-        # Should contain an error with code -32601
-        if "code" in data:
-            assert data["code"] == -32601
-        else:
-            assert data.get("ok") is False
+        assert "error" in data and isinstance(data["error"], dict)
+        assert data["error"].get("code") == -32601
+        assert data.get("id") == 1
 
     def test_unknown_method_rest_post(self, endpoint, headers):
-        """An unknown method via REST POST should return an error."""
+        """An unknown method via REST POST returns an error.  POST to a
+        non-REST URL falls through the JSON-RPC envelope handler so the
+        body must be valid JSON-RPC; we send an empty object which lacks
+        the required `method` field."""
         url = endpoint.rstrip("/") + "/thisMethodDoesNotExist"
         resp = requests.post(url, json={}, headers=headers)
-        assert resp.status_code in {404, 422, 500}
+        # Either legacy mapped HTTP status or spec-shape HTTP 200 with
+        # error.code -32600 (missing method field) is acceptable.
+        if resp.status_code == 200:
+            data = resp.json()
+            assert "error" in data and isinstance(data["error"], dict)
+            assert data["error"].get("code") in {-32600, -32601}
+        else:
+            assert resp.status_code in {404, 422, 500}
 
     def test_unknown_method_rest_get(self, endpoint, headers):
         """An unknown method via REST GET should return 404 or equivalent."""
