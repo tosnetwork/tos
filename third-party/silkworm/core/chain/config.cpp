@@ -78,6 +78,7 @@ nlohmann::json ChainConfig::to_json() const noexcept {
     member_to_json(ret, "shanghaiTime", shanghai_time);
     member_to_json(ret, "cancunTime", cancun_time);
     member_to_json(ret, "pragueTime", prague_time);
+    member_to_json(ret, "osakaTime", osaka_time);
 
     if (genesis_hash.has_value()) {
         ret["genesisBlockHash"] = to_hex(*genesis_hash, /*with_prefix=*/true);
@@ -163,6 +164,7 @@ std::optional<ChainConfig> ChainConfig::from_json(const nlohmann::json& json) no
     read_json_config_member(json, "shanghaiTime", config.shanghai_time);
     read_json_config_member(json, "cancunTime", config.cancun_time);
     read_json_config_member(json, "pragueTime", config.prague_time);
+    read_json_config_member(json, "osakaTime", config.osaka_time);
 
     /* Note ! genesis_hash is purposely omitted. It must be loaded from db after the
      * effective genesis block has been persisted */
@@ -185,7 +187,12 @@ bool ChainConfig::is_prague(BlockNum block_num, BlockTime block_time) const noex
     return revision(block_num, block_time) >= EVMC_PRAGUE;
 }
 
+bool ChainConfig::is_osaka(BlockNum block_num, BlockTime block_time) const noexcept {
+    return revision(block_num, block_time) >= EVMC_OSAKA;
+}
+
 evmc_revision ChainConfig::revision(uint64_t block_num, uint64_t block_time) const noexcept {
+    if (osaka_time && block_time >= osaka_time) return EVMC_OSAKA;
     if (prague_time && block_time >= prague_time) return EVMC_PRAGUE;
     if (cancun_time && block_time >= cancun_time) return EVMC_CANCUN;
     if (shanghai_time && block_time >= shanghai_time) return EVMC_SHANGHAI;
@@ -240,6 +247,7 @@ std::vector<BlockTime> ChainConfig::distinct_fork_times() const {
     ret.insert(shanghai_time.value_or(0));
     ret.insert(cancun_time.value_or(0));
     ret.insert(prague_time.value_or(0));
+    ret.insert(osaka_time.value_or(0));
 
     ret.erase(0);  // Block 0 is not a fork timestamp
     return {ret.cbegin(), ret.cend()};

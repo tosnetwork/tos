@@ -73,6 +73,7 @@ struct ChainConfig {
     std::optional<BlockTime> shanghai_time{std::nullopt};
     std::optional<BlockTime> cancun_time{std::nullopt};
     std::optional<BlockTime> prague_time{std::nullopt};
+    std::optional<BlockTime> osaka_time{std::nullopt};  // Fusaka (EIPs 7825/7883/7823/7939/7951/7935)
 
     //! \brief Returns the config of the (pre-Merge) protocol rule set
     protocol::PreMergeRuleSetConfig rule_set_config{protocol::NoPreMergeConfig{}};
@@ -81,6 +82,7 @@ struct ChainConfig {
     bool withdrawals_activated(BlockTime block_time) const noexcept;
     bool is_london(BlockNum block_num) const noexcept;
     bool is_prague(BlockNum block_num, BlockTime block_time) const noexcept;
+    bool is_osaka(BlockNum block_num, BlockTime block_time) const noexcept;
 
     //! \brief Returns the revision level at given block number
     //! \details In other words, on behalf of Json chain config data
