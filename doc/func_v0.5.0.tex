@@ -421,8 +421,7 @@ Modules organize contract code and the standard library:
 \begin{verbatim}
 mod wallet::state;
 mod wallet::msg;
-use std::result::Result;
-use std::message::{InternalContext, SendOptions};
+use std::message::{Signed, BounceContext, SendOptions, SendMode};
 \end{verbatim}
 
 The language keeps modules simple:
@@ -866,8 +865,8 @@ Traits provide interface-oriented reuse:
 
 \begin{verbatim}
 pub trait TlbCodec {
-    fn store(self, mut b: Builder) -> Result<Builder, CellError> pure;
-    fn load(mut s: Slice) -> Result<(Self, Slice), ParseError> pure;
+    fn store(self, mut b: Builder) -> Builder pure;   // aborts on overflow
+    fn load (mut s: Slice) -> (Self, Slice)  pure;   // aborts on underflow
 }
 \end{verbatim}
 
@@ -892,8 +891,8 @@ impl WalletState {
 }
 
 impl TlbCodec for WalletMsg {
-    fn store(self, mut b: Builder) -> Result<Builder, CellError> pure { ... }
-    fn load(mut s: Slice) -> Result<(Self, Slice), ParseError> pure { ... }
+    fn store(self, mut b: Builder) -> Builder pure { ... }
+    fn load (mut s: Slice) -> (Self, Slice)  pure { ... }
 }
 \end{verbatim}
 
@@ -972,7 +971,7 @@ Methods may declare \verb|mut self|:
 
 \begin{verbatim}
 impl Slice {
-    pub fn load_uint(mut self, bits: u16) -> Result<u256, ParseError> pure { ... }
+    pub fn load_uint(mut self, bits: u16) -> u256 pure { ... }
 }
 \end{verbatim}
 
@@ -980,12 +979,14 @@ At the call site, this looks ordinary:
 
 \begin{verbatim}
 let mut cs = body;
-let op = cs.load_uint(32)?;
+let op = cs.load_uint(32);
 \end{verbatim}
 
-This replaces the special \verb|cs~load_uint(32)| syntax. The source clearly
-states mutability in the binding and in the method signature, rather than
-hiding it in punctuation.
+This replaces the special \verb|cs~load_uint(32)| syntax. The source
+clearly states mutability in the binding and in the method signature,
+rather than hiding it in punctuation. On malformed input the method
+aborts with exit code 9 (cell underflow) per the abort-by-default
+model; no \verb|?| is needed.
 
 \paragraph{Mutation on the abort path.}
 When a \verb|mut self| method aborts (via \verb|require!|, an
@@ -1798,10 +1799,10 @@ enum LookupResult {
 
 fn maybe_lookup(k: Key) -> LookupResult effect(read) { ... }
 
-internal fn recv(ctx: InternalContext<LookupRequest>) {
-    match maybe_lookup(ctx.body.key) {
-        LookupResult::Ok(e) => send(ctx.sender, FoundReply { data: e }, ...),
-        LookupResult::Err(_) => send(ctx.sender, NotFoundReply { }, ...),
+internal fn recv(req: LookupRequest) {
+    match maybe_lookup(req.key) {
+        LookupResult::Ok(e)  => send(ctx.sender, FoundReply { data: e }, ...),
+        LookupResult::Err(_) => send(ctx.sender, NotFoundReply { },     ...),
     }
 }
 \end{verbatim}
@@ -1905,10 +1906,8 @@ throw_unless(33, msg_seqno == stored_seqno);
 
 // 0.5.0 style
 let mut cs = in_msg;
-let signature = cs.load_bits(512)?;
-if msg_seqno != stored_seqno {
-    return Err(WalletError::WrongSeqno);
-}
+let signature = cs.load_bits(512);                  // aborts on underflow
+require!(msg_seqno == stored_seqno, WrongSeqno);   // aborts with exit code 33
 \end{verbatim}
 
 \subsection{Migration Principle}
@@ -1917,11 +1916,14 @@ The important migration principle is semantic, not cosmetic:
 \begin{itemize}
 \item move from raw integers toward explicit types;
 \item move from hidden mutation toward \verb|mut|;
-\item move from integer-status parsing toward \verb|Result|;
-\item move from raw op-code dispatch toward \verb|enum + match|;
-\item move from parser magic toward stdlib declarations, while retaining a small
-amount of protocol-aware lowering where it clearly improves source-level
-clarity.
+\item move from \verb|throw_unless(N, cond)| toward
+\verb|require!(cond, Name)| with \verb|Name = N| preserving the exit
+code;
+\item move from raw op-code dispatch toward typed \verb|message| and
+\verb|enum + match|;
+\item move from parser magic toward stdlib declarations, while
+retaining a small amount of protocol-aware lowering where it clearly
+improves source-level clarity.
 \end{itemize}
 
 \section{Worked Comparison: One Wallet Contract in 0.4.6 and 0.5.0}
@@ -2466,19 +2468,19 @@ error; the compiler reports every colliding pair;
 for the same source are a violation of this rule.
 \end{itemize}
 
-The grammar for \verb|FunctionDecl| is extended accordingly:
+The grammar rule for \verb|GetterDecl| carries the optional
+\verb|method_id| clause (see Section~\ref{sec:grammar} for the full
+form):
 
 \begin{verbatim}
-FunctionDecl ::= [ "pub" ] [ EntryQualifier ] "fn" identifier
-                 [ GenericParams ] "(" Params ")" "->" Type
-                 [ EffectQualifier ]
-                 [ "method_id" ( "(" IntLiteral ")"
-                               | "(" StringLiteral ")" ) ]
-                 BlockOrSemicolon
+GetterDecl     ::= "get" "fn" identifier "(" Params ")" "->" Type
+                   [ MethodIdClause ] Block
+MethodIdClause ::= "method_id" "(" IntLiteral ")"
+                 | "method_id" "(" StringLiteral ")"
 \end{verbatim}
 
-\verb|method_id| is admissible only on \verb|get fn| functions in edition
-\verb|0.5.0|; using it on a non-getter is a compile-time error.
+\verb|method_id| is admissible only on \verb|get fn| functions in
+edition \verb|0.5.0|; using it elsewhere is a compile-time error.
 
 \subsection{Canonical Decision 7: Expression Grammar and Precedence}
 \label{sec:cd-expr}
@@ -2707,25 +2709,31 @@ is checked. The corpus is defined in a sibling document,
 under \verb|crypto/smartcont/v050/|.
 
 Every compliance-seeking compiler must produce byte-identical TVM code-cell
-output for every corpus entry at its pinned version. Corpus v1 includes:
+output for every corpus entry at its pinned version. Corpus v2 includes:
 
 \begin{itemize}
-\item C1 --- Simple wallet (\verb|wallet3|);
-\item C2 --- Plugin wallet (\verb|wallet-v4|);
-\item C3 --- Highload wallet v2;
-\item C4 --- Jetton wallet (synthetic, from TEP-74);
-\item C5 --- Multisig (sketch; full rewrite in corpus v2);
-\item --- Elector (deferred to corpus v2).
+\item C1 --- Simple wallet (\verb|wallet3|), rewritten in the v4 surface
+at 30 lines vs 0.4.6's 45;
+\item C2 --- Plugin wallet (\verb|wallet-v4|), rewritten at \textasciitilde 60
+lines vs 0.4.6's 121;
+\item C3 --- Highload wallet v2, rewritten at \textasciitilde 55 lines vs
+0.4.6's 91;
+\item C4 --- Jetton wallet (synthetic, from TEP-74), exercising typed
+internal dispatch, \verb|BounceContext<T>|, and helper-function
+\verb|mut state| patterns;
+\item C5 --- Multisig (sketch; full rewrite in corpus v3);
+\item --- Elector (deferred to corpus v3, after the reference compiler
+lands).
 \end{itemize}
 
-The corpus is intentionally small in v1: enough to pin the language, not so
+The corpus is intentionally small in v2: enough to pin the language, not so
 large that freezing it blocks edition maturation. Corpus versions are
-monotonic --- v2 may add entries but may not redefine entries already fixed
-in v1, short of a spec-revision-grade compatibility break.
+monotonic --- v3 may add entries but may not redefine entries already fixed
+in v2, short of a spec-revision-grade compatibility break.
 
-\paragraph{Issues surfaced by corpus v1, now resolved in main spec v3.}
-Every issue that corpus v1 flagged as open has been folded into the main
-specification:
+\paragraph{Design issues surfaced by earlier corpus drafts and resolved in v4.}
+Each open item that earlier corpus drafts flagged has been folded into
+the main specification:
 
 \begin{itemize}
 \item helper-function state mutation --- resolved in
@@ -2739,7 +2747,10 @@ there is no \verb|\&mut self| syntax;
 \S\ref{sec:entry-decode} by the \texttt{BounceBodyTooWide} compile-time
 check;
 \item canonical \verb|std::| module layout --- resolved in
-Appendix~\ref{app:stdlib-map} below.
+Appendix~\ref{app:stdlib-map} below;
+\item entry-function parameter shape (\verb|InternalContext<T>| vs
+typed body) --- resolved by Canonical Decision~9, which makes the
+typed message the entry parameter directly.
 \end{itemize}
 
 \appendix

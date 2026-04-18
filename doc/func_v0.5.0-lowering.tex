@@ -139,8 +139,11 @@ Some source forms correspond directly to blockchain protocol concepts rather
 than to ordinary library code. These may use generated wrappers:
 
 \begin{itemize}
-\item \verb|entry internal|, \verb|entry external|, \verb|entry bounce|;
-\item typed message contexts such as \verb|InternalContext<T>|;
+\item entry qualifiers \verb|internal fn|, \verb|external fn|,
+\verb|bounce fn|, \verb|get fn| inside a \verb|contract { }| block;
+\item typed message parameters on entries
+(\verb|internal fn recv(msg: T)|); the stdlib-provided
+\verb|Signed<T>| and \verb|BounceContext<T>| wrappers;
 \item \verb|message| declarations with bound opcodes;
 \item \verb|BodyLayout::Auto| and typed \verb|send(... )|.
 \end{itemize}
@@ -334,26 +337,26 @@ may survive only as debug metadata/comments \\ \hline
 bind a source signature to a raw intrinsic &
 emit direct intrinsic/opcode sequence or imported asm helper &
 surface replacement for parser magic \\ \hline
-\texttt{entry internal} &
-generate ABI wrapper around typed user function &
-existing internal-entry ABI plus message/context parsing wrapper &
-still one real TVM entrypoint \\ \hline
-\texttt{entry external} &
-generate ABI wrapper around typed user function &
-existing external-entry ABI plus parse/signature wrapper &
-\texttt{accept\_message} remains explicit unless specified otherwise \\ \hline
-\texttt{entry bounce} &
-generate wrapper for bounced-message path &
-existing bounced-message convention plus bounce-body decoding wrapper &
-no new protocol primitive \\ \hline
+\texttt{internal fn recv(msg: T)} &
+generate ABI wrapper that peeks 32-bit opcode, decodes body into T &
+existing internal-entry ABI + opcode match + field decode + user body call &
+unknown op $\to$ silent drop \\ \hline
+\texttt{external fn recv(msg: Signed<T>)} &
+generate ABI wrapper that decodes body into T, signature stays in wrapper &
+existing external-entry ABI plus derived-codec parse &
+\texttt{accept\_message} is the author's responsibility \\ \hline
+\texttt{bounce fn on\_bounce(ctx: BounceContext<T>)} &
+generate wrapper for bounced-message path; strip 32-bit header &
+existing bounced-message convention plus bounce-body decoding &
+T subject to 256-bit / 0-ref rule \\ \hline
 \texttt{get fn} &
 mark as getter export and read-only surface &
 ordinary getter selector / method-id export &
 same getter ABI family as today \\ \hline
-\texttt{InternalContext<T>} and friends &
-type-check context field access and requested body type &
-compiler-generated tuple/view assembled from real VM inputs &
-context object itself is not heap state \\ \hline
+\texttt{Signed<T>} / \texttt{BounceContext<T>} &
+stdlib wrappers, no compiler magic; derived codec like any message &
+wrapper fields are unpacked by ordinary field-load sequence &
+\texttt{Signed<T>::check} calls \texttt{CHKSIGNU} \\ \hline
 \texttt{to\_cell}/\texttt{from\_cell} &
 select \texttt{CellEncode}/\texttt{CellDecode} implementation &
 \texttt{NEWC} + stores + \texttt{ENDC}; or \texttt{CTOS} + loads + \texttt{ENDS} &
@@ -885,14 +888,15 @@ authoritative statements are in
 main-spec Canonical Decision 2;
 \item canonical layout of \verb|Bytes|: main-spec Canonical Decision 3;
 \item \verb|BodyLayout::Auto| fit predicate: main-spec Canonical Decision 4;
-\item typed-\verb|Err|-to-exit-code mapping: main-spec Canonical Decision 5;
+\item abort semantics and \verb|require!|-to-exit-code mapping:
+main-spec Canonical Decision 5;
 \item getter / \verb|method_id| selector policy: main-spec Canonical
 Decision 6;
-\item expression grammar and operator precedence: main-spec Canonical
-Decision 7;
+\item expression grammar and operator precedence (no \verb|?|):
+main-spec Canonical Decision 7;
 \item trait coherence and orphan rules: main-spec Canonical Decision 8;
-\item eager-decode opt-in syntax for \verb|entry external|: main-spec
-Canonical Decision 9;
+\item entry parameter is a typed message (replaces lazy/eager
+distinction): main-spec Canonical Decision 9;
 \item \verb|0.4-compat| edition surface and cross-edition rules: main-spec
 Canonical Decision 10.
 \end{enumerate}
