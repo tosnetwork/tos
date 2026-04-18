@@ -76,6 +76,20 @@ const silkworm::ChainConfig& evm_chain_config() noexcept {
         c.shanghai_time     = 0;
         // Cancun (EIP-1153/4788/4844/5656/6780/7516) active from time 0.
         c.cancun_time       = 0;
+        // Pectra/Prague (EIP-2537/2935/6110/7002/7251/7549/7623/7685/7702)
+        // active from time 0. Mainnet activated 2025-05-07. Pre-fork
+        // prep landed today (2026-04-18):
+        //   - EIP-2935 history-storage predeploy seeded at startup
+        //     (seed_eip2935_predeploy in evm-init.cpp)
+        //   - EIP-2935 system call hook in compute-phase, gated on
+        //     revision() >= EVMC_PRAGUE
+        //   - EIP-7702 set-code (type-4) tx admission already supported
+        //     by silkworm; passes through transparently
+        // NOT YET WIRED in this commit (Phase B follow-up):
+        //   - EIP-2537 BLS12-381 precompiles (0x0b–0x11). silkworm's
+        //     kContracts[] table only exposes through 0x0a; evmone has
+        //     bls.cpp implementation. Phase B extends the table.
+        c.prague_time       = 0;
 
         // PoW → PoS terminal difficulty set to 0 (merged from genesis).
         c.terminal_total_difficulty = 0;

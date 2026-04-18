@@ -4660,6 +4660,16 @@ static evmc::bytes32 hash_test_header(uint64_t number,
     hdr.blob_gas_used = 0;
     hdr.excess_blob_gas = 0;
     hdr.parent_beacon_block_root = evmc::bytes32{};
+    {
+        evmc::bytes32 rh{};
+        static const uint8_t kSha256Empty[32] = {
+            0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14,
+            0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f, 0xb9, 0x24,
+            0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c,
+            0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52, 0xb8, 0x55};
+        std::memcpy(rh.bytes, kSha256Empty, 32);
+        hdr.requests_hash = rh;
+    }
     return hdr.hash();
 }
 
@@ -4727,6 +4737,16 @@ static void test_block_hash_canonical() {
     hdr.blob_gas_used = 0;
     hdr.excess_blob_gas = 0;
     hdr.parent_beacon_block_root = evmc::bytes32{};
+    {
+        evmc::bytes32 rh{};
+        static const uint8_t kSha256Empty[32] = {
+            0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14,
+            0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f, 0xb9, 0x24,
+            0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c,
+            0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52, 0xb8, 0x55};
+        std::memcpy(rh.bytes, kSha256Empty, 32);
+        hdr.requests_hash = rh;
+    }
     silkworm::Bytes rlp;
     silkworm::rlp::encode(rlp, hdr);
     auto manual_hash = ethash::keccak256(rlp.data(), rlp.size());

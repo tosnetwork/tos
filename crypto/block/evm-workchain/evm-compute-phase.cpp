@@ -121,6 +121,42 @@ bool run_evm_compute_phase(
                 }
             }
         }
+
+        // EIP-2935 (Pectra): Serve historical block hashes from state.
+        // Mirrors silkworm's MergeRuleSet::initialize. Per EIP, the system
+        // call writes parent_hash into the kHistoryStorageAddress
+        // ring-buffer keyed on (block_number - 1) % 8191. Skipped at
+        // block 0 (no parent).
+        if (rev >= EVMC_PRAGUE && block_seqno > 0) {
+            static std::atomic<uint64_t> s_last_hist_block{0};
+            uint64_t prev = s_last_hist_block.load(std::memory_order_relaxed);
+            if (block_seqno > prev &&
+                s_last_hist_block.compare_exchange_strong(prev, block_seqno,
+                                                          std::memory_order_relaxed)) {
+                auto parent_hash_bytes = state.get_block_hash(block_seqno - 1);
+                silkworm::Transaction sys_txn{};
+                sys_txn.type = silkworm::TransactionType::kSystem;
+                sys_txn.to = silkworm::protocol::kHistoryStorageAddress;
+                sys_txn.data = silkworm::Bytes{
+                    silkworm::ByteView{parent_hash_bytes.bytes, 32}};
+                sys_txn.set_sender(silkworm::protocol::kSystemAddress);
+                std::unique_lock sys_lock(state.mutex());
+                silkworm::IntraBlockState sys_ibs(state.state());
+                silkworm::EVM sys_evm(block, sys_ibs, config);
+                try {
+                    sys_evm.execute(sys_txn, silkworm::protocol::kSystemCallGasLimit);
+                    sys_ibs.destruct_touched_dead();
+                    sys_ibs.write_to_db(block_seqno);
+                } catch (const std::exception& e) {
+                    LOG(ERROR) << "evm-workchain: EIP-2935 system call threw at block "
+                               << block_seqno << ": " << e.what()
+                               << " (continuing — predeploy may be missing)";
+                } catch (...) {
+                    LOG(ERROR) << "evm-workchain: EIP-2935 system call threw at block "
+                               << block_seqno << " (unknown exception)";
+                }
+            }
+        }
     }
 
     // --- Step 4: Execute the transaction ---
@@ -373,6 +409,24 @@ bool run_evm_compute_phase(
             hdr.blob_gas_used = 0;
             hdr.excess_blob_gas = 0;
             hdr.parent_beacon_block_root = evmc::bytes32{};
+            // Pectra/Prague (prague_time = 0 flipped on 2026-04-18).
+            // EIP-7685 mandates a `requests_hash` field — sha256 of the
+            // concatenated execution-layer requests (deposits, withdrawals,
+            // consolidations from EIP-6110/7002/7251). We don't process
+            // any of those (they're consensus-layer beacon mechanics that
+            // don't apply to TOS BFT), so the requests list is always
+            // empty → requests_hash = sha256("") =
+            //   0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+            {
+                evmc::bytes32 rh{};
+                static const uint8_t kSha256Empty[32] = {
+                    0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14,
+                    0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f, 0xb9, 0x24,
+                    0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c,
+                    0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52, 0xb8, 0x55};
+                std::memcpy(rh.bytes, kSha256Empty, 32);
+                hdr.requests_hash = rh;
+            }
             const auto eth_hash = hdr.hash();
             std::memcpy(stored_block.hash.bytes, eth_hash.bytes, 32);
         }

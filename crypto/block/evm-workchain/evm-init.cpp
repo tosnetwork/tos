@@ -192,6 +192,17 @@ constexpr const char* kEip4788Bytecode =
     "5f35801560495762001fff810690815414603c575f5ffd5b62001fff01545f5260205ff35b"
     "5f5ffd5b62001fff42064281555f359062001fff015500";
 
+// EIP-2935 deployed runtime bytecode at kHistoryStorageAddress
+// (0x0000F90827F1C53A10CB7A02335B175320002935). Source: https://eips.ethereum.org/EIPS/eip-2935
+// §"Specification". Length: 84 bytes (168 hex chars). Logic: when called
+// with sender == kSystemAddress it stores parent_hash to ring-buffer slot
+// (block_number - 1) % 8191; otherwise serves a parent-block-hash lookup
+// keyed by the calldata block number.
+constexpr const char* kEip2935Bytecode =
+    "3373fffffffffffffffffffffffffffffffffffffffe14604657602036036042575f35600143038111"
+    "604257611fff81430311604257611fff9006545f5260205ff35b5f5ffd5b5f35611fff60014303068155"
+    "00";
+
 bool hex_decode(const char* hex, silkworm::Bytes& out) {
     size_t len = std::strlen(hex);
     if (len % 2 != 0) return false;
@@ -254,6 +265,50 @@ void seed_eip4788_predeploy(EvmState& state) {
 
     LOG(WARNING) << "evm-workchain: seeded EIP-4788 beacon-roots predeploy at "
                     "0x000f3df6d732807ef1319fb7b8bb8522d0beac02 (code=97 bytes, nonce=1)";
+}
+
+void seed_eip2935_predeploy(EvmState& state) {
+    // The history-storage system contract lives at the magic address
+    // kHistoryStorageAddress = 0x0000F90827F1C53A10CB7A02335B175320002935.
+    // EIP-2935 deploys it with: nonce = 1, balance = 0, code = the
+    // 84-byte runtime above, storage = empty.
+    //
+    // Idempotent (same pattern as seed_eip4788_predeploy).
+    const evmc::address addr = silkworm::protocol::kHistoryStorageAddress;
+
+    silkworm::Bytes code;
+    if (!hex_decode(kEip2935Bytecode, code)) {
+        LOG(ERROR) << "evm-workchain: EIP-2935 bytecode literal failed to hex-decode (programmer error)";
+        return;
+    }
+
+    auto code_hash_kk = ethash::keccak256(code.data(), code.size());
+    evmc::bytes32 code_hash{};
+    std::memcpy(code_hash.bytes, code_hash_kk.bytes, 32);
+
+    if (auto existing = state.read_account(addr); existing.has_value()) {
+        if (existing->code_hash == code_hash) {
+            LOG(INFO) << "evm-workchain: EIP-2935 history-storage predeploy already present (code_hash match), skipping";
+            return;
+        }
+        LOG(WARNING) << "evm-workchain: EIP-2935 predeploy address has unexpected code_hash; overwriting";
+    }
+
+    {
+        std::unique_lock lock(state.mutex());
+        silkworm::Account acct;
+        acct.nonce = 1;
+        acct.balance = 0;
+        acct.code_hash = code_hash;
+        state.state().update_account(addr, std::nullopt, acct);
+        state.state().update_account_code(addr, /*incarnation=*/0,
+                                          code_hash,
+                                          silkworm::ByteView{code.data(), code.size()});
+    }
+
+    LOG(WARNING) << "evm-workchain: seeded EIP-2935 history-storage predeploy at "
+                    "0x0000f90827f1c53a10cb7a02335b175320002935 (code=" << code.size()
+                 << " bytes, nonce=1)";
 }
 
 void verify_kzg_setup_loaded() {
@@ -578,6 +633,7 @@ void init_evm_workchain(const std::string& db_root) {
     //     code_hash, and we skip on subsequent calls.
     verify_kzg_setup_loaded();
     seed_eip4788_predeploy(*g_evm_state);
+    seed_eip2935_predeploy(*g_evm_state);  // EIP-2935 (Pectra)
 
     // Phase F.3/F.4: open the per-validator side-channel RPC cache DB.
     // Skipped on the test harness path (no db_root provided).

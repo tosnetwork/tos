@@ -103,6 +103,7 @@ size_t hydrate_global_state_if_empty(vm::AugmentedDictionary& shard_accounts);
 /// it's safe to call on every node startup. Exposed publicly so the
 /// state-test runner and unit tests can re-invoke it on a fresh EvmState.
 void seed_eip4788_predeploy(EvmState& state);
+void seed_eip2935_predeploy(EvmState& state);  // EIP-2935 (Pectra)
 
 /// Run the EIP-4844 spec test vector through the KZG point-evaluation
 /// precompile (silkworm `precompile::point_evaluation_run`). Logs WARNING
