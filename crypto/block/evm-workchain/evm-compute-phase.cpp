@@ -114,10 +114,15 @@ bool run_evm_compute_phase(
     // validators produces a different cell hash, which produces a different
     // TOS state_hash, which fails consensus.
     //
-    // Layout: data cell = magic(24) + Maybe ^EvmStateRootCell + 256-bit Ethereum stateRoot
+    // Layout (v2, Phase F.2):
+    //   magic(24) + Maybe ^EvmStateRootCell + 256-bit Ethereum stateRoot
+    //   + Maybe ^EvmRpcCacheRoot
     //   - magic 0x45564D ("EVM") identifies EVM-workchain accounts
-    //   - reference: full CellEvmState root (covers all accounts/storage/code)
-    //   - 256 bits: Ethereum-format MPT stateRoot (for RPC compatibility)
+    //   - first ref: full CellEvmState root (covers accounts/storage/code)
+    //   - 256 bits: Ethereum-format MPT stateRoot (for RPC parity)
+    //   - second Maybe: side-channel RPC cache root (Phase F.3+F.4 will
+    //     populate). Always emitted; v1 cells (which lack this trailing
+    //     bit) are tolerated by the decoder for backward compatibility.
     {
         td::Ref<vm::Cell> evm_state_cell;
         {
@@ -137,6 +142,10 @@ bool run_evm_compute_phase(
         }
         // 256-bit Ethereum-format stateRoot (informational, for RPC parity)
         data_cb.store_bytes(reinterpret_cast<const char*>(evm_state_root.bytes), 32);
+        // v2: trailing Maybe ^Cell rpc_cache_root. Phase F.2 always emits 0
+        // (no cache yet); Phase F.3 will populate via the per-tx receipt
+        // accumulator and emit a non-null ref when the cache has entries.
+        data_cb.store_long(0, 1);
         cp.new_data = data_cb.finalize();
     }
     // Empty actions cell (action phase runs with 0 actions → succeeds)

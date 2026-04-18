@@ -136,32 +136,40 @@ void seed_test_accounts(EvmState& state) {
 
 }  // anonymous namespace
 
-// Decode a cp.new_data-shaped cell (see evm-compute-phase.cpp:118-141) into
-// the state_root cell and Ethereum MPT root. Layout:
-//   magic:24 bits (0x45564D)
-//   has_state_root:1 bit
-//   [state_root:^Cell]   if has_state_root
-//   eth_state_root:bits256
+// Decode a cp.new_data-shaped cell (see evm-compute-phase.cpp). Layout:
+//   v1: magic:24 + has_state_root:1 + [state_root:^Cell] + eth_state_root:bits256
+//   v2: same + Maybe ^EvmRpcCacheRoot (trailing bit, optional ref)
 //
-// Returns true if the cell parses as cp.new_data format. state_root may
-// be null (for the has_state_root=0 case, which shouldn't occur in
-// practice but is valid per the compute-phase encoder).
+// Returns true if the cell parses. Backward-compatible: a v1 cell with
+// no trailing bit is treated as `rpc_cache_root = nothing`. state_root
+// may be null (has_state_root=0 case, valid per the encoder).
 static bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
                                td::Ref<vm::Cell>& state_root_out,
-                               evmc::bytes32& eth_state_root_out) {
+                               evmc::bytes32& eth_state_root_out,
+                               td::Ref<vm::Cell>& rpc_cache_root_out) {
+    state_root_out = {};
+    rpc_cache_root_out = {};
     if (cell.is_null()) return false;
     auto cs = vm::load_cell_slice(cell);
     if (cs.size() < kEvmMagicBits + 1 + 256) return false;
     auto magic = cs.fetch_ulong(kEvmMagicBits);
     if (magic != kEvmAccountMagic) return false;
     auto has_root = cs.fetch_ulong(1);
-    state_root_out = {};
     if (has_root == 1) {
         if (cs.size_refs() == 0) return false;
         state_root_out = cs.fetch_ref();
     }
     if (cs.size() < 256) return false;
     cs.fetch_bytes(eth_state_root_out.bytes, 32);
+
+    // v2 trailing field — tolerate v1 cells (no remaining bits) as nothing.
+    if (cs.size() >= 1) {
+        auto has_cache = cs.fetch_ulong(1);
+        if (has_cache == 1) {
+            if (cs.size_refs() == 0) return false;
+            rpc_cache_root_out = cs.fetch_ref();
+        }
+    }
     return true;
 }
 
@@ -211,7 +219,8 @@ size_t populate_state_from_shard_accounts(
 
     td::Ref<vm::Cell> state_root;
     evmc::bytes32 eth_state_root{};
-    if (!decode_cp_new_data(cp_new_data_cell, state_root, eth_state_root)) {
+    td::Ref<vm::Cell> rpc_cache_root;  // F.4 will hydrate from this
+    if (!decode_cp_new_data(cp_new_data_cell, state_root, eth_state_root, rpc_cache_root)) {
         LOG(WARNING) << "evm-workchain: executor StateInit.data does not decode as cp.new_data";
         return 0;
     }
@@ -259,11 +268,10 @@ td::Ref<vm::Cell> build_evm_zerostate_accounts_cell() {
     }
     auto state_root = cell_state.serialize_to_cell();
 
-    // Build cp.new_data-shaped cell: magic + has_root:1 + ^state_root + bits256:eth_root.
-    // eth_state_root at genesis is left as zero; the first tx's compute
-    // phase will recompute via IncrementalTrieCalculator. eth_state_root
-    // is RPC-facing only (eth_getProof); consensus uses the ^state_root
-    // cell hash via the surrounding Account cell hash.
+    // Build cp.new_data v2-shaped cell:
+    //   magic + has_root:1 + ^state_root + bits256:eth_root + has_cache:1
+    // eth_state_root at genesis is zero (recomputed on first tx).
+    // rpc_cache_root at genesis is nothing (no cache yet).
     vm::CellBuilder data_cb;
     data_cb.store_long(static_cast<long long>(kEvmAccountMagic), kEvmMagicBits);
     if (state_root.not_null()) {
@@ -273,6 +281,7 @@ td::Ref<vm::Cell> build_evm_zerostate_accounts_cell() {
         data_cb.store_long(0, 1);
     }
     data_cb.store_zeroes(256);  // eth_state_root = 0 at genesis
+    data_cb.store_long(0, 1);   // rpc_cache_root = nothing (Phase F.2)
     auto cp_new_data_cell = data_cb.finalize();
 
     // Wrap as executor ShardAccount and insert as sole entry.
