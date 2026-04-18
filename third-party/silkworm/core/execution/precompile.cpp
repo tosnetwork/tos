@@ -120,8 +120,12 @@ static intx::uint256 mult_complexity_eip2565(const intx::uint256& max_length) no
 }
 
 #ifndef SILKWORM_NO_LIBFF
-// EIP-7823 (Fusaka): per-parameter input length cap (8192 bytes).
-constexpr uint64_t kModexpMaxInputLen = 8192;
+// EIP-7823 (Fusaka): per-parameter input length cap — the final value
+// agreed by execution-spec-tests + go-ethereum is **1024 bytes**, not
+// 8192 which appeared in an earlier EIP draft. See go-ethereum
+// core/vm/contracts.go line 631:
+//   if c.eip7823 && (inputLenOverflow || max(baseLen, expLen, modLen) > 1024)
+constexpr uint64_t kModexpMaxInputLen = 1024;
 
 uint64_t expmod_gas(ByteView input_view, evmc_revision rev) noexcept {
     // EIP-7883 (Fusaka) raises the minimum from 200 to 500.
