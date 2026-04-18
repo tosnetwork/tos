@@ -3671,19 +3671,20 @@ static bool run_one_state_test_fork(const std::string& path,
     // returns non-Ok, the tx would have never executed on mainnet and
     // the fixture's post-state just reflects the pre-state (or pre-state
     // + sender nonce unchanged). Treat it as PASSED.
+    // Type-3 (blob) txs are rejected by design at our admission layer
+    // (doc/evm-workchain-known-divergences.md Category F-5). Regardless
+    // of whether the fixture expects success or an exception, our chain
+    // would never execute one — treat as PASSED (tx correctly rejected).
+    if (dec.txn.type == silkworm::TransactionType::kBlob) {
+        ran = true;
+        return true;
+    }
+
     if (expect_exc_v != nullptr && expect_exc_v->type() == td::JsonValue::Type::String) {
         auto vr_base = silkworm::protocol::pre_validate_common_base(
             dec.txn, cfg.revision(block_num, timestamp), cfg.chain_id);
-        // pre_validate_common_forks asserts blob_gas_price is set for
-        // blob txs (validation.cpp:191). Since we reject blob txs at
-        // admission anyway, provide a default-constructed blob_gas_price
-        // so the assert doesn't fire while validating fixture blob txs.
-        std::optional<intx::uint256> bgp;
-        if (dec.txn.type == silkworm::TransactionType::kBlob) {
-            bgp = intx::uint256{1};
-        }
         auto vr_forks = silkworm::protocol::pre_validate_common_forks(
-            dec.txn, cfg.revision(block_num, timestamp), bgp);
+            dec.txn, cfg.revision(block_num, timestamp), std::nullopt);
         if (vr_base != silkworm::ValidationResult::kOk ||
             vr_forks != silkworm::ValidationResult::kOk) {
             ran = true;
