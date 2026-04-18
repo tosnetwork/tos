@@ -415,6 +415,36 @@ Kept here for traceability so reviewers don't chase ghosts.
 | `eth_createAccessList` missing `error` field in response | `bfb6b5c0` | Same |
 | `totalDifficulty` emitted on post-merge blocks (geth / erigon drop it) | `7449b586` | Same |
 
+## Category F — Permanent design-level divergences from Ethereum mainnet
+
+These are **by-design differences** between the TOS EVM workchain and
+Ethereum L1. Unlike Category A/B/C, they will not be closed — closing
+them would defeat the reasons the workchain was designed the way it
+was. Documenting them keeps future contributors from mistaking a
+design choice for a bug.
+
+The executive summary: at the **Solidity developer experience level**
+(opcodes, precompiles, gas metering, tx format, JSON-RPC) the
+workchain aims for Fusaka parity and reaches it. At the **consensus
+state machine level** the workchain is deliberately not an Ethereum
+clone.
+
+| # | Divergence | Why it exists | Consequence |
+|---|------------|---------------|-------------|
+| F-1 | **Consensus state root is a TOS cell hash, not an Ethereum MPT root.** The canonical `state_root` binding the block to its post-state is `keccak256` of the account dictionary's root cell serialization. The Ethereum-format MPT is recomputed in RAM by `IncrementalTrieCalculator` purely so `eth_getProof` can return the conventional Merkle-Patricia proofs. | zkVM compatibility. Cell-native state trees can be proved by circuits we build on top of TOS without importing MPT gadgets. Recomputing the MPT for RPC is cheap; recomputing cell-native state from an MPT would not be. | Two block headers whose EVM execution produced the exact same Ethereum state will have **different** `state_root` on our chain vs. mainnet. Any test that compares our `state_root` to a mainnet fixture will fail. |
+| F-2 | **Single-executor account model.** The whole workchain has one TOS account (the "executor"). Every EVM account lives as an entry in that one TOS account's `StateInit.data` cell (encoded as a `ShardAccounts` dictionary). | TOS host chain design: each workchain transaction debits/credits a single TOS account for gas. Splitting EVM accounts into one TOS account each would balloon the cell graph and break the collator's single-tx-per-block assumption. | Tools that enumerate TOS accounts see one account at `wc=1:0x…0`. EVM accounts are only visible via EVM RPC (`eth_getBalance`, etc.) — not via TOS RPC. |
+| F-3 | **ChainId ≠ 1.** Default `chain_id = 0x544F53` ("TOS"); can be overridden at startup via `TOS_EVM_CHAIN_ID` env var. | We are a distinct chain, not a mainnet replay target. EIP-155 replay protection requires every independent chain to pick its own id. | Transactions signed for mainnet (chainId=1) are rejected at admission. The dev experience is identical (wallets / Hardhat configure the id), just with a different number. |
+| F-4 | **Consensus layer is TOS BFT, not Ethereum PoS.** No beacon chain, no validator deposit contract, no withdrawals queue, no slashing, no `parent_beacon_block_root` from a real beacon source. | TOS has its own finality layer. Grafting Ethereum's beacon chain would duplicate consensus for no gain. | Post-merge fields in the block header are stubbed: `prev_randao` is mapped from the host chain's random seed, `parent_beacon_block_root` is synthesized from the EVM block number, withdrawals list is always empty. The EIP-4788 beacon-roots precompile (0x000F…Beac02) is seeded with its canonical runtime so system calls still work, but it reads from the synthesized values. |
+| F-5 | **No blob mempool.** Blob (type-3) transactions are rejected at `eth_sendRawTransaction` admission. The KZG point-evaluation precompile (0x0a) is still fully functional — only the blob-carrying tx type itself is refused. | We have no data-availability layer and no committee to sample against. Accepting blob txs without DA would be unsafe. | Rollups that use blob txs for DA can't use our chain as a settlement layer today. Non-blob rollup designs (calldata-posting, sovereign) work. |
+| F-6 | **`coinbase` = TOS collator address, not a beacon proposer.** The `beneficiary` field of the EVM block header is derived from the collator's TOS validator key. | Whoever produced the TOS wc=1 block gets the coinbase role for that block's EVM execution, analogous to how a PoS proposer gets it on mainnet. | Contracts that use `block.coinbase` for MEV-ish logic will see a different value than on mainnet, but the semantics (an address that changes per block) are preserved. |
+| F-7 | **EIP-7935 (default 60 M block gas limit) is operational, not enforced in silkworm.** The Fusaka-recommended default is set per-genesis / runtime by the chain operator, not by the EVM library. | TOS chooses its own gas economics; silkworm simply accepts whatever `gas_limit` appears in the block header. | Our chain can run at a different block gas limit than mainnet. Not a divergence in the literal sense — the EIP is advisory for execution clients. |
+
+**F-items are documentation, not TODO.** Do not "fix" them. If a
+future change erodes one of these (for example, adopting the
+Ethereum-format MPT as the consensus root), update the table with
+the reason and keep the old rationale in git history for the next
+reader.
+
 ## Maintaining this document
 
 Add a new entry to Category A, B, or C whenever:
