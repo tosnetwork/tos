@@ -25,7 +25,7 @@ version \verb|0.5.0|. It starts from the currently implemented FunC
 language around five principles:
 
 \begin{enumerate}
-\item strong domain types for TVM/TOS values such as \verb|Cell|,
+\item strong domain types for TVM/TOS values such as typed cells,
 \verb|Slice|, \verb|Builder|, \verb|Address|, and typed messages;
 \item algebraic data types and exhaustive pattern matching;
 \item explicit fallibility through \verb|Option| and \verb|Result|;
@@ -162,13 +162,19 @@ To preserve approachability, FunC \verb|0.5.0| deliberately excludes several
 features often associated with Rust:
 
 \begin{itemize}
-\item no borrow checker;
+\item no ownership-and-lifetime borrow checker in the Rust sense;
 \item no lifetimes;
 \item no user-defined macros;
 \item no trait objects as a required abstraction mechanism;
 \item no \verb|async/await|;
 \item no hidden heap allocation model.
 \end{itemize}
+
+At the same time, the language \emph{may} include a lightweight checker for
+mutable-place overlap. Rejecting obviously dangerous expressions such as
+``mutate the same slice twice in one expression'' is compatible with the goal of
+remaining easy to learn; it does not require authors to reason about lifetimes
+or ownership graphs.
 
 \section{Headline Changes with Respect to 0.4.6}
 \begin{longtable}{|p{0.28\textwidth}|p{0.31\textwidth}|p{0.31\textwidth}|}
@@ -191,14 +197,22 @@ Error handling &
 typed \verb|Result| plus \verb|?| and \verb|match|; raw abort still exists for low-level code \\ \hline
 Domain types &
 \verb|int/cell/slice/builder/cont| plus conventions &
-rich built-in domain types such as \verb|Cell|, \verb|Slice|, \verb|Builder|,
-\verb|Address|, \verb|Coins|, \verb|InternalMessage<T>| \\ \hline
+rich built-in domain types such as \verb|Cell<T>|, \verb|Slice|,
+\verb|Builder|, \verb|Address|, \verb|Coins|, and
+\verb|InternalContext<T>| \\ \hline
 Control over impurity &
 single \verb|impure| qualifier &
 explicit effect sets such as \verb|effect(read, write, send)| \\ \hline
 Message schemas &
 manual op-code parsing and slice plumbing &
 \verb|enum|, \verb|struct|, codec traits, and typed entrypoints \\ \hline
+Serialization &
+manual builder/slice plumbing for every protocol type &
+\verb|Cell<T>|, \verb|to_cell|, \verb|from_cell|, \verb|load_any|, and
+\verb|store_any| as ordinary typed APIs \\ \hline
+Mutable alias safety &
+mostly unchecked beyond surface syntax &
+explicit mutable arguments plus a lightweight overlap checker for mutable places \\ \hline
 Reuse &
 include-heavy and built-in-heavy &
 \verb|mod|, \verb|use|, generics, \verb|trait|, and \verb|impl| \\ \hline
@@ -280,9 +294,9 @@ constructors.
 The core language reserves the following new keyword set:
 
 \begin{verbatim}
-mod use pub const type struct enum trait impl fn extern
+mod use pub const type struct enum message trait impl fn extern
 let mut static match if else while loop for in break continue
-return where self Self
+return where self Self as
 effect pure unsafe
 entry external internal bounce get
 \end{verbatim}
@@ -302,6 +316,7 @@ Item ::= ModuleDecl
        | TypeAlias
        | StructDecl
        | EnumDecl
+       | MessageDecl
        | TraitDecl
        | ImplDecl
        | FunctionDecl
@@ -314,7 +329,7 @@ Modules organize contract code and the standard library:
 mod wallet::state;
 mod wallet::msg;
 use std::result::Result;
-use std::message::{InternalMessage, SendOptions};
+use std::message::{InternalContext, SendOptions};
 \end{verbatim}
 
 The language keeps modules simple:
@@ -333,6 +348,7 @@ standard library design, contract libraries, and test-only helpers:
 \begin{verbatim}
 pub struct WalletState { ... }
 pub enum WalletMsg { ... }
+pub message Transfer(op = 0x0f8a7ea5) { ... }
 pub fn recv_internal(...) -> Result<(), WalletError> effect(write, send) { ... }
 \end{verbatim}
 
@@ -355,7 +371,7 @@ compatibility mode, but new code should prefer explicit widths.
 The following types become first-class built-ins:
 
 \begin{verbatim}
-Cell
+Cell<T>
 Slice
 Builder
 Cont
@@ -370,7 +386,9 @@ RawSlice
 The role of these types is:
 
 \begin{itemize}
-\item \verb|Cell|, \verb|Slice|, and \verb|Builder| model the TVM cell domain;
+\item \verb|Cell<T>| represents a typed cell reference carrying an expected
+decoded payload type;
+\item \verb|Slice| and \verb|Builder| model the TVM read/write cell domain;
 \item \verb|Address| models a full on-chain address, not an arbitrary slice;
 \item \verb|Coins| models currency amounts and documents intent better than raw
 \verb|u128|;
@@ -379,12 +397,28 @@ The role of these types is:
 unchecked code.
 \end{itemize}
 
+\subsection{Typed Cell References}
+Typed cells are central to making TVM serialization tractable without hiding it:
+
+\begin{verbatim}
+pub struct WalletState {
+    seqno: u32,
+    owner: Address,
+    plugins: Cell<PluginDict>?,
+}
+\end{verbatim}
+
+\verb|Cell<T>| is assignable to \verb|RawCell| when raw interop is needed, but
+ordinary contract code should prefer the typed form. This improves reviewability
+for persistent state, lazy-loaded message refs, and nested TL-B objects.
+
 \subsection{Compound Types}
 Compound types are:
 
 \begin{verbatim}
 (T1, T2, ..., Tn)          // tuples
 [T; N]                     // fixed-size arrays
+T?                         // sugar for Option<T>
 Option<T>
 Result<T, E>
 \end{verbatim}
@@ -436,6 +470,31 @@ pub enum Op : u32 {
 }
 \end{verbatim}
 
+\subsection{Message Declarations}
+Wire-level message bodies deserve a dedicated declaration form because they are
+one of the dominant concepts in TVM/TOS contracts:
+
+\begin{verbatim}
+pub message Transfer(op = 0x0f8a7ea5) {
+    query_id: u64,
+    amount: Coins,
+    to: Address,
+    response_to: Address?,
+}
+\end{verbatim}
+
+A \verb|message| declaration behaves like a named struct plus a derived message
+codec. In particular:
+
+\begin{itemize}
+\item the opcode binding is part of the declaration rather than an external
+convention;
+\item the declaration derives the relevant cell/TL-B codec traits;
+\item typed entrypoints may request \verb|InternalContext<Transfer>| directly;
+\item higher-level enums may still group multiple message bodies when a contract
+wants one sum type for dispatch.
+\end{itemize}
+
 \subsection{Option and Result}
 Two standard prelude types are assumed:
 
@@ -459,6 +518,17 @@ authoring:
 \item \verb|Result<T, E>| expresses recoverable failure without bare exceptions;
 \item \verb|match| and \verb|?| make both types ergonomic in routine code.
 \end{itemize}
+
+For readability, \verb|T?| is accepted as surface sugar for
+\verb|Option<T>|:
+
+\begin{verbatim}
+Address?
+Cell<JettonWalletState>?
+\end{verbatim}
+
+Unlike languages that normalize everything around \verb|null|, the teaching path
+still centers \verb|Some|/\verb|None|, \verb|match|, and \verb|if let|.
 
 \subsection{Type Aliases}
 Type aliases remain important for readability:
@@ -521,6 +591,12 @@ into audited, inspectable library code. Traits support that directly:
 \item test doubles and mock implementations become natural.
 \end{itemize}
 
+This does \emph{not} mean the compiler should be blind to protocol structure.
+A small amount of protocol-aware lowering remains justified for things such as
+entrypoint contexts, message opcodes, and automatic inline-vs-ref message-body
+placement. The goal is to eliminate accidental parser magic, not to forbid every
+useful built-in lowering.
+
 \section{Bindings, Mutability, and Patterns}
 \subsection{Immutable by Default}
 All local bindings are immutable unless declared with \verb|mut|:
@@ -539,6 +615,21 @@ Only mutable places may be assigned to:
 \begin{verbatim}
 let mut state = load_state()?;
 state.seqno = state.seqno + 1;
+\end{verbatim}
+
+\subsection{Pattern-Oriented Control Flow}
+Patterns are not limited to \verb|match|. The language should also support
+\verb|if let| and \verb|while let| because optional values and typed message
+variants are ubiquitous in contract code:
+
+\begin{verbatim}
+if let Some(response_to) = msg.response_to {
+    send(response_to, Ack { query_id: msg.query_id }, opts)?;
+}
+
+while let Some(item) = queue.pop_front() {
+    process(item)?;
+}
 \end{verbatim}
 
 \subsection{Destructuring}
@@ -579,12 +670,35 @@ This replaces the special \verb|cs~load_uint(32)| syntax. The source clearly
 states mutability in the binding and in the method signature, rather than
 hiding it in punctuation.
 
+\subsection{Mutable Arguments and Lightweight Safety Checks}
+Methods with \verb|mut self| remain the idiomatic surface for builder/slice-like
+APIs. Free functions may also accept mutable places explicitly:
+
+\begin{verbatim}
+pub fn load_var_uint(mut s: Slice, bits: u16) -> Result<u256, ParseError> pure { ... }
+
+let mut cs = body;
+let n = load_var_uint(mut cs, 5)?;
+\end{verbatim}
+
+This proposal adopts three lightweight rules:
+
+\begin{itemize}
+\item only mutable lvalues may be passed as \verb|mut| arguments;
+\item the same mutable place may not be passed twice in one full expression;
+\item parent and child places may not be mutated simultaneously in one full
+expression.
+\end{itemize}
+
+These rules are intentionally narrow. They prevent obvious aliasing hazards
+without introducing ownership, region inference, or lifetime syntax.
+
 \section{Functions and Effect System}
 \subsection{Function Syntax}
 The general form is:
 
 \begin{verbatim}
-[pub] fn name(arg1: T1, arg2: T2, ...) -> R [effect(...)] Block
+[pub] fn name(arg1: T1, mut arg2: T2, ...) -> R [effect(...)] Block
 \end{verbatim}
 
 Examples:
@@ -592,6 +706,7 @@ Examples:
 \begin{verbatim}
 pub fn min(x: i257, y: i257) -> i257 pure { ... }
 pub fn load_state() -> Result<WalletState, ParseError> effect(read) { ... }
+pub fn load_uint(mut s: Slice, bits: u16) -> Result<u256, ParseError> pure { ... }
 pub fn send_transfer(...) -> Result<(), SendError> effect(send) { ... }
 \end{verbatim}
 
@@ -642,16 +757,15 @@ Contract-facing entrypoints are explicit:
 
 \begin{verbatim}
 entry external fn recv_external(
-    mut ctx: ExternalContext,
-    body: Slice,
+    ctx: ExternalContext<SignedRequest>,
 ) -> Result<(), WalletError> effect(read, write, send) { ... }
 
 entry internal fn recv_internal(
-    mut ctx: InternalContext<WalletMsg>,
+    ctx: InternalContext<WalletMsg>,
 ) -> Result<(), WalletError> effect(read, write, send) { ... }
 
 entry bounce fn on_bounce(
-    ctx: BounceContext,
+    ctx: BounceContext<RawSlice>,
 ) -> Result<(), WalletError> effect(read, write) { ... }
 \end{verbatim}
 
@@ -664,12 +778,26 @@ get fn seqno() -> Result<u32, ParseError> effect(read) { ... }
 The compiler maps these to the existing TVM/TOS conventions for internal,
 external, bounced, and get-method execution.
 
+The context types are not ordinary heap objects. They are compiler-recognized
+views over real VM inputs. Source code should nevertheless treat them as normal,
+typed fields:
+
+\begin{verbatim}
+ctx.sender
+ctx.value
+ctx.forward_fee
+ctx.body
+\end{verbatim}
+
+This makes the execution model explicit while keeping raw TVM stack plumbing out
+of routine contract code.
+
 \subsection{External Intrinsics}
 Raw TVM primitives should be declared as \verb|extern "tvm"| in the standard
 library rather than being magic parser names:
 
 \begin{verbatim}
-extern "tvm" fn send_raw_message(msg: Cell, mode: u8) -> () effect(send, unsafe);
+extern "tvm" fn send_raw_message(msg: RawCell, mode: u8) -> () effect(send, unsafe);
 extern "tvm" fn accept_message() -> () effect(send, unsafe);
 \end{verbatim}
 
@@ -684,8 +812,10 @@ The language supports:
 let
 let mut
 if / else
+if let
 match
 while
+while let
 loop
 for
 break
@@ -706,6 +836,20 @@ match msg {
 
 This is a major ergonomics improvement over manually parsing an op code into an
 \verb|int| and then maintaining a parallel maze of \verb|if| branches.
+
+\subsection{Flow-Sensitive Narrowing}
+Pattern matching and optional-value tests should refine types in a
+flow-sensitive way:
+
+\begin{verbatim}
+if let Some(reply_to) = msg.response_to {
+    send(reply_to, Receipt { query_id: msg.query_id }, opts)?;
+}
+\end{verbatim}
+
+Inside the \verb|if let| body, \verb|reply_to| is an \verb|Address| rather than
+\verb|Address?|. Similar narrowing should happen for \verb|match| arms and other
+obvious success paths over \verb|Option|, \verb|Result|, and message variants.
 
 \subsection{The Question-Mark Operator}
 If a function returns \verb|Result<T, E>|, the \verb|?| operator may be applied
@@ -735,22 +879,47 @@ but the core language should converge on a smaller, more conventional control
 surface.
 
 \section{Messages, Serialization, and TVM-Specific APIs}
-\subsection{Typed Message Values}
+\subsection{Typed Message Contexts}
 Messages should be represented as typed values rather than raw slices whenever
-possible. The standard library is expected to define types such as:
+possible. The standard library is expected to define context types such as:
 
 \begin{verbatim}
-pub struct InternalMessage<T> {
-    src: Address,
-    dst: Address,
+pub struct InternalContext<T> {
+    sender: Address,
     value: Coins,
-    bounced: bool,
+    forward_fee: Coins,
     body: T,
 }
 
-pub struct ExternalMessage<T> {
+pub struct ExternalContext<T> {
     body: T,
     signature: Option<Bytes>,
+}
+
+pub struct BounceContext<T = RawSlice> {
+    sender: Address,
+    value: Coins,
+    original_forward_fee: Coins,
+    body: T,
+}
+\end{verbatim}
+
+When an entrypoint requests \verb|InternalContext<T>| for a concrete message
+type, the compiler or stdlib-generated wrapper is responsible for parsing the
+inbound body into \verb|T|. Contracts may still opt into \verb|RawSlice| when
+they need manual parsing.
+
+\subsection{Typed Cell APIs}
+Serialization should be both trait-driven and convenient in routine code:
+
+\begin{verbatim}
+impl<T: CellEncode> T {
+    pub fn to_cell(self) -> Result<Cell<T>, CellError> pure;
+}
+
+impl<T: CellDecode> Cell<T> {
+    pub fn load(self) -> Result<T, ParseError> pure;
+    pub fn begin_parse(self) -> Slice pure;
 }
 \end{verbatim}
 
@@ -759,16 +928,29 @@ Serialization and deserialization should be expressed through traits:
 
 \begin{verbatim}
 pub trait CellEncode {
-    fn encode(self) -> Result<Cell, CellError> pure;
+    fn encode(self) -> Result<RawCell, CellError> pure;
 }
 
 pub trait CellDecode: Sized {
-    fn decode(cell: Cell) -> Result<Self, ParseError> pure;
+    fn decode(cell: RawCell) -> Result<Self, ParseError> pure;
 }
 \end{verbatim}
 
 For wire protocols that rely on TL-B, a narrower \verb|TlbCodec| trait may
 specialize the same idea.
+
+The standard library should also offer high-frequency helpers modeled directly on
+how contracts are written:
+
+\begin{verbatim}
+impl Slice {
+    pub fn load_any<T: CellDecode>(mut self) -> Result<T, ParseError> pure;
+}
+
+impl Builder {
+    pub fn store_any<T: CellEncode>(mut self, value: T) -> Result<Self, CellError> pure;
+}
+\end{verbatim}
 
 \subsection{Slice and Builder APIs}
 The low-level APIs remain essential, but their contracts become explicit:
@@ -777,7 +959,7 @@ The low-level APIs remain essential, but their contracts become explicit:
 impl Slice {
     pub fn load_uint(mut self, bits: u16) -> Result<u256, ParseError> pure;
     pub fn load_int(mut self, bits: u16) -> Result<i257, ParseError> pure;
-    pub fn load_ref(mut self) -> Result<Cell, ParseError> pure;
+    pub fn load_ref(mut self) -> Result<RawCell, ParseError> pure;
     pub fn load_addr(mut self) -> Result<Address, ParseError> pure;
     pub fn remaining_bits(self) -> u16 pure;
     pub fn remaining_refs(self) -> u8 pure;
@@ -786,8 +968,8 @@ impl Slice {
 impl Builder {
     pub fn store_uint(mut self, value: u256, bits: u16) -> Result<Self, CellError> pure;
     pub fn store_int(mut self, value: i257, bits: u16) -> Result<Self, CellError> pure;
-    pub fn store_ref(mut self, cell: Cell) -> Result<Self, CellError> pure;
-    pub fn end_cell(self) -> Result<Cell, CellError> pure;
+    pub fn store_ref(mut self, cell: RawCell) -> Result<Self, CellError> pure;
+    pub fn end_cell(self) -> Result<RawCell, CellError> pure;
 }
 \end{verbatim}
 
@@ -798,9 +980,22 @@ not try to make TVM cells disappear; it makes them typed and tractable.
 High-level message sending should take typed bodies:
 
 \begin{verbatim}
+pub enum BounceMode {
+    NoBounce,
+    Body256,
+    Rich,
+}
+
+pub enum BodyLayout {
+    Auto,
+    Inline,
+    ByRef,
+}
+
 pub struct SendOptions {
     value: Coins,
-    bounce: bool,
+    bounce: BounceMode,
+    body_layout: BodyLayout,
     mode: SendMode,
 }
 
@@ -813,6 +1008,11 @@ pub fn send<T: CellEncode>(
 
 This API expresses a real protocol operation more directly than ad hoc raw-cell
 construction plus \verb|SENDRAWMSG|.
+
+When \verb|body_layout| is \verb|Auto|, the compiler or stdlib may inline small
+message bodies and spill larger ones to a ref automatically. This reflects real
+TVM ergonomics: source code should express intent, while the message builder
+chooses the cheapest valid encoding unless the author overrides it.
 
 \section{Error Model}
 \subsection{Recoverable and Unrecoverable Failure}
@@ -866,6 +1066,15 @@ special or parser-defined should instead move to the standard library:
 \item codec traits and implementations;
 \item contract-state helpers;
 \item cryptographic intrinsics surfaced as \verb|extern "tvm"| functions.
+\end{itemize}
+
+Expected stdlib conveniences include:
+
+\begin{itemize}
+\item \verb|create_message| and \verb|send| wrappers over raw action lists;
+\item typed state load/save helpers built on \verb|Cell<T>|;
+\item \verb|load_any| / \verb|store_any| helpers for routine TL-B work;
+\item message-body declarations with derived codecs.
 \end{itemize}
 
 \subsection{Traits as the Unit of Reuse}
@@ -945,7 +1154,9 @@ The important migration principle is semantic, not cosmetic:
 \item move from hidden mutation toward \verb|mut|;
 \item move from integer-status parsing toward \verb|Result|;
 \item move from raw op-code dispatch toward \verb|enum + match|;
-\item move from parser magic toward stdlib declarations.
+\item move from parser magic toward stdlib declarations, while retaining a small
+amount of protocol-aware lowering where it clearly improves source-level
+clarity.
 \end{itemize}
 
 \section{Worked Comparison: One Wallet Contract in 0.4.6 and 0.5.0}
@@ -1016,7 +1227,7 @@ message construction:
 
 \subsection{FunC 0.5.0 Style}
 In the proposed \verb|0.5.0| surface, the same logic is expressed through typed
-state, a typed message enum, explicit mutability, explicit effects, and a
+state, a typed message declaration, explicit mutability, explicit effects, and a
 \verb|Result|-based error path:
 
 \begin{verbatim}
@@ -1027,12 +1238,10 @@ pub struct WalletState {
     owner: Address,
 }
 
-pub enum WalletMsg {
-    Transfer {
-        seqno: u32,
-        to: Address,
-        amount: Coins,
-    },
+pub message Transfer(op = 0x0f8a7ea5) {
+    seqno: u32,
+    to: Address,
+    amount: Coins,
 }
 
 pub enum WalletError {
@@ -1046,34 +1255,32 @@ pub fn load_state() -> Result<WalletState, ParseError> effect(read) { ... }
 pub fn save_state(state: WalletState) -> Result<(), CellError> effect(write) { ... }
 
 entry internal fn recv_internal(
-    mut ctx: InternalContext<WalletMsg>,
+    ctx: InternalContext<Transfer>,
 ) -> Result<(), WalletError> effect(read, write, send) {
     let mut state = load_state()?;
+    let transfer = ctx.body;
 
-    match ctx.body {
-        WalletMsg::Transfer { seqno, to, amount } => {
-            if seqno != state.seqno {
-                return Err(WalletError::WrongSeqno);
-            }
-            if amount.is_zero() {
-                return Err(WalletError::ZeroAmount);
-            }
-
-            send(
-                to,
-                (),
-                SendOptions {
-                    value: amount,
-                    bounce: true,
-                    mode: SendMode::PayFeesSeparately,
-                },
-            )?;
-
-            state.seqno += 1;
-            save_state(state)?;
-            Ok(())
-        }
+    if transfer.seqno != state.seqno {
+        return Err(WalletError::WrongSeqno);
     }
+    if transfer.amount.is_zero() {
+        return Err(WalletError::ZeroAmount);
+    }
+
+    send(
+        transfer.to,
+        (),
+        SendOptions {
+            value: transfer.amount,
+            bounce: BounceMode::Body256,
+            body_layout: BodyLayout::Auto,
+            mode: SendMode::PayFeesSeparately,
+        }
+    )?;
+
+    state.seqno += 1;
+    save_state(state)?;
+    Ok(())
 }
 \end{verbatim}
 
@@ -1081,10 +1288,10 @@ entry internal fn recv_internal(
 The comparison illustrates the intended source-level improvements:
 
 \begin{itemize}
-\item \textbf{Typed message body instead of raw op-code dispatch.}
+\item \textbf{Typed message declaration instead of raw op-code dispatch.}
 In \verb|0.4.6| the contract manually loads \verb|op|, then loads each field
-from a \verb|slice|. In \verb|0.5.0| the entrypoint receives a
-\verb|WalletMsg| value and dispatches with \verb|match|.
+from a \verb|slice|. In \verb|0.5.0| the \verb|Transfer| message binds its
+opcode in the declaration and the entrypoint receives a typed body directly.
 
 \item \textbf{Explicit domain types.}
 \verb|Address| and \verb|Coins| replace raw \verb|slice| and \verb|int|
@@ -1093,7 +1300,7 @@ conventions, making the meaning of each field visible at the type level.
 \item \textbf{Explicit mutation.}
 In \verb|0.4.6| mutation is hidden inside \verb|cs~load_uint(...)| and similar
 forms. In \verb|0.5.0| mutation is carried by \verb|let mut cs| or
-\verb|let mut state| and by signatures such as \verb|mut ctx|.
+\verb|let mut state| and by explicit mutable parameters.
 
 \item \textbf{Typed recoverable errors instead of numeric abort codes.}
 \verb|throw_unless(33, ...)| and \verb|throw_unless(34, ...)| become
@@ -1103,7 +1310,7 @@ This makes reviews and refactors much easier.
 \item \textbf{High-level send API instead of manual action-cell assembly.}
 The \verb|0.4.6| version has to build an outbound message cell explicitly.
 The \verb|0.5.0| version exposes the protocol operation as \verb|send(...)|,
-with value, bounce, and mode still explicit.
+with value, bounce mode, body layout, and mode still explicit.
 
 \item \textbf{Persistent state becomes a typed struct.}
 The state layout is no longer ``a sequence of manually loaded fields'' from the
@@ -1116,6 +1323,8 @@ contracts:
 
 \begin{itemize}
 \item Jetton and NFT messages become enums instead of raw op-code trees;
+\item single message bodies can be declared with bound opcodes instead of
+parallel ``struct + opcode constant'' conventions;
 \item parser helpers return \verb|Result| instead of integer flags;
 \item bounce handlers match typed variants instead of re-parsing raw slices;
 \item audited stdlib modules provide \verb|send|, codecs, and dict abstractions
@@ -1133,6 +1342,7 @@ Item ::= ModuleDecl
        | TypeAlias
        | StructDecl
        | EnumDecl
+       | MessageDecl
        | TraitDecl
        | ImplDecl
        | FunctionDecl
@@ -1145,6 +1355,8 @@ TypeAlias  ::= [ "pub" ] "type" identifier [ GenericParams ] "=" Type ";"
 StructDecl ::= [ "pub" ] "struct" identifier [ GenericParams ] "{" Fields "}"
 EnumDecl   ::= [ "pub" ] "enum" identifier [ GenericParams ] [ ":" Type ] "{"
                Variants "}"
+MessageDecl ::= [ "pub" ] "message" identifier [ "(" "op" "=" Expr ")" ]
+                "{" Fields "}"
 TraitDecl  ::= [ "pub" ] "trait" identifier [ GenericParams ] "{"
                TraitItems "}"
 ImplDecl   ::= "impl" [ GenericParams ] Type [ "for" Type ] "{"
@@ -1165,13 +1377,21 @@ Stmt ::= LetStmt
        | ExprStmt
        | ReturnStmt
        | IfStmt
+       | IfLetStmt
        | MatchStmt
        | WhileStmt
+       | WhileLetStmt
        | LoopStmt
        | ForStmt
        | BreakStmt
        | ContinueStmt
        | Block
+
+Type ::= SimpleType
+       | Type "?"
+
+Arg ::= Expr
+      | "mut" Expr
 \end{verbatim}
 
 \section{Illustrative Contract Fragment}
@@ -1194,39 +1414,49 @@ pub enum WalletError {
     Send(SendError),
 }
 
-pub enum WalletMsg {
-    Transfer {
-        query_id: u64,
-        amount: Coins,
-        to: Address,
-    },
+pub message Transfer(op = 0x0f8a7ea5) {
+    query_id: u64,
+    amount: Coins,
+    to: Address,
+    response_to: Address?,
 }
 
 pub fn load_state() -> Result<WalletState, ParseError> effect(read) { ... }
 pub fn save_state(state: WalletState) -> Result<(), CellError> effect(write) { ... }
 
 entry internal fn recv_internal(
-    mut ctx: InternalContext<WalletMsg>,
+    ctx: InternalContext<Transfer>,
 ) -> Result<(), WalletError> effect(read, write, send) {
     let mut state = load_state()?;
+    let msg = ctx.body;
 
-    match ctx.body {
-        WalletMsg::Transfer { query_id, amount, to } => {
-            send(
-                to,
-                WalletMsg::Transfer { query_id, amount, to },
-                SendOptions {
-                    value: amount,
-                    bounce: true,
-                    mode: SendMode::PayFeesSeparately,
-                },
-            )?;
-
-            state.seqno = state.seqno + 1;
-            save_state(state)?;
-            Ok(())
-        }
+    if let Some(response_to) = msg.response_to {
+        send(
+            response_to,
+            Receipt { query_id: msg.query_id },
+            SendOptions {
+                value: 0.into(),
+                bounce: BounceMode::NoBounce,
+                body_layout: BodyLayout::Auto,
+                mode: SendMode::PayFeesSeparately,
+            },
+        )?;
     }
+
+    send(
+        msg.to,
+        msg,
+        SendOptions {
+            value: msg.amount,
+            bounce: BounceMode::Body256,
+            body_layout: BodyLayout::Auto,
+            mode: SendMode::PayFeesSeparately,
+        },
+    )?;
+
+    state.seqno = state.seqno + 1;
+    save_state(state)?;
+    Ok(())
 }
 \end{verbatim}
 
@@ -1237,9 +1467,14 @@ modeling it honestly:
 \begin{itemize}
 \item typed messages instead of raw slices;
 \item enums and exhaustive \verb|match| instead of integer dispatch;
+\item message declarations with bound opcodes instead of ad hoc constants;
+\item typed cell references and auto codec helpers instead of repetitive
+builder/slice plumbing;
 \item \verb|Result| and \verb|Option| instead of status flags and surprise
 exceptions;
 \item \verb|let mut| and \verb|mut self| instead of punctuation-based mutation;
+\item \verb|if let| and flow-sensitive narrowing for common optional/message
+control flow;
 \item explicit effects instead of a single opaque impurity bit;
 \item trait- and module-based reuse instead of parser magic and ad hoc
 includes.
