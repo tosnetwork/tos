@@ -38,6 +38,8 @@
 #include "evm-transaction.h"
 #include "evm-external-message.h"
 #include "evm-workchain.h"
+#include "evm-block-context.h"  // evm_chain_config
+#include <silkworm/core/protocol/validation.hpp>
 #include <sstream>
 
 namespace tos {
@@ -1523,6 +1525,51 @@ void JsonRpcServer::handle_eth_sendRawTransaction(td::JsonValue &params_val,
         -32000,
         "blob transactions not supported on this chain", req_id));
     return;
+  }
+
+  // Silkworm-backed pre-validation. Runs every fork rule that is
+  // checkable without state (intrinsic gas, EIP-7825 tx gas cap,
+  // EIP-3860 initcode size, EIP-7702 authorizations shape, EIP-7623
+  // floor cost, type-vs-revision compatibility, nonce-max, signature).
+  // Catching these here returns a clear RPC error instead of admitting
+  // a doomed tx that later surfaces as `status: "0x0", gasUsed: "0x0"`
+  // in a receipt. State-dependent checks (nonce-matches-account,
+  // balance) still run later in the execution path.
+  {
+    const auto& cfg = evm_workchain::evm_chain_config();
+    const auto rev = cfg.revision(/*block_num=*/UINT64_MAX,
+                                   /*block_time=*/static_cast<uint64_t>(std::time(nullptr)));
+    // pre_validate_common_base runs the type-/chain-/intrinsic-gas suite.
+    auto vr_base = silkworm::protocol::pre_validate_common_base(
+        decoded.txn, rev, cfg.chain_id);
+    if (vr_base != silkworm::ValidationResult::kOk) {
+      std::ostringstream msg;
+      msg << "admission rejected (base): ValidationResult="
+          << static_cast<int>(vr_base);
+      promise.set_value(make_eth_json_error(-32000, msg.str(), req_id));
+      return;
+    }
+    auto vr_forks = silkworm::protocol::pre_validate_common_forks(
+        decoded.txn, rev, /*blob_gas_price=*/std::nullopt);
+    if (vr_forks != silkworm::ValidationResult::kOk) {
+      std::ostringstream msg;
+      if (vr_forks == silkworm::ValidationResult::kTxGasLimitExceeded) {
+        msg << "tx gas limit exceeds EIP-7825 cap (2^24 = 16777216)";
+      } else if (vr_forks == silkworm::ValidationResult::kMaxInitCodeSizeExceeded) {
+        msg << "initcode exceeds EIP-3860 size limit";
+      } else if (vr_forks == silkworm::ValidationResult::kFloorCost) {
+        msg << "gas_limit below EIP-7623 floor cost";
+      } else if (vr_forks == silkworm::ValidationResult::kProhibitedContractCreation) {
+        msg << "contract creation prohibited for this transaction type";
+      } else if (vr_forks == silkworm::ValidationResult::kEmptyAuthorizations) {
+        msg << "EIP-7702 SetCode tx requires at least one authorization";
+      } else {
+        msg << "admission rejected (forks): ValidationResult="
+            << static_cast<int>(vr_forks);
+      }
+      promise.set_value(make_eth_json_error(-32000, msg.str(), req_id));
+      return;
+    }
   }
 
   auto tx_hash = decoded.txn.hash();
