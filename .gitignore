@@ -33,3 +33,6 @@ build-ucrt64/
 build/
 3pp_emscripten/
 /android-ndk-r27d-linux.zip
+
+# Claude Code agent workspaces (transient per-session state)
+.claude/
