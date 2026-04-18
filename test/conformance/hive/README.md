@@ -9,10 +9,17 @@ JSON-RPC surface end-to-end.
 **proxy mode**: a thin container forwards Hive's 8545 traffic to an
 already-running TOS RPC endpoint.  Against the spec's
 `execution-apis/tests/*.io` fixtures (which is the same fixture set
-`rpc-compat` consumes), this delivers **19 PASSes** out of 204
+`rpc-compat` consumes), this delivers **21 PASSes** out of 204
 single-roundtrip sub-tests when the upstream is the live 4-validator
-testnet.  The remaining 185 fail because they assert on values from a
-specific seeded chain we don't have.
+testnet *and* the proxy is launched with `--override-chain-id` set to
+the spec's expected value (`0xc72dd9d5e883e`).  The remaining 183 fail
+because they assert on values from a specific seeded chain we don't
+have — see *Gap* below.
+
+The validator binary itself now also honours `TOS_EVM_CHAIN_ID` at
+startup (consumed by `evm_workchain::init_evm_workchain`), so a
+fresh-chain single-node bootstrap can serve the spec's chain id end-to-
+end without a recompile. See `crypto/block/evm-workchain/evm-init.cpp`.
 
 The full single-node validator path is **not yet functional** — the TOS
 validator requires a 4-node consensus topology and a pre-built
@@ -83,6 +90,25 @@ bash test/conformance/hive/run-rpc-compat-local.sh
 # => PASS=19  FAIL=185  SKIP=3 (multi-roundtrip)
 ```
 
+To pick up the two extra `eth_chainId` / `net_version` fixtures (PASS=21),
+launch the proxy with `HIVE_CHAIN_ID` set to the spec value:
+
+```bash
+docker run -d --name tos-hive --network host \
+    -e TOS_PROXY_UPSTREAM=127.0.0.1:8011 \
+    -e TOS_JSONRPC_BIND=127.0.0.1:18546 \
+    -e HIVE_CHAIN_ID=0xc72dd9d5e883e \
+    tos/validator-hive:proxy
+```
+
+Or, without docker, run the proxy script directly with `--override-chain-id`:
+
+```bash
+python3 test/conformance/hive/clients/tos/tos-rpc-proxy.py \
+    --listen 127.0.0.1:18546 --upstream 127.0.0.1:8011 \
+    --override-chain-id 0xc72dd9d5e883e --ready-marker TOS-READY
+```
+
 ## How to run real Hive against us (full path — not yet wired)
 
 Pre-requisites: a built TOS image tagged `tos/validator-hive:latest` —
@@ -125,11 +151,12 @@ chainId from `/genesis.json`.
 | Single-node validator bootstrap inside container | TODO | Needs zerostate + key + DHT init |
 | Per-test re-init when HIVE_GENESIS_* changes | TODO   | Needs working init first |
 
-### The 19 sub-tests passing today (proxy mode against live testnet)
+### The 21 sub-tests passing today (proxy mode against live testnet, chain-id override)
 
 ```
 debug_getRawReceipts/get-genesis
 debug_getRawTransaction/get-invalid-hash             (both errored)
+eth_chainId/get-chain-id                              (only with --override-chain-id)
 eth_createAccessList/create-al-value-transfer
 eth_getBalance/get-balance-unknown-account
 eth_getBlockByHash/get-block-by-empty-hash
@@ -147,6 +174,7 @@ eth_getTransactionCount/get-nonce-unknown-account
 eth_getTransactionReceipt/get-empty-tx
 eth_getTransactionReceipt/get-notfound-tx
 eth_syncing/check-syncing
+net_version/get-network-id                            (only with --override-chain-id)
 ```
 
 These fall into three categories:
@@ -156,18 +184,20 @@ These fall into three categories:
 3. **Error-path** queries where the spec expects an error and we
    return one (codes/messages are not compared, per Hive policy).
 
-## Gap: what blocks the other ~185 sub-tests
+## Gap: what blocks the other ~183 sub-tests
 
 The remaining fixtures fall into two buckets:
 
-1. **Chain-id mismatch (~all `eth_chainId`-derived expectations)**:
-   the spec's chain id is `0xc72dd9d5e883e` (3503995874084926); ours
-   is `0x544f53`.  The spec injects this chain id via `genesis.json`
-   into the client at boot; our validator reads chain id from a
-   pre-baked zerostate and can't be reconfigured at runtime.
-   **Fix:** add an init flow that writes `chain_id` into the
-   zerostate before launch.  Estimated 1 day plus a host-side
-   tos-create-state extension.
+1. **Chain-id mismatch (2 sub-tests, FIXED)**:
+   `eth_chainId/get-chain-id` and `net_version/get-network-id`. The
+   spec's chain id is `0xc72dd9d5e883e` (3503995874084926); ours is
+   `0x544f53`.  The validator now honours `TOS_EVM_CHAIN_ID` at
+   startup (consumed by `evm_workchain::init_evm_workchain`), and the
+   proxy script honours `--override-chain-id` for setups where the
+   upstream is the live testnet.  **Caveat:** the validator override
+   MUST be applied to a fresh chain — EIP-155 v-recovery and stored
+   receipts both assume a stable chain id, so changing it on an
+   existing chain invalidates every signed transaction in state.
 
 2. **Seeded chain expectations (~everything else)**: the spec
    pre-mines a 36-block chain with specific txs/logs/contracts and

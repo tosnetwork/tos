@@ -258,11 +258,11 @@ static std::string compute_logs_bloom_hex(const std::vector<silkworm::Log>& logs
 // ---------------------------------------------------------------------------
 
 static RpcResult handle_chain_id(const std::string& id) {
-    return {make_result(id, to_hex_quantity(kEvmChainId)), false};
+    return {make_result(id, to_hex_quantity(current_evm_chain_id())), false};
 }
 
 static RpcResult handle_net_version(const std::string& id) {
-    return {make_result(id, "\"" + std::to_string(kEvmChainId) + "\""), false};
+    return {make_result(id, "\"" + std::to_string(current_evm_chain_id()) + "\""), false};
 }
 
 static RpcResult handle_block_number(const std::string& id) {
@@ -725,7 +725,7 @@ static std::vector<silkworm::AccessListEntry> parse_access_list(const std::strin
 static silkworm::Transaction parse_call_object(const std::string& params) {
     silkworm::Transaction txn;
     txn.type = silkworm::TransactionType::kLegacy;
-    txn.chain_id = kEvmChainId;
+    txn.chain_id = current_evm_chain_id();
     txn.gas_limit = 10'000'000;  // default high gas limit for eth_call
     txn.max_fee_per_gas = 0;
     txn.max_priority_fee_per_gas = 0;
@@ -1164,7 +1164,7 @@ static RpcResult handle_debug_trace_transaction(const std::string& params, const
     // Reconstruct the transaction
     silkworm::Transaction txn;
     txn.type = silkworm::TransactionType::kLegacy;
-    txn.chain_id = kEvmChainId;
+    txn.chain_id = current_evm_chain_id();
     txn.nonce = stored_tx->nonce;
     txn.max_fee_per_gas = stored_tx->gas_price;
     txn.max_priority_fee_per_gas = stored_tx->gas_price;
@@ -3090,7 +3090,7 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
                 out2 += "]}";
             }
             out2 += "],";
-            out2 += "\"chainId\":" + to_hex_quantity(static_cast<uint64_t>(kEvmChainId)) + ",";
+            out2 += "\"chainId\":" + to_hex_quantity(static_cast<uint64_t>(current_evm_chain_id())) + ",";
             if (is_blob) {
                 out2 += "\"blobVersionedHashes\":[";
                 for (size_t bh = 0; bh < t.blob_versioned_hashes.size(); bh++) {

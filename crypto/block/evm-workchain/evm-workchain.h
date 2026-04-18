@@ -20,9 +20,37 @@ namespace evm_workchain {
 /// Value 1 is the next available slot after masterchain (-1) and basechain (0).
 constexpr tos::WorkchainId kWorkchainId = 1;
 
-/// EVM chainId exposed to wallets and JSON-RPC (eth_chainId).
-/// This is the Ethereum-style network identifier, not the internal workchain id.
-constexpr uint64_t kEvmChainId = 0x544F53;  // "TOS" in ASCII — placeholder, freeze before mainnet
+/// Default EVM chainId baked into the binary.
+///
+/// Exposed to wallets and JSON-RPC via `eth_chainId`. This is the
+/// Ethereum-style network identifier, not the internal workchain id.
+///
+/// At runtime this default may be overridden by `current_evm_chain_id()`
+/// (see `set_evm_chain_id`). The override is set once during
+/// `init_evm_workchain` from the `TOS_EVM_CHAIN_ID` env var so a single
+/// validator-engine binary can boot a Hive-style genesis where the spec
+/// dictates a different chain id (e.g. `0xc72dd9d5e883e`). The override
+/// MUST only be applied to a fresh chain — EIP-155 signatures depend on
+/// chain id, so changing it on an existing chain invalidates every signed
+/// transaction in state.
+///
+/// Kept as a `constexpr` so existing callers (unit tests, fixtures, etc.)
+/// that hard-coded the default continue to compile. Production code paths
+/// that read the chain id at runtime MUST use `current_evm_chain_id()`.
+constexpr uint64_t kEvmChainId = 0x544F53;  // "TOS" in ASCII — historical default
+
+/// Returns the chain id to use at runtime. Defaults to `kEvmChainId` until
+/// `set_evm_chain_id` is called (typically during `init_evm_workchain`).
+///
+/// Header-defined inline so the lookup is cheap and there is no extra
+/// translation unit dependency for callers.
+uint64_t current_evm_chain_id() noexcept;
+
+/// Override the runtime chain id. Intended to be called exactly once at
+/// process startup (before any block is processed or any RPC is served).
+/// Calling this after the validator has accepted a block is undefined —
+/// EIP-155 v-recovery and stored receipts assume a stable chain id.
+void set_evm_chain_id(uint64_t chain_id) noexcept;
 
 // ---------------------------------------------------------------------------
 // VM descriptor fields (written into the workchain descriptor)

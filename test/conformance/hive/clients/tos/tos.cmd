@@ -118,10 +118,22 @@ if [ -n "${TOS_PROXY_UPSTREAM:-}" ]; then
     # talks to *us* (this container) on 8545; we forward to a real TOS RPC
     # already running elsewhere.  This is the working path until a true
     # single-node TOS bootstrap is wired (see README "Gap" table).
+    #
+    # Chain-id override: when the Hive fixtures demand a chain id that the
+    # upstream can't serve (the spec uses 0xc72dd9d5e883e, our live testnet
+    # reports 0x544f53), answer eth_chainId / net_version locally in the
+    # proxy so those fixture sub-tests stop failing with SHAPE_MISMATCH.
+    # Triggered whenever HIVE_CHAIN_ID differs from the default (0x544f53).
+    OVERRIDE_ARGS=()
+    if [ "$CHAIN_ID_DEC" != "5525331" ]; then
+        log "      chain-id override active: ${CHAIN_ID_DEC} (upstream serves 5525331)"
+        OVERRIDE_ARGS+=(--override-chain-id "$CHAIN_ID_DEC")
+    fi
     exec /usr/local/bin/tos-rpc-proxy.py \
         --listen "${RPC_BIND}" \
         --upstream "${TOS_PROXY_UPSTREAM}" \
-        --ready-marker "TOS-VALIDATOR-READY"
+        --ready-marker "TOS-VALIDATOR-READY" \
+        "${OVERRIDE_ARGS[@]}"
 fi
 
 # -----------------------------------------------------------------------------
@@ -172,7 +184,14 @@ fi
     log "TOS-VALIDATOR-NOT-READY (eth_chainId not responsive after 60s)"
 ) &
 
-log "Starting tos-validator-engine on $RPC_BIND (sync-delay=$SYNC_DELAY, log=$LOGLEVEL)"
+log "Starting tos-validator-engine on $RPC_BIND (sync-delay=$SYNC_DELAY, log=$LOGLEVEL, chainId=$CHAIN_ID_DEC)"
+
+# Pass the Hive-requested chain id to the validator via TOS_EVM_CHAIN_ID
+# (consumed by evm_workchain::init_evm_workchain at startup). This must be
+# applied to a FRESH chain — EIP-155 v-recovery and stored receipts both
+# assume a stable chain id, so an override on an existing chain would
+# invalidate every signed transaction in state.
+export TOS_EVM_CHAIN_ID="$CHAIN_ID_DEC"
 
 exec /usr/local/bin/tos-validator-engine \
     -C "$DATA/tos-global.json" \

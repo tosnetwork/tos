@@ -38,9 +38,15 @@ const silkworm::ChainConfig& evm_chain_config() noexcept {
     // Singleton config for the EVM workchain.
     // Uses Shanghai rules — the latest stable fork before Cancun/blob txns.
     // All fork blocks set to 0 so that all rules are active from genesis.
+    //
+    // The chain_id is captured on first call (via current_evm_chain_id()),
+    // so any TOS_EVM_CHAIN_ID override applied during init_evm_workchain
+    // takes effect — provided init runs before the first transaction (it
+    // does, see validator-engine.cpp). Once captured the config is frozen
+    // because silkworm caches the pointer for the rest of the process.
     static const silkworm::ChainConfig config = [] {
         silkworm::ChainConfig c;
-        c.chain_id = kEvmChainId;
+        c.chain_id = current_evm_chain_id();
 
         // All forks active from block 0 (Shanghai-equivalent).
         c.homestead_block   = 0;

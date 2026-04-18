@@ -4152,6 +4152,54 @@ static void test_persisted_logs_roundtrip() {
     printf("  %s\n\n", (count_ok && fields_ok && empty_ok && deterministic) ? "PASSED" : "FAILED");
 }
 
+// Verify that set_evm_chain_id() / current_evm_chain_id() round-trip and
+// that the eth_chainId / net_version RPC handlers report the override.
+// Restores the default at the end so subsequent tests still see 0x544F53.
+static void test_runtime_chain_id_override() {
+    printf("=== test_runtime_chain_id_override (Hive bootstrap) ===\n");
+
+    const uint64_t hive_chain_id = 0xc72dd9d5e883eULL;  // execution-apis spec
+    const uint64_t saved = current_evm_chain_id();
+
+    // Sanity: initial value is the historical default.
+    bool default_ok = (saved == kEvmChainId);
+    printf("  default chain id: 0x%lx (kEvmChainId=0x%lx) %s\n",
+           (unsigned long)saved, (unsigned long)kEvmChainId,
+           default_ok ? "OK" : "WRONG");
+
+    // Apply the override and confirm the getter sees it.
+    set_evm_chain_id(hive_chain_id);
+    bool getter_ok = (current_evm_chain_id() == hive_chain_id);
+    printf("  override applied: 0x%lx %s\n",
+           (unsigned long)current_evm_chain_id(), getter_ok ? "OK" : "WRONG");
+
+    // The RPC handler must reflect the override (this is the load-bearing
+    // path that Hive's rpc-compat fixtures assert on via eth_chainId).
+    auto r1 = handle_eth_rpc("eth_chainId", "[]", "1");
+    bool rpc_chain_ok = r1.has_value() &&
+        r1->json.find("\"0xc72dd9d5e883e\"") != std::string::npos;
+    printf("  eth_chainId RPC: %s %s\n",
+           r1 ? r1->json.c_str() : "NOT HANDLED",
+           rpc_chain_ok ? "OK" : "WRONG");
+
+    auto r2 = handle_eth_rpc("net_version", "[]", "2");
+    // net_version is decimal; 0xc72dd9d5e883e == 3503995874084926
+    bool rpc_net_ok = r2.has_value() &&
+        r2->json.find("\"3503995874084926\"") != std::string::npos;
+    printf("  net_version RPC: %s %s\n",
+           r2 ? r2->json.c_str() : "NOT HANDLED",
+           rpc_net_ok ? "OK" : "WRONG");
+
+    // Restore so other tests aren't affected.
+    set_evm_chain_id(saved);
+    bool restored_ok = (current_evm_chain_id() == saved);
+    printf("  restored to:    0x%lx %s\n",
+           (unsigned long)current_evm_chain_id(), restored_ok ? "OK" : "WRONG");
+
+    bool all_ok = default_ok && getter_ok && rpc_chain_ok && rpc_net_ok && restored_ok;
+    printf("  %s\n\n", all_ok ? "PASSED" : "FAILED");
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -4160,6 +4208,7 @@ int main() {
     test_contract_create();
     test_contract_call();
     test_eth_rpc();
+    test_runtime_chain_id_override();
     test_signed_transaction();
     test_persistent_state();
     test_config_param();

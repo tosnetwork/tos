@@ -1503,10 +1503,10 @@ void JsonRpcServer::handle_eth_sendRawTransaction(td::JsonValue &params_val,
   //   - Pre-EIP-155 legacy txs omit chain_id (std::nullopt) — we accept
   //     those because they're not bound to any specific chain.
   if (decoded.txn.chain_id.has_value() &&
-      *decoded.txn.chain_id != evm_workchain::kEvmChainId) {
+      *decoded.txn.chain_id != evm_workchain::current_evm_chain_id()) {
     std::ostringstream msg;
     msg << "invalid chain id: got " << *decoded.txn.chain_id
-        << ", expected 0x" << std::hex << evm_workchain::kEvmChainId << std::dec;
+        << ", expected 0x" << std::hex << evm_workchain::current_evm_chain_id() << std::dec;
     promise.set_value(make_eth_json_error(-32000, msg.str(), req_id));
     return;
   }

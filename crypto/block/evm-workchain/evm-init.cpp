@@ -27,11 +27,26 @@
 #include <silkworm/core/types/account.hpp>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "td/utils/logging.h"
 
 namespace evm_workchain {
+
+// Runtime-overridable chain id. Stored as a plain `uint64_t` (not atomic)
+// because writes happen exactly once during process init, before any RPC
+// thread spins up. Reads are unsynchronised but safe in that ordering —
+// see the contract on `set_evm_chain_id` in `evm-workchain.h`.
+static uint64_t g_evm_chain_id = kEvmChainId;
+
+uint64_t current_evm_chain_id() noexcept {
+    return g_evm_chain_id;
+}
+
+void set_evm_chain_id(uint64_t chain_id) noexcept {
+    g_evm_chain_id = chain_id;
+}
 
 static std::unique_ptr<EvmState> g_evm_state;
 static std::unique_ptr<IncrementalTrieCalculator> g_trie_calc;
@@ -320,8 +335,31 @@ void init_evm_workchain(const std::string& db_root) {
     // ShardAccounts now). It now serves Phase F.3/F.4: open the
     // side-channel RPC cache DB at db_root + "/evm-rpc-cache" so
     // receipts survive restart without touching consensus.
+
+    // Read TOS_EVM_CHAIN_ID once at startup. Used by the Hive harness to
+    // boot a validator with a spec-mandated chain id (e.g. the
+    // execution-apis fixtures bake `0xc72dd9d5e883e`). Falls back to the
+    // historical default (`kEvmChainId` == 0x544F53). MUST NOT change on
+    // an existing chain — EIP-155 v-recovery and stored receipts assume a
+    // stable chain id (see contract on `set_evm_chain_id`).
+    if (const char* env = std::getenv("TOS_EVM_CHAIN_ID"); env && *env) {
+        char* endp = nullptr;
+        // Accept both decimal ("5525331") and hex ("0x544f53") forms.
+        unsigned long long parsed = std::strtoull(env, &endp, 0);
+        if (endp == env || *endp != '\0' || parsed == 0) {
+            LOG(ERROR) << "evm-workchain: ignoring TOS_EVM_CHAIN_ID='" << env
+                       << "' (failed to parse as positive integer)";
+        } else {
+            set_evm_chain_id(static_cast<uint64_t>(parsed));
+            LOG(WARNING) << "evm-workchain: TOS_EVM_CHAIN_ID override → 0x"
+                         << std::hex << current_evm_chain_id() << std::dec
+                         << " (default would have been 0x" << std::hex
+                         << kEvmChainId << std::dec << ")";
+        }
+    }
+
     LOG(WARNING) << "evm-workchain: initialising (workchain_id=1, chain_id="
-                 << kEvmChainId << ")";
+                 << current_evm_chain_id() << ")";
 
     // Cell-native state. The dictionary starts empty here; the canonical
     // wc=1 ShardAccounts (loaded by the collator/validate-query from CellDb)

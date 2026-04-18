@@ -89,9 +89,9 @@ td::Ref<vm::Cell> build_evm_zerostate(
     //   workchain_id(32) = 2
 
     vm::CellBuilder cb;
-    cb.store_long(0x9023afe2, 32);      // shard_state tag
-    cb.store_long(kEvmChainId, 32);     // global_id
-    cb.store_long(kWorkchainId, 32);    // shard_ident.workchain_id (simplified)
+    cb.store_long(0x9023afe2, 32);            // shard_state tag
+    cb.store_long(current_evm_chain_id(), 32);// global_id (runtime-overridable)
+    cb.store_long(kWorkchainId, 32);          // shard_ident.workchain_id (simplified)
     // Pad with zeros for the remaining required fields (simplified zerostate)
     cb.store_long(0, 64);               // shard_ident.shard_pfx_bits + shard_prefix
     cb.store_long(0, 32);               // seq_no
