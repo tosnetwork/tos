@@ -1,23 +1,23 @@
 # EVM Workchain — Test Plan
 
-Version: v1.3 — 2026-04-18 (RPC correctness pass)
+Version: v1.4 — 2026-04-18 (4-agent parallel RPC correctness sprint)
 
 ## Status at a glance
 
 | Gate | State | Notes |
 |------|-------|-------|
-| **Gate T — Testnet** | ✅ PASS | All 6 rows green. Last-known-good `57887d30` (RPC correctness pass — simulateV1 / feeHistory / getLogs). |
-| **Gate P — Private mainnet** | 🚧 in progress | **3 of 6** rows fully green (P-1 G.1 GeneralStateTests 100% / 2533 pass; P-2 G.2 Pyspec Cancun+Shanghai 100% / 54 pass; **P-5 Phase F receipts/restart-survival shipped**). P-3 24h fuzz, P-4 7-day soak, P-6 indexer sync remain. |
-| **Gate M — Public mainnet** | 📋 planned | Depends on Gates T + P + Phase G.3/G.4 (continuous CI) + third-party audit. |
+| **Gate T — Testnet** | ✅ PASS | All 6 rows green. Last-known-good `4ba807df` (Phase F.6 + simulateV1 deep dive + manual-rpc sanity fixtures + Hive proxy wiring). |
+| **Gate P — Private mainnet** | 🚧 in progress | **3 of 6** rows fully green (P-1 G.1 GeneralStateTests 100% / 2533 pass; P-2 G.2 Pyspec Cancun+Shanghai 100% / 54 pass; **P-5 Phase F receipts + tx + blocks + logs cross-restart shipped — F.6 codec + write hooks + hydration all live**). P-3 24h fuzz, P-4 7-day soak, P-6 indexer sync remain — all gated on operational time, not engineering work. |
+| **Gate M — Public mainnet** | 🚧 progressing | **Hive `rpc-compat` first 19 sub-tests pass via proxy** (`4ba807df`); full chain bootstrap is the remaining ~4 engineer-days for M-3. |
 
 | Phase | State | Headline |
 |-------|-------|----------|
 | G.1 — State-test harness (GeneralStateTests) | ✅ done (55 dirs, 100% pass) | Runner + walker ✅ over **55 subdirs**, **2533/2533 pass (100%)**, **0 fail**, 5 upstream-skipped (silkworm `kFailingTests` + EIP-684/7610 grey zone), 2 silkworm-asserted skips. **10 real bugs** found and fixed (5 consensus + 3 DoS + 2 adapter-glue) |
 | G.2 — execution-spec-tests (Pyspec) | ✅ done (Cancun + Shanghai, 100% pass; Prague stub awaiting fixtures) | Walkers landed in `eef094bf` + `f6d1f83a`. Pyspec stable v3.0.0 fixtures: **Cancun 43/43**, **Shanghai 11/11**, Prague stub ready (no `prague/` dir in current release; future drop activates without code change). 1 new bug class found and fixed: EIP-4844 blob-fee burn missing + 2 blob-tx pre-validation rules. |
-| G.3 — Hive (`rpc-compat`) | 🚧 scaffold ✅, real run 📋 | `test/conformance/hive/` ✅ landed in `132a9787`: Dockerfile (2-stage ubuntu:22.04 build, validated `docker build --check`), hive client wrapper + `tos.cmd` + `mapper.jq` stub + README. ~4 engineer-days remain to wire real genesis-translation and per-test re-init before the simulator goes green. |
-| G.4 — Continuous differential CI | 🚧 runner ✅, CI 📋 | One-shot `differential_geth.py`: 20/25 OK (after a 2026-04-18 RPC correctness pass added spec-shape `eth_feeHistory.gasUsedRatio:list<float>`, geth still returns `list<int>` so they re-diverge — both are spec-allowed, we picked spec-correct). The 5 remaining diverges are all intentional (eth_mining, eth_syncing shape, eth_accounts, eth_createAccessList simulation strategy, eth_feeHistory ratio type) — see `known-divergences.md` Category B. **OUR_ERROR methods across 202 conformance fixtures = 0**. Continuous CI not yet stood up. |
+| G.3 — Hive (`rpc-compat`) | 🚧 proxy mode ✅ (19 sub-tests pass), real bootstrap 📋 (~4 days) | `test/conformance/hive/` scaffold (`132a9787`) extended in `4ba807df` with a **proxy mode**: `Dockerfile.proxy` + stdlib-only `tos-rpc-proxy.py` forwards Hive's port-8545 traffic to the live validator on 8011. Container starts cleanly, logs `TOS-VALIDATOR-READY`, `eth_chainId` end-to-end works. Local harness `run-rpc-compat-local.sh` mirrors hive's compare policy. **PASS=19 / FAIL=185 / SKIP=3** — the 19 are "chainless" sub-tests (eth_syncing, unknown-account / unknown-tx, error-paths). The 185 fail because (a) we report chainId `0x544f53` not the spec's `0xc72dd9d5e883e`, and (b) we lack the spec's seeded 36-block chain. To get to "first-green real Hive": ~1-2 days for `tos-create-state` to bake an arbitrary chainId from mapper.jq, plus ~1-2 days for chain.rlp replay (gated on stabilising `eth_sendRawTransaction` further). |
+| G.4 — Continuous differential CI + manual-rpc sanity set | 🚧 runner ✅, CI 📋 | One-shot `differential_geth.py`: 20/25 OK (after the 2026-04-18 RPC correctness pass added spec-shape `eth_feeHistory.gasUsedRatio:list<float>`, geth still returns `list<int>` so they re-diverge — both are spec-allowed, we picked spec-correct). The 5 remaining diverges are all intentional (eth_mining, eth_syncing shape, eth_accounts, eth_createAccessList simulation strategy, eth_feeHistory ratio type) — see `known-divergences.md` Category B. **OUR_ERROR methods across 202 conformance fixtures = 0**. **NEW**: `test/conformance/manual-rpc/` (`698a51fc`) — 17 RPC methods × 18 fixtures + 3 chain-step fixtures (filter lifecycle), all PASS. Covers the methods execution-apis upstream doesn't (eth_blobBaseFee, eth_coinbase, eth_protocolVersion, eth_hashrate, eth_maxPriorityFeePerGas, eth_getRawTransactionByHash, eth_getUncle*, web3_sha3 + web3_clientVersion, net_listening, net_peerCount, eth_newFilter+changes+uninstall, eth_newBlockFilter chain, eth_newPendingTransactionFilter chain). New runner `run_manual_rpc.py` understands `${RESULT_N}` token interpolation for chained tests. Continuous CI not yet stood up. |
 | G.5 — Fuzz + stress | 🚧 runner ✅, 32-min soak ✅, 4h soak 🚧 deferred to overnight, 24h soak 📋 | `test/conformance/fuzz_eth.py` ✅ landed; found 1 DoS (eth_call hex-parse) fixed in `f53c356a`. Two follow-up soaks: 10-min and 32-min (109,500 mutated requests, **0 crashers / 0 5xx / 0 validator restarts**). 4-hour run started but interrupted at 32 min by user request to push other testing forward; rescheduled for off-peak. 10K-tx/s stress harness still pending. |
-| **Phase F — RPC cache persistence** (Gate P-5 blocker) | ✅ done (receipts; tx/blocks/logs scaffolded) | First-principles **Pure B side-channel** design: per-validator RocksDB at `${db_root}/evm-rpc-cache`, parallel to celldb/statedb, **zero consensus involvement**. Receipts persist across validator restart end-to-end (`68e31992`). Codec also covers `PersistedTransaction` + `PersistedBlock` (`483b760e`); cp.new_data has v2 `rpc_cache_root` slot reserved (`90eea2a6`) but Pure B doesn't use it. **3 subtle bugs found and fixed** during integration: `td::RocksDb` manual_wal_flush durability, `fetch_long_bool(1, val)` sign-extension in `decode_log_list`, validate-block re-execution overwriting good receipts. |
+| **Phase F — RPC cache persistence** (Gate P-5 blocker) | ✅ done — receipts + tx + blocks (by-number + by-hash) + logs all persisted | First-principles **Pure B side-channel** design: per-validator RocksDB at `${db_root}/evm-rpc-cache`, parallel to celldb/statedb, **zero consensus involvement**. **F.5** (receipts) shipped in `68e31992`. **F.6** (tx + blocks + logs) shipped in `607ceff6`: `EvmRpcCacheDb` extended with put/get/for_each for all 4 types (key tags 0x01-0x05); compute-phase write hooks gated on `exec_result.success` to avoid validate-block re-write; `evm-init.cpp` runs 4 independent hydration walks; `proof-receipt-survives-restart.js --verify <hash> <block> <hash>` extended to also assert tx/block/logs. New unit test `test_persisted_logs_roundtrip`. **47/47** unit tests pass. **3 subtle bugs found and fixed** during F.5 integration; F.6 hooks land cleanly behind the same patterns. |
 
 | Consensus bugs found via external-oracle testing | Commit | Severity |
 |--------------------------------------------------|--------|----------|
@@ -40,6 +40,8 @@ Version: v1.3 — 2026-04-18 (RPC correctness pass)
 | `eth_simulateV1` was missing ~20 spec block-header fields per simulated block + `maxUsedGas` per call; `transactions[]` array always empty even with `returnFullTransactions:true`. Parser also returned empty array for `blockStateCalls:[{}]` (no `"calls"` keyword) | `57887d30` | RPC shape — fixed to enumerate blockStateCalls by brace-counting; 9/63 OK on spec fixtures (was 0/63) |
 | `eth_feeHistory` hardcoded 1 reward per block regardless of percentile array length; emitted `gasUsedRatio` as int (`0`) when ratio==0, breaking spec's `list<float>` shape | `57887d30` | RPC shape — 1/1 OK (was 0/1) |
 | `eth_getLogs` accepted invalid filter combos: `blockHash` + `from/toBlock` (mutually exclusive per spec) and reversed `from > to` ranges. No validation rejects | `57887d30` | RPC compat — geth/erigon both reject; we now do too with matching error messages |
+| `eth_simulateV1` deep-dive: parse_call_object didn't extract accessList, blobVersionedHashes, maxPriorityFeePerGas, maxFeePerBlobGas, nonce; tx-shape emission emitted every tx as type-2 (DynamicFee) regardless of fields present; `transactions[]` always emitted as object list when spec emits hash list when `returnFullTransactions` is false; per-log envelope missing 7 fields (blockHash/Number/Timestamp, transactionHash/Index, logIndex, removed); failed calls emitted no `error` envelope; `blockOverrides.number` jumps weren't filled with placeholder blocks | `4e35666e` | **9 → 50 OK on 63 simulateV1 fixtures** (+41); 13 remaining all need `stateOverrides` (out of scope for read-only simulator) |
+| Phase F.6: tx + blocks + logs cross-restart persistence (Gate P-5 closure for the remaining 3 RPC categories) | `607ceff6` | Pure B side-channel — same pattern as F.5 receipts; one new key tag per type (0x02-0x05), separate write hooks all gated on `exec_result.success`, four independent hydration walks |
 
 ## Purpose
 
@@ -107,7 +109,7 @@ yet started · ❌ blocked or failing · ⊘ explicitly out of scope.
 
 ### Unit + integration — `crypto/block/evm-workchain/test-evm-executor.cpp` ✅
 
-**46** tests compiled into `./build/crypto/block/evm-workchain/test-evm-executor`.
+**47** tests compiled into `./build/crypto/block/evm-workchain/test-evm-executor`.
 All pass. Run in ~3 seconds on a laptop. Grouped by theme:
 
 | Group | Count | Status | What it proves |
@@ -120,7 +122,7 @@ All pass. Run in ~3 seconds on a laptop. Grouped by theme:
 | DoS regression (Phase E.5) | 1 | ✅ | `test_large_raw_tx_roundtrip` — 2 KB raw RLP fits in chunk chain, round-trip byte-equal |
 | State-test runner (Phase G.1) | 2 | ✅ | `test_state_test_runner_poc` (loads stChainId/chainId.json and runs it against CellEvmState end-to-end), `test_state_test_runner_walk_curated` (**2533/2533 Cancun entries across 55 dirs — 100% pass**, 5 upstream-skip matching silkworm `kFailingTests` + EIP-684/7610) |
 | Pyspec walker (Phase G.2) | 3 | ✅ | `test_state_test_runner_pyspec_walk` (Cancun 43/43), `test_state_test_runner_pyspec_walk_shanghai` (11/11), `test_state_test_runner_pyspec_walk_prague` (stub, awaiting fixtures) |
-| Phase F codec (rpc-cache persistence) | 3 | ✅ | `test_persisted_receipt_roundtrip` (3 logs, 300-byte return_data, 4 topics LOG4-max, deterministic re-encode), `test_persisted_transaction_roundtrip` (populated + contract-create + 250-byte data + 400-byte raw_rlp), `test_persisted_block_roundtrip` (256-byte bloom, 17-hash chunked list, scalars, 4-ref fan-out) |
+| Phase F codec (rpc-cache persistence) | 4 | ✅ | `test_persisted_receipt_roundtrip` (3 logs, 300-byte return_data, 4 topics LOG4-max, deterministic re-encode), `test_persisted_transaction_roundtrip` (populated + contract-create + 250-byte data + 400-byte raw_rlp), `test_persisted_block_roundtrip` (256-byte bloom, 17-hash chunked list, scalars, 4-ref fan-out), `test_persisted_logs_roundtrip` (chunked IndexedLog chain) |
 | Other | 10 | ✅ | transfer, create, call, signed tx, persistent state, config param, bn254, replay, event logs, ERC-20, bridge, subscriptions, nonce validation |
 
 Run:
@@ -187,16 +189,17 @@ Each row is a binary: green = go, red or yellow = stop. Each next stage is a str
 
 | # | Requirement | How to verify | Blocker? | Status |
 |---|-------------|---------------|----------|--------|
-| T-1 | 46/46 unit tests pass | `./build/crypto/block/evm-workchain/test-evm-executor` | ✓ | ✅ |
+| T-1 | 47/47 unit tests pass | `./build/crypto/block/evm-workchain/test-evm-executor` | ✓ | ✅ |
 | T-2 | All three `proof-*.sh` scripts pass | `sudo bash test/evm-workchain/proof-*.sh` (restart-survival + rpc-indexing) | ✓ | ✅ |
 | T-3 | execution-apis suite: 0 METHOD_NOT_FOUND, 0 crashes, every SHAPE_MISMATCH and OUR_ERROR accounted for in `doc/evm-workchain-known-divergences.md` | `SKIP_CRASHERS=0 python3 test/conformance/run_execution_apis.py` | ✓ | ✅ |
 | T-4 | 4 validators stay up through the full suite | systemd shows all `tos-validator@{1..4}` `active` post-run | ✓ | ✅ |
 | T-5 | Basic wallet probes work | `node test/evm-workchain/wallet-test.js`, `full-rpc-test.js` | ✓ | ✅ |
 | T-6 | Differential vs. geth: every diverge listed in `doc/evm-workchain-known-divergences.md` Category B | `python3 test/conformance/differential_geth.py` | ✓ | ✅ |
 
-**Current status: PASS.** Commit `57887d30` is the last-known-good
-(RPC correctness pass — simulateV1 / feeHistory / getLogs; built on top
-of Phase F.3+F.4+F.5 receipts-survive-restart at `68e31992`).
+**Current status: PASS.** Commit `4ba807df` is the last-known-good
+(combines Phase F.6 tx/blocks/logs persistence, eth_simulateV1 deep
+dive, manual-rpc sanity fixtures, Hive proxy wiring — all from a
+2026-04-18 4-agent parallel sprint).
 
 ### Gate P — Private mainnet (limited allowlisted validators + RPCs)
 
@@ -208,7 +211,7 @@ Everything in Gate T, plus:
 | P-2 | execution-spec-tests Cancun fork ≥ 95% pass | Phase G.2 runner (shared harness) | ✓ | ✅ — Cancun **43/43 (100%)** + Shanghai **11/11 (100%)** |
 | P-3 | No known DoS vectors from a 24-hour fuzz of `eth_sendRawTransaction` + `eth_call` with malformed inputs | Phase G.5 fuzz harness | ✓ | 🚧 — **32-min soak: 109,500 mutations / 0 crashers / 0 5xx**; 4h overnight scheduled; 24h still pending |
 | P-4 | 7-day soak on a dedicated testnet: zero validator restarts due to EVM bugs, zero state-hash divergences | Operational logs | ✓ | 📋 |
-| P-5 | Receipts / tx / logs survive validator restart | **Phase F: receipts done** (`68e31992`); tx/blocks/logs codec scaffolded, write+hydrate hooks identical pattern, ~1 day to extend | ✓ | ✅ — receipts proven via `proof-receipt-survives-restart.js`; tx/blocks/logs are mechanical extension of the same `EvmRpcCacheDb` (see Phase F section below) |
+| P-5 | Receipts / tx / logs survive validator restart | **Phase F.5+F.6 fully shipped** (`68e31992` receipts; `607ceff6` tx + blocks + logs). Codec, write hooks, hydration walks all live. e2e proof script extended (`proof-receipt-survives-restart.js --verify <hash> <block> <hash>`) — receipt + tx + block-by-number + block-by-hash + getLogs all check post-restart | ✓ | ✅ |
 | P-6 | Third-party indexer (Blockscout or similar) syncs the chain without warnings | Manual run | Recommended | 📋 |
 
 ### Gate M — Public mainnet
@@ -219,7 +222,7 @@ Everything in Gates T + P, plus:
 |---|-------------|---------------|----------|--------|
 | M-1 | **All** Cancun + Shanghai + post-merge GeneralStateTests pass (100%) | Phase G.1 runner | ✓ | 📋 |
 | M-2 | execution-spec-tests: 100% on all forks our chain claims to support | Phase G.2 runner | ✓ | 📋 |
-| M-3 | Hive suite `rpc-compat` + `sync` subsets pass | Phase G.3 | ✓ | 📋 |
+| M-3 | Hive suite `rpc-compat` + `sync` subsets pass | Phase G.3 | ✓ | 🚧 — proxy mode passes 19 sub-tests (`4ba807df`); ~1-2d for arbitrary chainId in `tos-create-state`, ~1-2d for chain.rlp replay (gated on further `eth_sendRawTransaction` stabilisation). `sync` skipped (we don't speak devp2p — out of scope per design) |
 | M-4 | Third-party security audit of the EVM adapter layer (`crypto/block/evm-workchain/`, the admission path, and the cell codec) | Audit report | ✓ | 📋 |
 | M-5 | Differential CI against geth + erigon + reth has run continuously for ≥ 30 days with no undiagnosed diverges | Phase G.4 | ✓ | 📋 (runner ✅, continuous CI 📋) |
 | M-6 | Stress: 10K tx/s submission through `eth_sendRawTransaction` for 1 hour without validator crashes or memory exhaustion | Phase G.5 | ✓ | 📋 |
