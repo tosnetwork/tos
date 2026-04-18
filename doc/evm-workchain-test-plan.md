@@ -16,7 +16,7 @@ Version: v1.1 — 2026-04-17 (status snapshot)
 | G.2 — execution-spec-tests (Pyspec) | ✅ done (Cancun, 100% pass) | Walker added in `eef094bf`. Pyspec stable v3.0.0 fixtures, **43/43 pass**, 13 skipped (Shanghai-only entries). 1 new bug class found and fixed: EIP-4844 blob-fee burn missing + 2 blob-tx pre-validation rules (zero-blobs, bad version byte). |
 | G.3 — Hive (`rpc-compat`) | 📋 planned | Dockerize validator, write hive client stub |
 | G.4 — Continuous differential CI | 🚧 runner ✅, CI 📋 | One-shot `differential_geth.py` lives; continuous CI not yet stood up |
-| G.5 — Fuzz + stress | 🚧 runner ✅, 24h soak 📋 | `test/conformance/fuzz_eth.py` ✅ landed; found 1 DoS (eth_call hex-parse) fixed in `f53c356a`; 60s reruns clean; 24-hour soak + stress-throughput still pending |
+| G.5 — Fuzz + stress | 🚧 runner ✅, 10-min soak ✅, 24h soak 📋 | `test/conformance/fuzz_eth.py` ✅ landed; found 1 DoS (eth_call hex-parse) fixed in `f53c356a`. Latest soak: **26,374 mutated RPC requests, 0 genuine crashes** (a 10-min run; was scheduled for 30 but a parallel proof-test ran concurrently and the fuzzer's connection-refused detector tripped on operator restart, not on fuzz). 24-hour run + 10K-tx/s stress harness still pending. |
 
 | Consensus bugs found via external-oracle testing | Commit | Severity |
 |--------------------------------------------------|--------|----------|

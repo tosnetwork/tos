@@ -402,14 +402,30 @@ def run_fuzz(seed_txs, deadline):
         elif kind == "timeout":
             stats[key]["timeouts"] += 1
         elif kind == "refused":
-            # Strong signal: node is down.
-            sys.stderr.write("\n!!! CONNECTION REFUSED -- node may have died !!!\n")
-            sys.stderr.write(f"offending payload: {json.dumps(payload)[:2000]}\n")
-            sys.stderr.write(f"--- preceding {len(recent)} payloads (newest last) ---\n")
-            for p in recent:
-                sys.stderr.write(json.dumps(p)[:1000] + "\n")
-            stats[key]["node_deaths"] += 1
-            return stats, last_payload
+            # Connection refused. Could be:
+            #   (a) the node actually died from the previous payload (real bug);
+            #   (b) operator action — someone ran a sudo bash that restarted the
+            #       validator (proof tests, deploys). Validator returns within ~5s.
+            # Distinguish by polling for recovery up to ~30s. If the node comes
+            # back, it was operator action — log a warning and continue. If not,
+            # treat as a real crash.
+            sys.stderr.write("\n[fuzz] connection refused — probing recovery...\n")
+            recovered = False
+            for backoff in [1, 2, 3, 5, 8, 13]:
+                time.sleep(backoff)
+                if health_check():
+                    recovered = True
+                    sys.stderr.write(
+                        f"[fuzz] recovered after {backoff}s — likely operator restart, NOT a fuzz crash; continuing\n")
+                    break
+            if not recovered:
+                sys.stderr.write("\n!!! NODE DID NOT RECOVER WITHIN 32s -- treating as fuzz-induced crash !!!\n")
+                sys.stderr.write(f"offending payload: {json.dumps(payload)[:2000]}\n")
+                sys.stderr.write(f"--- preceding {len(recent)} payloads (newest last) ---\n")
+                for p in recent:
+                    sys.stderr.write(json.dumps(p)[:1000] + "\n")
+                stats[key]["node_deaths"] += 1
+                return stats, last_payload
         else:
             stats[key]["other"] += 1
 
@@ -425,14 +441,25 @@ def run_fuzz(seed_txs, deadline):
                 time.sleep(1.0)
                 ok = health_check()
             if not ok:
-                sys.stderr.write(
-                    "\n!!! HEALTH CHECK FAILED after mutation -- node may have died !!!\n")
-                sys.stderr.write(f"last payload: {json.dumps(last_payload)[:2000]}\n")
-                sys.stderr.write(f"--- preceding {len(recent)} payloads (newest last) ---\n")
-                for p in recent:
-                    sys.stderr.write(json.dumps(p)[:1000] + "\n")
-                stats[key]["node_deaths"] += 1
-                return stats, last_payload
+                # Same operator-restart distinguishing logic as above.
+                sys.stderr.write("\n[fuzz] health check failed — probing recovery...\n")
+                recovered = False
+                for backoff in [1, 2, 3, 5, 8, 13]:
+                    time.sleep(backoff)
+                    if health_check():
+                        recovered = True
+                        sys.stderr.write(
+                            f"[fuzz] recovered after {backoff}s — likely operator restart, NOT a fuzz crash; continuing\n")
+                        break
+                if not recovered:
+                    sys.stderr.write(
+                        "\n!!! HEALTH CHECK FAILED for >32s -- treating as fuzz-induced crash !!!\n")
+                    sys.stderr.write(f"last payload: {json.dumps(last_payload)[:2000]}\n")
+                    sys.stderr.write(f"--- preceding {len(recent)} payloads (newest last) ---\n")
+                    for p in recent:
+                        sys.stderr.write(json.dumps(p)[:1000] + "\n")
+                    stats[key]["node_deaths"] += 1
+                    return stats, last_payload
 
             total = stats["raw_tx"]["attempts"] + stats["call"]["attempts"]
             remaining = max(0, int(deadline - time.time()))
