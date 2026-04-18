@@ -191,27 +191,103 @@ pass at Cancun. **Tests and production run on different forks.**
 What's blocked in production today (silently — no error, just opcode
 acts as INVALID and reverts):
 - BLOBBASEFEE (`0x4a`, EIP-7516)
+- BLOBHASH (`0x49`, EIP-4844 host op for blob versioned hashes)
 - TLOAD / TSTORE (`0x5c`/`0x5d`, transient storage, EIP-1153)
 - MCOPY (`0x5e`, EIP-5656)
 - KZG point-evaluation precompile (`0x0a`)
 - EIP-6780 SELFDESTRUCT semantics (production still does the
   pre-Cancun full-teardown flavor)
+- EIP-4788 beacon-roots predeploy at
+  `0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02` (we don't seed it)
 
 Modern Solidity output (compiled with `--optimize` on `^0.8.25`)
 emits MCOPY and TSTORE routinely → contracts compiled with current
 Solidity will revert in our chain.
 
-Recommended next step: enable Cancun in the live chain config
-(`cancun_time = 0`) and add a blob-tx admission reject in
-`handle_eth_sendRawTransaction` (we don't have a blob mempool, so
-type-3 txs should be rejected at submission, not silently accepted
-then bounced by the collator). The Cancun fee-burn fix in
-`d140ec1d` then becomes meaningful.
+### Adapter-readiness audit (2026-04-18, Agent F)
+
+Done while closing the last `eth_simulateV1` SHAPE_MISMATCHes
+(`ethSimulate-blobs.io` was the third — its only failure mode is
+spec-side `BLOBHASH` succeeding while we revert at Shanghai). Audit
+of every Cancun-only behavior against our adapter:
+
+| Behavior | Adapter-side prerequisite | Ready? | Evidence |
+|----------|---------------------------|--------|----------|
+| `BLOBHASH` opcode | Read `txn.blob_versioned_hashes` from EVM context | ✅ | silkworm + evmone implement it; we already parse blob_versioned_hashes (`evm-rpc.cpp:647`) and tag blob txns as `kBlob` |
+| `BLOBBASEFEE` opcode | Block header carries `excess_blob_gas` → `blob_gas_price()` | ✅ | `block.header.blob_gas_price()` already wired in `evm-executor.cpp:208` for blob-fee burn |
+| `TLOAD`/`TSTORE` | Per-transaction transient storage in IBS | ✅ | silkworm IBS already has it; nothing to do |
+| `MCOPY` | evmone implements as a base op | ✅ | upstream-only |
+| KZG precompile (`0x0a`) | KZG trusted setup loaded into evmone | ⚠️ | silkworm bundles a setup; we never call its loader. Without the setup the precompile reverts. **Blocker for any contract that calls 0x0a.** |
+| EIP-6780 SELFDESTRUCT | silkworm's `selfdestruct()` switches on `rev >= EVMC_CANCUN` (`evm.cpp:420`) | ✅ | flips automatically |
+| EIP-4844 blob fee burn | Burn `total_blob_gas * blob_gas_price` from sender (never credit beneficiary) | ✅ | shipped in `d140ec1d` (`evm-executor.cpp:199-210`) |
+| EIP-4788 beacon-roots predeploy | Genesis-seeded contract at `0x000F…Beac02` storing parent beacon roots | ❌ | not deployed; any contract calling it gets empty code → reverts. Cosmetic for normal traffic but breaks any L2 / restaking client that reads parent beacon roots |
+| Blob-tx admission gating | Reject type-3 at `eth_sendRawTransaction` (no blob mempool) | ⚠️ | see admission audit in `validator-engine/json-rpc-server-send.cpp` — needs verification |
+| `eth_simulateV1` Cancun fields | Always emit `blobGasUsed`/`excessBlobGas`/`parentBeaconBlockRoot`/`requestsHash` | ✅ | shipped in `bfb6b5c0` and untouched here; the new pre-merge schema branch only kicks in for explicitly-anchored sub-block-16 simulations |
+
+### Recommendation (revised 2026-04-18)
+
+**Defer flipping `cancun_time = 0` to a coordinated hard-fork
+deployment.** Reasoning:
+
+1. **Two real adapter gaps remain.** KZG trusted setup is unloaded
+   (point-evaluation reverts), and the EIP-4788 beacon-roots
+   predeploy is not seeded. Activating Cancun without those means
+   any contract that touches 0x0a or the beacon-roots address
+   gets a silent revert that didn't exist on day-0. That's a worse
+   user experience than today's "BLOBHASH reverts because rev=Shanghai".
+
+2. **Blob-tx admission needs a deliberate rejection path.** We
+   already burn the blob fee correctly (`d140ec1d`), but we have
+   no blob-data mempool — so accepting a type-3 at the JSON-RPC
+   layer just to bounce it at the collator is a worse latency
+   contract than rejecting at submission. Verify the current
+   `eth_sendRawTransaction` path before a fork.
+
+3. **Consensus-changing.** Flipping `cancun_time` retro-actively
+   re-revisions every block in history (`config.revision()` is
+   keyed off `block.header.timestamp`, and every existing block
+   would suddenly report EVMC_CANCUN). Validators that pull the
+   updated binary will disagree with any node still on the
+   pre-Cancun build over selfdestruct semantics on accounts with
+   prior mid-block creates. This is a hard-fork and must be
+   announced + scheduled, not slipped in as a PR.
+
+4. **Conformance gain is small.** Today the Shanghai gap costs us
+   exactly one conformance fixture (`ethSimulate-blobs.io`).
+   Marking it as a documented Category-E divergence and
+   classifying it `expected_fail` in the conformance runner buys
+   parity-on-paper without any consensus risk.
+
+**Concrete plan** (when the team is ready):
+
+  a. Pre-deploy:
+     - Wire silkworm KZG setup into validator-engine init.
+     - Seed the EIP-4788 beacon-roots contract bytecode at
+       `0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02` (and the
+       per-block update logic that writes the parent root).
+     - Add an explicit `txn.type == kBlob → -32000 "blob
+       transactions not supported"` rejection in
+       `handle_eth_sendRawTransaction`.
+     - Re-run Phase G.2 walker against a Cancun-flag *and* a
+       Shanghai-flag config to confirm no state-root drift.
+
+  b. Hard-fork deploy:
+     - Set `cancun_time = <activation_unix>` (NOT 0 — anchor it
+       to a future timestamp so the fork is deterministic across
+       all replay clients).
+     - Coordinate validator binary rollout so the activation
+       timestamp passes uniformly.
+     - Update the divergence doc + test plan to reflect post-fork
+       state.
+
+  c. Until then: accept `ethSimulate-blobs.io` as a known
+     divergence (BLOBHASH on Shanghai is INVALID; spec succeeds).
 
 This is a deployment-blocking discrepancy that the state-test
 walker can't catch (because the walker controls its own ChainConfig).
 Surfaced manually while reviewing `evm-block-context.cpp` during
-the Phase G.2 expansion.
+the Phase G.2 expansion; re-affirmed during the Agent F audit
+that closed the other two simulateV1 SHAPE_MISMATCHes.
 
 ## Category D — Upstream silkworm known-failing tests
 
