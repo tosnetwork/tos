@@ -106,13 +106,15 @@ COPY --from=build /tos/crypto/fift/lib       /usr/local/share/tos/fift/lib
 COPY --from=build /tos/crypto/smartcont      /usr/local/share/tos/smartcont
 
 # Entrypoint shim and minimal config templates.
-COPY test/conformance/hive/clients/tos/tos.cmd               /usr/local/bin/tos.cmd
-COPY test/conformance/hive/clients/tos/tos-rpc-proxy.py      /usr/local/bin/tos-rpc-proxy.py
-COPY test/conformance/hive/clients/tos/chain-rlp-replay.py   /usr/local/bin/tos-chain-rlp-replay
-COPY test/conformance/hive/clients/tos/translate-genesis.py  /usr/local/bin/tos-translate-genesis
-COPY test/conformance/hive/clients/tos/mapper.jq             /etc/tos/mapper.jq
-COPY test/conformance/hive/clients/tos/genesis.tmpl.json     /etc/tos/genesis.tmpl.json
+COPY test/conformance/hive/clients/tos/tos.cmd                 /usr/local/bin/tos.cmd
+COPY test/conformance/hive/clients/tos/bootstrap-validators.sh /usr/local/bin/tos-bootstrap-validators
+COPY test/conformance/hive/clients/tos/tos-rpc-proxy.py        /usr/local/bin/tos-rpc-proxy.py
+COPY test/conformance/hive/clients/tos/chain-rlp-replay.py     /usr/local/bin/tos-chain-rlp-replay
+COPY test/conformance/hive/clients/tos/translate-genesis.py    /usr/local/bin/tos-translate-genesis
+COPY test/conformance/hive/clients/tos/mapper.jq               /etc/tos/mapper.jq
+COPY test/conformance/hive/clients/tos/genesis.tmpl.json       /etc/tos/genesis.tmpl.json
 RUN chmod +x /usr/local/bin/tos.cmd \
+             /usr/local/bin/tos-bootstrap-validators \
              /usr/local/bin/tos-rpc-proxy.py \
              /usr/local/bin/tos-chain-rlp-replay \
              /usr/local/bin/tos-translate-genesis

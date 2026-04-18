@@ -25,14 +25,14 @@
 #   1. TOS_PROXY_UPSTREAM=<host:port>    — proxy mode: forward 8545 to an
 #                                          upstream TOS RPC.  Used for
 #                                          end-to-end pipeline demos.
-#   2. (default)                          — full validator: build single-node
-#                                          state and run tos-validator-engine.
+#   2. (default)                          — full validator: spin up 4
+#                                          tos-validator-engine processes
+#                                          + 1 DHT inside this container,
+#                                          via tos-bootstrap-validators.
 #
-# The proxy mode lets the Hive simulator drive a real TOS chain without the
-# full single-node bootstrap (which is not yet wired — see README "Gap"
-# table).  When TOS_PROXY_UPSTREAM is unset, the script attempts the full
-# init flow but will exit non-zero if the prerequisites for a single-node
-# chain are absent.
+# The full-validator path is now functional — see bootstrap-validators.sh.
+# It needs ~2 GB of memory headroom (4 × 500 MB) and ~30s of warm-up before
+# the first EVM block is finalised.
 # =============================================================================
 
 set -euo pipefail
@@ -88,8 +88,8 @@ done
 #    (legacy mapper.jq output) AND into a Fift include the new C++ word
 #    `evm-zerostate-from-alloc` consumes. The two paths are kept side-by-side
 #    so the existing proxy-mode code keeps working unchanged while the new
-#    bootstrap path (TOS_BOOTSTRAP_LOCAL=1) has direct access to the alloc
-#    in the form tos-create-state expects.
+#    bootstrap path has direct access to the alloc in the form
+#    tos-create-state expects.
 #
 #    Phase D additions:
 #      - translate-genesis.py writes /tmp/genesis-alloc.fif and /tmp/chain_id.txt
@@ -197,51 +197,58 @@ if [ -n "${TOS_PROXY_UPSTREAM:-}" ]; then
 fi
 
 # -----------------------------------------------------------------------------
-# 3) Full single-node validator path.
-#    NOT YET FUNCTIONAL — the TOS validator currently requires a 4-validator
-#    consensus topology and a pre-built zerostate.  A real init step needs
-#    to: (a) generate validator keys via tos-genkey, (b) build zerostate
-#    via tos-create-state from the mapped genesis, (c) emit tos-global.json
-#    pointing at the local DHT.  See README "Gap" for the engineering
-#    estimate.
+# 3) Full validator path — single-container 4-validator + DHT bootstrap.
 #
-#    For now we still attempt to launch (so the surface is reachable for
-#    debugging), but tag the WARNING clearly.
+# The TOS validator-session asserts validators >= 4 (Agent H confirmed),
+# so we spin up the minimum viable topology inside one container:
+#   - 1 DHT node (loopback, distinct port)
+#   - 4 tos-validator-engine processes, all on 127.0.0.1, distinct ports
+#   - shared zerostate built from $GENESIS_ALLOC_FIF (or built-in 10 EOAs
+#     when no /genesis.json was supplied)
+#   - validator 1's JSON-RPC bound to $RPC_BIND_PORT (= 8545 for hive)
+#
+# All heavy lifting is in bootstrap-validators.sh; this section just sets
+# the right env vars and exec's it. The bootstrap script blocks on the 4
+# validator processes — perfect shape for hive's "stay foreground until
+# killed" contract.
 # -----------------------------------------------------------------------------
-log "MODE: full validator (single-node, EXPERIMENTAL — see README)"
+log "MODE: full validator (4-validator + DHT in single container)"
 
-if [ ! -f "$DATA/config.json" ]; then
-    log "WARNING: $DATA/config.json missing — emitting empty stub."
-    log "         The validator will bind ${RPC_BIND} but will not produce blocks"
-    log "         (no zerostate, no peers, no consensus).  This is a known gap."
-    cat > "$DATA/config.json" <<'JSON'
-{ "@type": "engine.validator.config", "out_port": 0,
-  "addrs": [], "adnl": [], "validators": [],
-  "fullnodeslaves": [], "fullnodemasters": [],
-  "liteservers": [], "control": [], "shards_to_monitor": [],
-  "gc": {"@type": "engine.validator.gc", "ids": []} }
-JSON
+if [ ! -x /usr/local/bin/tos-bootstrap-validators ]; then
+    log "ERROR: tos-bootstrap-validators not installed at /usr/local/bin/tos-bootstrap-validators"
+    log "       (Should be a copy of test/conformance/hive/clients/tos/bootstrap-validators.sh)"
+    exit 1
 fi
 
-if [ ! -f "$DATA/tos-global.json" ]; then
-    log "WARNING: $DATA/tos-global.json missing — copying empty stub"
-    echo '{}' > "$DATA/tos-global.json"
+# Map the hive RPC bind port to RPC_BASE so tos1 lands on the port hive
+# probes (default 8545). The other 3 validators are at +1/+2/+3 (8546-8548)
+# which hive doesn't care about but useful for in-container debugging.
+export RPC_BASE="$RPC_BIND_PORT"
+export PORT_BASE="${TOS_PORT_BASE:-2000}"
+export TOS_EVM_CHAIN_ID="$CHAIN_ID_DEC"
+# Only forward the alloc fif if it actually exists (translate-genesis.py
+# may have failed silently or no /genesis.json was present).
+if [ -s "$GENESIS_ALLOC_FIF" ]; then
+    export GENESIS_ALLOC_FIF
+else
+    unset GENESIS_ALLOC_FIF
 fi
+export DATA
+export FIFT_DIR
+export SMARTCONT_DIR="${TOS_SMARTCONT_DIR:-/usr/local/share/tos/smartcont}"
 
 # Background readiness watcher: poll RPC, log a clear marker once it's up.
 # Once readiness is reached, optionally replay /chain.rlp (the per-test
-# Hive seed file) into our chain via eth_sendRawTransaction so that subsequent
-# rpc-compat fixtures see the same state geth would after importing it.
+# Hive seed file) into our chain via eth_sendRawTransaction so that
+# subsequent rpc-compat fixtures see the same state geth would after
+# importing it.
 #
 # Hive's docs/clients.md says: "the client should import the blocks from
 # /chain.rlp if it is present". We do so in this background task once RPC is
-# alive; we exit non-zero only on hard errors (block production stalls).
-# Bad-signature rejections are common when the chain id doesn't match what
-# the chain.rlp txs were signed with — we set TOS_EVM_CHAIN_ID above so the
-# spec's chain id is honoured at validator startup.
+# alive.
 CHAIN_RLP="${HIVE_CHAIN_RLP_PATH:-/chain.rlp}"
 (
-    for i in $(seq 1 120); do
+    for i in $(seq 1 240); do
         sleep 1
         if curl -fsS -X POST -H 'Content-Type: application/json' \
                 -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
@@ -254,7 +261,8 @@ CHAIN_RLP="${HIVE_CHAIN_RLP_PATH:-/chain.rlp}"
                     --rpc "http://127.0.0.1:${RPC_BIND_PORT}" \
                     --expected-chain-id "$CHAIN_ID_DEC" \
                     --start-block 0 \
-                    --block-wait-secs 30 \
+                    --skip-block-wait \
+                    --skip-block-wait-throttle-ms 500 \
                     || log "WARNING: chain.rlp replay returned non-zero (see above)."
                 log "TOS-VALIDATOR-CHAIN-LOADED"
             elif [ ! -f "$CHAIN_RLP" ]; then
@@ -263,28 +271,8 @@ CHAIN_RLP="${HIVE_CHAIN_RLP_PATH:-/chain.rlp}"
             exit 0
         fi
     done
-    log "TOS-VALIDATOR-NOT-READY (eth_chainId not responsive after 120s)"
+    log "TOS-VALIDATOR-NOT-READY (eth_chainId not responsive after 240s)"
 ) &
 
-log "Starting tos-validator-engine on $RPC_BIND (sync-delay=$SYNC_DELAY, log=$LOGLEVEL, chainId=$CHAIN_ID_DEC)"
-
-# Pass the Hive-requested chain id to the validator via TOS_EVM_CHAIN_ID
-# (consumed by evm_workchain::init_evm_workchain at startup). This must be
-# applied to a FRESH chain — EIP-155 v-recovery and stored receipts both
-# assume a stable chain id, so an override on an existing chain would
-# invalidate every signed transaction in state.
-export TOS_EVM_CHAIN_ID="$CHAIN_ID_DEC"
-
-exec /usr/local/bin/tos-validator-engine \
-    -C "$DATA/tos-global.json" \
-    -c "$DATA/config.json" \
-    -D "$DATA" \
-    -f "$FIFT_DIR" \
-    -l "$DATA/log" \
-    -t 4 \
-    -v "$LOGLEVEL" \
-    --initial-sync-delay "$SYNC_DELAY" \
-    --session-logs "$DATA/session-logs" \
-    --quic-flood-control -1 \
-    --json-rpc-address "$RPC_BIND" \
-    --json-rpc-cors-origin "*"
+log "Starting 4-validator + DHT bootstrap (rpc-base=$RPC_BASE, chainId=$CHAIN_ID_DEC, alloc=${GENESIS_ALLOC_FIF:-builtin})"
+exec /usr/local/bin/tos-bootstrap-validators

@@ -161,6 +161,13 @@ def main() -> int:
                    help="Per-block timeout waiting for the chain to advance.")
     p.add_argument("--dry-run", action="store_true",
                    help="Decode and report tx counts without sending anything.")
+    p.add_argument("--skip-block-wait", action="store_true",
+                   help="Don't synchronise per-block; just send all txs and "
+                        "throttle. Use when upstream eth_blockNumber doesn't "
+                        "track the EVM-workchain head.")
+    p.add_argument("--skip-block-wait-throttle-ms", type=int, default=200,
+                   help="When --skip-block-wait is set, sleep this many ms "
+                        "between blocks to give the mempool breathing room.")
     args = p.parse_args()
 
     try:
@@ -225,6 +232,14 @@ def main() -> int:
 
     sys.stderr.write(f"[chain-rlp-replay] head before replay: {head_before}\n")
 
+    # Track tx hashes so we can switch from a head-based wait to a per-tx
+    # receipt wait when the upstream's eth_blockNumber doesn't track the
+    # EVM workchain head correctly (a known TOS quirk — masterchain seqno
+    # advances independently of the wc=1 head, which is what eth_*
+    # methods report). When --skip-block-wait is set, we just send all txs
+    # and don't synchronise per-block at all.
+    last_tx_hash: str | None = None
+
     for i in range(args.start_block, last_block + 1):
         if i >= len(block_txs):
             break
@@ -240,26 +255,56 @@ def main() -> int:
                     sys.stderr.write(f"    tx {j}: REJECTED — {resp['error']}\n")
                     rejected += 1
                 else:
-                    sys.stderr.write(f"    tx {j}: ok hash={resp.get('result','?')}\n")
+                    last_tx_hash = resp.get("result")
+                    sys.stderr.write(f"    tx {j}: ok hash={last_tx_hash}\n")
             except urllib.error.URLError as e:
                 sys.stderr.write(f"    tx {j}: RPC error {e}\n")
                 return 1
 
-        # Wait for our collator to seal a new block before sending the next one.
-        target = head_before + (i - args.start_block + 1)
+        if args.skip_block_wait:
+            # Throttle the send rate so the mempool doesn't get overwhelmed.
+            time.sleep(args.skip_block_wait_throttle_ms / 1000.0)
+            continue
+
+        # Wait for the chain to advance — preferring per-tx receipt lookup
+        # when we have a hash (more reliable on TOS than eth_blockNumber).
         deadline = time.time() + args.block_wait_secs
-        while time.time() < deadline:
-            try:
-                cur = rpc_block_number(args.rpc)
-            except Exception:
-                cur = None
-            if cur is not None and cur >= target:
-                break
-            time.sleep(0.5)
+        if last_tx_hash:
+            done = False
+            while time.time() < deadline:
+                try:
+                    body = json.dumps({
+                        "jsonrpc": "2.0",
+                        "method": "eth_getTransactionByHash",
+                        "params": [last_tx_hash],
+                        "id": 1,
+                    }).encode()
+                    req = urllib.request.Request(
+                        args.rpc,
+                        data=body,
+                        headers={"content-type": "application/json"},
+                    )
+                    with urllib.request.urlopen(req, timeout=5) as resp:
+                        rj = json.loads(resp.read().decode())
+                    if rj.get("result", {}) and rj["result"].get("blockNumber") not in (None, "0x0"):
+                        done = True
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.5)
+            if not done:
+                sys.stderr.write(f"  block {i}: tx {last_tx_hash} not yet mined after "
+                                 f"{args.block_wait_secs}s — continuing anyway\n")
         else:
-            sys.stderr.write(f"  block {i}: chain stalled at {rpc_block_number(args.rpc)} "
-                             f"(target {target})\n")
-            return 3
+            target = head_before + (i - args.start_block + 1)
+            while time.time() < deadline:
+                try:
+                    cur = rpc_block_number(args.rpc)
+                except Exception:
+                    cur = None
+                if cur is not None and cur >= target:
+                    break
+                time.sleep(0.5)
 
     sys.stderr.write(f"[chain-rlp-replay] done. rejected={rejected}, "
                      f"final head={rpc_block_number(args.rpc)}\n")

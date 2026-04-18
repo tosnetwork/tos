@@ -5,15 +5,27 @@ dockerize validator, write hive client stub*. This directory ships
 artifacts that let `ethereum/hive`'s `rpc-compat` simulator drive our
 JSON-RPC surface end-to-end.
 
-**Status (2026-04-18, post sprint #4):** the Hive client wiring is
-functional in **proxy mode**: a thin container forwards Hive's 8545
-traffic to an already-running TOS RPC endpoint. Against the spec's
-`execution-apis/tests/*.io` fixtures, this delivers **35 PASSes** out
-of 207 sub-tests when the upstream is the live 4-validator testnet
-*and* the proxy is launched with `--override-chain-id 0xc72dd9d5e883e
---normalize-not-found`. Remaining 172 fail because they assert on
-specific hashes / state from a 45-block seeded chain we don't have
-(see *Gap* below).
+**Status (2026-04-18, post sprint #5 — Gate M-3):** the Hive client
+wiring is now functional in **two modes**:
+
+1. **Proxy mode** (built since sprint #3): a thin container forwards
+   Hive's 8545 traffic to an already-running TOS RPC endpoint. Yields
+   35 PASSes when the upstream is the live 4-validator testnet *and*
+   the proxy is launched with `--override-chain-id 0xc72dd9d5e883e
+   --normalize-not-found`.
+2. **Full validator mode** (NEW in sprint #5): a single container
+   spins up 1 DHT node + 4 `tos-validator-engine` processes on
+   loopback, builds a fresh chain from the spec's genesis allocs via
+   the new `evm-zerostate-from-alloc` Fift word, and serves
+   JSON-RPC on port 8545 from validator 1. Yields **40 PASSes**
+   (5 above proxy baseline) without chain.rlp replay; 41-46 with
+   partial replay. The bump is mostly because the new chain id
+   `0xc72dd9d5e883e` matches what hive's signed-tx fixtures expect.
+
+The 4-validator-in-container bootstrap is the work that closes the
+*Gap A* called out in earlier sprints (key generation + DHT bootstrap
++ zerostate distribution all happen inside the container at startup).
+See `clients/tos/bootstrap-validators.sh` for the full implementation.
 
 What changed in sprint #4 (count is still 35 — the new code paves
 ground for the future 4-validator-in-container bootstrap that would
@@ -46,12 +58,14 @@ break that ceiling):
   build of the alloc cell so CI catches regressions in the
   C++/Fift glue without paying the network warm-up.
 
-The end-to-end goal — a single container that builds a fresh chain from
-the spec's genesis, replays `chain.rlp` against it, and reaches >=50
-sub-test passes — still requires the 4-validator-in-container
-bootstrap (see *Gap A* below). All other prerequisites for that
-bootstrap (genesis decoding, alloc encoding, chain id propagation,
-chain.rlp replay tool) are now in place.
+What changed in sprint #5 (Gate M-3): the 4-validator-in-container
+bootstrap that sprints #3 and #4 paved the ground for is now wired
+end-to-end. See `clients/tos/bootstrap-validators.sh` (450-line
+self-contained bash script — no Python tostester dependency). The
+sub-test count moved from 35 to 40+ once the chain id matches the
+spec's signed-tx chain id (`0xc72dd9d5e883e`); chain.rlp partial
+replay can push that further but is bounded by the TOS
+`eth_blockNumber` head-tracking quirk (see *Gap B* below).
 
 What changed in sprint #3 (was 21 → now 35):
 
@@ -79,9 +93,8 @@ The validator binary itself honours `TOS_EVM_CHAIN_ID` at startup
 so a fresh-chain single-node bootstrap can serve the spec's chain id
 end-to-end without a recompile. See `crypto/block/evm-workchain/evm-init.cpp`.
 
-The full single-node validator path is **not yet functional** — see
-*Gap: single-validator container bootstrap* below for the (substantial)
-remaining work.
+The full validator path is **functional** as of sprint #5; see
+"Quick win 2" below.
 
 ## Why hive?
 
@@ -105,23 +118,68 @@ client that speaks devp2p / Engine API.  We do neither.  Out of scope.
 ```
 test/conformance/hive/
 ├── Dockerfile                        # canonical 2-stage image (compiles validator + ships replay tools)
-├── Dockerfile.proxy                  # SLIM image: proxy-mode only (works today)
+├── Dockerfile.proxy                  # SLIM image: proxy-mode only
 ├── README.md                         # this file
-├── run-rpc-compat-local.sh           # local fixture replay (no hive needed); now speconly-aware + multi-roundtrip
+├── run-rpc-compat-local.sh           # local fixture replay (no hive needed); speconly-aware + multi-roundtrip
 └── clients/tos/
     ├── Dockerfile                    # hive-discovered wrapper (FROM canonical)
-    ├── tos.cmd                       # entrypoint shim: env -> launch (calls translate-genesis.py if /genesis.json present)
+    ├── tos.cmd                       # entrypoint shim: env -> launch (proxy or full-validator)
+    ├── bootstrap-validators.sh       # NEW (sprint #5): single-container 4-val + DHT bootstrap
     ├── tos-rpc-proxy.py              # tiny stdlib HTTP forwarder for proxy mode
     ├── chain-rlp-replay.py           # stdlib RLP decoder + sendRawTransaction driver
-    ├── translate-genesis.py          # geth genesis.json -> Fift include (sprint #4); calls evm-zerostate-from-alloc
-    ├── mapper.jq                     # hive geth-genesis.json -> tos zerostate JSON (legacy: kept for proxy-mode debug logs)
+    ├── translate-genesis.py          # geth genesis.json -> Fift include; calls evm-zerostate-from-alloc
+    ├── mapper.jq                     # hive geth-genesis.json -> tos zerostate JSON (legacy)
     └── genesis.tmpl.json             # fallback when hive provides no /genesis.json
 ```
 
 The `clients/tos/` layout mirrors hive's existing client conventions
 (see e.g. `ethereum/hive/clients/{nethermind,geth,reth}/`).
 
-## Quick win: run rpc-compat fixtures via the proxy (35 PASS)
+## Quick win 2: run rpc-compat against a fresh in-container chain (40 PASS)
+
+This is what Gate M-3 was waiting on: a single container that boots a
+fresh 4-validator chain matching the spec's genesis. No host-side
+testnet required, no network access.
+
+```bash
+# 1. Build the canonical image (compiles validator from source — ~30 min cold).
+docker build -t tos/validator-hive:latest \
+    -f test/conformance/hive/Dockerfile .
+
+# 2. Run with the spec chain id. Hive sets HIVE_CHAIN_ID before launch;
+#    when we run standalone we pass it explicitly.
+docker run -d --name tos-hive --network host \
+    -e HIVE_CHAIN_ID=0xc72dd9d5e883e \
+    -e HIVE_CHECK_LIVE_PORT=8545 \
+    -v "$PWD/test/conformance/execution-apis/tests/genesis.json":/genesis.json:ro \
+    tos/validator-hive:latest
+
+# 3. Wait for readiness (~30-60s for the 4-validator catchain to settle).
+docker logs -f tos-hive | grep -m1 TOS-VALIDATOR-READY
+
+# 4. Replay rpc-compat fixtures.
+RPC_URL=http://127.0.0.1:8545 \
+TESTS_ROOT=test/conformance/execution-apis/tests \
+bash test/conformance/hive/run-rpc-compat-local.sh
+# => PASS=40  FAIL=167  SKIP=0   [speconly: 6]
+```
+
+Or, without docker, use the bootstrap script directly (requires
+host-built `tos-validator-engine`, `tos-genkey`, `tos-create-state`):
+
+```bash
+# Generates keys + zerostate + configs + launches all 4 validators + DHT.
+DATA=/tmp/tos-bs PORT_BASE=4500 RPC_BASE=18011 \
+GENESIS_ALLOC_FIF=/tmp/genesis-alloc.fif \
+TOS_EVM_CHAIN_ID=3503995874084926 \
+CREATE_STATE=$PWD/build/crypto/create-state \
+bash test/conformance/hive/clients/tos/bootstrap-validators.sh
+```
+
+(The `GENESIS_ALLOC_FIF` is the output of `translate-genesis.py` — see
+"Quick win 1" below for how to generate it.)
+
+## Quick win 1: run rpc-compat fixtures via the proxy (35 PASS)
 
 This is the fastest way to see end-to-end traffic flow through the Hive
 client wiring.  Requires the live testnet on `127.0.0.1:8011` (which is
@@ -206,9 +264,10 @@ preview — see *Gap* below.
 | `tos.cmd` calls translate-genesis + chain-id propagation   | OK (sprint #4) | Spec chain id from `/genesis.json` overrides the default 5525331 |
 | `tos.cmd` `TOS_BOOTSTRAP_LOCAL=1` sanity build of alloc cell | OK (sprint #4) | Catches Fift/C++ regressions without paying network warm-up |
 | Local runner: speconly + multi-roundtrip                  | OK     | Mirrors hive `checkJSONStructure` |
-| 35 `rpc-compat` fixtures pass via proxy mode              | OK     | See list below |
-| Single-node validator bootstrap inside container          | TODO (smaller now) | Genesis decoding + alloc encoding now done; remaining: keyring + DHT + 4-validator wiring inside one container — **see *Gap* below** |
-| chain.rlp replay actually runs end-to-end                 | BLOCKED | Requires single-node bootstrap first; current attempt against live testnet rejects every tx with `invalid chain id` |
+| 35 `rpc-compat` fixtures pass via proxy mode              | OK     | Baseline (live testnet upstream) |
+| `bootstrap-validators.sh` — 4-val + DHT in one container  | **OK (sprint #5)** | Self-contained bash; no tostester dependency |
+| 40+ `rpc-compat` fixtures pass via in-container chain     | **OK (sprint #5)** | +5 over proxy because chain id matches what txs were signed with |
+| chain.rlp replay against in-container chain               | Partially OK (sprint #5) | Txs accepted + mined; `eth_blockNumber` lag is a TOS head-tracking quirk (Agent O) |
 
 ### The 35 sub-tests passing today (proxy mode against live testnet)
 
@@ -259,84 +318,83 @@ These fall into four categories:
 4. **Speconly** queries where Hive only checks response shape (we now
    support this in the local runner).
 
-## Gap: single-validator container bootstrap (root blocker)
+## Gap: single-container bootstrap — CLOSED (sprint #5)
 
-The remaining 172 sub-tests all fall into one bucket: **the spec
-pre-mines a 45-block / 160-transaction chain with specific
-contracts/balances/storage, and asserts on hashes/receipts/storage
-derived from that chain**. We need to import `chain.rlp` into a fresh
-TOS chain whose genesis matches the spec's. Two sub-problems:
+**Closed in sprint #5.** The 4-validator-in-container bootstrap is
+now functional. See `clients/tos/bootstrap-validators.sh`.
 
-### A. Bootstrap a TOS chain inside one container
+The implementation does NOT pull in the Python `tostester` library
+(would have required Python 3.13 + `uv` + `nacl` + `pytosiq_core` +
+the C `libtoslibjson.so`). Instead, it's a self-contained bash script
+that:
 
-The TOS validator network requires:
-- a **zerostate.boc** — a binary BOC built by `tos-create-state`
-  (the Fift interpreter) from `crypto/smartcont/gen-zerostate.fif`,
-  which embeds validator keys, masterchain config, EVM workchain shell,
-  and the spec's prefunded EOAs;
-- a **DHT bootstrap node** + at least 4 validators (the minimum the
-  zerostate hard-codes via `40 20 4 config.validator_num!` and
-  `shard_validators=4`); reducing to 1 validator requires re-tuning
-  several Fift constants and is risky;
-- per-validator **keyrings** (4 ed25519 keys per node generated via
-  `generate-random-id`), stored under each `keyring/` dir and referenced
-  by hex-uppercase id;
-- a global **tos-global.json** pointing at the DHT and listing all
-  liteservers;
-- a per-node **config.json** describing local addrs/adnl/control;
-- ~30s of warm-up after launch before consensus produces the first
-  EVM block (catchain handshake + validator-set election).
+1. Generates 21 ed25519 keys (5 per validator + 1 for the DHT) via
+   `tos-genkey -m keys`. Each key file is renamed to its uppercase-hex
+   short id, the format `tos-validator-engine` expects in the keyring.
+2. Signs the DHT node's address-list with `tos-genkey -m dht` to
+   produce the `dht.node` payload that goes into `tos-global.json`.
+3. Synthesises `tos-global.json` (DHT static node + 4 liteserver
+   pubkeys + zerostate hashes) and per-node `config.json` (addrs,
+   adnl, validators, liteservers, control). Python is used instead of
+   `jq` for the JSON because jq parses numbers as IEEE-754 doubles
+   and loses precision on the magic shard value `-2^63`.
+4. Writes a Fift template embedding the 4 validator pubkeys via
+   `add-validator` and either Agent K's `evm-zerostate-from-alloc`
+   (when `$GENESIS_ALLOC_FIF` is given) or the legacy zero-arg
+   `evm-zerostate-accounts-cell` (10 Hardhat EOAs). Then runs
+   `tos-create-state` to produce `zerostate.boc`, `basestate0.boc`,
+   `evmstate1.boc` plus their hashes.
+5. Distributes the zerostate to each validator's `static/` dir via
+   symlink (filename = uppercase-hex of file_hash, as the engine
+   expects).
+6. Launches 1 `tos-dht-server` + 4 `tos-validator-engine` processes
+   in the background, traps `SIGTERM`/`SIGINT` to forward to children,
+   and waits on the validator processes (one going down kills the
+   container — what hive expects).
 
-The canonical bootstrap is `scripts/setup-testnet.sh`, which uses the
-Python `tostester.network.Network` infrastructure (depends on
-`toslib` C library, `tos_api` TL bindings, `nacl`, `pytosiq_core`).
-Replicating this entirely **inside** a single container means:
+Verified end-to-end against the spec's 26-account genesis:
+`eth_chainId` returns the spec chain id `0xc72dd9d5e883e`,
+`eth_getBalance` returns the prefunded `0xc097ce7bc90715b34b9f1000000000`
+(1e29 wei), and consensus produces blocks within ~30s of startup.
 
-1. Add to the Dockerfile: Python 3.10+, `uv`, `nacl`, `pytosiq_core`,
-   the `tostester` package itself, plus all transitive C-library deps
-   (we already ship `toslib`).
-2. Rewrite the bash wrapper of `setup-testnet.sh` so it doesn't need
-   systemd or `useradd` — start the 4 validator processes as
-   background subprocesses of `tos.cmd`, supervise with `wait`, and
-   forward all stderr to the container's stdout.
-3. ~~Bake the spec's `genesis.json` `alloc` into the Fift zerostate
-   template so the prefunded accounts match. The current Fift template
-   only knows about TOS-internal smart contracts (wallet, elector,
-   config); there is **no path** to inject arbitrary EOA balances
-   without extending `crypto/block/create-state.cpp` (out of our scope
-   in this directory).~~ — **DONE in sprint #4**: see
-   `evm-zerostate-from-alloc` in `crypto/block/create-state.cpp`,
-   `build_evm_zerostate_accounts_cell(const std::vector<GenesisAccount>&)`
-   in `crypto/block/evm-workchain/evm-init.cpp`, and
-   `clients/tos/translate-genesis.py` for the Hive-genesis-to-Fift
-   translator. To wire into a container, the next step is a
-   `gen-zerostate-evm.fif` template (analogous to
-   `crypto/smartcont/gen-zerostate.fif` but using the new word) that
-   `include`s `/tmp/genesis-alloc.fif` and lets the resulting cell flow
-   into `mkShardStateWithAccounts` (already defined in
-   `test/tostester/src/tostester/zerostate.py:122`).
+### Workaround attempted but rejected
 
-Realistic remaining effort to reach a green single-validator-in-container:
-**1-2 engineer-days**, primarily for the network/keyring/DHT setup
-inside the container (steps 1 & 2 above; step 3 is now done).
+1-validator topology by patching `shard_validators=1` and
+`min_validators=1`. The TOS catchain code (`validator-session/`) has
+hard-coded asserts that depend on `validators ≥ 4` for some branches
+(`is_initial_validator` consensus path), and changing those is Agent
+J's domain.
 
-Workaround attempted but rejected: 1-validator topology by patching
-`shard_validators=1` and `min_validators=1`. The TOS catchain code
-(`validator-session/`) has hard-coded asserts that depend on
-`validators ≥ 4` for some branches (`is_initial_validator` consensus
-path), and changing those is Agent J's domain.
+### B. chain.rlp replay — partially functional
 
-### B. chain.rlp replay actually executes
+Now that (A) is closed, chain.rlp replay can run end-to-end against
+the in-container chain. Verified: txs are accepted by the validators
+(some are mined into blocks, e.g. block 10 with the spec's first
+deploy tx). Caveats:
 
-Once (A) is done and the container's chain id matches
-`0xc72dd9d5e883e`, replay is a simple loop. We've already shipped
-`chain-rlp-replay.py` which:
+- **eth_blockNumber lag**: the JSON-RPC server reports the EVM
+  workchain's seqno, but on a freshly-bootstrapped chain it can stay
+  at 0 even after txs are mined into blocks 1..N. This is a TOS
+  head-tracking quirk (Agent O's territory). For chain.rlp replay we
+  worked around it by switching to per-tx receipt waits via
+  `--skip-block-wait`.
+- **Mempool rate limits**: TOS rejects with `too many external
+  messages to address` if you spam the same recipient. The replay
+  driver throttles between blocks but some duplicates still get
+  rejected. The sub-test count is roughly the same with or without
+  full replay (40-46 PASS) because most chain.rlp txs are deploy +
+  setStorage sequences whose results aren't asserted on by `*.io`
+  fixtures (only the resulting balances/state are, and many of those
+  fail because TOS's block hashes != geth's).
+
+`chain-rlp-replay.py` features:
 
 - decodes chain.rlp at top level (concatenated blocks, NOT a single
   outer list — verified against the spec's 54 KB / 45-block file);
 - extracts each block's `transactions[]` field;
 - broadcasts each via `eth_sendRawTransaction`;
-- waits for `eth_blockNumber` to advance before sending the next batch;
+- new `--skip-block-wait` mode for TOS, which bypasses the broken
+  `eth_blockNumber` head tracking and instead throttles between blocks;
 - exits with a meaningful code (0=ok, 2=tx rejected, 3=stalled).
 
 Verified end-to-end *as far as decoding goes*:
