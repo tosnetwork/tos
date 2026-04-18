@@ -700,12 +700,15 @@ inline constexpr uint16_t bls_msm_discount(size_t k) noexcept {
 // 0x0b — BLS12_G1ADD
 uint64_t bls_g1add_gas(ByteView, evmc_revision) noexcept { return 375; }
 std::optional<Bytes> bls_g1add_run(ByteView input_view) noexcept {
-    Bytes input{input_view};
-    right_pad(input, 256);
+    // EIP-2537: input is exactly 256 bytes (2 G1 points × 128 B). Any other
+    // length is an error, not right-padded with zeros.
+    if (input_view.size() != 256) {
+        return std::nullopt;
+    }
     uint8_t rx[64], ry[64];
     if (!evmone::crypto::bls::g1_add(rx, ry,
-            input.data(),       input.data() + 64,
-            input.data() + 128, input.data() + 192)) {
+            input_view.data(),       input_view.data() + 64,
+            input_view.data() + 128, input_view.data() + 192)) {
         return std::nullopt;
     }
     Bytes out(128, 0);
@@ -742,12 +745,14 @@ std::optional<Bytes> bls_g1msm_run(ByteView input_view) noexcept {
 // 0x0d — BLS12_G2ADD
 uint64_t bls_g2add_gas(ByteView, evmc_revision) noexcept { return 600; }
 std::optional<Bytes> bls_g2add_run(ByteView input_view) noexcept {
-    Bytes input{input_view};
-    right_pad(input, 512);
+    // EIP-2537: input is exactly 512 bytes (2 G2 points × 256 B).
+    if (input_view.size() != 512) {
+        return std::nullopt;
+    }
     uint8_t rx[128], ry[128];
     if (!evmone::crypto::bls::g2_add(rx, ry,
-            input.data(),       input.data() + 128,
-            input.data() + 256, input.data() + 384)) {
+            input_view.data(),       input_view.data() + 128,
+            input_view.data() + 256, input_view.data() + 384)) {
         return std::nullopt;
     }
     Bytes out(256, 0);
@@ -806,10 +811,12 @@ std::optional<Bytes> bls_pairing_run(ByteView input_view) noexcept {
 // 0x10 — BLS12_MAP_FP_TO_G1
 uint64_t bls_map_fp_to_g1_gas(ByteView, evmc_revision) noexcept { return 5500; }
 std::optional<Bytes> bls_map_fp_to_g1_run(ByteView input_view) noexcept {
-    Bytes input{input_view};
-    right_pad(input, 64);
+    // EIP-2537: input is exactly 64 bytes (one Fp field element).
+    if (input_view.size() != 64) {
+        return std::nullopt;
+    }
     uint8_t rx[64], ry[64];
-    if (!evmone::crypto::bls::map_fp_to_g1(rx, ry, input.data())) {
+    if (!evmone::crypto::bls::map_fp_to_g1(rx, ry, input_view.data())) {
         return std::nullopt;
     }
     Bytes out(128, 0);
@@ -821,10 +828,12 @@ std::optional<Bytes> bls_map_fp_to_g1_run(ByteView input_view) noexcept {
 // 0x11 — BLS12_MAP_FP2_TO_G2
 uint64_t bls_map_fp2_to_g2_gas(ByteView, evmc_revision) noexcept { return 23800; }
 std::optional<Bytes> bls_map_fp2_to_g2_run(ByteView input_view) noexcept {
-    Bytes input{input_view};
-    right_pad(input, 128);
+    // EIP-2537: input is exactly 128 bytes (one Fp2 element = 2 × Fp).
+    if (input_view.size() != 128) {
+        return std::nullopt;
+    }
     uint8_t rx[128], ry[128];
-    if (!evmone::crypto::bls::map_fp2_to_g2(rx, ry, input.data())) {
+    if (!evmone::crypto::bls::map_fp2_to_g2(rx, ry, input_view.data())) {
         return std::nullopt;
     }
     Bytes out(256, 0);
