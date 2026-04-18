@@ -120,8 +120,12 @@ static intx::uint256 mult_complexity_eip2565(const intx::uint256& max_length) no
 }
 
 #ifndef SILKWORM_NO_LIBFF
+// EIP-7823 (Fusaka): per-parameter input length cap (8192 bytes).
+constexpr uint64_t kModexpMaxInputLen = 8192;
+
 uint64_t expmod_gas(ByteView input_view, evmc_revision rev) noexcept {
-    const uint64_t min_gas{rev < EVMC_BERLIN ? 0 : 200u};
+    // EIP-7883 (Fusaka) raises the minimum from 200 to 500.
+    const uint64_t min_gas{rev < EVMC_BERLIN ? 0 : (rev >= EVMC_OSAKA ? 500u : 200u)};
 
     Bytes input{input_view};
     right_pad(input, 3 * 32);
@@ -137,6 +141,13 @@ uint64_t expmod_gas(ByteView input_view, evmc_revision rev) noexcept {
     if (intx::count_significant_words(base_len256) > 1 || intx::count_significant_words(exp_len256) > 1 ||
         intx::count_significant_words(mod_len256) > 1) {
         return UINT64_MAX;
+    }
+
+    // EIP-7823 hard cap on each length parameter.
+    if (rev >= EVMC_OSAKA) {
+        if (base_len256 > kModexpMaxInputLen || exp_len256 > kModexpMaxInputLen || mod_len256 > kModexpMaxInputLen) {
+            return UINT64_MAX;
+        }
     }
 
     uint64_t base_len64{static_cast<uint64_t>(base_len256)};
@@ -156,9 +167,12 @@ uint64_t expmod_gas(ByteView input_view, evmc_revision rev) noexcept {
     }
     unsigned bit_len{256 - clz(exp_head)};
 
+    // EIP-7883 changes the iteration_count (a.k.a. adjusted_exponent_len)
+    // formula for long exponents from 8*(exp_len-32) to 16*(exp_len-32).
     intx::uint256 adjusted_exponent_len{0};
     if (exp_len256 > 32) {
-        adjusted_exponent_len = 8 * (exp_len256 - 32);
+        const intx::uint256 mult{rev >= EVMC_OSAKA ? intx::uint256{16} : intx::uint256{8}};
+        adjusted_exponent_len = mult * (exp_len256 - 32);
     }
     if (bit_len > 1) {
         adjusted_exponent_len += bit_len - 1;
@@ -173,6 +187,17 @@ uint64_t expmod_gas(ByteView input_view, evmc_revision rev) noexcept {
     intx::uint256 gas;
     if (rev < EVMC_BERLIN) {
         gas = mult_complexity_eip198(max_length) * adjusted_exponent_len / 20;
+    } else if (rev >= EVMC_OSAKA) {
+        // EIP-7883 multiplication_complexity:
+        //   max_length <= 32  →  16
+        //   max_length  > 32  →  2 * words²
+        intx::uint256 mc;
+        if (max_length <= 32) {
+            mc = 16;
+        } else {
+            mc = 2 * mult_complexity_eip2565(max_length);
+        }
+        gas = mc * adjusted_exponent_len / 3;
     } else {
         gas = mult_complexity_eip2565(max_length) * adjusted_exponent_len / 3;
     }

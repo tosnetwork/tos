@@ -104,6 +104,9 @@ enum class [[nodiscard]] ValidationResult {
     // EIP-7702 Set EOA account code
     kIncorrectAuthorization,
 
+    // EIP-7825 (Fusaka): tx gas limit > 2^24 = 16,777,216
+    kTxGasLimitExceeded,
+
     // Bor validation errors. See https://github.com/erigontech/erigon/blob/main/consensus/bor/bor.go
     kMissingVanity,          // Block's extra-data section is shorter than 32 bytes, which is required to store the signer vanity
     kMissingSignature,       // Block's extra-data section doesn't seem to contain a 65 byte secp256k1 signature

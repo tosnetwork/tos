@@ -215,6 +215,14 @@ ValidationResult pre_validate_common_forks(const Transaction& txn, const evmc_re
             return ValidationResult::kFloorCost;
         }
     }
+
+    if (rev >= EVMC_OSAKA) {
+        // EIP-7825: per-tx gas limit cap (2^24 = 16,777,216).
+        constexpr uint64_t kTxGasLimitCap = 1ull << 24;
+        if (txn.gas_limit > kTxGasLimitCap) {
+            return ValidationResult::kTxGasLimitExceeded;
+        }
+    }
     return ValidationResult::kOk;
 }
 
