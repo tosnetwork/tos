@@ -18,9 +18,11 @@
 #include <ethash/keccak.hpp>
 #include "vm/cells/CellBuilder.h"
 
+#include <silkworm/core/common/empty_hashes.hpp>
 #include <silkworm/core/execution/evm.hpp>
 #include <silkworm/core/protocol/param.hpp>
 #include <silkworm/core/state/intra_block_state.hpp>
+#include <silkworm/core/types/block.hpp>
 #include <silkworm/core/types/transaction.hpp>
 
 #include <atomic>
@@ -285,16 +287,7 @@ bool run_evm_compute_phase(
         auto parent_num = block_seqno > 0 ? block_seqno - 1 : 0;
         stored_block.parent_hash = state.get_block_hash(parent_num);
 
-        uint8_t hash_input[32 + 32 + 8];
-        auto bn_be = intx::be::store<evmc::uint256be>(intx::uint256{block_seqno});
-        std::memcpy(hash_input, bn_be.bytes, 32);
-        std::memcpy(hash_input + 32, stored_block.parent_hash.bytes, 32);
-        uint64_t ts_be = __builtin_bswap64(timestamp);
-        std::memcpy(hash_input + 64, &ts_be, 8);
-        auto h = ethash::keccak256(hash_input, sizeof(hash_input));
-        std::memcpy(stored_block.hash.bytes, h.bytes, 32);
-
-        // Logs bloom
+        // Logs bloom — computed BEFORE hash so the hash binds it.
         {
             uint8_t bloom[256] = {};
             for (const auto& log : exec_result.logs) {
@@ -318,6 +311,66 @@ bool run_evm_compute_phase(
             stored_block.transaction_hashes, state);
         stored_block.receipts_root = compute_receipts_root(
             stored_block.transaction_hashes, state);
+
+        // Phase G.6 (block-hash canonicalisation):
+        //
+        // Build a silkworm::BlockHeader with all 17+ Ethereum fields and use
+        // its `.hash()` method, which RLP-encodes the header and returns
+        // keccak256(rlp). This is the canonical Ethereum block hash.
+        //
+        // The previous implementation only hashed (number | parent_hash |
+        // timestamp) — a 72-byte truncated keccak that did NOT bind state_root,
+        // receipts_root, gas_used, or any execution result. Two blocks with
+        // identical (number, parent, timestamp) but different state changes
+        // would have produced identical hashes, breaking light-client proofs
+        // and any indexer/explorer that expects hash-binds-content.
+        //
+        // Why this is safe to swap on a live chain: TOS consensus does NOT
+        // depend on this Ethereum-shaped block hash. The TOS shard hash
+        // (cell-tree hash via cp.new_data → ShardAccounts → state_hash) is
+        // what BFT validators agree on. The Ethereum block hash here is an
+        // RPC-facing field only. After this commit, validators with the new
+        // binary all compute the same canonical hash → no fork.
+        //
+        // Field choices for TOS-specific values:
+        //  - beneficiary (miner) = zero address. TOS has a BFT committee, no
+        //    single proposer. We don't credit fees to a specific validator.
+        //  - prev_randao (mixHash) = zero. TOS doesn't have a beacon RANDAO.
+        //  - extra_data = "evm-workchain/0.1.0" (matches web3_clientVersion).
+        //  - parent_beacon_block_root = zero. We don't have a beacon chain.
+        //  - ommers_hash = kEmptyListHash (post-merge canonical).
+        //  - withdrawals_root = kEmptyRoot. We don't process withdrawals.
+        //  - blob_gas_used / excess_blob_gas = 0 (Cancun pre-fork).
+        //  - requests_hash = sha256(empty) (Prague EIP-7685 default — but
+        //    silkworm requires this only when at Prague; we leave nullopt
+        //    until Prague activation).
+        {
+            silkworm::BlockHeader hdr{};
+            std::memcpy(hdr.parent_hash.bytes, stored_block.parent_hash.bytes, 32);
+            hdr.ommers_hash = silkworm::kEmptyListHash;
+            // beneficiary stays default (zero) — no single miner in TOS.
+            std::memcpy(hdr.state_root.bytes, stored_block.state_root.bytes, 32);
+            std::memcpy(hdr.transactions_root.bytes, stored_block.transactions_root.bytes, 32);
+            std::memcpy(hdr.receipts_root.bytes, stored_block.receipts_root.bytes, 32);
+            std::memcpy(hdr.logs_bloom.data(), stored_block.logs_bloom, 256);
+            hdr.difficulty = 0;  // post-merge
+            hdr.number = block_seqno;
+            hdr.gas_limit = stored_block.gas_limit;
+            hdr.gas_used = stored_block.gas_used;
+            hdr.timestamp = timestamp;
+            const std::string client_id = "evm-workchain/0.1.0";
+            hdr.extra_data.assign(client_id.begin(), client_id.end());
+            // prev_randao stays default (zero) — no beacon RANDAO in TOS.
+            // nonce stays default (zero) — post-merge.
+            hdr.base_fee_per_gas = stored_block.base_fee_per_gas;
+            hdr.withdrawals_root = silkworm::kEmptyRoot;  // Shanghai+
+            // Cancun fields (blob_gas_used, excess_blob_gas, parent_beacon_block_root)
+            // remain nullopt until cancun_time = 0 flips. silkworm's RLP encoder
+            // includes them only when present — the absence on Shanghai-era
+            // blocks matches the pre-Cancun canonical shape.
+            const auto eth_hash = hdr.hash();
+            std::memcpy(stored_block.hash.bytes, eth_hash.bytes, 32);
+        }
 
         state.store_block(stored_block);
 

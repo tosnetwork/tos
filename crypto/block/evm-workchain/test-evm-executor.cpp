@@ -46,6 +46,7 @@
 #include <silkworm/core/common/empty_hashes.hpp>
 #include "vm/cells/CellBuilder.h"
 
+#include <silkworm/core/types/block.hpp>
 #include <silkworm/core/types/transaction.hpp>
 #include <silkworm/core/types/address.hpp>
 #include <silkworm/core/rlp/encode.hpp>
@@ -4619,6 +4620,116 @@ static void test_eip4788_predeploy_seeded() {
     printf("  %s\n\n", all_ok ? "PASSED" : "FAILED");
 }
 
+// =============================================================================
+// Phase G.6 — block hash binds content (silkworm canonical RLP)
+// =============================================================================
+//
+// The pre-G.6 implementation hashed only (block_number | parent_hash | timestamp)
+// — a 72-byte truncated keccak that did NOT bind state_root, receipts_root,
+// gas_used, etc. Two blocks with identical (number, parent, timestamp) but
+// different state changes produced identical hashes.
+//
+// The G.6 fix uses silkworm::BlockHeader::hash() which RLP-encodes all 17+
+// header fields then keccak256. This test PROVES the new hash binds content
+// by mutating individual fields and asserting the hash changes.
+
+static evmc::bytes32 hash_test_header(uint64_t number,
+                                       const evmc::bytes32& parent,
+                                       uint64_t timestamp,
+                                       const evmc::bytes32& state_root,
+                                       const evmc::bytes32& tx_root,
+                                       const evmc::bytes32& receipts_root,
+                                       uint64_t gas_used) {
+    silkworm::BlockHeader hdr{};
+    std::memcpy(hdr.parent_hash.bytes, parent.bytes, 32);
+    hdr.ommers_hash = silkworm::kEmptyListHash;
+    std::memcpy(hdr.state_root.bytes, state_root.bytes, 32);
+    std::memcpy(hdr.transactions_root.bytes, tx_root.bytes, 32);
+    std::memcpy(hdr.receipts_root.bytes, receipts_root.bytes, 32);
+    // logs_bloom stays zero
+    hdr.difficulty = 0;
+    hdr.number = number;
+    hdr.gas_limit = 30'000'000;
+    hdr.gas_used = gas_used;
+    hdr.timestamp = timestamp;
+    const std::string client_id = "evm-workchain/0.1.0";
+    hdr.extra_data.assign(client_id.begin(), client_id.end());
+    hdr.base_fee_per_gas = intx::uint256{1'000'000'000};
+    hdr.withdrawals_root = silkworm::kEmptyRoot;
+    return hdr.hash();
+}
+
+static void test_block_hash_canonical() {
+    printf("=== test_block_hash_canonical (Phase G.6 — silkworm RLP) ===\n");
+
+    // Baseline header
+    evmc::bytes32 parent{};
+    for (int i = 0; i < 32; ++i) parent.bytes[i] = static_cast<uint8_t>(i);
+    evmc::bytes32 state_root{}, tx_root{}, receipts_root{};
+    for (int i = 0; i < 32; ++i) state_root.bytes[i]    = static_cast<uint8_t>(0x10 + i);
+    for (int i = 0; i < 32; ++i) tx_root.bytes[i]       = static_cast<uint8_t>(0x20 + i);
+    for (int i = 0; i < 32; ++i) receipts_root.bytes[i] = static_cast<uint8_t>(0x30 + i);
+
+    auto h0 = hash_test_header(/*number=*/100, parent, /*timestamp=*/1000,
+                                state_root, tx_root, receipts_root, /*gas_used=*/21000);
+
+    // 1) Determinism: same input → same hash
+    auto h0_repeat = hash_test_header(100, parent, 1000, state_root, tx_root, receipts_root, 21000);
+    bool deterministic = std::memcmp(h0.bytes, h0_repeat.bytes, 32) == 0;
+    printf("  deterministic re-hash:           %s\n", deterministic ? "OK" : "WRONG");
+
+    // 2) Hash binds state_root: changing it changes the hash
+    auto state2 = state_root;
+    state2.bytes[31] ^= 0xff;
+    auto h_state = hash_test_header(100, parent, 1000, state2, tx_root, receipts_root, 21000);
+    bool state_binds = std::memcmp(h0.bytes, h_state.bytes, 32) != 0;
+    printf("  hash changes when state_root changes:    %s\n", state_binds ? "OK" : "WRONG");
+
+    // 3) Hash binds receipts_root
+    auto rec2 = receipts_root;
+    rec2.bytes[31] ^= 0xff;
+    auto h_rec = hash_test_header(100, parent, 1000, state_root, tx_root, rec2, 21000);
+    bool rec_binds = std::memcmp(h0.bytes, h_rec.bytes, 32) != 0;
+    printf("  hash changes when receipts_root changes: %s\n", rec_binds ? "OK" : "WRONG");
+
+    // 4) Hash binds transactions_root
+    auto tx2 = tx_root;
+    tx2.bytes[31] ^= 0xff;
+    auto h_tx = hash_test_header(100, parent, 1000, state_root, tx2, receipts_root, 21000);
+    bool tx_binds = std::memcmp(h0.bytes, h_tx.bytes, 32) != 0;
+    printf("  hash changes when tx_root changes:       %s\n", tx_binds ? "OK" : "WRONG");
+
+    // 5) Hash binds gas_used
+    auto h_gas = hash_test_header(100, parent, 1000, state_root, tx_root, receipts_root, 99999);
+    bool gas_binds = std::memcmp(h0.bytes, h_gas.bytes, 32) != 0;
+    printf("  hash changes when gas_used changes:      %s\n", gas_binds ? "OK" : "WRONG");
+
+    // 6) Hash matches a recompute via RLP+keccak round-trip (sanity)
+    silkworm::BlockHeader hdr{};
+    std::memcpy(hdr.parent_hash.bytes, parent.bytes, 32);
+    hdr.ommers_hash = silkworm::kEmptyListHash;
+    std::memcpy(hdr.state_root.bytes, state_root.bytes, 32);
+    std::memcpy(hdr.transactions_root.bytes, tx_root.bytes, 32);
+    std::memcpy(hdr.receipts_root.bytes, receipts_root.bytes, 32);
+    hdr.difficulty = 0;
+    hdr.number = 100;
+    hdr.gas_limit = 30'000'000;
+    hdr.gas_used = 21000;
+    hdr.timestamp = 1000;
+    const std::string client_id = "evm-workchain/0.1.0";
+    hdr.extra_data.assign(client_id.begin(), client_id.end());
+    hdr.base_fee_per_gas = intx::uint256{1'000'000'000};
+    hdr.withdrawals_root = silkworm::kEmptyRoot;
+    silkworm::Bytes rlp;
+    silkworm::rlp::encode(rlp, hdr);
+    auto manual_hash = ethash::keccak256(rlp.data(), rlp.size());
+    bool rlp_matches = std::memcmp(h0.bytes, manual_hash.bytes, 32) == 0;
+    printf("  hash == keccak256(rlp(header)):          %s\n", rlp_matches ? "OK" : "WRONG");
+
+    bool all_ok = deterministic && state_binds && rec_binds && tx_binds && gas_binds && rlp_matches;
+    printf("  %s\n\n", all_ok ? "PASSED" : "FAILED");
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -4671,6 +4782,7 @@ int main() {
     test_persisted_block_roundtrip();
     test_persisted_logs_roundtrip();
     test_eth_get_proof_non_existence();
+    test_block_hash_canonical();
     test_state_test_runner_poc();
     test_state_test_runner_walk_curated();
     test_state_test_runner_pyspec_walk();

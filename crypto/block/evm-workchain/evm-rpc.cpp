@@ -905,14 +905,22 @@ static std::string format_block_json(const StoredBlock& blk, bool full_transacti
     // totalDifficulty is omitted for post-merge blocks (geth, erigon,
     // reth all do this starting with the merge). Keeping it as a
     // deprecated-but-present field confuses newer clients.
-    r += "\"extraData\":\"0x\",";
+    //
+    // Phase G.6 alignment: every field below MUST match what the
+    // compute-phase block-hash builder uses, otherwise a client receiving
+    // this JSON would compute a different hash than what we publish.
+    //   extraData    — "evm-workchain/0.1.0" (matches web3_clientVersion)
+    //   sha3Uncles   — kEmptyListHash (post-merge canonical empty-list keccak)
+    //   mixHash      — zero (no beacon RANDAO in TOS)
+    //   parentBeaconBlockRoot — zero (no beacon chain)
+    r += "\"extraData\":\"0x65766d2d776f726b636861696e2f302e312e30\",";  // hex of "evm-workchain/0.1.0"
     r += "\"size\":\"0x0\",";
     r += "\"mixHash\":\"0x" + std::string(64, '0') + "\",";
     r += "\"stateRoot\":" + to_hex_data(blk.state_root.bytes, 32) + ",";
     r += "\"transactionsRoot\":" + to_hex_data(blk.transactions_root.bytes, 32) + ",";
     r += "\"receiptsRoot\":" + to_hex_data(blk.receipts_root.bytes, 32) + ",";
     r += "\"logsBloom\":" + to_hex_data(blk.logs_bloom, 256) + ",";
-    r += "\"sha3Uncles\":\"0x" + std::string(64, '0') + "\",";
+    r += "\"sha3Uncles\":\"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347\",";  // kEmptyListHash (post-merge)
     // Cancun (EIP-4844 / EIP-4788) fields — always emitted because
     // block explorers and indexers (Etherscan, Blockscout, The Graph)
     // assume every modern RPC returns them. We don't support blobs or
