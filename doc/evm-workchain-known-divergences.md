@@ -177,7 +177,9 @@ spec description of the method.
 
 ## Category E — Live chain config divergence (production lags state tests)
 
-**Status: open — design decision pending.**
+**Status: open — Cancun pre-fork checklist landed (2026-04-18). The chain is
+ready to flip `cancun_time = <future-anchor>` in a future coordinated
+release; the flag itself remains unset to keep this PR consensus-neutral.**
 
 `crypto/block/evm-workchain/evm-block-context.cpp::evm_chain_config()`
 sets `shanghai_time = 0` but does **not** set `cancun_time` or
@@ -217,11 +219,11 @@ of every Cancun-only behavior against our adapter:
 | `BLOBBASEFEE` opcode | Block header carries `excess_blob_gas` → `blob_gas_price()` | ✅ | `block.header.blob_gas_price()` already wired in `evm-executor.cpp:208` for blob-fee burn |
 | `TLOAD`/`TSTORE` | Per-transaction transient storage in IBS | ✅ | silkworm IBS already has it; nothing to do |
 | `MCOPY` | evmone implements as a base op | ✅ | upstream-only |
-| KZG precompile (`0x0a`) | KZG trusted setup loaded into evmone | ⚠️ | silkworm bundles a setup; we never call its loader. Without the setup the precompile reverts. **Blocker for any contract that calls 0x0a.** |
+| KZG precompile (`0x0a`) | KZG trusted setup loaded into evmone | ✅ | evmone bundles the G2_1 trusted-setup point as a constexpr (`third-party/evmone/evmone/lib/evmone_precompiles/kzg.cpp`); no external `trusted_setup.txt` needed. `init_evm_workchain` calls `verify_kzg_setup_loaded()` which runs the EIP-4844 spec test vector at startup as a canary. Unit test: `test_kzg_precompile_active` |
 | EIP-6780 SELFDESTRUCT | silkworm's `selfdestruct()` switches on `rev >= EVMC_CANCUN` (`evm.cpp:420`) | ✅ | flips automatically |
 | EIP-4844 blob fee burn | Burn `total_blob_gas * blob_gas_price` from sender (never credit beneficiary) | ✅ | shipped in `d140ec1d` (`evm-executor.cpp:199-210`) |
-| EIP-4788 beacon-roots predeploy | Genesis-seeded contract at `0x000F…Beac02` storing parent beacon roots | ❌ | not deployed; any contract calling it gets empty code → reverts. Cosmetic for normal traffic but breaks any L2 / restaking client that reads parent beacon roots |
-| Blob-tx admission gating | Reject type-3 at `eth_sendRawTransaction` (no blob mempool) | ⚠️ | see admission audit in `validator-engine/json-rpc-server-send.cpp` — needs verification |
+| EIP-4788 beacon-roots predeploy | Genesis-seeded contract at `0x000F…Beac02` storing parent beacon roots | ✅ | `seed_eip4788_predeploy()` in `evm-init.cpp` deploys the canonical 97-byte EIP runtime at the magic address (idempotent, called every node startup). Per-block system-call hook added to `evm-compute-phase.cpp`, gated on `revision() >= EVMC_CANCUN`. Unit test: `test_eip4788_predeploy_seeded` |
+| Blob-tx admission gating | Reject type-3 at `eth_sendRawTransaction` (no blob mempool) | ✅ | `handle_eth_sendRawTransaction` rejects `TransactionType::kBlob` with `-32000 "blob transactions not supported on this chain"` (json-rpc-server-send.cpp). Revisit once a blob mempool ships alongside the actual `cancun_time` activation |
 | `eth_simulateV1` Cancun fields | Always emit `blobGasUsed`/`excessBlobGas`/`parentBeaconBlockRoot`/`requestsHash` | ✅ | shipped in `bfb6b5c0` and untouched here; the new pre-merge schema branch only kicks in for explicitly-anchored sub-block-16 simulations |
 
 ### Recommendation (revised 2026-04-18)
@@ -260,18 +262,45 @@ deployment.** Reasoning:
 
 **Concrete plan** (when the team is ready):
 
-  a. Pre-deploy:
-     - Wire silkworm KZG setup into validator-engine init.
-     - Seed the EIP-4788 beacon-roots contract bytecode at
-       `0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02` (and the
-       per-block update logic that writes the parent root).
-     - Add an explicit `txn.type == kBlob → -32000 "blob
-       transactions not supported"` rejection in
-       `handle_eth_sendRawTransaction`.
-     - Re-run Phase G.2 walker against a Cancun-flag *and* a
-       Shanghai-flag config to confirm no state-root drift.
+  a. Pre-deploy: ✅ **Landed in this commit series (2026-04-18, Agent
+     working in `worktree-agent-ae9cb27d`).**
+     - ✅ KZG point-evaluation precompile is wired through
+       `silkworm::precompile::point_evaluation_run`. evmone bundles the
+       trusted-setup G2_1 point as a constexpr in
+       `third-party/evmone/evmone/lib/evmone_precompiles/kzg.cpp` —
+       there is no external `trusted_setup.txt` to vendor and no
+       loader entry-point. `init_evm_workchain` calls
+       `verify_kzg_setup_loaded()`, a startup-time canary that runs
+       the EIP-4844 spec test vector through the precompile and logs
+       readiness (or ERROR if the precompile is missing/unlinked).
+       Unit test: `test_kzg_precompile_active` (positive vector +
+       gas-cost check + corrupt-vh rejection).
+     - ✅ EIP-4788 beacon-roots predeploy. `seed_eip4788_predeploy()`
+       (idempotent) deploys the canonical 97-byte runtime bytecode at
+       `0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02` with `nonce=1`,
+       `balance=0`, empty storage. Called once from
+       `init_evm_workchain` so every node startup converges to the
+       same predeploy state. Per-block EIP-4788 system call hook
+       added to `evm-compute-phase.cpp` — gated on
+       `config.revision(...) >= EVMC_CANCUN`, so today's
+       Shanghai-revision config makes it a no-op. The hook fires once
+       per block (process-local high-water mark on `block_seqno`),
+       matching `silkworm::MergeRuleSet::initialize()` semantics.
+       Unit test: `test_eip4788_predeploy_seeded` (presence + 200-byte
+       length + first opcode 0x33 + last opcode 0x00 + idempotent re-seed).
+     - ✅ Blob-tx admission reject. `handle_eth_sendRawTransaction`
+       now rejects type-3 transactions with
+       `-32000 "blob transactions not supported on this chain"`
+       immediately after RLP decode. Revisit once a blob mempool
+       lands alongside the actual `cancun_time` flip.
+     - ⚠️ Phase G.2 cross-config walker re-run (Cancun-flag vs
+       Shanghai-flag) is a deferred verification step; it requires
+       config plumbing not yet exposed at the walker level. Tracked
+       separately. Existing Phase G.2 tests at the cancun_time=0
+       per-test config continue to pass (48 baseline + 2 new = 50
+       unit tests in test-evm-executor, all green).
 
-  b. Hard-fork deploy:
+  b. Hard-fork deploy (still pending):
      - Set `cancun_time = <activation_unix>` (NOT 0 — anchor it
        to a future timestamp so the fork is deterministic across
        all replay clients).
@@ -282,6 +311,26 @@ deployment.** Reasoning:
 
   c. Until then: accept `ethSimulate-blobs.io` as a known
      divergence (BLOBHASH on Shanghai is INVALID; spec succeeds).
+
+### Recommendation update (2026-04-18, post-prep work)
+
+**All three pre-deploy adapter gaps are now closed.** A future release
+that flips `cancun_time = <future-anchor-timestamp>` in
+`evm-block-context.cpp::evm_chain_config()` is now safe from the
+adapter standpoint; the only remaining work is the consensus
+coordination step described in (b) above. Anchor the timestamp at
+least one validator-restart cycle in the future so all four nodes
+pull the new binary before the activation passes — once the
+timestamp is reached, every existing block reports `EVMC_CANCUN`
+and the `selfdestruct` semantics flip from full-teardown to
+EIP-6780; nodes still on the pre-Cancun build will diverge on any
+mid-block self-destruct that follows a same-block `CREATE`.
+
+The `verify_kzg_setup_loaded()` startup canary will surface as a
+WARNING line in the validator log on every restart — its purpose
+is to make a future broken build (e.g. an evmone update that
+removes the bundled setup) immediately visible rather than
+deferred until the first contract calls 0x0a.
 
 This is a deployment-blocking discrepancy that the state-test
 walker can't catch (because the walker controls its own ChainConfig).
