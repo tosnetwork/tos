@@ -1,0 +1,798 @@
+\documentclass[12pt,oneside]{article}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,array,longtable}
+\usepackage[english]{babel}
+\usepackage[bookmarks=false,pdfauthor={Tomi Setsu},pdftitle={FunC v0.5.0 to Fift Lowering Guide}]{hyperref}
+\usepackage{fancyhdr}
+
+\setlength{\headheight}{15.2pt}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.5pt}
+\fancyhead[C]{FunC v0.5.0 to Fift Lowering Guide}
+
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+\title{FunC v0.5.0 $\rightarrow$ Fift\\Feature-by-Feature Lowering Guide}
+\author{Tomi Setsu}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This document complements \verb|doc/func_v0.5.0.tex| by explaining how the
+proposed FunC \verb|0.5.0| surface can be lowered into Fift/TVM code without
+introducing a hidden runtime or a second virtual machine. The goal is to make
+the lowering model explicit enough that language design can be judged against
+the real constraints of TVM/TOS.
+
+The central claim is that FunC \verb|0.5.0| should remain a \emph{front-end
+heavy, runtime-light} language. Most new features are either:
+
+\begin{enumerate}
+\item compile-time only and erased before code generation;
+\item mapped to fixed TVM stack or cell representations;
+\item implemented by generated wrappers around existing TVM conventions.
+\end{enumerate}
+
+This is a design-lowering specification, not a statement that the current
+compiler already implements all of the described transformations.
+\end{abstract}
+
+\section*{Introduction}
+The proposed FunC \verb|0.5.0| surface is intentionally more expressive than
+FunC \verb|0.4.6|: it adds named structs, enums, message declarations,
+\verb|Option|/\verb|Result|, explicit mutability, explicit effect sets, traits,
+generics, typed contexts, and typed cell APIs. The obvious concern is whether
+these features remain faithful to the low-level execution model.
+
+They can, provided that the compiler obeys three discipline rules:
+
+\begin{enumerate}
+\item no hidden heap or object runtime;
+\item no dynamic dispatch requirement;
+\item no source feature whose meaning cannot be reduced to ordinary TVM stack,
+cell, control-flow, and action-phase operations.
+\end{enumerate}
+
+This document therefore answers a practical question: \emph{for each major
+FunC 0.5.0 feature, what is the canonical lowering path to Fift/TVM?}
+
+\clearpage
+\tableofcontents
+
+\clearpage
+\section{Scope and Backend Model}
+\subsection{What ``Lowering to Fift'' Means}
+In this document, ``lowering to Fift'' means lowering to the same TVM execution
+model already targeted by current FunC and Fift macro assembly. The backend may
+internally pass through an IR, but the observable result should still be a
+selector-based TVM program expressible in Fift assembly.
+
+In particular:
+
+\begin{itemize}
+\item ordinary functions still become TVM routines callable through selector
+indices and the existing \verb|CALLDICT|/\verb|JMPDICT| model;
+\item cell parsing still becomes \verb|CTOS|, \verb|LDU|/\verb|LDUX|,
+\verb|LDI|/\verb|LDIX|, \verb|LDREF|, and related instructions;
+\item cell building still becomes \verb|NEWC|, \verb|STU|/\verb|STUX|,
+\verb|STI|/\verb|STIX|, \verb|STREF|, and \verb|ENDC|;
+\item outbound messaging still ends in \verb|SENDRAWMSG|;
+\item persistent state still goes through the existing data-register
+conventions and helpers such as \verb|get_data|/\verb|set_data|.
+\end{itemize}
+
+\subsection{Three Representation Layers}
+Every source construct must be understood at three different layers:
+
+\begin{enumerate}
+\item \textbf{source representation}: what the author writes;
+\item \textbf{runtime representation}: what exists on the TVM stack while code
+executes;
+\item \textbf{wire/storage representation}: how values are serialized into
+cells for messages, persistent state, dictionaries, or ABI boundaries.
+\end{enumerate}
+
+Many confusions disappear once these layers are kept distinct. For example,
+\verb|Option<T>| need not have the same representation on the stack and on the
+wire, as long as the compiler-generated codecs are deterministic.
+
+\subsection{Canonical Lowering vs Optimization}
+This document specifies a \emph{canonical} lowering. Optimizations are still
+allowed afterwards:
+
+\begin{itemize}
+\item tuples may be scalarized into separate locals;
+\item enum tests may become jump tables or branch trees;
+\item \verb|Option<T>| may be unboxed locally when the optimization is not
+observable;
+\item small helper functions may be inlined;
+\item dead fields or dead temporary tuples may be removed.
+\end{itemize}
+
+The important invariant is that optimization may improve code generation, but
+must not change the source-level meaning or the externally visible wire format.
+
+\section{Lowering Principles}
+\subsection{Compile-Time Features Must Erase}
+Several proposed \verb|0.5.0| features exist to improve readability and static
+safety, not to create a runtime subsystem. In particular:
+
+\begin{itemize}
+\item \verb|mod|, \verb|use|, and \verb|pub| are namespace features only;
+\item effect sets are checked statically and erased;
+\item mutable-place overlap checks are static only;
+\item traits and generics use static dispatch and monomorphization;
+\item field names and variant names are debug/source concepts, not runtime
+symbols.
+\end{itemize}
+
+\subsection{Runtime Features Must Map to Existing TVM Values}
+When a feature survives past type checking, it must lower to existing TVM value
+kinds: integers, cells, slices, builders, tuples, continuations, or null.
+Nothing in the proposal requires a new runtime type.
+
+\subsection{Protocol-Aware Wrappers Are Allowed}
+Some source forms correspond directly to blockchain protocol concepts rather
+than to ordinary library code. These may use generated wrappers:
+
+\begin{itemize}
+\item \verb|entry internal|, \verb|entry external|, \verb|entry bounce|;
+\item typed message contexts such as \verb|InternalContext<T>|;
+\item \verb|message| declarations with bound opcodes;
+\item \verb|BodyLayout::Auto| and typed \verb|send(... )|.
+\end{itemize}
+
+This is acceptable because these features do not invent a second semantic
+world; they merely expose real TVM/TOS conventions in a safer surface form.
+
+\subsection{Static Dispatch Is Mandatory}
+To keep the backend simple and predictable:
+
+\begin{itemize}
+\item trait calls must resolve at compile time;
+\item generic functions must be monomorphized;
+\item there are no trait objects, no vtables, and no hidden dictionary-passing
+runtime.
+\end{itemize}
+
+\section{Canonical Runtime Representations}
+\subsection{Scalars and Domain Types}
+\begin{longtable}{|L{0.24\textwidth}|L{0.30\textwidth}|L{0.32\textwidth}|}
+\hline
+\textbf{Source type} & \textbf{Canonical TVM stack representation} & \textbf{Wire/storage representation} \\ \hline
+\endfirsthead
+\hline
+\textbf{Source type} & \textbf{Canonical TVM stack representation} & \textbf{Wire/storage representation} \\ \hline
+\endhead
+\texttt{iN}/\texttt{uN} &
+ordinary TVM integer &
+fixed-width or variable-width integer encoding, depending on codec \\ \hline
+\texttt{bool} &
+ordinary TVM integer, normalized to \texttt{0} for false and \texttt{-1} for true &
+usually a 1-bit or fixed small-integer encoding chosen by the relevant codec \\ \hline
+\texttt{Coins} &
+ordinary TVM integer with source-level domain meaning &
+\texttt{Grams}/\texttt{VarUInteger} encoding through the standard amount codecs \\ \hline
+\texttt{Address} &
+ordinary TVM \texttt{Slice} carrying the invariant ``valid serialized address'' &
+serialized message address form \\ \hline
+\texttt{RawCell} &
+ordinary TVM \texttt{Cell} &
+ordinary cell reference \\ \hline
+\texttt{Cell<T>} &
+ordinary TVM \texttt{Cell}; \texttt{T} is erased after type checking &
+same raw cell bits and refs, but interpreted through \texttt{T}'s codec \\ \hline
+\texttt{RawSlice} / \texttt{Slice} &
+ordinary TVM \texttt{Slice} &
+not directly stored; arises from \texttt{CTOS} or message/body parsing \\ \hline
+\texttt{Builder} &
+ordinary TVM \texttt{Builder} &
+not directly stored; finalized with \texttt{ENDC} \\ \hline
+\texttt{Bytes} &
+byte-aligned \texttt{Slice} or stdlib wrapper over a slice/cell pair &
+byte-string codec; exact layout must be fixed by the stdlib/ABI \\ \hline
+\texttt{()} &
+zero stack values at function boundaries; null/empty payload when embedded &
+zero-width payload or omitted payload by codec rule \\ \hline
+\end{longtable}
+
+\subsection{Aggregates and Sum Types}
+\begin{longtable}{|L{0.24\textwidth}|L{0.30\textwidth}|L{0.32\textwidth}|}
+\hline
+\textbf{Source construct} & \textbf{Canonical TVM stack representation} & \textbf{Wire/storage representation} \\ \hline
+\endfirsthead
+\hline
+\textbf{Source construct} & \textbf{Canonical TVM stack representation} & \textbf{Wire/storage representation} \\ \hline
+\endhead
+\texttt{(T1, ..., Tn)} &
+TVM tuple or flattened multi-value temporary &
+codec-dependent tuple/product layout \\ \hline
+\texttt{struct S \{...\}} &
+logical tuple in field order; backend may scalarize locals &
+derived product codec in field order \\ \hline
+\texttt{enum E \{...\}} &
+tagged tuple \texttt{(tag, payload)}; payload is a tuple or null &
+tag plus payload, with tag width fixed by the derived codec \\ \hline
+\texttt{Option<T>} / \texttt{T?} &
+tagged tuple like any two-variant enum; optimizer may unbox locally &
+\texttt{Maybe}-style tag plus payload \\ \hline
+\texttt{Result<T, E>} &
+tagged tuple \texttt{(0, ok)} or \texttt{(1, err)} canonically &
+tag plus payload if explicitly serialized \\ \hline
+\texttt{message M(op = ...)\{...\}} &
+same as a named struct at runtime, plus compile-time opcode metadata &
+opcode prefix followed by field encoding \\ \hline
+\end{longtable}
+
+\section{Feature-by-Feature Lowering Table}
+\begingroup
+\setlength{\tabcolsep}{4pt}
+\footnotesize
+\begin{longtable}{|L{0.15\textwidth}|L{0.24\textwidth}|L{0.24\textwidth}|L{0.15\textwidth}|}
+\hline
+\textbf{Feature} & \textbf{Frontend handling} & \textbf{Canonical Fift/TVM lowering} & \textbf{Notes} \\ \hline
+\endfirsthead
+\hline
+\textbf{Feature} & \textbf{Frontend handling} & \textbf{Canonical Fift/TVM lowering} & \textbf{Notes} \\ \hline
+\endhead
+\texttt{mod}, \texttt{use}, \texttt{pub} &
+resolve names, visibility, and imports at compile time &
+no runtime code; generate mangled function/type symbols only &
+pure erasure \\ \hline
+\texttt{const}, type alias &
+evaluate or resolve during semantic analysis &
+constant immediates or no code at all &
+pure erasure except constant uses \\ \hline
+\texttt{let} &
+create immutable local binding &
+ordinary local slot / stack temporary &
+no runtime mutability bit \\ \hline
+\texttt{let mut} &
+mark local as assignable &
+same local slot shape as \texttt{let} &
+\texttt{mut} is checker-only \\ \hline
+assignment to locals/fields &
+verify place mutability and field existence &
+stack shuffles plus tuple rebuild or scalar local update &
+backend may scalarize struct fields \\ \hline
+\texttt{bool} &
+type-check boolean-only operators and conditions &
+emit ordinary integer-producing comparisons; normalize to \texttt{0/-1} &
+no new VM type \\ \hline
+\texttt{Coins} &
+track domain meaning distinctly from raw ints &
+ordinary TVM integer in computation; amount codec on serialization &
+zero-cost in arithmetic paths \\ \hline
+\texttt{Address} &
+type-check address-only APIs &
+ordinary slice value plus address-validity invariant &
+codec uses message-address helpers \\ \hline
+\texttt{Cell<T>} &
+enforce typed cell APIs and erase \texttt{T} after checking &
+ordinary cell value; codecs inserted at load/store boundaries &
+no runtime generic metadata \\ \hline
+\texttt{struct} &
+resolve field offsets and patterns &
+tuple-like product value or flattened locals &
+field names erased after lowering \\ \hline
+\texttt{enum} &
+assign canonical tags and verify exhaustiveness &
+tagged tuple \texttt{(tag, payload)}; branch on tag &
+payload may be null for zero-field variants \\ \hline
+\texttt{message(op = X)} &
+derive codec and bind opcode metadata &
+generated decoder checks prefix, then parses fields; encoder prepends opcode &
+protocol-aware wrapper justified \\ \hline
+\texttt{Option<T>} / \texttt{T?} &
+desugar \texttt{T?} to \texttt{Option<T>} &
+two-variant tagged tuple canonically &
+optimizer may unbox locally \\ \hline
+\texttt{Result<T, E>} &
+type-check recoverable error paths &
+two-variant tagged tuple canonically &
+drives \texttt{?} lowering \\ \hline
+\texttt{trait} / \texttt{impl} &
+resolve methods and trait obligations statically &
+no runtime object; selected concrete function symbol only &
+no vtables \\ \hline
+generics &
+instantiate per concrete type vector &
+monomorphized concrete functions/types, then ordinary lowering &
+same discipline as template expansion \\ \hline
+\texttt{mut self} methods &
+desugar method call into explicit state threading &
+internal helper returns updated receiver plus result, then uses existing TVM ops &
+surface replacement for \texttt{\~{}method} \\ \hline
+\texttt{mut} arguments &
+verify mutable-place rules &
+same calling convention as explicit state threading or by-value update &
+overlap checks are static only \\ \hline
+\texttt{if let} &
+desugar to match over one scrutinee &
+tag/type test plus destructuring branch &
+for \texttt{Option}, often just tag test \\ \hline
+\texttt{while let} &
+desugar to loop plus match/test &
+loop header, test, destructure, exit branch &
+no special runtime form \\ \hline
+\texttt{match} &
+check exhaustiveness, bind arm patterns &
+discriminant test tree, jump table, or direct destructuring &
+message opcodes may use preload fast path \\ \hline
+\texttt{?} on \texttt{Result} &
+check enclosing residual type &
+branch on tag; on error construct early return and jump to epilogue &
+zero hidden exceptions \\ \hline
+\texttt{effect(...)} &
+check allowed operations transitively &
+erased before code generation &
+may survive only as debug metadata/comments \\ \hline
+\texttt{extern "tvm"} &
+bind a source signature to a raw intrinsic &
+emit direct intrinsic/opcode sequence or imported asm helper &
+surface replacement for parser magic \\ \hline
+\texttt{entry internal} &
+generate ABI wrapper around typed user function &
+existing internal-entry ABI plus message/context parsing wrapper &
+still one real TVM entrypoint \\ \hline
+\texttt{entry external} &
+generate ABI wrapper around typed user function &
+existing external-entry ABI plus parse/signature wrapper &
+\texttt{accept\_message} remains explicit unless specified otherwise \\ \hline
+\texttt{entry bounce} &
+generate wrapper for bounced-message path &
+existing bounced-message convention plus bounce-body decoding wrapper &
+no new protocol primitive \\ \hline
+\texttt{get fn} &
+mark as getter export and read-only surface &
+ordinary getter selector / method-id export &
+same getter ABI family as today \\ \hline
+\texttt{InternalContext<T>} and friends &
+type-check context field access and requested body type &
+compiler-generated tuple/view assembled from real VM inputs &
+context object itself is not heap state \\ \hline
+\texttt{to\_cell}/\texttt{from\_cell} &
+select \texttt{CellEncode}/\texttt{CellDecode} implementation &
+\texttt{NEWC} + stores + \texttt{ENDC}; or \texttt{CTOS} + loads + \texttt{ENDS} &
+typed facade over raw cell ops \\ \hline
+\texttt{load\_any}/\texttt{store\_any} &
+resolve concrete codec statically &
+call monomorphized codec helper, which emits raw load/store instructions &
+no reflective runtime \\ \hline
+\texttt{send<T>} &
+resolve body codec and send options &
+encode body, build message envelope, choose inline/ref layout, emit \texttt{SENDRAWMSG} &
+typed wrapper over action-cell construction \\ \hline
+\texttt{BodyLayout::Auto} &
+mark layout policy in source &
+generated size-aware branch chooses inline body or ref body deterministically &
+must be fully deterministic \\ \hline
+\texttt{BounceMode} &
+select bounce policy at source level &
+maps to message-header bits and chosen bounced-body convention &
+no dedicated VM primitive \\ \hline
+\texttt{for item in items} &
+desugar through a statically resolved iterator protocol &
+hidden iterator state plus \texttt{loop} and \texttt{next()} match &
+initial implementation should restrict iterable kinds \\ \hline
+\end{longtable}
+\endgroup
+
+\section{Detailed Lowering Notes}
+\subsection{Functions Still Lower to Selector-Based TVM Routines}
+After desugaring, ordinary functions should still lower to the same broad model
+used today:
+
+\begin{enumerate}
+\item each concrete function body is assigned a selector;
+\item the program stores its selector dispatcher in \verb|c3|;
+\item intra-program calls become \verb|CALLDICT n| or equivalent selector
+calls;
+\item tail calls become \verb|JMPDICT n| or equivalent jumps.
+\end{enumerate}
+
+The proposed language features therefore sit \emph{above} the current function
+family model; they do not replace it.
+
+\subsection{Explicit Mutability Lowers to Explicit State Threading}
+A method with \verb|mut self| should not require a new calling convention at
+the VM level. The canonical lowering is:
+
+\begin{enumerate}
+\item rewrite the surface method call into an internal helper call;
+\item make the helper return both the updated receiver and the value result;
+\item rebind the caller-side mutable place to the updated receiver;
+\item keep using the existing raw TVM instructions underneath.
+\end{enumerate}
+
+For example:
+
+\begin{verbatim}
+let mut cs = body;
+let op = cs.load_uint(32)?;
+\end{verbatim}
+
+canonically lowers in two conceptual steps:
+
+\begin{verbatim}
+let (__cs1, __r1) = __Slice_load_uint(cs, 32);
+cs = __cs1;
+let op = __r1?;
+\end{verbatim}
+
+and then \verb|__Slice_load_uint| lowers to the same \verb|LDUX|-based helper
+family already used by current \verb|~load_uint| built-ins.
+
+\subsection{Structs Lower as Products, Not Objects}
+Structs do not imply heap allocation or object identity. Their canonical
+meaning is just ``a named product type''. The lowering strategy is:
+
+\begin{enumerate}
+\item field names guide parsing, typing, and pattern matching;
+\item a struct value is represented as a tuple in field order at observable
+boundaries;
+\item within one function, the backend may flatten fields into separate locals.
+\end{enumerate}
+
+This keeps structs zero-cost in the common case while still giving the user a
+legible source-level model.
+
+\subsection{Enums, Option, and Result Lower as Tagged Products}
+General algebraic data types require an explicit discriminant. The canonical
+runtime form is therefore:
+
+\begin{verbatim}
+(tag, payload)
+\end{verbatim}
+
+where:
+
+\begin{itemize}
+\item \verb|tag| is an integer discriminant;
+\item \verb|payload| is a tuple of the selected variant fields, or null for a
+zero-field variant.
+\end{itemize}
+
+Examples:
+
+\begin{verbatim}
+Option<T>::None        => (0, null)
+Option<T>::Some(x)     => (1, x)
+Result<T, E>::Ok(x)    => (0, x)
+Result<T, E>::Err(e)   => (1, e)
+\end{verbatim}
+
+This representation is uniform, supports nesting, and matches ordinary
+\verb|match| lowering. A backend may locally optimize some cases to a more
+compact form, but the canonical semantic model should remain tagged.
+
+\subsection{Pattern Matching Lowers to Tag Tests and Destructuring}
+A \verb|match| expression lowers in four stages:
+
+\begin{enumerate}
+\item evaluate the scrutinee into a temporary;
+\item extract or inspect its discriminant;
+\item branch to the selected arm;
+\item destructure the payload into arm-local bindings.
+\end{enumerate}
+
+For dense integer discriminants, the backend may generate a jump table. For
+sparse discriminants, it may generate a branch tree. For message decoding, it
+may first use a slice preload such as \verb|PLDUZ 32| or a full \verb|LDU 32|
+to inspect the opcode before decoding the remainder of the body.
+
+\subsection{The Question-Mark Operator Lowers to Early Return}
+The \verb|?| operator should be understood as structured control flow, not as an
+exception mechanism.
+
+\begin{verbatim}
+let msg = parse_msg(body)?;
+\end{verbatim}
+
+canonically lowers to:
+
+\begin{enumerate}
+\item evaluate \verb|parse_msg(body)| into a temporary \verb|Result|;
+\item inspect the tag;
+\item if the tag is \verb|Err|, package the error in the caller's return form
+and jump to the function epilogue;
+\item if the tag is \verb|Ok|, extract the payload and continue.
+\end{enumerate}
+
+This keeps all recoverable failure explicit in the generated control flow.
+
+\subsection{Typed Messages Lower to Generated Codecs}
+A declaration such as
+
+\begin{verbatim}
+pub message Transfer(op = 0x0f8a7ea5) {
+    query_id: u64,
+    amount: Coins,
+    to: Address,
+}
+\end{verbatim}
+
+should generate at least:
+
+\begin{enumerate}
+\item a stack-level runtime type equivalent to a struct;
+\item an encoder that prepends \verb|0x0f8a7ea5| and then serializes fields;
+\item a decoder that checks the prefix and then parses fields;
+\item metadata allowing typed entrypoints and typed \verb|send| wrappers to
+select the codec automatically.
+\end{enumerate}
+
+The encoder lowers to ordinary builder instructions such as \verb|NEWC|,
+\verb|STU|/\verb|STUX|, address stores, amount stores, optional ref stores, and
+\verb|ENDC|. The decoder lowers to \verb|CTOS|, \verb|LDU|/\verb|LDUX|,
+address loads, amount loads, optional-value loads, and a final \verb|ENDS| when
+the codec requires exact consumption.
+
+\subsection{Typed Cell APIs Lower to Raw Cell Operations}
+The typed cell APIs are wrappers over codecs and raw cell primitives:
+
+\begin{itemize}
+\item \verb|to_cell(x)| becomes ``encode \verb|x| into a builder, then
+\verb|ENDC|'';
+\item \verb|from_cell(c)| becomes ``\verb|CTOS|, decode fields, ensure final
+slice invariants, return typed value'';
+\item \verb|load_any<T>| becomes a statically resolved call to \verb|T|'s
+decoder;
+\item \verb|store_any<T>| becomes a statically resolved call to \verb|T|'s
+encoder.
+\end{itemize}
+
+The important point is that \verb|Cell<T>| itself carries no runtime metadata.
+All real work happens at codec boundaries.
+
+\subsection{Typed Contexts Lower to ABI Wrappers}
+A function such as
+
+\begin{verbatim}
+entry internal fn recv_internal(
+    ctx: InternalContext<Transfer>,
+) -> Result<(), WalletError> effect(read, write, send) { ... }
+\end{verbatim}
+
+should lower to two layers:
+
+\begin{enumerate}
+\item a generated low-level entry wrapper with the existing internal-message ABI;
+\item a typed user function body that receives a constructed
+\verb|InternalContext<Transfer>|.
+\end{enumerate}
+
+The wrapper:
+
+\begin{enumerate}
+\item reads the raw inbound context values from the existing ABI inputs;
+\item extracts sender, transferred value, forward fee, and raw body slice;
+\item decodes the raw body as \verb|Transfer|;
+\item constructs the logical context tuple;
+\item calls the typed user body;
+\item converts the user body's result into the required low-level contract
+behavior.
+\end{enumerate}
+
+This is protocol-aware lowering, but it is still only a wrapper around the real
+VM inputs.
+
+\subsection{Effect Sets Do Not Survive Code Generation}
+An effect annotation such as
+
+\begin{verbatim}
+effect(read, write, send)
+\end{verbatim}
+
+should be enforced entirely by static analysis:
+
+\begin{itemize}
+\item a \verb|pure| function may not reach \verb|get_data|, \verb|set_data|,
+\verb|SENDRAWMSG|, raw asm, or unsafe intrinsics;
+\item a \verb|read|-only function may read context and storage but not write or
+emit actions;
+\item a \verb|send|-annotated function may use outbound-message primitives.
+\end{itemize}
+
+After validation, the annotation can be erased. The generated Fift code does not
+need a runtime effect table.
+
+\subsection{Traits and Generics Lower by Monomorphization}
+Trait calls must never require a runtime interface object. The lowering model
+is:
+
+\begin{enumerate}
+\item resolve the concrete implementation during type checking;
+\item create a concrete instantiation of any generic function or method;
+\item compile the resulting concrete function like any other function.
+\end{enumerate}
+
+For example, a call to:
+
+\begin{verbatim}
+send<Transfer>(dst, body, opts)
+\end{verbatim}
+
+should resolve the \verb|CellEncode| implementation for \verb|Transfer| at
+compile time and produce a concrete body encoder call, not a reflective or
+dynamic dispatch sequence.
+
+\subsection{Typed Send Lowers to Ordinary Message Construction}
+The high-level call
+
+\begin{verbatim}
+send(dst, body, opts)
+\end{verbatim}
+
+should lower to the following pipeline:
+
+\begin{enumerate}
+\item encode \verb|body| using the selected codec;
+\item build the message envelope with the right destination, amount, and flags;
+\item decide whether the body is inlined or stored by reference;
+\item finalize the message cell;
+\item emit \verb|SENDRAWMSG| with the chosen send mode.
+\end{enumerate}
+
+\verb|BounceMode| and \verb|BodyLayout| are therefore not new runtime entities.
+They are source-level policy inputs to message construction.
+
+\subsection{BodyLayout::Auto Must Be Deterministic}
+\verb|BodyLayout::Auto| is useful only if all compliant toolchains make the same
+choice for the same source and codec. The canonical rule should therefore be:
+
+\begin{enumerate}
+\item compute the encoded body size exactly when it is statically known;
+\item otherwise encode into a temporary builder/cell first;
+\item choose inline vs ref according to a fully specified fit predicate;
+\item emit the corresponding branch or specialized fast path.
+\end{enumerate}
+
+The exact fit predicate belongs to the language+stdlib contract and must be
+stable across compilers.
+
+\section{Worked Lowering Example}
+\subsection{Source Fragment}
+\begin{verbatim}
+pub message Transfer(op = 0x0f8a7ea5) {
+    seqno: u32,
+    to: Address,
+    amount: Coins,
+}
+
+entry internal fn recv_internal(
+    ctx: InternalContext<Transfer>,
+) -> Result<(), WalletError> effect(read, write, send) {
+    let mut state = load_state()?;
+    let msg = ctx.body;
+
+    if msg.seqno != state.seqno {
+        return Err(WalletError::WrongSeqno);
+    }
+
+    send(
+        msg.to,
+        (),
+        SendOptions {
+            value: msg.amount,
+            bounce: BounceMode::Body256,
+            body_layout: BodyLayout::Auto,
+            mode: SendMode::PayFeesSeparately,
+        }
+    )?;
+
+    state.seqno += 1;
+    save_state(state)?;
+    Ok(())
+}
+\end{verbatim}
+
+\subsection{Conceptual Lowering}
+The canonical lowering is:
+
+\begin{enumerate}
+\item generate \verb|__Transfer_encode| and \verb|__Transfer_decode|;
+\item generate a low-level internal-entry wrapper \verb|__entry_recv_internal|;
+\item keep the typed user body as a concrete selector function;
+\item lower each \verb|?| into explicit branch-and-return control flow;
+\item lower \verb|send(... )| to ordinary message building plus
+\verb|SENDRAWMSG|.
+\end{enumerate}
+
+\subsection{Generated Wrapper Shape}
+\begin{verbatim}
+__entry_recv_internal(low_level_abi_args):
+    raw_ctx   = parse_low_level_internal_context(low_level_abi_args)
+    msg_res   = __Transfer_decode(raw_ctx.body_slice)
+    if msg_res is Err(e):
+        return lower_entry_parse_failure(e)
+    typed_ctx = InternalContext {
+        sender: raw_ctx.sender,
+        value: raw_ctx.value,
+        forward_fee: raw_ctx.forward_fee,
+        body: msg_res.ok,
+    }
+    return __recv_internal_impl(typed_ctx)
+\end{verbatim}
+
+\subsection{User Body Shape After Desugaring}
+\begin{verbatim}
+__recv_internal_impl(ctx):
+    __r0 = load_state()
+    if __r0 is Err(e): return Err(WalletError::Parse(e))
+    state = __r0.ok
+    msg = ctx.body
+
+    if msg.seqno != state.seqno:
+        return Err(WalletError::WrongSeqno)
+
+    __r1 = send(msg.to, (), opts_from(msg.amount))
+    if __r1 is Err(e): return Err(WalletError::Send(e))
+
+    state.seqno = state.seqno + 1
+
+    __r2 = save_state(state)
+    if __r2 is Err(e): return Err(map_cell_error(e))
+
+    return Ok(())
+\end{verbatim}
+
+\subsection{Fift/TVM Shape}
+At the final backend stage, the remaining building blocks are ordinary TVM
+operations:
+
+\begin{itemize}
+\item state load/save via the current persistent-data path;
+\item integer comparison for the sequence number check;
+\item builder construction and \verb|ENDC| for any encoded cells;
+\item \verb|SENDRAWMSG| for the outbound transfer;
+\item selector-based function calls for helper routines;
+\item conditional branches for all \verb|Result| tests.
+\end{itemize}
+
+In other words, the high-level source has been reduced to the same machine model
+already used by present FunC and hand-written Fift.
+
+\section{Required Canonical Decisions Before Implementation}
+The proposal is lowerable, but several details must be fixed precisely before a
+compiler implementation can claim compatibility:
+
+\begin{enumerate}
+\item the exact canonical stack representation of \verb|enum|,
+\verb|Option<T>|, and \verb|Result<T, E>|;
+\item the exact derived wire format for serialized enums and results;
+\item whether \verb|Bytes| is canonically a byte-aligned slice, a typed cell,
+or a stdlib wrapper with a fixed ABI;
+\item the exact deterministic rule behind \verb|BodyLayout::Auto|;
+\item the mapping from typed error results in entry wrappers to legacy numeric
+exit behavior where required;
+\item the exact getter/export selector policy for edition \verb|0.5.0|.
+\end{enumerate}
+
+These are not objections to the design. They are the finite set of ABI-level
+decisions required to keep different compilers interoperable.
+
+\section{Conclusion}
+FunC \verb|0.5.0| can remain fully lowerable to Fift/TVM if it preserves one
+discipline: \emph{push complexity into the front end, not into the runtime}.
+
+Under that discipline:
+
+\begin{itemize}
+\item modules, visibility, effects, and mutable-place checks erase entirely;
+\item structs, enums, messages, and results become fixed tuple/cell layouts;
+\item typed entrypoints and typed send wrappers become generated adapters over
+existing protocol conventions;
+\item traits and generics remain static-dispatch only;
+\item the final emitted operations are still the familiar TVM primitives for
+control flow, parsing, building, state access, and \verb|SENDRAWMSG|.
+\end{itemize}
+
+This is exactly the kind of language upgrade that keeps TVM/TOS honest:
+better source ergonomics, stronger static guarantees, and no semantic break
+from the underlying machine.
+
+\end{document}
