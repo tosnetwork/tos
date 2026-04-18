@@ -3157,7 +3157,13 @@ static std::string slice_str(td::Slice s) { return s.str(); }
 
 }  // namespace stt
 
-static bool run_one_state_test_cancun(const std::string& path, bool& ran) {
+// Generalized per-fixture runner. `fork_name` selects which post-state array
+// to read (e.g. "Cancun", "Shanghai", "Prague") and which fork-activation
+// timestamps to set in the per-test ChainConfig. The original
+// run_one_state_test_cancun() is now a thin wrapper that passes "Cancun".
+static bool run_one_state_test_fork(const std::string& path,
+                                     const std::string& fork_name,
+                                     bool& ran) {
     using namespace stt;
     ran = false;
     auto content_r = td::read_file_str(path);
@@ -3186,13 +3192,13 @@ static bool run_one_state_test_cancun(const std::string& path, bool& ran) {
     auto* post_v = field(test_obj, "post");
     if (!pre_v || !tx_v || !post_v) return false;
 
-    auto* cancun = field(post_v->get_object(), "Cancun");
-    if (!cancun || cancun->type() != td::JsonValue::Type::Array) {
-        printf("  SKIP: no Cancun entry\n"); return false;
+    auto* fork_post = field(post_v->get_object(), td::Slice(fork_name));
+    if (!fork_post || fork_post->type() != td::JsonValue::Type::Array) {
+        printf("  SKIP: no %s entry\n", fork_name.c_str()); return false;
     }
-    auto& cancun_arr = cancun->get_array();
-    if (cancun_arr.empty()) return false;
-    auto& entry = cancun_arr[0];
+    auto& fork_arr = fork_post->get_array();
+    if (fork_arr.empty()) return false;
+    auto& entry = fork_arr[0];
     if (entry.type() != td::JsonValue::Type::Object) return false;
     auto& entry_obj = entry.get_object();
 
@@ -3255,6 +3261,11 @@ static bool run_one_state_test_cancun(const std::string& path, bool& ran) {
     // The fixture's `transaction` doesn't carry chain_id directly (it's in
     // the signature for EIP-155 legacy txs; for typed txs it's explicit).
     // We honor whatever the decoded tx claims.
+    //
+    // Fork-activation timestamps are gated by `fork_name` so silkworm picks
+    // the correct EVMC revision: Shanghai-only fixtures must NOT set
+    // cancun_time (otherwise opcodes like TLOAD/TSTORE would be enabled),
+    // and Prague fixtures need shanghai_time + cancun_time + prague_time.
     silkworm::ChainConfig cfg{};
     cfg.chain_id = static_cast<uint64_t>(dec.txn.chain_id.value_or(intx::uint256{1}));
     cfg.homestead_block = 0;
@@ -3266,9 +3277,16 @@ static bool run_one_state_test_cancun(const std::string& path, bool& ran) {
     cfg.istanbul_block = 0;
     cfg.berlin_block = 0;
     cfg.london_block = 0;
-    cfg.shanghai_time = 0;
-    cfg.cancun_time = 0;
     cfg.terminal_total_difficulty = 0;
+    const bool is_shanghai_or_later = (fork_name == "Shanghai" ||
+                                        fork_name == "Cancun" ||
+                                        fork_name == "Prague");
+    const bool is_cancun_or_later   = (fork_name == "Cancun" ||
+                                        fork_name == "Prague");
+    const bool is_prague_or_later   = (fork_name == "Prague");
+    if (is_shanghai_or_later) cfg.shanghai_time = 0;
+    if (is_cancun_or_later)   cfg.cancun_time = 0;
+    if (is_prague_or_later)   cfg.prague_time = 0;
 
     // --- Build the block from env -------------------------------------------
     auto* env_v = field(test_obj, "env");
@@ -3304,10 +3322,12 @@ static bool run_one_state_test_cancun(const std::string& path, bool& ran) {
     // calc_blob_gas_price(0, Cancun) = MIN_BLOB_GASPRICE = 1, not 0.
     // Otherwise contracts that branch on `ISZERO(BLOBBASEFEE)` revert
     // (e.g. stBadOpcode/opc4ADiffPlaces).
-    if (auto* f = field(env, "currentExcessBlobGas")) {
-        blk.header.excess_blob_gas = static_cast<uint64_t>(hex0x_to_u256(str(*f)));
-    } else {
-        blk.header.excess_blob_gas = 0;  // engaged optional with value 0
+    if (is_cancun_or_later) {
+        if (auto* f = field(env, "currentExcessBlobGas")) {
+            blk.header.excess_blob_gas = static_cast<uint64_t>(hex0x_to_u256(str(*f)));
+        } else {
+            blk.header.excess_blob_gas = 0;  // engaged optional with value 0
+        }
     }
 
     // EIP-4788 pre-block hook (Cancun+): silkworm's ExecutionProcessor
@@ -3316,7 +3336,11 @@ static bool run_one_state_test_cancun(const std::string& path, bool& ran) {
     // fixture's pre-state warming matches silkworm's own runner. If
     // the beacon-roots predeploy isn't in `pre`, the call silently
     // no-ops (call to an address with empty code), which is fine.
-    {
+    //
+    // For Shanghai (and earlier) the hook is a no-op for ExecutionProcessor
+    // and the parent_beacon_block_root field is undefined; skip it entirely
+    // to avoid touching state with a Shanghai-revision EVM.
+    if (is_cancun_or_later) {
         blk.header.parent_beacon_block_root = evmc::bytes32{};
         silkworm::Transaction sys_txn{};
         sys_txn.type = silkworm::TransactionType::kSystem;
@@ -3476,6 +3500,13 @@ static bool run_one_state_test_cancun(const std::string& path, bool& ran) {
     return root_ok;
 }
 
+// Back-compat wrapper: most callers were written before the multi-fork walker
+// landed. Keep this so the existing curated GeneralStateTests / poc paths
+// (which assume Cancun semantics) don't have to change.
+static bool run_one_state_test_cancun(const std::string& path, bool& ran) {
+    return run_one_state_test_fork(path, "Cancun", ran);
+}
+
 // Silence per-test output during the bulk walker — only print a summary.
 static bool g_state_test_verbose = true;
 
@@ -3517,11 +3548,14 @@ static bool is_upstream_failing(const std::string& path) {
 }
 
 // v0 runner that walks every `*.json` under a directory and runs the
-// Cancun entry from each. Returns (pass_count, fail_count, skip_count).
+// `fork_name` entry from each. Returns (pass_count, fail_count, skip_count).
+// `fork_name` defaults to "Cancun" to preserve the existing GeneralStateTests
+// / curated-walker behavior.
 static void walk_state_tests(const std::string& dir,
                               size_t& passed, size_t& failed, size_t& skipped,
                               size_t& skipped_upstream,
-                              size_t limit = SIZE_MAX) {
+                              size_t limit = SIZE_MAX,
+                              const std::string& fork_name = "Cancun") {
     passed = failed = skipped = skipped_upstream = 0;
     // Enumerate via `find` since td::walk_path is overkill.
     std::string cmd = "find '" + dir + "' -type f -name '*.json' | sort";
@@ -3539,7 +3573,7 @@ static void walk_state_tests(const std::string& dir,
         bool ran = false;
         bool verbose_saved = g_state_test_verbose;
         g_state_test_verbose = false;
-        bool ok = run_one_state_test_cancun(path, ran);
+        bool ok = run_one_state_test_fork(path, fork_name, ran);
         g_state_test_verbose = verbose_saved;
         if (!ran) { ++skipped; continue; }
         if (ok) ++passed; else { ++failed;
@@ -3670,18 +3704,24 @@ static void test_state_test_runner_walk_curated() {
 // fixtures. The fixture JSON shape is the same as ethereum/tests
 // GeneralStateTests except the post-state is verified by Merkle root
 // (entry.hash) rather than per-account diff (entry.state). Our
-// run_one_state_test_cancun() helper now handles both.
+// run_one_state_test_fork() helper handles both.
 //
 // Source: https://github.com/ethereum/execution-spec-tests releases
 // (fixtures_stable.tar.gz). Layout: fixtures/state_tests/<fork>/<feature>/...
 //
-// We walk only the Cancun subtree for now; Prague support is a future
-// fork for evm-workchain.
-static void test_state_test_runner_pyspec_walk() {
-    printf("=== test_state_test_runner_pyspec_walk (Phase G.2: walk Pyspec state_tests/cancun) ===\n");
-    const std::string root = "/home/tomi/evm-workchain/test/conformance/execution-spec-tests/fixtures/state_tests/cancun";
+// Shared driver used by the per-fork walkers below: enumerate the
+// per-feature subdirs under `<root>/<fork_dir>/` and run each fixture
+// with the matching `fork_name` post-state entry.
+static void run_pyspec_walk_for_fork(const std::string& fork_dir,
+                                      const std::string& fork_name,
+                                      const std::string& label) {
+    printf("=== test_state_test_runner_pyspec_walk_%s "
+           "(Phase G.2: walk Pyspec state_tests/%s) ===\n",
+           fork_dir.c_str(), fork_dir.c_str());
+    const std::string root =
+        "/home/tomi/evm-workchain/test/conformance/execution-spec-tests/fixtures/state_tests/" + fork_dir;
     if (td::stat(td::CSlice(root)).is_error()) {
-        printf("  SKIP (execution-spec-tests fixtures not on disk;\n");
+        printf("  SKIP (execution-spec-tests fixtures for %s not on disk;\n", fork_dir.c_str());
         printf("        download fixtures_stable.tar.gz from\n");
         printf("        https://github.com/ethereum/execution-spec-tests/releases\n");
         printf("        and extract under test/conformance/execution-spec-tests/)\n\n");
@@ -3709,7 +3749,7 @@ static void test_state_test_runner_pyspec_walk() {
     size_t total_p = 0, total_f = 0, total_s = 0, total_u = 0;
     for (const auto& f : features) {
         size_t p, fl, s, u;
-        walk_state_tests(root + "/" + f, p, fl, s, u);
+        walk_state_tests(root + "/" + f, p, fl, s, u, SIZE_MAX, fork_name);
         if (u > 0) {
             printf("  %-32s  pass=%zu  fail=%zu  skip=%zu  upstream_skip=%zu\n",
                    f.c_str(), p, fl, s, u);
@@ -3718,9 +3758,34 @@ static void test_state_test_runner_pyspec_walk() {
         }
         total_p += p; total_f += fl; total_s += s; total_u += u;
     }
-    printf("  Pyspec Cancun  pass=%zu  fail=%zu  skip=%zu  upstream_skip=%zu\n",
-           total_p, total_f, total_s, total_u);
-    printf("  %s\n\n", (total_f == 0 && total_p > 0) ? "PASSED" : "FAILED");
+    printf("  Pyspec %s  pass=%zu  fail=%zu  skip=%zu  upstream_skip=%zu\n",
+           label.c_str(), total_p, total_f, total_s, total_u);
+    // Pure skips (e.g. no Shanghai post entry on a Paris-only fixture under
+    // shanghai/) are acceptable; only fails count against us. We also let
+    // pass==0 stand if everything was skipped (e.g. fork dir is just
+    // cross-fork stubs) — print PASSED in that case so the run isn't
+    // misread as a regression.
+    bool ok = (total_f == 0);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_state_test_runner_pyspec_walk() {
+    run_pyspec_walk_for_fork("cancun", "Cancun", "Cancun");
+}
+
+// Sister walker for Shanghai. Fixtures under state_tests/shanghai/ use
+// post.Shanghai (or post.Paris for cross-fork stubs); we read post.Shanghai
+// here and skip the Paris-only ones (counted as plain skips).
+static void test_state_test_runner_pyspec_walk_shanghai() {
+    run_pyspec_walk_for_fork("shanghai", "Shanghai", "Shanghai");
+}
+
+// Sister walker for Prague. Pyspec didn't ship a state_tests/prague/ dir
+// in the fixture release we currently track; if the dir is absent the
+// runner prints SKIP and moves on. When the dir lands in a future fixture
+// drop, this will exercise post.Prague + prague_time.
+static void test_state_test_runner_pyspec_walk_prague() {
+    run_pyspec_walk_for_fork("prague", "Prague", "Prague");
 }
 
 int main() {
@@ -3771,6 +3836,8 @@ int main() {
     test_state_test_runner_poc();
     test_state_test_runner_walk_curated();
     test_state_test_runner_pyspec_walk();
+    test_state_test_runner_pyspec_walk_shanghai();
+    test_state_test_runner_pyspec_walk_prague();
 
     // Scan stdout for FAILED to determine exit code
     // (Individual tests print PASSED or FAILED)
