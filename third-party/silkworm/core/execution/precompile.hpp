@@ -62,6 +62,23 @@ struct SupportedContract {
     evmc_revision added_in;
 };
 
+// EIP-2537 BLS12-381 precompile gas/run pairs (forward decls; impls in
+// precompile.cpp).
+uint64_t bls_g1add_gas(ByteView, evmc_revision) noexcept;
+std::optional<Bytes> bls_g1add_run(ByteView) noexcept;
+uint64_t bls_g1msm_gas(ByteView, evmc_revision) noexcept;
+std::optional<Bytes> bls_g1msm_run(ByteView) noexcept;
+uint64_t bls_g2add_gas(ByteView, evmc_revision) noexcept;
+std::optional<Bytes> bls_g2add_run(ByteView) noexcept;
+uint64_t bls_g2msm_gas(ByteView, evmc_revision) noexcept;
+std::optional<Bytes> bls_g2msm_run(ByteView) noexcept;
+uint64_t bls_pairing_gas(ByteView, evmc_revision) noexcept;
+std::optional<Bytes> bls_pairing_run(ByteView) noexcept;
+uint64_t bls_map_fp_to_g1_gas(ByteView, evmc_revision) noexcept;
+std::optional<Bytes> bls_map_fp_to_g1_run(ByteView) noexcept;
+uint64_t bls_map_fp2_to_g2_gas(ByteView, evmc_revision) noexcept;
+std::optional<Bytes> bls_map_fp2_to_g2_run(ByteView) noexcept;
+
 inline constexpr std::optional<SupportedContract> kContracts[]{
     std::nullopt,                                                                  // 0x00
     SupportedContract{{ecrec_gas, ecrec_run}, EVMC_FRONTIER},                      // 0x01
@@ -74,6 +91,14 @@ inline constexpr std::optional<SupportedContract> kContracts[]{
     SupportedContract{{snarkv_gas, snarkv_run}, EVMC_BYZANTIUM},                   // 0x08
     SupportedContract{{blake2_f_gas, blake2_f_run}, EVMC_ISTANBUL},                // 0x09
     SupportedContract{{point_evaluation_gas, point_evaluation_run}, EVMC_CANCUN},  // 0x0a
+    // EIP-2537 BLS12-381 precompiles (Pectra, EVMC_PRAGUE).
+    SupportedContract{{bls_g1add_gas, bls_g1add_run}, EVMC_PRAGUE},                // 0x0b
+    SupportedContract{{bls_g1msm_gas, bls_g1msm_run}, EVMC_PRAGUE},                // 0x0c
+    SupportedContract{{bls_g2add_gas, bls_g2add_run}, EVMC_PRAGUE},                // 0x0d
+    SupportedContract{{bls_g2msm_gas, bls_g2msm_run}, EVMC_PRAGUE},                // 0x0e
+    SupportedContract{{bls_pairing_gas, bls_pairing_run}, EVMC_PRAGUE},            // 0x0f
+    SupportedContract{{bls_map_fp_to_g1_gas, bls_map_fp_to_g1_run}, EVMC_PRAGUE},  // 0x10
+    SupportedContract{{bls_map_fp2_to_g2_gas, bls_map_fp2_to_g2_run}, EVMC_PRAGUE}, // 0x11
 };
 
 bool is_precompile(const evmc::address&, evmc_revision) noexcept;

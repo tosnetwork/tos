@@ -626,6 +626,188 @@ std::optional<Bytes> point_evaluation_run(ByteView input) noexcept {
         "73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001");
 }
 
+// =============================================================================
+// EIP-2537: BLS12-381 precompiles (0x0b–0x11), Pectra fork.
+// =============================================================================
+//
+// Wires evmone's bls.cpp (G1/G2 add, msm, pairing, map_to_curve) into
+// silkworm's precompile dispatch. Per-precompile gas costs from EIP-2537;
+// the discount table for MSM is included verbatim for k=1..128, with k>128
+// using the floor of 174 (also per spec).
+//
+// Spec input/output layout per https://eips.ethereum.org/EIPS/eip-2537:
+//   G1 point  : 128 bytes (2 × 64-byte field element, x then y)
+//   G2 point  : 256 bytes (2 × 128-byte Fp2 element, x then y)
+//   Scalar    : 32 bytes (big-endian uint256)
+//   Field elt : 64 bytes (Fp), 128 bytes (Fp2)
+//
+// All input is right-padded with zeros to the expected size BEFORE we
+// invoke evmone — same convention as bn_add_run/bn_mul_run above.
+
+}  // close namespace silkworm::precompile to include evmone bls header
+#include <evmone_precompiles/bls.hpp>
+namespace silkworm::precompile {
+
+// EIP-2537 §"MSM gas discount" table, indexed by k-1 (so kBlsMsmDiscount[0]
+// is for k=1). Values stay constant at 174 for k > 128.
+inline constexpr uint16_t kBlsMsmDiscount[128] = {
+    1000, 949, 848, 797, 764, 750, 738, 728, 719, 712,
+    705, 698, 692, 687, 682, 677, 673, 669, 665, 661,
+    658, 654, 651, 648, 645, 642, 640, 637, 635, 632,
+    630, 627, 625, 623, 621, 619, 617, 615, 613, 611,
+    609, 608, 606, 604, 603, 601, 599, 598, 596, 595,
+    593, 592, 591, 589, 588, 586, 585, 584, 582, 581,
+    580, 579, 577, 576, 575, 574, 573, 572, 570, 569,
+    568, 567, 566, 565, 564, 563, 562, 561, 560, 559,
+    558, 557, 556, 555, 554, 553, 552, 551, 550, 549,
+    548, 547, 547, 546, 545, 544, 543, 542, 541, 540,
+    540, 539, 538, 537, 536, 536, 535, 534, 533, 532,
+    532, 531, 530, 529, 528, 528, 527, 526, 525, 525,
+    524, 523, 522, 522, 521, 520, 520, 519,
+};
+
+inline constexpr uint16_t bls_msm_discount(size_t k) noexcept {
+    if (k == 0) return 1000;  // shouldn't happen — caller validates
+    if (k > 128) return 174;
+    return kBlsMsmDiscount[k - 1];
+}
+
+// 0x0b — BLS12_G1ADD
+uint64_t bls_g1add_gas(ByteView, evmc_revision) noexcept { return 375; }
+std::optional<Bytes> bls_g1add_run(ByteView input_view) noexcept {
+    Bytes input{input_view};
+    right_pad(input, 256);
+    uint8_t rx[64], ry[64];
+    if (!evmone::crypto::bls::g1_add(rx, ry,
+            input.data(),       input.data() + 64,
+            input.data() + 128, input.data() + 192)) {
+        return std::nullopt;
+    }
+    Bytes out(128, 0);
+    std::memcpy(out.data(), rx, 64);
+    std::memcpy(out.data() + 64, ry, 64);
+    return out;
+}
+
+// 0x0c — BLS12_G1MSM
+uint64_t bls_g1msm_gas(ByteView input, evmc_revision) noexcept {
+    constexpr size_t kPairBytes = 160;  // 128B G1 point + 32B scalar
+    if (input.empty() || input.size() % kPairBytes != 0) {
+        return UINT64_MAX;  // forces out-of-gas — caller will see "ran out" failure
+    }
+    const size_t k = input.size() / kPairBytes;
+    return (k * 12000ull * bls_msm_discount(k)) / 1000ull;
+}
+std::optional<Bytes> bls_g1msm_run(ByteView input_view) noexcept {
+    constexpr size_t kPairBytes = 160;
+    if (input_view.empty() || input_view.size() % kPairBytes != 0) {
+        return std::nullopt;
+    }
+    Bytes input{input_view};
+    uint8_t rx[64], ry[64];
+    if (!evmone::crypto::bls::g1_msm(rx, ry, input.data(), input.size())) {
+        return std::nullopt;
+    }
+    Bytes out(128, 0);
+    std::memcpy(out.data(), rx, 64);
+    std::memcpy(out.data() + 64, ry, 64);
+    return out;
+}
+
+// 0x0d — BLS12_G2ADD
+uint64_t bls_g2add_gas(ByteView, evmc_revision) noexcept { return 600; }
+std::optional<Bytes> bls_g2add_run(ByteView input_view) noexcept {
+    Bytes input{input_view};
+    right_pad(input, 512);
+    uint8_t rx[128], ry[128];
+    if (!evmone::crypto::bls::g2_add(rx, ry,
+            input.data(),       input.data() + 128,
+            input.data() + 256, input.data() + 384)) {
+        return std::nullopt;
+    }
+    Bytes out(256, 0);
+    std::memcpy(out.data(), rx, 128);
+    std::memcpy(out.data() + 128, ry, 128);
+    return out;
+}
+
+// 0x0e — BLS12_G2MSM
+uint64_t bls_g2msm_gas(ByteView input, evmc_revision) noexcept {
+    constexpr size_t kPairBytes = 288;  // 256B G2 point + 32B scalar
+    if (input.empty() || input.size() % kPairBytes != 0) {
+        return UINT64_MAX;
+    }
+    const size_t k = input.size() / kPairBytes;
+    return (k * 22500ull * bls_msm_discount(k)) / 1000ull;
+}
+std::optional<Bytes> bls_g2msm_run(ByteView input_view) noexcept {
+    constexpr size_t kPairBytes = 288;
+    if (input_view.empty() || input_view.size() % kPairBytes != 0) {
+        return std::nullopt;
+    }
+    Bytes input{input_view};
+    uint8_t rx[128], ry[128];
+    if (!evmone::crypto::bls::g2_msm(rx, ry, input.data(), input.size())) {
+        return std::nullopt;
+    }
+    Bytes out(256, 0);
+    std::memcpy(out.data(), rx, 128);
+    std::memcpy(out.data() + 128, ry, 128);
+    return out;
+}
+
+// 0x0f — BLS12_PAIRING_CHECK
+uint64_t bls_pairing_gas(ByteView input, evmc_revision) noexcept {
+    constexpr size_t kPairBytes = 384;  // G1(128) + G2(256)
+    if (input.empty() || input.size() % kPairBytes != 0) {
+        return UINT64_MAX;
+    }
+    const size_t k = input.size() / kPairBytes;
+    return 32600ull + 37700ull * k;
+}
+std::optional<Bytes> bls_pairing_run(ByteView input_view) noexcept {
+    constexpr size_t kPairBytes = 384;
+    if (input_view.empty() || input_view.size() % kPairBytes != 0) {
+        return std::nullopt;
+    }
+    Bytes input{input_view};
+    uint8_t r[32];
+    if (!evmone::crypto::bls::pairing_check(r, input.data(), input.size())) {
+        return std::nullopt;
+    }
+    return Bytes{r, r + 32};
+}
+
+// 0x10 — BLS12_MAP_FP_TO_G1
+uint64_t bls_map_fp_to_g1_gas(ByteView, evmc_revision) noexcept { return 5500; }
+std::optional<Bytes> bls_map_fp_to_g1_run(ByteView input_view) noexcept {
+    Bytes input{input_view};
+    right_pad(input, 64);
+    uint8_t rx[64], ry[64];
+    if (!evmone::crypto::bls::map_fp_to_g1(rx, ry, input.data())) {
+        return std::nullopt;
+    }
+    Bytes out(128, 0);
+    std::memcpy(out.data(), rx, 64);
+    std::memcpy(out.data() + 64, ry, 64);
+    return out;
+}
+
+// 0x11 — BLS12_MAP_FP2_TO_G2
+uint64_t bls_map_fp2_to_g2_gas(ByteView, evmc_revision) noexcept { return 23800; }
+std::optional<Bytes> bls_map_fp2_to_g2_run(ByteView input_view) noexcept {
+    Bytes input{input_view};
+    right_pad(input, 128);
+    uint8_t rx[128], ry[128];
+    if (!evmone::crypto::bls::map_fp2_to_g2(rx, ry, input.data())) {
+        return std::nullopt;
+    }
+    Bytes out(256, 0);
+    std::memcpy(out.data(), rx, 128);
+    std::memcpy(out.data() + 128, ry, 128);
+    return out;
+}
+
 bool is_precompile(const evmc::address& address, evmc_revision rev) noexcept {
     using namespace evmc::literals;
 
