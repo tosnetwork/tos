@@ -2259,19 +2259,36 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
 
     // Account proof for the target address.
     //
-    // generate_mpt_proof() walks the trie root → leaf even when the target
-    // is absent ("exclusion proof"): the walk terminates at the deepest
-    // node along the keccak(addr) path, demonstrating divergence (different
-    // leaf, missing branch slot, or extension mismatch). The only case it
-    // returns an empty list is when the underlying trie itself is empty —
-    // i.e. our chain has no accounts at all, which only happens at genesis.
+    // generate_mpt_proof() implements a real Yellow Paper Appendix D walk:
+    // starting from the root, it descends along the keccak(addr) nibble
+    // path, appending each encountered node's RLP encoding. Termination
+    // cases (all of which yield a cryptographically valid proof a verifier
+    // can independently check):
+    //   - Existence:    walk reaches a leaf whose path matches the target
+    //                   nibbles in full; proof[last] is the leaf with value.
+    //   - Non-existence A (different leaf): walk reaches a leaf whose key
+    //                   diverges from target; the leaf's HP-encoded path
+    //                   exposes the divergence.
+    //   - Non-existence B (empty branch slot): walk reaches a branch node
+    //                   whose entry at the matching nibble is empty (0x80);
+    //                   the branch RLP IS the proof of absence.
+    //   - Non-existence C (extension mismatch): walk reaches an extension
+    //                   whose path nibbles don't match the corresponding
+    //                   target nibbles; the extension's HP path exposes
+    //                   the divergence.
     //
-    // The eth_getProof spec mandates accountProof be `list<string>` (never
-    // `list[]`); for the empty-trie case we fall back to a single-node
-    // proof of `0x80` (RLP encoding of the empty string), which is the
-    // canonical serialisation of the empty trie root node. Its keccak256
-    // is silkworm::kEmptyRoot, satisfying the "first node hashes to root"
-    // invariant a verifier checks.
+    // This is verified end-to-end by test_eth_get_proof_non_existence in
+    // test-evm-executor.cpp (calls verify_mpt_proof on the output, asserts
+    // both keccak(proof[0]) == stateRoot and structural validity).
+    //
+    // generate_mpt_proof returns [] ONLY when the underlying trie itself
+    // is empty (no accounts at all — only happens at genesis with no
+    // allocs). The eth_getProof spec mandates accountProof be `list<string>`
+    // (never `list[]`); for the empty-trie case we fall back to a single-
+    // node proof of `0x80` (RLP encoding of the empty string), which is
+    // the canonical serialisation of the empty trie root node. Its
+    // keccak256 equals silkworm::kEmptyRoot, satisfying the "first node
+    // hashes to root" invariant a verifier checks.
     auto target_hash = ethash::keccak256(addr.bytes, 20);
     silkworm::Bytes target_key(target_hash.bytes, target_hash.bytes + 32);
     auto account_proof = generate_mpt_proof(account_kv, target_key);

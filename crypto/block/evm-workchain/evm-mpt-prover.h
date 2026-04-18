@@ -45,4 +45,34 @@ std::vector<silkworm::Bytes> generate_mpt_proof(
 /// returned by generate_mpt_proof(kv, any_key_in_kv).
 evmc::bytes32 mpt_root(const std::map<silkworm::Bytes, silkworm::Bytes>& sorted_kv);
 
+/// Result of verifying an MPT proof against an expected root.
+enum class MptProofResult {
+    kValidExistence,     // Proof terminates at a leaf whose key == target_key, with `out_value` populated.
+    kValidNonExistence,  // Proof terminates at a node demonstrating the target_key is absent.
+    kInvalidRoot,        // First node's keccak256 doesn't match expected_root.
+    kInvalidLink,        // A child reference in some node didn't match the next node's hash/embedded RLP.
+    kInvalidStructure,   // RLP structure malformed (wrong arity, bad HP path, etc.).
+};
+
+/// Verify an MPT proof against the expected root for `target_key`.
+///
+/// Walks the proof list node-by-node, checking:
+///   1. keccak256(proof[0]) == expected_root
+///   2. each non-terminal node's link to the next is consistent
+///      (either a 32-byte keccak hash or an embedded RLP < 32 bytes)
+///   3. the path of nibbles consumed matches keccak256(target_key)
+///
+/// On kValidExistence, `out_value` receives the leaf's RLP-encoded value.
+/// On kValidNonExistence, `out_value` is left empty.
+///
+/// This is the verification half of generate_mpt_proof — used by self-tests
+/// to confirm the prover's output is a real Yellow Paper Appendix D proof
+/// (not just a placeholder) without round-tripping through an external
+/// verifier. The check is linear in proof length.
+MptProofResult verify_mpt_proof(
+    const std::vector<silkworm::Bytes>& proof,
+    const evmc::bytes32& expected_root,
+    const silkworm::Bytes& target_key,
+    silkworm::Bytes& out_value);
+
 }  // namespace evm_workchain
