@@ -7,13 +7,13 @@ Version: v1.1 — 2026-04-17 (status snapshot)
 | Gate | State | Notes |
 |------|-------|-------|
 | **Gate T — Testnet** | ✅ PASS | All 6 rows green. Last-known-good `57bf20cb`. |
-| **Gate P — Private mainnet** | 🚧 in progress | 1 of 6 rows fully green (G.1 at **100%** on 55-dir curated subset, 2533/2533 pass, 0 fail). |
+| **Gate P — Private mainnet** | 🚧 in progress | 2 of 6 rows fully green (G.1 at **100%** on 55-dir GeneralStateTests / 2533 pass; G.2 Pyspec at **100%** on Cancun / 43 pass). |
 | **Gate M — Public mainnet** | 📋 planned | Depends on Gates T + P + Phase G.2/G.3/G.4/G.5 + third-party audit. |
 
 | Phase | State | Headline |
 |-------|-------|----------|
 | G.1 — State-test harness (GeneralStateTests) | ✅ done (55 dirs, 100% pass) | Runner + walker ✅ over **55 subdirs**, **2533/2533 pass (100%)**, **0 fail**, 5 upstream-skipped (silkworm `kFailingTests` + EIP-684/7610 grey zone), 2 silkworm-asserted skips. **10 real bugs** found and fixed (5 consensus + 3 DoS + 2 adapter-glue) |
-| G.2 — execution-spec-tests (Pyspec) | 📋 planned | Same runner as G.1; extend to new fixture dir |
+| G.2 — execution-spec-tests (Pyspec) | ✅ done (Cancun, 100% pass) | Walker added in `eef094bf`. Pyspec stable v3.0.0 fixtures, **43/43 pass**, 13 skipped (Shanghai-only entries). 1 new bug class found and fixed: EIP-4844 blob-fee burn missing + 2 blob-tx pre-validation rules (zero-blobs, bad version byte). |
 | G.3 — Hive (`rpc-compat`) | 📋 planned | Dockerize validator, write hive client stub |
 | G.4 — Continuous differential CI | 🚧 runner ✅, CI 📋 | One-shot `differential_geth.py` lives; continuous CI not yet stood up |
 | G.5 — Fuzz + stress | 🚧 runner ✅, 24h soak 📋 | `test/conformance/fuzz_eth.py` ✅ landed; found 1 DoS (eth_call hex-parse) fixed in `f53c356a`; 60s reruns clean; 24-hour soak + stress-throughput still pending |
@@ -29,7 +29,8 @@ Version: v1.1 — 2026-04-17 (status snapshot)
 | `eth_call` DoS: invalid hex in `value`/`gas`/`gasPrice` crashed validator via `intx::from_string` throw | `f53c356a` | DoS (remote-reachable, found by Phase G.5 fuzzer) |
 | State-test runner: PREVRANDAO fed zero to silkworm (`env.currentRandom` ignored) — 10 fixtures diverged | `23fe9c88` | Adapter glue (runner-only; prod collator already wires `block.prev_randao` correctly) |
 | `CellEvmState::read_code`: returned ByteView into a shared thread_local buffer, overwritten on every call. silkworm caches the ByteView in `IntraBlockState::existing_code_`, so any recursive contract ping-ponging between two code_hashes corrupted the cache → wrong bytecode executed | `8a929b44` | **Consensus bug** — affects any tx that touches ≥2 contracts and recursion. Cleared 22 state-test fixtures at once. |
-| State-test runner: `excess_blob_gas` left as `nullopt` on the block header → `blob_gas_price()` returned `nullopt` → `BLOBBASEFEE` opcode (EIP-7516, Cancun) returned 0 instead of `MIN_BLOB_GASPRICE = 1`. Contracts that branched on `ISZERO(BLOBBASEFEE)` reverted | (this commit) | Adapter glue (runner-only; production block builder doesn't have blob txs yet). Cleared the last failing fixture. |
+| State-test runner: `excess_blob_gas` left as `nullopt` on the block header → `blob_gas_price()` returned `nullopt` → `BLOBBASEFEE` opcode (EIP-7516, Cancun) returned 0 instead of `MIN_BLOB_GASPRICE = 1`. Contracts that branched on `ISZERO(BLOBBASEFEE)` reverted | `a23f0fb9` | Adapter glue (runner-only; production block builder doesn't have blob txs yet). Cleared the last failing fixture. |
+| EIP-4844 blob-fee burn missing — `run_evm()` deducted `gas_limit * gas_price` from sender but never subtracted `total_blob_gas * blob_gas_price`. Sender balance came out too high by exactly the burn amount; spec state-root mismatched | (this commit) | **Consensus bug** — affects every EIP-4844 blob tx. Found by Pyspec G.2 walker (8 fixtures simultaneously). Fix also adds 2 EIP-4844 pre-validation rules (zero-blobs, bad version byte) for 2 more cleared fixtures. |
 
 ## Purpose
 

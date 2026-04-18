@@ -123,22 +123,57 @@ static ExecutionResult run_evm(
             }
         }
 
-        // EIP-1559 balance check: sender must be able to afford
-        //   gas_limit * max_fee_per_gas + value
-        // even if the effective_gas_price (after base-fee deduction)
-        // ends up lower. The Yellow-Paper / Berlin check used
-        // effective_gas_price; London+ tightened it to max_fee_per_gas
-        // as the upfront-budget ceiling.
+        // EIP-1559 + EIP-4844 balance check. Sender must afford:
+        //   gas_limit * max_fee_per_gas
+        //   + total_blob_gas * max_fee_per_blob_gas   (EIP-4844)
+        //   + value
+        // even if the effective gas/blob prices end up lower.
         const intx::uint256 max_gas_price = (rev >= EVMC_LONDON &&
                                                txn.type != silkworm::TransactionType::kLegacy)
             ? txn.max_fee_per_gas
             : txn.effective_gas_price(bf);
-        const intx::uint512 max_cost = intx::uint512{txn.gas_limit} * intx::uint512{max_gas_price} +
-                                        intx::uint512{txn.value};
+        intx::uint512 max_cost = intx::uint512{txn.gas_limit} * intx::uint512{max_gas_price} +
+                                  intx::uint512{txn.value};
+        if (rev >= EVMC_CANCUN &&
+            txn.type == silkworm::TransactionType::kBlob) {
+            max_cost += intx::uint512{txn.total_blob_gas()} *
+                        intx::uint512{txn.max_fee_per_blob_gas};
+        }
         if (intx::uint512{state.get_balance(sender)} < max_cost) {
             result.error_message = "insufficient funds for gas + value";
             result.gas_used = 0;
             return result;
+        }
+
+        // EIP-4844 blob-tx pre-validation suite.
+        if (rev >= EVMC_CANCUN &&
+            txn.type == silkworm::TransactionType::kBlob) {
+            // 1. max_fee_per_blob_gas must cover the current blob
+            //    base fee; otherwise the tx underpays the burn.
+            const auto blob_price = block.header.blob_gas_price().value_or(0);
+            if (txn.max_fee_per_blob_gas < blob_price) {
+                result.error_message = "max fee per blob gas below blob base fee";
+                result.gas_used = 0;
+                return result;
+            }
+            // 2. A blob (type-3) tx must have ≥ 1 blob hash.
+            //    Pyspec: TransactionException.TYPE_3_TX_ZERO_BLOBS
+            if (txn.blob_versioned_hashes.empty()) {
+                result.error_message = "blob tx must carry at least one blob";
+                result.gas_used = 0;
+                return result;
+            }
+            // 3. Each versioned hash's first byte must be the KZG
+            //    version marker (0x01).
+            //    Pyspec: TransactionException.TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH
+            constexpr uint8_t kKzgVersionedHash = 0x01;
+            for (const auto& h : txn.blob_versioned_hashes) {
+                if (h.bytes[0] != kKzgVersionedHash) {
+                    result.error_message = "blob versioned hash has wrong version byte";
+                    result.gas_used = 0;
+                    return result;
+                }
+            }
         }
     }
 
@@ -160,6 +195,20 @@ static ExecutionResult run_evm(
     // 1. Deduct upfront gas cost.
     const intx::uint256 upfront_gas_cost = intx::uint256{txn.gas_limit} * effective_gas_price;
     state.subtract_from_balance(sender, upfront_gas_cost);
+
+    // 1b. EIP-4844: deduct the blob-data fee. blob_gas_price is the
+    // current blob base fee (computed from excess_blob_gas via
+    // fake_exponential). The full blob_fee is **burned** — it is
+    // never credited back to the sender (no refund on revert) and
+    // never paid to the beneficiary. Only applicable to blob-type
+    // txs (TransactionType::kBlob) when the chain is at Cancun+.
+    if (rev >= EVMC_CANCUN &&
+        txn.type == silkworm::TransactionType::kBlob &&
+        !txn.blob_versioned_hashes.empty()) {
+        const intx::uint256 blob_gas_price = block.header.blob_gas_price().value_or(0);
+        const intx::uint256 blob_fee = intx::uint256{txn.total_blob_gas()} * blob_gas_price;
+        state.subtract_from_balance(sender, blob_fee);
+    }
 
     // 2. Increment sender nonce (CALL only; CREATE increments internally).
     if (txn.to.has_value()) {
