@@ -1,5 +1,15 @@
 cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
 
+# Prefer clang — GCC has C++20 compatibility issues with this codebase.
+if(NOT DEFINED CMAKE_C_COMPILER AND NOT DEFINED CMAKE_CXX_COMPILER)
+  find_program(_CLANG_C   clang)
+  find_program(_CLANG_CXX clang++)
+  if(_CLANG_C AND _CLANG_CXX)
+    set(CMAKE_C_COMPILER   "${_CLANG_C}"   CACHE FILEPATH "C compiler"   FORCE)
+    set(CMAKE_CXX_COMPILER "${_CLANG_CXX}" CACHE FILEPATH "C++ compiler" FORCE)
+  endif()
+endif()
+
 project(TOS VERSION 0.5 LANGUAGES C CXX)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -284,6 +294,31 @@ include(BuildSECP256K1)
 include(BuildLibbacktrace)
 include(BuildMHD)
 include(BuildZlib)
+
+# --- EVM Workchain third-party dependencies ---
+if (NOT TOS_ONLY_TOSLIB)
+  message("Add EVM workchain dependencies (intx, ethash, evmone)")
+  function(evm_deps_scope)
+    # intx: extended precision integer library (header-only)
+    add_subdirectory(third-party/intx EXCLUDE_FROM_ALL)
+    # ethash: keccak hashing
+    set(ETHASH_BUILD_GLOBAL_CONTEXT OFF CACHE BOOL "" FORCE)
+    set(ETHASH_BUILD_ETHASH ON CACHE BOOL "" FORCE)
+    set(ETHASH_TESTING OFF CACHE BOOL "" FORCE)
+    add_subdirectory(third-party/ethash EXCLUDE_FROM_ALL)
+    # evmone: EVM implementation (includes evmc)
+    add_subdirectory(third-party/evmone EXCLUDE_FROM_ALL)
+  endfunction()
+  evm_deps_scope()
+
+  # libff: finite field library for alt_bn128 pairing / modexp
+  message("Add libff (alt_bn128 precompiles)")
+  add_subdirectory(third-party/libff EXCLUDE_FROM_ALL)
+
+  # silkworm-core: Ethereum execution types, state, EVM wrapper
+  message("Add silkworm-core (Ethereum execution engine)")
+  add_subdirectory(third-party/silkworm/core EXCLUDE_FROM_ALL)
+endif()
 
 
 # Configure CCache if available

@@ -326,7 +326,7 @@ td::actor::Task<> ValidatorManagerMasterchainStarter::run() {
   R.ensure();
   promise_.set_value(R.move_as_ok());
   stop();
-  co_return {};
+  co_return td::Unit{};
 }
 
 td::actor::Task<ValidatorManagerInitResult> ValidatorManagerMasterchainStarter::run_inner() {
@@ -464,7 +464,7 @@ td::actor::Task<> ValidatorManagerMasterchainStarter::get_latest_applied_block()
     state_ = td::Ref<MasterchainState>{
         co_await td::actor::ask(manager_, &ValidatorManager::get_shard_state_from_db, handle_)};
   }
-  co_return {};
+  co_return td::Unit{};
 }
 
 td::actor::Task<> ValidatorManagerMasterchainStarter::truncate(BlockSeqno truncate_seqno) {
@@ -489,7 +489,7 @@ td::actor::Task<> ValidatorManagerMasterchainStarter::truncate(BlockSeqno trunca
   }
   handle_->unsafe_clear_next();
   co_await handle_->flush(manager_, handle_);
-  co_return {};
+  co_return td::Unit{};
 }
 
 void validator_manager_init(td::Ref<ValidatorManagerOptions> opts, td::actor::ActorId<ValidatorManager> manager,

@@ -558,7 +558,7 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
         co_return td::Status::Error("Duplicate broadcast");
       }
     }
-    co_return {};
+    co_return td::Unit{};
   }
 
  private:
@@ -593,7 +593,7 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
       egress_quota -= msg_size;
 
       owning_bus().publish<OutgoingProtocolMessage>(std::nullopt, std::move(message));
-      co_return {};
+      co_return td::Unit{};
     };
 
     while (true) {
@@ -717,7 +717,7 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
       }
     }
 
-    co_return {};
+    co_return td::Unit{};
   }
 
   // ===== Bookkeeping =====
@@ -854,7 +854,7 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
 
     auto slot = state_->slot_at(cert->vote.referenced_slot());
     if (!slot.has_value()) {
-      co_return {};
+      co_return td::Unit{};
     }
 
     std::move(cert.write()).consume_and_downcast([&](auto cert) {
@@ -866,7 +866,7 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
       }
       handle_saved_certificate(*slot, cert);
     });
-    co_return {};
+    co_return td::Unit{};
   }
 
   template <typename T>

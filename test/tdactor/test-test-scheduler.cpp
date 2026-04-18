@@ -20,7 +20,7 @@ TEST(TestScheduler, BasicActorStartUp) {
     create_actor<MyActor>("test").release();
     co_await ts.wait_sync_work();
     EXPECT(started);
-    co_return {};
+    co_return td::Unit{};
   });
 }
 
@@ -49,7 +49,7 @@ TEST(TestScheduler, AlarmWithVirtualTime) {
     co_await ts.wait_sync_work();
 
     EXPECT(alarm_fired);
-    co_return {};
+    co_return td::Unit{};
   });
 }
 
@@ -81,7 +81,7 @@ TEST(TestScheduler, TimeFrozenDuringWork) {
     EXPECT_EQ(time_at_alarm, t1);
     EXPECT_EQ(Time::now(), t1);
 
-    co_return {};
+    co_return td::Unit{};
   });
 }
 
@@ -114,7 +114,7 @@ TEST(TestScheduler, RepeatingAlarm) {
     }
 
     EXPECT_EQ(alarm_count, 5);
-    co_return {};
+    co_return td::Unit{};
   });
 }
 
@@ -137,7 +137,7 @@ TEST(TestScheduler, SendClosure) {
     co_await ts.wait_sync_work();
 
     EXPECT_EQ(value, 42);
-    co_return {};
+    co_return td::Unit{};
   });
 }
 
@@ -150,7 +150,7 @@ TEST(TestScheduler, CoroSleep) {
     auto sleeper = [&]() -> Task<Unit> {
       co_await coro_sleep(Timestamp::in(3.0));
       woke_up = true;
-      co_return {};
+      co_return td::Unit{};
     }();
     auto started = std::move(sleeper).start();
 
@@ -162,7 +162,7 @@ TEST(TestScheduler, CoroSleep) {
     co_await ts.wait_sync_work();
     EXPECT(woke_up);
 
-    co_return {};
+    co_return td::Unit{};
   });
 }
 
@@ -212,7 +212,7 @@ TEST(TestScheduler, MultipleActorsInteracting) {
       EXPECT_EQ(pong_count, i);
     }
 
-    co_return {};
+    co_return td::Unit{};
   });
 }
 
@@ -229,7 +229,7 @@ TEST(TestScheduler, NextTimeoutInfinity) {
     co_await ts.wait_sync_work();
 
     EXPECT(ts.next_timeout_in() == std::numeric_limits<double>::infinity());
-    co_return {};
+    co_return td::Unit{};
   });
 }
 
@@ -251,7 +251,7 @@ TEST(TestScheduler, ActorStopAndTearDown) {
     create_actor<MyActor>("self-stopper").release();
     co_await ts.wait_sync_work();
     EXPECT(torn_down);
-    co_return {};
+    co_return td::Unit{};
   });
 }
 
@@ -298,7 +298,7 @@ TEST(TestScheduler, AdvanceTimePrecise) {
     co_await ts.wait_sync_work();
     EXPECT(alarm_b);
 
-    co_return {};
+    co_return td::Unit{};
   });
 }
 
@@ -313,14 +313,14 @@ TEST(TestScheduler, CleanupDrainsPendingAlarms) {
         iterations++;
         co_await coro_sleep(Timestamp::in(1.0));
       }
-      co_return {};
+      co_return td::Unit{};
     };
     std::move(looper()).start().detach();
 
     co_await ts.wait_sync_work();
     EXPECT_EQ(iterations, 1);
 
-    co_return {};
+    co_return td::Unit{};
   });
 
   EXPECT_EQ(iterations, 5);
@@ -346,7 +346,7 @@ TEST(TestScheduler, CleanupDrainsPendingAlarmsWithActor) {
           iterations++;
           co_await coro_sleep(Timestamp::in(1.0));
         }
-        co_return {};
+        co_return td::Unit{};
       };
     };
 
@@ -355,7 +355,7 @@ TEST(TestScheduler, CleanupDrainsPendingAlarmsWithActor) {
     co_await ts.wait_sync_work();
     EXPECT_EQ(iterations, 1);
 
-    co_return {};
+    co_return td::Unit{};
   });
 }
 

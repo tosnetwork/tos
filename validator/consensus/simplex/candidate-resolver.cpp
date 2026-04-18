@@ -181,7 +181,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     maybe_resume_resolve_awaiters(state);
 
     if (state.candidate_stored) {
-      co_return {};
+      co_return td::Unit{};
     }
 
     auto [task, promise] = td::actor::StartedTask<td::Unit>::make_bridge();
@@ -197,7 +197,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     }
 
     co_await std::move(task);
-    co_return {};
+    co_return td::Unit{};
   }
 
   template <>
@@ -306,7 +306,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
       }
       state.resolve_awaiters.clear();
     }
-    co_return {};
+    co_return td::Unit{};
   }
 
   td::actor::Task<> resolve_candidate_inner(CandidateId id, CandidateState &state) {
@@ -316,7 +316,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
 
     if (bus.validator_set.size() == 1) {
       CHECK(state.candidate_and_cert.is_complete());
-      co_return {};
+      co_return td::Unit{};
     }
 
     std::chrono::duration<double> timeout = params_.candidate_resolve_timeout;
@@ -356,7 +356,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
       }
     }
 
-    co_return {};
+    co_return td::Unit{};
   }
 
   td::actor::Task<> store_candidate(CandidateId id, CandidateState &state) {
@@ -366,7 +366,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     CHECK(candidate.has_value());
 
     if (state.candidate_stored) {
-      co_return {};
+      co_return td::Unit{};
     }
 
     auto contents_key = create_serialize_tl_object<tl::db_key_candidate>(id.to_tl());
@@ -376,7 +376,7 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     co_await bus.db->set(std::move(index_key), td::BufferSlice());
 
     state.candidate_stored = true;
-    co_return {};
+    co_return td::Unit{};
   }
 };
 

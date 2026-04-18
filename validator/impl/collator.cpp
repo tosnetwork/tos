@@ -25,6 +25,8 @@
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/block.h"
+#include "block/evm-workchain/evm-init.h"
+#include "block/evm-workchain/evm-workchain.h"
 #include "block/mc-config.h"
 #include "block/validator-set.h"
 #include "crypto/openssl/rand.hpp"
@@ -149,8 +151,9 @@ void Collator::start_up() {
     is_key_block_ = true;
   }
   // 1. check validity of parameters, especially prev_blocks, shard and min_mc_block_id
-  if (workchain() != tos::masterchainId && workchain() != tos::basechainId) {
-    fatal_error(-667, "can create block candidates only for masterchain (-1) and base workchain (0)");
+  if (workchain() != tos::masterchainId && workchain() != tos::basechainId &&
+      workchain() != evm_workchain::kWorkchainId) {
+    fatal_error(-667, "can create block candidates only for masterchain (-1), base workchain (0), and EVM workchain (1)");
     return;
   }
   if (is_busy()) {
@@ -242,6 +245,7 @@ void Collator::start_up() {
   if (!params_.is_hardfork) {
     LOG(DEBUG) << "installing external message queue";
     ext_msg_queue_ = ExtMsgQueue("ext_msg_queue", 500);
+    ext_msg_queue_initialized_ = true;
     auto callback = std::make_unique<ExtMsgCallback>();
     callback->shard = shard_;
     callback->cancellation_token = ext_msg_cancellation_.get_cancellation_token();
@@ -2257,6 +2261,29 @@ bool Collator::fetch_config_params() {
                                                      compute_phase_cfg_.size_limits.defer_out_queue_size_limit);
   // This one is checked in validate-query
   hard_defer_out_queue_size_limit_ = compute_phase_cfg_.size_limits.defer_out_queue_size_limit;
+
+  // EVM workchain (wc=1): single-executor design. No mirror dict is
+  // allocated — every EVM tx produces exactly one AccountBlock (for the
+  // fixed executor account) so there is no need for a side channel to
+  // smuggle multi-account changes past validate-query.
+  //
+  // On a fresh process the g_evm_state singleton starts empty (modulo
+  // the legacy seed_test_accounts in init_evm_workchain). Rehydration
+  // reads the executor's StateInit.data as a cp.new_data cell and loads
+  // the ^state_root ref directly into CellEvmState. One dict lookup, no
+  // per-account walk.
+  if (workchain() == evm_workchain::kWorkchainId) {
+    compute_phase_cfg_.evm_block_seqno = static_cast<td::uint64>(new_block_seqno);
+    if (account_dict) {
+      auto hydrated = evm_workchain::hydrate_global_state_if_empty(*account_dict);
+      if (hydrated > 0) {
+        LOG(WARNING) << "evm-workchain: hydrated world state from executor account";
+      }
+    }
+  } else {
+    compute_phase_cfg_.evm_block_seqno = 0;
+  }
+
   return true;
 }
 
@@ -2373,7 +2400,7 @@ td::actor::Task<> Collator::do_collate() {
     fatal_error(result.error().clone());
   }
   token.finish(result.move_as_status());
-  co_return {};
+  co_return td::Unit{};
 }
 
 td::actor::Task<> Collator::do_collate_inner() {
@@ -2500,7 +2527,7 @@ td::actor::Task<> Collator::do_collate_inner() {
     co_return td::Status::Error("cannot serialize a new Block candidate");
   }
   post_ext_token.finish(td::Result<td::Unit>(td::Unit()));
-  co_return {};
+  co_return td::Unit{};
 }
 
 /**
@@ -3156,6 +3183,11 @@ bool Collator::combine_account_transactions() {
       }
     }
   }
+
+  // wc=1 post-loop merge deleted: single-executor design writes the sole
+  // executor AccountBlock via the normal per-account loop above. There is
+  // no mirror to merge.
+
   vm::CellBuilder cb;
   if (!(cb.append_cellslice_bool(std::move(dict).extract_root()) && cb.finalize_to(shard_account_blocks_))) {
     return fatal_error("cannot serialize ShardAccountBlocks");
@@ -4298,7 +4330,7 @@ td::actor::Task<> Collator::process_external_and_new_messages() {
       break;
     }
   }
-  co_return {};
+  co_return td::Unit{};
 }
 
 /**
@@ -6682,7 +6714,7 @@ td::actor::Task<> Collator::wait_for_external_message(td::Timestamp timeout) {
     co_return result.move_as_error();
   }
   pending_ext_msg_ = result.move_as_ok();
-  co_return {};
+  co_return td::Unit{};
 }
 
 /**

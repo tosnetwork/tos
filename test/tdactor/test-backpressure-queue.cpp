@@ -24,7 +24,7 @@ TEST(BackpressureQueue, BasicPushPop) {
     }
 
     q.close();
-    co_return {};
+    co_return td::Unit{};
   });
 }
 
@@ -53,7 +53,7 @@ TEST(BackpressureQueue, NonBlockingPushPop) {
     EXPECT(empty.is_error());  // empty
 
     q.close();
-    co_return {};
+    co_return td::Unit{};
   });
 }
 
@@ -84,7 +84,7 @@ TEST(BackpressureQueue, BackpressureBlocksProducer) {
     EXPECT_EQ(3, v3);
 
     q.close();
-    co_return {};
+    co_return td::Unit{};
   });
 }
 
@@ -103,7 +103,7 @@ TEST(BackpressureQueue, PopBlocksConsumer) {
     EXPECT_EQ(42, val);
 
     q.close();
-    co_return {};
+    co_return td::Unit{};
   });
 }
 
@@ -123,7 +123,7 @@ TEST(BackpressureQueue, CloseWakesBlockedPop) {
     auto r = co_await q.push(42);
     EXPECT(!r);
 
-    co_return {};
+    co_return td::Unit{};
   });
 }
 
@@ -142,7 +142,7 @@ TEST(BackpressureQueue, CloseWakesBlockedPush) {
     auto r = co_await std::move(push_task);
     EXPECT(!r);
 
-    co_return {};
+    co_return td::Unit{};
   });
 }
 
@@ -167,7 +167,7 @@ TEST(BackpressureQueue, CloseAllowsDrainingRemainingItems) {
     auto r = co_await q.pop().wrap();
     EXPECT(r.is_error());
 
-    co_return {};
+    co_return td::Unit{};
   });
 }
 
@@ -185,7 +185,7 @@ TEST(BackpressureQueue, ProducerConsumerStreaming) {
         }
       }
       q.close();
-      co_return {};
+      co_return td::Unit{};
     }(q);
     auto producer_started = std::move(producer).start();
 
@@ -200,7 +200,7 @@ TEST(BackpressureQueue, ProducerConsumerStreaming) {
     }
 
     co_await std::move(producer_started);
-    co_return {};
+    co_return td::Unit{};
   });
 
   EXPECT_EQ(20, received);
@@ -222,7 +222,7 @@ TEST(BackpressureQueue, MultipleProducers) {
             break;
           }
         }
-        co_return {};
+        co_return td::Unit{};
       }(q, p, ITEMS_PER)
                                                             .start()
                                                             .detach();
@@ -234,7 +234,7 @@ TEST(BackpressureQueue, MultipleProducers) {
     }
 
     q.close();
-    co_return {};
+    co_return td::Unit{};
   });
 
   EXPECT_EQ(30, total);

@@ -34,6 +34,14 @@
 #include <array>
 #include <limits>
 
+// EVM workchain headers for eth_sendRawTransaction
+#include "evm-transaction.h"
+#include "evm-external-message.h"
+#include "evm-workchain.h"
+#include "evm-block-context.h"  // evm_chain_config
+#include <silkworm/core/protocol/validation.hpp>
+#include <sstream>
+
 namespace tos {
 
 static constexpr size_t kMaxBocSize = 64 * 1024;  // 64 KiB
@@ -1429,6 +1437,239 @@ void JsonRpcServer::handle_sendBocReturnHashNoError(td::JsonObject &params, std:
             PSTRING() << "{\"@type\":\"raw.extMessageInfo\""
                       << ",\"hash\":" << td::JsonString(td::Slice(msg_hash_b64)) << "}",
             req_id));
+      });
+}
+
+// --- EVM Workchain: eth_sendRawTransaction via ExtMessagePool ---
+
+void JsonRpcServer::handle_eth_sendRawTransaction(td::JsonValue &params_val,
+                                                   std::string req_id,
+                                                   td::Promise<HttpReturn> promise) {
+  // 1. Extract the hex-encoded raw transaction from params array: ["0xf8..."]
+  std::string raw_hex;
+  if (params_val.type() == td::JsonValue::Type::Array) {
+    auto &arr = params_val.get_array();
+    if (!arr.empty() && arr[0].type() == td::JsonValue::Type::String) {
+      raw_hex = arr[0].get_string().str();
+    }
+  }
+  if (raw_hex.empty()) {
+    promise.set_value(make_eth_json_error(-32602, "Missing raw transaction hex parameter", req_id));
+    return;
+  }
+
+  // 2. Decode hex to bytes
+  std::string hex = raw_hex;
+  if (hex.size() >= 2 && hex[0] == '0' && (hex[1] == 'x' || hex[1] == 'X')) {
+    hex = hex.substr(2);
+  }
+  if (hex.size() % 2 != 0) {
+    promise.set_value(make_eth_json_error(-32602, "Invalid hex: odd length", req_id));
+    return;
+  }
+  std::string raw_bytes;
+  raw_bytes.reserve(hex.size() / 2);
+  for (size_t i = 0; i < hex.size(); i += 2) {
+    auto hi = hex[i], lo = hex[i + 1];
+    auto hv = [](char c) -> int {
+      if (c >= '0' && c <= '9') return c - '0';
+      if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+      if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+      return -1;
+    };
+    int h = hv(hi), l = hv(lo);
+    if (h < 0 || l < 0) {
+      promise.set_value(make_eth_json_error(-32602, "Invalid hex character", req_id));
+      return;
+    }
+    raw_bytes.push_back(static_cast<char>((h << 4) | l));
+  }
+
+  // 3. Decode RLP to recover sender and compute tx hash
+  silkworm::Bytes rlp_bytes(reinterpret_cast<const uint8_t*>(raw_bytes.data()),
+                             reinterpret_cast<const uint8_t*>(raw_bytes.data()) + raw_bytes.size());
+  auto decode_result = evm_workchain::decode_evm_transaction(rlp_bytes);
+  if (auto* err = std::get_if<evm_workchain::TxDecodeError>(&decode_result)) {
+    promise.set_value(make_eth_json_error(-32000, PSTRING() << "RLP decode failed: " << err->reason, req_id));
+    return;
+  }
+  auto& decoded = std::get<evm_workchain::DecodedTransaction>(decode_result);
+
+  // Reject txs that target a foreign chainId. Ethereum mainnet rejects
+  // these at eth_sendRawTransaction with a clear error, and accepting
+  // them at the RPC layer only to have the collator reject them
+  // downstream just wastes mempool space (and, historically, has
+  // proven to be a DoS surface when enough pile up).
+  //   - Post-EIP-155 legacy txs carry chain_id in v.
+  //   - EIP-2930 / 1559 / 4844 typed txs embed chain_id explicitly.
+  //   - Pre-EIP-155 legacy txs omit chain_id (std::nullopt) — we accept
+  //     those because they're not bound to any specific chain.
+  if (decoded.txn.chain_id.has_value() &&
+      *decoded.txn.chain_id != evm_workchain::current_evm_chain_id()) {
+    std::ostringstream msg;
+    msg << "invalid chain id: got " << *decoded.txn.chain_id
+        << ", expected 0x" << std::hex << evm_workchain::current_evm_chain_id() << std::dec;
+    promise.set_value(make_eth_json_error(-32000, msg.str(), req_id));
+    return;
+  }
+
+  // Cancun-prep gate: explicitly reject blob (EIP-4844 type-3) transactions
+  // at the admission layer. We have no blob mempool — accepting a type-3
+  // here only to have the collator silently bounce it later wastes
+  // mempool space and confuses wallets that retry after seeing a tx
+  // hash. Documented in `doc/evm-workchain-known-divergences.md` Category E
+  // ("Cancun pre-fork checklist"). Revisit once a blob mempool ships
+  // alongside `cancun_time = 0`.
+  if (decoded.txn.type == silkworm::TransactionType::kBlob) {
+    promise.set_value(make_eth_json_error(
+        -32000,
+        "blob transactions not supported on this chain", req_id));
+    return;
+  }
+
+  // Silkworm-backed pre-validation. Runs every fork rule that is
+  // checkable without state (intrinsic gas, EIP-7825 tx gas cap,
+  // EIP-3860 initcode size, EIP-7702 authorizations shape, EIP-7623
+  // floor cost, type-vs-revision compatibility, nonce-max, signature).
+  // Catching these here returns a clear RPC error instead of admitting
+  // a doomed tx that later surfaces as `status: "0x0", gasUsed: "0x0"`
+  // in a receipt. State-dependent checks (nonce-matches-account,
+  // balance) still run later in the execution path.
+  {
+    const auto& cfg = evm_workchain::evm_chain_config();
+    const auto rev = cfg.revision(/*block_num=*/UINT64_MAX,
+                                   /*block_time=*/static_cast<uint64_t>(std::time(nullptr)));
+    // pre_validate_common_base runs the type-/chain-/intrinsic-gas suite.
+    auto vr_base = silkworm::protocol::pre_validate_common_base(
+        decoded.txn, rev, cfg.chain_id);
+    if (vr_base != silkworm::ValidationResult::kOk) {
+      std::ostringstream msg;
+      switch (vr_base) {
+        case silkworm::ValidationResult::kIntrinsicGas:
+          msg << "gas_limit below intrinsic gas cost (21000 for simple transfer, +4/16 gas per byte of calldata)";
+          break;
+        case silkworm::ValidationResult::kUnsupportedTransactionType:
+          msg << "transaction type not supported at current revision";
+          break;
+        case silkworm::ValidationResult::kWrongChainId:
+          msg << "wrong chain id (this chain expects 0x"
+              << std::hex << cfg.chain_id << std::dec << ")";
+          break;
+        case silkworm::ValidationResult::kNonceTooHigh:
+          msg << "nonce at uint64 max (EIP-2681)";
+          break;
+        case silkworm::ValidationResult::kInsufficientFunds:
+          msg << "maximum gas cost overflows 256 bits";
+          break;
+        default:
+          msg << "admission rejected (base): ValidationResult="
+              << static_cast<int>(vr_base);
+          break;
+      }
+      promise.set_value(make_eth_json_error(-32000, msg.str(), req_id));
+      return;
+    }
+    auto vr_forks = silkworm::protocol::pre_validate_common_forks(
+        decoded.txn, rev, /*blob_gas_price=*/std::nullopt);
+    if (vr_forks != silkworm::ValidationResult::kOk) {
+      std::ostringstream msg;
+      switch (vr_forks) {
+        case silkworm::ValidationResult::kTxGasLimitExceeded:
+          msg << "tx gas limit exceeds EIP-7825 cap (2^24 = 16777216)";
+          break;
+        case silkworm::ValidationResult::kMaxInitCodeSizeExceeded:
+          msg << "initcode exceeds EIP-3860 size limit";
+          break;
+        case silkworm::ValidationResult::kFloorCost:
+          msg << "gas_limit below EIP-7623 floor cost";
+          break;
+        case silkworm::ValidationResult::kProhibitedContractCreation:
+          msg << "contract creation prohibited for this transaction type";
+          break;
+        case silkworm::ValidationResult::kEmptyAuthorizations:
+          msg << "EIP-7702 SetCode tx requires at least one authorization";
+          break;
+        default:
+          msg << "admission rejected (forks): ValidationResult="
+              << static_cast<int>(vr_forks);
+          break;
+      }
+      promise.set_value(make_eth_json_error(-32000, msg.str(), req_id));
+      return;
+    }
+  }
+
+  auto tx_hash = decoded.txn.hash();
+
+  // 4. Build ext_in_msg cell. CellBuilder operations throw on range
+  // overflow — catch here so a malformed oversized payload returns
+  // a polite JSON-RPC error instead of terminating the process.
+  td::Ref<vm::Cell> ext_msg;
+  try {
+    ext_msg = evm_workchain::build_evm_external_message(
+        reinterpret_cast<const uint8_t*>(raw_bytes.data()), raw_bytes.size(),
+        decoded.sender);
+  } catch (const std::exception& e) {
+    promise.set_value(make_eth_json_error(-32000,
+        PSTRING() << "Failed to build external message cell: " << e.what(),
+        req_id));
+    return;
+  } catch (...) {
+    promise.set_value(make_eth_json_error(-32000,
+        "Failed to build external message cell: unknown error", req_id));
+    return;
+  }
+  if (ext_msg.is_null()) {
+    promise.set_value(make_eth_json_error(-32000, "Failed to build external message cell", req_id));
+    return;
+  }
+
+  // 5. Serialize cell to BOC
+  td::Result<td::BufferSlice> boc_r;
+  try {
+    boc_r = vm::std_boc_serialize(ext_msg);
+  } catch (const std::exception& e) {
+    promise.set_value(make_eth_json_error(-32000,
+        PSTRING() << "BOC serialization threw: " << e.what(), req_id));
+    return;
+  } catch (...) {
+    promise.set_value(make_eth_json_error(-32000,
+        "BOC serialization threw: unknown error", req_id));
+    return;
+  }
+  if (boc_r.is_error()) {
+    promise.set_value(make_eth_json_error(-32000, PSTRING() << "BOC serialization failed: " << boc_r.error(), req_id));
+    return;
+  }
+  auto boc = boc_r.move_as_ok();
+
+  // 6. Submit to ExtMessagePool via liteServer_sendMessage (same as sendBoc)
+  auto inner = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_sendMessage>(std::move(boc)), true);
+  auto query = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
+
+  // Format tx hash for the response
+  std::string tx_hash_hex = "\"0x";
+  for (auto b : tx_hash.bytes) {
+    char buf[4];
+    snprintf(buf, sizeof(buf), "%02x", b);
+    tx_hash_hex += buf;
+  }
+  tx_hash_hex += "\"";
+
+  send_liteserver_query(std::move(query),
+      [req_id = std::move(req_id), tx_hash_hex = std::move(tx_hash_hex),
+       promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+        if (R.is_error()) {
+          promise.set_value(make_eth_json_error(-32000,
+              PSTRING() << "Transaction submission failed: " << R.error(), req_id));
+          return;
+        }
+        // Return the tx hash (the tx is now in the mempool, will be executed by collator)
+        std::string body = "{\"jsonrpc\":\"2.0\",\"id\":" + req_id +
+            ",\"result\":" + tx_hash_hex + "}";
+        promise.set_value(make_raw_json_response(body));
       });
 }
 

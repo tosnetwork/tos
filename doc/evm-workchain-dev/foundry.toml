@@ -1,0 +1,33 @@
+# Foundry configuration for the EVM Workchain.
+#
+# Copy this file into your Foundry project root.
+#
+# Deploy:
+#   forge create --rpc-url http://127.0.0.1:8081 \
+#     --private-key 0x01 \
+#     src/Counter.sol:Counter
+#
+# Call:
+#   cast call --rpc-url http://127.0.0.1:8081 \
+#     <contract_address> "number()(uint256)"
+#
+# Send transaction:
+#   cast send --rpc-url http://127.0.0.1:8081 \
+#     --private-key 0x01 \
+#     <contract_address> "increment()"
+
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+
+# EVM Workchain settings
+evm_version = "shanghai"
+
+[rpc_endpoints]
+evm_workchain = "http://127.0.0.1:8081"
+
+# Chain ID for the EVM Workchain
+# 0x544F53 = 5525331
+[etherscan]
+evm_workchain = { key = "not-needed", chain = 5525331, url = "http://127.0.0.1:8081" }

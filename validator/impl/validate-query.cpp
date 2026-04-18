@@ -24,6 +24,8 @@
 #include "block/block-db.h"
 #include "block/block-parse.h"
 #include "block/block.h"
+#include "block/evm-workchain/evm-init.h"
+#include "block/evm-workchain/evm-workchain.h"
 #include "block/output-queue-merger.h"
 #include "block/validator-set.h"
 #include "common/errorlog.h"
@@ -288,8 +290,9 @@ void ValidateQuery::start_up() {
                                 << " different from current shard " << shard_.to_str());
     return;
   }
-  if (workchain() != tos::masterchainId && workchain() != tos::basechainId) {
-    soft_reject_query("can validate block candidates only for masterchain (-1) and base workchain (0)");
+  if (workchain() != tos::masterchainId && workchain() != tos::basechainId &&
+      workchain() != evm_workchain::kWorkchainId) {
+    soft_reject_query("can validate block candidates only for masterchain (-1), base workchain (0), and EVM workchain (1)");
     return;
   }
   if (!shard_.is_valid_ext()) {
@@ -1112,6 +1115,22 @@ bool ValidateQuery::fetch_config_params() {
     compute_phase_cfg_.precompiled_contracts = config_->get_precompiled_contracts_config();
     compute_phase_cfg_.allow_external_unfreeze = compute_phase_cfg_.global_version >= 8;
     compute_phase_cfg_.disable_anycast = config_->get_global_version() >= 10;
+
+    // EVM workchain (wc=1): single-executor design. No mirror dict is
+    // allocated; the validator's re-execution runs the same compute
+    // dispatch and deterministically produces identical cp.new_data cell
+    // hashes, so the announced ShardState new_hash matches by construction.
+    if (workchain() == evm_workchain::kWorkchainId) {
+      compute_phase_cfg_.evm_block_seqno = static_cast<td::uint64>(id_.id.seqno);
+      if (id_.id.seqno > 1 && ps_.account_dict_) {
+        auto hydrated = evm_workchain::hydrate_global_state_if_empty(*ps_.account_dict_);
+        if (hydrated > 0) {
+          LOG(WARNING) << "evm-workchain: hydrated world state from executor account (validate-query)";
+        }
+      }
+    } else {
+      compute_phase_cfg_.evm_block_seqno = 0;
+    }
   }
   {
     // compute action_phase_cfg

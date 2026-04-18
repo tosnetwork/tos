@@ -219,7 +219,7 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
                      << response.move_as_error();
         promise.set_value(create_serialize_tl_object<tl::requestError>());
       }
-      co_return {};
+      co_return td::Unit{};
     };
     task(owning_bus(), request, std::move(promise)).start().detach();
   }

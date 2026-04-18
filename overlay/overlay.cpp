@@ -203,37 +203,37 @@ void OverlayImpl::receive_query(adnl::AdnlNodeIdShort src, tl_object_ptr<tos_api
 td::actor::Task<> OverlayImpl::process_broadcast(adnl::AdnlNodeIdShort message_from,
                                                  tl_object_ptr<tos_api::overlay_broadcast> bcast) {
   if (peer_list_.local_member_flags_ & OverlayMemberFlags::DoNotReceiveBroadcasts) {
-    co_return {};
+    co_return td::Unit{};
   }
   if (!opts_.allow_old_broadcasts_) {
     co_return td::Status::Error("overlay.broadcast not allowed");
   }
   co_await broadcasts_simple_.process_broadcast(this, message_from, std::move(bcast));
-  co_return {};
+  co_return td::Unit{};
 }
 
 td::actor::Task<> OverlayImpl::process_broadcast(adnl::AdnlNodeIdShort message_from,
                                                  tl_object_ptr<tos_api::overlay_broadcastFec> b) {
   if (peer_list_.local_member_flags_ & OverlayMemberFlags::DoNotReceiveBroadcasts) {
-    co_return {};
+    co_return td::Unit{};
   }
   if (!opts_.allow_old_broadcasts_) {
     co_return td::Status::Error("overlay.broadcastFec not allowed");
   }
   co_await broadcasts_fec_.process_broadcast(this, message_from, std::move(b));
-  co_return {};
+  co_return td::Unit{};
 }
 
 td::actor::Task<> OverlayImpl::process_broadcast(adnl::AdnlNodeIdShort message_from,
                                                  tl_object_ptr<tos_api::overlay_broadcastFecShort> b) {
   if (peer_list_.local_member_flags_ & OverlayMemberFlags::DoNotReceiveBroadcasts) {
-    co_return {};
+    co_return td::Unit{};
   }
   if (!opts_.allow_old_broadcasts_) {
     co_return td::Status::Error("overlay.broadcastFecShort not allowed");
   }
   co_await broadcasts_fec_.process_broadcast(this, message_from, std::move(b));
-  co_return {};
+  co_return td::Unit{};
 }
 
 td::actor::Task<> OverlayImpl::process_broadcast(adnl::AdnlNodeIdShort message_from,
@@ -244,19 +244,19 @@ td::actor::Task<> OverlayImpl::process_broadcast(adnl::AdnlNodeIdShort message_f
 
 td::actor::Task<> OverlayImpl::process_broadcast(adnl::AdnlNodeIdShort message_from,
                                                  tl_object_ptr<tos_api::overlay_fec_received> msg) {
-  co_return {};
+  co_return td::Unit{};
 }
 
 td::actor::Task<> OverlayImpl::process_broadcast(adnl::AdnlNodeIdShort message_from,
                                                  tl_object_ptr<tos_api::overlay_fec_completed> msg) {
-  co_return {};
+  co_return td::Unit{};
 }
 
 td::actor::Task<> OverlayImpl::process_broadcast(adnl::AdnlNodeIdShort message_from,
                                                  tl_object_ptr<tos_api::overlay_unicast> msg) {
   VLOG(OVERLAY_DEBUG) << this << ": received unicast from " << message_from;
   callback_->receive_message(message_from, overlay_id_, std::move(msg->data_));
-  co_return {};
+  co_return td::Unit{};
 }
 
 td::actor::Task<> OverlayImpl::process_broadcast(adnl::AdnlNodeIdShort message_from,
@@ -265,7 +265,7 @@ td::actor::Task<> OverlayImpl::process_broadcast(adnl::AdnlNodeIdShort message_f
     co_return td::Status::Error("twostep broadcasts are not enabled");
   }
   co_await broadcasts_twostep_.process_broadcast(this, message_from, std::move(bcast));
-  co_return {};
+  co_return td::Unit{};
 }
 
 td::actor::Task<> OverlayImpl::process_broadcast(adnl::AdnlNodeIdShort message_from,
@@ -274,7 +274,7 @@ td::actor::Task<> OverlayImpl::process_broadcast(adnl::AdnlNodeIdShort message_f
     co_return td::Status::Error("twostep broadcasts are not enabled");
   }
   co_await broadcasts_twostep_.process_broadcast(this, message_from, std::move(bcast));
-  co_return {};
+  co_return td::Unit{};
 }
 
 void OverlayImpl::receive_message(adnl::AdnlNodeIdShort src, tl_object_ptr<tos_api::overlay_messageExtra> extra,
@@ -296,7 +296,7 @@ void OverlayImpl::receive_message(adnl::AdnlNodeIdShort src, tl_object_ptr<tos_a
       auto status = (co_await self->process_broadcast(src, std::move(obj)).wrap()).move_as_status();
       LOG_IF(WARNING, status.is_error() && status.code() != ErrorCode::notready)
           << "Failed to process broadcast: " << status;
-      co_return {};
+      co_return td::Unit{};
     }(self, src, move_tl_object_as<std::remove_reference_t<decltype(object)>>(Q))
                                                                       .start()
                                                                       .detach();
@@ -711,7 +711,7 @@ td::actor::Task<> OverlayImpl::precheck_broadcast(PublicKeyHash src, td::Bits256
   callback_->precheck_broadcast(src, overlay_id_, broadcast_id, std::move(extra), signature_checked,
                                 std::move(promise));
   co_await std::move(task);
-  co_return {};
+  co_return td::Unit{};
 }
 
 void OverlayImpl::broadcast_simple_signed(std::unique_ptr<BroadcastSimple> &&bcast,
@@ -803,7 +803,7 @@ td::Status OverlayImpl::check_signature_from_peer(PublicKey key, td::Slice messa
     auto task = [](OverlayImpl *self, adnl::AdnlNodeIdShort peer) -> td::actor::Task<> {
       co_await td::actor::coro_sleep(td::Timestamp::in(REJECT_SIGNATURES_DURATION));
       self->reject_signatures_from_.erase(peer);
-      co_return {};
+      co_return td::Unit{};
     };
     task(this, message_from).start().detach_silent();
   }

@@ -130,7 +130,7 @@ td::actor::Task<> ArchiveManager::move_block_to_archive(BlockHandle handle,
 
   tasks.push_back(td::actor::ask(f->file_actor_id(), &ArchiveSlice::add_block, handle, std::move(files)));
   co_await td::actor::all(std::move(tasks));
-  co_return {};
+  co_return td::Unit{};
 }
 
 void ArchiveManager::add_file(BlockHandle handle, FileReference ref_id, td::BufferSlice data,

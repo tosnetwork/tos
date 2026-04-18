@@ -203,6 +203,8 @@ set(BLOCK_SOURCE
   block/account-storage-stat.h
   block/account-storage-stat.cpp
   block/precompiled-smc/PrecompiledSmartContract.cpp
+  block/evm-workchain-dispatch.cpp
+  block/evm-workchain-dispatch.h
   ${TLB_BLOCK_AUTO}
 
   block/block-binlog.h
@@ -396,6 +398,11 @@ if (USE_EMSCRIPTEN)
   target_compile_options(tos_block PRIVATE -fexceptions)
 endif()
 
+# --- EVM Workchain module ---
+if (NOT TOS_ONLY_TOSLIB)
+  add_subdirectory(block/evm-workchain)
+endif()
+
 add_executable(func func/func-main.cpp ${FUNC_LIB_SOURCE})
 target_include_directories(func PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
 target_link_libraries(func PUBLIC tos_crypto src_parser git)
@@ -540,12 +547,12 @@ add_executable(create-state block/create-state.cpp)
 target_include_directories(create-state PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
 if (INTERNAL_COMPILE)
-  target_link_libraries(create-state PUBLIC tos_crypto fift-lib toslib git)
+  target_link_libraries(create-state PUBLIC tos_crypto fift-lib toslib evm_workchain git)
 else()
   if (TOSLIB_COMPILE)
-    target_link_libraries(create-state PUBLIC tos_crypto fift-lib toslib git)
+    target_link_libraries(create-state PUBLIC tos_crypto fift-lib toslib evm_workchain git)
   else()
-    target_link_libraries(create-state PUBLIC tos_crypto fift-lib git)
+    target_link_libraries(create-state PUBLIC tos_crypto fift-lib evm_workchain git)
   endif()
 endif()
 if (WINGETOPT_FOUND)

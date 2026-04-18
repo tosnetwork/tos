@@ -85,9 +85,18 @@ wc_master setworkchain
 // ... serialize to basestate0.boc ...
 
 basestate0_rhash basestate0_fhash now 0 0 dup 0
-  add-std-workchain-v2        // register workchain 0 descriptor
-config.workchains!            // set ConfigParam 12
+  add-std-workchain-v2        // register workchain 0 descriptor (TVM)
+
+// EVM workchain 1 (optional, see crypto/block/evm-workchain/evm-config-param.cpp)
+1 mkemptyShardState           // create empty workchain 1 (EVM) state
+// ... serialize evmstate1.boc ...
+evmstate1_rhash evmstate1_fhash now 0 0 dup 1
+  add-evm-workchain           // register workchain 1 descriptor (EVM, vm_version=0x45564D)
+
+config.workchains!            // set ConfigParam 12 with all registered workchains
 ```
+
+If the `add-evm-workchain` Fift word is not present in the local toolchain, omit the EVM workchain block to produce a TVM-only zerostate, then enable the EVM workchain later via a ConfigParam 12 governance proposal.
 
 ### 3. Smart contracts
 

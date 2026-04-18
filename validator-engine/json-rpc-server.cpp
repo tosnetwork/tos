@@ -18,7 +18,80 @@
 */
 #include "json-rpc-server-internal.h"
 
+#include "evm-rpc.h"
+
+#include <cstring>
+
 namespace tos {
+
+// ─── HTTP body draining helper ─────────────────────────────────────────────
+//
+// HttpPayload stores received bytes in a deque of fixed-size 16 KiB chunks.
+// `HttpPayload::get_slice(max)` returns AT MOST ONE chunk per call, so a
+// single call can return only the first 16 KiB of a larger body.  A request
+// body of, say, 21 KiB would arrive split across two chunks: the first
+// `get_slice` returns ~16 KiB, leaving the rest in the payload — which then
+// gets dropped on the floor and the JSON parser sees a truncated body and
+// rejects it with `-32700 invalid JSON` (HTTP 400).
+//
+// This helper drains the entire payload by repeatedly calling get_slice
+// until either the payload is exhausted or the cap is hit.  Bodies larger
+// than `max_body_bytes` are rejected up-front to prevent memory-exhaustion
+// DoS.  See test/conformance/manual-rpc/http_large_request_body.io for the
+// regression test that pins this behaviour.
+//
+// Cap: 1 MiB — comfortably accommodates complex `eth_simulateV1` and
+// `eth_call` requests with many state overrides (Geth defaults to 5 MiB,
+// Erigon to 1 MiB).
+static constexpr std::size_t kJsonRpcMaxRequestBodyBytes = 1u << 20;
+
+// Drain the entire payload into a single contiguous buffer.  Returns an
+// error status if the body would exceed `kJsonRpcMaxRequestBodyBytes`
+// (callers translate this to a -32600 "Request body too large" response so
+// the client gets a deterministic rejection rather than a connection drop).
+// Returns an empty BufferSlice for an empty body.
+static td::Result<td::BufferSlice> drain_payload_body(
+    const std::shared_ptr<http::HttpPayload> &payload) {
+  // Fast path: single chunk fits in one get_slice call.
+  auto first = payload->get_slice(kJsonRpcMaxRequestBodyBytes);
+  if (first.empty()) {
+    return td::BufferSlice{};
+  }
+  // See if there's more — peek by trying another get_slice.  In the common
+  // (small body) case, the second call returns empty and we're done with
+  // zero copying overhead.
+  auto next = payload->get_slice(kJsonRpcMaxRequestBodyBytes);
+  if (next.empty()) {
+    return std::move(first);
+  }
+  // Multi-chunk path: concatenate all chunks into one BufferSlice.  This
+  // copies the body once, but only triggers for bodies > 16 KiB which are
+  // rare on a JSON-RPC server (typical request: a few hundred bytes).
+  std::size_t total = first.size() + next.size();
+  if (total > kJsonRpcMaxRequestBodyBytes) {
+    return td::Status::Error("request body exceeds size limit");
+  }
+  std::vector<td::BufferSlice> parts;
+  parts.reserve(4);
+  parts.push_back(std::move(first));
+  parts.push_back(std::move(next));
+  while (true) {
+    auto more = payload->get_slice(kJsonRpcMaxRequestBodyBytes);
+    if (more.empty()) break;
+    total += more.size();
+    if (total > kJsonRpcMaxRequestBodyBytes) {
+      return td::Status::Error("request body exceeds size limit");
+    }
+    parts.push_back(std::move(more));
+  }
+  td::BufferSlice combined{total};
+  std::size_t off = 0;
+  for (auto &p : parts) {
+    std::memcpy(combined.data() + off, p.data(), p.size());
+    off += p.size();
+  }
+  return std::move(combined);
+}
 
 // ─── URL-decode + query-string → JSON helpers (for REST GET endpoints) ────
 
@@ -157,7 +230,9 @@ td::actor::ActorOwn<JsonRpcServer> JsonRpcServer::create(
 JsonRpcServer::JsonRpcServer(
     td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager,
     Options options)
-    : validator_manager_(std::move(validator_manager)), opts_(std::move(options)) {
+    : validator_manager_(std::move(validator_manager)),
+      opts_(std::move(options)),
+      cache_(opts_.cache_max_entries, opts_.cache_max_body_bytes) {
   // Arm periodic cache cleanup if caching is enabled
   if (opts_.cache_ttl > 0) {
     alarm_timestamp() = td::Timestamp::in(10.0);
@@ -166,6 +241,8 @@ JsonRpcServer::JsonRpcServer(
 
 void JsonRpcServer::listen(td::IPAddress addr) {
   CHECK(http_.empty());
+  // Enable EVM RPC rate limiting for the production server
+  evm_workchain::enable_evm_rpc_rate_limit(true);
   auto callback = std::make_shared<HttpCallback>(actor_id(this));
   http_ = td::actor::create_actor<http::HttpServer>(
       PSTRING() << "JsonRPC@" << addr, addr, std::move(callback));
@@ -398,8 +475,15 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
         bool fired_{false};
       };
       if (payload->parse_completed()) {
-        auto body = payload->get_slice(1 << 20);
-        process_rest_post_body(std::move(body), std::move(rest_method), std::move(promise));
+        auto body_r = drain_payload_body(payload);
+        if (body_r.is_error()) {
+          // REST POST endpoint — TVM-style error envelope (HTTP 422)
+          promise.set_value(make_json_error(-32600, "Request body too large",
+                                            "null", opts_.cors_origin));
+          return;
+        }
+        process_rest_post_body(body_r.move_as_ok(), std::move(rest_method),
+                               std::move(promise));
       } else {
         payload->add_callback(std::make_unique<PostRestWaiter>(
             actor_id(this), payload, std::move(rest_method), std::move(promise)));
@@ -411,8 +495,14 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
   // Accept POST on /jsonRPC (canonical) and any other path (backward compat)
 
   if (payload->parse_completed()) {
-    auto body = payload->get_slice(1 << 20);
-    process_body(std::move(body), "", std::move(promise));
+    auto body_r = drain_payload_body(payload);
+    if (body_r.is_error()) {
+      // JSON-RPC envelope path — emit spec-shape so generic clients decode it.
+      promise.set_value(make_eth_json_error(-32600, "Request body too large",
+                                            "null", opts_.cors_origin));
+      return;
+    }
+    process_body(body_r.move_as_ok(), "", std::move(promise));
   } else {
     // Body not yet fully received — register callback.
     // IMPORTANT: completed() must NOT call payload_->get_slice() directly,
@@ -447,43 +537,94 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
 
 void JsonRpcServer::on_body_ready(PayloadPtr payload, td::Promise<HttpReturn> promise) {
   if (!payload) {
-    promise.set_value(make_json_error(-32603, "Internal error: missing request payload", "null",
-                                      opts_.cors_origin));
+    promise.set_value(make_eth_json_error(-32603, "Internal error: missing request payload", "null",
+                                          opts_.cors_origin));
     return;
   }
   // Safe to call get_slice() here — we are in the actor scheduler, NOT inside
   // HttpPayload::parse()'s mutex. This breaks the deadlock chain.
-  auto body = payload->get_slice(1 << 20);
-  process_body(std::move(body), "", std::move(promise));
+  auto body_r = drain_payload_body(payload);
+  if (body_r.is_error()) {
+    promise.set_value(make_eth_json_error(-32600, "Request body too large", "null",
+                                          opts_.cors_origin));
+    return;
+  }
+  process_body(body_r.move_as_ok(), "", std::move(promise));
 }
+
+// JSON-RPC 2.0 batch request cap.  Anything larger gets rejected with
+// -32600 "Batch too large".  100 mirrors what most production indexers
+// (ethers BatchProvider, web3.js BatchRequest) settle on; Blockscout's
+// catchup uses ~50.
+static constexpr std::size_t kJsonRpcMaxBatchSize = 100;
 
 void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
                                  td::Promise<HttpReturn> promise) {
+  // NOTE: All JSON-RPC envelope errors below use `make_eth_json_error`
+  // (spec-compliant `{jsonrpc, id, error:{code, message}}`, HTTP 200) so
+  // that ethers/viem/Blockscout-style clients can decode them.  The
+  // legacy `make_json_error` (`{ok:false, error:<str>, code}` + mapped
+  // HTTP status) is retained for the dedicated REST endpoints under
+  // `process_rest_post_body` whose Python tests still depend on it.
   if (body.empty()) {
-    promise.set_value(make_json_error(-32700, "Empty request body", req_id, opts_.cors_origin));
+    promise.set_value(make_eth_json_error(-32700, "Empty request body", req_id, opts_.cors_origin));
     return;
   }
 
   auto json_r = td::json_decode(body.as_slice());
   if (json_r.is_error()) {
-    promise.set_value(make_json_error(-32700, "Parse error: invalid JSON", req_id, opts_.cors_origin));
+    promise.set_value(make_eth_json_error(-32700, "Parse error: invalid JSON",
+                                          req_id, opts_.cors_origin));
     return;
   }
 
   auto json = json_r.move_as_ok();
+
+  // ── JSON-RPC 2.0 batch request ──────────────────────────────────────
   if (json.type() == td::JsonValue::Type::Array) {
-    promise.set_value(make_json_error(-32600, "Batch requests are not supported", req_id, opts_.cors_origin));
-    return;
-  }
-  if (json.type() != td::JsonValue::Type::Object) {
-    promise.set_value(make_json_error(-32600, "Invalid request: expected JSON object", req_id, opts_.cors_origin));
+    auto &arr = json.get_array();
+    // Per spec: empty array → single -32600 error response (NOT an
+    // empty array).
+    if (arr.empty()) {
+      promise.set_value(make_eth_json_error(-32600, "Invalid Request: empty batch",
+                                            "null", opts_.cors_origin));
+      return;
+    }
+    if (arr.size() > kJsonRpcMaxBatchSize) {
+      promise.set_value(make_eth_json_error(
+          -32600,
+          PSTRING() << "Batch too large: max " << kJsonRpcMaxBatchSize
+                    << " requests, got " << arr.size(),
+          "null", opts_.cors_origin));
+      return;
+    }
+    std::vector<td::JsonValue> elements;
+    elements.reserve(arr.size());
+    for (auto &e : arr) {
+      elements.push_back(std::move(e));
+    }
+    process_batch(std::move(elements), std::move(promise));
     return;
   }
 
-  auto &obj = json.get_object();
+  if (json.type() != td::JsonValue::Type::Object) {
+    promise.set_value(make_eth_json_error(-32600, "Invalid Request: expected JSON object or array",
+                                          req_id, opts_.cors_origin));
+    return;
+  }
+
+  process_single_object_request(std::move(json), std::move(promise));
+}
+
+// JSON-RPC 2.0 single object dispatch — extracted from process_body so the
+// batch handler can re-use it.  `req` MUST be a JSON Object (caller checks).
+void JsonRpcServer::process_single_object_request(td::JsonValue req,
+                                                   td::Promise<HttpReturn> promise) {
+  auto &obj = req.get_object();
 
   // Extract request ID — store as JSON literal to preserve type in response
-  // (JSON-RPC 2.0 requires echoing the id type exactly)
+  // (JSON-RPC 2.0 requires echoing the id type exactly).
+  std::string req_id;
   {
     auto id_val = obj.extract_field("id");
     if (id_val.type() == td::JsonValue::Type::String) {
@@ -491,6 +632,10 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
     } else if (id_val.type() == td::JsonValue::Type::Number) {
       req_id = id_val.get_number().str();  // numeric literal, no quotes
     } else {
+      // Null id, missing id, or non-stringy/numeric id → echo as JSON
+      // null per spec.  Note: in single-request mode this still emits
+      // a response.  In batch mode the batch driver detects "no id"
+      // (notification) by re-checking the original element.
       req_id = "null";
     }
   }
@@ -498,7 +643,7 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
   // Extract method
   auto method_r = obj.get_required_string_field("method");
   if (method_r.is_error()) {
-    promise.set_value(make_json_error(-32600, "Missing or invalid 'method' field", req_id));
+    promise.set_value(make_eth_json_error(-32600, "Missing or invalid 'method' field", req_id));
     return;
   }
   std::string method = method_r.move_as_ok();
@@ -508,13 +653,171 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
   if (params_val.type() == td::JsonValue::Type::Null) {
     params_val = td::JsonValue::make_object(td::JsonObject());
   }
+
+  // eth_sendRawTransaction: route to async handler (submits to ExtMessagePool)
+  if (method == "eth_sendRawTransaction") {
+    handle_eth_sendRawTransaction(params_val, std::move(req_id), std::move(promise));
+    return;
+  }
+
+  // Ethereum JSON-RPC sends params as arrays.  Handle eth_* methods with
+  // array params directly, before the object-params check.
+  if (params_val.type() == td::JsonValue::Type::Array &&
+      evm_workchain::is_eth_rpc_method(method)) {
+    td::JsonBuilder jb;
+    jb.enter_value() << params_val;
+    std::string params_str = jb.string_builder().as_cslice().str();
+
+    auto result = evm_workchain::handle_eth_rpc(method, params_str, req_id);
+    if (result) {
+      // The EVM RPC handler returns a complete JSON-RPC response string.
+      // Wrap it in a raw HTTP response.
+      promise.set_value(make_raw_json_response(result->json, opts_.cors_origin));
+    } else {
+      promise.set_value(make_eth_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
+    }
+    return;
+  }
+
   if (params_val.type() != td::JsonValue::Type::Object) {
-    promise.set_value(make_json_error(-32602, "'params' must be an object", req_id));
+    // Method is unknown to the eth_* registry AND params is not an object.
+    // Don't bail with "'params' must be an object" — that would mask a
+    // real "Method not found" for callers who probe with array params
+    // (Blockscout's `txpool_content` polling, geth-style probes, etc.).
+    // Substitute an empty params object and let dispatch_method emit
+    // either the method-not-found error or a per-handler missing-field
+    // error.  Both are spec-shape via make_eth_json_error.
+    td::JsonObject empty_params;
+    cached_dispatch_method(std::move(method), empty_params,
+                           std::move(req_id), std::move(promise));
     return;
   }
 
   cached_dispatch_method(std::move(method), params_val.get_object(),
                          std::move(req_id), std::move(promise));
+}
+
+// ── JSON-RPC 2.0 batch dispatch ────────────────────────────────────────
+//
+// The batch is processed sequentially: dispatch element N, on completion
+// dispatch element N+1, and on completion of the last element emit the
+// JSON array of responses.  Sequential dispatch keeps memory bounded
+// (one in-flight liteserver query per batch instead of N) and avoids
+// racing the cache_misses_/active_requests_ counters.  The 100-element
+// cap (kJsonRpcMaxBatchSize) means worst-case latency is ~100×
+// per-method service time, well under the 30 s request_timeout.
+//
+// Notifications (request elements with no `id` field) are dispatched
+// like any other request, but their response is dropped from the output
+// array per spec.  If every element is a notification the response is
+// HTTP 204 No Content.
+
+struct JsonRpcServer::BatchState {
+  std::vector<td::JsonValue> elements;
+  std::vector<bool> is_notification;
+  std::vector<std::string> responses;  // empty = notification, dropped
+  std::size_t cursor{0};
+  td::Promise<HttpReturn> final_promise;
+  std::string cors;
+};
+
+void JsonRpcServer::process_batch(std::vector<td::JsonValue> elements,
+                                  td::Promise<HttpReturn> promise) {
+  // Per-element notification flag.  A request is a notification iff its
+  // `id` field is absent (NOT iff it's null — null is a valid id).  We
+  // detect this BEFORE process_single_object_request consumes the field.
+  std::vector<bool> is_notification;
+  is_notification.reserve(elements.size());
+  for (auto &el : elements) {
+    if (el.type() != td::JsonValue::Type::Object) {
+      // Spec: per-element invalid request → an error response with id null
+      // in the output array.  We synthesize one below in the loop.
+      is_notification.push_back(false);
+      continue;
+    }
+    auto &obj = el.get_object();
+    bool has_id = false;
+    for (auto &fv : obj.field_values_) {
+      if (fv.first == "id") { has_id = true; break; }
+    }
+    is_notification.push_back(!has_id);
+  }
+
+  auto state = std::make_shared<BatchState>();
+  state->elements = std::move(elements);
+  state->is_notification = std::move(is_notification);
+  state->responses.resize(state->elements.size());
+  state->final_promise = std::move(promise);
+  state->cors = opts_.cors_origin;
+
+  process_batch_step(state);
+}
+
+void JsonRpcServer::process_batch_step(std::shared_ptr<BatchState> state) {
+  // Drain synchronous (non-Object) elements.
+  while (state->cursor < state->elements.size()) {
+    std::size_t i = state->cursor;
+    auto &el = state->elements[i];
+    if (el.type() != td::JsonValue::Type::Object) {
+      auto err = make_eth_json_error(
+          -32600, "Invalid Request: batch element is not a JSON object",
+          "null", state->cors);
+      state->responses[i] = extract_response_body(err);
+      state->cursor++;
+      continue;
+    }
+
+    bool is_notif = state->is_notification[i];
+    auto self = actor_id(this);
+    auto sub_promise = td::PromiseCreator::lambda(
+        [self, state, i, is_notif](td::Result<HttpReturn> R) mutable {
+          if (R.is_error()) {
+            // Internal error becomes an element-level error with null id.
+            auto err = JsonRpcServer::make_eth_json_error(
+                -32603, R.error().message().str(), "null", state->cors);
+            state->responses[i] = JsonRpcServer::extract_response_body(err);
+          } else {
+            auto ret = R.move_as_ok();
+            std::string body = JsonRpcServer::extract_response_body(ret);
+            if (is_notif) {
+              state->responses[i] = "";  // dropped from output array
+            } else {
+              state->responses[i] = std::move(body);
+            }
+          }
+          state->cursor++;
+          // Re-enter on the actor scheduler — keeps the stack flat and
+          // ordering deterministic.
+          td::actor::send_closure(self, &JsonRpcServer::process_batch_step, state);
+        });
+
+    auto el_moved = std::move(el);
+    process_single_object_request(std::move(el_moved), std::move(sub_promise));
+    return;  // wait for sub_promise to fire
+  }
+  // All elements done — emit the result array (or 204 if all-notifications).
+  finalize_batch(std::move(state));
+}
+
+void JsonRpcServer::finalize_batch(std::shared_ptr<BatchState> state) {
+  // Filter notifications out of the output.
+  std::string body = "[";
+  bool first = true;
+  for (std::size_t i = 0; i < state->responses.size(); i++) {
+    if (state->responses[i].empty()) continue;  // dropped notification
+    if (!first) body += ",";
+    first = false;
+    body += state->responses[i];
+  }
+  body += "]";
+
+  if (first) {
+    // All elements were notifications — spec says return nothing.  HTTP
+    // 204 No Content with an empty body is the canonical interpretation.
+    state->final_promise.set_value(make_no_content(state->cors));
+    return;
+  }
+  state->final_promise.set_value(make_json_array_response(std::move(body), state->cors));
 }
 
 // ─── POST REST body processing (body = params JSON, no jsonrpc envelope) ──
@@ -523,8 +826,13 @@ void JsonRpcServer::on_post_rest_body_ready(PayloadPtr payload, std::string meth
                                             td::Promise<HttpReturn> promise) {
   // Safe to call get_slice() here — we are in the actor scheduler, NOT inside
   // HttpPayload::parse()'s callback chain. Breaks the deadlock.
-  auto body = payload->get_slice(1 << 20);
-  process_rest_post_body(std::move(body), std::move(method), std::move(promise));
+  auto body_r = drain_payload_body(payload);
+  if (body_r.is_error()) {
+    promise.set_value(make_json_error(-32600, "Request body too large", "null",
+                                      opts_.cors_origin));
+    return;
+  }
+  process_rest_post_body(body_r.move_as_ok(), std::move(method), std::move(promise));
 }
 
 void JsonRpcServer::process_rest_post_body(td::BufferSlice body, std::string method,
@@ -590,7 +898,7 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
        method == "grantAccountDelegation" || method == "revokeAccountDelegation" ||
        method == "grantAccountSession" || method == "revokeAccountSession" ||
        method == "grantAccountAgent" || method == "revokeAccountAgent")) {
-    promise.set_value(make_json_error(-32601,
+    promise.set_value(make_eth_json_error(-32601,
         "Write methods are disabled (server is in readonly mode)", req_id));
     return;
   }
@@ -699,8 +1007,31 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     handle_runGetMethodStd(params, std::move(req_id), std::move(promise));
   } else if (method == "sendBocReturnHashNoError") {
     handle_sendBocReturnHashNoError(params, std::move(req_id), std::move(promise));
-  } else {
-    promise.set_value(make_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
+  }
+  // --- EVM Workchain: Ethereum JSON-RPC methods ---
+  else if (evm_workchain::is_eth_rpc_method(method)) {
+    std::string params_str = "[]";
+    if (params.field_count() > 0) {
+      td::JsonBuilder jb;
+      auto arr = jb.enter_array();
+      for (auto& kv : params.field_values_) {
+        arr.enter_value() << kv.second;
+      }
+      arr.leave();
+      params_str = jb.string_builder().as_cslice().str();
+    }
+    auto result = evm_workchain::handle_eth_rpc(method, params_str, req_id);
+    if (result) {
+      promise.set_value(make_raw_json_response(result->json, opts_.cors_origin));
+    } else {
+      promise.set_value(make_eth_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
+    }
+  }
+  else {
+    // Unknown method via JSON-RPC envelope dispatch — emit spec-compliant
+    // error so generic ethereum tooling (Blockscout, ethers, viem, web3.py)
+    // can decode it.  See process_body for the rationale.
+    promise.set_value(make_eth_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
   }
 }
 
@@ -741,9 +1072,25 @@ void JsonRpcServer::send_liteserver_query(td::BufferSlice query,
 
 // ─── JSON response construction ───────────────────────────────────────────
 
+JsonRpcServer::HttpReturn JsonRpcServer::make_raw_json_response(const std::string& json_body,
+                                                                const std::string& cors_origin) {
+  auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
+  response->add_header({"Content-Type", "application/json"});
+  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  response->add_header({"Transfer-Encoding", "Chunked"});
+  response->complete_parse_header();
+  auto payload = response->create_empty_payload().move_as_ok();
+  payload->add_chunk(td::BufferSlice(json_body));
+  payload->complete_parse();
+  return {std::move(response), std::move(payload)};
+}
+
 JsonRpcServer::HttpReturn JsonRpcServer::make_json_ok(std::string result_json, std::string id,
                                                       const std::string& cors_origin) {
   if (id.empty()) id = "null";
+  // TVM convention: `{ok, jsonrpc, id, result}` — the `ok` field is a
+  // convenience wrapper the Python/JS test suite depends on. Ethereum
+  // JSON-RPC callers (ethers/viem/web3.py) ignore it.
   std::string body = PSTRING()
       << "{\"ok\":true,\"jsonrpc\":\"2.0\",\"id\":" << id
       << ",\"result\":" << result_json << "}";
@@ -764,12 +1111,16 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_ok(std::string result_json, s
 JsonRpcServer::HttpReturn JsonRpcServer::make_json_error(int code, std::string message, std::string id,
                                                          const std::string& cors_origin) {
   if (id.empty()) id = "null";
+  // TVM convention: `{ok: false, jsonrpc, id, error:<string>, code}` +
+  // a mapped HTTP status code. The Python test suite
+  // (test/json-rpc/*.py) asserts on both `ok` and the HTTP status.
+  // For Ethereum RPC use `make_eth_json_error` instead — it emits
+  // the JSON-RPC 2.0 nested error shape with HTTP 200.
   std::string body = PSTRING()
       << "{\"ok\":false,\"jsonrpc\":\"2.0\",\"id\":" << id
       << ",\"error\":" << td::JsonString(td::Slice(message))
       << ",\"code\":" << code << "}";
 
-  // Map JSON-RPC / application error codes to HTTP status codes
   int http_status = 200;
   std::string http_status_text = "OK";
   if (code == -32602 || code == -32600) {
@@ -813,6 +1164,69 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_health_ok(const std::string& cors_
   payload->complete_parse();
 
   return {std::move(response), std::move(payload)};
+}
+
+JsonRpcServer::HttpReturn JsonRpcServer::make_eth_json_error(int code, std::string message, std::string id,
+                                                              const std::string& cors_origin) {
+  if (id.empty()) id = "null";
+  // JSON-RPC 2.0 error: `{jsonrpc, id, error:{code, message}}`, HTTP
+  // 200 always. Matches the Ethereum execution-apis contract that
+  // ethers / viem / web3.py all assume.
+  std::string body = PSTRING()
+      << "{\"jsonrpc\":\"2.0\",\"id\":" << id
+      << ",\"error\":{\"code\":" << code
+      << ",\"message\":" << td::JsonString(td::Slice(message)) << "}}";
+
+  auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
+  response->add_header({"Content-Type", "application/json"});
+  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  response->add_header({"Transfer-Encoding", "Chunked"});
+  response->complete_parse_header();
+
+  auto payload = response->create_empty_payload().move_as_ok();
+  payload->add_chunk(td::BufferSlice(body));
+  payload->complete_parse();
+
+  return {std::move(response), std::move(payload)};
+}
+
+JsonRpcServer::HttpReturn JsonRpcServer::make_no_content(const std::string& cors_origin) {
+  auto response = http::HttpResponse::create("HTTP/1.1", 204, "No Content", false, false).move_as_ok();
+  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  response->add_header({"Content-Length", "0"});
+  response->complete_parse_header();
+
+  auto payload = response->create_empty_payload().move_as_ok();
+  payload->complete_parse();
+
+  return {std::move(response), std::move(payload)};
+}
+
+JsonRpcServer::HttpReturn JsonRpcServer::make_json_array_response(std::string body,
+                                                                   const std::string& cors_origin) {
+  auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
+  response->add_header({"Content-Type", "application/json"});
+  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  response->add_header({"Transfer-Encoding", "Chunked"});
+  response->complete_parse_header();
+
+  auto payload = response->create_empty_payload().move_as_ok();
+  payload->add_chunk(td::BufferSlice(std::move(body)));
+  payload->complete_parse();
+
+  return {std::move(response), std::move(payload)};
+}
+
+std::string JsonRpcServer::extract_response_body(HttpReturn& ret) {
+  std::string out;
+  if (!ret.second) return out;
+  // HttpPayload returns ONE chunk per get_slice() call — loop until drained.
+  while (true) {
+    auto chunk = ret.second->get_slice(1u << 20);
+    if (chunk.empty()) break;
+    out.append(chunk.as_slice().begin(), chunk.size());
+  }
+  return out;
 }
 
 JsonRpcServer::HttpReturn JsonRpcServer::make_cors_preflight(const std::string& cors_origin) {
@@ -932,16 +1346,8 @@ const std::set<std::string> &JsonRpcServer::cacheable_methods() {
 }
 
 void JsonRpcServer::alarm() {
-  // Periodic cache cleanup — remove expired entries
   if (opts_.cache_ttl > 0 && !cache_.empty()) {
-    auto it = cache_.begin();
-    while (it != cache_.end()) {
-      if (it->second.expires_at.is_in_past()) {
-        it = cache_.erase(it);
-      } else {
-        ++it;
-      }
-    }
+    cache_.evict_expired();
   }
   // Re-arm alarm every 10 seconds if caching is enabled
   if (opts_.cache_ttl > 0) {
@@ -995,12 +1401,12 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
   std::string cache_key = sb.as_cslice().str();
 
   // Check cache
-  auto it = cache_.find(cache_key);
-  if (it != cache_.end() && !it->second.expires_at.is_in_past()) {
+  auto cached = cache_.lookup(cache_key);
+  if (cached.has_value()) {
     // Cache hit — rebuild HTTP response from the cached body string, substituting
     // the current request's id so that each caller gets the correct "id" field.
     cache_hits_.fetch_add(1);
-    promise.set_value(make_json_ok(it->second.response_json, req_id));
+    promise.set_value(make_json_ok(*cached, req_id));
     return;
   }
 
@@ -1020,8 +1426,18 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
         if (result.first && result.first->code() == 200 && result.second) {
           // Read the payload body for inspection.  get_slice() consumes it,
           // so we must rebuild the response pair afterward.
-          auto body_slice = result.second->get_slice(1 << 20);
-          std::string body_str = body_slice.as_slice().str();
+          //
+          // HttpPayload stores the body in 16 KiB chunks and `get_slice()`
+          // returns ONE chunk per call.  Loop until exhausted so responses
+          // larger than 16 KiB (e.g. blocks with many transactions) are
+          // captured correctly for caching.  No upper cap here — the cache
+          // layer enforces its own `cache_max_body_bytes` budget.
+          std::string body_str;
+          while (true) {
+            auto chunk = result.second->get_slice(1u << 20);
+            if (chunk.empty()) break;
+            body_str.append(chunk.as_slice().begin(), chunk.size());
+          }
 
           if (body_str.find("\"ok\":true") != std::string::npos) {
             // Extract the "result" JSON value using the td::JsonValue parser
@@ -1033,10 +1449,15 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
               for (auto &fv : obj.field_values_) {
                 if (fv.first == "result") {
                   auto encoded = td::json_encode<std::string>(fv.second);
-                  cache_[cache_key] = CacheEntry{std::move(encoded),
-                                                 td::Timestamp::in(static_cast<double>(ttl))};
-                  orig_promise.set_value(make_json_ok(cache_[cache_key].response_json,
-                                                      req_id, cors));
+                  if (cache_.store(cache_key, encoded,
+                                   td::Timestamp::in(static_cast<double>(ttl)))) {
+                    auto cached_value = cache_.lookup(cache_key);
+                    if (cached_value.has_value()) {
+                      orig_promise.set_value(make_json_ok(*cached_value, req_id, cors));
+                      return;
+                    }
+                  }
+                  orig_promise.set_value(make_json_ok(std::move(encoded), req_id, cors));
                   return;
                 }
               }

@@ -81,7 +81,7 @@ void ExtMessagePool::install_collator_queue(ShardIdFull shard, std::unique_ptr<E
     for (auto &[priority, treap] : snapshot) {
       while (!treap.empty()) {
         if (token.check().is_error()) {
-          co_return {};
+          co_return td::Unit{};
         }
         size_t idx = td::Random::fast_uint32() % treap.size();
         auto [key, msg] = treap.at(idx);
@@ -91,14 +91,14 @@ void ExtMessagePool::install_collator_queue(ShardIdFull shard, std::unique_ptr<E
         }
         bool ok = co_await queue.push(std::make_pair(msg->message, priority));
         if (!ok) {
-          co_return {};
+          co_return td::Unit{};
         }
         ++pushed;
       }
     }
     LOG(WARNING) << "install_collator_queue: pushed " << pushed << " existing messages to shard " << shard.to_str()
                  << " in " << t.elapsed() << "s";
-    co_return {};
+    co_return td::Unit{};
   };
   push_existing(callback->queue, callback->cancellation_token, shard, std::move(snapshot), callback->sync_only)
       .start()
@@ -268,6 +268,19 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
                                                                            td::optional<td::uint32> &msg_seqno) {
   WorkchainId wc = message->wc();
   StdSmcAddress addr = message->addr();
+
+  // EVM workchain (workchain 1): skip TVM validation entirely.
+  // EVM accounts have no TVM code — signature and nonce validation
+  // happens in the EVM executor during the collator's compute phase.
+  // Structural validation (BOC/TLB) and rate-limiting still apply.
+  // Must short-circuit BEFORE run_fetch_account_state(), which expects
+  // the workchain's block storage to be populated by a TVM-style collator.
+  if (wc == 1 /* evm_workchain::kWorkchainId */) {
+    auto [wait, promise] = td::actor::StartedTask<>::make_bridge();
+    promise.set_value(td::Unit{});
+    co_return CheckResult{.message = message, .wait_allow_broadcast = std::move(wait)};
+  }
+
   auto [shard_acc, utime, lt, config] = co_await run_fetch_account_state(wc, addr, manager_);
   bool special = wc == masterchainId && config->is_special_smartcontract(addr);
   block::Account acc;

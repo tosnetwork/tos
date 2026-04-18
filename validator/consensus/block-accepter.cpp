@@ -40,7 +40,7 @@ class BlockAccepterImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     co_await td::actor::ask(owning_bus()->manager, &ManagerFacade::accept_block, block.id, block_data,
                             event->candidate->leader.value(), event->signatures, broadcast_mode, true);
     owning_bus().publish<TraceEvent>(stats::BlockAccepted::create(event->candidate->id));
-    co_return {};
+    co_return td::Unit{};
   }
 
   template <>

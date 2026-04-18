@@ -539,7 +539,7 @@ class SleepyActor : public Actor {
  private:
   Task<> task() {
     co_await coro_sleep(td::Timestamp::in(24 * 3600));
-    co_return {};
+    co_return td::Unit{};
   }
 };
 

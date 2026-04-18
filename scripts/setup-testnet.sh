@@ -103,7 +103,7 @@ async def setup():
             # Populate static dir
             static_dir = node._directory / "static"
             static_dir.mkdir(exist_ok=True)
-            for state in (zs.masterchain, zs.shardchain):
+            for state in (zs.masterchain, zs.shardchain, zs.evmchain):
                 link = static_dir / state.file_hash.hex().upper()
                 if not link.exists():
                     link.symlink_to(state.file)
@@ -158,6 +158,7 @@ async def setup():
             print(f"    validator:  127.0.0.1:{node._addr.port}")
             print(f"    liteserver: 127.0.0.1:{node._liteserver_addr.port}")
             print(f"    console:    127.0.0.1:{node._engine_console_addr.port}")
+            print(f"    json-rpc:   127.0.0.1:{8010 + idx}  (eth_*)")
 
         # DHT node config
         dht_dir = DATA / "dht"
@@ -166,11 +167,13 @@ async def setup():
             os.symlink(dht._directory / "keyring", dht_dir / "keyring")
         (dht_dir / "config.json").write_text(dht._local_config.to_json())
 
-        # Port info for systemd generation
+        # Port info for systemd generation. EVM JSON-RPC ports are 8011..8014
+        # (allocated in the bash side after this Python block).
         port_info = {"dht_port": dht._addr.port, "nodes": [
             {"idx": i+1, "validator_port": n._addr.port,
              "liteserver_port": n._liteserver_addr.port,
-             "console_port": n._engine_console_addr.port}
+             "console_port": n._engine_console_addr.port,
+             "jsonrpc_port": 8010 + i + 1}
             for i, n in enumerate(nodes)
         ]}
         (DATA / "testnet-ports.json").write_text(json.dumps(port_info, indent=2))
@@ -230,6 +233,9 @@ for i in 1 2 3 4; do
     NODE_DIR="$DATA/tos$i"
     TESTNET_NODE_DIR=$(echo "$PORTS" | python3 -c "import json,sys; d=json.load(sys.stdin); n=[x for x in d['nodes'] if x['idx']==$i][0]; print(n)")
 
+    # JSON-RPC HTTP port for eth_* methods (one per validator: 8011..8014)
+    JSONRPC_PORT=$((8010 + i))
+
     cat > "/etc/systemd/system/tos-validator@${i}.service" <<SVCEOF
 [Unit]
 Description=TOS Validator Node $i
@@ -250,6 +256,7 @@ ExecStart=$INSTALL_BIN/tos-validator-engine \\
   --initial-sync-delay 5 \\
   --session-logs $NODE_DIR/session-logs \\
   --quic-flood-control -1 \\
+  --json-rpc-address 127.0.0.1:$JSONRPC_PORT \\
   -l $NODE_DIR/log \\
   -t 4
 Restart=on-failure

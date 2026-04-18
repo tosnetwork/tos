@@ -300,7 +300,7 @@ static td::actor::Task<> check_and_deliver(OverlayImpl *overlay, PublicKeyHash s
     co_await std::move(task);
   }
   overlay->deliver_broadcast(src, std::move(data), std::move(extra));
-  co_return {};
+  co_return td::Unit{};
 }
 
 td::actor::Task<> BroadcastsTwostep::process_broadcast(
@@ -354,7 +354,7 @@ td::actor::Task<> BroadcastsTwostep::process_broadcast(
   overlay->register_delivered_broadcast(broadcast_id);
   co_await check_and_deliver(overlay, src_keyhash, check_result, std::move(broadcast->data_),
                              std::move(broadcast->extra_));
-  co_return {};
+  co_return td::Unit{};
 }
 
 td::actor::Task<> BroadcastsTwostep::process_broadcast(OverlayImpl *overlay, adnl::AdnlNodeIdShort src_peer_id,
@@ -437,7 +437,7 @@ td::actor::Task<> BroadcastsTwostep::process_broadcast(OverlayImpl *overlay, adn
     overlay->get_broadcasts_limiter(src_keyhash, cert.get()).register_out_traffic(total_size);
   }
   if (bcast->delivered) {
-    co_return {};
+    co_return td::Unit{};
   }
   bcast->debug.chunk_senders.insert(src_peer_id);
   CO_TRY(bcast->decoder->add_symbol({seqno, std::move(broadcast->part_)}));
@@ -454,7 +454,7 @@ td::actor::Task<> BroadcastsTwostep::process_broadcast(OverlayImpl *overlay, adn
     }
     co_await check_and_deliver(overlay, src_keyhash, check_result, std::move(R.data), std::move(broadcast->extra_));
   }
-  co_return {};
+  co_return td::Unit{};
 }
 
 void BroadcastsTwostep::gc(OverlayImpl *overlay) {

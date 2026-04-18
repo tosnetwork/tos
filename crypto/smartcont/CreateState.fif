@@ -111,6 +111,16 @@ variable workchain-dict
   <s swap workchain-dict @ 32 idict!+ 0= abort"cannot add workchain"
   workchain-dict !
 } : add-std-workchain
+// EVM workchain (wc=1): same layout as add-std-workchain but vm_version=0x45564D ("EVM")
+// instead of -1, so the host-chain dispatch routes wc=1 transactions to evmone
+// (see crypto/block/evm-workchain/evm-config-param.cpp::build_evm_workchain_descr).
+// root-hash file-hash enable-utime actual-min-split min-split max-split workchain-id --
+{ <b x{a6} s, 5 roll 32 u, 4 roll 8 u, 3 roll 8 u, rot 8 u, x{e000} s,
+  3 roll 256 u, rot 256 u, 0 32 u, x{1} s, 0x45564D 32 i, 0 64 u, b>
+  dup isWorkchainDescr? not abort"invalid WorkchainDescr created"
+  <s swap workchain-dict @ 32 idict!+ 0= abort"cannot add workchain"
+  workchain-dict !
+} : add-evm-workchain
 // --
 { workchain-dict @ dict>s s>c 12 config! } : config.workchains!
 

@@ -49,6 +49,7 @@ class WorkchainState:
 class Zerostate:
     masterchain: WorkchainState
     shardchain: WorkchainState
+    evmchain: WorkchainState  # EVM workchain (wc=1)
     main_wallet_key: nacl.signing.SigningKey
     main_wallet_address: Address
 
@@ -90,10 +91,42 @@ wc_master setworkchain
   workchain-dict !
 }} : add-std-workchain-v2
 
+// EVM workchain (wc=1) — same as add-std-workchain-v2 but vm_version=0x45564D ("EVM")
+// instead of -1, which selects the evmone executor in Transaction::prepare_compute_phase.
+{{ <b x{{a7}} s, 5 roll 32 u, 4 roll 8 u, 3 roll 8 u, rot 8 u, x{{e000}} s,
+  3 roll 256 u, rot 256 u, 0 32 u, x{{1}} s, 0x45564D 32 i, 0 64 u, x{{0}} s, 20 32 u, 20 32 u, 10 32 u, 1000 32 u, 0 8 u, b>
+  dup isWorkchainDescr? not abort"invalid WorkchainDescr created"
+  <s swap workchain-dict @ 32 idict!+ 0= abort"cannot add workchain"
+  workchain-dict !
+}} : add-evm-workchain-v2
+
 dup dup 31 boc+>B dup "basestate0.boc" B>file
 Bhashu dup =: basestate0_fhash 256 u>B "basestate0.fhash" B>file
 hashu dup =: basestate0_rhash 256 u>B "basestate0.rhash" B>file
 basestate0_rhash basestate0_fhash now {monitor_min_split} {split} dup 0 add-std-workchain-v2
+
+// EVM workchain (wc=1) zerostate: ShardState whose accounts:^ShardAccounts ref
+// is pre-populated with the 10 Hardhat/Anvil test EOAs (10000 TOS each). The
+// accounts cell is built deterministically by the C++ word
+// `evm-zerostate-accounts-cell` registered in create-state.cpp; this glue
+// re-builds the ShardState shell exactly like `mkemptyShardState` except it
+// substitutes that cell for the otherwise-empty accounts ref.
+//
+// ( accounts_ref wc -- shard_state_cell )
+{{ <b x{{9023afe2}} s, globalid@ 32 i, 0 8 i,
+  swap 32 i, 1 63 << 64 u, 0 64 i, now 32 u, 0 64 i, -1 32 i,
+  <b 0 67 u, b> ref, 0 1 u,
+  swap ref,
+  <b 0 128 10 + 1+ 1+ u, b> ref, 0 1 u, b>
+  dup isShardState? not abort"invalid ShardState created"
+}} : mkShardStateWithAccounts
+
+evm-zerostate-accounts-cell 1 mkShardStateWithAccounts
+dup dup 31 boc+>B dup "evmstate1.boc" B>file
+Bhashu dup =: evmstate1_fhash 256 u>B "evmstate1.fhash" B>file
+hashu dup =: evmstate1_rhash 256 u>B "evmstate1.rhash" B>file
+evmstate1_rhash evmstate1_fhash now {monitor_min_split} {split} dup 1 add-evm-workchain-v2
+
 config.workchains!
 
 // SmartContract #1 (Simple wallet)
@@ -373,6 +406,11 @@ def create_zerostate(
             file=state_dir / "basestate0.boc",
             file_hash=(state_dir / "basestate0.fhash").read_bytes(),
             root_hash=(state_dir / "basestate0.rhash").read_bytes(),
+        ),
+        evmchain=WorkchainState(
+            file=state_dir / "evmstate1.boc",
+            file_hash=(state_dir / "evmstate1.fhash").read_bytes(),
+            root_hash=(state_dir / "evmstate1.rhash").read_bytes(),
         ),
         main_wallet_key=nacl.signing.SigningKey(pk),
         main_wallet_address=Address((addr_wc, addr_hash)),

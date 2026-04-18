@@ -18,6 +18,8 @@
 */
 #pragma once
 
+#include <cstddef>
+
 #include "http/http-server.h"
 #include "metrics/metrics-collectors.h"
 #include "td/actor/actor.h"
@@ -26,10 +28,115 @@
 #include "validator/validator.h"
 #include "block/block.h"
 
+#include <list>
 #include <set>
 #include <unordered_map>
 
 namespace tos {
+
+class JsonRpcResponseCache {
+ public:
+  JsonRpcResponseCache(std::size_t max_entries, std::size_t max_body_bytes)
+      : max_entries_(max_entries), max_body_bytes_(max_body_bytes) {
+  }
+
+  bool empty() const noexcept {
+    return entries_.empty();
+  }
+
+  std::size_t size() const noexcept {
+    return entries_.size();
+  }
+
+  std::size_t body_bytes() const noexcept {
+    return body_bytes_;
+  }
+
+  void clear() {
+    entries_.clear();
+    lru_.clear();
+    body_bytes_ = 0;
+  }
+
+  void evict_expired() {
+    auto it = entries_.begin();
+    while (it != entries_.end()) {
+      if (it->second.expires_at.is_in_past()) {
+        auto erase_it = it++;
+        erase(erase_it);
+      } else {
+        ++it;
+      }
+    }
+  }
+
+  std::optional<std::string> lookup(const std::string& key) {
+    evict_expired();
+    auto it = entries_.find(key);
+    if (it == entries_.end()) {
+      return std::nullopt;
+    }
+    touch(it);
+    return it->second.response_json;
+  }
+
+  bool store(const std::string& key, std::string response_json, td::Timestamp expires_at) {
+    evict_expired();
+    if (max_body_bytes_ > 0 && response_json.size() > max_body_bytes_) {
+      return false;
+    }
+    auto existing = entries_.find(key);
+    if (existing != entries_.end()) {
+      erase(existing);
+    }
+    lru_.push_front(key);
+    body_bytes_ += response_json.size();
+    entries_.emplace(key, Entry{std::move(response_json), expires_at, 0, lru_.begin()});
+    auto inserted = entries_.find(key);
+    inserted->second.size_bytes = inserted->second.response_json.size();
+    evict_to_budget();
+    return entries_.find(key) != entries_.end();
+  }
+
+ private:
+  struct Entry {
+    std::string response_json;
+    td::Timestamp expires_at;
+    std::size_t size_bytes{0};
+    std::list<std::string>::iterator lru_it;
+  };
+
+  void erase(std::unordered_map<std::string, Entry>::iterator it) {
+    body_bytes_ -= it->second.size_bytes;
+    lru_.erase(it->second.lru_it);
+    entries_.erase(it);
+  }
+
+  void touch(std::unordered_map<std::string, Entry>::iterator it) {
+    lru_.splice(lru_.begin(), lru_, it->second.lru_it);
+  }
+
+  void evict_to_budget() {
+    while ((max_entries_ > 0 && entries_.size() > max_entries_) ||
+           (max_body_bytes_ > 0 && body_bytes_ > max_body_bytes_)) {
+      if (lru_.empty()) {
+        break;
+      }
+      auto it = entries_.find(lru_.back());
+      if (it == entries_.end()) {
+        lru_.pop_back();
+        continue;
+      }
+      erase(it);
+    }
+  }
+
+  std::size_t max_entries_{0};
+  std::size_t max_body_bytes_{0};
+  std::unordered_map<std::string, Entry> entries_;
+  std::list<std::string> lru_;
+  std::size_t body_bytes_{0};
+};
 
 class JsonRpcServer final : public td::actor::Actor, public virtual metrics::AsyncCollector {
  public:
@@ -40,6 +147,8 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
     double request_timeout = 30.0;   // per-request timeout in seconds (0 = no timeout)
     std::string api_key;             // empty = no auth required
     td::int32 cache_ttl = 0;        // seconds, 0 = disabled
+    std::size_t cache_max_entries = 1024;
+    std::size_t cache_max_body_bytes = 8 << 20;
   };
 
   static td::actor::ActorOwn<JsonRpcServer> create(
@@ -75,6 +184,18 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   void on_body_ready(PayloadPtr payload, td::Promise<HttpReturn> promise);
   void process_body(td::BufferSlice body, std::string req_id,
                     td::Promise<HttpReturn> promise);
+  // JSON-RPC 2.0 single object dispatch: parses id/method/params from `req`
+  // and dispatches.  `req` must be a JSON Object — callers (process_body and
+  // the batch handler) enforce this.
+  void process_single_object_request(td::JsonValue req,
+                                     td::Promise<HttpReturn> promise);
+  // JSON-RPC 2.0 batch dispatch: array of element requests becomes an array
+  // of element responses (notifications omitted).  See process_batch.
+  struct BatchState;
+  void process_batch(std::vector<td::JsonValue> elements,
+                     td::Promise<HttpReturn> promise);
+  void process_batch_step(std::shared_ptr<BatchState> state);
+  void finalize_batch(std::shared_ptr<BatchState> state);
   void process_rest_post_body(td::BufferSlice body, std::string method,
                               td::Promise<HttpReturn> promise);
   // Called by PostRestWaiter via actor message — reads payload OUTSIDE mutex.
@@ -86,6 +207,8 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   // Method handlers — existing
   void handle_sendBoc(td::JsonObject &params, std::string req_id,
                       td::Promise<HttpReturn> promise);
+  void handle_eth_sendRawTransaction(td::JsonValue &params_val, std::string req_id,
+                                      td::Promise<HttpReturn> promise);
   void handle_getConfigParam(td::JsonObject &params, std::string req_id,
                              td::Promise<HttpReturn> promise);
   void handle_getAddressInformation(td::JsonObject &params, std::string req_id,
@@ -216,10 +339,29 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
                              td::Promise<td::BufferSlice> promise);
 
   // Utility: build JSON-RPC response
+  static HttpReturn make_raw_json_response(const std::string& json_body,
+                                            const std::string& cors_origin = "*");
   static HttpReturn make_json_ok(std::string result_json, std::string id,
                                  const std::string& cors_origin = "*");
   static HttpReturn make_json_error(int code, std::string message, std::string id,
                                     const std::string& cors_origin = "*");
+  // Standards-compliant JSON-RPC 2.0 error (nested `error:{code,message}`,
+  // HTTP 200). Use for every `eth_*` / `net_*` / `web3_*` / `debug_*`
+  // handler. `make_json_error` is retained for TVM JSON-RPC methods
+  // whose existing tests depend on `{ok, error:<string>, code}` at
+  // top level and on mapped HTTP status codes.
+  static HttpReturn make_eth_json_error(int code, std::string message, std::string id,
+                                        const std::string& cors_origin = "*");
+  // HTTP 204 No Content with CORS — used for batch-of-only-notifications.
+  static HttpReturn make_no_content(const std::string& cors_origin = "*");
+  // HTTP 200 wrapping a literal JSON body (e.g. a JSON array of batch
+  // element responses).  Identical to make_raw_json_response but with an
+  // explicit name to clarify intent at call sites.
+  static HttpReturn make_json_array_response(std::string body,
+                                              const std::string& cors_origin = "*");
+  // Extract the response body bytes from an HttpReturn.  Consumes the
+  // payload — caller must not use `ret.second` afterwards.
+  static std::string extract_response_body(HttpReturn& ret);
   static HttpReturn make_health_ok(const std::string& cors_origin = "*");
   static HttpReturn make_cors_preflight(const std::string& cors_origin = "*");
   static HttpReturn make_text_response(int status_code, std::string status_text,
@@ -240,12 +382,7 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
 
   void alarm() override;
 
-  // ── Response cache ───────────────────────────────────────────────────
-  struct CacheEntry {
-    std::string response_json;
-    td::Timestamp expires_at;
-  };
-  std::unordered_map<std::string, CacheEntry> cache_;
+  JsonRpcResponseCache cache_;
 
   static const std::set<std::string> &cacheable_methods();
 
