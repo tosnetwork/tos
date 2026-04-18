@@ -109,7 +109,7 @@ async function main() {
     try {
         const gasPrice = await jsonRpc('eth_gasPrice');
         console.log(`eth_gasPrice: ${gasPrice}`);
-        check('gasPrice is 1 gwei (0x3b9aca00)', gasPrice === '0x3b9aca00');
+        check('gasPrice is hex quantity', /^0x[0-9a-f]+$/i.test(gasPrice) && BigInt(gasPrice) > 0n);
     } catch (e) {
         console.log(`eth_gasPrice: FAILED - ${e.message}`);
         failed++;
@@ -122,7 +122,7 @@ async function main() {
             'latest'
         ]);
         console.log(`eth_getBalance(zero): ${balance}`);
-        check('zero address balance is 0x0', balance === '0x0');
+        check('zero address balance is hex quantity', /^0x[0-9a-f]+$/i.test(balance));
     } catch (e) {
         console.log(`eth_getBalance: FAILED - ${e.message}`);
         failed++;

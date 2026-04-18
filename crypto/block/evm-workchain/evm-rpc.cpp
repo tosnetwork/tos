@@ -2305,16 +2305,11 @@ static RpcResult handle_create_access_list(const std::string& params, const std:
         }
         r += "]}";
     }
-    r += "],\"gasUsed\":" + to_hex_quantity(gas_used);
-    // Per execution-apis, when the simulated call reverts we return the
-    // error string alongside the access list. Successful calls omit the
-    // field — we emit "" for parity with the spec's shape (clients that
-    // check truthiness get an empty string and know there was no error).
-    r += ",\"error\":\"";
     if (call_result.status != EVMC_SUCCESS) {
-        r += "execution reverted";
+        r += "],\"error\":\"execution reverted\",\"gasUsed\":" + to_hex_quantity(gas_used) + "}";
+    } else {
+        r += "],\"gasUsed\":" + to_hex_quantity(gas_used) + "}";
     }
-    r += "\"}";
     return {make_result(id, r), false};
 }
 

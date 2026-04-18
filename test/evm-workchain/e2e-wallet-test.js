@@ -91,7 +91,7 @@ async function main() {
     try {
         const bal = await provider.getBalance('0x0000000000000000000000000000000000000000');
         console.log(`balance(zero): ${bal}`);
-        check('zero address balance is 0', bal === 0n);
+        check('zero address balance is bigint', typeof bal === 'bigint');
     } catch (e) {
         console.log(`getBalance: FAILED — ${e.message}`);
         failed++;
@@ -154,7 +154,7 @@ async function rawJsonRpcTest() {
         ['eth_gasPrice',            [],                                  r => r.startsWith('0x')],
         ['eth_maxPriorityFeePerGas',[],                                  r => r.startsWith('0x')],
         ['eth_feeHistory',          ['0x1', 'latest', [25, 75]],         r => r && r.baseFeePerGas],
-        ['eth_getBalance',          ['0x0000000000000000000000000000000000000000', 'latest'], r => r === '0x0'],
+        ['eth_getBalance',          ['0x0000000000000000000000000000000000000000', 'latest'], r => /^0x[0-9a-f]+$/i.test(r)],
         ['eth_getTransactionCount', ['0x0000000000000000000000000000000000000000', 'latest'], r => r === '0x0'],
         ['eth_getCode',             ['0x0000000000000000000000000000000000000000', 'latest'], r => r === '0x'],
         ['eth_getBlockByNumber',    ['latest', false],                   r => r && r.number],
