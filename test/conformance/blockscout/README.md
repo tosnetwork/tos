@@ -132,10 +132,10 @@ Definitions:
   Whether to add it depends on the indexer feature it gates.
 - **SHAPE** — Field is present but not in the shape the spec demands.
 
-### BUG #1 — Error response shape is non-spec when params is an array (`-32602` path)
+### BUG #1 — Error response shape is non-spec — **FIXED**
 
-**Symptom:** when Blockscout sends a single-call request whose method is
-unknown OR sends a JSON-RPC batch (a JSON array), TOS replies with:
+**Original symptom:** when Blockscout sent a single-call request whose
+method was unknown, TOS replied with:
 
 ```json
 {"ok":false,"jsonrpc":"2.0","id":1,
@@ -150,28 +150,41 @@ JSON-RPC 2.0 (and Blockscout's
  "error":{"code":-32601,"message":"Method not found: txpool_content"}}
 ```
 
-**Severity:** **HARD BLOCKER**. Blockscout's
-`Indexer.Block.Catchup.MissingRangesCollector` GenServer crashes with
+**Original severity:** **HARD BLOCKER**. Blockscout's
+`Indexer.Block.Catchup.MissingRangesCollector` GenServer crashed with
 `FunctionClauseError` on `standardize_error/1`, and the supervisor
-restarts it in a tight loop until the next catchup attempt also crashes.
-No blocks indexed.
+restarted it in a tight loop until the next catchup attempt also
+crashed. No blocks were indexed.
 
-**Workaround in this stack:** `normalize-proxy.py` rewrites every
-`{"ok":false, ..., "error":"<str>", "code":<int>}` into
-`{"error":{"code":<int>,"message":"<str>"}}`. Drop both `ok` and the
-top-level `code` keys.
+**Fix:** commit `fix(json-rpc-server): emit spec-compliant error
+envelope` switched the JSON-RPC envelope path
+(`process_body` and the dispatcher's last-resort method-not-found) to
+use `make_eth_json_error()`.  That helper emits the spec shape
+`{jsonrpc, id, error:{code, message}}` with HTTP 200 — the same shape
+`evm_workchain::handle_eth_rpc()` already used for in-EVM errors.  The
+legacy `make_json_error()` (`{ok:false, error:<str>, code}` + mapped
+HTTP status) is retained for the dedicated REST endpoints
+(`POST /getMasterchainInfo`, etc.) whose pytest suite under
+`test/json-rpc/` still depends on it.
 
-**Real fix (TOS side):** in the JSON-RPC server's error path (a single
-serialiser, presumably in `crypto/block/evm-workchain/json-rpc/` or
-`validator-engine/json-rpc/`), encode errors as `{"error":{"code":N,
-"message":S}}` and remove the top-level `ok` field. Confirm by `grep`
-for `"\"ok\":false"`.
+**Verification:** `test/conformance/manual-rpc/error_shape/*.io` pins
+the new shape on the wire.  Direct probe:
 
-**Note — secondary BUG:** the same error path returns
+```bash
+$ curl -s -X POST http://127.0.0.1:8011/jsonRPC \
+    -H 'Content-Type: application/json' \
+    -d '{"jsonrpc":"2.0","id":42,"method":"txpool_content","params":[]}'
+{"jsonrpc":"2.0","id":42,"error":{"code":-32601,"message":"Method not found: txpool_content"}}
+```
+
+**Secondary BUG (also fixed):** the dispatcher used to return
 `"'params' must be an object"` for *unknown methods called with array
-params*, masking the real "Method not found" reason. The dispatcher
-seems to validate `params` shape **before** method lookup, when it
-should be the other way round. Easy fix: lookup the method first.
+params*, masking the real "Method not found" reason because the params
+shape check ran before method lookup.  Resolved in the same commit:
+when params is an array and the method isn't an `eth_*` method, we now
+substitute an empty params object and let the dispatcher emit
+`Method not found` (or per-handler missing-field error) via the spec
+shape.
 
 ### BUG #2 — Batch JSON-RPC unsupported
 

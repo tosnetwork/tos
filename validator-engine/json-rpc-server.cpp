@@ -496,8 +496,9 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
   if (payload->parse_completed()) {
     auto body_r = drain_payload_body(payload);
     if (body_r.is_error()) {
-      promise.set_value(make_json_error(-32600, "Request body too large",
-                                        "null", opts_.cors_origin));
+      // JSON-RPC envelope path — emit spec-shape so generic clients decode it.
+      promise.set_value(make_eth_json_error(-32600, "Request body too large",
+                                            "null", opts_.cors_origin));
       return;
     }
     process_body(body_r.move_as_ok(), "", std::move(promise));
@@ -535,16 +536,16 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
 
 void JsonRpcServer::on_body_ready(PayloadPtr payload, td::Promise<HttpReturn> promise) {
   if (!payload) {
-    promise.set_value(make_json_error(-32603, "Internal error: missing request payload", "null",
-                                      opts_.cors_origin));
+    promise.set_value(make_eth_json_error(-32603, "Internal error: missing request payload", "null",
+                                          opts_.cors_origin));
     return;
   }
   // Safe to call get_slice() here — we are in the actor scheduler, NOT inside
   // HttpPayload::parse()'s mutex. This breaks the deadlock chain.
   auto body_r = drain_payload_body(payload);
   if (body_r.is_error()) {
-    promise.set_value(make_json_error(-32600, "Request body too large", "null",
-                                      opts_.cors_origin));
+    promise.set_value(make_eth_json_error(-32600, "Request body too large", "null",
+                                          opts_.cors_origin));
     return;
   }
   process_body(body_r.move_as_ok(), "", std::move(promise));
@@ -552,24 +553,36 @@ void JsonRpcServer::on_body_ready(PayloadPtr payload, td::Promise<HttpReturn> pr
 
 void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
                                  td::Promise<HttpReturn> promise) {
+  // NOTE: All JSON-RPC envelope errors below use `make_eth_json_error`
+  // (spec-compliant `{jsonrpc, id, error:{code, message}}`, HTTP 200) so
+  // that ethers/viem/Blockscout-style clients can decode them.  The
+  // legacy `make_json_error` (`{ok:false, error:<str>, code}` + mapped
+  // HTTP status) is retained for the dedicated REST endpoints under
+  // `process_rest_post_body` whose Python tests still depend on it.
   if (body.empty()) {
-    promise.set_value(make_json_error(-32700, "Empty request body", req_id, opts_.cors_origin));
+    promise.set_value(make_eth_json_error(-32700, "Empty request body", req_id, opts_.cors_origin));
     return;
   }
 
   auto json_r = td::json_decode(body.as_slice());
   if (json_r.is_error()) {
-    promise.set_value(make_json_error(-32700, "Parse error: invalid JSON", req_id, opts_.cors_origin));
+    promise.set_value(make_eth_json_error(-32700, "Parse error: invalid JSON",
+                                          req_id, opts_.cors_origin));
     return;
   }
 
   auto json = json_r.move_as_ok();
   if (json.type() == td::JsonValue::Type::Array) {
-    promise.set_value(make_json_error(-32600, "Batch requests are not supported", req_id, opts_.cors_origin));
+    // Batch dispatch added in a follow-up commit; pre-fix behaviour kept
+    // here so this commit is a pure error-shape fix with no behavioural
+    // change for non-batch traffic.
+    promise.set_value(make_eth_json_error(-32600, "Batch requests are not supported",
+                                          req_id, opts_.cors_origin));
     return;
   }
   if (json.type() != td::JsonValue::Type::Object) {
-    promise.set_value(make_json_error(-32600, "Invalid request: expected JSON object", req_id, opts_.cors_origin));
+    promise.set_value(make_eth_json_error(-32600, "Invalid request: expected JSON object",
+                                          req_id, opts_.cors_origin));
     return;
   }
 
@@ -591,7 +604,7 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
   // Extract method
   auto method_r = obj.get_required_string_field("method");
   if (method_r.is_error()) {
-    promise.set_value(make_json_error(-32600, "Missing or invalid 'method' field", req_id));
+    promise.set_value(make_eth_json_error(-32600, "Missing or invalid 'method' field", req_id));
     return;
   }
   std::string method = method_r.move_as_ok();
@@ -628,7 +641,16 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
   }
 
   if (params_val.type() != td::JsonValue::Type::Object) {
-    promise.set_value(make_json_error(-32602, "'params' must be an object", req_id));
+    // Method is unknown to the eth_* registry AND params is not an object.
+    // Don't bail with "'params' must be an object" — that would mask a
+    // real "Method not found" for callers who probe with array params
+    // (Blockscout's `txpool_content` polling, geth-style probes, etc.).
+    // Substitute an empty params object and let dispatch_method emit
+    // either the method-not-found error or a per-handler missing-field
+    // error.  Both are spec-shape via make_eth_json_error.
+    td::JsonObject empty_params;
+    cached_dispatch_method(std::move(method), empty_params,
+                           std::move(req_id), std::move(promise));
     return;
   }
 
@@ -714,7 +736,7 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
        method == "grantAccountDelegation" || method == "revokeAccountDelegation" ||
        method == "grantAccountSession" || method == "revokeAccountSession" ||
        method == "grantAccountAgent" || method == "revokeAccountAgent")) {
-    promise.set_value(make_json_error(-32601,
+    promise.set_value(make_eth_json_error(-32601,
         "Write methods are disabled (server is in readonly mode)", req_id));
     return;
   }
@@ -840,11 +862,14 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     if (result) {
       promise.set_value(make_raw_json_response(result->json, opts_.cors_origin));
     } else {
-      promise.set_value(make_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
+      promise.set_value(make_eth_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
     }
   }
   else {
-    promise.set_value(make_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
+    // Unknown method via JSON-RPC envelope dispatch — emit spec-compliant
+    // error so generic ethereum tooling (Blockscout, ethers, viem, web3.py)
+    // can decode it.  See process_body for the rationale.
+    promise.set_value(make_eth_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
   }
 }
 
