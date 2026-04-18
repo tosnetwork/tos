@@ -28,6 +28,7 @@
 
 #include <silkworm/core/execution/evm.hpp>
 #include <silkworm/core/protocol/intrinsic_gas.hpp>
+#include <evmone/execution_state.hpp>
 #include <silkworm/core/trie/hash_builder.hpp>
 #include <silkworm/core/trie/nibbles.hpp>
 #include <silkworm/core/common/empty_hashes.hpp>
@@ -2580,18 +2581,92 @@ static SimulateBlockOverrides parse_block_overrides_for_sim(const std::string& b
     return bo;
 }
 
+// SELFDESTRUCT-emit-log tracer.
+//
+// When traceTransfers:true is set on eth_simulateV1, the spec requires us
+// to surface the implicit ETH transfer that SELFDESTRUCT performs (from
+// the destroyed contract to the beneficiary) as a synthetic ERC-20-style
+// Transfer log emitted by 0xeeee…eeee.
+//
+// silkworm's EvmTracer::on_self_destruct(from, beneficiary) fires AFTER
+// the host has already moved the balance off the destroyed contract, so
+// we cannot read the balance from IBS at that moment. Instead we hook
+// on_instruction_start, maintain a per-frame code stack populated by
+// on_execution_start, and check whether the next opcode is 0xff
+// (SELFDESTRUCT). When it is, we snapshot the (recipient, beneficiary,
+// pre-destruct balance) tuple — that's what the spec records.
+//
+// The tuples are exposed via take() and consumed by handle_simulate_v1
+// after each call to format synthetic Transfer logs.
+class SelfDestructLogTracer final : public silkworm::EvmTracer {
+  public:
+    struct Event {
+        evmc::address from;
+        evmc::address beneficiary;
+        intx::uint256 balance;
+    };
+
+    void on_execution_start(evmc_revision /*rev*/, const evmc_message& /*msg*/,
+                            evmone::bytes_view code) noexcept override {
+        code_stack_.push_back(code);
+    }
+
+    void on_execution_end(const evmc_result& /*result*/,
+                          const silkworm::IntraBlockState& /*ibs*/) noexcept override {
+        if (!code_stack_.empty()) code_stack_.pop_back();
+    }
+
+    void on_instruction_start(uint32_t pc, const intx::uint256* stack_top,
+                              int stack_height, int64_t /*gas*/,
+                              const evmone::ExecutionState& state,
+                              const silkworm::IntraBlockState& ibs) noexcept override {
+        if (code_stack_.empty()) return;
+        const auto& code = code_stack_.back();
+        if (pc >= code.size()) return;
+        const uint8_t op = code[pc];
+        if (op != 0xff) return;  // SELFDESTRUCT
+        if (stack_height < 1 || state.msg == nullptr) return;
+
+        Event ev;
+        ev.from = state.msg->recipient;
+        // Top-of-stack holds the beneficiary address (low 20 bytes of the
+        // 256-bit word). Materialize it as evmc::address.
+        const auto& top = stack_top[0];
+        const auto bytes = intx::be::store<evmc::bytes32>(top);
+        std::memcpy(ev.beneficiary.bytes, bytes.bytes + 12, 20);
+        // Read the destroying contract's balance BEFORE the host moves it.
+        ev.balance = ibs.get_balance(ev.from);
+        events_.push_back(ev);
+    }
+
+    std::vector<Event> take() noexcept {
+        auto out = std::move(events_);
+        events_.clear();
+        return out;
+    }
+
+  private:
+    std::vector<evmone::bytes_view> code_stack_;
+    std::vector<Event> events_;
+};
+
 // Run one simulated call against a pre-built IntraBlockState. Mirrors the
 // read-only call path in evm-executor.cpp's run_evm but writes only into
 // `ibs` (which the caller scopes to the simulation). Sender balance is
 // topped up to cover txn.value so value transfers don't revert when the
 // sender is a brand-new address whose state isn't in the underlying DB.
 //
+// When `tracer` is non-null it is wired into the EVM before execution —
+// used by eth_simulateV1 to surface SELFDESTRUCT-induced ETH transfers
+// as synthetic Transfer logs (traceTransfers:true).
+//
 // The returned ExecutionResult mirrors the executor's struct: success,
 // gas_used, return_data, logs, error_message.
 static ExecutionResult run_simulated_call(const silkworm::Transaction& txn,
                                            const silkworm::Block& block,
                                            silkworm::IntraBlockState& ibs,
-                                           const silkworm::ChainConfig& config) {
+                                           const silkworm::ChainConfig& config,
+                                           silkworm::EvmTracer* tracer = nullptr) {
     ExecutionResult result;
     auto sender_opt = txn.sender();
     if (!sender_opt) {
@@ -2607,6 +2682,9 @@ static ExecutionResult run_simulated_call(const silkworm::Transaction& txn,
     auto initial_logs = ibs.logs().size();
 
     silkworm::EVM evm(block, ibs, config);
+    if (tracer != nullptr) {
+        evm.add_tracer(*tracer);
+    }
     auto rev = evm.revision();
 
     auto intrinsic = silkworm::protocol::intrinsic_gas(txn, rev);
@@ -3034,8 +3112,16 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
                 if (auto s = oc.txn.sender()) oc.txn.nonce = ibs.get_nonce(*s);
             }
 
+            // The SELFDESTRUCT-emit-log tracer captures (from, beneficiary,
+            // pre-destruct balance) tuples whenever a SELFDESTRUCT executes
+            // anywhere in the call tree. It's only meaningful when
+            // traceTransfers is on; we still always wire it for code-path
+            // simplicity (the cost is one extra dereference per opcode and
+            // the tuples are discarded otherwise).
+            SelfDestructLogTracer sd_tracer;
             try {
-                oc.result = run_simulated_call(oc.txn, block, ibs, config);
+                oc.result = run_simulated_call(oc.txn, block, ibs, config,
+                                                trace_transfers ? &sd_tracer : nullptr);
             } catch (const std::exception& e) {
                 oc.result.success = false;
                 oc.result.error_message = std::string("simulate exception: ") + e.what();
@@ -3064,6 +3150,29 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
                 auto v_be = intx::be::store<evmc::bytes32>(oc.txn.value);
                 std::memcpy(lg.data.data(), v_be.bytes, 32);
                 oc.synthetic_logs.push_back(std::move(lg));
+            }
+            // Append a synthetic Transfer log for every SELFDESTRUCT we
+            // observed during this call. Spec semantics: log address =
+            // 0xeeee…eeee, topics = [Transfer(addr,addr,uint256), from
+            // (destroyed contract), beneficiary], data = pre-destruct
+            // balance. Only emit on success (revert wipes the tracer's
+            // captures conceptually; we just check oc.result.success).
+            if (trace_transfers && oc.result.success) {
+                for (const auto& ev : sd_tracer.take()) {
+                    silkworm::Log lg;
+                    lg.address = kTransferEmitter;
+                    lg.topics.push_back(kTransferTopic);
+                    evmc::bytes32 t_from{};
+                    std::memcpy(t_from.bytes + 12, ev.from.bytes, 20);
+                    lg.topics.push_back(t_from);
+                    evmc::bytes32 t_to{};
+                    std::memcpy(t_to.bytes + 12, ev.beneficiary.bytes, 20);
+                    lg.topics.push_back(t_to);
+                    lg.data.resize(32, 0);
+                    auto v_be = intx::be::store<evmc::bytes32>(ev.balance);
+                    std::memcpy(lg.data.data(), v_be.bytes, 32);
+                    oc.synthetic_logs.push_back(std::move(lg));
+                }
             }
             calls.push_back(std::move(oc));
         }
