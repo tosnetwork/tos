@@ -4330,7 +4330,6 @@ static void test_runtime_chain_id_override() {
     printf("  %s\n\n", all_ok ? "PASSED" : "FAILED");
 }
 
-<<<<<<< HEAD
 // -----------------------------------------------------------------------------
 // test_eth_get_proof_non_existence
 //

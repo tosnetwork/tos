@@ -1,14 +1,14 @@
 # EVM Workchain — Test Plan
 
-Version: v1.6 — 2026-04-18 (third 3-agent sprint: simulateV1 →63/64; HTTP transport fix; Hive →35)
+Version: v1.7 — 2026-04-18 (fourth 4-agent sprint: Cancun prep + getProof real walk + Hive translator + Blockscout)
 
 ## Status at a glance
 
 | Gate | State | Notes |
 |------|-------|-------|
-| **Gate T — Testnet** | ✅ PASS | All 6 rows green. Last-known-good `56d80175` (simulateV1 reaches 63/64 OK; HTTP body 16 KiB truncation fixed; Hive 35 sub-tests pass). |
-| **Gate P — Private mainnet** | 🚧 in progress | **3 of 6** rows fully green (P-1 + P-2 + P-5). P-3 24h fuzz + P-4 7-day soak still gated on operational time. **P-6 indexer sync now reveals 2 hard-blocking RPC bugs** in the TOS JSON-RPC server (non-spec error shape + no batch support) that no operator-time can clear — Blockscout 9.0.2 only syncs through a `normalize-proxy` shim. ~1-2 engineer-days to fix; details in P-6 row + `test/conformance/blockscout/README.md`. |
-| **Gate M — Public mainnet** | 🚧 progressing | Hive `rpc-compat` **35 sub-tests pass** (+14, from `56d80175`'s spec-only schema check + multi-roundtrip + normalize-not-found + chain.rlp replay tool); single-validator-in-container is the next blocker (~3-5 engineer-days for `tos-create-state` Ethereum-genesis-alloc support). M-1/M-2 effectively done (Cancun+Shanghai 100%). |
+| **Gate T — Testnet** | ✅ PASS | All 6 rows green. Last-known-good HEAD includes Cancun pre-fork prep (KZG + EIP-4788 predeploy + blob-tx admission reject), real Yellow-Paper Appendix-D `eth_getProof` non-existence walk, parameterized `tos-create-state` for Hive genesis allocs, Blockscout install + 4 issues catalogued. |
+| **Gate P — Private mainnet** | 🚧 in progress | **3 of 6** rows fully green (P-1 + P-2 + P-5). P-3 24h fuzz + P-4 7-day soak still gated on operational time. **P-6 indexer sync now reveals 2 hard-blocking RPC bugs** in the TOS JSON-RPC server (non-spec error shape + no batch support) — Blockscout 9.0.2 only syncs through a `normalize-proxy` shim. Engineering work, not operator time. ~1-2 engineer-days to fix; details in `test/conformance/blockscout/README.md`. |
+| **Gate M — Public mainnet** | 🚧 progressing | Hive `rpc-compat` 35 sub-tests pass; `tos-create-state` now accepts arbitrary Ethereum genesis allocs (`24721846`) + Fift bridge word (`f70d040c`) + JSON translator (`72f997e9`) — 4-validator-in-container is the remaining ~1-2 engineer-day blocker (was 3-5 days; alloc encoding done). M-1/M-2 effectively done (Cancun+Shanghai 100%). Cancun pre-fork prep landed (`6d311e8e`/`bb56f43e`/`ca8cc59b`): KZG ready, EIP-4788 predeploy seeded, blob-tx admission rejects type-3. `cancun_time = 0` flip remains intentional defer (consensus change requires user approval + future-anchored timestamp + cross-config walker re-run). |
 
 | Phase | State | Headline |
 |-------|-------|----------|
@@ -49,6 +49,10 @@ Version: v1.6 — 2026-04-18 (third 3-agent sprint: simulateV1 →63/64; HTTP tr
 | `eth_simulateV1` `traceTransfers:true` did not emit a synthetic Transfer log on SELFDESTRUCT — spec emits one to `0xeeee…eeee` with the beneficiary transfer details | `b2feb54f` | RPC shape — new `SelfDestructLogTracer` subclass of `silkworm::EvmTracer`; 61 → 63 simulateV1 OK |
 | Cancun activation analysis (no code change): pre-fork checklist documented in `known-divergences.md` Category E — KZG precompile + EIP-4788 predeploy + blob-tx admission gaps must close BEFORE flipping `cancun_time = 0`. Conformance gain (1 fixture) too small to justify rolling out without those | `a05409a1` | Documentation only |
 | HTTP body silently truncated at 16 KiB — `HttpPayload::get_slice(N)` returns at most ONE 16 KiB chunk regardless of `N`, all 4 RPC server call sites called it once and treated the result as the whole body. Any ≥16 KiB request hit `-32700 Parse error` | `7fa271b0` | **Transport DoS-class bug** — silent data corruption pretending to be malformed JSON. New `drain_payload_body` helper concatenates all chunks; explicit 1 MiB cap with deterministic `-32600` rejection on overflow. Fixes the eth_simulateV1 21 KiB transport error and any other oversized request. New regression test `test/conformance/manual-rpc/http_transport/large-eth-call-30kb.io` |
+| Hive bootstrap: `tos-create-state` only baked the 10 hard-coded Hardhat EOAs at 10000 TOS each. To run Hive `rpc-compat` against the spec's 36-account / 5-contract genesis, needed an arbitrary-genesis-alloc path | `24721846` + `f70d040c` + `72f997e9` | C++ overload accepting `std::vector<GenesisAccount>` with code + storage; Fift word `evm-zerostate-from-alloc` exposing it; stdlib Python translator `translate-genesis.py` that converts geth `genesis.json` to a Fift include. Test `test_genesis_alloc_parameterized` round-trips a 3-account zerostate (EOA + contract+code + contract+storage) |
+| Cancun pre-fork prep: KZG point-evaluation precompile (0x0a) was not verified active; EIP-4788 beacon-roots predeploy not seeded; blob-tx admission silently passed type-3 txs that the collator would later bounce | `6d311e8e` + `bb56f43e` + `ca8cc59b` | (1) `verify_kzg_setup_loaded()` startup canary confirms evmone's bundled trusted setup is callable; (2) `seed_eip4788_predeploy()` deploys the 97-byte EIP-4788 runtime at the magic address with nonce=1; (3) per-block EIP-4788 system call hook in compute-phase, gated on `revision() >= EVMC_CANCUN` (no-op until flip); (4) `eth_sendRawTransaction` rejects type-3 with `-32000 "blob transactions not supported on this chain"`. New tests `test_kzg_precompile_active` + `test_eip4788_predeploy_seeded`. **Cancun activation analysis**: 3/3 pre-fork gaps closed; intentional defer remains because flip needs future-anchored timestamp + cross-config walker re-run |
+| `eth_getProof` non-existence proof was a `0x80` placeholder for empty-trie cases; now a real Yellow Paper Appendix D walk for missing accounts/slots when the trie is non-empty | `f82a0c4b` | New `verify_mpt_proof()` cryptographic verifier in `evm-mpt-prover.{h,cpp}`. Test `test_eth_get_proof_non_existence` confirms `keccak(proof[0]) == stateRoot`, walks the proof along `keccak(target)` nibble path, terminates at divergence with `MptProofResult::kValidNonExistence`. Existence-proof + empty-trie cases also self-verify. The `0x80` empty-trie sentinel is preserved for the genuinely-empty-trie edge case |
+| Blockscout 9.0.2 indexer install + sync revealed 2 hard-blocking RPC bugs in TOS JSON-RPC server: (1) error envelope shape is `{ok:false, error:str, code:N}` instead of spec `{error:{code:N, message:str}}` — crashes Indexer.Block.Catchup.MissingRangesCollector; (2) batch JSON arrays rejected — Blockscout always batches its catchup fetches | `d652576e` | Issues catalogued in `test/conformance/blockscout/README.md`; normalize-proxy shim included for sync to proceed in current state. Real fixes are ~1-2 engineer-days in `validator-engine/json-rpc-server-*.cpp`. P-6 cannot be marked ✅ until the server-side fixes ship |
 
 ## Purpose
 
@@ -116,7 +120,7 @@ yet started · ❌ blocked or failing · ⊘ explicitly out of scope.
 
 ### Unit + integration — `crypto/block/evm-workchain/test-evm-executor.cpp` ✅
 
-**48** tests compiled into `./build/crypto/block/evm-workchain/test-evm-executor`.
+**50** tests compiled into `./build/crypto/block/evm-workchain/test-evm-executor`.
 All pass. Run in ~3 seconds on a laptop. Grouped by theme:
 
 | Group | Count | Status | What it proves |
@@ -196,18 +200,21 @@ Each row is a binary: green = go, red or yellow = stop. Each next stage is a str
 
 | # | Requirement | How to verify | Blocker? | Status |
 |---|-------------|---------------|----------|--------|
-| T-1 | 48/48 unit tests pass | `./build/crypto/block/evm-workchain/test-evm-executor` | ✓ | ✅ |
+| T-1 | 50/50 unit tests pass | `./build/crypto/block/evm-workchain/test-evm-executor` | ✓ | ✅ |
 | T-2 | All three `proof-*.sh` scripts pass | `sudo bash test/evm-workchain/proof-*.sh` (restart-survival + rpc-indexing) | ✓ | ✅ |
 | T-3 | execution-apis suite: 0 METHOD_NOT_FOUND, 0 crashes, every SHAPE_MISMATCH and OUR_ERROR accounted for in `doc/evm-workchain-known-divergences.md` | `SKIP_CRASHERS=0 python3 test/conformance/run_execution_apis.py` | ✓ | ✅ |
 | T-4 | 4 validators stay up through the full suite | systemd shows all `tos-validator@{1..4}` `active` post-run | ✓ | ✅ |
 | T-5 | Basic wallet probes work | `node test/evm-workchain/wallet-test.js`, `full-rpc-test.js` | ✓ | ✅ |
 | T-6 | Differential vs. geth: every diverge listed in `doc/evm-workchain-known-divergences.md` Category B | `python3 test/conformance/differential_geth.py` | ✓ | ✅ |
 
-**Current status: PASS.** Commit `56d80175` is the last-known-good
-(adds eth_simulateV1 → 63/64 OK via pre-merge schema + SELFDESTRUCT
-log tracer; HTTP transport 16 KiB silent-truncation fix; Hive
-35 sub-tests via spec-only schema + multi-roundtrip + RLP-replay
-tool — third 3-agent sprint of 2026-04-18).
+**Current status: PASS.** HEAD includes the fourth 4-agent sprint
+results (Cancun pre-fork prep — KZG canary + EIP-4788 predeploy +
+blob-tx admission reject; real Yellow-Paper Appendix-D getProof
+non-existence walk + cryptographic verifier; parameterised
+`tos-create-state` accepting Ethereum-style genesis allocs;
+Blockscout install + 4 issues catalogued in
+`test/conformance/blockscout/README.md`). **50/50** unit tests
+pass; **OUR_ERROR=0** across 202 conformance fixtures.
 
 ### Gate P — Private mainnet (limited allowlisted validators + RPCs)
 

@@ -40,6 +40,13 @@ target_include_directories(tos_validator PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>/..
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>/../crypto
   ${OPENSSL_INCLUDE_DIR}
+  # Phase F.6 + Hive-bootstrap: evm-init.h now exposes GenesisAccount
+  # (uses evmc::address/bytes32) and evm-rpc-cache-codec.h uses cell types.
+  # Pull in the evmone-bundled evmc headers + intx + silkworm bytes so
+  # tos_validator (collator + validate-query) can include evm-init.h cleanly.
+  ${CMAKE_SOURCE_DIR}/third-party/evmone/evmone/evmc/include
+  ${CMAKE_SOURCE_DIR}/third-party/intx/intx/include
+  ${CMAKE_SOURCE_DIR}/third-party
 )
 
 target_link_libraries(tos_validator PRIVATE tdutils tdactor adnl tl_api tl_lite_api tl-lite-utils dht tdfec
