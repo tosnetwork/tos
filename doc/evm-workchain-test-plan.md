@@ -1,12 +1,12 @@
 # EVM Workchain — Test Plan
 
-Version: v1.2 — 2026-04-18 (status snapshot)
+Version: v1.3 — 2026-04-18 (RPC correctness pass)
 
 ## Status at a glance
 
 | Gate | State | Notes |
 |------|-------|-------|
-| **Gate T — Testnet** | ✅ PASS | All 6 rows green. Last-known-good `68e31992` (Phase F.3+F.4+F.5 receipts-survive-restart). |
+| **Gate T — Testnet** | ✅ PASS | All 6 rows green. Last-known-good `57887d30` (RPC correctness pass — simulateV1 / feeHistory / getLogs). |
 | **Gate P — Private mainnet** | 🚧 in progress | **3 of 6** rows fully green (P-1 G.1 GeneralStateTests 100% / 2533 pass; P-2 G.2 Pyspec Cancun+Shanghai 100% / 54 pass; **P-5 Phase F receipts/restart-survival shipped**). P-3 24h fuzz, P-4 7-day soak, P-6 indexer sync remain. |
 | **Gate M — Public mainnet** | 📋 planned | Depends on Gates T + P + Phase G.3/G.4 (continuous CI) + third-party audit. |
 
@@ -194,8 +194,9 @@ Each row is a binary: green = go, red or yellow = stop. Each next stage is a str
 | T-5 | Basic wallet probes work | `node test/evm-workchain/wallet-test.js`, `full-rpc-test.js` | ✓ | ✅ |
 | T-6 | Differential vs. geth: every diverge listed in `doc/evm-workchain-known-divergences.md` Category B | `python3 test/conformance/differential_geth.py` | ✓ | ✅ |
 
-**Current status: PASS.** Commit `68e31992` is the last-known-good
-(includes Phase F.3+F.4+F.5 — receipts survive validator restart).
+**Current status: PASS.** Commit `57887d30` is the last-known-good
+(RPC correctness pass — simulateV1 / feeHistory / getLogs; built on top
+of Phase F.3+F.4+F.5 receipts-survive-restart at `68e31992`).
 
 ### Gate P — Private mainnet (limited allowlisted validators + RPCs)
 
