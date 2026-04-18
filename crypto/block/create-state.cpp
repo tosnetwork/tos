@@ -59,6 +59,9 @@
 #include "block-parse.h"
 #include "block.h"
 #include "evm-workchain/evm-init.h"  // build_evm_zerostate_accounts_cell (Phase C)
+
+#include <evmc/evmc.hpp>
+#include <intx/intx.hpp>
 #include "git.h"
 #include "mc-config.h"
 
@@ -586,6 +589,150 @@ void interpret_evm_zerostate_accounts_cell(vm::Stack& stack) {
   stack.push_cell(std::move(cell));
 }
 
+// Phase D (Hive bootstrap): returns a wc=1 ShardAccounts cell built from a
+// caller-supplied list of Ethereum-style genesis allocations. Used by
+// `translate-genesis.py` to convert a Hive `/genesis.json` file into a
+// zerostate matching the spec's pre-state.
+//
+// Stack: ( T -- accounts_cell )
+//
+// Where T is a tuple whose elements are 5-tuples (one per allocation):
+//
+//   [0] addr     — int  (interpreted as 160-bit big-endian)
+//   [1] balance  — int  (interpreted as 256-bit big-endian, in wei)
+//   [2] nonce    — int  (uint64 range)
+//   [3] code     — bytes (raw EVM bytecode; empty bytes ⇒ EOA)
+//   [4] storage  — tuple of 2-tuples [slot_int, value_int]
+//                  (each int interpreted as 256-bit big-endian; empty tuple ⇒
+//                   no storage entries seeded)
+//
+// All integer fields must be non-negative and fit in their respective bit
+// widths. Throws `fift::IntError` on shape mismatch or out-of-range values.
+//
+// This is the parameterised counterpart to `evm-zerostate-accounts-cell`;
+// the C++ overload it forwards to (build_evm_zerostate_accounts_cell with a
+// std::vector<GenesisAccount> argument) is the canonical entry point used by
+// both Hive harness setup and unit tests.
+void interpret_evm_zerostate_from_alloc(vm::Stack& stack) {
+  using evm_workchain::GenesisAccount;
+
+  auto outer = stack.pop_tuple();
+  if (outer.is_null()) {
+    throw fift::IntError{"evm-zerostate-from-alloc: expected a tuple of allocations on top of stack"};
+  }
+
+  std::vector<GenesisAccount> accounts;
+  accounts.reserve(outer->size());
+
+  auto require_uint = [](const td::RefInt256& x, const char* what, int bits) -> td::RefInt256 {
+    if (x.is_null() || !x->is_valid() || x->sgn() < 0) {
+      throw fift::IntError{std::string{"evm-zerostate-from-alloc: "} + what +
+                           " must be non-negative integer"};
+    }
+    // bits-bit unsigned upper bound check
+    if (x->bit_size(false) > bits) {
+      throw fift::IntError{std::string{"evm-zerostate-from-alloc: "} + what +
+                           " exceeds " + std::to_string(bits) + " bits"};
+    }
+    return x;
+  };
+
+  for (size_t i = 0; i < outer->size(); ++i) {
+    const vm::StackEntry& entry_se = outer->at(i);
+    if (!entry_se.is_tuple()) {
+      throw fift::IntError{"evm-zerostate-from-alloc: each element must be a 5-tuple"};
+    }
+    auto entry = entry_se.as_tuple();
+    if (entry.is_null() || entry->size() != 5) {
+      throw fift::IntError{"evm-zerostate-from-alloc: each element must be a 5-tuple "
+                           "(addr, balance, nonce, code, storage)"};
+    }
+
+    // [0] address — 160-bit unsigned integer.
+    if (!entry->at(0).is_int()) {
+      throw fift::IntError{"evm-zerostate-from-alloc: addr must be integer"};
+    }
+    auto addr_int = require_uint(entry->at(0).as_int(), "addr", 160);
+
+    // [1] balance — 256-bit unsigned integer (wei).
+    if (!entry->at(1).is_int()) {
+      throw fift::IntError{"evm-zerostate-from-alloc: balance must be integer"};
+    }
+    auto balance_int = require_uint(entry->at(1).as_int(), "balance", 256);
+
+    // [2] nonce — uint64.
+    if (!entry->at(2).is_int()) {
+      throw fift::IntError{"evm-zerostate-from-alloc: nonce must be integer"};
+    }
+    auto nonce_int = require_uint(entry->at(2).as_int(), "nonce", 64);
+
+    // [3] code — bytes (Fift bytes-type, even empty B{}).
+    if (entry->at(3).type() != vm::StackEntry::t_bytes) {
+      throw fift::IntError{"evm-zerostate-from-alloc: code must be bytes (B{...})"};
+    }
+    std::string code_str = entry->at(3).as_bytes();
+
+    // [4] storage — tuple of 2-tuples.
+    if (!entry->at(4).is_tuple()) {
+      throw fift::IntError{"evm-zerostate-from-alloc: storage must be a tuple of [slot,value] pairs"};
+    }
+    auto storage_tup = entry->at(4).as_tuple();
+
+    // --- Decode integers into raw bytes that GenesisAccount wants. ---
+
+    GenesisAccount g{};
+
+    // addr → 20 bytes BE → evmc::address.
+    unsigned char addr_be[20];
+    if (!addr_int->export_bytes(addr_be, 20, /*sgnd=*/false)) {
+      throw fift::IntError{"evm-zerostate-from-alloc: addr export failed"};
+    }
+    std::memcpy(g.addr.bytes, addr_be, 20);
+
+    // balance → 32 bytes BE → intx::uint256.
+    unsigned char bal_be[32];
+    if (!balance_int->export_bytes(bal_be, 32, /*sgnd=*/false)) {
+      throw fift::IntError{"evm-zerostate-from-alloc: balance export failed"};
+    }
+    g.balance = intx::be::unsafe::load<intx::uint256>(bal_be);
+
+    // nonce → uint64.
+    g.nonce = static_cast<uint64_t>(nonce_int->to_long());
+
+    // code bytes — silkworm::Bytes (== std::basic_string<uint8_t>).
+    g.code.assign(reinterpret_cast<const uint8_t*>(code_str.data()), code_str.size());
+
+    // storage pairs.
+    for (size_t k = 0; k < storage_tup->size(); ++k) {
+      const vm::StackEntry& pair_se = storage_tup->at(k);
+      if (!pair_se.is_tuple()) {
+        throw fift::IntError{"evm-zerostate-from-alloc: each storage entry must be a [slot,value] pair"};
+      }
+      auto pair = pair_se.as_tuple();
+      if (pair.is_null() || pair->size() != 2 || !pair->at(0).is_int() || !pair->at(1).is_int()) {
+        throw fift::IntError{"evm-zerostate-from-alloc: storage pair must be [slot:int, value:int]"};
+      }
+      auto slot_int = require_uint(pair->at(0).as_int(), "storage slot", 256);
+      auto val_int = require_uint(pair->at(1).as_int(), "storage value", 256);
+
+      evmc::bytes32 slot_be{}, val_be{};
+      if (!slot_int->export_bytes(slot_be.bytes, 32, /*sgnd=*/false) ||
+          !val_int->export_bytes(val_be.bytes, 32, /*sgnd=*/false)) {
+        throw fift::IntError{"evm-zerostate-from-alloc: storage int export failed"};
+      }
+      g.storage[slot_be] = val_be;
+    }
+
+    accounts.push_back(std::move(g));
+  }
+
+  Ref<vm::Cell> cell = evm_workchain::build_evm_zerostate_accounts_cell(accounts);
+  if (cell.is_null()) {
+    throw fift::IntError{"evm-zerostate-from-alloc: could not build accounts cell"};
+  }
+  stack.push_cell(std::move(cell));
+}
+
 void interpret_get_config_dict(vm::Stack& stack) {
   Ref<vm::Cell> value = config_dict.get_root_cell();
   if (value.is_null()) {
@@ -726,6 +873,7 @@ void init_words_custom(fift::Dictionary& d) {
   d.def_stack_word("create_state ", interpret_create_state);
   // Phase C — EVM workchain zerostate seeding
   d.def_stack_word("evm-zerostate-accounts-cell ", interpret_evm_zerostate_accounts_cell);
+  d.def_stack_word("evm-zerostate-from-alloc ", interpret_evm_zerostate_from_alloc);
   d.def_stack_word("isShardState? ", interpret_is_shard_state);
   d.def_stack_word("isWorkchainDescr? ", interpret_is_workchain_descr);
   d.def_stack_word("CC+? ", interpret_add_extra_currencies);
