@@ -177,34 +177,39 @@ python3 run_execution_apis.py        # skips crashers by default
 SKIP_CRASHERS=0 python3 run_execution_apis.py   # full suite, crashes node
 ```
 
-## Update 2026-04-18 — sendRawTransaction crashers fixed; differential vs geth
+## Update 2026-04-18 — crashers fixed, regression fixed, balance-topup pass
 
 Re-ran with `SKIP_CRASHERS=0`: the four prior validator-killing payloads
 now reject cleanly with `invalid chain id` (`f53c356a` invalid-hex/DoS
 hardening + `fdcebdc1` chunked-RLP + chainId reject). The fifth
 (`send-blob-tx.io`) still times out on submit but does not crash.
 
-`createAccessList` regression on `value-transfer.io` (was the 1 OK,
-now SHAPE_MISMATCH) traced to `bfb6b5c0` always-emitting `error:""` on
-success — the spec only includes the field on revert. Fixed in the
-followup commit; binary restart deferred to after the in-flight 4h
-fuzz soak.
+`createAccessList` shape regression on `value-transfer.io` traced to
+`bfb6b5c0` always-emitting `error:""` on success — the spec only
+includes the field on revert. Fixed (`2bdbb5e1`); 1 OK restored.
+
+Read-only paths (`eth_call`, `eth_estimateGas`, `eth_createAccessList`)
+now match geth/erigon: top up sender balance during simulation so
+value-bearing dry-runs don't revert when sender is unfunded
+(`1b9f881f` + `cf38cdd2` + `d4ca7c4c`).
+
+After all fixes, live re-run:
+- `eth_call`              : 4 OK / 0 OUR_ERR (was 3 OK / 1 OUR_ERR)
+- `eth_estimateGas`       : 4 OK / 0 OUR_ERR (was 2 OK / 2 OUR_ERR)
+- `eth_createAccessList`  : 1 OK / 3 MM (regression closed; 3 MM are
+  spec contracts not deployed on our chain — chain-state false positives)
+- **methods with OUR_ERROR across all 202 fixtures: 0.** Every remaining
+  mismatch is a chain-state false positive, not a server bug.
 
 **G.4 differential vs local geth** (`differential_geth.py`, 25 methods):
-20/25 OK, 5 minor divergences:
+**21/25 OK**, 4 acceptable divergences:
 - `eth_mining` — geth dropped (-32601), ours returns `false`. We're
   more spec-compliant; leave alone.
 - `eth_syncing` — geth returns rich sync-stats object, ours returns
-  bool `false`. Both are spec-allowed; geth's shape is the modern
-  convention but our minimal shape is fine for explorers.
+  bool `false`. Both are spec-allowed.
 - `eth_accounts` — geth returns one dev-mode account, ours returns
   empty array (we never manage user keys). Working as intended.
-- `eth_estimateGas` for value transfer from an unfunded sender
-  (`{from:0x...01, to:0x...02, value:0x1}`) — geth returns gas estimate,
-  ours rejects `execution reverted`. Geth bypasses balance enforcement
-  during estimation; we run the real EVM. Real wallet UX gap, not
-  consensus. Worth fixing in a follow-up by inflating sender balance
-  during the simulation only.
-- `eth_createAccessList` for the same payload — same `0x...01` →
-  `0x...02` value-transfer case; both diverge differently from each
-  other and from spec. Mostly subsumed by the estimateGas fix above.
+- `eth_createAccessList` (transfer) — geth bails with -32000, we
+  simulate and return an empty list. Different design choice; ours is
+  more permissive (matches the spec's intended UX of "simulate, then
+  let the user decide").
