@@ -114,7 +114,7 @@ async function main() {
             txReceipt = receipt;
             check('receipt status == 1 (success)', receipt.status === 1, `gasUsed=${receipt.gasUsed}`);
             check('receipt has blockNumber', receipt.blockNumber > 0, `block ${receipt.blockNumber}`);
-            check('receipt has effectiveGasPrice', receipt.effectiveGasPrice > 0n);
+            check('receipt has effectiveGasPrice', receipt.gasPrice > 0n);
         } else {
             check('tx receipt within 30s', false, 'timeout — collator did not produce a block');
         }
