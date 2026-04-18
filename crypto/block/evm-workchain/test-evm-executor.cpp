@@ -3723,6 +3723,41 @@ static bool run_one_state_test_fork(const std::string& path,
     DumpTracer tracer;
     tracer.enabled = (std::getenv("TRACE_FIXTURE") != nullptr);
 
+    // EIP-7702 authorization_list processing now happens inside run_evm
+    // (after sender nonce bump, before EVM execute) — see evm-executor.cpp
+    // step 2b. That's the spec-correct order per evmone state::transition
+    // and also keeps the nonce check in step 2 consistent with txn.nonce.
+    //
+    // We still need to count applied authorizations that qualified for the
+    // EIP-7702 refund (pre-existing authorities) so we can apply the refund
+    // post-hoc — run_evm doesn't know about refund caps or fee accounting
+    // for auth-list refunds, those are ExecutionProcessor territory.
+    uint64_t auth_refund_count = 0;
+    if (is_prague_or_later &&
+        dec.txn.type == silkworm::TransactionType::kSetCode) {
+        std::unique_lock count_lock(state.mutex());
+        silkworm::State* ist = &state.state();
+        auto sender_opt = dec.txn.sender();
+        for (const auto& auth : dec.txn.authorizations) {
+            if (auth.chain_id != 0 && auth.chain_id != intx::uint256{cfg.chain_id}) continue;
+            auto authority_opt = auth.recover_authority(dec.txn);
+            if (!authority_opt) continue;
+            auto acct_opt = ist->read_account(*authority_opt);
+            if (!acct_opt.has_value()) continue;  // fresh authority: no refund
+            if (acct_opt->code_hash != silkworm::kEmptyHash) {
+                auto existing = ist->read_code(*authority_opt, acct_opt->code_hash);
+                if (!silkworm::eip7702::is_code_delegated(existing)) continue;
+            }
+            // For self-delegation the authority's nonce at auth-processing
+            // time equals sender.nonce + 1 (evmone bumps sender first).
+            const bool self_delegation = sender_opt.has_value()
+                                         && *sender_opt == *authority_opt;
+            const uint64_t expected = self_delegation ? acct_opt->nonce + 1 : acct_opt->nonce;
+            if (expected != auth.nonce) continue;
+            ++auth_refund_count;
+        }
+    }
+
     // --- Execute ------------------------------------------------------------
     evm_workchain::ExecutionResult result;
     try {
@@ -3747,6 +3782,44 @@ static bool run_one_state_test_fork(const std::string& path,
     printf("  execute: %s (gas_used=%lu)\n",
            result.success ? "ok" : "revert",
            static_cast<unsigned long>(result.gas_used));
+
+    // --- EIP-7702 authorization refund (Prague+ SetCode tx) ----------------
+    //
+    // EIP-7702 awards a per-applied-authorization refund of
+    // (PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST) = 25000 - 12500 = 12500
+    // into the tx's refund counter. Silkworm's ExecutionProcessor adds this
+    // via evmone APIv2; our bare run_evm path misses it. Replicate here,
+    // subject to EIP-3529's refund cap of gas_used / 5.
+    if (is_prague_or_later && result.success && auth_refund_count > 0) {
+        uint64_t auth_refund = auth_refund_count * 12500;
+        uint64_t refund_cap = result.gas_used / 5;
+        uint64_t refund = std::min(auth_refund, refund_cap);
+        if (refund > 0) {
+            intx::uint256 effective_price =
+                dec.txn.effective_gas_price(base_fee);
+            intx::uint256 priority_fee =
+                dec.txn.priority_fee_per_gas(base_fee);
+            intx::uint256 sender_credit = intx::uint256{refund} * effective_price;
+            intx::uint256 coinbase_debit = intx::uint256{refund} * priority_fee;
+            std::unique_lock adj_lock(state.mutex());
+            auto sender_opt2 = dec.txn.sender();
+            if (sender_opt2.has_value()) {
+                auto sender_acc = state.state().read_account(*sender_opt2);
+                if (sender_acc) {
+                    auto updated = *sender_acc;
+                    updated.balance += sender_credit;
+                    state.state().update_account(*sender_opt2, sender_acc, updated);
+                }
+            }
+            auto cb_acc = state.state().read_account(coinbase);
+            if (cb_acc && cb_acc->balance >= coinbase_debit) {
+                auto updated_cb = *cb_acc;
+                updated_cb.balance -= coinbase_debit;
+                state.state().update_account(coinbase, cb_acc, updated_cb);
+            }
+            if (result.gas_used > refund) result.gas_used -= refund;
+        }
+    }
 
     // --- EIP-7623 floor cost (Prague+) --------------------------------------
     //

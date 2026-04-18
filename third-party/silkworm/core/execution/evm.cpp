@@ -70,6 +70,26 @@ CallResult EVM::execute(const Transaction& txn, uint64_t gas) noexcept {
     const bool contract_creation{!txn.to.has_value()};
     const evmc::address destination{contract_creation ? evmc::address{} : *txn.to};
 
+    // EIP-7702 (Prague+): when the tx target is an EOA whose code is an
+    // EIP-7702 delegation designator (0xef 0x01 0x00 || address), execute
+    // the delegate's code in the authority's storage/balance context.
+    // evmone resolves this automatically for CALL/STATICCALL/DELEGATECALL
+    // opcodes (instructions_calls.cpp::resolve_delegation) but NOT for the
+    // tx-entry call that this function initiates — so we resolve it here.
+    //
+    // The semantics: message.recipient stays as the authority (storage +
+    // value go to authority); message.code_address points at the delegate
+    // (code is loaded from delegate).
+    evmc::address code_address{destination};
+    const auto rev = revision();
+    if (!contract_creation && rev >= EVMC_PRAGUE) {
+        const ByteView target_code{state_.get_code(destination)};
+        if (target_code.size() == 23 &&
+            target_code[0] == 0xef && target_code[1] == 0x01 && target_code[2] == 0x00) {
+            std::memcpy(code_address.bytes, target_code.data() + 3, 20);
+        }
+    }
+
     const evmc_message message{
         .kind = contract_creation ? EVMC_CREATE : EVMC_CALL,
         .gas = static_cast<int64_t>(gas),
@@ -78,7 +98,7 @@ CallResult EVM::execute(const Transaction& txn, uint64_t gas) noexcept {
         .input_data = txn.data.data(),
         .input_size = txn.data.size(),
         .value = intx::be::store<evmc::uint256be>(txn.value),
-        .code_address = destination,
+        .code_address = code_address,
     };
 
     evmc::Result res{contract_creation ? create(message) : call(message)};

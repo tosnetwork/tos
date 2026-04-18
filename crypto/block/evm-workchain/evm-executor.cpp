@@ -52,13 +52,22 @@ static ExecutionResult run_evm(
     // Skip entirely for read-only calls (eth_call / eth_estimateGas).
     if (commit_state) {
         // EIP-3607 (London+): reject txs from accounts that have code.
+        // EIP-7702 (Prague+) exempts accounts whose code is a delegation
+        // designator (0xef 0x01 0x00 || address).
         if (rev >= EVMC_LONDON) {
             auto sender_code_hash = state.get_code_hash(sender);
             if (sender_code_hash != silkworm::kEmptyHash &&
                 sender_code_hash != evmc::bytes32{}) {
-                result.error_message = "EIP-3607: sender has code";
-                result.gas_used = 0;
-                return result;
+                bool allowed_by_eip7702 = false;
+                if (rev >= EVMC_PRAGUE) {
+                    auto code = state.get_code(sender);
+                    allowed_by_eip7702 = silkworm::eip7702::is_code_delegated(code);
+                }
+                if (!allowed_by_eip7702) {
+                    result.error_message = "EIP-3607: sender has code";
+                    result.gas_used = 0;
+                    return result;
+                }
             }
         }
 
@@ -213,6 +222,48 @@ static ExecutionResult run_evm(
     // 2. Increment sender nonce (CALL only; CREATE increments internally).
     if (txn.to.has_value()) {
         state.set_nonce(sender, state.get_nonce(sender) + 1);
+    }
+
+    // 2b. EIP-7702 (Prague+): process the authorization list. Per evmone's
+    // state::transition (state.cpp:571–574), this runs AFTER the sender's
+    // nonce is bumped but BEFORE the EVM runs. For each authorization:
+    //   1. chain_id is 0 or matches the chain
+    //   2. authority is recovered from the ECDSA signature
+    //   3. authority has no code (or already has a delegation designator)
+    //   4. authority.nonce matches auth.nonce  (for self-delegation, this
+    //      value is sender's bumped nonce)
+    //   5. set authority code to 0xef0100 || auth.address (23-byte
+    //      delegation designator)
+    //   6. increment authority.nonce
+    if (commit_state && rev >= EVMC_PRAGUE &&
+        txn.type == silkworm::TransactionType::kSetCode) {
+        for (const auto& auth : txn.authorizations) {
+            if (auth.chain_id != 0 && auth.chain_id != intx::uint256{config.chain_id}) continue;
+            if (auth.nonce == std::numeric_limits<uint64_t>::max()) continue;
+            auto authority_opt = auth.recover_authority(txn);
+            if (!authority_opt) continue;
+            const auto& authority = *authority_opt;
+
+            // Existing code must be empty or already-delegated.
+            auto code_hash = state.get_code_hash(authority);
+            if (code_hash != silkworm::kEmptyHash && code_hash != evmc::bytes32{}) {
+                auto existing = state.get_code(authority);
+                if (!silkworm::eip7702::is_code_delegated(existing)) continue;
+            }
+
+            const uint64_t cur_nonce = state.get_nonce(authority);
+            if (cur_nonce != auth.nonce) continue;
+
+            silkworm::Bytes designation;
+            designation.reserve(23);
+            designation.push_back(0xef);
+            designation.push_back(0x01);
+            designation.push_back(0x00);
+            designation.insert(designation.end(),
+                               auth.address.bytes, auth.address.bytes + 20);
+            state.set_nonce(authority, cur_nonce + 1);
+            state.set_code(authority, silkworm::ByteView{designation.data(), designation.size()});
+        }
     }
 
     // 3. Warm up access lists (EIP-2929).
