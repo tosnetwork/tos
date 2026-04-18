@@ -10,7 +10,8 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
     apt-get install -y build-essential git cmake ninja-build pkg-config \
     autoconf automake libtool libjemalloc-dev ccache gperf wget curl \
-    lsb-release software-properties-common gnupg python3 python3-dev && \
+    lsb-release software-properties-common gnupg python3 python3-dev \
+    libgmp-dev && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Clang 21 (pinned — no runtime download needed by CI)
@@ -37,7 +38,8 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
     apt-get install -y build-essential git cmake ninja-build pkg-config \
     autoconf automake libtool libjemalloc-dev ccache gperf wget curl \
-    lsb-release software-properties-common gnupg python3 python3-dev && \
+    lsb-release software-properties-common gnupg python3 python3-dev \
+    libgmp-dev && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Clang 21
