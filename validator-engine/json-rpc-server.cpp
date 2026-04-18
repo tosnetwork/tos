@@ -20,7 +20,78 @@
 
 #include "evm-rpc.h"
 
+#include <cstring>
+
 namespace tos {
+
+// ─── HTTP body draining helper ─────────────────────────────────────────────
+//
+// HttpPayload stores received bytes in a deque of fixed-size 16 KiB chunks.
+// `HttpPayload::get_slice(max)` returns AT MOST ONE chunk per call, so a
+// single call can return only the first 16 KiB of a larger body.  A request
+// body of, say, 21 KiB would arrive split across two chunks: the first
+// `get_slice` returns ~16 KiB, leaving the rest in the payload — which then
+// gets dropped on the floor and the JSON parser sees a truncated body and
+// rejects it with `-32700 invalid JSON` (HTTP 400).
+//
+// This helper drains the entire payload by repeatedly calling get_slice
+// until either the payload is exhausted or the cap is hit.  Bodies larger
+// than `max_body_bytes` are rejected up-front to prevent memory-exhaustion
+// DoS.  See test/conformance/manual-rpc/http_large_request_body.io for the
+// regression test that pins this behaviour.
+//
+// Cap: 1 MiB — comfortably accommodates complex `eth_simulateV1` and
+// `eth_call` requests with many state overrides (Geth defaults to 5 MiB,
+// Erigon to 1 MiB).
+static constexpr std::size_t kJsonRpcMaxRequestBodyBytes = 1u << 20;
+
+// Drain the entire payload into a single contiguous buffer.  Returns an
+// error status if the body would exceed `kJsonRpcMaxRequestBodyBytes`
+// (callers translate this to a -32600 "Request body too large" response so
+// the client gets a deterministic rejection rather than a connection drop).
+// Returns an empty BufferSlice for an empty body.
+static td::Result<td::BufferSlice> drain_payload_body(
+    const std::shared_ptr<http::HttpPayload> &payload) {
+  // Fast path: single chunk fits in one get_slice call.
+  auto first = payload->get_slice(kJsonRpcMaxRequestBodyBytes);
+  if (first.empty()) {
+    return td::BufferSlice{};
+  }
+  // See if there's more — peek by trying another get_slice.  In the common
+  // (small body) case, the second call returns empty and we're done with
+  // zero copying overhead.
+  auto next = payload->get_slice(kJsonRpcMaxRequestBodyBytes);
+  if (next.empty()) {
+    return std::move(first);
+  }
+  // Multi-chunk path: concatenate all chunks into one BufferSlice.  This
+  // copies the body once, but only triggers for bodies > 16 KiB which are
+  // rare on a JSON-RPC server (typical request: a few hundred bytes).
+  std::size_t total = first.size() + next.size();
+  if (total > kJsonRpcMaxRequestBodyBytes) {
+    return td::Status::Error("request body exceeds size limit");
+  }
+  std::vector<td::BufferSlice> parts;
+  parts.reserve(4);
+  parts.push_back(std::move(first));
+  parts.push_back(std::move(next));
+  while (true) {
+    auto more = payload->get_slice(kJsonRpcMaxRequestBodyBytes);
+    if (more.empty()) break;
+    total += more.size();
+    if (total > kJsonRpcMaxRequestBodyBytes) {
+      return td::Status::Error("request body exceeds size limit");
+    }
+    parts.push_back(std::move(more));
+  }
+  td::BufferSlice combined{total};
+  std::size_t off = 0;
+  for (auto &p : parts) {
+    std::memcpy(combined.data() + off, p.data(), p.size());
+    off += p.size();
+  }
+  return std::move(combined);
+}
 
 // ─── URL-decode + query-string → JSON helpers (for REST GET endpoints) ────
 
@@ -404,8 +475,14 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
         bool fired_{false};
       };
       if (payload->parse_completed()) {
-        auto body = payload->get_slice(1 << 20);
-        process_rest_post_body(std::move(body), std::move(rest_method), std::move(promise));
+        auto body_r = drain_payload_body(payload);
+        if (body_r.is_error()) {
+          promise.set_value(make_json_error(-32600, "Request body too large",
+                                            "null", opts_.cors_origin));
+          return;
+        }
+        process_rest_post_body(body_r.move_as_ok(), std::move(rest_method),
+                               std::move(promise));
       } else {
         payload->add_callback(std::make_unique<PostRestWaiter>(
             actor_id(this), payload, std::move(rest_method), std::move(promise)));
@@ -417,8 +494,13 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
   // Accept POST on /jsonRPC (canonical) and any other path (backward compat)
 
   if (payload->parse_completed()) {
-    auto body = payload->get_slice(1 << 20);
-    process_body(std::move(body), "", std::move(promise));
+    auto body_r = drain_payload_body(payload);
+    if (body_r.is_error()) {
+      promise.set_value(make_json_error(-32600, "Request body too large",
+                                        "null", opts_.cors_origin));
+      return;
+    }
+    process_body(body_r.move_as_ok(), "", std::move(promise));
   } else {
     // Body not yet fully received — register callback.
     // IMPORTANT: completed() must NOT call payload_->get_slice() directly,
@@ -459,8 +541,13 @@ void JsonRpcServer::on_body_ready(PayloadPtr payload, td::Promise<HttpReturn> pr
   }
   // Safe to call get_slice() here — we are in the actor scheduler, NOT inside
   // HttpPayload::parse()'s mutex. This breaks the deadlock chain.
-  auto body = payload->get_slice(1 << 20);
-  process_body(std::move(body), "", std::move(promise));
+  auto body_r = drain_payload_body(payload);
+  if (body_r.is_error()) {
+    promise.set_value(make_json_error(-32600, "Request body too large", "null",
+                                      opts_.cors_origin));
+    return;
+  }
+  process_body(body_r.move_as_ok(), "", std::move(promise));
 }
 
 void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
@@ -555,8 +642,13 @@ void JsonRpcServer::on_post_rest_body_ready(PayloadPtr payload, std::string meth
                                             td::Promise<HttpReturn> promise) {
   // Safe to call get_slice() here — we are in the actor scheduler, NOT inside
   // HttpPayload::parse()'s callback chain. Breaks the deadlock.
-  auto body = payload->get_slice(1 << 20);
-  process_rest_post_body(std::move(body), std::move(method), std::move(promise));
+  auto body_r = drain_payload_body(payload);
+  if (body_r.is_error()) {
+    promise.set_value(make_json_error(-32600, "Request body too large", "null",
+                                      opts_.cors_origin));
+    return;
+  }
+  process_rest_post_body(body_r.move_as_ok(), std::move(method), std::move(promise));
 }
 
 void JsonRpcServer::process_rest_post_body(td::BufferSlice body, std::string method,
@@ -1108,8 +1200,18 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
         if (result.first && result.first->code() == 200 && result.second) {
           // Read the payload body for inspection.  get_slice() consumes it,
           // so we must rebuild the response pair afterward.
-          auto body_slice = result.second->get_slice(1 << 20);
-          std::string body_str = body_slice.as_slice().str();
+          //
+          // HttpPayload stores the body in 16 KiB chunks and `get_slice()`
+          // returns ONE chunk per call.  Loop until exhausted so responses
+          // larger than 16 KiB (e.g. blocks with many transactions) are
+          // captured correctly for caching.  No upper cap here — the cache
+          // layer enforces its own `cache_max_body_bytes` budget.
+          std::string body_str;
+          while (true) {
+            auto chunk = result.second->get_slice(1u << 20);
+            if (chunk.empty()) break;
+            body_str.append(chunk.as_slice().begin(), chunk.size());
+          }
 
           if (body_str.find("\"ok\":true") != std::string::npos) {
             // Extract the "result" JSON value using the td::JsonValue parser
