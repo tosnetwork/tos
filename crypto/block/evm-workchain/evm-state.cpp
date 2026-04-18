@@ -116,6 +116,20 @@ void EvmState::store_block(const StoredBlock& block) {
     std::unique_lock lock(mutex_);
     blocks_[block.number] = block;
     hash_to_block_[block.hash] = block.number;
+    // Head tracking: every successful store_block advances block_number_ so
+    // that eth_blockNumber tracks the highest block we've ever seen. Covers:
+    //   * compute-phase live execution (collator + validate-block re-run)
+    //   * RPC cache hydration on startup (replays stored blocks)
+    //   * sync-path test harness (handle_send_raw_transaction)
+    // Monotonic max — out-of-order calls (e.g. a stray older block) never
+    // walk the head backwards. Without this hook the field only advances
+    // when handle_send_raw_transaction's allocate_next_block_number runs,
+    // which never fires on the validator (sendRawTransaction is intercepted
+    // by the JSON-RPC server and routed through the ExtMessagePool); the
+    // result is eth_blockNumber == 0 even after txs mine into wc=1 blocks.
+    if (block.number > block_number_) {
+        block_number_ = block.number;
+    }
     while (blocks_.size() > kMaxCachedBlocks) {
         auto oldest = blocks_.begin();
         hash_to_block_.erase(oldest->second.hash);
