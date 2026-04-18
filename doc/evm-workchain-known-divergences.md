@@ -175,6 +175,44 @@ path hits both cases; our behavior is the more forgiving of the two.
 **Verdict:** accept our behavior. It matches the execution-apis
 spec description of the method.
 
+## Category E — Live chain config divergence (production lags state tests)
+
+**Status: open — design decision pending.**
+
+`crypto/block/evm-workchain/evm-block-context.cpp::evm_chain_config()`
+sets `shanghai_time = 0` but does **not** set `cancun_time` or
+`prague_time`. The live 4-validator chain therefore reports
+**EVMC_SHANGHAI** revision to silkworm + evmone.
+
+In contrast, the Phase G.1 / G.2 state-test runner builds its own
+per-test ChainConfig with `cancun_time = 0`, so all our state tests
+pass at Cancun. **Tests and production run on different forks.**
+
+What's blocked in production today (silently — no error, just opcode
+acts as INVALID and reverts):
+- BLOBBASEFEE (`0x4a`, EIP-7516)
+- TLOAD / TSTORE (`0x5c`/`0x5d`, transient storage, EIP-1153)
+- MCOPY (`0x5e`, EIP-5656)
+- KZG point-evaluation precompile (`0x0a`)
+- EIP-6780 SELFDESTRUCT semantics (production still does the
+  pre-Cancun full-teardown flavor)
+
+Modern Solidity output (compiled with `--optimize` on `^0.8.25`)
+emits MCOPY and TSTORE routinely → contracts compiled with current
+Solidity will revert in our chain.
+
+Recommended next step: enable Cancun in the live chain config
+(`cancun_time = 0`) and add a blob-tx admission reject in
+`handle_eth_sendRawTransaction` (we don't have a blob mempool, so
+type-3 txs should be rejected at submission, not silently accepted
+then bounced by the collator). The Cancun fee-burn fix in
+`d140ec1d` then becomes meaningful.
+
+This is a deployment-blocking discrepancy that the state-test
+walker can't catch (because the walker controls its own ChainConfig).
+Surfaced manually while reviewing `evm-block-context.cpp` during
+the Phase G.2 expansion.
+
 ## Category D — Upstream silkworm known-failing tests
 
 These are `GeneralStateTests` fixtures that silkworm itself maintains
