@@ -206,7 +206,11 @@ After all fixes, live re-run:
 - `eth_mining` — geth dropped (-32601), ours returns `false`. We're
   more spec-compliant; leave alone.
 - `eth_syncing` — geth returns rich sync-stats object, ours returns
-  bool `false`. Both are spec-allowed.
+  bool `false`. Both are spec-allowed; the rich object only appears
+  when actively snap-syncing. Geth's devnet sits in that state
+  permanently (artifact of `--dev` mode), which is why differential
+  surfaces a shape diff. On a healthy producing chain — which is what
+  ours is — `false` is the correct response. No change.
 - `eth_accounts` — geth returns one dev-mode account, ours returns
   empty array (we never manage user keys). Working as intended.
 - `eth_createAccessList` (transfer) — geth bails with -32000, we
