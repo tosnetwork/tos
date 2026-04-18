@@ -1,20 +1,20 @@
 # EVM Workchain — Test Plan
 
-Version: v1.4 — 2026-04-18 (4-agent parallel RPC correctness sprint)
+Version: v1.5 — 2026-04-18 (second 3-agent sprint: simulateV1 stateOverrides + getProof + chainId)
 
 ## Status at a glance
 
 | Gate | State | Notes |
 |------|-------|-------|
-| **Gate T — Testnet** | ✅ PASS | All 6 rows green. Last-known-good `4ba807df` (Phase F.6 + simulateV1 deep dive + manual-rpc sanity fixtures + Hive proxy wiring). |
-| **Gate P — Private mainnet** | 🚧 in progress | **3 of 6** rows fully green (P-1 G.1 GeneralStateTests 100% / 2533 pass; P-2 G.2 Pyspec Cancun+Shanghai 100% / 54 pass; **P-5 Phase F receipts + tx + blocks + logs cross-restart shipped — F.6 codec + write hooks + hydration all live**). P-3 24h fuzz, P-4 7-day soak, P-6 indexer sync remain — all gated on operational time, not engineering work. |
-| **Gate M — Public mainnet** | 🚧 progressing | **Hive `rpc-compat` first 19 sub-tests pass via proxy** (`4ba807df`); full chain bootstrap is the remaining ~4 engineer-days for M-3. |
+| **Gate T — Testnet** | ✅ PASS | All 6 rows green. Last-known-good `02b791ef` (simulateV1 stateOverrides → 60 OK / 63; getProof non-existence proof → 3 OK / 0 mismatch; runtime-configurable chainId for Hive bootstrap). |
+| **Gate P — Private mainnet** | 🚧 in progress | **3 of 6** rows fully green (P-1 + P-2 + P-5). P-3 24h fuzz, P-4 7-day soak, P-6 indexer sync remain — all gated on operational time, not engineering work. |
+| **Gate M — Public mainnet** | 🚧 progressing | Hive `rpc-compat` 21 sub-tests pass via proxy + chainId override (`02b791ef`, +2 from chainId/networkId fixtures); chain.rlp replay still ~3-4 engineer-days for M-3. M-1/M-2 effectively done (Cancun+Shanghai 100%). |
 
 | Phase | State | Headline |
 |-------|-------|----------|
 | G.1 — State-test harness (GeneralStateTests) | ✅ done (55 dirs, 100% pass) | Runner + walker ✅ over **55 subdirs**, **2533/2533 pass (100%)**, **0 fail**, 5 upstream-skipped (silkworm `kFailingTests` + EIP-684/7610 grey zone), 2 silkworm-asserted skips. **10 real bugs** found and fixed (5 consensus + 3 DoS + 2 adapter-glue) |
 | G.2 — execution-spec-tests (Pyspec) | ✅ done (Cancun + Shanghai, 100% pass; Prague stub awaiting fixtures) | Walkers landed in `eef094bf` + `f6d1f83a`. Pyspec stable v3.0.0 fixtures: **Cancun 43/43**, **Shanghai 11/11**, Prague stub ready (no `prague/` dir in current release; future drop activates without code change). 1 new bug class found and fixed: EIP-4844 blob-fee burn missing + 2 blob-tx pre-validation rules. |
-| G.3 — Hive (`rpc-compat`) | 🚧 proxy mode ✅ (19 sub-tests pass), real bootstrap 📋 (~4 days) | `test/conformance/hive/` scaffold (`132a9787`) extended in `4ba807df` with a **proxy mode**: `Dockerfile.proxy` + stdlib-only `tos-rpc-proxy.py` forwards Hive's port-8545 traffic to the live validator on 8011. Container starts cleanly, logs `TOS-VALIDATOR-READY`, `eth_chainId` end-to-end works. Local harness `run-rpc-compat-local.sh` mirrors hive's compare policy. **PASS=19 / FAIL=185 / SKIP=3** — the 19 are "chainless" sub-tests (eth_syncing, unknown-account / unknown-tx, error-paths). The 185 fail because (a) we report chainId `0x544f53` not the spec's `0xc72dd9d5e883e`, and (b) we lack the spec's seeded 36-block chain. To get to "first-green real Hive": ~1-2 days for `tos-create-state` to bake an arbitrary chainId from mapper.jq, plus ~1-2 days for chain.rlp replay (gated on stabilising `eth_sendRawTransaction` further). |
+| G.3 — Hive (`rpc-compat`) | 🚧 proxy + chainId override ✅ (21 sub-tests pass), chain.rlp replay 📋 (~3 days) | `test/conformance/hive/` scaffold (`132a9787`) extended in `4ba807df` (proxy) + `02b791ef` (chainId override). `Dockerfile.proxy` + stdlib-only `tos-rpc-proxy.py` forwards Hive's port-8545 traffic to the live validator on 8011 with optional `--override-chain-id` interception. Container starts cleanly, logs `TOS-VALIDATOR-READY`, end-to-end works. Local harness `run-rpc-compat-local.sh` mirrors hive's compare policy. **PASS=21 / FAIL=183 / SKIP=3** — the 21 are chainless sub-tests + chainId/networkId. The 183 fail because we lack the spec's seeded 36-block chain. Validator binary now reads `TOS_EVM_CHAIN_ID` env to bake any chainId at startup. Remaining: ~3 days for chain.rlp replay (gated on further `eth_sendRawTransaction` stabilisation). |
 | G.4 — Continuous differential CI + manual-rpc sanity set | 🚧 runner ✅, CI 📋 | One-shot `differential_geth.py`: 20/25 OK (after the 2026-04-18 RPC correctness pass added spec-shape `eth_feeHistory.gasUsedRatio:list<float>`, geth still returns `list<int>` so they re-diverge — both are spec-allowed, we picked spec-correct). The 5 remaining diverges are all intentional (eth_mining, eth_syncing shape, eth_accounts, eth_createAccessList simulation strategy, eth_feeHistory ratio type) — see `known-divergences.md` Category B. **OUR_ERROR methods across 202 conformance fixtures = 0**. **NEW**: `test/conformance/manual-rpc/` (`698a51fc`) — 17 RPC methods × 18 fixtures + 3 chain-step fixtures (filter lifecycle), all PASS. Covers the methods execution-apis upstream doesn't (eth_blobBaseFee, eth_coinbase, eth_protocolVersion, eth_hashrate, eth_maxPriorityFeePerGas, eth_getRawTransactionByHash, eth_getUncle*, web3_sha3 + web3_clientVersion, net_listening, net_peerCount, eth_newFilter+changes+uninstall, eth_newBlockFilter chain, eth_newPendingTransactionFilter chain). New runner `run_manual_rpc.py` understands `${RESULT_N}` token interpolation for chained tests. Continuous CI not yet stood up. |
 | G.5 — Fuzz + stress | 🚧 runner ✅, 32-min soak ✅, 4h soak 🚧 deferred to overnight, 24h soak 📋 | `test/conformance/fuzz_eth.py` ✅ landed; found 1 DoS (eth_call hex-parse) fixed in `f53c356a`. Two follow-up soaks: 10-min and 32-min (109,500 mutated requests, **0 crashers / 0 5xx / 0 validator restarts**). 4-hour run started but interrupted at 32 min by user request to push other testing forward; rescheduled for off-peak. 10K-tx/s stress harness still pending. |
 | **Phase F — RPC cache persistence** (Gate P-5 blocker) | ✅ done — receipts + tx + blocks (by-number + by-hash) + logs all persisted | First-principles **Pure B side-channel** design: per-validator RocksDB at `${db_root}/evm-rpc-cache`, parallel to celldb/statedb, **zero consensus involvement**. **F.5** (receipts) shipped in `68e31992`. **F.6** (tx + blocks + logs) shipped in `607ceff6`: `EvmRpcCacheDb` extended with put/get/for_each for all 4 types (key tags 0x01-0x05); compute-phase write hooks gated on `exec_result.success` to avoid validate-block re-write; `evm-init.cpp` runs 4 independent hydration walks; `proof-receipt-survives-restart.js --verify <hash> <block> <hash>` extended to also assert tx/block/logs. New unit test `test_persisted_logs_roundtrip`. **47/47** unit tests pass. **3 subtle bugs found and fixed** during F.5 integration; F.6 hooks land cleanly behind the same patterns. |
@@ -42,6 +42,9 @@ Version: v1.4 — 2026-04-18 (4-agent parallel RPC correctness sprint)
 | `eth_getLogs` accepted invalid filter combos: `blockHash` + `from/toBlock` (mutually exclusive per spec) and reversed `from > to` ranges. No validation rejects | `57887d30` | RPC compat — geth/erigon both reject; we now do too with matching error messages |
 | `eth_simulateV1` deep-dive: parse_call_object didn't extract accessList, blobVersionedHashes, maxPriorityFeePerGas, maxFeePerBlobGas, nonce; tx-shape emission emitted every tx as type-2 (DynamicFee) regardless of fields present; `transactions[]` always emitted as object list when spec emits hash list when `returnFullTransactions` is false; per-log envelope missing 7 fields (blockHash/Number/Timestamp, transactionHash/Index, logIndex, removed); failed calls emitted no `error` envelope; `blockOverrides.number` jumps weren't filled with placeholder blocks | `4e35666e` | **9 → 50 OK on 63 simulateV1 fixtures** (+41); 13 remaining all need `stateOverrides` (out of scope for read-only simulator) |
 | Phase F.6: tx + blocks + logs cross-restart persistence (Gate P-5 closure for the remaining 3 RPC categories) | `607ceff6` | Pure B side-channel — same pattern as F.5 receipts; one new key tag per type (0x02-0x05), separate write hooks all gated on `exec_result.success`, four independent hydration walks |
+| `eth_simulateV1` stateOverrides + blockOverrides: handler ran every call against live state with no per-call balance/code/storage overrides and no per-block coinbase/timestamp/baseFee overrides; spec's contract-deploying fixtures all reverted because the contract address had no code on our chain | `849a42d0` | **50 → 60 OK on 63 simulateV1 fixtures** (+10); 3 remaining (1 needs Cancun activation, 1 needs SELFDESTRUCT-emit-log tracer subclass, 1 is a pre-merge fork-schema corner) |
+| `eth_getProof` returned empty `storageProof[*].proof:[]` for slots that don't exist (or that exist but live in an empty storage trie). Spec emits a non-existence proof — at minimum the empty-trie root node `0x80` so verifier sees `keccak(proof[0]) == storageHash` | `fbde5412` | **2 → 3 OK on getProof fixtures** (+1, all green) |
+| Hard-coded `kEvmChainId = 0x544F53` was used in 7+ places (RPC handlers, transaction admission, EIP-155 sigrec, simulateV1 chainId field, zerostate generator). To run the Hive `rpc-compat` simulator with the spec's expected chainId `0xc72dd9d5e883e`, these had to become runtime-configurable | `02b791ef` | new `current_evm_chain_id()` getter + `TOS_EVM_CHAIN_ID` env override. Caveat: must only be applied to a fresh chain (EIP-155 v-recovery binds to chainId). Hive sub-test count: 19 → 21 |
 
 ## Purpose
 
@@ -109,7 +112,7 @@ yet started · ❌ blocked or failing · ⊘ explicitly out of scope.
 
 ### Unit + integration — `crypto/block/evm-workchain/test-evm-executor.cpp` ✅
 
-**47** tests compiled into `./build/crypto/block/evm-workchain/test-evm-executor`.
+**48** tests compiled into `./build/crypto/block/evm-workchain/test-evm-executor`.
 All pass. Run in ~3 seconds on a laptop. Grouped by theme:
 
 | Group | Count | Status | What it proves |
@@ -189,17 +192,17 @@ Each row is a binary: green = go, red or yellow = stop. Each next stage is a str
 
 | # | Requirement | How to verify | Blocker? | Status |
 |---|-------------|---------------|----------|--------|
-| T-1 | 47/47 unit tests pass | `./build/crypto/block/evm-workchain/test-evm-executor` | ✓ | ✅ |
+| T-1 | 48/48 unit tests pass | `./build/crypto/block/evm-workchain/test-evm-executor` | ✓ | ✅ |
 | T-2 | All three `proof-*.sh` scripts pass | `sudo bash test/evm-workchain/proof-*.sh` (restart-survival + rpc-indexing) | ✓ | ✅ |
 | T-3 | execution-apis suite: 0 METHOD_NOT_FOUND, 0 crashes, every SHAPE_MISMATCH and OUR_ERROR accounted for in `doc/evm-workchain-known-divergences.md` | `SKIP_CRASHERS=0 python3 test/conformance/run_execution_apis.py` | ✓ | ✅ |
 | T-4 | 4 validators stay up through the full suite | systemd shows all `tos-validator@{1..4}` `active` post-run | ✓ | ✅ |
 | T-5 | Basic wallet probes work | `node test/evm-workchain/wallet-test.js`, `full-rpc-test.js` | ✓ | ✅ |
 | T-6 | Differential vs. geth: every diverge listed in `doc/evm-workchain-known-divergences.md` Category B | `python3 test/conformance/differential_geth.py` | ✓ | ✅ |
 
-**Current status: PASS.** Commit `4ba807df` is the last-known-good
-(combines Phase F.6 tx/blocks/logs persistence, eth_simulateV1 deep
-dive, manual-rpc sanity fixtures, Hive proxy wiring — all from a
-2026-04-18 4-agent parallel sprint).
+**Current status: PASS.** Commit `02b791ef` is the last-known-good
+(adds eth_simulateV1 stateOverrides → 60/63 OK, eth_getProof
+non-existence proof → 3/3 OK, runtime-configurable chainId for
+Hive bootstrap — second 3-agent sprint of 2026-04-18).
 
 ### Gate P — Private mainnet (limited allowlisted validators + RPCs)
 
