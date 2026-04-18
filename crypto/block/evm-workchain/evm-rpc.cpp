@@ -170,10 +170,50 @@ static std::string make_result(const std::string& id, const std::string& result_
     return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":" + result_value + "}";
 }
 
+static std::string json_escape_string(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    for (unsigned char c : in) {
+        switch (c) {
+            case '\\':
+                out += "\\\\";
+                break;
+            case '"':
+                out += "\\\"";
+                break;
+            case '\b':
+                out += "\\b";
+                break;
+            case '\f':
+                out += "\\f";
+                break;
+            case '\n':
+                out += "\\n";
+                break;
+            case '\r':
+                out += "\\r";
+                break;
+            case '\t':
+                out += "\\t";
+                break;
+            default:
+                if (c < 0x20) {
+                    char buf[7];
+                    std::snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned int>(c));
+                    out += buf;
+                } else {
+                    out.push_back(static_cast<char>(c));
+                }
+                break;
+        }
+    }
+    return out;
+}
+
 static std::string make_error(const std::string& id, int code, const std::string& msg) {
     return "{\"jsonrpc\":\"2.0\",\"id\":" + id +
            ",\"error\":{\"code\":" + std::to_string(code) +
-           ",\"message\":\"" + msg + "\"}}";
+           ",\"message\":\"" + json_escape_string(msg) + "\"}}";
 }
 
 // ---------------------------------------------------------------------------
@@ -219,6 +259,15 @@ static bool parse_hex_bytes(const std::string& hex, silkworm::Bytes& out) {
     return true;
 }
 
+static bool parse_hex_bytes32(const std::string& hex, evmc::bytes32& out) {
+    silkworm::Bytes bytes;
+    if (!parse_hex_bytes(hex, bytes) || bytes.size() != 32) {
+        return false;
+    }
+    std::memcpy(out.bytes, bytes.data(), 32);
+    return true;
+}
+
 // Forward declarations
 static std::vector<std::vector<evmc::bytes32>> parse_topics_array(const std::string& params);
 
@@ -235,21 +284,8 @@ static std::string lookup_block_hash_hex(uint64_t block_num) {
 // For each log: hash(address) and hash(each topic) contribute 3 bits each to the bloom.
 // Reference: ~/s/silkworm/core/types/bloom.cpp
 static void compute_logs_bloom(const std::vector<silkworm::Log>& logs, uint8_t bloom[256]) {
-    std::memset(bloom, 0, 256);
-    for (const auto& log : logs) {
-        auto ah = ethash::keccak256(log.address.bytes, 20);
-        for (int i = 0; i < 6; i += 2) {
-            uint16_t bit = (static_cast<uint16_t>(ah.bytes[i]) << 8 | ah.bytes[i + 1]) & 0x7FF;
-            bloom[bit / 8] |= (1 << (bit % 8));
-        }
-        for (const auto& topic : log.topics) {
-            auto th = ethash::keccak256(topic.bytes, 32);
-            for (int i = 0; i < 6; i += 2) {
-                uint16_t bit = (static_cast<uint16_t>(th.bytes[i]) << 8 | th.bytes[i + 1]) & 0x7FF;
-                bloom[bit / 8] |= (1 << (bit % 8));
-            }
-        }
-    }
+    auto sw_bloom = silkworm::logs_bloom(logs);
+    std::memcpy(bloom, sw_bloom.data(), sw_bloom.size());
 }
 
 static std::string compute_logs_bloom_hex(const std::vector<silkworm::Log>& logs) {
@@ -964,13 +1000,6 @@ static std::string format_block_json(const StoredBlock& blk, bool full_transacti
     return r;
 }
 
-static std::string format_empty_block_json(uint64_t bn) {
-    StoredBlock blk;
-    blk.number = bn;
-    blk.timestamp = static_cast<uint64_t>(std::time(nullptr));
-    return format_block_json(blk);
-}
-
 static RpcResult handle_get_block_by_number(const std::string& params, const std::string& id) {
     uint64_t bn = global_evm_state().block_number();
     bool full_transactions = false;
@@ -999,7 +1028,7 @@ static RpcResult handle_get_block_by_number(const std::string& params, const std
     if (global_evm_state().has_block(bn)) {
         return {make_result(id, format_block_json(blk, full_transactions)), false};
     }
-    return {make_result(id, format_empty_block_json(bn)), false};
+    return {make_result(id, "null"), false};
 }
 
 static RpcResult handle_get_logs(const std::string& params, const std::string& id) {
@@ -1034,6 +1063,18 @@ static RpcResult handle_get_logs(const std::string& params, const std::string& i
     if (!block_hash_hex.empty() && (has_from || has_to)) {
         return {make_error(id, -32602,
             "invalid argument 0: cannot specify both BlockHash and FromBlock/ToBlock, choose one or the other"), true};
+    }
+    if (!block_hash_hex.empty()) {
+        evmc::bytes32 block_hash{};
+        if (!parse_hex_bytes32(block_hash_hex, block_hash)) {
+            return {make_error(id, -32602, "invalid block hash"), true};
+        }
+        auto blk = global_evm_state().get_block_by_hash_copy(block_hash);
+        if (std::memcmp(blk.hash.bytes, block_hash.bytes, 32) != 0) {
+            return {make_result(id, "[]"), false};
+        }
+        from_block = blk.number;
+        to_block = blk.number;
     }
 
     // Spec validation: reversed range.
@@ -1665,10 +1706,13 @@ enum class FilterType { Logs, Blocks, PendingTx };
 
 struct FilterEntry {
     FilterType type{FilterType::Logs};
-    uint64_t last_polled_block{0};
+    uint64_t next_poll_block{0};
     uint64_t created_at{0};
     uint64_t last_access{0};
     // Log filter criteria (only for FilterType::Logs)
+    uint64_t query_from_block{0};
+    uint64_t query_to_block{0};
+    bool has_fixed_to_block{false};
     std::vector<evmc::address> addresses;
     std::vector<std::vector<evmc::bytes32>> topics;
 };
@@ -1699,17 +1743,27 @@ static void cleanup_expired_filters() {
 
 static uint64_t create_filter(FilterType type,
                                const std::vector<evmc::address>& addresses = {},
-                               const std::vector<std::vector<evmc::bytes32>>& topics = {}) {
+                               const std::vector<std::vector<evmc::bytes32>>& topics = {},
+                               uint64_t query_from_block = 0,
+                               uint64_t query_to_block = 0,
+                               bool has_fixed_to_block = false,
+                               bool future_only = false) {
     std::lock_guard<std::mutex> lock(g_filter_mutex);
     cleanup_expired_filters();
     if (g_filters.size() >= kMaxFilters) return 0;
     uint64_t fid = g_next_filter_id++;
     uint64_t now = static_cast<uint64_t>(std::time(nullptr));
+    uint64_t head = global_evm_state().block_number();
     FilterEntry entry;
     entry.type = type;
-    entry.last_polled_block = global_evm_state().block_number();
+    entry.next_poll_block = (type == FilterType::Logs)
+        ? (future_only ? head + 1 : query_from_block)
+        : (head + 1);
     entry.created_at = now;
     entry.last_access = now;
+    entry.query_from_block = query_from_block;
+    entry.query_to_block = query_to_block;
+    entry.has_fixed_to_block = has_fixed_to_block;
     entry.addresses = addresses;
     entry.topics = topics;
     g_filters[fid] = std::move(entry);
@@ -1764,12 +1818,91 @@ static std::vector<std::vector<evmc::bytes32>> parse_topics_array(const std::str
     return result;
 }
 
+struct ParsedLogFilter {
+    uint64_t from_block{0};
+    uint64_t to_block{0};
+    bool has_fixed_to_block{false};
+    bool future_only{true};
+    std::vector<evmc::address> addresses;
+    std::vector<std::vector<evmc::bytes32>> topics;
+};
+
+static std::optional<RpcResult> parse_log_filter_for_subscription(
+    const std::string& params,
+    const std::string& id,
+    ParsedLogFilter& out) {
+    const uint64_t head = global_evm_state().block_number();
+    out.from_block = head;
+    out.to_block = head;
+    out.has_fixed_to_block = false;
+    out.future_only = true;
+
+    std::string fb_hex = extract_json_string_value(params, "fromBlock");
+    bool has_from = !fb_hex.empty();
+    if (has_from && fb_hex != "latest" && fb_hex != "pending" && fb_hex != "earliest") {
+        out.from_block = parse_hex_uint64(fb_hex);
+        out.future_only = false;
+    } else if (has_from && fb_hex == "earliest") {
+        out.from_block = 0;
+        out.future_only = false;
+    } else if (has_from && (fb_hex == "latest" || fb_hex == "pending")) {
+        out.from_block = head;
+        out.future_only = true;
+    }
+
+    std::string tb_hex = extract_json_string_value(params, "toBlock");
+    bool has_to = !tb_hex.empty();
+    if (has_to && tb_hex != "latest" && tb_hex != "pending") {
+        if (tb_hex == "earliest") out.to_block = 0;
+        else out.to_block = parse_hex_uint64(tb_hex);
+        out.has_fixed_to_block = true;
+    }
+
+    std::string block_hash_hex = extract_json_string_value(params, "blockHash");
+    if (!block_hash_hex.empty() && (has_from || has_to)) {
+        return RpcResult{make_error(id, -32602,
+            "invalid argument 0: cannot specify both BlockHash and FromBlock/ToBlock, choose one or the other"), true};
+    }
+    if (!block_hash_hex.empty()) {
+        evmc::bytes32 block_hash{};
+        if (!parse_hex_bytes32(block_hash_hex, block_hash)) {
+            return RpcResult{make_error(id, -32602, "invalid block hash"), true};
+        }
+        auto blk = global_evm_state().get_block_by_hash_copy(block_hash);
+        if (std::memcmp(blk.hash.bytes, block_hash.bytes, 32) != 0) {
+            out.from_block = head + 1;
+            out.to_block = head;
+        } else {
+            out.from_block = blk.number;
+            out.to_block = blk.number;
+        }
+        out.has_fixed_to_block = true;
+        out.future_only = false;
+    }
+
+    if (has_from && has_to && out.from_block > out.to_block) {
+        return RpcResult{make_error(id, -32602, "invalid block range params"), true};
+    }
+
+    out.addresses = parse_address_param(params);
+    out.topics = parse_topics_array(params);
+    return std::nullopt;
+}
+
 static RpcResult handle_new_filter(const std::string& params, const std::string& id) {
     // Parse filter criteria: {"fromBlock":"0x1","toBlock":"latest","address":"0x...","topics":[...]}
-    auto addresses = parse_address_param(params);
-    auto topics = parse_topics_array(params);
+    ParsedLogFilter filter;
+    if (auto error = parse_log_filter_for_subscription(params, id, filter)) {
+        return *error;
+    }
 
-    uint64_t fid = create_filter(FilterType::Logs, addresses, topics);
+    uint64_t fid = create_filter(FilterType::Logs,
+                                 filter.addresses,
+                                 filter.topics,
+                                 filter.from_block,
+                                 filter.to_block,
+                                 filter.has_fixed_to_block,
+                                 filter.future_only);
     if (fid == 0) return {make_error(id, -32000, "too many filters"), true};
     return {make_result(id, to_hex_quantity(fid)), false};
 }
@@ -1814,17 +1947,21 @@ static RpcResult handle_get_filter_changes(const std::string& params, const std:
     f.last_access = static_cast<uint64_t>(std::time(nullptr));
 
     uint64_t current_block = global_evm_state().block_number();
-    uint64_t from_block = f.last_polled_block + 1;
-    f.last_polled_block = current_block;
+    uint64_t from_block = f.next_poll_block;
+    uint64_t to_block = current_block;
+    if (f.type == FilterType::Logs && f.has_fixed_to_block) {
+        to_block = f.query_to_block;
+    }
 
-    if (from_block > current_block) {
+    if (from_block > to_block) {
         return {make_result(id, "[]"), false};
     }
 
     std::string arr = "[";
     if (f.type == FilterType::Logs) {
-        auto logs = global_evm_state().get_logs(from_block, current_block,
+        auto logs = global_evm_state().get_logs(from_block, to_block,
                                                  f.addresses, f.topics);
+        f.next_poll_block = to_block + 1;
         for (size_t i = 0; i < logs.size(); ++i) {
             if (i > 0) arr += ",";
             arr += format_log_json(logs[i]);
@@ -1840,6 +1977,7 @@ static RpcResult handle_get_filter_changes(const std::string& params, const std:
                 arr += to_hex_data(hash.bytes, 32);
             }
         }
+        f.next_poll_block = current_block + 1;
     } else if (f.type == FilterType::PendingTx) {
         // Pending tx filter: return empty (we execute immediately, no mempool)
     }
@@ -3396,7 +3534,8 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
                 } else {
                     msg = "execution reverted: " + oc.result.error_message;
                 }
-                out2 += ",\"error\":{\"code\":3,\"message\":\"" + msg + "\",\"data\":" + rev_data + "}";
+                out2 += ",\"error\":{\"code\":3,\"message\":\"" + json_escape_string(msg) +
+                        "\",\"data\":" + rev_data + "}";
             }
             out2 += "}";
         }
@@ -3508,8 +3647,13 @@ static RpcResult handle_get_filter_logs(const std::string& params, const std::st
     if (f.type != FilterType::Logs) {
         return {make_error(id, -32000, "not a log filter"), true};
     }
-    auto logs = global_evm_state().get_logs(0, global_evm_state().block_number(),
-                                             f.addresses, f.topics);
+    f.last_access = static_cast<uint64_t>(std::time(nullptr));
+    uint64_t to_block = f.has_fixed_to_block ? f.query_to_block : global_evm_state().block_number();
+    if (f.query_from_block > to_block) {
+        return {make_result(id, "[]"), false};
+    }
+    auto logs = global_evm_state().get_logs(f.query_from_block, to_block,
+                                            f.addresses, f.topics);
     std::string arr = "[";
     for (size_t i = 0; i < logs.size(); i++) {
         if (i > 0) arr += ",";

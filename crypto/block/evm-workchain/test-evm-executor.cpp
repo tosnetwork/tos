@@ -13,6 +13,7 @@
     Source: TOS-specific test (not copied from ~/s).
 */
 #include <cstdio>
+#include <cstdarg>
 #include <cstring>
 #include <cassert>
 #include <algorithm>
@@ -48,6 +49,7 @@
 #include "vm/cells/CellBuilder.h"
 
 #include <silkworm/core/types/block.hpp>
+#include <silkworm/core/types/bloom.hpp>
 #include <silkworm/core/types/transaction.hpp>
 #include <silkworm/core/types/address.hpp>
 #include <silkworm/core/rlp/encode.hpp>
@@ -65,6 +67,40 @@
 
 using namespace evm_workchain;
 using namespace silkworm;
+
+static std::atomic<int> g_test_failures{0};
+
+static int tracked_printf(const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+
+    va_list copy;
+    va_copy(copy, args);
+    int needed = std::vsnprintf(nullptr, 0, fmt, copy);
+    va_end(copy);
+
+    std::string rendered;
+    if (needed >= 0) {
+        rendered.resize(static_cast<size_t>(needed) + 1);
+        va_copy(copy, args);
+        std::vsnprintf(rendered.data(), rendered.size(), fmt, copy);
+        va_end(copy);
+        rendered.resize(static_cast<size_t>(needed));
+    }
+
+    int written = std::vprintf(fmt, args);
+    va_end(args);
+
+    if (!rendered.empty() &&
+        (rendered.find("FAILED") != std::string::npos ||
+         rendered.find("PARTIAL") != std::string::npos)) {
+        g_test_failures.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    return written;
+}
+
+#define printf tracked_printf
 
 // --- Hex decode helpers ---
 
@@ -704,6 +740,110 @@ static void test_eth_rpc() {
         printf("  FAILED (all=%d bal=%d nonce=%d call=%d est=%d)\n\n",
                all_ok, balance_ok, nonce_ok, call_ok, est_ok);
     }
+}
+
+static void test_eth_rpc_block_lookup_and_log_filters() {
+    printf("=== test_eth_rpc_block_lookup_and_log_filters ===\n");
+
+    init_evm_workchain();
+    reset_evm_rpc_filter_state_for_test();
+
+    evmc::address log_addr{};
+    log_addr.bytes[19] = 0xAA;
+    evmc::address sender{};
+    sender.bytes[19] = 0x55;
+
+    StoredBlock blk7;
+    blk7.number = 7;
+    blk7.hash.bytes[31] = 0x07;
+
+    StoredBlock blk8;
+    blk8.number = 8;
+    blk8.hash.bytes[31] = 0x08;
+
+    global_evm_state().store_block(blk7);
+    global_evm_state().store_block(blk8);
+
+    silkworm::Log log7;
+    log7.address = log_addr;
+    log7.topics.push_back(evmc::bytes32{});
+    log7.topics[0].bytes[31] = 0x11;
+    log7.data = {0x01, 0x02, 0x03};
+
+    silkworm::Log log8;
+    log8.address = log_addr;
+    log8.topics.push_back(evmc::bytes32{});
+    log8.topics[0].bytes[31] = 0x22;
+    log8.data = {0x04, 0x05};
+
+    evmc::bytes32 tx_hash7{};
+    tx_hash7.bytes[31] = 0x71;
+    evmc::bytes32 tx_hash8{};
+    tx_hash8.bytes[31] = 0x81;
+
+    global_evm_state().store_logs(7, tx_hash7, {log7}, 0);
+    global_evm_state().store_logs(8, tx_hash8, {log8}, 0);
+
+    StoredReceipt receipt7;
+    receipt7.success = true;
+    receipt7.gas_used = 21'000;
+    receipt7.cumulative_gas_used = 21'000;
+    receipt7.block_number = 7;
+    receipt7.tx_index = 0;
+    receipt7.from = sender;
+    receipt7.to = log_addr;
+    receipt7.logs = {log7};
+    global_evm_state().store_receipt(tx_hash7, std::move(receipt7));
+
+    const std::string block7_hash_hex = bytes_to_hex0x(Bytes{blk7.hash.bytes, blk7.hash.bytes + 32});
+    const std::string tx7_hash_hex = bytes_to_hex0x(Bytes{tx_hash7.bytes, tx_hash7.bytes + 32});
+    const std::string tx8_hash_hex = bytes_to_hex0x(Bytes{tx_hash8.bytes, tx_hash8.bytes + 32});
+    const std::string log_addr_hex = bytes_to_hex0x(Bytes{log_addr.bytes, log_addr.bytes + 20});
+
+    auto missing_block = handle_eth_rpc("eth_getBlockByNumber", "[\"0xffff\", false]", "20");
+    bool missing_block_ok = missing_block && json_result_is_null(missing_block->json);
+    printf("  missing block -> null: %s\n", missing_block_ok ? "OK" : "WRONG");
+
+    std::string get_logs_params = "[{\"blockHash\":\"" + block7_hash_hex +
+                                  "\",\"address\":\"" + log_addr_hex + "\"}]";
+    auto by_block_hash = handle_eth_rpc("eth_getLogs", get_logs_params, "21");
+    bool block_hash_filter_ok = by_block_hash && !by_block_hash->is_error &&
+                                by_block_hash->json.find(tx7_hash_hex) != std::string::npos &&
+                                by_block_hash->json.find(tx8_hash_hex) == std::string::npos;
+    printf("  eth_getLogs blockHash filter: %s\n", block_hash_filter_ok ? "OK" : "WRONG");
+
+    auto receipt = handle_eth_rpc("eth_getTransactionReceipt", "[\"" + tx7_hash_hex + "\"]", "22");
+    auto expected_bloom = silkworm::logs_bloom(std::vector<silkworm::Log>{log7});
+    const std::string expected_bloom_hex = bytes_to_hex0x(Bytes{expected_bloom.begin(), expected_bloom.end()});
+    bool receipt_bloom_ok = receipt && !receipt->is_error &&
+                            receipt->json.find(expected_bloom_hex) != std::string::npos;
+    printf("  receipt logsBloom matches silkworm: %s\n", receipt_bloom_ok ? "OK" : "WRONG");
+
+    std::string historical_filter_params = "[{\"fromBlock\":\"0x7\",\"toBlock\":\"0x7\",\"address\":\"" +
+                                           log_addr_hex + "\"}]";
+    auto historical_filter = handle_eth_rpc("eth_newFilter", historical_filter_params, "23");
+    std::string historical_filter_id =
+        historical_filter && !historical_filter->is_error ? extract_json_result_string(historical_filter->json) : "";
+
+    auto historical_changes = historical_filter_id.empty()
+        ? std::optional<RpcResult>{}
+        : handle_eth_rpc("eth_getFilterChanges", "[\"" + historical_filter_id + "\"]", "24");
+    bool historical_changes_ok = historical_changes && !historical_changes->is_error &&
+                                 historical_changes->json.find(tx7_hash_hex) != std::string::npos &&
+                                 historical_changes->json.find(tx8_hash_hex) == std::string::npos;
+    printf("  eth_getFilterChanges historical range: %s\n", historical_changes_ok ? "OK" : "WRONG");
+
+    auto historical_logs = historical_filter_id.empty()
+        ? std::optional<RpcResult>{}
+        : handle_eth_rpc("eth_getFilterLogs", "[\"" + historical_filter_id + "\"]", "25");
+    bool filter_logs_ok = historical_logs && !historical_logs->is_error &&
+                          historical_logs->json.find(tx7_hash_hex) != std::string::npos &&
+                          historical_logs->json.find(tx8_hash_hex) == std::string::npos;
+    printf("  eth_getFilterLogs honors filter range: %s\n", filter_logs_ok ? "OK" : "WRONG");
+
+    bool ok = missing_block_ok && block_hash_filter_ok && receipt_bloom_ok &&
+              historical_changes_ok && filter_logs_ok;
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
 }
 
 static void test_signed_transaction() {
@@ -5115,6 +5255,7 @@ int main() {
     test_contract_create();
     test_contract_call();
     test_eth_rpc();
+    test_eth_rpc_block_lookup_and_log_filters();
     test_runtime_chain_id_override();
     test_signed_transaction();
     test_persistent_state();
@@ -5178,6 +5319,11 @@ int main() {
 
     // Scan stdout for FAILED to determine exit code
     // (Individual tests print PASSED or FAILED)
+    int failures = g_test_failures.load(std::memory_order_relaxed);
     printf("All tests completed.\n");
-    return 0;  // TODO: accumulate per-test pass/fail for proper CI exit code
+    if (failures != 0) {
+        printf("Detected %d failing test output(s).\n", failures);
+        return 1;
+    }
+    return 0;
 }
