@@ -18,7 +18,7 @@
 */
 #include "json-rpc-server-internal.h"
 
-#include "evm-rpc.h"
+#include "evm/rpc/handlers.h"
 
 #include <cstring>
 

@@ -398,10 +398,11 @@ if (USE_EMSCRIPTEN)
   target_compile_options(tos_block PRIVATE -fexceptions)
 endif()
 
-# --- EVM Workchain module ---
-if (NOT TOS_ONLY_TOSLIB)
-  add_subdirectory(block/evm-workchain)
-endif()
+# EVM workchain lives at the top-level `evm/` subdirectory; see the
+# top-level CMakeLists.txt for `add_subdirectory(evm)`. The TOS-side
+# dispatch hook (block/evm-workchain-dispatch.{cpp,h}) stays here in
+# crypto/ because it is part of the host-chain transaction path; the
+# EVM module registers into it from outside.
 
 add_executable(func func/func-main.cpp ${FUNC_LIB_SOURCE})
 target_include_directories(func PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)

@@ -35,10 +35,10 @@
 #include <limits>
 
 // EVM workchain headers for eth_sendRawTransaction
-#include "evm-transaction.h"
-#include "evm-external-message.h"
-#include "evm-workchain.h"
-#include "evm-block-context.h"  // evm_chain_config
+#include "evm/core/transaction.h"
+#include "evm/core/external-message.h"
+#include "evm/core/workchain.h"
+#include "evm/core/block-context.h"  // evm_chain_config
 #include <silkworm/core/protocol/validation.hpp>
 #include <sstream>
 

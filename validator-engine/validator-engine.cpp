@@ -63,7 +63,7 @@
 
 #include "errorcode.h"
 
-#include "evm-init.h"
+#include "evm/core/init.h"
 #include "overlay-manager.h"
 #include "overlays.h"
 #include "validator-engine.hpp"
