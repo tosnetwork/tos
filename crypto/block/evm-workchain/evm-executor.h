@@ -69,4 +69,16 @@ ExecutionResult call_evm_transaction(
     const EvmState& state,
     const silkworm::ChainConfig& config);
 
+/// Like call_evm_transaction, but inflates the sender's balance to cover
+/// txn.value before execution. Mirrors geth/erigon eth_estimateGas
+/// behavior — wallets can estimate gas before holding funds. The override
+/// is applied to the IntraBlockState only; the underlying State is not
+/// mutated. Pass a non-zero `top_up_to_at_least` to request a balance of
+/// at least that amount on the sender.
+ExecutionResult call_evm_transaction_with_balance_topup(
+    const silkworm::Transaction& txn,
+    const silkworm::Block& block,
+    const EvmState& state,
+    const silkworm::ChainConfig& config);
+
 }  // namespace evm_workchain

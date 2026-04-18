@@ -326,4 +326,29 @@ ExecutionResult call_evm_transaction(
     return run_evm(txn, block, ibs, config, /*commit_state=*/false);
 }
 
+ExecutionResult call_evm_transaction_with_balance_topup(
+    const silkworm::Transaction& txn,
+    const silkworm::Block& block,
+    const EvmState& evm_state,
+    const silkworm::ChainConfig& config) {
+
+    std::unique_lock lock(evm_state.mutex());
+    auto& mutable_state = const_cast<silkworm::State&>(evm_state.state());
+    silkworm::IntraBlockState ibs(mutable_state);
+
+    auto sender_opt = txn.sender();
+    if (sender_opt) {
+        // Need balance >= value (gas cost is already 0 because the call
+        // path zeroes out max_fee_per_gas / max_priority_fee_per_gas).
+        const intx::uint256 needed = txn.value;
+        if (needed > 0) {
+            const auto current = ibs.get_balance(*sender_opt);
+            if (current < needed) {
+                ibs.add_to_balance(*sender_opt, needed - current);
+            }
+        }
+    }
+    return run_evm(txn, block, ibs, config, /*commit_state=*/false);
+}
+
 }  // namespace evm_workchain

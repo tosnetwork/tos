@@ -724,7 +724,7 @@ static RpcResult handle_estimate_gas(const std::string& params, const std::strin
         rand_seed);
     const auto& config = evm_chain_config();
 
-    auto result = call_evm_transaction(txn, block, global_evm_state(), config);
+    auto result = call_evm_transaction_with_balance_topup(txn, block, global_evm_state(), config);
 
     if (!result.success) {
         std::string revert_hex = to_hex_data(result.return_data.data(), result.return_data.size());
