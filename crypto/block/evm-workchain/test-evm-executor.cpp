@@ -33,6 +33,7 @@
 #include "evm-cell-state.h"
 #include "evm-cell-codec.h"
 #include "evm-rpc-cache-codec.h"
+#include "evm-rpc-cache-db.h"
 #include "block/evm-workchain-dispatch.h"
 #include "vm/boc.h"
 #include "evm-config-param.h"
@@ -3027,6 +3028,13 @@ void test_no_separate_evm_db() {
 
     printf("  no /evm-state RocksDB directory: %s\n", old_dir_absent ? "yes" : "NO!");
     printf("  %s\n\n", old_dir_absent ? "PASSED" : "FAILED");
+
+    // Explicitly release the RPC cache DB handle before rm -rf so we don't
+    // yank files out from under RocksDB's open file descriptors; otherwise
+    // RocksDB's background compaction threads access stale mutex state at
+    // process exit and the whole process aborts with "pthread lock: Invalid
+    // argument", masking real failures in later tests.
+    set_evm_rpc_cache_db(nullptr);
 
     std::system(("rm -rf " + tmp_root).c_str());
 }
