@@ -398,41 +398,45 @@ The proposed language features therefore sit \emph{above} the current function
 family model; they do not replace it.
 
 \subsection{Explicit Mutability Lowers to Explicit State Threading}
-A method with \verb|mut self| should not require a new calling convention at
-the VM level. The canonical lowering rewrites the surface method call into an
-internal helper call that returns both the updated receiver and the value
-result. The caller-side rebind must respect the error-path rule from the
-main spec: \emph{on \texttt{Err}, the receiver is restored to its pre-call
-state}. So for a \verb|mut self| method returning \verb|Result|, the
-desugaring is:
+A method with \verb|mut self| does not require a new calling
+convention at the VM level. Under the abort-by-default error model,
+stdlib \verb|mut self| methods return raw values (not \verb|Result|);
+on failure they \verb|THROW|, which unwinds the whole transaction so
+no per-place rollback logic is needed.
+
+Canonical desugar for the common case:
 
 \begin{verbatim}
 let mut cs = body;
-let op = cs.load_uint(32)?;
+let op = cs.load_uint(32);    // aborts on cell underflow
 
 // canonical desugar:
-let (__cs1, __r1) = __Slice_load_uint(cs, 32);
-match __r1 {
-    Ok(v)  => { cs = __cs1; v }        // commit new receiver, yield value
-    Err(e) => { /* cs unchanged */
-                return Err(e.into()) }  // error path preserves receiver
-};
+let (__cs1, __v) = __Slice_load_uint(cs, 32);
+cs = __cs1;                   // commit new receiver
+let op = __v;                 // bind value
 \end{verbatim}
 
-For \verb|mut self| methods that return a non-\verb|Result| type, the
-writeback is unconditional (there is no failure channel, so nothing to
-roll back):
+\verb|__Slice_load_uint| lowers directly to the \verb|LDUX|-based
+helper family already used by current \verb|~load_uint| built-ins.
+The helper \verb|THROW|s on underflow; no \verb|match| / tag check is
+emitted in the desugar.
+
+\paragraph{The rare \texttt{Result}-returning \texttt{mut self} case.}
+When a \verb|mut self| method genuinely returns \verb|Result<T, E>|
+(uncommon in 0.5.0), the caller binds the result via \verb|match|:
 
 \begin{verbatim}
-let (__cs1, __r1) = __Slice_some_op(cs, ...);
-cs = __cs1;
-let v = __r1;
+let mut cs = body;
+match cs.try_load_uint(32) {
+    Ok(v)  => { /* cs already committed to __cs1 */ ... }
+    Err(e) => { /* cs value is still __cs1 (committed);
+                   authors who need a snapshot must copy cs before the call */ ... }
+}
 \end{verbatim}
 
-\verb|__Slice_load_uint| and its siblings lower to the same \verb|LDUX|-based
-helper family already used by current \verb|~load_uint| built-ins; the only
-new obligation is the tag-check before writeback in the \verb|Result|
-variant.
+The unconditional writeback is acceptable here because \verb|Result|-
+returning \verb|mut self| methods are rare and their authors may
+document the partial-mutation semantics.
 
 \subsection{Structs Lower as Products, Not Objects}
 Structs do not imply heap allocation or object identity. Their canonical
@@ -492,25 +496,64 @@ sparse discriminants, it may generate a branch tree. For message decoding, it
 may first use a slice preload such as \verb|PLDUZ 32| or a full \verb|LDU 32|
 to inspect the opcode before decoding the remainder of the body.
 
-\subsection{The Question-Mark Operator Lowers to Early Return}
-The \verb|?| operator should be understood as structured control flow, not as an
-exception mechanism.
+\subsection{\texttt{require!} and Abort Lowering}
+\label{sec:lower-require}
+The main failure mechanism in FunC \verb|0.5.0| is abort. The source
+construct \verb|require!(cond, Err)| lowers to:
 
 \begin{verbatim}
-let msg = parse_msg(body)?;
+if !(cond) { THROW(Err as u16) }
 \end{verbatim}
 
-canonically lowers to:
+That is a single \verb|IFNOT| conditional around the TVM
+\verb|THROW| / \verb|THROWIF| / \verb|THROWIFNOT| family:
 
-\begin{enumerate}
-\item evaluate \verb|parse_msg(body)| into a temporary \verb|Result|;
-\item inspect the tag;
-\item if the tag is \verb|Err|, package the error in the caller's return form
-and jump to the function epilogue;
-\item if the tag is \verb|Ok|, extract the payload and continue.
-\end{enumerate}
+\begin{verbatim}
+require!(cond, Err)
+  ==>
+  <evaluate cond>
+  <push (Err as u16)>
+  THROWIFNOT
+\end{verbatim}
 
-This keeps all recoverable failure explicit in the generated control flow.
+Where the error identifier resolves to a \verb|u16| constant at
+compile time (from an \verb|error| shorthand or an \verb|enum E : u16|
+explicit discriminant), the compiler prefers the \verb|THROWIFNOT n|
+immediate-operand form when available.
+
+\paragraph{Stdlib functions that abort on failure.}
+Stdlib APIs such as \verb|Slice::load_uint|, \verb|Builder::store_uint|,
+\verb|Dict::get|, and \verb|send| return raw values; failure is signalled
+by TVM-level abort. The lowering is typically the bare TVM opcode with
+no extra guard:
+
+\begin{verbatim}
+cs.load_uint(32)
+  ==>
+  <cs>
+  LDU 32          // TVM opcode; throws 9 on underflow
+\end{verbatim}
+
+The compiler emits no \verb|Result| wrapper, no tag check, and no
+control-flow split. On abort, the transaction wrapper's handler picks
+up the thrown code and propagates it as the contract's exit code.
+
+\paragraph{\texttt{Result<T, E>} (rare use) still lowers as a tagged
+product.}
+When a function genuinely returns \verb|Result<T, E>|, the tagged
+product from Canonical Decision~1 appears on the stack as
+\verb|(tag, payload)|. The caller destructures it with \verb|match|,
+which lowers to a tag test and a branch --- ordinary enum lowering,
+not a new form.
+
+\paragraph{\texttt{emit} lowering.}
+\verb|emit Event \{ fields \}| lowers to:
+
+\begin{verbatim}
+send(LOG_SINK_ADDR, Event { fields }, EVENT_DEFAULT_OPTS)
+\end{verbatim}
+
+which in turn lowers through \S\ref{sec:send-lowering} below.
 
 \subsection{Typed Messages Lower to Generated Codecs}
 A declaration such as
@@ -556,37 +599,64 @@ encoder.
 The important point is that \verb|Cell<T>| itself carries no runtime metadata.
 All real work happens at codec boundaries.
 
-\subsection{Typed Contexts Lower to ABI Wrappers}
+\subsection{Typed Entry Parameters Lower to ABI Wrappers}
+\label{sec:typed-entry-lowering}
 A function such as
 
 \begin{verbatim}
-entry internal fn recv_internal(
-    ctx: InternalContext<Transfer>,
-) -> Result<(), WalletError> effect(read, write, send) { ... }
+contract Jetton {
+    internal fn on_transfer(msg: Transfer) { ... }
+}
 \end{verbatim}
 
-should lower to two layers:
+lowers to two layers:
 
 \begin{enumerate}
-\item a generated low-level entry wrapper with the existing internal-message ABI;
-\item a typed user function body that receives a constructed
-\verb|InternalContext<Transfer>|.
+\item a generated low-level entry wrapper with the existing
+internal-message ABI;
+\item a typed user function body that receives a decoded \verb|Transfer|.
 \end{enumerate}
 
 The wrapper:
 
 \begin{enumerate}
 \item reads the raw inbound context values from the existing ABI inputs;
-\item extracts sender, transferred value, forward fee, and raw body slice;
-\item decodes the raw body as \verb|Transfer|;
-\item constructs the logical context tuple;
-\item calls the typed user body;
-\item converts the user body's result into the required low-level contract
-behavior.
+\item binds \verb|ctx.sender|, \verb|ctx.value|, \verb|ctx.forward_fee|
+to internal wrapper-local names that the user body can reference;
+\item peeks the first 32 bits of the body for the opcode and matches
+against \verb|Transfer|'s declared op;
+\item on match, decodes the remaining fields and calls the user body;
+\item on mismatch, exits successfully without invoking the user body;
+\item on successful return from the user body, commits state via
+\verb|SETDATA| and terminates with exit code 0;
+\item on any \verb|THROW| during the user body, skips the state commit
+and propagates the exit code.
 \end{enumerate}
 
-This is protocol-aware lowering, but it is still only a wrapper around the real
-VM inputs.
+For \verb|external fn recv(msg: Signed<Payload>)| the wrapper applies
+the same model plus signature decoding. For
+\verb|bounce fn on_bounce(ctx: BounceContext<T>)| the wrapper first
+strips the \verb|0xFFFFFFFF| bounce header.
+
+For a \verb|Slice| entry parameter the wrapper skips decoding entirely;
+the user body receives the raw body slice.
+
+\paragraph{Trailing \texttt{Slice} / \texttt{Cell} field handling.}
+A trailing \verb|Slice| field on a message type captures the
+remaining bits and refs of the cell \emph{unconsumed} by the
+structured fields. Lowering: after decoding the structured fields, the
+remainder slice is bound directly to the field name without further
+\verb|ENDS| check. A trailing \verb|Cell| / \verb|RawCell| field
+consumes one more \verb|^Cell| reference via \verb|LDREF| instead.
+
+\paragraph{\texttt{enum} of messages for dispatch.}
+A wrapper whose parameter is an enum of \verb|message| variants
+performs a 32-bit opcode peek once, matches against the concatenated
+variants' opcode set, and dispatches to the matching variant's
+decoder + user-body arm. No match $\to$ silent success.
+
+This is protocol-aware lowering, but it is still only a wrapper around
+the real VM inputs.
 
 \subsection{Effect Sets Do Not Survive Code Generation}
 An effect annotation such as
@@ -629,6 +699,7 @@ compile time and produce a concrete body encoder call, not a reflective or
 dynamic dispatch sequence.
 
 \subsection{Typed Send Lowers to Ordinary Message Construction}
+\label{sec:send-lowering}
 The high-level call
 
 \begin{verbatim}
@@ -659,42 +730,77 @@ choice for the same source and codec. The canonical rule should therefore be:
 \item emit the corresponding branch or specialized fast path.
 \end{enumerate}
 
-The exact fit predicate belongs to the language+stdlib contract and must be
-stable across compilers.
+The exact fit predicate belongs to the language+stdlib contract and
+must be stable across compilers.
+
+\subsection{\texttt{asm} Blocks Pass Through to Fift}
+\label{sec:asm-lowering}
+\verb|asm| blocks are the only surface form whose content bypasses
+type checking and lowering. The compiler's contract is to:
+
+\begin{enumerate}
+\item verify the enclosing function carries the \verb|unsafe|
+qualifier;
+\item for inline \verb|asm(in\_vars) -> (out\_tys) { """..." "" }|,
+arrange the named input variables on the TVM stack per the declared
+order before emitting the literal Fift snippet;
+\item emit the Fift tokens verbatim into the generated Fift source
+(with appropriate escaping);
+\item after the block, treat the stack as the declared \verb|out\_tys|
+and bind to outer temporaries or return values accordingly;
+\item for function-body \verb|asm "..."| or \verb|asm { """..." "" }|
+forms, the rule in \verb|crypto/func/parse-func.cpp| \S5.4 for 0.4.6
+\verb|asm| bodies applies: width constraints ($\le 16$ per argument
+and per return tensor) and optional argument/return order permutation
+are honoured.
+\end{enumerate}
+
+The compiler does not parse the Fift beyond minimal tokenisation
+(balanced quotes, comment handling). The burden of correctness lies
+with the author.
+
+\paragraph{Effect inference inside \texttt{asm}.}
+Because the compiler does not understand the Fift, it cannot infer an
+effect set for an \verb|asm| block. The enclosing function therefore
+defaults to the \verb|unsafe| qualifier's semantics: the compiler
+treats it as if it had the maximal effect set
+\verb|effect(read, write, send)| for the purpose of checking other
+callers. Authors who want a safe wrapper provide a non-\verb|unsafe|
+function that calls the \verb|unsafe| primitive with a narrower
+declared effect set.
 
 \section{Worked Lowering Example}
 \subsection{Source Fragment}
 \begin{verbatim}
-pub message Transfer(op = 0x0f8a7ea5) {
-    seqno: u32,
-    to: Address,
-    amount: Coins,
-}
+contract Wallet {
+    state { seqno: u32, owner: Address }
 
-entry internal fn recv_internal(
-    ctx: InternalContext<Transfer>,
-) -> Result<(), WalletError> effect(read, write, send) {
-    let mut state = load_state()?;
-    let msg = ctx.body;
+    error WrongSeqno = 33,
+          ZeroAmount = 34;
 
-    if msg.seqno != state.seqno {
-        return Err(WalletError::WrongSeqno);
+    message Transfer(op = 0x0f8a7ea5) {
+        seqno:  u32,
+        to:     Address,
+        amount: Coins,
     }
 
-    send(
-        msg.to,
-        (),
-        SendOptions {
-            value: msg.amount,
-            bounce: BounceMode::Body256,
-            body_layout: BodyLayout::Auto,
-            mode: SendMode::PayFeesSeparately,
-        }
-    )?;
+    internal fn on_transfer(msg: Transfer) {
+        require!(msg.seqno == state.seqno,   WrongSeqno);
+        require!(msg.amount > Coins::zero(), ZeroAmount);
 
-    state.seqno += 1;
-    save_state(state)?;
-    Ok(())
+        send(
+            msg.to,
+            (),
+            SendOptions {
+                value:       msg.amount,
+                bounce:      BounceMode::Body256,
+                body_layout: BodyLayout::Auto,
+                mode:        SendMode::PayFeesSeparately,
+            }
+        );
+
+        state.seqno += 1;
+    }
 }
 \end{verbatim}
 
@@ -703,66 +809,68 @@ The canonical lowering is:
 
 \begin{enumerate}
 \item generate \verb|__Transfer_encode| and \verb|__Transfer_decode|;
-\item generate a low-level internal-entry wrapper \verb|__entry_recv_internal|;
+\item generate error enum \verb|WalletError| $\to$ \verb|u16| mapping;
+\item generate a low-level internal-entry wrapper
+\verb|__entry_on_transfer|;
 \item keep the typed user body as a concrete selector function;
-\item lower each \verb|?| into explicit branch-and-return control flow;
+\item lower each \verb|require!| to an \verb|IFNOT| + \verb|THROW|
+sequence with the numeric error code;
 \item lower \verb|send(... )| to ordinary message building plus
-\verb|SENDRAWMSG|.
+\verb|SENDRAWMSG|;
+\item lower \verb|state.seqno += 1| to a tuple-field rewrite on the
+wrapper-supplied \verb|state| local;
+\item emit \verb|SETDATA| on normal return, nothing on \verb|THROW|.
 \end{enumerate}
 
 \subsection{Generated Wrapper Shape}
 \begin{verbatim}
-__entry_recv_internal(low_level_abi_args):
-    raw_ctx   = parse_low_level_internal_context(low_level_abi_args)
-    msg_res   = __Transfer_decode(raw_ctx.body_slice)
-    if msg_res is Err(e):
-        return lower_entry_parse_failure(e)
-    typed_ctx = InternalContext {
-        sender: raw_ctx.sender,
-        value: raw_ctx.value,
-        forward_fee: raw_ctx.forward_fee,
-        body: msg_res.ok,
-    }
-    return __recv_internal_impl(typed_ctx)
+__entry_on_transfer(low_level_abi_args):
+    raw_ctx  = parse_low_level_internal_context(low_level_abi_args)
+    op       = preload_u32(raw_ctx.body_slice)
+    if op != 0x0f8a7ea5:
+        return 0                    # silent drop, no state commit
+    msg      = __Transfer_decode_after_op(raw_ctx.body_slice)
+    # bind wrapper-local ctx.sender, ctx.value, ctx.forward_fee
+    state    = load_state()          # aborts on malformed state cell
+    # call the user body, which mutates state via the wrapper frame
+    __user_on_transfer_impl(state, msg, raw_ctx)
+    save_state(state)                 # SETDATA on normal return only
+    return 0
 \end{verbatim}
 
 \subsection{User Body Shape After Desugaring}
 \begin{verbatim}
-__recv_internal_impl(ctx):
-    __r0 = load_state()
-    if __r0 is Err(e): return Err(WalletError::Parse(e))
-    state = __r0.ok
-    msg = ctx.body
+__user_on_transfer_impl(state, msg, ctx):
+    if !(msg.seqno == state.seqno):
+        THROW 33                      # WrongSeqno
+    if !(msg.amount > 0):
+        THROW 34                      # ZeroAmount
 
-    if msg.seqno != state.seqno:
-        return Err(WalletError::WrongSeqno)
-
-    __r1 = send(msg.to, (), opts_from(msg.amount))
-    if __r1 is Err(e): return Err(WalletError::Send(e))
+    send(msg.to, (), opts_from(msg.amount))  # aborts on any failure
 
     state.seqno = state.seqno + 1
-
-    __r2 = save_state(state)
-    if __r2 is Err(e): return Err(map_cell_error(e))
-
-    return Ok(())
 \end{verbatim}
 
 \subsection{Fift/TVM Shape}
-At the final backend stage, the remaining building blocks are ordinary TVM
-operations:
+At the final backend stage, the remaining building blocks are
+ordinary TVM operations:
 
 \begin{itemize}
-\item state load/save via the current persistent-data path;
-\item integer comparison for the sequence number check;
-\item builder construction and \verb|ENDC| for any encoded cells;
+\item state load/save via \verb|GETDATA| and \verb|SETDATA|;
+\item integer comparison for the seqno check;
+\item builder construction and \verb|ENDC| for the encoded outbound
+message body;
 \item \verb|SENDRAWMSG| for the outbound transfer;
 \item selector-based function calls for helper routines;
-\item conditional branches for all \verb|Result| tests.
+\item \verb|THROWIFNOT| for each \verb|require!|;
+\item conditional branches only for \verb|match| over enums and
+\verb|if let| over \verb|Option|.
 \end{itemize}
 
-In other words, the high-level source has been reduced to the same machine model
-already used by present FunC and hand-written Fift.
+In other words, the high-level source is reduced to the same machine
+model already used by present FunC and hand-written Fift --- no
+hidden runtime, no reflective dispatch, no \verb|Result| control
+flow.
 
 \section{Canonical Decisions Fixed}
 Every ABI-level and semantic decision that earlier drafts of this document

@@ -19,56 +19,74 @@
 \maketitle
 
 \begin{center}
-\textbf{Document version:} v3 (Draft)\quad$\vert$\quad
-\textbf{Supersedes:} v1 (initial proposal), v2 (10 Canonical Decisions locked)
+\textbf{Document version:} v4 (Draft)\quad$\vert$\quad
+\textbf{Supersedes:} v1 (initial proposal), v2 (10 Canonical Decisions
+locked), v3 (corpus-surfaced issues folded)
 \end{center}
 
 \begin{abstract}
 This document proposes a new source-level design target for FunC,
 version \verb|0.5.0|. It starts from the currently implemented FunC
 \verb|0.4.6| surface documented in \verb|doc/func.tex|, but reworks the
-language around five principles:
+language around four principles:
 
 \begin{enumerate}
-\item strong domain types for TVM/TOS values such as typed cells,
-\verb|Slice|, \verb|Builder|, \verb|Address|, and typed messages;
-\item algebraic data types and exhaustive pattern matching;
-\item explicit fallibility through \verb|Option| and \verb|Result|;
-\item explicit mutability and explicit side effects;
-\item module-, trait-, and generic-oriented reuse suitable for a standard
-library and contract ecosystem.
+\item strong domain types for TVM/TOS values --- typed cells,
+\verb|Slice|, \verb|Builder|, \verb|Address|, \verb|Coins|, and typed
+messages carried directly as entry-function parameters;
+\item a \verb|contract { }| block that groups state, errors, entry
+points, and getters into one legible declaration, with low ceremony;
+\item abort-by-default semantics using \verb|require!(cond, err)| and
+named exit codes, matching TVM, FunC \verb|0.4.6|, and Solidity mental
+models;
+\item a single \verb|asm { }| escape hatch for direct Fift whenever the
+high-level surface is not enough.
 \end{enumerate}
 
-The language direction intentionally moves toward Rust-like ergonomics, but does
-not attempt to become ``Rust on TVM''. In particular, it does not introduce
-ownership, borrowing, lifetimes, macro metaprogramming, or a synchronous call
-model that would conflict with TOS's asynchronous, actor-like execution.
+FunC \verb|0.5.0| deliberately rejects every Rust-derived feature whose
+complexity outweighs its benefit in the smart-contract context: no
+ownership, no lifetimes, no \verb|\&self| borrows, no macros, no
+\verb|async/await|, no trait objects --- and \textbf{no} \verb|?|
+operator. \verb|Result<T, E>| is retained as a niche type for genuine
+recovery paths, but the idiomatic failure mechanism is abort. Traits,
+generics, and \verb|impl| blocks remain available for stdlib and
+advanced library authors, but ordinary contract authors never need to
+write them.
 
-This is a design proposal, not an implementation manifest. Its role is to
-define a coherent, teachable next-generation FunC surface that remains faithful
-to TVM/TOS semantics.
+This is a design proposal, not an implementation manifest. Its role is
+to define a coherent, teachable next-generation FunC surface that
+remains faithful to TVM/TOS semantics.
 \end{abstract}
 
 \section*{Introduction}
-Current FunC is compact and close to TVM, but that same closeness makes it hard
-to learn and easy to misuse. Several recurring pain points follow directly from
-the \verb|0.4.6| language shape:
+Current FunC is compact and close to TVM, but that same closeness makes
+it hard to learn and easy to misuse. Several recurring pain points
+follow directly from the \verb|0.4.6| language shape:
 
 \begin{itemize}
 \item domain values are not modeled as strongly as they should be;
 \item boolean logic, parsing success, and protocol errors are too often
 represented as unstructured integers;
 \item mutation is hidden inside special syntax such as \verb|~method|;
-\item exceptions and implicit runtime conventions are used where typed return
-values would be easier to reason about;
-\item code reuse relies too heavily on low-level built-ins and ad hoc include
-patterns.
+\item exception codes are magic numbers rather than named constants;
+\item code reuse relies too heavily on low-level built-ins and ad hoc
+include patterns;
+\item entry-point message bodies must be parsed manually, one field at
+a time, from a raw \verb|Slice|.
 \end{itemize}
 
-FunC \verb|0.5.0| addresses these issues by keeping the low-level power of TVM
-available while moving ordinary authoring toward a safer and more legible
-surface. The intended result is not ``higher level at any cost'', but a better
-alignment between source code and the actual constraints of on-chain execution.
+FunC \verb|0.5.0| addresses these issues by keeping the low-level power
+of TVM available while moving ordinary authoring toward a safer and
+more legible surface. The central design choice is \emph{one surface
+plus one escape hatch}: a compact high-level language that covers the
+vast majority of contract code, and an \verb|asm { }| block that drops
+to raw Fift whenever the high level cannot express what TVM can do.
+This mirrors how Solidity plus its inline \verb|assembly { }| block is
+used in practice on EVM, adapted for the TVM instruction set.
+
+The intended result is not ``higher level at any cost'', but a better
+alignment between source code and the actual constraints of on-chain
+execution.
 
 \clearpage
 \tableofcontents
@@ -182,45 +200,80 @@ remaining easy to learn; it does not require authors to reason about lifetimes
 or ownership graphs.
 
 \section{Headline Changes with Respect to 0.4.6}
-\begin{longtable}{|p{0.28\textwidth}|p{0.31\textwidth}|p{0.31\textwidth}|}
+\begin{longtable}{|p{0.26\textwidth}|p{0.31\textwidth}|p{0.33\textwidth}|}
 \hline
-\textbf{Concern} & \textbf{FunC 0.4.6} & \textbf{FunC 0.5.0 proposal} \\ \hline
+\textbf{Concern} & \textbf{FunC 0.4.6} & \textbf{FunC 0.5.0} \\ \hline
+Contract structure &
+free-standing \verb|recv_internal|, \verb|recv_external|, \verb|seqno|
+etc.\ with implicit state layout &
+\verb|contract { state {...} error ...; external fn ...;|
+\verb|internal fn ...; get fn ...; }| as a single block \\ \hline
 Local binding &
 \verb|var x = ...| or explicit type application syntax &
 \verb|let x = ...|, \verb|let mut x = ...|, and ordinary typed bindings \\ \hline
 Boolean values &
 commonly encoded as \verb|int| &
 dedicated \verb|bool| type with no implicit int-to-bool coercion \\ \hline
-Parsing failures &
-integer flags or exceptions &
-\verb|Option<T>| and \verb|Result<T, E>| \\ \hline
 Mutating methods &
 \verb|~method| syntax &
 ordinary method syntax with \verb|mut self| in the signature \\ \hline
 Error handling &
-\verb|throw_*| helpers and \verb|try/catch| &
-typed \verb|Result| plus \verb|?| and \verb|match|; raw abort still exists for low-level code \\ \hline
+\verb|throw|, \verb|throw_if|, \verb|throw_unless(N, cond)| with bare
+numeric codes &
+\verb|require!(cond, Err)| with a named error enum; the legacy numeric
+exit-code convention is preserved at the wrapper \\ \hline
+Failure semantics &
+abort on failure (TVM-native) &
+\textbf{still abort on failure} --- the idiomatic path uses
+\verb|require!| with no \verb|Result| wrapping. \verb|Result<T, E>|
+remains available for genuine recoverable paths but is not the default \\ \hline
 Domain types &
 \verb|int/cell/slice/builder/cont| plus conventions &
-rich built-in domain types such as \verb|Cell<T>|, \verb|Slice|,
-\verb|Builder|, \verb|Address|, \verb|Coins|, and
-\verb|InternalContext<T>| \\ \hline
+rich built-in domain types: \verb|Cell<T>|, \verb|Slice|,
+\verb|Builder|, \verb|Address|, \verb|Coins|, \verb|Bytes|,
+\verb|Vec<T>|, \verb|EitherRefOrInline<T>|, \verb|bits512|, typed
+\verb|i32..i257| / \verb|u8..u256| scalars \\ \hline
+Entry bodies &
+entry functions take a raw \verb|slice in_msg|; every contract hand-rolls
+opcode load + branch + field-by-field parse &
+entry functions take a \textbf{typed message parameter} directly; the
+generated wrapper decodes the raw body into a \verb|struct| or
+\verb|enum| before calling the user body \\ \hline
+Signature verification &
+hand-rolled signature+hash wiring in every wallet &
+\verb|Signed<T>| stdlib wrapper: \verb|msg: Signed<Payload>| +
+\verb|msg.check(pubkey)| \\ \hline
+Trailing-body handling &
+while-loop over a shared \verb|slice| &
+message declarations may end with a \verb|Slice| or \verb|Cell| field
+that captures the remaining bits/refs; everything before is
+structurally parsed \\ \hline
 Control over impurity &
 single \verb|impure| qualifier &
-explicit effect sets such as \verb|effect(read, write, send)| \\ \hline
+an effect system (\verb|pure| / \verb|effect(read, write, send)| /
+\verb|unsafe|) that is \textbf{inferred by default}; see the Effect
+Visibility Policy (\S\ref{sec:effect-visibility}) \\ \hline
+Raw TVM interop &
+special \verb|asm| function bodies &
+\verb|asm| function bodies + inline \verb|asm { """ ... """ }|
+expression/statement blocks, both gated behind \verb|unsafe| \\ \hline
 Message schemas &
-manual op-code parsing and slice plumbing &
-\verb|enum|, \verb|struct|, codec traits, and typed entrypoints \\ \hline
+manual op-code constants and slice plumbing &
+\verb|message M(op = 0x...) { fields }| with derived codec;
+\verb|enum| of messages for dispatch via \verb|match| \\ \hline
 Serialization &
 manual builder/slice plumbing for every protocol type &
-\verb|Cell<T>|, \verb|to_cell|, \verb|from_cell|, \verb|load_any|, and
-\verb|store_any| as ordinary typed APIs \\ \hline
-Mutable alias safety &
-mostly unchecked beyond surface syntax &
-explicit mutable arguments plus a lightweight overlap checker for mutable places \\ \hline
+derived codecs via \verb|Cell<T>|, \verb|to_cell|, \verb|from_cell|;
+\verb|store_any| / \verb|load_any| as stdlib helpers \\ \hline
+Error codes &
+magic integers passed to \verb|throw_unless(N, ...)| &
+\verb|error A = 33, B = 34;| mini-syntax inside \verb|contract { }|
+expands to a private enum with numeric discriminants preserved for
+ABI parity \\ \hline
 Reuse &
 include-heavy and built-in-heavy &
-\verb|mod|, \verb|use|, generics, \verb|trait|, and \verb|impl| \\ \hline
+\verb|mod| / \verb|use| / generics / \verb|trait| / \verb|impl|,
+available but intended primarily for stdlib and library authors \\ \hline
 Built-ins &
 many parser-predefined names &
 small core + stdlib \verb|extern "tvm"| declarations \\ \hline
@@ -296,23 +349,28 @@ compatibility gates, but new code should prefer explicit prefixes and typed
 constructors.
 
 \subsection{Keywords}
-The core language reserves the following new keyword set:
+The core language reserves the following keyword set:
 
 \begin{verbatim}
 mod use pub const type struct enum message trait impl fn extern
-let mut static match if else while loop for in break continue
-return where self Self as
-effect pure unsafe
-entry external internal bounce get
+let mut match if else while loop for in break continue return
+where self Self as
+effect pure unsafe asm
+contract state error require emit
+external internal bounce get
 \end{verbatim}
 
-Two of these (\verb|static|, \verb|where|) are reserved for future use: the
-language grammar in Section~\ref{sec:grammar} does not currently consume them.
-They are listed here so that user identifiers do not collide.
+\verb|where| is reserved for future use. Compatibility mode may
+additionally reserve legacy FunC words such as \verb|global|, \verb|impure|,
+\verb|inline|, and \verb|method_id|.
 
-Compatibility mode may additionally reserve legacy FunC words such as
-\verb|global|, \verb|asm|, \verb|impure|, \verb|inline|, and
-\verb|method_id|.
+\verb|require| and \verb|emit| are consumed by their macro forms
+\verb|require!| and \verb|emit| (see \S\ref{sec:require-emit}); they are
+not callable as plain function names. \verb|contract|, \verb|state|,
+and \verb|error| introduce a contract block and its declarations
+(\S\ref{sec:contract-block}). \verb|external| / \verb|internal| /
+\verb|bounce| / \verb|get| are entry qualifiers inside a contract
+block.
 
 \subsection{Attributes}
 \label{sec:attributes}
@@ -384,8 +442,81 @@ standard library design, contract libraries, and test-only helpers:
 pub struct WalletState { ... }
 pub enum WalletMsg { ... }
 pub message Transfer(op = 0x0f8a7ea5) { ... }
-pub fn recv_internal(...) -> Result<(), WalletError> effect(write, send) { ... }
+pub fn helper(...) -> () effect(read) { ... }
 \end{verbatim}
+
+\subsection{The \texttt{contract \{ ... \}} Block}
+\label{sec:contract-block}
+The recommended top-level shape for a smart contract is a
+\verb|contract { }| block that groups persistent state, error codes,
+entry points, getters, and contract-local helpers into one declaration:
+
+\begin{verbatim}
+contract Name {
+    state { field: T, field: T, ... }
+
+    error Code1 = N1,
+          Code2 = N2,
+          ...;
+
+    message LocalMsg(op = 0x...) { ... }    // optional local schemas
+    enum LocalBundle { ... }
+
+    external fn recv(msg: SomeMessage) { ... }
+    internal fn recv(msg: SomeEnum)    { ... }
+    bounce   fn on_bounce(ctx: BounceContext<T>) { ... }
+    get      fn name(...) -> T { ... }
+
+    fn helper(mut state: Name, ...) { ... }  // contract-local helper
+}
+\end{verbatim}
+
+The \verb|contract Name { }| block is a sugar that expands to:
+
+\begin{itemize}
+\item a \verb|pub struct NameState { ... }| with the declared fields;
+\item a private \verb|enum NameError : u16 { ... }| from the
+\verb|error| declarations, with numeric discriminants preserved;
+\item generated \verb|load_state|/\verb|save_state| helpers over the
+persistent-data cell;
+\item wrapper functions around the entry points that decode the raw
+inbound body into the typed parameter and (on
+success) commit state, or (on failure) abort with the appropriate exit
+code;
+\item getters exported with their \verb|method_id| per Canonical
+Decision 6;
+\item an ABI manifest enumerating entry effect sets, exit codes, and
+exported method-ids.
+\end{itemize}
+
+Authors who want finer control may still declare these items directly
+at module scope (without the \verb|contract| block). The block is
+syntactic sugar, not a restriction.
+
+\subsection{The \texttt{error} Shorthand}
+\label{sec:error-shorthand}
+Inside a \verb|contract { }| block (or at module scope with the same
+syntax) authors may declare error codes using the \verb|error|
+shorthand:
+
+\begin{verbatim}
+error WrongSeqno = 33,
+      BadSignature = 35,
+      Expired = 35,
+      UnknownOp = 40;
+\end{verbatim}
+
+This expands to a private \verb|enum ContractError : u16|
+with the declared variants and numeric discriminants. The codes are
+used directly in \verb|require!(cond, ErrorCode)| (see
+\S\ref{sec:require-emit}). Multiple variants may share a numeric value
+(as above with \verb|35|); the compiler keeps them distinguishable at
+the source level while producing identical exit-code behaviour, so
+existing indexers that compare \verb|exit_code == 35| still work.
+
+The longer form \verb|enum CustomError : u16 { ... }| remains
+available and is required when error variants need to carry payload or
+span modules (see Section~\ref{sec:error-model}).
 
 \section{Type System}
 \label{sec:v050-types}
@@ -578,6 +709,7 @@ pub enum Op : u32 {
 \end{verbatim}
 
 \subsection{Message Declarations}
+\label{sec:message-decl}
 Wire-level message bodies deserve a dedicated declaration form because they are
 one of the dominant concepts in TVM/TOS contracts:
 
@@ -596,15 +728,65 @@ codec. In particular:
 \begin{itemize}
 \item the opcode binding is part of the declaration rather than an external
 convention;
-\item the declaration derives the relevant cell/TL-B codec traits;
-\item typed entrypoints may request \verb|InternalContext<Transfer>| directly;
-\item higher-level enums may still group multiple message bodies when a contract
-wants one sum type for dispatch.
+\item the declaration derives the relevant cell/TL-B codec;
+\item entry functions may take a message type directly as their
+parameter (\S\ref{sec:entry-typed}); the generated wrapper decodes the
+inbound body into the typed struct before invoking the user body;
+\item an \verb|enum| of message variants dispatches multiple opcodes
+through a single \verb|match|.
 \end{itemize}
 
+Message declarations without an \verb|op =| clause are still valid and
+describe a body schema without a wire-level opcode; such schemas are
+used as payloads inside wrappers such as \verb|Signed<T>| or as
+non-TEP-owned custom formats.
+
+\paragraph{Messages without opcodes as entry payloads.}
+For external entries (notably wallet bodies), a message may be declared
+without an opcode:
+
+\begin{verbatim}
+pub message WalletRequest {
+    global_id: i32,
+    subwallet_id: u32,
+    valid_until: u32,
+    seqno: u32,
+    actions: Slice,
+}
+\end{verbatim}
+
+This is the natural payload type for \verb|Signed<WalletRequest>|,
+where the wrapper carries the signature and the message carries the
+signed body (see \S\ref{sec:signed-t}).
+
+\subsection{Trailing \texttt{Slice} / \texttt{Cell} Field}
+\label{sec:trailing-slice}
+A message or struct may end with a single field of type \verb|Slice|,
+\verb|RawSlice|, \verb|Cell|, or \verb|RawCell|. When present, such a
+field \textbf{captures the remainder} of the decoder input without
+further structural parsing:
+
+\begin{itemize}
+\item a trailing \verb|Slice| or \verb|RawSlice| field binds to the
+remaining bits \textbf{and} refs of the current cell, as a native TVM
+slice, letting the author iterate manually or pass it to another
+parser;
+\item a trailing \verb|Cell| or \verb|RawCell| field binds to the next
+single \verb|^Cell| reference, which the author may later decode
+using a more specific codec.
+\end{itemize}
+
+A \verb|Slice|/\verb|Cell| field in any position other than last is a
+compile-time error (\verb|TailFieldNotLast|), because a non-terminal
+capture has no determinable boundary.
+
+The rule lets authors model ``fixed structured header followed by
+opaque tail'' naturally, without building a custom ad-hoc decoder in
+every wallet contract.
+
 \subsection{Option and Result}
-Two standard prelude types are assumed. Their variant order is fixed by the
-canonical tag assignment in Section~\ref{sec:cd-stack-enum}:
+Two standard prelude enums are defined. Their variant order is fixed by
+the canonical tag assignment in Section~\ref{sec:cd-stack-enum}:
 
 \begin{verbatim}
 pub enum Option<T> {
@@ -618,30 +800,43 @@ pub enum Result<T, E> {
 }
 \end{verbatim}
 
-Wire-format and stack-layout are fixed canonically:
-\verb|Option<T>| is bit-compatible with TL-B \verb|Maybe X|;
-\verb|Result<T, E>| uses a 1-bit tag. See
-Sections~\ref{sec:cd-stack-enum} and \ref{sec:cd-wire-enum}.
+\paragraph{\texttt{Option<T>} is first-class.}
+\verb|Option<T>| expresses fields that may or may not be present (for
+example an optional response address on a transfer). It is used
+routinely; \verb|match msg { Some(x) => ..., None => ... }| and
+\verb|if let Some(x) = msg.response_to| are the ordinary idioms.
 
-These types are not library afterthoughts. They are core to ordinary contract
-authoring:
-
-\begin{itemize}
-\item \verb|Option<T>| expresses absence without sentinels;
-\item \verb|Result<T, E>| expresses recoverable failure without bare exceptions;
-\item \verb|match| and \verb|?| make both types ergonomic in routine code.
-\end{itemize}
+Wire form: bit-compatible with TL-B \verb|Maybe X|. Stack form:
+\verb|(tag, payload)| per Canonical Decision~1.
 
 For readability, \verb|T?| is accepted as surface sugar for
 \verb|Option<T>|:
 
 \begin{verbatim}
-Address?
-Cell<JettonWalletState>?
+response_to: Address?
+plugins: Cell<PluginDict>?
 \end{verbatim}
 
-Unlike languages that normalize everything around \verb|null|, the teaching path
-still centers \verb|Some|/\verb|None|, \verb|match|, and \verb|if let|.
+\paragraph{\texttt{Result<T, E>} is kept but deprioritised.}
+\verb|Result<T, E>| exists for genuine recoverable-failure paths --- for
+example a cross-contract reply that can be \verb|Ok| with a payload or
+\verb|Err| with a typed reason, and the caller genuinely wants to branch
+on the two cases locally. Such paths are rare in contract code.
+
+For the overwhelmingly common case --- a value that either arrives
+correctly or causes the whole transaction to abort --- the idiomatic
+form is \textbf{not} \verb|Result|. Stdlib APIs return raw values and
+abort on failure, matching TVM native semantics. Authors use
+\verb|require!(cond, err)| (\S\ref{sec:require-emit}) to assert
+conditions and abort with a named exit code. See
+Section~\ref{sec:error-model} for the full error model.
+
+FunC \verb|0.5.0| does \textbf{not} provide a \verb|?| operator.
+Recoverable-error chains that legitimately need \verb|Result| are
+handled with an explicit \verb|match| at every call site. The absence
+of \verb|?| is a deliberate design choice: the \verb|?| family of
+syntax encourages rescuing errors at a distance, which matches poorly
+with TVM's abort-or-commit transaction semantics.
 
 \subsection{Type Aliases}
 Type aliases remain important for readability:
@@ -792,70 +987,53 @@ This replaces the special \verb|cs~load_uint(32)| syntax. The source clearly
 states mutability in the binding and in the method signature, rather than
 hiding it in punctuation.
 
-\paragraph{Error-path state of mutable receivers.} When a \verb|mut self|
-method returns \verb|Result<_, E>|, the canonical semantics are:
-
-\begin{itemize}
-\item on \verb|Ok|, the caller-side mutable place is rebound to the updated
-receiver, and the \verb|Ok| payload is propagated;
-\item on \verb|Err|, the caller-side mutable place is \emph{restored to its
-pre-call state}. Any partial cursor advancement or field mutation inside
-the callee is discarded.
-\end{itemize}
-
-This means \verb|cs.load_uint(32)?| followed by code that reuses \verb|cs| in
-the \verb|Err| branch can rely on \verb|cs| still pointing at the original
-position. The lowering in \verb|doc/func_v0.5.0-lowering.tex| \S4.3 must
-be read with this rule: the \texttt{unconditional writeback} shown there is a
-conceptual desugar step, and the emitted code must guard the writeback with a
-tag check, or must use a shadow copy, so that the \verb|Err| case does not
-commit intermediate state. Authors may explicitly commit partial mutations by
-writing \verb|let new_cs = cs; new_cs.load_uint(32)?| in a non-receiver form.
+\paragraph{Mutation on the abort path.}
+When a \verb|mut self| method aborts (via \verb|require!|, an
+overflowing cell operation, or any other \verb|THROW|), the entire
+transaction rolls back: persistent state is not committed, the action
+list is discarded, and the caller's mutable place is irrelevant because
+execution halts. Authors do not reason about partial state updates
+across an abort boundary.
 
 \subsection{Mutable Arguments and Lightweight Safety Checks}
 \label{sec:mut-args}
-Methods with \verb|mut self| remain the idiomatic surface for builder/slice-like
-APIs. Free functions --- and in particular helper functions that update a
-contract's persistent state --- accept mutable places explicitly through a
-\verb|mut| parameter qualifier:
+Methods with \verb|mut self| are the idiomatic surface for
+builder/slice-like APIs. Free functions --- and in particular helper
+functions that update a contract's persistent state --- accept mutable
+places explicitly through a \verb|mut| parameter qualifier:
 
 \begin{verbatim}
-pub fn load_var_uint(mut s: Slice, bits: u16) -> Result<u256, ParseError> pure { ... }
+pub fn load_var_uint(mut s: Slice, bits: u16) -> u256 pure { ... }
 
 let mut cs = body;
-let n = load_var_uint(mut cs, 5)?;
+let n = load_var_uint(mut cs, 5);   // aborts on malformed input
 \end{verbatim}
 
 \paragraph{Helper functions that mutate persistent state.}
-This is the canonical pattern for splitting a contract's entry body into
-smaller helpers that each mutate the protocol state. There is no \verb|&self|
-or \verb|&mut self| borrow form in FunC \verb|0.5.0|; state passes through
-\verb|mut| arguments by value-thread:
+This is the canonical pattern for splitting an entry body into smaller
+helpers that each mutate the protocol state. There is no \verb|&self|
+or \verb|&mut self| borrow form in FunC \verb|0.5.0|; state passes
+through \verb|mut| arguments by value-thread:
 
 \begin{verbatim}
-fn on_transfer(
-    mut state: WalletState,
-    sender: Address,
-    req: Transfer,
-) -> Result<(), WalletError> effect(read, send) { ... }
+fn on_transfer(mut state: WalletState, sender: Address, req: Transfer) { ... }
 
-fn recv_internal(ctx: InternalContext<WalletMsg>) -> Result<(), WalletError> ... {
-    let mut state = load_state()?;
-    match ctx.body {
-        WalletMsg::Transfer(req) => on_transfer(mut state, ctx.sender, req)?,
+internal fn recv(msg: WalletMsg) {
+    let mut state = load_state();
+    match msg {
+        WalletMsg::Transfer(req) => on_transfer(mut state, ctx.sender, req),
+        WalletMsg::Burn(req)     => on_burn(mut state, ctx.sender, req),
         ...
     }
-    save_state(state)
+    save_state(state);
 }
 \end{verbatim}
 
-The lowering is identical to a method with \verb|mut self|: the helper takes
-the receiver by value and returns it updated on \verb|Ok|, rolled back on
-\verb|Err| (per the rule in \S\ref{sec:cd-stack-enum} and
-\verb|doc/func_v0.5.0-lowering.tex| \S4.3).
-
-This pattern resolves what earlier drafts listed as ``helper functions need
-\verb|&mut self|''; no such syntax is required.
+The lowering passes the receiver by value; the helper returns the
+updated receiver and its own return value (if any), and the caller's
+binding is rebound to the updated receiver. An abort along the helper
+path unwinds the whole transaction, so no per-place rollback logic is
+required.
 
 \paragraph{Overlap checks.}
 This proposal adopts three lightweight rules:
@@ -875,205 +1053,295 @@ without introducing ownership, region inference, or lifetime syntax.
 The general form is:
 
 \begin{verbatim}
-[pub] fn name(arg1: T1, mut arg2: T2, ...) -> R [effect(...)] Block
+[pub] fn name(arg1: T1, mut arg2: T2, ...) -> R [EffectQualifier] Block
+EffectQualifier ::= "pure" | "unsafe" | "effect" "(" EffectList ")"
 \end{verbatim}
 
 Examples:
 
 \begin{verbatim}
 pub fn min(x: i257, y: i257) -> i257 pure { ... }
-pub fn load_state() -> Result<WalletState, ParseError> effect(read) { ... }
-pub fn load_uint(mut s: Slice, bits: u16) -> Result<u256, ParseError> pure { ... }
-pub fn send_transfer(...) -> Result<(), SendError> effect(send) { ... }
+pub fn load_state() -> WalletState effect(read) { ... }
+pub fn load_uint(mut s: Slice, bits: u16) -> u256 pure { ... }
+pub fn send_transfer(...) -> () effect(send) { ... }
 \end{verbatim}
 
-\subsection{Pure by Default}
-A function with no effect annotation is \verb|pure|. It may compute, match, and
-transform values, but it may not:
+\subsection{Effect Vocabulary}
+\label{sec:effect-vocab}
+The effect vocabulary is:
 
 \begin{itemize}
-\item read persistent state or chain context;
-\item modify persistent state;
-\item emit outgoing messages;
-\item use raw unsafe TVM intrinsics.
+\item \verb|read|: may inspect persistent state, inbound context,
+config, time, balance, or other chain environment values;
+\item \verb|write|: may persist updated state or otherwise mutate
+contract-owned storage;
+\item \verb|send|: may emit action-phase effects such as outbound
+messages, reserve operations, or code changes.
 \end{itemize}
 
-\subsection{Effect Sets}
-The primary effect vocabulary is:
+An effect set is cumulative: \verb|effect(write, send)| may both write
+state and send messages. A \verb|pure| function has the empty effect
+set; it may only call other \verb|pure| functions. Effects propagate
+transitively: if callee's effect set is $E$, caller's effect set must
+be a superset of $E$.
 
-\begin{verbatim}
-effect(read)
-effect(write)
-effect(send)
-\end{verbatim}
+\verb|unsafe| is \emph{not} a member of the effect set. It is a
+separate top-level qualifier that grants permission to use raw
+\verb|asm| blocks and \verb|extern "tvm"| intrinsics whose safety
+cannot be proved from the surface type rules alone. A function that
+contains an \verb|asm| block (\S\ref{sec:asm-escape}) must be declared
+\verb|unsafe|; callers of \verb|unsafe| functions must themselves be
+\verb|unsafe| or wrap the call in a way that re-establishes the
+invariants (the usual pattern is a thin safe wrapper around an
+\verb|unsafe| primitive).
 
-These effects mean:
+\verb|mut self| and \verb|mut| arguments are \emph{not} effects; they
+express local state threading and are compatible with any effect set
+including \verb|pure|.
 
-\begin{itemize}
-\item \verb|read|: may inspect persistent state, inbound context, config, time,
-balance, or other chain environment values;
-\item \verb|write|: may persist updated state or otherwise mutate contract-owned
-storage;
-\item \verb|send|: may emit action-phase effects such as outbound messages,
-reserve operations, or code changes.
-\end{itemize}
+\subsection{Effect Visibility Policy}
+\label{sec:effect-visibility}
+Effects are \textbf{inferred by default}. Source code does not need to
+declare them in most positions. The spec fixes the visibility policy
+as follows:
 
-An effect set is cumulative: \verb|effect(write, send)| may both write state
-and send messages.
+\begin{longtable}{|p{0.30\textwidth}|p{0.30\textwidth}|p{0.34\textwidth}|}
+\hline
+\textbf{Function kind} & \textbf{Effect visibility} & \textbf{Why} \\ \hline
+\endfirsthead
+\hline
+\textbf{Function kind} & \textbf{Effect visibility} & \textbf{Why} \\ \hline
+\endhead
+Local \verb|fn| inside a \verb|contract { }| block or inside a module &
+\textbf{inferred}, not written in source &
+noise for the common case; compiler still computes and propagates \\ \hline
+\verb|get fn| inside a \verb|contract { }| block &
+\textbf{inferred with ceiling \texttt{effect(read)}} --- writing or
+sending from a getter is a compile error &
+the \verb|get| keyword itself declares the effect ceiling; no need to
+repeat \\ \hline
+\verb|external fn| / \verb|internal fn| / \verb|bounce fn| inside a
+\verb|contract { }| block &
+\textbf{inferred; upper bound \texttt{effect(read, write, send)}} &
+the entry keyword declares the ceiling; most entries hit the full set
+anyway \\ \hline
+\verb|pub fn| in any module (library-visible) &
+\textbf{explicit}; the declared effect set is part of the stable ABI &
+cross-module callers need to see the effect set without inference;
+stdlib and library authors must not break the declared set
+silently \\ \hline
+\verb|unsafe| functions &
+\textbf{always written in source} as a top-level qualifier; not inferable &
+\verb|unsafe| is a security boundary; auditors must see it and it
+propagates transitively \\ \hline
+\end{longtable}
 
-\verb|unsafe| is \emph{not} a member of the effect set. It is a separate
-top-level qualifier on a function that grants permission to use raw
-\verb|extern "tvm"| intrinsics and other surface-unsafe operations. See the
-grammar in Section~\ref{sec:grammar} for the precise distinction: a function
-signature may carry exactly one \texttt{EffectQualifier}, chosen from
-\verb|pure|, \verb|unsafe|, or \verb|effect(...)|.
+\paragraph{Opt-in restriction.}
+An author may write an \verb|effect(...)| annotation on any function
+to \emph{restrict} its inferred set. For example a critical function
+may declare \verb|effect(read)| to have the compiler enforce that no
+\verb|write| or \verb|send| sneaks in via a later refactor. This is
+defensive annotation, not mandatory.
 
-Effect propagation is transitive and mandatory: if a function calls another
-function whose effect set is $E$, the caller's effect set must be a superset of
-$E$ (or the caller itself must be \verb|unsafe|). A \verb|pure| function has
-$E = \emptyset$ and may only call other \verb|pure| functions. \verb|mut self|
-and \verb|mut| arguments are \emph{not} effects; they express local state
-threading and are compatible with \verb|pure|.
+\paragraph{ABI manifest.}
+The compiler emits an ABI manifest alongside every contract that
+enumerates, for each entry and getter, the inferred effect set, exit
+code catalogue, exported \verb|method_id| values, and declared
+messages. Auditors, indexers, wallets, and block explorers consume
+this manifest as the source of truth for effect information rather
+than relying on source-level annotations.
 
-\subsection{Why Not Keep \texttt{impure}}
-The old \verb|impure| marker is too coarse. It does not distinguish a getter
-that reads block context from a function that mutates storage and sends three
-messages. In \verb|0.5.0|, effect sets become part of ordinary interface review.
+\paragraph{Why Not Keep \texttt{impure}.}
+The old \verb|impure| marker is too coarse to distinguish a getter
+that reads block context from a function that mutates storage and
+sends three messages. The inferred effect set preserves the
+fine-grained distinction without forcing authors to write it.
 
 \subsection{Entrypoints}
-Contract-facing entrypoints are explicit:
+\label{sec:entrypoints}
+Entry qualifiers live inside a \verb|contract { }| block. The entry
+function takes its inbound body directly as a typed parameter:
 
 \begin{verbatim}
-entry external fn recv_external(
-    ctx: ExternalContext<SignedRequest>,
-) -> Result<(), WalletError> effect(read, write, send) { ... }
+contract Wallet {
+    state { ... }
+    error ... ;
 
-entry internal fn recv_internal(
-    ctx: InternalContext<WalletMsg>,
-) -> Result<(), WalletError> effect(read, write, send) { ... }
-
-entry bounce fn on_bounce(
-    ctx: BounceContext<RawSlice>,
-) -> Result<(), WalletError> effect(read, write) { ... }
+    external fn recv(msg: Signed<Payload>) { ... }
+    internal fn recv(msg: WalletMsg)        { ... }
+    bounce   fn on_bounce(ctx: BounceContext<Transfer>) { ... }
+    get      fn seqno() -> u32 { state.seqno }
+}
 \end{verbatim}
 
-Getter functions use a dedicated modifier:
+The compiler generates a wrapper per entry that decodes the raw
+inbound body into the declared parameter type using the derived codec
+(see Section~\ref{sec:cd-stack-enum}), then calls the user body.
+Success commits state; any abort along the user-body path rolls back
+the whole transaction.
+
+Inside a user body the names \verb|state|, \verb|ctx.sender|,
+\verb|ctx.value|, and \verb|ctx.forward_fee| are in scope when
+applicable (\verb|ctx| is supplied only where the entry receives a
+context type, not a plain typed body). \verb|state| is a mutable
+reference to the contract's persistent state, rebound to the updated
+value on normal return.
+
+The context types that can appear as an entry parameter are:
 
 \begin{verbatim}
-get fn seqno() -> Result<u32, ParseError> effect(read) { ... }
+Signed<T>                // external wallet-like pattern (stdlib; §9.2)
+WalletMsg, Transfer, ... // any user-defined typed message
+BounceContext<T>         // for entry bounce
+SignedMessage<T>         // alias for Signed<T>
 \end{verbatim}
 
-The compiler maps these to the existing TVM/TOS conventions for internal,
-external, bounced, and get-method execution.
-
-The context types are not ordinary heap objects. They are compiler-recognized
-views over real VM inputs. Source code should nevertheless treat them as normal,
-typed fields:
-
-\begin{verbatim}
-ctx.sender
-ctx.value
-ctx.forward_fee
-ctx.body
-\end{verbatim}
-
-This makes the execution model explicit while keeping raw TVM stack plumbing out
-of routine contract code.
+A plain \verb|Slice| parameter is also legal and falls back to raw
+body processing; it is the low-ceremony escape when the typed-entry
+pattern does not fit.
 
 \subsection{Entry Dispatch Matrix}
 \label{sec:entry-dispatch}
-Unlike FunC \verb|0.4.6| which uses a single \verb|recv_internal| and expects
-the contract to branch on the \verb|bounced| header bit, \verb|0.5.0| splits
-internal-message delivery into two entry families:
+Unlike FunC \verb|0.4.6| which uses a single \verb|recv_internal| and
+expects the contract to branch on the \verb|bounced| header bit,
+\verb|0.5.0| splits delivery into three independent entry families:
 
 \begin{itemize}
-\item fresh internal messages are delivered to \verb|entry internal|;
-\item bounced messages are delivered to \verb|entry bounce|;
-\item external messages are delivered to \verb|entry external|.
+\item fresh internal messages are delivered to \verb|internal fn|;
+\item bounced messages are delivered to \verb|bounce fn|;
+\item external messages are delivered to \verb|external fn|.
 \end{itemize}
 
-If a contract defines \verb|entry internal| but no \verb|entry bounce|, an
-inbound bounced message is silently dropped after consuming only the minimal
-gas needed by the low-level wrapper --- no user-written handler is invoked.
-Symmetric rules apply to undefined \verb|entry internal| (fresh internal
-silently dropped) and undefined \verb|entry external| (external message
-rejected at the wrapper). Contracts requiring the old single-entry pattern
-must use a \verb|BounceContext<RawSlice>| form and manually re-dispatch.
+If a contract defines \verb|internal fn| but no \verb|bounce fn|, an
+inbound bounced message is silently dropped after consuming only the
+minimal gas needed by the low-level wrapper --- no user-written handler
+is invoked. Symmetric rules apply to undefined \verb|internal fn|
+(fresh internal silently dropped) and undefined \verb|external fn|
+(external message rejected at the wrapper with exit code 11 = invalid
+operation). Contracts requiring the legacy single-entry pattern use a
+\verb|Slice| parameter and manually re-dispatch.
 
 \subsection{Entry Decoding Semantics}
 \label{sec:entry-decode}
-Typed body decoding happens in the generated wrapper, not in user code. The
-canonical semantics for decode failure differ per entry kind:
+Typed body decoding happens in the generated wrapper, not in user code.
+The canonical semantics for decode failure are:
 
 \begin{itemize}
-\item \verb|entry internal|: if the inbound body cannot be decoded as the
-requested \verb|T|, the wrapper exits successfully without invoking the user
-body. No state is written, no messages are sent. This preserves the TOS
-convention that unrecognized ops do not cause bounce-refund gas drain.
-\item \verb|entry external|: decoding is lazy. The wrapper exposes
-\verb|ctx.body_slice: Slice| and a user-invoked
-\verb|ctx.parse_body<T>() -> Result<T, ParseError>|.
-The wrapper does \emph{not} decode eagerly,
-because the external-message gas limit (typically 10\,000 gas before
-\verb|accept_message|) may be exhausted by decoding a large body. Authors
-must call \verb|accept_message| first, then parse.
-\item \verb|entry bounce|: decoding uses the bounced-message body convention
-(at most 256 bits after the \verb|0xFFFFFFFF| header). The default
-\verb|BounceContext<RawSlice>| form accepts any bounce; typed variants must
-opt in and must be robust to truncation.
+\item \verb|internal fn recv(msg: T)|: if the inbound body cannot be
+decoded as \verb|T|, the wrapper exits successfully without invoking
+the user body. No state is written, no messages are sent. This
+preserves the TOS convention that unrecognized ops do not cause
+bounce-refund gas drain. For a generic fallback that inspects any
+body, use \verb|Slice| as the parameter type.
+\item \verb|external fn recv(msg: T)|: if the body cannot be decoded as
+\verb|T|, the wrapper aborts with exit code 9 (cell underflow) ---
+the external message is rejected. The external-message gas limit
+(typically 10\,000 gas before \verb|accept_message|) applies to the
+decode cost; authors using a \verb|Slice| parameter take full manual
+control and are responsible for calling \verb|accept_message| at the
+right point. For the common typed case, the fixed header portion of a
+wallet-style \verb|Signed<Payload>| is cheap enough to decode under
+the quota.
+\item \verb|bounce fn on_bounce(ctx: BounceContext<T>)|: decoding
+uses the bounced-message body convention --- at most 256 bits after
+the \verb|0xFFFFFFFF| header, and no refs. See the bounced body
+width rule below.
 \end{itemize}
 
 \paragraph{Bounced body width rule.}
-For any \verb|entry bounce fn ...(ctx: BounceContext<T>)| with \verb|T| not
-equal to \verb|RawSlice|, the compiler must statically verify
+For any \verb|bounce fn ...(ctx: BounceContext<T>)| with \verb|T| not
+equal to \verb|Slice| / \verb|RawSlice|, the compiler must statically
+verify
+
 \[
 \verb|max_encoded_bits|(T) \;\le\; 256
 \]
-where \verb|max_encoded_bits| is the worst-case bit width of \verb|T|'s
-derived codec, not counting refs. The \verb|0xFFFFFFFF| bounce header
-prefix occupies 32 bits and is added by the wrapper, not counted against the
-256-bit budget available to \verb|T|. Ref counts are also verified: \verb|T|
-must encode as purely inline bits (no refs) because bounced bodies are
-truncated, not referenced.
+
+where \verb|max_encoded_bits| is the worst-case bit width of
+\verb|T|'s derived codec, not counting refs. The \verb|0xFFFFFFFF|
+bounce header prefix occupies 32 bits and is added by the wrapper.
+Ref counts are also verified: \verb|T| must encode as purely inline
+bits (no refs) because bounced bodies are truncated, not referenced.
 
 If \verb|max_encoded_bits(T) > 256| or \verb|T| requires any refs, the
 compile error is \verb|BounceBodyTooWide|, and the author must either
-narrow \verb|T|'s schema or fall back to \verb|BounceContext<RawSlice>| and
-parse manually.
+narrow \verb|T|'s schema or fall back to \verb|BounceContext<Slice>|
+and parse manually.
 
-If a contract wants eager decoding in \verb|entry external|, it must write
-\verb|entry external(eager) fn ...|. See
-Section~\ref{sec:cd-external-eager} for the canonical rule.
-
-\subsection{External Intrinsics}
-Raw TVM primitives should be declared as \verb|extern "tvm"| in the standard
-library rather than being magic parser names:
+\subsection{External Intrinsics and the \texttt{asm} Escape}
+\label{sec:asm-escape}
+Raw TVM primitives are declared as \verb|extern "tvm"| functions in
+the standard library rather than being magic parser names:
 
 \begin{verbatim}
-extern "tvm" fn send_raw_message(msg: RawCell, mode: u8) -> () effect(send, unsafe);
-extern "tvm" fn accept_message() -> () effect(send, unsafe);
+extern "tvm" fn send_raw_message(msg: RawCell, mode: u8) -> () unsafe;
+extern "tvm" fn accept_message() -> () unsafe;
 \end{verbatim}
 
-This preserves power while making the surface language smaller and more
-teachable.
+Additionally, arbitrary Fift snippets may appear in three places inside
+\verb|unsafe| functions:
+
+\begin{verbatim}
+// (1) function-level asm body
+fn hash(s: Slice) -> u256 unsafe asm "HASHSU";
+
+// (2) multi-line asm body
+fn crc32(data: Bytes) -> u32 unsafe asm {
+    """
+    NEWC
+    STSLICE
+    ENDC
+    HASHCU
+    """
+}
+
+// (3) inline asm statement / expression inside a function
+fn combine(x: u256, y: u256) -> u256 {
+    // ... ordinary FunC above ...
+    let combined = asm(x, y) -> (u256) {
+        """
+        PAIR
+        HASHCU
+        """
+    };
+    combined
+}
+\end{verbatim}
+
+\paragraph{Rules for \texttt{asm} blocks.}
+
+\begin{itemize}
+\item Any function that contains an \verb|asm| block (function-level or
+inline) must carry the \verb|unsafe| qualifier.
+\item Inline \verb|asm(in\_vars) -> (out\_tys) { """..." "" }| must
+declare its input-variable list and output-type tuple. The compiler
+does not inspect the Fift; it trusts the declared stack contract.
+\item Formal parameters and \verb|let|-bound names in the enclosing
+function are visible inside \verb|asm| blocks.
+\item \verb|asm| contents use the 0.4.6 Fift conventions documented in
+\verb|doc/func.tex| \S5.4 (AsmBody).
+\end{itemize}
+
+The combination of a compact high-level surface and an \verb|asm|
+escape hatch is the core design choice of FunC \verb|0.5.0|: the
+high-level covers the vast majority of contract code; \verb|asm|
+covers everything TVM can do that the high-level cannot express.
 
 \section{Expressions and Statements}
 \subsection{Core Statements}
 The language supports:
 
 \begin{verbatim}
-let
-let mut
-if / else
-if let
-match
-while
-while let
-loop
-for
-break
-continue
-return
+let                       // immutable binding
+let mut                   // mutable binding
+if / else                 // conditional
+if let                    // conditional pattern bind
+match                     // exhaustive multiway
+while, while let, loop    // loops
+for                       // iterator-driven loop
+break, continue, return   // control flow
+require!(cond, err)       // abort if !cond
+emit Event { ... }        // emit an event message
 \end{verbatim}
 
 \subsection{Match Expressions}
@@ -1083,40 +1351,104 @@ Pattern matching is exhaustive by default:
 match msg {
     WalletMsg::Transfer { query_id, amount, to, response_to } => { ... }
     WalletMsg::InstallPlugin { plugin } => { ... }
-    WalletMsg::RemovePlugin { plugin } => { ... }
+    WalletMsg::RemovePlugin  { plugin } => { ... }
 }
 \end{verbatim}
 
-This is a major ergonomics improvement over manually parsing an op code into an
-\verb|int| and then maintaining a parallel maze of \verb|if| branches.
+A non-exhaustive \verb|match| is a compile-time error; the author must
+either add the missing variant or an explicit wildcard arm \verb|_ => ...|.
+This is a major ergonomics improvement over manually parsing an opcode
+into an \verb|int| and maintaining a parallel maze of \verb|if|
+branches.
 
 \subsection{Flow-Sensitive Narrowing}
-Pattern matching and optional-value tests should refine types in a
+Pattern matching and optional-value tests refine types in a
 flow-sensitive way:
 
 \begin{verbatim}
 if let Some(reply_to) = msg.response_to {
-    send(reply_to, Receipt { query_id: msg.query_id }, opts)?;
+    send(reply_to, Receipt { query_id: msg.query_id }, opts);
 }
 \end{verbatim}
 
-Inside the \verb|if let| body, \verb|reply_to| is an \verb|Address| rather than
-\verb|Address?|. Similar narrowing should happen for \verb|match| arms and other
-obvious success paths over \verb|Option|, \verb|Result|, and message variants.
+Inside the \verb|if let| body, \verb|reply_to| is an \verb|Address|
+rather than \verb|Address?|. Similar narrowing happens for \verb|match|
+arms over \verb|Option| and enum / message variants.
 
-\subsection{The Question-Mark Operator}
-If a function returns \verb|Result<T, E>|, the \verb|?| operator may be applied
-to intermediate \verb|Result| values:
+\subsection{\texttt{require!} and \texttt{emit}}
+\label{sec:require-emit}
+FunC \verb|0.5.0| provides two compiler-recognised forms that look
+like function calls but desugar at compile time.
+
+\paragraph{\texttt{require!(cond, err)}.}
+Asserts \verb|cond|; if false, aborts the transaction with the numeric
+exit code associated with \verb|err|. \verb|err| is typically a variant
+of the contract-local \verb|error| enum (\S\ref{sec:error-shorthand})
+or of an explicitly declared \verb|enum E : u16|.
 
 \begin{verbatim}
-let mut cs = body;
-let global_id = cs.load_int(32)?;
-let seqno = cs.load_uint(32)?;
-let msg = WalletMsg::load(cs)?;
+require!(seqno == state.seqno,        WrongSeqno);
+require!(valid_until > now(),         Expired);
+require!(amount > Coins::zero(),      ZeroAmount);
 \end{verbatim}
 
-This drastically reduces the need for hand-written \verb|throw_unless|,
-\verb|try/catch|, and integer-status plumbing in ordinary code.
+Desugar:
+
+\begin{verbatim}
+require!(COND, ERR)
+  ==>  if !(COND) { throw(ERR as u16) }
+\end{verbatim}
+
+\paragraph{\texttt{emit Event \{ ... \}}.}
+Emits an event message onto a predefined log sink. \verb|Event| must
+be a user-declared \verb|message| (with or without an opcode); the
+sink address is a compile-time constant configured in the stdlib
+(typically \verb|0:FFF...FFF|, the TON log-sink convention). The
+payload is derived-codec-encoded and sent with mode 32 (carry remaining
+value + destroy-if-zero).
+
+\begin{verbatim}
+message TransferLog(op = 0xTL) {
+    from:   Address,
+    to:     Address,
+    amount: Coins,
+}
+
+emit TransferLog { from: state.owner, to: req.to, amount: req.amount };
+\end{verbatim}
+
+Desugar:
+
+\begin{verbatim}
+emit Event { FIELDS }
+  ==>  send(log_sink_address, Event { FIELDS }, EVENT_DEFAULT_OPTS);
+\end{verbatim}
+
+where \verb|EVENT_DEFAULT_OPTS| is \verb|SendOptions { value: 0, bounce: NoBounce, body_layout: Auto, mode: CarryAllBalance }|.
+
+\subsection{No \texttt{?} Operator}
+FunC \verb|0.5.0| does not include a \verb|?| operator. Stdlib
+functions either return a raw value (aborting on failure) or return an
+\verb|Option<T>| / \verb|Result<T, E>| that the caller destructures
+explicitly with \verb|match| or \verb|if let|. The design rationale is
+two-fold:
+
+\begin{enumerate}
+\item The \verb|?| operator encourages rescuing errors at a distance,
+which matches poorly with TVM's abort-or-commit transaction
+semantics. When a smart-contract operation fails, the
+overwhelmingly correct action is to roll the whole transaction
+back, not to continue execution with a recovered error;
+\item abort-by-default aligns FunC \verb|0.5.0| with TVM native
+instruction semantics (\verb|LDU| / \verb|LDI| etc.\ throw on
+failure), with FunC \verb|0.4.6| \verb|~method| idioms, and with
+Solidity's \verb|require(cond, "msg")|. The conceptual model is
+shared across three widely understood systems.
+\end{enumerate}
+
+Contracts that genuinely need recoverable error paths use
+\verb|Result<T, E>| and a \verb|match| arm. Such paths are rare; see
+\S\ref{sec:error-model}.
 
 \subsection{Loop Design}
 The preferred loop forms are:
@@ -1167,116 +1499,181 @@ stdlib or user code. Trait resolution is static (monomorphized), matching the
 lowering rule in \verb|doc/func_v0.5.0-lowering.tex| \S4.10.
 
 \section{Messages, Serialization, and TVM-Specific APIs}
-\subsection{Typed Message Contexts}
-Messages should be represented as typed values rather than raw slices whenever
-possible. The standard library is expected to define context types such as:
+\subsection{Entry Parameter Types}
+\label{sec:entry-typed}
+Entry functions take their inbound body directly as a typed parameter.
+Three shapes are supported:
+
+\paragraph{1.\ A user-declared \texttt{message} type.}
+For internal messages with an opcode, use a \verb|message|:
 
 \begin{verbatim}
-pub struct InternalContext<T> {
-    sender: Address,
-    value: Coins,
-    forward_fee: Coins,
-    body: T,
+message Transfer(op = 0x0f8a7ea5) {
+    query_id: u64,
+    amount: Coins,
+    to: Address,
 }
 
-pub struct ExternalContext<T> {
-    body: T,
-    signature: Option<Bytes>,
-}
-
-pub struct BounceContext<T = RawSlice> {
-    sender: Address,
-    value: Coins,
-    original_forward_fee: Coins,
-    body: T,
+contract Jetton {
+    internal fn on_transfer(msg: Transfer) { ... }
 }
 \end{verbatim}
 
-When an entrypoint requests \verb|InternalContext<T>| for a concrete message
-type, the compiler or stdlib-generated wrapper is responsible for parsing the
-inbound body into \verb|T|. Contracts may still opt into \verb|RawSlice| when
-they need manual parsing.
+The wrapper consumes 32 bits of opcode, verifies it equals \verb|0x0f8a7ea5|,
+decodes the fields, and calls the user body. Opcode mismatch $\to$
+silent drop.
+
+\paragraph{2.\ An \texttt{enum} of messages.}
+For contracts handling multiple opcodes, group them in an enum:
+
+\begin{verbatim}
+enum JettonMsg {
+    Transfer(Transfer),
+    InternalTransfer(InternalTransfer),
+    Burn(Burn),
+}
+
+contract Jetton {
+    internal fn recv(msg: JettonMsg) {
+        match msg {
+            JettonMsg::Transfer(t)         => on_transfer(mut state, t),
+            JettonMsg::InternalTransfer(i) => on_internal_transfer(mut state, i),
+            JettonMsg::Burn(b)             => on_burn(mut state, b),
+        }
+    }
+}
+\end{verbatim}
+
+The wrapper peeks the first 32 bits and dispatches to the matching
+variant's decoder. No match $\to$ silent drop.
+
+\paragraph{3.\ A \texttt{Signed<T>} wrapper for external wallet-style
+bodies.}
+\label{sec:signed-t}
+External wallet bodies have a standard shape --- 512-bit signature
+followed by a signed payload --- and are represented by the stdlib
+wrapper:
+
+\begin{verbatim}
+// std::message
+message Signed<T> {
+    signature: bits512,
+    body: T,
+}
+
+impl<T: CellEncode> Signed<T> {
+    pub fn check(self, pubkey: u256) -> bool pure;
+}
+\end{verbatim}
+
+\verb|Signed<T>::check(pubkey)| hashes \verb|self.body| and verifies
+the signature against the supplied public key. Authors use it as:
+
+\begin{verbatim}
+message Payload {
+    global_id: i32,
+    subwallet_id: u32,
+    valid_until: u32,
+    seqno: u32,
+    actions: Slice,   // trailing
+}
+
+external fn recv(msg: Signed<Payload>) {
+    let p = msg.body;
+    require!(p.valid_until > now(),                Expired);
+    require!(p.seqno == state.seqno,               WrongSeqno);
+    // ...
+    require!(msg.check(state.pubkey),              BadSignature);
+    accept_message();
+    // ... act on p.actions ...
+}
+\end{verbatim}
+
+\subsection{\texttt{BounceContext<T>}}
+For bounce handlers the entry receives a context wrapper because
+bounced messages carry a \verb|0xFFFFFFFF| header and protocol
+metadata beyond the body itself:
+
+\begin{verbatim}
+struct BounceContext<T = Slice> {
+    sender: Address,
+    value:  Coins,
+    body:   T,
+}
+
+contract Jetton {
+    bounce fn on_bounce(ctx: BounceContext<InternalTransfer>) {
+        let mut state = load_state();
+        state.balance += ctx.body.amount;   // refund
+        save_state(state);
+    }
+}
+\end{verbatim}
+
+The \verb|T| of a \verb|BounceContext<T>| must satisfy the bounced
+body width rule (\S\ref{sec:entry-decode}): at most 256 encoded bits
+and no refs.
 
 \subsection{Typed Cell APIs}
-Serialization should be both trait-driven and convenient in routine code.
-Per Section~\ref{sec:cd-coherence}, the \verb|to_cell| convenience lives on
-the \verb|CellEncode| trait itself as a default method, not as a blanket
-inherent impl:
+Serialization is trait-driven with convenience methods:
 
 \begin{verbatim}
 pub trait CellEncode {
-    fn encode(self) -> Result<RawCell, CellError> pure;
-    fn to_cell(self) -> Result<Cell<Self>, CellError> pure {
-        self.encode().map(Cell::from_raw)
-    }
+    fn encode(self) -> RawCell pure;
+    fn to_cell(self) -> Cell<Self> pure { Cell::from_raw(self.encode()) }
 }
 
 impl<T: CellDecode> Cell<T> {
-    pub fn load(self) -> Result<T, ParseError> pure;
+    pub fn load(self) -> T pure;           // aborts on decode failure
     pub fn begin_parse(self) -> Slice pure;
 }
 \end{verbatim}
 
-The \verb|impl<T: CellDecode> Cell<T> { ... }| form \emph{is} admissible
-because \verb|Cell| is declared in the standard library (the trait's
-originating crate). User code may not add its own blanket impls over foreign
-types.
+Normal cases do not return \verb|Result|; malformed cells abort the
+transaction. This matches the TVM opcodes \verb|CTOS| (fails if not
+cell), \verb|LDU| (fails if underflow), and the design of every real
+contract under 0.4.6.
 
 \subsection{Codec Traits}
-Serialization and deserialization should be expressed through traits:
-
 \begin{verbatim}
-pub trait CellEncode {
-    fn encode(self) -> Result<RawCell, CellError> pure;
-}
-
-pub trait CellDecode: Sized {
-    fn decode(cell: RawCell) -> Result<Self, ParseError> pure;
-}
+pub trait CellEncode           { fn encode(self)   -> RawCell pure; }
+pub trait CellDecode: Sized    { fn decode(c: RawCell) -> Self pure; }
 \end{verbatim}
 
-For wire protocols that rely on TL-B, a narrower \verb|TlbCodec| trait may
-specialize the same idea.
+Derived automatically for every \verb|struct|, \verb|enum|, and
+\verb|message| declaration. Authors rarely write
+\verb|impl CellEncode| by hand; the stdlib derives it.
 
-The standard library should also offer high-frequency helpers modeled directly on
-how contracts are written:
-
-\begin{verbatim}
-impl Slice {
-    pub fn load_any<T: CellDecode>(mut self) -> Result<T, ParseError> pure;
-}
-
-impl Builder {
-    pub fn store_any<T: CellEncode>(mut self, value: T) -> Result<Self, CellError> pure;
-}
-\end{verbatim}
+For wire protocols that rely on TL-B, a narrower \verb|TlbCodec| trait
+specialises the same idea.
 
 \subsection{Slice and Builder APIs}
-The low-level APIs remain essential, but their contracts become explicit:
+Low-level APIs abort on failure:
 
 \begin{verbatim}
 impl Slice {
-    pub fn load_uint(mut self, bits: u16) -> Result<u256, ParseError> pure;
-    pub fn load_int(mut self, bits: u16) -> Result<i257, ParseError> pure;
-    pub fn load_ref(mut self) -> Result<RawCell, ParseError> pure;
-    pub fn load_addr(mut self) -> Result<Address, ParseError> pure;
+    pub fn load_uint(mut self, bits: u16) -> u256 pure;
+    pub fn load_int(mut self, bits: u16)  -> i257 pure;
+    pub fn load_ref(mut self)              -> RawCell pure;
+    pub fn load_addr(mut self)             -> Address pure;
     pub fn remaining_bits(self) -> u16 pure;
-    pub fn remaining_refs(self) -> u8 pure;
+    pub fn remaining_refs(self) -> u8  pure;
 }
 
 impl Builder {
-    pub fn store_uint(mut self, value: u256, bits: u16) -> Result<Self, CellError> pure;
-    pub fn store_int(mut self, value: i257, bits: u16) -> Result<Self, CellError> pure;
-    pub fn store_ref(mut self, cell: RawCell) -> Result<Self, CellError> pure;
-    pub fn end_cell(self) -> Result<RawCell, CellError> pure;
+    pub fn store_uint(mut self, value: u256, bits: u16) -> Self pure;
+    pub fn store_int (mut self, value: i257, bits: u16) -> Self pure;
+    pub fn store_ref (mut self, cell: RawCell)          -> Self pure;
+    pub fn end_cell(self) -> RawCell pure;
 }
 \end{verbatim}
 
-Note that parsing and building remain explicit operations. The language does
+Parsing and building remain explicit operations. The language does
 not try to make TVM cells disappear; it makes them typed and tractable.
 
 \subsection{Sending Messages}
-High-level message sending should take typed bodies:
+\label{sec:send-api}
+High-level message sending takes typed bodies and an options record:
 
 \begin{verbatim}
 pub enum BounceMode {
@@ -1302,64 +1699,124 @@ pub fn send<T: CellEncode>(
     dst: Address,
     body: T,
     opts: SendOptions,
-) -> Result<(), SendError> effect(send);
+) -> () effect(send);
 \end{verbatim}
 
-This API expresses a real protocol operation more directly than ad hoc raw-cell
-construction plus \verb|SENDRAWMSG|.
+This API expresses a real protocol operation more directly than ad
+hoc raw-cell construction plus \verb|SENDRAWMSG|. \verb|send| aborts
+on underlying failure (e.g.\ cell overflow); the result type is
+\verb|()|.
 
-When \verb|body_layout| is \verb|Auto|, the compiler \emph{must} choose between
-inline and ref according to the canonical fit predicate specified in
-Section~\ref{sec:cd-bodylayout}. The predicate is a deterministic function of
-\verb|(env_bits, env_refs, body_bits, body_refs)| and is stable across
-toolchains: two compliant compilers compiling the same source produce
-identical wire bytes. Using ``may'' here instead of ``must'' would silently
-break message hashing, fee estimation, and receiver-side parsing across
-contracts built with different toolchains.
+When \verb|body_layout| is \verb|Auto|, the compiler \emph{must}
+choose between inline and ref according to the canonical fit predicate
+in Section~\ref{sec:cd-bodylayout}. The predicate is a deterministic
+function of \verb|(env_bits, env_refs, body_bits, body_refs)| and is
+stable across toolchains.
 
-When \verb|body| is the unit value \verb|()|, the generated envelope encodes
-``no body''\,: the TL-B \verb|Maybe| bit for \verb|body:(Maybe \ \^{}Cell)| is
-set to \verb|0|. This is distinct from a zero-width inlined body or an empty
-cell reference.
+When \verb|body| is the unit value \verb|()|, the generated envelope
+encodes ``no body''\,: the TL-B \verb|Maybe| bit for
+\verb|body:(Maybe \^{}Cell)| is set to \verb|0|.
 
 \section{Error Model}
-\subsection{Recoverable and Unrecoverable Failure}
-FunC \verb|0.5.0| distinguishes:
+\label{sec:error-model}
+\subsection{Abort by Default}
+FunC \verb|0.5.0| uses abort-by-default semantics. When a validation
+condition fails or an operation cannot complete (cell underflow, cell
+overflow, integer overflow, unauthorized sender, etc.) the transaction
+aborts: persistent state is not committed, the action list is
+discarded, no outbound messages are sent, and the contract returns a
+numeric exit code to the TVM level. Indexers, wallets, and block
+explorers observe the exit code and treat the transaction as failed.
+
+This matches three pre-existing models that FunC authors already know:
 
 \begin{itemize}
-\item recoverable failures, represented by \verb|Result<T, E>|;
-\item unrecoverable VM aborts, represented by \verb|abort| or raw unsafe
-intrinsics.
+\item TVM native opcodes (\verb|LDU|, \verb|LDI|, \verb|CTOS|, ...)
+throw on failure;
+\item FunC \verb|0.4.6| \verb|throw_unless(N, cond)| aborts on false;
+\item Solidity \verb|require(cond, "msg")| reverts on false.
 \end{itemize}
 
-The default teaching path should strongly prefer typed recoverable failure.
+The primary mechanism to assert in source is \verb|require!(cond, err)|
+(\S\ref{sec:require-emit}). A false \verb|cond| aborts with the
+numeric exit code derived from \verb|err|.
 
-\subsection{Domain Error Types}
-Contracts are expected to define domain-specific error enums:
+\subsection{Named Error Codes}
+Contracts declare their error codes inline using the \verb|error|
+shorthand inside the \verb|contract { }| block
+(\S\ref{sec:error-shorthand}):
 
 \begin{verbatim}
-pub enum WalletError {
-    InvalidSignature,
-    WrongGlobalId,
-    WrongSeqno,
-    UnknownPlugin,
-    Parse(ParseError),
-    Send(SendError),
+contract Wallet {
+    error WrongSeqno     = 33,
+          WrongSubwallet = 34,
+          BadSignature   = 35,
+          Expired        = 35,
+          WrongGlobal    = 36;
+    ...
 }
 \end{verbatim}
+
+The shorthand expands to \verb|pub enum WalletError : u16 { ... }|
+with the declared numeric discriminants.
+\verb|require!(cond, WalletError::WrongSeqno)|
+(shortened to \verb|require!(cond, WrongSeqno)| inside the block)
+aborts with exit code 33, matching \verb|throw_unless(33, cond)| in a
+0.4.6 contract byte-for-byte.
+
+Two variants may share the same numeric value (as \verb|Expired = 35|
+and \verb|BadSignature = 35| above). The source treats them as
+distinct for readability and grepping; the wire code is identical.
+
+\paragraph{Reserved ranges.}
+
+\begin{itemize}
+\item \verb|0|: normal success. Assigning \verb|0| to an error variant
+is a compile-time error.
+\item \verb|1| -- \verb|10|: TVM-internal exit codes (e.g.\ 8 = range
+check failed, 9 = cell underflow, 10 = dict error). Authors may
+re-use these codes with care when their semantics match.
+\item \verb|11| -- \verb|31|: TOS-reserved for protocol-level failures
+(unknown operation, insufficient fee, etc.).
+\item \verb|32| -- \verb|65535|: user range. Established TON wallet
+and Jetton conventions occupy \verb|32| -- \verb|400|; contracts may
+use anything not already reserved in their domain.
+\end{itemize}
+
+\subsection{The Rare \texttt{Result<T, E>} Use Case}
+Some protocol patterns genuinely need recoverable error paths: a
+cross-contract query returns an \verb|Ok(value)| or \verb|Err(reason)|
+that the caller inspects and chooses between two follow-up actions.
+For these rare cases, \verb|Result<T, E>| is available as an ordinary
+enum:
+
+\begin{verbatim}
+enum LookupResult {
+    Ok(Entry),
+    Err(LookupError),
+}
+
+fn maybe_lookup(k: Key) -> LookupResult effect(read) { ... }
+
+internal fn recv(ctx: InternalContext<LookupRequest>) {
+    match maybe_lookup(ctx.body.key) {
+        LookupResult::Ok(e) => send(ctx.sender, FoundReply { data: e }, ...),
+        LookupResult::Err(_) => send(ctx.sender, NotFoundReply { }, ...),
+    }
+}
+\end{verbatim}
+
+This is \emph{not} the default idiom. Authors who find themselves
+wanting \verb|Result| for validation-style logic should use
+\verb|require!| instead --- it is shorter, cheaper, and matches the
+abort-by-default contract model.
 
 \subsection{Bridging Legacy Exit Codes}
-Compatibility layers may map legacy numeric exit codes to domain enums:
-
-\begin{verbatim}
-pub enum LegacyExitCode : u16 {
-    InvalidSignature = 202,
-    WrongSeqno = 33,
-}
-\end{verbatim}
-
-This lets modern source code remain typed even when it interoperates with
-legacy tooling or protocol conventions.
+Any FunC \verb|0.5.0| contract that interoperates with existing
+indexers, wallets, or explorer tools assigns the legacy numeric codes
+(33, 34, 35, ...) directly in its \verb|error| shorthand. The wire
+behaviour is identical to 0.4.6, and legacy tooling continues to
+function without change.
 
 \section{Standard Library Direction}
 \subsection{Small Core, Rich Stdlib}
@@ -1534,61 +1991,43 @@ message construction:
 \end{verbatim}
 
 \subsection{FunC 0.5.0 Style}
-In the proposed \verb|0.5.0| surface, the same logic is expressed through typed
-state, a typed message declaration, explicit mutability, explicit effects, and a
-\verb|Result|-based error path:
+In the proposed \verb|0.5.0| surface, the same logic is expressed
+through a \verb|contract| block, a typed message, named error codes,
+and \verb|require!| for validation:
 
 \begin{verbatim}
 #![edition = "0.5.0"]
 
-pub struct WalletState {
-    seqno: u32,
-    owner: Address,
-}
+contract Wallet {
+    state { seqno: u32, owner: Address }
 
-pub message Transfer(op = 0x0f8a7ea5) {
-    seqno: u32,
-    to: Address,
-    amount: Coins,
-}
+    error WrongSeqno = 33,
+          ZeroAmount = 34,
+          UnknownOp  = 40;
 
-pub enum WalletError {
-    WrongSeqno,
-    ZeroAmount,
-    Parse(ParseError),
-    Send(SendError),
-}
-
-pub fn load_state() -> Result<WalletState, ParseError> effect(read) { ... }
-pub fn save_state(state: WalletState) -> Result<(), CellError> effect(write) { ... }
-
-entry internal fn recv_internal(
-    ctx: InternalContext<Transfer>,
-) -> Result<(), WalletError> effect(read, write, send) {
-    let mut state = load_state()?;
-    let transfer = ctx.body;
-
-    if transfer.seqno != state.seqno {
-        return Err(WalletError::WrongSeqno);
-    }
-    if transfer.amount.is_zero() {
-        return Err(WalletError::ZeroAmount);
+    message Transfer(op = 0x0f8a7ea5) {
+        seqno:  u32,
+        to:     Address,
+        amount: Coins,
     }
 
-    send(
-        transfer.to,
-        (),
-        SendOptions {
-            value: transfer.amount,
-            bounce: BounceMode::Body256,
-            body_layout: BodyLayout::Auto,
-            mode: SendMode::PayFeesSeparately,
-        }
-    )?;
+    internal fn on_transfer(msg: Transfer) {
+        require!(msg.seqno == state.seqno,  WrongSeqno);
+        require!(msg.amount > Coins::zero(), ZeroAmount);
 
-    state.seqno += 1;
-    save_state(state)?;
-    Ok(())
+        send(
+            msg.to,
+            (),
+            SendOptions {
+                value:       msg.amount,
+                bounce:      BounceMode::Body256,
+                body_layout: BodyLayout::Auto,
+                mode:        SendMode::PayFeesSeparately,
+            },
+        );
+
+        state.seqno += 1;
+    }
 }
 \end{verbatim}
 
@@ -1596,48 +2035,56 @@ entry internal fn recv_internal(
 The comparison illustrates the intended source-level improvements:
 
 \begin{itemize}
+\item \textbf{Contract block.}
+The \verb|contract Wallet \{ state, error, message, internal fn \}|
+shape groups persistent state, error codes, message schemas, and entry
+points into one declaration, eliminating imports, explicit
+\verb|load_data| / \verb|save_data| helpers, and boilerplate per-entry
+setup.
+
 \item \textbf{Typed message declaration instead of raw op-code dispatch.}
-In \verb|0.4.6| the contract manually loads \verb|op|, then loads each field
-from a \verb|slice|. In \verb|0.5.0| the \verb|Transfer| message binds its
-opcode in the declaration and the entrypoint receives a typed body directly.
+In \verb|0.4.6| the contract manually loads \verb|op|, then loads each
+field from a \verb|slice|. In \verb|0.5.0| the \verb|Transfer| message
+binds its opcode in the declaration and the entry receives a typed
+body directly. Opcode mismatch is handled by the wrapper (silent drop),
+not by user code.
 
 \item \textbf{Explicit domain types.}
 \verb|Address| and \verb|Coins| replace raw \verb|slice| and \verb|int|
-conventions, making the meaning of each field visible at the type level.
+conventions, making the meaning of each field visible at the type
+level.
 
 \item \textbf{Explicit mutation.}
-In \verb|0.4.6| mutation is hidden inside \verb|cs~load_uint(...)| and similar
-forms. In \verb|0.5.0| mutation is carried by \verb|let mut cs| or
-\verb|let mut state| and by explicit mutable parameters.
+In \verb|0.4.6| mutation is hidden inside \verb|cs~load_uint(...)| and
+similar forms. In \verb|0.5.0| persistent state is \verb|state| and
+mutates in place; parameter-level mutation uses \verb|let mut| and
+\verb|mut| arguments.
 
-\item \textbf{Typed recoverable errors instead of numeric abort codes.}
+\item \textbf{Named error codes, legacy wire behaviour preserved.}
 \verb|throw_unless(33, ...)| and \verb|throw_unless(34, ...)| become
-\verb|Err(WalletError::WrongSeqno)| and \verb|Err(WalletError::ZeroAmount)|.
-This makes reviews and refactors much easier.
+\verb|require!(cond, WrongSeqno)| and \verb|require!(cond, ZeroAmount)|.
+The numeric exit codes (33, 34) are preserved via the explicit
+discriminants, so existing indexers continue to work.
 
 \item \textbf{High-level send API instead of manual action-cell assembly.}
-The \verb|0.4.6| version has to build an outbound message cell explicitly.
-The \verb|0.5.0| version exposes the protocol operation as \verb|send(...)|,
-with value, bounce mode, body layout, and mode still explicit.
+The \verb|0.4.6| version builds an outbound message cell explicitly.
+The \verb|0.5.0| version exposes the protocol operation as
+\verb|send(...)|, with value, bounce mode, body layout, and mode still
+explicit in the options record.
 
-\item \textbf{Persistent state becomes a typed struct.}
-The state layout is no longer ``a sequence of manually loaded fields'' from the
-reader's point of view. The source speaks in terms of \verb|WalletState|.
+\item \textbf{No \texttt{?} operator, no \texttt{Result} clutter.}
+Failures abort the transaction. The source code reads as a linear
+sequence of checks and actions, matching the mental model of
+\verb|require(cond)| from Solidity and \verb|throw_unless(N, cond)|
+from FunC \verb|0.4.6|.
 \end{itemize}
 
 \subsection{Why This Example Matters}
-This example is deliberately small, but the same pattern scales to larger
-contracts:
-
-\begin{itemize}
-\item Jetton and NFT messages become enums instead of raw op-code trees;
-\item single message bodies can be declared with bound opcodes instead of
-parallel ``struct + opcode constant'' conventions;
-\item parser helpers return \verb|Result| instead of integer flags;
-\item bounce handlers match typed variants instead of re-parsing raw slices;
-\item audited stdlib modules provide \verb|send|, codecs, and dict abstractions
-instead of every contract open-coding them.
-\end{itemize}
+This example is deliberately small, but the same pattern scales to
+larger contracts. See the Canonical Corpus
+(\verb|doc/func_v0.5.0-corpus.md|) for worked rewrites of wallet-v4,
+highload-v2, and a synthetic Jetton wallet, each under 50 lines in the
+new surface.
 
 \section{Core Grammar Summary}
 \label{sec:grammar}
@@ -1667,37 +2114,65 @@ TypeAlias  ::= [ "pub" ] "type" identifier [ GenericParams ] "=" Type ";"
 StructDecl ::= [ "pub" ] "struct" identifier [ GenericParams ] "{" Fields "}"
 EnumDecl   ::= [ "pub" ] "enum" identifier [ GenericParams ] [ ":" Type ] "{"
                Variants "}"
-MessageDecl ::= [ "pub" ] "message" identifier [ "(" "op" "=" Expr ")" ]
-                "{" Fields "}"
+MessageDecl ::= [ "pub" ] "message" identifier [ GenericParams ]
+                [ "(" "op" "=" Expr ")" ] "{" Fields "}"
 TraitDecl  ::= [ "pub" ] "trait" identifier [ GenericParams ] "{"
                TraitItems "}"
 ImplDecl   ::= "impl" [ GenericParams ] Type [ "for" Type ] "{"
                ImplItems "}"
 
-FunctionDecl ::= [ "pub" ] [ EntryQualifier ] "fn" identifier
-                 [ GenericParams ] "(" Params ")" "->" Type
-                 [ EffectQualifier ] BlockOrSemicolon
+ContractDecl ::= "contract" identifier "{" { ContractItem } "}"
+ContractItem ::= StateDecl
+               | ErrorDecl
+               | StructDecl | EnumDecl | MessageDecl
+               | EntryFunctionDecl
+               | GetterDecl
+               | FunctionDecl
 
-EntryQualifier ::= "entry" ( "external" | "internal" | "bounce" )
-                 | "get"
+StateDecl ::= "state" "{" Fields "}"
+ErrorDecl ::= "error" ErrorVariant { "," ErrorVariant } ";"
+ErrorVariant ::= identifier "=" integer-literal
+
+EntryFunctionDecl ::= EntryKind "fn" identifier "(" Params ")"
+                     [ "->" Type ] [ EffectQualifier ] Block
+EntryKind    ::= "external" | "internal" | "bounce"
+GetterDecl   ::= "get" "fn" identifier "(" Params ")" "->" Type
+                 [ MethodIdClause ] Block
+MethodIdClause ::= "method_id" "(" integer-literal ")"
+                 | "method_id" "(" string-literal ")"
+
+FunctionDecl ::= [ "pub" ] "fn" identifier
+                 [ GenericParams ] "(" Params ")" "->" Type
+                 [ EffectQualifier ] BlockOrAsmBody
 
 EffectQualifier ::= "pure"
                   | "unsafe"
                   | "effect" "(" EffectList ")"
+                  | "unsafe" "asm" ( string-literal | "{" AsmBody "}" )
+
+BlockOrAsmBody ::= Block
+                 | ";"
+                 | "asm" ( string-literal | "{" AsmBody "}" ) ";"
+
+AsmBody ::= triple-quoted-string
+
+InlineAsmExpr ::= "asm" "(" InVars ")" "->" "(" OutTys ")"
+                  "{" AsmBody "}"
 
 Stmt ::= LetStmt
        | ExprStmt
        | ReturnStmt
-       | IfStmt
-       | IfLetStmt
+       | IfStmt | IfLetStmt
        | MatchStmt
-       | WhileStmt
-       | WhileLetStmt
-       | LoopStmt
-       | ForStmt
-       | BreakStmt
-       | ContinueStmt
+       | WhileStmt | WhileLetStmt
+       | LoopStmt | ForStmt
+       | BreakStmt | ContinueStmt
+       | RequireStmt
+       | EmitStmt
        | Block
+
+RequireStmt ::= "require!" "(" Expr "," Expr ")" ";"
+EmitStmt    ::= "emit" Path "{" FieldInits "}" ";"
 
 Type ::= SimpleType
        | Type "?"
@@ -1706,96 +2181,101 @@ Arg ::= Expr
       | "mut" Expr
 \end{verbatim}
 
+Note that the grammar does \textbf{not} include a \verb|?| postfix
+expression operator. A \verb|T?| type is sugar for \verb|Option<T>|;
+there is no expression-level try-operator.
+
 \section{Illustrative Contract Fragment}
-The following fragment demonstrates the overall style target:
+The following fragment demonstrates the overall style target --- the
+full simplified surface with a \verb|contract| block, named errors,
+typed entry parameters, and \verb|require!|:
 
 \begin{verbatim}
 #![edition = "0.5.0"]
 
-use std::result::Result;
-use std::message::{InternalContext, SendOptions, SendMode, send};
+contract Wallet {
+    state { seqno: u32, owner: Address }
 
-pub struct WalletState {
-    seqno: u32,
-    owner: Address,
-}
+    error WrongSeqno = 33,
+          ZeroAmount = 34;
 
-pub enum WalletError {
-    WrongSeqno,
-    Parse(ParseError),
-    Send(SendError),
-}
-
-pub message Transfer(op = 0x0f8a7ea5) {
-    query_id: u64,
-    amount: Coins,
-    to: Address,
-    response_to: Address?,
-}
-
-pub fn load_state() -> Result<WalletState, ParseError> effect(read) { ... }
-pub fn save_state(state: WalletState) -> Result<(), CellError> effect(write) { ... }
-
-entry internal fn recv_internal(
-    ctx: InternalContext<Transfer>,
-) -> Result<(), WalletError> effect(read, write, send) {
-    let mut state = load_state()?;
-    let msg = ctx.body;
-
-    if let Some(response_to) = msg.response_to {
-        send(
-            response_to,
-            Receipt { query_id: msg.query_id },
-            SendOptions {
-                value: 0.into(),
-                bounce: BounceMode::NoBounce,
-                body_layout: BodyLayout::Auto,
-                mode: SendMode::PayFeesSeparately,
-            },
-        )?;
+    message Transfer(op = 0x0f8a7ea5) {
+        query_id: u64,
+        amount:   Coins,
+        to:       Address,
+        response_to: Address?,
     }
 
-    send(
-        msg.to,
-        msg,
-        SendOptions {
-            value: msg.amount,
-            bounce: BounceMode::Body256,
-            body_layout: BodyLayout::Auto,
-            mode: SendMode::PayFeesSeparately,
-        },
-    )?;
+    message Receipt(op = 0x00000001) {
+        query_id: u64,
+    }
 
-    state.seqno = state.seqno + 1;
-    save_state(state)?;
-    Ok(())
+    internal fn on_transfer(msg: Transfer) {
+        require!(msg.amount > Coins::zero(), ZeroAmount);
+
+        if let Some(reply) = msg.response_to {
+            send(
+                reply,
+                Receipt { query_id: msg.query_id },
+                SendOptions {
+                    value:       Coins::zero(),
+                    bounce:      BounceMode::NoBounce,
+                    body_layout: BodyLayout::Auto,
+                    mode:        SendMode::PayFeesSeparately,
+                },
+            );
+        }
+
+        send(
+            msg.to,
+            (),
+            SendOptions {
+                value:       msg.amount,
+                bounce:      BounceMode::Body256,
+                body_layout: BodyLayout::Auto,
+                mode:        SendMode::PayFeesSeparately,
+            },
+        );
+
+        state.seqno += 1;
+    }
+
+    get fn seqno() -> u32 { state.seqno }
 }
 \end{verbatim}
 
 \section{Conclusion}
-FunC \verb|0.5.0| should become easier to read not by hiding TVM/TOS, but by
-modeling it honestly:
+FunC \verb|0.5.0| becomes easier to read and write not by hiding
+TVM/TOS but by modeling it honestly through a compact high-level
+surface and a single \verb|asm| escape hatch:
 
 \begin{itemize}
-\item typed messages instead of raw slices;
-\item enums and exhaustive \verb|match| instead of integer dispatch;
-\item message declarations with bound opcodes instead of ad hoc constants;
-\item typed cell references and auto codec helpers instead of repetitive
-builder/slice plumbing;
-\item \verb|Result| and \verb|Option| instead of status flags and surprise
-exceptions;
-\item \verb|let mut| and \verb|mut self| instead of punctuation-based mutation;
-\item \verb|if let| and flow-sensitive narrowing for common optional/message
-control flow;
-\item explicit effects instead of a single opaque impurity bit;
-\item trait- and module-based reuse instead of parser magic and ad hoc
-includes.
+\item a \verb|contract| block that collapses state, errors, messages,
+entries, and getters into one declarative shape;
+\item typed messages as entry parameters, with the wrapper handling
+opcode check and field decoding;
+\item \verb|Signed<T>| for the ubiquitous wallet-style signed-body
+pattern;
+\item trailing \verb|Slice| / \verb|Cell| fields to model
+``fixed header plus opaque tail'';
+\item abort-by-default with named error codes via \verb|require!|,
+preserving legacy exit-code ABI;
+\item \verb|Option<T>|, exhaustive \verb|match|, and \verb|if let|
+for the cases that genuinely benefit from typed absence;
+\item \verb|emit Event \{ ... \}| as the canonical form for log-style
+outbound messages;
+\item effects inferred by default, displayed through the ABI manifest
+and enforced by the keyword ceiling on entries;
+\item \verb|asm \{ ... \}| as the single, well-defined escape hatch to
+raw Fift when the high level is not enough;
+\item trait- and module-based reuse for stdlib and library authors,
+kept out of the ordinary contract author's daily path.
 \end{itemize}
 
-That combination preserves the strengths of FunC --- closeness to TVM, direct
-control over serialization and messaging, and efficient compilation --- while
-making the source language much easier to teach, review, and scale across a
-real contract ecosystem.
+The combination preserves the strengths of FunC --- closeness to TVM,
+direct control over serialization and messaging, and efficient
+compilation --- while making the source language dramatically easier
+to teach, review, and scale across a real contract ecosystem.
 
 \section{Canonical Decisions}
 \label{sec:canonical-decisions}
@@ -1923,41 +2403,51 @@ runtime branch whose test matches the predicate above bit-for-bit.
 choice; a body that does not fit inline under \verb|Inline| is a runtime
 error mapped to \verb|CellError::Overflow|.
 
-\subsection{Canonical Decision 5: Typed \texttt{Err} to Exit Code}
+\subsection{Canonical Decision 5: Abort Semantics and Exit Codes}
 \label{sec:cd-err-exit}
-When the user body of an \verb|entry| function returns \verb|Err(e)|:
+The primary failure mechanism in FunC \verb|0.5.0| is abort: a failed
+operation throws a numeric exit code, the transaction rolls back, no
+state or actions are committed. The mechanism is reached from source
+code via \verb|require!(cond, err)| (\S\ref{sec:require-emit}) or by
+any stdlib function that itself aborts on underlying failure.
+
+\paragraph{Exit-code derivation from error names.}
+A \verb|require!(cond, err)| where \verb|err| is an
+\verb|enum E : u16| variant throws exactly that variant's numeric
+discriminant. The \verb|error| shorthand (\S\ref{sec:error-shorthand})
+and the longer \verb|enum E : u16 { ... }| form both expand to the
+same representation.
+
+Reserved ranges:
 
 \begin{itemize}
-\item persistent state is \textbf{not} committed (no \verb|set_data|);
-\item queued action-phase effects are \textbf{not} committed (the action list
-built during the user body is discarded);
-\item the contract terminates via \verb|THROW n| where \verb|n| is the
-\emph{exit code} derived from \verb|e|.
+\item \verb|0|: normal success. Assigning \verb|0| to an error variant
+is a compile-time error.
+\item \verb|1| -- \verb|10|: TVM-internal exit codes (8 = range check, 9
+= cell underflow, 10 = dict error). Authors may re-use these codes
+when the semantics match.
+\item \verb|11| -- \verb|31|: TOS-reserved for protocol-level failures
+such as unknown operation (11) and insufficient fee.
+\item \verb|32| -- \verb|65535|: user range. Existing TON wallet and
+Jetton conventions occupy \verb|32| -- \verb|400|.
 \end{itemize}
 
-The exit code derivation is:
+\paragraph{Commit boundary.}
+The wrapper around each entry function handles commit boundary
+uniformly: on normal return the wrapper commits state (saving the
+final value of \verb|state|) and action-phase effects, then returns
+\verb|0| as the exit code. On any \verb|THROW| during the user body,
+the wrapper's own handler discards the action list, skips the
+\verb|set_data| commit, and propagates the thrown exit code to TVM.
 
-\begin{enumerate}
-\item If the error type is an \verb|enum|, and each variant carries an
-explicit unsigned discriminant within \verb|[1, 65535]| (directly via
-\verb|enum E : uN| and per-variant \verb|= N|), the discriminant is the
-exit code.
-\item Otherwise the compiler assigns
-\verb|exit_code(variant_i) = 1000 + i| where \verb|i| is the zero-based
-declaration index. The range \verb|[1000, 65535]| is the user range.
-\item The range \verb|[0, 999]| is reserved: \verb|0| is success, \verb|1|
-through \verb|999| are reserved for TVM, TOS, and compiler-internal
-use. Explicit user discriminants in this range are a compile-time error.
-\end{enumerate}
-
-Variants that carry additional payload data (e.g.\ \verb|Parse(ParseError)|)
-use only their own variant discriminant as the exit code; the nested payload
-is discarded at the exit boundary. Contracts that need richer error
-telemetry must emit it explicitly through \verb|send| or getters before
-returning \verb|Err|.
-
-On \verb|Ok|, the wrapper commits state (if the user called \verb|save_state|)
-and action-phase effects normally, then returns \verb|0|.
+\paragraph{Rare \texttt{Result<T, E>} use case.}
+If the user body explicitly returns \verb|Err(e)| as a normal value
+(no \verb|THROW|, the function's declared return type is
+\verb|Result<T, E>|), the wrapper treats it as a successful return
+with a typed error payload. Whether that payload is visible to the
+outside world is the author's responsibility --- typically by
+\verb|emit|-ing a log message or \verb|send|-ing a reply before
+returning. This pattern is rare; see \S\ref{sec:error-model}.
 
 \subsection{Canonical Decision 6: Getter / \texttt{method\_id} Selector Rule}
 \label{sec:cd-method-id}
@@ -2018,8 +2508,7 @@ UnaryOp    ::= "-" | "!" | "~"
 Cast       ::= Postfix [ "as" Type ]
 
 Postfix    ::= Primary { PostfixOp }
-PostfixOp  ::= "?"                               // Result/Option propagation
-             | "." Ident [ "(" Args ")" ]        // field or method call
+PostfixOp  ::= "." Ident [ "(" Args ")" ]        // field or method call
              | "(" Args ")"                      // function call
              | "[" Expr "]"                      // index
              | "::" Ident                        // associated fn/const path
@@ -2044,7 +2533,7 @@ Precedence summary (highest to lowest):
 \begin{tabular}{|c|l|l|}
 \hline
 \textbf{Level} & \textbf{Forms} & \textbf{Associativity} \\ \hline
-14 & postfix: \verb|?|, \verb|.|, \verb|(..)|, \verb|[..]|, \verb|::| & left \\ \hline
+14 & postfix: \verb|.|, \verb|(..)|, \verb|[..]|, \verb|::| & left \\ \hline
 13 & prefix: \verb|-|, \verb|!|, \verb|~|; \verb|as| & right \\ \hline
 12 & \verb|*|  \verb|/|  \verb|%| & left \\ \hline
 11 & \verb|+|  \verb|-| & left \\ \hline
@@ -2063,8 +2552,8 @@ Notes:
 
 \begin{itemize}
 \item Comparisons are non-chainable: \verb|a < b < c| is a syntax error.
-\item \verb|?| binds tighter than method-call dot: \verb|x?.foo()| means
-\verb|(x?).foo()|. Writing \verb|x.foo()?| propagates after calling.
+\item FunC \verb|0.5.0| has no \verb|?| postfix operator; the error
+model is abort-by-default via \verb|require!| (\S\ref{sec:require-emit}).
 \item \verb|as| takes a type, not an expression, on the right.
 \item Bitwise \verb|&|/\verb+|+/\verb|^| coexist with logical
 \verb|&&|/\verb+||+ at separate precedences. Logical operators require
@@ -2093,9 +2582,9 @@ default method using the trait's \verb|encode|:
 
 \begin{verbatim}
 pub trait CellEncode {
-    fn encode(self) -> Result<RawCell, CellError> pure;
-    fn to_cell(self) -> Result<Cell<Self>, CellError> pure {
-        self.encode().map(Cell::from_raw)
+    fn encode(self) -> RawCell pure;
+    fn to_cell(self) -> Cell<Self> pure {
+        Cell::from_raw(self.encode())
     }
 }
 \end{verbatim}
@@ -2104,46 +2593,51 @@ pub trait CellEncode {
 Coherence is checked after monomorphisation: an instantiated concrete pair
 must not acquire two impls via different routes.
 
-\subsection{Canonical Decision 9: Eager Decoding on \texttt{entry external}}
-\label{sec:cd-external-eager}
-By default \verb|entry external fn foo(ctx: ExternalContext)| receives an
-untyped \verb|ctx|:
+\subsection{Canonical Decision 9: Entry Parameter as Typed Message}
+\label{sec:cd-entry-typed}
+Every entry function inside a \verb|contract { }| block takes its
+inbound body directly as a typed parameter:
 
 \begin{verbatim}
-pub struct ExternalContext {
-    body_slice: Slice,
-    signature: Option<Bytes>,
-}
-
-impl ExternalContext {
-    pub fn parse_body<T: CellDecode>(mut self)
-        -> Result<T, ParseError> pure { ... }
-}
+external fn recv(msg: Signed<Payload>)   { ... }
+internal fn recv(msg: WalletMsg)          { ... }
+bounce   fn on_bounce(ctx: BounceContext<Transfer>) { ... }
 \end{verbatim}
 
-Authors call \verb|parse_body| after \verb|accept_message|, so decoding gas
-is paid from contract balance rather than from the pre-accept 10\,000-gas
-external-message quota.
+The generated wrapper decodes the raw body into the declared parameter
+type using the derived codec, then invokes the user body. This
+replaces the earlier v3 design where entry functions took a context
+wrapper object (\verb|InternalContext<T>|, \verb|ExternalContext<T>|,
+\verb|BounceContext<T>|) and needed either ``eager'' or ``lazy''
+decoding markers.
 
-Authors who accept the gas risk may opt into eager decoding:
+Decode-failure semantics are specified in \S\ref{sec:entry-decode}:
 
-\begin{verbatim}
-entry external(eager) fn recv_external(
-    ctx: ExternalContext<SignedRequest>,
-) -> Result<(), WalletError> effect(read, write, send) { ... }
-\end{verbatim}
+\begin{itemize}
+\item \verb|internal fn|: decode failure $\to$ silent drop;
+\item \verb|external fn|: decode failure $\to$ abort with exit code 9
+(cell underflow). The wrapper's decode runs \emph{before} any user
+code, so it must be cheap enough to complete under the
+pre-\verb|accept\_message| gas quota --- which the typical ``fixed
+header + trailing \verb|Slice|'' pattern satisfies;
+\item \verb|bounce fn|: decode uses the bounced-message convention
+subject to the 256-bit / zero-ref constraint
+(\S\ref{sec:entry-decode}).
+\end{itemize}
 
-The grammar for \verb|EntryQualifier| is extended:
+\paragraph{Using a plain \texttt{Slice} parameter.}
+An entry may also take a plain \verb|Slice|; the wrapper performs no
+decoding and the user body is responsible for all parsing. This is
+the low-ceremony escape when the typed-message pattern is not a good
+fit (for example, contracts that want to inspect raw bytes before
+deciding how to parse).
 
-\begin{verbatim}
-EntryQualifier ::= "entry" "external" [ "(" "eager" ")" ]
-                 | "entry" "internal"
-                 | "entry" "bounce"
-                 | "get"
-\end{verbatim}
-
-For \verb|entry internal| and \verb|entry bounce| the default is already
-eager decoding; no opt-in is required.
+\paragraph{Ceiling context types.}
+The stdlib provides \verb|BounceContext<T>| because the bounce
+protocol carries metadata beyond the body; \verb|Signed<T>| because
+wallet-style signed bodies have a standard wrapper shape. These are
+\emph{not} compiler-magic wrappers; they are ordinary user-visible
+\verb|message| declarations in the standard library.
 
 \subsection{Canonical Decision 10: Compatibility Edition Surface}
 \label{sec:cd-compat}
@@ -2266,18 +2760,19 @@ compatible.
 \textbf{Module path} & \textbf{Key exports} \\ \hline
 \endhead
 \verb|std::prelude| & auto-imported into every source file:
-\verb|Result|, \verb|Option|, \verb|Ok|, \verb|Err|, \verb|Some|,
-\verb|None|; the \verb|?| lowering relies on these exact names \\ \hline
+\verb|Option|, \verb|Some|, \verb|None|;
+\verb|Result|, \verb|Ok|, \verb|Err| (rare use);
+\verb|require!| macro form; \verb|emit| macro form \\ \hline
 \verb|std::cell| & \verb|Cell<T>|, \verb|RawCell|, \verb|Builder|,
-\verb|Slice|, \verb|RawSlice|, \verb|CellError|, \verb|ParseError|;
+\verb|Slice|, \verb|RawSlice|;
 conversions \verb|to_cell|, \verb|from_cell|, \verb|load_any|,
 \verb|store_any|; \verb|Cell::from_raw|, \verb|Cell::as_raw| \\ \hline
 \verb|std::address| & \verb|Address|, \verb|StdAddress|,
 \verb|parse_std_addr|, \verb|Address::derive|, address codecs \\ \hline
 \verb|std::coins| & \verb|Coins|, \verb|Coins::zero|, \verb|Coins::is_zero|,
 arithmetic, safe conversions \\ \hline
-\verb|std::bytes| & \verb|Bytes|, \verb|LenPrefixedBytes|, helpers for snake
-encoding and byte-alignment assertions \\ \hline
+\verb|std::bytes| & \verb|Bytes|, \verb|LenPrefixedBytes|, helpers for
+snake encoding and byte-alignment assertions \\ \hline
 \verb|std::vec| & \verb|Vec<T>|, \verb|EitherRefOrInline<T>|; iteration
 traits on \verb|Vec| \\ \hline
 \verb|std::dict| & \verb|Dict<K, V>|, \verb|DictEntry<K, V>|, iteration via
@@ -2290,18 +2785,19 @@ opcodes \\ \hline
 \verb|raw_reserve|, \verb|get_data|, \verb|set_data|, contract-balance
 and block-context readers \\ \hline
 \verb|std::message| & \verb|send|, \verb|send_raw|, \verb|SendOptions|,
-\verb|SendMode|, \verb|BounceMode|, \verb|BodyLayout|,
-\verb|InternalContext<T>|, \verb|ExternalContext|,
-\verb|BounceContext<T>|, \verb|SendError| \\ \hline
+\verb|SendMode|, \verb|BounceMode|, \verb|BodyLayout|;
+\verb|Signed<T>|, \verb|BounceContext<T>|, \verb|SendError|;
+log-sink address constant and \verb|emit| sink resolution \\ \hline
 \verb|std::iter| & \verb|Iter|, \verb|IntoIter| traits (see
 \S\ref{sec:cd-expr}); stdlib iterator impls for \verb|Vec|, \verb|Dict|,
 ranges, fixed arrays, uniform tuples \\ \hline
-\verb|std::result| & re-exports from \verb|std::prelude|; additional
-combinators \verb|map|, \verb|map_err|, \verb|and_then|,
-\verb|or_else|, \verb|ok_or|, \verb|expect| \\ \hline
-\verb|std::option| & re-exports from \verb|std::prelude|; additional
-combinators \verb|map|, \verb|unwrap|, \verb|unwrap_or|, \verb|ok_or|,
-\verb|is_some|, \verb|is_none| \\ \hline
+\verb|std::option| & combinators on \verb|Option|: \verb|map|,
+\verb|unwrap|, \verb|unwrap_or|, \verb|is_some|, \verb|is_none|,
+\verb|ok_or| \\ \hline
+\verb|std::result| & combinators on \verb|Result|: \verb|map|,
+\verb|map_err|, \verb|and_then|, \verb|or_else|, \verb|ok_or|.
+Reminder: idiomatic 0.5.0 code uses \verb|require!| instead of
+\verb|Result| pipelines \\ \hline
 \verb|std::intrinsics| & low-level \verb|extern "tvm"| declarations for
 every TVM opcode that the stdlib surface wraps, available to
 \verb|unsafe| code only \\ \hline
