@@ -1,0 +1,154 @@
+# Phase P-6: third-party indexer (Blockscout) sync against the live TOS
+# 4-validator testnet.
+#
+# Topology:
+#
+#     +------------------+      forward 0.0.0.0:18011 -> 127.0.0.1:8011
+#     | tos-rpc-forwarder|<------------------------------------------+
+#     | (socat, host net)|                                           |
+#     +--------+---------+                                           |
+#              |                                                     |
+#              | 172.17.0.1:18011                                    |
+#              v                                                     |
+#     +--------+---------+    +-------+    +------------+            |
+#     |     backend      |--->|   db  |    |  redis-db  |            |
+#     | (blockscout v9)  |    +-------+    +------------+            |
+#     +--------+---------+                                           |
+#              |                                                     |
+#              | host port 4001 (API)                                |
+#              v                                                     |
+#     +--------+---------+                                           |
+#     |    operator      |---- curl http://localhost:4001/api/...    |
+#     +------------------+                                           |
+#
+# The TOS validator binds RPC on 127.0.0.1:8011 (loopback only). Bridge-mode
+# containers cannot reach loopback, so `tos-rpc-forwarder` runs in
+# `network_mode: host` and re-exposes the port on the docker bridge gateway
+# (172.17.0.1:18011), reachable from any container via host-gateway.
+#
+# Project name override (avoid colliding with sibling agents' Docker stacks):
+#
+#     COMPOSE_PROJECT_NAME=tos-blockscout \
+#       docker-compose -f test/conformance/blockscout/docker-compose.yml up -d
+#
+# See README.md in this directory for full operating procedure and the catalog
+# of RPC issues this stack surfaced.
+
+name: tos-blockscout
+
+services:
+
+  # ----------------------------------------------------------------------
+  # TCP forwarder: bridge-net containers -> host loopback RPC.
+  # ----------------------------------------------------------------------
+  tos-rpc-forwarder:
+    image: alpine/socat:latest
+    container_name: tos-blockscout-rpc-forwarder
+    network_mode: host
+    restart: unless-stopped
+    command: >
+      -d -d
+      TCP-LISTEN:18011,bind=0.0.0.0,fork,reuseaddr
+      TCP-CONNECT:127.0.0.1:8011
+
+  # ----------------------------------------------------------------------
+  # JSON-RPC normalising proxy (in front of TOS, behind Blockscout).
+  #
+  # See normalize-proxy.py for the two TOS-side wire-shape gaps it papers
+  # over. Without it, Blockscout's MissingRangesCollector GenServer crashes
+  # on the very first batch request.
+  # ----------------------------------------------------------------------
+  normalize-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.normalize-proxy
+    image: tos-blockscout-normalize-proxy:local
+    container_name: tos-blockscout-normalize-proxy
+    restart: unless-stopped
+    depends_on:
+      tos-rpc-forwarder:
+        condition: service_started
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - --listen
+      - 0.0.0.0:9545
+      - --upstream
+      - http://host.docker.internal:18011
+    # Expose on host:9545 so the operator can curl the proxy directly to
+    # diff its output against the raw TOS RPC.
+    ports:
+      - "9545:9545"
+
+  # ----------------------------------------------------------------------
+  # Postgres: blockscout's primary store. Volume is named to ease teardown
+  # via `docker-compose down -v`.
+  # ----------------------------------------------------------------------
+  db:
+    image: postgres:17
+    container_name: tos-blockscout-db
+    restart: unless-stopped
+    shm_size: 256m
+    command: postgres -c 'max_connections=200' -c 'client_connection_check_interval=60000'
+    environment:
+      POSTGRES_DB: blockscout
+      POSTGRES_USER: blockscout
+      POSTGRES_PASSWORD: blockscout_local_dev
+    volumes:
+      - blockscout-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U blockscout -d blockscout"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+
+  # ----------------------------------------------------------------------
+  # Redis: caches and pubsub.
+  # ----------------------------------------------------------------------
+  redis-db:
+    image: redis:7-alpine
+    container_name: tos-blockscout-redis
+    restart: unless-stopped
+    command: redis-server
+
+  # ----------------------------------------------------------------------
+  # Blockscout backend (indexer + API). Frontend / stats / nft-handler /
+  # nginx are intentionally NOT included — the goal here is to surface
+  # RPC issues against TOS, not to run a full UI. Pin to a known-good
+  # major version (9.x; matches the upstream docker-compose default at
+  # the time of writing).
+  # ----------------------------------------------------------------------
+  backend:
+    image: ghcr.io/blockscout/blockscout:9.0.2
+    container_name: tos-blockscout-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis-db:
+        condition: service_started
+      tos-rpc-forwarder:
+        condition: service_started
+      normalize-proxy:
+        condition: service_started
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "4001:4000"
+    volumes:
+      - ./logs/:/app/logs/
+      - ./dets/:/app/dets/
+    env_file:
+      - ./blockscout.env
+    # NB: keep this as a single-line array form. The `>` folded form turns
+    # internal line breaks into spaces, which is fine for whitespace, but
+    # docker-compose's JSON encoding still passes the literal newline to
+    # `sh -c` and breaks `&&`. Array form sidesteps the YAML quoting.
+    command:
+      - sh
+      - -c
+      - 'bin/blockscout eval "Elixir.Explorer.ReleaseTasks.create_and_migrate()" && bin/blockscout start'
+
+volumes:
+  blockscout-db-data:
+    name: tos-blockscout-db-data
