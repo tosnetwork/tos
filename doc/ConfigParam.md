@@ -234,17 +234,32 @@ See `doc/Validator-Local.md#evm-workchain-workchain-1` for end-to-end activation
 
 ## ConfigParam 21 — Basechain Gas Prices
 
+The EVM workchain (wc = 1) reads this param for per-tx and per-block gas
+limits. Values below are sized for Fusaka-equivalent EVM semantics:
+`gas_limit` must be **≥ EIP-7825's per-tx cap of 2^24 = 16,777,216** so
+that any tx that passes admission (which rejects `gas_limit > 2^24`) can
+actually execute; `block_gas_limit` follows **EIP-7935's 60 M
+recommendation** for default Fusaka block gas.
+
 | Field | Type | Value | Description |
 |-------|------|-------|-------------|
 | `gas_price` | uint64 | **26,214,400** | Gas price (nanotomi per 2^16 gas units) |
-| `gas_limit` | uint64 | **1,000,000** | Max gas per ordinary transaction |
-| `special_gas_limit` | uint64 | **1,000,000** | Max gas for special/system transactions |
+| `gas_limit` | uint64 | **30,000,000** | Max gas per ordinary transaction (≥ EIP-7825 cap) |
+| `special_gas_limit` | uint64 | **30,000,000** | Max gas for special/system transactions |
 | `gas_credit` | uint64 | **10,000** | Free gas for external messages |
-| `block_gas_limit` | uint64 | **10,000,000** | Max total gas per block |
+| `block_gas_limit` | uint64 | **60,000,000** | Max total gas per block (EIP-7935 default) |
 | `freeze_due_limit` | uint64 | **100,000,000** (0.1 TOS) | Balance below which account is frozen |
 | `delete_due_limit` | uint64 | **1,000,000,000** (1.0 TOS) | Balance below which account is deleted |
 | `flat_gas_limit` | uint64 | **100** | Gas amount covered by flat fee |
 | `flat_gas_price` | uint64 | **40,000** | Flat fee (nanotomi) for gas up to flat_gas_limit |
+
+**History:** pre-Fusaka values were `gas_limit = 1,000,000`,
+`block_gas_limit = 10,000,000`. That combination silently blocked any
+EVM tx requesting more than 1 M gas (common for contract deployments
+and multi-step DeFi calls): admission passed, then the compute phase
+rejected with "tx gas limit exceeds block gas limit" and wrote a
+receipt with `status = 0x0` and `gasUsed = 0x0`. Raised in lockstep
+with the EIP-7825 admission gate.
 
 ## ConfigParam 22 — Masterchain Block Limits
 
@@ -264,14 +279,18 @@ Three tiers: underload (triggers shard merge), soft (normal target), hard (absol
 
 ## ConfigParam 23 — Basechain Block Limits
 
+The `gas.soft_limit` here **must match** ConfigParam 21's
+`block_gas_limit` — the two are two views of the same ceiling. Keep
+these in lockstep whenever either is updated.
+
 | Field | Type | Value | Description |
 |-------|------|-------|-------------|
 | `bytes.underload` | uint32 | **262,144** (256 KB) | Below this → shard merge candidate |
 | `bytes.soft_limit` | uint32 | **1,048,576** (1 MB) | Normal target |
 | `bytes.hard_limit` | uint32 | **2,097,152** (2 MB) | Absolute maximum |
-| `gas.underload` | uint32 | **2,000,000** | Below this → shard merge candidate |
-| `gas.soft_limit` | uint32 | **10,000,000** | Normal target |
-| `gas.hard_limit` | uint32 | **20,000,000** | Absolute maximum |
+| `gas.underload` | uint32 | **5,000,000** | Below this → shard merge candidate |
+| `gas.soft_limit` | uint32 | **60,000,000** | Normal target (matches Param 21 block_gas_limit) |
+| `gas.hard_limit` | uint32 | **120,000,000** | Absolute maximum (2× soft) |
 | `lt_delta.underload` | uint32 | **1,000** | Logical time delta underload |
 | `lt_delta.soft_limit` | uint32 | **5,000** | Normal target |
 | `lt_delta.hard_limit` | uint32 | **10,000** | Absolute maximum |
