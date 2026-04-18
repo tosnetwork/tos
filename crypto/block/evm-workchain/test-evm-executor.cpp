@@ -3930,6 +3930,16 @@ static void test_state_test_runner_pyspec_walk_prague() {
     run_pyspec_walk_for_fork("prague", "Prague", "Prague");
 }
 
+// Sister walker for Osaka/Fusaka. Same SKIP-on-missing behaviour as the
+// Prague walker — fixtures are not yet on disk in the snapshot we track
+// (July 2024 release, well before Fusaka). When fixtures_stable.tar.gz
+// is refreshed to a post-Fusaka build, this walker will auto-exercise
+// the six Fusaka EIPs (P-256 at 0x100, CLZ, MODEXP cap/gas, tx gas cap,
+// requests-hash validation).
+static void test_state_test_runner_pyspec_walk_osaka() {
+    run_pyspec_walk_for_fork("osaka", "Osaka", "Osaka");
+}
+
 // ---------------------------------------------------------------------------
 // Phase F (RPC cache persistence) — codec roundtrip scaffold.
 // See doc/evm-workchain-rpc-cache-persistence.md for the broader design.
@@ -5155,6 +5165,7 @@ int main() {
     test_state_test_runner_pyspec_walk();
     test_state_test_runner_pyspec_walk_shanghai();
     test_state_test_runner_pyspec_walk_prague();
+    test_state_test_runner_pyspec_walk_osaka();
 
     // Cancun pre-fork prep (Category E in known-divergences). Appended at
     // the end so existing test ordering is preserved.
