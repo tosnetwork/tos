@@ -127,15 +127,18 @@ were not present. This is mainly useful when a name would otherwise be hard to
 tokenize.
 
 \subsection{Integer Literals}
-An integer literal is either:
+An integer literal has the shape: an optional leading \verb|-|, followed by
+either
 
 \begin{itemize}
-\item a decimal literal, such as \verb|0|, \verb|17|, or \verb|-3|;
-\item a hexadecimal literal beginning with \verb|0x|, such as \verb|0xff|.
+\item decimal digits, as in \verb|0|, \verb|17|, or \verb|-3|; or
+\item the prefix \verb|0x| and hexadecimal digits (case-insensitive in a-f),
+as in \verb|0xff|, \verb|0xDEAD|, or \verb|-0xff|.
 \end{itemize}
 
-The parser converts integer literals into signed 257-bit values and rejects
-anything that does not fit.
+The prefix \verb|0x| is recognized only in lowercase. The parser converts
+integer literals into signed 257-bit values and rejects anything that does
+not fit.
 
 \subsection{String Literals}
 The parser accepts ordinary quoted strings and triple-quoted strings, each with
@@ -173,6 +176,7 @@ method_id  operator  infix  infixl  infixr  const
 The following multi-character operators are also reserved:
 
 \begin{verbatim}
+->
 ==  !=  <=  >=  <=>
 <<  >>  ~>>  ^>>
 ~/  ^/  ~%  ^%  /%
@@ -180,6 +184,9 @@ The following multi-character operators are also reserved:
 <<=  >>=  ~>>=  ^>>=
 &=  |=  ^=
 \end{verbatim}
+
+The \verb|->| operator is used in function-type expressions (see
+Section~\ref{sec:types}) and as the terminator of a \verb|forall| clause.
 
 In addition, the single characters below are registered as keywords in their
 own right:
@@ -192,14 +199,31 @@ own right:
 \section{Types}
 \label{sec:types}
 \subsection{Atomic Types}
-The parser recognizes the following atomic types:
+The parser recognizes the following atomic types in type-expression position
+(that is, in any context where \verb|parse_type| is invoked --- global variable
+declarations, constant declarations, formal parameter types, return types,
+type ascriptions inside expressions):
 
 \begin{verbatim}
-int  cell  slice  builder  cont  tuple  type
+int  cell  slice  builder  cont  tuple
 \end{verbatim}
 
 In addition, \verb|_| and \verb|var| both denote a fresh type hole in type
 position.
+
+The keyword \verb|type| is \emph{not} accepted as a type expression. It is
+reserved by the lexer and used by the parser in only two places:
+
+\begin{itemize}
+\item as an optional prefix before each bound variable in a \verb|forall|
+clause (see Section~\ref{sec:types-forall});
+\item as a primary expression in \verb|parse_expr100|, where it denotes an
+atomic type value of kind \verb|type|. This usage is rarely written by hand in
+ordinary contract source code.
+\end{itemize}
+
+Writing \verb|type| in a type-expression position, such as
+\verb|global type x;| or \verb|type f();|, is a parse error.
 
 \subsection{Type Constructors}
 The parser uses the following grammar for type expressions:
@@ -240,6 +264,7 @@ int -> int
 \end{verbatim}
 
 \subsection{Universally Quantified Type Variables}
+\label{sec:types-forall}
 Source-level universal quantification appears only as a prefix of a function
 definition:
 
@@ -430,12 +455,18 @@ Example:
 forall X -> (X, tuple) list_next(tuple list) asm( -> 1 0) "UNCONS";
 \end{verbatim}
 
-The parser imposes two important static restrictions on \verb|asm| functions:
+The parser imposes the following static restrictions on \verb|asm| functions:
 
 \begin{itemize}
 \item at most 16 formal arguments;
-\item a fixed-width return type and fixed-width argument types.
+\item the return type must have a well-defined fixed width, at most 16 stack
+values wide;
+\item each formal parameter's type must have a well-defined fixed width, at
+most 16 stack values wide.
 \end{itemize}
+
+All three bounds are enforced independently. A tensor-valued argument or
+return type counts as its total width in stack values.
 
 \subsection{Method Identifiers}
 If \verb|method_id| is present without an explicit argument, the compiler uses
@@ -588,8 +619,9 @@ The difference between the two prefixes is:
 a ``modify-and-return'' pattern.
 \end{itemize}
 
-If a \verb|~name| symbol is not defined but the corresponding plain
-\verb|name| symbol exists, the parser falls back to the plain symbol.
+If a \verb|.name| or \verb|~name| symbol is not defined but the corresponding
+plain \verb|name| symbol exists, the parser falls back to the plain symbol.
+The fallback applies uniformly to both dot-identifiers and tilde-identifiers.
 
 \subsection{Operator Precedence}
 The parser implements the following precedence levels, from highest to lowest:
