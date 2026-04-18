@@ -11,6 +11,8 @@
 #include "evm-incremental-trie.h"
 #include "evm-cell-state.h"
 #include "evm-init.h"
+#include "evm-rpc-cache-codec.h"
+#include "evm-rpc-cache-db.h"
 #include "evm-subscriptions.h"
 
 #include <ethash/keccak.hpp>
@@ -77,6 +79,28 @@ bool run_evm_compute_phase(
     receipt.contract_address = exec_result.contract_address;
     receipt.logs = exec_result.logs;
     receipt.return_data = exec_result.return_data;
+
+    // Phase F.3: persist to side-channel cache db before moving the
+    // receipt into RAM. Skipped on the test harness path (no db open).
+    //
+    // Why `receipt.success` filter: compute-phase runs multiple times per
+    // block — once in the collator (applies the tx, success=true), then
+    // again in the validator's validate-block (re-applies against state
+    // that already has the tx, fails with nonce mismatch → success=false).
+    // Writing the second result overwrites the first with garbage. We
+    // only persist successful executions; failures are inferred by RPC
+    // returning null on tx hash that never produced a receipt.
+    if (auto* cache = evm_rpc_cache_db(); cache && receipt.success) {
+        td::Bits256 tx_hash_bits;
+        std::memcpy(tx_hash_bits.data(), tx_hash.bytes, 32);
+        auto cell = encode_persisted_receipt(receipt);
+        auto put_status = cache->put_receipt(tx_hash_bits, cell);
+        if (put_status.is_error()) {
+            LOG(WARNING) << "evm-rpc-cache: put_receipt failed for "
+                         << tx_hash_bits.to_hex() << ": "
+                         << put_status.message();
+        }
+    }
     state.store_receipt(tx_hash, std::move(receipt));
 
     StoredTransaction stored_tx;

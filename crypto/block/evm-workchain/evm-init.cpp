@@ -13,6 +13,8 @@
 #include "block/block-parse.h"
 #include "block/evm-workchain-dispatch.h"
 #include "evm-cell-codec.h"
+#include "evm-rpc-cache-codec.h"
+#include "evm-rpc-cache-db.h"
 #include "evm-compute-phase.h"
 #include "evm-state.h"
 #include "evm-cell-state.h"
@@ -312,12 +314,12 @@ size_t hydrate_global_state_if_empty(vm::AugmentedDictionary& shard_accounts) {
     return count;
 }
 
-void init_evm_workchain(const std::string& /*db_root*/) {
-    // db_root used to point at the legacy evm-state.boc sidecar location.
-    // After Phase B that file is no longer read or written; canonical state
-    // is rehydrated from the wc=1 ShardAccounts at first block load. The
-    // parameter remains for backward source compatibility with the existing
-    // callers in validator-engine and tests.
+void init_evm_workchain(const std::string& db_root) {
+    // db_root historically pointed at the legacy evm-state.boc sidecar
+    // location (removed in Phase B — canonical state lives in wc=1
+    // ShardAccounts now). It now serves Phase F.3/F.4: open the
+    // side-channel RPC cache DB at db_root + "/evm-rpc-cache" so
+    // receipts survive restart without touching consensus.
     LOG(WARNING) << "evm-workchain: initialising (workchain_id=1, chain_id="
                  << kEvmChainId << ")";
 
@@ -333,6 +335,45 @@ void init_evm_workchain(const std::string& /*db_root*/) {
     // Production deployments should remove or guard this call. See the
     // PRE-FUNDED TEST ACCOUNTS block above for the full list and rationale.
     seed_test_accounts(*g_evm_state);
+
+    // Phase F.3/F.4: open the per-validator side-channel RPC cache DB.
+    // Skipped on the test harness path (no db_root provided).
+    if (!db_root.empty()) {
+        auto cache_path = db_root + "/evm-rpc-cache";
+        auto db_r = EvmRpcCacheDb::open(cache_path);
+        if (db_r.is_error()) {
+            LOG(ERROR) << "evm-workchain: failed to open rpc cache db at "
+                       << cache_path << ": " << db_r.error().message();
+        } else {
+            set_evm_rpc_cache_db(db_r.move_as_ok());
+            // Hydrate g_evm_state.receipts_ from the cache so RPC
+            // queries for pre-restart txs return data immediately.
+            size_t hydrated = 0;
+            size_t decode_fails = 0;
+            auto walk_status = evm_rpc_cache_db()->for_each_receipt(
+                [&hydrated, &decode_fails](const td::Bits256& tx_hash,
+                            td::Ref<vm::Cell> cell) -> td::Status {
+                    StoredReceipt r;
+                    if (!decode_persisted_receipt(cell, r)) {
+                        ++decode_fails;
+                        return td::Status::OK();
+                    }
+                    evmc::bytes32 tx_hash_be{};
+                    std::memcpy(tx_hash_be.bytes, tx_hash.data(), 32);
+                    g_evm_state->store_receipt(tx_hash_be, std::move(r));
+                    ++hydrated;
+                    return td::Status::OK();
+                });
+            if (walk_status.is_error()) {
+                LOG(ERROR) << "evm-workchain: rpc cache walk failed: "
+                           << walk_status.message();
+            } else {
+                LOG(WARNING) << "evm-workchain: hydrated " << hydrated
+                             << " receipts from rpc cache db"
+                             << (decode_fails > 0 ? " (skipped " + std::to_string(decode_fails) + " corrupt entries)" : "");
+            }
+        }
+    }
 
     evm_workchain_dispatch::set_evm_compute_handler(
         [](block::ComputePhase& cp,
