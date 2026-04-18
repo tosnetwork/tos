@@ -1,5 +1,7 @@
 // Copyright 2025 The Silkworm Authors
 // SPDX-License-Identifier: Apache-2.0
+// Modifications copyright 2026 TOS Blockchain Teams (Apache-2.0).
+// See git log for the list of changes.
 
 #pragma once
 
