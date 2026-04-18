@@ -177,34 +177,48 @@ spec description of the method.
 
 ## Category E — Live chain config divergence (production lags state tests)
 
-**Status: open — Cancun pre-fork checklist landed (2026-04-18). The chain is
-ready to flip `cancun_time = <future-anchor>` in a future coordinated
-release; the flag itself remains unset to keep this PR consensus-neutral.**
+**Status: ✅ closed (2026-04-18, commit `cccf9754`).** `cancun_time = 0`
+flipped in `evm_chain_config()`. Tests and production now run on the
+SAME fork (Cancun). Pre-fork prep landed earlier the same day:
+KZG canary verifies the precompile is callable (`6d311e8e`),
+EIP-4788 beacon-roots predeploy is seeded at the magic address
+(`6d311e8e`), blob (type-3) admission rejects at
+`eth_sendRawTransaction` since we have no blob mempool (`bb56f43e`).
 
-`crypto/block/evm-workchain/evm-block-context.cpp::evm_chain_config()`
-sets `shanghai_time = 0` but does **not** set `cancun_time` or
-`prague_time`. The live 4-validator chain therefore reports
-**EVMC_SHANGHAI** revision to silkworm + evmone.
+Block-header consequence of the flip: every Cancun-era block now
+carries `blob_gas_used`, `excess_blob_gas`, and
+`parent_beacon_block_root` (all zero — we don't produce blobs and
+have no beacon chain). silkworm's RLP encoder includes them in the
+canonical header, so the Phase G.6 `BlockHeader::hash()` covers
+them. Blocks before commit `cccf9754` have v1 (Shanghai) hashes;
+blocks after have v2 (Cancun) hashes.
 
-In contrast, the Phase G.1 / G.2 state-test runner builds its own
-per-test ChainConfig with `cancun_time = 0`, so all our state tests
-pass at Cancun. **Tests and production run on different forks.**
-
-What's blocked in production today (silently — no error, just opcode
-acts as INVALID and reverts):
+What's now active in production (was blocked under Shanghai-only):
 - BLOBBASEFEE (`0x4a`, EIP-7516)
 - BLOBHASH (`0x49`, EIP-4844 host op for blob versioned hashes)
 - TLOAD / TSTORE (`0x5c`/`0x5d`, transient storage, EIP-1153)
 - MCOPY (`0x5e`, EIP-5656)
 - KZG point-evaluation precompile (`0x0a`)
-- EIP-6780 SELFDESTRUCT semantics (production still does the
-  pre-Cancun full-teardown flavor)
-- EIP-4788 beacon-roots predeploy at
-  `0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02` (we don't seed it)
+- EIP-6780 SELFDESTRUCT semantics (only beneficiary transfer
+  outside the same-tx-create case)
+- EIP-4788 beacon-roots system call (per-block hook gated on
+  `revision() >= EVMC_CANCUN` in compute-phase)
 
 Modern Solidity output (compiled with `--optimize` on `^0.8.25`)
-emits MCOPY and TSTORE routinely → contracts compiled with current
-Solidity will revert in our chain.
+emits MCOPY and TSTORE routinely — those contracts now run
+correctly on our chain.
+
+### Historical context (kept for audit trail)
+The original Shanghai-only chain config was Phase A's choice to ship
+a known-stable EVM revision before the Phase F adapters were
+complete. The 5-month gap closed when:
+1. Phase G.2 Pyspec walker proved Cancun fixtures pass against our
+   silkworm-driven IBS (`d140ec1d` cleared blob-fee burn, etc.)
+2. Phase F.6 receipts/tx/blocks/logs cross-restart shipped (`607ceff6`)
+3. Cancun pre-fork prep landed (KZG + EIP-4788 + blob admission)
+4. Phase G.6 block-hash canonicalisation (`cd46f269`) made the
+   header hash bind the new Cancun fields correctly
+5. User decision on 2026-04-18 to flip the flag from genesis
 
 ### Adapter-readiness audit (2026-04-18, Agent F)
 
