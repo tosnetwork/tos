@@ -56,6 +56,7 @@
 #include <silkworm/core/crypto/ecdsa.h>
 #include <silkworm/core/execution/precompile.hpp>
 #include <silkworm/core/protocol/validation.hpp>
+#include <silkworm/core/protocol/intrinsic_gas.hpp>
 #include <ethash/keccak.hpp>
 #include <secp256k1.h>
 #include <secp256k1_recovery.h>
@@ -3746,6 +3747,49 @@ static bool run_one_state_test_fork(const std::string& path,
     printf("  execute: %s (gas_used=%lu)\n",
            result.success ? "ok" : "revert",
            static_cast<unsigned long>(result.gas_used));
+
+    // --- EIP-7623 floor cost (Prague+) --------------------------------------
+    //
+    // silkworm's ExecutionProcessor applies `gas_used = max(gas_used,
+    // floor_cost)` after the EVM has settled refunds, and re-credits the
+    // delta from the sender to the coinbase. Our bare run_evm path doesn't
+    // use ExecutionProcessor, so we replicate that adjustment here for
+    // fixture parity. Without this, calldata-heavy txs (which trigger the
+    // floor) post a balance that's short by (floor_cost - actual_gas_used)
+    // * effective_gas_price.
+    if (is_prague_or_later && result.success) {
+        auto floor = static_cast<uint64_t>(silkworm::protocol::floor_cost(dec.txn));
+        if (result.gas_used < floor) {
+            uint64_t extra_gas = floor - result.gas_used;
+            intx::uint256 effective_price =
+                dec.txn.effective_gas_price(base_fee);
+            intx::uint256 extra_fee = intx::uint256{extra_gas} * effective_price;
+            intx::uint256 priority_fee =
+                dec.txn.priority_fee_per_gas(base_fee);
+            intx::uint256 extra_coinbase = intx::uint256{extra_gas} * priority_fee;
+            std::unique_lock adj_lock(state.mutex());
+            auto sender_opt = dec.txn.sender();
+            if (sender_opt.has_value()) {
+                auto sender_acc = state.state().read_account(*sender_opt);
+                if (sender_acc && sender_acc->balance >= extra_fee) {
+                    auto updated = *sender_acc;
+                    updated.balance -= extra_fee;
+                    state.state().update_account(*sender_opt, sender_acc, updated);
+                }
+            }
+            auto cb_acc = state.state().read_account(coinbase);
+            if (!cb_acc) {
+                silkworm::Account new_cb{};
+                new_cb.balance = extra_coinbase;
+                state.state().update_account(coinbase, std::nullopt, new_cb);
+            } else {
+                auto updated_cb = *cb_acc;
+                updated_cb.balance += extra_coinbase;
+                state.state().update_account(coinbase, cb_acc, updated_cb);
+            }
+            result.gas_used = floor;
+        }
+    }
 
     // --- Verify post-state --------------------------------------------------
     std::unique_lock lock(state.mutex());
