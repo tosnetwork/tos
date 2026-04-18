@@ -51,6 +51,7 @@
 #include <silkworm/core/types/address.hpp>
 #include <silkworm/core/rlp/encode.hpp>
 #include <silkworm/core/crypto/ecdsa.h>
+#include <silkworm/core/execution/precompile.hpp>
 #include <ethash/keccak.hpp>
 #include <secp256k1.h>
 #include <secp256k1_recovery.h>
@@ -4621,6 +4622,93 @@ static void test_eip4788_predeploy_seeded() {
 }
 
 // =============================================================================
+// Phase C.2 — EIP-7951 P-256 precompile (Fusaka)
+// =============================================================================
+//
+// Verifies the 0x100 precompile against the RFC 6979 §A.2.5 P-256/SHA-256
+// test vector (message "sample"). This is a public cross-referenced vector
+// — any correct P-256 ECDSA implementation produces the same (r, s) from
+// the same (x, k, H(m)), and any correct verifier accepts it.
+
+static bool hex_to_bytes_exact(const char* hex, size_t expected_len, uint8_t* out) {
+    const size_t hex_len = std::strlen(hex);
+    if (hex_len != expected_len * 2) return false;
+    for (size_t i = 0; i < expected_len; ++i) {
+        unsigned x;
+        if (std::sscanf(hex + i * 2, "%2x", &x) != 1) return false;
+        out[i] = static_cast<uint8_t>(x);
+    }
+    return true;
+}
+
+static void test_p256verify_precompile() {
+    printf("=== test_p256verify_precompile (Phase C.2, RFC 6979 §A.2.5) ===\n");
+
+    // RFC 6979 §A.2.5 — P-256 with SHA-256, message "sample".
+    // Public key (qx, qy):
+    constexpr const char* kQx = "60fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb6";
+    constexpr const char* kQy = "7903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299";
+    // SHA-256 of "sample":
+    constexpr const char* kHash = "af2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1bf";
+    // Deterministic ECDSA signature:
+    constexpr const char* kR = "efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3716";
+    constexpr const char* kS = "f7cb1c942d657c41d436c7a1b6e29f65f3e900dbb9aff4064dc4ab2f843acda8";
+
+    // Input: 160 bytes = msg_hash(32) | r(32) | s(32) | qx(32) | qy(32).
+    uint8_t input[160] = {};
+    bool parse_ok =
+        hex_to_bytes_exact(kHash, 32, input + 0) &&
+        hex_to_bytes_exact(kR,    32, input + 32) &&
+        hex_to_bytes_exact(kS,    32, input + 64) &&
+        hex_to_bytes_exact(kQx,   32, input + 96) &&
+        hex_to_bytes_exact(kQy,   32, input + 128);
+    if (!parse_ok) {
+        printf("  input hex parse FAILED\n  FAILED\n\n");
+        return;
+    }
+
+    // Valid signature → 32-byte 0x…01.
+    auto out_valid = silkworm::precompile::p256verify_run(
+        silkworm::ByteView{input, sizeof(input)});
+    bool shape_ok = out_valid.has_value() && out_valid->size() == 32;
+    bool value_ok = shape_ok && std::all_of(out_valid->begin(),
+                                             out_valid->begin() + 31,
+                                             [](uint8_t b) { return b == 0; })
+                             && (*out_valid)[31] == 1;
+    printf("  valid signature: output_len=%zu last_byte=0x%02x %s\n",
+           shape_ok ? out_valid->size() : 0,
+           (shape_ok && !out_valid->empty()) ? out_valid->back() : 0,
+           value_ok ? "OK" : "WRONG");
+
+    // Corrupt one byte of r → must return empty bytes (verification failed).
+    uint8_t corrupted[160];
+    std::memcpy(corrupted, input, 160);
+    corrupted[32] ^= 0x01;  // flip a bit in r
+    auto out_corrupt = silkworm::precompile::p256verify_run(
+        silkworm::ByteView{corrupted, sizeof(corrupted)});
+    bool corrupt_ok = out_corrupt.has_value() && out_corrupt->empty();
+    printf("  corrupted r → empty output: %s\n", corrupt_ok ? "OK" : "WRONG");
+
+    // Wrong-length input (159 bytes) → empty output.
+    auto out_short = silkworm::precompile::p256verify_run(
+        silkworm::ByteView{input, 159});
+    bool short_ok = out_short.has_value() && out_short->empty();
+    printf("  short input (159B) → empty output: %s\n", short_ok ? "OK" : "WRONG");
+    fflush(stdout);
+
+    // Gas price is flat 6900.
+    uint64_t g = silkworm::precompile::p256verify_gas(
+        silkworm::ByteView{input, sizeof(input)}, EVMC_OSAKA);
+    bool gas_ok = (g == 6900);
+    printf("  gas: %lu (expected 6900) %s\n", (unsigned long)g, gas_ok ? "OK" : "WRONG");
+    fflush(stdout);
+
+    bool all_ok = value_ok && corrupt_ok && short_ok && gas_ok;
+    printf("  %s\n\n", all_ok ? "PASSED" : "FAILED");
+    fflush(stdout);
+}
+
+// =============================================================================
 // Phase G.6 — block hash binds content (silkworm canonical RLP)
 // =============================================================================
 //
@@ -4819,6 +4907,7 @@ int main() {
     // Cancun pre-fork prep (Category E in known-divergences). Appended at
     // the end so existing test ordering is preserved.
     test_kzg_precompile_active();
+    test_p256verify_precompile();  // run before eip4788 (which hits a pre-existing dtor crash last)
     test_eip4788_predeploy_seeded();
 
     // Scan stdout for FAILED to determine exit code
