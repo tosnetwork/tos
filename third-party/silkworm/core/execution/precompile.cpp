@@ -833,21 +833,140 @@ std::optional<Bytes> bls_map_fp2_to_g2_run(ByteView input_view) noexcept {
     return out;
 }
 
-bool is_precompile(const evmc::address& address, evmc_revision rev) noexcept {
+// =============================================================================
+// EIP-7951 (Fusaka): secp256r1 (P-256) ECDSA verify precompile at 0x100.
+// =============================================================================
+//
+// Input layout (160 bytes, big-endian throughout):
+//   bytes [0   .. 32) : msg_hash (32B)
+//   bytes [32  .. 64) : r        (32B, signature scalar)
+//   bytes [64  .. 96) : s        (32B, signature scalar)
+//   bytes [96  ..128) : qx       (32B, public key x)
+//   bytes [128 ..160) : qy       (32B, public key y)
+//
+// Output: 32-byte big-endian uint256 == 1 on valid signature, OR empty
+// bytes on any failure (invalid input length, point not on curve, r/s
+// out of range, signature does not verify).
+//
+// Crypto: delegates to OpenSSL libcrypto (NID_X9_62_prime256v1). Silkworm's
+// core lib gains a libcrypto link in CMakeLists.txt for this precompile.
+
+}  // close namespace silkworm::precompile to include OpenSSL headers
+#include <openssl/bn.h>
+#include <openssl/ec.h>
+#include <openssl/ecdsa.h>
+#include <openssl/obj_mac.h>
+namespace silkworm::precompile {
+
+uint64_t p256verify_gas(ByteView, evmc_revision) noexcept {
+    return 6900;  // EIP-7951
+}
+
+std::optional<Bytes> p256verify_run(ByteView input_view) noexcept {
+    // Strict length check — EIP-7951 says non-160-byte input is invalid.
+    if (input_view.size() != 160) {
+        return Bytes{};  // empty output → "verification failed" per spec
+    }
+
+    auto* group = EC_GROUP_new_by_curve_name(NID_X9_62_prime256v1);
+    if (!group) return Bytes{};
+
+    auto cleanup_group = [&]() { EC_GROUP_free(group); };
+
+    BIGNUM* qx = BN_bin2bn(input_view.data() + 96, 32, nullptr);
+    BIGNUM* qy = BN_bin2bn(input_view.data() + 128, 32, nullptr);
+    BIGNUM* r = BN_bin2bn(input_view.data() + 32, 32, nullptr);
+    BIGNUM* s = BN_bin2bn(input_view.data() + 64, 32, nullptr);
+    if (!qx || !qy || !r || !s) {
+        BN_free(qx); BN_free(qy); BN_free(r); BN_free(s);
+        cleanup_group();
+        return Bytes{};
+    }
+
+    // Build public key point and validate.
+    auto* pub = EC_POINT_new(group);
+    if (!pub) {
+        BN_free(qx); BN_free(qy); BN_free(r); BN_free(s);
+        cleanup_group();
+        return Bytes{};
+    }
+    bool ok = EC_POINT_set_affine_coordinates(group, pub, qx, qy, nullptr) == 1
+              && EC_POINT_is_on_curve(group, pub, nullptr) == 1
+              && EC_POINT_is_at_infinity(group, pub) == 0;
+
+    // Validate r,s ∈ [1, n-1].
+    if (ok) {
+        const BIGNUM* order = EC_GROUP_get0_order(group);
+        ok = !BN_is_zero(r) && !BN_is_zero(s)
+             && BN_cmp(r, order) < 0 && BN_cmp(s, order) < 0;
+    }
+
+    int verify_result = 0;
+    if (ok) {
+        auto* key = EC_KEY_new();
+        if (key && EC_KEY_set_group(key, group) == 1
+                && EC_KEY_set_public_key(key, pub) == 1) {
+            auto* sig = ECDSA_SIG_new();
+            if (sig && ECDSA_SIG_set0(sig, r, s) == 1) {
+                // ECDSA_SIG_set0 takes ownership of r and s; null them out
+                // so the cleanup below doesn't double-free.
+                r = nullptr;
+                s = nullptr;
+                verify_result = ECDSA_do_verify(input_view.data(), 32, sig, key);
+                ECDSA_SIG_free(sig);  // also frees the consumed r,s
+            } else if (sig) {
+                ECDSA_SIG_free(sig);
+            }
+            EC_KEY_free(key);
+        } else if (key) {
+            EC_KEY_free(key);
+        }
+    }
+
+    BN_free(qx); BN_free(qy); BN_free(r); BN_free(s);
+    EC_POINT_free(pub);
+    cleanup_group();
+
+    if (verify_result == 1) {
+        Bytes out(32, 0);
+        out[31] = 1;
+        return out;
+    }
+    return Bytes{};  // empty bytes on any failure (per EIP-7951)
+}
+
+// EIP-7951: P-256 lives at address 0x000…0100 (= 256 decimal). Out-of-table
+// — the contiguous kContracts[] dispatch only covers addresses ≤ 0xff.
+inline constexpr evmc::address kP256VerifyAddress{
+    0x0000000000000000000000000000000000000100_address};
+inline constexpr Contract kP256VerifyContract{p256verify_gas, p256verify_run};
+
+const Contract* find_precompile(const evmc::address& address, evmc_revision rev) noexcept {
     using namespace evmc::literals;
+
+    // EIP-7951 (Osaka): P-256 verify at 0x100.
+    if (rev >= EVMC_OSAKA && address == kP256VerifyAddress) {
+        return &kP256VerifyContract;
+    }
 
     static_assert(std::size(kContracts) < 256);
     static constexpr evmc::address kMaxOneByteAddress{0x00000000000000000000000000000000000000ff_address};
     if (address > kMaxOneByteAddress) {
-        return false;
+        return nullptr;
     }
 
     const uint8_t num{address.bytes[kAddressLength - 1]};
     if (num >= std::size(kContracts) || !kContracts[num]) {
-        return false;
+        return nullptr;
     }
+    if (kContracts[num]->added_in > rev) {
+        return nullptr;
+    }
+    return &kContracts[num]->contract;
+}
 
-    return kContracts[num]->added_in <= rev;
+bool is_precompile(const evmc::address& address, evmc_revision rev) noexcept {
+    return find_precompile(address, rev) != nullptr;
 }
 
 }  // namespace silkworm::precompile

@@ -107,6 +107,10 @@ target_compile_definitions(silkworm_core PRIVATE
   SILKWORM_NO_JSON=1
 )
 
+# OpenSSL libcrypto for EIP-7951 secp256r1 (P-256) ECDSA verify.
+find_package(OpenSSL REQUIRED)
+target_link_libraries(silkworm_core PRIVATE OpenSSL::Crypto)
+
 if(MSVC)
   target_compile_options(silkworm_core PRIVATE /w)
 else()

@@ -79,6 +79,10 @@ std::optional<Bytes> bls_map_fp_to_g1_run(ByteView) noexcept;
 uint64_t bls_map_fp2_to_g2_gas(ByteView, evmc_revision) noexcept;
 std::optional<Bytes> bls_map_fp2_to_g2_run(ByteView) noexcept;
 
+// EIP-7951 (Fusaka): secp256r1 (P-256) ECDSA verify precompile, 0x100.
+uint64_t p256verify_gas(ByteView, evmc_revision) noexcept;
+std::optional<Bytes> p256verify_run(ByteView) noexcept;
+
 inline constexpr std::optional<SupportedContract> kContracts[]{
     std::nullopt,                                                                  // 0x00
     SupportedContract{{ecrec_gas, ecrec_run}, EVMC_FRONTIER},                      // 0x01
@@ -102,5 +106,11 @@ inline constexpr std::optional<SupportedContract> kContracts[]{
 };
 
 bool is_precompile(const evmc::address&, evmc_revision) noexcept;
+
+// Returns the (gas, run) pair for the precompile at `address` if one is
+// active at `rev`, or nullptr otherwise. Subsumes the kContracts table
+// lookup AND the out-of-table addresses introduced by Osaka (P-256 at
+// 0x100). Callers should prefer this over indexing kContracts directly.
+const Contract* find_precompile(const evmc::address& address, evmc_revision rev) noexcept;
 
 }  // namespace silkworm::precompile

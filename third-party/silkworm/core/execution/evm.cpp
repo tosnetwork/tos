@@ -219,10 +219,8 @@ evmc::Result EVM::call(const evmc_message& message) noexcept {
         }
     }
 
-    if (precompile::is_precompile(message.code_address, rev)) {
-        static_assert(std::size(precompile::kContracts) < 256);
-        const uint8_t num{message.code_address.bytes[kAddressLength - 1]};
-        const precompile::Contract& contract{precompile::kContracts[num]->contract};
+    if (const auto* contract_ptr = precompile::find_precompile(message.code_address, rev)) {
+        const precompile::Contract& contract{*contract_ptr};
         const ByteView input{message.input_data, message.input_size};
         const uint64_t gas{contract.gas(input, rev)};
         if (std::cmp_greater(gas, message.gas)) {
