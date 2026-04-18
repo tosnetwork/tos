@@ -191,13 +191,20 @@ uint64_t expmod_gas(ByteView input_view, evmc_revision rev) noexcept {
         // EIP-7883 multiplication_complexity:
         //   max_length <= 32  →  16
         //   max_length  > 32  →  2 * words²
+        // No /3 divisor: the EIP's Python pseudocode shows `// 3`, but both
+        // the reference geth (core/vm/contracts.go::osakaModexpGas — no /3)
+        // and the execution-spec-tests fixtures (nagydani-5-square at
+        // base=1024, exp=1, mod=1024 expects gas=32768, which is exactly
+        // 2*128²*1 with NO division) agree that the EIP-7883 formula drops
+        // the GQUADDIVISOR term. Keeping `/ 3` (the EIP-2565 behaviour) is
+        // wrong at Osaka and produces 1/3 of the consensus gas cost.
         intx::uint256 mc;
         if (max_length <= 32) {
             mc = 16;
         } else {
             mc = 2 * mult_complexity_eip2565(max_length);
         }
-        gas = mc * adjusted_exponent_len / 3;
+        gas = mc * adjusted_exponent_len;
     } else {
         gas = mult_complexity_eip2565(max_length) * adjusted_exponent_len / 3;
     }
