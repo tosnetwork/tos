@@ -18,6 +18,11 @@
 \begin{document}
 \maketitle
 
+\begin{center}
+\textbf{Document version:} v3 (Draft)\quad$\vert$\quad
+\textbf{Supersedes:} v1 (initial proposal), v2 (10 Canonical Decisions locked)
+\end{center}
+
 \begin{abstract}
 This document proposes a new source-level design target for FunC,
 version \verb|0.5.0|. It starts from the currently implemented FunC
@@ -301,9 +306,39 @@ effect pure unsafe
 entry external internal bounce get
 \end{verbatim}
 
+Two of these (\verb|static|, \verb|where|) are reserved for future use: the
+language grammar in Section~\ref{sec:grammar} does not currently consume them.
+They are listed here so that user identifiers do not collide.
+
 Compatibility mode may additionally reserve legacy FunC words such as
 \verb|global|, \verb|asm|, \verb|impure|, \verb|inline|, and
 \verb|method_id|.
+
+\subsection{Attributes}
+\label{sec:attributes}
+FunC \verb|0.5.0| introduces an attribute syntax for edition selection and
+module-level metadata. Inner attributes apply to the enclosing item (here, the
+source file):
+
+\begin{verbatim}
+InnerAttribute ::= "#" "!" "[" AttrBody "]"
+OuterAttribute ::= "#"     "[" AttrBody "]"
+AttrBody       ::= identifier [ "=" (string-literal | integer-literal) ]
+                 | identifier "(" [ AttrArg { "," AttrArg } ] ")"
+AttrArg        ::= identifier [ "=" (string-literal | integer-literal) ]
+\end{verbatim}
+
+The only recognised inner attribute in the edition-\verb|0.5.0| surface is
+\verb|edition|:
+
+\begin{verbatim}
+#![edition = "0.5.0"]
+#![edition = "0.4-compat"]
+\end{verbatim}
+
+Unknown attributes are reserved and reject at parse time to leave room for
+future extensions. Outer attributes (\verb|#[...]|) on individual items are
+reserved but unused in this edition.
 
 \section{Source Structure and Modules}
 \subsection{Compilation Unit}
@@ -381,6 +416,8 @@ Coins
 Bytes
 RawCell
 RawSlice
+Vec<T>
+EitherRefOrInline<T>
 \end{verbatim}
 
 The role of these types is:
@@ -394,8 +431,78 @@ decoded payload type;
 \verb|u128|;
 \item \verb|Bytes| represents ordinary byte strings;
 \item \verb|RawCell| and \verb|RawSlice| are low-level escape-hatch types for
-unchecked code.
+unchecked code;
+\item \verb|Vec<T>| is a sequence type with a fixed stack and wire
+representation, usable at getter and ABI boundaries
+(\S\ref{sec:vec-type});
+\item \verb|EitherRefOrInline<T>| is a field-level codec that chooses inline
+or ref storage deterministically (\S\ref{sec:either-ref-inline}).
 \end{itemize}
+
+\subsection{\texttt{Vec<T>}}
+\label{sec:vec-type}
+A \verb|Vec<T>| is a homogeneous sequence usable wherever the built-in
+domain types are usable, including struct fields, function arguments,
+function returns, and \verb|get fn| exports.
+
+\paragraph{Stack representation.}
+A \verb|Vec<T>| on the TVM stack is a single TVM \verb|Tuple| whose elements
+are the sequence's items in order. TVM tuples natively hold up to 255
+elements; a \verb|Vec<T>| longer than 255 is represented by a chain of tail
+tuples (last element of the outer tuple is itself a \verb|Vec<T>| for the
+remainder). The chain is deterministic: each segment holds exactly
+\verb|min(255, remaining)| elements before continuing.
+
+\paragraph{Wire representation.}
+When serialised into a cell, a \verb|Vec<T>| writes:
+
+\begin{enumerate}
+\item \verb|length:uint16| --- the number of items, big-endian;
+\item the items in order, each by \verb|T|'s codec;
+\item if the encoded items overflow the current cell (bit budget or ref
+budget), the encoder spills into a \emph{tail ref} whose referent is a
+cell containing the remaining items, recursively.
+\end{enumerate}
+
+Overflow is determined by the same fit predicate used in
+\S\ref{sec:cd-bodylayout}. The \verb|uint16| prefix caps the wire length at
+65\,535 items; \verb|Vec| values longer than that cannot be serialised and
+raise \verb|CellError::Overflow| at the codec boundary.
+
+\paragraph{Getter returns.}
+A \verb|get fn| returning \verb|Vec<T>| exports the stack-tuple form
+directly to the caller. Indexers and wallets that consume the getter see a
+TVM tuple and can iterate without invoking a cell decode.
+
+\subsection{\texttt{EitherRefOrInline<T>}}
+\label{sec:either-ref-inline}
+This type represents a field whose TL-B form is \verb|field:(Either T ^T)|:
+one bit of discriminant followed by either an inline encoding of \verb|T| or
+a reference to a cell carrying \verb|T|.
+
+\paragraph{Stack representation.}
+An \verb|EitherRefOrInline<T>| on the TVM stack is a \verb|T| (the
+inline/ref distinction is a codec-level concern, not a stack concern). The
+compiler carries no runtime discriminant past the codec boundary.
+
+\paragraph{Wire representation.}
+The encoder writes:
+
+\begin{enumerate}
+\item one discriminant bit (\verb|0| = inline, \verb|1| = ref);
+\item if inline: the encoded \verb|T| immediately after the bit;
+\item if ref: a single cell reference whose referent is the encoded \verb|T|.
+\end{enumerate}
+
+The choice is deterministic and uses the same fit predicate as
+\S\ref{sec:cd-bodylayout}, specialised to the current field cursor: inline
+iff the encoded \verb|T| fits in the remaining bits and refs of the current
+cell after consuming the discriminant bit. Two compliant compilers must
+produce identical bytes.
+
+\verb|EitherRefOrInline<T>| is distinct from \verb|Option<Cell<T>>|: the
+former is mandatory (\verb|T| is always present), the latter is
+(\verb|0| = absent, \verb|1| = present).
 
 \subsection{Typed Cell References}
 Typed cells are central to making TVM serialization tractable without hiding it:
@@ -496,19 +603,25 @@ wants one sum type for dispatch.
 \end{itemize}
 
 \subsection{Option and Result}
-Two standard prelude types are assumed:
+Two standard prelude types are assumed. Their variant order is fixed by the
+canonical tag assignment in Section~\ref{sec:cd-stack-enum}:
 
 \begin{verbatim}
 pub enum Option<T> {
-    Some(T),
-    None,
+    None,        // tag 0
+    Some(T),     // tag 1
 }
 
 pub enum Result<T, E> {
-    Ok(T),
-    Err(E),
+    Ok(T),       // tag 0
+    Err(E),      // tag 1
 }
 \end{verbatim}
+
+Wire-format and stack-layout are fixed canonically:
+\verb|Option<T>| is bit-compatible with TL-B \verb|Maybe X|; \verb|Result<T,
+E>| uses a 1-bit tag. See Sections~\ref{sec:cd-stack-enum} and
+\ref{sec:cd-wire-enum}.
 
 These types are not library afterthoughts. They are core to ordinary contract
 authoring:
@@ -562,6 +675,15 @@ pub trait TlbCodec {
     fn load(mut s: Slice) -> Result<(Self, Slice), ParseError> pure;
 }
 \end{verbatim}
+
+Inside a \verb|trait| or \verb|impl| body, \verb|Self| refers to the concrete
+type that implements (or is being defined by) the surrounding block. Outside
+these blocks \verb|Self| is not in scope. A trait method whose signature does
+not name \verb|self| is a \textbf{static associated function} and is called
+with explicit type syntax, e.g.\ \verb|WalletMsg::load(cs)|. Methods with a
+\verb|self| or \verb|mut self| receiver are dispatched through ordinary
+method-call syntax \verb|x.method(...)|. The proposal does \emph{not} include
+borrowed receivers; there are no \verb|\&self| or \verb|\&mut self| forms.
 
 \subsection{Implementations}
 Implementations attach methods to types:
@@ -670,9 +792,32 @@ This replaces the special \verb|cs~load_uint(32)| syntax. The source clearly
 states mutability in the binding and in the method signature, rather than
 hiding it in punctuation.
 
+\paragraph{Error-path state of mutable receivers.} When a \verb|mut self|
+method returns \verb|Result<_, E>|, the canonical semantics are:
+
+\begin{itemize}
+\item on \verb|Ok|, the caller-side mutable place is rebound to the updated
+receiver, and the \verb|Ok| payload is propagated;
+\item on \verb|Err|, the caller-side mutable place is \emph{restored to its
+pre-call state}. Any partial cursor advancement or field mutation inside
+the callee is discarded.
+\end{itemize}
+
+This means \verb|cs.load_uint(32)?| followed by code that reuses \verb|cs| in
+the \verb|Err| branch can rely on \verb|cs| still pointing at the original
+position. The lowering in \verb|doc/func_v0.5.0-lowering.tex| \S4.3 must
+be read with this rule: the \texttt{unconditional writeback} shown there is a
+conceptual desugar step, and the emitted code must guard the writeback with a
+tag check, or must use a shadow copy, so that the \verb|Err| case does not
+commit intermediate state. Authors may explicitly commit partial mutations by
+writing \verb|let new_cs = cs; new_cs.load_uint(32)?| in a non-receiver form.
+
 \subsection{Mutable Arguments and Lightweight Safety Checks}
+\label{sec:mut-args}
 Methods with \verb|mut self| remain the idiomatic surface for builder/slice-like
-APIs. Free functions may also accept mutable places explicitly:
+APIs. Free functions --- and in particular helper functions that update a
+contract's persistent state --- accept mutable places explicitly through a
+\verb|mut| parameter qualifier:
 
 \begin{verbatim}
 pub fn load_var_uint(mut s: Slice, bits: u16) -> Result<u256, ParseError> pure { ... }
@@ -681,6 +826,38 @@ let mut cs = body;
 let n = load_var_uint(mut cs, 5)?;
 \end{verbatim}
 
+\paragraph{Helper functions that mutate persistent state.}
+This is the canonical pattern for splitting a contract's entry body into
+smaller helpers that each mutate the protocol state. There is no \verb|&self|
+or \verb|&mut self| borrow form in FunC \verb|0.5.0|; state passes through
+\verb|mut| arguments by value-thread:
+
+\begin{verbatim}
+fn on_transfer(
+    mut state: WalletState,
+    sender: Address,
+    req: Transfer,
+) -> Result<(), WalletError> effect(read, send) { ... }
+
+fn recv_internal(ctx: InternalContext<WalletMsg>) -> Result<(), WalletError> ... {
+    let mut state = load_state()?;
+    match ctx.body {
+        WalletMsg::Transfer(req) => on_transfer(mut state, ctx.sender, req)?,
+        ...
+    }
+    save_state(state)
+}
+\end{verbatim}
+
+The lowering is identical to a method with \verb|mut self|: the helper takes
+the receiver by value and returns it updated on \verb|Ok|, rolled back on
+\verb|Err| (per the rule in \S\ref{sec:cd-stack-enum} and
+\verb|doc/func_v0.5.0-lowering.tex| \S4.3).
+
+This pattern resolves what earlier drafts listed as ``helper functions need
+\verb|&mut self|''; no such syntax is required.
+
+\paragraph{Overlap checks.}
 This proposal adopts three lightweight rules:
 
 \begin{itemize}
@@ -728,7 +905,6 @@ The primary effect vocabulary is:
 effect(read)
 effect(write)
 effect(send)
-effect(unsafe)
 \end{verbatim}
 
 These effects mean:
@@ -739,13 +915,25 @@ balance, or other chain environment values;
 \item \verb|write|: may persist updated state or otherwise mutate contract-owned
 storage;
 \item \verb|send|: may emit action-phase effects such as outbound messages,
-reserve operations, or code changes;
-\item \verb|unsafe|: may use raw assembler, unchecked parsing, or other
-operations whose safety cannot be proved from the surface type rules alone.
+reserve operations, or code changes.
 \end{itemize}
 
 An effect set is cumulative: \verb|effect(write, send)| may both write state
 and send messages.
+
+\verb|unsafe| is \emph{not} a member of the effect set. It is a separate
+top-level qualifier on a function that grants permission to use raw
+\verb|extern "tvm"| intrinsics and other surface-unsafe operations. See the
+grammar in Section~\ref{sec:grammar} for the precise distinction: a function
+signature may carry exactly one \texttt{EffectQualifier}, chosen from
+\verb|pure|, \verb|unsafe|, or \verb|effect(...)|.
+
+Effect propagation is transitive and mandatory: if a function calls another
+function whose effect set is $E$, the caller's effect set must be a superset of
+$E$ (or the caller itself must be \verb|unsafe|). A \verb|pure| function has
+$E = \emptyset$ and may only call other \verb|pure| functions. \verb|mut self|
+and \verb|mut| arguments are \emph{not} effects; they express local state
+threading and are compatible with \verb|pure|.
 
 \subsection{Why Not Keep \texttt{impure}}
 The old \verb|impure| marker is too coarse. It does not distinguish a getter
@@ -791,6 +979,70 @@ ctx.body
 
 This makes the execution model explicit while keeping raw TVM stack plumbing out
 of routine contract code.
+
+\subsection{Entry Dispatch Matrix}
+\label{sec:entry-dispatch}
+Unlike FunC \verb|0.4.6| which uses a single \verb|recv_internal| and expects
+the contract to branch on the \verb|bounced| header bit, \verb|0.5.0| splits
+internal-message delivery into two entry families:
+
+\begin{itemize}
+\item fresh internal messages are delivered to \verb|entry internal|;
+\item bounced messages are delivered to \verb|entry bounce|;
+\item external messages are delivered to \verb|entry external|.
+\end{itemize}
+
+If a contract defines \verb|entry internal| but no \verb|entry bounce|, an
+inbound bounced message is silently dropped after consuming only the minimal
+gas needed by the low-level wrapper --- no user-written handler is invoked.
+Symmetric rules apply to undefined \verb|entry internal| (fresh internal
+silently dropped) and undefined \verb|entry external| (external message
+rejected at the wrapper). Contracts requiring the old single-entry pattern
+must use a \verb|BounceContext<RawSlice>| form and manually re-dispatch.
+
+\subsection{Entry Decoding Semantics}
+\label{sec:entry-decode}
+Typed body decoding happens in the generated wrapper, not in user code. The
+canonical semantics for decode failure differ per entry kind:
+
+\begin{itemize}
+\item \verb|entry internal|: if the inbound body cannot be decoded as the
+requested \verb|T|, the wrapper exits successfully without invoking the user
+body. No state is written, no messages are sent. This preserves the TOS
+convention that unrecognized ops do not cause bounce-refund gas drain.
+\item \verb|entry external|: decoding is lazy. The wrapper exposes
+\verb|ctx.body_slice: Slice| and a user-invoked \verb|ctx.parse_body<T>()
+-> Result<T, ParseError>|. The wrapper does \emph{not} decode eagerly,
+because the external-message gas limit (typically 10\,000 gas before
+\verb|accept_message|) may be exhausted by decoding a large body. Authors
+must call \verb|accept_message| first, then parse.
+\item \verb|entry bounce|: decoding uses the bounced-message body convention
+(at most 256 bits after the \verb|0xFFFFFFFF| header). The default
+\verb|BounceContext<RawSlice>| form accepts any bounce; typed variants must
+opt in and must be robust to truncation.
+\end{itemize}
+
+\paragraph{Bounced body width rule.}
+For any \verb|entry bounce fn ...(ctx: BounceContext<T>)| with \verb|T| not
+equal to \verb|RawSlice|, the compiler must statically verify
+\[
+\verb|max_encoded_bits|(T) \;\le\; 256
+\]
+where \verb|max_encoded_bits| is the worst-case bit width of \verb|T|'s
+derived codec, not counting refs. The \verb|0xFFFFFFFF| bounce header
+prefix occupies 32 bits and is added by the wrapper, not counted against the
+256-bit budget available to \verb|T|. Ref counts are also verified: \verb|T|
+must encode as purely inline bits (no refs) because bounced bodies are
+truncated, not referenced.
+
+If \verb|max_encoded_bits(T) > 256| or \verb|T| requires any refs, the
+compile error is \verb|BounceBodyTooWide|, and the author must either
+narrow \verb|T|'s schema or fall back to \verb|BounceContext<RawSlice>| and
+parse manually.
+
+If a contract wants eager decoding in \verb|entry external|, it must write
+\verb|entry external(eager) fn ...|. See
+Section~\ref{sec:cd-external-eager} for the canonical rule.
 
 \subsection{External Intrinsics}
 Raw TVM primitives should be declared as \verb|extern "tvm"| in the standard
@@ -878,6 +1130,41 @@ Legacy \verb|repeat| and \verb|do ... until| may remain in compatibility mode,
 but the core language should converge on a smaller, more conventional control
 surface.
 
+\paragraph{Iterator protocol for \texttt{for}.}
+\verb|for item in items| desugars to a \verb|while let Some(item) = iter.next()|
+loop where \verb|iter| is derived from \verb|items| by the \verb|Iter| trait:
+
+\begin{verbatim}
+pub trait Iter {
+    type Item;
+    fn next(mut self) -> Option<Self::Item> pure;
+}
+
+pub trait IntoIter {
+    type Item;
+    type IntoIterTy: Iter<Item = Self::Item>;
+    fn into_iter(self) -> Self::IntoIterTy pure;
+}
+\end{verbatim}
+
+The desugaring rule is:
+
+\begin{verbatim}
+for <pattern> in <expr> { <body> }
+
+    ==>
+
+let mut __it = <expr>.into_iter();
+while let Some(<pattern>) = __it.next() { <body> }
+\end{verbatim}
+
+In edition \verb|0.5.0| the compiler must accept \verb|for| only over
+iterables whose type implements \verb|IntoIter|. The standard library provides
+initial implementations for ranges, fixed arrays, tuples of uniform element
+type, and dictionary iteration; additional implementations may be added by
+stdlib or user code. Trait resolution is static (monomorphized), matching the
+lowering rule in \verb|doc/func_v0.5.0-lowering.tex| \S4.10.
+
 \section{Messages, Serialization, and TVM-Specific APIs}
 \subsection{Typed Message Contexts}
 Messages should be represented as typed values rather than raw slices whenever
@@ -910,11 +1197,17 @@ inbound body into \verb|T|. Contracts may still opt into \verb|RawSlice| when
 they need manual parsing.
 
 \subsection{Typed Cell APIs}
-Serialization should be both trait-driven and convenient in routine code:
+Serialization should be both trait-driven and convenient in routine code.
+Per Section~\ref{sec:cd-coherence}, the \verb|to_cell| convenience lives on
+the \verb|CellEncode| trait itself as a default method, not as a blanket
+inherent impl:
 
 \begin{verbatim}
-impl<T: CellEncode> T {
-    pub fn to_cell(self) -> Result<Cell<T>, CellError> pure;
+pub trait CellEncode {
+    fn encode(self) -> Result<RawCell, CellError> pure;
+    fn to_cell(self) -> Result<Cell<Self>, CellError> pure {
+        self.encode().map(Cell::from_raw)
+    }
 }
 
 impl<T: CellDecode> Cell<T> {
@@ -922,6 +1215,11 @@ impl<T: CellDecode> Cell<T> {
     pub fn begin_parse(self) -> Slice pure;
 }
 \end{verbatim}
+
+The \verb|impl<T: CellDecode> Cell<T> { ... }| form \emph{is} admissible
+because \verb|Cell| is declared in the standard library (the trait's
+originating crate). User code may not add its own blanket impls over foreign
+types.
 
 \subsection{Codec Traits}
 Serialization and deserialization should be expressed through traits:
@@ -1009,10 +1307,19 @@ pub fn send<T: CellEncode>(
 This API expresses a real protocol operation more directly than ad hoc raw-cell
 construction plus \verb|SENDRAWMSG|.
 
-When \verb|body_layout| is \verb|Auto|, the compiler or stdlib may inline small
-message bodies and spill larger ones to a ref automatically. This reflects real
-TVM ergonomics: source code should express intent, while the message builder
-chooses the cheapest valid encoding unless the author overrides it.
+When \verb|body_layout| is \verb|Auto|, the compiler \emph{must} choose between
+inline and ref according to the canonical fit predicate specified in
+Section~\ref{sec:cd-bodylayout}. The predicate is a deterministic function of
+\verb|(env_bits, env_refs, body_bits, body_refs)| and is stable across
+toolchains: two compliant compilers compiling the same source produce
+identical wire bytes. Using ``may'' here instead of ``must'' would silently
+break message hashing, fee estimation, and receiver-side parsing across
+contracts built with different toolchains.
+
+When \verb|body| is the unit value \verb|()|, the generated envelope encodes
+``no body''\,: the TL-B \verb|Maybe| bit for \verb|body:(Maybe \ \^{}Cell)| is
+set to \verb|0|. This is distinct from a zero-width inlined body or an empty
+cell reference.
 
 \section{Error Model}
 \subsection{Recoverable and Unrecoverable Failure}
@@ -1332,20 +1639,24 @@ instead of every contract open-coding them.
 \end{itemize}
 
 \section{Core Grammar Summary}
+\label{sec:grammar}
 The grammar below is intentionally schematic. It describes the shape of the
 language, not every precedence rule or parsing ambiguity.
 
 \begin{verbatim}
-Item ::= ModuleDecl
-       | UseDecl
-       | ConstDecl
-       | TypeAlias
-       | StructDecl
-       | EnumDecl
-       | MessageDecl
-       | TraitDecl
-       | ImplDecl
-       | FunctionDecl
+SourceFile ::= { InnerAttribute } { Item }
+
+Item ::= { OuterAttribute }
+         ( ModuleDecl
+         | UseDecl
+         | ConstDecl
+         | TypeAlias
+         | StructDecl
+         | EnumDecl
+         | MessageDecl
+         | TraitDecl
+         | ImplDecl
+         | FunctionDecl )
 
 ModuleDecl ::= "mod" Path ";"
 UseDecl    ::= "use" Path [ "as" identifier ] ";"
@@ -1484,5 +1795,534 @@ That combination preserves the strengths of FunC --- closeness to TVM, direct
 control over serialization and messaging, and efficient compilation --- while
 making the source language much easier to teach, review, and scale across a
 real contract ecosystem.
+
+\section{Canonical Decisions}
+\label{sec:canonical-decisions}
+The items below were open questions in an earlier draft. Each has now been
+fixed from first principles: minimum runtime cost, determinism across
+toolchains, fidelity to TVM/TOS, and alignment with existing TON conventions.
+Compilers claiming specification conformance must obey these rules exactly.
+
+\subsection{Canonical Decision 1: Stack Representation of Sum Types}
+\label{sec:cd-stack-enum}
+An \verb|enum|, \verb|Option<T>|, or \verb|Result<T, E>| value occupies
+exactly two TVM stack values:
+
+\begin{verbatim}
+(tag : int,  payload : tuple)
+\end{verbatim}
+
+\begin{itemize}
+\item \verb|tag| is an ordinary TVM 257-bit signed integer. No bit packing is
+performed on the stack; that is a wire-format concern only.
+\item \verb|payload| is an ordinary TVM tuple. Variant fields appear in
+declaration order. A zero-field variant uses the empty tuple \verb|[]|.
+A one-field variant uses the singleton tuple \verb|[v]|. Multi-field
+variants use tuples of the appropriate arity.
+\end{itemize}
+
+Tag values:
+
+\begin{itemize}
+\item \verb|Option<T>|: \verb|None = 0|, \verb|Some = 1|.
+\item \verb|Result<T, E>|: \verb|Ok = 0|, \verb|Err = 1|.
+\item User-defined enums without an explicit discriminant type: tags are
+assigned \verb|0, 1, 2, ...| in declaration order.
+\item User-defined enums with an explicit discriminant type
+(\verb|enum E : uN|) or explicit per-variant values: the declared numeric
+values are the stack tags.
+\end{itemize}
+
+Optimisers may locally unbox the payload when the unboxing is not observable
+at function, trait, or ABI boundaries, but the canonical model above is what
+every compiler must be able to produce on demand (for example at
+\verb|store_any| boundaries).
+
+\subsection{Canonical Decision 2: Wire Format of Sum Types}
+\label{sec:cd-wire-enum}
+The codec for a sum type $S$ with $N$ variants writes:
+
+\begin{enumerate}
+\item a tag prefix of width
+\[
+w_S \;=\; \max\!\left(1,\; \lceil \log_2 N \rceil\right)
+\]
+bits, big-endian, unsigned, unless the enum declares an explicit discriminant
+type \verb|: uN| in which case the tag is exactly \verb|uN| wide;
+\item the variant fields, in declaration order, each by its own codec.
+\end{enumerate}
+
+For \verb|Option<T>| the tag is 1 bit (\verb|None = 0|, \verb|Some = 1|),
+yielding a wire format bit-compatible with TL-B \verb|Maybe X|.
+For \verb|Result<T, E>| the tag is 1 bit (\verb|Ok = 0|, \verb|Err = 1|).
+
+A \verb|message M(op = X)| declaration is a special case: the wire prefix is
+the 32-bit opcode \verb|X|, not a derived enum tag. A sum of \verb|message|
+variants (for dispatch) uses the 32-bit opcodes of each constituent message
+as its discriminant; the enum does not insert an additional tag.
+
+Adding, removing, or reordering variants of an enum \emph{breaks the wire
+format}. Implementations must reject silent breakage at compile time by
+computing a schema hash over the enum definition and including it in the
+generated ABI manifest.
+
+\subsection{Canonical Decision 3: Layout of \texttt{Bytes}}
+\label{sec:cd-bytes}
+\verb|Bytes| is a stdlib struct with a fixed ABI:
+
+\begin{itemize}
+\item \textbf{Stack:} a single TVM \verb|Slice| that is guaranteed
+byte-aligned (\verb|remaining_bits() % 8 == 0|) when entering any function
+that accepts \verb|Bytes|.
+\item \textbf{Wire:} the ``snake'' cell-chain convention already standard in
+TON: up to $\lfloor (1023 - \mathit{header\,bits}) / 8 \rfloor$ bytes inline
+in the current cell, overflow spilled into a single tail reference whose
+referent is itself a snake cell. A length prefix is \emph{not} part of the
+snake convention; the reader stops at end-of-slice.
+\item For protocols that need a length-prefixed byte string, stdlib provides
+\verb|LenPrefixedBytes| with an explicit \verb|u16| length.
+\end{itemize}
+
+\verb|Bytes| is deliberately not a \verb|Cell<Bytes>| because the most common
+pattern (message bodies, metadata strings) inlines the prefix into the
+current cell rather than forcing a ref.
+
+\subsection{Canonical Decision 4: \texttt{BodyLayout::Auto} Fit Predicate}
+\label{sec:cd-bodylayout}
+Let \verb|env| be the current envelope builder after the compiler has stored
+the common message header (source, destination, value, flags, created-lt,
+created-at, init, and the outer \verb|Either| tag for the body). Let
+\verb|body| be the encoded body after materialising it into a temporary
+builder. Define:
+
+\begin{verbatim}
+env_bits   = env.bits_used()
+env_refs   = env.refs_used()
+body_bits  = body.bits_used()
+body_refs  = body.refs_used()
+\end{verbatim}
+
+\verb|BodyLayout::Auto| emits the \emph{inline} form
+(\verb|body:(Either X \^{}X) = Left X|) iff both of:
+
+\begin{verbatim}
+env_bits + 1 + body_bits <= 1023
+env_refs +     body_refs <=    4
+\end{verbatim}
+
+Otherwise it emits the \emph{by-ref} form (\verb|Right \^{}X|). The constant
+\verb|+1| accounts for the outer \verb|Either| tag bit. All compilers must
+compute exactly this predicate.
+
+When \verb|body_bits| is statically known (constant-size codec), the compiler
+may fold the branch at compile time. When it is not, the compiler emits a
+runtime branch whose test matches the predicate above bit-for-bit.
+
+\verb|BodyLayout::Inline| and \verb|BodyLayout::ByRef| force the respective
+choice; a body that does not fit inline under \verb|Inline| is a runtime
+error mapped to \verb|CellError::Overflow|.
+
+\subsection{Canonical Decision 5: Typed \texttt{Err} to Exit Code}
+\label{sec:cd-err-exit}
+When the user body of an \verb|entry| function returns \verb|Err(e)|:
+
+\begin{itemize}
+\item persistent state is \textbf{not} committed (no \verb|set_data|);
+\item queued action-phase effects are \textbf{not} committed (the action list
+built during the user body is discarded);
+\item the contract terminates via \verb|THROW n| where \verb|n| is the
+\emph{exit code} derived from \verb|e|.
+\end{itemize}
+
+The exit code derivation is:
+
+\begin{enumerate}
+\item If the error type is an \verb|enum|, and each variant carries an
+explicit unsigned discriminant within \verb|[1, 65535]| (directly via
+\verb|enum E : uN| and per-variant \verb|= N|), the discriminant is the
+exit code.
+\item Otherwise the compiler assigns
+\verb|exit_code(variant_i) = 1000 + i| where \verb|i| is the zero-based
+declaration index. The range \verb|[1000, 65535]| is the user range.
+\item The range \verb|[0, 999]| is reserved: \verb|0| is success, \verb|1|
+through \verb|999| are reserved for TVM, TOS, and compiler-internal
+use. Explicit user discriminants in this range are a compile-time error.
+\end{enumerate}
+
+Variants that carry additional payload data (e.g.\ \verb|Parse(ParseError)|)
+use only their own variant discriminant as the exit code; the nested payload
+is discarded at the exit boundary. Contracts that need richer error
+telemetry must emit it explicitly through \verb|send| or getters before
+returning \verb|Err|.
+
+On \verb|Ok|, the wrapper commits state (if the user called \verb|save_state|)
+and action-phase effects normally, then returns \verb|0|.
+
+\subsection{Canonical Decision 6: Getter / \texttt{method\_id} Selector Rule}
+\label{sec:cd-method-id}
+For every \verb|get fn name(...)|:
+
+\begin{itemize}
+\item the default exported method id is
+\verb|crc16(name) \| 0x10000| (identical to FunC \verb|0.4.6|, preserving
+interop with every existing TON/TOS indexer and wallet);
+\item an explicit override uses the same syntax family as
+\verb|0.4.6|: \verb|get fn name(...) method_id(N)| for a literal integer, or
+\verb|method_id("string")| to select via the crc16 of an alternative name;
+\item collisions in the final exported method-id set are a compile-time
+error; the compiler reports every colliding pair;
+\item two sibling compilations that produce different method-id assignments
+for the same source are a violation of this rule.
+\end{itemize}
+
+The grammar for \verb|FunctionDecl| is extended accordingly:
+
+\begin{verbatim}
+FunctionDecl ::= [ "pub" ] [ EntryQualifier ] "fn" identifier
+                 [ GenericParams ] "(" Params ")" "->" Type
+                 [ EffectQualifier ]
+                 [ "method_id" ( "(" IntLiteral ")"
+                               | "(" StringLiteral ")" ) ]
+                 BlockOrSemicolon
+\end{verbatim}
+
+\verb|method_id| is admissible only on \verb|get fn| functions in edition
+\verb|0.5.0|; using it on a non-getter is a compile-time error.
+
+\subsection{Canonical Decision 7: Expression Grammar and Precedence}
+\label{sec:cd-expr}
+The expression grammar below supersedes the earlier schematic summary. It is
+parsed top-down with precedence climbing.
+
+\begin{verbatim}
+Expr       ::= Assign
+Assign     ::= Or [ AssignOp Assign ]           // right-assoc
+AssignOp   ::= "=" | "+=" | "-=" | "*=" | "/=" | "%="
+             | "&=" | "|=" | "^=" | "<<=" | ">>="
+
+Or         ::= And { "||" And }                  // left-assoc, short-circuit
+And        ::= Compare { "&&" Compare }          // left-assoc, short-circuit
+Compare    ::= BitOr [ CmpOp BitOr ]             // non-associative
+CmpOp      ::= "==" | "!=" | "<" | ">" | "<=" | ">=" | "<=>"
+
+BitOr      ::= BitXor { "|" BitXor }             // left-assoc
+BitXor     ::= BitAnd { "^" BitAnd }             // left-assoc
+BitAnd     ::= Shift  { "&" Shift }              // left-assoc
+Shift      ::= Add    { ( "<<" | ">>" ) Add }    // left-assoc
+Add        ::= Mul    { ( "+" | "-" ) Mul }      // left-assoc
+Mul        ::= Unary  { ( "*" | "/" | "%" ) Unary }
+
+Unary      ::= { UnaryOp } Cast
+UnaryOp    ::= "-" | "!" | "~"
+Cast       ::= Postfix [ "as" Type ]
+
+Postfix    ::= Primary { PostfixOp }
+PostfixOp  ::= "?"                               // Result/Option propagation
+             | "." Ident [ "(" Args ")" ]        // field or method call
+             | "(" Args ")"                      // function call
+             | "[" Expr "]"                      // index
+             | "::" Ident                        // associated fn/const path
+
+Primary    ::= Literal
+             | "(" ")" | "(" Expr { "," Expr } ")"
+             | "[" "]" | "[" Expr { "," Expr } "]"
+             | StructLit
+             | EnumLit
+             | Path
+             | "if" Expr Block [ "else" Block ]
+             | "match" Expr "{" { MatchArm } "}"
+             | Block
+
+Args       ::= [ Arg { "," Arg } ]
+Arg        ::= Expr | "mut" Expr
+\end{verbatim}
+
+Precedence summary (highest to lowest):
+
+\begin{center}
+\begin{tabular}{|c|l|l|}
+\hline
+\textbf{Level} & \textbf{Forms} & \textbf{Associativity} \\ \hline
+14 & postfix: \verb|?|, \verb|.|, \verb|(..)|, \verb|[..]|, \verb|::| & left \\ \hline
+13 & prefix: \verb|-|, \verb|!|, \verb|~|; \verb|as| & right \\ \hline
+12 & \verb|*|  \verb|/|  \verb|%| & left \\ \hline
+11 & \verb|+|  \verb|-| & left \\ \hline
+10 & \verb|<<|  \verb|>>| & left \\ \hline
+ 9 & \verb|&| & left \\ \hline
+ 8 & \verb|^| & left \\ \hline
+ 7 & \verb|{|} & left \\ \hline
+ 6 & \verb|==| \verb|!=| \verb|<| \verb|>| \verb|<=| \verb|>=| \verb|<=>| & non-associative \\ \hline
+ 5 & \verb|&&| & left (short-circuit) \\ \hline
+ 4 & \verb|{|}\verb|{|} & left (short-circuit) \\ \hline
+ 2 & \verb|=| and compound assignments & right \\ \hline
+\end{tabular}
+\end{center}
+
+Notes:
+
+\begin{itemize}
+\item Comparisons are non-chainable: \verb|a < b < c| is a syntax error.
+\item \verb|?| binds tighter than method-call dot: \verb|x?.foo()| means
+\verb|(x?).foo()|. Writing \verb|x.foo()?| propagates after calling.
+\item \verb|as| takes a type, not an expression, on the right.
+\item Bitwise \verb|&|/\verb|||/\verb|^| coexist with logical
+\verb|&&|/\verb|||| at separate precedences. Logical operators require
+\verb|bool| operands and short-circuit; bitwise operators work on
+integer types only.
+\end{itemize}
+
+\subsection{Canonical Decision 8: Trait Coherence}
+\label{sec:cd-coherence}
+FunC \verb|0.5.0| adopts an orphan-style coherence rule:
+
+\begin{itemize}
+\item \verb|impl Trait for T| is admissible iff \verb|Trait| \emph{or}
+\verb|T| is declared in the current compilation unit (the file or the
+set of files forming one \verb|mod|).
+\item A blanket \verb|impl<X: Bound> Trait for X| is admissible iff
+\verb|Trait| is declared in the current compilation unit.
+\item For any concrete pair \verb|(Trait, T)| there may be at most one
+\verb|impl| in the full dependency graph; a second impl is a
+compile-time error. This includes indirect duplication through blanket
+impls.
+\item The earlier \verb|impl<T: CellEncode> T { fn to_cell(...) }| shorthand
+in \S\ref{sec:v050-types} is not admissible. \verb|to_cell| is instead a
+method on the \verb|CellEncode| trait itself, either abstract or as a
+default method using the trait's \verb|encode|:
+
+\begin{verbatim}
+pub trait CellEncode {
+    fn encode(self) -> Result<RawCell, CellError> pure;
+    fn to_cell(self) -> Result<Cell<Self>, CellError> pure {
+        self.encode().map(Cell::from_raw)
+    }
+}
+\end{verbatim}
+\end{itemize}
+
+Coherence is checked after monomorphisation: an instantiated concrete pair
+must not acquire two impls via different routes.
+
+\subsection{Canonical Decision 9: Eager Decoding on \texttt{entry external}}
+\label{sec:cd-external-eager}
+By default \verb|entry external fn foo(ctx: ExternalContext)| receives an
+untyped \verb|ctx|:
+
+\begin{verbatim}
+pub struct ExternalContext {
+    body_slice: Slice,
+    signature: Option<Bytes>,
+}
+
+impl ExternalContext {
+    pub fn parse_body<T: CellDecode>(mut self)
+        -> Result<T, ParseError> pure { ... }
+}
+\end{verbatim}
+
+Authors call \verb|parse_body| after \verb|accept_message|, so decoding gas
+is paid from contract balance rather than from the pre-accept 10\,000-gas
+external-message quota.
+
+Authors who accept the gas risk may opt into eager decoding:
+
+\begin{verbatim}
+entry external(eager) fn recv_external(
+    ctx: ExternalContext<SignedRequest>,
+) -> Result<(), WalletError> effect(read, write, send) { ... }
+\end{verbatim}
+
+The grammar for \verb|EntryQualifier| is extended:
+
+\begin{verbatim}
+EntryQualifier ::= "entry" "external" [ "(" "eager" ")" ]
+                 | "entry" "internal"
+                 | "entry" "bounce"
+                 | "get"
+\end{verbatim}
+
+For \verb|entry internal| and \verb|entry bounce| the default is already
+eager decoding; no opt-in is required.
+
+\subsection{Canonical Decision 10: Compatibility Edition Surface}
+\label{sec:cd-compat}
+An edition is chosen per source file by an inner attribute; it is not
+per-item.
+
+\begin{itemize}
+\item \verb|#![edition = "0.5.0"]| selects the strict \verb|0.5.0| surface.
+This is the recommended edition for new code.
+\item \verb|#![edition = "0.4-compat"]| selects the superset edition that
+accepts all \verb|0.4.6| constructs plus all \verb|0.5.0| constructs.
+The declared purpose is migration, not long-term authoring.
+\item Absence of an edition attribute defaults to \verb|0.4-compat| for
+this release, so existing contracts continue to compile without
+modification.
+\end{itemize}
+
+Under \verb|0.4-compat| the following legacy constructs are accepted in
+addition to the \verb|0.5.0| surface:
+
+\begin{itemize}
+\item lexical: \verb|;;| line comments; \verb|{- ... -}| nested block
+comments; legacy string suffixes \verb|s|, \verb|a|, \verb|u|, \verb|h|,
+\verb|H|, \verb|c|; \verb|?|-suffixed predicate identifiers;
+\verb|~|-prefixed modifying methods;
+\item top-level: \verb|#pragma ...|, \verb|#include ...|, \verb|global|
+declarations, \verb|const| declarations without type, function bodies
+introduced by \verb|asm| with \verb|method_id| after modifiers;
+\item function modifiers: \verb|impure|, \verb|inline|, \verb|inline_ref|,
+\verb|method_id| in \verb|0.4.6| positions;
+\item types: \verb|int| as an alias for \verb|i257|, and lowercase
+\verb|cell|, \verb|slice|, \verb|builder|, \verb|cont|, \verb|tuple| as
+aliases for the \verb|0.5.0| domain types;
+\item statements: \verb|repeat Expr Block|, \verb|do Block until Expr|;
+\item expressions: \verb|var ...| bindings, explicit type application
+\verb|(int, slice) (n, s) = ...| on the left of \verb|=|, bare unit
+return \verb|return (())|; method calls of the form
+\verb|receiver~name(args)|.
+\end{itemize}
+
+Cross-edition interoperation:
+
+\begin{itemize}
+\item a \verb|0.5.0| file may \verb|use| items from a \verb|0.4-compat| file,
+provided the imported items have types expressible in the \verb|0.5.0|
+surface;
+\item a \verb|0.4-compat| file may call \verb|0.5.0| items that do not use
+features absent from the compat surface (notably: \verb|Result|, typed
+\verb|entry|, traits, or enums);
+\item a \verb|0.4-compat| file may \emph{not} define a \verb|0.5.0|
+\verb|entry| function; entry points cross the compatibility boundary
+exactly once, at the outer edition of the contract's root module;
+\item the contract's root module's edition determines the emitted ABI.
+\end{itemize}
+
+\paragraph{Removal schedule.} \verb|0.4-compat| is a migration surface, not a
+long-term supported edition. It is scheduled for removal in a future edition
+\verb|0.7.0|. Contracts that have not migrated by then must freeze on the
+last compiler release that still accepts it.
+
+\section{Canonical Corpus}
+\label{sec:canonical-corpus}
+The 10 Canonical Decisions above are normative on paper; the corpus is how
+they are validated against real contracts and how cross-compiler conformance
+is checked. The corpus is defined in a sibling document,
+\verb|doc/func_v0.5.0-corpus.md|, which ships as version-pinned artefacts
+under \verb|crypto/smartcont/v050/|.
+
+Every compliance-seeking compiler must produce byte-identical TVM code-cell
+output for every corpus entry at its pinned version. Corpus v1 includes:
+
+\begin{itemize}
+\item C1 --- Simple wallet (\verb|wallet3|);
+\item C2 --- Plugin wallet (\verb|wallet-v4|);
+\item C3 --- Highload wallet v2;
+\item C4 --- Jetton wallet (synthetic, from TEP-74);
+\item C5 --- Multisig (sketch; full rewrite in corpus v2);
+\item --- Elector (deferred to corpus v2).
+\end{itemize}
+
+The corpus is intentionally small in v1: enough to pin the language, not so
+large that freezing it blocks edition maturation. Corpus versions are
+monotonic --- v2 may add entries but may not redefine entries already fixed
+in v1, short of a spec-revision-grade compatibility break.
+
+\paragraph{Issues surfaced by corpus v1, now resolved in main spec v3.}
+Every issue that corpus v1 flagged as open has been folded into the main
+specification:
+
+\begin{itemize}
+\item helper-function state mutation --- resolved in
+\S\ref{sec:mut-args} by the existing \verb|mut| parameter qualifier;
+there is no \verb|\&mut self| syntax;
+\item \verb|Vec<T>| at getter and ABI boundaries --- resolved in
+\S\ref{sec:vec-type};
+\item \verb|EitherRefOrInline<T>| per-field encoding --- resolved in
+\S\ref{sec:either-ref-inline};
+\item bounce-body width enforcement --- resolved in
+\S\ref{sec:entry-decode} by the \texttt{BounceBodyTooWide} compile-time
+check;
+\item canonical \verb|std::| module layout --- resolved in
+Appendix~\ref{app:stdlib-map} below.
+\end{itemize}
+
+\appendix
+\section{Standard Library Module Map}
+\label{app:stdlib-map}
+The canonical \verb|std::| module tree below is part of the
+edition-\verb|0.5.0| ABI. Every conforming compiler must accept these module
+paths and export the listed names. Item signatures are authoritative in the
+modules themselves (shipped alongside the reference compiler); this appendix
+fixes the \emph{tree} so that \verb|use| paths across source bases are
+compatible.
+
+\begin{longtable}{|l|p{0.58\textwidth}|}
+\hline
+\textbf{Module path} & \textbf{Key exports} \\ \hline
+\endfirsthead
+\hline
+\textbf{Module path} & \textbf{Key exports} \\ \hline
+\endhead
+\verb|std::prelude| & auto-imported into every source file:
+\verb|Result|, \verb|Option|, \verb|Ok|, \verb|Err|, \verb|Some|,
+\verb|None|; the \verb|?| lowering relies on these exact names \\ \hline
+\verb|std::cell| & \verb|Cell<T>|, \verb|RawCell|, \verb|Builder|,
+\verb|Slice|, \verb|RawSlice|, \verb|CellError|, \verb|ParseError|;
+conversions \verb|to_cell|, \verb|from_cell|, \verb|load_any|,
+\verb|store_any|; \verb|Cell::from_raw|, \verb|Cell::as_raw| \\ \hline
+\verb|std::address| & \verb|Address|, \verb|StdAddress|,
+\verb|parse_std_addr|, \verb|Address::derive|, address codecs \\ \hline
+\verb|std::coins| & \verb|Coins|, \verb|Coins::zero|, \verb|Coins::is_zero|,
+arithmetic, safe conversions \\ \hline
+\verb|std::bytes| & \verb|Bytes|, \verb|LenPrefixedBytes|, helpers for snake
+encoding and byte-alignment assertions \\ \hline
+\verb|std::vec| & \verb|Vec<T>|, \verb|EitherRefOrInline<T>|; iteration
+traits on \verb|Vec| \\ \hline
+\verb|std::dict| & \verb|Dict<K, V>|, \verb|DictEntry<K, V>|, iteration via
+\verb|iter_sorted|, \verb|Dict::pop_min|, \verb|Dict::contains|,
+\verb|Dict::insert|, \verb|Dict::remove|, \verb|Dict::get| \\ \hline
+\verb|std::crypto| & \verb|check_signature|, \verb|slice_hash|,
+\verb|sha256|, \verb|keccak256|, curve primitives that expose TVM hashing
+opcodes \\ \hline
+\verb|std::chain| & \verb|now|, \verb|global_id|, \verb|accept_message|,
+\verb|raw_reserve|, \verb|get_data|, \verb|set_data|, contract-balance
+and block-context readers \\ \hline
+\verb|std::message| & \verb|send|, \verb|send_raw|, \verb|SendOptions|,
+\verb|SendMode|, \verb|BounceMode|, \verb|BodyLayout|,
+\verb|InternalContext<T>|, \verb|ExternalContext|,
+\verb|BounceContext<T>|, \verb|SendError| \\ \hline
+\verb|std::iter| & \verb|Iter|, \verb|IntoIter| traits (see
+\S\ref{sec:cd-expr}); stdlib iterator impls for \verb|Vec|, \verb|Dict|,
+ranges, fixed arrays, uniform tuples \\ \hline
+\verb|std::result| & re-exports from \verb|std::prelude|; additional
+combinators \verb|map|, \verb|map_err|, \verb|and_then|,
+\verb|or_else|, \verb|ok_or|, \verb|expect| \\ \hline
+\verb|std::option| & re-exports from \verb|std::prelude|; additional
+combinators \verb|map|, \verb|unwrap|, \verb|unwrap_or|, \verb|ok_or|,
+\verb|is_some|, \verb|is_none| \\ \hline
+\verb|std::intrinsics| & low-level \verb|extern "tvm"| declarations for
+every TVM opcode that the stdlib surface wraps, available to
+\verb|unsafe| code only \\ \hline
+\end{longtable}
+
+Module-path collision rules:
+
+\begin{itemize}
+\item third-party libraries may not publish into the \verb|std::*|
+namespace;
+\item contract code may publish its own \verb|mod foo::bar| tree freely;
+\item the \verb|use| resolver searches the current crate first, then
+\verb|std::*| as a reserved root, then external dependencies listed in
+the build manifest;
+\item \verb|use std::prelude::*;| is applied implicitly at the top of
+every source file under edition \verb|0.5.0|.
+\end{itemize}
+
+A full item-level stdlib reference (every exported signature with
+documentation) is scheduled as a sibling document,
+\verb|doc/func_v0.5.0-stdlib-ref.md|, to be written alongside the reference
+compiler implementation. The tree above is the frozen surface; the
+signatures inside each module may still evolve up to edition freeze.
 
 \end{document}

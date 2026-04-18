@@ -399,32 +399,40 @@ family model; they do not replace it.
 
 \subsection{Explicit Mutability Lowers to Explicit State Threading}
 A method with \verb|mut self| should not require a new calling convention at
-the VM level. The canonical lowering is:
-
-\begin{enumerate}
-\item rewrite the surface method call into an internal helper call;
-\item make the helper return both the updated receiver and the value result;
-\item rebind the caller-side mutable place to the updated receiver;
-\item keep using the existing raw TVM instructions underneath.
-\end{enumerate}
-
-For example:
+the VM level. The canonical lowering rewrites the surface method call into an
+internal helper call that returns both the updated receiver and the value
+result. The caller-side rebind must respect the error-path rule from the
+main spec: \emph{on \texttt{Err}, the receiver is restored to its pre-call
+state}. So for a \verb|mut self| method returning \verb|Result|, the
+desugaring is:
 
 \begin{verbatim}
 let mut cs = body;
 let op = cs.load_uint(32)?;
+
+// canonical desugar:
+let (__cs1, __r1) = __Slice_load_uint(cs, 32);
+match __r1 {
+    Ok(v)  => { cs = __cs1; v }        // commit new receiver, yield value
+    Err(e) => { /* cs unchanged */
+                return Err(e.into()) }  // error path preserves receiver
+};
 \end{verbatim}
 
-canonically lowers in two conceptual steps:
+For \verb|mut self| methods that return a non-\verb|Result| type, the
+writeback is unconditional (there is no failure channel, so nothing to
+roll back):
 
 \begin{verbatim}
-let (__cs1, __r1) = __Slice_load_uint(cs, 32);
+let (__cs1, __r1) = __Slice_some_op(cs, ...);
 cs = __cs1;
-let op = __r1?;
+let v = __r1;
 \end{verbatim}
 
-and then \verb|__Slice_load_uint| lowers to the same \verb|LDUX|-based helper
-family already used by current \verb|~load_uint| built-ins.
+\verb|__Slice_load_uint| and its siblings lower to the same \verb|LDUX|-based
+helper family already used by current \verb|~load_uint| built-ins; the only
+new obligation is the tag-check before writeback in the \verb|Result|
+variant.
 
 \subsection{Structs Lower as Products, Not Objects}
 Structs do not imply heap allocation or object identity. Their canonical
@@ -756,24 +764,34 @@ operations:
 In other words, the high-level source has been reduced to the same machine model
 already used by present FunC and hand-written Fift.
 
-\section{Required Canonical Decisions Before Implementation}
-The proposal is lowerable, but several details must be fixed precisely before a
-compiler implementation can claim compatibility:
+\section{Canonical Decisions Fixed}
+Every ABI-level and semantic decision that earlier drafts of this document
+listed as \emph{pending} has now been fixed in the main specification. The
+authoritative statements are in
+\verb|doc/func_v0.5.0.tex| \S``Canonical Decisions'':
 
 \begin{enumerate}
-\item the exact canonical stack representation of \verb|enum|,
-\verb|Option<T>|, and \verb|Result<T, E>|;
-\item the exact derived wire format for serialized enums and results;
-\item whether \verb|Bytes| is canonically a byte-aligned slice, a typed cell,
-or a stdlib wrapper with a fixed ABI;
-\item the exact deterministic rule behind \verb|BodyLayout::Auto|;
-\item the mapping from typed error results in entry wrappers to legacy numeric
-exit behavior where required;
-\item the exact getter/export selector policy for edition \verb|0.5.0|.
+\item stack representation of \verb|enum|, \verb|Option<T>|,
+\verb|Result<T, E>|: main-spec Canonical Decision 1;
+\item wire format of serialized enums, \verb|Option|, and \verb|Result|:
+main-spec Canonical Decision 2;
+\item canonical layout of \verb|Bytes|: main-spec Canonical Decision 3;
+\item \verb|BodyLayout::Auto| fit predicate: main-spec Canonical Decision 4;
+\item typed-\verb|Err|-to-exit-code mapping: main-spec Canonical Decision 5;
+\item getter / \verb|method_id| selector policy: main-spec Canonical
+Decision 6;
+\item expression grammar and operator precedence: main-spec Canonical
+Decision 7;
+\item trait coherence and orphan rules: main-spec Canonical Decision 8;
+\item eager-decode opt-in syntax for \verb|entry external|: main-spec
+Canonical Decision 9;
+\item \verb|0.4-compat| edition surface and cross-edition rules: main-spec
+Canonical Decision 10.
 \end{enumerate}
 
-These are not objections to the design. They are the finite set of ABI-level
-decisions required to keep different compilers interoperable.
+The backend lowering described earlier in this document is consistent with
+each of those canonical rules; implementations MUST obey the main-spec
+wording verbatim at ABI boundaries.
 
 \section{Conclusion}
 FunC \verb|0.5.0| can remain fully lowerable to Fift/TVM if it preserves one
