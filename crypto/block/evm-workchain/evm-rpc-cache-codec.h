@@ -66,6 +66,12 @@ constexpr int kPersistedReceiptMagicBits = 32;
 constexpr unsigned long long kPersistedLogMagic = 0x4c4f4720ull;  // "LOG "
 constexpr int kPersistedLogMagicBits = 32;
 
+constexpr unsigned long long kPersistedTransactionMagic = 0x54584e5full;  // "TXN_"
+constexpr int kPersistedTransactionMagicBits = 32;
+
+constexpr unsigned long long kPersistedBlockMagic = 0x424c4b5full;  // "BLK_"
+constexpr int kPersistedBlockMagicBits = 32;
+
 /// Encode a StoredReceipt into a single cell tree (returns the root).
 ///
 /// The encoding is deterministic — identical input produces identical cell
@@ -79,5 +85,13 @@ td::Ref<vm::Cell> encode_persisted_receipt(const StoredReceipt& receipt);
 /// StoredReceipt.  Returns true on success; on failure `out` is left in an
 /// unspecified (but not corrupting) state.
 bool decode_persisted_receipt(td::Ref<vm::Cell> cell, StoredReceipt& out);
+
+/// Encode/decode a StoredTransaction (eth_getTransactionByHash payload).
+td::Ref<vm::Cell> encode_persisted_transaction(const StoredTransaction& txn);
+bool decode_persisted_transaction(td::Ref<vm::Cell> cell, StoredTransaction& out);
+
+/// Encode/decode a StoredBlock (eth_getBlockByNumber / *_byHash payload).
+td::Ref<vm::Cell> encode_persisted_block(const StoredBlock& block);
+bool decode_persisted_block(td::Ref<vm::Cell> cell, StoredBlock& out);
 
 }  // namespace evm_workchain

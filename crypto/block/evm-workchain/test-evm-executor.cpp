@@ -3938,6 +3938,140 @@ static void test_persisted_receipt_roundtrip() {
     printf("  %s\n\n", pass ? "PASSED" : "FAILED");
 }
 
+static void test_persisted_transaction_roundtrip() {
+    printf("=== test_persisted_transaction_roundtrip (Phase F.1) ===\n");
+    StoredTransaction in;
+    for (int i = 0; i < 20; ++i) in.from.bytes[i] = static_cast<uint8_t>(0x10 + i);
+    evmc::address to_addr{};
+    for (int i = 0; i < 20; ++i) to_addr.bytes[i] = static_cast<uint8_t>(0xC0 + i);
+    in.to = to_addr;
+    in.value = intx::uint256{0xDEADBEEFCAFEBABEULL} << 128 | intx::uint256{0x0123456789ABCDEFULL};
+    in.nonce = 0x1234567890ABCDEFULL;
+    in.gas_limit = 30'000'000;
+    in.gas_price = intx::uint256{0x77359400ULL};  // 2 gwei
+    in.block_number = 999'001ULL;
+    in.tx_index = 7;
+    in.data.resize(250);
+    for (size_t i = 0; i < in.data.size(); ++i) {
+        in.data[i] = static_cast<uint8_t>((i * 7 + 3) & 0xff);
+    }
+    in.raw_rlp.resize(400);
+    for (size_t i = 0; i < in.raw_rlp.size(); ++i) {
+        in.raw_rlp[i] = static_cast<uint8_t>((i * 11 + 5) & 0xff);
+    }
+
+    auto cell = encode_persisted_transaction(in);
+    StoredTransaction out;
+    bool ok = decode_persisted_transaction(cell, out);
+
+    bool fields_ok = ok &&
+        std::memcmp(in.from.bytes, out.from.bytes, 20) == 0 &&
+        out.to.has_value() && std::memcmp(in.to->bytes, out.to->bytes, 20) == 0 &&
+        in.value == out.value &&
+        in.nonce == out.nonce &&
+        in.gas_limit == out.gas_limit &&
+        in.gas_price == out.gas_price &&
+        in.block_number == out.block_number &&
+        in.tx_index == out.tx_index &&
+        in.data == out.data &&
+        in.raw_rlp == out.raw_rlp;
+
+    auto cell2 = encode_persisted_transaction(in);
+    bool deterministic = ok && cell2.not_null() && cell->get_hash() == cell2->get_hash();
+
+    // Round-trip with no `to` (contract-create) and empty data/rlp.
+    StoredTransaction create_in;
+    for (int i = 0; i < 20; ++i) create_in.from.bytes[i] = 0x55;
+    create_in.value = 0;
+    create_in.gas_price = 0;
+    auto cell3 = encode_persisted_transaction(create_in);
+    StoredTransaction create_out;
+    bool create_ok = decode_persisted_transaction(cell3, create_out) &&
+                     !create_out.to.has_value() &&
+                     create_out.data.empty() && create_out.raw_rlp.empty();
+
+    printf("  populated round-trip: %s\n", fields_ok ? "yes" : "no");
+    printf("  contract-create round-trip: %s\n", create_ok ? "yes" : "no");
+    printf("  deterministic re-encode: %s\n", deterministic ? "yes" : "no");
+    printf("  %s\n\n", (fields_ok && create_ok && deterministic) ? "PASSED" : "FAILED");
+}
+
+static void test_persisted_block_roundtrip() {
+    printf("=== test_persisted_block_roundtrip (Phase F.1) ===\n");
+    StoredBlock in;
+    in.number = 0xABCDEF12ULL;
+    for (int i = 0; i < 32; ++i) in.hash.bytes[i] = static_cast<uint8_t>(0x10 + i);
+    for (int i = 0; i < 32; ++i) in.parent_hash.bytes[i] = static_cast<uint8_t>(0x80 + i);
+    in.timestamp = 0x69E2E234ULL;
+    in.gas_limit = 30'000'000;
+    in.gas_used = 12'345'678;
+    for (int i = 0; i < 20; ++i) in.miner.bytes[i] = static_cast<uint8_t>(0x55 + i);
+    in.base_fee_per_gas = intx::uint256{0x3B9ACA00ULL};  // 1 gwei
+    for (int i = 0; i < 32; ++i) in.state_root.bytes[i] = static_cast<uint8_t>(0xA0 + i);
+    for (int i = 0; i < 32; ++i) in.transactions_root.bytes[i] = static_cast<uint8_t>(0x40 + i);
+    for (int i = 0; i < 32; ++i) in.receipts_root.bytes[i] = static_cast<uint8_t>(0xC0 + i);
+    for (int i = 0; i < 256; ++i) {
+        in.logs_bloom[i] = static_cast<uint8_t>((i * 7 + 11) & 0xff);
+    }
+
+    // 17 tx hashes — exercises the chunk chain (kHashesPerListChunk = 3, so 6
+    // chunks: 5 of 3 hashes + 1 of 2 hashes).
+    in.transaction_hashes.resize(17);
+    for (size_t t = 0; t < 17; ++t) {
+        for (int j = 0; j < 32; ++j) {
+            in.transaction_hashes[t].bytes[j] = static_cast<uint8_t>((t * 32 + j) & 0xff);
+        }
+    }
+
+    auto cell = encode_persisted_block(in);
+    StoredBlock out;
+    bool ok = decode_persisted_block(cell, out);
+
+    bool scalars_ok = ok &&
+        in.number == out.number &&
+        in.timestamp == out.timestamp &&
+        in.gas_limit == out.gas_limit &&
+        in.gas_used == out.gas_used &&
+        in.base_fee_per_gas == out.base_fee_per_gas;
+    bool addrs_ok = ok &&
+        std::memcmp(in.hash.bytes, out.hash.bytes, 32) == 0 &&
+        std::memcmp(in.parent_hash.bytes, out.parent_hash.bytes, 32) == 0 &&
+        std::memcmp(in.miner.bytes, out.miner.bytes, 20) == 0 &&
+        std::memcmp(in.state_root.bytes, out.state_root.bytes, 32) == 0 &&
+        std::memcmp(in.transactions_root.bytes, out.transactions_root.bytes, 32) == 0 &&
+        std::memcmp(in.receipts_root.bytes, out.receipts_root.bytes, 32) == 0;
+    bool bloom_ok = ok && std::memcmp(in.logs_bloom, out.logs_bloom, 256) == 0;
+    bool hashes_ok = ok && in.transaction_hashes.size() == out.transaction_hashes.size();
+    if (hashes_ok) {
+        for (size_t t = 0; t < in.transaction_hashes.size(); ++t) {
+            if (std::memcmp(in.transaction_hashes[t].bytes,
+                            out.transaction_hashes[t].bytes, 32) != 0) {
+                hashes_ok = false;
+                break;
+            }
+        }
+    }
+
+    auto cell2 = encode_persisted_block(in);
+    bool deterministic = ok && cell2.not_null() && cell->get_hash() == cell2->get_hash();
+
+    // Empty block (no txs).
+    StoredBlock empty_in;
+    auto empty_cell = encode_persisted_block(empty_in);
+    StoredBlock empty_out;
+    bool empty_ok = decode_persisted_block(empty_cell, empty_out) &&
+                    empty_out.transaction_hashes.empty();
+
+    printf("  scalars match: %s\n", scalars_ok ? "yes" : "no");
+    printf("  hashes/addresses match: %s\n", addrs_ok ? "yes" : "no");
+    printf("  bloom (256 B) round-trip: %s\n", bloom_ok ? "yes" : "no");
+    printf("  17-hash list round-trip: %s\n", hashes_ok ? "yes" : "no");
+    printf("  empty block round-trip: %s\n", empty_ok ? "yes" : "no");
+    printf("  deterministic re-encode: %s\n", deterministic ? "yes" : "no");
+    printf("  %s\n\n", (scalars_ok && addrs_ok && bloom_ok && hashes_ok &&
+                       empty_ok && deterministic) ? "PASSED" : "FAILED");
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -3984,6 +4118,8 @@ int main() {
     test_bytecode_marker_distinguished();
     test_large_raw_tx_roundtrip();
     test_persisted_receipt_roundtrip();
+    test_persisted_transaction_roundtrip();
+    test_persisted_block_roundtrip();
     test_state_test_runner_poc();
     test_state_test_runner_walk_curated();
     test_state_test_runner_pyspec_walk();

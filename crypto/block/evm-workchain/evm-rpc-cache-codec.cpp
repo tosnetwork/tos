@@ -289,7 +289,7 @@ bool decode_log_list(td::Ref<vm::Cell> root, std::vector<silkworm::Log>& out) {
         // already consumed the count), then walk refs.
         long long has_next = 0;
         if (!cs.fetch_long_bool(1, has_next)) return false;
-        unsigned cont_refs = (has_next == 1) ? 1u : 0u;
+        unsigned cont_refs = (has_next != 0) ? 1u : 0u;
         if (cont_refs > nrefs) return false;
         unsigned log_refs = nrefs - cont_refs;
 
@@ -298,7 +298,7 @@ bool decode_log_list(td::Ref<vm::Cell> root, std::vector<silkworm::Log>& out) {
             if (!decode_one_log(cs.prefetch_ref(r), lg)) return false;
             out.push_back(std::move(lg));
         }
-        if (has_next == 0) break;
+        if (!has_next) break;
         cell = cs.prefetch_ref(log_refs);
     }
     if (total < 0) return false;
@@ -308,8 +308,292 @@ bool decode_log_list(td::Ref<vm::Cell> root, std::vector<silkworm::Log>& out) {
 }  // namespace
 
 // ---------------------------------------------------------------------------
+// uint256 (big-endian 32-byte) helpers.
+// ---------------------------------------------------------------------------
+
+void store_uint256(vm::CellBuilder& cb, const intx::uint256& v) {
+    auto be = intx::be::store<evmc::uint256be>(v);
+    cb.store_bytes(be.bytes, 32);
+}
+
+bool load_uint256(vm::CellSlice& cs, intx::uint256& out) {
+    evmc::uint256be be{};
+    if (!cs.fetch_bytes(be.bytes, 32)) return false;
+    out = intx::be::load<intx::uint256>(be);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// PersistedTransaction (StoredTransaction round-trip).
+// ---------------------------------------------------------------------------
+
+td::Ref<vm::Cell> encode_persisted_transaction_impl(const StoredTransaction& txn) {
+    // Total scalar bits would be 32 (magic) + 160 (from) + 162 (to opt)
+    // + 256 (value) + 64 (nonce) + 64 (gas_limit) + 256 (gas_price)
+    // + 64 (block_number) + 32 (tx_index) = 1090 — overflows 1023.
+    // Split into a head with the address fields + a meta-ref cell with
+    // the integer fields.
+    vm::CellBuilder meta;
+    store_uint256(meta, txn.value);
+    store_uint256(meta, txn.gas_price);
+    meta.store_long(static_cast<long long>(txn.nonce), 64);
+    meta.store_long(static_cast<long long>(txn.gas_limit), 64);
+    meta.store_long(static_cast<long long>(txn.block_number), 64);
+    meta.store_long(static_cast<long long>(txn.tx_index), 32);
+
+    vm::CellBuilder head;
+    head.store_long(static_cast<long long>(kPersistedTransactionMagic),
+                    kPersistedTransactionMagicBits);
+    head.store_bytes(txn.from.bytes, 20);
+    store_optional_address(head, txn.to);
+    head.store_ref(meta.finalize());
+    store_maybe_bytes(head, td::Slice{reinterpret_cast<const char*>(txn.data.data()),
+                                       txn.data.size()});
+    store_maybe_bytes(head, td::Slice{reinterpret_cast<const char*>(txn.raw_rlp.data()),
+                                       txn.raw_rlp.size()});
+    return head.finalize();
+}
+
+bool decode_persisted_transaction_impl(td::Ref<vm::Cell> cell, StoredTransaction& out) {
+    out = StoredTransaction{};
+    if (cell.is_null()) return false;
+    auto cs = vm::load_cell_slice(cell);
+    long long magic = 0;
+    if (!cs.fetch_long_bool(kPersistedTransactionMagicBits, magic) ||
+        static_cast<unsigned long long>(magic) != kPersistedTransactionMagic) {
+        return false;
+    }
+    if (!cs.fetch_bytes(out.from.bytes, 20)) return false;
+    if (!load_optional_address(cs, out.to)) return false;
+
+    if (cs.size_refs() == 0) return false;
+    auto meta_cell = cs.fetch_ref();
+    auto meta_cs = vm::load_cell_slice(meta_cell);
+    if (!load_uint256(meta_cs, out.value)) return false;
+    if (!load_uint256(meta_cs, out.gas_price)) return false;
+    long long nonce = 0, gas_limit = 0, block_number = 0, tx_index = 0;
+    if (!meta_cs.fetch_long_bool(64, nonce)) return false;
+    if (!meta_cs.fetch_long_bool(64, gas_limit)) return false;
+    if (!meta_cs.fetch_long_bool(64, block_number)) return false;
+    if (!meta_cs.fetch_long_bool(32, tx_index)) return false;
+    out.nonce = static_cast<uint64_t>(nonce);
+    out.gas_limit = static_cast<uint64_t>(gas_limit);
+    out.block_number = static_cast<uint64_t>(block_number);
+    out.tx_index = static_cast<uint32_t>(tx_index);
+
+    if (!load_maybe_bytes(cs, out.data)) return false;
+    if (!load_maybe_bytes(cs, out.raw_rlp)) return false;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// PersistedBlock (StoredBlock round-trip).
+//
+// transaction_hashes encoded as a chunked chain (4 hashes per cell head + 1
+// continuation ref), parallel to the log-list pattern.
+// ---------------------------------------------------------------------------
+
+constexpr size_t kHashesPerListChunk = 3;  // 4 refs - 1 for next = 3 hashes
+
+td::Ref<vm::Cell> encode_hash32(const evmc::bytes32& h) {
+    vm::CellBuilder cb;
+    cb.store_bytes(h.bytes, 32);
+    return cb.finalize();
+}
+
+bool decode_hash32(td::Ref<vm::Cell> cell, evmc::bytes32& out) {
+    if (cell.is_null()) return false;
+    auto cs = vm::load_cell_slice(cell);
+    return cs.fetch_bytes(out.bytes, 32);
+}
+
+td::Ref<vm::Cell> encode_hash_list(const std::vector<evmc::bytes32>& hashes) {
+    auto count = static_cast<unsigned>(hashes.size());
+    if (count > 0xffffffu) count = 0xffffffu;  // 24-bit cap, plenty
+
+    if (count == 0) {
+        vm::CellBuilder cb;
+        cb.store_long(0, 24);
+        cb.store_long(0, 1);
+        return cb.finalize();
+    }
+
+    std::vector<td::Ref<vm::Cell>> leaves;
+    leaves.reserve(count);
+    for (unsigned i = 0; i < count; ++i) {
+        leaves.push_back(encode_hash32(hashes[i]));
+    }
+
+    td::Ref<vm::Cell> next;
+    size_t i = leaves.size();
+    while (i > 0) {
+        size_t take = std::min<size_t>(kHashesPerListChunk, i);
+        size_t start = i - take;
+        bool is_head = (start == 0);
+
+        vm::CellBuilder cb;
+        cb.store_long(is_head ? count : 0u, 24);
+        for (size_t k = 0; k < take; ++k) {
+            cb.store_ref(leaves[start + k]);
+        }
+        if (next.not_null()) {
+            cb.store_long(1, 1);
+            cb.store_ref(next);
+        } else {
+            cb.store_long(0, 1);
+        }
+        next = cb.finalize();
+        i = start;
+    }
+    return next;
+}
+
+bool decode_hash_list(td::Ref<vm::Cell> root, std::vector<evmc::bytes32>& out) {
+    out.clear();
+    if (root.is_null()) return false;
+
+    long long total = -1;
+    auto cell = root;
+    constexpr size_t kMaxChunks = 1 << 20;
+    for (size_t step = 0; step < kMaxChunks; ++step) {
+        if (cell.is_null()) return false;
+        auto cs = vm::load_cell_slice(cell);
+        long long count_field = 0;
+        if (!cs.fetch_long_bool(24, count_field)) return false;
+        if (total < 0) {
+            total = count_field;
+            out.reserve(static_cast<size_t>(total));
+        }
+        unsigned nrefs = cs.size_refs();
+        long long has_next = 0;
+        if (!cs.fetch_long_bool(1, has_next)) return false;
+        unsigned cont_refs = (has_next != 0) ? 1u : 0u;
+        if (cont_refs > nrefs) return false;
+        unsigned hash_refs = nrefs - cont_refs;
+        for (unsigned r = 0; r < hash_refs; ++r) {
+            evmc::bytes32 h{};
+            if (!decode_hash32(cs.prefetch_ref(r), h)) return false;
+            out.push_back(h);
+        }
+        if (!has_next) break;
+        cell = cs.prefetch_ref(hash_refs);
+    }
+    if (total < 0) return false;
+    return out.size() == static_cast<size_t>(total);
+}
+
+td::Ref<vm::Cell> encode_persisted_block_impl(const StoredBlock& block) {
+    // Body cell holds the scalar fields (under the 1023-bit cell limit) and
+    // points at side cells for the bloom + hash list.
+    //
+    // Scalar bits: 32 (magic) + 64 (number) + 32 (timestamp lo, see below)
+    // + 32 (timestamp hi) + 64 (gas_limit) + 64 (gas_used) + 160 (miner)
+    // + 256 (base_fee) + 256 (state_root) + 256 (tx_root) + 256 (receipts_root)
+    // = 1472 bits — exceeds one cell. Split: scalars in head, with a child
+    // cell holding the four 256-bit roots + base_fee.
+    vm::CellBuilder head;
+    head.store_long(static_cast<long long>(kPersistedBlockMagic),
+                    kPersistedBlockMagicBits);
+    head.store_long(static_cast<long long>(block.number), 64);
+    head.store_long(static_cast<long long>(block.timestamp), 64);
+    head.store_long(static_cast<long long>(block.gas_limit), 64);
+    head.store_long(static_cast<long long>(block.gas_used), 64);
+    head.store_bytes(block.hash.bytes, 32);
+    head.store_bytes(block.parent_hash.bytes, 32);
+    head.store_bytes(block.miner.bytes, 20);
+    // Now: 32 + 4*64 + 32 + 32 + 20 = 32 + 256 + 64 + 20 = 372 bytes
+    // wait: 32 bits + 256 bits + (32+32+20) bytes = 288 bits + 84 bytes
+    // = 288 + 672 = 960 bits — under 1023. OK.
+
+    // Roots cell: base_fee (256) + state_root (256) + tx_root (256)
+    // + receipts_root (256) = 1024 bits — overflows by 1. Split base_fee
+    // into the head cell (head was 960 bits + 256 base_fee = 1216, also
+    // overflow). Use two ref cells: roots_a (base_fee + state_root = 512)
+    // and roots_b (tx_root + receipts_root = 512).
+    vm::CellBuilder roots_a;
+    store_uint256(roots_a, block.base_fee_per_gas);
+    roots_a.store_bytes(block.state_root.bytes, 32);
+    head.store_ref(roots_a.finalize());
+
+    vm::CellBuilder roots_b;
+    roots_b.store_bytes(block.transactions_root.bytes, 32);
+    roots_b.store_bytes(block.receipts_root.bytes, 32);
+    head.store_ref(roots_b.finalize());
+
+    // Bloom (256 bytes = 2048 bits) needs its own ref cell. 2048 > 1023
+    // → chain into 2 cells: 1016 bits each + continuation. Use a bytes
+    // chunk via encode_evm_bytecode (already chunks at 127 bytes).
+    auto bloom_cell = encode_evm_bytecode(
+        td::Slice{reinterpret_cast<const char*>(block.logs_bloom), 256});
+    head.store_ref(bloom_cell);
+
+    // Transaction-hash list as its own ref.
+    head.store_ref(encode_hash_list(block.transaction_hashes));
+
+    return head.finalize();
+}
+
+bool decode_persisted_block_impl(td::Ref<vm::Cell> cell, StoredBlock& out) {
+    out = StoredBlock{};
+    if (cell.is_null()) return false;
+    auto cs = vm::load_cell_slice(cell);
+
+    long long magic = 0;
+    if (!cs.fetch_long_bool(kPersistedBlockMagicBits, magic) ||
+        static_cast<unsigned long long>(magic) != kPersistedBlockMagic) {
+        return false;
+    }
+    long long number = 0, timestamp = 0, gas_limit = 0, gas_used = 0;
+    if (!cs.fetch_long_bool(64, number)) return false;
+    if (!cs.fetch_long_bool(64, timestamp)) return false;
+    if (!cs.fetch_long_bool(64, gas_limit)) return false;
+    if (!cs.fetch_long_bool(64, gas_used)) return false;
+    out.number = static_cast<uint64_t>(number);
+    out.timestamp = static_cast<uint64_t>(timestamp);
+    out.gas_limit = static_cast<uint64_t>(gas_limit);
+    out.gas_used = static_cast<uint64_t>(gas_used);
+    if (!cs.fetch_bytes(out.hash.bytes, 32)) return false;
+    if (!cs.fetch_bytes(out.parent_hash.bytes, 32)) return false;
+    if (!cs.fetch_bytes(out.miner.bytes, 20)) return false;
+
+    if (cs.size_refs() < 4) return false;
+    auto roots_a = cs.fetch_ref();
+    auto roots_b = cs.fetch_ref();
+    auto bloom_cell = cs.fetch_ref();
+    auto hashes_cell = cs.fetch_ref();
+
+    auto cs_a = vm::load_cell_slice(roots_a);
+    if (!load_uint256(cs_a, out.base_fee_per_gas)) return false;
+    if (!cs_a.fetch_bytes(out.state_root.bytes, 32)) return false;
+
+    auto cs_b = vm::load_cell_slice(roots_b);
+    if (!cs_b.fetch_bytes(out.transactions_root.bytes, 32)) return false;
+    if (!cs_b.fetch_bytes(out.receipts_root.bytes, 32)) return false;
+
+    auto bloom_bytes = decode_evm_bytecode(bloom_cell);
+    if (bloom_bytes.size() != 256) return false;
+    std::memcpy(out.logs_bloom, bloom_bytes.data(), 256);
+
+    if (!decode_hash_list(hashes_cell, out.transaction_hashes)) return false;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Public API.
 // ---------------------------------------------------------------------------
+
+td::Ref<vm::Cell> encode_persisted_transaction(const StoredTransaction& txn) {
+    return encode_persisted_transaction_impl(txn);
+}
+bool decode_persisted_transaction(td::Ref<vm::Cell> cell, StoredTransaction& out) {
+    return decode_persisted_transaction_impl(cell, out);
+}
+td::Ref<vm::Cell> encode_persisted_block(const StoredBlock& block) {
+    return encode_persisted_block_impl(block);
+}
+bool decode_persisted_block(td::Ref<vm::Cell> cell, StoredBlock& out) {
+    return decode_persisted_block_impl(cell, out);
+}
 
 td::Ref<vm::Cell> encode_persisted_receipt(const StoredReceipt& receipt) {
     vm::CellBuilder cb;
