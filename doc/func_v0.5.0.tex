@@ -926,11 +926,11 @@ This replaces the old mixture of \verb|var|, explicit type application, and
 hidden mutation through \verb|~method| calls.
 
 \subsection{Assignments}
-Only mutable places may be assigned to:
+Only mutable places may be assigned to. Inside an entry-function body
+the implicit \verb|state| binding is mutable:
 
 \begin{verbatim}
-let mut state = load_state()?;
-state.seqno = state.seqno + 1;
+state.seqno = state.seqno + 1;     // or: state.seqno += 1;
 \end{verbatim}
 
 \subsection{Pattern-Oriented Control Flow}
@@ -1020,13 +1020,14 @@ through \verb|mut| arguments by value-thread:
 fn on_transfer(mut state: WalletState, sender: Address, req: Transfer) { ... }
 
 internal fn recv(msg: WalletMsg) {
-    let mut state = load_state();
+    // Inside an entry body, `state` and `ctx` are in scope implicitly.
+    // Non-entry helpers do not see them; the entry forwards what they need.
     match msg {
         WalletMsg::Transfer(req) => on_transfer(mut state, ctx.sender, req),
-        WalletMsg::Burn(req)     => on_burn(mut state, ctx.sender, req),
+        WalletMsg::Burn(req)     => on_burn    (mut state, ctx.sender, req),
         ...
     }
-    save_state(state);
+    // No explicit save_state: the wrapper commits `state` on normal return.
 }
 \end{verbatim}
 
@@ -1062,9 +1063,9 @@ Examples:
 
 \begin{verbatim}
 pub fn min(x: i257, y: i257) -> i257 pure { ... }
-pub fn load_state() -> WalletState effect(read) { ... }
 pub fn load_uint(mut s: Slice, bits: u16) -> u256 pure { ... }
 pub fn send_transfer(...) -> () effect(send) { ... }
+pub fn compute_discount(amount: Coins) -> Coins pure { ... }
 \end{verbatim}
 
 \subsection{Effect Vocabulary}
@@ -1181,25 +1182,74 @@ inbound body into the declared parameter type using the derived codec
 Success commits state; any abort along the user-body path rolls back
 the whole transaction.
 
-Inside a user body the names \verb|state|, \verb|ctx.sender|,
-\verb|ctx.value|, and \verb|ctx.forward_fee| are in scope when
-applicable (\verb|ctx| is supplied only where the entry receives a
-context type, not a plain typed body). \verb|state| is a mutable
-reference to the contract's persistent state, rebound to the updated
-value on normal return.
+\paragraph{Implicit \texttt{state} and \texttt{ctx} bindings.}
+Inside the body of any entry function declared inside a
+\verb|contract { }| block, two names are implicitly in scope:
 
-The context types that can appear as an entry parameter are:
+\begin{itemize}
+\item \verb|state| --- a mutable binding to the contract's persistent
+state (the \verb|state { ... }| struct). Available in every entry
+kind including \verb|get fn|. For \verb|get fn|, writes to
+\verb|state| are a compile error per the \verb|get| effect ceiling.
+\item \verb|ctx| --- a compiler-supplied context value carrying the
+inbound protocol metadata. Its shape depends on the entry kind:
+\begin{itemize}
+\item in \verb|internal fn|: \verb|ctx.sender: Address|,
+\verb|ctx.value: Coins|, \verb|ctx.forward_fee: Coins|.
+\item in \verb|external fn|: \verb|ctx| is not in scope. External
+messages carry no sender / no value; the typed \verb|msg|
+parameter is the full payload. For raw access (uncommon), use
+\verb|external fn recv(body: Slice)|.
+\item in \verb|bounce fn|: \verb|ctx| is the \verb|BounceContext<T>|
+parameter the user declared --- an ordinary parameter that
+happens to be named \verb|ctx|. If the user names it differently
+(e.g.\ \verb|bc|), the name follows the parameter.
+\item in \verb|get fn|: \verb|ctx| is not in scope (a getter has no
+inbound message).
+\end{itemize}
+\end{itemize}
+
+Implicit bindings are in scope only inside entry-function bodies.
+Non-entry \verb|fn| helpers --- whether declared inside or outside the
+\verb|contract { }| block --- do not receive \verb|state| or
+\verb|ctx| implicitly; they must declare them as parameters when they
+need them:
 
 \begin{verbatim}
-Signed<T>                // external wallet-like pattern (stdlib; §9.2)
-WalletMsg, Transfer, ... // any user-defined typed message
-BounceContext<T>         // for entry bounce
-SignedMessage<T>         // alias for Signed<T>
+fn on_transfer(
+    mut state: WalletState,
+    sender: Address,
+    value: Coins,
+    req: Transfer,
+) { ... }
 \end{verbatim}
 
-A plain \verb|Slice| parameter is also legal and falls back to raw
-body processing; it is the low-ceremony escape when the typed-entry
-pattern does not fit.
+Callers in entry bodies pass the implicit bindings through explicitly:
+
+\begin{verbatim}
+internal fn recv(msg: WalletMsg) {
+    match msg {
+        WalletMsg::Transfer(t) =>
+            on_transfer(mut state, ctx.sender, ctx.value, t),
+        ...
+    }
+}
+\end{verbatim}
+
+\paragraph{Valid parameter types on each entry kind.}
+
+\begin{itemize}
+\item \verb|external fn|: \verb|Signed<T>|, any user-defined typed
+\verb|message|, or a plain \verb|Slice| for low-ceremony manual
+parsing;
+\item \verb|internal fn|: any user-defined typed \verb|message|, an
+\verb|enum| of messages, or a plain \verb|Slice|;
+\item \verb|bounce fn|: \verb|BounceContext<T>| where \verb|T| is the
+originally-sent message type (subject to the 256-bit / zero-ref
+rule in \S\ref{sec:entry-decode}), or \verb|BounceContext<Slice>|;
+\item \verb|get fn|: no inbound-message parameter (only declared
+arguments from the getter ABI).
+\end{itemize}
 
 \subsection{Entry Dispatch Matrix}
 \label{sec:entry-dispatch}
@@ -1275,8 +1325,17 @@ Raw TVM primitives are declared as \verb|extern "tvm"| functions in
 the standard library rather than being magic parser names:
 
 \begin{verbatim}
-extern "tvm" fn send_raw_message(msg: RawCell, mode: u8) -> () unsafe;
-extern "tvm" fn accept_message() -> () unsafe;
+// std::intrinsics
+extern "tvm" fn __sendrawmsg(msg: RawCell, mode: u8) -> () unsafe;
+extern "tvm" fn __accept_message() -> () unsafe;
+
+// std::message (safe wrappers)
+pub fn send_raw(msg: RawCell, mode: u8) -> () effect(send) {
+    unsafe { __sendrawmsg(msg, mode) }
+}
+pub fn accept_message() -> () effect(send) {
+    unsafe { __accept_message() }
+}
 \end{verbatim}
 
 Additionally, arbitrary Fift snippets may appear in three places inside
@@ -1604,9 +1663,9 @@ struct BounceContext<T = Slice> {
 
 contract Jetton {
     bounce fn on_bounce(ctx: BounceContext<InternalTransfer>) {
-        let mut state = load_state();
+        // `state` is the implicit persistent-state binding.
+        // The wrapper commits it on normal return.
         state.balance += ctx.body.amount;   // refund
-        save_state(state);
     }
 }
 \end{verbatim}
@@ -1662,9 +1721,12 @@ impl Slice {
 }
 
 impl Builder {
+    pub fn new() -> Builder pure;                    // empty builder
     pub fn store_uint(mut self, value: u256, bits: u16) -> Self pure;
     pub fn store_int (mut self, value: i257, bits: u16) -> Self pure;
     pub fn store_ref (mut self, cell: RawCell)          -> Self pure;
+    pub fn store_address(mut self, addr: Address)       -> Self pure;
+    pub fn store_coins  (mut self, amount: Coins)       -> Self pure;
     pub fn end_cell(self) -> RawCell pure;
 }
 \end{verbatim}

@@ -398,10 +398,15 @@ contract JettonWallet {
     }
 
     internal fn recv(msg: JettonMsg) {
+        // Non-entry helpers do not see `ctx` or `state` implicitly
+        // (main spec §Entrypoints), so the entry body forwards them.
         match msg {
-            JettonMsg::Transfer(t)         => on_transfer(mut state, t),
-            JettonMsg::InternalTransfer(i) => on_internal_transfer(mut state, i),
-            JettonMsg::Burn(b)             => on_burn(mut state, b),
+            JettonMsg::Transfer(t)         =>
+                on_transfer(mut state, ctx.sender, ctx.value, t),
+            JettonMsg::InternalTransfer(i) =>
+                on_internal_transfer(mut state, ctx.sender, i),
+            JettonMsg::Burn(b)             =>
+                on_burn(mut state, ctx.sender, b),
         }
     }
 
@@ -415,9 +420,14 @@ contract JettonWallet {
     }
 }
 
-fn on_transfer(mut state: JettonWalletState, req: Transfer) {
-    require!(ctx.sender == state.owner,         NotOwner);
-    require!(state.balance >= req.amount,       InsufficientBalance);
+fn on_transfer(
+    mut state:  JettonWalletState,
+    sender:     Address,
+    msg_value:  Coins,
+    req:        Transfer,
+) {
+    require!(sender == state.owner,       NotOwner);
+    require!(state.balance >= req.amount, InsufficientBalance);
     state.balance -= req.amount;
 
     let dest_wallet = derive_jetton_wallet_address(
@@ -434,7 +444,7 @@ fn on_transfer(mut state: JettonWalletState, req: Transfer) {
             forward_payload:      req.forward_payload,
         },
         SendOptions {
-            value:       ctx.value - req.forward_tos_amount,
+            value:       msg_value - req.forward_tos_amount,
             bounce:      BounceMode::Body256,
             body_layout: BodyLayout::Auto,
             mode:        SendMode::PayFeesSeparately,
@@ -442,10 +452,13 @@ fn on_transfer(mut state: JettonWalletState, req: Transfer) {
     );
 }
 
-fn on_internal_transfer(mut state: JettonWalletState, req: InternalTransfer) {
-    // ... similar validation and state update ...
-}
-fn on_burn(mut state: JettonWalletState, req: Burn) { ... }
+fn on_internal_transfer(
+    mut state: JettonWalletState, sender: Address, req: InternalTransfer,
+) { /* similar validation and state update */ }
+
+fn on_burn(
+    mut state: JettonWalletState, sender: Address, req: Burn,
+) { /* ... */ }
 ```
 
 ### 7.2 Migration notes (C4)
