@@ -1544,8 +1544,28 @@ void JsonRpcServer::handle_eth_sendRawTransaction(td::JsonValue &params_val,
         decoded.txn, rev, cfg.chain_id);
     if (vr_base != silkworm::ValidationResult::kOk) {
       std::ostringstream msg;
-      msg << "admission rejected (base): ValidationResult="
-          << static_cast<int>(vr_base);
+      switch (vr_base) {
+        case silkworm::ValidationResult::kIntrinsicGas:
+          msg << "gas_limit below intrinsic gas cost (21000 for simple transfer, +4/16 gas per byte of calldata)";
+          break;
+        case silkworm::ValidationResult::kUnsupportedTransactionType:
+          msg << "transaction type not supported at current revision";
+          break;
+        case silkworm::ValidationResult::kWrongChainId:
+          msg << "wrong chain id (this chain expects 0x"
+              << std::hex << cfg.chain_id << std::dec << ")";
+          break;
+        case silkworm::ValidationResult::kNonceTooHigh:
+          msg << "nonce at uint64 max (EIP-2681)";
+          break;
+        case silkworm::ValidationResult::kInsufficientFunds:
+          msg << "maximum gas cost overflows 256 bits";
+          break;
+        default:
+          msg << "admission rejected (base): ValidationResult="
+              << static_cast<int>(vr_base);
+          break;
+      }
       promise.set_value(make_eth_json_error(-32000, msg.str(), req_id));
       return;
     }
@@ -1553,19 +1573,26 @@ void JsonRpcServer::handle_eth_sendRawTransaction(td::JsonValue &params_val,
         decoded.txn, rev, /*blob_gas_price=*/std::nullopt);
     if (vr_forks != silkworm::ValidationResult::kOk) {
       std::ostringstream msg;
-      if (vr_forks == silkworm::ValidationResult::kTxGasLimitExceeded) {
-        msg << "tx gas limit exceeds EIP-7825 cap (2^24 = 16777216)";
-      } else if (vr_forks == silkworm::ValidationResult::kMaxInitCodeSizeExceeded) {
-        msg << "initcode exceeds EIP-3860 size limit";
-      } else if (vr_forks == silkworm::ValidationResult::kFloorCost) {
-        msg << "gas_limit below EIP-7623 floor cost";
-      } else if (vr_forks == silkworm::ValidationResult::kProhibitedContractCreation) {
-        msg << "contract creation prohibited for this transaction type";
-      } else if (vr_forks == silkworm::ValidationResult::kEmptyAuthorizations) {
-        msg << "EIP-7702 SetCode tx requires at least one authorization";
-      } else {
-        msg << "admission rejected (forks): ValidationResult="
-            << static_cast<int>(vr_forks);
+      switch (vr_forks) {
+        case silkworm::ValidationResult::kTxGasLimitExceeded:
+          msg << "tx gas limit exceeds EIP-7825 cap (2^24 = 16777216)";
+          break;
+        case silkworm::ValidationResult::kMaxInitCodeSizeExceeded:
+          msg << "initcode exceeds EIP-3860 size limit";
+          break;
+        case silkworm::ValidationResult::kFloorCost:
+          msg << "gas_limit below EIP-7623 floor cost";
+          break;
+        case silkworm::ValidationResult::kProhibitedContractCreation:
+          msg << "contract creation prohibited for this transaction type";
+          break;
+        case silkworm::ValidationResult::kEmptyAuthorizations:
+          msg << "EIP-7702 SetCode tx requires at least one authorization";
+          break;
+        default:
+          msg << "admission rejected (forks): ValidationResult="
+              << static_cast<int>(vr_forks);
+          break;
       }
       promise.set_value(make_eth_json_error(-32000, msg.str(), req_id));
       return;
