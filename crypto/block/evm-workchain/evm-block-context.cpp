@@ -36,8 +36,21 @@ silkworm::Block make_evm_block(
 
 const silkworm::ChainConfig& evm_chain_config() noexcept {
     // Singleton config for the EVM workchain.
-    // Uses Shanghai rules — the latest stable fork before Cancun/blob txns.
-    // All fork blocks set to 0 so that all rules are active from genesis.
+    // **Cancun-rules**: all forks active from genesis. Per the user
+    // decision on 2026-04-18, `cancun_time = 0` so BLOBHASH, BLOBBASEFEE,
+    // TLOAD/TSTORE, MCOPY, EIP-6780 SELFDESTRUCT, KZG point-evaluation
+    // precompile (0x0a), and EIP-4788 beacon-roots system call all
+    // activate from block 0.
+    //
+    // Pre-fork prep (commits 6d311e8e + bb56f43e + ca8cc59b) wired:
+    //  - KZG canary in init_evm_workchain (verifies evmone's bundled
+    //    trusted setup is loaded before any tx executes)
+    //  - EIP-4788 beacon-roots predeploy at the magic address
+    //    0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02 with the canonical
+    //    97-byte runtime
+    //  - blob-tx (type-3) admission rejection at eth_sendRawTransaction —
+    //    we have no blob mempool, so blob txs would otherwise stall in
+    //    the collator
     //
     // The chain_id is captured on first call (via current_evm_chain_id()),
     // so any TOS_EVM_CHAIN_ID override applied during init_evm_workchain
@@ -48,7 +61,7 @@ const silkworm::ChainConfig& evm_chain_config() noexcept {
         silkworm::ChainConfig c;
         c.chain_id = current_evm_chain_id();
 
-        // All forks active from block 0 (Shanghai-equivalent).
+        // All forks active from block 0 (Cancun-equivalent).
         c.homestead_block   = 0;
         c.tangerine_whistle_block = 0;
         c.spurious_dragon_block = 0;
@@ -61,6 +74,8 @@ const silkworm::ChainConfig& evm_chain_config() noexcept {
 
         // Shanghai (EIP-3651, 3855, 3860, 4895) active from time 0.
         c.shanghai_time     = 0;
+        // Cancun (EIP-1153/4788/4844/5656/6780/7516) active from time 0.
+        c.cancun_time       = 0;
 
         // PoW → PoS terminal difficulty set to 0 (merged from genesis).
         c.terminal_total_difficulty = 0;

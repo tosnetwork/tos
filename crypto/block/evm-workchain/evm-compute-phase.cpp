@@ -364,10 +364,15 @@ bool run_evm_compute_phase(
             // nonce stays default (zero) — post-merge.
             hdr.base_fee_per_gas = stored_block.base_fee_per_gas;
             hdr.withdrawals_root = silkworm::kEmptyRoot;  // Shanghai+
-            // Cancun fields (blob_gas_used, excess_blob_gas, parent_beacon_block_root)
-            // remain nullopt until cancun_time = 0 flips. silkworm's RLP encoder
-            // includes them only when present — the absence on Shanghai-era
-            // blocks matches the pre-Cancun canonical shape.
+            // Cancun (cancun_time = 0 flipped on 2026-04-18). All three
+            // EIP-4844/4788 header fields MUST be present once Cancun is
+            // active — silkworm's RLP encoder asserts on this. We don't
+            // produce blob txs (admission-rejected at eth_sendRawTransaction
+            // for type-3) so blob_gas_used / excess_blob_gas stay at 0;
+            // parent_beacon_block_root is zero because TOS has no beacon.
+            hdr.blob_gas_used = 0;
+            hdr.excess_blob_gas = 0;
+            hdr.parent_beacon_block_root = evmc::bytes32{};
             const auto eth_hash = hdr.hash();
             std::memcpy(stored_block.hash.bytes, eth_hash.bytes, 32);
         }

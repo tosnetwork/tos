@@ -4656,6 +4656,10 @@ static evmc::bytes32 hash_test_header(uint64_t number,
     hdr.extra_data.assign(client_id.begin(), client_id.end());
     hdr.base_fee_per_gas = intx::uint256{1'000'000'000};
     hdr.withdrawals_root = silkworm::kEmptyRoot;
+    // Cancun (cancun_time=0): the three EIP-4844/4788 fields are present.
+    hdr.blob_gas_used = 0;
+    hdr.excess_blob_gas = 0;
+    hdr.parent_beacon_block_root = evmc::bytes32{};
     return hdr.hash();
 }
 
@@ -4720,6 +4724,9 @@ static void test_block_hash_canonical() {
     hdr.extra_data.assign(client_id.begin(), client_id.end());
     hdr.base_fee_per_gas = intx::uint256{1'000'000'000};
     hdr.withdrawals_root = silkworm::kEmptyRoot;
+    hdr.blob_gas_used = 0;
+    hdr.excess_blob_gas = 0;
+    hdr.parent_beacon_block_root = evmc::bytes32{};
     silkworm::Bytes rlp;
     silkworm::rlp::encode(rlp, hdr);
     auto manual_hash = ethash::keccak256(rlp.data(), rlp.size());
