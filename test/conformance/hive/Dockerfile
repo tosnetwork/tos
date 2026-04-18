@@ -90,6 +90,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         jq \
         curl \
         netcat \
+        python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Binaries from the build stage.
@@ -105,9 +106,11 @@ COPY --from=build /tos/crypto/fift/lib       /usr/local/share/tos/fift/lib
 COPY --from=build /tos/crypto/smartcont      /usr/local/share/tos/smartcont
 
 # Entrypoint shim and minimal config templates.
-COPY test/conformance/hive/clients/tos/tos.cmd      /usr/local/bin/tos.cmd
-COPY test/conformance/hive/clients/tos/genesis.tmpl.json /etc/tos/genesis.tmpl.json
-RUN chmod +x /usr/local/bin/tos.cmd
+COPY test/conformance/hive/clients/tos/tos.cmd            /usr/local/bin/tos.cmd
+COPY test/conformance/hive/clients/tos/tos-rpc-proxy.py   /usr/local/bin/tos-rpc-proxy.py
+COPY test/conformance/hive/clients/tos/mapper.jq          /etc/tos/mapper.jq
+COPY test/conformance/hive/clients/tos/genesis.tmpl.json  /etc/tos/genesis.tmpl.json
+RUN chmod +x /usr/local/bin/tos.cmd /usr/local/bin/tos-rpc-proxy.py
 
 # Hive's expected JSON-RPC port. Engine API (8551) and devp2p (30303) are NOT
 # exposed — see README.md "What's still missing".
