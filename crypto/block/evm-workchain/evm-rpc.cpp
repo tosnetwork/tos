@@ -692,7 +692,9 @@ static RpcResult handle_call(const std::string& params, const std::string& id) {
         rand_seed);
     const auto& config = evm_chain_config();
 
-    auto result = call_evm_transaction(txn, block, global_evm_state(), config);
+    // Match geth/erigon: bypass sender balance enforcement during read-only
+    // calls so wallets can simulate value-bearing calls before holding funds.
+    auto result = call_evm_transaction_with_balance_topup(txn, block, global_evm_state(), config);
 
     if (!result.success) {
         // Return revert data in the error response (EIP-3668 compatible)
