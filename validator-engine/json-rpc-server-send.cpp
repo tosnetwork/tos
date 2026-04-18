@@ -1511,6 +1511,20 @@ void JsonRpcServer::handle_eth_sendRawTransaction(td::JsonValue &params_val,
     return;
   }
 
+  // Cancun-prep gate: explicitly reject blob (EIP-4844 type-3) transactions
+  // at the admission layer. We have no blob mempool — accepting a type-3
+  // here only to have the collator silently bounce it later wastes
+  // mempool space and confuses wallets that retry after seeing a tx
+  // hash. Documented in `doc/evm-workchain-known-divergences.md` Category E
+  // ("Cancun pre-fork checklist"). Revisit once a blob mempool ships
+  // alongside `cancun_time = 0`.
+  if (decoded.txn.type == silkworm::TransactionType::kBlob) {
+    promise.set_value(make_eth_json_error(
+        -32000,
+        "blob transactions not supported on this chain", req_id));
+    return;
+  }
+
   auto tx_hash = decoded.txn.hash();
 
   // 4. Build ext_in_msg cell. CellBuilder operations throw on range
