@@ -14,7 +14,7 @@ Three roles:
 2. **Cross-compiler conformance baseline.** Future 0.5.0 compilers must produce byte-identical TVM output for the corpus. Any divergence is either a spec bug or an implementation bug.
 3. **Authoring template.** Each corpus entry ships as a three-part artefact: the 0.4.6 original, the 0.5.0 canonical rewrite, and a prose migration note. That is simultaneously a tutorial for contract authors migrating existing code and a library of reusable patterns.
 
-Corpus v2 is the first corpus to target the **simplified v4 surface** — `contract { }` block + `require!` + typed-message entries + `asm` escape hatch + no `?` operator.
+Corpus v2 is the first corpus to target the **simplified v4 surface** — `contract { }` block + `require` + typed-message entries + `asm` escape hatch + no `?` operator.
 
 ## 2. Corpus Membership
 
@@ -114,11 +114,11 @@ contract Wallet {
 
     external fn recv(msg: Signed<Payload>) {
         let p = msg.body;
-        require!(p.global_id    == global_id(),        WrongGlobal);
-        require!(p.valid_until  >  now(),              Expired);
-        require!(p.seqno        == state.seqno,        WrongSeqno);
-        require!(p.subwallet_id == state.subwallet_id, WrongSubwallet);
-        require!(msg.check(state.pubkey),              BadSignature);
+        require(p.global_id    == global_id(),        WrongGlobal);
+        require(p.valid_until  >  now(),              Expired);
+        require(p.seqno        == state.seqno,        WrongSeqno);
+        require(p.subwallet_id == state.subwallet_id, WrongSubwallet);
+        require(msg.check(state.pubkey),              BadSignature);
         accept_message();
 
         let mut actions = p.actions;
@@ -138,7 +138,7 @@ contract Wallet {
 - **Shorter than the 0.4.6 original (30 vs 45 lines).** The `contract { }` block eliminates `load_data` / `save_data` helpers, the manual `set_data(begin_cell()...)` construction, and the `in_msg_body` plumbing. `state`, `error`, `message`, and `external fn` appear as one coherent unit.
 - **Signature handling delegated to `Signed<T>`.** The wrapper hashes the body (post-signature), and `msg.check(pubkey)` does the `check_signature` call. Author writes one line instead of three.
 - **Trailing `Slice` captures the action list.** `actions: Slice` as the last field of `Payload` binds to the remaining bits and refs. Authors iterate it with the ordinary `while actions.refs() > 0` pattern.
-- **Named error codes, ABI preserved.** `throw_unless(33, ...)` becomes `require!(cond, WrongSeqno)`. Because the error variant has explicit `= 33`, the thrown exit code is exactly 33; existing indexers observing exit code 33 keep working.
+- **Named error codes, ABI preserved.** `throw_unless(33, ...)` becomes `require(cond, WrongSeqno)`. Because the error variant has explicit `= 33`, the thrown exit code is exactly 33; existing indexers observing exit code 33 keep working.
 - **Getter method-ids unchanged.** `get fn seqno()` compiles to `crc16("seqno") | 0x10000`, identical to 0.4.6's `int seqno() method_id`.
 - **`internal fn` omitted.** wallet3 does nothing on internal messages and has no bounce handling. In 0.5.0 you simply don't write those entries — the wrapper drops them silently, matching the 0.4.6 no-op `recv_internal`.
 - **No `impure`, no `?`, no `Result`.** Every failure is an abort; every success is a plain return.
@@ -213,11 +213,11 @@ contract WalletV4 {
 
     external fn recv(msg: Signed<ExternalPayload>) {
         let p = msg.body;
-        require!(p.global_id    == global_id(),        WrongGlobal);
-        require!(p.valid_until  >  now(),              Expired);
-        require!(p.seqno        == state.seqno,        WrongSeqno);
-        require!(p.subwallet_id == state.subwallet_id, WrongSubwallet);
-        require!(msg.check(state.pubkey),              BadSignature);
+        require(p.global_id    == global_id(),        WrongGlobal);
+        require(p.valid_until  >  now(),              Expired);
+        require(p.seqno        == state.seqno,        WrongSeqno);
+        require(p.subwallet_id == state.subwallet_id, WrongSubwallet);
+        require(msg.check(state.pubkey),              BadSignature);
         accept_message();
 
         let mut tail = p.tail;
@@ -258,7 +258,7 @@ contract WalletV4 {
 - **`SubOp : u8` with explicit discriminants** gives 8-bit wire width at the cost of zero source-level ceremony. The compiler decodes it before the user body.
 - **`Dict<(i8, u256), ()>`** replaces 0.4.6's manual 264-bit packed key dict. The tuple key is laid out MSB-first per field order, reproducing the same wire form.
 - **State-struct update.** `state.plugins.insert(...)` mutates in place; `state.seqno += 1` updates a single field. Save happens implicitly at wrapper return.
-- **All `throw_unless(N, ...)` map to `require!` with the same numeric exit code.** ABI preserved.
+- **All `throw_unless(N, ...)` map to `require` with the same numeric exit code.** ABI preserved.
 
 ## 6. C3 — Highload Wallet v2
 
@@ -299,14 +299,14 @@ contract Highload {
 
     external fn recv(msg: Signed<Payload>) {
         let p = msg.body;
-        require!(p.global_id == global_id(), WrongGlobal);
+        require(p.global_id == global_id(), WrongGlobal);
 
         // query_id encodes (expire_at << 32 | nonce)
         let bound = (now() as u64) << 32;
-        require!(p.query_id >= bound,                 Expired);
-        require!(p.subwallet_id == state.subwallet_id, WrongSubwallet);
-        require!(!state.old_queries.contains(&p.query_id), DuplicateQuery);
-        require!(msg.check(state.pubkey),              BadSignature);
+        require(p.query_id >= bound,                 Expired);
+        require(p.subwallet_id == state.subwallet_id, WrongSubwallet);
+        require(!state.old_queries.contains(&p.query_id), DuplicateQuery);
+        require(msg.check(state.pubkey),              BadSignature);
         accept_message();
 
         for (_, (mode, raw)) in p.actions.iter_sorted() {
@@ -426,8 +426,8 @@ fn on_transfer(
     msg_value:  Coins,
     req:        Transfer,
 ) {
-    require!(sender == state.owner,       NotOwner);
-    require!(state.balance >= req.amount, InsufficientBalance);
+    require(sender == state.owner,       NotOwner);
+    require(state.balance >= req.amount, InsufficientBalance);
     state.balance -= req.amount;
 
     let dest_wallet = derive_jetton_wallet_address(
@@ -492,9 +492,9 @@ Canonical Decision interactions specific to multisig:
 
 Patterns that recur across the corpus.
 
-### 10.1 `throw_unless(N, cond)` → `require!(cond, NameN)`
+### 10.1 `throw_unless(N, cond)` → `require(cond, NameN)`
 
-Declare the error in the `contract` block's `error` shorthand with `= N`; use `require!(cond, NameN)`. ABI preserved byte-for-byte.
+Declare the error in the `contract` block's `error` shorthand with `= N`; use `require(cond, NameN)`. ABI preserved byte-for-byte.
 
 ### 10.2 Entry parameter is a message type, not a Slice
 
@@ -548,7 +548,7 @@ If `T` fits in 256 bits and zero refs, `bounce fn on_bounce(ctx: BounceContext<T
 
 ```
 external fn recv(msg: Signed<Payload>) {
-    require!(msg.check(state.pubkey), BadSignature);
+    require(msg.check(state.pubkey), BadSignature);
     accept_message();
     // ... use msg.body ...
 }

@@ -499,30 +499,44 @@ sparse discriminants, it may generate a branch tree. For message decoding, it
 may first use a slice preload such as \verb|PLDUZ 32| or a full \verb|LDU 32|
 to inspect the opcode before decoding the remainder of the body.
 
-\subsection{\texttt{require!} and Abort Lowering}
+\subsection{\texttt{require}, \texttt{revert}, and Abort Lowering}
 \label{sec:lower-require}
-The main failure mechanism in FunC \verb|0.5.0| is abort. The source
-construct \verb|require!(cond, Err)| lowers to:
+The main failure mechanism in FunC \verb|0.5.0| is abort. The two
+source constructs \verb|require(cond, Err)| and \verb|revert(Err)|
+both lower to the TVM
+\verb|THROW| / \verb|THROWIF| / \verb|THROWIFNOT| family.
+
+\paragraph{\texttt{require(cond, Err)}.}
+Lowers to a conditional throw:
 
 \begin{verbatim}
-if !(cond) { THROW(Err as u16) }
-\end{verbatim}
-
-That is a single \verb|IFNOT| conditional around the TVM
-\verb|THROW| / \verb|THROWIF| / \verb|THROWIFNOT| family:
-
-\begin{verbatim}
-require!(cond, Err)
+require(cond, Err)
   ==>
   <evaluate cond>
   <push (Err as u16)>
   THROWIFNOT
 \end{verbatim}
 
+Equivalent to \verb|if !(cond) { THROW(Err as u16) }|.
+
+\paragraph{\texttt{revert(Err)}.}
+Lowers to an unconditional throw:
+
+\begin{verbatim}
+revert(Err)
+  ==>
+  <push (Err as u16)>
+  THROW
+\end{verbatim}
+
+\verb|revert(Err)| is semantically equivalent to
+\verb|require(false, Err)|; the compiler folds either form to the
+same single-instruction sequence.
+
 Where the error identifier resolves to a \verb|u16| constant at
 compile time (from an \verb|error| shorthand or an \verb|enum E : u16|
 explicit discriminant), the compiler prefers the \verb|THROWIFNOT n|
-immediate-operand form when available.
+or \verb|THROW n| immediate-operand form when available.
 
 \paragraph{Stdlib functions that abort on failure.}
 Stdlib APIs such as \verb|Slice::load_uint|, \verb|Builder::store_uint|,
@@ -788,8 +802,8 @@ contract Wallet {
     }
 
     internal fn on_transfer(msg: Transfer) {
-        require!(msg.seqno == state.seqno,   WrongSeqno);
-        require!(msg.amount > Coins::zero(), ZeroAmount);
+        require(msg.seqno == state.seqno,   WrongSeqno);
+        require(msg.amount > Coins::zero(), ZeroAmount);
 
         send(
             msg.to,
@@ -816,7 +830,7 @@ The canonical lowering is:
 \item generate a low-level internal-entry wrapper
 \verb|__entry_on_transfer|;
 \item keep the typed user body as a concrete selector function;
-\item lower each \verb|require!| to an \verb|IFNOT| + \verb|THROW|
+\item lower each \verb|require| to an \verb|IFNOT| + \verb|THROW|
 sequence with the numeric error code;
 \item lower \verb|send(... )| to ordinary message building plus
 \verb|SENDRAWMSG|;
@@ -865,7 +879,7 @@ ordinary TVM operations:
 message body;
 \item \verb|SENDRAWMSG| for the outbound transfer;
 \item selector-based function calls for helper routines;
-\item \verb|THROWIFNOT| for each \verb|require!|;
+\item \verb|THROWIFNOT| for each \verb|require|;
 \item conditional branches only for \verb|match| over enums and
 \verb|if let| over \verb|Option|.
 \end{itemize}
@@ -888,7 +902,7 @@ authoritative statements are in
 main-spec Canonical Decision 2;
 \item canonical layout of \verb|Bytes|: main-spec Canonical Decision 3;
 \item \verb|BodyLayout::Auto| fit predicate: main-spec Canonical Decision 4;
-\item abort semantics and \verb|require!|-to-exit-code mapping:
+\item abort semantics and \verb|require|-to-exit-code mapping:
 main-spec Canonical Decision 5;
 \item getter / \verb|method_id| selector policy: main-spec Canonical
 Decision 6;

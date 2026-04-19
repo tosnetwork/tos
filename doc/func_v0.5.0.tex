@@ -36,7 +36,7 @@ language around four principles:
 messages carried directly as entry-function parameters;
 \item a \verb|contract { }| block that groups state, errors, entry
 points, and getters into one legible declaration, with low ceremony;
-\item abort-by-default semantics using \verb|require!(cond, err)| and
+\item abort-by-default semantics using \verb|require(cond, err)| and
 named exit codes, matching TVM, FunC \verb|0.4.6|, and Solidity mental
 models;
 \item a single \verb|asm { }| escape hatch for direct Fift whenever the
@@ -220,12 +220,12 @@ ordinary method syntax with \verb|mut self| in the signature \\ \hline
 Error handling &
 \verb|throw|, \verb|throw_if|, \verb|throw_unless(N, cond)| with bare
 numeric codes &
-\verb|require!(cond, Err)| with a named error enum; the legacy numeric
+\verb|require(cond, Err)| with a named error enum; the legacy numeric
 exit-code convention is preserved at the wrapper \\ \hline
 Failure semantics &
 abort on failure (TVM-native) &
 \textbf{still abort on failure} --- the idiomatic path uses
-\verb|require!| with no \verb|Result| wrapping. \verb|Result<T, E>|
+\verb|require| with no \verb|Result| wrapping. \verb|Result<T, E>|
 remains available for genuine recoverable paths but is not the default \\ \hline
 Domain types &
 \verb|int/cell/slice/builder/cont| plus conventions &
@@ -349,6 +349,7 @@ compatibility gates, but new code should prefer explicit prefixes and typed
 constructors.
 
 \subsection{Keywords}
+\label{sec:keywords}
 The core language reserves the following keyword set:
 
 \begin{verbatim}
@@ -356,7 +357,7 @@ mod use pub const type struct enum message trait impl fn extern
 let mut match if else while loop for in break continue return
 where self Self as
 effect pure unsafe asm
-contract state error require emit
+contract state error require revert emit
 external internal bounce get
 \end{verbatim}
 
@@ -364,9 +365,16 @@ external internal bounce get
 additionally reserve legacy FunC words such as \verb|global|, \verb|impure|,
 \verb|inline|, and \verb|method_id|.
 
-\verb|require| and \verb|emit| are consumed by their macro forms
-\verb|require!| and \verb|emit| (see \S\ref{sec:require-emit}); they are
-not callable as plain function names. \verb|contract|, \verb|state|,
+\verb|require|, \verb|revert|, and \verb|emit| are \emph{keyword-form
+statements}, not functions: although \verb|require(cond, Err)| and
+\verb|revert(Err)| look syntactically like calls, they are recognised
+by the parser, desugar at compile time, and lower directly to TVM
+\verb|THROWIFNOT| / \verb|THROW| instructions (see
+\S\ref{sec:require-emit}). They cannot be shadowed, aliased, taken by
+reference, or called indirectly. \verb|emit E { ... }| is similarly a
+keyword statement whose shape (bare identifier plus struct literal)
+makes the distinction obvious without additional punctuation.
+\verb|contract|, \verb|state|,
 and \verb|error| introduce a contract block and its declarations
 (\S\ref{sec:contract-block}). \verb|external| / \verb|internal| /
 \verb|bounce| / \verb|get| are entry qualifiers inside a contract
@@ -507,7 +515,7 @@ error WrongSeqno = 33,
 
 This expands to a private \verb|enum ContractError : u16|
 with the declared variants and numeric discriminants. The codes are
-used directly in \verb|require!(cond, ErrorCode)| (see
+used directly in \verb|require(cond, ErrorCode)| (see
 \S\ref{sec:require-emit}). Multiple variants may share a numeric value
 (as above with \verb|35|); the compiler keeps them distinguishable at
 the source level while producing identical exit-code behaviour, so
@@ -826,7 +834,7 @@ For the overwhelmingly common case --- a value that either arrives
 correctly or causes the whole transaction to abort --- the idiomatic
 form is \textbf{not} \verb|Result|. Stdlib APIs return raw values and
 abort on failure, matching TVM native semantics. Authors use
-\verb|require!(cond, err)| (\S\ref{sec:require-emit}) to assert
+\verb|require(cond, err)| (\S\ref{sec:require-emit}) to assert
 conditions and abort with a named exit code. See
 Section~\ref{sec:error-model} for the full error model.
 
@@ -989,7 +997,7 @@ aborts with exit code 9 (cell underflow) per the abort-by-default
 model; no \verb|?| is needed.
 
 \paragraph{Mutation on the abort path.}
-When a \verb|mut self| method aborts (via \verb|require!|, an
+When a \verb|mut self| method aborts (via \verb|require|, an
 overflowing cell operation, or any other \verb|THROW|), the entire
 transaction rolls back: persistent state is not committed, the action
 list is discarded, and the caller's mutable place is irrelevant because
@@ -1400,7 +1408,8 @@ match                     // exhaustive multiway
 while, while let, loop    // loops
 for                       // iterator-driven loop
 break, continue, return   // control flow
-require!(cond, err)       // abort if !cond
+require(cond, err)        // abort if !cond
+revert(err)               // abort unconditionally
 emit Event { ... }        // emit an event message
 \end{verbatim}
 
@@ -1435,29 +1444,72 @@ Inside the \verb|if let| body, \verb|reply_to| is an \verb|Address|
 rather than \verb|Address?|. Similar narrowing happens for \verb|match|
 arms over \verb|Option| and enum / message variants.
 
-\subsection{\texttt{require!} and \texttt{emit}}
+\subsection{\texttt{require}, \texttt{revert}, and \texttt{emit}}
 \label{sec:require-emit}
-FunC \verb|0.5.0| provides two compiler-recognised forms that look
-like function calls but desugar at compile time.
+FunC \verb|0.5.0| provides three compiler-recognised statement forms.
+\verb|require| and \verb|revert| share the abort mechanism;
+\verb|emit| is a structured log send. All three are reserved keywords
+(\S\ref{sec:keywords}) rather than functions, and none of them can be
+shadowed, aliased, or called indirectly.
 
-\paragraph{\texttt{require!(cond, err)}.}
+\paragraph{\texttt{require(cond, err)}.}
 Asserts \verb|cond|; if false, aborts the transaction with the numeric
 exit code associated with \verb|err|. \verb|err| is typically a variant
 of the contract-local \verb|error| enum (\S\ref{sec:error-shorthand})
 or of an explicitly declared \verb|enum E : u16|.
 
 \begin{verbatim}
-require!(seqno == state.seqno,        WrongSeqno);
-require!(valid_until > now(),         Expired);
-require!(amount > Coins::zero(),      ZeroAmount);
+require(seqno == state.seqno,        WrongSeqno);
+require(valid_until > now(),         Expired);
+require(amount > Coins::zero(),      ZeroAmount);
 \end{verbatim}
 
 Desugar:
 
 \begin{verbatim}
-require!(COND, ERR)
-  ==>  if !(COND) { throw(ERR as u16) }
+require(COND, ERR)
+  ==>  if !(COND) { __throw(ERR as u16) }
 \end{verbatim}
+
+where \verb|__throw| is not a user-callable function but the internal
+name for the \verb|THROW n| lowering (\S\ref{sec:cd-err-exit}).
+
+\paragraph{\texttt{revert(err)}.}
+Unconditionally aborts the transaction with the numeric exit code
+associated with \verb|err|. Useful in \verb|match| fall-through arms,
+post-condition failures, and permission-denied branches where the
+condition has already been decided.
+
+\begin{verbatim}
+match msg {
+    WalletMsg::Transfer(t)      => { ... }
+    WalletMsg::InstallPlugin(p) => { ... }
+    _                           => revert(UnknownOp),
+}
+\end{verbatim}
+
+Desugar:
+
+\begin{verbatim}
+revert(ERR)
+  ==>  __throw(ERR as u16)
+\end{verbatim}
+
+\verb|revert(Err)| is equivalent to \verb|require(false, Err)|; the
+compiler emits identical Fift (\verb|THROW n|). The keyword form
+exists purely for readability at unconditional-abort sites.
+
+\paragraph{Why a keyword, not a function?}
+Both \verb|require| and \verb|revert| take an \emph{error variant
+symbol} as their error argument, not a runtime value. The compiler
+resolves the variant's \verb|u16| discriminant at compile time and
+inlines it into a single \verb|THROWIFNOT n| / \verb|THROW n|
+instruction. A plain function would have to accept a runtime
+\verb|u16|, losing both the typed-name check and the single-opcode
+lowering. In addition, shorthand name resolution (bare
+\verb|WrongSeqno| inside a \verb|contract| block resolving to
+\verb|WalletError::WrongSeqno|, \S\ref{sec:error-shorthand}) is only
+possible in a parser-recognised keyword form.
 
 \paragraph{\texttt{emit Event \{ ... \}}.}
 Emits an event message onto a predefined log sink. \verb|Event| must
@@ -1640,10 +1692,10 @@ message Payload {
 
 external fn recv(msg: Signed<Payload>) {
     let p = msg.body;
-    require!(p.valid_until > now(),                Expired);
-    require!(p.seqno == state.seqno,               WrongSeqno);
+    require(p.valid_until > now(),                Expired);
+    require(p.seqno == state.seqno,               WrongSeqno);
     // ...
-    require!(msg.check(state.pubkey),              BadSignature);
+    require(msg.check(state.pubkey),              BadSignature);
     accept_message();
     // ... act on p.actions ...
 }
@@ -1800,7 +1852,7 @@ throw on failure;
 \item Solidity \verb|require(cond, "msg")| reverts on false.
 \end{itemize}
 
-The primary mechanism to assert in source is \verb|require!(cond, err)|
+The primary mechanism to assert in source is \verb|require(cond, err)|
 (\S\ref{sec:require-emit}). A false \verb|cond| aborts with the
 numeric exit code derived from \verb|err|.
 
@@ -1822,8 +1874,8 @@ contract Wallet {
 
 The shorthand expands to \verb|pub enum WalletError : u16 { ... }|
 with the declared numeric discriminants.
-\verb|require!(cond, WalletError::WrongSeqno)|
-(shortened to \verb|require!(cond, WrongSeqno)| inside the block)
+\verb|require(cond, WalletError::WrongSeqno)|
+(shortened to \verb|require(cond, WrongSeqno)| inside the block)
 aborts with exit code 33, matching \verb|throw_unless(33, cond)| in a
 0.4.6 contract byte-for-byte.
 
@@ -1871,7 +1923,7 @@ internal fn recv(req: LookupRequest) {
 
 This is \emph{not} the default idiom. Authors who find themselves
 wanting \verb|Result| for validation-style logic should use
-\verb|require!| instead --- it is shorter, cheaper, and matches the
+\verb|require| instead --- it is shorter, cheaper, and matches the
 abort-by-default contract model.
 
 \subsection{Bridging Legacy Exit Codes}
@@ -1969,7 +2021,7 @@ throw_unless(33, msg_seqno == stored_seqno);
 // 0.5.0 style
 let mut cs = in_msg;
 let signature = cs.load_bits(512);                  // aborts on underflow
-require!(msg_seqno == stored_seqno, WrongSeqno);   // aborts with exit code 33
+require(msg_seqno == stored_seqno, WrongSeqno);   // aborts with exit code 33
 \end{verbatim}
 
 \subsection{Migration Principle}
@@ -1979,7 +2031,7 @@ The important migration principle is semantic, not cosmetic:
 \item move from raw integers toward explicit types;
 \item move from hidden mutation toward \verb|mut|;
 \item move from \verb|throw_unless(N, cond)| toward
-\verb|require!(cond, Name)| with \verb|Name = N| preserving the exit
+\verb|require(cond, Name)| with \verb|Name = N| preserving the exit
 code;
 \item move from raw op-code dispatch toward typed \verb|message| and
 \verb|enum + match|;
@@ -2057,7 +2109,7 @@ message construction:
 \subsection{FunC 0.5.0 Style}
 In the proposed \verb|0.5.0| surface, the same logic is expressed
 through a \verb|contract| block, a typed message, named error codes,
-and \verb|require!| for validation:
+and \verb|require| for validation:
 
 \begin{verbatim}
 #![edition = "0.5.0"]
@@ -2076,8 +2128,8 @@ contract Wallet {
     }
 
     internal fn on_transfer(msg: Transfer) {
-        require!(msg.seqno == state.seqno,  WrongSeqno);
-        require!(msg.amount > Coins::zero(), ZeroAmount);
+        require(msg.seqno == state.seqno,  WrongSeqno);
+        require(msg.amount > Coins::zero(), ZeroAmount);
 
         send(
             msg.to,
@@ -2126,7 +2178,7 @@ mutates in place; parameter-level mutation uses \verb|let mut| and
 
 \item \textbf{Named error codes, legacy wire behaviour preserved.}
 \verb|throw_unless(33, ...)| and \verb|throw_unless(34, ...)| become
-\verb|require!(cond, WrongSeqno)| and \verb|require!(cond, ZeroAmount)|.
+\verb|require(cond, WrongSeqno)| and \verb|require(cond, ZeroAmount)|.
 The numeric exit codes (33, 34) are preserved via the explicit
 discriminants, so existing indexers continue to work.
 
@@ -2231,11 +2283,12 @@ Stmt ::= LetStmt
        | WhileStmt | WhileLetStmt
        | LoopStmt | ForStmt
        | BreakStmt | ContinueStmt
-       | RequireStmt
+       | RequireStmt | RevertStmt
        | EmitStmt
        | Block
 
-RequireStmt ::= "require!" "(" Expr "," Expr ")" ";"
+RequireStmt ::= "require" "(" Expr "," Expr ")" ";"
+RevertStmt  ::= "revert" "(" Expr ")" ";"
 EmitStmt    ::= "emit" Path "{" FieldInits "}" ";"
 
 Type ::= SimpleType
@@ -2252,7 +2305,7 @@ there is no expression-level try-operator.
 \section{Illustrative Contract Fragment}
 The following fragment demonstrates the overall style target --- the
 full simplified surface with a \verb|contract| block, named errors,
-typed entry parameters, and \verb|require!|:
+typed entry parameters, and \verb|require|:
 
 \begin{verbatim}
 #![edition = "0.5.0"]
@@ -2275,7 +2328,7 @@ contract Wallet {
     }
 
     internal fn on_transfer(msg: Transfer) {
-        require!(msg.amount > Coins::zero(), ZeroAmount);
+        require(msg.amount > Coins::zero(), ZeroAmount);
 
         if let Some(reply) = msg.response_to {
             send(
@@ -2322,7 +2375,7 @@ opcode check and field decoding;
 pattern;
 \item trailing \verb|Slice| / \verb|Cell| fields to model
 ``fixed header plus opaque tail'';
-\item abort-by-default with named error codes via \verb|require!|,
+\item abort-by-default with named error codes via \verb|require|,
 preserving legacy exit-code ABI;
 \item \verb|Option<T>|, exhaustive \verb|match|, and \verb|if let|
 for the cases that genuinely benefit from typed absence;
@@ -2472,11 +2525,11 @@ error mapped to \verb|CellError::Overflow|.
 The primary failure mechanism in FunC \verb|0.5.0| is abort: a failed
 operation throws a numeric exit code, the transaction rolls back, no
 state or actions are committed. The mechanism is reached from source
-code via \verb|require!(cond, err)| (\S\ref{sec:require-emit}) or by
+code via \verb|require(cond, err)| (\S\ref{sec:require-emit}) or by
 any stdlib function that itself aborts on underlying failure.
 
 \paragraph{Exit-code derivation from error names.}
-A \verb|require!(cond, err)| where \verb|err| is an
+A \verb|require(cond, err)| where \verb|err| is an
 \verb|enum E : u16| variant throws exactly that variant's numeric
 discriminant. The \verb|error| shorthand (\S\ref{sec:error-shorthand})
 and the longer \verb|enum E : u16 { ... }| form both expand to the
@@ -2617,7 +2670,7 @@ Notes:
 \begin{itemize}
 \item Comparisons are non-chainable: \verb|a < b < c| is a syntax error.
 \item FunC \verb|0.5.0| has no \verb|?| postfix operator; the error
-model is abort-by-default via \verb|require!| (\S\ref{sec:require-emit}).
+model is abort-by-default via \verb|require| (\S\ref{sec:require-emit}).
 \item \verb|as| takes a type, not an expression, on the right.
 \item Bitwise \verb|&|/\verb+|+/\verb|^| coexist with logical
 \verb|&&|/\verb+||+ at separate precedences. Logical operators require
@@ -2835,7 +2888,7 @@ compatible.
 \verb|std::prelude| & auto-imported into every source file:
 \verb|Option|, \verb|Some|, \verb|None|;
 \verb|Result|, \verb|Ok|, \verb|Err| (rare use);
-\verb|require!| macro form; \verb|emit| macro form \\ \hline
+\verb|require|, \verb|revert|, \verb|emit| keyword statements \\ \hline
 \verb|std::cell| & \verb|Cell<T>|, \verb|RawCell|, \verb|Builder|,
 \verb|Slice|, \verb|RawSlice|;
 conversions \verb|to_cell|, \verb|from_cell|, \verb|load_any|,
@@ -2869,7 +2922,7 @@ ranges, fixed arrays, uniform tuples \\ \hline
 \verb|ok_or| \\ \hline
 \verb|std::result| & combinators on \verb|Result|: \verb|map|,
 \verb|map_err|, \verb|and_then|, \verb|or_else|, \verb|ok_or|.
-Reminder: idiomatic 0.5.0 code uses \verb|require!| instead of
+Reminder: idiomatic 0.5.0 code uses \verb|require| instead of
 \verb|Result| pipelines \\ \hline
 \verb|std::intrinsics| & low-level \verb|extern "tvm"| declarations for
 every TVM opcode that the stdlib surface wraps, available to

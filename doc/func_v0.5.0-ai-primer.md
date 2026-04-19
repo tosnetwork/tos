@@ -9,7 +9,7 @@ This document is designed to be pasted — in whole or by section — into a sys
 
 ## 0. What FunC v0.5.0 v4 Is (one-paragraph primer)
 
-FunC v0.5.0 is a smart-contract language for the TOS blockchain that compiles to TVM via Fift. It is the successor to FunC 0.4.6. v4 is the simplified surface: one `contract { }` block groups state + errors + messages + entries + getters; `require!(cond, err)` replaces `throw_unless(N, cond)`; typed message declarations replace manual opcode parsing; `Signed<T>` stdlib type handles wallet signatures; `asm { ... }` is the only escape hatch to raw Fift. There is **no `?` operator**, **no `Result<T, E>` default**, **no `&self`/`&mut self` borrows**, **no async/await**, **no macros except `require!` / `emit` / `asm`**. Failures abort the whole transaction; the wrapper around each entry function auto-loads state before the body and auto-commits state after the body on normal return.
+FunC v0.5.0 is a smart-contract language for the TOS blockchain that compiles to TVM via Fift. It is the successor to FunC 0.4.6. v4 is the simplified surface: one `contract { }` block groups state + errors + messages + entries + getters; `require(cond, err)` replaces `throw_unless(N, cond)`; typed message declarations replace manual opcode parsing; `Signed<T>` stdlib type handles wallet signatures; `asm { ... }` is the only escape hatch to raw Fift. There is **no `?` operator**, **no `Result<T, E>` default**, **no `&self`/`&mut self` borrows**, **no async/await**, **no macros except `require` / `emit` / `asm`**. Failures abort the whole transaction; the wrapper around each entry function auto-loads state before the body and auto-commits state after the body on normal return.
 
 ---
 
@@ -30,12 +30,13 @@ You MUST NOT use:
   - `&self`, `&mut self`, `&T`, `&mut T` — there are no borrows
   - `async`, `await`, `.then()`, `.await()` — TVM is async by protocol
      but the source language is not
-  - macros other than `require!`, `emit`, and `asm` — no `macro_rules!`,
-     no procedural macros
+  - macros of any kind — `require`, `revert`, `emit`, and `asm` are
+     keyword-form statements, not macros; there is no `macro_rules!`
+     and no procedural macros
   - `Vec<u8>` when you mean byte data — use `Slice` or `Bytes`
   - `Box<T>`, `Rc<T>`, `Arc<T>` — there is no heap model
   - `impure` keyword — removed
-  - `throw_unless(N, cond)` — replaced by `require!(cond, Name)`
+  - `throw_unless(N, cond)` — replaced by `require(cond, Name)`
   - `entry` keyword — removed; use `external fn` / `internal fn` /
      `bounce fn` / `get fn` inside a contract block
   - manual `let mut state = load_state()` / `save_state(state)` —
@@ -46,8 +47,8 @@ You MUST NOT use:
   - `String` / `&str` — use `Bytes` if you need strings, but most
      contracts don't
   - `unsafe` blocks — `unsafe` is only a top-level function qualifier
-  - Solidity-style `require(cond, "string message")` — require! takes
-     an error enum variant, not a string
+  - Solidity-style `require(cond, "string message")` — the second
+     argument is an error enum variant, never a string
 
 You MUST use:
   - `#![edition = "0.5.0"]` at the top of each source file
@@ -55,7 +56,8 @@ You MUST use:
   - `state { field: T, ... }` inside the contract block
   - `error Name1 = N1, Name2 = N2, ...;` for error codes
   - `message MyMsg(op = 0xHEX) { fields }` for wire-bound messages
-  - `require!(cond, ErrorName)` for validation
+  - `require(cond, ErrorName)` for validation
+  - `revert(ErrorName)` for unconditional abort (e.g. `match` fall-through)
   - `emit Event { field1, field2 }` for emitting events
   - `match msg { Variant::A(x) => ..., Variant::B(y) => ... }` for
      dispatch
@@ -72,7 +74,7 @@ You MUST use:
     the high-level surface can't express
 
 Failures are aborts. Do not wrap validation in Result. When you see
-"the operation might fail", write `require!(cond, ErrorName)` — the
+"the operation might fail", write `require(cond, ErrorName)` — the
 exit code is the numeric discriminant of `ErrorName`.
 ================================================================
 ```
@@ -108,13 +110,13 @@ contract MyContract {
 
     // --- Entry points (implicit state and ctx in scope) ---
     external fn recv(msg: Signed<Payload>) {
-        require!(msg.check(state.pubkey), BadSignature);
+        require(msg.check(state.pubkey), BadSignature);
         accept_message();
         // body logic...
     }
 
     internal fn on_transfer(msg: Transfer) {
-        require!(ctx.sender == state.owner, NotOwner);
+        require(ctx.sender == state.owner, NotOwner);
         // body logic...
         send(
             msg.to,
@@ -156,7 +158,7 @@ This is the skeleton every v0.5.0 contract begins with. When asked to write a ne
 | Pattern match (exhaustive) | `match v { V::A(x) => ..., V::B => ... }` |
 | Optional unpack | `if let Some(x) = opt { ... }` |
 | Loop with optional | `while let Some(x) = iter.next() { ... }` |
-| Early exit on failure | `require!(cond, ErrorName);` |
+| Early exit on failure | `require(cond, ErrorName);` |
 | Emit event | `emit EventName { field1, field2 };` |
 | Function call | `foo(a, b)` |
 | Method call | `slice.load_uint(32)` |
@@ -189,7 +191,7 @@ internal fn foo(msg: Whatever) {
 ### 4.3 Check sender is owner
 ```func
 internal fn privileged(msg: Op) {
-    require!(ctx.sender == state.owner, NotOwner);
+    require(ctx.sender == state.owner, NotOwner);
     // ...
 }
 ```
@@ -197,7 +199,7 @@ internal fn privileged(msg: Op) {
 ### 4.4 Check signature on an external wallet
 ```func
 external fn recv(msg: Signed<Payload>) {
-    require!(msg.check(state.pubkey), BadSignature);
+    require(msg.check(state.pubkey), BadSignature);
     accept_message();
     // ...
 }
@@ -285,7 +287,7 @@ if let Some(addr) = msg.response_to {
 ### 4.13 Declare a helper that mutates state
 ```func
 fn on_transfer(mut state: MyState, sender: Address, req: Transfer) {
-    require!(sender == state.owner, NotOwner);
+    require(sender == state.owner, NotOwner);
     state.balance -= req.amount;
 }
 
@@ -326,7 +328,7 @@ fn slice_double_hash(s: Slice) -> u512 unsafe asm {
 ```
 Option<T>, Some, None
 Result<T, E>, Ok, Err            // niche use only
-require! macro
+require macro
 emit macro
 ```
 
@@ -550,13 +552,13 @@ RIGHT:  let x = body.load_uint(32);
 WRONG:  pub fn save_state(s: State) -> Result<(), CellError>
 RIGHT:  pub fn save_state(s: State) -> ()          // aborts on fail
 WRONG:  return Err(WalletError::WrongSeqno);
-RIGHT:  require!(cond, WrongSeqno);
+RIGHT:  require(cond, WrongSeqno);
 ```
 
 ### 8.3 Used `throw_unless` (legacy 0.4.6)
 ```
 WRONG:  throw_unless(33, cond);
-RIGHT:  require!(cond, WrongSeqno);   // needs error WrongSeqno = 33;
+RIGHT:  require(cond, WrongSeqno);   // needs error WrongSeqno = 33;
 ```
 
 ### 8.4 Used `&self` / `&mut self`
@@ -590,11 +592,11 @@ WRONG:  internal fn recv(ctx: InternalContext<Transfer>) { ... }
 RIGHT:  internal fn recv(msg: Transfer) { ... }     // ctx is implicit
 ```
 
-### 8.8 Used string in `require!`
+### 8.8 Used string in `require`
 ```
-WRONG:  require!(cond, "wrong seqno");
+WRONG:  require(cond, "wrong seqno");
 RIGHT:  error WrongSeqno = 33;
-        require!(cond, WrongSeqno);
+        require(cond, WrongSeqno);
 ```
 
 ### 8.9 Used `impure` qualifier
@@ -624,7 +626,7 @@ WRONG:  external fn recv(msg: Signed<Payload>) {
             // signature check then heavy work WITHOUT accept_message
         }
 RIGHT:  external fn recv(msg: Signed<Payload>) {
-            require!(msg.check(state.pubkey), BadSignature);
+            require(msg.check(state.pubkey), BadSignature);
             accept_message();                // MUST come before expensive ops
             // ... actual work here, paid from contract balance ...
         }
@@ -878,8 +880,8 @@ fn on_transfer(
     msg_value:  Coins,
     req:        Transfer,
 ) {
-    require!(sender == state.owner,        NotOwner);
-    require!(state.balance >= req.amount,  InsufficientBalance);
+    require(sender == state.owner,        NotOwner);
+    require(state.balance >= req.amount,  InsufficientBalance);
     state.balance -= req.amount;
 
     let dest_wallet = derive_jetton_wallet_address(
@@ -907,7 +909,7 @@ fn on_transfer(
 fn on_internal_transfer(
     mut state: JettonWalletState, sender: Address, req: InternalTransfer,
 ) {
-    require!(sender == state.master ||
+    require(sender == state.master ||
              sender == derive_jetton_wallet_address(
                  state.master, state.wallet_code, req.from
              ),
@@ -919,8 +921,8 @@ fn on_internal_transfer(
 fn on_burn(
     mut state: JettonWalletState, sender: Address, req: Burn,
 ) {
-    require!(sender == state.owner,       NotOwner);
-    require!(state.balance >= req.amount, InsufficientBalance);
+    require(sender == state.owner,       NotOwner);
+    require(state.balance >= req.amount, InsufficientBalance);
     state.balance -= req.amount;
     // notify master...
 }
@@ -936,7 +938,7 @@ Pattern points to absorb:
 - `internal fn recv(msg: EnumType)` receives the whole group; `match` dispatches
 - Helpers outside the contract block take `mut state` as parameter
 - Inside entry body, `state.x` and `ctx.sender` are in scope implicitly
-- `require!(cond, Name)` is the only failure mechanism used
+- `require(cond, Name)` is the only failure mechanism used
 - `send(dst, body, SendOptions { ... })` for outbound messages
 - `bounce fn on_bounce(ctx: BounceContext<T>)` for refund-on-failure
 - `get fn ...` for public read queries
@@ -948,7 +950,7 @@ Pattern points to absorb:
 ```
             DO                                  DON'T
 ─────────────────────────────────────────────────────────────────
-require!(cond, ErrorName)             |   throw_unless(33, cond)
+require(cond, ErrorName)             |   throw_unless(33, cond)
 state.x += 1                          |   let mut s = load_state();
                                       |     save_state(s)
 error Name = 33                       |   magic 33 in throw_unless
