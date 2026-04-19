@@ -27,7 +27,7 @@ locked), v3 (corpus-surfaced issues folded)
 \begin{abstract}
 This document proposes a new source-level design target for FunC,
 version \verb|0.5.0|. It starts from the currently implemented FunC
-\verb|0.4.6| surface documented in \verb|doc/func.tex|, but reworks the
+\verb|0.4.6| surface documented in \verb|doc/func_v0.4.6.tex|, but reworks the
 language around four principles:
 
 \begin{enumerate}
@@ -1387,7 +1387,7 @@ does not inspect the Fift; it trusts the declared stack contract.
 \item Formal parameters and \verb|let|-bound names in the enclosing
 function are visible inside \verb|asm| blocks.
 \item \verb|asm| contents use the 0.4.6 Fift conventions documented in
-\verb|doc/func.tex| \S5.4 (AsmBody).
+\verb|doc/func_v0.4.6.tex| \S5.4 (AsmBody).
 \end{itemize}
 
 The combination of a compact high-level surface and an \verb|asm|
