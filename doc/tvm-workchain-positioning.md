@@ -14,22 +14,25 @@ MetaMask, Hardhat, Foundry, ethers.js, OpenZeppelin — any investment
 in rebuilding the same application libraries in FunC duplicates what
 users can already get by deploying Solidity on the other workchain.
 
-The strategic conclusion: **TVM workchain should specialise in what
-EVM cannot do**, not compete with it on standard smart-contract
-territory.
+The strategic conclusion: **TVM workchain enters maintenance mode**.
+It stays stable, stays available, and retains the six differentiated
+capabilities that only it can offer (account abstraction,
+asynchronous messaging, sharding, cell storage, system contracts,
+cross-workchain bridges) as **latent invitation**, not active
+framework-building.
 
 **Positioning:**
 
 - **EVM workchain** — the default target for standard DeFi, NFTs,
   DAOs, bridges, and any application that an OpenZeppelin import
   can solve. Ethereum tooling works unchanged.
-- **TVM workchain** — the differentiated layer for native account
-  abstraction, asynchronous message workflows, sharded applications,
-  cell-optimised storage, system contracts, and cross-workchain
-  infrastructure.
-- **FunC** — the TVM systems language, kept minimal and oriented
-  toward what only TVM can express. Not an application-layer library
-  platform.
+- **TVM workchain** — the systems layer, with infrastructure
+  (wallet / elector / DNS contracts, `stdlib.fc`, `func`/`fift`
+  compilers, TVM node) kept stable. Six latent differentiators
+  (see §2) wait for builders who actively need them. No proactive
+  framework / library construction.
+- **FunC** — stable legacy language. No upgrade planned. No new
+  stdlib families. Security + fixes only.
 
 ---
 
@@ -169,104 +172,116 @@ subtracts from the clarity of TOS's value proposition**.
 
 ---
 
-## 4. Where FunC Investment Should Go
+## 4. TVM Workchain Enters Maintenance Mode
 
-With the recognition that EVM workchain owns general-purpose
-smart-contract territory, FunC's job becomes to make TVM workchain's
-unique capabilities first-class.
+Given that EVM workchain owns general-purpose contract territory, a
+natural next question is: "what proactive work should we do on the
+TVM side?"
 
-### P0 — Highest leverage
+The honest first-principles answer: **nothing**.
 
-**P0-1: Wallet Framework**
+The differentiated capabilities listed in §2 (account abstraction,
+async messaging, sharding, cell storage, system contracts, cross-
+workchain bridges) are real, but none of them have a present-day user
+driving the need for framework-level tooling. Proactively building
+"wallet frameworks", "bridge primitives", "async workflow libraries",
+or "sharding-aware templates" would create tools for hypothetical
+users who may never materialise — a classic builder's-syndrome
+anti-pattern.
 
-The single biggest win for TOS users. Account abstraction is ambient
-on TVM; a good stdlib surfaces it.
+Instead, TVM workchain enters maintenance mode:
 
-```
-crypto/smartcont/tvm-native/wallet/
-├── WalletBase.fc          — account-abstraction primitive
-├── SessionKey.fc          — time-bounded subkeys
-├── SocialRecovery.fc      — N-of-M guardian recovery
-├── FeeDelegation.fc       — sponsored transactions / gasless UX
-├── SubscriptionWallet.fc  — scheduled recurring payments
-└── MultisigWallet.fc      — multi-owner wallet (not external contract)
-```
+### 4.1 What maintenance mode means
 
-These aren't "nice to have" — they're what dApp wallets need to
-offer modern UX. EVM can't easily do them; TVM can naturally.
+**Keep running:**
+- TVM node code — security patches, performance tuning, crash fixes
+- Existing system contracts (elector, config-params, DNS, wallet
+  variants) — bug fixes, required policy changes
+- `stdlib.fc` — security patches only, no feature additions
+- Existing `crypto/smartcont/` contracts — dependency bumps,
+  regression fixes
+- `func` + `fift` compiler binaries — minimal maintenance; they
+  are stable legacy tools
 
-**P0-2: Cross-workchain bridge**
+**Do not build:**
+- FunC equivalents of OpenZeppelin contracts (Jetton / NFT / Vault
+  / AMM / Governor / Multisig-as-app-contract) — these exist on the
+  EVM workchain.
+- `mapping` type syntax sugar or other FunC language extensions —
+  the language is adequate for its narrow remaining mission;
+  compiler energy is better spent elsewhere (or not spent at all).
+- `stdlib.fc` DeFi wrapper families (`std_typed_dict.fc`, etc.) —
+  speculative ergonomic sugar, no pain point driving the demand.
+- Wallet framework / session-key libraries / social-recovery
+  primitives — existing wallet contracts (wallet-v3/v4/v5,
+  highload-wallet, session-wallet, restricted-wallet) cover the
+  realistic use cases. Wallet projects fork them as needed.
+- Cross-workchain bridge infrastructure — premature until a
+  concrete TVM-native application has assets worth bridging out.
+  Chicken-and-egg: bridge value follows application value, not
+  vice versa.
+- Async workflow library (saga / timeout / callback templates) —
+  hypothetical users only.
+- Sharding-aware templates — TOS traffic is nowhere near the
+  thresholds where basechain auto-sharding activates in practice.
+- FunC language upgrade (v0.5.0 / v0.6.0) — already retired; the
+  archived `func-v0.5.0` branch and its documents are gone.
+- Rewriting `func` or `fift` in Rust — ton-rust's precedent (they
+  rewrote node/TVM/emulator in Rust but left FunC and Fift alone)
+  stands as the right judgement. These are stable legacy C++
+  binaries that can sit untouched for years.
 
-The killer protocol-level feature only TOS can offer: TVM ↔ EVM
-inside one L1.
+### 4.2 Reactive work is welcome
 
-```
-crypto/smartcont/tvm-native/bridge/
-├── TVMAssetLock.fc        — TVM-side asset lock / unlock
-├── MessagePassing.fc      — cross-workchain message envelope
-├── ProofVerifier.fc       — masterchain proof verification
-└── (Solidity side)        — EVM gateway contract (in evm/)
-```
+Maintenance mode is not "frozen." When a concrete, named need
+surfaces — a specific project asking for X, a security issue
+requiring Y, a policy change requiring a system-contract
+amendment — that work is appropriate.
 
-Done right, users transfer value between workchains in one UX flow.
-No external bridge. No third-party custody.
+The default stance shifts from "what should we proactively build?"
+to "what actual request is on the table?" Absent such a request,
+TVM-side effort is zero.
 
-**P0-3: System contracts**
+### 4.3 The six capabilities remain the differentiation story
 
-Elector, config-params, masterchain governance. Existing system
-contracts are in FunC; this is where FunC's seriousness matters most.
-Future work on validator economics, slashing, governance evolution
-lives here.
+§2's list of six things TVM can do that EVM cannot is still the
+narrative reason TOS carries two workchains. The shift is that
+those capabilities become **latent differentiators** rather than
+active construction projects — available to anyone who wants to
+build a TVM-native application, but not prematurely packaged into
+frameworks by us.
 
-### P1 — Differentiated application primitives
-
-**P1-1: Async workflow library**
-
-Patterns that only make sense on TVM:
-
-- Saga with rollback
-- Message timeout + bounce routing
-- Deadline + callback scheduling
-- Two-phase commit across contracts
-
-**P1-2: Sharding-aware frameworks**
-
-- Per-user shard allocation patterns
-- Cross-shard state synchronisation utilities
-- Shardable order book / game state templates
-
-### What FunC investment should NOT fund
-
-- FunC equivalents of OpenZeppelin contracts (Jetton / NFT / Vault /
-  AMM / Governor / Multisig-as-app-contract / etc.) — these exist
-  on EVM workchain.
-- `mapping` type syntax sugar — ergonomic improvement, zero new
-  capability; `stdlib.fc` dict primitives already express every
-  TVM storage pattern.
-- FunC language upgrade (v0.5.0 / v0.6.0) — the language is adequate
-  for its new systems-level mission; compiler energy is better
-  spent elsewhere.
-- `crypto/smartcont/tos-oz/` or similar "OpenZeppelin clone"
-  directory — we will not ship this.
+If and when a team decides to build (for example) a novel
+account-abstraction wallet or a cross-workchain bridge, the TVM
+primitives will be there to support them. The stdlib and existing
+system contracts are the raw material; no pre-built "framework"
+is needed beyond what already ships.
 
 ---
 
 ## 5. `tosctl` Positioning
 
-`tosctl` stays the operator + SDK tool. Its scope:
+`tosctl` stays the operator + generic SDK tool. Its scope:
 
 - Validator operations (nodes, wallets, pools, elections, voting)
 - Key management + vault integration
 - Generic contract operations: `deploy contract`, `account
   run-method`, `account send-boc`
-- TVM assembler + emulator + executor (already shipped)
-- Bridge operations (new, tied to P0-2)
-- Wallet-framework interactions (new, tied to P0-1)
+- TVM assembler + emulator + executor crates (already shipped)
 
-It should NOT grow application-specific subcommands like `tosctl
-jetton` or `tosctl nft`. Users writing DeFi apps against the EVM
-workchain use Hardhat / Foundry / ethers.js. `tosctl` is for
-TVM-native operations and cross-workchain glue.
+`tosctl` does NOT grow application-specific subcommands such as
+`tosctl jetton`, `tosctl nft`, `tosctl bridge`, `tosctl amm`, etc.
+
+- DeFi-style applications live on the EVM workchain; users interact
+  with them via Hardhat / Foundry / ethers.js.
+- Hypothetical TVM-native applications (bridges, specialised
+  wallets, async workflows) do not yet exist and should not be
+  pre-empted by CLI surface area.
+
+The principle is the same as for FunC: avoid building tooling for
+users who are not yet present. When a concrete TVM-native project
+lands and needs operational tooling, adding a targeted subcommand
+at that point is reactive and appropriate.
 
 ---
 
@@ -279,18 +294,22 @@ A clear story for anyone landing on TOS documentation:
 > Deploy to the EVM workchain. Use Solidity, Hardhat, MetaMask,
 > OpenZeppelin. Everything works exactly as it does on Ethereum.
 >
-> **Want to exploit TOS's unique capabilities — native account
-> abstraction, sharded applications, asynchronous workflows, or
+> **Want to build a TVM-native application that leans on one of
+> the six differentiators — native account abstraction,
+> asynchronous messages, sharding, cell storage, system contracts,
 > cross-workchain bridges?**
-> Build on the TVM workchain with FunC. Use our wallet framework,
-> async-workflow primitives, and bridge infrastructure.
->
-> **Want to move assets or messages between the two workchains?**
-> Use the native cross-workchain bridge. No third-party custody.
+> The TVM workchain is there, with its base infrastructure
+> (`crypto/smartcont/`, `stdlib.fc`, TVM node, `func`/`fift`
+> compilers). Existing wallet / elector / DNS contracts are
+> useful starting points. Expect to build on raw primitives; we
+> do not ship a TVM application framework.
 
 The dual-workchain architecture becomes a **benefit**: it gives
 developers a choice based on what they're actually building, not a
-confusion about which to pick.
+confusion about which to pick. It also sets expectations
+correctly: the EVM side is a fully-stocked developer experience;
+the TVM side is a systems-level environment where unique
+capabilities are raw material for builders who want them.
 
 ---
 
@@ -299,38 +318,59 @@ confusion about which to pick.
 ### "So will TVM workchain have no ERC-20?"
 
 Correct. Developers wanting an ERC-20 deploy on the EVM workchain.
-On TVM, the equivalent might be an account-abstracted holder pattern
-— where each holder's wallet natively tracks the token balance
-without a separate token-wallet sub-contract. This leans on what
-TVM can uniquely do.
+If someone builds an account-abstracted holder pattern on TVM — where
+each holder's wallet natively tracks the token balance without a
+separate token-wallet sub-contract — that would lean on TVM's unique
+capabilities, but nobody is building it, and we are not going to
+pre-build the framework either.
 
 ### "Won't everyone just use the EVM workchain then?"
 
-Yes, for standard applications they should. That's the right outcome.
-The TVM workchain is for applications whose value comes from what
-only it can do. This is healthy specialisation, not a loss.
+Most users will, and that is the right outcome. The TVM workchain
+exists for the rare application whose value depends on one of the
+six differentiators. Until such an application shows up, it's fine
+for the TVM side to look quiet from the outside.
 
 ### "Then why have a TVM workchain at all?"
 
-Account abstraction, asynchronous messaging, sharding, cell storage,
-system contracts, and cross-workchain bridges are the six reasons.
-If we don't invest in making those capabilities first-class, TVM
-workchain is indeed redundant. This document argues we SHOULD invest
-in those, not in generic application libraries.
+Six latent capabilities EVM cannot match natively: account
+abstraction, asynchronous messaging, sharding, cell storage, system
+contracts, cross-workchain bridges. These capabilities are properties
+of the VM and the protocol layer — they exist whether or not we
+build frameworks around them.
+
+An earlier draft of this document argued we SHOULD actively
+invest in turning those capabilities into frameworks. A harder
+first-principles pass corrected that: building frameworks for
+hypothetical users is the wrong move. The capabilities stand as
+**invitation**, not as construction backlog. When someone decides
+to exploit one of them, the primitives in `crypto/smartcont/` +
+`stdlib.fc` + the TVM itself are there.
 
 ### "Does this mean FunC development stops?"
 
-No. It redirects. FunC work moves from "build application libraries"
-to "make TVM-unique capabilities accessible". The stdlib stays
-minimal and systems-oriented. Compiler work is deferred unless a
-differentiated use case surfaces a specific gap.
+Effectively yes, for new feature work. FunC stays in maintenance
+mode: security patches, required fixes, nothing else. The archived
+v0.5.0 upgrade is gone; no v0.6.0 is planned. `func` and `fift`
+binaries stay as they are — stable, boring, functional.
 
 ### "What about existing FunC contracts in `crypto/smartcont/`?"
 
-They stay. They're the base system: wallets, elector, DNS, etc.
-They're valuable precisely because they use TVM's unique properties.
-They're not examples of application development — they're the
-protocol layer.
+They stay. They're the base system: wallets (v3 / v4 / highload /
+restricted / session), elector, config-params, DNS. They're the
+protocol layer, not application examples. They'll see reactive
+updates when specific bugs or policy changes require them, and
+nothing else.
+
+### "What if a team comes to us wanting to build a TVM-native dApp?"
+
+Welcome. Point them at `crypto/smartcont/` as reference, `stdlib.fc`
+as the primitive set, and `tosctl deploy contract` + `account
+run-method` + `account send-boc` as the generic deployment /
+interaction path. If specific tooling gaps surface during their
+build, that's a reactive trigger to fill that specific gap —
+narrower and more useful than any framework we would have invented
+up front.
 
 ---
 
@@ -345,15 +385,20 @@ decisions follow from it:
    Point users at the EVM workchain for those.
 
 2. **Do not extend FunC the language.** The archived
-   `func-v0.5.0` work stays archived. No Phase 7 AST project. No
-   `mapping` keyword. FunC is a systems language; its current
-   feature set is adequate.
+   `func-v0.5.0` work stays archived. No v0.6.0. No `mapping`
+   keyword. No `func` → BOC direct-emit project. No Rust
+   reimplementation of `func` or `fift`. These are stable legacy
+   tools.
 
-3. **Invest in TVM-native differentiators.** Sprint priorities go
-   to: wallet framework (P0-1), cross-workchain bridge (P0-2),
-   system contracts (P0-3). Async-workflow and sharding-aware
-   libraries (P1) follow.
+3. **TVM workchain is in maintenance mode.** No proactive
+   framework / stdlib / library construction. Security patches,
+   required bug fixes, and policy-driven system-contract changes
+   only. New work is strictly reactive to concrete, named requests
+   from specific projects.
 
 The EVM workchain continues on its own track (see
-`doc/evm-workchain-*.md` series). This document is about what the
-TVM side does with its existence.
+`doc/evm-workchain-*.md` series) and absorbs general-purpose
+smart-contract development. This document is about what the TVM
+side does with its existence — which, for now, is stay stable,
+stay available, and wait for applications whose need for its
+unique capabilities is strong enough to drive specific requests.
