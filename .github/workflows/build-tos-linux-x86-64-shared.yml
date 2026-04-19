@@ -2,9 +2,10 @@ name: Ubuntu TOS build (x86-64)
 
 on:
   pull_request:
-    branches: [master, testnet]
+    branches: [master, testnet, main]
     types: [opened, reopened, synchronize, ready_for_review]
   push:
+    branches: [master, testnet, main]
   workflow_dispatch:
   workflow_call:
 

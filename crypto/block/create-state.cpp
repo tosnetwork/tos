@@ -58,7 +58,7 @@
 #include "block-auto.h"
 #include "block-parse.h"
 #include "block.h"
-#include "evm-workchain/evm-init.h"  // build_evm_zerostate_accounts_cell (Phase C)
+#include "evm/core/init.h"  // build_evm_zerostate_accounts_cell (Phase C)
 
 #include <evmc/evmc.hpp>
 #include <intx/intx.hpp>
