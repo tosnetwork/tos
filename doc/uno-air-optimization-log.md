@@ -62,6 +62,7 @@ Each row records one attempt, its agent tag, the commit (or "reverted" /
 | 5 | K-air-bench               | `6cad7c347`   | Shape-matrix benchmark harness               | ✅ Reproducible 6-shape measurements; basis for all future deltas.                         |
 | 6 | K-fri-analysis            | `dd0383b69`   | Sweep 15 FRI configurations                  | ✅ Best sweep data-point is 5.5× over envelope; identified 3 frontier configs + 3 hard findings. |
 | 7 | K-air-fold-outputs        | no commit     | Row-cycle OUTPUT_PROXY_COLS into a global shared block | ❌ Works functionally (all tests pass) but yields only −3.19 % proof shrink at 4/4 vs −10 % predicted by C1. **Finding: C1's "~1 KB per col" upper bound overstates reality by 3×; actual empirical rate is ~325 B/col on this AIR.** Ruled out row-loop-proxy as a path to §3.4 envelope. |
+| 8 | K-air-range-lookup        | no commit (feasibility stop) | Migrate 64-bit value range check from bit-decomp to 16-bit LogUp lookup | ❌ **Blocked at feasibility.** `p3-lookup` v0.5.1 exists in the vendored tree but its `LookupEvaluator` requires `AB: PermutationAirBuilder`, which only `p3-batch-stark` implements. Our `p3-uni-stark` StarkConfig has no path to wire LogUp without migrating the entire prove/verify/wire-format stack. Pinned as **constraint C7**. |
 
 ---
 
@@ -254,6 +255,84 @@ the FRI parameter renegotiation surfaced by K-fri-analysis.
 
 ---
 
+### Experiment 8 — 64-bit range check via LogUp lookup (K-air-range-lookup)
+
+**Hypothesis**: the 64-bit value range check in claims 5 + 7 costs 64
+trace columns per value via explicit bit decomposition. Using a LogUp
+lookup argument with a precomputed `[0, 2^16)` table, each value
+decomposes as 4 × 16-bit limbs with one lookup per limb — 4 trace
+columns per value, 60 saved. At 8 values per 4/4 tx that's **480 cols**;
+at the calibrated 325 B/col rate (C1) that's **~156 KB proof shrink
+(~7.5 %)** — the single largest remaining single-commit win identified
+by experiment 7's path-2 analysis.
+
+**Feasibility investigation (no build attempted)**:
+
+Plonky3's lookup primitive ships as the `p3-lookup` crate
+(vendored at `third-party/plonky3-uno/lookup/` in our v0.5.1 pin at
+commit `6374a36f`). The crate implements LogUp (logarithmic
+derivatives, after [Häberlein, Haböck 2022 / eprint 2022/1530]).
+
+Looking at how `p3-lookup` actually wires into a prover:
+
+1. `LookupEvaluator::eval_local_lookup` and `eval_global_update`
+   in `third-party/plonky3-uno/lookup/src/types.rs:156-173` require
+   `AB: PermutationAirBuilder`.
+2. `PermutationAirBuilder` is defined in `p3-air` and exposes
+   permutation-trace columns and extension-field challenges —
+   the LogUp grand-product accumulator lives in a separate
+   "permutation trace" alongside the main trace.
+3. `p3-uni-stark` (the StarkConfig our AIR uses, via
+   `prover.rs::build_config`) defines `ProverConstraintFolder` and
+   `VerifierConstraintFolder` in `uni-stark/src/folder.rs`. Those
+   folders implement `AirBuilder` + `ExtensionBuilder` +
+   `PeriodicAirBuilder` — but **not** `PermutationAirBuilder`. A
+   `PermutationAirBuilder` impl doesn't exist anywhere in the
+   `uni-stark` crate.
+4. The only prover in the vendored tree that wires LogUp into a FRI
+   proof is `p3-batch-stark` (`batch-stark/src/prover.rs` imports
+   `p3_lookup::logup::LogUpGadget` and emits a separate
+   permutation-trace commitment alongside the main trace).
+5. `uni-stark::prove_with_preprocessed` has no lookup parameter;
+   `Proof<SC>` has no permutation-trace field; error variants like
+   `LookupCommitmentMismatch` in `uni-stark/src/error.rs` exist
+   only as surface hooks for callers that came from `batch-stark`.
+
+**Conclusion**: using LogUp for the 64-bit range check — or any other
+lookup-based optimization (set membership proofs, precomputed
+`cm`/`nf` checks, claim-2/6 table-driven variants) — requires a full
+migration of our Plonky3 integration from `uni-stark` to
+`batch-stark`. That migration touches:
+
+- `uno/plonky3-ffi/src/prover.rs::prove_transfer` — different entry
+  point (`prove_batch` vs `prove`), different `Proof` type
+  (`BatchProof` vs `Proof`)
+- `uno/plonky3-ffi/src/verifier.rs::verify_transfer` — mirror change
+- `uno/plonky3-ffi/src/lib.rs` FFI wire format — postcard-serialized
+  `Proof` on the wire; `BatchProof` has a different layout (extra
+  permutation-trace commitment, LogUp sum bytes)
+- `uno/crypto/plonky3-verifier.h` (C++ consumer) — ABI-breaking, needs
+  coordinated update
+- All 43 existing Rust FFI tests — need re-fixturing against new proof
+  bytes
+- Public-input golden (`test-uno-public-input-fixture`) — whether PI
+  layout changes depends on `batch-stark` specifics
+- Consensus-binding: the on-chain proof bytes change, so this is a
+  §2.1-level design decision + audit-vendor sign-off
+
+**Decision**: did NOT attempt the migration. Per the task contract
+("Do not roll your own lookup argument") and the spirit of the §6
+landing discipline, stopped at the feasibility stage. No code was
+touched; working tree is clean.
+
+**Value produced**: the negative result + constraint C7 (§4 below)
+save the next contributor from re-investigating this. It also
+**sharpens the P.2 path-2 menu**: lookup-based optimizations are not
+agent-sized incremental work; they're gated on a `uni-stark → batch-stark`
+proof-system upgrade that needs team + audit vendor alignment.
+
+---
+
 ## 4. Load-bearing constraints
 
 Every future optimization attempt must respect these constraints, which
@@ -302,6 +381,18 @@ envelope (not 22×) and verify is 31 ms (not 109 ms). A proof-size
 improvement that benefits 4/4 should benefit 1/2 proportionally; if it
 only helps 4/4 it may be less important than it looks. (From K-air-bench.)
 
+**C7. Plonky3 LogUp lookups are unavailable under the current
+StarkConfig.** The vendored `p3-lookup` v0.5.1 @ commit `6374a36f`
+requires `PermutationAirBuilder`, which only `p3-batch-stark`
+implements. The `p3-uni-stark` StarkConfig our AIR uses has no path
+to wire LogUp without migrating `prove`/`verify`/`Proof` to their
+`batch-stark` equivalents. That migration changes the on-chain proof
+byte format, breaks the C++ verifier FFI ABI, and is itself a
+consensus-binding §2.1-level decision. All lookup-based
+optimizations (range-check, set-membership, precomputed-table claim
+variants) are therefore **gated on that proof-system upgrade** — not
+agent-sized incremental work. (From K-air-range-lookup.)
+
 ---
 
 ## 5. Remaining paths
@@ -329,35 +420,47 @@ buys at most ~6–7 % total — not enough. What's needed is reducing the
 fields and intermediate values per (spend, output), not fewer copies
 of the same fields.
 
-Candidate directions (all still unexplored; each is a research-grade
+Candidate directions (all unexplored; each is a research-grade
 cryptographer task, not an agent-sized edit):
 
 - **Claim fusion** — combining claim-2 (`cm = Poseidon2(d, pk_d, …, value, rcm)`)
   and claim-3 (`ivk_commitment = Poseidon2(ivk, d)`) into one composite
-  Poseidon2 absorb. Saves one per-spend Poseidon2-w8 instance if the
-  resulting 8-field claim can be expressed as a single absorb.
-- **Value-range-check via lookup** — the 64-bit value range check
-  currently costs 64 cols/spend + 64 cols/output for bit
-  decomposition. Plonky3 supports **lookup arguments**; migrating
-  range-check to a precomputed `[0, 2^16)` lookup (4 × 16-bit limbs
-  per value) drops 64 → 4 cols per field, saving ~60 cols × 8 =
-  ~480 cols at 4/4, which at 325 B/col ≈ **−156 KB (−7.5 %)**.
-  Primary candidate for the next K-batch agent.
+  Poseidon2 absorb. Saves one per-spend Poseidon2-w8 instance (~180
+  cols in the shared block → 0 cols if claim-3 is folded entirely
+  into claim-2's absorb sequence). This does NOT require lookups and
+  is the **highest-value direction still accessible under the current
+  StarkConfig**. Estimated 4/4 proof shrink at the calibrated C1: ~15 %
+  if the w=8 block is removed; smaller if only a column share. Semantic
+  complication: the AIR needs to prove `ivk_commitment = H("uno-ivk-cm-v1", ivk, d)`
+  *and* `cm = H("uno-cm-v1", d, pk_d, ivk_commitment, value, rcm)` —
+  fusion means proving the latter with `ivk_commitment` expressed as
+  the hash of `(ivk, d)` directly inside the Poseidon2 input chain,
+  which changes the commitment scheme's semantic.
 - **Nullifier derivation reformulation** — claim-4 currently absorbs
-  `(nk, cm, pos)` via a full Poseidon2-w8. Some protocols fold nk
-  directly into cm via a different algebraic structure; a research
+  `(nk, cm, pos)` via a full Poseidon2-w8. Some protocols fold `nk`
+  directly into `cm` via a different algebraic structure; a research
   task to check whether this is compatible with the hash-chain
-  ownership proof.
+  ownership proof. No lookup dependency.
+- **Value-range-check via LogUp lookup** — ❌ **BLOCKED** by C7
+  (experiment 8). Requires `uni-stark → batch-stark` proof-system
+  migration, which is itself a consensus-binding §2.1 decision + C++
+  verifier FFI ABI break. Re-visit only after the team has a deliberate
+  stance on that upgrade.
+- **Set-membership / precomputed-table claim variants** — ❌ same
+  blocker as above (any lookup-based optimization).
 - **Merkle-path verification via STIR / WHIR** — swap the classical
   FRI-on-columns Merkle opening for a STIR-style verifier that gives
   sub-linear query cost. This is v2 / research horizon.
 
-Expected win per direction is on the order of 5–15 % individually;
-stacking them all optimistically gets to another ~30 % on top of
-Path 1's 76 %. Even so, the combination may still not reach the
-100 KB envelope at 4/4 — in which case §3.4 becomes a v1-vs-v2
-scope question (ship at a larger envelope or defer until research
-matures).
+Expected win per accessible direction (claim fusion + nullifier
+reformulation) is ~5–15 % individually. Stacking both + FRI retuning
+gets to ~85 % total. Closing the remaining 15 % to reach the §3.4
+~100 KB envelope at 4/4 almost certainly requires either the
+`uni-stark → batch-stark` migration (unlocks lookups) or a
+research-grade proof-system redesign. **§3.4 as a v1 goal may need
+to be re-scoped** to a larger-but-still-acceptable envelope (e.g.
+~500 KB worst-case, consistent with the K-fri-analysis frontier
+"Aspirational" config at 559 KB) pending that decision.
 
 ### Path 3 — Proof-system change (out of scope for v1)
 
@@ -395,6 +498,7 @@ current system.
 - `6cad7c347` — K-air-bench (shape-matrix harness landed)
 - `dd0383b69` — K-fri-analysis (parameter sweep + frontier-config doc landed)
 - K-air-fold-outputs (experiment 7, no-commit; C1 re-calibration finding)
+- K-air-range-lookup (experiment 8, no-commit; C7 Plonky3-lookup-blocked finding)
 - Primary sources:
     - `uno/plonky3-ffi/src/transfer_air.rs` — the AIR itself
     - `uno/plonky3-ffi/src/prover.rs::build_config` — FRI configuration
