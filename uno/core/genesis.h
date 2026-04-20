@@ -112,6 +112,19 @@ struct GenesisDistribution {
 /// `UnoShardState::make_empty()` on any failure.
 UnoShardState build_zerostate_state(const GenesisDistribution& dist);
 
+/// K-genesis-loader convenience wrapper: takes a raw `std::vector<GenesisNote>`
+/// and returns the corresponding `UnoShardState`. For each note, if
+/// `GenesisNote::cm` is all-zero the loader recomputes it from the
+/// (recipient, value, rseed) tuple per §3.2; if the caller supplied `cm`
+/// it is verified against the recomputation and the function returns an
+/// empty state on mismatch. `chain_id` is taken from the runtime
+/// ConfigParam 84 setting (`current_uno_chain_id()`).
+///
+/// Canonical §10.3 step-3 append order is preserved: commitment tree
+/// appended in vector order, post-genesis root pushed into the anchor
+/// window.
+UnoShardState build_genesis_state(const std::vector<GenesisNote>& notes);
+
 /// Convenience: build_zerostate_state + serialize via `cell-state.h`. Used
 /// by `init_uno_workchain` to write the initial StateInit.data.
 td::Ref<vm::Cell> build_zerostate_state_cell(const GenesisDistribution& dist);

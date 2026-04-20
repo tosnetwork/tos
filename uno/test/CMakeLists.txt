@@ -82,6 +82,18 @@ add_executable(test-uno-mandatory-negatives
                test-mandatory-negatives.cpp
                fixtures/valid_transfer_fixture.cpp)
 
+# K-nullifier-warm-lru: pins the §5.9 post-cold-start warm-up contract for
+# NullifierSet::warm_lru(k) — tail-k most-recent coverage, older-entries
+# absence, and the k==0 / k>=N edge cases. Lightweight: no fixtures, no
+# Plonky3 dependency; links against the nullifier-set TU in uno_workchain.
+add_executable(test-uno-nullifier-warm-lru
+               test-nullifier-warm-lru.cpp)
+
+# K-genesis-loader: exercises load_genesis_distribution() + build_genesis_state()
+# against a 3-note fixture + canonical reject paths (malformed address envelope,
+# short rseed, negative value, supply mismatch). See test file header for scope.
+add_executable(test-uno-genesis-loader           test-genesis-loader.cpp)
+
 # Build-only helper: regenerates uno/test/golden/state-transitions-v1.hex.
 # NOT registered with ctest — invocation is a manual operator step (see the
 # file's own doc comment). Links against uno_workchain for encode_transfer.
@@ -99,7 +111,9 @@ foreach(_t test-uno-transfer
            test-uno-primitive-parity
            test-uno-state-transition-golden
            test-uno-restart-survival
-           test-uno-mandatory-negatives)
+           test-uno-mandatory-negatives
+           test-uno-nullifier-warm-lru
+           test-uno-genesis-loader)
   target_link_libraries(${_t} PRIVATE uno_workchain)
   target_include_directories(${_t} PRIVATE ${CMAKE_SOURCE_DIR})
   if (COMMAND tos_test)
