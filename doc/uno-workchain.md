@@ -231,21 +231,21 @@ Properties:
 - **Unlinkable**: two different notes owned by the same `nk` produce `nf`s indistinguishable from random.
 - **In-circuit verifiable**: the AIR constrains `nf = Poseidon2(...)` directly; no external hash needed.
 
-### 2.5 Spend authorization (randomized Schnorr on Ristretto255)
+### 2.5 Spend authorization (fresh per-spend Schnorr on Ristretto255)
 
-Spend authorization is **off-circuit**. The ZK proof attests that the prover owns the secret material that derives the note's `pk_d`; the Schnorr signature additionally binds the tx to a one-time spending public key `rk`.
+Spend authorization is **off-circuit** and **decoupled from any long-term identity key**. Ownership is proven entirely in-circuit via the ivk-commitment binding (§4.2 claim 3). The Schnorr signature merely binds the transaction to a one-time ephemeral key, preventing mempool tampering.
 
-- **Curve**: Ristretto255 over Curve25519. Chosen because (a) mature, well-audited, standardized (RFC 9496), (b) modern and widely implemented, (c) hash-to-curve is clean, (d) no legacy from Halo2/Pallas.
-- **Secret**: spend authority scalar `ask ∈ scalars(Ristretto255)` derived from the seed (§2.6).
-- **Public**: base spend key `ak = ask · G ∈ Ristretto255`. `G` is the standard Ristretto basepoint.
-- **Per-spend randomization**: sample fresh `α ∈ scalars`, compute `rsk = ask + α`, `rk = ak + α · G`. Publish `rk`.
-- **Signature**: Schnorr-on-Ristretto using `rsk` as private key, signing `tx_hash` (§4.1).
+- **Curve**: Ristretto255 over Curve25519 (RFC 9496).
+- **Per-spend fresh keypair**: the wallet samples `rsk ∈ scalars(Ristretto255)` fresh for each spend; publishes `rk = rsk · G`. There is **no derivation** from any long-term holder key.
+- **Signature**: Schnorr-on-Ristretto255 with `rsk` over `tx_hash` (§4.1).
 
-**Unlinkability**: `rk` is indistinguishable from a random public key and cannot be tied to `ak` or to other `rk`s from the same holder.
+**Unlinkability**: each `rk` is a uniformly random fresh public key. No observer (nor even the holder's `fvk`) can cluster spends by `rk`.
 
-**No in-circuit curve operations.** The AIR does *not* prove "`rk = ak + α · G`" directly. Instead, it proves knowledge of the hash-chain that derives `ak` from the owner's seed, and the external Schnorr signature proves knowledge of the secret corresponding to `rk`. This is a cleaner split than Orchard's in-circuit curve ops, enabled by the fact that we are not trying to prove consistency of in-circuit hashes with curve-based identity; we ship all identity assertions to the off-circuit signature layer.
+**Why no Orchard-style `rk = ak + α·G` randomization?** Orchard ties `rk` to the holder's long-term `ak` so that `fvk` holders can trace their own spends through the randomizer `α`. Our design achieves equivalent audit by having the sender encrypt a `ovk`-decryptable memo into `out_ciphertext` (§4.1); the `fvk = (ivk, nk, ovk, sk_mlkem)` audit path (§2.6, §7.5) recovers spend history via `ovk`, not via `rk` inversion. This lets us avoid **all** curve operations inside the AIR — structurally why the Plonky3-over-Goldilocks path is cheap.
 
-**Phase 1 upgrade** (`scheme_id = 0x02`): the spend-auth signature is promoted to a hybrid Schnorr-Ristretto + ML-DSA-65 co-signature. Classical Schnorr ensures correctness under classical breaks of ML-DSA; ML-DSA ensures correctness under quantum breaks of Ristretto. Both verify on every spend. Trigger: production-grade ML-DSA-65 library with constant-time verify. See §6.2.
+**No in-circuit curve operations.** The AIR manipulates only hash-chained scalars and Poseidon2 hashes; every Ristretto255 op (address derivation, ECDH for hybrid KEM, Schnorr sign/verify) is off-circuit.
+
+**Phase 1 upgrade** (`scheme_id = 0x02`): the spend-auth signature is promoted to a hybrid Schnorr-Ristretto + ML-DSA-65 co-signature. Both verify on every spend. Trigger: production-grade ML-DSA-65 library with constant-time verify. See §6.2.
 
 ### 2.6 Key hierarchy (hash-native)
 
@@ -259,42 +259,48 @@ uno_seed = BLAKE2b-256("uno-seed-v1" || main_tos_seed)
 
 This binding is intentional (§1.2): a user with any TOS account automatically has a wc=2 identity without maintaining separate key material.
 
-From `uno_seed`:
+From `uno_seed`, the wallet derives three layers of material:
 
 ```
-// Off-circuit, byte-oriented secrets (BLAKE2b with domain separators):
-ask      = BLAKE2b-256("uno-ask-v1"    || uno_seed)     reduced mod ord(Ristretto255)
-esk_seed = BLAKE2b-256("uno-esk-v1"    || uno_seed)     // per-output ephemeral seed
-mlkem_seed = BLAKE2b-256("uno-mlkem-v1"|| uno_seed)     // deterministic ML-KEM KeyGen seed
-ovk      = BLAKE2b-256("uno-ovk-v1"    || uno_seed)     // outgoing viewing key, 32 B
+// (1) Off-circuit, byte-oriented secrets (BLAKE2b-256 with domain separators):
+esk_seed    = BLAKE2b-256("uno-esk-v1"    || uno_seed)   // per-output ephemeral seed
+mlkem_seed  = BLAKE2b-256("uno-mlkem-v1"  || uno_seed)   // deterministic ML-KEM KeyGen seed
+ovk         = BLAKE2b-256("uno-ovk-v1"    || uno_seed)   // outgoing viewing key, 32 B
 
-// In-circuit-reproducible secrets (Poseidon2-over-Goldilocks):
-nk       = Poseidon2("uno-nk-v1", uno_seed)             // nullifier key, 256 bits
-ivk      = Poseidon2("uno-ivk-v1", nk, ak)              // incoming viewing key, 256 bits
+// (2) In-circuit-reproducible secrets (Poseidon2-over-Goldilocks):
+nk          = Poseidon2("uno-nk-v1",  uno_seed)          // nullifier key, 256 bits
+ivk         = Poseidon2("uno-ivk-v1", uno_seed, nk)      // incoming viewing key (Ristretto scalar), 256 bits
 
-// Ristretto-based public material (derived off-circuit):
-ak       = ask · G                                       // spend-auth pubkey
-(pk_mlkem, sk_mlkem) = ML-KEM-768.KeyGen(mlkem_seed)    // deterministic PQ KEM keypair
+// (3) Off-circuit public material:
+(pk_mlkem, sk_mlkem) = ML-KEM-768.KeyGen(mlkem_seed)     // deterministic PQ KEM keypair
 
-fvk      = (ak, nk, ovk, sk_mlkem)                      // full viewing key, enables audit
+// Full viewing key (audit bundle):
+fvk         = (ivk, nk, ovk, sk_mlkem)
 ```
 
-**Why `nk` and `ivk` use Poseidon2 while the rest use BLAKE2b**: `nk` and `ivk` must be **re-derivable inside the AIR** (the nullifier derivation uses `nk`, and the address-matching path uses `ivk`). Poseidon2 is orders of magnitude cheaper to constrain in-circuit than BLAKE2b. Everything else is off-circuit and stays byte-oriented for audit clarity.
+**Design note — no long-term spend-auth key `ak`.** Earlier drafts derived `ak = ask · G` as a long-term Ristretto255 spend-auth pubkey, analogous to Orchard. Per decision §2.5 (fresh per-spend `rk`), `ak` has no role in spending or verifying, so it is removed from the key hierarchy. This shrinks `fvk` by 32 B and eliminates one curve op from wallet key-gen.
+
+**Why `nk` and `ivk` use Poseidon2 while the rest use BLAKE2b**: `nk` is the in-circuit input to the nullifier derivation (§2.4); `ivk` is the in-circuit input to the ivk-commitment binding (§4.2 claim 3). Both must be cheaply re-derivable inside the AIR. Poseidon2 over Goldilocks is orders of magnitude cheaper to constrain in-circuit than BLAKE2b. Everything else is off-circuit and stays byte-oriented for audit clarity.
 
 **Addresses (stealth + diversifiers)**:
 
 ```
-d        : bits88                                       // diversifier chosen by recipient
-g_d      = HashToRistretto("uno-diversifier-v1" || d)   // diversified base point
-pk_d     = Poseidon2(ivk, d) · g_d ∈ Ristretto255       // diversified transmission key
-Address  = (d, compress(pk_d), pk_mlkem)
-         = 11 B + 32 B + 1184 B
-         ≈ 1227 B total
+d              : bits88                                             // diversifier chosen by recipient
+g_d            = HashToRistretto("uno-diversifier-v1" || d)         // diversified base point
+pk_d           = ivk · g_d ∈ Ristretto255                           // diversified transmission key (off-circuit)
+ivk_commitment = Poseidon2("uno-ivk-cm-v1", ivk, d)                 // 256-bit binding of ivk to this diversifier
+Address        = (d, compress(pk_d), ivk_commitment, pk_mlkem)
+               = 11 B + 32 B + 32 B + 1184 B
+               ≈ 1259 B total
 ```
 
-`HashToRistretto` is the standard hash-to-curve for Ristretto255 (RFC 9380 over Curve25519 with the Ristretto map). A single `uno_seed` yields ~2⁸⁸ distinct diversified addresses; addresses of the same holder are unlinkable by an observer.
+`HashToRistretto` is the standard hash-to-curve for Ristretto255 (RFC 9380). A single `uno_seed` yields ~2⁸⁸ distinct diversified addresses; addresses of the same holder are unlinkable by an observer.
 
-**Address size is the deliberate UX cost of v1's PQ posture.** The ~1.2 KB address carries the recipient's ML-KEM-768 public key, which is required for the sender to perform the PQ half of hybrid encapsulation. Addresses are expected to be shared via QR code, NFC, deep link, or wallet-to-wallet DM — not as plain text in a social-media bio. See §11 (wallet UX) for the consequences.
+**Role of `ivk_commitment` in the address.** The field is the in-circuit hash-chain binding anchor (§4.2 claim 3). Sender writes it into `cm` at note-creation time (§3.2); spender recomputes it from their own `ivk` + `d` inside the AIR to prove ownership. `ivk_commitment` is public; `ivk` is never.
+
+**Consistency of `pk_d` and `ivk_commitment`.** Both are derived off-circuit by the receiver from the same `(ivk, d)`. The AIR does **not** verify that `pk_d` matches `ivk` (that would require an in-circuit curve op, rejected by §2.5). A malformed address that desynchronizes the two produces a stuck output (encryption uses `pk_d`, decryption matches against `ivk_commitment`) — the affected sender loses funds, but no pool-level security property is violated. Wallets produce addresses deterministically from `uno_seed`, so this is effectively impossible in practice.
+
+**Address size is the deliberate UX cost of v1's PQ posture.** The ~1.26 KB address carries the recipient's ML-KEM-768 public key plus the 32-byte ivk-commitment, which are required for the sender to perform the PQ half of hybrid encapsulation and write a valid note commitment. Addresses are expected to be shared via QR code, NFC, deep link, or wallet-to-wallet DM — not as plain text in a social-media bio.
 
 ### 2.7 Note encryption: hybrid ECDH + ML-KEM-768
 
@@ -343,25 +349,56 @@ plaintext  = ChaCha20-Poly1305.Open(k_aead', nonce, enc_ct)
 
 **Phase 1+**: the hybrid KEM need not change in Phase 1. In Phase 3 (Tachyon-like), `enc_ct` + `mlkem_ct` move off-chain, and the HNDL surface disappears entirely.
 
-### 2.8 Compact filter tag
+### 2.8 Compact filter tag and block-filter encoding
 
-Each `OutputDescription` carries a 16-bit `filter_tag` derived from the same hybrid shared secret:
+Each `OutputDescription` carries a 16-bit `filter_tag` derived from the hybrid AEAD key:
 
 ```
-filter_tag = Truncate_16bit( Poseidon2("uno-filter-v1", k_aead) )
+filter_tag : bits16
+           = Truncate_16bit( Poseidon2("uno-filter-v1", k_aead) )
 ```
 
-The tag is computable by **sender** (knows `k_aead` at encrypt time) and **receiver** (derives `k_aead` on scan); an observer without `ivk` + `sk_mlkem` cannot compute it. The 16-bit width gives false-positive rate 2⁻¹⁶ — a wallet rejects ~99.9985% of outputs via filter match before attempting AEAD decryption.
+The tag is computable by **sender** (knows `k_aead` at encrypt time) and **receiver** (derives `k_aead` on scan); an observer without `ivk` + `sk_mlkem` cannot compute it. The 16-bit width gives a per-block per-wallet false-positive rate of `2⁻¹⁶`, so a wallet rejects ~99.9985% of outputs via filter match before attempting AEAD decryption.
 
-End-of-block, validator collects all `filter_tag`s in the block and exposes them via RPC (§9.1) — no consensus state is added for filters; they are a derived view.
+**Tag privacy**: since each output uses fresh `esk`, `k_aead` is fresh, so `filter_tag` is cryptographically unlinkable across outputs even for the same receiver. Observers cannot cluster outputs by recipient.
 
-**Tag privacy**: since each output uses fresh `esk`, the tag is cryptographically unlinkable across outputs even to the same receiver. Observers cannot cluster outputs by recipient via the tag.
+#### 2.8.1 Per-block filter encoding (consensus-binding spec)
+
+At end of block, the validator collects all `filter_tag` values emitted in the block, deduplicates, sorts ascending as u16, and emits a **Golomb-Coded Set (GCS)** encoding over the raw 16-bit values:
+
+```
+BlockFilter(block_seqno) :=
+  tags    : sorted_deduplicated_list(OutputDescription[*].filter_tag)
+  encoded : GCS_encode(tags, P = 15, M = 2^16)
+```
+
+**Parameters pinned**:
+- `P = 15` (Golomb parameter; unary-terminated deltas use 2^P buckets).
+- `M = 2^16 = 65536` (tag universe; matches the `filter_tag` width exactly).
+- **No secondary hash**. `filter_tag` is already a cryptographic derivative of `k_aead` (§2.8 above); GCS operates directly on the u16 value. This differs from BIP-158, which hashes bitcoin-script entries into a uniform pseudo-random space before GCS; our tags are already uniformly random, so the extra hash layer would add spec complexity without privacy benefit.
+
+**Encoding procedure** (byte-identical across every implementation):
+1. Sort the u16 tag multi-set ascending; drop duplicates.
+2. Prepend a varint of `N = |tags|`.
+3. For each `i ≥ 1`, compute delta `Δᵢ = tagᵢ − tagᵢ₋₁ − 1`; write Golomb-Rice of `Δᵢ` with quotient `q = Δᵢ >> P` in unary followed by remainder `r = Δᵢ & ((1 << P) − 1)` in `P` bits.
+4. Byte-align with zero bits.
+
+**Decoding procedure**: reverse; emit `tagᵢ` by accumulating `Δᵢ + 1` from `tagᵢ₋₁`.
+
+**Expected size**: at 30 TPS × 2 outputs/tx the block has ~60 distinct tags; GCS with `P=15, M=2^16` produces ~100–150 B per block. At 50 TPS burst, ~180–260 B per block.
+
+**Consensus status**: the filter itself is a **derived view**, not consensus state (§5 state model). Validators recompute it end-of-block from the accepted `OutputDescription`s; any full node can reconstruct it from the ordered tx log. The filter is served via `uno_getBlockFilter(seqno)` (§9.1) — callers cross-check by refetching and re-GCS-encoding if desired. Because the encoding is byte-identical across implementations, wallet SDKs that build against this spec match validator output exactly; **no keyed-hash agreement is required**.
+
+**Why GCS over a bit-vector or a sorted plain list**:
+- Plain sorted u16 list: ~120-200 B/block. Simpler but ~50% larger than GCS.
+- 65536-bit bit-vector: 8 KB/block fixed — prohibitive daily download.
+- GCS over raw u16: best trade-off; simple spec (no hash choice); byte-identical across implementations.
 
 ---
 
 ## 3. Note, Commitment, Nullifier
 
-Note that there is no separate **value commitment (`cv`)** or **binding signature** in this design. Balance (`Σ spend.value = Σ output.value + fee`) is enforced by an in-circuit constraint in the Transfer AIR (§4.2 claim 10), not by a homomorphic Pedersen trick. Removing `cv` / `binding_sig` eliminates two Pallas-specific constructs from the protocol, shrinks every tx by 32 B per spend/output + 64 B per tx, and matches the natural expressive shape of a Plonky3 AIR over 64-bit Goldilocks (u64 values are cheap to constrain directly).
+Note that there is no separate **value commitment (`cv`)** or **binding signature** in this design. Balance (`Σ spend.value = Σ output.value + fee`) is enforced by an in-circuit constraint in the Transfer AIR (§4.2 claim 8), not by a homomorphic Pedersen trick. Removing `cv` / `binding_sig` eliminates two Pallas-specific constructs from the protocol, shrinks every tx by 32 B per spend/output + 64 B per tx, and matches the natural expressive shape of a Plonky3 AIR over 64-bit Goldilocks (u64 values are cheap to constrain directly).
 
 ### 3.1 Note (plaintext, off-chain)
 
@@ -383,12 +420,19 @@ No `rcv` blinding factor is needed — there is no Pedersen `cv`.
 ### 3.2 Note commitment (on-chain, in `OutputDescription`)
 
 ```
-cm = Poseidon2("uno-cm-v1", d, pk_d.bytes, value, rcm)
+cm = Poseidon2("uno-cm-v1", d, pk_d.bytes, ivk_commitment, value, rcm)
 ```
 
-- Inputs are packed into Goldilocks field elements: `d` (11 B) zero-extends to 2 field elements; `pk_d.bytes` (32 B compressed Ristretto) packs into 4 field elements; `value` (u64) is one field element; `rcm` (256 bits) is 4 field elements. Total Poseidon2 input: 11 field elements → one Poseidon2 permutation call with output truncated to 4 field elements (256 bits) as `cm`.
-- Computed inside the Plonky3 AIR by the prover; the chain takes `cm` as-is and appends to the tree.
+where `ivk_commitment = Poseidon2("uno-ivk-cm-v1", ivk, d)` (§2.6) — the receiver's 256-bit ivk-binding anchor.
+
+- Inputs packed into Goldilocks field elements: `d` (11 B) → 2 fes; `pk_d.bytes` (32 B compressed Ristretto) → 4 fes; `ivk_commitment` (256 bits) → 4 fes; `value` (u64) → 1 fe; `rcm` (256 bits) → 4 fes. Total Poseidon2 input: 15 field elements → one wide-sponge Poseidon2 permutation (width t=16) with output truncated to 4 field elements (256 bits) as `cm`.
+- The sender gets `(d, pk_d, ivk_commitment, pk_mlkem)` from the recipient's published address and thus can compute `cm` without knowing `ivk` itself.
+- Computed inside the Plonky3 AIR by the prover at spend time for consistency with the witness; the chain takes `cm` as-is at output time.
 - Leaks zero bits about `value` by the pre-image resistance and hiding of Poseidon2, given a 256-bit seed `rseed` feeding `rcm`.
+
+**Why include `ivk_commitment`?** This is the on-chain anchor that the AIR's ownership proof (§4.2 claim 3) hashes into — the prover must show they know an `ivk` satisfying `Poseidon2("uno-ivk-cm-v1", ivk, d) == ivk_commitment`. Without this field in `cm`, there would be no in-circuit binding from the note to the holder's seed, since we reject in-circuit curve operations (§2.5). With this field, ownership is proven purely through hash-chain reproducibility — no Ristretto scalar multiplication inside the AIR.
+
+**Why include `pk_d.bytes`?** So that the commitment is fully determined by the note's off-chain content, not just by `(d, ivk_commitment, value, rcm)`. A chimera address that desynchronizes `pk_d` from `ivk_commitment` produces a stuck output (§2.6), but the `cm` itself remains well-defined and uniquely bound to the full note contents.
 
 ### 3.3 Balance constraint (in-circuit, not a separate artifact)
 
@@ -507,33 +551,57 @@ Every signature and every ZK-proof public input binds `tx_hash` (or equivalently
 
 ### 4.2 What the ZK proof attests
 
-The Plonky3 Transfer AIR (for `scheme_id = 0x01`) proves the following claims simultaneously. All arithmetic is over Goldilocks; all hashes are Poseidon2-over-Goldilocks.
+The Plonky3 Transfer AIR (for `scheme_id = 0x01`) proves the following claims simultaneously. All arithmetic is over Goldilocks; all hashes are Poseidon2-over-Goldilocks. **No curve operations appear inside the AIR** (§2.5); every identity claim is expressed as a hash-chain.
 
 Per `SpendDescription` (index `i`):
 
 1. **Tree membership**: spent `cm_i` is a leaf of the tree rooted at `anchor`. Proved via a 32-level Merkle path with Poseidon2 internal nodes. Witness: the 32 sibling hashes + leaf position `pos_i`.
-2. **Note opening**: prover knows `(d_i, pk_d_i, value_i, rseed_i)` such that `cm_i = Poseidon2("uno-cm-v1", d_i, pk_d_i.bytes, value_i, rcm_i)` where `rcm_i = Poseidon2("uno-rcm-v1", rseed_i)`.
-3. **Ownership (hash-chain)**: prover knows `uno_seed` such that `nk_i = Poseidon2("uno-nk-v1", uno_seed)` and the address-match condition for `pk_d_i` holds. Concretely, the AIR verifies `ivk_i = Poseidon2("uno-ivk-v1", nk_i, ak_i.bytes)` and that `pk_d_i` corresponds to this `(ivk_i, d_i)` via a hash-binding check (see circuit spec). No in-circuit curve arithmetic is performed; the curve check is shipped to the off-circuit Schnorr signature (claim 6).
-4. **Nullifier correctness**: `nf_i = Poseidon2("uno-nf-v1", nk_i, cm_i, pos_i)` where `pos_i` is the leaf position opened in claim 1. `nk_i` comes from the same seed material as claim 3.
-5. **Range**: `value_i ∈ [0, 2⁶⁴)` — enforced by the Goldilocks field constraint (`value_i < p_Goldilocks = 2⁶⁴ − 2³² + 1`, one range check).
-6. **Spend-auth binding**: `rk_i` equals the public key derived from the randomizer committed in-circuit (indirectly, via hash-chain on `ak_i` + randomizer `α_i`). This provides a bridge between the in-circuit hash identity and the off-circuit `spend_auth_sig` on `tx_hash`. Exact in-circuit formula pinned by circuit spec.
+
+2. **Note opening**: prover knows `(d_i, pk_d_i.bytes, ivk_commitment_i, value_i, rseed_i)` such that
+   ```
+   cm_i = Poseidon2("uno-cm-v1", d_i, pk_d_i.bytes, ivk_commitment_i, value_i, rcm_i)
+   ```
+   where `rcm_i = Poseidon2("uno-rcm-v1", rseed_i)`. Here `pk_d_i.bytes` is a 32-byte private witness treated as opaque bytes inside the AIR — no curve-level consistency is checked.
+
+3. **Ownership (ivk-commitment hash-chain)**: prover knows `(uno_seed, ivk_i)` such that
+   ```
+   nk_i            = Poseidon2("uno-nk-v1",  uno_seed)
+   ivk_i           = Poseidon2("uno-ivk-v1", uno_seed, nk_i)
+   ivk_commitment_i = Poseidon2("uno-ivk-cm-v1", ivk_i, d_i)
+   ```
+   and the computed `ivk_commitment_i` equals the value opened from `cm_i` in claim 2. This is the **only** ownership anchor — it binds the note to the holder of `uno_seed` without any in-circuit curve operation. Only the holder with the matching `ivk` can satisfy the constraint; no one can construct a valid spend proof for a note addressed to a different `ivk_commitment`.
+
+4. **Nullifier correctness**:
+   ```
+   nf_i = Poseidon2("uno-nf-v1", nk_i, cm_i, pos_i)
+   ```
+   where `nk_i` comes from the same seed-material chain as claim 3 and `pos_i` is the leaf position opened in claim 1.
+
+5. **Range**: `value_i ∈ [0, 2⁶⁴)` — enforced trivially by the Goldilocks field constraint, since `value_i < p_Goldilocks = 2⁶⁴ − 2³² + 1` implies the value fits as one unmodded field element.
 
 Per `OutputDescription` (index `j`):
 
-7. **Well-formed commitment**: `cm_j = Poseidon2("uno-cm-v1", d_j, pk_d_j.bytes, value_j, rcm_j)` for sender-chosen `(d_j, pk_d_j, value_j, rseed_j)`.
-8. **Range**: `value_j ∈ [0, 2⁶⁴)` — same Goldilocks-native check as claim 5.
+6. **Well-formed commitment**: prover knows `(d_j, pk_d_j.bytes, ivk_commitment_j, value_j, rseed_j)` such that
+   ```
+   cm_j = Poseidon2("uno-cm-v1", d_j, pk_d_j.bytes, ivk_commitment_j, value_j, rcm_j)
+   ```
+   with the sender-chosen recipient address fields `(d_j, pk_d_j.bytes, ivk_commitment_j)` matching the address the sender encrypted to. No in-circuit link between these fields is required — the AIR treats them as opaque witnesses.
+
+7. **Range**: `value_j ∈ [0, 2⁶⁴)` — same Goldilocks-native check as claim 5.
 
 Whole-tx balance:
 
-9. **Value conservation** (replaces the previous cv/binding_sig mechanism):
+8. **Value conservation** (replaces the Pedersen `cv` / binding-signature mechanism used by Orchard):
    ```
    Σ_i value_i = Σ_j value_j + fee
    ```
    Enforced in-circuit as a single field-element equality over summed u64 values. `fee` is a public input.
 
+**No claim for `rk_i` ↔ `ak` randomization**. Under §2.5, `rk_i` is a fresh per-spend Ristretto255 public key with no long-term anchor. The Schnorr `spend_auth_sig[i]` on `tx_hash` under `rk_i` is verified off-circuit (§4.3 step 3); the AIR has no responsibility for linking `rk_i` to the seed.
+
 Public inputs visible to the verifier: `scheme_id`, `chain_id`, `expiry_block`, `fee`, `anchor`, per-spend `(nf_i, rk_i)`, per-output `(cm_j, epk_j, filter_tag_j)`. All other values are private witnesses.
 
-The Plonky3 proof attests claims 1–9 in one shot. The verifier additionally checks the per-spend Schnorr `spend_auth_sig` off-circuit. No separate balance proof, no binding signature.
+The Plonky3 proof attests claims 1–8 in one shot. The verifier additionally checks the per-spend Schnorr `spend_auth_sig` off-circuit. No separate balance proof, no binding signature, no in-circuit curve operations.
 
 ### 4.3 Deterministic verification order
 
@@ -549,7 +617,7 @@ The Plonky3 proof attests claims 1–9 in one shot. The verifier additionally ch
    7. Every 32-byte Ristretto255 point field (`rk`, `epk`) decompresses to a valid non-identity point on Ristretto255.
 2. **Nullifier not-spent**: for each spend, `nf ∉ nullifier_set` (LRU hit is sufficient for positive-lookup reject; negative LRU must be followed by a cell-dict lookup per §5.3).
 3. **Each `spend_auth_sig`** verifies as Schnorr-on-Ristretto255 under the corresponding `rk`, signed over `tx_hash` (BLAKE3 over canonical tx bytes excluding signatures and proof).
-4. **Plonky3 proof** verifies (covers claims 1–9 from §4.2). Public inputs are assembled into a canonical Goldilocks field-element vector in exactly the following order (verifier and prover must agree bit-identically; pinned by the Transfer AIR spec):
+4. **Plonky3 proof** verifies (covers claims 1–8 from §4.2). Public inputs are assembled into a canonical Goldilocks field-element vector in exactly the following order (verifier and prover must agree bit-identically; pinned by the Transfer AIR spec):
    1. `scheme_id` (1 B zero-extended → 1 Goldilocks element).
    2. `chain_id` (4 B zero-extended → 1 Goldilocks element).
    3. `expiry_block` (u64 → 1 Goldilocks element, within field since `p > 2⁶⁴ − 2³²`).
@@ -594,7 +662,7 @@ This separation bounds the mempool's DoS surface to the cheap checks and keeps t
 | Sender identity | `rk` is a one-time key. No link to `ak`. |
 | Receiver identity | `epk` is a fresh ephemeral; `cm` is a hash. No link to `pk_d`. |
 | Which prior note is spent | Only `nf` is revealed; anonymity set = all live commitments. |
-| Balance composition | No per-note values; `Σ spend.value = Σ output.value + fee` enforced by in-circuit AIR constraint (§3.3, §4.2 claim 9). |
+| Balance composition | No per-note values; `Σ spend.value = Σ output.value + fee` enforced by in-circuit AIR constraint (§3.3, §4.2 claim 8). |
 | Tx graph | No input references; Merkle membership is inside the ZK proof. |
 
 What remains public: fee, anchor, expiry, tx size (hence spend/output counts up to the max of 4/4 — a fixed envelope). We do **not** pad to fixed 4/4 in v1; cost vs privacy trade-off deferred to v2.
@@ -1283,7 +1351,7 @@ Uno follows the same layout convention as the EVM workchain (`~/tos/evm/`):
 │   ├── Cargo.toml              // depends on plonky3 workspace crates
 │   ├── src/
 │   │   ├── lib.rs              // C ABI surface
-│   │   ├── transfer_air.rs     // hand-written Transfer AIR (§4.2 claims 1–9)
+│   │   ├── transfer_air.rs     // hand-written Transfer AIR (§4.2 claims 1–8)
 │   │   ├── prover.rs           // reference prover used by tosctl + P.6
 │   │   └── verifier.rs         // verifier entrypoint called from crypto/plonky3-verifier.cpp
 │   └── cbindgen.toml           // header generation for C++ consumers
@@ -1510,7 +1578,7 @@ Mirrors the EVM workchain's gate model.
 |---|---|---|
 | **P.0** Plonky3 toolchain bring-up | Integrate Plonky3 Rust crates; write a minimum viable AIR (single-Poseidon2 hash + single Merkle-path verification); measure prove/verify times; validate C ABI approach via a "Hello World" Transfer-adjacent circuit. 2–3 weeks. | Minimal AIR produces and verifies; FFI round-trip works; Rust↔C++ build integrates cleanly. **This is a prerequisite before we can commit the full Transfer AIR design.** |
 | **P.1** Crypto scaffolding | Goldilocks field ops, Poseidon2 over Goldilocks, Ristretto255, Schnorr-on-Ristretto255, ML-KEM-768, hybrid-KEM combiner, stealth-address derivation, note encryption. Test vectors pass. | Cross-verify against RFC 9496 (Ristretto255), NIST ACVP (ML-KEM), Plonky3 reference (Poseidon2), eprint 2025/1444 (hybrid KEM). |
-| **P.2** Transfer AIR + prover (Rust) | Hand-written Plonky3 AIR implementing claims 1–9 of §4.2: spends 1..4, outputs 1..4, in-circuit balance, Merkle paths, nullifier derivation, hash-chain key identity. Reference prover CLI in `tosctl`. | Valid witnesses produce accepting proofs; invalid witnesses fail at proving or verify. Cross-implementation fuzz. |
+| **P.2** Transfer AIR + prover (Rust) | Hand-written Plonky3 AIR implementing claims 1–8 of §4.2: spends 1..4, outputs 1..4, in-circuit balance, Merkle paths, nullifier derivation, hash-chain key identity. Reference prover CLI in `tosctl`. | Valid witnesses produce accepting proofs; invalid witnesses fail at proving or verify. Cross-implementation fuzz. |
 | **P.3** Parallel verifier in C++ (FFI) | Link `uno_plonky3_ffi` into validator via minimal C ABI. **Must support parallel verification across N worker threads (N = num_cores) with deterministic output ordering — this is an ACTIVATION PREREQUISITE, not a later release gate or optimization.** Per-tx signatures and proof verifies run concurrently in the pool; state mutations remain serialized by tx order. | Verify ≤ 15 ms per 1-spend/2-output tx single-thread; ≥ 3.5× scaling on 4 cores; byte-identical state root across parallel and serial execution. The chain cannot produce blocks at target TPS without this; it is blocking. |
 | **P.4** State model + dispatch | `UnoShardState`, commitment-tree cells, nullifier dict, anchor window, block-filter accumulator, init hook, dispatch (§8). | Empty-state boot; no-tx blocks commit cleanly; state roots stable across restart. |
 | **P.5** End-to-end compute + RPC | verify_transfer, apply_transfer, block-commit path. `uno_sendTransfer`, `uno_getAnchor`, `uno_getBlockFilter`, `uno_getOutputsAtBlock`, `uno_estimateFee`, `uno_getNullifierStatus`. | Two-wallet demo: A sends to B, B scans via compact filter + trial-decrypts, detects, `fvk` audit matches. |
@@ -1599,6 +1667,9 @@ Every non-trivial choice below was made against the alternative space of publish
 27. **Compact block filters shipped in v1 — decided.** 16-bit per-output detection tags + GCS-encoded per-block filter. Wallet scan cost drops ~500× at negligible validator cost (end-of-block compilation, ~1 ms/block). Activation requirement for mobile-viable privacy UX (§7.5).
 28. **Parallel verify as activation prerequisite — decided (upgraded from "release gate").** The chain is structurally unable to produce 1 s blocks at target TPS without parallel Plonky3 verify across `num_cores` workers (§13 P.3). Not a later optimization; not a release gate; a precondition for the chain running at all. Encoded in §1.2 goals, §7.4 budget, and §13 roadmap as blocking.
 29. **Value commitment / binding signature — decided: removed.** Balance is enforced by an in-circuit AIR constraint (§3.3), not by a Pedersen homomorphic trick. Removes 32 B per spend/output + 64 B per tx from the wire format. The Orchard/Halo2 trick was an optimization for a context where in-circuit u64 arithmetic was expensive; Goldilocks-native 64-bit arithmetic makes it obsolete.
+30. **Ownership claim — decided: ivk-commitment hash-chain binding (no in-circuit curve ops).** §4.2 claim 3 is reformulated from Orchard's in-circuit `pk_d = ivk · g_d` to a pure hash-chain: `ivk_commitment = Poseidon2("uno-ivk-cm-v1", ivk, d)` is published in the address (§2.6) and bound into `cm` (§3.2); the AIR proves `ivk_commitment` matches an `ivk` hash-chained from `uno_seed`. **No curve operations inside the AIR.** The sole adversary-relevant property — "only the holder of `uno_seed` can produce a valid spend proof" — is preserved under the Poseidon2 random-oracle model.
+31. **Spend-auth `rk` — decided: fresh per-spend Ristretto255 key, no `ak` randomization.** §2.5 is simplified from Orchard's `rk = ak + α·G` randomization scheme. Each spend samples a fresh `rsk ∈ scalars(Ristretto255)`, publishes `rk = rsk · G`, and signs `tx_hash` with Schnorr. No long-term spend-auth key `ak` exists; it is removed from `fvk`. Audit recovery of spend history goes through `ovk`-decrypted `out_ciphertext`, not through `rk` inversion. Rationale: Orchard's `rk-ak` randomization required in-circuit curve ops (claim 6 in earlier drafts); removing it eliminates the last curve op from the AIR, consistent with §2.5.
+32. **Block-filter encoding — decided: GCS over raw 16-bit tags, `P=15, M=2¹⁶`, no secondary hash.** §2.8.1 pins the exact encoding as a consensus-binding spec. `filter_tag` is already cryptographic (§2.8), so no BIP-158-style keyed second hash is needed; GCS operates directly on the sorted deduplicated u16 multiset. Expected size ~100–150 B per block at 30 TPS, ~180-260 B at 50 TPS burst. The filter is a **derived view**, not consensus state — any full node reconstructs it from on-chain data. Byte-identical across every implementation; wallet SDKs match validator output by spec, not by keyed-hash agreement.
 
 ---
 
