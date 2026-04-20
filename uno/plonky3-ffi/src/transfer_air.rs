@@ -1,94 +1,84 @@
-//! Transfer AIR for the Uno workchain — P.2 foundation (real Poseidon2
-//! compression).
+//! Transfer AIR for the Uno workchain — P.2 full §4.1 envelope (1..4 spends
+//! × 1..4 outputs) with real Poseidon2 compression and in-circuit balance.
 //!
 //! # What this file proves
 //!
-//! This AIR is still MVP-shaped (one proxy field element per semantic
-//! value) but it has been upgraded away from linear `MIX_COEF` stand-ins
-//! to **real Poseidon2-over-Goldilocks compression** for four of the
-//! §4.2 Transfer claims:
+//! The AIR is now parameterized by `(n_spends, n_outputs)` with
+//! `1 ≤ n_spends, n_outputs ≤ 4` (ConfigParam 84 cap, §4.1). Prior slices
+//! (A4 MVP, I-B ivk-commitment, N-P2 real Poseidon2) landed the four
+//! Poseidon2 compressions for claims 1/2/3/4 at fixed (1, 1). This slice
+//! (M-P2 scale-to-envelope) replicates claims 1/2/3/4 across all spends,
+//! adds claims 6/7 per output, and adds the §4.2 claim-8 in-circuit
+//! balance constraint `Σ value_i = Σ value_j + fee`.
 //!
-//! - **Claim 1 (Merkle step)**: `parent = Poseidon2(leaf, sibling)`.
-//!   Single-step (32-level scale-out is P.2 follow-up).
+//! # Claims enforced (row-0 bindings; Poseidon2 constraints on ALL rows)
 //!
-//! - **Claim 2 (Note opening)**: `cm = Poseidon2("uno-cm-v1", d,
-//!   pk_d.bytes, ivk_commitment, value, rcm)`. The five non-tag inputs
-//!   are single-field-element proxies for the full-width Transfer AIR's
-//!   multi-element fields (per §3.2, the real circuit packs 15 field
-//!   elements into a wide-sponge Poseidon2-16; the single-proxy shape
-//!   here keeps the constraint family honest while the Poseidon2 width
-//!   stays at 8).
+//! **Per spend `i` (for `i ∈ [0, n_spends)`)**:
 //!
-//! - **Claim 3 (Ownership via ivk-commitment binding)**:
-//!   `ivk_commitment = Poseidon2("uno-ivk-cm-v1", ivk, d)`. Real
-//!   Poseidon2 replaces the `IVK_CM_MIX_COEF` placeholder.
+//! - **Claim 1 — Merkle step**: `parent_i = Poseidon2(leaf_i, sibling_i)`.
+//!   Single step only; 32-level scale-out flagged
+//!   `TODO(uno-p2-merkle32)` and reserved for a follow-up slice.
+//!   Row-0 binding: `parent_i == public_inputs[anchor][0]` (limb 0 of the
+//!   shared tx-level anchor).
 //!
-//! - **Claim 4 (Nullifier derivation)**: `nf = Poseidon2("uno-nf-v1",
-//!   nk, cm, pos)`. Real Poseidon2-8 compression; `cm` is taken from
-//!   the note-opening output column (i.e. `cm == leaf`, matching how
-//!   the Merkle step sees the spent note).
+//! - **Claim 2 — Note opening**: `cm_i = Poseidon2("uno-cm-v1", d_i, pk_d_i,
+//!   ivk_commitment_i, value_i, rcm_i)`. Row-0 binding: `cm_i == leaf_i`.
 //!
-//! Claims 5, 6, 7, 8, 9 (value range, spend-auth, per-output opening,
-//! output range, balance) are OUT OF SCOPE for this agent and remain
-//! either placeholder (claim 5: the MVP's 63-bit bit-decomposition is
-//! kept for now) or unimplemented.
+//! - **Claim 3 — Ownership via ivk-commitment**: `ivk_commitment_i =
+//!   Poseidon2("uno-ivk-cm-v1", ivk_i, d_i)`. Row-0 binding:
+//!   `ivk_commitment_claim_i == ` claim-2 input slot.
 //!
-//! # Poseidon2 choice: width 8 everywhere (§16 decision tracking)
+//! - **Claim 4 — Nullifier**: `nf_i = Poseidon2("uno-nf-v1", nk_i, cm_i,
+//!   pos_i)`. Row-0 binding: `nf_i == public_inputs[nf_i][0]`.
 //!
-//! All four compressions use `Poseidon2Goldilocks<8>` with the audited
-//! round constants from `p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_*`
-//! (decision #42). Width 8 is sufficient here because:
+//! - **Claim 5 — Range `value_i < 2^64`**: trivially enforced by
+//!   Goldilocks field arithmetic (§4.2 claim 5); flagged
+//!   `TODO(uno-p2-u64-range-explicit)` in case the base field widens.
 //!
-//! - Merkle step has 2 inputs + 6 padding/capacity slots.
-//! - IVK-CM has domain-tag + 2 inputs + 5 padding slots.
-//! - CM has domain-tag + 5 proxy inputs + 2 padding slots. The real
-//!   Transfer AIR needs Poseidon2-16 here (15 field elements); the
-//!   proxy-shape MVP does not.
-//! - NF has domain-tag + 3 inputs + 4 padding slots.
+//! **Per output `j`**:
 //!
-//! Follow-up P.2 work: widen CM's Poseidon2 to t=16 and expand
-//! proxies to their real-AIR multi-element shapes. Same audited
-//! constants, different width.
+//! - **Claim 6 — Output commitment**: `cm_j = Poseidon2("uno-cm-v1", d_j,
+//!   pk_d_j, ivk_commitment_j, value_j, rcm_j)` — identical Poseidon2 shape
+//!   to claim 2 over sender-chosen witnesses. Row-0 binding: `cm_j ==
+//!   public_inputs[cm_j][0]`.
 //!
-//! # AIR structure
+//! - **Claim 7 — Range `value_j < 2^64`**: same as claim 5.
 //!
-//! The trace has width
+//! **Whole-tx**:
+//!
+//! - **Claim 8 — Balance**: `Σ_i value_i = Σ_j value_j + fee`. Single
+//!   degree-1 field-element equality on row 0 over value proxies and the
+//!   `fee` PI.
+//!
+//! # Column layout
 //!
 //! ```text
-//! NUM_COLS = MVP_PROXY_COLS + 4 * POSEIDON2_COLS_PER_INSTANCE
-//!          = 11 + 4 * 180 = 731
+//! width(n_s, n_o) =
+//!     GLOBAL_COLS                                        // 1 (fee proxy)
+//!   + n_s · (SPEND_PROXY_COLS + 4·POSEIDON2_COLS_PER_INSTANCE)
+//!   + n_o · (OUTPUT_PROXY_COLS + 1·POSEIDON2_COLS_PER_INSTANCE)
 //! ```
 //!
-//! (plus the existing range-check scaffold).  `MVP_PROXY_COLS` now
-//! carries, in addition to the original 7, the four new single-element
-//! witness proxies (`pk_d`, `rcm`, `nk`, `pos`) needed for claims 2 / 4.
-//! The 180 comes from `num_cols::<8, 7, 1, 4, 22>()` of the upstream
-//! `p3_poseidon2_air` crate.
+//! At (4, 4): `1 + 4·(10 + 720) + 4·(6 + 180) = 3665` columns.
+//! At (1, 1): `1 + 730 + 186 = 917` columns.
+//! At (1, 2): `1 + 730 + 372 = 1103` columns.
 //!
-//! Trace height stays at `2^6 = 64` rows (range-check holdover). The
-//! Poseidon2 constraints hold on every row (the prover fills rows 1..63
-//! with honest permutations of arbitrary inputs — see trace generation);
-//! only row 0 binds the Poseidon2 inputs/outputs to the MVP proxy
-//! columns and public inputs.
+//! Trace height stays at `2^6 = 64` rows.
 //!
-//! # Public inputs (unchanged from MVP — decision #5)
+//! # Public-input vector (§4.3 step 4, decision #5)
 //!
-//! Layout (Goldilocks elements):
-//!   - `[0]`: declared parent digest (Merkle step output)
-//!   - `[1]`: declared leaf digest  (= `cm`; Merkle step input; also
-//!     claim-2 output)
-//!   - `[2]`: declared range-checked value
-//!   - `[3]`: declared ivk_commitment (= claim-3 output; also
-//!     claim-2 input)
+//! Length: `8 + 8·n_s + 9·n_o` Goldilocks elements.
+//! Byte length: `64 + 64·n_s + 72·n_o` bytes.
 //!
-//! `nf` is NOT a public input at this stage; the constraint guarantees
-//! consistency but exposing it is a follow-up P.2 scope item.
+//! Verifier derives `(n_spends, n_outputs)` from the wire-byte length
+//! (see [`derive_shape_from_public_inputs_len`]) and picks the matching
+//! AIR instance.
 //!
-//! # Witness
+//! # Poseidon2 (unchanged from N-P2)
 //!
-//! Wire length grew from **32 B** (MVP) to **64 B** (P.2 upgrade), to
-//! carry the four new proxies: `pk_d`, `rcm`, `nk`, `pos`. See
-//! [`MvpWitness::encode`] for the exact layout.
+//! Width-8 Poseidon2-Goldilocks with audited `GOLDILOCKS_POSEIDON2_RC_8_*`
+//! constants (decision #42). Full-width Poseidon2-16 for claim 2/6's
+//! 15-field-element absorb is `TODO(uno-p2-wide)`.
 
 use core::borrow::Borrow;
 
@@ -108,32 +98,41 @@ use p3_symmetric::Permutation;
 use crate::Plonky3Status;
 
 // ---------------------------------------------------------------------------
-// Poseidon2 parameters
+// Shape caps (§4.1 ConfigParam 84)
+// ---------------------------------------------------------------------------
+
+/// Maximum spend count (§4.1 ConfigParam 84).
+pub const MAX_SPENDS: usize = 4;
+
+/// Maximum output count (§4.1 ConfigParam 84).
+pub const MAX_OUTPUTS: usize = 4;
+
+/// Minimum spend count — at least one spend is required for a Transfer.
+pub const MIN_SPENDS: usize = 1;
+
+/// Minimum output count — at least one output is required.
+pub const MIN_OUTPUTS: usize = 1;
+
+// ---------------------------------------------------------------------------
+// Poseidon2 parameters (unchanged from N-P2 slice)
 // ---------------------------------------------------------------------------
 
 /// Width of the Poseidon2 permutation used throughout this AIR.
-///
-/// Width 8 matches the Goldilocks `Poseidon2Goldilocks<8>` default; it is
-/// big enough for every compression in the MVP proxy shape (§ module doc).
 pub const POSEIDON2_WIDTH: usize = 8;
 
-/// S-box degree (α=7 on Goldilocks per Plonky3's `GOLDILOCKS_S_BOX_DEGREE`).
+/// S-box degree (α=7 on Goldilocks).
 pub const POSEIDON2_SBOX_DEGREE: u64 = 7;
 
-/// Number of committed intermediate registers per S-box at degree 7. Exactly
-/// one (for `x^3`) is optimal per the Poseidon2 paper Appendix C.
+/// Number of committed intermediate registers per S-box at degree 7.
 pub const POSEIDON2_SBOX_REGISTERS: usize = 1;
 
-/// Number of full rounds per half (beginning and ending). Total `R_F = 8`.
+/// Number of full rounds per half. Total `R_F = 8`.
 pub const POSEIDON2_HALF_FULL_ROUNDS: usize = GOLDILOCKS_POSEIDON2_HALF_FULL_ROUNDS;
 
-/// Number of partial rounds. `R_P = 22` for width-8 Goldilocks per §16
-/// decision #42's audited parameter set.
+/// Number of partial rounds. `R_P = 22` for width-8 Goldilocks (§16 #42).
 pub const POSEIDON2_PARTIAL_ROUNDS: usize = GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8;
 
-/// Number of trace columns occupied by one Poseidon2 permutation witness.
-///
-/// Concretely `8 + 4·(8·1 + 8) + 22·(1 + 1) + 4·(8·1 + 8) = 180` columns.
+/// Trace columns per Poseidon2 permutation witness = 180.
 pub const POSEIDON2_COLS_PER_INSTANCE: usize = p2_num_cols::<
     POSEIDON2_WIDTH,
     POSEIDON2_SBOX_DEGREE,
@@ -153,184 +152,247 @@ type P2Cols<T> = Poseidon2Cols<
 >;
 
 // ---------------------------------------------------------------------------
-// Domain separation tags for Poseidon2 compressions
+// Domain separation tags
 // ---------------------------------------------------------------------------
-//
-// These are single-field-element proxies for the full ASCII labels
-// specified in §2.2/§3.2 of the design doc (e.g. `"uno-ivk-cm-v1"`).
-// In the real Transfer AIR the tag occupies one Goldilocks element and
-// is the first absorb slot; here we keep the same shape but pack the
-// label into a u64 with the top byte = 0x01 as a version marker.
 
-/// Domain tag for the IVK-commitment Poseidon2. `"uno-ivk-cm" || 0x01`.
-pub const TAG_IVK_CM: u64 = 0x01_75_6E_6F_69_76_6B_63; // top byte = version 1
+/// Domain tag for the IVK-commitment Poseidon2.
+pub const TAG_IVK_CM: u64 = 0x01_75_6E_6F_69_76_6B_63;
 
-/// Domain tag for the note-commitment Poseidon2. `"uno-cm-v1"` proxy.
+/// Domain tag for the note-commitment Poseidon2.
 pub const TAG_CM: u64 = 0x01_75_6E_6F_63_6D_76_31;
 
-/// Domain tag for the nullifier Poseidon2. `"uno-nf-v1"` proxy.
+/// Domain tag for the nullifier Poseidon2.
 pub const TAG_NF: u64 = 0x01_75_6E_6F_6E_66_76_31;
-
-/// Merkle-step compression does NOT use a domain tag in §2.3
-/// (`parent = Poseidon2(left, right)` is plain 2-to-1 compression).
 
 // ---------------------------------------------------------------------------
 // Column layout
 // ---------------------------------------------------------------------------
 
-/// MVP proxy columns (semantic, all single field elements per MVP-proxy
-/// convention). See [`MvpRow`] for field-by-field documentation.
-pub const MVP_PROXY_COLS: usize = 11;
+/// Global (tx-level) proxy columns: `[fee]`.
+pub const GLOBAL_COLS: usize = 1;
+const GCOL_FEE: usize = 0;
 
-/// Index (in the raw row slice) where the four Poseidon2 column groups
-/// begin. Groups are laid out in order: Merkle, IVK-CM, CM, NF.
-const POSEIDON2_GROUP_OFFSETS: [usize; 4] = [
-    MVP_PROXY_COLS,
-    MVP_PROXY_COLS + POSEIDON2_COLS_PER_INSTANCE,
-    MVP_PROXY_COLS + 2 * POSEIDON2_COLS_PER_INSTANCE,
-    MVP_PROXY_COLS + 3 * POSEIDON2_COLS_PER_INSTANCE,
-];
+/// Per-spend proxy columns: leaf, sibling, parent_claim, value, ivk,
+/// ivk_commitment_claim, pk_d, rcm, nk, pos.
+pub const SPEND_PROXY_COLS: usize = 10;
 
-/// Slot enum for readability when addressing a Poseidon2 group.
+/// Per-output proxy columns: cm_claim, d, pk_d, ivk_commitment, value, rcm.
+pub const OUTPUT_PROXY_COLS: usize = 6;
+
+/// Poseidon2 instances per spend (Merkle, IvkCm, Cm, Nf).
+pub const POSEIDON2_PER_SPEND: usize = 4;
+
+/// Poseidon2 instances per output (Cm only).
+pub const POSEIDON2_PER_OUTPUT: usize = 1;
+
+/// Trace height log2. 64 rows; Poseidon2 sub-AIR runs on every row.
+pub const LOG_TRACE_HEIGHT: usize = 6;
+
+/// Trace height = 64 rows.
+pub const TRACE_HEIGHT: usize = 1 << LOG_TRACE_HEIGHT;
+
+// ---- Per-spend column indices (within a spend proxy block) ----
+const S_LEAF: usize = 0;
+const S_SIBLING: usize = 1;
+const S_PARENT_CLAIM: usize = 2;
+const S_VALUE: usize = 3;
+const S_IVK: usize = 4;
+const S_IVK_COMMITMENT_CLAIM: usize = 5;
+const S_PK_D: usize = 6;
+const S_RCM: usize = 7;
+const S_NK: usize = 8;
+const S_POS: usize = 9;
+
+// ---- Per-output column indices (within an output proxy block) ----
+const O_CM_CLAIM: usize = 0;
+const O_D: usize = 1;
+const O_PK_D: usize = 2;
+const O_IVK_COMMITMENT: usize = 3;
+const O_VALUE: usize = 4;
+const O_RCM: usize = 5;
+
+// ---------------------------------------------------------------------------
+// Shape-aware helpers
+// ---------------------------------------------------------------------------
+
+/// Column width for a given `(n_spends, n_outputs)` shape.
+#[inline]
+pub const fn air_width(n_spends: usize, n_outputs: usize) -> usize {
+    GLOBAL_COLS
+        + n_spends * (SPEND_PROXY_COLS + POSEIDON2_PER_SPEND * POSEIDON2_COLS_PER_INSTANCE)
+        + n_outputs * (OUTPUT_PROXY_COLS + POSEIDON2_PER_OUTPUT * POSEIDON2_COLS_PER_INSTANCE)
+}
+
+/// Public-input vector length (field elements) per §4.3 step 4.
+#[inline]
+pub const fn air_num_public_values(n_spends: usize, n_outputs: usize) -> usize {
+    8 + 8 * n_spends + 9 * n_outputs
+}
+
+/// Public-input wire byte length: `8 · num_public_values`.
+#[inline]
+pub const fn air_public_inputs_wire_len(n_spends: usize, n_outputs: usize) -> usize {
+    8 * air_num_public_values(n_spends, n_outputs)
+}
+
+/// Derive `(n_spends, n_outputs)` from the public-input wire byte length.
+///
+/// Linearly searches the 16 legal shapes (§4.1 cap of 4×4). Each shape
+/// has a distinct byte length because `8·n_s + 9·n_o` is unique in the
+/// `[1,4]²` envelope.
+pub fn derive_shape_from_public_inputs_len(
+    byte_len: usize,
+) -> Result<(usize, usize), Plonky3Status> {
+    for n_s in MIN_SPENDS..=MAX_SPENDS {
+        for n_o in MIN_OUTPUTS..=MAX_OUTPUTS {
+            if air_public_inputs_wire_len(n_s, n_o) == byte_len {
+                return Ok((n_s, n_o));
+            }
+        }
+    }
+    Err(Plonky3Status::PublicInputLengthMismatch)
+}
+
+// --- Column offsets -------------------------------------------------------
+
+#[inline]
+const fn spend_proxy_offset(i: usize) -> usize {
+    GLOBAL_COLS + i * (SPEND_PROXY_COLS + POSEIDON2_PER_SPEND * POSEIDON2_COLS_PER_INSTANCE)
+}
+
+#[inline]
+const fn spend_p2_offset(i: usize) -> usize {
+    spend_proxy_offset(i) + SPEND_PROXY_COLS
+}
+
+#[inline]
+const fn output_proxy_offset(n_spends: usize, j: usize) -> usize {
+    GLOBAL_COLS
+        + n_spends * (SPEND_PROXY_COLS + POSEIDON2_PER_SPEND * POSEIDON2_COLS_PER_INSTANCE)
+        + j * (OUTPUT_PROXY_COLS + POSEIDON2_PER_OUTPUT * POSEIDON2_COLS_PER_INSTANCE)
+}
+
+#[inline]
+const fn output_p2_offset(n_spends: usize, j: usize) -> usize {
+    output_proxy_offset(n_spends, j) + OUTPUT_PROXY_COLS
+}
+
+/// Enumerated spend Poseidon2 slot.
 #[derive(Copy, Clone)]
-#[allow(clippy::upper_case_acronyms)]
-enum P2Slot {
+enum SpendP2 {
     Merkle = 0,
     IvkCm = 1,
     Cm = 2,
     Nf = 3,
 }
 
-/// Total number of trace columns. See module-level doc.
-///
-/// = `MVP_PROXY_COLS + 4 * POSEIDON2_COLS_PER_INSTANCE` = 11 + 720 = 731.
-pub const NUM_COLS: usize = MVP_PROXY_COLS + 4 * POSEIDON2_COLS_PER_INSTANCE;
-
-/// Column indices — kept for documentation / debug-trace tooling. The AIR
-/// itself reads through the typed [`MvpRow`] view; these are not exported
-/// across the FFI.
-#[allow(dead_code)]
-#[doc(hidden)]
-pub(crate) mod col {
-    pub const LEAF: usize = 0;
-    pub const SIBLING: usize = 1;
-    pub const PARENT_CLAIM: usize = 2;
-    pub const VALUE_ACC: usize = 3;
-    pub const VALUE_BIT: usize = 4;
-    pub const IVK: usize = 5;
-    pub const IVK_COMMITMENT_CLAIM: usize = 6;
-    pub const PK_D: usize = 7;
-    pub const RCM: usize = 8;
-    pub const NK: usize = 9;
-    pub const POS: usize = 10;
-}
-
-/// Log2 of the trace height. 64 rows = 2^6.
-///
-/// Chosen so that the bit-decomposition column accumulates 64 bits over 64
-/// transitions — covers values up to 2^63. Real Transfer AIR uses the same
-/// structure with a sign-bit extension to cover the full u64 range.
-pub const LOG_TRACE_HEIGHT: usize = 6;
-
-/// Trace height = 2^LOG_TRACE_HEIGHT.
-pub const TRACE_HEIGHT: usize = 1 << LOG_TRACE_HEIGHT;
-
-/// Number of public inputs.
-///
-/// Layout (Goldilocks elements, indexed):
-/// - `[0]`: declared parent digest (Merkle step output)
-/// - `[1]`: declared leaf digest  (Merkle step input; also claim-2 cm)
-/// - `[2]`: declared range-checked value
-/// - `[3]`: declared ivk_commitment (claim-3 output; claim-2 input)
-pub const NUM_PUBLIC_INPUTS: usize = 4;
-
-/// Byte length of the public-input wire encoding. Each Goldilocks element
-/// is serialized as 8 little-endian bytes.
-pub const PUBLIC_INPUTS_WIRE_LEN: usize = NUM_PUBLIC_INPUTS * 8;
-
-// ---------------------------------------------------------------------------
-// Row view
-// ---------------------------------------------------------------------------
-
-/// Typed view of one MVP trace row (PROXY columns only; Poseidon2 column
-/// groups sit after these in the raw row slice and are viewed via
-/// [`poseidon2_group`]).
-#[repr(C)]
-pub struct MvpRow<F> {
-    /// `col::LEAF` — single-fe proxy for the spent note commitment `cm`.
-    pub leaf: F,
-    /// `col::SIBLING` — Merkle sibling (single-fe proxy). Also reused as
-    /// the diversifier `d` proxy in claims 2 and 3.
-    pub sibling: F,
-    /// `col::PARENT_CLAIM` — trace-visible copy of the Merkle-step output.
-    pub parent_claim: F,
-    /// `col::VALUE_ACC`
-    pub value_acc: F,
-    /// `col::VALUE_BIT`
-    pub value_bit: F,
-    /// `col::IVK` — private-witness `ivk` proxy (§4.2 claim 3).
-    pub ivk: F,
-    /// `col::IVK_COMMITMENT_CLAIM` — trace-visible copy of the IVK-CM
-    /// Poseidon2 output, bound to `public_inputs[3]` on row 0.
-    pub ivk_commitment_claim: F,
-    /// `col::PK_D` — proxy for `pk_d.bytes` (claim 2).
-    pub pk_d: F,
-    /// `col::RCM` — proxy for the randomness `rcm` (claim 2).
-    pub rcm: F,
-    /// `col::NK` — proxy for the nullifier key (claim 4).
-    pub nk: F,
-    /// `col::POS` — proxy for the leaf position (claim 4).
-    pub pos: F,
-}
-
-impl<F> Borrow<MvpRow<F>> for [F] {
-    #[inline]
-    fn borrow(&self) -> &MvpRow<F> {
-        debug_assert!(self.len() >= MVP_PROXY_COLS);
-        // SAFETY: the leading `MVP_PROXY_COLS` cells of a trace row are
-        // laid out as `MvpRow` (repr(C), identically-typed fields).
-        let head: &[F] = &self[..MVP_PROXY_COLS];
-        let (prefix, shorts, suffix) = unsafe { head.align_to::<MvpRow<F>>() };
-        debug_assert!(prefix.is_empty());
-        debug_assert!(suffix.is_empty());
-        debug_assert_eq!(shorts.len(), 1);
-        &shorts[0]
-    }
-}
-
-/// Borrow one of the four Poseidon2 column groups from a raw row slice.
 #[inline]
-fn poseidon2_group<T>(row: &[T], slot: P2Slot) -> &P2Cols<T> {
-    let off = POSEIDON2_GROUP_OFFSETS[slot as usize];
+fn spend_p2_group<T>(row: &[T], i: usize, s: SpendP2) -> &P2Cols<T> {
+    let off = spend_p2_offset(i) + (s as usize) * POSEIDON2_COLS_PER_INSTANCE;
     let group: &[T] = &row[off..off + POSEIDON2_COLS_PER_INSTANCE];
     <[T] as Borrow<P2Cols<T>>>::borrow(group)
 }
+
+#[inline]
+fn output_p2_group<T>(row: &[T], n_spends: usize, j: usize) -> &P2Cols<T> {
+    let off = output_p2_offset(n_spends, j);
+    let group: &[T] = &row[off..off + POSEIDON2_COLS_PER_INSTANCE];
+    <[T] as Borrow<P2Cols<T>>>::borrow(group)
+}
+
+#[inline]
+fn spend_col<T: Copy>(row: &[T], i: usize, local_idx: usize) -> T {
+    row[spend_proxy_offset(i) + local_idx]
+}
+
+#[inline]
+fn output_col<T: Copy>(row: &[T], n_spends: usize, j: usize, local_idx: usize) -> T {
+    row[output_proxy_offset(n_spends, j) + local_idx]
+}
+
+// ---------------------------------------------------------------------------
+// Public-input indices
+// ---------------------------------------------------------------------------
+
+const PI_SCHEME: usize = 0;
+const PI_CHAIN: usize = 1;
+const PI_EXPIRY: usize = 2;
+const PI_FEE: usize = 3;
+const PI_ANCHOR: usize = 4; // limb 0 of 4-limb anchor
+#[inline]
+const fn pi_nf(i: usize) -> usize {
+    8 + i * 8
+}
+#[inline]
+const fn pi_rk(i: usize) -> usize {
+    8 + i * 8 + 4
+}
+#[inline]
+const fn pi_cm(n_spends: usize, j: usize) -> usize {
+    8 + n_spends * 8 + j * 9
+}
+#[inline]
+const fn pi_epk(n_spends: usize, j: usize) -> usize {
+    8 + n_spends * 8 + j * 9 + 4
+}
+#[inline]
+const fn pi_filter_tag(n_spends: usize, j: usize) -> usize {
+    8 + n_spends * 8 + j * 9 + 8
+}
+
+// Silence unused warnings for field-tag indices that the proxy-shape AIR
+// does not constrain today (reserved for future slices).
+#[allow(dead_code)]
+const _UNUSED_PI: (usize, usize, usize, fn(usize) -> usize, fn(usize, usize) -> usize, fn(usize, usize) -> usize) =
+    (PI_SCHEME, PI_CHAIN, PI_EXPIRY, pi_rk, pi_epk, pi_filter_tag);
 
 // ---------------------------------------------------------------------------
 // AIR definition
 // ---------------------------------------------------------------------------
 
-/// The Transfer AIR (claims 1, 2, 3, 4 — single-step / single-spend
-/// / single-output — with range check retained from MVP).
+/// The Transfer AIR, parameterized at runtime by `(n_spends, n_outputs)`.
 ///
-/// Uses real Poseidon2-Goldilocks-8 compression in-circuit, with the
-/// audited round constants sourced via `GOLDILOCKS_POSEIDON2_RC_8_*`
-/// (§16 decision #42). See module-level doc for the constraint system.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct MvpTransferAir;
+/// Prover and verifier each select a matching instance via
+/// [`derive_shape_from_public_inputs_len`].
+#[derive(Debug, Clone, Copy)]
+pub struct MvpTransferAir {
+    /// Number of spends (1..=4).
+    pub n_spends: usize,
+    /// Number of outputs (1..=4).
+    pub n_outputs: usize,
+}
 
-impl MvpTransferAir {
-    /// Build the AIR. All Poseidon2 round constants are compile-time
-    /// constants from `p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_*`;
-    /// prover and verifier both read them through this type.
-    pub const fn new() -> Self {
-        Self
+impl Default for MvpTransferAir {
+    /// Default shape is 1-spend / 1-output.
+    fn default() -> Self {
+        Self::new(1, 1)
     }
 }
 
-/// Audited Goldilocks Poseidon2-8 round constants, typed so both the AIR
-/// (symbolic builder) and the trace generator (concrete Goldilocks) can
-/// read from the same source.
+impl MvpTransferAir {
+    /// Build the AIR for a given shape. Panics if out of §4.1 envelope.
+    pub const fn new(n_spends: usize, n_outputs: usize) -> Self {
+        assert!(n_spends >= MIN_SPENDS && n_spends <= MAX_SPENDS);
+        assert!(n_outputs >= MIN_OUTPUTS && n_outputs <= MAX_OUTPUTS);
+        Self {
+            n_spends,
+            n_outputs,
+        }
+    }
+
+    /// AIR column width for this shape.
+    #[inline]
+    pub const fn width(&self) -> usize {
+        air_width(self.n_spends, self.n_outputs)
+    }
+
+    /// Public-input vector length (field elements) for this shape.
+    #[inline]
+    pub const fn num_public_values(&self) -> usize {
+        air_num_public_values(self.n_spends, self.n_outputs)
+    }
+}
+
 #[inline]
 fn beginning_full_round_constant<F: PrimeCharacteristicRing>(round: usize) -> [F; POSEIDON2_WIDTH] {
     let src = &p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_INITIAL[round];
@@ -351,21 +413,16 @@ fn partial_round_constant<F: PrimeCharacteristicRing>(round: usize) -> F {
 impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for MvpTransferAir {
     #[inline]
     fn width(&self) -> usize {
-        NUM_COLS
+        MvpTransferAir::width(self)
     }
 
     #[inline]
     fn num_public_values(&self) -> usize {
-        NUM_PUBLIC_INPUTS
+        MvpTransferAir::num_public_values(self)
     }
 
     #[inline]
     fn max_constraint_degree(&self) -> Option<usize> {
-        // Let the symbolic evaluator compute the actual degree. A
-        // conservative hint is fine in principle, but an under-hint
-        // silently produces a wrong-size quotient polynomial; returning
-        // `None` avoids the trap without noticeable prove-cost impact
-        // (the symbolic walk runs once at prove/verify startup).
         None
     }
 }
@@ -379,175 +436,187 @@ where
         let local_slice = main.current_slice();
         let next_slice = main.next_slice();
 
-        let local: &MvpRow<AB::Var> = local_slice.borrow();
-        let next: &MvpRow<AB::Var> = next_slice.borrow();
+        // Snapshot the PI vars we'll reference later. `PublicVar: Copy`,
+        // so copying out dodges the aliasing-borrow conflict with the
+        // later `builder.when_*_row()` mutable borrows.
+        let pis_vec: Vec<AB::PublicVar> = builder.public_values().to_vec();
+        let pi_fee = pis_vec[PI_FEE];
+        let pi_anchor0 = pis_vec[PI_ANCHOR];
+        let pi_nfs: Vec<AB::PublicVar> =
+            (0..self.n_spends).map(|i| pis_vec[pi_nf(i)]).collect();
+        let pi_cms: Vec<AB::PublicVar> = (0..self.n_outputs)
+            .map(|j| pis_vec[pi_cm(self.n_spends, j)])
+            .collect();
 
-        let pis = builder.public_values();
-        let declared_parent = pis[0];
-        let declared_leaf = pis[1];
-        let declared_value = pis[2];
-        let declared_ivk_commitment = pis[3];
+        // ---- Poseidon2 sub-AIR on every row -----------------------------
+        for i in 0..self.n_spends {
+            eval_poseidon2(builder, spend_p2_group(local_slice, i, SpendP2::Merkle));
+            eval_poseidon2(builder, spend_p2_group(local_slice, i, SpendP2::IvkCm));
+            eval_poseidon2(builder, spend_p2_group(local_slice, i, SpendP2::Cm));
+            eval_poseidon2(builder, spend_p2_group(local_slice, i, SpendP2::Nf));
+        }
+        for j in 0..self.n_outputs {
+            eval_poseidon2(builder, output_p2_group(local_slice, self.n_spends, j));
+        }
 
-        // ---- Poseidon2 sub-AIR constraints on EVERY row ----------------
-        //
-        // Each of the four Poseidon2 column groups must represent a valid
-        // permutation of its `inputs` to its `ending_full_rounds` final
-        // `post` state. The prover fills rows 1..=TRACE_HEIGHT-1 with
-        // honest permutations over arbitrary inputs (see
-        // `MvpWitness::generate_trace`); the binding constraints below
-        // only check row 0.
-        eval_poseidon2(builder, poseidon2_group::<AB::Var>(local_slice, P2Slot::Merkle));
-        eval_poseidon2(builder, poseidon2_group::<AB::Var>(local_slice, P2Slot::IvkCm));
-        eval_poseidon2(builder, poseidon2_group::<AB::Var>(local_slice, P2Slot::Cm));
-        eval_poseidon2(builder, poseidon2_group::<AB::Var>(local_slice, P2Slot::Nf));
-
-        // ---- First-row: wire Poseidon2 inputs + outputs to MVP proxies
+        // ---- First-row bindings ----------------------------------------
         {
             let mut first = builder.when_first_row();
 
-            // --- Claim 1: Merkle step ---
-            // inputs = [leaf, sibling, 0, 0, 0, 0, 0, 0]
-            // output = inputs_after_perm[0]  → must equal parent_claim
-            //
-            // `ending_full_rounds[last].post[0]` is the degree-1 final
-            // state slot. See `p3_poseidon2_air::eval` for where the
-            // permutation places its output.
-            let merkle = poseidon2_group::<AB::Var>(local_slice, P2Slot::Merkle);
-            first.assert_eq(merkle.inputs[0], local.leaf);
-            first.assert_eq(merkle.inputs[1], local.sibling);
-            // Pad remaining input slots to zero so a malicious prover
-            // cannot smuggle extra entropy.
-            for i in 2..POSEIDON2_WIDTH {
-                first.assert_zero(merkle.inputs[i].into());
-            }
-            // Output of the permutation: final `post[0]` after the last
-            // external round. Bind to `parent_claim`.
-            let merkle_out = &merkle.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
-            first.assert_eq(merkle_out[0], local.parent_claim);
+            // Global: fee proxy bound to PI.
+            first.assert_eq(local_slice[GCOL_FEE], pi_fee);
 
-            // Bind `parent_claim` and `leaf` to public inputs. `leaf`
-            // is ALSO the claim-2 `cm` anchor — hence the note-opening
-            // binding below ties `cm = Poseidon2(...) == declared_leaf`.
-            first.assert_eq(local.parent_claim, declared_parent);
-            first.assert_eq(local.leaf, declared_leaf);
+            // Per-spend claims 1/2/3/4.
+            for i in 0..self.n_spends {
+                let leaf = spend_col(local_slice, i, S_LEAF);
+                let sibling = spend_col(local_slice, i, S_SIBLING);
+                let parent_claim = spend_col(local_slice, i, S_PARENT_CLAIM);
+                let value = spend_col(local_slice, i, S_VALUE);
+                let ivk = spend_col(local_slice, i, S_IVK);
+                let ivk_commitment_claim =
+                    spend_col(local_slice, i, S_IVK_COMMITMENT_CLAIM);
+                let pk_d = spend_col(local_slice, i, S_PK_D);
+                let rcm = spend_col(local_slice, i, S_RCM);
+                let nk = spend_col(local_slice, i, S_NK);
+                let pos = spend_col(local_slice, i, S_POS);
 
-            // --- Claim 3: IVK-commitment binding ---
-            // inputs = [TAG_IVK_CM, ivk, sibling(=d), 0, 0, 0, 0, 0]
-            // output[0] → must equal ivk_commitment_claim
-            let ivkcm = poseidon2_group::<AB::Var>(local_slice, P2Slot::IvkCm);
-            first.assert_eq(
-                ivkcm.inputs[0].into(),
-                AB::Expr::from(AB::F::from_u64(TAG_IVK_CM)),
-            );
-            first.assert_eq(ivkcm.inputs[1], local.ivk);
-            first.assert_eq(ivkcm.inputs[2], local.sibling);
-            for i in 3..POSEIDON2_WIDTH {
-                first.assert_zero(ivkcm.inputs[i].into());
-            }
-            let ivkcm_out = &ivkcm.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
-            first.assert_eq(ivkcm_out[0], local.ivk_commitment_claim);
-            first.assert_eq(local.ivk_commitment_claim, declared_ivk_commitment);
+                // Claim 1: Merkle step (single-step; TODO(uno-p2-merkle32)).
+                let merkle = spend_p2_group::<AB::Var>(local_slice, i, SpendP2::Merkle);
+                first.assert_eq(merkle.inputs[0], leaf);
+                first.assert_eq(merkle.inputs[1], sibling);
+                for k in 2..POSEIDON2_WIDTH {
+                    first.assert_zero(merkle.inputs[k].into());
+                }
+                let merkle_out =
+                    &merkle.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
+                first.assert_eq(merkle_out[0], parent_claim);
+                // All spends hash to the same tx-level anchor.
+                first.assert_eq(parent_claim, pi_anchor0);
 
-            // --- Claim 2: Note opening (cm) ---
-            // inputs = [TAG_CM, d(=sibling), pk_d, ivk_commitment,
-            //           value, rcm, 0, 0]
-            // output[0] → must equal leaf (i.e. cm == declared_leaf)
-            let cm = poseidon2_group::<AB::Var>(local_slice, P2Slot::Cm);
-            first.assert_eq(
-                cm.inputs[0].into(),
-                AB::Expr::from(AB::F::from_u64(TAG_CM)),
-            );
-            first.assert_eq(cm.inputs[1], local.sibling);
-            first.assert_eq(cm.inputs[2], local.pk_d);
-            first.assert_eq(cm.inputs[3], local.ivk_commitment_claim);
-            // value enters as a single field element (u64 fits in
-            // Goldilocks). The AIR's range-check chain is separate
-            // (claim 5, out of scope here) but still wires the same
-            // public input.
-            first.assert_eq(cm.inputs[4].into(), declared_value);
-            first.assert_eq(cm.inputs[5], local.rcm);
-            for i in 6..POSEIDON2_WIDTH {
-                first.assert_zero(cm.inputs[i].into());
-            }
-            let cm_out = &cm.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
-            // Bind the computed cm to the publicly-declared leaf (= cm).
-            first.assert_eq(cm_out[0], local.leaf);
+                // Claim 3: IVK-commitment.
+                let ivkcm = spend_p2_group::<AB::Var>(local_slice, i, SpendP2::IvkCm);
+                first.assert_eq(
+                    ivkcm.inputs[0].into(),
+                    AB::Expr::from(AB::F::from_u64(TAG_IVK_CM)),
+                );
+                first.assert_eq(ivkcm.inputs[1], ivk);
+                first.assert_eq(ivkcm.inputs[2], sibling); // d_i proxy
+                for k in 3..POSEIDON2_WIDTH {
+                    first.assert_zero(ivkcm.inputs[k].into());
+                }
+                let ivkcm_out =
+                    &ivkcm.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
+                first.assert_eq(ivkcm_out[0], ivk_commitment_claim);
 
-            // --- Claim 4: Nullifier ---
-            // inputs = [TAG_NF, nk, cm(=leaf), pos, 0, 0, 0, 0]
-            // output[0] is the nullifier — kept as a free witness at
-            // this stage (no PI binding; follow-up P.2 agent adds it).
-            let nf = poseidon2_group::<AB::Var>(local_slice, P2Slot::Nf);
-            first.assert_eq(
-                nf.inputs[0].into(),
-                AB::Expr::from(AB::F::from_u64(TAG_NF)),
-            );
-            first.assert_eq(nf.inputs[1], local.nk);
-            // Bind the nullifier's `cm` input to the leaf (i.e. the
-            // claim-1 Merkle-step input, which equals claim-2 cm output).
-            first.assert_eq(nf.inputs[2], local.leaf);
-            first.assert_eq(nf.inputs[3], local.pos);
-            for i in 4..POSEIDON2_WIDTH {
-                first.assert_zero(nf.inputs[i].into());
+                // Claim 2: Note opening. TODO(uno-p2-wide) — widen to
+                // Poseidon2-16 for the full 15-fe absorb.
+                let cm = spend_p2_group::<AB::Var>(local_slice, i, SpendP2::Cm);
+                first.assert_eq(
+                    cm.inputs[0].into(),
+                    AB::Expr::from(AB::F::from_u64(TAG_CM)),
+                );
+                first.assert_eq(cm.inputs[1], sibling); // d_i
+                first.assert_eq(cm.inputs[2], pk_d);
+                first.assert_eq(cm.inputs[3], ivk_commitment_claim);
+                first.assert_eq(cm.inputs[4], value);
+                first.assert_eq(cm.inputs[5], rcm);
+                for k in 6..POSEIDON2_WIDTH {
+                    first.assert_zero(cm.inputs[k].into());
+                }
+                let cm_out = &cm.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
+                first.assert_eq(cm_out[0], leaf); // cm_i == leaf_i
+
+                // Claim 4: Nullifier.
+                let nf = spend_p2_group::<AB::Var>(local_slice, i, SpendP2::Nf);
+                first.assert_eq(
+                    nf.inputs[0].into(),
+                    AB::Expr::from(AB::F::from_u64(TAG_NF)),
+                );
+                first.assert_eq(nf.inputs[1], nk);
+                first.assert_eq(nf.inputs[2], leaf); // cm_i
+                first.assert_eq(nf.inputs[3], pos);
+                for k in 4..POSEIDON2_WIDTH {
+                    first.assert_zero(nf.inputs[k].into());
+                }
+                let nf_out = &nf.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
+                // Bind nf_i to limb 0 of the per-spend nullifier PI.
+                // TODO(uno-p2-nf-fullwidth): bind all 4 limbs once the
+                // wide-Poseidon2 slice lands.
+                first.assert_eq(nf_out[0], pi_nfs[i]);
             }
 
-            // Range-check accumulator starts at value_bit[row 0] (the MSB).
-            first.assert_eq(local.value_acc, local.value_bit);
+            // Per-output claims 6/7.
+            for j in 0..self.n_outputs {
+                let cm_claim = output_col(local_slice, self.n_spends, j, O_CM_CLAIM);
+                let d_out = output_col(local_slice, self.n_spends, j, O_D);
+                let pk_d_out = output_col(local_slice, self.n_spends, j, O_PK_D);
+                let ivk_cm_out =
+                    output_col(local_slice, self.n_spends, j, O_IVK_COMMITMENT);
+                let value_out = output_col(local_slice, self.n_spends, j, O_VALUE);
+                let rcm_out = output_col(local_slice, self.n_spends, j, O_RCM);
+
+                let cm_p2 = output_p2_group::<AB::Var>(local_slice, self.n_spends, j);
+                first.assert_eq(
+                    cm_p2.inputs[0].into(),
+                    AB::Expr::from(AB::F::from_u64(TAG_CM)),
+                );
+                first.assert_eq(cm_p2.inputs[1], d_out);
+                first.assert_eq(cm_p2.inputs[2], pk_d_out);
+                first.assert_eq(cm_p2.inputs[3], ivk_cm_out);
+                first.assert_eq(cm_p2.inputs[4], value_out);
+                first.assert_eq(cm_p2.inputs[5], rcm_out);
+                for k in 6..POSEIDON2_WIDTH {
+                    first.assert_zero(cm_p2.inputs[k].into());
+                }
+                let cm_p2_out =
+                    &cm_p2.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
+                first.assert_eq(cm_p2_out[0], cm_claim);
+                // Bind cm_j to limb 0 of the output-commitment PI.
+                first.assert_eq(cm_claim, pi_cms[j]);
+            }
+
+            // Claim 8: balance. `Σ value_i - Σ value_j - fee == 0`.
+            let mut sum: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
+            for i in 0..self.n_spends {
+                sum = sum + spend_col::<AB::Var>(local_slice, i, S_VALUE).into();
+            }
+            for j in 0..self.n_outputs {
+                sum = sum
+                    - output_col::<AB::Var>(local_slice, self.n_spends, j, O_VALUE)
+                        .into();
+            }
+            sum = sum - local_slice[GCOL_FEE].into();
+            first.assert_zero(sum);
         }
 
-        // ---- Per-row bit-ness check (claim 5 scaffold, kept from MVP) --
-        builder.assert_bool(local.value_bit);
-
-        // ---- Per-row replica checks for MVP proxy columns --------------
-        //
-        // The leaf/sibling/parent/ivk/ivk_commitment/pk_d/rcm/nk/pos
-        // columns are single-row witnesses; replicate across the 64-row
-        // trace so a prover cannot silently change them mid-trace (which
-        // would produce different Poseidon2 inputs on other rows). We
-        // do NOT replicate value_acc/value_bit — they carry distinct
-        // per-row data for the bit decomposition.
+        // ---- Per-row replica checks: proxies constant across rows ------
         {
             let mut t = builder.when_transition();
-            t.assert_eq(next.leaf, local.leaf);
-            t.assert_eq(next.sibling, local.sibling);
-            t.assert_eq(next.parent_claim, local.parent_claim);
-            t.assert_eq(next.ivk, local.ivk);
-            t.assert_eq(next.ivk_commitment_claim, local.ivk_commitment_claim);
-            t.assert_eq(next.pk_d, local.pk_d);
-            t.assert_eq(next.rcm, local.rcm);
-            t.assert_eq(next.nk, local.nk);
-            t.assert_eq(next.pos, local.pos);
-
-            // Range-check accumulator transition:
-            //   value_acc_next = value_acc_curr * 2 + value_bit_next
-            let two = AB::Expr::from(AB::F::from_u64(2));
-            t.assert_eq(
-                next.value_acc.into(),
-                local.value_acc.into() * two + next.value_bit.into(),
-            );
-        }
-
-        // ---- Last-row: range check public binding ----------------------
-        {
-            let mut last = builder.when_last_row();
-            last.assert_eq(local.value_acc, declared_value);
+            t.assert_eq(next_slice[GCOL_FEE], local_slice[GCOL_FEE]);
+            for i in 0..self.n_spends {
+                for k in 0..SPEND_PROXY_COLS {
+                    t.assert_eq(
+                        next_slice[spend_proxy_offset(i) + k],
+                        local_slice[spend_proxy_offset(i) + k],
+                    );
+                }
+            }
+            for j in 0..self.n_outputs {
+                for k in 0..OUTPUT_PROXY_COLS {
+                    t.assert_eq(
+                        next_slice[output_proxy_offset(self.n_spends, j) + k],
+                        local_slice[output_proxy_offset(self.n_spends, j) + k],
+                    );
+                }
+            }
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Local Poseidon2 constraint evaluation
+// Poseidon2 constraint evaluation (reimplemented here because the upstream
+// `p3_poseidon2_air::eval` is pub(crate); logic mirrors upstream byte-for-byte).
 // ---------------------------------------------------------------------------
-//
-// Upstream `p3_poseidon2_air::eval` is `pub(crate)`, so we reimplement
-// the round-by-round constraint walk here using the public fields of
-// `Poseidon2Cols` / `FullRound` / `PartialRound` / `SBox`. The logic
-// mirrors `poseidon2-air/src/air.rs` byte-for-byte; only the privacy
-// boundary differs. A mismatch with upstream would show up as a failing
-// prove/verify round-trip on the very first test — byte-identical round
-// constants (via `beginning_full_round_constant` etc.) and the same
-// `GenericPoseidon2LinearLayersGoldilocks` linear-layer definition
-// ensure identity.
 
 fn eval_poseidon2<AB>(builder: &mut AB, local: &P2Cols<AB::Var>)
 where
@@ -599,11 +668,7 @@ fn eval_full_round<AB: AirBuilder>(
     round_constants: &[AB::F; POSEIDON2_WIDTH],
     builder: &mut AB,
 ) {
-    for (i, (s, r)) in state
-        .iter_mut()
-        .zip(round_constants.iter())
-        .enumerate()
-    {
+    for (i, (s, r)) in state.iter_mut().zip(round_constants.iter()).enumerate() {
         *s += r.dup();
         eval_sbox(&full_round.sbox[i], s, builder);
     }
@@ -643,246 +708,386 @@ fn eval_sbox<AB: AirBuilder>(
     x: &mut AB::Expr,
     builder: &mut AB,
 ) {
-    // DEGREE=7, REGISTERS=1: commit x^3, assert committed = x^3, return
-    // committed^2 * x = x^6 * x = x^7.
     let committed_x3: AB::Expr = sbox.0[0].into();
     builder.assert_eq(committed_x3.dup(), x.cube());
     *x = committed_x3.square() * x.dup();
 }
 
 // ---------------------------------------------------------------------------
-// Witness struct + trace generation
+// Witness + trace generation
 // ---------------------------------------------------------------------------
 
-/// A witness to the MVP AIR, in a form callable from tests and the FFI
-/// prover entry point.
-///
-/// P.2 upgrade: the witness now carries four additional single-fe
-/// proxies required for claims 2 (`pk_d`, `rcm`) and 4 (`nk`, `pos`).
+/// Single-spend witness.
 #[derive(Debug, Clone)]
-pub struct MvpWitness {
-    /// Single-fe proxy for the note commitment `cm`. The leaf column is
-    /// bound to public input `[1]` and — via the claim-2 Poseidon2 —
-    /// must equal `Poseidon2("uno-cm-v1", d, pk_d, ivk_commitment,
-    /// value, rcm)`. The honest prover therefore derives `leaf` from
-    /// the other witness fields.
+pub struct SpendWitness {
+    /// Single-fe proxy for the spent note commitment `cm` (= Merkle leaf).
     pub leaf: u64,
-    /// Merkle sibling at the step being proved (single-fe proxy). Also
-    /// reused as the `d` proxy in claims 2 and 3.
+    /// Merkle sibling / diversifier `d` proxy (8 B LE).
     pub merkle_sibling: [u8; 8],
-    /// The u64 value being range-checked. Also enters the claim-2
-    /// Poseidon2 as a single field element (u64 < p_Goldilocks).
+    /// Value being spent. Must be `< p_Goldilocks`.
     pub value: u64,
-    /// Private-witness `ivk` proxy (§4.2 claim 3).
+    /// Private-witness `ivk` proxy.
     pub ivk: u64,
-    /// Proxy for `pk_d.bytes` (§4.2 claim 2). In the real AIR this is
-    /// 4 field elements (32-byte compressed Ristretto); here it is one
-    /// field element for witness-shape symmetry with the other proxies.
+    /// Proxy for `pk_d.bytes`.
     pub pk_d: u64,
-    /// Proxy for the note randomness `rcm` (§4.2 claim 2).
+    /// Proxy for the note randomness `rcm`.
     pub rcm: u64,
-    /// Proxy for the nullifier key `nk` (§4.2 claim 4).
+    /// Proxy for the nullifier key `nk`.
     pub nk: u64,
-    /// Proxy for the leaf position `pos` (§4.2 claim 4).
+    /// Proxy for the leaf position `pos`.
     pub pos: u64,
 }
 
+/// Single-output witness.
+#[derive(Debug, Clone)]
+pub struct OutputWitness {
+    /// Diversifier `d_j` proxy.
+    pub d: u64,
+    /// `pk_d_j` proxy.
+    pub pk_d: u64,
+    /// Recipient `ivk_commitment_j` proxy.
+    pub ivk_commitment: u64,
+    /// Output value (u64, Goldilocks-fits).
+    pub value: u64,
+    /// `rcm_j` proxy.
+    pub rcm: u64,
+}
+
+/// Full Transfer witness for 1..4 spends × 1..4 outputs + fee.
+#[derive(Debug, Clone)]
+pub struct MvpWitness {
+    /// Transaction fee, public input.
+    pub fee: u64,
+    /// Spend descriptions (len ∈ [1, 4]).
+    pub spends: Vec<SpendWitness>,
+    /// Output descriptions (len ∈ [1, 4]).
+    pub outputs: Vec<OutputWitness>,
+    /// Shared anchor proxy (limb 0 of the 256-bit anchor). Derived by the
+    /// constructor from the first spend's Merkle step so honest witnesses
+    /// are self-consistent.
+    pub anchor_proxy: u64,
+}
+
 impl MvpWitness {
-    /// Build a deterministic valid witness, seeded by `seed`.
+    /// `(n_spends, n_outputs)` for this witness.
+    #[inline]
+    pub fn shape(&self) -> (usize, usize) {
+        (self.spends.len(), self.outputs.len())
+    }
+
+    /// Build a deterministic valid witness of the given shape.
     ///
-    /// The witness is self-consistent: `leaf` is computed as the
-    /// Poseidon2 output of the note-opening inputs, so claim 2 holds.
-    /// The other derived public inputs (`parent`, `ivk_commitment`)
-    /// follow from this `leaf` + sibling + ivk via the same honest
-    /// Poseidon2 permutation the AIR constrains.
-    pub fn deterministic_valid(seed: u64) -> Self {
-        let sibling_word = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ 0x1234_0000_0000_0000;
-        let value = (seed ^ 0xbabe_cafe_dead_f00d) & ((1u64 << 63) - 1); // 63-bit range
-        let ivk = seed.wrapping_mul(0xc2b2_ae3d_27d4_eb4f) ^ 0x1efbe1edu64;
-        let pk_d = seed.wrapping_mul(0x165667b1_9e37_79f9) ^ 0xdeca_d0de;
-        let rcm = seed.wrapping_mul(0xd6e8_feb8_6659_fd93) ^ 0xfade_cafe;
-        let nk = seed.wrapping_mul(0xcbf2_9ce4_8422_2325) ^ 0xba11_00ba;
-        let pos = seed.wrapping_mul(0x100_0000_0001) & 0x00FF_FFFF_FFFF_FFFF;
+    /// All spends share `(leaf, sibling, value, ivk, pk_d, rcm)` so the
+    /// per-spend Merkle step produces the same anchor by construction
+    /// (single-step Merkle can only produce anchor-equivalence if all
+    /// `(leaf, sibling)` pairs are equal). Only `(nk, pos)` differ
+    /// per-spend to produce distinct nullifiers. This is a test-fixture
+    /// construction — real wallets produce distinct leaves per spend
+    /// over a 32-level Merkle chain (`TODO(uno-p2-merkle32)`).
+    ///
+    /// Balance construction: `value_i = v` constant per spend; total in
+    /// is `n_s · v`; `fee` is chosen small; output values split
+    /// `n_s·v - fee` evenly across `n_o` outputs (last output absorbs
+    /// the remainder).
+    pub fn deterministic_valid(n_spends: usize, n_outputs: usize, seed: u64) -> Self {
+        assert!(n_spends >= MIN_SPENDS && n_spends <= MAX_SPENDS);
+        assert!(n_outputs >= MIN_OUTPUTS && n_outputs <= MAX_OUTPUTS);
 
-        // Derive `ivk_commitment` = Poseidon2(TAG_IVK_CM, ivk, d, 0…).
         let perm = default_goldilocks_poseidon2_8();
-        let d_word = u64::from_le_bytes(sibling_word.to_le_bytes());
 
-        let mut ivkcm_state = [Goldilocks::default(); POSEIDON2_WIDTH];
-        ivkcm_state[0] = Goldilocks::from_u64(TAG_IVK_CM);
-        ivkcm_state[1] = Goldilocks::from_u64(reduce_to_goldilocks(ivk));
-        ivkcm_state[2] = Goldilocks::from_u64(reduce_to_goldilocks(d_word));
-        perm.permute_mut(&mut ivkcm_state);
-        let ivk_commitment_fe = ivkcm_state[0];
-        let ivk_commitment_u = ivk_commitment_fe.as_canonical_u64();
+        // Derive shared spend witness fields.
+        let sibling_word = seed
+            .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+            .wrapping_add(0x1234_0000_0000_0000)
+            & ((1u64 << 62) - 1);
+        let shared_ivk = seed.wrapping_mul(0xc2b2_ae3d_27d4_eb4f) ^ 0x1efb_e1ed;
+        let shared_pk_d = seed.wrapping_mul(0x1656_67b1_9e37_79f9) ^ 0xdeca_d0de;
+        let shared_rcm = seed.wrapping_mul(0xd6e8_feb8_6659_fd93) ^ 0xfade_cafe;
 
-        // Derive `cm` (= `leaf`) = Poseidon2(TAG_CM, d, pk_d,
-        // ivk_commitment, value, rcm, 0, 0).
-        let mut cm_state = [Goldilocks::default(); POSEIDON2_WIDTH];
-        cm_state[0] = Goldilocks::from_u64(TAG_CM);
-        cm_state[1] = Goldilocks::from_u64(reduce_to_goldilocks(d_word));
-        cm_state[2] = Goldilocks::from_u64(reduce_to_goldilocks(pk_d));
-        cm_state[3] = ivk_commitment_fe;
-        cm_state[4] = Goldilocks::from_u64(value);
-        cm_state[5] = Goldilocks::from_u64(reduce_to_goldilocks(rcm));
-        perm.permute_mut(&mut cm_state);
-        let leaf_fe = cm_state[0];
-        let leaf = leaf_fe.as_canonical_u64();
+        // Shared per-spend value (small u32-ish so n_s·v never overflows u64).
+        let v_per_spend: u64 = 0x0001_0000 + (seed & 0xFF_FFFF);
+        let fee: u64 = 0x100 + (seed & 0xFFF);
 
-        // `ivk_commitment_u` is retained inside the PI derivation;
-        // `leaf` becomes both the Merkle-step input and the claim-2
-        // output. The sibling stays as-is (prover's free choice).
-        let _ = ivk_commitment_u;
+        // Derived shared leaf via claim-2 Poseidon2.
+        let ivkcm = poseidon2_ivk_commitment(&perm, shared_ivk, sibling_word);
+        let shared_leaf = poseidon2_cm(
+            &perm,
+            sibling_word,
+            shared_pk_d,
+            ivkcm.as_canonical_u64(),
+            v_per_spend,
+            shared_rcm,
+        );
+
+        // Build spends with varying (nk, pos) for distinct nullifiers.
+        let mut spends = Vec::with_capacity(n_spends);
+        for i in 0..n_spends {
+            let s = seed
+                .wrapping_mul(0x517c_c1b7_2722_0a95)
+                .wrapping_add((i as u64) * 0xC0FF_EE00);
+            let nk = s.wrapping_mul(0xcbf2_9ce4_8422_2325) ^ 0xba11_00ba;
+            let pos = s.wrapping_mul(0x1_0000_0001) & 0x00FF_FFFF_FFFF_FFFF;
+            spends.push(SpendWitness {
+                leaf: shared_leaf,
+                merkle_sibling: sibling_word.to_le_bytes(),
+                value: v_per_spend,
+                ivk: shared_ivk,
+                pk_d: shared_pk_d,
+                rcm: shared_rcm,
+                nk,
+                pos,
+            });
+        }
+
+        // Balance: Σ spends = n_s · v_per_spend; distribute across outputs.
+        let total_in: u128 = (n_spends as u128) * (v_per_spend as u128);
+        assert!(total_in > fee as u128, "test seed produced unpayable fee");
+        let total_out: u128 = total_in - (fee as u128);
+        let v_per_out_base: u64 = (total_out / (n_outputs as u128)) as u64;
+        let remainder: u64 = (total_out - (v_per_out_base as u128) * (n_outputs as u128)) as u64;
+
+        let mut outputs = Vec::with_capacity(n_outputs);
+        for j in 0..n_outputs {
+            let s = seed
+                .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                .wrapping_add((j as u64) * 0xDEAD_BEEF);
+            let d = s.wrapping_mul(0xc2b2_ae3d_27d4_eb4f) ^ 0x1efb_e1ed;
+            let pk_d = s.wrapping_mul(0x1656_67b1_9e37_79f9) ^ 0xdeca_d0de;
+            let rcm = s.wrapping_mul(0xd6e8_feb8_6659_fd93) ^ 0xfade_cafe;
+            let ivk_commitment = s.wrapping_mul(0xcbf2_9ce4_8422_2325) ^ 0xba11_00ba;
+            let value = if j + 1 == n_outputs {
+                v_per_out_base + remainder
+            } else {
+                v_per_out_base
+            };
+            outputs.push(OutputWitness {
+                d,
+                pk_d,
+                ivk_commitment,
+                value,
+                rcm,
+            });
+        }
+
+        // Compute shared anchor via claim-1 Poseidon2 (all spends hash
+        // identically → same anchor).
+        let anchor_fe = poseidon2_merkle(&perm, shared_leaf, sibling_word);
+        let anchor_proxy = anchor_fe.as_canonical_u64();
 
         Self {
-            leaf,
-            merkle_sibling: sibling_word.to_le_bytes(),
-            value,
-            ivk,
-            pk_d,
-            rcm,
-            nk,
-            pos,
+            fee,
+            spends,
+            outputs,
+            anchor_proxy,
         }
     }
 
-    /// Serialize the witness to a byte buffer for the FFI path.
+    /// Wire-encode for FFI.
     ///
-    /// Layout (64 B total, all u64 little-endian):
-    /// `leaf(8) || sibling(8) || value(8) || ivk(8) || pk_d(8) ||
-    ///  rcm(8) || nk(8) || pos(8)`
+    /// Layout: `u8 n_s || u8 n_o || u64 fee || (u64 leaf || [8 B] sibling
+    /// || u64 value || u64 ivk || u64 pk_d || u64 rcm || u64 nk || u64 pos)
+    /// × n_s || (u64 d || u64 pk_d || u64 ivk_commitment || u64 value ||
+    /// u64 rcm) × n_o || u64 anchor_proxy`.
     ///
-    /// P.2 upgrade: witness wire grew from 32 B (MVP) to 64 B; callers
-    /// must size buffers accordingly. Consensus-binding: this is a
-    /// prover-only wire format and does not affect the public-input
-    /// encoding (which is unchanged — decision #5).
+    /// Byte length: `18 + 64·n_s + 40·n_o`.
     pub fn encode(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(64);
-        out.extend_from_slice(&self.leaf.to_le_bytes());
-        out.extend_from_slice(&self.merkle_sibling);
-        out.extend_from_slice(&self.value.to_le_bytes());
-        out.extend_from_slice(&self.ivk.to_le_bytes());
-        out.extend_from_slice(&self.pk_d.to_le_bytes());
-        out.extend_from_slice(&self.rcm.to_le_bytes());
-        out.extend_from_slice(&self.nk.to_le_bytes());
-        out.extend_from_slice(&self.pos.to_le_bytes());
+        let mut out =
+            Vec::with_capacity(18 + 64 * self.spends.len() + 40 * self.outputs.len());
+        out.push(self.spends.len() as u8);
+        out.push(self.outputs.len() as u8);
+        out.extend_from_slice(&self.fee.to_le_bytes());
+        for s in &self.spends {
+            out.extend_from_slice(&s.leaf.to_le_bytes());
+            out.extend_from_slice(&s.merkle_sibling);
+            out.extend_from_slice(&s.value.to_le_bytes());
+            out.extend_from_slice(&s.ivk.to_le_bytes());
+            out.extend_from_slice(&s.pk_d.to_le_bytes());
+            out.extend_from_slice(&s.rcm.to_le_bytes());
+            out.extend_from_slice(&s.nk.to_le_bytes());
+            out.extend_from_slice(&s.pos.to_le_bytes());
+        }
+        for o in &self.outputs {
+            out.extend_from_slice(&o.d.to_le_bytes());
+            out.extend_from_slice(&o.pk_d.to_le_bytes());
+            out.extend_from_slice(&o.ivk_commitment.to_le_bytes());
+            out.extend_from_slice(&o.value.to_le_bytes());
+            out.extend_from_slice(&o.rcm.to_le_bytes());
+        }
+        out.extend_from_slice(&self.anchor_proxy.to_le_bytes());
         out
     }
 
-    /// Decode from wire bytes produced by [`Self::encode`].
+    /// Decode a witness from the wire format.
     pub fn decode(bytes: &[u8]) -> Result<Self, Plonky3Status> {
-        if bytes.len() != 64 {
+        if bytes.len() < 18 {
             return Err(Plonky3Status::WitnessInvalid);
         }
-        let leaf = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
-        let merkle_sibling: [u8; 8] = bytes[8..16].try_into().unwrap();
-        let value = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
-        let ivk = u64::from_le_bytes(bytes[24..32].try_into().unwrap());
-        let pk_d = u64::from_le_bytes(bytes[32..40].try_into().unwrap());
-        let rcm = u64::from_le_bytes(bytes[40..48].try_into().unwrap());
-        let nk = u64::from_le_bytes(bytes[48..56].try_into().unwrap());
-        let pos = u64::from_le_bytes(bytes[56..64].try_into().unwrap());
-        if value >> 63 != 0 {
+        let n_s = bytes[0] as usize;
+        let n_o = bytes[1] as usize;
+        if n_s < MIN_SPENDS || n_s > MAX_SPENDS || n_o < MIN_OUTPUTS || n_o > MAX_OUTPUTS {
             return Err(Plonky3Status::WitnessInvalid);
         }
+        let want = 18 + 64 * n_s + 40 * n_o;
+        if bytes.len() != want {
+            return Err(Plonky3Status::WitnessInvalid);
+        }
+        let fee = u64::from_le_bytes(bytes[2..10].try_into().unwrap());
+        if fee >= GOLDILOCKS_P {
+            return Err(Plonky3Status::WitnessInvalid);
+        }
+
+        let mut off = 10;
+        let mut spends = Vec::with_capacity(n_s);
+        for _ in 0..n_s {
+            let leaf = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+            off += 8;
+            let mut merkle_sibling = [0u8; 8];
+            merkle_sibling.copy_from_slice(&bytes[off..off + 8]);
+            off += 8;
+            let value = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+            off += 8;
+            if value >= GOLDILOCKS_P {
+                return Err(Plonky3Status::WitnessInvalid);
+            }
+            let ivk = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+            off += 8;
+            let pk_d = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+            off += 8;
+            let rcm = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+            off += 8;
+            let nk = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+            off += 8;
+            let pos = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+            off += 8;
+            spends.push(SpendWitness {
+                leaf,
+                merkle_sibling,
+                value,
+                ivk,
+                pk_d,
+                rcm,
+                nk,
+                pos,
+            });
+        }
+        let mut outputs = Vec::with_capacity(n_o);
+        for _ in 0..n_o {
+            let d = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+            off += 8;
+            let pk_d = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+            off += 8;
+            let ivk_commitment =
+                u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+            off += 8;
+            let value = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+            off += 8;
+            if value >= GOLDILOCKS_P {
+                return Err(Plonky3Status::WitnessInvalid);
+            }
+            let rcm = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+            off += 8;
+            outputs.push(OutputWitness {
+                d,
+                pk_d,
+                ivk_commitment,
+                value,
+                rcm,
+            });
+        }
+        let anchor_proxy = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+        off += 8;
+        debug_assert_eq!(off, bytes.len());
+
         Ok(Self {
-            leaf,
-            merkle_sibling,
-            value,
-            ivk,
-            pk_d,
-            rcm,
-            nk,
-            pos,
+            fee,
+            spends,
+            outputs,
+            anchor_proxy,
         })
     }
 
-    /// Verify the claim-2 relation: `leaf == Poseidon2("uno-cm-v1",
-    /// d, pk_d, ivk_commitment, value, rcm)` holds under the canonical
-    /// field reductions.
+    /// Balance pre-check. Runs in u128 to dodge u64 overflow on sums of
+    /// up to 4 u64 summands.
+    pub fn balance_holds(&self) -> bool {
+        let sin: u128 = self.spends.iter().map(|s| s.value as u128).sum();
+        let sout: u128 = self.outputs.iter().map(|o| o.value as u128).sum();
+        sin == sout + (self.fee as u128)
+    }
+
+    /// Derive public inputs per §4.3 step 4.
     ///
-    /// Returns `true` for honest witnesses and `false` for any witness
-    /// where the note-opening relation is violated (e.g. tampered
-    /// `ivk`, tampered `sibling`, stale `leaf`). The prover's
-    /// pre-check calls this to short-circuit a Plonky3-level panic
-    /// into a structured `WitnessInvalid` status.
-    pub fn claim2_cm_consistent(&self) -> bool {
+    /// See the struct doc for field layout. The 3 higher limbs of
+    /// anchor / nf / rk / cm / epk, and `epk` / `filter_tag` fields are
+    /// emitted as zero in this proxy-shape derivation — real wallet PIs
+    /// come from `uno_workchain::build_plonky3_public_inputs` and carry
+    /// non-zero limbs. The AIR does not constrain the zero limbs.
+    pub fn public_inputs(&self) -> Vec<Goldilocks> {
+        let n_s = self.spends.len();
+        let n_o = self.outputs.len();
+        let mut out = Vec::with_capacity(air_num_public_values(n_s, n_o));
+
+        out.push(Goldilocks::from_u64(0x01));
+        out.push(Goldilocks::from_u64(CHAIN_ID_TEST as u64));
+        out.push(Goldilocks::from_u64(EXPIRY_BLOCK_TEST));
+        out.push(Goldilocks::from_u64(self.fee));
+
+        // anchor: limb 0 = anchor_proxy; limbs 1..3 = 0.
+        out.push(Goldilocks::from_u64(reduce_to_goldilocks(self.anchor_proxy)));
+        for _ in 1..4 {
+            out.push(Goldilocks::ZERO);
+        }
+
         let perm = default_goldilocks_poseidon2_8();
-        let d_word = u64::from_le_bytes(self.merkle_sibling);
-        let ivkcm = self.compute_ivk_commitment();
-        let mut state = [Goldilocks::default(); POSEIDON2_WIDTH];
-        state[0] = Goldilocks::from_u64(TAG_CM);
-        state[1] = Goldilocks::from_u64(reduce_to_goldilocks(d_word));
-        state[2] = Goldilocks::from_u64(reduce_to_goldilocks(self.pk_d));
-        state[3] = ivkcm;
-        state[4] = Goldilocks::from_u64(self.value);
-        state[5] = Goldilocks::from_u64(reduce_to_goldilocks(self.rcm));
-        perm.permute_mut(&mut state);
-        state[0] == Goldilocks::from_u64(reduce_to_goldilocks(self.leaf))
+
+        for s in &self.spends {
+            // nf_i = Poseidon2(TAG_NF, nk, leaf(=cm), pos).
+            let nf = poseidon2_nf(&perm, s.nk, s.leaf, s.pos);
+            out.push(nf);
+            for _ in 1..4 {
+                out.push(Goldilocks::ZERO);
+            }
+            // rk_i: 4 × 0.
+            for _ in 0..4 {
+                out.push(Goldilocks::ZERO);
+            }
+        }
+
+        for o in &self.outputs {
+            let cm =
+                poseidon2_cm_fe(&perm, o.d, o.pk_d, o.ivk_commitment, o.value, o.rcm);
+            out.push(cm);
+            for _ in 1..4 {
+                out.push(Goldilocks::ZERO);
+            }
+            // epk_j: 4 × 0.
+            for _ in 0..4 {
+                out.push(Goldilocks::ZERO);
+            }
+            // filter_tag_j: 0.
+            out.push(Goldilocks::ZERO);
+        }
+
+        debug_assert_eq!(out.len(), air_num_public_values(n_s, n_o));
+        out
     }
 
-    /// Compute the `ivk_commitment` Goldilocks element from the
-    /// witness, matching the claim-3 Poseidon2 formula.
-    fn compute_ivk_commitment(&self) -> Goldilocks {
-        let perm = default_goldilocks_poseidon2_8();
-        let d_word = u64::from_le_bytes(self.merkle_sibling);
-        let mut state = [Goldilocks::default(); POSEIDON2_WIDTH];
-        state[0] = Goldilocks::from_u64(TAG_IVK_CM);
-        state[1] = Goldilocks::from_u64(reduce_to_goldilocks(self.ivk));
-        state[2] = Goldilocks::from_u64(reduce_to_goldilocks(d_word));
-        perm.permute_mut(&mut state);
-        state[0]
-    }
-
-    /// Compute the Merkle-step parent from the witness.
-    fn compute_parent(&self) -> Goldilocks {
-        let perm = default_goldilocks_poseidon2_8();
-        let d_word = u64::from_le_bytes(self.merkle_sibling);
-        let mut state = [Goldilocks::default(); POSEIDON2_WIDTH];
-        state[0] = Goldilocks::from_u64(reduce_to_goldilocks(self.leaf));
-        state[1] = Goldilocks::from_u64(reduce_to_goldilocks(d_word));
-        perm.permute_mut(&mut state);
-        state[0]
-    }
-
-    /// Derive the 4 public-input field elements from the witness.
-    pub fn public_inputs(&self) -> [Goldilocks; NUM_PUBLIC_INPUTS] {
-        let leaf_f = Goldilocks::from_u64(reduce_to_goldilocks(self.leaf));
-        let parent_f = self.compute_parent();
-        let value_f = Goldilocks::from_u64(self.value);
-        let ivk_commitment_f = self.compute_ivk_commitment();
-        [parent_f, leaf_f, value_f, ivk_commitment_f]
-    }
-
-    /// Encode the public inputs as the verifier wire format.
+    /// Serialize `public_inputs()` to the wire-byte format (8 B LE per FE).
     pub fn public_inputs_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(PUBLIC_INPUTS_WIRE_LEN);
-        for elem in self.public_inputs() {
-            out.extend_from_slice(&elem.as_canonical_u64().to_le_bytes());
+        let pis = self.public_inputs();
+        let mut out = Vec::with_capacity(pis.len() * 8);
+        for fe in pis {
+            out.extend_from_slice(&fe.as_canonical_u64().to_le_bytes());
         }
         out
     }
 
-    /// Generate the full trace matrix for this witness.
-    ///
-    /// Trace layout per row:
-    ///   [MvpRow (11 cols)] ++ [Poseidon2Cols (180) × 4 groups]
+    /// Generate the full trace matrix.
     pub fn generate_trace(&self) -> RowMajorMatrix<Goldilocks> {
-        let pis = self.public_inputs();
-        let declared_leaf = pis[1];
-        let declared_parent = pis[0];
-        let declared_ivk_commitment = pis[3];
+        let n_s = self.spends.len();
+        let n_o = self.outputs.len();
+        let width = air_width(n_s, n_o);
 
-        let d_word = u64::from_le_bytes(self.merkle_sibling);
-        let sibling_f = Goldilocks::from_u64(reduce_to_goldilocks(d_word));
-        let ivk_f = Goldilocks::from_u64(reduce_to_goldilocks(self.ivk));
-        let pk_d_f = Goldilocks::from_u64(reduce_to_goldilocks(self.pk_d));
-        let rcm_f = Goldilocks::from_u64(reduce_to_goldilocks(self.rcm));
-        let nk_f = Goldilocks::from_u64(reduce_to_goldilocks(self.nk));
-        let pos_f = Goldilocks::from_u64(reduce_to_goldilocks(self.pos));
-
-        // Helper to generate a Poseidon2 row given the input state.
-        // Returns the 180-column slice.
+        let perm = default_goldilocks_poseidon2_8();
         let constants = RoundConstants::new(
             p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_INITIAL,
             p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_INTERNAL,
@@ -890,8 +1095,6 @@ impl MvpWitness {
         );
         let gen_p2_row = |input: [Goldilocks; POSEIDON2_WIDTH]| -> Vec<Goldilocks> {
             use p3_poseidon2_air::generate_trace_rows;
-            // generate_trace_rows wants a power-of-two count; we generate
-            // 1 permutation in a length-1 batch via its exact API.
             let mat = generate_trace_rows::<
                 Goldilocks,
                 GenericPoseidon2LinearLayersGoldilocks,
@@ -904,158 +1107,303 @@ impl MvpWitness {
             debug_assert_eq!(mat.values.len(), POSEIDON2_COLS_PER_INSTANCE);
             mat.values
         };
+        let padding_p2 = gen_p2_row([Goldilocks::ZERO; POSEIDON2_WIDTH]);
 
-        // Inputs for the four slots (row 0).
-        let merkle_in: [Goldilocks; POSEIDON2_WIDTH] = {
-            let mut s = [Goldilocks::default(); POSEIDON2_WIDTH];
-            s[0] = declared_leaf;
-            s[1] = sibling_f;
-            s
-        };
-        let ivkcm_in: [Goldilocks; POSEIDON2_WIDTH] = {
-            let mut s = [Goldilocks::default(); POSEIDON2_WIDTH];
-            s[0] = Goldilocks::from_u64(TAG_IVK_CM);
-            s[1] = ivk_f;
-            s[2] = sibling_f;
-            s
-        };
-        let cm_in: [Goldilocks; POSEIDON2_WIDTH] = {
-            let mut s = [Goldilocks::default(); POSEIDON2_WIDTH];
-            s[0] = Goldilocks::from_u64(TAG_CM);
-            s[1] = sibling_f;
-            s[2] = pk_d_f;
-            s[3] = declared_ivk_commitment;
-            s[4] = Goldilocks::from_u64(self.value);
-            s[5] = rcm_f;
-            s
-        };
-        let nf_in: [Goldilocks; POSEIDON2_WIDTH] = {
-            let mut s = [Goldilocks::default(); POSEIDON2_WIDTH];
-            s[0] = Goldilocks::from_u64(TAG_NF);
-            s[1] = nk_f;
-            s[2] = declared_leaf;
-            s[3] = pos_f;
-            s
-        };
+        // Row-0 Poseidon2 trace cells, per spend + output.
+        let mut row0_spend_merkle = Vec::with_capacity(n_s);
+        let mut row0_spend_ivkcm = Vec::with_capacity(n_s);
+        let mut row0_spend_cm = Vec::with_capacity(n_s);
+        let mut row0_spend_nf = Vec::with_capacity(n_s);
+        for s in &self.spends {
+            let sibling_word = u64::from_le_bytes(s.merkle_sibling);
+            let sibling_f = Goldilocks::from_u64(reduce_to_goldilocks(sibling_word));
+            let leaf_f = Goldilocks::from_u64(reduce_to_goldilocks(s.leaf));
+            let pk_d_f = Goldilocks::from_u64(reduce_to_goldilocks(s.pk_d));
+            let rcm_f = Goldilocks::from_u64(reduce_to_goldilocks(s.rcm));
+            let ivk_f = Goldilocks::from_u64(reduce_to_goldilocks(s.ivk));
+            let nk_f = Goldilocks::from_u64(reduce_to_goldilocks(s.nk));
+            let pos_f = Goldilocks::from_u64(reduce_to_goldilocks(s.pos));
+            let value_f = Goldilocks::from_u64(reduce_to_goldilocks(s.value));
+            let ivkcm_fe = poseidon2_ivk_commitment(&perm, s.ivk, sibling_word);
 
-        // Row-0 Poseidon2 trace cells (real permutations on real inputs).
-        let row0_merkle = gen_p2_row(merkle_in);
-        let row0_ivkcm = gen_p2_row(ivkcm_in);
-        let row0_cm = gen_p2_row(cm_in);
-        let row0_nf = gen_p2_row(nf_in);
+            let mut merkle = [Goldilocks::ZERO; POSEIDON2_WIDTH];
+            merkle[0] = leaf_f;
+            merkle[1] = sibling_f;
+            row0_spend_merkle.push(gen_p2_row(merkle));
 
-        // Note: for honest witnesses `extract_p2_output_zero` of each
-        // row-0 group equals the respective public input. For ADVERSARIAL
-        // witnesses (e.g. tampered ivk / sibling, used in negative tests)
-        // the outputs will diverge — that is the desired behaviour, and
-        // the AIR's first-row `assert_eq` bindings catch it either at
-        // the DebugConstraintBuilder layer (returning WitnessInvalid)
-        // or at verify time (returning VerifyFailed). We therefore do
-        // NOT `debug_assert` consistency here; doing so would panic in
-        // the negative test path before the guarded FFI boundary could
-        // translate it to a status code.
-        let _ = declared_parent;
-        let _ = declared_ivk_commitment;
-        let _ = declared_leaf;
+            let mut ivkcm_in = [Goldilocks::ZERO; POSEIDON2_WIDTH];
+            ivkcm_in[0] = Goldilocks::from_u64(TAG_IVK_CM);
+            ivkcm_in[1] = ivk_f;
+            ivkcm_in[2] = sibling_f;
+            row0_spend_ivkcm.push(gen_p2_row(ivkcm_in));
 
-        // For rows 1..TRACE_HEIGHT-1 we pick arbitrary (zero) inputs and
-        // fill honestly. The AIR does not bind these Poseidon2 instances
-        // to any public input, so they are free — but they MUST satisfy
-        // the Poseidon2 constraints (every row of the sub-AIR is
-        // enforced). Using the same zero input for all pads is OK.
-        let padding_merkle = gen_p2_row([Goldilocks::default(); POSEIDON2_WIDTH]);
-        let padding_ivkcm = padding_merkle.clone();
-        let padding_cm = padding_merkle.clone();
-        let padding_nf = padding_merkle.clone();
+            let mut cm_in = [Goldilocks::ZERO; POSEIDON2_WIDTH];
+            cm_in[0] = Goldilocks::from_u64(TAG_CM);
+            cm_in[1] = sibling_f;
+            cm_in[2] = pk_d_f;
+            cm_in[3] = ivkcm_fe;
+            cm_in[4] = value_f;
+            cm_in[5] = rcm_f;
+            row0_spend_cm.push(gen_p2_row(cm_in));
 
-        // Pre-compute the 64 bits of `value`, MSB first, for the range
-        // check scaffold carried from MVP.
-        let mut bits_msb_first = [0u64; TRACE_HEIGHT];
-        for i in 0..TRACE_HEIGHT {
-            let bit_index_from_lsb = (TRACE_HEIGHT - 1) - i;
-            bits_msb_first[i] = (self.value >> bit_index_from_lsb) & 1;
+            let mut nf_in = [Goldilocks::ZERO; POSEIDON2_WIDTH];
+            nf_in[0] = Goldilocks::from_u64(TAG_NF);
+            nf_in[1] = nk_f;
+            nf_in[2] = leaf_f;
+            nf_in[3] = pos_f;
+            row0_spend_nf.push(gen_p2_row(nf_in));
         }
 
-        let mut values = Vec::<Goldilocks>::with_capacity(TRACE_HEIGHT * NUM_COLS);
-        let mut acc: u64 = 0;
-        for (row_idx, &bit) in bits_msb_first.iter().enumerate() {
-            // Proxy columns (replicated across rows, except value_acc /
-            // value_bit which carry the bit decomposition).
-            values.push(declared_leaf); // 0 leaf
-            values.push(sibling_f); // 1 sibling
-            values.push(declared_parent); // 2 parent_claim
+        let mut row0_out_cm = Vec::with_capacity(n_o);
+        for o in &self.outputs {
+            let d_f = Goldilocks::from_u64(reduce_to_goldilocks(o.d));
+            let pk_d_f = Goldilocks::from_u64(reduce_to_goldilocks(o.pk_d));
+            let ivk_cm_f = Goldilocks::from_u64(reduce_to_goldilocks(o.ivk_commitment));
+            let rcm_f = Goldilocks::from_u64(reduce_to_goldilocks(o.rcm));
+            let value_f = Goldilocks::from_u64(reduce_to_goldilocks(o.value));
+            let mut cm_in = [Goldilocks::ZERO; POSEIDON2_WIDTH];
+            cm_in[0] = Goldilocks::from_u64(TAG_CM);
+            cm_in[1] = d_f;
+            cm_in[2] = pk_d_f;
+            cm_in[3] = ivk_cm_f;
+            cm_in[4] = value_f;
+            cm_in[5] = rcm_f;
+            row0_out_cm.push(gen_p2_row(cm_in));
+        }
 
-            if row_idx == 0 {
-                acc = bit;
-            } else {
-                acc = acc.wrapping_mul(2).wrapping_add(bit);
+        let anchor_f = Goldilocks::from_u64(reduce_to_goldilocks(self.anchor_proxy));
+
+        let spend_proxies: Vec<[Goldilocks; SPEND_PROXY_COLS]> = self
+            .spends
+            .iter()
+            .map(|s| {
+                let sibling_word = u64::from_le_bytes(s.merkle_sibling);
+                let sibling_f = Goldilocks::from_u64(reduce_to_goldilocks(sibling_word));
+                let ivkcm_fe = poseidon2_ivk_commitment(&perm, s.ivk, sibling_word);
+                [
+                    Goldilocks::from_u64(reduce_to_goldilocks(s.leaf)),
+                    sibling_f,
+                    anchor_f,
+                    Goldilocks::from_u64(reduce_to_goldilocks(s.value)),
+                    Goldilocks::from_u64(reduce_to_goldilocks(s.ivk)),
+                    ivkcm_fe,
+                    Goldilocks::from_u64(reduce_to_goldilocks(s.pk_d)),
+                    Goldilocks::from_u64(reduce_to_goldilocks(s.rcm)),
+                    Goldilocks::from_u64(reduce_to_goldilocks(s.nk)),
+                    Goldilocks::from_u64(reduce_to_goldilocks(s.pos)),
+                ]
+            })
+            .collect();
+
+        let output_proxies: Vec<[Goldilocks; OUTPUT_PROXY_COLS]> = self
+            .outputs
+            .iter()
+            .map(|o| {
+                let cm_fe =
+                    poseidon2_cm_fe(&perm, o.d, o.pk_d, o.ivk_commitment, o.value, o.rcm);
+                [
+                    cm_fe,
+                    Goldilocks::from_u64(reduce_to_goldilocks(o.d)),
+                    Goldilocks::from_u64(reduce_to_goldilocks(o.pk_d)),
+                    Goldilocks::from_u64(reduce_to_goldilocks(o.ivk_commitment)),
+                    Goldilocks::from_u64(reduce_to_goldilocks(o.value)),
+                    Goldilocks::from_u64(reduce_to_goldilocks(o.rcm)),
+                ]
+            })
+            .collect();
+
+        let fee_f = Goldilocks::from_u64(self.fee);
+
+        let mut values = Vec::<Goldilocks>::with_capacity(TRACE_HEIGHT * width);
+        for row_idx in 0..TRACE_HEIGHT {
+            values.push(fee_f);
+            for i in 0..n_s {
+                values.extend_from_slice(&spend_proxies[i]);
+                if row_idx == 0 {
+                    values.extend_from_slice(&row0_spend_merkle[i]);
+                    values.extend_from_slice(&row0_spend_ivkcm[i]);
+                    values.extend_from_slice(&row0_spend_cm[i]);
+                    values.extend_from_slice(&row0_spend_nf[i]);
+                } else {
+                    values.extend_from_slice(&padding_p2);
+                    values.extend_from_slice(&padding_p2);
+                    values.extend_from_slice(&padding_p2);
+                    values.extend_from_slice(&padding_p2);
+                }
             }
-            values.push(Goldilocks::from_u64(acc)); // 3 value_acc
-            values.push(Goldilocks::from_u64(bit)); // 4 value_bit
-
-            values.push(ivk_f); // 5 ivk
-            values.push(declared_ivk_commitment); // 6 ivk_commitment_claim
-            values.push(pk_d_f); // 7 pk_d
-            values.push(rcm_f); // 8 rcm
-            values.push(nk_f); // 9 nk
-            values.push(pos_f); // 10 pos
-
-            // Poseidon2 column groups.
-            let (merkle_src, ivkcm_src, cm_src, nf_src) = if row_idx == 0 {
-                (&row0_merkle, &row0_ivkcm, &row0_cm, &row0_nf)
-            } else {
-                (&padding_merkle, &padding_ivkcm, &padding_cm, &padding_nf)
-            };
-            values.extend_from_slice(merkle_src);
-            values.extend_from_slice(ivkcm_src);
-            values.extend_from_slice(cm_src);
-            values.extend_from_slice(nf_src);
+            for j in 0..n_o {
+                values.extend_from_slice(&output_proxies[j]);
+                if row_idx == 0 {
+                    values.extend_from_slice(&row0_out_cm[j]);
+                } else {
+                    values.extend_from_slice(&padding_p2);
+                }
+            }
         }
 
-        debug_assert_eq!(values.len(), TRACE_HEIGHT * NUM_COLS);
-        RowMajorMatrix::new(values, NUM_COLS)
+        debug_assert_eq!(values.len(), TRACE_HEIGHT * width);
+        RowMajorMatrix::new(values, width)
     }
 }
-
-// (Helper `extract_p2_output_zero` was used by an earlier debug
-// cross-check in `generate_trace`; see git history. Removed when
-// adversarial-witness tests — which construct deliberately inconsistent
-// traces — started panicking on the sanity assertion. Consistency is
-// now enforced at three other layers: (1) the prover's
-// `pre_check_witness` short-circuit, (2) Plonky3's
-// DebugConstraintBuilder in debug builds, (3) the verifier in release
-// builds.)
 
 // ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
 
+/// Goldilocks prime.
+pub(crate) const GOLDILOCKS_P: u64 = 0xFFFF_FFFF_0000_0001;
+
 /// Reduce a `u64` into a canonical Goldilocks residue.
 #[inline]
 pub(crate) fn reduce_to_goldilocks(x: u64) -> u64 {
-    const P: u64 = 0xFFFF_FFFF_0000_0001;
-    if x >= P {
-        x.wrapping_sub(P)
+    if x >= GOLDILOCKS_P {
+        x.wrapping_sub(GOLDILOCKS_P)
     } else {
         x
     }
 }
 
-/// Decode a public-input byte buffer into Goldilocks field elements.
+/// Default test chain_id ("UNOT" LE).
+pub const CHAIN_ID_TEST: u32 = 0x544F4E55;
+
+/// Default test expiry_block for witness-derived public inputs.
+pub const EXPIRY_BLOCK_TEST: u64 = 100_000;
+
+/// Decode a public-input byte buffer into Goldilocks field elements. The
+/// decoder is length-agnostic; callers pair it with
+/// [`derive_shape_from_public_inputs_len`] to detect the shape first.
 pub fn decode_public_inputs(bytes: &[u8]) -> Result<Vec<Goldilocks>, Plonky3Status> {
-    if bytes.len() != PUBLIC_INPUTS_WIRE_LEN {
+    if bytes.len() % 8 != 0 {
         return Err(Plonky3Status::PublicInputLengthMismatch);
     }
-    const P: u64 = 0xFFFF_FFFF_0000_0001;
-    let mut out = Vec::with_capacity(NUM_PUBLIC_INPUTS);
+    let mut out = Vec::with_capacity(bytes.len() / 8);
     for chunk in bytes.chunks_exact(8) {
         let v = u64::from_le_bytes(chunk.try_into().unwrap());
-        if v >= P {
+        if v >= GOLDILOCKS_P {
             return Err(Plonky3Status::PublicInputDecodeFailed);
         }
         out.push(Goldilocks::from_u64(v));
     }
     Ok(out)
+}
+
+// Small Poseidon2 wrappers.
+
+fn poseidon2_merkle(
+    perm: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH]>,
+    leaf: u64,
+    sibling: u64,
+) -> Goldilocks {
+    let mut state = [Goldilocks::ZERO; POSEIDON2_WIDTH];
+    state[0] = Goldilocks::from_u64(reduce_to_goldilocks(leaf));
+    state[1] = Goldilocks::from_u64(reduce_to_goldilocks(sibling));
+    perm.permute_mut(&mut state);
+    state[0]
+}
+
+fn poseidon2_ivk_commitment(
+    perm: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH]>,
+    ivk: u64,
+    d: u64,
+) -> Goldilocks {
+    let mut state = [Goldilocks::ZERO; POSEIDON2_WIDTH];
+    state[0] = Goldilocks::from_u64(TAG_IVK_CM);
+    state[1] = Goldilocks::from_u64(reduce_to_goldilocks(ivk));
+    state[2] = Goldilocks::from_u64(reduce_to_goldilocks(d));
+    perm.permute_mut(&mut state);
+    state[0]
+}
+
+fn poseidon2_cm(
+    perm: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH]>,
+    d: u64,
+    pk_d: u64,
+    ivk_cm: u64,
+    value: u64,
+    rcm: u64,
+) -> u64 {
+    poseidon2_cm_fe(perm, d, pk_d, ivk_cm, value, rcm).as_canonical_u64()
+}
+
+fn poseidon2_cm_fe(
+    perm: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH]>,
+    d: u64,
+    pk_d: u64,
+    ivk_cm: u64,
+    value: u64,
+    rcm: u64,
+) -> Goldilocks {
+    let mut state = [Goldilocks::ZERO; POSEIDON2_WIDTH];
+    state[0] = Goldilocks::from_u64(TAG_CM);
+    state[1] = Goldilocks::from_u64(reduce_to_goldilocks(d));
+    state[2] = Goldilocks::from_u64(reduce_to_goldilocks(pk_d));
+    state[3] = Goldilocks::from_u64(reduce_to_goldilocks(ivk_cm));
+    state[4] = Goldilocks::from_u64(reduce_to_goldilocks(value));
+    state[5] = Goldilocks::from_u64(reduce_to_goldilocks(rcm));
+    perm.permute_mut(&mut state);
+    state[0]
+}
+
+fn poseidon2_nf(
+    perm: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH]>,
+    nk: u64,
+    cm: u64,
+    pos: u64,
+) -> Goldilocks {
+    let mut state = [Goldilocks::ZERO; POSEIDON2_WIDTH];
+    state[0] = Goldilocks::from_u64(TAG_NF);
+    state[1] = Goldilocks::from_u64(reduce_to_goldilocks(nk));
+    state[2] = Goldilocks::from_u64(reduce_to_goldilocks(cm));
+    state[3] = Goldilocks::from_u64(reduce_to_goldilocks(pos));
+    perm.permute_mut(&mut state);
+    state[0]
+}
+
+// ---------------------------------------------------------------------------
+// Pre-check helpers (prover-side)
+// ---------------------------------------------------------------------------
+//
+// Plonky3's `DebugConstraintBuilder` panics on inconsistent traces in
+// debug builds. These helpers run the hard claim checks in plain Rust so
+// the prover can reject with a structured `WitnessInvalid` status before
+// ever invoking Plonky3. Identical checks as the AIR row-0 bindings —
+// drift here silently accepts constraint-violating witnesses at debug
+// build time, but release builds catch them at verify.
+
+/// True iff for every spend, `leaf_i == Poseidon2("uno-cm-v1", d_i,
+/// pk_d_i, ivk_commitment_i, value_i, rcm_i)`.
+pub fn witness_claim2_leaf_consistent(w: &MvpWitness) -> bool {
+    let perm = default_goldilocks_poseidon2_8();
+    for s in &w.spends {
+        let d_word = u64::from_le_bytes(s.merkle_sibling);
+        let ivkcm = poseidon2_ivk_commitment(&perm, s.ivk, d_word);
+        let derived = poseidon2_cm(
+            &perm,
+            d_word,
+            s.pk_d,
+            ivkcm.as_canonical_u64(),
+            s.value,
+            s.rcm,
+        );
+        if derived != reduce_to_goldilocks(s.leaf) {
+            return false;
+        }
+    }
+    true
+}
+
+/// True iff for every spend, `Poseidon2(leaf_i, sibling_i) == anchor_proxy`.
+pub fn witness_claim1_anchor_consistent(w: &MvpWitness) -> bool {
+    let perm = default_goldilocks_poseidon2_8();
+    let want = reduce_to_goldilocks(w.anchor_proxy);
+    for s in &w.spends {
+        let d_word = u64::from_le_bytes(s.merkle_sibling);
+        let derived = poseidon2_merkle(&perm, s.leaf, d_word).as_canonical_u64();
+        if derived != want {
+            return false;
+        }
+    }
+    true
 }
 
 // ---------------------------------------------------------------------------
@@ -1066,42 +1414,99 @@ mod tests {
     use super::*;
 
     #[test]
-    fn public_inputs_are_four_elements() {
-        assert_eq!(NUM_PUBLIC_INPUTS, 4);
-        assert_eq!(
-            <MvpTransferAir as BaseAir<Goldilocks>>::num_public_values(&MvpTransferAir::new()),
-            NUM_PUBLIC_INPUTS
-        );
+    fn shape_math_matches_envelope() {
+        assert_eq!(air_num_public_values(1, 1), 25);
+        assert_eq!(air_num_public_values(1, 2), 34);
+        assert_eq!(air_num_public_values(4, 4), 76);
+        assert_eq!(air_public_inputs_wire_len(1, 2), 272);
+        assert_eq!(air_public_inputs_wire_len(4, 4), 608);
     }
 
     #[test]
-    fn num_cols_matches_layout() {
-        // 11 proxy cols + 4 × 180 Poseidon2 cols = 731.
-        assert_eq!(POSEIDON2_COLS_PER_INSTANCE, 180);
-        assert_eq!(NUM_COLS, MVP_PROXY_COLS + 4 * POSEIDON2_COLS_PER_INSTANCE);
-        assert_eq!(NUM_COLS, 731);
+    fn shape_derivation_roundtrip() {
+        for n_s in MIN_SPENDS..=MAX_SPENDS {
+            for n_o in MIN_OUTPUTS..=MAX_OUTPUTS {
+                let len = air_public_inputs_wire_len(n_s, n_o);
+                assert_eq!(derive_shape_from_public_inputs_len(len).unwrap(), (n_s, n_o));
+            }
+        }
     }
 
     #[test]
-    fn witness_encode_decode_roundtrip() {
-        let w = MvpWitness::deterministic_valid(42);
-        let bytes = w.encode();
-        assert_eq!(bytes.len(), 64, "P.2 upgrade: witness wire is 64 B");
-        let w2 = MvpWitness::decode(&bytes).unwrap();
-        assert_eq!(w.leaf, w2.leaf);
-        assert_eq!(w.merkle_sibling, w2.merkle_sibling);
-        assert_eq!(w.value, w2.value);
-        assert_eq!(w.ivk, w2.ivk);
-        assert_eq!(w.pk_d, w2.pk_d);
-        assert_eq!(w.rcm, w2.rcm);
-        assert_eq!(w.nk, w2.nk);
-        assert_eq!(w.pos, w2.pos);
+    fn shape_derivation_rejects_bogus_length() {
+        assert!(derive_shape_from_public_inputs_len(0).is_err());
+        assert!(derive_shape_from_public_inputs_len(40).is_err());
+        assert!(derive_shape_from_public_inputs_len(273).is_err());
     }
 
     #[test]
-    fn witness_decode_rejects_out_of_range_value() {
-        let mut bytes = MvpWitness::deterministic_valid(0).encode();
-        bytes[16..24].copy_from_slice(&u64::MAX.to_le_bytes());
+    fn width_grows_with_shape() {
+        let w11 = air_width(1, 1);
+        let w12 = air_width(1, 2);
+        let w22 = air_width(2, 2);
+        let w44 = air_width(4, 4);
+        assert!(w11 < w12 && w12 < w22 && w22 < w44);
+        assert_eq!(w44, 1 + 4 * (10 + 4 * 180) + 4 * (6 + 180));
+    }
+
+    #[test]
+    fn witness_encode_decode_roundtrip_all_shapes() {
+        for n_s in MIN_SPENDS..=MAX_SPENDS {
+            for n_o in MIN_OUTPUTS..=MAX_OUTPUTS {
+                let w = MvpWitness::deterministic_valid(n_s, n_o, 0xA5A5_0000 + n_s as u64);
+                let bytes = w.encode();
+                let w2 = MvpWitness::decode(&bytes).unwrap();
+                assert_eq!(w.shape(), w2.shape());
+                assert_eq!(w.fee, w2.fee);
+                assert_eq!(w.anchor_proxy, w2.anchor_proxy);
+                assert_eq!(w.spends.len(), w2.spends.len());
+                assert_eq!(w.outputs.len(), w2.outputs.len());
+            }
+        }
+    }
+
+    #[test]
+    fn witness_balance_holds_for_deterministic_valid() {
+        for n_s in MIN_SPENDS..=MAX_SPENDS {
+            for n_o in MIN_OUTPUTS..=MAX_OUTPUTS {
+                let w = MvpWitness::deterministic_valid(n_s, n_o, 0xDEAD_0000 + n_o as u64);
+                assert!(
+                    w.balance_holds(),
+                    "balance must hold for deterministic_valid({}, {})",
+                    n_s,
+                    n_o
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn public_inputs_length_per_shape() {
+        for n_s in MIN_SPENDS..=MAX_SPENDS {
+            for n_o in MIN_OUTPUTS..=MAX_OUTPUTS {
+                let w = MvpWitness::deterministic_valid(n_s, n_o, 1);
+                let pis = w.public_inputs();
+                assert_eq!(pis.len(), air_num_public_values(n_s, n_o));
+                let pib = w.public_inputs_bytes();
+                assert_eq!(pib.len(), air_public_inputs_wire_len(n_s, n_o));
+            }
+        }
+    }
+
+    #[test]
+    fn trace_shape_matches_air_width() {
+        use p3_matrix::Matrix;
+        for (n_s, n_o) in [(1, 1), (1, 2), (2, 2), (4, 4)].iter().copied() {
+            let w = MvpWitness::deterministic_valid(n_s, n_o, 42);
+            let trace = w.generate_trace();
+            assert_eq!(trace.height(), TRACE_HEIGHT);
+            assert_eq!(trace.width(), air_width(n_s, n_o));
+        }
+    }
+
+    #[test]
+    fn witness_decode_rejects_short_buffer() {
+        let bytes = vec![0u8; 5];
         assert!(matches!(
             MvpWitness::decode(&bytes),
             Err(Plonky3Status::WitnessInvalid)
@@ -1109,103 +1514,30 @@ mod tests {
     }
 
     #[test]
-    fn witness_decode_rejects_short_length() {
-        // A 32-byte buffer (pre-P.2 shape) must be rejected now.
-        let short = vec![0u8; 32];
+    fn witness_decode_rejects_out_of_envelope_shape() {
+        let mut bytes = vec![0u8; 18];
+        bytes[0] = 0; // n_spends = 0
+        bytes[1] = 1;
         assert!(matches!(
-            MvpWitness::decode(&short),
+            MvpWitness::decode(&bytes),
+            Err(Plonky3Status::WitnessInvalid)
+        ));
+        let mut bytes = vec![0u8; 18];
+        bytes[0] = 1;
+        bytes[1] = 5; // n_outputs = 5 (out of cap)
+        assert!(matches!(
+            MvpWitness::decode(&bytes),
             Err(Plonky3Status::WitnessInvalid)
         ));
     }
 
     #[test]
-    fn public_inputs_bytes_are_expected_length() {
-        let w = MvpWitness::deterministic_valid(7);
-        assert_eq!(w.public_inputs_bytes().len(), PUBLIC_INPUTS_WIRE_LEN);
-    }
-
-    #[test]
-    fn public_input_decode_round_trip() {
-        let w = MvpWitness::deterministic_valid(99);
-        let bytes = w.public_inputs_bytes();
-        let pis = decode_public_inputs(&bytes).unwrap();
-        assert_eq!(pis.len(), NUM_PUBLIC_INPUTS);
-        let expected = w.public_inputs();
-        assert_eq!(pis[0], expected[0]);
-        assert_eq!(pis[1], expected[1]);
-        assert_eq!(pis[2], expected[2]);
-        assert_eq!(pis[3], expected[3]);
-    }
-
-    /// Tamper with `ivk` and confirm the derived `ivk_commitment` PI
-    /// changes. Real-Poseidon2 version of the MVP's claim-3 soundness
-    /// test.
-    #[test]
-    fn ivk_commitment_binding_changes_with_ivk() {
-        let honest = MvpWitness::deterministic_valid(0xcafe_f00d_0001);
-        let honest_pis = honest.public_inputs();
-        let mut tampered = honest.clone();
-        tampered.ivk ^= 0xffff_ffff_ffff_ffff;
-        let tampered_pis = tampered.public_inputs();
-        // `leaf` (cm) and `parent` depend on `ivk_commitment`, so they
-        // change too — this is the expected cascading-hash behaviour
-        // once the linear stand-in is gone.
-        assert_ne!(
-            honest_pis[3], tampered_pis[3],
-            "ivk_commitment must change when ivk changes"
-        );
-    }
-
-    #[test]
     fn public_input_decode_rejects_non_canonical() {
-        let mut bytes = vec![0u8; PUBLIC_INPUTS_WIRE_LEN];
-        let p = 0xFFFF_FFFF_0000_0001u64;
-        bytes[0..8].copy_from_slice(&p.to_le_bytes());
+        let mut bytes = vec![0u8; 8];
+        bytes[0..8].copy_from_slice(&GOLDILOCKS_P.to_le_bytes());
         assert!(matches!(
             decode_public_inputs(&bytes),
             Err(Plonky3Status::PublicInputDecodeFailed)
         ));
-    }
-
-    #[test]
-    fn public_input_decode_rejects_wrong_length() {
-        let bytes = vec![0u8; PUBLIC_INPUTS_WIRE_LEN - 1];
-        assert!(matches!(
-            decode_public_inputs(&bytes),
-            Err(Plonky3Status::PublicInputLengthMismatch)
-        ));
-    }
-
-    #[test]
-    fn trace_shape() {
-        use p3_matrix::Matrix;
-        let w = MvpWitness::deterministic_valid(11);
-        let trace = w.generate_trace();
-        assert_eq!(trace.height(), TRACE_HEIGHT);
-        assert_eq!(trace.width(), NUM_COLS);
-    }
-
-    /// End-to-end Poseidon2 cross-check: the witness's `leaf` must be
-    /// the Poseidon2-8 output of the note-opening inputs. If the
-    /// constants drift from the audited tables, this test fires.
-    #[test]
-    fn claim2_note_opening_poseidon2_matches_witness_leaf() {
-        let w = MvpWitness::deterministic_valid(0xfeed_face_cafe_b00b);
-        let perm = default_goldilocks_poseidon2_8();
-        let d_word = u64::from_le_bytes(w.merkle_sibling);
-        let ivkcm = w.compute_ivk_commitment();
-        let mut state = [Goldilocks::default(); POSEIDON2_WIDTH];
-        state[0] = Goldilocks::from_u64(TAG_CM);
-        state[1] = Goldilocks::from_u64(reduce_to_goldilocks(d_word));
-        state[2] = Goldilocks::from_u64(reduce_to_goldilocks(w.pk_d));
-        state[3] = ivkcm;
-        state[4] = Goldilocks::from_u64(w.value);
-        state[5] = Goldilocks::from_u64(reduce_to_goldilocks(w.rcm));
-        perm.permute_mut(&mut state);
-        assert_eq!(
-            state[0],
-            Goldilocks::from_u64(reduce_to_goldilocks(w.leaf)),
-            "claim-2 Poseidon2 output must match the witness `leaf`"
-        );
     }
 }

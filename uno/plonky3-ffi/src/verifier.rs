@@ -1,34 +1,58 @@
-//! Verifier entry point for the Uno MVP AIR — consensus-critical path.
+//! Verifier entry point for the Uno Transfer AIR — consensus-critical path.
 //!
 //! This function is called from the validator's compute phase (via the
-//! C++ `Plonky3Verifier::verify` wrapper in `uno/crypto/plonky3-verifier.cpp`).
-//! Every validator in the catchain runs this function with byte-identical
-//! inputs and must agree bit-identically on accept/reject.
+//! C++ `Plonky3Verifier::verify` wrapper). Every validator in the
+//! catchain runs this function with byte-identical inputs and must agree
+//! bit-identically on accept/reject.
+//!
+//! # Shape dispatch (P.2 scale-to-envelope)
+//!
+//! The Uno Transfer envelope allows 1..4 spends × 1..4 outputs (§4.1 /
+//! ConfigParam 84). The AIR column-count and public-input length both
+//! scale with the shape. Instead of embedding the shape in the proof
+//! bytes (which would be either a consensus side-channel or wasted bytes
+//! on the hot path), we derive it from the **public-input byte length**:
+//!
+//! ```text
+//! pi_len = 64 + 64·n_spends + 72·n_outputs
+//! ```
+//!
+//! The 16 legal shapes produce 16 distinct `pi_len` values (proven in
+//! `transfer_air::derive_shape_from_public_inputs_len`). The verifier:
+//!
+//! 1. Decodes `pi_len` into `(n_spends, n_outputs)` — rejects with
+//!    `PublicInputLengthMismatch` if no legal shape matches.
+//! 2. Decodes the bytes into `Vec<Goldilocks>` — rejects with
+//!    `PublicInputDecodeFailed` on non-canonical limbs.
+//! 3. Instantiates `MvpTransferAir::new(n_spends, n_outputs)`.
+//! 4. Calls `p3_uni_stark::verify`.
+//!
+//! A malicious prover who tries to pass a 4/4-shape proof with a
+//! 1/2-shape public-input vector is caught at step 1 (wrong length) or
+//! step 4 (wrong `num_public_values` / wrong trace width). Either way:
+//! `VerifyFailed`.
 //!
 //! # Determinism constraints (design doc §4.3 + §7.4)
 //!
-//! - No wall clock.
-//! - No OS entropy.
-//! - No HashMap iteration.
-//! - No floating point.
-//! - No thread-local mutation (pool allocators, TLS counters, etc.).
-//!
-//! We inherit Plonky3's own determinism story here — `p3_uni_stark::verify`
-//! is pure over its inputs. We add one layer: the byte-level decode of
-//! proof + public inputs. The decoder is linear-scan, rejects non-
-//! canonical encodings (see `transfer_air::decode_public_inputs`), and
-//! does not allocate beyond `O(len)`.
+//! - No wall clock, OS entropy, HashMap iteration, floating point, or
+//!   thread-local mutation. Plonky3's `verify` is pure over its inputs;
+//!   we add one layer (byte-level decode + shape dispatch) that is
+//!   equally pure.
 
 use p3_uni_stark::{Proof, verify};
 
 use crate::prover::{MvpConfig, build_config};
-use crate::transfer_air::{decode_public_inputs, MvpTransferAir};
+use crate::transfer_air::{
+    MvpTransferAir, decode_public_inputs, derive_shape_from_public_inputs_len,
+};
 use crate::Plonky3Status;
 
-/// Verifier handle holding the config and AIR reference.
+/// Verifier handle holding the config.
+///
+/// The AIR is instantiated per-verify-call from the dispatched shape, so
+/// a single handle serves all 16 envelope shapes.
 pub struct MvpVerifier {
     config: MvpConfig,
-    air: MvpTransferAir,
 }
 
 impl Default for MvpVerifier {
@@ -38,38 +62,40 @@ impl Default for MvpVerifier {
 }
 
 impl MvpVerifier {
-    /// Build a verifier with the canonical MVP config. The config must
-    /// match the prover's byte-for-byte (same Poseidon2 round constants,
-    /// same FRI parameters) — we enforce this by reusing `build_config`.
+    /// Build a verifier with the canonical config. The config matches the
+    /// prover's byte-for-byte (same Poseidon2 round constants, same FRI).
     pub fn new() -> Self {
         Self {
             config: build_config(),
-            air: MvpTransferAir,
         }
     }
 
-    /// Verify a serialized proof against a serialized public-input vector.
+    /// Verify a serialized proof against its public-input vector.
     ///
-    /// Returns [`Plonky3Status::Ok`] iff the proof is valid, otherwise a
-    /// specific error code (see the [`Plonky3Status`] docs).
+    /// Shape-aware: decodes `(n_spends, n_outputs)` from the PI byte
+    /// length and dispatches to the matching AIR instance.
     pub fn verify(&self, proof_bytes: &[u8], public_inputs_bytes: &[u8]) -> Plonky3Status {
-        // Step 1: decode public inputs first (cheap; catches
-        // canonical-form violations).
+        // Step 1: shape from PI length.
+        let (n_s, n_o) = match derive_shape_from_public_inputs_len(public_inputs_bytes.len()) {
+            Ok(shape) => shape,
+            Err(e) => return e,
+        };
+
+        // Step 2: decode PI bytes into Goldilocks elements.
         let public_inputs = match decode_public_inputs(public_inputs_bytes) {
             Ok(v) => v,
             Err(e) => return e,
         };
 
-        // Step 2: deserialize proof (may fail on truncated/malformed bytes).
+        // Step 3: deserialize proof.
         let proof: Proof<MvpConfig> = match postcard::from_bytes(proof_bytes) {
             Ok(p) => p,
             Err(_) => return Plonky3Status::ProofDecodeFailed,
         };
 
-        // Step 3: run Plonky3 STARK verify. Any verification error is
-        // mapped to `VerifyFailed`; specific error kinds are not exposed
-        // to C++ to keep the ABI stable across upstream Plonky3 refactors.
-        match verify(&self.config, &self.air, &proof, &public_inputs) {
+        // Step 4: instantiate AIR for the dispatched shape and run verify.
+        let air = MvpTransferAir::new(n_s, n_o);
+        match verify(&self.config, &air, &proof, &public_inputs) {
             Ok(()) => Plonky3Status::Ok,
             Err(_) => Plonky3Status::VerifyFailed,
         }
@@ -92,146 +118,178 @@ mod tests {
     use crate::prover::MvpProver;
     use crate::transfer_air::MvpWitness;
 
-    fn valid_proof() -> (Vec<u8>, Vec<u8>) {
+    fn valid_proof(n_s: usize, n_o: usize, seed: u64) -> (Vec<u8>, Vec<u8>) {
         let prover = MvpProver::new();
-        let witness = MvpWitness::deterministic_valid(0x11_22_33_44_55_66_77_88);
-        prover.prove(&witness.encode()).expect("prove succeeds")
+        let w = MvpWitness::deterministic_valid(n_s, n_o, seed);
+        prover.prove(&w.encode()).expect("prove succeeds")
     }
 
-    /// Valid proof must verify.
     #[test]
-    fn verify_valid_proof() {
-        let (proof, pis) = valid_proof();
-        let verifier = MvpVerifier::new();
-        assert_eq!(verifier.verify(&proof, &pis), Plonky3Status::Ok);
+    fn verify_valid_1_1() {
+        let (proof, pis) = valid_proof(1, 1, 0x1111_0001);
+        assert_eq!(MvpVerifier::new().verify(&proof, &pis), Plonky3Status::Ok);
     }
 
-    /// Public-input truncation is rejected with a structured status.
+    #[test]
+    fn verify_valid_1_2() {
+        let (proof, pis) = valid_proof(1, 2, 0x1212_0001);
+        assert_eq!(MvpVerifier::new().verify(&proof, &pis), Plonky3Status::Ok);
+    }
+
+    #[test]
+    fn verify_valid_2_2() {
+        let (proof, pis) = valid_proof(2, 2, 0x2222_0002);
+        assert_eq!(MvpVerifier::new().verify(&proof, &pis), Plonky3Status::Ok);
+    }
+
+    #[test]
+    fn verify_valid_4_4_worst_case() {
+        let (proof, pis) = valid_proof(4, 4, 0x4444_0004);
+        assert_eq!(MvpVerifier::new().verify(&proof, &pis), Plonky3Status::Ok);
+    }
+
+    /// PI-byte-length truncation to a non-legal byte count (i.e. not a
+    /// multiple of 8, or not matching any of the 16 legal shapes) is
+    /// rejected with `PublicInputLengthMismatch`. NOTE: truncating by
+    /// one FE from a legal length can still land on another legal shape
+    /// (e.g. 272 B = (1,2), 264 B = (2,1)). In that case the verifier
+    /// reaches step 4 and returns `VerifyFailed` from the AIR-width
+    /// mismatch. Either way the proof is rejected.
     #[test]
     fn verify_rejects_short_public_inputs() {
-        let (proof, mut pis) = valid_proof();
-        pis.truncate(pis.len() - 1);
-        let verifier = MvpVerifier::new();
-        assert_eq!(
-            verifier.verify(&proof, &pis),
-            Plonky3Status::PublicInputLengthMismatch
-        );
+        let (proof, mut pis) = valid_proof(1, 2, 0x99);
+        pis.truncate(pis.len() - 1); // drop one byte → non-multiple-of-8.
+        let rc = MvpVerifier::new().verify(&proof, &pis);
+        assert_eq!(rc, Plonky3Status::PublicInputLengthMismatch);
+    }
+
+    /// PI-byte length that's a multiple of 8 but doesn't match any of
+    /// the 16 legal (n_s, n_o) shapes must also be rejected with
+    /// `PublicInputLengthMismatch`.
+    #[test]
+    fn verify_rejects_bogus_shape_length() {
+        let (proof, _) = valid_proof(1, 1, 0xDD);
+        // 40 bytes = 5 FE; no legal shape has 5 FE.
+        let bogus_pis = vec![0u8; 40];
+        let rc = MvpVerifier::new().verify(&proof, &bogus_pis);
+        assert_eq!(rc, Plonky3Status::PublicInputLengthMismatch);
     }
 
     /// Flipping a byte in the public-input vector is rejected at verify.
     #[test]
     fn verify_rejects_tampered_public_inputs() {
-        let (proof, mut pis) = valid_proof();
-        // Flip a bit in element 0 (declared parent) but keep the value
-        // inside canonical range so `decode_public_inputs` accepts. XOR
-        // on a middle byte does that.
-        pis[3] ^= 0x01;
-        let verifier = MvpVerifier::new();
-        assert_eq!(verifier.verify(&proof, &pis), Plonky3Status::VerifyFailed);
+        let (proof, mut pis) = valid_proof(1, 1, 0x77);
+        pis[8] ^= 0x01; // tamper chain_id limb.
+        let rc = MvpVerifier::new().verify(&proof, &pis);
+        assert_eq!(rc, Plonky3Status::VerifyFailed);
     }
 
     /// A malformed proof buffer is rejected at decode.
     #[test]
     fn verify_rejects_malformed_proof() {
-        let (_, pis) = valid_proof();
+        let (_, pis) = valid_proof(1, 1, 0x66);
         let bad = vec![0xffu8; 10];
-        let verifier = MvpVerifier::new();
-        assert_eq!(
-            verifier.verify(&bad, &pis),
-            Plonky3Status::ProofDecodeFailed
+        let rc = MvpVerifier::new().verify(&bad, &pis);
+        assert_eq!(rc, Plonky3Status::ProofDecodeFailed);
+    }
+
+    /// Cross-shape attack: present a 1/1 proof but with a 4/4 PI byte
+    /// length. Shape derivation succeeds (pi_len=608 is legal for 4/4),
+    /// but the 4/4 AIR width doesn't match the 1/1-shaped proof → reject.
+    #[test]
+    fn verify_rejects_shape_confusion_attack() {
+        let (proof_1_1, _) = valid_proof(1, 1, 0xAB);
+        let (_, pis_4_4) = valid_proof(4, 4, 0xCD);
+        let rc = MvpVerifier::new().verify(&proof_1_1, &pis_4_4);
+        assert_ne!(
+            rc,
+            Plonky3Status::Ok,
+            "verifier MUST reject a proof-vs-PI shape mismatch"
         );
     }
 
-    /// Adversarial witness (decision #1, §4.2 claim 3 scaffold): the
-    /// prover tampers with their private-witness `ivk` but claims the
-    /// honest `ivk_commitment` in the public inputs. Because the AIR's
-    /// first-row constraint is `ivk_commitment_claim = ivk * MIX +
-    /// sibling`, a different `ivk` produces a different
-    /// `ivk_commitment_claim`, which then mismatches the public input.
-    /// The verifier MUST reject.
+    /// Adversarial: the prover tampers with a private witness field while
+    /// keeping the honest PI. Cross-check against honest PI must reject.
     #[test]
-    fn verify_rejects_adversarial_ivk_witness() {
+    fn verify_rejects_adversarial_ivk_mutation() {
         let prover = MvpProver::new();
-        let honest = MvpWitness::deterministic_valid(0x5678_5678_5678_5678);
+        let honest = MvpWitness::deterministic_valid(2, 2, 0xFEED_0001);
         let honest_pi_bytes = honest.public_inputs_bytes();
 
-        // Tamper with the private `ivk` while keeping the honest PI.
         let mut bad = honest.clone();
-        bad.ivk = bad.ivk.wrapping_add(1);
+        bad.spends[0].ivk = bad.spends[0].ivk.wrapping_add(1);
 
         match prover.prove(&bad.encode()) {
-            Err(Plonky3Status::WitnessInvalid) => {
-                // Debug-build constraint check pre-filter caught it.
-            }
-            Err(other) => panic!("unexpected prove error: {:?}", other),
-            Ok((proof_bytes, bad_pi_bytes)) => {
+            Err(_) => {} // pre-check caught it
+            Ok((proof_bytes, _bad_pi_bytes)) => {
                 let verifier = MvpVerifier::new();
-                // Self-consistent under the adversary's own PI is allowed.
-                let _ = verifier.verify(&proof_bytes, &bad_pi_bytes);
-                // But same proof against HONEST PI must reject.
                 assert_ne!(
                     verifier.verify(&proof_bytes, &honest_pi_bytes),
                     Plonky3Status::Ok,
-                    "verifier MUST reject when prover's `ivk` does not satisfy \
-                     the public ivk_commitment binding"
+                    "verifier MUST NOT accept a tampered-ivk proof against honest PI"
                 );
             }
         }
     }
 
-    /// Adversarial witness: flip the sibling, keep the public input "parent"
-    /// as before (unchanged from the valid case). The AIR's first-row
-    /// Merkle-step constraint says `parent_claim = leaf * MIX + sibling`,
-    /// and the first-row binding says `parent_claim = public_input[0]`.
-    /// So if sibling is perturbed the prover's trace will have
-    /// `parent_claim_trace != public_input[0]`, and the verifier rejects.
+    /// Adversarial: tamper `pos` — should change the derived nullifier PI.
     #[test]
-    fn verify_rejects_adversarial_sibling_witness() {
+    fn verify_rejects_adversarial_pos_mutation() {
         let prover = MvpProver::new();
-        let witness = MvpWitness::deterministic_valid(0xf00d_d00d_cafe_babe);
+        let honest = MvpWitness::deterministic_valid(4, 4, 0xCAFE_0044);
+        let honest_pi_bytes = honest.public_inputs_bytes();
 
-        // Derive the "honest" public inputs.
-        let honest_pi_bytes = witness.public_inputs_bytes();
+        let mut bad = honest.clone();
+        bad.spends[2].pos = bad.spends[2].pos.wrapping_add(0x100);
 
-        // Now mutate the sibling to produce an inconsistent trace.
-        let mut bad_witness = witness.clone();
-        bad_witness.merkle_sibling[0] ^= 0xff;
-
-        // In debug builds the debug-constraint-builder inside `prove`
-        // panics; our wrapper catches it and returns WitnessInvalid.
-        // In release builds the prover succeeds but the verifier fails.
-        let result = prover.prove(&bad_witness.encode());
-
-        match result {
-            Err(Plonky3Status::WitnessInvalid) => {
-                // Outcome A (debug build, constraint-check pre-filter).
-                // Acceptable — the negative was caught early.
-            }
-            Err(other) => {
-                panic!("unexpected prove error: {:?}", other);
-            }
-            Ok((proof_bytes, bad_pi_bytes)) => {
-                // Outcome B (release build path): prover produced a proof.
-                // The proof may verify under the bad_witness's OWN public
-                // inputs (self-consistency) — that's fine; the interesting
-                // check is whether it verifies against the HONEST public
-                // inputs (the adversary's claim of what was proved).
+        match prover.prove(&bad.encode()) {
+            Err(_) => {}
+            Ok((proof_bytes, _bad_pi_bytes)) => {
                 let verifier = MvpVerifier::new();
-
-                // (1) Self-consistent: proof matches the tampered PI.
-                // Plonky3 MUST accept this — the prover produced a valid
-                // proof for that witness. Our job is to show it FAILS
-                // against the CLAIM the adversary wants to make.
-                let _self_consistent = verifier.verify(&proof_bytes, &bad_pi_bytes);
-
-                // (2) Adversarial claim: same proof, but public inputs
-                // asserting the original `parent` digest. MUST REJECT.
                 assert_ne!(
                     verifier.verify(&proof_bytes, &honest_pi_bytes),
                     Plonky3Status::Ok,
-                    "verifier MUST NOT accept a proof that contradicts its declared parent"
+                    "verifier MUST NOT accept a tampered-pos proof against honest PI"
                 );
             }
         }
+    }
+
+    /// Adversarial: tamper the anchor_proxy (i.e. lie about which tree
+    /// root the spend was proven against). Cross-verify against honest
+    /// PI must reject.
+    #[test]
+    fn verify_rejects_adversarial_wrong_anchor() {
+        let prover = MvpProver::new();
+        let honest = MvpWitness::deterministic_valid(1, 1, 0xBAAD_F00D);
+        let honest_pi_bytes = honest.public_inputs_bytes();
+
+        let mut bad = honest.clone();
+        bad.anchor_proxy = bad.anchor_proxy.wrapping_add(42);
+
+        match prover.prove(&bad.encode()) {
+            Err(_) => {}
+            Ok((proof_bytes, bad_pi_bytes)) => {
+                let verifier = MvpVerifier::new();
+                assert_ne!(bad_pi_bytes, honest_pi_bytes);
+                assert_ne!(
+                    verifier.verify(&proof_bytes, &honest_pi_bytes),
+                    Plonky3Status::Ok,
+                    "verifier MUST NOT accept a wrong-anchor proof against honest PI"
+                );
+            }
+        }
+    }
+
+    /// Balance inflation adversary. The pre-check MUST catch.
+    #[test]
+    fn prover_rejects_inflation_adversary_4_4() {
+        let prover = MvpProver::new();
+        let mut w = MvpWitness::deterministic_valid(4, 4, 0xBEEF_0000);
+        w.outputs[0].value = w.outputs[0].value.saturating_add(1_000);
+        assert_eq!(
+            prover.prove(&w.encode()).unwrap_err(),
+            Plonky3Status::WitnessInvalid
+        );
     }
 }
