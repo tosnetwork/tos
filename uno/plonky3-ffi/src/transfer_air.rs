@@ -55,22 +55,34 @@
 //!   degree-1 field-element equality on row 0 over value proxies and the
 //!   `fee` PI.
 //!
-//! # Column layout
+//! # Column layout (K-air-col-share step 1: Merkle row-loop)
 //!
 //! ```text
 //! width(n_s, n_o) = GLOBAL_COLS + n_s·per_spend_cols() + n_o·per_output_cols()
 //!
+//! GLOBAL_COLS       = 1 + MERKLE_DEPTH                 // fee + 32 row selectors
+//!
 //! per_spend_cols()  = SPEND_PROXY_COLS
-//!                   + 32·POSEIDON2_COLS_PER_INSTANCE   // 32-level Merkle (w=8)
-//!                   +  1·POSEIDON2_COLS_PER_INSTANCE   // claim 3 IvkCm  (w=8)
-//!                   +  1·POSEIDON2_COLS_PER_INSTANCE_16 // claim 2 Cm    (w=16)
-//!                   +  1·POSEIDON2_COLS_PER_INSTANCE   // claim 4 Nf     (w=8)
+//!                   + 1                                // S_CURRENT (Merkle running val)
+//!                   + 1·POSEIDON2_COLS_PER_INSTANCE    // SHARED Merkle (w=8)
+//!                   + 1·POSEIDON2_COLS_PER_INSTANCE    // claim 3 IvkCm  (w=8)
+//!                   + 1·POSEIDON2_COLS_PER_INSTANCE_16 // claim 2 Cm     (w=16)
+//!                   + 1·POSEIDON2_COLS_PER_INSTANCE    // claim 4 Nf     (w=8)
 //! per_output_cols() = OUTPUT_PROXY_COLS + 1·POSEIDON2_COLS_PER_INSTANCE_16
 //! ```
 //!
-//! Trace height stays at `2^6 = 64` rows. See [`air_width`] for current
-//! cols-per-shape; exact numbers are tracked by the
-//! `width_grows_with_shape` test.
+//! Merkle levels are folded across the first 32 trace rows of a single
+//! shared Poseidon2-w8 column block per spend. Row `k ∈ 0..32` carries
+//! level `k`; row 32..63 latch the final running value. A global
+//! one-hot row-selector (`GS_ROW_SEL[0..32]`) tags which level is live.
+//! Per spend, `S_CURRENT` carries the running Merkle digest, bound to
+//! `leaf` on row 0, advanced by each level's Poseidon2 output[0], and
+//! asserted equal to the tx-level anchor PI on the last row.
+//!
+//! This pass (K-air-col-share step 1) reduces width at (4, 4) from
+//! 27,837 cols to 5,553 cols — a ~80 % column reduction — while keeping
+//! trace height at `2^6 = 64` rows. See [`air_width`] for the exact
+//! cols-per-shape; numbers are tracked by `width_grows_with_shape`.
 //!
 //! # Public-input vector (§4.3 step 4, decision #5)
 //!
@@ -204,12 +216,19 @@ pub const TAG_NF: u64 = 0x01_75_6E_6F_6E_66_76_31;
 // Column layout
 // ---------------------------------------------------------------------------
 
-/// Global (tx-level) proxy columns: `[fee]`.
-pub const GLOBAL_COLS: usize = 1;
-const GCOL_FEE: usize = 0;
-
 /// Depth of the note-commitment Merkle tree (§2.3 / §10.2 ConfigParam 84).
 pub const MERKLE_DEPTH: usize = 32;
+
+/// Global (tx-level) columns: `[fee]` followed by `MERKLE_DEPTH` one-hot
+/// row selectors (K-air-col-share step 1 — Merkle row-loop). The selectors
+/// are the AIR's clock for the shared Merkle Poseidon2 column block:
+/// exactly one `GS_ROW_SEL[k]` is `1` on each of the first 32 rows, and
+/// all are `0` on rows 32..63. A shared row-selector saves `n_spends ·
+/// MERKLE_DEPTH` selector slots.
+pub const GLOBAL_COLS: usize = 1 + MERKLE_DEPTH;
+const GCOL_FEE: usize = 0;
+/// Base index of the 32 one-hot Merkle row-selector columns (§claim 1).
+const GS_ROW_SEL0: usize = 1;
 
 /// Width in bits of the bit-decomposition range check for `value_i` /
 /// `value_j` (§4.2 claims 5 & 7). Each value is committed as 64 bit
@@ -232,9 +251,18 @@ pub const SPEND_PROXY_COLS: usize =
 /// u64 range-check on `value_j` (§4.2 claim 7).
 pub const OUTPUT_PROXY_COLS: usize = 6 + VALUE_BITS;
 
-/// Narrow (width-8) Poseidon2 instances per spend (Merkle×32 + IvkCm + Nf).
-/// The Cm slot is width-16 and counted separately.
-pub const POSEIDON2_NARROW_PER_SPEND: usize = MERKLE_DEPTH + 2;
+/// Narrow (width-8) Poseidon2 instances per spend (shared Merkle + IvkCm + Nf).
+/// The Cm slot is width-16 and counted separately. After the K-air-col-share
+/// step-1 pass the 32 Merkle-level instances share one column block across
+/// rows, so the narrow slot count drops from `MERKLE_DEPTH + 2` (= 34) to 3.
+pub const POSEIDON2_NARROW_PER_SPEND: usize = 3;
+
+/// Per-spend variable columns that are NOT constant across rows (i.e., not
+/// included in the transition "proxies are constant" equality). Currently:
+/// `S_CURRENT` (running Merkle digest).
+pub const SPEND_VAR_COLS: usize = 1;
+/// Offset of `S_CURRENT` within the per-spend variable block.
+const S_CURRENT: usize = 0;
 
 /// Wide (width-16) Poseidon2 instances per spend (Cm only).
 pub const POSEIDON2_WIDE_PER_SPEND: usize = 1;
@@ -279,12 +307,13 @@ const O_VALUE_BIT0: usize = 6;
 // Shape-aware helpers
 // ---------------------------------------------------------------------------
 
-/// Per-spend block width: proxies + 32 width-8 Merkle levels + width-8
-/// IvkCm + width-16 Cm + width-8 Nf.
+/// Per-spend block width: proxies + `S_CURRENT` + 1 shared width-8 Merkle
+/// slot + width-8 IvkCm + width-16 Cm + width-8 Nf.
 #[inline]
 pub const fn per_spend_cols() -> usize {
     SPEND_PROXY_COLS
-        + MERKLE_DEPTH * POSEIDON2_COLS_PER_INSTANCE
+        + SPEND_VAR_COLS
+        + POSEIDON2_COLS_PER_INSTANCE // shared Merkle (row-loop)
         + POSEIDON2_COLS_PER_INSTANCE
         + POSEIDON2_COLS_PER_INSTANCE_16
         + POSEIDON2_COLS_PER_INSTANCE
@@ -335,10 +364,12 @@ pub fn derive_shape_from_public_inputs_len(
 // --- Column offsets -------------------------------------------------------
 //
 // Spend block layout (contiguous within the spend-i region):
-//     [SPEND_PROXY_COLS] | [Merkle level 0..32 : 180 each]
-//                        | [IvkCm : 180]
-//                        | [Cm (width-16) : 316]
-//                        | [Nf : 180]
+//     [SPEND_PROXY_COLS]        (constant across rows)
+//   | [SPEND_VAR_COLS: S_CURRENT] (running Merkle digest)
+//   | [shared Merkle P2 (w=8) : 180]
+//   | [IvkCm (w=8) : 180]
+//   | [Cm (w=16) : 316]
+//   | [Nf (w=8) : 180]
 //
 // Output block layout:
 //     [OUTPUT_PROXY_COLS] | [Cm (width-16) : 316]
@@ -348,15 +379,24 @@ const fn spend_proxy_offset(i: usize) -> usize {
     GLOBAL_COLS + i * per_spend_cols()
 }
 
+/// Offset of `S_CURRENT` (running Merkle digest) within spend `i`. Placed
+/// immediately after the constant-across-rows proxies.
+#[inline]
+const fn spend_var_offset(i: usize) -> usize {
+    spend_proxy_offset(i) + SPEND_PROXY_COLS
+}
+
+/// Offset of the shared Merkle width-8 Poseidon2 column block within
+/// spend `i` (K-air-col-share step 1 — row-loop over the 32 levels).
 #[inline]
 const fn spend_p2_offset(i: usize) -> usize {
-    spend_proxy_offset(i) + SPEND_PROXY_COLS
+    spend_var_offset(i) + SPEND_VAR_COLS
 }
 
 /// Offset of the IvkCm width-8 P2 slot within spend `i`.
 #[inline]
 const fn spend_p2_ivkcm_offset(i: usize) -> usize {
-    spend_p2_offset(i) + MERKLE_DEPTH * POSEIDON2_COLS_PER_INSTANCE
+    spend_p2_offset(i) + POSEIDON2_COLS_PER_INSTANCE
 }
 
 /// Offset of the Cm width-16 P2 slot within spend `i`.
@@ -383,10 +423,15 @@ const fn output_p2_offset(n_spends: usize, j: usize) -> usize {
 
 /// Enumerated narrow (width-8) spend Poseidon2 slot. The Cm slot is
 /// width-16 and reached via `spend_p2_cm_group`.
+///
+/// After K-air-col-share step 1 the 32 Merkle levels share one column
+/// block and are selected by the global row selector; the enum variant
+/// `Merkle` now names that single shared slot.
 #[derive(Copy, Clone)]
 enum SpendP2 {
-    /// Merkle path level `k`, for `k ∈ [0, MERKLE_DEPTH)`.
-    MerkleLevel(usize),
+    /// Shared Merkle-path width-8 Poseidon2 slot (row-loop — level `k` is
+    /// on trace row `k`).
+    Merkle,
     /// Claim-3 IVK-commitment Poseidon2 (width-8).
     IvkCm,
     /// Claim-4 nullifier Poseidon2 (width-8).
@@ -396,9 +441,7 @@ enum SpendP2 {
 #[inline]
 fn spend_p2_group<T>(row: &[T], i: usize, s: SpendP2) -> &P2Cols<T> {
     let off = match s {
-        SpendP2::MerkleLevel(k) => {
-            spend_p2_offset(i) + k * POSEIDON2_COLS_PER_INSTANCE
-        }
+        SpendP2::Merkle => spend_p2_offset(i),
         SpendP2::IvkCm => spend_p2_ivkcm_offset(i),
         SpendP2::Nf => spend_p2_nf_offset(i),
     };
@@ -601,19 +644,63 @@ where
             .collect();
 
         // ---- Poseidon2 sub-AIR on every row -----------------------------
+        // K-air-col-share step 1: 32 Merkle levels share ONE column block
+        // per spend; each level is bound to trace row `k ∈ 0..32` via the
+        // global one-hot row selector. The Poseidon2 sub-AIR runs every
+        // row regardless of row selector; padding rows (32..63) feed it
+        // the zero-input permutation witness.
         for i in 0..self.n_spends {
-            for k in 0..MERKLE_DEPTH {
-                eval_poseidon2(
-                    builder,
-                    spend_p2_group(local_slice, i, SpendP2::MerkleLevel(k)),
-                );
-            }
+            eval_poseidon2(builder, spend_p2_group(local_slice, i, SpendP2::Merkle));
             eval_poseidon2(builder, spend_p2_group(local_slice, i, SpendP2::IvkCm));
             eval_poseidon2_16(builder, spend_p2_cm_group(local_slice, i));
             eval_poseidon2(builder, spend_p2_group(local_slice, i, SpendP2::Nf));
         }
         for j in 0..self.n_outputs {
             eval_poseidon2_16(builder, output_p2_group(local_slice, self.n_spends, j));
+        }
+
+        // ---- Global row-selector boot, shift, and tail constraints -----
+        //
+        // `GS_ROW_SEL[k]` is 1 iff the current row is Merkle level `k`
+        // (i.e., row index `k`). They are a one-hot pulse that starts at
+        // position 0 on row 0 and shifts by +1 each row; after 32 rows
+        // the pulse falls off the end of the bank and the selectors are
+        // all 0 on rows 32..63.
+        //
+        // Row 0:    GS_ROW_SEL[0] = 1, GS_ROW_SEL[1..32] = 0.
+        // Transition: next[0] = 0, next[k+1] = local[k]  (k = 0..30).
+        //              local[31] has no next-row target (pulse expires).
+        //
+        // `is_merkle = Σ_k GS_ROW_SEL[k]` is 1 on rows 0..31, 0 on 32..63.
+        {
+            let mut first = builder.when_first_row();
+            first.assert_eq(
+                local_slice[GS_ROW_SEL0 + 0].into(),
+                AB::Expr::from(AB::F::from_u64(1)),
+            );
+            for k in 1..MERKLE_DEPTH {
+                first.assert_zero(local_slice[GS_ROW_SEL0 + k].into());
+            }
+        }
+        {
+            let mut t = builder.when_transition();
+            // next[0] = 0.
+            t.assert_zero(next_slice[GS_ROW_SEL0 + 0].into());
+            // next[k+1] = local[k], for k ∈ 0..MERKLE_DEPTH-1.
+            for k in 0..MERKLE_DEPTH - 1 {
+                t.assert_eq(
+                    next_slice[GS_ROW_SEL0 + k + 1].into(),
+                    local_slice[GS_ROW_SEL0 + k].into(),
+                );
+            }
+        }
+        // Boolean each selector on every row (catches a malicious prover
+        // committing non-boolean values that sum to 1).
+        for k in 0..MERKLE_DEPTH {
+            let s: AB::Expr = local_slice[GS_ROW_SEL0 + k].into();
+            let one_minus_s: AB::Expr =
+                AB::Expr::from(AB::F::from_u64(1)) - s.clone();
+            builder.assert_zero(s * one_minus_s);
         }
 
         // ---- First-row bindings ----------------------------------------
@@ -636,51 +723,43 @@ where
                 let nk = spend_col(local_slice, i, S_NK);
                 let pos = spend_col(local_slice, i, S_POS);
 
-                // Claim 1: 32-level Merkle path (§2.3). Each level k takes
-                // the running `current` (starts at leaf), combines with
-                // `sibling_k` under path-bit `b_k` ordering, and outputs
-                // the next `current` via Poseidon2(., .).
+                // Claim 1: 32-level Merkle path (§2.3) — row-looped.
                 //
-                // Conservation invariants enforced on row 0:
-                //  (a) `b_k ∈ {0,1}` (bit constraint).
-                //  (b) Poseidon2 inputs: inputs[0] = (1-b)·cur + b·sib,
-                //                        inputs[1] = b·cur + (1-b)·sib.
-                //  (c) inputs[2..8] == 0 (padding).
-                //  (d) output[0] feeds `current` of level k+1.
-                //  (e) After level MERKLE_DEPTH-1, current[0] == anchor.
+                // The 32 Merkle compressions now share a single Poseidon2
+                // column block per spend and run as one level per trace
+                // row, gated by the global row selector. Row-0 bindings
+                // in this block:
+                //  (a) `S_CURRENT` on row 0 starts at `leaf`.
+                //  (b) Each path-bit proxy `b_k ∈ {0, 1}` (bit constraint).
                 //  (f) `pos = Σ_k b_k · 2^k` (bit decomposition of pos).
-                let mut current_expr: AB::Expr = leaf.into();
+                //
+                // Per-row gated constraints (evaluated every row, activated
+                // by `is_merkle`):
+                //  (c) inputs[0] = (1-b_k)·cur + b_k·sib_k,
+                //      inputs[1] = b_k·cur + (1-b_k)·sib_k, where
+                //      (b_k, sib_k) are selected from the 32 proxies by
+                //      the one-hot `GS_ROW_SEL`.
+                //  (d) inputs[2..8] == 0 (padding).
+                //  (e) next.S_CURRENT = P2.output[0] on Merkle rows; latch
+                //      next.S_CURRENT = S_CURRENT on non-Merkle rows.
+                //
+                // Last-row binding: `S_CURRENT == anchor` — after row 31
+                // latches, every subsequent row carries the final anchor.
+                let s_current_row0 =
+                    local_slice[spend_var_offset(i) + S_CURRENT];
+                first.assert_eq(s_current_row0.into(), leaf.into());
+
+                // Row-0 bit booleanity (32 bit proxies are constant across
+                // rows, so booleanity on row 0 + the transition "proxies
+                // are constant" check propagates to all rows).
                 for k in 0..MERKLE_DEPTH {
                     let b: AB::Var =
                         spend_col(local_slice, i, S_PATH_BIT0 + k);
-                    let sibling: AB::Var =
-                        spend_col(local_slice, i, S_SIBLING0 + k);
-                    // Bit constraint: b·(1-b) == 0.
                     let b_expr: AB::Expr = b.into();
                     let one_minus_b: AB::Expr =
                         AB::Expr::from(AB::F::from_u64(1)) - b_expr.clone();
-                    first.assert_zero(b_expr.clone() * one_minus_b.clone());
-
-                    let level =
-                        spend_p2_group::<AB::Var>(local_slice, i, SpendP2::MerkleLevel(k));
-                    // inputs[0] = (1-b)·current + b·sibling
-                    let sibling_expr: AB::Expr = sibling.into();
-                    let left_sel: AB::Expr = one_minus_b.clone() * current_expr.clone()
-                        + b_expr.clone() * sibling_expr.clone();
-                    let right_sel: AB::Expr = b_expr.clone() * current_expr.clone()
-                        + one_minus_b.clone() * sibling_expr.clone();
-                    first.assert_eq(level.inputs[0].into(), left_sel);
-                    first.assert_eq(level.inputs[1].into(), right_sel);
-                    for pad in 2..POSEIDON2_WIDTH {
-                        first.assert_zero(level.inputs[pad].into());
-                    }
-                    // current_expr <- output[0] of this level's Poseidon2.
-                    let level_out =
-                        &level.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
-                    current_expr = level_out[0].into();
+                    first.assert_zero(b_expr * one_minus_b);
                 }
-                // Final root equals the tx-level anchor.
-                first.assert_eq(current_expr, pi_anchor0.into());
 
                 // Pos bit-decomposition: `pos == Σ_k b_k · 2^k`.
                 let mut pos_recon: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
@@ -838,6 +917,96 @@ where
             }
             sum = sum - local_slice[GCOL_FEE].into();
             first.assert_zero(sum);
+        }
+
+        // ---- Per-row Merkle row-loop constraints (K-air-col-share #1) ---
+        //
+        // Let `is_merkle = Σ_k GS_ROW_SEL[k]`. On Merkle rows (0..31)
+        // `is_merkle = 1`; on padding rows (32..63) `is_merkle = 0`.
+        //
+        // Selected bit/sibling: `b = Σ_k sel[k] · bit_k`, similarly `sib`.
+        //
+        // Active rows: bind P2.inputs to (left, right, 0*6); assert
+        //   next.S_CURRENT = P2.output[0].
+        // Inactive rows: latch next.S_CURRENT = S_CURRENT. P2.inputs are
+        //   unconstrained (prover fills zero-input permutation witness).
+        {
+            // is_merkle as a reusable expression (sum of selectors on the
+            // current row).
+            let mut is_merkle: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
+            for k in 0..MERKLE_DEPTH {
+                is_merkle =
+                    is_merkle + AB::Expr::from(local_slice[GS_ROW_SEL0 + k]);
+            }
+
+            for i in 0..self.n_spends {
+                // Selected bit/sibling at this row.
+                let mut b_sel: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
+                let mut sib_sel: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
+                for k in 0..MERKLE_DEPTH {
+                    let sel: AB::Expr = local_slice[GS_ROW_SEL0 + k].into();
+                    let bit_k: AB::Var =
+                        spend_col(local_slice, i, S_PATH_BIT0 + k);
+                    let sib_k: AB::Var =
+                        spend_col(local_slice, i, S_SIBLING0 + k);
+                    b_sel = b_sel + sel.clone() * bit_k.into();
+                    sib_sel = sib_sel + sel * sib_k.into();
+                }
+                let one_minus_b_sel: AB::Expr =
+                    AB::Expr::from(AB::F::from_u64(1)) - b_sel.clone();
+                let cur: AB::Expr =
+                    local_slice[spend_var_offset(i) + S_CURRENT].into();
+
+                let left_sel: AB::Expr =
+                    one_minus_b_sel.clone() * cur.clone() + b_sel.clone() * sib_sel.clone();
+                let right_sel: AB::Expr =
+                    b_sel * cur.clone() + one_minus_b_sel * sib_sel;
+
+                let merkle =
+                    spend_p2_group::<AB::Var>(local_slice, i, SpendP2::Merkle);
+                // Active-row input bindings (gated by is_merkle).
+                builder.assert_zero(
+                    is_merkle.clone()
+                        * (AB::Expr::from(merkle.inputs[0]) - left_sel),
+                );
+                builder.assert_zero(
+                    is_merkle.clone()
+                        * (AB::Expr::from(merkle.inputs[1]) - right_sel),
+                );
+                for pad in 2..POSEIDON2_WIDTH {
+                    builder.assert_zero(
+                        is_merkle.clone() * AB::Expr::from(merkle.inputs[pad]),
+                    );
+                }
+
+                // Transition: advance (active) or latch (inactive).
+                let next_cur: AB::Expr =
+                    next_slice[spend_var_offset(i) + S_CURRENT].into();
+                let merkle_out_0: AB::Expr = AB::Expr::from(
+                    merkle.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1]
+                        .post[0],
+                );
+                let mut t = builder.when_transition();
+                // Active: next.S_CURRENT == P2.output[0].
+                t.assert_zero(
+                    is_merkle.clone() * (next_cur.clone() - merkle_out_0),
+                );
+                // Inactive: next.S_CURRENT == S_CURRENT.
+                let one_minus_is_merkle: AB::Expr =
+                    AB::Expr::from(AB::F::from_u64(1)) - is_merkle.clone();
+                t.assert_zero(one_minus_is_merkle * (next_cur - cur));
+            }
+
+            // Last-row anchor binding: after 32 active rows + latching on
+            // rows 32..63, `S_CURRENT` on the last row is the final
+            // Merkle root, which must equal the tx-level anchor PI.
+            let mut last = builder.when_last_row();
+            for i in 0..self.n_spends {
+                last.assert_eq(
+                    local_slice[spend_var_offset(i) + S_CURRENT],
+                    pi_anchor0,
+                );
+            }
         }
 
         // ---- Per-row replica checks: proxies constant across rows ------
@@ -1502,10 +1671,18 @@ impl MvpWitness {
         let padding_p2 = gen_p2_row([Goldilocks::ZERO; POSEIDON2_WIDTH]);
         let padding_p2_16 = gen_p2_row_16([Goldilocks::ZERO; POSEIDON2_WIDTH_16]);
 
-        // Row-0 Poseidon2 trace cells, per spend + output.
-        // Per spend we generate MERKLE_DEPTH Merkle-level rows, then
-        // IvkCm, Cm, Nf — matching the column layout from `SpendP2::slot`.
-        let mut row0_spend_merkle: Vec<Vec<Vec<Goldilocks>>> = Vec::with_capacity(n_s);
+        // K-air-col-share step 1: the 32 Merkle levels now share one
+        // Poseidon2 column block per spend, placed on rows 0..31. We
+        // pre-compute:
+        //   - `merkle_rows[i][k]` (k ∈ 0..32): the permutation witness for
+        //     spend `i`'s level-k compression (placed at trace row `k`).
+        //   - `s_current_vals[i][row]` (row ∈ 0..TRACE_HEIGHT): the per-row
+        //     running Merkle digest (row 0 = leaf; row k+1 = permutation
+        //     output of level k; rows 32..63 latch the final value = anchor).
+        //   - `row0_spend_ivkcm / _cm / _nf`: the single-row permutation
+        //     witnesses for claims 3/2/4 (placed on trace row 0 only).
+        let mut merkle_rows: Vec<Vec<Vec<Goldilocks>>> = Vec::with_capacity(n_s);
+        let mut s_current_vals: Vec<Vec<Goldilocks>> = Vec::with_capacity(n_s);
         let mut row0_spend_ivkcm = Vec::with_capacity(n_s);
         let mut row0_spend_cm = Vec::with_capacity(n_s);
         let mut row0_spend_nf = Vec::with_capacity(n_s);
@@ -1521,9 +1698,11 @@ impl MvpWitness {
             let value_f = Goldilocks::from_u64(reduce_to_goldilocks(s.value));
             let ivkcm_fe = poseidon2_ivk_commitment(&perm, s.ivk, d_word);
 
-            // Merkle path rows: at each level, run the permutation with
-            // inputs ordered by the path bit.
-            let mut levels_rows = Vec::with_capacity(MERKLE_DEPTH);
+            // Merkle-row-loop: level k goes on trace row k. The P2 witness
+            // at rows 32..63 is the zero-input permutation (padding_p2).
+            let mut per_spend_merkle = Vec::with_capacity(TRACE_HEIGHT);
+            let mut per_spend_current = Vec::with_capacity(TRACE_HEIGHT);
+            per_spend_current.push(Goldilocks::from_u64(reduce_to_goldilocks(s.leaf)));
             let mut current = reduce_to_goldilocks(s.leaf);
             for k in 0..MERKLE_DEPTH {
                 let bit = (s.pos >> k) & 1;
@@ -1532,14 +1711,25 @@ impl MvpWitness {
                 let mut input = [Goldilocks::ZERO; POSEIDON2_WIDTH];
                 input[0] = Goldilocks::from_u64(left);
                 input[1] = Goldilocks::from_u64(right);
-                // Compute output for next-level current.
                 let mut state = input;
                 perm.permute_mut(&mut state);
-                let row = gen_p2_row(input);
-                levels_rows.push(row);
+                per_spend_merkle.push(gen_p2_row(input));
                 current = state[0].as_canonical_u64();
+                per_spend_current.push(Goldilocks::from_u64(current));
             }
-            row0_spend_merkle.push(levels_rows);
+            // Latch rows 32..63: pad P2 with zero-input permutation, and
+            // hold S_CURRENT at the final anchor value.
+            let anchor_f = Goldilocks::from_u64(current);
+            while per_spend_merkle.len() < TRACE_HEIGHT {
+                per_spend_merkle.push(padding_p2.clone());
+            }
+            while per_spend_current.len() < TRACE_HEIGHT {
+                per_spend_current.push(anchor_f);
+            }
+            debug_assert_eq!(per_spend_merkle.len(), TRACE_HEIGHT);
+            debug_assert_eq!(per_spend_current.len(), TRACE_HEIGHT);
+            merkle_rows.push(per_spend_merkle);
+            s_current_vals.push(per_spend_current);
 
             let mut ivkcm_in = [Goldilocks::ZERO; POSEIDON2_WIDTH];
             ivkcm_in[0] = Goldilocks::from_u64(TAG_IVK_CM);
@@ -1646,20 +1836,31 @@ impl MvpWitness {
 
         let mut values = Vec::<Goldilocks>::with_capacity(TRACE_HEIGHT * width);
         for row_idx in 0..TRACE_HEIGHT {
+            // Global cols: fee + 32 one-hot Merkle row selectors.
             values.push(fee_f);
+            for k in 0..MERKLE_DEPTH {
+                let bit = if row_idx < MERKLE_DEPTH && row_idx == k {
+                    1
+                } else {
+                    0
+                };
+                values.push(Goldilocks::from_u64(bit));
+            }
+
             for i in 0..n_s {
+                // Constant-across-rows spend proxies.
                 values.extend_from_slice(&spend_proxies[i]);
+                // S_CURRENT for this row.
+                values.push(s_current_vals[i][row_idx]);
+                // Shared Merkle P2 slot: level-`row_idx` compression on
+                // rows 0..31, zero-input permutation on rows 32..63.
+                values.extend_from_slice(&merkle_rows[i][row_idx]);
+                // IvkCm / Cm / Nf: real permutation witness on row 0 only.
                 if row_idx == 0 {
-                    for k in 0..MERKLE_DEPTH {
-                        values.extend_from_slice(&row0_spend_merkle[i][k]);
-                    }
                     values.extend_from_slice(&row0_spend_ivkcm[i]);
                     values.extend_from_slice(&row0_spend_cm[i]);
                     values.extend_from_slice(&row0_spend_nf[i]);
                 } else {
-                    for _ in 0..MERKLE_DEPTH {
-                        values.extend_from_slice(&padding_p2);
-                    }
                     values.extend_from_slice(&padding_p2); // IvkCm (w=8)
                     values.extend_from_slice(&padding_p2_16); // Cm (w=16)
                     values.extend_from_slice(&padding_p2); // Nf (w=8)
