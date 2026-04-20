@@ -59,6 +59,7 @@ pub mod prover;
 pub mod verifier;
 pub mod permute;
 pub mod verifier_air;
+pub mod challenger_air;
 pub mod aggregator;
 
 /// Result codes returned across the C ABI.

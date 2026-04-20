@@ -119,6 +119,61 @@
 // Default test expiry_block for witness-derived public inputs.
 #define EXPIRY_BLOCK_TEST 100000
 
+// Sponge width. Matches `Poseidon2Goldilocks<8>`.
+#define SPONGE_WIDTH 8
+
+// Absorb / squeeze rate. Matches prover's `DuplexChallenger<_, _, 8, 4>`.
+#define SPONGE_RATE 4
+
+// Capacity (non-absorbed state positions).
+#define SPONGE_CAPACITY (SPONGE_WIDTH - SPONGE_RATE)
+
+// Column layout for the future ChallengerAir. Each row represents one
+// operation: `Observe(v)`, `Sample → v'`, `Duplex`, or `Idle`. Phase
+// A2-2 will wire the constraints; Phase A2-1 only documents the
+// intent.
+//
+// # Per-row columns (width ≈ 24 + 1 Poseidon2-w8 block on duplex rows)
+//
+// ```text
+// ----- State (persistent across rows) -----
+//   state_local[0..8]     : 8 cols   — sponge state mirror
+//   in_buf[0..4]          : 4 cols   — pending inputs
+//   in_buf_len            : 1 col    — current in_buf fill (0..=4)
+//   out_buf[0..4]         : 4 cols   — output queue
+//   out_buf_len           : 1 col    — current out_buf fill (0..=4)
+//
+// ----- Per-row operation selector (one-hot) -----
+//   is_observe            : 1 col
+//   is_sample             : 1 col
+//   is_duplex_auto        : 1 col    — triggered by in_buf_len == 4
+//   is_duplex_forced      : 1 col    — triggered by sample-on-empty-out
+//   is_idle               : 1 col
+//
+// ----- Per-row operation payload -----
+//   observed_value        : 1 col    — the F being absorbed (if observe)
+//   sampled_value         : 1 col    — the F being squeezed (if sample)
+//
+// ----- Duplex row extension (only populated on duplex rows) -----
+//   p2_cols               : 180 cols — shared Poseidon2 block
+//                                      (row-gated by is_duplex_* via
+//                                       the GS_ROW_SEL-style selector
+//                                       pattern from K-air-col-share)
+// ```
+//
+// **Rough per-row width: ~24 cols for the state-tracking side, plus
+// the shared Poseidon2-w8 block (180 cols) — same size as the
+// per-spend Merkle block in `transfer_air`.** Phase A2-2 must
+// confirm this fits the §3 aggregator column-budget estimate
+// (~200-300 cols/slot in `doc/uno-aggregation-design.md` §1.3).
+#define CHALLENGER_STATE_COLS ((((8 + 4) + 1) + 4) + 1)
+
+// Per-row operation selectors + payloads.
+#define CHALLENGER_OP_COLS (5 + 2)
+
+// Total non-P2 columns per challenger row.
+#define CHALLENGER_NON_P2_COLS (CHALLENGER_STATE_COLS + CHALLENGER_OP_COLS)
+
 // Per-block maximum aggregated Transfer count. See design doc §2.3.
 //
 // Rationale: matches §1.4 success criterion #7 (15–30 TPS sustained)
