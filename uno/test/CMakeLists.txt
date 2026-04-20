@@ -23,11 +23,18 @@ add_executable(test-uno-filter                test-filter.cpp)
 # uno/plonky3-ffi/tests/public_input_fixture.rs. Both implementations
 # MUST produce byte-identical output for every fixture record.
 add_executable(test-uno-public-input-fixture  test-public-input-fixture.cpp)
+# P.5 done-when gate (§13): two-wallet end-to-end demo that drives the full
+# prove → admission → verify → scan → audit lifecycle against the real A1/A2
+# state, A3 crypto primitives, and A5 codec. Plonky3 verify is covered by
+# a test-only override (install_test_proof_override_for_test) because A4's
+# prover is not in scope for P.5.
+add_executable(test-uno-end-to-end            test-uno-end-to-end.cpp)
 
 foreach(_t test-uno-transfer
            test-uno-determinism
            test-uno-filter
-           test-uno-public-input-fixture)
+           test-uno-public-input-fixture
+           test-uno-end-to-end)
   target_link_libraries(${_t} PRIVATE uno_workchain)
   target_include_directories(${_t} PRIVATE ${CMAKE_SOURCE_DIR})
   if (COMMAND tos_test)
