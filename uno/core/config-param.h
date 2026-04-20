@@ -21,6 +21,8 @@
 #include "tos/tos-types.h"
 
 #include "uno/core/workchain.h"
+#include "uno/core/commitment-tree.h"  // kTreeDepth (decision #14)
+#include "uno/core/anchor-window.h"    // kDefaultAnchorWindowSize (decision #14)
 
 namespace uno_workchain {
 
@@ -38,7 +40,7 @@ struct UnoConfig {
     uint64_t fee_per_output_nano  {kDefaultFeePerOutputNano};
     uint8_t  max_spends_per_tx    {kDefaultMaxSpendsPerTx};
     uint8_t  max_outputs_per_tx   {kDefaultMaxOutputsPerTx};
-    uint16_t anchor_window_size   {static_cast<uint16_t>(kAnchorWindowSize)};
+    uint16_t anchor_window_size   {static_cast<uint16_t>(kDefaultAnchorWindowSize)};
     uint8_t  tree_depth           {static_cast<uint8_t>(kTreeDepth)};
     uint32_t expiry_window_blocks {kDefaultExpiryWindowBlocks};
 
@@ -99,14 +101,13 @@ bool parse_uno_config_cell(td::Ref<vm::Cell> cell, UnoConfig& out);
 
 /// Build the `WorkchainDescr` cell for the Uno workchain.  Identical in
 /// shape to `evm_workchain::build_evm_workchain_descr` but with wc=2
-/// identity (kVmVersion="UNO1", kUnoFlag).
+/// identity (kVmVersion="UNO1", flags=0 per decision #8).
 ///
-/// Per §10.1:
+/// Per §10.1 + decision #8:
 ///   - min_split = 0, max_split = 0 (single shard; global commitment tree)
-///   - basic     = false (no TVM)
+///   - basic     = true (first-class workchain; bit is not "is-TVM")
 ///   - active    = true, accept_msgs = true
-///   - flags     = kUnoFlag (new bit; exact assignment TBD in masterchain
-///                 flag registry — see workchain.h comment)
+///   - flags     = 0 (TLB enforces zero; identity carried by vm_version only)
 ///   - vm_version = kVmVersion, vm_mode = kVmMode
 ///
 /// @param zerostate_root_hash  Root hash of the wc=2 zerostate (from

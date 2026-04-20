@@ -28,45 +28,13 @@
 namespace uno_workchain {
 
 // ---------------------------------------------------------------------------
-// Sub-object factory forward declarations (Agent 2)
-// ---------------------------------------------------------------------------
-// These are the entry points the genesis path expects Agent 2 to expose.
-// TODO(uno-integration): exact signatures to be confirmed with Agent 2.
-// The shapes below are what §5.2 / §5.3 / §5.4 imply.
-
-/// Build an empty CommitmentTree pre-populated with 32 canonical empty-
-/// subtree hashes (§5.2). The empty-subtree hashes are derived from the
-/// Poseidon2-over-Goldilocks zero leaf, forward-declared in crypto/.
-/// The returned tree is ready to accept append() calls.
-std::unique_ptr<CommitmentTree> make_empty_commitment_tree();
-
-/// Empty nullifier set backed by an empty vm::Dictionary (§5.3).
-std::unique_ptr<NullifierSet> make_empty_nullifier_set();
-
-/// Empty anchor window (§5.4). The zerostate path seeds the first entry
-/// via `anchor_window->push(initial_root)` rather than via the factory,
-/// so the factory returns a zero-length ring.
-std::unique_ptr<AnchorWindow> make_empty_anchor_window();
-
-// ---------------------------------------------------------------------------
-// Sub-object operation forward declarations (Agent 2)
-// ---------------------------------------------------------------------------
-
-/// Append a note commitment to the tree (§5.2). Returns the updated root.
-std::array<uint8_t, kHashBytes> commitment_tree_append(
-    CommitmentTree& tree, const std::array<uint8_t, kHashBytes>& cm);
-
-/// Push a root into the anchor window (§5.4). Evicts the oldest when the
-/// buffer is full.
-void anchor_window_push(AnchorWindow& win,
-                        const std::array<uint8_t, kHashBytes>& root);
-
-/// Query the current commitment-tree root. Read-only helper.
-std::array<uint8_t, kHashBytes> commitment_tree_root(const CommitmentTree& tree);
-
-// ---------------------------------------------------------------------------
 // build_zerostate_state
 // ---------------------------------------------------------------------------
+//
+// Decision #14 replaces A1's free-function placeholders
+// (`make_empty_commitment_tree`, `commitment_tree_append`,
+// `anchor_window_push`, ...) with A2's method-based API. The zerostate path
+// default-constructs each sub-object and drives it through append() / push().
 
 UnoShardState build_zerostate_state(const GenesisDistribution& dist) {
     UnoShardState s = UnoShardState::make_empty();
@@ -74,13 +42,21 @@ UnoShardState build_zerostate_state(const GenesisDistribution& dist) {
     s.scheme_id = kSchemeIdV1;
     s.next_position = 0;
 
-    s.commitment_tree = make_empty_commitment_tree();
-    s.nullifier_set   = make_empty_nullifier_set();
-    s.anchor_window   = make_empty_anchor_window();
+    s.commitment_tree = std::make_unique<CommitmentTree>();
+    s.nullifier_set   = std::make_unique<NullifierSet>();
+    s.anchor_window   = std::make_unique<AnchorWindow>();
 
     if (!s.commitment_tree || !s.nullifier_set || !s.anchor_window) {
         LOG(ERROR) << "uno/genesis: sub-object factory returned null";
         return UnoShardState::make_empty();
+    }
+
+    // Seed commitment_tree_root with the empty-tree root so the pre-notes
+    // case (dist.notes.empty()) still reports the canonical value.
+    {
+        const NoteHash& empty_root = s.commitment_tree->get_root();
+        std::copy(empty_root.begin(), empty_root.end(),
+                  s.commitment_tree_root.begin());
     }
 
     // Append each genesis note's commitment in canonical order.
@@ -94,8 +70,15 @@ UnoShardState build_zerostate_state(const GenesisDistribution& dist) {
         }
         total += note.value;
 
-        auto new_root = commitment_tree_append(*s.commitment_tree, note.cm);
-        s.commitment_tree_root = new_root;
+        // A2's CommitmentTree::append takes a NoteHash (32-byte array) and
+        // returns the new root. GenesisNote::cm is also a 32-byte array but
+        // with a different alias (`std::array<uint8_t, kHashBytes>`) so we
+        // copy byte-wise.
+        NoteHash cm_hash{};
+        std::copy(note.cm.begin(), note.cm.end(), cm_hash.begin());
+        NoteHash new_root = s.commitment_tree->append(cm_hash);
+        std::copy(new_root.begin(), new_root.end(),
+                  s.commitment_tree_root.begin());
         s.next_position = i + 1;
     }
 
@@ -109,7 +92,13 @@ UnoShardState build_zerostate_state(const GenesisDistribution& dist) {
 
     // Seed the anchor window with the post-genesis root so the first user
     // spend can reference it (§10.3 step 3 interpreted against §5.4).
-    anchor_window_push(*s.anchor_window, s.commitment_tree_root);
+    {
+        NoteHash root_hash{};
+        std::copy(s.commitment_tree_root.begin(),
+                  s.commitment_tree_root.end(),
+                  root_hash.begin());
+        s.anchor_window->push(root_hash);
+    }
 
     // Stats: one synthetic genesis tx minted |notes| outputs; no fee.
     s.stats.burned_fees = 0;

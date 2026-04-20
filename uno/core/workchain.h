@@ -34,13 +34,9 @@ constexpr int32_t kVmVersion = 0x554E4F31;
 /// vm_mode — Uno has no VM (§8.4). Reserved to 0 on the wc descriptor.
 constexpr uint32_t kVmMode = 0;
 
-/// vm_mode flag bit claimed for "no-VM PQ privacy" workchains. The exact bit
-/// assignment is TBD by network ops; reserving the lowest flag bit is a safe
-/// default until the full flag registry is drafted.
-// TODO(uno-design-gap): the doc mentions `flags = UNO_FLAG (new bit)` in
-// §10.1 but does not assign a specific bit. Default 0x1 until the masterchain
-// flag registry is defined.
-constexpr uint16_t kUnoFlag = 0x1;
+// Decision #8 (doc/uno-workchain.md §16): no UNO_FLAG. The WorkchainDescr
+// TLB enforces `flags = 0`; workchain identity is carried by `vm_version`
+// ("UNO1") only. No `kUnoFlag` constant exists. Do not reintroduce.
 
 // ---------------------------------------------------------------------------
 // Chain ids (§10.4)
@@ -100,11 +96,12 @@ constexpr uint8_t kConfigParamVersion = 1;
 // Cell / state layout constants (§5.1, §5.2, §5.4)
 // ---------------------------------------------------------------------------
 
-/// Depth of the note-commitment sparse Merkle tree (§2.3, §5.2).
-constexpr unsigned kTreeDepth = 32;
-
-/// Number of past commitment-tree roots retained in the anchor window (§5.4).
-constexpr unsigned kAnchorWindowSize = 100;
+// Decision #14 (A1↔A2 alignment): the tree/nullifier/anchor subsystems own
+// their own size constants in their headers — `kTreeDepth` in
+// commitment-tree.h, `kNullifierBytes` / `kDefaultNullifierLruCapacity` in
+// nullifier-set.h, `kDefaultAnchorWindowSize` in anchor-window.h. Keep only
+// the consensus-observable constants here (hash width in bits/bytes) so
+// non-A2 call sites can size buffers without pulling in A2 headers.
 
 /// Width of Poseidon2 output consumed for a node / leaf hash (bits).
 /// Each node is 4 Goldilocks field elements = 256 bits.
@@ -146,7 +143,7 @@ constexpr uint64_t kDefaultFeePerOutputNano  = 500'000ULL;
 constexpr uint8_t  kDefaultMaxSpendsPerTx    = 4;   // §10.2 hard cap
 constexpr uint8_t  kDefaultMaxOutputsPerTx   = 4;   // §10.2 hard cap
 constexpr uint32_t kDefaultExpiryWindowBlocks = 64; // §10.2, ~64 s at 1 s blocks
-constexpr size_t   kDefaultNullifierLruCapacity = 1'000'000;  // §5.3 (1M ≈ 100 MB)
+// `kDefaultNullifierLruCapacity` lives in nullifier-set.h (decision #14).
 
 // ---------------------------------------------------------------------------
 // Domain-separation strings used across the module

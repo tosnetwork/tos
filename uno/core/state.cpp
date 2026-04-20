@@ -15,14 +15,9 @@
 // Full declarations of the sub-object types are required at the ctor/dtor
 // site because UnoShardState holds std::unique_ptr<T> to each of them and
 // the defaulted destructor needs a complete type. These headers are owned
-// by Agent 2 (doc/uno-workchain.md §5.2 / §5.3 / §5.4 / §9.1).
-//
-// TODO(uno-integration): Agent 2 must provide headers with the exact names
-// `uno/core/commitment-tree.h`, `uno/core/nullifier-set.h`,
-// `uno/core/anchor-window.h`, `uno/core/block-filter.h` and classes
-// `CommitmentTree`, `NullifierSet`, `AnchorWindow`, `BlockFilter`. If the
-// header names differ, update both `state.h` forward declarations and the
-// includes here in the same change.
+// by Agent 2 (doc/uno-workchain.md §5.2 / §5.3 / §5.4 / §9.1); A2's real
+// class names are CommitmentTree / NullifierSet / AnchorWindow /
+// BlockFilterBuilder (decision #14).
 #include "uno/core/commitment-tree.h"
 #include "uno/core/nullifier-set.h"
 #include "uno/core/anchor-window.h"
@@ -79,7 +74,7 @@ UnoState::UnoState(UnoShardState initial) : state_(std::move(initial)) {}
 
 UnoState::~UnoState() = default;
 
-std::unique_ptr<BlockFilter> UnoState::consume_current_block_filter() {
+std::unique_ptr<BlockFilterBuilder> UnoState::consume_current_block_filter() {
     // Caller must hold unique_lock on mutex_.
     auto out = std::move(current_block_filter_);
     current_block_filter_.reset();  // defensive; std::move should already null
