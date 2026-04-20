@@ -21,12 +21,12 @@ use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
 use p3_fri::{FriParameters, TwoAdicFriPcs};
-use p3_goldilocks::{Goldilocks, Poseidon2Goldilocks};
+use p3_goldilocks::{
+    Goldilocks, Poseidon2Goldilocks, default_goldilocks_poseidon2_8,
+};
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
 use p3_uni_stark::{StarkConfig, prove};
-use rand::SeedableRng;
-use rand::rngs::SmallRng;
 
 use crate::transfer_air::{MvpTransferAir, MvpWitness};
 use crate::Plonky3Status;
@@ -85,23 +85,27 @@ pub(crate) type MvpConfig = StarkConfig<MvpPcs, Challenge, MvpChallenger>;
 /// production P.2 will target `log_blowup = 1` + `num_queries = 84` (for
 /// 100-bit soundness) per §2.1. Tagged TODO(uno-p2).
 ///
-/// **Determinism note**: the Poseidon2 instance is seeded by
-/// `ChaCha20Rng::seed_from_u64(0xUNO_WC2)` so both prover and verifier get
-/// byte-identical round constants. Do NOT change the seed without a
-/// corresponding testnet hardfork.
+/// **Poseidon2 configuration (decision #42, §16)**. The width-8 Poseidon2
+/// permutation is instantiated from Plonky3's upstream audited constants
+/// (`GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_INITIAL`,
+/// `GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_FINAL`,
+/// `GOLDILOCKS_POSEIDON2_RC_8_INTERNAL`) via the
+/// `default_goldilocks_poseidon2_8()` helper. These are the Grain-LFSR-
+/// generated constants used by AggLayer / SP1 in production and are the
+/// only Poseidon2-Goldilocks round constants within the audited surface.
+/// Do NOT substitute RNG-derived constants: audit recovery depends on
+/// using the canonical upstream values byte-for-byte.
+///
+/// **Note (§16 decision #42 scope)**. Swapping the round-constants source
+/// is orthogonal to the MVP AIR's placeholder `MERKLE_MIX_COEF` /
+/// `IVK_CM_MIX_COEF` linear stand-ins for Poseidon2 compression — those
+/// are replaced by real Poseidon2 in the full Transfer AIR (P.2), not
+/// here. This decision only pins the permutation's round-constant source.
 pub(crate) fn build_config() -> MvpConfig {
-    // Deterministic Poseidon2 round constants.
-    // 0x554e4f5f57433d32 == "UNO_WC=2" (ASCII, big-endian) — domain-sep tag.
-    //
-    // We use `rand::rngs::SmallRng` (xorshift family) to match Plonky3's
-    // own examples/tests convention. It's seeded deterministically so
-    // prover and verifier agree on round constants byte-for-byte.
-    //
-    // TODO(uno-p2): swap to the hard-coded GOLDILOCKS_POSEIDON2_RC_*
-    // constants from `p3_goldilocks::poseidon2`. Those are the audited
-    // round constants; `new_from_rng_128` is for example/test code.
-    let mut rng = SmallRng::seed_from_u64(0x554e_4f5f_5743_3d32);
-    let perm = Perm8::new_from_rng_128(&mut rng);
+    // Poseidon2-over-Goldilocks width-8 permutation with audited round
+    // constants (decision #42). Prover and verifier both go through this
+    // helper, so byte-identical constants are guaranteed by construction.
+    let perm: Perm8 = default_goldilocks_poseidon2_8();
 
     let hash = MvpHash::new(perm.clone());
     let compress = MvpCompress::new(perm.clone());

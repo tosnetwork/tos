@@ -57,11 +57,11 @@ p3-uni-stark   = { git = "https://github.com/Plonky3/Plonky3", rev = "6374a36ff5
 # use). Deterministic, no alloc-required features that we'd have to audit.
 postcard    = { version = "1", features = ["alloc"] }
 serde       = { version = "1", features = ["derive"] }
-# Only used for deterministic config construction (Poseidon2 round-constant
-# expansion) via `SmallRng::seed_from_u64`. Matches Plonky3's own
-# examples/tests convention so our config stays idiomatic. No OS entropy.
-# `std_rng` pulls in the SmallRng type we need; no actual OS RNG touched
-# unless the caller explicitly asks for it (we never do).
+# `rand` is retained as a transitive surface used by some Plonky3 test paths
+# and dev-time scaffolding. The production verify/prove path does NOT seed
+# any RNG — Poseidon2 round constants come from the audited
+# `GOLDILOCKS_POSEIDON2_RC_*` tables in `p3_goldilocks::poseidon2` (see
+# decision #42, §16). No OS entropy is touched on any code path we invoke.
 rand        = { version = "0.10", default-features = false, features = ["alloc", "std_rng"] }
 
 [build-dependencies]
