@@ -394,12 +394,10 @@ std::vector<uint8_t> Plonky3PublicInputs::to_bytes() const noexcept {
 
 namespace {
 
-// Advance `cs` past `bits` bits, chasing into continuation cells if the
-// current slice runs out. Returns false on underflow. Currently the Transfer
-// layout never spans continuation cells (inline is < 1023 bits per 4/4 case
-// when packed without tree cells beyond ref slots), but we handle it
-// defensively so encoders that split inline payload into a continuation
-// remain decodable.
+// Root-level inline fetch (no cross-cell continuation — the root cell has a
+// fixed 448-bit header and the spec never spills header bytes into a
+// continuation cell). The per-spend / per-output chunk-chains are walked
+// separately via walk_two_chunk_payload() below.
 bool fetch_bytes_checked(vm::CellSlice& cs, uint8_t* out, unsigned bytes) {
     if (!cs.have(bytes * 8u)) {
         return false;
@@ -411,13 +409,6 @@ bool fetch_u8(vm::CellSlice& cs, uint8_t& out) {
     uint8_t b;
     if (!fetch_bytes_checked(cs, &b, 1)) return false;
     out = b;
-    return true;
-}
-
-bool fetch_be_u16(vm::CellSlice& cs, uint16_t& out) {
-    uint8_t tmp[2];
-    if (!fetch_bytes_checked(cs, tmp, 2)) return false;
-    out = static_cast<uint16_t>(tmp[0]) << 8 | tmp[1];
     return true;
 }
 
@@ -446,6 +437,78 @@ bool fetch_bits256(vm::CellSlice& cs, td::Bits256& out) {
 }
 
 TransferDecodeError err(const char* s) { return TransferDecodeError{std::string{s}}; }
+
+// ---------------------------------------------------------------------------
+// Per-item chunk-chain packing (encode/decode helpers)
+// ---------------------------------------------------------------------------
+//
+// Both spends (128 B) and outputs (146 B inline) exceed the 1023-bit cell
+// budget and must be split. We keep the split deterministic and shallow: the
+// first cell holds up to 127 B inline and, if more bytes remain, a single
+// ref[0] to a "continuation" cell with the residual bytes inline and zero
+// refs. For the output cell the post-split frees up ref[1] and ref[2] for
+// enc_ciphertext / mlkem_ct respectively.
+//
+// This keeps walk depth at **2** per per-item subtree (root → item_cell →
+// continuation), which combined with the spends_root / outputs_root fan-out
+// layer puts the whole Transfer at a total walk depth of 4 from the root —
+// comfortably under the §17 ≤5-level constraint for every 1..4 × 1..4 shape.
+
+// First 127 B of each item go inline; residual (1 B for a spend, 19 B for an
+// output's inline payload) spills into a single continuation cell.
+constexpr size_t kItemInlineHeadBytes = 127;
+
+// Encode a byte payload of length `len` <= 127 + 127 as either (a) single
+// cell inline when len <= 127 or (b) a 127-byte head cell with a single
+// continuation-ref holding the residual bytes inline. Returns the builder
+// seeded with the head cell's inline bytes; caller is responsible for
+// appending additional refs (e.g. enc_ct / mlkem_ct) or calling finalize().
+void append_item_head_and_continuation(vm::CellBuilder& item_cb,
+                                       const uint8_t* bytes,
+                                       size_t len) {
+    const size_t head = std::min<size_t>(len, kItemInlineHeadBytes);
+    item_cb.store_bytes(reinterpret_cast<const char*>(bytes), head);
+    if (head < len) {
+        vm::CellBuilder cont_cb;
+        cont_cb.store_bytes(reinterpret_cast<const char*>(bytes + head), len - head);
+        item_cb.store_ref(cont_cb.finalize());
+    }
+}
+
+// Read a `len`-byte payload out of an item cell that was built by
+// append_item_head_and_continuation(). `head_slice` must be the item cell's
+// slice positioned at the start of its inline bytes. Consumes the inline
+// bytes and — if `len > 127` — the first ref of `head_slice`.
+bool load_item_chunked(vm::CellSlice& head_slice, uint8_t* out, size_t len) {
+    const size_t head = std::min<size_t>(len, kItemInlineHeadBytes);
+    if (!fetch_bytes_checked(head_slice, out, static_cast<unsigned>(head))) {
+        return false;
+    }
+    if (head >= len) return true;
+    if (head_slice.size_refs() < 1) return false;
+    auto cont_ref = head_slice.prefetch_ref(0);
+    head_slice.advance_refs(1);
+    if (cont_ref.is_null()) return false;
+    auto cont_cs = vm::load_cell_slice(cont_ref);
+    const size_t rest = len - head;
+    // Enforce shape: continuation cell holds exactly `rest` bytes inline and
+    // zero refs. Extra data / refs is a malformed tx.
+    if (cont_cs.size() != rest * 8u) return false;
+    if (cont_cs.size_refs() != 0) return false;
+    return cont_cs.fetch_bytes(out + head, static_cast<unsigned>(rest));
+}
+
+// §17 ≤5-level walk assertion — invoked by the decoder after all refs have
+// been captured. Our encoder keeps depth at 4 from the Transfer root (plus
+// the internal depths of enc_ct / mlkem_ct / zk_proof, which are their own
+// bounded subchains); a decoded Transfer whose ref tree exceeds 5 levels is
+// a malformed / adversarial input and is rejected here.
+constexpr unsigned kMaxTransferRefDepth = 5;
+
+unsigned cell_depth_bounded(const td::Ref<vm::Cell>& c, unsigned budget) {
+    if (c.is_null() || budget == 0) return 0;
+    return static_cast<unsigned>(c->get_depth());
+}
 
 // Approximate wire_size_bytes for the fee calculation in §4.3 step 1.4.
 // Inline: 56 header + 128 * spend_count + 146 * output_count.
@@ -490,7 +553,7 @@ size_t estimate_wire_size(const Transfer& tx) {
 DecodeResult decode_transfer(vm::CellSlice body) noexcept {
     Transfer tx;
 
-    // --- inline header ---
+    // --- inline 448-bit header (root cell) ---
     if (!fetch_u8(body, tx.version))      return err("short header: version");
     if (!fetch_u8(body, tx.scheme_id))    return err("short header: scheme_id");
     if (!fetch_be_u32(body, tx.chain_id)) return err("short header: chain_id");
@@ -508,31 +571,96 @@ DecodeResult decode_transfer(vm::CellSlice body) noexcept {
     tx.spends.resize(sc);
     tx.outputs.resize(oc);
 
-    // --- spends ---
-    for (uint8_t i = 0; i < sc; ++i) {
-        auto& s = tx.spends[i];
-        if (!fetch_bits256(body, s.nullifier)) return err("short spend.nullifier");
-        if (!fetch_bits256(body, s.rk))        return err("short spend.rk");
-        if (!fetch_bytes_checked(body, s.spend_auth_sig.data(), 64)) return err("short spend.sig");
-    }
+    // Root cell layout: 3 refs (spends_root, outputs_root, zk_proof).
+    if (body.size_refs() < 3) return err("missing spends_root / outputs_root / zk_proof refs");
 
-    // --- outputs ---
-    for (uint8_t j = 0; j < oc; ++j) {
-        auto& o = tx.outputs[j];
-        if (!fetch_bits256(body, o.cm))       return err("short output.cm");
-        if (!fetch_bits256(body, o.epk))      return err("short output.epk");
-        if (!fetch_be_u16(body, o.filter_tag)) return err("short output.filter_tag");
-        if (body.size_refs() < 2) return err("missing enc_ciphertext / mlkem_ct refs");
-        if (!body.fetch_ref_to(o.enc_ciphertext)) return err("missing enc_ciphertext ref");
-        if (!body.fetch_ref_to(o.mlkem_ct))        return err("missing mlkem_ct ref");
-        if (!fetch_bytes_checked(body, o.out_ciphertext.data(), kOutCiphertextBytes)) {
-            return err("short output.out_ciphertext");
+    auto spends_root_ref  = body.prefetch_ref(0);
+    auto outputs_root_ref = body.prefetch_ref(1);
+    auto zk_proof_ref     = body.prefetch_ref(2);
+    body.advance_refs(3);
+
+    if (spends_root_ref.is_null())  return err("null spends_root ref");
+    if (outputs_root_ref.is_null()) return err("null outputs_root ref");
+    if (zk_proof_ref.is_null())     return err("null zk_proof ref");
+
+    // --- spends array (spends_root → per_spend[i] → cont) ---
+    {
+        auto spends_root = vm::load_cell_slice(spends_root_ref);
+        if (spends_root.size() != 0) return err("spends_root: unexpected inline data");
+        if (spends_root.size_refs() != sc) {
+            return err("spends_root: ref count does not match spend_count");
+        }
+        for (uint8_t i = 0; i < sc; ++i) {
+            auto spend_ref = spends_root.prefetch_ref(i);
+            if (spend_ref.is_null()) return err("spends_root: null per-spend ref");
+            auto spend_cs = vm::load_cell_slice(spend_ref);
+            uint8_t buf[kSpendInlineBytes] = {0};
+            if (!load_item_chunked(spend_cs, buf, kSpendInlineBytes)) {
+                return err("per-spend cell: malformed chunked payload");
+            }
+            // Disallow extra trailing inline data / refs so re-encode is bit-identical.
+            if (spend_cs.size() != 0) return err("per-spend cell: unexpected trailing inline data");
+            if (spend_cs.size_refs() != 0) return err("per-spend cell: unexpected trailing refs");
+
+            auto& s = tx.spends[i];
+            std::memcpy(s.nullifier.data(), buf + 0,  32);
+            std::memcpy(s.rk.data(),        buf + 32, 32);
+            std::memcpy(s.spend_auth_sig.data(), buf + 64, 64);
         }
     }
 
-    // --- zk_proof ref (trailing) ---
-    if (body.size_refs() < 1) return err("missing zk_proof ref");
-    if (!body.fetch_ref_to(tx.zk_proof)) return err("failed to fetch zk_proof ref");
+    // --- outputs array (outputs_root → per_output[j] → cont + enc_ct + mlkem_ct) ---
+    {
+        auto outputs_root = vm::load_cell_slice(outputs_root_ref);
+        if (outputs_root.size() != 0) return err("outputs_root: unexpected inline data");
+        if (outputs_root.size_refs() != oc) {
+            return err("outputs_root: ref count does not match output_count");
+        }
+        for (uint8_t j = 0; j < oc; ++j) {
+            auto out_ref = outputs_root.prefetch_ref(j);
+            if (out_ref.is_null()) return err("outputs_root: null per-output ref");
+            auto out_cs = vm::load_cell_slice(out_ref);
+            uint8_t buf[kOutputInlineBytes];
+            if (!load_item_chunked(out_cs, buf, kOutputInlineBytes)) {
+                return err("per-output cell: malformed chunked inline payload");
+            }
+            // After chunked load: 2 remaining refs (enc_ct, mlkem_ct) and 0 bits.
+            if (out_cs.size() != 0) return err("per-output cell: unexpected trailing inline data");
+            if (out_cs.size_refs() != 2) return err("per-output cell: expected 2 trailing refs (enc_ct, mlkem_ct)");
+
+            auto& o = tx.outputs[j];
+            std::memcpy(o.cm.data(),  buf +  0, 32);
+            std::memcpy(o.epk.data(), buf + 32, 32);
+            o.filter_tag = static_cast<uint16_t>((uint16_t(buf[64]) << 8) | buf[65]);
+            std::memcpy(o.out_ciphertext.data(), buf + 66, kOutCiphertextBytes);
+
+            o.enc_ciphertext = out_cs.prefetch_ref(0);
+            o.mlkem_ct       = out_cs.prefetch_ref(1);
+            if (o.enc_ciphertext.is_null()) return err("per-output cell: null enc_ciphertext");
+            if (o.mlkem_ct.is_null())       return err("per-output cell: null mlkem_ct");
+        }
+    }
+
+    tx.zk_proof = zk_proof_ref;
+
+    // §17 walk-depth gate: reject malformed trees that exceed the 5-level
+    // budget. The per-item subtrees contribute depth 2 (item_cell →
+    // continuation), layered under spends_root / outputs_root → depth 4 from
+    // the Transfer root. Anything larger came from a hand-crafted adversary
+    // cell tree — refuse to admit.
+    auto gate = [](const td::Ref<vm::Cell>& c, unsigned bound) -> bool {
+        if (c.is_null()) return true;
+        return cell_depth_bounded(c, bound) + 1u <= bound;
+    };
+    if (!gate(spends_root_ref,  kMaxTransferRefDepth) ||
+        !gate(outputs_root_ref, kMaxTransferRefDepth)) {
+        return err("ref-tree depth exceeds §17 5-level bound");
+    }
+
+    // Trailing bits / extra refs on the root are disallowed so re-encode
+    // yields byte-identical output.
+    if (body.size() != 0) return err("root cell: unexpected trailing inline data");
+    if (body.size_refs() != 0) return err("root cell: unexpected trailing refs");
 
     // tx_hash is derived from the decoded form.
     tx.tx_hash = canonical_tx_hash(tx);
@@ -558,20 +686,26 @@ DecodeResult decode_transfer_bytes(td::Slice raw_bytes) noexcept {
 // ---------------------------------------------------------------------------
 
 td::Result<td::Ref<vm::Cell>> encode_transfer(const Transfer& tx) noexcept {
-    // Header bits: 56 bytes = 448 bits. Per-spend inline: 128 bytes = 1024
-    // bits. Per-output inline (ex-refs): 32 + 32 + 2 + 80 = 146 bytes = 1168
-    // bits. A single cell holds at most 1023 bits + 4 refs — a 4/4 transfer
-    // will exceed that inline budget and must chain into continuation cells.
+    // Physical BoC shape (§17 ≤5-level walk bound — we fan out instead of
+    // chaining linearly). Root cell inline is the fixed 448-bit §4.1 header
+    // exactly; spends and outputs are carried by two parallel subtrees
+    // referenced from the root.
     //
-    // Strategy: build inline payload as a byte stream, then split into
-    // 127-byte chunks (same chunk chain as zk_proof) but with the
-    // non-inlineable refs kept on the ROOT cell. The encoder here keeps the
-    // simple single-cell form for small tx shapes (1-spend / 1-output), and
-    // returns an error for shapes that don't fit without continuation
-    // support. The admission path / test fixtures use small shapes.
+    //   root cell (448 bits inline, 3 refs)
+    //     inline: version ‖ scheme_id ‖ chain_id ‖ anchor ‖ expiry ‖ fee ‖ sc ‖ oc
+    //     ref[0] → spends_root (empty inline, `sc` refs)
+    //                each ref → per_spend cell: 127 B head + 1 ref → 1 B cont
+    //     ref[1] → outputs_root (empty inline, `oc` refs)
+    //                each ref → per_output cell:
+    //                            127 B head (of the 146 B output inline)
+    //                            ref[0] → 19 B continuation (inline, 0 refs)
+    //                            ref[1] → enc_ciphertext
+    //                            ref[2] → mlkem_ct
+    //     ref[2] → zk_proof
     //
-    // TODO(uno-integration): extend to multi-cell continuation once
-    // compute-phase's decoder is verified end-to-end on the 1/1 shape.
+    // Walk depth from root to any leaf (exclusive of enc_ct / mlkem_ct /
+    // zk_proof's own internal chains, which have their own depth budgets per
+    // §17.1): 4 for every 1..4 × 1..4 shape — tight under the ≤5 bound.
 
     if (tx.spends.size() < kMinSpendCount || tx.spends.size() > kMaxSpendCount) {
         return td::Status::Error("spend_count out of range");
@@ -579,9 +713,53 @@ td::Result<td::Ref<vm::Cell>> encode_transfer(const Transfer& tx) noexcept {
     if (tx.outputs.size() < kMinOutputCount || tx.outputs.size() > kMaxOutputCount) {
         return td::Status::Error("output_count out of range");
     }
+    if (tx.zk_proof.is_null()) {
+        return td::Status::Error("encode_transfer: zk_proof must be non-null");
+    }
+    for (const auto& o : tx.outputs) {
+        if (o.enc_ciphertext.is_null()) {
+            return td::Status::Error("encode_transfer: enc_ciphertext must be non-null");
+        }
+        if (o.mlkem_ct.is_null()) {
+            return td::Status::Error("encode_transfer: mlkem_ct must be non-null");
+        }
+    }
 
+    // --- spends_root: fan-out cell with one ref per spend ---
+    vm::CellBuilder spends_root_cb;
+    for (const auto& s : tx.spends) {
+        uint8_t buf[kSpendInlineBytes];
+        std::memcpy(buf +  0, s.nullifier.data(),       32);
+        std::memcpy(buf + 32, s.rk.data(),              32);
+        std::memcpy(buf + 64, s.spend_auth_sig.data(),  64);
+        vm::CellBuilder item_cb;
+        append_item_head_and_continuation(item_cb, buf, kSpendInlineBytes);
+        spends_root_cb.store_ref(item_cb.finalize());
+    }
+    auto spends_root = spends_root_cb.finalize();
+
+    // --- outputs_root: fan-out cell with one ref per output ---
+    vm::CellBuilder outputs_root_cb;
+    for (const auto& o : tx.outputs) {
+        uint8_t buf[kOutputInlineBytes];
+        std::memcpy(buf +  0, o.cm.data(),  32);
+        std::memcpy(buf + 32, o.epk.data(), 32);
+        buf[64] = static_cast<uint8_t>(o.filter_tag >> 8);
+        buf[65] = static_cast<uint8_t>(o.filter_tag & 0xFF);
+        std::memcpy(buf + 66, o.out_ciphertext.data(), kOutCiphertextBytes);
+        vm::CellBuilder item_cb;
+        append_item_head_and_continuation(item_cb, buf, kOutputInlineBytes);
+        // Trailing refs (enc_ct, mlkem_ct) after the inline continuation ref —
+        // decoder reads refs in this exact order (ref[0]=cont, ref[1]=enc_ct,
+        // ref[2]=mlkem_ct).
+        item_cb.store_ref(o.enc_ciphertext);
+        item_cb.store_ref(o.mlkem_ct);
+        outputs_root_cb.store_ref(item_cb.finalize());
+    }
+    auto outputs_root = outputs_root_cb.finalize();
+
+    // --- root cell: 448-bit header + 3 refs ---
     vm::CellBuilder root;
-    // inline header
     root.store_long(tx.version, 8);
     root.store_long(tx.scheme_id, 8);
     root.store_long(tx.chain_id, 32);
@@ -590,48 +768,8 @@ td::Result<td::Ref<vm::Cell>> encode_transfer(const Transfer& tx) noexcept {
     root.store_long(tx.fee, 64);
     root.store_long(static_cast<long long>(tx.spends.size()), 8);
     root.store_long(static_cast<long long>(tx.outputs.size()), 8);
-
-    // spends
-    for (const auto& s : tx.spends) {
-        root.store_bytes(reinterpret_cast<const char*>(s.nullifier.data()), 32);
-        root.store_bytes(reinterpret_cast<const char*>(s.rk.data()), 32);
-        root.store_bytes(reinterpret_cast<const char*>(s.spend_auth_sig.data()), 64);
-    }
-
-    // outputs. Each output consumes 2 refs (enc_ciphertext, mlkem_ct) +
-    // 1168 inline bits. For a 1/1 tx the root has:
-    //   inline bits = 448 + 1024 + 1168 = 2640 (> 1023 — must continue)
-    //   refs        = 2 out-refs + 1 zk_proof ref = 3
-    // Cells hold at most 1023 data bits + 4 refs. A 1/1 transfer already
-    // overflows the bit budget: we need at least one continuation.
-    //
-    // Simple split: pack everything after the header into a single
-    // continuation cell's chain by splitting at 127-byte boundaries. For
-    // v1 we return an error and defer the full encoder to Agent 6 / tests.
-    if (tx.spends.size() > 1 || tx.outputs.size() > 1) {
-        return td::Status::Error(
-            "encode_transfer: multi-spend/multi-output encoding not yet implemented "
-            "(use BoC-level builder or extend once admission path lands)");
-    }
-
-    for (const auto& o : tx.outputs) {
-        root.store_bytes(reinterpret_cast<const char*>(o.cm.data()), 32);
-        root.store_bytes(reinterpret_cast<const char*>(o.epk.data()), 32);
-        root.store_long(o.filter_tag, 16);
-        if (o.enc_ciphertext.is_null()) {
-            return td::Status::Error("encode_transfer: enc_ciphertext must be non-null");
-        }
-        if (o.mlkem_ct.is_null()) {
-            return td::Status::Error("encode_transfer: mlkem_ct must be non-null");
-        }
-        root.store_ref(o.enc_ciphertext);
-        root.store_ref(o.mlkem_ct);
-        root.store_bytes(reinterpret_cast<const char*>(o.out_ciphertext.data()), kOutCiphertextBytes);
-    }
-
-    if (tx.zk_proof.is_null()) {
-        return td::Status::Error("encode_transfer: zk_proof must be non-null");
-    }
+    root.store_ref(spends_root);
+    root.store_ref(outputs_root);
     root.store_ref(tx.zk_proof);
 
     return root.finalize();

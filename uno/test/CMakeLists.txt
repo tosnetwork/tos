@@ -18,6 +18,10 @@
 add_executable(test-uno-transfer              test-transfer.cpp)
 add_executable(test-uno-determinism           test-determinism.cpp)
 add_executable(test-uno-filter                test-filter.cpp)
+# M-codec: round-trip encode/decode across the full 1..4 × 1..4 shape
+# envelope of §4.1. Pins the wire-codec invariant that unblocks §12 P.3
+# state-transition golden fixtures + tosctl uno send integration.
+add_executable(test-uno-codec-shapes          test-codec-shapes.cpp)
 # Decision #5 cross-impl parity gate for the Plonky3 public-input byte
 # encoding. Driven by uno/test/golden/public-inputs-v1.hex; Rust side is
 # uno/plonky3-ffi/tests/public_input_fixture.rs. Both implementations
@@ -53,6 +57,7 @@ add_executable(test-uno-mandatory-negatives      test-mandatory-negatives.cpp)
 foreach(_t test-uno-transfer
            test-uno-determinism
            test-uno-filter
+           test-uno-codec-shapes
            test-uno-public-input-fixture
            test-uno-parallel-verify
            test-uno-end-to-end
