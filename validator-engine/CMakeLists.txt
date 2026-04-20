@@ -26,6 +26,7 @@ target_link_libraries(validator-engine metrics overlay tdutils tdactor adnl tl_a
   fift-lib memprof git ${JEMALLOC_LIBRARIES})
 
 target_link_libraries(validator-engine evm_workchain)
+target_link_libraries(validator-engine uno_workchain)
 if (JEMALLOC_FOUND)
   target_include_directories(validator-engine PRIVATE ${JEMALLOC_INCLUDE_DIR})
   target_compile_definitions(validator-engine PRIVATE -DTOS_USE_JEMALLOC=1)
@@ -36,6 +37,7 @@ target_link_libraries(test-json-rpc-cache metrics overlay tdutils tdactor adnl t
   rldp rldp2 quic catchain validatorsession full-node validator tos_validator validator
   fift-lib memprof git ${JEMALLOC_LIBRARIES})
 target_link_libraries(test-json-rpc-cache evm_workchain)
+target_link_libraries(test-json-rpc-cache uno_workchain)
 if (JEMALLOC_FOUND)
   target_include_directories(test-json-rpc-cache PRIVATE ${JEMALLOC_INCLUDE_DIR})
   target_compile_definitions(test-json-rpc-cache PRIVATE -DTOS_USE_JEMALLOC=1)
