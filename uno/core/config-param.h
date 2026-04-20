@@ -21,6 +21,8 @@
 #include "tos/tos-types.h"
 
 #include "uno/core/workchain.h"
+#include "uno/core/commitment-tree.h"  // kTreeDepth (decision #14)
+#include "uno/core/anchor-window.h"    // kDefaultAnchorWindowSize (decision #14)
 
 namespace uno_workchain {
 
@@ -38,7 +40,7 @@ struct UnoConfig {
     uint64_t fee_per_output_nano  {kDefaultFeePerOutputNano};
     uint8_t  max_spends_per_tx    {kDefaultMaxSpendsPerTx};
     uint8_t  max_outputs_per_tx   {kDefaultMaxOutputsPerTx};
-    uint16_t anchor_window_size   {static_cast<uint16_t>(kAnchorWindowSize)};
+    uint16_t anchor_window_size   {static_cast<uint16_t>(kDefaultAnchorWindowSize)};
     uint8_t  tree_depth           {static_cast<uint8_t>(kTreeDepth)};
     uint32_t expiry_window_blocks {kDefaultExpiryWindowBlocks};
 

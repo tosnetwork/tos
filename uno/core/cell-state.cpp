@@ -16,31 +16,14 @@
 #include "td/utils/logging.h"
 #include "td/utils/Slice.h"
 
-// Agent 2's sub-object headers. The `serialize_*` / `deserialize_*` codec
-// entry points below are declared extern here; Agent 2 provides the
-// definitions in commitment-tree.cpp / nullifier-set.cpp / anchor-window.cpp.
-// TODO(uno-integration): if Agent 2 chooses different function names or
-// signatures, update both this file and Agent 2's headers in the same
-// change. Signatures below are the minimum shape §5.2/§5.3/§5.4 imply.
+// A2's sub-object headers. Decision #14 pins the API: each class owns a
+// method-based codec (`serialize_to_cell()` / `deserialize_from_cell(...)`).
+// The obsolete free-function `serialize_commitment_tree(...)` etc. that A1
+// forward-declared here never existed in A2; this translation unit now
+// dispatches directly through the member functions.
 #include "uno/core/commitment-tree.h"
 #include "uno/core/nullifier-set.h"
 #include "uno/core/anchor-window.h"
-
-namespace uno_workchain {
-
-td::Ref<vm::Cell> serialize_commitment_tree(const CommitmentTree& tree);
-bool deserialize_commitment_tree(td::Ref<vm::Cell> cell,
-                                 std::unique_ptr<CommitmentTree>& out);
-
-td::Ref<vm::Cell> serialize_nullifier_set(const NullifierSet& set);
-bool deserialize_nullifier_set(td::Ref<vm::Cell> cell,
-                               std::unique_ptr<NullifierSet>& out);
-
-td::Ref<vm::Cell> serialize_anchor_window(const AnchorWindow& win);
-bool deserialize_anchor_window(td::Ref<vm::Cell> cell,
-                               std::unique_ptr<AnchorWindow>& out);
-
-}  // namespace uno_workchain
 
 // BLAKE3 is already linked in-tree; the header lives at `keys/blake3` in EVM
 // usage, but the exact include path depends on Agent 6's CMake wiring.
@@ -126,19 +109,31 @@ std::array<uint8_t, kHashBytes> compute_config_hash(td::Slice config_cell_bytes)
 
 td::Ref<vm::Cell> serialize_state(const UnoShardState& state) {
     // Serialise child refs first, so we can abort without leaving a partial
-    // builder on the floor.
+    // builder on the floor. Decision #14: each sub-object owns a method-
+    // based `serialize_to_cell()` codec.
     td::Ref<vm::Cell> tree_cell;
     td::Ref<vm::Cell> nullifier_cell;
     td::Ref<vm::Cell> anchor_cell;
 
     if (state.commitment_tree) {
-        tree_cell = serialize_commitment_tree(*state.commitment_tree);
+        tree_cell = state.commitment_tree->serialize_to_cell();
     }
     if (state.nullifier_set) {
-        nullifier_cell = serialize_nullifier_set(*state.nullifier_set);
+        // NullifierSet exposes the dict root as a Maybe ^Cell. Always wrap
+        // in a cell so the root-cell ref slot is never null (even for an
+        // empty set), because `store_ref_bool` cannot accept a null ref.
+        vm::CellBuilder nf_cb;
+        (void)state.nullifier_set->append_to_builder(nf_cb);
+        nullifier_cell = nf_cb.finalize();
     }
     if (state.anchor_window) {
-        anchor_cell = serialize_anchor_window(*state.anchor_window);
+        anchor_cell = state.anchor_window->serialize_to_cell();
+        if (anchor_cell.is_null()) {
+            // Empty window — serialize an empty-marker cell so the meta ref
+            // slot is never null (parent cell must always have a ref).
+            vm::CellBuilder empty_cb;
+            anchor_cell = empty_cb.finalize();
+        }
     }
 
     if (tree_cell.is_null() || nullifier_cell.is_null() || anchor_cell.is_null()) {
@@ -229,13 +224,44 @@ bool deserialize_state(td::Ref<vm::Cell> root, UnoShardState& out) {
     auto nullifier_cell = cs.prefetch_ref(kStateRefNullifierSet);
     auto meta_cell      = cs.prefetch_ref(kStateRefMeta);
 
-    if (!deserialize_commitment_tree(std::move(tree_cell), out.commitment_tree)) {
-        LOG(ERROR) << "uno/cell-state: commitment tree deserialize failed";
-        return false;
+    // Decision #14: use A2's method-based codec.
+    {
+        auto tree = std::make_unique<CommitmentTree>();
+        // A2's CommitmentTree::deserialize_from_cell cross-checks the
+        // recomputed root against the header value; we pass them through.
+        // The `NoteHash` type is a 32-byte array alias — copy in.
+        NoteHash expected_root{};
+        std::copy(out.commitment_tree_root.begin(),
+                  out.commitment_tree_root.end(),
+                  expected_root.begin());
+        if (!tree->deserialize_from_cell(std::move(tree_cell),
+                                         out.next_position,
+                                         expected_root)) {
+            LOG(ERROR) << "uno/cell-state: commitment tree deserialize failed";
+            return false;
+        }
+        out.commitment_tree = std::move(tree);
     }
-    if (!deserialize_nullifier_set(std::move(nullifier_cell), out.nullifier_set)) {
-        LOG(ERROR) << "uno/cell-state: nullifier set deserialize failed";
-        return false;
+    {
+        auto nf = std::make_unique<NullifierSet>();
+        // `nullifier_cell` is the cell built by `append_to_builder`: it
+        // carries one `Maybe ^Cell` bit + optional ref. Load the root-ref
+        // directly out of that wrapper.
+        auto nf_cs = vm::load_cell_slice(nullifier_cell);
+        long long has_root = 0;
+        if (!nf_cs.fetch_long_bool(1, has_root)) {
+            LOG(ERROR) << "uno/cell-state: nullifier wrapper missing tag bit";
+            return false;
+        }
+        td::Ref<vm::Cell> dict_root;
+        if (has_root) {
+            if (!nf_cs.fetch_ref_to(dict_root)) {
+                LOG(ERROR) << "uno/cell-state: nullifier wrapper missing root ref";
+                return false;
+            }
+        }
+        nf->load_from_cell(std::move(dict_root));
+        out.nullifier_set = std::move(nf);
     }
 
     // Meta cell: anchor window + stats.
@@ -248,9 +274,20 @@ bool deserialize_state(td::Ref<vm::Cell> root, UnoShardState& out) {
     auto anchor_cell = meta_cs.prefetch_ref(kMetaRefAnchorWindow);
     auto stats_cell  = meta_cs.prefetch_ref(kMetaRefStats);
 
-    if (!deserialize_anchor_window(std::move(anchor_cell), out.anchor_window)) {
-        LOG(ERROR) << "uno/cell-state: anchor window deserialize failed";
-        return false;
+    {
+        auto win = std::make_unique<AnchorWindow>(kDefaultAnchorWindowSize);
+        // Empty anchor windows serialize as an empty placeholder cell
+        // (size=0 bits, no refs); treat that as "empty window" instead of
+        // a parse error.
+        auto probe = vm::load_cell_slice(anchor_cell);
+        if (probe.size() == 0 && probe.size_refs() == 0) {
+            // leave the default-constructed empty window as-is
+        } else if (!win->deserialize_from_cell(std::move(anchor_cell),
+                                                kDefaultAnchorWindowSize)) {
+            LOG(ERROR) << "uno/cell-state: anchor window deserialize failed";
+            return false;
+        }
+        out.anchor_window = std::move(win);
     }
     if (!decode_stats_cell(std::move(stats_cell), out.stats)) {
         LOG(ERROR) << "uno/cell-state: stats cell deserialize failed";

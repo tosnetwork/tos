@@ -34,12 +34,12 @@ namespace uno_workchain {
 // definitions live in the header files authored by Agent 2; we only need
 // a pointer / unique_ptr to them here to keep the state struct independent
 // of their implementation details.
-// TODO(uno-integration): Agent 2 owns these headers. The forward decls
-// below MUST match the class names Agent 2 chooses.
-class CommitmentTree;   // uno/core/commitment-tree.h  (Agent 2)
-class NullifierSet;     // uno/core/nullifier-set.h    (Agent 2)
-class AnchorWindow;     // uno/core/anchor-window.h    (Agent 2)
-class BlockFilter;      // uno/core/block-filter.h     (Agent 2)
+//
+// Decision #14: names below match A2's real class names.
+class CommitmentTree;      // uno/core/commitment-tree.h  (A2)
+class NullifierSet;        // uno/core/nullifier-set.h    (A2)
+class AnchorWindow;        // uno/core/anchor-window.h    (A2)
+class BlockFilterBuilder;  // uno/core/block-filter.h     (A2)
 
 // ---------------------------------------------------------------------------
 // Stats (§5.5)
@@ -131,15 +131,15 @@ class UnoState {
 
     /// Access to the in-progress block-filter accumulator (§2.8, §9.1).
     /// Writable only inside the compute phase (unique_lock held).
-    BlockFilter* current_block_filter() noexcept { return current_block_filter_.get(); }
-    const BlockFilter* current_block_filter() const noexcept {
+    BlockFilterBuilder* current_block_filter() noexcept { return current_block_filter_.get(); }
+    const BlockFilterBuilder* current_block_filter() const noexcept {
         return current_block_filter_.get();
     }
 
     /// Rotate the current block-filter accumulator out and reset to empty.
     /// Called at end-of-block (§5.7) by `init`/compute-phase hook. The
     /// returned filter is what `uno_getBlockFilter` serves (§9.1).
-    std::unique_ptr<BlockFilter> consume_current_block_filter();
+    std::unique_ptr<BlockFilterBuilder> consume_current_block_filter();
 
     /// Shared/unique lock accessors for callers that need to hold the lock
     /// across multiple operations (e.g. compute-phase per-block critical
@@ -148,7 +148,7 @@ class UnoState {
 
   private:
     UnoShardState                 state_;
-    std::unique_ptr<BlockFilter>  current_block_filter_;
+    std::unique_ptr<BlockFilterBuilder>  current_block_filter_;
     mutable std::shared_mutex     mutex_;
 };
 
