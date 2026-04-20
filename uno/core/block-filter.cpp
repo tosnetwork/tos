@@ -58,6 +58,14 @@ class BitWriter {
 
     void finish() {
         if (bit_pos_ != 0) {
+            // write_bit accumulates bits into the LOW positions of
+            // cur_byte_ (`cur_byte_ = (cur_byte_ << 1) | bit`), so after
+            // N < 8 writes the bits live in positions [0 .. N-1] counting
+            // from the LSB. BitReader reads MSB-first (`(byte >> (7 - i)) & 1`),
+            // so an unshifted partial-byte push reads back as zeros followed
+            // by wrong bits. Shift the accumulated bits into the MSB
+            // position before pushing so the reader sees them in order.
+            cur_byte_ = static_cast<std::uint8_t>(cur_byte_ << (8 - bit_pos_));
             out_.push_back(cur_byte_);
             cur_byte_ = 0;
             bit_pos_ = 0;

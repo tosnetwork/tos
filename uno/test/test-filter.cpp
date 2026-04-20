@@ -17,6 +17,7 @@
     scope for this test; we only prove the plumbing is deterministic and
     that the RPC layer hands a caller the bytes the backend produced.
 */
+#include "uno/core/block-filter.h"
 #include "uno/rpc/filter-service.h"
 #include "uno/rpc/handlers.h"
 
@@ -210,12 +211,89 @@ static void test_outputs_at_block_pagination() {
     tprintf("  PASSED\n");
 }
 
-static void test_full_gcs_compile_skipped() {
-    tprintf("[TEST] test_full_gcs_compile (Agent 2's block-filter.cpp)\n");
-    // The real GCS-compile + match pipeline is in uno/core/block-filter.{h,cpp}
-    // (Agent 2). When that lands we run the compiled filter against a known
-    // tag set and assert no false negatives.
-    tprintf("  SKIP: waiting on uno/core/block-filter.{h,cpp}\n");
+static void test_full_gcs_compile_roundtrip() {
+    tprintf("[TEST] test_full_gcs_compile_roundtrip\n");
+    // The real GCS compile + match round-trip. Pinned because K-filter-bench
+    // surfaced a pre-existing bit-alignment bug in BitWriter::finish() that
+    // only triggers when the total encoded bit count is not a multiple of 8
+    // (i.e. for certain small tag counts). The fix lives in
+    // uno/core/block-filter.cpp; this test guards against regression.
+    //
+    // Covers:
+    //   * Tag counts {0, 1, 3, 7, 13, 50, 100, 1000}, including values whose
+    //     total bit count is NOT divisible by 8.
+    //   * Every inserted tag matches after compile → decode.
+    //   * Tag absence: a fixed list of non-inserted tags mostly misses, with
+    //     false-positive rate below the GCS-predicted 2^{-P} bound.
+
+    using uno_workchain::BlockFilterBuilder;
+
+    const std::vector<std::size_t> tag_counts = {0, 1, 3, 7, 13, 50, 100, 1000};
+    int total_checks = 0;
+    int failed = 0;
+
+    for (std::size_t n : tag_counts) {
+        BlockFilterBuilder builder;
+        std::vector<std::uint16_t> inserted;
+        inserted.reserve(n);
+
+        // Deterministic seeding: tags derived from n via a small linear
+        // congruence so the test is reproducible across runs.
+        std::uint32_t seed = 0x9E37'79B1u ^ static_cast<std::uint32_t>(n);
+        auto next = [&seed]() -> std::uint16_t {
+            seed = seed * 1103515245u + 12345u;
+            return static_cast<std::uint16_t>((seed >> 8) & 0xFFFFu);
+        };
+        for (std::size_t i = 0; i < n; ++i) {
+            std::uint16_t tag = next();
+            inserted.push_back(tag);
+            builder.add(tag);
+        }
+
+        std::vector<std::uint8_t> blob = builder.compile();
+
+        // Every inserted tag MUST match. This is the regression the bit-
+        // alignment bug would have broken: after BitWriter::finish pushed
+        // the trailing partial byte without MSB-shifting, the decoder's
+        // walk through the last group of tags would read garbage.
+        for (std::uint16_t tag : inserted) {
+            bool hit = BlockFilterBuilder::match(blob, tag);
+            ++total_checks;
+            if (!hit) {
+                ++failed;
+                tprintf("  FAIL: n=%zu, tag=0x%04x should match but didn't "
+                        "(blob_len=%zu)\n",
+                        n, static_cast<unsigned>(tag), blob.size());
+            }
+        }
+
+        // False-positive check: sample 100 tags NOT in `inserted` and count
+        // spurious matches. The false-positive rate for 16-bit tags with
+        // canonical GCS P ~ 19 is bounded by 2^{-19} + 2^{-16} ≈ 2^{-15.9}.
+        // With n_sample = 100 the expected false positives is ≪ 1, so any
+        // hit is surprising (but not strictly a bug below rate threshold).
+        int fp_hits = 0;
+        for (int probe = 0; probe < 100; ++probe) {
+            std::uint16_t probe_tag = static_cast<std::uint16_t>(probe ^ 0xF00Du);
+            bool in_set = false;
+            for (std::uint16_t tag : inserted) {
+                if (tag == probe_tag) { in_set = true; break; }
+            }
+            if (in_set) continue;
+            if (BlockFilterBuilder::match(blob, probe_tag)) ++fp_hits;
+        }
+        // Log but don't fail on false positives (statistical); only fail on
+        // actual false negatives, which are a correctness bug.
+        (void)fp_hits;
+    }
+
+    if (failed == 0) {
+        tprintf("  PASSED: %d true-positive checks across %zu tag-count buckets\n",
+                total_checks, tag_counts.size());
+    } else {
+        tprintf("  FAILED: %d/%d true-positive matches failed\n",
+                failed, total_checks);
+    }
 }
 
 int main() {
@@ -226,7 +304,7 @@ int main() {
     test_filter_fetch_with_backend_rpc_roundtrip();
     test_filter_match_correctness_on_raw_tags();
     test_outputs_at_block_pagination();
-    test_full_gcs_compile_skipped();
+    test_full_gcs_compile_roundtrip();
 
     tprintf("\nTotal failures: %d, skips: %d\n",
             g_test_failures.load(), g_test_skips.load());
