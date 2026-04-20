@@ -626,7 +626,7 @@ The Plonky3 proof attests claims 1–8 in one shot. The verifier additionally ch
 
 1. **Cheap syntax**:
    1. `version == 1`, `scheme_id == 0x01`, `chain_id == expected`.
-   2. `expiry_block ≥ current_block` AND `expiry_block ≤ current_block + expiry_window_blocks` (ConfigParam 26).
+   2. `expiry_block ≥ current_block` AND `expiry_block ≤ current_block + expiry_window_blocks` (ConfigParam 84).
    3. `1 ≤ spend_count ≤ 4`, `1 ≤ output_count ≤ 4`.
    4. `fee ≥ min_fee_nano + fee_per_byte_nano · tx_size_bytes + fee_per_spend_nano · spend_count + fee_per_output_nano · output_count`.
    5. `anchor` matches one of the 100 roots in `state.anchor_window`.
@@ -734,7 +734,7 @@ Full history (all committed notes) is NOT persisted on-chain. Clients that want 
 
 A TOS `vm::Dictionary` with 256-bit keys and a unit value. Cell-friendly, O(log N) lookup, O(log N) insert. At 10M spends, on-disk size roughly 500 MB (dict node overhead dominates). Scales linearly; pruning is not possible (nullifiers are forever).
 
-**Implementation requirement (M2) — nullifier LRU cache**: the validator maintains an in-memory LRU of recently-inserted nullifiers, default capacity **1 M entries (~100 MB RAM)**, tunable via ConfigParam 26. Cold-cache dictionary lookups on a 10 M-entry set traverse ~24 cell levels and can exceed the per-tx block-time budget under a 1 s cadence; the LRU makes insert-and-immediately-check paths hot.
+**Implementation requirement (M2) — nullifier LRU cache**: the validator maintains an in-memory LRU of recently-inserted nullifiers, default capacity **1 M entries (~100 MB RAM)**, tunable via ConfigParam 84. Cold-cache dictionary lookups on a 10 M-entry set traverse ~24 cell levels and can exceed the per-tx block-time budget under a 1 s cadence; the LRU makes insert-and-immediately-check paths hot.
 
 The LRU is **advisory, not consensus**. The on-cell dictionary remains the authoritative source of truth. A negative answer from the LRU (miss) MUST be followed by a dictionary lookup before declaring the nullifier unseen. A positive answer (hit) is sufficient to reject a double-spend without touching the dictionary. State-root hashing only ever reflects the dictionary.
 
@@ -1281,7 +1281,7 @@ wc=2 entry:
 
 Built by `uno_workchain::build_workchain_descr()`.
 
-### 10.2 Chain config (ConfigParam 26, new)
+### 10.2 Chain config (ConfigParam 84, new)
 
 ```
 UnoConfig :=
@@ -1688,6 +1688,7 @@ Every non-trivial choice below was made against the alternative space of publish
 31. **Spend-auth `rk` — decided: fresh per-spend Ristretto255 key, no `ak` randomization.** §2.5 is simplified from Orchard's `rk = ak + α·G` randomization scheme. Each spend samples a fresh `rsk ∈ scalars(Ristretto255)`, publishes `rk = rsk · G`, and signs `tx_hash` with Schnorr. No long-term spend-auth key `ak` exists; it is removed from `fvk`. Audit recovery of spend history goes through `ovk`-decrypted `out_ciphertext`, not through `rk` inversion. Rationale: Orchard's `rk-ak` randomization required in-circuit curve ops (claim 6 in earlier drafts); removing it eliminates the last curve op from the AIR, consistent with §2.5.
 32. **Block-filter encoding — decided: GCS over raw 16-bit tags, `P=15, M=2¹⁶`, no secondary hash.** §2.8.1 pins the exact encoding as a consensus-binding spec. `filter_tag` is already cryptographic (§2.8), so no BIP-158-style keyed second hash is needed; GCS operates directly on the sorted deduplicated u16 multiset. Expected size ~100–150 B per block at 30 TPS, ~180-260 B at 50 TPS burst. The filter is a **derived view**, not consensus state — any full node reconstructs it from on-chain data. Byte-identical across every implementation; wallet SDKs match validator output by spec, not by keyed-hash agreement.
 33. **FRI security parameters — decided: `log_blowup = 2`, `num_queries = 128`, `proof_of_work_bits = 16`.** §2.1 pins these as consensus-binding. Gives ~128-bit conjectured / ~64-bit proven classical soundness, ~64-bit conjectured / ~32-bit proven quantum soundness. Tighter than Plonky3/SP1/AggLayer defaults (`num_queries=84-100`, ~100-bit conjectured) because a soundness break on a privacy L1 with fixed-supply native asset enables unauthorized value creation, not just cross-chain bridge inconsistency. Cost: prove time +40%, proof size +30%, verify time +30% vs Plonky3 defaults. Accepted as the price of payment-chain-grade security. Rejected: `log_blowup=4` (doubled prove time for minimal conjectured-soundness gain); `num_queries=200` (same soundness as our choice, +50% proof size); pure 128-bit-proven target (prove time >2× slower, no meaningful real-world adversary advantage).
+34. **ConfigParam slot for UnoConfig — decided: `ConfigParam 84`.** §10.2 slot allocation follows the TOS convention of placing workchain-specific / bridge-adjacent protocol parameters in the 70s-80s cluster (existing usage: 71-73 oracle bridges, 79/81/82 jetton bridges). 84 is the first free slot after the cluster. Rejected: `26` / `27` (core-band gaps that TOS/TON upstream may backfill with future low-numbered core-protocol extensions — clash risk); `100+` (arbitrary, breaks spatial locality with 71-82). Canonical registry entry added to `doc/ConfigParam.md`.
 
 ---
 

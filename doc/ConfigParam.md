@@ -491,6 +491,29 @@ Each `ValidatorDescr`:
 | 81 | BNB→TOS | (same fields) | | |
 | 82 | Polygon→TOS | (same fields) | | |
 
+## ConfigParam 84 — Uno Workchain Chain Config
+
+Per-chain parameters for wc=2 (Uno shielded workchain). See [uno-workchain.md §10.2](uno-workchain.md) for context.
+
+| Field | Type | Value | Description |
+|-------|------|-------|-------------|
+| `version` | uint8 | **1** | Schema version of this config cell |
+| `chain_id` | uint32 | testnet `0x554E4F54` ("UNOT") / mainnet TBD | Uno chain id, bound into every tx transcript |
+| `min_fee_nano` | uint64 | TBD | Baseline fee for any `Transfer` |
+| `fee_per_byte_nano` | uint64 | TBD | Per-inline-byte charge |
+| `fee_per_spend_nano` | uint64 | TBD | Per-`SpendDescription` charge |
+| `fee_per_output_nano` | uint64 | TBD | Per-`OutputDescription` charge |
+| `max_spends_per_tx` | uint8 | **4** | Hard cap on spends per Transfer |
+| `max_outputs_per_tx` | uint8 | **4** | Hard cap on outputs per Transfer |
+| `anchor_window_size` | uint16 | **100** | Accepted-anchor ring buffer size |
+| `tree_depth` | uint8 | **32** | Note-commitment Merkle tree depth |
+| `expiry_window_blocks` | uint32 | **64** | Max forward window for `expiry_block` |
+| `nullifier_lru_capacity` | uint32 | **1,000,000** | Advisory LRU entries (non-consensus) |
+
+**Why 84 and not 26**: wc-specific protocol params follow the TOS convention established by the bridge/workchain-extension cluster at 71-82. Core-band gaps (26, 27, 38, 41, 42) are reserved for low-numbered core-protocol extensions that TON upstream may backfill; 84 is adjacent to the existing 71-82 cluster and unlikely to clash.
+
+**Activation**: the param is installed at zerostate (`crypto/smartcont/gen-zerostate.fif`) alongside the wc=2 workchain descriptor in ConfigParam 12. No runtime governance upgrade path is required for v1, but the param is mutable through the standard proposal flow (ConfigParam 11) if future rate-adjustment is needed. `max_spends_per_tx`, `max_outputs_per_tx`, and `tree_depth` are effectively consensus-binding (mutating them breaks AIR public-input shape); treat them as frozen after genesis.
+
 ## Negative (Internal) Parameters
 
 | Param | Description |
