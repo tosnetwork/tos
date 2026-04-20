@@ -9,11 +9,11 @@
 //! | `scan`       | ✅     | Compact-filter GCS scan + hybrid-KEM trial-decrypt     |
 //! | `balance`    | ✅     | Sum unspent notes (scan + nullifier-set delta)         |
 //! | `chain-info` | ✅     | `uno_chainInfo` smoke-test                             |
-//! | `send`       | ⬜     | Build + prove + send a Transfer — **not in P.6 scope** |
+//! | `send`       | 🔧    | Build + Schnorr-sign + submit a Transfer (stub Plonky3 proof — M-P2) |
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
-use tosctl_uno::{address, balance, keygen, rpc_client, scan};
+use tosctl_uno::{address, balance, keygen, rpc_client, scan, send};
 
 /// Uno Workchain (wc=2) wallet CLI — P.6 foundation build.
 #[derive(Debug, Parser)]
@@ -35,8 +35,9 @@ enum Command {
     Balance(BalanceArgs),
     /// Fetch chain-info from an RPC endpoint (smoke test).
     ChainInfo(ChainInfoArgs),
-    /// Build, prove, and submit a Transfer. **Not implemented in P.6
-    /// foundation** — needs the full P.2 Transfer AIR.
+    /// Build, Schnorr-sign, and submit a Transfer. Uses a STUB Plonky3
+    /// proof (M-P2 integration point) — the resulting tx will be rejected
+    /// by any real validator until the Transfer AIR lands.
     Send(SendArgs),
 }
 
@@ -245,26 +246,53 @@ async fn run_chain_info(args: &ChainInfoArgs) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// Send (stub)
+// Send
 // ---------------------------------------------------------------------------
+//
+// This is the M-send scaffold against a STUB Plonky3 prover — see
+// `src/send.rs::plonky3_prove` for the M-P2 integration point.
 
 #[derive(Debug, clap::Args)]
 struct SendArgs {
+    /// Path to FVK JSON (produced by `keygen`).
+    #[arg(long, required = true)]
+    fvk: std::path::PathBuf,
+    /// Recipient address string (`uno1...` / `unos...`).
+    #[arg(long, required = true)]
+    to: String,
+    /// Amount to send, in native UNO nano-units.
+    #[arg(long, required = true)]
+    amount: u64,
+    /// Optional memo (UTF-8, max 479 bytes). Stored inside the encrypted
+    /// note plaintext; never visible on-chain.
     #[arg(long)]
-    fvk: Option<std::path::PathBuf>,
+    memo: Option<String>,
+    /// Explicit fee override, in nano-units. If omitted, the wallet queries
+    /// `uno_estimateFee(spend_count=1, output_count=2)`.
     #[arg(long)]
-    to: Option<String>,
+    fee: Option<u64>,
+    /// RPC endpoint.
+    #[arg(long, default_value = "http://localhost:8080")]
+    rpc: String,
+    /// Build and print the Transfer but do NOT submit.
     #[arg(long)]
-    amount: Option<u64>,
+    dry_run: bool,
 }
 
-fn run_send(_args: &SendArgs) -> Result<()> {
-    Err(anyhow!(
-        "`tosctl uno send` is not implemented in the P.6 foundation. It \
-         requires the full Plonky3 Transfer AIR (P.2), which is still in \
-         flight. Use this CLI for keygen / address / scan / balance today; \
-         `send` will land in a follow-up commit once P.2 passes internal review."
-    ))
+async fn run_send(args: &SendArgs) -> Result<()> {
+    let send_args = send::SendArgs {
+        fvk_path: args.fvk.clone(),
+        rpc_url: args.rpc.clone(),
+        to: args.to.clone(),
+        amount: args.amount,
+        memo: args.memo.clone(),
+        fee: args.fee,
+        dry_run: args.dry_run,
+        skip_scan: false,
+    };
+    let summary = send::execute(&send_args).await?;
+    println!("{}", serde_json::to_string_pretty(&summary)?);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -280,7 +308,7 @@ fn main() -> Result<()> {
         Command::Scan(args)      => block_on(run_scan(&args)),
         Command::Balance(args)   => block_on(run_balance(&args)),
         Command::ChainInfo(args) => block_on(run_chain_info(&args)),
-        Command::Send(args)      => run_send(&args),
+        Command::Send(args)      => block_on(run_send(&args)),
     }
 }
 
