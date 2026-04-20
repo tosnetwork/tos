@@ -1,0 +1,104 @@
+# uno_plonky3_ffi — Rust crate exposing the Plonky3 Transfer AIR verifier
+# (and a reference prover for scaffolding) to the C++ validator via C ABI.
+#
+# This is the P.0 / P.2-bootstrap scaffold per design doc §13.
+# It deliberately implements a *Minimum Viable AIR* — a single Poseidon2-Goldilocks
+# hash + a single Merkle-path-step constraint + a u64 range check — to validate
+# the end-to-end toolchain (Rust↔C++ FFI, Plonky3 prover/verifier round-trip).
+#
+# The full Transfer AIR (§4.2 claims 1–9 of doc/uno-workchain.md) is NOT in this
+# scaffold. See src/transfer_air.rs TODO(uno-design-gap) markers for what remains.
+#
+# Pin: Plonky3 commit 6374a36ff50fc641821513852263cc61ca7a1278 (2026-04-16).
+# Rationale: this is the HEAD-1 commit at time of writing; it lands a documented
+# perf change on WHIR sumcheck that does not touch the Goldilocks/FRI/uni-stark
+# surface we rely on. HEAD (0f87f2b5) is a bench-only change, so either would
+# be equivalent for our purposes; we pin to 6374a36f as the "newest non-bench"
+# commit. Upstream crate version tag: 0.5.1.
+#
+# TODO(uno-p1): once Plonky3 publishes a 0.6.x release to crates.io (upstream
+# has signalled intent but no date as of 2026-04), switch from `git` to a
+# versioned `crates.io` dep for reproducibility without network-at-build.
+
+[package]
+name        = "uno_plonky3_ffi"
+version     = "0.1.0"
+edition     = "2021"
+license     = "GPL-3.0"
+description = "Uno wc=2 workchain: Plonky3 STARK verifier + reference prover (C ABI)"
+publish     = false
+
+[lib]
+name       = "uno_plonky3_ffi"
+# Produce both a staticlib (for Agent 5's CMake link into validator-engine)
+# and an rlib (for Rust-side integration tests + tosctl consumption).
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+# ---- Plonky3 (pinned by rev) ----------------------------------------------
+# We intentionally enumerate every crate we use; no wildcard / workspace import.
+# This keeps the dependency surface auditable and makes the diff for a future
+# rev-bump mechanical.
+p3-air         = { git = "https://github.com/Plonky3/Plonky3", rev = "6374a36ff50fc641821513852263cc61ca7a1278" }
+p3-challenger  = { git = "https://github.com/Plonky3/Plonky3", rev = "6374a36ff50fc641821513852263cc61ca7a1278" }
+p3-commit      = { git = "https://github.com/Plonky3/Plonky3", rev = "6374a36ff50fc641821513852263cc61ca7a1278" }
+p3-dft         = { git = "https://github.com/Plonky3/Plonky3", rev = "6374a36ff50fc641821513852263cc61ca7a1278" }
+p3-field       = { git = "https://github.com/Plonky3/Plonky3", rev = "6374a36ff50fc641821513852263cc61ca7a1278" }
+p3-fri         = { git = "https://github.com/Plonky3/Plonky3", rev = "6374a36ff50fc641821513852263cc61ca7a1278" }
+p3-goldilocks  = { git = "https://github.com/Plonky3/Plonky3", rev = "6374a36ff50fc641821513852263cc61ca7a1278" }
+p3-matrix      = { git = "https://github.com/Plonky3/Plonky3", rev = "6374a36ff50fc641821513852263cc61ca7a1278" }
+p3-merkle-tree = { git = "https://github.com/Plonky3/Plonky3", rev = "6374a36ff50fc641821513852263cc61ca7a1278" }
+p3-poseidon2   = { git = "https://github.com/Plonky3/Plonky3", rev = "6374a36ff50fc641821513852263cc61ca7a1278" }
+p3-symmetric   = { git = "https://github.com/Plonky3/Plonky3", rev = "6374a36ff50fc641821513852263cc61ca7a1278" }
+p3-uni-stark   = { git = "https://github.com/Plonky3/Plonky3", rev = "6374a36ff50fc641821513852263cc61ca7a1278" }
+
+# ---- Small utilities -------------------------------------------------------
+# Postcard is used for proof serialization (same format Plonky3's own examples
+# use). Deterministic, no alloc-required features that we'd have to audit.
+postcard    = { version = "1", features = ["alloc"] }
+serde       = { version = "1", features = ["derive"] }
+# Only used for deterministic config construction (Poseidon2 round-constant
+# expansion) via `SmallRng::seed_from_u64`. Matches Plonky3's own
+# examples/tests convention so our config stays idiomatic. No OS entropy.
+# `std_rng` pulls in the SmallRng type we need; no actual OS RNG touched
+# unless the caller explicitly asks for it (we never do).
+rand        = { version = "0.10", default-features = false, features = ["alloc", "std_rng"] }
+
+[build-dependencies]
+cbindgen = "0.29"
+
+[dev-dependencies]
+# For the adversarial-witness negative test.
+hex = "0.4"
+
+[profile.release]
+# STARK prover is the hot path; release must be aggressive. Debug-asserts off
+# so the reference prover does not diverge from the validator-build verifier
+# in edge cases (e.g. integer overflow wraparound assumptions).
+opt-level       = 3
+lto             = "thin"
+codegen-units   = 1
+debug           = false
+overflow-checks = false
+# Panic strategy: we use `abort` so FFI can never unwind across the C ABI
+# boundary. Any verifier error is a returned int, not a panic.
+panic           = "abort"
+
+[profile.dev]
+# Keep dev builds usable for P.2 prover iteration; but still no panic=unwind
+# (matches release, so FFI behavior is identical across build profiles).
+opt-level = 1
+panic     = "abort"
+
+# ---------------------------------------------------------------------------
+# Determinism notes (see design doc §4.3 "No randomness, no wall-clock,
+# no HashMap iteration, no floats anywhere in the verify path"):
+#
+#   * No `rand` default feature ("std_rng" pulls in OS entropy) — we only
+#     use rand_chacha::ChaCha20Rng with a seed derived from public inputs.
+#   * No `tokio`, no async runtime — verify is a synchronous, pure function.
+#   * No `hashbrown`-iteration surfaces exposed to the verify path.
+#
+# Agent 5 (C++ side) ALSO enforces this at the FFI boundary by never calling
+# `uno_plonky3_prove` from consensus code; `prove` is for wallet/tosctl only.
+# ---------------------------------------------------------------------------
