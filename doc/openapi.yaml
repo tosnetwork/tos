@@ -35,6 +35,13 @@ tags:
     description: Send external messages and estimate fees
   - name: health
     description: Health and readiness probes
+  - name: uno
+    description: >
+      Uno Workchain (wc=2) shielded-note RPC surface. See §9 of
+      doc/uno-workchain.md for the narrative spec. All 11 `uno_*` methods
+      plus 3 subscription methods (`uno_subscribe`, `uno_unsubscribe`,
+      `uno_getSubscription`) are served by uno/rpc/handlers.cpp and
+      uno/rpc/subscriptions.cpp.
 
 paths:
   # ──────────────────────────────────────────────────────────────────────
@@ -1365,6 +1372,519 @@ paths:
                             items: {type: object}
 
   # ──────────────────────────────────────────────────────────────────────
+  # Uno Workchain (wc=2) shielded-note methods (§9 of doc/uno-workchain.md)
+  #
+  # JSON-RPC surface served by uno/rpc/handlers.cpp and
+  # uno/rpc/subscriptions.cpp. Invoke via POST /jsonRPC with
+  # {"jsonrpc":"2.0","method":"uno_*","params":[…]} or via the per-method
+  # POST /uno_* convenience paths below. All reads return last-committed
+  # state only (§9.3 — no mempool-projected reads). Binary values are
+  # 64-char lowercase hex without a 0x prefix unless noted otherwise.
+  #
+  # Shared error codes (from uno/rpc/handlers.cpp):
+  #   -32600  request params exceed max size               (kErrTooLarge)
+  #   -32601  method not found                              (kErrMethodNotFound)
+  #   -32602  invalid params                                (kErrInvalidParams)
+  #   -32603  internal error                                (kErrInternal)
+  #   -32005  rate limit exceeded                           (kErrRateLimited)
+  #   -32010  upstream state not wired / unavailable        (kErrStateUnavailable)
+  #   -32011  filter / outputs for seqno not yet committed  (kErrNotReadyYet)
+  #   -32020  sendTransfer admission-check rejection        (kErrAdmissionRejected)
+  #   -32021  external-message submit hook not installed    (kErrSubmitUnavailable)
+  # ──────────────────────────────────────────────────────────────────────
+  /uno_chainInfo:
+    post:
+      operationId: uno_chainInfo_post
+      summary: Uno workchain head-state snapshot
+      tags: [uno]
+      description: >
+        Returns a snapshot of the wc=2 executor's head state: chain and
+        workchain id, current head seqno, executor account, the set of
+        active signature/proof schemes, and the anchor-window size (§9.1
+        of doc/uno-workchain.md). Wallets consult this to discover the
+        active scheme set and head seqno before building a transfer.
+        Errors: -32010 when uno head state is not wired.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        '200':
+          description: Chain info snapshot
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/UnoChainInfo'}
+
+  /uno_estimateFee:
+    post:
+      operationId: uno_estimateFee_post
+      summary: Estimate the native-unit fee for a transfer shape
+      tags: [uno]
+      description: >
+        Returns the minimum fee in nano-UNO units for a transfer with the
+        given number of spends and outputs (§9.1 of doc/uno-workchain.md,
+        §4.1 for the fee model). If Agent 5's estimator is registered it
+        is used directly; otherwise the handler computes a best-effort
+        estimate from the head-state fee parameters (min + per-byte + per-
+        spend + per-output). Errors: -32602 on bad params, -32010 when
+        neither estimator nor head state is wired.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [n_spends, n_outputs]
+              properties:
+                n_spends: {type: integer, minimum: 0, description: 'Number of input notes (1..max_spends_per_tx)'}
+                n_outputs: {type: integer, minimum: 0, description: 'Number of output notes (1..max_outputs_per_tx)'}
+      responses:
+        '200':
+          description: Fee estimate
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/UnoFeeEstimate'}
+
+  /uno_getAnchor:
+    post:
+      operationId: uno_getAnchor_post
+      summary: Current commitment-tree anchor and recent-anchor window
+      tags: [uno]
+      description: >
+        Returns the current `commitment_tree_root` plus the last-N anchor
+        window (§9.1 of doc/uno-workchain.md). Wallets read this to pick
+        a valid anchor when building a Transfer; only anchors inside the
+        window are admissible at submission time. Errors: -32010 when
+        uno head state is not wired.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        '200':
+          description: Current anchor and window
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/UnoAnchor'}
+
+  /uno_getAnchorAtSeqno:
+    post:
+      operationId: uno_getAnchorAtSeqno_post
+      summary: Historical anchor lookup by block seqno
+      tags: [uno]
+      description: >
+        Returns the commitment-tree anchor committed at the given block
+        seqno, or JSON null if the seqno has no recorded anchor (§9.1 of
+        doc/uno-workchain.md). Wallets use this for stale-transaction
+        handling and for cross-checking anchors referenced by prior
+        transfers. Errors: -32602 on bad params, -32010 when the anchor
+        index is not wired.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [seqno]
+              properties:
+                seqno: {type: integer, minimum: 0, description: 'Block sequence number'}
+      responses:
+        '200':
+          description: Historical anchor (or null)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result:
+                        oneOf:
+                          - $ref: '#/components/schemas/UnoAnchorAtSeqno'
+                          - type: 'null'
+
+  /uno_getBlockFilter:
+    post:
+      operationId: uno_getBlockFilter_post
+      summary: Per-block GCS compact filter
+      tags: [uno]
+      description: >
+        Returns the Golomb-coded-set compact filter accumulated at end of
+        block for the given seqno (§2.8 and §9.1 of doc/uno-workchain.md).
+        This is a derived, non-consensus artefact cached by the filter
+        service. Wallets fetch the filter, evaluate membership locally for
+        their tag set, and only trial-decrypt on hits — keeping
+        per-recipient identity off-server. Errors: -32602 on bad params,
+        -32011 if the filter for this seqno is not yet committed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [seqno]
+              properties:
+                seqno: {type: integer, minimum: 0}
+      responses:
+        '200':
+          description: Compact filter for the block
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/UnoBlockFilter'}
+
+  /uno_getCommitmentTreeFrontier:
+    post:
+      operationId: uno_getCommitmentTreeFrontier_post
+      summary: Commitment-tree frontier (for witness construction)
+      tags: [uno]
+      description: >
+        Returns the current frontier of the global commitment tree
+        (~1 KB), which a wallet needs locally to build an authentication
+        path for a newly received output (§9.1 of doc/uno-workchain.md).
+        The frontier is an ordered array of 32-byte nodes; its length is
+        reported as `depth`. Errors: -32010 when the frontier accessor
+        is not wired.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {type: object}
+      responses:
+        '200':
+          description: Frontier array + depth
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/UnoFrontier'}
+
+  /uno_getNullifierStatus:
+    post:
+      operationId: uno_getNullifierStatus_post
+      summary: Check whether a nullifier has been spent
+      tags: [uno]
+      description: >
+        Returns `{ spent, block_seqno? }` for the given nullifier (§9.1 of
+        doc/uno-workchain.md). `spent=false` means the nullifier has not
+        been observed in any committed block; `spent=true` additionally
+        surfaces the block seqno at which the spend was applied, when
+        the upstream index records it. Errors: -32602 when the nullifier
+        is not 32-byte hex, -32010 when the nullifier set is not wired.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nf_hex]
+              properties:
+                nf_hex: {type: string, description: '32-byte nullifier, 64-char lowercase hex (optional 0x prefix)'}
+      responses:
+        '200':
+          description: Nullifier status
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/UnoNullifierStatus'}
+
+  /uno_getOutputsAtBlock:
+    post:
+      operationId: uno_getOutputsAtBlock_post
+      summary: Paginated raw OutputDescriptions for one block
+      tags: [uno]
+      description: >
+        Returns a paginated slice of raw OutputDescription wire bytes for
+        the given block, in the exact order they were applied by
+        apply_transfer (§4.3 step 5, §9.1 of doc/uno-workchain.md).
+        Wallets pair this with `uno_getBlockFilter` — filter hits drive
+        targeted `getOutputsAtBlock` calls that feed local trial
+        decryption. `limit` is clamped to 1024 (kMaxOutputsPerPage);
+        values of 0 or above the cap are treated as the cap. Errors:
+        -32602 on bad params, -32011 if outputs for this seqno are not
+        yet indexed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [seqno, from_index, limit]
+              properties:
+                seqno: {type: integer, minimum: 0}
+                from_index: {type: integer, minimum: 0, description: 'Zero-based offset into the block output list'}
+                limit: {type: integer, minimum: 0, maximum: 1024, description: 'Max entries to return; 0 or >1024 is clamped to 1024'}
+      responses:
+        '200':
+          description: Output slab page
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/UnoOutputsPage'}
+
+  /uno_getOutputsForIvk:
+    post:
+      operationId: uno_getOutputsForIvk_post
+      summary: "Server-assisted wallet scan (opt-in, privacy-weakening)"
+      tags: [uno]
+      description: >
+        Opt-in, privacy-weakening server-assisted scan (§9.2 of
+        doc/uno-workchain.md). The client supplies an incoming viewing
+        key (`ivk`) and the server trial-decrypts on the client's behalf,
+        returning the subset of outputs that belong to that wallet. This
+        exposes the `ivk` to the operator; prefer the compact-filter path
+        (`uno_getBlockFilter` + `uno_getOutputsAtBlock`) wherever possible.
+        The server logs a PRIVACY WARNING to stderr on every invocation
+        and the response body includes a `warning` field. Errors: -32602
+        when `ivk_hex` is not 32-byte hex, -32010 when the server-
+        assisted scan backend is not wired.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ivk_hex]
+              properties:
+                ivk_hex: {type: string, description: '32-byte incoming viewing key, 64-char lowercase hex (optional 0x prefix)'}
+      responses:
+        '200':
+          description: Matches + in-body warning
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/UnoOutputsForIvk'}
+
+  /uno_getSubscription:
+    post:
+      operationId: uno_getSubscription_post
+      summary: Drain pending events for a subscription (polling variant)
+      tags: [uno]
+      description: >
+        Drains and returns the queued events for a subscription opened
+        via `uno_subscribe` (§9.1 of doc/uno-workchain.md). Each call
+        returns an array of event objects matching the channel's payload
+        shape and empties the server-side queue. Queues are capped at
+        10 000 events per subscription; excess events are dropped oldest-
+        first. If `sub_id` is unknown an empty array is returned rather
+        than an error. Errors: -32602 when `sub_id_hex` is not 8-byte hex.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sub_id_hex]
+              properties:
+                sub_id_hex: {type: string, description: '16-char lowercase hex of the uint64 subscription id returned by uno_subscribe'}
+      responses:
+        '200':
+          description: Event array (possibly empty)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result:
+                        type: array
+                        items:
+                          oneOf:
+                            - $ref: '#/components/schemas/UnoIncludedTxEvent'
+                            - $ref: '#/components/schemas/UnoNewHeadEvent'
+                            - $ref: '#/components/schemas/UnoNewAnchorEvent'
+
+  /uno_getTransactionStatus:
+    post:
+      operationId: uno_getTransactionStatus_post
+      summary: Look up the lifecycle status of a submitted Transfer
+      tags: [uno]
+      description: >
+        Returns `pending` / `included(block_seqno)` / `rejected(reason)` /
+        `unknown` for the given 32-byte BLAKE3 tx hash (§9.1 of
+        doc/uno-workchain.md). `unknown` means the status index has no
+        record of the hash (neither in mempool nor in a committed block).
+        Errors: -32602 on bad params, -32010 when the status index is
+        not wired.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tx_hash_hex]
+              properties:
+                tx_hash_hex: {type: string, description: '32-byte canonical tx hash, 64-char lowercase hex (optional 0x prefix)'}
+      responses:
+        '200':
+          description: Transaction lifecycle status
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/UnoTxStatus'}
+
+  /uno_sendTransfer:
+    post:
+      operationId: uno_sendTransfer_post
+      summary: Submit a signed, proven Transfer
+      tags: [uno]
+      description: >
+        Submits a signed, Plonky3-proven Transfer wire blob to the wc=2
+        executor (§9.1 of doc/uno-workchain.md). The handler runs the
+        §4.3a mempool admission subset (syntax, chain id, scheme id,
+        expiry, spend/output bounds, minimum fee, anchor-window
+        membership, LRU nullifier check, spend_auth_sig verification),
+        then hands the raw bytes to the external-message submit hook.
+        The expensive Plonky3 proof verify is deliberately deferred to
+        the compute phase (§4.3 step 4) — it is NOT run by this RPC.
+        Rate-limited independently of the shared RPC bucket (20 rps /
+        50 burst). Errors: -32005 on rate limit, -32600 when the hex
+        blob exceeds max tx size, -32602 on malformed params,
+        -32020 on admission rejection (message carries the specific
+        reason), -32021 when no submit hook is installed, -32010 when
+        the admission checker is not wired, -32603 on submit failure.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hex_blob]
+              properties:
+                hex_blob:
+                  type: string
+                  description: >
+                    Raw Transfer wire bytes as hex (optional 0x prefix).
+                    Max 256 KB hex (~128 KB binary).
+      responses:
+        '200':
+          description: Accepted for mempool admission
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {$ref: '#/components/schemas/UnoSendTransferResult'}
+
+  /uno_subscribe:
+    post:
+      operationId: uno_subscribe_post
+      summary: Open a subscription on one of three event channels
+      tags: [uno]
+      description: >
+        Opens a subscription on one of the three fixed channels defined
+        by the Uno subscription manager (§9.1 of doc/uno-workchain.md,
+        uno/rpc/subscriptions.h). Returns an 8-byte subscription id as
+        16-char lowercase hex. No wildcard or per-wallet filter channels
+        are offered — per-wallet filtering would require the server to
+        know wallet identity (see §5.6 "no accounts on chain"). In v1
+        only the polling variant `uno_getSubscription` is wired;
+        WebSocket push is a follow-up. Channels and event payloads:
+          - `includedTx`  → `{ tx_hash, block_seqno, fee }` per accepted Transfer
+          - `newHead`     → `{ seqno, anchor_root, tx_count, note_count }` per wc=2 block
+          - `newAnchor`   → `{ seqno, anchor_root }` convenience mirror of `uno_getAnchor` head changes
+        Errors: -32602 on bad params or an unknown channel name.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channel]
+              properties:
+                channel:
+                  type: string
+                  enum: [includedTx, newHead, newAnchor]
+                  description: 'Event channel name'
+      responses:
+        '200':
+          description: Subscription id (hex)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result:
+                        type: string
+                        description: '16-char lowercase hex of the uint64 subscription id'
+
+  /uno_unsubscribe:
+    post:
+      operationId: uno_unsubscribe_post
+      summary: Close a subscription
+      tags: [uno]
+      description: >
+        Closes a subscription opened via `uno_subscribe` (§9.1 of
+        doc/uno-workchain.md). Returns `true` if the id existed and was
+        removed, `false` if it was not found (idempotent). Errors:
+        -32602 when `sub_id_hex` is not 8-byte hex.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sub_id_hex]
+              properties:
+                sub_id_hex: {type: string, description: '16-char lowercase hex of the uint64 subscription id'}
+      responses:
+        '200':
+          description: Removal ack (boolean)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/OkResponse'
+                  - type: object
+                    properties:
+                      result: {type: boolean}
+
+  # ──────────────────────────────────────────────────────────────────────
   # CORS preflight (any path)
   # ──────────────────────────────────────────────────────────────────────
   /:
@@ -1652,6 +2172,174 @@ components:
         b64: {type: string}
         b64url: {type: string}
         hex: {type: string}
+
+    # ── Uno Workchain result shapes (§9.1 of doc/uno-workchain.md) ─────
+    UnoHex32:
+      type: string
+      description: 32-byte value encoded as 64-char lowercase hex (no 0x prefix)
+      minLength: 64
+      maxLength: 64
+      pattern: '^[0-9a-f]{64}$'
+
+    UnoChainInfo:
+      type: object
+      description: uno_chainInfo result (§9.1)
+      required: [chain_id, workchain_id, head_seqno, executor, active_schemes, anchor_window_size]
+      properties:
+        chain_id: {type: integer, description: 'Chain id from ConfigParam 84'}
+        workchain_id: {type: integer, enum: [2], description: 'Always 2 for Uno'}
+        head_seqno: {type: integer, description: 'Last-committed wc=2 block seqno'}
+        executor:
+          allOf:
+            - $ref: '#/components/schemas/UnoHex32'
+          description: '32-byte executor account address (hex)'
+        active_schemes:
+          type: array
+          items: {type: string, description: 'Single-byte scheme id as 2-char hex'}
+          description: 'Active signature/proof scheme ids; v1 ships ["01"]'
+        anchor_window_size: {type: integer, description: 'Size of the rolling anchor window (§9.1)'}
+
+    UnoAnchor:
+      type: object
+      description: uno_getAnchor result (§9.1)
+      required: [commitment_tree_root, head_seqno, anchor_window]
+      properties:
+        commitment_tree_root: {$ref: '#/components/schemas/UnoHex32'}
+        head_seqno: {type: integer}
+        anchor_window:
+          type: array
+          description: 'Newest-first list of recently committed anchors'
+          items: {$ref: '#/components/schemas/UnoHex32'}
+
+    UnoAnchorAtSeqno:
+      type: object
+      description: uno_getAnchorAtSeqno result (§9.1); null if not recorded
+      required: [seqno, anchor]
+      properties:
+        seqno: {type: integer}
+        anchor: {$ref: '#/components/schemas/UnoHex32'}
+
+    UnoFrontier:
+      type: object
+      description: uno_getCommitmentTreeFrontier result (§9.1)
+      required: [frontier, depth]
+      properties:
+        frontier:
+          type: array
+          items: {$ref: '#/components/schemas/UnoHex32'}
+          description: 'Commitment-tree frontier nodes'
+        depth: {type: integer, description: 'Number of nodes in the frontier array'}
+
+    UnoNullifierStatus:
+      type: object
+      description: uno_getNullifierStatus result (§9.1)
+      required: [spent]
+      properties:
+        spent: {type: boolean}
+        block_seqno:
+          type: integer
+          description: 'Block seqno at which the spend was applied; present only when spent=true and the upstream index records it'
+
+    UnoOutputRecord:
+      type: object
+      description: One entry in a uno_getOutputsAtBlock / uno_getOutputsForIvk result
+      required: [index, bytes]
+      properties:
+        index: {type: integer, description: 'Global output index within the block'}
+        bytes: {type: string, description: 'Raw OutputDescription wire bytes as lowercase hex'}
+
+    UnoOutputsPage:
+      type: object
+      description: uno_getOutputsAtBlock result (§9.1)
+      required: [seqno, from_index, total_in_block, outputs]
+      properties:
+        seqno: {type: integer}
+        from_index: {type: integer}
+        total_in_block: {type: integer, description: 'Total outputs in this block (page-aware cursor target)'}
+        outputs:
+          type: array
+          items: {$ref: '#/components/schemas/UnoOutputRecord'}
+
+    UnoBlockFilter:
+      type: object
+      description: uno_getBlockFilter result (§2.8, §9.1)
+      required: [seqno, filter_tag_bits, p, gcs]
+      properties:
+        seqno: {type: integer}
+        filter_tag_bits: {type: integer, description: 'Tag width; v1 ships 16'}
+        p: {type: integer, description: 'GCS P parameter; 0 when the block has no outputs'}
+        gcs: {type: string, description: 'GCS-encoded filter bytes as lowercase hex'}
+
+    UnoOutputsForIvk:
+      type: object
+      description: uno_getOutputsForIvk result (§9.2 — privacy-weakening)
+      required: [matches, warning]
+      properties:
+        matches:
+          type: array
+          items: {$ref: '#/components/schemas/UnoOutputRecord'}
+        warning:
+          type: string
+          description: 'Human-readable privacy warning included in every response'
+
+    UnoFeeEstimate:
+      type: object
+      description: uno_estimateFee result (§9.1, §4.1)
+      required: [fee_nano, n_spends, n_outputs]
+      properties:
+        fee_nano: {type: integer, description: 'Minimum fee in nano-UNO units'}
+        n_spends: {type: integer}
+        n_outputs: {type: integer}
+
+    UnoSendTransferResult:
+      type: object
+      description: uno_sendTransfer success result (§9.1)
+      required: [tx_hash]
+      properties:
+        tx_hash:
+          allOf:
+            - $ref: '#/components/schemas/UnoHex32'
+          description: 'Canonical 32-byte BLAKE3 tx hash (§4.3 step 3)'
+
+    UnoTxStatus:
+      type: object
+      description: uno_getTransactionStatus result (§9.1)
+      required: [status]
+      properties:
+        status: {type: string, enum: [pending, included, rejected, unknown]}
+        block_seqno: {type: integer, description: 'Present when status=included'}
+        reason: {type: string, description: 'Present when status=rejected'}
+
+    # ── Uno subscription event payloads (uno/rpc/subscriptions.cpp) ────
+    UnoIncludedTxEvent:
+      type: object
+      description: Payload of the `includedTx` subscription channel
+      required: [tx_hash, block_seqno, fee]
+      properties:
+        tx_hash:
+          allOf:
+            - $ref: '#/components/schemas/UnoHex32'
+          description: 'Canonical tx hash of the included Transfer'
+        block_seqno: {type: integer}
+        fee: {type: integer, description: 'Public fee paid, in nano-UNO units (§4.1)'}
+
+    UnoNewHeadEvent:
+      type: object
+      description: Payload of the `newHead` subscription channel
+      required: [seqno, anchor_root, tx_count, note_count]
+      properties:
+        seqno: {type: integer}
+        anchor_root: {$ref: '#/components/schemas/UnoHex32'}
+        tx_count: {type: integer}
+        note_count: {type: integer}
+
+    UnoNewAnchorEvent:
+      type: object
+      description: Payload of the `newAnchor` subscription channel
+      required: [seqno, anchor_root]
+      properties:
+        seqno: {type: integer}
+        anchor_root: {$ref: '#/components/schemas/UnoHex32'}
 
   responses:
     GenericOkResponse:
