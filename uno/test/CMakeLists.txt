@@ -135,6 +135,17 @@ add_executable(test-uno-subscriptions
 # fixtures, no Plonky3 / Poseidon2 real path.
 add_executable(test-uno-metrics                  test-uno-metrics.cpp)
 
+# K-filter-bench: standalone GCS encode/decode benchmark for the §2.8
+# compact-filter path. Complements the `uno_block_filter_gcs_bytes` runtime
+# histogram by giving operators (and the eventual audit vendor) a
+# reproducible offline hardware-specific baseline. Hand-rolled
+# std::chrono::steady_clock best-of-5 harness — no Google Benchmark
+# dependency — matching the shape of uno/plonky3-ffi/benches/shape_matrix.rs.
+# Emits a Markdown table on stdout so the output drops straight into commit
+# messages and ops dashboards. Measurement-only; does NOT touch the encoder
+# implementation.
+add_executable(test-uno-filter-bench             test-filter-bench.cpp)
+
 # Build-only helper: regenerates uno/test/golden/state-transitions-v1.hex.
 # NOT registered with ctest — invocation is a manual operator step (see the
 # file's own doc comment). Links against uno_workchain for encode_transfer.
@@ -159,7 +170,8 @@ foreach(_t test-uno-transfer
            test-uno-genesis-loader
            test-uno-bech32m-envelope
            test-uno-subscriptions
-           test-uno-metrics)
+           test-uno-metrics
+           test-uno-filter-bench)
   target_link_libraries(${_t} PRIVATE uno_workchain)
   target_include_directories(${_t} PRIVATE ${CMAKE_SOURCE_DIR})
   if (COMMAND tos_test)
