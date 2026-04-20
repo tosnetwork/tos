@@ -1,6 +1,6 @@
 //! `tosctl uno send` round-trip integration test.
 //!
-//! Scope (M-send scaffold):
+//! Scope (K-P6-wire):
 //!
 //! 1. Two-wallet setup (Alice + Bob) from distinct deterministic seeds.
 //! 2. Synthetic owned-note fixtures for Alice (bypasses the RPC scan).
@@ -11,11 +11,14 @@
 //!      - canonical `tx_hash`
 //!      - Schnorr-sign each spend
 //!      - wire serialize
+//!      - **real Plonky3 prove via `uno_plonky3_ffi`**
 //! 4. Assertions:
 //!      - built Transfer decodes back byte-identically
 //!      - `tx_hash` recomputed from the decoded tx equals the pre-submit hash
-//!      - `zk_proof` is the 43-byte stubbed placeholder (so the M-P2
-//!        integration point is exercised by the scaffold)
+//!      - `zk_proof` size lies in the §17 cell-budget window (30–210 KB)
+//!        across the 1..4 × 1..4 shape envelope
+//!      - the emitted proof verifies against `uno_plonky3_ffi::verify` for
+//!        the witness's canonical public-input vector
 //!      - Bob's wallet trial-decrypts the recipient output (send →
 //!        scan closes the loop without a network)
 //!      - each spend's `spend_auth_sig` verifies against its `rk` over tx_hash
@@ -28,9 +31,14 @@ use tosctl_uno::{
     scan::{self, OwnedNote},
     schnorr,
     send,
-    transfer::{self, STUB_PROOF_BYTES, TRANSFER_VERSION, SCHEME_ID_V1},
+    transfer::{self, TRANSFER_VERSION, SCHEME_ID_V1},
     wire as wire_mod,
 };
+
+/// §17 proof-size window: minimum observed at (1,1) shape; maximum at
+/// (4,4). Any honest K-P6-wire proof must fall in this window.
+const PROOF_MIN_BYTES: usize = 30_000;
+const PROOF_MAX_BYTES: usize = 210_000;
 
 fn seed_for(label: u8) -> [u8; 32] {
     let mut s = [0u8; 32];
@@ -51,7 +59,7 @@ fn fake_note(value: u64, salt: u8) -> OwnedNote {
 }
 
 #[test]
-fn send_pipeline_builds_well_formed_transfer_with_stub_proof() {
+fn send_pipeline_builds_well_formed_transfer_with_real_proof() {
     // --- Setup two wallets ---------------------------------------------
     let alice = keygen::derive_fvk(&seed_for(0x01)).expect("alice fvk");
     let bob   = keygen::derive_fvk(&seed_for(0x02)).expect("bob fvk");
@@ -93,15 +101,19 @@ fn send_pipeline_builds_well_formed_transfer_with_stub_proof() {
     assert_eq!(tx.spends.len(), 1);
     assert_eq!(tx.outputs.len(), 2, "recipient + change → 2 outputs");
 
-    // --- Stub-proof assertion ------------------------------------------
-    assert_eq!(
-        tx.zk_proof.len(),
-        STUB_PROOF_BYTES,
-        "zk_proof must be the 43-byte stub — M-P2 integration point"
-    );
+    // --- Real Plonky3 proof size ---------------------------------------
     assert!(
-        tx.zk_proof.iter().all(|&b| b == 0),
-        "stub proof is all-zero so it's unmistakable at the validator"
+        (PROOF_MIN_BYTES..=PROOF_MAX_BYTES).contains(&tx.zk_proof.len()),
+        "zk_proof size {} outside the §17 window [{}, {}] — K-P6-wire regression",
+        tx.zk_proof.len(), PROOF_MIN_BYTES, PROOF_MAX_BYTES
+    );
+    // A real proof is almost-certainly not all-zero; the probability of
+    // a Plonky3 STARK postcard blob being all-zero by chance is ~ 2^-k
+    // for any practical prefix. This guards against a future regression
+    // where the stub path silently reappears.
+    assert!(
+        tx.zk_proof.iter().any(|&b| b != 0),
+        "real proof must contain non-zero bytes"
     );
 
     // --- Wire round-trip ------------------------------------------------
@@ -194,6 +206,58 @@ fn send_pipeline_handles_single_output_no_change() {
 
     assert_eq!(tx.outputs.len(), 1, "no change → 1 output");
     assert_eq!(tx.spends.len(), 1);
-    // Still stubbed proof.
-    assert_eq!(tx.zk_proof.len(), STUB_PROOF_BYTES);
+    // Real Plonky3 proof at shape (1, 1).
+    assert!(
+        (PROOF_MIN_BYTES..=PROOF_MAX_BYTES).contains(&tx.zk_proof.len()),
+        "zk_proof size {} outside §17 window", tx.zk_proof.len()
+    );
+}
+
+/// K-P6-wire acceptance test: the proof emitted by the wallet's send
+/// path must verify against the `uno_plonky3_ffi` verifier at the
+/// canonical public-input vector the prover consumed. This closes the
+/// prove→verify loop end-to-end for the 1-spend / 2-output shape.
+#[test]
+fn test_real_proof_verifies_against_ffi_verifier() {
+    let _alice = keygen::derive_fvk(&seed_for(0x55)).expect("alice fvk");
+    let bob = keygen::derive_fvk(&seed_for(0x66)).expect("bob fvk");
+    let bob_diversifier = [0x77u8; 11];
+    let bob_addr = Address::build(&bob, &bob_diversifier).expect("bob addr");
+
+    let alice_notes = vec![fake_note(2_000, 0x09)];
+    let anchor = [0x5au8; 32];
+
+    // Directly build a prover witness over the same inputs the send
+    // pipeline uses, then verify the emitted proof against its canonical
+    // PI vector.
+    //
+    // The recipient-address material mirrors what `send::build_transfer`
+    // feeds into `TransferWitness::build`. For the test we use the
+    // recipient's real address fields so the proxy PIs are deterministic.
+    let witness = send::TransferWitness::build(
+        &alice_notes,
+        &[2_000],          // spend values
+        &[1_500, 450],     // recipient + change
+        &[[0x01u8; 32], [0x02u8; 32]],   // output cms
+        &[bob_diversifier, alice_notes[0].diversifier], // output d
+        &[bob_addr.pk_d, bob_addr.pk_d],                // output pk_d (change reuses shape)
+        &[bob_addr.ivk_commitment, bob_addr.ivk_commitment],
+        50,                // fee
+        &anchor,
+    ).expect("TransferWitness::build 1s/2o");
+
+    let proof = send::plonky3_prove(&witness);
+    assert!(
+        (PROOF_MIN_BYTES..=PROOF_MAX_BYTES).contains(&proof.len()),
+        "proof size {} outside §17 window", proof.len()
+    );
+
+    let pi = witness.public_inputs();
+    let verifier = uno_plonky3_ffi::verifier::MvpVerifier::new();
+    let rc = verifier.verify(&proof, &pi);
+    assert_eq!(
+        rc,
+        uno_plonky3_ffi::Plonky3Status::Ok,
+        "FFI verifier must accept the wallet-emitted proof"
+    );
 }
