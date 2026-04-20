@@ -116,7 +116,7 @@ Anything weaker — the account + homomorphic-ciphertext recipe — still leaks 
 1. On-chain footprint of a Transfer reveals only: `{tx occurred, fee, anchor, spend count, output count}`. No amount, no sender identity, no receiver identity, no link to prior txs.
 2. A wallet with `ivk` correctly detects all incoming notes sent to any of its diversified addresses via compact-filter scan + hybrid-KEM trial-decrypt; a wallet without `ivk` detects nothing.
 3. Validator nodes restarted mid-chain reproduce byte-identical `note_tree_root`, nullifier set root, and anchor window.
-4. Client-side proving ≤ **15 s** on a 2020-era laptop (M1 or 8-core x86) for a 1-spend / 2-output Transfer; validator verify ≤ **15 ms** single-core, ≤ 5 ms on 4-core parallel (§7.2, §7.4). Mobile proving is best-effort; no committed target.
+4. Client-side proving ≤ **22 s** on a 2020-era laptop (M1 or 8-core x86) for a 1-spend / 2-output Transfer under the pinned FRI parameters (§2.1: `log_blowup=2, num_queries=128`); validator verify ≤ **20 ms** single-core, ≤ 7 ms on 4-core parallel (§7.2, §7.4). Mobile proving is best-effort; no committed target.
 5. Nullifier lookup ≤ **1 ms** against a 10 M-entry set (cache-warm); ≤ 10 ms (cache-cold).
 6. An auditor holding `fvk` for a target account can reconstruct the full note history with correct amounts (via `ivk`-derived hybrid-KEM `sk_mlkem` + Schnorr verifying key); without `fvk`, zero recovery.
 7. **Sustained throughput: 15–30 TPS at 1 s global block time**, burst capacity up to ~50 TPS when the nullifier LRU cache is warm. Higher throughput requires proof aggregation (v2 roadmap). This ceiling is intrinsic to terminal privacy on commodity validator hardware; we do not fight it in v1.
@@ -188,8 +188,25 @@ Cost: 1 byte per tx, 1 byte per transcript absorb, one dispatch map entry.
 ### 2.1 Field and proof system
 
 - **Field**: **Goldilocks** prime field `Fp = Fp_G` with `p = 2⁶⁴ − 2³² + 1`. 64-bit, CPU-friendly, SIMD-friendly, the native operating field of Plonky3.
-- **Proof system**: **Plonky3 STARK** with FRI polynomial commitments. No trusted setup. Transparent, post-quantum-native (hash-based). Proofs for the Transfer AIR are ~30–80 KB depending on circuit shape; verify is ~5–15 ms on a modern validator core.
+- **Proof system**: **Plonky3 STARK** with FRI polynomial commitments. No trusted setup. Transparent, post-quantum-native (hash-based). Proofs for the Transfer AIR are ~40–100 KB depending on circuit shape (with our pinned FRI parameters below); verify is ~7–20 ms on a modern validator core.
 - **Transfer AIR**: hand-written Plonky3 Algebraic Intermediate Representation for the Transfer claims in §4.2. Proof system components reused from Plonky3's production toolkit (AggLayer/SP1 baseline); the Transfer AIR is project-specific.
+
+**FRI parameters (pinned, consensus-binding)**:
+
+```
+log_blowup         = 2     // trace domain = 2^log_blowup · trace length
+num_queries        = 128   // FRI verifier query rounds
+proof_of_work_bits = 16    // Fiat-Shamir grinding bits
+```
+
+**Security posture**: ~128-bit conjectured soundness / ~64-bit proven soundness against classical adversaries, ~64-bit conjectured / ~32-bit proven against a quantum adversary (Grover halves bits). For a payment chain this is the appropriate level — tighter than Plonky3/SP1/AggLayer defaults (`num_queries=84-100`, ~100-bit conjectured) because a soundness break on a privacy L1 is strictly more damaging than on a cross-chain aggregation proof (forged proof → unauthorized value creation, not just bridge-balance inconsistency).
+
+**Rejected alternatives**:
+- `num_queries=84` (Plonky3 default): ~100-bit conjectured, ~50-bit proven. Sufficient for zkVMs/aggregation, not for native-value L1.
+- `num_queries=200` with `log_blowup=1`: same proven security but +50% proof size.
+- `log_blowup=4, num_queries=84`: ~128-bit proven (stronger) but prove time +80% — UX-negative without security gain against realistic classical adversaries.
+
+See §16 decision #33 for the rationale.
 
 Why Goldilocks over alternatives:
 - **vs. Pallas/Vesta (Halo2)**: Pallas has no PQ path; every shielded chain on it (Zcash Orchard) carries a Phase 2 proof-system migration debt. Goldilocks with FRI is PQ-native at v1 ship — no Phase 2 debt on the proof layer.
@@ -510,7 +527,7 @@ Inline field sizes:
 - Each `SpendDescription` inline: `32+32+64 = 128` bytes (no `cv`).
 - Each `OutputDescription` inline (excluding `enc_ciphertext` and `mlkem_ct` refs): `32+32+2+80 = 146` bytes (no `cv`, plus `filter_tag`).
 - No `binding_sig` on the tx.
-- `zk_proof` is a ref to a cell chain — Plonky3 STARK proof, ~40 KB for a 1-spend/2-output Transfer, ~80 KB worst-case 4/4. See §17.1.
+- `zk_proof` is a ref to a cell chain — Plonky3 STARK proof under the pinned §2.1 FRI parameters, ~52 KB for a 1-spend/2-output Transfer, ~100 KB worst-case 4/4. See §17.1.
 
 `enc_ciphertext` layout (~580 B total, unchanged from v1 design pre-Plonky3):
 - 84 B: `Note` plaintext fields packed and aligned (11 B `d` + 32 B `pk_d` + 8 B `value` + 32 B `rseed` + 1 B padding = 84 B).
@@ -524,8 +541,8 @@ Inline field sizes:
 - Inline tx body: `56 + 128 + 2×146 = 476` bytes.
 - Ref cell chain for 2 × `enc_ciphertext` (~580 B each, ~5 cells): ~1.4 KB with overhead.
 - Ref cell chain for 2 × `mlkem_ct` (~1088 B each, ~9 cells): ~2.4 KB with overhead.
-- Ref cell chain for `zk_proof` (~40 KB Plonky3 proof, ~320 cells): ~50 KB with overhead.
-- **Total: ~54 KB per typical tx.** Worst-case 4-spend / 4-output with 80 KB proof: ~110 KB.
+- Ref cell chain for `zk_proof` (~52 KB Plonky3 proof, ~420 cells): ~64 KB with overhead.
+- **Total: ~68 KB per typical tx.** Worst-case 4-spend / 4-output with 100 KB proof: ~135 KB.
 
 Larger than a Halo2-based shielded tx (~15 KB) due to the STARK proof size. This is the intrinsic cost of PQ-native proving. Bandwidth impact analyzed in §5.9 and §7.4; stays within datacenter-validator budgets and is borderline tight for residential operators, a conscious trade against Phase 2 migration debt.
 
@@ -810,22 +827,22 @@ TOS simplex consensus runs a global block rate (ConfigParam 30); per-workchain b
 | End-of-block compact filter compilation (§2.8) | 1–2 ms |
 | **Remaining for compute phase** | **~400–500 ms** |
 
-Per-tx compute cost in the compute phase (Plonky3 / Goldilocks under `scheme_id = 0x01`):
+Per-tx compute cost in the compute phase (Plonky3 / Goldilocks under `scheme_id = 0x01`, with the pinned FRI parameters from §2.1):
 
 | Component | Time |
 |---|---|
 | Cheap checks (anchor, dedup, Ristretto decompression) | 2 ms |
 | Nullifier existence check (LRU-hit path) | < 1 ms |
 | `spend_auth_sig × N` Schnorr-on-Ristretto verify | ~2 ms per spend |
-| **Plonky3 proof verify** | **5–15 ms** (FRI query + Merkle verify; smaller than Halo2 IPA by a modest margin) |
+| **Plonky3 proof verify** (`num_queries=128`; FRI Merkle paths + PoW check) | **7–20 ms** |
 | State mutation (tree append + nullifier insert + filter accumulation + cell writes) | 6–9 ms |
-| **Total per tx, single-threaded, 1-spend/2-output** | **~20 ms** |
+| **Total per tx, single-threaded, 1-spend/2-output** | **~25 ms** |
 
-**Serial TPS ceiling: 400 / 20 ≈ 20 TPS.** With parallel Plonky3 verify across `num_cores` workers (§13 P.3, **activation prerequisite**), the ceiling rises to **~50 TPS burst / 30 TPS sustained** on 4-core validator hardware, matching the design target (§1.4).
+**Serial TPS ceiling: 400 / 25 ≈ 16 TPS.** With parallel Plonky3 verify across `num_cores` workers (§13 P.3, **activation prerequisite**), the ceiling rises to **~50 TPS burst / 30 TPS sustained** on 4-core validator hardware, matching the design target (§1.4).
 
 This ceiling is **by design**. The trade-off: every user gets terminal privacy + PQ-native proving, validators run on commodity hardware, the chain does not market throughput. If sustained demand exceeds the ceiling, the response is proof aggregation (v2) — not block-rate adjustment and not weakening of privacy properties.
 
-**Note on bandwidth**: Plonky3 proofs are ~4× larger than Halo2 proofs (~40 KB vs ~10 KB typical). At 30 TPS × 40 KB × 100 validators = ~120 MB/s of inter-validator bandwidth during consensus — datacenter-feasible, borderline for residential operators. This is the principal trade-off of choosing Plonky3 over Halo2 and is accepted as the cost of PQ-native proving without Phase 2 migration debt.
+**Note on bandwidth**: Plonky3 proofs under the pinned FRI parameters are ~5× larger than Halo2 proofs (~52 KB typical vs ~10 KB). At 30 TPS × 52 KB × 100 validators = ~160 MB/s of inter-validator bandwidth during consensus — datacenter-feasible, tight on residential links. This is the principal cost of choosing Plonky3 over Halo2 with 128-bit conjectured soundness, accepted as the price of PQ-native proving with payment-chain-grade security.
 
 ---
 
@@ -989,26 +1006,26 @@ Concrete cost on a 2020-era laptop (M1 or 8-core x86) for a 1-spend / 2-output T
 | Step | Work | Time |
 |---|---|---|
 | Witness construction | select notes, compute `nf`, build outputs, ML-KEM encap, AEAD encrypt | ~10 ms |
-| Plonky3 STARK proving (FRI + Poseidon2 over Goldilocks) | the dominant cost | **10–30 s** |
+| Plonky3 STARK proving (`log_blowup=2, num_queries=128`; FRI + Poseidon2-Goldilocks) | the dominant cost | **15–40 s** |
 | Schnorr-on-Ristretto255 signatures | `spend_auth_sig × N` | ~3 ms |
 | Serialize + JSON-RPC submit | TLB codec + HTTP | ~20 ms |
 
-Scaling to other hardware (Plonky3 proving is slower than Halo2 by ~3–5× but benefits more from multi-core parallelism):
+Scaling to other hardware (Plonky3 proving is slower than Halo2 by ~4–6× at our pinned security level, but benefits more from multi-core parallelism):
 
 | Device class | 1-spend/2-output | 4-spend/4-output |
 |---|---|---|
-| Server / workstation | 2–5 s | 8–15 s |
-| Modern laptop (M2/M3, 8-core x86) | 10–15 s | 30–50 s |
-| Flagship phone (iPhone 15 Pro, Pixel 8 Pro) | 30–60 s | 90–180 s |
-| Mid-range phone (Pixel 6a, mid-tier Snapdragon) | 60–120 s | **likely fails / OOM** |
-| Low-end phone (4 GB RAM) | likely OOM | OOM |
+| Server / workstation | 3–7 s | 12–22 s |
+| Modern laptop (M2/M3, 8-core x86) | 15–22 s | 45–75 s |
+| Flagship phone (iPhone 15 Pro, Pixel 8 Pro) | 45–90 s | likely fails / OOM |
+| Mid-range phone (Pixel 6a, mid-tier Snapdragon) | 90–180 s | OOM |
+| Low-end phone (4 GB RAM) | OOM | OOM |
 
-**Implication for product design**: prove latency on Plonky3 is higher than on Halo2 — the trade we accepted for PQ-native proving. Mobile is at the edge of what's comfortable even on flagship devices. Wallets should:
+**Implication for product design**: prove latency on Plonky3 with payment-chain-grade FRI parameters is higher than on Halo2 — the trade we accepted for PQ-native + 128-bit-conjectured soundness. Mobile flagship can handle simple txs but 4/4 max txs are out of reach even on flagship. Wallets should:
 - surface proving as an explicit "generating proof…" step with progress indication;
 - encourage laptop / desktop proving for non-trivial transactions;
 - degrade gracefully on low-memory devices (e.g., limit to 1-spend / 2-output on phones with ≤ 4 GB RAM).
 
-§1.4 targets ≤ 15 s laptop proving; no committed phone target. If prove UX turns out to be a critical blocker, the v2+ path is delegated proving with blinded witnesses (research-grade) or Tachyon-style PCD which compresses prove into smaller recursive steps.
+§1.4 targets ≤ 22 s laptop proving for 1-spend/2-output under pinned parameters; no committed phone target. If prove UX becomes critical, the v2+ path is delegated proving with blinded witnesses (research-grade) or Tachyon-style PCD which compresses prove into smaller recursive steps.
 
 ### 7.3 Phase 2 — Admission (non-consensus, cheap pre-filter)
 
@@ -1035,7 +1052,7 @@ Typical admission cost for a 1-spend tx: ~3 ms. An adversary can force bounded w
 
 Determinism is a hard requirement (§5.7 verify-before-mutate; §12 P.5 cross-validator replay). Every call path invoked here uses no randomness, no wall-clock, no HashMap iteration, no floats, no uninitialized reads. Cross-validator state-root parity is enforced by golden-fixture tests.
 
-Per-tx cost, single-threaded, 1-spend/2-output under `scheme_id = 0x01`:
+Per-tx cost, single-threaded, 1-spend/2-output under `scheme_id = 0x01` (pinned FRI parameters from §2.1):
 
 | Component | Time |
 |---|---|
@@ -1043,13 +1060,13 @@ Per-tx cost, single-threaded, 1-spend/2-output under `scheme_id = 0x01`:
 | Nullifier existence (LRU-hit path) | < 1 ms |
 | Nullifier existence (LRU-miss → 24-level dict walk) | ~10 ms |
 | `spend_auth_sig × N` Schnorr verify | ~2 ms/spend |
-| **Plonky3 proof verify (FRI query + Merkle check)** | **5–15 ms** |
+| **Plonky3 proof verify (128 FRI queries + PoW check + Merkle paths)** | **7–20 ms** |
 | State mutation (tree append × outputs, nf dict insert × spends, filter accumulate, stats) | 6–9 ms |
-| **Total (LRU-hit case)** | **~20 ms** |
+| **Total (LRU-hit case)** | **~25 ms** |
 
-At target throughput 30 TPS, single-threaded verify consumes 30 × 20 ms = **600 ms** of compute per block — exceeding the ~400–500 ms compute-phase budget (§5.9). Parallel Plonky3 verify across `num_cores` workers (§13 P.3, **activation prerequisite**) cuts effective per-tx time to ~6 ms on 4-core hardware; 30 TPS then consumes ~180 ms, which fits. Parallel verify is not a later optimization — it is a precondition for the chain producing blocks at target TPS, and the release gate is accordingly a hard activation gate.
+At target throughput 30 TPS, single-threaded verify consumes 30 × 25 ms = **750 ms** of compute per block — exceeding the ~400–500 ms compute-phase budget (§5.9). Parallel Plonky3 verify across `num_cores` workers (§13 P.3, **activation prerequisite**) cuts effective per-tx time to ~7 ms on 4-core hardware; 30 TPS then consumes ~210 ms, which fits. Parallel verify is not a later optimization — it is a precondition for the chain producing blocks at target TPS, and the release gate is accordingly a hard activation gate.
 
-**Verify bandwidth**: each proof is produced once but consumed many times. For a network of `V` validators, every tx's proof crosses the validator-to-validator catchain links `V − 1` times during consensus, plus once per future replaying node. At `V = 100`, 30 TPS, ~40 KB Plonky3 proofs, per-validator aggregate inbound proof bandwidth is ~120 MB/s — datacenter-feasible, tight on residential links. This is the principal cost of choosing Plonky3 over Halo2 and is accepted as the price of PQ-native proving without Phase 2 migration debt. See §7.6 for the axis analysis.
+**Verify bandwidth**: each proof is produced once but consumed many times. For a network of `V` validators, every tx's proof crosses the validator-to-validator catchain links `V − 1` times during consensus, plus once per future replaying node. At `V = 100`, 30 TPS, ~52 KB Plonky3 proofs (payment-chain FRI params), per-validator aggregate inbound proof bandwidth is ~160 MB/s — datacenter-feasible, tight on residential links. This is the principal cost of 128-bit conjectured soundness under Plonky3 and is accepted as the price of PQ-native proving with payment-grade security. See §7.6 for the axis analysis.
 
 ### 7.5 Phase 4 — Scan (receiver-side, post-inclusion)
 
@@ -1085,18 +1102,18 @@ Without compact filters (unfiltered scan path), cost at 30 TPS is ~24 min/day of
 
 | Phase | Actor | Frequency per tx | Time budget | Binding constraint |
 |---|---|---|---|---|
-| Prove | Sender device | 1 | 10–30 s laptop (UX) | Plonky3 FRI + Poseidon2 on user hardware |
+| Prove | Sender device | 1 | 15–40 s laptop (UX) | Plonky3 FRI (`num_queries=128`) + Poseidon2 on user hardware |
 | Admission | Any full node | 1 × (nodes that see it) | ~3 ms (DoS-bounded) | Schnorr-on-Ristretto verify |
-| Verify | Each validator + replay nodes | `V` + replay count | ~20 ms serial, ~6 ms parallel | Plonky3 verify; parallel-verify gate |
+| Verify | Each validator + replay nodes | `V` + replay count | ~25 ms serial, ~7 ms parallel | Plonky3 verify; parallel-verify gate |
 | Scan | Receiver wallet | 1 per owned output | ~1.1 ms per filter hit | AEAD + ML-KEM decap (both negligible) |
 
 **Three independent cost axes — do not collapse them**:
 
 1. **Prove time** — a one-off UX cost borne on the sender's device. Scales with the sender's hardware, not with network size. Slow prove on mobile is an inherent property of shielded L1 and is orthogonal to verify budget. Optimizations here (GPU proving, Plonky3 tuning, delegated proving research) help UX but not consensus throughput.
 2. **Verify time** — a recurring consensus cost borne by every validator. Scales with validator count. Sets the block-throughput ceiling. Parallel verify (§13 P.3) is the only within-v1 lever; proof aggregation (v2+) and Tachyon-style PCD compression (Phase 3) are the out-of-v1 levers.
-3. **Proof bandwidth** — an inter-validator cost borne `V − 1` times per tx during catchain propagation, plus once per replay. Scales with proof size (~40 KB Plonky3 typical). The PQ-native trade: Plonky3 proofs are ~4× larger than Halo2 would have produced; we accepted this cost in exchange for no Phase 2 migration debt.
+3. **Proof bandwidth** — an inter-validator cost borne `V − 1` times per tx during catchain propagation, plus once per replay. Scales with proof size (~52 KB Plonky3 typical under pinned FRI params). The PQ-native-with-payment-grade-security trade: Plonky3 proofs at 128-bit conjectured soundness are ~5× larger than Halo2 would have produced; we accepted this cost in exchange for no Phase 2 migration debt and stronger soundness margin.
 
-An optimization that improves one axis at the expense of another is a real trade-off and must be evaluated against which axis is the currently binding constraint, not against an aggregate "performance" metric. Example: choosing Plonky3 over Halo2 costs prove time (~3–5× slower) and proof bandwidth (~4× larger), but it delivers native PQ and removes the Phase 2 migration debt (§6). This is a rational trade only if PQ is worth more than prove/bandwidth on this chain — which, given the chain's top-line positioning as a PQ-native privacy L1 (§0), it is.
+An optimization that improves one axis at the expense of another is a real trade-off and must be evaluated against which axis is the currently binding constraint, not against an aggregate "performance" metric. Example: choosing Plonky3 over Halo2 costs prove time (~4–6× slower) and proof bandwidth (~5× larger), but it delivers native PQ and removes the Phase 2 migration debt (§6). Likewise, choosing `num_queries=128` over Plonky3's `num_queries=84` default costs ~40% prove time and ~30% proof size, but adds ~28 bits of soundness margin — a rational trade for a native-value L1.
 
 ### 7.7 File-by-file trace of `uno_sendTransfer`
 
@@ -1670,6 +1687,7 @@ Every non-trivial choice below was made against the alternative space of publish
 30. **Ownership claim — decided: ivk-commitment hash-chain binding (no in-circuit curve ops).** §4.2 claim 3 is reformulated from Orchard's in-circuit `pk_d = ivk · g_d` to a pure hash-chain: `ivk_commitment = Poseidon2("uno-ivk-cm-v1", ivk, d)` is published in the address (§2.6) and bound into `cm` (§3.2); the AIR proves `ivk_commitment` matches an `ivk` hash-chained from `uno_seed`. **No curve operations inside the AIR.** The sole adversary-relevant property — "only the holder of `uno_seed` can produce a valid spend proof" — is preserved under the Poseidon2 random-oracle model.
 31. **Spend-auth `rk` — decided: fresh per-spend Ristretto255 key, no `ak` randomization.** §2.5 is simplified from Orchard's `rk = ak + α·G` randomization scheme. Each spend samples a fresh `rsk ∈ scalars(Ristretto255)`, publishes `rk = rsk · G`, and signs `tx_hash` with Schnorr. No long-term spend-auth key `ak` exists; it is removed from `fvk`. Audit recovery of spend history goes through `ovk`-decrypted `out_ciphertext`, not through `rk` inversion. Rationale: Orchard's `rk-ak` randomization required in-circuit curve ops (claim 6 in earlier drafts); removing it eliminates the last curve op from the AIR, consistent with §2.5.
 32. **Block-filter encoding — decided: GCS over raw 16-bit tags, `P=15, M=2¹⁶`, no secondary hash.** §2.8.1 pins the exact encoding as a consensus-binding spec. `filter_tag` is already cryptographic (§2.8), so no BIP-158-style keyed second hash is needed; GCS operates directly on the sorted deduplicated u16 multiset. Expected size ~100–150 B per block at 30 TPS, ~180-260 B at 50 TPS burst. The filter is a **derived view**, not consensus state — any full node reconstructs it from on-chain data. Byte-identical across every implementation; wallet SDKs match validator output by spec, not by keyed-hash agreement.
+33. **FRI security parameters — decided: `log_blowup = 2`, `num_queries = 128`, `proof_of_work_bits = 16`.** §2.1 pins these as consensus-binding. Gives ~128-bit conjectured / ~64-bit proven classical soundness, ~64-bit conjectured / ~32-bit proven quantum soundness. Tighter than Plonky3/SP1/AggLayer defaults (`num_queries=84-100`, ~100-bit conjectured) because a soundness break on a privacy L1 with fixed-supply native asset enables unauthorized value creation, not just cross-chain bridge inconsistency. Cost: prove time +40%, proof size +30%, verify time +30% vs Plonky3 defaults. Accepted as the price of payment-chain-grade security. Rejected: `log_blowup=4` (doubled prove time for minimal conjectured-soundness gain); `num_queries=200` (same soundness as our choice, +50% proof size); pure 128-bit-proven target (prove time >2× slower, no meaningful real-world adversary advantage).
 
 ---
 
@@ -1701,8 +1719,8 @@ All over-sized data is stored as **cell trees** using the standard TOS idiom.
 
 | Artifact | Raw size | Representation | Cells | Walk depth |
 |---|---|---|---|---|
-| Plonky3 proof (typical 1-spend/2-output) | ~40 KB | contiguous byte blob via `CellString` | ~320 | ~5 levels |
-| Plonky3 proof (4-spend/4-output worst case) | ~80 KB | contiguous byte blob via `CellString` | ~640 | ~5 levels |
+| Plonky3 proof (typical 1-spend/2-output, pinned FRI params) | ~52 KB | contiguous byte blob via `CellString` | ~420 | ~5 levels |
+| Plonky3 proof (4-spend/4-output worst case) | ~100 KB | contiguous byte blob via `CellString` | ~800 | ~5 levels |
 | `enc_ciphertext` (per output) | ~580 B | `CellString` | ~5 | 1 level |
 | `mlkem_ct` (per output) | 1088 B | `CellString` | ~9 | 1 level |
 | Commitment-tree frontier (32 Poseidon2-Goldilocks siblings) | ~1 KB | linked chain | ~8 | 1 level |
@@ -1720,7 +1738,7 @@ Each cell carries ~32 bytes of representation-hash and depth metadata, so a 40 K
 
 ### 17.3 Cell-count scaling frontier
 
-Plonky3 proofs (30–80 KB per tx) translate to 240–640 cells per proof. Tractable, but it makes **cell count per tx** — not inline bit width — the binding scaling axis. Proof-chain traversal must keep ≤ 5 levels; use all four refs per internal node where possible.
+Plonky3 proofs under the pinned FRI parameters (40–100 KB per tx) translate to 320–800 cells per proof. Tractable, but it makes **cell count per tx** — not inline bit width — the binding scaling axis. Proof-chain traversal must keep ≤ 5 levels; use all four refs per internal node where possible.
 
 Phase 3 (Tachyon-compatible) would move `enc_ciphertext` and `mlkem_ct` off-chain entirely, shrinking on-chain per-tx to just the proof + commitments + nullifiers. This is the long-term route to reducing cell-tree scaling pressure.
 
