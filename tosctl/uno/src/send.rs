@@ -1085,15 +1085,15 @@ mod tests {
             &[0xAAu8; 32],
         ).expect("build witness");
         let proof = plonky3_prove(&witness);
-        // Observed K-AIR proof sizes (test-grade FRI params — the reference
-        // prover ships `FriParameters::new_testing(log_blowup=2)`): 1/1
-        // shape ≈ 380 KB, 4/4 shape ≈ 1.5 MB. Production FRI params (§2.1
-        // soundness target, `TODO(uno-p2-soundness)`) will cut this to
-        // §17's ~52 KB typical / ~100 KB worst. Widen the window until the
-        // prover switches.
+        // Observed proof sizes under §2.1 production FRI params
+        // (log_blowup=2, num_queries=128, query_pow_bits=16) on the MVP
+        // column-heavy AIR: 1/2 shape ≈ 8 MB, 4/4 shape ≈ 33 MB. §3.4's
+        // ~52 KB typical / ~100 KB worst envelope will hit once the real
+        // Transfer AIR collapses its per-Poseidon2 column expansion. Until
+        // then this is a sanity bound, not a production-gate.
         assert!(
-            (200_000..=2_000_000).contains(&proof.len()),
-            "proof size {} outside expected [200 KB, 2 MB] window", proof.len()
+            (500_000..=50_000_000).contains(&proof.len()),
+            "proof size {} outside expected [500 KB, 50 MB] window", proof.len()
         );
         // Proof must round-trip through the FFI verifier.
         let verifier = uno_plonky3_ffi::verifier::MvpVerifier::new();

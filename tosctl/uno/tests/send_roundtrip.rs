@@ -35,14 +35,14 @@ use tosctl_uno::{
     wire as wire_mod,
 };
 
-/// Observed K-AIR proof-size window under the reference prover's
-/// test-grade FRI params (`FriParameters::new_testing(log_blowup=2)`):
-/// 1/1 shape ≈ 380 KB, 4/4 shape ≈ 1.5 MB. Production FRI params (§2.1
-/// soundness target, `TODO(uno-p2-soundness)`) will cut this to §17's
-/// ~52 KB typical / ~100 KB worst. Window is loose until the prover
-/// switches.
-const PROOF_MIN_BYTES: usize = 200_000;
-const PROOF_MAX_BYTES: usize = 2_000_000;
+/// Observed proof-size window under §2.1 production FRI params
+/// (log_blowup=2, num_queries=128, query_pow_bits=16) on the MVP
+/// column-heavy AIR: 1/2 shape ≈ 8 MB, 4/4 shape ≈ 33 MB. §3.4's
+/// ~52 KB typical / ~100 KB worst envelope will hit once the real
+/// Transfer AIR collapses its per-Poseidon2 column expansion. Until
+/// then this is a sanity bound, not a production-gate.
+const PROOF_MIN_BYTES: usize = 500_000;
+const PROOF_MAX_BYTES: usize = 50_000_000;
 
 fn seed_for(label: u8) -> [u8; 32] {
     let mut s = [0u8; 32];
