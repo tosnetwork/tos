@@ -12,6 +12,7 @@
 
 #include "td/utils/Slice.h"
 #include "td/utils/logging.h"
+#include "vm/boc.h"
 #include "vm/cells/CellBuilder.h"
 #include "vm/cells/CellSlice.h"
 
@@ -669,16 +670,26 @@ DecodeResult decode_transfer(vm::CellSlice body) noexcept {
 }
 
 DecodeResult decode_transfer_bytes(td::Slice raw_bytes) noexcept {
-    // For the admission path we accept a "root cell" serialisation: the
-    // caller has encode_transfer()'d the tx, then BoC-serialised the root.
-    // At the edge, JSON-RPC decodes hex → BoC → Ref<Cell>; this helper takes
-    // raw BoC bytes and runs the cell-slice decoder.
-    //
-    // TODO(uno-integration): wire vm::BagOfCells once admission path is in
-    // place. Currently unused from compute-phase (which receives a CellSlice
-    // directly from the dispatcher).
-    (void)raw_bytes;
-    return err("decode_transfer_bytes: not yet implemented — use decode_transfer(CellSlice) from compute-phase");
+    // Admission / mempool / RPC path: the caller has encode_transfer()'d the
+    // Transfer into its root cell, then BoC-serialised that root via
+    // `vm::std_boc_serialize`. JSON-RPC `uno_sendTransfer` decodes hex →
+    // raw_bytes → here; mempool persistence round-trips Transfers through
+    // the same byte string so validators hash byte-identical units across
+    // process restart. Mirrors the `std_boc_deserialize` pattern used by
+    // `evm_workchain` (see evm/rpc/cache-db.cpp).
+    if (raw_bytes.empty()) {
+        return err("decode_transfer_bytes: empty BoC input");
+    }
+    auto cell_r = vm::std_boc_deserialize(raw_bytes);
+    if (cell_r.is_error()) {
+        return err("decode_transfer_bytes: std_boc_deserialize failed");
+    }
+    auto root = cell_r.move_as_ok();
+    if (root.is_null()) {
+        return err("decode_transfer_bytes: null root cell from BoC");
+    }
+    auto cs = vm::load_cell_slice(root);
+    return decode_transfer(cs);
 }
 
 // ---------------------------------------------------------------------------
@@ -773,6 +784,22 @@ td::Result<td::Ref<vm::Cell>> encode_transfer(const Transfer& tx) noexcept {
     root.store_ref(tx.zk_proof);
 
     return root.finalize();
+}
+
+td::Result<td::BufferSlice> encode_transfer_to_boc(const Transfer& tx) noexcept {
+    // BoC envelope: `encode_transfer` produces the §4.1 root cell; we wrap it
+    // in a standard BoC via `vm::std_boc_serialize` so the byte string is
+    // suitable for JSON-RPC `uno_sendTransfer`, mempool persistence, and
+    // cross-validator tx-hash agreement. The inverse is `decode_transfer_bytes`
+    // above — together they pin the round-trip invariant that
+    // test-uno-codec-shapes exercises across every 1..4 × 1..4 shape.
+    auto root_r = encode_transfer(tx);
+    if (root_r.is_error()) return root_r.move_as_error();
+    auto root = root_r.move_as_ok();
+    if (root.is_null()) {
+        return td::Status::Error("encode_transfer_to_boc: encode_transfer returned null root");
+    }
+    return vm::std_boc_serialize(root);
 }
 
 }  // namespace uno_workchain

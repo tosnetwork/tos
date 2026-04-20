@@ -358,6 +358,97 @@ bool run_shape(const ShapeCase& sc) {
         return false;
     }
 
+    // --- K-tx-boc: BoC round-trip (TLV → cells → BoC bytes → cells → TLV) ---
+    //
+    // encode_transfer_to_boc / decode_transfer_bytes are the on-the-wire
+    // envelope used by the JSON-RPC admission path (uno_sendTransfer),
+    // mempool persistence, and cross-validator tx-hash agreement. The
+    // invariant is that for any valid Transfer,
+    //   encode_transfer_to_boc(tx) == encode_transfer_to_boc(decode_transfer_bytes(encode_transfer_to_boc(tx)))
+    // i.e. one full BoC round-trip is byte-idempotent.
+    {
+        auto boc_r = uno_workchain::encode_transfer_to_boc(tx);
+        if (boc_r.is_error()) {
+            tprintf("  FAILED: encode_transfer_to_boc: %s\n",
+                    boc_r.error().message().c_str());
+            return false;
+        }
+        auto boc_bs = boc_r.move_as_ok();
+        std::string boc3(boc_bs.data(), boc_bs.size());
+        if (boc3 != boc1) {
+            tprintf("  FAILED: encode_transfer_to_boc bytes differ from std_boc_serialize(encode_transfer) (%zu vs %zu)\n",
+                    boc3.size(), boc1.size());
+            return false;
+        }
+
+        auto dec2 = uno_workchain::decode_transfer_bytes(
+            td::Slice{boc3.data(), boc3.size()});
+        if (auto e = std::get_if<uno_workchain::TransferDecodeError>(&dec2)) {
+            tprintf("  FAILED: decode_transfer_bytes(BoC): %s\n", e->reason.c_str());
+            return false;
+        }
+        auto& tx3 = std::get<uno_workchain::Transfer>(dec2);
+        const char* why3 = "?";
+        if (!same_shape(tx, tx3, &why3)) {
+            tprintf("  FAILED: BoC round-trip shape mismatch on field: %s\n", why3);
+            return false;
+        }
+        if (!bits256_eq(tx.tx_hash, tx3.tx_hash)) {
+            tprintf("  FAILED: tx_hash changed across BoC round-trip\n");
+            return false;
+        }
+
+        auto boc_r2 = uno_workchain::encode_transfer_to_boc(tx3);
+        if (boc_r2.is_error()) {
+            tprintf("  FAILED: re-encode_transfer_to_boc: %s\n",
+                    boc_r2.error().message().c_str());
+            return false;
+        }
+        auto boc_bs2 = boc_r2.move_as_ok();
+        std::string boc4(boc_bs2.data(), boc_bs2.size());
+        if (boc4 != boc3) {
+            tprintf("  FAILED: BoC bytes differ across TLV→BoC→TLV→BoC (%zu vs %zu)\n",
+                    boc4.size(), boc3.size());
+            return false;
+        }
+    }
+
+    // Empty / truncated BoC input: both must cleanly return decode errors
+    // without crashing (the admission path hands us adversary-controlled
+    // bytes via JSON-RPC).
+    {
+        auto bad = uno_workchain::decode_transfer_bytes(td::Slice{});
+        if (std::holds_alternative<uno_workchain::Transfer>(bad)) {
+            tprintf("  FAILED: decode_transfer_bytes accepted empty input\n");
+            return false;
+        }
+        // Truncated BoC: drop the last quarter of the bytes. std_boc_deserialize
+        // should reject with an error; we only assert "did not accept" here
+        // (not a specific reason), since the cutoff may land in the header
+        // or body depending on shape.
+        if (boc1.size() > 8) {
+            std::string truncated(boc1.data(), boc1.size() * 3 / 4);
+            auto bad2 = uno_workchain::decode_transfer_bytes(
+                td::Slice{truncated.data(), truncated.size()});
+            if (std::holds_alternative<uno_workchain::Transfer>(bad2)) {
+                tprintf("  FAILED: decode_transfer_bytes accepted truncated BoC\n");
+                return false;
+            }
+        }
+        // Arbitrary garbage: random bytes are overwhelmingly unlikely to
+        // parse as a valid BoC magic header.
+        {
+            uint8_t junk[64];
+            fill_stream(junk, sizeof(junk), 0xDEADBEEFULL);
+            auto bad3 = uno_workchain::decode_transfer_bytes(
+                td::Slice{reinterpret_cast<const char*>(junk), sizeof(junk)});
+            if (std::holds_alternative<uno_workchain::Transfer>(bad3)) {
+                tprintf("  FAILED: decode_transfer_bytes accepted random garbage\n");
+                return false;
+            }
+        }
+    }
+
     tprintf("  PASSED  boc_bytes=%zu  cells=%zu  max_depth=%u\n",
             boc1.size(), rep.cell_count, rep.max_depth);
     return true;

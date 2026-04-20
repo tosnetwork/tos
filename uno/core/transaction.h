@@ -61,6 +61,7 @@
 
 #include "td/utils/SharedSlice.h"
 #include "td/utils/Slice.h"
+#include "td/utils/buffer.h"
 #include "td/utils/UInt.h"
 #include "vm/cells/Cell.h"
 #include "vm/cells/CellSlice.h"
@@ -152,6 +153,21 @@ DecodeResult decode_transfer_bytes(td::Slice raw_bytes) noexcept;
 /// wire layout. Used by wallets / test fixtures and the JSON-RPC admission
 /// path; not called from verify/apply.
 td::Result<td::Ref<vm::Cell>> encode_transfer(const Transfer& tx) noexcept;
+
+/// Serialize a Transfer into a standard BoC byte string (the on-the-wire
+/// envelope). Pairs with `decode_transfer_bytes` — `encode_transfer_to_boc(tx)`
+/// followed by `decode_transfer_bytes(...)` yields a Transfer whose
+/// `encode_transfer_to_boc` output is byte-identical to the original.
+///
+/// Used by:
+///   - JSON-RPC `uno_sendTransfer` (external-message envelope over hex bytes).
+///   - Mempool persistence (RocksDB / on-disk encoded Transfers).
+///   - Cross-validator tx-hash agreement (the BoC bytes are the hashable unit
+///     above the `canonical_tx_hash` preimage level).
+///
+/// Mirrors the `vm::std_boc_serialize` pattern used by `evm_workchain` on
+/// wc=1 (`evm/rpc/cache-db.cpp` etc.).
+td::Result<td::BufferSlice> encode_transfer_to_boc(const Transfer& tx) noexcept;
 
 // ---------------------------------------------------------------------------
 // Canonical tx hash (§4.1)
