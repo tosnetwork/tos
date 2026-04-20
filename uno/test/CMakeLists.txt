@@ -59,7 +59,15 @@ add_executable(test-uno-end-to-end
 # fixtures" discipline recorded in doc §12 P.3.
 add_executable(test-uno-primitive-parity         test-primitive-parity.cpp)
 add_executable(test-uno-state-transition-golden  test-state-transition-golden.cpp)
-add_executable(test-uno-restart-survival         test-restart-survival.cpp)
+# K-restart-survival-drive: full apply / serialize / deserialize round-trip
+# against a real UnoShardState via the opaque restart_survival_adapter. The
+# adapter TU is compiled here (not in uno/core/) because state.h and
+# compute-phase.h both declare a class named `UnoState` in the same
+# namespace, so the test TU can only pull one of them; the adapter bridges.
+add_executable(test-uno-restart-survival
+               test-restart-survival.cpp
+               restart_survival_adapter.cpp
+               fixtures/valid_transfer_fixture.cpp)
 # K-p7-fixtures: mandatory-negatives now shares the valid-Transfer builder
 # with test-uno-end-to-end (see uno/test/fixtures/).
 add_executable(test-uno-mandatory-negatives
