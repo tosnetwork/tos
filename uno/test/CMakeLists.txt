@@ -41,6 +41,16 @@ add_executable(test-uno-codec-fuzz            test-codec-fuzz.cpp)
 # uno/plonky3-ffi/tests/public_input_fixture.rs. Both implementations
 # MUST produce byte-identical output for every fixture record.
 add_executable(test-uno-public-input-fixture  test-public-input-fixture.cpp)
+# K-codec-parity: cross-impl byte-parity for the full §4.1 Transfer codec
+# derived-field surface — cm, nf, ivk_commitment, tx_hash, AND the §4.3
+# step 4 public-input bytes. Superset of test-uno-public-input-fixture
+# (which pins only the public-input encoder). Driven by
+# uno/test/golden/codec-parity-v1.hex; Rust generator lives at
+# uno/plonky3-ffi/tests/codec_parity_goldens.rs. Would have caught the
+# K-genesis-distribution `uno-rcm-v1` tag-truncation bug on the first 1/1
+# record. Regenerate the golden with:
+#   cd uno/plonky3-ffi && cargo test --release --test codec_parity_goldens
+add_executable(test-uno-codec-parity          test-codec-parity.cpp)
 # P.3 parallel verify pool (§13 P.3): determinism vs serial reference,
 # repeat-under-thread-pressure invariant, and a min-of-3 scaling
 # micro-benchmark for the 4-core ≥ 3.5x ideal target from §1.4.
@@ -138,6 +148,7 @@ foreach(_t test-uno-transfer
            test-uno-codec-shapes
            test-uno-codec-fuzz
            test-uno-public-input-fixture
+           test-uno-codec-parity
            test-uno-parallel-verify
            test-uno-end-to-end
            test-uno-primitive-parity
@@ -210,6 +221,7 @@ endif()
 # the first candidate hit reliably under ctest.
 set_tests_properties(
     test-uno-public-input-fixture
+    test-uno-codec-parity
     test-uno-state-transition-golden
     test-uno-genesis-loader
     PROPERTIES

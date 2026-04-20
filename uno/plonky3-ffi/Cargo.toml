@@ -76,6 +76,11 @@ cbindgen = "0.29"
 [dev-dependencies]
 # For the adversarial-witness negative test.
 hex = "0.4"
+# K-codec-parity: the codec_parity_goldens integration test hashes the
+# canonical tx_hash preimage with BLAKE3 (same backend as the C++ side via
+# `uno/crypto/internal/blake3_adapter.h`). Dev-only dependency — not pulled
+# into the production staticlib the C++ validator links against.
+blake3 = "1.5"
 
 # ---------------------------------------------------------------------------
 # Benches (K-air-bench, K-fri-analysis)
