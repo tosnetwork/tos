@@ -140,16 +140,32 @@ pub struct Plonky3ProofBytes {
     pub len: usize,
 }
 
-/// Borrowed byte slice containing the canonical public-input encoding
-/// (per design doc §4.3 step 4).
+/// Borrowed byte slice containing the canonical public-input encoding.
 ///
-/// For the MVP AIR the encoding is: 4 Goldilocks elements for the claimed
-/// Poseidon2 output digest, 4 elements for the Merkle parent hash, and 1
-/// element for the u64 range-checked value; little-endian 8-byte-per-element
-/// packing; total 72 bytes (9 × 8 B).
+/// # Wire format (decision #5 / §4.3 step 4)
 ///
-/// For the production Transfer AIR the encoding is defined in §4.3 step 4
-/// bullets 1–7; see `transfer_air::TODO(uno-design-gap)`.
+/// Each Goldilocks element serializes as 8 bytes little-endian u64
+/// (canonical Plonky3 form: `Goldilocks::from_canonical_u64` /
+/// `Goldilocks::from_wrapped_u64`). 256-bit inputs split into 4 × u64 LE
+/// chunks, each reduced mod `p_Goldilocks = 2^64 - 2^32 + 1`. The
+/// verifier decodes via `transfer_air::decode_public_inputs`, which
+/// rejects non-canonical limbs (v ≥ p) to close off a wire-encoding
+/// malleability vector.
+///
+/// Production Transfer AIR element order is §4.3 step 4 bullets 1–7:
+/// scheme_id, chain_id, expiry_block, fee, anchor (4 limbs), and per
+/// spend/output the corresponding nf/rk/cm/epk/filter_tag fields. Total
+/// byte length: `64 + 64·spend_count + 72·output_count`.
+///
+/// Cross-impl byte parity is enforced by the golden fixture
+/// `uno/test/golden/public-inputs-v1.hex` — produced by the C++ encoder
+/// (`uno/core/transaction.cpp :: build_plonky3_public_inputs`) and
+/// checked by this crate's `tests/public_input_fixture.rs`. Any wire
+/// drift is a scheme_id bump.
+///
+/// The MVP AIR shipped in P.0 uses a simpler 4-element schema (3 → 4
+/// elements after decision #1's claim-3 extension); see
+/// `transfer_air::MvpWitness::public_inputs_bytes`.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Plonky3PublicInputs {

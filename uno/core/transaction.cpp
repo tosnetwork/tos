@@ -273,22 +273,69 @@ td::Bits256 canonical_tx_hash(const Transfer& tx) noexcept {
 }
 
 // ---------------------------------------------------------------------------
-// Plonky3 public-input builder (§4.3 step 4)
+// Plonky3 public-input builder (§4.3 step 4, decision #5)
 // ---------------------------------------------------------------------------
+//
+// Byte encoding is consensus-binding. Each Goldilocks element serializes as
+// 8 bytes little-endian u64. 256-bit inputs split into 4 × u64 LE chunks,
+// each reduced mod p_Goldilocks = 2^64 - 2^32 + 1. Adversary-controlled
+// scalar inputs (scheme_id, chain_id, expiry_block, fee, filter_tag) are
+// asserted in-range by `encode_u64` below — a consensus fault otherwise.
+//
+// Cross-impl parity is enforced by the golden fixture
+// `uno/test/golden/public-inputs-v1.hex`; see test-public-input-fixture.cpp
+// (C++ side) and `tests/public_input_fixture.rs` (Rust side).
 
-namespace {
+uint64_t encode_u64(uint64_t x) noexcept {
+    // Per decision #5: u64 public inputs (expiry_block, fee) must satisfy
+    // `x < p_Goldilocks`; out-of-range implies a malformed adversarial
+    // transaction that should have been caught at admission. We abort so
+    // no silent wire-encoding drift reaches the verifier.
+    if (x >= kPGoldilocks) {
+        // The admission path asserts `fee <= some_cap` and `expiry_block
+        // <= current + window`, both bounded well below p. A value larger
+        // than p here is a serious invariant break.
+        LOG(ERROR) << "uno/public-input: u64 value " << x
+                   << " >= p_Goldilocks; aborting (should have been "
+                      "rejected at admission).";
+        std::abort();
+    }
+    return x;
+}
 
-// Pack a 256-bit blob into 4 × 64-bit little-endian limbs (canonical
-// Goldilocks wire form). The Goldilocks prime is 2^64 - 2^32 + 1; a uniformly
-// random 64-bit limb exceeds p with probability ~2^-32, so strict Plonky3
-// verifiers will reject out-of-range limbs. We pass the bytes through
-// untouched — reduction is the verifier's responsibility.
-inline void pack_bits256_as_4_limbs(const td::Bits256& src, std::vector<uint64_t>& out) {
-    const uint8_t* p = reinterpret_cast<const uint8_t*>(src.data());
+std::array<uint8_t, 32> encode_256(const uint8_t bytes[32]) noexcept {
+    // Split into 4 × u64 LE chunks, reduce each mod p_Goldilocks, then
+    // write each canonical limb back in the same byte slot (LE). The
+    // output byte order matches §4.3 step 4 exactly.
+    std::array<uint8_t, 32> out{};
     for (int limb = 0; limb < 4; ++limb) {
         uint64_t v = 0;
         for (int j = 0; j < 8; ++j) {
-            v |= static_cast<uint64_t>(p[limb * 8 + j]) << (8 * j);
+            v |= static_cast<uint64_t>(bytes[limb * 8 + j]) << (8 * j);
+        }
+        // Reduce. At 2^-32 per limb this is a rare branch on uniform input.
+        if (v >= kPGoldilocks) {
+            v -= kPGoldilocks;
+            // One subtraction suffices: p_Goldilocks > 2^63, so u64 - p fits.
+        }
+        for (int j = 0; j < 8; ++j) {
+            out[limb * 8 + j] = static_cast<uint8_t>(v >> (8 * j));
+        }
+    }
+    return out;
+}
+
+namespace {
+
+// Pack a 256-bit blob into 4 × 64-bit little-endian limbs, each reduced
+// mod p_Goldilocks (decision #5). Uses encode_256() internally to keep the
+// reduction rule in one place.
+inline void pack_bits256_as_4_limbs(const td::Bits256& src, std::vector<uint64_t>& out) {
+    auto canonical = encode_256(reinterpret_cast<const uint8_t*>(src.data()));
+    for (int limb = 0; limb < 4; ++limb) {
+        uint64_t v = 0;
+        for (int j = 0; j < 8; ++j) {
+            v |= static_cast<uint64_t>(canonical[limb * 8 + j]) << (8 * j);
         }
         out.push_back(v);
     }
@@ -297,20 +344,21 @@ inline void pack_bits256_as_4_limbs(const td::Bits256& src, std::vector<uint64_t
 }  // anonymous namespace
 
 Plonky3PublicInputs build_plonky3_public_inputs(const Transfer& tx) noexcept {
-    // Layout per §4.3 step 4:
+    // Layout per §4.3 step 4 (decision #5):
     //   [scheme_id, chain_id, expiry_block, fee]    (4 elts)
     //   [anchor as 4 limbs]                         (4 elts)
     //   per spend: [nf_i 4 limbs, rk_i 4 limbs]     (8 elts)
     //   per output:[cm_j 4 limbs, epk_j 4 limbs,
     //               filter_tag_j 1 elt]             (9 elts)
-    // Total: 8 + 8*spends + 9*outputs.
+    // Total: 8 + 8*spends + 9*outputs.  Byte length: 64 + 64·spends + 72·outputs.
     Plonky3PublicInputs pi;
     pi.elements.reserve(8 + 8 * tx.spends.size() + 9 * tx.outputs.size());
 
+    // u8 / u16 / u32 always fit (they're < 2^32 < p). u64 is asserted.
     pi.elements.push_back(static_cast<uint64_t>(tx.scheme_id));
     pi.elements.push_back(static_cast<uint64_t>(tx.chain_id));
-    pi.elements.push_back(tx.expiry_block);
-    pi.elements.push_back(tx.fee);
+    pi.elements.push_back(encode_u64(tx.expiry_block));
+    pi.elements.push_back(encode_u64(tx.fee));
 
     pack_bits256_as_4_limbs(tx.anchor, pi.elements);
 
