@@ -4,7 +4,7 @@
 **Brand:** uno
 **One-line positioning:** PQ-native privacy L1 on TOS workchain 2.
 **Scope:** Shielded note-pool workchain on TOS at workchain id `2`, with Plonky3 STARK proving and hybrid post-quantum note encryption shipped in v1.
-**Architecture class:** Shielded note-pool workchain. The cryptographic construction family (note commitments, nullifier scheme, diversified stealth addresses, randomized spend authorization, view-key hierarchy) derives from the Zcash Orchard specification (ZIP 224). The proof system is **Plonky3 STARK over the Goldilocks field** with Poseidon2 as the in-circuit hash — hash-based, transparent, post-quantum native, no trusted setup. Note encryption is **ECDH-over-Pallas + ML-KEM-768 hybrid** in v1, closing the HNDL window on on-chain ciphertexts at issuance. State is integrated into TOS cell-native storage via a single executor account on wc=2. Bridgelessness (§1.5), selective disclosure via view keys, and PQ-native posture are first-class design properties.
+**Architecture class:** Shielded note-pool workchain. The cryptographic construction family (note commitments, nullifier scheme, diversified stealth addresses, randomized spend authorization, view-key hierarchy) derives from the Zcash Orchard specification (ZIP 224). The proof system is **Plonky3 STARK over the Goldilocks field** with Poseidon2 as the in-circuit hash — hash-based, transparent, post-quantum native, no trusted setup. Note encryption is **ECDH-over-Ristretto255 + ML-KEM-768 hybrid** in v1, closing the HNDL window on on-chain ciphertexts at issuance. State is integrated into TOS cell-native storage via a single executor account on wc=2. Bridgelessness (§1.5), selective disclosure via view keys, and PQ-native posture are first-class design properties.
 
 **Primary references:**
 - **Zcash Orchard (ZIP 224)** — published specification we adopt for the shielded-pool construction family (note-commitment tree, nullifier derivation, randomized spend auth, diversified-address hierarchy). We adopt the construction; we substitute the proof backend.
@@ -40,9 +40,19 @@ UNO adopts reading (2). The cost is the loss of cross-workchain composability �
 
 UNO's proof system is **Plonky3 STARK over the Goldilocks field**, with Poseidon2 as the in-circuit hash. It is hash-based, transparent, and post-quantum native. There is no elliptic curve whose discrete log Shor could break, no trusted-setup ceremony whose toxic waste could compromise soundness, and no mandatory Phase 2 migration of the proof system. This removes the largest quantum-migration liability that every Halo2 / Groth16 / Varuna shielded chain currently carries as technical debt.
 
-The only remaining PQ extension surface is **note-encryption key material**: the ECDH that derives the AEAD key for each `enc_ciphertext`. v1 closes this surface immediately by adopting a hybrid **ECDH-over-Pallas + ML-KEM-768** construction (§2.6, §3.1). Harvest-now-decrypt-later adversaries who capture today's ciphertexts and wait for a CRQC cannot decrypt them without breaking ML-KEM — a 2030+ horizon under the most aggressive published forecasts. The PQ migration surface that remains after v1 is strictly narrower than that carried by any currently deployed shielded pool.
+The only remaining PQ extension surface is **note-encryption key material**: the ECDH that derives the AEAD key for each `enc_ciphertext`. v1 closes this surface immediately by adopting a hybrid **ECDH-over-Ristretto255 + ML-KEM-768** construction (§2.6, §3.1). Harvest-now-decrypt-later adversaries who capture today's ciphertexts and wait for a CRQC cannot decrypt them without breaking ML-KEM — a 2030+ horizon under the most aggressive published forecasts. The PQ migration surface that remains after v1 is strictly narrower than that carried by any currently deployed shielded pool.
 
-**A deliberate bet, acknowledged**: as of v1 ship, UNO is the first L1 to carry an Orchard-family shielded-pool protocol directly on Plonky3 AIRs. All prior Plonky3 mainnet deployments — Polygon AggLayer pessimistic proofs (via SP1), OP Succinct, Valida, Lurk/Sphinx — apply the toolkit to general-purpose zkVMs or cross-chain aggregation proofs, not to payment-protocol circuits. This design opens that application. The underlying cryptographic construction (note commitments, nullifiers, randomized spend authorization, diversified stealth addresses) is unchanged from a well-studied specification family; only the proving backend is new to this class of circuit. The specific risks and mitigations of this first-application posture are enumerated in §13 (phased roadmap) and §12 (test strategy).
+**A deliberate bet, acknowledged**: as of v1 ship, UNO is the first L1 to carry an Orchard-family shielded-pool protocol directly on Plonky3 AIRs. All prior Plonky3 mainnet deployments — Polygon AggLayer pessimistic proofs (via SP1), OP Succinct, Valida, Lurk/Sphinx — apply the toolkit to general-purpose zkVMs or cross-chain aggregation proofs, not to payment-protocol circuits. This design opens that application.
+
+**What is and is not new construction (audit-scope framing).** It would be inaccurate to describe UNO as "Orchard with a Plonky3 backend." The proving backend is the most visible change, but the protocol additionally diverges from Orchard at three load-bearing points:
+
+1. **No value commitment / no binding signature** (decision #29, §3.3 claim 8). Balance is enforced by an in-circuit u64 equality, not by a Pedersen `cv` + homomorphic Schnorr `binding_sig`. This is a new construction for the balance proof, not a backend swap.
+2. **Fresh per-spend spend-authorization key** (decision #31, §2.5). `rk = rsk · G` is sampled fresh; there is no long-term `ak` and no in-circuit `rk = ak + α·G` link. The unlinkability argument for `rk` across spends is structurally different from Orchard's randomized-spend-authorization argument.
+3. **`ivk`-commitment hash-chain binding** (decision #30, §2.6, §4.2 claim 3). Ownership is proved by recomputing `ivk_commitment = Poseidon2("uno-ivk-cm-v1", ivk, d)` in-circuit and matching the commitment opening; Orchard uses in-circuit Pallas curve ops to prove the `ivk`↔`pk_d` relation. This eliminates all in-circuit curve operations, but the proof-of-ownership construction is new and has no direct prior deployment.
+
+All three changes are **consequences** of moving from Halo2/Pallas (where curve ops are cheap, u64 arithmetic is expensive) to Plonky3/Goldilocks (where u64 arithmetic is native, curve ops are expensive). Each inverted cost profile argued for a new construction. The cryptographic building blocks (note-commitment tree, nullifier scheme, diversified stealth addresses, view-key hierarchy, hybrid KEM) remain conventionally parameterized, but the way balance, ownership, and spend authorization are enforced is new to this protocol family.
+
+The specific risks and mitigations of this first-application posture are enumerated in §13 (phased roadmap) and §12 (test strategy). Audit scope must cover the three new constructions above, not only the AIR-to-Halo2 proof-backend substitution.
 
 ### 0.3 Bridgeless by architecture
 
@@ -121,6 +131,22 @@ Anything weaker — the account + homomorphic-ciphertext recipe — still leaks 
 6. An auditor holding `fvk` for a target account can reconstruct the full note history with correct amounts (via `ivk`-derived hybrid-KEM `sk_mlkem` + Schnorr verifying key); without `fvk`, zero recovery.
 7. **Sustained throughput: 15–30 TPS at 1 s global block time**, burst capacity up to ~50 TPS when the nullifier LRU cache is warm. Higher throughput requires proof aggregation (v2 roadmap). This ceiling is intrinsic to terminal privacy on commodity validator hardware; we do not fight it in v1.
 8. HNDL (harvest-now-decrypt-later) exposure: a CRQC adversary capturing all on-chain `enc_ciphertext` + `mlkem_ct` artifacts today cannot decrypt them without breaking ML-KEM-768. This closes the HNDL window at v1 ship, without waiting for Phase 2.
+
+### 1.4a Validator hardware profile and set formation
+
+The numbers in §1.4 (4-core parallel verify at ~7 ms per tx, ~160 MB/s inter-validator bandwidth at peak, ~100 MB nullifier-LRU RAM, ~1.5 MB worst-case proof) carry an implicit statement about **what kind of operator can run a wc=2 validator**. We state it explicitly here so it is a design decision and not a discovery:
+
+**Target validator profile — v1:**
+- 4 physical CPU cores, 16 GB RAM, 500 GB SSD (local-cell cache + history snapshots).
+- Sustained 200 Mbps symmetric bandwidth for catchain consensus; bursty to ~1 Gbps during block gossip.
+- Datacenter or home-lab colocation; modern residential fiber (≥ 500 Mbps symmetric) is feasible but borderline.
+- Not required: GPU, FPGA, or specialized proving hardware. UNO validators **only verify**; they do not prove.
+
+**What this means socially:** UNO validators are a subset of the TOS validator set — specifically, the subset that opts in to wc=2 participation by advertising the capability. The chain does not assume a datacenter-only validator set (the 4-core floor is deliberately low), but also does not assume a pure home-operator set (the 200 Mbps sustained bandwidth excludes most residential ADSL / cellular / satellite links). This matches TOS's existing shardchain operator profile; wc=2 does not change the social formation of the TOS validator set, only its opt-in workload.
+
+**What this means for the proving side:** Proving is **client-side** (§7.2). The 22 s target on a 2020-era laptop is the binding constraint for the end-user UX, not for validator hardware. A UNO validator does not need to prove anything — ever. This asymmetry is intentional: the chain pushes the only compute-heavy workload out to the party that has the privacy interest (the sender), and keeps validator work bounded to what a commodity-tier operator can handle at 1 s block cadence.
+
+**Phase 2 horizon (out of scope for v1):** Proof aggregation (§13 roadmap) would shift part of the prove cost to a collator role and change this picture. If that path is taken, validator-set formation is revisited explicitly; v1 does not quietly assume it.
 
 ### 1.5 Bridgelessness as a permanent invariant
 
@@ -319,6 +345,26 @@ Address        = (d, compress(pk_d), ivk_commitment, pk_mlkem)
 
 **Address size is the deliberate UX cost of v1's PQ posture.** The ~1.26 KB address carries the recipient's ML-KEM-768 public key plus the 32-byte ivk-commitment, which are required for the sender to perform the PQ half of hybrid encapsulation and write a valid note commitment. Addresses are expected to be shared via QR code, NFC, deep link, or wallet-to-wallet DM — not as plain text in a social-media bio.
 
+**Address envelope — protocol-level MUST.** Because an address is large and PQ-opaque (no on-chain validity proof at share-time), it is an attractive target for silent corruption (typo, transcription error, man-in-the-middle substitution). v1 defines the address encoding envelope **as a protocol requirement**, not as an SDK-level nicety:
+
+```
+AddressEnvelope := HRP "1" Base32(
+    version_tag : u8                    // 0x01 for v1; future versions bump
+  | network_tag : u8                    // 0x00 = testnet ("UNOT"), 0x01 = mainnet ("UNOM")
+  | payload     : bytes[1259]           // (d, compress(pk_d), ivk_commitment, pk_mlkem) as in §2.6
+  | checksum    : bytes[6]              // BLAKE3("uno-addr-checksum-v1" || version_tag || network_tag || payload)[0..6]
+)
+HRP := "uno" | "unot"                   // mainnet | testnet
+```
+
+Encoding rules (MUST, tested in §12 mandatory negatives):
+- Base32 alphabet: **Bech32m** (BIP-350), same char set as modern Bitcoin/Lightning for familiarity.
+- Wallets and RPC endpoints **MUST** reject any address whose checksum does not verify, whose HRP does not match the configured network, or whose `version_tag` is unknown.
+- RPC endpoints that accept an address argument (`uno_sendTransfer`, future discovery/memo paths) **MUST** validate the envelope before doing any further work — before constructing a witness, before probing the compact-filter index, before any cryptographic operation with the recipient key material.
+- The raw `payload` must not be transported without the envelope. Internal representations are fine, but any external-facing surface (QR code, deep link, wallet-to-wallet DM, paper backup) must carry the envelope.
+
+This elevates the self-authentication requirement from "SDK hygiene" to a consensus-of-tooling invariant. A wallet that silently accepts a malformed address is non-conformant in the same sense as one that silently accepts a malformed ML-KEM ciphertext.
+
 ### 2.7 Note encryption: hybrid ECDH + ML-KEM-768
 
 Every `OutputDescription` carries a note ciphertext locked by an AEAD key derived from **both** a classical ECDH shared secret **and** an ML-KEM-768 shared secret. HNDL (harvest-now-decrypt-later) security requires breaking both to decrypt a v1 ciphertext. Combiner follows the split-KDF pattern established in eprint 2025/1444 ("The Best of Both KEMs").
@@ -510,7 +556,7 @@ Transfer :=
 
 SpendDescription :=
   nullifier         : bits256                    // nf = Poseidon2("uno-nf-v1", nk, cm, pos)
-  rk                : bits256                    // randomized spend pubkey = ak + α·G (compressed Ristretto255)
+  rk                : bits256                    // fresh per-spend pubkey rk = rsk·G (compressed Ristretto255; decision #31 — no ak randomization)
   spend_auth_sig    : bits512                    // 64 B Schnorr on Ristretto255 under rsk over tx_hash
 
 OutputDescription :=
@@ -681,19 +727,26 @@ No randomness, no wall-clock, no HashMap iteration, no floats anywhere in the ve
 
 ### 4.3a Mempool admission (non-consensus pre-filter)
 
-To prevent DoS from obviously-invalid txs, the JSON-RPC admission path runs a **cheaper** subset of checks before queuing a tx into the mempool:
+To prevent DoS from obviously-invalid txs, the JSON-RPC admission path runs a **cheaper** subset of checks before queuing a tx into the mempool. Checks are ordered strictly cheapest-first so an adversary who probes the boundary is rejected before the node spends any measurable CPU on them:
 
-1. §4.3 step 1 (all cheap syntax checks).
-2. Nullifier LRU check only (do NOT touch the cell-dict — that is a tx-per-block cost; the LRU hit is sufficient to reject obvious replays).
-3. `spend_auth_sig` verification (cheap: N × ~1 ms).
-4. Binding sig verification (cheap: ~1 ms).
-5. **Does NOT** run the Plonky3 proof verify — that is the expensive step, deferred to the compute phase where at least the block producer is paid to pay for it.
+1. **Byte-shape envelope** (microseconds — pure bounds/arithmetic, no cryptography):
+   - Transfer TLV parses without error.
+   - `spend_count ∈ 1..=4` and `output_count ∈ 1..=4`.
+   - Declared sub-array lengths match their types (per §4.1).
+   - `len(zk_proof) ∈ [PROOF_BYTES_MIN, PROOF_BYTES_MAX]` — the documented Plonky3 proof-size envelope for the configured FRI parameters (§3.4). A proof that is obviously too short or too long is not a candidate for "maybe it will verify" — it is syntactically not a proof for this scheme and is rejected without any FRI state allocated.
+   - `len(PublicInputs) == 64 + 64·spend_count + 72·output_count` — the shape-dispatch invariant from §4.3 claim 1. Because this is a pure arithmetic check against the declared `(S, O)`, a malformed tx cannot force the verifier to do any work to discover that the PI length is wrong.
+   - `expiry_block > current_block` and `expiry_block − current_block ≤ EXPIRY_MAX` (reject already-expired or far-future txs without touching state).
+2. §4.3 step 1 (remaining cheap syntax checks: `chain_id` match, distinctness of nullifiers within the tx, fee within `ConfigParam 84` bounds).
+3. Nullifier LRU check only (do NOT touch the cell-dict — that is a tx-per-block cost; the LRU hit is sufficient to reject obvious replays).
+4. `spend_auth_sig` verification (cheap: N × ~1 ms). Runs **last** in the admission path precisely because it is the most expensive of the admission checks; anything that is going to be rejected by shape, syntax, or replay should be rejected before the node signs an Ed25519-class operation for the attacker.
+5. **Does NOT** run the Plonky3 proof verify — that is the expensive step, deferred to the compute phase where at least the block producer is paid to pay for it. (There is no binding_sig in this design — balance is enforced in-circuit per decision #29.)
 
 Txs that pass 1–4 are queued for inclusion; the compute phase runs the full §4.3 sequence including Plonky3 verify. A tx that passes admission but fails compute (e.g. an invalid proof that nevertheless carried valid signatures) is recorded as `TxRejected` in the block and **costs the mempool its admission slot** — but, since v1 has no way to charge fees for rejected txs (the fee is claimed only on inclusion), such an adversarial tx gives the attacker a free proof-verify consumption. Mitigations:
 - **Admission rate-limit per IP** (validator-configurable, not consensus): bounds attacker's effective rate.
 - **Proof-verify is the only costly operation** and it runs in the compute phase's parallel pool (§13 P.3), so one bad proof does not block a block's progress; it only wastes one verifier slot.
+- **Byte-shape envelope filter (step 1)** catches the cheap-to-generate / expensive-to-verify attack class entirely — an attacker cannot burn a verifier slot by flooding mempool with random bytes of the wrong shape.
 
-A future extension (v2 candidate) may require an `admission_stake` — a small amount pre-committed to the mempool and slashed on rejection — but this is out of scope for v1.
+A future extension (v2 candidate) may require an `admission_stake` — a small amount pre-committed to the mempool and slashed on rejection. This would close the remaining adversarial-cost gap (the one-verifier-slot-per-tx cost of a shape-correct but proof-invalid tx) but introduces a UX tax on honest first-time senders. Kept as v2 because the byte-shape filter plus per-IP rate limit are judged sufficient for v1 under the §10 traffic model.
 
 This separation bounds the mempool's DoS surface to the cheap checks and keeps the collator's expensive budget on actually-includable txs.
 
@@ -1660,7 +1713,7 @@ Mirrors the EVM workchain's gate model.
 
 ### P.7 View-key audit correctness
 - Seed wallet, send 100 txs, run audit with:
-  - `fvk` (= `(ak, nk, ovk, sk_mlkem)`): recovers all incoming + outgoing notes with exact amounts.
+  - `fvk` (= `(ivk, nk, ovk, sk_mlkem)`; decision #30 — no `ak` in the key hierarchy): recovers all incoming + outgoing notes with exact amounts.
   - `ivk` + `sk_mlkem` only: recovers all incoming, no outgoing.
   - `ovk` only: recovers all outgoing (via `out_ciphertext`), no incoming.
   - None: zero recovery.
@@ -1727,7 +1780,7 @@ Every non-trivial choice below was made against the alternative space of publish
 | Hash | **Poseidon2 over Goldilocks** | Poseidon v1 (slower, same security); Rescue-Prime, Monolith (slower on CPUs in 2026 measurements); Keccak/BLAKE3 (non-arithmetic, expensive in-circuit). |
 | Tree depth | **32** (≈ 4 B-leaf cap) | Depth 24 tested in other systems; rejected as too tight for long-term growth. |
 | Address model | **Orchard-style diversifiers over Ristretto255 + ML-KEM-768 hybrid** | Single-key addresses (Monero-family stealth) rejected as less flexible; EIP-5564 stealth-only (rejected: no PQ path for note encryption). |
-| Spend auth | **Randomized Schnorr-on-Ristretto255** | Direct Schnorr without randomization (leaks owner identity across spends); ML-DSA-only (works but wastes bandwidth for a non-HNDL artifact in v1; deferred to Phase 1 hybrid). |
+| Spend auth | **Fresh per-spend Schnorr-on-Ristretto255** (decision #31: `rk = rsk·G`, no long-term `ak`) | Orchard-style `rk = ak + α·G` randomization of a long-term spend key (rejected: requires in-circuit curve ops to prove `rk`↔`ak` link, which Plonky3 over Goldilocks makes expensive; fresh `rsk` achieves the same unlinkability with zero in-circuit cost); direct Schnorr under a static long-term key (leaks owner identity across spends); ML-DSA-only (works but wastes bandwidth for a non-HNDL artifact in v1; deferred to Phase 1 hybrid). |
 | Value commitment | **None — in-circuit balance check** | Pedersen `cv` + homomorphic binding signature (Orchard pattern): rejected as a Halo2-specific optimization made obsolete by Goldilocks u64-native arithmetic. |
 | Note encryption | **Hybrid ECDH-Ristretto255 + ML-KEM-768** | ECDH-only (HNDL-vulnerable; Zcash is still debating this since 2022 issue #1133); ML-KEM-only (single point of failure if ML-KEM is broken); alternative hybrid KEMs (Saber, NTRU) — not NIST-standardized. |
 | Max spends/outputs | **4 / 4** | Higher counts increase tx size linearly and proving time super-linearly; we pick a middle ground. |
