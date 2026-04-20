@@ -100,6 +100,17 @@ add_executable(test-uno-genesis-loader           test-genesis-loader.cpp)
 # uppercase-tolerant BIP-173 decode path.
 add_executable(test-uno-bech32m-envelope         test-bech32m-envelope.cpp)
 
+# K-subs-test: closes the loop on the three N-P5 `uno_subscribe_*` channels
+# (IncludedTx / NewHead / NewAnchor) by driving valid-Transfer fixtures
+# through the end-of-block notify hooks and asserting shape + ordering of
+# the events that subscribers observe. Consumes the same
+# `global_uno_subscription_manager()` API the production JSON-RPC handlers
+# for uno_subscribe_* use — test-local subscriptions are installed through
+# the hook-registration API, not by patching the notify path.
+add_executable(test-uno-subscriptions
+               test-uno-subscriptions.cpp
+               fixtures/valid_transfer_fixture.cpp)
+
 # Build-only helper: regenerates uno/test/golden/state-transitions-v1.hex.
 # NOT registered with ctest — invocation is a manual operator step (see the
 # file's own doc comment). Links against uno_workchain for encode_transfer.
@@ -120,7 +131,8 @@ foreach(_t test-uno-transfer
            test-uno-mandatory-negatives
            test-uno-nullifier-warm-lru
            test-uno-genesis-loader
-           test-uno-bech32m-envelope)
+           test-uno-bech32m-envelope
+           test-uno-subscriptions)
   target_link_libraries(${_t} PRIVATE uno_workchain)
   target_include_directories(${_t} PRIVATE ${CMAKE_SOURCE_DIR})
   if (COMMAND tos_test)
