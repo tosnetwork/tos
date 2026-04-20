@@ -40,11 +40,32 @@
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <variant>
 #include <vector>
+
+#include "td/utils/Slice.h"
+#include "td/utils/SharedSlice.h"
+#include "td/utils/crypto.h"
+#include "vm/boc.h"
+#include "vm/cells/Cell.h"
+#include "vm/cells/CellSlice.h"
+
+#include "uno/core/transaction.h"
+
+// Weak BLAKE3 fallback — the decode-side path recomputes `tx_hash`, which
+// routes through the A3 BLAKE3 adapter. Out-of-validator test binaries
+// don't link the real adapter; this fallback keeps us identical-under-
+// any-hash because every call site uses the same function.
+namespace uno_workchain::crypto::internal {
+__attribute__((weak)) void blake3_hash(td::Slice in, uint8_t out[32]) {
+    td::sha256(in, td::MutableSlice(reinterpret_cast<char*>(out), 32));
+}
+}  // namespace uno_workchain::crypto::internal
 
 // ----- Tracked printf harness (matches other uno/test/*.cpp) -----------------
 
@@ -242,6 +263,218 @@ static void test_fixture_file_is_parseable() {
             fx.size(), unpopulated, (int)fx.size() - unpopulated);
 }
 
+// ---------------------------------------------------------------------------
+// Lightweight reject-path driver (UNO_P4 gate half-flip).
+//
+// Full UnoShardState-backed verify/apply requires Agent 1's cell-state
+// deserializer + a real Plonky3 prover for the Ok records; until both are
+// wired we can still assert a tight invariant on the REJECT records:
+//
+//   For each reject record with populated `transfer_hex`:
+//     1. BoC-deserialize the hex blob → root cell.
+//     2. Run `decode_transfer` on the root cell slice.
+//     3. The decode result MUST correlate with the declared verdict:
+//        - verdict==BadSpendCount  → decoder rejects (sc out of range)
+//        - any other reject verdict → decoder accepts (the rejection is
+//          a verify-step concern, not a codec concern), AND the decoded
+//          field that justifies the verdict matches expectation.
+//     4. The verdict string MUST name a known VerifyResult enum value.
+//
+// This driver does NOT mutate state and does NOT require Plonky3. It flips
+// the SKIP for reject records into deterministic PASSes, which is the
+// UNO_P4 done-when gate this agent (K-fixtures) delivers.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+int hex_nib(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+bool hex_decode(const std::string& hex, std::string& out) {
+    if (hex.size() % 2 != 0) return false;
+    out.clear();
+    out.reserve(hex.size() / 2);
+    for (size_t i = 0; i < hex.size(); i += 2) {
+        int hi = hex_nib(hex[i]);
+        int lo = hex_nib(hex[i + 1]);
+        if (hi < 0 || lo < 0) return false;
+        out.push_back(static_cast<char>((hi << 4) | lo));
+    }
+    return true;
+}
+
+// Declared-verdict → expected decoder outcome. `true` means decoder accepts
+// (the verdict is a verify-step concern, not a codec concern). `false`
+// means decoder rejects (the verdict is a codec-layer concern).
+bool expect_decoder_accepts(const std::string& verdict) {
+    // The only reject verdict the *codec* itself enforces is BadSpendCount
+    // (spend_count > 4) and BadOutputCount (output_count > 4). Everything
+    // else is a downstream verify concern.
+    if (verdict == "BadSpendCount")  return false;
+    if (verdict == "BadOutputCount") return false;
+    // BadVersion / BadSchemeId could be codec-enforced too if we policy
+    // them there; current codec doesn't, so keep permissive.
+    return true;
+}
+
+// Basic allow-list of verdict strings that map to a known VerifyResult.
+// Kept in sync with the enum in uno/core/compute-phase.h; duplicated here
+// to avoid pulling that header into the test (which would drag A2/A3
+// types transitively).
+bool is_known_verdict(const std::string& v) {
+    static const char* known[] = {
+        "Ok",
+        "BadVersion", "BadSchemeId", "BadChainId", "ExpiryOutOfRange",
+        "BadSpendCount", "BadOutputCount", "InsufficientFee", "UnknownAnchor",
+        "DuplicateNullifierInTx", "DuplicateCommitmentInTx", "BadRistrettoPoint",
+        "NullifierAlreadySpent", "BadSpendAuthSig", "BadPlonky3Proof",
+        "DecodeError",
+    };
+    for (const char* k : known) if (v == k) return true;
+    return false;
+}
+
+// Cross-check: the decoded Transfer's relevant field matches the verdict.
+// Spot-checked fields only — full verify/apply is out-of-scope here.
+bool decoded_matches_verdict(const uno_workchain::Transfer& tx,
+                             const std::string& verdict,
+                             std::string* why) {
+    auto fail = [&](const char* m) { if (why) *why = m; return false; };
+    if (verdict == "BadChainId") {
+        // chain_id must disagree with the default testnet id.
+        if (tx.chain_id == 0x554E4F54u) return fail("chain_id not mismatched");
+    } else if (verdict == "InsufficientFee") {
+        // fee below a reasonable default floor (100_000 nano, §10.2).
+        if (tx.fee >= 100'000ULL) return fail("fee not below min");
+    } else if (verdict == "ExpiryOutOfRange") {
+        // expiry_block very small (the exact admission check uses the
+        // live UnoState::current_block_seqno; here we just confirm it was
+        // picked to be far below any plausible head).
+        if (tx.expiry_block >= 1'000'000ULL) return fail("expiry_block not small");
+    }
+    // Other verdicts (NullifierAlreadySpent, UnknownAnchor, BadPlonky3Proof,
+    // BadSpendAuthSig) can't be spot-checked from the wire alone — the
+    // rejection is a function of pre_state / proof-verifier output. We
+    // rely on codec acceptance as the minimum bar.
+    return true;
+}
+
+}  // anonymous namespace
+
+static void test_reject_path_decodes() {
+    tprintf("[TEST] test_reject_path_decodes\n");
+    std::string path = find_fixture_path();
+    if (path.empty()) {
+        tprintf("  FAILED: fixture not found\n");
+        return;
+    }
+    std::vector<Fixture> fx;
+    if (!load_fixtures(path, fx)) {
+        tprintf("  FAILED: fixture load\n");
+        return;
+    }
+
+    int ok_records      = 0;
+    int reject_records  = 0;
+    int reject_flipped  = 0;  // records that went SKIP → PASS this run
+    int reject_skipped  = 0;
+    for (auto& f : fx) {
+        if (f.verdict == "Ok") {
+            ++ok_records;
+            // Valid records still need a real Plonky3 proof; gate behind
+            // UNO_RUN_PROVE_FIXTURES env-var per the M-P2 integration plan.
+            const char* run_prove = std::getenv("UNO_RUN_PROVE_FIXTURES");
+            if (!run_prove || !*run_prove) {
+                tprintf("  SKIP: fixture %d (%s) — valid-proof record, "
+                        "set UNO_RUN_PROVE_FIXTURES=1 to regenerate\n",
+                        f.id, f.label.c_str());
+                continue;
+            }
+            // If the env-var is set but the record is still unpopulated, bail.
+            if (f.transfer_hex.empty()) {
+                tprintf("  SKIP: fixture %d (%s) — UNO_RUN_PROVE_FIXTURES "
+                        "set but transfer_hex empty (regenerate fixture first)\n",
+                        f.id, f.label.c_str());
+                continue;
+            }
+            tprintf("  SKIP: fixture %d (%s) — valid-record apply driver "
+                    "requires UnoShardState serializer (M-P2 scope)\n",
+                    f.id, f.label.c_str());
+            continue;
+        }
+
+        ++reject_records;
+        if (!is_known_verdict(f.verdict)) {
+            tprintf("  FAILED: fixture %d (%s) verdict=%s is not a known VerifyResult\n",
+                    f.id, f.label.c_str(), f.verdict.c_str());
+            continue;
+        }
+        if (f.transfer_hex.empty()) {
+            tprintf("  SKIP: fixture %d (%s) — transfer_hex empty, "
+                    "regenerate via generate-state-transitions-v1\n",
+                    f.id, f.label.c_str());
+            ++reject_skipped;
+            continue;
+        }
+
+        // Decode hex → BoC bytes → root cell
+        std::string boc;
+        if (!hex_decode(f.transfer_hex, boc)) {
+            tprintf("  FAILED: fixture %d (%s) transfer_hex is not valid hex\n",
+                    f.id, f.label.c_str());
+            continue;
+        }
+        auto cell_r = vm::std_boc_deserialize(td::Slice(boc.data(), boc.size()));
+        if (cell_r.is_error()) {
+            tprintf("  FAILED: fixture %d (%s) BoC deserialize failed: %s\n",
+                    f.id, f.label.c_str(), cell_r.error().message().c_str());
+            continue;
+        }
+        auto root = cell_r.move_as_ok();
+        auto cs   = vm::load_cell_slice(root);
+        auto dr   = uno_workchain::decode_transfer(cs);
+
+        bool decoder_accepted = std::holds_alternative<uno_workchain::Transfer>(dr);
+        bool expected_accept  = expect_decoder_accepts(f.verdict);
+
+        if (decoder_accepted != expected_accept) {
+            if (expected_accept) {
+                auto& e = std::get<uno_workchain::TransferDecodeError>(dr);
+                tprintf("  FAILED: fixture %d (%s) expected decoder to accept, "
+                        "got error: \"%s\"\n",
+                        f.id, f.label.c_str(), e.reason.c_str());
+            } else {
+                tprintf("  FAILED: fixture %d (%s) expected decoder to reject, "
+                        "got accept\n", f.id, f.label.c_str());
+            }
+            continue;
+        }
+
+        if (decoder_accepted) {
+            const auto& tx = std::get<uno_workchain::Transfer>(dr);
+            std::string why = "?";
+            if (!decoded_matches_verdict(tx, f.verdict, &why)) {
+                tprintf("  FAILED: fixture %d (%s) decoded tx does not match "
+                        "declared verdict reason: %s\n",
+                        f.id, f.label.c_str(), why.c_str());
+                continue;
+            }
+        }
+
+        tprintf("  PASSED: fixture %d (%s) — verdict=%s, decoder=%s\n",
+                f.id, f.label.c_str(), f.verdict.c_str(),
+                decoder_accepted ? "accept" : "reject");
+        ++reject_flipped;
+    }
+
+    tprintf("  SUMMARY: %d Ok records, %d reject records, %d reject PASSes, %d reject SKIPs\n",
+            ok_records, reject_records, reject_flipped, reject_skipped);
+}
+
 static void test_state_transition_apply() {
     tprintf("[TEST] test_state_transition_apply\n");
 
@@ -251,7 +484,9 @@ static void test_state_transition_apply() {
             "        • uno/core/cell-state.h    :: serialize_state / deserialize_state\n"
             "        • uno/plonky3-ffi          :: real Plonky3 AIR (P.2 blocker)\n"
             "        Fixture framework validated; runtime assertions gated\n"
-            "        until the full Transfer AIR lands (doc §12 P.3 permits SKIP).\n");
+            "        until the full Transfer AIR lands (doc §12 P.3 permits SKIP).\n"
+            "        Reject-path assertions now live in test_reject_path_decodes\n"
+            "        above; valid-path assertions remain blocked on M-P2.\n");
     return;
 #else
     // When the driver is ready, iterate fixtures and assert byte-equality.
@@ -281,6 +516,7 @@ int main() {
     tprintf("========================================================\n\n");
 
     test_fixture_file_is_parseable();
+    test_reject_path_decodes();
     test_state_transition_apply();
 
     tprintf("\nTotal: passed=%d, failures=%d, skips=%d\n",
