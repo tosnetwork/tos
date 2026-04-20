@@ -115,19 +115,24 @@ td::Result<MlKem768KeyPair> mlkem768_keygen_from_seed(td::Slice seed_64) {
         return td::Status::Error("mlkem768: liboqs ML-KEM-768 not available");
     }
     // Detect: does liboqs provide the derand variant? Older builds do not.
-    // At the time of writing liboqs 0.10 exposes it as
-    // `OQS_KEM_ml_kem_768_keypair_derand`; portable symbol detection is
-    // deferred to Agent 5 (CMake feature probe).
+    // liboqs >= 0.10 exposes it as `OQS_KEM_ml_kem_768_keypair_derand` with
+    // a single 64-byte seed argument (the `d||z` concatenation that FIPS 203
+    // calls for — liboqs does the internal split). The CMake probe in
+    // uno/CMakeLists.txt checks the header for the prototype and defines
+    // OQS_HAVE_ML_KEM_KEYPAIR_DERAND when present.
 #if defined(OQS_HAVE_ML_KEM_KEYPAIR_DERAND)
     MlKem768KeyPair out;
     out.sk = MlKem768SecretKey{};  // default: zero-filled SecureString
 
-    const uint8_t* d = reinterpret_cast<const uint8_t*>(seed_64.data());
-    const uint8_t* z = d + 32;
+    // NOTE (M-liboqs build bringup): liboqs expects a single 64 B seed
+    // pointer `d||z`; earlier drafts of this file called a hypothetical
+    // two-pointer variant `(pk, sk, d, z)`. The final FIPS 203 liboqs API
+    // takes the contiguous 64 B seed, so we pass the full seed_64 slice.
+    const uint8_t* seed_ptr = reinterpret_cast<const uint8_t*>(seed_64.data());
     OQS_STATUS rc = OQS_KEM_ml_kem_768_keypair_derand(
         out.pk.bytes.data(),
         reinterpret_cast<uint8_t*>(out.sk.as_mutable_slice().data()),
-        d, z);
+        seed_ptr);
     if (rc != OQS_SUCCESS) {
         return td::Status::Error("mlkem768: deterministic keygen failed");
     }
