@@ -271,4 +271,34 @@ mod tests {
         let err = prover.prove(&short).unwrap_err();
         assert_eq!(err, Plonky3Status::WitnessInvalid);
     }
+
+    /// Record proof / witness / public-input byte sizes at P.2.
+    ///
+    /// Runs a 1-spend / 1-output-shape prove and prints the result so
+    /// the size budget (§7.4) can be tracked across revisions. Not a
+    /// consensus-binding assertion — just a visible floor.
+    #[test]
+    fn sizes_p2_upgrade_recorded() {
+        let prover = MvpProver::new();
+        let w = crate::transfer_air::MvpWitness::deterministic_valid(0x1111_2222_3333_4444);
+        let witness_wire = w.encode();
+        let (proof, pi) = prover.prove(&witness_wire).expect("prove");
+        println!(
+            "[sizes] witness={}B proof={}B public_inputs={}B",
+            witness_wire.len(),
+            proof.len(),
+            pi.len()
+        );
+        // Regression floor: the real-Poseidon2 upgrade bumps both trace
+        // width (~730 cols) and constraint degree vs the MVP, so the
+        // proof grows. Anchor at the measured baseline so a future
+        // accidental bloat is visible in CI.
+        assert_eq!(witness_wire.len(), 64, "P.2 witness wire = 64 B");
+        assert_eq!(pi.len(), 32, "public inputs unchanged (4 × 8 B)");
+        assert!(
+            proof.len() < 200_000,
+            "proof size exceeds 200 KB floor (was {} B)",
+            proof.len()
+        );
+    }
 }
