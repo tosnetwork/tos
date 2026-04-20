@@ -54,6 +54,13 @@ add_executable(test-uno-state-transition-golden  test-state-transition-golden.cp
 add_executable(test-uno-restart-survival         test-restart-survival.cpp)
 add_executable(test-uno-mandatory-negatives      test-mandatory-negatives.cpp)
 
+# Build-only helper: regenerates uno/test/golden/state-transitions-v1.hex.
+# NOT registered with ctest — invocation is a manual operator step (see the
+# file's own doc comment). Links against uno_workchain for encode_transfer.
+add_executable(generate-state-transitions-v1     generate-state-transitions-v1.cpp)
+target_link_libraries(generate-state-transitions-v1 PRIVATE uno_workchain)
+target_include_directories(generate-state-transitions-v1 PRIVATE ${CMAKE_SOURCE_DIR})
+
 foreach(_t test-uno-transfer
            test-uno-determinism
            test-uno-filter
