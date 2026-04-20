@@ -1,0 +1,121 @@
+# uno/test/golden/state-transitions-v1.hex
+#
+# Consensus-binding golden fixtures for the §4.3 verify + apply pipeline
+# (§12 P.3 of doc/uno-workchain.md).
+#
+# Each record pins one (UnoShardState X, Transfer Y) → (UnoShardState X', verdict)
+# tuple. The consumer test (uno/test/test-state-transition-golden.cpp) parses
+# this file and asserts byte-equality against the running implementation.
+#
+# Format:
+#   record_id=<int, monotonically increasing from 1>
+#   label=<short-human-label>
+#   verdict=<Ok | one of VerifyResult::* names from uno/core/compute-phase.h>
+#   pre_state=<hex byte blob; canonical UnoShardState serialisation>
+#   transfer=<hex byte blob; canonical §4.1 wire format>
+#   post_state=<hex byte blob; present ONLY when verdict == Ok>
+#   ---
+#
+# Empty hex values are written as empty strings on the right of the `=`.
+#
+# --- CURRENT STATE (P.7 scaffold) -------------------------------------------
+# The pre_state / transfer / post_state blobs below are intentionally empty
+# placeholders at P.7 scaffold time because:
+#
+#   a. UnoShardState's canonical byte serialisation (uno/core/cell-state.cpp)
+#      is not yet finalised end-to-end — some sub-objects still SKIP
+#      in-progress cases (commitment-tree frontier for non-power-of-two
+#      position counts; nullifier-set rehash on LRU eviction).
+#   b. The Transfer wire encoder (uno/core/transaction.cpp :: encode_transfer)
+#      currently only handles the 1-spend/1-output shape.
+#   c. The Plonky3 Transfer AIR (§4.2 claims 1-8) is in P.2; without real
+#      proof bytes the fixture would need fake proofs, and a fake proof
+#      pinned in the consensus golden file is worse than a SKIP.
+#
+# Pre-populating the expected post_state hex NOW with placeholder bytes would
+# bake in wrong bytes that the first real-AIR run would spuriously fail on.
+# Per the N-P7 scope note: "Deterministic GTEST_SKIP is preferred over
+# hardcoded fixtures with wrong proofs." — we honour that here.
+#
+# Once P.2 AIR lands and encode_transfer supports 1..4 shapes:
+#   1. Regenerate blobs via a dedicated fixture-gen CLI in tosctl.
+#   2. Paste the resulting hex into the respective record fields.
+#   3. Remove the "blobs are empty" text from this header.
+#   4. Bump the file version suffix (v1 → v2) IF any existing record's
+#      pre_state / transfer / post_state *changes*. Appending new records
+#      stays at v1.
+#
+# --- Records ----------------------------------------------------------------
+
+record_id=1
+label=valid-1in-1out
+verdict=Ok
+pre_state=
+transfer=
+post_state=
+---
+
+record_id=2
+label=valid-4in-4out-max-shape
+verdict=Ok
+pre_state=
+transfer=
+post_state=
+---
+
+record_id=3
+label=valid-2in-3out-fee-rounding
+verdict=Ok
+pre_state=
+transfer=
+post_state=
+---
+
+record_id=4
+label=reject-double-spend
+verdict=NullifierAlreadySpent
+pre_state=
+transfer=
+---
+
+record_id=5
+label=reject-stale-anchor
+verdict=UnknownAnchor
+pre_state=
+transfer=
+---
+
+record_id=6
+label=reject-invalid-plonky3-proof
+verdict=BadPlonky3Proof
+pre_state=
+transfer=
+---
+
+record_id=7
+label=reject-over-max-spends
+verdict=BadSpendCount
+pre_state=
+transfer=
+---
+
+record_id=8
+label=reject-fee-below-min
+verdict=InsufficientFee
+pre_state=
+transfer=
+---
+
+record_id=9
+label=reject-expiry-exceeded
+verdict=ExpiryOutOfRange
+pre_state=
+transfer=
+---
+
+record_id=10
+label=reject-wrong-chain-id
+verdict=BadChainId
+pre_state=
+transfer=
+---
