@@ -223,9 +223,15 @@ pub const PUBLIC_INPUTS_WIRE_LEN: usize = NUM_PUBLIC_INPUTS * 8;
 /// output, public output) while avoiding the ~300-line Poseidon2 round
 /// expansion for the MVP. Value: 0xdeadbeef_cafef00d (arbitrary, fixed).
 ///
-/// TODO(uno-design-gap): replace with `p3_goldilocks::Poseidon2Goldilocks<8>`
-/// compression. When we do, `parent_claim` becomes a 4-element digest
-/// (4 columns) and `leaf`/`sibling` become 4-element digests as well.
+/// **Decision #42 (§16) note**: the Poseidon2 *round constants* are now
+/// sourced from Plonky3's audited `GOLDILOCKS_POSEIDON2_RC_*` tables
+/// (see `prover::build_config`) but the MVP AIR still uses this linear
+/// stand-in for in-circuit *compression*. The full P.2 AIR replaces
+/// `MERKLE_MIX_COEF` with real Poseidon2 compression (width 8 over
+/// Goldilocks); `parent_claim` becomes a 4-element digest and
+/// `leaf`/`sibling` become 4-element digests as well. Swapping the
+/// constants source is decision #42; swapping the linear stand-in for
+/// the real permutation is the P.2 roadmap item (see module doc).
 pub const MERKLE_MIX_COEF: u64 = 0xdead_beef_cafe_f00d;
 
 /// AIR mixing coefficient used by the MVP ivk-commitment binding (decision
@@ -244,9 +250,11 @@ pub const MERKLE_MIX_COEF: u64 = 0xdead_beef_cafe_f00d;
 /// Merkle step without knowing the right `ivk` still gets the wrong
 /// `ivk_commitment_claim`. Value: 0xbadcafe0_ivkcmv1 formatted as a nonce.
 ///
-/// TODO(uno-design-gap): replace with the real in-circuit Poseidon2 over
-/// the 6-element input `[ivk (4 fes), d_packed (2 fes)]` at P.2. Verifier
-/// side (off-circuit, §2.6) already uses real Poseidon2.
+/// **Decision #42 (§16)** applies to Poseidon2 *round constants*; the
+/// in-circuit Poseidon2 compression that will replace this linear stand-in
+/// is P.2 work and remains outside this file. The off-circuit Poseidon2
+/// path (key derivation, cm formula, §2.6/§3.2) already uses the audited
+/// constants via `default_goldilocks_poseidon2_8()`.
 pub const IVK_CM_MIX_COEF: u64 = 0xbad_cafe_0001_cb01;
 
 // ---------------------------------------------------------------------------

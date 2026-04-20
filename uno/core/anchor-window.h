@@ -12,7 +12,7 @@
     cells, 1–2 levels of cell-walk.
 
     The window size is declared as `kDefaultAnchorWindowSize = 100` to match
-    ConfigParam 26 `anchor_window_size` (§10.2). Callers can instantiate the
+    ConfigParam 84 `anchor_window_size` (§10.2). Callers can instantiate the
     class with any size; consensus must agree on the same value chain-wide.
 
     Source: TOS-specific (not copied from upstream).
@@ -29,7 +29,7 @@
 
 namespace uno_workchain {
 
-/// Default window depth (§5.4, matches ConfigParam 26).
+/// Default window depth (§5.4, matches ConfigParam 84).
 static constexpr std::uint32_t kDefaultAnchorWindowSize = 100;
 
 /// Cell serialization fan-out. 4 × 32 B hashes + small header = 1 KB total
@@ -54,7 +54,7 @@ class AnchorWindow {
     AnchorWindow();
 
     /// Construct an empty window with a caller-supplied capacity.
-    /// `capacity` MUST match ConfigParam 26 `anchor_window_size` or the
+    /// `capacity` MUST match ConfigParam 84 `anchor_window_size` or the
     /// chain is non-deterministic.
     explicit AnchorWindow(std::uint32_t capacity);
 
@@ -89,7 +89,7 @@ class AnchorWindow {
 
     /// Parse a chain previously produced by `serialize_to_cell`. Supplies
     /// `expected_capacity` so deserialization rejects a chain that doesn't
-    /// match the declared ConfigParam 26 value. `head` may be null (empty
+    /// match the declared ConfigParam 84 value. `head` may be null (empty
     /// window). Returns false on malformed input; leaves `*this` untouched.
     bool deserialize_from_cell(td::Ref<vm::Cell> head, std::uint32_t expected_capacity);
 

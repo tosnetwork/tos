@@ -1,12 +1,13 @@
 /*
     Uno Workchain — ConfigParam 12 (wc=2 workchain descriptor) +
-                    ConfigParam 26 (UnoConfig) builders.
+                    ConfigParam 84 (UnoConfig) builders.
 
     ConfigParam 12 (workchain registry) is a masterchain-global dictionary
     of `WorkchainDescr` values keyed by workchain id. wc=2 ships as a
     slot in the genesis value — no hardfork machinery (§10).
 
-    ConfigParam 26 is a new parameter reserved for Uno: a single cell
+    ConfigParam 84 is a new parameter reserved for Uno (decision #4, §16;
+    slot renumbered from the earlier 26 placeholder): a single cell
     encoding the wc=2 chain config (fees, tx limits, anchor window size,
     tree depth, expiry window). The schema is pinned in §10.2 of the
     design doc; this file provides the builder + parser.
@@ -27,10 +28,11 @@
 namespace uno_workchain {
 
 // ---------------------------------------------------------------------------
-// UnoConfig (ConfigParam 26)
+// UnoConfig (ConfigParam 84)
 // ---------------------------------------------------------------------------
 
-/// In-memory view of ConfigParam 26. Matches §10.2 field-for-field.
+/// In-memory view of ConfigParam 84 (decision #4, §16). Matches §10.2
+/// field-for-field.
 struct UnoConfig {
     uint8_t  version              {kConfigParamVersion};
     uint32_t chain_id             {kDefaultTestnetChainId};
@@ -44,9 +46,34 @@ struct UnoConfig {
     uint8_t  tree_depth           {static_cast<uint8_t>(kTreeDepth)};
     uint32_t expiry_window_blocks {kDefaultExpiryWindowBlocks};
 
-    /// Factory for the canonical v1 testnet config. Production mainnet
-    /// configs are populated by network ops — see `build_uno_config_cell`.
+    /// Factory for the canonical v1 testnet config. `chain_id` is the
+    /// testnet value (`kChainIdTestnet`, decision #9). All other fields
+    /// use the launch-schedule defaults (decision #7) from the
+    /// `kDefault*` constants in `workchain.h`.
+    ///
+    /// Production mainnet configs are populated by network ops — see
+    /// `build_uno_config_cell` and `default_mainnet()` below. The
+    /// in-memory default value (`UnoConfig{}`) stays testnet because
+    /// mainnet is not yet launched.
     static UnoConfig default_testnet() noexcept { return UnoConfig{}; }
+
+    /// Factory for the canonical v1 mainnet config (decision #9, §10.4).
+    /// Identical to `default_testnet()` except `chain_id == kChainIdMainnet`
+    /// ("UNOM"). Callers that want mainnet must opt in explicitly; the
+    /// plain default constructor stays testnet so accidental `UnoConfig{}`
+    /// usage cannot route a testnet node onto the mainnet transcript.
+    static UnoConfig default_mainnet() noexcept {
+        UnoConfig c{};
+        c.chain_id = kChainIdMainnet;
+        return c;
+    }
+
+    /// Select testnet vs mainnet launch defaults without touching any
+    /// other field. `use_mainnet_chain_id == false` is the safe default
+    /// for pre-launch images.
+    static UnoConfig default_launch(bool use_mainnet_chain_id) noexcept {
+        return use_mainnet_chain_id ? default_mainnet() : default_testnet();
+    }
 
     bool operator==(const UnoConfig& other) const noexcept {
         return version == other.version && chain_id == other.chain_id &&
@@ -63,7 +90,8 @@ struct UnoConfig {
 };
 
 /// Serialise `UnoConfig` into a single cell suitable for insertion into
-/// ConfigParam 26. Deterministic; identical input → identical cell hash.
+/// ConfigParam 84 (decision #4, §16). Deterministic; identical input →
+/// identical cell hash.
 ///
 /// The layout:
 ///     uno_config#26554E4F
@@ -85,13 +113,15 @@ struct UnoConfig {
 /// One cell, no refs.
 td::Ref<vm::Cell> build_uno_config_cell(const UnoConfig& cfg);
 
-/// Magic prefix for the UnoConfig cell. ASCII "26UN" reworked so the first
-/// 8 bits distinguish it inside ConfigParam 26 from any accidental neighbour.
-/// Value 0x26554E4F packs cleanly into 32 bits.
+/// Magic prefix for the UnoConfig cell. ASCII-ish 32-bit tag used as the
+/// cell's first 32 inline bits; distinguishes UnoConfig from any accidental
+/// neighbour inside ConfigParam 84. Value 0x26554E4F is the historical
+/// magic from when UnoConfig sat in ConfigParam 26; kept stable across the
+/// slot renumbering to avoid a consensus-visible re-hash of genesis state.
 constexpr uint32_t kUnoConfigMagic = 0x26554E4F;
 constexpr unsigned kUnoConfigMagicBits = 32;
 
-/// Parse a ConfigParam 26 cell back into a UnoConfig.
+/// Parse a ConfigParam 84 cell back into a UnoConfig.
 /// Returns false on magic / version mismatch or short read.
 bool parse_uno_config_cell(td::Ref<vm::Cell> cell, UnoConfig& out);
 
@@ -128,12 +158,12 @@ td::Ref<vm::Cell> build_uno_workchain_descr(
 
 /// Returns the currently-loaded UnoConfig. Populated by
 /// `install_uno_config(cfg)` at node startup (called from `init_uno_workchain`
-/// once the masterchain ConfigParam 26 is read). Until then, returns a
+/// once the masterchain ConfigParam 84 is read). Until then, returns a
 /// default-constructed UnoConfig with testnet defaults.
 const UnoConfig& current_uno_config() noexcept;
 
 /// Install a new UnoConfig at process scope. Called exactly once at startup
-/// (masterchain ConfigParam 26 load). Re-installing after block production
+/// (masterchain ConfigParam 84 load). Re-installing after block production
 /// has started is undefined — fee floors would change mid-flight and tx
 /// validation would desync across validators.
 void install_uno_config(UnoConfig cfg) noexcept;

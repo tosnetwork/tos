@@ -1,11 +1,13 @@
 /*
-    Uno Workchain — ConfigParam 12 + 26 builders.
+    Uno Workchain — ConfigParam 12 + 84 builders.
 
     Mirrors `evm/core/config-param.cpp` in style. The WorkchainDescr
     TLB layout is reused as-is (workchain#a6, v1) because it is a
     masterchain-wide registry format that every non-masterchain workchain
     shares, including wc=1 (EVM) and wc=2 (Uno). We plug our own
     vm_version, vm_mode, and split/flag fields into that common envelope.
+
+    Decision #4 (§16): UnoConfig lives in ConfigParam 84, not 26.
 
     Source: TOS-specific adapter; see doc/uno-workchain.md §10.1, §10.2.
 */
@@ -120,13 +122,13 @@ bool parse_uno_config_cell(td::Ref<vm::Cell> cell, UnoConfig& out) {
     long long v = 0;
     if (!cs.fetch_long_bool(kUnoConfigMagicBits, v) ||
         static_cast<uint32_t>(v) != kUnoConfigMagic) {
-        LOG(ERROR) << "uno/config: wrong/missing magic on ConfigParam 26";
+        LOG(ERROR) << "uno/config: wrong/missing magic on ConfigParam 84";
         return false;
     }
     if (!cs.fetch_long_bool(8, v)) return false;
     out.version = static_cast<uint8_t>(v);
     if (out.version != kConfigParamVersion) {
-        LOG(ERROR) << "uno/config: unknown ConfigParam 26 version "
+        LOG(ERROR) << "uno/config: unknown ConfigParam 84 version "
                    << int(out.version);
         return false;
     }

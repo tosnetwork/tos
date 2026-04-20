@@ -95,7 +95,7 @@ void init_uno_workchain(const std::string& db_root) {
 
     // Step 4. Warm the nullifier LRU (M2, §5.3). Scan the last K blocks of
     // nullifier inserts and prefill the LRU. K defaults to 1000; tunable
-    // via ConfigParam 26.
+    // via ConfigParam 84.
     //
     // TODO(uno-integration): call Agent 2's warm_nullifier_lru(K) once
     // nullifier-set.h lands.

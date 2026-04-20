@@ -14,7 +14,8 @@
     unseen.
 
     Default capacity: 1,000,000 entries (~100 MB RAM at 96 B/entry overhead),
-    tunable at runtime from ConfigParam 26. See §5.3.
+    pinned by decision #7 (§16) / §10.2, tunable at runtime from
+    ConfigParam 84. See §5.3.
 
     Source: TOS-specific (not copied from upstream).
 */
@@ -35,7 +36,7 @@ namespace uno_workchain {
 static constexpr std::size_t kNullifierBytes = 32;
 
 /// Default LRU capacity. 1 M entries ≈ 100 MB RAM (key 32 B + node-overhead).
-/// Override via ConfigParam 26 at init time.
+/// Pinned by decision #7 (§16) / §10.2; override via ConfigParam 84 at init time.
 static constexpr std::size_t kDefaultNullifierLruCapacity = 1'000'000;
 
 /// 256-bit nullifier value.
