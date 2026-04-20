@@ -1,0 +1,208 @@
+/*
+    Uno Workchain — Transfer wire codec.
+
+    Decode / encode the `Transfer` transaction envelope per §4.1 of
+    doc/uno-workchain.md, plus canonical `tx_hash` computation (the message
+    signed by each `spend_auth_sig` and the Plonky3 public-input digest
+    anchor).
+
+    Layout recap (inline section):
+      version:uint8 = 1
+      scheme_id:uint8 = 0x01
+      chain_id:uint32
+      anchor:bits256
+      expiry_block:uint64
+      fee:uint64
+      spend_count:uint8   (1..4)
+      output_count:uint8  (1..4)
+      spends[spend_count]:SpendDescription
+      outputs[output_count]:OutputDescription
+      zk_proof:^Cell   (Plonky3 STARK proof; CellString-style chunk chain)
+
+    SpendDescription (inline, 128 B):
+      nullifier:bits256
+      rk:bits256
+      spend_auth_sig:bits512
+
+    OutputDescription (inline 146 B + 2 refs):
+      cm:bits256
+      epk:bits256
+      filter_tag:bits16
+      enc_ciphertext:^Cell
+      mlkem_ct:^Cell
+      out_ciphertext:bytes[80]
+
+    Source: TOS-specific adapter — consensus-critical codec.
+*/
+#pragma once
+
+#include <array>
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <variant>
+#include <vector>
+
+#include "td/utils/SharedSlice.h"
+#include "td/utils/Slice.h"
+#include "td/utils/UInt.h"
+#include "vm/cells/Cell.h"
+#include "vm/cells/CellSlice.h"
+
+namespace uno_workchain {
+
+// ---------------------------------------------------------------------------
+// Fixed wire constants (mirror §4.1)
+// ---------------------------------------------------------------------------
+
+constexpr uint8_t  kTransferVersion       = 1;       // byte 0
+constexpr uint8_t  kSchemeIdV1            = 0x01;    // byte 1 — Plonky3 / Goldilocks / Poseidon2
+constexpr uint8_t  kMaxSpendCount         = 4;       // §10.2
+constexpr uint8_t  kMaxOutputCount        = 4;       // §10.2
+constexpr uint8_t  kMinSpendCount         = 1;
+constexpr uint8_t  kMinOutputCount        = 1;
+constexpr size_t   kOutCiphertextBytes    = 80;      // inline AEAD-encrypted memo (ovk-recoverable)
+constexpr size_t   kSpendInlineBytes      = 32 + 32 + 64;     // 128
+constexpr size_t   kOutputInlineBytes     = 32 + 32 + 2 + 80; // 146 (incl. filter_tag, excl. refs)
+constexpr size_t   kTransferHeaderBytes   = 1 + 1 + 4 + 32 + 8 + 8 + 1 + 1; // 56
+
+// ---------------------------------------------------------------------------
+// Structured types
+// ---------------------------------------------------------------------------
+
+struct SpendDescription {
+    td::Bits256 nullifier;
+    td::Bits256 rk;                          // compressed Ristretto255 point
+    std::array<uint8_t, 64> spend_auth_sig;  // Schnorr-on-Ristretto255 over tx_hash
+};
+
+struct OutputDescription {
+    td::Bits256 cm;
+    td::Bits256 epk;                              // compressed Ristretto255 point
+    uint16_t    filter_tag;
+    td::Ref<vm::Cell> enc_ciphertext;             // ~580 B ChaCha20-Poly1305 payload
+    td::Ref<vm::Cell> mlkem_ct;                   // 1088 B ML-KEM-768 ciphertext
+    std::array<uint8_t, kOutCiphertextBytes> out_ciphertext;
+};
+
+struct Transfer {
+    uint8_t  version{kTransferVersion};
+    uint8_t  scheme_id{kSchemeIdV1};
+    uint32_t chain_id{0};
+    td::Bits256 anchor;
+    uint64_t expiry_block{0};
+    uint64_t fee{0};                              // plaintext, native nano-units
+    std::vector<SpendDescription>  spends;
+    std::vector<OutputDescription> outputs;
+    td::Ref<vm::Cell> zk_proof;                   // Plonky3 STARK proof chunk chain
+
+    // Filled by the decoder so apply_transfer / gas accounting can re-use them
+    // without re-serializing.
+    size_t      wire_size_bytes{0};               // full inline+ref tx size in bytes (§4.3 step 1.4)
+    td::Bits256 tx_hash{};                        // canonical hash per §4.1
+};
+
+// ---------------------------------------------------------------------------
+// Error descriptor
+// ---------------------------------------------------------------------------
+
+struct TransferDecodeError {
+    std::string reason;
+};
+
+using DecodeResult = std::variant<Transfer, TransferDecodeError>;
+
+// ---------------------------------------------------------------------------
+// Decode / encode
+// ---------------------------------------------------------------------------
+
+/// Decode a Transfer from a message-body CellSlice.
+///
+/// The body is the CellSlice the dispatcher hands to the compute phase. Layout
+/// matches §4.1: `56 B header + spends + outputs + ^zk_proof`. Inline data
+/// may overflow into continuation cells via the TOS cell chain; this decoder
+/// transparently walks refs if needed. Large cell-refs (enc_ciphertext,
+/// mlkem_ct, zk_proof) are captured as `Ref<Cell>` handles — actual content
+/// read happens downstream (verifier side).
+///
+/// On success, `Transfer::tx_hash` is populated via canonical_tx_hash().
+/// On failure, returns TransferDecodeError with a short reason string.
+DecodeResult decode_transfer(vm::CellSlice body) noexcept;
+
+/// Convenience overload for raw byte buffers (JSON-RPC admission path).
+DecodeResult decode_transfer_bytes(td::Slice raw_bytes) noexcept;
+
+/// Serialize a Transfer into a CellSlice-friendly root cell, matching §4.1's
+/// wire layout. Used by wallets / test fixtures and the JSON-RPC admission
+/// path; not called from verify/apply.
+td::Result<td::Ref<vm::Cell>> encode_transfer(const Transfer& tx) noexcept;
+
+// ---------------------------------------------------------------------------
+// Canonical tx hash (§4.1)
+// ---------------------------------------------------------------------------
+
+/// Compute the canonical tx_hash per §4.1. Excludes spend_auth_sig[i] and the
+/// ^zk_proof ref. Large fields (enc_ciphertext, mlkem_ct) are represented by
+/// their cell-root hashes to keep the hash O(inline).
+///
+///   tx_hash = BLAKE3(
+///       version(1) || scheme_id(1) || chain_id(4) || anchor(32) ||
+///       expiry_block(8) || fee(8) || spend_count(1) || output_count(1) ||
+///       for each spend:   nullifier(32) || rk(32)
+///       for each output:  cm(32) || epk(32) || filter_tag(2) ||
+///                         cell_hash(enc_ciphertext) ||
+///                         cell_hash(mlkem_ct) ||
+///                         out_ciphertext(80)
+///   )
+///
+/// Deterministic, endian-stable. `chain_id`, `expiry_block`, `fee` and
+/// `filter_tag` are encoded big-endian for cross-platform reproducibility.
+td::Bits256 canonical_tx_hash(const Transfer& tx) noexcept;
+
+// ---------------------------------------------------------------------------
+// Plonky3 public-input builder (§4.3 step 4)
+// ---------------------------------------------------------------------------
+//
+// The verifier (this file's caller in compute-phase.cpp) and the prover
+// (Agent 4's Rust AIR) MUST agree byte-identically on the public-input
+// encoding. Order, per §4.3:
+//
+//   1. scheme_id               (1 Goldilocks element, zero-extended)
+//   2. chain_id                (1 elt)
+//   3. expiry_block            (1 elt, u64 fits since p > 2^64 - 2^32)
+//   4. fee                     (1 elt)
+//   5. anchor                  (4 elts — 256 bits in 4 × 64-bit limbs)
+//   6. for each spend i:       nf_i (4 elts), rk_i (4 elts)
+//   7. for each output j:      cm_j (4 elts), epk_j (4 elts),
+//                              filter_tag_j (1 elt, 16 bits zero-extended)
+//
+// Total count: 8 + 8 * spend_count + 9 * output_count Goldilocks field elts.
+//
+// We encode each Goldilocks element as an 8-byte little-endian u64 (the
+// canonical Plonky3 wire form). Agent 4 — if the Rust AIR differs here
+// TODO(uno-integration): re-sync this encoding with plonky3-ffi/src/verifier.rs.
+
+struct Plonky3PublicInputs {
+    std::vector<uint64_t> elements;  // Goldilocks field elements (canonical form)
+
+    /// Concatenated little-endian byte encoding (for FFI hand-off).
+    std::vector<uint8_t> to_bytes() const noexcept;
+};
+
+Plonky3PublicInputs build_plonky3_public_inputs(const Transfer& tx) noexcept;
+
+// ---------------------------------------------------------------------------
+// Raw cell-chain helpers (used internally; exposed for tests)
+// ---------------------------------------------------------------------------
+
+/// Store a byte blob of arbitrary length into a linked chain of cells, same
+/// layout as the EVM bytecode chunk chain: each chunk packs up to 127 bytes
+/// + a 1-bit has-next tag + optional ref. Returns a null ref for empty input.
+td::Ref<vm::Cell> store_bytes_as_chunk_chain(td::Slice bytes) noexcept;
+
+/// Walk a chunk chain produced by `store_bytes_as_chunk_chain` and return the
+/// concatenated bytes. Bounded walk (rejects cycles and oversized chains).
+/// Returns empty string on malformed input or null root.
+std::string load_bytes_from_chunk_chain(td::Ref<vm::Cell> root) noexcept;
+
+}  // namespace uno_workchain
