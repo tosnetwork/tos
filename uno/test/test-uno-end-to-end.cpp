@@ -50,6 +50,12 @@
 #include "uno/rpc/filter-service.h"
 #include "uno/rpc/subscriptions.h"
 
+// Shared valid-Transfer builder. See K-p7-fixtures: the DemoWallet /
+// make_wallet / make_note_cm / build_transfer primitives previously inline
+// in this TU were factored out so the mandatory-negatives tests can reuse
+// them. The ovk-AEAD audit path (§4.1 / §2.7, below) stays local to this TU.
+#include "uno/test/fixtures/valid_transfer_fixture.h"
+
 #include "block/transaction.h"     // block::ComputePhase
 #include "vm/cells/CellBuilder.h"
 #include "vm/cells/CellSlice.h"
@@ -187,122 +193,25 @@ static int tprintf(const char* fmt, ...) {
 }
 
 // ---------------------------------------------------------------------------
-// Wallet stand-in.
+// Wallet / note-commitment / Transfer-builder helpers now live in the
+// shared fixture header (K-p7-fixtures). Rename the fixture types into
+// this TU so the rest of the body below is untouched:
 //
-// P.5 scope: we build keys without invoking Poseidon2 or ML-KEM-768
-// (both stubbed in this build — no real FFI crate linked, no liboqs). The
-// stand-in wallet provides just enough to:
-//   - derive a valid Ristretto `ask` / `ak` pair (real group element)
-//   - produce an `rk = ak + α·G` + matching Schnorr signature
-//   - carry a `pk_d` (valid Ristretto point; derived via hash-to-curve on
-//     the diversifier)
-//   - carry an `ovk` (random 32 B) so the audit invariant checks
-//   - carry `nk` / `ivk` as deterministic sha256 digests (stand-in for the
-//     real Poseidon2 output). The demo does not depend on the Poseidon2
-//     identities inside the AIR.
-// The full wallet path (with real Poseidon2 / ML-KEM) is exercised once A4
-// + liboqs are available — then this test-side stand-in is replaced by
-// `uc::derive_keys_from_seed`.
+//   DemoWallet            = uno_workchain::test_fixtures::DemoWallet
+//   make_wallet           = uno_workchain::test_fixtures::make_wallet
+//   make_note_cm          = uno_workchain::test_fixtures::make_note_cm
+//   test_digest           = uno_workchain::test_fixtures::test_digest
+//   point_to_bits256      = uno_workchain::test_fixtures::point_to_bits256
+//
+// The P.5-scope note (Poseidon2 / ML-KEM both stubbed; sha256 stand-ins
+// substitute for the Poseidon2 preimage) moved to the fixture header.
 // ---------------------------------------------------------------------------
-struct DemoWallet {
-    std::string name;
-    std::array<uint8_t, 32> seed_bytes{};
-    uc::RistrettoScalar ask;
-    uc::RistrettoPoint  ak;
-    std::array<uint8_t, 32> nk{};
-    std::array<uint8_t, 32> ivk{};
-    td::SecureString     ovk;
-    std::array<uint8_t, 11> diversifier{};
-    uc::RistrettoPoint   pk_d;
-    std::array<uint8_t, 32> ivk_commitment{};
-};
-
-static DemoWallet make_wallet(const char* name, uint8_t seed_byte) {
-    DemoWallet w;
-    w.name = name;
-    for (int i = 0; i < 32; ++i) w.seed_bytes[i] = seed_byte;
-    // ask: reduce_64 of a derived 64-byte stream; lands in [0, L).
-    {
-        std::array<uint8_t, 64> buf{};
-        buf[0] = seed_byte;
-        buf[1] = 0xA5;
-        w.ask = uc::RistrettoScalar::reduce_64_bytes(
-            td::Slice(reinterpret_cast<const char*>(buf.data()), 64));
-    }
-    // ak = ask * G (real group element)
-    {
-        auto r = uc::ristretto_basepoint_mul(w.ask);
-        if (r.is_error()) { tprintf("  FAILED: ak gen: %s\n", r.error().message().c_str()); std::exit(1); }
-        w.ak = r.move_as_ok();
-    }
-    // nk, ivk: sha256-derived stand-ins
-    {
-        uint8_t src[33]; std::memcpy(src, w.seed_bytes.data(), 32);
-        src[32] = 'N';
-        td::sha256(td::Slice(reinterpret_cast<const char*>(src), 33),
-                   td::MutableSlice(reinterpret_cast<char*>(w.nk.data()), 32));
-        src[32] = 'I';
-        td::sha256(td::Slice(reinterpret_cast<const char*>(src), 33),
-                   td::MutableSlice(reinterpret_cast<char*>(w.ivk.data()), 32));
-    }
-    // ovk: random 32 B
-    {
-        w.ovk = td::SecureString(32);
-        for (int i = 0; i < 32; ++i) ((uint8_t*)w.ovk.data())[i] = seed_byte + 0x40 + i;
-    }
-    // diversifier
-    for (int i = 0; i < 11; ++i) w.diversifier[i] = static_cast<uint8_t>(seed_byte + i);
-    // pk_d: a valid Ristretto point via hash-to-curve on diversifier
-    w.pk_d = uc::derive_diversified_base_point(
-        td::Slice(reinterpret_cast<const char*>(w.diversifier.data()), 11));
-    // ivk_commitment: sha256(ivk || d)
-    {
-        uint8_t src[43];
-        std::memcpy(src, w.ivk.data(), 32);
-        std::memcpy(src + 32, w.diversifier.data(), 11);
-        td::sha256(td::Slice(reinterpret_cast<const char*>(src), 43),
-                   td::MutableSlice(reinterpret_cast<char*>(w.ivk_commitment.data()), 32));
-    }
-    return w;
-}
-
-// Note-commitment stand-in. The real path uses Poseidon2 (decision #1):
-//     cm = Poseidon2("uno-cm-v1", d, pk_d, ivk_commitment, value, rcm)
-// This build has no linked Poseidon2 FFI crate, so we substitute a
-// deterministic sha256 over the same preimage. The test never re-hashes
-// through the in-circuit AIR, so only self-consistency (same preimage →
-// same cm; different preimages → different cm) is required.
-static td::Bits256 make_note_cm(const DemoWallet& rec, uint64_t value,
-                                 const std::array<uint8_t, 32>& rcm) {
-    uint8_t buf[11 + 32 + 32 + 8 + 32];
-    std::memcpy(buf +   0, rec.diversifier.data(), 11);
-    std::memcpy(buf +  11, rec.pk_d.bytes.data(), 32);
-    std::memcpy(buf +  43, rec.ivk_commitment.data(), 32);
-    for (int i = 0; i < 8; ++i) {
-        buf[75 + i] = static_cast<uint8_t>((value >> (8 * i)) & 0xff);
-    }
-    std::memcpy(buf + 83, rcm.data(), 32);
-    td::Bits256 cm;
-    td::sha256(td::Slice(reinterpret_cast<const char*>(buf), sizeof(buf)),
-               td::MutableSlice(reinterpret_cast<char*>(cm.data()), 32));
-    return cm;
-}
-
-// Deterministic 32-byte digest via BLAKE-family SHA256 for test-scoped
-// placeholder use (nullifier rho, alpha, etc.). Not consensus crypto.
-static std::array<uint8_t, 32> test_digest(const void* p, size_t n) {
-    std::array<uint8_t, 32> out{};
-    td::sha256(td::Slice(reinterpret_cast<const char*>(p), n),
-                td::MutableSlice(reinterpret_cast<char*>(out.data()), 32));
-    return out;
-}
-
-// Convert the compressed RistrettoPoint into td::Bits256.
-static td::Bits256 point_to_bits256(const uc::RistrettoPoint& p) {
-    td::Bits256 b;
-    std::memcpy(b.data(), p.bytes.data(), 32);
-    return b;
-}
+namespace tf = uno_workchain::test_fixtures;
+using DemoWallet = tf::DemoWallet;
+using tf::make_wallet;
+using tf::make_note_cm;
+using tf::test_digest;
+using tf::point_to_bits256;
 
 // ---------------------------------------------------------------------------
 // Phase-5 ovk-AEAD recipe (§4.1 / §2.7).
@@ -391,6 +300,16 @@ static bool ovk_aead_unwrap(td::Slice ovk_32, td::Slice cm_32,
 
 // ---------------------------------------------------------------------------
 // Build Alice's 1-spend / 2-output Transfer.
+//
+// Under K-p7-fixtures the core Transfer-construction pipeline (Ristretto
+// keys, Schnorr sigs, placeholder zk_proof, canonical_tx_hash) moved to
+// `uno/test/fixtures/valid_transfer_fixture.{h,cpp}`. This wrapper keeps
+// the end-to-end test's calling convention unchanged by:
+//   1. pre-computing the ovk-AEAD-wrapped out_ciphertext for each output,
+//      then
+//   2. delegating the Transfer construction + Schnorr sign to
+//      `tf::make_valid_transfer()`.
+// Byte-for-byte identical to the pre-refactor inline build_transfer.
 // ---------------------------------------------------------------------------
 static uw::Transfer build_transfer(
     const DemoWallet& sender,
@@ -404,132 +323,45 @@ static uw::Transfer build_transfer(
     uc::RistrettoScalar& out_rsk_for_signing,
     uc::RistrettoPoint&  out_rk_for_signing) {
 
-    uw::Transfer tx;
-    tx.version     = uw::kTransferVersion;
-    tx.scheme_id   = uw::kSchemeIdV1;
-    tx.chain_id    = chain_id;
-    tx.anchor      = anchor;
-    tx.expiry_block= expiry_block;
-    tx.fee         = fee_nano;
+    const uint64_t change_value = spend_value - to_receiver_value - fee_nano;
 
-    // --- Spend 0 ---
-    uw::SpendDescription spend;
-    // nullifier: deterministic placeholder. A real nf = Poseidon2("uno-nf-v1",
-    // nk, rho); for the state-machine demo we only need pairwise-distinct +
-    // not-spent properties.
-    {
-        uint8_t seed[64] = {0};
-        std::memcpy(seed, sender.nk.data(), 32);
-        seed[32] = 0xA1;  // spend_index discriminator
-        auto nf = test_digest(seed, 64);
-        std::memcpy(spend.nullifier.data(), nf.data(), 32);
-    }
-    // rk = ak + alpha · G. alpha = reduce_64_bytes(H(...)) so the scalar
-    // decodes cleanly without from_bytes' strict check.
-    {
-        std::array<uint8_t, 64> alpha_seed{};
-        alpha_seed[0] = 0xAF;
-        auto alpha = uc::RistrettoScalar::reduce_64_bytes(
-            td::Slice(reinterpret_cast<const char*>(alpha_seed.data()), 64));
-        auto rpair_r = uc::randomize_spend_auth(sender.ask, sender.ak, alpha);
-        if (rpair_r.is_error()) {
-            tprintf("  FAILED: randomize_spend_auth: %s\n",
-                    rpair_r.error().message().c_str());
-            std::exit(1);
-        }
-        auto rpair = rpair_r.move_as_ok();
-        spend.rk = point_to_bits256(rpair.rk);
-        out_rsk_for_signing = std::move(rpair.rsk);
-        out_rk_for_signing  = rpair.rk;
-        // spend_auth_sig filled after tx_hash is computed.
-        spend.spend_auth_sig.fill(0);
-    }
-    tx.spends.push_back(std::move(spend));
+    tf::ValidTransferParams params;
+    params.sender       = &sender;
+    params.receiver     = &receiver;
+    params.spend_value  = spend_value;
+    params.fee_nano     = fee_nano;
+    params.anchor       = anchor;
+    params.expiry_block = expiry_block;
+    params.chain_id     = chain_id;
+    params.outputs.resize(2);
+    params.outputs[0].value = to_receiver_value;
+    params.outputs[1].value = change_value;
 
-    // --- Output 0: to receiver ---
-    {
-        uw::OutputDescription out;
+    // --- Phase-5 audit path: ovk-AEAD wrap ---------------------------------
+    // The fixture needs the cm for each output to derive the AEAD nonce. For
+    // the rcm scheme used by `tf::make_valid_transfer` (rcm = 0x10 * (oi+1))
+    // we recompute each cm here to pre-build the out_ciphertext, so the
+    // fixture sees the matching (cm, out_ciphertext) pair before it hashes
+    // tx_hash. This is a faithful reproduction of the pre-refactor ordering.
+    for (std::size_t oi = 0; oi < params.outputs.size(); ++oi) {
+        const DemoWallet& rec = (oi == 0) ? receiver : sender;
         std::array<uint8_t, 32> rcm{};
-        rcm[0] = 0x10;
-        out.cm = make_note_cm(receiver, to_receiver_value, rcm);
-        // epk: a fresh valid Ristretto point. Derive from the recipient's
-        // diversified base point; that's a real group element by construction.
-        out.epk = point_to_bits256(
-            uc::derive_diversified_base_point(
-                td::Slice(reinterpret_cast<const char*>(receiver.diversifier.data()), 11)));
-        // filter_tag: low 16 bits of H(ivk || cm). Wallet scan replicates this.
-        uint8_t fb[64] = {0};
-        std::memcpy(fb, receiver.ivk.data(), 32);
-        std::memcpy(fb + 32, out.cm.data(), 32);
-        auto h = test_digest(fb, 64);
-        out.filter_tag = static_cast<uint16_t>(
-            static_cast<uint16_t>(h[0]) |
-            (static_cast<uint16_t>(h[1]) << 8));
-        // Opaque placeholder refs (not decoded by consensus path).
-        vm::CellBuilder ec; ec.store_long(0xDEADBEEF, 32); out.enc_ciphertext = ec.finalize();
-        vm::CellBuilder mc; mc.store_long(0x12345678, 32); out.mlkem_ct       = mc.finalize();
-        // Phase-5 audit path: AEAD-encrypt the pinned memo with sender's
-        // ovk + this output's cm. Recoverable by any holder of Alice's ovk
-        // (sender herself or an auditor).
-        {
-            uint8_t memo[kOvkMemoBytes];
-            std::memcpy(memo, kOvkMemoPinned, kOvkMemoBytes);
-            ovk_aead_wrap(
-                td::Slice(reinterpret_cast<const char*>(sender.ovk.data()), 32),
-                td::Slice(reinterpret_cast<const char*>(out.cm.data()), 32),
-                memo,
-                out.out_ciphertext.data());
-        }
-        tx.outputs.push_back(std::move(out));
+        rcm[0] = static_cast<uint8_t>(0x10 * (oi + 1));
+        td::Bits256 cm = make_note_cm(rec, params.outputs[oi].value, rcm);
+
+        uint8_t memo[kOvkMemoBytes];
+        std::memcpy(memo, kOvkMemoPinned, kOvkMemoBytes);
+        ovk_aead_wrap(
+            td::Slice(reinterpret_cast<const char*>(sender.ovk.data()), 32),
+            td::Slice(reinterpret_cast<const char*>(cm.data()), 32),
+            memo,
+            params.outputs[oi].out_ciphertext.data());
     }
 
-    // --- Output 1: change to sender ---
-    {
-        uw::OutputDescription out;
-        uint64_t change = spend_value - to_receiver_value - fee_nano;
-        std::array<uint8_t, 32> rcm{};
-        rcm[0] = 0x20;
-        out.cm = make_note_cm(sender, change, rcm);
-        out.epk = point_to_bits256(
-            uc::derive_diversified_base_point(
-                td::Slice(reinterpret_cast<const char*>(sender.diversifier.data()), 11)));
-        uint8_t fb[64] = {0};
-        std::memcpy(fb, sender.ivk.data(), 32);
-        std::memcpy(fb + 32, out.cm.data(), 32);
-        auto h = test_digest(fb, 64);
-        out.filter_tag = static_cast<uint16_t>(
-            static_cast<uint16_t>(h[0]) |
-            (static_cast<uint16_t>(h[1]) << 8));
-        vm::CellBuilder ec; ec.store_long(0xCAFEBABE, 32); out.enc_ciphertext = ec.finalize();
-        vm::CellBuilder mc; mc.store_long(0x87654321, 32); out.mlkem_ct       = mc.finalize();
-        // Phase-5 audit path for the change note: same recipe, bound to the
-        // sender's ovk and this change-note cm.
-        {
-            uint8_t memo[kOvkMemoBytes];
-            std::memcpy(memo, kOvkMemoPinned, kOvkMemoBytes);
-            ovk_aead_wrap(
-                td::Slice(reinterpret_cast<const char*>(sender.ovk.data()), 32),
-                td::Slice(reinterpret_cast<const char*>(out.cm.data()), 32),
-                memo,
-                out.out_ciphertext.data());
-        }
-        tx.outputs.push_back(std::move(out));
-    }
-
-    // Placeholder zk_proof cell (accepted by test-only proof override).
-    {
-        vm::CellBuilder zp; zp.store_long(0x50425050, 32); // "PBPP"
-        tx.zk_proof = zp.finalize();
-    }
-
-    tx.wire_size_bytes = uw::kTransferHeaderBytes
-                       + uw::kSpendInlineBytes * tx.spends.size()
-                       + uw::kOutputInlineBytes * tx.outputs.size();
-
-    // Canonical tx_hash (§4.1) — excludes spend_auth_sig + ^zk_proof.
-    tx.tx_hash = uw::canonical_tx_hash(tx);
-
-    return tx;
+    auto fx = tf::make_valid_transfer(params);
+    out_rsk_for_signing = std::move(fx.rsk);
+    out_rk_for_signing  = fx.rk;
+    return std::move(fx.tx);
 }
 
 // ---------------------------------------------------------------------------

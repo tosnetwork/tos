@@ -36,7 +36,15 @@ add_executable(test-uno-parallel-verify       test-parallel-verify.cpp)
 # state, A3 crypto primitives, and A5 codec. Plonky3 verify is covered by
 # a test-only override (install_test_proof_override_for_test) because A4's
 # prover is not in scope for P.5.
-add_executable(test-uno-end-to-end            test-uno-end-to-end.cpp)
+#
+# K-p7-fixtures: the valid-Transfer builder (DemoWallet / make_wallet /
+# build_transfer) originally inline in test-uno-end-to-end.cpp lives in
+# uno/test/fixtures/valid_transfer_fixture.{h,cpp}. Shared with the
+# mandatory-negatives test so the §4.3-step-2 / step-4 reject paths
+# (replay / cross-chain / inflation) can be exercised end-to-end.
+add_executable(test-uno-end-to-end
+               test-uno-end-to-end.cpp
+               fixtures/valid_transfer_fixture.cpp)
 
 # --- §12 test matrix (owner: N-P7) -----------------------------------------
 # Added under P.7 scaffolding: primitive parity (§12 P.1), state-transition
@@ -52,7 +60,11 @@ add_executable(test-uno-end-to-end            test-uno-end-to-end.cpp)
 add_executable(test-uno-primitive-parity         test-primitive-parity.cpp)
 add_executable(test-uno-state-transition-golden  test-state-transition-golden.cpp)
 add_executable(test-uno-restart-survival         test-restart-survival.cpp)
-add_executable(test-uno-mandatory-negatives      test-mandatory-negatives.cpp)
+# K-p7-fixtures: mandatory-negatives now shares the valid-Transfer builder
+# with test-uno-end-to-end (see uno/test/fixtures/).
+add_executable(test-uno-mandatory-negatives
+               test-mandatory-negatives.cpp
+               fixtures/valid_transfer_fixture.cpp)
 
 # Build-only helper: regenerates uno/test/golden/state-transitions-v1.hex.
 # NOT registered with ctest — invocation is a manual operator step (see the
