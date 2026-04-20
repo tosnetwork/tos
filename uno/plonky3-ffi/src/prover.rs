@@ -1,9 +1,11 @@
 //! Reference prover for the Uno Transfer AIR (P.2 scale-to-envelope).
 //!
-//! This is NOT a production prover — it uses Plonky3's canonical default
-//! `FriParameters::new_testing(...)` shape with a low `log_blowup`, so
-//! proofs are small but security is below the production bar. P.2 swaps
-//! this for a FriParameters configured to the §2.1 soundness target.
+//! Uses the production, consensus-binding FRI parameters pinned in §2.1
+//! of doc/uno-workchain.md (`log_blowup=2, num_queries=128, pow_bits=16`).
+//! Both the prover and the validator verifier build their `StarkConfig`
+//! via `build_config()` below, so they stay byte-identical by
+//! construction; diverging FRI params on either side would cause every
+//! validator to reject every proof.
 //!
 //! Consumed by:
 //! - the `uno_plonky3_prove` FFI entry point;
@@ -61,9 +63,35 @@ pub(crate) type MvpConfig = StarkConfig<MvpPcs, Challenge, MvpChallenger>;
 
 /// Build the canonical Transfer `StarkConfig`.
 ///
-/// `log_blowup = 2` + `FriParameters::new_testing(...)` are test-grade
-/// parameters; production P.2 will target `log_blowup = 1` + soundness-
-/// target `num_queries` per §2.1. Tagged `TODO(uno-p2-soundness)`.
+/// FRI parameters are the §2.1 (doc/uno-workchain.md) consensus-binding
+/// production triple:
+///
+/// ```text
+/// log_blowup   = 2     // trace domain = 4× trace length
+/// num_queries  = 128   // FRI verifier query rounds
+/// pow_bits     = 16    // Fiat-Shamir grinding bits
+/// ```
+///
+/// Target: ~128-bit conjectured soundness (ethSTARK model) against
+/// classical adversaries. See §2.1 for the rejected alternatives
+/// (`num_queries=84` Plonky3 default is below the native-value-L1 bar;
+/// `log_blowup=1, num_queries=200` wastes proof size for no security
+/// gain; `log_blowup=4, num_queries=84` costs +80% prove time for no
+/// realistic gain).
+///
+/// Field-name mapping from §2.1 to the Plonky3 `FriParameters` struct
+/// (third-party/plonky3-uno/fri/src/config.rs): the spec's `pow_bits`
+/// binds to `query_proof_of_work_bits` (the grinding phase before query
+/// sampling, the bits counted by `conjectured_soundness_bits =
+/// log_blowup·num_queries + query_proof_of_work_bits`).
+/// `commit_proof_of_work_bits` is an orthogonal per-batching-challenge
+/// grind that the Plonky3 `new_benchmark*` presets leave at 0; we match.
+/// `log_final_poly_len = 0` and `max_log_arity = 1` also match the
+/// benchmark presets (final polynomial of size 1, binary FRI folding).
+///
+/// The validator verifier builds `StarkConfig` via this same function
+/// (see verifier.rs::MvpVerifier::new), so prover and verifier cannot
+/// drift on FRI params.
 pub(crate) fn build_config() -> MvpConfig {
     let perm: Perm8 = default_goldilocks_poseidon2_8();
     let hash = MvpHash::new(perm.clone());
@@ -71,8 +99,15 @@ pub(crate) fn build_config() -> MvpConfig {
     let val_mmcs = MvpValMmcs::new(hash, compress, 0);
     let challenge_mmcs = MvpChallengeMmcs::new(val_mmcs.clone());
     let dft = MvpDft::default();
-    // TODO(uno-p2-soundness): switch to production FRI parameters.
-    let fri_params = FriParameters::new_testing(challenge_mmcs, 2);
+    let fri_params = FriParameters {
+        log_blowup: 2,
+        log_final_poly_len: 0,
+        max_log_arity: 1,
+        num_queries: 128,
+        commit_proof_of_work_bits: 0,
+        query_proof_of_work_bits: 16,
+        mmcs: challenge_mmcs,
+    };
     let pcs = MvpPcs::new(dft, val_mmcs, fri_params);
     let challenger = MvpChallenger::new(perm);
     MvpConfig::new(pcs, challenger)
