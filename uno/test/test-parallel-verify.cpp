@@ -530,6 +530,59 @@ static void test_determinism_repeat() {
 }
 
 // ---------------------------------------------------------------------------
+// Test 3 — scaling micro-benchmark
+//
+// Not a pass/fail on absolute numbers — reports wall-clock for 1 / 2 / 4 / 8
+// workers so operators can eyeball §1.4's 4-core ≥ 3.5× ideal target. We
+// sidestep CI-runner noise by taking the min over 3 runs per config.
+//
+// Failure only if the pool is so broken that 4-core wall is WORSE than
+// 1.5× of serial, which would indicate a lock-contention or false-sharing
+// regression in the pool. The 3.5× production target from §1.4 is not
+// hard-asserted here because wall-clock on CI shared runners is too
+// noisy to differentiate a real regression from scheduling jitter.
+// ---------------------------------------------------------------------------
+static void test_scaling_bench() {
+    tprintf("[BENCH] parallel-verify scaling (min over 3 runs)\n");
+
+    auto g = make_tx_stream(40);
+
+    auto run = [&](size_t workers) -> double {
+        double best = 1e18;
+        for (int k = 0; k < 3; ++k) {
+            double ms;
+            run_case("bench", workers, g, nullptr, nullptr, &ms);
+            if (ms < best) best = ms;
+        }
+        return best;
+    };
+
+    const double t1 = run(1);
+    const double t2 = run(2);
+    const double t4 = run(4);
+    const double t8 = run(8);
+
+    tprintf("\n  scaling table (%zu txs, §5.9 1-spend/2-output shape, stub Plonky3)\n",
+            g.txs.size());
+    tprintf("  ----------------------------------------------------------\n");
+    tprintf("  workers=1  wall=%8.2f ms  (baseline)\n", t1);
+    tprintf("  workers=2  wall=%8.2f ms  speedup=%.2fx\n", t2, t1 / t2);
+    tprintf("  workers=4  wall=%8.2f ms  speedup=%.2fx  (ideal ≥ 3.5x per §1.4)\n",
+            t4, t1 / t4);
+    tprintf("  workers=8  wall=%8.2f ms  speedup=%.2fx\n", t8, t1 / t8);
+    tprintf("  ----------------------------------------------------------\n\n");
+
+    if (t1 / t4 < 1.5) {
+        g_failures.fetch_add(1);
+        tprintf("  FAILED 4-core speedup %.2fx is below no-regression floor 1.5x\n",
+                t1 / t4);
+        return;
+    }
+    g_passes.fetch_add(1);
+    tprintf("  PASSED (4-core speedup %.2fx ≥ 1.5x floor)\n", t1 / t4);
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -539,6 +592,7 @@ int main() {
 
     test_determinism_parallel_vs_serial();
     test_determinism_repeat();
+    test_scaling_bench();
 
     tprintf("\nTotal passes: %d, failures: %d\n",
             g_passes.load(), g_failures.load());
