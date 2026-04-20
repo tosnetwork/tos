@@ -18,15 +18,17 @@
 
 #include <cstring>
 
-// TODO(uno-integration): Agent 2's codec entry points.  Declared here as
-// extern in the same namespace so this translation unit compiles before
-// Agent 2's files land.  Agent 2 MUST provide definitions with these
-// exact signatures, or update this file in the same change.
-namespace uno_workchain {
+// Agent 2's sub-object headers. The `serialize_*` / `deserialize_*` codec
+// entry points below are declared extern here; Agent 2 provides the
+// definitions in commitment-tree.cpp / nullifier-set.cpp / anchor-window.cpp.
+// TODO(uno-integration): if Agent 2 chooses different function names or
+// signatures, update both this file and Agent 2's headers in the same
+// change. Signatures below are the minimum shape §5.2/§5.3/§5.4 imply.
+#include "uno/core/commitment-tree.h"
+#include "uno/core/nullifier-set.h"
+#include "uno/core/anchor-window.h"
 
-class CommitmentTree;
-class NullifierSet;
-class AnchorWindow;
+namespace uno_workchain {
 
 td::Ref<vm::Cell> serialize_commitment_tree(const CommitmentTree& tree);
 bool deserialize_commitment_tree(td::Ref<vm::Cell> cell,

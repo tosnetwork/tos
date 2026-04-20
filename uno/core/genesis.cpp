@@ -19,21 +19,13 @@
 
 #include <cstring>
 
-// Full declarations of the sub-object types owned by Agent 2. We need full
-// types here to `new` them up in build_zerostate_state().
-// TODO(uno-integration): Agent 2 owns commitment-tree.h / nullifier-set.h /
-// anchor-window.h. We include them opportunistically; until they land, the
-// build will fail at link for any translation unit that instantiates a
-// zerostate, which is acceptable for scaffolding.
-#if __has_include("uno/core/commitment-tree.h")
+// Full declarations of the sub-object types owned by Agent 2 (§5.2/§5.3/§5.4)
+// are required at the call sites below because the zerostate path
+// instantiates CommitmentTree / NullifierSet / AnchorWindow via Agent 2's
+// factory functions and calls their mutators.
 #include "uno/core/commitment-tree.h"
-#endif
-#if __has_include("uno/core/nullifier-set.h")
 #include "uno/core/nullifier-set.h"
-#endif
-#if __has_include("uno/core/anchor-window.h")
 #include "uno/core/anchor-window.h"
-#endif
 
 namespace uno_workchain {
 

@@ -12,27 +12,21 @@
 */
 #include "uno/core/state.h"
 
-// Full declarations of the sub-object types. These headers are owned by
-// Agent 2 (doc/uno-workchain.md §5.2 / §5.3 / §5.4 / §9.1).
+// Full declarations of the sub-object types are required at the ctor/dtor
+// site because UnoShardState holds std::unique_ptr<T> to each of them and
+// the defaulted destructor needs a complete type. These headers are owned
+// by Agent 2 (doc/uno-workchain.md §5.2 / §5.3 / §5.4 / §9.1).
+//
 // TODO(uno-integration): Agent 2 must provide headers with the exact names
 // `uno/core/commitment-tree.h`, `uno/core/nullifier-set.h`,
 // `uno/core/anchor-window.h`, `uno/core/block-filter.h` and classes
-// `CommitmentTree`, `NullifierSet`, `AnchorWindow`, `BlockFilter`. Until
-// those land the template-less unique_ptr<T> members below will only
-// compile once forward declarations become definitions at the ctor/dtor
-// points — if Agent 2 uses different names, adjust both state.h and here.
-#if __has_include("uno/core/commitment-tree.h")
+// `CommitmentTree`, `NullifierSet`, `AnchorWindow`, `BlockFilter`. If the
+// header names differ, update both `state.h` forward declarations and the
+// includes here in the same change.
 #include "uno/core/commitment-tree.h"
-#endif
-#if __has_include("uno/core/nullifier-set.h")
 #include "uno/core/nullifier-set.h"
-#endif
-#if __has_include("uno/core/anchor-window.h")
 #include "uno/core/anchor-window.h"
-#endif
-#if __has_include("uno/core/block-filter.h")
 #include "uno/core/block-filter.h"
-#endif
 
 namespace uno_workchain {
 
