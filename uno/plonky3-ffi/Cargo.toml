@@ -77,6 +77,18 @@ cbindgen = "0.29"
 # For the adversarial-witness negative test.
 hex = "0.4"
 
+# ---------------------------------------------------------------------------
+# Benches (K-air-bench)
+#
+# `harness = false` disables the default libtest harness so the bench file's
+# own `fn main()` is the entire bench binary. This keeps the standardized
+# shape-matrix harness free of criterion / nightly-`#[bench]` dependencies
+# while still being driven by `cargo bench --bench shape_matrix`.
+# ---------------------------------------------------------------------------
+[[bench]]
+name    = "shape_matrix"
+harness = false
+
 [profile.release]
 # STARK prover is the hot path; release must be aggressive. Debug-asserts off
 # so the reference prover does not diverge from the validator-build verifier
