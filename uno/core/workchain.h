@@ -164,10 +164,34 @@ constexpr const char kTranscriptRootTag[] = "uno-workchain-v1";
 constexpr const char kNullifierTag[] = "uno-nf-v1";
 
 /// Domain separator for the note commitment hash (§3.2).
+///
+/// Note-commitment formula per decision #1 (§3.2 updated):
+///
+///     cm = Poseidon2("uno-cm-v1", d, pk_d.bytes, ivk_commitment, value, rcm)
+///
+/// The five-argument form (with `ivk_commitment`) is the v1 wire contract;
+/// the older four-argument form (without `ivk_commitment`) is retracted.
+/// Both sides — the off-circuit C++ sender and the Plonky3 AIR — MUST use
+/// the five-arg preimage, or prover/verifier disagree silently.
 constexpr const char kNoteCommitmentTag[] = "uno-cm-v1";
+/// Explicit alias so callers can reference the domain separator by its
+/// decision-#1 name. Identical bytes to `kNoteCommitmentTag`.
+constexpr const char kDomainSepCmV1[] = "uno-cm-v1";
+
+/// Domain separator for the ivk-commitment hash-chain binding (decision #1,
+/// §2.6 Addresses, §4.2 claim 3):
+///
+///     ivk_commitment = Poseidon2("uno-ivk-cm-v1", ivk, d)
+///
+/// A 256-bit public field published in every Address; bound into `cm` via
+/// `kDomainSepCmV1`; recomputed inside the Transfer AIR from the private
+/// witness `(ivk, d)` to prove ownership without any in-circuit curve op.
+constexpr const char kIvkCommitmentTag[] = "uno-ivk-cm-v1";
+constexpr const char kDomainSepIvkCmV1[] = "uno-ivk-cm-v1";
 
 /// Domain separator for rcm (note-commitment trapdoor) (§3.1).
 constexpr const char kRcmTag[] = "uno-rcm-v1";
+constexpr const char kDomainSepRcmV1[] = "uno-rcm-v1";
 
 /// Domain separators for the key hierarchy (§2.6).
 constexpr const char kSeedTag[]     = "uno-seed-v1";

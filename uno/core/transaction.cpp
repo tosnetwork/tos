@@ -21,6 +21,19 @@
 // diverge on the wire.
 #include "uno/crypto/internal/blake3_adapter.h"
 
+// Decision #1: note commitment preimage uses Poseidon2 with ivk_commitment
+// bound in. compute_note_commitment() below is the off-circuit computation.
+// Note: we intentionally do NOT include "uno/core/workchain.h" here —
+// `transaction.h` and `workchain.h` both declare `kSchemeIdV1` /
+// `kTransferVersion` as internal-scope constants, and pulling both into one
+// TU triggers redefinition. The two domain-separator strings we need
+// ("uno-cm-v1" for cm; see transaction.h / workchain.h::kDomainSepCmV1) are
+// reproduced verbatim inside compute_note_commitment() so this TU stays
+// independent of workchain.h. The strings are consensus-binding; any drift
+// is caught by the golden fixture (decision #5).
+#include "uno/crypto/goldilocks.h"
+#include "uno/crypto/poseidon2.h"
+
 namespace uno_workchain {
 
 namespace {
@@ -109,6 +122,83 @@ std::string load_bytes_from_chunk_chain(td::Ref<vm::Cell> root) noexcept {
         cell = cs.prefetch_ref(0);
     }
     return {};  // cycle / oversize — reject
+}
+
+// ---------------------------------------------------------------------------
+// Note commitment (§3.2, decision #1)
+// ---------------------------------------------------------------------------
+//
+// Pack the five Poseidon2 inputs per §3.2 into 15 Goldilocks field elements
+// and hash with domain tag "uno-cm-v1". Output is truncated to 4 field
+// elements (32 bytes canonical LE) and returned.
+//
+// Packing order (consensus-binding; matches the Transfer AIR claim 2 absorb
+// ordering in `transfer_air.rs` when the full P.2 AIR lands):
+//
+//   [0..1]   d (11 B) → 2 fes (LE packed, last 5 bytes of fe[1] are zero).
+//   [2..5]   pk_d.bytes (32 B) → 4 fes (each fe = LE u64 of 8 bytes, mod p).
+//   [6..9]   ivk_commitment (32 B) → 4 fes (same packing as pk_d).
+//   [10]     value (u64) → 1 fe (value < 2^64 < p + 2^32; canonical-reduce).
+//   [11..14] rcm (32 B) → 4 fes (same packing as pk_d).
+//
+// Why `mod p_Goldilocks` per limb: identical to §4.3 step 4 reasoning —
+// pk_d.bytes / ivk_commitment / rcm are cryptographic digests, uniformly
+// pseudo-random by construction; per-limb bias is 2^-32 and the combined
+// collision surface is negligible.
+
+std::array<uint8_t, 32>
+compute_note_commitment(const NoteCommitmentInputs& in) noexcept {
+    using ::uno_workchain::crypto::Fp;
+    using ::uno_workchain::crypto::Digest;
+    using ::uno_workchain::crypto::fp_from_u64;
+    using ::uno_workchain::crypto::poseidon2_hash_tagged;
+
+    auto pack_bytes32_as_4 = [](const std::array<uint8_t, 32>& src,
+                                Fp out[4]) noexcept {
+        for (int limb = 0; limb < 4; ++limb) {
+            uint64_t v = 0;
+            for (int j = 0; j < 8; ++j) {
+                v |= static_cast<uint64_t>(src[limb * 8 + j]) << (8 * j);
+            }
+            out[limb] = fp_from_u64(v);  // fp_from_u64 reduces mod p
+        }
+    };
+
+    Fp inputs[15];
+
+    // --- d (11 B) as 2 fes; LE, zero-padded ---
+    {
+        uint8_t pad[16] = {0};
+        std::memcpy(pad, in.d.data(), in.d.size());
+        uint64_t w0 = 0, w1 = 0;
+        std::memcpy(&w0, pad, 8);
+        std::memcpy(&w1, pad + 8, 8);
+        inputs[0] = fp_from_u64(w0);
+        inputs[1] = fp_from_u64(w1);
+    }
+
+    // --- pk_d.bytes (32 B) → 4 fes ---
+    pack_bytes32_as_4(in.pk_d_bytes, &inputs[2]);
+
+    // --- ivk_commitment (32 B) → 4 fes  (decision #1) ---
+    pack_bytes32_as_4(in.ivk_commitment, &inputs[6]);
+
+    // --- value (u64) → 1 fe ---
+    inputs[10] = fp_from_u64(in.value);
+
+    // --- rcm (32 B) → 4 fes ---
+    pack_bytes32_as_4(in.rcm, &inputs[11]);
+
+    // Domain separator kDomainSepCmV1 ("uno-cm-v1"), duplicated here to
+    // avoid pulling in workchain.h (see top-of-file comment).
+    static constexpr char kCmV1Tag[] = "uno-cm-v1";
+    Digest h = poseidon2_hash_tagged(
+        td::Slice{kCmV1Tag, sizeof(kCmV1Tag) - 1},
+        inputs, 15);
+
+    std::array<uint8_t, 32> out{};
+    h.to_bytes({reinterpret_cast<char*>(out.data()), out.size()});
+    return out;
 }
 
 // ---------------------------------------------------------------------------

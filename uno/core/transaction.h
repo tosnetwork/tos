@@ -160,6 +160,47 @@ td::Result<td::Ref<vm::Cell>> encode_transfer(const Transfer& tx) noexcept;
 td::Bits256 canonical_tx_hash(const Transfer& tx) noexcept;
 
 // ---------------------------------------------------------------------------
+// Note commitment (§3.2; decision #1)
+// ---------------------------------------------------------------------------
+//
+// Wire format: `OutputDescription::cm` is a 32-byte field. The wire layout
+// is UNCHANGED by decision #1; only the preimage feeding `cm` is changed
+// (the four-arg `(d, pk_d, value, rcm)` form is retracted in favour of the
+// five-arg form below).
+//
+// Per §3.2 the preimage is:
+//
+//     cm = Poseidon2("uno-cm-v1", d, pk_d.bytes, ivk_commitment, value, rcm)
+//
+// where `ivk_commitment = Poseidon2("uno-ivk-cm-v1", ivk, d)` is copied
+// from the recipient's Address and `rcm = Poseidon2("uno-rcm-v1", rseed)`.
+// Total Poseidon2 input: 15 Goldilocks field elements packed as in §3.2
+// (d → 2 fes; pk_d.bytes → 4 fes; ivk_commitment → 4 fes; value → 1 fe;
+// rcm → 4 fes). Output is truncated to 4 field elements (256 bits = 32 B).
+//
+// The helper below is the off-circuit computation a sender uses at
+// encrypt-time; the Plonky3 AIR re-evaluates the same expression over the
+// private witness to attest claim 2 (§4.2). Prover and verifier MUST agree
+// bit-identically — the domain tag and absorb order here pin that contract.
+
+/// 32-byte packed form of `rcm` (4 Goldilocks limbs, canonical LE).
+struct NoteCommitmentInputs {
+    std::array<uint8_t, 11>  d{};            // diversifier, 11 B
+    std::array<uint8_t, 32>  pk_d_bytes{};   // compressed Ristretto255
+    std::array<uint8_t, 32>  ivk_commitment{}; // decision #1, §2.6 / §3.2
+    uint64_t                 value{0};       // UNO nano-units
+    std::array<uint8_t, 32>  rcm{};          // Poseidon2("uno-rcm-v1", rseed)
+};
+
+/// Off-circuit `cm` computation per §3.2 (decision #1). Returns the 32-byte
+/// canonical wire form (byte-identical to what the Transfer AIR opens in
+/// claim 2 / claim 6). Implementation is in transaction.cpp and lives
+/// alongside the codec so the cm formula and the wire format evolve
+/// together.
+std::array<uint8_t, 32> compute_note_commitment(
+    const NoteCommitmentInputs& in) noexcept;
+
+// ---------------------------------------------------------------------------
 // Plonky3 public-input builder (§4.3 step 4)
 // ---------------------------------------------------------------------------
 //

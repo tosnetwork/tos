@@ -44,12 +44,20 @@ namespace uno_workchain {
 // Genesis distribution
 // ---------------------------------------------------------------------------
 
-/// Plaintext address bytes (§2.6 Addresses): 11 B diversifier `d`, 32 B
-/// compressed Ristretto `pk_d`, 1184 B ML-KEM-768 `pk_mlkem`. Total 1227 B.
-/// Stored raw; genesis consumers interpret the layout.
+/// Plaintext address bytes (§2.6 Addresses, updated per decision #1):
+///   11 B diversifier `d`
+///   32 B compressed Ristretto `pk_d`
+///   32 B `ivk_commitment` = Poseidon2("uno-ivk-cm-v1", ivk, d)
+///   1184 B ML-KEM-768 `pk_mlkem`
+/// Total 1259 B. Stored raw; genesis consumers interpret the layout.
+/// `ivk_commitment` is the public binding anchor that will later be hashed
+/// into every `cm` sent to this address (§3.2), so it must be present at
+/// genesis time — the chain-boot tool computes it from the recipient's
+/// wallet-side `ivk`.
 struct GenesisAddress {
     std::array<uint8_t, 11>   diversifier;         // d
     std::array<uint8_t, 32>   pk_d_compressed;     // Ristretto255 pk_d
+    std::array<uint8_t, 32>   ivk_commitment{};    // Poseidon2("uno-ivk-cm-v1", ivk, d)
     std::vector<uint8_t>      pk_mlkem;            // ML-KEM-768, 1184 B
 };
 
@@ -138,9 +146,10 @@ td::Ref<vm::Cell> build_zerostate(const GenesisDistribution& dist,
 ///   "notes": [
 ///     {
 ///       "recipient": {
-///         "d":         "hex:11B",
-///         "pk_d":      "hex:32B",
-///         "pk_mlkem":  "hex:1184B"
+///         "d":              "hex:11B",
+///         "pk_d":           "hex:32B",
+///         "ivk_commitment": "hex:32B",   // decision #1: published ivk-binding field
+///         "pk_mlkem":       "hex:1184B"
 ///       },
 ///       "value":  "100000000",
 ///       "rseed":  "hex:32B",

@@ -20,6 +20,7 @@
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
 
+#include "uno/core/workchain.h"   // kDomainSepIvkCmV1
 #include "uno/crypto/poseidon2.h"
 
 namespace uno_workchain::crypto {
@@ -204,15 +205,59 @@ td::Result<RistrettoPoint> derive_pk_d(const Digest& ivk,
 }
 
 // ---------------------------------------------------------------------------
+// ivk_commitment (decision #1 / §2.6)
+// ---------------------------------------------------------------------------
+
+std::array<uint8_t, kIvkCommitmentBytes>
+derive_ivk_commitment_bytes(const Digest& ivk, td::Slice diversifier_11) {
+    // `ivk_commitment = Poseidon2("uno-ivk-cm-v1", ivk, d)`.
+    //
+    // We pack ivk as 4 Fp (its canonical form) and d (11 bytes) as 2 Fp — 8
+    // bytes into Fp #0, remaining 3 bytes into Fp #1 (zero-padded LE).
+    // Matches the in-circuit absorb order in the Transfer AIR (claim 3,
+    // `transfer_air.rs`) so prover and off-circuit wallet agree on a single
+    // 32-byte wire value.
+    //
+    // The diversifier packing is identical to `derive_diversified_scalar` to
+    // keep address-time derivations consistent (ivk-commitment and pk_d both
+    // absorb d the same way).
+    std::array<uint8_t, kIvkCommitmentBytes> out{};
+    if (diversifier_11.size() != kDiversifierBytes) {
+        return out;  // caller should have validated; zero-fill on abuse
+    }
+
+    Fp inputs[6];
+    for (size_t i = 0; i < 4; ++i) inputs[i] = ivk.e[i];
+    uint8_t pad[16] = {0};
+    std::memcpy(pad, diversifier_11.data(), kDiversifierBytes);
+    uint64_t w0, w1;
+    std::memcpy(&w0, pad, 8);
+    std::memcpy(&w1, pad + 8, 8);
+    inputs[4] = fp_from_u64(w0);
+    inputs[5] = fp_from_u64(w1);
+
+    Digest h = poseidon2_hash_tagged(
+        td::Slice{kDomainSepIvkCmV1, sizeof(kDomainSepIvkCmV1) - 1},
+        inputs, 6);
+    h.to_bytes({reinterpret_cast<char*>(out.data()), out.size()});
+    return out;
+}
+
+// ---------------------------------------------------------------------------
 // Address encoding
 // ---------------------------------------------------------------------------
 
 std::vector<uint8_t> Address::to_bytes() const {
     std::vector<uint8_t> out(kAddressBytes);
-    std::memcpy(out.data(), d.data(), kDiversifierBytes);
-    std::memcpy(out.data() + kDiversifierBytes,
+    size_t off = 0;
+    std::memcpy(out.data() + off, d.data(), kDiversifierBytes);
+    off += kDiversifierBytes;
+    std::memcpy(out.data() + off,
                 compressed_pk_d.bytes.data(), kRistrettoPointBytes);
-    std::memcpy(out.data() + kDiversifierBytes + kRistrettoPointBytes,
+    off += kRistrettoPointBytes;
+    std::memcpy(out.data() + off, ivk_commitment.data(), kIvkCommitmentBytes);
+    off += kIvkCommitmentBytes;
+    std::memcpy(out.data() + off,
                 pk_mlkem.bytes.data(), kMlKem768PublicKeyBytes);
     return out;
 }
@@ -222,12 +267,17 @@ td::Result<Address> Address::from_bytes(td::Slice in) {
         return td::Status::Error("stealth-address: wrong address length");
     }
     Address a;
-    std::memcpy(a.d.data(), in.data(), kDiversifierBytes);
+    size_t off = 0;
+    std::memcpy(a.d.data(), in.data() + off, kDiversifierBytes);
+    off += kDiversifierBytes;
     std::memcpy(a.compressed_pk_d.bytes.data(),
-                in.data() + kDiversifierBytes, kRistrettoPointBytes);
+                in.data() + off, kRistrettoPointBytes);
+    off += kRistrettoPointBytes;
+    std::memcpy(a.ivk_commitment.data(),
+                in.data() + off, kIvkCommitmentBytes);
+    off += kIvkCommitmentBytes;
     std::memcpy(a.pk_mlkem.bytes.data(),
-                in.data() + kDiversifierBytes + kRistrettoPointBytes,
-                kMlKem768PublicKeyBytes);
+                in.data() + off, kMlKem768PublicKeyBytes);
     TRY_STATUS(a.compressed_pk_d.validate());
     return a;
 }
@@ -241,6 +291,8 @@ td::Result<Address> build_address(const FullViewingKey& fvk,
     std::memcpy(a.d.data(), diversifier_11.data(), kDiversifierBytes);
     TRY_RESULT(pk_d, derive_pk_d(fvk.ivk, diversifier_11));
     a.compressed_pk_d = pk_d;
+    // decision #1: published 32-byte ivk-binding field.
+    a.ivk_commitment = derive_ivk_commitment_bytes(fvk.ivk, diversifier_11);
     a.pk_mlkem = fvk.pk_mlkem;
     return a;
 }
@@ -288,6 +340,25 @@ td::Status stealth_address_verify_test_vectors() {
     TRY_RESULT(decoded, Address::from_bytes(bytes_slice));
     if (decoded.compressed_pk_d.bytes != addr.compressed_pk_d.bytes) {
         return td::Status::Error("stealth-address: address round-trip mismatch");
+    }
+    if (decoded.ivk_commitment != addr.ivk_commitment) {
+        return td::Status::Error("stealth-address: ivk_commitment round-trip mismatch");
+    }
+    // Decision #1: address MUST carry a non-zero ivk_commitment derived
+    // from (ivk, d). A zero field would imply the Poseidon2 backend was
+    // not linked.
+    bool ivkcm_all_zero = true;
+    for (uint8_t b : addr.ivk_commitment) if (b != 0) { ivkcm_all_zero = false; break; }
+    if (ivkcm_all_zero) {
+        return td::Status::Error(
+            "stealth-address: ivk_commitment is all-zero — "
+            "Poseidon2 backend missing?");
+    }
+    // Determinism: re-derivation from the same (ivk, d) must match byte-for-byte.
+    auto ivkcm2 = derive_ivk_commitment_bytes(a.ivk, d_slice);
+    if (ivkcm2 != addr.ivk_commitment) {
+        return td::Status::Error(
+            "stealth-address: ivk_commitment derivation is non-deterministic");
     }
 
     // Explicit consistency: pk_d = scalar · g_d.

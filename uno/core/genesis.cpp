@@ -218,6 +218,9 @@ td::Result<std::string> dump_genesis_distribution(
         out += "\",\"pk_d\":\"";
         out += hex(note.recipient.pk_d_compressed.data(),
                    note.recipient.pk_d_compressed.size());
+        out += "\",\"ivk_commitment\":\"";
+        out += hex(note.recipient.ivk_commitment.data(),
+                   note.recipient.ivk_commitment.size());
         out += "\",\"pk_mlkem\":\"";
         out += hex(note.recipient.pk_mlkem.data(),
                    note.recipient.pk_mlkem.size());
