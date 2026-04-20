@@ -50,6 +50,7 @@ set(UNO_CRYPTO_AGENT3
   crypto/hybrid-kem.cpp
   crypto/stealth-address.cpp
   crypto/note-encryption.cpp
+  crypto/internal/blake3_adapter.cpp
 )
 
 set(UNO_CRYPTO_AGENT4
@@ -207,6 +208,34 @@ target_link_libraries(uno_workchain
     tos_crypto           # cells, vm types, block types, dispatcher
     Threads::Threads     # §13 P.3: std::thread in uno/core/parallel-verify.cpp
 )
+
+# -----------------------------------------------------------------------------
+# BLAKE3 backend — decision #41: UNO_BLAKE3_AVATAR (SIMD in ~/avatar) preferred.
+# Baseline build compiles avatar's at_blake3.c + at_blake3_ref.c (portable
+# reference kernel). x86 hosts can additionally compile the SIMD variants
+# (at_blake3_sse41/avx2/avx512.c) and set AT_HAS_SSE / AT_HAS_AVX / AT_HAS_AVX512
+# compile definitions to enable runtime dispatch; that's opt-in because those
+# files need the host's SIMD intrinsics and headers to build.
+# -----------------------------------------------------------------------------
+set(AVATAR_ROOT "$ENV{HOME}/avatar" CACHE PATH "Path to in-house avatar crypto tree")
+if (EXISTS "${AVATAR_ROOT}/src/crypto/blake3/at_blake3.c" AND
+    EXISTS "${AVATAR_ROOT}/include/at/crypto/at_blake3.h")
+  message(STATUS "uno_workchain: found avatar BLAKE3 at ${AVATAR_ROOT}/src/crypto/blake3")
+  target_sources(uno_workchain PRIVATE
+    ${AVATAR_ROOT}/src/crypto/blake3/at_blake3.c
+    ${AVATAR_ROOT}/src/crypto/blake3/at_blake3_ref.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/crypto/internal/avatar_log_stubs.c  # minimal at_log_* stubs
+  )
+  target_include_directories(uno_workchain PRIVATE
+    ${AVATAR_ROOT}/include              # for "at/infra/at_util.h"
+    ${AVATAR_ROOT}/include/at/crypto    # so at_blake3.c finds "at_blake3_private.h" sibling
+    ${AVATAR_ROOT}/src/crypto/blake3    # compile-time workspace
+  )
+  target_compile_definitions(uno_workchain PUBLIC UNO_BLAKE3_AVATAR=1)
+else()
+  message(STATUS "uno_workchain: avatar BLAKE3 not found at ${AVATAR_ROOT} — "
+                 "set AVATAR_ROOT or the hybrid-KEM KAT will stay SKIP.")
+endif()
 
 # Optional subdirs — Agent 6 owns tests; include only when present.
 if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/CMakeLists.txt")

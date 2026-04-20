@@ -40,7 +40,7 @@ void blake3_hash(td::Slice in, uint8_t out[32]) {
 struct Impl {
     at_blake3_t hasher;
 };
-static_assert(sizeof(Impl) <= 4096, "Blake3Hasher state too small; grow state_");
+static_assert(sizeof(Impl) <= 32768, "Blake3Hasher state too small; grow state_");
 
 Blake3Hasher::Blake3Hasher() {
     auto* p = reinterpret_cast<Impl*>(state_);
@@ -70,7 +70,7 @@ void blake3_hash(td::Slice in, uint8_t out[32]) {
 }
 
 struct Impl { blake3_hasher hasher; };
-static_assert(sizeof(Impl) <= 4096, "Blake3Hasher state too small; grow state_");
+static_assert(sizeof(Impl) <= 32768, "Blake3Hasher state too small; grow state_");
 
 Blake3Hasher::Blake3Hasher() {
     auto* p = reinterpret_cast<Impl*>(state_);

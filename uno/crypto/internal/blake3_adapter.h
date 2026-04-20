@@ -41,9 +41,10 @@ struct Blake3Hasher {
     void finalize_32(uint8_t out[32]);
 
   private:
-    // Opaque backend state (sized to cover at_blake3_t OR the reference
-    // struct, whichever Agent 5 picks). 4 KiB is comfortably above both.
-    alignas(128) unsigned char state_[4096];
+    // Opaque backend state. avatar's `at_blake3_t` is ~17.6 KiB (internal
+    // tree-hash buffer `at_blake3_buf_t` dominates); reserve 32 KiB to
+    // cover it + any reference-backend struct with headroom.
+    alignas(128) unsigned char state_[32768];
 };
 
 }  // namespace uno_workchain::crypto::internal

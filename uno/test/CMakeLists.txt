@@ -54,6 +54,13 @@ add_executable(test-uno-state-transition-golden  test-state-transition-golden.cp
 add_executable(test-uno-restart-survival         test-restart-survival.cpp)
 add_executable(test-uno-mandatory-negatives      test-mandatory-negatives.cpp)
 
+# Build-only helper: regenerates uno/test/golden/state-transitions-v1.hex.
+# NOT registered with ctest — invocation is a manual operator step (see the
+# file's own doc comment). Links against uno_workchain for encode_transfer.
+add_executable(generate-state-transitions-v1     generate-state-transitions-v1.cpp)
+target_link_libraries(generate-state-transitions-v1 PRIVATE uno_workchain)
+target_include_directories(generate-state-transitions-v1 PRIVATE ${CMAKE_SOURCE_DIR})
+
 foreach(_t test-uno-transfer
            test-uno-determinism
            test-uno-filter
@@ -87,6 +94,13 @@ target_link_libraries(test-uno-parallel-verify PRIVATE Threads::Threads)
 # is not guaranteed.
 if (NOT LIBOQS_INCLUDE_DIR OR NOT LIBOQS_LIBRARY)
   target_compile_definitions(test-uno-primitive-parity PRIVATE UNO_MLKEM_STUB=1)
+endif()
+
+# BLAKE3 backend is active when uno_workchain was built with UNO_BLAKE3_AVATAR
+# (decision #41). Flip the hybrid-KEM gate so the pinned KAT runs instead of
+# SKIPping. Check the avatar source-tree presence mirrors uno/CMakeLists.txt.
+if (EXISTS "${AVATAR_ROOT}/src/crypto/blake3/at_blake3.c")
+  target_compile_definitions(test-uno-primitive-parity PRIVATE UNO_P1_HYBRID_KEM_READY=1)
 endif()
 
 # Fixture-backed tests need ctest's cwd set to CMAKE_SOURCE_DIR so they can
