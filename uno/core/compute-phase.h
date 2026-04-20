@@ -25,9 +25,9 @@
 */
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
-
-#include <cstdint>
+#include <vector>
 
 #include "block/transaction.h"  // block::ComputePhase
 #include "td/utils/UInt.h"
@@ -35,6 +35,10 @@
 #include "vm/cells/CellSlice.h"
 
 namespace uno_workchain {
+
+struct Transfer;  // uno/core/transaction.h — full def used by
+                  // `run_compute_phase_batch` (§13 P.3).
+
 
 // ---------------------------------------------------------------------------
 // UnoState — minimal surface consumed by the compute phase.
@@ -132,5 +136,33 @@ bool run_compute_phase(
     uint64_t block_seqno,
     uint64_t timestamp,
     const uint8_t rand_seed[32]);
+
+// ---------------------------------------------------------------------------
+// Batch entry point — §13 P.3 parallel verify.
+//
+// `run_compute_phase_batch` is the block-level compute phase used by a
+// collator that has a list of N pre-decoded Transfers in hand. It:
+//
+//   1. Dispatches the §4.3 step 1–4 verify of every Transfer through the
+//      installed `ParallelVerifyPool` (falling back to serial verify if
+//      no pool is installed).
+//   2. Serially applies `apply_transfer` in declared tx-order for every
+//      result == Ok. Tx-order preservation is the load-bearing invariant
+//      that §12 P.5 "Cross-validator determinism" depends on.
+//
+// Returns the per-tx VerifyResults in input order, one per Transfer. The
+// caller populates the per-tx `ComputePhase` records from these results;
+// the host-chain tx-lifecycle loop already ran `decode_transfer` and set
+// up the `ComputePhase` skeleton for each tx.
+//
+// Thread safety: callers MUST hold a unique_lock on the backing
+// `UnoState::mutex()` for the duration of the call. Parallel verify
+// reads through the `const UnoState&` surface only; the serial apply
+// path then does the mutations under the same lock.
+// ---------------------------------------------------------------------------
+std::vector<VerifyResult> run_compute_phase_batch(
+    UnoState&               state,
+    const Transfer*         txs,
+    std::size_t             n_txs);
 
 }  // namespace uno_workchain

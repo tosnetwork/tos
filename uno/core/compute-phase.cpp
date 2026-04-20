@@ -21,11 +21,8 @@
 */
 #include "uno/core/compute-phase.h"
 
-#include <array>
 #include <cstdint>
-#include <cstring>
 #include <string>
-#include <unordered_set>
 #include <vector>
 
 #include "block/transaction.h"
@@ -33,6 +30,7 @@
 #include "td/utils/logging.h"
 #include "vm/cells/CellBuilder.h"
 
+#include "uno/core/parallel-verify.h"
 #include "uno/core/transaction.h"
 
 // =============================================================================
@@ -44,62 +42,26 @@
 // `uno::crypto::Plonky3Verifier` (FFI handle). A thin adapter namespace
 // `uno_crypto` keeps the verify call sites signature-compatible with A5's
 // original boolean-returning shape so no consensus-relevant logic moved.
+//
+// §13 P.3 note: the inline `verify_transfer` that used to live in this TU
+// has been promoted to `uno_workchain::verify_transfer_serial` in
+// `parallel-verify.{h,cpp}`, and the Plonky3 / Schnorr / Ristretto step of
+// each block is now routed through `ParallelVerifyPool::verify_batch` when
+// a pool is installed. When no pool is installed (skeleton builds / unit
+// tests that don't call `install_parallel_verify_pool`) we fall back to
+// `verify_transfer_serial`. Byte-for-byte identical post-state — the test
+// in `uno/test/test-parallel-verify.cpp` pins this invariant.
 // =============================================================================
-#include "uno/crypto/ristretto255.h"
-#include "uno/crypto/schnorr-ristretto.h"
-#include "uno/crypto/plonky3-verifier.h"
+// §13 P.3: ristretto255.h / schnorr-ristretto.h / plonky3-verifier.h are
+// consumed only by parallel-verify.cpp after P.3. They remain transitively
+// available via uno/core/parallel-verify.h → <uno_workchain API>; we keep
+// the explicit includes below so this TU stays self-documenting about its
+// dependency on A3 + A4 at the §4.3 verify seam.
+#include "uno/crypto/ristretto255.h"       // NOLINT(unused-include) — documentary
+#include "uno/crypto/schnorr-ristretto.h"  // NOLINT(unused-include) — documentary
+#include "uno/crypto/plonky3-verifier.h"   // NOLINT(unused-include) — documentary
 
 namespace uno_workchain {
-
-namespace uno_crypto {
-
-/// Returns true iff the 32-byte buffer decompresses to a valid, non-identity
-/// Ristretto255 point. §4.3 step 1.7. Wraps A3's
-/// `RistrettoPoint::validate()` (td::Status).
-inline bool ristretto255_is_valid_point(const uint8_t bytes[32]) noexcept {
-    ::uno_workchain::crypto::RistrettoPoint pt{};
-    std::memcpy(pt.bytes.data(), bytes, 32);
-    return pt.validate().is_ok();
-}
-
-/// Verify a single Schnorr-on-Ristretto255 signature `sig` (64 B) under
-/// verification key `rk` (32 B compressed point) over `msg` (32 B — the
-/// canonical tx_hash). Returns true iff valid. §4.3 step 3. Wraps A3's
-/// `schnorr_verify(pk, msg, sig)`.
-inline bool schnorr_ristretto_verify(const uint8_t rk[32],
-                                     const uint8_t msg[32],
-                                     const uint8_t sig[64]) noexcept {
-    ::uno_workchain::crypto::RistrettoPoint pk{};
-    std::memcpy(pk.bytes.data(), rk, 32);
-    ::uno_workchain::crypto::SchnorrSignature s{};
-    std::memcpy(s.data(), sig, 64);
-    td::Slice msg_slice(reinterpret_cast<const char*>(msg), 32);
-    return ::uno_workchain::crypto::schnorr_verify(pk, msg_slice, s).is_ok();
-}
-
-/// Verify a Plonky3 STARK proof under the pinned public-input encoding.
-/// §4.3 step 4. Thin wrapper over A4's `Plonky3Verifier::verify()` handle.
-///
-/// The handle is process-singleton (thread-safe, one init per validator);
-/// we materialise a `Meyers singleton` to keep the call-site free of state.
-inline bool plonky3_verify_transfer_proof(td::Slice public_inputs_bytes,
-                                          td::Slice proof_bytes) noexcept {
-    struct Holder {
-        ::uno::crypto::Plonky3Verifier verifier;
-        bool ready{false};
-        Holder() { ready = verifier.init(); }
-    };
-    static Holder holder;
-    if (!holder.ready) return false;
-    auto r = holder.verifier.verify(
-        reinterpret_cast<const std::uint8_t*>(proof_bytes.data()),
-        proof_bytes.size(),
-        reinterpret_cast<const std::uint8_t*>(public_inputs_bytes.data()),
-        public_inputs_bytes.size());
-    return r == ::uno::crypto::VerifyResult::kOk;
-}
-
-}  // namespace uno_crypto
 
 // =============================================================================
 // verify_result_name
@@ -128,123 +90,31 @@ const char* verify_result_name(VerifyResult r) noexcept {
 }
 
 // =============================================================================
-// verify_transfer (§4.3 steps 1–4)
+// verify_transfer (§4.3 steps 1–4) — dispatched to the parallel verify pool
+//
+// When `install_parallel_verify_pool` has been called (production init path,
+// §13 P.3), a single-tx verify routes through a batch-of-one call to the
+// pool. This keeps the control-flow of `run_compute_phase` identical to
+// the pre-P.3 version while exercising the same code path as the batch
+// entry point used by collators that feed N-tx blocks through
+// `run_compute_phase_batch`.
+//
+// When no pool is installed (skeleton builds / unit tests that don't wire
+// init) we fall back to `verify_transfer_serial`, defined in
+// `parallel-verify.cpp`. Byte-for-byte identical semantics — the test
+// `test-uno-parallel-verify` pins that invariant by running both paths
+// against a fixed tx stream and diffing the post-state cells.
 // =============================================================================
 
 namespace {
 
-// §4.3 step 1.4: fee >= min_fee_nano + fee_per_byte·size + fee_per_spend·|S|
-//                + fee_per_output·|O|.
-uint64_t required_fee(const UnoState& state, const Transfer& tx) noexcept {
-    uint64_t size_bytes = tx.wire_size_bytes;
-    // Guard multiplicative overflow cheaply. Per config caps, none of these
-    // products comes anywhere near 2^64.
-    return state.min_fee_nano()
-         + state.fee_per_byte_nano()   * size_bytes
-         + state.fee_per_spend_nano()  * tx.spends.size()
-         + state.fee_per_output_nano() * tx.outputs.size();
-}
-
 VerifyResult verify_transfer(const UnoState& state, const Transfer& tx) {
-    // ---- Step 1: cheap syntax (§4.3 step 1) ----
-    if (tx.version != kTransferVersion)   return VerifyResult::BadVersion;
-    if (tx.scheme_id != kSchemeIdV1)      return VerifyResult::BadSchemeId;
-    if (tx.chain_id != state.expected_chain_id()) return VerifyResult::BadChainId;
-
-    const uint64_t cur = state.current_block_seqno();
-    const uint64_t max_expiry = cur + state.expiry_window_blocks();
-    if (tx.expiry_block < cur || tx.expiry_block > max_expiry) {
-        return VerifyResult::ExpiryOutOfRange;
+    ParallelVerifyPool* pool = global_parallel_verify_pool();
+    if (pool == nullptr) {
+        return verify_transfer_serial(state, tx);
     }
-    if (tx.spends.size() < kMinSpendCount || tx.spends.size() > kMaxSpendCount) {
-        return VerifyResult::BadSpendCount;
-    }
-    if (tx.outputs.size() < kMinOutputCount || tx.outputs.size() > kMaxOutputCount) {
-        return VerifyResult::BadOutputCount;
-    }
-    if (tx.fee < required_fee(state, tx)) {
-        return VerifyResult::InsufficientFee;
-    }
-
-    if (!state.anchor_window_contains(tx.anchor)) {
-        return VerifyResult::UnknownAnchor;
-    }
-
-    // Pairwise-distinct within-tx checks for nullifiers and commitments.
-    {
-        std::unordered_set<std::string> seen_nf;
-        seen_nf.reserve(tx.spends.size() * 2);
-        for (const auto& s : tx.spends) {
-            std::string k(reinterpret_cast<const char*>(s.nullifier.data()), 32);
-            if (!seen_nf.insert(std::move(k)).second) {
-                return VerifyResult::DuplicateNullifierInTx;
-            }
-        }
-    }
-    {
-        std::unordered_set<std::string> seen_cm;
-        seen_cm.reserve(tx.outputs.size() * 2);
-        for (const auto& o : tx.outputs) {
-            std::string k(reinterpret_cast<const char*>(o.cm.data()), 32);
-            if (!seen_cm.insert(std::move(k)).second) {
-                return VerifyResult::DuplicateCommitmentInTx;
-            }
-        }
-    }
-
-    // Ristretto point decompression (§4.3 step 1.7). A3 always links in
-    // under decision #15 — no weak-symbol fallback.
-    for (const auto& s : tx.spends) {
-        if (!uno_crypto::ristretto255_is_valid_point(
-                reinterpret_cast<const uint8_t*>(s.rk.data()))) {
-            return VerifyResult::BadRistrettoPoint;
-        }
-    }
-    for (const auto& o : tx.outputs) {
-        if (!uno_crypto::ristretto255_is_valid_point(
-                reinterpret_cast<const uint8_t*>(o.epk.data()))) {
-            return VerifyResult::BadRistrettoPoint;
-        }
-    }
-
-    // ---- Step 2: nullifier not-spent (§4.3 step 2) ----
-    for (const auto& s : tx.spends) {
-        if (state.nullifier_is_spent(s.nullifier)) {
-            return VerifyResult::NullifierAlreadySpent;
-        }
-    }
-
-    // ---- Step 3: Schnorr-on-Ristretto255 spend-auth sigs (§4.3 step 3) ----
-    for (const auto& s : tx.spends) {
-        if (!uno_crypto::schnorr_ristretto_verify(
-                reinterpret_cast<const uint8_t*>(s.rk.data()),
-                reinterpret_cast<const uint8_t*>(tx.tx_hash.data()),
-                s.spend_auth_sig.data())) {
-            return VerifyResult::BadSpendAuthSig;
-        }
-    }
-
-    // ---- Step 4: Plonky3 proof verify (§4.3 step 4) ----
-    // Public-input encoding is OURS: see transaction.cpp::build_plonky3_public_inputs.
-    // Agent 4's Rust verifier must decode with bit-identical semantics.
-    {
-        auto pi = build_plonky3_public_inputs(tx);
-        auto pi_bytes = pi.to_bytes();
-        // Load the zk_proof cell chain into a flat byte buffer. For a typical
-        // 1-spend/2-output transfer this is ~40 KB; 4/4 worst case ~80 KB.
-        // TODO(uno-integration): replace std::string copy with a zero-copy
-        // iterator once Agent 4's verifier accepts a ref-counted Cell.
-        std::string proof_bytes = load_bytes_from_chunk_chain(tx.zk_proof);
-        if (proof_bytes.empty()) {
-            return VerifyResult::BadPlonky3Proof;
-        }
-        bool ok = uno_crypto::plonky3_verify_transfer_proof(
-            td::Slice(reinterpret_cast<const char*>(pi_bytes.data()), pi_bytes.size()),
-            td::Slice(proof_bytes.data(), proof_bytes.size()));
-        if (!ok) return VerifyResult::BadPlonky3Proof;
-    }
-
-    return VerifyResult::Ok;
+    auto results = pool->verify_batch(state, &tx, 1);
+    return results.empty() ? VerifyResult::DecodeError : results[0];
 }
 
 // =============================================================================
@@ -376,6 +246,53 @@ bool run_compute_phase(
     cp.vm_final_state_hash.set_zero();
 
     return true;
+}
+
+// =============================================================================
+// Batch entry point (§13 P.3)
+//
+// Collator-facing: given N pre-decoded Transfers, run the §4.3 step 1–4
+// verify in parallel and apply successful ones serially in declared order.
+//
+// The pool guarantees that `results[i]` is the outcome of
+// `verify_transfer_serial(state, txs[i])` — byte-for-byte identical to a
+// simple for-loop over `verify_transfer_serial`. Apply then sweeps the
+// results vector linearly; for every `Ok` we mutate state in tx-order.
+// `Transfer`s whose verify returned an error leave the state untouched
+// (the per-tx ComputePhase record — constructed by the caller — flags
+// them as rejected; this function only reports the result vector).
+// =============================================================================
+std::vector<VerifyResult> run_compute_phase_batch(
+    UnoState&               state,
+    const Transfer*         txs,
+    std::size_t             n_txs) {
+
+    std::vector<VerifyResult> results;
+    if (n_txs == 0) return results;
+
+    ParallelVerifyPool* pool = global_parallel_verify_pool();
+    if (pool != nullptr) {
+        results = pool->verify_batch(state, txs, n_txs);
+    } else {
+        // No pool installed — serial fallback. Keeps skeleton / test builds
+        // green and guarantees identical semantics to the parallel path.
+        results.reserve(n_txs);
+        for (std::size_t i = 0; i < n_txs; ++i) {
+            results.push_back(verify_transfer_serial(state, txs[i]));
+        }
+    }
+
+    // Serial apply in declared tx-order. Any tx whose verify failed
+    // contributes zero state delta — the verify-before-mutate invariant
+    // of §4.3 is preserved per-tx just as in the pre-P.3 per-tx
+    // `run_compute_phase`.
+    for (std::size_t i = 0; i < n_txs; ++i) {
+        if (results[i] == VerifyResult::Ok) {
+            apply_transfer(state, txs[i]);
+        }
+    }
+
+    return results;
 }
 
 }  // namespace uno_workchain
