@@ -188,21 +188,31 @@ impl MvpProver {
     /// Cheap sanity checks over the witness that mirror the hardest AIR
     /// constraints. Defends the FFI caller against profile-dependent error
     /// codes (see `prove` body).
+    ///
+    /// Post-P.2 upgrade this now checks Poseidon2 consistency of the
+    /// claim-2 note-opening: an adversarial witness whose `leaf` does
+    /// not equal `Poseidon2("uno-cm-v1", d, pk_d, ivk_commitment,
+    /// value, rcm)` would later trigger a DebugConstraintBuilder panic
+    /// inside `prove`, which the FFI guard would map to
+    /// `InternalError`. Mapping to `WitnessInvalid` here is stricter
+    /// and gives adversarial tests (and honest mis-typed callers) a
+    /// stable error code across debug/release profiles.
     fn pre_check_witness(&self, w: &MvpWitness) -> Result<(), Plonky3Status> {
         // Range check (63-bit for MVP).
         if w.value >> 63 != 0 {
             return Err(Plonky3Status::WitnessInvalid);
         }
 
-        // Merkle step correctness: the public-inputs derivation already
-        // computes `parent = leaf * MIX + sibling` over Goldilocks; we
-        // don't need to re-check it here because both the trace and the
-        // public inputs are derived from the same `witness` struct.
-        // A *maliciously inconsistent* witness is caught by Plonky3's
-        // DebugConstraintBuilder in debug builds; in release builds the
-        // verifier catches it. The FFI test covers both branches.
-        let _ = &self.air;
+        // Poseidon2 claim-2 consistency: `leaf` (= `cm`) must equal the
+        // Poseidon2 output of the declared inputs. A discrepancy means
+        // the prover can't produce a proof that the verifier would
+        // accept under the SAME public inputs; short-circuit to
+        // `WitnessInvalid` before entering Plonky3.
+        if !w.claim2_cm_consistent() {
+            return Err(Plonky3Status::WitnessInvalid);
+        }
 
+        let _ = &self.air;
         Ok(())
     }
 }

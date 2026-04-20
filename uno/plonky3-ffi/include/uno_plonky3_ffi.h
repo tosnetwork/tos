@@ -10,30 +10,52 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-// AIR mixing coefficient used by the MVP ivk-commitment binding (decision
-// #1, §4.2 claim 3 scaffold):
+// Width of the Poseidon2 permutation used throughout this AIR.
 //
-// ```text
-//     ivk_commitment_claim = ivk * IVK_CM_MIX_COEF + sibling   // sibling reused as `d` proxy
-// ```
-//
-// Linear stand-in for `Poseidon2("uno-ivk-cm-v1", ivk, d)`. Same role as
-// `MERKLE_MIX_COEF`: preserves the constraint family (one public-input
-// output bound to a hash-like combination of a private witness and a
-// trace-accessible value) while deferring the full Poseidon2 expansion to
-// P.2. A different mix coefficient is used so the two constraints don't
-// collapse into the same linear relation — an adversary who satisfies the
-// Merkle step without knowing the right `ivk` still gets the wrong
-// `ivk_commitment_claim`. Value: 0xbadcafe0_ivkcmv1 formatted as a nonce.
-//
-// TODO(uno-design-gap): replace with the real in-circuit Poseidon2 over
-// the 6-element input `[ivk (4 fes), d_packed (2 fes)]` at P.2. Verifier
-// side (off-circuit, §2.6) already uses real Poseidon2.
-#define IVK_CM_MIX_COEF 841551897658772225
+// Width 8 matches the Goldilocks `Poseidon2Goldilocks<8>` default; it is
+// big enough for every compression in the MVP proxy shape (§ module doc).
+#define POSEIDON2_WIDTH 8
+
+// S-box degree (α=7 on Goldilocks per Plonky3's `GOLDILOCKS_S_BOX_DEGREE`).
+#define POSEIDON2_SBOX_DEGREE 7
+
+// Number of committed intermediate registers per S-box at degree 7. Exactly
+// one (for `x^3`) is optimal per the Poseidon2 paper Appendix C.
+#define POSEIDON2_SBOX_REGISTERS 1
+
+// Number of full rounds per half (beginning and ending). Total `R_F = 8`.
+#define POSEIDON2_HALF_FULL_ROUNDS GOLDILOCKS_POSEIDON2_HALF_FULL_ROUNDS
+
+// Number of partial rounds. `R_P = 22` for width-8 Goldilocks per §16
+// decision #42's audited parameter set.
+#define POSEIDON2_PARTIAL_ROUNDS GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8
+
+// Domain tag for the IVK-commitment Poseidon2. `"uno-ivk-cm" || 0x01`.
+#define TAG_IVK_CM 105111591102868323
+
+// Domain tag for the note-commitment Poseidon2. `"uno-cm-v1"` proxy.
+#define TAG_CM 105111591001617969
+
+// Domain tag for the nullifier Poseidon2. `"uno-nf-v1"` proxy.
+#define TAG_NF 105111591185708593
+
+// Merkle-step compression does NOT use a domain tag in §2.3
+// (`parent = Poseidon2(left, right)` is plain 2-to-1 compression).
+// MVP proxy columns (semantic, all single field elements per MVP-proxy
+// convention). See [`MvpRow`] for field-by-field documentation.
+#define MVP_PROXY_COLS 11
 
 #define IVK 5
 
 #define IVK_COMMITMENT_CLAIM 6
+
+#define PK_D 7
+
+#define RCM 8
+
+#define NK 9
+
+#define POS 10
 
 // Result codes returned across the C ABI.
 //
@@ -154,6 +176,8 @@ typedef struct {
     // Capacity in bytes (needed for correct `Vec` reconstruction on free).
     uintptr_t cap;
 } Plonky3OwnedProof;
+
+
 
 #ifdef __cplusplus
 extern "C" {
