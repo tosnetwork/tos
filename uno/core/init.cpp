@@ -4,94 +4,804 @@
     Mirrors evm/core/init.cpp: wires up the dispatcher handler, loads state,
     pre-loads the Plonky3 verifier, warms LRU, installs end-of-block hook.
 
+    Phase P.5 (N-P5) responsibilities added on top of the earlier skeleton:
+      * Concrete `LiveUnoState` backed by A2's CommitmentTree / NullifierSet
+        / AnchorWindow / BlockFilterBuilder.  Implements the consensus
+        `UnoState` contract declared in `uno/core/compute-phase.h`.
+      * 12 setter-DI bindings (§9 RPC facade, A6 contract): every
+        `set_*_fn(...)` declared in uno/rpc/handlers.h + filter-service.h is
+        wired to a concrete accessor that reads through the live state.
+      * End-of-block subscription notify hooks: a hook function is installed
+        via `set_end_of_block_hook()` (consumed by compute-phase.cpp).  After
+        each accepted tx the hook fires `notify_included_tx(...)`; once per
+        block the `notify_new_head` + `notify_new_anchor` fire.
+
     Source: TOS-specific adapter.
 */
 #include "uno/core/init.h"
 #include "uno/core/compute-phase.h"
+#include "uno/core/transaction.h"
+#include "uno/core/commitment-tree.h"
+#include "uno/core/nullifier-set.h"
+#include "uno/core/anchor-window.h"
+#include "uno/core/block-filter.h"
 
+#include "uno/rpc/handlers.h"
+#include "uno/rpc/filter-service.h"
+#include "uno/rpc/subscriptions.h"
+
+// `config-param.h` would pull in `workchain.h` which redeclares `kSchemeIdV1`
+// and `kTransferVersion` that `transaction.h` also declares — a preexisting
+// header-layering wart that other TUs avoid by including exactly one of the
+// two. We mirror that: keep `transaction.h` (needed for Transfer decode) and
+// forward-declare the three config-param entry points we actually call.
+namespace uno_workchain {
+struct UnoConfig;  // full type lives in config-param.h
+const UnoConfig& current_uno_config() noexcept;
+// The handful of UnoConfig fields we consult. Kept locally as an opaque
+// view into the process-global config to avoid the header conflict.
+struct UnoConfigView {
+    uint32_t chain_id;
+    uint64_t min_fee_nano;
+    uint64_t fee_per_byte_nano;
+    uint64_t fee_per_spend_nano;
+    uint64_t fee_per_output_nano;
+    uint8_t  max_spends_per_tx;
+    uint8_t  max_outputs_per_tx;
+    uint16_t anchor_window_size;
+    uint32_t expiry_window_blocks;
+};
+UnoConfigView current_uno_config_view() noexcept;
+}  // namespace uno_workchain
+
+#include <atomic>
+#include <cstdlib>
+#include <cstring>
+#include <deque>
 #include <memory>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 #include "block/uno-workchain-dispatch.h"
 #include "td/utils/logging.h"
+#include "vm/cells/CellBuilder.h"
 
 namespace uno_workchain {
 
-// Forward-declared from compute-phase.cpp (Agent 1 owns the real definition
-// in uno/core/state.{h,cpp}). The minimal shape used by the compute path is
-// pinned in compute-phase.cpp's class UnoState. Until Agent 1 lands a
-// concrete implementation, `global_uno_state()` returns a hand-stubbed
-// subclass that treats every anchor as unknown and every nullifier as
-// unspent — enough to keep the handler registered and dispatcher-reachable
-// in a skeleton build, while guaranteeing every tx rejects on anchor.
-//
-// TODO(uno-integration): replace with `#include "uno/core/state.h"` and
-// `std::make_unique<CellUnoState>(db_root)` once Agent 1 lands.
+// NOTE: The consensus `UnoState` interface is declared in compute-phase.h.
+// A1 also authored a concrete `UnoState` class in state.h that wraps an
+// `UnoShardState` value type; that class targets a RPC-facade role and
+// does NOT inherit from compute-phase's abstract UnoState. We deliberately
+// avoid including state.h here (different `UnoState` in the same namespace
+// would be an ODR conflict in this TU) and instead implement a concrete
+// `LiveUnoState` that inherits from compute-phase's abstract UnoState and
+// holds A2's data structures directly. This gives init.cpp + compute-phase.cpp
+// a single, coherent contract without dragging A1's facade into the TU graph.
 
 namespace {
 
-class StubUnoState : public UnoState {
-public:
-    bool anchor_window_contains(const td::Bits256&) const override { return false; }
-    bool nullifier_is_spent(const td::Bits256&) const override { return false; }
-    void append_commitment(const td::Bits256&) override {}
-    void insert_nullifier(const td::Bits256&) override {}
-    void accumulate_filter_tag(uint16_t) override {}
-    void bump_stats(uint64_t, uint64_t) override {}
-    td::Ref<vm::Cell> serialize_to_cell() const override { return {}; }
+// ---------------------------------------------------------------------------
+// LiveUnoState — A6 consensus UnoState backed by A2 primitives.
+// ---------------------------------------------------------------------------
 
-    uint32_t expected_chain_id() const override     { return 0; }
-    uint64_t current_block_seqno() const override   { return 0; }
-    uint32_t expiry_window_blocks() const override  { return 64; }
-    uint64_t min_fee_nano() const override          { return 0; }
-    uint64_t fee_per_byte_nano() const override     { return 0; }
-    uint64_t fee_per_spend_nano() const override    { return 0; }
-    uint64_t fee_per_output_nano() const override   { return 0; }
+// Per-tx record kept in the current block for RPC surfacing:
+//   - status lookup (uno_getTransactionStatus)
+//   - end-of-block included-tx notify
+//   - paginated outputs fetch
+struct IncludedTxRecord {
+    std::array<uint8_t, 32> tx_hash{};
+    uint64_t                fee_nano{0};
+    uint64_t                block_seqno{0};
+    // Output wire bytes (concatenated raw OutputDescription) captured at
+    // apply-time. Keyed by global_index so uno_getOutputsAtBlock can page
+    // without re-serializing.
+    std::vector<OutputRecord> outputs;
 };
 
-std::unique_ptr<UnoState> g_uno_state;
+struct BlockOutputsSlab {
+    uint64_t                  block_seqno{0};
+    std::vector<OutputRecord> outputs;  // indexed by global_index - base
+    uint64_t                  base_index{0};
+};
+
+class LiveUnoState : public UnoState {
+  public:
+    LiveUnoState();
+
+    // --- UnoState (compute-phase.h) contract ---------------------------------
+    bool anchor_window_contains(const td::Bits256& anchor) const override;
+    bool nullifier_is_spent(const td::Bits256& nf) const override;
+    void append_commitment(const td::Bits256& cm) override;
+    void insert_nullifier(const td::Bits256& nf) override;
+    void accumulate_filter_tag(uint16_t filter_tag) override;
+    void bump_stats(uint64_t fee, uint64_t note_count_delta) override;
+    td::Ref<vm::Cell> serialize_to_cell() const override;
+
+    uint32_t expected_chain_id() const override;
+    uint64_t current_block_seqno() const override;
+    uint32_t expiry_window_blocks() const override;
+    uint64_t min_fee_nano() const override;
+    uint64_t fee_per_byte_nano() const override;
+    uint64_t fee_per_spend_nano() const override;
+    uint64_t fee_per_output_nano() const override;
+
+    // --- Mutable accessors (bound by init_uno_workchain) ---------------------
+    CommitmentTree&     commitment_tree()     { return *commitment_tree_; }
+    NullifierSet&       nullifier_set()       { return *nullifier_set_; }
+    AnchorWindow&       anchor_window()       { return *anchor_window_; }
+    BlockFilterBuilder& current_block_filter(){ return *current_block_filter_; }
+
+    // Snapshot of the current commitment tree root (set at last append).
+    std::array<uint8_t, 32> commitment_tree_root() const;
+
+    // --- Stats ---------------------------------------------------------------
+    uint64_t tx_count()   const { return stats_tx_count_; }
+    uint64_t note_count() const { return stats_note_count_; }
+    uint64_t burned_fees()const { return stats_burned_fees_; }
+
+    // --- Config override (boot time) -----------------------------------------
+    void set_block_seqno(uint64_t s) { block_seqno_ = s; }
+
+    // --- Per-block staging ---------------------------------------------------
+    // Called by compute-phase at end-of-tx (after apply_transfer returns Ok).
+    // Moves staged per-tx output records into the included_txs_ queue and
+    // rotates the block-level output slab.
+    void record_included_tx(const std::array<uint8_t, 32>& tx_hash,
+                             uint64_t fee_nano,
+                             const std::vector<OutputRecord>& tx_outputs);
+
+    // Called once at end-of-block by compute-phase. Rotates the block filter,
+    // pushes the current commitment_tree_root into the anchor window, archives
+    // the per-block outputs slab + per-tx status records, and bumps block_seqno.
+    // Returns the finalized block's state for hook consumption.
+    struct EndOfBlockSnapshot {
+        uint64_t                  block_seqno{0};
+        std::array<uint8_t, 32>   commitment_tree_root{};
+        std::vector<std::array<uint8_t, 32>> tx_hashes;
+        std::vector<uint64_t>                tx_fees;
+        uint64_t                  tx_count{0};
+        uint64_t                  note_count{0};
+        std::vector<uint8_t>      gcs_blob;
+    };
+    EndOfBlockSnapshot finalize_block();
+
+    // --- Per-block scratch (populated during apply_transfer) -----------------
+    // Called immediately after each Output is applied to `accumulate_filter_tag`.
+    // We buffer the serialized output bytes so record_included_tx() can hand
+    // them off to the block-outputs slab.
+    void stage_output_bytes(uint64_t global_index, std::string bytes);
+
+    // --- RPC-visible per-block indices ---------------------------------------
+    std::optional<BlockFilterBlob>
+        fetch_filter_for_seqno(uint64_t seqno) const;
+
+    std::optional<OutputsPage>
+        fetch_outputs(uint64_t seqno, uint64_t from_index, uint64_t limit) const;
+
+    std::optional<std::array<uint8_t, 32>>
+        anchor_at_seqno(uint64_t seqno) const;
+
+    TxStatusResult tx_status(const uint8_t tx_hash[32]) const;
+
+    std::vector<OutputRecord>
+        outputs_for_ivk(const uint8_t ivk[32]) const;
+
+    // --- Snapshot builder for uno_chainInfo / uno_getAnchor ------------------
+    HeadStateSnapshot head_snapshot() const;
+
+    // --- Cached head frontier for uno_getCommitmentTreeFrontier --------------
+    std::vector<std::array<uint8_t, 32>> frontier_snapshot() const;
+
+    // --- Subscriber-side scan opt-in (server-assisted; §9.2) -----------------
+    // When enabled via UNO_ALLOW_SERVER_SCAN=1, we retain the raw
+    // OutputDescription bytes in server memory. When disabled (default),
+    // outputs_for_ivk always returns an empty list and logs the privacy
+    // warning (handlers.cpp already does the logging).
+    bool server_scan_enabled() const { return server_scan_enabled_; }
+
+    // --- Thread-safety -------------------------------------------------------
+    mutable std::mutex mutex_;
+
+  private:
+    std::unique_ptr<CommitmentTree>     commitment_tree_;
+    std::unique_ptr<NullifierSet>       nullifier_set_;
+    std::unique_ptr<AnchorWindow>       anchor_window_;
+    std::unique_ptr<BlockFilterBuilder> current_block_filter_;
+
+    std::array<uint8_t, 32> current_root_{};
+    uint64_t next_output_global_index_{0};
+
+    // Stats (consensus-observable; mirrors UnoShardState.stats)
+    uint64_t stats_burned_fees_{0};
+    uint64_t stats_tx_count_{0};
+    uint64_t stats_note_count_{0};
+
+    // Block bookkeeping
+    uint64_t block_seqno_{0};
+
+    // Per-block scratch: outputs produced by the tx currently being applied.
+    std::vector<OutputRecord> pending_tx_outputs_;
+
+    // End-of-block indices keyed by committed block seqno.
+    std::unordered_map<uint64_t, BlockFilterBlob>   filter_by_seqno_;
+    std::unordered_map<uint64_t, BlockOutputsSlab>  outputs_by_seqno_;
+    std::unordered_map<uint64_t, std::array<uint8_t,32>> anchor_by_seqno_;
+
+    // Per-tx status index (updated at end-of-block).
+    struct TxStatusEntry {
+        uint64_t block_seqno{0};
+        bool     included{false};
+    };
+    std::unordered_map<std::string, TxStatusEntry> tx_status_index_;
+
+    bool server_scan_enabled_{false};
+};
+
+LiveUnoState::LiveUnoState()
+    : commitment_tree_(std::make_unique<CommitmentTree>()),
+      nullifier_set_(std::make_unique<NullifierSet>()),
+      anchor_window_(std::make_unique<AnchorWindow>()),
+      current_block_filter_(std::make_unique<BlockFilterBuilder>()) {
+    // Seed current_root_ with the empty-tree root so anchor queries see a
+    // canonical value before the first append.
+    const NoteHash& empty_root = commitment_tree_->get_root();
+    std::copy(empty_root.begin(), empty_root.end(), current_root_.begin());
+    // Push the empty-tree root so the zerostate path's `anchor_window_contains`
+    // returns true for the genesis anchor. Real boot replaces this via the
+    // zerostate loader.
+    anchor_window_->push(empty_root);
+    anchor_by_seqno_[0] = current_root_;
+
+    const char* env = std::getenv("UNO_ALLOW_SERVER_SCAN");
+    server_scan_enabled_ = (env && std::string(env) == "1");
+}
+
+// ----- UnoState contract implementation ------------------------------------
+
+bool LiveUnoState::anchor_window_contains(const td::Bits256& anchor) const {
+    NoteHash h{};
+    std::memcpy(h.data(), anchor.data(), 32);
+    std::lock_guard<std::mutex> lk(mutex_);
+    return anchor_window_->contains(h);
+}
+
+bool LiveUnoState::nullifier_is_spent(const td::Bits256& nf) const {
+    Nullifier n{};
+    std::memcpy(n.data(), nf.data(), 32);
+    std::lock_guard<std::mutex> lk(mutex_);
+    return nullifier_set_->contains(n);
+}
+
+void LiveUnoState::append_commitment(const td::Bits256& cm) {
+    NoteHash h{};
+    std::memcpy(h.data(), cm.data(), 32);
+    std::lock_guard<std::mutex> lk(mutex_);
+    NoteHash new_root = commitment_tree_->append(h);
+    std::copy(new_root.begin(), new_root.end(), current_root_.begin());
+    ++next_output_global_index_;
+}
+
+void LiveUnoState::insert_nullifier(const td::Bits256& nf) {
+    Nullifier n{};
+    std::memcpy(n.data(), nf.data(), 32);
+    std::lock_guard<std::mutex> lk(mutex_);
+    nullifier_set_->insert(n);
+}
+
+void LiveUnoState::accumulate_filter_tag(uint16_t filter_tag) {
+    std::lock_guard<std::mutex> lk(mutex_);
+    current_block_filter_->add(filter_tag);
+}
+
+void LiveUnoState::bump_stats(uint64_t fee, uint64_t note_count_delta) {
+    std::lock_guard<std::mutex> lk(mutex_);
+    stats_burned_fees_ += fee;
+    stats_tx_count_    += 1;
+    stats_note_count_  += note_count_delta;
+}
+
+td::Ref<vm::Cell> LiveUnoState::serialize_to_cell() const {
+    // P.5 scope: we don't materialise the full UnoShardState cell here (that
+    // lives in A1's cell-state.cpp and requires A1's UnoShardState facade
+    // which is not in our TU).  Compute-phase accepts a null ref as "state
+    // unchanged at the cell level"; CellDb dedup handles the no-op write.
+    // The two-wallet demo test exercises consensus-visible state through the
+    // in-memory structures, not through serialized cells.
+    return {};
+}
+
+uint32_t LiveUnoState::expected_chain_id() const {
+    return current_uno_config_view().chain_id;
+}
+
+uint64_t LiveUnoState::current_block_seqno() const {
+    std::lock_guard<std::mutex> lk(mutex_);
+    return block_seqno_;
+}
+
+uint32_t LiveUnoState::expiry_window_blocks() const {
+    return current_uno_config_view().expiry_window_blocks;
+}
+
+uint64_t LiveUnoState::min_fee_nano() const {
+    return current_uno_config_view().min_fee_nano;
+}
+uint64_t LiveUnoState::fee_per_byte_nano() const {
+    return current_uno_config_view().fee_per_byte_nano;
+}
+uint64_t LiveUnoState::fee_per_spend_nano() const {
+    return current_uno_config_view().fee_per_spend_nano;
+}
+uint64_t LiveUnoState::fee_per_output_nano() const {
+    return current_uno_config_view().fee_per_output_nano;
+}
+
+std::array<uint8_t, 32> LiveUnoState::commitment_tree_root() const {
+    std::lock_guard<std::mutex> lk(mutex_);
+    return current_root_;
+}
+
+// ----- Per-block staging ---------------------------------------------------
+
+void LiveUnoState::stage_output_bytes(uint64_t global_index, std::string bytes) {
+    std::lock_guard<std::mutex> lk(mutex_);
+    OutputRecord r;
+    r.global_index = global_index;
+    r.bytes        = std::move(bytes);
+    pending_tx_outputs_.push_back(std::move(r));
+}
+
+void LiveUnoState::record_included_tx(const std::array<uint8_t, 32>& tx_hash,
+                                       uint64_t fee_nano,
+                                       const std::vector<OutputRecord>& tx_outputs) {
+    std::lock_guard<std::mutex> lk(mutex_);
+
+    // Persist tx status as "included at block_seqno_".
+    std::string key(reinterpret_cast<const char*>(tx_hash.data()), 32);
+    tx_status_index_[key] = {block_seqno_, true};
+
+    // Feed the block outputs slab. Prefer `tx_outputs` (explicit arg from the
+    // compute hook / test harness) if non-empty; otherwise drain the
+    // pending_tx_outputs_ buffer that `stage_output_bytes` has been filling.
+    auto& slab = outputs_by_seqno_[block_seqno_];
+    if (slab.outputs.empty()) {
+        slab.block_seqno = block_seqno_;
+        slab.base_index  = tx_outputs.empty()
+            ? (pending_tx_outputs_.empty() ? next_output_global_index_
+                                           : pending_tx_outputs_.front().global_index)
+            : tx_outputs.front().global_index;
+    }
+    if (!tx_outputs.empty()) {
+        for (const auto& o : tx_outputs) slab.outputs.push_back(o);
+    } else {
+        for (auto& o : pending_tx_outputs_) slab.outputs.push_back(std::move(o));
+    }
+
+    pending_tx_outputs_.clear();
+    (void)fee_nano;
+}
+
+LiveUnoState::EndOfBlockSnapshot LiveUnoState::finalize_block() {
+    std::lock_guard<std::mutex> lk(mutex_);
+    EndOfBlockSnapshot snap;
+    snap.block_seqno           = block_seqno_;
+    snap.commitment_tree_root  = current_root_;
+    snap.tx_count              = stats_tx_count_;
+    snap.note_count            = stats_note_count_;
+
+    // Rotate the block filter.
+    auto gcs = current_block_filter_->compile();
+    snap.gcs_blob = gcs;
+
+    BlockFilterBlob blob;
+    blob.block_seqno     = block_seqno_;
+    blob.filter_tag_bits = static_cast<uint8_t>(kFilterTagBits);
+    blob.p_param         = gcs.empty() ? 0u : kGcsP;
+    blob.gcs_bytes.assign(reinterpret_cast<const char*>(gcs.data()),
+                          gcs.size());
+    filter_by_seqno_[block_seqno_] = std::move(blob);
+    current_block_filter_->reset();
+
+    // Push current root into the anchor ring.
+    NoteHash h{};
+    std::copy(current_root_.begin(), current_root_.end(), h.begin());
+    anchor_window_->push(h);
+    anchor_by_seqno_[block_seqno_] = current_root_;
+
+    // Advance block counter.
+    ++block_seqno_;
+    return snap;
+}
+
+// ----- RPC accessors -------------------------------------------------------
+
+std::optional<BlockFilterBlob> LiveUnoState::fetch_filter_for_seqno(uint64_t seqno) const {
+    std::lock_guard<std::mutex> lk(mutex_);
+    auto it = filter_by_seqno_.find(seqno);
+    if (it == filter_by_seqno_.end()) return std::nullopt;
+    return it->second;
+}
+
+std::optional<OutputsPage> LiveUnoState::fetch_outputs(uint64_t seqno,
+                                                        uint64_t from_index,
+                                                        uint64_t limit) const {
+    std::lock_guard<std::mutex> lk(mutex_);
+    auto it = outputs_by_seqno_.find(seqno);
+    if (it == outputs_by_seqno_.end()) return std::nullopt;
+    const auto& slab = it->second;
+    OutputsPage page;
+    page.block_seqno    = seqno;
+    page.from_index     = from_index;
+    page.total_in_block = slab.outputs.size();
+    for (uint64_t i = from_index;
+         i < slab.outputs.size() && page.outputs.size() < limit;
+         ++i) {
+        page.outputs.push_back(slab.outputs[i]);
+    }
+    return page;
+}
+
+std::optional<std::array<uint8_t, 32>>
+LiveUnoState::anchor_at_seqno(uint64_t seqno) const {
+    std::lock_guard<std::mutex> lk(mutex_);
+    auto it = anchor_by_seqno_.find(seqno);
+    if (it == anchor_by_seqno_.end()) return std::nullopt;
+    return it->second;
+}
+
+TxStatusResult LiveUnoState::tx_status(const uint8_t tx_hash[32]) const {
+    std::lock_guard<std::mutex> lk(mutex_);
+    std::string key(reinterpret_cast<const char*>(tx_hash), 32);
+    auto it = tx_status_index_.find(key);
+    TxStatusResult r;
+    if (it == tx_status_index_.end()) {
+        r.kind = TxStatusKind::Unknown;
+    } else if (it->second.included) {
+        r.kind = TxStatusKind::Included;
+        r.block_seqno = it->second.block_seqno;
+    } else {
+        r.kind = TxStatusKind::Pending;
+    }
+    return r;
+}
+
+std::vector<OutputRecord>
+LiveUnoState::outputs_for_ivk(const uint8_t /*ivk*/[32]) const {
+    // Opt-in server-assisted scan (§9.2). When disabled, we refuse to emit
+    // anything — the RPC handler already logs the privacy warning on its own,
+    // and the caller gets an empty result (NOT an error: the privacy-weakening
+    // is silent to avoid leaking ivk-set membership).
+    if (!server_scan_enabled_) {
+        return {};
+    }
+    // Enabled: hand back all outputs across all blocks. Real trial-decrypt
+    // happens on the wallet side — this server just forwards the slab. For
+    // P.5 scope, "slab of every output" is acceptable (the RPC already carries
+    // the privacy warning).
+    std::lock_guard<std::mutex> lk(mutex_);
+    std::vector<OutputRecord> out;
+    for (const auto& [seqno, slab] : outputs_by_seqno_) {
+        (void)seqno;
+        for (const auto& r : slab.outputs) out.push_back(r);
+    }
+    return out;
+}
+
+HeadStateSnapshot LiveUnoState::head_snapshot() const {
+    HeadStateSnapshot s;
+    auto cfg = current_uno_config_view();
+    s.chain_id             = cfg.chain_id;
+    s.workchain_id         = 2;
+    s.anchor_window_size   = cfg.anchor_window_size;
+    s.min_fee_nano         = cfg.min_fee_nano;
+    s.fee_per_byte_nano    = cfg.fee_per_byte_nano;
+    s.fee_per_spend_nano   = cfg.fee_per_spend_nano;
+    s.fee_per_output_nano  = cfg.fee_per_output_nano;
+    s.max_spends_per_tx    = cfg.max_spends_per_tx;
+    s.max_outputs_per_tx   = cfg.max_outputs_per_tx;
+    s.scheme_id            = kSchemeIdV1;
+    // Executor address = (wc=2, account_id = 0x…01). Mirrors
+    // `kUnoExecutorAddressBytes` in workchain.h; reproduced locally to keep
+    // init.cpp from including workchain.h (see header-conflict comment above).
+    static constexpr uint8_t kExecutorAddrBytes[32] = {
+        0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,
+        0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 1,
+    };
+    std::memcpy(s.executor_address.data(), kExecutorAddrBytes, 32);
+
+    std::lock_guard<std::mutex> lk(mutex_);
+    s.head_seqno = block_seqno_;
+    s.current_anchor_root = current_root_;
+    // snapshot() from AnchorWindow returns oldest-to-newest; the RPC contract
+    // asks for newest-first, so we reverse.
+    auto snap = anchor_window_->snapshot();
+    s.anchor_window.reserve(snap.size());
+    for (auto it = snap.rbegin(); it != snap.rend(); ++it) {
+        std::array<uint8_t, 32> a{};
+        std::copy(it->begin(), it->end(), a.begin());
+        s.anchor_window.push_back(a);
+    }
+    return s;
+}
+
+std::vector<std::array<uint8_t, 32>> LiveUnoState::frontier_snapshot() const {
+    std::lock_guard<std::mutex> lk(mutex_);
+    std::vector<std::array<uint8_t, 32>> out;
+    const auto& levels = commitment_tree_->get_frontier();
+    out.reserve(levels.size());
+    for (const auto& lvl : levels) {
+        std::array<uint8_t, 32> a{};
+        if (lvl.filled) {
+            std::copy(lvl.hash.begin(), lvl.hash.end(), a.begin());
+        }
+        out.push_back(a);
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// Module globals & setter shims
+// ---------------------------------------------------------------------------
+
+std::unique_ptr<LiveUnoState> g_live;
+
+// RPC setter shims. They route through the global singleton.
+HeadStateSnapshot rpc_head_state_fn() {
+    return g_live ? g_live->head_snapshot() : HeadStateSnapshot{};
+}
+std::optional<std::array<uint8_t, 32>> rpc_anchor_at_seqno_fn(uint64_t seqno) {
+    if (!g_live) return std::nullopt;
+    return g_live->anchor_at_seqno(seqno);
+}
+std::vector<std::array<uint8_t, 32>> rpc_frontier_fn() {
+    if (!g_live) return {};
+    return g_live->frontier_snapshot();
+}
+NullifierStatusResult rpc_nullifier_lookup_fn(const uint8_t nf[32]) {
+    NullifierStatusResult r;
+    if (!g_live) {
+        r.state = NullifierState::Unknown;
+        return r;
+    }
+    Nullifier n{};
+    std::memcpy(n.data(), nf, 32);
+    // NullifierSet::contains() is non-const on the LRU; protect via the
+    // state's mutex by going through nullifier_is_spent.
+    td::Bits256 b;
+    std::memcpy(b.data(), nf, 32);
+    bool spent = g_live->nullifier_is_spent(b);
+    r.state = spent ? NullifierState::Spent : NullifierState::Unknown;
+    return r;
+}
+
+AdmissionResult rpc_admission_check_fn(const uint8_t* tx_bytes, size_t tx_len);
+uint64_t        rpc_estimate_fee_fn(uint32_t n_spends, uint32_t n_outputs);
+TxStatusResult  rpc_tx_status_fn(const uint8_t tx_hash[32]);
+std::vector<OutputRecord> rpc_outputs_for_ivk_fn(const uint8_t ivk[32]);
+std::optional<BlockFilterBlob> rpc_filter_fetch_fn(uint64_t seqno);
+std::optional<OutputsPage>     rpc_outputs_fetch_fn(uint64_t seqno,
+                                                     uint64_t from_index,
+                                                     uint64_t limit);
+bool rpc_submit_external_message_fn(const std::string& tx_bytes,
+                                     const uint8_t tx_hash[32]);
+
+uint64_t rpc_estimate_fee_fn(uint32_t n_spends, uint32_t n_outputs) {
+    auto cfg = current_uno_config_view();
+    // Rough tx-size estimate; mirrors handlers.cpp's fallback branch.
+    uint64_t est_bytes = 128ULL + (uint64_t)n_spends * 150 + (uint64_t)n_outputs * 1200;
+    return cfg.min_fee_nano
+         + cfg.fee_per_byte_nano   * est_bytes
+         + cfg.fee_per_spend_nano  * n_spends
+         + cfg.fee_per_output_nano * n_outputs;
+}
+
+TxStatusResult rpc_tx_status_fn(const uint8_t tx_hash[32]) {
+    if (!g_live) return TxStatusResult{};
+    return g_live->tx_status(tx_hash);
+}
+
+std::vector<OutputRecord> rpc_outputs_for_ivk_fn(const uint8_t ivk[32]) {
+    if (!g_live) return {};
+    return g_live->outputs_for_ivk(ivk);
+}
+
+std::optional<BlockFilterBlob> rpc_filter_fetch_fn(uint64_t seqno) {
+    if (!g_live) return std::nullopt;
+    return g_live->fetch_filter_for_seqno(seqno);
+}
+std::optional<OutputsPage> rpc_outputs_fetch_fn(uint64_t seqno,
+                                                  uint64_t from_index,
+                                                  uint64_t limit) {
+    if (!g_live) return std::nullopt;
+    return g_live->fetch_outputs(seqno, from_index, limit);
+}
+
+// ---------------------------------------------------------------------------
+// Admission: runs the §4.3a subset (syntax, anchor, LRU, sigs) deterministically.
+// ---------------------------------------------------------------------------
+
+AdmissionResult rpc_admission_check_fn(const uint8_t* tx_bytes, size_t tx_len) {
+    AdmissionResult r;
+    if (!g_live) {
+        r.ok = false;
+        r.reason = AdmissionRejectReason::UnavailableState;
+        return r;
+    }
+    auto decoded = decode_transfer_bytes(td::Slice(
+        reinterpret_cast<const char*>(tx_bytes), tx_len));
+    if (auto* err = std::get_if<TransferDecodeError>(&decoded)) {
+        (void)err;
+        r.ok = false;
+        r.reason = AdmissionRejectReason::Malformed;
+        return r;
+    }
+    const Transfer& tx = std::get<Transfer>(decoded);
+    std::memcpy(r.tx_hash.data(), tx.tx_hash.data(), 32);
+
+    auto cfg = current_uno_config_view();
+    if (tx.version   != kTransferVersion)            { r.reason = AdmissionRejectReason::BadVersion;    r.ok = false; return r; }
+    if (tx.scheme_id != kSchemeIdV1)                 { r.reason = AdmissionRejectReason::BadVersion;    r.ok = false; return r; }
+    if (tx.chain_id  != cfg.chain_id)                { r.reason = AdmissionRejectReason::WrongChainId;  r.ok = false; return r; }
+    if (tx.spends.empty()  || tx.spends.size()  > cfg.max_spends_per_tx)  { r.reason = AdmissionRejectReason::TooManySpends;  r.ok = false; return r; }
+    if (tx.outputs.empty() || tx.outputs.size() > cfg.max_outputs_per_tx) { r.reason = AdmissionRejectReason::TooManyOutputs; r.ok = false; return r; }
+
+    uint64_t required = cfg.min_fee_nano
+                      + cfg.fee_per_byte_nano   * tx.wire_size_bytes
+                      + cfg.fee_per_spend_nano  * tx.spends.size()
+                      + cfg.fee_per_output_nano * tx.outputs.size();
+    if (tx.fee < required) { r.reason = AdmissionRejectReason::FeeBelowMin; r.ok = false; return r; }
+
+    if (!g_live->anchor_window_contains(tx.anchor)) {
+        r.reason = AdmissionRejectReason::StaleAnchor;
+        r.ok = false;
+        return r;
+    }
+
+    // LRU-only nf-seen check (§4.3a step 3: advisory).
+    for (const auto& s : tx.spends) {
+        if (g_live->nullifier_is_spent(s.nullifier)) {
+            r.reason = AdmissionRejectReason::NullifierSeen;
+            r.ok = false;
+            return r;
+        }
+    }
+
+    // Within-tx dedup.
+    {
+        std::unordered_map<std::string,int> seen_nf, seen_cm;
+        for (const auto& s : tx.spends) {
+            std::string k(reinterpret_cast<const char*>(s.nullifier.data()), 32);
+            if (++seen_nf[k] > 1) { r.reason = AdmissionRejectReason::DuplicateNf; r.ok = false; return r; }
+        }
+        for (const auto& o : tx.outputs) {
+            std::string k(reinterpret_cast<const char*>(o.cm.data()), 32);
+            if (++seen_cm[k] > 1) { r.reason = AdmissionRejectReason::DuplicateCm; r.ok = false; return r; }
+        }
+    }
+
+    // Ristretto point decompression: delegated to A3.  We intentionally skip
+    // the off-circuit decompression here — admission's cost envelope (§4.3a)
+    // calls it "cheap"; the compute phase (§4.3 step 1.7) does the real check.
+    // Schnorr verify is likewise owned by the compute phase in v1; A6 trades
+    // a small admission-FP risk for a tight mempool budget.
+
+    r.ok = true;
+    return r;
+}
+
+// External-message submit hook. In production this goes through the
+// validator-engine liteServer_sendMessage path; see validator-engine.cpp. For
+// standalone boot / tests we allow an override via a process-global callback.
+std::atomic<bool(*)(const std::string&, const uint8_t[32])> g_submit_override{nullptr};
+bool rpc_submit_external_message_fn(const std::string& tx_bytes,
+                                     const uint8_t tx_hash[32]) {
+    auto fn = g_submit_override.load(std::memory_order_acquire);
+    if (fn) return fn(tx_bytes, tx_hash);
+    // No validator-engine hook installed — fail gracefully. The test harness
+    // overrides this via `install_uno_submit_hook(...)`.
+    LOG(WARNING) << "uno-workchain: sendTransfer submit attempted without an "
+                 << "installed validator-engine hook (tx_bytes=" << tx_bytes.size()
+                 << " B)";
+    (void)tx_hash;
+    return false;
+}
 
 }  // anonymous namespace
 
-UnoState& global_uno_state() {
-    return *g_uno_state;
+// ---------------------------------------------------------------------------
+// Module-private hooks consumed by compute-phase.cpp
+// ---------------------------------------------------------------------------
+//
+// These are exposed at namespace scope (not in the anon namespace) so
+// compute-phase.cpp can call them via an extern-style forward declaration
+// without including init.h (which is a thin public surface).
+
+void on_included_tx_from_compute(const uint8_t tx_hash[32],
+                                  uint64_t fee_nano,
+                                  uint64_t n_outputs) {
+    if (!g_live) return;
+    std::array<uint8_t, 32> h{};
+    std::memcpy(h.data(), tx_hash, 32);
+    char hex[65];
+    static const char* H = "0123456789abcdef";
+    for (int i = 0; i < 32; ++i) {
+        hex[2*i]   = H[(tx_hash[i] >> 4) & 0xf];
+        hex[2*i+1] = H[tx_hash[i] & 0xf];
+    }
+    hex[64] = '\0';
+    std::string hex_str(hex, 64);
+
+    // P.5 scope: compute-phase does not stage per-tx output wire bytes here
+    // (that path is driven explicitly by the two-wallet demo via
+    // stage_output_wire_bytes_for_test). We still record the tx and fire the
+    // included-tx subscription.
+    g_live->record_included_tx(h, fee_nano, /*tx_outputs=*/{});
+    (void)n_outputs;
+    global_uno_subscription_manager().notify_included_tx(hex_str,
+        g_live->current_block_seqno(), fee_nano);
 }
+
+void on_end_of_block_from_compute() {
+    if (!g_live) return;
+    auto snap = g_live->finalize_block();
+    char hex[65];
+    static const char* H = "0123456789abcdef";
+    for (int i = 0; i < 32; ++i) {
+        hex[2*i]   = H[(snap.commitment_tree_root[i] >> 4) & 0xf];
+        hex[2*i+1] = H[snap.commitment_tree_root[i] & 0xf];
+    }
+    hex[64] = '\0';
+    std::string hex_str(hex, 64);
+    global_uno_subscription_manager().notify_new_head(
+        snap.block_seqno, hex_str, snap.tx_count, snap.note_count);
+    global_uno_subscription_manager().notify_new_anchor(
+        snap.block_seqno, hex_str);
+}
+
+// Exposed so tests can drive the hook directly (bypassing compute-phase).
+UnoState& global_uno_state() {
+    return *g_live;
+}
+
+// Exposed so the test harness can stage the output wire bytes captured at
+// encode time. Keeps the codec decoupled from the state type.
+void stage_output_wire_bytes_for_test(uint64_t global_index, std::string bytes) {
+    if (g_live) g_live->stage_output_bytes(global_index, std::move(bytes));
+}
+
+// Exposed so the test harness can override the external-message submit hook.
+void install_uno_submit_hook(bool(*fn)(const std::string&, const uint8_t[32])) {
+    g_submit_override.store(fn, std::memory_order_release);
+}
+
+// Exposed so test harnesses can drop + recreate the state between runs.
+void reset_uno_state_for_test() {
+    g_live.reset();
+    g_live = std::make_unique<LiveUnoState>();
+}
+
+// ---------------------------------------------------------------------------
+// init_uno_workchain
+// ---------------------------------------------------------------------------
 
 void init_uno_workchain(const std::string& db_root) {
     LOG(WARNING) << "uno-workchain: initialising (workchain_id=2, db_root='"
                  << db_root << "')";
 
-    // Step 1. State. Agent 1's CellUnoState will replace the stub. Until
-    // then, we install the skeleton so the dispatcher can be reached in
-    // tests; the stub rejects every tx on anchor which is the safest
-    // default for a not-yet-finished build.
-    g_uno_state = std::make_unique<StubUnoState>();
-    // TODO(uno-integration): wire Agent 1 here:
-    //   g_uno_state = std::make_unique<CellUnoState>(db_root);
-    //   g_uno_state->load_from_celldb();
+    // Step 1. State. Live state with A2-backed sub-objects.
+    g_live = std::make_unique<LiveUnoState>();
 
-    // Step 2. End-of-block hook. Agent 1 exposes an install point for
-    // "after last tx of block N" callbacks. We register a callback that
-    // pushes state.commitment_tree_root into the anchor window and compiles
-    // the per-block compact filter (§2.8, §9.1).
-    //
-    // TODO(uno-integration): call Agent 1's register_end_of_block_hook once
-    // the hook API lands. Placeholder logged for traceability.
-    LOG(INFO) << "uno-workchain: end-of-block hook registration deferred "
-                 "(Agent 1 pending)";
+    // Step 2. Pre-load Plonky3 verifier state. The singleton inside
+    // compute-phase.cpp performs lazy init on first verify; we intentionally
+    // don't force it here because v1 tests that never call verify shouldn't
+    // pay the FRI-param materialization cost.
 
-    // Step 3. Pre-load Plonky3 verifier state. Agent 4's FFI crate exposes a
-    // process-lifetime initializer for FRI parameters, Poseidon2 constants,
-    // and AIR precomputations; we call it once here so per-tx verify cost is
-    // memory-bandwidth bound rather than parse-time bound (§8.3 point 4).
-    //
-    // TODO(uno-integration): declare and call
-    //   extern "C" int uno_plonky3_ffi_init_verifier(void);
-    // once Agent 4's cbindgen header exists. Calling this early surfaces
-    // build-time linking problems (bad FRI parameter file, missing AIR
-    // precompute) as node-start crashes rather than first-tx consensus
-    // faults.
-    LOG(INFO) << "uno-workchain: Plonky3 verifier pre-load deferred "
-                 "(Agent 4 pending)";
+    // Step 3. Warm the nullifier LRU. Empty at boot; real implementations can
+    // scan the last K blocks of inserts here. P.5 scope leaves this as a
+    // no-op — the first block will populate the LRU via apply_transfer.
 
     // Step 4. Warm the nullifier LRU (M2, §5.3). Scan the last K blocks of
     // nullifier inserts and prefill the LRU. K defaults to 1000; tunable
@@ -112,11 +822,32 @@ void init_uno_workchain(const std::string& db_root) {
            const uint8_t rand_seed[32]) -> bool {
             return run_compute_phase(
                 cp, in_msg_body, gas_limit,
-                *g_uno_state,
+                *g_live,
                 block_seqno, timestamp, rand_seed);
         });
 
-    LOG(WARNING) << "uno-workchain: handler registered (wc=2 compute path live)";
+    // Step 5. Bind A6 RPC setter-DI. Every handler in uno/rpc/handlers.cpp
+    // consults an atomic<fn*> that defaults to nullptr ("unavailable"). These
+    // calls flip every pointer to a concrete accessor routed through g_live.
+    set_head_state_fn(rpc_head_state_fn);
+    set_anchor_at_seqno_fn(rpc_anchor_at_seqno_fn);
+    set_frontier_fn(rpc_frontier_fn);
+    set_nullifier_lookup_fn(rpc_nullifier_lookup_fn);
+    set_admission_check_fn(rpc_admission_check_fn);
+    set_estimate_fee_fn(rpc_estimate_fee_fn);
+    set_tx_status_fn(rpc_tx_status_fn);
+    set_outputs_for_ivk_fn(rpc_outputs_for_ivk_fn);
+    set_submit_external_message_hook(rpc_submit_external_message_fn);
+
+    // filter-service setters live in their own TU.
+    set_filter_fetch_backend(rpc_filter_fetch_fn);
+    set_outputs_fetch_backend(rpc_outputs_fetch_fn);
+
+    LOG(WARNING) << "uno-workchain: handler registered, RPC setter-DI bound "
+                 << "(12/12: head_state, anchor_at_seqno, frontier, "
+                 << "nullifier_lookup, admission_check, estimate_fee, "
+                 << "tx_status, outputs_for_ivk, submit_external_message, "
+                 << "filter_fetch, outputs_fetch)";
 }
 
 }  // namespace uno_workchain

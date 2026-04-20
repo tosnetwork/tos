@@ -34,6 +34,20 @@
 #include "uno/core/transaction.h"
 
 // =============================================================================
+// Namespace-scope forward declarations for the subscription hooks owned by
+// init.cpp (P.5). These fire once per included tx and once per block, so the
+// wallet subscription channels (`includedTx`, `newHead`, `newAnchor`) see
+// every state change without coupling compute-phase.cpp to the concrete
+// LiveUnoState class.
+// =============================================================================
+namespace uno_workchain {
+void on_included_tx_from_compute(const uint8_t tx_hash[32],
+                                  uint64_t fee_nano,
+                                  uint64_t n_outputs);
+void on_end_of_block_from_compute();
+}  // namespace uno_workchain
+
+// =============================================================================
 // A3 crypto primitives (decision #15).
 //
 // Decision #15 replaces the original weak-symbol `uno_crypto_fwd::` forward
@@ -62,6 +76,18 @@
 #include "uno/crypto/plonky3-verifier.h"   // NOLINT(unused-include) — documentary
 
 namespace uno_workchain {
+
+namespace uno_crypto {
+// Test-only proof-verify override. When non-null, parallel-verify and the
+// inline single-tx path use this callback instead of the real Plonky3
+// verifier. Exists ONLY for the P.5 two-wallet end-to-end demo
+// (test-uno-end-to-end), which exercises the compute-phase + state-machine
+// path without needing a valid Plonky3 proof (full A4 prover is P.2 work).
+// Never installed in production.
+using TestProofOverrideFn = bool(*)(td::Slice pi, td::Slice proof);
+std::atomic<TestProofOverrideFn> g_test_proof_override{nullptr};
+}  // namespace uno_crypto
+
 
 // =============================================================================
 // verify_result_name
@@ -224,6 +250,16 @@ bool run_compute_phase(
               << " outputs=" << tx.outputs.size()
               << " fee=" << tx.fee;
 
+    // --- End-of-tx subscription notify (P.5) ---
+    // §9.1 `includedTx` channel: wakes wallet subscribers that are watching
+    // for their own txs to land. Payload is { tx_hash, block_seqno, fee };
+    // neither amounts nor note metadata leak (the subscription manager owns
+    // the JSON shape in subscriptions.cpp::notify_included_tx).
+    on_included_tx_from_compute(
+        reinterpret_cast<const uint8_t*>(tx.tx_hash.data()),
+        tx.fee,
+        tx.outputs.size());
+
     // --- Step 4: serialize updated state into cp.new_data (§8.4) ---
     // Agent 1's UnoState::serialize_to_cell() returns a cell whose root is
     // the canonical UnoShardState cell (§5.1). End-of-block, the state is
@@ -293,6 +329,26 @@ std::vector<VerifyResult> run_compute_phase_batch(
     }
 
     return results;
+}
+
+// ---------------------------------------------------------------------------
+// End-of-block entry point (P.5). Thin forwarder to init.cpp's hook so the
+// test harness and validator-engine integration code have a single public
+// symbol to call.
+// ---------------------------------------------------------------------------
+void end_of_block_hook() {
+    on_end_of_block_from_compute();
+}
+
+// ---------------------------------------------------------------------------
+// Test-only: install a proof-verify override. Passing nullptr restores the
+// real Rust verifier. Only the two-wallet demo test uses this today.
+// ---------------------------------------------------------------------------
+void install_test_proof_override_for_test(
+    bool(*fn)(td::Slice public_inputs, td::Slice proof)) {
+    uno_crypto::g_test_proof_override.store(
+        reinterpret_cast<uno_crypto::TestProofOverrideFn>(fn),
+        std::memory_order_release);
 }
 
 }  // namespace uno_workchain

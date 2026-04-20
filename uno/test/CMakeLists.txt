@@ -27,6 +27,12 @@ add_executable(test-uno-public-input-fixture  test-public-input-fixture.cpp)
 # repeat-under-thread-pressure invariant, and a min-of-3 scaling
 # micro-benchmark for the 4-core ≥ 3.5x ideal target from §1.4.
 add_executable(test-uno-parallel-verify       test-parallel-verify.cpp)
+# P.5 done-when gate (§13): two-wallet end-to-end demo that drives the full
+# prove → admission → verify → scan → audit lifecycle against the real A1/A2
+# state, A3 crypto primitives, and A5 codec. Plonky3 verify is covered by
+# a test-only override (install_test_proof_override_for_test) because A4's
+# prover is not in scope for P.5.
+add_executable(test-uno-end-to-end            test-uno-end-to-end.cpp)
 
 # --- §12 test matrix (owner: N-P7) -----------------------------------------
 # Added under P.7 scaffolding: primitive parity (§12 P.1), state-transition
@@ -49,6 +55,7 @@ foreach(_t test-uno-transfer
            test-uno-filter
            test-uno-public-input-fixture
            test-uno-parallel-verify
+           test-uno-end-to-end
            test-uno-primitive-parity
            test-uno-state-transition-golden
            test-uno-restart-survival

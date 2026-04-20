@@ -165,4 +165,17 @@ std::vector<VerifyResult> run_compute_phase_batch(
     const Transfer*         txs,
     std::size_t             n_txs);
 
+/// End-of-block hook. Called exactly once per wc=2 block after the last
+/// `run_compute_phase` / `run_compute_phase_batch` for that block. Drives:
+///   - anchor-window push: current commitment_tree_root → oldest evicted
+///   - block-filter compile: accumulated filter_tags → GCS blob, archived
+///     for uno_getBlockFilter
+///   - subscription notifications: `newHead` + `newAnchor` channels fire
+///     once, with payloads pinned in subscriptions.cpp
+///
+/// Implementation is in init.cpp (`on_end_of_block_from_compute`); this
+/// declaration is surfaced here so the test harness and the validator-engine
+/// integration layer can call it without including init.h.
+void end_of_block_hook();
+
 }  // namespace uno_workchain

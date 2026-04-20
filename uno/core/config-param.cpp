@@ -68,6 +68,37 @@ const UnoConfig& current_uno_config() noexcept {
     return g_uno_config;
 }
 
+// Forward-declared in init.cpp — a minimal POD projection of UnoConfig to
+// let that TU consult chain config without including config-param.h (which
+// would pull in workchain.h and conflict with transaction.h on
+// `kSchemeIdV1` / `kTransferVersion`).
+struct UnoConfigView {
+    uint32_t chain_id;
+    uint64_t min_fee_nano;
+    uint64_t fee_per_byte_nano;
+    uint64_t fee_per_spend_nano;
+    uint64_t fee_per_output_nano;
+    uint8_t  max_spends_per_tx;
+    uint8_t  max_outputs_per_tx;
+    uint16_t anchor_window_size;
+    uint32_t expiry_window_blocks;
+};
+
+UnoConfigView current_uno_config_view() noexcept {
+    const auto& c = g_uno_config;
+    return UnoConfigView{
+        c.chain_id,
+        c.min_fee_nano,
+        c.fee_per_byte_nano,
+        c.fee_per_spend_nano,
+        c.fee_per_output_nano,
+        c.max_spends_per_tx,
+        c.max_outputs_per_tx,
+        c.anchor_window_size,
+        c.expiry_window_blocks,
+    };
+}
+
 void install_uno_config(UnoConfig cfg) noexcept {
     std::lock_guard<std::mutex> lock(g_config_mutex);
     if (g_uno_config_installed) {
