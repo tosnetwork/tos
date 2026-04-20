@@ -132,6 +132,33 @@ include(BuildOpenSSL)
 include(BuildSodium)
 include(BuildLZ4)
 
+# -----------------------------------------------------------------------------
+# corrosion-rs — CMake ↔ Cargo integration for the Uno wc=2 Rust FFI crate
+# (`uno/plonky3-ffi/`, produces `libuno_plonky3_ffi.a`). Vendored at
+# `third-party/corrosion/` at release tag v0.5.2 — see
+# `third-party/corrosion/README.uno.md` for upstream pin + refresh policy.
+#
+# Added here (before `add_subdirectory(uno)` below) so the `Corrosion::*`
+# targets and `corrosion_import_crate(...)` function are visible when
+# `uno/CMakeLists.txt` calls them. Guarded by file existence so a stripped
+# checkout (no Rust toolchain available) still configures; in that case
+# `uno/CMakeLists.txt`'s `find_package(Corrosion QUIET)` returns not-found
+# and the Plonky3 bridge falls back to the weak-symbol stubs in
+# `uno/core/parallel-verify.cpp`.
+# -----------------------------------------------------------------------------
+if (NOT TOS_ONLY_TOSLIB AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third-party/corrosion/CMakeLists.txt")
+  message("Add corrosion-rs (Rust ↔ CMake bridge for uno/plonky3-ffi)")
+  # Rust .a will be linked into the uno_workchain static lib which in turn
+  # feeds shared libs downstream; force PIC on the Rust side to avoid
+  # "relocation R_X86_64_32 against .rodata" link errors on GNU/Linux.
+  set(ENV{CARGO_PROFILE_RELEASE_PIC} "true")
+  set(ENV{CARGO_PROFILE_DEV_PIC} "true")
+  # Corrosion's own test suite is off when consumed as a subproject, but be
+  # explicit so a future top-level rebase doesn't flip the default on us.
+  set(CORROSION_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  add_subdirectory(third-party/corrosion EXCLUDE_FROM_ALL)
+endif()
+
 if (USE_EMSCRIPTEN OR EMSCRIPTEN)
   set(SODIUM_ROOT_DIR ${CMAKE_BINARY_DIR}/3pp_emscripten/libsodium CACHE PATH "Sodium root directory" FORCE)
   if (EXISTS ${SODIUM_ROOT_DIR}/lib/libsodium.a)

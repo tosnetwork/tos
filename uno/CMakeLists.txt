@@ -174,34 +174,50 @@ else()
 endif()
 
 # -----------------------------------------------------------------------------
-# Rust FFI crate: uno_plonky3_ffi (Agent 4 owns the crate; agent-5 owns this
-# integration point). Wired via corrosion-rs — the canonical way to consume
-# Cargo crates from CMake.
+# Rust FFI crate: uno_plonky3_ffi. Wired via corrosion-rs — the canonical
+# way to consume Cargo crates from CMake. Corrosion is vendored at
+# `third-party/corrosion/` (see README.uno.md there) and its subdirectory
+# is added from the repo-root CMakeLists.txt before `add_subdirectory(uno)`.
 #
-# Integration recipe (to be activated when Agent 4's crate lands):
+# `corrosion_import_crate(...)` registers a CMake target named after the
+# `[lib].name` in `plonky3-ffi/Cargo.toml` (= `uno_plonky3_ffi`). Linking it
+# PUBLIC into uno_workchain propagates the archive through every downstream
+# consumer (validator-engine, create-hardfork, test-tos-collator, every
+# test-uno-* binary) — they all resolve `uno_plonky3_*` and
+# `uno_poseidon2_goldilocks_permute_t8` against the real Rust symbols
+# instead of the weak-symbol stubs in uno/core/parallel-verify.cpp.
 #
-#   find_package(Corrosion QUIET)
-#   if (Corrosion_FOUND AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/plonky3-ffi/Cargo.toml")
-#     corrosion_import_crate(MANIFEST_PATH plonky3-ffi/Cargo.toml)
-#     target_link_libraries(uno_workchain PUBLIC uno_plonky3_ffi)
-#   else()
-#     message(STATUS "uno_workchain: Corrosion not found or plonky3-ffi crate not present "
-#                    "— Plonky3 verifier bridge will be stubbed at link time")
-#   endif()
-#
-# Corrosion is vendored as a submodule / FetchContent — the uno branch will
-# add `third-party/corrosion/` and an `include(third-party/corrosion/cmake/Corrosion.cmake)`
-# call at the top-level CMakeLists.txt when Agent 4 merges.
-#
-# For today's skeleton build, we keep the block commented so builds succeed
-# without the Rust crate (the weak-symbol fallbacks in compute-phase.cpp take
-# over). Flip this block on when `find_package(Corrosion)` returns OK.
+# Graceful fallback: if corrosion is missing (e.g. somebody wiped
+# `third-party/corrosion/` in a stripped checkout), `find_package` returns
+# not-found and we keep the weak-symbol stubs. The build still succeeds,
+# just with verify() fatal-aborting at runtime.
 # -----------------------------------------------------------------------------
-# TODO(uno-integration, agent-5 + agent-4): uncomment once corrosion + crate are in.
-# find_package(Corrosion QUIET)
-# if (Corrosion_FOUND AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/plonky3-ffi/Cargo.toml")
-#   corrosion_import_crate(MANIFEST_PATH plonky3-ffi/Cargo.toml)
-# endif()
+# Corrosion is consumed via `add_subdirectory(third-party/corrosion)` from the
+# repo-root CMakeLists.txt; that path makes `corrosion_import_crate` a defined
+# CMake function in the global scope, but does NOT set `Corrosion_FOUND` in
+# the find_package sense. Probe for the function directly so the same block
+# handles both the vendored-subdirectory and the out-of-tree-install paths.
+find_package(Corrosion QUIET)
+if (NOT Corrosion_FOUND AND COMMAND corrosion_import_crate)
+  set(Corrosion_FOUND TRUE)
+endif()
+if (Corrosion_FOUND AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/plonky3-ffi/Cargo.toml")
+  message(STATUS "uno_workchain: Corrosion found — linking libuno_plonky3_ffi.a into uno_workchain")
+  # Build the release profile by default: the verifier is on the validator
+  # hot path (§13 P.3) and the reference prover in dev mode is ~50x slower.
+  corrosion_import_crate(
+    MANIFEST_PATH plonky3-ffi/Cargo.toml
+    PROFILE release
+    CRATE_TYPES staticlib
+  )
+  target_link_libraries(uno_workchain PUBLIC uno_plonky3_ffi)
+else()
+  message(STATUS "uno_workchain: Corrosion not found or plonky3-ffi crate absent "
+                 "— Plonky3 verifier bridge will fall back to weak-symbol stubs "
+                 "in uno/core/parallel-verify.cpp (verify() will fatal-abort at "
+                 "runtime). Install corrosion at third-party/corrosion/ to enable "
+                 "the real Rust verifier.")
+endif()
 
 target_link_libraries(uno_workchain
   PUBLIC
