@@ -6,7 +6,7 @@
     signed by each `spend_auth_sig` and the Plonky3 public-input digest
     anchor).
 
-    Layout recap (inline section):
+    Layout recap (logical §4.1 field order):
       version:uint8 = 1
       scheme_id:uint8 = 0x01
       chain_id:uint32
@@ -19,18 +19,34 @@
       outputs[output_count]:OutputDescription
       zk_proof:^Cell   (Plonky3 STARK proof; CellString-style chunk chain)
 
-    SpendDescription (inline, 128 B):
-      nullifier:bits256
-      rk:bits256
-      spend_auth_sig:bits512
+    SpendDescription (128 B payload):
+      nullifier:bits256 || rk:bits256 || spend_auth_sig:bits512
 
-    OutputDescription (inline 146 B + 2 refs):
-      cm:bits256
-      epk:bits256
-      filter_tag:bits16
+    OutputDescription (146 B inline payload + 2 refs):
+      cm:bits256 || epk:bits256 || filter_tag:bits16
       enc_ciphertext:^Cell
       mlkem_ct:^Cell
       out_ciphertext:bytes[80]
+
+    Physical BoC shape (§17 ≤5-level-walk constraint — fan-out instead of a
+    deep linear chain):
+
+      root cell (448 bits inline = §4.1 header exactly)
+        ref[0] → spends_root (empty inline, `spend_count` refs)
+                  ref[i] → per_spend[i]
+                             inline: first 127 B of the 128 B spend payload
+                             ref[0] → 1-byte continuation cell (8 bits, 0 refs)
+        ref[1] → outputs_root (empty inline, `output_count` refs)
+                  ref[j] → per_output[j]
+                             inline: first 127 B of the 146 B output inline payload
+                             ref[0] → 19-byte continuation cell (152 bits, 0 refs)
+                             ref[1] → enc_ciphertext
+                             ref[2] → mlkem_ct
+        ref[2] → zk_proof chunk chain
+
+    Max walk depth from root (not counting the enc_ct / mlkem_ct / zk_proof
+    internal chains, which own their own depth budgets per §17.1): **4**
+    levels — tight under the ≤5 bound for all 1..4 × 1..4 shapes.
 
     Source: TOS-specific adapter — consensus-critical codec.
 */
