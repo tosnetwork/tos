@@ -90,6 +90,89 @@ struct GenesisDistribution {
 };
 
 // ---------------------------------------------------------------------------
+// §10.3 60 / 25 / 15 distribution builder (K-genesis-distribution)
+// ---------------------------------------------------------------------------
+
+/// Per-recipient input for the §10.3 distribution builder. `rseed` and
+/// `cm` are populated by the builder; the caller only supplies the address
+/// (in any of the three forms GenesisAddress accepts) and the nano-UNO
+/// value. Duplicate addresses anywhere across the three lists are a
+/// validation error.
+struct DistributionRecipient {
+    GenesisAddress address;
+    uint64_t       value_nano{0};
+};
+
+/// 60% airdrop / 25% treasury / 15% team lists, as enumerated by the
+/// genesis-distribution operator. The builder canonicalises the order
+/// (each list sorted by address hash, then airdrop → treasury → team in
+/// that order) and validates the per-category and total sums against the
+/// §10.3 constants before emitting.
+struct GenesisDistributionInputs {
+    uint32_t                          chain_id{kChainIdTestnet};
+    std::vector<DistributionRecipient> airdrop;
+    std::vector<DistributionRecipient> treasury;
+    std::vector<DistributionRecipient> team;
+};
+
+/// Canonical §10.3 constants (K-genesis-distribution). The builder and
+/// loader BOTH pin these — any future change requires a `scheme_id` bump
+/// because the zerostate state root is bound to the resulting cm set.
+///
+/// 21,000,000 UNO × 10^9 nano-units/UNO = 2.1e16 nano-UNO.
+constexpr uint64_t kGenesisTotalSupplyNano = 21'000'000ULL * 1'000'000'000ULL;
+
+/// Per-category targets. Chosen so the rounded integer split is exact:
+/// 21M is divisible by 20 so 60/25/15 lands on whole-UNO boundaries.
+constexpr uint64_t kGenesisAirdropNano  = 12'600'000ULL * 1'000'000'000ULL;  // 60%
+constexpr uint64_t kGenesisTreasuryNano =  5'250'000ULL * 1'000'000'000ULL;  // 25%
+constexpr uint64_t kGenesisTeamNano     =  3'150'000ULL * 1'000'000'000ULL;  // 15%
+
+static_assert(kGenesisAirdropNano + kGenesisTreasuryNano + kGenesisTeamNano
+              == kGenesisTotalSupplyNano,
+              "genesis category splits must sum to total supply");
+
+/// Domain-separation tag for the per-note rseed derivation (§10.3 step 2):
+///
+///     rseed[i] = BLAKE2b-256("uno-genesis-rseed-v1" || u32_be(i))
+///
+/// where `i` is the canonical-order index (0..N-1) AFTER sorting per
+/// category by address hash and concatenating airdrop → treasury → team.
+/// 4-byte big-endian index matches the wire convention the loader reads.
+constexpr const char kGenesisRseedTagV1[] = "uno-genesis-rseed-v1";
+
+/// Build the canonical `zerostate-genesis-notes.json` for the given
+/// distribution (§10.3, K-genesis-distribution).
+///
+/// Steps, in order:
+///   1. Validate each list's sum matches the §10.3 category target
+///      (12.6 M / 5.25 M / 3.15 M nano-UNO).
+///   2. Reject duplicate addresses anywhere across the three lists
+///      (compared on the 1259-byte payload).
+///   3. Sort each list by BLAKE2b-256(address_bytes) ascending.
+///   4. Concatenate in order airdrop || treasury || team. The resulting
+///      index `i` is the canonical position in the commitment tree.
+///   5. For each entry: rseed = BLAKE2b-256(kGenesisRseedTagV1 || u32_be(i));
+///      cm = Poseidon2("uno-cm-v1", d, pk_d, ivk_commitment, value,
+///           Poseidon2("uno-rcm-v1", rseed)).
+///   6. Emit JSON via `dump_genesis_distribution` so byte output exactly
+///      matches what `load_genesis_distribution` accepts.
+///
+/// Uses the Bech32m envelope form for the `address` field when available
+/// (K-bech32m). The hex `recipient` block is emitted alongside it so
+/// third-party tooling without a Bech32m decoder can still read the file.
+td::Result<std::string> build_genesis_notes_json(
+    const GenesisDistributionInputs& inputs);
+
+/// Canonical sort key for a GenesisAddress: BLAKE2b-256 over the 1259-byte
+/// address payload (§2.6 layout). Exposed so tests and Rust-side tooling
+/// can mirror the sort byte-for-byte.
+std::array<uint8_t, 32> canonical_address_hash(const GenesisAddress& addr);
+
+/// Canonical rseed derivation exposed for cross-impl parity tests.
+std::array<uint8_t, 32> derive_genesis_rseed(uint32_t address_index);
+
+// ---------------------------------------------------------------------------
 // Zerostate builders
 // ---------------------------------------------------------------------------
 

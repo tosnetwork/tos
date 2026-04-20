@@ -82,7 +82,11 @@
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"  // td::buffer_to_hex, td::hex_decode
 
+#include <sodium.h>   // crypto_generichash (BLAKE2b) — already a project-wide dep
+
+#include <algorithm>
 #include <cstring>
+#include <set>
 #include <string>
 
 // Full declarations of the sub-object types owned by Agent 2 (§5.2/§5.3/§5.4)
@@ -428,7 +432,15 @@ std::array<uint8_t, 32> compute_rcm(const std::array<uint8_t, 32>& rseed) noexce
         }
         inputs[limb] = fp_from_u64(w);
     }
-    Digest d = poseidon2_hash_tagged(td::Slice(kDomainSepRcmV1, 9), inputs, 4);
+    // §3.1 tag "uno-rcm-v1" is 10 chars. (`kDomainSepRcmV1` is a
+    // null-terminated char[]; `std::strlen` gives the correct 10-byte
+    // length. A previous revision passed `9` here, truncating to
+    // "uno-rcm-v", which disagreed with the Rust wallet's rcm tag and
+    // silently produced a different cm. Fixed under K-genesis-distribution
+    // cross-impl parity.)
+    Digest d = poseidon2_hash_tagged(
+        td::Slice(kDomainSepRcmV1, std::strlen(kDomainSepRcmV1)),
+        inputs, 4);
     std::array<uint8_t, 32> out{};
     d.to_bytes({reinterpret_cast<char*>(out.data()), out.size()});
     return out;
@@ -711,6 +723,240 @@ UnoShardState build_genesis_state(const std::vector<GenesisNote>& notes) {
         dist.notes.emplace_back(std::move(copy));
     }
     return build_zerostate_state(dist);
+}
+
+// ---------------------------------------------------------------------------
+// §10.3 60 / 25 / 15 distribution builder (K-genesis-distribution)
+// ---------------------------------------------------------------------------
+//
+// Public entry: `build_genesis_notes_json`.
+//
+// Contract (design doc §10.3):
+//   Input  : three recipient lists (airdrop / treasury / team), each a
+//            sequence of (Address, nano-UNO value) pairs.
+//   Output : canonical `zerostate-genesis-notes.json` — the same file the
+//            K-genesis-loader `load_genesis_distribution` accepts
+//            byte-for-byte.
+//
+// Steps, in the order the task spec pins:
+//   1. Validate each list's sum matches the §10.3 category target
+//      (12,600,000 / 5,250,000 / 3,150,000 UNO × 10^9).
+//   2. Reject duplicate addresses (compared on the 1259-byte payload).
+//   3. Sort each list by BLAKE2b-256(address_payload) ascending.
+//   4. Concatenate airdrop || treasury || team → canonical index `i`.
+//   5. For each entry:
+//        rseed[i] = BLAKE2b-256(kGenesisRseedTagV1 || u32_be(i))
+//        cm[i]    = Poseidon2("uno-cm-v1",
+//                             d, pk_d, ivk_commitment, value,
+//                             Poseidon2("uno-rcm-v1", rseed[i]))
+//   6. Emit JSON via dump_genesis_distribution (same writer the loader
+//      test already pins for byte output).
+
+namespace {
+
+// Build the 1259-byte flat address payload in §2.6 layout.
+std::array<uint8_t, ::uno_workchain::crypto::kAddressPayloadBytes>
+    flatten_address(const GenesisAddress& addr) {
+    constexpr std::size_t N = ::uno_workchain::crypto::kAddressPayloadBytes;
+    std::array<uint8_t, N> out{};
+    std::memcpy(out.data() +  0, addr.diversifier.data(),     11);
+    std::memcpy(out.data() + 11, addr.pk_d_compressed.data(), 32);
+    std::memcpy(out.data() + 43, addr.ivk_commitment.data(),  32);
+    // pk_mlkem MUST be 1184 B (§2.6); validate_recipient below rejects shorter.
+    if (addr.pk_mlkem.size() == 1184) {
+        std::memcpy(out.data() + 75, addr.pk_mlkem.data(), 1184);
+    }
+    return out;
+}
+
+static_assert(::uno_workchain::crypto::kAddressPayloadBytes == 1259,
+              "address payload layout changed — rehash the canonical "
+              "genesis sort");
+
+td::Status validate_recipient(const DistributionRecipient& r,
+                              const char* list_name, size_t idx) {
+    if (r.address.pk_mlkem.size() != 1184) {
+        return td::Status::Error(PSLICE()
+            << "uno/genesis: " << list_name << "[" << idx
+            << "] pk_mlkem length " << r.address.pk_mlkem.size()
+            << " != 1184 (§2.6)");
+    }
+    if (r.value_nano == 0) {
+        return td::Status::Error(PSLICE()
+            << "uno/genesis: " << list_name << "[" << idx
+            << "] value_nano == 0 (rejected — zero-value notes pollute "
+               "the commitment tree without funding anyone)");
+    }
+    return td::Status::OK();
+}
+
+td::Result<uint64_t> sum_category(
+        const std::vector<DistributionRecipient>& list,
+        const char* list_name) {
+    uint64_t total = 0;
+    for (size_t i = 0; i < list.size(); ++i) {
+        TRY_STATUS(validate_recipient(list[i], list_name, i));
+        if (total > UINT64_MAX - list[i].value_nano) {
+            return td::Status::Error(PSLICE()
+                << "uno/genesis: " << list_name
+                << " sum overflow at index " << i);
+        }
+        total += list[i].value_nano;
+    }
+    return total;
+}
+
+}  // namespace
+
+std::array<uint8_t, 32> canonical_address_hash(const GenesisAddress& addr) {
+    auto flat = flatten_address(addr);
+    std::array<uint8_t, 32> out{};
+    // Untagged BLAKE2b-256 over the raw address payload. Untagged chosen
+    // deliberately — the sort key is an internal ordering primitive, not
+    // a cryptographic commitment; a tag would only add ceremony without
+    // changing the collision-resistance bound.
+    crypto_generichash_state st;
+    crypto_generichash_init(&st, nullptr, 0, 32);
+    crypto_generichash_update(&st, flat.data(), flat.size());
+    crypto_generichash_final(&st, out.data(), out.size());
+    return out;
+}
+
+std::array<uint8_t, 32> derive_genesis_rseed(uint32_t address_index) {
+    std::array<uint8_t, 32> out{};
+    // rseed[i] = BLAKE2b-256("uno-genesis-rseed-v1" || u32_be(i))
+    //
+    // u32 big-endian so the wire layout matches the Rust-side derivation
+    // byte-for-byte; the 4-byte index width accommodates up to
+    // ~4.3 billion recipients (more than enough for any plausible 21 M
+    // UNO airdrop).
+    uint8_t idx_be[4] = {
+        static_cast<uint8_t>((address_index >> 24) & 0xFF),
+        static_cast<uint8_t>((address_index >> 16) & 0xFF),
+        static_cast<uint8_t>((address_index >>  8) & 0xFF),
+        static_cast<uint8_t>((address_index >>  0) & 0xFF),
+    };
+    crypto_generichash_state st;
+    crypto_generichash_init(&st, nullptr, 0, 32);
+    crypto_generichash_update(&st,
+                              reinterpret_cast<const uint8_t*>(kGenesisRseedTagV1),
+                              std::strlen(kGenesisRseedTagV1));
+    crypto_generichash_update(&st, idx_be, 4);
+    crypto_generichash_final(&st, out.data(), out.size());
+    return out;
+}
+
+td::Result<std::string> build_genesis_notes_json(
+        const GenesisDistributionInputs& inputs) {
+    if (sodium_init() < 0) {
+        return td::Status::Error("uno/genesis: libsodium init failed");
+    }
+
+    // --- Step 1: per-category sums -----------------------------------------
+    TRY_RESULT(airdrop_sum,  sum_category(inputs.airdrop,  "airdrop"));
+    TRY_RESULT(treasury_sum, sum_category(inputs.treasury, "treasury"));
+    TRY_RESULT(team_sum,     sum_category(inputs.team,     "team"));
+
+    if (inputs.airdrop.empty()) {
+        return td::Status::Error("uno/genesis: airdrop list is empty");
+    }
+    if (airdrop_sum != kGenesisAirdropNano) {
+        return td::Status::Error(PSLICE()
+            << "uno/genesis: airdrop sum " << airdrop_sum
+            << " != §10.3 target " << kGenesisAirdropNano
+            << " (12,600,000 × 10^9 nano-UNO)");
+    }
+    if (treasury_sum != kGenesisTreasuryNano) {
+        return td::Status::Error(PSLICE()
+            << "uno/genesis: treasury sum " << treasury_sum
+            << " != §10.3 target " << kGenesisTreasuryNano
+            << " (5,250,000 × 10^9 nano-UNO)");
+    }
+    if (team_sum != kGenesisTeamNano) {
+        return td::Status::Error(PSLICE()
+            << "uno/genesis: team sum " << team_sum
+            << " != §10.3 target " << kGenesisTeamNano
+            << " (3,150,000 × 10^9 nano-UNO)");
+    }
+    const uint64_t total = airdrop_sum + treasury_sum + team_sum;
+    if (total != kGenesisTotalSupplyNano) {
+        return td::Status::Error(PSLICE()
+            << "uno/genesis: total supply " << total
+            << " != §10.3 fixed supply " << kGenesisTotalSupplyNano);
+    }
+
+    // --- Step 2: duplicate-address check (across ALL three lists) ----------
+    std::set<std::array<uint8_t, ::uno_workchain::crypto::kAddressPayloadBytes>>
+        seen;
+    auto probe_dup = [&](const std::vector<DistributionRecipient>& list,
+                         const char* list_name) -> td::Status {
+        for (size_t i = 0; i < list.size(); ++i) {
+            auto flat = flatten_address(list[i].address);
+            if (!seen.insert(flat).second) {
+                return td::Status::Error(PSLICE()
+                    << "uno/genesis: duplicate address detected at "
+                    << list_name << "[" << i << "]");
+            }
+        }
+        return td::Status::OK();
+    };
+    TRY_STATUS(probe_dup(inputs.airdrop,  "airdrop"));
+    TRY_STATUS(probe_dup(inputs.treasury, "treasury"));
+    TRY_STATUS(probe_dup(inputs.team,     "team"));
+
+    // --- Step 3 + 4: sort each category, concatenate in order --------------
+    auto sort_by_address_hash = [](std::vector<DistributionRecipient> in) {
+        std::vector<std::pair<std::array<uint8_t, 32>,
+                              DistributionRecipient>> keyed;
+        keyed.reserve(in.size());
+        for (auto& r : in) {
+            keyed.emplace_back(canonical_address_hash(r.address),
+                               std::move(r));
+        }
+        std::sort(keyed.begin(), keyed.end(),
+                  [](const auto& a, const auto& b) {
+                      return a.first < b.first;
+                  });
+        std::vector<DistributionRecipient> out;
+        out.reserve(keyed.size());
+        for (auto& kv : keyed) out.emplace_back(std::move(kv.second));
+        return out;
+    };
+    auto airdrop_sorted  = sort_by_address_hash(inputs.airdrop);
+    auto treasury_sorted = sort_by_address_hash(inputs.treasury);
+    auto team_sorted     = sort_by_address_hash(inputs.team);
+
+    std::vector<DistributionRecipient> canonical;
+    canonical.reserve(airdrop_sorted.size() + treasury_sorted.size()
+                      + team_sorted.size());
+    for (auto& r : airdrop_sorted)  canonical.emplace_back(std::move(r));
+    for (auto& r : treasury_sorted) canonical.emplace_back(std::move(r));
+    for (auto& r : team_sorted)     canonical.emplace_back(std::move(r));
+
+    // --- Step 5: assign rseed, compute cm ----------------------------------
+    GenesisDistribution dist;
+    dist.chain_id = inputs.chain_id;
+    dist.notes.reserve(canonical.size());
+    dist.total_supply_nano = total;
+    for (size_t i = 0; i < canonical.size(); ++i) {
+        GenesisNote n;
+        n.recipient = std::move(canonical[i].address);
+        n.value     = canonical[i].value_nano;
+        n.rseed     = derive_genesis_rseed(static_cast<uint32_t>(i));
+
+        NoteCommitmentInputs nci{};
+        nci.d              = n.recipient.diversifier;
+        nci.pk_d_bytes     = n.recipient.pk_d_compressed;
+        nci.ivk_commitment = n.recipient.ivk_commitment;
+        nci.value          = n.value;
+        nci.rcm            = compute_rcm(n.rseed);
+        n.cm               = compute_note_commitment(nci);
+
+        dist.notes.emplace_back(std::move(n));
+    }
+
+    // --- Step 6: serialize via the loader-compatible writer ----------------
+    return dump_genesis_distribution(dist);
 }
 
 td::Result<std::string> dump_genesis_distribution(

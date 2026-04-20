@@ -13,7 +13,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
-use tosctl_uno::{address, balance, keygen, rpc_client, scan, send};
+use tosctl_uno::{address, balance, genesis_build, keygen, rpc_client, scan, send};
 
 /// Uno Workchain (wc=2) wallet CLI — P.6 foundation build.
 #[derive(Debug, Parser)]
@@ -39,6 +39,96 @@ enum Command {
     /// proof (M-P2 integration point) — the resulting tx will be rejected
     /// by any real validator until the Transfer AIR lands.
     Send(SendArgs),
+    /// Genesis-distribution tooling (§10.3 builder).
+    #[command(subcommand)]
+    Genesis(GenesisCmd),
+}
+
+#[derive(Debug, Subcommand)]
+enum GenesisCmd {
+    /// Build the canonical `zerostate-genesis-notes.json` from three CSV
+    /// recipient lists (airdrop.csv, treasury.csv, team.csv). Validates the
+    /// 60 / 25 / 15 split (§10.3) and emits the loader-compatible JSON.
+    Build(GenesisBuildArgs),
+}
+
+#[derive(Debug, clap::Args)]
+struct GenesisBuildArgs {
+    /// Path to airdrop CSV — each line is `<address_hex_1259_bytes>,<value_nano>`.
+    #[arg(long, required = true)]
+    airdrop: std::path::PathBuf,
+    /// Path to treasury CSV (same format as --airdrop).
+    #[arg(long, required = true)]
+    treasury: std::path::PathBuf,
+    /// Path to team CSV (same format as --airdrop).
+    #[arg(long, required = true)]
+    team: std::path::PathBuf,
+    /// Target chain_id: either `mainnet`, `testnet`, or a decimal / 0xhex u32.
+    #[arg(long, default_value = "testnet")]
+    chain_id: String,
+    /// Output path for the JSON. `-` writes to stdout.
+    #[arg(long, default_value = "-")]
+    out: String,
+}
+
+fn run_genesis_build(args: &GenesisBuildArgs) -> Result<()> {
+    let airdrop_text = std::fs::read_to_string(&args.airdrop)
+        .with_context(|| format!("reading {}", args.airdrop.display()))?;
+    let treasury_text = std::fs::read_to_string(&args.treasury)
+        .with_context(|| format!("reading {}", args.treasury.display()))?;
+    let team_text = std::fs::read_to_string(&args.team)
+        .with_context(|| format!("reading {}", args.team.display()))?;
+
+    let chain_id = parse_chain_id_arg(&args.chain_id)?;
+
+    let inputs = genesis_build::GenesisDistributionInputs {
+        chain_id,
+        airdrop: genesis_build::parse_recipient_csv(
+            &airdrop_text,
+            &args.airdrop.display().to_string(),
+        )?,
+        treasury: genesis_build::parse_recipient_csv(
+            &treasury_text,
+            &args.treasury.display().to_string(),
+        )?,
+        team: genesis_build::parse_recipient_csv(
+            &team_text,
+            &args.team.display().to_string(),
+        )?,
+    };
+
+    let json = genesis_build::build_genesis_notes_json(&inputs)?;
+
+    if args.out == "-" {
+        println!("{}", json);
+    } else {
+        std::fs::write(&args.out, &json)
+            .with_context(|| format!("writing {}", args.out))?;
+        eprintln!(
+            "wrote genesis-notes JSON ({} notes, chain_id=0x{:08X}) to {}",
+            inputs.airdrop.len() + inputs.treasury.len() + inputs.team.len(),
+            chain_id,
+            args.out
+        );
+    }
+    Ok(())
+}
+
+fn parse_chain_id_arg(s: &str) -> Result<u32> {
+    match s {
+        "mainnet" => Ok(genesis_build::CHAIN_ID_MAINNET),
+        "testnet" => Ok(genesis_build::CHAIN_ID_TESTNET),
+        other => {
+            if let Some(hex) = other.strip_prefix("0x").or_else(|| other.strip_prefix("0X")) {
+                u32::from_str_radix(hex, 16)
+                    .map_err(|e| anyhow!("invalid --chain-id hex {:?}: {}", other, e))
+            } else {
+                other
+                    .parse::<u32>()
+                    .map_err(|e| anyhow!("invalid --chain-id {:?}: {}", other, e))
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -309,6 +399,7 @@ fn main() -> Result<()> {
         Command::Balance(args)   => block_on(run_balance(&args)),
         Command::ChainInfo(args) => block_on(run_chain_info(&args)),
         Command::Send(args)      => block_on(run_send(&args)),
+        Command::Genesis(GenesisCmd::Build(args)) => run_genesis_build(&args),
     }
 }
 

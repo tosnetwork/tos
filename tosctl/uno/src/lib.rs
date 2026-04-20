@@ -26,6 +26,7 @@
 pub mod address;
 pub mod balance;
 pub mod gcs;
+pub mod genesis_build;
 pub mod hybrid_kem;
 pub mod keygen;
 pub mod poseidon2;

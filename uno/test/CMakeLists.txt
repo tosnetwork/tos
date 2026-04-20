@@ -195,5 +195,6 @@ endif()
 set_tests_properties(
     test-uno-public-input-fixture
     test-uno-state-transition-golden
+    test-uno-genesis-loader
     PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
