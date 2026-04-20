@@ -70,6 +70,13 @@ serde       = { version = "1", features = ["derive"] }
 # decision #42, §16). No OS entropy is touched on any code path we invoke.
 rand        = { version = "0.10", default-features = false, features = ["alloc", "std_rng"] }
 
+# K-aggregation-A1: used by `verifier_air` / `aggregator` modules for
+# off-AIR hashing — merkle-root over per-Tx public inputs, deterministic
+# stub proof bytes. Future Phase A2 may switch in-AIR hashes to Poseidon2
+# but BLAKE3 remains the off-AIR commitment primitive for the block-level
+# PI merkle root. Matches the C++ side (`uno/crypto/internal/blake3_adapter.h`).
+blake3 = "1.5"
+
 [build-dependencies]
 cbindgen = "0.29"
 
@@ -78,9 +85,10 @@ cbindgen = "0.29"
 hex = "0.4"
 # K-codec-parity: the codec_parity_goldens integration test hashes the
 # canonical tx_hash preimage with BLAKE3 (same backend as the C++ side via
-# `uno/crypto/internal/blake3_adapter.h`). Dev-only dependency — not pulled
-# into the production staticlib the C++ validator links against.
-blake3 = "1.5"
+# `uno/crypto/internal/blake3_adapter.h`). blake3 is now in the main
+# [dependencies] block for the aggregation scaffolding (K-aggregation-A1),
+# so this section entry is redundant — leaving the tag here as a comment
+# for the integration test that still relies on it.
 
 # ---------------------------------------------------------------------------
 # Benches (K-air-bench, K-fri-analysis)

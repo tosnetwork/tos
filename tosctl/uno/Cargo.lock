@@ -2300,6 +2300,7 @@ dependencies = [
 name = "uno_plonky3_ffi"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "cbindgen",
  "p3-air",
  "p3-challenger 0.5.1",

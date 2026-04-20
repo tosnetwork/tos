@@ -119,6 +119,18 @@
 // Default test expiry_block for witness-derived public inputs.
 #define EXPIRY_BLOCK_TEST 100000
 
+// Per-block maximum aggregated Transfer count. See design doc §2.3.
+//
+// Rationale: matches §1.4 success criterion #7 (15–30 TPS sustained)
+// at 1 s block cadence. A higher cap increases aggregator prove time
+// and may push the block production off the 1 s schedule.
+#define BLOCK_TX_CAP 30
+
+// Minimum aggregated Transfer count. Zero-Transfer blocks are legal
+// (empty block → empty aggregator proof), but the aggregator only
+// runs when N >= 1.
+#define BLOCK_TX_MIN 0
+
 // Result codes returned across the C ABI.
 //
 // These are stable wire values; renumbering is a breaking change. C++ side
