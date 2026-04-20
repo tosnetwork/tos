@@ -88,6 +88,12 @@ p3-symmetric     = { git = "https://github.com/Plonky3/Plonky3", rev = "6374a36f
 rand             = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
 zeroize          = { version = "1", features = ["zeroize_derive"] }
 
+# ---- Plonky3 prover (real Transfer AIR) ------------------------------------
+# K-P6-wire: the wallet now produces real STARK proofs via M-P2's §4.1-envelope
+# Transfer AIR (1..4 × 1..4 shape dispatch). Path dep: same pinned Plonky3 rev
+# as this crate's p3-* deps above; enforced transitively.
+uno_plonky3_ffi  = { path = "../../uno/plonky3-ffi" }
+
 [dev-dependencies]
 # Deterministic tests only; no network, no clock.
 tempfile = "3"
