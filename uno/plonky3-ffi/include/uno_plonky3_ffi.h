@@ -54,11 +54,24 @@
 // Domain tag for the nullifier Poseidon2.
 #define TAG_NF 105111591185708593
 
-// Global (tx-level) proxy columns: `[fee]`.
-#define GLOBAL_COLS 1
-
 // Depth of the note-commitment Merkle tree (§2.3 / §10.2 ConfigParam 84).
 #define MERKLE_DEPTH 32
+
+// Global (tx-level) columns:
+//
+// ```text
+//   [fee]                                            (1 col)
+//   [GS_ROW_SEL[0..MERKLE_DEPTH]]                    (32 cols, one-hot bank)
+//   [shared Cm/OutCm Poseidon2-16 block]             (316 cols, claim 2/6)
+//   [shared IvkCm/Nf Poseidon2-8 block]              (180 cols, claim 3/4)
+// ```
+//
+// The 32 row selectors are the AIR's clock for all three shared
+// Poseidon2 blocks: `GS_ROW_SEL[k]` is `1` exactly on trace row `k` for
+// `k ∈ 0..32`, `0` on rows 32..63. Step 1 (K-air-col-share) introduced
+// them for the Merkle row-loop; step 2 (K-air-col-step2) reuses the
+// same bank for the Cm/IvkCm/Nf row-loops — no extra selector columns.
+#define GLOBAL_COLS (((1 + MERKLE_DEPTH) + POSEIDON2_COLS_PER_INSTANCE_16) + POSEIDON2_COLS_PER_INSTANCE)
 
 // Width in bits of the bit-decomposition range check for `value_i` /
 // `value_j` (§4.2 claims 5 & 7). Each value is committed as 64 bit
@@ -80,15 +93,25 @@
 // u64 range-check on `value_j` (§4.2 claim 7).
 #define OUTPUT_PROXY_COLS (6 + VALUE_BITS)
 
-// Narrow (width-8) Poseidon2 instances per spend (Merkle×32 + IvkCm + Nf).
-// The Cm slot is width-16 and counted separately.
-#define POSEIDON2_NARROW_PER_SPEND (MERKLE_DEPTH + 2)
+// Narrow (width-8) Poseidon2 instances per spend after K-air-col-step2:
+// only the shared-Merkle slot remains. IvkCm + Nf are folded into a
+// single globally-shared row-looped block on rows 0..7.
+#define POSEIDON2_NARROW_PER_SPEND 1
 
-// Wide (width-16) Poseidon2 instances per spend (Cm only).
-#define POSEIDON2_WIDE_PER_SPEND 1
+// Per-spend variable columns that are NOT constant across rows (i.e., not
+// included in the transition "proxies are constant" equality). Currently:
+// `S_CURRENT` (running Merkle digest).
+#define SPEND_VAR_COLS 1
 
-// Wide (width-16) Poseidon2 instances per output (Cm only).
-#define POSEIDON2_WIDE_PER_OUTPUT 1
+// Wide (width-16) Poseidon2 instances per spend after K-air-col-step2:
+// zero (the claim-2 Cm compression is folded into the global shared
+// w=16 block on trace rows 0..3).
+#define POSEIDON2_WIDE_PER_SPEND 0
+
+// Wide (width-16) Poseidon2 instances per output after K-air-col-step2:
+// zero (the claim-6 Cm compression is folded into the global shared
+// w=16 block on trace rows 4..7).
+#define POSEIDON2_WIDE_PER_OUTPUT 0
 
 // Default test chain_id ("UNOT" LE).
 #define CHAIN_ID_TEST 1414483541

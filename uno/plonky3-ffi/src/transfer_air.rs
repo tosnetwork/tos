@@ -55,34 +55,46 @@
 //!   degree-1 field-element equality on row 0 over value proxies and the
 //!   `fee` PI.
 //!
-//! # Column layout (K-air-col-share step 1: Merkle row-loop)
+//! # Column layout (K-air-col-step2: wide-Cm + narrow-IvkCm/Nf row-loops)
 //!
 //! ```text
 //! width(n_s, n_o) = GLOBAL_COLS + n_s·per_spend_cols() + n_o·per_output_cols()
 //!
 //! GLOBAL_COLS       = 1 + MERKLE_DEPTH                 // fee + 32 row selectors
+//!                   + 1·POSEIDON2_COLS_PER_INSTANCE_16 // SHARED claim 2/6 Cm (w=16)
+//!                   + 1·POSEIDON2_COLS_PER_INSTANCE    // SHARED claim 3/4 IvkCm/Nf (w=8)
 //!
 //! per_spend_cols()  = SPEND_PROXY_COLS
 //!                   + 1                                // S_CURRENT (Merkle running val)
-//!                   + 1·POSEIDON2_COLS_PER_INSTANCE    // SHARED Merkle (w=8)
-//!                   + 1·POSEIDON2_COLS_PER_INSTANCE    // claim 3 IvkCm  (w=8)
-//!                   + 1·POSEIDON2_COLS_PER_INSTANCE_16 // claim 2 Cm     (w=16)
-//!                   + 1·POSEIDON2_COLS_PER_INSTANCE    // claim 4 Nf     (w=8)
-//! per_output_cols() = OUTPUT_PROXY_COLS + 1·POSEIDON2_COLS_PER_INSTANCE_16
+//!                   + 1·POSEIDON2_COLS_PER_INSTANCE    // SHARED Merkle (w=8, row-loop)
+//! per_output_cols() = OUTPUT_PROXY_COLS
 //! ```
 //!
-//! Merkle levels are folded across the first 32 trace rows of a single
-//! shared Poseidon2-w8 column block per spend. Row `k ∈ 0..32` carries
-//! level `k`; row 32..63 latch the final running value. A global
-//! one-hot row-selector (`GS_ROW_SEL[0..32]`) tags which level is live.
-//! Per spend, `S_CURRENT` carries the running Merkle digest, bound to
-//! `leaf` on row 0, advanced by each level's Poseidon2 output[0], and
-//! asserted equal to the tx-level anchor PI on the last row.
+//! Three row-looped shared Poseidon2 blocks fold all per-spend /
+//! per-output compressions across trace rows:
 //!
-//! This pass (K-air-col-share step 1) reduces width at (4, 4) from
-//! 27,837 cols to 5,553 cols — a ~80 % column reduction — while keeping
-//! trace height at `2^6 = 64` rows. See [`air_width`] for the exact
-//! cols-per-shape; numbers are tracked by `width_grows_with_shape`.
+//! - **Merkle (w=8, shared per spend)**: rows 0..31 carry the 32 Merkle
+//!   levels of that spend via a running-digest column `S_CURRENT`.
+//! - **Cm/OutCm (w=16, shared globally — K-air-col-step2 strategy b)**:
+//!   rows 0..3 carry spend `i`'s claim-2 Cm compression, rows 4..7 carry
+//!   output `j`'s claim-6 Cm compression. Row-0 bindings check `cm ==
+//!   leaf` (claim 2) or `cm == public_inputs[cm_j]` (claim 6) via
+//!   selector-gated equalities on rows 0..7.
+//! - **IvkCm/Nf (w=8, shared globally — K-air-col-step2 strategy c)**:
+//!   rows 0..3 carry spend `i`'s claim-3 IVK-commitment compression,
+//!   rows 4..7 carry spend `i`'s claim-4 nullifier compression. Row-4+i
+//!   binds the 4 nullifier limbs to `public_inputs[nf_i]`.
+//!
+//! All three blocks reuse the existing `GS_ROW_SEL[0..32]` one-hot row
+//! selector bank (which is `1` on row `k`, `0` elsewhere) — no new
+//! selector columns are added for the step-2 pass. The Poseidon2 sub-AIR
+//! still runs on every row; trace height stays at 64 rows.
+//!
+//! Width at (4, 4) after step 2 drops from 5,553 cols to 2,081 cols (a
+//! ~62.5 % additional reduction on top of the 80 % step-1 savings, for
+//! a cumulative ~92.5 % vs the pre-K-air-col-share baseline of 27,837
+//! cols). See [`air_width`] for the exact cols-per-shape; numbers are
+//! tracked by `width_grows_with_shape`.
 //!
 //! # Public-input vector (§4.3 step 4, decision #5)
 //!
@@ -219,16 +231,34 @@ pub const TAG_NF: u64 = 0x01_75_6E_6F_6E_66_76_31;
 /// Depth of the note-commitment Merkle tree (§2.3 / §10.2 ConfigParam 84).
 pub const MERKLE_DEPTH: usize = 32;
 
-/// Global (tx-level) columns: `[fee]` followed by `MERKLE_DEPTH` one-hot
-/// row selectors (K-air-col-share step 1 — Merkle row-loop). The selectors
-/// are the AIR's clock for the shared Merkle Poseidon2 column block:
-/// exactly one `GS_ROW_SEL[k]` is `1` on each of the first 32 rows, and
-/// all are `0` on rows 32..63. A shared row-selector saves `n_spends ·
-/// MERKLE_DEPTH` selector slots.
-pub const GLOBAL_COLS: usize = 1 + MERKLE_DEPTH;
+/// Global (tx-level) columns:
+///
+/// ```text
+///   [fee]                                            (1 col)
+///   [GS_ROW_SEL[0..MERKLE_DEPTH]]                    (32 cols, one-hot bank)
+///   [shared Cm/OutCm Poseidon2-16 block]             (316 cols, claim 2/6)
+///   [shared IvkCm/Nf Poseidon2-8 block]              (180 cols, claim 3/4)
+/// ```
+///
+/// The 32 row selectors are the AIR's clock for all three shared
+/// Poseidon2 blocks: `GS_ROW_SEL[k]` is `1` exactly on trace row `k` for
+/// `k ∈ 0..32`, `0` on rows 32..63. Step 1 (K-air-col-share) introduced
+/// them for the Merkle row-loop; step 2 (K-air-col-step2) reuses the
+/// same bank for the Cm/IvkCm/Nf row-loops — no extra selector columns.
+pub const GLOBAL_COLS: usize = 1
+    + MERKLE_DEPTH
+    + POSEIDON2_COLS_PER_INSTANCE_16 // shared Cm / OutCm (w=16) — claim 2/6
+    + POSEIDON2_COLS_PER_INSTANCE;   // shared IvkCm / Nf (w=8) — claim 3/4
 const GCOL_FEE: usize = 0;
 /// Base index of the 32 one-hot Merkle row-selector columns (§claim 1).
 const GS_ROW_SEL0: usize = 1;
+/// Base index of the shared Cm/OutCm width-16 Poseidon2 block
+/// (K-air-col-step2 strategy b — claim 2/6 row-loop on rows 0..7).
+const G_CM_SHARED_P2_16: usize = GS_ROW_SEL0 + MERKLE_DEPTH;
+/// Base index of the shared IvkCm/Nf width-8 Poseidon2 block
+/// (K-air-col-step2 strategy c — claim 3/4 row-loop on rows 0..7).
+const G_IVKCM_NF_SHARED_P2_8: usize =
+    G_CM_SHARED_P2_16 + POSEIDON2_COLS_PER_INSTANCE_16;
 
 /// Width in bits of the bit-decomposition range check for `value_i` /
 /// `value_j` (§4.2 claims 5 & 7). Each value is committed as 64 bit
@@ -251,11 +281,10 @@ pub const SPEND_PROXY_COLS: usize =
 /// u64 range-check on `value_j` (§4.2 claim 7).
 pub const OUTPUT_PROXY_COLS: usize = 6 + VALUE_BITS;
 
-/// Narrow (width-8) Poseidon2 instances per spend (shared Merkle + IvkCm + Nf).
-/// The Cm slot is width-16 and counted separately. After the K-air-col-share
-/// step-1 pass the 32 Merkle-level instances share one column block across
-/// rows, so the narrow slot count drops from `MERKLE_DEPTH + 2` (= 34) to 3.
-pub const POSEIDON2_NARROW_PER_SPEND: usize = 3;
+/// Narrow (width-8) Poseidon2 instances per spend after K-air-col-step2:
+/// only the shared-Merkle slot remains. IvkCm + Nf are folded into a
+/// single globally-shared row-looped block on rows 0..7.
+pub const POSEIDON2_NARROW_PER_SPEND: usize = 1;
 
 /// Per-spend variable columns that are NOT constant across rows (i.e., not
 /// included in the transition "proxies are constant" equality). Currently:
@@ -264,11 +293,15 @@ pub const SPEND_VAR_COLS: usize = 1;
 /// Offset of `S_CURRENT` within the per-spend variable block.
 const S_CURRENT: usize = 0;
 
-/// Wide (width-16) Poseidon2 instances per spend (Cm only).
-pub const POSEIDON2_WIDE_PER_SPEND: usize = 1;
+/// Wide (width-16) Poseidon2 instances per spend after K-air-col-step2:
+/// zero (the claim-2 Cm compression is folded into the global shared
+/// w=16 block on trace rows 0..3).
+pub const POSEIDON2_WIDE_PER_SPEND: usize = 0;
 
-/// Wide (width-16) Poseidon2 instances per output (Cm only).
-pub const POSEIDON2_WIDE_PER_OUTPUT: usize = 1;
+/// Wide (width-16) Poseidon2 instances per output after K-air-col-step2:
+/// zero (the claim-6 Cm compression is folded into the global shared
+/// w=16 block on trace rows 4..7).
+pub const POSEIDON2_WIDE_PER_OUTPUT: usize = 0;
 
 /// Trace height log2. 64 rows; Poseidon2 sub-AIR runs on every row.
 pub const LOG_TRACE_HEIGHT: usize = 6;
@@ -307,22 +340,22 @@ const O_VALUE_BIT0: usize = 6;
 // Shape-aware helpers
 // ---------------------------------------------------------------------------
 
-/// Per-spend block width: proxies + `S_CURRENT` + 1 shared width-8 Merkle
-/// slot + width-8 IvkCm + width-16 Cm + width-8 Nf.
+/// Per-spend block width after K-air-col-step2: proxies + `S_CURRENT` +
+/// the shared Merkle Poseidon2-w8 slot. IvkCm (w=8), Cm (w=16), Nf (w=8)
+/// are globally shared (row-looped on rows 0..7) and live in `GLOBAL_COLS`.
 #[inline]
 pub const fn per_spend_cols() -> usize {
     SPEND_PROXY_COLS
         + SPEND_VAR_COLS
         + POSEIDON2_COLS_PER_INSTANCE // shared Merkle (row-loop)
-        + POSEIDON2_COLS_PER_INSTANCE
-        + POSEIDON2_COLS_PER_INSTANCE_16
-        + POSEIDON2_COLS_PER_INSTANCE
 }
 
-/// Per-output block width: proxies + 1 width-16 Cm slot.
+/// Per-output block width after K-air-col-step2: proxies only; the
+/// claim-6 Cm compression is globally shared (row-looped on rows 4..7)
+/// and lives in `GLOBAL_COLS`.
 #[inline]
 pub const fn per_output_cols() -> usize {
-    OUTPUT_PROXY_COLS + POSEIDON2_COLS_PER_INSTANCE_16
+    OUTPUT_PROXY_COLS
 }
 
 /// Column width for a given `(n_spends, n_outputs)` shape.
@@ -363,16 +396,21 @@ pub fn derive_shape_from_public_inputs_len(
 
 // --- Column offsets -------------------------------------------------------
 //
+// Global block layout (K-air-col-step2):
+//     [GCOL_FEE : 1]                                (constant across rows)
+//   | [GS_ROW_SEL[0..32] : 32]                      (one-hot, rows 0..31)
+//   | [shared Cm/OutCm P2 (w=16) : 316]             (rows 0..3 = spends,
+//                                                    rows 4..7 = outputs)
+//   | [shared IvkCm/Nf P2 (w=8) : 180]              (rows 0..3 = IvkCm,
+//                                                    rows 4..7 = Nf)
+//
 // Spend block layout (contiguous within the spend-i region):
-//     [SPEND_PROXY_COLS]        (constant across rows)
-//   | [SPEND_VAR_COLS: S_CURRENT] (running Merkle digest)
-//   | [shared Merkle P2 (w=8) : 180]
-//   | [IvkCm (w=8) : 180]
-//   | [Cm (w=16) : 316]
-//   | [Nf (w=8) : 180]
+//     [SPEND_PROXY_COLS]                            (constant across rows)
+//   | [SPEND_VAR_COLS: S_CURRENT]                   (running Merkle digest)
+//   | [shared Merkle P2 (w=8) : 180]                (rows 0..31 = 32 levels)
 //
 // Output block layout:
-//     [OUTPUT_PROXY_COLS] | [Cm (width-16) : 316]
+//     [OUTPUT_PROXY_COLS]                           (constant across rows)
 
 #[inline]
 const fn spend_proxy_offset(i: usize) -> usize {
@@ -393,74 +431,48 @@ const fn spend_p2_offset(i: usize) -> usize {
     spend_var_offset(i) + SPEND_VAR_COLS
 }
 
-/// Offset of the IvkCm width-8 P2 slot within spend `i`.
-#[inline]
-const fn spend_p2_ivkcm_offset(i: usize) -> usize {
-    spend_p2_offset(i) + POSEIDON2_COLS_PER_INSTANCE
-}
-
-/// Offset of the Cm width-16 P2 slot within spend `i`.
-#[inline]
-const fn spend_p2_cm_offset(i: usize) -> usize {
-    spend_p2_ivkcm_offset(i) + POSEIDON2_COLS_PER_INSTANCE
-}
-
-/// Offset of the Nf width-8 P2 slot within spend `i`.
-#[inline]
-const fn spend_p2_nf_offset(i: usize) -> usize {
-    spend_p2_cm_offset(i) + POSEIDON2_COLS_PER_INSTANCE_16
-}
-
 #[inline]
 const fn output_proxy_offset(n_spends: usize, j: usize) -> usize {
     GLOBAL_COLS + n_spends * per_spend_cols() + j * per_output_cols()
 }
 
-#[inline]
-const fn output_p2_offset(n_spends: usize, j: usize) -> usize {
-    output_proxy_offset(n_spends, j) + OUTPUT_PROXY_COLS
-}
-
-/// Enumerated narrow (width-8) spend Poseidon2 slot. The Cm slot is
-/// width-16 and reached via `spend_p2_cm_group`.
+/// Enumerated narrow (width-8) per-spend Poseidon2 slot.
 ///
-/// After K-air-col-share step 1 the 32 Merkle levels share one column
-/// block and are selected by the global row selector; the enum variant
-/// `Merkle` now names that single shared slot.
+/// After K-air-col-step2 the per-spend narrow block holds only the shared
+/// Merkle row-loop; IvkCm and Nf moved to the globally-shared
+/// `G_IVKCM_NF_SHARED_P2_8` block on rows 0..3 and 4..7 respectively.
 #[derive(Copy, Clone)]
 enum SpendP2 {
     /// Shared Merkle-path width-8 Poseidon2 slot (row-loop — level `k` is
     /// on trace row `k`).
     Merkle,
-    /// Claim-3 IVK-commitment Poseidon2 (width-8).
-    IvkCm,
-    /// Claim-4 nullifier Poseidon2 (width-8).
-    Nf,
 }
 
 #[inline]
 fn spend_p2_group<T>(row: &[T], i: usize, s: SpendP2) -> &P2Cols<T> {
     let off = match s {
         SpendP2::Merkle => spend_p2_offset(i),
-        SpendP2::IvkCm => spend_p2_ivkcm_offset(i),
-        SpendP2::Nf => spend_p2_nf_offset(i),
     };
     let group: &[T] = &row[off..off + POSEIDON2_COLS_PER_INSTANCE];
     <[T] as Borrow<P2Cols<T>>>::borrow(group)
 }
 
+/// Globally-shared width-16 Poseidon2 block for claim 2 (spend Cm) on
+/// rows 0..3 and claim 6 (output Cm) on rows 4..7.
 #[inline]
-fn spend_p2_cm_group<T>(row: &[T], i: usize) -> &P2Cols16<T> {
-    let off = spend_p2_cm_offset(i);
-    let group: &[T] = &row[off..off + POSEIDON2_COLS_PER_INSTANCE_16];
+fn shared_cm_p2_group<T>(row: &[T]) -> &P2Cols16<T> {
+    let group: &[T] =
+        &row[G_CM_SHARED_P2_16..G_CM_SHARED_P2_16 + POSEIDON2_COLS_PER_INSTANCE_16];
     <[T] as Borrow<P2Cols16<T>>>::borrow(group)
 }
 
+/// Globally-shared width-8 Poseidon2 block for claim 3 (IvkCm) on rows
+/// 0..3 and claim 4 (Nf) on rows 4..7.
 #[inline]
-fn output_p2_group<T>(row: &[T], n_spends: usize, j: usize) -> &P2Cols16<T> {
-    let off = output_p2_offset(n_spends, j);
-    let group: &[T] = &row[off..off + POSEIDON2_COLS_PER_INSTANCE_16];
-    <[T] as Borrow<P2Cols16<T>>>::borrow(group)
+fn shared_ivkcm_nf_p2_group<T>(row: &[T]) -> &P2Cols<T> {
+    let group: &[T] = &row[G_IVKCM_NF_SHARED_P2_8
+        ..G_IVKCM_NF_SHARED_P2_8 + POSEIDON2_COLS_PER_INSTANCE];
+    <[T] as Borrow<P2Cols<T>>>::borrow(group)
 }
 
 #[inline]
@@ -644,20 +656,24 @@ where
             .collect();
 
         // ---- Poseidon2 sub-AIR on every row -----------------------------
-        // K-air-col-share step 1: 32 Merkle levels share ONE column block
-        // per spend; each level is bound to trace row `k ∈ 0..32` via the
-        // global one-hot row selector. The Poseidon2 sub-AIR runs every
-        // row regardless of row selector; padding rows (32..63) feed it
-        // the zero-input permutation witness.
+        //
+        // After K-air-col-step2 the three shared Poseidon2 blocks are:
+        //   * Per-spend shared Merkle (w=8): runs 32 levels on rows 0..31.
+        //   * Globally-shared Cm/OutCm (w=16): runs claim 2 on rows 0..3
+        //     (spend i on row i) and claim 6 on rows 4..7 (output j on
+        //     row 4+j). One physical column block, row-selector picks
+        //     which instance's input/output binding applies.
+        //   * Globally-shared IvkCm/Nf (w=8): runs claim 3 on rows 0..3
+        //     (spend i on row i) and claim 4 on rows 4..7 (spend i on
+        //     row 4+i). One physical column block, same gating story.
+        //
+        // The Poseidon2 sub-AIR runs on every row regardless of row
+        // selector; non-bound rows carry zero-input permutation witness.
         for i in 0..self.n_spends {
             eval_poseidon2(builder, spend_p2_group(local_slice, i, SpendP2::Merkle));
-            eval_poseidon2(builder, spend_p2_group(local_slice, i, SpendP2::IvkCm));
-            eval_poseidon2_16(builder, spend_p2_cm_group(local_slice, i));
-            eval_poseidon2(builder, spend_p2_group(local_slice, i, SpendP2::Nf));
         }
-        for j in 0..self.n_outputs {
-            eval_poseidon2_16(builder, output_p2_group(local_slice, self.n_spends, j));
-        }
+        eval_poseidon2_16(builder, shared_cm_p2_group(local_slice));
+        eval_poseidon2(builder, shared_ivkcm_nf_p2_group(local_slice));
 
         // ---- Global row-selector boot, shift, and tail constraints -----
         //
@@ -710,48 +726,24 @@ where
             // Global: fee proxy bound to PI.
             first.assert_eq(local_slice[GCOL_FEE], pi_fee);
 
-            // Per-spend claims 1/2/3/4.
+            // Per-spend row-0 bindings (claims 1 / 5 seeds; bit-decomp of
+            // path-bits, pos, value). Claims 2 / 3 / 4 are now row-gated
+            // on rows 0..7 via the K-air-col-step2 shared blocks and live
+            // in the separate "Row-gated shared-block bindings" section
+            // below.
             for i in 0..self.n_spends {
-                let leaf = spend_col(local_slice, i, S_LEAF);
-                let d = spend_col(local_slice, i, S_D);
                 let value = spend_col(local_slice, i, S_VALUE);
-                let ivk = spend_col(local_slice, i, S_IVK);
-                let ivk_commitment_claim =
-                    spend_col(local_slice, i, S_IVK_COMMITMENT_CLAIM);
-                let pk_d = spend_col(local_slice, i, S_PK_D);
-                let rcm = spend_col(local_slice, i, S_RCM);
-                let nk = spend_col(local_slice, i, S_NK);
                 let pos = spend_col(local_slice, i, S_POS);
+                let leaf = spend_col(local_slice, i, S_LEAF);
 
-                // Claim 1: 32-level Merkle path (§2.3) — row-looped.
-                //
-                // The 32 Merkle compressions now share a single Poseidon2
-                // column block per spend and run as one level per trace
-                // row, gated by the global row selector. Row-0 bindings
-                // in this block:
-                //  (a) `S_CURRENT` on row 0 starts at `leaf`.
-                //  (b) Each path-bit proxy `b_k ∈ {0, 1}` (bit constraint).
-                //  (f) `pos = Σ_k b_k · 2^k` (bit decomposition of pos).
-                //
-                // Per-row gated constraints (evaluated every row, activated
-                // by `is_merkle`):
-                //  (c) inputs[0] = (1-b_k)·cur + b_k·sib_k,
-                //      inputs[1] = b_k·cur + (1-b_k)·sib_k, where
-                //      (b_k, sib_k) are selected from the 32 proxies by
-                //      the one-hot `GS_ROW_SEL`.
-                //  (d) inputs[2..8] == 0 (padding).
-                //  (e) next.S_CURRENT = P2.output[0] on Merkle rows; latch
-                //      next.S_CURRENT = S_CURRENT on non-Merkle rows.
-                //
-                // Last-row binding: `S_CURRENT == anchor` — after row 31
-                // latches, every subsequent row carries the final anchor.
+                // Claim 1 seed: `S_CURRENT` on row 0 starts at `leaf`.
                 let s_current_row0 =
                     local_slice[spend_var_offset(i) + S_CURRENT];
                 first.assert_eq(s_current_row0.into(), leaf.into());
 
-                // Row-0 bit booleanity (32 bit proxies are constant across
-                // rows, so booleanity on row 0 + the transition "proxies
-                // are constant" check propagates to all rows).
+                // Row-0 bit booleanity for 32 path-bit proxies (they are
+                // constant across rows by the transition "proxies are
+                // constant" check, so booleanity on row 0 propagates).
                 for k in 0..MERKLE_DEPTH {
                     let b: AB::Var =
                         spend_col(local_slice, i, S_PATH_BIT0 + k);
@@ -771,22 +763,15 @@ where
                 }
                 first.assert_eq(pos.into(), pos_recon);
 
-                // Claim 5: explicit u64 range-check on `value_i` via
-                // 64-bit decomposition. Bit columns V_0..V_63 live at
-                // S_VALUE_BIT0. Constraints: each bit is Boolean and the
-                // weighted sum reconstructs `value`.
+                // Claim 5: explicit u64 range-check on `value_i`.
                 let mut value_recon: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
                 for k in 0..VALUE_BITS {
                     let b: AB::Var =
                         spend_col(local_slice, i, S_VALUE_BIT0 + k);
                     let b_expr: AB::Expr = b.into();
-                    // b·(1-b) == 0.
                     let one_minus_b =
                         AB::Expr::from(AB::F::from_u64(1)) - b_expr.clone();
                     first.assert_zero(b_expr.clone() * one_minus_b);
-                    // 2^k · b_k. k < 64 so `1u64 << k` fits in u64 for
-                    // k ≤ 63; for k = 64 it would overflow but we stop
-                    // at 63.
                     let weight = if k == 63 {
                         AB::F::from_u64(1u64 << 63)
                     } else {
@@ -795,91 +780,18 @@ where
                     value_recon = value_recon + AB::Expr::from(weight) * b_expr;
                 }
                 first.assert_eq(value.into(), value_recon);
-
-                // Claim 3: IVK-commitment.
-                let ivkcm = spend_p2_group::<AB::Var>(local_slice, i, SpendP2::IvkCm);
-                first.assert_eq(
-                    ivkcm.inputs[0].into(),
-                    AB::Expr::from(AB::F::from_u64(TAG_IVK_CM)),
-                );
-                first.assert_eq(ivkcm.inputs[1], ivk);
-                first.assert_eq(ivkcm.inputs[2], d); // d_i proxy
-                for k in 3..POSEIDON2_WIDTH {
-                    first.assert_zero(ivkcm.inputs[k].into());
-                }
-                let ivkcm_out =
-                    &ivkcm.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
-                first.assert_eq(ivkcm_out[0], ivk_commitment_claim);
-
-                // Claim 2: Note opening — wide-sponge Poseidon2-16 over the
-                // 15-fe input `(TAG_CM, d, pk_d, ivk_commitment, value, rcm)`
-                // per §3.2. Proxy-AIR keeps each field as a single fe slot;
-                // unused slots 6..16 are pinned to zero.
-                let cm = spend_p2_cm_group::<AB::Var>(local_slice, i);
-                first.assert_eq(
-                    cm.inputs[0].into(),
-                    AB::Expr::from(AB::F::from_u64(TAG_CM)),
-                );
-                first.assert_eq(cm.inputs[1], d);
-                first.assert_eq(cm.inputs[2], pk_d);
-                first.assert_eq(cm.inputs[3], ivk_commitment_claim);
-                first.assert_eq(cm.inputs[4], value);
-                first.assert_eq(cm.inputs[5], rcm);
-                for k in 6..POSEIDON2_WIDTH_16 {
-                    first.assert_zero(cm.inputs[k].into());
-                }
-                let cm_out = &cm.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
-                first.assert_eq(cm_out[0], leaf); // cm_i == leaf_i
-
-                // Claim 4: Nullifier.
-                let nf = spend_p2_group::<AB::Var>(local_slice, i, SpendP2::Nf);
-                first.assert_eq(
-                    nf.inputs[0].into(),
-                    AB::Expr::from(AB::F::from_u64(TAG_NF)),
-                );
-                first.assert_eq(nf.inputs[1], nk);
-                first.assert_eq(nf.inputs[2], leaf); // cm_i
-                first.assert_eq(nf.inputs[3], pos);
-                for k in 4..POSEIDON2_WIDTH {
-                    first.assert_zero(nf.inputs[k].into());
-                }
-                let nf_out = &nf.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
-                // Bind `nf_i` to all 4 limbs of the per-spend nullifier PI
-                // (§4.3 step 4). Width-8 Poseidon2 produces 8 output fes;
-                // we take the first 4 as the 256-bit nullifier.
-                for limb in 0..4 {
-                    first.assert_eq(nf_out[limb], pi_nfs[i][limb]);
-                }
             }
 
-            // Per-output claims 6/7.
+            // Per-output row-0 bindings (claim 7 bit-decomp of value_j,
+            // and the `cm_claim == pi_cms[j]` equality — proxies are
+            // constant across rows, so row-0 suffices for these).
             for j in 0..self.n_outputs {
                 let cm_claim = output_col(local_slice, self.n_spends, j, O_CM_CLAIM);
-                let d_out = output_col(local_slice, self.n_spends, j, O_D);
-                let pk_d_out = output_col(local_slice, self.n_spends, j, O_PK_D);
-                let ivk_cm_out =
-                    output_col(local_slice, self.n_spends, j, O_IVK_COMMITMENT);
                 let value_out = output_col(local_slice, self.n_spends, j, O_VALUE);
-                let rcm_out = output_col(local_slice, self.n_spends, j, O_RCM);
 
-                // Claim 6: wide-sponge Poseidon2-16, same shape as claim 2.
-                let cm_p2 = output_p2_group::<AB::Var>(local_slice, self.n_spends, j);
-                first.assert_eq(
-                    cm_p2.inputs[0].into(),
-                    AB::Expr::from(AB::F::from_u64(TAG_CM)),
-                );
-                first.assert_eq(cm_p2.inputs[1], d_out);
-                first.assert_eq(cm_p2.inputs[2], pk_d_out);
-                first.assert_eq(cm_p2.inputs[3], ivk_cm_out);
-                first.assert_eq(cm_p2.inputs[4], value_out);
-                first.assert_eq(cm_p2.inputs[5], rcm_out);
-                for k in 6..POSEIDON2_WIDTH_16 {
-                    first.assert_zero(cm_p2.inputs[k].into());
-                }
-                let cm_p2_out =
-                    &cm_p2.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
-                first.assert_eq(cm_p2_out[0], cm_claim);
-                // Bind cm_j to limb 0 of the output-commitment PI.
+                // Claim 6 (output half): bind the per-output `cm_claim`
+                // proxy to PI. The `cm_claim = Poseidon2(...)` half of
+                // claim 6 is gated on row 4+j via the shared wide block.
                 first.assert_eq(cm_claim, pi_cms[j]);
 
                 // Claim 7: explicit u64 range-check on `value_j`.
@@ -917,6 +829,234 @@ where
             }
             sum = sum - local_slice[GCOL_FEE].into();
             first.assert_zero(sum);
+        }
+
+        // ---- Row-gated shared-block bindings (K-air-col-step2) ---------
+        //
+        // The two globally-shared Poseidon2 blocks (wide Cm + narrow
+        // IvkCm/Nf) host up to 4 + 4 = 8 distinct instances on the first
+        // 8 trace rows. On row `r`, `GS_ROW_SEL[r] == 1` and we want:
+        //
+        //   Wide Cm block (w=16):
+        //     row i (i ∈ 0..n_spends): inputs = (TAG_CM, d_i, pk_d_i,
+        //       ivk_commitment_claim_i, value_i, rcm_i, 0*10); output[0]
+        //       == leaf_i (claim 2 half — `cm == leaf`).
+        //     row 4+j (j ∈ 0..n_outputs): inputs = (TAG_CM, d_j, pk_d_j,
+        //       ivk_commitment_j, value_j, rcm_j, 0*10); output[0] ==
+        //       cm_claim_j (claim 6 half — `cm == Poseidon2(...)`).
+        //
+        //   Narrow IvkCm/Nf block (w=8):
+        //     row i (i ∈ 0..n_spends): inputs = (TAG_IVK_CM, ivk_i, d_i,
+        //       0*5); output[0] == ivk_commitment_claim_i (claim 3).
+        //     row 4+i (i ∈ 0..n_spends): inputs = (TAG_NF, nk_i, leaf_i,
+        //       pos_i, 0*4); output[0..4] == pi_nfs[i] (claim 4, full
+        //       256-bit nullifier).
+        //
+        // For rows that are NOT bound to any instance (e.g., row 4+i for
+        // i ≥ n_spends, or rows 8..63), we emit no constraint — the
+        // prover fills a zero-input permutation witness which satisfies
+        // the Poseidon2 sub-AIR trivially.
+        //
+        // `GS_ROW_SEL` is one-hot with exactly one `1` on rows 0..31 (see
+        // the row-selector shift-register constraint). Each row-gated
+        // equality `sel_r · (a - b) == 0` is degree 2.
+        {
+            let shared_cm = shared_cm_p2_group::<AB::Var>(local_slice);
+            let shared_cm_out =
+                &shared_cm.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
+            let shared_ivkcm_nf =
+                shared_ivkcm_nf_p2_group::<AB::Var>(local_slice);
+            let shared_ivkcm_nf_out = &shared_ivkcm_nf.ending_full_rounds
+                [POSEIDON2_HALF_FULL_ROUNDS - 1]
+                .post;
+
+            // --- Wide Cm block: spend row-0..(n_spends-1) bindings ------
+            for i in 0..self.n_spends {
+                let sel: AB::Expr = local_slice[GS_ROW_SEL0 + i].into();
+                let leaf = spend_col::<AB::Var>(local_slice, i, S_LEAF);
+                let d = spend_col::<AB::Var>(local_slice, i, S_D);
+                let pk_d = spend_col::<AB::Var>(local_slice, i, S_PK_D);
+                let ivk_commitment_claim = spend_col::<AB::Var>(
+                    local_slice,
+                    i,
+                    S_IVK_COMMITMENT_CLAIM,
+                );
+                let value = spend_col::<AB::Var>(local_slice, i, S_VALUE);
+                let rcm = spend_col::<AB::Var>(local_slice, i, S_RCM);
+
+                // inputs[0] = TAG_CM
+                builder.assert_zero(
+                    sel.clone()
+                        * (AB::Expr::from(shared_cm.inputs[0])
+                            - AB::Expr::from(AB::F::from_u64(TAG_CM))),
+                );
+                // inputs[1..6] = d, pk_d, ivk_commitment_claim, value, rcm
+                builder.assert_zero(
+                    sel.clone()
+                        * (AB::Expr::from(shared_cm.inputs[1]) - d.into()),
+                );
+                builder.assert_zero(
+                    sel.clone()
+                        * (AB::Expr::from(shared_cm.inputs[2]) - pk_d.into()),
+                );
+                builder.assert_zero(
+                    sel.clone()
+                        * (AB::Expr::from(shared_cm.inputs[3])
+                            - ivk_commitment_claim.into()),
+                );
+                builder.assert_zero(
+                    sel.clone()
+                        * (AB::Expr::from(shared_cm.inputs[4]) - value.into()),
+                );
+                builder.assert_zero(
+                    sel.clone()
+                        * (AB::Expr::from(shared_cm.inputs[5]) - rcm.into()),
+                );
+                for k in 6..POSEIDON2_WIDTH_16 {
+                    builder.assert_zero(
+                        sel.clone() * AB::Expr::from(shared_cm.inputs[k]),
+                    );
+                }
+                // Claim 2 output binding: `cm == leaf_i`.
+                builder.assert_zero(
+                    sel * (AB::Expr::from(shared_cm_out[0]) - leaf.into()),
+                );
+            }
+
+            // --- Wide Cm block: output rows 4..(4+n_outputs-1) bindings -
+            for j in 0..self.n_outputs {
+                let sel: AB::Expr = local_slice[GS_ROW_SEL0 + 4 + j].into();
+                let cm_claim = output_col::<AB::Var>(
+                    local_slice,
+                    self.n_spends,
+                    j,
+                    O_CM_CLAIM,
+                );
+                let d = output_col::<AB::Var>(local_slice, self.n_spends, j, O_D);
+                let pk_d =
+                    output_col::<AB::Var>(local_slice, self.n_spends, j, O_PK_D);
+                let ivk_cm = output_col::<AB::Var>(
+                    local_slice,
+                    self.n_spends,
+                    j,
+                    O_IVK_COMMITMENT,
+                );
+                let value_out =
+                    output_col::<AB::Var>(local_slice, self.n_spends, j, O_VALUE);
+                let rcm =
+                    output_col::<AB::Var>(local_slice, self.n_spends, j, O_RCM);
+
+                builder.assert_zero(
+                    sel.clone()
+                        * (AB::Expr::from(shared_cm.inputs[0])
+                            - AB::Expr::from(AB::F::from_u64(TAG_CM))),
+                );
+                builder.assert_zero(
+                    sel.clone()
+                        * (AB::Expr::from(shared_cm.inputs[1]) - d.into()),
+                );
+                builder.assert_zero(
+                    sel.clone()
+                        * (AB::Expr::from(shared_cm.inputs[2]) - pk_d.into()),
+                );
+                builder.assert_zero(
+                    sel.clone()
+                        * (AB::Expr::from(shared_cm.inputs[3]) - ivk_cm.into()),
+                );
+                builder.assert_zero(
+                    sel.clone()
+                        * (AB::Expr::from(shared_cm.inputs[4]) - value_out.into()),
+                );
+                builder.assert_zero(
+                    sel.clone()
+                        * (AB::Expr::from(shared_cm.inputs[5]) - rcm.into()),
+                );
+                for k in 6..POSEIDON2_WIDTH_16 {
+                    builder.assert_zero(
+                        sel.clone() * AB::Expr::from(shared_cm.inputs[k]),
+                    );
+                }
+                // Claim 6 output binding: `cm_claim == Poseidon2(...)`.
+                builder.assert_zero(
+                    sel * (AB::Expr::from(shared_cm_out[0]) - cm_claim.into()),
+                );
+            }
+
+            // --- Narrow IvkCm block: rows 0..(n_spends-1) --------------
+            for i in 0..self.n_spends {
+                let sel: AB::Expr = local_slice[GS_ROW_SEL0 + i].into();
+                let ivk = spend_col::<AB::Var>(local_slice, i, S_IVK);
+                let d = spend_col::<AB::Var>(local_slice, i, S_D);
+                let ivk_commitment_claim = spend_col::<AB::Var>(
+                    local_slice,
+                    i,
+                    S_IVK_COMMITMENT_CLAIM,
+                );
+
+                builder.assert_zero(
+                    sel.clone()
+                        * (AB::Expr::from(shared_ivkcm_nf.inputs[0])
+                            - AB::Expr::from(AB::F::from_u64(TAG_IVK_CM))),
+                );
+                builder.assert_zero(
+                    sel.clone()
+                        * (AB::Expr::from(shared_ivkcm_nf.inputs[1]) - ivk.into()),
+                );
+                builder.assert_zero(
+                    sel.clone()
+                        * (AB::Expr::from(shared_ivkcm_nf.inputs[2]) - d.into()),
+                );
+                for k in 3..POSEIDON2_WIDTH {
+                    builder.assert_zero(
+                        sel.clone() * AB::Expr::from(shared_ivkcm_nf.inputs[k]),
+                    );
+                }
+                // Claim 3 output binding: `ivk_commitment_claim == ...`.
+                builder.assert_zero(
+                    sel
+                        * (AB::Expr::from(shared_ivkcm_nf_out[0])
+                            - ivk_commitment_claim.into()),
+                );
+            }
+
+            // --- Narrow Nf block: rows 4..(4+n_spends-1) ---------------
+            for i in 0..self.n_spends {
+                let sel: AB::Expr = local_slice[GS_ROW_SEL0 + 4 + i].into();
+                let nk = spend_col::<AB::Var>(local_slice, i, S_NK);
+                let leaf = spend_col::<AB::Var>(local_slice, i, S_LEAF);
+                let pos = spend_col::<AB::Var>(local_slice, i, S_POS);
+
+                builder.assert_zero(
+                    sel.clone()
+                        * (AB::Expr::from(shared_ivkcm_nf.inputs[0])
+                            - AB::Expr::from(AB::F::from_u64(TAG_NF))),
+                );
+                builder.assert_zero(
+                    sel.clone()
+                        * (AB::Expr::from(shared_ivkcm_nf.inputs[1]) - nk.into()),
+                );
+                builder.assert_zero(
+                    sel.clone()
+                        * (AB::Expr::from(shared_ivkcm_nf.inputs[2]) - leaf.into()),
+                );
+                builder.assert_zero(
+                    sel.clone()
+                        * (AB::Expr::from(shared_ivkcm_nf.inputs[3]) - pos.into()),
+                );
+                for k in 4..POSEIDON2_WIDTH {
+                    builder.assert_zero(
+                        sel.clone() * AB::Expr::from(shared_ivkcm_nf.inputs[k]),
+                    );
+                }
+                // Claim 4: bind all 4 limbs of `nf_i` to the PI.
+                for limb in 0..4 {
+                    builder.assert_zero(
+                        sel.clone()
+                            * (AB::Expr::from(shared_ivkcm_nf_out[limb])
+                                - pi_nfs[i][limb].into()),
+                    );
+                }
+            }
         }
 
         // ---- Per-row Merkle row-loop constraints (K-air-col-share #1) ---
@@ -1847,32 +1987,40 @@ impl MvpWitness {
                 values.push(Goldilocks::from_u64(bit));
             }
 
-            for i in 0..n_s {
-                // Constant-across-rows spend proxies.
-                values.extend_from_slice(&spend_proxies[i]);
-                // S_CURRENT for this row.
-                values.push(s_current_vals[i][row_idx]);
-                // Shared Merkle P2 slot: level-`row_idx` compression on
-                // rows 0..31, zero-input permutation on rows 32..63.
-                values.extend_from_slice(&merkle_rows[i][row_idx]);
-                // IvkCm / Cm / Nf: real permutation witness on row 0 only.
-                if row_idx == 0 {
-                    values.extend_from_slice(&row0_spend_ivkcm[i]);
-                    values.extend_from_slice(&row0_spend_cm[i]);
-                    values.extend_from_slice(&row0_spend_nf[i]);
-                } else {
-                    values.extend_from_slice(&padding_p2); // IvkCm (w=8)
-                    values.extend_from_slice(&padding_p2_16); // Cm (w=16)
-                    values.extend_from_slice(&padding_p2); // Nf (w=8)
-                }
+            // Globally-shared Cm/OutCm (w=16) block:
+            //   row i (i ∈ 0..n_s): spend i's claim-2 witness
+            //   row 4+j (j ∈ 0..n_o): output j's claim-6 witness
+            //   else: zero-input permutation
+            if row_idx < n_s {
+                values.extend_from_slice(&row0_spend_cm[row_idx]);
+            } else if (4..4 + n_o).contains(&row_idx) {
+                values.extend_from_slice(&row0_out_cm[row_idx - 4]);
+            } else {
+                values.extend_from_slice(&padding_p2_16);
             }
+
+            // Globally-shared IvkCm/Nf (w=8) block:
+            //   row i (i ∈ 0..n_s): spend i's claim-3 (IvkCm) witness
+            //   row 4+i (i ∈ 0..n_s): spend i's claim-4 (Nf) witness
+            //   else: zero-input permutation
+            if row_idx < n_s {
+                values.extend_from_slice(&row0_spend_ivkcm[row_idx]);
+            } else if (4..4 + n_s).contains(&row_idx) {
+                values.extend_from_slice(&row0_spend_nf[row_idx - 4]);
+            } else {
+                values.extend_from_slice(&padding_p2);
+            }
+
+            // Per-spend block: proxies + S_CURRENT + per-spend shared
+            // Merkle P2 row-loop.
+            for i in 0..n_s {
+                values.extend_from_slice(&spend_proxies[i]);
+                values.push(s_current_vals[i][row_idx]);
+                values.extend_from_slice(&merkle_rows[i][row_idx]);
+            }
+            // Per-output block: proxies only (Cm moved to global block).
             for j in 0..n_o {
                 values.extend_from_slice(&output_proxies[j]);
-                if row_idx == 0 {
-                    values.extend_from_slice(&row0_out_cm[j]);
-                } else {
-                    values.extend_from_slice(&padding_p2_16);
-                }
             }
         }
 
