@@ -16,7 +16,15 @@
 # exit-status 0.
 
 add_executable(test-uno-transfer              test-transfer.cpp)
-add_executable(test-uno-determinism           test-determinism.cpp)
+# K-determinism-v2: test-uno-determinism now drives §12 P.5 4-node mempool
+# permutation against real `verify_transfer_serial` + apply-phase mutations on
+# A2's CommitmentTree / NullifierSet / AnchorWindow. Shares the K-p7-fixtures
+# valid-Transfer builder with test-uno-end-to-end and test-uno-mandatory-
+# negatives. Does NOT include state.h / cell-state.h — see the file-header
+# note in test-determinism.cpp for the ODR-collision rationale.
+add_executable(test-uno-determinism
+               test-determinism.cpp
+               fixtures/valid_transfer_fixture.cpp)
 add_executable(test-uno-filter                test-filter.cpp)
 # M-codec: round-trip encode/decode across the full 1..4 × 1..4 shape
 # envelope of §4.1. Pins the wire-codec invariant that unblocks §12 P.3
