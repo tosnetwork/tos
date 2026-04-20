@@ -83,10 +83,33 @@ add_library(uno_workchain STATIC ${UNO_SRC})
 
 target_include_directories(uno_workchain
   PUBLIC
-    ${CMAKE_SOURCE_DIR}             # for "uno/core/*.h", "uno/crypto/*.h", "uno/rpc/*.h"
-    ${CMAKE_SOURCE_DIR}/crypto      # for "block/*.h" (dispatcher header)
-    ${CMAKE_SOURCE_DIR}/crypto/vm   # for "vm/cells/*.h"
+    ${CMAKE_SOURCE_DIR}                                     # for "uno/core/*.h", "uno/crypto/*.h", "uno/rpc/*.h"
+    ${CMAKE_SOURCE_DIR}/crypto                              # for "block/*.h" (dispatcher header)
+    ${CMAKE_SOURCE_DIR}/crypto/vm                           # for "vm/cells/*.h"
+    ${CMAKE_CURRENT_SOURCE_DIR}/plonky3-ffi/include         # for cbindgen-generated "uno_plonky3_ffi.h"
 )
+
+# -----------------------------------------------------------------------------
+# liboqs detection for ML-KEM-768.
+#
+# A3's mlkem768.{h,cpp} supports two build modes:
+#   - Production: links against system `liboqs` (Open Quantum Safe).
+#   - Stub: -DUNO_MLKEM_STUB=1 — all ML-KEM ops fatal-abort at runtime.
+#
+# The stub keeps the skeleton build green on hosts without liboqs installed;
+# I-C / full-build CI should install liboqs-dev and drop the stub.
+# -----------------------------------------------------------------------------
+find_path(LIBOQS_INCLUDE_DIR oqs/oqs.h)
+find_library(LIBOQS_LIBRARY NAMES oqs)
+
+if (LIBOQS_INCLUDE_DIR AND LIBOQS_LIBRARY)
+  message(STATUS "uno_workchain: found liboqs at ${LIBOQS_LIBRARY}")
+  target_include_directories(uno_workchain PRIVATE ${LIBOQS_INCLUDE_DIR})
+  target_link_libraries(uno_workchain PUBLIC ${LIBOQS_LIBRARY})
+else()
+  message(STATUS "uno_workchain: liboqs not found — ML-KEM-768 built with UNO_MLKEM_STUB=1 (runtime abort)")
+  target_compile_definitions(uno_workchain PRIVATE UNO_MLKEM_STUB=1)
+endif()
 
 # -----------------------------------------------------------------------------
 # Rust FFI crate: uno_plonky3_ffi (Agent 4 owns the crate; agent-5 owns this

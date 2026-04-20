@@ -165,7 +165,7 @@ std::string dec(uint64_t v) {
     return std::to_string((unsigned long long)v);
 }
 
-std::string quoted(const std::string& s) {
+std::string quote_json(const std::string& s) {
     return "\"" + json_escape(s) + "\"";
 }
 
@@ -389,7 +389,7 @@ std::optional<RpcResult> handle_chain_info(const std::string& /*params*/,
     json += "\"chain_id\":"            + dec(snap.chain_id) + ",";
     json += "\"workchain_id\":"        + dec(snap.workchain_id) + ",";
     json += "\"head_seqno\":"          + dec(snap.head_seqno) + ",";
-    json += "\"executor\":"            + quoted(to_hex(snap.executor_address.data(), 32)) + ",";
+    json += "\"executor\":"            + quote_json(to_hex(snap.executor_address.data(), 32)) + ",";
     json += "\"active_schemes\":[\""   + to_hex(&snap.scheme_id, 1) + "\"],";
     json += "\"anchor_window_size\":"  + dec(snap.anchor_window_size);
     json += "}";
@@ -410,12 +410,12 @@ std::optional<RpcResult> handle_get_anchor(const std::string& /*params*/,
     std::string window = "[";
     for (size_t i = 0; i < snap.anchor_window.size(); ++i) {
         if (i) window += ",";
-        window += quoted(to_hex(snap.anchor_window[i].data(), 32));
+        window += quote_json(to_hex(snap.anchor_window[i].data(), 32));
     }
     window += "]";
 
     std::string json = "{";
-    json += "\"commitment_tree_root\":" + quoted(to_hex(snap.current_anchor_root.data(), 32)) + ",";
+    json += "\"commitment_tree_root\":" + quote_json(to_hex(snap.current_anchor_root.data(), 32)) + ",";
     json += "\"head_seqno\":"           + dec(snap.head_seqno) + ",";
     json += "\"anchor_window\":"        + window;
     json += "}";
@@ -442,7 +442,7 @@ std::optional<RpcResult> handle_get_anchor_at_seqno(const std::string& params,
     }
     std::string json = "{";
     json += "\"seqno\":"  + dec(seqno) + ",";
-    json += "\"anchor\":" + quoted(to_hex(anchor->data(), 32));
+    json += "\"anchor\":" + quote_json(to_hex(anchor->data(), 32));
     json += "}";
     return RpcResult{make_result(id, json), false};
 }
@@ -460,7 +460,7 @@ std::optional<RpcResult> handle_get_frontier(const std::string& /*params*/,
     std::string json = "{\"frontier\":[";
     for (size_t i = 0; i < frontier.size(); ++i) {
         if (i) json += ",";
-        json += quoted(to_hex(frontier[i].data(), 32));
+        json += quote_json(to_hex(frontier[i].data(), 32));
     }
     json += "],\"depth\":" + dec(frontier.size()) + "}";
     return RpcResult{make_result(id, json), false};
@@ -524,7 +524,7 @@ std::optional<RpcResult> handle_get_outputs_at_block(const std::string& params,
         // TLV layout.
         std::vector<uint8_t> tmp(page->outputs[i].bytes.begin(),
                                  page->outputs[i].bytes.end());
-        outs += ",\"bytes\":" + quoted(to_hex(tmp.data(), tmp.size())) + "}";
+        outs += ",\"bytes\":" + quote_json(to_hex(tmp.data(), tmp.size())) + "}";
     }
     outs += "]";
     std::string json = "{";
@@ -555,7 +555,7 @@ std::optional<RpcResult> handle_get_block_filter(const std::string& params,
     json += "\"seqno\":"           + dec(blob->block_seqno) + ",";
     json += "\"filter_tag_bits\":" + dec(blob->filter_tag_bits) + ",";
     json += "\"p\":"               + dec(blob->p_param) + ",";
-    json += "\"gcs\":"             + quoted(to_hex(tmp.data(), tmp.size()));
+    json += "\"gcs\":"             + quote_json(to_hex(tmp.data(), tmp.size()));
     json += "}";
     return RpcResult{make_result(id, json), false};
 }
@@ -603,13 +603,13 @@ std::optional<RpcResult> handle_get_outputs_for_ivk(const std::string& params,
         if (i) outs += ",";
         outs += "{\"index\":" + dec(matches[i].global_index);
         std::vector<uint8_t> tmp(matches[i].bytes.begin(), matches[i].bytes.end());
-        outs += ",\"bytes\":" + quoted(to_hex(tmp.data(), tmp.size())) + "}";
+        outs += ",\"bytes\":" + quote_json(to_hex(tmp.data(), tmp.size())) + "}";
     }
     outs += "]";
 
     std::string json = "{";
     json += "\"matches\":" + outs + ",";
-    json += "\"warning\":" + quoted(
+    json += "\"warning\":" + quote_json(
         "server-assisted scan: this RPC exposes your ivk to the server; "
         "server learns which on-chain outputs belong to you. "
         "Prefer compact-filter scan (uno_getBlockFilter + uno_getOutputsAtBlock).");
@@ -723,7 +723,7 @@ std::optional<RpcResult> handle_send_transfer(const std::string& params,
     }
 
     std::string hash_hex = to_hex(ar.tx_hash.data(), 32);
-    std::string json = "{\"tx_hash\":" + quoted(hash_hex) + "}";
+    std::string json = "{\"tx_hash\":" + quote_json(hash_hex) + "}";
     return RpcResult{make_result(id, json), false};
 }
 
@@ -758,7 +758,7 @@ std::optional<RpcResult> handle_get_transaction_status(const std::string& params
             break;
         case TxStatusKind::Rejected:
             json += "\"status\":\"rejected\"";
-            if (!st.reason.empty()) json += ",\"reason\":" + quoted(st.reason);
+            if (!st.reason.empty()) json += ",\"reason\":" + quote_json(st.reason);
             break;
         case TxStatusKind::Unknown:
         default:
@@ -791,7 +791,7 @@ std::optional<RpcResult> handle_subscribe(const std::string& params,
                                     "unknown subscription channel: " + channel), true};
     }
     uint64_t sub_id = global_uno_subscription_manager().subscribe(t);
-    std::string json = quoted(to_hex(reinterpret_cast<const uint8_t*>(&sub_id), sizeof(sub_id)));
+    std::string json = quote_json(to_hex(reinterpret_cast<const uint8_t*>(&sub_id), sizeof(sub_id)));
     return RpcResult{make_result(id, json), false};
 }
 
