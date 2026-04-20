@@ -34,6 +34,7 @@
 #include "uno/rpc/handlers.h"
 
 #include "uno/rpc/filter-service.h"
+#include "uno/rpc/metrics.h"
 #include "uno/rpc/subscriptions.h"
 
 #include <algorithm>
@@ -813,6 +814,24 @@ std::optional<RpcResult> handle_unsubscribe(const std::string& params,
     return RpcResult{make_result(id, ok ? "true" : "false"), false};
 }
 
+// ---- uno_getMetrics (K-uno-metrics) ---------------------------------------
+//
+// Returns the Prometheus text-format exposition of every `uno_*` metric as
+// a single JSON string field. No separate HTTP endpoint — operators scrape
+// this through the existing JSON-RPC facade and pipe the `metrics` field
+// into their time-series store. Content is self-describing (# HELP / # TYPE
+// preamble on every family).
+
+std::optional<RpcResult> handle_get_metrics(const std::string& /*params*/,
+                                             const std::string& id) {
+    std::string exposition = global_metrics_registry().render_prometheus();
+    std::string json = "{";
+    json += "\"content_type\":\"text/plain; version=0.0.4\",";
+    json += "\"metrics\":" + quote_json(exposition);
+    json += "}";
+    return RpcResult{make_result(id, json), false};
+}
+
 std::optional<RpcResult> handle_get_subscription(const std::string& params,
                                                   const std::string& id) {
     std::string sub_id_hex;
@@ -855,6 +874,7 @@ bool is_uno_rpc_method(const std::string& method) noexcept {
            method == "uno_estimateFee" ||
            method == "uno_sendTransfer" ||
            method == "uno_getTransactionStatus" ||
+           method == "uno_getMetrics" ||
            method == "uno_subscribe" ||
            method == "uno_unsubscribe" ||
            method == "uno_getSubscription";
@@ -888,6 +908,7 @@ std::optional<RpcResult> handle_uno_rpc(
     if (method == "uno_estimateFee")               return handle_estimate_fee(params, id);
     if (method == "uno_sendTransfer")              return handle_send_transfer(params, id);
     if (method == "uno_getTransactionStatus")      return handle_get_transaction_status(params, id);
+    if (method == "uno_getMetrics")                return handle_get_metrics(params, id);
     if (method == "uno_subscribe")                 return handle_subscribe(params, id);
     if (method == "uno_unsubscribe")               return handle_unsubscribe(params, id);
     if (method == "uno_getSubscription")           return handle_get_subscription(params, id);

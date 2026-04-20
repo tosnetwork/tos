@@ -58,6 +58,9 @@
 #include "uno/crypto/plonky3-verifier.h"
 #include "uno/crypto/ristretto255.h"
 #include "uno/crypto/schnorr-ristretto.h"
+#include "uno/rpc/metrics.h"
+
+#include <chrono>
 
 namespace uno_workchain {
 
@@ -241,7 +244,29 @@ Plonky3Holder& tls_plonky3_holder() {
 }  // anonymous namespace
 
 VerifyResult verify_transfer_serial(const UnoState& state, const Transfer& tx) {
-    return verify_transfer_with_holder(state, tx, tls_plonky3_holder());
+    // K-uno-metrics: record the §4.3 step 1-4 verify duration in the compute-
+    // phase histogram. This covers both the skeleton-build path (compute-phase
+    // fallback) and every worker in the parallel pool. The scoped timer in
+    // `verify_transfer()` (compute-phase.cpp) would otherwise double-count
+    // this interval when no pool is installed — we avoid that by ONLY timing
+    // here for the batched / per-worker path. compute-phase's timer is the
+    // single-tx fallback and runs exactly once per tx regardless.
+    //
+    // Caveat: when compute-phase.cpp's `verify_transfer()` falls through to
+    // this function (pool not installed), the compute-phase timer observes
+    // the full wall-clock including the function-call overhead here; we do
+    // NOT double-observe because compute-phase's timer is the only one that
+    // enters the histogram on the non-pool path. The pool path calls
+    // `verify_transfer_with_holder` directly (see worker_loop), so this
+    // serial-verify entry point is not on that hot path.
+    auto t0 = std::chrono::steady_clock::now();
+    VerifyResult r = verify_transfer_with_holder(state, tx, tls_plonky3_holder());
+    auto t1 = std::chrono::steady_clock::now();
+    double seconds =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count() / 1e9;
+    global_metrics_registry().observe_verify_transfer(
+        VerifyPhase::Compute, seconds);
+    return r;
 }
 
 // =============================================================================
@@ -323,8 +348,18 @@ private:
                     next_idx_.fetch_add(1, std::memory_order_relaxed);
                 if (idx >= n_txs_) break;
 
+                // K-uno-metrics: record per-tx verify latency on the pool hot
+                // path. Mirror the observation from `verify_transfer_serial`;
+                // compute-phase's top-level `verify_transfer()` does NOT time
+                // separately to avoid double-counting.
+                auto t0 = std::chrono::steady_clock::now();
                 VerifyResult r =
                     verify_transfer_with_holder(*state_, txs_[idx], holder);
+                auto t1 = std::chrono::steady_clock::now();
+                global_metrics_registry().observe_verify_transfer(
+                    VerifyPhase::Compute,
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        t1 - t0).count() / 1e9);
                 results_[idx] = r;
 
                 // Signal completion once the last task finishes. Must be

@@ -64,6 +64,8 @@ set(UNO_RPC_AGENT6
   rpc/handlers.cpp
   rpc/filter-service.cpp
   rpc/subscriptions.cpp
+  # K-uno-metrics: Prometheus text-format exposition backing uno_getMetrics.
+  rpc/metrics.cpp
 )
 
 # Assemble only files that are actually present on disk. Once every agent

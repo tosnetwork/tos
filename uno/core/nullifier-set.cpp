@@ -10,6 +10,8 @@
 #include "td/utils/logging.h"
 #include "vm/cells/CellBuilder.h"
 
+#include "uno/rpc/metrics.h"
+
 namespace uno_workchain {
 
 // ---------------------------------------------------------------------------
@@ -90,11 +92,23 @@ bool NullifierSet::contains(const Nullifier& nf) const {
 }
 
 bool NullifierSet::lru_contains(const Nullifier& nf) const noexcept {
-    if (lru_capacity_ == 0) return false;
+    if (lru_capacity_ == 0) {
+        // LRU disabled: count as a miss. Dashboard should show 0 hit rate
+        // when operators deliberately disable the LRU (advisory per §5.3).
+        global_metrics_registry().inc_nullifier_lru_misses();
+        return false;
+    }
     auto it = lru_index_.find(nf);
-    if (it == lru_index_.end()) return false;
+    if (it == lru_index_.end()) {
+        // K-uno-metrics: cold lookup; caller will fall through to the cell-
+        // dict walk. A collapsing hit rate is the §7.3 cold-dict-traversal
+        // alert signal.
+        global_metrics_registry().inc_nullifier_lru_misses();
+        return false;
+    }
     // Promote to front (most recent).
     lru_order_.splice(lru_order_.begin(), lru_order_, it->second);
+    global_metrics_registry().inc_nullifier_lru_hits();
     return true;
 }
 

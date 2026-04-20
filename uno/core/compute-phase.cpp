@@ -32,6 +32,7 @@
 
 #include "uno/core/parallel-verify.h"
 #include "uno/core/transaction.h"
+#include "uno/rpc/metrics.h"
 
 // =============================================================================
 // Namespace-scope forward declarations for the subscription hooks owned by
@@ -135,6 +136,10 @@ const char* verify_result_name(VerifyResult r) noexcept {
 namespace {
 
 VerifyResult verify_transfer(const UnoState& state, const Transfer& tx) {
+    // K-uno-metrics: per-tx compute-phase verify latency is measured one
+    // level down — either in `verify_transfer_serial` (non-pool path) or
+    // in the parallel-verify worker loop (pool path). Measuring here too
+    // would double-count, so this wrapper just forwards.
     ParallelVerifyPool* pool = global_parallel_verify_pool();
     if (pool == nullptr) {
         return verify_transfer_serial(state, tx);
@@ -148,6 +153,12 @@ VerifyResult verify_transfer(const UnoState& state, const Transfer& tx) {
 // =============================================================================
 
 void apply_transfer(UnoState& state, const Transfer& tx) {
+    // K-uno-metrics: measure the §4.3 step 5 apply duration. Apply is all
+    // in-memory state mutation; under healthy load this is sub-millisecond,
+    // but the histogram catches regressions in the commitment-tree /
+    // nullifier-LRU paths early.
+    ScopedApplyTimer _t(global_metrics_registry());
+
     // Declared-order application, matching §4.3 step 5. Stats are bumped once
     // at the end.
     for (const auto& o : tx.outputs) {
@@ -198,6 +209,9 @@ bool run_compute_phase(
     // --- Step 1: Decode Transfer wire body ---
     auto decoded = decode_transfer(in_msg_body);
     if (auto* err_ptr = std::get_if<TransferDecodeError>(&decoded)) {
+        // K-uno-metrics: count decode failures under the `decode_error` label.
+        global_metrics_registry().inc_transfers_rejected(
+            RejectReason::DecodeError);
         LOG(WARNING) << "uno-workchain: decode failed: " << err_ptr->reason;
         cp.skip_reason = block::ComputePhase::sk_bad_state;
         cp.success = false;
@@ -219,6 +233,10 @@ bool run_compute_phase(
     VerifyResult vr = verify_transfer(state, tx);
 
     if (vr != VerifyResult::Ok) {
+        // K-uno-metrics: bump the rejected counter with the reason label.
+        global_metrics_registry().inc_transfers_rejected(
+            reject_reason_from_verify_result(static_cast<int>(vr)));
+
         LOG(INFO) << "uno-workchain: reject tx=" << tx.tx_hash.to_hex()
                   << " reason=" << verify_result_name(vr);
         cp.success    = false;
@@ -245,6 +263,8 @@ bool run_compute_phase(
 
     // --- Step 3: apply (mutate) ---
     apply_transfer(state, tx);
+    // K-uno-metrics: count accepted Transfers.
+    global_metrics_registry().inc_transfers_admitted();
     LOG(INFO) << "uno-workchain: apply tx=" << tx.tx_hash.to_hex()
               << " spends=" << tx.spends.size()
               << " outputs=" << tx.outputs.size()
@@ -322,9 +342,18 @@ std::vector<VerifyResult> run_compute_phase_batch(
     // contributes zero state delta — the verify-before-mutate invariant
     // of §4.3 is preserved per-tx just as in the pre-P.3 per-tx
     // `run_compute_phase`.
+    //
+    // K-uno-metrics: same bookkeeping as `run_compute_phase`'s single-tx
+    // path — a batched collator path should report identical admitted /
+    // rejected counters.
+    auto& mreg = global_metrics_registry();
     for (std::size_t i = 0; i < n_txs; ++i) {
         if (results[i] == VerifyResult::Ok) {
             apply_transfer(state, txs[i]);
+            mreg.inc_transfers_admitted();
+        } else {
+            mreg.inc_transfers_rejected(reject_reason_from_verify_result(
+                static_cast<int>(results[i])));
         }
     }
 

@@ -117,6 +117,14 @@ add_executable(test-uno-subscriptions
                test-uno-subscriptions.cpp
                fixtures/valid_transfer_fixture.cpp)
 
+# K-uno-metrics: pins the Prometheus text-format exposition surfaced via
+# `uno_getMetrics`. Drives the three primitive types (counter / gauge /
+# histogram) through the registry, walks the `handle_uno_rpc` surface to
+# prove the JSON-RPC wrapper is wired, and forces a compute-phase decode
+# error to exercise the in-tree instrumentation hook. Lightweight — no
+# fixtures, no Plonky3 / Poseidon2 real path.
+add_executable(test-uno-metrics                  test-uno-metrics.cpp)
+
 # Build-only helper: regenerates uno/test/golden/state-transitions-v1.hex.
 # NOT registered with ctest — invocation is a manual operator step (see the
 # file's own doc comment). Links against uno_workchain for encode_transfer.
@@ -139,7 +147,8 @@ foreach(_t test-uno-transfer
            test-uno-nullifier-warm-lru
            test-uno-genesis-loader
            test-uno-bech32m-envelope
-           test-uno-subscriptions)
+           test-uno-subscriptions
+           test-uno-metrics)
   target_link_libraries(${_t} PRIVATE uno_workchain)
   target_include_directories(${_t} PRIVATE ${CMAKE_SOURCE_DIR})
   if (COMMAND tos_test)

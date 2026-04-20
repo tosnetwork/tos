@@ -18,6 +18,7 @@
       uno_estimateFee(n_spends, n_outputs)
       uno_sendTransfer(hex_blob)
       uno_getTransactionStatus(tx_hash_hex)
+      uno_getMetrics()                        -- K-uno-metrics; Prometheus exposition
 
     Subscriptions (`uno_subscribe` / `uno_unsubscribe`) are provided in
     rpc/subscriptions.{h,cpp} and mirror `eth_subscribe`.

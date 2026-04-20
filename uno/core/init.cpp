@@ -28,6 +28,7 @@
 
 #include "uno/rpc/handlers.h"
 #include "uno/rpc/filter-service.h"
+#include "uno/rpc/metrics.h"
 #include "uno/rpc/subscriptions.h"
 
 // `config-param.h` would pull in `workchain.h` which redeclares `kSchemeIdV1`
@@ -624,10 +625,20 @@ std::optional<OutputsPage> rpc_outputs_fetch_fn(uint64_t seqno,
 // ---------------------------------------------------------------------------
 
 AdmissionResult rpc_admission_check_fn(const uint8_t* tx_bytes, size_t tx_len) {
+    // K-uno-metrics: scoped timer for the §4.3a admission chain. A helper
+    // fires at each rejection site below so the rejected counter gets the
+    // correct reason label — the scoped timer handles the histogram.
+    ScopedVerifyTimer _vt(global_metrics_registry(), VerifyPhase::Admission);
+    auto bump_reject = [](AdmissionRejectReason reason) noexcept {
+        global_metrics_registry().inc_transfers_rejected(
+            reject_reason_from_admission(static_cast<int>(reason)));
+    };
+
     AdmissionResult r;
     if (!g_live) {
         r.ok = false;
         r.reason = AdmissionRejectReason::UnavailableState;
+        bump_reject(r.reason);
         return r;
     }
     auto decoded = decode_transfer_bytes(td::Slice(
@@ -636,27 +647,29 @@ AdmissionResult rpc_admission_check_fn(const uint8_t* tx_bytes, size_t tx_len) {
         (void)err;
         r.ok = false;
         r.reason = AdmissionRejectReason::Malformed;
+        bump_reject(r.reason);
         return r;
     }
     const Transfer& tx = std::get<Transfer>(decoded);
     std::memcpy(r.tx_hash.data(), tx.tx_hash.data(), 32);
 
     auto cfg = current_uno_config_view();
-    if (tx.version   != kTransferVersion)            { r.reason = AdmissionRejectReason::BadVersion;    r.ok = false; return r; }
-    if (tx.scheme_id != kSchemeIdV1)                 { r.reason = AdmissionRejectReason::BadVersion;    r.ok = false; return r; }
-    if (tx.chain_id  != cfg.chain_id)                { r.reason = AdmissionRejectReason::WrongChainId;  r.ok = false; return r; }
-    if (tx.spends.empty()  || tx.spends.size()  > cfg.max_spends_per_tx)  { r.reason = AdmissionRejectReason::TooManySpends;  r.ok = false; return r; }
-    if (tx.outputs.empty() || tx.outputs.size() > cfg.max_outputs_per_tx) { r.reason = AdmissionRejectReason::TooManyOutputs; r.ok = false; return r; }
+    if (tx.version   != kTransferVersion)            { r.reason = AdmissionRejectReason::BadVersion;    r.ok = false; bump_reject(r.reason); return r; }
+    if (tx.scheme_id != kSchemeIdV1)                 { r.reason = AdmissionRejectReason::BadVersion;    r.ok = false; bump_reject(r.reason); return r; }
+    if (tx.chain_id  != cfg.chain_id)                { r.reason = AdmissionRejectReason::WrongChainId;  r.ok = false; bump_reject(r.reason); return r; }
+    if (tx.spends.empty()  || tx.spends.size()  > cfg.max_spends_per_tx)  { r.reason = AdmissionRejectReason::TooManySpends;  r.ok = false; bump_reject(r.reason); return r; }
+    if (tx.outputs.empty() || tx.outputs.size() > cfg.max_outputs_per_tx) { r.reason = AdmissionRejectReason::TooManyOutputs; r.ok = false; bump_reject(r.reason); return r; }
 
     uint64_t required = cfg.min_fee_nano
                       + cfg.fee_per_byte_nano   * tx.wire_size_bytes
                       + cfg.fee_per_spend_nano  * tx.spends.size()
                       + cfg.fee_per_output_nano * tx.outputs.size();
-    if (tx.fee < required) { r.reason = AdmissionRejectReason::FeeBelowMin; r.ok = false; return r; }
+    if (tx.fee < required) { r.reason = AdmissionRejectReason::FeeBelowMin; r.ok = false; bump_reject(r.reason); return r; }
 
     if (!g_live->anchor_window_contains(tx.anchor)) {
         r.reason = AdmissionRejectReason::StaleAnchor;
         r.ok = false;
+        bump_reject(r.reason);
         return r;
     }
 
@@ -665,6 +678,7 @@ AdmissionResult rpc_admission_check_fn(const uint8_t* tx_bytes, size_t tx_len) {
         if (g_live->nullifier_is_spent(s.nullifier)) {
             r.reason = AdmissionRejectReason::NullifierSeen;
             r.ok = false;
+            bump_reject(r.reason);
             return r;
         }
     }
@@ -674,11 +688,11 @@ AdmissionResult rpc_admission_check_fn(const uint8_t* tx_bytes, size_t tx_len) {
         std::unordered_map<std::string,int> seen_nf, seen_cm;
         for (const auto& s : tx.spends) {
             std::string k(reinterpret_cast<const char*>(s.nullifier.data()), 32);
-            if (++seen_nf[k] > 1) { r.reason = AdmissionRejectReason::DuplicateNf; r.ok = false; return r; }
+            if (++seen_nf[k] > 1) { r.reason = AdmissionRejectReason::DuplicateNf; r.ok = false; bump_reject(r.reason); return r; }
         }
         for (const auto& o : tx.outputs) {
             std::string k(reinterpret_cast<const char*>(o.cm.data()), 32);
-            if (++seen_cm[k] > 1) { r.reason = AdmissionRejectReason::DuplicateCm; r.ok = false; return r; }
+            if (++seen_cm[k] > 1) { r.reason = AdmissionRejectReason::DuplicateCm; r.ok = false; bump_reject(r.reason); return r; }
         }
     }
 
@@ -759,6 +773,26 @@ void on_end_of_block_from_compute() {
         snap.block_seqno, hex_str, snap.tx_count, snap.note_count);
     global_uno_subscription_manager().notify_new_anchor(
         snap.block_seqno, hex_str);
+
+    // K-uno-metrics: refresh gauges + bump block-produced counter.
+    // End-of-block is the single natural cadence for gauge updates — every
+    // scrape after this fires will see the post-block state.
+    auto& mreg = global_metrics_registry();
+    mreg.inc_blocks_produced();
+    {
+        std::lock_guard<std::mutex> lk(g_live->mutex_);
+        mreg.set_anchor_window_size(
+            static_cast<uint64_t>(g_live->anchor_window().size()));
+        mreg.set_commitment_tree_next_position(
+            static_cast<uint64_t>(g_live->commitment_tree().next_position()));
+        mreg.set_nullifier_set_size(
+            static_cast<uint64_t>(g_live->nullifier_set().size()));
+    }
+    // Observe the compiled block-filter size. `snap.gcs_blob` is moved into
+    // the per-seqno index inside `finalize_block`, but we captured its size
+    // before rotation.
+    mreg.observe_block_filter_gcs_bytes(
+        static_cast<uint64_t>(snap.gcs_blob.size()));
 }
 
 // Exposed so tests can drive the hook directly (bypassing compute-phase).
