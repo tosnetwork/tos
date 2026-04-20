@@ -38,6 +38,8 @@
 #include <oqs/oqs.h>
 #endif
 
+#include <sodium.h>  // for the 32-byte-seed expand helper (BLAKE2b-512)
+
 namespace uno_workchain::crypto {
 
 #ifdef UNO_MLKEM_STUB
@@ -139,6 +141,33 @@ td::Result<MlKem768KeyPair> mlkem768_keygen_from_seed(td::Slice seed_64) {
 #endif
 }
 
+td::Result<MlKem768KeyPair> mlkem768_keygen_from_seed32(td::Slice seed_32) {
+    if (seed_32.size() != 32) {
+        return td::Status::Error("mlkem768: 32-byte seed required");
+    }
+    // Expand to 64 B via BLAKE2b-512 under a distinct tag. The tag is
+    // different from the stealth-address `"uno-mlkem-v1"` domain so that
+    // this helper cannot be accidentally used to derive the on-chain
+    // production keypair from a raw 32-byte seed without going through
+    // the stealth-address hierarchy.
+    constexpr const char kTag[] = "uno-mlkem-expand-v1";
+    constexpr size_t kTagLen = sizeof(kTag) - 1;
+
+    uint8_t expanded[64];
+    crypto_generichash_state st;
+    crypto_generichash_init(&st, nullptr, 0, 64);
+    crypto_generichash_update(&st,
+                              reinterpret_cast<const uint8_t*>(kTag), kTagLen);
+    crypto_generichash_update(&st,
+                              reinterpret_cast<const uint8_t*>(seed_32.data()),
+                              seed_32.size());
+    crypto_generichash_final(&st, expanded, 64);
+    td::Slice expanded_slice{reinterpret_cast<const char*>(expanded), 64};
+    auto out = mlkem768_keygen_from_seed(expanded_slice);
+    sodium_memzero(expanded, sizeof(expanded));
+    return out;
+}
+
 td::Result<MlKem768EncapResult> mlkem768_encap(const MlKem768PublicKey& pk) {
     const auto& K = kem_instance();
     if (!K.ok()) return td::Status::Error("mlkem768: liboqs ML-KEM-768 not available");
@@ -202,6 +231,9 @@ td::Result<MlKem768SharedSecret> mlkem768_decap(const MlKem768SecretKey& sk,
 
 td::Result<MlKem768KeyPair> mlkem768_keygen_from_seed(td::Slice) {
     stub_abort("keygen_from_seed");
+}
+td::Result<MlKem768KeyPair> mlkem768_keygen_from_seed32(td::Slice) {
+    stub_abort("keygen_from_seed32");
 }
 td::Result<MlKem768EncapResult> mlkem768_encap(const MlKem768PublicKey&) {
     stub_abort("encap");

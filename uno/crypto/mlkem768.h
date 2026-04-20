@@ -117,6 +117,13 @@ struct MlKem768KeyPair {
 /// seed length is wrong.
 td::Result<MlKem768KeyPair> mlkem768_keygen_from_seed(td::Slice seed_64);
 
+/// Convenience overload that accepts a 32-byte seed and deterministically
+/// expands it to the 64-byte (d || z) form used by FIPS 203 derand keygen:
+///     expanded = BLAKE2b-512("uno-mlkem-expand-v1" || seed_32)
+/// Intended for tests / CLI; production callers pass the full 64-byte
+/// output of the stealth-address seed derivation.
+td::Result<MlKem768KeyPair> mlkem768_keygen_from_seed32(td::Slice seed_32);
+
 /// Encapsulate a fresh shared secret under `pk`. Uses the library's
 /// internal randomness (which on Linux reads /dev/urandom) — sufficient for
 /// a one-shot per-output KEM ct. Returns `(ct, ss)`.
