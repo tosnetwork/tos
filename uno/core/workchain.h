@@ -46,12 +46,15 @@ constexpr uint32_t kVmMode = 0;
 /// ASCII "UNOT" = 0x554E4F54. Overridable at runtime via ConfigParam load.
 constexpr uint32_t kDefaultTestnetChainId = 0x554E4F54;
 
-/// Mainnet chain_id. **TBD** by network ops (§10.4); this sentinel means
-/// "not yet assigned". Boot code MUST refuse to produce blocks while the
-/// active chain_id equals this sentinel.
-// TODO(uno-design-gap): mainnet chain_id is TBD in §10.4. Callers that
-// consume ConfigParam 84 should treat this value as an error.
-constexpr uint32_t kMainnetChainIdUnassigned = 0x00000000;
+/// Alias of `kDefaultTestnetChainId`, kept for symmetry with
+/// `kChainIdMainnet` below. Decision #9 (§16) pins both values.
+constexpr uint32_t kChainIdTestnet = kDefaultTestnetChainId;
+
+/// Mainnet chain_id per decision #9 (§16) / §10.4.
+/// ASCII "UNOM" = 0x554E4F4D. Bound into every Uno tx transcript (§2.0).
+/// Independent from TOS `global_id` (ConfigParam 19): that is masterchain-
+/// level; `chain_id` here is wc=2-level, carried inside `UnoConfig`.
+constexpr uint32_t kChainIdMainnet = 0x554E4F4D;
 
 /// Returns the currently configured chain id. Boot flow: set once from
 /// ConfigParam 84 at node startup, otherwise falls back to testnet.
@@ -135,17 +138,31 @@ constexpr unsigned kMetaRefCount        = 2;
 constexpr unsigned kNullifierKeyBits = kHashBits;
 
 // ---------------------------------------------------------------------------
-// Default config values (§10.2). Anything marked TBD in the doc lands as a
-// compile-time default here, overridable by ConfigParam 84 at runtime.
+// Default config values (§10.2). Overridable by ConfigParam 84 at runtime.
 // ---------------------------------------------------------------------------
+//
+// Values below are pinned by decision #7 (§16) / §10.2 launch schedule:
+//
+//   min_fee_nano           = 100_000        (0.0001 UNO baseline)
+//   fee_per_byte_nano      = 10
+//   fee_per_spend_nano     = 50_000
+//   fee_per_output_nano    = 50_000
+//   max_spends_per_tx      = 4
+//   max_outputs_per_tx     = 4
+//   expiry_window_blocks   = 64             (~64 s at 1 s block rate)
+//   anchor_window_size     = 100            (kDefaultAnchorWindowSize, decision #15)
+//   tree_depth             = 32             (kTreeDepth, §2.3)
+//   nullifier_lru_capacity = 1_000_000      (kDefaultNullifierLruCapacity, advisory)
+//
+// The four fee fields are governance-upgradable via ConfigParam 11 voting
+// (§10.2). `max_spends_per_tx`, `max_outputs_per_tx`, and `tree_depth` are
+// consensus-binding (they pin AIR public-input shape) and must be treated
+// as frozen after genesis.
 
-// TODO(uno-design-gap): §10.2 fees and §10.3 genesis distribution / total
-// supply are marked TBD. These defaults are conservative placeholders that
-// the ConfigParam 84 loader will overwrite in production.
-constexpr uint64_t kDefaultMinFeeNano        = 1'000'000ULL;          // 0.001 UNO
-constexpr uint64_t kDefaultFeePerByteNano    = 100ULL;
-constexpr uint64_t kDefaultFeePerSpendNano   = 500'000ULL;
-constexpr uint64_t kDefaultFeePerOutputNano  = 500'000ULL;
+constexpr uint64_t kDefaultMinFeeNano        = 100'000ULL;            // 0.0001 UNO baseline
+constexpr uint64_t kDefaultFeePerByteNano    = 10ULL;
+constexpr uint64_t kDefaultFeePerSpendNano   = 50'000ULL;
+constexpr uint64_t kDefaultFeePerOutputNano  = 50'000ULL;
 constexpr uint8_t  kDefaultMaxSpendsPerTx    = 4;   // §10.2 hard cap
 constexpr uint8_t  kDefaultMaxOutputsPerTx   = 4;   // §10.2 hard cap
 constexpr uint32_t kDefaultExpiryWindowBlocks = 64; // §10.2, ~64 s at 1 s blocks

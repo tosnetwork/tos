@@ -46,9 +46,34 @@ struct UnoConfig {
     uint8_t  tree_depth           {static_cast<uint8_t>(kTreeDepth)};
     uint32_t expiry_window_blocks {kDefaultExpiryWindowBlocks};
 
-    /// Factory for the canonical v1 testnet config. Production mainnet
-    /// configs are populated by network ops — see `build_uno_config_cell`.
+    /// Factory for the canonical v1 testnet config. `chain_id` is the
+    /// testnet value (`kChainIdTestnet`, decision #9). All other fields
+    /// use the launch-schedule defaults (decision #7) from the
+    /// `kDefault*` constants in `workchain.h`.
+    ///
+    /// Production mainnet configs are populated by network ops — see
+    /// `build_uno_config_cell` and `default_mainnet()` below. The
+    /// in-memory default value (`UnoConfig{}`) stays testnet because
+    /// mainnet is not yet launched.
     static UnoConfig default_testnet() noexcept { return UnoConfig{}; }
+
+    /// Factory for the canonical v1 mainnet config (decision #9, §10.4).
+    /// Identical to `default_testnet()` except `chain_id == kChainIdMainnet`
+    /// ("UNOM"). Callers that want mainnet must opt in explicitly; the
+    /// plain default constructor stays testnet so accidental `UnoConfig{}`
+    /// usage cannot route a testnet node onto the mainnet transcript.
+    static UnoConfig default_mainnet() noexcept {
+        UnoConfig c{};
+        c.chain_id = kChainIdMainnet;
+        return c;
+    }
+
+    /// Select testnet vs mainnet launch defaults without touching any
+    /// other field. `use_mainnet_chain_id == false` is the safe default
+    /// for pre-launch images.
+    static UnoConfig default_launch(bool use_mainnet_chain_id) noexcept {
+        return use_mainnet_chain_id ? default_mainnet() : default_testnet();
+    }
 
     bool operator==(const UnoConfig& other) const noexcept {
         return version == other.version && chain_id == other.chain_id &&
