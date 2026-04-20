@@ -188,10 +188,14 @@ td::Ref<vm::Cell> build_uno_workchain_descr(
     cb.store_long(0, 8);                    // max_split
 
     // basic (1 bit) + active (1 bit) + accept_msgs (1 bit) + flags (13 bits)
-    // §10.1: basic=false, active=true, accept_msgs=true, flags=kUnoFlag.
-    // Packed: 0 1 1 <flags:13>
-    uint16_t flags13 = kUnoFlag & 0x1FFF;
-    uint16_t packed = static_cast<uint16_t>((0u << 15) | (1u << 14) |
+    // §10.1 + decision #8: basic=true (non-TVM workchains still set this bit
+    // — it distinguishes "first-class workchain" from the legacy extension
+    // format, not "is-TVM"), active=true, accept_msgs=true, flags=0. The
+    // TLB schema enforces `flags = 0` on WorkchainDescr; identity is carried
+    // by vm_version ("UNO1") only, not by a flag bit.
+    // Packed: 1 1 1 <flags:13=0>
+    uint16_t flags13 = 0;
+    uint16_t packed = static_cast<uint16_t>((1u << 15) | (1u << 14) |
                                             (1u << 13) | flags13);
     cb.store_long(packed, 16);
 
@@ -230,8 +234,8 @@ td::Ref<vm::Cell> build_uno_workchain_descr(
     }
     LOG(WARNING) << "uno/config: built WorkchainDescr for workchain "
                  << kWorkchainId << " (vm_version=0x" << std::hex
-                 << kVmVersion << std::dec << ", flags=0x" << std::hex
-                 << flags13 << std::dec << ")";
+                 << kVmVersion << std::dec << ", flags=0 per decision #8)";
+    (void)flags13;
     return cell;
 }
 

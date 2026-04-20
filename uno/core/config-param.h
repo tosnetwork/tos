@@ -99,14 +99,13 @@ bool parse_uno_config_cell(td::Ref<vm::Cell> cell, UnoConfig& out);
 
 /// Build the `WorkchainDescr` cell for the Uno workchain.  Identical in
 /// shape to `evm_workchain::build_evm_workchain_descr` but with wc=2
-/// identity (kVmVersion="UNO1", kUnoFlag).
+/// identity (kVmVersion="UNO1", flags=0 per decision #8).
 ///
-/// Per §10.1:
+/// Per §10.1 + decision #8:
 ///   - min_split = 0, max_split = 0 (single shard; global commitment tree)
-///   - basic     = false (no TVM)
+///   - basic     = true (first-class workchain; bit is not "is-TVM")
 ///   - active    = true, accept_msgs = true
-///   - flags     = kUnoFlag (new bit; exact assignment TBD in masterchain
-///                 flag registry — see workchain.h comment)
+///   - flags     = 0 (TLB enforces zero; identity carried by vm_version only)
 ///   - vm_version = kVmVersion, vm_mode = kVmMode
 ///
 /// @param zerostate_root_hash  Root hash of the wc=2 zerostate (from

@@ -34,13 +34,9 @@ constexpr int32_t kVmVersion = 0x554E4F31;
 /// vm_mode — Uno has no VM (§8.4). Reserved to 0 on the wc descriptor.
 constexpr uint32_t kVmMode = 0;
 
-/// vm_mode flag bit claimed for "no-VM PQ privacy" workchains. The exact bit
-/// assignment is TBD by network ops; reserving the lowest flag bit is a safe
-/// default until the full flag registry is drafted.
-// TODO(uno-design-gap): the doc mentions `flags = UNO_FLAG (new bit)` in
-// §10.1 but does not assign a specific bit. Default 0x1 until the masterchain
-// flag registry is defined.
-constexpr uint16_t kUnoFlag = 0x1;
+// Decision #8 (doc/uno-workchain.md §16): no UNO_FLAG. The WorkchainDescr
+// TLB enforces `flags = 0`; workchain identity is carried by `vm_version`
+// ("UNO1") only. No `kUnoFlag` constant exists. Do not reintroduce.
 
 // ---------------------------------------------------------------------------
 // Chain ids (§10.4)
