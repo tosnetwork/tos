@@ -22,8 +22,13 @@
 // Minimum output count — at least one output is required.
 #define MIN_OUTPUTS 1
 
-// Width of the Poseidon2 permutation used throughout this AIR.
+// Width of the narrow Poseidon2 permutation (Merkle / IvkCm / Nf).
 #define POSEIDON2_WIDTH 8
+
+// Width of the wide Poseidon2 permutation (claim 2 / claim 6 note-
+// commitment absorb; §3.2). The 15-fe input (`domain_tag, d, pk_d,
+// ivk_commitment, value, rcm`) needs a width-16 sponge.
+#define POSEIDON2_WIDTH_16 16
 
 // S-box degree (α=7 on Goldilocks).
 #define POSEIDON2_SBOX_DEGREE 7
@@ -31,11 +36,14 @@
 // Number of committed intermediate registers per S-box at degree 7.
 #define POSEIDON2_SBOX_REGISTERS 1
 
-// Number of full rounds per half. Total `R_F = 8`.
+// Number of full rounds per half. Total `R_F = 8`. Same for widths 8 / 16.
 #define POSEIDON2_HALF_FULL_ROUNDS GOLDILOCKS_POSEIDON2_HALF_FULL_ROUNDS
 
 // Number of partial rounds. `R_P = 22` for width-8 Goldilocks (§16 #42).
 #define POSEIDON2_PARTIAL_ROUNDS GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8
+
+// Number of partial rounds for width-16 Goldilocks. Also 22.
+#define POSEIDON2_PARTIAL_ROUNDS_16 GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_16
 
 // Domain tag for the IVK-commitment Poseidon2.
 #define TAG_IVK_CM 105111591102868323
@@ -60,11 +68,15 @@
 // Per-output proxy columns: cm_claim, d, pk_d, ivk_commitment, value, rcm.
 #define OUTPUT_PROXY_COLS 6
 
-// Poseidon2 instances per spend (Merkle×32 + IvkCm + Cm + Nf).
-#define POSEIDON2_PER_SPEND (MERKLE_DEPTH + 3)
+// Narrow (width-8) Poseidon2 instances per spend (Merkle×32 + IvkCm + Nf).
+// The Cm slot is width-16 and counted separately.
+#define POSEIDON2_NARROW_PER_SPEND (MERKLE_DEPTH + 2)
 
-// Poseidon2 instances per output (Cm only).
-#define POSEIDON2_PER_OUTPUT 1
+// Wide (width-16) Poseidon2 instances per spend (Cm only).
+#define POSEIDON2_WIDE_PER_SPEND 1
+
+// Wide (width-16) Poseidon2 instances per output (Cm only).
+#define POSEIDON2_WIDE_PER_OUTPUT 1
 
 // Default test chain_id ("UNOT" LE).
 #define CHAIN_ID_TEST 1414483541
@@ -206,6 +218,8 @@ typedef struct {
     // Capacity in bytes (needed for correct `Vec` reconstruction on free).
     uintptr_t cap;
 } Plonky3OwnedProof;
+
+
 
 
 
