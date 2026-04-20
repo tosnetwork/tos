@@ -24,6 +24,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <list>
 #include <unordered_map>
 
@@ -38,6 +39,13 @@ static constexpr std::size_t kNullifierBytes = 32;
 /// Default LRU capacity. 1 M entries ≈ 100 MB RAM (key 32 B + node-overhead).
 /// Pinned by decision #7 (§16) / §10.2; override via ConfigParam 84 at init time.
 static constexpr std::size_t kDefaultNullifierLruCapacity = 1'000'000;
+
+/// Default warm-snapshot cap — the maximum number of recent insertions we
+/// retain in-memory for `warm_lru()`. Matches the default LRU capacity
+/// (§5.9 / §10.2 `nullifier_lru_capacity = 1_000_000`) so a full warm-up
+/// after cold start can repopulate the LRU to capacity without the ring
+/// buffer truncating it first.
+static constexpr std::size_t kDefaultNullifierWarmSnapshotCap = 1'048'576;
 
 /// 256-bit nullifier value.
 using Nullifier = std::array<std::uint8_t, kNullifierBytes>;
@@ -105,7 +113,35 @@ class NullifierSet {
     void load_from_cell(td::Ref<vm::Cell> dict_root, std::uint64_t known_size = 0);
 
     /// Clear the LRU (e.g. on reorg). Does not touch the authoritative dict.
+    /// Does NOT clear the recent-insertions ring buffer used by `warm_lru()` —
+    /// a reorg rebuilds the LRU from the warm snapshot on the next verify
+    /// pass. Use `load_from_cell()` for the full-restart path.
     void clear_lru();
+
+    /// Warm the LRU with up to `k` recently-inserted nullifiers. Intended to
+    /// be called exactly once at validator cold-start (§5.9 / §4.3 step 2)
+    /// so the first blocks after restart don't pay the ~24-level cell-dict
+    /// walk per nullifier miss.
+    ///
+    /// Semantics: promotes the tail (most-recent) up-to-`k` entries of the
+    /// in-memory recent-insertions ring buffer into the LRU in oldest-to-
+    /// newest order, so the newest becomes the LRU front. A warm-snapshot
+    /// miss (e.g. after `load_from_cell()` where the ring buffer has been
+    /// cleared) falls back to a bounded dict traversal in dict-key order,
+    /// capped at `k` entries — still a correct warm-up because the LRU is
+    /// advisory (§5.3): a warmed subset only accelerates positive hits; it
+    /// can never mask a negative answer because `contains()` still consults
+    /// the dict on LRU miss. The fallback mode is flagged with a log line
+    /// so the operator sees the degraded path explicitly.
+    ///
+    /// Idempotent. `k == 0` and `k > warm_snapshot_cap_` are both safe
+    /// (the latter is capped to whatever the ring buffer actually holds).
+    void warm_lru(std::size_t k);
+
+    /// Current size of the warm-snapshot ring buffer. Exposed for tests /
+    /// diagnostics; never exceeds the `warm_snapshot_cap_` passed at
+    /// construction (or `kDefaultNullifierWarmSnapshotCap`).
+    std::size_t warm_snapshot_size() const noexcept { return recent_inserts_.size(); }
 
   private:
     /// Raw dict lookup (bypasses LRU). Returns true iff present on-cell.
@@ -128,6 +164,18 @@ class NullifierSet {
     mutable std::unordered_map<Nullifier,
                                std::list<Nullifier>::iterator,
                                NullifierByteHash> lru_index_;
+
+    // In-memory, non-consensus ring buffer of recently-inserted nullifiers
+    // used by `warm_lru()`. Populated by `insert()` on successful add; front
+    // is the oldest-retained, back is the newest. Capped at
+    // `warm_snapshot_cap_` entries — older inserts fall off and become
+    // unavailable for warm-up (but still correctly looked up via the dict).
+    //
+    // NOT serialised: across a validator restart the ring buffer is empty
+    // and `warm_lru()` falls back to a bounded dict traversal. This matches
+    // the §5.3 "LRU is advisory, not consensus" rule.
+    std::size_t warm_snapshot_cap_{kDefaultNullifierWarmSnapshotCap};
+    std::deque<Nullifier> recent_inserts_;
 };
 
 }  // namespace uno_workchain

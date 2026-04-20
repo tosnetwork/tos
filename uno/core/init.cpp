@@ -799,18 +799,29 @@ void init_uno_workchain(const std::string& db_root) {
     // don't force it here because v1 tests that never call verify shouldn't
     // pay the FRI-param materialization cost.
 
-    // Step 3. Warm the nullifier LRU. Empty at boot; real implementations can
-    // scan the last K blocks of inserts here. P.5 scope leaves this as a
-    // no-op — the first block will populate the LRU via apply_transfer.
-
-    // Step 4. Warm the nullifier LRU (M2, §5.3). Scan the last K blocks of
-    // nullifier inserts and prefill the LRU. K defaults to 1000; tunable
-    // via ConfigParam 84.
+    // Step 3. Warm the nullifier LRU (M2, §5.3 / §5.9). Pre-populate the
+    // LRU with up to K recently-inserted nullifiers so the first blocks
+    // after cold start don't pay the ~24-level cell-dict walk for every
+    // nullifier-miss path (§4.3 step 2).
     //
-    // TODO(uno-integration): call Agent 2's warm_nullifier_lru(K) once
-    // nullifier-set.h lands.
-    LOG(INFO) << "uno-workchain: nullifier LRU warm-up deferred "
-                 "(Agent 2 pending)";
+    // K source of truth: §10.2 pins `nullifier_lru_capacity = 1_000_000`
+    // in ConfigParam 84, but the current `UnoConfig` struct does not yet
+    // expose that field (it's documented but not wired through to the
+    // builder/parser). We therefore use a compile-time default here —
+    // 1 << 20 = 1,048,576 entries per §5.9 — and leave a follow-up to
+    // route it through `current_uno_config_view()` once the config-param
+    // schema bump lands. Behaviour is identical at launch defaults
+    // (doc value is 1,000,000; our default is 1,048,576 — both well
+    // under the worst-case ~100 MB RAM budget).
+    static constexpr std::size_t kNullifierLruWarmSize = std::size_t{1} << 20;
+    if (g_live) {
+        g_live->nullifier_set().warm_lru(kNullifierLruWarmSize);
+        LOG(INFO) << "uno-workchain: nullifier LRU warm-up requested k="
+                  << kNullifierLruWarmSize
+                  << " (snapshot now "
+                  << g_live->nullifier_set().warm_snapshot_size()
+                  << " entries)";
+    }
 
     // Step 5. Register the real compute handler with the dispatcher.
     uno_workchain_dispatch::set_uno_compute_handler(
