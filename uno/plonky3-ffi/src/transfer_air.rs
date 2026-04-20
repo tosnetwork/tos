@@ -583,8 +583,19 @@ where
         let pis_vec: Vec<AB::PublicVar> = builder.public_values().to_vec();
         let pi_fee = pis_vec[PI_FEE];
         let pi_anchor0 = pis_vec[PI_ANCHOR];
-        let pi_nfs: Vec<AB::PublicVar> =
-            (0..self.n_spends).map(|i| pis_vec[pi_nf(i)]).collect();
+        // Full-width nullifier PI: `nf_i` occupies 4 Goldilocks slots
+        // starting at `pi_nf(i)` per §4.3 step 4. Snapshot all 4 limbs.
+        let pi_nfs: Vec<[AB::PublicVar; 4]> = (0..self.n_spends)
+            .map(|i| {
+                let base = pi_nf(i);
+                [
+                    pis_vec[base],
+                    pis_vec[base + 1],
+                    pis_vec[base + 2],
+                    pis_vec[base + 3],
+                ]
+            })
+            .collect();
         let pi_cms: Vec<AB::PublicVar> = (0..self.n_outputs)
             .map(|j| pis_vec[pi_cm(self.n_spends, j)])
             .collect();
@@ -754,10 +765,12 @@ where
                     first.assert_zero(nf.inputs[k].into());
                 }
                 let nf_out = &nf.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
-                // Bind nf_i to limb 0 of the per-spend nullifier PI.
-                // TODO(uno-p2-nf-fullwidth): bind all 4 limbs once the
-                // wide-Poseidon2 slice lands.
-                first.assert_eq(nf_out[0], pi_nfs[i]);
+                // Bind `nf_i` to all 4 limbs of the per-spend nullifier PI
+                // (§4.3 step 4). Width-8 Poseidon2 produces 8 output fes;
+                // we take the first 4 as the 256-bit nullifier.
+                for limb in 0..4 {
+                    first.assert_eq(nf_out[limb], pi_nfs[i][limb]);
+                }
             }
 
             // Per-output claims 6/7.
@@ -1399,11 +1412,11 @@ impl MvpWitness {
         let perm16 = default_goldilocks_poseidon2_16();
 
         for s in &self.spends {
-            // nf_i = Poseidon2(TAG_NF, nk, leaf(=cm), pos).
-            let nf = poseidon2_nf(&perm, s.nk, s.leaf, s.pos);
-            out.push(nf);
-            for _ in 1..4 {
-                out.push(Goldilocks::ZERO);
+            // nf_i = first 4 limbs of Poseidon2(TAG_NF, nk, leaf(=cm), pos, 0, ...).
+            // Full-width binding per §4.3 step 4.
+            let nf_limbs = poseidon2_nf_full(&perm, s.nk, s.leaf, s.pos);
+            for limb in nf_limbs {
+                out.push(limb);
             }
             // rk_i: 4 × 0.
             for _ in 0..4 {
@@ -1784,19 +1797,21 @@ fn poseidon2_cm_fe(
     state[0]
 }
 
-fn poseidon2_nf(
+/// Full-width nullifier computation per §4.3 step 4: `nf_i` occupies 4
+/// Goldilocks elements (the first 4 limbs of the post-permutation state).
+fn poseidon2_nf_full(
     perm: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH]>,
     nk: u64,
     cm: u64,
     pos: u64,
-) -> Goldilocks {
+) -> [Goldilocks; 4] {
     let mut state = [Goldilocks::ZERO; POSEIDON2_WIDTH];
     state[0] = Goldilocks::from_u64(TAG_NF);
     state[1] = Goldilocks::from_u64(reduce_to_goldilocks(nk));
     state[2] = Goldilocks::from_u64(reduce_to_goldilocks(cm));
     state[3] = Goldilocks::from_u64(reduce_to_goldilocks(pos));
     perm.permute_mut(&mut state);
-    state[0]
+    [state[0], state[1], state[2], state[3]]
 }
 
 // ---------------------------------------------------------------------------
