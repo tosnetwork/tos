@@ -101,6 +101,90 @@ clang-21 --version
 clang++-21 --version
 ```
 
+## Uno Workchain (wc=2) — Additional Prerequisites
+
+The Uno privacy workchain adds four native dependencies on top of the base tree:
+
+| Dependency | Purpose | Where it lives | Action required |
+|---|---|---|---|
+| **libsodium** | Ristretto255, ChaCha20-Poly1305, BLAKE2b (§2.5, §2.7) | `third-party/sodium/` (built in-tree) | none — bundled |
+| **liboqs** | ML-KEM-768 post-quantum KEM (§2.7 hybrid note encryption) | external, pinned to a specific commit | **must install manually** |
+| **avatar BLAKE3** | `BLAKE3` for transcripts, cell hashing, KDF (decision #41) | `third-party/avatar-crypto/` (vendored) | none — bundled |
+| **corrosion-rs** | CMake ↔ Cargo bridge for the `uno_plonky3_ffi` Rust static library | `third-party/corrosion/` (vendored v0.5.2) | none — bundled |
+| **Plonky3 toolkit** | STARK prover/verifier, Goldilocks field, Poseidon2 (§2.1, decision #43) | `third-party/plonky3-uno/` (vendored) | none — bundled |
+| **Rust toolchain** | Required to build `uno_plonky3_ffi` — even if you only target the C++ side | rustup-managed | install via rustup |
+
+### Installing liboqs
+
+The pinned commit is recorded in [`uno/crypto/LIBOQS_VERSION.md`](uno/crypto/LIBOQS_VERSION.md). Pick ONE of the two paths below; do not mix them.
+
+#### Path A — system-level (recommended for CI / single-purpose nodes)
+
+```bash
+sudo apt install -y libssl-dev   # liboqs needs libcrypto for SHA3/AES
+git clone https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs-src
+cd /tmp/liboqs-src
+git checkout 3cb781fd4737c900ad755ee0bb9e1949d0f68955   # see LIBOQS_VERSION.md
+cmake -S . -B /tmp/liboqs-build \
+      -DOQS_BUILD_ONLY_LIB=ON \
+      -DOQS_ENABLE_KEM_ML_KEM=ON \
+      -DBUILD_SHARED_LIBS=OFF \
+      -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DCMAKE_BUILD_TYPE=Release
+cmake --build /tmp/liboqs-build -j"$(nproc)"
+sudo cmake --install /tmp/liboqs-build
+```
+
+Trade-off: convenient (CMake finds it automatically, no extra env var), but needs `sudo` and can collide with `apt install liboqs-dev` if a distro package is installed later.
+
+#### Path B — user-local `$HOME/.local` (dev machines, multi-user hosts, no sudo)
+
+Same as Path A, but:
+
+```bash
+cmake -S . -B /tmp/liboqs-build \
+      ... \
+      -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
+      ...
+cmake --install /tmp/liboqs-build    # no sudo
+```
+
+Under Path B, every subsequent `cmake -S tos -B tos/build` invocation must be prefixed with:
+
+```bash
+CMAKE_PREFIX_PATH="$HOME/.local" cmake -S . -B build ...
+```
+
+That env var tells CMake to add `$HOME/.local/{include,lib}` to the `find_path` / `find_library` search roots — without it the Uno build silently falls back to `UNO_MLKEM_STUB=1` and every runtime ML-KEM call aborts.
+
+If you forget the env var, `uno/CMakeLists.txt` will print:
+
+```
+-- uno_workchain: liboqs not found — ML-KEM-768 built with UNO_MLKEM_STUB=1 (runtime abort).
+```
+
+This is the signal that you are building a Uno tree whose ML-KEM paths cannot actually run.
+
+### Installing the Rust toolchain (required even for a pure C++ build of Uno)
+
+The Uno C++ library links against the Rust static archive produced by `uno/plonky3-ffi/` (Plonky3 verifier + Poseidon2 FFI). Corrosion drives the Cargo build during CMake configure; Cargo needs rustc.
+
+```bash
+curl https://sh.rustup.rs -sSf | sh
+source "$HOME/.cargo/env"
+```
+
+Tosctl's Rust workspace (`tosctl/src/`) pins `1.91.1`; the `uno/plonky3-ffi/` crate targets the same channel. Rustup will install what's needed on first build. No separate toolchain install is required for the Uno FFI — it rides the pin from `tosctl/src/rust-toolchain.toml`.
+
+### What stays bundled (no action)
+
+- **libsodium** is built from `third-party/sodium/` by the top-level CMake.
+- **avatar BLAKE3** sits at `third-party/avatar-crypto/` (100% in-house code, vendored per decision #41). `uno/CMakeLists.txt` auto-detects it and defines `UNO_BLAKE3_AVATAR=1`.
+- **corrosion-rs** sits at `third-party/corrosion/` (v0.5.2). Top-level `CMakeLists.txt` includes it via `add_subdirectory(third-party/corrosion EXCLUDE_FROM_ALL)`.
+- **Plonky3** sits at `third-party/plonky3-uno/` (commit `6374a36f`). Built as a sub-crate of `uno_plonky3_ffi`.
+
+Refresh policy for the vendored trees is documented in their respective `README.uno.md` files.
+
 ## C++ Configure
 
 Always use an out-of-source build:
@@ -117,6 +201,27 @@ cmake .. \
   -DCMAKE_C_COMPILER=clang-21 \
   -DCMAKE_CXX_COMPILER=clang++-21
 ```
+
+If you installed **liboqs to `$HOME/.local`** (Uno prereq Path B), prefix every configure call:
+
+```bash
+CMAKE_PREFIX_PATH="$HOME/.local" cmake .. \
+  -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_COMPILER=clang-21 \
+  -DCMAKE_CXX_COMPILER=clang++-21
+```
+
+Look for these lines in the configure output to confirm the Uno wiring is live:
+
+```
+-- uno_workchain: found liboqs at /.../liboqs.a
+-- uno_workchain: liboqs exposes OQS_KEM_ml_kem_768_keypair_derand
+-- uno_workchain: Corrosion found — linking libuno_plonky3_ffi.a into uno_workchain
+-- uno_workchain: using vendored avatar BLAKE3 at /.../third-party/avatar-crypto
+```
+
+If instead you see `liboqs not found — ML-KEM-768 built with UNO_MLKEM_STUB=1`, stop and fix the liboqs path before building — a stubbed ML-KEM will produce an otherwise-clean build whose runtime aborts on every Uno tx.
 
 ## C++ Build
 
@@ -151,6 +256,53 @@ Run the suite:
 ```bash
 cd /path/to/tos/build-clang21
 ctest --output-on-failure -j128
+```
+
+### Uno-specific test targets
+
+The Uno workchain tests live under `uno/test/` and can be run individually when iterating:
+
+```bash
+cd /path/to/tos/build-clang21
+ninja test-uno-primitive-parity \
+      test-uno-mandatory-negatives \
+      test-uno-end-to-end \
+      test-uno-parallel-verify \
+      test-uno-transfer \
+      test-uno-codec-shapes \
+      test-uno-public-input-fixture \
+      test-uno-state-transition-golden \
+      test-uno-restart-survival \
+      test-uno-determinism \
+      test-uno-filter
+
+# Run individually (each prints its own pass / fail / skip summary):
+./uno/test/test-uno-primitive-parity
+./uno/test/test-uno-mandatory-negatives
+./uno/test/test-uno-end-to-end
+./uno/test/test-uno-parallel-verify
+```
+
+If `liboqs` was installed to `$HOME/.local`, the test binaries also need the prefix at runtime for some paths — it's easier to just prefix `CMAKE_PREFIX_PATH` at both configure and run time:
+
+```bash
+CMAKE_PREFIX_PATH="$HOME/.local" ./uno/test/test-uno-primitive-parity
+```
+
+The Rust-side FFI crate has its own test suite:
+
+```bash
+cd /path/to/tos/uno/plonky3-ffi
+cargo test --release --lib
+# Expected: 43 passed; 0 failed; 0 ignored
+```
+
+The tosctl wallet crate (`P.6`) is a separate workspace:
+
+```bash
+cd /path/to/tos/tosctl/uno
+cargo test --release
+# Expected: 44 lib + 4 send_roundtrip + 1 derive_keys = 49 passed
 ```
 
 Or:
@@ -240,10 +392,12 @@ cargo clippy --workspace --all-targets
 If you are setting up a fresh development machine, the practical order is:
 
 1. Install the native Linux dependencies and `clang-21`.
-2. Configure and build the top-level C++ tree.
-3. Install Rust via `rustup`.
-4. Build the Rust workspace in `tosctl/src`.
-5. Run `ctest` for the C++ side and `cargo test --workspace` for the Rust side.
+2. Install Rust via `rustup` (required for Uno's Plonky3 FFI — even if you only care about the C++ side).
+3. Install **liboqs** at the pinned commit (see the Uno Workchain prerequisites above). Pick `/usr/local` if you have sudo, otherwise `$HOME/.local`.
+4. Configure and build the top-level C++ tree. Pass `CMAKE_PREFIX_PATH="$HOME/.local"` at configure time if you chose the user-local liboqs path.
+5. Build the Rust workspace in `tosctl/src`.
+6. Run `ctest` for the C++ side and `cargo test --workspace` for the Rust side.
+7. Run the Uno-specific test binaries (`test-uno-*`) and the Rust FFI crate tests (`cd uno/plonky3-ffi && cargo test --release --lib`).
 
 This keeps both halves of the repository healthy and catches cross-surface breakage early.
 
@@ -282,3 +436,33 @@ Observed result:
 - `clang-14` was not sufficient for this tree; `clang-21` was used for the verified native build.
 - The Rust workspace is not a small auxiliary tool anymore; treat it as a first-class build surface of the repository.
 - If you have already modified branding, file names, or generated libraries in the source tree, keep include paths, generated artifacts, and tool names consistent before rebuilding.
+
+## Troubleshooting
+
+### `ninja: error: 'third-party/zlib/lib/libz.a', needed by ...`
+
+After a `rm -rf build` on some CMake caches the zlib path resolves to a stale in-tree build dir that was never populated. Rebuild zlib via system package and re-point CMake at it:
+
+```bash
+sudo apt install -y zlib1g-dev
+rm -rf build-clang21
+cmake -S . -B build-clang21 \
+      -DZLIB_LIBRARY=/usr/lib/x86_64-linux-gnu/libz.so \
+      -DZLIB_INCLUDE_DIR=/usr/include \
+      ...
+```
+
+### `undefined reference to 'uno_plonky3_abi_version' / 'uno_plonky3_verify' / 'uno_poseidon2_goldilocks_permute_t8'`
+
+The Rust FFI crate was not linked into `uno_workchain`. Causes:
+
+- `third-party/corrosion/` missing or broken → configure output will show `Corrosion not found`. Re-clone the submodule or re-vendor per `third-party/corrosion/README.uno.md`.
+- Rust toolchain not installed → `cmake` configure succeeds but `ninja` fails at the cargo-build step. Install rustup.
+
+### `uno_workchain: liboqs not found — ML-KEM-768 built with UNO_MLKEM_STUB=1`
+
+liboqs is not installed or CMake cannot find it. Either install to `/usr/local` (sudo) or install to `$HOME/.local` and pass `CMAKE_PREFIX_PATH="$HOME/.local"` at configure time. See the Uno Workchain prerequisites above.
+
+### Test binary aborts with "FFI symbol `uno_poseidon2_goldilocks_permute_t8` not linked"
+
+The binary was built against the weak-symbol fallback in `uno/crypto/poseidon2.cpp` because corrosion wasn't active when CMake configured. Re-configure from a clean `build/` directory after confirming the Rust toolchain and `third-party/corrosion/` are in place.
