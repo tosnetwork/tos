@@ -19,6 +19,7 @@
 #include "json-rpc-server-internal.h"
 
 #include "evm/rpc/handlers.h"
+#include "uno/rpc/handlers.h"
 
 #include <cstring>
 
@@ -679,6 +680,22 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
     return;
   }
 
+  // Uno workchain (wc=2) JSON-RPC: same array-params convention as eth_*.
+  if (params_val.type() == td::JsonValue::Type::Array &&
+      uno_workchain::is_uno_rpc_method(method)) {
+    td::JsonBuilder jb;
+    jb.enter_value() << params_val;
+    std::string params_str = jb.string_builder().as_cslice().str();
+
+    auto result = uno_workchain::handle_uno_rpc(method, params_str, req_id);
+    if (result) {
+      promise.set_value(make_raw_json_response(result->json, opts_.cors_origin));
+    } else {
+      promise.set_value(make_eth_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
+    }
+    return;
+  }
+
   if (params_val.type() != td::JsonValue::Type::Object) {
     // Method is unknown to the eth_* registry AND params is not an object.
     // Don't bail with "'params' must be an object" — that would mask a
@@ -1021,6 +1038,25 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
       params_str = jb.string_builder().as_cslice().str();
     }
     auto result = evm_workchain::handle_eth_rpc(method, params_str, req_id);
+    if (result) {
+      promise.set_value(make_raw_json_response(result->json, opts_.cors_origin));
+    } else {
+      promise.set_value(make_eth_json_error(-32601, PSTRING() << "Method not found: " << method, req_id));
+    }
+  }
+  // --- Uno Workchain (wc=2): uno_* JSON-RPC methods ---
+  else if (uno_workchain::is_uno_rpc_method(method)) {
+    std::string params_str = "[]";
+    if (params.field_count() > 0) {
+      td::JsonBuilder jb;
+      auto arr = jb.enter_array();
+      for (auto& kv : params.field_values_) {
+        arr.enter_value() << kv.second;
+      }
+      arr.leave();
+      params_str = jb.string_builder().as_cslice().str();
+    }
+    auto result = uno_workchain::handle_uno_rpc(method, params_str, req_id);
     if (result) {
       promise.set_value(make_raw_json_response(result->json, opts_.cors_origin));
     } else {
