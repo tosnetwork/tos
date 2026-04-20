@@ -31,6 +31,7 @@ pub mod keygen;
 pub mod poseidon2;
 pub mod rpc_client;
 pub mod scan;
+pub mod schnorr;
 pub mod transfer;
 pub mod wire;
 
