@@ -15,11 +15,16 @@
 //!
 //! **Per spend `i` (for `i ∈ [0, n_spends)`)**:
 //!
-//! - **Claim 1 — Merkle step**: `parent_i = Poseidon2(leaf_i, sibling_i)`.
-//!   Single step only; 32-level scale-out flagged
-//!   `TODO(uno-p2-merkle32)` and reserved for a follow-up slice.
-//!   Row-0 binding: `parent_i == public_inputs[anchor][0]` (limb 0 of the
-//!   shared tx-level anchor).
+//! - **Claim 1 — Merkle path (32 levels, §2.3)**: prover opens
+//!   `cm_i → anchor` across 32 Poseidon2-Goldilocks-8 compressions. At
+//!   level `k`, a path-bit `b_k ∈ {0, 1}` selects ordering: `b_k = 0`
+//!   → `parent = Poseidon2(current, sibling_k)`; `b_k = 1` →
+//!   `parent = Poseidon2(sibling_k, current)`. `current` starts as the
+//!   leaf (= `cm_i`) and is replaced by each level's `parent`. The
+//!   final `current` at level 31's output must equal the tx-level
+//!   anchor PI. Position low→high bit order matches the
+//!   C++ `commitment-tree.{h,cpp}` append-walk convention (`pos >> k & 1`).
+//!   Row-0 binding: `current_final_i == public_inputs[anchor][0]`.
 //!
 //! - **Claim 2 — Note opening**: `cm_i = Poseidon2("uno-cm-v1", d_i, pk_d_i,
 //!   ivk_commitment_i, value_i, rcm_i)`. Row-0 binding: `cm_i == leaf_i`.
@@ -55,15 +60,13 @@
 //! ```text
 //! width(n_s, n_o) =
 //!     GLOBAL_COLS                                        // 1 (fee proxy)
-//!   + n_s · (SPEND_PROXY_COLS + 4·POSEIDON2_COLS_PER_INSTANCE)
-//!   + n_o · (OUTPUT_PROXY_COLS + 1·POSEIDON2_COLS_PER_INSTANCE)
+//!   + n_s · (SPEND_PROXY_COLS + POSEIDON2_PER_SPEND·POSEIDON2_COLS_PER_INSTANCE)
+//!   + n_o · (OUTPUT_PROXY_COLS + POSEIDON2_PER_OUTPUT·POSEIDON2_COLS_PER_INSTANCE)
 //! ```
 //!
-//! At (4, 4): `1 + 4·(10 + 720) + 4·(6 + 180) = 3665` columns.
-//! At (1, 1): `1 + 730 + 186 = 917` columns.
-//! At (1, 2): `1 + 730 + 372 = 1103` columns.
-//!
-//! Trace height stays at `2^6 = 64` rows.
+//! Trace height stays at `2^6 = 64` rows. See [`air_width`] for current
+//! cols-per-shape; exact numbers are tracked by the
+//! `width_grows_with_shape` test.
 //!
 //! # Public-input vector (§4.3 step 4, decision #5)
 //!
@@ -172,15 +175,19 @@ pub const TAG_NF: u64 = 0x01_75_6E_6F_6E_66_76_31;
 pub const GLOBAL_COLS: usize = 1;
 const GCOL_FEE: usize = 0;
 
-/// Per-spend proxy columns: leaf, sibling, parent_claim, value, ivk,
-/// ivk_commitment_claim, pk_d, rcm, nk, pos.
-pub const SPEND_PROXY_COLS: usize = 10;
+/// Depth of the note-commitment Merkle tree (§2.3 / §10.2 ConfigParam 84).
+pub const MERKLE_DEPTH: usize = 32;
+
+/// Per-spend proxy columns: leaf, d, value, ivk, ivk_commitment_claim,
+/// pk_d, rcm, nk, pos (9 leading fields), plus 32 path-bit proxies and 32
+/// sibling-hash proxies for the 32-level Merkle path (§2.3).
+pub const SPEND_PROXY_COLS: usize = 9 + MERKLE_DEPTH + MERKLE_DEPTH;
 
 /// Per-output proxy columns: cm_claim, d, pk_d, ivk_commitment, value, rcm.
 pub const OUTPUT_PROXY_COLS: usize = 6;
 
-/// Poseidon2 instances per spend (Merkle, IvkCm, Cm, Nf).
-pub const POSEIDON2_PER_SPEND: usize = 4;
+/// Poseidon2 instances per spend (Merkle×32 + IvkCm + Cm + Nf).
+pub const POSEIDON2_PER_SPEND: usize = MERKLE_DEPTH + 3;
 
 /// Poseidon2 instances per output (Cm only).
 pub const POSEIDON2_PER_OUTPUT: usize = 1;
@@ -193,15 +200,18 @@ pub const TRACE_HEIGHT: usize = 1 << LOG_TRACE_HEIGHT;
 
 // ---- Per-spend column indices (within a spend proxy block) ----
 const S_LEAF: usize = 0;
-const S_SIBLING: usize = 1;
-const S_PARENT_CLAIM: usize = 2;
-const S_VALUE: usize = 3;
-const S_IVK: usize = 4;
-const S_IVK_COMMITMENT_CLAIM: usize = 5;
-const S_PK_D: usize = 6;
-const S_RCM: usize = 7;
-const S_NK: usize = 8;
-const S_POS: usize = 9;
+const S_D: usize = 1; // diversifier proxy (was overloaded onto S_SIBLING pre-merkle32)
+const S_VALUE: usize = 2;
+const S_IVK: usize = 3;
+const S_IVK_COMMITMENT_CLAIM: usize = 4;
+const S_PK_D: usize = 5;
+const S_RCM: usize = 6;
+const S_NK: usize = 7;
+const S_POS: usize = 8;
+// Merkle path: MERKLE_DEPTH path-bit proxies, then MERKLE_DEPTH sibling
+// proxies. Path bit `k` is `(pos >> k) & 1` (low→high bit order).
+const S_PATH_BIT0: usize = 9;
+const S_SIBLING0: usize = S_PATH_BIT0 + MERKLE_DEPTH;
 
 // ---- Per-output column indices (within an output proxy block) ----
 const O_CM_CLAIM: usize = 0;
@@ -277,18 +287,35 @@ const fn output_p2_offset(n_spends: usize, j: usize) -> usize {
     output_proxy_offset(n_spends, j) + OUTPUT_PROXY_COLS
 }
 
-/// Enumerated spend Poseidon2 slot.
+/// Enumerated spend Poseidon2 slot. Merkle levels occupy slots
+/// `0..MERKLE_DEPTH`; the claim-3/2/4 hashes follow.
 #[derive(Copy, Clone)]
 enum SpendP2 {
-    Merkle = 0,
-    IvkCm = 1,
-    Cm = 2,
-    Nf = 3,
+    /// Merkle path level `k`, for `k ∈ [0, MERKLE_DEPTH)`.
+    MerkleLevel(usize),
+    /// Claim-3 IVK-commitment Poseidon2.
+    IvkCm,
+    /// Claim-2 note-commitment Poseidon2.
+    Cm,
+    /// Claim-4 nullifier Poseidon2.
+    Nf,
+}
+
+impl SpendP2 {
+    #[inline]
+    const fn slot(self) -> usize {
+        match self {
+            SpendP2::MerkleLevel(k) => k,
+            SpendP2::IvkCm => MERKLE_DEPTH,
+            SpendP2::Cm => MERKLE_DEPTH + 1,
+            SpendP2::Nf => MERKLE_DEPTH + 2,
+        }
+    }
 }
 
 #[inline]
 fn spend_p2_group<T>(row: &[T], i: usize, s: SpendP2) -> &P2Cols<T> {
-    let off = spend_p2_offset(i) + (s as usize) * POSEIDON2_COLS_PER_INSTANCE;
+    let off = spend_p2_offset(i) + s.slot() * POSEIDON2_COLS_PER_INSTANCE;
     let group: &[T] = &row[off..off + POSEIDON2_COLS_PER_INSTANCE];
     <[T] as Borrow<P2Cols<T>>>::borrow(group)
 }
@@ -450,7 +477,12 @@ where
 
         // ---- Poseidon2 sub-AIR on every row -----------------------------
         for i in 0..self.n_spends {
-            eval_poseidon2(builder, spend_p2_group(local_slice, i, SpendP2::Merkle));
+            for k in 0..MERKLE_DEPTH {
+                eval_poseidon2(
+                    builder,
+                    spend_p2_group(local_slice, i, SpendP2::MerkleLevel(k)),
+                );
+            }
             eval_poseidon2(builder, spend_p2_group(local_slice, i, SpendP2::IvkCm));
             eval_poseidon2(builder, spend_p2_group(local_slice, i, SpendP2::Cm));
             eval_poseidon2(builder, spend_p2_group(local_slice, i, SpendP2::Nf));
@@ -469,8 +501,7 @@ where
             // Per-spend claims 1/2/3/4.
             for i in 0..self.n_spends {
                 let leaf = spend_col(local_slice, i, S_LEAF);
-                let sibling = spend_col(local_slice, i, S_SIBLING);
-                let parent_claim = spend_col(local_slice, i, S_PARENT_CLAIM);
+                let d = spend_col(local_slice, i, S_D);
                 let value = spend_col(local_slice, i, S_VALUE);
                 let ivk = spend_col(local_slice, i, S_IVK);
                 let ivk_commitment_claim =
@@ -480,18 +511,61 @@ where
                 let nk = spend_col(local_slice, i, S_NK);
                 let pos = spend_col(local_slice, i, S_POS);
 
-                // Claim 1: Merkle step (single-step; TODO(uno-p2-merkle32)).
-                let merkle = spend_p2_group::<AB::Var>(local_slice, i, SpendP2::Merkle);
-                first.assert_eq(merkle.inputs[0], leaf);
-                first.assert_eq(merkle.inputs[1], sibling);
-                for k in 2..POSEIDON2_WIDTH {
-                    first.assert_zero(merkle.inputs[k].into());
+                // Claim 1: 32-level Merkle path (§2.3). Each level k takes
+                // the running `current` (starts at leaf), combines with
+                // `sibling_k` under path-bit `b_k` ordering, and outputs
+                // the next `current` via Poseidon2(., .).
+                //
+                // Conservation invariants enforced on row 0:
+                //  (a) `b_k ∈ {0,1}` (bit constraint).
+                //  (b) Poseidon2 inputs: inputs[0] = (1-b)·cur + b·sib,
+                //                        inputs[1] = b·cur + (1-b)·sib.
+                //  (c) inputs[2..8] == 0 (padding).
+                //  (d) output[0] feeds `current` of level k+1.
+                //  (e) After level MERKLE_DEPTH-1, current[0] == anchor.
+                //  (f) `pos = Σ_k b_k · 2^k` (bit decomposition of pos).
+                let mut current_expr: AB::Expr = leaf.into();
+                for k in 0..MERKLE_DEPTH {
+                    let b: AB::Var =
+                        spend_col(local_slice, i, S_PATH_BIT0 + k);
+                    let sibling: AB::Var =
+                        spend_col(local_slice, i, S_SIBLING0 + k);
+                    // Bit constraint: b·(1-b) == 0.
+                    let b_expr: AB::Expr = b.into();
+                    let one_minus_b: AB::Expr =
+                        AB::Expr::from(AB::F::from_u64(1)) - b_expr.clone();
+                    first.assert_zero(b_expr.clone() * one_minus_b.clone());
+
+                    let level =
+                        spend_p2_group::<AB::Var>(local_slice, i, SpendP2::MerkleLevel(k));
+                    // inputs[0] = (1-b)·current + b·sibling
+                    let sibling_expr: AB::Expr = sibling.into();
+                    let left_sel: AB::Expr = one_minus_b.clone() * current_expr.clone()
+                        + b_expr.clone() * sibling_expr.clone();
+                    let right_sel: AB::Expr = b_expr.clone() * current_expr.clone()
+                        + one_minus_b.clone() * sibling_expr.clone();
+                    first.assert_eq(level.inputs[0].into(), left_sel);
+                    first.assert_eq(level.inputs[1].into(), right_sel);
+                    for pad in 2..POSEIDON2_WIDTH {
+                        first.assert_zero(level.inputs[pad].into());
+                    }
+                    // current_expr <- output[0] of this level's Poseidon2.
+                    let level_out =
+                        &level.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
+                    current_expr = level_out[0].into();
                 }
-                let merkle_out =
-                    &merkle.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
-                first.assert_eq(merkle_out[0], parent_claim);
-                // All spends hash to the same tx-level anchor.
-                first.assert_eq(parent_claim, pi_anchor0);
+                // Final root equals the tx-level anchor.
+                first.assert_eq(current_expr, pi_anchor0.into());
+
+                // Pos bit-decomposition: `pos == Σ_k b_k · 2^k`.
+                let mut pos_recon: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
+                for k in 0..MERKLE_DEPTH {
+                    let b: AB::Var =
+                        spend_col(local_slice, i, S_PATH_BIT0 + k);
+                    let weight = AB::F::from_u64(1u64 << k);
+                    pos_recon = pos_recon + AB::Expr::from(weight) * b.into();
+                }
+                first.assert_eq(pos.into(), pos_recon);
 
                 // Claim 3: IVK-commitment.
                 let ivkcm = spend_p2_group::<AB::Var>(local_slice, i, SpendP2::IvkCm);
@@ -500,7 +574,7 @@ where
                     AB::Expr::from(AB::F::from_u64(TAG_IVK_CM)),
                 );
                 first.assert_eq(ivkcm.inputs[1], ivk);
-                first.assert_eq(ivkcm.inputs[2], sibling); // d_i proxy
+                first.assert_eq(ivkcm.inputs[2], d); // d_i proxy
                 for k in 3..POSEIDON2_WIDTH {
                     first.assert_zero(ivkcm.inputs[k].into());
                 }
@@ -515,7 +589,7 @@ where
                     cm.inputs[0].into(),
                     AB::Expr::from(AB::F::from_u64(TAG_CM)),
                 );
-                first.assert_eq(cm.inputs[1], sibling); // d_i
+                first.assert_eq(cm.inputs[1], d);
                 first.assert_eq(cm.inputs[2], pk_d);
                 first.assert_eq(cm.inputs[3], ivk_commitment_claim);
                 first.assert_eq(cm.inputs[4], value);
@@ -722,8 +796,8 @@ fn eval_sbox<AB: AirBuilder>(
 pub struct SpendWitness {
     /// Single-fe proxy for the spent note commitment `cm` (= Merkle leaf).
     pub leaf: u64,
-    /// Merkle sibling / diversifier `d` proxy (8 B LE).
-    pub merkle_sibling: [u8; 8],
+    /// Diversifier `d` proxy (8 B LE).
+    pub d: [u8; 8],
     /// Value being spent. Must be `< p_Goldilocks`.
     pub value: u64,
     /// Private-witness `ivk` proxy.
@@ -734,8 +808,15 @@ pub struct SpendWitness {
     pub rcm: u64,
     /// Proxy for the nullifier key `nk`.
     pub nk: u64,
-    /// Proxy for the leaf position `pos`.
+    /// Leaf position within the depth-32 commitment tree. Low bit is the
+    /// level-0 path bit (§2.3, matching `commitment-tree.{h,cpp}`). Must
+    /// satisfy `pos < 2^MERKLE_DEPTH` (upper bits in `pos` are discarded
+    /// when the witness is encoded because only 32 path bits are stored).
     pub pos: u64,
+    /// 32-level Merkle path: each entry is the sibling hash proxy
+    /// (single Goldilocks fe) at level `k`. Level 0 is the first layer
+    /// above the leaf.
+    pub merkle_path: [u64; MERKLE_DEPTH],
 }
 
 /// Single-output witness.
@@ -796,7 +877,7 @@ impl MvpWitness {
         let perm = default_goldilocks_poseidon2_8();
 
         // Derive shared spend witness fields.
-        let sibling_word = seed
+        let d_word = seed
             .wrapping_mul(0x9e37_79b9_7f4a_7c15)
             .wrapping_add(0x1234_0000_0000_0000)
             & ((1u64 << 62) - 1);
@@ -809,33 +890,57 @@ impl MvpWitness {
         let fee: u64 = 0x100 + (seed & 0xFFF);
 
         // Derived shared leaf via claim-2 Poseidon2.
-        let ivkcm = poseidon2_ivk_commitment(&perm, shared_ivk, sibling_word);
+        let ivkcm = poseidon2_ivk_commitment(&perm, shared_ivk, d_word);
         let shared_leaf = poseidon2_cm(
             &perm,
-            sibling_word,
+            d_word,
             shared_pk_d,
             ivkcm.as_canonical_u64(),
             v_per_spend,
             shared_rcm,
         );
 
-        // Build spends with varying (nk, pos) for distinct nullifiers.
+        // Shared 32-level Merkle path: siblings fixed per seed; position
+        // fixed per seed. All spends share `(leaf, path, pos)` so that the
+        // resulting anchor is the same by construction (the AIR only
+        // enforces anchor equality, not distinct leaves — test-fixture
+        // convention, see struct-doc).
+        let shared_pos: u64 = (seed & ((1u64 << MERKLE_DEPTH) - 1)) as u64;
+        let mut shared_path = [0u64; MERKLE_DEPTH];
+        for k in 0..MERKLE_DEPTH {
+            // Distinct per-level siblings, bounded to 62 bits to stay
+            // canonical after Goldilocks reduction.
+            let mix = seed
+                .wrapping_mul(0xBF58_476D_1CE4_E5B9)
+                .wrapping_add((k as u64).wrapping_mul(0x94D0_49BB_1331_11EB));
+            shared_path[k] = mix & ((1u64 << 62) - 1);
+        }
+        let shared_anchor = poseidon2_merkle_path_root(
+            &perm,
+            shared_leaf,
+            shared_pos,
+            &shared_path,
+        )
+        .as_canonical_u64();
+
+        // Build spends; all share the path so the anchor is identical per
+        // spend. Only `nk` differs for distinct nullifiers.
         let mut spends = Vec::with_capacity(n_spends);
         for i in 0..n_spends {
             let s = seed
                 .wrapping_mul(0x517c_c1b7_2722_0a95)
                 .wrapping_add((i as u64) * 0xC0FF_EE00);
             let nk = s.wrapping_mul(0xcbf2_9ce4_8422_2325) ^ 0xba11_00ba;
-            let pos = s.wrapping_mul(0x1_0000_0001) & 0x00FF_FFFF_FFFF_FFFF;
             spends.push(SpendWitness {
                 leaf: shared_leaf,
-                merkle_sibling: sibling_word.to_le_bytes(),
+                d: d_word.to_le_bytes(),
                 value: v_per_spend,
                 ivk: shared_ivk,
                 pk_d: shared_pk_d,
                 rcm: shared_rcm,
                 nk,
-                pos,
+                pos: shared_pos,
+                merkle_path: shared_path,
             });
         }
 
@@ -869,42 +974,43 @@ impl MvpWitness {
             });
         }
 
-        // Compute shared anchor via claim-1 Poseidon2 (all spends hash
-        // identically → same anchor).
-        let anchor_fe = poseidon2_merkle(&perm, shared_leaf, sibling_word);
-        let anchor_proxy = anchor_fe.as_canonical_u64();
-
         Self {
             fee,
             spends,
             outputs,
-            anchor_proxy,
+            anchor_proxy: shared_anchor,
         }
     }
 
     /// Wire-encode for FFI.
     ///
-    /// Layout: `u8 n_s || u8 n_o || u64 fee || (u64 leaf || [8 B] sibling
-    /// || u64 value || u64 ivk || u64 pk_d || u64 rcm || u64 nk || u64 pos)
-    /// × n_s || (u64 d || u64 pk_d || u64 ivk_commitment || u64 value ||
-    /// u64 rcm) × n_o || u64 anchor_proxy`.
+    /// Layout: `u8 n_s || u8 n_o || u64 fee || (u64 leaf || [8 B] d
+    /// || u64 value || u64 ivk || u64 pk_d || u64 rcm || u64 nk || u64 pos
+    /// || u64 path[0..32]) × n_s || (u64 d || u64 pk_d || u64 ivk_commitment
+    /// || u64 value || u64 rcm) × n_o || u64 anchor_proxy`.
     ///
-    /// Byte length: `18 + 64·n_s + 40·n_o`.
+    /// Per-spend bytes: `64 + 8·MERKLE_DEPTH = 320 bytes` (8 leading fields
+    /// at 8 B each, then 32 path siblings at 8 B each).
+    ///
+    /// Byte length: `18 + (64 + 8·MERKLE_DEPTH)·n_s + 40·n_o`.
     pub fn encode(&self) -> Vec<u8> {
-        let mut out =
-            Vec::with_capacity(18 + 64 * self.spends.len() + 40 * self.outputs.len());
+        let per_spend = 64 + 8 * MERKLE_DEPTH;
+        let mut out = Vec::with_capacity(18 + per_spend * self.spends.len() + 40 * self.outputs.len());
         out.push(self.spends.len() as u8);
         out.push(self.outputs.len() as u8);
         out.extend_from_slice(&self.fee.to_le_bytes());
         for s in &self.spends {
             out.extend_from_slice(&s.leaf.to_le_bytes());
-            out.extend_from_slice(&s.merkle_sibling);
+            out.extend_from_slice(&s.d);
             out.extend_from_slice(&s.value.to_le_bytes());
             out.extend_from_slice(&s.ivk.to_le_bytes());
             out.extend_from_slice(&s.pk_d.to_le_bytes());
             out.extend_from_slice(&s.rcm.to_le_bytes());
             out.extend_from_slice(&s.nk.to_le_bytes());
             out.extend_from_slice(&s.pos.to_le_bytes());
+            for sib in &s.merkle_path {
+                out.extend_from_slice(&sib.to_le_bytes());
+            }
         }
         for o in &self.outputs {
             out.extend_from_slice(&o.d.to_le_bytes());
@@ -927,7 +1033,8 @@ impl MvpWitness {
         if n_s < MIN_SPENDS || n_s > MAX_SPENDS || n_o < MIN_OUTPUTS || n_o > MAX_OUTPUTS {
             return Err(Plonky3Status::WitnessInvalid);
         }
-        let want = 18 + 64 * n_s + 40 * n_o;
+        let per_spend = 64 + 8 * MERKLE_DEPTH;
+        let want = 18 + per_spend * n_s + 40 * n_o;
         if bytes.len() != want {
             return Err(Plonky3Status::WitnessInvalid);
         }
@@ -941,8 +1048,8 @@ impl MvpWitness {
         for _ in 0..n_s {
             let leaf = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
             off += 8;
-            let mut merkle_sibling = [0u8; 8];
-            merkle_sibling.copy_from_slice(&bytes[off..off + 8]);
+            let mut d = [0u8; 8];
+            d.copy_from_slice(&bytes[off..off + 8]);
             off += 8;
             let value = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
             off += 8;
@@ -959,15 +1066,29 @@ impl MvpWitness {
             off += 8;
             let pos = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
             off += 8;
+            // `pos` must fit in MERKLE_DEPTH bits for the AIR's bit
+            // decomposition to hold.
+            if pos >= (1u64 << MERKLE_DEPTH) {
+                return Err(Plonky3Status::WitnessInvalid);
+            }
+            let mut merkle_path = [0u64; MERKLE_DEPTH];
+            for sib in merkle_path.iter_mut() {
+                *sib = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+                off += 8;
+                if *sib >= GOLDILOCKS_P {
+                    return Err(Plonky3Status::WitnessInvalid);
+                }
+            }
             spends.push(SpendWitness {
                 leaf,
-                merkle_sibling,
+                d,
                 value,
                 ivk,
                 pk_d,
                 rcm,
                 nk,
                 pos,
+                merkle_path,
             });
         }
         let mut outputs = Vec::with_capacity(n_o);
@@ -1110,13 +1231,15 @@ impl MvpWitness {
         let padding_p2 = gen_p2_row([Goldilocks::ZERO; POSEIDON2_WIDTH]);
 
         // Row-0 Poseidon2 trace cells, per spend + output.
-        let mut row0_spend_merkle = Vec::with_capacity(n_s);
+        // Per spend we generate MERKLE_DEPTH Merkle-level rows, then
+        // IvkCm, Cm, Nf — matching the column layout from `SpendP2::slot`.
+        let mut row0_spend_merkle: Vec<Vec<Vec<Goldilocks>>> = Vec::with_capacity(n_s);
         let mut row0_spend_ivkcm = Vec::with_capacity(n_s);
         let mut row0_spend_cm = Vec::with_capacity(n_s);
         let mut row0_spend_nf = Vec::with_capacity(n_s);
         for s in &self.spends {
-            let sibling_word = u64::from_le_bytes(s.merkle_sibling);
-            let sibling_f = Goldilocks::from_u64(reduce_to_goldilocks(sibling_word));
+            let d_word = u64::from_le_bytes(s.d);
+            let d_f = Goldilocks::from_u64(reduce_to_goldilocks(d_word));
             let leaf_f = Goldilocks::from_u64(reduce_to_goldilocks(s.leaf));
             let pk_d_f = Goldilocks::from_u64(reduce_to_goldilocks(s.pk_d));
             let rcm_f = Goldilocks::from_u64(reduce_to_goldilocks(s.rcm));
@@ -1124,22 +1247,37 @@ impl MvpWitness {
             let nk_f = Goldilocks::from_u64(reduce_to_goldilocks(s.nk));
             let pos_f = Goldilocks::from_u64(reduce_to_goldilocks(s.pos));
             let value_f = Goldilocks::from_u64(reduce_to_goldilocks(s.value));
-            let ivkcm_fe = poseidon2_ivk_commitment(&perm, s.ivk, sibling_word);
+            let ivkcm_fe = poseidon2_ivk_commitment(&perm, s.ivk, d_word);
 
-            let mut merkle = [Goldilocks::ZERO; POSEIDON2_WIDTH];
-            merkle[0] = leaf_f;
-            merkle[1] = sibling_f;
-            row0_spend_merkle.push(gen_p2_row(merkle));
+            // Merkle path rows: at each level, run the permutation with
+            // inputs ordered by the path bit.
+            let mut levels_rows = Vec::with_capacity(MERKLE_DEPTH);
+            let mut current = reduce_to_goldilocks(s.leaf);
+            for k in 0..MERKLE_DEPTH {
+                let bit = (s.pos >> k) & 1;
+                let sib = reduce_to_goldilocks(s.merkle_path[k]);
+                let (left, right) = if bit == 0 { (current, sib) } else { (sib, current) };
+                let mut input = [Goldilocks::ZERO; POSEIDON2_WIDTH];
+                input[0] = Goldilocks::from_u64(left);
+                input[1] = Goldilocks::from_u64(right);
+                // Compute output for next-level current.
+                let mut state = input;
+                perm.permute_mut(&mut state);
+                let row = gen_p2_row(input);
+                levels_rows.push(row);
+                current = state[0].as_canonical_u64();
+            }
+            row0_spend_merkle.push(levels_rows);
 
             let mut ivkcm_in = [Goldilocks::ZERO; POSEIDON2_WIDTH];
             ivkcm_in[0] = Goldilocks::from_u64(TAG_IVK_CM);
             ivkcm_in[1] = ivk_f;
-            ivkcm_in[2] = sibling_f;
+            ivkcm_in[2] = d_f;
             row0_spend_ivkcm.push(gen_p2_row(ivkcm_in));
 
             let mut cm_in = [Goldilocks::ZERO; POSEIDON2_WIDTH];
             cm_in[0] = Goldilocks::from_u64(TAG_CM);
-            cm_in[1] = sibling_f;
+            cm_in[1] = d_f;
             cm_in[2] = pk_d_f;
             cm_in[3] = ivkcm_fe;
             cm_in[4] = value_f;
@@ -1171,27 +1309,34 @@ impl MvpWitness {
             row0_out_cm.push(gen_p2_row(cm_in));
         }
 
-        let anchor_f = Goldilocks::from_u64(reduce_to_goldilocks(self.anchor_proxy));
-
-        let spend_proxies: Vec<[Goldilocks; SPEND_PROXY_COLS]> = self
+        // Per-spend proxy vector: [leaf, d, value, ivk, ivk_cm_claim, pk_d,
+        // rcm, nk, pos, path_bits[0..32], siblings[0..32]].
+        let spend_proxies: Vec<Vec<Goldilocks>> = self
             .spends
             .iter()
             .map(|s| {
-                let sibling_word = u64::from_le_bytes(s.merkle_sibling);
-                let sibling_f = Goldilocks::from_u64(reduce_to_goldilocks(sibling_word));
-                let ivkcm_fe = poseidon2_ivk_commitment(&perm, s.ivk, sibling_word);
-                [
-                    Goldilocks::from_u64(reduce_to_goldilocks(s.leaf)),
-                    sibling_f,
-                    anchor_f,
-                    Goldilocks::from_u64(reduce_to_goldilocks(s.value)),
-                    Goldilocks::from_u64(reduce_to_goldilocks(s.ivk)),
-                    ivkcm_fe,
-                    Goldilocks::from_u64(reduce_to_goldilocks(s.pk_d)),
-                    Goldilocks::from_u64(reduce_to_goldilocks(s.rcm)),
-                    Goldilocks::from_u64(reduce_to_goldilocks(s.nk)),
-                    Goldilocks::from_u64(reduce_to_goldilocks(s.pos)),
-                ]
+                let d_word = u64::from_le_bytes(s.d);
+                let d_f = Goldilocks::from_u64(reduce_to_goldilocks(d_word));
+                let ivkcm_fe = poseidon2_ivk_commitment(&perm, s.ivk, d_word);
+                let mut v = Vec::with_capacity(SPEND_PROXY_COLS);
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.leaf)));
+                v.push(d_f);
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.value)));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.ivk)));
+                v.push(ivkcm_fe);
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.pk_d)));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.rcm)));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.nk)));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.pos)));
+                for k in 0..MERKLE_DEPTH {
+                    let bit = (s.pos >> k) & 1;
+                    v.push(Goldilocks::from_u64(bit));
+                }
+                for k in 0..MERKLE_DEPTH {
+                    v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.merkle_path[k])));
+                }
+                debug_assert_eq!(v.len(), SPEND_PROXY_COLS);
+                v
             })
             .collect();
 
@@ -1220,12 +1365,16 @@ impl MvpWitness {
             for i in 0..n_s {
                 values.extend_from_slice(&spend_proxies[i]);
                 if row_idx == 0 {
-                    values.extend_from_slice(&row0_spend_merkle[i]);
+                    for k in 0..MERKLE_DEPTH {
+                        values.extend_from_slice(&row0_spend_merkle[i][k]);
+                    }
                     values.extend_from_slice(&row0_spend_ivkcm[i]);
                     values.extend_from_slice(&row0_spend_cm[i]);
                     values.extend_from_slice(&row0_spend_nf[i]);
                 } else {
-                    values.extend_from_slice(&padding_p2);
+                    for _ in 0..MERKLE_DEPTH {
+                        values.extend_from_slice(&padding_p2);
+                    }
                     values.extend_from_slice(&padding_p2);
                     values.extend_from_slice(&padding_p2);
                     values.extend_from_slice(&padding_p2);
@@ -1289,16 +1438,34 @@ pub fn decode_public_inputs(bytes: &[u8]) -> Result<Vec<Goldilocks>, Plonky3Stat
 
 // Small Poseidon2 wrappers.
 
-fn poseidon2_merkle(
+fn poseidon2_merkle_step(
     perm: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH]>,
-    leaf: u64,
-    sibling: u64,
+    left: u64,
+    right: u64,
 ) -> Goldilocks {
     let mut state = [Goldilocks::ZERO; POSEIDON2_WIDTH];
-    state[0] = Goldilocks::from_u64(reduce_to_goldilocks(leaf));
-    state[1] = Goldilocks::from_u64(reduce_to_goldilocks(sibling));
+    state[0] = Goldilocks::from_u64(reduce_to_goldilocks(left));
+    state[1] = Goldilocks::from_u64(reduce_to_goldilocks(right));
     perm.permute_mut(&mut state);
     state[0]
+}
+
+/// Compute the Merkle root for a 32-level path: at each level `k`, combine
+/// `current` with `path[k]` under the bit `(pos >> k) & 1` ordering.
+fn poseidon2_merkle_path_root(
+    perm: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH]>,
+    leaf: u64,
+    pos: u64,
+    path: &[u64; MERKLE_DEPTH],
+) -> Goldilocks {
+    let mut current = reduce_to_goldilocks(leaf);
+    for k in 0..MERKLE_DEPTH {
+        let bit = (pos >> k) & 1;
+        let sib = reduce_to_goldilocks(path[k]);
+        let (left, right) = if bit == 0 { (current, sib) } else { (sib, current) };
+        current = poseidon2_merkle_step(perm, left, right).as_canonical_u64();
+    }
+    Goldilocks::from_u64(current)
 }
 
 fn poseidon2_ivk_commitment(
@@ -1375,7 +1542,7 @@ fn poseidon2_nf(
 pub fn witness_claim2_leaf_consistent(w: &MvpWitness) -> bool {
     let perm = default_goldilocks_poseidon2_8();
     for s in &w.spends {
-        let d_word = u64::from_le_bytes(s.merkle_sibling);
+        let d_word = u64::from_le_bytes(s.d);
         let ivkcm = poseidon2_ivk_commitment(&perm, s.ivk, d_word);
         let derived = poseidon2_cm(
             &perm,
@@ -1392,13 +1559,15 @@ pub fn witness_claim2_leaf_consistent(w: &MvpWitness) -> bool {
     true
 }
 
-/// True iff for every spend, `Poseidon2(leaf_i, sibling_i) == anchor_proxy`.
+/// True iff for every spend, folding the 32-level Merkle path reproduces
+/// `anchor_proxy`.
 pub fn witness_claim1_anchor_consistent(w: &MvpWitness) -> bool {
     let perm = default_goldilocks_poseidon2_8();
     let want = reduce_to_goldilocks(w.anchor_proxy);
     for s in &w.spends {
-        let d_word = u64::from_le_bytes(s.merkle_sibling);
-        let derived = poseidon2_merkle(&perm, s.leaf, d_word).as_canonical_u64();
+        let derived =
+            poseidon2_merkle_path_root(&perm, s.leaf, s.pos, &s.merkle_path)
+                .as_canonical_u64();
         if derived != want {
             return false;
         }
@@ -1446,7 +1615,11 @@ mod tests {
         let w22 = air_width(2, 2);
         let w44 = air_width(4, 4);
         assert!(w11 < w12 && w12 < w22 && w22 < w44);
-        assert_eq!(w44, 1 + 4 * (10 + 4 * 180) + 4 * (6 + 180));
+        assert_eq!(
+            w44,
+            1 + 4 * (SPEND_PROXY_COLS + POSEIDON2_PER_SPEND * POSEIDON2_COLS_PER_INSTANCE)
+                + 4 * (OUTPUT_PROXY_COLS + POSEIDON2_COLS_PER_INSTANCE)
+        );
     }
 
     #[test]

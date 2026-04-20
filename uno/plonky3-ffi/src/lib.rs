@@ -604,9 +604,10 @@ mod ffi_tests {
         );
         let honest_pi_bytes = honest_witness.public_inputs_bytes();
 
-        // Adversary's tampered witness: flip a sibling bit of spend 0.
+        // Adversary's tampered witness: flip a sibling bit of spend 0's
+        // diversifier `d` proxy.
         let mut bad_witness = honest_witness.clone();
-        bad_witness.spends[0].merkle_sibling[0] ^= 1;
+        bad_witness.spends[0].d[0] ^= 1;
         let bad_witness_bytes = bad_witness.encode();
 
         let mut out_proof = Plonky3OwnedProof::EMPTY;

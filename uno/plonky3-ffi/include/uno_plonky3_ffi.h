@@ -49,15 +49,19 @@
 // Global (tx-level) proxy columns: `[fee]`.
 #define GLOBAL_COLS 1
 
-// Per-spend proxy columns: leaf, sibling, parent_claim, value, ivk,
-// ivk_commitment_claim, pk_d, rcm, nk, pos.
-#define SPEND_PROXY_COLS 10
+// Depth of the note-commitment Merkle tree (§2.3 / §10.2 ConfigParam 84).
+#define MERKLE_DEPTH 32
+
+// Per-spend proxy columns: leaf, d, value, ivk, ivk_commitment_claim,
+// pk_d, rcm, nk, pos (9 leading fields), plus 32 path-bit proxies and 32
+// sibling-hash proxies for the 32-level Merkle path (§2.3).
+#define SPEND_PROXY_COLS ((9 + MERKLE_DEPTH) + MERKLE_DEPTH)
 
 // Per-output proxy columns: cm_claim, d, pk_d, ivk_commitment, value, rcm.
 #define OUTPUT_PROXY_COLS 6
 
-// Poseidon2 instances per spend (Merkle, IvkCm, Cm, Nf).
-#define POSEIDON2_PER_SPEND 4
+// Poseidon2 instances per spend (Merkle×32 + IvkCm + Cm + Nf).
+#define POSEIDON2_PER_SPEND (MERKLE_DEPTH + 3)
 
 // Poseidon2 instances per output (Cm only).
 #define POSEIDON2_PER_OUTPUT 1
