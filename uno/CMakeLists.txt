@@ -210,31 +210,36 @@ target_link_libraries(uno_workchain
 )
 
 # -----------------------------------------------------------------------------
-# BLAKE3 backend — decision #41: UNO_BLAKE3_AVATAR (SIMD in ~/avatar) preferred.
-# Baseline build compiles avatar's at_blake3.c + at_blake3_ref.c (portable
-# reference kernel). x86 hosts can additionally compile the SIMD variants
-# (at_blake3_sse41/avx2/avx512.c) and set AT_HAS_SSE / AT_HAS_AVX / AT_HAS_AVX512
-# compile definitions to enable runtime dispatch; that's opt-in because those
-# files need the host's SIMD intrinsics and headers to build.
+# BLAKE3 backend — decision #41: UNO_BLAKE3_AVATAR.
+# avatar is in-house code (100% team-authored) vendored into
+# `third-party/avatar-crypto/` so the tos repo is self-contained — no sibling
+# avatar checkout needed for build, CI, or audit. See
+# `third-party/avatar-crypto/README.uno.md` for upstream pin + refresh policy.
+#
+# Baseline compiles at_blake3.c + at_blake3_ref.c (portable reference kernel).
+# x86 hosts can add at_blake3_{sse41,avx2,avx512}.c and set AT_HAS_SSE /
+# AT_HAS_AVX / AT_HAS_AVX512 compile definitions to enable SIMD dispatch.
 # -----------------------------------------------------------------------------
-set(AVATAR_ROOT "$ENV{HOME}/avatar" CACHE PATH "Path to in-house avatar crypto tree")
-if (EXISTS "${AVATAR_ROOT}/src/crypto/blake3/at_blake3.c" AND
-    EXISTS "${AVATAR_ROOT}/include/at/crypto/at_blake3.h")
-  message(STATUS "uno_workchain: found avatar BLAKE3 at ${AVATAR_ROOT}/src/crypto/blake3")
+set(AVATAR_CRYPTO_ROOT "${CMAKE_SOURCE_DIR}/third-party/avatar-crypto"
+    CACHE PATH "Path to the vendored avatar crypto tree (self-contained in tos repo)")
+if (EXISTS "${AVATAR_CRYPTO_ROOT}/src/crypto/blake3/at_blake3.c" AND
+    EXISTS "${AVATAR_CRYPTO_ROOT}/include/at/crypto/at_blake3.h")
+  message(STATUS "uno_workchain: using vendored avatar BLAKE3 at ${AVATAR_CRYPTO_ROOT}")
   target_sources(uno_workchain PRIVATE
-    ${AVATAR_ROOT}/src/crypto/blake3/at_blake3.c
-    ${AVATAR_ROOT}/src/crypto/blake3/at_blake3_ref.c
+    ${AVATAR_CRYPTO_ROOT}/src/crypto/blake3/at_blake3.c
+    ${AVATAR_CRYPTO_ROOT}/src/crypto/blake3/at_blake3_ref.c
     ${CMAKE_CURRENT_SOURCE_DIR}/crypto/internal/avatar_log_stubs.c  # minimal at_log_* stubs
   )
   target_include_directories(uno_workchain PRIVATE
-    ${AVATAR_ROOT}/include              # for "at/infra/at_util.h"
-    ${AVATAR_ROOT}/include/at/crypto    # so at_blake3.c finds "at_blake3_private.h" sibling
-    ${AVATAR_ROOT}/src/crypto/blake3    # compile-time workspace
+    ${AVATAR_CRYPTO_ROOT}/include              # for "at/infra/at_util.h"
+    ${AVATAR_CRYPTO_ROOT}/include/at/crypto    # so at_blake3.c finds "at_blake3_private.h" sibling
+    ${AVATAR_CRYPTO_ROOT}/src/crypto/blake3    # compile-time workspace
   )
   target_compile_definitions(uno_workchain PUBLIC UNO_BLAKE3_AVATAR=1)
 else()
-  message(STATUS "uno_workchain: avatar BLAKE3 not found at ${AVATAR_ROOT} — "
-                 "set AVATAR_ROOT or the hybrid-KEM KAT will stay SKIP.")
+  message(FATAL_ERROR "uno_workchain: vendored avatar BLAKE3 missing at "
+                      "${AVATAR_CRYPTO_ROOT}. Check third-party/avatar-crypto/ or "
+                      "override with -DAVATAR_CRYPTO_ROOT=<path>.")
 endif()
 
 # Optional subdirs — Agent 6 owns tests; include only when present.

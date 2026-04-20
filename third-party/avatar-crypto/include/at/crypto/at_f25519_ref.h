@@ -1,0 +1,322 @@
+#ifndef HEADER_at_src_ballet_ed25519_at_f25519_h
+#error "Do not include this directly; use at_f25519.h"
+#endif
+
+#include "at_crypto_base.h"
+#include <stdint.h>
+
+/* Use 64-bit fiat-crypto implementation */
+#define USE_FIAT_32 0
+#include "fiat-crypto/curve25519_64.c"
+
+/* A at_f25519_t stores a curve25519 field element in 5 uint64_t (64 bit).
+   Using uint64_t instead of ulong for fiat-crypto compatibility. */
+struct at_f25519 {
+  uint64_t el[5];
+};
+typedef struct at_f25519 at_f25519_t;
+
+#include "table/at_f25519_table_ref.c"
+
+AT_PROTOTYPES_BEGIN
+
+/*
+ * Implementation of inline functions
+ */
+
+/* at_f25519_mul computes r = a * b, and returns r. */
+AT_25519_INLINE at_f25519_t *
+at_f25519_mul( at_f25519_t * r,
+               at_f25519_t const * a,
+               at_f25519_t const * b ) {
+  fiat_25519_carry_mul( r->el, a->el, b->el );
+  return r;
+}
+
+/* at_f25519_sqr computes r = a^2, and returns r. */
+AT_25519_INLINE at_f25519_t *
+at_f25519_sqr( at_f25519_t * r,
+               at_f25519_t const * a ) {
+  fiat_25519_carry_square( r->el, a->el );
+  return r;
+}
+
+/* at_f25519_add computes r = a + b, and returns r. */
+AT_25519_INLINE at_f25519_t *
+at_f25519_add( at_f25519_t * r,
+               at_f25519_t const * a,
+               at_f25519_t const * b ) {
+  fiat_25519_add( r->el, a->el, b->el );
+  fiat_25519_carry( r->el, r->el );
+  return r;
+}
+
+/* at_f25519_add computes r = a - b, and returns r. */
+AT_25519_INLINE at_f25519_t *
+at_f25519_sub( at_f25519_t * r,
+               at_f25519_t const * a,
+               at_f25519_t const * b ) {
+  fiat_25519_sub( r->el, a->el, b->el );
+  fiat_25519_carry( r->el, r->el );
+  return r;
+}
+
+/* at_f25519_add computes r = a + b, and returns r.
+   Note: this does NOT reduce the result mod p.
+   It can be used before mul, sqr. */
+AT_25519_INLINE at_f25519_t *
+at_f25519_add_nr( at_f25519_t * r,
+                  at_f25519_t const * a,
+                  at_f25519_t const * b ) {
+  fiat_25519_add( r->el, a->el, b->el );
+  return r;
+}
+
+/* at_f25519_sub computes r = a - b, and returns r.
+   Note: this does NOT reduce the result mod p.
+   It can be used before mul, sqr. */
+AT_25519_INLINE at_f25519_t *
+at_f25519_sub_nr( at_f25519_t * r,
+                  at_f25519_t const * a,
+                  at_f25519_t const * b ) {
+  fiat_25519_sub( r->el, a->el, b->el );
+  return r;
+}
+
+/* at_f25519_add computes r = -a, and returns r. */
+AT_25519_INLINE at_f25519_t *
+at_f25519_neg( at_f25519_t * r,
+               at_f25519_t const * a ) {
+  fiat_25519_opp( r->el, a->el );
+  return r;
+}
+
+/* at_f25519_add computes r = a * k, k=121666, and returns r. */
+AT_25519_INLINE at_f25519_t *
+at_f25519_mul_121666( at_f25519_t * r,
+                      at_f25519_t const * a ) {
+  fiat_25519_carry_scmul_121666( r->el, a->el );
+  return r;
+}
+
+/* at_f25519_frombytes deserializes a 32-byte buffer buf into a
+   at_f25519_t element r, and returns r.
+   buf is in little endian form, we accept non-canonical elements
+   unlike RFC 8032. */
+AT_25519_INLINE at_f25519_t *
+at_f25519_frombytes( at_f25519_t * r,
+                     uchar const   buf[ 32 ] ) {
+  fiat_25519_from_bytes( r->el, buf );
+  return r;
+}
+
+/* at_f25519_tobytes serializes a at_f25519_t element a into
+   a 32-byte buffer out, and returns out.
+   out is in little endian form, according to RFC 8032
+   (we don't output non-canonical elements). */
+AT_25519_INLINE uchar *
+at_f25519_tobytes( uchar               out[ 32 ],
+                   at_f25519_t const * a ) {
+  fiat_25519_to_bytes( out, a->el );
+  return out;
+}
+
+/* at_f25519_if sets r = a0 if cond, else r = a1, equivalent to:
+   r = cond ? a0 : a1.
+   Note: this is constant time. */
+AT_25519_INLINE at_f25519_t *
+at_f25519_if( at_f25519_t *       r,
+              int const           cond, /* 0, 1 */
+              at_f25519_t const * a0,
+              at_f25519_t const * a1 ) {
+  fiat_25519_selectznz( r->el, (uchar)cond, a1->el, a0->el );
+  return r;
+}
+
+/* at_f25519_swap_if swaps r1, r2 if cond, else leave them as is.
+   Note: this is constant time. */
+AT_25519_INLINE void
+at_f25519_swap_if( at_f25519_t * restrict r1,
+                   at_f25519_t * restrict r2,
+                   int const              cond /* 0, 1 */ ) {
+
+#if USE_FIAT_32
+  uint m  = (uint)-!!cond;
+  uint h0 = m & (r1->el[0] ^ r2->el[0]);
+  uint h1 = m & (r1->el[1] ^ r2->el[1]);
+  uint h2 = m & (r1->el[2] ^ r2->el[2]);
+  uint h3 = m & (r1->el[3] ^ r2->el[3]);
+  uint h4 = m & (r1->el[4] ^ r2->el[4]);
+  uint h5 = m & (r1->el[5] ^ r2->el[5]);
+  uint h6 = m & (r1->el[6] ^ r2->el[6]);
+  uint h7 = m & (r1->el[7] ^ r2->el[7]);
+  uint h8 = m & (r1->el[8] ^ r2->el[8]);
+  uint h9 = m & (r1->el[9] ^ r2->el[9]);
+
+#else
+  ulong m  = (ulong)-!!cond;
+  ulong h0 = m & (r1->el[0] ^ r2->el[0]);
+  ulong h1 = m & (r1->el[1] ^ r2->el[1]);
+  ulong h2 = m & (r1->el[2] ^ r2->el[2]);
+  ulong h3 = m & (r1->el[3] ^ r2->el[3]);
+  ulong h4 = m & (r1->el[4] ^ r2->el[4]);
+#endif
+
+  r1->el[0] ^= h0;
+  r1->el[1] ^= h1;
+  r1->el[2] ^= h2;
+  r1->el[3] ^= h3;
+  r1->el[4] ^= h4;
+
+  r2->el[0] ^= h0;
+  r2->el[1] ^= h1;
+  r2->el[2] ^= h2;
+  r2->el[3] ^= h3;
+  r2->el[4] ^= h4;
+
+#if USE_FIAT_32
+  r1->el[5] ^= h5;
+  r1->el[6] ^= h6;
+  r1->el[7] ^= h7;
+  r1->el[8] ^= h8;
+  r1->el[9] ^= h9;
+
+  r2->el[5] ^= h5;
+  r2->el[6] ^= h6;
+  r2->el[7] ^= h7;
+  r2->el[8] ^= h8;
+  r2->el[9] ^= h9;
+#endif
+}
+
+/* at_f25519_set copies r = a, and returns r. */
+AT_25519_INLINE at_f25519_t *
+at_f25519_set( at_f25519_t * r,
+               at_f25519_t const * a ) {
+  r->el[0] = a->el[0];
+  r->el[1] = a->el[1];
+  r->el[2] = a->el[2];
+  r->el[3] = a->el[3];
+  r->el[4] = a->el[4];
+#if USE_FIAT_32
+  r->el[5] = a->el[5];
+  r->el[6] = a->el[6];
+  r->el[7] = a->el[7];
+  r->el[8] = a->el[8];
+  r->el[9] = a->el[9];
+#endif
+  return r;
+}
+
+/* at_f25519_is_zero returns 1 if a == 0, 0 otherwise. */
+AT_25519_INLINE int
+at_f25519_is_zero( at_f25519_t const * a ) {
+  // fiat_25519_tight_field_element x;
+  // fiat_25519_carry( x, a->el );
+#if USE_FIAT_32
+  uint const * x = a->el;
+  if(( x[0] == 0
+    && x[1] == 0
+    && x[2] == 0
+    && x[3] == 0
+    && x[4] == 0
+    && x[5] == 0
+    && x[6] == 0
+    && x[7] == 0
+    && x[8] == 0
+    && x[9] == 0
+  ) || (
+       x[0] == 0x3ffffed
+    && x[1] == 0x1ffffff
+    && x[2] == 0x3ffffff
+    && x[3] == 0x1ffffff
+    && x[4] == 0x3ffffff
+    && x[5] == 0x1ffffff
+    && x[6] == 0x3ffffff
+    && x[7] == 0x1ffffff
+    && x[8] == 0x3ffffff
+    && x[9] == 0x1ffffff
+  )) {
+    return 1;
+  }
+#else
+  uint64_t const * x = a->el;
+  if(( x[0] == 0
+    && x[1] == 0
+    && x[2] == 0
+    && x[3] == 0
+    && x[4] == 0
+  ) || (
+       x[0] == 0x7ffffffffffed
+    && x[1] == 0x7ffffffffffff
+    && x[2] == 0x7ffffffffffff
+    && x[3] == 0x7ffffffffffff
+    && x[4] == 0x7ffffffffffff
+  )) {
+    return 1;
+  }
+#endif
+  return 0;
+}
+
+/*
+ * Vectorized
+ */
+
+/* at_f25519_muln computes r_i = a_i * b_i */
+AT_25519_INLINE void
+at_f25519_mul2( at_f25519_t * r1, at_f25519_t const * a1, at_f25519_t const * b1,
+                at_f25519_t * r2, at_f25519_t const * a2, at_f25519_t const * b2 ) {
+  at_f25519_mul( r1, a1, b1 );
+  at_f25519_mul( r2, a2, b2 );
+}
+
+AT_25519_INLINE void
+at_f25519_mul3( at_f25519_t * r1, at_f25519_t const * a1, at_f25519_t const * b1,
+                at_f25519_t * r2, at_f25519_t const * a2, at_f25519_t const * b2,
+                at_f25519_t * r3, at_f25519_t const * a3, at_f25519_t const * b3 ) {
+  at_f25519_mul( r1, a1, b1 );
+  at_f25519_mul( r2, a2, b2 );
+  at_f25519_mul( r3, a3, b3 );
+}
+
+AT_25519_INLINE void
+at_f25519_mul4( at_f25519_t * r1, at_f25519_t const * a1, at_f25519_t const * b1,
+                at_f25519_t * r2, at_f25519_t const * a2, at_f25519_t const * b2,
+                at_f25519_t * r3, at_f25519_t const * a3, at_f25519_t const * b3,
+                at_f25519_t * r4, at_f25519_t const * a4, at_f25519_t const * b4 ) {
+  at_f25519_mul( r1, a1, b1 );
+  at_f25519_mul( r2, a2, b2 );
+  at_f25519_mul( r3, a3, b3 );
+  at_f25519_mul( r4, a4, b4 );
+}
+
+/* at_f25519_sqrn computes r_i = a_i^2 */
+AT_25519_INLINE void
+at_f25519_sqr2( at_f25519_t * r1, at_f25519_t const * a1,
+                at_f25519_t * r2, at_f25519_t const * a2 ) {
+  at_f25519_sqr( r1, a1 );
+  at_f25519_sqr( r2, a2 );
+}
+
+AT_25519_INLINE void
+at_f25519_sqr3( at_f25519_t * r1, at_f25519_t const * a1,
+                at_f25519_t * r2, at_f25519_t const * a2,
+                at_f25519_t * r3, at_f25519_t const * a3 ) {
+  at_f25519_sqr( r1, a1 );
+  at_f25519_sqr( r2, a2 );
+  at_f25519_sqr( r3, a3 );
+}
+
+AT_25519_INLINE void
+at_f25519_sqr4( at_f25519_t * r1, at_f25519_t const * a1,
+                at_f25519_t * r2, at_f25519_t const * a2,
+                at_f25519_t * r3, at_f25519_t const * a3,
+                at_f25519_t * r4, at_f25519_t const * a4 ) {
+  at_f25519_sqr( r1, a1 );
+  at_f25519_sqr( r2, a2 );
+  at_f25519_sqr( r3, a3 );
+  at_f25519_sqr( r4, a4 );
+}
+
+AT_PROTOTYPES_END

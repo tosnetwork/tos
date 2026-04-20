@@ -98,8 +98,9 @@ endif()
 
 # BLAKE3 backend is active when uno_workchain was built with UNO_BLAKE3_AVATAR
 # (decision #41). Flip the hybrid-KEM gate so the pinned KAT runs instead of
-# SKIPping. Check the avatar source-tree presence mirrors uno/CMakeLists.txt.
-if (EXISTS "${AVATAR_ROOT}/src/crypto/blake3/at_blake3.c")
+# SKIPping. Vendor tree is at `third-party/avatar-crypto/`; check its presence
+# (symmetric with uno/CMakeLists.txt).
+if (EXISTS "${AVATAR_CRYPTO_ROOT}/src/crypto/blake3/at_blake3.c")
   target_compile_definitions(test-uno-primitive-parity PRIVATE UNO_P1_HYBRID_KEM_READY=1)
 endif()
 
