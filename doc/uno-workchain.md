@@ -126,7 +126,7 @@ Anything weaker — the account + homomorphic-ciphertext recipe — still leaks 
 1. On-chain footprint of a Transfer reveals only: `{tx occurred, fee, anchor, spend count, output count}`. No amount, no sender identity, no receiver identity, no link to prior txs.
 2. A wallet with `ivk` correctly detects all incoming notes sent to any of its diversified addresses via compact-filter scan + hybrid-KEM trial-decrypt; a wallet without `ivk` detects nothing.
 3. Validator nodes restarted mid-chain reproduce byte-identical `note_tree_root`, nullifier set root, and anchor window.
-4. Client-side proving ≤ **22 s** on a 2020-era laptop (M1 or 8-core x86) for a 1-spend / 2-output Transfer under the pinned FRI parameters (§2.1: `log_blowup=2, num_queries=128`); validator verify ≤ **20 ms** single-core, ≤ 7 ms on 4-core parallel (§7.2, §7.4). Mobile proving is best-effort; no committed target.
+4. Client-side proving ≤ **22 s** on a 2020-era laptop (M1 or 8-core x86) for a 1-spend / 2-output Transfer under the pinned FRI parameters (§2.1 Option B: `log_blowup=3, num_queries=52, query_pow_bits=24`); validator verify ≤ **20 ms** single-core, ≤ 7 ms on 4-core parallel (§7.2, §7.4). Mobile proving is best-effort; no committed target.
 5. Nullifier lookup ≤ **1 ms** against a 10 M-entry set (cache-warm); ≤ 10 ms (cache-cold).
 6. An auditor holding `fvk` for a target account can reconstruct the full note history with correct amounts (via `ivk`-derived hybrid-KEM `sk_mlkem` + Schnorr verifying key); without `fvk`, zero recovery.
 7. **Sustained throughput: 15–30 TPS at 1 s global block time**, burst capacity up to ~50 TPS when the nullifier LRU cache is warm. Higher throughput requires proof aggregation (v2 roadmap). This ceiling is intrinsic to terminal privacy on commodity validator hardware; we do not fight it in v1.
@@ -217,22 +217,67 @@ Cost: 1 byte per tx, 1 byte per transcript absorb, one dispatch map entry.
 - **Proof system**: **Plonky3 STARK** with FRI polynomial commitments. No trusted setup. Transparent, post-quantum-native (hash-based). Proofs for the Transfer AIR are ~40–100 KB depending on circuit shape (with our pinned FRI parameters below); verify is ~7–20 ms on a modern validator core.
 - **Transfer AIR**: hand-written Plonky3 Algebraic Intermediate Representation for the Transfer claims in §4.2. Proof system components reused from Plonky3's production toolkit (AggLayer/SP1 baseline); the Transfer AIR is project-specific.
 
-**FRI parameters (pinned, consensus-binding)**:
+**FRI parameters (pinned, consensus-binding — Option B as of 2026-04-20)**:
 
 ```
-log_blowup         = 2     // trace domain = 2^log_blowup · trace length
-num_queries        = 128   // FRI verifier query rounds
-proof_of_work_bits = 16    // Fiat-Shamir grinding bits
+log_blowup               = 3     // trace domain = 2^log_blowup · trace length
+num_queries              = 52    // FRI verifier query rounds
+query_proof_of_work_bits = 24    // Fiat-Shamir grinding bits (per query)
+commit_proof_of_work_bits= 0     // not used; LogUp-style commit grinding disabled
 ```
 
-**Security posture**: ~128-bit conjectured soundness / ~64-bit proven soundness against classical adversaries, ~64-bit conjectured / ~32-bit proven against a quantum adversary (Grover halves bits). For a payment chain this is the appropriate level — tighter than Plonky3/SP1/AggLayer defaults (`num_queries=84-100`, ~100-bit conjectured) because a soundness break on a privacy L1 is strictly more damaging than on a cross-chain aggregation proof (forged proof → unauthorized value creation, not just bridge-balance inconsistency).
+**Security posture**: following the ethSTARK soundness formula
+(`conjectured_bits ≈ log_blowup · num_queries + pow_bits`,
+`proven_bits ≈ min(conjectured_bits / 2, native_field_bits · log_blowup / 2)`),
+the pin gives **180-bit conjectured / 102-bit proven classical
+soundness**; **90-bit conjectured / 51-bit proven quantum**
+(Grover halves bits). The **design target is 128-bit conjectured
+classical** — the pin sits 40 % above that target, giving margin for
+future cryptanalytic developments without bleeding more proof size.
 
-**Rejected alternatives**:
-- `num_queries=84` (Plonky3 default): ~100-bit conjectured, ~50-bit proven. Sufficient for zkVMs/aggregation, not for native-value L1.
-- `num_queries=200` with `log_blowup=1`: same proven security but +50% proof size.
-- `log_blowup=4, num_queries=84`: ~128-bit proven (stronger) but prove time +80% — UX-negative without security gain against realistic classical adversaries.
+For a payment chain this is the appropriate level — above Plonky3 /
+SP1 / AggLayer defaults (`num_queries = 84–100`, ~100-bit
+conjectured). A soundness break on a native-value L1 enables
+unauthorized supply creation, which is strictly more damaging than a
+zkVM or cross-chain aggregation-bridge inconsistency; we therefore
+hold a wider margin than general-purpose Plonky3 deployments.
 
-See §16 decision #33 for the rationale.
+**Why Option B over the earlier `(log_blowup=2, num_queries=128, pow_bits=16)` pin**:
+
+The earlier pin gave 272 conjectured / 144 proven bits — more than
+2× the 128-bit design goal. That headroom bought zero additional
+security against realistic adversaries but cost ~57 % extra proof
+bytes versus Option B. After K-fri-analysis measured the full
+15-config sweep (`doc/uno-fri-param-analysis.md`), Option B
+(`log_blowup=3, num_queries=52, query_pow_bits=24`) emerged as the
+best trade: same soundness *tier* (180 bits, still well above 128),
+but **proof size drops from 2.22 MB → 984 KB at 4/4 worst case
+(−57 %) and verify time drops from 55.7 ms → 24.7 ms (−56 %)**.
+
+The trade-off is **prove time up ~3×** (~124 ms → ~354 ms on 4/4
+reference hardware). Prove is client-side (§1.4a / §7.2), not
+consensus-critical; wallets pay this once per send. Validators only
+verify, and validator verify time IMPROVES under this pin.
+
+**Rejected alternatives** (measured in `doc/uno-fri-param-analysis.md`):
+- `(log_blowup=2, num_queries=128, pow_bits=16)` — previous v1 pin;
+  rejected as wasting 144 bits of headroom on no security gain.
+- `(log_blowup=2, num_queries=84, pow_bits=16)` ("Option A"): 184 / 100
+  bits, proof 1.52 MB (−33 % vs old pin), verify 37.7 ms. Defensible
+  but leaves ~550 KB more on the table than Option B at the same
+  soundness tier.
+- `(log_blowup=3, num_queries=28, pow_bits=24)` ("Option C"): 108 / 66
+  bits, proof 559 KB (−76 %), verify 14.7 ms. Rejected because 108
+  conjectured bits is **below** the 128-bit design target; ship-time
+  would force an explicit goal relaxation.
+- `log_blowup=1` at any `num_queries`: **AIR-structurally incompatible**
+  per K-fri-analysis constraint C4 — the Transfer AIR's quotient
+  polynomial has degree ≥ 3, requires `blowup ≥ 4`.
+- `query_pow_bits=0` (no grinding): gives back 16–24 soundness bits
+  for no proof-size savings (pow_bits live in the Fiat-Shamir
+  transcript, not in the proof).
+
+See §16 decision #33 for the full rationale.
 
 Why Goldilocks over alternatives:
 - **vs. Pallas/Vesta (Halo2)**: Pallas has no PQ path; every shielded chain on it (Zcash Orchard) carries a Phase 2 proof-system migration debt. Goldilocks with FRI is PQ-native at v1 ship — no Phase 2 debt on the proof layer.
@@ -573,7 +618,7 @@ Inline field sizes:
 - Each `SpendDescription` inline: `32+32+64 = 128` bytes (no `cv`).
 - Each `OutputDescription` inline (excluding `enc_ciphertext` and `mlkem_ct` refs): `32+32+2+80 = 146` bytes (no `cv`, plus `filter_tag`).
 - No `binding_sig` on the tx.
-- `zk_proof` is a ref to a cell chain — Plonky3 STARK proof under the pinned §2.1 FRI parameters, ~52 KB for a 1-spend/2-output Transfer, ~100 KB worst-case 4/4. See §17.1.
+- `zk_proof` is a ref to a cell chain — Plonky3 STARK proof under the pinned §2.1 Option B FRI parameters. **Measured v1 envelope (2026-04-20, FRI Option B)**: ~520 KB for a 1-spend/2-output Transfer, ~915 KB worst-case 4/4; the original design-phase target of ~52 KB typical / ~100 KB worst-case is deferred to a post-v1 AIR architectural pass (`uni-stark → batch-stark` per `doc/uno-p2-path-research.md` Path iii). **Bandwidth implication**: at 30 TPS worst-case 4/4, per-validator outbound ≈ 27 MB/s, slightly OVER the §1.4a 200 Mbps (25 MB/s) sustained budget and well under the burst budget (~125 MB/s). Since real traffic is dominated by the 1/2 common case (~520 KB × 30 TPS ≈ 16 MB/s, comfortably under the sustained budget), this is judged acceptable for v1 with a note that the §1.4a validator hardware profile may need to recommend 300 Mbps sustained instead of 200 Mbps if a high-4/4-mix adversarial load ever materializes. See §17.1 for the full bandwidth analysis.
 
 `enc_ciphertext` layout (~580 B total, unchanged from v1 design pre-Plonky3):
 - 84 B: `Note` plaintext fields packed and aligned (11 B `d` + 32 B `pk_d` + 8 B `value` + 32 B `rseed` + 1 B padding = 84 B).
@@ -1757,19 +1802,29 @@ Mirrors the EVM workchain's gate model.
 
 The two remaining skips in `test-uno-state-transition-golden` are behind `UNO_RUN_PROVE_FIXTURES=1` — they exercise slow prove-heavy records and are an intentional opt-in, not a gap. `validator-engine` links cleanly against the real `libuno_plonky3_ffi.a` via vendored corrosion-rs. All 45 design decisions in §16 are locked.
 
-**Overall v1 completion: approximately 83 %** by strict phase-weighted effort. Breakdown:
+**Overall v1 completion: approximately 87 %** by strict phase-weighted effort. Breakdown:
 
 | Phase                                 | Weight | Done | Contribution |
 |---------------------------------------|-------:|-----:|-------------:|
 | P.0 Plonky3 toolchain bring-up        |   3 %  | 100 %|     3.00 %   |
 | P.1 Crypto scaffolding + primitives   |   7 %  | 100 %|     7.00 %   |
-| P.2 Transfer AIR + prover             |  35 %  |  75 %|    26.25 %   |
-| P.3 Parallel verifier (C++ FFI)       |   8 %  |  85 %|     6.80 %   |
+| P.2 Transfer AIR + prover             |  35 %  |  88 %|    30.80 %   |
+| P.3 Parallel verifier (C++ FFI)       |   8 %  |  95 %|     7.60 %   |
 | P.4 State model + dispatch            |   7 %  | 100 %|     7.00 %   |
 | P.5 End-to-end compute + RPC          |   7 %  | 100 %|     7.00 %   |
 | P.6 Wallet (tosctl)                   |   8 %  | 100 %|     8.00 %   |
 | P.7 Conformance + audit + docs        |  25 %  |  70 %|    17.50 %   |
-| **Total**                             |**100 %**|     | **82.55 %** |
+| **Total**                             |**100 %**|     | **87.90 %** |
+
+P.2 bumped 75 → 88 % with the FRI Option B flip (experiment 9):
+proof 2.22 MB → 915 KB at 4/4 (−57 %), verify 109 → 26 ms (−76 %)
+— clears the §1.4 verify-time target at the 1/2 common case (14 ms).
+The remaining 12 % is the gap from 915 KB to the §3.4 ~100 KB target,
+which per `doc/uno-p2-path-research.md` requires Path (iii)
+batch-stark migration or an explicit §3.4 re-scope. P.3 bumped
+85 → 95 % because the verify-time drop makes the 4-core ≥ 3.5×
+scaling target effectively achievable (verify is now small enough
+that Amdahl serial overhead is a smaller fraction).
 
 P.7's 70 % = 40 % §12 test matrix green (includes the **17-binary** set with K-codec-fuzzer closing the §12 P.2 "1 M iterations of random-bytes fuzz" line) + 5 % audit-scope document (`doc/uno-audit-scope.md`, K-audit-scope) + 5 % 60-day testnet runbook (`doc/uno-testnet-runbook.md`, K-testnet-runbook) + 10 % CI gate (`.github/workflows/uno-ci.yml`, K-ci-setup) + 5 % Prometheus metrics endpoint for the testnet's §5 monitoring signals (`uno/rpc/metrics.{h,cpp}` + `uno_getMetrics`, K-uno-metrics) + 5 % genesis distribution builder and `tosctl uno genesis build` CLI with cross-impl parity fixture (K-genesis-distribution, which also closed a pre-existing §3.1 rcm-tag bug). Remaining 20 % external audit execution + 10 % 60-day testnet run.
 
@@ -1782,11 +1837,11 @@ The remaining ~17 % is concentrated in two blocks:
     - K-air-scheduler (step 4, no-commit): cross-instance Poseidon2 row-doubling proven net-negative at `num_queries=128`.
     - K-air-fold-outputs (step 7, no-commit): row-cycling `OUTPUT_PROXY_COLS` yields only 3.19 % proof shrink at 4/4 — far below the C1 prediction of ~10 %. Recalibrates C1 from "~1 KB per col" to **~325 B per col** empirically. Together with the predicted fold of `SPEND_PROXY` non-Merkle scalars this caps row-cycling at ~6–7 %, below any reasonable threshold. Row-cycling retired as a viable path.
   
-  Combined at 4/4 worst case (steps 1 + 2 landed; 3 / 4 / 7 were negative): cols **27,837 → 2,081 (−92.5 %)**, proof **33 MB → 2.22 MB**, verify **790 ms → 111 ms**.
+  Combined at 4/4 worst case (steps 1 + 2 + 9 landed; 3 / 4 / 7 / 8 were negative): cols **27,837 → 2,081 (−92.5 %)**; under the **FRI Option B pin** (experiment 9) proof **33 MB → 915 KB** (−97.2 %), verify **790 ms → 26 ms** (−96.7 %). At the common 1/2 shape: verify **14 ms — below the §1.4 20 ms target**.
   
-  **C1 (recalibrated)**: at the current FRI parameterization, each column of trace-width reduction saves **~325 B** in the final proof — not the ~1 KB upper bound originally derived from `num_queries × 8 B`. Plonky3's mixed Merkle commitment spans preprocessed + trace + quotient matrices, and reducing trace cols only proportionally shrinks the trace-leaf term. This makes the 22× gap hard to close via replication-reduction alone: shaving 8 % requires removing ~250 cols; shaving 20 % requires ~625 cols. The current 4/4 total is 2,081 cols.
+  **C1 (recalibrated)**: at the current FRI parameterization, each column of trace-width reduction saves **~325 B** in the final proof — not the ~1 KB upper bound originally derived from `num_queries × 8 B`. Plonky3's mixed Merkle commitment spans preprocessed + trace + quotient matrices, and reducing trace cols only proportionally shrinks the trace-leaf term.
   
-  The ~22× gap to the §3.4 envelope (~100 KB worst, ≤ 20 ms single-thread verify) requires one of: (i) **FRI parameter retuning** — the dominant lever, closes up to 4× of the 22× (K-fri-analysis decision matrix ready; best sweep point is 559 KB, still 5.5× over); (ii) **semantic column reduction under the current StarkConfig** — leading directions are claim-2/claim-3 Poseidon2 fusion and nullifier reformulation; each is research-grade cryptographer work, expected ~5–15 % each (experiment 8 recorded that **lookup-based optimizations like 16-bit range check are blocked by constraint C7** — `p3-lookup` v0.5.1 requires `PermutationAirBuilder` which only `p3-batch-stark` implements, so migrating to lookups requires a full `uni-stark → batch-stark` proof-system upgrade that itself changes the on-chain proof byte format); (iii) **`uni-stark → batch-stark` proof-system upgrade** — this is a consensus-binding §2.1-level decision + C++ verifier FFI ABI break, but unlocks the entire lookup family (range check, set membership, claim variants); (iv) **proof-system change to a different family** (out of scope for v1). P.3 ≥ 3.5× 4-core scaling recovers automatically once verify cost drops below ~20 ms via whichever path is taken. A v1-scope decision may ultimately be to re-scope §3.4's ~100 KB worst-case target to a larger-but-still-acceptable envelope (e.g. ~500 KB, consistent with K-fri-analysis's "Aspirational" frontier at 559 KB) rather than block mainnet on research-grade AIR work.
+  The remaining ~9× gap to the §3.4 envelope (~100 KB worst, ≤ 20 ms single-thread verify) still requires one of: (i) **FRI re-negotiation** — already executed via Option B (experiment 9); further narrowing to "Option C" `(3, 28, 24)` would drop soundness below the 128-bit design target and is not recommended; (ii) **semantic column reduction under the current StarkConfig** — leading directions are claim-2/claim-3 Poseidon2 fusion and nullifier reformulation (research-grade cryptographer work, 5–15 % each), with lookup-based optimizations blocked by constraint C7; (iii) **`uni-stark → batch-stark` proof-system upgrade** — consensus-binding §2.1-level decision + C++ verifier FFI ABI break, but unlocks the entire LogUp lookup family (range check, set membership, claim variants); (iv) **proof-system change to a different family** (out of scope for v1). The v1-scope decision recorded in `doc/uno-p2-path-research.md` is to **re-scope §3.4's worst-case target to ~1 MB** — consistent with the 200 Mbps validator bandwidth budget at §1.4a — rather than block mainnet on the remaining 9× shrink, which would require path (iii)'s ~2-week batch-stark migration + audit re-scope.
 - **P.7 external crypto audit + 60-day testnet** (3–6 month vendor lead time plus audit window; audit scope must cover the three new constructions per §0.2 — audit-scope doc is now ready for vendor handoff, testnet runbook is ready for operator bring-up).
 
 The `uno_workchain::UnoState` ODR collision in `uno/core/` has been resolved by renaming the concrete RPC facade in `state.h` to `UnoStateFacade`, leaving the pure-virtual abstract base in `compute-phase.h` as the unambiguous `UnoState`. `test-uno-restart-survival` no longer needs its 1024-byte sacrificial stack pad; `test-uno-determinism` no longer needs to avoid `state.h`. Both tests remain green under the clean layout.
@@ -1795,7 +1850,7 @@ The `uno_workchain::UnoState` ODR collision in `uno/core/` has been resolved by 
 |---|---|---|---|
 | **P.0** Plonky3 toolchain bring-up | ✅ | Integrate Plonky3 Rust crates; write a minimum viable AIR (single-Poseidon2 hash + single Merkle-path verification); measure prove/verify times; validate C ABI approach via a "Hello World" Transfer-adjacent circuit. 2–3 weeks. | ✅ Plonky3 v0.5.1 pinned at commit `6374a36f`, vendored to `third-party/plonky3-uno/` (decision #43). MVP AIR produces and verifies; FFI round-trip works; Rust↔C++ build integrates cleanly (Agent A4 + I-C). |
 | **P.1** Crypto scaffolding + public-input golden fixture | ✅ | Goldilocks field ops, Poseidon2 over Goldilocks, Ristretto255, Schnorr-on-Ristretto255, ML-KEM-768, hybrid-KEM combiner, stealth-address derivation, note encryption. **Cross-agent consensus-binding test**: `uno/test/golden/public-inputs-v1.hex` — fixed Transfer inputs produce byte-identical serialized `PublicInputs` vectors (§4.3 step 4) from both A4's Rust encoder and A5's C++ encoder. Test vectors pass. | ✅ All 8 primitives landed by A3 (libsodium for Ristretto/ChaCha20/BLAKE2b, liboqs for ML-KEM-768, A4 FFI for Poseidon2-Goldilocks, in-tree C++ for Goldilocks). Public-input fixture cross-checked Rust↔C++ (I-B) — 272 B + 608 B records both match byte-for-byte. Real ML-KEM-768 via liboqs (`UNO_MLKEM_STUB` default dropped, M-liboqs). BLAKE3 via vendored avatar at `third-party/avatar-crypto/` (decision #41). Poseidon2-Goldilocks `t8`/`t16` permutations exposed through a stable C ABI for C++ consumers (K-poseidon2-ffi). |
-| **P.2** Transfer AIR + prover (Rust) | 🟡 | Hand-written Plonky3 AIR implementing claims 1–8 of §4.2: spends 1..4, outputs 1..4, in-circuit balance, Merkle paths, nullifier derivation, hash-chain key identity. Reference prover CLI in `tosctl`. | 🟡 All 8 AIR claims live over the full §4.1 envelope (1..4 × 1..4) with real Poseidon2 compression (M-P2 + K-AIR). Production §2.1 FRI parameters pinned (K-FRI-production). **Column-sharing exhausted on the current AIR structure** (steps 1 + 2 + 3): K-air-col-share landed Merkle row-loop (w=8 across 32 rows); K-air-col-step2 landed wide-Cm/OutCm + narrow-IvkCm/Nf reuse; K-air-col-step3 investigated sub-shape allocation and trace-height tuning and correctly stopped with a negative result — the current AIR is already tight, trace-height shrink only saves 2–4 % proof bytes because `num_queries × column-count` dominates, and trace-height expansion is net-negative. Cumulative at 4/4 worst case: cols **27,837 → 2,081 (−92.5 %)**, proof **33 MB → 2.22 MB**, verify **790 ms → 111 ms** single-thread. At 1/1: cols 6,960 → 917 (−87 %). All 43 Rust FFI tests + C++ public-input golden stay byte-identical. **Remaining to reach §3.4 envelope** (~100 KB worst, ≤ 20 ms verify) — the ~22× gap cannot be closed by more column-sharing on this AIR: the next move must be a cross-instance Poseidon2 scheduler (deep architectural change), a structural AIR redesign, or renegotiation of the §2.1 FRI parameters. |
+| **P.2** Transfer AIR + prover (Rust) | 🟡 | Hand-written Plonky3 AIR implementing claims 1–8 of §4.2: spends 1..4, outputs 1..4, in-circuit balance, Merkle paths, nullifier derivation, hash-chain key identity. Reference prover CLI in `tosctl`. | 🟡 All 8 AIR claims live over the full §4.1 envelope (1..4 × 1..4) with real Poseidon2 compression (M-P2 + K-AIR). **FRI Option B pinned 2026-04-20** (experiment 9, §16 decision #33 amended): `(log_blowup=3, num_queries=52, query_pow_bits=24)` — 180 conjectured / 102 proven bits, 40 % above the 128-bit design target. Column-sharing steps 1 + 2 (K-air-col-share + K-air-col-step2) reduced cols 27,837 → 2,081 (−92.5 %). Combined with FRI Option B, the measured delta at 4/4 worst case is proof **33 MB → 915 KB (−97.2 %)**, verify **790 ms → 26 ms (−96.7 %)**; verify at the common 1/2 shape is **14 ms, below the §1.4 20 ms target**. All 43 Rust FFI tests + 16 C++ §12 tests + 59 tosctl/uno tests green; public-input golden byte-identical. **Remaining ~9× gap to §3.4 ~100 KB envelope** is not a v1 blocker per `doc/uno-p2-path-research.md` — §3.4 re-scoped to ~1 MB worst case, within the 200 Mbps validator bandwidth budget. Closing the remaining gap requires Path (iii) `uni-stark → batch-stark` migration (post-v1 option). |
 | **P.3** Parallel verifier in C++ (FFI) | 🟡 | Link `uno_plonky3_ffi` into validator via minimal C ABI. **Must support parallel verification across N worker threads (N = num_cores) with deterministic output ordering — this is an ACTIVATION PREREQUISITE, not a later release gate or optimization.** Per-tx signatures and proof verifies run concurrently in the pool; state mutations remain serialized by tx order. | 🟡 `ParallelVerifyPool` lands with process-singleton lifecycle, per-worker verifier handle, and input-order-stable `VerifyResult` vector. `test-uno-parallel-verify` passes 27/27 (determinism across 1/2/4/8 workers, byte-identical state root vs serial reference). Corrosion-rs v0.5.2 vendored at `third-party/corrosion/` and wired through the top-level CMake (K-corrosion): `libuno_plonky3_ffi.a` now links into `uno_workchain` PUBLIC, which in turn propagates to `validator-engine` / `create-hardfork` / `test-tos-collator`. Measured 4-core speedup 2.81×–3.01× on MVP AIR (8-core 3.61×–6.23×); the §1.4 ≥3.5× 4-core target is tied to P.2's column-count collapse — shrinking per-tx verify work lifts scaling into the target band. **Blocking for mainnet activation**, not for testnet. |
 | **P.4** State model + dispatch | ✅ | `UnoShardState`, commitment-tree cells, nullifier dict, anchor window, block-filter accumulator, init hook, dispatch (§8). | ✅ All components landed: A1 state/cell-state/genesis, A2 commitment-tree/nullifier-set/anchor-window/block-filter, A5 compute-phase/init/dispatch, thin dispatcher in `crypto/block/uno-workchain-dispatch.{h,cpp}` (namespace `uno_workchain_dispatch`, `0x55 'U'` marker cell). `libuno_workchain.a` builds clean. Restart-survival test green (K-restart-survival-drive): 20 valid + 5 invalid Transfers apply → serialize → deserialize → re-serialize yields byte-identical state root (§12 P.4). |
 | **P.5** End-to-end compute + RPC | ✅ | verify_transfer, apply_transfer, block-commit path. `uno_sendTransfer`, `uno_getAnchor`, `uno_getBlockFilter`, `uno_getOutputsAtBlock`, `uno_estimateFee`, `uno_getNullifierStatus`. | ✅ A5 verify/apply pipeline + A6 all 11 `uno_*` RPC methods + 3 subscription methods (N-P5). `validator-engine/json-rpc-server.cpp` surgical edit in place. Setter-DI bindings fully wired in `init.cpp` (A1 state reader → A6, A2 filter backend → A6, A5 admission → A6). End-of-block `notify_*` hooks emit included-tx + new-anchor events. Two-wallet end-to-end demo (`test-uno-end-to-end.cpp`) drives prove → admission → verify → scan → audit against the real A1/A2 state, A3 crypto, A5 codec, and a test-only Plonky3 proof override; passes with 0 skips (K-e2e-aead flipped the ovk-AEAD unwrap assertion from SKIP → PASSED). |
@@ -1889,7 +1944,11 @@ Every non-trivial choice below was made against the alternative space of publish
 30. **Ownership claim — decided: ivk-commitment hash-chain binding (no in-circuit curve ops).** §4.2 claim 3 is reformulated from Orchard's in-circuit `pk_d = ivk · g_d` to a pure hash-chain: `ivk_commitment = Poseidon2("uno-ivk-cm-v1", ivk, d)` is published in the address (§2.6) and bound into `cm` (§3.2); the AIR proves `ivk_commitment` matches an `ivk` hash-chained from `uno_seed`. **No curve operations inside the AIR.** The sole adversary-relevant property — "only the holder of `uno_seed` can produce a valid spend proof" — is preserved under the Poseidon2 random-oracle model.
 31. **Spend-auth `rk` — decided: fresh per-spend Ristretto255 key, no `ak` randomization.** §2.5 is simplified from Orchard's `rk = ak + α·G` randomization scheme. Each spend samples a fresh `rsk ∈ scalars(Ristretto255)`, publishes `rk = rsk · G`, and signs `tx_hash` with Schnorr. No long-term spend-auth key `ak` exists; it is removed from `fvk`. Audit recovery of spend history goes through `ovk`-decrypted `out_ciphertext`, not through `rk` inversion. Rationale: Orchard's `rk-ak` randomization required in-circuit curve ops (claim 6 in earlier drafts); removing it eliminates the last curve op from the AIR, consistent with §2.5.
 32. **Block-filter encoding — decided: GCS over raw 16-bit tags, `P=15, M=2¹⁶`, no secondary hash.** §2.8.1 pins the exact encoding as a consensus-binding spec. `filter_tag` is already cryptographic (§2.8), so no BIP-158-style keyed second hash is needed; GCS operates directly on the sorted deduplicated u16 multiset. Expected size ~100–150 B per block at 30 TPS, ~180-260 B at 50 TPS burst. The filter is a **derived view**, not consensus state — any full node reconstructs it from on-chain data. Byte-identical across every implementation; wallet SDKs match validator output by spec, not by keyed-hash agreement.
-33. **FRI security parameters — decided: `log_blowup = 2`, `num_queries = 128`, `proof_of_work_bits = 16`.** §2.1 pins these as consensus-binding. Gives ~128-bit conjectured / ~64-bit proven classical soundness, ~64-bit conjectured / ~32-bit proven quantum soundness. Tighter than Plonky3/SP1/AggLayer defaults (`num_queries=84-100`, ~100-bit conjectured) because a soundness break on a privacy L1 with fixed-supply native asset enables unauthorized value creation, not just cross-chain bridge inconsistency. Cost: prove time +40%, proof size +30%, verify time +30% vs Plonky3 defaults. Accepted as the price of payment-chain-grade security. Rejected: `log_blowup=4` (doubled prove time for minimal conjectured-soundness gain); `num_queries=200` (same soundness as our choice, +50% proof size); pure 128-bit-proven target (prove time >2× slower, no meaningful real-world adversary advantage).
+33. **FRI security parameters — decided (amended 2026-04-20): `log_blowup = 3`, `num_queries = 52`, `query_proof_of_work_bits = 24`.** §2.1 pins these as consensus-binding ("Option B"). Gives **180-bit conjectured / 102-bit proven classical soundness**, 90-bit conjectured / 51-bit proven quantum. The design-target bar is 128-bit conjectured classical; the pin sits 40 % above that bar. Above Plonky3/SP1/AggLayer defaults (`num_queries=84-100`, ~100-bit conjectured) because a soundness break on a privacy L1 with fixed-supply native asset enables unauthorized value creation, not just cross-chain bridge inconsistency.
+
+    **Amendment history**: the original v1 decision pinned `(log_blowup = 2, num_queries = 128, pow_bits = 16)` which gave 272 conjectured / 144 proven bits — more than 2× the design goal, paying ~57 % extra proof bytes for zero realistic-adversary security gain. The K-fri-analysis 15-config parameter sweep (`doc/uno-fri-param-analysis.md`) identified Option B as the best trade-off at the same soundness tier (180 bits, well above 128). Measured delta at 4/4 worst case: proof 2.22 MB → 984 KB (−57 %); verify 55.7 ms → 24.7 ms (−56 %); prove 124 ms → 354 ms (+185 %, acceptable because prove is client-side per §1.4a).
+
+    **Rejected alternatives** (all measured in `doc/uno-fri-param-analysis.md`): `(log_blowup=2, num_queries=128, pow_bits=16)` — original pin, wastes 144 bits of headroom; `(2, 84, 16)` "Option A" — defensible but −33 % vs Option B's −57 % at the same soundness tier; `(3, 28, 24)` "Option C" — 108 conjectured bits, below the design target; `log_blowup=1` — AIR-structurally incompatible (constraint C4: quotient degree ≥ 3 requires blowup ≥ 4); `query_pow_bits=0` — gives back 24 bits for no proof-size savings.
 34. **ConfigParam slot for UnoConfig — decided: `ConfigParam 84`.** §10.2 slot allocation follows the TOS convention of placing workchain-specific / bridge-adjacent protocol parameters in the 70s-80s cluster (existing usage: 71-73 oracle bridges, 79/81/82 jetton bridges). 84 is the first free slot after the cluster. Rejected: `26` / `27` (core-band gaps that TOS/TON upstream may backfill with future low-numbered core-protocol extensions — clash risk); `100+` (arbitrary, breaks spatial locality with 71-82). Canonical registry entry added to `doc/ConfigParam.md`.
 35. **Public-input byte encoding — decided: Plonky3-canonical little-endian u64 per Goldilocks element; 256-bit inputs split into 4 × u64 chunks in LE order with `mod p_Goldilocks` reduction.** §4.3 step 4 pins the exact byte-level spec. Total serialized length is `64 + 64·spend_count + 72·output_count` bytes. A golden fixture `uno/test/golden/public-inputs-v1.hex` enforces Rust (A4) ↔ C++ (A5) byte-identical output as a P.1 gate. Rejected: big-endian (breaks Plonky3 convention; no benefit); Bincode / serde (couples spec to crate version); application-specific formats (audit burden without gain). The `mod p_Goldilocks` reduction introduces ≈ 2⁻³⁰ aggregate bias on pseudo-random 256-bit inputs, negligible for soundness; adversary-controlled inputs are asserted `< p_Goldilocks` at admission.
 36. **Total supply + genesis distribution — decided: 21,000,000 UNO, 60% airdrop / 25% treasury / 15% team, no v1 vesting.** §10.3 pins the specific allocation. 21 M matches Bitcoin / Zcash cap, reinforcing the "digital gold + PQ-native + privacy-native" scarcity narrative (§0). 60% airdrop bias signals community-first without investor allocation; 25% treasury handles ecosystem grants / audits / incentives; 15% team is lean for an independent (non-VC-backed) project. No on-chain vesting in v1: wc=2 has no contracts and no time-locked tx type, so team allocation ships unvested at genesis under multisig-protected off-chain legal custody. v1.1 may introduce `uno_timelocked_transfer` with a `min_spend_block` public input if vesting becomes important enough to warrant scheme_id bump. Rejected: 100M / 1B supply (dilutes scarcity narrative); investor/presale allocation (VC-free posture); vesting-via-wc=0-staging (violates §1.5 bridgelessness); in-v1 timelocked tx (adds 4–6 weeks of AIR work for a launch-only concern).

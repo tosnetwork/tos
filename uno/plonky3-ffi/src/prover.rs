@@ -64,26 +64,39 @@ pub(crate) type MvpConfig = StarkConfig<MvpPcs, Challenge, MvpChallenger>;
 /// Build the canonical Transfer `StarkConfig`.
 ///
 /// FRI parameters are the §2.1 (doc/uno-workchain.md) consensus-binding
-/// production triple:
+/// production triple ("Option B", pinned 2026-04-20 per the
+/// K-fri-analysis parameter sweep at `doc/uno-fri-param-analysis.md`):
 ///
 /// ```text
-/// log_blowup   = 2     // trace domain = 4× trace length
-/// num_queries  = 128   // FRI verifier query rounds
-/// pow_bits     = 16    // Fiat-Shamir grinding bits
+/// log_blowup               = 3     // trace domain = 8× trace length
+/// num_queries              = 52    // FRI verifier query rounds
+/// query_proof_of_work_bits = 24    // Fiat-Shamir grinding bits per query
+/// commit_proof_of_work_bits= 0     // not used; commit grinding disabled
 /// ```
 ///
-/// Target: ~128-bit conjectured soundness (ethSTARK model) against
-/// classical adversaries. See §2.1 for the rejected alternatives
-/// (`num_queries=84` Plonky3 default is below the native-value-L1 bar;
-/// `log_blowup=1, num_queries=200` wastes proof size for no security
-/// gain; `log_blowup=4, num_queries=84` costs +80% prove time for no
-/// realistic gain).
+/// Target: **180-bit conjectured / 102-bit proven classical** soundness
+/// (ethSTARK model). Design bar is 128-bit conjectured classical; the
+/// pin sits 40 % above that. Quantum: 90 / 51 bits (Grover).
+///
+/// Amendment history: the original v1 pin was (2, 128, 16) giving
+/// 272 conjectured / 144 proven bits — more than 2× the design goal,
+/// wasting ~57 % proof bytes on no realistic-adversary security gain.
+/// Option B is the same soundness tier (180 bits, still >40 % above
+/// the 128-bit design target) at the best proof-size / verify-time
+/// point on the frontier. See §16 decision #33 (amended) for the full
+/// rationale + rejected alternatives.
+///
+/// Expected measured impact vs the original pin (from K-fri-analysis on
+/// 4/4 worst case):
+///   proof: 2,290,134 B → 984,019 B  (−57 %)
+///   verify: 55.7 ms     → 24.7 ms   (−56 %)
+///   prove:  124 ms      → 354 ms    (+185 %, acceptable — client-side)
 ///
 /// Field-name mapping from §2.1 to the Plonky3 `FriParameters` struct
 /// (third-party/plonky3-uno/fri/src/config.rs): the spec's `pow_bits`
 /// binds to `query_proof_of_work_bits` (the grinding phase before query
-/// sampling, the bits counted by `conjectured_soundness_bits =
-/// log_blowup·num_queries + query_proof_of_work_bits`).
+/// sampling, counted in `conjectured_soundness_bits = log_blowup·num_queries
+/// + query_proof_of_work_bits = 3·52 + 24 = 180`).
 /// `commit_proof_of_work_bits` is an orthogonal per-batching-challenge
 /// grind that the Plonky3 `new_benchmark*` presets leave at 0; we match.
 /// `log_final_poly_len = 0` and `max_log_arity = 1` also match the
@@ -100,12 +113,12 @@ pub(crate) fn build_config() -> MvpConfig {
     let challenge_mmcs = MvpChallengeMmcs::new(val_mmcs.clone());
     let dft = MvpDft::default();
     let fri_params = FriParameters {
-        log_blowup: 2,
+        log_blowup: 3,
         log_final_poly_len: 0,
         max_log_arity: 1,
-        num_queries: 128,
+        num_queries: 52,
         commit_proof_of_work_bits: 0,
-        query_proof_of_work_bits: 16,
+        query_proof_of_work_bits: 24,
         mmcs: challenge_mmcs,
     };
     let pcs = MvpPcs::new(dft, val_mmcs, fri_params);

@@ -35,14 +35,16 @@ use tosctl_uno::{
     wire as wire_mod,
 };
 
-/// Observed proof-size window under §2.1 production FRI params
-/// (log_blowup=2, num_queries=128, query_pow_bits=16) on the MVP
-/// column-heavy AIR: 1/2 shape ≈ 8 MB, 4/4 shape ≈ 33 MB. §3.4's
-/// ~52 KB typical / ~100 KB worst envelope will hit once the real
-/// Transfer AIR collapses its per-Poseidon2 column expansion. Until
-/// then this is a sanity bound, not a production-gate.
-const PROOF_MIN_BYTES: usize = 500_000;
-const PROOF_MAX_BYTES: usize = 50_000_000;
+/// Observed proof-size window under §2.1 Option B FRI params
+/// (log_blowup=3, num_queries=52, query_pow_bits=24). Measured on the
+/// MVP AIR after K-air-col-share + K-air-col-step2 column-sharing
+/// passes: 1/2 shape ≈ 520 KB, 4/4 shape ≈ 915 KB. §3.4's envelope
+/// (~100 KB worst) remains a longer-term target requiring Path (iii)
+/// (uni-stark → batch-stark) or further AIR structural work; until
+/// then this window is a wallet-side sanity bound, not a production-
+/// gate.
+const PROOF_MIN_BYTES: usize = 300_000;
+const PROOF_MAX_BYTES: usize = 2_000_000;
 
 fn seed_for(label: u8) -> [u8; 32] {
     let mut s = [0u8; 32];

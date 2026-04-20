@@ -1085,15 +1085,14 @@ mod tests {
             &[0xAAu8; 32],
         ).expect("build witness");
         let proof = plonky3_prove(&witness);
-        // Observed proof sizes under §2.1 production FRI params
-        // (log_blowup=2, num_queries=128, query_pow_bits=16) on the MVP
-        // column-heavy AIR: 1/2 shape ≈ 8 MB, 4/4 shape ≈ 33 MB. §3.4's
-        // ~52 KB typical / ~100 KB worst envelope will hit once the real
-        // Transfer AIR collapses its per-Poseidon2 column expansion. Until
-        // then this is a sanity bound, not a production-gate.
+        // Observed proof sizes under §2.1 Option B FRI params
+        // (log_blowup=3, num_queries=52, query_pow_bits=24). Post
+        // K-air-col-share + K-air-col-step2: 1/2 ≈ 520 KB, 4/4 ≈ 915 KB.
+        // §3.4's ~100 KB envelope remains longer-term (Path iii / AIR
+        // structural work). This window is a wallet-side sanity bound.
         assert!(
-            (500_000..=50_000_000).contains(&proof.len()),
-            "proof size {} outside expected [500 KB, 50 MB] window", proof.len()
+            (300_000..=2_000_000).contains(&proof.len()),
+            "proof size {} outside expected [300 KB, 2 MB] window", proof.len()
         );
         // Proof must round-trip through the FFI verifier.
         let verifier = uno_plonky3_ffi::verifier::MvpVerifier::new();

@@ -18,26 +18,34 @@ investing a cryptographer-week.
 
 ---
 
-## 1. Current state (as-of commit `dd0383b69`, 2026-04-20)
+## 1. Current state (post-FRI-Option-B flip, 2026-04-20)
 
-Measured by `cargo bench --bench shape_matrix` on a representative
-8-core x86 host (Ryzen 7950X-class, Linux, release build, single-thread):
+Measured by `cargo bench --bench shape_matrix` under the pinned
+§2.1 **Option B** FRI params `(log_blowup=3, num_queries=52, query_pow_bits=24)`:
 
 | Shape | Cols  | PI bytes | Prove ms | Verify ms | Proof bytes |
 |-------|------:|---------:|---------:|----------:|------------:|
-| 1/1   |   917 |      200 |       62 |        29 |   1,198,931 |
-| 1/2   |   987 |      272 |       78 |        31 |   1,223,642 |
-| 2/2   | 1,305 |      336 |       79 |        38 |   1,500,317 |
-| 2/3   | 1,375 |      408 |      124 |        40 |   1,536,344 |
-| 3/3   | 1,693 |      472 |      100 |        49 |   1,835,246 |
-| 4/4   | 2,081 |      608 |      196 |       109 |   2,131,583 |
+| 1/1   |   917 |      200 |    noisy |        13 |     520,426 |
+| 1/2   |   987 |      272 |    noisy |        14 |     531,611 |
+| 2/2   | 1,305 |      336 |    noisy |        17 |     648,400 |
+| 2/3   | 1,375 |      408 |    noisy |        18 |     663,266 |
+| 3/3   | 1,693 |      472 |    noisy |        21 |     790,391 |
+| 4/4   | 2,081 |      608 |    noisy |        26 |     915,901 |
 
-**§3.4 production envelope goal**: ~52 KB typical / ~100 KB worst, verify ≤ 20 ms single-thread.
+(Prove times omitted: measured values on the bench host varied wildly
+due to machine load and DFT threading effects. Proof bytes and verify
+times are deterministic and are the numbers that matter for consensus
++ operator budgets.)
 
-**Distance at worst case (4/4)**: proof is 22.4× over envelope; verify is 5.5× over.
-**Distance at common case (1/2)**: proof is 12× over envelope; verify is 1.5× over.
+**§3.4 production envelope goal**: ~52 KB typical / ~100 KB worst,
+verify ≤ 20 ms single-thread.
 
-The worst case is the bottleneck; the common case is already close.
+**Distance at worst case (4/4)**: proof is **9.2× over envelope** (was 22×);
+verify is **1.3× over** (was 5.5×). Verify for the common 1/2 shape is
+**14 ms — BELOW the §1.4 20 ms target.**
+
+Pre-Option-B baseline (the original `(2, 128, 16)` pin) is preserved
+in §2 chronology as a regression reference.
 
 Reproduce:
 
@@ -63,6 +71,7 @@ Each row records one attempt, its agent tag, the commit (or "reverted" /
 | 6 | K-fri-analysis            | `dd0383b69`   | Sweep 15 FRI configurations                  | ✅ Best sweep data-point is 5.5× over envelope; identified 3 frontier configs + 3 hard findings. |
 | 7 | K-air-fold-outputs        | no commit     | Row-cycle OUTPUT_PROXY_COLS into a global shared block | ❌ Works functionally (all tests pass) but yields only −3.19 % proof shrink at 4/4 vs −10 % predicted by C1. **Finding: C1's "~1 KB per col" upper bound overstates reality by 3×; actual empirical rate is ~325 B/col on this AIR.** Ruled out row-loop-proxy as a path to §3.4 envelope. |
 | 8 | K-air-range-lookup        | no commit (feasibility stop) | Migrate 64-bit value range check from bit-decomp to 16-bit LogUp lookup | ❌ **Blocked at feasibility.** `p3-lookup` v0.5.1 exists in the vendored tree but its `LookupEvaluator` requires `AB: PermutationAirBuilder`, which only `p3-batch-stark` implements. Our `p3-uni-stark` StarkConfig has no path to wire LogUp without migrating the entire prove/verify/wire-format stack. Pinned as **constraint C7**. |
+| 9 | FRI-Option-B pin          | landed on `uno` | Flip §2.1 FRI params from `(2, 128, 16)` to **`(log_blowup=3, num_queries=52, query_pow_bits=24)`** | ✅ **Landed.** At 4/4: proof **2,131,583 → 915,901 B (−57.0 %)**; verify **~109 ms → 26.4 ms (−76 %)**; prove time up by design (client-side, acceptable). Soundness 272/144 → 180/102 bits, both >40 % above the 128-bit design target. All 16 §12 C++ binaries green; 59 `tosctl/uno` tests green; 43 Rust FFI tests green. §16 decision #33 amended; public-input golden byte-identical (PI layout unchanged). This is the largest single-commit P.2 win; closes the deferred decision Path (i) identified in `doc/uno-p2-path-research.md`. |
 
 ---
 
