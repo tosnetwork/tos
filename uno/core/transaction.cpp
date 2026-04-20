@@ -11,37 +11,24 @@
 #include <cstring>
 
 #include "td/utils/Slice.h"
-#include "td/utils/crypto.h"    // td::sha256 — temporary hash stand-in (see TODO below)
 #include "td/utils/logging.h"
 #include "vm/cells/CellBuilder.h"
 #include "vm/cells/CellSlice.h"
 
-// Forward-declared BLAKE3 hook owned by uno/crypto/ (Agent 3). The signature
-// must match td::sha256(Slice, MutableSlice). Linked in at assembly time once
-// Agent 3's `blake3.{h,cpp}` lands. Until then, this source file falls back
-// to SHA-256 so we can exercise the full codec path in unit tests. The fallback
-// is gated behind `UNO_BLAKE3_AVAILABLE`; flipping that flag in the CMake
-// config once the Rust/C BLAKE3 bridge is wired switches to the canonical
-// BLAKE3(Slice, MutableSlice) used by §4.1.
-//
-// TODO(uno-integration): replace td::sha256 fallback once Agent 3 lands
-// uno/crypto/blake3.h with `uno_crypto::blake3_256(Slice in, MutableSlice out)`.
-#ifdef UNO_BLAKE3_AVAILABLE
-namespace uno_crypto {
-void blake3_256(td::Slice in, td::MutableSlice out);
-}  // namespace uno_crypto
-#endif
+// Decision #15: BLAKE3 via A3's adapter (uno/crypto/internal/blake3_adapter.h).
+// A3 has landed; the sha256 fallback path (gated by `UNO_BLAKE3_AVAILABLE`)
+// is removed — tx_hash MUST be BLAKE3 per §4.1, anything else would silently
+// diverge on the wire.
+#include "uno/crypto/internal/blake3_adapter.h"
 
 namespace uno_workchain {
 
 namespace {
 
 inline void hash_blake3_or_fallback(td::Slice in, td::MutableSlice out) {
-#ifdef UNO_BLAKE3_AVAILABLE
-    uno_crypto::blake3_256(in, out);
-#else
-    td::sha256(in, out);  // deterministic stand-in; swapped when Agent 3 lands
-#endif
+    // §4.1: tx_hash = BLAKE3(canonical-preimage). Always-on under decision #15.
+    ::uno_workchain::crypto::internal::blake3_hash(
+        in, reinterpret_cast<uint8_t*>(out.data()));
 }
 
 // ---------------------------------------------------------------------------

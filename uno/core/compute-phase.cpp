@@ -23,6 +23,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -35,51 +36,70 @@
 #include "uno/core/transaction.h"
 
 // =============================================================================
-// Forward-declared interfaces owned by other agents.
+// A3 crypto primitives (decision #15).
 //
-// These are placeholders so compute-phase.cpp compiles against a skeleton
-// build. Once the owning agents land their headers (see per-decl TODOs) we
-// replace these forwards with real #includes.
-//
-// NONE of the signatures below are consensus-binding in this file — only the
-// Plonky3 public-input encoding is, and that is owned by us (see
-// `uno/core/transaction.cpp::build_plonky3_public_inputs`).
+// Decision #15 replaces the original weak-symbol `uno_crypto_fwd::` forward
+// declarations with real A3 headers. A3 delivered under the
+// `uno_workchain::crypto` namespace (points / signatures) and
+// `uno::crypto::Plonky3Verifier` (FFI handle). A thin adapter namespace
+// `uno_crypto` keeps the verify call sites signature-compatible with A5's
+// original boolean-returning shape so no consensus-relevant logic moved.
 // =============================================================================
+#include "uno/crypto/ristretto255.h"
+#include "uno/crypto/schnorr-ristretto.h"
+#include "uno/crypto/plonky3-verifier.h"
 
 namespace uno_workchain {
 
-// ---- Agent 3: Ristretto255 point-decompression check ------------------------
-// TODO(uno-integration): replace with `#include "uno/crypto/ristretto255.h"`.
-namespace uno_crypto_fwd {
+namespace uno_crypto {
+
 /// Returns true iff the 32-byte buffer decompresses to a valid, non-identity
-/// Ristretto255 point. §4.3 step 1.7.
-bool ristretto255_is_valid_point(const uint8_t bytes[32]) noexcept
-    __attribute__((weak));
-}  // namespace uno_crypto_fwd
+/// Ristretto255 point. §4.3 step 1.7. Wraps A3's
+/// `RistrettoPoint::validate()` (td::Status).
+inline bool ristretto255_is_valid_point(const uint8_t bytes[32]) noexcept {
+    ::uno_workchain::crypto::RistrettoPoint pt{};
+    std::memcpy(pt.bytes.data(), bytes, 32);
+    return pt.validate().is_ok();
+}
 
-// ---- Agent 3: Schnorr-on-Ristretto255 verifier ------------------------------
-// TODO(uno-integration): replace with `#include "uno/crypto/schnorr-ristretto.h"`.
-namespace uno_crypto_fwd {
 /// Verify a single Schnorr-on-Ristretto255 signature `sig` (64 B) under
-/// verification key `rk` (32 B compressed point) over `msg` (32 B, which
-/// here is `tx_hash`). Returns true iff valid. §4.3 step 3.
-bool schnorr_ristretto_verify(
-    const uint8_t rk[32],
-    const uint8_t msg[32],
-    const uint8_t sig[64]) noexcept __attribute__((weak));
-}  // namespace uno_crypto_fwd
+/// verification key `rk` (32 B compressed point) over `msg` (32 B — the
+/// canonical tx_hash). Returns true iff valid. §4.3 step 3. Wraps A3's
+/// `schnorr_verify(pk, msg, sig)`.
+inline bool schnorr_ristretto_verify(const uint8_t rk[32],
+                                     const uint8_t msg[32],
+                                     const uint8_t sig[64]) noexcept {
+    ::uno_workchain::crypto::RistrettoPoint pk{};
+    std::memcpy(pk.bytes.data(), rk, 32);
+    ::uno_workchain::crypto::SchnorrSignature s{};
+    std::memcpy(s.data(), sig, 64);
+    td::Slice msg_slice(reinterpret_cast<const char*>(msg), 32);
+    return ::uno_workchain::crypto::schnorr_verify(pk, msg_slice, s).is_ok();
+}
 
-// ---- Agent 4: Plonky3 verifier bridge ---------------------------------------
-// TODO(uno-integration): replace with `#include "uno/crypto/plonky3-verifier.h"`.
-// Agent 4's Rust AIR must consume `public_inputs` bytes in the exact layout
-// produced by `build_plonky3_public_inputs(tx).to_bytes()` (§4.3 step 4).
-// If Agent 4's verifier differs, this call site is the coordination point
-// (pinned encoding already done in transaction.cpp).
-namespace uno_crypto_fwd {
-bool plonky3_verify_transfer_proof(
-    td::Slice public_inputs_bytes,
-    td::Slice proof_bytes) noexcept __attribute__((weak));
-}  // namespace uno_crypto_fwd
+/// Verify a Plonky3 STARK proof under the pinned public-input encoding.
+/// §4.3 step 4. Thin wrapper over A4's `Plonky3Verifier::verify()` handle.
+///
+/// The handle is process-singleton (thread-safe, one init per validator);
+/// we materialise a `Meyers singleton` to keep the call-site free of state.
+inline bool plonky3_verify_transfer_proof(td::Slice public_inputs_bytes,
+                                          td::Slice proof_bytes) noexcept {
+    struct Holder {
+        ::uno::crypto::Plonky3Verifier verifier;
+        bool ready{false};
+        Holder() { ready = verifier.init(); }
+    };
+    static Holder holder;
+    if (!holder.ready) return false;
+    auto r = holder.verifier.verify(
+        reinterpret_cast<const std::uint8_t*>(proof_bytes.data()),
+        proof_bytes.size(),
+        reinterpret_cast<const std::uint8_t*>(public_inputs_bytes.data()),
+        public_inputs_bytes.size());
+    return r == ::uno::crypto::VerifyResult::kOk;
+}
+
+}  // namespace uno_crypto
 
 // =============================================================================
 // verify_result_name
@@ -172,27 +192,19 @@ VerifyResult verify_transfer(const UnoState& state, const Transfer& tx) {
         }
     }
 
-    // Ristretto point decompression (§4.3 step 1.7). We run this even when
-    // Agent 3's check is not yet linked: the weak symbol below resolves to
-    // nullptr in that case and we conservatively *accept* (treating this as
-    // a build-not-finished marker), logging a warning. This keeps the skeleton
-    // build green without ever silently passing in a production link.
-    if (uno_crypto_fwd::ristretto255_is_valid_point) {
-        for (const auto& s : tx.spends) {
-            if (!uno_crypto_fwd::ristretto255_is_valid_point(
-                    reinterpret_cast<const uint8_t*>(s.rk.data()))) {
-                return VerifyResult::BadRistrettoPoint;
-            }
+    // Ristretto point decompression (§4.3 step 1.7). A3 always links in
+    // under decision #15 — no weak-symbol fallback.
+    for (const auto& s : tx.spends) {
+        if (!uno_crypto::ristretto255_is_valid_point(
+                reinterpret_cast<const uint8_t*>(s.rk.data()))) {
+            return VerifyResult::BadRistrettoPoint;
         }
-        for (const auto& o : tx.outputs) {
-            if (!uno_crypto_fwd::ristretto255_is_valid_point(
-                    reinterpret_cast<const uint8_t*>(o.epk.data()))) {
-                return VerifyResult::BadRistrettoPoint;
-            }
+    }
+    for (const auto& o : tx.outputs) {
+        if (!uno_crypto::ristretto255_is_valid_point(
+                reinterpret_cast<const uint8_t*>(o.epk.data()))) {
+            return VerifyResult::BadRistrettoPoint;
         }
-    } else {
-        LOG(WARNING) << "uno-workchain: ristretto255_is_valid_point symbol not linked "
-                        "(Agent 3 pending); skipping §4.3 step 1.7 point validation";
     }
 
     // ---- Step 2: nullifier not-spent (§4.3 step 2) ----
@@ -203,18 +215,13 @@ VerifyResult verify_transfer(const UnoState& state, const Transfer& tx) {
     }
 
     // ---- Step 3: Schnorr-on-Ristretto255 spend-auth sigs (§4.3 step 3) ----
-    if (uno_crypto_fwd::schnorr_ristretto_verify) {
-        for (const auto& s : tx.spends) {
-            if (!uno_crypto_fwd::schnorr_ristretto_verify(
-                    reinterpret_cast<const uint8_t*>(s.rk.data()),
-                    reinterpret_cast<const uint8_t*>(tx.tx_hash.data()),
-                    s.spend_auth_sig.data())) {
-                return VerifyResult::BadSpendAuthSig;
-            }
+    for (const auto& s : tx.spends) {
+        if (!uno_crypto::schnorr_ristretto_verify(
+                reinterpret_cast<const uint8_t*>(s.rk.data()),
+                reinterpret_cast<const uint8_t*>(tx.tx_hash.data()),
+                s.spend_auth_sig.data())) {
+            return VerifyResult::BadSpendAuthSig;
         }
-    } else {
-        LOG(WARNING) << "uno-workchain: schnorr_ristretto_verify symbol not linked "
-                        "(Agent 3 pending); skipping §4.3 step 3 signature verify";
     }
 
     // ---- Step 4: Plonky3 proof verify (§4.3 step 4) ----
@@ -231,15 +238,10 @@ VerifyResult verify_transfer(const UnoState& state, const Transfer& tx) {
         if (proof_bytes.empty()) {
             return VerifyResult::BadPlonky3Proof;
         }
-        if (uno_crypto_fwd::plonky3_verify_transfer_proof) {
-            bool ok = uno_crypto_fwd::plonky3_verify_transfer_proof(
-                td::Slice(reinterpret_cast<const char*>(pi_bytes.data()), pi_bytes.size()),
-                td::Slice(proof_bytes.data(), proof_bytes.size()));
-            if (!ok) return VerifyResult::BadPlonky3Proof;
-        } else {
-            LOG(WARNING) << "uno-workchain: plonky3_verify_transfer_proof symbol not linked "
-                            "(Agent 4 pending); skipping §4.3 step 4 proof verify";
-        }
+        bool ok = uno_crypto::plonky3_verify_transfer_proof(
+            td::Slice(reinterpret_cast<const char*>(pi_bytes.data()), pi_bytes.size()),
+            td::Slice(proof_bytes.data(), proof_bytes.size()));
+        if (!ok) return VerifyResult::BadPlonky3Proof;
     }
 
     return VerifyResult::Ok;
