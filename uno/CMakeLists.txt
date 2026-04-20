@@ -99,6 +99,21 @@ target_include_directories(uno_workchain
 #
 # The stub keeps the skeleton build green on hosts without liboqs installed;
 # I-C / full-build CI should install liboqs-dev and drop the stub.
+#
+# Probe order:
+#   1. Honour caller-provided LIBOQS_INCLUDE_DIR / LIBOQS_LIBRARY (for CI and
+#      non-root installs into user prefixes such as $HOME/.local).
+#   2. find_path / find_library against the default system prefixes.
+#
+# When liboqs is located we additionally probe for the FIPS 203 deterministic
+# derand symbols and surface them to mlkem768.cpp via preprocessor defines
+# (OQS_HAVE_ML_KEM_KEYPAIR_DERAND / OQS_HAVE_ML_KEM_ENCAPS_DERAND). The header
+# declares these unconditionally in recent liboqs (>= 0.10), but the probe
+# keeps the wiring explicit and future-proofs against older packaged builds.
+#
+# Version pin for the liboqs commit this TOS-side has been validated against
+# is recorded in uno/crypto/LIBOQS_VERSION.md. CI and validator builds MUST
+# pin that exact commit rather than track liboqs `main`.
 # -----------------------------------------------------------------------------
 find_path(LIBOQS_INCLUDE_DIR oqs/oqs.h)
 find_library(LIBOQS_LIBRARY NAMES oqs)
@@ -107,8 +122,53 @@ if (LIBOQS_INCLUDE_DIR AND LIBOQS_LIBRARY)
   message(STATUS "uno_workchain: found liboqs at ${LIBOQS_LIBRARY}")
   target_include_directories(uno_workchain PRIVATE ${LIBOQS_INCLUDE_DIR})
   target_link_libraries(uno_workchain PUBLIC ${LIBOQS_LIBRARY})
+
+  # Probe the kem_ml_kem.h header for the FIPS 203 derand prototypes and
+  # surface their availability to mlkem768.cpp. liboqs >= 0.10 exposes both.
+  #
+  # Compile-only probe (no link): we cast the function designator to void
+  # pointer inside a conditional that is never executed — this forces the
+  # compiler to resolve the declaration (fails if not declared) without
+  # emitting a relocation to the symbol, so the check does not require
+  # linking against liboqs (which would drag in OpenSSL as a transitive
+  # dependency of liboqs.a).
+  include(CheckCXXSourceCompiles)
+  set(CMAKE_REQUIRED_INCLUDES_SAVED ${CMAKE_REQUIRED_INCLUDES})
+  set(CMAKE_REQUIRED_INCLUDES ${LIBOQS_INCLUDE_DIR})
+  check_cxx_source_compiles("
+    #include <oqs/oqs.h>
+    #include <oqs/kem_ml_kem.h>
+    int main() {
+      // Declaration-only probe: sizeof(&fn) forces the compiler to resolve
+      // the prototype but does not emit a reference to the symbol body.
+      return sizeof(&OQS_KEM_ml_kem_768_keypair_derand) > 0 ? 0 : 1;
+    }
+  " UNO_OQS_HAS_ML_KEM_KEYPAIR_DERAND)
+  check_cxx_source_compiles("
+    #include <oqs/oqs.h>
+    #include <oqs/kem_ml_kem.h>
+    int main() {
+      return sizeof(&OQS_KEM_ml_kem_768_encaps_derand) > 0 ? 0 : 1;
+    }
+  " UNO_OQS_HAS_ML_KEM_ENCAPS_DERAND)
+  set(CMAKE_REQUIRED_INCLUDES ${CMAKE_REQUIRED_INCLUDES_SAVED})
+
+  if (UNO_OQS_HAS_ML_KEM_KEYPAIR_DERAND)
+    message(STATUS "uno_workchain: liboqs exposes OQS_KEM_ml_kem_768_keypair_derand")
+    target_compile_definitions(uno_workchain PRIVATE OQS_HAVE_ML_KEM_KEYPAIR_DERAND=1)
+  else()
+    message(STATUS "uno_workchain: liboqs build lacks ML-KEM-768 derand keypair — deterministic keygen will error at runtime")
+  endif()
+  if (UNO_OQS_HAS_ML_KEM_ENCAPS_DERAND)
+    message(STATUS "uno_workchain: liboqs exposes OQS_KEM_ml_kem_768_encaps_derand")
+    target_compile_definitions(uno_workchain PRIVATE OQS_HAVE_ML_KEM_ENCAPS_DERAND=1)
+  else()
+    message(STATUS "uno_workchain: liboqs build lacks ML-KEM-768 derand encaps — deterministic encap will error at runtime")
+  endif()
 else()
-  message(STATUS "uno_workchain: liboqs not found — ML-KEM-768 built with UNO_MLKEM_STUB=1 (runtime abort)")
+  message(STATUS "uno_workchain: liboqs not found — ML-KEM-768 built with UNO_MLKEM_STUB=1 (runtime abort). "
+                 "Install liboqs-dev, or build liboqs from source (see uno/crypto/LIBOQS_VERSION.md) and re-configure with "
+                 "-DLIBOQS_INCLUDE_DIR=<prefix>/include -DLIBOQS_LIBRARY=<prefix>/lib/liboqs.a.")
   target_compile_definitions(uno_workchain PRIVATE UNO_MLKEM_STUB=1)
 endif()
 
