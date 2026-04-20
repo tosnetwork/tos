@@ -15,11 +15,16 @@
 //!
 //! **Per spend `i` (for `i ∈ [0, n_spends)`)**:
 //!
-//! - **Claim 1 — Merkle step**: `parent_i = Poseidon2(leaf_i, sibling_i)`.
-//!   Single step only; 32-level scale-out flagged
-//!   `TODO(uno-p2-merkle32)` and reserved for a follow-up slice.
-//!   Row-0 binding: `parent_i == public_inputs[anchor][0]` (limb 0 of the
-//!   shared tx-level anchor).
+//! - **Claim 1 — Merkle path (32 levels, §2.3)**: prover opens
+//!   `cm_i → anchor` across 32 Poseidon2-Goldilocks-8 compressions. At
+//!   level `k`, a path-bit `b_k ∈ {0, 1}` selects ordering: `b_k = 0`
+//!   → `parent = Poseidon2(current, sibling_k)`; `b_k = 1` →
+//!   `parent = Poseidon2(sibling_k, current)`. `current` starts as the
+//!   leaf (= `cm_i`) and is replaced by each level's `parent`. The
+//!   final `current` at level 31's output must equal the tx-level
+//!   anchor PI. Position low→high bit order matches the
+//!   C++ `commitment-tree.{h,cpp}` append-walk convention (`pos >> k & 1`).
+//!   Row-0 binding: `current_final_i == public_inputs[anchor][0]`.
 //!
 //! - **Claim 2 — Note opening**: `cm_i = Poseidon2("uno-cm-v1", d_i, pk_d_i,
 //!   ivk_commitment_i, value_i, rcm_i)`. Row-0 binding: `cm_i == leaf_i`.
@@ -53,17 +58,19 @@
 //! # Column layout
 //!
 //! ```text
-//! width(n_s, n_o) =
-//!     GLOBAL_COLS                                        // 1 (fee proxy)
-//!   + n_s · (SPEND_PROXY_COLS + 4·POSEIDON2_COLS_PER_INSTANCE)
-//!   + n_o · (OUTPUT_PROXY_COLS + 1·POSEIDON2_COLS_PER_INSTANCE)
+//! width(n_s, n_o) = GLOBAL_COLS + n_s·per_spend_cols() + n_o·per_output_cols()
+//!
+//! per_spend_cols()  = SPEND_PROXY_COLS
+//!                   + 32·POSEIDON2_COLS_PER_INSTANCE   // 32-level Merkle (w=8)
+//!                   +  1·POSEIDON2_COLS_PER_INSTANCE   // claim 3 IvkCm  (w=8)
+//!                   +  1·POSEIDON2_COLS_PER_INSTANCE_16 // claim 2 Cm    (w=16)
+//!                   +  1·POSEIDON2_COLS_PER_INSTANCE   // claim 4 Nf     (w=8)
+//! per_output_cols() = OUTPUT_PROXY_COLS + 1·POSEIDON2_COLS_PER_INSTANCE_16
 //! ```
 //!
-//! At (4, 4): `1 + 4·(10 + 720) + 4·(6 + 180) = 3665` columns.
-//! At (1, 1): `1 + 730 + 186 = 917` columns.
-//! At (1, 2): `1 + 730 + 372 = 1103` columns.
-//!
-//! Trace height stays at `2^6 = 64` rows.
+//! Trace height stays at `2^6 = 64` rows. See [`air_width`] for current
+//! cols-per-shape; exact numbers are tracked by the
+//! `width_grows_with_shape` test.
 //!
 //! # Public-input vector (§4.3 step 4, decision #5)
 //!
@@ -85,8 +92,10 @@ use core::borrow::Borrow;
 use p3_air::{Air, AirBuilder, BaseAir, WindowAccess};
 use p3_field::{Dup, PrimeCharacteristicRing, PrimeField64};
 use p3_goldilocks::{
-    GOLDILOCKS_POSEIDON2_HALF_FULL_ROUNDS, GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8, Goldilocks,
-    GenericPoseidon2LinearLayersGoldilocks, default_goldilocks_poseidon2_8,
+    GOLDILOCKS_POSEIDON2_HALF_FULL_ROUNDS, GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_16,
+    GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8, Goldilocks,
+    GenericPoseidon2LinearLayersGoldilocks, default_goldilocks_poseidon2_16,
+    default_goldilocks_poseidon2_8,
 };
 use p3_matrix::dense::RowMajorMatrix;
 use p3_poseidon2::GenericPoseidon2LinearLayers;
@@ -117,8 +126,13 @@ pub const MIN_OUTPUTS: usize = 1;
 // Poseidon2 parameters (unchanged from N-P2 slice)
 // ---------------------------------------------------------------------------
 
-/// Width of the Poseidon2 permutation used throughout this AIR.
+/// Width of the narrow Poseidon2 permutation (Merkle / IvkCm / Nf).
 pub const POSEIDON2_WIDTH: usize = 8;
+
+/// Width of the wide Poseidon2 permutation (claim 2 / claim 6 note-
+/// commitment absorb; §3.2). The 15-fe input (`domain_tag, d, pk_d,
+/// ivk_commitment, value, rcm`) needs a width-16 sponge.
+pub const POSEIDON2_WIDTH_16: usize = 16;
 
 /// S-box degree (α=7 on Goldilocks).
 pub const POSEIDON2_SBOX_DEGREE: u64 = 7;
@@ -126,13 +140,16 @@ pub const POSEIDON2_SBOX_DEGREE: u64 = 7;
 /// Number of committed intermediate registers per S-box at degree 7.
 pub const POSEIDON2_SBOX_REGISTERS: usize = 1;
 
-/// Number of full rounds per half. Total `R_F = 8`.
+/// Number of full rounds per half. Total `R_F = 8`. Same for widths 8 / 16.
 pub const POSEIDON2_HALF_FULL_ROUNDS: usize = GOLDILOCKS_POSEIDON2_HALF_FULL_ROUNDS;
 
 /// Number of partial rounds. `R_P = 22` for width-8 Goldilocks (§16 #42).
 pub const POSEIDON2_PARTIAL_ROUNDS: usize = GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8;
 
-/// Trace columns per Poseidon2 permutation witness = 180.
+/// Number of partial rounds for width-16 Goldilocks. Also 22.
+pub const POSEIDON2_PARTIAL_ROUNDS_16: usize = GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_16;
+
+/// Trace columns per width-8 Poseidon2 permutation witness = 180.
 pub const POSEIDON2_COLS_PER_INSTANCE: usize = p2_num_cols::<
     POSEIDON2_WIDTH,
     POSEIDON2_SBOX_DEGREE,
@@ -141,7 +158,16 @@ pub const POSEIDON2_COLS_PER_INSTANCE: usize = p2_num_cols::<
     POSEIDON2_PARTIAL_ROUNDS,
 >();
 
-/// Alias: one Poseidon2 column-set specialized to our parameters.
+/// Trace columns per width-16 Poseidon2 permutation witness = 316.
+pub const POSEIDON2_COLS_PER_INSTANCE_16: usize = p2_num_cols::<
+    POSEIDON2_WIDTH_16,
+    POSEIDON2_SBOX_DEGREE,
+    POSEIDON2_SBOX_REGISTERS,
+    POSEIDON2_HALF_FULL_ROUNDS,
+    POSEIDON2_PARTIAL_ROUNDS_16,
+>();
+
+/// Alias: one width-8 Poseidon2 column-set specialized to our parameters.
 type P2Cols<T> = Poseidon2Cols<
     T,
     POSEIDON2_WIDTH,
@@ -149,6 +175,16 @@ type P2Cols<T> = Poseidon2Cols<
     POSEIDON2_SBOX_REGISTERS,
     POSEIDON2_HALF_FULL_ROUNDS,
     POSEIDON2_PARTIAL_ROUNDS,
+>;
+
+/// Alias: one width-16 Poseidon2 column-set specialized to our parameters.
+type P2Cols16<T> = Poseidon2Cols<
+    T,
+    POSEIDON2_WIDTH_16,
+    POSEIDON2_SBOX_DEGREE,
+    POSEIDON2_SBOX_REGISTERS,
+    POSEIDON2_HALF_FULL_ROUNDS,
+    POSEIDON2_PARTIAL_ROUNDS_16,
 >;
 
 // ---------------------------------------------------------------------------
@@ -172,18 +208,39 @@ pub const TAG_NF: u64 = 0x01_75_6E_6F_6E_66_76_31;
 pub const GLOBAL_COLS: usize = 1;
 const GCOL_FEE: usize = 0;
 
-/// Per-spend proxy columns: leaf, sibling, parent_claim, value, ivk,
-/// ivk_commitment_claim, pk_d, rcm, nk, pos.
-pub const SPEND_PROXY_COLS: usize = 10;
+/// Depth of the note-commitment Merkle tree (§2.3 / §10.2 ConfigParam 84).
+pub const MERKLE_DEPTH: usize = 32;
 
-/// Per-output proxy columns: cm_claim, d, pk_d, ivk_commitment, value, rcm.
-pub const OUTPUT_PROXY_COLS: usize = 6;
+/// Width in bits of the bit-decomposition range check for `value_i` /
+/// `value_j` (§4.2 claims 5 & 7). Each value is committed as 64 bit
+/// columns so the AIR constrains `value < 2^64`; since
+/// `p_Goldilocks = 2^64 − 2^32 + 1`, the additional 32 high-bit
+/// combinations in `[2^64 − 2^32 + 1, 2^64)` are unreachable by a single
+/// field element, so the bit decomposition is exact on canonical inputs.
+pub const VALUE_BITS: usize = 64;
 
-/// Poseidon2 instances per spend (Merkle, IvkCm, Cm, Nf).
-pub const POSEIDON2_PER_SPEND: usize = 4;
+/// Per-spend proxy columns: leaf, d, value, ivk, ivk_commitment_claim,
+/// pk_d, rcm, nk, pos (9 leading fields), plus 32 path-bit proxies, 32
+/// sibling-hash proxies for the 32-level Merkle path (§2.3), and
+/// VALUE_BITS bit columns for the explicit u64 range-check on `value_i`
+/// (§4.2 claim 5).
+pub const SPEND_PROXY_COLS: usize =
+    9 + MERKLE_DEPTH + MERKLE_DEPTH + VALUE_BITS;
 
-/// Poseidon2 instances per output (Cm only).
-pub const POSEIDON2_PER_OUTPUT: usize = 1;
+/// Per-output proxy columns: cm_claim, d, pk_d, ivk_commitment, value,
+/// rcm (6 leading fields), plus VALUE_BITS bit columns for the explicit
+/// u64 range-check on `value_j` (§4.2 claim 7).
+pub const OUTPUT_PROXY_COLS: usize = 6 + VALUE_BITS;
+
+/// Narrow (width-8) Poseidon2 instances per spend (Merkle×32 + IvkCm + Nf).
+/// The Cm slot is width-16 and counted separately.
+pub const POSEIDON2_NARROW_PER_SPEND: usize = MERKLE_DEPTH + 2;
+
+/// Wide (width-16) Poseidon2 instances per spend (Cm only).
+pub const POSEIDON2_WIDE_PER_SPEND: usize = 1;
+
+/// Wide (width-16) Poseidon2 instances per output (Cm only).
+pub const POSEIDON2_WIDE_PER_OUTPUT: usize = 1;
 
 /// Trace height log2. 64 rows; Poseidon2 sub-AIR runs on every row.
 pub const LOG_TRACE_HEIGHT: usize = 6;
@@ -193,15 +250,20 @@ pub const TRACE_HEIGHT: usize = 1 << LOG_TRACE_HEIGHT;
 
 // ---- Per-spend column indices (within a spend proxy block) ----
 const S_LEAF: usize = 0;
-const S_SIBLING: usize = 1;
-const S_PARENT_CLAIM: usize = 2;
-const S_VALUE: usize = 3;
-const S_IVK: usize = 4;
-const S_IVK_COMMITMENT_CLAIM: usize = 5;
-const S_PK_D: usize = 6;
-const S_RCM: usize = 7;
-const S_NK: usize = 8;
-const S_POS: usize = 9;
+const S_D: usize = 1; // diversifier proxy (was overloaded onto S_SIBLING pre-merkle32)
+const S_VALUE: usize = 2;
+const S_IVK: usize = 3;
+const S_IVK_COMMITMENT_CLAIM: usize = 4;
+const S_PK_D: usize = 5;
+const S_RCM: usize = 6;
+const S_NK: usize = 7;
+const S_POS: usize = 8;
+// Merkle path: MERKLE_DEPTH path-bit proxies, then MERKLE_DEPTH sibling
+// proxies. Path bit `k` is `(pos >> k) & 1` (low→high bit order).
+const S_PATH_BIT0: usize = 9;
+const S_SIBLING0: usize = S_PATH_BIT0 + MERKLE_DEPTH;
+/// Base index of the 64-bit range-check columns for `value_i` (claim 5).
+const S_VALUE_BIT0: usize = S_SIBLING0 + MERKLE_DEPTH;
 
 // ---- Per-output column indices (within an output proxy block) ----
 const O_CM_CLAIM: usize = 0;
@@ -210,17 +272,34 @@ const O_PK_D: usize = 2;
 const O_IVK_COMMITMENT: usize = 3;
 const O_VALUE: usize = 4;
 const O_RCM: usize = 5;
+/// Base index of the 64-bit range-check columns for `value_j` (claim 7).
+const O_VALUE_BIT0: usize = 6;
 
 // ---------------------------------------------------------------------------
 // Shape-aware helpers
 // ---------------------------------------------------------------------------
 
+/// Per-spend block width: proxies + 32 width-8 Merkle levels + width-8
+/// IvkCm + width-16 Cm + width-8 Nf.
+#[inline]
+pub const fn per_spend_cols() -> usize {
+    SPEND_PROXY_COLS
+        + MERKLE_DEPTH * POSEIDON2_COLS_PER_INSTANCE
+        + POSEIDON2_COLS_PER_INSTANCE
+        + POSEIDON2_COLS_PER_INSTANCE_16
+        + POSEIDON2_COLS_PER_INSTANCE
+}
+
+/// Per-output block width: proxies + 1 width-16 Cm slot.
+#[inline]
+pub const fn per_output_cols() -> usize {
+    OUTPUT_PROXY_COLS + POSEIDON2_COLS_PER_INSTANCE_16
+}
+
 /// Column width for a given `(n_spends, n_outputs)` shape.
 #[inline]
 pub const fn air_width(n_spends: usize, n_outputs: usize) -> usize {
-    GLOBAL_COLS
-        + n_spends * (SPEND_PROXY_COLS + POSEIDON2_PER_SPEND * POSEIDON2_COLS_PER_INSTANCE)
-        + n_outputs * (OUTPUT_PROXY_COLS + POSEIDON2_PER_OUTPUT * POSEIDON2_COLS_PER_INSTANCE)
+    GLOBAL_COLS + n_spends * per_spend_cols() + n_outputs * per_output_cols()
 }
 
 /// Public-input vector length (field elements) per §4.3 step 4.
@@ -254,10 +333,19 @@ pub fn derive_shape_from_public_inputs_len(
 }
 
 // --- Column offsets -------------------------------------------------------
+//
+// Spend block layout (contiguous within the spend-i region):
+//     [SPEND_PROXY_COLS] | [Merkle level 0..32 : 180 each]
+//                        | [IvkCm : 180]
+//                        | [Cm (width-16) : 316]
+//                        | [Nf : 180]
+//
+// Output block layout:
+//     [OUTPUT_PROXY_COLS] | [Cm (width-16) : 316]
 
 #[inline]
 const fn spend_proxy_offset(i: usize) -> usize {
-    GLOBAL_COLS + i * (SPEND_PROXY_COLS + POSEIDON2_PER_SPEND * POSEIDON2_COLS_PER_INSTANCE)
+    GLOBAL_COLS + i * per_spend_cols()
 }
 
 #[inline]
@@ -265,11 +353,27 @@ const fn spend_p2_offset(i: usize) -> usize {
     spend_proxy_offset(i) + SPEND_PROXY_COLS
 }
 
+/// Offset of the IvkCm width-8 P2 slot within spend `i`.
+#[inline]
+const fn spend_p2_ivkcm_offset(i: usize) -> usize {
+    spend_p2_offset(i) + MERKLE_DEPTH * POSEIDON2_COLS_PER_INSTANCE
+}
+
+/// Offset of the Cm width-16 P2 slot within spend `i`.
+#[inline]
+const fn spend_p2_cm_offset(i: usize) -> usize {
+    spend_p2_ivkcm_offset(i) + POSEIDON2_COLS_PER_INSTANCE
+}
+
+/// Offset of the Nf width-8 P2 slot within spend `i`.
+#[inline]
+const fn spend_p2_nf_offset(i: usize) -> usize {
+    spend_p2_cm_offset(i) + POSEIDON2_COLS_PER_INSTANCE_16
+}
+
 #[inline]
 const fn output_proxy_offset(n_spends: usize, j: usize) -> usize {
-    GLOBAL_COLS
-        + n_spends * (SPEND_PROXY_COLS + POSEIDON2_PER_SPEND * POSEIDON2_COLS_PER_INSTANCE)
-        + j * (OUTPUT_PROXY_COLS + POSEIDON2_PER_OUTPUT * POSEIDON2_COLS_PER_INSTANCE)
+    GLOBAL_COLS + n_spends * per_spend_cols() + j * per_output_cols()
 }
 
 #[inline]
@@ -277,27 +381,43 @@ const fn output_p2_offset(n_spends: usize, j: usize) -> usize {
     output_proxy_offset(n_spends, j) + OUTPUT_PROXY_COLS
 }
 
-/// Enumerated spend Poseidon2 slot.
+/// Enumerated narrow (width-8) spend Poseidon2 slot. The Cm slot is
+/// width-16 and reached via `spend_p2_cm_group`.
 #[derive(Copy, Clone)]
 enum SpendP2 {
-    Merkle = 0,
-    IvkCm = 1,
-    Cm = 2,
-    Nf = 3,
+    /// Merkle path level `k`, for `k ∈ [0, MERKLE_DEPTH)`.
+    MerkleLevel(usize),
+    /// Claim-3 IVK-commitment Poseidon2 (width-8).
+    IvkCm,
+    /// Claim-4 nullifier Poseidon2 (width-8).
+    Nf,
 }
 
 #[inline]
 fn spend_p2_group<T>(row: &[T], i: usize, s: SpendP2) -> &P2Cols<T> {
-    let off = spend_p2_offset(i) + (s as usize) * POSEIDON2_COLS_PER_INSTANCE;
+    let off = match s {
+        SpendP2::MerkleLevel(k) => {
+            spend_p2_offset(i) + k * POSEIDON2_COLS_PER_INSTANCE
+        }
+        SpendP2::IvkCm => spend_p2_ivkcm_offset(i),
+        SpendP2::Nf => spend_p2_nf_offset(i),
+    };
     let group: &[T] = &row[off..off + POSEIDON2_COLS_PER_INSTANCE];
     <[T] as Borrow<P2Cols<T>>>::borrow(group)
 }
 
 #[inline]
-fn output_p2_group<T>(row: &[T], n_spends: usize, j: usize) -> &P2Cols<T> {
+fn spend_p2_cm_group<T>(row: &[T], i: usize) -> &P2Cols16<T> {
+    let off = spend_p2_cm_offset(i);
+    let group: &[T] = &row[off..off + POSEIDON2_COLS_PER_INSTANCE_16];
+    <[T] as Borrow<P2Cols16<T>>>::borrow(group)
+}
+
+#[inline]
+fn output_p2_group<T>(row: &[T], n_spends: usize, j: usize) -> &P2Cols16<T> {
     let off = output_p2_offset(n_spends, j);
-    let group: &[T] = &row[off..off + POSEIDON2_COLS_PER_INSTANCE];
-    <[T] as Borrow<P2Cols<T>>>::borrow(group)
+    let group: &[T] = &row[off..off + POSEIDON2_COLS_PER_INSTANCE_16];
+    <[T] as Borrow<P2Cols16<T>>>::borrow(group)
 }
 
 #[inline]
@@ -394,20 +514,41 @@ impl MvpTransferAir {
 }
 
 #[inline]
-fn beginning_full_round_constant<F: PrimeCharacteristicRing>(round: usize) -> [F; POSEIDON2_WIDTH] {
+fn beginning_full_round_constant_8<F: PrimeCharacteristicRing>(round: usize) -> [F; POSEIDON2_WIDTH] {
     let src = &p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_INITIAL[round];
     core::array::from_fn(|i| F::from_u64(src[i].as_canonical_u64()))
 }
 
 #[inline]
-fn ending_full_round_constant<F: PrimeCharacteristicRing>(round: usize) -> [F; POSEIDON2_WIDTH] {
+fn beginning_full_round_constant_16<F: PrimeCharacteristicRing>(
+    round: usize,
+) -> [F; POSEIDON2_WIDTH_16] {
+    let src = &p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_16_EXTERNAL_INITIAL[round];
+    core::array::from_fn(|i| F::from_u64(src[i].as_canonical_u64()))
+}
+
+#[inline]
+fn ending_full_round_constant_8<F: PrimeCharacteristicRing>(round: usize) -> [F; POSEIDON2_WIDTH] {
     let src = &p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_FINAL[round];
     core::array::from_fn(|i| F::from_u64(src[i].as_canonical_u64()))
 }
 
 #[inline]
-fn partial_round_constant<F: PrimeCharacteristicRing>(round: usize) -> F {
+fn ending_full_round_constant_16<F: PrimeCharacteristicRing>(
+    round: usize,
+) -> [F; POSEIDON2_WIDTH_16] {
+    let src = &p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_16_EXTERNAL_FINAL[round];
+    core::array::from_fn(|i| F::from_u64(src[i].as_canonical_u64()))
+}
+
+#[inline]
+fn partial_round_constant_8<F: PrimeCharacteristicRing>(round: usize) -> F {
     F::from_u64(p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_INTERNAL[round].as_canonical_u64())
+}
+
+#[inline]
+fn partial_round_constant_16<F: PrimeCharacteristicRing>(round: usize) -> F {
+    F::from_u64(p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_16_INTERNAL[round].as_canonical_u64())
 }
 
 impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for MvpTransferAir {
@@ -442,21 +583,37 @@ where
         let pis_vec: Vec<AB::PublicVar> = builder.public_values().to_vec();
         let pi_fee = pis_vec[PI_FEE];
         let pi_anchor0 = pis_vec[PI_ANCHOR];
-        let pi_nfs: Vec<AB::PublicVar> =
-            (0..self.n_spends).map(|i| pis_vec[pi_nf(i)]).collect();
+        // Full-width nullifier PI: `nf_i` occupies 4 Goldilocks slots
+        // starting at `pi_nf(i)` per §4.3 step 4. Snapshot all 4 limbs.
+        let pi_nfs: Vec<[AB::PublicVar; 4]> = (0..self.n_spends)
+            .map(|i| {
+                let base = pi_nf(i);
+                [
+                    pis_vec[base],
+                    pis_vec[base + 1],
+                    pis_vec[base + 2],
+                    pis_vec[base + 3],
+                ]
+            })
+            .collect();
         let pi_cms: Vec<AB::PublicVar> = (0..self.n_outputs)
             .map(|j| pis_vec[pi_cm(self.n_spends, j)])
             .collect();
 
         // ---- Poseidon2 sub-AIR on every row -----------------------------
         for i in 0..self.n_spends {
-            eval_poseidon2(builder, spend_p2_group(local_slice, i, SpendP2::Merkle));
+            for k in 0..MERKLE_DEPTH {
+                eval_poseidon2(
+                    builder,
+                    spend_p2_group(local_slice, i, SpendP2::MerkleLevel(k)),
+                );
+            }
             eval_poseidon2(builder, spend_p2_group(local_slice, i, SpendP2::IvkCm));
-            eval_poseidon2(builder, spend_p2_group(local_slice, i, SpendP2::Cm));
+            eval_poseidon2_16(builder, spend_p2_cm_group(local_slice, i));
             eval_poseidon2(builder, spend_p2_group(local_slice, i, SpendP2::Nf));
         }
         for j in 0..self.n_outputs {
-            eval_poseidon2(builder, output_p2_group(local_slice, self.n_spends, j));
+            eval_poseidon2_16(builder, output_p2_group(local_slice, self.n_spends, j));
         }
 
         // ---- First-row bindings ----------------------------------------
@@ -469,8 +626,7 @@ where
             // Per-spend claims 1/2/3/4.
             for i in 0..self.n_spends {
                 let leaf = spend_col(local_slice, i, S_LEAF);
-                let sibling = spend_col(local_slice, i, S_SIBLING);
-                let parent_claim = spend_col(local_slice, i, S_PARENT_CLAIM);
+                let d = spend_col(local_slice, i, S_D);
                 let value = spend_col(local_slice, i, S_VALUE);
                 let ivk = spend_col(local_slice, i, S_IVK);
                 let ivk_commitment_claim =
@@ -480,18 +636,86 @@ where
                 let nk = spend_col(local_slice, i, S_NK);
                 let pos = spend_col(local_slice, i, S_POS);
 
-                // Claim 1: Merkle step (single-step; TODO(uno-p2-merkle32)).
-                let merkle = spend_p2_group::<AB::Var>(local_slice, i, SpendP2::Merkle);
-                first.assert_eq(merkle.inputs[0], leaf);
-                first.assert_eq(merkle.inputs[1], sibling);
-                for k in 2..POSEIDON2_WIDTH {
-                    first.assert_zero(merkle.inputs[k].into());
+                // Claim 1: 32-level Merkle path (§2.3). Each level k takes
+                // the running `current` (starts at leaf), combines with
+                // `sibling_k` under path-bit `b_k` ordering, and outputs
+                // the next `current` via Poseidon2(., .).
+                //
+                // Conservation invariants enforced on row 0:
+                //  (a) `b_k ∈ {0,1}` (bit constraint).
+                //  (b) Poseidon2 inputs: inputs[0] = (1-b)·cur + b·sib,
+                //                        inputs[1] = b·cur + (1-b)·sib.
+                //  (c) inputs[2..8] == 0 (padding).
+                //  (d) output[0] feeds `current` of level k+1.
+                //  (e) After level MERKLE_DEPTH-1, current[0] == anchor.
+                //  (f) `pos = Σ_k b_k · 2^k` (bit decomposition of pos).
+                let mut current_expr: AB::Expr = leaf.into();
+                for k in 0..MERKLE_DEPTH {
+                    let b: AB::Var =
+                        spend_col(local_slice, i, S_PATH_BIT0 + k);
+                    let sibling: AB::Var =
+                        spend_col(local_slice, i, S_SIBLING0 + k);
+                    // Bit constraint: b·(1-b) == 0.
+                    let b_expr: AB::Expr = b.into();
+                    let one_minus_b: AB::Expr =
+                        AB::Expr::from(AB::F::from_u64(1)) - b_expr.clone();
+                    first.assert_zero(b_expr.clone() * one_minus_b.clone());
+
+                    let level =
+                        spend_p2_group::<AB::Var>(local_slice, i, SpendP2::MerkleLevel(k));
+                    // inputs[0] = (1-b)·current + b·sibling
+                    let sibling_expr: AB::Expr = sibling.into();
+                    let left_sel: AB::Expr = one_minus_b.clone() * current_expr.clone()
+                        + b_expr.clone() * sibling_expr.clone();
+                    let right_sel: AB::Expr = b_expr.clone() * current_expr.clone()
+                        + one_minus_b.clone() * sibling_expr.clone();
+                    first.assert_eq(level.inputs[0].into(), left_sel);
+                    first.assert_eq(level.inputs[1].into(), right_sel);
+                    for pad in 2..POSEIDON2_WIDTH {
+                        first.assert_zero(level.inputs[pad].into());
+                    }
+                    // current_expr <- output[0] of this level's Poseidon2.
+                    let level_out =
+                        &level.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
+                    current_expr = level_out[0].into();
                 }
-                let merkle_out =
-                    &merkle.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
-                first.assert_eq(merkle_out[0], parent_claim);
-                // All spends hash to the same tx-level anchor.
-                first.assert_eq(parent_claim, pi_anchor0);
+                // Final root equals the tx-level anchor.
+                first.assert_eq(current_expr, pi_anchor0.into());
+
+                // Pos bit-decomposition: `pos == Σ_k b_k · 2^k`.
+                let mut pos_recon: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
+                for k in 0..MERKLE_DEPTH {
+                    let b: AB::Var =
+                        spend_col(local_slice, i, S_PATH_BIT0 + k);
+                    let weight = AB::F::from_u64(1u64 << k);
+                    pos_recon = pos_recon + AB::Expr::from(weight) * b.into();
+                }
+                first.assert_eq(pos.into(), pos_recon);
+
+                // Claim 5: explicit u64 range-check on `value_i` via
+                // 64-bit decomposition. Bit columns V_0..V_63 live at
+                // S_VALUE_BIT0. Constraints: each bit is Boolean and the
+                // weighted sum reconstructs `value`.
+                let mut value_recon: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
+                for k in 0..VALUE_BITS {
+                    let b: AB::Var =
+                        spend_col(local_slice, i, S_VALUE_BIT0 + k);
+                    let b_expr: AB::Expr = b.into();
+                    // b·(1-b) == 0.
+                    let one_minus_b =
+                        AB::Expr::from(AB::F::from_u64(1)) - b_expr.clone();
+                    first.assert_zero(b_expr.clone() * one_minus_b);
+                    // 2^k · b_k. k < 64 so `1u64 << k` fits in u64 for
+                    // k ≤ 63; for k = 64 it would overflow but we stop
+                    // at 63.
+                    let weight = if k == 63 {
+                        AB::F::from_u64(1u64 << 63)
+                    } else {
+                        AB::F::from_u64(1u64 << k)
+                    };
+                    value_recon = value_recon + AB::Expr::from(weight) * b_expr;
+                }
+                first.assert_eq(value.into(), value_recon);
 
                 // Claim 3: IVK-commitment.
                 let ivkcm = spend_p2_group::<AB::Var>(local_slice, i, SpendP2::IvkCm);
@@ -500,7 +724,7 @@ where
                     AB::Expr::from(AB::F::from_u64(TAG_IVK_CM)),
                 );
                 first.assert_eq(ivkcm.inputs[1], ivk);
-                first.assert_eq(ivkcm.inputs[2], sibling); // d_i proxy
+                first.assert_eq(ivkcm.inputs[2], d); // d_i proxy
                 for k in 3..POSEIDON2_WIDTH {
                     first.assert_zero(ivkcm.inputs[k].into());
                 }
@@ -508,19 +732,21 @@ where
                     &ivkcm.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
                 first.assert_eq(ivkcm_out[0], ivk_commitment_claim);
 
-                // Claim 2: Note opening. TODO(uno-p2-wide) — widen to
-                // Poseidon2-16 for the full 15-fe absorb.
-                let cm = spend_p2_group::<AB::Var>(local_slice, i, SpendP2::Cm);
+                // Claim 2: Note opening — wide-sponge Poseidon2-16 over the
+                // 15-fe input `(TAG_CM, d, pk_d, ivk_commitment, value, rcm)`
+                // per §3.2. Proxy-AIR keeps each field as a single fe slot;
+                // unused slots 6..16 are pinned to zero.
+                let cm = spend_p2_cm_group::<AB::Var>(local_slice, i);
                 first.assert_eq(
                     cm.inputs[0].into(),
                     AB::Expr::from(AB::F::from_u64(TAG_CM)),
                 );
-                first.assert_eq(cm.inputs[1], sibling); // d_i
+                first.assert_eq(cm.inputs[1], d);
                 first.assert_eq(cm.inputs[2], pk_d);
                 first.assert_eq(cm.inputs[3], ivk_commitment_claim);
                 first.assert_eq(cm.inputs[4], value);
                 first.assert_eq(cm.inputs[5], rcm);
-                for k in 6..POSEIDON2_WIDTH {
+                for k in 6..POSEIDON2_WIDTH_16 {
                     first.assert_zero(cm.inputs[k].into());
                 }
                 let cm_out = &cm.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
@@ -539,10 +765,12 @@ where
                     first.assert_zero(nf.inputs[k].into());
                 }
                 let nf_out = &nf.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
-                // Bind nf_i to limb 0 of the per-spend nullifier PI.
-                // TODO(uno-p2-nf-fullwidth): bind all 4 limbs once the
-                // wide-Poseidon2 slice lands.
-                first.assert_eq(nf_out[0], pi_nfs[i]);
+                // Bind `nf_i` to all 4 limbs of the per-spend nullifier PI
+                // (§4.3 step 4). Width-8 Poseidon2 produces 8 output fes;
+                // we take the first 4 as the 256-bit nullifier.
+                for limb in 0..4 {
+                    first.assert_eq(nf_out[limb], pi_nfs[i][limb]);
+                }
             }
 
             // Per-output claims 6/7.
@@ -555,6 +783,7 @@ where
                 let value_out = output_col(local_slice, self.n_spends, j, O_VALUE);
                 let rcm_out = output_col(local_slice, self.n_spends, j, O_RCM);
 
+                // Claim 6: wide-sponge Poseidon2-16, same shape as claim 2.
                 let cm_p2 = output_p2_group::<AB::Var>(local_slice, self.n_spends, j);
                 first.assert_eq(
                     cm_p2.inputs[0].into(),
@@ -565,7 +794,7 @@ where
                 first.assert_eq(cm_p2.inputs[3], ivk_cm_out);
                 first.assert_eq(cm_p2.inputs[4], value_out);
                 first.assert_eq(cm_p2.inputs[5], rcm_out);
-                for k in 6..POSEIDON2_WIDTH {
+                for k in 6..POSEIDON2_WIDTH_16 {
                     first.assert_zero(cm_p2.inputs[k].into());
                 }
                 let cm_p2_out =
@@ -573,6 +802,28 @@ where
                 first.assert_eq(cm_p2_out[0], cm_claim);
                 // Bind cm_j to limb 0 of the output-commitment PI.
                 first.assert_eq(cm_claim, pi_cms[j]);
+
+                // Claim 7: explicit u64 range-check on `value_j`.
+                let mut value_recon: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
+                for k in 0..VALUE_BITS {
+                    let b: AB::Var = output_col(
+                        local_slice,
+                        self.n_spends,
+                        j,
+                        O_VALUE_BIT0 + k,
+                    );
+                    let b_expr: AB::Expr = b.into();
+                    let one_minus_b =
+                        AB::Expr::from(AB::F::from_u64(1)) - b_expr.clone();
+                    first.assert_zero(b_expr.clone() * one_minus_b);
+                    let weight = if k == 63 {
+                        AB::F::from_u64(1u64 << 63)
+                    } else {
+                        AB::F::from_u64(1u64 << k)
+                    };
+                    value_recon = value_recon + AB::Expr::from(weight) * b_expr;
+                }
+                first.assert_eq(value_out.into(), value_recon);
             }
 
             // Claim 8: balance. `Σ value_i - Σ value_j - fee == 0`.
@@ -629,51 +880,91 @@ where
     >>::external_linear_layer(&mut state);
 
     for round in 0..POSEIDON2_HALF_FULL_ROUNDS {
-        eval_full_round::<AB>(
+        eval_full_round::<AB, POSEIDON2_WIDTH>(
             &mut state,
             &local.beginning_full_rounds[round],
-            &beginning_full_round_constant::<AB::F>(round),
+            &beginning_full_round_constant_8::<AB::F>(round),
             builder,
         );
     }
 
     for round in 0..POSEIDON2_PARTIAL_ROUNDS {
-        eval_partial_round::<AB>(
+        eval_partial_round::<AB, POSEIDON2_WIDTH>(
             &mut state,
             &local.partial_rounds[round],
-            &partial_round_constant::<AB::F>(round),
+            &partial_round_constant_8::<AB::F>(round),
             builder,
         );
     }
 
     for round in 0..POSEIDON2_HALF_FULL_ROUNDS {
-        eval_full_round::<AB>(
+        eval_full_round::<AB, POSEIDON2_WIDTH>(
             &mut state,
             &local.ending_full_rounds[round],
-            &ending_full_round_constant::<AB::F>(round),
+            &ending_full_round_constant_8::<AB::F>(round),
+            builder,
+        );
+    }
+}
+
+fn eval_poseidon2_16<AB>(builder: &mut AB, local: &P2Cols16<AB::Var>)
+where
+    AB: AirBuilder,
+{
+    let mut state: [AB::Expr; POSEIDON2_WIDTH_16] = local.inputs.map(|x| x.into());
+
+    <GenericPoseidon2LinearLayersGoldilocks as GenericPoseidon2LinearLayers<
+        POSEIDON2_WIDTH_16,
+    >>::external_linear_layer(&mut state);
+
+    for round in 0..POSEIDON2_HALF_FULL_ROUNDS {
+        eval_full_round_16::<AB>(
+            &mut state,
+            &local.beginning_full_rounds[round],
+            &beginning_full_round_constant_16::<AB::F>(round),
+            builder,
+        );
+    }
+
+    for round in 0..POSEIDON2_PARTIAL_ROUNDS_16 {
+        eval_partial_round_16::<AB>(
+            &mut state,
+            &local.partial_rounds[round],
+            &partial_round_constant_16::<AB::F>(round),
+            builder,
+        );
+    }
+
+    for round in 0..POSEIDON2_HALF_FULL_ROUNDS {
+        eval_full_round_16::<AB>(
+            &mut state,
+            &local.ending_full_rounds[round],
+            &ending_full_round_constant_16::<AB::F>(round),
             builder,
         );
     }
 }
 
 #[inline]
-fn eval_full_round<AB: AirBuilder>(
-    state: &mut [AB::Expr; POSEIDON2_WIDTH],
+fn eval_full_round<AB: AirBuilder, const WIDTH: usize>(
+    state: &mut [AB::Expr; WIDTH],
     full_round: &FullRound<
         AB::Var,
-        POSEIDON2_WIDTH,
+        WIDTH,
         POSEIDON2_SBOX_DEGREE,
         POSEIDON2_SBOX_REGISTERS,
     >,
-    round_constants: &[AB::F; POSEIDON2_WIDTH],
+    round_constants: &[AB::F; WIDTH],
     builder: &mut AB,
-) {
+) where
+    GenericPoseidon2LinearLayersGoldilocks: GenericPoseidon2LinearLayers<WIDTH>,
+{
     for (i, (s, r)) in state.iter_mut().zip(round_constants.iter()).enumerate() {
         *s += r.dup();
         eval_sbox(&full_round.sbox[i], s, builder);
     }
     <GenericPoseidon2LinearLayersGoldilocks as GenericPoseidon2LinearLayers<
-        POSEIDON2_WIDTH,
+        WIDTH,
     >>::external_linear_layer(state);
     for (state_i, post_i) in state.iter_mut().zip(full_round.post) {
         builder.assert_eq(state_i.clone(), post_i);
@@ -682,24 +973,56 @@ fn eval_full_round<AB: AirBuilder>(
 }
 
 #[inline]
-fn eval_partial_round<AB: AirBuilder>(
-    state: &mut [AB::Expr; POSEIDON2_WIDTH],
+fn eval_partial_round<AB: AirBuilder, const WIDTH: usize>(
+    state: &mut [AB::Expr; WIDTH],
     partial_round: &PartialRound<
         AB::Var,
-        POSEIDON2_WIDTH,
+        WIDTH,
+        POSEIDON2_SBOX_DEGREE,
+        POSEIDON2_SBOX_REGISTERS,
+    >,
+    round_constant: &AB::F,
+    builder: &mut AB,
+) where
+    GenericPoseidon2LinearLayersGoldilocks: GenericPoseidon2LinearLayers<WIDTH>,
+{
+    state[0] += round_constant.dup();
+    eval_sbox(&partial_round.sbox, &mut state[0], builder);
+    builder.assert_eq(state[0].dup(), partial_round.post_sbox);
+    state[0] = partial_round.post_sbox.into();
+    <GenericPoseidon2LinearLayersGoldilocks as GenericPoseidon2LinearLayers<
+        WIDTH,
+    >>::internal_linear_layer(state);
+}
+
+#[inline]
+fn eval_full_round_16<AB: AirBuilder>(
+    state: &mut [AB::Expr; POSEIDON2_WIDTH_16],
+    full_round: &FullRound<
+        AB::Var,
+        POSEIDON2_WIDTH_16,
+        POSEIDON2_SBOX_DEGREE,
+        POSEIDON2_SBOX_REGISTERS,
+    >,
+    round_constants: &[AB::F; POSEIDON2_WIDTH_16],
+    builder: &mut AB,
+) {
+    eval_full_round::<AB, POSEIDON2_WIDTH_16>(state, full_round, round_constants, builder)
+}
+
+#[inline]
+fn eval_partial_round_16<AB: AirBuilder>(
+    state: &mut [AB::Expr; POSEIDON2_WIDTH_16],
+    partial_round: &PartialRound<
+        AB::Var,
+        POSEIDON2_WIDTH_16,
         POSEIDON2_SBOX_DEGREE,
         POSEIDON2_SBOX_REGISTERS,
     >,
     round_constant: &AB::F,
     builder: &mut AB,
 ) {
-    state[0] += round_constant.dup();
-    eval_sbox(&partial_round.sbox, &mut state[0], builder);
-    builder.assert_eq(state[0].dup(), partial_round.post_sbox);
-    state[0] = partial_round.post_sbox.into();
-    <GenericPoseidon2LinearLayersGoldilocks as GenericPoseidon2LinearLayers<
-        POSEIDON2_WIDTH,
-    >>::internal_linear_layer(state);
+    eval_partial_round::<AB, POSEIDON2_WIDTH_16>(state, partial_round, round_constant, builder)
 }
 
 #[inline]
@@ -722,8 +1045,8 @@ fn eval_sbox<AB: AirBuilder>(
 pub struct SpendWitness {
     /// Single-fe proxy for the spent note commitment `cm` (= Merkle leaf).
     pub leaf: u64,
-    /// Merkle sibling / diversifier `d` proxy (8 B LE).
-    pub merkle_sibling: [u8; 8],
+    /// Diversifier `d` proxy (8 B LE).
+    pub d: [u8; 8],
     /// Value being spent. Must be `< p_Goldilocks`.
     pub value: u64,
     /// Private-witness `ivk` proxy.
@@ -734,8 +1057,15 @@ pub struct SpendWitness {
     pub rcm: u64,
     /// Proxy for the nullifier key `nk`.
     pub nk: u64,
-    /// Proxy for the leaf position `pos`.
+    /// Leaf position within the depth-32 commitment tree. Low bit is the
+    /// level-0 path bit (§2.3, matching `commitment-tree.{h,cpp}`). Must
+    /// satisfy `pos < 2^MERKLE_DEPTH` (upper bits in `pos` are discarded
+    /// when the witness is encoded because only 32 path bits are stored).
     pub pos: u64,
+    /// 32-level Merkle path: each entry is the sibling hash proxy
+    /// (single Goldilocks fe) at level `k`. Level 0 is the first layer
+    /// above the leaf.
+    pub merkle_path: [u64; MERKLE_DEPTH],
 }
 
 /// Single-output witness.
@@ -794,9 +1124,10 @@ impl MvpWitness {
         assert!(n_outputs >= MIN_OUTPUTS && n_outputs <= MAX_OUTPUTS);
 
         let perm = default_goldilocks_poseidon2_8();
+        let perm16 = default_goldilocks_poseidon2_16();
 
         // Derive shared spend witness fields.
-        let sibling_word = seed
+        let d_word = seed
             .wrapping_mul(0x9e37_79b9_7f4a_7c15)
             .wrapping_add(0x1234_0000_0000_0000)
             & ((1u64 << 62) - 1);
@@ -808,34 +1139,58 @@ impl MvpWitness {
         let v_per_spend: u64 = 0x0001_0000 + (seed & 0xFF_FFFF);
         let fee: u64 = 0x100 + (seed & 0xFFF);
 
-        // Derived shared leaf via claim-2 Poseidon2.
-        let ivkcm = poseidon2_ivk_commitment(&perm, shared_ivk, sibling_word);
+        // Derived shared leaf via claim-2 Poseidon2-16 (wide sponge).
+        let ivkcm = poseidon2_ivk_commitment(&perm, shared_ivk, d_word);
         let shared_leaf = poseidon2_cm(
-            &perm,
-            sibling_word,
+            &perm16,
+            d_word,
             shared_pk_d,
             ivkcm.as_canonical_u64(),
             v_per_spend,
             shared_rcm,
         );
 
-        // Build spends with varying (nk, pos) for distinct nullifiers.
+        // Shared 32-level Merkle path: siblings fixed per seed; position
+        // fixed per seed. All spends share `(leaf, path, pos)` so that the
+        // resulting anchor is the same by construction (the AIR only
+        // enforces anchor equality, not distinct leaves — test-fixture
+        // convention, see struct-doc).
+        let shared_pos: u64 = (seed & ((1u64 << MERKLE_DEPTH) - 1)) as u64;
+        let mut shared_path = [0u64; MERKLE_DEPTH];
+        for k in 0..MERKLE_DEPTH {
+            // Distinct per-level siblings, bounded to 62 bits to stay
+            // canonical after Goldilocks reduction.
+            let mix = seed
+                .wrapping_mul(0xBF58_476D_1CE4_E5B9)
+                .wrapping_add((k as u64).wrapping_mul(0x94D0_49BB_1331_11EB));
+            shared_path[k] = mix & ((1u64 << 62) - 1);
+        }
+        let shared_anchor = poseidon2_merkle_path_root(
+            &perm,
+            shared_leaf,
+            shared_pos,
+            &shared_path,
+        )
+        .as_canonical_u64();
+
+        // Build spends; all share the path so the anchor is identical per
+        // spend. Only `nk` differs for distinct nullifiers.
         let mut spends = Vec::with_capacity(n_spends);
         for i in 0..n_spends {
             let s = seed
                 .wrapping_mul(0x517c_c1b7_2722_0a95)
                 .wrapping_add((i as u64) * 0xC0FF_EE00);
             let nk = s.wrapping_mul(0xcbf2_9ce4_8422_2325) ^ 0xba11_00ba;
-            let pos = s.wrapping_mul(0x1_0000_0001) & 0x00FF_FFFF_FFFF_FFFF;
             spends.push(SpendWitness {
                 leaf: shared_leaf,
-                merkle_sibling: sibling_word.to_le_bytes(),
+                d: d_word.to_le_bytes(),
                 value: v_per_spend,
                 ivk: shared_ivk,
                 pk_d: shared_pk_d,
                 rcm: shared_rcm,
                 nk,
-                pos,
+                pos: shared_pos,
+                merkle_path: shared_path,
             });
         }
 
@@ -869,42 +1224,43 @@ impl MvpWitness {
             });
         }
 
-        // Compute shared anchor via claim-1 Poseidon2 (all spends hash
-        // identically → same anchor).
-        let anchor_fe = poseidon2_merkle(&perm, shared_leaf, sibling_word);
-        let anchor_proxy = anchor_fe.as_canonical_u64();
-
         Self {
             fee,
             spends,
             outputs,
-            anchor_proxy,
+            anchor_proxy: shared_anchor,
         }
     }
 
     /// Wire-encode for FFI.
     ///
-    /// Layout: `u8 n_s || u8 n_o || u64 fee || (u64 leaf || [8 B] sibling
-    /// || u64 value || u64 ivk || u64 pk_d || u64 rcm || u64 nk || u64 pos)
-    /// × n_s || (u64 d || u64 pk_d || u64 ivk_commitment || u64 value ||
-    /// u64 rcm) × n_o || u64 anchor_proxy`.
+    /// Layout: `u8 n_s || u8 n_o || u64 fee || (u64 leaf || [8 B] d
+    /// || u64 value || u64 ivk || u64 pk_d || u64 rcm || u64 nk || u64 pos
+    /// || u64 path[0..32]) × n_s || (u64 d || u64 pk_d || u64 ivk_commitment
+    /// || u64 value || u64 rcm) × n_o || u64 anchor_proxy`.
     ///
-    /// Byte length: `18 + 64·n_s + 40·n_o`.
+    /// Per-spend bytes: `64 + 8·MERKLE_DEPTH = 320 bytes` (8 leading fields
+    /// at 8 B each, then 32 path siblings at 8 B each).
+    ///
+    /// Byte length: `18 + (64 + 8·MERKLE_DEPTH)·n_s + 40·n_o`.
     pub fn encode(&self) -> Vec<u8> {
-        let mut out =
-            Vec::with_capacity(18 + 64 * self.spends.len() + 40 * self.outputs.len());
+        let per_spend = 64 + 8 * MERKLE_DEPTH;
+        let mut out = Vec::with_capacity(18 + per_spend * self.spends.len() + 40 * self.outputs.len());
         out.push(self.spends.len() as u8);
         out.push(self.outputs.len() as u8);
         out.extend_from_slice(&self.fee.to_le_bytes());
         for s in &self.spends {
             out.extend_from_slice(&s.leaf.to_le_bytes());
-            out.extend_from_slice(&s.merkle_sibling);
+            out.extend_from_slice(&s.d);
             out.extend_from_slice(&s.value.to_le_bytes());
             out.extend_from_slice(&s.ivk.to_le_bytes());
             out.extend_from_slice(&s.pk_d.to_le_bytes());
             out.extend_from_slice(&s.rcm.to_le_bytes());
             out.extend_from_slice(&s.nk.to_le_bytes());
             out.extend_from_slice(&s.pos.to_le_bytes());
+            for sib in &s.merkle_path {
+                out.extend_from_slice(&sib.to_le_bytes());
+            }
         }
         for o in &self.outputs {
             out.extend_from_slice(&o.d.to_le_bytes());
@@ -927,7 +1283,8 @@ impl MvpWitness {
         if n_s < MIN_SPENDS || n_s > MAX_SPENDS || n_o < MIN_OUTPUTS || n_o > MAX_OUTPUTS {
             return Err(Plonky3Status::WitnessInvalid);
         }
-        let want = 18 + 64 * n_s + 40 * n_o;
+        let per_spend = 64 + 8 * MERKLE_DEPTH;
+        let want = 18 + per_spend * n_s + 40 * n_o;
         if bytes.len() != want {
             return Err(Plonky3Status::WitnessInvalid);
         }
@@ -941,8 +1298,8 @@ impl MvpWitness {
         for _ in 0..n_s {
             let leaf = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
             off += 8;
-            let mut merkle_sibling = [0u8; 8];
-            merkle_sibling.copy_from_slice(&bytes[off..off + 8]);
+            let mut d = [0u8; 8];
+            d.copy_from_slice(&bytes[off..off + 8]);
             off += 8;
             let value = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
             off += 8;
@@ -959,15 +1316,29 @@ impl MvpWitness {
             off += 8;
             let pos = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
             off += 8;
+            // `pos` must fit in MERKLE_DEPTH bits for the AIR's bit
+            // decomposition to hold.
+            if pos >= (1u64 << MERKLE_DEPTH) {
+                return Err(Plonky3Status::WitnessInvalid);
+            }
+            let mut merkle_path = [0u64; MERKLE_DEPTH];
+            for sib in merkle_path.iter_mut() {
+                *sib = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+                off += 8;
+                if *sib >= GOLDILOCKS_P {
+                    return Err(Plonky3Status::WitnessInvalid);
+                }
+            }
             spends.push(SpendWitness {
                 leaf,
-                merkle_sibling,
+                d,
                 value,
                 ivk,
                 pk_d,
                 rcm,
                 nk,
                 pos,
+                merkle_path,
             });
         }
         let mut outputs = Vec::with_capacity(n_o);
@@ -1038,13 +1409,14 @@ impl MvpWitness {
         }
 
         let perm = default_goldilocks_poseidon2_8();
+        let perm16 = default_goldilocks_poseidon2_16();
 
         for s in &self.spends {
-            // nf_i = Poseidon2(TAG_NF, nk, leaf(=cm), pos).
-            let nf = poseidon2_nf(&perm, s.nk, s.leaf, s.pos);
-            out.push(nf);
-            for _ in 1..4 {
-                out.push(Goldilocks::ZERO);
+            // nf_i = first 4 limbs of Poseidon2(TAG_NF, nk, leaf(=cm), pos, 0, ...).
+            // Full-width binding per §4.3 step 4.
+            let nf_limbs = poseidon2_nf_full(&perm, s.nk, s.leaf, s.pos);
+            for limb in nf_limbs {
+                out.push(limb);
             }
             // rk_i: 4 × 0.
             for _ in 0..4 {
@@ -1054,7 +1426,7 @@ impl MvpWitness {
 
         for o in &self.outputs {
             let cm =
-                poseidon2_cm_fe(&perm, o.d, o.pk_d, o.ivk_commitment, o.value, o.rcm);
+                poseidon2_cm_fe(&perm16, o.d, o.pk_d, o.ivk_commitment, o.value, o.rcm);
             out.push(cm);
             for _ in 1..4 {
                 out.push(Goldilocks::ZERO);
@@ -1088,10 +1460,16 @@ impl MvpWitness {
         let width = air_width(n_s, n_o);
 
         let perm = default_goldilocks_poseidon2_8();
-        let constants = RoundConstants::new(
+        let perm16 = default_goldilocks_poseidon2_16();
+        let constants_8 = RoundConstants::new(
             p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_INITIAL,
             p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_INTERNAL,
             p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_FINAL,
+        );
+        let constants_16 = RoundConstants::new(
+            p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_16_EXTERNAL_INITIAL,
+            p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_16_INTERNAL,
+            p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_16_EXTERNAL_FINAL,
         );
         let gen_p2_row = |input: [Goldilocks; POSEIDON2_WIDTH]| -> Vec<Goldilocks> {
             use p3_poseidon2_air::generate_trace_rows;
@@ -1103,20 +1481,37 @@ impl MvpWitness {
                 POSEIDON2_SBOX_REGISTERS,
                 POSEIDON2_HALF_FULL_ROUNDS,
                 POSEIDON2_PARTIAL_ROUNDS,
-            >(vec![input], &constants, 0);
+            >(vec![input], &constants_8, 0);
             debug_assert_eq!(mat.values.len(), POSEIDON2_COLS_PER_INSTANCE);
             mat.values
         };
+        let gen_p2_row_16 = |input: [Goldilocks; POSEIDON2_WIDTH_16]| -> Vec<Goldilocks> {
+            use p3_poseidon2_air::generate_trace_rows;
+            let mat = generate_trace_rows::<
+                Goldilocks,
+                GenericPoseidon2LinearLayersGoldilocks,
+                POSEIDON2_WIDTH_16,
+                POSEIDON2_SBOX_DEGREE,
+                POSEIDON2_SBOX_REGISTERS,
+                POSEIDON2_HALF_FULL_ROUNDS,
+                POSEIDON2_PARTIAL_ROUNDS_16,
+            >(vec![input], &constants_16, 0);
+            debug_assert_eq!(mat.values.len(), POSEIDON2_COLS_PER_INSTANCE_16);
+            mat.values
+        };
         let padding_p2 = gen_p2_row([Goldilocks::ZERO; POSEIDON2_WIDTH]);
+        let padding_p2_16 = gen_p2_row_16([Goldilocks::ZERO; POSEIDON2_WIDTH_16]);
 
         // Row-0 Poseidon2 trace cells, per spend + output.
-        let mut row0_spend_merkle = Vec::with_capacity(n_s);
+        // Per spend we generate MERKLE_DEPTH Merkle-level rows, then
+        // IvkCm, Cm, Nf — matching the column layout from `SpendP2::slot`.
+        let mut row0_spend_merkle: Vec<Vec<Vec<Goldilocks>>> = Vec::with_capacity(n_s);
         let mut row0_spend_ivkcm = Vec::with_capacity(n_s);
         let mut row0_spend_cm = Vec::with_capacity(n_s);
         let mut row0_spend_nf = Vec::with_capacity(n_s);
         for s in &self.spends {
-            let sibling_word = u64::from_le_bytes(s.merkle_sibling);
-            let sibling_f = Goldilocks::from_u64(reduce_to_goldilocks(sibling_word));
+            let d_word = u64::from_le_bytes(s.d);
+            let d_f = Goldilocks::from_u64(reduce_to_goldilocks(d_word));
             let leaf_f = Goldilocks::from_u64(reduce_to_goldilocks(s.leaf));
             let pk_d_f = Goldilocks::from_u64(reduce_to_goldilocks(s.pk_d));
             let rcm_f = Goldilocks::from_u64(reduce_to_goldilocks(s.rcm));
@@ -1124,27 +1519,42 @@ impl MvpWitness {
             let nk_f = Goldilocks::from_u64(reduce_to_goldilocks(s.nk));
             let pos_f = Goldilocks::from_u64(reduce_to_goldilocks(s.pos));
             let value_f = Goldilocks::from_u64(reduce_to_goldilocks(s.value));
-            let ivkcm_fe = poseidon2_ivk_commitment(&perm, s.ivk, sibling_word);
+            let ivkcm_fe = poseidon2_ivk_commitment(&perm, s.ivk, d_word);
 
-            let mut merkle = [Goldilocks::ZERO; POSEIDON2_WIDTH];
-            merkle[0] = leaf_f;
-            merkle[1] = sibling_f;
-            row0_spend_merkle.push(gen_p2_row(merkle));
+            // Merkle path rows: at each level, run the permutation with
+            // inputs ordered by the path bit.
+            let mut levels_rows = Vec::with_capacity(MERKLE_DEPTH);
+            let mut current = reduce_to_goldilocks(s.leaf);
+            for k in 0..MERKLE_DEPTH {
+                let bit = (s.pos >> k) & 1;
+                let sib = reduce_to_goldilocks(s.merkle_path[k]);
+                let (left, right) = if bit == 0 { (current, sib) } else { (sib, current) };
+                let mut input = [Goldilocks::ZERO; POSEIDON2_WIDTH];
+                input[0] = Goldilocks::from_u64(left);
+                input[1] = Goldilocks::from_u64(right);
+                // Compute output for next-level current.
+                let mut state = input;
+                perm.permute_mut(&mut state);
+                let row = gen_p2_row(input);
+                levels_rows.push(row);
+                current = state[0].as_canonical_u64();
+            }
+            row0_spend_merkle.push(levels_rows);
 
             let mut ivkcm_in = [Goldilocks::ZERO; POSEIDON2_WIDTH];
             ivkcm_in[0] = Goldilocks::from_u64(TAG_IVK_CM);
             ivkcm_in[1] = ivk_f;
-            ivkcm_in[2] = sibling_f;
+            ivkcm_in[2] = d_f;
             row0_spend_ivkcm.push(gen_p2_row(ivkcm_in));
 
-            let mut cm_in = [Goldilocks::ZERO; POSEIDON2_WIDTH];
+            let mut cm_in = [Goldilocks::ZERO; POSEIDON2_WIDTH_16];
             cm_in[0] = Goldilocks::from_u64(TAG_CM);
-            cm_in[1] = sibling_f;
+            cm_in[1] = d_f;
             cm_in[2] = pk_d_f;
             cm_in[3] = ivkcm_fe;
             cm_in[4] = value_f;
             cm_in[5] = rcm_f;
-            row0_spend_cm.push(gen_p2_row(cm_in));
+            row0_spend_cm.push(gen_p2_row_16(cm_in));
 
             let mut nf_in = [Goldilocks::ZERO; POSEIDON2_WIDTH];
             nf_in[0] = Goldilocks::from_u64(TAG_NF);
@@ -1161,54 +1571,74 @@ impl MvpWitness {
             let ivk_cm_f = Goldilocks::from_u64(reduce_to_goldilocks(o.ivk_commitment));
             let rcm_f = Goldilocks::from_u64(reduce_to_goldilocks(o.rcm));
             let value_f = Goldilocks::from_u64(reduce_to_goldilocks(o.value));
-            let mut cm_in = [Goldilocks::ZERO; POSEIDON2_WIDTH];
+            let mut cm_in = [Goldilocks::ZERO; POSEIDON2_WIDTH_16];
             cm_in[0] = Goldilocks::from_u64(TAG_CM);
             cm_in[1] = d_f;
             cm_in[2] = pk_d_f;
             cm_in[3] = ivk_cm_f;
             cm_in[4] = value_f;
             cm_in[5] = rcm_f;
-            row0_out_cm.push(gen_p2_row(cm_in));
+            row0_out_cm.push(gen_p2_row_16(cm_in));
         }
 
-        let anchor_f = Goldilocks::from_u64(reduce_to_goldilocks(self.anchor_proxy));
-
-        let spend_proxies: Vec<[Goldilocks; SPEND_PROXY_COLS]> = self
+        // Per-spend proxy vector: [leaf, d, value, ivk, ivk_cm_claim, pk_d,
+        // rcm, nk, pos, path_bits[0..32], siblings[0..32],
+        // value_bits[0..64]].
+        let spend_proxies: Vec<Vec<Goldilocks>> = self
             .spends
             .iter()
             .map(|s| {
-                let sibling_word = u64::from_le_bytes(s.merkle_sibling);
-                let sibling_f = Goldilocks::from_u64(reduce_to_goldilocks(sibling_word));
-                let ivkcm_fe = poseidon2_ivk_commitment(&perm, s.ivk, sibling_word);
-                [
-                    Goldilocks::from_u64(reduce_to_goldilocks(s.leaf)),
-                    sibling_f,
-                    anchor_f,
-                    Goldilocks::from_u64(reduce_to_goldilocks(s.value)),
-                    Goldilocks::from_u64(reduce_to_goldilocks(s.ivk)),
-                    ivkcm_fe,
-                    Goldilocks::from_u64(reduce_to_goldilocks(s.pk_d)),
-                    Goldilocks::from_u64(reduce_to_goldilocks(s.rcm)),
-                    Goldilocks::from_u64(reduce_to_goldilocks(s.nk)),
-                    Goldilocks::from_u64(reduce_to_goldilocks(s.pos)),
-                ]
+                let d_word = u64::from_le_bytes(s.d);
+                let d_f = Goldilocks::from_u64(reduce_to_goldilocks(d_word));
+                let ivkcm_fe = poseidon2_ivk_commitment(&perm, s.ivk, d_word);
+                let mut v = Vec::with_capacity(SPEND_PROXY_COLS);
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.leaf)));
+                v.push(d_f);
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.value)));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.ivk)));
+                v.push(ivkcm_fe);
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.pk_d)));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.rcm)));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.nk)));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.pos)));
+                for k in 0..MERKLE_DEPTH {
+                    let bit = (s.pos >> k) & 1;
+                    v.push(Goldilocks::from_u64(bit));
+                }
+                for k in 0..MERKLE_DEPTH {
+                    v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.merkle_path[k])));
+                }
+                // Bit-decompose value into VALUE_BITS = 64 bits.
+                let value_canon = reduce_to_goldilocks(s.value);
+                for k in 0..VALUE_BITS {
+                    let bit = (value_canon >> k) & 1;
+                    v.push(Goldilocks::from_u64(bit));
+                }
+                debug_assert_eq!(v.len(), SPEND_PROXY_COLS);
+                v
             })
             .collect();
 
-        let output_proxies: Vec<[Goldilocks; OUTPUT_PROXY_COLS]> = self
+        let output_proxies: Vec<Vec<Goldilocks>> = self
             .outputs
             .iter()
             .map(|o| {
                 let cm_fe =
-                    poseidon2_cm_fe(&perm, o.d, o.pk_d, o.ivk_commitment, o.value, o.rcm);
-                [
-                    cm_fe,
-                    Goldilocks::from_u64(reduce_to_goldilocks(o.d)),
-                    Goldilocks::from_u64(reduce_to_goldilocks(o.pk_d)),
-                    Goldilocks::from_u64(reduce_to_goldilocks(o.ivk_commitment)),
-                    Goldilocks::from_u64(reduce_to_goldilocks(o.value)),
-                    Goldilocks::from_u64(reduce_to_goldilocks(o.rcm)),
-                ]
+                    poseidon2_cm_fe(&perm16, o.d, o.pk_d, o.ivk_commitment, o.value, o.rcm);
+                let mut v = Vec::with_capacity(OUTPUT_PROXY_COLS);
+                v.push(cm_fe);
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(o.d)));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(o.pk_d)));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(o.ivk_commitment)));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(o.value)));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(o.rcm)));
+                let value_canon = reduce_to_goldilocks(o.value);
+                for k in 0..VALUE_BITS {
+                    let bit = (value_canon >> k) & 1;
+                    v.push(Goldilocks::from_u64(bit));
+                }
+                debug_assert_eq!(v.len(), OUTPUT_PROXY_COLS);
+                v
             })
             .collect();
 
@@ -1220,15 +1650,19 @@ impl MvpWitness {
             for i in 0..n_s {
                 values.extend_from_slice(&spend_proxies[i]);
                 if row_idx == 0 {
-                    values.extend_from_slice(&row0_spend_merkle[i]);
+                    for k in 0..MERKLE_DEPTH {
+                        values.extend_from_slice(&row0_spend_merkle[i][k]);
+                    }
                     values.extend_from_slice(&row0_spend_ivkcm[i]);
                     values.extend_from_slice(&row0_spend_cm[i]);
                     values.extend_from_slice(&row0_spend_nf[i]);
                 } else {
-                    values.extend_from_slice(&padding_p2);
-                    values.extend_from_slice(&padding_p2);
-                    values.extend_from_slice(&padding_p2);
-                    values.extend_from_slice(&padding_p2);
+                    for _ in 0..MERKLE_DEPTH {
+                        values.extend_from_slice(&padding_p2);
+                    }
+                    values.extend_from_slice(&padding_p2); // IvkCm (w=8)
+                    values.extend_from_slice(&padding_p2_16); // Cm (w=16)
+                    values.extend_from_slice(&padding_p2); // Nf (w=8)
                 }
             }
             for j in 0..n_o {
@@ -1236,7 +1670,7 @@ impl MvpWitness {
                 if row_idx == 0 {
                     values.extend_from_slice(&row0_out_cm[j]);
                 } else {
-                    values.extend_from_slice(&padding_p2);
+                    values.extend_from_slice(&padding_p2_16);
                 }
             }
         }
@@ -1289,16 +1723,34 @@ pub fn decode_public_inputs(bytes: &[u8]) -> Result<Vec<Goldilocks>, Plonky3Stat
 
 // Small Poseidon2 wrappers.
 
-fn poseidon2_merkle(
+fn poseidon2_merkle_step(
     perm: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH]>,
-    leaf: u64,
-    sibling: u64,
+    left: u64,
+    right: u64,
 ) -> Goldilocks {
     let mut state = [Goldilocks::ZERO; POSEIDON2_WIDTH];
-    state[0] = Goldilocks::from_u64(reduce_to_goldilocks(leaf));
-    state[1] = Goldilocks::from_u64(reduce_to_goldilocks(sibling));
+    state[0] = Goldilocks::from_u64(reduce_to_goldilocks(left));
+    state[1] = Goldilocks::from_u64(reduce_to_goldilocks(right));
     perm.permute_mut(&mut state);
     state[0]
+}
+
+/// Compute the Merkle root for a 32-level path: at each level `k`, combine
+/// `current` with `path[k]` under the bit `(pos >> k) & 1` ordering.
+fn poseidon2_merkle_path_root(
+    perm: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH]>,
+    leaf: u64,
+    pos: u64,
+    path: &[u64; MERKLE_DEPTH],
+) -> Goldilocks {
+    let mut current = reduce_to_goldilocks(leaf);
+    for k in 0..MERKLE_DEPTH {
+        let bit = (pos >> k) & 1;
+        let sib = reduce_to_goldilocks(path[k]);
+        let (left, right) = if bit == 0 { (current, sib) } else { (sib, current) };
+        current = poseidon2_merkle_step(perm, left, right).as_canonical_u64();
+    }
+    Goldilocks::from_u64(current)
 }
 
 fn poseidon2_ivk_commitment(
@@ -1315,48 +1767,51 @@ fn poseidon2_ivk_commitment(
 }
 
 fn poseidon2_cm(
-    perm: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH]>,
+    perm16: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH_16]>,
     d: u64,
     pk_d: u64,
     ivk_cm: u64,
     value: u64,
     rcm: u64,
 ) -> u64 {
-    poseidon2_cm_fe(perm, d, pk_d, ivk_cm, value, rcm).as_canonical_u64()
+    poseidon2_cm_fe(perm16, d, pk_d, ivk_cm, value, rcm).as_canonical_u64()
 }
 
+/// Wide-sponge Poseidon2-16 for the 15-fe note-commitment input per §3.2.
 fn poseidon2_cm_fe(
-    perm: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH]>,
+    perm16: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH_16]>,
     d: u64,
     pk_d: u64,
     ivk_cm: u64,
     value: u64,
     rcm: u64,
 ) -> Goldilocks {
-    let mut state = [Goldilocks::ZERO; POSEIDON2_WIDTH];
+    let mut state = [Goldilocks::ZERO; POSEIDON2_WIDTH_16];
     state[0] = Goldilocks::from_u64(TAG_CM);
     state[1] = Goldilocks::from_u64(reduce_to_goldilocks(d));
     state[2] = Goldilocks::from_u64(reduce_to_goldilocks(pk_d));
     state[3] = Goldilocks::from_u64(reduce_to_goldilocks(ivk_cm));
     state[4] = Goldilocks::from_u64(reduce_to_goldilocks(value));
     state[5] = Goldilocks::from_u64(reduce_to_goldilocks(rcm));
-    perm.permute_mut(&mut state);
+    perm16.permute_mut(&mut state);
     state[0]
 }
 
-fn poseidon2_nf(
+/// Full-width nullifier computation per §4.3 step 4: `nf_i` occupies 4
+/// Goldilocks elements (the first 4 limbs of the post-permutation state).
+fn poseidon2_nf_full(
     perm: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH]>,
     nk: u64,
     cm: u64,
     pos: u64,
-) -> Goldilocks {
+) -> [Goldilocks; 4] {
     let mut state = [Goldilocks::ZERO; POSEIDON2_WIDTH];
     state[0] = Goldilocks::from_u64(TAG_NF);
     state[1] = Goldilocks::from_u64(reduce_to_goldilocks(nk));
     state[2] = Goldilocks::from_u64(reduce_to_goldilocks(cm));
     state[3] = Goldilocks::from_u64(reduce_to_goldilocks(pos));
     perm.permute_mut(&mut state);
-    state[0]
+    [state[0], state[1], state[2], state[3]]
 }
 
 // ---------------------------------------------------------------------------
@@ -1370,15 +1825,16 @@ fn poseidon2_nf(
 // drift here silently accepts constraint-violating witnesses at debug
 // build time, but release builds catch them at verify.
 
-/// True iff for every spend, `leaf_i == Poseidon2("uno-cm-v1", d_i,
-/// pk_d_i, ivk_commitment_i, value_i, rcm_i)`.
+/// True iff for every spend, `leaf_i == Poseidon2-16("uno-cm-v1", d_i,
+/// pk_d_i, ivk_commitment_i, value_i, rcm_i)` (wide sponge per §3.2).
 pub fn witness_claim2_leaf_consistent(w: &MvpWitness) -> bool {
     let perm = default_goldilocks_poseidon2_8();
+    let perm16 = default_goldilocks_poseidon2_16();
     for s in &w.spends {
-        let d_word = u64::from_le_bytes(s.merkle_sibling);
+        let d_word = u64::from_le_bytes(s.d);
         let ivkcm = poseidon2_ivk_commitment(&perm, s.ivk, d_word);
         let derived = poseidon2_cm(
-            &perm,
+            &perm16,
             d_word,
             s.pk_d,
             ivkcm.as_canonical_u64(),
@@ -1392,13 +1848,15 @@ pub fn witness_claim2_leaf_consistent(w: &MvpWitness) -> bool {
     true
 }
 
-/// True iff for every spend, `Poseidon2(leaf_i, sibling_i) == anchor_proxy`.
+/// True iff for every spend, folding the 32-level Merkle path reproduces
+/// `anchor_proxy`.
 pub fn witness_claim1_anchor_consistent(w: &MvpWitness) -> bool {
     let perm = default_goldilocks_poseidon2_8();
     let want = reduce_to_goldilocks(w.anchor_proxy);
     for s in &w.spends {
-        let d_word = u64::from_le_bytes(s.merkle_sibling);
-        let derived = poseidon2_merkle(&perm, s.leaf, d_word).as_canonical_u64();
+        let derived =
+            poseidon2_merkle_path_root(&perm, s.leaf, s.pos, &s.merkle_path)
+                .as_canonical_u64();
         if derived != want {
             return false;
         }
@@ -1446,7 +1904,7 @@ mod tests {
         let w22 = air_width(2, 2);
         let w44 = air_width(4, 4);
         assert!(w11 < w12 && w12 < w22 && w22 < w44);
-        assert_eq!(w44, 1 + 4 * (10 + 4 * 180) + 4 * (6 + 180));
+        assert_eq!(w44, GLOBAL_COLS + 4 * per_spend_cols() + 4 * per_output_cols());
     }
 
     #[test]
