@@ -61,6 +61,7 @@ Each row records one attempt, its agent tag, the commit (or "reverted" /
 | 4 | K-air-scheduler           | no commit     | Cross-instance Poseidon2 row-doubling        | ❌ Math proof: at `num_queries=128`, adding 180 cols costs +184 KB, halving trace saves only 12 KB. Net **grow** ~8 %. |
 | 5 | K-air-bench               | `6cad7c347`   | Shape-matrix benchmark harness               | ✅ Reproducible 6-shape measurements; basis for all future deltas.                         |
 | 6 | K-fri-analysis            | `dd0383b69`   | Sweep 15 FRI configurations                  | ✅ Best sweep data-point is 5.5× over envelope; identified 3 frontier configs + 3 hard findings. |
+| 7 | K-air-fold-outputs        | no commit     | Row-cycle OUTPUT_PROXY_COLS into a global shared block | ❌ Works functionally (all tests pass) but yields only −3.19 % proof shrink at 4/4 vs −10 % predicted by C1. **Finding: C1's "~1 KB per col" upper bound overstates reality by 3×; actual empirical rate is ~325 B/col on this AIR.** Ruled out row-loop-proxy as a path to §3.4 envelope. |
 
 ---
 
@@ -180,23 +181,109 @@ total                                         ≈ 2.22 MB
 
 ---
 
+### Experiment 7 — Row-cycle OUTPUT_PROXY_COLS into a shared block (K-air-fold-outputs)
+
+**Hypothesis**: each output currently carries a private 70-col block
+(6 scalars + 64 value-bits) that is constant across all 64 trace rows.
+But each output's values are only read on one specific row (row 4+j
+for claims 6 + 7). Fold the 4-output replication into a single shared
+70-col block in `GLOBAL_COLS` that cycles through outputs by row:
+on row 4+j, the shared block holds output-j's values. Add a
+1-col `G_OUT_VALUE_ACCUM` running sum so the claim-8 balance check
+can still be evaluated on a single (last) row. Net column change at
+4/4: `4 × 70 − (70 + 1) = 209` cols removed.
+
+**C1 prediction**: 209 cols × ~1 KB/col ≈ **214 KB shrink (−10 %)** at 4/4.
+
+**Implementation** (prototyped on branch `uno-air-fold-outputs`,
+discarded at the user's direction):
+- Added `G_OUT_SHARED[0..70]` + `G_OUT_VALUE_ACCUM` to `GLOBAL_COLS`.
+- Set `per_output_cols() = 0`. `air_width(n_s, n_o)` no longer has
+  an `n_outputs` term.
+- Row-gated claim-6 PI binding + claim-7 bit-decomp on row 4+j via
+  `GS_ROW_SEL[4+j]` (same idiom as the shared wide-Cm block bindings).
+- Accumulator transition: `accum[r+1] − accum[r] − Σ_j GS_ROW_SEL[4+j]·value_shared == 0`
+  (degree 2, well within the max-degree-7 budget).
+- Balance check moved from `when_first_row` to `when_last_row`:
+  `Σ spend_value − accum − fee == 0`.
+- Boundary: `accum[0] == 0`.
+- Removed the "output proxies constant across rows" transition loop
+  (the shared block legitimately varies now).
+- Prover trace: fills shared block with output-j's values on row 4+j,
+  zeros elsewhere; accumulator populated per-row.
+
+**Result**: ❌ **Not committed.** All 43 Rust tests pass; public-input
+golden byte-identical; verify +9 % faster at 4/4 (57 → 52 ms). But
+proof-size shrink is far under C1's prediction:
+
+| shape | cols before | cols after | Δ cols | proof before | proof after | Δ % proof |
+|-------|------------:|-----------:|-------:|-------------:|------------:|----------:|
+| 1/1   |         917 |        918 |     +1 |   1,198,931  |  1,199,578  |  +0.05 %  |
+| 1/2   |         987 |        918 |    −69 |   1,223,642  |  1,198,588  |   −2.05 % |
+| 2/2   |       1,305 |      1,236 |    −69 |   1,500,317  |  1,482,582  |   −1.18 % |
+| 2/3   |       1,375 |      1,236 |   −139 |   1,536,344  |  1,491,160  |   −2.94 % |
+| 3/3   |       1,693 |      1,554 |   −139 |   1,835,246  |  1,788,770  |   −2.53 % |
+| **4/4** |   **2,081** |  **1,872** | **−209** | **2,131,583** | **2,063,512** | **−3.19 %** |
+
+**Empirical rate: 68,071 B / 209 cols ≈ 325 B per column reduction** —
+about **1/3 of C1's ~1 KB/col upper bound**.
+
+**Why the prediction was wrong**: C1's model counted one term —
+`num_queries × col_count × 8 B/field` — for the per-query leaf opening.
+That term is real but it's not the only cost of shrinking col_count.
+Plonky3 commits multiple matrices (trace + quotient chunks +
+preprocessed) into one mixed Merkle tree; reducing trace column count
+only saves proportionally on the trace leaf, not the quotient or
+preprocessed leaves, and the per-query Merkle-path overhead is roughly
+invariant to trace width under mixed commitment. So col reduction does
+shrink proof, but at ~325 B per column, not ~1 KB.
+
+**Consequence for Method B (also fold SPEND_PROXY non-Merkle scalars)**:
+B would remove another ~216 cols (8 scalars + 64 value-bits per spend × 3
+redundant copies). At the new 325 B/col rate that's ≈70 KB extra,
+bringing A + B total to ~140 KB ≈ 6.5 % at 4/4 — **still below the 8 %
+threshold** and with much higher implementation complexity (spend
+proxies entangle with Merkle rows 0..31). **Row-loop-proxy via
+column-count reduction is not the path to §3.4.**
+
+**Decision**: code discarded; finding recorded here + in §4 C1
+re-calibration below. Future contributors should not re-run this
+experiment; they should instead target (a) claim-structure redesign
+that reduces *semantic* column count (not just replication), or (b)
+the FRI parameter renegotiation surfaced by K-fri-analysis.
+
+---
+
 ## 4. Load-bearing constraints
 
 Every future optimization attempt must respect these constraints, which
 were established empirically across the experiments above:
 
-**C1. Proof size is leaf-bound at `num_queries=128`.** Adding a column
-costs ~1 KB/col in the proof (128 queries × 8 B/field). Shrinking
-`log(trace_height)` saves kilobytes, not megabytes. Any optimization
-whose cost is more columns and whose payoff is smaller trace height
-is net-negative at the current FRI pin. (From K-air-scheduler.)
+**C1. Proof size is leaf-dominated at `num_queries=128`, but per-column
+savings are ~325 B, not the theoretical ~1 KB.** The simple model
+"adding a column costs `num_queries × 8 B = 1 KB`" is an **upper bound**
+that overstates real savings by ~3×. The empirical rate measured by
+experiment 7 is **325 B per column of trace-width reduction** at the
+current FRI pin. This is because Plonky3 uses a mixed Merkle commitment
+over (preprocessed + trace + quotient) matrices — shrinking trace cols
+only proportionally shrinks the trace leaf, not the quotient/preprocessed
+leaves or the per-query Merkle-path overhead.
+
+**Practical implication**: an optimization needs to remove **~250 cols
+at 4/4 to shave 8 %**, or ~625 cols to shave 20 %. The current 4/4
+total is 2,081 cols. Shrinking `log(trace_height)` still saves only
+kilobytes (experiment 3); row-doubling schemes that add cols are still
+net-negative (experiment 4). (From K-air-scheduler + K-air-fold-outputs.)
 
 **C2. Column-sharing via row-looping is exhausted.** Steps 1 + 2 took
 cumulative −92.5 % at 4/4; step 3 could not find another sharing
 that clears a 15 % threshold. The shared column blocks
 (`shared w=16 Cm/OutCm`, `shared w=8 IvkCm/Nf`, `shared w=8 Merkle`)
 are already atomic Poseidon2 witness-column widths that cannot shrink
-below one block. (From K-air-col-step3.)
+below one block. Row-cycling the remaining proxy blocks
+(`OUTPUT_PROXY_COLS`, `SPEND_PROXY_COLS` non-Merkle part) yields at most
+~6–7 % combined (experiment 7), below any reasonable threshold.
+(From K-air-col-step3 + K-air-fold-outputs.)
 
 **C3. Trace-height expansion is net-negative for proof size.** At
 height=128 with one more Merkle collapse, cells grow faster than cols
@@ -233,28 +320,44 @@ and audit-vendor sign-off because §2.1 is consensus-binding.
 ready (`doc/uno-fri-param-analysis.md`); the code change is a one-liner
 in `prover.rs::build_config` once a new pin is agreed.
 
-### Path 2 — Structural AIR rewrite
+### Path 2 — Structural AIR rewrite (semantic column reduction)
 
 **Needed to close the remaining 5.5×** (frontier config to envelope).
-Candidate targets flagged by K-air-scheduler's read of
-`transfer_air.rs`:
+Experiment 7 established that row-cycling *replicated* proxy columns
+buys at most ~6–7 % total — not enough. What's needed is reducing the
+**semantic** column count of the AIR, meaning: fewer distinct witness
+fields and intermediate values per (spend, output), not fewer copies
+of the same fields.
 
-- **`SPEND_PROXY_COLS` replication across spends** — currently each
-  spend carries ~70+ proxy columns (value, nk, rseed, position, ...).
-  Fold the 4-spend replication onto a row-looped shared block (similar
-  to the Merkle collapse in K-air-col-share).
-- **Output-descriptor column replication** — each output carries
-  OUTPUT_PROXY_COLS = 70 cols. Same row-looping treatment possible.
-- **Cross-claim witness sharing** — claim-2 and claim-6 are
-  structurally identical Poseidon2-w16 absorbs with different inputs;
-  the current step-2 sharing only unifies the column block, not the
-  witness injection paths. There may be a further column trim by
-  unifying the input-gating logic.
+Candidate directions (all still unexplored; each is a research-grade
+cryptographer task, not an agent-sized edit):
 
-Each of these is a bounded experiment for a future K-batch agent. The
-optimization-effort-to-payoff ratio is lower than steps 1 + 2 (those
-were the low-hanging fruit), so expect multiple passes each yielding
-~10–30 % individually.
+- **Claim fusion** — combining claim-2 (`cm = Poseidon2(d, pk_d, …, value, rcm)`)
+  and claim-3 (`ivk_commitment = Poseidon2(ivk, d)`) into one composite
+  Poseidon2 absorb. Saves one per-spend Poseidon2-w8 instance if the
+  resulting 8-field claim can be expressed as a single absorb.
+- **Value-range-check via lookup** — the 64-bit value range check
+  currently costs 64 cols/spend + 64 cols/output for bit
+  decomposition. Plonky3 supports **lookup arguments**; migrating
+  range-check to a precomputed `[0, 2^16)` lookup (4 × 16-bit limbs
+  per value) drops 64 → 4 cols per field, saving ~60 cols × 8 =
+  ~480 cols at 4/4, which at 325 B/col ≈ **−156 KB (−7.5 %)**.
+  Primary candidate for the next K-batch agent.
+- **Nullifier derivation reformulation** — claim-4 currently absorbs
+  `(nk, cm, pos)` via a full Poseidon2-w8. Some protocols fold nk
+  directly into cm via a different algebraic structure; a research
+  task to check whether this is compatible with the hash-chain
+  ownership proof.
+- **Merkle-path verification via STIR / WHIR** — swap the classical
+  FRI-on-columns Merkle opening for a STIR-style verifier that gives
+  sub-linear query cost. This is v2 / research horizon.
+
+Expected win per direction is on the order of 5–15 % individually;
+stacking them all optimistically gets to another ~30 % on top of
+Path 1's 76 %. Even so, the combination may still not reach the
+100 KB envelope at 4/4 — in which case §3.4 becomes a v1-vs-v2
+scope question (ship at a larger envelope or defer until research
+matures).
 
 ### Path 3 — Proof-system change (out of scope for v1)
 
@@ -291,6 +394,7 @@ current system.
 - K-air-scheduler (negative result, record in §13 P.2 of `doc/uno-workchain.md`)
 - `6cad7c347` — K-air-bench (shape-matrix harness landed)
 - `dd0383b69` — K-fri-analysis (parameter sweep + frontier-config doc landed)
+- K-air-fold-outputs (experiment 7, no-commit; C1 re-calibration finding)
 - Primary sources:
     - `uno/plonky3-ffi/src/transfer_air.rs` — the AIR itself
     - `uno/plonky3-ffi/src/prover.rs::build_config` — FRI configuration
