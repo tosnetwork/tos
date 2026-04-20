@@ -41,6 +41,8 @@ include = [
     "uno_plonky3_prove",
     "uno_plonky3_proof_free",
     "uno_plonky3_abi_version",
+    "uno_poseidon2_goldilocks_permute_t8",
+    "uno_poseidon2_goldilocks_permute_t16",
 ]
 exclude = [
     # Submodule constants that cbindgen would otherwise lift out as #defines

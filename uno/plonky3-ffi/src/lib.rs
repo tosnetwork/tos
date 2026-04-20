@@ -57,6 +57,7 @@ use std::sync::Arc;
 pub mod transfer_air;
 pub mod prover;
 pub mod verifier;
+pub mod permute;
 
 /// Result codes returned across the C ABI.
 ///

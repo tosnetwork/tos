@@ -19,6 +19,7 @@ fn main() {
 
     // Re-emit only when the surface-defining files change.
     println!("cargo:rerun-if-changed=src/lib.rs");
+    println!("cargo:rerun-if-changed=src/permute.rs");
     println!("cargo:rerun-if-changed=cbindgen.toml");
     println!("cargo:rerun-if-changed=build.rs");
 

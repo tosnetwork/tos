@@ -328,6 +328,28 @@ void uno_plonky3_proof_free(Plonky3OwnedProof proof);
 // `Plonky3Status`, or on any addition/removal of FFI entry points.
 uint32_t uno_plonky3_abi_version(void);
 
+// Width-8 Poseidon2-Goldilocks permutation, in place.
+//
+// On success the 8 `u64`s at `state` are replaced with the permutation
+// output (also canonical `< p_G`). If `state` is null or any limb is
+// `>= p_G`, the call returns without writing.
+//
+// # Safety
+// `state` must either be null or point to a writable, properly-aligned
+// buffer of at least 8 `u64`s for the duration of the call.
+void uno_poseidon2_goldilocks_permute_t8(uint64_t *state);
+
+// Width-16 Poseidon2-Goldilocks permutation, in place.
+//
+// Contract mirrors [`uno_poseidon2_goldilocks_permute_t8`] at width 16.
+// Used by the wide sponge for claim-2 / claim-6 note-commitment absorb
+// (15-fe input fits in the width-16 state with one capacity slot).
+//
+// # Safety
+// `state` must either be null or point to a writable, properly-aligned
+// buffer of at least 16 `u64`s for the duration of the call.
+void uno_poseidon2_goldilocks_permute_t16(uint64_t *state);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus

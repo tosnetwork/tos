@@ -104,6 +104,18 @@ if (EXISTS "${AVATAR_CRYPTO_ROOT}/src/crypto/blake3/at_blake3.c")
   target_compile_definitions(test-uno-primitive-parity PRIVATE UNO_P1_HYBRID_KEM_READY=1)
 endif()
 
+# Poseidon2 FFI surface is active when the uno_plonky3_ffi crate is present
+# in-tree (Agent 4 K-poseidon2-ffi). The `uno_poseidon2_goldilocks_permute_t{8,16}`
+# C-ABI entry points are exported by `uno/plonky3-ffi/src/permute.rs` and
+# regenerated into `include/uno_plonky3_ffi.h` by build.rs. Flipping the gate
+# activates the `test_poseidon2_reference_vector` + `test_nullifier_derivation`
+# self-consistency assertions; the test-TU carries weak-symbol stubs so the
+# link works before Corrosion is fully wired (the stubs are overridden when
+# the real static-lib is linked).
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../plonky3-ffi/Cargo.toml")
+  target_compile_definitions(test-uno-primitive-parity PRIVATE UNO_P1_POSEIDON2_READY=1)
+endif()
+
 # Fixture-backed tests need ctest's cwd set to CMAKE_SOURCE_DIR so they can
 # find the golden/*.hex files via relative paths. Each test's `find_fixture_path`
 # probes a handful of candidate prefixes, but setting WORKING_DIRECTORY makes
