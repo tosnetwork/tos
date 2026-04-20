@@ -1311,19 +1311,38 @@ Built by `uno_workchain::build_workchain_descr()`.
 
 ```
 UnoConfig :=
-  version             : uint8    = 1
-  chain_id            : uint32
-  min_fee_nano        : uint64         // baseline fee
-  fee_per_byte_nano   : uint64         // per-byte charge
-  fee_per_spend_nano  : uint64         // per-spend charge
-  fee_per_output_nano : uint64         // per-output charge
-  max_spends_per_tx   : uint8    = 4
-  max_outputs_per_tx  : uint8    = 4
-  anchor_window_size  : uint16   = 100
-  tree_depth          : uint8    = 32
-  expiry_window_blocks: uint32   = 64     // max blocks between current and expiry_block; 64 gives ~64 s
-                                          // forward window at 1 s block rate, comfortable vs 2–5 s proving
+  version                : uint8   = 1
+  chain_id               : uint32
+  min_fee_nano           : uint64  = 100_000     // 0.0001 UNO baseline; DoS floor
+  fee_per_byte_nano      : uint64  = 10          // per inline byte (excludes ref cell chains)
+  fee_per_spend_nano     : uint64  = 50_000      // 0.00005 UNO per SpendDescription
+  fee_per_output_nano    : uint64  = 50_000      // 0.00005 UNO per OutputDescription
+  max_spends_per_tx      : uint8   = 4
+  max_outputs_per_tx     : uint8   = 4
+  anchor_window_size     : uint16  = 100
+  tree_depth             : uint8   = 32
+  expiry_window_blocks   : uint32  = 64          // max blocks between current_block and expiry_block;
+                                                 // 64 gives ~64 s forward window at 1 s block rate
+  nullifier_lru_capacity : uint32  = 1_000_000   // advisory LRU, non-consensus (§5.3)
 ```
+
+**Fee economics at launch values**:
+
+| Tx shape | Base + bytes + spend + output | Total (nano-UNO) | Total (UNO) |
+|---|---|---|---|
+| 1-spend / 2-output (typical) | 100k + 10·476 + 50k + 100k | ~255 k | 0.000255 |
+| 4-spend / 4-output (worst case) | 100k + 10·1380 + 200k + 200k | ~514 k | 0.000514 |
+
+**Annual burn estimate** at sustained 20 TPS of typical (1-spend/2-output) txs:
+```
+20 × 86400 × 365 × 255k nano-UNO  ≈  1.6 × 10¹⁴ nano-UNO
+                                   =  160 k UNO
+                                   ≈  0.76 % of 21 M supply per year
+```
+
+Early-phase TPS is lower than 20, so real-world burn at launch will be a fraction of this. The rate approaches the target 1-2% asymptotically as adoption grows, never reaching a level that threatens asset continuity (131 years to halve at steady 0.76%).
+
+**Governance path**: all four fee fields are mutable via the standard ConfigParam 11 voting mechanism if post-launch observations require rebalancing. `max_spends_per_tx`, `max_outputs_per_tx`, and `tree_depth` are effectively consensus-binding (mutating them breaks AIR public-input shape) and should be treated as frozen after genesis.
 
 ### 10.3 Zerostate and genesis distribution
 
@@ -1755,6 +1774,7 @@ Every non-trivial choice below was made against the alternative space of publish
 34. **ConfigParam slot for UnoConfig — decided: `ConfigParam 84`.** §10.2 slot allocation follows the TOS convention of placing workchain-specific / bridge-adjacent protocol parameters in the 70s-80s cluster (existing usage: 71-73 oracle bridges, 79/81/82 jetton bridges). 84 is the first free slot after the cluster. Rejected: `26` / `27` (core-band gaps that TOS/TON upstream may backfill with future low-numbered core-protocol extensions — clash risk); `100+` (arbitrary, breaks spatial locality with 71-82). Canonical registry entry added to `doc/ConfigParam.md`.
 35. **Public-input byte encoding — decided: Plonky3-canonical little-endian u64 per Goldilocks element; 256-bit inputs split into 4 × u64 chunks in LE order with `mod p_Goldilocks` reduction.** §4.3 step 4 pins the exact byte-level spec. Total serialized length is `64 + 64·spend_count + 72·output_count` bytes. A golden fixture `uno/test/golden/public-inputs-v1.hex` enforces Rust (A4) ↔ C++ (A5) byte-identical output as a P.1 gate. Rejected: big-endian (breaks Plonky3 convention; no benefit); Bincode / serde (couples spec to crate version); application-specific formats (audit burden without gain). The `mod p_Goldilocks` reduction introduces ≈ 2⁻³⁰ aggregate bias on pseudo-random 256-bit inputs, negligible for soundness; adversary-controlled inputs are asserted `< p_Goldilocks` at admission.
 36. **Total supply + genesis distribution — decided: 21,000,000 UNO, 60% airdrop / 25% treasury / 15% team, no v1 vesting.** §10.3 pins the specific allocation. 21 M matches Bitcoin / Zcash cap, reinforcing the "digital gold + PQ-native + privacy-native" scarcity narrative (§0). 60% airdrop bias signals community-first without investor allocation; 25% treasury handles ecosystem grants / audits / incentives; 15% team is lean for an independent (non-VC-backed) project. No on-chain vesting in v1: wc=2 has no contracts and no time-locked tx type, so team allocation ships unvested at genesis under multisig-protected off-chain legal custody. v1.1 may introduce `uno_timelocked_transfer` with a `min_spend_block` public input if vesting becomes important enough to warrant scheme_id bump. Rejected: 100M / 1B supply (dilutes scarcity narrative); investor/presale allocation (VC-free posture); vesting-via-wc=0-staging (violates §1.5 bridgelessness); in-v1 timelocked tx (adds 4–6 weeks of AIR work for a launch-only concern).
+37. **Fee schedule at launch — decided: `min_fee_nano=100,000`, `fee_per_byte_nano=10`, `fee_per_spend_nano=50,000`, `fee_per_output_nano=50,000`.** Calibrated by target annual burn rate of ~1% of 21 M supply at sustained 20 TPS; actual launch-phase burn is fraction of that and asymptotically approaches 1-2% as adoption grows. Typical 1-spend/2-output tx costs ~0.000255 UNO; worst-case 4/4 costs ~0.000514 UNO. Comparable to Zcash/Monero fee level, ~1000× cheaper than Bitcoin/Ethereum. Governance-upgradable via ConfigParam 11 voting if observed economics drift. Rejected: higher min_fee (DoS floor is handled by per-IP rate limit + proof verify cost + per-spend/output structural cost; raising `min_fee` to $0.01-level creates friction for legitimate users); lower fees (insufficient DoS floor and too-slow burn). `nullifier_lru_capacity = 1,000,000` pinned at the same time as an advisory (non-consensus) parameter.
 
 ---
 
