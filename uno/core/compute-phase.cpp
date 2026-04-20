@@ -36,6 +36,20 @@
 #include "uno/core/transaction.h"
 
 // =============================================================================
+// Namespace-scope forward declarations for the subscription hooks owned by
+// init.cpp (P.5). These fire once per included tx and once per block, so the
+// wallet subscription channels (`includedTx`, `newHead`, `newAnchor`) see
+// every state change without coupling compute-phase.cpp to the concrete
+// LiveUnoState class.
+// =============================================================================
+namespace uno_workchain {
+void on_included_tx_from_compute(const uint8_t tx_hash[32],
+                                  uint64_t fee_nano,
+                                  uint64_t n_outputs);
+void on_end_of_block_from_compute();
+}  // namespace uno_workchain
+
+// =============================================================================
 // A3 crypto primitives (decision #15).
 //
 // Decision #15 replaces the original weak-symbol `uno_crypto_fwd::` forward
@@ -82,8 +96,25 @@ inline bool schnorr_ristretto_verify(const uint8_t rk[32],
 ///
 /// The handle is process-singleton (thread-safe, one init per validator);
 /// we materialise a `Meyers singleton` to keep the call-site free of state.
+///
+/// Test-only override: when a non-null `g_test_proof_override` is installed
+/// via `install_test_proof_override_for_test`, that callback is used instead
+/// of the real Rust verifier. This exists ONLY so the P.5 two-wallet demo
+/// can exercise the compute-phase + state-machine path without needing a
+/// valid Plonky3 proof (which would require full A4 prover support). The
+/// override is never installed in production; its presence is a runtime
+/// flag guarded by the test harness.
+extern "C" {
+// Defined at namespace scope below so external test code can bind it.
+}  // extern "C"
+using TestProofOverrideFn = bool(*)(td::Slice pi, td::Slice proof);
+std::atomic<TestProofOverrideFn> g_test_proof_override{nullptr};
+
 inline bool plonky3_verify_transfer_proof(td::Slice public_inputs_bytes,
                                           td::Slice proof_bytes) noexcept {
+    if (auto fn = g_test_proof_override.load(std::memory_order_acquire)) {
+        return fn(public_inputs_bytes, proof_bytes);
+    }
     struct Holder {
         ::uno::crypto::Plonky3Verifier verifier;
         bool ready{false};
@@ -354,6 +385,16 @@ bool run_compute_phase(
               << " outputs=" << tx.outputs.size()
               << " fee=" << tx.fee;
 
+    // --- End-of-tx subscription notify (P.5) ---
+    // §9.1 `includedTx` channel: wakes wallet subscribers that are watching
+    // for their own txs to land. Payload is { tx_hash, block_seqno, fee };
+    // neither amounts nor note metadata leak (the subscription manager owns
+    // the JSON shape in subscriptions.cpp::notify_included_tx).
+    on_included_tx_from_compute(
+        reinterpret_cast<const uint8_t*>(tx.tx_hash.data()),
+        tx.fee,
+        tx.outputs.size());
+
     // --- Step 4: serialize updated state into cp.new_data (§8.4) ---
     // Agent 1's UnoState::serialize_to_cell() returns a cell whose root is
     // the canonical UnoShardState cell (§5.1). End-of-block, the state is
@@ -376,6 +417,26 @@ bool run_compute_phase(
     cp.vm_final_state_hash.set_zero();
 
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// End-of-block entry point (P.5). Thin forwarder to init.cpp's hook so the
+// test harness and validator-engine integration code have a single public
+// symbol to call.
+// ---------------------------------------------------------------------------
+void end_of_block_hook() {
+    on_end_of_block_from_compute();
+}
+
+// ---------------------------------------------------------------------------
+// Test-only: install a proof-verify override. Passing nullptr restores the
+// real Rust verifier. Only the two-wallet demo test uses this today.
+// ---------------------------------------------------------------------------
+void install_test_proof_override_for_test(
+    bool(*fn)(td::Slice public_inputs, td::Slice proof)) {
+    uno_crypto::g_test_proof_override.store(
+        reinterpret_cast<uno_crypto::TestProofOverrideFn>(fn),
+        std::memory_order_release);
 }
 
 }  // namespace uno_workchain

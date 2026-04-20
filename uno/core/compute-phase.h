@@ -133,4 +133,17 @@ bool run_compute_phase(
     uint64_t timestamp,
     const uint8_t rand_seed[32]);
 
+/// End-of-block hook. Called exactly once per wc=2 block after the last
+/// `run_compute_phase` for that block. Drives:
+///   - anchor-window push: current commitment_tree_root → oldest evicted
+///   - block-filter compile: accumulated filter_tags → GCS blob, archived
+///     for uno_getBlockFilter
+///   - subscription notifications: `newHead` + `newAnchor` channels fire
+///     once, with payloads pinned in subscriptions.cpp
+///
+/// Implementation is in init.cpp (`on_end_of_block_from_compute`); this
+/// declaration is surfaced here so the test harness and the validator-engine
+/// integration layer can call it without including init.h.
+void end_of_block_hook();
+
 }  // namespace uno_workchain
