@@ -15,11 +15,19 @@
 # a `SKIP:` line for that specific assertion and keeps the test binary
 # exit-status 0.
 
-add_executable(test-uno-transfer    test-transfer.cpp)
-add_executable(test-uno-determinism test-determinism.cpp)
-add_executable(test-uno-filter      test-filter.cpp)
+add_executable(test-uno-transfer              test-transfer.cpp)
+add_executable(test-uno-determinism           test-determinism.cpp)
+add_executable(test-uno-filter                test-filter.cpp)
+# Decision #5 cross-impl parity gate for the Plonky3 public-input byte
+# encoding. Driven by uno/test/golden/public-inputs-v1.hex; Rust side is
+# uno/plonky3-ffi/tests/public_input_fixture.rs. Both implementations
+# MUST produce byte-identical output for every fixture record.
+add_executable(test-uno-public-input-fixture  test-public-input-fixture.cpp)
 
-foreach(_t test-uno-transfer test-uno-determinism test-uno-filter)
+foreach(_t test-uno-transfer
+           test-uno-determinism
+           test-uno-filter
+           test-uno-public-input-fixture)
   target_link_libraries(${_t} PRIVATE uno_workchain)
   target_include_directories(${_t} PRIVATE ${CMAKE_SOURCE_DIR})
   if (COMMAND tos_test)
@@ -28,3 +36,8 @@ foreach(_t test-uno-transfer test-uno-determinism test-uno-filter)
     add_test(NAME ${_t} COMMAND ${_t})
   endif()
 endforeach()
+
+# Pass the canonical in-tree fixture path to the fixture test so ctest can
+# run from the build directory without a cwd hack.
+set_tests_properties(test-uno-public-input-fixture PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")

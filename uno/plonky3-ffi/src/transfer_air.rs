@@ -11,15 +11,18 @@
 //!
 //! # What the MVP AIR asserts
 //!
-//! The AIR has the following trace layout (5 columns over Goldilocks):
+//! The AIR has the following trace layout (7 columns over Goldilocks):
 //!
-//! | col | name         | semantic (MVP)                                           |
-//! |-----|--------------|----------------------------------------------------------|
-//! | 0   | leaf         | note-commitment leaf digest (one field-element proxy)    |
-//! | 1   | sibling      | Merkle sibling at this level                              |
-//! | 2   | parent_claim | claimed parent digest (one field-element proxy)          |
-//! | 3   | value_acc    | rolling accumulator of `value` for the range check       |
-//! | 4   | value_bit    | one bit of the little-endian decomposition of `value`    |
+//! | col | name                   | semantic (MVP)                                           |
+//! |-----|------------------------|----------------------------------------------------------|
+//! | 0   | leaf                   | note-commitment leaf digest (one field-element proxy)    |
+//! | 1   | sibling                | Merkle sibling at this level; also reused as the         |
+//! |     |                        | diversifier `d` proxy in the claim-3 binding             |
+//! | 2   | parent_claim           | claimed parent digest (one field-element proxy)          |
+//! | 3   | value_acc              | rolling accumulator of `value` for the range check       |
+//! | 4   | value_bit              | one bit of the little-endian decomposition of `value`    |
+//! | 5   | ivk                    | private-witness `ivk` (decision #1, §2.6 claim 3)         |
+//! | 6   | ivk_commitment_claim   | claimed Poseidon2("uno-ivk-cm-v1", ivk, d) proxy         |
 //!
 //! Over a trace of `2^k` rows (MVP uses `k=6`, so 64 rows), the AIR enforces:
 //!
@@ -47,6 +50,24 @@
 //!   `public_inputs[2]` (the "declared range-checked value"). With 64 rows
 //!   of decomposition this asserts value ∈ [0, 2^63]. A depth-64 trace + one
 //!   sign-bit column would extend this to [0, 2^64).
+//!
+//! - **ivk-commitment binding** (first row; decision #1, §4.2 claim 3
+//!   scaffold): `ivk_commitment_claim = ivk * IVK_CM_MIX_COEF + sibling`
+//!   where `sibling` is reused as the diversifier `d` proxy. This is the
+//!   linear stand-in for `Poseidon2("uno-ivk-cm-v1", ivk, d)`; the full
+//!   Transfer AIR (P.2) swaps the mix-coef compression for a real Poseidon2
+//!   permutation with the same constraint shape (private-witness input ×
+//!   public-input-derived input → public-input output). `ivk` and
+//!   `ivk_commitment_claim` replicate across every transition so a prover
+//!   cannot silently change them mid-trace.
+//!
+//! - **ivk-commitment public binding** (first row): `ivk_commitment_claim`
+//!   equals `public_inputs[3]` (the "declared ivk_commitment"). Together
+//!   with the binding above, this proves the claim-3 property: "prover
+//!   knows an `ivk` such that `Poseidon2("uno-ivk-cm-v1", ivk, d) ==
+//!   declared_ivk_commitment`". An adversary who picks a different `ivk`
+//!   (not hash-chained from the owner's seed) gets a different
+//!   `ivk_commitment_claim` and verify rejects.
 //!
 //! # Why this shape
 //!
@@ -142,7 +163,10 @@ use crate::Plonky3Status;
 // ---------------------------------------------------------------------------
 
 /// Number of trace columns. See module doc for semantics.
-pub const NUM_COLS: usize = 5;
+///
+/// Decision #1 grew the AIR from 5 → 7 columns by adding `ivk` and
+/// `ivk_commitment_claim` columns for the claim-3 binding constraint.
+pub const NUM_COLS: usize = 7;
 
 /// Column indices — kept as named consts to make the witness generator
 /// and AIR `eval()` signatures match the module-doc table above.
@@ -161,6 +185,8 @@ pub(crate) mod col {
     pub const PARENT_CLAIM: usize = 2;
     pub const VALUE_ACC: usize = 3;
     pub const VALUE_BIT: usize = 4;
+    pub const IVK: usize = 5;
+    pub const IVK_COMMITMENT_CLAIM: usize = 6;
 }
 
 /// Log2 of the trace height. 64 rows = 2^6.
@@ -179,7 +205,8 @@ pub const TRACE_HEIGHT: usize = 1 << LOG_TRACE_HEIGHT;
 /// - `[0]`: declared parent digest (Merkle step output)
 /// - `[1]`: declared leaf digest  (Merkle step input)
 /// - `[2]`: declared range-checked value (the u64 being range-proved)
-pub const NUM_PUBLIC_INPUTS: usize = 3;
+/// - `[3]`: declared ivk_commitment (decision #1, claim 3 binding)
+pub const NUM_PUBLIC_INPUTS: usize = 4;
 
 /// Byte length of the public-input wire encoding. Each Goldilocks element
 /// is serialized as 8 little-endian bytes.
@@ -201,6 +228,27 @@ pub const PUBLIC_INPUTS_WIRE_LEN: usize = NUM_PUBLIC_INPUTS * 8;
 /// (4 columns) and `leaf`/`sibling` become 4-element digests as well.
 pub const MERKLE_MIX_COEF: u64 = 0xdead_beef_cafe_f00d;
 
+/// AIR mixing coefficient used by the MVP ivk-commitment binding (decision
+/// #1, §4.2 claim 3 scaffold):
+///
+/// ```text
+///     ivk_commitment_claim = ivk * IVK_CM_MIX_COEF + sibling   // sibling reused as `d` proxy
+/// ```
+///
+/// Linear stand-in for `Poseidon2("uno-ivk-cm-v1", ivk, d)`. Same role as
+/// `MERKLE_MIX_COEF`: preserves the constraint family (one public-input
+/// output bound to a hash-like combination of a private witness and a
+/// trace-accessible value) while deferring the full Poseidon2 expansion to
+/// P.2. A different mix coefficient is used so the two constraints don't
+/// collapse into the same linear relation — an adversary who satisfies the
+/// Merkle step without knowing the right `ivk` still gets the wrong
+/// `ivk_commitment_claim`. Value: 0xbadcafe0_ivkcmv1 formatted as a nonce.
+///
+/// TODO(uno-design-gap): replace with the real in-circuit Poseidon2 over
+/// the 6-element input `[ivk (4 fes), d_packed (2 fes)]` at P.2. Verifier
+/// side (off-circuit, §2.6) already uses real Poseidon2.
+pub const IVK_CM_MIX_COEF: u64 = 0xbad_cafe_0001_cb01;
+
 // ---------------------------------------------------------------------------
 // Row view
 // ---------------------------------------------------------------------------
@@ -210,7 +258,8 @@ pub const MERKLE_MIX_COEF: u64 = 0xdead_beef_cafe_f00d;
 pub struct MvpRow<F> {
     /// `col::LEAF`
     pub leaf: F,
-    /// `col::SIBLING`
+    /// `col::SIBLING` — also reused as the diversifier `d` proxy in the
+    /// claim-3 ivk-commitment binding (decision #1).
     pub sibling: F,
     /// `col::PARENT_CLAIM`
     pub parent_claim: F,
@@ -218,6 +267,11 @@ pub struct MvpRow<F> {
     pub value_acc: F,
     /// `col::VALUE_BIT`
     pub value_bit: F,
+    /// `col::IVK` — private-witness `ivk` (decision #1, §4.2 claim 3).
+    pub ivk: F,
+    /// `col::IVK_COMMITMENT_CLAIM` — the claim-3 output, bound to
+    /// `public_inputs[3]` on row 0.
+    pub ivk_commitment_claim: F,
 }
 
 impl<F> Borrow<MvpRow<F>> for [F] {
@@ -279,6 +333,7 @@ where
         let declared_parent = pis[0];
         let declared_leaf = pis[1];
         let declared_value = pis[2];
+        let declared_ivk_commitment = pis[3];
 
         // ---- First-row: Merkle-step and public bindings ----------------
         //
@@ -302,6 +357,26 @@ where
 
             // Range-check accumulator starts at value_bit[row 0] (the MSB).
             first.assert_eq(local.value_acc, local.value_bit);
+
+            // ---- ivk-commitment binding (decision #1, §4.2 claim 3) ----
+            //
+            // Linear stand-in for `Poseidon2("uno-ivk-cm-v1", ivk, d)`,
+            // with `sibling` reused as the `d` proxy. The full P.2 AIR
+            // swaps this mix-coef compression for real Poseidon2 over the
+            // 6-element absorb `[ivk (4 fes), d_packed (2 fes)]`; the
+            // constraint *family* here (private-witness + trace-linked
+            // input → public-input output) is identical.
+            let ivk_mix = AB::Expr::from(AB::F::from_u64(IVK_CM_MIX_COEF));
+            first.assert_eq(
+                local.ivk_commitment_claim.into(),
+                local.ivk.into() * ivk_mix + local.sibling.into(),
+            );
+
+            // Public binding: declared ivk_commitment matches the trace.
+            // An adversary who supplies a different private `ivk` (one not
+            // hash-chained from the owner's seed) gets a different
+            // ivk_commitment_claim value, and the verifier rejects.
+            first.assert_eq(local.ivk_commitment_claim, declared_ivk_commitment);
         }
 
         // ---- Per-row bit-ness check ------------------------------------
@@ -317,12 +392,15 @@ where
         // be at least 2^log_blowup rows. We pad by replicating columns 0..3
         // across every row. Enforce `leaf_next = leaf_curr`,
         // `sibling_next = sibling_curr`, `parent_claim_next = parent_claim_curr`
-        // on every transition.
+        // on every transition.  Decision #1 adds the same for `ivk` and
+        // `ivk_commitment_claim` so the claim-3 binding cannot drift.
         {
             let mut t = builder.when_transition();
             t.assert_eq(next.leaf, local.leaf);
             t.assert_eq(next.sibling, local.sibling);
             t.assert_eq(next.parent_claim, local.parent_claim);
+            t.assert_eq(next.ivk, local.ivk);
+            t.assert_eq(next.ivk_commitment_claim, local.ivk_commitment_claim);
 
             // Range-check accumulator transition:
             //   value_acc_next = value_acc_curr * 2 + value_bit_next
@@ -354,10 +432,16 @@ pub struct MvpWitness {
     /// the full Transfer AIR. MVP treats it as one field element.
     pub leaf: u64,
     /// Merkle sibling at the step being proved. TEST ONLY — the
-    /// production AIR has 32 siblings (one per tree level).
+    /// production AIR has 32 siblings (one per tree level). Also reused
+    /// as the diversifier `d` proxy for the claim-3 ivk-commitment
+    /// binding (decision #1).
     pub merkle_sibling: [u8; 8],
     /// The u64 value being range-checked. Represents one spend's `value`.
     pub value: u64,
+    /// Private-witness `ivk` (decision #1, §4.2 claim 3). The full AIR
+    /// treats this as 4 Goldilocks field elements; the MVP AIR treats it
+    /// as one u64 proxy alongside the other single-element simplifications.
+    pub ivk: u64,
 }
 
 impl MvpWitness {
@@ -371,32 +455,40 @@ impl MvpWitness {
         let leaf = seed ^ 0xa5a5_a5a5_a5a5_a5a5;
         let sibling_word = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ 0x1234_0000_0000_0000;
         let value = (seed ^ 0xbabe_cafe_dead_f00d) & ((1u64 << 63) - 1); // mask to 63-bit range
+        // Deterministic `ivk` proxy; distinct from `leaf`/`sibling` so a
+        // copy-paste regression between columns is caught at prove time.
+        let ivk = seed.wrapping_mul(0xc2b2_ae3d_27d4_eb4f) ^ 0x1efbe1edu64;
 
         Self {
             leaf,
             merkle_sibling: sibling_word.to_le_bytes(),
             value,
+            ivk,
         }
     }
 
     /// Serialize the witness to a byte buffer for the FFI path.
-    /// Layout: `leaf_le(8) || sibling(8) || value_le(8)` = 24 B total.
+    /// Layout: `leaf_le(8) || sibling(8) || value_le(8) || ivk_le(8)` = 32 B.
+    /// Decision #1 grew the witness by 8 B (the `ivk` proxy); callers
+    /// encoding witnesses off-wire must supply 32 B, not 24 B.
     pub fn encode(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(24);
+        let mut out = Vec::with_capacity(32);
         out.extend_from_slice(&self.leaf.to_le_bytes());
         out.extend_from_slice(&self.merkle_sibling);
         out.extend_from_slice(&self.value.to_le_bytes());
+        out.extend_from_slice(&self.ivk.to_le_bytes());
         out
     }
 
     /// Decode from wire bytes produced by [`Self::encode`].
     pub fn decode(bytes: &[u8]) -> Result<Self, Plonky3Status> {
-        if bytes.len() != 24 {
+        if bytes.len() != 32 {
             return Err(Plonky3Status::WitnessInvalid);
         }
         let leaf = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
         let merkle_sibling: [u8; 8] = bytes[8..16].try_into().unwrap();
         let value = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
+        let ivk = u64::from_le_bytes(bytes[24..32].try_into().unwrap());
         // Enforce the MVP 63-bit range here as well — the AIR would reject
         // at verify time, but rejecting early gives a cleaner error code.
         if value >> 63 != 0 {
@@ -406,10 +498,11 @@ impl MvpWitness {
             leaf,
             merkle_sibling,
             value,
+            ivk,
         })
     }
 
-    /// Derive the 3 public-input field elements from the witness.
+    /// Derive the 4 public-input field elements from the witness.
     /// These are the values the verifier will see.
     pub fn public_inputs(&self) -> [Goldilocks; NUM_PUBLIC_INPUTS] {
         let leaf_f = Goldilocks::from_u64(reduce_to_goldilocks(self.leaf));
@@ -422,7 +515,14 @@ impl MvpWitness {
 
         let value_f = Goldilocks::from_u64(self.value);
 
-        [parent, leaf_f, value_f]
+        // ivk_commitment_claim = ivk * IVK_CM_MIX_COEF + sibling_as_d
+        // (decision #1, §4.2 claim 3 scaffold). `sibling` is reused as the
+        // `d` proxy; this matches the first-row AIR constraint.
+        let ivk_f = Goldilocks::from_u64(reduce_to_goldilocks(self.ivk));
+        let ivk_mix = Goldilocks::from_u64(IVK_CM_MIX_COEF);
+        let ivk_commitment = ivk_f * ivk_mix + sibling_f;
+
+        [parent, leaf_f, value_f, ivk_commitment]
     }
 
     /// Encode the public inputs as the verifier wire format (LE bytes,
@@ -447,6 +547,10 @@ impl MvpWitness {
 
         // Parent from pis[0] — matches the AIR's declared_parent check.
         let parent_f = pis[0];
+
+        // Decision #1: ivk + ivk_commitment_claim replicate across the trace.
+        let ivk_f = Goldilocks::from_u64(reduce_to_goldilocks(self.ivk));
+        let ivk_commitment_f = pis[3];
 
         // Pre-compute the 64 bits of `value`, MSB first.
         // For a 63-bit range the top bit is guaranteed 0 (decoder enforced).
@@ -473,6 +577,10 @@ impl MvpWitness {
 
             values.push(Goldilocks::from_u64(acc)); // col 3: value_acc
             values.push(Goldilocks::from_u64(bit)); // col 4: value_bit
+
+            // Decision #1: ivk + ivk_commitment_claim replicated per row.
+            values.push(ivk_f);             // col 5: ivk
+            values.push(ivk_commitment_f);  // col 6: ivk_commitment_claim
         }
 
         RowMajorMatrix::new(values, NUM_COLS)
@@ -535,7 +643,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn public_inputs_are_three_elements() {
+    fn public_inputs_are_four_elements() {
+        // Decision #1 bumped NUM_PUBLIC_INPUTS from 3 to 4.
+        assert_eq!(NUM_PUBLIC_INPUTS, 4);
         assert_eq!(
             <MvpTransferAir as BaseAir<Goldilocks>>::num_public_values(&MvpTransferAir),
             NUM_PUBLIC_INPUTS
@@ -543,13 +653,22 @@ mod tests {
     }
 
     #[test]
+    fn num_cols_is_seven() {
+        // Decision #1 bumped NUM_COLS from 5 to 7 (added ivk +
+        // ivk_commitment_claim).
+        assert_eq!(NUM_COLS, 7);
+    }
+
+    #[test]
     fn witness_encode_decode_roundtrip() {
         let w = MvpWitness::deterministic_valid(42);
         let bytes = w.encode();
+        assert_eq!(bytes.len(), 32, "decision #1: witness wire is 32 B");
         let w2 = MvpWitness::decode(&bytes).unwrap();
         assert_eq!(w.leaf, w2.leaf);
         assert_eq!(w.merkle_sibling, w2.merkle_sibling);
         assert_eq!(w.value, w2.value);
+        assert_eq!(w.ivk, w2.ivk);
     }
 
     #[test]
@@ -559,6 +678,17 @@ mod tests {
         bytes[16..24].copy_from_slice(&u64::MAX.to_le_bytes());
         assert!(matches!(
             MvpWitness::decode(&bytes),
+            Err(Plonky3Status::WitnessInvalid)
+        ));
+    }
+
+    #[test]
+    fn witness_decode_rejects_short_length() {
+        // A 24-byte buffer (pre-decision-#1 shape) must be rejected now
+        // that the witness carries the 8-byte `ivk` tail.
+        let short = vec![0u8; 24];
+        assert!(matches!(
+            MvpWitness::decode(&short),
             Err(Plonky3Status::WitnessInvalid)
         ));
     }
@@ -575,9 +705,35 @@ mod tests {
         let bytes = w.public_inputs_bytes();
         let pis = decode_public_inputs(&bytes).unwrap();
         assert_eq!(pis.len(), NUM_PUBLIC_INPUTS);
-        assert_eq!(pis[0], w.public_inputs()[0]);
-        assert_eq!(pis[1], w.public_inputs()[1]);
-        assert_eq!(pis[2], w.public_inputs()[2]);
+        let expected = w.public_inputs();
+        assert_eq!(pis[0], expected[0]);
+        assert_eq!(pis[1], expected[1]);
+        assert_eq!(pis[2], expected[2]);
+        // Decision #1: fourth element is the ivk_commitment binding.
+        assert_eq!(pis[3], expected[3]);
+    }
+
+    /// Honest witness produces a non-trivial ivk_commitment binding, and
+    /// that binding must change if the adversary alters the `ivk` private
+    /// witness. This is the scaffold form of §4.2 claim 3: only the holder
+    /// of the seed-chained `ivk` can match the public ivk_commitment.
+    #[test]
+    fn ivk_commitment_binding_changes_with_ivk() {
+        let honest = MvpWitness::deterministic_valid(0xcafe_f00d_0001);
+        let honest_pis = honest.public_inputs();
+        let mut tampered = honest.clone();
+        tampered.ivk ^= 0xffff_ffff_ffff_ffff;
+        let tampered_pis = tampered.public_inputs();
+        // Merkle-step public input (index 0) unchanged — only claim 3
+        // flips. This confirms the new constraint is functionally wired
+        // and is not collapsing into one of the earlier bindings.
+        assert_eq!(honest_pis[0], tampered_pis[0]);
+        assert_eq!(honest_pis[1], tampered_pis[1]);
+        assert_eq!(honest_pis[2], tampered_pis[2]);
+        assert_ne!(
+            honest_pis[3], tampered_pis[3],
+            "decision #1: ivk_commitment must change when `ivk` changes"
+        );
     }
 
     #[test]

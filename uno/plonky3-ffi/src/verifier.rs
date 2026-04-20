@@ -142,6 +142,43 @@ mod tests {
         );
     }
 
+    /// Adversarial witness (decision #1, §4.2 claim 3 scaffold): the
+    /// prover tampers with their private-witness `ivk` but claims the
+    /// honest `ivk_commitment` in the public inputs. Because the AIR's
+    /// first-row constraint is `ivk_commitment_claim = ivk * MIX +
+    /// sibling`, a different `ivk` produces a different
+    /// `ivk_commitment_claim`, which then mismatches the public input.
+    /// The verifier MUST reject.
+    #[test]
+    fn verify_rejects_adversarial_ivk_witness() {
+        let prover = MvpProver::new();
+        let honest = MvpWitness::deterministic_valid(0x5678_5678_5678_5678);
+        let honest_pi_bytes = honest.public_inputs_bytes();
+
+        // Tamper with the private `ivk` while keeping the honest PI.
+        let mut bad = honest.clone();
+        bad.ivk = bad.ivk.wrapping_add(1);
+
+        match prover.prove(&bad.encode()) {
+            Err(Plonky3Status::WitnessInvalid) => {
+                // Debug-build constraint check pre-filter caught it.
+            }
+            Err(other) => panic!("unexpected prove error: {:?}", other),
+            Ok((proof_bytes, bad_pi_bytes)) => {
+                let verifier = MvpVerifier::new();
+                // Self-consistent under the adversary's own PI is allowed.
+                let _ = verifier.verify(&proof_bytes, &bad_pi_bytes);
+                // But same proof against HONEST PI must reject.
+                assert_ne!(
+                    verifier.verify(&proof_bytes, &honest_pi_bytes),
+                    Plonky3Status::Ok,
+                    "verifier MUST reject when prover's `ivk` does not satisfy \
+                     the public ivk_commitment binding"
+                );
+            }
+        }
+    }
+
     /// Adversarial witness: flip the sibling, keep the public input "parent"
     /// as before (unchanged from the valid case). The AIR's first-row
     /// Merkle-step constraint says `parent_claim = leaf * MIX + sibling`,

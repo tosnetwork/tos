@@ -195,6 +195,16 @@ td::Status note_encryption_verify_test_vectors() {
     uint8_t d_bytes[11] = {0};
     rec.d_bytes = td::Slice{reinterpret_cast<const char*>(d_bytes), 11};
     rec.pk_d = pk_d;
+    // Decision #1: the recipient's Address carries ivk_commitment. The
+    // note-encryption self-test does not build a full Address here (it
+    // does not hold `ivk`), so we pass a fixed placeholder that the
+    // receiver would otherwise recompute. The AEAD/filter_tag path does
+    // not read this field; it only gets written into `cm` by callers
+    // downstream of encrypt_note.
+    uint8_t ivkcm_placeholder[32] = {0};
+    for (size_t i = 0; i < 32; ++i) ivkcm_placeholder[i] = static_cast<uint8_t>(0xEE ^ i);
+    rec.ivk_commitment =
+        td::Slice{reinterpret_cast<const char*>(ivkcm_placeholder), 32};
     rec.pk_mlkem = mlkem_kp.pk;
 
     td::Slice pt{"hello uno", 9};

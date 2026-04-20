@@ -21,6 +21,19 @@
 // diverge on the wire.
 #include "uno/crypto/internal/blake3_adapter.h"
 
+// Decision #1: note commitment preimage uses Poseidon2 with ivk_commitment
+// bound in. compute_note_commitment() below is the off-circuit computation.
+// Note: we intentionally do NOT include "uno/core/workchain.h" here —
+// `transaction.h` and `workchain.h` both declare `kSchemeIdV1` /
+// `kTransferVersion` as internal-scope constants, and pulling both into one
+// TU triggers redefinition. The two domain-separator strings we need
+// ("uno-cm-v1" for cm; see transaction.h / workchain.h::kDomainSepCmV1) are
+// reproduced verbatim inside compute_note_commitment() so this TU stays
+// independent of workchain.h. The strings are consensus-binding; any drift
+// is caught by the golden fixture (decision #5).
+#include "uno/crypto/goldilocks.h"
+#include "uno/crypto/poseidon2.h"
+
 namespace uno_workchain {
 
 namespace {
@@ -112,6 +125,83 @@ std::string load_bytes_from_chunk_chain(td::Ref<vm::Cell> root) noexcept {
 }
 
 // ---------------------------------------------------------------------------
+// Note commitment (§3.2, decision #1)
+// ---------------------------------------------------------------------------
+//
+// Pack the five Poseidon2 inputs per §3.2 into 15 Goldilocks field elements
+// and hash with domain tag "uno-cm-v1". Output is truncated to 4 field
+// elements (32 bytes canonical LE) and returned.
+//
+// Packing order (consensus-binding; matches the Transfer AIR claim 2 absorb
+// ordering in `transfer_air.rs` when the full P.2 AIR lands):
+//
+//   [0..1]   d (11 B) → 2 fes (LE packed, last 5 bytes of fe[1] are zero).
+//   [2..5]   pk_d.bytes (32 B) → 4 fes (each fe = LE u64 of 8 bytes, mod p).
+//   [6..9]   ivk_commitment (32 B) → 4 fes (same packing as pk_d).
+//   [10]     value (u64) → 1 fe (value < 2^64 < p + 2^32; canonical-reduce).
+//   [11..14] rcm (32 B) → 4 fes (same packing as pk_d).
+//
+// Why `mod p_Goldilocks` per limb: identical to §4.3 step 4 reasoning —
+// pk_d.bytes / ivk_commitment / rcm are cryptographic digests, uniformly
+// pseudo-random by construction; per-limb bias is 2^-32 and the combined
+// collision surface is negligible.
+
+std::array<uint8_t, 32>
+compute_note_commitment(const NoteCommitmentInputs& in) noexcept {
+    using ::uno_workchain::crypto::Fp;
+    using ::uno_workchain::crypto::Digest;
+    using ::uno_workchain::crypto::fp_from_u64;
+    using ::uno_workchain::crypto::poseidon2_hash_tagged;
+
+    auto pack_bytes32_as_4 = [](const std::array<uint8_t, 32>& src,
+                                Fp out[4]) noexcept {
+        for (int limb = 0; limb < 4; ++limb) {
+            uint64_t v = 0;
+            for (int j = 0; j < 8; ++j) {
+                v |= static_cast<uint64_t>(src[limb * 8 + j]) << (8 * j);
+            }
+            out[limb] = fp_from_u64(v);  // fp_from_u64 reduces mod p
+        }
+    };
+
+    Fp inputs[15];
+
+    // --- d (11 B) as 2 fes; LE, zero-padded ---
+    {
+        uint8_t pad[16] = {0};
+        std::memcpy(pad, in.d.data(), in.d.size());
+        uint64_t w0 = 0, w1 = 0;
+        std::memcpy(&w0, pad, 8);
+        std::memcpy(&w1, pad + 8, 8);
+        inputs[0] = fp_from_u64(w0);
+        inputs[1] = fp_from_u64(w1);
+    }
+
+    // --- pk_d.bytes (32 B) → 4 fes ---
+    pack_bytes32_as_4(in.pk_d_bytes, &inputs[2]);
+
+    // --- ivk_commitment (32 B) → 4 fes  (decision #1) ---
+    pack_bytes32_as_4(in.ivk_commitment, &inputs[6]);
+
+    // --- value (u64) → 1 fe ---
+    inputs[10] = fp_from_u64(in.value);
+
+    // --- rcm (32 B) → 4 fes ---
+    pack_bytes32_as_4(in.rcm, &inputs[11]);
+
+    // Domain separator kDomainSepCmV1 ("uno-cm-v1"), duplicated here to
+    // avoid pulling in workchain.h (see top-of-file comment).
+    static constexpr char kCmV1Tag[] = "uno-cm-v1";
+    Digest h = poseidon2_hash_tagged(
+        td::Slice{kCmV1Tag, sizeof(kCmV1Tag) - 1},
+        inputs, 15);
+
+    std::array<uint8_t, 32> out{};
+    h.to_bytes({reinterpret_cast<char*>(out.data()), out.size()});
+    return out;
+}
+
+// ---------------------------------------------------------------------------
 // Canonical tx_hash (§4.1)
 // ---------------------------------------------------------------------------
 
@@ -183,22 +273,69 @@ td::Bits256 canonical_tx_hash(const Transfer& tx) noexcept {
 }
 
 // ---------------------------------------------------------------------------
-// Plonky3 public-input builder (§4.3 step 4)
+// Plonky3 public-input builder (§4.3 step 4, decision #5)
 // ---------------------------------------------------------------------------
+//
+// Byte encoding is consensus-binding. Each Goldilocks element serializes as
+// 8 bytes little-endian u64. 256-bit inputs split into 4 × u64 LE chunks,
+// each reduced mod p_Goldilocks = 2^64 - 2^32 + 1. Adversary-controlled
+// scalar inputs (scheme_id, chain_id, expiry_block, fee, filter_tag) are
+// asserted in-range by `encode_u64` below — a consensus fault otherwise.
+//
+// Cross-impl parity is enforced by the golden fixture
+// `uno/test/golden/public-inputs-v1.hex`; see test-public-input-fixture.cpp
+// (C++ side) and `tests/public_input_fixture.rs` (Rust side).
 
-namespace {
+uint64_t encode_u64(uint64_t x) noexcept {
+    // Per decision #5: u64 public inputs (expiry_block, fee) must satisfy
+    // `x < p_Goldilocks`; out-of-range implies a malformed adversarial
+    // transaction that should have been caught at admission. We abort so
+    // no silent wire-encoding drift reaches the verifier.
+    if (x >= kPGoldilocks) {
+        // The admission path asserts `fee <= some_cap` and `expiry_block
+        // <= current + window`, both bounded well below p. A value larger
+        // than p here is a serious invariant break.
+        LOG(ERROR) << "uno/public-input: u64 value " << x
+                   << " >= p_Goldilocks; aborting (should have been "
+                      "rejected at admission).";
+        std::abort();
+    }
+    return x;
+}
 
-// Pack a 256-bit blob into 4 × 64-bit little-endian limbs (canonical
-// Goldilocks wire form). The Goldilocks prime is 2^64 - 2^32 + 1; a uniformly
-// random 64-bit limb exceeds p with probability ~2^-32, so strict Plonky3
-// verifiers will reject out-of-range limbs. We pass the bytes through
-// untouched — reduction is the verifier's responsibility.
-inline void pack_bits256_as_4_limbs(const td::Bits256& src, std::vector<uint64_t>& out) {
-    const uint8_t* p = reinterpret_cast<const uint8_t*>(src.data());
+std::array<uint8_t, 32> encode_256(const uint8_t bytes[32]) noexcept {
+    // Split into 4 × u64 LE chunks, reduce each mod p_Goldilocks, then
+    // write each canonical limb back in the same byte slot (LE). The
+    // output byte order matches §4.3 step 4 exactly.
+    std::array<uint8_t, 32> out{};
     for (int limb = 0; limb < 4; ++limb) {
         uint64_t v = 0;
         for (int j = 0; j < 8; ++j) {
-            v |= static_cast<uint64_t>(p[limb * 8 + j]) << (8 * j);
+            v |= static_cast<uint64_t>(bytes[limb * 8 + j]) << (8 * j);
+        }
+        // Reduce. At 2^-32 per limb this is a rare branch on uniform input.
+        if (v >= kPGoldilocks) {
+            v -= kPGoldilocks;
+            // One subtraction suffices: p_Goldilocks > 2^63, so u64 - p fits.
+        }
+        for (int j = 0; j < 8; ++j) {
+            out[limb * 8 + j] = static_cast<uint8_t>(v >> (8 * j));
+        }
+    }
+    return out;
+}
+
+namespace {
+
+// Pack a 256-bit blob into 4 × 64-bit little-endian limbs, each reduced
+// mod p_Goldilocks (decision #5). Uses encode_256() internally to keep the
+// reduction rule in one place.
+inline void pack_bits256_as_4_limbs(const td::Bits256& src, std::vector<uint64_t>& out) {
+    auto canonical = encode_256(reinterpret_cast<const uint8_t*>(src.data()));
+    for (int limb = 0; limb < 4; ++limb) {
+        uint64_t v = 0;
+        for (int j = 0; j < 8; ++j) {
+            v |= static_cast<uint64_t>(canonical[limb * 8 + j]) << (8 * j);
         }
         out.push_back(v);
     }
@@ -207,20 +344,21 @@ inline void pack_bits256_as_4_limbs(const td::Bits256& src, std::vector<uint64_t
 }  // anonymous namespace
 
 Plonky3PublicInputs build_plonky3_public_inputs(const Transfer& tx) noexcept {
-    // Layout per §4.3 step 4:
+    // Layout per §4.3 step 4 (decision #5):
     //   [scheme_id, chain_id, expiry_block, fee]    (4 elts)
     //   [anchor as 4 limbs]                         (4 elts)
     //   per spend: [nf_i 4 limbs, rk_i 4 limbs]     (8 elts)
     //   per output:[cm_j 4 limbs, epk_j 4 limbs,
     //               filter_tag_j 1 elt]             (9 elts)
-    // Total: 8 + 8*spends + 9*outputs.
+    // Total: 8 + 8*spends + 9*outputs.  Byte length: 64 + 64·spends + 72·outputs.
     Plonky3PublicInputs pi;
     pi.elements.reserve(8 + 8 * tx.spends.size() + 9 * tx.outputs.size());
 
+    // u8 / u16 / u32 always fit (they're < 2^32 < p). u64 is asserted.
     pi.elements.push_back(static_cast<uint64_t>(tx.scheme_id));
     pi.elements.push_back(static_cast<uint64_t>(tx.chain_id));
-    pi.elements.push_back(tx.expiry_block);
-    pi.elements.push_back(tx.fee);
+    pi.elements.push_back(encode_u64(tx.expiry_block));
+    pi.elements.push_back(encode_u64(tx.fee));
 
     pack_bits256_as_4_limbs(tx.anchor, pi.elements);
 

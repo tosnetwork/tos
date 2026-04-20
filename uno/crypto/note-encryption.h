@@ -51,9 +51,20 @@ inline constexpr size_t kAeadTagBytes = 16;  // Poly1305 tag
 
 /// Inputs that define "who the note is for". Mirrors Address + the field
 /// needed to derive `g_d` (the diversifier `d`, 11 bytes).
+///
+/// `ivk_commitment` is copied straight from the recipient's published
+/// Address (decision #1, §2.6). The sender cannot derive it locally — only
+/// the recipient knows `ivk` — so this struct simply forwards the bytes.
+/// The sender hashes `ivk_commitment` into `cm` per §3.2; the recipient
+/// recomputes and matches the field during scan.
 struct NoteEncryptionRecipient {
     td::Slice d_bytes;              // 11 bytes; diversifier
     RistrettoPoint pk_d;             // diversified transmission key
+    /// 32-byte ivk-binding anchor from the recipient's Address.
+    /// Empty slice is tolerated only by callers that don't need cm-building
+    /// (e.g. ciphertext-only fuzz); consensus-path encrypt callers must pass
+    /// the real 32 bytes.
+    td::Slice ivk_commitment;       // 32 bytes (decision #1)
     MlKem768PublicKey pk_mlkem;      // 1184-byte PQ KEM pubkey
 };
 

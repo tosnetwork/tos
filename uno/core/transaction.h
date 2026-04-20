@@ -160,36 +160,108 @@ td::Result<td::Ref<vm::Cell>> encode_transfer(const Transfer& tx) noexcept;
 td::Bits256 canonical_tx_hash(const Transfer& tx) noexcept;
 
 // ---------------------------------------------------------------------------
-// Plonky3 public-input builder (§4.3 step 4)
+// Note commitment (§3.2; decision #1)
 // ---------------------------------------------------------------------------
 //
-// The verifier (this file's caller in compute-phase.cpp) and the prover
-// (Agent 4's Rust AIR) MUST agree byte-identically on the public-input
-// encoding. Order, per §4.3:
+// Wire format: `OutputDescription::cm` is a 32-byte field. The wire layout
+// is UNCHANGED by decision #1; only the preimage feeding `cm` is changed
+// (the four-arg `(d, pk_d, value, rcm)` form is retracted in favour of the
+// five-arg form below).
+//
+// Per §3.2 the preimage is:
+//
+//     cm = Poseidon2("uno-cm-v1", d, pk_d.bytes, ivk_commitment, value, rcm)
+//
+// where `ivk_commitment = Poseidon2("uno-ivk-cm-v1", ivk, d)` is copied
+// from the recipient's Address and `rcm = Poseidon2("uno-rcm-v1", rseed)`.
+// Total Poseidon2 input: 15 Goldilocks field elements packed as in §3.2
+// (d → 2 fes; pk_d.bytes → 4 fes; ivk_commitment → 4 fes; value → 1 fe;
+// rcm → 4 fes). Output is truncated to 4 field elements (256 bits = 32 B).
+//
+// The helper below is the off-circuit computation a sender uses at
+// encrypt-time; the Plonky3 AIR re-evaluates the same expression over the
+// private witness to attest claim 2 (§4.2). Prover and verifier MUST agree
+// bit-identically — the domain tag and absorb order here pin that contract.
+
+/// 32-byte packed form of `rcm` (4 Goldilocks limbs, canonical LE).
+struct NoteCommitmentInputs {
+    std::array<uint8_t, 11>  d{};            // diversifier, 11 B
+    std::array<uint8_t, 32>  pk_d_bytes{};   // compressed Ristretto255
+    std::array<uint8_t, 32>  ivk_commitment{}; // decision #1, §2.6 / §3.2
+    uint64_t                 value{0};       // UNO nano-units
+    std::array<uint8_t, 32>  rcm{};          // Poseidon2("uno-rcm-v1", rseed)
+};
+
+/// Off-circuit `cm` computation per §3.2 (decision #1). Returns the 32-byte
+/// canonical wire form (byte-identical to what the Transfer AIR opens in
+/// claim 2 / claim 6). Implementation is in transaction.cpp and lives
+/// alongside the codec so the cm formula and the wire format evolve
+/// together.
+std::array<uint8_t, 32> compute_note_commitment(
+    const NoteCommitmentInputs& in) noexcept;
+
+// ---------------------------------------------------------------------------
+// Plonky3 public-input builder (§4.3 step 4, decision #5)
+// ---------------------------------------------------------------------------
+//
+// Decision #5 (`doc/uno-workchain.md` §16): the public-input byte encoding
+// is Plonky3-canonical — each Goldilocks element serializes as 8 bytes
+// little-endian u64; 256-bit inputs split into 4 × u64 chunks in LE order,
+// each reduced mod `p_Goldilocks = 2^64 - 2^32 + 1`. Consensus-binding;
+// cross-implementation parity enforced by the golden fixture at
+// `uno/test/golden/public-inputs-v1.hex` (produced by this encoder and by
+// the Rust encoder in `plonky3-ffi/src/lib.rs`, consumed by both).
+//
+// Element order per §4.3 step 4:
 //
 //   1. scheme_id               (1 Goldilocks element, zero-extended)
 //   2. chain_id                (1 elt)
-//   3. expiry_block            (1 elt, u64 fits since p > 2^64 - 2^32)
-//   4. fee                     (1 elt)
-//   5. anchor                  (4 elts — 256 bits in 4 × 64-bit limbs)
+//   3. expiry_block            (1 elt, u64 — asserted `< p_Goldilocks`)
+//   4. fee                     (1 elt, u64 — asserted `< p_Goldilocks`)
+//   5. anchor                  (4 elts — 256 bits in 4 × 64-bit limbs, each
+//                                        reduced mod p_G)
 //   6. for each spend i:       nf_i (4 elts), rk_i (4 elts)
 //   7. for each output j:      cm_j (4 elts), epk_j (4 elts),
 //                              filter_tag_j (1 elt, 16 bits zero-extended)
 //
 // Total count: 8 + 8 * spend_count + 9 * output_count Goldilocks field elts.
-//
-// We encode each Goldilocks element as an 8-byte little-endian u64 (the
-// canonical Plonky3 wire form). Agent 4 — if the Rust AIR differs here
-// TODO(uno-integration): re-sync this encoding with plonky3-ffi/src/verifier.rs.
+// Total byte length: 64 + 64·spend_count + 72·output_count bytes.
 
 struct Plonky3PublicInputs {
-    std::vector<uint64_t> elements;  // Goldilocks field elements (canonical form)
+    /// Canonical Goldilocks limbs (each already < p_Goldilocks).
+    std::vector<uint64_t> elements;
 
-    /// Concatenated little-endian byte encoding (for FFI hand-off).
+    /// Concatenated little-endian byte encoding (for FFI hand-off). Matches
+    /// §4.3 step 4 byte-for-byte; consumed by the Rust verifier via
+    /// `uno_plonky3_verify(proof, public_inputs, len)`.
     std::vector<uint8_t> to_bytes() const noexcept;
 };
 
 Plonky3PublicInputs build_plonky3_public_inputs(const Transfer& tx) noexcept;
+
+// ---------------------------------------------------------------------------
+// §4.3 step 4 encoding primitives (decision #5)
+// ---------------------------------------------------------------------------
+
+/// Goldilocks prime p = 2^64 - 2^32 + 1. Mirrors `crypto/goldilocks.h` so
+/// transaction.h need not pull that header into every TU that includes it.
+inline constexpr uint64_t kPGoldilocks = 0xFFFFFFFF00000001ULL;
+
+/// Encode a u64 as one Goldilocks limb. `x` MUST satisfy `x < p_Goldilocks`;
+/// an out-of-range value is a consensus fault (adversary-controlled
+/// `expiry_block` / `fee` values are checked at admission per §4.3 step 4
+/// rationale). Returns `x` unchanged when in range; aborts otherwise.
+uint64_t encode_u64(uint64_t x) noexcept;
+
+/// Encode a 32-byte field as 4 Goldilocks limbs (little-endian per §4.3
+/// step 4). Each 8-byte chunk is read as u64-LE and reduced mod
+/// p_Goldilocks; the returned 32 bytes are the canonical form (byte order
+/// unchanged after reduction — each chunk's bytes are rewritten to its
+/// canonical limb's LE encoding). For cryptographically-random 256-bit
+/// inputs (Poseidon2 / Schnorr / hybrid-KEM outputs) the per-limb
+/// reduction rate is 2^-32; aggregate 2^-30 bias is negligible for the
+/// soundness analysis per decision #35.
+std::array<uint8_t, 32> encode_256(const uint8_t bytes[32]) noexcept;
 
 // ---------------------------------------------------------------------------
 // Raw cell-chain helpers (used internally; exposed for tests)
