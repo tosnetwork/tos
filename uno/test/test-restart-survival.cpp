@@ -156,35 +156,6 @@ static int tracked_printf(const char* fmt, ...) {
 // ---------------------------------------------------------------------------
 // ShardStateAdapter — subclass of the abstract UnoState (compute-phase.h)
 // that forwards every virtual through the opaque StateHandle adapter.
-//
-// ## ODR-violation workaround (padding buffer)
-//
-// The Uno Workchain has two classes named `uno_workchain::UnoState`
-// compiled into the same archive: the abstract base in
-// `uno/core/compute-phase.h` (8 B, pure-virtual, no state fields) and
-// the concrete RPC facade in `uno/core/state.h` (≈320 B: holds a
-// UnoShardState + a BlockFilterBuilder pointer + a shared_mutex).
-// They share the same mangled symbol for the default constructor and
-// destructor. Because `restart_survival_adapter.cpp` pulls
-// `state.cpp` (via `UnoShardState::make_empty`), the linker resolves
-// every call to `UnoState::UnoState()` / `~UnoState()` against the
-// state.cpp strong symbol. That body zero-memsets ~320 B starting at
-// `this` — way more than the 16 B the compiler allocated for a
-// ShardStateAdapter whose only visible base is the 8-B abstract class,
-// so the spurious write clobbers surrounding stack.
-//
-// We pad the subclass with a sacrificial buffer sized to ABSORB the
-// concrete UnoState's memset. The compiler still lays the vptr slot
-// + padding out as a single object; every virtual call on
-// `ShardStateAdapter*` dispatches through the subclass's own vtable
-// (the compiler builds that vtable from the in-TU view of the
-// abstract class); the padding only keeps the spurious 320-byte
-// memset from spilling onto the caller's locals.
-//
-// The proper fix belongs in `uno/core/` (rename one of the `UnoState`
-// classes, or have them share a single abstract base). The task
-// contract forbids modifying `uno/core/` from this test, so this
-// padding keeps the restart-survival invariant checkable here-and-now.
 // ---------------------------------------------------------------------------
 namespace {
 
@@ -199,24 +170,7 @@ constexpr uint32_t kDriverExpiryWindowBlocks  = 256;
 
 class ShardStateAdapter : public uno_workchain::UnoState {
 public:
-    // ODR-workaround sacrificial padding (see class docstring). Sized
-    // to absorb the concrete state.cpp `UnoState::UnoState()` body's
-    // field initialisers (≈320 B for `state_(UnoShardState)` +
-    // `current_block_filter_` unique_ptr + `mutex_` shared_mutex).
-    // Placed AS THE FIRST MEMBER so the spurious writes land here and
-    // NOT on `handle_`. The pad occupies offsets 8..8+1024 in the
-    // subclass layout; state.cpp's `state_` member sits at offset 8
-    // of state.h's UnoState, so the overlap is complete. Our own
-    // subclass ctor sets the vptr / `handle_` AFTER the base ctor
-    // returns, which restores the slot to the correct vtable + value.
-    alignas(void*) unsigned char _odr_pad[1024]{};
-
-    ShardStateAdapter() : handle_(tr::adapter_make_empty()) {
-        // Re-zero the pad (the base ctor may have left it in an
-        // unspecified state). Not strictly required — we never read
-        // _odr_pad — but makes reruns reproducible under ASan.
-        std::memset(_odr_pad, 0, sizeof(_odr_pad));
-    }
+    ShardStateAdapter() : handle_(tr::adapter_make_empty()) {}
     ~ShardStateAdapter() override { tr::adapter_destroy(handle_); }
 
     ShardStateAdapter(const ShardStateAdapter&)            = delete;

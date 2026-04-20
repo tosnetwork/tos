@@ -8,7 +8,7 @@
     is serialised via its own cell-codec (Agent 2) and reassembled from
     `cell-state.{h,cpp}` at block boundaries.
 
-    Thread-safety: `UnoState` owns the working copy used by the compute
+    Thread-safety: `UnoStateFacade` owns the working copy used by the compute
     phase, and is accessed concurrently by the JSON-RPC read path. The
     access pattern mirrors `evm_workchain::EvmState` — a `std::shared_mutex`
     on the facade, read methods take `shared_lock`, write methods
@@ -79,7 +79,7 @@ struct UnoShardState {
 
     // Sub-objects owned by the state (one ref each in the root cell / MetaCell).
     // Unique ownership: the state is the sole writer; RPC reads take a shared
-    // lock on UnoState and read through these pointers.
+    // lock on UnoStateFacade and read through these pointers.
     std::unique_ptr<CommitmentTree> commitment_tree;   // ref 0 of root
     std::unique_ptr<NullifierSet>   nullifier_set;     // ref 1 of root
     std::unique_ptr<AnchorWindow>   anchor_window;     // meta.ref 0
@@ -108,21 +108,21 @@ struct UnoShardState {
 };
 
 // ---------------------------------------------------------------------------
-// UnoState — RPC-safe facade wrapping UnoShardState + a BlockFilter accumulator
+// UnoStateFacade — RPC-safe facade wrapping UnoShardState + a BlockFilter accumulator
 // ---------------------------------------------------------------------------
 
 /// Thread-safe wrapper the compute phase and RPC handlers share. Compute
 /// path holds a unique_lock for the entire block (§5.7); RPC reads take
 /// shared_locks and get a consistent snapshot of the last-committed block
 /// (§9.3 "All uno_* reads return the last-committed block's state").
-class UnoState {
+class UnoStateFacade {
   public:
-    UnoState();
-    explicit UnoState(UnoShardState initial);
-    ~UnoState();
+    UnoStateFacade();
+    explicit UnoStateFacade(UnoShardState initial);
+    ~UnoStateFacade();
 
-    UnoState(const UnoState&) = delete;
-    UnoState& operator=(const UnoState&) = delete;
+    UnoStateFacade(const UnoStateFacade&) = delete;
+    UnoStateFacade& operator=(const UnoStateFacade&) = delete;
 
     /// Direct access to the underlying state. Caller MUST hold the lock
     /// via `lock_shared()` / `mutex()` — mirrors the EVM pattern.

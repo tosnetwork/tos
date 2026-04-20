@@ -1,5 +1,5 @@
 /*
-    Uno Workchain — UnoShardState / UnoState implementation.
+    Uno Workchain — UnoShardState / UnoStateFacade implementation.
 
     Responsibilities:
       - Default-construct and destroy the sub-object pointers. The concrete
@@ -65,16 +65,16 @@ bool UnoShardState::is_empty() const noexcept {
 }
 
 // ---------------------------------------------------------------------------
-// UnoState
+// UnoStateFacade
 // ---------------------------------------------------------------------------
 
-UnoState::UnoState() : state_(UnoShardState::make_empty()) {}
+UnoStateFacade::UnoStateFacade() : state_(UnoShardState::make_empty()) {}
 
-UnoState::UnoState(UnoShardState initial) : state_(std::move(initial)) {}
+UnoStateFacade::UnoStateFacade(UnoShardState initial) : state_(std::move(initial)) {}
 
-UnoState::~UnoState() = default;
+UnoStateFacade::~UnoStateFacade() = default;
 
-std::unique_ptr<BlockFilterBuilder> UnoState::consume_current_block_filter() {
+std::unique_ptr<BlockFilterBuilder> UnoStateFacade::consume_current_block_filter() {
     // Caller must hold unique_lock on mutex_.
     auto out = std::move(current_block_filter_);
     current_block_filter_.reset();  // defensive; std::move should already null

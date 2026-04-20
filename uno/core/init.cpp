@@ -72,14 +72,14 @@ UnoConfigView current_uno_config_view() noexcept;
 namespace uno_workchain {
 
 // NOTE: The consensus `UnoState` interface is declared in compute-phase.h.
-// A1 also authored a concrete `UnoState` class in state.h that wraps an
-// `UnoShardState` value type; that class targets a RPC-facade role and
-// does NOT inherit from compute-phase's abstract UnoState. We deliberately
-// avoid including state.h here (different `UnoState` in the same namespace
-// would be an ODR conflict in this TU) and instead implement a concrete
-// `LiveUnoState` that inherits from compute-phase's abstract UnoState and
-// holds A2's data structures directly. This gives init.cpp + compute-phase.cpp
-// a single, coherent contract without dragging A1's facade into the TU graph.
+// A1 also authored a concrete `UnoStateFacade` class in state.h (originally
+// also named `UnoState`, renamed to resolve the ODR collision — see task #14)
+// that wraps an `UnoShardState` value type and targets a RPC-facade role.
+// `UnoStateFacade` does NOT inherit from compute-phase's abstract UnoState;
+// it is a parallel value-type surface for RPC handlers that want a lockable
+// snapshot. This TU implements a concrete `LiveUnoState` that inherits from
+// compute-phase's abstract UnoState and holds A2's data structures directly,
+// so init.cpp + compute-phase.cpp share a single coherent contract.
 
 namespace {
 

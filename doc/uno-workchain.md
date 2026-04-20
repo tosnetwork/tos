@@ -1752,7 +1752,7 @@ The two remaining skips in `test-uno-state-transition-golden` are behind `UNO_RU
 - **P.2 AIR column-count collapse** (the largest remaining item; ~3–5 months of focused AIR-design work to shrink MVP-AIR's 27,837 cols at 4/4 down to the §3.4 envelope of ~100 KB worst-case proofs and ≤ 20 ms single-thread verify). P.3 ≥ 3.5× 4-core scaling is downstream — it recovers automatically once per-tx verify cost drops.
 - **P.7 external crypto audit + 60-day testnet** (3–6 month vendor lead time plus audit window; audit scope must cover the three new constructions per §0.2).
 
-Known cross-tree technical debt (non-blocking for v1 but tracked): `uno_workchain::UnoState` is declared twice in the same namespace with incompatible layouts (pure-virtual abstract base in `uno/core/compute-phase.h`, concrete RPC facade in `uno/core/state.h`). Tests that need both spellings currently work around the ODR collision (`test-uno-restart-survival` uses a sacrificial 1024 B stack pad; `test-uno-determinism` side-steps the collision entirely by not including `state.h`). Proper fix is renaming one class, ideally before audit.
+The `uno_workchain::UnoState` ODR collision in `uno/core/` has been resolved by renaming the concrete RPC facade in `state.h` to `UnoStateFacade`, leaving the pure-virtual abstract base in `compute-phase.h` as the unambiguous `UnoState`. `test-uno-restart-survival` no longer needs its 1024-byte sacrificial stack pad; `test-uno-determinism` no longer needs to avoid `state.h`. Both tests remain green under the clean layout.
 
 | Phase | Status | Deliverable | Done-when |
 |---|---|---|---|
