@@ -1297,13 +1297,16 @@ TOS has not launched. wc=2 is enabled from genesis. No hardfork machinery; the c
 
 ### 10.1 Workchain descriptor (ConfigParam 12)
 
-wc=2 entry:
-- `vm_version = 0x554E4F31` (`"UNO1"`)
-- `vm_mode = 0` (no VM)
+wc=2 entry — uses `wfmt_basic` like the EVM workchain, distinguished by `vm_version`:
+
+- `vm_version = 0x554E4F31` (`"UNO1"`) — selects the Uno compute handler in `prepare_compute_phase` (see §8.2)
+- `vm_mode = 0` (reserved)
 - `min_split = 0`, `max_split = 0` (single shard; no sharding in v1 — the commitment tree is global)
 - `active = true`, `accept_msgs = true`
-- `basic = false`
-- `flags = UNO_FLAG` (new bit)
+- `basic = 1` (same as wc=1 EVM; selects `wfmt_basic` format)
+- `flags = 0` — **mandatory**; the TLB schema `block.tlb:669` enforces `flags:(## 13) { flags = 0 }` across all workchain descriptor versions
+
+There is **no `UNO_FLAG` bit**. Earlier drafts of this doc contained a placeholder "`flags = UNO_FLAG (new bit)`" which was an error — the TLB schema prohibits non-zero `flags`. Workchain identity at the protocol layer is conveyed entirely by the `vm_version` field, exactly as EVM (`0x45564D`) and TVM (`0x00000000`) do. The dispatcher in `crypto/block/transaction.cpp` routes by `workchain_id` (see §8.2), not by any flag bit.
 
 Built by `uno_workchain::build_workchain_descr()`.
 
@@ -1775,6 +1778,7 @@ Every non-trivial choice below was made against the alternative space of publish
 35. **Public-input byte encoding — decided: Plonky3-canonical little-endian u64 per Goldilocks element; 256-bit inputs split into 4 × u64 chunks in LE order with `mod p_Goldilocks` reduction.** §4.3 step 4 pins the exact byte-level spec. Total serialized length is `64 + 64·spend_count + 72·output_count` bytes. A golden fixture `uno/test/golden/public-inputs-v1.hex` enforces Rust (A4) ↔ C++ (A5) byte-identical output as a P.1 gate. Rejected: big-endian (breaks Plonky3 convention; no benefit); Bincode / serde (couples spec to crate version); application-specific formats (audit burden without gain). The `mod p_Goldilocks` reduction introduces ≈ 2⁻³⁰ aggregate bias on pseudo-random 256-bit inputs, negligible for soundness; adversary-controlled inputs are asserted `< p_Goldilocks` at admission.
 36. **Total supply + genesis distribution — decided: 21,000,000 UNO, 60% airdrop / 25% treasury / 15% team, no v1 vesting.** §10.3 pins the specific allocation. 21 M matches Bitcoin / Zcash cap, reinforcing the "digital gold + PQ-native + privacy-native" scarcity narrative (§0). 60% airdrop bias signals community-first without investor allocation; 25% treasury handles ecosystem grants / audits / incentives; 15% team is lean for an independent (non-VC-backed) project. No on-chain vesting in v1: wc=2 has no contracts and no time-locked tx type, so team allocation ships unvested at genesis under multisig-protected off-chain legal custody. v1.1 may introduce `uno_timelocked_transfer` with a `min_spend_block` public input if vesting becomes important enough to warrant scheme_id bump. Rejected: 100M / 1B supply (dilutes scarcity narrative); investor/presale allocation (VC-free posture); vesting-via-wc=0-staging (violates §1.5 bridgelessness); in-v1 timelocked tx (adds 4–6 weeks of AIR work for a launch-only concern).
 37. **Fee schedule at launch — decided: `min_fee_nano=100,000`, `fee_per_byte_nano=10`, `fee_per_spend_nano=50,000`, `fee_per_output_nano=50,000`.** Calibrated by target annual burn rate of ~1% of 21 M supply at sustained 20 TPS; actual launch-phase burn is fraction of that and asymptotically approaches 1-2% as adoption grows. Typical 1-spend/2-output tx costs ~0.000255 UNO; worst-case 4/4 costs ~0.000514 UNO. Comparable to Zcash/Monero fee level, ~1000× cheaper than Bitcoin/Ethereum. Governance-upgradable via ConfigParam 11 voting if observed economics drift. Rejected: higher min_fee (DoS floor is handled by per-IP rate limit + proof verify cost + per-spend/output structural cost; raising `min_fee` to $0.01-level creates friction for legitimate users); lower fees (insufficient DoS floor and too-slow burn). `nullifier_lru_capacity = 1,000,000` pinned at the same time as an advisory (non-consensus) parameter.
+38. **Workchain descriptor flags — decided: no `UNO_FLAG`; `flags = 0` mandatory, `basic = 1`, routing via `vm_version = 0x554E4F31` ("UNO1").** The TLB schema `block.tlb:669` enforces `flags:(## 13) { flags = 0 }` as an invariant; any "new bit" would be a schema-breaking hardfork. Earlier drafts of §10.1 contained a placeholder `flags = UNO_FLAG` which was removed. Workchain identity at the protocol layer is conveyed by `vm_version` exactly as EVM (`0x45564D`) and TVM (`0x00000000`) do; the compute-phase dispatcher (§8.2) routes by `workchain_id`, not by any flag bit. A1's `workchain.h` `kUnoFlag` constant is retracted during integration.
 
 ---
 
