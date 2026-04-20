@@ -56,6 +56,17 @@
 #include "td/utils/SharedSlice.h"
 #include "td/utils/crypto.h"
 
+// K-e2e-aead: ovk-AEAD unwrap path uses libsodium primitives (BLAKE2b-256
+// keyed-by-tag via crypto_generichash; ChaCha20-Poly1305 IETF). Mirrors the
+// §4.1 / §2.7 recipe used by the wallet SDK audit path. Linked via the
+// uno_workchain static lib, which already depends on libsodium.
+#include <sodium.h>
+
+// BLAKE3 adapter for the per-output nonce derivation from `cm`. The weak
+// stub at the top of this TU falls back to SHA-256 if the real blake3
+// adapter is not linked in; self-consistent within this binary either way.
+#include "uno/crypto/internal/blake3_adapter.h"
+
 #include <array>
 #include <atomic>
 #include <cassert>
@@ -294,6 +305,91 @@ static td::Bits256 point_to_bits256(const uc::RistrettoPoint& p) {
 }
 
 // ---------------------------------------------------------------------------
+// Phase-5 ovk-AEAD recipe (§4.1 / §2.7).
+//
+//   k_ovk = BLAKE2b-256("uno-out-cipher-v1" || ovk)[0..32]
+//   nonce = BLAKE3         ("uno-out-nonce-v1"  || cm )[0..12]
+//   out_ciphertext = ChaCha20-Poly1305(k_ovk, nonce, memo)
+//
+// `out_ciphertext` is exactly 80 B on-chain: 64 B memo plaintext + 16 B
+// Poly1305 tag. The sender / auditor recomputes both key and nonce from
+// material that is either held locally (ovk) or present on-chain (cm).
+// ---------------------------------------------------------------------------
+static constexpr size_t kOvkMemoBytes = 64;  // 80 - Poly1305 tag(16)
+
+// Pinned memo bytes this test round-trips through the AEAD. The recovered
+// plaintext is asserted byte-for-byte in Step 6 below.
+static constexpr char kOvkMemoPinned[kOvkMemoBytes + 1] =
+    "uno-e2e-memo: hello bob, 40 UNO from alice (P.5 audit gate)\0\0\0\0\0";
+
+static std::array<uint8_t, 32> derive_ovk_key(td::Slice ovk_32) {
+    static const char kTag[] = "uno-out-cipher-v1";
+    std::array<uint8_t, 32> k{};
+    crypto_generichash_state st;
+    crypto_generichash_init(&st, nullptr, 0, 32);
+    crypto_generichash_update(&st,
+        reinterpret_cast<const uint8_t*>(kTag), sizeof(kTag) - 1);
+    crypto_generichash_update(&st,
+        reinterpret_cast<const uint8_t*>(ovk_32.data()), ovk_32.size());
+    crypto_generichash_final(&st, k.data(), 32);
+    return k;
+}
+
+static std::array<uint8_t, 12> derive_ovk_nonce(td::Slice cm_32) {
+    static const char kTag[] = "uno-out-nonce-v1";
+    std::array<uint8_t, 32> full{};
+    std::vector<uint8_t> buf;
+    buf.reserve(sizeof(kTag) - 1 + cm_32.size());
+    buf.insert(buf.end(), kTag, kTag + sizeof(kTag) - 1);
+    buf.insert(buf.end(),
+        reinterpret_cast<const uint8_t*>(cm_32.data()),
+        reinterpret_cast<const uint8_t*>(cm_32.data()) + cm_32.size());
+    uc::internal::blake3_hash(
+        td::Slice(reinterpret_cast<const char*>(buf.data()), buf.size()),
+        full.data());
+    std::array<uint8_t, 12> n{};
+    std::memcpy(n.data(), full.data(), 12);
+    return n;
+}
+
+// Encrypt a 64-byte memo into the fixed 80-byte out_ciphertext slot using
+// ovk + cm per the §4.1 recipe.
+static void ovk_aead_wrap(td::Slice ovk_32, td::Slice cm_32,
+                          const uint8_t memo[kOvkMemoBytes],
+                          uint8_t out80[80]) {
+    auto k     = derive_ovk_key(ovk_32);
+    auto nonce = derive_ovk_nonce(cm_32);
+    unsigned long long ct_len = 0;
+    int rc = crypto_aead_chacha20poly1305_ietf_encrypt(
+        out80, &ct_len,
+        memo, kOvkMemoBytes,
+        nullptr, 0,          // no AAD
+        nullptr,              // no nsec
+        nonce.data(),
+        k.data());
+    assert(rc == 0 && ct_len == 80);
+    (void)rc;
+}
+
+// Decrypt the 80-byte out_ciphertext back to the 64-byte memo. Returns
+// true on AEAD success, false on tag mismatch / length error.
+static bool ovk_aead_unwrap(td::Slice ovk_32, td::Slice cm_32,
+                            const uint8_t in80[80],
+                            uint8_t out_memo[kOvkMemoBytes]) {
+    auto k     = derive_ovk_key(ovk_32);
+    auto nonce = derive_ovk_nonce(cm_32);
+    unsigned long long pt_len = 0;
+    int rc = crypto_aead_chacha20poly1305_ietf_decrypt(
+        out_memo, &pt_len,
+        nullptr,              // no nsec
+        in80, 80,
+        nullptr, 0,          // no AAD
+        nonce.data(),
+        k.data());
+    return rc == 0 && pt_len == kOvkMemoBytes;
+}
+
+// ---------------------------------------------------------------------------
 // Build Alice's 1-spend / 2-output Transfer.
 // ---------------------------------------------------------------------------
 static uw::Transfer build_transfer(
@@ -372,7 +468,18 @@ static uw::Transfer build_transfer(
         // Opaque placeholder refs (not decoded by consensus path).
         vm::CellBuilder ec; ec.store_long(0xDEADBEEF, 32); out.enc_ciphertext = ec.finalize();
         vm::CellBuilder mc; mc.store_long(0x12345678, 32); out.mlkem_ct       = mc.finalize();
-        std::memset(out.out_ciphertext.data(), 0xAB, 80);
+        // Phase-5 audit path: AEAD-encrypt the pinned memo with sender's
+        // ovk + this output's cm. Recoverable by any holder of Alice's ovk
+        // (sender herself or an auditor).
+        {
+            uint8_t memo[kOvkMemoBytes];
+            std::memcpy(memo, kOvkMemoPinned, kOvkMemoBytes);
+            ovk_aead_wrap(
+                td::Slice(reinterpret_cast<const char*>(sender.ovk.data()), 32),
+                td::Slice(reinterpret_cast<const char*>(out.cm.data()), 32),
+                memo,
+                out.out_ciphertext.data());
+        }
         tx.outputs.push_back(std::move(out));
     }
 
@@ -395,7 +502,17 @@ static uw::Transfer build_transfer(
             (static_cast<uint16_t>(h[1]) << 8));
         vm::CellBuilder ec; ec.store_long(0xCAFEBABE, 32); out.enc_ciphertext = ec.finalize();
         vm::CellBuilder mc; mc.store_long(0x87654321, 32); out.mlkem_ct       = mc.finalize();
-        std::memset(out.out_ciphertext.data(), 0xCD, 80);
+        // Phase-5 audit path for the change note: same recipe, bound to the
+        // sender's ovk and this change-note cm.
+        {
+            uint8_t memo[kOvkMemoBytes];
+            std::memcpy(memo, kOvkMemoPinned, kOvkMemoBytes);
+            ovk_aead_wrap(
+                td::Slice(reinterpret_cast<const char*>(sender.ovk.data()), 32),
+                td::Slice(reinterpret_cast<const char*>(out.cm.data()), 32),
+                memo,
+                out.out_ciphertext.data());
+        }
         tx.outputs.push_back(std::move(out));
     }
 
@@ -645,17 +762,53 @@ static void test_two_wallet_e2e() {
             (uint8_t)page->outputs[0].bytes[31]);
 
     // --- Step 6: Phase 5 — audit via ovk ---
-    // alice.ovk enables the auditor to decrypt out_ciphertext and recover
-    // the outgoing note metadata. The off-chain ovk-unwrap path is owned by
-    // the wallet SDK (N-P6) and is gated by the ML-KEM stub (no liboqs).
-    // The assertion here is structural: ovk is present and has the correct
-    // length; actual AEAD unwrap is SKIPPED.
+    // alice.ovk enables the sender/auditor to decrypt out_ciphertext and
+    // recover the pinned memo. Recipe (§4.1 / §2.7):
+    //   k_ovk = BLAKE2b-256("uno-out-cipher-v1" || ovk)[0..32]
+    //   nonce = BLAKE3      ("uno-out-nonce-v1"  || cm )[0..12]
+    //   memo  = ChaCha20-Poly1305_Open(k_ovk, nonce, out_ciphertext)
+    // `cm` comes from the on-chain OutputDescription that Bob's wallet
+    // fetched in Step 5; `ovk` comes from Alice's fvk.
     if (alice.ovk.size() != 32) {
         tprintf("  FAILED: alice.ovk size=%zu (expected 32)\n",
                 alice.ovk.size());
         return;
     }
-    tprintf("  SKIP: ovk-ciphertext unwrap (ML-KEM stub; wallet SDK N-P6 scope)\n");
+    {
+        // Use the on-chain bytes Bob recovered (page->outputs[0]) for cm +
+        // out_ciphertext rather than the in-memory Transfer, to match the
+        // real auditor flow of "read on-chain row → decrypt".
+        const auto& chain_row = page->outputs[0].bytes;
+        if (chain_row.size() < 32 + 32 + 2 + 80) {
+            tprintf("  FAIL: ovk-ciphertext unwrap failed "
+                    "(chain row too short: %zu)\n", chain_row.size());
+            g_failures.fetch_add(1);
+            return;
+        }
+        // Layout: cm(32) || epk(32) || filter_tag_le(2) || out_ciphertext(80).
+        const uint8_t* cm_ptr        = reinterpret_cast<const uint8_t*>(chain_row.data());
+        const uint8_t* out_ct80_ptr  = cm_ptr + 32 + 32 + 2;
+
+        uint8_t memo[kOvkMemoBytes] = {0};
+        bool ok = ovk_aead_unwrap(
+            td::Slice(reinterpret_cast<const char*>(alice.ovk.data()), 32),
+            td::Slice(reinterpret_cast<const char*>(cm_ptr), 32),
+            out_ct80_ptr,
+            memo);
+        if (!ok) {
+            tprintf("  FAIL: ovk-ciphertext unwrap failed (AEAD tag reject)\n");
+            g_failures.fetch_add(1);
+            return;
+        }
+        if (std::memcmp(memo, kOvkMemoPinned, kOvkMemoBytes) != 0) {
+            tprintf("  FAIL: ovk-ciphertext unwrap failed (memo mismatch)\n");
+            g_failures.fetch_add(1);
+            return;
+        }
+        tprintf("  ovk-unwrap: memo=\"%.*s\" (%zu bytes)\n",
+                (int)std::strlen(reinterpret_cast<const char*>(memo)),
+                memo, kOvkMemoBytes);
+    }
 
     // --- Step 7: invariants ---
     // Re-applying the same tx must reject on nullifier.
