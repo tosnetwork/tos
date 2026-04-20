@@ -1,4 +1,4 @@
-//! Reference prover for the Uno MVP AIR.
+//! Reference prover for the Uno Transfer AIR (P.2 scale-to-envelope).
 //!
 //! This is NOT a production prover — it uses Plonky3's canonical default
 //! `FriParameters::new_testing(...)` shape with a low `log_blowup`, so
@@ -6,9 +6,8 @@
 //! this for a FriParameters configured to the §2.1 soundness target.
 //!
 //! Consumed by:
-//! - the `uno_plonky3_prove` FFI entry point (called by tests and by
-//!   `tosctl` for witness generation);
-//! - the `ffi_tests::ffi_roundtrip_valid_witness` integration test.
+//! - the `uno_plonky3_prove` FFI entry point;
+//! - Rust-side integration tests.
 //!
 //! NOT consumed by:
 //! - the validator compute phase (which only ever calls the verifier);
@@ -21,9 +20,7 @@ use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
 use p3_fri::{FriParameters, TwoAdicFriPcs};
-use p3_goldilocks::{
-    Goldilocks, Poseidon2Goldilocks, default_goldilocks_poseidon2_8,
-};
+use p3_goldilocks::{Goldilocks, Poseidon2Goldilocks, default_goldilocks_poseidon2_8};
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
 use p3_uni_stark::{StarkConfig, prove};
@@ -33,29 +30,16 @@ use crate::Plonky3Status;
 
 // ---------------------------------------------------------------------------
 // Type aliases pinning our concrete config.
-//
-// These MUST match one-to-one with `verifier.rs`. Any change here requires
-// a matching change there; any mismatch produces a deserialization failure
-// rather than a silent miscomputation.
 // ---------------------------------------------------------------------------
 
 pub(crate) type Val = Goldilocks;
 pub(crate) type Challenge = BinomialExtensionField<Val, 2>;
 
-// Poseidon2-Goldilocks-8 for compression (width 8), reused for the duplex
-// challenger. Single permutation minimises config surface area.
 pub(crate) type Perm8 = Poseidon2Goldilocks<8>;
 
-/// MerkleTreeMmcs hash: PaddingFreeSponge over Poseidon2-8.
-/// Width 8, rate 4, output 4 (matches Goldilocks Poseidon2 default).
 pub(crate) type MvpHash = PaddingFreeSponge<Perm8, 8, 4, 4>;
-
-/// MerkleTreeMmcs compression: TruncatedPermutation over Poseidon2-8.
 pub(crate) type MvpCompress = TruncatedPermutation<Perm8, 2, 4, 8>;
 
-/// The MMCS over the base field. Matches the standard Plonky3 pattern:
-/// commits packed Goldilocks values, output digests are 4 Goldilocks field
-/// elements.
 pub(crate) type MvpValMmcs = MerkleTreeMmcs<
     <Val as p3_field::Field>::Packing,
     <Val as p3_field::Field>::Packing,
@@ -66,63 +50,31 @@ pub(crate) type MvpValMmcs = MerkleTreeMmcs<
 >;
 
 pub(crate) type MvpChallengeMmcs = ExtensionMmcs<Val, Challenge, MvpValMmcs>;
-
 pub(crate) type MvpChallenger = DuplexChallenger<Val, Perm8, 8, 4>;
-
 pub(crate) type MvpDft = Radix2DitParallel<Val>;
-
 pub(crate) type MvpPcs = TwoAdicFriPcs<Val, MvpDft, MvpValMmcs, MvpChallengeMmcs>;
-
 pub(crate) type MvpConfig = StarkConfig<MvpPcs, Challenge, MvpChallenger>;
 
 // ---------------------------------------------------------------------------
 // Config builder
 // ---------------------------------------------------------------------------
 
-/// Build the canonical MVP `StarkConfig`.
+/// Build the canonical Transfer `StarkConfig`.
 ///
-/// `log_blowup = 2` and `num_queries = 32` are test-grade parameters;
-/// production P.2 will target `log_blowup = 1` + `num_queries = 84` (for
-/// 100-bit soundness) per §2.1. Tagged TODO(uno-p2).
-///
-/// **Poseidon2 configuration (decision #42, §16)**. The width-8 Poseidon2
-/// permutation is instantiated from Plonky3's upstream audited constants
-/// (`GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_INITIAL`,
-/// `GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_FINAL`,
-/// `GOLDILOCKS_POSEIDON2_RC_8_INTERNAL`) via the
-/// `default_goldilocks_poseidon2_8()` helper. These are the Grain-LFSR-
-/// generated constants used by AggLayer / SP1 in production and are the
-/// only Poseidon2-Goldilocks round constants within the audited surface.
-/// Do NOT substitute RNG-derived constants: audit recovery depends on
-/// using the canonical upstream values byte-for-byte.
-///
-/// **Note (§16 decision #42 scope)**. Swapping the round-constants source
-/// is orthogonal to the MVP AIR's placeholder `MERKLE_MIX_COEF` /
-/// `IVK_CM_MIX_COEF` linear stand-ins for Poseidon2 compression — those
-/// are replaced by real Poseidon2 in the full Transfer AIR (P.2), not
-/// here. This decision only pins the permutation's round-constant source.
+/// `log_blowup = 2` + `FriParameters::new_testing(...)` are test-grade
+/// parameters; production P.2 will target `log_blowup = 1` + soundness-
+/// target `num_queries` per §2.1. Tagged `TODO(uno-p2-soundness)`.
 pub(crate) fn build_config() -> MvpConfig {
-    // Poseidon2-over-Goldilocks width-8 permutation with audited round
-    // constants (decision #42). Prover and verifier both go through this
-    // helper, so byte-identical constants are guaranteed by construction.
     let perm: Perm8 = default_goldilocks_poseidon2_8();
-
     let hash = MvpHash::new(perm.clone());
     let compress = MvpCompress::new(perm.clone());
     let val_mmcs = MvpValMmcs::new(hash, compress, 0);
     let challenge_mmcs = MvpChallengeMmcs::new(val_mmcs.clone());
-
     let dft = MvpDft::default();
-
-    // TODO(uno-p2): replace with production soundness parameters.
-    // `FriParameters::new_testing(challenge_mmcs, log_final_poly_len)` is
-    // Plonky3's "canonical cheap" shape for tests — adequate for the P.0
-    // toolchain bring-up but NOT for mainnet. See §2.1.
+    // TODO(uno-p2-soundness): switch to production FRI parameters.
     let fri_params = FriParameters::new_testing(challenge_mmcs, 2);
-
     let pcs = MvpPcs::new(dft, val_mmcs, fri_params);
     let challenger = MvpChallenger::new(perm);
-
     MvpConfig::new(pcs, challenger)
 }
 
@@ -130,10 +82,10 @@ pub(crate) fn build_config() -> MvpConfig {
 // Prover handle
 // ---------------------------------------------------------------------------
 
-/// Reference prover — wraps a pre-built [`MvpConfig`] and the AIR instance.
+/// Reference prover. The AIR shape is selected per-prove-call from the
+/// decoded witness, so a single prover handle serves all 16 legal shapes.
 pub struct MvpProver {
     config: MvpConfig,
-    air: MvpTransferAir,
 }
 
 impl Default for MvpProver {
@@ -143,76 +95,59 @@ impl Default for MvpProver {
 }
 
 impl MvpProver {
-    /// Build a prover with the canonical MVP config.
+    /// Build a prover with the canonical config.
     pub fn new() -> Self {
         Self {
             config: build_config(),
-            air: MvpTransferAir,
         }
     }
 
-    /// Consume a byte-encoded witness and produce a `(proof_bytes,
-    /// public_inputs_bytes)` pair.
-    ///
-    /// `proof_bytes` is the serialized STARK proof (postcard format, per
-    /// Plonky3 convention). `public_inputs_bytes` is the LE-packed
-    /// Goldilocks elements that the verifier must be given alongside the
-    /// proof; see `transfer_air::MvpWitness::public_inputs_bytes`.
+    /// Prove a witness. Returns `(proof_bytes, public_inputs_bytes)`.
     pub fn prove(&self, witness_bytes: &[u8]) -> Result<(Vec<u8>, Vec<u8>), Plonky3Status> {
         let witness = MvpWitness::decode(witness_bytes)?;
-        let trace = witness.generate_trace();
-        let public_inputs = witness.public_inputs().to_vec();
-
-        // Plonky3's `prove` function:
-        //   - In debug builds: runs DebugConstraintBuilder first, panicking
-        //     if the trace doesn't satisfy the AIR (which in our wrapper
-        //     becomes catch_unwind -> InternalError at FFI boundary, OR we
-        //     could pre-check here and return WitnessInvalid cleanly).
-        //   - In release builds: produces a proof unconditionally; the
-        //     verifier catches a mismatched witness.
-        //
-        // We choose to report `WitnessInvalid` (not `InternalError`) for
-        // adversarial witnesses that the debug build catches, by doing a
-        // pre-check against the AIR's bit decomposition + Merkle step.
-        // This keeps the C ABI contract self-consistent across profiles.
-        //
-        // The pre-check is O(64) and re-uses the constraint logic.
         self.pre_check_witness(&witness)?;
 
-        let proof = prove(&self.config, &self.air, trace, &public_inputs);
-        let proof_bytes = postcard::to_allocvec(&proof).map_err(|_| Plonky3Status::InternalError)?;
+        let (n_s, n_o) = witness.shape();
+        let air = MvpTransferAir::new(n_s, n_o);
+        let trace = witness.generate_trace();
+        let public_inputs = witness.public_inputs();
+
+        let proof = prove(&self.config, &air, trace, &public_inputs);
+        let proof_bytes =
+            postcard::to_allocvec(&proof).map_err(|_| Plonky3Status::InternalError)?;
         let pi_bytes = witness.public_inputs_bytes();
         Ok((proof_bytes, pi_bytes))
     }
 
-    /// Cheap sanity checks over the witness that mirror the hardest AIR
-    /// constraints. Defends the FFI caller against profile-dependent error
-    /// codes (see `prove` body).
+    /// Cheap sanity checks mirroring the hardest AIR constraints. Short-
+    /// circuits adversarial witnesses with `WitnessInvalid` before Plonky3
+    /// sees them, keeping the FFI error code stable across debug/release
+    /// profiles and preventing debug-build `DebugConstraintBuilder` panics
+    /// on malformed witnesses.
     ///
-    /// Post-P.2 upgrade this now checks Poseidon2 consistency of the
-    /// claim-2 note-opening: an adversarial witness whose `leaf` does
-    /// not equal `Poseidon2("uno-cm-v1", d, pk_d, ivk_commitment,
-    /// value, rcm)` would later trigger a DebugConstraintBuilder panic
-    /// inside `prove`, which the FFI guard would map to
-    /// `InternalError`. Mapping to `WitnessInvalid` here is stricter
-    /// and gives adversarial tests (and honest mis-typed callers) a
-    /// stable error code across debug/release profiles.
+    /// The witness is inconsistent iff any of the following is true:
+    ///   (a) `fee` or any proxy is non-canonical mod Goldilocks.
+    ///   (b) Claim 8 balance: `Σ spend.value ≠ Σ output.value + fee`.
+    ///   (c) Claim 2 leaf derivation: for any spend,
+    ///       `leaf_i ≠ Poseidon2("uno-cm-v1", d_i, pk_d_i, ivk_commitment_i,
+    ///                            value_i, rcm_i)`.
+    ///   (d) Claim 1 anchor consistency: for any spend,
+    ///       `Poseidon2(leaf_i, sibling_i) ≠ anchor_proxy`.
     fn pre_check_witness(&self, w: &MvpWitness) -> Result<(), Plonky3Status> {
-        // Range check (63-bit for MVP).
-        if w.value >> 63 != 0 {
+        use crate::transfer_air::{witness_claim1_anchor_consistent, witness_claim2_leaf_consistent};
+
+        if w.fee >= crate::transfer_air::GOLDILOCKS_P {
             return Err(Plonky3Status::WitnessInvalid);
         }
-
-        // Poseidon2 claim-2 consistency: `leaf` (= `cm`) must equal the
-        // Poseidon2 output of the declared inputs. A discrepancy means
-        // the prover can't produce a proof that the verifier would
-        // accept under the SAME public inputs; short-circuit to
-        // `WitnessInvalid` before entering Plonky3.
-        if !w.claim2_cm_consistent() {
+        if !w.balance_holds() {
             return Err(Plonky3Status::WitnessInvalid);
         }
-
-        let _ = &self.air;
+        if !witness_claim2_leaf_consistent(w) {
+            return Err(Plonky3Status::WitnessInvalid);
+        }
+        if !witness_claim1_anchor_consistent(w) {
+            return Err(Plonky3Status::WitnessInvalid);
+        }
         Ok(())
     }
 }
@@ -220,10 +155,6 @@ impl MvpProver {
 // ---------------------------------------------------------------------------
 // Thread-safety marker
 // ---------------------------------------------------------------------------
-
-// `MvpConfig` and `MvpTransferAir` are both Send+Sync. `Arc<MvpProver>` is
-// used by the FFI handle, so we need Send+Sync on `MvpProver` itself.
-// Static assertion:
 const _: fn() = || {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<MvpProver>();
@@ -236,68 +167,93 @@ const _: fn() = || {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transfer_air::MvpWitness;
+    use crate::transfer_air::{air_public_inputs_wire_len, MvpWitness};
 
     #[test]
-    fn prove_succeeds_on_valid_witness() {
+    fn prove_succeeds_on_valid_1_1() {
         let prover = MvpProver::new();
-        let witness = MvpWitness::deterministic_valid(0x4242_4242_4242_4242);
-        let result = prover.prove(&witness.encode());
-        assert!(
-            result.is_ok(),
-            "prove must succeed on valid witness, got {:?}",
-            result.err()
-        );
-        let (proof, pis) = result.unwrap();
-        // Proof must be non-trivially sized; PI must be the fixed width.
+        let w = MvpWitness::deterministic_valid(1, 1, 0x4242_4242_4242_4242);
+        let (proof, pis) = prover.prove(&w.encode()).expect("prove 1/1");
         assert!(!proof.is_empty());
-        assert_eq!(pis.len(), crate::transfer_air::PUBLIC_INPUTS_WIRE_LEN);
+        assert_eq!(pis.len(), air_public_inputs_wire_len(1, 1));
     }
 
     #[test]
-    fn prove_rejects_out_of_range_value() {
+    fn prove_succeeds_on_valid_1_2() {
         let prover = MvpProver::new();
-        // Craft a witness byte buffer with value > 2^63.
-        let mut bytes = MvpWitness::deterministic_valid(1).encode();
-        bytes[16..24].copy_from_slice(&(u64::MAX).to_le_bytes());
-        let err = prover.prove(&bytes).unwrap_err();
-        assert_eq!(err, Plonky3Status::WitnessInvalid);
+        let w = MvpWitness::deterministic_valid(1, 2, 0xAAAA_0001);
+        let (proof, pis) = prover.prove(&w.encode()).expect("prove 1/2");
+        assert!(!proof.is_empty());
+        assert_eq!(pis.len(), air_public_inputs_wire_len(1, 2));
+    }
+
+    #[test]
+    fn prove_succeeds_on_valid_2_2() {
+        let prover = MvpProver::new();
+        let w = MvpWitness::deterministic_valid(2, 2, 0xBBBB_0002);
+        let (proof, pis) = prover.prove(&w.encode()).expect("prove 2/2");
+        assert!(!proof.is_empty());
+        assert_eq!(pis.len(), air_public_inputs_wire_len(2, 2));
+    }
+
+    #[test]
+    fn prove_succeeds_on_valid_4_4_worst_case() {
+        let prover = MvpProver::new();
+        let w = MvpWitness::deterministic_valid(4, 4, 0xCCCC_0004);
+        let (proof, pis) = prover.prove(&w.encode()).expect("prove 4/4");
+        assert!(!proof.is_empty());
+        assert_eq!(pis.len(), air_public_inputs_wire_len(4, 4));
     }
 
     #[test]
     fn prove_rejects_malformed_witness() {
         let prover = MvpProver::new();
-        let short = vec![0u8; 10];
+        let short = vec![0u8; 5];
         let err = prover.prove(&short).unwrap_err();
         assert_eq!(err, Plonky3Status::WitnessInvalid);
     }
 
-    /// Record proof / witness / public-input byte sizes at P.2.
-    ///
-    /// Runs a 1-spend / 1-output-shape prove and prints the result so
-    /// the size budget (§7.4) can be tracked across revisions. Not a
-    /// consensus-binding assertion — just a visible floor.
+    /// Inflation attempt: bump an output value so `output_sum > spend_sum + fee`.
+    /// Must reject with `WitnessInvalid` (balance pre-check).
     #[test]
-    fn sizes_p2_upgrade_recorded() {
+    fn prove_rejects_inflation_attempt() {
         let prover = MvpProver::new();
-        let w = crate::transfer_air::MvpWitness::deterministic_valid(0x1111_2222_3333_4444);
+        let mut w = MvpWitness::deterministic_valid(2, 2, 0x1234);
+        w.outputs[0].value = w.outputs[0].value.saturating_add(1);
+        let err = prover.prove(&w.encode()).unwrap_err();
+        assert_eq!(err, Plonky3Status::WitnessInvalid);
+    }
+
+    /// Under-claim output: also breaks balance. Must reject.
+    #[test]
+    fn prove_rejects_under_claim() {
+        let prover = MvpProver::new();
+        let mut w = MvpWitness::deterministic_valid(2, 2, 0x2345);
+        w.outputs[0].value = w.outputs[0].value.saturating_sub(1);
+        let err = prover.prove(&w.encode()).unwrap_err();
+        assert_eq!(err, Plonky3Status::WitnessInvalid);
+    }
+
+    /// Record proof / witness / public-input byte sizes at (4, 4).
+    /// Not a consensus-binding assertion — just a visible regression floor.
+    #[test]
+    fn sizes_at_4_4_worst_case_recorded() {
+        let prover = MvpProver::new();
+        let w = MvpWitness::deterministic_valid(4, 4, 0x1111_2222_3333_4444);
         let witness_wire = w.encode();
-        let (proof, pi) = prover.prove(&witness_wire).expect("prove");
+        let (proof, pi) = prover.prove(&witness_wire).expect("prove 4/4");
         println!(
-            "[sizes] witness={}B proof={}B public_inputs={}B",
+            "[sizes 4/4] witness={}B proof={}B public_inputs={}B air_cols={}",
             witness_wire.len(),
             proof.len(),
-            pi.len()
+            pi.len(),
+            crate::transfer_air::air_width(4, 4),
         );
-        // Regression floor: the real-Poseidon2 upgrade bumps both trace
-        // width (~730 cols) and constraint degree vs the MVP, so the
-        // proof grows. Anchor at the measured baseline so a future
-        // accidental bloat is visible in CI.
-        assert_eq!(witness_wire.len(), 64, "P.2 witness wire = 64 B");
-        assert_eq!(pi.len(), 32, "public inputs unchanged (4 × 8 B)");
+        assert_eq!(witness_wire.len(), 18 + 64 * 4 + 40 * 4);
+        assert_eq!(pi.len(), 608);
         assert!(
-            proof.len() < 200_000,
-            "proof size exceeds 200 KB floor (was {} B)",
+            proof.len() < 1_000_000,
+            "proof 4/4 exceeds 1 MB floor ({} B)",
             proof.len()
         );
     }

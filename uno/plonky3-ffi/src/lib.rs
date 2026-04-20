@@ -175,21 +175,23 @@ pub struct Plonky3PublicInputs {
     pub len: usize,
 }
 
-/// Borrowed witness bytes for the reference prover. Layout is MVP-AIR
-/// specific and defined in [`transfer_air::MvpWitness::encode`].
+/// Borrowed witness bytes for the reference prover. Layout is defined in
+/// [`transfer_air::MvpWitness::encode`].
 ///
-/// # P.2 note — witness wire length
+/// # Witness wire length (P.2 scale-to-envelope)
 ///
-/// With the P.2 upgrade (real Poseidon2-Goldilocks compression for
-/// claims 1/2/3/4 — see `transfer_air` module doc), the encoded
-/// witness grew from 32 B (MVP) to **64 B**. The extra 32 B carry
-/// single-field-element proxies for `pk_d`, `rcm`, `nk`, `pos` needed
-/// to evaluate the claim-2 (note opening) and claim-4 (nullifier)
-/// Poseidon2 inputs inside the AIR. This is a **prover-only** wire
-/// change: consensus-binding bytes (`Plonky3PublicInputs` and the
-/// proof bytes consumed by `uno_plonky3_verify`) are unaffected. No
-/// ABI version bump is required because the witness descriptor is a
-/// length-prefixed byte slice, not a fixed-size struct.
+/// The witness encoding is length-variable across the §4.1 envelope:
+///
+/// ```text
+/// witness_len = 18 + 64·n_spends + 40·n_outputs
+/// ```
+///
+/// — `1 ≤ n_spends, n_outputs ≤ 4`. Prior slices (A4 MVP → N-P2 real
+/// Poseidon2) shipped a fixed 64 B witness at (1, 1). This slice
+/// replaces the fixed shape with a shape header (`u8 n_spends || u8
+/// n_outputs`) followed by per-spend and per-output records. The
+/// witness is a **prover-only** wire format and does not affect the
+/// consensus-binding public-input or proof bytes.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Plonky3Witness {
@@ -524,8 +526,11 @@ mod ffi_tests {
         assert_eq!(rc, Plonky3Status::Ok.as_i32());
         assert!(!p.is_null());
 
-        // Build a valid witness via the transfer_air module helper.
-        let witness = transfer_air::MvpWitness::deterministic_valid(0x1234_5678_9abc_def0);
+        // Build a valid 1-spend / 1-output witness via the transfer_air
+        // module helper. P.2 scale-to-envelope: the MvpWitness API now
+        // takes explicit shape parameters.
+        let witness =
+            transfer_air::MvpWitness::deterministic_valid(1, 1, 0x1234_5678_9abc_def0);
         let witness_bytes = witness.encode();
 
         // Prove.
@@ -592,13 +597,16 @@ mod ffi_tests {
         unsafe { uno_plonky3_prover_init(&mut p) };
 
         // Honest witness + its declared public inputs.
-        let honest_witness =
-            transfer_air::MvpWitness::deterministic_valid(0xcafe_f00d_dead_beef);
+        let honest_witness = transfer_air::MvpWitness::deterministic_valid(
+            1,
+            1,
+            0xcafe_f00d_dead_beef,
+        );
         let honest_pi_bytes = honest_witness.public_inputs_bytes();
 
-        // Adversary's tampered witness: flip a sibling bit.
+        // Adversary's tampered witness: flip a sibling bit of spend 0.
         let mut bad_witness = honest_witness.clone();
-        bad_witness.merkle_sibling[0] ^= 1;
+        bad_witness.spends[0].merkle_sibling[0] ^= 1;
         let bad_witness_bytes = bad_witness.encode();
 
         let mut out_proof = Plonky3OwnedProof::EMPTY;
