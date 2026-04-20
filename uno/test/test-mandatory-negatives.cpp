@@ -23,9 +23,20 @@
                                   tuples, without `ivk + sk_mlkem` no
                                   decryption succeeds.
 
-    Tests 1–4 are compile-gated on the full verify pipeline (UNO_MN_DRIVER_READY)
-    and emit SKIP if missing. Tests 5–7 are statistics-level tests that only
-    need the off-chain generators in uno/crypto and run unconditionally.
+    Test 3 (stale anchor) runs today against the real compute-phase
+    `verify_transfer_serial` — a fabricated Transfer whose `anchor` is not in
+    the window returns `VerifyResult::UnknownAnchor` at §4.3 step 1.5 before
+    any Ristretto / Schnorr / Plonky3 machinery is touched. The FakeUnoState
+    harness is the same in-memory stand-in used by test-parallel-verify.
+
+    Tests 1, 2, 4 still require a deterministic valid-Transfer generator
+    (a shared Plonky3-prover-backed helper reused from test-uno-end-to-end),
+    because their reject paths sit AFTER §4.3 step 3 (Schnorr) or inside
+    §4.3 step 4 (Plonky3 verify). They emit a more specific SKIP until the
+    shared generator lands — see K-p7-skip-lift follow-up.
+
+    Tests 5–7 are statistics-level tests that only need the off-chain
+    generators in uno/crypto and run unconditionally.
 
     Style: local tracked-printf harness.
 */
@@ -40,9 +51,16 @@
 #include <random>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "td/utils/Slice.h"
+#include "td/utils/UInt.h"
+#include "vm/cells/CellBuilder.h"
+
+#include "uno/core/compute-phase.h"
+#include "uno/core/parallel-verify.h"
+#include "uno/core/transaction.h"
 
 // ----- Tracked-printf harness -----------------------------------------------
 
@@ -79,70 +97,281 @@ static int tracked_printf(const char* fmt, ...) {
 // ============================================================================
 // 1–4. Driver-gated rejects
 // ============================================================================
+//
+// Plonky3 FFI weak stubs — mirror test-parallel-verify.cpp.
+//
+// uno_workchain is linked as-is; the Rust `uno_plonky3_ffi` crate is not
+// currently wired into this binary via Corrosion (see uno/CMakeLists.txt
+// comment). Provide weak C-linkage stubs so verify_transfer_serial's
+// step-4 verifier construction succeeds without the Rust toolchain. If
+// the real crate ever gets linked into the test target, these are
+// overridden automatically.
+//
+// None of the negative tests below ever reach §4.3 step 4 (they all reject
+// earlier), so the stub behaviour of "always VerifyFailed" never comes
+// into play — but an UNKNOWN SYMBOL link error would brick the whole
+// test, which is what the weak stubs defend against.
+// ----------------------------------------------------------------------------
+extern "C" {
 
-#ifdef UNO_MN_DRIVER_READY
-#include "uno/core/cell-state.h"
-#include "uno/core/compute-phase.h"
-#include "uno/core/state.h"
-#include "uno/core/transaction.h"
-#endif
+struct Plonky3VerifierHandle;
+typedef struct { const uint8_t *ptr; uintptr_t len; } Plonky3ProofBytes;
+typedef struct { const uint8_t *ptr; uintptr_t len; } Plonky3PublicInputs;
+
+static std::atomic<int> g_mn_fake_handle{0};
+
+__attribute__((weak)) uint32_t uno_plonky3_abi_version(void) { return 1; }
+
+__attribute__((weak)) int32_t uno_plonky3_verifier_init(
+    Plonky3VerifierHandle **out_handle) {
+    g_mn_fake_handle.fetch_add(1, std::memory_order_relaxed);
+    *out_handle = reinterpret_cast<Plonky3VerifierHandle*>(&g_mn_fake_handle);
+    return 0;
+}
+
+__attribute__((weak)) void uno_plonky3_verifier_free(
+    Plonky3VerifierHandle * /*handle*/) {}
+
+__attribute__((weak)) int32_t uno_plonky3_verify(
+    const Plonky3VerifierHandle * /*handle*/,
+    Plonky3ProofBytes /*proof*/,
+    Plonky3PublicInputs /*public_inputs*/) {
+    return 4;  // Plonky3Status::VerifyFailed — unreachable in these tests
+}
+
+// Poseidon2 permutations are referenced via uno_workchain's crypto TU;
+// we do not call into them in these tests but the static-archive link
+// still resolves the symbols. FNV-style deterministic stand-in matching
+// test-uno-end-to-end.cpp.
+__attribute__((weak)) void uno_poseidon2_goldilocks_permute_t8(uint64_t s[8]) {
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (int i = 0; i < 8; ++i) { h ^= s[i]; h *= 0x100000001b3ULL; }
+    for (int i = 0; i < 8; ++i) {
+        h = (h * 0x100000001b3ULL) ^ (s[i] + static_cast<uint64_t>(i) * 0x9E3779B97F4A7C15ULL);
+        s[i] = h % 0xFFFFFFFF00000001ULL;
+    }
+}
+__attribute__((weak)) void uno_poseidon2_goldilocks_permute_t16(uint64_t s[16]) {
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (int i = 0; i < 16; ++i) { h ^= s[i]; h *= 0x100000001b3ULL; }
+    for (int i = 0; i < 16; ++i) {
+        h = (h * 0x100000001b3ULL) ^ (s[i] + static_cast<uint64_t>(i) * 0x9E3779B97F4A7C15ULL);
+        s[i] = h % 0xFFFFFFFF00000001ULL;
+    }
+}
+
+}  // extern "C"
+
+// ----------------------------------------------------------------------------
+// FakeUnoState — mirror of test-parallel-verify.cpp's in-memory UnoState.
+// Deterministic, thread-safe enough for a single-threaded verify call.
+// ----------------------------------------------------------------------------
+namespace {
+
+class FakeUnoState : public uno_workchain::UnoState {
+public:
+    // ---- Config ----
+    uint32_t expected_chain_id() const override    { return 0xC0FFEE; }
+    uint64_t current_block_seqno() const override  { return 100; }
+    uint32_t expiry_window_blocks() const override { return 256; }
+    uint64_t min_fee_nano() const override         { return 0; }
+    uint64_t fee_per_byte_nano() const override    { return 0; }
+    uint64_t fee_per_spend_nano() const override   { return 0; }
+    uint64_t fee_per_output_nano() const override  { return 0; }
+
+    // ---- Verify-phase reads ----
+    bool anchor_window_contains(const td::Bits256& a) const override {
+        std::string k(reinterpret_cast<const char*>(a.data()), 32);
+        return valid_anchors_.count(k) > 0;
+    }
+    bool nullifier_is_spent(const td::Bits256& nf) const override {
+        std::string k(reinterpret_cast<const char*>(nf.data()), 32);
+        return spent_nf_.count(k) > 0;
+    }
+
+    // ---- Apply-phase mutations (unused by negative tests; stubs are fine) ----
+    void append_commitment(const td::Bits256& /*cm*/) override {}
+    void insert_nullifier(const td::Bits256& nf) override {
+        spent_nf_.insert(std::string(reinterpret_cast<const char*>(nf.data()), 32));
+    }
+    void accumulate_filter_tag(uint16_t /*t*/) override {}
+    void bump_stats(uint64_t /*fee*/, uint64_t /*n_outputs*/) override {}
+    td::Ref<vm::Cell> serialize_to_cell() const override {
+        return vm::CellBuilder{}.finalize();
+    }
+
+    // ---- Test helpers ----
+    void accept_anchor(const td::Bits256& a) {
+        valid_anchors_.insert(std::string(reinterpret_cast<const char*>(a.data()), 32));
+    }
+
+private:
+    std::unordered_set<std::string> valid_anchors_;
+    std::unordered_set<std::string> spent_nf_;
+};
+
+// A valid Ristretto255 basepoint encoding. Not strictly needed by the
+// stale-anchor test (UnknownAnchor short-circuits before Ristretto
+// decompression) but recorded here so future lifts at §4.3 step 1.7+
+// have a canonical known-good point handy.
+[[maybe_unused]] constexpr uint8_t kRistrettoBasepoint[32] = {
+    0xe2, 0xf2, 0xae, 0x0a, 0x6a, 0xbc, 0x4e, 0x71,
+    0xa8, 0x84, 0xa9, 0x61, 0xc5, 0x00, 0x51, 0x5f,
+    0x58, 0xe3, 0x0b, 0x6a, 0xa5, 0x82, 0xdd, 0x8d,
+    0xb6, 0xa6, 0x59, 0x45, 0xe0, 0x8d, 0x2d, 0x76,
+};
+
+// Build a minimally well-formed Transfer whose §4.3 step 1 syntactic
+// checks pass given the FakeUnoState config above (chain_id, expiry
+// window, spend/output counts, fee floor). The caller fills in `anchor`
+// and any adversarial mutations afterwards.
+uno_workchain::Transfer make_syntactic_transfer_skeleton() {
+    using namespace uno_workchain;
+    Transfer tx;
+    tx.version      = kTransferVersion;
+    tx.scheme_id    = kSchemeIdV1;
+    tx.chain_id     = 0xC0FFEE;                // matches FakeUnoState
+    tx.expiry_block = 128;                     // inside [100, 100+256]
+    tx.fee          = 1;                       // min-fee nano == 0
+    tx.wire_size_bytes = 256;
+
+    SpendDescription s{};
+    for (int i = 0; i < 32; ++i) s.nullifier.data()[i] = static_cast<uint8_t>(i + 1);
+    std::memcpy(s.rk.data(), kRistrettoBasepoint, 32);
+    s.spend_auth_sig.fill(0);
+    tx.spends.push_back(std::move(s));
+
+    OutputDescription o{};
+    for (int i = 0; i < 32; ++i) o.cm.data()[i]  = static_cast<uint8_t>(0x40 + i);
+    std::memcpy(o.epk.data(), kRistrettoBasepoint, 32);
+    o.filter_tag = 0xABCD;
+    o.out_ciphertext.fill(0x77);
+    o.enc_ciphertext = vm::CellBuilder{}.finalize();
+    o.mlkem_ct       = vm::CellBuilder{}.finalize();
+    tx.outputs.push_back(std::move(o));
+
+    // zk_proof must be non-empty so load_bytes_from_chunk_chain returns
+    // data; only reached if verify makes it to §4.3 step 4 (these tests
+    // don't, but the field is load-bearing for decode invariants).
+    uint8_t proof_payload[32] = {0};
+    tx.zk_proof = uno_workchain::store_bytes_as_chunk_chain(
+        td::Slice(reinterpret_cast<const char*>(proof_payload), 32));
+
+    // tx_hash — deterministic; only used as Schnorr message (tests here
+    // reject before step 3).
+    for (int i = 0; i < 32; ++i) tx.tx_hash.data()[i] = static_cast<uint8_t>(0xA0 + i);
+
+    return tx;
+}
+
+}  // anonymous namespace
 
 static void test_replay_rejected_at_nullifier() {
     tprintf("[TEST] test_replay_rejected_at_nullifier\n");
-#ifndef UNO_MN_DRIVER_READY
-    tprintf("  SKIP: UNO_MN_DRIVER_READY not defined — requires full verify pipeline + "
-            "a deterministic valid-tx generator (P.2/P.6). Reject path is specced at "
-            "§4.3 step 2 (NullifierAlreadySpent).\n");
-    return;
-#else
-    // TODO(uno-integration): build a valid Transfer T, apply it, then submit
-    // a byte-identical T' and assert VerifyResult::NullifierAlreadySpent.
-    tprintf("  SKIP: TODO — valid-tx generator + apply wiring\n");
-#endif
+    // The replay reject path is §4.3 step 2 (NullifierAlreadySpent), which
+    // sits AFTER Schnorr verify (step 3 in the code, step 2 in the spec
+    // numbering for nullifier-set lookup). Exercising it end-to-end needs
+    // a valid Transfer that survives Ristretto decompression + Schnorr
+    // verify, i.e. a real spend-auth signature over tx_hash.
+    //
+    // TODO(K-p7-skip-lift follow-up): factor test-uno-end-to-end.cpp's
+    // `build_transfer()` + proof-override plumbing into a shared helper
+    // (e.g. uno/test/fixtures/valid_transfer.h) and:
+    //   1. build a valid Transfer T;
+    //   2. install_test_proof_override_for_test(&always_ok);
+    //   3. apply T via run_compute_phase_batch;
+    //   4. re-submit byte-identical T', assert VerifyResult::NullifierAlreadySpent.
+    tprintf("  SKIP: blocked on shared valid-Transfer generator "
+            "(Schnorr + proof-override scaffolding in test-uno-end-to-end.cpp "
+            "not yet extracted to a reusable fixture). Reject path is specced "
+            "at §4.3 step 2 (NullifierAlreadySpent).\n");
 }
 
 static void test_cross_chain_replay_rejected_at_plonky3() {
     tprintf("[TEST] test_cross_chain_replay_rejected_at_plonky3\n");
-#ifndef UNO_MN_DRIVER_READY
-    tprintf("  SKIP: UNO_MN_DRIVER_READY not defined. Reject path is "
-            "§4.3 step 4 (Plonky3 public-input mismatch → BadPlonky3Proof) "
-            "because `chain_id` is in the public-inputs vector per §4.3 step 4.\n");
-    return;
-#else
-    // TODO: take a valid Transfer, mutate chain_id only, re-submit, assert
-    // VerifyResult::BadPlonky3Proof (public-input mismatch, NOT BadChainId —
-    // see decision chain: BadChainId rejects are for non-matching chain_id
-    // at step 1; once we've passed step 1 the proof's public inputs bind
-    // chain_id and the reject is BadPlonky3Proof).
-    tprintf("  SKIP: TODO\n");
-#endif
+    // The test docstring is specific: assert VerifyResult::BadPlonky3Proof
+    // (public-input mismatch, NOT BadChainId). BadChainId rejects at §4.3
+    // step 1 before the proof is consulted; the richer cross-chain-replay
+    // attack is "valid proof for chain A, submitted to chain B" — chain_id
+    // is pinned in the Plonky3 public-input vector so the rebinding fails
+    // at step 4.
+    //
+    // Exercising this path requires (a) a real Plonky3 prover in the test
+    // binary (uno_plonky3_ffi + real uno_plonky3_prove), and (b) a way to
+    // mutate the tx's chain_id AFTER proving so the proof is valid-for-A
+    // but the tx claims chain_id-of-B.
+    //
+    // TODO(K-p7-skip-lift follow-up): once tosctl's real-prover path
+    // (K-P6-wire) is reusable as a test fixture, add the mutation harness
+    // and assert VerifyResult::BadPlonky3Proof.
+    tprintf("  SKIP: blocked on real Plonky3 prover in test binary "
+            "(uno_plonky3_ffi crate is not linked into test-uno-* targets; "
+            "see uno/CMakeLists.txt Corrosion block). Reject path is §4.3 "
+            "step 4 (BadPlonky3Proof, public-input mismatch on chain_id).\n");
 }
 
 static void test_stale_anchor_rejected_at_step_1_5() {
     tprintf("[TEST] test_stale_anchor_rejected_at_step_1_5\n");
-#ifndef UNO_MN_DRIVER_READY
-    tprintf("  SKIP: UNO_MN_DRIVER_READY not defined. Reject path is "
-            "§4.3 step 1.5 (UnknownAnchor) when anchor predates the last "
-            "window_size blocks.\n");
-    return;
-#else
-    tprintf("  SKIP: TODO\n");
-#endif
+
+    // §4.3 step 1.5 reject: if `anchor` is not in the state's anchor
+    // window, verify returns VerifyResult::UnknownAnchor BEFORE any
+    // Ristretto / Schnorr / Plonky3 work. That's the exact consensus
+    // invariant mandated by §12's "Stale anchor" negative — an anchor
+    // older than the window_size blocks is rejected, no partial state
+    // delta applied.
+    //
+    // Harness: FakeUnoState accepts exactly one anchor (a "good" anchor
+    // that's NOT the one on the adversarial Transfer); the Transfer
+    // carries a distinctive "stale" anchor that the window never knew.
+    FakeUnoState state;
+    td::Bits256 good_anchor;
+    for (int i = 0; i < 32; ++i) good_anchor.data()[i] = static_cast<uint8_t>(i ^ 0x5A);
+    state.accept_anchor(good_anchor);
+
+    uno_workchain::Transfer tx = make_syntactic_transfer_skeleton();
+    // Stale anchor: deliberately distinct from `good_anchor`.
+    for (int i = 0; i < 32; ++i) tx.anchor.data()[i] = static_cast<uint8_t>(0xE0 ^ i);
+
+    auto r = uno_workchain::verify_transfer_serial(state, tx);
+    if (r != uno_workchain::VerifyResult::UnknownAnchor) {
+        tprintf("  FAILED: expected UnknownAnchor, got %s\n",
+                uno_workchain::verify_result_name(r));
+        return;
+    }
+
+    // Cross-check: with the same tx but the good anchor, we must NOT
+    // return UnknownAnchor (we'll fail further down — at Schnorr verify
+    // with zero-sig, BadSpendAuthSig — but critically NOT at step 1.5).
+    tx.anchor = good_anchor;
+    auto r_good_anchor = uno_workchain::verify_transfer_serial(state, tx);
+    if (r_good_anchor == uno_workchain::VerifyResult::UnknownAnchor) {
+        tprintf("  FAILED: good anchor was misclassified as stale\n");
+        return;
+    }
+
+    tprintf("  PASSED (stale anchor → UnknownAnchor at §4.3 step 1.5; "
+            "known-good anchor bypasses step 1.5 and rejects later as %s)\n",
+            uno_workchain::verify_result_name(r_good_anchor));
 }
 
 static void test_inflation_rejected_at_air_claim_8() {
     tprintf("[TEST] test_inflation_rejected_at_air_claim_8\n");
-#ifndef UNO_MN_DRIVER_READY
-    tprintf("  SKIP: UNO_MN_DRIVER_READY not defined. The balance check\n"
-            "        (Σoutput_value + fee == Σspend_value) is an in-circuit\n"
-            "        constraint (AIR claim 8, §3.3). Honest provers cannot\n"
-            "        produce a satisfying witness when the invariant fails;\n"
-            "        an adversary who forges a proof with unbalanced values\n"
-            "        is rejected at §4.3 step 4 (BadPlonky3Proof).\n");
-    return;
-#else
-    tprintf("  SKIP: TODO\n");
-#endif
+    // Inflation is an IN-CIRCUIT reject — AIR claim 8 enforces
+    // Σoutput_value + fee == Σspend_value (§3.3, §4.2). An honest prover
+    // can never produce a satisfying witness for an unbalanced tx; an
+    // adversary who forges one is rejected at §4.3 step 4 as
+    // BadPlonky3Proof. There is no "off-circuit" reject path to assert
+    // in the C++ verifier — the entire guard lives inside the Plonky3
+    // proof-verify.
+    //
+    // TODO(K-p7-skip-lift follow-up): once uno_plonky3_ffi is linked
+    // into this test binary (same blocker as the cross-chain-replay
+    // test), fabricate a Transfer whose declared public-input balance
+    // deltas are non-zero and assert VerifyResult::BadPlonky3Proof.
+    tprintf("  SKIP: blocked on real Plonky3 prover in test binary. "
+            "Inflation is an AIR claim-8 in-circuit constraint (§3.3); "
+            "off-circuit, an unbalanced proof rejects at §4.3 step 4 "
+            "(BadPlonky3Proof). No pre-step-4 reject exists to assert.\n");
 }
 
 // ============================================================================
