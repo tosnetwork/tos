@@ -42,7 +42,7 @@ constexpr uint32_t kVmMode = 0;
 // Chain ids (§10.4)
 // ---------------------------------------------------------------------------
 
-/// Default chain_id baked into ConfigParam 26 for the testnet image.
+/// Default chain_id baked into ConfigParam 84 for the testnet image.
 /// ASCII "UNOT" = 0x554E4F54. Overridable at runtime via ConfigParam load.
 constexpr uint32_t kDefaultTestnetChainId = 0x554E4F54;
 
@@ -50,18 +50,18 @@ constexpr uint32_t kDefaultTestnetChainId = 0x554E4F54;
 /// "not yet assigned". Boot code MUST refuse to produce blocks while the
 /// active chain_id equals this sentinel.
 // TODO(uno-design-gap): mainnet chain_id is TBD in §10.4. Callers that
-// consume ConfigParam 26 should treat this value as an error.
+// consume ConfigParam 84 should treat this value as an error.
 constexpr uint32_t kMainnetChainIdUnassigned = 0x00000000;
 
 /// Returns the currently configured chain id. Boot flow: set once from
-/// ConfigParam 26 at node startup, otherwise falls back to testnet.
+/// ConfigParam 84 at node startup, otherwise falls back to testnet.
 ///
 /// Mirrors `evm_workchain::current_evm_chain_id()` — kept as a free function
 /// so the runtime override has one canonical accessor.
 uint32_t current_uno_chain_id() noexcept;
 
 /// Override the runtime chain id. Called exactly once at startup, from
-/// `init_uno_workchain()` after loading ConfigParam 26. Calling this after
+/// `init_uno_workchain()` after loading ConfigParam 84. Calling this after
 /// a block has been produced is undefined — Fiat-Shamir transcripts (§2.0)
 /// absorb chain_id and every signed tx binds to it.
 void set_uno_chain_id(uint32_t chain_id) noexcept;
@@ -89,8 +89,14 @@ constexpr uint8_t kTransferVersion = 1;
 /// Schema version of the on-cell `UnoShardState` root cell (§5.1).
 constexpr uint8_t kShardStateVersion = 1;
 
-/// Schema version of ConfigParam 26 `UnoConfig` (§10.2).
+/// Schema version of ConfigParam 84 `UnoConfig` (§10.2). Slot is pinned by
+/// decision #4 (§16): UnoConfig lives in ConfigParam 84, not 26.
 constexpr uint8_t kConfigParamVersion = 1;
+
+/// Masterchain ConfigParam slot reserved for `UnoConfig` (§10.2, decision #4).
+/// Callers that load / install ConfigParam should use this constant rather
+/// than hardcoding the literal.
+constexpr int kUnoConfigParamIdx = 84;
 
 // ---------------------------------------------------------------------------
 // Cell / state layout constants (§5.1, §5.2, §5.4)
@@ -130,12 +136,12 @@ constexpr unsigned kNullifierKeyBits = kHashBits;
 
 // ---------------------------------------------------------------------------
 // Default config values (§10.2). Anything marked TBD in the doc lands as a
-// compile-time default here, overridable by ConfigParam 26 at runtime.
+// compile-time default here, overridable by ConfigParam 84 at runtime.
 // ---------------------------------------------------------------------------
 
 // TODO(uno-design-gap): §10.2 fees and §10.3 genesis distribution / total
 // supply are marked TBD. These defaults are conservative placeholders that
-// the ConfigParam 26 loader will overwrite in production.
+// the ConfigParam 84 loader will overwrite in production.
 constexpr uint64_t kDefaultMinFeeNano        = 1'000'000ULL;          // 0.001 UNO
 constexpr uint64_t kDefaultFeePerByteNano    = 100ULL;
 constexpr uint64_t kDefaultFeePerSpendNano   = 500'000ULL;
@@ -214,7 +220,7 @@ constexpr const char kFilterTag[] = "uno-filter-v1";
 /// Diversifier-hash-to-curve tag (§2.6 Addresses).
 constexpr const char kDiversifierTag[] = "uno-diversifier-v1";
 
-/// Sanity-hash tag over live ConfigParam 26 bytes, mixed into
+/// Sanity-hash tag over live ConfigParam 84 bytes, mixed into
 /// `UnoShardState.config_hash` (§5.1). This is consensus-independent but
 /// consensus-observable: nodes with mismatched configs diverge on the
 /// first block and fail replay immediately.

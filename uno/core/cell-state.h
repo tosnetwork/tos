@@ -91,7 +91,7 @@ inline td::Ref<vm::Cell> serialize_state_or_null(const UnoShardState& state) {
 // ---------------------------------------------------------------------------
 
 /// Recompute the `config_hash` field of UnoShardState from a canonicalised
-/// byte view of the live ConfigParam 26 cell. The hash is BLAKE3 with the
+/// byte view of the live ConfigParam 84 cell. The hash is BLAKE3 with the
 /// `kConfigHashTag` domain separator (§5.1 "BLAKE3 over live wc=2 config
 /// params; sanity").
 ///

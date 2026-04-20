@@ -106,7 +106,7 @@ UnoShardState build_zerostate_state(const GenesisDistribution& dist) {
     s.stats.note_count  = static_cast<uint64_t>(dist.notes.size());
 
     // config_hash is populated after cell-state serialization, where the
-    // caller also has the live ConfigParam 26 bytes in hand.  Leave zero
+    // caller also has the live ConfigParam 84 bytes in hand.  Leave zero
     // here; init code overwrites before writing to disk.
 
     return s;

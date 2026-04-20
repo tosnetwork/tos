@@ -70,7 +70,7 @@ public:
     // Returns a cell whose root is the canonical UnoShardState (§5.1).
     virtual td::Ref<vm::Cell> serialize_to_cell() const = 0;
 
-    // Consensus-visible config view. These come from ConfigParam 26 (§10.2)
+    // Consensus-visible config view. These come from ConfigParam 84 (§10.2)
     // snapshotted into the state at block start.
     virtual uint32_t expected_chain_id() const    = 0;
     virtual uint64_t current_block_seqno() const  = 0;

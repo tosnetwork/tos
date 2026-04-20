@@ -69,7 +69,7 @@ size_t chunk_chain_byte_length(td::Ref<vm::Cell> root) noexcept;
 //   tlv_field$_ tag:uint8 length:uint16 data:(length * uint8) = TlvField;
 //
 // Used by Agent 1 for forward-compatible fields in UnoShardState / ConfigParam
-// 26. Keeps field additions a bump-and-append rather than a schema migration.
+// 84. Keeps field additions a bump-and-append rather than a schema migration.
 
 /// Append a TLV field to the current CellBuilder. Returns an error if the
 /// value is too large (> 65535 bytes) or does not fit into the remaining cell

@@ -37,7 +37,7 @@ namespace uno_workchain {
 /// serialized as 32 bytes of canonical little-endian u64 limbs.
 static constexpr std::size_t kNoteHashBytes = 32;
 
-/// Commitment-tree depth (§2.3 and §10.2 ConfigParam 26 `tree_depth = 32`).
+/// Commitment-tree depth (§2.3 and §10.2 ConfigParam 84 `tree_depth = 32`).
 static constexpr std::size_t kTreeDepth = 32;
 
 /// Maximum number of leaves addressable at depth 32.
