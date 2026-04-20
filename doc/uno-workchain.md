@@ -1754,7 +1754,23 @@ Mirrors the EVM workchain's gate model.
 
 The two remaining skips in `test-uno-state-transition-golden` are behind `UNO_RUN_PROVE_FIXTURES=1` — they exercise slow prove-heavy records and are an intentional opt-in, not a gap. `validator-engine` links cleanly against the real `libuno_plonky3_ffi.a` via vendored corrosion-rs. All 45 design decisions in §16 are locked.
 
-**Overall v1 completion: approximately 86 %** by work-weighted effort. The remaining 14 % is concentrated in two blocks:
+**Overall v1 completion: approximately 82 %** by strict phase-weighted effort. Breakdown:
+
+| Phase                                 | Weight | Done | Contribution |
+|---------------------------------------|-------:|-----:|-------------:|
+| P.0 Plonky3 toolchain bring-up        |   3 %  | 100 %|     3.00 %   |
+| P.1 Crypto scaffolding + primitives   |   7 %  | 100 %|     7.00 %   |
+| P.2 Transfer AIR + prover             |  35 %  |  75 %|    26.25 %   |
+| P.3 Parallel verifier (C++ FFI)       |   8 %  |  85 %|     6.80 %   |
+| P.4 State model + dispatch            |   7 %  | 100 %|     7.00 %   |
+| P.5 End-to-end compute + RPC          |   7 %  | 100 %|     7.00 %   |
+| P.6 Wallet (tosctl)                   |   8 %  | 100 %|     8.00 %   |
+| P.7 Conformance + audit + docs        |  25 %  |  65 %|    16.25 %   |
+| **Total**                             |**100 %**|     | **81.30 %** |
+
+P.7's 65 % figure = 40 % §12 test matrix green (K-p7-skip-lift + K-p7-fixtures + K-restart-survival-drive + K-determinism-v2 + K-state-golden-unskip + K-subs-test) + 15 % audit-scope document (`doc/uno-audit-scope.md`, K-audit-scope) + 10 % 60-day testnet runbook (`doc/uno-testnet-runbook.md`, K-testnet-runbook); remaining 25 % external audit execution + 10 % 60-day testnet run.
+
+The remaining ~18 % is concentrated in two blocks:
 
 - **P.2 AIR architectural pass** (~2–4 months of focused cryptographer work). Column-sharing has been pushed to its limit on the current AIR structure:
     - K-air-col-share (strategy a): Merkle-level row loop across 32 rows.
@@ -1762,7 +1778,7 @@ The two remaining skips in `test-uno-state-transition-golden` are behind `UNO_RU
     - K-air-col-step3 (investigated, stopped cleanly): strategy (e) tight shape alloc already in place; strategy (f) trace-height shrink only yields 2–4 % proof shrink because `num_queries=128 × column-count` dominates; trace-height expansion is net-negative (cells grow faster than cols shrink).
   
   Combined at 4/4 worst case: cols **27,837 → 2,081 (−92.5 %)**, proof **33 MB → 2.22 MB**, verify **790 ms → 111 ms**. The ~22× gap to the §3.4 envelope (~100 KB worst, ≤ 20 ms single-thread verify) cannot be closed by further column-sharing of the current AIR — it requires *one of*: (i) a cross-instance Poseidon2 scheduler (multiplex multiple sub-AIR instances onto one column block with deeper trace partitioning), (ii) a structural AIR redesign (different claim layout), or (iii) renegotiation of §2.1's `num_queries=128` / `log_blowup=2` FRI parameters (currently consensus-binding). P.3 ≥ 3.5× 4-core scaling recovers automatically once verify cost drops below ~20 ms via whichever path is taken.
-- **P.7 external crypto audit + 60-day testnet** (3–6 month vendor lead time plus audit window; audit scope must cover the three new constructions per §0.2).
+- **P.7 external crypto audit + 60-day testnet** (3–6 month vendor lead time plus audit window; audit scope must cover the three new constructions per §0.2 — audit-scope doc is now ready for vendor handoff, testnet runbook is ready for operator bring-up).
 
 The `uno_workchain::UnoState` ODR collision in `uno/core/` has been resolved by renaming the concrete RPC facade in `state.h` to `UnoStateFacade`, leaving the pure-virtual abstract base in `compute-phase.h` as the unambiguous `UnoState`. `test-uno-restart-survival` no longer needs its 1024-byte sacrificial stack pad; `test-uno-determinism` no longer needs to avoid `state.h`. Both tests remain green under the clean layout.
 
