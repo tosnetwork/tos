@@ -16,7 +16,18 @@
 # exit-status 0.
 
 add_executable(test-uno-transfer              test-transfer.cpp)
-add_executable(test-uno-determinism           test-determinism.cpp)
+# K-determinism-drive: test-uno-determinism now drives the §12 P.5 4-node
+# cross-validator determinism invariant end-to-end using
+# `verify_transfer_serial` + `apply_transfer` + `serialize_state`. The
+# valid-Transfer fixture (K-p7-fixtures) supplies the 30 valid-shape Transfers
+# the test shuffles across 4 permuted mempool orders; a split TU
+# (determinism_state_root.{h,cpp}) owns the cell-state serialise so the main
+# TU can stay on the compute-phase UnoState spelling (see that file for the
+# class UnoState collision rationale).
+add_executable(test-uno-determinism
+               test-determinism.cpp
+               fixtures/valid_transfer_fixture.cpp
+               fixtures/determinism_state_root.cpp)
 add_executable(test-uno-filter                test-filter.cpp)
 # M-codec: round-trip encode/decode across the full 1..4 × 1..4 shape
 # envelope of §4.1. Pins the wire-codec invariant that unblocks §12 P.3
