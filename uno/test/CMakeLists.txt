@@ -30,6 +30,12 @@ add_executable(test-uno-filter                test-filter.cpp)
 # envelope of §4.1. Pins the wire-codec invariant that unblocks §12 P.3
 # state-transition golden fixtures + tosctl uno send integration.
 add_executable(test-uno-codec-shapes          test-codec-shapes.cpp)
+# K-codec-fuzzer: §12 P.2 bullet 2 — 1 M iterations of random-bytes fuzz,
+# deterministic Xoroshiro128++ seed + three-way distribution mix (pure
+# random, near-valid bit-flip, structured garbage). Asserts no crashes,
+# no panics, no non-deterministic decode. UNO_FUZZ_SEED /
+# UNO_FUZZ_ITERATIONS env vars for CI tuning (default 1'000'000 iters).
+add_executable(test-uno-codec-fuzz            test-codec-fuzz.cpp)
 # Decision #5 cross-impl parity gate for the Plonky3 public-input byte
 # encoding. Driven by uno/test/golden/public-inputs-v1.hex; Rust side is
 # uno/plonky3-ffi/tests/public_input_fixture.rs. Both implementations
@@ -122,6 +128,7 @@ foreach(_t test-uno-transfer
            test-uno-determinism
            test-uno-filter
            test-uno-codec-shapes
+           test-uno-codec-fuzz
            test-uno-public-input-fixture
            test-uno-parallel-verify
            test-uno-end-to-end
