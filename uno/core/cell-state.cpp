@@ -16,8 +16,6 @@
 #include "td/utils/logging.h"
 #include "td/utils/Slice.h"
 
-#include <cstring>
-
 // Agent 2's sub-object headers. The `serialize_*` / `deserialize_*` codec
 // entry points below are declared extern here; Agent 2 provides the
 // definitions in commitment-tree.cpp / nullifier-set.cpp / anchor-window.cpp.

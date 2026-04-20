@@ -17,8 +17,6 @@
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"  // td::buffer_to_hex
 
-#include <cstring>
-
 // Full declarations of the sub-object types owned by Agent 2 (§5.2/§5.3/§5.4)
 // are required at the call sites below because the zerostate path
 // instantiates CommitmentTree / NullifierSet / AnchorWindow via Agent 2's
