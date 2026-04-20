@@ -15,8 +15,8 @@
 //! 4. Assertions:
 //!      - built Transfer decodes back byte-identically
 //!      - `tx_hash` recomputed from the decoded tx equals the pre-submit hash
-//!      - `zk_proof` size lies in the §17 cell-budget window (30–210 KB)
-//!        across the 1..4 × 1..4 shape envelope
+//!      - `zk_proof` size lies in the observed K-AIR window (200 KB – 2 MB
+//!        under test-grade FRI params) across the 1..4 × 1..4 shape envelope
 //!      - the emitted proof verifies against `uno_plonky3_ffi::verify` for
 //!        the witness's canonical public-input vector
 //!      - Bob's wallet trial-decrypts the recipient output (send →
@@ -35,10 +35,14 @@ use tosctl_uno::{
     wire as wire_mod,
 };
 
-/// §17 proof-size window: minimum observed at (1,1) shape; maximum at
-/// (4,4). Any honest K-P6-wire proof must fall in this window.
-const PROOF_MIN_BYTES: usize = 30_000;
-const PROOF_MAX_BYTES: usize = 210_000;
+/// Observed K-AIR proof-size window under the reference prover's
+/// test-grade FRI params (`FriParameters::new_testing(log_blowup=2)`):
+/// 1/1 shape ≈ 380 KB, 4/4 shape ≈ 1.5 MB. Production FRI params (§2.1
+/// soundness target, `TODO(uno-p2-soundness)`) will cut this to §17's
+/// ~52 KB typical / ~100 KB worst. Window is loose until the prover
+/// switches.
+const PROOF_MIN_BYTES: usize = 200_000;
+const PROOF_MAX_BYTES: usize = 2_000_000;
 
 fn seed_for(label: u8) -> [u8; 32] {
     let mut s = [0u8; 32];
@@ -58,7 +62,6 @@ fn fake_note(value: u64, salt: u8) -> OwnedNote {
     }
 }
 
-#[ignore = "K-AIR AIR tightened — wallet witness rebuild pending (uno-p6-witness-rebuild)"]
 #[test]
 fn send_pipeline_builds_well_formed_transfer_with_real_proof() {
     // --- Setup two wallets ---------------------------------------------
@@ -174,7 +177,6 @@ fn send_pipeline_builds_well_formed_transfer_with_real_proof() {
     );
 }
 
-#[ignore = "K-AIR AIR tightened — wallet witness rebuild pending (uno-p6-witness-rebuild)"]
 #[test]
 fn send_pipeline_rejects_insufficient_funds() {
     let alice = keygen::derive_fvk(&seed_for(0x11)).expect("alice fvk");
@@ -190,7 +192,6 @@ fn send_pipeline_rejects_insufficient_funds() {
     assert!(err.is_err(), "send should reject insufficient funds");
 }
 
-#[ignore = "K-AIR AIR tightened — wallet witness rebuild pending (uno-p6-witness-rebuild)"]
 #[test]
 fn send_pipeline_handles_single_output_no_change() {
     // If the selected notes exactly cover amount + fee (change == 0),
@@ -220,7 +221,6 @@ fn send_pipeline_handles_single_output_no_change() {
 /// path must verify against the `uno_plonky3_ffi` verifier at the
 /// canonical public-input vector the prover consumed. This closes the
 /// prove→verify loop end-to-end for the 1-spend / 2-output shape.
-#[ignore = "K-AIR AIR tightened — wallet witness rebuild pending (uno-p6-witness-rebuild)"]
 #[test]
 fn test_real_proof_verifies_against_ffi_verifier() {
     let _alice = keygen::derive_fvk(&seed_for(0x55)).expect("alice fvk");
