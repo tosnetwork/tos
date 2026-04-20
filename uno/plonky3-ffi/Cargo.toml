@@ -78,15 +78,24 @@ cbindgen = "0.29"
 hex = "0.4"
 
 # ---------------------------------------------------------------------------
-# Benches (K-air-bench)
+# Benches (K-air-bench, K-fri-analysis)
 #
 # `harness = false` disables the default libtest harness so the bench file's
 # own `fn main()` is the entire bench binary. This keeps the standardized
 # shape-matrix harness free of criterion / nightly-`#[bench]` dependencies
-# while still being driven by `cargo bench --bench shape_matrix`.
+# while still being driven by `cargo bench --bench <name>`.
 # ---------------------------------------------------------------------------
 [[bench]]
 name    = "shape_matrix"
+harness = false
+
+# K-fri-analysis: FRI parameter-space sweep harness. Reproduces the data
+# table in `doc/uno-fri-param-analysis.md` — prove/verify/proof-bytes and
+# conjectured+proven soundness bits across ~15 (log_blowup, num_queries,
+# pow_bits) triples at the 4/4 worst-case envelope shape. Non-consensus-
+# critical; does NOT change `prover.rs::build_config`'s §2.1 pin.
+[[bench]]
+name    = "fri_param_sweep"
 harness = false
 
 [profile.release]
