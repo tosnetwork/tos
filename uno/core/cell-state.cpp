@@ -25,16 +25,15 @@
 #include "uno/core/nullifier-set.h"
 #include "uno/core/anchor-window.h"
 
-// BLAKE3 is already linked in-tree; the header lives at `keys/blake3` in EVM
-// usage, but the exact include path depends on Agent 6's CMake wiring.
-// TODO(uno-integration): swap to the canonical BLAKE3 include path once
-// Agent 6 pins it at the top-level `uno/CMakeLists.txt`.
-#if __has_include("blake3.h")
-#include "blake3.h"
-#define UNO_HAS_BLAKE3 1
-#else
-#define UNO_HAS_BLAKE3 0
+// BLAKE3 is wired through the in-tree adapter, which is backed by the
+// vendored avatar crypto tree (third-party/avatar-crypto/, decision #41).
+// uno/CMakeLists.txt compiles this TU into the `uno_workchain` target with
+// UNO_BLAKE3_AVATAR=1 (PUBLIC). An unconfigured build must fail loudly
+// rather than silently produce zero-filled hashes.
+#ifndef UNO_BLAKE3_AVATAR
+#error "cell-state.cpp requires UNO_BLAKE3_AVATAR=1; install third-party/avatar-crypto/ per uno/CMakeLists.txt"
 #endif
+#include "uno/crypto/internal/blake3_adapter.h"
 
 namespace uno_workchain {
 
@@ -86,20 +85,14 @@ td::Ref<vm::Cell> build_meta_cell(td::Ref<vm::Cell> anchor_window_cell,
 // ---------------------------------------------------------------------------
 
 std::array<uint8_t, kHashBytes> compute_config_hash(td::Slice config_cell_bytes) {
+    static_assert(kHashBytes == 32,
+                  "compute_config_hash assumes BLAKE3-256 output");
     std::array<uint8_t, kHashBytes> out{};
-#if UNO_HAS_BLAKE3
-    blake3_hasher h;
-    blake3_hasher_init(&h);
-    blake3_hasher_update(&h, kConfigHashTag, sizeof(kConfigHashTag) - 1);
-    blake3_hasher_update(&h, config_cell_bytes.data(), config_cell_bytes.size());
-    blake3_hasher_finalize(&h, out.data(), out.size());
-#else
-    // TODO(uno-integration): BLAKE3 not wired yet; zero the field so callers
-    // can still round-trip cells during early assembly. Production paths
-    // MUST have UNO_HAS_BLAKE3 defined.
-    (void)config_cell_bytes;
-    LOG(WARNING) << "uno/cell-state: BLAKE3 not available; config_hash left zero";
-#endif
+    uno_workchain::crypto::internal::Blake3Hasher h;
+    h.update(td::Slice(reinterpret_cast<const char*>(kConfigHashTag),
+                       sizeof(kConfigHashTag) - 1));
+    h.update(config_cell_bytes);
+    h.finalize_32(out.data());
     return out;
 }
 
