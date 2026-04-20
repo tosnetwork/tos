@@ -1,0 +1,104 @@
+# tosctl/uno — Rust binary crate for the Uno Workchain (wc=2) wallet CLI.
+#
+# Design doc: doc/uno-workchain.md §13 P.6.
+#
+# Scope (this crate): the **foundation** — key management + receive side.
+#   - keygen   : derive uno_seed / fvk / sk_mlkem from TOS BIP-39 mnemonic per §2.6
+#   - address  : build a diversified Address (d + pk_d + ivk_commitment + pk_mlkem)
+#   - scan     : compact-filter GCS scan + hybrid-KEM trial-decrypt per §5.8 / §7.5
+#   - balance  : sum unspent owned-note values
+#   - chain-info: smoke-test the uno_* JSON-RPC namespace
+#
+# Out of scope: `send` (needs the full P.2 Transfer AIR prover, blocked on
+# cryptographer work). A stub is wired with a clear TODO.
+#
+# Standalone workspace — does NOT merge into `tosctl/src/Cargo.toml` to avoid
+# bumping the main tosctl toolchain (which pins Rust 1.91.1 / edition 2024).
+# The binary `tosctl-uno` is built independently; it can be copied alongside
+# `tosctl` or invoked directly.
+
+[workspace]
+members = ["."]
+resolver = "2"
+
+[package]
+name        = "tosctl-uno"
+version     = "0.1.0"
+edition     = "2021"
+license     = "GPL-3.0"
+description = "Uno Workchain (wc=2) wallet CLI — P.6 foundation"
+publish     = false
+
+[[bin]]
+name = "tosctl-uno"
+path = "src/main.rs"
+
+[lib]
+name = "tosctl_uno"
+path = "src/lib.rs"
+
+[dependencies]
+# ---- CLI -------------------------------------------------------------------
+clap       = { version = "4.5", features = ["derive", "env"] }
+anyhow     = "1.0"
+thiserror  = "1.0"
+
+# ---- async runtime + HTTP --------------------------------------------------
+tokio      = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+reqwest    = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# ---- serialization ---------------------------------------------------------
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex        = { version = "0.4", features = ["serde"] }
+
+# ---- symmetric crypto ------------------------------------------------------
+# BLAKE2b-256 / BLAKE2b-512 for seed-derivation domain-separated hashes (§2.6).
+blake2           = "0.10"
+# BLAKE3 for the hybrid-KEM KDF transcript and nonce derivation (§2.7).
+blake3           = "1.5"
+# ChaCha20-Poly1305 for the note AEAD (§2.7 / §5.8 trial-decrypt).
+chacha20poly1305 = "0.10"
+
+# ---- classical asymmetric --------------------------------------------------
+# Ristretto255 for ECDH, diversified base points, pk_d. Uses RFC 9380-ish
+# `from_hash(BLAKE2b-512)` for HashToRistretto (matches A3's libsodium call
+# `crypto_core_ristretto255_from_hash`).
+curve25519-dalek = { version = "4.1", default-features = false, features = [
+    "alloc", "precomputed-tables", "digest", "rand_core", "zeroize",
+] }
+# Mnemonic → seed: BIP-39 over 24-word English wordlist (TOS convention).
+bip39            = { version = "2", default-features = false, features = ["std"] }
+
+# ---- post-quantum KEM ------------------------------------------------------
+# ML-KEM-768 (FIPS 203) — RustCrypto reference implementation.
+ml-kem           = { version = "0.2", features = ["deterministic"] }
+
+# ---- Poseidon2 over Goldilocks ---------------------------------------------
+# Byte-identical to A3's off-circuit Poseidon2 and to the in-circuit Plonky3
+# AIR — we pin the SAME Plonky3 rev that `uno/plonky3-ffi/` pins (§P.0
+# decision). Until the FFI crate exports a pure `poseidon2_permute_t8/t16`
+# surface, we depend directly on the upstream p3-* crates.
+p3-field         = { git = "https://github.com/Plonky3/Plonky3", rev = "6374a36ff50fc641821513852263cc61ca7a1278" }
+p3-goldilocks    = { git = "https://github.com/Plonky3/Plonky3", rev = "6374a36ff50fc641821513852263cc61ca7a1278" }
+p3-poseidon2     = { git = "https://github.com/Plonky3/Plonky3", rev = "6374a36ff50fc641821513852263cc61ca7a1278" }
+p3-symmetric     = { git = "https://github.com/Plonky3/Plonky3", rev = "6374a36ff50fc641821513852263cc61ca7a1278" }
+
+# ---- misc ------------------------------------------------------------------
+rand             = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
+zeroize          = { version = "1", features = ["zeroize_derive"] }
+
+[dev-dependencies]
+# Deterministic tests only; no network, no clock.
+tempfile = "3"
+
+[profile.release]
+opt-level       = 3
+lto             = "thin"
+codegen-units   = 1
+debug           = false
+panic           = "abort"
+
+[profile.dev]
+opt-level = 1
+panic     = "abort"
