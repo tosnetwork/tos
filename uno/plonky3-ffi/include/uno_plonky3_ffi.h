@@ -156,6 +156,19 @@ typedef struct {
 
 // Borrowed witness bytes for the reference prover. Layout is MVP-AIR
 // specific and defined in [`transfer_air::MvpWitness::encode`].
+//
+// # P.2 note — witness wire length
+//
+// With the P.2 upgrade (real Poseidon2-Goldilocks compression for
+// claims 1/2/3/4 — see `transfer_air` module doc), the encoded
+// witness grew from 32 B (MVP) to **64 B**. The extra 32 B carry
+// single-field-element proxies for `pk_d`, `rcm`, `nk`, `pos` needed
+// to evaluate the claim-2 (note opening) and claim-4 (nullifier)
+// Poseidon2 inputs inside the AIR. This is a **prover-only** wire
+// change: consensus-binding bytes (`Plonky3PublicInputs` and the
+// proof bytes consumed by `uno_plonky3_verify`) are unaffected. No
+// ABI version bump is required because the witness descriptor is a
+// length-prefixed byte slice, not a fixed-size struct.
 typedef struct {
     // Pointer to the first byte of the encoded witness.
     const uint8_t *ptr;
