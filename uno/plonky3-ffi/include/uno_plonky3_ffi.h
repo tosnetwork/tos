@@ -60,13 +60,25 @@
 // Depth of the note-commitment Merkle tree (§2.3 / §10.2 ConfigParam 84).
 #define MERKLE_DEPTH 32
 
-// Per-spend proxy columns: leaf, d, value, ivk, ivk_commitment_claim,
-// pk_d, rcm, nk, pos (9 leading fields), plus 32 path-bit proxies and 32
-// sibling-hash proxies for the 32-level Merkle path (§2.3).
-#define SPEND_PROXY_COLS ((9 + MERKLE_DEPTH) + MERKLE_DEPTH)
+// Width in bits of the bit-decomposition range check for `value_i` /
+// `value_j` (§4.2 claims 5 & 7). Each value is committed as 64 bit
+// columns so the AIR constrains `value < 2^64`; since
+// `p_Goldilocks = 2^64 − 2^32 + 1`, the additional 32 high-bit
+// combinations in `[2^64 − 2^32 + 1, 2^64)` are unreachable by a single
+// field element, so the bit decomposition is exact on canonical inputs.
+#define VALUE_BITS 64
 
-// Per-output proxy columns: cm_claim, d, pk_d, ivk_commitment, value, rcm.
-#define OUTPUT_PROXY_COLS 6
+// Per-spend proxy columns: leaf, d, value, ivk, ivk_commitment_claim,
+// pk_d, rcm, nk, pos (9 leading fields), plus 32 path-bit proxies, 32
+// sibling-hash proxies for the 32-level Merkle path (§2.3), and
+// VALUE_BITS bit columns for the explicit u64 range-check on `value_i`
+// (§4.2 claim 5).
+#define SPEND_PROXY_COLS (((9 + MERKLE_DEPTH) + MERKLE_DEPTH) + VALUE_BITS)
+
+// Per-output proxy columns: cm_claim, d, pk_d, ivk_commitment, value,
+// rcm (6 leading fields), plus VALUE_BITS bit columns for the explicit
+// u64 range-check on `value_j` (§4.2 claim 7).
+#define OUTPUT_PROXY_COLS (6 + VALUE_BITS)
 
 // Narrow (width-8) Poseidon2 instances per spend (Merkle×32 + IvkCm + Nf).
 // The Cm slot is width-16 and counted separately.

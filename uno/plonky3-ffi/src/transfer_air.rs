@@ -211,13 +211,26 @@ const GCOL_FEE: usize = 0;
 /// Depth of the note-commitment Merkle tree (§2.3 / §10.2 ConfigParam 84).
 pub const MERKLE_DEPTH: usize = 32;
 
-/// Per-spend proxy columns: leaf, d, value, ivk, ivk_commitment_claim,
-/// pk_d, rcm, nk, pos (9 leading fields), plus 32 path-bit proxies and 32
-/// sibling-hash proxies for the 32-level Merkle path (§2.3).
-pub const SPEND_PROXY_COLS: usize = 9 + MERKLE_DEPTH + MERKLE_DEPTH;
+/// Width in bits of the bit-decomposition range check for `value_i` /
+/// `value_j` (§4.2 claims 5 & 7). Each value is committed as 64 bit
+/// columns so the AIR constrains `value < 2^64`; since
+/// `p_Goldilocks = 2^64 − 2^32 + 1`, the additional 32 high-bit
+/// combinations in `[2^64 − 2^32 + 1, 2^64)` are unreachable by a single
+/// field element, so the bit decomposition is exact on canonical inputs.
+pub const VALUE_BITS: usize = 64;
 
-/// Per-output proxy columns: cm_claim, d, pk_d, ivk_commitment, value, rcm.
-pub const OUTPUT_PROXY_COLS: usize = 6;
+/// Per-spend proxy columns: leaf, d, value, ivk, ivk_commitment_claim,
+/// pk_d, rcm, nk, pos (9 leading fields), plus 32 path-bit proxies, 32
+/// sibling-hash proxies for the 32-level Merkle path (§2.3), and
+/// VALUE_BITS bit columns for the explicit u64 range-check on `value_i`
+/// (§4.2 claim 5).
+pub const SPEND_PROXY_COLS: usize =
+    9 + MERKLE_DEPTH + MERKLE_DEPTH + VALUE_BITS;
+
+/// Per-output proxy columns: cm_claim, d, pk_d, ivk_commitment, value,
+/// rcm (6 leading fields), plus VALUE_BITS bit columns for the explicit
+/// u64 range-check on `value_j` (§4.2 claim 7).
+pub const OUTPUT_PROXY_COLS: usize = 6 + VALUE_BITS;
 
 /// Narrow (width-8) Poseidon2 instances per spend (Merkle×32 + IvkCm + Nf).
 /// The Cm slot is width-16 and counted separately.
@@ -249,6 +262,8 @@ const S_POS: usize = 8;
 // proxies. Path bit `k` is `(pos >> k) & 1` (low→high bit order).
 const S_PATH_BIT0: usize = 9;
 const S_SIBLING0: usize = S_PATH_BIT0 + MERKLE_DEPTH;
+/// Base index of the 64-bit range-check columns for `value_i` (claim 5).
+const S_VALUE_BIT0: usize = S_SIBLING0 + MERKLE_DEPTH;
 
 // ---- Per-output column indices (within an output proxy block) ----
 const O_CM_CLAIM: usize = 0;
@@ -257,6 +272,8 @@ const O_PK_D: usize = 2;
 const O_IVK_COMMITMENT: usize = 3;
 const O_VALUE: usize = 4;
 const O_RCM: usize = 5;
+/// Base index of the 64-bit range-check columns for `value_j` (claim 7).
+const O_VALUE_BIT0: usize = 6;
 
 // ---------------------------------------------------------------------------
 // Shape-aware helpers
@@ -664,6 +681,31 @@ where
                 }
                 first.assert_eq(pos.into(), pos_recon);
 
+                // Claim 5: explicit u64 range-check on `value_i` via
+                // 64-bit decomposition. Bit columns V_0..V_63 live at
+                // S_VALUE_BIT0. Constraints: each bit is Boolean and the
+                // weighted sum reconstructs `value`.
+                let mut value_recon: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
+                for k in 0..VALUE_BITS {
+                    let b: AB::Var =
+                        spend_col(local_slice, i, S_VALUE_BIT0 + k);
+                    let b_expr: AB::Expr = b.into();
+                    // b·(1-b) == 0.
+                    let one_minus_b =
+                        AB::Expr::from(AB::F::from_u64(1)) - b_expr.clone();
+                    first.assert_zero(b_expr.clone() * one_minus_b);
+                    // 2^k · b_k. k < 64 so `1u64 << k` fits in u64 for
+                    // k ≤ 63; for k = 64 it would overflow but we stop
+                    // at 63.
+                    let weight = if k == 63 {
+                        AB::F::from_u64(1u64 << 63)
+                    } else {
+                        AB::F::from_u64(1u64 << k)
+                    };
+                    value_recon = value_recon + AB::Expr::from(weight) * b_expr;
+                }
+                first.assert_eq(value.into(), value_recon);
+
                 // Claim 3: IVK-commitment.
                 let ivkcm = spend_p2_group::<AB::Var>(local_slice, i, SpendP2::IvkCm);
                 first.assert_eq(
@@ -747,6 +789,28 @@ where
                 first.assert_eq(cm_p2_out[0], cm_claim);
                 // Bind cm_j to limb 0 of the output-commitment PI.
                 first.assert_eq(cm_claim, pi_cms[j]);
+
+                // Claim 7: explicit u64 range-check on `value_j`.
+                let mut value_recon: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
+                for k in 0..VALUE_BITS {
+                    let b: AB::Var = output_col(
+                        local_slice,
+                        self.n_spends,
+                        j,
+                        O_VALUE_BIT0 + k,
+                    );
+                    let b_expr: AB::Expr = b.into();
+                    let one_minus_b =
+                        AB::Expr::from(AB::F::from_u64(1)) - b_expr.clone();
+                    first.assert_zero(b_expr.clone() * one_minus_b);
+                    let weight = if k == 63 {
+                        AB::F::from_u64(1u64 << 63)
+                    } else {
+                        AB::F::from_u64(1u64 << k)
+                    };
+                    value_recon = value_recon + AB::Expr::from(weight) * b_expr;
+                }
+                first.assert_eq(value_out.into(), value_recon);
             }
 
             // Claim 8: balance. `Σ value_i - Σ value_j - fee == 0`.
@@ -1505,7 +1569,8 @@ impl MvpWitness {
         }
 
         // Per-spend proxy vector: [leaf, d, value, ivk, ivk_cm_claim, pk_d,
-        // rcm, nk, pos, path_bits[0..32], siblings[0..32]].
+        // rcm, nk, pos, path_bits[0..32], siblings[0..32],
+        // value_bits[0..64]].
         let spend_proxies: Vec<Vec<Goldilocks>> = self
             .spends
             .iter()
@@ -1530,25 +1595,37 @@ impl MvpWitness {
                 for k in 0..MERKLE_DEPTH {
                     v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.merkle_path[k])));
                 }
+                // Bit-decompose value into VALUE_BITS = 64 bits.
+                let value_canon = reduce_to_goldilocks(s.value);
+                for k in 0..VALUE_BITS {
+                    let bit = (value_canon >> k) & 1;
+                    v.push(Goldilocks::from_u64(bit));
+                }
                 debug_assert_eq!(v.len(), SPEND_PROXY_COLS);
                 v
             })
             .collect();
 
-        let output_proxies: Vec<[Goldilocks; OUTPUT_PROXY_COLS]> = self
+        let output_proxies: Vec<Vec<Goldilocks>> = self
             .outputs
             .iter()
             .map(|o| {
                 let cm_fe =
                     poseidon2_cm_fe(&perm16, o.d, o.pk_d, o.ivk_commitment, o.value, o.rcm);
-                [
-                    cm_fe,
-                    Goldilocks::from_u64(reduce_to_goldilocks(o.d)),
-                    Goldilocks::from_u64(reduce_to_goldilocks(o.pk_d)),
-                    Goldilocks::from_u64(reduce_to_goldilocks(o.ivk_commitment)),
-                    Goldilocks::from_u64(reduce_to_goldilocks(o.value)),
-                    Goldilocks::from_u64(reduce_to_goldilocks(o.rcm)),
-                ]
+                let mut v = Vec::with_capacity(OUTPUT_PROXY_COLS);
+                v.push(cm_fe);
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(o.d)));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(o.pk_d)));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(o.ivk_commitment)));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(o.value)));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(o.rcm)));
+                let value_canon = reduce_to_goldilocks(o.value);
+                for k in 0..VALUE_BITS {
+                    let bit = (value_canon >> k) & 1;
+                    v.push(Goldilocks::from_u64(bit));
+                }
+                debug_assert_eq!(v.len(), OUTPUT_PROXY_COLS);
+                v
             })
             .collect();
 
