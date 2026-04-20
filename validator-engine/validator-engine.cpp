@@ -64,6 +64,7 @@
 #include "errorcode.h"
 
 #include "evm/core/init.h"
+#include "uno/core/init.h"
 #include "overlay-manager.h"
 #include "overlays.h"
 #include "validator-engine.hpp"
@@ -2334,6 +2335,7 @@ void ValidatorEngine::start_validator() {
                                                       rldp_.get(), rldp2_.get(), quic_.get(), overlay_manager_.get());
 
   evm_workchain::init_evm_workchain(db_root_);
+  uno_workchain::init_uno_workchain(db_root_);
 
   if (json_rpc_addr_) {
     json_rpc_server_ = tos::JsonRpcServer::create(validator_manager_.get(), json_rpc_opts_);

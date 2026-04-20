@@ -22,6 +22,7 @@
 #include "block/block.h"
 #include "block/transaction.h"
 #include "block/evm-workchain-dispatch.h"
+#include "block/uno-workchain-dispatch.h"
 #include "crypto/openssl/rand.hpp"
 #include "td/utils/Timer.h"
 #include "td/utils/bits.h"
@@ -1929,6 +1930,55 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     return true;
   }
   // --- End EVM Workchain dispatch ---
+
+  // --- Uno Workchain dispatch ---
+  // If the account belongs to the Uno workchain (wc=2) and a handler is
+  // registered, route to the shielded-pool compute phase instead of TVM.
+  // Mirrors the wc=1 branch above. See doc/uno-workchain.md §8.2.
+  if (uno_workchain_dispatch::has_uno_compute_handler() &&
+      account.workchain == 2 /* uno_workchain::kWorkchainId — avoid header dep */) {
+    if (in_msg_body.is_null()) {
+      cp.skip_reason = ComputePhase::sk_bad_state;
+      return true;
+    }
+    vm::CellSlice body_cs{*in_msg_body};
+    bool ok = uno_workchain_dispatch::invoke_uno_compute(
+        cp, body_cs, cp.gas_limit,
+        cfg.evm_block_seqno,                              // reuse block_seqno carrier
+        static_cast<td::uint64>(account.now_),            // timestamp (block gen_utime)
+        cfg.block_rand_seed.as_array().data());           // rand_seed (unused; Uno is deterministic)
+    if (!ok) {
+      compute_phase.reset();
+      return false;
+    }
+    // Gas fee accounting for the Uno compute phase. Uno's gas_used is a
+    // deterministic function of tx structure (§8.4); the same per-byte rate
+    // used elsewhere applies.
+    cp.gas_fees = cfg.compute_gas_price(cp.gas_used);
+
+    // Propagate the serialized UnoShardState root into Transaction::new_data
+    // so compute_state() packs it into the executor account's StateInit.data
+    // — making state delta part of the TOS block state_hash. Identical
+    // mechanism as the wc=1 branch above.
+    if (cp.new_data.not_null()) {
+      new_data = cp.new_data;
+    }
+    // Activate the executor account if currently uninit (first message).
+    if (acc_status == Account::acc_uninit) {
+      acc_status = Account::acc_active;
+      was_activated = true;
+    }
+    // Install the canonical 0x55 'U' code-marker cell if this account has no
+    // code yet — same pattern as EVM, single cell hash across every wc=2
+    // account (and wc=2 only has one executor account anyway). CellDb dedup
+    // means every validator reuses the same ref.
+    if (new_code.is_null()) {
+      new_code = uno_workchain_dispatch::get_uno_code_marker_cell();
+    }
+
+    return true;
+  }
+  // --- End Uno Workchain dispatch ---
 
   if (in_msg_state.not_null()) {
     LOG(DEBUG) << "HASH(in_msg_state) = " << in_msg_state->get_hash().bits().to_hex(256)
