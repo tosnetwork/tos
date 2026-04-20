@@ -111,6 +111,45 @@ impl RpcClient {
         ).await?;
         serde_json::from_value(v).context("decoding NullifierStatus")
     }
+
+    /// `uno_getAnchor()` — current commitment-tree root + last-100 window.
+    /// Used by `tosctl uno send` to pick the `anchor` field of a Transfer.
+    pub async fn get_anchor(&self) -> Result<AnchorInfo> {
+        let v = self.call("uno_getAnchor", json!([])).await?;
+        serde_json::from_value(v).context("decoding AnchorInfo")
+    }
+
+    /// `uno_estimateFee(n_spends, n_outputs)` — minimum native-asset fee in
+    /// nano-units. Returns a single u64 per §9.1.
+    pub async fn estimate_fee(&self, n_spends: u8, n_outputs: u8) -> Result<u64> {
+        let v = self.call(
+            "uno_estimateFee",
+            json!([n_spends, n_outputs]),
+        ).await?;
+        // Accept either a bare integer or a {"fee": N} envelope. The chain
+        // handler currently returns a bare integer; wrapper form is future-proof.
+        if let Some(n) = v.as_u64() {
+            return Ok(n);
+        }
+        if let Some(n) = v.get("fee").and_then(|x| x.as_u64()) {
+            return Ok(n);
+        }
+        Err(anyhow!("estimate_fee: unexpected shape {:?}", v))
+    }
+
+    /// `uno_sendTransfer(hex_blob)` — submit a signed + proven Transfer.
+    /// Returns the server-reported `tx_hash` hex string.
+    pub async fn send_transfer(&self, tx_bytes: &[u8]) -> Result<String> {
+        let blob_hex = hex::encode(tx_bytes);
+        let v = self.call("uno_sendTransfer", json!([blob_hex])).await?;
+        // Server returns {"tx_hash": "<hex>"}
+        let obj: serde_json::Map<String, Value> = serde_json::from_value(v.clone())
+            .with_context(|| format!("send_transfer: unexpected response shape: {v:?}"))?;
+        let hash = obj.get("tx_hash")
+            .and_then(|x| x.as_str())
+            .ok_or_else(|| anyhow!("send_transfer: response missing 'tx_hash'"))?;
+        Ok(hash.trim_start_matches("0x").to_string())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -142,4 +181,16 @@ pub struct NullifierStatus {
     pub spent: bool,
     #[serde(default)]
     pub block_seqno: Option<u64>,
+}
+
+/// Response of `uno_getAnchor()`.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AnchorInfo {
+    /// Current commitment-tree root as 32-byte hex.
+    pub commitment_tree_root: String,
+    pub head_seqno: u64,
+    /// Window of accepted anchors (last 100 roots). Each entry is a 32-byte
+    /// hex string.
+    #[serde(default)]
+    pub anchor_window: Vec<String>,
 }

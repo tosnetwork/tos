@@ -31,6 +31,7 @@ pub mod keygen;
 pub mod poseidon2;
 pub mod rpc_client;
 pub mod scan;
+pub mod transfer;
 pub mod wire;
 
 /// Crate version string embedded in the `--version` flag.
