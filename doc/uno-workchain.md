@@ -1403,9 +1403,10 @@ A v1.1 upgrade (`scheme_id` bump) may introduce an in-pool `uno_timelocked_trans
 
 ### 10.4 Chain id
 
-- Testnet: e.g. `0x554E4F54` (`"UNOT"`).
-- Mainnet: TBD by network ops.
+- **Testnet**: `0x554E4F54` (`"UNOT"`).
+- **Mainnet**: `0x554E4F4D` (`"UNOM"`).
 - Bound in every tx's transcript (§2.0) → no cross-network replay possible.
+- Independent from TOS `global_id` (ConfigParam 19): that is masterchain-level; Uno's `chain_id` is wc=2-level, lives inside `UnoConfig` (ConfigParam 84), and only affects Uno tx transcript binding.
 
 ---
 
@@ -1779,6 +1780,7 @@ Every non-trivial choice below was made against the alternative space of publish
 36. **Total supply + genesis distribution — decided: 21,000,000 UNO, 60% airdrop / 25% treasury / 15% team, no v1 vesting.** §10.3 pins the specific allocation. 21 M matches Bitcoin / Zcash cap, reinforcing the "digital gold + PQ-native + privacy-native" scarcity narrative (§0). 60% airdrop bias signals community-first without investor allocation; 25% treasury handles ecosystem grants / audits / incentives; 15% team is lean for an independent (non-VC-backed) project. No on-chain vesting in v1: wc=2 has no contracts and no time-locked tx type, so team allocation ships unvested at genesis under multisig-protected off-chain legal custody. v1.1 may introduce `uno_timelocked_transfer` with a `min_spend_block` public input if vesting becomes important enough to warrant scheme_id bump. Rejected: 100M / 1B supply (dilutes scarcity narrative); investor/presale allocation (VC-free posture); vesting-via-wc=0-staging (violates §1.5 bridgelessness); in-v1 timelocked tx (adds 4–6 weeks of AIR work for a launch-only concern).
 37. **Fee schedule at launch — decided: `min_fee_nano=100,000`, `fee_per_byte_nano=10`, `fee_per_spend_nano=50,000`, `fee_per_output_nano=50,000`.** Calibrated by target annual burn rate of ~1% of 21 M supply at sustained 20 TPS; actual launch-phase burn is fraction of that and asymptotically approaches 1-2% as adoption grows. Typical 1-spend/2-output tx costs ~0.000255 UNO; worst-case 4/4 costs ~0.000514 UNO. Comparable to Zcash/Monero fee level, ~1000× cheaper than Bitcoin/Ethereum. Governance-upgradable via ConfigParam 11 voting if observed economics drift. Rejected: higher min_fee (DoS floor is handled by per-IP rate limit + proof verify cost + per-spend/output structural cost; raising `min_fee` to $0.01-level creates friction for legitimate users); lower fees (insufficient DoS floor and too-slow burn). `nullifier_lru_capacity = 1,000,000` pinned at the same time as an advisory (non-consensus) parameter.
 38. **Workchain descriptor flags — decided: no `UNO_FLAG`; `flags = 0` mandatory, `basic = 1`, routing via `vm_version = 0x554E4F31` ("UNO1").** The TLB schema `block.tlb:669` enforces `flags:(## 13) { flags = 0 }` as an invariant; any "new bit" would be a schema-breaking hardfork. Earlier drafts of §10.1 contained a placeholder `flags = UNO_FLAG` which was removed. Workchain identity at the protocol layer is conveyed by `vm_version` exactly as EVM (`0x45564D`) and TVM (`0x00000000`) do; the compute-phase dispatcher (§8.2) routes by `workchain_id`, not by any flag bit. A1's `workchain.h` `kUnoFlag` constant is retracted during integration.
+39. **Mainnet `chain_id` — decided: `0x554E4F4D` ("UNOM"); testnet keeps `0x554E4F54` ("UNOT").** Symmetric ASCII pair, last byte distinguishes network (`T`estnet / `M`ainnet). Distinct from TOS masterchain `global_id` (ConfigParam 19): that lives in a different layer and controls block-header / wallet-signature domain; Uno's `chain_id` lives in `UnoConfig` (ConfigParam 84) and only binds Uno tx Fiat-Shamir transcripts. Rejected: `0x554E4F31` ("UNO1") — collides with `vm_version`, introduces ambiguity; pure integer (e.g. `1`) — collides with TOS `global_id` semantics and loses the hex-dump readability.
 
 ---
 

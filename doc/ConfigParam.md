@@ -498,7 +498,7 @@ Per-chain parameters for wc=2 (Uno shielded workchain). See [uno-workchain.md §
 | Field | Type | Value | Description |
 |-------|------|-------|-------------|
 | `version` | uint8 | **1** | Schema version of this config cell |
-| `chain_id` | uint32 | testnet `0x554E4F54` ("UNOT") / mainnet TBD | Uno chain id, bound into every tx transcript |
+| `chain_id` | uint32 | testnet `0x554E4F54` ("UNOT") / mainnet `0x554E4F4D` ("UNOM") | Uno chain id, bound into every tx transcript |
 | `min_fee_nano` | uint64 | **100,000** (0.0001 UNO) | Baseline fee for any `Transfer`; DoS floor |
 | `fee_per_byte_nano` | uint64 | **10** | Per-inline-byte charge (excludes referenced cell chains) |
 | `fee_per_spend_nano` | uint64 | **50,000** (0.00005 UNO) | Per-`SpendDescription` charge |
