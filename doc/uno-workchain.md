@@ -86,7 +86,7 @@ Anything weaker — the account + homomorphic-ciphertext recipe — still leaks 
 ### 1.2 v1 Goals (what ships)
 
 - **One user-facing transaction type**: `Transfer` with `1..4` spends and `1..4` outputs (outputs include sender change). Balance `Σ spends = Σ outputs + fee` is enforced by an in-circuit constraint — there is no separate value commitment or binding signature (§3.3).
-- **Native single asset (UNO)**, fixed at genesis, monotonically non-increasing via fee burn (§1.5, §10.3).
+- **Native single asset (UNO)**, **21,000,000 total supply** fixed at genesis, monotonically non-increasing via fee burn (§1.5, §10.3). Distribution: 60% public airdrop / 25% treasury / 15% team, no investor allocation, no emission.
 - **Stealth addresses** with diversifier-based key derivation, Ristretto255 as the off-circuit curve.
 - **View-key hierarchy** (`fvk`, `ivk`, `ovk`) for native selective disclosure, hash-derived via Poseidon2.
 - **Plonky3 STARK proof system over Goldilocks**, no trusted setup, PQ-native proof backend — no Phase 2 proof-system migration debt.
@@ -1325,19 +1325,57 @@ UnoConfig :=
                                           // forward window at 1 s block rate, comfortable vs 2–5 s proving
 ```
 
-### 10.3 Zerostate
+### 10.3 Zerostate and genesis distribution
+
+**Total supply: 21,000,000 UNO** = `2.1 × 10¹⁶` nano-UNO (9 decimal places, matching TOS tomi convention). This value is fixed at genesis and monotonically non-increasing (fees are burned; see §16 decisions #19, #24). The Bitcoin-equivalent cap reinforces the "digital gold + PQ-native + privacy-native" scarcity narrative framed in §0.
+
+#### Distribution categories
+
+| Category | Share | Amount (UNO) | Purpose |
+|---|---|---|---|
+| **Public airdrop** | **60%** | 12,600,000 | Community and ecosystem bootstrap (see breakdown below) |
+| **Treasury / ecosystem fund** | **25%** | 5,250,000 | Long-term development, grants, liquidity provisioning, audits, incentive programs; managed by foundation / DAO |
+| **Team / core contributors** | **15%** | 3,150,000 | Engineering, cryptography, research contributors; no on-chain vesting in v1 (see below) |
+
+No investor / presale allocation. No mining / block reward. No ongoing emission.
+
+**Airdrop sub-breakdown** (12.6 M UNO, proportions indicative; final recipient lists finalized by ops at launch):
+
+- 40% (5.04 M) — TOS wc=1 EVM ecosystem active addresses, snapshot-based.
+- 30% (3.78 M) — Publicly verified prior-art privacy-chain participation (Zcash / Monero / Aleo / Aztec historical active addresses via hash-commitment challenge-response; no cross-chain custody).
+- 20% (2.52 M) — Public claim with anti-sybil verification (proof-of-personhood + social attestation).
+- 10% (1.26 M) — Reserved "late-claim" slot for users who can later prove early participation via key-possession attestation.
+
+#### Vesting posture for v1
+
+**No on-chain vesting mechanism in v1.** wc=2 v1 has no smart contracts, no time-locked tx type, and cannot implement linear-release vesting without either (a) adding a dedicated `uno_timelocked_transfer` tx type (extends the AIR — 4–6 week scope increase) or (b) using wc=0/wc=1 as a vesting staging area, which violates the bridgelessness invariant (§1.5).
+
+Since neither is acceptable for v1, the 15% team allocation ships **unvested at genesis**, held in a **multisig-protected address under off-chain legal custody** committing to a published release schedule. This is a social/legal commitment, not a cryptographic one.
+
+A v1.1 upgrade (`scheme_id` bump) may introduce an in-pool `uno_timelocked_transfer` with a `min_spend_block` public input; deferring to avoid lengthening v1. See §14.
+
+#### Zerostate build process
 
 `uno_workchain::build_zerostate()`:
 
 1. Create executor account `(2, 0x…01)` with `UnoShardState`:
    - Empty frontier (32 canonical empty-subtree hashes).
    - Empty nullifier set.
-   - Anchor window seeded with the root of an empty tree (one entry).
-   - Stats zeroed.
-2. Seed **N genesis notes**: a list of `(address, value)` pairs baked into genesis. Each becomes an output in a synthetic "genesis tx" whose `cm`s are appended in canonical order to the initial tree.
-3. Publish `zerostate-genesis-notes.json` alongside the state cell: contains the `(Note plaintext, Address)` pairs so genesis recipients can claim their notes.
+   - Anchor window seeded with the root of the post-genesis tree (one entry; see step 3).
+   - `stats.burned_fees = 0`; `stats.tx_count = 0`; `stats.note_count = |genesis_notes|`.
+2. Seed genesis notes: one note per entry in the distribution list. Each `(Address, value)` pair is encoded as an `OutputDescription` with:
+   - `cm` = `Poseidon2("uno-cm-v1", d, pk_d.bytes, ivk_commitment, value, rcm)` (§3.2) where `rcm` is derived from a deterministic `rseed` = `BLAKE2b("uno-genesis-rseed-v1" || address_index)`.
+   - `enc_ciphertext`, `mlkem_ct`, `filter_tag` computed as if the genesis authority sent the note to itself — the recipient can reproduce the derivation from the published genesis manifest.
+3. Append each `cm` in canonical order (airdrop entries sorted by address hash, then treasury entries, then team entries) to the initial commitment tree. Push the post-genesis root to the anchor window.
+4. Publish `zerostate-genesis-notes.json` alongside the state cell: a plaintext JSON listing every `(Address, value, rseed)` triple in appended order. Users match against it by address to recover their `(pos_in_tree, rseed)` pair and spend.
 
-**After genesis, note plaintexts are never on-chain.** The publication of genesis plaintexts is an intentional, one-time transparency trade — initial distribution is auditable; no other plaintext value is ever on chain afterwards.
+**Total supply assertion**: the zerostate builder verifies `Σ_{entries} value == 21,000,000 × 10⁹` nano-UNO before emitting the state root. Mismatch is a genesis-generation failure, not a runtime reject (zerostate is static).
+
+#### Transparency trade
+
+**After genesis, note plaintexts are never on-chain.** The publication of genesis plaintexts is an intentional, one-time transparency trade — the full initial distribution is auditable by anyone (supply cap, per-category shares, per-address allocations) at the cost of genesis-recipient pseudonymity. Recipients can move their genesis note to a private address via one standard `Transfer` after launch to recover privacy forward-looking.
+
+#### Supply invariant
 
 **Zerostate is the sole and permanent source of UNO supply.** No minting, no Shield, no bridge, no validator inflation, no governance-issued emission. UNO supply is set exactly once, at genesis, and is monotonically non-increasing thereafter (fees are burned; see §16 decision #19). This is not a v1 scope decision — it is the invariant that makes bridgelessness possible (§1.5). Any future proposal to introduce a supply-creation path on wc=2 would structurally reopen the deanonymization vectors enumerated in §1.5 and is therefore out of scope for every phase of the roadmap.
 
@@ -1716,6 +1754,7 @@ Every non-trivial choice below was made against the alternative space of publish
 33. **FRI security parameters — decided: `log_blowup = 2`, `num_queries = 128`, `proof_of_work_bits = 16`.** §2.1 pins these as consensus-binding. Gives ~128-bit conjectured / ~64-bit proven classical soundness, ~64-bit conjectured / ~32-bit proven quantum soundness. Tighter than Plonky3/SP1/AggLayer defaults (`num_queries=84-100`, ~100-bit conjectured) because a soundness break on a privacy L1 with fixed-supply native asset enables unauthorized value creation, not just cross-chain bridge inconsistency. Cost: prove time +40%, proof size +30%, verify time +30% vs Plonky3 defaults. Accepted as the price of payment-chain-grade security. Rejected: `log_blowup=4` (doubled prove time for minimal conjectured-soundness gain); `num_queries=200` (same soundness as our choice, +50% proof size); pure 128-bit-proven target (prove time >2× slower, no meaningful real-world adversary advantage).
 34. **ConfigParam slot for UnoConfig — decided: `ConfigParam 84`.** §10.2 slot allocation follows the TOS convention of placing workchain-specific / bridge-adjacent protocol parameters in the 70s-80s cluster (existing usage: 71-73 oracle bridges, 79/81/82 jetton bridges). 84 is the first free slot after the cluster. Rejected: `26` / `27` (core-band gaps that TOS/TON upstream may backfill with future low-numbered core-protocol extensions — clash risk); `100+` (arbitrary, breaks spatial locality with 71-82). Canonical registry entry added to `doc/ConfigParam.md`.
 35. **Public-input byte encoding — decided: Plonky3-canonical little-endian u64 per Goldilocks element; 256-bit inputs split into 4 × u64 chunks in LE order with `mod p_Goldilocks` reduction.** §4.3 step 4 pins the exact byte-level spec. Total serialized length is `64 + 64·spend_count + 72·output_count` bytes. A golden fixture `uno/test/golden/public-inputs-v1.hex` enforces Rust (A4) ↔ C++ (A5) byte-identical output as a P.1 gate. Rejected: big-endian (breaks Plonky3 convention; no benefit); Bincode / serde (couples spec to crate version); application-specific formats (audit burden without gain). The `mod p_Goldilocks` reduction introduces ≈ 2⁻³⁰ aggregate bias on pseudo-random 256-bit inputs, negligible for soundness; adversary-controlled inputs are asserted `< p_Goldilocks` at admission.
+36. **Total supply + genesis distribution — decided: 21,000,000 UNO, 60% airdrop / 25% treasury / 15% team, no v1 vesting.** §10.3 pins the specific allocation. 21 M matches Bitcoin / Zcash cap, reinforcing the "digital gold + PQ-native + privacy-native" scarcity narrative (§0). 60% airdrop bias signals community-first without investor allocation; 25% treasury handles ecosystem grants / audits / incentives; 15% team is lean for an independent (non-VC-backed) project. No on-chain vesting in v1: wc=2 has no contracts and no time-locked tx type, so team allocation ships unvested at genesis under multisig-protected off-chain legal custody. v1.1 may introduce `uno_timelocked_transfer` with a `min_spend_block` public input if vesting becomes important enough to warrant scheme_id bump. Rejected: 100M / 1B supply (dilutes scarcity narrative); investor/presale allocation (VC-free posture); vesting-via-wc=0-staging (violates §1.5 bridgelessness); in-v1 timelocked tx (adds 4–6 weeks of AIR work for a launch-only concern).
 
 ---
 
