@@ -22,6 +22,7 @@
 set(UNO_CORE_AGENT5
   core/transaction.cpp
   core/compute-phase.cpp
+  core/parallel-verify.cpp
   core/cell-codec.cpp
   core/init.cpp
 )
@@ -144,6 +145,7 @@ endif()
 target_link_libraries(uno_workchain
   PUBLIC
     tos_crypto           # cells, vm types, block types, dispatcher
+    Threads::Threads     # §13 P.3: std::thread in uno/core/parallel-verify.cpp
 )
 
 # Optional subdirs — Agent 6 owns tests; include only when present.

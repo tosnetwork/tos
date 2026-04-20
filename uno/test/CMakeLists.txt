@@ -23,11 +23,16 @@ add_executable(test-uno-filter                test-filter.cpp)
 # uno/plonky3-ffi/tests/public_input_fixture.rs. Both implementations
 # MUST produce byte-identical output for every fixture record.
 add_executable(test-uno-public-input-fixture  test-public-input-fixture.cpp)
+# P.3 parallel verify pool (§13 P.3): determinism vs serial reference,
+# repeat-under-thread-pressure invariant, and a min-of-3 scaling
+# micro-benchmark for the 4-core ≥ 3.5x ideal target from §1.4.
+add_executable(test-uno-parallel-verify       test-parallel-verify.cpp)
 
 foreach(_t test-uno-transfer
            test-uno-determinism
            test-uno-filter
-           test-uno-public-input-fixture)
+           test-uno-public-input-fixture
+           test-uno-parallel-verify)
   target_link_libraries(${_t} PRIVATE uno_workchain)
   target_include_directories(${_t} PRIVATE ${CMAKE_SOURCE_DIR})
   if (COMMAND tos_test)
@@ -36,6 +41,10 @@ foreach(_t test-uno-transfer
     add_test(NAME ${_t} COMMAND ${_t})
   endif()
 endforeach()
+
+# test-uno-parallel-verify spins up std::thread workers from the pool;
+# make sure it links against the system's pthread runtime.
+target_link_libraries(test-uno-parallel-verify PRIVATE Threads::Threads)
 
 # Pass the canonical in-tree fixture path to the fixture test so ctest can
 # run from the build directory without a cwd hack.
