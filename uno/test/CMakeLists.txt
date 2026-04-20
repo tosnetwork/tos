@@ -97,6 +97,17 @@ endforeach()
 # make sure it links against the system's pthread runtime.
 target_link_libraries(test-uno-parallel-verify PRIVATE Threads::Threads)
 
+# K-state-golden-unskip: flip the UNO_P3_DRIVER_READY gate on now that
+# M-P2's full 1..4×1..4 Transfer AIR + cell-state serialize_state /
+# deserialize_state have landed. With this set, test_state_transition_apply
+# iterates populated fixtures and drives `verify_transfer_serial` against a
+# per-record FakeUnoState configured to reproduce the declared verdict,
+# rather than emitting a blanket SKIP. Ok-record byte-equality remains
+# opt-in behind UNO_RUN_PROVE_FIXTURES=1 because the fixture generator
+# still leaves valid-record blobs empty pending a prove-path regeneration.
+target_compile_definitions(test-uno-state-transition-golden
+                           PRIVATE UNO_P3_DRIVER_READY=1)
+
 # Propagate the UNO_MLKEM_STUB flag from the library to the §12 tests that
 # check for it at runtime. uno_workchain sets it PRIVATE (so upstream libs
 # don't inherit it), but the test-side SKIP guard needs to know. The parent
