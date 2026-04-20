@@ -1744,6 +1744,13 @@ Mirrors the EVM workchain's gate model.
 | `test-uno-restart-survival`         | 2 / 0 / 0                 |
 | `test-uno-determinism`              | 3 / 0 / 0                 |
 | `test-uno-state-transition-golden`  | 13 / 0 / 2 (opt-in)       |
+| `test-uno-public-input-fixture`     | 2 / 0 / 0                 |
+| `test-uno-codec-shapes`             | 5 / 0 / 0                 |
+| `test-uno-transfer`                 | all / 0 / 1 (unrelated)   |
+| `test-uno-filter`                   | all / 0 / 0               |
+| `test-uno-genesis-loader`           | 6 / 0 / 0 (K-genesis + K-bech32m) |
+| `test-uno-bech32m-envelope`         | 12 / 0 / 0 (K-bech32m)    |
+| `test-uno-nullifier-warm-lru`       | 644 / 0 / 0 (K-nullifier-warm-lru) |
 
 The two remaining skips in `test-uno-state-transition-golden` are behind `UNO_RUN_PROVE_FIXTURES=1` — they exercise slow prove-heavy records and are an intentional opt-in, not a gap. `validator-engine` links cleanly against the real `libuno_plonky3_ffi.a` via vendored corrosion-rs. All 45 design decisions in §16 are locked.
 
