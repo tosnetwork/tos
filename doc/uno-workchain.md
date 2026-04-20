@@ -634,16 +634,42 @@ The Plonky3 proof attests claims 1–8 in one shot. The verifier additionally ch
    7. Every 32-byte Ristretto255 point field (`rk`, `epk`) decompresses to a valid non-identity point on Ristretto255.
 2. **Nullifier not-spent**: for each spend, `nf ∉ nullifier_set` (LRU hit is sufficient for positive-lookup reject; negative LRU must be followed by a cell-dict lookup per §5.3).
 3. **Each `spend_auth_sig`** verifies as Schnorr-on-Ristretto255 under the corresponding `rk`, signed over `tx_hash` (BLAKE3 over canonical tx bytes excluding signatures and proof).
-4. **Plonky3 proof** verifies (covers claims 1–8 from §4.2). Public inputs are assembled into a canonical Goldilocks field-element vector in exactly the following order (verifier and prover must agree bit-identically; pinned by the Transfer AIR spec):
-   1. `scheme_id` (1 B zero-extended → 1 Goldilocks element).
-   2. `chain_id` (4 B zero-extended → 1 Goldilocks element).
-   3. `expiry_block` (u64 → 1 Goldilocks element, within field since `p > 2⁶⁴ − 2³²`).
-   4. `fee` (u64 → 1 Goldilocks element).
-   5. `anchor` (256 bits → 4 Goldilocks elements).
-   6. For each spend `i` in declared order: `nf_i` (4 elements), `rk_i.bytes` (4 elements).
-   7. For each output `j` in declared order: `cm_j` (4 elements), `epk_j.bytes` (4 elements), `filter_tag_j` (1 element, 16 bits zero-extended).
+4. **Plonky3 proof** verifies (covers claims 1–8 from §4.2). Public inputs are assembled into a canonical Goldilocks field-element vector. Verifier and prover must agree **bit-identically**; the encoding below is consensus-binding and pinned for `scheme_id = 0x01`.
 
-   Total public input count: `8 + 8·spend_count + 9·output_count` Goldilocks field elements. Verifier rejects proofs whose public-input vector has a different length or encoding.
+   **Element order** (from `PublicInputs(tx)`):
+
+   1. `scheme_id`         (u8)  → 1 Goldilocks element.
+   2. `chain_id`          (u32) → 1 Goldilocks element.
+   3. `expiry_block`      (u64) → 1 Goldilocks element, with `x < p_Goldilocks` asserted.
+   4. `fee`               (u64) → 1 Goldilocks element, with `x < p_Goldilocks` asserted.
+   5. `anchor`            (256 bits) → 4 Goldilocks elements.
+   6. For each spend `i` in declared order: `nf_i` (4 elements), `rk_i.bytes` (4 elements).
+   7. For each output `j` in declared order: `cm_j` (4 elements), `epk_j.bytes` (4 elements), `filter_tag_j` (u16 → 1 element).
+
+   Total element count: `8 + 8·spend_count + 9·output_count` Goldilocks field elements. Verifier rejects proofs whose public-input vector has a different length or encoding.
+
+   **Byte-level encoding** (each element serialized as **8 bytes little-endian u64**, matching Plonky3 `Goldilocks::from_canonical_u64` / `Goldilocks::from_wrapped_u64` canonical form):
+
+   ```
+   encode_u8 (x)            → 1 fe = x as u64;            byte form: 8 B LE
+   encode_u16(x)            → 1 fe = x as u64;            byte form: 8 B LE
+   encode_u32(x)            → 1 fe = x as u64;            byte form: 8 B LE
+   encode_u64(x)            → 1 fe = x; assert x < p_G;   byte form: 8 B LE
+   encode_256(bytes[32])    → 4 fes, reading 32-byte input as four u64 chunks
+                              in little-endian order, each reduced mod p_G:
+       fe[0] = u64::from_le_bytes(bytes[0..8])   mod p_G
+       fe[1] = u64::from_le_bytes(bytes[8..16])  mod p_G
+       fe[2] = u64::from_le_bytes(bytes[16..24]) mod p_G
+       fe[3] = u64::from_le_bytes(bytes[24..32]) mod p_G
+                              byte form: 32 B (unchanged byte order, canonical
+                              form after mod p_G reduction)
+   ```
+
+   **Total byte length** of the serialized public-input vector: `64 + 64·spend_count + 72·output_count` bytes.
+
+   **Why `mod p_G` reduction**: `p_Goldilocks = 2⁶⁴ − 2³² + 1`; a uniformly random u64 chunk has probability `(2⁶⁴ − p_G) / 2⁶⁴ = 2⁻³²` of exceeding the field. For every 256-bit input (all are Poseidon2 / Schnorr / hybrid-KEM outputs — uniformly pseudo-random by construction), the aggregate bias across four chunks is ≈ 2⁻³⁰, negligible for soundness analysis. Adversary-controlled inputs (`scheme_id`, `chain_id`, `expiry_block`, `fee`, `filter_tag`) are asserted to fit without reduction at admission.
+
+   **Cross-implementation parity is enforced by golden fixture**. P.1 (§13) produces `uno/test/golden/public-inputs-v1.hex`: a set of `(Transfer bytes, PublicInputs bytes)` pairs computed by A4's Rust encoder and re-verified by A5's C++ encoder on every CI run. Any byte-level drift is a breaking change to `scheme_id = 0x01` and triggers a `scheme_id` bump.
 5. **Apply state transition** (only after steps 1–4 all pass):
    - For each output in declared order: `state.commitment_tree.append(output.cm)`; `state.next_position += 1`; record `output.filter_tag` into this block's filter accumulator (for `uno_getBlockFilter`, §9.1).
    - For each spend in declared order: `state.nullifier_set.insert(spend.nf)`; update the nullifier LRU.
@@ -1594,7 +1620,7 @@ Mirrors the EVM workchain's gate model.
 | Phase | Deliverable | Done-when |
 |---|---|---|
 | **P.0** Plonky3 toolchain bring-up | Integrate Plonky3 Rust crates; write a minimum viable AIR (single-Poseidon2 hash + single Merkle-path verification); measure prove/verify times; validate C ABI approach via a "Hello World" Transfer-adjacent circuit. 2–3 weeks. | Minimal AIR produces and verifies; FFI round-trip works; Rust↔C++ build integrates cleanly. **This is a prerequisite before we can commit the full Transfer AIR design.** |
-| **P.1** Crypto scaffolding | Goldilocks field ops, Poseidon2 over Goldilocks, Ristretto255, Schnorr-on-Ristretto255, ML-KEM-768, hybrid-KEM combiner, stealth-address derivation, note encryption. Test vectors pass. | Cross-verify against RFC 9496 (Ristretto255), NIST ACVP (ML-KEM), Plonky3 reference (Poseidon2), eprint 2025/1444 (hybrid KEM). |
+| **P.1** Crypto scaffolding + public-input golden fixture | Goldilocks field ops, Poseidon2 over Goldilocks, Ristretto255, Schnorr-on-Ristretto255, ML-KEM-768, hybrid-KEM combiner, stealth-address derivation, note encryption. **Cross-agent consensus-binding test**: `uno/test/golden/public-inputs-v1.hex` — fixed Transfer inputs produce byte-identical serialized `PublicInputs` vectors (§4.3 step 4) from both A4's Rust encoder and A5's C++ encoder. Test vectors pass. | Cross-verify against RFC 9496 (Ristretto255), NIST ACVP (ML-KEM), Plonky3 reference (Poseidon2), eprint 2025/1444 (hybrid KEM). Public-input fixture cross-checked between Rust and C++; mismatch blocks P.2 start. |
 | **P.2** Transfer AIR + prover (Rust) | Hand-written Plonky3 AIR implementing claims 1–8 of §4.2: spends 1..4, outputs 1..4, in-circuit balance, Merkle paths, nullifier derivation, hash-chain key identity. Reference prover CLI in `tosctl`. | Valid witnesses produce accepting proofs; invalid witnesses fail at proving or verify. Cross-implementation fuzz. |
 | **P.3** Parallel verifier in C++ (FFI) | Link `uno_plonky3_ffi` into validator via minimal C ABI. **Must support parallel verification across N worker threads (N = num_cores) with deterministic output ordering — this is an ACTIVATION PREREQUISITE, not a later release gate or optimization.** Per-tx signatures and proof verifies run concurrently in the pool; state mutations remain serialized by tx order. | Verify ≤ 15 ms per 1-spend/2-output tx single-thread; ≥ 3.5× scaling on 4 cores; byte-identical state root across parallel and serial execution. The chain cannot produce blocks at target TPS without this; it is blocking. |
 | **P.4** State model + dispatch | `UnoShardState`, commitment-tree cells, nullifier dict, anchor window, block-filter accumulator, init hook, dispatch (§8). | Empty-state boot; no-tx blocks commit cleanly; state roots stable across restart. |
@@ -1689,6 +1715,7 @@ Every non-trivial choice below was made against the alternative space of publish
 32. **Block-filter encoding — decided: GCS over raw 16-bit tags, `P=15, M=2¹⁶`, no secondary hash.** §2.8.1 pins the exact encoding as a consensus-binding spec. `filter_tag` is already cryptographic (§2.8), so no BIP-158-style keyed second hash is needed; GCS operates directly on the sorted deduplicated u16 multiset. Expected size ~100–150 B per block at 30 TPS, ~180-260 B at 50 TPS burst. The filter is a **derived view**, not consensus state — any full node reconstructs it from on-chain data. Byte-identical across every implementation; wallet SDKs match validator output by spec, not by keyed-hash agreement.
 33. **FRI security parameters — decided: `log_blowup = 2`, `num_queries = 128`, `proof_of_work_bits = 16`.** §2.1 pins these as consensus-binding. Gives ~128-bit conjectured / ~64-bit proven classical soundness, ~64-bit conjectured / ~32-bit proven quantum soundness. Tighter than Plonky3/SP1/AggLayer defaults (`num_queries=84-100`, ~100-bit conjectured) because a soundness break on a privacy L1 with fixed-supply native asset enables unauthorized value creation, not just cross-chain bridge inconsistency. Cost: prove time +40%, proof size +30%, verify time +30% vs Plonky3 defaults. Accepted as the price of payment-chain-grade security. Rejected: `log_blowup=4` (doubled prove time for minimal conjectured-soundness gain); `num_queries=200` (same soundness as our choice, +50% proof size); pure 128-bit-proven target (prove time >2× slower, no meaningful real-world adversary advantage).
 34. **ConfigParam slot for UnoConfig — decided: `ConfigParam 84`.** §10.2 slot allocation follows the TOS convention of placing workchain-specific / bridge-adjacent protocol parameters in the 70s-80s cluster (existing usage: 71-73 oracle bridges, 79/81/82 jetton bridges). 84 is the first free slot after the cluster. Rejected: `26` / `27` (core-band gaps that TOS/TON upstream may backfill with future low-numbered core-protocol extensions — clash risk); `100+` (arbitrary, breaks spatial locality with 71-82). Canonical registry entry added to `doc/ConfigParam.md`.
+35. **Public-input byte encoding — decided: Plonky3-canonical little-endian u64 per Goldilocks element; 256-bit inputs split into 4 × u64 chunks in LE order with `mod p_Goldilocks` reduction.** §4.3 step 4 pins the exact byte-level spec. Total serialized length is `64 + 64·spend_count + 72·output_count` bytes. A golden fixture `uno/test/golden/public-inputs-v1.hex` enforces Rust (A4) ↔ C++ (A5) byte-identical output as a P.1 gate. Rejected: big-endian (breaks Plonky3 convention; no benefit); Bincode / serde (couples spec to crate version); application-specific formats (audit burden without gain). The `mod p_Goldilocks` reduction introduces ≈ 2⁻³⁰ aggregate bias on pseudo-random 256-bit inputs, negligible for soundness; adversary-controlled inputs are asserted `< p_Goldilocks` at admission.
 
 ---
 
