@@ -50,20 +50,27 @@
         rcm = Poseidon2("uno-rcm-v1", rseed)              // §3.1
         cm  = Poseidon2("uno-cm-v1", d, pk_d, ivk_commitment, value, rcm)  // §3.2
 
-    Bech32m envelope (§2.6 `AddressEnvelope`, HRP "uno" / "unot") is NOT
-    accepted by this loader. The dedicated `uno-bech32-v1` decoder is not
-    in-tree yet (see decision-log commit K-genesis-loader); once it lands
-    the schema will gain a `"address": "unot1…"` alternative to the hex
-    `recipient` block and auto-detect which form was used. Adopting the
-    Bech32m envelope here without the canonical decoder would risk a spec
-    divergence — per §2.6 the envelope is a protocol-level MUST and must
-    round-trip bit-identically to every wallet implementation.
+    Bech32m envelope (§2.6 `AddressEnvelope`, HRP "uno" / "unot") is ALSO
+    accepted — the per-note schema is EITHER the hex `recipient` block
+    above OR a single string field:
+
+        "address": "unot1q…"   // Bech32m-enveloped, §2.6
+
+    Both MAY be present (useful for operator cross-checks); if both are
+    present, the decoded envelope's `(d, pk_d, ivk_commitment, pk_mlkem)`
+    MUST agree byte-for-byte with the explicit hex block, otherwise the
+    loader rejects. Decoding goes through
+    `uno::crypto::decode_address_envelope` (`uno/crypto/bech32m.h`) which
+    performs the BIP-350 Bech32m polymod check, a BLAKE3 content-bound
+    checksum cross-check, HRP/network cross-validation, and a
+    version_tag whitelist.
     -------------------------------------------------------------------------
 */
 #include "uno/core/genesis.h"
 #include "uno/core/cell-state.h"
 #include "uno/core/config-param.h"
 #include "uno/core/workchain.h"
+#include "uno/crypto/bech32m.h"
 
 #include "vm/cells/CellBuilder.h"
 #include "vm/boc.h"
@@ -451,7 +458,30 @@ td::Status fill_or_verify_cm(GenesisNote& note, bool cm_supplied) {
     return td::Status::OK();
 }
 
+/// Unmarshal an `AddressEnvelope.payload` into the GenesisAddress fields.
+/// The payload layout (§2.6) is:
+///   [0..11)     diversifier `d`
+///   [11..43)    compressed Ristretto255 `pk_d`
+///   [43..75)    `ivk_commitment`
+///   [75..1259)  ML-KEM-768 `pk_mlkem` (1184 B)
+void unpack_address_payload(const ::uno_workchain::crypto::AddressEnvelope& env,
+                            GenesisAddress& out) {
+    constexpr size_t kMlkemPkBytes = 1184;
+    std::memcpy(out.diversifier.data(),     env.payload.data() +   0, 11);
+    std::memcpy(out.pk_d_compressed.data(), env.payload.data() +  11, 32);
+    std::memcpy(out.ivk_commitment.data(),  env.payload.data() +  43, 32);
+    out.pk_mlkem.assign(env.payload.data() + 75,
+                        env.payload.data() + 75 + kMlkemPkBytes);
+}
+
 /// Parse a single per-note object.
+///
+/// The recipient can be specified in two mutually-compatible forms:
+///   * `"recipient": { d, pk_d, ivk_commitment, pk_mlkem }`  — hex block
+///   * `"address":   "unot1q…"`                              — Bech32m envelope
+/// At least ONE must be present. If BOTH are present, the envelope's
+/// unpacked payload MUST byte-match the explicit hex block. Reject at
+/// parse time on any malformed envelope (§2.6 MUST).
 td::Status parse_note(td::JsonValue& note_val, size_t idx, GenesisNote& out) {
     if (note_val.type() != td::JsonValue::Type::Object) {
         return td::Status::Error(PSLICE()
@@ -459,35 +489,87 @@ td::Status parse_note(td::JsonValue& note_val, size_t idx, GenesisNote& out) {
     }
     auto& obj = note_val.get_object();
 
-    // Recipient ------------------------------------------------------------
-    TRY_RESULT(recipient_v,
-               obj.extract_required_field("recipient",
-                                          td::JsonValue::Type::Object));
-    auto& rcp = recipient_v.get_object();
-
-    TRY_RESULT(d_s,              rcp.get_required_string_field("d"));
-    TRY_STATUS(decode_hex_fixed(d_s,
-                                out.recipient.diversifier.data(),
-                                out.recipient.diversifier.size(),
-                                "recipient.d"));
-
-    TRY_RESULT(pk_d_s,           rcp.get_required_string_field("pk_d"));
-    TRY_STATUS(decode_hex_fixed(pk_d_s,
-                                out.recipient.pk_d_compressed.data(),
-                                out.recipient.pk_d_compressed.size(),
-                                "recipient.pk_d"));
-
-    TRY_RESULT(ivk_cm_s,         rcp.get_required_string_field("ivk_commitment"));
-    TRY_STATUS(decode_hex_fixed(ivk_cm_s,
-                                out.recipient.ivk_commitment.data(),
-                                out.recipient.ivk_commitment.size(),
-                                "recipient.ivk_commitment"));
-
-    TRY_RESULT(pk_mlkem_s,       rcp.get_required_string_field("pk_mlkem"));
-    // §2.7: ML-KEM-768 public key is exactly 1184 bytes.
+    // ML-KEM-768 public key is exactly 1184 bytes (§2.7).
     constexpr size_t kMlkemPkBytes = 1184;
-    TRY_STATUS(decode_hex_var(pk_mlkem_s, out.recipient.pk_mlkem,
-                              kMlkemPkBytes, "recipient.pk_mlkem"));
+
+    // Track which forms we saw so we can (a) require at least one, and
+    // (b) cross-check when both are present.
+    bool have_hex_recipient = obj.has_field("recipient");
+    bool have_address_env   = obj.has_field("address");
+    if (!have_hex_recipient && !have_address_env) {
+        return td::Status::Error(PSLICE()
+            << "uno/genesis: notes[" << idx
+            << "] missing both \"recipient\" and \"address\"");
+    }
+
+    // --- Envelope form (§2.6 Bech32m). ---------------------------------
+    GenesisAddress env_addr{};
+    bool env_ok = false;
+    if (have_address_env) {
+        TRY_RESULT(addr_s, obj.get_required_string_field("address"));
+        ::uno_workchain::crypto::AddressEnvelope env{};
+        auto err = ::uno_workchain::crypto::decode_address_envelope(
+            td::Slice(addr_s).str(), env);
+        if (err != ::uno_workchain::crypto::EnvelopeError::kOk) {
+            return td::Status::Error(PSLICE()
+                << "uno/genesis: notes[" << idx
+                << "] malformed Bech32m address envelope (err="
+                << static_cast<int>(err) << ")");
+        }
+        unpack_address_payload(env, env_addr);
+        env_ok = true;
+    }
+
+    // --- Explicit hex block. --------------------------------------------
+    GenesisAddress hex_addr{};
+    bool hex_ok = false;
+    if (have_hex_recipient) {
+        TRY_RESULT(recipient_v,
+                   obj.extract_required_field("recipient",
+                                              td::JsonValue::Type::Object));
+        auto& rcp = recipient_v.get_object();
+
+        TRY_RESULT(d_s,              rcp.get_required_string_field("d"));
+        TRY_STATUS(decode_hex_fixed(d_s,
+                                    hex_addr.diversifier.data(),
+                                    hex_addr.diversifier.size(),
+                                    "recipient.d"));
+
+        TRY_RESULT(pk_d_s,           rcp.get_required_string_field("pk_d"));
+        TRY_STATUS(decode_hex_fixed(pk_d_s,
+                                    hex_addr.pk_d_compressed.data(),
+                                    hex_addr.pk_d_compressed.size(),
+                                    "recipient.pk_d"));
+
+        TRY_RESULT(ivk_cm_s,         rcp.get_required_string_field("ivk_commitment"));
+        TRY_STATUS(decode_hex_fixed(ivk_cm_s,
+                                    hex_addr.ivk_commitment.data(),
+                                    hex_addr.ivk_commitment.size(),
+                                    "recipient.ivk_commitment"));
+
+        TRY_RESULT(pk_mlkem_s,       rcp.get_required_string_field("pk_mlkem"));
+        TRY_STATUS(decode_hex_var(pk_mlkem_s, hex_addr.pk_mlkem,
+                                  kMlkemPkBytes, "recipient.pk_mlkem"));
+        hex_ok = true;
+    }
+
+    // --- Reconcile / choose. --------------------------------------------
+    if (env_ok && hex_ok) {
+        // Both forms present → cross-check byte-for-byte.
+        if (env_addr.diversifier      != hex_addr.diversifier      ||
+            env_addr.pk_d_compressed  != hex_addr.pk_d_compressed  ||
+            env_addr.ivk_commitment   != hex_addr.ivk_commitment   ||
+            env_addr.pk_mlkem         != hex_addr.pk_mlkem) {
+            return td::Status::Error(PSLICE()
+                << "uno/genesis: notes[" << idx
+                << "] \"address\" envelope disagrees with \"recipient\" hex block");
+        }
+        out.recipient = std::move(hex_addr);
+    } else if (env_ok) {
+        out.recipient = std::move(env_addr);
+    } else {
+        out.recipient = std::move(hex_addr);
+    }
 
     // value ---------------------------------------------------------------
     // `extract_required_field` demands a single JSON type, but the schema

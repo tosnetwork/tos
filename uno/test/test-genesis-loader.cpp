@@ -52,6 +52,7 @@
 #include "uno/core/commitment-tree.h"
 #include "uno/core/anchor-window.h"
 #include "uno/core/workchain.h"
+#include "uno/crypto/bech32m.h"
 
 // ----- Tracked-printf harness -----------------------------------------------
 
@@ -400,6 +401,83 @@ static void test_reject_supply_mismatch() {
 }
 
 // ---------------------------------------------------------------------------
+// Envelope-form recipient: feed a note whose address is supplied as a
+// Bech32m "address": "unot1..." string (§2.6). The loader MUST accept this
+// alternative and produce the same GenesisAddress it would have built from
+// the explicit hex block.
+// ---------------------------------------------------------------------------
+
+static void test_load_address_envelope_form() {
+    tprintf("[TEST] test_load_address_envelope_form\n");
+
+    // Build an envelope whose payload layout mirrors mk_recipient_json:
+    //   d      = 0x01 × 11
+    //   pk_d   = 0x22 × 32
+    //   ivk_cm = 0x33 × 32
+    //   pk_ml  = 0x44 × 1184
+    ::uno_workchain::crypto::AddressEnvelope env{};
+    env.version_tag = ::uno_workchain::crypto::kAddressEnvelopeVersionV1;
+    env.network_tag = ::uno_workchain::crypto::kAddressNetworkTestnet;
+    std::memset(env.payload.data() +   0, 0x01,   11);
+    std::memset(env.payload.data() +  11, 0x22,   32);
+    std::memset(env.payload.data() +  43, 0x33,   32);
+    std::memset(env.payload.data() +  75, 0x44, 1184);
+    std::string encoded = ::uno_workchain::crypto::encode_address_envelope(env);
+    if (encoded.empty()) {
+        tprintf("  FAILED: encode_address_envelope returned empty\n");
+        return;
+    }
+
+    // Note object uses `"address"` instead of the `"recipient"` hex block.
+    std::string body = "{";
+    body += "\"scheme_id\":1,\"chain_id\":\"UNOT\",\"notes\":[{";
+    body += "\"address\":\""; body += encoded; body += "\",";
+    body += "\"value\":1000,\"rseed\":\"";
+    body += hex_repeat(0xA1, 32);
+    body += "\"}]}";
+
+    auto path = write_tmp(body, "address-envelope").move_as_ok();
+    auto dist_r = uno_workchain::load_genesis_distribution(path);
+    if (dist_r.is_error()) {
+        tprintf("  FAILED: envelope-form load: %s\n",
+                dist_r.error().message().c_str());
+        return;
+    }
+    auto dist = dist_r.move_as_ok();
+    if (dist.notes.size() != 1) {
+        tprintf("  FAILED: expected 1 note, got %zu\n", dist.notes.size());
+        return;
+    }
+    const auto& addr = dist.notes[0].recipient;
+    for (size_t i = 0; i <   11; ++i) if (addr.diversifier[i]     != 0x01) { tprintf("  FAILED: d[%zu] != 0x01\n", i); return; }
+    for (size_t i = 0; i <   32; ++i) if (addr.pk_d_compressed[i] != 0x22) { tprintf("  FAILED: pk_d[%zu] != 0x22\n", i); return; }
+    for (size_t i = 0; i <   32; ++i) if (addr.ivk_commitment[i]  != 0x33) { tprintf("  FAILED: ivk_cm[%zu] != 0x33\n", i); return; }
+    if (addr.pk_mlkem.size() != 1184)                                       { tprintf("  FAILED: pk_mlkem size=%zu\n", addr.pk_mlkem.size()); return; }
+    for (size_t i = 0; i < 1184; ++i) if (addr.pk_mlkem[i]        != 0x44) { tprintf("  FAILED: pk_mlkem[%zu] != 0x44\n", i); return; }
+
+    // Also: swap in a corrupted envelope (flip last char) and confirm
+    // the loader rejects at parse time.
+    std::string corrupted = encoded;
+    corrupted.back() = (corrupted.back() == 'q' ? 'p' : 'q');
+    std::string bad_body = "{";
+    bad_body += "\"scheme_id\":1,\"chain_id\":\"UNOT\",\"notes\":[{";
+    bad_body += "\"address\":\""; bad_body += corrupted; bad_body += "\",";
+    bad_body += "\"value\":1000,\"rseed\":\"";
+    bad_body += hex_repeat(0xA1, 32);
+    bad_body += "\"}]}";
+    auto bad_path = write_tmp(bad_body, "address-envelope-bad").move_as_ok();
+    auto bad_r = uno_workchain::load_genesis_distribution(bad_path);
+    if (bad_r.is_ok()) {
+        tprintf("  FAILED: accepted corrupted Bech32m envelope\n");
+        return;
+    }
+
+    tprintf("  PASSED (envelope unpacked to the expected payload; "
+            "flipped-checksum envelope rejected: %s)\n",
+            bad_r.error().message().c_str());
+}
+
+// ---------------------------------------------------------------------------
 
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
@@ -411,6 +489,7 @@ int main() {
     test_reject_short_rseed();
     test_reject_negative_value();
     test_reject_supply_mismatch();
+    test_load_address_envelope_form();
 
     tprintf("\nTotal: passed=%d, failures=%d, skips=%d\n",
             g_passes.load(), g_failures.load(), g_skips.load());

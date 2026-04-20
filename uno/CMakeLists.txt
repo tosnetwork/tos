@@ -51,6 +51,9 @@ set(UNO_CRYPTO_AGENT3
   crypto/stealth-address.cpp
   crypto/note-encryption.cpp
   crypto/internal/blake3_adapter.cpp
+  # K-bech32m: §2.6 AddressEnvelope Bech32m codec — shared between wallet
+  # CLI, RPC validation, and the genesis-loader "address" alternative.
+  crypto/bech32m.cpp
 )
 
 set(UNO_CRYPTO_AGENT4

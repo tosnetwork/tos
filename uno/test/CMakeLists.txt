@@ -94,6 +94,12 @@ add_executable(test-uno-nullifier-warm-lru
 # short rseed, negative value, supply mismatch). See test file header for scope.
 add_executable(test-uno-genesis-loader           test-genesis-loader.cpp)
 
+# K-bech32m: §2.6 AddressEnvelope codec round-trips and reject paths (bad HRP,
+# HRP/network mismatch, flipped checksum symbol, flipped payload byte, short
+# payload, unknown version, mixed case, illegal charset). Also pins the
+# uppercase-tolerant BIP-173 decode path.
+add_executable(test-uno-bech32m-envelope         test-bech32m-envelope.cpp)
+
 # Build-only helper: regenerates uno/test/golden/state-transitions-v1.hex.
 # NOT registered with ctest — invocation is a manual operator step (see the
 # file's own doc comment). Links against uno_workchain for encode_transfer.
@@ -113,7 +119,8 @@ foreach(_t test-uno-transfer
            test-uno-restart-survival
            test-uno-mandatory-negatives
            test-uno-nullifier-warm-lru
-           test-uno-genesis-loader)
+           test-uno-genesis-loader
+           test-uno-bech32m-envelope)
   target_link_libraries(${_t} PRIVATE uno_workchain)
   target_include_directories(${_t} PRIVATE ${CMAKE_SOURCE_DIR})
   if (COMMAND tos_test)
