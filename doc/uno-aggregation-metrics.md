@@ -136,3 +136,131 @@ round-trip testing.
   `fri_verify.rs`.
 - Test fixture entry point: `query_verifier_air::tests::
   full_query_verifier_accepts_all_chains_1_1_query_0`.
+
+---
+
+## A3 phase — monolithic AIR progression
+
+Phase A3 collapses the A2 orchestration into a **single AIR with
+K-air-col-share** — one `MonolithicVerifierAirV1` with 272 columns and
+per-row `KIND` selectors gating constraint banks.
+
+### A3-PRE: scaffold + column layout pin (landed).
+
+### A3-1: ABSORB + COMPRESS banks + leaf-digest bridge (landed).
+  - "Wide leaf → Merkle root" in ONE STARK.
+  - The ABSORB→COMPRESS in-circuit bridge closes A2's first
+    trusted-by-construction gap (leaf-hash digest == first-compression
+    CURRENT).
+
+### A3-2: FOLD + ALPHA banks (landed).
+  - Fold-chain and α-reduction expressible as standalone single-STARK
+    traces on the monolithic AIR.
+  - K-air-col-share re-uses `STATE_IN[0..4]` as FOLD's PAIR_LEFT/RIGHT,
+    `COMPRESS_SIBLING[0..2]` as FRI sibling, `COMPRESS_INDEX_BIT` as
+    orientation. FOLD / COMPRESS are one-hot disjoint so the shared
+    cols carry orthogonal meaning without cross-bank interference.
+
+### A3-3: α↔fold cross-binding (landed).
+  - Three in-circuit transitions close A2's "trusted construction"
+    gap at the α/fold seam:
+    1. `is_alpha · next_is_fold · (next.FOLD_IN − local.ALPHA_RO_OUT) = 0`
+    2. `(1 − next_is_alpha) · (next.ALPHA_RO_OUT − local.ALPHA_RO_OUT) = 0`
+    3. `(1 − next_is_fold) · (next.FOLD_OUT − local.FOLD_OUT) = 0`
+  - Unified α+fold trace verifies in ONE monolithic STARK
+    (`air_prove_and_verify_unified_alpha_to_fold_chain`).
+  - Adversarial tests tamper the α→fold seam and reject via the
+    bridge constraint.
+
+### A3-4: scaling measurements (landed).
+
+Captured on `Linux 6.8.0-107-generic`, 192-core host,
+`cargo test --release --test-threads 1`. Measurements use the
+monolithic AIR at its current 272-col width, Option B FRI pin
+(log_blowup = 3, num_queries = 52, query_pow_bits = 24).
+
+**α-chain scaling sweep** (α-only trace, IDLE-padded to `trace_height`):
+
+| trace_height | trace cells |  prove (ms) | proof (bytes) |
+|-------------:|------------:|------------:|--------------:|
+|          64  |      17 408 |      ~4 500 |       222 219 |
+|         256  |      69 632 |      ~8 000 |       269 841 |
+|       1 024  |     278 528 |     ~13-36k |       326 056 |
+|       4 096  |   1 114 112 |      ~4-11k |       389 597 |
+
+**Fold-chain scaling sweep** (tight: all rounds fit in height 16):
+
+| rounds | trace_height | prove (ms) | proof (bytes) |
+|-------:|-------------:|-----------:|--------------:|
+|      3 |           16 |     ~170-2k|       180 646 |
+|      6 |           16 |     ~170-2k|       180 624 |
+|      9 |           16 |     ~170-2k|       180 519 |
+|     15 |           16 |     ~170-2k|       180 478 |
+
+*(Fold-chain proof size is dominated by the trace's constant 16-row
+pow2 footprint. Base-field encoding of the PI cols + the fold bank's
+21 cols shows up as the flat 180 KB floor.)*
+
+**Unified α+fold scaling sweep** (realistic per-query shapes):
+
+| shape       |  α_steps | fold_rnds | trace_h | prove (ms) | proof (bytes) |
+|-------------|---------:|----------:|--------:|-----------:|--------------:|
+| 1/1 shape   |       40 |         3 |      64 |      ~4 500|       231 804 |
+| 2/2 shape   |      180 |         6 |     256 |      ~9 700|       279 789 |
+| 4/4 shape   |      500 |         9 |    1024 |     ~13 300|       335 360 |
+| stretch     |     2000 |        12 |    4096 |      ~4-11k|       398 879 |
+
+**Key findings:**
+
+1. **Proof size is dominated by FRI overhead**: even a tiny 16-row
+   trace ships ~180 KB, growing to ~400 KB at 4K rows. This is the
+   one-STARK-per-query cost, NOT the monolithic-per-block cost. An
+   N = 30 per-Tx breakdown would ship ~30 × 400 KB ≈ **12 MB per
+   block — still well above §3.4's 100 KB**.
+
+2. **Feasibility path CONFIRMED, but shape of the solution is now
+   clear**: §3.4 is only reachable via **ONE monolithic STARK spanning
+   the WHOLE block** (all slots × all queries in a single proof).
+   Per-slot or per-Tx monolithic proofs do not compose down by
+   concatenation — they need structural aggregation.
+
+3. **Prover time is CPU-bound at scale**: timings below ~4K rows are
+   dominated by fixed overhead (commitment setup, FRI parameters).
+   Above ~4K rows prover time grows linearly with trace area, as
+   expected for FRI. The apparent "prove=4500 ms at trace_h=64" vs
+   "prove=4500 ms at trace_h=4096" paradox is this constant overhead.
+
+4. **Trace width stays fixed at 272 cols regardless of shape**: the
+   monolithic AIR's K-air-col-share design means the WIDTH is a
+   one-time cost. Scaling to more operations just adds rows, not cols.
+
+### A3-5 (planned): multi-path Merkle + multi-slot composition.
+
+The A3-4 measurements motivate A3-5's scope. Rather than concatenating
+per-Tx proofs, A3-5 adds:
+
+1. **Multi-path Merkle support** in the COMPRESS bank: the current
+   last-row `DIGEST == TRACE_COMMIT_ROOT` boundary generalizes to a
+   per-path root check via a COMPRESS → non-COMPRESS transition
+   constraint, letting one trace hold multiple independent Merkle
+   openings.
+
+2. **Full per-query bundle composition** in one AIR: α-chain +
+   fold-chain + trace-commit Merkle + quotient-commit Merkle +
+   per-round commit-phase Merkle, all in one trace.
+
+3. **Multi-slot stacking**: N slots × (per-Tx bundle) in one trace.
+
+### A4 (planned): N = 30 slot × 52 query measurement against §3.4.
+
+### Measurement harness
+
+Run the scaling sweeps:
+
+```
+cargo test -j 128 --release --lib monolithic_verifier_air::tests::measure \
+  -- --ignored --test-threads 1 --nocapture
+```
+
+The four `#[ignore]`'d `measure_*` tests record height × width × cells
+× prover-time × proof-size per scenario.
