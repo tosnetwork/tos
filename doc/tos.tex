@@ -434,6 +434,11 @@ is organized around three concrete execution domains:
   post-quantum note encryption and a bridgeless shielded-pool
   architecture.
 \end{itemize}
+The current native-asset naming of these execution domains is
+likewise fixed in product terminology: {\em TOS\/} is the native
+asset of the base chain (Workchain Zero), {\em EMO\/} is the native
+asset of the EVM-oriented workchain (Workchain One), and {\em UNO\/}
+is the native asset of the privacy workchain (Workchain Two).
 These three domains share masterchain coordination, validator
 economics and the same node implementation. Users choose an execution
 domain per transaction; validators may advertise support and
@@ -645,6 +650,12 @@ There is one special native asset with $\currencyid=0$, namely {\em
 TOS}. It is the basic asset of Workchain Zero. It is also used for
 transaction fees, validator stakes, storage accounting and other
 protocol-native payments.
+
+In the current three-domain TOS product structure, Workchain One uses
+{\em EMO\/} as its native asset, while Workchain Two (Uno) uses {\em
+UNO\/} as its native asset. These workchain-native assets are
+distinct from the base-chain asset TOS even though all three
+workchains remain under one masterchain and one validator economy.
 
 In principle, other workchains may collect transaction fees in other
 tokens. In this case, some smart contract or protocol mechanism for
