@@ -71,6 +71,7 @@ pub mod fri_verify;
 pub mod merkle_path_air;
 pub mod fold_air;
 pub mod alpha_reduction_air;
+pub mod query_verifier_air;
 
 /// Result codes returned across the C ABI.
 ///
