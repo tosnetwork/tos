@@ -226,11 +226,31 @@ Adversarial tests: swapping per-path roots rejects at the per-path
 check; TCR drift within a compression run rejects at the in-run
 persistence constraint.
 
-### A3-5b (planned): Full per-query bundle composition
+### A3-5b: Full per-query bundle composition (landed)
 
-Compose in ONE AIR: α + fold + trace-commit Merkle + quot-commit
-Merkle + per-round commit-phase Merkles. Unblocks the one-STARK-per-
-query shape for §3.4 feasibility.
+Composes α-reduction chain + N independent Merkle paths + FRI fold
+chain into ONE monolithic STARK via
+`build_alpha_merkle_fold_bundle_trace`.
+
+Key result: **no new constraints were required**. A3-3's non-α
+`ALPHA_RO_OUT` persistence and non-fold `FOLD_OUT` persistence thread
+ρ_final from the last ALPHA row through all Merkle rows into the
+last pre-fold row's `FOLD_OUT`. The A3-2 FOLD threading transition
+(`next_is_fold · (next.FOLD_IN − local.FOLD_OUT) = 0`) then reads
+that `FOLD_OUT` into first-FOLD's `FOLD_IN`, seeding the fold chain
+with ρ_final in-circuit.
+
+Acceptance tests:
+- `air_prove_and_verify_bundle_alpha_1merkle_fold` — bundle with 1
+  Merkle path (e.g. trace-commit only).
+- `air_prove_and_verify_bundle_alpha_2merkle_fold` — bundle with 2
+  paths carrying different roots (mirrors the trace-commit + quot-
+  commit pair in one per-query bundle).
+
+Adversarial tests:
+- `air_rejects_bundle_tampered_merkle_sibling` — per-path check fires.
+- `air_rejects_bundle_tampered_alpha` — DIFF_QUOT/RO cascade rejects.
+- `air_rejects_bundle_tampered_fold_sibling` — fold orientation fires.
 
 ### A3-5c (planned): Multi-slot stacking
 
