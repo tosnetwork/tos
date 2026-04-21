@@ -9,39 +9,31 @@
 //! - a flat-bytes serialization consumed by the P.6 foundation `send` path
 //!   (see `src/send.rs`).
 //!
-//! # Scope and parity caveat (⚠️ V1-3b pending)
+//! # Scope and parity caveat
 //!
-//! On the C++ side (`uno/core/transaction.cpp`) the Transfer is packed as a
-//! TOS `Cell` tree: `enc_ciphertext`, `mlkem_ct`, and `zk_proof` live as
-//! chunk-chain refs, and `canonical_tx_hash` absorbs each ref's 32-byte
-//! cell-root hash (a TOS-specific Merkle construction). This tosctl crate
-//! currently uses a simpler Rust-only mirror:
+//! This module provides the flat self-contained byte layout for
+//! `encode_transfer_wire` / `decode_transfer_wire`. It is used by the
+//! offline `tests/send_roundtrip.rs` to exercise the end-to-end send
+//! pipeline through a tosctl-uno-internal codec pair, and its
+//! `canonical_tx_hash` formula mirrors the consensus-bound preimage
+//! the daemon signs over.
 //!
-//! ```text
-//!   cell_hash_rust(bytes) := BLAKE3(bytes)
-//! ```
+//! **Daemon-compatible path (V1-3b, landed)**: production submission
+//! (`send::run_send`) routes through `crate::boc_encode::encode_transfer_boc`
+//! instead of the flat encoder below. That emitter produces TOS BoC
+//! bytes whose Cell tree matches `uno/core/transaction.cpp::encode_transfer`
+//! exactly; the daemon's `std_boc_deserialize`-based
+//! `decode_transfer_bytes` parses them cleanly. The flat encoder here
+//! is NOT daemon-compatible (flat layout vs Cell tree); it exists only
+//! so the offline plumbing test can round-trip without depending on
+//! the daemon's BoC reader.
 //!
-//! for `enc_ciphertext` and `mlkem_ct`. The resulting `tx_hash` is
-//! deterministic and covers every consensus-bound byte of the tx; it is NOT,
-//! however, bit-identical to what `uno/core/transaction.cpp` will produce
-//! for the same tuple.
-//!
-//! **This means**: the `encode_transfer_wire` output in this module does
-//! NOT round-trip through the daemon's `decode_transfer_bytes` — the daemon
-//! runs `vm::std_boc_deserialize` and walks a Cell tree, which expects the
-//! `uno/core/transaction.cpp::encode_transfer` BoC layout (root with 3 refs
-//! → spends_root, outputs_root, zk_proof chunk chain). The tosctl-uno flat
-//! layout below CANNOT be submitted to a real daemon as-is.
-//!
-//! **Status**: the offline pipeline (`send.rs`) and all `tosctl-uno` tests
-//! use this flat encoding and round-trip cleanly within the crate. The
-//! real daemon-compatible path is scheduled as **V1-3b** per
-//! `doc/uno-aggregation-design.md` §4.1 — resolved by path-depping the
-//! `tosctl/src/block` (`chain_block`) crate and reimplementing
-//! `encode_transfer_wire` to emit a BoC whose Cell tree matches
-//! `uno/core/transaction.cpp::encode_transfer` byte-for-byte. Tests will
-//! round-trip through the daemon's decoder path (same cell walker, same
-//! expected ref fan-out).
+//! The flat `canonical_tx_hash` below uses `BLAKE3(enc_ct_bytes)` as
+//! the "cell hash" proxy, which is NOT bit-identical to
+//! `uno/core/transaction.cpp::canonical_tx_hash` (which uses the TOS
+//! cell-root hash). The production path recomputes the canonical
+//! tx_hash via BoC cell-root hashing once BoC encoding is complete;
+//! offline tests still verify structural properties via the flat path.
 //!
 //! Inline layout of `encode_transfer_wire` (flat bytes, self-contained):
 //!

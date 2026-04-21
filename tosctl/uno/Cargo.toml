@@ -12,15 +12,15 @@
 #                  `uno_plonky3_ffi`. K-P6-wire landed; 4 integration tests
 #                  pass. Proof size ~200 KB–2 MB across 1..4 × 1..4 shape.
 #
-# KNOWN GAP (K-P6-boc-parity — V1-3b): `transfer::encode_transfer_wire`
-# uses a FLAT self-contained byte layout; the daemon's
-# `uno/core/transaction.cpp::decode_transfer_bytes` expects a TOS BoC
-# (tree of Cells with refs). These DO NOT round-trip today — send
-# pipeline produces proofs that verify offline but cannot be submitted
-# to a real daemon until the wire-encoding path goes through
-# `tosctl/src/block` `write_boc` + the per-shape Cell tree in
-# `encode_transfer`. Scheduled as V1-3b; no wallet-to-daemon UX
-# regression risk until then because v1 testnet is still ahead (V1-4).
+# V1-3b (landed): `boc_encode::encode_transfer_boc` produces TOS BoC
+# bytes whose Cell-tree shape matches the daemon's
+# `uno/core/transaction.cpp::encode_transfer` exactly. Daemon's
+# `std_boc_deserialize`-based decoder accepts these bytes; production
+# `run_send` uses this path. `transfer::encode_transfer_wire` stays
+# available for offline send_roundtrip tests (flat layout, tosctl-uno-
+# internal only; NOT daemon-compatible). Daemon's chunk-chain walker
+# cap also raised (2048 → 8192 chunks) to cover the v1 worst-case
+# ~915 KB zk_proof. See uno/core/transaction.cpp kChunkChainMaxChunks.
 #
 # Standalone workspace — does NOT merge into `tosctl/src/Cargo.toml` to avoid
 # bumping the main tosctl toolchain (which pins Rust 1.91.1 / edition 2024).
