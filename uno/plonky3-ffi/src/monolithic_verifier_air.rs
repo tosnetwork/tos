@@ -534,6 +534,249 @@ pub fn build_leaf_to_root_trace(
 }
 
 // ---------------------------------------------------------------------------
+// A3-5a trace builder: multiple independent Merkle paths in ONE trace.
+//
+// Each path is a (leaf, opening_proof, index, expected_root) tuple. The
+// trace emits each path's ABSORB rows (leaf hash) + COMPRESS rows
+// (Merkle walk), then pads with IDLE.
+//
+// Constraint model (A3-5a):
+//   - TRACE_COMMIT_ROOT persists within a COMPRESS run but is FREE
+//     at ABSORB rows (between paths). The builder writes the current
+//     path's expected_root on every COMPRESS row of that path.
+//   - The per-path root check fires at each path's COMPRESS → non-
+//     COMPRESS transition: local.DIGEST == local.TRACE_COMMIT_ROOT.
+//   - The last-row boundary fires only if is_compress; otherwise IDLE
+//     persistence carries the last path's root through to the last row.
+// ---------------------------------------------------------------------------
+
+/// A single Merkle opening for the multi-path builder.
+#[derive(Clone, Debug)]
+pub struct MerkleOpening<'a> {
+    /// Leaf row (base-field values).
+    pub leaf: &'a [Goldilocks],
+    /// Sibling digests, least-significant-level first.
+    pub opening_proof: &'a [Digest],
+    /// Leaf index (low bits drive INDEX_BIT orientation).
+    pub index: usize,
+    /// Expected root at the end of this path.
+    pub expected_root: Digest,
+}
+
+/// Build a trace that verifies multiple independent Merkle openings in
+/// ONE monolithic STARK. Each opening runs its ABSORB rows then its
+/// COMPRESS rows; IDLE padding fills the remainder.
+pub fn build_multi_path_leaf_to_root_trace(
+    paths: &[MerkleOpening<'_>],
+    trace_height: usize,
+) -> Result<Vec<Goldilocks>, TraceBuildError> {
+    if paths.is_empty() {
+        return Err(TraceBuildError::EmptyPath);
+    }
+    if !trace_height.is_power_of_two() {
+        return Err(TraceBuildError::TraceHeightNotPow2 { got: trace_height });
+    }
+    // Sum physical rows across all paths.
+    let mut physical_rows = 0usize;
+    for p in paths {
+        if p.leaf.is_empty() {
+            return Err(TraceBuildError::EmptyLeaf);
+        }
+        if p.opening_proof.is_empty() {
+            return Err(TraceBuildError::EmptyPath);
+        }
+        let n_absorb = (p.leaf.len() + SPONGE_RATE - 1) / SPONGE_RATE;
+        let n_compress = p.opening_proof.len();
+        physical_rows += n_absorb + n_compress;
+    }
+    if physical_rows > trace_height {
+        return Err(TraceBuildError::TraceHeightTooSmall {
+            physical_rows,
+            trace_height,
+        });
+    }
+
+    let width = col::WIDTH;
+    let mut flat = vec![Goldilocks::default(); trace_height * width];
+    let zero_g = Goldilocks::default();
+    let perm = default_goldilocks_poseidon2_8();
+
+    let write_kind = |out: &mut [Goldilocks], kind: u8| {
+        for k in 0..NUM_OP_KINDS {
+            out[col::KIND0 + k] =
+                if k as u8 == kind { Goldilocks::new(1) } else { zero_g };
+        }
+    };
+    let write_root_pi = |out: &mut [Goldilocks], root: &Digest| {
+        for i in 0..DIGEST_WIDTH {
+            out[col::TRACE_COMMIT_ROOT0 + i] = root[i];
+        }
+    };
+    let write_block_len_flags = |out: &mut [Goldilocks], len: usize| {
+        debug_assert!(len <= SPONGE_RATE);
+        out[col::ABSORB_BLOCK_LEN] = Goldilocks::new(len as u64);
+        for k in 0..=SPONGE_RATE {
+            out[col::ABSORB_BLOCK_LEN_FLAG0 + k] =
+                if k == len { Goldilocks::new(1) } else { zero_g };
+        }
+    };
+
+    let mut row_cursor: usize = 0;
+
+    for path in paths {
+        let n_absorb = (path.leaf.len() + SPONGE_RATE - 1) / SPONGE_RATE;
+        let n_compress = path.opening_proof.len();
+
+        // === ABSORB rows ===
+        let mut state: [Goldilocks; SPONGE_WIDTH] = [zero_g; SPONGE_WIDTH];
+        for r in 0..n_absorb {
+            let base = (row_cursor + r) * width;
+            let row = &mut flat[base..base + width];
+            write_kind(row, OP_KIND_ABSORB);
+
+            let is_first = r == 0;
+            let is_last = r + 1 == n_absorb;
+            row[col::ABSORB_IS_FIRST] = if is_first { Goldilocks::new(1) } else { zero_g };
+            row[col::ABSORB_IS_LAST] = if is_last { Goldilocks::new(1) } else { zero_g };
+
+            let block_start = r * SPONGE_RATE;
+            let block_len = core::cmp::min(SPONGE_RATE, path.leaf.len() - block_start);
+            write_block_len_flags(row, block_len);
+            for i in 0..block_len {
+                row[col::ABSORB_BLOCK0 + i] = path.leaf[block_start + i];
+            }
+
+            if is_first {
+                // Reset state at the start of each path.
+                state = [zero_g; SPONGE_WIDTH];
+            }
+            for i in 0..block_len {
+                state[i] = path.leaf[block_start + i];
+            }
+            for i in 0..SPONGE_WIDTH {
+                row[col::STATE_IN0 + i] = state[i];
+            }
+            perm.permute_mut(&mut state);
+            for i in 0..SPONGE_WIDTH {
+                row[col::STATE_OUT0 + i] = state[i];
+            }
+            if is_last {
+                for i in 0..DIGEST_WIDTH {
+                    row[col::DIGEST0 + i] = state[i];
+                }
+            }
+            // TRACE_COMMIT_ROOT on ABSORB rows is free, but writing the
+            // path's expected root here gives a clean audit trail.
+            write_root_pi(row, &path.expected_root);
+
+            let p2_witness = gen_p2_witness({
+                let mut s: [Goldilocks; SPONGE_WIDTH] = [zero_g; SPONGE_WIDTH];
+                for i in 0..SPONGE_WIDTH {
+                    s[i] = row[col::STATE_IN0 + i];
+                }
+                s
+            });
+            for (i, v) in p2_witness.into_iter().enumerate() {
+                row[col::P2_BLOCK + i] = v;
+            }
+        }
+
+        // === COMPRESS rows ===
+        let mut running: Digest = {
+            let last_absorb_base = (row_cursor + n_absorb - 1) * width;
+            let mut d = [zero_g; DIGEST_WIDTH];
+            for i in 0..DIGEST_WIDTH {
+                d[i] = flat[last_absorb_base + col::STATE_OUT0 + i];
+            }
+            d
+        };
+        let mut idx = path.index;
+        for (r, sibling) in path.opening_proof.iter().enumerate() {
+            let row_idx = row_cursor + n_absorb + r;
+            let base = row_idx * width;
+            let row = &mut flat[base..base + width];
+            write_kind(row, OP_KIND_COMPRESS);
+            write_block_len_flags(row, 0);
+
+            let bit = (idx & 1) as u64;
+            let (left, right) = if bit == 0 {
+                (running, *sibling)
+            } else {
+                (*sibling, running)
+            };
+            for i in 0..DIGEST_WIDTH {
+                row[col::COMPRESS_CURRENT0 + i] = running[i];
+                row[col::COMPRESS_SIBLING0 + i] = sibling[i];
+            }
+            row[col::COMPRESS_INDEX_BIT] = Goldilocks::new(bit);
+            for i in 0..DIGEST_WIDTH {
+                row[col::STATE_IN0 + i] = left[i];
+                row[col::STATE_IN0 + DIGEST_WIDTH + i] = right[i];
+            }
+            let mut s: [Goldilocks; SPONGE_WIDTH] = [zero_g; SPONGE_WIDTH];
+            for i in 0..SPONGE_WIDTH {
+                s[i] = row[col::STATE_IN0 + i];
+            }
+            // Capture pre-permute state for the P2 witness; `gen_p2_witness`
+            // needs the input, not the output.
+            let state_in_values = s;
+            perm.permute_mut(&mut s);
+            for i in 0..SPONGE_WIDTH {
+                row[col::STATE_OUT0 + i] = s[i];
+            }
+            let new_digest: Digest = {
+                let mut d = [zero_g; DIGEST_WIDTH];
+                for i in 0..DIGEST_WIDTH {
+                    d[i] = s[i];
+                }
+                d
+            };
+            for i in 0..DIGEST_WIDTH {
+                row[col::DIGEST0 + i] = new_digest[i];
+            }
+            write_root_pi(row, &path.expected_root);
+
+            let p2_witness = gen_p2_witness(state_in_values);
+            for (i, v) in p2_witness.into_iter().enumerate() {
+                row[col::P2_BLOCK + i] = v;
+            }
+
+            running = new_digest;
+            idx >>= 1;
+        }
+
+        // Sanity: final digest equals the path's expected root.
+        debug_assert_eq!(
+            running, path.expected_root,
+            "multi-path builder: path digest doesn't match expected_root",
+        );
+
+        row_cursor += n_absorb + n_compress;
+    }
+
+    // === IDLE padding ===
+    let p2_zero_witness = gen_p2_witness_zero();
+    for r in physical_rows..trace_height {
+        let prev_base = (r - 1) * width;
+        let prev_row = flat[prev_base..prev_base + width].to_vec();
+        let base = r * width;
+        let row = &mut flat[base..base + width];
+        for c in col::STATE_IN0..col::P2_BLOCK {
+            row[c] = prev_row[c];
+        }
+        write_kind(row, OP_KIND_IDLE);
+        row[col::ABSORB_IS_FIRST] = zero_g;
+        row[col::ABSORB_IS_LAST] = zero_g;
+        write_block_len_flags(row, 0);
+        for (i, v) in p2_zero_witness.iter().enumerate() {
+            row[col::P2_BLOCK + i] = *v;
+        }
+    }
+
+    Ok(flat)
+}
+
+// ---------------------------------------------------------------------------
 // A3-2 trace builders: ALPHA-only and FOLD-only chains.
 //
 // These are standalone test traces — they exercise the ALPHA / FOLD
@@ -1289,11 +1532,45 @@ where
         // =================================================================
         let mut trans = builder.when_transition();
 
-        // TRACE_COMMIT_ROOT persists across all rows.
+        // A3-5a: TRACE_COMMIT_ROOT persists WITHIN a compression run
+        // only (COMPRESS → COMPRESS). Between runs, the prover sets a
+        // fresh TCR for the new path's expected root. The IDLE
+        // persistence (later in this fn) still carries TCR into IDLE
+        // padding, which is correct — IDLE inherits the preceding run's
+        // last TCR. At ABSORB → COMPRESS, TCR is free, letting multi-
+        // path traces hold independent roots.
+        //
+        // NOTE: this replaces A3-1's unconditional TCR persistence,
+        // which made one-root-per-trace the only supported shape.
+        let next_is_compress_tcr: AB::Expr =
+            next[col::KIND0 + OP_KIND_COMPRESS as usize].into();
         for i in 0..DIGEST_WIDTH {
             let l_r: AB::Expr = local[col::TRACE_COMMIT_ROOT0 + i].into();
             let n_r: AB::Expr = next[col::TRACE_COMMIT_ROOT0 + i].into();
-            trans.assert_zero(n_r - l_r);
+            trans.assert_zero(
+                is_compress.clone() * next_is_compress_tcr.clone() * (n_r - l_r),
+            );
+        }
+
+        // A3-5a: Per-path root check.
+        // At every COMPRESS → non-COMPRESS transition, the last
+        // COMPRESS row's DIGEST must equal its TRACE_COMMIT_ROOT. This
+        // lets the trace hold MULTIPLE independent Merkle paths, each
+        // with its own root. The check fires once per path, at the
+        // path's terminal row.
+        //
+        // For a trace whose last row itself is COMPRESS (no IDLE
+        // padding), the `when_last_row` boundary at the bottom of this
+        // fn takes over — `when_transition` excludes the final row in
+        // uni-stark's formulation.
+        for i in 0..DIGEST_WIDTH {
+            let dg: AB::Expr = local[col::DIGEST0 + i].into();
+            let tcr: AB::Expr = local[col::TRACE_COMMIT_ROOT0 + i].into();
+            trans.assert_zero(
+                is_compress.clone()
+                    * (one() - next_is_compress_tcr.clone())
+                    * (dg - tcr),
+            );
         }
 
         // Leaf-digest bridge: when local is is_last ABSORB and next is
@@ -1366,18 +1643,25 @@ where
         drop(trans);
 
         // =================================================================
-        // Boundary: last row's DIGEST (propagated via IDLE persistence)
-        // equals TRACE_COMMIT_ROOT.
+        // A3-5a: Last-row root check, gated on is_compress.
         //
-        // IDLE persistence: STATE_IN0..P2_BLOCK range includes DIGEST,
-        // so the last compression's DIGEST propagates forward to the
-        // trace's last row.
+        // When the trace's final row is a COMPRESS row (no IDLE
+        // padding), the `when_transition` per-path check above doesn't
+        // fire (it excludes the last row). This boundary catches that
+        // case. For IDLE-padded traces the last row has is_compress=0
+        // and this boundary is a no-op — the path's root check fired
+        // at the COMPRESS → IDLE transition.
+        //
+        // For non-COMPRESS traces (α-only, fold-only, all-IDLE), the
+        // gate is 0 and no constraint fires.
         // =================================================================
         let mut last = builder.when_last_row();
+        let last_is_compress: AB::Expr =
+            local[col::KIND0 + OP_KIND_COMPRESS as usize].into();
         for i in 0..DIGEST_WIDTH {
             let dg: AB::Expr = local[col::DIGEST0 + i].into();
             let r: AB::Expr = local[col::TRACE_COMMIT_ROOT0 + i].into();
-            last.assert_zero(dg - r);
+            last.assert_zero(last_is_compress.clone() * (dg - r));
         }
 
         // =================================================================
@@ -2834,6 +3118,238 @@ mod tests {
 
             let proof_bytes = postcard::to_allocvec(&proof).unwrap().len();
             report(tag, trace_height, prove_ms, proof_bytes);
+        }
+    }
+
+    // ======================================================================
+    // A3-5a: multi-path Merkle in ONE monolithic STARK
+    // ======================================================================
+
+    /// Build two independent Merkle paths (from the same tiny tree) and
+    /// prove them both in ONE STARK via the multi-path trace builder.
+    /// This exercises the A3-5a per-path root check across two paths
+    /// with the SAME root (the tiny tree has one shared root).
+    #[test]
+    fn air_prove_and_verify_two_paths_same_tree() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let (leaves, openings, root) = tiny_tree_wide_leaves();
+        let (_, path0, idx0) = openings[0].clone();
+        let (_, path2, idx2) = openings[2].clone();
+        let paths = vec![
+            MerkleOpening {
+                leaf: &leaves[0],
+                opening_proof: &path0,
+                index: idx0,
+                expected_root: root,
+            },
+            MerkleOpening {
+                leaf: &leaves[2],
+                opening_proof: &path2,
+                index: idx2,
+                expected_root: root,
+            },
+        ];
+        // Each path: 2 absorb (W=8/RATE=4) + 2 compress = 4 rows. Two
+        // paths = 8 physical rows; pad to 16.
+        let flat = build_multi_path_leaf_to_root_trace(&paths, 16).unwrap();
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let proof = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof, &[])
+            .expect("two Merkle paths must verify in ONE monolithic STARK");
+    }
+
+    /// Build two Merkle paths from DIFFERENT trees (with different
+    /// roots). Verifies the relaxed TRACE_COMMIT_ROOT persistence lets
+    /// each path hold its own root. This is the critical A3-5a
+    /// capability that A3-1's one-root model couldn't express.
+    #[test]
+    fn air_prove_and_verify_two_paths_different_roots() {
+        use crate::merkle_path::{compress_pair_ref, hash_leaf_row_ref};
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let perm = default_goldilocks_poseidon2_8();
+
+        // Tree A: 2 wide leaves → 1 compression → root_A.
+        let leaf_a0: Vec<Goldilocks> =
+            (0..8u64).map(|j| gl(100 + j * 17 + 1)).collect();
+        let leaf_a1: Vec<Goldilocks> =
+            (0..8u64).map(|j| gl(200 + j * 23 + 3)).collect();
+        let dig_a0 = hash_leaf_row_ref(&perm, &leaf_a0);
+        let dig_a1 = hash_leaf_row_ref(&perm, &leaf_a1);
+        let root_a = compress_pair_ref(&perm, &dig_a0, &dig_a1);
+
+        // Tree B: 2 wide leaves → 1 compression → root_B (≠ root_A).
+        let leaf_b0: Vec<Goldilocks> =
+            (0..8u64).map(|j| gl(300 + j * 29 + 5)).collect();
+        let leaf_b1: Vec<Goldilocks> =
+            (0..8u64).map(|j| gl(400 + j * 31 + 7)).collect();
+        let dig_b0 = hash_leaf_row_ref(&perm, &leaf_b0);
+        let dig_b1 = hash_leaf_row_ref(&perm, &leaf_b1);
+        let root_b = compress_pair_ref(&perm, &dig_b0, &dig_b1);
+
+        assert_ne!(root_a, root_b, "tree A and B must differ");
+
+        // Path 0 in tree A: leaf_a0, sibling = dig_a1, index 0.
+        // Path 0 in tree B: leaf_b0, sibling = dig_b1, index 0.
+        let path_a_siblings = vec![dig_a1];
+        let path_b_siblings = vec![dig_b1];
+        let paths = vec![
+            MerkleOpening {
+                leaf: &leaf_a0,
+                opening_proof: &path_a_siblings,
+                index: 0,
+                expected_root: root_a,
+            },
+            MerkleOpening {
+                leaf: &leaf_b0,
+                opening_proof: &path_b_siblings,
+                index: 0,
+                expected_root: root_b,
+            },
+        ];
+        // 2 absorb + 1 compress = 3 rows per path; two paths = 6
+        // physical rows. Pad to 8.
+        let flat = build_multi_path_leaf_to_root_trace(&paths, 8).unwrap();
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let proof = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof, &[])
+            .expect("two paths with different roots must verify in ONE STARK");
+    }
+
+    /// A3-5a adversarial test: swap path A's expected root with path
+    /// B's. Path A's last COMPRESS row now claims root_B but DIGEST_A
+    /// = real root_A ≠ root_B. The per-path root check
+    ///   is_compress · (1 − next_is_compress) · (DIGEST − TCR) = 0
+    /// fires at path A's COMPRESS → ABSORB_B transition — reject.
+    #[test]
+    fn air_rejects_multi_path_with_swapped_root() {
+        use crate::merkle_path::{compress_pair_ref, hash_leaf_row_ref};
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let perm = default_goldilocks_poseidon2_8();
+        let leaf_a0: Vec<Goldilocks> = (0..8u64).map(|j| gl(j * 17 + 1)).collect();
+        let leaf_a1: Vec<Goldilocks> = (0..8u64).map(|j| gl(j * 23 + 3)).collect();
+        let dig_a0 = hash_leaf_row_ref(&perm, &leaf_a0);
+        let dig_a1 = hash_leaf_row_ref(&perm, &leaf_a1);
+        let root_a = compress_pair_ref(&perm, &dig_a0, &dig_a1);
+
+        let leaf_b0: Vec<Goldilocks> = (0..8u64).map(|j| gl(j * 29 + 5)).collect();
+        let leaf_b1: Vec<Goldilocks> = (0..8u64).map(|j| gl(j * 31 + 7)).collect();
+        let dig_b0 = hash_leaf_row_ref(&perm, &leaf_b0);
+        let dig_b1 = hash_leaf_row_ref(&perm, &leaf_b1);
+        let root_b = compress_pair_ref(&perm, &dig_b0, &dig_b1);
+
+        let path_a_siblings = vec![dig_a1];
+        let path_b_siblings = vec![dig_b1];
+        // Deliberately swap: claim path_a leads to root_b (a lie).
+        let paths = vec![
+            MerkleOpening {
+                leaf: &leaf_a0,
+                opening_proof: &path_a_siblings,
+                index: 0,
+                expected_root: root_b, // wrong root
+            },
+            MerkleOpening {
+                leaf: &leaf_b0,
+                opening_proof: &path_b_siblings,
+                index: 0,
+                expected_root: root_a, // wrong root
+            },
+        ];
+        // build_multi_path_leaf_to_root_trace debug-asserts that the
+        // final digest matches expected_root; bypass that by building
+        // with correct roots first, then tampering TCR post-hoc.
+        let real_paths = vec![
+            MerkleOpening {
+                leaf: &leaf_a0,
+                opening_proof: &path_a_siblings,
+                index: 0,
+                expected_root: root_a,
+            },
+            MerkleOpening {
+                leaf: &leaf_b0,
+                opening_proof: &path_b_siblings,
+                index: 0,
+                expected_root: root_b,
+            },
+        ];
+        let mut flat = build_multi_path_leaf_to_root_trace(&real_paths, 8).unwrap();
+        // Swap TCR on BOTH paths' compression rows. Each path has 2
+        // absorb + 1 compress; path_A's compress is row 2, path_B's is
+        // row 5 (after 2 absorb + 1 compress + 2 absorb).
+        for i in 0..DIGEST_WIDTH {
+            let row2 = 2 * col::WIDTH;
+            flat[row2 + col::TRACE_COMMIT_ROOT0 + i] = root_b[i];
+            let row5 = 5 * col::WIDTH;
+            flat[row5 + col::TRACE_COMMIT_ROOT0 + i] = root_a[i];
+        }
+        // Suppress unused-var warning; `paths` built for docs only.
+        let _ = paths;
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove(&cfg, &air, trace, &[])
+        }));
+        match outcome {
+            Err(_) => {}
+            Ok(p) => {
+                verify(&cfg, &air, &p, &[]).expect_err(
+                    "swapped multi-path roots must reject via per-path check",
+                );
+            }
+        }
+    }
+
+    /// A3-5a adversarial test: within path A's compression run, change
+    /// TCR on an intermediate COMPRESS row (not the last). The in-run
+    /// persistence `is_compress · next_is_compress · (next.TCR −
+    /// local.TCR) = 0` fires and rejects.
+    #[test]
+    fn air_rejects_multi_path_tcr_drifts_mid_run() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let (leaves, openings, root) = tiny_tree_wide_leaves();
+        let (_, path0, idx0) = openings[0].clone();
+        let paths = vec![MerkleOpening {
+            leaf: &leaves[0],
+            opening_proof: &path0,
+            index: idx0,
+            expected_root: root,
+        }];
+        let mut flat = build_multi_path_leaf_to_root_trace(&paths, 8).unwrap();
+        // Rows 0,1 = ABSORB; rows 2,3 = COMPRESS; row 4+ = IDLE.
+        // Tamper TCR on row 2 (first COMPRESS). Row 3's TCR still
+        // equals real root. In-run persistence row2→row3 fires:
+        // is_compress(row2)·next_is_compress(row3)·(row3.TCR − row2.TCR) ≠ 0.
+        let row2 = 2 * col::WIDTH;
+        flat[row2 + col::TRACE_COMMIT_ROOT0] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove(&cfg, &air, trace, &[])
+        }));
+        match outcome {
+            Err(_) => {}
+            Ok(p) => {
+                verify(&cfg, &air, &p, &[]).expect_err(
+                    "TCR drift within a compression run must reject",
+                );
+            }
         }
     }
 }

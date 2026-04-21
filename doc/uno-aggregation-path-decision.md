@@ -202,19 +202,41 @@ concatenation.
 originally scoped as part of A3-4 but requires structural changes to
 the COMPRESS bank — see A3-5 below).
 
-### A3-5 (planned): Multi-path Merkle + multi-slot composition
+### A3-5a: Multi-path Merkle in the COMPRESS bank (landed)
 
-1. Generalize the COMPRESS bank's root-check boundary from a single
-   last-row `DIGEST == TRACE_COMMIT_ROOT` to a per-path
-   COMPRESS → non-COMPRESS transition, so one trace can hold multiple
-   independent Merkle openings.
+Generalized the A3-1 one-path-per-trace boundary to support arbitrarily
+many independent Merkle openings in a single monolithic trace:
 
-2. Compose a full per-query bundle (α + fold + trace-commit Merkle +
-   quot-commit Merkle + per-round commit-phase Merkles) in one AIR.
+- **Removed**: A3-1's unconditional TRACE_COMMIT_ROOT persistence
+  (which locked the trace into a single root).
+- **Added**: TRACE_COMMIT_ROOT persists WITHIN a COMPRESS run via
+  `is_compress · next_is_compress · (next.TCR − local.TCR) = 0`.
+- **Added**: Per-path root check at each COMPRESS → non-COMPRESS
+  transition: `is_compress · (1 − next_is_compress) · (DIGEST − TCR)
+  = 0`. Fires once per path, at the path's terminal row.
+- **Gated**: The last-row root boundary is now `is_compress · (DIGEST
+  − TCR)`, a no-op on IDLE-padded last rows.
 
-3. Stack N slots × per-Tx bundles in one trace. This is the original
-   §4.1 "4-Tx aggregation + fixture-based 4/4 aggregated proof"
-   landmark, shifted from A3-4 to A3-5.
+Acceptance tests (`air_prove_and_verify_two_paths_same_tree` and
+`air_prove_and_verify_two_paths_different_roots`): two independent
+Merkle openings — from the same tree, and from different trees with
+distinct roots — verify in ONE monolithic STARK.
+
+Adversarial tests: swapping per-path roots rejects at the per-path
+check; TCR drift within a compression run rejects at the in-run
+persistence constraint.
+
+### A3-5b (planned): Full per-query bundle composition
+
+Compose in ONE AIR: α + fold + trace-commit Merkle + quot-commit
+Merkle + per-round commit-phase Merkles. Unblocks the one-STARK-per-
+query shape for §3.4 feasibility.
+
+### A3-5c (planned): Multi-slot stacking
+
+Stack N slots × per-Tx bundles in one trace. This is the original
+§4.1 "4-Tx aggregation + fixture-based 4/4 aggregated proof"
+landmark.
 
 ### A4: 30-Tx measurement
 
