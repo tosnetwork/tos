@@ -6,8 +6,8 @@
     signed by each `spend_auth_sig` and the Plonky3 public-input digest
     anchor).
 
-    Layout recap (logical §4.1 field order):
-      version:uint8 = 1
+    Layout recap (logical §4.1 field order — A6-4 aggregation-era v2):
+      version:uint8 = 2          (A6-4 bump; v1 carried zk_proof:^Cell)
       scheme_id:uint8 = 0x01
       chain_id:uint32
       anchor:bits256
@@ -15,9 +15,16 @@
       fee:uint64
       spend_count:uint8   (1..4)
       output_count:uint8  (1..4)
+      witness_commitment:bits256    (NEW in v2 — BLAKE3 over postcard(proof)
+                                      || public_input_encoding(tx); binds
+                                      each Transfer to its per-Tx Plonky3
+                                      proof + PI. See §5.1 of the
+                                      aggregation design doc.)
       spends[spend_count]:SpendDescription
       outputs[output_count]:OutputDescription
-      zk_proof:^Cell   (Plonky3 STARK proof; CellString-style chunk chain)
+      (NO zk_proof field — the per-Tx proof is stripped at the collator
+       and never lands on-chain; validators verify ONE aggregated block
+       proof carried in UnoBlockExtra.)
 
     SpendDescription (128 B payload):
       nullifier:bits256 || rk:bits256 || spend_auth_sig:bits512
@@ -31,7 +38,9 @@
     Physical BoC shape (§17 ≤5-level-walk constraint — fan-out instead of a
     deep linear chain):
 
-      root cell (448 bits inline = §4.1 header exactly)
+      root cell (704 bits inline = §4.1 header + witness_commitment)
+        inline: version ‖ scheme_id ‖ chain_id ‖ anchor ‖ expiry ‖ fee ‖
+                spend_count ‖ output_count ‖ witness_commitment
         ref[0] → spends_root (empty inline, `spend_count` refs)
                   ref[i] → per_spend[i]
                              inline: first 127 B of the 128 B spend payload
@@ -42,11 +51,11 @@
                              ref[0] → 19-byte continuation cell (152 bits, 0 refs)
                              ref[1] → enc_ciphertext
                              ref[2] → mlkem_ct
-        ref[2] → zk_proof chunk chain
 
-    Max walk depth from root (not counting the enc_ct / mlkem_ct / zk_proof
-    internal chains, which own their own depth budgets per §17.1): **4**
-    levels — tight under the ≤5 bound for all 1..4 × 1..4 shapes.
+    Root-cell refs dropped from 3 → 2 (no zk_proof ref). Max walk depth
+    from root (not counting the enc_ct / mlkem_ct internal chains, which
+    own their own depth budgets per §17.1): **4** levels — unchanged;
+    tight under the ≤5 bound for all 1..4 × 1..4 shapes.
 
     Source: TOS-specific adapter — consensus-critical codec.
 */
@@ -72,7 +81,7 @@ namespace uno_workchain {
 // Fixed wire constants (mirror §4.1)
 // ---------------------------------------------------------------------------
 
-constexpr uint8_t  kTransferVersion       = 1;       // byte 0
+constexpr uint8_t  kTransferVersion       = 2;       // byte 0 (A6-4: v2 launch)
 constexpr uint8_t  kSchemeIdV1            = 0x01;    // byte 1 — Plonky3 / Goldilocks / Poseidon2
 constexpr uint8_t  kMaxSpendCount         = 4;       // §10.2
 constexpr uint8_t  kMaxOutputCount        = 4;       // §10.2
@@ -81,7 +90,8 @@ constexpr uint8_t  kMinOutputCount        = 1;
 constexpr size_t   kOutCiphertextBytes    = 80;      // inline AEAD-encrypted memo (ovk-recoverable)
 constexpr size_t   kSpendInlineBytes      = 32 + 32 + 64;     // 128
 constexpr size_t   kOutputInlineBytes     = 32 + 32 + 2 + 80; // 146 (incl. filter_tag, excl. refs)
-constexpr size_t   kTransferHeaderBytes   = 1 + 1 + 4 + 32 + 8 + 8 + 1 + 1; // 56
+constexpr size_t   kWitnessCommitmentBytes = 32;     // A6-4: BLAKE3 over postcard(proof) || PI encoding
+constexpr size_t   kTransferHeaderBytes   = 1 + 1 + 4 + 32 + 8 + 8 + 1 + 1 + 32; // 88 (+witness_commitment)
 
 // ---------------------------------------------------------------------------
 // Structured types
@@ -109,9 +119,18 @@ struct Transfer {
     td::Bits256 anchor;
     uint64_t expiry_block{0};
     uint64_t fee{0};                              // plaintext, native nano-units
+    td::Bits256 witness_commitment{};             // A6-4: BLAKE3 over postcard(proof) || PI encoding.
+                                                  // Binds this Transfer to its per-Tx Plonky3 proof +
+                                                  // public inputs. Computed off-wire by the wallet; the
+                                                  // validator re-checks it against Merkle-root in
+                                                  // UnoBlockExtra.tx_pi_merkle_root.
     std::vector<SpendDescription>  spends;
     std::vector<OutputDescription> outputs;
-    td::Ref<vm::Cell> zk_proof;                   // Plonky3 STARK proof chunk chain
+    // A6-4: zk_proof field REMOVED. The per-Tx Plonky3 proof flows
+    // wallet → mempool → collator as a sidecar (NOT part of this struct);
+    // collator strips it before block commit. On-chain only the
+    // witness_commitment survives per Transfer; the aggregated proof
+    // lives in UnoBlockExtra.
 
     // Filled by the decoder so apply_transfer / gas accounting can re-use them
     // without re-serializing.
@@ -136,11 +155,11 @@ using DecodeResult = std::variant<Transfer, TransferDecodeError>;
 /// Decode a Transfer from a message-body CellSlice.
 ///
 /// The body is the CellSlice the dispatcher hands to the compute phase. Layout
-/// matches §4.1: `56 B header + spends + outputs + ^zk_proof`. Inline data
-/// may overflow into continuation cells via the TOS cell chain; this decoder
-/// transparently walks refs if needed. Large cell-refs (enc_ciphertext,
-/// mlkem_ct, zk_proof) are captured as `Ref<Cell>` handles — actual content
-/// read happens downstream (verifier side).
+/// matches §4.1 v2: `88 B header (incl. witness_commitment) + spends + outputs`.
+/// Inline data may overflow into continuation cells via the TOS cell chain;
+/// this decoder transparently walks refs if needed. Large cell-refs
+/// (enc_ciphertext, mlkem_ct) are captured as `Ref<Cell>` handles — actual
+/// content read happens downstream (verifier side).
 ///
 /// On success, `Transfer::tx_hash` is populated via canonical_tx_hash().
 /// On failure, returns TransferDecodeError with a short reason string.
@@ -173,13 +192,16 @@ td::Result<td::BufferSlice> encode_transfer_to_boc(const Transfer& tx) noexcept;
 // Canonical tx hash (§4.1)
 // ---------------------------------------------------------------------------
 
-/// Compute the canonical tx_hash per §4.1. Excludes spend_auth_sig[i] and the
-/// ^zk_proof ref. Large fields (enc_ciphertext, mlkem_ct) are represented by
-/// their cell-root hashes to keep the hash O(inline).
+/// Compute the canonical tx_hash per §4.1. Excludes spend_auth_sig[i]
+/// (signatures are over this hash). Includes the witness_commitment so
+/// the tx_hash binds to the per-Tx Plonky3 proof / PI. Large fields
+/// (enc_ciphertext, mlkem_ct) are represented by their cell-root hashes
+/// to keep the hash O(inline).
 ///
 ///   tx_hash = BLAKE3(
 ///       version(1) || scheme_id(1) || chain_id(4) || anchor(32) ||
 ///       expiry_block(8) || fee(8) || spend_count(1) || output_count(1) ||
+///       witness_commitment(32) ||
 ///       for each spend:   nullifier(32) || rk(32)
 ///       for each output:  cm(32) || epk(32) || filter_tag(2) ||
 ///                         cell_hash(enc_ciphertext) ||

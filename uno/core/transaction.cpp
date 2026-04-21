@@ -70,8 +70,10 @@ inline void write_be_u64(uint8_t* p, uint64_t v) noexcept {
 
 // Chunk-chain max bytes per cell (mirror EVM bytecode chunk convention).
 constexpr size_t kChunkBytes = 127;
-// Bound the decode walk. A 4-spend/4-output Transfer's zk_proof can be ~80 KB;
-// at 127 B/chunk that is ~640 chunks. Head-room to 2048 for future proofs.
+// Bound the decode walk. Kept as a generic ceiling for enc_ciphertext /
+// mlkem_ct chunk chains (the former ~600 B, the latter ~1088 B — well
+// under 2048 chunks). A6-4 removed the on-chain zk_proof chunk chain so
+// the bound no longer has to cover ~80 KB proofs.
 constexpr size_t kChunkChainMaxChunks = 2048;
 
 }  // anonymous namespace
@@ -208,8 +210,9 @@ compute_note_commitment(const NoteCommitmentInputs& in) noexcept {
 
 td::Bits256 canonical_tx_hash(const Transfer& tx) noexcept {
     // Stream-assemble the preimage into a std::string buffer. Total length is
-    // bounded: 56 (header) + 64 B/spend + (32+32+2+32+32+80) B/output — fits
-    // comfortably in a few hundred bytes for worst-case 4/4.
+    // bounded: 88 (A6-4 header, incl. witness_commitment) + 64 B/spend +
+    // (32+32+2+32+32+80) B/output — fits comfortably in a few hundred bytes
+    // for worst-case 4/4.
     std::string buf;
     buf.reserve(kTransferHeaderBytes + tx.spends.size() * 64 + tx.outputs.size() * (32 + 32 + 2 + 32 + 32 + 80));
 
@@ -241,7 +244,7 @@ td::Bits256 canonical_tx_hash(const Transfer& tx) noexcept {
         append_bytes(reinterpret_cast<const uint8_t*>(slice.data()), 32);
     };
 
-    // --- inline header ---
+    // --- inline header (A6-4: version-2 bump hashes witness_commitment) ---
     append_byte(tx.version);
     append_byte(tx.scheme_id);
     append_be_u32(tx.chain_id);
@@ -250,6 +253,11 @@ td::Bits256 canonical_tx_hash(const Transfer& tx) noexcept {
     append_be_u64(tx.fee);
     append_byte(static_cast<uint8_t>(tx.spends.size()));
     append_byte(static_cast<uint8_t>(tx.outputs.size()));
+    // A6-4: witness_commitment is included in the canonical hash so a
+    // signed spend_auth_sig over tx_hash also binds to the per-Tx
+    // proof/PI commitment. A prover cannot swap the proof without
+    // invalidating every spend signature.
+    append_bits256(tx.witness_commitment);
 
     // --- per-spend (exclude spend_auth_sig, per §4.1) ---
     for (const auto& s : tx.spends) {
@@ -501,9 +509,10 @@ bool load_item_chunked(vm::CellSlice& head_slice, uint8_t* out, size_t len) {
 
 // §17 ≤5-level walk assertion — invoked by the decoder after all refs have
 // been captured. Our encoder keeps depth at 4 from the Transfer root (plus
-// the internal depths of enc_ct / mlkem_ct / zk_proof, which are their own
-// bounded subchains); a decoded Transfer whose ref tree exceeds 5 levels is
-// a malformed / adversarial input and is rejected here.
+// the internal depths of enc_ct / mlkem_ct, which are their own bounded
+// subchains; A6-4 dropped the zk_proof subchain). A decoded Transfer
+// whose ref tree exceeds 5 levels is a malformed / adversarial input and
+// is rejected here.
 constexpr unsigned kMaxTransferRefDepth = 5;
 
 unsigned cell_depth_bounded(const td::Ref<vm::Cell>& c, unsigned budget) {
@@ -545,7 +554,7 @@ size_t estimate_wire_size(const Transfer& tx) {
         n += count_chain(o.enc_ciphertext);
         n += count_chain(o.mlkem_ct);
     }
-    n += count_chain(tx.zk_proof);
+    // A6-4: zk_proof removed from the on-chain Transfer; no chain to count.
     return n;
 }
 
@@ -569,20 +578,26 @@ DecodeResult decode_transfer(vm::CellSlice body) noexcept {
     if (sc < kMinSpendCount  || sc > kMaxSpendCount)  return err("spend_count out of range");
     if (oc < kMinOutputCount || oc > kMaxOutputCount) return err("output_count out of range");
 
+    // A6-4: witness_commitment (32 B) — binds this Transfer to its
+    // per-Tx Plonky3 proof + PI. Validator re-checks it against
+    // UnoBlockExtra.tx_pi_merkle_root as a Merkle leaf.
+    if (!fetch_bits256(body, tx.witness_commitment)) {
+        return err("short header: witness_commitment");
+    }
+
     tx.spends.resize(sc);
     tx.outputs.resize(oc);
 
-    // Root cell layout: 3 refs (spends_root, outputs_root, zk_proof).
-    if (body.size_refs() < 3) return err("missing spends_root / outputs_root / zk_proof refs");
+    // A6-4: Root cell layout is now 2 refs (spends_root, outputs_root).
+    // The zk_proof ref was removed — per-Tx proof no longer on-chain.
+    if (body.size_refs() < 2) return err("missing spends_root / outputs_root refs");
 
     auto spends_root_ref  = body.prefetch_ref(0);
     auto outputs_root_ref = body.prefetch_ref(1);
-    auto zk_proof_ref     = body.prefetch_ref(2);
-    body.advance_refs(3);
+    body.advance_refs(2);
 
     if (spends_root_ref.is_null())  return err("null spends_root ref");
     if (outputs_root_ref.is_null()) return err("null outputs_root ref");
-    if (zk_proof_ref.is_null())     return err("null zk_proof ref");
 
     // --- spends array (spends_root → per_spend[i] → cont) ---
     {
@@ -642,7 +657,7 @@ DecodeResult decode_transfer(vm::CellSlice body) noexcept {
         }
     }
 
-    tx.zk_proof = zk_proof_ref;
+    // A6-4: no zk_proof assignment — the field was removed from Transfer.
 
     // §17 walk-depth gate: reject malformed trees that exceed the 5-level
     // budget. The per-item subtrees contribute depth 2 (item_cell →
@@ -698,12 +713,14 @@ DecodeResult decode_transfer_bytes(td::Slice raw_bytes) noexcept {
 
 td::Result<td::Ref<vm::Cell>> encode_transfer(const Transfer& tx) noexcept {
     // Physical BoC shape (§17 ≤5-level walk bound — we fan out instead of
-    // chaining linearly). Root cell inline is the fixed 448-bit §4.1 header
-    // exactly; spends and outputs are carried by two parallel subtrees
-    // referenced from the root.
+    // chaining linearly). Root cell inline is the §4.1 v2 header
+    // (448 + 256 = 704 bits, with the A6-4 witness_commitment); spends
+    // and outputs are carried by two parallel subtrees referenced from
+    // the root.
     //
-    //   root cell (448 bits inline, 3 refs)
-    //     inline: version ‖ scheme_id ‖ chain_id ‖ anchor ‖ expiry ‖ fee ‖ sc ‖ oc
+    //   root cell (704 bits inline, 2 refs)
+    //     inline: version ‖ scheme_id ‖ chain_id ‖ anchor ‖ expiry ‖ fee ‖
+    //             sc ‖ oc ‖ witness_commitment
     //     ref[0] → spends_root (empty inline, `sc` refs)
     //                each ref → per_spend cell: 127 B head + 1 ref → 1 B cont
     //     ref[1] → outputs_root (empty inline, `oc` refs)
@@ -712,20 +729,16 @@ td::Result<td::Ref<vm::Cell>> encode_transfer(const Transfer& tx) noexcept {
     //                            ref[0] → 19 B continuation (inline, 0 refs)
     //                            ref[1] → enc_ciphertext
     //                            ref[2] → mlkem_ct
-    //     ref[2] → zk_proof
     //
-    // Walk depth from root to any leaf (exclusive of enc_ct / mlkem_ct /
-    // zk_proof's own internal chains, which have their own depth budgets per
-    // §17.1): 4 for every 1..4 × 1..4 shape — tight under the ≤5 bound.
+    // A6-4: zk_proof ref was dropped. Walk depth from root to any leaf
+    // (exclusive of enc_ct / mlkem_ct internal chains): 4 for every
+    // 1..4 × 1..4 shape — unchanged under the ≤5 bound.
 
     if (tx.spends.size() < kMinSpendCount || tx.spends.size() > kMaxSpendCount) {
         return td::Status::Error("spend_count out of range");
     }
     if (tx.outputs.size() < kMinOutputCount || tx.outputs.size() > kMaxOutputCount) {
         return td::Status::Error("output_count out of range");
-    }
-    if (tx.zk_proof.is_null()) {
-        return td::Status::Error("encode_transfer: zk_proof must be non-null");
     }
     for (const auto& o : tx.outputs) {
         if (o.enc_ciphertext.is_null()) {
@@ -769,7 +782,7 @@ td::Result<td::Ref<vm::Cell>> encode_transfer(const Transfer& tx) noexcept {
     }
     auto outputs_root = outputs_root_cb.finalize();
 
-    // --- root cell: 448-bit header + 3 refs ---
+    // --- root cell (A6-4): 704-bit header + 2 refs ---
     vm::CellBuilder root;
     root.store_long(tx.version, 8);
     root.store_long(tx.scheme_id, 8);
@@ -779,9 +792,10 @@ td::Result<td::Ref<vm::Cell>> encode_transfer(const Transfer& tx) noexcept {
     root.store_long(tx.fee, 64);
     root.store_long(static_cast<long long>(tx.spends.size()), 8);
     root.store_long(static_cast<long long>(tx.outputs.size()), 8);
+    root.store_bytes(
+        reinterpret_cast<const char*>(tx.witness_commitment.data()), 32);
     root.store_ref(spends_root);
     root.store_ref(outputs_root);
-    root.store_ref(tx.zk_proof);
 
     return root.finalize();
 }

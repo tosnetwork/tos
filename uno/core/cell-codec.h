@@ -7,7 +7,8 @@
     Transfer type.
 
     Primitives provided:
-      - chunked byte-blob cell chain (for enc_ciphertext, mlkem_ct, zk_proof)
+      - chunked byte-blob cell chain (for enc_ciphertext, mlkem_ct;
+        zk_proof removed in A6-4 — see doc/uno-aggregation-design.md §5)
       - TLV (tag + uint16 length + value) frame helpers for versioned sub-cells
       - fixed-width big-endian int fetch/store helpers
 
