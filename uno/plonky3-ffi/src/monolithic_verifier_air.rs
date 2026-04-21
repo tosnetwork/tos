@@ -844,6 +844,245 @@ pub fn build_fold_chain_trace(
 }
 
 // ---------------------------------------------------------------------------
+// A3-3 trace builder: unified ALPHA + FOLD chain
+//
+// Layout:
+//   rows 0..N_alpha            : ALPHA rows (α-reduction chain)
+//   rows N_alpha..N_alpha+N_fd : FOLD  rows (fold chain, seeded by α's ρ)
+//   rows N_alpha+N_fd..height  : IDLE  padding
+//
+// Cross-binding invariants populated off-circuit:
+//   - Last α row's ALPHA_RO_OUT = ρ_final.
+//   - First FOLD row's FOLD_IN  = ρ_final (enforced by the A3-3 α→FOLD
+//     bridge; the trace builder sets it this way so the bridge holds).
+//   - On every α row, FOLD_OUT = ρ_final (so A3-3 non-fold persistence
+//     holds on α→α transitions; the FOLD threading on α→FOLD then
+//     reads local.FOLD_OUT = ρ_final, agreeing with the bridge).
+//   - ALPHA_RO_OUT persists at ρ_final through FOLD + IDLE rows (so
+//     the unconditional last-row `ALPHA_RO_OUT == FINAL_RO` holds).
+// ---------------------------------------------------------------------------
+
+/// Build a trace that verifies α-reduction followed by FRI fold as
+/// ONE monolithic STARK. This is the A3-3 acceptance trace.
+pub fn build_alpha_to_fold_unified_trace(
+    initial_alpha_pow: Challenge,
+    initial_ro: Challenge,
+    alpha: Challenge,
+    alpha_steps: &[AlphaStep],
+    fold_rounds: &[FoldRound],
+    trace_height: usize,
+) -> Result<Vec<Goldilocks>, TraceBuildError> {
+    use p3_field::{BasedVectorSpace, Field, TwoAdicField};
+    use p3_util::reverse_bits_len;
+
+    if !trace_height.is_power_of_two() {
+        return Err(TraceBuildError::TraceHeightNotPow2 { got: trace_height });
+    }
+    let n_alpha = alpha_steps.len();
+    let n_fold = fold_rounds.len();
+    if n_alpha == 0 || n_fold == 0 {
+        return Err(TraceBuildError::EmptyPath);
+    }
+    let physical_rows = n_alpha + n_fold;
+    if physical_rows > trace_height {
+        return Err(TraceBuildError::TraceHeightTooSmall {
+            physical_rows,
+            trace_height,
+        });
+    }
+
+    let width = col::WIDTH;
+    let mut flat = vec![Goldilocks::default(); trace_height * width];
+    let zero_g = Goldilocks::default();
+    let write_ext = |out: &mut [Goldilocks], base: usize, v: Challenge| {
+        let limbs =
+            <Challenge as BasedVectorSpace<Goldilocks>>::as_basis_coefficients_slice(&v);
+        for i in 0..CHALLENGE_DIM {
+            out[base + i] = limbs[i];
+        }
+    };
+    let write_kind = |out: &mut [Goldilocks], kind: u8| {
+        for k in 0..NUM_OP_KINDS {
+            out[col::KIND0 + k] =
+                if k as u8 == kind { Goldilocks::new(1) } else { zero_g };
+        }
+    };
+    let zero_block_len_flag = |out: &mut [Goldilocks]| {
+        out[col::ABSORB_BLOCK_LEN_FLAG0] = Goldilocks::new(1);
+    };
+
+    let p2_zero_witness = gen_p2_witness_zero();
+
+    // --- Pass 1: run α chain off-circuit to compute ρ_final. ---
+    let mut apow = initial_alpha_pow;
+    let mut ro = initial_ro;
+    let mut step_records: Vec<(Challenge, Challenge, Challenge, Challenge)> =
+        Vec::with_capacity(n_alpha);
+    for step in alpha_steps {
+        let denom = step.z - step.x;
+        if denom.is_zero() {
+            return Err(TraceBuildError::TraceHeightTooSmall {
+                physical_rows,
+                trace_height,
+            });
+        }
+        let qi = denom.try_inverse().expect("denom ≠ 0");
+        let diff = step.p_at_z - step.p_at_x;
+        let dq = diff * qi;
+        let ro_in = ro;
+        let apow_in = apow;
+        ro = ro_in + apow_in * dq;
+        apow = apow_in * alpha;
+        step_records.push((qi, dq, apow_in, ro_in));
+    }
+    let rho_final = ro;
+    let alpha_final_pow = apow;
+
+    // --- Pass 2: run fold chain off-circuit to compute FINAL_FOLDED. ---
+    let mut current = rho_final;
+    let mut fold_witness: Vec<(Goldilocks, Goldilocks, Challenge, Challenge, Challenge)> =
+        Vec::with_capacity(n_fold);
+    for round in fold_rounds {
+        let bit = (round.domain_index & 1) as u64;
+        let child_log_h = round.log_height - 1;
+        let parent_idx = round.domain_index >> 1;
+        let g_outer = Goldilocks::two_adic_generator(child_log_h + 1);
+        let rev = reverse_bits_len(parent_idx, child_log_h);
+        let s = g_outer.exp_u64(rev as u64);
+        if s == zero_g {
+            return Err(TraceBuildError::TraceHeightTooSmall {
+                physical_rows,
+                trace_height,
+            });
+        }
+        let two_s = s * Goldilocks::new(2);
+        let inv_2s = two_s.try_inverse().expect("2s ≠ 0");
+        let (pair_left, pair_right) = if bit == 0 {
+            (current, round.sibling)
+        } else {
+            (round.sibling, current)
+        };
+        let folded = fold_row_ref(
+            parent_idx,
+            child_log_h,
+            1,
+            round.beta,
+            &[pair_left, pair_right],
+        );
+        fold_witness.push((s, inv_2s, pair_left, pair_right, folded));
+        current = folded;
+    }
+    let final_folded = current;
+
+    // --- Pass 3: emit ALPHA rows. ---
+    for (r, (step, record)) in alpha_steps.iter().zip(step_records.iter()).enumerate() {
+        let (qi, dq, apow_in, ro_in) = *record;
+        let base = r * width;
+        let row = &mut flat[base..base + width];
+        write_kind(row, OP_KIND_ALPHA);
+        zero_block_len_flag(row);
+
+        row[col::ALPHA_P_AT_X] = step.p_at_x;
+        write_ext(row, col::ALPHA_P_AT_Z0, step.p_at_z);
+        write_ext(row, col::ALPHA_Z0, step.z);
+        row[col::ALPHA_X] = step.x;
+
+        write_ext(row, col::ALPHA_QUOT_INV0, qi);
+        write_ext(row, col::ALPHA_DIFF_QUOT0, dq);
+        write_ext(row, col::ALPHA_CHALLENGE0, alpha);
+        write_ext(row, col::ALPHA_POW_IN0, apow_in);
+        write_ext(row, col::ALPHA_POW_OUT0, apow_in * alpha);
+        write_ext(row, col::ALPHA_RO_IN0, ro_in);
+        let new_ro = ro_in + apow_in * dq;
+        write_ext(row, col::ALPHA_RO_OUT0, new_ro);
+
+        // A3-3 cross-bind setup: FOLD_OUT on α rows = ρ_final.
+        // This satisfies non-fold persistence across α→α (FOLD_OUT
+        // constant across α rows) AND agrees with the α→FOLD bridge
+        // (which requires next.FOLD_IN = local.ALPHA_RO_OUT on the
+        // last α row, i.e. = ρ_final).
+        write_ext(row, col::FOLD_OUT0, rho_final);
+
+        // PI proxies.
+        write_ext(row, col::INITIAL_ALPHA_POW0, initial_alpha_pow);
+        write_ext(row, col::INITIAL_RO0, initial_ro);
+        write_ext(row, col::FINAL_FOLDED0, final_folded);
+        write_ext(row, col::INITIAL_FOLDED0, rho_final);
+        write_ext(row, col::FINAL_RO0, rho_final);
+
+        for (i, v) in p2_zero_witness.iter().enumerate() {
+            row[col::P2_BLOCK + i] = *v;
+        }
+    }
+
+    // --- Pass 4: emit FOLD rows. ---
+    let mut fold_current = rho_final;
+    for (r, (round, record)) in fold_rounds.iter().zip(fold_witness.iter()).enumerate() {
+        let (s, inv_2s, pair_left, pair_right, folded) = *record;
+        let row_idx = n_alpha + r;
+        let base = row_idx * width;
+        let row = &mut flat[base..base + width];
+        write_kind(row, OP_KIND_FOLD);
+        zero_block_len_flag(row);
+
+        let bit = (round.domain_index & 1) as u64;
+        write_ext(row, col::FOLD_IN0, fold_current);
+        write_ext(row, col::FOLD_OUT0, folded);
+        write_ext(row, col::FOLD_BETA0, round.beta);
+        row[col::FOLD_S] = s;
+        row[col::FOLD_INV_2S] = inv_2s;
+
+        write_ext(row, col::COMPRESS_SIBLING0, round.sibling);
+        row[col::COMPRESS_INDEX_BIT] = Goldilocks::new(bit);
+        write_ext(row, col::STATE_IN0, pair_left);
+        write_ext(row, col::STATE_IN0 + CHALLENGE_DIM, pair_right);
+
+        // A3-3: ALPHA_RO_OUT persists at ρ_final through FOLD rows.
+        write_ext(row, col::ALPHA_RO_OUT0, rho_final);
+        // ALPHA_POW_OUT, ALPHA_POW_IN, ALPHA_RO_IN keep α-chain's last
+        // values so their transition threading stays consistent (the α
+        // threading gate is zero on FOLD→FOLD so they're free, but we
+        // populate to avoid IDLE-persistence mismatches downstream).
+        write_ext(row, col::ALPHA_POW_IN0, alpha_final_pow);
+        write_ext(row, col::ALPHA_POW_OUT0, alpha_final_pow);
+        write_ext(row, col::ALPHA_RO_IN0, rho_final);
+
+        // PI proxies.
+        write_ext(row, col::INITIAL_ALPHA_POW0, initial_alpha_pow);
+        write_ext(row, col::INITIAL_RO0, initial_ro);
+        write_ext(row, col::FINAL_FOLDED0, final_folded);
+        write_ext(row, col::INITIAL_FOLDED0, rho_final);
+        write_ext(row, col::FINAL_RO0, rho_final);
+
+        for (i, v) in p2_zero_witness.iter().enumerate() {
+            row[col::P2_BLOCK + i] = *v;
+        }
+
+        fold_current = folded;
+    }
+
+    // --- Pass 5: IDLE padding. ---
+    for row_idx in physical_rows..trace_height {
+        let prev_base = (row_idx - 1) * width;
+        let prev_row = flat[prev_base..prev_base + width].to_vec();
+        let base = row_idx * width;
+        let row = &mut flat[base..base + width];
+        for c in col::STATE_IN0..col::P2_BLOCK {
+            row[c] = prev_row[c];
+        }
+        write_kind(row, OP_KIND_IDLE);
+        zero_block_len_flag(row);
+        row[col::ABSORB_IS_FIRST] = zero_g;
+        row[col::ABSORB_IS_LAST] = zero_g;
+        for (i, v) in p2_zero_witness.iter().enumerate() {
+            row[col::P2_BLOCK + i] = *v;
+        }
+    }
+
+    Ok(flat)
+}
+
+// ---------------------------------------------------------------------------
 // Boilerplate — the existing gen_p2_witness fn follows.
 // ---------------------------------------------------------------------------
 
@@ -1323,6 +1562,57 @@ where
             let l_c: AB::Expr = local[c].into();
             let n_c: AB::Expr = next[c].into();
             trans2.assert_zero(n_c - l_c);
+        }
+
+        // =================================================================
+        // A3-3: Cross-binding constraints.
+        //
+        // Close the A2 "trusted-by-construction" gap at the α↔fold seam.
+        // The aggregator pipeline is: α-reduction chain computes ρ (the
+        // reduced opening at the query point); ρ then seeds the fold
+        // chain's initial running value. In A2 this was threaded at
+        // orchestrator level without in-circuit binding. A3-3 enforces
+        // it with three constraints:
+        //
+        //   (i)  Direct α→FOLD bridge: when a FOLD row follows an ALPHA
+        //        row, the fold's FOLD_IN must equal the α's ALPHA_RO_OUT.
+        //   (ii) ALPHA_RO_OUT persistence on non-α transitions, so the
+        //        α chain's last output propagates through fold/IDLE rows
+        //        to the last-row boundary `ALPHA_RO_OUT == FINAL_RO`.
+        //   (iii) FOLD_OUT persistence on non-fold transitions, so the
+        //        fold chain's last output propagates to the last-row
+        //        boundary `FOLD_OUT == FINAL_FOLDED`.
+        //
+        // Together, a unified α+fold+IDLE trace verifies in ONE STARK.
+        // =================================================================
+
+        // (i) α→FOLD bridge: is_alpha · next_is_fold · (next.FOLD_IN − local.ALPHA_RO_OUT) = 0.
+        for i in 0..CHALLENGE_DIM {
+            let n_fin: AB::Expr = next[col::FOLD_IN0 + i].into();
+            let l_ro: AB::Expr = local[col::ALPHA_RO_OUT0 + i].into();
+            trans2.assert_zero(
+                is_alpha.clone() * next_is_fold.clone() * (n_fin - l_ro),
+            );
+        }
+
+        // (ii) ALPHA_RO_OUT persistence on non-α transitions.
+        //      (1 − next_is_alpha) · (next.ALPHA_RO_OUT − local.ALPHA_RO_OUT) = 0.
+        for i in 0..CHALLENGE_DIM {
+            let l_ro: AB::Expr = local[col::ALPHA_RO_OUT0 + i].into();
+            let n_ro: AB::Expr = next[col::ALPHA_RO_OUT0 + i].into();
+            trans2.assert_zero(
+                (one() - next_is_alpha.clone()) * (n_ro - l_ro),
+            );
+        }
+
+        // (iii) FOLD_OUT persistence on non-fold transitions.
+        //       (1 − next_is_fold) · (next.FOLD_OUT − local.FOLD_OUT) = 0.
+        for i in 0..CHALLENGE_DIM {
+            let l_fo: AB::Expr = local[col::FOLD_OUT0 + i].into();
+            let n_fo: AB::Expr = next[col::FOLD_OUT0 + i].into();
+            trans2.assert_zero(
+                (one() - next_is_fold.clone()) * (n_fo - l_fo),
+            );
         }
 
         drop(trans2);
@@ -2033,5 +2323,271 @@ mod tests {
         let proof = prove(&cfg, &air, trace, &[]);
         verify(&cfg, &air, &proof, &[])
             .expect("A3-1 leaf-to-root must still verify post-A3-2");
+    }
+
+    // ======================================================================
+    // A3-3: Cross-bindings — unified α + fold chain in ONE STARK
+    // ======================================================================
+
+    /// A3-3 acceptance: the α chain's ρ_final THREADS in-circuit into
+    /// the fold chain's seed via:
+    ///   (i)  bridge: is_alpha · next_is_fold · (next.FOLD_IN − local.ALPHA_RO_OUT)
+    ///   (ii) ALPHA_RO_OUT non-α persistence → last-row ALPHA_RO_OUT == FINAL_RO
+    ///   (iii) FOLD_OUT non-fold persistence → last-row FOLD_OUT == FINAL_FOLDED
+    /// One STARK proof covers both chains.
+    #[test]
+    fn air_prove_and_verify_unified_alpha_to_fold_chain() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let alpha = ext(3, 5);
+        let initial_apow = ext(1, 0);
+        let initial_ro = ext(0, 0);
+        let alpha_steps = vec![
+            AlphaStep { p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23) },
+            AlphaStep { p_at_x: gl(29), p_at_z: ext(31, 37), z: ext(41, 43), x: gl(47) },
+        ];
+        let fold_rounds = vec![
+            FoldRound {
+                sibling: ext(53, 59),
+                beta: ext(61, 67),
+                domain_index: 0b10,
+                log_height: 4,
+            },
+            FoldRound {
+                sibling: ext(71, 73),
+                beta: ext(79, 83),
+                domain_index: 0b01,
+                log_height: 3,
+            },
+        ];
+        let flat = build_alpha_to_fold_unified_trace(
+            initial_apow, initial_ro, alpha, &alpha_steps, &fold_rounds, 16,
+        )
+        .unwrap();
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let proof = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof, &[])
+            .expect("unified α+fold must verify in ONE monolithic STARK");
+    }
+
+    /// A3-3 adversarial test #1: directly tamper the first FOLD row's
+    /// FOLD_IN so it doesn't match the α chain's last ALPHA_RO_OUT.
+    /// The bridge constraint
+    ///   is_alpha · next_is_fold · (next.FOLD_IN − local.ALPHA_RO_OUT) = 0
+    /// fires at the α→FOLD transition — rejection.
+    ///
+    /// This CLOSES A2's "trusted-by-construction" gap at the α/fold
+    /// seam. Before A3-3, the prover could forge a fold chain starting
+    /// from an arbitrary ρ' ≠ ρ_final and the verifier wouldn't catch it.
+    #[test]
+    fn air_rejects_unified_tampered_alpha_to_fold_bridge() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let alpha = ext(3, 5);
+        let initial_apow = ext(1, 0);
+        let initial_ro = ext(0, 0);
+        let alpha_steps = vec![AlphaStep {
+            p_at_x: gl(7),
+            p_at_z: ext(11, 13),
+            z: ext(17, 19),
+            x: gl(23),
+        }];
+        let fold_rounds = vec![FoldRound {
+            sibling: ext(29, 31),
+            beta: ext(37, 41),
+            domain_index: 0b01,
+            log_height: 3,
+        }];
+        let mut flat = build_alpha_to_fold_unified_trace(
+            initial_apow, initial_ro, alpha, &alpha_steps, &fold_rounds, 8,
+        )
+        .unwrap();
+        // Row 0 = ALPHA; row 1 = first FOLD. Tamper FOLD_IN on row 1
+        // so it no longer equals row 0's ALPHA_RO_OUT.
+        let row1 = 1 * col::WIDTH;
+        flat[row1 + col::FOLD_IN0] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove(&cfg, &air, trace, &[])
+        }));
+        match outcome {
+            Err(_) => {}
+            Ok(p) => {
+                verify(&cfg, &air, &p, &[]).expect_err(
+                    "forged α→FOLD seam must reject — A3-3 closes A2's cross-binding gap",
+                );
+            }
+        }
+    }
+
+    /// A3-3 adversarial test #2: tamper the α chain's last RO_OUT on
+    /// its last row. The direct bridge still sees local.ALPHA_RO_OUT
+    /// (unchanged in this case, since we tamper via P_AT_X), so the
+    /// rejection path is the DIFF_QUOT / RO update constraint, not the
+    /// bridge. Confirms α-chain tampering cascades through.
+    #[test]
+    fn air_rejects_unified_tampered_alpha_chain() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let alpha = ext(3, 5);
+        let initial_apow = ext(1, 0);
+        let initial_ro = ext(0, 0);
+        let alpha_steps = vec![AlphaStep {
+            p_at_x: gl(7),
+            p_at_z: ext(11, 13),
+            z: ext(17, 19),
+            x: gl(23),
+        }];
+        let fold_rounds = vec![FoldRound {
+            sibling: ext(29, 31),
+            beta: ext(37, 41),
+            domain_index: 0b01,
+            log_height: 3,
+        }];
+        let mut flat = build_alpha_to_fold_unified_trace(
+            initial_apow, initial_ro, alpha, &alpha_steps, &fold_rounds, 8,
+        )
+        .unwrap();
+        // Tamper α row 0's P_AT_X — breaks DIFF_QUOT → RO update.
+        flat[col::ALPHA_P_AT_X] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove(&cfg, &air, trace, &[])
+        }));
+        match outcome {
+            Err(_) => {}
+            Ok(p) => {
+                verify(&cfg, &air, &p, &[])
+                    .expect_err("tampered α chain in unified trace must reject");
+            }
+        }
+    }
+
+    /// A3-3 adversarial test #3: forge ALPHA_RO_OUT on a FOLD row to
+    /// break the non-α persistence chain. If the prover tries to set
+    /// FINAL_RO = forged ρ' while keeping the real α chain → the
+    /// last-row boundary holds only if ALPHA_RO_OUT propagates from
+    /// last α row. Tampering mid-propagation fires persistence.
+    #[test]
+    fn air_rejects_unified_tampered_alpha_ro_out_on_fold_row() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let alpha = ext(3, 5);
+        let initial_apow = ext(1, 0);
+        let initial_ro = ext(0, 0);
+        let alpha_steps = vec![AlphaStep {
+            p_at_x: gl(7),
+            p_at_z: ext(11, 13),
+            z: ext(17, 19),
+            x: gl(23),
+        }];
+        let fold_rounds = vec![
+            FoldRound {
+                sibling: ext(29, 31),
+                beta: ext(37, 41),
+                domain_index: 0b10,
+                log_height: 4,
+            },
+            FoldRound {
+                sibling: ext(43, 47),
+                beta: ext(53, 59),
+                domain_index: 0b01,
+                log_height: 3,
+            },
+        ];
+        let mut flat = build_alpha_to_fold_unified_trace(
+            initial_apow, initial_ro, alpha, &alpha_steps, &fold_rounds, 8,
+        )
+        .unwrap();
+        // Row 0 = ALPHA, rows 1,2 = FOLD. Tamper ALPHA_RO_OUT on row 1.
+        // Non-α persistence fires on row0→row1 (fold) or row1→row2 (fold).
+        let row1 = 1 * col::WIDTH;
+        flat[row1 + col::ALPHA_RO_OUT0] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove(&cfg, &air, trace, &[])
+        }));
+        match outcome {
+            Err(_) => {}
+            Ok(p) => {
+                verify(&cfg, &air, &p, &[])
+                    .expect_err("tampered ALPHA_RO_OUT on FOLD row must reject via non-α persistence");
+            }
+        }
+    }
+
+    /// A3-3 regression: all A3-1 and A3-2 tests still pass under the
+    /// new cross-binding constraints. Covers leaf-to-root, α-only, and
+    /// fold-only traces in a single test.
+    #[test]
+    fn a3_1_and_a3_2_still_verify_after_a3_3() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+
+        // Leaf-to-root (A3-1).
+        {
+            let (leaves, openings, root) = tiny_tree_wide_leaves();
+            let (_, path, idx) = openings[1].clone();
+            let flat = build_leaf_to_root_trace(&leaves[1], &path, idx, root, 16).unwrap();
+            let trace = RowMajorMatrix::new(flat, col::WIDTH);
+            let proof = prove(&cfg, &air, trace, &[]);
+            verify(&cfg, &air, &proof, &[])
+                .expect("A3-1 leaf-to-root must still verify post-A3-3");
+        }
+
+        // α-only (A3-2).
+        {
+            let alpha = ext(2, 3);
+            let steps = vec![AlphaStep {
+                p_at_x: gl(5), p_at_z: ext(7, 11), z: ext(13, 17), x: gl(19),
+            }];
+            let final_ro = expected_final_ro(ext(1, 0), ext(0, 0), alpha, &steps);
+            let flat = build_alpha_chain_trace(
+                ext(1, 0), ext(0, 0), alpha, &steps, final_ro, 8,
+            )
+            .unwrap();
+            let trace = RowMajorMatrix::new(flat, col::WIDTH);
+            let proof = prove(&cfg, &air, trace, &[]);
+            verify(&cfg, &air, &proof, &[])
+                .expect("A3-2 α-only must still verify post-A3-3");
+        }
+
+        // Fold-only (A3-2).
+        {
+            let initial_folded = ext(5, 7);
+            let rounds = vec![FoldRound {
+                sibling: ext(11, 13),
+                beta: ext(17, 19),
+                domain_index: 0b01,
+                log_height: 3,
+            }];
+            let final_folded = expected_final_folded(initial_folded, &rounds);
+            let flat =
+                build_fold_chain_trace(initial_folded, &rounds, final_folded, 8).unwrap();
+            let trace = RowMajorMatrix::new(flat, col::WIDTH);
+            let proof = prove(&cfg, &air, trace, &[]);
+            verify(&cfg, &air, &proof, &[])
+                .expect("A3-2 fold-only must still verify post-A3-3");
+        }
     }
 }

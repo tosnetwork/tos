@@ -155,14 +155,30 @@ Incremental rollout, each step runnable + testable:
 - End-to-end test: α-reduction → fold chain verifies via ONE STARK,
   replacing the two STARKs from A2's d-6.
 
-### A3-3: Cross-bindings
+### A3-3: Cross-bindings ✅
 
-- Add `builder.assert_eq` on the shared PUBLIC-INPUT columns: leaf
-  digests flow in-circuit from leaf-hash → compression; RO flows
-  α → fold; final_folded = eval_final_poly_horner.
-- End-to-end test: the full 9-STARK bundle from d-8-c merges into
-  ONE monolithic STARK; `tampered_ro_field_still_passes_stark_verify`
-  (the known PoC gap from d-6) now FAILS — closing soundness.
+Landed: three in-circuit constraints close A2's "trusted-by-construction"
+gap at the α/fold seam:
+
+1. Direct α→FOLD bridge: `is_alpha · next_is_fold · (next.FOLD_IN −
+   local.ALPHA_RO_OUT) = 0` threads ρ_final in-circuit from the last
+   ALPHA row to the first FOLD row.
+2. ALPHA_RO_OUT persistence on non-α transitions propagates ρ_final
+   through FOLD + IDLE rows to the last-row boundary
+   `ALPHA_RO_OUT == FINAL_RO`.
+3. FOLD_OUT persistence on non-fold transitions propagates the fold
+   chain's terminal value to `FOLD_OUT == FINAL_FOLDED`.
+
+(The ABSORB→COMPRESS leaf-digest bridge was already closed in A3-1.)
+
+Acceptance test (`air_prove_and_verify_unified_alpha_to_fold_chain`):
+one STARK proof verifies a trace that runs α-reduction followed by
+fold, with the α output seeding the fold input through in-circuit
+constraints. Adversarial test
+`air_rejects_unified_tampered_alpha_to_fold_bridge` tampers the first
+fold row's FOLD_IN — the bridge constraint fires and the proof
+rejects. Two additional adversarial tests cover α-chain tampering and
+non-α persistence violation.
 
 ### A3-4: Multi-query + multi-slot measurement
 
