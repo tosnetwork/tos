@@ -180,12 +180,41 @@ fold row's FOLD_IN — the bridge constraint fires and the proof
 rejects. Two additional adversarial tests cover α-chain tampering and
 non-α persistence violation.
 
-### A3-4: Multi-query + multi-slot measurement
+### A3-4: Scaling measurements (landed — partial)
 
-- Scale to 52 queries per per-Tx STARK verification and N=4 slots.
-- Measure proof size + prover time. This is the §4.1 A3 landmark:
-  "4-Tx aggregation + correctness tests; Fixture-based 4/4 aggregated
-  proof; cross-impl parity".
+Landed: four `#[ignore]`'d measurement tests in
+`monolithic_verifier_air.rs::tests::measure_*` that record prover
+time and proof size at realistic scales. See
+`doc/uno-aggregation-metrics.md` §A3-4 for the full numeric table.
+
+**Empirical finding**: at realistic per-query shapes (α_steps ≈ 500,
+fold_rounds = 9, trace_height ≈ 1024), one monolithic-AIR STARK per
+query ships ~335 KB. Scaled naively to N = 30 slots × 52 queries,
+this lands at ~12 MB/block — still orders of magnitude above §3.4's
+100 KB envelope.
+
+**Shape of the §3.4-compliant solution is now clear**: one monolithic
+STARK must span the WHOLE block (all slots × all queries in a single
+proof). Per-slot or per-Tx monolithic proofs don't compose down by
+concatenation.
+
+**Deferred to A3-5** (the per-Tx bundle + multi-slot work was
+originally scoped as part of A3-4 but requires structural changes to
+the COMPRESS bank — see A3-5 below).
+
+### A3-5 (planned): Multi-path Merkle + multi-slot composition
+
+1. Generalize the COMPRESS bank's root-check boundary from a single
+   last-row `DIGEST == TRACE_COMMIT_ROOT` to a per-path
+   COMPRESS → non-COMPRESS transition, so one trace can hold multiple
+   independent Merkle openings.
+
+2. Compose a full per-query bundle (α + fold + trace-commit Merkle +
+   quot-commit Merkle + per-round commit-phase Merkles) in one AIR.
+
+3. Stack N slots × per-Tx bundles in one trace. This is the original
+   §4.1 "4-Tx aggregation + fixture-based 4/4 aggregated proof"
+   landmark, shifted from A3-4 to A3-5.
 
 ### A4: 30-Tx measurement
 

@@ -2590,4 +2590,250 @@ mod tests {
                 .expect("A3-2 fold-only must still verify post-A3-3");
         }
     }
+
+    // ======================================================================
+    // A3-4: Scaling measurements — prover time + proof size sweep.
+    //
+    // These tests exercise the monolithic AIR at progressively larger
+    // trace heights and record:
+    //   - trace (height, width, cells)
+    //   - prover time (ms)
+    //   - postcard-serialized proof size (bytes)
+    //
+    // The measurements feed into `doc/uno-aggregation-metrics.md` §A3-4
+    // and validate the §3.4 feasibility path before A4 scales to N=30.
+    //
+    // Reliability: these are #[ignore]'d by default to keep the default
+    // test suite fast. Run them explicitly with
+    //   cargo test -j 128 --release --lib monolithic_verifier_air::tests::measure \
+    //     -- --ignored --test-threads 1 --nocapture
+    // to capture fresh measurements. The `--test-threads 1` keeps the
+    // timing measurements un-contended.
+    // ======================================================================
+
+    /// Deterministically sample α-chain steps for measurement traces.
+    fn sample_alpha_steps(n: usize) -> Vec<AlphaStep> {
+        // Use low-entropy-but-distinct values so steps don't degenerate
+        // (z ≠ x is required for (z − x)^{−1} to exist).
+        (0..n as u64)
+            .map(|i| AlphaStep {
+                p_at_x: gl(7 * i + 1),
+                p_at_z: ext(11 * i + 3, 13 * i + 5),
+                z: ext(17 * i + 7, 19 * i + 11),
+                x: gl(23 * i + 2),
+            })
+            .collect()
+    }
+
+    /// Deterministically sample fold rounds. `log_height_start` is the
+    /// log-height of the codeword BEFORE the first fold; log_height
+    /// halves each round.
+    fn sample_fold_rounds(n: usize, log_height_start: usize) -> Vec<FoldRound> {
+        assert!(
+            log_height_start >= n,
+            "fold chain needs log_height_start ≥ n_rounds (each round halves log_h)"
+        );
+        (0..n)
+            .map(|r| FoldRound {
+                sibling: ext(53 + r as u64 * 7, 59 + r as u64 * 11),
+                beta: ext(61 + r as u64 * 13, 67 + r as u64 * 17),
+                domain_index: (0b1010_0101 ^ r) & ((1 << log_height_start) - 1),
+                log_height: log_height_start - r,
+            })
+            .collect()
+    }
+
+    /// Single measurement record emitted to stderr.
+    fn report(tag: &str, trace_h: usize, prove_ms: u128, proof_bytes: usize) {
+        let cells = trace_h * col::WIDTH;
+        eprintln!(
+            "  [{tag}] height={trace_h:>6}  width={w}  cells={cells:>12}  \
+             prove={prove_ms:>6} ms  proof={proof_bytes:>7} B",
+            w = col::WIDTH,
+            prove_ms = prove_ms,
+            proof_bytes = proof_bytes,
+        );
+    }
+
+    /// A3-4 acceptance: a realistic-scale unified α+fold trace at 2/2
+    /// shape dimensions verifies in ONE monolithic STARK.
+    ///
+    /// Dimensions (mirrors §`doc/uno-aggregation-metrics.md` 2/2 row):
+    ///   air_width   ≈ 1305 → α-chain length ≈ air_width · 2 + 2
+    ///                                       = 2612 steps ≈ next_pow2 = 4096.
+    ///   num_rounds  = 6
+    ///   trace_height = 4096
+    ///
+    /// For this test we use a smaller but still-representative
+    /// α_steps = 400 to keep runtime under ~1 min.
+    #[test]
+    #[ignore = "A3-4 measurement test — run explicitly to capture scaling data"]
+    fn measure_unified_alpha_fold_realistic_scale() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+        use std::time::Instant;
+
+        let alpha = ext(3, 5);
+        let initial_apow = ext(1, 0);
+        let initial_ro = ext(0, 0);
+        let alpha_steps = sample_alpha_steps(400);
+        let fold_rounds = sample_fold_rounds(9, 12);
+        let trace_height = 512;
+        let flat = build_alpha_to_fold_unified_trace(
+            initial_apow,
+            initial_ro,
+            alpha,
+            &alpha_steps,
+            &fold_rounds,
+            trace_height,
+        )
+        .unwrap();
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+
+        let t0 = Instant::now();
+        let proof = prove(&cfg, &air, trace, &[]);
+        let prove_ms = t0.elapsed().as_millis();
+        verify(&cfg, &air, &proof, &[]).expect("realistic-scale unified trace must verify");
+
+        let proof_bytes = postcard::to_allocvec(&proof).unwrap().len();
+        eprintln!();
+        eprintln!("A3-4 unified realistic-scale (α_steps=400, fold_rounds=9):");
+        report("unified@512", trace_height, prove_ms, proof_bytes);
+    }
+
+    /// A3-4 scaling sweep: α-only chain at trace heights ∈ {64, 256, 1024, 4096}.
+    /// Confirms prover time scales ~linearly with trace area.
+    #[test]
+    #[ignore = "A3-4 measurement test — run explicitly to capture scaling data"]
+    fn measure_alpha_chain_scaling_sweep() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+        use std::time::Instant;
+
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let alpha = ext(3, 5);
+        let initial_apow = ext(1, 0);
+        let initial_ro = ext(0, 0);
+
+        eprintln!();
+        eprintln!("A3-4 α-chain scaling sweep:");
+        for trace_height in [64usize, 256, 1024, 4096] {
+            let steps = sample_alpha_steps(trace_height / 2);
+            let final_ro = expected_final_ro(initial_apow, initial_ro, alpha, &steps);
+            let flat = build_alpha_chain_trace(
+                initial_apow, initial_ro, alpha, &steps, final_ro, trace_height,
+            )
+            .unwrap();
+            let trace = RowMajorMatrix::new(flat, col::WIDTH);
+
+            let t0 = Instant::now();
+            let proof = prove(&cfg, &air, trace, &[]);
+            let prove_ms = t0.elapsed().as_millis();
+            verify(&cfg, &air, &proof, &[]).unwrap();
+
+            let proof_bytes = postcard::to_allocvec(&proof).unwrap().len();
+            report(&format!("α@{trace_height}"), trace_height, prove_ms, proof_bytes);
+        }
+    }
+
+    /// A3-4 scaling sweep: fold-only chain at log_height_start up to 16
+    /// (15 rounds matches the 4/4 shape's `num_rounds = 9` with headroom).
+    #[test]
+    #[ignore = "A3-4 measurement test — run explicitly to capture scaling data"]
+    fn measure_fold_chain_scaling_sweep() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+        use std::time::Instant;
+
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let initial_folded = ext(5, 7);
+
+        eprintln!();
+        eprintln!("A3-4 fold-chain scaling sweep:");
+        // Each row of the fold bank is one round. num_rounds ∈ {3,6,9,12,15}
+        // covers the 1/1 (3), 2/2 (6), 4/4 (9), and beyond.
+        for (n_rounds, log_h_start) in [(3usize, 5usize), (6, 8), (9, 12), (15, 18)] {
+            let rounds = sample_fold_rounds(n_rounds, log_h_start);
+            let final_folded = expected_final_folded(initial_folded, &rounds);
+            let trace_height = n_rounds.next_power_of_two().max(16);
+            let flat = build_fold_chain_trace(
+                initial_folded,
+                &rounds,
+                final_folded,
+                trace_height,
+            )
+            .unwrap();
+            let trace = RowMajorMatrix::new(flat, col::WIDTH);
+
+            let t0 = Instant::now();
+            let proof = prove(&cfg, &air, trace, &[]);
+            let prove_ms = t0.elapsed().as_millis();
+            verify(&cfg, &air, &proof, &[]).unwrap();
+
+            let proof_bytes = postcard::to_allocvec(&proof).unwrap().len();
+            report(
+                &format!("fold@{n_rounds}rnd"),
+                trace_height,
+                prove_ms,
+                proof_bytes,
+            );
+        }
+    }
+
+    /// A3-4 composite: unified α+fold sweep at trace heights that match
+    /// the 1/1, 2/2, and (scaled) 4/4 per-query shape.
+    #[test]
+    #[ignore = "A3-4 measurement test — run explicitly to capture scaling data"]
+    fn measure_unified_alpha_fold_scaling_sweep() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+        use std::time::Instant;
+
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let alpha = ext(3, 5);
+        let initial_apow = ext(1, 0);
+        let initial_ro = ext(0, 0);
+
+        eprintln!();
+        eprintln!("A3-4 unified α+fold scaling sweep:");
+        // (α_steps, fold_rounds, log_h_start, trace_height) — sized so
+        // α_steps + fold_rounds < trace_height.
+        let scenarios = [
+            ("1/1 shape", 40usize, 3usize, 5usize, 64usize),
+            ("2/2 shape", 180, 6, 10, 256),
+            ("4/4 shape", 500, 9, 14, 1024),
+            ("stretch", 2000, 12, 16, 4096),
+        ];
+        for (tag, n_alpha, n_fold, log_h_start, trace_height) in scenarios {
+            let alpha_steps = sample_alpha_steps(n_alpha);
+            let fold_rounds = sample_fold_rounds(n_fold, log_h_start);
+            let flat = build_alpha_to_fold_unified_trace(
+                initial_apow,
+                initial_ro,
+                alpha,
+                &alpha_steps,
+                &fold_rounds,
+                trace_height,
+            )
+            .unwrap();
+            let trace = RowMajorMatrix::new(flat, col::WIDTH);
+
+            let t0 = Instant::now();
+            let proof = prove(&cfg, &air, trace, &[]);
+            let prove_ms = t0.elapsed().as_millis();
+            verify(&cfg, &air, &proof, &[]).unwrap();
+
+            let proof_bytes = postcard::to_allocvec(&proof).unwrap().len();
+            report(tag, trace_height, prove_ms, proof_bytes);
+        }
+    }
 }
