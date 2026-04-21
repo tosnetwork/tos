@@ -135,6 +135,21 @@ add_executable(test-uno-subscriptions
 # fixtures, no Plonky3 / Poseidon2 real path.
 add_executable(test-uno-metrics                  test-uno-metrics.cpp)
 
+# K-block-proof-verifier-cpp: C++ integration test for the A6-3
+# `uno::crypto::BlockProofVerifier` / `BlockExtraView` RAII bridge. Pins
+# construction / init / is_initialized lifecycle, `BlockExtraView::decode`
+# round-trip against a real `uno_block_extra_encode_v1` wire blob, decode
+# reject paths (truncated header, bad scheme_id, over-cap proof_len), and
+# verify reject paths (null handle, garbage proof bytes). End-to-end
+# real-proof verify from C++ is out of scope — covered by the Rust
+# `block_verifier_ffi_round_trip` test in uno/plonky3-ffi/src/lib.rs.
+#
+# Links against the real uno_plonky3_ffi staticlib (via Corrosion) through
+# uno_workchain PUBLIC. If Corrosion is not configured, the A6-2/A6-3 FFI
+# entry points (`uno_block_extra_*`, `uno_block_verifier_*`) are unresolved
+# and the test emits a clear SKIP line at startup rather than running.
+add_executable(test-uno-block-proof-verifier     test-block-proof-verifier.cpp)
+
 # K-filter-bench: standalone GCS encode/decode benchmark for the §2.8
 # compact-filter path. Complements the `uno_block_filter_gcs_bytes` runtime
 # histogram by giving operators (and the eventual audit vendor) a
@@ -171,7 +186,8 @@ foreach(_t test-uno-transfer
            test-uno-bech32m-envelope
            test-uno-subscriptions
            test-uno-metrics
-           test-uno-filter-bench)
+           test-uno-filter-bench
+           test-uno-block-proof-verifier)
   target_link_libraries(${_t} PRIVATE uno_workchain)
   target_include_directories(${_t} PRIVATE ${CMAKE_SOURCE_DIR})
   if (COMMAND tos_test)
