@@ -67,6 +67,7 @@ pub mod ood_eval;
 pub mod fri_arith;
 pub mod merkle_path;
 pub mod open_input;
+pub mod fri_verify;
 
 /// Result codes returned across the C ABI.
 ///
