@@ -1,26 +1,27 @@
 //! uno_plonky3_ffi — Rust crate exposing a Plonky3 STARK verifier + reference
 //! prover to the TOS C++ validator via a minimal C ABI.
 //!
-//! Design doc §13 P.0 / P.2 bootstrap (see `doc/uno-workchain.md`).
+//! Design doc §13 P.2 / P.3 implementation surface (see
+//! `doc/uno-workchain.md`).
 //!
 //! # What this is
 //!
-//! This crate is the **scaffolding** for the Uno workchain's proof system. It:
+//! This crate is the Rust-side proof-system implementation for the Uno
+//! workchain. It:
 //!
-//! 1. Implements a Minimum Viable AIR — a single Poseidon2-Goldilocks hash
-//!    (4-to-1 compression) combined with a single-step Merkle path check and
-//!    a u64 range assertion (see [`transfer_air`]).
-//! 2. Exposes a reference prover + verifier over that MVP AIR (see
-//!    [`prover`] and [`verifier`]).
+//! 1. Implements the Uno Transfer AIR over the full §4.1 envelope
+//!    (`1..4` spends × `1..4` outputs) with real Poseidon2-Goldilocks
+//!    constraints, Merkle-path checks, nullifier derivation and
+//!    in-circuit balance enforcement (see [`transfer_air`]).
+//! 2. Exposes the reference prover + consensus-critical verifier over that
+//!    AIR (see [`prover`] and [`verifier`]).
 //! 3. Wraps both in a C ABI suitable for the C++ validator to consume
 //!    (this file).
 //!
-//! It is **not** the production Transfer circuit. The production AIR will
-//! implement all nine claims in §4.2 of the design doc (tree-membership at
-//! depth 32, note opening, hash-chain ownership, nullifier correctness,
-//! range, spend-auth binding, well-formed commitment, per-output range,
-//! value conservation). The scaffolding here only proves the *toolchain*
-//! end-to-end; it does not prove anything consensus-meaningful.
+//! Plonky3 provides the generic STARK proving/verifying machinery; this
+//! crate supplies the Uno-specific AIR, public-input encoding, shape
+//! dispatch, parameter pinning and FFI boundary needed to make that
+//! machinery usable from the validator.
 //!
 //! # C ABI contract
 //!
