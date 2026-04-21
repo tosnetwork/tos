@@ -54,9 +54,14 @@ this document promotes it to v1.
 **Recommended v1 decision**: adopt aggregation at the v1 launch.
 Rationale:
 1. Cleanly delivers the original §3.4 ~100 KB envelope.
-2. Every future v2 item (multi-asset, shielded DEX, Aleo-class
-   programmability) already assumes aggregation; baking it into v1
-   avoids a consensus-binding wire-format change post-launch.
+2. Every plausible v2+ feature on a private-payments chain
+   (multi-asset support, batch settlement, staking hooks, etc.)
+   already assumes aggregation; baking it into v1 avoids a
+   consensus-binding wire-format change post-launch. UNO is
+   positioned as a TOS-native Zcash/Penumbra-style private-payment
+   workchain, NOT a general-VM platform — any "Aleo-class
+   programmability" ask is explicitly out-of-scope for v1/v2 per
+   `doc/uno-workchain.md` §5.
 3. The infrastructure is foundational; it compound-interests every
    subsequent release.
 
@@ -289,6 +294,85 @@ aggregator prove time.
 
 Unchanged from Option B. The full Plonky3 verify is deferred to the
 collator (step 5 above), so admission still does the cheap checks only.
+
+### 2.6 Block-proposal sequencing decision (prover-latency architecture)
+
+A4 measurements (`doc/uno-aggregation-metrics.md` §A4) gave real
+numbers for block-level prover time:
+
+| shape                 | prover time  | proof size |
+|-----------------------|-------------:|-----------:|
+| 4-Tx / 208 bundles    | ~65 s        | ~420 KB    |
+| N=30 extrapolation    | ~4 min       | ~550-650 KB |
+
+At the 1-second TOS block cadence this is **3-4 orders of magnitude
+longer than the block cadence**, which raises a first-class design
+question: **is the aggregated proof a HARD prerequisite for block
+proposal, or can it be pipelined / delay-finalized?**
+
+This section pins UNO's answer. Two options were considered:
+
+**Option A — hard prerequisite (synchronous)**: collator MUST have a
+valid aggregated proof before broadcasting the block candidate. Pros:
+simplest consensus rule; every committed block has full crypto
+validity attested by the time validators see it. Cons: block cadence
+is bounded below by prover time → UNO wc=2 cannot produce a block
+every 1 s; cadence drops to ~1 min at N=30. That's incompatible with
+wc=2 sharing the mainchain tempo.
+
+**Option B — pipelined / delay-finalize (asynchronous)**: collator
+broadcasts a *proof-pending* block immediately; the aggregated proof
+lands K blocks later and retroactively attests validity of the
+pending-window blocks. Pros: matches the 1 s cadence; prover cost is
+an amortized background job. Cons: a window of K blocks is
+"soft-finalized" (signatures / anchors / nullifiers checked, but no
+STARK cover yet); adds a new finality depth concept to the rule-set;
+complicates rollback if the delayed proof fails.
+
+**Decision**: **Option B at v1 launch.** Specifically:
+
+1. **Soft-finality window**: the last K blocks on wc=2 are `PROOF_PENDING`
+   until their aggregated proof lands. `K` defaults to `ceil(prover_time /
+   block_cadence) + safety_margin` ≈ **300 blocks at 1 s cadence**
+   (5 min worst-case at N=30; 2× safety). Pinned as a consensus
+   parameter.
+
+2. **Pending block contents**: include everything EXCEPT
+   `UnoBlockExtra.aggregated_proof`. Instead they carry
+   `UnoBlockExtra.proof_commitment: bits256` — a BLAKE3 hash over the
+   block's `tx_pi_merkle_root` + expected-PI vector — so the prover
+   CANNOT change the set of Transfers the proof attests to between
+   soft-finality and hard-finality.
+
+3. **Hard-finality**: a future block carries the aggregated proof for
+   a prior height via a new message type `AggregatedProofDelivery`.
+   That delivery cross-checks `proof_commitment` of the target block
+   and promotes it from `PROOF_PENDING` → `FINALIZED`.
+
+4. **Rollback rule**: if a pending block's proof fails to land within
+   the `K`-block window OR if the delivered proof rejects STARK verify,
+   the pending block and all its descendants are rolled back. This is
+   already the TOS masterchain's failed-shardchain convention, reused.
+
+5. **Wallet / user UX**: a receiver SHALL treat a UTXO as
+   PROOF_PENDING until its parent block is FINALIZED. The masterchain
+   shows block state ∈ {PROOF_PENDING, FINALIZED} via a new RPC
+   field. Default wallet policy: treat only FINALIZED as spendable;
+   treat PROOF_PENDING as "visible, cannot respend" (same UX as
+   Ethereum's "12-block confirmation" pattern, at 1 s per block →
+   ~5 min confirmation delay at worst).
+
+**Consequence for the implementation plan**: A6-5 (validator wiring)
+MUST treat `BlockProofVerifier::verify` as a delivery-time check for
+a prior block, not a proposal-time check. This affects the
+compute-phase order in §2.4 — the step 7 ("NEW: block-level
+aggregated_proof verify") moves to `AggregatedProofDelivery` message
+handling, not the block-body compute-phase. §4.3 and §2.4 text
+will be revised when A6-5 lands.
+
+**Out-of-scope for v1**: adaptive `K` based on load; commit-chain
+merging (batching several pending blocks into one aggregated proof
+delivery). Both are v2 optimizations.
 
 ---
 
