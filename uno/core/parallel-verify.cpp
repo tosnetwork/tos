@@ -210,20 +210,25 @@ VerifyResult verify_transfer_with_holder(const UnoState& state,
     }
 
     // ---- Step 4: Plonky3 proof verify (§4.3 step 4) ------------------------
-    //
-    // A6-4 bridge (stub): the per-Tx zk_proof chunk-chain was removed from
-    // Transfer in A6-4a. Per-Tx proof verification is moving to the block
-    // level in A6-4d/A6-5 (decode UnoBlockExtra once per block, call
-    // BlockProofVerifier::verify). Until that landing the compute-phase
-    // skips STARK verify altogether; signatures, nullifier uniqueness,
-    // anchor-window, and witness_commitment cross-check still execute via
-    // the steps above and the upcoming validator path.
-    //
-    // NOTE: this stub is NOT production-safe on its own — it disables
-    // per-Tx cryptographic validity. A6-4d/A6-5 must land before UNO
-    // ships or the collator must verify per-Tx before admission (which
-    // matches §4.3a's mempool pre-filter design).
-    (void)holder;  // unused until A6-4d wires the block-level verifier.
+    {
+        auto pi = build_plonky3_public_inputs(tx);
+        auto pi_bytes = pi.to_bytes();
+        std::string proof_bytes = load_bytes_from_chunk_chain(tx.zk_proof);
+        if (proof_bytes.empty()) {
+            return VerifyResult::BadPlonky3Proof;
+        }
+        if (!holder.ensure_ready()) {
+            return VerifyResult::BadPlonky3Proof;
+        }
+        auto r = holder.verifier.verify(
+            reinterpret_cast<const std::uint8_t*>(proof_bytes.data()),
+            proof_bytes.size(),
+            reinterpret_cast<const std::uint8_t*>(pi_bytes.data()),
+            pi_bytes.size());
+        if (r != ::uno::crypto::VerifyResult::kOk) {
+            return VerifyResult::BadPlonky3Proof;
+        }
+    }
 
     return VerifyResult::Ok;
 }
