@@ -35,7 +35,16 @@
 use p3_air::{Air, AirBuilder, BaseAir, WindowAccess};
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use p3_goldilocks::{default_goldilocks_poseidon2_8, Goldilocks, Poseidon2Goldilocks};
+use p3_poseidon2_air::RoundConstants;
 use p3_symmetric::Permutation;
+
+// Reuse the Poseidon2-w8 AIR machinery from transfer_air. These are
+// `pub(crate)` exports specifically to avoid duplicating ~150 lines of
+// round-constraint logic (see `transfer_air::eval_poseidon2`).
+use crate::transfer_air::{
+    eval_poseidon2, P2Cols, POSEIDON2_COLS_PER_INSTANCE, POSEIDON2_HALF_FULL_ROUNDS,
+};
+use core::borrow::Borrow;
 
 // ---------------------------------------------------------------------------
 // Protocol constants (MUST match uno/plonky3-ffi/src/prover.rs::MvpChallenger)
@@ -371,14 +380,21 @@ pub mod col {
     /// Value squeezed on SAMPLE rows; equal to out_buf_local[out_buf_len_local - 1].
     pub const SAMPLED_VALUE: usize = OBSERVED_VALUE + 1;
 
+    /// Base-of-row offset for the shared Poseidon2-w8 sub-AIR block.
+    /// This block is populated on EVERY row — it carries a valid
+    /// permutation witness for SOME input (zero-state on non-DUPLEX
+    /// rows, the duplex-input state on DUPLEX rows). The DUPLEX-row
+    /// constraints (A2-2c) gate "inputs match state_local ∥ in_buf"
+    /// and "outputs match state_next[0..8]" with `is_duplex`.
+    pub const P2_BLOCK: usize = SAMPLED_VALUE + 1;
+
     /// Total column width of a ChallengerAir trace row.
-    pub const WIDTH: usize = SAMPLED_VALUE + 1;
+    pub const WIDTH: usize = P2_BLOCK + super::POSEIDON2_COLS_PER_INSTANCE;
 }
 
-/// Canonical trace width (≤ 35 cols for the framing; the shared Poseidon2-w8
-/// block (180 cols) that Phase A2-2b will wire in for DUPLEX rows brings the
-/// full slot width to ~215 cols, still within the aggregator's 200–300 cols/
-/// slot budget from `doc/uno-aggregation-design.md` §1.3).
+/// Canonical trace width (34 framing cols + 180 Poseidon2-w8 witness cols =
+/// 214 cols total). Fits the aggregator's 200–300 cols/slot budget from
+/// `doc/uno-aggregation-design.md` §1.3.
 pub const CHALLENGER_AIR_WIDTH: usize = col::WIDTH;
 
 /// Populate a trace row in-place from a `RefChallenger` snapshot at the
@@ -435,6 +451,49 @@ fn write_kind(row: &mut [Goldilocks], kind: u8) {
 /// (Plonky3 prover requires pow-2 heights). Extra rows pad with IDLE.
 /// Returns `Err(_)` on arithmetic overflow or on a trace_height that's
 /// too small / not a power of 2.
+/// Generate a full Poseidon2-w8 witness-row for a given input state.
+/// Returns 180 Goldilocks elements in the layout expected by `P2Cols`.
+/// Used by the trace builder below to populate the shared P2 block on
+/// every row.
+pub(crate) fn gen_p2_witness(input: [Goldilocks; SPONGE_WIDTH]) -> Vec<Goldilocks> {
+    use p3_goldilocks::{
+        GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8, GenericPoseidon2LinearLayersGoldilocks,
+    };
+    use p3_poseidon2_air::generate_trace_rows;
+
+    let constants: RoundConstants<
+        Goldilocks,
+        8,
+        { p3_goldilocks::GOLDILOCKS_POSEIDON2_HALF_FULL_ROUNDS },
+        GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8,
+    > = RoundConstants::new(
+        p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_INITIAL,
+        p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_INTERNAL,
+        p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_FINAL,
+    );
+    let mat = generate_trace_rows::<
+        Goldilocks,
+        GenericPoseidon2LinearLayersGoldilocks,
+        8,
+        7,  // SBOX_DEGREE
+        1,  // SBOX_REGISTERS
+        { p3_goldilocks::GOLDILOCKS_POSEIDON2_HALF_FULL_ROUNDS },
+        GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8,
+    >(vec![input], &constants, 0);
+    debug_assert_eq!(mat.values.len(), POSEIDON2_COLS_PER_INSTANCE);
+    mat.values
+}
+
+/// View the Poseidon2-w8 sub-block at `col::P2_BLOCK` as `&P2Cols<T>`.
+/// Used by the AIR's `eval` to call `eval_poseidon2` against the shared
+/// block and to reach `p2.inputs` / `p2.ending_full_rounds.post` for the
+/// DUPLEX-row input/output-match constraints (Phase A2-2c).
+#[inline]
+pub(crate) fn p2_group<T>(row: &[T]) -> &P2Cols<T> {
+    let group: &[T] = &row[col::P2_BLOCK..col::P2_BLOCK + POSEIDON2_COLS_PER_INSTANCE];
+    <[T] as Borrow<P2Cols<T>>>::borrow(group)
+}
+
 pub fn build_trace(
     script: &[ChallengerOp],
     trace_height: usize,
@@ -470,6 +529,29 @@ pub fn build_trace(
         write_kind(&mut row, kind);
         row[col::OBSERVED_VALUE] = observed;
         row[col::SAMPLED_VALUE] = sampled;
+
+        // Populate the shared Poseidon2-w8 block.
+        //   * DUPLEX rows: input = state_local with in_buf overwritten
+        //     at positions [0..in_buf_len]. This is exactly what the
+        //     duplex applies the permutation to.
+        //   * non-DUPLEX rows: input = [0; 8] (dummy witness — the AIR
+        //     does NOT constrain the input on these rows, so any valid
+        //     permutation witness would work, but we use a canonical
+        //     zero input for determinism).
+        let p2_input = if kind == OP_KIND_DUPLEX {
+            let mut s = *row_state;
+            for (i, &v) in row_in.iter().enumerate() {
+                s[i] = v;
+            }
+            s
+        } else {
+            [Goldilocks::default(); SPONGE_WIDTH]
+        };
+        let p2_witness = gen_p2_witness(p2_input);
+        debug_assert_eq!(p2_witness.len(), POSEIDON2_COLS_PER_INSTANCE);
+        for (i, v) in p2_witness.into_iter().enumerate() {
+            row[col::P2_BLOCK + i] = v;
+        }
         rows.push(row);
     }
 
@@ -925,8 +1007,12 @@ impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for ChallengerAirV1 {
 
     #[inline]
     fn max_constraint_degree(&self) -> Option<usize> {
-        // See degree analysis above the impl.
-        Some(3)
+        // Per-row state-machine constraints are degree 3 at most (see
+        // the degree-analysis comment above the impl). With the shared
+        // Poseidon2-w8 block wired in at Phase A2-2c, the S-box adds
+        // degree-SBOX_DEGREE=7 constraints. Let Plonky3 auto-compute
+        // the bound — same pattern as `transfer_air::MvpTransferAir`.
+        None
     }
 }
 
@@ -1142,6 +1228,79 @@ where
                 trans.assert_zero(is_idle.clone() * delta);
             }
         }
+
+        drop(trans);
+
+        // =====================================================
+        // Shared Poseidon2-w8 block (Phase A2-2c)
+        //
+        // The P2 sub-AIR is evaluated on EVERY row — the block carries
+        // a valid permutation witness for SOME input on every row (the
+        // trace builder uses the DUPLEX input on DUPLEX rows and a
+        // canonical zero-input witness on non-DUPLEX rows). This keeps
+        // the AIR width uniform; the DUPLEX-gated constraints below
+        // tie the P2 I/O to the challenger state only when it matters.
+        // =====================================================
+        let p2_local = p2_group::<AB::Var>(local_slice);
+        eval_poseidon2(builder, p2_local);
+
+        // =====================================================
+        // DUPLEX-gated permutation binding (Phase A2-2c)
+        //
+        // On DUPLEX rows, the Poseidon2 block's input/output must match
+        // the challenger's state evolution:
+        //
+        //   p2.inputs[i]             == state_local[i] overwritten with
+        //                                in_buf_local[i] for i < in_buf_len_local
+        //                                         (for i in 0..RATE)
+        //                            == state_local[i] (for i in RATE..WIDTH)
+        //   p2.ending_full_rounds
+        //     .last().post[i]        == state_next[i] for i in 0..WIDTH
+        //
+        // The in_buf-vs-state overwrite is expressed via the one-hot
+        // in_buf_len flags:
+        //   cond_in_buf_use_i   = Σ_{j > i} in_buf_len_flag[j]  (= [in_buf_len > i])
+        //   cond_state_use_i    = Σ_{j ≤ i} in_buf_len_flag[j]  (= [in_buf_len ≤ i])
+        // These sum to exactly 1 (by the one-hot constraint above), so
+        // the constraint is linear in the chosen branch.
+        // =====================================================
+        {
+            // Inputs on positions 0..RATE: mixture of in_buf / state.
+            for i in 0..SPONGE_RATE {
+                let mut cond_in_buf = zero();
+                for j in (i + 1)..=SPONGE_RATE {
+                    let f: AB::Expr = local_slice[col::IN_BUF_LEN_FLAG0 + j].into();
+                    cond_in_buf = cond_in_buf + f;
+                }
+                let mut cond_state = zero();
+                for j in 0..=i {
+                    let f: AB::Expr = local_slice[col::IN_BUF_LEN_FLAG0 + j].into();
+                    cond_state = cond_state + f;
+                }
+                let in_buf_i: AB::Expr = local_slice[col::IN_BUF0 + i].into();
+                let state_i: AB::Expr = local_slice[col::STATE0 + i].into();
+                let expected_input = cond_in_buf * in_buf_i + cond_state * state_i;
+                let p2_input_i: AB::Expr = p2_local.inputs[i].into();
+                builder.assert_zero(is_duplex.clone() * (p2_input_i - expected_input));
+            }
+            // Inputs on positions RATE..WIDTH: always state_local[i].
+            for i in SPONGE_RATE..SPONGE_WIDTH {
+                let p2_input_i: AB::Expr = p2_local.inputs[i].into();
+                let state_i: AB::Expr = local_slice[col::STATE0 + i].into();
+                builder.assert_zero(is_duplex.clone() * (p2_input_i - state_i));
+            }
+
+            // Outputs: final MDS'd post-vector of the last ending full
+            // round is the permutation output. Bind to state_next[0..W].
+            // Uses next_slice, so this must sit inside when_transition().
+            let mut trans2 = builder.when_transition();
+            let post = &p2_local.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
+            for i in 0..SPONGE_WIDTH {
+                let p2_out_i: AB::Expr = post[i].into();
+                let state_next_i: AB::Expr = next_slice[col::STATE0 + i].into();
+                trans2.assert_zero(is_duplex.clone() * (p2_out_i - state_next_i));
+            }
+        }
     }
 }
 
@@ -1277,11 +1436,14 @@ mod tests {
     fn trace_width_matches_col_offsets() {
         // Regression guard: if anyone shifts col offsets, the width
         // constant must move with them.
-        assert_eq!(CHALLENGER_AIR_WIDTH, col::SAMPLED_VALUE + 1);
+        assert_eq!(col::P2_BLOCK, col::SAMPLED_VALUE + 1);
         assert_eq!(col::WIDTH, CHALLENGER_AIR_WIDTH);
-        // Current width: 8 state + 4 in_buf + 1 len + 5 flags + 4 out_buf +
-        //  1 len + 5 flags + 4 kinds + 1 observed + 1 sampled = 34 cols.
-        assert_eq!(CHALLENGER_AIR_WIDTH, 34);
+        // Current layout: 8 state + 4 in_buf + 1 len + 5 flags + 4 out_buf +
+        //  1 len + 5 flags + 4 kinds + 1 observed + 1 sampled = 34 framing
+        // cols, plus POSEIDON2_COLS_PER_INSTANCE (= 180) = 214 total at
+        // Phase A2-2c.
+        assert_eq!(col::P2_BLOCK, 34);
+        assert_eq!(CHALLENGER_AIR_WIDTH, 34 + POSEIDON2_COLS_PER_INSTANCE);
     }
 
     #[test]
@@ -1624,6 +1786,45 @@ mod tests {
         flat_bad[col::KIND0 + OP_KIND_SAMPLE as usize] = Goldilocks::new(1);
         let trace = RowMajorMatrix::new(flat_bad, CHALLENGER_AIR_WIDTH);
         assert!(air_rejects(trace), "two simultaneous kind flags must be rejected");
+    }
+
+    #[test]
+    fn air_rejects_forged_state_next_on_duplex() {
+        // 4 observes trigger an auto-duplex at row 4; row 5's state[0..8]
+        // is the permutation output. Replace row 5's state[0] with row 4's
+        // state[0] (pre-permutation). The DUPLEX-row P2 identity
+        // (state_next == P2(state_local ∥ in_buf)) must catch the forgery.
+        //
+        // This is the Phase A2-2c acceptance test — without the
+        // Poseidon2 block wired into the AIR, a prover could emit any
+        // state_next it wants, forging challenger output. With the
+        // wiring, the permutation output on the DUPLEX row is committed
+        // to match state_next.
+        let script = vec![obs(1), obs(2), obs(3), obs(4)];
+        let flat = build_trace(&script, 16).unwrap();
+        let mut flat_bad = flat.clone();
+        let duplex_row = 4;
+        let next_row = 5;
+        // Sanity: row 4 is DUPLEX.
+        assert_eq!(
+            flat[duplex_row * CHALLENGER_AIR_WIDTH + col::KIND0 + OP_KIND_DUPLEX as usize],
+            Goldilocks::new(1)
+        );
+        // Forge: copy row 4's state[0] (pre-permutation) into row 5's state[0].
+        let forged = flat[duplex_row * CHALLENGER_AIR_WIDTH + col::STATE0];
+        let real = flat[next_row * CHALLENGER_AIR_WIDTH + col::STATE0];
+        assert_ne!(forged, real, "fixture sanity: pre/post permutation should differ");
+        flat_bad[next_row * CHALLENGER_AIR_WIDTH + col::STATE0] = forged;
+        // Also mirror the forged value into out_buf[0] to keep the
+        // DUPLEX's secondary constraint `out_buf_next[0] == state_next[0]`
+        // satisfied — otherwise THAT constraint trips first and the P2
+        // binding never gets tested.
+        flat_bad[next_row * CHALLENGER_AIR_WIDTH + col::OUT_BUF0] = forged;
+        let trace = RowMajorMatrix::new(flat_bad, CHALLENGER_AIR_WIDTH);
+        assert!(
+            air_rejects(trace),
+            "forged state_next on DUPLEX row must be rejected by P2 identity"
+        );
     }
 
     #[test]
