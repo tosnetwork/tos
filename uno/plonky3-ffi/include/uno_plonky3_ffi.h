@@ -611,6 +611,18 @@ typedef struct Plonky3ProverHandle Plonky3ProverHandle;
 // verify across `num_cores` workers is an activation prerequisite).
 typedef struct Plonky3VerifierHandle Plonky3VerifierHandle;
 
+// Opaque handle to an initialized block-level aggregated-proof verifier.
+//
+// Constructed by [`uno_block_verifier_init`] and destroyed by
+// [`uno_block_verifier_free`]. Wraps the A6-1.5 real `verify_block`
+// function (monolithic AIR + Plonky3 `uni_stark::verify`).
+//
+// A single validator process is expected to hold ONE of these handles,
+// shared across the compute-phase worker pool by `const&`. Thread-safe
+// by construction (the wrapped verify is stateless; the `StarkConfig`
+// is re-derived per call from `prover::build_config`).
+typedef struct UnoBlockVerifierHandle UnoBlockVerifierHandle;
+
 // Borrowed byte slice passed across the FFI. Matches C `struct { const
 // uint8_t* ptr; uintptr_t len; }`.
 //
@@ -730,6 +742,26 @@ typedef struct {
     // Allocation capacity needed to reconstruct the `Vec` on free.
     uintptr_t aggregated_proof_cap;
 } UnoBlockExtraParsed;
+
+// Flat view of [`BlockPublicInputs`] passed across the FFI. Layout
+// matches C `struct` packing: 8-byte-aligned fields, u16 padding
+// explicit.
+typedef struct {
+    // Matches `BlockPublicInputs.chain_id`.
+    uint32_t chain_id;
+    // Padding for 8-byte alignment.
+    uint32_t _pad0;
+    // Matches `BlockPublicInputs.block_seqno`.
+    uint64_t block_seqno;
+    // Matches `BlockPublicInputs.anchor_seqno`.
+    uint64_t anchor_seqno;
+    // Matches `BlockPublicInputs.n_transfers` (0..=BLOCK_TX_CAP).
+    uint16_t n_transfers;
+    // Padding for 8-byte alignment.
+    uint8_t _pad1[6];
+    // Matches `BlockPublicInputs.tx_pi_merkle_root`.
+    uint8_t tx_pi_merkle_root[32];
+} UnoBlockPublicInputsView;
 
 
 
@@ -873,18 +905,56 @@ int32_t uno_block_extra_encode_v1(uint16_t n_transfers,
                                   uintptr_t proof_len,
                                   Plonky3OwnedProof *out_bytes);
 
+// Initialize the block-level aggregated-proof verifier. Returns an
+// opaque handle that the caller owns and MUST free via
+// [`uno_block_verifier_free`] exactly once.
+//
+// # Safety
+// `out_handle` must be a valid, aligned, writable
+// `*mut *mut UnoBlockVerifierHandle` pointer.
+int32_t uno_block_verifier_init(UnoBlockVerifierHandle **out_handle);
+
+// Free a verifier handle previously returned by
+// [`uno_block_verifier_init`]. Idempotent for a null pointer.
+//
+// # Safety
+// `handle` must be from [`uno_block_verifier_init`] and not already
+// freed. Passing null is safe and a no-op.
+void uno_block_verifier_free(UnoBlockVerifierHandle *handle);
+
+// Verify an aggregated block proof against its public inputs.
+//
+// | return               | meaning                                        |
+// |----------------------|------------------------------------------------|
+// | `kOk` (0)            | Proof cryptographically verified against PI.   |
+// | `kProofDecodeFailed` | Postcard decode failed (malformed bytes).      |
+// | `kVerifyFailed`      | STARK verify returned an error.                |
+// | `kNullPointer`       | `handle` / `pi` / `proof.ptr` null invalid.    |
+// | `kInternalError`     | Panic inside Rust (should not happen).         |
+//
+// # Safety
+// - `handle` must be a live handle from [`uno_block_verifier_init`].
+// - `pi` must point to a valid [`UnoBlockPublicInputsView`].
+// - `proof.ptr` / `proof.len` must describe a valid readable region
+//   (or ptr null with `len == 0` for the trivially-empty case).
+int32_t uno_block_verifier_verify(const UnoBlockVerifierHandle *handle,
+                                  const UnoBlockPublicInputsView *pi,
+                                  Plonky3ProofBytes proof);
+
 // Returns the ABI revision of this crate. The C++ bridge checks this at
 // `Plonky3Verifier::init()` to catch a version-skew between the shipped
 // Rust static-lib and the compiled C++ header.
 //
-// Current value: 2 (bumped from 1 by A6-1, which adds
-// [`UnoBlockExtraBytes`], [`UnoBlockExtraParsed`],
-// [`uno_block_extra_decode`], [`uno_block_extra_owned_free`], and
-// [`uno_block_extra_encode_v1`] to the FFI surface). Bump on any
-// layout change to `Plonky3OwnedProof`, `Plonky3ProofBytes`,
-// `Plonky3PublicInputs`, `Plonky3Witness`, `Plonky3Status`,
-// `UnoBlockExtraBytes`, `UnoBlockExtraParsed`, or any
+// Current value: 3 (bumped from 2 by A6-2, which adds
+// [`UnoBlockPublicInputsView`], [`UnoBlockVerifierHandle`],
+// [`uno_block_verifier_init`], [`uno_block_verifier_free`], and
+// [`uno_block_verifier_verify`] to the FFI surface). Bump on any
+// layout change to existing FFI structs or any
 // addition/removal of FFI entry points.
+//
+// History:
+// - v1 → v2 (A6-1): UnoBlockExtra{Bytes,Parsed} + wire-format entry points.
+// - v2 → v3 (A6-2): UnoBlockPublicInputsView + block-verifier handle.
 uint32_t uno_plonky3_abi_version(void);
 
 // Width-8 Poseidon2-Goldilocks permutation, in place.
