@@ -64,6 +64,7 @@ pub mod challenger_air;
 pub mod aggregator;
 pub mod fiat_shamir;
 pub mod ood_eval;
+pub mod fri_arith;
 
 /// Result codes returned across the C ABI.
 ///
