@@ -1326,6 +1326,423 @@ pub fn build_alpha_to_fold_unified_trace(
 }
 
 // ---------------------------------------------------------------------------
+// A3-5b trace builder: full per-query bundle — α + Merkle paths + fold
+//
+// Composes in ONE monolithic AIR trace:
+//   rows 0..N_α              : ALPHA rows   (α-reduction chain; produces ρ_final)
+//   rows N_α..P              : Merkle paths (ABSORB + COMPRESS per path)
+//   rows P..P+N_fold         : FOLD rows    (fold chain seeded by ρ_final)
+//   rows P+N_fold..height    : IDLE padding
+//
+// No new constraints are needed — A3-3's non-α ALPHA_RO_OUT persistence
+// and non-fold FOLD_OUT persistence thread ρ_final from the last α row
+// through all Merkle rows to the last-non-FOLD row's FOLD_OUT. The FOLD
+// threading transition then reads that FOLD_OUT into first-FOLD's
+// FOLD_IN, seeding the fold chain.
+//
+// Concretely:
+//   - Last α row:           ALPHA_RO_OUT = ρ_final, FOLD_OUT = ρ_final.
+//   - Merkle rows:          ALPHA_RO_OUT = ρ_final (non-α persistence),
+//                           FOLD_OUT = ρ_final (non-fold persistence).
+//   - Last Merkle COMPRESS: FOLD_OUT = ρ_final.
+//   - FOLD → threads:       next.FOLD_IN = local.FOLD_OUT = ρ_final.
+//   - Last FOLD row:        FOLD_OUT = FINAL_FOLDED (boundary),
+//                           ALPHA_RO_OUT = ρ_final = FINAL_RO (boundary).
+// ---------------------------------------------------------------------------
+
+/// Build a trace that composes α-reduction + N Merkle path openings +
+/// FRI fold chain into ONE monolithic STARK.
+///
+/// `alpha_steps` seeds the α chain. `merkle_paths` is processed in
+/// order; each path's ABSORB+COMPRESS rows land between the α chain
+/// and the fold chain. `fold_rounds` seeded by the α chain's ρ_final.
+pub fn build_alpha_merkle_fold_bundle_trace(
+    initial_alpha_pow: Challenge,
+    initial_ro: Challenge,
+    alpha: Challenge,
+    alpha_steps: &[AlphaStep],
+    merkle_paths: &[MerkleOpening<'_>],
+    fold_rounds: &[FoldRound],
+    trace_height: usize,
+) -> Result<Vec<Goldilocks>, TraceBuildError> {
+    use p3_field::{BasedVectorSpace, Field, TwoAdicField};
+    use p3_util::reverse_bits_len;
+
+    if !trace_height.is_power_of_two() {
+        return Err(TraceBuildError::TraceHeightNotPow2 { got: trace_height });
+    }
+    if alpha_steps.is_empty() || fold_rounds.is_empty() {
+        return Err(TraceBuildError::EmptyPath);
+    }
+    // Bundle requires at least one Merkle path; otherwise use
+    // build_alpha_to_fold_unified_trace directly.
+    if merkle_paths.is_empty() {
+        return Err(TraceBuildError::EmptyPath);
+    }
+
+    let n_alpha = alpha_steps.len();
+    let n_fold = fold_rounds.len();
+    let mut n_merkle = 0usize;
+    for p in merkle_paths {
+        if p.leaf.is_empty() {
+            return Err(TraceBuildError::EmptyLeaf);
+        }
+        if p.opening_proof.is_empty() {
+            return Err(TraceBuildError::EmptyPath);
+        }
+        n_merkle += (p.leaf.len() + SPONGE_RATE - 1) / SPONGE_RATE + p.opening_proof.len();
+    }
+    let physical_rows = n_alpha + n_merkle + n_fold;
+    if physical_rows > trace_height {
+        return Err(TraceBuildError::TraceHeightTooSmall {
+            physical_rows,
+            trace_height,
+        });
+    }
+
+    let width = col::WIDTH;
+    let mut flat = vec![Goldilocks::default(); trace_height * width];
+    let zero_g = Goldilocks::default();
+    let perm = default_goldilocks_poseidon2_8();
+
+    let write_ext = |out: &mut [Goldilocks], base: usize, v: Challenge| {
+        let limbs =
+            <Challenge as BasedVectorSpace<Goldilocks>>::as_basis_coefficients_slice(&v);
+        for i in 0..CHALLENGE_DIM {
+            out[base + i] = limbs[i];
+        }
+    };
+    let write_kind = |out: &mut [Goldilocks], kind: u8| {
+        for k in 0..NUM_OP_KINDS {
+            out[col::KIND0 + k] =
+                if k as u8 == kind { Goldilocks::new(1) } else { zero_g };
+        }
+    };
+    let write_block_len_flags = |out: &mut [Goldilocks], len: usize| {
+        debug_assert!(len <= SPONGE_RATE);
+        out[col::ABSORB_BLOCK_LEN] = Goldilocks::new(len as u64);
+        for k in 0..=SPONGE_RATE {
+            out[col::ABSORB_BLOCK_LEN_FLAG0 + k] =
+                if k == len { Goldilocks::new(1) } else { zero_g };
+        }
+    };
+    let write_root = |out: &mut [Goldilocks], root: &Digest| {
+        for i in 0..DIGEST_WIDTH {
+            out[col::TRACE_COMMIT_ROOT0 + i] = root[i];
+        }
+    };
+
+    // --- Pass 1: run α chain off-circuit. ---
+    let mut apow = initial_alpha_pow;
+    let mut ro = initial_ro;
+    let mut alpha_records: Vec<(Challenge, Challenge, Challenge, Challenge)> =
+        Vec::with_capacity(n_alpha);
+    for step in alpha_steps {
+        let denom = step.z - step.x;
+        if denom.is_zero() {
+            return Err(TraceBuildError::TraceHeightTooSmall {
+                physical_rows,
+                trace_height,
+            });
+        }
+        let qi = denom.try_inverse().expect("denom ≠ 0");
+        let diff = step.p_at_z - step.p_at_x;
+        let dq = diff * qi;
+        let ro_in = ro;
+        let apow_in = apow;
+        ro = ro_in + apow_in * dq;
+        apow = apow_in * alpha;
+        alpha_records.push((qi, dq, apow_in, ro_in));
+    }
+    let rho_final = ro;
+    let alpha_final_pow = apow;
+
+    // --- Pass 2: run fold chain off-circuit. ---
+    let mut fold_current = rho_final;
+    let mut fold_records: Vec<(Goldilocks, Goldilocks, Challenge, Challenge, Challenge)> =
+        Vec::with_capacity(n_fold);
+    for round in fold_rounds {
+        let bit = (round.domain_index & 1) as u64;
+        let child_log_h = round.log_height - 1;
+        let parent_idx = round.domain_index >> 1;
+        let g_outer = Goldilocks::two_adic_generator(child_log_h + 1);
+        let rev = reverse_bits_len(parent_idx, child_log_h);
+        let s = g_outer.exp_u64(rev as u64);
+        if s == zero_g {
+            return Err(TraceBuildError::TraceHeightTooSmall {
+                physical_rows,
+                trace_height,
+            });
+        }
+        let two_s = s * Goldilocks::new(2);
+        let inv_2s = two_s.try_inverse().expect("2s ≠ 0");
+        let (pair_left, pair_right) = if bit == 0 {
+            (fold_current, round.sibling)
+        } else {
+            (round.sibling, fold_current)
+        };
+        let folded = fold_row_ref(
+            parent_idx,
+            child_log_h,
+            1,
+            round.beta,
+            &[pair_left, pair_right],
+        );
+        fold_records.push((s, inv_2s, pair_left, pair_right, folded));
+        fold_current = folded;
+    }
+    let final_folded = fold_current;
+
+    let p2_zero_witness = gen_p2_witness_zero();
+
+    // Helper: populate PI proxies + α-persistence cols on non-α rows.
+    // rho_final threads through via A3-3's non-α persistence.
+    let populate_shared = |row: &mut [Goldilocks]| {
+        write_ext(row, col::INITIAL_ALPHA_POW0, initial_alpha_pow);
+        write_ext(row, col::INITIAL_RO0, initial_ro);
+        write_ext(row, col::FINAL_FOLDED0, final_folded);
+        write_ext(row, col::INITIAL_FOLDED0, rho_final);
+        write_ext(row, col::FINAL_RO0, rho_final);
+        // ALPHA_RO_OUT = rho_final (non-α persistence requires this).
+        write_ext(row, col::ALPHA_RO_OUT0, rho_final);
+        // FOLD_OUT = rho_final (non-fold persistence requires this on
+        // α + Merkle rows; FOLD rows overwrite with the fold result).
+        write_ext(row, col::FOLD_OUT0, rho_final);
+        // Keep ALPHA_* persistence cols consistent (not constrained on
+        // non-α rows; populate for audit clarity).
+        write_ext(row, col::ALPHA_POW_IN0, alpha_final_pow);
+        write_ext(row, col::ALPHA_POW_OUT0, alpha_final_pow);
+        write_ext(row, col::ALPHA_RO_IN0, rho_final);
+    };
+
+    // --- Pass 3: emit ALPHA rows. ---
+    for (r, (step, record)) in alpha_steps.iter().zip(alpha_records.iter()).enumerate() {
+        let (qi, dq, apow_in, ro_in) = *record;
+        let base = r * width;
+        let row = &mut flat[base..base + width];
+        write_kind(row, OP_KIND_ALPHA);
+        write_block_len_flags(row, 0);
+
+        row[col::ALPHA_P_AT_X] = step.p_at_x;
+        write_ext(row, col::ALPHA_P_AT_Z0, step.p_at_z);
+        write_ext(row, col::ALPHA_Z0, step.z);
+        row[col::ALPHA_X] = step.x;
+
+        write_ext(row, col::ALPHA_QUOT_INV0, qi);
+        write_ext(row, col::ALPHA_DIFF_QUOT0, dq);
+        write_ext(row, col::ALPHA_CHALLENGE0, alpha);
+        write_ext(row, col::ALPHA_POW_IN0, apow_in);
+        write_ext(row, col::ALPHA_POW_OUT0, apow_in * alpha);
+        write_ext(row, col::ALPHA_RO_IN0, ro_in);
+        let new_ro = ro_in + apow_in * dq;
+        write_ext(row, col::ALPHA_RO_OUT0, new_ro);
+
+        // FOLD_OUT = ρ_final on α rows (A3-3 convention, so non-fold
+        // persistence holds across α→α and α→Merkle transitions).
+        write_ext(row, col::FOLD_OUT0, rho_final);
+
+        // PI proxies.
+        write_ext(row, col::INITIAL_ALPHA_POW0, initial_alpha_pow);
+        write_ext(row, col::INITIAL_RO0, initial_ro);
+        write_ext(row, col::FINAL_FOLDED0, final_folded);
+        write_ext(row, col::INITIAL_FOLDED0, rho_final);
+        write_ext(row, col::FINAL_RO0, rho_final);
+
+        for (i, v) in p2_zero_witness.iter().enumerate() {
+            row[col::P2_BLOCK + i] = *v;
+        }
+    }
+
+    // --- Pass 4: emit Merkle path rows. ---
+    let mut row_cursor = n_alpha;
+    for path in merkle_paths {
+        let n_absorb = (path.leaf.len() + SPONGE_RATE - 1) / SPONGE_RATE;
+        let n_compress = path.opening_proof.len();
+
+        // ABSORB rows of this path.
+        let mut state: [Goldilocks; SPONGE_WIDTH] = [zero_g; SPONGE_WIDTH];
+        for r in 0..n_absorb {
+            let base = (row_cursor + r) * width;
+            let row = &mut flat[base..base + width];
+            write_kind(row, OP_KIND_ABSORB);
+
+            let is_first = r == 0;
+            let is_last = r + 1 == n_absorb;
+            row[col::ABSORB_IS_FIRST] = if is_first { Goldilocks::new(1) } else { zero_g };
+            row[col::ABSORB_IS_LAST] = if is_last { Goldilocks::new(1) } else { zero_g };
+
+            let block_start = r * SPONGE_RATE;
+            let block_len = core::cmp::min(SPONGE_RATE, path.leaf.len() - block_start);
+            write_block_len_flags(row, block_len);
+            for i in 0..block_len {
+                row[col::ABSORB_BLOCK0 + i] = path.leaf[block_start + i];
+            }
+
+            if is_first {
+                state = [zero_g; SPONGE_WIDTH];
+            }
+            for i in 0..block_len {
+                state[i] = path.leaf[block_start + i];
+            }
+            for i in 0..SPONGE_WIDTH {
+                row[col::STATE_IN0 + i] = state[i];
+            }
+            let state_in_values = state;
+            perm.permute_mut(&mut state);
+            for i in 0..SPONGE_WIDTH {
+                row[col::STATE_OUT0 + i] = state[i];
+            }
+            if is_last {
+                for i in 0..DIGEST_WIDTH {
+                    row[col::DIGEST0 + i] = state[i];
+                }
+            }
+            write_root(row, &path.expected_root);
+
+            let p2_witness = gen_p2_witness(state_in_values);
+            for (i, v) in p2_witness.into_iter().enumerate() {
+                row[col::P2_BLOCK + i] = v;
+            }
+
+            populate_shared(row);
+        }
+
+        // COMPRESS rows of this path.
+        let mut running: Digest = {
+            let last_absorb_base = (row_cursor + n_absorb - 1) * width;
+            let mut d = [zero_g; DIGEST_WIDTH];
+            for i in 0..DIGEST_WIDTH {
+                d[i] = flat[last_absorb_base + col::STATE_OUT0 + i];
+            }
+            d
+        };
+        let mut idx = path.index;
+        for (r, sibling) in path.opening_proof.iter().enumerate() {
+            let row_idx = row_cursor + n_absorb + r;
+            let base = row_idx * width;
+            let row = &mut flat[base..base + width];
+            write_kind(row, OP_KIND_COMPRESS);
+            write_block_len_flags(row, 0);
+
+            let bit = (idx & 1) as u64;
+            let (left, right) = if bit == 0 {
+                (running, *sibling)
+            } else {
+                (*sibling, running)
+            };
+            for i in 0..DIGEST_WIDTH {
+                row[col::COMPRESS_CURRENT0 + i] = running[i];
+                row[col::COMPRESS_SIBLING0 + i] = sibling[i];
+            }
+            row[col::COMPRESS_INDEX_BIT] = Goldilocks::new(bit);
+            for i in 0..DIGEST_WIDTH {
+                row[col::STATE_IN0 + i] = left[i];
+                row[col::STATE_IN0 + DIGEST_WIDTH + i] = right[i];
+            }
+            let mut s: [Goldilocks; SPONGE_WIDTH] = [zero_g; SPONGE_WIDTH];
+            for i in 0..SPONGE_WIDTH {
+                s[i] = row[col::STATE_IN0 + i];
+            }
+            let state_in_values = s;
+            perm.permute_mut(&mut s);
+            for i in 0..SPONGE_WIDTH {
+                row[col::STATE_OUT0 + i] = s[i];
+            }
+            let new_digest: Digest = {
+                let mut d = [zero_g; DIGEST_WIDTH];
+                for i in 0..DIGEST_WIDTH {
+                    d[i] = s[i];
+                }
+                d
+            };
+            for i in 0..DIGEST_WIDTH {
+                row[col::DIGEST0 + i] = new_digest[i];
+            }
+            write_root(row, &path.expected_root);
+
+            let p2_witness = gen_p2_witness(state_in_values);
+            for (i, v) in p2_witness.into_iter().enumerate() {
+                row[col::P2_BLOCK + i] = v;
+            }
+
+            populate_shared(row);
+
+            running = new_digest;
+            idx >>= 1;
+        }
+        debug_assert_eq!(
+            running, path.expected_root,
+            "bundle builder: Merkle path digest mismatch",
+        );
+
+        row_cursor += n_absorb + n_compress;
+    }
+
+    // --- Pass 5: emit FOLD rows. ---
+    let mut fold_current = rho_final;
+    for (r, (round, record)) in fold_rounds.iter().zip(fold_records.iter()).enumerate() {
+        let (s, inv_2s, pair_left, pair_right, folded) = *record;
+        let row_idx = row_cursor + r;
+        let base = row_idx * width;
+        let row = &mut flat[base..base + width];
+        write_kind(row, OP_KIND_FOLD);
+        write_block_len_flags(row, 0);
+
+        let bit = (round.domain_index & 1) as u64;
+        write_ext(row, col::FOLD_IN0, fold_current);
+        write_ext(row, col::FOLD_OUT0, folded);
+        write_ext(row, col::FOLD_BETA0, round.beta);
+        row[col::FOLD_S] = s;
+        row[col::FOLD_INV_2S] = inv_2s;
+
+        write_ext(row, col::COMPRESS_SIBLING0, round.sibling);
+        row[col::COMPRESS_INDEX_BIT] = Goldilocks::new(bit);
+        write_ext(row, col::STATE_IN0, pair_left);
+        write_ext(row, col::STATE_IN0 + CHALLENGE_DIM, pair_right);
+
+        // ALPHA persistence cols.
+        write_ext(row, col::ALPHA_RO_OUT0, rho_final);
+        write_ext(row, col::ALPHA_POW_IN0, alpha_final_pow);
+        write_ext(row, col::ALPHA_POW_OUT0, alpha_final_pow);
+        write_ext(row, col::ALPHA_RO_IN0, rho_final);
+
+        // PI proxies.
+        write_ext(row, col::INITIAL_ALPHA_POW0, initial_alpha_pow);
+        write_ext(row, col::INITIAL_RO0, initial_ro);
+        write_ext(row, col::FINAL_FOLDED0, final_folded);
+        write_ext(row, col::INITIAL_FOLDED0, rho_final);
+        write_ext(row, col::FINAL_RO0, rho_final);
+
+        for (i, v) in p2_zero_witness.iter().enumerate() {
+            row[col::P2_BLOCK + i] = *v;
+        }
+
+        fold_current = folded;
+    }
+    row_cursor += n_fold;
+
+    // --- Pass 6: IDLE padding. ---
+    for r in row_cursor..trace_height {
+        let prev_base = (r - 1) * width;
+        let prev_row = flat[prev_base..prev_base + width].to_vec();
+        let base = r * width;
+        let row = &mut flat[base..base + width];
+        for c in col::STATE_IN0..col::P2_BLOCK {
+            row[c] = prev_row[c];
+        }
+        write_kind(row, OP_KIND_IDLE);
+        row[col::ABSORB_IS_FIRST] = zero_g;
+        row[col::ABSORB_IS_LAST] = zero_g;
+        write_block_len_flags(row, 0);
+        for (i, v) in p2_zero_witness.iter().enumerate() {
+            row[col::P2_BLOCK + i] = *v;
+        }
+    }
+
+    Ok(flat)
+}
+
+// ---------------------------------------------------------------------------
 // Boilerplate — the existing gen_p2_witness fn follows.
 // ---------------------------------------------------------------------------
 
@@ -3348,6 +3765,309 @@ mod tests {
             Ok(p) => {
                 verify(&cfg, &air, &p, &[]).expect_err(
                     "TCR drift within a compression run must reject",
+                );
+            }
+        }
+    }
+
+    // ======================================================================
+    // A3-5b: full per-query bundle — α + Merkle paths + fold in ONE STARK
+    // ======================================================================
+
+    /// A3-5b core acceptance: α-reduction chain + one Merkle path +
+    /// fold chain verify as a single STARK proof. The α chain's ρ_final
+    /// threads through the Merkle rows (via A3-3 non-α/non-fold
+    /// persistence) into the FOLD chain's seed (via FOLD threading).
+    /// No new constraints were needed beyond A3-3 + A3-5a.
+    #[test]
+    fn air_prove_and_verify_bundle_alpha_1merkle_fold() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let (leaves, openings, root) = tiny_tree_wide_leaves();
+        let (_, path, idx) = openings[0].clone();
+        let merkle_paths = vec![MerkleOpening {
+            leaf: &leaves[0],
+            opening_proof: &path,
+            index: idx,
+            expected_root: root,
+        }];
+        let alpha = ext(3, 5);
+        let initial_apow = ext(1, 0);
+        let initial_ro = ext(0, 0);
+        let alpha_steps = vec![
+            AlphaStep { p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23) },
+            AlphaStep { p_at_x: gl(29), p_at_z: ext(31, 37), z: ext(41, 43), x: gl(47) },
+        ];
+        let fold_rounds = vec![
+            FoldRound {
+                sibling: ext(53, 59),
+                beta: ext(61, 67),
+                domain_index: 0b10,
+                log_height: 4,
+            },
+            FoldRound {
+                sibling: ext(71, 73),
+                beta: ext(79, 83),
+                domain_index: 0b01,
+                log_height: 3,
+            },
+        ];
+        // Physical rows: 2 α + (2 absorb + 2 compress = 4 Merkle) + 2 fold = 8.
+        let flat = build_alpha_merkle_fold_bundle_trace(
+            initial_apow,
+            initial_ro,
+            alpha,
+            &alpha_steps,
+            &merkle_paths,
+            &fold_rounds,
+            16,
+        )
+        .unwrap();
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let proof = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof, &[])
+            .expect("bundle (α + 1 Merkle + fold) must verify in ONE monolithic STARK");
+    }
+
+    /// A3-5b 2-path bundle: α + TWO independent Merkle paths (different
+    /// roots) + fold. Mirrors the per-query shape where trace-commit
+    /// and quotient-commit paths sit in the same trace.
+    #[test]
+    fn air_prove_and_verify_bundle_alpha_2merkle_fold() {
+        use crate::merkle_path::{compress_pair_ref, hash_leaf_row_ref};
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let perm = default_goldilocks_poseidon2_8();
+
+        // Tree A (mimics trace-commit Merkle).
+        let leaf_a0: Vec<Goldilocks> = (0..8u64).map(|j| gl(100 + j * 17 + 1)).collect();
+        let leaf_a1: Vec<Goldilocks> = (0..8u64).map(|j| gl(200 + j * 23 + 3)).collect();
+        let dig_a0 = hash_leaf_row_ref(&perm, &leaf_a0);
+        let dig_a1 = hash_leaf_row_ref(&perm, &leaf_a1);
+        let root_a = compress_pair_ref(&perm, &dig_a0, &dig_a1);
+
+        // Tree B (mimics quotient-commit Merkle).
+        let leaf_b0: Vec<Goldilocks> = (0..8u64).map(|j| gl(300 + j * 29 + 5)).collect();
+        let leaf_b1: Vec<Goldilocks> = (0..8u64).map(|j| gl(400 + j * 31 + 7)).collect();
+        let dig_b0 = hash_leaf_row_ref(&perm, &leaf_b0);
+        let dig_b1 = hash_leaf_row_ref(&perm, &leaf_b1);
+        let root_b = compress_pair_ref(&perm, &dig_b0, &dig_b1);
+
+        let path_a_siblings = vec![dig_a1];
+        let path_b_siblings = vec![dig_b1];
+        let merkle_paths = vec![
+            MerkleOpening {
+                leaf: &leaf_a0,
+                opening_proof: &path_a_siblings,
+                index: 0,
+                expected_root: root_a,
+            },
+            MerkleOpening {
+                leaf: &leaf_b0,
+                opening_proof: &path_b_siblings,
+                index: 0,
+                expected_root: root_b,
+            },
+        ];
+        let alpha = ext(2, 3);
+        let alpha_steps = vec![AlphaStep {
+            p_at_x: gl(5), p_at_z: ext(7, 11), z: ext(13, 17), x: gl(19),
+        }];
+        let fold_rounds = vec![FoldRound {
+            sibling: ext(23, 29),
+            beta: ext(31, 37),
+            domain_index: 0b01,
+            log_height: 3,
+        }];
+        // 1 α + 2×(2 absorb + 1 compress = 3) + 1 fold = 8.
+        let flat = build_alpha_merkle_fold_bundle_trace(
+            ext(1, 0),
+            ext(0, 0),
+            alpha,
+            &alpha_steps,
+            &merkle_paths,
+            &fold_rounds,
+            16,
+        )
+        .unwrap();
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let proof = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof, &[])
+            .expect("bundle with 2 Merkle paths must verify in ONE monolithic STARK");
+    }
+
+    /// A3-5b adversarial: tamper a Merkle sibling mid-bundle — the
+    /// ABSORB+COMPRESS Poseidon2 chain diverges, the per-path root
+    /// check fails.
+    #[test]
+    fn air_rejects_bundle_tampered_merkle_sibling() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let (leaves, openings, root) = tiny_tree_wide_leaves();
+        let (_, path, idx) = openings[1].clone();
+        let merkle_paths = vec![MerkleOpening {
+            leaf: &leaves[1],
+            opening_proof: &path,
+            index: idx,
+            expected_root: root,
+        }];
+        let alpha = ext(3, 5);
+        let alpha_steps = vec![AlphaStep {
+            p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23),
+        }];
+        let fold_rounds = vec![FoldRound {
+            sibling: ext(53, 59),
+            beta: ext(61, 67),
+            domain_index: 0b01,
+            log_height: 3,
+        }];
+        let mut flat = build_alpha_merkle_fold_bundle_trace(
+            ext(1, 0),
+            ext(0, 0),
+            alpha,
+            &alpha_steps,
+            &merkle_paths,
+            &fold_rounds,
+            16,
+        )
+        .unwrap();
+        // Bundle layout: 1 α + (2 absorb + 2 compress) + 1 fold = 6.
+        // α rows: 0. ABSORB rows: 1, 2. COMPRESS rows: 3, 4. FOLD: 5.
+        // Tamper COMPRESS_SIBLING on row 3 (first COMPRESS of path).
+        let row3 = 3 * col::WIDTH;
+        flat[row3 + col::COMPRESS_SIBLING0] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove(&cfg, &air, trace, &[])
+        }));
+        match outcome {
+            Err(_) => {}
+            Ok(p) => {
+                verify(&cfg, &air, &p, &[]).expect_err(
+                    "tampered Merkle sibling in bundle must reject",
+                );
+            }
+        }
+    }
+
+    /// A3-5b adversarial: tamper the α chain's P_AT_X. Even with a
+    /// Merkle path between α and fold, the α→...→fold chain must
+    /// reject when α is corrupted (via the DIFF_QUOT / RO cascade and
+    /// the eventual FOLD_IN = local.FOLD_OUT threading).
+    #[test]
+    fn air_rejects_bundle_tampered_alpha() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let (leaves, openings, root) = tiny_tree_wide_leaves();
+        let (_, path, idx) = openings[0].clone();
+        let merkle_paths = vec![MerkleOpening {
+            leaf: &leaves[0],
+            opening_proof: &path,
+            index: idx,
+            expected_root: root,
+        }];
+        let alpha = ext(3, 5);
+        let alpha_steps = vec![AlphaStep {
+            p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23),
+        }];
+        let fold_rounds = vec![FoldRound {
+            sibling: ext(53, 59),
+            beta: ext(61, 67),
+            domain_index: 0b01,
+            log_height: 3,
+        }];
+        let mut flat = build_alpha_merkle_fold_bundle_trace(
+            ext(1, 0),
+            ext(0, 0),
+            alpha,
+            &alpha_steps,
+            &merkle_paths,
+            &fold_rounds,
+            16,
+        )
+        .unwrap();
+        // Tamper α row 0's P_AT_X.
+        flat[col::ALPHA_P_AT_X] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove(&cfg, &air, trace, &[])
+        }));
+        match outcome {
+            Err(_) => {}
+            Ok(p) => {
+                verify(&cfg, &air, &p, &[]).expect_err(
+                    "tampered α chain in bundle must reject",
+                );
+            }
+        }
+    }
+
+    /// A3-5b adversarial: tamper a FOLD round's SIBLING — fold
+    /// orientation constraint fires.
+    #[test]
+    fn air_rejects_bundle_tampered_fold_sibling() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let (leaves, openings, root) = tiny_tree_wide_leaves();
+        let (_, path, idx) = openings[0].clone();
+        let merkle_paths = vec![MerkleOpening {
+            leaf: &leaves[0],
+            opening_proof: &path,
+            index: idx,
+            expected_root: root,
+        }];
+        let alpha_steps = vec![AlphaStep {
+            p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23),
+        }];
+        let fold_rounds = vec![FoldRound {
+            sibling: ext(53, 59),
+            beta: ext(61, 67),
+            domain_index: 0b01,
+            log_height: 3,
+        }];
+        let mut flat = build_alpha_merkle_fold_bundle_trace(
+            ext(1, 0),
+            ext(0, 0),
+            ext(3, 5),
+            &alpha_steps,
+            &merkle_paths,
+            &fold_rounds,
+            16,
+        )
+        .unwrap();
+        // Bundle: 1 α + 2 absorb + 2 compress + 1 fold = 6. FOLD on row 5.
+        // FOLD's SIBLING shares COMPRESS_SIBLING; tamper it on row 5.
+        let row5 = 5 * col::WIDTH;
+        flat[row5 + col::COMPRESS_SIBLING0] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove(&cfg, &air, trace, &[])
+        }));
+        match outcome {
+            Err(_) => {}
+            Ok(p) => {
+                verify(&cfg, &air, &p, &[]).expect_err(
+                    "tampered fold SIBLING in bundle must reject",
                 );
             }
         }
