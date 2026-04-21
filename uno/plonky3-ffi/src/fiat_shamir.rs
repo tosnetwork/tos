@@ -359,6 +359,23 @@ pub fn derive_full_challenges_recorded(
         rec.observe(Goldilocks::from_usize(log_arity));
     }
 
+    // 7a. Query-PoW `check_witness` step (fri/verifier.rs:239).
+    //     With `query_proof_of_work_bits > 0`, `DuplexChallenger::
+    //     check_witness(bits, witness)` *mutates* the transcript:
+    //       - observe(witness)     — 1 Goldilocks
+    //       - sample_bits(bits)    — one Goldilocks sample (discarded
+    //         only after masking low `bits` bits; the transcript
+    //         advance is real)
+    //     Our `MvpConfig` pin is `query_proof_of_work_bits = 24`
+    //     (prover::build_config), so this step MUST be replayed
+    //     verbatim before query-index sampling. Skipping it would
+    //     shift every subsequent query index and the whole FRI
+    //     verification diverges. See upstream
+    //     `challenger/src/grinding_challenger.rs:40-46`.
+    const QUERY_POW_BITS: usize = 24;
+    rec.observe(proof.opening_proof.query_pow_witness);
+    let _pow_check_sample = rec.sample_bits(QUERY_POW_BITS);
+
     // 8. Query-index sampling. `extra_query_index_bits == 0` for
     //    `TwoAdicFriFolding` (fri/two_adic_pcs.rs:106-108), so the
     //    number of bits sampled per query equals `log_global_max_height`.
@@ -627,6 +644,13 @@ mod tests {
         for &la in &log_arities {
             ch.observe(Goldilocks::from_usize(la));
         }
+        // Query-PoW check_witness step (fri/verifier.rs:239). Our pin
+        // is 24 bits — upstream observes the witness and samples 24
+        // bits before the query-index loop.
+        ch.observe(proof.opening_proof.query_pow_witness);
+        let _pow_sample: Goldilocks =
+            <DuplexChallenger<Goldilocks, Perm8, 8, 4> as CanSample<Goldilocks>>::sample(&mut ch);
+
         let total_log_reduction: usize = log_arities.iter().sum();
         let log_global_max_height = total_log_reduction + 3 + 0;
         let num_queries = proof.opening_proof.query_proofs.len();
