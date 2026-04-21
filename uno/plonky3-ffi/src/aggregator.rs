@@ -284,26 +284,54 @@ pub fn verify_block_stub(
 // `p3_uni_stark::Proof`. `verify_block` is PI+proof ONLY (no witness
 // required — the validator API).
 //
-// Status of PI binding:
+// A6-1.6: PI binding is NOW in-circuit.
 //
-//   The monolithic AIR currently declares `num_public_values = 0` —
-//   the `BlockPublicInputs` fields (chain_id, block_seqno,
-//   anchor_seqno, n_transfers, tx_pi_merkle_root) are passed as
-//   context here but NOT bound into the proof cryptographically.
-//   Closing this is a follow-up ("A6-1.6 PI binding") that adds
-//   public-input columns to the AIR. Until then, the C++ validator
-//   MUST re-check PI consistency against block-header fields OUTSIDE
-//   the proof. This matches the §4.3 compute-phase design anyway:
-//   the validator computes `tx_pi_merkle_root` from the Transfer
-//   list and verifies the proof against the matching PI.
+//   The monolithic AIR declares `num_public_values() = 8` and pins 8
+//   BLOCK_PI_* columns to the public-value slice on row 0, then
+//   unconditionally persists them across every transition. A prover
+//   that attempts to produce a proof accepted against a MODIFIED PI
+//   (e.g. flipping a bit in `tx_pi_merkle_root`) will fail the
+//   row-0 boundary. See `block_public_inputs_to_field_elements` below
+//   for the exact encoding and `monolithic_verifier_air::col::BLOCK_PI_*`
+//   for the column layout.
 // ---------------------------------------------------------------------------
 
 use crate::block_wire_format;
 use crate::monolithic_verifier_air::{
-    build_multi_bundle_trace, BundleSpec, MonolithicVerifierAirV1,
+    build_multi_bundle_trace, BlockPi, BundleSpec, MonolithicVerifierAirV1,
     MONOLITHIC_VERIFIER_AIR_WIDTH,
 };
 use crate::prover::build_config;
+use p3_goldilocks::Goldilocks;
+
+/// A6-1.6: Encode `BlockPublicInputs` as 8 Goldilocks field elements
+/// bound in-circuit by [`MonolithicVerifierAirV1`].
+///
+/// Layout (matches `col::BLOCK_PI_*` in `monolithic_verifier_air.rs`):
+///
+///   [0] chain_id        (u32 widened to u64)
+///   [1] block_seqno     (u64)
+///   [2] anchor_seqno    (u64)
+///   [3] n_transfers     (u16 widened to u64)
+///   [4..8] tx_pi_merkle_root split into 4 × u64 LE chunks (8 bytes each)
+///
+/// Endianness is deterministic via `u64::from_le_bytes`. Every Goldilocks
+/// element fits a u64 cleanly (Goldilocks prime is 2^64 - 2^32 + 1 — any
+/// u64 input is interpreted modulo the prime; the round-trip validates
+/// in-circuit because prove and verify convert identically).
+pub fn block_public_inputs_to_field_elements(pi: &BlockPublicInputs) -> [Goldilocks; 8] {
+    let mut out = [Goldilocks::default(); 8];
+    out[0] = Goldilocks::new(pi.chain_id as u64);
+    out[1] = Goldilocks::new(pi.block_seqno);
+    out[2] = Goldilocks::new(pi.anchor_seqno);
+    out[3] = Goldilocks::new(pi.n_transfers as u64);
+    for (i, chunk) in pi.tx_pi_merkle_root.chunks_exact(8).enumerate() {
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(chunk);
+        out[4 + i] = Goldilocks::new(u64::from_le_bytes(buf));
+    }
+    out
+}
 
 /// Errors surfaced by [`verify_block`]. Wire-layer decode errors are
 /// re-used from [`block_wire_format::DecodeError`] where applicable;
@@ -316,15 +344,19 @@ pub enum BlockVerifyError {
     StarkVerifyFailed,
 }
 
-/// Build + prove a multi-bundle aggregated block proof. PI is passed
-/// for future binding (see module header on PI status); today the
-/// validator cross-checks PI externally.
+/// Build + prove a multi-bundle aggregated block proof.
+///
+/// A6-1.6: `pi` is now cryptographically bound INSIDE the proof via 8
+/// public-input columns on the monolithic AIR. The returned proof is
+/// valid ONLY against this exact `pi`; changing any field on the
+/// verifier side (chain_id, block_seqno, anchor_seqno, n_transfers,
+/// tx_pi_merkle_root) rejects the proof.
 ///
 /// `trace_height` must be a power of two ≥ the sum of bundle
 /// physical rows. Callers typically set it to the next pow2 of the
 /// total expected row count.
 pub fn prove_block(
-    _pi: &BlockPublicInputs,
+    pi: &BlockPublicInputs,
     bundles: &[BundleSpec<'_>],
     trace_height: usize,
 ) -> Result<AggregatedProof, AggregatorError> {
@@ -335,12 +367,15 @@ pub fn prove_block(
         return Err(AggregatorError::TooManySlots);
     }
 
-    let flat = build_multi_bundle_trace(bundles, trace_height)
+    let pi_felts = block_public_inputs_to_field_elements(pi);
+    let block_pi = BlockPi::new(pi_felts);
+
+    let flat = build_multi_bundle_trace(bundles, &block_pi, trace_height)
         .map_err(|_| AggregatorError::SlotMismatch)?;
     let trace = RowMajorMatrix::new(flat, MONOLITHIC_VERIFIER_AIR_WIDTH);
     let cfg = build_config();
     let air = MonolithicVerifierAirV1;
-    let proof = prove(&cfg, &air, trace, &[]);
+    let proof = prove(&cfg, &air, trace, &pi_felts);
 
     let proof_bytes = postcard::to_allocvec(&proof)
         .map_err(|_| AggregatorError::SlotMismatch)?;
@@ -359,14 +394,17 @@ pub fn prove_block(
 /// the witness. This is the real validator API.
 ///
 /// On Ok, the proof cryptographically attested the AIR constraints
-/// (all bank identities + cross-bindings across all stacked bundles).
-/// On Err, the block must be rejected.
+/// (all bank identities + cross-bindings across all stacked bundles)
+/// AND the 8 public-input columns equal `block_public_inputs_to_field_elements(pi)`
+/// on row 0 (propagated to every row by unconditional persistence).
+/// Any mismatch between `pi` and the proof's baked-in PI triggers
+/// `BlockVerifyError::StarkVerifyFailed`.
 ///
-/// NOTE: PI binding is not yet in-circuit (see module header). The
-/// `pi` argument is accepted for API-shape stability; callers MUST
-/// still cross-check PI consistency at the consensus layer.
+/// A6-1.6: PI is now bound in-circuit — the C++ validator no longer
+/// needs to cross-check PI consistency at the consensus layer, though
+/// doing so as defence-in-depth is harmless.
 pub fn verify_block(
-    _pi: &BlockPublicInputs,
+    pi: &BlockPublicInputs,
     proof: &AggregatedProof,
 ) -> Result<(), BlockVerifyError> {
     use p3_uni_stark::verify;
@@ -376,7 +414,8 @@ pub fn verify_block(
 
     let cfg = build_config();
     let air = MonolithicVerifierAirV1;
-    verify(&cfg, &air, &decoded, &[])
+    let pi_felts = block_public_inputs_to_field_elements(pi);
+    verify(&cfg, &air, &decoded, &pi_felts)
         .map_err(|_| BlockVerifyError::StarkVerifyFailed)
 }
 
@@ -618,12 +657,18 @@ mod tests {
         }];
         let bundle = bundle_from_storage(&store, &mp);
 
+        // A6-1.6: real PI with non-trivial merkle root — in-circuit
+        // binding means this exact PI must be passed to verify_block.
+        let mut root = [0u8; 32];
+        for (i, b) in root.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_mul(17).wrapping_add(3);
+        }
         let pi = BlockPublicInputs {
             chain_id: 7,
             block_seqno: 1,
             anchor_seqno: 0,
             n_transfers: 1,
-            tx_pi_merkle_root: [0; 32],
+            tx_pi_merkle_root: root,
         };
         // 1 α + 2 absorb + 1 compress + 1 fold = 5 rows; pad to 16.
         let proof = prove_block(&pi, std::slice::from_ref(&bundle), 16).unwrap();
@@ -635,6 +680,114 @@ mod tests {
             proof.bytes.len()
         );
         verify_block(&pi, &proof).expect("real block proof round-trips");
+    }
+
+    // =======================================================================
+    // A6-1.6: in-circuit PI binding tests
+    // =======================================================================
+
+    fn tiny_bundle_and_pi() -> (
+        BundleStorage,
+        BlockPublicInputs,
+    ) {
+        let mut root = [0u8; 32];
+        for (i, b) in root.iter_mut().enumerate() {
+            *b = ((i as u8).wrapping_mul(29)).wrapping_add(5);
+        }
+        let pi = BlockPublicInputs {
+            chain_id: 0x554E4F54, // 'UNOT'
+            block_seqno: 12345,
+            anchor_seqno: 12340,
+            n_transfers: 1,
+            tx_pi_merkle_root: root,
+        };
+        (tiny_bundle_storage(), pi)
+    }
+
+    #[test]
+    fn air_accepts_matching_block_pi() {
+        // Happy path: prove with PI_A, verify with PI_A — round-trips.
+        use crate::monolithic_verifier_air::MerkleOpening;
+        let (store, pi) = tiny_bundle_and_pi();
+        let mp = vec![MerkleOpening {
+            leaf: &store.leaf,
+            opening_proof: &store.opening,
+            index: store.index,
+            expected_root: store.expected_root,
+        }];
+        let bundle = bundle_from_storage(&store, &mp);
+        let proof = prove_block(&pi, std::slice::from_ref(&bundle), 16).unwrap();
+        verify_block(&pi, &proof).expect("matching PI must verify");
+    }
+
+    #[test]
+    fn air_rejects_mismatched_block_pi() {
+        // A6-1.6 load-bearing test: prove with PI_A, verify with PI_B
+        // where ONE field differs (chain_id). The AIR's in-circuit PI
+        // binding must cause rejection — previously (pre A6-1.6) this
+        // would wrongly succeed because PI was not bound.
+        use crate::monolithic_verifier_air::MerkleOpening;
+        let (store, pi_a) = tiny_bundle_and_pi();
+        let mp = vec![MerkleOpening {
+            leaf: &store.leaf,
+            opening_proof: &store.opening,
+            index: store.index,
+            expected_root: store.expected_root,
+        }];
+        let bundle = bundle_from_storage(&store, &mp);
+        let proof = prove_block(&pi_a, std::slice::from_ref(&bundle), 16).unwrap();
+
+        // Change chain_id — everything else identical.
+        let pi_b = BlockPublicInputs {
+            chain_id: pi_a.chain_id ^ 0x1, // flip one bit
+            ..pi_a.clone()
+        };
+        let err = verify_block(&pi_b, &proof).unwrap_err();
+        assert_eq!(err, BlockVerifyError::StarkVerifyFailed);
+
+        // Also check that swapping the merkle root rejects.
+        let mut bad_root = pi_a.tx_pi_merkle_root;
+        bad_root[0] ^= 0xff;
+        let pi_c = BlockPublicInputs {
+            tx_pi_merkle_root: bad_root,
+            ..pi_a.clone()
+        };
+        let err2 = verify_block(&pi_c, &proof).unwrap_err();
+        assert_eq!(err2, BlockVerifyError::StarkVerifyFailed);
+
+        // And seqno.
+        let pi_d = BlockPublicInputs {
+            block_seqno: pi_a.block_seqno + 1,
+            ..pi_a
+        };
+        let err3 = verify_block(&pi_d, &proof).unwrap_err();
+        assert_eq!(err3, BlockVerifyError::StarkVerifyFailed);
+    }
+
+    #[test]
+    fn block_public_inputs_to_field_elements_is_deterministic() {
+        let pi = BlockPublicInputs {
+            chain_id: 0xDEADBEEF,
+            block_seqno: 0x0102030405060708,
+            anchor_seqno: 0x1122334455667788,
+            n_transfers: 7,
+            tx_pi_merkle_root: [0xAB; 32],
+        };
+        let a = block_public_inputs_to_field_elements(&pi);
+        let b = block_public_inputs_to_field_elements(&pi);
+        assert_eq!(a, b);
+
+        // Field-by-field sanity.
+        use p3_goldilocks::Goldilocks;
+        assert_eq!(a[0], Goldilocks::new(0xDEADBEEF));
+        assert_eq!(a[1], Goldilocks::new(0x0102030405060708));
+        assert_eq!(a[2], Goldilocks::new(0x1122334455667788));
+        assert_eq!(a[3], Goldilocks::new(7));
+        // tx_pi_merkle_root = [0xAB; 32] ⇒ each 8-byte u64 LE chunk is
+        // 0xABABABABABABABAB.
+        for i in 0..4 {
+            assert_eq!(a[4 + i], Goldilocks::new(0xABABABABABABABAB));
+        }
     }
 
     #[test]

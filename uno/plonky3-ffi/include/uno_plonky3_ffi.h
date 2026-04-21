@@ -559,6 +559,21 @@
 
 #define QUOT_COMMIT_ROOT_END (QUOT_COMMIT_ROOT0 + DIGEST_WIDTH)
 
+#define BLOCK_PI_CHAIN_ID FINAL_RO_END
+
+#define BLOCK_PI_BLOCK_SEQNO (BLOCK_PI_CHAIN_ID + 1)
+
+#define BLOCK_PI_ANCHOR_SEQNO (BLOCK_PI_BLOCK_SEQNO + 1)
+
+#define BLOCK_PI_N_TRANSFERS (BLOCK_PI_ANCHOR_SEQNO + 1)
+
+#define BLOCK_PI_ROOT0 (BLOCK_PI_N_TRANSFERS + 1)
+
+#define BLOCK_PI_ROOT_END (BLOCK_PI_ROOT0 + 4)
+
+// Total number of public-input Goldilocks elements bound in-circuit.
+#define NUM_BLOCK_PI_ELEMS 8
+
 // Result codes returned across the C ABI.
 //
 // These are stable wire values; renumbering is a breaking change. C++ side

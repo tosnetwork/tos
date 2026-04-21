@@ -776,11 +776,12 @@ pub unsafe extern "C" fn uno_block_extra_encode_v1(
 // The C++ validator holds ONE handle, shared across the compute-phase
 // worker pool (thread-safe — verify is stateless).
 //
-// PI binding status: the AIR does not yet constrain PI fields against
-// trace columns (see A6-1.5 module header in `aggregator.rs`). The C++
-// side still cross-checks PI consistency at the consensus layer; the
-// UnoBlockPublicInputsView struct is accepted for API-shape stability
-// so the ABI won't change when in-circuit PI binding lands.
+// PI binding status (A6-1.6): the AIR NOW binds the 8 PI fields
+// (chain_id, block_seqno, anchor_seqno, n_transfers, 4× u64 LE chunks
+// of tx_pi_merkle_root) to 8 public-input columns via a row-0 boundary
+// + unconditional persistence. The C++ validator still MAY cross-check
+// PI at the consensus layer as defence-in-depth, but the STARK itself
+// now rejects a proof whose PI doesn't match the bytes baked inside.
 // ---------------------------------------------------------------------------
 
 /// Flat view of [`BlockPublicInputs`] passed across the FFI. Layout

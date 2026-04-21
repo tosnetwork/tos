@@ -201,8 +201,32 @@ pub mod col {
     pub const FINAL_RO0: usize = INITIAL_FOLDED_END;
     pub const FINAL_RO_END: usize = FINAL_RO0 + CHALLENGE_DIM;
 
+    // ---- A6-1.6: Block-level PI columns (in-circuit PI binding) --------
+    //
+    // These 8 columns hold the 8 Goldilocks elements that encode the
+    // block's `BlockPublicInputs`:
+    //
+    //   [0] chain_id          (u32 as u64)
+    //   [1] block_seqno       (u64)
+    //   [2] anchor_seqno      (u64)
+    //   [3] n_transfers       (u16 as u64)
+    //   [4..8] tx_pi_merkle_root, 4 × u64 LE chunks of the 32-byte root
+    //
+    // UNCONDITIONALLY persisted across every transition (block-level,
+    // not bundle-scoped, so they do NOT change at bundle boundaries).
+    // `when_first_row` pins them to `builder.public_values()[0..8]`,
+    // cryptographically binding the aggregated proof to its PI.
+    pub const BLOCK_PI_CHAIN_ID: usize = FINAL_RO_END;
+    pub const BLOCK_PI_BLOCK_SEQNO: usize = BLOCK_PI_CHAIN_ID + 1;
+    pub const BLOCK_PI_ANCHOR_SEQNO: usize = BLOCK_PI_BLOCK_SEQNO + 1;
+    pub const BLOCK_PI_N_TRANSFERS: usize = BLOCK_PI_ANCHOR_SEQNO + 1;
+    pub const BLOCK_PI_ROOT0: usize = BLOCK_PI_N_TRANSFERS + 1;
+    pub const BLOCK_PI_ROOT_END: usize = BLOCK_PI_ROOT0 + 4;
+    /// Total number of public-input Goldilocks elements bound in-circuit.
+    pub const NUM_BLOCK_PI_ELEMS: usize = 8;
+
     /// Base offset of the shared Poseidon2-w8 sub-AIR witness block.
-    pub const P2_BLOCK: usize = FINAL_RO_END;
+    pub const P2_BLOCK: usize = BLOCK_PI_ROOT_END;
 
     /// Total column width. 180-col Poseidon2 block added on top of
     /// framing cols. Final number fixed at A3-PRE to pin the layout.
@@ -227,14 +251,70 @@ pub enum TraceBuildError {
     },
 }
 
+// ---------------------------------------------------------------------------
+// A6-1.6: Block-level public inputs bound in-circuit.
+//
+// `BlockPi` is the 8-element Goldilocks encoding of the block's public
+// inputs. The monolithic AIR declares `num_public_values() = 8`; the
+// trace builder populates `BLOCK_PI_*` columns with this data on every
+// row; `when_first_row` pins row 0 to `builder.public_values()`;
+// unconditional persistence propagates the values to every other row.
+// This cryptographically binds the proof to its PI.
+//
+// For test-only builders that don't care about PI binding,
+// [`block_pi_zero`] returns an all-zero PI. Production call sites
+// (currently only `build_multi_bundle_trace` via `aggregator::prove_block`)
+// take an explicit `BlockPi`.
+// ---------------------------------------------------------------------------
+
+/// 8-element Goldilocks encoding of the block's public inputs, bound
+/// in-circuit by the AIR's public-value check. See
+/// `aggregator::block_public_inputs_to_field_elements` for the encoding.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct BlockPi {
+    pub values: [Goldilocks; col::NUM_BLOCK_PI_ELEMS],
+}
+
+impl BlockPi {
+    pub fn new(values: [Goldilocks; col::NUM_BLOCK_PI_ELEMS]) -> Self {
+        Self { values }
+    }
+}
+
+/// Zero-PI helper for test-only builders. In production, `prove_block`
+/// derives a real `BlockPi` from `BlockPublicInputs` via
+/// `aggregator::block_public_inputs_to_field_elements`.
+pub fn block_pi_zero() -> BlockPi {
+    BlockPi {
+        values: [Goldilocks::default(); col::NUM_BLOCK_PI_ELEMS],
+    }
+}
+
+/// Write the 8 BLOCK_PI columns on a single row.
+#[inline]
+fn write_block_pi(row: &mut [Goldilocks], pi: &BlockPi) {
+    row[col::BLOCK_PI_CHAIN_ID] = pi.values[0];
+    row[col::BLOCK_PI_BLOCK_SEQNO] = pi.values[1];
+    row[col::BLOCK_PI_ANCHOR_SEQNO] = pi.values[2];
+    row[col::BLOCK_PI_N_TRANSFERS] = pi.values[3];
+    for i in 0..4 {
+        row[col::BLOCK_PI_ROOT0 + i] = pi.values[4 + i];
+    }
+}
+
 /// Build a trivial all-IDLE trace of the requested height. Real
 /// operation-specific rows land in A3-1+ as each bank migrates in.
+///
+/// A6-1.6: this test builder populates BLOCK_PI columns with zeros so
+/// the in-circuit PI binding trivially passes when callers invoke
+/// `prove(&cfg, &air, trace, &[Goldilocks::default(); 8])`.
 pub fn build_trivial_trace(trace_height: usize) -> Result<Vec<Goldilocks>, TraceBuildError> {
     if !trace_height.is_power_of_two() {
         return Err(TraceBuildError::TraceHeightNotPow2 { got: trace_height });
     }
     let width = col::WIDTH;
     let mut flat = vec![Goldilocks::default(); trace_height * width];
+    let pi_zero = block_pi_zero();
 
     // Populate KIND = IDLE on every row + BLOCK_LEN_FLAG[0] = 1 (A3-1
     // requires BLOCK_LEN flags be a valid one-hot on every row).
@@ -242,6 +322,7 @@ pub fn build_trivial_trace(trace_height: usize) -> Result<Vec<Goldilocks>, Trace
         let base = r * width;
         flat[base + col::KIND0 + OP_KIND_IDLE as usize] = Goldilocks::new(1);
         flat[base + col::ABSORB_BLOCK_LEN_FLAG0] = Goldilocks::new(1);
+        write_block_pi(&mut flat[base..base + width], &pi_zero);
     }
 
     // Populate the shared Poseidon2-w8 block on every row with the
@@ -319,6 +400,7 @@ pub fn build_leaf_to_root_trace(
     let mut flat = vec![Goldilocks::default(); trace_height * width];
     let zero_g = Goldilocks::default();
     let perm = default_goldilocks_poseidon2_8();
+    let pi_zero = block_pi_zero();
 
     let write_kind = |out: &mut [Goldilocks], kind: u8| {
         for k in 0..NUM_OP_KINDS {
@@ -348,6 +430,7 @@ pub fn build_leaf_to_root_trace(
         let base = r * width;
         let row = &mut flat[base..base + width];
         write_kind(row, OP_KIND_ABSORB);
+        write_block_pi(row, &pi_zero);
 
         let is_first = r == 0;
         let is_last = r + 1 == n_absorb;
@@ -440,6 +523,7 @@ pub fn build_leaf_to_root_trace(
         let base = row_idx * width;
         let row = &mut flat[base..base + width];
         write_kind(row, OP_KIND_COMPRESS);
+        write_block_pi(row, &pi_zero);
         // COMPRESS rows have BLOCK_LEN = 0 (flag[0] = 1). The ABSORB
         // bank's flag-one-hot + weighted-sum constraints fire on
         // EVERY row, so this is mandatory even though the COMPRESS
@@ -600,6 +684,7 @@ pub fn build_multi_path_leaf_to_root_trace(
     let mut flat = vec![Goldilocks::default(); trace_height * width];
     let zero_g = Goldilocks::default();
     let perm = default_goldilocks_poseidon2_8();
+    let pi_zero = block_pi_zero();
 
     let write_kind = |out: &mut [Goldilocks], kind: u8| {
         for k in 0..NUM_OP_KINDS {
@@ -633,6 +718,7 @@ pub fn build_multi_path_leaf_to_root_trace(
             let base = (row_cursor + r) * width;
             let row = &mut flat[base..base + width];
             write_kind(row, OP_KIND_ABSORB);
+            write_block_pi(row, &pi_zero);
 
             let is_first = r == 0;
             let is_last = r + 1 == n_absorb;
@@ -696,6 +782,7 @@ pub fn build_multi_path_leaf_to_root_trace(
             let base = row_idx * width;
             let row = &mut flat[base..base + width];
             write_kind(row, OP_KIND_COMPRESS);
+            write_block_pi(row, &pi_zero);
             write_block_len_flags(row, 0);
 
             let bit = (idx & 1) as u64;
@@ -861,11 +948,13 @@ pub fn build_alpha_chain_trace(
     let mut alpha_pow = initial_alpha_pow;
     let mut ro = initial_ro;
     let p2_zero_witness = gen_p2_witness_zero();
+    let pi_zero = block_pi_zero();
 
     for (r, step) in steps.iter().enumerate() {
         let base = r * width;
         let row = &mut flat[base..base + width];
         write_kind(row, OP_KIND_ALPHA);
+        write_block_pi(row, &pi_zero);
         zero_block_len_flag(row);
 
         // Per-step claimed values.
@@ -999,12 +1088,14 @@ pub fn build_fold_chain_trace(
     };
 
     let p2_zero_witness = gen_p2_witness_zero();
+    let pi_zero = block_pi_zero();
 
     let mut current = initial_folded;
     for (r, round) in rounds.iter().enumerate() {
         let base = r * width;
         let row = &mut flat[base..base + width];
         write_kind(row, OP_KIND_FOLD);
+        write_block_pi(row, &pi_zero);
         zero_block_len_flag(row);
 
         let bit = (round.domain_index & 1) as u64;
@@ -1155,6 +1246,7 @@ pub fn build_alpha_to_fold_unified_trace(
     };
 
     let p2_zero_witness = gen_p2_witness_zero();
+    let pi_zero = block_pi_zero();
 
     // --- Pass 1: run α chain off-circuit to compute ρ_final. ---
     let mut apow = initial_alpha_pow;
@@ -1223,6 +1315,7 @@ pub fn build_alpha_to_fold_unified_trace(
         let base = r * width;
         let row = &mut flat[base..base + width];
         write_kind(row, OP_KIND_ALPHA);
+        write_block_pi(row, &pi_zero);
         zero_block_len_flag(row);
 
         row[col::ALPHA_P_AT_X] = step.p_at_x;
@@ -1266,6 +1359,7 @@ pub fn build_alpha_to_fold_unified_trace(
         let base = row_idx * width;
         let row = &mut flat[base..base + width];
         write_kind(row, OP_KIND_FOLD);
+        write_block_pi(row, &pi_zero);
         zero_block_len_flag(row);
 
         let bit = (round.domain_index & 1) as u64;
@@ -1494,6 +1588,7 @@ pub fn build_alpha_merkle_fold_bundle_trace(
     let final_folded = fold_current;
 
     let p2_zero_witness = gen_p2_witness_zero();
+    let pi_zero = block_pi_zero();
 
     // Helper: populate PI proxies + α-persistence cols on non-α rows.
     // rho_final threads through via A3-3's non-α persistence.
@@ -1513,6 +1608,8 @@ pub fn build_alpha_merkle_fold_bundle_trace(
         write_ext(row, col::ALPHA_POW_IN0, alpha_final_pow);
         write_ext(row, col::ALPHA_POW_OUT0, alpha_final_pow);
         write_ext(row, col::ALPHA_RO_IN0, rho_final);
+        // A6-1.6: block-level PI columns (zero for this test builder).
+        write_block_pi(row, &pi_zero);
     };
 
     // --- Pass 3: emit ALPHA rows. ---
@@ -1521,6 +1618,7 @@ pub fn build_alpha_merkle_fold_bundle_trace(
         let base = r * width;
         let row = &mut flat[base..base + width];
         write_kind(row, OP_KIND_ALPHA);
+        write_block_pi(row, &pi_zero);
         write_block_len_flags(row, 0);
 
         row[col::ALPHA_P_AT_X] = step.p_at_x;
@@ -1686,6 +1784,7 @@ pub fn build_alpha_merkle_fold_bundle_trace(
         let base = row_idx * width;
         let row = &mut flat[base..base + width];
         write_kind(row, OP_KIND_FOLD);
+        write_block_pi(row, &pi_zero);
         write_block_len_flags(row, 0);
 
         let bit = (round.domain_index & 1) as u64;
@@ -1785,8 +1884,15 @@ pub struct BundleSpec<'a> {
 /// Build a trace that stacks `bundles` back-to-back, each verified
 /// in-circuit with its own α/ρ/final-folded via A3-5c bundle-boundary
 /// constraints.
+///
+/// A6-1.6: `block_pi` is the 8-element Goldilocks encoding of the
+/// block's [`BlockPublicInputs`]. Every row has BLOCK_PI columns set to
+/// these values; the AIR's `when_first_row` boundary pins row 0 to
+/// `builder.public_values()`, cryptographically binding the proof to
+/// its declared PI.
 pub fn build_multi_bundle_trace(
     bundles: &[BundleSpec<'_>],
+    block_pi: &BlockPi,
     trace_height: usize,
 ) -> Result<Vec<Goldilocks>, TraceBuildError> {
     use p3_field::{BasedVectorSpace, Field, TwoAdicField};
@@ -1944,6 +2050,7 @@ pub fn build_multi_bundle_trace(
             let base = (row_cursor + r) * width;
             let row = &mut flat[base..base + width];
             write_kind(row, OP_KIND_ALPHA);
+            write_block_pi(row, block_pi);
             write_block_len_flags(row, 0);
 
             row[col::ALPHA_P_AT_X] = step.p_at_x;
@@ -1982,6 +2089,7 @@ pub fn build_multi_bundle_trace(
                 let base = (inner_cursor + r) * width;
                 let row = &mut flat[base..base + width];
                 write_kind(row, OP_KIND_ABSORB);
+                write_block_pi(row, block_pi);
 
                 let is_first = r == 0;
                 let is_last = r + 1 == n_absorb;
@@ -2051,6 +2159,7 @@ pub fn build_multi_bundle_trace(
                 let base = row_idx * width;
                 let row = &mut flat[base..base + width];
                 write_kind(row, OP_KIND_COMPRESS);
+                write_block_pi(row, block_pi);
                 write_block_len_flags(row, 0);
 
                 let bit = (idx & 1) as u64;
@@ -2123,6 +2232,7 @@ pub fn build_multi_bundle_trace(
             let base = row_idx * width;
             let row = &mut flat[base..base + width];
             write_kind(row, OP_KIND_FOLD);
+            write_block_pi(row, block_pi);
             write_block_len_flags(row, 0);
 
             let bit = (round.domain_index & 1) as u64;
@@ -2224,7 +2334,10 @@ impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for MonolithicVerifierAirV1 {
 
     #[inline]
     fn num_public_values(&self) -> usize {
-        0
+        // A6-1.6: 8 Goldilocks elements encoding the block's
+        // `BlockPublicInputs` (chain_id, block_seqno, anchor_seqno,
+        // n_transfers, 4× LE limbs of tx_pi_merkle_root).
+        col::NUM_BLOCK_PI_ELEMS
     }
 
     #[inline]
@@ -2825,6 +2938,25 @@ where
             trans2.assert_zero(bundle_start.clone() * (n_ri - n_ir));
         }
 
+        // =================================================================
+        // A6-1.6: Block-level PI persistence (UNCONDITIONAL).
+        //
+        // The 8 BLOCK_PI_* columns carry the block's public inputs on
+        // every row. They are BLOCK-LEVEL (not bundle-scoped), so they
+        // persist across every transition — including bundle boundaries
+        // and IDLE transitions. Combined with the `when_first_row` pin
+        // against `builder.public_values()[0..8]`, every row's BLOCK_PI
+        // columns are cryptographically bound to the aggregated proof's
+        // declared PI.
+        //
+        // Degree: 1 (a pure equality; no gating factor). ✓
+        // =================================================================
+        for c in col::BLOCK_PI_CHAIN_ID..col::BLOCK_PI_ROOT_END {
+            let l_c: AB::Expr = local[c].into();
+            let n_c: AB::Expr = next[c].into();
+            trans2.assert_zero(n_c - l_c);
+        }
+
         drop(trans2);
 
         // =================================================================
@@ -2854,6 +2986,26 @@ where
             first.assert_zero(is_alpha.clone() * (ri - ir));
         }
         drop(first);
+
+        // A6-1.6: Bind row-0 BLOCK_PI columns to the proof's declared
+        // public values. With the UNCONDITIONAL BLOCK_PI persistence
+        // constraint in trans2, this row-0 pin propagates to every row.
+        //
+        // PublicVar: Copy, so we snapshot the 8 values first; then open
+        // the when_first_row filter to emit the 8 equality constraints.
+        let pi_vars: [AB::PublicVar; col::NUM_BLOCK_PI_ELEMS] = {
+            let pis = builder.public_values();
+            // The AIR declares num_public_values() = NUM_BLOCK_PI_ELEMS;
+            // prove/verify enforce length at the boundary, so indexing
+            // 0..8 is safe for any honest configuration.
+            core::array::from_fn(|i| pis[i])
+        };
+        let mut first_pi = builder.when_first_row();
+        for (i, c) in (col::BLOCK_PI_CHAIN_ID..col::BLOCK_PI_ROOT_END).enumerate() {
+            let l_c: AB::Expr = local[c].into();
+            let pi_i: AB::Expr = pi_vars[i].into();
+            first_pi.assert_zero(l_c - pi_i);
+        }
 
         // =================================================================
         // A3-2: Last-row boundaries.
@@ -2892,6 +3044,13 @@ where
 mod tests {
     use super::*;
 
+    /// A6-1.6: test PI = all-zero 8-element Goldilocks array. Test
+    /// traces use `block_pi_zero()` to populate BLOCK_PI cols to zero,
+    /// so calling `prove / verify` with this constant satisfies the
+    /// in-circuit PI binding trivially. Production call sites pass a
+    /// real PI derived from `BlockPublicInputs`.
+    const TEST_PI_ZERO: [Goldilocks; 8] = [Goldilocks::new(0); 8];
+
     #[test]
     fn column_layout_is_stable() {
         // Pin the layout at A3-PRE. Follow-up sub-phases must NOT change
@@ -2904,6 +3063,11 @@ mod tests {
         assert_eq!(col::ABSORB_BLOCK0, 5);
         assert_eq!(col::P2_BLOCK % 1, 0); // just a syntactic no-op
         assert_eq!(col::WIDTH, col::P2_BLOCK + POSEIDON2_COLS_PER_INSTANCE);
+        // A6-1.6: 8 BLOCK_PI columns sit between FINAL_RO_END and P2_BLOCK.
+        assert_eq!(col::NUM_BLOCK_PI_ELEMS, 8);
+        assert_eq!(col::BLOCK_PI_ROOT_END - col::BLOCK_PI_CHAIN_ID, 8);
+        assert_eq!(col::BLOCK_PI_CHAIN_ID, col::FINAL_RO_END);
+        assert_eq!(col::P2_BLOCK, col::BLOCK_PI_ROOT_END);
     }
 
     #[test]
@@ -2933,8 +3097,8 @@ mod tests {
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
-        let proof = prove(&cfg, &air, trace, &[]);
-        verify(&cfg, &air, &proof, &[]).expect("trivial IDLE trace must verify");
+        let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
+        verify(&cfg, &air, &proof, &TEST_PI_ZERO).expect("trivial IDLE trace must verify");
     }
 
     #[test]
@@ -2950,12 +3114,12 @@ mod tests {
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove(&cfg, &air, trace, &[])
+            prove(&cfg, &air, trace, &TEST_PI_ZERO)
         }));
         match outcome {
             Err(_) => {} // debug-builder panic on broken one-hot
             Ok(p) => {
-                verify(&cfg, &air, &p, &[])
+                verify(&cfg, &air, &p, &TEST_PI_ZERO)
                     .expect_err("broken KIND one-hot must reject");
             }
         }
@@ -2980,6 +3144,11 @@ mod tests {
         );
         eprintln!("  FOLD bank      : {} .. {}", col::FOLD_BETA0, col::FOLD_OUT_END);
         eprintln!("  ALPHA bank     : {} .. {}", col::ALPHA_CHALLENGE0, col::ALPHA_RO_OUT_END);
+        eprintln!(
+            "  Block PI (A6-1.6): {} .. {}  ({} cols)",
+            col::BLOCK_PI_CHAIN_ID, col::BLOCK_PI_ROOT_END,
+            col::NUM_BLOCK_PI_ELEMS
+        );
         eprintln!(
             "  Public-input   : {} .. {}",
             col::TRACE_COMMIT_ROOT0, col::FINAL_FOLDED_END
@@ -3045,8 +3214,8 @@ mod tests {
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
-        let proof = prove(&cfg, &air, trace, &[]);
-        verify(&cfg, &air, &proof, &[])
+        let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
+        verify(&cfg, &air, &proof, &TEST_PI_ZERO)
             .expect("width-8 leaf → root must verify end-to-end in ONE STARK");
     }
 
@@ -3063,8 +3232,8 @@ mod tests {
             let flat = build_leaf_to_root_trace(&leaves[leaf_idx], path, *idx, root, 16)
                 .expect("build");
             let trace = RowMajorMatrix::new(flat, col::WIDTH);
-            let proof = prove(&cfg, &air, trace, &[]);
-            verify(&cfg, &air, &proof, &[])
+            let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
+            verify(&cfg, &air, &proof, &TEST_PI_ZERO)
                 .unwrap_or_else(|e| panic!("leaf {leaf_idx}: {e:?}"));
         }
     }
@@ -3086,12 +3255,12 @@ mod tests {
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove(&cfg, &air, trace, &[])
+            prove(&cfg, &air, trace, &TEST_PI_ZERO)
         }));
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &[])
+                verify(&cfg, &air, &p, &TEST_PI_ZERO)
                     .expect_err("tampered wide leaf must reject");
             }
         }
@@ -3115,12 +3284,12 @@ mod tests {
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove(&cfg, &air, trace, &[])
+            prove(&cfg, &air, trace, &TEST_PI_ZERO)
         }));
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &[])
+                verify(&cfg, &air, &p, &TEST_PI_ZERO)
                     .expect_err("wrong root must reject at last-row boundary");
             }
         }
@@ -3152,12 +3321,12 @@ mod tests {
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove(&cfg, &air, trace, &[])
+            prove(&cfg, &air, trace, &TEST_PI_ZERO)
         }));
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &[]).expect_err(
+                verify(&cfg, &air, &p, &TEST_PI_ZERO).expect_err(
                     "forged leaf-digest bridge must reject — A3-1 closes A2's construction gap",
                 );
             }
@@ -3240,8 +3409,8 @@ mod tests {
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
-        let proof = prove(&cfg, &air, trace, &[]);
-        verify(&cfg, &air, &proof, &[])
+        let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
+        verify(&cfg, &air, &proof, &TEST_PI_ZERO)
             .expect("α-chain (3 steps) must verify in ONE monolithic STARK");
     }
 
@@ -3268,8 +3437,8 @@ mod tests {
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
-        let proof = prove(&cfg, &air, trace, &[]);
-        verify(&cfg, &air, &proof, &[]).expect("α-chain (1 step) must verify");
+        let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
+        verify(&cfg, &air, &proof, &TEST_PI_ZERO).expect("α-chain (1 step) must verify");
     }
 
     #[test]
@@ -3295,12 +3464,12 @@ mod tests {
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove(&cfg, &air, trace, &[])
+            prove(&cfg, &air, trace, &TEST_PI_ZERO)
         }));
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &[])
+                verify(&cfg, &air, &p, &TEST_PI_ZERO)
                     .expect_err("wrong FINAL_RO must reject at last-row boundary");
             }
         }
@@ -3330,12 +3499,12 @@ mod tests {
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove(&cfg, &air, trace, &[])
+            prove(&cfg, &air, trace, &TEST_PI_ZERO)
         }));
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &[])
+                verify(&cfg, &air, &p, &TEST_PI_ZERO)
                     .expect_err("tampered P_AT_X must reject via DIFF_QUOT bank");
             }
         }
@@ -3374,8 +3543,8 @@ mod tests {
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
-        let proof = prove(&cfg, &air, trace, &[]);
-        verify(&cfg, &air, &proof, &[])
+        let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
+        verify(&cfg, &air, &proof, &TEST_PI_ZERO)
             .expect("fold chain (3 rounds) must verify in ONE monolithic STARK");
     }
 
@@ -3401,8 +3570,8 @@ mod tests {
             let flat =
                 build_fold_chain_trace(initial_folded, &rounds, final_folded, 8).unwrap();
             let trace = RowMajorMatrix::new(flat, col::WIDTH);
-            let proof = prove(&cfg, &air, trace, &[]);
-            verify(&cfg, &air, &proof, &[])
+            let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
+            verify(&cfg, &air, &proof, &TEST_PI_ZERO)
                 .unwrap_or_else(|e| panic!("bit={bit}: {e:?}"));
         }
     }
@@ -3427,12 +3596,12 @@ mod tests {
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove(&cfg, &air, trace, &[])
+            prove(&cfg, &air, trace, &TEST_PI_ZERO)
         }));
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &[]).expect_err(
+                verify(&cfg, &air, &p, &TEST_PI_ZERO).expect_err(
                     "wrong FINAL_FOLDED must reject at last-row boundary",
                 );
             }
@@ -3471,12 +3640,12 @@ mod tests {
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove(&cfg, &air, trace, &[])
+            prove(&cfg, &air, trace, &TEST_PI_ZERO)
         }));
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &[])
+                verify(&cfg, &air, &p, &TEST_PI_ZERO)
                     .expect_err("tampered SIBLING must reject via orientation bank");
             }
         }
@@ -3504,12 +3673,12 @@ mod tests {
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove(&cfg, &air, trace, &[])
+            prove(&cfg, &air, trace, &TEST_PI_ZERO)
         }));
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &[])
+                verify(&cfg, &air, &p, &TEST_PI_ZERO)
                     .expect_err("broken INV_2S witness must reject via 2s·INV_2S=1 bank");
             }
         }
@@ -3530,8 +3699,8 @@ mod tests {
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
-        let proof = prove(&cfg, &air, trace, &[]);
-        verify(&cfg, &air, &proof, &[])
+        let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
+        verify(&cfg, &air, &proof, &TEST_PI_ZERO)
             .expect("A3-1 leaf-to-root must still verify post-A3-2");
     }
 
@@ -3579,8 +3748,8 @@ mod tests {
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
-        let proof = prove(&cfg, &air, trace, &[]);
-        verify(&cfg, &air, &proof, &[])
+        let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
+        verify(&cfg, &air, &proof, &TEST_PI_ZERO)
             .expect("unified α+fold must verify in ONE monolithic STARK");
     }
 
@@ -3626,12 +3795,12 @@ mod tests {
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove(&cfg, &air, trace, &[])
+            prove(&cfg, &air, trace, &TEST_PI_ZERO)
         }));
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &[]).expect_err(
+                verify(&cfg, &air, &p, &TEST_PI_ZERO).expect_err(
                     "forged α→FOLD seam must reject — A3-3 closes A2's cross-binding gap",
                 );
             }
@@ -3674,12 +3843,12 @@ mod tests {
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove(&cfg, &air, trace, &[])
+            prove(&cfg, &air, trace, &TEST_PI_ZERO)
         }));
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &[])
+                verify(&cfg, &air, &p, &TEST_PI_ZERO)
                     .expect_err("tampered α chain in unified trace must reject");
             }
         }
@@ -3731,12 +3900,12 @@ mod tests {
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove(&cfg, &air, trace, &[])
+            prove(&cfg, &air, trace, &TEST_PI_ZERO)
         }));
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &[])
+                verify(&cfg, &air, &p, &TEST_PI_ZERO)
                     .expect_err("tampered ALPHA_RO_OUT on FOLD row must reject via non-α persistence");
             }
         }
@@ -3760,8 +3929,8 @@ mod tests {
             let (_, path, idx) = openings[1].clone();
             let flat = build_leaf_to_root_trace(&leaves[1], &path, idx, root, 16).unwrap();
             let trace = RowMajorMatrix::new(flat, col::WIDTH);
-            let proof = prove(&cfg, &air, trace, &[]);
-            verify(&cfg, &air, &proof, &[])
+            let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
+            verify(&cfg, &air, &proof, &TEST_PI_ZERO)
                 .expect("A3-1 leaf-to-root must still verify post-A3-3");
         }
 
@@ -3777,8 +3946,8 @@ mod tests {
             )
             .unwrap();
             let trace = RowMajorMatrix::new(flat, col::WIDTH);
-            let proof = prove(&cfg, &air, trace, &[]);
-            verify(&cfg, &air, &proof, &[])
+            let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
+            verify(&cfg, &air, &proof, &TEST_PI_ZERO)
                 .expect("A3-2 α-only must still verify post-A3-3");
         }
 
@@ -3795,8 +3964,8 @@ mod tests {
             let flat =
                 build_fold_chain_trace(initial_folded, &rounds, final_folded, 8).unwrap();
             let trace = RowMajorMatrix::new(flat, col::WIDTH);
-            let proof = prove(&cfg, &air, trace, &[]);
-            verify(&cfg, &air, &proof, &[])
+            let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
+            verify(&cfg, &air, &proof, &TEST_PI_ZERO)
                 .expect("A3-2 fold-only must still verify post-A3-3");
         }
     }
@@ -3904,9 +4073,9 @@ mod tests {
         let air = MonolithicVerifierAirV1;
 
         let t0 = Instant::now();
-        let proof = prove(&cfg, &air, trace, &[]);
+        let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
         let prove_ms = t0.elapsed().as_millis();
-        verify(&cfg, &air, &proof, &[]).expect("realistic-scale unified trace must verify");
+        verify(&cfg, &air, &proof, &TEST_PI_ZERO).expect("realistic-scale unified trace must verify");
 
         let proof_bytes = postcard::to_allocvec(&proof).unwrap().len();
         eprintln!();
@@ -3942,9 +4111,9 @@ mod tests {
             let trace = RowMajorMatrix::new(flat, col::WIDTH);
 
             let t0 = Instant::now();
-            let proof = prove(&cfg, &air, trace, &[]);
+            let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
             let prove_ms = t0.elapsed().as_millis();
-            verify(&cfg, &air, &proof, &[]).unwrap();
+            verify(&cfg, &air, &proof, &TEST_PI_ZERO).unwrap();
 
             let proof_bytes = postcard::to_allocvec(&proof).unwrap().len();
             report(&format!("α@{trace_height}"), trace_height, prove_ms, proof_bytes);
@@ -3983,9 +4152,9 @@ mod tests {
             let trace = RowMajorMatrix::new(flat, col::WIDTH);
 
             let t0 = Instant::now();
-            let proof = prove(&cfg, &air, trace, &[]);
+            let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
             let prove_ms = t0.elapsed().as_millis();
-            verify(&cfg, &air, &proof, &[]).unwrap();
+            verify(&cfg, &air, &proof, &TEST_PI_ZERO).unwrap();
 
             let proof_bytes = postcard::to_allocvec(&proof).unwrap().len();
             report(
@@ -4038,9 +4207,9 @@ mod tests {
             let trace = RowMajorMatrix::new(flat, col::WIDTH);
 
             let t0 = Instant::now();
-            let proof = prove(&cfg, &air, trace, &[]);
+            let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
             let prove_ms = t0.elapsed().as_millis();
-            verify(&cfg, &air, &proof, &[]).unwrap();
+            verify(&cfg, &air, &proof, &TEST_PI_ZERO).unwrap();
 
             let proof_bytes = postcard::to_allocvec(&proof).unwrap().len();
             report(tag, trace_height, prove_ms, proof_bytes);
@@ -4084,8 +4253,8 @@ mod tests {
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
-        let proof = prove(&cfg, &air, trace, &[]);
-        verify(&cfg, &air, &proof, &[])
+        let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
+        verify(&cfg, &air, &proof, &TEST_PI_ZERO)
             .expect("two Merkle paths must verify in ONE monolithic STARK");
     }
 
@@ -4146,8 +4315,8 @@ mod tests {
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
-        let proof = prove(&cfg, &air, trace, &[]);
-        verify(&cfg, &air, &proof, &[])
+        let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
+        verify(&cfg, &air, &proof, &TEST_PI_ZERO)
             .expect("two paths with different roots must verify in ONE STARK");
     }
 
@@ -4226,12 +4395,12 @@ mod tests {
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove(&cfg, &air, trace, &[])
+            prove(&cfg, &air, trace, &TEST_PI_ZERO)
         }));
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &[]).expect_err(
+                verify(&cfg, &air, &p, &TEST_PI_ZERO).expect_err(
                     "swapped multi-path roots must reject via per-path check",
                 );
             }
@@ -4267,12 +4436,12 @@ mod tests {
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove(&cfg, &air, trace, &[])
+            prove(&cfg, &air, trace, &TEST_PI_ZERO)
         }));
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &[]).expect_err(
+                verify(&cfg, &air, &p, &TEST_PI_ZERO).expect_err(
                     "TCR drift within a compression run must reject",
                 );
             }
@@ -4337,8 +4506,8 @@ mod tests {
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
-        let proof = prove(&cfg, &air, trace, &[]);
-        verify(&cfg, &air, &proof, &[])
+        let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
+        verify(&cfg, &air, &proof, &TEST_PI_ZERO)
             .expect("bundle (α + 1 Merkle + fold) must verify in ONE monolithic STARK");
     }
 
@@ -4408,8 +4577,8 @@ mod tests {
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
-        let proof = prove(&cfg, &air, trace, &[]);
-        verify(&cfg, &air, &proof, &[])
+        let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
+        verify(&cfg, &air, &proof, &TEST_PI_ZERO)
             .expect("bundle with 2 Merkle paths must verify in ONE monolithic STARK");
     }
 
@@ -4459,12 +4628,12 @@ mod tests {
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove(&cfg, &air, trace, &[])
+            prove(&cfg, &air, trace, &TEST_PI_ZERO)
         }));
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &[]).expect_err(
+                verify(&cfg, &air, &p, &TEST_PI_ZERO).expect_err(
                     "tampered Merkle sibling in bundle must reject",
                 );
             }
@@ -4515,12 +4684,12 @@ mod tests {
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove(&cfg, &air, trace, &[])
+            prove(&cfg, &air, trace, &TEST_PI_ZERO)
         }));
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &[]).expect_err(
+                verify(&cfg, &air, &p, &TEST_PI_ZERO).expect_err(
                     "tampered α chain in bundle must reject",
                 );
             }
@@ -4570,12 +4739,12 @@ mod tests {
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove(&cfg, &air, trace, &[])
+            prove(&cfg, &air, trace, &TEST_PI_ZERO)
         }));
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &[]).expect_err(
+                verify(&cfg, &air, &p, &TEST_PI_ZERO).expect_err(
                     "tampered fold SIBLING in bundle must reject",
                 );
             }
@@ -4677,12 +4846,12 @@ mod tests {
         ];
         // Bundle 0: 1 α + (2 absorb + 1 compress) + 1 fold = 5 rows.
         // Bundle 1: same shape = 5 rows. Total = 10; pad to 16.
-        let flat = build_multi_bundle_trace(&bundles, 16).unwrap();
+        let flat = build_multi_bundle_trace(&bundles, &block_pi_zero(), 16).unwrap();
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
-        let proof = prove(&cfg, &air, trace, &[]);
-        verify(&cfg, &air, &proof, &[])
+        let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
+        verify(&cfg, &air, &proof, &TEST_PI_ZERO)
             .expect("two bundles with different α must verify in ONE STARK");
     }
 
@@ -4731,7 +4900,7 @@ mod tests {
                 fold_rounds: &fold_rounds,
             },
         ];
-        let mut flat = build_multi_bundle_trace(&bundles, 16).unwrap();
+        let mut flat = build_multi_bundle_trace(&bundles, &block_pi_zero(), 16).unwrap();
         // Tamper FINAL_RO on row 0 (inside bundle 0). PI persistence
         // within bundle 0 fires on row 0 → row 1 transition.
         flat[col::FINAL_RO0] += gl(1);
@@ -4739,12 +4908,12 @@ mod tests {
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove(&cfg, &air, trace, &[])
+            prove(&cfg, &air, trace, &TEST_PI_ZERO)
         }));
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &[]).expect_err(
+                verify(&cfg, &air, &p, &TEST_PI_ZERO).expect_err(
                     "tampered FINAL_RO within bundle must reject",
                 );
             }
@@ -4800,7 +4969,7 @@ mod tests {
                 fold_rounds: &fold_rounds,
             },
         ];
-        let mut flat = build_multi_bundle_trace(&bundles, 16).unwrap();
+        let mut flat = build_multi_bundle_trace(&bundles, &block_pi_zero(), 16).unwrap();
         // Bundle 0 has 5 rows: 0=α, 1=ABS, 2=ABS, 3=COMPR, 4=FOLD.
         // Bundle 1 starts at row 5 (first α of bundle 1). Tamper
         // ALPHA_POW_IN on row 5 — bundle-boundary seed check (c) fires
@@ -4812,12 +4981,12 @@ mod tests {
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove(&cfg, &air, trace, &[])
+            prove(&cfg, &air, trace, &TEST_PI_ZERO)
         }));
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &[]).expect_err(
+                verify(&cfg, &air, &p, &TEST_PI_ZERO).expect_err(
                     "tampered ALPHA_POW_IN at bundle boundary must reject via seed check",
                 );
             }
@@ -4873,7 +5042,7 @@ mod tests {
                 fold_rounds: &fold_rounds,
             },
         ];
-        let mut flat = build_multi_bundle_trace(&bundles, 16).unwrap();
+        let mut flat = build_multi_bundle_trace(&bundles, &block_pi_zero(), 16).unwrap();
         // Tamper FINAL_FOLDED on row 4 (last FOLD of bundle 0). PI
         // persistence within bundle 0 would fire between α rows and
         // row 4, so we need to tamper FINAL_FOLDED on ALL rows of
@@ -4892,12 +5061,12 @@ mod tests {
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove(&cfg, &air, trace, &[])
+            prove(&cfg, &air, trace, &TEST_PI_ZERO)
         }));
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &[]).expect_err(
+                verify(&cfg, &air, &p, &TEST_PI_ZERO).expect_err(
                     "tampered bundle 0 FOLD_OUT must reject",
                 );
             }
@@ -4932,8 +5101,8 @@ mod tests {
             )
             .unwrap();
             let trace = RowMajorMatrix::new(flat, col::WIDTH);
-            let proof = prove(&cfg, &air, trace, &[]);
-            verify(&cfg, &air, &proof, &[])
+            let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
+            verify(&cfg, &air, &proof, &TEST_PI_ZERO)
                 .expect("A3-3 unified trace must still verify post-A3-5c");
         }
 
@@ -4962,8 +5131,8 @@ mod tests {
             )
             .unwrap();
             let trace = RowMajorMatrix::new(flat, col::WIDTH);
-            let proof = prove(&cfg, &air, trace, &[]);
-            verify(&cfg, &air, &proof, &[])
+            let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
+            verify(&cfg, &air, &proof, &TEST_PI_ZERO)
                 .expect("A3-5b single-bundle must still verify post-A3-5c");
         }
     }
@@ -5122,16 +5291,16 @@ mod tests {
             })
             .collect();
 
-        let flat = build_multi_bundle_trace(&bundles, trace_height)
+        let flat = build_multi_bundle_trace(&bundles, &block_pi_zero(), trace_height)
             .expect("trace build");
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
 
         let t0 = Instant::now();
-        let proof = prove(&cfg, &air, trace, &[]);
+        let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
         let prove_ms = t0.elapsed().as_millis();
-        verify(&cfg, &air, &proof, &[]).expect("must verify");
+        verify(&cfg, &air, &proof, &TEST_PI_ZERO).expect("must verify");
 
         let proof_bytes = postcard::to_allocvec(&proof).unwrap().len();
         let cells = trace_height * col::WIDTH;
