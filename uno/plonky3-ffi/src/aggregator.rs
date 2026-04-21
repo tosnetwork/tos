@@ -1,6 +1,15 @@
 //! Block-level proof aggregator — bundles N per-Transfer Plonky3 proofs
 //! into one recursive STARK proof whose size is ~independent of N.
 //!
+//! ⚠️ **v2 research path (frozen).** Per the v1 pivot in
+//! `doc/uno-aggregation-design.md` §-1 (2026-04-21), UNO v1 launches
+//! WITHOUT block-level aggregation. This module's real prove_block /
+//! verify_block are shipping code but NOT on the v1 critical path —
+//! they stay in-tree as infrastructure for when v2 triggers light up
+//! (WHIR/BaseFold maturity + specialized prover ecosystem). The only
+//! v1-relevant item here is the `BLOCK_TX_CAP = 4` constant, used by
+//! the v1 collator to cap per-block Transfer admission.
+//!
 //! See `doc/uno-aggregation-design.md` for the full architecture.
 //!
 //! # Role in the block-production pipeline
@@ -50,12 +59,24 @@ use crate::verifier_air::{
 // Block-level throughput cap
 // ---------------------------------------------------------------------------
 
-/// Per-block maximum aggregated Transfer count. See design doc §2.3.
+/// Per-block maximum Transfer count. See design doc §2.3.
 ///
-/// Rationale: matches §1.4 success criterion #7 (15–30 TPS sustained)
-/// at 1 s block cadence. A higher cap increases aggregator prove time
-/// and may push the block production off the 1 s schedule.
-pub const BLOCK_TX_CAP: usize = 30;
+/// **v1 value: 4** (per `doc/uno-aggregation-design.md` §-1 pivot of
+/// 2026-04-21). UNO v1 ships without block-level aggregation; each
+/// Transfer carries its own ~520 KB per-Tx Plonky3 STARK on-chain.
+/// Block size at 4 Tx × ~520 KB ≈ 2 MB typical (3.7 MB worst-case
+/// 4/4 shape), ~16-32 Mbps validator bandwidth — consumer broadband
+/// territory. TPS = 4 is 10× Zcash observed (~0.9), 2× Zcash Sapling
+/// theoretical (~10), and plenty for 2026 launch. Scaling beyond 4
+/// TPS uses additional wc=2 shardchains (wc=2a, wc=2b, ...) — TOS
+/// architecture supports this natively.
+///
+/// **v2 target: 30** (to be restored when aggregation returns per
+/// §-1 triggers). Matches original §1.4 success criterion #7
+/// ("15–30 TPS sustained") at 1 s block cadence, under the v2
+/// aggregation path where block prover time becomes the bottleneck
+/// instead of bandwidth.
+pub const BLOCK_TX_CAP: usize = 4;
 
 /// Minimum aggregated Transfer count. Zero-Transfer blocks are legal
 /// (empty block → empty aggregator proof), but the aggregator only
@@ -439,10 +460,11 @@ mod tests {
 
     #[test]
     fn block_tx_cap_matches_design_doc() {
-        // Design doc §2.3 pins BLOCK_TX_CAP = 30 to match §1.4 30 TPS
-        // target at 1 s block cadence. A drift here is a design-doc
-        // divergence — catch it immediately.
-        assert_eq!(BLOCK_TX_CAP, 30);
+        // Design doc §-1 + §2.3 pin BLOCK_TX_CAP = 4 for v1 launch
+        // (per-Tx direct, no aggregation). A drift here is a design-doc
+        // divergence — catch it immediately. Will flip to 30 when v2
+        // aggregation returns per the §-1 trigger checklist.
+        assert_eq!(BLOCK_TX_CAP, 4);
     }
 
     #[test]

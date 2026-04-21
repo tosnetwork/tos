@@ -1,5 +1,17 @@
 //! Monolithic VerifierAir — Phase A3-PRE scaffolding.
 //!
+//! ⚠️ **v2 research path (frozen).** Per the v1 pivot in
+//! `doc/uno-aggregation-design.md` §-1 (2026-04-21), UNO v1 launches
+//! WITHOUT this AIR on the critical path. Each Transfer carries its
+//! own per-Tx Plonky3 STARK on-chain; validators verify them
+//! directly (see `uno/plonky3-ffi/src/verifier_air.rs` for the
+//! v1 verifier path). This module stays in-tree as frozen v2
+//! research; revive when the §-1 triggers light up
+//! (WHIR/BaseFold maturity + specialized prover ecosystem). The
+//! 40-test suite + `#[ignore]` measurement benches in the tests
+//! module here are the audit-grade proof that this path is
+//! sound — ready for v2 activation.
+//!
 //! This module implements the **merged, single-STARK** per-Tx verifier
 //! AIR that Phase A3+ will use to collapse the A2 orchestration's
 //! 6+N per-query STARK bundle into ONE proof. See

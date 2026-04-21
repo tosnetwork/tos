@@ -1248,7 +1248,8 @@ mod ffi_tests {
         let mut out = Plonky3OwnedProof::EMPTY;
         let rc = unsafe {
             uno_block_extra_encode_v1(
-                5,
+                // v1 BLOCK_TX_CAP = 4; use boundary value.
+                4,
                 root.as_ptr(),
                 proof_bytes.as_ptr(),
                 proof_bytes.len(),
@@ -1271,7 +1272,7 @@ mod ffi_tests {
             )
         };
         assert_eq!(rc, Plonky3Status::Ok.as_i32());
-        assert_eq!(parsed.n_transfers, 5);
+        assert_eq!(parsed.n_transfers, 4);
         assert_eq!(parsed.tx_pi_merkle_root, root);
         assert_eq!(parsed.aggregated_proof_len, 256);
 
