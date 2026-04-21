@@ -384,7 +384,7 @@ soundness).
 | A2   | ✅ DONE       | Proof-of-concept: 1-Tx "aggregation" | End-to-end prove+verify for N=1 (9-STARK bundle on 1/1 Transfer proof) |
 | A3   | ⬜ PENDING    | 4-Tx aggregation + correctness tests | Fixture-based 4/4 aggregated proof; cross-impl parity |
 | A4   | ⬜ PENDING    | 30-Tx aggregation + performance | Shape_matrix-style bench; ensures ≤ 100 KB block proof |
-| A5   | ⬜ PENDING    | §4.1 wire format lands | Transfer struct + `UnoBlockExtra` as the v1 launch format |
+| A5   | 🟡 PARTIAL    | §4.1 wire format lands | `UnoBlockExtra` encode/decode landed in `block_wire_format.rs`; `Transfer` struct delta + validator wiring (A6) still pending |
 | A6   | ⬜ PENDING    | Validator compute-phase wiring | Per-block aggregated-proof verify path; no per-Tx STARK verify |
 | A7   | ⬜ PENDING    | Wallet / tosctl integration | Wallet still produces per-Tx proof (unchanged path) |
 | A8   | ⬜ PENDING    | Testnet validation | 60-day run per §P.7 before mainnet launch |
