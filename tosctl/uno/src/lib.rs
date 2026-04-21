@@ -25,6 +25,7 @@
 
 pub mod address;
 pub mod balance;
+pub mod boc_encode;
 pub mod gcs;
 pub mod genesis_build;
 pub mod hybrid_kem;
