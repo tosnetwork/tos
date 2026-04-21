@@ -64,7 +64,9 @@ use p3_symmetric::Permutation;
 // Shared / imported constants
 // ---------------------------------------------------------------------------
 
+use crate::fri_arith::fold_row_ref;
 use crate::merkle_path::{compress_pair_ref, hash_leaf_row_ref, Digest};
+use crate::prover::Challenge;
 use crate::transfer_air::{
     eval_poseidon2, P2Cols, POSEIDON2_COLS_PER_INSTANCE, POSEIDON2_HALF_FULL_ROUNDS,
 };
@@ -77,6 +79,9 @@ pub const SPONGE_RATE: usize = 4;
 pub const SPONGE_WIDTH: usize = 8;
 /// Digest width (sponge OUT).
 pub const DIGEST_WIDTH: usize = 4;
+/// Binomial-extension norm constant for Goldilocks D = 2.
+/// Must match `<Goldilocks as BinomiallyExtendable<2>>::W`.
+pub const EXT_W_U64: u64 = 7;
 
 // ---------------------------------------------------------------------------
 // One-hot row-kind selectors
@@ -188,9 +193,16 @@ pub mod col {
     /// Expected FINAL_FOLDED (= eval_final_poly_horner(x_final)).
     pub const FINAL_FOLDED0: usize = INITIAL_RO_END;
     pub const FINAL_FOLDED_END: usize = FINAL_FOLDED0 + CHALLENGE_DIM;
+    /// Fold chain's initial running folded value. A3-3 binds this to
+    /// the α-chain's FINAL_RO via an in-circuit `assert_eq`.
+    pub const INITIAL_FOLDED0: usize = FINAL_FOLDED_END;
+    pub const INITIAL_FOLDED_END: usize = INITIAL_FOLDED0 + CHALLENGE_DIM;
+    /// Expected final RO from the α-reduction chain.
+    pub const FINAL_RO0: usize = INITIAL_FOLDED_END;
+    pub const FINAL_RO_END: usize = FINAL_RO0 + CHALLENGE_DIM;
 
     /// Base offset of the shared Poseidon2-w8 sub-AIR witness block.
-    pub const P2_BLOCK: usize = FINAL_FOLDED_END;
+    pub const P2_BLOCK: usize = FINAL_RO_END;
 
     /// Total column width. 180-col Poseidon2 block added on top of
     /// framing cols. Final number fixed at A3-PRE to pin the layout.
@@ -522,6 +534,316 @@ pub fn build_leaf_to_root_trace(
 }
 
 // ---------------------------------------------------------------------------
+// A3-2 trace builders: ALPHA-only and FOLD-only chains.
+//
+// These are standalone test traces — they exercise the ALPHA / FOLD
+// banks in isolation. Row 0..N is the chain; the rest is IDLE padding.
+// Non-bank cols are set to values that satisfy the "foreign" boundary
+// constraints trivially (e.g. TRACE_COMMIT_ROOT = DIGEST = 0 ensures
+// the ABSORB/COMPRESS boundary `DIGEST == ROOT` at last row holds; the
+// fold-only trace sets ALPHA_RO_OUT = FINAL_RO = 0 on every row so the
+// α-chain last-row boundary holds trivially; analogous for α-only).
+// A3-3 wires cross-bindings between the chains.
+// ---------------------------------------------------------------------------
+
+/// One step of the α-reduction chain.
+#[derive(Clone, Debug)]
+pub struct AlphaStep {
+    /// Base-field opening at query-domain point `x`.
+    pub p_at_x: Goldilocks,
+    /// Extension opening at point `z`.
+    pub p_at_z: Challenge,
+    /// Evaluation point `z`.
+    pub z: Challenge,
+    /// Query-domain base-field point `x`.
+    pub x: Goldilocks,
+}
+
+/// Build a monolithic-AIR trace that verifies a single α-reduction
+/// chain of `steps.len()` ALPHA rows, padded with IDLE.
+///
+/// * `initial_alpha_pow`, `initial_ro` : seed values for row 0.
+/// * `alpha`                            : persistent FRI α challenge.
+/// * `steps`                            : per-row claimed evaluations.
+/// * `final_ro`                         : expected RO after last step.
+///
+/// Non-α data cols are kept at zero on every row so the other banks'
+/// boundary constraints hold trivially.
+pub fn build_alpha_chain_trace(
+    initial_alpha_pow: Challenge,
+    initial_ro: Challenge,
+    alpha: Challenge,
+    steps: &[AlphaStep],
+    final_ro: Challenge,
+    trace_height: usize,
+) -> Result<Vec<Goldilocks>, TraceBuildError> {
+    use p3_field::{BasedVectorSpace, Field};
+
+    if !trace_height.is_power_of_two() {
+        return Err(TraceBuildError::TraceHeightNotPow2 { got: trace_height });
+    }
+    let physical_rows = steps.len();
+    if physical_rows == 0 {
+        return Err(TraceBuildError::EmptyPath);
+    }
+    if physical_rows > trace_height {
+        return Err(TraceBuildError::TraceHeightTooSmall {
+            physical_rows,
+            trace_height,
+        });
+    }
+
+    let width = col::WIDTH;
+    let mut flat = vec![Goldilocks::default(); trace_height * width];
+    let zero_g = Goldilocks::default();
+
+    let write_ext = |out: &mut [Goldilocks], base: usize, v: Challenge| {
+        let limbs =
+            <Challenge as BasedVectorSpace<Goldilocks>>::as_basis_coefficients_slice(&v);
+        for i in 0..CHALLENGE_DIM {
+            out[base + i] = limbs[i];
+        }
+    };
+    let write_kind = |out: &mut [Goldilocks], kind: u8| {
+        for k in 0..NUM_OP_KINDS {
+            out[col::KIND0 + k] =
+                if k as u8 == kind { Goldilocks::new(1) } else { zero_g };
+        }
+    };
+    // Flag[0] = 1 on every non-ABSORB row (BLOCK_LEN = 0).
+    let zero_block_len_flag = |out: &mut [Goldilocks]| {
+        out[col::ABSORB_BLOCK_LEN_FLAG0] = Goldilocks::new(1);
+    };
+
+    let mut alpha_pow = initial_alpha_pow;
+    let mut ro = initial_ro;
+    let p2_zero_witness = gen_p2_witness_zero();
+
+    for (r, step) in steps.iter().enumerate() {
+        let base = r * width;
+        let row = &mut flat[base..base + width];
+        write_kind(row, OP_KIND_ALPHA);
+        zero_block_len_flag(row);
+
+        // Per-step claimed values.
+        row[col::ALPHA_P_AT_X] = step.p_at_x;
+        write_ext(row, col::ALPHA_P_AT_Z0, step.p_at_z);
+        write_ext(row, col::ALPHA_Z0, step.z);
+        row[col::ALPHA_X] = step.x;
+
+        // Witness: (z − x)^{-1}.
+        let denom = step.z - step.x;
+        if denom.is_zero() {
+            return Err(TraceBuildError::TraceHeightTooSmall {
+                physical_rows: r,
+                trace_height,
+            });
+        }
+        let quot_inv = denom
+            .try_inverse()
+            .expect("denom ≠ 0 ⇒ invertible");
+        write_ext(row, col::ALPHA_QUOT_INV0, quot_inv);
+
+        // Intermediate: DIFF_QUOT = (p_z − p_x) · quot_inv.
+        let diff = step.p_at_z - step.p_at_x;
+        let diff_quot = diff * quot_inv;
+        write_ext(row, col::ALPHA_DIFF_QUOT0, diff_quot);
+
+        // Chain state.
+        write_ext(row, col::ALPHA_CHALLENGE0, alpha);
+        write_ext(row, col::ALPHA_POW_IN0, alpha_pow);
+        let new_alpha_pow = alpha_pow * alpha;
+        write_ext(row, col::ALPHA_POW_OUT0, new_alpha_pow);
+        write_ext(row, col::ALPHA_RO_IN0, ro);
+        let new_ro = ro + alpha_pow * diff_quot;
+        write_ext(row, col::ALPHA_RO_OUT0, new_ro);
+
+        // PI proxies.
+        write_ext(row, col::INITIAL_ALPHA_POW0, initial_alpha_pow);
+        write_ext(row, col::INITIAL_RO0, initial_ro);
+        write_ext(row, col::FINAL_RO0, final_ro);
+        // FOLD/FINAL_FOLDED/INITIAL_FOLDED remain zero (boundary holds
+        // trivially since FOLD_OUT = FINAL_FOLDED = 0).
+
+        // Zero-input P2 witness; P2 block is unconstrained on ALPHA.
+        for (i, v) in p2_zero_witness.iter().enumerate() {
+            row[col::P2_BLOCK + i] = *v;
+        }
+
+        alpha_pow = new_alpha_pow;
+        ro = new_ro;
+    }
+
+    // Pad with IDLE.
+    for row_idx in physical_rows..trace_height {
+        let prev_base = (row_idx - 1) * width;
+        let prev_row = flat[prev_base..prev_base + width].to_vec();
+        let base = row_idx * width;
+        let row = &mut flat[base..base + width];
+        for c in col::STATE_IN0..col::P2_BLOCK {
+            row[c] = prev_row[c];
+        }
+        write_kind(row, OP_KIND_IDLE);
+        zero_block_len_flag(row);
+        row[col::ABSORB_IS_FIRST] = zero_g;
+        row[col::ABSORB_IS_LAST] = zero_g;
+        for (i, v) in p2_zero_witness.iter().enumerate() {
+            row[col::P2_BLOCK + i] = *v;
+        }
+    }
+
+    Ok(flat)
+}
+
+/// One round of the FRI fold chain.
+#[derive(Clone, Debug)]
+pub struct FoldRound {
+    /// Sibling opening at this round (Challenge).
+    pub sibling: Challenge,
+    /// FRI fold challenge β_r (Challenge).
+    pub beta: Challenge,
+    /// Domain index at the START of this round (low bit → INDEX_BIT).
+    pub domain_index: usize,
+    /// Log-height of the FRI codeword BEFORE this fold.
+    pub log_height: usize,
+}
+
+/// Build a monolithic-AIR trace that verifies a fold chain of
+/// `rounds.len()` FOLD rows, padded with IDLE.
+///
+/// Non-FOLD data cols are kept at zero so other banks' boundaries hold.
+pub fn build_fold_chain_trace(
+    initial_folded: Challenge,
+    rounds: &[FoldRound],
+    final_folded: Challenge,
+    trace_height: usize,
+) -> Result<Vec<Goldilocks>, TraceBuildError> {
+    use p3_field::{BasedVectorSpace, Field, TwoAdicField};
+    use p3_util::reverse_bits_len;
+
+    if !trace_height.is_power_of_two() {
+        return Err(TraceBuildError::TraceHeightNotPow2 { got: trace_height });
+    }
+    let physical_rows = rounds.len();
+    if physical_rows == 0 {
+        return Err(TraceBuildError::EmptyPath);
+    }
+    if physical_rows > trace_height {
+        return Err(TraceBuildError::TraceHeightTooSmall {
+            physical_rows,
+            trace_height,
+        });
+    }
+
+    let width = col::WIDTH;
+    let mut flat = vec![Goldilocks::default(); trace_height * width];
+    let zero_g = Goldilocks::default();
+    let write_ext = |out: &mut [Goldilocks], base: usize, v: Challenge| {
+        let limbs =
+            <Challenge as BasedVectorSpace<Goldilocks>>::as_basis_coefficients_slice(&v);
+        for i in 0..CHALLENGE_DIM {
+            out[base + i] = limbs[i];
+        }
+    };
+    let write_kind = |out: &mut [Goldilocks], kind: u8| {
+        for k in 0..NUM_OP_KINDS {
+            out[col::KIND0 + k] =
+                if k as u8 == kind { Goldilocks::new(1) } else { zero_g };
+        }
+    };
+    let zero_block_len_flag = |out: &mut [Goldilocks]| {
+        out[col::ABSORB_BLOCK_LEN_FLAG0] = Goldilocks::new(1);
+    };
+
+    let p2_zero_witness = gen_p2_witness_zero();
+
+    let mut current = initial_folded;
+    for (r, round) in rounds.iter().enumerate() {
+        let base = r * width;
+        let row = &mut flat[base..base + width];
+        write_kind(row, OP_KIND_FOLD);
+        zero_block_len_flag(row);
+
+        let bit = (round.domain_index & 1) as u64;
+        let child_log_h = round.log_height - 1;
+        let parent_idx = round.domain_index >> 1;
+        let g_outer = Goldilocks::two_adic_generator(child_log_h + 1);
+        let rev = reverse_bits_len(parent_idx, child_log_h);
+        let s = g_outer.exp_u64(rev as u64);
+        if s == zero_g {
+            return Err(TraceBuildError::TraceHeightTooSmall {
+                physical_rows: r,
+                trace_height,
+            });
+        }
+        let two_s = s * Goldilocks::new(2);
+        let inv_2s = two_s
+            .try_inverse()
+            .expect("2s ≠ 0 ⇒ invertible in Goldilocks");
+
+        let (pair_left, pair_right) = if bit == 0 {
+            (current, round.sibling)
+        } else {
+            (round.sibling, current)
+        };
+        let folded = fold_row_ref(
+            parent_idx,
+            child_log_h,
+            1, // log_arity = 1 (binary FRI)
+            round.beta,
+            &[pair_left, pair_right],
+        );
+
+        // Write FOLD-bank cols.
+        write_ext(row, col::FOLD_IN0, current);
+        write_ext(row, col::FOLD_OUT0, folded);
+        write_ext(row, col::FOLD_BETA0, round.beta);
+        row[col::FOLD_S] = s;
+        row[col::FOLD_INV_2S] = inv_2s;
+
+        // Shared cols:
+        //   COMPRESS_SIBLING[0..2] ← sibling (2 of 4)
+        //   COMPRESS_INDEX_BIT     ← bit
+        //   STATE_IN[0..2]         ← PAIR_LEFT
+        //   STATE_IN[2..4]         ← PAIR_RIGHT
+        write_ext(row, col::COMPRESS_SIBLING0, round.sibling);
+        row[col::COMPRESS_INDEX_BIT] = Goldilocks::new(bit);
+        write_ext(row, col::STATE_IN0, pair_left);
+        write_ext(row, col::STATE_IN0 + CHALLENGE_DIM, pair_right);
+
+        // PI proxies.
+        write_ext(row, col::INITIAL_FOLDED0, initial_folded);
+        write_ext(row, col::FINAL_FOLDED0, final_folded);
+
+        for (i, v) in p2_zero_witness.iter().enumerate() {
+            row[col::P2_BLOCK + i] = *v;
+        }
+
+        current = folded;
+    }
+
+    // Pad with IDLE.
+    for row_idx in physical_rows..trace_height {
+        let prev_base = (row_idx - 1) * width;
+        let prev_row = flat[prev_base..prev_base + width].to_vec();
+        let base = row_idx * width;
+        let row = &mut flat[base..base + width];
+        for c in col::STATE_IN0..col::P2_BLOCK {
+            row[c] = prev_row[c];
+        }
+        write_kind(row, OP_KIND_IDLE);
+        zero_block_len_flag(row);
+        row[col::ABSORB_IS_FIRST] = zero_g;
+        row[col::ABSORB_IS_LAST] = zero_g;
+        for (i, v) in p2_zero_witness.iter().enumerate() {
+            row[col::P2_BLOCK + i] = *v;
+        }
+    }
+
+    Ok(flat)
+}
+
+// ---------------------------------------------------------------------------
 // Boilerplate — the existing gen_p2_witness fn follows.
 // ---------------------------------------------------------------------------
 
@@ -819,8 +1141,246 @@ where
             last.assert_zero(dg - r);
         }
 
-        // Silence unused warnings for FOLD/ALPHA banks (A3-2).
-        let _ = (is_fold, is_alpha);
+        // =================================================================
+        // A3-2: FOLD bank (binary FRI Lagrange fold).
+        //
+        // Column sharing (K-air-col-share): FOLD rows reuse
+        //   COMPRESS_SIBLING[0..2] → FRI SIBLING (Challenge; 2 of 4 cols)
+        //   COMPRESS_INDEX_BIT    → FRI INDEX_BIT (low bit of domain idx)
+        //   STATE_IN[0..2]        → PAIR_LEFT  (Challenge)
+        //   STATE_IN[2..4]        → PAIR_RIGHT (Challenge)
+        //
+        // The shared-col binding is safe because FOLD / COMPRESS are
+        // one-hot disjoint — each row's gate zeroes out any cross-bank
+        // constraint from the other bank.
+        // =================================================================
+        let w = || fe(EXT_W_U64);
+
+        // FOLD row: INDEX_BIT boolean (shared col with COMPRESS, but
+        // gated separately for FOLD). Re-assert here rather than gating
+        // through is_compress.
+        let fold_bit: AB::Expr = local[col::COMPRESS_INDEX_BIT].into();
+        builder.assert_zero(
+            is_fold.clone() * fold_bit.clone() * (fold_bit.clone() - one()),
+        );
+
+        // FOLD row: PAIR_LEFT / PAIR_RIGHT orientation — STATE_IN cols
+        // repurposed via K-air-col-share.
+        //   STATE_IN[0..2] = PAIR_LEFT  = (1 − bit)·FOLD_IN + bit·SIBLING
+        //   STATE_IN[2..4] = PAIR_RIGHT = bit·FOLD_IN + (1 − bit)·SIBLING
+        for i in 0..CHALLENGE_DIM {
+            let fin: AB::Expr = local[col::FOLD_IN0 + i].into();
+            let sib: AB::Expr = local[col::COMPRESS_SIBLING0 + i].into();
+            let pl: AB::Expr = local[col::STATE_IN0 + i].into();
+            let pr: AB::Expr = local[col::STATE_IN0 + CHALLENGE_DIM + i].into();
+            let expected_left =
+                (one() - fold_bit.clone()) * fin.clone() + fold_bit.clone() * sib.clone();
+            let expected_right =
+                fold_bit.clone() * fin + (one() - fold_bit.clone()) * sib;
+            builder.assert_zero(is_fold.clone() * (pl - expected_left));
+            builder.assert_zero(is_fold.clone() * (pr - expected_right));
+        }
+
+        // FOLD row: INV_2S witness 2·S·INV_2S = 1.
+        {
+            let s: AB::Expr = local[col::FOLD_S].into();
+            let inv2s: AB::Expr = local[col::FOLD_INV_2S].into();
+            builder.assert_zero(
+                is_fold.clone() * (fe(2) * s * inv2s - one()),
+            );
+        }
+
+        // FOLD row: fold identity per limb (degree 3 when gated).
+        //   folded_0 · 2s = s·(pl_0 + pr_0) + β_0·d_0 + W·β_1·d_1
+        //   folded_1 · 2s = s·(pl_1 + pr_1) + β_0·d_1 +     β_1·d_0
+        {
+            let s: AB::Expr = local[col::FOLD_S].into();
+            let pl0: AB::Expr = local[col::STATE_IN0].into();
+            let pl1: AB::Expr = local[col::STATE_IN0 + 1].into();
+            let pr0: AB::Expr = local[col::STATE_IN0 + CHALLENGE_DIM].into();
+            let pr1: AB::Expr = local[col::STATE_IN0 + CHALLENGE_DIM + 1].into();
+            let b0: AB::Expr = local[col::FOLD_BETA0].into();
+            let b1: AB::Expr = local[col::FOLD_BETA0 + 1].into();
+            let f0: AB::Expr = local[col::FOLD_OUT0].into();
+            let f1: AB::Expr = local[col::FOLD_OUT0 + 1].into();
+
+            let two_s = fe(2) * s.clone();
+            let d0 = pl0.clone() - pr0.clone();
+            let d1 = pl1.clone() - pr1.clone();
+
+            let lhs0 = f0 * two_s.clone();
+            let rhs0 = s.clone() * (pl0 + pr0)
+                + b0.clone() * d0.clone()
+                + w() * b1.clone() * d1.clone();
+            builder.assert_zero(is_fold.clone() * (lhs0 - rhs0));
+
+            let lhs1 = f1 * two_s;
+            let rhs1 = s * (pl1 + pr1) + b0 * d1 + b1 * d0;
+            builder.assert_zero(is_fold.clone() * (lhs1 - rhs1));
+        }
+
+        // =================================================================
+        // A3-2: ALPHA bank (α-batched quotient combination).
+        //
+        // Self-contained in the ALPHA_* columns: four degree-2 extension
+        // multiplications, each gated by is_alpha → degree 3 overall.
+        // =================================================================
+        let ext_mul = |a0: AB::Expr, a1: AB::Expr, b0: AB::Expr, b1: AB::Expr|
+            -> (AB::Expr, AB::Expr) {
+            let p0 = a0.clone() * b0.clone() + w() * a1.clone() * b1.clone();
+            let p1 = a0 * b1 + a1 * b0;
+            (p0, p1)
+        };
+
+        // (1) ALPHA — QUOT_INV · (Z − X) == 1.
+        {
+            let qi0: AB::Expr = local[col::ALPHA_QUOT_INV0].into();
+            let qi1: AB::Expr = local[col::ALPHA_QUOT_INV0 + 1].into();
+            let z0: AB::Expr = local[col::ALPHA_Z0].into();
+            let z1: AB::Expr = local[col::ALPHA_Z0 + 1].into();
+            let x: AB::Expr = local[col::ALPHA_X].into();
+            let d0 = z0 - x;
+            let d1 = z1;
+            let (p0, p1) = ext_mul(qi0, qi1, d0, d1);
+            builder.assert_zero(is_alpha.clone() * (p0 - one()));
+            builder.assert_zero(is_alpha.clone() * p1);
+        }
+
+        // (2) ALPHA — DIFF_QUOT == (P_AT_Z − P_AT_X) · QUOT_INV.
+        {
+            let pz0: AB::Expr = local[col::ALPHA_P_AT_Z0].into();
+            let pz1: AB::Expr = local[col::ALPHA_P_AT_Z0 + 1].into();
+            let px: AB::Expr = local[col::ALPHA_P_AT_X].into();
+            let qi0: AB::Expr = local[col::ALPHA_QUOT_INV0].into();
+            let qi1: AB::Expr = local[col::ALPHA_QUOT_INV0 + 1].into();
+            let diff0 = pz0 - px;
+            let diff1 = pz1;
+            let (dq0_exp, dq1_exp) = ext_mul(diff0, diff1, qi0, qi1);
+            let dq0: AB::Expr = local[col::ALPHA_DIFF_QUOT0].into();
+            let dq1: AB::Expr = local[col::ALPHA_DIFF_QUOT0 + 1].into();
+            builder.assert_zero(is_alpha.clone() * (dq0 - dq0_exp));
+            builder.assert_zero(is_alpha.clone() * (dq1 - dq1_exp));
+        }
+
+        // (3) ALPHA — ALPHA_POW_OUT == ALPHA_POW_IN · ALPHA.
+        {
+            let api0: AB::Expr = local[col::ALPHA_POW_IN0].into();
+            let api1: AB::Expr = local[col::ALPHA_POW_IN0 + 1].into();
+            let a0: AB::Expr = local[col::ALPHA_CHALLENGE0].into();
+            let a1: AB::Expr = local[col::ALPHA_CHALLENGE0 + 1].into();
+            let (exp0, exp1) = ext_mul(api0, api1, a0, a1);
+            let apo0: AB::Expr = local[col::ALPHA_POW_OUT0].into();
+            let apo1: AB::Expr = local[col::ALPHA_POW_OUT0 + 1].into();
+            builder.assert_zero(is_alpha.clone() * (apo0 - exp0));
+            builder.assert_zero(is_alpha.clone() * (apo1 - exp1));
+        }
+
+        // (4) ALPHA — RO_OUT == RO_IN + ALPHA_POW_IN · DIFF_QUOT.
+        {
+            let api0: AB::Expr = local[col::ALPHA_POW_IN0].into();
+            let api1: AB::Expr = local[col::ALPHA_POW_IN0 + 1].into();
+            let dq0: AB::Expr = local[col::ALPHA_DIFF_QUOT0].into();
+            let dq1: AB::Expr = local[col::ALPHA_DIFF_QUOT0 + 1].into();
+            let (add0, add1) = ext_mul(api0, api1, dq0, dq1);
+            let ri0: AB::Expr = local[col::ALPHA_RO_IN0].into();
+            let ri1: AB::Expr = local[col::ALPHA_RO_IN0 + 1].into();
+            let ro0: AB::Expr = local[col::ALPHA_RO_OUT0].into();
+            let ro1: AB::Expr = local[col::ALPHA_RO_OUT0 + 1].into();
+            builder.assert_zero(is_alpha.clone() * (ro0 - (ri0 + add0)));
+            builder.assert_zero(is_alpha.clone() * (ro1 - (ri1 + add1)));
+        }
+
+        // =================================================================
+        // A3-2: FOLD / ALPHA transitions (threading + PI persistence).
+        // =================================================================
+        let mut trans2 = builder.when_transition();
+
+        // FOLD threading: next.FOLD_IN = local.FOLD_OUT when next is FOLD.
+        let next_is_fold: AB::Expr = next[col::KIND0 + OP_KIND_FOLD as usize].into();
+        for i in 0..CHALLENGE_DIM {
+            let n_in: AB::Expr = next[col::FOLD_IN0 + i].into();
+            let l_out: AB::Expr = local[col::FOLD_OUT0 + i].into();
+            trans2.assert_zero(next_is_fold.clone() * (n_in - l_out));
+        }
+
+        // ALPHA threading:
+        //   next.ALPHA_POW_IN = local.ALPHA_POW_OUT when next is ALPHA
+        //   next.ALPHA_RO_IN  = local.ALPHA_RO_OUT  when next is ALPHA
+        let next_is_alpha: AB::Expr = next[col::KIND0 + OP_KIND_ALPHA as usize].into();
+        for i in 0..CHALLENGE_DIM {
+            let n_api: AB::Expr = next[col::ALPHA_POW_IN0 + i].into();
+            let l_apo: AB::Expr = local[col::ALPHA_POW_OUT0 + i].into();
+            trans2.assert_zero(next_is_alpha.clone() * (n_api - l_apo));
+
+            let n_ri: AB::Expr = next[col::ALPHA_RO_IN0 + i].into();
+            let l_ro: AB::Expr = local[col::ALPHA_RO_OUT0 + i].into();
+            trans2.assert_zero(next_is_alpha.clone() * (n_ri - l_ro));
+        }
+
+        // PI-proxy persistence (unconditional across all rows):
+        //   INITIAL_ALPHA_POW, INITIAL_RO, FINAL_FOLDED, INITIAL_FOLDED, FINAL_RO.
+        for c in col::INITIAL_ALPHA_POW0..col::FINAL_RO_END {
+            let l_c: AB::Expr = local[c].into();
+            let n_c: AB::Expr = next[c].into();
+            trans2.assert_zero(n_c - l_c);
+        }
+
+        drop(trans2);
+
+        // =================================================================
+        // A3-2: Row-0 boundaries for FOLD and ALPHA chains.
+        //
+        // Each boundary is gated by the row-0 kind so it only fires when
+        // the chain is present. Leaf-to-root traces (row 0 = ABSORB) are
+        // unaffected: is_fold = is_alpha = 0 on an ABSORB row.
+        // =================================================================
+        let mut first = builder.when_first_row();
+        // FOLD row-0: FOLD_IN == INITIAL_FOLDED.
+        for i in 0..CHALLENGE_DIM {
+            let fin: AB::Expr = local[col::FOLD_IN0 + i].into();
+            let init: AB::Expr = local[col::INITIAL_FOLDED0 + i].into();
+            first.assert_zero(is_fold.clone() * (fin - init));
+        }
+        // ALPHA row-0:
+        //   ALPHA_POW_IN == INITIAL_ALPHA_POW
+        //   ALPHA_RO_IN  == INITIAL_RO
+        for i in 0..CHALLENGE_DIM {
+            let api: AB::Expr = local[col::ALPHA_POW_IN0 + i].into();
+            let iap: AB::Expr = local[col::INITIAL_ALPHA_POW0 + i].into();
+            first.assert_zero(is_alpha.clone() * (api - iap));
+
+            let ri: AB::Expr = local[col::ALPHA_RO_IN0 + i].into();
+            let ir: AB::Expr = local[col::INITIAL_RO0 + i].into();
+            first.assert_zero(is_alpha.clone() * (ri - ir));
+        }
+        drop(first);
+
+        // =================================================================
+        // A3-2: Last-row boundaries.
+        //
+        // FOLD chain: last row's FOLD_OUT == FINAL_FOLDED.
+        // ALPHA chain: last row's ALPHA_RO_OUT == FINAL_RO.
+        //
+        // For fold-only / α-only traces, IDLE persistence carries these
+        // cols from the last physical row through to the last trace row.
+        // For non-FOLD / non-ALPHA traces (e.g. leaf-to-root), the trace
+        // builder sets FOLD_OUT = FINAL_FOLDED = 0 and ALPHA_RO_OUT =
+        // FINAL_RO = 0 on every row, so both boundaries hold trivially.
+        // =================================================================
+        let mut last2 = builder.when_last_row();
+        for i in 0..CHALLENGE_DIM {
+            let f: AB::Expr = local[col::FOLD_OUT0 + i].into();
+            let expected: AB::Expr = local[col::FINAL_FOLDED0 + i].into();
+            last2.assert_zero(f - expected);
+
+            let ro: AB::Expr = local[col::ALPHA_RO_OUT0 + i].into();
+            let fr: AB::Expr = local[col::FINAL_RO0 + i].into();
+            last2.assert_zero(ro - fr);
+        }
+
+        // Silence the unused-var warning for is_idle (used implicitly
+        // via one-hot sum).
+        let _ = is_idle;
     }
 }
 
@@ -1102,5 +1662,376 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ======================================================================
+    // A3-2: ALPHA + FOLD banks — standalone chains
+    // ======================================================================
+
+    use p3_field::BasedVectorSpace;
+
+    fn ext(a: u64, b: u64) -> Challenge {
+        Challenge::from_basis_coefficients_fn(|i| if i == 0 { gl(a) } else { gl(b) })
+    }
+
+    /// Run the α-chain out-of-circuit to compute the expected FINAL_RO.
+    fn expected_final_ro(
+        initial_alpha_pow: Challenge,
+        initial_ro: Challenge,
+        alpha: Challenge,
+        steps: &[AlphaStep],
+    ) -> Challenge {
+        let mut apow = initial_alpha_pow;
+        let mut ro = initial_ro;
+        for step in steps {
+            let denom = step.z - step.x;
+            use p3_field::Field;
+            let qi = denom.try_inverse().expect("denom ≠ 0");
+            let diff = step.p_at_z - step.p_at_x;
+            let dq = diff * qi;
+            ro = ro + apow * dq;
+            apow = apow * alpha;
+        }
+        ro
+    }
+
+    /// Run the fold chain out-of-circuit to compute the expected FINAL_FOLDED.
+    fn expected_final_folded(initial_folded: Challenge, rounds: &[FoldRound]) -> Challenge {
+        let mut current = initial_folded;
+        for round in rounds {
+            let bit = (round.domain_index & 1) as u64;
+            let child_log_h = round.log_height - 1;
+            let parent_idx = round.domain_index >> 1;
+            let (pair_left, pair_right) = if bit == 0 {
+                (current, round.sibling)
+            } else {
+                (round.sibling, current)
+            };
+            current = fold_row_ref(
+                parent_idx,
+                child_log_h,
+                1,
+                round.beta,
+                &[pair_left, pair_right],
+            );
+        }
+        current
+    }
+
+    #[test]
+    fn air_prove_and_verify_alpha_chain_3_steps() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let alpha = ext(3, 5);
+        let initial_apow = ext(1, 0);
+        let initial_ro = ext(0, 0);
+        let steps = vec![
+            AlphaStep { p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23) },
+            AlphaStep { p_at_x: gl(29), p_at_z: ext(31, 37), z: ext(41, 43), x: gl(47) },
+            AlphaStep { p_at_x: gl(53), p_at_z: ext(59, 61), z: ext(67, 71), x: gl(73) },
+        ];
+        let final_ro = expected_final_ro(initial_apow, initial_ro, alpha, &steps);
+        let flat = build_alpha_chain_trace(
+            initial_apow, initial_ro, alpha, &steps, final_ro, 16,
+        )
+        .unwrap();
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let proof = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof, &[])
+            .expect("α-chain (3 steps) must verify in ONE monolithic STARK");
+    }
+
+    #[test]
+    fn air_prove_and_verify_alpha_chain_single_step() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let alpha = ext(2, 0);
+        let initial_apow = ext(1, 0);
+        let initial_ro = ext(0, 0);
+        let steps = vec![AlphaStep {
+            p_at_x: gl(1),
+            p_at_z: ext(2, 3),
+            z: ext(5, 7),
+            x: gl(11),
+        }];
+        let final_ro = expected_final_ro(initial_apow, initial_ro, alpha, &steps);
+        let flat = build_alpha_chain_trace(
+            initial_apow, initial_ro, alpha, &steps, final_ro, 8,
+        )
+        .unwrap();
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let proof = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof, &[]).expect("α-chain (1 step) must verify");
+    }
+
+    #[test]
+    fn air_rejects_alpha_chain_wrong_final_ro() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let alpha = ext(3, 5);
+        let initial_apow = ext(1, 0);
+        let initial_ro = ext(0, 0);
+        let steps = vec![
+            AlphaStep { p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23) },
+            AlphaStep { p_at_x: gl(29), p_at_z: ext(31, 37), z: ext(41, 43), x: gl(47) },
+        ];
+        let real_final = expected_final_ro(initial_apow, initial_ro, alpha, &steps);
+        let bad_final = real_final + ext(1, 0);
+        let flat = build_alpha_chain_trace(
+            initial_apow, initial_ro, alpha, &steps, bad_final, 8,
+        )
+        .unwrap();
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove(&cfg, &air, trace, &[])
+        }));
+        match outcome {
+            Err(_) => {}
+            Ok(p) => {
+                verify(&cfg, &air, &p, &[])
+                    .expect_err("wrong FINAL_RO must reject at last-row boundary");
+            }
+        }
+    }
+
+    #[test]
+    fn air_rejects_alpha_chain_tampered_p_at_x() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let alpha = ext(3, 5);
+        let initial_apow = ext(1, 0);
+        let initial_ro = ext(0, 0);
+        let steps = vec![
+            AlphaStep { p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23) },
+            AlphaStep { p_at_x: gl(29), p_at_z: ext(31, 37), z: ext(41, 43), x: gl(47) },
+        ];
+        let final_ro = expected_final_ro(initial_apow, initial_ro, alpha, &steps);
+        let mut flat = build_alpha_chain_trace(
+            initial_apow, initial_ro, alpha, &steps, final_ro, 8,
+        )
+        .unwrap();
+        // Tamper P_AT_X on row 0 — breaks DIFF_QUOT and RO_OUT.
+        flat[col::ALPHA_P_AT_X] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove(&cfg, &air, trace, &[])
+        }));
+        match outcome {
+            Err(_) => {}
+            Ok(p) => {
+                verify(&cfg, &air, &p, &[])
+                    .expect_err("tampered P_AT_X must reject via DIFF_QUOT bank");
+            }
+        }
+    }
+
+    #[test]
+    fn air_prove_and_verify_fold_chain_3_rounds() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let initial_folded = ext(5, 7);
+        let rounds = vec![
+            FoldRound {
+                sibling: ext(11, 13),
+                beta: ext(17, 19),
+                domain_index: 0b101,
+                log_height: 5,
+            },
+            FoldRound {
+                sibling: ext(23, 29),
+                beta: ext(31, 37),
+                domain_index: 0b010,
+                log_height: 4,
+            },
+            FoldRound {
+                sibling: ext(41, 43),
+                beta: ext(47, 53),
+                domain_index: 0b001,
+                log_height: 3,
+            },
+        ];
+        let final_folded = expected_final_folded(initial_folded, &rounds);
+        let flat =
+            build_fold_chain_trace(initial_folded, &rounds, final_folded, 16).unwrap();
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let proof = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof, &[])
+            .expect("fold chain (3 rounds) must verify in ONE monolithic STARK");
+    }
+
+    #[test]
+    fn air_prove_and_verify_fold_chain_bit_orientation_cases() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+
+        // Exercise both INDEX_BIT = 0 and INDEX_BIT = 1 on round 0.
+        for bit in 0..2usize {
+            let initial_folded = ext(9, 11);
+            let rounds = vec![FoldRound {
+                sibling: ext(13, 17),
+                beta: ext(19, 23),
+                domain_index: bit,
+                log_height: 3,
+            }];
+            let final_folded = expected_final_folded(initial_folded, &rounds);
+            let flat =
+                build_fold_chain_trace(initial_folded, &rounds, final_folded, 8).unwrap();
+            let trace = RowMajorMatrix::new(flat, col::WIDTH);
+            let proof = prove(&cfg, &air, trace, &[]);
+            verify(&cfg, &air, &proof, &[])
+                .unwrap_or_else(|e| panic!("bit={bit}: {e:?}"));
+        }
+    }
+
+    #[test]
+    fn air_rejects_fold_chain_wrong_final_folded() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let initial_folded = ext(5, 7);
+        let rounds = vec![FoldRound {
+            sibling: ext(11, 13),
+            beta: ext(17, 19),
+            domain_index: 0b01,
+            log_height: 4,
+        }];
+        let real_final = expected_final_folded(initial_folded, &rounds);
+        let bad_final = real_final + ext(1, 0);
+        let flat = build_fold_chain_trace(initial_folded, &rounds, bad_final, 8).unwrap();
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove(&cfg, &air, trace, &[])
+        }));
+        match outcome {
+            Err(_) => {}
+            Ok(p) => {
+                verify(&cfg, &air, &p, &[]).expect_err(
+                    "wrong FINAL_FOLDED must reject at last-row boundary",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn air_rejects_fold_chain_tampered_sibling() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let initial_folded = ext(5, 7);
+        let rounds = vec![
+            FoldRound {
+                sibling: ext(11, 13),
+                beta: ext(17, 19),
+                domain_index: 0b010,
+                log_height: 4,
+            },
+            FoldRound {
+                sibling: ext(23, 29),
+                beta: ext(31, 37),
+                domain_index: 0b001,
+                log_height: 3,
+            },
+        ];
+        let final_folded = expected_final_folded(initial_folded, &rounds);
+        let mut flat =
+            build_fold_chain_trace(initial_folded, &rounds, final_folded, 8).unwrap();
+        // Tamper SIBLING[0] on row 0 — breaks PAIR_LEFT/RIGHT orientation
+        // (STATE_IN cols are the prover's "claimed" LEFT/RIGHT; flipping
+        // SIBLING without recomputing them fires the orientation bank).
+        flat[col::COMPRESS_SIBLING0] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove(&cfg, &air, trace, &[])
+        }));
+        match outcome {
+            Err(_) => {}
+            Ok(p) => {
+                verify(&cfg, &air, &p, &[])
+                    .expect_err("tampered SIBLING must reject via orientation bank");
+            }
+        }
+    }
+
+    #[test]
+    fn air_rejects_fold_chain_broken_inv_2s_witness() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let initial_folded = ext(5, 7);
+        let rounds = vec![FoldRound {
+            sibling: ext(11, 13),
+            beta: ext(17, 19),
+            domain_index: 0b01,
+            log_height: 3,
+        }];
+        let final_folded = expected_final_folded(initial_folded, &rounds);
+        let mut flat =
+            build_fold_chain_trace(initial_folded, &rounds, final_folded, 8).unwrap();
+        // Corrupt INV_2S witness on row 0.
+        flat[col::FOLD_INV_2S] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove(&cfg, &air, trace, &[])
+        }));
+        match outcome {
+            Err(_) => {}
+            Ok(p) => {
+                verify(&cfg, &air, &p, &[])
+                    .expect_err("broken INV_2S witness must reject via 2s·INV_2S=1 bank");
+            }
+        }
+    }
+
+    /// Regression guard: after A3-2, the A3-1 leaf-to-root test still
+    /// passes — the new FOLD/ALPHA banks are gated off and don't fire
+    /// on ABSORB/COMPRESS/IDLE rows.
+    #[test]
+    fn a3_1_leaf_to_root_still_verifies_after_a3_2() {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+
+        let (leaves, openings, root) = tiny_tree_wide_leaves();
+        let (_, path, idx) = openings[2].clone();
+        let flat = build_leaf_to_root_trace(&leaves[2], &path, idx, root, 16).unwrap();
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+        let proof = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof, &[])
+            .expect("A3-1 leaf-to-root must still verify post-A3-2");
     }
 }
