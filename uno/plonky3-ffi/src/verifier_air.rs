@@ -27,8 +27,10 @@
 //!
 //! For a single `(pi, π)` slot:
 //!
-//!     `verify_transfer_plonky3(pi, π)` returns `Ok` under the §2.1
-//!     Option B FRI pin `(log_blowup=3, num_queries=52, query_pow_bits=24)`.
+//! ```text
+//! verify_transfer_plonky3(pi, π) returns Ok under the §2.1
+//! Option B FRI pin (log_blowup=3, num_queries=52, query_pow_bits=24).
+//! ```
 //!
 //! Expressed via AIR columns that replay the uni-stark verifier's
 //! algorithm:
