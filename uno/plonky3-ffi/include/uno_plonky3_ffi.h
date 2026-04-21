@@ -694,6 +694,43 @@ typedef struct {
     uintptr_t cap;
 } Plonky3OwnedProof;
 
+// Borrowed byte buffer passed across the FFI for wire-format decode.
+typedef struct {
+    // Raw bytes of an encoded `UnoBlockExtra` (header + proof).
+    const uint8_t *ptr;
+    // Length in bytes.
+    uintptr_t len;
+} UnoBlockExtraBytes;
+
+// Parsed header fields the C++ side needs to inspect. The aggregated
+// proof payload is returned separately via an owned buffer — the
+// caller frees it via [`uno_block_extra_owned_free`].
+//
+// Layout must match the C side byte-for-byte. `scheme_id` / `version`
+// are tagged by the Rust decoder against the accepted set, so the C
+// caller can trust the fields it receives.
+typedef struct {
+    // Matches `UNO_AGGREGATOR_SCHEME_ID_V1` at launch.
+    uint8_t scheme_id;
+    // Matches `UNO_AGGREGATOR_VERSION_V1` at launch.
+    uint8_t version;
+    // Padding for alignment; always written as 0.
+    uint16_t _pad0;
+    // 0..=BLOCK_TX_CAP. Already bounds-checked by decoder.
+    uint16_t n_transfers;
+    // Padding for alignment; always written as 0.
+    uint16_t _pad1;
+    // BLAKE3 root over per-Tx PI hashes (inclusion order).
+    uint8_t tx_pi_merkle_root[32];
+    // Heap-allocated aggregated proof payload (opaque to this layer).
+    // Callers MUST free via [`uno_block_extra_owned_free`] exactly once.
+    uint8_t *aggregated_proof_ptr;
+    // Bytes in the aggregated proof payload.
+    uintptr_t aggregated_proof_len;
+    // Allocation capacity needed to reconstruct the `Vec` on free.
+    uintptr_t aggregated_proof_cap;
+} UnoBlockExtraParsed;
+
 
 
 
@@ -782,13 +819,72 @@ int32_t uno_plonky3_prove(const Plonky3ProverHandle *handle,
 // must not have been freed. Other fields of `proof` must be unchanged.
 void uno_plonky3_proof_free(Plonky3OwnedProof proof);
 
+// Decode an encoded `UnoBlockExtra` into [`UnoBlockExtraParsed`].
+//
+// Error mapping (wire-layer only; the aggregated proof itself is NOT
+// verified here — call [`uno_block_verifier_verify`] separately):
+//
+// | `DecodeError`           | `Plonky3Status`                |
+// |-------------------------|--------------------------------|
+// | `ShortHeader`           | `ProofDecodeFailed` (1)        |
+// | `UnknownSchemeId`       | `ProofDecodeFailed` (1)        |
+// | `UnknownVersion`        | `ProofDecodeFailed` (1)        |
+// | `TooManyTransfers`      | `ProofDecodeFailed` (1)        |
+// | `ProofTooLarge`         | `LengthTooLarge` (7)           |
+// | `ProofLengthMismatch`   | `ProofDecodeFailed` (1)        |
+//
+// # Safety
+// - `bytes.ptr` / `bytes.len` must describe a valid, readable region.
+// - `out` must be a valid, aligned, writable pointer to an
+//   `UnoBlockExtraParsed`. Previous contents are overwritten.
+// - On non-Ok return, `*out` is cleared to `EMPTY` and caller must
+//   NOT free; on Ok return, caller MUST free via
+//   [`uno_block_extra_owned_free`] exactly once.
+int32_t uno_block_extra_decode(UnoBlockExtraBytes bytes, UnoBlockExtraParsed *out);
+
+// Free the heap buffer owned by a previously-returned
+// [`UnoBlockExtraParsed`]. Idempotent iff called exactly once per
+// successful decode — double-free is undefined behavior.
+//
+// # Safety
+// `parsed.aggregated_proof_ptr` must have come from
+// [`uno_block_extra_decode`] and must not have been freed. The other
+// fields must be unchanged from the decode call.
+void uno_block_extra_owned_free(UnoBlockExtraParsed parsed);
+
+// Encode a fresh `UnoBlockExtra` v1 from its constituent fields.
+// Primarily intended for tests and for tooling that needs to emit a
+// canonical wire blob (collator side). The validator path only needs
+// [`uno_block_extra_decode`].
+//
+// Returns a heap-allocated byte buffer via `out_bytes`; caller MUST
+// free via [`uno_plonky3_proof_free`] (shares the same allocator
+// discipline — a `Plonky3OwnedProof`-shaped Vec).
+//
+// # Safety
+// - `tx_pi_merkle_root` must be a valid 32-byte readable region.
+// - `proof_bytes` must be a valid readable region of `proof_len` bytes
+//   (or null with `proof_len == 0`).
+// - `out_bytes` must be a valid, aligned, writable `*mut
+//   Plonky3OwnedProof`. Previous contents are overwritten.
+int32_t uno_block_extra_encode_v1(uint16_t n_transfers,
+                                  const uint8_t *tx_pi_merkle_root,
+                                  const uint8_t *proof_bytes,
+                                  uintptr_t proof_len,
+                                  Plonky3OwnedProof *out_bytes);
+
 // Returns the ABI revision of this crate. The C++ bridge checks this at
 // `Plonky3Verifier::init()` to catch a version-skew between the shipped
 // Rust static-lib and the compiled C++ header.
 //
-// Current value: 1. Bump on any layout change to `Plonky3OwnedProof`,
-// `Plonky3ProofBytes`, `Plonky3PublicInputs`, `Plonky3Witness`, or
-// `Plonky3Status`, or on any addition/removal of FFI entry points.
+// Current value: 2 (bumped from 1 by A6-1, which adds
+// [`UnoBlockExtraBytes`], [`UnoBlockExtraParsed`],
+// [`uno_block_extra_decode`], [`uno_block_extra_owned_free`], and
+// [`uno_block_extra_encode_v1`] to the FFI surface). Bump on any
+// layout change to `Plonky3OwnedProof`, `Plonky3ProofBytes`,
+// `Plonky3PublicInputs`, `Plonky3Witness`, `Plonky3Status`,
+// `UnoBlockExtraBytes`, `UnoBlockExtraParsed`, or any
+// addition/removal of FFI entry points.
 uint32_t uno_plonky3_abi_version(void);
 
 // Width-8 Poseidon2-Goldilocks permutation, in place.

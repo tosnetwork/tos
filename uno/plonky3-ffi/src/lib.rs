@@ -505,6 +505,253 @@ pub unsafe extern "C" fn uno_plonky3_proof_free(proof: Plonky3OwnedProof) {
 }
 
 // ---------------------------------------------------------------------------
+// A6-1: UnoBlockExtra wire-format FFI surface
+//
+// C++ consumers (validator / mempool / collator) use these to framing-
+// decode the block-level aggregated-proof container before handing the
+// opaque proof payload to the aggregated verifier (A6-2). Errors surface
+// BEFORE any proof buffer is allocated, so a malformed block header
+// cannot cause an allocator-based DoS.
+//
+// Layout of the C-side view is deliberately flat byte buffers, not a
+// mirrored C struct — the Rust decoder does the framing, the C++ side
+// just passes bytes through. This lets the wire format evolve under a
+// `scheme_id`-bump without an ABI break.
+// ---------------------------------------------------------------------------
+
+/// Borrowed byte buffer passed across the FFI for wire-format decode.
+#[repr(C)]
+pub struct UnoBlockExtraBytes {
+    /// Raw bytes of an encoded `UnoBlockExtra` (header + proof).
+    pub ptr: *const u8,
+    /// Length in bytes.
+    pub len: usize,
+}
+
+/// Parsed header fields the C++ side needs to inspect. The aggregated
+/// proof payload is returned separately via an owned buffer — the
+/// caller frees it via [`uno_block_extra_owned_free`].
+///
+/// Layout must match the C side byte-for-byte. `scheme_id` / `version`
+/// are tagged by the Rust decoder against the accepted set, so the C
+/// caller can trust the fields it receives.
+#[repr(C)]
+pub struct UnoBlockExtraParsed {
+    /// Matches `UNO_AGGREGATOR_SCHEME_ID_V1` at launch.
+    pub scheme_id: u8,
+    /// Matches `UNO_AGGREGATOR_VERSION_V1` at launch.
+    pub version: u8,
+    /// Padding for alignment; always written as 0.
+    pub _pad0: u16,
+    /// 0..=BLOCK_TX_CAP. Already bounds-checked by decoder.
+    pub n_transfers: u16,
+    /// Padding for alignment; always written as 0.
+    pub _pad1: u16,
+    /// BLAKE3 root over per-Tx PI hashes (inclusion order).
+    pub tx_pi_merkle_root: [u8; 32],
+    /// Heap-allocated aggregated proof payload (opaque to this layer).
+    /// Callers MUST free via [`uno_block_extra_owned_free`] exactly once.
+    pub aggregated_proof_ptr: *mut u8,
+    /// Bytes in the aggregated proof payload.
+    pub aggregated_proof_len: usize,
+    /// Allocation capacity needed to reconstruct the `Vec` on free.
+    pub aggregated_proof_cap: usize,
+}
+
+impl UnoBlockExtraParsed {
+    const EMPTY: Self = Self {
+        scheme_id: 0,
+        version: 0,
+        _pad0: 0,
+        n_transfers: 0,
+        _pad1: 0,
+        tx_pi_merkle_root: [0u8; 32],
+        aggregated_proof_ptr: std::ptr::null_mut(),
+        aggregated_proof_len: 0,
+        aggregated_proof_cap: 0,
+    };
+}
+
+/// Decode an encoded `UnoBlockExtra` into [`UnoBlockExtraParsed`].
+///
+/// Error mapping (wire-layer only; the aggregated proof itself is NOT
+/// verified here — call [`uno_block_verifier_verify`] separately):
+///
+/// | `DecodeError`           | `Plonky3Status`                |
+/// |-------------------------|--------------------------------|
+/// | `ShortHeader`           | `ProofDecodeFailed` (1)        |
+/// | `UnknownSchemeId`       | `ProofDecodeFailed` (1)        |
+/// | `UnknownVersion`        | `ProofDecodeFailed` (1)        |
+/// | `TooManyTransfers`      | `ProofDecodeFailed` (1)        |
+/// | `ProofTooLarge`         | `LengthTooLarge` (7)           |
+/// | `ProofLengthMismatch`   | `ProofDecodeFailed` (1)        |
+///
+/// # Safety
+/// - `bytes.ptr` / `bytes.len` must describe a valid, readable region.
+/// - `out` must be a valid, aligned, writable pointer to an
+///   `UnoBlockExtraParsed`. Previous contents are overwritten.
+/// - On non-Ok return, `*out` is cleared to `EMPTY` and caller must
+///   NOT free; on Ok return, caller MUST free via
+///   [`uno_block_extra_owned_free`] exactly once.
+#[no_mangle]
+pub unsafe extern "C" fn uno_block_extra_decode(
+    bytes: UnoBlockExtraBytes,
+    out: *mut UnoBlockExtraParsed,
+) -> i32 {
+    ffi_guard(|| {
+        if out.is_null() {
+            return Plonky3Status::NullPointer;
+        }
+        // SAFETY: caller upholds writability.
+        unsafe {
+            *out = UnoBlockExtraParsed::EMPTY;
+        }
+
+        let input = match unsafe { slice_from_parts(bytes.ptr, bytes.len) } {
+            Some(s) => s,
+            None => return Plonky3Status::NullPointer,
+        };
+
+        let decoded = match block_wire_format::decode(input) {
+            Ok(d) => d,
+            Err(block_wire_format::DecodeError::ProofTooLarge { .. }) => {
+                return Plonky3Status::LengthTooLarge;
+            }
+            Err(_) => {
+                return Plonky3Status::ProofDecodeFailed;
+            }
+        };
+
+        // Move the proof bytes into a heap-stable Vec, hand ownership
+        // to the caller via raw parts. Mirrors `uno_plonky3_prove`'s
+        // pattern so the caller's free path is identical.
+        let mut proof_vec = decoded.aggregated_proof;
+        let ptr = proof_vec.as_mut_ptr();
+        let len = proof_vec.len();
+        let cap = proof_vec.capacity();
+        std::mem::forget(proof_vec);
+
+        // SAFETY: caller upholds writability of `out`.
+        unsafe {
+            *out = UnoBlockExtraParsed {
+                scheme_id: decoded.aggregator_scheme_id,
+                version: decoded.aggregator_version,
+                _pad0: 0,
+                n_transfers: decoded.n_transfers,
+                _pad1: 0,
+                tx_pi_merkle_root: decoded.tx_pi_merkle_root,
+                aggregated_proof_ptr: ptr,
+                aggregated_proof_len: len,
+                aggregated_proof_cap: cap,
+            };
+        }
+
+        Plonky3Status::Ok
+    })
+}
+
+/// Free the heap buffer owned by a previously-returned
+/// [`UnoBlockExtraParsed`]. Idempotent iff called exactly once per
+/// successful decode — double-free is undefined behavior.
+///
+/// # Safety
+/// `parsed.aggregated_proof_ptr` must have come from
+/// [`uno_block_extra_decode`] and must not have been freed. The other
+/// fields must be unchanged from the decode call.
+#[no_mangle]
+pub unsafe extern "C" fn uno_block_extra_owned_free(parsed: UnoBlockExtraParsed) {
+    if parsed.aggregated_proof_ptr.is_null() || parsed.aggregated_proof_cap == 0 {
+        return;
+    }
+    let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: reconstruct the Vec leaked in `decode`.
+        unsafe {
+            let _ = Vec::from_raw_parts(
+                parsed.aggregated_proof_ptr,
+                parsed.aggregated_proof_len,
+                parsed.aggregated_proof_cap,
+            );
+        }
+    }));
+}
+
+/// Encode a fresh `UnoBlockExtra` v1 from its constituent fields.
+/// Primarily intended for tests and for tooling that needs to emit a
+/// canonical wire blob (collator side). The validator path only needs
+/// [`uno_block_extra_decode`].
+///
+/// Returns a heap-allocated byte buffer via `out_bytes`; caller MUST
+/// free via [`uno_plonky3_proof_free`] (shares the same allocator
+/// discipline — a `Plonky3OwnedProof`-shaped Vec).
+///
+/// # Safety
+/// - `tx_pi_merkle_root` must be a valid 32-byte readable region.
+/// - `proof_bytes` must be a valid readable region of `proof_len` bytes
+///   (or null with `proof_len == 0`).
+/// - `out_bytes` must be a valid, aligned, writable `*mut
+///   Plonky3OwnedProof`. Previous contents are overwritten.
+#[no_mangle]
+pub unsafe extern "C" fn uno_block_extra_encode_v1(
+    n_transfers: u16,
+    tx_pi_merkle_root: *const u8,
+    proof_bytes: *const u8,
+    proof_len: usize,
+    out_bytes: *mut Plonky3OwnedProof,
+) -> i32 {
+    ffi_guard(|| {
+        if out_bytes.is_null() || tx_pi_merkle_root.is_null() {
+            return Plonky3Status::NullPointer;
+        }
+        // SAFETY: caller upholds writability of `out_bytes`.
+        unsafe {
+            *out_bytes = Plonky3OwnedProof::EMPTY;
+        }
+
+        // Bounds check: n_transfers must fit BLOCK_TX_CAP and proof_len
+        // must fit the wire-format cap. Mirror `UnoBlockExtra::v1` which
+        // panics on violation; here we return typed errors instead.
+        if n_transfers as usize > crate::aggregator::BLOCK_TX_CAP {
+            return Plonky3Status::WitnessInvalid;
+        }
+        if proof_len > block_wire_format::UNO_BLOCK_EXTRA_MAX_PROOF_BYTES as usize {
+            return Plonky3Status::LengthTooLarge;
+        }
+
+        let proof_slice = match unsafe { slice_from_parts(proof_bytes, proof_len) } {
+            Some(s) => s,
+            None => return Plonky3Status::NullPointer,
+        };
+
+        // SAFETY: caller promised tx_pi_merkle_root[..32] is readable.
+        let root: [u8; 32] = unsafe {
+            let mut r = [0u8; 32];
+            std::ptr::copy_nonoverlapping(tx_pi_merkle_root, r.as_mut_ptr(), 32);
+            r
+        };
+
+        let extra = block_wire_format::UnoBlockExtra::v1(
+            n_transfers,
+            root,
+            crate::aggregator::AggregatedProof {
+                bytes: proof_slice.to_vec(),
+            },
+        );
+        let mut encoded = block_wire_format::encode(&extra);
+        let ptr = encoded.as_mut_ptr();
+        let len = encoded.len();
+        let cap = encoded.capacity();
+        std::mem::forget(encoded);
+
+        // SAFETY: caller upholds writability of `out_bytes`.
+        unsafe {
+            *out_bytes = Plonky3OwnedProof { ptr, len, cap };
+        }
+
+        Plonky3Status::Ok
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Version / ABI probe
 // ---------------------------------------------------------------------------
 
@@ -512,12 +759,17 @@ pub unsafe extern "C" fn uno_plonky3_proof_free(proof: Plonky3OwnedProof) {
 /// `Plonky3Verifier::init()` to catch a version-skew between the shipped
 /// Rust static-lib and the compiled C++ header.
 ///
-/// Current value: 1. Bump on any layout change to `Plonky3OwnedProof`,
-/// `Plonky3ProofBytes`, `Plonky3PublicInputs`, `Plonky3Witness`, or
-/// `Plonky3Status`, or on any addition/removal of FFI entry points.
+/// Current value: 2 (bumped from 1 by A6-1, which adds
+/// [`UnoBlockExtraBytes`], [`UnoBlockExtraParsed`],
+/// [`uno_block_extra_decode`], [`uno_block_extra_owned_free`], and
+/// [`uno_block_extra_encode_v1`] to the FFI surface). Bump on any
+/// layout change to `Plonky3OwnedProof`, `Plonky3ProofBytes`,
+/// `Plonky3PublicInputs`, `Plonky3Witness`, `Plonky3Status`,
+/// `UnoBlockExtraBytes`, `UnoBlockExtraParsed`, or any
+/// addition/removal of FFI entry points.
 #[no_mangle]
 pub extern "C" fn uno_plonky3_abi_version() -> u32 {
-    1
+    2
 }
 
 // ---------------------------------------------------------------------------
@@ -688,8 +940,212 @@ mod ffi_tests {
     }
 
     /// The ABI-version probe must return a positive integer.
+    /// v2 added the A6-1 UnoBlockExtra wire-format entry points.
     #[test]
     fn abi_version_probe() {
-        assert_eq!(uno_plonky3_abi_version(), 1);
+        assert_eq!(uno_plonky3_abi_version(), 2);
+    }
+
+    // =======================================================================
+    // A6-1 UnoBlockExtra FFI — round-trip + error-path coverage
+    // =======================================================================
+
+    fn sample_encoded_block_extra(proof_len: usize) -> Vec<u8> {
+        // Build with the safe Rust builder, encode, then pass the
+        // bytes through the FFI decoder. This validates that the
+        // FFI decoder is byte-for-byte compatible with the Rust one.
+        let proof = crate::aggregator::AggregatedProof {
+            bytes: (0..proof_len).map(|i| i as u8).collect(),
+        };
+        let extra = block_wire_format::UnoBlockExtra::v1(3, [0x7e; 32], proof);
+        block_wire_format::encode(&extra)
+    }
+
+    #[test]
+    fn block_extra_ffi_decode_round_trip() {
+        let encoded = sample_encoded_block_extra(128);
+        let mut parsed = UnoBlockExtraParsed::EMPTY;
+
+        let rc = unsafe {
+            uno_block_extra_decode(
+                UnoBlockExtraBytes {
+                    ptr: encoded.as_ptr(),
+                    len: encoded.len(),
+                },
+                &mut parsed,
+            )
+        };
+        assert_eq!(rc, Plonky3Status::Ok.as_i32());
+        assert_eq!(parsed.scheme_id, block_wire_format::UNO_AGGREGATOR_SCHEME_ID_V1);
+        assert_eq!(parsed.version, block_wire_format::UNO_AGGREGATOR_VERSION_V1);
+        assert_eq!(parsed.n_transfers, 3);
+        assert_eq!(parsed.tx_pi_merkle_root, [0x7e; 32]);
+        assert_eq!(parsed.aggregated_proof_len, 128);
+        assert!(!parsed.aggregated_proof_ptr.is_null());
+
+        // Inspect first + last byte of returned proof buffer.
+        unsafe {
+            let slice = std::slice::from_raw_parts(
+                parsed.aggregated_proof_ptr,
+                parsed.aggregated_proof_len,
+            );
+            assert_eq!(slice[0], 0);
+            assert_eq!(slice[127], 127);
+        }
+
+        // Free the owned buffer; must not leak.
+        unsafe {
+            uno_block_extra_owned_free(parsed);
+        }
+    }
+
+    #[test]
+    fn block_extra_ffi_decode_null_out_returns_null_pointer() {
+        let encoded = sample_encoded_block_extra(32);
+        let rc = unsafe {
+            uno_block_extra_decode(
+                UnoBlockExtraBytes {
+                    ptr: encoded.as_ptr(),
+                    len: encoded.len(),
+                },
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(rc, Plonky3Status::NullPointer.as_i32());
+    }
+
+    #[test]
+    fn block_extra_ffi_decode_null_input_returns_null_pointer() {
+        let mut parsed = UnoBlockExtraParsed::EMPTY;
+        let rc = unsafe {
+            uno_block_extra_decode(
+                UnoBlockExtraBytes { ptr: std::ptr::null(), len: 64 },
+                &mut parsed,
+            )
+        };
+        assert_eq!(rc, Plonky3Status::NullPointer.as_i32());
+        assert!(parsed.aggregated_proof_ptr.is_null());
+    }
+
+    #[test]
+    fn block_extra_ffi_decode_short_header_rejects() {
+        let short = vec![0u8; 10];
+        let mut parsed = UnoBlockExtraParsed::EMPTY;
+        let rc = unsafe {
+            uno_block_extra_decode(
+                UnoBlockExtraBytes {
+                    ptr: short.as_ptr(),
+                    len: short.len(),
+                },
+                &mut parsed,
+            )
+        };
+        assert_eq!(rc, Plonky3Status::ProofDecodeFailed.as_i32());
+        assert!(parsed.aggregated_proof_ptr.is_null());
+    }
+
+    #[test]
+    fn block_extra_ffi_decode_unknown_scheme_rejects() {
+        let mut encoded = sample_encoded_block_extra(16);
+        encoded[0] = 0xff; // unknown scheme_id
+        let mut parsed = UnoBlockExtraParsed::EMPTY;
+        let rc = unsafe {
+            uno_block_extra_decode(
+                UnoBlockExtraBytes {
+                    ptr: encoded.as_ptr(),
+                    len: encoded.len(),
+                },
+                &mut parsed,
+            )
+        };
+        assert_eq!(rc, Plonky3Status::ProofDecodeFailed.as_i32());
+    }
+
+    #[test]
+    fn block_extra_ffi_decode_proof_too_large_rejects() {
+        // Forge a header claiming proof_len > cap (no need to allocate
+        // it; the FFI decoder should reject before attempting a read).
+        let mut bytes = vec![0u8; block_wire_format::UNO_BLOCK_EXTRA_HEADER_BYTES];
+        bytes[0] = block_wire_format::UNO_AGGREGATOR_SCHEME_ID_V1;
+        bytes[1] = block_wire_format::UNO_AGGREGATOR_VERSION_V1;
+        let bad_len = block_wire_format::UNO_BLOCK_EXTRA_MAX_PROOF_BYTES + 1;
+        bytes[36..40].copy_from_slice(&bad_len.to_le_bytes());
+        let mut parsed = UnoBlockExtraParsed::EMPTY;
+        let rc = unsafe {
+            uno_block_extra_decode(
+                UnoBlockExtraBytes {
+                    ptr: bytes.as_ptr(),
+                    len: bytes.len(),
+                },
+                &mut parsed,
+            )
+        };
+        assert_eq!(rc, Plonky3Status::LengthTooLarge.as_i32());
+    }
+
+    #[test]
+    fn block_extra_ffi_encode_round_trip() {
+        let proof_bytes: Vec<u8> = (0..256u32).map(|i| i as u8).collect();
+        let root = [0x5a; 32];
+        let mut out = Plonky3OwnedProof::EMPTY;
+        let rc = unsafe {
+            uno_block_extra_encode_v1(
+                5,
+                root.as_ptr(),
+                proof_bytes.as_ptr(),
+                proof_bytes.len(),
+                &mut out,
+            )
+        };
+        assert_eq!(rc, Plonky3Status::Ok.as_i32());
+        assert!(!out.ptr.is_null());
+        assert_eq!(
+            out.len,
+            block_wire_format::UNO_BLOCK_EXTRA_HEADER_BYTES + 256
+        );
+
+        // Feed the encoded bytes back through the decode FFI.
+        let mut parsed = UnoBlockExtraParsed::EMPTY;
+        let rc = unsafe {
+            uno_block_extra_decode(
+                UnoBlockExtraBytes { ptr: out.ptr, len: out.len },
+                &mut parsed,
+            )
+        };
+        assert_eq!(rc, Plonky3Status::Ok.as_i32());
+        assert_eq!(parsed.n_transfers, 5);
+        assert_eq!(parsed.tx_pi_merkle_root, root);
+        assert_eq!(parsed.aggregated_proof_len, 256);
+
+        unsafe {
+            uno_block_extra_owned_free(parsed);
+            uno_plonky3_proof_free(out);
+        }
+    }
+
+    #[test]
+    fn block_extra_ffi_encode_rejects_n_transfers_overflow() {
+        let mut out = Plonky3OwnedProof::EMPTY;
+        let bad_n = (crate::aggregator::BLOCK_TX_CAP + 1) as u16;
+        let rc = unsafe {
+            uno_block_extra_encode_v1(
+                bad_n,
+                [0u8; 32].as_ptr(),
+                std::ptr::null(),
+                0,
+                &mut out,
+            )
+        };
+        assert_eq!(rc, Plonky3Status::WitnessInvalid.as_i32());
+        assert!(out.ptr.is_null());
+    }
+
+    #[test]
+    fn block_extra_ffi_owned_free_is_null_safe() {
+        // Freeing the EMPTY parsed struct must be a no-op (null ptr + 0
+        // cap) — mirrors `uno_plonky3_proof_free` null-safety.
+        unsafe {
+            uno_block_extra_owned_free(UnoBlockExtraParsed::EMPTY);
+        }
     }
 }
