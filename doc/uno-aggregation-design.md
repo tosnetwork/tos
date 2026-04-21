@@ -640,10 +640,13 @@ soundness).
 |---------|---------------|----------------------------------------|---------------------------------------------------|
 | V1-PRE  | ✅ DONE       | Revert A6-4a Transfer struct delta     | commit `42fdb46a7` — zk_proof restored; BLOCK_TX_CAP = 4 |
 | V1-1    | ✅ DONE       | Reinstate per-Tx verify in §4.3 step 4 | commit `42fdb46a7` — parallel-verify.cpp un-stubbed |
-| V1-2    | 🟡 PARTIAL    | Update doc set for v1 positioning      | commit `b2d601a09` — top-level TPS posture; V1-2b = parameter recalibration (fees, filter, bandwidth tables) pending |
+| V1-2    | ✅ DONE       | Update doc set for v1 positioning      | commits `b2d601a09` (top-level TPS posture) + V1-2b batch (filter / bandwidth / fees / burn rate recalibrated to 4 TPS) |
 | V1-3a   | 🟡 PARTIAL    | tosctl-uno send docs / gap flagged     | tosctl-uno send pipeline + real Plonky3 prove ✅ (K-P6-wire); BoC parity ⚠️ pending |
 | V1-3b   | ⬜ TODO       | tosctl-uno daemon wire-encoding parity | path-dep `chain_block`, emit Cell tree matching `uno/core/transaction.cpp::encode_transfer`; integration test against real daemon |
-| V1-4    | ⬜ TODO       | Testnet 60-day burn-in                 | 4 TPS sustained; validator decentralization healthy |
+| V1-4a   | ✅ DONE       | Testnet 60-day burn-in plan            | `doc/uno-v1-testnet-plan.md` — objectives / gates / scenarios / exit criteria |
+| V1-4b   | ⬜ TODO       | Testnet burn-in execution              | 60-day run per V1-4a plan; 4 TPS sustained; validator decentralization healthy |
+| V1-audit| ✅ DONE       | Audit scope handoff doc                | `doc/uno-v1-audit-scope.md` — 9 in-scope components + 12 audit queries; v2 research explicitly out-of-scope |
+| V1-ops  | ✅ DONE       | Validator ops runbook                  | `doc/uno-v1-validator-ops.md` — hardware profile / opt-in / monitoring / incident playbooks |
 
 **v2 research path phase table** (historical; code kept in tree):
 

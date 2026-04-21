@@ -106,7 +106,7 @@ Anything weaker — the account + homomorphic-ciphertext recipe — still leaks 
 - **Hybrid ECDH + ML-KEM-768 note encryption** — closes the HNDL window on on-chain ciphertexts at v1 ship, not deferred to Phase 2.
 - **Main-account seed derivation** — wc=2 identity deterministically derived from the user's primary TOS seed (`uno_seed = BLAKE2b("uno-seed-v1" ‖ main_tos_seed)`); no separate key management.
 - **Compact block filters** — 16-bit per-output detection tags + GCS-encoded block filter, making wallet sync ≤100× cheaper. Mobile-viable from day one.
-- **Parallel Plonky3 verify across `num_cores`** as an **activation prerequisite**, not a later optimization. The chain is structurally unable to produce 1 s blocks at target TPS without it; see §7.4 and §13 P.3.
+- **Parallel Plonky3 verify across `num_cores`** as a **strong recommendation / v2-return prerequisite** (relaxed from the pre-pivot "activation prerequisite"). At v1 `BLOCK_TX_CAP = 4`, serial verify (4 × 25 ms = 100 ms) already fits the 400 ms compute phase; parallel verify (4 × 7 ms = 28 ms) gives ~14× headroom and is retained for burst, catchain-verify parallelism, and v2-return-to-30 TPS readiness. See §7.4, §5.9, §13 P.3, and decision #28.
 - **Cell-native state** — note-commitment tree frontier, nullifier set, anchor window, stats all live as TOS cells in CellDb inside a single executor account on wc=2 (§5).
 - **Crypto-agility** via `scheme_id : u8` on every artifact. v1 ships `scheme_id = 0x01`. Future PQ upgrades (ML-DSA hybrid spend-auth in Phase 1; see §6) do not require a hardfork of the structural protocol.
 - **Consensus-deterministic** execution; restart-survival; cross-validator state parity (§12 P.5).
@@ -136,26 +136,28 @@ Anything weaker — the account + homomorphic-ciphertext recipe — still leaks 
 
 ### 1.4a Validator hardware profile and set formation
 
-> **⚠️ V1-2 pending:** numeric calibrations in §1.4a and downstream
-> sections (filter sizing in §2.8, fee schedule in §8, bandwidth
-> tables in §7.6 / §8.3, wallet-scan calcs in §5.8 / §9) were sized
-> against the pre-pivot 30 TPS target. They are not yet recomputed
-> for the v1 `BLOCK_TX_CAP = 4` ceiling. Directional conclusions
-> (qualitative posture, decision rationale) stay valid; specific
-> byte / Mbps / nano-UNO numbers should be treated as upper bounds
-> rather than current design targets. A V1-2b pass will recalibrate
-> these quantitatively. See `doc/uno-aggregation-design.md` §-1 for
-> the v1 pivot decision.
+> **V1-2b applied (2026-04-21):** numeric calibrations in §1.4a and
+> downstream sections (filter sizing in §2.8, fee schedule in §8,
+> bandwidth tables in §7.6 / §8.3, wallet-scan calcs in §5.8 / §7.5)
+> have been recomputed for the v1 `BLOCK_TX_CAP = 4` ceiling + per-Tx
+> proof shape (~520 KB typical / ~915 KB worst-case Plonky3 STARK
+> under FRI Option B). The legacy 30 TPS / 20 TPS targets from the
+> pre-pivot block-aggregation design appear only in historical /
+> v2-return contexts (§14 aggregation deferral, §15 TPS row
+> alternative column). A v2 return to 30 TPS/shard via block
+> aggregation + WHIR/BaseFold is preserved as an explicit future
+> option; see `doc/uno-aggregation-design.md` §-1 for the v1 pivot
+> decision record and v2 trigger checklist.
 
-The numbers in §1.4 (4-core parallel verify at ~7 ms per tx, ~160 MB/s inter-validator bandwidth at peak, ~100 MB nullifier-LRU RAM, ~1.5 MB worst-case proof) carry an implicit statement about **what kind of operator can run a wc=2 validator**. We state it explicitly here so it is a design decision and not a discovery:
+The numbers in §1.4 (4-core parallel verify at ~7 ms per tx, ~2 MB/s per-validator outbound proof bandwidth at 4 TPS sustained, ~100 MB nullifier-LRU RAM, ~915 KB worst-case proof) carry an implicit statement about **what kind of operator can run a wc=2 validator**. We state it explicitly here so it is a design decision and not a discovery:
 
-**Target validator profile — v1:**
+**Target validator profile — v1 (post-v1 pivot to per-Tx proofs @ 4 TPS):**
 - 4 physical CPU cores, 16 GB RAM, 500 GB SSD (local-cell cache + history snapshots).
-- Sustained 200 Mbps symmetric bandwidth for catchain consensus; bursty to ~1 Gbps during block gossip.
-- Datacenter or home-lab colocation; modern residential fiber (≥ 500 Mbps symmetric) is feasible but borderline.
+- Sustained 25–50 Mbps symmetric bandwidth for catchain consensus; bursty to ~200 Mbps during block gossip under worst-case 4/4 mix. At the typical 1/2 mix, sustained ~16 Mbps and burst ~100 Mbps.
+- **Residential-fiber-feasible**: any connection ≥ 100 Mbps symmetric clears the bandwidth profile comfortably. The pre-pivot 200 Mbps sustained figure was sized for a 30-TPS block-aggregated target; per-Tx @ 4 TPS cuts it by ~8×, explicitly bringing the v1 profile into consumer-broadband territory. This is the intended design corollary of the 2026-04-21 pivot (§15 / `doc/uno-aggregation-design.md` §-1).
 - Not required: GPU, FPGA, or specialized proving hardware. UNO validators **only verify**; they do not prove.
 
-**What this means socially:** UNO validators are a subset of the TOS validator set — specifically, the subset that opts in to wc=2 participation by advertising the capability. The chain does not assume a datacenter-only validator set (the 4-core floor is deliberately low), but also does not assume a pure home-operator set (the 200 Mbps sustained bandwidth excludes most residential ADSL / cellular / satellite links). This matches TOS's existing shardchain operator profile; wc=2 does not change the social formation of the TOS validator set, only its opt-in workload.
+**What this means socially:** UNO validators are a subset of the TOS validator set — specifically, the subset that opts in to wc=2 participation by advertising the capability. The chain does not assume a datacenter-only validator set (the 4-core floor is deliberately low), and the post-pivot bandwidth profile (25–50 Mbps sustained) now also admits a pure home-operator set on residential fiber links. This deliberately broadens the social formation of the TOS validator set relative to the pre-pivot 200 Mbps sustained target. A v2 return to 30 TPS/shard via block aggregation (§14) would re-tighten this to the earlier datacenter-leaning profile; v1 intentionally sits on the other side of that trade.
 
 **What this means for the proving side:** Proving is **client-side** (§7.2). The 22 s target on a 2020-era laptop is the binding constraint for the end-user UX, not for validator hardware. A UNO validator does not need to prove anything — ever. This asymmetry is intentional: the chain pushes the only compute-heavy workload out to the party that has the privacy interest (the sender), and keeps validator work bounded to what a commodity-tier operator can handle at 1 s block cadence.
 
@@ -506,7 +508,7 @@ BlockFilter(block_seqno) :=
 
 **Decoding procedure**: reverse; emit `tagᵢ` by accumulating `Δᵢ + 1` from `tagᵢ₋₁`.
 
-**Expected size**: at 30 TPS × 2 outputs/tx the block has ~60 distinct tags; GCS with `P=15, M=2^16` produces ~100–150 B per block. At 50 TPS burst, ~180–260 B per block.
+**Expected size**: at v1 `BLOCK_TX_CAP = 4` (4 TPS × 2 outputs/tx typical) the block has ~8 distinct tags; GCS with `P=15, M=2^16` produces ~20–30 B per block (varint length prefix + 8 Golomb-Rice-coded deltas, average delta ≈ 8192, average code length ≈ 14–15 bits). Worst-case 4 × 4 mix: ~16 tags, ~35–45 B per block. A v2 return to 30 TPS/shard via block aggregation (§14) would restore the ~100–150 B per block figure; v1 filters are ~5× smaller than the pre-pivot design target.
 
 **Consensus status**: the filter itself is a **derived view**, not consensus state (§5 state model). Validators recompute it end-of-block from the accepted `OutputDescription`s; any full node can reconstruct it from the ordered tx log. The filter is served via `uno_getBlockFilter(seqno)` (§9.1) — callers cross-check by refetching and re-GCS-encoding if desired. Because the encoding is byte-identical across implementations, wallet SDKs that build against this spec match validator output exactly; **no keyed-hash agreement is required**.
 
@@ -631,7 +633,7 @@ Inline field sizes:
 - Each `SpendDescription` inline: `32+32+64 = 128` bytes (no `cv`).
 - Each `OutputDescription` inline (excluding `enc_ciphertext` and `mlkem_ct` refs): `32+32+2+80 = 146` bytes (no `cv`, plus `filter_tag`).
 - No `binding_sig` on the tx.
-- `zk_proof` is a ref to a cell chain — Plonky3 STARK proof under the pinned §2.1 Option B FRI parameters. **Measured v1 envelope (2026-04-20, FRI Option B)**: ~520 KB for a 1-spend/2-output Transfer, ~915 KB worst-case 4/4; the original design-phase target of ~52 KB typical / ~100 KB worst-case is deferred to a post-v1 AIR architectural pass (`uni-stark → batch-stark` per `doc/uno-p2-path-research.md` Path iii). **Bandwidth implication**: at 30 TPS worst-case 4/4, per-validator outbound ≈ 27 MB/s, slightly OVER the §1.4a 200 Mbps (25 MB/s) sustained budget and well under the burst budget (~125 MB/s). Since real traffic is dominated by the 1/2 common case (~520 KB × 30 TPS ≈ 16 MB/s, comfortably under the sustained budget), this is judged acceptable for v1 with a note that the §1.4a validator hardware profile may need to recommend 300 Mbps sustained instead of 200 Mbps if a high-4/4-mix adversarial load ever materializes. See §17.1 for the full bandwidth analysis.
+- `zk_proof` is a ref to a cell chain — Plonky3 STARK proof under the pinned §2.1 Option B FRI parameters. **Measured v1 envelope (2026-04-20, FRI Option B)**: ~520 KB for a 1-spend/2-output Transfer, ~915 KB worst-case 4/4; the original design-phase target of ~52 KB typical / ~100 KB worst-case is deferred to a post-v1 AIR architectural pass (`uni-stark → batch-stark` per `doc/uno-p2-path-research.md` Path iii). **Bandwidth implication at v1 `BLOCK_TX_CAP = 4`**: typical 1/2 mix gives ~520 KB × 4 TPS ≈ **~2 MB/s (~16 Mbps)** per-validator outbound; worst-case 4/4 mix gives ~915 KB × 4 ≈ **~3.6 MB/s (~29 Mbps)**. Both well inside the residential-fiber profile (§1.4a, 25–50 Mbps sustained), which is the key design consequence of the 2026-04-21 per-Tx pivot. A v2 return to 30 TPS/shard via block aggregation (§14, `doc/uno-aggregation-design.md` §-1) would collapse block-proof to ~420 KB/block regardless of 1/2 vs 4/4 mix, yielding ~420 KB/s — a ~5× bandwidth improvement at the cost of specialized prover hardware. See §17.1 for the full cell-tree cost analysis.
 
 `enc_ciphertext` layout (~580 B total, unchanged from v1 design pre-Plonky3):
 - 84 B: `Note` plaintext fields packed and aligned (11 B `d` + 32 B `pk_d` + 8 B `value` + 32 B `rseed` + 1 B padding = 84 B).
@@ -641,14 +643,14 @@ Inline field sizes:
 
 `mlkem_ct` layout: 1088 B ML-KEM-768 ciphertext, serialized via `CellString` (~9 cells).
 
-**Size breakdown** (typical 1-spend / 2-output tx):
+**Size breakdown** (typical 1-spend / 2-output tx, FRI Option B):
 - Inline tx body: `56 + 128 + 2×146 = 476` bytes.
 - Ref cell chain for 2 × `enc_ciphertext` (~580 B each, ~5 cells): ~1.4 KB with overhead.
 - Ref cell chain for 2 × `mlkem_ct` (~1088 B each, ~9 cells): ~2.4 KB with overhead.
-- Ref cell chain for `zk_proof` (~52 KB Plonky3 proof, ~420 cells): ~64 KB with overhead.
-- **Total: ~68 KB per typical tx.** Worst-case 4-spend / 4-output with 100 KB proof: ~135 KB.
+- Ref cell chain for `zk_proof` (~520 KB Plonky3 proof, ~4,200 cells): ~650 KB with overhead.
+- **Total: ~655 KB per typical tx.** Worst-case 4-spend / 4-output with ~915 KB proof: ~1.15 MB.
 
-Larger than a Halo2-based shielded tx (~15 KB) due to the STARK proof size. This is the intrinsic cost of PQ-native proving. Bandwidth impact analyzed in §5.9 and §7.4; stays within datacenter-validator budgets and is borderline tight for residential operators, a conscious trade against Phase 2 migration debt.
+Larger than a Halo2-based shielded tx (~15 KB) due to the STARK proof size; larger than the pre-pivot design-phase target (~68 KB / ~135 KB) by an order of magnitude, per the P.2 re-scoping in `doc/uno-p2-path-research.md`. This is the intrinsic cost of PQ-native proving at 180-bit conjectured soundness without a post-v1 `uni-stark → batch-stark` AIR rearchitecture. Bandwidth impact analyzed in §5.9 and §7.4; the 2026-04-21 per-Tx pivot (`BLOCK_TX_CAP = 4`) keeps per-validator bandwidth in residential-fiber territory despite the ~10× per-Tx proof bloat. A conscious trade against Phase 2 proof-system migration debt.
 
 **Canonical tx hash** (used by `spend_auth_sig` as the message it signs, and by `uno_getTransactionStatus` as the lookup key):
 
@@ -938,11 +940,11 @@ Wallets hold `fvk` or `ivk` + `sk_mlkem`. They sync by fetching per-block compac
 Trial-decrypt cost per filter-hit output ≈ **1.1 ms** (one Ristretto255 scalar multiplication for `s_dh = ivk · epk` ~1 ms + ML-KEM-768 decapsulation ~80 μs + hybrid KDF ~5 μs + ChaCha20-Poly1305 AEAD open ~10 μs).
 
 Concrete sync budget (with compact filters, the v1 default):
-- **Sustained load** (30 TPS × 2 outputs/tx, 16-bit filter tag, 2⁻¹⁶ FP rate): ~5.2 M outputs/day filtered down to ~80 false-positives + real hits for an active wallet. Total daily trial-decrypt work: **seconds**, not minutes.
-- **Burst load** (50 TPS × 2 outputs/tx): similar budget, trivial work on any device.
-- **Filter download bandwidth**: ~5 MB/day at 30 TPS under GCS encoding.
+- **Sustained load** (4 TPS × 2 outputs/tx @ 1 s blocks, 16-bit filter tag, 2⁻¹⁶ FP rate): ~691 K outputs/day filtered down to ~11 false-positives + real hits for an active wallet (`691,200 / 65536 ≈ 10.5`). Total daily trial-decrypt work: **sub-second**, not minutes.
+- **Worst-case 4/4 mix** (4 TPS × 4 outputs/tx): ~1.38 M outputs/day, ~21 false-positives/day; still sub-second on any device.
+- **Filter download bandwidth**: ~2.2 MB/day at 4 TPS under GCS encoding (~25 B/block × 86400 blocks/day). A v2 return to 30 TPS/shard would raise this to ~5 MB/day; v1 is ~2× cheaper.
 
-Mobile-viable without further optimization.
+Mobile-viable without further optimization, with extra headroom over the pre-pivot 30-TPS envelope.
 
 Three scan modes, ordered from v1 default to opt-in escape hatch:
 
@@ -975,11 +977,11 @@ Per-tx compute cost in the compute phase (Plonky3 / Goldilocks under `scheme_id 
 | State mutation (tree append + nullifier insert + filter accumulation + cell writes) | 6–9 ms |
 | **Total per tx, single-threaded, 1-spend/2-output** | **~25 ms** |
 
-**Serial TPS ceiling: 400 / 25 ≈ 16 TPS.** With parallel Plonky3 verify across `num_cores` workers (§13 P.3, **activation prerequisite**), the ceiling rises to **~50 TPS burst / 30 TPS sustained** on 4-core validator hardware, matching the design target (§1.4).
+**Serial verify ceiling: 400 / 25 ≈ 16 TPS** — well above the v1 `BLOCK_TX_CAP = 4`, so **serial verify alone already has ~4× headroom over the v1 TPS target**. With parallel Plonky3 verify across `num_cores` workers (§13 P.3), the per-tx verify drops to ~7 ms on 4-core hardware; 4 TPS × 7 ms = 28 ms per block — ~14× inside the 400 ms compute-phase budget. **Parallel verify is no longer a hard activation prerequisite at 4 TPS** — serial verify fits in 100 ms of the 400 ms compute phase. It remains a **strong recommendation / required-for-headroom-and-burst** posture: burst admission up to `BLOCK_TX_CAP = 4` still benefits from parallelism, and a v2 return to 30 TPS/shard (§14 aggregation) would immediately re-elevate parallel verify to a hard prerequisite. The §13 P.3 classification may therefore be relaxable from **activation prerequisite** to **strong recommendation** for v1 specifically; see §16 decision #28.
 
-This ceiling is **by design**. The trade-off: every user gets terminal privacy + PQ-native proving, validators run on commodity hardware, the chain does not market throughput. If sustained demand exceeds the ceiling, the response is proof aggregation (v2) — not block-rate adjustment and not weakening of privacy properties.
+This ceiling (v1 bandwidth-bound @ 4 TPS; verify-bound would be ~30 TPS parallel or ~16 TPS serial on 4 cores) is **by design**. The trade-off: every user gets terminal privacy + PQ-native proving, validators run on commodity-broadband hardware, the chain does not market throughput. If sustained demand exceeds the per-shard ceiling, the v1 response is **horizontal scale via additional wc=2a, wc=2b shardchains**, each running 4 TPS; block-level proof aggregation (which would enable 30 TPS/shard) is deferred to v2 per `doc/uno-aggregation-design.md` §-1.
 
-**Note on bandwidth**: Plonky3 proofs under the pinned FRI parameters are ~5× larger than Halo2 proofs (~52 KB typical vs ~10 KB). At 30 TPS × 52 KB × 100 validators = ~160 MB/s of inter-validator bandwidth during consensus — datacenter-feasible, tight on residential links. This is the principal cost of choosing Plonky3 over Halo2 with 128-bit conjectured soundness, accepted as the price of PQ-native proving with payment-chain-grade security.
+**Note on bandwidth**: Plonky3 proofs under the pinned FRI Option B parameters are ~520 KB typical (1-spend/2-output) / ~915 KB worst-case (4-spend/4-output) — ~50× larger than Halo2 proofs (~10 KB) and ~10× larger than the pre-pivot design target (~52 KB typical). At `BLOCK_TX_CAP = 4` × ~520 KB = **~2 MB/s per-validator outbound** (~16 Mbps at the typical 1/2 mix); worst-case 4/4 mix pushes this to ~27 Mbps but is rare. Inbound (receiving proofs from the `V-1` peer validators during catchain): symmetric. This fits comfortably in the §1.4a residential-fiber profile — the key consequence of the 2026-04-21 per-Tx pivot. Accepted as the price of PQ-native proving with payment-chain-grade (180-bit conjectured, 102-bit proven) soundness. A v2 aggregation pivot would collapse a block's 4 × 520 KB = 2 MB of per-Tx proofs into one ~420 KB block proof, reducing wire cost ~5× at the price of prover specialization.
 
 ---
 
@@ -1201,9 +1203,9 @@ Per-tx cost, single-threaded, 1-spend/2-output under `scheme_id = 0x01` (pinned 
 | State mutation (tree append × outputs, nf dict insert × spends, filter accumulate, stats) | 6–9 ms |
 | **Total (LRU-hit case)** | **~25 ms** |
 
-At target throughput 30 TPS, single-threaded verify consumes 30 × 25 ms = **750 ms** of compute per block — exceeding the ~400–500 ms compute-phase budget (§5.9). Parallel Plonky3 verify across `num_cores` workers (§13 P.3, **activation prerequisite**) cuts effective per-tx time to ~7 ms on 4-core hardware; 30 TPS then consumes ~210 ms, which fits. Parallel verify is not a later optimization — it is a precondition for the chain producing blocks at target TPS, and the release gate is accordingly a hard activation gate.
+At target throughput `BLOCK_TX_CAP = 4` (4 TPS @ 1 s blocks), single-threaded verify consumes 4 × 25 ms = **100 ms** of compute per block — well inside the ~400–500 ms compute-phase budget (§5.9). Parallel Plonky3 verify across `num_cores` workers (§13 P.3) cuts effective per-tx time to ~7 ms on 4-core hardware; 4 TPS then consumes ~28 ms — ~14× inside the compute-phase budget. **Parallel verify is therefore no longer a hard activation prerequisite at v1's 4 TPS** (as it was at the pre-pivot 30 TPS target, where serial would have been 750 ms > 500 ms budget). It remains a **strong recommendation** for burst headroom, for catchain-verify parallelism across peer candidate blocks, and to keep v2-return-to-30-TPS (§14 aggregation) a drop-in config change rather than a structural re-gate. See §16 decision #28 for the (relaxable) classification.
 
-**Verify bandwidth**: each proof is produced once but consumed many times. For a network of `V` validators, every tx's proof crosses the validator-to-validator catchain links `V − 1` times during consensus, plus once per future replaying node. At `V = 100`, 30 TPS, ~52 KB Plonky3 proofs (payment-chain FRI params), per-validator aggregate inbound proof bandwidth is ~160 MB/s — datacenter-feasible, tight on residential links. This is the principal cost of 128-bit conjectured soundness under Plonky3 and is accepted as the price of PQ-native proving with payment-grade security. See §7.6 for the axis analysis.
+**Verify bandwidth**: each proof is produced once but consumed many times. For a network of `V` validators, every tx's proof crosses the validator-to-validator catchain links `V − 1` times during consensus, plus once per future replaying node. At `V = 100`, `BLOCK_TX_CAP = 4`, ~520 KB Plonky3 proofs (FRI Option B, typical 1/2 shape): per-validator aggregate outbound proof bandwidth is 4 × 520 KB / s = ~2 MB/s ≈ **~16 Mbps**; worst-case 4/4 mix gives ~27 Mbps. This is consumer-broadband territory — a key design consequence of the 2026-04-21 per-Tx-on-chain pivot (§15 TPS row / `doc/uno-aggregation-design.md` §-1). Pre-pivot at 30 TPS × 52 KB × 100 validators this would have been ~160 MB/s, datacenter-only. Accepted as the price of PQ-native proving with payment-grade security; see §7.6 for the three-axis analysis.
 
 ### 7.5 Phase 4 — Scan (receiver-side, post-inclusion)
 
@@ -1231,7 +1233,7 @@ Cost on a single commodity core:
 - Real hits per day for an active wallet: tens
 - Daily CPU cost: seconds, not minutes
 
-Without compact filters (unfiltered scan path), cost at 30 TPS is ~24 min/day of trial-decrypt — tolerable on desktop, unusable on mobile. Compact filters are therefore a v1 activation requirement for mobile-first privacy UX, not a later optimization. See §5.8 for wallet-sync budget detail and §9.1 for the RPC surface.
+Without compact filters (unfiltered scan path), cost at v1 4 TPS is ~`691,200 × 1.1 ms = ~760 s = ~13 min/day` of trial-decrypt — tolerable on desktop, still uncomfortable on mobile. At a v2 return to 30 TPS/shard this rises to ~95 min/day, genuinely unusable on mobile. Compact filters are therefore a v1 activation requirement for mobile-first privacy UX, not a later optimization, and remain so under any v2 TPS uplift. See §5.8 for wallet-sync budget detail and §9.1 for the RPC surface.
 
 **Audit vs scan**: the scan path uses `ivk` (detection + decryption of incoming notes). The audit path uses `fvk` (full viewing key), which includes `ovk` and a derived `sk_mlkem` so that the auditor can also decrypt historical outgoing notes. Both paths are consensus-independent and happen post-inclusion.
 
@@ -1248,7 +1250,7 @@ Without compact filters (unfiltered scan path), cost at 30 TPS is ~24 min/day of
 
 1. **Prove time** — a one-off UX cost borne on the sender's device. Scales with the sender's hardware, not with network size. Slow prove on mobile is an inherent property of shielded L1 and is orthogonal to verify budget. Optimizations here (GPU proving, Plonky3 tuning, delegated proving research) help UX but not consensus throughput.
 2. **Verify time** — a recurring consensus cost borne by every validator. Scales with validator count. Sets the block-throughput ceiling. Parallel verify (§13 P.3) is the only within-v1 lever; proof aggregation (v2+) and Tachyon-style PCD compression (Phase 3) are the out-of-v1 levers.
-3. **Proof bandwidth** — an inter-validator cost borne `V − 1` times per tx during catchain propagation, plus once per replay. Scales with proof size (~52 KB Plonky3 typical under pinned FRI params). The PQ-native-with-payment-grade-security trade: Plonky3 proofs at 128-bit conjectured soundness are ~5× larger than Halo2 would have produced; we accepted this cost in exchange for no Phase 2 migration debt and stronger soundness margin.
+3. **Proof bandwidth** — an inter-validator cost borne `V − 1` times per tx during catchain propagation, plus once per replay. Scales with proof size (~520 KB Plonky3 typical / ~915 KB worst-case under FRI Option B — an order of magnitude above the pre-pivot ~52 KB design target; §17.1 and `doc/uno-p2-path-research.md` for the architectural trace). At v1 `BLOCK_TX_CAP = 4`, per-validator outbound ~2 MB/s ≈ 16 Mbps, consumer-broadband. The PQ-native-with-payment-grade-security trade: Plonky3 proofs at 180-bit conjectured / 102-bit proven soundness are an order of magnitude larger than Halo2 would have produced; we accepted this cost (and chose `BLOCK_TX_CAP = 4` for the per-Tx pivot) in exchange for no Phase 2 migration debt and stronger soundness margin while staying on residential-fiber-grade validator links.
 
 An optimization that improves one axis at the expense of another is a real trade-off and must be evaluated against which axis is the currently binding constraint, not against an aggregate "performance" metric. Example: choosing Plonky3 over Halo2 costs prove time (~4–6× slower) and proof bandwidth (~5× larger), but it delivers native PQ and removes the Phase 2 migration debt (§6). Likewise, choosing `num_queries=128` over Plonky3's `num_queries=84` default costs ~40% prove time and ~30% proof size, but adds ~28 bits of soundness margin — a rational trade for a native-value L1.
 
@@ -1447,14 +1449,23 @@ UnoConfig :=
 | 1-spend / 2-output (typical) | 100k + 10·476 + 50k + 100k | ~255 k | 0.000255 |
 | 4-spend / 4-output (worst case) | 100k + 10·1380 + 200k + 200k | ~514 k | 0.000514 |
 
-**Annual burn estimate** at sustained 20 TPS of typical (1-spend/2-output) txs:
+**Annual burn estimate at v1 `BLOCK_TX_CAP = 4` (4 TPS sustained per shardchain, typical 1-spend/2-output txs):**
 ```
-20 × 86400 × 365 × 255k nano-UNO  ≈  1.6 × 10¹⁴ nano-UNO
-                                   =  160 k UNO
-                                   ≈  0.76 % of 21 M supply per year
+4 × 86400 × 365 × 255k nano-UNO  ≈  3.22 × 10¹³ nano-UNO
+                                  =  ~32.2 k UNO per shard-year
+                                  ≈  0.153 % of 21 M supply per year per shard
 ```
 
-Early-phase TPS is lower than 20, so real-world burn at launch will be a fraction of this. The rate approaches the target 1-2% asymptotically as adoption grows, never reaching a level that threatens asset continuity (131 years to halve at steady 0.76%).
+**Pre-pivot reference point** (sustained 20 TPS of typical txs): ~160 k UNO/year, ~0.76 % of supply — the original fee schedule was calibrated against this target (~1 % annual-burn asymptote).
+
+**Open decision — fee-schedule recalibration:** the v1 per-Tx pivot (2026-04-21) cuts per-shard throughput ~5× from the pre-pivot 20 TPS target, which cuts the annual fee burn ~5× for the same fee schedule. Two options, **not yet decided**:
+
+1. **Raise fees 5× to hold the ~1 % annual-burn target.** `min_fee_nano = 500,000` (0.0005 UNO), `fee_per_byte_nano = 50`, `fee_per_spend_nano = 250,000`, `fee_per_output_nano = 250,000`. Typical tx cost rises from 0.000255 UNO → 0.001275 UNO (~$0.01 at a nominal $10/UNO market); still ~1000× cheaper than Bitcoin/Ethereum, comparable to Zcash/Monero. Preserves the original economics design intent.
+2. **Accept slower burn as a v1 launch-phase property.** At 0.153 %/shard/year, full-supply halving takes ~450 years of single-shard saturation; economically harmless, and scaling to additional shardchains (wc=2a, wc=2b) re-aggregates the burn rate proportionally (N shards at full 4 TPS each → N × 0.153 % = back to ~1 % at N ≈ 6–7 shards). This treats the pivot-induced burn drop as a feature, not a bug: early-phase economics are deliberately gentle.
+
+The arithmetic above is launched here for review; the decision is flagged as open in §16 decision #37 and should be closed before mainnet. Launch with Option 2 + a **governance trigger** (auto-escalate fees 5× once aggregate v1 + v2a + v2b shard-hours sustain > 80 % saturation over a rolling quarter) is a middle path worth evaluating.
+
+Early-phase per-shard TPS is lower than 4 in any case, so real-world burn at launch will be a fraction of either column. The original framing — fee schedule approaches the target asymptote as adoption grows, never threatening asset continuity — remains directionally correct under both options.
 
 **Governance path**: all four fee fields are mutable via the standard ConfigParam 11 voting mechanism if post-launch observations require rebalancing. `max_spends_per_tx`, `max_outputs_per_tx`, and `tree_depth` are effectively consensus-binding (mutating them breaks AIR public-input shape) and should be treated as frozen after genesis.
 
@@ -1952,11 +1963,11 @@ Every non-trivial choice below was made against the alternative space of publish
 25. **ML-KEM hybrid note encryption shipped in v1 — decided.** The HNDL window on on-chain ciphertexts is closed at v1 ship, not deferred to Phase 2. Cost: address size grows from ~43 B to ~1.2 KB (ML-KEM-768 pubkey); tx grows by ~1 KB per output (ML-KEM ciphertext). Accepted as the UX and bandwidth cost of taking "PQ-native privacy L1" seriously. KEM combiner follows eprint 2025/1444 split-KDF construction.
 26. **Main-account seed derivation — decided: `uno_seed = BLAKE2b("uno-seed-v1" ‖ main_tos_seed)`.** A user with any TOS account automatically has a wc=2 identity; no separate key management. Specification-only change, zero runtime cost, determines the UX of cross-workchain identity for the life of the chain.
 27. **Compact block filters shipped in v1 — decided.** 16-bit per-output detection tags + GCS-encoded per-block filter. Wallet scan cost drops ~500× at negligible validator cost (end-of-block compilation, ~1 ms/block). Activation requirement for mobile-viable privacy UX (§7.5).
-28. **Parallel verify as activation prerequisite — decided (upgraded from "release gate").** The chain is structurally unable to produce 1 s blocks at target TPS without parallel Plonky3 verify across `num_cores` workers (§13 P.3). Not a later optimization; not a release gate; a precondition for the chain running at all. Encoded in §1.2 goals, §7.4 budget, and §13 roadmap as blocking.
+28. **Parallel verify — decided as activation prerequisite; relaxable to "strong recommendation" under v1 `BLOCK_TX_CAP = 4` (v1-2b re-review).** Original rationale: at the pre-pivot 30 TPS target, the chain was structurally unable to produce 1 s blocks without parallel Plonky3 verify across `num_cores` workers (§13 P.3), since 30 × 25 ms = 750 ms > 400 ms compute budget. After the 2026-04-21 per-Tx pivot, 4 × 25 ms = 100 ms serial fits comfortably inside the 400 ms budget, so parallel verify becomes a **strong recommendation / required-for-burst-and-v2-headroom** rather than a structural precondition. §13 P.3 remains ✅ landed (`ParallelVerifyPool` shipped); the classification label in the roadmap may be softened for v1 specifically. A v2 return to 30 TPS/shard (§14 aggregation) would immediately re-elevate this to a hard activation gate; the code path is therefore retained at full strength and the relaxation is purely a goals-statement / release-gate bookkeeping change. See §5.9 and §7.4 for the updated compute-phase math.
 29. **Value commitment / binding signature — decided: removed.** Balance is enforced by an in-circuit AIR constraint (§3.3), not by a Pedersen homomorphic trick. Removes 32 B per spend/output + 64 B per tx from the wire format. The Orchard/Halo2 trick was an optimization for a context where in-circuit u64 arithmetic was expensive; Goldilocks-native 64-bit arithmetic makes it obsolete.
 30. **Ownership claim — decided: ivk-commitment hash-chain binding (no in-circuit curve ops).** §4.2 claim 3 is reformulated from Orchard's in-circuit `pk_d = ivk · g_d` to a pure hash-chain: `ivk_commitment = Poseidon2("uno-ivk-cm-v1", ivk, d)` is published in the address (§2.6) and bound into `cm` (§3.2); the AIR proves `ivk_commitment` matches an `ivk` hash-chained from `uno_seed`. **No curve operations inside the AIR.** The sole adversary-relevant property — "only the holder of `uno_seed` can produce a valid spend proof" — is preserved under the Poseidon2 random-oracle model.
 31. **Spend-auth `rk` — decided: fresh per-spend Ristretto255 key, no `ak` randomization.** §2.5 is simplified from Orchard's `rk = ak + α·G` randomization scheme. Each spend samples a fresh `rsk ∈ scalars(Ristretto255)`, publishes `rk = rsk · G`, and signs `tx_hash` with Schnorr. No long-term spend-auth key `ak` exists; it is removed from `fvk`. Audit recovery of spend history goes through `ovk`-decrypted `out_ciphertext`, not through `rk` inversion. Rationale: Orchard's `rk-ak` randomization required in-circuit curve ops (claim 6 in earlier drafts); removing it eliminates the last curve op from the AIR, consistent with §2.5.
-32. **Block-filter encoding — decided: GCS over raw 16-bit tags, `P=15, M=2¹⁶`, no secondary hash.** §2.8.1 pins the exact encoding as a consensus-binding spec. `filter_tag` is already cryptographic (§2.8), so no BIP-158-style keyed second hash is needed; GCS operates directly on the sorted deduplicated u16 multiset. Expected size ~100–150 B per block at 30 TPS, ~180-260 B at 50 TPS burst. The filter is a **derived view**, not consensus state — any full node reconstructs it from on-chain data. Byte-identical across every implementation; wallet SDKs match validator output by spec, not by keyed-hash agreement.
+32. **Block-filter encoding — decided: GCS over raw 16-bit tags, `P=15, M=2¹⁶`, no secondary hash.** §2.8.1 pins the exact encoding as a consensus-binding spec. `filter_tag` is already cryptographic (§2.8), so no BIP-158-style keyed second hash is needed; GCS operates directly on the sorted deduplicated u16 multiset. Expected size ~20–30 B per block at v1 `BLOCK_TX_CAP = 4` (8 tags typical 1/2 mix), ~35–45 B worst-case 4/4 mix; a v2 return to 30 TPS/shard would restore the pre-pivot ~100–150 B per block / ~180–260 B burst envelope. The filter is a **derived view**, not consensus state — any full node reconstructs it from on-chain data. Byte-identical across every implementation; wallet SDKs match validator output by spec, not by keyed-hash agreement.
 33. **FRI security parameters — decided (amended 2026-04-20): `log_blowup = 3`, `num_queries = 52`, `query_proof_of_work_bits = 24`.** §2.1 pins these as consensus-binding ("Option B"). Gives **180-bit conjectured / 102-bit proven classical soundness**, 90-bit conjectured / 51-bit proven quantum. The design-target bar is 128-bit conjectured classical; the pin sits 40 % above that bar. Above Plonky3/SP1/AggLayer defaults (`num_queries=84-100`, ~100-bit conjectured) because a soundness break on a privacy L1 with fixed-supply native asset enables unauthorized value creation, not just cross-chain bridge inconsistency.
 
     **Amendment history**: the original v1 decision pinned `(log_blowup = 2, num_queries = 128, pow_bits = 16)` which gave 272 conjectured / 144 proven bits — more than 2× the design goal, paying ~57 % extra proof bytes for zero realistic-adversary security gain. The K-fri-analysis 15-config parameter sweep (`doc/uno-fri-param-analysis.md`) identified Option B as the best trade-off at the same soundness tier (180 bits, well above 128). Measured delta at 4/4 worst case: proof 2.22 MB → 984 KB (−57 %); verify 55.7 ms → 24.7 ms (−56 %); prove 124 ms → 354 ms (+185 %, acceptable because prove is client-side per §1.4a).
@@ -1965,7 +1976,7 @@ Every non-trivial choice below was made against the alternative space of publish
 34. **ConfigParam slot for UnoConfig — decided: `ConfigParam 84`.** §10.2 slot allocation follows the TOS convention of placing workchain-specific / bridge-adjacent protocol parameters in the 70s-80s cluster (existing usage: 71-73 oracle bridges, 79/81/82 jetton bridges). 84 is the first free slot after the cluster. Rejected: `26` / `27` (core-band gaps that TOS/TON upstream may backfill with future low-numbered core-protocol extensions — clash risk); `100+` (arbitrary, breaks spatial locality with 71-82). Canonical registry entry added to `doc/ConfigParam.md`.
 35. **Public-input byte encoding — decided: Plonky3-canonical little-endian u64 per Goldilocks element; 256-bit inputs split into 4 × u64 chunks in LE order with `mod p_Goldilocks` reduction.** §4.3 step 4 pins the exact byte-level spec. Total serialized length is `64 + 64·spend_count + 72·output_count` bytes. A golden fixture `uno/test/golden/public-inputs-v1.hex` enforces Rust (A4) ↔ C++ (A5) byte-identical output as a P.1 gate. Rejected: big-endian (breaks Plonky3 convention; no benefit); Bincode / serde (couples spec to crate version); application-specific formats (audit burden without gain). The `mod p_Goldilocks` reduction introduces ≈ 2⁻³⁰ aggregate bias on pseudo-random 256-bit inputs, negligible for soundness; adversary-controlled inputs are asserted `< p_Goldilocks` at admission.
 36. **Total supply + genesis distribution — decided: 21,000,000 UNO, 60% airdrop / 25% treasury / 15% team, no v1 vesting.** §10.3 pins the specific allocation. 21 M matches Bitcoin / Zcash cap, reinforcing the "digital gold + PQ-native + privacy-native" scarcity narrative (§0). 60% airdrop bias signals community-first without investor allocation; 25% treasury handles ecosystem grants / audits / incentives; 15% team is lean for an independent (non-VC-backed) project. No on-chain vesting in v1: wc=2 has no contracts and no time-locked tx type, so team allocation ships unvested at genesis under multisig-protected off-chain legal custody. v1.1 may introduce `uno_timelocked_transfer` with a `min_spend_block` public input if vesting becomes important enough to warrant scheme_id bump. Rejected: 100M / 1B supply (dilutes scarcity narrative); investor/presale allocation (VC-free posture); vesting-via-wc=0-staging (violates §1.5 bridgelessness); in-v1 timelocked tx (adds 4–6 weeks of AIR work for a launch-only concern).
-37. **Fee schedule at launch — decided: `min_fee_nano=100,000`, `fee_per_byte_nano=10`, `fee_per_spend_nano=50,000`, `fee_per_output_nano=50,000`.** Calibrated by target annual burn rate of ~1% of 21 M supply at sustained 20 TPS; actual launch-phase burn is fraction of that and asymptotically approaches 1-2% as adoption grows. Typical 1-spend/2-output tx costs ~0.000255 UNO; worst-case 4/4 costs ~0.000514 UNO. Comparable to Zcash/Monero fee level, ~1000× cheaper than Bitcoin/Ethereum. Governance-upgradable via ConfigParam 11 voting if observed economics drift. Rejected: higher min_fee (DoS floor is handled by per-IP rate limit + proof verify cost + per-spend/output structural cost; raising `min_fee` to $0.01-level creates friction for legitimate users); lower fees (insufficient DoS floor and too-slow burn). `nullifier_lru_capacity = 1,000,000` pinned at the same time as an advisory (non-consensus) parameter.
+37. **Fee schedule at launch — OPEN (v1-2b re-review pending): `min_fee_nano=100,000`, `fee_per_byte_nano=10`, `fee_per_spend_nano=50,000`, `fee_per_output_nano=50,000` remains as the provisional launch pin, but is flagged for explicit re-decision pre-mainnet.** Original calibration targeted ~1 % of 21 M supply annual burn at sustained 20 TPS; the 2026-04-21 per-Tx pivot (see decision #21, `doc/uno-aggregation-design.md` §-1) cuts per-shard TPS from 20 → 4, cutting annual burn ~5× for the same fee schedule (from ~0.76 %/year → ~0.153 %/year per shard; see §8 economics table). Typical 1-spend/2-output tx still costs ~0.000255 UNO. **Two open options** (§8): (a) **raise fees 5× to hold the ~1 % burn target** — preserves original economics intent at the cost of a ~5× UX fee bump that remains ~1000× cheaper than BTC/ETH; (b) **accept slower burn as a v1 launch-phase property** — relies on horizontal shard scaling to re-aggregate the burn rate proportionally (N shards × 0.153 % → ~1 % at N ≈ 6–7 shards); middle-path governance trigger also available. **This decision needs human arbitration before mainnet.** Rejected (unchanged): higher min_fee to $0.01-level (creates friction for legitimate users); zero-fee (insufficient DoS floor). Governance-upgradable via ConfigParam 11 voting; a v1 launch with option (b) is reversible via a single ConfigParam vote if option (a) proves preferable in practice. `nullifier_lru_capacity = 1,000,000` pinned at the same time as an advisory (non-consensus) parameter and is unaffected by the v1-2b pivot.
 38. **Workchain descriptor flags — decided: no `UNO_FLAG`; `flags = 0` mandatory, `basic = 1`, routing via `vm_version = 0x554E4F31` ("UNO1").** The TLB schema `block.tlb:669` enforces `flags:(## 13) { flags = 0 }` as an invariant; any "new bit" would be a schema-breaking hardfork. Earlier drafts of §10.1 contained a placeholder `flags = UNO_FLAG` which was removed. Workchain identity at the protocol layer is conveyed by `vm_version` exactly as EVM (`0x45564D`) and TVM (`0x00000000`) do; the compute-phase dispatcher (§8.2) routes by `workchain_id`, not by any flag bit. A1's `workchain.h` `kUnoFlag` constant is retracted during integration.
 39. **Mainnet `chain_id` — decided: `0x554E4F4D` ("UNOM"); testnet keeps `0x554E4F54` ("UNOT").** Symmetric ASCII pair, last byte distinguishes network (`T`estnet / `M`ainnet). Distinct from TOS masterchain `global_id` (ConfigParam 19): that lives in a different layer and controls block-header / wallet-signature domain; Uno's `chain_id` lives in `UnoConfig` (ConfigParam 84) and only binds Uno tx Fiat-Shamir transcripts. Rejected: `0x554E4F31` ("UNO1") — collides with `vm_version`, introduces ambiguity; pure integer (e.g. `1`) — collides with TOS `global_id` semantics and loses the hex-dump readability.
 40. **wc=2 validator reward mechanism — decided: reuse ConfigParam 14 `basechain_block_fee` uniformly, no wc=2-specific premium.** The existing TOS block-create-fee mechanism (1.0 TOS per non-masterchain block, minted at masterchain) applies to wc=2 producers automatically; no new ConfigParam, no UnoConfig extension, no changes to TOS core. Although wc=2 bears heavier per-block compute cost than wc=0/wc=1 (Plonky3 verify, larger blocks, LRU RAM), giving wc=2 a premium would create validator-slot contention imbalance across ConfigParam 28's shard assignment — validators rotate across all shards over epochs, so long-run expected reward is equalized without per-shard rate differentiation. Governance can raise `basechain_block_fee` uniformly via ConfigParam 11 if the aggregate validator compensation becomes insufficient. Rejected: wc=2-specific ConfigParam field (TLB schema extension for a problem that can be handled uniformly); in-block tip mechanism (complexity without benefit under simplex consensus).
@@ -2008,15 +2019,15 @@ All over-sized data is stored as **cell trees** using the standard TOS idiom.
 
 | Artifact | Raw size | Representation | Cells | Walk depth |
 |---|---|---|---|---|
-| Plonky3 proof (typical 1-spend/2-output, pinned FRI params) | ~52 KB | contiguous byte blob via `CellString` | ~420 | ~5 levels |
-| Plonky3 proof (4-spend/4-output worst case) | ~100 KB | contiguous byte blob via `CellString` | ~800 | ~5 levels |
+| Plonky3 proof (typical 1-spend/2-output, FRI Option B pinned) | ~520 KB | contiguous byte blob via `CellString` | ~4,200 | ~6 levels |
+| Plonky3 proof (4-spend/4-output worst case) | ~915 KB | contiguous byte blob via `CellString` | ~7,400 | ~6 levels |
 | `enc_ciphertext` (per output) | ~580 B | `CellString` | ~5 | 1 level |
 | `mlkem_ct` (per output) | 1088 B | `CellString` | ~9 | 1 level |
 | Commitment-tree frontier (32 Poseidon2-Goldilocks siblings) | ~1 KB | linked chain | ~8 | 1 level |
 | Anchor window (100 roots) | ~3.2 KB | ring buffer cell chain | ~25 | 1–2 levels |
 | Nullifier `vm::Dictionary` at 10 M | ~500 MB | 256-bit-keyed sparse dict | ~5 M | ~24 levels |
 
-Each cell carries ~32 bytes of representation-hash and depth metadata, so a 40 KB proof pays ~10 KB of cell-tree overhead (≈ 24% bloat). This is the fixed cost of persisting non-trivially-sized artifacts in the cell model; we accept it.
+Each cell carries ~32 bytes of representation-hash and depth metadata, so a 520 KB proof pays ~130 KB of cell-tree overhead (≈ 25 % bloat; ~4,200 cells × ~32 B). This is the fixed cost of persisting non-trivially-sized artifacts in the cell model; we accept it.
 
 ### 17.2 Concrete mitigations in v1
 
@@ -2027,7 +2038,7 @@ Each cell carries ~32 bytes of representation-hash and depth metadata, so a 40 K
 
 ### 17.3 Cell-count scaling frontier
 
-Plonky3 proofs under the pinned FRI parameters (40–100 KB per tx) translate to 320–800 cells per proof. Tractable, but it makes **cell count per tx** — not inline bit width — the binding scaling axis. Proof-chain traversal must keep ≤ 5 levels; use all four refs per internal node where possible.
+Plonky3 proofs under the FRI Option B pin (~520 KB typical, ~915 KB worst-case per tx — per P.2 measurement, `doc/uno-p2-path-research.md`) translate to ~4,200–7,400 cells per proof. Tractable, but it makes **cell count per tx** — not inline bit width — the binding scaling axis. Proof-chain traversal must keep ≤ 6 levels (raised from the pre-pivot ~5-level target to accommodate the ~10× larger proofs); use all four refs per internal node where possible.
 
 Phase 3 (Tachyon-compatible) would move `enc_ciphertext` and `mlkem_ct` off-chain entirely, shrinking on-chain per-tx to just the proof + commitments + nullifiers. This is the long-term route to reducing cell-tree scaling pressure.
 
