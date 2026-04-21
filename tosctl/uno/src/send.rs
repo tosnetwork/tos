@@ -7,23 +7,25 @@
 //! proof bytes embedded in each emitted `Transfer` are real STARK proofs
 //! that `uno_plonky3_ffi::verify(proof, pi)` accepts.
 //!
-//! # ⚠️ V1-3b pending: daemon wire-encoding parity
+//! # Wire encoding
 //!
-//! `transfer::encode_transfer_wire` uses a flat self-contained byte layout
-//! (see `transfer.rs` module docstring). The daemon's
-//! `uno/core/transaction.cpp::decode_transfer_bytes` expects TOS BoC
-//! (Cell tree). These DO NOT interoperate today. This means:
+//! Production submission path (`run_send`) encodes via
+//! `boc_encode::encode_transfer_boc` — produces TOS BoC bytes whose
+//! Cell tree matches `uno/core/transaction.cpp::encode_transfer`
+//! exactly (V1-3b). The daemon's `uno_sendTransfer` RPC feeds bytes
+//! through `std_boc_deserialize` and walks the Cell tree, so this is
+//! the format the daemon actually accepts.
 //!
-//! - `--dry-run` and offline tests work end-to-end within tosctl-uno.
-//! - Actual `uno_sendTransfer` RPC submission to a real TOS daemon WILL
-//!   be rejected at the daemon's BoC decoder until V1-3b lands.
-//! - `tests/send_roundtrip.rs` uses tosctl-uno's OWN decoder; passing is
-//!   NOT proof the daemon would accept the bytes.
+//! Offline test helper `test_build_transfer` still uses
+//! `transfer::encode_transfer_wire` (flat self-contained layout) so
+//! `tests/send_roundtrip.rs` can round-trip within tosctl-uno using
+//! its own `decode_transfer_wire`. That flat encoding is NOT daemon-
+//! compatible; it's intentionally preserved only for the offline
+//! pipeline-plumbing test.
 //!
-//! V1-3b resolution path: path-dep `tosctl/src/block` (`chain_block`)
-//! crate → emit a Cell tree whose shape matches
-//! `uno/core/transaction.cpp::encode_transfer` → round-trip against a
-//! real daemon build in an integration test.
+//! Daemon chunk-chain cap was simultaneously raised
+//! (`uno/core/transaction.cpp::kChunkChainMaxChunks` 2048 → 8192) to
+//! cover the v1 worst-case ~915 KB zk_proof shape.
 //!
 //! # Pipeline
 //!
@@ -210,9 +212,19 @@ pub async fn execute(args: &SendArgs) -> Result<SendSummary> {
     let signed_tx = sign_spends(tx, &sel.rsk_keys);
 
     // (i) Serialize, submit (unless dry-run).
+    //
+    // V1-3b: route through the BoC encoder (daemon-compatible) rather
+    // than the flat encoder (tosctl-uno-internal only). The daemon's
+    // uno_sendTransfer RPC feeds the bytes through std_boc_deserialize
+    // and walks a Cell tree; the flat encoder output would be rejected
+    // before any verification runs. See boc_encode::encode_transfer_boc
+    // for the Cell-tree shape spec (mirrors uno/core/transaction.cpp::
+    // encode_transfer). The flat encoder is retained for the offline
+    // send_roundtrip integration test, which does not exercise the
+    // daemon decoder.
     let tx_hash = canonical_tx_hash(&signed_tx);
-    let tx_bytes = encode_transfer_wire(&signed_tx)
-        .context("encoding Transfer to wire bytes")?;
+    let tx_bytes = crate::boc_encode::encode_transfer_boc(&signed_tx)
+        .context("encoding Transfer to BoC bytes")?;
 
     let submitted = if args.dry_run {
         None
@@ -994,6 +1006,11 @@ pub fn test_build_transfer(
     let tx = build_transfer(fvk, recipient, &sel, anchor, chain_id, expiry_block, memo)?;
     let signed = sign_spends(tx, &sel.rsk_keys);
     let hash = canonical_tx_hash(&signed);
+    // Test helper intentionally stays on the flat `encode_transfer_wire`
+    // so `tests/send_roundtrip.rs` can round-trip through the
+    // tosctl-uno-internal `decode_transfer_wire`. Production submission
+    // (run_send) uses `encode_transfer_boc` instead; see comment above
+    // on the tx_bytes line in `run_send`.
     let bytes = encode_transfer_wire(&signed)?;
     Ok((signed, bytes, hash))
 }
