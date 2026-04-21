@@ -6,9 +6,10 @@ new §16 decision; closes the §3.4 ~100 KB envelope gap identified in
 UNO has not launched, so the §4.1 format lands at v1 directly — there is
 no prior deployed format to amend.
 
-**Implementation progress:** A1 ✅, A2 🟡 (A2-1/2a/2b/2c/3a/3b/3c-i/3c-ii/3c-iii
-done; A2-3c-iv/4 remaining), A3–A8 ⬜. See §4.1 and §6 for the per-phase
-status table.
+**Implementation progress:** A1 ✅, A2 ✅ (all sub-phases complete;
+single-slot in-circuit FRI verification works end-to-end on real 1/1
+Transfer proofs — see `doc/uno-aggregation-metrics.md`). A3–A8 ⬜.
+See §4.1 and §6 for the per-phase status table.
 
 ## 0. Executive summary
 
@@ -380,7 +381,7 @@ soundness).
 | Phase | Status | Scope | Landmark |
 |------|--------|------|----------|
 | A1   | ✅ DONE       | Design + scaffolding | This doc + `aggregator.rs` / `verifier_air.rs` skeleton |
-| A2   | 🟡 IN PROGRESS | Proof-of-concept: 1-Tx "aggregation" | End-to-end prove+verify for N=1; functional test |
+| A2   | ✅ DONE       | Proof-of-concept: 1-Tx "aggregation" | End-to-end prove+verify for N=1 (9-STARK bundle on 1/1 Transfer proof) |
 | A3   | ⬜ PENDING    | 4-Tx aggregation + correctness tests | Fixture-based 4/4 aggregated proof; cross-impl parity |
 | A4   | ⬜ PENDING    | 30-Tx aggregation + performance | Shape_matrix-style bench; ensures ≤ 100 KB block proof |
 | A5   | ⬜ PENDING    | §4.1 wire format lands | Transfer struct + `UnoBlockExtra` as the v1 launch format |
@@ -411,11 +412,29 @@ own commit and set of adversarial tests.
 | A2-3c-i   | ✅ DONE | Full transcript driver — pre-PCS + FRI prefix (`alpha, zeta, fri_alpha, betas, query_indices`) | 6 (3 shapes parity + prefix invariant + 2 structural) | `bfe8cc821` |
 | A2-3c-ii  | ✅ DONE | FRI arithmetic primitives — `fold_row`, `eval_final_poly_horner`, `final_eval_x` | 11 (fold-row × 4 + final-poly × 4 + final-x × 2 + helper × 1) | `a6e652afe` |
 | A2-3c-iii | ✅ DONE | Merkle-path reference — `hash_leaf_row`, `compress_pair`, `verify_merkle_path` | 10 (hash × 4 + compress × 2 + verify × 4) | `9b0795533` |
-| A2-3c-iv  | ⬜ PENDING | In-circuit FRI-AIR (fold-chain + Merkle path as AIR constraints) | N/A | — |
-| A2-4      | ⬜ PENDING | Single-slot VerifierAir end-to-end prove+verify | N/A | — |
+| A2-3c-iv-a | ✅ DONE | Multi-matrix Merkle (reference) — quot-commit leaf shape | 6 | `dad26a269` |
+| A2-3c-iv-b | ✅ DONE | `open_input` arithmetic — query_x + α-batched quotient | 12 | `f00bdf575` |
+| A2-3c-iv-c | ✅ DONE | Full pure-Rust FRI verifier + query-PoW Fiat-Shamir fix | 11 (positive+adversarial+regression) | `3c5f6a17f` |
+| A2-3c-iv-d-1 | ✅ DONE | Merkle-path AIR (narrow leaf) — trace+checker | 12 | `3f8915c7e` |
+| A2-3c-iv-d-2 | ✅ DONE | MerklePathAirV1 `Air<AB>` + real STARK | 10 STARK | `0d51b4846` |
+| A2-3c-iv-d-3 | ✅ DONE | Poseidon2 identity in MerklePathAirV1 | +2 forged-digest | `470b6af02` |
+| A2-3c-iv-d-4 | ✅ DONE | FoldAir trace+checker (binary Lagrange fold) | 15 | `d6e4da973` |
+| A2-3c-iv-d-4-2 | ✅ DONE | FoldAirV1 `Air<AB>` + STARK | 13 | `b265fb5fd` |
+| A2-3c-iv-d-5 | ✅ DONE | α-reduction AIR trace+checker | 17 | `ff796c35b` |
+| A2-3c-iv-d-5-2 | ✅ DONE | AlphaReductionAirV1 `Air<AB>` + STARK | 12 | `99b9cf3b5` |
+| A2-3c-iv-d-6 | ✅ DONE | Single-query orchestration (α + fold cross-binding) | 8 | `da3180a7e` |
+| A2-3c-iv-d-7-a | ✅ DONE | Wide-leaf hash AIR trace+checker (W = RATE·k) | 18 | `021611d83` |
+| A2-3c-iv-d-7-b | ✅ DONE | LeafHashAirV1 `Air<AB>` + P2 + STARK | 11 | `e8a4127e7` |
+| A2-3c-iv-d-7-c | ✅ DONE | Partial-last-block (widths 4k+r; trace-commit W=1305) | 4 net | `d9394cb20` |
+| A2-3c-iv-d-7-d | ✅ DONE | `compression_path_air` (digest → root) | 10 | `6461f34da` |
+| A2-3c-iv-d-8-a | ✅ DONE | query_verifier + trace-commit Merkle chain | 4 | `2e039648a` |
+| A2-3c-iv-d-8-b | ✅ DONE | query_verifier + quotient-commit Merkle chain | 2 | `a5f02db2c` |
+| A2-3c-iv-d-8-c | ✅ DONE | query_verifier + per-round commit-phase Merkle | 3 | `b20a3ce66` |
+| A2-4      | ✅ DONE | Column-budget / feasibility measurement → `doc/uno-aggregation-metrics.md` | — | *this sub-phase* |
 
-**Crate test count at end of A2-3c-iii:** 133 Rust tests, all green; 16 C++
-§12 tests still pass; consensus-binding FRI pin unchanged.
+**Crate test count at end of A2-4:** 303 Rust tests, all green
+(128-core parallelism: ~3m38s full suite). 16 C++ §12 tests still
+pass. Consensus-binding FRI pin unchanged.
 
 ### 4.2 Landed work
 
