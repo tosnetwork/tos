@@ -227,8 +227,15 @@
 // Value squeezed on SAMPLE rows; equal to out_buf_local[out_buf_len_local - 1].
 #define SAMPLED_VALUE (OBSERVED_VALUE + 1)
 
-// Total column width of a ChallengerAir trace row.
-#define WIDTH (SAMPLED_VALUE + 1)
+// Base-of-row offset for the shared Poseidon2-w8 sub-AIR block.
+// This block is populated on EVERY row — it carries a valid
+// permutation witness for SOME input (zero-state on non-DUPLEX
+// rows, the duplex-input state on DUPLEX rows). The DUPLEX-row
+// constraints (A2-2c) gate "inputs match state_local ∥ in_buf"
+// and "outputs match state_next[0..8]" with `is_duplex`.
+#define P2_BLOCK (SAMPLED_VALUE + 1)
+
+
 
 // Per-block maximum aggregated Transfer count. See design doc §2.3.
 //
