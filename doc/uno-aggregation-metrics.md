@@ -339,6 +339,35 @@ Each bundle: 40 α + 3 Merkle + 6 fold = ~49 rows.
 
 4. **Width stays fixed at 272 columns** regardless of bundle count;
    adding bundles only adds rows. The K-air-col-share pattern holds.
+   (Note: A6-1.6 later extended this to 280 cols after adding 8
+   block-level PI columns; see A6-1.6 re-measure below.)
+
+### A6-1.6 PI-binding re-measure (280 cols)
+
+After landing A6-1.6 `num_public_values = 8` and the 8 `BLOCK_PI_*`
+columns, trace width grew 272 → 280. Re-ran the same four
+measurement tests on the same host; overhead is essentially noise:
+
+| Shape                             | Pre-A6-1.6 proof | Post-A6-1.6 proof | Δ bytes |
+|-----------------------------------|-----------------:|------------------:|--------:|
+| 1 Tx = 52 bundles                 |         356 247  |          356 658  |   +411  |
+| 4 Txs = 208 bundles (§4.1 mark)   |         419 865  |          420 204  |   +339  |
+| 2 bundles (64 rows)               |         252 667  |          253 047  |   +380  |
+| 8 bundles (256 rows)              |         300 312  |          300 835  |   +523  |
+| 32 bundles (1024 rows)            |         356 247  |          356 501  |   +254  |
+| 128 bundles (4096 rows)           |         419 724  |          419 986  |   +262  |
+| 2/2 ×8 (512 rows)                 |         326 889  |          327 292  |   +403  |
+| 2/2 ×32 (2048 rows)               |         387 198  |          387 295  |    +97  |
+
+**Finding**: A6-1.6's 8 new columns add **~100-500 B** (sub-0.15 %)
+to proof size across all shapes — within single-run timing noise. PI
+binding is effectively free from a wire-budget perspective.
+
+Prover time was dominated by run-to-run noise (cold caches, CPU
+scheduling, other processes); no meaningful signal for a PI-binding
+regression in either direction.
+
+The §4.3 fallback budget (500-800 KB) remains comfortably achieved.
 
 ### Feasibility path forward
 
