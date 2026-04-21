@@ -212,7 +212,8 @@ void case_decode_round_trip() {
         proof[i] = static_cast<std::uint8_t>((i * 31) & 0xFF);
     }
 
-    const std::uint16_t n_transfers = 7;
+    // v1 BLOCK_TX_CAP = 4; pick a value at/below the cap.
+    const std::uint16_t n_transfers = 3;
     Plonky3OwnedProof wire = encode_v1(n_transfers, root, proof.data(), proof.size());
     EXPECT_TRUE(wire.ptr != nullptr, "encode_v1 produced a non-null wire buffer");
     EXPECT_TRUE(wire.len >= 40 + proof.size(),
