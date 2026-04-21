@@ -6,8 +6,9 @@ new §16 decision; closes the §3.4 ~100 KB envelope gap identified in
 UNO has not launched, so the §4.1 format lands at v1 directly — there is
 no prior deployed format to amend.
 
-**Implementation progress:** A1 ✅, A2 🟡 (A2-1/2a/2b/2c/3a/3b done; A2-3c/4
-remaining), A3–A8 ⬜. See §4.1 and §6 for the per-phase status table.
+**Implementation progress:** A1 ✅, A2 🟡 (A2-1/2a/2b/2c/3a/3b/3c-i/3c-ii/3c-iii
+done; A2-3c-iv/4 remaining), A3–A8 ⬜. See §4.1 and §6 for the per-phase
+status table.
 
 ## 0. Executive summary
 
@@ -401,16 +402,19 @@ own commit and set of adversarial tests.
 
 | Sub-phase | Status | Scope | Tests | Commit (on branch `uno`) |
 |-----------|--------|-------|-------|--------------------------|
-| A2-1   | ✅ DONE | RefChallenger reference + upstream parity + AIR layout spec | 11 parity | `f80994712` |
-| A2-2a  | ✅ DONE | ChallengerAir trace builder + pure-Rust constraint checker | 13 trace/checker | `6187106ec` |
-| A2-2b  | ✅ DONE | ChallengerAirV1 `Air<AB>` impl + real STARK prove/verify | 8 STARK prove+verify | `47c620af7` |
-| A2-2c  | ✅ DONE | Poseidon2-w8 duplex identity wired into ChallengerAir | +1 forged-state-next adversarial | `33bd9cd1b` |
-| A2-3a  | ✅ DONE | Out-of-circuit Fiat-Shamir driver + byte-parity vs upstream | 6 (3 shapes × parity + replay + tamper + decode) | `a0bf0bc18` |
-| A2-3b  | ✅ DONE | OOD constraint identity driver (skip-PCS) | 8 (3 positive + 4 adversarial + 1 upstream-agree) | `1fd4ed4d0` |
-| A2-3c  | ⬜ PENDING | FRI-folding as AIR (verifier's query-path constraints) | N/A | — |
-| A2-4   | ⬜ PENDING | Single-slot VerifierAir end-to-end prove+verify | N/A | — |
+| A2-1      | ✅ DONE | RefChallenger reference + upstream parity + AIR layout spec | 11 parity | `f80994712` |
+| A2-2a     | ✅ DONE | ChallengerAir trace builder + pure-Rust constraint checker | 13 trace/checker | `6187106ec` |
+| A2-2b     | ✅ DONE | ChallengerAirV1 `Air<AB>` impl + real STARK prove/verify | 8 STARK prove+verify | `47c620af7` |
+| A2-2c     | ✅ DONE | Poseidon2-w8 duplex identity wired into ChallengerAir | +1 forged-state-next adversarial | `33bd9cd1b` |
+| A2-3a     | ✅ DONE | Out-of-circuit Fiat-Shamir driver + byte-parity vs upstream | 6 (3 shapes × parity + replay + tamper + decode) | `a0bf0bc18` |
+| A2-3b     | ✅ DONE | OOD constraint identity driver (skip-PCS) | 8 (3 positive + 4 adversarial + 1 upstream-agree) | `1fd4ed4d0` |
+| A2-3c-i   | ✅ DONE | Full transcript driver — pre-PCS + FRI prefix (`alpha, zeta, fri_alpha, betas, query_indices`) | 6 (3 shapes parity + prefix invariant + 2 structural) | `bfe8cc821` |
+| A2-3c-ii  | ✅ DONE | FRI arithmetic primitives — `fold_row`, `eval_final_poly_horner`, `final_eval_x` | 11 (fold-row × 4 + final-poly × 4 + final-x × 2 + helper × 1) | `a6e652afe` |
+| A2-3c-iii | ✅ DONE | Merkle-path reference — `hash_leaf_row`, `compress_pair`, `verify_merkle_path` | 10 (hash × 4 + compress × 2 + verify × 4) | `9b0795533` |
+| A2-3c-iv  | ⬜ PENDING | In-circuit FRI-AIR (fold-chain + Merkle path as AIR constraints) | N/A | — |
+| A2-4      | ⬜ PENDING | Single-slot VerifierAir end-to-end prove+verify | N/A | — |
 
-**Crate test count at end of A2-3b:** 106 Rust tests, all green; 16 C++
+**Crate test count at end of A2-3c-iii:** 133 Rust tests, all green; 16 C++
 §12 tests still pass; consensus-binding FRI pin unchanged.
 
 ### 4.2 Landed work
@@ -428,10 +432,12 @@ own commit and set of adversarial tests.
 - All 16 §12 C++ tests and 43 Rust FFI tests continued to pass.
 
 **Phase A2** (in progress — see §4.1.1 for sub-phase breakdown):
-- A2-1 through A2-3b merged into `uno`; cumulative +~6 KLoC Rust,
-  +63 new unit tests (11 parity + 13 trace/checker + 8 STARK + 6
-  Fiat-Shamir + 8 OOD + 17 other assorted).
-- Remaining A2 work: FRI-folding as AIR (A2-3c) and single-slot
+- A2-1 through A2-3c-iii merged into `uno`; cumulative +~8 KLoC Rust,
+  +90 new unit tests (11 parity + 13 trace/checker + 8 STARK + 6
+  Fiat-Shamir pre-PCS + 6 Fiat-Shamir full-transcript + 8 OOD + 11
+  FRI arithmetic + 10 Merkle-path + 17 other assorted).
+- Remaining A2 work: in-circuit FRI-AIR (A2-3c-iv — encodes
+  `fri_arith` + `merkle_path` as AIR constraints) and single-slot
   end-to-end prove+verify (A2-4).
 
 **Phases A3–A8** are separate future PRs.
@@ -531,17 +537,34 @@ Sub-phases landed:
   prove+verify round-trip; 8 adversarial tests pass.
 - [x] **A2-2c**: Poseidon2-w8 duplex identity wired into
   ChallengerAir; forged `state_next` adversarial test rejects.
-- [x] **A2-3a**: Out-of-circuit Fiat-Shamir driver
-  (`fiat_shamir.rs`); byte-parity vs upstream on 1/1, 2/2, 4/4
-  real Transfer proofs.
+- [x] **A2-3a**: Out-of-circuit pre-PCS Fiat-Shamir driver
+  (`fiat_shamir.rs::derive_pre_pcs_challenges`); byte-parity vs
+  upstream on 1/1, 2/2, 4/4 real Transfer proofs.
 - [x] **A2-3b**: OOD constraint identity driver (`ood_eval.rs`);
   recomposes `quotient(zeta)` and asserts the identity; 4
   adversarial tamper-path tests reject.
+- [x] **A2-3c-i**: Full-transcript Fiat-Shamir driver
+  (`fiat_shamir.rs::derive_full_challenges`) extending past zeta
+  through the PCS/FRI prefix. Returns `FullChallenges { alpha_stark,
+  zeta, fri_alpha, betas, query_indices, log_global_max_height }`
+  with byte-parity against upstream on all shape extremes.
+- [x] **A2-3c-ii**: FRI arithmetic primitives (`fri_arith.rs`) —
+  `fold_row_ref` (Lagrange-at-β over roots-of-unity coset),
+  `eval_final_poly_horner`, `final_eval_x`. Line-numbered
+  reimplementations of upstream, validated via 11 tests including
+  64 randomized + arity-4 sweeps.
+- [x] **A2-3c-iii**: Merkle-path reference primitives
+  (`merkle_path.rs`) — `hash_leaf_row_ref` (PaddingFreeSponge),
+  `compress_pair_ref` (TruncatedPermutation), and
+  `verify_merkle_path_ref` for single-matrix / binary / cap_height=0
+  trees. 10 tests including upstream-commit / our-verify crossovers.
 
 Remaining:
 
-- [ ] **A2-3c**: FRI-folding as AIR (verifier's query-path
-  constraints re-encoded in-circuit).
+- [ ] **A2-3c-iv**: In-circuit FRI-AIR — encode the A2-3c-ii
+  arithmetic primitives and A2-3c-iii Merkle-path primitives as
+  AIR constraint banks, driving a per-query fold-chain row-loop
+  bound to `FullChallenges` via public-input wiring.
 - [ ] **A2-4**: Single-slot `VerifierAir` end-to-end prove+verify.
   Measurement target: ≤ ~300 cols/slot at the aggregator's
   verifier-replay sub-block.
