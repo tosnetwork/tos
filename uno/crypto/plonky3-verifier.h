@@ -80,7 +80,12 @@ inline const char* verify_result_label(VerifyResult r) noexcept {
 // ABI version the C++ side expects from the linked Rust staticlib.
 // Must match `uno_plonky3_abi_version()`. Bumped together on any layout
 // change to the FFI structs.
-inline constexpr std::uint32_t kExpectedAbiVersion = 1;
+//
+// v2 (A6-1): adds UnoBlockExtra{Bytes,Parsed} structs + the three
+// block-wire-format entry points. Existing Plonky3Verifier surface
+// unchanged; new C++ consumers of the block wire format link against
+// the same lib.
+inline constexpr std::uint32_t kExpectedAbiVersion = 2;
 
 // RAII wrapper around an `UnoPlonky3VerifierHandle`.
 //
