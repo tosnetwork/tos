@@ -508,6 +508,219 @@ pub fn check_all_transitions(
 }
 
 // ---------------------------------------------------------------------------
+// Plonky3 AIR trait implementation (Phase A2-3c-iv-d-4-2)
+//
+// Mechanical port of `check_all_transitions`. Every `if / return Err`
+// in the checker becomes a `builder.assert_zero(selector * (lhs-rhs))`
+// constraint. No Poseidon2 block — the fold identity is pure
+// arithmetic over Goldilocks / BinomialExtensionField<_, 2>.
+//
+// # Constraint-degree analysis
+//
+// * KIND boolean + one-hot:    degree 1 / 2.
+// * PAIR_LEFT/RIGHT selection: (1 − bit) · CURRENT + bit · SIBLING = degree 2,
+//                              gated by is_fold ⇒ degree 3.
+// * INV_2S witness (2·S·INV_2S = 1): gated → degree 3.
+// * Fold identity per limb:    folded·2s is degree 2; s·(pl+pr) and
+//                              β·d terms are degree 2; gate by is_fold
+//                              ⇒ degree 3.
+// * CURRENT threading:         degree 2 (next_is_fold · (next.CURRENT
+//                              − local.FOLDED)).
+// * IDLE persistence:          degree 2.
+// * INITIAL / FINAL persistence: degree 1.
+// * Row-0 and last-row boundaries: degree 1.
+//
+// Overall max = 3, fitting Option B's log_blowup = 3 budget exactly.
+// ---------------------------------------------------------------------------
+
+use p3_air::{Air, AirBuilder, BaseAir, WindowAccess};
+
+/// Plonky3 AIR for the FRI fold-chain (binary arity). Enforces every
+/// row's fold identity, INDEX_BIT orientation, INV_2S witness, plus
+/// chain-wide threading and boundary conditions.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct FoldAirV1;
+
+impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for FoldAirV1 {
+    #[inline]
+    fn width(&self) -> usize {
+        FOLD_AIR_FRAMING_WIDTH
+    }
+
+    #[inline]
+    fn num_public_values(&self) -> usize {
+        // INITIAL_FOLDED / FINAL_FOLDED are trace columns with
+        // persistence constraints at d-4. Integration (d-6) will
+        // promote them to `num_public_values` and drive from the
+        // aggregator's public-input vector.
+        0
+    }
+
+    #[inline]
+    fn max_constraint_degree(&self) -> Option<usize> {
+        Some(3)
+    }
+}
+
+impl<AB> Air<AB> for FoldAirV1
+where
+    AB: AirBuilder<F = Goldilocks>,
+{
+    fn eval(&self, builder: &mut AB) {
+        let main = builder.main();
+        let local: &[AB::Var] = main.current_slice();
+        let next: &[AB::Var] = main.next_slice();
+
+        let fe = |v: u64| AB::Expr::from(AB::F::from_u64(v));
+        let zero = || fe(0);
+        let one = || fe(1);
+        let two = || fe(2);
+        let w = || fe(EXT_W);
+
+        let is_fold: AB::Expr = local[col::KIND0 + OP_KIND_FOLD as usize].into();
+        let is_idle: AB::Expr = local[col::KIND0 + OP_KIND_IDLE as usize].into();
+
+        // ============================================================
+        // Per-row: one-hot selector.
+        // ============================================================
+        let mut kind_sum = zero();
+        for k in 0..NUM_OP_KINDS {
+            let flag: AB::Expr = local[col::KIND0 + k].into();
+            builder.assert_zero(flag.clone() * (flag.clone() - one()));
+            kind_sum = kind_sum + flag;
+        }
+        builder.assert_eq(kind_sum, one());
+
+        // ============================================================
+        // FOLD row: INDEX_BIT boolean + PAIR_LEFT/RIGHT selection.
+        // ============================================================
+        let bit: AB::Expr = local[col::INDEX_BIT].into();
+        builder.assert_zero(is_fold.clone() * bit.clone() * (bit.clone() - one()));
+
+        for i in 0..CHALLENGE_DIM {
+            let cur: AB::Expr = local[col::CURRENT0 + i].into();
+            let sib: AB::Expr = local[col::SIBLING0 + i].into();
+            let pl: AB::Expr = local[col::PAIR_LEFT0 + i].into();
+            let pr: AB::Expr = local[col::PAIR_RIGHT0 + i].into();
+
+            let expected_left =
+                (one() - bit.clone()) * cur.clone() + bit.clone() * sib.clone();
+            let expected_right = bit.clone() * cur + (one() - bit.clone()) * sib;
+
+            builder.assert_zero(is_fold.clone() * (pl - expected_left));
+            builder.assert_zero(is_fold.clone() * (pr - expected_right));
+        }
+
+        // ============================================================
+        // FOLD row: INV_2S witness (2·S·INV_2S == 1).
+        // ============================================================
+        {
+            let s: AB::Expr = local[col::S].into();
+            let inv2s: AB::Expr = local[col::INV_2S].into();
+            builder.assert_zero(is_fold.clone() * (two() * s * inv2s - one()));
+        }
+
+        // ============================================================
+        // FOLD row: fold identity (I) per limb.
+        //
+        //   folded_0 · 2s = s·(pl_0 + pr_0) + β_0·d_0 + W·β_1·d_1
+        //   folded_1 · 2s = s·(pl_1 + pr_1) + β_0·d_1 +   β_1·d_0
+        //
+        // where d_i = pl_i − pr_i.
+        // ============================================================
+        {
+            let s: AB::Expr = local[col::S].into();
+            let pl0: AB::Expr = local[col::PAIR_LEFT0].into();
+            let pl1: AB::Expr = local[col::PAIR_LEFT0 + 1].into();
+            let pr0: AB::Expr = local[col::PAIR_RIGHT0].into();
+            let pr1: AB::Expr = local[col::PAIR_RIGHT0 + 1].into();
+            let b0: AB::Expr = local[col::BETA0].into();
+            let b1: AB::Expr = local[col::BETA0 + 1].into();
+            let f0: AB::Expr = local[col::FOLDED0].into();
+            let f1: AB::Expr = local[col::FOLDED0 + 1].into();
+
+            let two_s = two() * s.clone();
+            let d0 = pl0.clone() - pr0.clone();
+            let d1 = pl1.clone() - pr1.clone();
+
+            // Limb 0.
+            let lhs0 = f0 * two_s.clone();
+            let rhs0 = s.clone() * (pl0 + pr0) + b0.clone() * d0.clone() + w() * b1.clone() * d1.clone();
+            builder.assert_zero(is_fold.clone() * (lhs0 - rhs0));
+
+            // Limb 1.
+            let lhs1 = f1 * two_s;
+            let rhs1 = s * (pl1 + pr1) + b0 * d1 + b1 * d0;
+            builder.assert_zero(is_fold.clone() * (lhs1 - rhs1));
+        }
+
+        // ============================================================
+        // Transition constraints.
+        // ============================================================
+        let mut trans = builder.when_transition();
+
+        // CURRENT threading: next.IS_FOLD ⇒ next.CURRENT = local.FOLDED.
+        let next_is_fold: AB::Expr = next[col::KIND0 + OP_KIND_FOLD as usize].into();
+        for i in 0..CHALLENGE_DIM {
+            let next_cur: AB::Expr = next[col::CURRENT0 + i].into();
+            let local_folded: AB::Expr = local[col::FOLDED0 + i].into();
+            trans.assert_zero(next_is_fold.clone() * (next_cur - local_folded));
+        }
+
+        // INITIAL_FOLDED and FINAL_FOLDED persist across every row.
+        for i in 0..CHALLENGE_DIM {
+            let local_i: AB::Expr = local[col::INITIAL_FOLDED0 + i].into();
+            let next_i: AB::Expr = next[col::INITIAL_FOLDED0 + i].into();
+            trans.assert_zero(next_i - local_i);
+            let local_f: AB::Expr = local[col::FINAL_FOLDED0 + i].into();
+            let next_f: AB::Expr = next[col::FINAL_FOLDED0 + i].into();
+            trans.assert_zero(next_f - local_f);
+        }
+
+        // IDLE persistence: non-KIND cols match the previous row's.
+        let next_is_idle: AB::Expr = next[col::KIND0 + OP_KIND_IDLE as usize].into();
+        for c in col::KIND_END..col::WIDTH {
+            let local_c: AB::Expr = local[c].into();
+            let next_c: AB::Expr = next[c].into();
+            trans.assert_zero(next_is_idle.clone() * (next_c - local_c));
+        }
+
+        drop(trans);
+
+        // ============================================================
+        // Boundary: row 0's CURRENT == INITIAL_FOLDED.
+        // ============================================================
+        let mut first = builder.when_first_row();
+        for i in 0..CHALLENGE_DIM {
+            let cur: AB::Expr = local[col::CURRENT0 + i].into();
+            let init: AB::Expr = local[col::INITIAL_FOLDED0 + i].into();
+            first.assert_zero(cur - init);
+        }
+        drop(first);
+
+        // ============================================================
+        // Boundary: last row's FOLDED == FINAL_FOLDED.
+        //
+        // IDLE rows carry FOLDED unchanged via the IDLE persistence
+        // transition, so this closes the chain even when the trace
+        // is padded beyond the last physical FOLD row.
+        // ============================================================
+        let mut last = builder.when_last_row();
+        for i in 0..CHALLENGE_DIM {
+            let f: AB::Expr = local[col::FOLDED0 + i].into();
+            let expected: AB::Expr = local[col::FINAL_FOLDED0 + i].into();
+            last.assert_zero(f - expected);
+        }
+
+        // Silence unused-var warnings in builds where the linter is
+        // tight. `is_idle` is used indirectly via `is_fold` (since
+        // they sum to 1) but the builder API doesn't let us emit a
+        // no-op reference cheaply.
+        let _ = is_idle;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -785,5 +998,251 @@ mod tests {
 
         check_all_transitions(&trace, trace_height)
             .expect("real fold chain must check out-of-circuit");
+    }
+
+    // ======================================================================
+    // Phase A2-3c-iv-d-4-2: real STARK prove + verify via uni-stark
+    // ======================================================================
+
+    use crate::prover::build_config;
+    use p3_matrix::dense::RowMajorMatrix;
+    use p3_uni_stark::{prove, verify};
+
+    fn trace_matrix(
+        initial_folded: Challenge,
+        rounds: &[FoldRound],
+        final_folded: Challenge,
+        trace_height: usize,
+    ) -> RowMajorMatrix<Goldilocks> {
+        let flat = build_trace(initial_folded, rounds, final_folded, trace_height)
+            .expect("trace build");
+        RowMajorMatrix::new(flat, col::WIDTH)
+    }
+
+    #[test]
+    fn air_prove_and_verify_handmade_chain() {
+        let (initial, rounds, final_folded) = handmade_3_round_chain(ext(100, 200));
+        // Use trace_height = 16 so FRI has enough height with
+        // log_blowup = 3; the uni-stark prover requires pow2 height.
+        let trace = trace_matrix(initial, &rounds, final_folded, 16);
+        let cfg = build_config();
+        let air = FoldAirV1;
+        let proof = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof, &[]).expect("valid fold-chain trace must verify");
+    }
+
+    #[test]
+    fn air_prove_and_verify_real_fri_fold_chain() {
+        use crate::fiat_shamir::derive_full_challenges;
+        use crate::fri_arith::{eval_final_poly_horner, final_eval_x};
+        use crate::open_input::compute_reduced_openings_for_query;
+        use crate::prover::{MvpConfig, MvpProver};
+        use crate::transfer_air::MvpWitness;
+        use p3_field::TwoAdicField;
+        use p3_uni_stark::Proof;
+
+        let prover = MvpProver::new();
+        let w = MvpWitness::deterministic_valid(2, 2, 0xFA14_0001);
+        let (bytes, _) = prover.prove(&w.encode()).unwrap();
+        let proof: Proof<MvpConfig> = postcard::from_bytes(&bytes).unwrap();
+        let pis = w.public_inputs();
+        let ch = derive_full_challenges(&proof, &pis);
+
+        let q_pos = 0;
+        let domain_index = ch.query_indices[q_pos];
+        let zeta_next =
+            ch.zeta * Goldilocks::two_adic_generator(proof.degree_bits);
+        let ro = compute_reduced_openings_for_query(
+            &proof,
+            ch.zeta,
+            zeta_next,
+            ch.fri_alpha,
+            ch.log_global_max_height,
+            q_pos,
+            domain_index,
+        )
+        .expect("ro");
+        let initial_folded = ro.value;
+
+        let query = &proof.opening_proof.query_proofs[q_pos];
+        let num_rounds = query.commit_phase_openings.len();
+        let mut rounds = Vec::with_capacity(num_rounds);
+        let mut idx = domain_index;
+        let mut log_h = ch.log_global_max_height;
+        for (r, step) in query.commit_phase_openings.iter().enumerate() {
+            rounds.push(FoldRound {
+                sibling: step.sibling_values[0],
+                beta: ch.betas[r],
+                domain_index: idx,
+                log_height: log_h,
+            });
+            idx >>= 1;
+            log_h -= 1;
+        }
+
+        let x_final = final_eval_x(idx, ch.log_global_max_height);
+        let final_folded =
+            eval_final_poly_horner(&proof.opening_proof.final_poly, x_final);
+
+        let trace_height = (num_rounds + 4).next_power_of_two();
+        let trace = trace_matrix(initial_folded, &rounds, final_folded, trace_height);
+        let cfg = build_config();
+        let air = FoldAirV1;
+        let proof_stark = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof_stark, &[])
+            .expect("real FRI fold chain must verify via uni-stark");
+    }
+
+    /// Helper: adversarially prove+verify a tampered trace. Returns
+    /// true iff the AIR rejects (prove panics in debug or verify errs).
+    fn air_rejects(trace: RowMajorMatrix<Goldilocks>) -> bool {
+        let cfg = build_config();
+        let air = FoldAirV1;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove(&cfg, &air, trace, &[])
+        }));
+        match outcome {
+            Err(_) => true,
+            Ok(p) => verify(&cfg, &air, &p, &[]).is_err(),
+        }
+    }
+
+    #[test]
+    fn air_rejects_tampered_sibling() {
+        let (initial, rounds, final_folded) = handmade_3_round_chain(ext(100, 200));
+        let mut flat =
+            build_trace(initial, &rounds, final_folded, 16).unwrap();
+        // Tamper row 0 SIBLING[0] → PAIR_LEFT/RIGHT selection fails
+        // OR fold identity fails on a subsequent row.
+        flat[col::SIBLING0] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(air_rejects(trace), "tampered sibling must reject");
+    }
+
+    #[test]
+    fn air_rejects_flipped_index_bit() {
+        let (initial, rounds, final_folded) = handmade_3_round_chain(ext(100, 200));
+        let mut flat =
+            build_trace(initial, &rounds, final_folded, 16).unwrap();
+        // Flip row 0 INDEX_BIT — LEFT/RIGHT selection constraint fires.
+        flat[col::INDEX_BIT] = if flat[col::INDEX_BIT] == gl(0) {
+            gl(1)
+        } else {
+            gl(0)
+        };
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(air_rejects(trace), "flipped INDEX_BIT must reject");
+    }
+
+    #[test]
+    fn air_rejects_bad_inv_2s_witness() {
+        let (initial, rounds, final_folded) = handmade_3_round_chain(ext(100, 200));
+        let mut flat =
+            build_trace(initial, &rounds, final_folded, 16).unwrap();
+        // Corrupt INV_2S on row 0 → 2·S·INV_2S ≠ 1.
+        flat[col::INV_2S] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(air_rejects(trace), "bad INV_2S witness must reject");
+    }
+
+    #[test]
+    fn air_rejects_tampered_folded_limb0() {
+        let (initial, rounds, final_folded) = handmade_3_round_chain(ext(100, 200));
+        let mut flat =
+            build_trace(initial, &rounds, final_folded, 16).unwrap();
+        // Tamper row 0 FOLDED[0] — fold identity limb 0 fires.
+        flat[col::FOLDED0] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(air_rejects(trace), "tampered FOLDED[0] must reject");
+    }
+
+    #[test]
+    fn air_rejects_tampered_folded_limb1() {
+        let (initial, rounds, final_folded) = handmade_3_round_chain(ext(100, 200));
+        let mut flat =
+            build_trace(initial, &rounds, final_folded, 16).unwrap();
+        flat[col::FOLDED0 + 1] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(air_rejects(trace), "tampered FOLDED[1] must reject");
+    }
+
+    #[test]
+    fn air_rejects_broken_current_threading() {
+        let (initial, rounds, final_folded) = handmade_3_round_chain(ext(100, 200));
+        let mut flat =
+            build_trace(initial, &rounds, final_folded, 16).unwrap();
+        // Row 1 CURRENT[0] should equal row 0 FOLDED[0]. Break it.
+        let row1 = col::WIDTH;
+        flat[row1 + col::CURRENT0] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(
+            air_rejects(trace),
+            "broken CURRENT threading must be rejected"
+        );
+    }
+
+    #[test]
+    fn air_rejects_wrong_initial_folded_at_row0() {
+        let (initial, rounds, final_folded) = handmade_3_round_chain(ext(100, 200));
+        let mut flat =
+            build_trace(initial, &rounds, final_folded, 16).unwrap();
+        // Tamper row 0 INITIAL_FOLDED[0] → CURRENT must equal it;
+        // boundary at row 0 fires.
+        flat[col::INITIAL_FOLDED0] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(
+            air_rejects(trace),
+            "INITIAL_FOLDED mismatch at row 0 must reject"
+        );
+    }
+
+    #[test]
+    fn air_rejects_wrong_final_folded() {
+        let (initial, rounds, _) = handmade_3_round_chain(ext(100, 200));
+        // Build with a bogus FINAL_FOLDED.
+        let wrong_final = ext(9999, 8888);
+        let flat = build_trace(initial, &rounds, wrong_final, 16).unwrap();
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(
+            air_rejects(trace),
+            "wrong FINAL_FOLDED must reject at last-row boundary"
+        );
+    }
+
+    #[test]
+    fn air_rejects_initial_folded_drift() {
+        let (initial, rounds, final_folded) = handmade_3_round_chain(ext(100, 200));
+        let mut flat =
+            build_trace(initial, &rounds, final_folded, 16).unwrap();
+        // Change row 2 INITIAL_FOLDED[0] — persistence transition
+        // from row 1 → row 2 fires.
+        let row2 = 2 * col::WIDTH;
+        flat[row2 + col::INITIAL_FOLDED0] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(
+            air_rejects(trace),
+            "INITIAL_FOLDED drift across rows must reject"
+        );
+    }
+
+    #[test]
+    fn air_rejects_idle_mutation() {
+        let (initial, rounds, final_folded) = handmade_3_round_chain(ext(100, 200));
+        let mut flat =
+            build_trace(initial, &rounds, final_folded, 16).unwrap();
+        // Row 5 is IDLE. Mutate SIBLING[0]. IDLE persistence fires.
+        let row5 = 5 * col::WIDTH;
+        flat[row5 + col::SIBLING0] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(air_rejects(trace), "IDLE-row mutation must reject");
+    }
+
+    #[test]
+    fn air_width_matches_layout_constant() {
+        assert_eq!(
+            <FoldAirV1 as BaseAir<Goldilocks>>::width(&FoldAirV1),
+            FOLD_AIR_FRAMING_WIDTH,
+        );
+        assert_eq!(col::WIDTH, 21);
     }
 }
