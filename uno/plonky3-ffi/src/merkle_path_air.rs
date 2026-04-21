@@ -486,6 +486,208 @@ pub fn check_all_transitions(
 }
 
 // ---------------------------------------------------------------------------
+// Plonky3 AIR trait implementation (Phase A2-3c-iv-d-2)
+//
+// Mechanical port of `check_all_transitions` to `Air<AB>` — every
+// `if / return Err` arm becomes a `builder.assert_zero(selector *
+// (lhs - rhs))` constraint.
+//
+// # Constraints enforced at d-2 (structural only)
+//
+// - Per-row:
+//   * KIND[k] boolean for each k ∈ {LEAF, COMPRESS, IDLE};
+//     sum_k KIND[k] == 1 (one-hot).
+//   * LEAF row ⇒ LEFT[i] == LEAF_VALUES[i] for i ∈ 0..4,
+//                RIGHT[i] == 0 for i ∈ 0..4.
+//   * COMPRESS row ⇒ INDEX_BIT boolean;
+//                    LEFT[i]  == (1-INDEX_BIT)·CURRENT[i] + INDEX_BIT·SIBLING[i];
+//                    RIGHT[i] == INDEX_BIT·CURRENT[i] + (1-INDEX_BIT)·SIBLING[i].
+//
+// - Transition (row r → row r+1):
+//   * ROOT[i] persists across rows.
+//   * next.IS_COMPRESS=1 ⇒ next.CURRENT[i] == local.DIGEST[i].
+//   * next.IS_IDLE=1 ⇒ next[c] == local[c] for every non-KIND,
+//                     non-ROOT data column c.
+//
+// - Last row:
+//   * DIGEST[i] == ROOT[i]  (the boundary that closes the path).
+//
+// # Constraints deliberately NOT enforced here (deferred to d-3)
+//
+// - DIGEST[i] == P2([LEFT ∥ RIGHT])[i]  — the Poseidon2 identity.
+//
+// This means a malicious prover could currently emit any DIGEST
+// values and the structural AIR would accept. The cryptographic
+// binding comes from wiring in the shared Poseidon2-w8 sub-AIR in
+// A2-3c-iv-d-3, exactly mirroring how ChallengerAirV1 adds the
+// DUPLEX identity on top of its structural layer (A2-2c on top of
+// A2-2a/2b).
+//
+// # Degree
+//
+// Max degree is 3 (is_compress × (1−INDEX_BIT) × CURRENT produces a
+// degree-3 term; all other constraints are degree ≤ 2). Fits the
+// Option B `log_blowup = 3` budget exactly.
+// ---------------------------------------------------------------------------
+
+use p3_air::{Air, AirBuilder, BaseAir, WindowAccess};
+use p3_field::PrimeCharacteristicRing;
+
+/// Plonky3 AIR for single-Merkle-path verification at commit-phase
+/// shape (leaf width = 4 Goldilocks). Structural half of the final
+/// MerklePathAir — the P2 identity binding DIGEST = permutation
+/// output lands in A2-3c-iv-d-3.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct MerklePathAirV1;
+
+impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for MerklePathAirV1 {
+    #[inline]
+    fn width(&self) -> usize {
+        MERKLE_PATH_AIR_FRAMING_WIDTH
+    }
+
+    #[inline]
+    fn num_public_values(&self) -> usize {
+        // Phase d-2 carries ROOT as a trace column (duplicated each
+        // row via the persistence transition constraint). Promoting
+        // ROOT to `num_public_values` is orthogonal polish that can
+        // ride on a later sub-phase — not load-bearing for d-2.
+        0
+    }
+
+    #[inline]
+    fn max_constraint_degree(&self) -> Option<usize> {
+        // See degree analysis in the module comment: degree 3 max.
+        // Once d-3 wires in Poseidon2 (S-box degree 7), we'll bump
+        // this to `None` (auto-compute) — matches MvpTransferAir.
+        Some(3)
+    }
+}
+
+impl<AB> Air<AB> for MerklePathAirV1
+where
+    AB: AirBuilder<F = Goldilocks>,
+{
+    fn eval(&self, builder: &mut AB) {
+        let main = builder.main();
+        let local_slice: &[AB::Var] = main.current_slice();
+        let next_slice: &[AB::Var] = main.next_slice();
+
+        let fe = |v: u64| AB::Expr::from(AB::F::from_u64(v));
+        let zero = || fe(0);
+        let one = || fe(1);
+
+        // Kind-flag shortcuts.
+        let is_leaf: AB::Expr = local_slice[col::KIND0 + OP_KIND_LEAF as usize].into();
+        let is_compress: AB::Expr =
+            local_slice[col::KIND0 + OP_KIND_COMPRESS as usize].into();
+        let is_idle: AB::Expr = local_slice[col::KIND0 + OP_KIND_IDLE as usize].into();
+
+        // ================================================================
+        // Per-row: one-hot selector.
+        // ================================================================
+        let mut kind_sum = zero();
+        for k in 0..NUM_OP_KINDS {
+            let flag: AB::Expr = local_slice[col::KIND0 + k].into();
+            builder.assert_zero(flag.clone() * (flag.clone() - one()));
+            kind_sum = kind_sum + flag;
+        }
+        builder.assert_eq(kind_sum, one());
+
+        // ================================================================
+        // Per-row: LEAF — LEFT == LEAF_VALUES, RIGHT == 0.
+        // ================================================================
+        for i in 0..DIGEST_WIDTH {
+            let leaf_i: AB::Expr = local_slice[col::LEAF0 + i].into();
+            let left_i: AB::Expr = local_slice[col::LEFT0 + i].into();
+            let right_i: AB::Expr = local_slice[col::RIGHT0 + i].into();
+            builder.assert_zero(is_leaf.clone() * (left_i - leaf_i));
+            builder.assert_zero(is_leaf.clone() * right_i);
+        }
+
+        // ================================================================
+        // Per-row: COMPRESS — INDEX_BIT boolean + LEFT/RIGHT selection.
+        // ================================================================
+        let index_bit: AB::Expr = local_slice[col::INDEX_BIT].into();
+        // Boolean — but only when is_compress = 1. The vacuous case
+        // (non-COMPRESS rows with arbitrary INDEX_BIT) is allowed: the
+        // builder would see is_compress * … == 0 trivially.
+        builder.assert_zero(
+            is_compress.clone() * index_bit.clone() * (index_bit.clone() - one()),
+        );
+        for i in 0..DIGEST_WIDTH {
+            let cur: AB::Expr = local_slice[col::CURRENT0 + i].into();
+            let sib: AB::Expr = local_slice[col::SIBLING0 + i].into();
+            let left: AB::Expr = local_slice[col::LEFT0 + i].into();
+            let right: AB::Expr = local_slice[col::RIGHT0 + i].into();
+
+            // Expected LEFT  = (1-bit)·CURRENT + bit·SIBLING.
+            let expected_left =
+                (one() - index_bit.clone()) * cur.clone() + index_bit.clone() * sib.clone();
+            let expected_right =
+                index_bit.clone() * cur + (one() - index_bit.clone()) * sib;
+
+            builder.assert_zero(is_compress.clone() * (left - expected_left));
+            builder.assert_zero(is_compress.clone() * (right - expected_right));
+        }
+
+        // ================================================================
+        // Transition constraints (applied on row pairs).
+        // ================================================================
+        let mut trans = builder.when_transition();
+
+        // ROOT persists across rows (public-input proxy).
+        for i in 0..DIGEST_WIDTH {
+            let local_root: AB::Expr = local_slice[col::ROOT0 + i].into();
+            let next_root: AB::Expr = next_slice[col::ROOT0 + i].into();
+            trans.assert_zero(next_root - local_root);
+        }
+
+        // CURRENT threading: when the NEXT row is COMPRESS, its
+        // CURRENT must equal this row's DIGEST.
+        let next_is_compress: AB::Expr =
+            next_slice[col::KIND0 + OP_KIND_COMPRESS as usize].into();
+        for i in 0..DIGEST_WIDTH {
+            let local_digest: AB::Expr = local_slice[col::DIGEST0 + i].into();
+            let next_current: AB::Expr = next_slice[col::CURRENT0 + i].into();
+            trans.assert_zero(next_is_compress.clone() * (next_current - local_digest));
+        }
+
+        // IDLE persistence: when NEXT row is IDLE, all non-KIND /
+        // non-ROOT columns equal the local row's.
+        let next_is_idle: AB::Expr = next_slice[col::KIND0 + OP_KIND_IDLE as usize].into();
+        for c in col::KIND_END..col::ROOT0 {
+            let local_c: AB::Expr = local_slice[c].into();
+            let next_c: AB::Expr = next_slice[c].into();
+            trans.assert_zero(next_is_idle.clone() * (next_c - local_c));
+        }
+
+        drop(trans);
+
+        // ================================================================
+        // Last-row boundary: DIGEST == ROOT.
+        //
+        // Since IDLE rows carry DIGEST unchanged (via the IDLE
+        // persistence transition above), the last physical row of a
+        // path propagates its final-compression digest to the last
+        // row of the trace. This `when_last_row()` constraint therefore
+        // enforces the path-closure property even when the trace is
+        // padded with IDLE rows.
+        // ================================================================
+        let mut last = builder.when_last_row();
+        for i in 0..DIGEST_WIDTH {
+            let digest_i: AB::Expr = local_slice[col::DIGEST0 + i].into();
+            let root_i: AB::Expr = local_slice[col::ROOT0 + i].into();
+            last.assert_zero(digest_i - root_i);
+        }
+
+        // Silence unused warnings that would surface only when the
+        // crate's `#[warn(unused)]` lint pipeline changes.
+        let _ = (is_idle, zero);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -751,5 +953,182 @@ mod tests {
             }
             Err(e) => panic!("unexpected structural failure: {e:?}"),
         }
+    }
+
+    // ======================================================================
+    // Phase A2-3c-iv-d-2: real STARK prove + verify via uni-stark
+    // ======================================================================
+
+    use crate::prover::build_config;
+    use p3_matrix::dense::RowMajorMatrix;
+    use p3_uni_stark::{prove, verify};
+
+    /// Build the row-major trace matrix consumed by `uni_stark::prove`.
+    fn trace_matrix(
+        leaf_row: &[Goldilocks],
+        opening_proof: &[Digest],
+        index: usize,
+        root: Digest,
+        trace_height: usize,
+    ) -> RowMajorMatrix<Goldilocks> {
+        let flat = build_trace(leaf_row, opening_proof, index, root, trace_height)
+            .expect("trace build");
+        RowMajorMatrix::new(flat, col::WIDTH)
+    }
+
+    #[test]
+    fn air_prove_and_verify_tiny_tree_leaf_2() {
+        let (leaves, _, root, opening, index) = tiny_tree_path_for_leaf_2();
+        let trace = trace_matrix(&leaves[index], &opening, index, root, 16);
+        let cfg = build_config();
+        let air = MerklePathAirV1;
+        let proof = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof, &[]).expect("valid Merkle-path trace must verify");
+    }
+
+    #[test]
+    fn air_prove_and_verify_leaf_0_boundary() {
+        let perm = default_goldilocks_poseidon2_8();
+        let leaves: Vec<[Goldilocks; 4]> = (0..4)
+            .map(|i| [gl(i), gl(10 + i), gl(20 + i), gl(30 + i)])
+            .collect();
+        let leaf_digests: Vec<Digest> = leaves
+            .iter()
+            .map(|r| hash_leaf_row_ref(&perm, r))
+            .collect();
+        let level1 = vec![
+            compress_pair_ref(&perm, &leaf_digests[0], &leaf_digests[1]),
+            compress_pair_ref(&perm, &leaf_digests[2], &leaf_digests[3]),
+        ];
+        let root = compress_pair_ref(&perm, &level1[0], &level1[1]);
+        let opening = vec![leaf_digests[1], level1[1]];
+        let trace = trace_matrix(&leaves[0], &opening, 0, root, 16);
+        let cfg = build_config();
+        let air = MerklePathAirV1;
+        let proof = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof, &[]).expect("leaf-0 path must verify");
+    }
+
+    /// Helper: adversarially prove + verify a tampered trace. Returns
+    /// true iff the AIR rejects (either prove panics in debug or
+    /// verify returns Err in release).
+    fn air_rejects(trace: RowMajorMatrix<Goldilocks>) -> bool {
+        let cfg = build_config();
+        let air = MerklePathAirV1;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove(&cfg, &air, trace, &[])
+        }));
+        match outcome {
+            Err(_) => true, // debug builder panic
+            Ok(p) => verify(&cfg, &air, &p, &[]).is_err(),
+        }
+    }
+
+    #[test]
+    fn air_rejects_broken_one_hot() {
+        let (leaves, _, root, opening, index) = tiny_tree_path_for_leaf_2();
+        let mut flat = build_trace(&leaves[index], &opening, index, root, 16).unwrap();
+        // Row 0 has LEAF selector = 1. Set COMPRESS selector = 1 too →
+        // sum = 2, breaks one-hot and the boolean product checks.
+        flat[col::KIND0 + OP_KIND_COMPRESS as usize] = Goldilocks::new(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(air_rejects(trace), "broken one-hot must be rejected");
+    }
+
+    #[test]
+    fn air_rejects_flipped_index_bit() {
+        let (leaves, _, root, opening, index) = tiny_tree_path_for_leaf_2();
+        let mut flat = build_trace(&leaves[index], &opening, index, root, 16).unwrap();
+        // Row 1 is the first COMPRESS row (level 0). INDEX_BIT was 0
+        // for index=2. Flip to 1 — LEFT/RIGHT no longer match the
+        // stored selection formula.
+        let row1 = col::WIDTH;
+        flat[row1 + col::INDEX_BIT] = Goldilocks::new(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(air_rejects(trace), "flipped INDEX_BIT must be rejected");
+    }
+
+    #[test]
+    fn air_rejects_tampered_left() {
+        let (leaves, _, root, opening, index) = tiny_tree_path_for_leaf_2();
+        let mut flat = build_trace(&leaves[index], &opening, index, root, 16).unwrap();
+        // Tamper LEFT[0] on the first COMPRESS row (row 1). The LEFT
+        // selector constraint (LEFT = (1-bit)·CURRENT + bit·SIBLING)
+        // will detect the mismatch.
+        let row1 = col::WIDTH;
+        flat[row1 + col::LEFT0] += Goldilocks::new(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(air_rejects(trace), "tampered LEFT must be rejected");
+    }
+
+    #[test]
+    fn air_rejects_broken_current_propagation() {
+        let (leaves, _, root, opening, index) = tiny_tree_path_for_leaf_2();
+        let mut flat = build_trace(&leaves[index], &opening, index, root, 16).unwrap();
+        // Row 2 is COMPRESS (level 1). Its CURRENT[0] should equal
+        // row 1's DIGEST[0]. Tamper row 2's CURRENT[0].
+        let row2 = 2 * col::WIDTH;
+        flat[row2 + col::CURRENT0] += Goldilocks::new(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(
+            air_rejects(trace),
+            "broken CURRENT propagation must be rejected"
+        );
+    }
+
+    #[test]
+    fn air_rejects_wrong_final_root() {
+        let (leaves, _, root, opening, index) = tiny_tree_path_for_leaf_2();
+        let mut bad_root = root;
+        bad_root[0] += Goldilocks::new(1);
+        // Builder writes `bad_root` into ROOT columns on every row
+        // AND propagates the REAL final digest via IDLE. The last-row
+        // boundary constraint `DIGEST == ROOT` then fails.
+        let flat = build_trace(&leaves[index], &opening, index, bad_root, 16).unwrap();
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(
+            air_rejects(trace),
+            "final-digest-vs-root mismatch must be rejected"
+        );
+    }
+
+    #[test]
+    fn air_rejects_root_drift_across_rows() {
+        let (leaves, _, root, opening, index) = tiny_tree_path_for_leaf_2();
+        let mut flat = build_trace(&leaves[index], &opening, index, root, 16).unwrap();
+        // Change ROOT[0] on row 5 (which is IDLE padding). The
+        // ROOT-persistence transition constraint must reject.
+        let row5 = 5 * col::WIDTH;
+        flat[row5 + col::ROOT0] += Goldilocks::new(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(
+            air_rejects(trace),
+            "ROOT must persist across all trace rows"
+        );
+    }
+
+    #[test]
+    fn air_rejects_idle_data_mutation() {
+        let (leaves, _, root, opening, index) = tiny_tree_path_for_leaf_2();
+        let mut flat = build_trace(&leaves[index], &opening, index, root, 16).unwrap();
+        // Rows 3..=15 are IDLE. Mutate row 5's DIGEST[0]. IDLE
+        // persistence transition from row 4 → row 5 catches it.
+        let row5 = 5 * col::WIDTH;
+        flat[row5 + col::DIGEST0] += Goldilocks::new(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(
+            air_rejects(trace),
+            "IDLE rows must carry data cols unchanged"
+        );
+    }
+
+    #[test]
+    fn air_width_matches_layout_constant() {
+        // Regression guard: if anyone shifts col offsets the width
+        // constant must move in lockstep.
+        assert_eq!(
+            <MerklePathAirV1 as BaseAir<Goldilocks>>::width(&MerklePathAirV1),
+            MERKLE_PATH_AIR_FRAMING_WIDTH,
+        );
     }
 }
