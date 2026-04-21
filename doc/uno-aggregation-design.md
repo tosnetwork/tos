@@ -548,6 +548,228 @@ Sub-phase table:
 
 **Phases A5 part 2, A6–A8** are separate future PRs.
 
+## 5. A6-4 Transfer struct delta and activation plan
+
+A6-4 is the sub-phase that finalizes the on-chain `Transfer` layout for
+the aggregation-era wire format. A5 part 1 landed `UnoBlockExtra`
+(the block-level container for `aggregated_proof` + `tx_pi_merkle_root`);
+A6-1 landed the FFI wire-format entry points (`uno_block_extra_encode_v1`
+/ `_decode` / `_owned_free`); A6-1.5 landed `prove_block` /
+`verify_block` end-to-end; A6-2 landed the `UnoBlockVerifierHandle`
+FFI + the `uno_block_verifier_{init,free,verify}` entry points; A6-3
+landed the `BlockProofVerifier` C++ RAII wrapper consuming them; A3-5c
+landed the monolithic VerifierAir that fronts all of the above. A6-4
+closes the last wire-format gap: the per-Tx `Transfer` struct itself
+still carries a legacy `zk_proof: ^Cell` field that must be replaced
+by a 32-byte `witness_commitment` before genesis.
+
+### 5.1 Scope
+
+Three atomic changes to `Transfer`:
+
+1. **Remove `zk_proof: ^Cell`** — the per-Tx Plonky3 proof is no
+   longer an on-chain payload. It still flows wallet → mempool → collator
+   (see §5.3), but it is stripped before the collator commits the block.
+2. **Add `witness_commitment: bits256`** — a 32-byte BLAKE3 hash
+   computed by the wallet over the canonical bytes defined below.
+3. **Bump `version = 2`** (per §2.1; this is the v1-launch value — the
+   "2" reflects the original Option-B-era draft, not a post-launch
+   upgrade).
+
+**What the commitment binds** (recommended canonical encoding):
+
+```
+canonical_bytes := postcard(proof) || public_input_encoding(tx)
+witness_commitment := BLAKE3(canonical_bytes)
+```
+
+Binding the PI (not just the proof) gives the collator/validator a way
+to reconstruct each slot's PI hash deterministically from the `Transfer`
+struct alone and match it against the per-slot PI the aggregator
+consumed. Proof-only binding would still close the tampering gap at the
+proof level but would force validators to re-derive PI from a different
+source, duplicating serialization code. The 32 B cost is negligible
+compared to the clarity win.
+
+The commitment flows:
+
+```
+Wallet (computes BLAKE3) →
+  mempool (carries {Transfer, proof} pair; commitment is inside Transfer) →
+  collator (consumes proof for aggregator witness; commitment stays in Transfer) →
+  block (Transfer list, each with its commitment, as leaves in tx_pi_merkle_root)
+```
+
+### 5.2 Wire-format diff
+
+**Pre-A6-4 `Transfer` layout** (Option-B era, aspirational — UNO never
+shipped this):
+
+```
+offset  size           field
+   0    1              version
+   1    1              scheme_id
+   2    4              chain_id
+   6    32             anchor
+  38    4              expiry_block
+  42    8              fee
+  50    2              spend_count (S)
+  52    2              output_count (O)
+  54    S * 128        spends
+   …    O * 146        outputs
+   …    ^Cell ref      zk_proof            ← ~520 KB at 1/2, ~915 KB at 4/4
+```
+
+**Post-A6-4 `Transfer` layout** (A6-4 target, genesis-ready):
+
+```
+offset  size           field
+   0    1              version = 2
+   1    1              scheme_id = 0x01
+   2    4              chain_id
+   6    32             anchor
+  38    4              expiry_block
+  42    8              fee
+  50    2              spend_count (S)
+  52    2              output_count (O)
+  54    S * 128        spends
+   …    O * 146        outputs
+   …    32             witness_commitment  ← fixed 32 B, replaces ^Cell
+```
+
+**Size delta**: at 1/2 shape (1 spend, 2 outputs), the Transfer payload
+shrinks from ~520 KB to ~434 B — a ~1200× on-chain reduction (matches
+§6 risks-item-4 in the existing doc). The chunk-chain / `^Cell`
+indirection for `zk_proof` is fully removed.
+
+**Hash stability**: `Transfer` serialization changes its byte image, so
+all existing per-Tx hashes in fixtures, golden files, and C++
+roundtrip tests become stale. A6-4 must refresh:
+- `uno/test/fixtures/valid_transfer_fixture.h`
+- Every C++ test that roundtrips a `Transfer` (~10 tests in the §12
+  suite) needs regenerated golden hashes.
+- Any Rust-side FFI fixture that embeds a serialized Transfer.
+
+### 5.3 RPC / mempool impact
+
+`uno_sendTransfer` is extended (backward-compat doesn't apply — UNO is
+pre-launch):
+
+| Arg          | Before A6-4          | After A6-4                             |
+|--------------|----------------------|----------------------------------------|
+| `transfer`   | `Transfer` (w/ proof)| `Transfer` (w/o proof, w/ commitment)  |
+| `proof`      | —                    | Plonky3 proof bytes, separate arg      |
+
+The wallet produces a `(Transfer, proof)` tuple; the RPC body carries
+both, but the `Transfer` struct's proof field is gone. The collator
+retains both halves in mempool storage until block assembly:
+
+1. Pre-filter admits the tuple after cheap checks + per-Tx Plonky3
+   verify at mempool tier (§4.3a pre-filter).
+2. At block-assembly time, the collator pairs `(Transfer, proof)` for
+   each admitted Tx and hands the full list to `aggregator::prove_block`.
+3. Only the `Transfer` list (without proofs) + the aggregated proof
+   land on-chain.
+
+### 5.4 Validator compute-phase impact (§4.3 step 4 delta)
+
+Prior §4.3 had "per-Tx Plonky3 verify" as step 5; A6-4 removes it from
+non-collator validators entirely and replaces it with a per-block path:
+
+1. **Per-Tx Plonky3 verify — REMOVED** from the compute-phase for
+   non-producing validators. Step 5 remains ONLY at the collator tier.
+2. **New step 7**: decode `UnoBlockExtra`, invoke
+   `uno_verify_block(PI_block, aggregated_proof)` — ONE verify per block.
+3. **New step 8**: for each `Transfer` in the block, recompute
+   `BLAKE3(postcard(proof_i) || pi_encoding_i)` and compare against
+   `Transfer.witness_commitment`. Compute the Merkle root over these
+   commitments and compare against `UnoBlockExtra.tx_pi_merkle_root`.
+   This closes the "proof binds the right Tx" gap without a per-Tx
+   STARK verify.
+
+**Deterministic rejection** (critical semantic change): malformed
+`UnoBlockExtra`, commitment mismatch, Merkle-root mismatch, or STARK
+verify failure all reject the **whole block**, not a single Tx. Under
+the legacy per-Tx model a bad proof drops the one Tx and the block
+continues. Under aggregation the proof is block-scoped, so the failure
+unit is the block.
+
+### 5.5 Collator impact
+
+The collator gains one new responsibility:
+
+- After §4.3a admits N Transfers and per-Tx verify runs at mempool
+  tier, the collator invokes `aggregator::prove_block(txs, proofs)` to
+  produce the block's aggregated proof.
+- Per A4 measurements, that is ~1-4 min of prover time on a 128-core
+  x86 host (208 bundles ≈ 65 s; 30-Tx extrapolation ≈ 4 min).
+- **Block-production budget implication**: the current §1.4a 1 s block
+  cadence cannot absorb multi-minute prover time. Two mitigations are
+  on the table:
+  1. **Slower cadence**: move block cadence from 1 s to ~60 s for the
+     aggregated-block epoch; reduces TPS ceiling but halves
+     bandwidth/proof dominance.
+  2. **Prove-worker pipeline**: run `prove_block` ahead of the deadline
+     on a pipelined worker that begins once enough Txs admit, so the
+     producer only pays finalization cost at the deadline.
+  Decision is deferred to A7 (wallet/testnet integration) once real
+  hardware numbers land.
+
+### 5.6 Hardfork activation plan
+
+UNO is pre-launch, so "hardfork" here is shorthand for "versioning
+commitments at genesis". No migration of a deployed state is required.
+
+- `Transfer.version = 2` is the **v1-launch value** per §2.1. The "2"
+  preserves the Option-B draft numbering; version 1 was never deployed.
+- Collators and validators SHALL reject any `Transfer` with
+  `version != 2` post-launch (treat as unsupported scheme).
+- `aggregator_scheme_id = 0x01` and `scheme_id = 0x01` are the PQ-launch
+  values; future crypto-family migrations (e.g. WHIR-based
+  verifier-as-AIR) bump these and require a consensus upgrade at that
+  time.
+- Genesis block ships with the new Transfer shape; there is no
+  coexistence period with an earlier format.
+
+### 5.7 Testing plan
+
+A6-4 sub-tasks:
+
+1. **Fixture refresh**: regenerate `uno/test/fixtures/valid_transfer_fixture.h`
+   with the new Transfer shape (drop `zk_proof`, add a known-good
+   `witness_commitment`).
+2. **Encode/decode roundtrip**: update the ~10 C++ tests that
+   roundtrip `Transfer` structs (golden hashes become stale; refresh
+   them against the new serialization).
+3. **Commitment-to-Merkle-root test** (new): construct N synthetic
+   Transfers with known proofs, compute each `witness_commitment` via
+   BLAKE3, build the Merkle tree, assert the root equals
+   `UnoBlockExtra.tx_pi_merkle_root` produced by `prove_block` for the
+   same input list.
+4. **Validator rejection test** (new): feed a block with a valid
+   aggregated proof but a tampered `witness_commitment` on one Tx;
+   assert the whole block rejects at compute-phase step 8.
+5. **Scheme-id rejection test** (new): feed a block with `version = 1`
+   or `scheme_id != 0x01`; assert deterministic reject.
+
+### 5.8 Open questions (defer)
+
+Explicitly out of scope for A6-4; tracked for follow-on PRs:
+
+- **Outputs-only Transfers**: do Transfers with `spend_count = 0` need
+  a non-zero `witness_commitment`? If yes, what is the canonical
+  encoding when there is no spend-side proof data?
+- **PI-column stability**: is the `public_input_encoding(tx)` binding
+  canonical under future PI-column additions? Cross-reference to
+  A6-1.6 PI binding work.
+- **Mempool-carryover behavior**: if a Tx sits in mempool for K blocks
+  without being included, does its `witness_commitment` change?
+  Expected answer: no — the commitment binds per-Tx data only, and
+  block-level PI (e.g. `block_seqno`) is a separate concern handled at
+  the `UnoBlockExtra` layer. Confirm by test at A8 testnet tier.
+
+---
+
 ### 4.3 Pre-launch fallback posture
 
 UNO has not launched, so "rollback" in the usual consensus sense does
@@ -571,7 +793,7 @@ configuration.
 
 ---
 
-## 5. Risks and open questions
+## 6. Risks and open questions
 
 1. **Aggregator AIR column count at N=30**: estimated 200 + 20·30 = 800
    cols; under calibrated C1 that's ~135 KB. If the real AIR ends up
@@ -617,7 +839,7 @@ configuration.
 
 ---
 
-## 6. Success criteria (definition of done)
+## 7. Success criteria (definition of done)
 
 ### Phase A1 — ✅ DONE
 
@@ -685,7 +907,7 @@ configuration).
 
 ---
 
-## 7. Related documents
+## 8. Related documents
 
 - `doc/uno-workchain.md` §4.1 (Transfer wire format — A5 finalizes it as the v1 launch format)
 - `doc/uno-workchain.md` §4.3 (verify order — A6 finalizes the validator compute-phase wiring)
