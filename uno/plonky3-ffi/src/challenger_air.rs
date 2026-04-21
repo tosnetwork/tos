@@ -32,6 +32,8 @@
 //!     the reference today and swap in the AIR-backed variant later
 //!     without interface change.
 
+use p3_air::{Air, AirBuilder, BaseAir, WindowAccess};
+use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use p3_goldilocks::{default_goldilocks_poseidon2_8, Goldilocks, Poseidon2Goldilocks};
 use p3_symmetric::Permutation;
 
@@ -882,6 +884,267 @@ pub fn check_all_transitions(trace: &[Goldilocks], trace_height: usize) -> Resul
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Plonky3 AIR trait implementation (Phase A2-2b)
+//
+// Mechanical port of `check_all_transitions` to the Plonky3 `Air<AB>` trait.
+// Each `if / return Err` arm above becomes a `builder.assert_zero(selector *
+// (lhs - rhs))` here. Constraint degree analysis:
+//
+//   * one-hot sums:            degree 1
+//   * weighted-flag decoder:   degree 1
+//   * SAMPLE projection:       degree 2 (flag × out_buf)
+//   * OBSERVE in_buf_next:     degree 3 (is_observe × (cond_persist × in_buf + cond_insert × observed))
+//   * DUPLEX / SAMPLE / IDLE:  degree 2 (kind-selector × difference)
+//   * overall max:             degree 3
+//
+// Max degree 3 is well within the Plonky3 / uni-stark `log_blowup=3`
+// budget (quotient chunks handle up to degree 7). The Option B pin
+// (§2.1) is therefore directly usable for ChallengerAir.
+// ---------------------------------------------------------------------------
+
+/// Plonky3 AIR for the duplex challenger state machine. See module-level
+/// docs for the trace layout (Phase A2-1 spec) + `check_all_transitions`
+/// for the Rust-reference constraint definitions (Phase A2-2a).
+#[derive(Copy, Clone, Debug, Default)]
+pub struct ChallengerAirV1;
+
+impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for ChallengerAirV1 {
+    #[inline]
+    fn width(&self) -> usize {
+        CHALLENGER_AIR_WIDTH
+    }
+
+    #[inline]
+    fn num_public_values(&self) -> usize {
+        // Phase A2-2b: self-contained AIR, no public inputs. PIs arrive
+        // in Phase A3 when the aggregator wraps this AIR and commits a
+        // block-level merkle root.
+        0
+    }
+
+    #[inline]
+    fn max_constraint_degree(&self) -> Option<usize> {
+        // See degree analysis above the impl.
+        Some(3)
+    }
+}
+
+impl<AB> Air<AB> for ChallengerAirV1
+where
+    AB: AirBuilder<F = Goldilocks>,
+{
+    fn eval(&self, builder: &mut AB) {
+        let main = builder.main();
+        let local_slice: &[AB::Var] = main.current_slice();
+        let next_slice: &[AB::Var] = main.next_slice();
+
+        // Helper lambda-like closures — Plonky3 expressions are `AB::Expr`.
+        // Since `AB::Var: Copy + Into<AB::Expr>` we freely convert.
+
+        let fe = |v: u64| AB::Expr::from(AB::F::from_u64(v));
+        let zero = || fe(0);
+        let one = || fe(1);
+
+        // Quick aliases.
+        let is_observe: AB::Expr = local_slice[col::KIND0 + OP_KIND_OBSERVE as usize].into();
+        let is_sample: AB::Expr = local_slice[col::KIND0 + OP_KIND_SAMPLE as usize].into();
+        let is_duplex: AB::Expr = local_slice[col::KIND0 + OP_KIND_DUPLEX as usize].into();
+        let is_idle: AB::Expr = local_slice[col::KIND0 + OP_KIND_IDLE as usize].into();
+
+        // =====================================================
+        // Per-row constraints (apply on EVERY row, no `when_*`)
+        // =====================================================
+
+        // ---- Kind flags are each boolean and sum to 1 ----
+        let mut kind_sum = zero();
+        for k in 0..CHALLENGER_NUM_OP_KINDS {
+            let flag: AB::Expr = local_slice[col::KIND0 + k].into();
+            // flag * (flag - 1) == 0 → boolean.
+            builder.assert_zero(flag.clone() * (flag.clone() - one()));
+            kind_sum = kind_sum + flag;
+        }
+        builder.assert_eq(kind_sum, one());
+
+        // ---- in_buf_len_flag: each boolean, sum to 1, weighted == integer ----
+        let mut in_flag_sum = zero();
+        let mut in_weighted = zero();
+        for k in 0..=SPONGE_RATE {
+            let flag: AB::Expr = local_slice[col::IN_BUF_LEN_FLAG0 + k].into();
+            builder.assert_zero(flag.clone() * (flag.clone() - one()));
+            in_flag_sum = in_flag_sum + flag.clone();
+            in_weighted = in_weighted + fe(k as u64) * flag;
+        }
+        builder.assert_eq(in_flag_sum, one());
+        builder.assert_eq(in_weighted, AB::Expr::from(local_slice[col::IN_BUF_LEN]));
+
+        // ---- out_buf_len_flag: mirror of above ----
+        let mut out_flag_sum = zero();
+        let mut out_weighted = zero();
+        for k in 0..=SPONGE_RATE {
+            let flag: AB::Expr = local_slice[col::OUT_BUF_LEN_FLAG0 + k].into();
+            builder.assert_zero(flag.clone() * (flag.clone() - one()));
+            out_flag_sum = out_flag_sum + flag.clone();
+            out_weighted = out_weighted + fe(k as u64) * flag;
+        }
+        builder.assert_eq(out_flag_sum, one());
+        builder.assert_eq(out_weighted, AB::Expr::from(local_slice[col::OUT_BUF_LEN]));
+
+        // ---- Payload hygiene: non-OBSERVE rows have observed_value == 0;
+        //     non-SAMPLE rows have sampled_value == 0 ----
+        //
+        // "(1 - is_observe) * observed_value == 0" forces observed == 0
+        // whenever is_observe == 0. Same for sampled.
+        let observed: AB::Expr = local_slice[col::OBSERVED_VALUE].into();
+        let sampled: AB::Expr = local_slice[col::SAMPLED_VALUE].into();
+        builder.assert_zero((one() - is_observe.clone()) * observed.clone());
+        builder.assert_zero((one() - is_sample.clone()) * sampled.clone());
+
+        // ---- SAMPLE: sampled_value == out_buf[out_buf_len - 1] ----
+        // Sampling from empty out_buf is rejected by the zero-len flag
+        // (out_buf_len_flag[0] == 1 forces sampled_expected == 0 via
+        // the projection, but the rule below also asserts is_sample
+        // implies out_buf_len >= 1. We express that by adding a
+        // constraint: is_sample * out_buf_len_flag[0] == 0.
+        let out_flag_0: AB::Expr = local_slice[col::OUT_BUF_LEN_FLAG0].into();
+        builder.assert_zero(is_sample.clone() * out_flag_0);
+
+        // Express out_buf[out_buf_len - 1] as Σ_{k=1..=RATE} flag[k] * out_buf[k-1].
+        // Gate by is_sample so this constraint is vacuous on non-SAMPLE rows.
+        let mut sample_expected = zero();
+        for k in 1..=SPONGE_RATE {
+            let flag: AB::Expr = local_slice[col::OUT_BUF_LEN_FLAG0 + k].into();
+            let out_k_minus_1: AB::Expr = local_slice[col::OUT_BUF0 + k - 1].into();
+            sample_expected = sample_expected + flag * out_k_minus_1;
+        }
+        builder.assert_zero(is_sample.clone() * (sampled - sample_expected));
+
+        // =====================================================
+        // Transition constraints (apply to row pairs; exclude last row)
+        // =====================================================
+        let mut trans = builder.when_transition();
+
+        // ---- OBSERVE transition: ----
+        //
+        //   state_next = state_local
+        //   out_buf_next_len = 0
+        //   in_buf_next[k] = is_len(j>k) * in_buf_local[k]
+        //                  + is_len_eq_k * observed_value
+        //   in_buf_next_len = in_buf_len_local + 1 (unless local == RATE-1,
+        //                       in which case next is RATE — which triggers
+        //                       the companion DUPLEX row immediately after)
+        {
+            // state persistence on OBSERVE rows.
+            for i in 0..SPONGE_WIDTH {
+                let delta: AB::Expr =
+                    AB::Expr::from(next_slice[col::STATE0 + i]) - AB::Expr::from(local_slice[col::STATE0 + i]);
+                trans.assert_zero(is_observe.clone() * delta);
+            }
+            // out_buf_next_len == 0 on OBSERVE rows.
+            trans.assert_zero(is_observe.clone() * AB::Expr::from(next_slice[col::OUT_BUF_LEN]));
+            // in_buf_next[k] rule.
+            for k in 0..SPONGE_RATE {
+                // cond_persist_k = Σ_{j > k} in_buf_len_flag[j]  (1 iff in_buf_len > k)
+                let mut cond_persist = zero();
+                for j in (k + 1)..=SPONGE_RATE {
+                    let f: AB::Expr = local_slice[col::IN_BUF_LEN_FLAG0 + j].into();
+                    cond_persist = cond_persist + f;
+                }
+                // cond_insert_k = in_buf_len_flag[k]  (1 iff in_buf_len == k)
+                let cond_insert: AB::Expr = local_slice[col::IN_BUF_LEN_FLAG0 + k].into();
+
+                let in_local_k: AB::Expr = local_slice[col::IN_BUF0 + k].into();
+                let observed_local = AB::Expr::from(local_slice[col::OBSERVED_VALUE]);
+                let expected = cond_persist * in_local_k + cond_insert * observed_local;
+
+                let in_next_k: AB::Expr = next_slice[col::IN_BUF0 + k].into();
+                trans.assert_zero(is_observe.clone() * (in_next_k - expected));
+            }
+            // in_buf_next_len = in_buf_len_local + 1. There is no
+            // wrap-around column (post-RATE is split into a DUPLEX row).
+            let in_len_local: AB::Expr = local_slice[col::IN_BUF_LEN].into();
+            let in_len_next: AB::Expr = next_slice[col::IN_BUF_LEN].into();
+            trans.assert_zero(is_observe.clone() * (in_len_next - in_len_local - one()));
+        }
+
+        // ---- DUPLEX transition: ----
+        //
+        //   in_buf_next = [0;RATE]
+        //   in_buf_next_len = 0
+        //   out_buf_next[k] = state_next[k]    (state_next is the permutation
+        //                                        output; A2-2c will enforce
+        //                                        state_next == P2(state_local
+        //                                        with in_buf overwritten))
+        //   out_buf_next_len = RATE
+        {
+            for k in 0..SPONGE_RATE {
+                let in_next_k: AB::Expr = next_slice[col::IN_BUF0 + k].into();
+                trans.assert_zero(is_duplex.clone() * in_next_k);
+            }
+            let in_len_next: AB::Expr = next_slice[col::IN_BUF_LEN].into();
+            trans.assert_zero(is_duplex.clone() * in_len_next);
+
+            for k in 0..SPONGE_RATE {
+                let out_next_k: AB::Expr = next_slice[col::OUT_BUF0 + k].into();
+                let state_next_k: AB::Expr = next_slice[col::STATE0 + k].into();
+                trans.assert_zero(is_duplex.clone() * (out_next_k - state_next_k));
+            }
+            let out_len_next: AB::Expr = next_slice[col::OUT_BUF_LEN].into();
+            trans.assert_zero(is_duplex.clone() * (out_len_next - fe(SPONGE_RATE as u64)));
+        }
+
+        // ---- SAMPLE transition: ----
+        //
+        //   state_next = state_local
+        //   in_buf_next = in_buf_local
+        //   in_buf_next_len = in_buf_len_local
+        //   out_buf_next_len = out_buf_len_local - 1
+        //   out_buf_next[k] = (1 if k < out_buf_next_len else 0) * out_buf_local[k]
+        //                    — expressed via sum of next-row flags for j > k
+        {
+            for i in 0..SPONGE_WIDTH {
+                let delta: AB::Expr =
+                    AB::Expr::from(next_slice[col::STATE0 + i]) - AB::Expr::from(local_slice[col::STATE0 + i]);
+                trans.assert_zero(is_sample.clone() * delta);
+            }
+            for k in 0..SPONGE_RATE {
+                let delta: AB::Expr =
+                    AB::Expr::from(next_slice[col::IN_BUF0 + k]) - AB::Expr::from(local_slice[col::IN_BUF0 + k]);
+                trans.assert_zero(is_sample.clone() * delta);
+            }
+            let in_len_delta: AB::Expr = AB::Expr::from(next_slice[col::IN_BUF_LEN])
+                - AB::Expr::from(local_slice[col::IN_BUF_LEN]);
+            trans.assert_zero(is_sample.clone() * in_len_delta);
+
+            // out_buf_len_next = out_buf_len_local - 1
+            let out_len_local: AB::Expr = local_slice[col::OUT_BUF_LEN].into();
+            let out_len_next: AB::Expr = next_slice[col::OUT_BUF_LEN].into();
+            trans.assert_zero(is_sample.clone() * (out_len_next - out_len_local + one()));
+
+            // For each slot k: next[k] = (Σ_{j>k} next_flag[j]) * local[k]
+            for k in 0..SPONGE_RATE {
+                let mut keep = zero();
+                for j in (k + 1)..=SPONGE_RATE {
+                    let f: AB::Expr = next_slice[col::OUT_BUF_LEN_FLAG0 + j].into();
+                    keep = keep + f;
+                }
+                let expected = keep * AB::Expr::from(local_slice[col::OUT_BUF0 + k]);
+                let next_k: AB::Expr = next_slice[col::OUT_BUF0 + k].into();
+                trans.assert_zero(is_sample.clone() * (next_k - expected));
+            }
+        }
+
+        // ---- IDLE transition: everything 0..KIND0 persists ----
+        {
+            for c in 0..col::KIND0 {
+                let delta: AB::Expr =
+                    AB::Expr::from(next_slice[c]) - AB::Expr::from(local_slice[c]);
+                trans.assert_zero(is_idle.clone() * delta);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1239,5 +1502,143 @@ mod tests {
         // Too-small trace_height is rejected: 4 observes produce 4+1 = 5
         // physical rows, which won't fit in height-4.
         assert!(build_trace(&[obs(1), obs(2), obs(3), obs(4)], 4).is_err());
+    }
+
+    // ----- Phase A2-2b: real STARK prove + verify via uni-stark -----
+
+    use crate::prover::build_config;
+    use p3_matrix::dense::RowMajorMatrix;
+    use p3_uni_stark::{prove, verify};
+
+    fn trace_matrix_from_script(script: &[ChallengerOp], height: usize) -> RowMajorMatrix<Goldilocks> {
+        let flat = build_trace(script, height).expect("valid script");
+        RowMajorMatrix::new(flat, CHALLENGER_AIR_WIDTH)
+    }
+
+    #[test]
+    fn air_prove_and_verify_empty_script() {
+        let cfg = build_config();
+        let air = ChallengerAirV1;
+        let trace = trace_matrix_from_script(&[], 16);
+        let proof = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof, &[]).expect("empty-script challenger proof must verify");
+    }
+
+    #[test]
+    fn air_prove_and_verify_observe_and_sample() {
+        // 4 observes (auto-duplex) + 2 samples.
+        let script = vec![
+            obs(0x11), obs(0x22), obs(0x33), obs(0x44),
+            ChallengerOp::Sample,
+            ChallengerOp::Sample,
+        ];
+        // Need at least 4 OBSERVE + 1 DUPLEX + 2 SAMPLE = 7 physical rows,
+        // next pow-2 >= 7 is 8 but we need trace_height > 4 for FRI's
+        // log_blowup=3 expansion; use 16 for safety.
+        let trace = trace_matrix_from_script(&script, 16);
+        let cfg = build_config();
+        let air = ChallengerAirV1;
+        let proof = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof, &[])
+            .expect("observe-and-sample challenger proof must verify");
+    }
+
+    #[test]
+    fn air_prove_and_verify_sample_on_empty_out_buf() {
+        // Forced-duplex path: sample without prior observes.
+        let script = vec![ChallengerOp::Sample, ChallengerOp::Sample];
+        let trace = trace_matrix_from_script(&script, 16);
+        let cfg = build_config();
+        let air = ChallengerAirV1;
+        let proof = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof, &[])
+            .expect("forced-duplex sample path must verify");
+    }
+
+    #[test]
+    fn air_prove_and_verify_longer_interleaved() {
+        let script = vec![
+            obs(1), obs(2),
+            ChallengerOp::Sample,       // forced duplex (no observe filled the buffer)
+            obs(3),
+            ChallengerOp::Sample,
+            obs(4), obs(5), obs(6), obs(7),  // this triggers auto-duplex (RATE=4)
+            ChallengerOp::Sample,
+        ];
+        let trace = trace_matrix_from_script(&script, 32);
+        let cfg = build_config();
+        let air = ChallengerAirV1;
+        let proof = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof, &[])
+            .expect("interleaved script challenger proof must verify");
+    }
+
+    /// Helper: try to prove + verify an adversarial trace. Returns true
+    /// if the AIR rejects (either via debug-panic on prove, or verify
+    /// returns Err, or a malformed proof fails deserialization).
+    fn air_rejects(trace: RowMajorMatrix<Goldilocks>) -> bool {
+        let cfg = build_config();
+        let air = ChallengerAirV1;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove(&cfg, &air, trace, &[])
+        }));
+        match outcome {
+            Err(_) => true, // debug-builder panic
+            Ok(proof) => {
+                // Release: prove succeeded (debug builder absent). Verify
+                // must then reject.
+                let v = verify(&cfg, &air, &proof, &[]);
+                v.is_err()
+            }
+        }
+    }
+
+    #[test]
+    fn air_rejects_tampered_observed_value_at_verify_time() {
+        let flat = build_trace(&[obs(0xAA)], 16).unwrap();
+        let mut flat_bad = flat.clone();
+        flat_bad[col::OBSERVED_VALUE] = Goldilocks::new(0xBB);
+        let trace = RowMajorMatrix::new(flat_bad, CHALLENGER_AIR_WIDTH);
+        assert!(air_rejects(trace), "tampered observed_value must be rejected");
+    }
+
+    #[test]
+    fn air_rejects_tampered_sampled_value() {
+        let script = vec![obs(1), obs(2), obs(3), obs(4), ChallengerOp::Sample];
+        let flat = build_trace(&script, 16).unwrap();
+        let mut flat_bad = flat.clone();
+        let sample_row = 5;
+        flat_bad[sample_row * CHALLENGER_AIR_WIDTH + col::SAMPLED_VALUE] =
+            Goldilocks::new(0xDEAD_BEEF);
+        let trace = RowMajorMatrix::new(flat_bad, CHALLENGER_AIR_WIDTH);
+        assert!(air_rejects(trace), "tampered sampled_value must be rejected");
+    }
+
+    #[test]
+    fn air_rejects_broken_one_hot() {
+        let flat = build_trace(&[obs(1)], 16).unwrap();
+        let mut flat_bad = flat.clone();
+        // Row 0 already has OBSERVE flag = 1. Flipping SAMPLE to 1 breaks
+        // the one-hot sum (2 instead of 1) AND the boolean product check
+        // (OBSERVE is still fine, SAMPLE == 1 is fine, but sum != 1 catches it).
+        flat_bad[col::KIND0 + OP_KIND_SAMPLE as usize] = Goldilocks::new(1);
+        let trace = RowMajorMatrix::new(flat_bad, CHALLENGER_AIR_WIDTH);
+        assert!(air_rejects(trace), "two simultaneous kind flags must be rejected");
+    }
+
+    #[test]
+    fn air_rejects_duplex_leaving_in_buf_nonempty() {
+        let script = vec![obs(1), obs(2), obs(3), obs(4)];
+        let flat = build_trace(&script, 16).unwrap();
+        let mut flat_bad = flat.clone();
+        // Row 5 is the IDLE after the auto-duplex (row 4). The DUPLEX
+        // transition requires in_buf_next[0] == 0. Flip it to nonzero.
+        flat_bad[5 * CHALLENGER_AIR_WIDTH + col::IN_BUF0] = Goldilocks::new(99);
+        // Also need to keep one-hot consistency: if in_buf_next[0] != 0
+        // but in_buf_next_len == 0, the AIR sees inconsistency either
+        // from the DUPLEX transition (in_buf cleared) or from the
+        // next row's check. Either way the AIR must reject.
+        let trace = RowMajorMatrix::new(flat_bad, CHALLENGER_AIR_WIDTH);
+        assert!(air_rejects(trace), "duplex must clear in_buf");
     }
 }

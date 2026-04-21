@@ -119,6 +119,16 @@ think about TOS as a distributed supercomputer, or rather a
 ``superserver'', intended to host on-chain and off-chain services
 with one coherent operator and integration path.
 
+In its current product form, TOS uses this multichain architecture to
+run three distinct execution domains in parallel under one
+masterchain-rooted consensus: the asynchronous TVM-based base
+workchain, a synchronous EVM-oriented workchain for Ethereum-style
+smart contracts, and the Uno privacy workchain with PQ-native
+shielded transfers. One node binary (\texttt{validator-engine})
+serves these domains, and one canonical machine-facing surface
+(\texttt{tos\_*}, \texttt{eth\_*}, \texttt{uno\_*}) together with one
+operator path (\texttt{tosctl}) is intended to expose them.
+
 This text is not intended to be the ultimate reference with respect to
 all implementation details. It describes the system as implemented and
 planned in the current TOS codebase and documentation, and some
@@ -405,6 +415,30 @@ Zero or the basic workchain, is the one used for the current TVM
 smart-contract environment, canonical wallet contracts, base asset
 transfers and most existing applications. Shardchains of the basic
 workchain will be called {\em basic shardchains}.
+
+\nxsubpoint\label{sp:cur.exec.domains} \embt(Current execution
+domains.)  The general workchain mechanism admits many future virtual
+machines and transaction models, but the present TOS product direction
+is organized around three concrete execution domains:
+\begin{itemize}
+\item {\em Workchain Zero\/} ($\workchainid=0$): the native
+  asynchronous TVM environment, using actor-style message passing,
+  dynamic sharding and the canonical TOS asset and wallet model.
+\item {\em Workchain One\/} ($\workchainid=1$): a synchronous
+  EVM-oriented environment intended for Solidity and the Ethereum
+  tooling stack. It uses Ethereum-style addresses and signed
+  transactions, while remaining a first-class TOS workchain rather
+  than a sidechain.
+\item {\em Workchain Two\/} ($\workchainid=2$): {\em Uno\/}, a
+  privacy-oriented workchain using Plonky3 STARK proofs, hybrid
+  post-quantum note encryption and a bridgeless shielded-pool
+  architecture.
+\end{itemize}
+These three domains share masterchain coordination, validator
+economics and the same node implementation. Users choose an execution
+domain per transaction; validators may advertise support and
+participate per workchain according to the corresponding on-chain
+activation rules.
 
 \nxsubpoint \embt(Block generation intervals.)  TOS supports more than
 one consensus profile. In its current direction, block production is
@@ -4608,6 +4642,33 @@ We start with a discussion of how different blockchain and
 network-related applications and services may be implemented inside
 the TOS ecosystem. First of all, a simple classification is in order:
 
+\nxsubpoint \embt(Node-first operator and API surface.)  In the
+current TOS product shape, the primary integration point for wallets,
+explorers, backends and automation is the node itself rather than an
+externally reconstructed gateway stack. The
+\texttt{validator-engine} embeds the canonical JSON-RPC namespaces of
+the major execution domains: \texttt{tos\_*} for the native
+workchain, \texttt{eth\_*} for the EVM-oriented workchain and
+\texttt{uno\_*} for the Uno privacy workchain. The same embedded
+server also exposes structured health, readiness and metrics surfaces
+for machine consumption.
+
+\nxsubpoint \embt(Standards as ecosystem surfaces.)  Closely related
+to this node-first design is the decision to specify wallet send,
+estimate and track flows, transaction-history data, trust tiers,
+indexed-data contracts and machine-readable API descriptions as
+explicit standards rather than leaving them to ad hoc third-party
+conventions. The goal is to reduce the fragmented architecture that
+often emerges around blockchain systems, and to make TOS feel
+integrated rather than assembled from unrelated sidecars.
+
+\nxsubpoint \embt(Unified operator workflow.)  TOS also aims to keep
+the operator path coherent. Instead of spreading operational authority
+across many unrelated wrappers and scripts, the intended canonical
+workflow is centered on {\em tosctl\/}, which is expected to cover the
+main node-management, observability and workchain-specific operational
+tasks.
+
 \nxsubpoint \embt(Applications and services.)  We will use the words
 ``application'' and ``service'' interchangeably. However, there is a
 subtle and somewhat vague distinction: an {\em application\/} usually
@@ -5179,6 +5240,18 @@ and resources by including TOS URIs (cf.~\ptref{sp:ton.uri}) in
 messages; such hyperlinks, if selected, may be opened internally by
 the receiving client application, and interaction with the chosen
 entity will begin.
+
+\nxsubpoint \embt(TOS Connect and wallet-to-application session
+setup.)  A closely related capability is a standardized
+wallet-to-application connection flow, by which a wallet, browser or
+dapp discovers a counterparty, negotiates supported methods and asks
+the user for account access or transaction signatures. TOS treats
+this as a first-class ecosystem surface because one user wallet may
+need to interact with applications across several execution domains:
+native TVM contracts in Workchain Zero, Ethereum-style contracts in
+Workchain One, or privacy-preserving workflows around Uno in
+Workchain Two. A standardized connection layer avoids bespoke
+integration logic for each application.
 
 \nxsubpoint \embt(``tos-sites'' as tos-services supporting an HTTP
 interface.)  A {\em tos-site\/} is simply a tos-service that supports
