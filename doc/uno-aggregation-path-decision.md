@@ -1,7 +1,15 @@
 # Uno Aggregation — Feasibility Path Decision
 
-**Date:** 2026-04-27
-**Status:** Decision — work under way (A3-PRE scaffolding).
+**Date:** 2026-04-27 (original); **2026-04-21** (v1 superseded).
+
+**Status:** ⚠️ **Historical.** This document recorded the decision to
+pursue **Option 1: monolithic VerifierAir + K-air-col-share** as the
+feasibility path for v1 block-level aggregation. Per the v1 pivot in
+`doc/uno-aggregation-design.md` §-1 (2026-04-21), UNO v1 ships with
+per-Tx direct proofs and defers aggregation to v2+. The A3-PRE..A3-5c
+implementation tracked in this document stays in-tree as frozen v2
+research. The original decision logic below is preserved for v2
+revival.
 
 ## Context
 

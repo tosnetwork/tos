@@ -1,5 +1,12 @@
 # Uno Aggregation — Phase A2 Measurements (A2-4)
 
+> **v2 research path.** Per the v1 pivot in `doc/uno-aggregation-design.md`
+> §-1 (April 2026), UNO v1 ships **without** block-level aggregation.
+> Measurements in this document describe the frozen v2 research path
+> (monolithic AIR aggregation). They are the quantitative baseline
+> used to decide against including aggregation in v1 and will be
+> revisited when v2 triggers (§-1 of the design doc) light up.
+
 This document captures the per-query AIR column widths, trace heights,
 and STARK-bundle shapes for the orchestrated in-circuit FRI verifier
 landed over A2-3c-iv-d-6 through d-8-c. It is the **measurement input
