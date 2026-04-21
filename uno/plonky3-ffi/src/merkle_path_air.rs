@@ -69,9 +69,14 @@
 //! 5. LAST non-IDLE row's DIGEST == EXPECTED_ROOT.
 
 use p3_goldilocks::{default_goldilocks_poseidon2_8, Goldilocks};
+use p3_poseidon2_air::RoundConstants;
 use p3_symmetric::Permutation;
 
 use crate::merkle_path::{compress_pair_ref, hash_leaf_row_ref, Digest};
+use crate::transfer_air::{
+    eval_poseidon2, P2Cols, POSEIDON2_COLS_PER_INSTANCE, POSEIDON2_HALF_FULL_ROUNDS,
+};
+use core::borrow::Borrow;
 
 // ---------------------------------------------------------------------------
 // Protocol constants (must track `merkle_path` A2-3c-iii)
@@ -126,13 +131,66 @@ pub mod col {
     pub const ROOT0: usize = INDEX_BIT + 1;
     pub const ROOT_END: usize = ROOT0 + DIGEST_WIDTH;
 
-    /// Total framing width (A2-3c-iv-d-1). A2-3c-iv-d-3 appends a
-    /// 180-column Poseidon2-w8 block at this offset.
-    pub const WIDTH: usize = ROOT_END;
+    /// Base offset of the shared Poseidon2-w8 sub-AIR witness block
+    /// (Phase A2-3c-iv-d-3). The block is populated on EVERY row with
+    /// a valid permutation witness — its input matches LEAF_VALUES (on
+    /// LEAF rows), LEFT ∥ RIGHT (on COMPRESS rows), or zero (on IDLE
+    /// rows). The row-gated DIGEST = P2.post[0..4] constraint closes
+    /// the cryptographic binding that d-2 left open.
+    pub const P2_BLOCK: usize = ROOT_END;
+
+    /// Total column width including the Poseidon2 block. 32 framing
+    /// cols + POSEIDON2_COLS_PER_INSTANCE (= 180) = 212 cols.
+    pub const WIDTH: usize = P2_BLOCK + crate::transfer_air::POSEIDON2_COLS_PER_INSTANCE;
 }
 
 /// Canonical framing width. Equal to `col::WIDTH`.
 pub const MERKLE_PATH_AIR_FRAMING_WIDTH: usize = col::WIDTH;
+
+// ---------------------------------------------------------------------------
+// Shared Poseidon2-w8 sub-AIR helpers (A2-3c-iv-d-3)
+// ---------------------------------------------------------------------------
+
+/// Generate a full Poseidon2-w8 witness row for a given 8-element
+/// input state. Returns `POSEIDON2_COLS_PER_INSTANCE` Goldilocks
+/// values in the layout expected by `P2Cols`. Mirrors
+/// `challenger_air::gen_p2_witness` — same round constants, same
+/// `generate_trace_rows` call, same layout.
+pub(crate) fn gen_p2_witness(input: [Goldilocks; 8]) -> Vec<Goldilocks> {
+    use p3_goldilocks::{
+        GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8, GenericPoseidon2LinearLayersGoldilocks,
+    };
+    use p3_poseidon2_air::generate_trace_rows;
+
+    let constants: RoundConstants<
+        Goldilocks,
+        8,
+        { p3_goldilocks::GOLDILOCKS_POSEIDON2_HALF_FULL_ROUNDS },
+        GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8,
+    > = RoundConstants::new(
+        p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_INITIAL,
+        p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_INTERNAL,
+        p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_FINAL,
+    );
+    let mat = generate_trace_rows::<
+        Goldilocks,
+        GenericPoseidon2LinearLayersGoldilocks,
+        8,
+        7,
+        1,
+        { p3_goldilocks::GOLDILOCKS_POSEIDON2_HALF_FULL_ROUNDS },
+        GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8,
+    >(vec![input], &constants, 0);
+    debug_assert_eq!(mat.values.len(), POSEIDON2_COLS_PER_INSTANCE);
+    mat.values
+}
+
+/// View the Poseidon2-w8 sub-block at `col::P2_BLOCK` as `&P2Cols<T>`.
+#[inline]
+pub(crate) fn p2_group<T>(row: &[T]) -> &P2Cols<T> {
+    let group: &[T] = &row[col::P2_BLOCK..col::P2_BLOCK + POSEIDON2_COLS_PER_INSTANCE];
+    <[T] as Borrow<P2Cols<T>>>::borrow(group)
+}
 
 // ---------------------------------------------------------------------------
 // Trace builder
@@ -298,6 +356,41 @@ pub fn build_trace(
         // …then overwrite the KIND selector and ROOT.
         write_kind(row, OP_KIND_IDLE);
         write_root(row, &expected_root);
+    }
+
+    // --- Populate the shared Poseidon2-w8 block on every row (d-3) ---
+    //
+    // The P2 block stores a valid permutation witness for SOME 8-element
+    // input. On LEAF rows we feed [LEAF_VALUES ∥ 0]; on COMPRESS rows we
+    // feed [LEFT ∥ RIGHT]; on IDLE rows we feed [0; 8]. The d-3 AIR
+    // constraints gate input/output-match by row kind, so the IDLE P2
+    // witness is unconstrained relative to DIGEST.
+    for row_idx in 0..trace_height {
+        let base = row_idx * width;
+        let kind_leaf = flat[base + col::KIND0 + OP_KIND_LEAF as usize] == Goldilocks::new(1);
+        let kind_compress =
+            flat[base + col::KIND0 + OP_KIND_COMPRESS as usize] == Goldilocks::new(1);
+        let input: [Goldilocks; 8] = if kind_leaf {
+            let mut s = [Goldilocks::default(); 8];
+            for i in 0..LEAF_WIDTH {
+                s[i] = flat[base + col::LEAF0 + i];
+            }
+            s
+        } else if kind_compress {
+            let mut s = [Goldilocks::default(); 8];
+            for i in 0..DIGEST_WIDTH {
+                s[i] = flat[base + col::LEFT0 + i];
+                s[DIGEST_WIDTH + i] = flat[base + col::RIGHT0 + i];
+            }
+            s
+        } else {
+            [Goldilocks::default(); 8]
+        };
+        let p2_witness = gen_p2_witness(input);
+        debug_assert_eq!(p2_witness.len(), POSEIDON2_COLS_PER_INSTANCE);
+        for (i, v) in p2_witness.into_iter().enumerate() {
+            flat[base + col::P2_BLOCK + i] = v;
+        }
     }
 
     Ok(flat)
@@ -557,10 +650,11 @@ impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for MerklePathAirV1 {
 
     #[inline]
     fn max_constraint_degree(&self) -> Option<usize> {
-        // See degree analysis in the module comment: degree 3 max.
-        // Once d-3 wires in Poseidon2 (S-box degree 7), we'll bump
-        // this to `None` (auto-compute) — matches MvpTransferAir.
-        Some(3)
+        // Structural constraints are degree 3 at most. With d-3's
+        // Poseidon2 block wired in, the S-box arithmetic adds
+        // degree-SBOX_DEGREE = 7 constraints. Let Plonky3 auto-derive
+        // the bound — same pattern as MvpTransferAir + ChallengerAirV1.
+        None
     }
 }
 
@@ -683,7 +777,67 @@ where
 
         // Silence unused warnings that would surface only when the
         // crate's `#[warn(unused)]` lint pipeline changes.
-        let _ = (is_idle, zero);
+        let _ = (is_idle.clone(), zero);
+
+        // ================================================================
+        // Shared Poseidon2-w8 sub-AIR (Phase A2-3c-iv-d-3).
+        //
+        // The P2 sub-AIR runs on EVERY row — its constraint bank
+        // forces the 180 witness columns to represent a valid
+        // Poseidon2 permutation of `p2.inputs` (whatever the caller
+        // fills in). The trace builder writes:
+        //   * LEAF rows    → input = [LEAF_VALUES ∥ 0]
+        //   * COMPRESS rows → input = [LEFT ∥ RIGHT]
+        //   * IDLE rows    → input = [0; 8] (canonical dummy)
+        //
+        // The row-gated input/output-match constraints below tie the
+        // sub-AIR's input to the framing-layer columns on LEAF /
+        // COMPRESS rows, and tie its output (first 4 of the final
+        // post-state) to DIGEST on those same rows. On IDLE rows the
+        // P2 block's input and output are unconstrained relative to
+        // the framing — DIGEST propagation via the IDLE persistence
+        // transition handles that separately.
+        // ================================================================
+        let p2_local = p2_group::<AB::Var>(local_slice);
+        eval_poseidon2(builder, p2_local);
+
+        // ---- P2 input match on LEAF rows ----
+        //   p2.inputs[0..4] = LEAF_VALUES[0..4]
+        //   p2.inputs[4..8] = 0
+        for i in 0..DIGEST_WIDTH {
+            let p2_in_i: AB::Expr = p2_local.inputs[i].into();
+            let leaf_i: AB::Expr = local_slice[col::LEAF0 + i].into();
+            builder.assert_zero(is_leaf.clone() * (p2_in_i - leaf_i));
+        }
+        for i in DIGEST_WIDTH..8 {
+            let p2_in_i: AB::Expr = p2_local.inputs[i].into();
+            builder.assert_zero(is_leaf.clone() * p2_in_i);
+        }
+
+        // ---- P2 input match on COMPRESS rows ----
+        //   p2.inputs[0..4] = LEFT[0..4]
+        //   p2.inputs[4..8] = RIGHT[0..4]
+        for i in 0..DIGEST_WIDTH {
+            let p2_in_i: AB::Expr = p2_local.inputs[i].into();
+            let left_i: AB::Expr = local_slice[col::LEFT0 + i].into();
+            builder.assert_zero(is_compress.clone() * (p2_in_i - left_i));
+
+            let p2_in_hi: AB::Expr = p2_local.inputs[DIGEST_WIDTH + i].into();
+            let right_i: AB::Expr = local_slice[col::RIGHT0 + i].into();
+            builder.assert_zero(is_compress.clone() * (p2_in_hi - right_i));
+        }
+
+        // ---- P2 output match on LEAF + COMPRESS rows ----
+        //   DIGEST[i] = p2.post[i] for i in 0..4 (truncation to OUT = 4).
+        // The boundary "is_leaf + is_compress = 1 − is_idle" lets us
+        // combine the two cases with a single gate.
+        let p2_post = &p2_local.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
+        let is_hash_row = is_leaf + is_compress; // 1 iff LEAF or COMPRESS
+        for i in 0..DIGEST_WIDTH {
+            let p2_out_i: AB::Expr = p2_post[i].into();
+            let digest_i: AB::Expr = local_slice[col::DIGEST0 + i].into();
+            builder.assert_zero(is_hash_row.clone() * (p2_out_i - digest_i));
+        }
     }
 }
 
@@ -1129,6 +1283,74 @@ mod tests {
         assert_eq!(
             <MerklePathAirV1 as BaseAir<Goldilocks>>::width(&MerklePathAirV1),
             MERKLE_PATH_AIR_FRAMING_WIDTH,
+        );
+        // After d-3 the width includes the 180-col Poseidon2 block.
+        assert_eq!(col::WIDTH, col::P2_BLOCK + POSEIDON2_COLS_PER_INSTANCE);
+        assert_eq!(col::P2_BLOCK, 32);
+        assert_eq!(col::WIDTH, 32 + POSEIDON2_COLS_PER_INSTANCE);
+    }
+
+    /// Phase A2-3c-iv-d-3 acceptance test. The d-2 AIR accepted ANY
+    /// DIGEST values because the cryptographic identity wasn't
+    /// enforced. With d-3's shared Poseidon2 block wired in, tampering
+    /// DIGEST on a LEAF or COMPRESS row must cause the AIR to reject —
+    /// the P2 output-match constraint binds DIGEST to
+    /// `p2.post[0..4]`, and the P2 sub-AIR itself binds `p2.post` to
+    /// the permutation of `p2.inputs`.
+    #[test]
+    fn air_rejects_forged_digest_on_leaf_row() {
+        let (leaves, _, root, opening, index) = tiny_tree_path_for_leaf_2();
+        let mut flat = build_trace(&leaves[index], &opening, index, root, 16).unwrap();
+        // Tamper row 0 (LEAF row) DIGEST[0]. Before d-3 this would have
+        // been accepted by the structural AIR; the P2 output-match
+        // constraint now fires because p2.post[0] != forged DIGEST[0].
+        //
+        // We also need to counter-propagate the fake digest so that
+        // the CURRENT/threading/IDLE-persistence checks don't fire
+        // first — otherwise the test wouldn't exercise the P2 binding.
+        // Simplest: ONLY mutate DIGEST on the LEAF row and leave
+        // CURRENT on the next COMPRESS row intact (it was copied from
+        // the GENUINE leaf digest). That causes CURRENT-propagation
+        // to fire before P2 ever runs. To isolate the P2 binding,
+        // we mutate both DIGEST[0] on row 0 AND row 1's CURRENT[0].
+        flat[col::DIGEST0] += Goldilocks::new(1);
+        let row1 = col::WIDTH;
+        flat[row1 + col::CURRENT0] += Goldilocks::new(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(
+            air_rejects(trace),
+            "forged LEAF DIGEST must be rejected by P2 identity"
+        );
+    }
+
+    #[test]
+    fn air_rejects_forged_digest_on_compress_row() {
+        let (leaves, _, root, opening, index) = tiny_tree_path_for_leaf_2();
+        let mut flat = build_trace(&leaves[index], &opening, index, root, 16).unwrap();
+        // Row 1 is the first COMPRESS. Mutate its DIGEST[0] AND
+        // the downstream CURRENT/root-boundary state to isolate the
+        // P2 binding as the cause of rejection.
+        //
+        // After row 1, row 2 is the next COMPRESS. Its CURRENT[0]
+        // should equal row 1's (mutated) DIGEST[0]. We propagate.
+        // Row 2's DIGEST[0] is the tree root (for a 2-level tree);
+        // this is what's pinned to the ROOT columns via
+        // when_last_row. The IDLE rows carry row 2's DIGEST forward.
+        // Mutating row 1's DIGEST without re-computing row 2's hash
+        // → P2 binding on row 2 catches it too, but row 1's P2
+        // binding fires first in the listing order.
+        //
+        // Simplest isolation: mutate row 1 DIGEST[0] and row 2
+        // CURRENT[0] so that structural constraints all pass — the
+        // AIR must STILL reject because P2.post[0] != forged DIGEST[0].
+        let row1 = col::WIDTH;
+        let row2 = 2 * col::WIDTH;
+        flat[row1 + col::DIGEST0] += Goldilocks::new(1);
+        flat[row2 + col::CURRENT0] += Goldilocks::new(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(
+            air_rejects(trace),
+            "forged COMPRESS DIGEST must be rejected by P2 identity"
         );
     }
 }
