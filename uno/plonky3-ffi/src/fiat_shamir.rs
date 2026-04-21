@@ -104,6 +104,34 @@ impl TranscriptRecorder {
     fn sample_ext(&mut self) -> Challenge {
         Challenge::from_basis_coefficients_fn(|_| self.sample())
     }
+
+    /// Observe one extension-field element as its D=2 base-field limbs.
+    /// Mirrors upstream `observe_algebra_element`.
+    fn observe_ext(&mut self, v: Challenge) {
+        for &limb in v.as_basis_coefficients_slice() {
+            self.observe(limb);
+        }
+    }
+
+    /// Observe a slice of extension-field elements. Mirrors upstream
+    /// `observe_algebra_slice`.
+    fn observe_ext_slice(&mut self, values: &[Challenge]) {
+        for &v in values {
+            self.observe_ext(v);
+        }
+    }
+
+    /// Sample `bits` random bits from the transcript by drawing one
+    /// Goldilocks element and masking the low `bits` bits of its
+    /// canonical u64 representation. Matches upstream's
+    /// `DuplexChallenger::sample_bits`.
+    fn sample_bits(&mut self, bits: usize) -> usize {
+        use p3_field::PrimeField64;
+        debug_assert!(bits < usize::BITS as usize);
+        debug_assert!((1u64 << bits) < Goldilocks::ORDER_U64);
+        let v = self.sample();
+        (v.as_canonical_u64() as usize) & ((1usize << bits) - 1)
+    }
 }
 
 impl Default for TranscriptRecorder {
@@ -122,29 +150,15 @@ pub fn deserialize_proof(proof_bytes: &[u8]) -> Result<Proof<MvpConfig>, postcar
     postcard::from_bytes(proof_bytes)
 }
 
-/// Run the verifier's pre-PCS Fiat-Shamir transcript and return the
-/// derived challenges.
-///
-/// Byte-identical to `uni_stark::verifier::verify` lines 354–385 when
-/// the underlying challenger is our production `DuplexChallenger<
-/// Goldilocks, Poseidon2Goldilocks<8>, 8, 4>`. Verified by the
-/// `parity_with_upstream_verifier` test below.
-///
-/// Inputs:
-/// - `proof`: decoded proof (caller handles postcard errors).
-/// - `public_values`: field-element public-input vector — must match
-///   what the prover committed (i.e. what `transfer_air::MvpWitness::
-///   public_inputs()` returns for the witness that produced this
-///   proof).
-///
-/// Returns `(alpha, zeta, transcript)` where `transcript` is the
-/// sequence of `ChallengerOp`s the AIR trace builder will replay.
-pub fn derive_pre_pcs_challenges_recorded(
+/// Run the verifier's pre-PCS Fiat-Shamir transcript against an
+/// existing recorder and return the derived challenges. Extracted so
+/// `derive_full_challenges` can continue from zeta into the PCS/FRI
+/// transcript without rebuilding the recorder.
+fn pre_pcs_into(
+    rec: &mut TranscriptRecorder,
     proof: &Proof<MvpConfig>,
     public_values: &[Goldilocks],
-) -> (Challenge, Challenge, Vec<ChallengerOp>) {
-    let mut rec = TranscriptRecorder::new();
-
+) -> (Challenge, Challenge) {
     // --- Instance data (verifier.rs:355-357) ---
     let degree_bits = proof.degree_bits;
     // Our MvpConfig is NOT ZK. `base_degree_bits == degree_bits` and
@@ -187,6 +201,32 @@ pub fn derive_pre_pcs_challenges_recorded(
     // --- Sample zeta (verifier.rs:385) ---
     let zeta = rec.sample_ext();
 
+    (alpha, zeta)
+}
+
+/// Run the verifier's pre-PCS Fiat-Shamir transcript and return the
+/// derived challenges.
+///
+/// Byte-identical to `uni_stark::verifier::verify` lines 354–385 when
+/// the underlying challenger is our production `DuplexChallenger<
+/// Goldilocks, Poseidon2Goldilocks<8>, 8, 4>`. Verified by the
+/// `parity_with_upstream_verifier` test below.
+///
+/// Inputs:
+/// - `proof`: decoded proof (caller handles postcard errors).
+/// - `public_values`: field-element public-input vector — must match
+///   what the prover committed (i.e. what `transfer_air::MvpWitness::
+///   public_inputs()` returns for the witness that produced this
+///   proof).
+///
+/// Returns `(alpha, zeta, transcript)` where `transcript` is the
+/// sequence of `ChallengerOp`s the AIR trace builder will replay.
+pub fn derive_pre_pcs_challenges_recorded(
+    proof: &Proof<MvpConfig>,
+    public_values: &[Goldilocks],
+) -> (Challenge, Challenge, Vec<ChallengerOp>) {
+    let mut rec = TranscriptRecorder::new();
+    let (alpha, zeta) = pre_pcs_into(&mut rec, proof, public_values);
     (alpha, zeta, rec.ops)
 }
 
@@ -199,6 +239,160 @@ pub fn derive_pre_pcs_challenges(
 ) -> (Challenge, Challenge) {
     let (alpha, zeta, _ops) = derive_pre_pcs_challenges_recorded(proof, public_values);
     (alpha, zeta)
+}
+
+// ---------------------------------------------------------------------------
+// Full transcript driver — pre-PCS + PCS (FRI) prefix, Phase A2-3c-i
+// ---------------------------------------------------------------------------
+
+/// All Fiat-Shamir-derived values the verifier produces while replaying
+/// the transcript of a `uni_stark::verify` over our `MvpConfig`, from
+/// the start through to the last `sample_bits` call of the FRI query
+/// loop. This is the **complete** set of public-coin challenges the
+/// in-circuit VerifierAir (Phase A2-3c onward) must reproduce — there
+/// is no additional sampling after the query indices.
+#[derive(Clone, Debug)]
+pub struct FullChallenges {
+    /// `alpha` from the STARK constraint-folding step (verifier.rs:373).
+    pub alpha_stark: Challenge,
+    /// Out-of-domain evaluation point (verifier.rs:385).
+    pub zeta: Challenge,
+    /// `alpha` from the batch-combination step inside `pcs.verify` →
+    /// `verify_fri`, used to linearly combine multiple opening queries
+    /// into one FRI instance (fri/verifier.rs:144).
+    pub fri_alpha: Challenge,
+    /// Per-commit-phase folding challenges `β_0, β_1, …`. One per
+    /// `commit_phase_commits[i]` in the FRI proof.
+    pub betas: Vec<Challenge>,
+    /// Per-query random indices. Each is `log_global_max_height` bits.
+    pub query_indices: Vec<usize>,
+    /// `log_global_max_height` — the number of bits each query index
+    /// is drawn from. Derived from `log_blowup + sum(log_arities) +
+    /// log_final_poly_len`.
+    pub log_global_max_height: usize,
+}
+
+/// Run the full Fiat-Shamir transcript — pre-PCS plus the PCS (FRI)
+/// prefix up to and including query-index sampling — and return every
+/// public-coin challenge the verifier produces along the way, plus the
+/// recorded op sequence.
+///
+/// Byte-identical to a composition of
+/// `uni_stark::verifier::verify` (lines 354–385 → pre-PCS)
+/// + `TwoAdicFriPcs::verify` (observe opened values)
+/// + `fri::verifier::verify_fri` (commit-phase observes/betas + final
+///   poly + log_arities + query index samples).
+///
+/// Validated by `parity_full_transcript_with_upstream` on real 1/1,
+/// 2/2, 4/4 Transfer proofs.
+pub fn derive_full_challenges_recorded(
+    proof: &Proof<MvpConfig>,
+    public_values: &[Goldilocks],
+) -> (FullChallenges, Vec<ChallengerOp>) {
+    let mut rec = TranscriptRecorder::new();
+
+    // ======= Pre-PCS (A2-3a) =======
+    let (alpha_stark, zeta) = pre_pcs_into(&mut rec, proof, public_values);
+
+    // ======= PCS (FRI) transcript =======
+    // All observes done by `TwoAdicFriPcs::verify` before handing
+    // control to `verify_fri`: the opened values in the same order
+    // the prover committed them. For uni-stark verify over our
+    // non-ZK, no-preprocessed MvpConfig, the commitment list is
+    // (trace_commit, [(trace_domain, [(zeta, trace_local),
+    //                                 (zeta_next, trace_next)])])
+    // followed by (quotient_commit, [for each chunk: (chunk_domain,
+    // [(zeta, chunk_values)])]). The verifier observes them in
+    // exactly that order (two_adic_pcs.rs:680-685).
+
+    // 1. trace_local at zeta
+    rec.observe_ext_slice(&proof.opened_values.trace_local);
+
+    // 2. trace_next at zeta_next (our AIR has transition constraints ⇒ present)
+    if let Some(trace_next) = proof.opened_values.trace_next.as_deref() {
+        rec.observe_ext_slice(trace_next);
+    }
+
+    // 3. quotient chunks at zeta (one opening per chunk)
+    for chunk in &proof.opened_values.quotient_chunks {
+        rec.observe_ext_slice(chunk);
+    }
+
+    // ======= verify_fri =======
+    // 4. Sample fri_alpha (fri/verifier.rs:144).
+    let fri_alpha = rec.sample_ext();
+
+    // 5. Commit-phase rounds: for each, observe commit + sample β_i
+    //    (PoW witnesses are validated but do not affect the transcript).
+    let num_rounds = proof.opening_proof.commit_phase_commits.len();
+    let mut betas = Vec::with_capacity(num_rounds);
+    for comm in &proof.opening_proof.commit_phase_commits {
+        // Commitment is `ExtensionMmcs<Val, Challenge, ValMmcs>::Commitment`
+        // which inherits the inner (base-field) MMCS commitment type —
+        // a `MerkleCap<Goldilocks, [Goldilocks; 4]>`. So we observe the
+        // 4 base-field digest elements, identical to the trace and
+        // quotient commitments.
+        for digest in comm.roots() {
+            for v in digest.iter() {
+                rec.observe(*v);
+            }
+        }
+        betas.push(rec.sample_ext());
+    }
+
+    // 6. Observe the final polynomial's extension-field coefficients.
+    rec.observe_ext_slice(&proof.opening_proof.final_poly);
+
+    // 7. Observe the per-round log_arity schedule (fri/verifier.rs:234-236).
+    let log_arities: Vec<usize> = proof
+        .opening_proof
+        .query_proofs
+        .first()
+        .map(|qp| {
+            qp.commit_phase_openings
+                .iter()
+                .map(|o| o.log_arity as usize)
+                .collect()
+        })
+        .unwrap_or_default();
+    for &log_arity in &log_arities {
+        rec.observe(Goldilocks::from_usize(log_arity));
+    }
+
+    // 8. Query-index sampling. `extra_query_index_bits == 0` for
+    //    `TwoAdicFriFolding` (fri/two_adic_pcs.rs:106-108), so the
+    //    number of bits sampled per query equals `log_global_max_height`.
+    let total_log_reduction: usize = log_arities.iter().sum();
+    // params: log_blowup = 3, log_final_poly_len = 0 (see prover::build_config).
+    let log_blowup = 3usize;
+    let log_final_poly_len = 0usize;
+    let log_global_max_height = total_log_reduction + log_blowup + log_final_poly_len;
+
+    let num_queries = proof.opening_proof.query_proofs.len();
+    let mut query_indices = Vec::with_capacity(num_queries);
+    for _ in 0..num_queries {
+        query_indices.push(rec.sample_bits(log_global_max_height));
+    }
+
+    (
+        FullChallenges {
+            alpha_stark,
+            zeta,
+            fri_alpha,
+            betas,
+            query_indices,
+            log_global_max_height,
+        },
+        rec.ops,
+    )
+}
+
+/// Convenience: drop the recorded op vector.
+pub fn derive_full_challenges(
+    proof: &Proof<MvpConfig>,
+    public_values: &[Goldilocks],
+) -> FullChallenges {
+    derive_full_challenges_recorded(proof, public_values).0
 }
 
 // ---------------------------------------------------------------------------
@@ -333,5 +527,209 @@ mod tests {
         let w = MvpWitness::deterministic_valid(1, 1, 0xABCD);
         let (proof_bytes, _pi_bytes) = prover.prove(&w.encode()).unwrap();
         let _proof: Proof<MvpConfig> = deserialize_proof(&proof_bytes).expect("decode");
+    }
+
+    // ======================================================================
+    // A2-3c-i: full-transcript byte-parity with upstream verify
+    // ======================================================================
+
+    /// Reproduce the *full* verifier transcript (pre-PCS + PCS/FRI
+    /// prefix) directly against upstream `DuplexChallenger`, returning
+    /// the same set of challenges our `derive_full_challenges` does.
+    /// The test asserts that the two agree byte-for-byte — this is the
+    /// A2-3c-i acceptance: it proves the in-circuit VerifierAir has a
+    /// complete, faithful reference for every public-coin challenge.
+    fn upstream_derive_full(
+        proof: &Proof<MvpConfig>,
+        public_values: &[Goldilocks],
+    ) -> FullChallenges {
+        use crate::prover::Perm8;
+        use p3_challenger::DuplexChallenger;
+        use p3_field::PrimeField64;
+        use p3_goldilocks::default_goldilocks_poseidon2_8;
+
+        let perm: Perm8 = default_goldilocks_poseidon2_8();
+        let mut ch: DuplexChallenger<Goldilocks, Perm8, 8, 4> = DuplexChallenger::new(perm);
+
+        // Pre-PCS (mirrors upstream_derive + a bit more)
+        ch.observe(Goldilocks::from_usize(proof.degree_bits));
+        ch.observe(Goldilocks::from_usize(proof.degree_bits));
+        ch.observe(Goldilocks::from_usize(0));
+        for digest in proof.commitments.trace.roots() {
+            for v in digest.iter() {
+                ch.observe(*v);
+            }
+        }
+        ch.observe_slice(public_values);
+        let alpha_stark: Challenge = Challenge::from_basis_coefficients_fn(|_| {
+            <DuplexChallenger<Goldilocks, Perm8, 8, 4> as CanSample<Goldilocks>>::sample(&mut ch)
+        });
+        for digest in proof.commitments.quotient_chunks.roots() {
+            for v in digest.iter() {
+                ch.observe(*v);
+            }
+        }
+        let zeta: Challenge = Challenge::from_basis_coefficients_fn(|_| {
+            <DuplexChallenger<Goldilocks, Perm8, 8, 4> as CanSample<Goldilocks>>::sample(&mut ch)
+        });
+
+        // PCS observes all opened values first.
+        let basis = |v: &Challenge| -> [Goldilocks; 2] {
+            let s = <Challenge as BasedVectorSpace<Goldilocks>>::as_basis_coefficients_slice(v);
+            [s[0], s[1]]
+        };
+        for v in &proof.opened_values.trace_local {
+            ch.observe_slice(&basis(v));
+        }
+        if let Some(next) = proof.opened_values.trace_next.as_deref() {
+            for v in next {
+                ch.observe_slice(&basis(v));
+            }
+        }
+        for chunk in &proof.opened_values.quotient_chunks {
+            for v in chunk {
+                ch.observe_slice(&basis(v));
+            }
+        }
+
+        // verify_fri
+        let fri_alpha: Challenge = Challenge::from_basis_coefficients_fn(|_| {
+            <DuplexChallenger<Goldilocks, Perm8, 8, 4> as CanSample<Goldilocks>>::sample(&mut ch)
+        });
+        let mut betas = Vec::new();
+        for comm in &proof.opening_proof.commit_phase_commits {
+            for digest in comm.roots() {
+                for v in digest.iter() {
+                    ch.observe(*v);
+                }
+            }
+            betas.push(Challenge::from_basis_coefficients_fn(|_| {
+                <DuplexChallenger<Goldilocks, Perm8, 8, 4> as CanSample<Goldilocks>>::sample(
+                    &mut ch,
+                )
+            }));
+        }
+        for v in &proof.opening_proof.final_poly {
+            ch.observe_slice(&basis(v));
+        }
+
+        let log_arities: Vec<usize> = proof
+            .opening_proof
+            .query_proofs
+            .first()
+            .map(|qp| {
+                qp.commit_phase_openings
+                    .iter()
+                    .map(|o| o.log_arity as usize)
+                    .collect()
+            })
+            .unwrap_or_default();
+        for &la in &log_arities {
+            ch.observe(Goldilocks::from_usize(la));
+        }
+        let total_log_reduction: usize = log_arities.iter().sum();
+        let log_global_max_height = total_log_reduction + 3 + 0;
+        let num_queries = proof.opening_proof.query_proofs.len();
+        let mut query_indices = Vec::with_capacity(num_queries);
+        for _ in 0..num_queries {
+            // Mirror DuplexChallenger::sample_bits byte-for-byte.
+            let bits = log_global_max_height;
+            let g: Goldilocks =
+                <DuplexChallenger<Goldilocks, Perm8, 8, 4> as CanSample<Goldilocks>>::sample(
+                    &mut ch,
+                );
+            let idx = (g.as_canonical_u64() as usize) & ((1usize << bits) - 1);
+            query_indices.push(idx);
+        }
+
+        FullChallenges {
+            alpha_stark,
+            zeta,
+            fri_alpha,
+            betas,
+            query_indices,
+            log_global_max_height,
+        }
+    }
+
+    fn assert_full_challenges_eq(a: &FullChallenges, b: &FullChallenges, ctx: &str) {
+        assert_eq!(a.alpha_stark, b.alpha_stark, "{ctx}: alpha_stark mismatch");
+        assert_eq!(a.zeta, b.zeta, "{ctx}: zeta mismatch");
+        assert_eq!(a.fri_alpha, b.fri_alpha, "{ctx}: fri_alpha mismatch");
+        assert_eq!(a.betas, b.betas, "{ctx}: betas mismatch");
+        assert_eq!(
+            a.log_global_max_height, b.log_global_max_height,
+            "{ctx}: log_global_max_height mismatch"
+        );
+        assert_eq!(a.query_indices, b.query_indices, "{ctx}: query_indices mismatch");
+    }
+
+    #[test]
+    fn parity_full_transcript_1_1() {
+        let (proof, pis) = proof_for(1, 1, 0xF101);
+        let ours = derive_full_challenges(&proof, &pis);
+        let theirs = upstream_derive_full(&proof, &pis);
+        assert_full_challenges_eq(&ours, &theirs, "shape 1/1");
+        // Structural invariants: 52 queries, ≥ 1 β, log_global_max_height
+        // coherent with log_blowup = 3.
+        assert_eq!(ours.query_indices.len(), 52);
+        assert!(!ours.betas.is_empty());
+        assert!(ours.log_global_max_height >= 3);
+    }
+
+    #[test]
+    fn parity_full_transcript_2_2() {
+        let (proof, pis) = proof_for(2, 2, 0xF202);
+        let ours = derive_full_challenges(&proof, &pis);
+        let theirs = upstream_derive_full(&proof, &pis);
+        assert_full_challenges_eq(&ours, &theirs, "shape 2/2");
+    }
+
+    #[test]
+    fn parity_full_transcript_4_4_worst_case() {
+        let (proof, pis) = proof_for(4, 4, 0xF404);
+        let ours = derive_full_challenges(&proof, &pis);
+        let theirs = upstream_derive_full(&proof, &pis);
+        assert_full_challenges_eq(&ours, &theirs, "shape 4/4");
+    }
+
+    #[test]
+    fn pre_pcs_is_prefix_of_full() {
+        // Regression: derive_pre_pcs_challenges must return the same
+        // (alpha, zeta) that the full driver derives — otherwise we'd
+        // have drift between the A2-3a and A2-3c-i code paths.
+        let (proof, pis) = proof_for(3, 2, 0xF322);
+        let (pre_alpha, pre_zeta) = derive_pre_pcs_challenges(&proof, &pis);
+        let full = derive_full_challenges(&proof, &pis);
+        assert_eq!(pre_alpha, full.alpha_stark);
+        assert_eq!(pre_zeta, full.zeta);
+    }
+
+    #[test]
+    fn two_distinct_proofs_derive_distinct_fri_alphas() {
+        // Soundness-smoke: two valid proofs (different seeds, same
+        // shape) produce different trace / quotient commitments, so
+        // different zetas, and therefore different fri_alphas and
+        // different query-index schedules. Fiat-Shamir downstream
+        // challenges must reflect upstream commitment state; this
+        // test fails if the FRI transcript is somehow decoupled.
+        let (a_proof, a_pis) = proof_for(2, 2, 0xF555);
+        let (b_proof, b_pis) = proof_for(2, 2, 0xF556);
+        let a = derive_full_challenges(&a_proof, &a_pis);
+        let b = derive_full_challenges(&b_proof, &b_pis);
+        assert_ne!(a.zeta, b.zeta);
+        assert_ne!(a.fri_alpha, b.fri_alpha);
+        assert_ne!(a.betas, b.betas);
+        assert_ne!(a.query_indices, b.query_indices);
+    }
+
+    #[test]
+    fn query_indices_within_domain() {
+        let (proof, pis) = proof_for(2, 2, 0xF777);
+        let full = derive_full_challenges(&proof, &pis);
+        let bound = 1usize << full.log_global_max_height;
+        for &idx in &full.query_indices {
+            assert!(idx < bound, "query index {idx} out of range [0, {bound})");
+        }
     }
 }
