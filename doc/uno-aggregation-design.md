@@ -382,9 +382,9 @@ soundness).
 |------|--------|------|----------|
 | A1   | ✅ DONE       | Design + scaffolding | This doc + `aggregator.rs` / `verifier_air.rs` skeleton |
 | A2   | ✅ DONE       | Proof-of-concept: 1-Tx "aggregation" | End-to-end prove+verify for N=1 (9-STARK bundle on 1/1 Transfer proof) |
-| A3   | ⬜ PENDING    | 4-Tx aggregation + correctness tests | Fixture-based 4/4 aggregated proof; cross-impl parity |
-| A4   | ⬜ PENDING    | 30-Tx aggregation + performance | Shape_matrix-style bench; ensures ≤ 100 KB block proof |
-| A5   | 🟡 PARTIAL    | §4.1 wire format lands | `UnoBlockExtra` encode/decode landed in `block_wire_format.rs`; `Transfer` struct delta + validator wiring (A6) still pending |
+| A3   | ✅ DONE       | Monolithic VerifierAir — all cross-binding gaps closed | A3-PRE..A3-5c: single AIR composing α + Merkle + fold across N bundles; 40 passing tests (see §4.1.2) |
+| A4   | ✅ DONE       | Multi-bundle scaling measurements vs §3.4 | 208-bundle §4.1 landmark measured: ~420 KB proof, ~65 s prover; §3.4 100 KB envelope NOT achievable with plain FRI (see `doc/uno-aggregation-metrics.md` §A4) |
+| A5   | 🟡 PARTIAL    | §4.1 wire format lands | ✅ `UnoBlockExtra` encode/decode landed in `block_wire_format.rs` (40 B header + opaque proof payload; 11 tests); ⬜ `Transfer` struct delta + validator wiring (A6) still pending |
 | A6   | ⬜ PENDING    | Validator compute-phase wiring | Per-block aggregated-proof verify path; no per-Tx STARK verify |
 | A7   | ⬜ PENDING    | Wallet / tosctl integration | Wallet still produces per-Tx proof (unchanged path) |
 | A8   | ⬜ PENDING    | Testnet validation | 60-day run per §P.7 before mainnet launch |
@@ -436,6 +436,63 @@ own commit and set of adversarial tests.
 (128-core parallelism: ~3m38s full suite). 16 C++ §12 tests still
 pass. Consensus-binding FRI pin unchanged.
 
+#### 4.1.2 Phase A3 sub-decomposition (monolithic VerifierAir)
+
+A2 landed orchestrated per-query STARKs (6+N per query; ~12 MB/slot
+naive extrapolation). A3 collapses that orchestration into ONE AIR
+with K-air-col-share (see `doc/uno-aggregation-path-decision.md` for
+rationale). Each sub-phase is its own auditable PR + commit.
+
+| Sub-phase | Status | Scope | Tests | Commit (on branch `uno`) |
+|-----------|--------|-------|-------|--------------------------|
+| A3-PRE    | ✅ DONE | Feasibility path decision + `MonolithicVerifierAirV1` scaffold + 272-col layout pin | 3 (column-layout pinned + trivial IDLE round-trip + broken-one-hot reject) | `ccefafff9` |
+| A3-1      | ✅ DONE | ABSORB + COMPRESS banks + in-circuit leaf-digest bridge (closes A2 "trusted construction" gap #1) | +5 (leaf-to-root × 2 + tampered-leaf + wrong-root + forged-bridge) | `749d40f26` |
+| A3-2      | ✅ DONE | FOLD + ALPHA banks with K-air-col-share (STATE_IN = PAIR_LEFT/RIGHT; shared INDEX_BIT / SIBLING cols) | +10 (α-chain × 2 + fold-chain × 2 + adversarial × 5 + regression × 1) | `ade311647` |
+| A3-3      | ✅ DONE | α↔fold cross-bindings — direct α→FOLD bridge + non-α ALPHA_RO_OUT / non-fold FOLD_OUT persistence | +5 (unified α+fold + 3 adversarial + regression) | `5a746851e` |
+| A3-4      | ✅ DONE | Scaling measurements on unified α+fold shape → `doc/uno-aggregation-metrics.md` §A3-4 | +4 `#[ignore]`'d benches (α, fold, unified, sweep) | `d283e6fc1` |
+| A3-5a     | ✅ DONE | Multi-path Merkle — per-path TCR check at COMPRESS → non-COMPRESS transition | +4 (2-path same-root + 2-path diff-root + adversarial × 2) | `75f77fa9f` |
+| A3-5b     | ✅ DONE | Full per-query bundle — α + Merkle paths + fold in ONE AIR; **no new constraints needed** | +5 (1-Merkle + 2-Merkle positive + 3 adversarial) | `ded580564` |
+| A3-5c     | ✅ DONE | Multi-bundle stacking — bundle-boundary constraints let PI proxies change across bundles | +5 (2-bundle positive + 3 adversarial + regression) | `30bbfc449` |
+
+**Crate test count at end of A3:** 343 Rust tests passing, 4
+`#[ignore]`'d A3-4 measurement tests. 40 monolithic-AIR tests in
+`monolithic_verifier_air.rs` alone. Consensus-binding FRI pin
+unchanged.
+
+#### 4.1.3 Phase A4 landmark — scaling measurements against §3.4
+
+A4 stacked the A3-5c multi-bundle shape at progressive scales to
+characterize prover time and proof size. Full numbers in
+`doc/uno-aggregation-metrics.md` §A4; headline:
+
+| Shape                             | Prover time | Proof size |
+|-----------------------------------|------------:|-----------:|
+| 1 Tx = 52 bundles                 | ~2 s        | **356 KB** |
+| 4 Txs = 208 bundles (§4.1 mark)   | ~65 s       | **420 KB** |
+| N=30 extrapolation (1 560 bundles) | ~4 min     | ~550-650 KB |
+
+**Decision**: §3.4's original 100 KB envelope is **NOT achievable**
+with plain monolithic FRI at Option B parameters — FRI opening-proof
+overhead (52 queries × log-height siblings × ~10 B/sibling) puts a
+floor at ~250 KB that doesn't go away with trace packing. Per §4.3
+fallback: accept the realistic 500-800 KB block-proof budget.
+
+Sub-phase table:
+
+| Sub-phase | Status | Scope | Tests | Commit |
+|-----------|--------|-------|-------|--------|
+| A4        | ✅ DONE | Multi-bundle measurement harness (52q, 208b, scaling sweep, 2/2-shape) | +4 `#[ignore]`'d measurement tests | `f472e4ad1` |
+
+#### 4.1.4 Phase A5 sub-decomposition (wire format)
+
+| Sub-phase | Status | Scope | Tests | Commit |
+|-----------|--------|-------|-------|--------|
+| A5 part 1 | ✅ DONE | `UnoBlockExtra` encode/decode + version framing (40 B header, opaque proof payload, 16 MB cap) | +11 (round-trip × 3 + byte-layout × 1 + 5 decode-error paths + stability + 512 KB realistic) | `5a9d942a3` |
+| A5 part 2 | ⬜ PENDING | `Transfer` struct delta (add `witness_commitment`, drop `zk_proof`) + validator/mempool integration → folded into A6 | — | — |
+
+**Crate test count at end of A5:** **354** Rust tests passing
+(343 pre-A5 + 11 A5 wire-format). 8 `#[ignore]`'d measurement tests.
+
 ### 4.2 Landed work
 
 **Phase A1** (PR merged into `uno` — commit `f7d077d0b`):
@@ -450,16 +507,46 @@ pass. Consensus-binding FRI pin unchanged.
 - No changes to `compute-phase.cpp`.
 - All 16 §12 C++ tests and 43 Rust FFI tests continued to pass.
 
-**Phase A2** (in progress — see §4.1.1 for sub-phase breakdown):
-- A2-1 through A2-3c-iii merged into `uno`; cumulative +~8 KLoC Rust,
-  +90 new unit tests (11 parity + 13 trace/checker + 8 STARK + 6
-  Fiat-Shamir pre-PCS + 6 Fiat-Shamir full-transcript + 8 OOD + 11
-  FRI arithmetic + 10 Merkle-path + 17 other assorted).
-- Remaining A2 work: in-circuit FRI-AIR (A2-3c-iv — encodes
-  `fri_arith` + `merkle_path` as AIR constraints) and single-slot
-  end-to-end prove+verify (A2-4).
+**Phase A2** (✅ DONE — see §4.1.1 for sub-phase breakdown):
+- All A2 sub-phases merged into `uno`. Cumulative ~12 KLoC Rust across
+  `fiat_shamir.rs`, `ood_eval.rs`, `fri_arith.rs`, `merkle_path.rs`,
+  `open_input.rs`, `fri_verify.rs`, the AIR modules (`challenger_air`,
+  `merkle_path_air`, `fold_air`, `alpha_reduction_air`, `leaf_hash_air`,
+  `compression_path_air`, `query_verifier_air`), and supporting tests.
+- A2-4 capped the phase with column-budget metrics (303 Rust tests
+  green) establishing the feasibility input for A3.
 
-**Phases A3–A8** are separate future PRs.
+**Phase A3** (✅ DONE — see §4.1.2 for sub-phase breakdown):
+- Monolithic `MonolithicVerifierAirV1` at 272 columns collapses A2's
+  orchestration into ONE AIR. All sub-banks (ABSORB, COMPRESS, FOLD,
+  ALPHA, IDLE) share the Poseidon2-w8 block via K-air-col-share.
+- Cross-binding gaps closed in-circuit: leaf-digest bridge (A3-1),
+  α→fold bridge + persistence rules (A3-3), multi-path Merkle root
+  check (A3-5a), multi-bundle stacking (A3-5c).
+- Trace builders: `build_leaf_to_root_trace`,
+  `build_multi_path_leaf_to_root_trace`, `build_alpha_chain_trace`,
+  `build_fold_chain_trace`, `build_alpha_to_fold_unified_trace`,
+  `build_alpha_merkle_fold_bundle_trace`, `build_multi_bundle_trace`.
+- 40 tests pass in `monolithic_verifier_air.rs` alone; 343 total.
+- No new bank constraints needed after A3-2; the composition story is
+  entirely carried by persistence + cross-bank row-kind gating.
+
+**Phase A4** (✅ DONE — see §4.1.3):
+- Measurement harness at realistic scales (1 Tx = 52 bundles through
+  4 Txs = 208 bundles); results in `doc/uno-aggregation-metrics.md`
+  §A4.
+- Decision: §3.4's 100 KB envelope is unreachable with plain FRI at
+  Option B; §4.3 fallback selected (accept ~500-800 KB budget).
+
+**Phase A5 part 1** (✅ DONE — see §4.1.4):
+- `uno/plonky3-ffi/src/block_wire_format.rs` — `UnoBlockExtra` v1
+  (40 B header + opaque proof payload), canonical encode/decode,
+  versioning, decode-error surface.
+- `block_wire_format` public consts picked up in cbindgen-regenerated
+  `include/uno_plonky3_ffi.h` for C++ consumers.
+- 11 tests (total suite: 354).
+
+**Phases A5 part 2, A6–A8** are separate future PRs.
 
 ### 4.3 Pre-launch fallback posture
 
