@@ -249,6 +249,316 @@
 // runs when N >= 1.
 #define BLOCK_TX_MIN 0
 
+// Current `aggregator_scheme_id`. Bumped on crypto-family migration.
+#define UNO_AGGREGATOR_SCHEME_ID_V1 1
+
+// Current `aggregator_version`. Bumped on framing-incompatible
+// changes within the same scheme_id.
+#define UNO_AGGREGATOR_VERSION_V1 1
+
+// Fixed framing overhead (bytes BEFORE the variable-length proof).
+// 1 + 1 + 2 + 32 + 4 = 40.
+#define UNO_BLOCK_EXTRA_HEADER_BYTES 40
+
+// Hard cap on `aggregated_proof_len`. 16 MB is orders above our
+// measured 400-800 KB envelope and above any plausible future WHIR
+// proof size — rejects adversarial inputs before allocating.
+#define UNO_BLOCK_EXTRA_MAX_PROOF_BYTES ((16 * 1024) * 1024)
+
+// FRI `log_blowup` parameter. Matches `prover::build_config` (Option B).
+#define LOG_BLOWUP 3
+
+// FRI `log_final_poly_len` parameter. Matches `prover::build_config`.
+#define LOG_FINAL_POLY_LEN 0
+
+// Log of the final domain size after all folds.
+#define LOG_FINAL_HEIGHT (LOG_BLOWUP + LOG_FINAL_POLY_LEN)
+
+// Leaf-row width supported by this sub-phase: exactly RATE=4 Goldilocks
+// (single Poseidon2-w8 absorption block). Wider leaves land in a
+// follow-up sub-phase that pipelines the absorb rows.
+#define LEAF_WIDTH 4
+
+// Digest size (= DIGEST_ELEMS of MvpValMmcs).
+#define DIGEST_WIDTH 4
+
+#define OP_KIND_LEAF 0
+
+#define OP_KIND_COMPRESS 1
+
+#define NUM_OP_KINDS 3
+
+
+
+#define LEAF0 KIND_END
+
+#define LEAF_END (LEAF0 + LEAF_WIDTH)
+
+#define LEFT0 LEAF_END
+
+#define LEFT_END (LEFT0 + DIGEST_WIDTH)
+
+#define RIGHT0 LEFT_END
+
+#define RIGHT_END (RIGHT0 + DIGEST_WIDTH)
+
+#define DIGEST0 RIGHT_END
+
+#define DIGEST_END (DIGEST0 + DIGEST_WIDTH)
+
+#define CURRENT0 DIGEST_END
+
+#define CURRENT_END (CURRENT0 + DIGEST_WIDTH)
+
+#define SIBLING0 CURRENT_END
+
+#define SIBLING_END (SIBLING0 + DIGEST_WIDTH)
+
+#define INDEX_BIT SIBLING_END
+
+#define ROOT0 (INDEX_BIT + 1)
+
+#define ROOT_END (ROOT0 + DIGEST_WIDTH)
+
+// Extension field DIMENSION — Goldilocks's BinomialExtensionField<_, 2>.
+#define CHALLENGE_DIM 2
+
+// Binomial extension norm constant for Goldilocks D=2. Must match
+// `<Goldilocks as BinomiallyExtendable<2>>::W`.
+#define EXT_W 7
+
+#define OP_KIND_FOLD 0
+
+
+
+#define PAIR_LEFT0 SIBLING_END
+
+#define PAIR_LEFT_END (PAIR_LEFT0 + CHALLENGE_DIM)
+
+#define PAIR_RIGHT0 PAIR_LEFT_END
+
+#define PAIR_RIGHT_END (PAIR_RIGHT0 + CHALLENGE_DIM)
+
+#define BETA0 PAIR_RIGHT_END
+
+#define BETA_END (BETA0 + CHALLENGE_DIM)
+
+#define FOLDED0 BETA_END
+
+#define FOLDED_END (FOLDED0 + CHALLENGE_DIM)
+
+#define S (INDEX_BIT + 1)
+
+#define INV_2S (S + 1)
+
+#define INITIAL_FOLDED0 (INV_2S + 1)
+
+#define INITIAL_FOLDED_END (INITIAL_FOLDED0 + CHALLENGE_DIM)
+
+#define FINAL_FOLDED0 INITIAL_FOLDED_END
+
+#define FINAL_FOLDED_END (FINAL_FOLDED0 + CHALLENGE_DIM)
+
+#define OP_KIND_COMBINE 0
+
+
+
+#define P_AT_X KIND_END
+
+#define P_AT_Z0 (P_AT_X + 1)
+
+#define P_AT_Z_END (P_AT_Z0 + CHALLENGE_DIM)
+
+#define Z0 P_AT_Z_END
+
+#define Z_END (Z0 + CHALLENGE_DIM)
+
+#define X Z_END
+
+#define QUOT_INV0 (X + 1)
+
+#define QUOT_INV_END (QUOT_INV0 + CHALLENGE_DIM)
+
+#define DIFF_QUOT0 QUOT_INV_END
+
+#define DIFF_QUOT_END (DIFF_QUOT0 + CHALLENGE_DIM)
+
+#define ALPHA0 DIFF_QUOT_END
+
+#define ALPHA_END (ALPHA0 + CHALLENGE_DIM)
+
+#define ALPHA_POW_IN0 ALPHA_END
+
+#define ALPHA_POW_IN_END (ALPHA_POW_IN0 + CHALLENGE_DIM)
+
+#define ALPHA_POW_OUT0 ALPHA_POW_IN_END
+
+#define ALPHA_POW_OUT_END (ALPHA_POW_OUT0 + CHALLENGE_DIM)
+
+#define RO_IN0 ALPHA_POW_OUT_END
+
+#define RO_IN_END (RO_IN0 + CHALLENGE_DIM)
+
+#define RO_OUT0 RO_IN_END
+
+#define RO_OUT_END (RO_OUT0 + CHALLENGE_DIM)
+
+#define INITIAL_ALPHA_POW0 RO_OUT_END
+
+#define INITIAL_ALPHA_POW_END (INITIAL_ALPHA_POW0 + CHALLENGE_DIM)
+
+#define INITIAL_RO0 INITIAL_ALPHA_POW_END
+
+#define INITIAL_RO_END (INITIAL_RO0 + CHALLENGE_DIM)
+
+#define FINAL_RO0 INITIAL_RO_END
+
+#define FINAL_RO_END (FINAL_RO0 + CHALLENGE_DIM)
+
+#define OP_KIND_ABSORB 0
+
+// Reserved slot for a future non-absorb / non-idle kind (e.g.
+// COMPRESS once we re-unify with merkle_path_air).
+#define OP_KIND_RESERVED 2
+
+
+
+#define IS_FIRST KIND_END
+
+#define IS_LAST (IS_FIRST + 1)
+
+// Number of Goldilocks limbs absorbed on this row (1..=RATE on
+// ABSORB rows; 0 on IDLE rows). Used by Phase A2-3c-iv-d-7-c to
+// support partial-last-block leaf widths (W = 4k + r).
+#define BLOCK_LEN (IS_LAST + 1)
+
+// One-hot flags over {0,1,2,3,4}. Flag k is 1 iff BLOCK_LEN == k.
+// Flag 0 is 1 only on IDLE rows; on ABSORB rows BLOCK_LEN ∈ 1..=4.
+#define BLOCK_LEN_FLAG0 (BLOCK_LEN + 1)
+
+#define BLOCK_LEN_FLAG_END (BLOCK_LEN_FLAG0 + (SPONGE_RATE + 1))
+
+#define BLOCK0 BLOCK_LEN_FLAG_END
+
+#define BLOCK_END (BLOCK0 + SPONGE_RATE)
+
+#define STATE_IN0 BLOCK_END
+
+#define STATE_IN_END (STATE_IN0 + SPONGE_WIDTH)
+
+#define STATE_OUT0 STATE_IN_END
+
+#define STATE_OUT_END (STATE_OUT0 + SPONGE_WIDTH)
+
+#define EXPECTED_DIGEST0 STATE_OUT_END
+
+#define EXPECTED_DIGEST_END (EXPECTED_DIGEST0 + DIGEST_WIDTH)
+
+
+
+#define LEAF_DIGEST0 DIGEST_END
+
+#define LEAF_DIGEST_END (LEAF_DIGEST0 + DIGEST_WIDTH)
+
+// Binomial-extension norm constant for Goldilocks D = 2.
+// Must match `<Goldilocks as BinomiallyExtendable<2>>::W`.
+#define EXT_W_U64 7
+
+#define OP_KIND_ALPHA 3
+
+
+
+// Per-row absorption block (4 Goldilocks).
+#define ABSORB_BLOCK0 KIND_END
+
+#define ABSORB_BLOCK_END (ABSORB_BLOCK0 + SPONGE_RATE)
+
+// Per-row BLOCK_LEN (1..=RATE on ABSORB, 0 elsewhere).
+#define ABSORB_BLOCK_LEN ABSORB_BLOCK_END
+
+// One-hot over {0, 1, 2, 3, 4}.
+#define ABSORB_BLOCK_LEN_FLAG0 (ABSORB_BLOCK_LEN + 1)
+
+#define ABSORB_BLOCK_LEN_FLAG_END (ABSORB_BLOCK_LEN_FLAG0 + (SPONGE_RATE + 1))
+
+// 1 on the FIRST ABSORB row of a leaf's chain.
+#define ABSORB_IS_FIRST ABSORB_BLOCK_LEN_FLAG_END
+
+// 1 on the LAST ABSORB row of a leaf's chain.
+#define ABSORB_IS_LAST (ABSORB_IS_FIRST + 1)
+
+// Digest at the start of a COMPRESS row (from prior DIGEST, or
+// from the LEAF_DIGEST at the first COMPRESS of a path).
+#define COMPRESS_CURRENT0 (ABSORB_IS_LAST + 1)
+
+#define COMPRESS_CURRENT_END (COMPRESS_CURRENT0 + DIGEST_WIDTH)
+
+#define COMPRESS_SIBLING0 COMPRESS_CURRENT_END
+
+#define COMPRESS_SIBLING_END (COMPRESS_SIBLING0 + DIGEST_WIDTH)
+
+#define COMPRESS_INDEX_BIT COMPRESS_SIBLING_END
+
+#define FOLD_BETA0 DIGEST_END
+
+#define FOLD_BETA_END (FOLD_BETA0 + CHALLENGE_DIM)
+
+#define FOLD_S FOLD_BETA_END
+
+#define FOLD_INV_2S (FOLD_S + 1)
+
+// Folded-eval in/out (Challenge). IN carries from the prior FOLD row.
+#define FOLD_IN0 (FOLD_INV_2S + 1)
+
+#define FOLD_IN_END (FOLD_IN0 + CHALLENGE_DIM)
+
+#define FOLD_OUT0 FOLD_IN_END
+
+#define FOLD_OUT_END (FOLD_OUT0 + CHALLENGE_DIM)
+
+#define ALPHA_CHALLENGE0 FOLD_OUT_END
+
+#define ALPHA_CHALLENGE_END (ALPHA_CHALLENGE0 + CHALLENGE_DIM)
+
+#define ALPHA_P_AT_X ALPHA_POW_OUT_END
+
+#define ALPHA_P_AT_Z0 (ALPHA_P_AT_X + 1)
+
+#define ALPHA_P_AT_Z_END (ALPHA_P_AT_Z0 + CHALLENGE_DIM)
+
+#define ALPHA_Z0 ALPHA_P_AT_Z_END
+
+#define ALPHA_Z_END (ALPHA_Z0 + CHALLENGE_DIM)
+
+#define ALPHA_X ALPHA_Z_END
+
+#define ALPHA_QUOT_INV0 (ALPHA_X + 1)
+
+#define ALPHA_QUOT_INV_END (ALPHA_QUOT_INV0 + CHALLENGE_DIM)
+
+#define ALPHA_DIFF_QUOT0 ALPHA_QUOT_INV_END
+
+#define ALPHA_DIFF_QUOT_END (ALPHA_DIFF_QUOT0 + CHALLENGE_DIM)
+
+#define ALPHA_RO_IN0 ALPHA_DIFF_QUOT_END
+
+#define ALPHA_RO_IN_END (ALPHA_RO_IN0 + CHALLENGE_DIM)
+
+#define ALPHA_RO_OUT0 ALPHA_RO_IN_END
+
+#define ALPHA_RO_OUT_END (ALPHA_RO_OUT0 + CHALLENGE_DIM)
+
+// Trace-commit root; all COMPRESS rows of the trace-Merkle walk
+// have this as their "ROOT" target.
+#define TRACE_COMMIT_ROOT0 ALPHA_RO_OUT_END
+
+#define TRACE_COMMIT_ROOT_END (TRACE_COMMIT_ROOT0 + DIGEST_WIDTH)
+
+// Quotient-commit root (analogous).
+#define QUOT_COMMIT_ROOT0 TRACE_COMMIT_ROOT_END
+
+#define QUOT_COMMIT_ROOT_END (QUOT_COMMIT_ROOT0 + DIGEST_WIDTH)
+
 // Result codes returned across the C ABI.
 //
 // These are stable wire values; renumbering is a breaking change. C++ side
