@@ -1,13 +1,12 @@
 # uno_plonky3_ffi — Rust crate exposing the Plonky3 Transfer AIR verifier
-# (and a reference prover for scaffolding) to the C++ validator via C ABI.
+# (and a reference prover) to the C++ validator via C ABI.
 #
-# This is the P.0 / P.2-bootstrap scaffold per design doc §13.
-# It deliberately implements a *Minimum Viable AIR* — a single Poseidon2-Goldilocks
-# hash + a single Merkle-path-step constraint + a u64 range check — to validate
-# the end-to-end toolchain (Rust↔C++ FFI, Plonky3 prover/verifier round-trip).
-#
-# The full Transfer AIR (§4.2 claims 1–9 of doc/uno-workchain.md) is NOT in this
-# scaffold. See src/transfer_air.rs TODO(uno-design-gap) markers for what remains.
+# This crate is the Rust-side proof-system implementation for Uno wc=2.
+# It exposes the shape-aware Transfer AIR verifier used by the validator,
+# together with the reference prover and Rust-side benches/tests. The AIR
+# lives in `src/transfer_air.rs` and covers the §4.1 envelope
+# (`1..4` spends × `1..4` outputs) with real Poseidon2-Goldilocks
+# constraints and in-circuit balance checks.
 #
 # Pin: Plonky3 commit 6374a36ff50fc641821513852263cc61ca7a1278 (upstream v0.5.1).
 # Vendored into `third-party/plonky3-uno/` per §16 decision #43. All Plonky3

@@ -192,7 +192,7 @@ pub const POSEIDON2_COLS_PER_INSTANCE_16: usize = p2_num_cols::<
 >();
 
 /// Alias: one width-8 Poseidon2 column-set specialized to our parameters.
-type P2Cols<T> = Poseidon2Cols<
+pub(crate) type P2Cols<T> = Poseidon2Cols<
     T,
     POSEIDON2_WIDTH,
     POSEIDON2_SBOX_DEGREE,
@@ -1178,7 +1178,7 @@ where
 // `p3_poseidon2_air::eval` is pub(crate); logic mirrors upstream byte-for-byte).
 // ---------------------------------------------------------------------------
 
-fn eval_poseidon2<AB>(builder: &mut AB, local: &P2Cols<AB::Var>)
+pub(crate) fn eval_poseidon2<AB>(builder: &mut AB, local: &P2Cols<AB::Var>)
 where
     AB: AirBuilder,
 {
