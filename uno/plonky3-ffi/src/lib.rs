@@ -68,6 +68,7 @@ pub mod fri_arith;
 pub mod merkle_path;
 pub mod open_input;
 pub mod fri_verify;
+pub mod merkle_path_air;
 
 /// Result codes returned across the C ABI.
 ///
