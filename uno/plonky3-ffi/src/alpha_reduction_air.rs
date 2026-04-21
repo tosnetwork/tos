@@ -498,6 +498,227 @@ pub fn check_all_transitions(
 }
 
 // ---------------------------------------------------------------------------
+// Plonky3 AIR trait implementation (Phase A2-3c-iv-d-5-2)
+//
+// Mechanical port of `check_all_transitions` to Plonky3's `Air<AB>`.
+// No Poseidon2 block — four extension-mult constraint banks handle
+// the α-reduction identities. Max degree 3 (each ext-mult is degree
+// 2; gated by is_combine adds 1).
+// ---------------------------------------------------------------------------
+
+use p3_air::{Air, AirBuilder, BaseAir, WindowAccess};
+
+/// Plonky3 AIR for the α-reduction chain. One row per
+/// `(p_at_x, p_at_z, z, x)` update; threads ALPHA_POW and RO across
+/// rows.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct AlphaReductionAirV1;
+
+impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for AlphaReductionAirV1 {
+    #[inline]
+    fn width(&self) -> usize {
+        ALPHA_REDUCTION_AIR_FRAMING_WIDTH
+    }
+
+    #[inline]
+    fn num_public_values(&self) -> usize {
+        // INITIAL_* / FINAL_RO are trace columns with persistence
+        // transitions. Integration (d-6) promotes them to public inputs.
+        0
+    }
+
+    #[inline]
+    fn max_constraint_degree(&self) -> Option<usize> {
+        Some(3)
+    }
+}
+
+impl<AB> Air<AB> for AlphaReductionAirV1
+where
+    AB: AirBuilder<F = Goldilocks>,
+{
+    fn eval(&self, builder: &mut AB) {
+        let main = builder.main();
+        let local: &[AB::Var] = main.current_slice();
+        let next: &[AB::Var] = main.next_slice();
+
+        let fe = |v: u64| AB::Expr::from(AB::F::from_u64(v));
+        let zero = || fe(0);
+        let one = || fe(1);
+        let w = || fe(EXT_W);
+
+        let is_combine: AB::Expr = local[col::KIND0 + OP_KIND_COMBINE as usize].into();
+        let is_idle: AB::Expr = local[col::KIND0 + OP_KIND_IDLE as usize].into();
+
+        // ============================================================
+        // One-hot selector.
+        // ============================================================
+        let mut kind_sum = zero();
+        for k in 0..NUM_OP_KINDS {
+            let flag: AB::Expr = local[col::KIND0 + k].into();
+            builder.assert_zero(flag.clone() * (flag.clone() - one()));
+            kind_sum = kind_sum + flag;
+        }
+        builder.assert_eq(kind_sum, one());
+
+        // Helper — extension multiplication expressed per-limb with W.
+        let ext_mul = |a0: AB::Expr, a1: AB::Expr, b0: AB::Expr, b1: AB::Expr|
+            -> (AB::Expr, AB::Expr) {
+            // (a0 + a1·u) · (b0 + b1·u) = (a0·b0 + W·a1·b1) + (a0·b1 + a1·b0)·u
+            let p0 = a0.clone() * b0.clone() + w() * a1.clone() * b1.clone();
+            let p1 = a0 * b1 + a1 * b0;
+            (p0, p1)
+        };
+
+        // ============================================================
+        // (1) COMBINE — QUOT_INV · (Z − X) == 1.
+        //     Here (Z − X) has limbs (Z0 − X, Z1) since X is base-field.
+        // ============================================================
+        {
+            let qi0: AB::Expr = local[col::QUOT_INV0].into();
+            let qi1: AB::Expr = local[col::QUOT_INV0 + 1].into();
+            let z0: AB::Expr = local[col::Z0].into();
+            let z1: AB::Expr = local[col::Z0 + 1].into();
+            let x: AB::Expr = local[col::X].into();
+            let d0 = z0 - x;
+            let d1 = z1;
+            let (p0, p1) = ext_mul(qi0, qi1, d0, d1);
+            builder.assert_zero(is_combine.clone() * (p0 - one()));
+            builder.assert_zero(is_combine.clone() * p1);
+        }
+
+        // ============================================================
+        // (2) COMBINE — DIFF_QUOT == (P_AT_Z − P_AT_X) · QUOT_INV.
+        //     (P_AT_Z − P_AT_X) limbs: (P_AT_Z0 − P_AT_X, P_AT_Z1).
+        // ============================================================
+        {
+            let pz0: AB::Expr = local[col::P_AT_Z0].into();
+            let pz1: AB::Expr = local[col::P_AT_Z0 + 1].into();
+            let px: AB::Expr = local[col::P_AT_X].into();
+            let qi0: AB::Expr = local[col::QUOT_INV0].into();
+            let qi1: AB::Expr = local[col::QUOT_INV0 + 1].into();
+            let diff0 = pz0 - px;
+            let diff1 = pz1;
+            let (dq0_exp, dq1_exp) = ext_mul(diff0, diff1, qi0, qi1);
+            let dq0: AB::Expr = local[col::DIFF_QUOT0].into();
+            let dq1: AB::Expr = local[col::DIFF_QUOT0 + 1].into();
+            builder.assert_zero(is_combine.clone() * (dq0 - dq0_exp));
+            builder.assert_zero(is_combine.clone() * (dq1 - dq1_exp));
+        }
+
+        // ============================================================
+        // (3) COMBINE — ALPHA_POW_OUT == ALPHA_POW_IN · ALPHA.
+        // ============================================================
+        {
+            let api0: AB::Expr = local[col::ALPHA_POW_IN0].into();
+            let api1: AB::Expr = local[col::ALPHA_POW_IN0 + 1].into();
+            let a0: AB::Expr = local[col::ALPHA0].into();
+            let a1: AB::Expr = local[col::ALPHA0 + 1].into();
+            let (exp0, exp1) = ext_mul(api0, api1, a0, a1);
+            let apo0: AB::Expr = local[col::ALPHA_POW_OUT0].into();
+            let apo1: AB::Expr = local[col::ALPHA_POW_OUT0 + 1].into();
+            builder.assert_zero(is_combine.clone() * (apo0 - exp0));
+            builder.assert_zero(is_combine.clone() * (apo1 - exp1));
+        }
+
+        // ============================================================
+        // (4) COMBINE — RO_OUT == RO_IN + ALPHA_POW_IN · DIFF_QUOT.
+        // ============================================================
+        {
+            let api0: AB::Expr = local[col::ALPHA_POW_IN0].into();
+            let api1: AB::Expr = local[col::ALPHA_POW_IN0 + 1].into();
+            let dq0: AB::Expr = local[col::DIFF_QUOT0].into();
+            let dq1: AB::Expr = local[col::DIFF_QUOT0 + 1].into();
+            let (add0, add1) = ext_mul(api0, api1, dq0, dq1);
+            let ri0: AB::Expr = local[col::RO_IN0].into();
+            let ri1: AB::Expr = local[col::RO_IN0 + 1].into();
+            let ro0: AB::Expr = local[col::RO_OUT0].into();
+            let ro1: AB::Expr = local[col::RO_OUT0 + 1].into();
+            builder.assert_zero(is_combine.clone() * (ro0 - (ri0 + add0)));
+            builder.assert_zero(is_combine.clone() * (ro1 - (ri1 + add1)));
+        }
+
+        // ============================================================
+        // Transition constraints.
+        // ============================================================
+        let mut trans = builder.when_transition();
+
+        // ALPHA / INITIAL_* / FINAL_RO persist across every row.
+        for i in 0..CHALLENGE_DIM {
+            let l_a: AB::Expr = local[col::ALPHA0 + i].into();
+            let n_a: AB::Expr = next[col::ALPHA0 + i].into();
+            trans.assert_zero(n_a - l_a);
+
+            let l_iap: AB::Expr = local[col::INITIAL_ALPHA_POW0 + i].into();
+            let n_iap: AB::Expr = next[col::INITIAL_ALPHA_POW0 + i].into();
+            trans.assert_zero(n_iap - l_iap);
+
+            let l_ir: AB::Expr = local[col::INITIAL_RO0 + i].into();
+            let n_ir: AB::Expr = next[col::INITIAL_RO0 + i].into();
+            trans.assert_zero(n_ir - l_ir);
+
+            let l_fr: AB::Expr = local[col::FINAL_RO0 + i].into();
+            let n_fr: AB::Expr = next[col::FINAL_RO0 + i].into();
+            trans.assert_zero(n_fr - l_fr);
+        }
+
+        // CURRENT threading on COMBINE rows: next.ALPHA_POW_IN =
+        // local.ALPHA_POW_OUT; next.RO_IN = local.RO_OUT.
+        let next_is_combine: AB::Expr =
+            next[col::KIND0 + OP_KIND_COMBINE as usize].into();
+        for i in 0..CHALLENGE_DIM {
+            let n_api: AB::Expr = next[col::ALPHA_POW_IN0 + i].into();
+            let l_apo: AB::Expr = local[col::ALPHA_POW_OUT0 + i].into();
+            trans.assert_zero(next_is_combine.clone() * (n_api - l_apo));
+
+            let n_ri: AB::Expr = next[col::RO_IN0 + i].into();
+            let l_ro: AB::Expr = local[col::RO_OUT0 + i].into();
+            trans.assert_zero(next_is_combine.clone() * (n_ri - l_ro));
+        }
+
+        // IDLE persistence: all non-KIND cols stay put.
+        let next_is_idle: AB::Expr = next[col::KIND0 + OP_KIND_IDLE as usize].into();
+        for c in col::KIND_END..col::WIDTH {
+            let l_c: AB::Expr = local[c].into();
+            let n_c: AB::Expr = next[c].into();
+            trans.assert_zero(next_is_idle.clone() * (n_c - l_c));
+        }
+
+        drop(trans);
+
+        // ============================================================
+        // Boundary: row 0 seeds from INITIAL_*.
+        // ============================================================
+        let mut first = builder.when_first_row();
+        for i in 0..CHALLENGE_DIM {
+            let api: AB::Expr = local[col::ALPHA_POW_IN0 + i].into();
+            let iap: AB::Expr = local[col::INITIAL_ALPHA_POW0 + i].into();
+            first.assert_zero(api - iap);
+
+            let ri: AB::Expr = local[col::RO_IN0 + i].into();
+            let ir: AB::Expr = local[col::INITIAL_RO0 + i].into();
+            first.assert_zero(ri - ir);
+        }
+        drop(first);
+
+        // ============================================================
+        // Boundary: last row's RO_OUT == FINAL_RO.
+        //
+        // IDLE persistence carries RO_OUT unchanged so this closes
+        // the chain even when the trace is padded.
+        // ============================================================
+        let mut last = builder.when_last_row();
+        for i in 0..CHALLENGE_DIM {
+            let ro: AB::Expr = local[col::RO_OUT0 + i].into();
+            let fr: AB::Expr = local[col::FINAL_RO0 + i].into();
+            last.assert_zero(ro - fr);
+        }
+
+        let _ = is_idle;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -792,5 +1013,178 @@ mod tests {
         .expect("trace build");
         check_all_transitions(&trace, trace_height)
             .expect("real α-combine chain must check");
+    }
+
+    // ======================================================================
+    // Phase A2-3c-iv-d-5-2: real STARK prove + verify via uni-stark
+    // ======================================================================
+
+    use crate::prover::build_config;
+    use p3_matrix::dense::RowMajorMatrix;
+    use p3_uni_stark::{prove, verify};
+
+    fn trace_matrix(
+        initial_alpha_pow: Challenge,
+        initial_ro: Challenge,
+        alpha: Challenge,
+        steps: &[AlphaStep],
+        final_ro: Challenge,
+        trace_height: usize,
+    ) -> RowMajorMatrix<Goldilocks> {
+        let flat = build_trace(
+            initial_alpha_pow,
+            initial_ro,
+            alpha,
+            steps,
+            final_ro,
+            trace_height,
+        )
+        .expect("trace build");
+        RowMajorMatrix::new(flat, col::WIDTH)
+    }
+
+    #[test]
+    fn air_prove_and_verify_sample_chain() {
+        let (alpha, iap, ir, steps, fr) = sample_3_step();
+        // trace_height = 16 leaves enough FRI headroom with log_blowup = 3.
+        let trace = trace_matrix(iap, ir, alpha, &steps, fr, 16);
+        let cfg = build_config();
+        let air = AlphaReductionAirV1;
+        let proof = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof, &[]).expect("sample α-chain must verify");
+    }
+
+    /// Helper: adversarially prove+verify a tampered trace.
+    fn air_rejects(trace: RowMajorMatrix<Goldilocks>) -> bool {
+        let cfg = build_config();
+        let air = AlphaReductionAirV1;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove(&cfg, &air, trace, &[])
+        }));
+        match outcome {
+            Err(_) => true,
+            Ok(p) => verify(&cfg, &air, &p, &[]).is_err(),
+        }
+    }
+
+    #[test]
+    fn air_rejects_tampered_quot_inv() {
+        let (alpha, iap, ir, steps, fr) = sample_3_step();
+        let mut flat =
+            build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
+        flat[col::QUOT_INV0] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(air_rejects(trace), "tampered QUOT_INV must reject");
+    }
+
+    #[test]
+    fn air_rejects_tampered_diff_quot() {
+        let (alpha, iap, ir, steps, fr) = sample_3_step();
+        let mut flat =
+            build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
+        flat[col::DIFF_QUOT0] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(air_rejects(trace), "tampered DIFF_QUOT must reject");
+    }
+
+    #[test]
+    fn air_rejects_tampered_alpha_pow_out() {
+        let (alpha, iap, ir, steps, fr) = sample_3_step();
+        let mut flat =
+            build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
+        flat[col::ALPHA_POW_OUT0 + 1] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(air_rejects(trace), "tampered ALPHA_POW_OUT must reject");
+    }
+
+    #[test]
+    fn air_rejects_tampered_ro_out() {
+        let (alpha, iap, ir, steps, fr) = sample_3_step();
+        let mut flat =
+            build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
+        flat[col::RO_OUT0] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(air_rejects(trace), "tampered RO_OUT must reject");
+    }
+
+    #[test]
+    fn air_rejects_broken_alpha_pow_threading() {
+        let (alpha, iap, ir, steps, fr) = sample_3_step();
+        let mut flat =
+            build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
+        let row1 = col::WIDTH;
+        flat[row1 + col::ALPHA_POW_IN0] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(
+            air_rejects(trace),
+            "broken ALPHA_POW threading must reject"
+        );
+    }
+
+    #[test]
+    fn air_rejects_broken_ro_threading() {
+        let (alpha, iap, ir, steps, fr) = sample_3_step();
+        let mut flat =
+            build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
+        let row1 = col::WIDTH;
+        flat[row1 + col::RO_IN0] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(air_rejects(trace), "broken RO threading must reject");
+    }
+
+    #[test]
+    fn air_rejects_alpha_drift() {
+        let (alpha, iap, ir, steps, fr) = sample_3_step();
+        let mut flat =
+            build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
+        let row2 = 2 * col::WIDTH;
+        flat[row2 + col::ALPHA0] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(air_rejects(trace), "ALPHA drift must reject");
+    }
+
+    #[test]
+    fn air_rejects_initial_alpha_pow_mismatch_row0() {
+        let (alpha, iap, ir, steps, fr) = sample_3_step();
+        let mut flat =
+            build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
+        flat[col::INITIAL_ALPHA_POW0] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(
+            air_rejects(trace),
+            "INITIAL_ALPHA_POW mismatch at row 0 must reject"
+        );
+    }
+
+    #[test]
+    fn air_rejects_wrong_final_ro() {
+        let (alpha, iap, ir, steps, _) = sample_3_step();
+        let wrong = ext(9999, 8888);
+        let flat = build_trace(iap, ir, alpha, &steps, wrong, 16).unwrap();
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(
+            air_rejects(trace),
+            "wrong FINAL_RO must reject at last-row boundary"
+        );
+    }
+
+    #[test]
+    fn air_rejects_idle_mutation() {
+        let (alpha, iap, ir, steps, fr) = sample_3_step();
+        let mut flat =
+            build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
+        let row5 = 5 * col::WIDTH;
+        flat[row5 + col::P_AT_X] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(air_rejects(trace), "IDLE mutation must reject");
+    }
+
+    #[test]
+    fn air_width_matches_layout_constant() {
+        assert_eq!(
+            <AlphaReductionAirV1 as BaseAir<Goldilocks>>::width(&AlphaReductionAirV1),
+            ALPHA_REDUCTION_AIR_FRAMING_WIDTH,
+        );
+        assert_eq!(col::WIDTH, 28);
     }
 }
