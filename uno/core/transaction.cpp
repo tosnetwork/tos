@@ -70,9 +70,19 @@ inline void write_be_u64(uint8_t* p, uint64_t v) noexcept {
 
 // Chunk-chain max bytes per cell (mirror EVM bytecode chunk convention).
 constexpr size_t kChunkBytes = 127;
-// Bound the decode walk. A 4-spend/4-output Transfer's zk_proof can be ~80 KB;
-// at 127 B/chunk that is ~640 chunks. Head-room to 2048 for future proofs.
-constexpr size_t kChunkChainMaxChunks = 2048;
+// Bound the decode walk. Must cover every chunk chain that appears
+// on-wire in a Transfer. Per v1 per-Tx-direct wire shape
+// (doc/uno-aggregation-design.md §-1, 2026-04-21), the Plonky3 zk_proof
+// is on-chain and up to ~915 KB at worst-case 4/4 shape. At 127 B per
+// chunk cell:
+//   worst-case zk_proof: 915 KB / 127 ≈ 7,370 chunks
+//   enc_ciphertext:     ~600 B         ≈     5 chunks
+//   mlkem_ct:          ~1,088 B         ≈     9 chunks
+// Pinned to 8192 (~10 % headroom above the 4/4 worst case). The
+// pre-V1 value 2048 was tuned for a hypothetical ~80 KB / 640-chunk
+// proof and a witness_commitment-only on-chain shape; the v1 pivot
+// puts the full proof back on-chain, so this ceiling rises proportionally.
+constexpr size_t kChunkChainMaxChunks = 8192;
 
 }  // anonymous namespace
 

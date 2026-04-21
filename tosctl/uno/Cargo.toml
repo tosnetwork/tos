@@ -104,6 +104,14 @@ zeroize          = { version = "1", features = ["zeroize_derive"] }
 # as this crate's p3-* deps above; enforced transitively.
 uno_plonky3_ffi  = { path = "../../uno/plonky3-ffi" }
 
+# ---- TOS BoC / Cell encoding (V1-3b daemon parity) -------------------------
+# Path dep to the main tosctl `chain_block` crate. Used by `boc_encode.rs`
+# to produce Cell-tree BoC bytes whose shape matches the daemon's
+# `uno/core/transaction.cpp::encode_transfer` exactly. Resolves the V1-3a
+# gap where the wallet's flat `encode_transfer_wire` was not consumable
+# by the daemon's `std_boc_deserialize`-based decoder.
+chain_block      = { path = "../src/block" }
+
 [dev-dependencies]
 # Deterministic tests only; no network, no clock.
 tempfile = "3"
