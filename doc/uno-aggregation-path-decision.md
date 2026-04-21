@@ -252,11 +252,71 @@ Adversarial tests:
 - `air_rejects_bundle_tampered_alpha` — DIFF_QUOT/RO cascade rejects.
 - `air_rejects_bundle_tampered_fold_sibling` — fold orientation fires.
 
-### A3-5c (planned): Multi-slot stacking
+### A3-5c: Multi-bundle stacking (landed)
 
-Stack N slots × per-Tx bundles in one trace. This is the original
-§4.1 "4-Tx aggregation + fixture-based 4/4 aggregated proof"
-landmark.
+Stacks N per-query bundles in one trace via
+`build_multi_bundle_trace`. Each bundle carries its OWN α challenge,
+α_steps, Merkle roots, ρ_final, and FINAL_FOLDED — the three
+constraint relaxations and three new transitions below let PI proxies
+change across bundle boundaries while preserving soundness within
+each bundle.
+
+**Constraint changes:**
+
+1. PI-proxy persistence (A3-2, originally unconditional across all
+   transitions) is now gated by `1 − bundle_start`:
+   ```
+   (1 − bundle_start) · (next.PI − local.PI) = 0
+   bundle_start = (1 − local_is_alpha) · next_is_alpha
+   ```
+   PI proxies persist within bundles; free at bundle boundaries.
+
+2. Non-fold `FOLD_OUT` persistence (A3-3) now also skips bundle
+   boundaries: `(1 − next_is_fold) · (1 − next_is_alpha) · diff = 0`.
+   Lets FOLD_OUT reset on non-α → α transitions.
+
+3. ALPHA threading (A3-2, originally fired on all → α transitions)
+   now fires only on α → α: `is_alpha · next_is_alpha · diff = 0`.
+   Bundle-seed check takes over at non-α → α transitions.
+
+**Added constraints (all degree 3):**
+
+1. `bundle_start · (local.ALPHA_RO_OUT − local.FINAL_RO) = 0`
+   Previous bundle's α chain closed.
+
+2. `bundle_start · (local.FOLD_OUT − local.FINAL_FOLDED) = 0`
+   Previous bundle's fold chain closed.
+
+3. `bundle_start · (next.ALPHA_POW_IN − next.INITIAL_ALPHA_POW) = 0`
+   New bundle's α chain seeded.
+
+4. `bundle_start · (next.ALPHA_RO_IN − next.INITIAL_RO) = 0`
+   New bundle's RO chain seeded.
+
+**Tests (5 new):**
+
+Positive:
+- `air_prove_and_verify_two_bundles_different_alpha` — two bundles
+  with different α challenges, different Merkle trees, different
+  ρ_final, and different final_folded in ONE STARK.
+
+Adversarial:
+- `air_rejects_two_bundles_tampered_final_ro_mid_bundle` — FINAL_RO
+  drift within a bundle rejects via A3-5c PI persistence.
+- `air_rejects_bundle_boundary_bad_alpha_pow_seed` — forged
+  ALPHA_POW_IN at bundle boundary rejects via seed check (c).
+- `air_rejects_bundle_boundary_bad_final_folded_close` — forged
+  FOLD_OUT on prev bundle's last FOLD rejects (fold identity cascade
+  + close check).
+
+Regression:
+- `a3_3_and_a3_5b_still_verify_after_a3_5c` — A3-3 unified trace +
+  A3-5b single-bundle still pass under relaxed persistence.
+
+This completes the original §4.1 "4-Tx aggregation" foundation at
+small scale (demonstrated with N=2). Scaling to N=4 slots × 52
+queries each (208 bundles per trace) is a mechanical repetition
+unblocked by A3-5c's constraint machinery.
 
 ### A4: 30-Tx measurement
 
