@@ -174,6 +174,62 @@
 // Total non-P2 columns per challenger row.
 #define CHALLENGER_NON_P2_COLS (CHALLENGER_STATE_COLS + CHALLENGER_OP_COLS)
 
+// Operation kind flag values (one-hot column index inside the trace row).
+#define OP_KIND_OBSERVE 0
+
+#define OP_KIND_SAMPLE 1
+
+#define OP_KIND_DUPLEX 2
+
+#define OP_KIND_IDLE 3
+
+// Number of distinct row kinds; matches the one-hot selector width.
+#define CHALLENGER_NUM_OP_KINDS 4
+
+
+
+// Offset of state[0].
+#define STATE0 0
+
+// Width of the state block = SPONGE_WIDTH (8).
+#define STATE_END (STATE0 + SPONGE_WIDTH)
+
+#define IN_BUF0 STATE_END
+
+#define IN_BUF_END (IN_BUF0 + SPONGE_RATE)
+
+#define IN_BUF_LEN IN_BUF_END
+
+// One-hot decoder of in_buf_len: IN_BUF_LEN_FLAG[i] = 1 iff in_buf_len == i,
+// for i ∈ {0, 1, 2, 3, 4}. 5 positions.
+#define IN_BUF_LEN_FLAG0 (IN_BUF_LEN + 1)
+
+#define IN_BUF_LEN_FLAG_END (IN_BUF_LEN_FLAG0 + (SPONGE_RATE + 1))
+
+#define OUT_BUF0 IN_BUF_LEN_FLAG_END
+
+#define OUT_BUF_END (OUT_BUF0 + SPONGE_RATE)
+
+#define OUT_BUF_LEN OUT_BUF_END
+
+#define OUT_BUF_LEN_FLAG0 (OUT_BUF_LEN + 1)
+
+#define OUT_BUF_LEN_FLAG_END (OUT_BUF_LEN_FLAG0 + (SPONGE_RATE + 1))
+
+#define KIND0 OUT_BUF_LEN_FLAG_END
+
+#define KIND_END (KIND0 + CHALLENGER_NUM_OP_KINDS)
+
+// Value absorbed on OBSERVE rows; constrained to 0 on non-OBSERVE rows
+// (not strictly required for soundness, but simplifies audit).
+#define OBSERVED_VALUE KIND_END
+
+// Value squeezed on SAMPLE rows; equal to out_buf_local[out_buf_len_local - 1].
+#define SAMPLED_VALUE (OBSERVED_VALUE + 1)
+
+// Total column width of a ChallengerAir trace row.
+#define WIDTH (SAMPLED_VALUE + 1)
+
 // Per-block maximum aggregated Transfer count. See design doc §2.3.
 //
 // Rationale: matches §1.4 success criterion #7 (15–30 TPS sustained)
