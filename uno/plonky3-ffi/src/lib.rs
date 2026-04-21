@@ -62,6 +62,7 @@ pub mod permute;
 pub mod verifier_air;
 pub mod challenger_air;
 pub mod aggregator;
+pub mod block_wire_format;
 pub mod fiat_shamir;
 pub mod ood_eval;
 pub mod fri_arith;
