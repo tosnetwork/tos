@@ -4,6 +4,9 @@
 §3.4 ~100 KB envelope gap identified in `doc/uno-p2-path-research.md`.
 Supersedes the re-scope decision to 1 MB.
 
+**Implementation progress:** A1 ✅, A2 🟡 (A2-1/2a/2b/2c/3a/3b done; A2-3c/4
+remaining), A3–A8 ⬜. See §4.1 and §6 for the per-phase status table.
+
 ## 0. Executive summary
 
 §3.4 originally targeted a ~100 KB worst-case `zk_proof` field per
@@ -355,23 +358,43 @@ soundness).
 
 ### 4.1 Phase structure
 
-| Phase | Scope | Landmark |
-|------|------|----------|
-| A1 | Design + scaffolding | This doc + `aggregator.rs` / `verifier_air.rs` skeleton |
-| A2 | Proof-of-concept: 1-Tx "aggregation" | End-to-end prove+verify for N=1; functional test |
-| A3 | 4-Tx aggregation + correctness tests | Fixture-based 4/4 aggregated proof; cross-impl parity |
-| A4 | 30-Tx aggregation + performance | Shape_matrix-style bench; ensures ≤ 100 KB block proof |
-| A5 | §4.1 wire format migration | Transfer struct change; collator + validator wiring |
-| A6 | Validator compute-phase rewrite | Step 7 added; step 5 moved to collator tier only |
-| A7 | Wallet / tosctl updates | Wallet still produces per-Tx proof (unchanged path) |
-| A8 | Testnet validation | 60-day run per §P.7 |
+| Phase | Status | Scope | Landmark |
+|------|--------|------|----------|
+| A1   | ✅ DONE       | Design + scaffolding | This doc + `aggregator.rs` / `verifier_air.rs` skeleton |
+| A2   | 🟡 IN PROGRESS | Proof-of-concept: 1-Tx "aggregation" | End-to-end prove+verify for N=1; functional test |
+| A3   | ⬜ PENDING    | 4-Tx aggregation + correctness tests | Fixture-based 4/4 aggregated proof; cross-impl parity |
+| A4   | ⬜ PENDING    | 30-Tx aggregation + performance | Shape_matrix-style bench; ensures ≤ 100 KB block proof |
+| A5   | ⬜ PENDING    | §4.1 wire format migration | Transfer struct change; collator + validator wiring |
+| A6   | ⬜ PENDING    | Validator compute-phase rewrite | Step 7 added; step 5 moved to collator tier only |
+| A7   | ⬜ PENDING    | Wallet / tosctl updates | Wallet still produces per-Tx proof (unchanged path) |
+| A8   | ⬜ PENDING    | Testnet validation | 60-day run per §P.7 |
 
 Phases A1–A4 are pure Rust-side work (additive — no consensus impact
 until A5). A5–A6 are the consensus-binding changes.
 
-### 4.2 This PR
+#### 4.1.1 Phase A2 sub-decomposition (implementation-side)
 
-This PR lands **Phase A1** only:
+During A2 implementation the verifier-as-AIR work was split into
+auditable sub-phases. These are tracked here because each lands its
+own commit and set of adversarial tests.
+
+| Sub-phase | Status | Scope | Tests | Commit (on branch `uno`) |
+|-----------|--------|-------|-------|--------------------------|
+| A2-1   | ✅ DONE | RefChallenger reference + upstream parity + AIR layout spec | 11 parity | `f80994712` |
+| A2-2a  | ✅ DONE | ChallengerAir trace builder + pure-Rust constraint checker | 13 trace/checker | `6187106ec` |
+| A2-2b  | ✅ DONE | ChallengerAirV1 `Air<AB>` impl + real STARK prove/verify | 8 STARK prove+verify | `47c620af7` |
+| A2-2c  | ✅ DONE | Poseidon2-w8 duplex identity wired into ChallengerAir | +1 forged-state-next adversarial | `33bd9cd1b` |
+| A2-3a  | ✅ DONE | Out-of-circuit Fiat-Shamir driver + byte-parity vs upstream | 6 (3 shapes × parity + replay + tamper + decode) | `a0bf0bc18` |
+| A2-3b  | ✅ DONE | OOD constraint identity driver (skip-PCS) | 8 (3 positive + 4 adversarial + 1 upstream-agree) | `1fd4ed4d0` |
+| A2-3c  | ⬜ PENDING | FRI-folding as AIR (verifier's query-path constraints) | N/A | — |
+| A2-4   | ⬜ PENDING | Single-slot VerifierAir end-to-end prove+verify | N/A | — |
+
+**Crate test count at end of A2-3b:** 106 Rust tests, all green; 16 C++
+§12 tests still pass; consensus-binding FRI pin unchanged.
+
+### 4.2 Landed work
+
+**Phase A1** (PR merged into `uno` — commit `f7d077d0b`):
 - This design document (`doc/uno-aggregation-design.md`).
 - Module scaffolding: `uno/plonky3-ffi/src/aggregator.rs` with stub
   `AggregatorAir`, `AggregatorWitness`, and public entry points.
@@ -379,11 +402,18 @@ This PR lands **Phase A1** only:
   skeleton of the verifier-as-AIR, written to the same style as the
   Transfer AIR.
 - Cargo.toml entries for the new modules.
-- No changes to §4.1 wire format yet.
-- No changes to `compute-phase.cpp` yet.
-- All 16 §12 C++ tests and 43 Rust FFI tests continue to pass.
+- No changes to §4.1 wire format.
+- No changes to `compute-phase.cpp`.
+- All 16 §12 C++ tests and 43 Rust FFI tests continued to pass.
 
-Phases A2–A8 are **separate future PRs**.
+**Phase A2** (in progress — see §4.1.1 for sub-phase breakdown):
+- A2-1 through A2-3b merged into `uno`; cumulative +~6 KLoC Rust,
+  +63 new unit tests (11 parity + 13 trace/checker + 8 STARK + 6
+  Fiat-Shamir + 8 OOD + 17 other assorted).
+- Remaining A2 work: FRI-folding as AIR (A2-3c) and single-slot
+  end-to-end prove+verify (A2-4).
+
+**Phases A3–A8** are separate future PRs.
 
 ### 4.3 Rollback posture
 
@@ -447,19 +477,51 @@ having destabilized the codebase.
 
 ## 6. Success criteria (definition of done)
 
-Phase A1 (this PR) is complete when:
+### Phase A1 — ✅ DONE
+
 - [x] Design document lands in `doc/uno-aggregation-design.md`
-- [ ] Module skeletons in `uno/plonky3-ffi/src/aggregator.rs` and
+- [x] Module skeletons in `uno/plonky3-ffi/src/aggregator.rs` and
   `verifier_air.rs` compile cleanly
-- [ ] `cargo test` still passes all 43 existing tests
-- [ ] All 16 C++ §12 tests still pass
-- [ ] A new "hello-aggregator" test: the aggregator scaffolding
+- [x] `cargo test` still passes all 43 existing tests
+- [x] All 16 C++ §12 tests still pass
+- [x] A new "hello-aggregator" test: the aggregator scaffolding
   exposes entry points that accept empty input and return a stubbed
   proof byte vector. Not consensus-correct yet — just proves the
   wiring compiles.
 
-Future phases A2+ have their own criteria, defined in this doc's §4.1
-phase table.
+### Phase A2 — 🟡 IN PROGRESS
+
+Sub-phases landed:
+
+- [x] **A2-1**: `RefChallenger` reference impl + byte-parity tests
+  against upstream `DuplexChallenger`. AIR layout spec pinned.
+- [x] **A2-2a**: `ChallengerAir` trace builder + pure-Rust
+  constraint checker (the spec A2-2b ports to `Air<AB>`).
+- [x] **A2-2b**: `ChallengerAirV1::Air<AB>` impl; real STARK
+  prove+verify round-trip; 8 adversarial tests pass.
+- [x] **A2-2c**: Poseidon2-w8 duplex identity wired into
+  ChallengerAir; forged `state_next` adversarial test rejects.
+- [x] **A2-3a**: Out-of-circuit Fiat-Shamir driver
+  (`fiat_shamir.rs`); byte-parity vs upstream on 1/1, 2/2, 4/4
+  real Transfer proofs.
+- [x] **A2-3b**: OOD constraint identity driver (`ood_eval.rs`);
+  recomposes `quotient(zeta)` and asserts the identity; 4
+  adversarial tamper-path tests reject.
+
+Remaining:
+
+- [ ] **A2-3c**: FRI-folding as AIR (verifier's query-path
+  constraints re-encoded in-circuit).
+- [ ] **A2-4**: Single-slot `VerifierAir` end-to-end prove+verify.
+  Measurement target: ≤ ~300 cols/slot at the aggregator's
+  verifier-replay sub-block.
+
+### Phases A3–A8 — ⬜ PENDING
+
+Each has its own success criteria; see the §4.1 phase table.
+A3/A4 in particular must measure the aggregator proof size at
+N = 4 and N = 30 against the §3.4 ~100 KB target (the whole
+premise of this migration).
 
 ---
 
