@@ -276,6 +276,111 @@ pub fn verify_block_stub(
 }
 
 // ---------------------------------------------------------------------------
+// A6-1.5: Real prove_block / verify_block backed by the monolithic AIR
+//
+// These replace the A1 stub pair's semantics: `prove_block` runs a
+// real Plonky3 STARK prover over the A3-5c multi-bundle trace; the
+// returned `AggregatedProof.bytes` is a postcard-encoded
+// `p3_uni_stark::Proof`. `verify_block` is PI+proof ONLY (no witness
+// required — the validator API).
+//
+// Status of PI binding:
+//
+//   The monolithic AIR currently declares `num_public_values = 0` —
+//   the `BlockPublicInputs` fields (chain_id, block_seqno,
+//   anchor_seqno, n_transfers, tx_pi_merkle_root) are passed as
+//   context here but NOT bound into the proof cryptographically.
+//   Closing this is a follow-up ("A6-1.6 PI binding") that adds
+//   public-input columns to the AIR. Until then, the C++ validator
+//   MUST re-check PI consistency against block-header fields OUTSIDE
+//   the proof. This matches the §4.3 compute-phase design anyway:
+//   the validator computes `tx_pi_merkle_root` from the Transfer
+//   list and verifies the proof against the matching PI.
+// ---------------------------------------------------------------------------
+
+use crate::block_wire_format;
+use crate::monolithic_verifier_air::{
+    build_multi_bundle_trace, BundleSpec, MonolithicVerifierAirV1,
+    MONOLITHIC_VERIFIER_AIR_WIDTH,
+};
+use crate::prover::build_config;
+
+/// Errors surfaced by [`verify_block`]. Wire-layer decode errors are
+/// re-used from [`block_wire_format::DecodeError`] where applicable;
+/// cryptographic verification failures surface distinctly.
+#[derive(Debug, PartialEq, Eq)]
+pub enum BlockVerifyError {
+    /// Postcard deserialization of the proof payload failed.
+    ProofMalformed,
+    /// Plonky3 `uni_stark::verify` returned an error.
+    StarkVerifyFailed,
+}
+
+/// Build + prove a multi-bundle aggregated block proof. PI is passed
+/// for future binding (see module header on PI status); today the
+/// validator cross-checks PI externally.
+///
+/// `trace_height` must be a power of two ≥ the sum of bundle
+/// physical rows. Callers typically set it to the next pow2 of the
+/// total expected row count.
+pub fn prove_block(
+    _pi: &BlockPublicInputs,
+    bundles: &[BundleSpec<'_>],
+    trace_height: usize,
+) -> Result<AggregatedProof, AggregatorError> {
+    use p3_matrix::dense::RowMajorMatrix;
+    use p3_uni_stark::prove;
+
+    if bundles.len() > BLOCK_TX_CAP {
+        return Err(AggregatorError::TooManySlots);
+    }
+
+    let flat = build_multi_bundle_trace(bundles, trace_height)
+        .map_err(|_| AggregatorError::SlotMismatch)?;
+    let trace = RowMajorMatrix::new(flat, MONOLITHIC_VERIFIER_AIR_WIDTH);
+    let cfg = build_config();
+    let air = MonolithicVerifierAirV1;
+    let proof = prove(&cfg, &air, trace, &[]);
+
+    let proof_bytes = postcard::to_allocvec(&proof)
+        .map_err(|_| AggregatorError::SlotMismatch)?;
+
+    // Enforce the wire-format size cap up front, so a freshly proven
+    // block that can't be transmitted is caught at prove-time rather
+    // than at encode-time.
+    if proof_bytes.len() > block_wire_format::UNO_BLOCK_EXTRA_MAX_PROOF_BYTES as usize {
+        return Err(AggregatorError::SlotMismatch);
+    }
+
+    Ok(AggregatedProof { bytes: proof_bytes })
+}
+
+/// Verify a block proof. Takes PI + opaque proof bytes; does NOT need
+/// the witness. This is the real validator API.
+///
+/// On Ok, the proof cryptographically attested the AIR constraints
+/// (all bank identities + cross-bindings across all stacked bundles).
+/// On Err, the block must be rejected.
+///
+/// NOTE: PI binding is not yet in-circuit (see module header). The
+/// `pi` argument is accepted for API-shape stability; callers MUST
+/// still cross-check PI consistency at the consensus layer.
+pub fn verify_block(
+    _pi: &BlockPublicInputs,
+    proof: &AggregatedProof,
+) -> Result<(), BlockVerifyError> {
+    use p3_uni_stark::verify;
+
+    let decoded: p3_uni_stark::Proof<_> = postcard::from_bytes(&proof.bytes)
+        .map_err(|_| BlockVerifyError::ProofMalformed)?;
+
+    let cfg = build_config();
+    let air = MonolithicVerifierAirV1;
+    verify(&cfg, &air, &decoded, &[])
+        .map_err(|_| BlockVerifyError::StarkVerifyFailed)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -415,5 +520,197 @@ mod tests {
         // within 90..110 KB".
         assert_eq!(p_small.bytes.len(), p_large.bytes.len());
         assert_eq!(p_small.bytes.len(), 100_000);
+    }
+
+    // =======================================================================
+    // A6-1.5: real prove_block / verify_block round-trip coverage
+    // =======================================================================
+
+    /// Helper building a tiny but structurally complete BundleSpec
+    /// owner: one α step, one Merkle path into a 2-leaf tree, one
+    /// fold round. Returns (owner_storage, bundle_spec).
+    fn tiny_bundle_storage() -> BundleStorage {
+        use crate::merkle_path::{compress_pair_ref, hash_leaf_row_ref};
+        use crate::monolithic_verifier_air::{AlphaStep, FoldRound, MerkleOpening};
+        use crate::prover::Challenge;
+        use p3_field::BasedVectorSpace;
+        use p3_goldilocks::{default_goldilocks_poseidon2_8, Goldilocks};
+
+        fn gl(v: u64) -> Goldilocks {
+            Goldilocks::new(v)
+        }
+        fn ext(a: u64, b: u64) -> Challenge {
+            Challenge::from_basis_coefficients_fn(|i| if i == 0 { gl(a) } else { gl(b) })
+        }
+
+        let perm = default_goldilocks_poseidon2_8();
+        let leaf: Vec<Goldilocks> = (0..8u64).map(|j| gl(100 + j * 17 + 1)).collect();
+        let sib_leaf: Vec<Goldilocks> =
+            (0..8u64).map(|j| gl(200 + j * 23 + 3)).collect();
+        let dig = hash_leaf_row_ref(&perm, &leaf);
+        let sib = hash_leaf_row_ref(&perm, &sib_leaf);
+        let root = compress_pair_ref(&perm, &dig, &sib);
+
+        BundleStorage {
+            alpha: ext(3, 5),
+            initial_apow: ext(1, 0),
+            initial_ro: ext(0, 0),
+            alpha_steps: vec![crate::monolithic_verifier_air::AlphaStep {
+                p_at_x: gl(7),
+                p_at_z: ext(11, 13),
+                z: ext(17, 19),
+                x: gl(23),
+            }],
+            leaf,
+            opening: vec![sib],
+            index: 0,
+            expected_root: root,
+            fold_rounds: vec![FoldRound {
+                sibling: ext(29, 31),
+                beta: ext(37, 41),
+                domain_index: 0b01,
+                log_height: 3,
+            }],
+            _ph: std::marker::PhantomData::<AlphaStep>,
+            _ph2: std::marker::PhantomData::<MerkleOpening<'static>>,
+        }
+    }
+
+    /// Owns the backing Vecs so BundleSpec borrows remain valid.
+    struct BundleStorage {
+        alpha: crate::prover::Challenge,
+        initial_apow: crate::prover::Challenge,
+        initial_ro: crate::prover::Challenge,
+        alpha_steps: Vec<crate::monolithic_verifier_air::AlphaStep>,
+        leaf: Vec<p3_goldilocks::Goldilocks>,
+        opening: Vec<crate::merkle_path::Digest>,
+        index: usize,
+        expected_root: crate::merkle_path::Digest,
+        fold_rounds: Vec<crate::monolithic_verifier_air::FoldRound>,
+        _ph: std::marker::PhantomData<crate::monolithic_verifier_air::AlphaStep>,
+        _ph2: std::marker::PhantomData<crate::monolithic_verifier_air::MerkleOpening<'static>>,
+    }
+
+    fn bundle_from_storage<'a>(
+        s: &'a BundleStorage,
+        merkle_paths: &'a [crate::monolithic_verifier_air::MerkleOpening<'a>],
+    ) -> BundleSpec<'a> {
+        BundleSpec {
+            initial_alpha_pow: s.initial_apow,
+            initial_ro: s.initial_ro,
+            alpha: s.alpha,
+            alpha_steps: &s.alpha_steps,
+            merkle_paths,
+            fold_rounds: &s.fold_rounds,
+        }
+    }
+
+    #[test]
+    fn prove_and_verify_block_single_bundle_round_trip() {
+        use crate::monolithic_verifier_air::MerkleOpening;
+
+        let store = tiny_bundle_storage();
+        let mp = vec![MerkleOpening {
+            leaf: &store.leaf,
+            opening_proof: &store.opening,
+            index: store.index,
+            expected_root: store.expected_root,
+        }];
+        let bundle = bundle_from_storage(&store, &mp);
+
+        let pi = BlockPublicInputs {
+            chain_id: 7,
+            block_seqno: 1,
+            anchor_seqno: 0,
+            n_transfers: 1,
+            tx_pi_merkle_root: [0; 32],
+        };
+        // 1 α + 2 absorb + 1 compress + 1 fold = 5 rows; pad to 16.
+        let proof = prove_block(&pi, std::slice::from_ref(&bundle), 16).unwrap();
+        // The real proof is much larger than the stub (100 KB) — it's
+        // a real Plonky3 STARK at ~250 KB minimum per our A4 metrics.
+        assert!(
+            proof.bytes.len() > 100_000,
+            "real proof should exceed stub size; got {}",
+            proof.bytes.len()
+        );
+        verify_block(&pi, &proof).expect("real block proof round-trips");
+    }
+
+    #[test]
+    fn verify_block_rejects_tampered_proof_bytes() {
+        use crate::monolithic_verifier_air::MerkleOpening;
+
+        let store = tiny_bundle_storage();
+        let mp = vec![MerkleOpening {
+            leaf: &store.leaf,
+            opening_proof: &store.opening,
+            index: store.index,
+            expected_root: store.expected_root,
+        }];
+        let bundle = bundle_from_storage(&store, &mp);
+        let pi = BlockPublicInputs {
+            chain_id: 0,
+            block_seqno: 0,
+            anchor_seqno: 0,
+            n_transfers: 1,
+            tx_pi_merkle_root: [0; 32],
+        };
+        let mut proof = prove_block(&pi, std::slice::from_ref(&bundle), 16).unwrap();
+
+        // Flip a byte deep in the serialized proof; the STARK verifier
+        // must reject.
+        let mid = proof.bytes.len() / 2;
+        proof.bytes[mid] ^= 0xff;
+        let err = verify_block(&pi, &proof).unwrap_err();
+        // Either the postcard decode chokes on the flipped byte or
+        // the STARK verifier does. Both are valid rejection paths —
+        // assert it's one of them (not Ok).
+        match err {
+            BlockVerifyError::ProofMalformed | BlockVerifyError::StarkVerifyFailed => {}
+        }
+    }
+
+    #[test]
+    fn verify_block_rejects_garbage_proof_bytes() {
+        let pi = BlockPublicInputs {
+            chain_id: 0,
+            block_seqno: 0,
+            anchor_seqno: 0,
+            n_transfers: 0,
+            tx_pi_merkle_root: [0; 32],
+        };
+        let junk = AggregatedProof {
+            bytes: b"not-a-valid-proof".to_vec(),
+        };
+        let err = verify_block(&pi, &junk).unwrap_err();
+        assert_eq!(err, BlockVerifyError::ProofMalformed);
+    }
+
+    #[test]
+    fn prove_block_rejects_too_many_bundles() {
+        use crate::monolithic_verifier_air::MerkleOpening;
+
+        let store = tiny_bundle_storage();
+        let mp = vec![MerkleOpening {
+            leaf: &store.leaf,
+            opening_proof: &store.opening,
+            index: store.index,
+            expected_root: store.expected_root,
+        }];
+        // Build BLOCK_TX_CAP + 1 bundles — all sharing the same backing
+        // storage; we only need the COUNT to exceed the cap.
+        let bundle = bundle_from_storage(&store, &mp);
+        let bundles: Vec<_> = (0..=BLOCK_TX_CAP).map(|_| bundle.clone()).collect();
+
+        let pi = BlockPublicInputs {
+            chain_id: 0,
+            block_seqno: 0,
+            anchor_seqno: 0,
+            n_transfers: BLOCK_TX_CAP as u16 + 1,
+            tx_pi_merkle_root: [0; 32],
+        };
+        let err = prove_block(&pi, &bundles, 512).unwrap_err();
+        assert_eq!(err, AggregatorError::TooManySlots);
     }
 }
