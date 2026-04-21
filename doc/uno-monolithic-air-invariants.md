@@ -1,5 +1,15 @@
 # Monolithic VerifierAir — Security Invariants (Audit Handoff)
 
+> **v2 research scope.** Per the v1 pivot in
+> `doc/uno-aggregation-design.md` §-1 (2026-04-21), UNO v1 launches
+> **without** the monolithic VerifierAir this document specifies.
+> The AIR code in `uno/plonky3-ffi/src/monolithic_verifier_air.rs`
+> stays in-tree as frozen v2 research infrastructure; it is NOT on
+> the v1 critical path. Schedule the third-party audit described
+> below for v2 (when triggers in §-1 of the design doc light up),
+> not v1. v1 audit scope is the per-Tx Transfer AIR already
+> specified in the legacy plonky3-ffi modules.
+
 **Source under review:** `uno/plonky3-ffi/src/monolithic_verifier_air.rs`
 (5 359 lines at time of writing).
 **Design rationale:** `doc/uno-aggregation-path-decision.md`.

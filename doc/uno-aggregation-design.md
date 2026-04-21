@@ -1,17 +1,155 @@
-# Uno Proof Aggregation — Design (v1 promotion from §14)
+# Uno Proof Aggregation — Design (v2 research path; v1 uses per-Tx direct)
 
-**Status:** Draft. Defines the v1 Transfer wire format (§4.1) and adds a
-new §16 decision; closes the §3.4 ~100 KB envelope gap identified in
-`doc/uno-p2-path-research.md`. Supersedes the re-scope decision to 1 MB.
-UNO has not launched, so the §4.1 format lands at v1 directly — there is
-no prior deployed format to amend.
+> **⚠️ DECISION REVERSAL (April 2026).** This document was originally
+> written to promote **block-level recursive aggregation** from v2+
+> to v1 launch. After A4 measurements and a strategic review of
+> validator-hardware / UX tradeoffs, UNO v1 has been re-scoped to
+> **per-Tx direct proofs with `BLOCK_TX_CAP = 4`** — no consensus-
+> level aggregation at launch.
+>
+> Sections §0–§4 below describe the **v2 research path** (monolithic
+> AIR aggregation) that phases A1 through A6 have built toward.
+> That work is NOT deleted; it stays as v2+ research infrastructure
+> to be revived when upstream PCS primitives (WHIR / BaseFold)
+> mature and specialized prover hardware becomes mainstream.
+>
+> §-1 below states the v1 launch decision and the rationale for the
+> pivot. Read §-1 for the current shipping plan; read §0–§4 for the
+> aggregation research history.
 
-**Implementation progress:** A1 ✅, A2 ✅ (all sub-phases complete;
-single-slot in-circuit FRI verification works end-to-end on real 1/1
-Transfer proofs — see `doc/uno-aggregation-metrics.md`). A3–A8 ⬜.
-See §4.1 and §6 for the per-phase status table.
+## §-1. v1 launch decision (April 2026)
 
-## 0. Executive summary
+**UNO v1 ships without block-level proof aggregation.** Each on-chain
+Transfer carries its own Plonky3 per-Tx STARK proof (the "Option B
+shape" we had before A3-5c aggregation landed). `BLOCK_TX_CAP = 4`.
+
+### Why we flipped
+
+A4 benchmarks gave concrete numbers for block-level prover time:
+
+| shape                         | prover time (192-core) | extrapolated to 16-core |
+|-------------------------------|-----------------------:|------------------------:|
+| 1 Tx = 52 bundles             |                 ~2 s   |              ~25 s      |
+| **4 Txs = 208 bundles (§4.1)** |                ~65 s   |             **~13 min** |
+| N=30 extrapolation            |               ~4 min   |             **~48 min** |
+
+Block-level aggregation would have forced UNO validators to run
+**~13 minutes of 16-core CPU per 1-second block** at steady state —
+equivalent to ~780× concurrent prove tasks always in flight. That's
+only tractable on **64+ core data-center hardware**, which pushes UNO
+into "professional-staking only" territory in 2026.
+
+Strategic framing:
+1. **2026 PQ threat model is forward-looking, not urgent.** Shor
+   won't materially threaten ECC before 2030+. Paying a heavy
+   hardware tax today for 4-year-ahead threat coverage trades the
+   wrong thing.
+2. **Validator participation is the actual near-term need.** 4-core
+   home hardware with consumer broadband is what gives UNO real
+   decentralization in 2026.
+3. **Zcash shielded ~0.9 TPS observed; Monero ~0.3 TPS.** UNO does
+   not need 30 TPS to be competitive. 4 TPS shielded already beats
+   observed Zcash 10×.
+
+### v1 architecture
+
+```
+Wallet (per-Tx prove, ~3-10 s, unchanged)
+    │ emits Transfer TLV with zk_proof:^Cell attached (Option-B-era shape)
+    ▼
+Mempool / collator (unchanged §4.3 admission)
+    │ for each accepted Transfer: full per-Tx STARK verify runs at admission
+    ▼
+Block (4 Tx × ~520 KB proof ≈ 2 MB typical / ~3.7 MB worst-case 4/4)
+    │
+    ▼
+Validator (non-block-producing): batch-verify 4 per-Tx STARKs per block
+    │ ~100 ms × 4 = ~400 ms of single-core CPU; parallel across cores
+    ▼
+Finality: complete in 1 s (Simplex consensus round) — no soft/hard split
+```
+
+### Quantitative UX contract
+
+| Metric                       | v1 target           | Notes                          |
+|------------------------------|---------------------|--------------------------------|
+| Shielded TPS per wc=2 chain  | **4**               | Zcash Orchard theoretical = 3  |
+| Send → receiver sees pending | **1-2 s**           | block cadence                  |
+| Block finality               | **1 s**             | Simplex 2-round BFT            |
+| Per-block bandwidth          | **2-4 MB** (16-32 Mbps) | consumer broadband          |
+| Validator hardware           | **4 core / 16 GB**  | commodity PC                   |
+| Archive growth               | ~172 GB/day         | pruned-mode validators do less |
+
+### What gets deferred to v2
+
+- **Block-level monolithic AIR aggregation** (the A3-5c path)
+- **Soft-finality window K** (the §2.6 "proof-pending → finalized" model)
+- **`AggregatedProofDelivery` message type**
+- **`UnoBlockExtra.aggregated_proof` field** (wire-format gets the
+  framing but no proof content at v1)
+- **Witness broadcast / prover failover** roles
+
+All of these come back in v2 **IF AND ONLY IF**:
+1. **WHIR / BaseFold** (smaller PCS proofs) is production-ready in
+   Plonky3 upstream; measurements show per-Tx proof size drops from
+   ~520 KB to ~100 KB AND prover time halves. See
+   `doc/uno-aggregation-metrics.md` for tracking.
+2. A **specialized prover role** becomes economically reasonable for
+   the UNO operator ecosystem (similar to Polygon zkEVM's prover
+   service model).
+3. TPS pressure justifies the complexity (current projections say
+   4 TPS is plenty through 2028).
+
+### Strategic positioning
+
+> **UNO v1 (2026) = Ethereum 2030 PQ privacy roadmap, delivered four
+> years early.**
+
+Mapping UNO's choices onto Vitalik's April 2025 privacy roadmap
+(9 items, `vitalik.eth.limo/general/2025/04/14/privacy.html`):
+
+| Vitalik 2030 item                                       | UNO v1 alignment |
+|---------------------------------------------------------|------------------|
+| #1 Shielded balance default (Railgun-class)             | ✅ native        |
+| #2 Stealth address per dApp (ERC-5564)                  | ✅ TOS compatible|
+| #3 Self-to-self default private                         | ✅               |
+| #4 FOCIL + EIP-7701 decentralized relay                 | ✅ compatible    |
+| #5 TEE RPC → PIR migration                              | ⚠️ v2           |
+| #6 Mixnet P2P routing                                   | ⚠️ v2           |
+| #7 **Proof aggregation** (many private txs share proof) | ⚠️ **v2**       |
+| #8 Cross-L1/L2 keystore wallets                         | ⚠️ v2           |
+| #9 **Hash-based STARK + lattice** (PQ migration 2029-30)| ✅ **already**  |
+
+**#9 is the key alignment.** Ethereum's stated 2029-2030 target is to
+replace pairing-based SNARKs and BLS signatures with hash-based
+STARKs and lattice signatures. UNO on Plonky3 FRI + Goldilocks +
+Poseidon2 is exactly that stack, four years early. Item #7
+(aggregation) is an optimization on that path; we defer it, not the
+cryptographic foundation.
+
+### v2 trigger conditions (tracked quarterly)
+
+- [ ] Plonky3 upstream `MultilinearPcs` trait ships (currently
+      github.com/Plonky3/Plonky3 PR #1523, in progress)
+- [ ] WHIR or BaseFold production-ready in Plonky3 for `uni-stark` /
+      `batch-stark` prover paths
+- [ ] Measured per-Tx proof size drops below 150 KB at Option B
+      soundness
+- [ ] TPS demand exceeds 4 per wc=2 shardchain for sustained periods
+- [ ] Prover-service ecosystem maturity (third-party operators)
+
+When all 5 land, revive the A3-5c aggregation path as a v2 feature
+with a soft-finality window (see §2.6 below for the precursor spec).
+
+---
+
+## 0. Executive summary (v2 research path)
+
+> **This executive summary describes the v2 aggregation research
+> path, NOT the v1 launch plan.** See §-1 above for the v1 decision.
+> Content below is retained because A1 through A6 actually built this
+> infrastructure; re-reviving it in v2 requires this design to be
+> accurate.
 
 §3.4 originally targeted a ~100 KB worst-case `zk_proof` field per
 Transfer. After the K-air-col-share + K-air-col-step2 + FRI-Option-B
@@ -23,56 +161,28 @@ from `doc/uno-p2-path-research.md` cannot close that gap while holding
 **First-principles analysis** (documented in the last planning round)
 identified recursive proof aggregation as the only path that respects
 all v1 invariants. §14 already lists "Proof aggregation" as a v2+ item;
-this document promotes it to v1.
+this document **originally** promoted it to v1 — since reversed by §-1
+above.
 
-**What this buys**:
-- On-chain block proof ≈ **~100 KB**, independent of how many
-  Transfers it covers (up to a per-block cap).
-- Inter-validator bandwidth at 30 TPS drops from ~27 MB/s (Option B)
-  to ~3 MB/s — well within the §1.4a 200 Mbps budget.
+**What aggregation would buy (v2)**:
+- On-chain block proof ≈ **~420 KB** (A4 measurement), vs ~2-15 MB
+  per block for per-Tx direct. 5-30× bandwidth saving.
 - Wallet-side prove cost **unchanged** (prove-per-Transfer is still
   client-side; no privacy loss).
-- Collator-side: adds a **block-level aggregation prove** step (a
-  recursive proof over the N per-Transfer proofs in the block).
-  ~3–10 s per block on 8-core x86; shift-able to dedicated hardware.
 
-**What this costs**:
+**What it would cost (and why v1 defers)**:
+- **Collator CPU**: ~4 min per block prover time at N=30, ~65 s at N=4
+  (192-core). On 16-core validator hardware: 13 min to 48 min per
+  block. This is the load-bearing reason v1 opted out.
 - New subsystem: a `verifier-as-AIR` that re-proves the Plonky3
-  Transfer-AIR verifier as a STARK circuit. ~800–1,500 LoC of Rust.
-- §4.1 wire format: Transfer's `zk_proof: ^Cell` field is redefined as
-  a witness commitment; a block-level `aggregated_proof` field is
-  added. Since UNO has not launched, this is the v1 launch format —
-  not a migration from a prior one.
-- §4.3 verify order: validators verify ONE aggregated proof per block
-  (plus per-Transfer signatures / anchors); they do NOT verify
-  per-Transfer STARK proofs individually.
-- Audit scope: the verifier AIR is an additional attack surface; the
-  audit-vendor SOW must cover it.
-- v1 ship timeline: **+3–4 months** vs. a hypothetical Option-B-only
-  launch.
-
-**Recommended v1 decision**: adopt aggregation at the v1 launch.
-Rationale:
-1. Cleanly delivers the original §3.4 ~100 KB envelope.
-2. Every plausible v2+ feature on a private-payments chain
-   (multi-asset support, batch settlement, staking hooks, etc.)
-   already assumes aggregation; baking it into v1 avoids a
-   consensus-binding wire-format change post-launch. UNO is
-   positioned as a TOS-native Zcash/Penumbra-style private-payment
-   workchain, NOT a general-VM platform — any "Aleo-class
-   programmability" ask is explicitly out-of-scope for v1/v2 per
-   `doc/uno-workchain.md` §5.
-3. The infrastructure is foundational; it compound-interests every
-   subsequent release.
-
-> **Note on framing**: this document was originally written as a
-> "migration plan" from Option B to aggregation. Since UNO has not
-> yet launched, there is no deployed state to migrate *from* — v1
-> launches directly with aggregation. Phase labels A1…A8 below are
-> retained as **implementation milestones**, not migration steps. No
-> rollback posture is needed in the traditional sense; the fallback
-> (§4.3) is to adjust `BLOCK_TX_CAP` or revisit FRI parameters
-> pre-launch if A4 measurements miss the envelope.
+  Transfer-AIR verifier as a STARK circuit. ~800–1,500 LoC of Rust
+  (already landed A1 through A6-2; stays as research code).
+- §4.1 wire format: Transfer's `zk_proof: ^Cell` would be redefined
+  as a witness commitment; a block-level `aggregated_proof` field
+  would be added. A6-4a started this — **reverted for v1**.
+- Soft-finality window (§2.6): introduces ~5 minute gap between
+  block production and STARK-verified finality. Acceptable for v2
+  if prover hardware / WHIR deliver, unacceptable for v1 launch.
 
 ---
 
@@ -215,20 +325,36 @@ Transfer :=
   zk_proof: ^Cell           // Plonky3 STARK proof, ~520 KB typical
 ```
 
-**Proposed aggregation-era `Transfer` struct**:
+**v1 `Transfer` struct (per §-1)** — Option-B-era shape retained:
 
 ```
 Transfer :=
-  version (= 2 now, signals new scheme), scheme_id (= 0x01)
+  version (= 1), scheme_id (= 0x01)
   chain_id, anchor, expiry_block, fee
   spend_count, output_count
   spends: Array<SpendDescription>
   outputs: Array<OutputDescription>
-  witness_commitment: bits256   // 32 B, BLAKE3 over canonical proof bytes
-  // zk_proof field REMOVED from the on-chain Transfer struct
+  zk_proof: ^Cell           // Plonky3 STARK proof chunk chain, ~520 KB typical
 ```
 
-**New block-level field** (next to other block metadata):
+A6-4a had bumped `version = 2`, removed `zk_proof`, and added a 32 B
+`witness_commitment` field. That change is **reverted for v1**; v1
+ships the Option-B shape above with the per-Tx proof on-chain.
+
+**v2 aggregation-era `Transfer` struct** (frozen research path):
+
+```
+Transfer :=
+  version (= 2 at v2 launch), scheme_id (= 0x01)
+  chain_id, anchor, expiry_block, fee
+  spend_count, output_count
+  spends: Array<SpendDescription>
+  outputs: Array<OutputDescription>
+  witness_commitment: bits256   // 32 B, BLAKE3 over postcard(proof) || PI
+  // zk_proof field removed — proof aggregated at block level
+```
+
+**v2 block-level field** (frozen research path):
 
 ```
 UnoBlockExtra :=
@@ -236,8 +362,12 @@ UnoBlockExtra :=
   aggregator_version   : u8       = 1
   n_transfers          : u16
   tx_pi_merkle_root    : bits256              // matches PI_block.merkle_root_of_tx_public_inputs
-  aggregated_proof     : ^Cell                // the recursive proof, ~100 KB
+  aggregated_proof     : ^Cell                // the recursive proof, ~420 KB measured
 ```
+
+v2 wire format is already implemented in
+`uno/plonky3-ffi/src/block_wire_format.rs` and exported via A6-1 FFI;
+it stays as v2-research shipped-but-unused code.
 
 ### 2.2 Mempool / RPC contract
 
@@ -260,32 +390,60 @@ Transfers don't make it into the aggregator input list.
 ### 2.3 Block-level throughput envelope
 
 ```
-BLOCK_TX_CAP := 30    // maximum Transfers per block (1 s cadence)
+v1 launch:  BLOCK_TX_CAP := 4     // per §-1 pivot
+v2 target:  BLOCK_TX_CAP := 30    // restored when aggregation returns
 ```
 
-This caps the aggregator's input list length. Chosen to match §1.4
-success criterion #7 ("15–30 TPS sustained"). A 30-Transfer block
-under aggregation emits ~100 KB of on-chain proof, vs. ~30 × 915 KB
-= 27 MB under the Option B per-Transfer model.
+**v1 rationale**: per §-1, no block-level aggregation; each Tx
+carries its own ~520 KB per-Tx Plonky3 proof. `BLOCK_TX_CAP = 4`
+gives 4 TPS shielded (10× observed Zcash, 2× theoretical Sapling)
+with **~2-4 MB block size / ~16-32 Mbps validator bandwidth** —
+comfortably within consumer broadband for 2026.
+
+**v2 rationale**: aggregation collapses N-Tx's proofs into ONE block
+proof (~420 KB by A4 measurement, independent of N). The ~30 cap
+matched §1.4 success criterion #7 ("15–30 TPS sustained"); revisit
+when v2 triggers (§-1) light up.
+
+Scaling beyond `BLOCK_TX_CAP` per wc=2 chain uses **additional UNO
+shardchains** (wc=2a, wc=2b, …) — TOS architecture supports this
+natively. Not a v1 concern.
 
 ### 2.4 §4.3 compute-phase order update
 
+**v1 (per §-1) — per-Tx proofs, no block-level aggregation**:
+
 ```
-1.  Syntax checks (unchanged)
-2.  Anchor window (unchanged)
-3.  Nullifier uniqueness across block (unchanged)
-4.  Per-Transfer signatures (unchanged)
-5.  Per-Transfer Plonky3 verify (unchanged, runs at the collator tier)
-6.  Accept Transfer → add to block candidate
+1.  Syntax checks
+2.  Anchor window
+3.  Nullifier uniqueness across block
+4.  Per-Transfer signatures
+5.  Per-Transfer Plonky3 verify (runs at EVERY validator, not just collator)
+6.  Accept Transfer → add to block / apply state
+(no step 7 — no aggregated_proof)
+```
+
+ALL validators (producing or not) run steps 1-6. Parallelism across
+cores makes step 5 cheap: `BLOCK_TX_CAP = 4` × ~100 ms/verify = ~400 ms
+single-core, sub-100 ms across 4+ cores. The §4.3a mempool pre-filter
+(below) is unchanged.
+
+**v2 (aggregation — frozen)** would have gone:
+
+```
+1-4. (unchanged)
+5.  Per-Transfer Plonky3 verify (runs ONLY at collator tier for filtering)
+6.  Accept Transfer → feed into aggregator
 7.  NEW: block-level aggregated_proof verify (ONE verify per block)
 ```
 
-Validators (non-block-producing) skip step 5 entirely; they only need
-step 7 to confirm "all Transfers in this block had valid proofs".
-Step 5 runs ONLY at the block producer (collator) in order to filter
-invalid proofs before aggregation.
+Validators (non-block-producing) would skip step 5 entirely; they'd
+only need step 7 to confirm "all Transfers in this block had valid
+proofs". This was the v2 design — see historical §2.6 below for the
+soft-finality window that would have been needed.
 
-Collator CPU cost: +3–10 s per block for the aggregation prove step.
+Collator CPU cost would be: +3–10 s per block for the aggregation
+prove step.
 At 1 s block cadence, aggregation runs in parallel with the next block's
 mempool drain (pipelined); per-block wall-clock impact bounded by the
 aggregator prove time.
@@ -295,7 +453,14 @@ aggregator prove time.
 Unchanged from Option B. The full Plonky3 verify is deferred to the
 collator (step 5 above), so admission still does the cheap checks only.
 
-### 2.6 Block-proposal sequencing decision (prover-latency architecture)
+### 2.6 Block-proposal sequencing decision (prover-latency architecture — v2 spec; v1 skips)
+
+> **v1 skips this section.** With per-Tx proofs (per §-1), there is no
+> ~4-minute aggregation prover job; block finalization is a single
+> ~1 s Simplex round and every committed block is fully STARK-verified
+> at commit time. The soft-finality / delay-finalize machinery below
+> was designed for the v2 aggregation path and is frozen as research
+> spec; revive it when the v2 triggers in §-1 light up.
 
 A4 measurements (`doc/uno-aggregation-metrics.md` §A4) gave real
 numbers for block-level prover time:
@@ -462,6 +627,25 @@ soundness).
 
 ### 4.1 Phase structure
 
+> **v1-scope status (post-§-1 pivot).** All A1-A6 work on block-level
+> aggregation is **frozen research infrastructure** for v2+. v1
+> launch uses the Option-B-era per-Tx proof shape — no new phases
+> required on the Rust/C++ side beyond the existing per-Tx verifier
+> (already shipping prior to A1). The v1 remaining work is wallet
+> + testnet validation only (A7', A8' below).
+
+**v1 launch phase table** (per §-1):
+
+| Phase  | Status    | Scope                             | Landmark                                  |
+|--------|-----------|-----------------------------------|-------------------------------------------|
+| V1-PRE | ⬜ TODO   | Revert A6-4a Transfer struct delta| Restore zk_proof: ^Cell field; BLOCK_TX_CAP = 4 |
+| V1-1   | ⬜ TODO   | Reinstate per-Tx verify in §4.3   | Undo A6-4d stub in parallel-verify.cpp    |
+| V1-2   | ⬜ TODO   | Update doc set for v1 positioning | `uno-workchain.md` TPS claim, UX contract |
+| V1-3   | ⬜ TODO   | Wallet per-Tx prove + send flow   | Unchanged from Option B plan              |
+| V1-4   | ⬜ TODO   | Testnet 60-day burn-in            | 4 TPS sustained; validator decentralization healthy |
+
+**v2 research path phase table** (historical; code kept in tree):
+
 | Phase | Status | Scope | Landmark |
 |------|--------|------|----------|
 | A1   | ✅ DONE       | Design + scaffolding | This doc + `aggregator.rs` / `verifier_air.rs` skeleton |
@@ -469,15 +653,14 @@ soundness).
 | A3   | ✅ DONE       | Monolithic VerifierAir — all cross-binding gaps closed | A3-PRE..A3-5c: single AIR composing α + Merkle + fold across N bundles; 40 passing tests (see §4.1.2) |
 | A4   | ✅ DONE       | Multi-bundle scaling measurements vs §3.4 | 208-bundle §4.1 landmark measured: ~420 KB proof, ~65 s prover; §3.4 100 KB envelope NOT achievable with plain FRI (see `doc/uno-aggregation-metrics.md` §A4) |
 | A5   | 🟡 PARTIAL    | §4.1 wire format lands | ✅ `UnoBlockExtra` encode/decode landed in `block_wire_format.rs` (40 B header + opaque proof payload; 11 tests); ⬜ `Transfer` struct delta + validator wiring (A6) still pending |
-| A6   | ⬜ PENDING    | Validator compute-phase wiring | Per-block aggregated-proof verify path; no per-Tx STARK verify |
-| A7   | ⬜ PENDING    | Wallet / tosctl integration | Wallet still produces per-Tx proof (unchanged path) |
-| A8   | ⬜ PENDING    | Testnet validation | 60-day run per §P.7 before mainnet launch |
+| A6   | 🟡 PARTIAL    | Validator compute-phase wiring | A6-1 / A6-1.5 / A6-1.6 / A6-2 / A6-3 / A6-3b all landed; A6-4a landed but **REVERTED** for v1; A6-4b/c/d/e and A6-5 **DEFERRED** to v2 |
+| A7   | ⬜ DEFERRED   | Wallet / tosctl integration | Was "per-Tx prove path unchanged" — rolls into V1-3 above |
+| A8   | ⬜ DEFERRED   | Testnet validation | Was 60-day aggregated run — rolls into V1-4 above with per-Tx target |
 
-Phases A1–A4 are Rust-side prover/verifier work. A5–A6 land the
-v1 wire format and validator logic. A7 is the client integration.
-A8 is the pre-launch burn-in. None of A5–A6 are "consensus-binding
-upgrades" in the sense of amending a deployed chain — they are
-the initial consensus parameters at genesis.
+Phases A1–A4 are Rust-side prover/verifier work (frozen as v2
+research). A5–A6 partly landed then frozen. A7/A8 folded into V1-3 /
+V1-4 for v1 launch. None of V1-* are "consensus-binding upgrades" —
+they are the initial consensus parameters at genesis.
 
 #### 4.1.1 Phase A2 sub-decomposition (implementation-side)
 
@@ -632,7 +815,13 @@ Sub-phase table:
 
 **Phases A5 part 2, A6–A8** are separate future PRs.
 
-## 5. A6-4 Transfer struct delta and activation plan
+## 5. A6-4 Transfer struct delta and activation plan (v2 research — v1 reverts)
+
+> **v1 reverts the Transfer struct change described below.** A6-4a
+> originally bumped `version=2`, removed `zk_proof`, and added a
+> `witness_commitment` field. Per §-1 pivot, v1 keeps the Option-B
+> shape (with `zk_proof: ^Cell`). The plan below stays as the v2
+> activation template for when aggregation returns.
 
 A6-4 is the sub-phase that finalizes the on-chain `Transfer` layout for
 the aggregation-era wire format. A5 part 1 landed `UnoBlockExtra`
