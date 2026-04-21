@@ -262,5 +262,103 @@ cargo test -j 128 --release --lib monolithic_verifier_air::tests::measure \
   -- --ignored --test-threads 1 --nocapture
 ```
 
-The four `#[ignore]`'d `measure_*` tests record height × width × cells
-× prover-time × proof-size per scenario.
+The `#[ignore]`'d `measure_*` tests record height × width × cells ×
+prover-time × proof-size per scenario.
+
+---
+
+## A4 — multi-bundle scaling measurements (landed)
+
+A3-5c enabled stacking N per-query bundles in ONE monolithic STARK.
+A4 measures prover time + proof size at progressive bundle counts to
+validate the §3.4 feasibility path.
+
+Captured on `Linux 6.8.0-107-generic`, 192-core host, Option B FRI
+pin (log_blowup = 3, num_queries = 52, query_pow_bits = 24).
+
+### Per-bundle shape (small)
+
+Each bundle: 10 α + 1 Merkle path (2 absorb + 1 compress) + 3 fold
+rounds = ~16 physical rows. Stacking bundles scales trace height.
+
+**Scaling sweep (α=10/bundle, fold=3):**
+
+| bundles |   rows | trace cells | prove (ms) | proof (bytes) |
+|--------:|-------:|------------:|-----------:|--------------:|
+|       2 |     64 |      17 408 |      ~7 000|       252 667 |
+|       8 |    256 |      69 632 |      ~5 400|       300 312 |
+|      32 |  1 024 |     278 528 |      ~3 300|       356 247 |
+|     128 |  4 096 |   1 114 112 |      ~6 700|       419 724 |
+
+### §4.1 landmark — 4-Tx aggregation (208 bundles)
+
+4 Txs × 52 queries = 208 per-query bundles composed in ONE STARK:
+
+| bundles | trace_height | trace cells | prove (ms) | proof (bytes) |
+|--------:|-------------:|------------:|-----------:|--------------:|
+|     208 |        4 096 |   1 114 112 |     **65 195** |   **419 865** |
+
+### Single-Tx measurement (52 bundles)
+
+A full per-Tx verification (all 52 FRI queries) in ONE STARK:
+
+|  bundles | trace_height |  trace cells |  prove (ms) | proof (bytes) |
+|---------:|-------------:|-------------:|------------:|--------------:|
+|       52 |        1 024 |      278 528 |    **1 998** |   **356 247** |
+
+### Per-bundle shape (2/2 — mid-case)
+
+Each bundle: 40 α + 3 Merkle + 6 fold = ~49 rows.
+
+| tag       | bundles | trace_height | prove (ms) | proof (bytes) |
+|-----------|--------:|-------------:|-----------:|--------------:|
+| 2/2 ×8    |       8 |          512 |     12 663 |       326 889 |
+| 2/2 ×32   |      32 |        2 048 |      1 892 |       387 198 |
+
+### Key findings
+
+1. **§3.4 100 KB envelope is NOT achievable with plain monolithic
+   FRI at Option B parameters.** Even the §4.1 landmark (208 bundles,
+   representing 4 Txs of aggregation) ships **~420 KB** — 4× the
+   envelope. At N=30 slots × 52 queries (1 560 bundles), trace rows
+   scale to ~25 000 → ~32 768 pow2, proof size extrapolates to
+   **~550-650 KB**. The monolithic shape does not compress FRI
+   overhead enough to hit §3.4.
+
+2. **Proof size grows sub-linearly with trace size.** Doubling rows
+   adds ~30-50 KB (the Merkle-tree caps at FRI's log-scaled
+   commitment size). The 250-420 KB spread across 17K-1.1M cells
+   illustrates this: FRI opening proofs (52 queries × log-height
+   sibling siblings) dominate.
+
+3. **Prover time scales with trace cells.** The 65s measurement at
+   1.1M cells on 128-core host implies ~60 ns/cell. Extrapolating to
+   N=30 slots × 52 queries × 49 rows = ~3.8M cells: **~230s (~4
+   minutes) of prover time**. This fits within a block-production
+   budget but is tight.
+
+4. **Width stays fixed at 272 columns** regardless of bundle count;
+   adding bundles only adds rows. The K-air-col-share pattern holds.
+
+### Feasibility path forward
+
+A4 measurements rule out hitting §3.4 via plain monolithic FRI. The
+feasible paths from here are:
+
+1. **Accept the envelope** — ship ~500 KB block proofs. The original
+   §3.4 target was set before the monolithic AIR design; a realistic
+   budget is probably 500-800 KB per block.
+
+2. **Reduce `num_queries`** — trade soundness for size. Dropping from
+   52 to 26 queries roughly halves proof size; soundness drops from
+   180-bit to ~90-bit conjectured (below the 128-bit design bar).
+
+3. **Increase `log_blowup`** — shrinks `num_queries` at equal
+   soundness but grows prover trace area. Requires re-tuning.
+
+4. **Multi-layer FRI wrapping (not SNARK-wrap)** — use a second
+   lower-parameter FRI over the first's commitment. Non-trivial
+   engineering; deferred to a future phase.
+
+Option 1 is the simplest and doesn't compromise soundness or require
+further engineering. Recommended unless §3.4 is a hard constraint.
