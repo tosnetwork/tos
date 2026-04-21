@@ -636,13 +636,14 @@ soundness).
 
 **v1 launch phase table** (per §-1):
 
-| Phase  | Status    | Scope                             | Landmark                                  |
-|--------|-----------|-----------------------------------|-------------------------------------------|
-| V1-PRE | ⬜ TODO   | Revert A6-4a Transfer struct delta| Restore zk_proof: ^Cell field; BLOCK_TX_CAP = 4 |
-| V1-1   | ⬜ TODO   | Reinstate per-Tx verify in §4.3   | Undo A6-4d stub in parallel-verify.cpp    |
-| V1-2   | ⬜ TODO   | Update doc set for v1 positioning | `uno-workchain.md` TPS claim, UX contract |
-| V1-3   | ⬜ TODO   | Wallet per-Tx prove + send flow   | Unchanged from Option B plan              |
-| V1-4   | ⬜ TODO   | Testnet 60-day burn-in            | 4 TPS sustained; validator decentralization healthy |
+| Phase   | Status        | Scope                                  | Landmark                                          |
+|---------|---------------|----------------------------------------|---------------------------------------------------|
+| V1-PRE  | ✅ DONE       | Revert A6-4a Transfer struct delta     | commit `42fdb46a7` — zk_proof restored; BLOCK_TX_CAP = 4 |
+| V1-1    | ✅ DONE       | Reinstate per-Tx verify in §4.3 step 4 | commit `42fdb46a7` — parallel-verify.cpp un-stubbed |
+| V1-2    | 🟡 PARTIAL    | Update doc set for v1 positioning      | commit `b2d601a09` — top-level TPS posture; V1-2b = parameter recalibration (fees, filter, bandwidth tables) pending |
+| V1-3a   | 🟡 PARTIAL    | tosctl-uno send docs / gap flagged     | tosctl-uno send pipeline + real Plonky3 prove ✅ (K-P6-wire); BoC parity ⚠️ pending |
+| V1-3b   | ⬜ TODO       | tosctl-uno daemon wire-encoding parity | path-dep `chain_block`, emit Cell tree matching `uno/core/transaction.cpp::encode_transfer`; integration test against real daemon |
+| V1-4    | ⬜ TODO       | Testnet 60-day burn-in                 | 4 TPS sustained; validator decentralization healthy |
 
 **v2 research path phase table** (historical; code kept in tree):
 

@@ -2315,6 +2315,7 @@ dependencies = [
  "p3-poseidon2-air",
  "p3-symmetric 0.5.1",
  "p3-uni-stark",
+ "p3-util 0.5.1",
  "postcard",
  "rand 0.10.1",
  "serde",
