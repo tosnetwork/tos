@@ -66,6 +66,7 @@ pub mod fiat_shamir;
 pub mod ood_eval;
 pub mod fri_arith;
 pub mod merkle_path;
+pub mod open_input;
 
 /// Result codes returned across the C ABI.
 ///
