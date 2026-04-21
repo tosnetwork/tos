@@ -237,12 +237,24 @@
 
 
 
-// Per-block maximum aggregated Transfer count. See design doc §2.3.
+// Per-block maximum Transfer count. See design doc §2.3.
 //
-// Rationale: matches §1.4 success criterion #7 (15–30 TPS sustained)
-// at 1 s block cadence. A higher cap increases aggregator prove time
-// and may push the block production off the 1 s schedule.
-#define BLOCK_TX_CAP 30
+// **v1 value: 4** (per `doc/uno-aggregation-design.md` §-1 pivot of
+// 2026-04-21). UNO v1 ships without block-level aggregation; each
+// Transfer carries its own ~520 KB per-Tx Plonky3 STARK on-chain.
+// Block size at 4 Tx × ~520 KB ≈ 2 MB typical (3.7 MB worst-case
+// 4/4 shape), ~16-32 Mbps validator bandwidth — consumer broadband
+// territory. TPS = 4 is 10× Zcash observed (~0.9), 2× Zcash Sapling
+// theoretical (~10), and plenty for 2026 launch. Scaling beyond 4
+// TPS uses additional wc=2 shardchains (wc=2a, wc=2b, ...) — TOS
+// architecture supports this natively.
+//
+// **v2 target: 30** (to be restored when aggregation returns per
+// §-1 triggers). Matches original §1.4 success criterion #7
+// ("15–30 TPS sustained") at 1 s block cadence, under the v2
+// aggregation path where block prover time becomes the bottleneck
+// instead of bandwidth.
+#define BLOCK_TX_CAP 4
 
 // Minimum aggregated Transfer count. Zero-Transfer blocks are legal
 // (empty block → empty aggregator proof), but the aggregator only

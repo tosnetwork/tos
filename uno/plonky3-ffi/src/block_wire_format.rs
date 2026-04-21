@@ -1,5 +1,13 @@
-//! `UnoBlockExtra` — v1 launch wire format for UNO aggregated-block
-//! proofs. Implements §2.1 of `doc/uno-aggregation-design.md`.
+//! `UnoBlockExtra` — v2 wire format for UNO aggregated-block proofs.
+//! Implements §2.1 of `doc/uno-aggregation-design.md`.
+//!
+//! ⚠️ **v2 research path (frozen).** Per the v1 pivot in
+//! `doc/uno-aggregation-design.md` §-1 (2026-04-21), UNO v1 ships
+//! WITHOUT block-level aggregation; this wire-format container is
+//! NOT used on the v1 critical path. The code stays in-tree so the
+//! v1 Transfer wire format (which keeps `zk_proof: ^Cell`) can carry
+//! a defensible "future aggregation will slot here" story, and so
+//! v2 activation requires no additional wire-codec work.
 //!
 //! # Layout (on the wire, little-endian, canonical)
 //!
@@ -239,7 +247,7 @@ mod tests {
             bytes: sample_proof_bytes(0x41, 128),
         };
         let root = [0x5a; 32];
-        let extra = UnoBlockExtra::v1(7, root, proof.clone());
+        let extra = UnoBlockExtra::v1(3, root, proof.clone());
         assert_eq!(extra.encoded_len(), UNO_BLOCK_EXTRA_HEADER_BYTES + 128);
 
         let encoded = encode(&extra);
@@ -250,17 +258,17 @@ mod tests {
 
     #[test]
     fn encode_layout_is_byte_exact() {
-        // Use a legal n_transfers (≤ BLOCK_TX_CAP = 30).
+        // Use a legal n_transfers (≤ BLOCK_TX_CAP = 4 at v1).
         let extra = UnoBlockExtra::v1(
-            7,
+            3,
             [0xaa; 32],
             AggregatedProof { bytes: vec![0xde, 0xad, 0xbe, 0xef] },
         );
         let encoded = encode(&extra);
         assert_eq!(encoded[0], UNO_AGGREGATOR_SCHEME_ID_V1);
         assert_eq!(encoded[1], UNO_AGGREGATOR_VERSION_V1);
-        // n_transfers = 7, little-endian.
-        assert_eq!(&encoded[2..4], &[7, 0]);
+        // n_transfers = 3, little-endian.
+        assert_eq!(&encoded[2..4], &[3, 0]);
         assert_eq!(&encoded[4..36], &[0xaa; 32]);
         // proof length = 4, LE.
         assert_eq!(&encoded[36..40], &[4, 0, 0, 0]);
@@ -373,7 +381,7 @@ mod tests {
         let proof = AggregatedProof {
             bytes: (0..512 * 1024u32).map(|i| i as u8).collect(),
         };
-        let extra = UnoBlockExtra::v1(30, [0x7e; 32], proof);
+        let extra = UnoBlockExtra::v1(4, [0x7e; 32], proof);
         let encoded = encode(&extra);
         assert_eq!(
             encoded.len(),
