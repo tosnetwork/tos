@@ -7,6 +7,24 @@
 //! proof bytes embedded in each emitted `Transfer` are real STARK proofs
 //! that `uno_plonky3_ffi::verify(proof, pi)` accepts.
 //!
+//! # ⚠️ V1-3b pending: daemon wire-encoding parity
+//!
+//! `transfer::encode_transfer_wire` uses a flat self-contained byte layout
+//! (see `transfer.rs` module docstring). The daemon's
+//! `uno/core/transaction.cpp::decode_transfer_bytes` expects TOS BoC
+//! (Cell tree). These DO NOT interoperate today. This means:
+//!
+//! - `--dry-run` and offline tests work end-to-end within tosctl-uno.
+//! - Actual `uno_sendTransfer` RPC submission to a real TOS daemon WILL
+//!   be rejected at the daemon's BoC decoder until V1-3b lands.
+//! - `tests/send_roundtrip.rs` uses tosctl-uno's OWN decoder; passing is
+//!   NOT proof the daemon would accept the bytes.
+//!
+//! V1-3b resolution path: path-dep `tosctl/src/block` (`chain_block`)
+//! crate → emit a Cell tree whose shape matches
+//! `uno/core/transaction.cpp::encode_transfer` → round-trip against a
+//! real daemon build in an integration test.
+//!
 //! # Pipeline
 //!
 //! 1. **CLI parse**: `--fvk / --rpc / --to / --amount / --memo / --fee`.

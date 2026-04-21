@@ -2,15 +2,25 @@
 #
 # Design doc: doc/uno-workchain.md §13 P.6.
 #
-# Scope (this crate): the **foundation** — key management + receive side.
-#   - keygen   : derive uno_seed / fvk / sk_mlkem from TOS BIP-39 mnemonic per §2.6
-#   - address  : build a diversified Address (d + pk_d + ivk_commitment + pk_mlkem)
-#   - scan     : compact-filter GCS scan + hybrid-KEM trial-decrypt per §5.8 / §7.5
-#   - balance  : sum unspent owned-note values
-#   - chain-info: smoke-test the uno_* JSON-RPC namespace
+# Scope (this crate):
+#   - keygen     : derive uno_seed / fvk / sk_mlkem from TOS BIP-39 mnemonic per §2.6
+#   - address    : build a diversified Address (d + pk_d + ivk_commitment + pk_mlkem)
+#   - scan       : compact-filter GCS scan + hybrid-KEM trial-decrypt per §5.8 / §7.5
+#   - balance    : sum unspent owned-note values
+#   - chain-info : smoke-test the uno_* JSON-RPC namespace
+#   - send       : end-to-end Transfer construction + real Plonky3 prove via
+#                  `uno_plonky3_ffi`. K-P6-wire landed; 4 integration tests
+#                  pass. Proof size ~200 KB–2 MB across 1..4 × 1..4 shape.
 #
-# Out of scope: `send` (needs the full P.2 Transfer AIR prover, blocked on
-# cryptographer work). A stub is wired with a clear TODO.
+# KNOWN GAP (K-P6-boc-parity — V1-3b): `transfer::encode_transfer_wire`
+# uses a FLAT self-contained byte layout; the daemon's
+# `uno/core/transaction.cpp::decode_transfer_bytes` expects a TOS BoC
+# (tree of Cells with refs). These DO NOT round-trip today — send
+# pipeline produces proofs that verify offline but cannot be submitted
+# to a real daemon until the wire-encoding path goes through
+# `tosctl/src/block` `write_boc` + the per-shape Cell tree in
+# `encode_transfer`. Scheduled as V1-3b; no wallet-to-daemon UX
+# regression risk until then because v1 testnet is still ahead (V1-4).
 #
 # Standalone workspace — does NOT merge into `tosctl/src/Cargo.toml` to avoid
 # bumping the main tosctl toolchain (which pins Rust 1.91.1 / edition 2024).
