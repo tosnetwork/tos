@@ -54,9 +54,14 @@
 //!   CURRENT via cross-binding (same pattern as d-6 uses for α ↔ fold).
 
 use p3_goldilocks::{default_goldilocks_poseidon2_8, Goldilocks};
+use p3_poseidon2_air::RoundConstants;
 use p3_symmetric::Permutation;
 
 use crate::merkle_path::{hash_leaf_row_ref, Digest};
+use crate::transfer_air::{
+    eval_poseidon2, P2Cols, POSEIDON2_COLS_PER_INSTANCE, POSEIDON2_HALF_FULL_ROUNDS,
+};
+use core::borrow::Borrow;
 
 // ---------------------------------------------------------------------------
 // Protocol constants
@@ -105,10 +110,61 @@ pub mod col {
     pub const EXPECTED_DIGEST0: usize = STATE_OUT_END;
     pub const EXPECTED_DIGEST_END: usize = EXPECTED_DIGEST0 + DIGEST_WIDTH;
 
-    pub const WIDTH: usize = EXPECTED_DIGEST_END;
+    /// Base offset of the shared Poseidon2-w8 sub-AIR witness block.
+    /// The block is populated on EVERY row; its input is bound to
+    /// STATE_IN and its output's first 4 limbs are bound to STATE_OUT
+    /// on ABSORB rows only (IDLE rows carry a zero-input permutation
+    /// witness, unconstrained relative to STATE_IN/OUT).
+    pub const P2_BLOCK: usize = EXPECTED_DIGEST_END;
+
+    /// Total column width = 29 framing cols + 180 Poseidon2-w8 block.
+    pub const WIDTH: usize = P2_BLOCK + crate::transfer_air::POSEIDON2_COLS_PER_INSTANCE;
 }
 
 pub const LEAF_HASH_AIR_FRAMING_WIDTH: usize = col::WIDTH;
+
+// ---------------------------------------------------------------------------
+// Shared Poseidon2-w8 sub-AIR helpers (A2-3c-iv-d-7-b)
+// ---------------------------------------------------------------------------
+
+/// Generate a full Poseidon2-w8 witness row for a given 8-element
+/// input state. Mirrors `challenger_air::gen_p2_witness` and
+/// `merkle_path_air::gen_p2_witness`.
+pub(crate) fn gen_p2_witness(input: [Goldilocks; 8]) -> Vec<Goldilocks> {
+    use p3_goldilocks::{
+        GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8, GenericPoseidon2LinearLayersGoldilocks,
+    };
+    use p3_poseidon2_air::generate_trace_rows;
+
+    let constants: RoundConstants<
+        Goldilocks,
+        8,
+        { p3_goldilocks::GOLDILOCKS_POSEIDON2_HALF_FULL_ROUNDS },
+        GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8,
+    > = RoundConstants::new(
+        p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_INITIAL,
+        p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_INTERNAL,
+        p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_FINAL,
+    );
+    let mat = generate_trace_rows::<
+        Goldilocks,
+        GenericPoseidon2LinearLayersGoldilocks,
+        8,
+        7,
+        1,
+        { p3_goldilocks::GOLDILOCKS_POSEIDON2_HALF_FULL_ROUNDS },
+        GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8,
+    >(vec![input], &constants, 0);
+    debug_assert_eq!(mat.values.len(), POSEIDON2_COLS_PER_INSTANCE);
+    mat.values
+}
+
+/// View the Poseidon2-w8 sub-block at `col::P2_BLOCK` as `&P2Cols<T>`.
+#[inline]
+pub(crate) fn p2_group<T>(row: &[T]) -> &P2Cols<T> {
+    let group: &[T] = &row[col::P2_BLOCK..col::P2_BLOCK + POSEIDON2_COLS_PER_INSTANCE];
+    <[T] as Borrow<P2Cols<T>>>::borrow(group)
+}
 
 // ---------------------------------------------------------------------------
 // Trace builder
@@ -213,13 +269,49 @@ pub fn build_trace(
         let base = r * width;
         let row = &mut flat[base..base + width];
         // Copy BLOCK, STATE_IN, STATE_OUT, EXPECTED_DIGEST from previous.
-        for c in col::BLOCK0..col::WIDTH {
+        for c in col::BLOCK0..col::P2_BLOCK {
             row[c] = prev_row[c];
         }
         // KIND = IDLE; IS_FIRST / IS_LAST = 0.
         write_kind(row, OP_KIND_IDLE);
         row[col::IS_FIRST] = zero_g;
         row[col::IS_LAST] = zero_g;
+    }
+
+    // --- Populate the shared Poseidon2-w8 block on every row (d-7-b) ---
+    //
+    // ABSORB rows: input = STATE_IN[0..8]; the P2 sub-AIR enforces
+    //   p2.inputs == STATE_IN and p2.post[0..4] == STATE_OUT[0..4]
+    //   (the other post limbs are the permutation output but only the
+    //    first 4 are truncated to the digest; STATE_OUT[4..8] is
+    //    forwarded to the next row's STATE_IN[4..8]).
+    //
+    //   Since STATE_OUT[0..8] = full post-state and p2.post[0..8] is
+    //   also the full post-state, we additionally bind p2.post[4..8]
+    //   == STATE_OUT[4..8] on ABSORB rows so downstream carry is
+    //   cryptographically pinned.
+    //
+    // IDLE rows: input = [0; 8] — canonical dummy permutation witness.
+    //   The AIR's output binding is gated by is_absorb, so IDLE rows'
+    //   P2 block is unconstrained relative to STATE_IN/OUT.
+    for r in 0..trace_height {
+        let base = r * width;
+        let is_absorb = flat[base + col::KIND0 + OP_KIND_ABSORB as usize]
+            == Goldilocks::new(1);
+        let input: [Goldilocks; 8] = if is_absorb {
+            let mut s = [zero_g; 8];
+            for i in 0..SPONGE_WIDTH {
+                s[i] = flat[base + col::STATE_IN0 + i];
+            }
+            s
+        } else {
+            [zero_g; 8]
+        };
+        let p2_witness = gen_p2_witness(input);
+        debug_assert_eq!(p2_witness.len(), POSEIDON2_COLS_PER_INSTANCE);
+        for (i, v) in p2_witness.into_iter().enumerate() {
+            flat[base + col::P2_BLOCK + i] = v;
+        }
     }
 
     Ok(flat)
@@ -352,11 +444,11 @@ pub fn check_all_transitions(
             }
         }
 
-        // IDLE persistence.
+        // IDLE persistence — framing data cols preserved (P2 block may
+        // differ: IDLE rows carry a zero-input P2 witness).
         if is_idle && r > 0 {
             let prev = row(r - 1);
-            // BLOCK, STATE_IN, STATE_OUT, EXPECTED_DIGEST preserved.
-            for c in col::BLOCK0..col::WIDTH {
+            for c in col::BLOCK0..col::P2_BLOCK {
                 if local[c] != prev[c] {
                     return Err(CheckError::IdlePersistenceMismatch { row: r, col: c });
                 }
@@ -389,6 +481,176 @@ pub fn check_all_transitions(
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Plonky3 AIR trait implementation (Phase A2-3c-iv-d-7-b)
+//
+// Combined d-2 + d-3 style commit: port the checker to `Air<AB>` AND
+// wire in the shared Poseidon2-w8 block in one sub-phase, since
+// `leaf_hash_air` has only ONE hashing operation per row (no
+// compression chain like `merkle_path_air` has).
+// ---------------------------------------------------------------------------
+
+use p3_air::{Air, AirBuilder, BaseAir, WindowAccess};
+use p3_field::PrimeCharacteristicRing;
+
+#[derive(Copy, Clone, Debug, Default)]
+pub struct LeafHashAirV1;
+
+impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for LeafHashAirV1 {
+    #[inline]
+    fn width(&self) -> usize {
+        LEAF_HASH_AIR_FRAMING_WIDTH
+    }
+
+    #[inline]
+    fn num_public_values(&self) -> usize {
+        0
+    }
+
+    #[inline]
+    fn max_constraint_degree(&self) -> Option<usize> {
+        // Poseidon2 S-box dominates (degree 7). Auto-compute.
+        None
+    }
+}
+
+impl<AB> Air<AB> for LeafHashAirV1
+where
+    AB: AirBuilder<F = Goldilocks>,
+{
+    fn eval(&self, builder: &mut AB) {
+        let main = builder.main();
+        let local: &[AB::Var] = main.current_slice();
+        let next: &[AB::Var] = main.next_slice();
+
+        let fe = |v: u64| AB::Expr::from(AB::F::from_u64(v));
+        let zero = || fe(0);
+        let one = || fe(1);
+
+        let is_absorb: AB::Expr = local[col::KIND0 + OP_KIND_ABSORB as usize].into();
+        let is_idle: AB::Expr = local[col::KIND0 + OP_KIND_IDLE as usize].into();
+        let is_first: AB::Expr = local[col::IS_FIRST].into();
+        let is_last: AB::Expr = local[col::IS_LAST].into();
+
+        // =============================================================
+        // One-hot selector over {ABSORB, IDLE, RESERVED}.
+        // =============================================================
+        let mut kind_sum = zero();
+        for k in 0..NUM_OP_KINDS {
+            let flag: AB::Expr = local[col::KIND0 + k].into();
+            builder.assert_zero(flag.clone() * (flag.clone() - one()));
+            kind_sum = kind_sum + flag;
+        }
+        builder.assert_eq(kind_sum, one());
+
+        // IS_FIRST / IS_LAST boolean; only meaningful on ABSORB rows,
+        // so gate both to is_absorb · (flag · (flag − 1)) = 0. We also
+        // force them to 0 on non-ABSORB rows via (1 − is_absorb) · flag = 0.
+        builder.assert_zero(is_first.clone() * (is_first.clone() - one()));
+        builder.assert_zero(is_last.clone() * (is_last.clone() - one()));
+        builder.assert_zero((one() - is_absorb.clone()) * is_first.clone());
+        builder.assert_zero((one() - is_absorb.clone()) * is_last.clone());
+
+        // =============================================================
+        // ABSORB row: STATE_IN[0..RATE] == BLOCK[0..RATE] (overwrite).
+        // =============================================================
+        for i in 0..SPONGE_RATE {
+            let state_in_i: AB::Expr = local[col::STATE_IN0 + i].into();
+            let block_i: AB::Expr = local[col::BLOCK0 + i].into();
+            builder.assert_zero(is_absorb.clone() * (state_in_i - block_i));
+        }
+
+        // =============================================================
+        // IS_FIRST ABSORB row: STATE_IN[RATE..WIDTH] == 0.
+        // =============================================================
+        for i in SPONGE_RATE..SPONGE_WIDTH {
+            let state_in_i: AB::Expr = local[col::STATE_IN0 + i].into();
+            builder.assert_zero(is_first.clone() * state_in_i);
+        }
+
+        // =============================================================
+        // IS_LAST ABSORB row: STATE_OUT[0..DIGEST] == EXPECTED_DIGEST.
+        // =============================================================
+        for i in 0..DIGEST_WIDTH {
+            let state_out_i: AB::Expr = local[col::STATE_OUT0 + i].into();
+            let ed_i: AB::Expr = local[col::EXPECTED_DIGEST0 + i].into();
+            builder.assert_zero(is_last.clone() * (state_out_i - ed_i));
+        }
+
+        // =============================================================
+        // Transition constraints.
+        //
+        //   * EXPECTED_DIGEST persists.
+        //   * On a NON-FIRST ABSORB row (i.e. carry-in row): STATE_IN
+        //     capacity equals the PREVIOUS row's STATE_OUT capacity.
+        //   * IDLE row persistence: all non-KIND, non-IS_FIRST,
+        //     non-IS_LAST cols match the previous row.
+        // =============================================================
+        let mut trans = builder.when_transition();
+
+        for i in 0..DIGEST_WIDTH {
+            let l_ed: AB::Expr = local[col::EXPECTED_DIGEST0 + i].into();
+            let n_ed: AB::Expr = next[col::EXPECTED_DIGEST0 + i].into();
+            trans.assert_zero(n_ed - l_ed);
+        }
+
+        // Capacity carry on ABSORB-after-ABSORB transitions.
+        // next.IS_FIRST must be 0 here (IS_FIRST only on row 0), so
+        // we gate by (next_is_absorb · (1 - next_is_first)) — on any
+        // absorb row that is NOT the first, STATE_IN[RATE..WIDTH] must
+        // equal the prior STATE_OUT's same limbs.
+        let next_is_absorb: AB::Expr =
+            next[col::KIND0 + OP_KIND_ABSORB as usize].into();
+        let next_is_first: AB::Expr = next[col::IS_FIRST].into();
+        let carry_gate = next_is_absorb.clone() * (one() - next_is_first);
+        for i in SPONGE_RATE..SPONGE_WIDTH {
+            let n_in: AB::Expr = next[col::STATE_IN0 + i].into();
+            let l_out: AB::Expr = local[col::STATE_OUT0 + i].into();
+            trans.assert_zero(carry_gate.clone() * (n_in - l_out));
+        }
+
+        // IDLE persistence: all non-KIND, non-IS_FIRST, non-IS_LAST
+        // columns unchanged.
+        let next_is_idle: AB::Expr = next[col::KIND0 + OP_KIND_IDLE as usize].into();
+        for c in col::BLOCK0..col::P2_BLOCK {
+            let l_c: AB::Expr = local[c].into();
+            let n_c: AB::Expr = next[c].into();
+            trans.assert_zero(next_is_idle.clone() * (n_c - l_c));
+        }
+
+        drop(trans);
+
+        // =============================================================
+        // Shared Poseidon2-w8 sub-AIR.
+        //
+        // Run on every row; tie its input to STATE_IN and its first
+        // 8 limbs of the final post to STATE_OUT[0..8], gated by
+        // is_absorb. On IDLE rows the P2 block runs against [0;8]
+        // (the builder wrote that witness) but no input/output
+        // constraints tie it to STATE_IN/OUT.
+        // =============================================================
+        let p2_local = p2_group::<AB::Var>(local);
+        eval_poseidon2(builder, p2_local);
+
+        // P2 input == STATE_IN on ABSORB rows.
+        for i in 0..SPONGE_WIDTH {
+            let p2_in: AB::Expr = p2_local.inputs[i].into();
+            let s_in: AB::Expr = local[col::STATE_IN0 + i].into();
+            builder.assert_zero(is_absorb.clone() * (p2_in - s_in));
+        }
+
+        // P2 post == STATE_OUT on ABSORB rows (full 8 limbs).
+        let p2_post = &p2_local.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
+        for i in 0..SPONGE_WIDTH {
+            let p2_out: AB::Expr = p2_post[i].into();
+            let s_out: AB::Expr = local[col::STATE_OUT0 + i].into();
+            builder.assert_zero(is_absorb.clone() * (p2_out - s_out));
+        }
+
+        let _ = is_idle;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -583,7 +845,9 @@ mod tests {
     fn column_layout_constants() {
         assert_eq!(col::KIND0, 0);
         assert_eq!(col::KIND_END, 3);
-        assert_eq!(col::WIDTH, 29);
+        // After d-7-b: 29 framing cols + 180 P2 block.
+        assert_eq!(col::P2_BLOCK, 29);
+        assert_eq!(col::WIDTH, 29 + POSEIDON2_COLS_PER_INSTANCE);
         assert_eq!(LEAF_HASH_AIR_FRAMING_WIDTH, col::WIDTH);
     }
 
@@ -626,5 +890,195 @@ mod tests {
             .expect("trace build");
         check_all_transitions(&trace, trace_height)
             .expect("real quot-commit leaf must check");
+    }
+
+    // ======================================================================
+    // Phase A2-3c-iv-d-7-b: real STARK prove + verify via uni-stark
+    // ======================================================================
+
+    use crate::prover::build_config;
+    use p3_matrix::dense::RowMajorMatrix;
+    use p3_uni_stark::{prove, verify};
+
+    fn trace_matrix(
+        leaf: &[Goldilocks],
+        expected: Digest,
+        trace_height: usize,
+    ) -> RowMajorMatrix<Goldilocks> {
+        let flat = build_trace(leaf, expected, trace_height).expect("trace");
+        RowMajorMatrix::new(flat, col::WIDTH)
+    }
+
+    #[test]
+    fn air_prove_and_verify_width_4() {
+        let leaf = vec![gl(7), gl(11), gl(13), gl(17)];
+        let digest = compute_digest(&leaf);
+        let trace = trace_matrix(&leaf, digest, 16);
+        let cfg = build_config();
+        let air = LeafHashAirV1;
+        let proof = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof, &[]).expect("width-4 leaf-hash must verify");
+    }
+
+    #[test]
+    fn air_prove_and_verify_width_8() {
+        let leaf: Vec<Goldilocks> = (1..=8).map(|i| gl(i * 100)).collect();
+        let digest = compute_digest(&leaf);
+        let trace = trace_matrix(&leaf, digest, 16);
+        let cfg = build_config();
+        let air = LeafHashAirV1;
+        let proof = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof, &[]).expect("width-8 leaf-hash must verify");
+    }
+
+    #[test]
+    fn air_prove_and_verify_width_16() {
+        let leaf: Vec<Goldilocks> = (1..=16).map(|i| gl(i * 7 + 3)).collect();
+        let digest = compute_digest(&leaf);
+        let trace = trace_matrix(&leaf, digest, 16);
+        let cfg = build_config();
+        let air = LeafHashAirV1;
+        let proof = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof, &[]).expect("width-16 leaf-hash must verify");
+    }
+
+    #[test]
+    fn air_prove_and_verify_real_quot_commit_leaf() {
+        use crate::merkle_path::hash_multi_matrix_leaf_ref;
+        use crate::prover::{MvpConfig, MvpProver};
+        use crate::transfer_air::MvpWitness;
+        use p3_uni_stark::Proof;
+
+        let prover = MvpProver::new();
+        let w = MvpWitness::deterministic_valid(2, 2, 0x7E57_FED0);
+        let (bytes, _) = prover.prove(&w.encode()).unwrap();
+        let proof: Proof<MvpConfig> = postcard::from_bytes(&bytes).unwrap();
+
+        let quot_batch = &proof.opening_proof.query_proofs[0].input_proof[1];
+        let refs: Vec<&[Goldilocks]> =
+            quot_batch.opened_values.iter().map(|v| v.as_slice()).collect();
+        let flat_leaf: Vec<Goldilocks> =
+            refs.iter().flat_map(|r| r.iter().copied()).collect();
+        let perm = default_goldilocks_poseidon2_8();
+        let expected = hash_multi_matrix_leaf_ref(&perm, &refs);
+
+        let trace_height =
+            (flat_leaf.len() / SPONGE_RATE).next_power_of_two().max(2) * 2;
+        let trace = trace_matrix(&flat_leaf, expected, trace_height);
+        let cfg = build_config();
+        let air = LeafHashAirV1;
+        let proof_s = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof_s, &[])
+            .expect("real quot-commit leaf-hash must verify via STARK");
+    }
+
+    /// Helper: adversarially prove+verify a tampered trace.
+    fn air_rejects(trace: RowMajorMatrix<Goldilocks>) -> bool {
+        let cfg = build_config();
+        let air = LeafHashAirV1;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove(&cfg, &air, trace, &[])
+        }));
+        match outcome {
+            Err(_) => true,
+            Ok(p) => verify(&cfg, &air, &p, &[]).is_err(),
+        }
+    }
+
+    #[test]
+    fn air_rejects_tampered_block() {
+        let leaf: Vec<Goldilocks> = (1..=8).map(|i| gl(i)).collect();
+        let digest = compute_digest(&leaf);
+        let mut flat = build_trace(&leaf, digest, 16).unwrap();
+        // Tamper row 0 BLOCK[0]. STATE_IN[0..RATE] = BLOCK enforced,
+        // so STATE_IN[0] also mismatches → P2(STATE_IN) != STATE_OUT.
+        flat[col::BLOCK0] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(air_rejects(trace), "tampered BLOCK must reject");
+    }
+
+    #[test]
+    fn air_rejects_first_row_non_zero_capacity() {
+        let leaf = vec![gl(1); 4];
+        let digest = compute_digest(&leaf);
+        let mut flat = build_trace(&leaf, digest, 16).unwrap();
+        // Row 0 is IS_FIRST. STATE_IN[4] should be 0 → set non-zero.
+        flat[col::STATE_IN0 + 4] = gl(42);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(air_rejects(trace), "non-zero first-row capacity must reject");
+    }
+
+    #[test]
+    fn air_rejects_broken_capacity_carry() {
+        let leaf: Vec<Goldilocks> = (1..=8).map(|i| gl(i)).collect();
+        let digest = compute_digest(&leaf);
+        let mut flat = build_trace(&leaf, digest, 16).unwrap();
+        // Row 1 STATE_IN[4] should carry from row 0 STATE_OUT[4]. Break.
+        let row1 = col::WIDTH;
+        flat[row1 + col::STATE_IN0 + 4] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(air_rejects(trace), "broken capacity carry must reject");
+    }
+
+    #[test]
+    fn air_rejects_wrong_expected_digest() {
+        let leaf = vec![gl(1); 4];
+        let digest = compute_digest(&leaf);
+        let mut bad = digest;
+        bad[0] += gl(1);
+        // Builder fills EXPECTED_DIGEST = bad; last row STATE_OUT[0..4]
+        // is the REAL digest → IS_LAST · (STATE_OUT − ED) ≠ 0.
+        let flat = build_trace(&leaf, bad, 16).unwrap();
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(
+            air_rejects(trace),
+            "wrong EXPECTED_DIGEST must reject at IS_LAST boundary"
+        );
+    }
+
+    #[test]
+    fn air_rejects_forged_state_out() {
+        // Forge STATE_OUT to a value that satisfies DIGEST but not P2
+        // (set STATE_OUT to something random). The P2 output binding
+        // (p2.post == STATE_OUT on ABSORB rows) must catch it.
+        //
+        // To isolate the P2 binding, we also propagate the forged
+        // STATE_OUT into EXPECTED_DIGEST so the IS_LAST boundary
+        // doesn't fire first.
+        let leaf = vec![gl(1); 4];
+        let digest = compute_digest(&leaf);
+        let mut flat = build_trace(&leaf, digest, 16).unwrap();
+        // Corrupt row 0 STATE_OUT[0] and also row 0 EXPECTED_DIGEST[0]
+        // (and all downstream EXPECTED_DIGEST for persistence).
+        let forged = flat[col::STATE_OUT0] + gl(1);
+        flat[col::STATE_OUT0] = forged;
+        for r in 0..16 {
+            flat[r * col::WIDTH + col::EXPECTED_DIGEST0] = forged;
+        }
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(
+            air_rejects(trace),
+            "forged STATE_OUT must fail P2 output binding"
+        );
+    }
+
+    #[test]
+    fn air_rejects_idle_mutation() {
+        let leaf = vec![gl(1); 4];
+        let digest = compute_digest(&leaf);
+        let mut flat = build_trace(&leaf, digest, 16).unwrap();
+        // Row 5 is IDLE. Mutate STATE_OUT[0]. IDLE persistence fires.
+        let row5 = 5 * col::WIDTH;
+        flat[row5 + col::STATE_OUT0] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(air_rejects(trace), "IDLE mutation must reject");
+    }
+
+    #[test]
+    fn air_width_matches_layout_constant() {
+        assert_eq!(
+            <LeafHashAirV1 as BaseAir<Goldilocks>>::width(&LeafHashAirV1),
+            LEAF_HASH_AIR_FRAMING_WIDTH,
+        );
     }
 }
