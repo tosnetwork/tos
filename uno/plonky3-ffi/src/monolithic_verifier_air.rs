@@ -4967,4 +4967,234 @@ mod tests {
                 .expect("A3-5b single-bundle must still verify post-A3-5c");
         }
     }
+
+    // ======================================================================
+    // A4: Multi-bundle scaling measurements — monolithic STARK per N bundles
+    //
+    // Each "bundle" is one per-query FRI verification (α + Merkle paths +
+    // fold). The §4.1 landmark is N = 4 Txs × 52 queries = 208 bundles per
+    // block-level monolithic trace. §3.4 scales to N = 30 Txs → 1560
+    // bundles. A4 measures prover time + proof size at progressive scales
+    // to validate the feasibility path.
+    //
+    // Run with:
+    //   cargo test -j 128 --release --lib monolithic_verifier_air::tests::measure_multi_bundle \
+    //     -- --ignored --test-threads 1 --nocapture
+    // ======================================================================
+
+    /// Deterministic sample per-bundle data. Each bundle has:
+    ///   - alpha_steps: `n_alpha` AlphaSteps.
+    ///   - merkle_paths: 1 path, wide-leaf into a tiny 2-leaf tree.
+    ///   - fold_rounds: `n_fold` rounds at log_height_start.
+    ///
+    /// Bundles are all structurally identical (same shape) but with α /
+    /// ρ / roots varying by `seed`.
+    fn sample_bundle_inputs(
+        seed: u64,
+        n_alpha: usize,
+        n_fold: usize,
+        log_height_start: usize,
+    ) -> (
+        Challenge,            // alpha
+        Vec<AlphaStep>,       // alpha_steps
+        Vec<Goldilocks>,      // leaf
+        Vec<Digest>,          // opening_proof (1 sibling = log_height 1)
+        usize,                // index
+        Digest,               // expected_root
+        Vec<FoldRound>,       // fold_rounds
+    ) {
+        use crate::merkle_path::{compress_pair_ref, hash_leaf_row_ref};
+        let perm = default_goldilocks_poseidon2_8();
+
+        let alpha = ext(3 + seed, 5 + seed * 2);
+        let alpha_steps: Vec<AlphaStep> = (0..n_alpha as u64)
+            .map(|i| AlphaStep {
+                p_at_x: gl(7 * i + seed + 1),
+                p_at_z: ext(11 * i + seed + 3, 13 * i + seed + 5),
+                z: ext(17 * i + seed + 7, 19 * i + seed + 11),
+                x: gl(23 * i + seed + 2),
+            })
+            .collect();
+
+        let leaf: Vec<Goldilocks> =
+            (0..8u64).map(|j| gl(seed * 1000 + j * 17 + 1)).collect();
+        let leaf_sib: Vec<Goldilocks> =
+            (0..8u64).map(|j| gl(seed * 1000 + 500 + j * 23 + 3)).collect();
+        let dig = hash_leaf_row_ref(&perm, &leaf);
+        let dig_sib = hash_leaf_row_ref(&perm, &leaf_sib);
+        let root = compress_pair_ref(&perm, &dig, &dig_sib);
+        let opening = vec![dig_sib];
+
+        let fold_rounds: Vec<FoldRound> = (0..n_fold)
+            .map(|r| FoldRound {
+                sibling: ext(53 + r as u64 * 7 + seed, 59 + r as u64 * 11 + seed),
+                beta: ext(61 + r as u64 * 13 + seed, 67 + r as u64 * 17 + seed),
+                domain_index: (0b1010_0101 ^ (r + seed as usize))
+                    & ((1 << log_height_start) - 1),
+                log_height: log_height_start - r,
+            })
+            .collect();
+
+        (alpha, alpha_steps, leaf, opening, 0, root, fold_rounds)
+    }
+
+    /// Convenience wrapper that runs prove+verify + postcard-serializes
+    /// and reports timing. Trace_height must be a power of two and ≥
+    /// the sum of all bundles' physical rows.
+    fn run_multi_bundle_measurement(
+        tag: &str,
+        n_bundles: usize,
+        n_alpha_per_bundle: usize,
+        n_fold_per_bundle: usize,
+        log_height_start: usize,
+        trace_height: usize,
+    ) {
+        use crate::prover::build_config;
+        use p3_matrix::dense::RowMajorMatrix;
+        use p3_uni_stark::{prove, verify};
+        use std::time::Instant;
+
+        // Generate bundle inputs, then borrow them into BundleSpec.
+        struct BundleInputs {
+            alpha: Challenge,
+            alpha_steps: Vec<AlphaStep>,
+            leaf: Vec<Goldilocks>,
+            opening: Vec<Digest>,
+            index: usize,
+            expected_root: Digest,
+            fold_rounds: Vec<FoldRound>,
+        }
+        let inputs: Vec<BundleInputs> = (0..n_bundles as u64)
+            .map(|seed| {
+                let (a, alpha_steps, leaf, opening, index, expected_root, fold_rounds) =
+                    sample_bundle_inputs(
+                        seed + 1, // +1 to avoid seed=0 degeneracies
+                        n_alpha_per_bundle,
+                        n_fold_per_bundle,
+                        log_height_start,
+                    );
+                BundleInputs {
+                    alpha: a,
+                    alpha_steps,
+                    leaf,
+                    opening,
+                    index,
+                    expected_root,
+                    fold_rounds,
+                }
+            })
+            .collect();
+
+        // Second pass: wire up &-borrows.
+        let bundles: Vec<BundleSpec<'_>> = inputs
+            .iter()
+            .map(|b| BundleSpec {
+                initial_alpha_pow: ext(1, 0),
+                initial_ro: ext(0, 0),
+                alpha: b.alpha,
+                alpha_steps: &b.alpha_steps,
+                merkle_paths: &[],
+                fold_rounds: &b.fold_rounds,
+            })
+            .collect();
+
+        // But merkle_paths needs a slice of MerkleOpening — can't nest
+        // borrows through closures easily. Build a parallel vec:
+        let merkle_paths_per_bundle: Vec<Vec<MerkleOpening<'_>>> = inputs
+            .iter()
+            .map(|b| {
+                vec![MerkleOpening {
+                    leaf: &b.leaf,
+                    opening_proof: &b.opening,
+                    index: b.index,
+                    expected_root: b.expected_root,
+                }]
+            })
+            .collect();
+
+        // Now weave them:
+        let bundles: Vec<BundleSpec<'_>> = bundles
+            .into_iter()
+            .zip(merkle_paths_per_bundle.iter())
+            .map(|(mut b, mp)| {
+                b.merkle_paths = mp.as_slice();
+                b
+            })
+            .collect();
+
+        let flat = build_multi_bundle_trace(&bundles, trace_height)
+            .expect("trace build");
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        let cfg = build_config();
+        let air = MonolithicVerifierAirV1;
+
+        let t0 = Instant::now();
+        let proof = prove(&cfg, &air, trace, &[]);
+        let prove_ms = t0.elapsed().as_millis();
+        verify(&cfg, &air, &proof, &[]).expect("must verify");
+
+        let proof_bytes = postcard::to_allocvec(&proof).unwrap().len();
+        let cells = trace_height * col::WIDTH;
+        eprintln!(
+            "  [{tag}] n_bundles={n_bundles:>4}  α={n_alpha_per_bundle:>3}/bundle  \
+             fold={n_fold_per_bundle}  height={trace_height:>6}  \
+             cells={cells:>10}  prove={prove_ms:>7} ms  proof={proof_bytes:>7} B",
+        );
+    }
+
+    /// A4 baseline: 52 bundles = 1 Tx's full per-query bundle (all 52
+    /// FRI queries in ONE monolithic STARK), small α_steps per query
+    /// to keep total runtime manageable.
+    #[test]
+    #[ignore = "A4 measurement — run explicitly to capture scaling data"]
+    fn measure_multi_bundle_one_tx_52q() {
+        eprintln!();
+        eprintln!("A4: 1 Tx = 52 bundles (all queries in ONE STARK):");
+        // Each bundle: 10 α + (2 absorb + 1 compress = 3 Merkle) + 3 fold
+        //            = 16 rows. 52 bundles = 832 rows. Pad to 1024.
+        run_multi_bundle_measurement("1tx-52q", 52, 10, 3, 5, 1024);
+    }
+
+    /// A4 §4.1 landmark: 4 Txs × 52 queries = 208 bundles in ONE STARK.
+    #[test]
+    #[ignore = "A4 measurement — run explicitly to capture scaling data"]
+    fn measure_multi_bundle_n4_208bundles() {
+        eprintln!();
+        eprintln!("A4 §4.1 landmark: N=4 Txs × 52q = 208 bundles:");
+        // 208 × 16 = 3328 rows. Pad to 4096.
+        run_multi_bundle_measurement("n4-208b", 208, 10, 3, 5, 4096);
+    }
+
+    /// A4 scaling sweep: exercise the monolithic AIR at increasing
+    /// bundle counts to characterize prover time / proof size growth.
+    #[test]
+    #[ignore = "A4 measurement — run explicitly to capture scaling data"]
+    fn measure_multi_bundle_scaling_sweep() {
+        eprintln!();
+        eprintln!("A4 multi-bundle scaling sweep:");
+        // (tag, n_bundles, trace_height) — α_steps=10, fold=3.
+        let scenarios = [
+            ("2 bundles ", 2usize, 64usize),
+            ("8 bundles ", 8, 256),
+            ("32 bundles", 32, 1024),
+            ("128 bundles", 128, 4096),
+        ];
+        for (tag, n, h) in scenarios {
+            run_multi_bundle_measurement(tag, n, 10, 3, 5, h);
+        }
+    }
+
+    /// A4 larger-per-bundle: each bundle has more α_steps + more fold
+    /// rounds (approximates the 2/2 per-query shape).
+    #[test]
+    #[ignore = "A4 measurement — run explicitly to capture scaling data"]
+    fn measure_multi_bundle_2_2_shape_per_bundle() {
+        eprintln!();
+        eprintln!("A4 2/2-shape per-bundle (α=40, fold=6):");
+        // Per bundle: 40 α + 3 Merkle + 6 fold = 49 rows.
+        // 8 bundles × 49 = 392 rows → pad to 512.
+        // 32 bundles × 49 = 1568 → pad to 2048.
+        run_multi_bundle_measurement("2/2 ×8 ", 8, 40, 6, 8, 512);
+        run_multi_bundle_measurement("2/2 ×32", 32, 40, 6, 8, 2048);
+    }
 }

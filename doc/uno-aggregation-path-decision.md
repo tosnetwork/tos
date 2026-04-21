@@ -318,12 +318,42 @@ small scale (demonstrated with N=2). Scaling to N=4 slots × 52
 queries each (208 bundles per trace) is a mechanical repetition
 unblocked by A3-5c's constraint machinery.
 
-### A4: 30-Tx measurement
+### A4: Multi-bundle scaling measurements against §3.4 (landed)
 
-- Scale to N=30 slots. Measure against §3.4 100 KB envelope.
-- If under budget: proceed to A5 (wire format).
-- If over budget: flip to §4.3 fallback (reduce BLOCK_TX_CAP, retune
-  aggregator FRI, or drop to per-Transfer shipping).
+A4 measured the A3-5c multi-bundle shape at progressive scales; full
+numbers in `doc/uno-aggregation-metrics.md` §A4.
+
+**Headline numbers:**
+
+| shape                             | prove   | proof size |
+|-----------------------------------|---------|------------|
+| 1 Tx = 52 bundles                 | ~2 s    | **356 KB** |
+| 4 Txs = 208 bundles (§4.1 mark)   | ~65 s   | **420 KB** |
+| N=30 extrapolation (1 560 bundles)| ~4 min  | ~550-650 KB|
+
+**Decision**: §3.4's 100 KB envelope is **NOT achievable** with the
+plain monolithic FRI at Option B parameters. Even the §4.1 landmark
+(4-Tx aggregation) ships ~420 KB — 4× over envelope. This is driven
+by FRI opening-proof overhead (52 queries × log-height siblings per
+query × ~10 bytes/sibling), which scales with log(trace_height) not
+trace size itself, and cannot be compressed further without soundness
+loss.
+
+**Forward path**: §4.3 fallback — accept a realistic block-proof
+budget of ~500-800 KB, OR reduce `num_queries` below 52 (drops
+soundness below the 128-bit design bar).
+
+The monolithic-AIR design itself is sound and complete across the A3
+series — all cross-binding gaps closed, all bank constraints
+composable, multi-bundle stacking works. What A4 showed is that the
+§3.4 envelope was set before the monolithic design existed; a
+realistic budget given the FRI shape is 500-800 KB.
+
+### A5+ (planned): wire format + validator integration
+
+Assumes accepted block-proof budget (~500-800 KB via §4.3 fallback).
+A5 formalizes the proof wire format; A6+ wires validators and wallets
+to consume monolithic-AIR proofs end-to-end.
 
 ## Open questions (not blocking A3)
 
