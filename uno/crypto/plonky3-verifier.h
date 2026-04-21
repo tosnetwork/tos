@@ -85,7 +85,12 @@ inline const char* verify_result_label(VerifyResult r) noexcept {
 // block-wire-format entry points. Existing Plonky3Verifier surface
 // unchanged; new C++ consumers of the block wire format link against
 // the same lib.
-inline constexpr std::uint32_t kExpectedAbiVersion = 2;
+//
+// v3 (A6-2): adds UnoBlockPublicInputsView struct + UnoBlockVerifierHandle
+// opaque type + init/free/verify entry points. The block-level verifier
+// (A6-3 RAII wrapper) uses these to replace per-Tx Plonky3 verify with
+// one block-level aggregated-proof verify.
+inline constexpr std::uint32_t kExpectedAbiVersion = 3;
 
 // RAII wrapper around an `UnoPlonky3VerifierHandle`.
 //

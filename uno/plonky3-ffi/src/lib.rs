@@ -141,6 +141,24 @@ pub struct Plonky3ProverHandle {
     inner: Arc<prover::MvpProver>,
 }
 
+/// Opaque handle to an initialized block-level aggregated-proof verifier.
+///
+/// Constructed by [`uno_block_verifier_init`] and destroyed by
+/// [`uno_block_verifier_free`]. Wraps the A6-1.5 real `verify_block`
+/// function (monolithic AIR + Plonky3 `uni_stark::verify`).
+///
+/// A single validator process is expected to hold ONE of these handles,
+/// shared across the compute-phase worker pool by `const&`. Thread-safe
+/// by construction (the wrapped verify is stateless; the `StarkConfig`
+/// is re-derived per call from `prover::build_config`).
+pub struct UnoBlockVerifierHandle {
+    /// A sentinel: verify functions are stateless today, so the handle
+    /// carries no hot state. Kept as an opaque struct for ABI stability
+    /// — a future `Arc<AggregatedBlockVerifier>` can drop in without
+    /// breaking the C++ side.
+    _phantom: (),
+}
+
 // ---------------------------------------------------------------------------
 // FFI-visible buffer descriptors
 // ---------------------------------------------------------------------------
@@ -752,6 +770,143 @@ pub unsafe extern "C" fn uno_block_extra_encode_v1(
 }
 
 // ---------------------------------------------------------------------------
+// A6-2: Block-level aggregated-proof verifier FFI surface
+//
+// Sits on top of the A6-1.5 `aggregator::verify_block` function.
+// The C++ validator holds ONE handle, shared across the compute-phase
+// worker pool (thread-safe — verify is stateless).
+//
+// PI binding status: the AIR does not yet constrain PI fields against
+// trace columns (see A6-1.5 module header in `aggregator.rs`). The C++
+// side still cross-checks PI consistency at the consensus layer; the
+// UnoBlockPublicInputsView struct is accepted for API-shape stability
+// so the ABI won't change when in-circuit PI binding lands.
+// ---------------------------------------------------------------------------
+
+/// Flat view of [`BlockPublicInputs`] passed across the FFI. Layout
+/// matches C `struct` packing: 8-byte-aligned fields, u16 padding
+/// explicit.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct UnoBlockPublicInputsView {
+    /// Matches `BlockPublicInputs.chain_id`.
+    pub chain_id: u32,
+    /// Padding for 8-byte alignment.
+    pub _pad0: u32,
+    /// Matches `BlockPublicInputs.block_seqno`.
+    pub block_seqno: u64,
+    /// Matches `BlockPublicInputs.anchor_seqno`.
+    pub anchor_seqno: u64,
+    /// Matches `BlockPublicInputs.n_transfers` (0..=BLOCK_TX_CAP).
+    pub n_transfers: u16,
+    /// Padding for 8-byte alignment.
+    pub _pad1: [u8; 6],
+    /// Matches `BlockPublicInputs.tx_pi_merkle_root`.
+    pub tx_pi_merkle_root: [u8; 32],
+}
+
+/// Initialize the block-level aggregated-proof verifier. Returns an
+/// opaque handle that the caller owns and MUST free via
+/// [`uno_block_verifier_free`] exactly once.
+///
+/// # Safety
+/// `out_handle` must be a valid, aligned, writable
+/// `*mut *mut UnoBlockVerifierHandle` pointer.
+#[no_mangle]
+pub unsafe extern "C" fn uno_block_verifier_init(
+    out_handle: *mut *mut UnoBlockVerifierHandle,
+) -> i32 {
+    ffi_guard(|| {
+        if out_handle.is_null() {
+            return Plonky3Status::NullPointer;
+        }
+        let handle = Box::new(UnoBlockVerifierHandle { _phantom: () });
+        // SAFETY: caller upholds writability.
+        unsafe {
+            *out_handle = Box::into_raw(handle);
+        }
+        Plonky3Status::Ok
+    })
+}
+
+/// Free a verifier handle previously returned by
+/// [`uno_block_verifier_init`]. Idempotent for a null pointer.
+///
+/// # Safety
+/// `handle` must be from [`uno_block_verifier_init`] and not already
+/// freed. Passing null is safe and a no-op.
+#[no_mangle]
+pub unsafe extern "C" fn uno_block_verifier_free(
+    handle: *mut UnoBlockVerifierHandle,
+) {
+    if handle.is_null() {
+        return;
+    }
+    let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: caller guarantees handle came from a Box::into_raw
+        // in `uno_block_verifier_init` and hasn't been freed.
+        unsafe {
+            drop(Box::from_raw(handle));
+        }
+    }));
+}
+
+/// Verify an aggregated block proof against its public inputs.
+///
+/// | return               | meaning                                        |
+/// |----------------------|------------------------------------------------|
+/// | `kOk` (0)            | Proof cryptographically verified against PI.   |
+/// | `kProofDecodeFailed` | Postcard decode failed (malformed bytes).      |
+/// | `kVerifyFailed`      | STARK verify returned an error.                |
+/// | `kNullPointer`       | `handle` / `pi` / `proof.ptr` null invalid.    |
+/// | `kInternalError`     | Panic inside Rust (should not happen).         |
+///
+/// # Safety
+/// - `handle` must be a live handle from [`uno_block_verifier_init`].
+/// - `pi` must point to a valid [`UnoBlockPublicInputsView`].
+/// - `proof.ptr` / `proof.len` must describe a valid readable region
+///   (or ptr null with `len == 0` for the trivially-empty case).
+#[no_mangle]
+pub unsafe extern "C" fn uno_block_verifier_verify(
+    handle: *const UnoBlockVerifierHandle,
+    pi: *const UnoBlockPublicInputsView,
+    proof: Plonky3ProofBytes,
+) -> i32 {
+    ffi_guard(|| {
+        if handle.is_null() || pi.is_null() {
+            return Plonky3Status::NullPointer;
+        }
+
+        let pi_view = unsafe { &*pi };
+        let pi_rust = aggregator::BlockPublicInputs {
+            chain_id: pi_view.chain_id,
+            block_seqno: pi_view.block_seqno,
+            anchor_seqno: pi_view.anchor_seqno,
+            n_transfers: pi_view.n_transfers,
+            tx_pi_merkle_root: pi_view.tx_pi_merkle_root,
+        };
+
+        let proof_slice = match unsafe { slice_from_parts(proof.ptr, proof.len) } {
+            Some(s) => s,
+            None => return Plonky3Status::NullPointer,
+        };
+        let agg_proof = aggregator::AggregatedProof {
+            bytes: proof_slice.to_vec(),
+        };
+
+        match aggregator::verify_block(&pi_rust, &agg_proof) {
+            Ok(()) => Plonky3Status::Ok,
+            Err(aggregator::BlockVerifyError::ProofMalformed) => {
+                Plonky3Status::ProofDecodeFailed
+            }
+            Err(aggregator::BlockVerifyError::StarkVerifyFailed) => {
+                Plonky3Status::VerifyFailed
+            }
+        }
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Version / ABI probe
 // ---------------------------------------------------------------------------
 
@@ -759,17 +914,19 @@ pub unsafe extern "C" fn uno_block_extra_encode_v1(
 /// `Plonky3Verifier::init()` to catch a version-skew between the shipped
 /// Rust static-lib and the compiled C++ header.
 ///
-/// Current value: 2 (bumped from 1 by A6-1, which adds
-/// [`UnoBlockExtraBytes`], [`UnoBlockExtraParsed`],
-/// [`uno_block_extra_decode`], [`uno_block_extra_owned_free`], and
-/// [`uno_block_extra_encode_v1`] to the FFI surface). Bump on any
-/// layout change to `Plonky3OwnedProof`, `Plonky3ProofBytes`,
-/// `Plonky3PublicInputs`, `Plonky3Witness`, `Plonky3Status`,
-/// `UnoBlockExtraBytes`, `UnoBlockExtraParsed`, or any
+/// Current value: 3 (bumped from 2 by A6-2, which adds
+/// [`UnoBlockPublicInputsView`], [`UnoBlockVerifierHandle`],
+/// [`uno_block_verifier_init`], [`uno_block_verifier_free`], and
+/// [`uno_block_verifier_verify`] to the FFI surface). Bump on any
+/// layout change to existing FFI structs or any
 /// addition/removal of FFI entry points.
+///
+/// History:
+/// - v1 → v2 (A6-1): UnoBlockExtra{Bytes,Parsed} + wire-format entry points.
+/// - v2 → v3 (A6-2): UnoBlockPublicInputsView + block-verifier handle.
 #[no_mangle]
 pub extern "C" fn uno_plonky3_abi_version() -> u32 {
-    2
+    3
 }
 
 // ---------------------------------------------------------------------------
@@ -940,10 +1097,10 @@ mod ffi_tests {
     }
 
     /// The ABI-version probe must return a positive integer.
-    /// v2 added the A6-1 UnoBlockExtra wire-format entry points.
+    /// v3 added the A6-2 block-verifier handle entry points.
     #[test]
     fn abi_version_probe() {
-        assert_eq!(uno_plonky3_abi_version(), 2);
+        assert_eq!(uno_plonky3_abi_version(), 3);
     }
 
     // =======================================================================
@@ -1147,5 +1304,179 @@ mod ffi_tests {
         unsafe {
             uno_block_extra_owned_free(UnoBlockExtraParsed::EMPTY);
         }
+    }
+
+    // =======================================================================
+    // A6-2 UnoBlockVerifier FFI — round-trip + error-path coverage
+    //
+    // These tests instantiate the handle, feed a real A6-1.5-generated
+    // proof through the FFI, and confirm rejection paths.
+    // =======================================================================
+
+    fn sample_pi_view() -> UnoBlockPublicInputsView {
+        UnoBlockPublicInputsView {
+            chain_id: 7,
+            _pad0: 0,
+            block_seqno: 1,
+            anchor_seqno: 0,
+            n_transfers: 1,
+            _pad1: [0u8; 6],
+            tx_pi_merkle_root: [0u8; 32],
+        }
+    }
+
+    /// Build a real A6-1.5 block proof for a 1-bundle toy trace, then
+    /// pass its bytes through the A6-2 FFI verify entry point. Must
+    /// return kOk.
+    #[test]
+    fn block_verifier_ffi_round_trip() {
+        use crate::merkle_path::{compress_pair_ref, hash_leaf_row_ref};
+        use crate::monolithic_verifier_air::{
+            AlphaStep, BundleSpec, FoldRound, MerkleOpening,
+        };
+        use crate::prover::Challenge;
+        use p3_field::BasedVectorSpace;
+        use p3_goldilocks::{default_goldilocks_poseidon2_8, Goldilocks};
+
+        fn gl(v: u64) -> Goldilocks { Goldilocks::new(v) }
+        fn ext(a: u64, b: u64) -> Challenge {
+            Challenge::from_basis_coefficients_fn(|i| if i == 0 { gl(a) } else { gl(b) })
+        }
+
+        let perm = default_goldilocks_poseidon2_8();
+        let leaf: Vec<Goldilocks> =
+            (0..8u64).map(|j| gl(100 + j * 17 + 1)).collect();
+        let sib_leaf: Vec<Goldilocks> =
+            (0..8u64).map(|j| gl(200 + j * 23 + 3)).collect();
+        let dig = hash_leaf_row_ref(&perm, &leaf);
+        let sib = hash_leaf_row_ref(&perm, &sib_leaf);
+        let root = compress_pair_ref(&perm, &dig, &sib);
+
+        let alpha_steps = vec![AlphaStep {
+            p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23),
+        }];
+        let opening = vec![sib];
+        let mp = vec![MerkleOpening {
+            leaf: &leaf,
+            opening_proof: &opening,
+            index: 0,
+            expected_root: root,
+        }];
+        let fold_rounds = vec![FoldRound {
+            sibling: ext(29, 31),
+            beta: ext(37, 41),
+            domain_index: 0b01,
+            log_height: 3,
+        }];
+        let bundle = BundleSpec {
+            initial_alpha_pow: ext(1, 0),
+            initial_ro: ext(0, 0),
+            alpha: ext(3, 5),
+            alpha_steps: &alpha_steps,
+            merkle_paths: &mp,
+            fold_rounds: &fold_rounds,
+        };
+
+        let pi_rust = aggregator::BlockPublicInputs {
+            chain_id: 7,
+            block_seqno: 1,
+            anchor_seqno: 0,
+            n_transfers: 1,
+            tx_pi_merkle_root: [0u8; 32],
+        };
+        let proof = aggregator::prove_block(&pi_rust, std::slice::from_ref(&bundle), 16)
+            .expect("prove");
+
+        // Init handle.
+        let mut handle: *mut UnoBlockVerifierHandle = std::ptr::null_mut();
+        let rc = unsafe { uno_block_verifier_init(&mut handle) };
+        assert_eq!(rc, Plonky3Status::Ok.as_i32());
+        assert!(!handle.is_null());
+
+        // Verify via FFI.
+        let pi_view = sample_pi_view();
+        let rc = unsafe {
+            uno_block_verifier_verify(
+                handle,
+                &pi_view,
+                Plonky3ProofBytes {
+                    ptr: proof.bytes.as_ptr(),
+                    len: proof.bytes.len(),
+                },
+            )
+        };
+        assert_eq!(rc, Plonky3Status::Ok.as_i32());
+
+        unsafe { uno_block_verifier_free(handle) };
+    }
+
+    #[test]
+    fn block_verifier_ffi_rejects_garbage_proof() {
+        let mut handle: *mut UnoBlockVerifierHandle = std::ptr::null_mut();
+        unsafe { uno_block_verifier_init(&mut handle) };
+        let pi_view = sample_pi_view();
+
+        let junk = b"definitely-not-a-stark-proof".to_vec();
+        let rc = unsafe {
+            uno_block_verifier_verify(
+                handle,
+                &pi_view,
+                Plonky3ProofBytes {
+                    ptr: junk.as_ptr(),
+                    len: junk.len(),
+                },
+            )
+        };
+        assert_eq!(rc, Plonky3Status::ProofDecodeFailed.as_i32());
+
+        unsafe { uno_block_verifier_free(handle) };
+    }
+
+    #[test]
+    fn block_verifier_ffi_rejects_null_handle() {
+        let pi_view = sample_pi_view();
+        let bytes = vec![1u8, 2, 3];
+        let rc = unsafe {
+            uno_block_verifier_verify(
+                std::ptr::null(),
+                &pi_view,
+                Plonky3ProofBytes {
+                    ptr: bytes.as_ptr(),
+                    len: bytes.len(),
+                },
+            )
+        };
+        assert_eq!(rc, Plonky3Status::NullPointer.as_i32());
+    }
+
+    #[test]
+    fn block_verifier_ffi_rejects_null_pi() {
+        let mut handle: *mut UnoBlockVerifierHandle = std::ptr::null_mut();
+        unsafe { uno_block_verifier_init(&mut handle) };
+        let bytes = vec![1u8, 2, 3];
+        let rc = unsafe {
+            uno_block_verifier_verify(
+                handle,
+                std::ptr::null(),
+                Plonky3ProofBytes {
+                    ptr: bytes.as_ptr(),
+                    len: bytes.len(),
+                },
+            )
+        };
+        assert_eq!(rc, Plonky3Status::NullPointer.as_i32());
+        unsafe { uno_block_verifier_free(handle) };
+    }
+
+    #[test]
+    fn block_verifier_ffi_init_null_out_rejects() {
+        let rc = unsafe { uno_block_verifier_init(std::ptr::null_mut()) };
+        assert_eq!(rc, Plonky3Status::NullPointer.as_i32());
+    }
+
+    #[test]
+    fn block_verifier_ffi_free_null_is_noop() {
+        // No observable state — just must not crash.
+        unsafe { uno_block_verifier_free(std::ptr::null_mut()) };
     }
 }
