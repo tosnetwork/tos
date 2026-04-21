@@ -98,7 +98,16 @@ pub mod col {
     pub const IS_FIRST: usize = KIND_END;
     pub const IS_LAST: usize = IS_FIRST + 1;
 
-    pub const BLOCK0: usize = IS_LAST + 1;
+    /// Number of Goldilocks limbs absorbed on this row (1..=RATE on
+    /// ABSORB rows; 0 on IDLE rows). Used by Phase A2-3c-iv-d-7-c to
+    /// support partial-last-block leaf widths (W = 4k + r).
+    pub const BLOCK_LEN: usize = IS_LAST + 1;
+    /// One-hot flags over {0,1,2,3,4}. Flag k is 1 iff BLOCK_LEN == k.
+    /// Flag 0 is 1 only on IDLE rows; on ABSORB rows BLOCK_LEN ∈ 1..=4.
+    pub const BLOCK_LEN_FLAG0: usize = BLOCK_LEN + 1;
+    pub const BLOCK_LEN_FLAG_END: usize = BLOCK_LEN_FLAG0 + (SPONGE_RATE + 1);
+
+    pub const BLOCK0: usize = BLOCK_LEN_FLAG_END;
     pub const BLOCK_END: usize = BLOCK0 + SPONGE_RATE;
 
     pub const STATE_IN0: usize = BLOCK_END;
@@ -172,7 +181,6 @@ pub(crate) fn p2_group<T>(row: &[T]) -> &P2Cols<T> {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum TraceBuildError {
-    LeafWidthNotMultipleOfRate { got: usize },
     LeafWidthZero,
     TraceHeightNotPow2 { got: usize },
     TraceHeightTooSmall { physical_rows: usize, trace_height: usize },
@@ -195,13 +203,12 @@ pub fn build_trace(
     if leaf.is_empty() {
         return Err(TraceBuildError::LeafWidthZero);
     }
-    if leaf.len() % SPONGE_RATE != 0 {
-        return Err(TraceBuildError::LeafWidthNotMultipleOfRate { got: leaf.len() });
-    }
     if !trace_height.is_power_of_two() {
         return Err(TraceBuildError::TraceHeightNotPow2 { got: trace_height });
     }
-    let num_absorb_rows = leaf.len() / SPONGE_RATE;
+    // Phase A2-3c-iv-d-7-c: accept any non-zero width via partial-block
+    // last absorb. num_absorb_rows = ceil(leaf.len() / RATE).
+    let num_absorb_rows = (leaf.len() + SPONGE_RATE - 1) / SPONGE_RATE;
     if num_absorb_rows > trace_height {
         return Err(TraceBuildError::TraceHeightTooSmall {
             physical_rows: num_absorb_rows,
@@ -225,6 +232,15 @@ pub fn build_trace(
         }
     };
 
+    let write_block_len = |out: &mut [Goldilocks], block_len: usize| {
+        debug_assert!(block_len <= SPONGE_RATE);
+        out[col::BLOCK_LEN] = Goldilocks::new(block_len as u64);
+        for k in 0..=SPONGE_RATE {
+            out[col::BLOCK_LEN_FLAG0 + k] =
+                if k == block_len { Goldilocks::new(1) } else { zero_g };
+        }
+    };
+
     // Run the sponge to populate STATE_IN / STATE_OUT per row.
     let mut state: [Goldilocks; SPONGE_WIDTH] = [zero_g; SPONGE_WIDTH];
 
@@ -238,14 +254,28 @@ pub fn build_trace(
         row[col::IS_FIRST] = if is_first { Goldilocks::new(1) } else { zero_g };
         row[col::IS_LAST] = if is_last { Goldilocks::new(1) } else { zero_g };
 
-        // BLOCK = next 4 leaf elements.
+        // Per-row block length: full RATE unless this is the last row
+        // of a partial-tail leaf.
         let block_start = r * SPONGE_RATE;
-        for i in 0..SPONGE_RATE {
+        let block_len = core::cmp::min(SPONGE_RATE, leaf.len() - block_start);
+        write_block_len(row, block_len);
+
+        // BLOCK[0..block_len] = next elements; BLOCK[block_len..RATE] = 0
+        // (padded — not used by STATE_IN, but pin deterministically
+        // so the checker / AIR can verify state consistency).
+        for i in 0..block_len {
             row[col::BLOCK0 + i] = leaf[block_start + i];
         }
+        for i in block_len..SPONGE_RATE {
+            row[col::BLOCK0 + i] = zero_g;
+        }
 
-        // STATE_IN: overwrite state[0..RATE] with BLOCK; keep state[RATE..] as-is.
-        for i in 0..SPONGE_RATE {
+        // STATE_IN: overwrite state[0..block_len] with BLOCK; KEEP
+        // state[block_len..RATE] AND state[RATE..WIDTH] as they are
+        // (from the prior permute output, or zero if first row). This
+        // matches `PaddingFreeSponge::hash_iter`'s overwrite-then-
+        // permute semantics for partial blocks.
+        for i in 0..block_len {
             state[i] = leaf[block_start + i];
         }
         for i in 0..SPONGE_WIDTH {
@@ -262,20 +292,22 @@ pub fn build_trace(
     }
 
     // Pad with IDLE rows — copy previous row's non-KIND, non-IS_FIRST,
-    // non-IS_LAST data.
+    // non-IS_LAST data; IDLE carries BLOCK_LEN = 0.
     for r in num_absorb_rows..trace_height {
         let prev_base = (r - 1) * width;
         let prev_row = flat[prev_base..prev_base + width].to_vec();
         let base = r * width;
         let row = &mut flat[base..base + width];
-        // Copy BLOCK, STATE_IN, STATE_OUT, EXPECTED_DIGEST from previous.
-        for c in col::BLOCK0..col::P2_BLOCK {
+        // Copy BLOCK, BLOCK_LEN + flags, STATE_IN, STATE_OUT, EXPECTED_DIGEST
+        // from previous.
+        for c in col::BLOCK_LEN..col::P2_BLOCK {
             row[c] = prev_row[c];
         }
-        // KIND = IDLE; IS_FIRST / IS_LAST = 0.
+        // KIND = IDLE; IS_FIRST / IS_LAST = 0; BLOCK_LEN = 0 (IDLE flag).
         write_kind(row, OP_KIND_IDLE);
         row[col::IS_FIRST] = zero_g;
         row[col::IS_LAST] = zero_g;
+        write_block_len(row, 0);
     }
 
     // --- Populate the shared Poseidon2-w8 block on every row (d-7-b) ---
@@ -339,6 +371,13 @@ pub enum CheckError {
     DigestMismatch { col: usize },
     UnexpectedIsFirstBeyondRow0,
     UnexpectedIsLastOnNonLastAbsorbRow { row: usize },
+    // d-7-c additions
+    BlockLenFlagNotBoolean { row: usize, k: usize },
+    BlockLenFlagNotOneHot { row: usize },
+    BlockLenNotMatchFlag { row: usize },
+    AbsorbBlockLenZero { row: usize },
+    IdleBlockLenNonZero { row: usize },
+    NonLastAbsorbBlockLenNotRate { row: usize },
 }
 
 /// Verify every constraint on a pre-built trace.
@@ -399,9 +438,48 @@ pub fn check_all_transitions(
             return Err(CheckError::FirstRowNotIsFirst);
         }
 
+        // BLOCK_LEN flags: boolean, one-hot, sum==1, weighted-sum == BLOCK_LEN.
+        let mut flag_sum = zero;
+        let mut weighted = zero;
+        for k in 0..=SPONGE_RATE {
+            let v = local[col::BLOCK_LEN_FLAG0 + k];
+            if v != zero && v != one {
+                return Err(CheckError::BlockLenFlagNotBoolean { row: r, k });
+            }
+            flag_sum += v;
+            weighted += Goldilocks::new(k as u64) * v;
+        }
+        if flag_sum != one {
+            return Err(CheckError::BlockLenFlagNotOneHot { row: r });
+        }
+        if weighted != local[col::BLOCK_LEN] {
+            return Err(CheckError::BlockLenNotMatchFlag { row: r });
+        }
+
+        // ABSORB rows: BLOCK_LEN ∈ 1..=RATE (flag[0] must be 0).
+        if is_absorb && local[col::BLOCK_LEN_FLAG0] != zero {
+            return Err(CheckError::AbsorbBlockLenZero { row: r });
+        }
+        // IDLE rows: BLOCK_LEN == 0 (flag[0] == 1).
+        if is_idle && local[col::BLOCK_LEN_FLAG0] != one {
+            return Err(CheckError::IdleBlockLenNonZero { row: r });
+        }
+        // Non-last ABSORB rows: BLOCK_LEN == RATE (flag[RATE] == 1).
+        if is_absorb && !is_last && local[col::BLOCK_LEN_FLAG0 + SPONGE_RATE] != one {
+            return Err(CheckError::NonLastAbsorbBlockLenNotRate { row: r });
+        }
+
         if is_absorb {
-            // STATE_IN[0..RATE] == BLOCK (overwrite rule).
-            for i in 0..SPONGE_RATE {
+            // Decode block_len from flags (equiv. to the integer col).
+            let mut block_len = 0usize;
+            for k in 0..=SPONGE_RATE {
+                if local[col::BLOCK_LEN_FLAG0 + k] == one {
+                    block_len = k;
+                    break;
+                }
+            }
+            // STATE_IN[0..block_len] == BLOCK[0..block_len] (overwrite).
+            for i in 0..block_len {
                 if local[col::STATE_IN0 + i] != local[col::BLOCK0 + i] {
                     return Err(CheckError::StateInBlockOverwriteMismatch {
                         row: r,
@@ -409,10 +487,10 @@ pub fn check_all_transitions(
                     });
                 }
             }
-            // STATE_IN[RATE..WIDTH]: if IS_FIRST, must be 0; else
-            // must equal previous row's STATE_OUT[RATE..WIDTH].
+            // STATE_IN[block_len..WIDTH]: carry from prev STATE_OUT
+            // (or zero on IS_FIRST).
             if is_first {
-                for i in SPONGE_RATE..SPONGE_WIDTH {
+                for i in block_len..SPONGE_WIDTH {
                     if local[col::STATE_IN0 + i] != zero {
                         return Err(CheckError::StateInFirstRowNotOverwrite {
                             row: r,
@@ -422,7 +500,7 @@ pub fn check_all_transitions(
                 }
             } else {
                 let prev = row(r - 1);
-                for i in SPONGE_RATE..SPONGE_WIDTH {
+                for i in block_len..SPONGE_WIDTH {
                     if local[col::STATE_IN0 + i] != prev[col::STATE_OUT0 + i] {
                         return Err(CheckError::StateInCarryMismatch { row: r, col: i });
                     }
@@ -554,20 +632,77 @@ where
         builder.assert_zero((one() - is_absorb.clone()) * is_last.clone());
 
         // =============================================================
-        // ABSORB row: STATE_IN[0..RATE] == BLOCK[0..RATE] (overwrite).
+        // BLOCK_LEN flags (A2-3c-iv-d-7-c).
+        //
+        //   * each flag[k] for k in 0..=RATE is boolean;
+        //   * sum_k flag[k] == 1 (one-hot);
+        //   * weighted sum == BLOCK_LEN integer col;
+        //   * on ABSORB rows: flag[0] == 0 (BLOCK_LEN ≥ 1);
+        //   * on IDLE rows:   flag[0] == 1 (BLOCK_LEN == 0);
+        //   * on non-last ABSORB rows: flag[RATE] == 1 (full block).
         // =============================================================
-        for i in 0..SPONGE_RATE {
+        let mut flag_sum = zero();
+        let mut weighted = zero();
+        for k in 0..=SPONGE_RATE {
+            let flag: AB::Expr = local[col::BLOCK_LEN_FLAG0 + k].into();
+            builder.assert_zero(flag.clone() * (flag.clone() - one()));
+            flag_sum = flag_sum + flag.clone();
+            weighted = weighted + fe(k as u64) * flag;
+        }
+        builder.assert_eq(flag_sum, one());
+        builder.assert_eq(weighted, AB::Expr::from(local[col::BLOCK_LEN]));
+
+        let flag0: AB::Expr = local[col::BLOCK_LEN_FLAG0].into();
+        let flag_rate: AB::Expr = local[col::BLOCK_LEN_FLAG0 + SPONGE_RATE].into();
+        builder.assert_zero(is_absorb.clone() * flag0.clone());
+        builder.assert_zero(is_idle.clone() * (one() - flag0.clone()));
+        builder.assert_zero(
+            is_absorb.clone() * (one() - is_last.clone()) * (one() - flag_rate),
+        );
+
+        // =============================================================
+        // ABSORB row: STATE_IN[i] = cond_block_use[i] · BLOCK[i]
+        //                         + cond_carry[i]   · carry_source[i]
+        //
+        //   cond_block_use[i] = sum_{k > i} flag[k]    ( = [BLOCK_LEN > i] )
+        //   cond_carry[i]     = sum_{k ≤ i} flag[k]    ( = [BLOCK_LEN ≤ i] )
+        //   carry_source[i]   = 0 on IS_FIRST rows,
+        //                       prev.STATE_OUT[i] on non-first ABSORB rows.
+        //
+        // The "carry from prev" half is a transition constraint (added
+        // below inside `when_transition`); the per-row constraint here
+        // covers is_absorb AND is_first — where carry_source == 0 so
+        // the rule collapses to
+        //       STATE_IN[i] = cond_block_use[i] · BLOCK[i].
+        //
+        // On non-first ABSORB rows the per-row constraint is vacuous
+        // (is_first = 0); the transition bank below handles those.
+        // =============================================================
+        for i in 0..SPONGE_WIDTH {
             let state_in_i: AB::Expr = local[col::STATE_IN0 + i].into();
-            let block_i: AB::Expr = local[col::BLOCK0 + i].into();
-            builder.assert_zero(is_absorb.clone() * (state_in_i - block_i));
+            let mut cond_block = zero();
+            for k in (i + 1)..=SPONGE_RATE {
+                let f: AB::Expr = local[col::BLOCK_LEN_FLAG0 + k].into();
+                cond_block = cond_block + f;
+            }
+            // Positions i >= RATE have cond_block = 0 (block never
+            // overwrites capacity); the expression below simplifies
+            // to state_in == 0 on first rows, matching the old rule.
+            let block_term: AB::Expr = if i < SPONGE_RATE {
+                cond_block * AB::Expr::from(local[col::BLOCK0 + i])
+            } else {
+                zero()
+            };
+            builder.assert_zero(is_first.clone() * (state_in_i - block_term));
         }
 
         // =============================================================
-        // IS_FIRST ABSORB row: STATE_IN[RATE..WIDTH] == 0.
+        // IS_LAST ABSORB row: STATE_OUT[0..DIGEST] == EXPECTED_DIGEST.
         // =============================================================
-        for i in SPONGE_RATE..SPONGE_WIDTH {
-            let state_in_i: AB::Expr = local[col::STATE_IN0 + i].into();
-            builder.assert_zero(is_first.clone() * state_in_i);
+        for i in 0..DIGEST_WIDTH {
+            let state_out_i: AB::Expr = local[col::STATE_OUT0 + i].into();
+            let ed_i: AB::Expr = local[col::EXPECTED_DIGEST0 + i].into();
+            builder.assert_zero(is_last.clone() * (state_out_i - ed_i));
         }
 
         // =============================================================
@@ -596,19 +731,40 @@ where
             trans.assert_zero(n_ed - l_ed);
         }
 
-        // Capacity carry on ABSORB-after-ABSORB transitions.
-        // next.IS_FIRST must be 0 here (IS_FIRST only on row 0), so
-        // we gate by (next_is_absorb · (1 - next_is_first)) — on any
-        // absorb row that is NOT the first, STATE_IN[RATE..WIDTH] must
-        // equal the prior STATE_OUT's same limbs.
+        // Partial-block-aware carry on ABSORB-after-ABSORB transitions.
+        //
+        // For any ABSORB row that is NOT the first, per-limb:
+        //   STATE_IN[i] == cond_block_use[i] · BLOCK[i]
+        //               + cond_carry[i]   · local.STATE_OUT[i]
+        //
+        // Gate by (next_is_absorb · (1 - next_is_first)).
         let next_is_absorb: AB::Expr =
             next[col::KIND0 + OP_KIND_ABSORB as usize].into();
         let next_is_first: AB::Expr = next[col::IS_FIRST].into();
-        let carry_gate = next_is_absorb.clone() * (one() - next_is_first);
-        for i in SPONGE_RATE..SPONGE_WIDTH {
+        let carry_gate = next_is_absorb * (one() - next_is_first);
+
+        for i in 0..SPONGE_WIDTH {
             let n_in: AB::Expr = next[col::STATE_IN0 + i].into();
             let l_out: AB::Expr = local[col::STATE_OUT0 + i].into();
-            trans.assert_zero(carry_gate.clone() * (n_in - l_out));
+            // cond_block_use[i] = sum_{k > i} next.flag[k]
+            // cond_carry[i]     = sum_{k ≤ i} next.flag[k]
+            let mut cond_block = zero();
+            for k in (i + 1)..=SPONGE_RATE {
+                let f: AB::Expr = next[col::BLOCK_LEN_FLAG0 + k].into();
+                cond_block = cond_block + f;
+            }
+            let mut cond_carry = zero();
+            for k in 0..=i.min(SPONGE_RATE) {
+                let f: AB::Expr = next[col::BLOCK_LEN_FLAG0 + k].into();
+                cond_carry = cond_carry + f;
+            }
+            let block_term: AB::Expr = if i < SPONGE_RATE {
+                cond_block * AB::Expr::from(next[col::BLOCK0 + i])
+            } else {
+                zero()
+            };
+            let carry_term = cond_carry * l_out;
+            trans.assert_zero(carry_gate.clone() * (n_in - block_term - carry_term));
         }
 
         // IDLE persistence: all non-KIND, non-IS_FIRST, non-IS_LAST
@@ -679,13 +835,19 @@ mod tests {
     }
 
     #[test]
-    fn build_rejects_non_multiple_of_rate() {
-        let leaf = vec![gl(1), gl(2), gl(3), gl(4), gl(5)];
-        let err = build_trace(&leaf, [gl(0); 4], 4).unwrap_err();
-        assert_eq!(
-            err,
-            TraceBuildError::LeafWidthNotMultipleOfRate { got: 5 }
-        );
+    fn build_accepts_partial_last_block_widths_d7c() {
+        // Phase A2-3c-iv-d-7-c: all widths ≥ 1 are legal, with the
+        // last absorb row taking a partial block of size 1..=RATE.
+        for width in [1, 2, 3, 5, 6, 7, 9, 13, 15, 17] {
+            let leaf: Vec<Goldilocks> = (0..width as u64).map(|i| gl(i + 11)).collect();
+            let digest = compute_digest(&leaf);
+            let num_rows = (width + SPONGE_RATE - 1) / SPONGE_RATE;
+            let trace_height = num_rows.next_power_of_two().max(2);
+            let trace = build_trace(&leaf, digest, trace_height)
+                .unwrap_or_else(|e| panic!("width {width} must build: {e:?}"));
+            check_all_transitions(&trace, trace_height)
+                .unwrap_or_else(|e| panic!("width {width} must check: {e:?}"));
+        }
     }
 
     #[test]
@@ -845,9 +1007,9 @@ mod tests {
     fn column_layout_constants() {
         assert_eq!(col::KIND0, 0);
         assert_eq!(col::KIND_END, 3);
-        // After d-7-b: 29 framing cols + 180 P2 block.
-        assert_eq!(col::P2_BLOCK, 29);
-        assert_eq!(col::WIDTH, 29 + POSEIDON2_COLS_PER_INSTANCE);
+        // After d-7-c: 35 framing cols (+ BLOCK_LEN + 5 flag cols) + 180 P2.
+        assert_eq!(col::P2_BLOCK, 35);
+        assert_eq!(col::WIDTH, 35 + POSEIDON2_COLS_PER_INSTANCE);
         assert_eq!(LEAF_HASH_AIR_FRAMING_WIDTH, col::WIDTH);
     }
 
@@ -1079,6 +1241,111 @@ mod tests {
         assert_eq!(
             <LeafHashAirV1 as BaseAir<Goldilocks>>::width(&LeafHashAirV1),
             LEAF_HASH_AIR_FRAMING_WIDTH,
+        );
+    }
+
+    // ======================================================================
+    // Phase A2-3c-iv-d-7-c — partial-block STARK prove+verify
+    // ======================================================================
+
+    /// STARK prove+verify a partial-block leaf (W = 4k + r, r ∈ {1,2,3}).
+    /// This is the d-7-c acceptance test — the flag-based conditional
+    /// overwrite/carry rule in `Air<AB>` must correctly express the
+    /// partial-last-block semantics.
+    #[test]
+    fn air_prove_and_verify_partial_block_widths() {
+        for width in [1, 2, 3, 5, 6, 7, 9, 13] {
+            let leaf: Vec<Goldilocks> =
+                (0..width as u64).map(|i| gl(i * 17 + 3)).collect();
+            let digest = compute_digest(&leaf);
+            let num_rows = (width + SPONGE_RATE - 1) / SPONGE_RATE;
+            let trace_height = num_rows.next_power_of_two().max(2);
+            // Pad the trace to at least 16 so FRI has headroom at
+            // log_blowup = 3.
+            let trace_height = trace_height.max(16);
+            let trace = trace_matrix(&leaf, digest, trace_height);
+            let cfg = build_config();
+            let air = LeafHashAirV1;
+            let proof = prove(&cfg, &air, trace, &[]);
+            verify(&cfg, &air, &proof, &[])
+                .unwrap_or_else(|e| panic!("width {width} STARK verify: {e:?}"));
+        }
+    }
+
+    /// Width-1305 trace-commit leaf end-to-end. This is the load-bearing
+    /// real-world test: on a 2/2 Transfer proof, the trace matrix has
+    /// width ~1305 (air_width(2, 2)) which is 4·326 + 1 = partial-tail
+    /// case. We hash the real trace-commit leaf and verify the STARK.
+    #[test]
+    fn air_prove_and_verify_real_trace_commit_leaf_width_1305() {
+        use crate::prover::{MvpConfig, MvpProver};
+        use crate::transfer_air::MvpWitness;
+        use p3_uni_stark::Proof;
+
+        let prover = MvpProver::new();
+        let w = MvpWitness::deterministic_valid(2, 2, 0x7E57_D7C0);
+        let (bytes, _) = prover.prove(&w.encode()).unwrap();
+        let proof: Proof<MvpConfig> = postcard::from_bytes(&bytes).unwrap();
+
+        // Trace-commit batch: one matrix of width = air_width(2,2).
+        let trace_batch = &proof.opening_proof.query_proofs[0].input_proof[0];
+        assert_eq!(trace_batch.opened_values.len(), 1);
+        let leaf = &trace_batch.opened_values[0];
+        assert_eq!(leaf.len() % SPONGE_RATE, 1,
+                   "2/2 air_width should have W mod 4 == 1 (partial tail of 1 limb)");
+
+        let digest = compute_digest(leaf);
+        let num_rows = (leaf.len() + SPONGE_RATE - 1) / SPONGE_RATE;
+        let trace_height = num_rows.next_power_of_two().max(16);
+        let trace = trace_matrix(leaf, digest, trace_height);
+        let cfg = build_config();
+        let air = LeafHashAirV1;
+        let proof_s = prove(&cfg, &air, trace, &[]);
+        verify(&cfg, &air, &proof_s, &[])
+            .expect("real trace-commit leaf (W=1305) STARK must verify");
+    }
+
+    /// Tampering the LAST block's value on a partial-tail width
+    /// (W=5 → block_len=1 on row 1). P2 input binding fires.
+    #[test]
+    fn air_rejects_tampered_partial_tail_block() {
+        let width = 5; // 4+1
+        let leaf: Vec<Goldilocks> =
+            (0..width as u64).map(|i| gl(i + 100)).collect();
+        let digest = compute_digest(&leaf);
+        let mut flat = build_trace(&leaf, digest, 16).unwrap();
+        // Row 1 is the last ABSORB row (partial, block_len=1).
+        // Tamper its BLOCK[0]. STATE_IN[0] was = BLOCK[0] (overwrite),
+        // so changing BLOCK[0] alone would also violate the overwrite
+        // constraint. Mutate both to isolate the P2 input binding.
+        let row1 = col::WIDTH;
+        flat[row1 + col::BLOCK0] += gl(1);
+        flat[row1 + col::STATE_IN0] += gl(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(
+            air_rejects(trace),
+            "tampered partial-tail BLOCK must reject via STATE_OUT ≠ P2(STATE_IN)"
+        );
+    }
+
+    /// Tampering BLOCK_LEN_FLAG breaks one-hot / BLOCK_LEN consistency.
+    #[test]
+    fn air_rejects_wrong_block_len_flag() {
+        let width = 5;
+        let leaf: Vec<Goldilocks> =
+            (0..width as u64).map(|i| gl(i + 200)).collect();
+        let digest = compute_digest(&leaf);
+        let mut flat = build_trace(&leaf, digest, 16).unwrap();
+        // Row 1's BLOCK_LEN_FLAG should have flag[1] = 1, others 0.
+        // Clear flag[1] and set flag[4] = 1 instead → inconsistent with
+        // block_len = 1 (and violates "last row carries real partial").
+        let row1 = col::WIDTH;
+        flat[row1 + col::BLOCK_LEN_FLAG0 + 1] = Goldilocks::default();
+        flat[row1 + col::BLOCK_LEN_FLAG0 + SPONGE_RATE] = Goldilocks::new(1);
+        let trace = RowMajorMatrix::new(flat, col::WIDTH);
+        assert!(
+            air_rejects(trace),
+            "wrong BLOCK_LEN_FLAG must reject via weighted-sum or carry-rule check"
         );
     }
 }
