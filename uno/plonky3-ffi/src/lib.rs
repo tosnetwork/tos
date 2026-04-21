@@ -61,6 +61,7 @@ pub mod permute;
 pub mod verifier_air;
 pub mod challenger_air;
 pub mod aggregator;
+pub mod fiat_shamir;
 
 /// Result codes returned across the C ABI.
 ///
