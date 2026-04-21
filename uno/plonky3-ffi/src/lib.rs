@@ -73,6 +73,7 @@ pub mod fold_air;
 pub mod alpha_reduction_air;
 pub mod query_verifier_air;
 pub mod leaf_hash_air;
+pub mod compression_path_air;
 
 /// Result codes returned across the C ABI.
 ///
