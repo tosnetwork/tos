@@ -1,8 +1,10 @@
 # Uno Proof Aggregation — Design (v1 promotion from §14)
 
-**Status:** Draft. Amends §4.1 wire format and §16 decision chain; closes the
-§3.4 ~100 KB envelope gap identified in `doc/uno-p2-path-research.md`.
-Supersedes the re-scope decision to 1 MB.
+**Status:** Draft. Defines the v1 Transfer wire format (§4.1) and adds a
+new §16 decision; closes the §3.4 ~100 KB envelope gap identified in
+`doc/uno-p2-path-research.md`. Supersedes the re-scope decision to 1 MB.
+UNO has not launched, so the §4.1 format lands at v1 directly — there is
+no prior deployed format to amend.
 
 **Implementation progress:** A1 ✅, A2 🟡 (A2-1/2a/2b/2c/3a/3b done; A2-3c/4
 remaining), A3–A8 ⬜. See §4.1 and §6 for the per-phase status table.
@@ -35,24 +37,35 @@ this document promotes it to v1.
 **What this costs**:
 - New subsystem: a `verifier-as-AIR` that re-proves the Plonky3
   Transfer-AIR verifier as a STARK circuit. ~800–1,500 LoC of Rust.
-- §4.1 wire format change: Transfer's `zk_proof: ^Cell` field changes
-  semantics; new block-level `aggregated_proof` field.
-- §4.3 verify order changes: validators no longer verify per-Transfer
-  proofs individually; they verify ONE aggregated proof per block.
-- Consensus-binding (§16-level amendment of decision #33 and the
-  wire-format contract).
-- Audit re-scope: the verifier AIR is itself a new attack surface; the
-  audit-vendor SOW needs to cover it.
-- v1 ship delay: **+3–4 months** vs. the Option B ship-now path.
+- §4.1 wire format: Transfer's `zk_proof: ^Cell` field is redefined as
+  a witness commitment; a block-level `aggregated_proof` field is
+  added. Since UNO has not launched, this is the v1 launch format —
+  not a migration from a prior one.
+- §4.3 verify order: validators verify ONE aggregated proof per block
+  (plus per-Transfer signatures / anchors); they do NOT verify
+  per-Transfer STARK proofs individually.
+- Audit scope: the verifier AIR is an additional attack surface; the
+  audit-vendor SOW must cover it.
+- v1 ship timeline: **+3–4 months** vs. a hypothetical Option-B-only
+  launch.
 
-**Recommended v1 decision**: adopt aggregation, accept the 3–4 month
-delay. Rationale:
-1. Cleanly tracks the original §3.4 commitment (no public re-scope).
+**Recommended v1 decision**: adopt aggregation at the v1 launch.
+Rationale:
+1. Cleanly delivers the original §3.4 ~100 KB envelope.
 2. Every future v2 item (multi-asset, shielded DEX, Aleo-class
-   programmability) already assumes aggregation; doing it at v1
-   avoids a consensus-binding wire-format change later.
+   programmability) already assumes aggregation; baking it into v1
+   avoids a consensus-binding wire-format change post-launch.
 3. The infrastructure is foundational; it compound-interests every
    subsequent release.
+
+> **Note on framing**: this document was originally written as a
+> "migration plan" from Option B to aggregation. Since UNO has not
+> yet launched, there is no deployed state to migrate *from* — v1
+> launches directly with aggregation. Phase labels A1…A8 below are
+> retained as **implementation milestones**, not migration steps. No
+> rollback posture is needed in the traditional sense; the fallback
+> (§4.3) is to adjust `BLOCK_TX_CAP` or revisit FRI parameters
+> pre-launch if A4 measurements miss the envelope.
 
 ---
 
@@ -354,7 +367,12 @@ soundness).
 
 ---
 
-## 4. Migration plan
+## 4. Implementation plan
+
+> UNO has not launched. "Migration" in earlier drafts meant "from
+> Option B to aggregation"; in practice v1 ships with aggregation
+> built-in. Phases below are **implementation milestones** leading
+> up to the v1 launch, not consensus migrations of a running chain.
 
 ### 4.1 Phase structure
 
@@ -364,13 +382,16 @@ soundness).
 | A2   | 🟡 IN PROGRESS | Proof-of-concept: 1-Tx "aggregation" | End-to-end prove+verify for N=1; functional test |
 | A3   | ⬜ PENDING    | 4-Tx aggregation + correctness tests | Fixture-based 4/4 aggregated proof; cross-impl parity |
 | A4   | ⬜ PENDING    | 30-Tx aggregation + performance | Shape_matrix-style bench; ensures ≤ 100 KB block proof |
-| A5   | ⬜ PENDING    | §4.1 wire format migration | Transfer struct change; collator + validator wiring |
-| A6   | ⬜ PENDING    | Validator compute-phase rewrite | Step 7 added; step 5 moved to collator tier only |
-| A7   | ⬜ PENDING    | Wallet / tosctl updates | Wallet still produces per-Tx proof (unchanged path) |
-| A8   | ⬜ PENDING    | Testnet validation | 60-day run per §P.7 |
+| A5   | ⬜ PENDING    | §4.1 wire format lands | Transfer struct + `UnoBlockExtra` as the v1 launch format |
+| A6   | ⬜ PENDING    | Validator compute-phase wiring | Per-block aggregated-proof verify path; no per-Tx STARK verify |
+| A7   | ⬜ PENDING    | Wallet / tosctl integration | Wallet still produces per-Tx proof (unchanged path) |
+| A8   | ⬜ PENDING    | Testnet validation | 60-day run per §P.7 before mainnet launch |
 
-Phases A1–A4 are pure Rust-side work (additive — no consensus impact
-until A5). A5–A6 are the consensus-binding changes.
+Phases A1–A4 are Rust-side prover/verifier work. A5–A6 land the
+v1 wire format and validator logic. A7 is the client integration.
+A8 is the pre-launch burn-in. None of A5–A6 are "consensus-binding
+upgrades" in the sense of amending a deployed chain — they are
+the initial consensus parameters at genesis.
 
 #### 4.1.1 Phase A2 sub-decomposition (implementation-side)
 
@@ -415,17 +436,26 @@ own commit and set of adversarial tests.
 
 **Phases A3–A8** are separate future PRs.
 
-### 4.3 Rollback posture
+### 4.3 Pre-launch fallback posture
 
-If the aggregator does not reach ≤ 150 KB proof at 30 Tx, the path
-back to Option B (current state) is a pure revert of A5 onward.
-Phases A1–A4 are non-consensus-binding and can be left in-tree as
-experimental machinery even if v1 ultimately ships at Option B.
+UNO has not launched, so "rollback" in the usual consensus sense does
+not apply. If the A4 30-Tx measurement misses the envelope, the
+pre-launch options are (in order of preference):
 
-This rollback-safety is why we land A1 as a scaffolding-only commit
-first — if the N=30 feasibility measurement reveals that the aggregator
-proof exceeds the budget, we can drop the full migration without
-having destabilized the codebase.
+1. Tune `BLOCK_TX_CAP` downward — smaller per-block N, smaller
+   aggregator AIR, proportionally smaller proof. v1 ships at the
+   largest N that meets §3.4.
+2. Revisit FRI parameters for the aggregator AIR independently of
+   the per-Transfer AIR. Option-B-equivalent pins apply to the
+   aggregator only.
+3. Abandon aggregation and ship v1 at Option B per-Transfer proofs
+   (~915 KB 4/4 worst case), re-scoping §3.4 publicly before
+   launch. A1–A4 scaffolding can stay in-tree as v2+ work.
+
+All three options are in-tree decisions pre-launch; none requires a
+consensus upgrade. This is why A1 lands as scaffolding-only — the
+feasibility measurement in A4 fully informs the v1 launch
+configuration.
 
 ---
 
@@ -521,14 +551,15 @@ Remaining:
 Each has its own success criteria; see the §4.1 phase table.
 A3/A4 in particular must measure the aggregator proof size at
 N = 4 and N = 30 against the §3.4 ~100 KB target (the whole
-premise of this migration).
+premise of this design — the feasibility result gates v1 launch
+configuration).
 
 ---
 
 ## 7. Related documents
 
-- `doc/uno-workchain.md` §4.1 (Transfer wire format, to be amended at A5)
-- `doc/uno-workchain.md` §4.3 (verify order, to be amended at A6)
+- `doc/uno-workchain.md` §4.1 (Transfer wire format — A5 finalizes it as the v1 launch format)
+- `doc/uno-workchain.md` §4.3 (verify order — A6 finalizes the validator compute-phase wiring)
 - `doc/uno-workchain.md` §14 (aggregation is listed here as v2+;
   this doc promotes it to v1)
 - `doc/uno-workchain.md` §16 (decision log — a new entry #46 will
