@@ -435,6 +435,10 @@ pub struct FullQueryProof {
     pub trace_leaf_hash_proof: Proof<MvpConfig>,
     /// Trace-commit compression-path STARK (compression_path_air).
     pub trace_compression_proof: Proof<MvpConfig>,
+    /// Quotient-commit leaf-hash STARK (d-8-b).
+    pub quot_leaf_hash_proof: Proof<MvpConfig>,
+    /// Quotient-commit compression-path STARK (d-8-b).
+    pub quot_compression_proof: Proof<MvpConfig>,
 
     /// Shared boundary: α's FINAL_RO == fold's INITIAL_FOLDED.
     pub reduced_opening: Challenge,
@@ -442,8 +446,12 @@ pub struct FullQueryProof {
     pub final_folded: Challenge,
     /// Shared boundary: trace leaf digest.
     pub trace_leaf_digest: Digest,
+    /// Shared boundary: quotient leaf digest (d-8-b).
+    pub quot_leaf_digest: Digest,
     /// The trace commit root (pinned via compression's ROOT col).
     pub trace_commit_root: Digest,
+    /// The quotient commit root (d-8-b).
+    pub quot_commit_root: Digest,
     /// The query position (0..num_queries).
     pub query_position: usize,
 }
@@ -535,15 +543,70 @@ pub fn prove_full_query(
     let cp_air = CompressionPathAirV1;
     let trace_compression_proof = prove(&cfg, &cp_air, cp_matrix, &[]);
 
+    // -- 4) Quotient-commit leaf hash (d-8-b) -------------------------------
+    //
+    // The quot-commit batch has num_quotient_chunks matrices, each
+    // DIMENSION=2 limbs wide. The leaf row fed into the MMCS is the
+    // flattened concatenation — same layout our `merkle_path::
+    // hash_multi_matrix_leaf_ref` uses. Here we concatenate manually
+    // and feed the result to `leaf_hash_air` (which hashes a flat vec).
+    let quot_batch = &query.input_proof[1];
+    let quot_leaf_flat: Vec<Goldilocks> = quot_batch
+        .opened_values
+        .iter()
+        .flat_map(|row| row.iter().copied())
+        .collect();
+    // Upstream's hash is over the concatenation (same as
+    // `hash_multi_matrix_leaf_ref`); `hash_leaf_row_ref` on the
+    // flattened vec gives identical output, which we use as the
+    // EXPECTED_DIGEST for leaf_hash_air.
+    let quot_leaf_digest: Digest = hash_leaf_row_ref(&perm, &quot_leaf_flat);
+    let qlh_rows = (quot_leaf_flat.len() + leaf_hash_air::SPONGE_RATE - 1)
+        / leaf_hash_air::SPONGE_RATE;
+    let qlh_trace_height = qlh_rows.next_power_of_two().max(16);
+    let qlh_flat = leaf_hash_air::build_trace(
+        &quot_leaf_flat,
+        quot_leaf_digest,
+        qlh_trace_height,
+    )
+    .map_err(FullQueryVerifyError::LeafHashTraceBuild)?;
+    let qlh_matrix = RowMajorMatrix::new(qlh_flat, leaf_hash_air::col::WIDTH);
+    let quot_leaf_hash_proof = prove(&cfg, &lh_air, qlh_matrix, &[]);
+
+    // -- 5) Quotient-commit compression-path (d-8-b) ------------------------
+    let quot_commit_root: Digest = proof.commitments.quotient_chunks.roots()[0];
+    let quot_path: &[Digest] = &quot_batch.opening_proof;
+    if quot_path.is_empty() {
+        return Err(FullQueryVerifyError::OpeningProofLengthMismatch {
+            expected: challenges.log_global_max_height,
+            got: 0,
+        });
+    }
+    let qcp_trace_height = quot_path.len().next_power_of_two().max(16);
+    let qcp_flat = compression_path_air::build_trace(
+        quot_leaf_digest,
+        quot_path,
+        domain_index,
+        quot_commit_root,
+        qcp_trace_height,
+    )
+    .map_err(FullQueryVerifyError::CompressionTraceBuild)?;
+    let qcp_matrix = RowMajorMatrix::new(qcp_flat, compression_path_air::col::WIDTH);
+    let quot_compression_proof = prove(&cfg, &cp_air, qcp_matrix, &[]);
+
     Ok(FullQueryProof {
         alpha_proof: inner.alpha_proof,
         fold_proof: inner.fold_proof,
         trace_leaf_hash_proof,
         trace_compression_proof,
+        quot_leaf_hash_proof,
+        quot_compression_proof,
         reduced_opening: inner.ro,
         final_folded: inner.final_folded,
         trace_leaf_digest,
+        quot_leaf_digest,
         trace_commit_root,
+        quot_commit_root,
         query_position,
     })
 }
@@ -567,6 +630,15 @@ pub fn verify_full_query(
         &[],
     )
     .map_err(|_| FullQueryVerifyError::SubProofVerify("trace_compression"))?;
+    verify(&cfg, &LeafHashAirV1, &aggregated.quot_leaf_hash_proof, &[])
+        .map_err(|_| FullQueryVerifyError::SubProofVerify("quot_leaf_hash"))?;
+    verify(
+        &cfg,
+        &CompressionPathAirV1,
+        &aggregated.quot_compression_proof,
+        &[],
+    )
+    .map_err(|_| FullQueryVerifyError::SubProofVerify("quot_compression"))?;
 
     // Bundle-level cross-binding: same `trace_leaf_digest` must appear
     // as `EXPECTED_DIGEST` in leaf_hash_air's trace AND `LEAF_DIGEST`
@@ -776,6 +848,39 @@ mod tests {
         assert_eq!(
             aggregated.trace_commit_root,
             proof.commitments.trace.roots()[0],
+        );
+    }
+
+    // ======================================================================
+    // Phase A2-3c-iv-d-8-b — quotient-commit Merkle chain sanity
+    // ======================================================================
+
+    /// The bundle's `quot_leaf_digest` matches what
+    /// `hash_multi_matrix_leaf_ref` computes on the concatenated
+    /// quotient-chunk openings.
+    #[test]
+    fn quot_leaf_digest_matches_reference() {
+        use crate::merkle_path::hash_multi_matrix_leaf_ref;
+        let (proof, ch) = real_proof_with_challenges(2, 2, 0xF0E_0005);
+        let aggregated = prove_full_query(&proof, &ch, 0).unwrap();
+        let perm = default_goldilocks_poseidon2_8();
+        let quot_batch = &proof.opening_proof.query_proofs[0].input_proof[1];
+        let refs: Vec<&[Goldilocks]> =
+            quot_batch.opened_values.iter().map(|v| v.as_slice()).collect();
+        let expected_mmm = hash_multi_matrix_leaf_ref(&perm, &refs);
+        assert_eq!(
+            aggregated.quot_leaf_digest, expected_mmm,
+            "quot leaf digest must match multi-matrix leaf hash"
+        );
+    }
+
+    #[test]
+    fn quot_commit_root_matches_proof() {
+        let (proof, ch) = real_proof_with_challenges(2, 2, 0xF0E_0006);
+        let aggregated = prove_full_query(&proof, &ch, 0).unwrap();
+        assert_eq!(
+            aggregated.quot_commit_root,
+            proof.commitments.quotient_chunks.roots()[0],
         );
     }
 }
