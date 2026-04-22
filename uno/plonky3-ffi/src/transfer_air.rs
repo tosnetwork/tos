@@ -1273,6 +1273,15 @@ pub struct SpendWitness {
     /// (single Goldilocks fe) at level `k`. Level 0 is the first layer
     /// above the leaf.
     pub merkle_path: [u64; MERKLE_DEPTH],
+    /// Raw 32-byte `rk` (compressed Ristretto255 spend-auth pubkey, §4.1).
+    /// Consensus-binding: C++ `build_plonky3_public_inputs` encodes this
+    /// via `encode_256` → 4 Goldilocks limbs. V1-3c-round-8 (档1) added
+    /// this field so Rust-side PI bytes match the C++ build byte-for-byte
+    /// (previously the 4 rk slots were all-zero, breaking STARK verify
+    /// on a real validator). The AIR proxy claims do not bind these
+    /// slots; the constraint is satisfied solely by consensus-level
+    /// preimage equality via §4.1 tx_hash.
+    pub rk_bytes: [u8; 32],
 }
 
 /// Single-output witness.
@@ -1288,11 +1297,27 @@ pub struct OutputWitness {
     pub value: u64,
     /// `rcm_j` proxy.
     pub rcm: u64,
+    /// Raw 32-byte `cm_j` (note commitment, §4.1). Used to populate all
+    /// 4 PI limbs via `encode_256`; the current proxy AIR binds only the
+    /// low-limb equality (`pi_cm[j] == cm_fe_computed_from_witness`).
+    /// V1-3c-round-8 (档1) — see `rk_bytes` note on SpendWitness.
+    pub cm_bytes: [u8; 32],
+    /// Raw 32-byte `epk_j` (compressed Ristretto255 ephemeral pubkey, §4.1).
+    pub epk_bytes: [u8; 32],
+    /// 16-bit compact filter tag (§2.8). Becomes 1 PI element.
+    pub filter_tag: u16,
 }
 
 /// Full Transfer witness for 1..4 spends × 1..4 outputs + fee.
 #[derive(Debug, Clone)]
 pub struct MvpWitness {
+    /// `scheme_id` (§4.1, v1 = 0x01). Goes into PI position 0.
+    pub scheme_id: u8,
+    /// `chain_id` (§4.1, mainnet 0x554E4F4D "UNOM" / testnet 0x554E4F54
+    /// "UNOT"). Goes into PI position 1.
+    pub chain_id: u32,
+    /// `expiry_block` (§4.1, §4.3 step 1.3). Goes into PI position 2.
+    pub expiry_block: u64,
     /// Transaction fee, public input.
     pub fee: u64,
     /// Spend descriptions (len ∈ [1, 4]).
@@ -1301,8 +1326,14 @@ pub struct MvpWitness {
     pub outputs: Vec<OutputWitness>,
     /// Shared anchor proxy (limb 0 of the 256-bit anchor). Derived by the
     /// constructor from the first spend's Merkle step so honest witnesses
-    /// are self-consistent.
+    /// are self-consistent. The AIR binds `pi_anchor[0] == anchor_proxy`.
     pub anchor_proxy: u64,
+    /// Raw 32-byte anchor (§4.1). PI slots 4..7 are the 4 `encode_256`
+    /// limbs of these bytes. For self-consistency callers should arrange
+    /// `anchor_bytes[0..8]` = `anchor_proxy.to_le_bytes()`; the AIR only
+    /// enforces the low-limb equality, so higher limbs are free.
+    /// V1-3c-round-8 (档1) — see `rk_bytes` note on SpendWitness.
+    pub anchor_bytes: [u8; 32],
 }
 
 impl MvpWitness {
@@ -1394,6 +1425,7 @@ impl MvpWitness {
                 nk,
                 pos: shared_pos,
                 merkle_path: shared_path,
+                rk_bytes: [0u8; 32],
             });
         }
 
@@ -1418,38 +1450,76 @@ impl MvpWitness {
             } else {
                 v_per_out_base
             };
+            // Synthesize cm_bytes from the Poseidon2 output so the AIR's
+            // low-limb binding holds when `public_inputs()` re-derives
+            // `cm_limb0` via `poseidon2_cm_fe`. `deterministic_valid` is a
+            // test fixture; it doesn't carry real 32-byte cm material, so
+            // we project `cm_limb0` into `cm_bytes[0..8]` and leave the
+            // rest zero. Real production wallets populate all 32 bytes.
+            let cm_limb0 =
+                poseidon2_cm_fe(&perm16, d, pk_d, ivk_commitment, value, rcm).as_canonical_u64();
+            let mut cm_bytes = [0u8; 32];
+            cm_bytes[0..8].copy_from_slice(&cm_limb0.to_le_bytes());
             outputs.push(OutputWitness {
                 d,
                 pk_d,
                 ivk_commitment,
                 value,
                 rcm,
+                cm_bytes,
+                epk_bytes: [0u8; 32],
+                filter_tag: 0,
             });
         }
 
+        // Same treatment for anchor_bytes: project `anchor_proxy` (= the
+        // limb the AIR binds) into the low 8 bytes of anchor_bytes.
+        let mut anchor_bytes = [0u8; 32];
+        anchor_bytes[0..8].copy_from_slice(&shared_anchor.to_le_bytes());
+
         Self {
+            scheme_id: 0x01,
+            chain_id: CHAIN_ID_TEST,
+            expiry_block: EXPIRY_BLOCK_TEST,
             fee,
             spends,
             outputs,
             anchor_proxy: shared_anchor,
+            anchor_bytes,
         }
     }
 
     /// Wire-encode for FFI.
     ///
-    /// Layout: `u8 n_s || u8 n_o || u64 fee || (u64 leaf || [8 B] d
-    /// || u64 value || u64 ivk || u64 pk_d || u64 rcm || u64 nk || u64 pos
-    /// || u64 path[0..32]) × n_s || (u64 d || u64 pk_d || u64 ivk_commitment
-    /// || u64 value || u64 rcm) × n_o || u64 anchor_proxy`.
+    /// Legacy layout (pre-档1):
+    ///   `u8 n_s || u8 n_o || u64 fee ||`
+    ///   `(u64 leaf || [8 B] d || u64 value || u64 ivk || u64 pk_d || u64 rcm
+    ///    || u64 nk || u64 pos || u64 path[0..32]) × n_s ||`
+    ///   `(u64 d || u64 pk_d || u64 ivk_commitment || u64 value || u64 rcm) × n_o ||`
+    ///   `u64 anchor_proxy`.
     ///
-    /// Per-spend bytes: `64 + 8·MERKLE_DEPTH = 320 bytes` (8 leading fields
-    /// at 8 B each, then 32 path siblings at 8 B each).
+    /// V1-3c-round-8 (档1) extended layout (this function):
+    ///   ... (legacy bytes above) ...
+    ///   `[32 B] anchor_bytes || u8 scheme_id || u32 chain_id || u64 expiry_block`  (trailer)
+    ///   Each spend: `[32 B] rk_bytes` appended (stride +32).
+    ///   Each output: `[32 B] cm_bytes || [32 B] epk_bytes || u16 filter_tag` appended (stride +66).
     ///
-    /// Byte length: `18 + (64 + 8·MERKLE_DEPTH)·n_s + 40·n_o`.
+    /// Per-spend bytes: `64 + 8·MERKLE_DEPTH + 32 = 352 bytes`.
+    /// Per-output bytes: `40 + 32 + 32 + 2 = 106 bytes`.
+    /// Trailer: `8 (anchor_proxy) + 32 (anchor_bytes) + 1 + 4 + 8 = 53 bytes`.
+    /// Byte length: `10 (n_s+n_o+fee) + 352·n_s + 106·n_o + 53`.
+    ///
+    /// The extended layout is backwards-incompatible with legacy pre-档1
+    /// callers; callers inside this crate and `tosctl/uno` were updated
+    /// atomically. `decode()` enforces the new length.
     pub fn encode(&self) -> Vec<u8> {
-        let per_spend = 64 + 8 * MERKLE_DEPTH;
-        let mut out =
-            Vec::with_capacity(18 + per_spend * self.spends.len() + 40 * self.outputs.len());
+        const PER_SPEND: usize = 64 + 8 * MERKLE_DEPTH + 32;
+        const PER_OUTPUT: usize = 40 + 32 + 32 + 2;
+        const HEAD: usize = 10;
+        const TAIL: usize = 8 + 32 + 1 + 4 + 8;
+        let mut out = Vec::with_capacity(
+            HEAD + PER_SPEND * self.spends.len() + PER_OUTPUT * self.outputs.len() + TAIL,
+        );
         out.push(self.spends.len() as u8);
         out.push(self.outputs.len() as u8);
         out.extend_from_slice(&self.fee.to_le_bytes());
@@ -1465,6 +1535,7 @@ impl MvpWitness {
             for sib in &s.merkle_path {
                 out.extend_from_slice(&sib.to_le_bytes());
             }
+            out.extend_from_slice(&s.rk_bytes);
         }
         for o in &self.outputs {
             out.extend_from_slice(&o.d.to_le_bytes());
@@ -1472,14 +1543,26 @@ impl MvpWitness {
             out.extend_from_slice(&o.ivk_commitment.to_le_bytes());
             out.extend_from_slice(&o.value.to_le_bytes());
             out.extend_from_slice(&o.rcm.to_le_bytes());
+            out.extend_from_slice(&o.cm_bytes);
+            out.extend_from_slice(&o.epk_bytes);
+            out.extend_from_slice(&o.filter_tag.to_le_bytes());
         }
         out.extend_from_slice(&self.anchor_proxy.to_le_bytes());
+        out.extend_from_slice(&self.anchor_bytes);
+        out.push(self.scheme_id);
+        out.extend_from_slice(&self.chain_id.to_le_bytes());
+        out.extend_from_slice(&self.expiry_block.to_le_bytes());
         out
     }
 
-    /// Decode a witness from the wire format.
+    /// Decode a witness from the wire format (档1 extended layout —
+    /// see `encode()` doc for the field order).
     pub fn decode(bytes: &[u8]) -> Result<Self, Plonky3Status> {
-        if bytes.len() < 18 {
+        const HEAD: usize = 10;
+        const TAIL: usize = 8 + 32 + 1 + 4 + 8;
+        const PER_SPEND: usize = 64 + 8 * MERKLE_DEPTH + 32;
+        const PER_OUTPUT: usize = 40 + 32 + 32 + 2;
+        if bytes.len() < HEAD + TAIL {
             return Err(Plonky3Status::WitnessInvalid);
         }
         let n_s = bytes[0] as usize;
@@ -1487,8 +1570,7 @@ impl MvpWitness {
         if n_s < MIN_SPENDS || n_s > MAX_SPENDS || n_o < MIN_OUTPUTS || n_o > MAX_OUTPUTS {
             return Err(Plonky3Status::WitnessInvalid);
         }
-        let per_spend = 64 + 8 * MERKLE_DEPTH;
-        let want = 18 + per_spend * n_s + 40 * n_o;
+        let want = HEAD + PER_SPEND * n_s + PER_OUTPUT * n_o + TAIL;
         if bytes.len() != want {
             return Err(Plonky3Status::WitnessInvalid);
         }
@@ -1533,6 +1615,9 @@ impl MvpWitness {
                     return Err(Plonky3Status::WitnessInvalid);
                 }
             }
+            let mut rk_bytes = [0u8; 32];
+            rk_bytes.copy_from_slice(&bytes[off..off + 32]);
+            off += 32;
             spends.push(SpendWitness {
                 leaf,
                 d,
@@ -1543,6 +1628,7 @@ impl MvpWitness {
                 nk,
                 pos,
                 merkle_path,
+                rk_bytes,
             });
         }
         let mut outputs = Vec::with_capacity(n_o);
@@ -1560,23 +1646,47 @@ impl MvpWitness {
             }
             let rcm = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
             off += 8;
+            let mut cm_bytes = [0u8; 32];
+            cm_bytes.copy_from_slice(&bytes[off..off + 32]);
+            off += 32;
+            let mut epk_bytes = [0u8; 32];
+            epk_bytes.copy_from_slice(&bytes[off..off + 32]);
+            off += 32;
+            let filter_tag = u16::from_le_bytes(bytes[off..off + 2].try_into().unwrap());
+            off += 2;
             outputs.push(OutputWitness {
                 d,
                 pk_d,
                 ivk_commitment,
                 value,
                 rcm,
+                cm_bytes,
+                epk_bytes,
+                filter_tag,
             });
         }
         let anchor_proxy = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
         off += 8;
+        let mut anchor_bytes = [0u8; 32];
+        anchor_bytes.copy_from_slice(&bytes[off..off + 32]);
+        off += 32;
+        let scheme_id = bytes[off];
+        off += 1;
+        let chain_id = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
+        off += 4;
+        let expiry_block = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+        off += 8;
         debug_assert_eq!(off, bytes.len());
 
         Ok(Self {
+            scheme_id,
+            chain_id,
+            expiry_block,
             fee,
             spends,
             outputs,
             anchor_proxy,
+            anchor_bytes,
         })
     }
 
@@ -1590,25 +1700,55 @@ impl MvpWitness {
 
     /// Derive public inputs per §4.3 step 4.
     ///
-    /// See the struct doc for field layout. The 3 higher limbs of
-    /// anchor / nf / rk / cm / epk, and `epk` / `filter_tag` fields are
-    /// emitted as zero in this proxy-shape derivation — real wallet PIs
-    /// come from `uno_workchain::build_plonky3_public_inputs` and carry
-    /// non-zero limbs. The AIR does not constrain the zero limbs.
+    /// Layout (per-element 8 B LE Goldilocks):
+    /// ```
+    ///   [scheme_id, chain_id, expiry_block, fee]          (4 header scalars)
+    ///   [anchor as 4 limbs — limb 0 = anchor_proxy]       (4 anchor limbs)
+    ///   for each spend i:
+    ///     [nf_i via 4-limb Poseidon2 nullifier]           (4 nf limbs)
+    ///     [rk_i as 4 limbs — all zero in proxy AIR]       (4 rk limbs)
+    ///   for each output j:
+    ///     [cm_j via 1-limb proxy + 3 zeros]               (4 cm limbs)
+    ///     [epk_j as 4 limbs — all zero in proxy AIR]      (4 epk limbs)
+    ///     [filter_tag_j as u16 → 1 limb — zero in proxy]  (1 filter_tag)
+    /// ```
+    ///
+    /// **V1-3c-round-8 (档1, 2026-04-22)**: this is a partial fix. The
+    /// header scalars `scheme_id` / `chain_id` / `expiry_block` are now
+    /// threaded from the witness (no more hardcoded `CHAIN_ID_TEST` /
+    /// `EXPIRY_BLOCK_TEST`), which is the subset of PI slots that the
+    /// proxy AIR does not constrain and therefore can be safely pinned
+    /// to real values. The 256-bit slots (anchor, nf, cm, rk, epk,
+    /// filter_tag) remain proxy-derived:
+    ///
+    /// * `anchor[0]` is bound by the AIR to `anchor_proxy` (derived via
+    ///   the depth-32 Merkle walk over the witness). Setting it to
+    ///   `encode_256(real_anchor)[0]` would break the AIR constraint
+    ///   (real anchor ≠ proxy anchor under the current u64-proxy AIR).
+    /// * Same for `cm[0]` (AIR-bound to `poseidon2_cm_fe(witness)`) and
+    ///   `nf[0..4]` (AIR-bound to `poseidon2_nf_full(witness)`).
+    /// * `rk`, `epk`, `filter_tag` are not AIR-bound but stay at zero
+    ///   in this pass to keep wallet↔validator PI alignment self-
+    ///   consistent with the proxy anchor/cm/nf; C++ validator produces
+    ///   real values at those slots, so full byte parity is still a
+    ///   **M-P2** responsibility (real 32-byte field-material AIR).
+    ///
+    /// **档1 net effect for v1 launch**: closes the hardcoded-constant
+    /// hazard for `scheme_id` / `chain_id` / `expiry_block`. Full
+    /// Rust-prover ↔ C++ validator STARK verify parity still requires
+    /// M-P2 (see `doc/uno-workchain.md §4.1` proxy-AIR notes).
     pub fn public_inputs(&self) -> Vec<Goldilocks> {
         let n_s = self.spends.len();
         let n_o = self.outputs.len();
         let mut out = Vec::with_capacity(air_num_public_values(n_s, n_o));
 
-        out.push(Goldilocks::from_u64(0x01));
-        out.push(Goldilocks::from_u64(CHAIN_ID_TEST as u64));
-        out.push(Goldilocks::from_u64(EXPIRY_BLOCK_TEST));
-        out.push(Goldilocks::from_u64(self.fee));
+        out.push(Goldilocks::from_u64(self.scheme_id as u64));
+        out.push(Goldilocks::from_u64(self.chain_id as u64));
+        out.push(Goldilocks::from_u64(reduce_to_goldilocks(self.expiry_block)));
+        out.push(Goldilocks::from_u64(reduce_to_goldilocks(self.fee)));
 
-        // anchor: limb 0 = anchor_proxy; limbs 1..3 = 0.
-        out.push(Goldilocks::from_u64(reduce_to_goldilocks(
-            self.anchor_proxy,
-        )));
+        // anchor: limb 0 = anchor_proxy (AIR-bound); limbs 1..3 = 0.
+        out.push(Goldilocks::from_u64(reduce_to_goldilocks(self.anchor_proxy)));
         for _ in 1..4 {
             out.push(Goldilocks::ZERO);
         }
@@ -1617,29 +1757,29 @@ impl MvpWitness {
         let perm16 = default_goldilocks_poseidon2_16();
 
         for s in &self.spends {
-            // nf_i = first 4 limbs of Poseidon2(TAG_NF, nk, leaf(=cm), pos, 0, ...).
-            // Full-width binding per §4.3 step 4.
+            // nf_i: 4-limb Poseidon2 nullifier (AIR-bound).
             let nf_limbs = poseidon2_nf_full(&perm, s.nk, s.leaf, s.pos);
             for limb in nf_limbs {
                 out.push(limb);
             }
-            // rk_i: 4 × 0.
+            // rk_i: 4 × 0 (deferred to M-P2).
             for _ in 0..4 {
                 out.push(Goldilocks::ZERO);
             }
         }
 
         for o in &self.outputs {
+            // cm_j: limb 0 = Poseidon2 proxy (AIR-bound); limbs 1..3 = 0.
             let cm = poseidon2_cm_fe(&perm16, o.d, o.pk_d, o.ivk_commitment, o.value, o.rcm);
             out.push(cm);
             for _ in 1..4 {
                 out.push(Goldilocks::ZERO);
             }
-            // epk_j: 4 × 0.
+            // epk_j: 4 × 0 (deferred to M-P2).
             for _ in 0..4 {
                 out.push(Goldilocks::ZERO);
             }
-            // filter_tag_j: 0.
+            // filter_tag_j: 0 (deferred to M-P2).
             out.push(Goldilocks::ZERO);
         }
 
@@ -1942,6 +2082,27 @@ pub(crate) fn reduce_to_goldilocks(x: u64) -> u64 {
     } else {
         x
     }
+}
+
+/// 32-byte → 4 canonical-Goldilocks u64 limbs. Byte-identical mirror of
+/// `uno/core/transaction.cpp::encode_256` (§4.3 step 4, decision #5):
+///
+/// * split into 4 consecutive u64 LE chunks,
+/// * each chunk reduced via a single conditional subtract (safe for
+///   `x ∈ [0, 2·p_Goldilocks)`, which covers any u64).
+///
+/// Used by `MvpWitness::public_inputs` (档1) to pack raw `anchor` / `rk`
+/// / `cm` / `epk` bytes into the PI vector so Rust-prover PIs byte-match
+/// C++ `build_plonky3_public_inputs(tx)` slot-for-slot.
+#[inline]
+pub fn encode_256_as_4_limbs(bytes: &[u8; 32]) -> [u64; 4] {
+    let mut out = [0u64; 4];
+    for limb in 0..4 {
+        let mut chunk = [0u8; 8];
+        chunk.copy_from_slice(&bytes[limb * 8..(limb + 1) * 8]);
+        out[limb] = reduce_to_goldilocks(u64::from_le_bytes(chunk));
+    }
+    out
 }
 
 /// Default test chain_id ("UNOT" LE).

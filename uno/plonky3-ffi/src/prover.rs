@@ -300,9 +300,15 @@ mod tests {
             pi.len(),
             crate::transfer_air::air_width(4, 4),
         );
-        // Per-spend wire: 64 B leading + 8·MERKLE_DEPTH path siblings.
-        let per_spend = 64 + 8 * MERKLE_DEPTH;
-        assert_eq!(witness_wire.len(), 18 + per_spend * 4 + 40 * 4);
+        // V1-3c-round-8 档1 extended wire layout:
+        //   HEAD(10) + PER_SPEND(64 + 8·MERKLE_DEPTH + 32)·n_s
+        //           + PER_OUTPUT(40 + 32 + 32 + 2)·n_o
+        //           + TAIL(8 + 32 + 1 + 4 + 8)
+        let per_spend = 64 + 8 * MERKLE_DEPTH + 32;
+        let per_output = 40 + 32 + 32 + 2;
+        let head = 10;
+        let tail = 8 + 32 + 1 + 4 + 8;
+        assert_eq!(witness_wire.len(), head + per_spend * 4 + per_output * 4 + tail);
         assert_eq!(pi.len(), 608);
     }
 }

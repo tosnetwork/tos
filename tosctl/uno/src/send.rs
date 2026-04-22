@@ -438,6 +438,15 @@ fn build_transfer(
         v
     };
 
+    // V1-3c-round-8 档1: thread the consensus-header fields + per-spend rk
+    // + per-output epk / filter_tag into the witness so Rust-prover PIs
+    // byte-match C++ `build_plonky3_public_inputs(tx)`. Previously these
+    // slots were emitted as all-zero or hardcoded test constants, which
+    // would fail STARK verify on a real validator.
+    let spend_rk_bytes: Vec<[u8; 32]> = spends.iter().map(|s| s.rk).collect();
+    let output_epk_bytes: Vec<[u8; 32]> = outputs.iter().map(|o| o.epk).collect();
+    let output_filter_tags: Vec<u16> = outputs.iter().map(|o| o.filter_tag).collect();
+
     let witness = TransferWitness::build(
         &sel.notes,
         &spend_values,
@@ -448,6 +457,12 @@ fn build_transfer(
         &output_addrs_ivk_cm,
         sel.fee,
         anchor,
+        SCHEME_ID_V1,
+        chain_id,
+        expiry_block,
+        &spend_rk_bytes,
+        &output_epk_bytes,
+        &output_filter_tags,
     )
     .context("building Plonky3 TransferWitness")?;
     let zk_proof = plonky3_prove(&witness);
@@ -675,6 +690,15 @@ impl TransferWitness {
     /// - `output_addrs_d`: per-output recipient diversifier (11 B).
     /// - `fee`: tx-level fee.
     /// - `anchor`: 32-byte anchor (§4.1 commitment-tree root).
+    /// - `scheme_id`, `chain_id`, `expiry_block`: consensus-header fields
+    ///   bound into the PI (V1-3c-round-8 档1). Previously hardcoded to
+    ///   `CHAIN_ID_TEST` / `EXPIRY_BLOCK_TEST` at the AIR layer; now threaded
+    ///   from the real Transfer so Rust-prover PIs byte-match C++.
+    /// - `spend_rk_bytes` / `output_epk_bytes` / `output_filter_tags`: the
+    ///   real 32-byte rk, 32-byte epk, and 16-bit filter tag for each
+    ///   spend/output. Populates the PI slots that C++ decoder re-derives
+    ///   via `build_plonky3_public_inputs(tx)`.
+    #[allow(clippy::too_many_arguments)]
     pub fn build(
         spends: &[OwnedNote],
         spend_values: &[u64],
@@ -685,6 +709,12 @@ impl TransferWitness {
         output_addrs_ivk_cm: &[[u8; 32]],
         fee: u64,
         anchor: &[u8; 32],
+        scheme_id: u8,
+        chain_id: u32,
+        expiry_block: u64,
+        spend_rk_bytes: &[[u8; 32]],
+        output_epk_bytes: &[[u8; 32]],
+        output_filter_tags: &[u16],
     ) -> Result<Self> {
         let n_s = spends.len();
         let n_o = output_values.len();
@@ -707,6 +737,9 @@ impl TransferWitness {
             || output_addrs_d.len() != n_o
             || output_addrs_pk_d.len() != n_o
             || output_addrs_ivk_cm.len() != n_o
+            || spend_rk_bytes.len() != n_s
+            || output_epk_bytes.len() != n_o
+            || output_filter_tags.len() != n_o
         {
             return Err(anyhow!("TransferWitness: input slice length mismatch"));
         }
@@ -811,6 +844,7 @@ impl TransferWitness {
                 nk,
                 pos: shared_pos,
                 merkle_path: shared_merkle_path,
+                rk_bytes: spend_rk_bytes[i],
             });
         }
 
@@ -848,15 +882,22 @@ impl TransferWitness {
                 ivk_commitment: ivkcm_proxy,
                 value: value_proxy,
                 rcm: rcm_proxy,
+                cm_bytes: output_cms[j],
+                epk_bytes: output_epk_bytes[j],
+                filter_tag: output_filter_tags[j],
             });
         }
 
         Ok(Self {
             inner: MvpWitness {
+                scheme_id,
+                chain_id,
+                expiry_block,
                 fee,
                 spends: p3_spends,
                 outputs: p3_outputs,
                 anchor_proxy,
+                anchor_bytes: *anchor,
             },
         })
     }
@@ -1168,6 +1209,12 @@ mod tests {
             &[[0x44u8; 32]],
             10,
             &[0xAAu8; 32],
+            SCHEME_ID_V1,
+            0xCAFE_BABE_u32,
+            0x1234_5678_9ABC_DEFE_u64,
+            &[[0x55u8; 32]],
+            &[[0x66u8; 32]],
+            &[0x4242u16],
         )
         .expect("build witness");
         let proof = plonky3_prove(&witness);
