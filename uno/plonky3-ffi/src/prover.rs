@@ -678,6 +678,72 @@ mod tests {
         );
     }
 
+    /// Diagnostic: prove + verify with SHARED `prover_data.common`
+    /// (matches the passing plonky3-uno simple.rs cross-AIR test
+    /// pattern — all 4 of those tests reuse `&prover_data.common` on
+    /// the verifier side; none independently reconstruct).
+    ///
+    /// This test isolated the bug WAS NOT independent-reconstruction
+    /// drift (shared-common still fails with the same
+    /// `OodEvaluationMismatch { index: Some(0) }`). Two real bugs
+    /// were found and fixed along the way:
+    ///   (a) `Range16Air::max_constraint_degree` was `Some(1)` which
+    ///       under-counts the LogUp-folded degree-2 lookup constraint
+    ///       — debug assert in `batch_stark::symbolic` trips.
+    ///   (b) `MvpTransferAir::main_next_row_columns` defaulted to `[]`
+    ///       despite the AIR reading `main.next_slice()` for the §4.2
+    ///       "proxies are constant across rows" transition check —
+    ///       latent since uni-stark auto-opens next-row regardless,
+    ///       but batch-stark gates next-row opening on this method.
+    ///
+    /// After both fixes this test still fails with the same OOD error,
+    /// meaning a third bug remains — likely in the lookup-element
+    /// column indices (symbolic vs. actual-trace offset), or in how
+    /// the permutation trace for MvpTransferAir is populated relative
+    /// to what the lookup constraint expects. Marked #[ignore] until
+    /// step3-final-RCA.
+    #[test]
+    #[ignore = "M-P2 step3-final-RCA: third bug remains after fixing Range16 degree + Transfer main_next_row; see batch_prove_with_range_check_smoke_1_1 for the prove-side reachability"]
+    fn batch_range_check_round_trip_1_1_shared_common() {
+        use crate::range16_air::{Range16Air, LOG_RANGE_TABLE_HEIGHT};
+        use crate::transfer_air::{MvpTransferAir, LOG_TRACE_HEIGHT};
+        use p3_batch_stark::{prove_batch, verify_batch, ProverData, StarkInstance};
+
+        let config = build_config();
+        let w = MvpWitness::deterministic_valid(1, 1, 0xB16B_0003);
+
+        let (n_s, n_o) = w.shape();
+        let transfer_trace = w.generate_trace();
+        let transfer_public_inputs = w.public_inputs();
+        let reads = collect_u16_reads_for_range16(&w);
+        let range16_trace = Range16Air::build_main_trace(&reads);
+
+        let mut airs = [
+            MvpAirUnion::Transfer(MvpTransferAir::new(n_s, n_o)),
+            MvpAirUnion::Range16(Range16Air::new()),
+        ];
+        let zk = p3_uni_stark::StarkGenericConfig::is_zk(&config);
+        let log_ext_degrees = [LOG_TRACE_HEIGHT + zk, LOG_RANGE_TABLE_HEIGHT + zk];
+
+        // ONE `from_airs_and_degrees` call — shared between prove + verify,
+        // matching the passing plonky3-uno tests
+        // (`test_batch_stark_global_lookups_only` et al).
+        let prover_data: ProverData<MvpConfig> =
+            ProverData::from_airs_and_degrees(&config, &mut airs, &log_ext_degrees);
+        let common = &prover_data.common;
+
+        let traces = [&transfer_trace, &range16_trace];
+        let pvs = [transfer_public_inputs.clone(), Vec::new()];
+        let instances = StarkInstance::new_multiple(&airs, &traces, &pvs, common);
+
+        let proof = prove_batch(&config, &instances, &prover_data);
+
+        // Verify with the SAME common_data that the prover used —
+        // avoids any potential drift from independent reconstruction.
+        let result = verify_batch(&config, &airs, &proof, &pvs, common);
+        assert!(result.is_ok(), "shared-common verify failed: {:?}", result.err());
+    }
+
     #[test]
     fn prove_succeeds_on_valid_2_2() {
         let prover = MvpProver::new();

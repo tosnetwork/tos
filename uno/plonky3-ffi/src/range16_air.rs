@@ -126,7 +126,12 @@ impl<F: PrimeCharacteristicRing + Send + Sync> BaseAir<F> for Range16Air {
     }
 
     fn max_constraint_degree(&self) -> Option<usize> {
-        Some(1)
+        // Return None — the LogUp lookup gadget folds a degree-2
+        // constraint into this AIR (running sum × (α − element) etc.),
+        // so a `Some(1)` hint under-counts and trips a debug assertion
+        // in `batch_stark::symbolic` at prove time. None tells the
+        // framework to compute the bound from the symbolic constraints.
+        None
     }
 }
 

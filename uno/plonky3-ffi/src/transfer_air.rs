@@ -606,6 +606,21 @@ impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for MvpTransferAir {
     fn max_constraint_degree(&self) -> Option<usize> {
         None
     }
+
+    /// Declare all main-trace columns as next-row-accessed. The AIR's
+    /// `eval` reads `main.next_slice()` for the §4.2 "proxies are
+    /// constant across rows" transition constraint (every proxy col is
+    /// checked against the next row). In the pre-batch-stark uni-stark
+    /// pipeline the trace was always opened at both zeta and zeta*g, so
+    /// this declaration was implicit. `p3_batch_stark` gates next-row
+    /// opening on this method's non-empty return — returning `vec![]`
+    /// (the default) means the verifier sees zeroed-out next-row data
+    /// while the prover's quotient used the real values, causing an
+    /// `OodEvaluationMismatch`. Declaring every column keeps the
+    /// behavior honest for both provers.
+    fn main_next_row_columns(&self) -> Vec<usize> {
+        (0..air_width(self.n_spends, self.n_outputs)).collect()
+    }
 }
 
 /// `LookupAir` impl — M-P2 Phase 3b-step3 reader side.
