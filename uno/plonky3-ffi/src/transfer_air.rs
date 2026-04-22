@@ -2420,6 +2420,162 @@ pub(crate) fn first_u64_proxy(bytes: &[u8; 32]) -> u64 {
     u64::from_le_bytes(bytes[0..8].try_into().unwrap())
 }
 
+// ---------------------------------------------------------------------------
+// Phase 4b-step3-step1.0 helpers — 15-fe iterated-sponge
+// Poseidon2-w=16 `cm` derivation, off-circuit reference
+// ---------------------------------------------------------------------------
+//
+// These functions are the byte-for-byte Rust mirror of tosctl's
+// `tosctl/uno/src/poseidon2.rs::hash_tagged` called with tag
+// "uno-cm-v1" and 15 Goldilocks field elements in the order
+// specified by `uno/core/poseidon2.cpp::compute_note_commitment`.
+// They are NOT yet wired into the AIR; Phase 4b-step3-step1.1+
+// will build trace-gen + constraints on top of them. Landing them
+// here as a standalone commit lets us unit-test the off-circuit
+// reference against tosctl / C++ before committing to the ~420 LOC
+// of AIR structural change needed to express the sponge in a STARK
+// constraint system.
+//
+// Layout per §3.2 of `doc/uno-workchain.md` and the iterated-sponge
+// description recorded in `doc/uno-p2-phase4b-step3-plan.md` §4.1:
+//
+//   tag_block        = pack("uno-cm-v1" into 8 fes via 8-byte LE chunks)
+//   fes[0..1]        = d   (11 B diversifier, zero-padded to 16 B,
+//                           split as 2 × u64 LE mod p)
+//   fes[2..5]        = pk_d            (32 B → 4 × u64 LE mod p)
+//   fes[6..9]        = ivk_commitment  (32 B → 4 × u64 LE mod p)
+//   fes[10]          = value           (u64 mod p)
+//   fes[11..14]      = rcm             (32 B → 4 × u64 LE mod p)
+//                      (15 fes total)
+//
+//   state[8..16]     = tag_block (capacity slots, pinned)
+//
+//   Permutation 1:   state[0..7] += fes[0..7]; permute.
+//   Permutation 2:   state[0..6] += fes[8..14]; state[7] += ONE
+//                    (10* padding, since rem=7 after block 1);
+//                    permute.
+//
+//   Output:          state[0..4]  (4 fe = 32 B after LE-u64 packing)
+
+/// Domain tag "uno-cm-v1" packed as 8 Goldilocks field elements in
+/// the convention tosctl / C++ use for the capacity slots of the
+/// width-16 sponge: 8-byte LE chunks of the UTF-8 tag string,
+/// zero-padded. Only the first fe holds a non-zero u64 for this
+/// 9-byte tag.
+#[inline]
+pub(crate) fn uno_cm_v1_tag_block() -> [Goldilocks; 8] {
+    // Mirror of `tosctl/uno/src/poseidon2.rs::pack_tag_block` for
+    // the specific tag "uno-cm-v1" (9 ASCII bytes). The tag fits
+    // inside one 8-byte chunk + 1 trailing byte in the second
+    // chunk; all remaining chunks are zero.
+    let tag: &[u8] = b"uno-cm-v1";
+    let mut out = [Goldilocks::ZERO; 8];
+    let full = tag.len() / 8;
+    for i in 0..full {
+        let mut limb = [0u8; 8];
+        limb.copy_from_slice(&tag[i * 8..(i + 1) * 8]);
+        out[i] = Goldilocks::from_u64(u64::from_le_bytes(limb));
+    }
+    let rem = tag.len() - full * 8;
+    if rem > 0 && full < 8 {
+        let mut buf = [0u8; 8];
+        buf[..rem].copy_from_slice(&tag[full * 8..full * 8 + rem]);
+        out[full] = Goldilocks::from_u64(u64::from_le_bytes(buf));
+    }
+    out
+}
+
+/// 32 bytes → 4 Goldilocks field elements via 8-byte LE chunks,
+/// each reduced mod p_Goldilocks (`reduce_to_goldilocks` if needed;
+/// inputs from tosctl are already canonical). Byte-identical to
+/// `tosctl/uno/src/poseidon2.rs::bytes_to_fes_wrapped` for a 32 B
+/// input + C++ `pack_bytes32_as_4`.
+#[inline]
+pub(crate) fn pack_32b_as_4fe(bytes: &[u8; 32]) -> [Goldilocks; 4] {
+    let mut out = [Goldilocks::ZERO; 4];
+    for i in 0..4 {
+        let limb = u64::from_le_bytes(bytes[i * 8..(i + 1) * 8].try_into().unwrap());
+        out[i] = Goldilocks::from_u64(reduce_to_goldilocks(limb));
+    }
+    out
+}
+
+/// 11-byte diversifier (passed as [u8; 32] with bytes[0..11] real +
+/// bytes[11..32] zero-pad per the Phase 4b-step3-step0 witness wire
+/// format) → 2 Goldilocks field elements. Consumes bytes[0..16] as
+/// 2 × u64 LE mod p; bytes[16..32] are not looked at (they are
+/// expected to be zero and play no role in the sponge).
+#[inline]
+pub(crate) fn pack_diversifier_as_2fe(d: &[u8; 32]) -> [Goldilocks; 2] {
+    [
+        Goldilocks::from_u64(reduce_to_goldilocks(
+            u64::from_le_bytes(d[0..8].try_into().unwrap()),
+        )),
+        Goldilocks::from_u64(reduce_to_goldilocks(
+            u64::from_le_bytes(d[8..16].try_into().unwrap()),
+        )),
+    ]
+}
+
+/// Off-circuit Rust mirror of tosctl `compute_note_commitment` /
+/// C++ `compute_note_commitment`. Computes the 4-fe cm digest via
+/// the 15-fe iterated Poseidon2-w=16 sponge with "uno-cm-v1" tag.
+///
+/// NOT yet wired into the AIR — step 1.1+ adds trace-gen + row-
+/// gated constraints that verify this derivation in-circuit, at
+/// which point `witness.cm_bytes` can be bound by the STARK to
+/// match the output of this function (currently the AIR only
+/// constrains the old single-permutation 6-input u64-proxy
+/// `poseidon2_cm_fe`, which does NOT match tosctl's cm bytes).
+///
+/// Returns `[Goldilocks; 4]` — pack them with
+/// `as_canonical_u64().to_le_bytes()` to get 32-byte cm.
+#[allow(dead_code)]
+pub(crate) fn poseidon2_cm_full_sponge(
+    perm16: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH_16]>,
+    d: &[u8; 32],
+    pk_d: &[u8; 32],
+    ivk_commitment: &[u8; 32],
+    value: u64,
+    rcm: &[u8; 32],
+) -> [Goldilocks; 4] {
+    // Assemble the 15 input field elements per §3.2.
+    let d_fes = pack_diversifier_as_2fe(d);
+    let pk_d_fes = pack_32b_as_4fe(pk_d);
+    let ivk_cm_fes = pack_32b_as_4fe(ivk_commitment);
+    let value_fe = Goldilocks::from_u64(reduce_to_goldilocks(value));
+    let rcm_fes = pack_32b_as_4fe(rcm);
+
+    let mut fes = [Goldilocks::ZERO; 15];
+    fes[0] = d_fes[0];
+    fes[1] = d_fes[1];
+    fes[2..6].copy_from_slice(&pk_d_fes);
+    fes[6..10].copy_from_slice(&ivk_cm_fes);
+    fes[10] = value_fe;
+    fes[11..15].copy_from_slice(&rcm_fes);
+
+    // Initial sponge state: tag block pinned at capacity slots.
+    let mut state = [Goldilocks::ZERO; POSEIDON2_WIDTH_16];
+    let tag = uno_cm_v1_tag_block();
+    state[8..16].copy_from_slice(&tag);
+
+    // Permutation 1: absorb fes[0..8] into rate slots 0..7.
+    for j in 0..8 {
+        state[j] = state[j] + fes[j];
+    }
+    perm16.permute_mut(&mut state);
+
+    // Permutation 2: absorb remaining 7 fes (rem = 15 - 8 = 7) into
+    // rate slots 0..6; state[7] += ONE for 10* padding.
+    for j in 0..7 {
+        state[j] = state[j] + fes[8 + j];
+    }
+    state[7] = state[7] + Goldilocks::from_u64(1);
+    perm16.permute_mut(&mut state);
+
+    [state[0], state[1], state[2], state[3]]
+}
+
 /// 32-byte → 4 canonical-Goldilocks u64 limbs. Byte-identical mirror of
 /// `uno/core/transaction.cpp::encode_256` (§4.3 step 4, decision #5):
 ///
@@ -2863,5 +3019,114 @@ mod tests {
                 );
             }
         }
+    }
+
+    // --------------------------------------------------------------
+    // Phase 4b-step3-step1.0 helper tests: off-circuit 15-fe sponge
+    // --------------------------------------------------------------
+
+    /// Tag-block packing matches a hand-derived expected for
+    /// "uno-cm-v1" — the only non-zero slot is slot 0, holding the
+    /// LE u64 of the first 8 ASCII bytes "uno-cm-v"; slot 1 holds
+    /// the trailing "1" byte in its low byte; slots 2..7 are zero.
+    #[test]
+    fn uno_cm_v1_tag_block_expected_layout() {
+        let got = uno_cm_v1_tag_block();
+
+        // "uno-cm-v" = 0x75 0x6e 0x6f 0x2d 0x63 0x6d 0x2d 0x76
+        let mut expect0 = [0u8; 8];
+        expect0.copy_from_slice(b"uno-cm-v");
+        let e0 = u64::from_le_bytes(expect0);
+        assert_eq!(got[0].as_canonical_u64(), e0);
+
+        // "1" at byte 0 of the second chunk, rest zero.
+        let mut expect1 = [0u8; 8];
+        expect1[0] = b'1';
+        let e1 = u64::from_le_bytes(expect1);
+        assert_eq!(got[1].as_canonical_u64(), e1);
+
+        for k in 2..8 {
+            assert_eq!(got[k].as_canonical_u64(), 0, "tag slot {} must be zero", k);
+        }
+    }
+
+    /// Determinism: same inputs → same cm digest.
+    #[test]
+    fn poseidon2_cm_full_sponge_deterministic() {
+        let perm16 = default_goldilocks_poseidon2_16();
+        let d = [0x11u8; 32];
+        let pk_d = [0x22u8; 32];
+        let ivk_commitment = [0x33u8; 32];
+        let value = 0xDEAD_BEEF_1234_5678u64 % GOLDILOCKS_P;
+        let rcm = [0x44u8; 32];
+
+        let a =
+            poseidon2_cm_full_sponge(&perm16, &d, &pk_d, &ivk_commitment, value, &rcm);
+        let b =
+            poseidon2_cm_full_sponge(&perm16, &d, &pk_d, &ivk_commitment, value, &rcm);
+        assert_eq!(a, b);
+
+        // Perturb one byte → output changes.
+        let mut rcm_alt = rcm;
+        rcm_alt[0] ^= 0x01;
+        let c = poseidon2_cm_full_sponge(
+            &perm16,
+            &d,
+            &pk_d,
+            &ivk_commitment,
+            value,
+            &rcm_alt,
+        );
+        assert_ne!(a, c, "cm digest must depend on every rcm byte");
+
+        // Each of the 5 inputs contributes: confirm for d as well.
+        let mut d_alt = d;
+        d_alt[3] ^= 0x80;
+        let e = poseidon2_cm_full_sponge(
+            &perm16,
+            &d_alt,
+            &pk_d,
+            &ivk_commitment,
+            value,
+            &rcm,
+        );
+        assert_ne!(a, e, "cm digest must depend on d bytes");
+    }
+
+    /// All four output limbs are typically non-zero for random inputs
+    /// (sanity: sponge is actually producing 4-fe output, not just
+    /// state[0]).
+    #[test]
+    fn poseidon2_cm_full_sponge_produces_4_distinct_limbs() {
+        let perm16 = default_goldilocks_poseidon2_16();
+        let d = [0x55u8; 32];
+        let pk_d = [0x66u8; 32];
+        let ivk_commitment = [0x77u8; 32];
+        let value = 0xCAFE_F00Du64;
+        let rcm = [0x88u8; 32];
+
+        let digest =
+            poseidon2_cm_full_sponge(&perm16, &d, &pk_d, &ivk_commitment, value, &rcm);
+
+        // Sanity: at least 3 of 4 limbs are non-zero (extremely high
+        // prob. given Poseidon2's avalanche). If this ever trips,
+        // either the sponge is buggy or we got astronomically lucky.
+        let non_zero = digest.iter().filter(|l| l.as_canonical_u64() != 0).count();
+        assert!(
+            non_zero >= 3,
+            "poseidon2 cm output has too many zero limbs: {:?}",
+            digest.map(|l| l.as_canonical_u64()),
+        );
+
+        // Sanity: all 4 limbs are distinct (ditto).
+        use std::collections::HashSet;
+        let distinct: HashSet<u64> =
+            digest.iter().map(|l| l.as_canonical_u64()).collect();
+        assert_eq!(
+            distinct.len(),
+            4,
+            "poseidon2 cm output limbs collide unexpectedly: {:?}",
+            digest.map(|l| l.as_canonical_u64()),
+        );
     }
 }
