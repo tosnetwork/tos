@@ -9,7 +9,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <limits>
 #include <utility>
 #include <vector>
 
@@ -686,7 +685,10 @@ unsigned structural_walk_depth(const td::Ref<vm::Cell>& items_root_ref) noexcept
     // tree that slipped past the earlier ordinary-only check (defensive —
     // we must not throw from this noexcept helper).
     if (!load_ordinary_cell_slice(items_root_ref, root_cs)) {
-        return std::numeric_limits<unsigned>::max();
+        // Sentinel: a value that trips the `depth + 1 <= bound` gate
+        // without overflowing when the caller adds 1. UINT_MAX would wrap
+        // to 0 and silently PASS the gate — don't use it here.
+        return kMaxTransferRefDepth + 1;
     }
     unsigned max_child = 0;
     for (unsigned i = 0; i < root_cs.size_refs(); ++i) {
@@ -694,7 +696,10 @@ unsigned structural_walk_depth(const td::Ref<vm::Cell>& items_root_ref) noexcept
         if (item_ref.is_null()) continue;
         vm::CellSlice item_cs;
         if (!load_ordinary_cell_slice(item_ref, item_cs)) {
-            return std::numeric_limits<unsigned>::max();
+            // Sentinel: a value that trips the `depth + 1 <= bound` gate
+            // without overflowing when the caller adds 1. UINT_MAX would wrap
+            // to 0 and silently PASS the gate — don't use it here.
+            return kMaxTransferRefDepth + 1;
         }
         // per-item cell counts as 1 level. It may carry a `cont` ref at
         // index 0 (another level). We explicitly do NOT descend into

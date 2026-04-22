@@ -54,11 +54,26 @@
                          out_ciphertext:bytes80 // inline ovk-recoverable memo
         = OutputDescription;
 
-    // Chunk-chain layout for large byte blobs (enc_ciphertext, mlkem_ct,
-    // zk_proof). Identical to the EVM bytecode chunk chain — keeps dump
-    // tools single-sourced. `kChunkInlineBytes` is 127.
-    chunk$_ {n:#} data:(n * uint8) { n <= 127 }
-            next:(Maybe ^Cell) = Chunk;
+    // Chunk-tree layout for large byte blobs (enc_ciphertext, mlkem_ct,
+    // zk_proof). Consensus-binding 4-ary balanced tree per
+    // `doc/uno-workchain.md §4.1a` — updated V1-3c-gamma from the pre-v1
+    // linear chain (which exceeded CellTraits::max_depth = 1024 for any
+    // blob > ~127 KB). Leaves carry 1..127 B inline with 0 refs; internal
+    // cells carry 0 data bits and 1..4 refs to children left-to-right in
+    // byte order. Canonical construction: split bytes into 127 B chunks,
+    // build leaves in order, fold by 4 bottom-up. Tree depth =
+    // ⌈log₄(N_leaves)⌉ (≤ 7 at v1 worst-case 915 KB zk_proof).
+    //
+    //   chunk_leaf$_     {n:#} data:(n * uint8) { 1 <= n <= 127 }
+    //                    = ChunkTreeNode;                     // 0 refs
+    //   chunk_internal$_ {k:#} refs:(k * ^ChunkTreeNode) { 1 <= k <= 4 }
+    //                    = ChunkTreeNode;                     // 0 data bits
+    //
+    // Node kind is disambiguated by ref count: 0 refs ⇒ leaf, ≥ 1 ref ⇒
+    // internal. Zero-length input is encoded as a null ^Cell, not an empty
+    // tree. Decoders MUST enforce total_leaves ≤ 8192 and total visited
+    // cells ≤ 16384, and MUST reject non-canonical shape (re-encode +
+    // cell-hash comparison).
 
     // -- Executor account state (§5.1) --------------------------------------
     uno_shard_state#554e4f     // magic "UNO", 24 bits
