@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <utility>
 #include <vector>
 
 #include "td/utils/Slice.h"
@@ -82,6 +83,68 @@ constexpr size_t kChunkTreeFanout = 4;
 // cumulative leaf count during DFS traversal, equivalent in role (caps
 // CPU/memory exposure against malicious oversized trees).
 constexpr size_t kChunkChainMaxChunks = 8192;
+// Defense-in-depth for malformed non-canonical trees: a valid canonical
+// 4-ary tree with 8192 leaves has ~10923 total cells. Cap all visited cells
+// well below the BoC/global depth limits so adversaries cannot hide excessive
+// internal-node work behind a small leaf count.
+constexpr size_t kChunkTreeMaxCells = kChunkChainMaxChunks * 2;
+
+struct ChunkTreeStats {
+    size_t bytes{0};
+    size_t leaves{0};
+    size_t cells{0};
+};
+
+bool scan_chunk_tree(td::Ref<vm::Cell> root, ChunkTreeStats& stats,
+                     std::string* out) noexcept {
+    if (root.is_null()) return false;
+    std::vector<td::Ref<vm::Cell>> stack;
+    stack.push_back(std::move(root));
+    while (!stack.empty()) {
+        auto cell = std::move(stack.back());
+        stack.pop_back();
+        if (cell.is_null()) return false;
+        if (++stats.cells > kChunkTreeMaxCells) return false;
+
+        auto cs = vm::load_cell_slice(cell);
+        const unsigned bits = cs.size();
+        const unsigned n_refs = cs.size_refs();
+        if (n_refs == 0) {
+            // Leaf: 1..127 B inline, byte-aligned.
+            if (++stats.leaves > kChunkChainMaxChunks) return false;
+            if (bits == 0 || bits % 8 != 0) return false;
+            const unsigned data_bytes = bits / 8;
+            if (data_bytes > kChunkBytes) return false;
+            stats.bytes += data_bytes;
+            if (out != nullptr) {
+                const size_t off = out->size();
+                out->resize(off + data_bytes);
+                if (!cs.fetch_bytes(reinterpret_cast<unsigned char*>(out->data() + off),
+                                    data_bytes)) {
+                    return false;
+                }
+            }
+        } else {
+            // Internal: 0 bits, 1..4 refs. Push children in reverse so DFS
+            // visits them left-to-right on the next iterations.
+            if (bits != 0) return false;
+            if (n_refs > kChunkTreeFanout) return false;
+            for (unsigned k = n_refs; k-- > 0; ) {
+                auto child = cs.prefetch_ref(k);
+                if (child.is_null()) return false;
+                stack.push_back(std::move(child));
+            }
+        }
+    }
+    return stats.leaves > 0;
+}
+
+bool chunk_tree_byte_length(td::Ref<vm::Cell> root, size_t& out) noexcept {
+    ChunkTreeStats stats;
+    if (!scan_chunk_tree(std::move(root), stats, nullptr)) return false;
+    out = stats.bytes;
+    return true;
+}
 
 }  // anonymous namespace
 
@@ -146,37 +209,8 @@ td::Ref<vm::Cell> store_bytes_as_chunk_chain(td::Slice bytes) noexcept {
 std::string load_bytes_from_chunk_chain(td::Ref<vm::Cell> root) noexcept {
     if (root.is_null()) return {};
     std::string out;
-    size_t leaf_count = 0;
-    std::vector<td::Ref<vm::Cell>> stack;
-    stack.push_back(root);
-    while (!stack.empty()) {
-        auto cell = std::move(stack.back());
-        stack.pop_back();
-        if (cell.is_null()) return {};  // malformed: null ref inside tree
-        auto cs = vm::load_cell_slice(cell);
-        const unsigned bits = cs.size();
-        const unsigned n_refs = cs.size_refs();
-        if (n_refs == 0) {
-            // Leaf: 1..127 B inline, byte-aligned.
-            if (++leaf_count > kChunkChainMaxChunks) return {};
-            if (bits == 0 || bits % 8 != 0) return {};
-            const unsigned data_bytes = bits / 8;
-            if (data_bytes > kChunkBytes) return {};
-            const size_t off = out.size();
-            out.resize(off + data_bytes);
-            cs.fetch_bytes(reinterpret_cast<unsigned char*>(out.data() + off), data_bytes);
-        } else {
-            // Internal: 0 bits, 1..4 refs. Push children in reverse so DFS
-            // visits them left-to-right on the next iterations.
-            if (bits != 0) return {};
-            if (n_refs > kChunkTreeFanout) return {};
-            for (unsigned k = n_refs; k-- > 0; ) {
-                auto child = cs.prefetch_ref(k);
-                if (child.is_null()) return {};
-                stack.push_back(std::move(child));
-            }
-        }
-    }
+    ChunkTreeStats stats;
+    if (!scan_chunk_tree(std::move(root), stats, &out)) return {};
     return out;
 }
 
@@ -614,42 +648,15 @@ unsigned structural_walk_depth(const td::Ref<vm::Cell>& items_root_ref) {
     return max_child + 1;
 }
 
-// Approximate wire_size_bytes for the fee calculation in §4.3 step 1.4.
-// Inline: 56 header + 128 * spend_count + 146 * output_count.
-// Ref-carried bytes for cells are not known without traversal; we use the
-// CellString-style estimated overhead (128 B/cell over the chain roots).
-// This is a deterministic function of (spend_count, output_count, chunk
-// counts), identical on every validator.
-size_t estimate_wire_size(const Transfer& tx) {
+// Approximate wire_size_bytes for the fee calculation in §4.3 step 1.4:
+// fixed inline bytes plus decoded ref-carried payload bytes. The chunk-tree
+// traversal that computes `ref_carried_bytes` also validates the tree shape,
+// so malformed oversized blobs fail admission instead of being undercharged.
+size_t estimate_wire_size(const Transfer& tx, size_t ref_carried_bytes) {
     size_t n = kTransferHeaderBytes
              + tx.spends.size()  * kSpendInlineBytes
              + tx.outputs.size() * kOutputInlineBytes;
-    auto count_chain = [](td::Ref<vm::Cell> root) -> size_t {
-        if (root.is_null()) return 0;
-        size_t bytes = 0;
-        auto cell = root;
-        for (size_t i = 0; i < kChunkChainMaxChunks; ++i) {
-            if (cell.is_null()) break;
-            auto cs = vm::load_cell_slice(cell);
-            unsigned bits = cs.size();
-            if (bits < 1 || (bits - 1) % 8 != 0) return bytes;
-            bytes += (bits - 1) / 8;
-            unsigned has_next = 0;
-            auto tmp = cs;
-            tmp.advance(bits - 1);
-            has_next = static_cast<unsigned>(tmp.fetch_ulong(1));
-            if (has_next == 0) break;
-            if (cs.size_refs() == 0) break;
-            cell = cs.prefetch_ref(0);
-        }
-        return bytes;
-    };
-    for (const auto& o : tx.outputs) {
-        n += count_chain(o.enc_ciphertext);
-        n += count_chain(o.mlkem_ct);
-    }
-    n += count_chain(tx.zk_proof);
-    return n;
+    return n + ref_carried_bytes;
 }
 
 }  // anonymous namespace
@@ -674,6 +681,7 @@ DecodeResult decode_transfer(vm::CellSlice body) noexcept {
 
     tx.spends.resize(sc);
     tx.outputs.resize(oc);
+    size_t ref_carried_bytes = 0;
 
     // Root cell layout: 3 refs (spends_root, outputs_root, zk_proof).
     if (body.size_refs() < 3) return err("missing spends_root / outputs_root / zk_proof refs");
@@ -742,10 +750,27 @@ DecodeResult decode_transfer(vm::CellSlice body) noexcept {
             o.mlkem_ct       = out_cs.prefetch_ref(1);
             if (o.enc_ciphertext.is_null()) return err("per-output cell: null enc_ciphertext");
             if (o.mlkem_ct.is_null())       return err("per-output cell: null mlkem_ct");
+
+            size_t enc_bytes = 0;
+            size_t mlkem_bytes = 0;
+            if (!chunk_tree_byte_length(o.enc_ciphertext, enc_bytes)) {
+                return err("per-output cell: malformed enc_ciphertext chunk tree");
+            }
+            if (!chunk_tree_byte_length(o.mlkem_ct, mlkem_bytes)) {
+                return err("per-output cell: malformed mlkem_ct chunk tree");
+            }
+            ref_carried_bytes += enc_bytes + mlkem_bytes;
         }
     }
 
     tx.zk_proof = zk_proof_ref;
+    {
+        size_t proof_bytes = 0;
+        if (!chunk_tree_byte_length(tx.zk_proof, proof_bytes)) {
+            return err("malformed zk_proof chunk tree");
+        }
+        ref_carried_bytes += proof_bytes;
+    }
 
     // §17 structural-walk-depth gate: reject malformed trees that exceed
     // the 5-level budget on the STRUCTURAL tree (root → items_root →
@@ -775,7 +800,7 @@ DecodeResult decode_transfer(vm::CellSlice body) noexcept {
 
     // tx_hash is derived from the decoded form.
     tx.tx_hash = canonical_tx_hash(tx);
-    tx.wire_size_bytes = estimate_wire_size(tx);
+    tx.wire_size_bytes = estimate_wire_size(tx, ref_carried_bytes);
     return tx;
 }
 

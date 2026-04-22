@@ -332,6 +332,19 @@ bool run_shape(const ShapeCase& sc) {
         tprintf("  FAILED: tx_hash changed across encode→decode\n");
         return false;
     }
+    {
+        const size_t expected_wire_size =
+            uno_workchain::kTransferHeaderBytes
+            + static_cast<size_t>(sc.spend_count) * uno_workchain::kSpendInlineBytes
+            + static_cast<size_t>(sc.output_count) * uno_workchain::kOutputInlineBytes
+            + static_cast<size_t>(sc.output_count) * (20 + 40)
+            + 64;
+        if (tx2.wire_size_bytes != expected_wire_size) {
+            tprintf("  FAILED: wire_size_bytes = %zu, expected %zu\n",
+                    tx2.wire_size_bytes, expected_wire_size);
+            return false;
+        }
+    }
 
     // encode #2 ---------------------------------------------------------
     auto r2 = uno_workchain::encode_transfer(tx2);
@@ -510,6 +523,37 @@ void test_depth_bound_rejection() {
     tprintf("  PASSED  rejected with reason: \"%s\"\n", e.reason.c_str());
 }
 
+void test_malformed_chunk_tree_rejection() {
+    tprintf("[TEST] decode_transfer rejects malformed enc_ciphertext chunk tree\n");
+
+    auto tx = build_transfer(1, 1);
+
+    // Invalid §4.1a chunk tree: a cell with refs is internal and therefore
+    // must have zero data bits. This one carries 8 data bits plus a ref.
+    auto leaf = make_ref_cell("bad-leaf", 0, 1);
+    vm::CellBuilder bad_chunk;
+    bad_chunk.store_long(0xAB, 8);
+    bad_chunk.store_ref(leaf);
+    tx.outputs[0].enc_ciphertext = bad_chunk.finalize();
+
+    auto enc = uno_workchain::encode_transfer(tx);
+    if (enc.is_error()) {
+        tprintf("  FAILED: baseline encode with opaque ref: %s\n",
+                enc.error().message().c_str());
+        return;
+    }
+
+    auto root = enc.move_as_ok();
+    auto cs = vm::load_cell_slice(root);
+    auto dr = uno_workchain::decode_transfer(cs);
+    if (std::holds_alternative<uno_workchain::Transfer>(dr)) {
+        tprintf("  FAILED: decoder accepted malformed enc_ciphertext chunk tree\n");
+        return;
+    }
+    auto& e = std::get<uno_workchain::TransferDecodeError>(dr);
+    tprintf("  PASSED  rejected with reason: \"%s\"\n", e.reason.c_str());
+}
+
 }  // anonymous namespace
 
 int main() {
@@ -526,6 +570,7 @@ int main() {
         run_shape(sc);
     }
     test_depth_bound_rejection();
+    test_malformed_chunk_tree_rejection();
 
     tprintf("\nTotal failures: %d, skips: %d\n",
             g_test_failures.load(), g_test_skips.load());

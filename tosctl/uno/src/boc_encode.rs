@@ -160,9 +160,8 @@ fn item_head_and_continuation(bytes: &[u8]) -> Result<BuilderData> {
 /// - `spend_count` or `output_count` out of [MIN..=MAX] range
 /// - `out_ciphertext.len() != 80`
 /// - `enc_ciphertext` / `mlkem_ct` / `zk_proof` empty — the daemon
-///   rejects `null` refs, so an empty ciphertext (hypothetically
-///   legal but untypical) must still carry at least one chunk cell
-///   with the terminal-bit set.
+///   rejects `null` refs, so blob refs must carry at least one chunk-tree
+///   leaf.
 pub fn encode_transfer_boc(tx: &Transfer) -> Result<Vec<u8>> {
     if tx.spends.is_empty()
         || tx.spends.len() > MAX_SPEND_COUNT as usize

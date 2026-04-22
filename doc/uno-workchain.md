@@ -703,9 +703,9 @@ Edge case: if input is ≤ 127 B, the tree is a single leaf (no internal cells).
 
 **Walk cost**: decoder visits every cell exactly once; total cells ≈ `N + N/4 + N/16 + ... ≈ 4N/3`, i.e. ~33 % overhead above the leaf count. For v1 `zk_proof` typical: ~4094 leaves + ~1365 internal = ~5459 cells per proof. Each internal cell serializes to ~5 B descriptor + 4 × 2 B refs = ~13 B; aggregate BoC overhead ≈ 18 KB on a 520 KB proof (3.5 %). Negligible.
 
-**Consensus-binding**: the 4-grouping rule, the left-to-right leaf order, and the 127 B chunk size are all consensus-binding — they determine cell hashes, which are covered by `tx_hash` via the `cell_hash(enc_ciphertext)` / `cell_hash(mlkem_ct)` terms in the §4.1 hash preimage, and by the STARK proof's public-input binding of the zk_proof root. Any divergence across implementations produces a different `tx_hash` and a consensus fork.
+**Consensus-binding**: the 4-grouping rule, the left-to-right leaf order, and the 127 B chunk size are consensus-binding for `enc_ciphertext` / `mlkem_ct` because they determine the cell hashes covered by `tx_hash` via the `cell_hash(enc_ciphertext)` / `cell_hash(mlkem_ct)` terms in the §4.1 hash preimage. `zk_proof` is excluded from `tx_hash`; validators recover its byte stream from the bounded chunk tree and pass those bytes to the verifier, so its tree shape is an admission/resource-accounting constraint rather than a signed-message input.
 
-**Bounds check** (decoder): every decoder MUST enforce `total_leaves ≤ kChunkChainMaxChunks = 8192` during the DFS walk. The counter bounds the cumulative cell count (and hence CPU/memory exposure) against a maliciously large tree; 8192 leaves ≈ 1040 KB, ~14 % above the 915 KB 4/4 worst case.
+**Bounds check** (decoder): every decoder MUST enforce `total_leaves ≤ kChunkChainMaxChunks = 8192` during the DFS walk and MUST also cap total visited cells (`kChunkTreeMaxCells = 16384` in the reference implementations). The leaf bound caps payload bytes; the total-cell bound prevents malformed non-canonical trees from hiding excessive internal-node work behind a small leaf count. 8192 leaves ≈ 1040 KB, ~14 % above the 915 KB 4/4 worst case.
 
 Reference implementations:
 - C++: `uno/core/transaction.cpp::store_bytes_as_chunk_chain` / `load_bytes_from_chunk_chain`.

@@ -34,7 +34,8 @@
 //! inline with 0 refs; internal cells have 0 data bits and 1..4 refs to
 //! children (left-to-right in byte order). Tree depth = ⌈log₄(N_leaves)⌉
 //! (≤ 7 at v1 worst case). Total leaf count bounded by
-//! `K_CHUNK_CHAIN_MAX_CHUNKS = 8192` during DFS walk.
+//! `K_CHUNK_CHAIN_MAX_CHUNKS = 8192`; total visited cells are also capped
+//! at `K_CHUNK_TREE_MAX_CELLS` to reject malformed internal-node expansion.
 
 use std::io::Cursor;
 
@@ -62,6 +63,9 @@ const OUTPUT_INLINE_BYTES: usize = 32 + 32 + 2 + OUT_CIPHERTEXT_BYTES;
 const TRANSFER_HEADER_BITS: usize = (1 + 1 + 4 + 32 + 8 + 8 + 1 + 1) * 8;
 /// Mirror of `uno/core/transaction.cpp` `kChunkChainMaxChunks` (post-V1 8192).
 const K_CHUNK_CHAIN_MAX_CHUNKS: usize = 8192;
+/// Mirror of `uno/core/transaction.cpp` `kChunkTreeMaxCells`. Bounds
+/// malformed internal-node expansion even when leaf count is small.
+const K_CHUNK_TREE_MAX_CELLS: usize = K_CHUNK_CHAIN_MAX_CHUNKS * 2;
 /// §17 ≤ 5-level walk assertion. Mirror of `kMaxTransferRefDepth`.
 const MAX_TRANSFER_REF_DEPTH: u16 = 5;
 
@@ -95,12 +99,9 @@ pub enum DecodeError {
     /// inline size, continuation carries unexpected refs, trailing data,
     /// or ref-count mismatch on the parent fan-out cell).
     MalformedItem(String),
-    /// A chunk-chain exceeded `K_CHUNK_CHAIN_MAX_CHUNKS` cells without
-    /// reaching the terminal (has_next=0) marker. Likely a cycle or
-    /// adversarial oversize.
+    /// A chunk tree exceeded the leaf or total-cell decode bound.
     ChunkChainTooLong,
-    /// A chunk-chain cell has a non-`(8k+1)`-bit inline, or claims
-    /// has_next=1 with zero refs.
+    /// A chunk-tree cell violates the §4.1a leaf/internal shape.
     MalformedChunkCell(String),
     /// The `spends_root` / `outputs_root` subtree exceeds the 5-level
     /// §17 walk budget.
@@ -128,7 +129,10 @@ impl std::fmt::Display for DecodeError {
             Self::NullRef(which) => write!(f, "null ref: {which}"),
             Self::MalformedItem(s) => write!(f, "malformed item cell: {s}"),
             Self::ChunkChainTooLong => {
-                write!(f, "chunk chain exceeds {K_CHUNK_CHAIN_MAX_CHUNKS} cells")
+                write!(
+                    f,
+                    "chunk tree exceeds bounds: {K_CHUNK_CHAIN_MAX_CHUNKS} leaves / {K_CHUNK_TREE_MAX_CELLS} cells"
+                )
             }
             Self::MalformedChunkCell(s) => write!(f, "malformed chunk cell: {s}"),
             Self::WalkDepthExceeded { which, depth } => {
@@ -220,8 +224,13 @@ fn load_item_chunked(
 fn load_bytes_from_chunk_chain(root: Cell) -> Result<Vec<u8>, DecodeError> {
     let mut out: Vec<u8> = Vec::new();
     let mut leaf_count: usize = 0;
+    let mut cell_count: usize = 0;
     let mut stack: Vec<Cell> = vec![root];
     while let Some(cell) = stack.pop() {
+        cell_count += 1;
+        if cell_count > K_CHUNK_TREE_MAX_CELLS {
+            return Err(DecodeError::ChunkChainTooLong);
+        }
         let cs = SliceData::load_cell(cell.clone())
             .map_err(|e| DecodeError::MalformedChunkCell(format!("load_cell: {e}")))?;
         let bits = cs.remaining_bits();

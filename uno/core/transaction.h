@@ -111,7 +111,7 @@ struct Transfer {
     uint64_t fee{0};                              // plaintext, native nano-units
     std::vector<SpendDescription>  spends;
     std::vector<OutputDescription> outputs;
-    td::Ref<vm::Cell> zk_proof;                   // Plonky3 STARK proof chunk chain
+    td::Ref<vm::Cell> zk_proof;                   // Plonky3 STARK proof chunk tree
 
     // Filled by the decoder so apply_transfer / gas accounting can re-use them
     // without re-serializing.
@@ -299,13 +299,13 @@ std::array<uint8_t, 32> encode_256(const uint8_t bytes[32]) noexcept;
 // Raw cell-chain helpers (used internally; exposed for tests)
 // ---------------------------------------------------------------------------
 
-/// Store a byte blob of arbitrary length into a linked chain of cells, same
-/// layout as the EVM bytecode chunk chain: each chunk packs up to 127 bytes
-/// + a 1-bit has-next tag + optional ref. Returns a null ref for empty input.
+/// Store a byte blob of arbitrary length into the canonical §4.1a 4-ary
+/// chunk tree. Leaves pack 1..127 bytes with 0 refs; internal cells carry
+/// 0 data bits and 1..4 refs. Returns a null ref for empty input.
 td::Ref<vm::Cell> store_bytes_as_chunk_chain(td::Slice bytes) noexcept;
 
-/// Walk a chunk chain produced by `store_bytes_as_chunk_chain` and return the
-/// concatenated bytes. Bounded walk (rejects cycles and oversized chains).
+/// Walk a chunk tree produced by `store_bytes_as_chunk_chain` and return the
+/// concatenated bytes. Bounded walk (rejects malformed / oversized trees).
 /// Returns empty string on malformed input or null root.
 std::string load_bytes_from_chunk_chain(td::Ref<vm::Cell> root) noexcept;
 
