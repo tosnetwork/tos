@@ -38,6 +38,12 @@ set(EVM_SRC
 
 add_library(evm_workchain STATIC ${EVM_SRC})
 
+target_compile_options(evm_workchain PRIVATE
+  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-cast-qual>
+  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-deprecated-literal-operator>
+  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-missing-field-initializers>
+)
+
 target_include_directories(evm_workchain
   PUBLIC
     ${CMAKE_SOURCE_DIR}             # for "evm/core/*.h", "evm/rpc/*.h"

@@ -33,7 +33,7 @@
 //!     without interface change.
 
 use p3_air::{Air, AirBuilder, BaseAir, WindowAccess};
-use p3_field::{PrimeCharacteristicRing, PrimeField64};
+use p3_field::PrimeCharacteristicRing;
 use p3_goldilocks::{default_goldilocks_poseidon2_8, Goldilocks, Poseidon2Goldilocks};
 use p3_poseidon2_air::RoundConstants;
 use p3_symmetric::Permutation;
@@ -412,13 +412,20 @@ fn write_state_snapshot(
 
     // in_buf snapshot (pad unused slots with 0).
     for k in 0..SPONGE_RATE {
-        row[col::IN_BUF0 + k] = if k < in_buf.len() { in_buf[k] } else { Goldilocks::default() };
+        row[col::IN_BUF0 + k] = if k < in_buf.len() {
+            in_buf[k]
+        } else {
+            Goldilocks::default()
+        };
     }
     let in_len = in_buf.len();
     row[col::IN_BUF_LEN] = Goldilocks::new(in_len as u64);
     for k in 0..(SPONGE_RATE + 1) {
-        row[col::IN_BUF_LEN_FLAG0 + k] =
-            if k == in_len { Goldilocks::new(1) } else { Goldilocks::default() };
+        row[col::IN_BUF_LEN_FLAG0 + k] = if k == in_len {
+            Goldilocks::new(1)
+        } else {
+            Goldilocks::default()
+        };
     }
 
     // out_buf snapshot — upstream's Vec uses `pop()` (LIFO), so the
@@ -427,21 +434,30 @@ fn write_state_snapshot(
     // positional order matching upstream's Vec layout — slot `k` holds
     // the element whose `pop` would be the `out_len - 1 - k`-th sample.
     for k in 0..SPONGE_RATE {
-        row[col::OUT_BUF0 + k] =
-            if k < out_buf.len() { out_buf[k] } else { Goldilocks::default() };
+        row[col::OUT_BUF0 + k] = if k < out_buf.len() {
+            out_buf[k]
+        } else {
+            Goldilocks::default()
+        };
     }
     let out_len = out_buf.len();
     row[col::OUT_BUF_LEN] = Goldilocks::new(out_len as u64);
     for k in 0..(SPONGE_RATE + 1) {
-        row[col::OUT_BUF_LEN_FLAG0 + k] =
-            if k == out_len { Goldilocks::new(1) } else { Goldilocks::default() };
+        row[col::OUT_BUF_LEN_FLAG0 + k] = if k == out_len {
+            Goldilocks::new(1)
+        } else {
+            Goldilocks::default()
+        };
     }
 }
 
 fn write_kind(row: &mut [Goldilocks], kind: u8) {
     for k in 0..CHALLENGER_NUM_OP_KINDS {
-        row[col::KIND0 + k] =
-            if k as u8 == kind { Goldilocks::new(1) } else { Goldilocks::default() };
+        row[col::KIND0 + k] = if k as u8 == kind {
+            Goldilocks::new(1)
+        } else {
+            Goldilocks::default()
+        };
     }
 }
 
@@ -457,7 +473,7 @@ fn write_kind(row: &mut [Goldilocks], kind: u8) {
 /// every row.
 pub(crate) fn gen_p2_witness(input: [Goldilocks; SPONGE_WIDTH]) -> Vec<Goldilocks> {
     use p3_goldilocks::{
-        GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8, GenericPoseidon2LinearLayersGoldilocks,
+        GenericPoseidon2LinearLayersGoldilocks, GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8,
     };
     use p3_poseidon2_air::generate_trace_rows;
 
@@ -475,8 +491,8 @@ pub(crate) fn gen_p2_witness(input: [Goldilocks; SPONGE_WIDTH]) -> Vec<Goldilock
         Goldilocks,
         GenericPoseidon2LinearLayersGoldilocks,
         8,
-        7,  // SBOX_DEGREE
-        1,  // SBOX_REGISTERS
+        7, // SBOX_DEGREE
+        1, // SBOX_REGISTERS
         { p3_goldilocks::GOLDILOCKS_POSEIDON2_HALF_FULL_ROUNDS },
         GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8,
     >(vec![input], &constants, 0);
@@ -574,8 +590,14 @@ pub fn build_trace(
             ChallengerOp::Observe(v) => {
                 // OBSERVE row: snapshot state BEFORE the observe push.
                 emit_row(
-                    &mut rows, width, &state, &in_buf, &out_buf,
-                    OP_KIND_OBSERVE, *v, Goldilocks::default(),
+                    &mut rows,
+                    width,
+                    &state,
+                    &in_buf,
+                    &out_buf,
+                    OP_KIND_OBSERVE,
+                    *v,
+                    Goldilocks::default(),
                 );
 
                 // Apply the observe: push v, clear out_buf, check
@@ -590,8 +612,14 @@ pub fn build_trace(
                     // to compute what state_next should be via P2 (in
                     // Phase A2-2c).
                     emit_row(
-                        &mut rows, width, &state, &in_buf, &out_buf,
-                        OP_KIND_DUPLEX, Goldilocks::default(), Goldilocks::default(),
+                        &mut rows,
+                        width,
+                        &state,
+                        &in_buf,
+                        &out_buf,
+                        OP_KIND_DUPLEX,
+                        Goldilocks::default(),
+                        Goldilocks::default(),
                     );
                     do_duplex(&perm, &mut state, &mut in_buf, &mut out_buf);
                 }
@@ -601,16 +629,28 @@ pub fn build_trace(
                 // with state snapshot BEFORE the permutation.
                 if out_buf.is_empty() {
                     emit_row(
-                        &mut rows, width, &state, &in_buf, &out_buf,
-                        OP_KIND_DUPLEX, Goldilocks::default(), Goldilocks::default(),
+                        &mut rows,
+                        width,
+                        &state,
+                        &in_buf,
+                        &out_buf,
+                        OP_KIND_DUPLEX,
+                        Goldilocks::default(),
+                        Goldilocks::default(),
                     );
                     do_duplex(&perm, &mut state, &mut in_buf, &mut out_buf);
                 }
                 // Now out_buf has RATE elements. Emit SAMPLE row.
                 let sampled = *out_buf.last().expect("out_buf populated by duplex above");
                 emit_row(
-                    &mut rows, width, &state, &in_buf, &out_buf,
-                    OP_KIND_SAMPLE, Goldilocks::default(), sampled,
+                    &mut rows,
+                    width,
+                    &state,
+                    &in_buf,
+                    &out_buf,
+                    OP_KIND_SAMPLE,
+                    Goldilocks::default(),
+                    sampled,
                 );
                 out_buf.pop();
             }
@@ -628,8 +668,14 @@ pub fn build_trace(
     // Pad with IDLE rows, carrying the tail state.
     while rows.len() < trace_height {
         emit_row(
-            &mut rows, width, &state, &in_buf, &out_buf,
-            OP_KIND_IDLE, Goldilocks::default(), Goldilocks::default(),
+            &mut rows,
+            width,
+            &state,
+            &in_buf,
+            &out_buf,
+            OP_KIND_IDLE,
+            Goldilocks::default(),
+            Goldilocks::default(),
         );
     }
 
@@ -687,7 +733,9 @@ pub fn check_all_transitions(trace: &[Goldilocks], trace_height: usize) -> Resul
             kind_sum += flag;
         }
         if kind_sum != one {
-            return Err(format!("row {r}: kind one-hot sum = {kind_sum:?}, expected 1"));
+            return Err(format!(
+                "row {r}: kind one-hot sum = {kind_sum:?}, expected 1"
+            ));
         }
 
         // ---- One-hot: in_buf_len_flags sum to 1, and weighted sum == in_buf_len ----
@@ -908,7 +956,10 @@ pub fn check_all_transitions(trace: &[Goldilocks], trace_height: usize) -> Resul
         if is_sample == one {
             for i in 0..SPONGE_WIDTH {
                 if next[col::STATE0 + i] != local[col::STATE0 + i] {
-                    return Err(format!("row {r}: SAMPLE preserves state, state[{}] changed", i));
+                    return Err(format!(
+                        "row {r}: SAMPLE preserves state, state[{}] changed",
+                        i
+                    ));
                 }
             }
             if next[col::IN_BUF_LEN] != local[col::IN_BUF_LEN] {
@@ -1122,8 +1173,8 @@ where
         {
             // state persistence on OBSERVE rows.
             for i in 0..SPONGE_WIDTH {
-                let delta: AB::Expr =
-                    AB::Expr::from(next_slice[col::STATE0 + i]) - AB::Expr::from(local_slice[col::STATE0 + i]);
+                let delta: AB::Expr = AB::Expr::from(next_slice[col::STATE0 + i])
+                    - AB::Expr::from(local_slice[col::STATE0 + i]);
                 trans.assert_zero(is_observe.clone() * delta);
             }
             // out_buf_next_len == 0 on OBSERVE rows.
@@ -1189,13 +1240,13 @@ where
         //                    — expressed via sum of next-row flags for j > k
         {
             for i in 0..SPONGE_WIDTH {
-                let delta: AB::Expr =
-                    AB::Expr::from(next_slice[col::STATE0 + i]) - AB::Expr::from(local_slice[col::STATE0 + i]);
+                let delta: AB::Expr = AB::Expr::from(next_slice[col::STATE0 + i])
+                    - AB::Expr::from(local_slice[col::STATE0 + i]);
                 trans.assert_zero(is_sample.clone() * delta);
             }
             for k in 0..SPONGE_RATE {
-                let delta: AB::Expr =
-                    AB::Expr::from(next_slice[col::IN_BUF0 + k]) - AB::Expr::from(local_slice[col::IN_BUF0 + k]);
+                let delta: AB::Expr = AB::Expr::from(next_slice[col::IN_BUF0 + k])
+                    - AB::Expr::from(local_slice[col::IN_BUF0 + k]);
                 trans.assert_zero(is_sample.clone() * delta);
             }
             let in_len_delta: AB::Expr = AB::Expr::from(next_slice[col::IN_BUF_LEN])
@@ -1315,7 +1366,9 @@ mod tests {
 
     #[test]
     fn parity_single_observe() {
-        let script = vec![ChallengerOp::Observe(Goldilocks::new(0x4242_4242_4242_4242))];
+        let script = vec![ChallengerOp::Observe(Goldilocks::new(
+            0x4242_4242_4242_4242,
+        ))];
         assert_parity_with_upstream(&script).unwrap();
     }
 
@@ -1470,7 +1523,10 @@ mod tests {
         let trace = build_trace(&script, 8).unwrap();
         // Row 0: OBSERVE.
         let r0 = &trace[0..CHALLENGER_AIR_WIDTH];
-        assert_eq!(r0[col::KIND0 + OP_KIND_OBSERVE as usize], Goldilocks::new(1));
+        assert_eq!(
+            r0[col::KIND0 + OP_KIND_OBSERVE as usize],
+            Goldilocks::new(1)
+        );
         assert_eq!(r0[col::OBSERVED_VALUE], Goldilocks::new(0x11));
         // Row 1: IDLE.
         let r1 = &trace[CHALLENGER_AIR_WIDTH..2 * CHALLENGER_AIR_WIDTH];
@@ -1517,7 +1573,10 @@ mod tests {
     fn trace_observe_four_then_sample_all_four() {
         // 4 observes trigger duplex; 4 samples drain out_buf.
         let script = vec![
-            obs(10), obs(20), obs(30), obs(40),
+            obs(10),
+            obs(20),
+            obs(30),
+            obs(40),
             ChallengerOp::Sample,
             ChallengerOp::Sample,
             ChallengerOp::Sample,
@@ -1566,7 +1625,10 @@ mod tests {
         // build_trace; collect the sampled values from both and assert
         // they match.
         let script = vec![
-            obs(0x11), obs(0x22), obs(0x33), obs(0x44), // triggers duplex
+            obs(0x11),
+            obs(0x22),
+            obs(0x33),
+            obs(0x44), // triggers duplex
             ChallengerOp::Sample,
             ChallengerOp::Sample,
             obs(0x55),
@@ -1614,10 +1676,7 @@ mod tests {
 
     #[test]
     fn checker_rejects_tampered_sample_value() {
-        let script = vec![
-            obs(1), obs(2), obs(3), obs(4),
-            ChallengerOp::Sample,
-        ];
+        let script = vec![obs(1), obs(2), obs(3), obs(4), ChallengerOp::Sample];
         let mut trace = build_trace(&script, 8).unwrap();
         // Row 5 is SAMPLE. Change its sampled_value to junk.
         let sample_row = 5;
@@ -1672,7 +1731,10 @@ mod tests {
     use p3_matrix::dense::RowMajorMatrix;
     use p3_uni_stark::{prove, verify};
 
-    fn trace_matrix_from_script(script: &[ChallengerOp], height: usize) -> RowMajorMatrix<Goldilocks> {
+    fn trace_matrix_from_script(
+        script: &[ChallengerOp],
+        height: usize,
+    ) -> RowMajorMatrix<Goldilocks> {
         let flat = build_trace(script, height).expect("valid script");
         RowMajorMatrix::new(flat, CHALLENGER_AIR_WIDTH)
     }
@@ -1690,7 +1752,10 @@ mod tests {
     fn air_prove_and_verify_observe_and_sample() {
         // 4 observes (auto-duplex) + 2 samples.
         let script = vec![
-            obs(0x11), obs(0x22), obs(0x33), obs(0x44),
+            obs(0x11),
+            obs(0x22),
+            obs(0x33),
+            obs(0x44),
             ChallengerOp::Sample,
             ChallengerOp::Sample,
         ];
@@ -1701,8 +1766,7 @@ mod tests {
         let cfg = build_config();
         let air = ChallengerAirV1;
         let proof = prove(&cfg, &air, trace, &[]);
-        verify(&cfg, &air, &proof, &[])
-            .expect("observe-and-sample challenger proof must verify");
+        verify(&cfg, &air, &proof, &[]).expect("observe-and-sample challenger proof must verify");
     }
 
     #[test]
@@ -1713,26 +1777,28 @@ mod tests {
         let cfg = build_config();
         let air = ChallengerAirV1;
         let proof = prove(&cfg, &air, trace, &[]);
-        verify(&cfg, &air, &proof, &[])
-            .expect("forced-duplex sample path must verify");
+        verify(&cfg, &air, &proof, &[]).expect("forced-duplex sample path must verify");
     }
 
     #[test]
     fn air_prove_and_verify_longer_interleaved() {
         let script = vec![
-            obs(1), obs(2),
-            ChallengerOp::Sample,       // forced duplex (no observe filled the buffer)
+            obs(1),
+            obs(2),
+            ChallengerOp::Sample, // forced duplex (no observe filled the buffer)
             obs(3),
             ChallengerOp::Sample,
-            obs(4), obs(5), obs(6), obs(7),  // this triggers auto-duplex (RATE=4)
+            obs(4),
+            obs(5),
+            obs(6),
+            obs(7), // this triggers auto-duplex (RATE=4)
             ChallengerOp::Sample,
         ];
         let trace = trace_matrix_from_script(&script, 32);
         let cfg = build_config();
         let air = ChallengerAirV1;
         let proof = prove(&cfg, &air, trace, &[]);
-        verify(&cfg, &air, &proof, &[])
-            .expect("interleaved script challenger proof must verify");
+        verify(&cfg, &air, &proof, &[]).expect("interleaved script challenger proof must verify");
     }
 
     /// Helper: try to prove + verify an adversarial trace. Returns true
@@ -1761,7 +1827,10 @@ mod tests {
         let mut flat_bad = flat.clone();
         flat_bad[col::OBSERVED_VALUE] = Goldilocks::new(0xBB);
         let trace = RowMajorMatrix::new(flat_bad, CHALLENGER_AIR_WIDTH);
-        assert!(air_rejects(trace), "tampered observed_value must be rejected");
+        assert!(
+            air_rejects(trace),
+            "tampered observed_value must be rejected"
+        );
     }
 
     #[test]
@@ -1773,7 +1842,10 @@ mod tests {
         flat_bad[sample_row * CHALLENGER_AIR_WIDTH + col::SAMPLED_VALUE] =
             Goldilocks::new(0xDEAD_BEEF);
         let trace = RowMajorMatrix::new(flat_bad, CHALLENGER_AIR_WIDTH);
-        assert!(air_rejects(trace), "tampered sampled_value must be rejected");
+        assert!(
+            air_rejects(trace),
+            "tampered sampled_value must be rejected"
+        );
     }
 
     #[test]
@@ -1785,7 +1857,10 @@ mod tests {
         // (OBSERVE is still fine, SAMPLE == 1 is fine, but sum != 1 catches it).
         flat_bad[col::KIND0 + OP_KIND_SAMPLE as usize] = Goldilocks::new(1);
         let trace = RowMajorMatrix::new(flat_bad, CHALLENGER_AIR_WIDTH);
-        assert!(air_rejects(trace), "two simultaneous kind flags must be rejected");
+        assert!(
+            air_rejects(trace),
+            "two simultaneous kind flags must be rejected"
+        );
     }
 
     #[test]
@@ -1813,7 +1888,10 @@ mod tests {
         // Forge: copy row 4's state[0] (pre-permutation) into row 5's state[0].
         let forged = flat[duplex_row * CHALLENGER_AIR_WIDTH + col::STATE0];
         let real = flat[next_row * CHALLENGER_AIR_WIDTH + col::STATE0];
-        assert_ne!(forged, real, "fixture sanity: pre/post permutation should differ");
+        assert_ne!(
+            forged, real,
+            "fixture sanity: pre/post permutation should differ"
+        );
         flat_bad[next_row * CHALLENGER_AIR_WIDTH + col::STATE0] = forged;
         // Also mirror the forged value into out_buf[0] to keep the
         // DUPLEX's secondary constraint `out_buf_next[0] == state_next[0]`

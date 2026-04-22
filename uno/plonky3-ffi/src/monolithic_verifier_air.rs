@@ -77,7 +77,7 @@ use p3_symmetric::Permutation;
 // ---------------------------------------------------------------------------
 
 use crate::fri_arith::fold_row_ref;
-use crate::merkle_path::{compress_pair_ref, hash_leaf_row_ref, Digest};
+use crate::merkle_path::{compress_pair_ref, Digest};
 use crate::prover::Challenge;
 use crate::transfer_air::{
     eval_poseidon2, P2Cols, POSEIDON2_COLS_PER_INSTANCE, POSEIDON2_HALF_FULL_ROUNDS,
@@ -125,8 +125,7 @@ pub mod col {
     pub const ABSORB_BLOCK_LEN: usize = ABSORB_BLOCK_END;
     /// One-hot over {0, 1, 2, 3, 4}.
     pub const ABSORB_BLOCK_LEN_FLAG0: usize = ABSORB_BLOCK_LEN + 1;
-    pub const ABSORB_BLOCK_LEN_FLAG_END: usize =
-        ABSORB_BLOCK_LEN_FLAG0 + (SPONGE_RATE + 1);
+    pub const ABSORB_BLOCK_LEN_FLAG_END: usize = ABSORB_BLOCK_LEN_FLAG0 + (SPONGE_RATE + 1);
     /// 1 on the FIRST ABSORB row of a leaf's chain.
     pub const ABSORB_IS_FIRST: usize = ABSORB_BLOCK_LEN_FLAG_END;
     /// 1 on the LAST ABSORB row of a leaf's chain.
@@ -254,7 +253,9 @@ pub const MONOLITHIC_VERIFIER_AIR_WIDTH: usize = col::WIDTH;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum TraceBuildError {
-    TraceHeightNotPow2 { got: usize },
+    TraceHeightNotPow2 {
+        got: usize,
+    },
     EmptyLeaf,
     EmptyPath,
     TraceHeightTooSmall {
@@ -416,8 +417,11 @@ pub fn build_leaf_to_root_trace(
 
     let write_kind = |out: &mut [Goldilocks], kind: u8| {
         for k in 0..NUM_OP_KINDS {
-            out[col::KIND0 + k] =
-                if k as u8 == kind { Goldilocks::new(1) } else { zero_g };
+            out[col::KIND0 + k] = if k as u8 == kind {
+                Goldilocks::new(1)
+            } else {
+                zero_g
+            };
         }
     };
     let write_root_pi = |out: &mut [Goldilocks], root: &Digest| {
@@ -519,9 +523,8 @@ pub fn build_leaf_to_root_trace(
     // ======================================================================
     // Phase B: COMPRESS rows.
     // ======================================================================
-    let mut running: Digest = digests_per_row.first().copied().unwrap_or([zero_g; 4]);
     // Start with leaf_digest (STATE_OUT[0..4] of last ABSORB row).
-    running = {
+    let mut running: Digest = {
         let last_absorb_base = (n_absorb - 1) * width;
         let mut d = [zero_g; DIGEST_WIDTH];
         for i in 0..DIGEST_WIDTH {
@@ -700,8 +703,11 @@ pub fn build_multi_path_leaf_to_root_trace(
 
     let write_kind = |out: &mut [Goldilocks], kind: u8| {
         for k in 0..NUM_OP_KINDS {
-            out[col::KIND0 + k] =
-                if k as u8 == kind { Goldilocks::new(1) } else { zero_g };
+            out[col::KIND0 + k] = if k as u8 == kind {
+                Goldilocks::new(1)
+            } else {
+                zero_g
+            };
         }
     };
     let write_root_pi = |out: &mut [Goldilocks], root: &Digest| {
@@ -940,16 +946,18 @@ pub fn build_alpha_chain_trace(
     let zero_g = Goldilocks::default();
 
     let write_ext = |out: &mut [Goldilocks], base: usize, v: Challenge| {
-        let limbs =
-            <Challenge as BasedVectorSpace<Goldilocks>>::as_basis_coefficients_slice(&v);
+        let limbs = <Challenge as BasedVectorSpace<Goldilocks>>::as_basis_coefficients_slice(&v);
         for i in 0..CHALLENGE_DIM {
             out[base + i] = limbs[i];
         }
     };
     let write_kind = |out: &mut [Goldilocks], kind: u8| {
         for k in 0..NUM_OP_KINDS {
-            out[col::KIND0 + k] =
-                if k as u8 == kind { Goldilocks::new(1) } else { zero_g };
+            out[col::KIND0 + k] = if k as u8 == kind {
+                Goldilocks::new(1)
+            } else {
+                zero_g
+            };
         }
     };
     // Flag[0] = 1 on every non-ABSORB row (BLOCK_LEN = 0).
@@ -983,9 +991,7 @@ pub fn build_alpha_chain_trace(
                 trace_height,
             });
         }
-        let quot_inv = denom
-            .try_inverse()
-            .expect("denom ≠ 0 ⇒ invertible");
+        let quot_inv = denom.try_inverse().expect("denom ≠ 0 ⇒ invertible");
         write_ext(row, col::ALPHA_QUOT_INV0, quot_inv);
 
         // Intermediate: DIFF_QUOT = (p_z − p_x) · quot_inv.
@@ -1083,16 +1089,18 @@ pub fn build_fold_chain_trace(
     let mut flat = vec![Goldilocks::default(); trace_height * width];
     let zero_g = Goldilocks::default();
     let write_ext = |out: &mut [Goldilocks], base: usize, v: Challenge| {
-        let limbs =
-            <Challenge as BasedVectorSpace<Goldilocks>>::as_basis_coefficients_slice(&v);
+        let limbs = <Challenge as BasedVectorSpace<Goldilocks>>::as_basis_coefficients_slice(&v);
         for i in 0..CHALLENGE_DIM {
             out[base + i] = limbs[i];
         }
     };
     let write_kind = |out: &mut [Goldilocks], kind: u8| {
         for k in 0..NUM_OP_KINDS {
-            out[col::KIND0 + k] =
-                if k as u8 == kind { Goldilocks::new(1) } else { zero_g };
+            out[col::KIND0 + k] = if k as u8 == kind {
+                Goldilocks::new(1)
+            } else {
+                zero_g
+            };
         }
     };
     let zero_block_len_flag = |out: &mut [Goldilocks]| {
@@ -1241,16 +1249,18 @@ pub fn build_alpha_to_fold_unified_trace(
     let mut flat = vec![Goldilocks::default(); trace_height * width];
     let zero_g = Goldilocks::default();
     let write_ext = |out: &mut [Goldilocks], base: usize, v: Challenge| {
-        let limbs =
-            <Challenge as BasedVectorSpace<Goldilocks>>::as_basis_coefficients_slice(&v);
+        let limbs = <Challenge as BasedVectorSpace<Goldilocks>>::as_basis_coefficients_slice(&v);
         for i in 0..CHALLENGE_DIM {
             out[base + i] = limbs[i];
         }
     };
     let write_kind = |out: &mut [Goldilocks], kind: u8| {
         for k in 0..NUM_OP_KINDS {
-            out[col::KIND0 + k] =
-                if k as u8 == kind { Goldilocks::new(1) } else { zero_g };
+            out[col::KIND0 + k] = if k as u8 == kind {
+                Goldilocks::new(1)
+            } else {
+                zero_g
+            };
         }
     };
     let zero_block_len_flag = |out: &mut [Goldilocks]| {
@@ -1512,16 +1522,18 @@ pub fn build_alpha_merkle_fold_bundle_trace(
     let perm = default_goldilocks_poseidon2_8();
 
     let write_ext = |out: &mut [Goldilocks], base: usize, v: Challenge| {
-        let limbs =
-            <Challenge as BasedVectorSpace<Goldilocks>>::as_basis_coefficients_slice(&v);
+        let limbs = <Challenge as BasedVectorSpace<Goldilocks>>::as_basis_coefficients_slice(&v);
         for i in 0..CHALLENGE_DIM {
             out[base + i] = limbs[i];
         }
     };
     let write_kind = |out: &mut [Goldilocks], kind: u8| {
         for k in 0..NUM_OP_KINDS {
-            out[col::KIND0 + k] =
-                if k as u8 == kind { Goldilocks::new(1) } else { zero_g };
+            out[col::KIND0 + k] = if k as u8 == kind {
+                Goldilocks::new(1)
+            } else {
+                zero_g
+            };
         }
     };
     let write_block_len_flags = |out: &mut [Goldilocks], len: usize| {
@@ -1934,8 +1946,7 @@ pub fn build_multi_bundle_trace(
             if p.opening_proof.is_empty() {
                 return Err(TraceBuildError::EmptyPath);
             }
-            merkle_rows +=
-                (p.leaf.len() + SPONGE_RATE - 1) / SPONGE_RATE + p.opening_proof.len();
+            merkle_rows += (p.leaf.len() + SPONGE_RATE - 1) / SPONGE_RATE + p.opening_proof.len();
         }
         physical_rows += b.alpha_steps.len() + merkle_rows + b.fold_rounds.len();
     }
@@ -1952,16 +1963,18 @@ pub fn build_multi_bundle_trace(
     let perm = default_goldilocks_poseidon2_8();
 
     let write_ext = |out: &mut [Goldilocks], base: usize, v: Challenge| {
-        let limbs =
-            <Challenge as BasedVectorSpace<Goldilocks>>::as_basis_coefficients_slice(&v);
+        let limbs = <Challenge as BasedVectorSpace<Goldilocks>>::as_basis_coefficients_slice(&v);
         for i in 0..CHALLENGE_DIM {
             out[base + i] = limbs[i];
         }
     };
     let write_kind = |out: &mut [Goldilocks], kind: u8| {
         for k in 0..NUM_OP_KINDS {
-            out[col::KIND0 + k] =
-                if k as u8 == kind { Goldilocks::new(1) } else { zero_g };
+            out[col::KIND0 + k] = if k as u8 == kind {
+                Goldilocks::new(1)
+            } else {
+                zero_g
+            };
         }
     };
     let write_block_len_flags = |out: &mut [Goldilocks], len: usize| {
@@ -2009,9 +2022,8 @@ pub fn build_multi_bundle_trace(
         let alpha_final_pow = apow;
 
         let mut fold_current = rho_final;
-        let mut fold_records: Vec<(
-            Goldilocks, Goldilocks, Challenge, Challenge, Challenge,
-        )> = Vec::with_capacity(bundle.fold_rounds.len());
+        let mut fold_records: Vec<(Goldilocks, Goldilocks, Challenge, Challenge, Challenge)> =
+            Vec::with_capacity(bundle.fold_rounds.len());
         for round in bundle.fold_rounds {
             let bit = (round.domain_index & 1) as u64;
             let child_log_h = round.log_height - 1;
@@ -2055,8 +2067,11 @@ pub fn build_multi_bundle_trace(
         };
 
         // === ALPHA rows ===
-        for (r, (step, record)) in
-            bundle.alpha_steps.iter().zip(alpha_records.iter()).enumerate()
+        for (r, (step, record)) in bundle
+            .alpha_steps
+            .iter()
+            .zip(alpha_records.iter())
+            .enumerate()
         {
             let (qi, dq, apow_in, ro_in) = *record;
             let base = (row_cursor + r) * width;
@@ -2105,14 +2120,11 @@ pub fn build_multi_bundle_trace(
 
                 let is_first = r == 0;
                 let is_last = r + 1 == n_absorb;
-                row[col::ABSORB_IS_FIRST] =
-                    if is_first { Goldilocks::new(1) } else { zero_g };
-                row[col::ABSORB_IS_LAST] =
-                    if is_last { Goldilocks::new(1) } else { zero_g };
+                row[col::ABSORB_IS_FIRST] = if is_first { Goldilocks::new(1) } else { zero_g };
+                row[col::ABSORB_IS_LAST] = if is_last { Goldilocks::new(1) } else { zero_g };
 
                 let block_start = r * SPONGE_RATE;
-                let block_len =
-                    core::cmp::min(SPONGE_RATE, path.leaf.len() - block_start);
+                let block_len = core::cmp::min(SPONGE_RATE, path.leaf.len() - block_start);
                 write_block_len_flags(row, block_len);
                 for i in 0..block_len {
                     row[col::ABSORB_BLOCK0 + i] = path.leaf[block_start + i];
@@ -2236,8 +2248,11 @@ pub fn build_multi_bundle_trace(
 
         // === FOLD rows ===
         let mut cur = rho_final;
-        for (r, (round, record)) in
-            bundle.fold_rounds.iter().zip(fold_records.iter()).enumerate()
+        for (r, (round, record)) in bundle
+            .fold_rounds
+            .iter()
+            .zip(fold_records.iter())
+            .enumerate()
         {
             let (s, inv_2s, pair_left, pair_right, folded) = *record;
             let row_idx = inner_cursor + r;
@@ -2304,9 +2319,9 @@ pub fn build_multi_bundle_trace(
 
 pub(crate) fn gen_p2_witness(input: [Goldilocks; 8]) -> Vec<Goldilocks> {
     use p3_goldilocks::{
-        GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8, GenericPoseidon2LinearLayersGoldilocks,
+        GenericPoseidon2LinearLayersGoldilocks, GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8,
     };
-    use p3_poseidon2_air::{RoundConstants, generate_trace_rows};
+    use p3_poseidon2_air::{generate_trace_rows, RoundConstants};
 
     let constants: RoundConstants<
         Goldilocks,
@@ -2375,8 +2390,7 @@ where
         let one = || fe(1);
 
         let is_absorb: AB::Expr = local[col::KIND0 + OP_KIND_ABSORB as usize].into();
-        let is_compress: AB::Expr =
-            local[col::KIND0 + OP_KIND_COMPRESS as usize].into();
+        let is_compress: AB::Expr = local[col::KIND0 + OP_KIND_COMPRESS as usize].into();
         let is_fold: AB::Expr = local[col::KIND0 + OP_KIND_FOLD as usize].into();
         let is_alpha: AB::Expr = local[col::KIND0 + OP_KIND_ALPHA as usize].into();
         let is_idle: AB::Expr = local[col::KIND0 + OP_KIND_IDLE as usize].into();
@@ -2423,11 +2437,8 @@ where
         // IDLE rows: BLOCK_LEN == 0 (flag[0] == 1).
         builder.assert_zero(is_idle.clone() * (one() - flag0.clone()));
         // Non-last ABSORB rows: BLOCK_LEN == RATE (flag[RATE] == 1).
-        let flag_rate: AB::Expr =
-            local[col::ABSORB_BLOCK_LEN_FLAG0 + SPONGE_RATE].into();
-        builder.assert_zero(
-            is_absorb.clone() * (one() - is_last.clone()) * (one() - flag_rate),
-        );
+        let flag_rate: AB::Expr = local[col::ABSORB_BLOCK_LEN_FLAG0 + SPONGE_RATE].into();
+        builder.assert_zero(is_absorb.clone() * (one() - is_last.clone()) * (one() - flag_rate));
 
         // ABSORB first-row rule:
         //   STATE_IN[i] = cond_block_use[i] · BLOCK[i] for i in 0..RATE
@@ -2469,10 +2480,8 @@ where
             let sib: AB::Expr = local[col::COMPRESS_SIBLING0 + i].into();
             let s_l: AB::Expr = local[col::STATE_IN0 + i].into();
             let s_r: AB::Expr = local[col::STATE_IN0 + DIGEST_WIDTH + i].into();
-            let expected_left =
-                (one() - bit.clone()) * cur.clone() + bit.clone() * sib.clone();
-            let expected_right =
-                bit.clone() * cur + (one() - bit.clone()) * sib;
+            let expected_left = (one() - bit.clone()) * cur.clone() + bit.clone() * sib.clone();
+            let expected_right = bit.clone() * cur + (one() - bit.clone()) * sib;
             builder.assert_zero(is_compress.clone() * (s_l - expected_left));
             builder.assert_zero(is_compress.clone() * (s_r - expected_right));
         }
@@ -2518,14 +2527,11 @@ where
         //
         // NOTE: this replaces A3-1's unconditional TCR persistence,
         // which made one-root-per-trace the only supported shape.
-        let next_is_compress_tcr: AB::Expr =
-            next[col::KIND0 + OP_KIND_COMPRESS as usize].into();
+        let next_is_compress_tcr: AB::Expr = next[col::KIND0 + OP_KIND_COMPRESS as usize].into();
         for i in 0..DIGEST_WIDTH {
             let l_r: AB::Expr = local[col::TRACE_COMMIT_ROOT0 + i].into();
             let n_r: AB::Expr = next[col::TRACE_COMMIT_ROOT0 + i].into();
-            trans.assert_zero(
-                is_compress.clone() * next_is_compress_tcr.clone() * (n_r - l_r),
-            );
+            trans.assert_zero(is_compress.clone() * next_is_compress_tcr.clone() * (n_r - l_r));
         }
 
         // A3-5a: Per-path root check.
@@ -2543,34 +2549,26 @@ where
             let dg: AB::Expr = local[col::DIGEST0 + i].into();
             let tcr: AB::Expr = local[col::TRACE_COMMIT_ROOT0 + i].into();
             trans.assert_zero(
-                is_compress.clone()
-                    * (one() - next_is_compress_tcr.clone())
-                    * (dg - tcr),
+                is_compress.clone() * (one() - next_is_compress_tcr.clone()) * (dg - tcr),
             );
         }
 
         // Leaf-digest bridge: when local is is_last ABSORB and next is
         // COMPRESS, next.CURRENT == local.STATE_OUT[0..4]. This closes
         // the A2 trusted-construction gap.
-        let next_is_compress: AB::Expr =
-            next[col::KIND0 + OP_KIND_COMPRESS as usize].into();
+        let next_is_compress: AB::Expr = next[col::KIND0 + OP_KIND_COMPRESS as usize].into();
         for i in 0..DIGEST_WIDTH {
             let n_cur: AB::Expr = next[col::COMPRESS_CURRENT0 + i].into();
             let l_out: AB::Expr = local[col::STATE_OUT0 + i].into();
-            trans.assert_zero(
-                is_last.clone() * next_is_compress.clone() * (n_cur - l_out),
-            );
+            trans.assert_zero(is_last.clone() * next_is_compress.clone() * (n_cur - l_out));
         }
 
         // COMPRESS → COMPRESS: next.CURRENT = local.DIGEST.
-        let next_is_compress_prop: AB::Expr =
-            next[col::KIND0 + OP_KIND_COMPRESS as usize].into();
+        let next_is_compress_prop: AB::Expr = next[col::KIND0 + OP_KIND_COMPRESS as usize].into();
         for i in 0..DIGEST_WIDTH {
             let n_cur: AB::Expr = next[col::COMPRESS_CURRENT0 + i].into();
             let l_dg: AB::Expr = local[col::DIGEST0 + i].into();
-            trans.assert_zero(
-                is_compress.clone() * next_is_compress_prop.clone() * (n_cur - l_dg),
-            );
+            trans.assert_zero(is_compress.clone() * next_is_compress_prop.clone() * (n_cur - l_dg));
         }
 
         // IDLE persistence — all shared-state + public-input cols
@@ -2590,8 +2588,7 @@ where
         //     + next.cond_carry[i]   · local.STATE_OUT[i]
         //
         // Gated by (next_is_absorb · (1 − next_is_first)).
-        let next_is_absorb: AB::Expr =
-            next[col::KIND0 + OP_KIND_ABSORB as usize].into();
+        let next_is_absorb: AB::Expr = next[col::KIND0 + OP_KIND_ABSORB as usize].into();
         let next_is_first: AB::Expr = next[col::ABSORB_IS_FIRST].into();
         let carry_gate = next_is_absorb * (one() - next_is_first);
         for i in 0..SPONGE_WIDTH {
@@ -2632,8 +2629,7 @@ where
         // gate is 0 and no constraint fires.
         // =================================================================
         let mut last = builder.when_last_row();
-        let last_is_compress: AB::Expr =
-            local[col::KIND0 + OP_KIND_COMPRESS as usize].into();
+        let last_is_compress: AB::Expr = local[col::KIND0 + OP_KIND_COMPRESS as usize].into();
         for i in 0..DIGEST_WIDTH {
             let dg: AB::Expr = local[col::DIGEST0 + i].into();
             let r: AB::Expr = local[col::TRACE_COMMIT_ROOT0 + i].into();
@@ -2659,9 +2655,7 @@ where
         // gated separately for FOLD). Re-assert here rather than gating
         // through is_compress.
         let fold_bit: AB::Expr = local[col::COMPRESS_INDEX_BIT].into();
-        builder.assert_zero(
-            is_fold.clone() * fold_bit.clone() * (fold_bit.clone() - one()),
-        );
+        builder.assert_zero(is_fold.clone() * fold_bit.clone() * (fold_bit.clone() - one()));
 
         // FOLD row: PAIR_LEFT / PAIR_RIGHT orientation — STATE_IN cols
         // repurposed via K-air-col-share.
@@ -2674,8 +2668,7 @@ where
             let pr: AB::Expr = local[col::STATE_IN0 + CHALLENGE_DIM + i].into();
             let expected_left =
                 (one() - fold_bit.clone()) * fin.clone() + fold_bit.clone() * sib.clone();
-            let expected_right =
-                fold_bit.clone() * fin + (one() - fold_bit.clone()) * sib;
+            let expected_right = fold_bit.clone() * fin + (one() - fold_bit.clone()) * sib;
             builder.assert_zero(is_fold.clone() * (pl - expected_left));
             builder.assert_zero(is_fold.clone() * (pr - expected_right));
         }
@@ -2684,9 +2677,7 @@ where
         {
             let s: AB::Expr = local[col::FOLD_S].into();
             let inv2s: AB::Expr = local[col::FOLD_INV_2S].into();
-            builder.assert_zero(
-                is_fold.clone() * (fe(2) * s * inv2s - one()),
-            );
+            builder.assert_zero(is_fold.clone() * (fe(2) * s * inv2s - one()));
         }
 
         // FOLD row: fold identity per limb (degree 3 when gated).
@@ -2708,9 +2699,8 @@ where
             let d1 = pl1.clone() - pr1.clone();
 
             let lhs0 = f0 * two_s.clone();
-            let rhs0 = s.clone() * (pl0 + pr0)
-                + b0.clone() * d0.clone()
-                + w() * b1.clone() * d1.clone();
+            let rhs0 =
+                s.clone() * (pl0 + pr0) + b0.clone() * d0.clone() + w() * b1.clone() * d1.clone();
             builder.assert_zero(is_fold.clone() * (lhs0 - rhs0));
 
             let lhs1 = f1 * two_s;
@@ -2724,12 +2714,12 @@ where
         // Self-contained in the ALPHA_* columns: four degree-2 extension
         // multiplications, each gated by is_alpha → degree 3 overall.
         // =================================================================
-        let ext_mul = |a0: AB::Expr, a1: AB::Expr, b0: AB::Expr, b1: AB::Expr|
-            -> (AB::Expr, AB::Expr) {
-            let p0 = a0.clone() * b0.clone() + w() * a1.clone() * b1.clone();
-            let p1 = a0 * b1 + a1 * b0;
-            (p0, p1)
-        };
+        let ext_mul =
+            |a0: AB::Expr, a1: AB::Expr, b0: AB::Expr, b1: AB::Expr| -> (AB::Expr, AB::Expr) {
+                let p0 = a0.clone() * b0.clone() + w() * a1.clone() * b1.clone();
+                let p1 = a0 * b1 + a1 * b0;
+                (p0, p1)
+            };
 
         // (1) ALPHA — QUOT_INV · (Z − X) == 1.
         {
@@ -2815,15 +2805,11 @@ where
         for i in 0..CHALLENGE_DIM {
             let n_api: AB::Expr = next[col::ALPHA_POW_IN0 + i].into();
             let l_apo: AB::Expr = local[col::ALPHA_POW_OUT0 + i].into();
-            trans2.assert_zero(
-                is_alpha.clone() * next_is_alpha.clone() * (n_api - l_apo),
-            );
+            trans2.assert_zero(is_alpha.clone() * next_is_alpha.clone() * (n_api - l_apo));
 
             let n_ri: AB::Expr = next[col::ALPHA_RO_IN0 + i].into();
             let l_ro: AB::Expr = local[col::ALPHA_RO_OUT0 + i].into();
-            trans2.assert_zero(
-                is_alpha.clone() * next_is_alpha.clone() * (n_ri - l_ro),
-            );
+            trans2.assert_zero(is_alpha.clone() * next_is_alpha.clone() * (n_ri - l_ro));
         }
 
         // A3-5c: PI-proxy persistence GATED by `1 − bundle_start`.
@@ -2838,8 +2824,7 @@ where
         //   bundle_start = (1 − local_is_alpha) · next_is_alpha
         //
         // (Degree 2; the PI-diff is degree 1; total degree 3 ✓.)
-        let bundle_start: AB::Expr =
-            (one() - is_alpha.clone()) * next_is_alpha.clone();
+        let bundle_start: AB::Expr = (one() - is_alpha.clone()) * next_is_alpha.clone();
         for c in col::INITIAL_ALPHA_POW0..col::FINAL_RO_END {
             let l_c: AB::Expr = local[c].into();
             let n_c: AB::Expr = next[c].into();
@@ -2872,9 +2857,7 @@ where
         for i in 0..CHALLENGE_DIM {
             let n_fin: AB::Expr = next[col::FOLD_IN0 + i].into();
             let l_ro: AB::Expr = local[col::ALPHA_RO_OUT0 + i].into();
-            trans2.assert_zero(
-                is_alpha.clone() * next_is_fold.clone() * (n_fin - l_ro),
-            );
+            trans2.assert_zero(is_alpha.clone() * next_is_fold.clone() * (n_fin - l_ro));
         }
 
         // (ii) ALPHA_RO_OUT persistence on non-α transitions.
@@ -2882,9 +2865,7 @@ where
         for i in 0..CHALLENGE_DIM {
             let l_ro: AB::Expr = local[col::ALPHA_RO_OUT0 + i].into();
             let n_ro: AB::Expr = next[col::ALPHA_RO_OUT0 + i].into();
-            trans2.assert_zero(
-                (one() - next_is_alpha.clone()) * (n_ro - l_ro),
-            );
+            trans2.assert_zero((one() - next_is_alpha.clone()) * (n_ro - l_ro));
         }
 
         // (iii) FOLD_OUT persistence on non-fold transitions.
@@ -2904,9 +2885,7 @@ where
             let l_fo: AB::Expr = local[col::FOLD_OUT0 + i].into();
             let n_fo: AB::Expr = next[col::FOLD_OUT0 + i].into();
             trans2.assert_zero(
-                (one() - next_is_fold.clone())
-                    * (one() - next_is_alpha.clone())
-                    * (n_fo - l_fo),
+                (one() - next_is_fold.clone()) * (one() - next_is_alpha.clone()) * (n_fo - l_fo),
             );
         }
 
@@ -3055,6 +3034,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::merkle_path::hash_leaf_row_ref;
 
     /// A6-1.6: test PI = all-zero 8-element Goldilocks array. Test
     /// traces use `block_pi_zero()` to populate BLOCK_PI cols to zero,
@@ -3131,8 +3111,7 @@ mod tests {
         match outcome {
             Err(_) => {} // debug-builder panic on broken one-hot
             Ok(p) => {
-                verify(&cfg, &air, &p, &TEST_PI_ZERO)
-                    .expect_err("broken KIND one-hot must reject");
+                verify(&cfg, &air, &p, &TEST_PI_ZERO).expect_err("broken KIND one-hot must reject");
             }
         }
     }
@@ -3141,33 +3120,52 @@ mod tests {
     #[test]
     fn print_column_layout() {
         eprintln!("MonolithicVerifierAir layout (A3-PRE):");
-        eprintln!("  KIND           : 0 .. {}  ({} cols)", col::KIND_END, col::KIND_END);
+        eprintln!(
+            "  KIND           : 0 .. {}  ({} cols)",
+            col::KIND_END,
+            col::KIND_END
+        );
         eprintln!(
             "  ABSORB bank    : {} .. {}",
-            col::ABSORB_BLOCK0, col::ABSORB_IS_LAST + 1
+            col::ABSORB_BLOCK0,
+            col::ABSORB_IS_LAST + 1
         );
         eprintln!(
             "  COMPRESS bank  : {} .. {}",
-            col::COMPRESS_CURRENT0, col::COMPRESS_INDEX_BIT + 1
+            col::COMPRESS_CURRENT0,
+            col::COMPRESS_INDEX_BIT + 1
         );
         eprintln!(
             "  STATE (shared) : {} .. {}",
-            col::STATE_IN0, col::DIGEST_END
+            col::STATE_IN0,
+            col::DIGEST_END
         );
-        eprintln!("  FOLD bank      : {} .. {}", col::FOLD_BETA0, col::FOLD_OUT_END);
-        eprintln!("  ALPHA bank     : {} .. {}", col::ALPHA_CHALLENGE0, col::ALPHA_RO_OUT_END);
+        eprintln!(
+            "  FOLD bank      : {} .. {}",
+            col::FOLD_BETA0,
+            col::FOLD_OUT_END
+        );
+        eprintln!(
+            "  ALPHA bank     : {} .. {}",
+            col::ALPHA_CHALLENGE0,
+            col::ALPHA_RO_OUT_END
+        );
         eprintln!(
             "  Block PI (A6-1.6): {} .. {}  ({} cols)",
-            col::BLOCK_PI_CHAIN_ID, col::BLOCK_PI_ROOT_END,
+            col::BLOCK_PI_CHAIN_ID,
+            col::BLOCK_PI_ROOT_END,
             col::NUM_BLOCK_PI_ELEMS
         );
         eprintln!(
             "  Public-input   : {} .. {}",
-            col::TRACE_COMMIT_ROOT0, col::FINAL_FOLDED_END
+            col::TRACE_COMMIT_ROOT0,
+            col::FINAL_FOLDED_END
         );
         eprintln!(
             "  P2 block       : {} .. {}  ({} cols)",
-            col::P2_BLOCK, col::WIDTH, POSEIDON2_COLS_PER_INSTANCE
+            col::P2_BLOCK,
+            col::WIDTH,
+            POSEIDON2_COLS_PER_INSTANCE
         );
         eprintln!("  TOTAL WIDTH    : {}", col::WIDTH);
     }
@@ -3241,8 +3239,8 @@ mod tests {
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
         for (leaf_idx, (_, path, idx)) in openings.iter().enumerate() {
-            let flat = build_leaf_to_root_trace(&leaves[leaf_idx], path, *idx, root, 16)
-                .expect("build");
+            let flat =
+                build_leaf_to_root_trace(&leaves[leaf_idx], path, *idx, root, 16).expect("build");
             let trace = RowMajorMatrix::new(flat, col::WIDTH);
             let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
             verify(&cfg, &air, &proof, &TEST_PI_ZERO)
@@ -3272,8 +3270,7 @@ mod tests {
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &TEST_PI_ZERO)
-                    .expect_err("tampered wide leaf must reject");
+                verify(&cfg, &air, &p, &TEST_PI_ZERO).expect_err("tampered wide leaf must reject");
             }
         }
     }
@@ -3290,8 +3287,7 @@ mod tests {
         bad_root[0] += gl(1);
         // Build with bad root pinned on every row; last-row DIGEST is
         // the REAL root, which differs — last-row boundary fires.
-        let flat = build_leaf_to_root_trace(&leaves[0], &path, idx, bad_root, 16)
-            .expect("build");
+        let flat = build_leaf_to_root_trace(&leaves[0], &path, idx, bad_root, 16).expect("build");
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
@@ -3409,15 +3405,28 @@ mod tests {
         let initial_apow = ext(1, 0);
         let initial_ro = ext(0, 0);
         let steps = vec![
-            AlphaStep { p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23) },
-            AlphaStep { p_at_x: gl(29), p_at_z: ext(31, 37), z: ext(41, 43), x: gl(47) },
-            AlphaStep { p_at_x: gl(53), p_at_z: ext(59, 61), z: ext(67, 71), x: gl(73) },
+            AlphaStep {
+                p_at_x: gl(7),
+                p_at_z: ext(11, 13),
+                z: ext(17, 19),
+                x: gl(23),
+            },
+            AlphaStep {
+                p_at_x: gl(29),
+                p_at_z: ext(31, 37),
+                z: ext(41, 43),
+                x: gl(47),
+            },
+            AlphaStep {
+                p_at_x: gl(53),
+                p_at_z: ext(59, 61),
+                z: ext(67, 71),
+                x: gl(73),
+            },
         ];
         let final_ro = expected_final_ro(initial_apow, initial_ro, alpha, &steps);
-        let flat = build_alpha_chain_trace(
-            initial_apow, initial_ro, alpha, &steps, final_ro, 16,
-        )
-        .unwrap();
+        let flat =
+            build_alpha_chain_trace(initial_apow, initial_ro, alpha, &steps, final_ro, 16).unwrap();
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
@@ -3442,10 +3451,8 @@ mod tests {
             x: gl(11),
         }];
         let final_ro = expected_final_ro(initial_apow, initial_ro, alpha, &steps);
-        let flat = build_alpha_chain_trace(
-            initial_apow, initial_ro, alpha, &steps, final_ro, 8,
-        )
-        .unwrap();
+        let flat =
+            build_alpha_chain_trace(initial_apow, initial_ro, alpha, &steps, final_ro, 8).unwrap();
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
@@ -3463,15 +3470,23 @@ mod tests {
         let initial_apow = ext(1, 0);
         let initial_ro = ext(0, 0);
         let steps = vec![
-            AlphaStep { p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23) },
-            AlphaStep { p_at_x: gl(29), p_at_z: ext(31, 37), z: ext(41, 43), x: gl(47) },
+            AlphaStep {
+                p_at_x: gl(7),
+                p_at_z: ext(11, 13),
+                z: ext(17, 19),
+                x: gl(23),
+            },
+            AlphaStep {
+                p_at_x: gl(29),
+                p_at_z: ext(31, 37),
+                z: ext(41, 43),
+                x: gl(47),
+            },
         ];
         let real_final = expected_final_ro(initial_apow, initial_ro, alpha, &steps);
         let bad_final = real_final + ext(1, 0);
-        let flat = build_alpha_chain_trace(
-            initial_apow, initial_ro, alpha, &steps, bad_final, 8,
-        )
-        .unwrap();
+        let flat =
+            build_alpha_chain_trace(initial_apow, initial_ro, alpha, &steps, bad_final, 8).unwrap();
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
@@ -3497,14 +3512,22 @@ mod tests {
         let initial_apow = ext(1, 0);
         let initial_ro = ext(0, 0);
         let steps = vec![
-            AlphaStep { p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23) },
-            AlphaStep { p_at_x: gl(29), p_at_z: ext(31, 37), z: ext(41, 43), x: gl(47) },
+            AlphaStep {
+                p_at_x: gl(7),
+                p_at_z: ext(11, 13),
+                z: ext(17, 19),
+                x: gl(23),
+            },
+            AlphaStep {
+                p_at_x: gl(29),
+                p_at_z: ext(31, 37),
+                z: ext(41, 43),
+                x: gl(47),
+            },
         ];
         let final_ro = expected_final_ro(initial_apow, initial_ro, alpha, &steps);
-        let mut flat = build_alpha_chain_trace(
-            initial_apow, initial_ro, alpha, &steps, final_ro, 8,
-        )
-        .unwrap();
+        let mut flat =
+            build_alpha_chain_trace(initial_apow, initial_ro, alpha, &steps, final_ro, 8).unwrap();
         // Tamper P_AT_X on row 0 — breaks DIFF_QUOT and RO_OUT.
         flat[col::ALPHA_P_AT_X] += gl(1);
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
@@ -3550,8 +3573,7 @@ mod tests {
             },
         ];
         let final_folded = expected_final_folded(initial_folded, &rounds);
-        let flat =
-            build_fold_chain_trace(initial_folded, &rounds, final_folded, 16).unwrap();
+        let flat = build_fold_chain_trace(initial_folded, &rounds, final_folded, 16).unwrap();
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         let cfg = build_config();
         let air = MonolithicVerifierAirV1;
@@ -3579,8 +3601,7 @@ mod tests {
                 log_height: 3,
             }];
             let final_folded = expected_final_folded(initial_folded, &rounds);
-            let flat =
-                build_fold_chain_trace(initial_folded, &rounds, final_folded, 8).unwrap();
+            let flat = build_fold_chain_trace(initial_folded, &rounds, final_folded, 8).unwrap();
             let trace = RowMajorMatrix::new(flat, col::WIDTH);
             let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
             verify(&cfg, &air, &proof, &TEST_PI_ZERO)
@@ -3613,9 +3634,8 @@ mod tests {
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &TEST_PI_ZERO).expect_err(
-                    "wrong FINAL_FOLDED must reject at last-row boundary",
-                );
+                verify(&cfg, &air, &p, &TEST_PI_ZERO)
+                    .expect_err("wrong FINAL_FOLDED must reject at last-row boundary");
             }
         }
     }
@@ -3642,8 +3662,7 @@ mod tests {
             },
         ];
         let final_folded = expected_final_folded(initial_folded, &rounds);
-        let mut flat =
-            build_fold_chain_trace(initial_folded, &rounds, final_folded, 8).unwrap();
+        let mut flat = build_fold_chain_trace(initial_folded, &rounds, final_folded, 8).unwrap();
         // Tamper SIBLING[0] on row 0 — breaks PAIR_LEFT/RIGHT orientation
         // (STATE_IN cols are the prover's "claimed" LEFT/RIGHT; flipping
         // SIBLING without recomputing them fires the orientation bank).
@@ -3677,8 +3696,7 @@ mod tests {
             log_height: 3,
         }];
         let final_folded = expected_final_folded(initial_folded, &rounds);
-        let mut flat =
-            build_fold_chain_trace(initial_folded, &rounds, final_folded, 8).unwrap();
+        let mut flat = build_fold_chain_trace(initial_folded, &rounds, final_folded, 8).unwrap();
         // Corrupt INV_2S witness on row 0.
         flat[col::FOLD_INV_2S] += gl(1);
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
@@ -3736,8 +3754,18 @@ mod tests {
         let initial_apow = ext(1, 0);
         let initial_ro = ext(0, 0);
         let alpha_steps = vec![
-            AlphaStep { p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23) },
-            AlphaStep { p_at_x: gl(29), p_at_z: ext(31, 37), z: ext(41, 43), x: gl(47) },
+            AlphaStep {
+                p_at_x: gl(7),
+                p_at_z: ext(11, 13),
+                z: ext(17, 19),
+                x: gl(23),
+            },
+            AlphaStep {
+                p_at_x: gl(29),
+                p_at_z: ext(31, 37),
+                z: ext(41, 43),
+                x: gl(47),
+            },
         ];
         let fold_rounds = vec![
             FoldRound {
@@ -3754,7 +3782,12 @@ mod tests {
             },
         ];
         let flat = build_alpha_to_fold_unified_trace(
-            initial_apow, initial_ro, alpha, &alpha_steps, &fold_rounds, 16,
+            initial_apow,
+            initial_ro,
+            alpha,
+            &alpha_steps,
+            &fold_rounds,
+            16,
         )
         .unwrap();
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
@@ -3796,7 +3829,12 @@ mod tests {
             log_height: 3,
         }];
         let mut flat = build_alpha_to_fold_unified_trace(
-            initial_apow, initial_ro, alpha, &alpha_steps, &fold_rounds, 8,
+            initial_apow,
+            initial_ro,
+            alpha,
+            &alpha_steps,
+            &fold_rounds,
+            8,
         )
         .unwrap();
         // Row 0 = ALPHA; row 1 = first FOLD. Tamper FOLD_IN on row 1
@@ -3846,7 +3884,12 @@ mod tests {
             log_height: 3,
         }];
         let mut flat = build_alpha_to_fold_unified_trace(
-            initial_apow, initial_ro, alpha, &alpha_steps, &fold_rounds, 8,
+            initial_apow,
+            initial_ro,
+            alpha,
+            &alpha_steps,
+            &fold_rounds,
+            8,
         )
         .unwrap();
         // Tamper α row 0's P_AT_X — breaks DIFF_QUOT → RO update.
@@ -3901,7 +3944,12 @@ mod tests {
             },
         ];
         let mut flat = build_alpha_to_fold_unified_trace(
-            initial_apow, initial_ro, alpha, &alpha_steps, &fold_rounds, 8,
+            initial_apow,
+            initial_ro,
+            alpha,
+            &alpha_steps,
+            &fold_rounds,
+            8,
         )
         .unwrap();
         // Row 0 = ALPHA, rows 1,2 = FOLD. Tamper ALPHA_RO_OUT on row 1.
@@ -3917,8 +3965,9 @@ mod tests {
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &TEST_PI_ZERO)
-                    .expect_err("tampered ALPHA_RO_OUT on FOLD row must reject via non-α persistence");
+                verify(&cfg, &air, &p, &TEST_PI_ZERO).expect_err(
+                    "tampered ALPHA_RO_OUT on FOLD row must reject via non-α persistence",
+                );
             }
         }
     }
@@ -3950,13 +3999,14 @@ mod tests {
         {
             let alpha = ext(2, 3);
             let steps = vec![AlphaStep {
-                p_at_x: gl(5), p_at_z: ext(7, 11), z: ext(13, 17), x: gl(19),
+                p_at_x: gl(5),
+                p_at_z: ext(7, 11),
+                z: ext(13, 17),
+                x: gl(19),
             }];
             let final_ro = expected_final_ro(ext(1, 0), ext(0, 0), alpha, &steps);
-            let flat = build_alpha_chain_trace(
-                ext(1, 0), ext(0, 0), alpha, &steps, final_ro, 8,
-            )
-            .unwrap();
+            let flat =
+                build_alpha_chain_trace(ext(1, 0), ext(0, 0), alpha, &steps, final_ro, 8).unwrap();
             let trace = RowMajorMatrix::new(flat, col::WIDTH);
             let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
             verify(&cfg, &air, &proof, &TEST_PI_ZERO)
@@ -3973,8 +4023,7 @@ mod tests {
                 log_height: 3,
             }];
             let final_folded = expected_final_folded(initial_folded, &rounds);
-            let flat =
-                build_fold_chain_trace(initial_folded, &rounds, final_folded, 8).unwrap();
+            let flat = build_fold_chain_trace(initial_folded, &rounds, final_folded, 8).unwrap();
             let trace = RowMajorMatrix::new(flat, col::WIDTH);
             let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
             verify(&cfg, &air, &proof, &TEST_PI_ZERO)
@@ -4087,7 +4136,8 @@ mod tests {
         let t0 = Instant::now();
         let proof = prove(&cfg, &air, trace, &TEST_PI_ZERO);
         let prove_ms = t0.elapsed().as_millis();
-        verify(&cfg, &air, &proof, &TEST_PI_ZERO).expect("realistic-scale unified trace must verify");
+        verify(&cfg, &air, &proof, &TEST_PI_ZERO)
+            .expect("realistic-scale unified trace must verify");
 
         let proof_bytes = postcard::to_allocvec(&proof).unwrap().len();
         eprintln!();
@@ -4117,7 +4167,12 @@ mod tests {
             let steps = sample_alpha_steps(trace_height / 2);
             let final_ro = expected_final_ro(initial_apow, initial_ro, alpha, &steps);
             let flat = build_alpha_chain_trace(
-                initial_apow, initial_ro, alpha, &steps, final_ro, trace_height,
+                initial_apow,
+                initial_ro,
+                alpha,
+                &steps,
+                final_ro,
+                trace_height,
             )
             .unwrap();
             let trace = RowMajorMatrix::new(flat, col::WIDTH);
@@ -4128,7 +4183,12 @@ mod tests {
             verify(&cfg, &air, &proof, &TEST_PI_ZERO).unwrap();
 
             let proof_bytes = postcard::to_allocvec(&proof).unwrap().len();
-            report(&format!("α@{trace_height}"), trace_height, prove_ms, proof_bytes);
+            report(
+                &format!("α@{trace_height}"),
+                trace_height,
+                prove_ms,
+                proof_bytes,
+            );
         }
     }
 
@@ -4154,13 +4214,8 @@ mod tests {
             let rounds = sample_fold_rounds(n_rounds, log_h_start);
             let final_folded = expected_final_folded(initial_folded, &rounds);
             let trace_height = n_rounds.next_power_of_two().max(16);
-            let flat = build_fold_chain_trace(
-                initial_folded,
-                &rounds,
-                final_folded,
-                trace_height,
-            )
-            .unwrap();
+            let flat = build_fold_chain_trace(initial_folded, &rounds, final_folded, trace_height)
+                .unwrap();
             let trace = RowMajorMatrix::new(flat, col::WIDTH);
 
             let t0 = Instant::now();
@@ -4284,19 +4339,15 @@ mod tests {
         let perm = default_goldilocks_poseidon2_8();
 
         // Tree A: 2 wide leaves → 1 compression → root_A.
-        let leaf_a0: Vec<Goldilocks> =
-            (0..8u64).map(|j| gl(100 + j * 17 + 1)).collect();
-        let leaf_a1: Vec<Goldilocks> =
-            (0..8u64).map(|j| gl(200 + j * 23 + 3)).collect();
+        let leaf_a0: Vec<Goldilocks> = (0..8u64).map(|j| gl(100 + j * 17 + 1)).collect();
+        let leaf_a1: Vec<Goldilocks> = (0..8u64).map(|j| gl(200 + j * 23 + 3)).collect();
         let dig_a0 = hash_leaf_row_ref(&perm, &leaf_a0);
         let dig_a1 = hash_leaf_row_ref(&perm, &leaf_a1);
         let root_a = compress_pair_ref(&perm, &dig_a0, &dig_a1);
 
         // Tree B: 2 wide leaves → 1 compression → root_B (≠ root_A).
-        let leaf_b0: Vec<Goldilocks> =
-            (0..8u64).map(|j| gl(300 + j * 29 + 5)).collect();
-        let leaf_b1: Vec<Goldilocks> =
-            (0..8u64).map(|j| gl(400 + j * 31 + 7)).collect();
+        let leaf_b0: Vec<Goldilocks> = (0..8u64).map(|j| gl(300 + j * 29 + 5)).collect();
+        let leaf_b1: Vec<Goldilocks> = (0..8u64).map(|j| gl(400 + j * 31 + 7)).collect();
         let dig_b0 = hash_leaf_row_ref(&perm, &leaf_b0);
         let dig_b1 = hash_leaf_row_ref(&perm, &leaf_b1);
         let root_b = compress_pair_ref(&perm, &dig_b0, &dig_b1);
@@ -4412,9 +4463,8 @@ mod tests {
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &TEST_PI_ZERO).expect_err(
-                    "swapped multi-path roots must reject via per-path check",
-                );
+                verify(&cfg, &air, &p, &TEST_PI_ZERO)
+                    .expect_err("swapped multi-path roots must reject via per-path check");
             }
         }
     }
@@ -4453,9 +4503,8 @@ mod tests {
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &TEST_PI_ZERO).expect_err(
-                    "TCR drift within a compression run must reject",
-                );
+                verify(&cfg, &air, &p, &TEST_PI_ZERO)
+                    .expect_err("TCR drift within a compression run must reject");
             }
         }
     }
@@ -4487,8 +4536,18 @@ mod tests {
         let initial_apow = ext(1, 0);
         let initial_ro = ext(0, 0);
         let alpha_steps = vec![
-            AlphaStep { p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23) },
-            AlphaStep { p_at_x: gl(29), p_at_z: ext(31, 37), z: ext(41, 43), x: gl(47) },
+            AlphaStep {
+                p_at_x: gl(7),
+                p_at_z: ext(11, 13),
+                z: ext(17, 19),
+                x: gl(23),
+            },
+            AlphaStep {
+                p_at_x: gl(29),
+                p_at_z: ext(31, 37),
+                z: ext(41, 43),
+                x: gl(47),
+            },
         ];
         let fold_rounds = vec![
             FoldRound {
@@ -4567,7 +4626,10 @@ mod tests {
         ];
         let alpha = ext(2, 3);
         let alpha_steps = vec![AlphaStep {
-            p_at_x: gl(5), p_at_z: ext(7, 11), z: ext(13, 17), x: gl(19),
+            p_at_x: gl(5),
+            p_at_z: ext(7, 11),
+            z: ext(13, 17),
+            x: gl(19),
         }];
         let fold_rounds = vec![FoldRound {
             sibling: ext(23, 29),
@@ -4613,7 +4675,10 @@ mod tests {
         }];
         let alpha = ext(3, 5);
         let alpha_steps = vec![AlphaStep {
-            p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23),
+            p_at_x: gl(7),
+            p_at_z: ext(11, 13),
+            z: ext(17, 19),
+            x: gl(23),
         }];
         let fold_rounds = vec![FoldRound {
             sibling: ext(53, 59),
@@ -4645,9 +4710,8 @@ mod tests {
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &TEST_PI_ZERO).expect_err(
-                    "tampered Merkle sibling in bundle must reject",
-                );
+                verify(&cfg, &air, &p, &TEST_PI_ZERO)
+                    .expect_err("tampered Merkle sibling in bundle must reject");
             }
         }
     }
@@ -4672,7 +4736,10 @@ mod tests {
         }];
         let alpha = ext(3, 5);
         let alpha_steps = vec![AlphaStep {
-            p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23),
+            p_at_x: gl(7),
+            p_at_z: ext(11, 13),
+            z: ext(17, 19),
+            x: gl(23),
         }];
         let fold_rounds = vec![FoldRound {
             sibling: ext(53, 59),
@@ -4701,9 +4768,8 @@ mod tests {
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &TEST_PI_ZERO).expect_err(
-                    "tampered α chain in bundle must reject",
-                );
+                verify(&cfg, &air, &p, &TEST_PI_ZERO)
+                    .expect_err("tampered α chain in bundle must reject");
             }
         }
     }
@@ -4725,7 +4791,10 @@ mod tests {
             expected_root: root,
         }];
         let alpha_steps = vec![AlphaStep {
-            p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23),
+            p_at_x: gl(7),
+            p_at_z: ext(11, 13),
+            z: ext(17, 19),
+            x: gl(23),
         }];
         let fold_rounds = vec![FoldRound {
             sibling: ext(53, 59),
@@ -4756,9 +4825,8 @@ mod tests {
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &TEST_PI_ZERO).expect_err(
-                    "tampered fold SIBLING in bundle must reject",
-                );
+                verify(&cfg, &air, &p, &TEST_PI_ZERO)
+                    .expect_err("tampered fold SIBLING in bundle must reject");
             }
         }
     }
@@ -4768,7 +4836,9 @@ mod tests {
     // ======================================================================
 
     fn sample_merkle_leaf(seed: u64, len: usize) -> Vec<Goldilocks> {
-        (0..len as u64).map(|j| gl(seed * 100 + j * 17 + 1)).collect()
+        (0..len as u64)
+            .map(|j| gl(seed * 100 + j * 17 + 1))
+            .collect()
     }
 
     /// Build a small self-contained Merkle tree-of-2-leaves and return
@@ -4809,7 +4879,10 @@ mod tests {
             expected_root: root_a,
         }];
         let alpha_steps_0 = vec![AlphaStep {
-            p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23),
+            p_at_x: gl(7),
+            p_at_z: ext(11, 13),
+            z: ext(17, 19),
+            x: gl(23),
         }];
         let fold_rounds_0 = vec![FoldRound {
             sibling: ext(29, 31),
@@ -4829,7 +4902,10 @@ mod tests {
             expected_root: root_b,
         }];
         let alpha_steps_1 = vec![AlphaStep {
-            p_at_x: gl(43), p_at_z: ext(47, 53), z: ext(59, 61), x: gl(67),
+            p_at_x: gl(43),
+            p_at_z: ext(47, 53),
+            z: ext(59, 61),
+            x: gl(67),
         }];
         let fold_rounds_1 = vec![FoldRound {
             sibling: ext(71, 73),
@@ -4886,7 +4962,10 @@ mod tests {
             expected_root: root,
         }];
         let alpha_steps = vec![AlphaStep {
-            p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23),
+            p_at_x: gl(7),
+            p_at_z: ext(11, 13),
+            z: ext(17, 19),
+            x: gl(23),
         }];
         let fold_rounds = vec![FoldRound {
             sibling: ext(29, 31),
@@ -4925,9 +5004,8 @@ mod tests {
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &TEST_PI_ZERO).expect_err(
-                    "tampered FINAL_RO within bundle must reject",
-                );
+                verify(&cfg, &air, &p, &TEST_PI_ZERO)
+                    .expect_err("tampered FINAL_RO within bundle must reject");
             }
         }
     }
@@ -4947,15 +5025,22 @@ mod tests {
         let siblings_a = vec![d1a];
         let siblings_b = vec![d1b];
         let paths_a = vec![MerkleOpening {
-            leaf: &l0a, opening_proof: &siblings_a,
-            index: 0, expected_root: root_a,
+            leaf: &l0a,
+            opening_proof: &siblings_a,
+            index: 0,
+            expected_root: root_a,
         }];
         let paths_b = vec![MerkleOpening {
-            leaf: &l0b, opening_proof: &siblings_b,
-            index: 0, expected_root: root_b,
+            leaf: &l0b,
+            opening_proof: &siblings_b,
+            index: 0,
+            expected_root: root_b,
         }];
         let alpha_steps = vec![AlphaStep {
-            p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23),
+            p_at_x: gl(7),
+            p_at_z: ext(11, 13),
+            z: ext(17, 19),
+            x: gl(23),
         }];
         let fold_rounds = vec![FoldRound {
             sibling: ext(29, 31),
@@ -5020,15 +5105,22 @@ mod tests {
         let siblings_a = vec![d1a];
         let siblings_b = vec![d1b];
         let paths_a = vec![MerkleOpening {
-            leaf: &l0a, opening_proof: &siblings_a,
-            index: 0, expected_root: root_a,
+            leaf: &l0a,
+            opening_proof: &siblings_a,
+            index: 0,
+            expected_root: root_a,
         }];
         let paths_b = vec![MerkleOpening {
-            leaf: &l0b, opening_proof: &siblings_b,
-            index: 0, expected_root: root_b,
+            leaf: &l0b,
+            opening_proof: &siblings_b,
+            index: 0,
+            expected_root: root_b,
         }];
         let alpha_steps = vec![AlphaStep {
-            p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23),
+            p_at_x: gl(7),
+            p_at_z: ext(11, 13),
+            z: ext(17, 19),
+            x: gl(23),
         }];
         let fold_rounds = vec![FoldRound {
             sibling: ext(29, 31),
@@ -5078,9 +5170,8 @@ mod tests {
         match outcome {
             Err(_) => {}
             Ok(p) => {
-                verify(&cfg, &air, &p, &TEST_PI_ZERO).expect_err(
-                    "tampered bundle 0 FOLD_OUT must reject",
-                );
+                verify(&cfg, &air, &p, &TEST_PI_ZERO)
+                    .expect_err("tampered bundle 0 FOLD_OUT must reject");
             }
         }
     }
@@ -5100,7 +5191,10 @@ mod tests {
         {
             let alpha = ext(3, 5);
             let alpha_steps = vec![AlphaStep {
-                p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23),
+                p_at_x: gl(7),
+                p_at_z: ext(11, 13),
+                z: ext(17, 19),
+                x: gl(23),
             }];
             let fold_rounds = vec![FoldRound {
                 sibling: ext(29, 31),
@@ -5109,7 +5203,12 @@ mod tests {
                 log_height: 3,
             }];
             let flat = build_alpha_to_fold_unified_trace(
-                ext(1, 0), ext(0, 0), alpha, &alpha_steps, &fold_rounds, 8,
+                ext(1, 0),
+                ext(0, 0),
+                alpha,
+                &alpha_steps,
+                &fold_rounds,
+                8,
             )
             .unwrap();
             let trace = RowMajorMatrix::new(flat, col::WIDTH);
@@ -5129,7 +5228,10 @@ mod tests {
                 expected_root: root,
             }];
             let alpha_steps = vec![AlphaStep {
-                p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23),
+                p_at_x: gl(7),
+                p_at_z: ext(11, 13),
+                z: ext(17, 19),
+                x: gl(23),
             }];
             let fold_rounds = vec![FoldRound {
                 sibling: ext(29, 31),
@@ -5138,8 +5240,13 @@ mod tests {
                 log_height: 3,
             }];
             let flat = build_alpha_merkle_fold_bundle_trace(
-                ext(1, 0), ext(0, 0), ext(3, 5),
-                &alpha_steps, &merkle_paths, &fold_rounds, 16,
+                ext(1, 0),
+                ext(0, 0),
+                ext(3, 5),
+                &alpha_steps,
+                &merkle_paths,
+                &fold_rounds,
+                16,
             )
             .unwrap();
             let trace = RowMajorMatrix::new(flat, col::WIDTH);
@@ -5176,13 +5283,13 @@ mod tests {
         n_fold: usize,
         log_height_start: usize,
     ) -> (
-        Challenge,            // alpha
-        Vec<AlphaStep>,       // alpha_steps
-        Vec<Goldilocks>,      // leaf
-        Vec<Digest>,          // opening_proof (1 sibling = log_height 1)
-        usize,                // index
-        Digest,               // expected_root
-        Vec<FoldRound>,       // fold_rounds
+        Challenge,       // alpha
+        Vec<AlphaStep>,  // alpha_steps
+        Vec<Goldilocks>, // leaf
+        Vec<Digest>,     // opening_proof (1 sibling = log_height 1)
+        usize,           // index
+        Digest,          // expected_root
+        Vec<FoldRound>,  // fold_rounds
     ) {
         use crate::merkle_path::{compress_pair_ref, hash_leaf_row_ref};
         let perm = default_goldilocks_poseidon2_8();
@@ -5197,10 +5304,10 @@ mod tests {
             })
             .collect();
 
-        let leaf: Vec<Goldilocks> =
-            (0..8u64).map(|j| gl(seed * 1000 + j * 17 + 1)).collect();
-        let leaf_sib: Vec<Goldilocks> =
-            (0..8u64).map(|j| gl(seed * 1000 + 500 + j * 23 + 3)).collect();
+        let leaf: Vec<Goldilocks> = (0..8u64).map(|j| gl(seed * 1000 + j * 17 + 1)).collect();
+        let leaf_sib: Vec<Goldilocks> = (0..8u64)
+            .map(|j| gl(seed * 1000 + 500 + j * 23 + 3))
+            .collect();
         let dig = hash_leaf_row_ref(&perm, &leaf);
         let dig_sib = hash_leaf_row_ref(&perm, &leaf_sib);
         let root = compress_pair_ref(&perm, &dig, &dig_sib);
@@ -5210,8 +5317,7 @@ mod tests {
             .map(|r| FoldRound {
                 sibling: ext(53 + r as u64 * 7 + seed, 59 + r as u64 * 11 + seed),
                 beta: ext(61 + r as u64 * 13 + seed, 67 + r as u64 * 17 + seed),
-                domain_index: (0b1010_0101 ^ (r + seed as usize))
-                    & ((1 << log_height_start) - 1),
+                domain_index: (0b1010_0101 ^ (r + seed as usize)) & ((1 << log_height_start) - 1),
                 log_height: log_height_start - r,
             })
             .collect();

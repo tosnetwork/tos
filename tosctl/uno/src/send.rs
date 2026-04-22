@@ -73,10 +73,10 @@ use crate::scan::{self, OwnedNote};
 use crate::schnorr;
 use crate::sizes::{MLKEM768_CT, MLKEM768_PK};
 use crate::transfer::{
-    compute_note_commitment, compute_rcm, encode_transfer_wire, canonical_tx_hash,
+    canonical_tx_hash, compute_note_commitment, compute_rcm, encode_transfer_wire,
     NoteCommitmentInputs, OutputDescription, SpendDescription, Transfer,
-    DEFAULT_EXPIRY_DELTA_BLOCKS, MAX_SPEND_COUNT, MAX_OUTPUT_COUNT,
-    OUT_CIPHERTEXT_BYTES, SCHEME_ID_V1, TRANSFER_VERSION,
+    DEFAULT_EXPIRY_DELTA_BLOCKS, MAX_OUTPUT_COUNT, MAX_SPEND_COUNT, OUT_CIPHERTEXT_BYTES,
+    SCHEME_ID_V1, TRANSFER_VERSION,
 };
 
 /// Fixed plaintext size for the `enc_ciphertext` AEAD. §4.1: 11 + 32 + 8 + 32
@@ -155,8 +155,7 @@ pub async fn execute(args: &SendArgs) -> Result<SendSummary> {
     // (a) Load FVK.
     let fvk_json = std::fs::read_to_string(&args.fvk_path)
         .with_context(|| format!("reading FVK from {}", args.fvk_path.display()))?;
-    let fvk: FullViewingKey = serde_json::from_str(&fvk_json)
-        .context("parsing FVK JSON")?;
+    let fvk: FullViewingKey = serde_json::from_str(&fvk_json).context("parsing FVK JSON")?;
 
     // (b) Parse recipient address.
     let (recipient, _hrp) = Address::from_string(args.to.trim())
@@ -167,8 +166,8 @@ pub async fn execute(args: &SendArgs) -> Result<SendSummary> {
     let chain_info = rpc.chain_info().await.context("fetching chain_info")?;
     let anchor_info = rpc.get_anchor().await.context("fetching anchor")?;
 
-    let anchor_bytes = hex_to_32(&anchor_info.commitment_tree_root)
-        .context("decoding anchor hex")?;
+    let anchor_bytes =
+        hex_to_32(&anchor_info.commitment_tree_root).context("decoding anchor hex")?;
 
     let expiry_block = anchor_info.head_seqno + DEFAULT_EXPIRY_DELTA_BLOCKS;
 
@@ -177,9 +176,11 @@ pub async fn execute(args: &SendArgs) -> Result<SendSummary> {
         Vec::new()
     } else {
         let end = chain_info.head_seqno + 1;
-        let owned = scan::scan_range(&rpc, &fvk, 0, end).await
+        let owned = scan::scan_range(&rpc, &fvk, 0, end)
+            .await
             .context("scanning blocks for owned notes")?;
-        let bal = balance::balance_for_notes(&rpc, &owned).await
+        let bal = balance::balance_for_notes(&rpc, &owned)
+            .await
             .context("filtering spent nullifiers")?;
         bal.unspent
     };
@@ -189,23 +190,33 @@ pub async fn execute(args: &SendArgs) -> Result<SendSummary> {
     //     the note-selection loop below refines.
     let fee_initial = match args.fee {
         Some(f) => f,
-        None => rpc.estimate_fee(1, 2).await
+        None => rpc
+            .estimate_fee(1, 2)
+            .await
             .context("uno_estimateFee: failed")?,
     };
 
     // (f) Note selection. Returns (selected_notes, fee_used, recipient_value,
     //     change_value, output_count).
-    let sel = select_notes(&unspent, args.amount, fee_initial)
-        .ok_or_else(|| anyhow!(
+    let sel = select_notes(&unspent, args.amount, fee_initial).ok_or_else(|| {
+        anyhow!(
             "insufficient funds: need {} + fee {} = {}, available (unspent) {}",
-            args.amount, fee_initial, args.amount as u128 + fee_initial as u128,
+            args.amount,
+            fee_initial,
+            args.amount as u128 + fee_initial as u128,
             unspent.iter().map(|n| n.value as u128).sum::<u128>()
-        ))?;
+        )
+    })?;
 
     // (g) Build the Transfer (still unsigned, stub proof).
     let tx = build_transfer(
-        &fvk, &recipient, &sel, &anchor_bytes, chain_info.chain_id,
-        expiry_block, args.memo.as_deref(),
+        &fvk,
+        &recipient,
+        &sel,
+        &anchor_bytes,
+        chain_info.chain_id,
+        expiry_block,
+        args.memo.as_deref(),
     )?;
 
     // (h) tx_hash + Schnorr-sign each spend under its fresh rk.
@@ -229,7 +240,9 @@ pub async fn execute(args: &SendArgs) -> Result<SendSummary> {
     let submitted = if args.dry_run {
         None
     } else {
-        let hash_hex = rpc.send_transfer(&tx_bytes).await
+        let hash_hex = rpc
+            .send_transfer(&tx_bytes)
+            .await
             .context("uno_sendTransfer: submit failed")?;
         Some(hash_hex)
     };
@@ -273,7 +286,9 @@ struct Selection {
 /// coin that already covers (minimal fragmentation). Limited to `MAX_SPEND_COUNT`.
 fn select_notes(unspent: &[OwnedNote], amount: u64, fee: u64) -> Option<Selection> {
     let target = (amount as u128) + (fee as u128);
-    if target == 0 { return None; }
+    if target == 0 {
+        return None;
+    }
 
     let mut by_value: Vec<&OwnedNote> = unspent.iter().collect();
     by_value.sort_by_key(|n| n.value);
@@ -288,7 +303,9 @@ fn select_notes(unspent: &[OwnedNote], amount: u64, fee: u64) -> Option<Selectio
     let mut acc = Vec::new();
     let mut sum: u128 = 0;
     for &n in by_value.iter().rev() {
-        if acc.len() == MAX_SPEND_COUNT as usize { break; }
+        if acc.len() == MAX_SPEND_COUNT as usize {
+            break;
+        }
         acc.push(n.clone());
         sum += n.value as u128;
         if sum >= target {
@@ -305,7 +322,9 @@ fn finalize_selection(notes: Vec<OwnedNote>, amount: u64, fee: u64) -> Selection
     let needs_change = change_u64 > 0;
     // Sample a fresh keypair per spend up front.
     let mut rng = OsRng;
-    let rsk_keys = (0..notes.len()).map(|_| schnorr::keypair(&mut rng)).collect();
+    let rsk_keys = (0..notes.len())
+        .map(|_| schnorr::keypair(&mut rng))
+        .collect();
     Selection {
         notes,
         rsk_keys,
@@ -335,7 +354,9 @@ fn build_transfer(
     if sel.notes.len() > MAX_SPEND_COUNT as usize {
         return Err(anyhow!(
             "build_transfer: selected {} notes but MAX_SPEND_COUNT is {}",
-            sel.notes.len(), MAX_SPEND_COUNT));
+            sel.notes.len(),
+            MAX_SPEND_COUNT
+        ));
     }
 
     // Outputs: recipient + optional change.
@@ -363,19 +384,24 @@ fn build_transfer(
 
     // Spends: nullifier + stub (zeroed) sig for now, real sig comes from
     // sign_spends() after tx_hash is computed.
-    let spends: Vec<SpendDescription> = sel.notes.iter().zip(sel.rsk_keys.iter()).map(|(note, kp)| {
-        SpendDescription {
+    let spends: Vec<SpendDescription> = sel
+        .notes
+        .iter()
+        .zip(sel.rsk_keys.iter())
+        .map(|(note, kp)| SpendDescription {
             nullifier: note.nullifier,
             rk: kp.rk,
             spend_auth_sig: [0u8; 64],
-        }
-    }).collect();
+        })
+        .collect();
 
     // Build the Plonky3 witness from the real send material and prove.
     let spend_values: Vec<u64> = sel.notes.iter().map(|n| n.value).collect();
     let output_values: Vec<u64> = {
         let mut v = vec![sel.recipient_value];
-        if sel.needs_change { v.push(sel.change_value); }
+        if sel.needs_change {
+            v.push(sel.change_value);
+        }
         v
     };
     let output_cms: Vec<[u8; 32]> = outputs.iter().map(|o| o.cm).collect();
@@ -415,7 +441,8 @@ fn build_transfer(
         &output_addrs_ivk_cm,
         sel.fee,
         anchor,
-    ).context("building Plonky3 TransferWitness")?;
+    )
+    .context("building Plonky3 TransferWitness")?;
     let zk_proof = plonky3_prove(&witness);
 
     Ok(Transfer {
@@ -458,8 +485,7 @@ fn build_output(recipient: &Address, value: u64, memo: Option<&str>) -> Result<O
     let s_dh_compressed = s_dh.compress().to_bytes();
 
     // 3. PQ encap.
-    let (mlkem_ct, s_pq) = keygen::mlkem_encap(&recipient.pk_mlkem)
-        .context("ML-KEM-768 encap")?;
+    let (mlkem_ct, s_pq) = keygen::mlkem_encap(&recipient.pk_mlkem).context("ML-KEM-768 encap")?;
     debug_assert_eq!(mlkem_ct.len(), MLKEM768_CT);
 
     // 4. Hybrid KDF + nonce.
@@ -491,7 +517,10 @@ fn build_output(recipient: &Address, value: u64, memo: Option<&str>) -> Result<O
     let memo_bytes = memo.map(|s| s.as_bytes()).unwrap_or(&[]);
     if memo_bytes.len() >= NOTE_MEMO_PADDED {
         return Err(anyhow!(
-            "memo too long: {} bytes, max {}", memo_bytes.len(), NOTE_MEMO_PADDED - 1));
+            "memo too long: {} bytes, max {}",
+            memo_bytes.len(),
+            NOTE_MEMO_PADDED - 1
+        ));
     }
     let memo_region_start = pt.len();
     pt.extend_from_slice(&[memo_bytes.len() as u8]);
@@ -651,12 +680,16 @@ impl TransferWitness {
         if !(1..=P3_MAX_SPENDS).contains(&n_s) {
             return Err(anyhow!(
                 "TransferWitness: spend count {} outside §4.1 envelope [1,{}]",
-                n_s, P3_MAX_SPENDS));
+                n_s,
+                P3_MAX_SPENDS
+            ));
         }
         if !(1..=P3_MAX_OUTPUTS).contains(&n_o) {
             return Err(anyhow!(
                 "TransferWitness: output count {} outside §4.1 envelope [1,{}]",
-                n_o, P3_MAX_OUTPUTS));
+                n_o,
+                P3_MAX_OUTPUTS
+            ));
         }
         if spend_values.len() != n_s
             || output_cms.len() != n_o
@@ -674,7 +707,10 @@ impl TransferWitness {
         if sin != sout + (fee as u128) {
             return Err(anyhow!(
                 "TransferWitness: Σ spend={} ≠ Σ output={} + fee={}",
-                sin, sout, fee));
+                sin,
+                sout,
+                fee
+            ));
         }
         if fee >= P_GL {
             return Err(anyhow!("TransferWitness: fee >= Goldilocks prime"));
@@ -775,20 +811,20 @@ impl TransferWitness {
         let total_in: u128 = (n_s as u128) * (v_per_spend as u128);
         if total_in < fee as u128 {
             return Err(anyhow!(
-                "TransferWitness: proxy total_in {} < fee {}", total_in, fee));
+                "TransferWitness: proxy total_in {} < fee {}",
+                total_in,
+                fee
+            ));
         }
         let total_out: u128 = total_in - (fee as u128);
         let v_per_out_base: u64 = (total_out / (n_o as u128)) as u64;
-        let remainder: u64 = (total_out
-            - (v_per_out_base as u128) * (n_o as u128)) as u64;
+        let remainder: u64 = (total_out - (v_per_out_base as u128) * (n_o as u128)) as u64;
 
         let mut p3_outputs = Vec::with_capacity(n_o);
         for j in 0..n_o {
             let d_proxy = reduce_digest_to_proxy_slice(b"uno-ow-d", &output_addrs_d[j]);
-            let pk_d_proxy =
-                reduce_digest_to_proxy(b"uno-ow-pk_d", &output_addrs_pk_d[j]);
-            let ivkcm_proxy =
-                reduce_digest_to_proxy(b"uno-ow-ivkcm", &output_addrs_ivk_cm[j]);
+            let pk_d_proxy = reduce_digest_to_proxy(b"uno-ow-pk_d", &output_addrs_pk_d[j]);
+            let ivkcm_proxy = reduce_digest_to_proxy(b"uno-ow-ivkcm", &output_addrs_ivk_cm[j]);
             let rcm_proxy = reduce_digest_to_proxy(b"uno-ow-rcm", &output_cms[j]);
             let value_proxy = if j + 1 == n_o {
                 v_per_out_base + remainder
@@ -887,11 +923,7 @@ fn reduce_digest_to_proxy_slice(domain: &[u8], bytes: &[u8]) -> u64 {
 /// Single Merkle-level Poseidon2-Goldilocks-8 compression matching the AIR's
 /// claim-1 step (§2.3). Position bit selects ordering: `bit=0` →
 /// `parent = Poseidon2(cur, sib)`, `bit=1` → `parent = Poseidon2(sib, cur)`.
-fn poseidon2_merkle_step(
-    perm: &Poseidon2Goldilocks<8>,
-    left: u64,
-    right: u64,
-) -> Goldilocks {
+fn poseidon2_merkle_step(perm: &Poseidon2Goldilocks<8>, left: u64, right: u64) -> Goldilocks {
     let mut state = [Goldilocks::ZERO; 8];
     state[0] = Goldilocks::from_u64(reduce_u64_to_gl(left));
     state[1] = Goldilocks::from_u64(reduce_u64_to_gl(right));
@@ -912,17 +944,17 @@ fn poseidon2_merkle_path_root(
     for k in 0..P3_MERKLE_DEPTH {
         let bit = (pos >> k) & 1;
         let sib = reduce_u64_to_gl(path[k]);
-        let (left, right) = if bit == 0 { (current, sib) } else { (sib, current) };
+        let (left, right) = if bit == 0 {
+            (current, sib)
+        } else {
+            (sib, current)
+        };
         current = poseidon2_merkle_step(perm, left, right).as_canonical_u64();
     }
     current
 }
 
-fn poseidon2_ivk_commitment(
-    perm: &Poseidon2Goldilocks<8>,
-    ivk: u64,
-    d: u64,
-) -> Goldilocks {
+fn poseidon2_ivk_commitment(perm: &Poseidon2Goldilocks<8>, ivk: u64, d: u64) -> Goldilocks {
     let mut state = [Goldilocks::ZERO; 8];
     state[0] = Goldilocks::from_u64(TAG_IVK_CM);
     state[1] = Goldilocks::from_u64(reduce_u64_to_gl(ivk));
@@ -1024,7 +1056,11 @@ mod tests {
     use super::*;
 
     fn fixed_seed() -> [u8; 32] {
-        let mut s = [0u8; 32]; for i in 0..32 { s[i] = i as u8; } s
+        let mut s = [0u8; 32];
+        for i in 0..32 {
+            s[i] = i as u8;
+        }
+        s
     }
 
     fn owned_note(value: u64, salt: u8) -> OwnedNote {
@@ -1092,7 +1128,9 @@ mod tests {
             mlkem_ct: out.mlkem_ct,
             out_ciphertext: out.out_ciphertext,
         };
-        let opened = crate::scan::try_open(&fvk, &wire_out).unwrap().expect("should open");
+        let opened = crate::scan::try_open(&fvk, &wire_out)
+            .unwrap()
+            .expect("should open");
         assert_eq!(opened.d, d);
         assert_eq!(opened.value, 42_000);
     }
@@ -1118,7 +1156,8 @@ mod tests {
             &[[0x44u8; 32]],
             10,
             &[0xAAu8; 32],
-        ).expect("build witness");
+        )
+        .expect("build witness");
         let proof = plonky3_prove(&witness);
         // Observed proof sizes under §2.1 Option B FRI params
         // (log_blowup=3, num_queries=52, query_pow_bits=24). Post
@@ -1127,14 +1166,18 @@ mod tests {
         // structural work). This window is a wallet-side sanity bound.
         assert!(
             (300_000..=2_000_000).contains(&proof.len()),
-            "proof size {} outside expected [300 KB, 2 MB] window", proof.len()
+            "proof size {} outside expected [300 KB, 2 MB] window",
+            proof.len()
         );
         // Proof must round-trip through the FFI verifier.
         let verifier = uno_plonky3_ffi::verifier::MvpVerifier::new();
         let pi = witness.public_inputs();
         let rc = verifier.verify(&proof, &pi);
-        assert_eq!(rc, uno_plonky3_ffi::Plonky3Status::Ok,
-                   "FFI verifier must accept a freshly-produced proof");
+        assert_eq!(
+            rc,
+            uno_plonky3_ffi::Plonky3Status::Ok,
+            "FFI verifier must accept a freshly-produced proof"
+        );
     }
 }
 

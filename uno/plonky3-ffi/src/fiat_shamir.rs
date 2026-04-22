@@ -47,7 +47,6 @@
 //!      record them. That's exactly what `TranscriptRecorder` below
 //!      does.
 
-use p3_challenger::{CanObserve, CanSample};
 use p3_field::{BasedVectorSpace, PrimeCharacteristicRing};
 use p3_goldilocks::Goldilocks;
 
@@ -421,6 +420,7 @@ mod tests {
     use super::*;
     use crate::prover::MvpProver;
     use crate::transfer_air::MvpWitness;
+    use p3_challenger::{CanObserve, CanSample};
 
     /// Reproduce the verifier's pre-PCS transcript directly against
     /// upstream `DuplexChallenger`, and assert our driver matches.
@@ -449,15 +449,17 @@ mod tests {
             }
         }
         ch.observe_slice(public_values);
-        let alpha: Challenge =
-            Challenge::from_basis_coefficients_fn(|_| <DuplexChallenger<Goldilocks, Perm8, 8, 4> as CanSample<Goldilocks>>::sample(&mut ch));
+        let alpha: Challenge = Challenge::from_basis_coefficients_fn(|_| {
+            <DuplexChallenger<Goldilocks, Perm8, 8, 4> as CanSample<Goldilocks>>::sample(&mut ch)
+        });
         for digest in proof.commitments.quotient_chunks.roots() {
             for v in digest.iter() {
                 ch.observe(*v);
             }
         }
-        let zeta: Challenge =
-            Challenge::from_basis_coefficients_fn(|_| <DuplexChallenger<Goldilocks, Perm8, 8, 4> as CanSample<Goldilocks>>::sample(&mut ch));
+        let zeta: Challenge = Challenge::from_basis_coefficients_fn(|_| {
+            <DuplexChallenger<Goldilocks, Perm8, 8, 4> as CanSample<Goldilocks>>::sample(&mut ch)
+        });
         (alpha, zeta)
     }
 
@@ -515,7 +517,11 @@ mod tests {
             }
         }
         // First D=2 samples form alpha, next D=2 form zeta.
-        assert_eq!(samples.len(), 4, "pre-PCS transcript samples exactly 2 + 2 Goldilocks");
+        assert_eq!(
+            samples.len(),
+            4,
+            "pre-PCS transcript samples exactly 2 + 2 Goldilocks"
+        );
 
         let replay_alpha = Challenge::from_basis_coefficients_fn(|i| samples[i]);
         let replay_zeta = Challenge::from_basis_coefficients_fn(|i| samples[2 + i]);
@@ -658,10 +664,9 @@ mod tests {
         for _ in 0..num_queries {
             // Mirror DuplexChallenger::sample_bits byte-for-byte.
             let bits = log_global_max_height;
-            let g: Goldilocks =
-                <DuplexChallenger<Goldilocks, Perm8, 8, 4> as CanSample<Goldilocks>>::sample(
-                    &mut ch,
-                );
+            let g: Goldilocks = <DuplexChallenger<Goldilocks, Perm8, 8, 4> as CanSample<
+                Goldilocks,
+            >>::sample(&mut ch);
             let idx = (g.as_canonical_u64() as usize) & ((1usize << bits) - 1);
             query_indices.push(idx);
         }
@@ -685,7 +690,10 @@ mod tests {
             a.log_global_max_height, b.log_global_max_height,
             "{ctx}: log_global_max_height mismatch"
         );
-        assert_eq!(a.query_indices, b.query_indices, "{ctx}: query_indices mismatch");
+        assert_eq!(
+            a.query_indices, b.query_indices,
+            "{ctx}: query_indices mismatch"
+        );
     }
 
     #[test]

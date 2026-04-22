@@ -262,8 +262,7 @@ VerifyResult verify_transfer_serial(const UnoState& state, const Transfer& tx) {
     auto t0 = std::chrono::steady_clock::now();
     VerifyResult r = verify_transfer_with_holder(state, tx, tls_plonky3_holder());
     auto t1 = std::chrono::steady_clock::now();
-    double seconds =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count() / 1e9;
+    double seconds = std::chrono::duration<double>(t1 - t0).count();
     global_metrics_registry().observe_verify_transfer(
         VerifyPhase::Compute, seconds);
     return r;
@@ -358,8 +357,7 @@ private:
                 auto t1 = std::chrono::steady_clock::now();
                 global_metrics_registry().observe_verify_transfer(
                     VerifyPhase::Compute,
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        t1 - t0).count() / 1e9);
+                    std::chrono::duration<double>(t1 - t0).count());
                 results_[idx] = r;
 
                 // Signal completion once the last task finishes. Must be

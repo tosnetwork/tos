@@ -29,9 +29,8 @@ use tosctl_uno::{
     address::Address,
     keygen,
     scan::{self, OwnedNote},
-    schnorr,
-    send,
-    transfer::{self, TRANSFER_VERSION, SCHEME_ID_V1},
+    schnorr, send,
+    transfer::{self, SCHEME_ID_V1, TRANSFER_VERSION},
     wire as wire_mod,
 };
 
@@ -48,7 +47,9 @@ const PROOF_MAX_BYTES: usize = 2_000_000;
 
 fn seed_for(label: u8) -> [u8; 32] {
     let mut s = [0u8; 32];
-    for i in 0..32 { s[i] = label.wrapping_add(i as u8); }
+    for i in 0..32 {
+        s[i] = label.wrapping_add(i as u8);
+    }
     s
 }
 
@@ -68,7 +69,7 @@ fn fake_note(value: u64, salt: u8) -> OwnedNote {
 fn send_pipeline_builds_well_formed_transfer_with_real_proof() {
     // --- Setup two wallets ---------------------------------------------
     let alice = keygen::derive_fvk(&seed_for(0x01)).expect("alice fvk");
-    let bob   = keygen::derive_fvk(&seed_for(0x02)).expect("bob fvk");
+    let bob = keygen::derive_fvk(&seed_for(0x02)).expect("bob fvk");
 
     // Bob's receive address (what Alice sends to).
     let bob_diversifier = [0x42u8; 11];
@@ -95,7 +96,8 @@ fn send_pipeline_builds_well_formed_transfer_with_real_proof() {
         chain_id,
         expiry,
         Some(memo),
-    ).expect("build transfer");
+    )
+    .expect("build transfer");
 
     // --- Well-formedness -----------------------------------------------
     assert_eq!(tx.version, TRANSFER_VERSION);
@@ -111,7 +113,9 @@ fn send_pipeline_builds_well_formed_transfer_with_real_proof() {
     assert!(
         (PROOF_MIN_BYTES..=PROOF_MAX_BYTES).contains(&tx.zk_proof.len()),
         "zk_proof size {} outside the §17 window [{}, {}] — K-P6-wire regression",
-        tx.zk_proof.len(), PROOF_MIN_BYTES, PROOF_MAX_BYTES
+        tx.zk_proof.len(),
+        PROOF_MIN_BYTES,
+        PROOF_MAX_BYTES
     );
     // A real proof is almost-certainly not all-zero; the probability of
     // a Plonky3 STARK postcard blob being all-zero by chance is ~ 2^-k
@@ -123,13 +127,15 @@ fn send_pipeline_builds_well_formed_transfer_with_real_proof() {
     );
 
     // --- Wire round-trip ------------------------------------------------
-    let decoded = transfer::decode_transfer_wire(&tx_bytes)
-        .expect("decode wire bytes");
+    let decoded = transfer::decode_transfer_wire(&tx_bytes).expect("decode wire bytes");
     assert_eq!(decoded, tx, "decode(encode(tx)) == tx");
 
     // tx_hash is deterministic from the decoded form.
     let tx_hash_decoded = transfer::canonical_tx_hash(&decoded);
-    assert_eq!(tx_hash, tx_hash_decoded, "tx_hash stable across encode/decode");
+    assert_eq!(
+        tx_hash, tx_hash_decoded,
+        "tx_hash stable across encode/decode"
+    );
 
     // --- Bob can trial-decrypt the recipient output ---------------------
     //
@@ -142,8 +148,7 @@ fn send_pipeline_builds_well_formed_transfer_with_real_proof() {
         mlkem_ct: tx.outputs[0].mlkem_ct.clone(),
         out_ciphertext: tx.outputs[0].out_ciphertext,
     };
-    let bob_sees = scan::try_open(&bob, &wire_out)
-        .expect("try_open");
+    let bob_sees = scan::try_open(&bob, &wire_out).expect("try_open");
     let bob_note = bob_sees.expect("bob should own the recipient output");
     assert_eq!(bob_note.value, 700);
     assert_eq!(bob_note.d, bob_diversifier);
@@ -157,8 +162,7 @@ fn send_pipeline_builds_well_formed_transfer_with_real_proof() {
         mlkem_ct: tx.outputs[1].mlkem_ct.clone(),
         out_ciphertext: tx.outputs[1].out_ciphertext,
     };
-    let alice_sees = scan::try_open(&alice, &wire_change)
-        .expect("try_open change");
+    let alice_sees = scan::try_open(&alice, &wire_change).expect("try_open change");
     let change_note = alice_sees.expect("alice should own the change output");
     assert_eq!(change_note.value, 1_000 - 700 - 25);
 
@@ -189,7 +193,15 @@ fn send_pipeline_rejects_insufficient_funds() {
     let alice_notes = vec![fake_note(10, 0x01)];
     let anchor = [0u8; 32];
     let err = send::test_build_transfer(
-        &alice, &bob_addr, &alice_notes, 100, 1, &anchor, 2, 100, None,
+        &alice,
+        &bob_addr,
+        &alice_notes,
+        100,
+        1,
+        &anchor,
+        2,
+        100,
+        None,
     );
     assert!(err.is_err(), "send should reject insufficient funds");
 }
@@ -207,15 +219,25 @@ fn send_pipeline_handles_single_output_no_change() {
     let anchor = [0xddu8; 32];
 
     let (tx, _bytes, _hash) = send::test_build_transfer(
-        &alice, &bob_addr, &alice_notes, 500, 10, &anchor, 2, 99, None,
-    ).expect("exact cover build");
+        &alice,
+        &bob_addr,
+        &alice_notes,
+        500,
+        10,
+        &anchor,
+        2,
+        99,
+        None,
+    )
+    .expect("exact cover build");
 
     assert_eq!(tx.outputs.len(), 1, "no change → 1 output");
     assert_eq!(tx.spends.len(), 1);
     // Real Plonky3 proof at shape (1, 1).
     assert!(
         (PROOF_MIN_BYTES..=PROOF_MAX_BYTES).contains(&tx.zk_proof.len()),
-        "zk_proof size {} outside §17 window", tx.zk_proof.len()
+        "zk_proof size {} outside §17 window",
+        tx.zk_proof.len()
     );
 }
 
@@ -242,20 +264,22 @@ fn test_real_proof_verifies_against_ffi_verifier() {
     // recipient's real address fields so the proxy PIs are deterministic.
     let witness = send::TransferWitness::build(
         &alice_notes,
-        &[2_000],          // spend values
-        &[1_500, 450],     // recipient + change
-        &[[0x01u8; 32], [0x02u8; 32]],   // output cms
+        &[2_000],                                       // spend values
+        &[1_500, 450],                                  // recipient + change
+        &[[0x01u8; 32], [0x02u8; 32]],                  // output cms
         &[bob_diversifier, alice_notes[0].diversifier], // output d
         &[bob_addr.pk_d, bob_addr.pk_d],                // output pk_d (change reuses shape)
         &[bob_addr.ivk_commitment, bob_addr.ivk_commitment],
-        50,                // fee
+        50, // fee
         &anchor,
-    ).expect("TransferWitness::build 1s/2o");
+    )
+    .expect("TransferWitness::build 1s/2o");
 
     let proof = send::plonky3_prove(&witness);
     assert!(
         (PROOF_MIN_BYTES..=PROOF_MAX_BYTES).contains(&proof.len()),
-        "proof size {} outside §17 window", proof.len()
+        "proof size {} outside §17 window",
+        proof.len()
     );
 
     let pi = witness.public_inputs();

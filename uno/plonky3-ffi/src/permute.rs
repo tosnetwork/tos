@@ -30,9 +30,7 @@
 //! stable across every validator, every build, every invocation.
 
 use p3_field::PrimeField64;
-use p3_goldilocks::{
-    Goldilocks, default_goldilocks_poseidon2_16, default_goldilocks_poseidon2_8,
-};
+use p3_goldilocks::{default_goldilocks_poseidon2_16, default_goldilocks_poseidon2_8, Goldilocks};
 use p3_symmetric::Permutation;
 
 /// The Goldilocks modulus `p_G = 2^64 - 2^32 + 1`. Inputs must satisfy
@@ -147,8 +145,10 @@ mod tests {
     fn permute_t8_zero_state_is_nontrivial() {
         let mut s = [0u64; 8];
         unsafe { uno_poseidon2_goldilocks_permute_t8(s.as_mut_ptr()) };
-        assert!(s.iter().any(|&v| v != 0),
-                "zero state must not be a fixed point of Poseidon2");
+        assert!(
+            s.iter().any(|&v| v != 0),
+            "zero state must not be a fixed point of Poseidon2"
+        );
         for &v in s.iter() {
             assert!(v < GOLDILOCKS_ORDER, "output must be canonical");
         }
@@ -167,17 +167,18 @@ mod tests {
         let fe: [Goldilocks; 8] = core::array::from_fn(|i| Goldilocks::new(input[i]));
         let expected = perm.permute(fe);
         for i in 0..8 {
-            assert_eq!(via_ffi[i], expected[i].as_canonical_u64(),
-                       "FFI output must equal trait permutation at index {i}");
+            assert_eq!(
+                via_ffi[i],
+                expected[i].as_canonical_u64(),
+                "FFI output must equal trait permutation at index {i}"
+            );
         }
     }
 
     /// Width-16 parity gate (same contract as t8).
     #[test]
     fn permute_t16_matches_trait_permute() {
-        let input: [u64; 16] = [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-        ];
+        let input: [u64; 16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
         let mut via_ffi = input;
         unsafe { uno_poseidon2_goldilocks_permute_t16(via_ffi.as_mut_ptr()) };
 
@@ -185,8 +186,11 @@ mod tests {
         let fe: [Goldilocks; 16] = core::array::from_fn(|i| Goldilocks::new(input[i]));
         let expected = perm.permute(fe);
         for i in 0..16 {
-            assert_eq!(via_ffi[i], expected[i].as_canonical_u64(),
-                       "FFI output must equal trait permutation at index {i}");
+            assert_eq!(
+                via_ffi[i],
+                expected[i].as_canonical_u64(),
+                "FFI output must equal trait permutation at index {i}"
+            );
         }
     }
 

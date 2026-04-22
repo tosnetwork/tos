@@ -20,7 +20,9 @@ use tosctl_uno::{address, hybrid_kem, keygen, poseidon2, scan};
 fn fixed_seed() -> [u8; 32] {
     // Deterministic test vector — first 32 natural numbers.
     let mut s = [0u8; 32];
-    for i in 0..32 { s[i] = i as u8; }
+    for i in 0..32 {
+        s[i] = i as u8;
+    }
     s
 }
 
@@ -43,7 +45,10 @@ fn derive_keys_then_address_verifies_ivk_commitment_chain() {
     let ic2 = keygen::ivk_commitment(&fvk.ivk.0, &d2).expect("ivk_cm 2");
     assert_eq!(a1.ivk_commitment, ic1);
     assert_eq!(a2.ivk_commitment, ic2);
-    assert_ne!(ic1, ic2, "different diversifiers must produce different commitments");
+    assert_ne!(
+        ic1, ic2,
+        "different diversifiers must produce different commitments"
+    );
 
     // Step 4. Wire round-trip: the 1259-byte layout parses back to the same
     //         struct.
@@ -82,13 +87,14 @@ fn derive_keys_then_address_verifies_ivk_commitment_chain() {
     let epk_compressed = epk.compress().to_bytes();
 
     // Sender computes s_dh = esk * pk_d (where pk_d = ivk · g_d).
-    let pk_d_point = CompressedRistretto(a1.pk_d).decompress().expect("pk_d decompress");
+    let pk_d_point = CompressedRistretto(a1.pk_d)
+        .decompress()
+        .expect("pk_d decompress");
     let s_dh_sender = esk * pk_d_point;
     let s_dh_sender_compressed = s_dh_sender.compress().to_bytes();
 
     // Sender encapsulates to pk_mlkem.
-    let (mlkem_ct, s_pq_sender) =
-        keygen::mlkem_encap(&fvk.pk_mlkem).expect("encap");
+    let (mlkem_ct, s_pq_sender) = keygen::mlkem_encap(&fvk.pk_mlkem).expect("encap");
 
     let k_aead = hybrid_kem::derive_key(
         &s_dh_sender_compressed,
@@ -115,7 +121,7 @@ fn derive_keys_then_address_verifies_ivk_commitment_chain() {
     // scan::try_open to close the loop.
     let filter_tag = poseidon2::filter_tag(&k_aead);
     let output = tosctl_uno::wire::OutputDescription {
-        cm: [0u8; 32],     // not verified by try_open
+        cm: [0u8; 32], // not verified by try_open
         epk: epk_compressed,
         filter_tag,
         enc_ciphertext,

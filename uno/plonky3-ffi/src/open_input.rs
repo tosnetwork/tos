@@ -48,7 +48,7 @@
 //! Having a line-numbered reference locked against upstream lets the
 //! AIR encoder diff constraint-by-constraint during A2-3c-iv-c.
 
-use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing, TwoAdicField};
+use p3_field::{Field, PrimeCharacteristicRing, TwoAdicField};
 use p3_goldilocks::Goldilocks;
 use p3_util::reverse_bits_len;
 
@@ -239,8 +239,7 @@ pub fn compute_reduced_openings_for_query(
         .trace_next
         .as_ref()
         .expect("MvpTransferAir has transition constraints ⇒ trace_next present");
-    if trace_mat_opening.len() != trace_local.len() || trace_mat_opening.len() != trace_next.len()
-    {
+    if trace_mat_opening.len() != trace_local.len() || trace_mat_opening.len() != trace_next.len() {
         return Err(OpenInputShapeError::PointValueLengthMismatch {
             mat_opening_len: trace_mat_opening.len(),
             ps_at_z_len: trace_local.len(),
@@ -326,6 +325,7 @@ mod tests {
     use crate::fiat_shamir::derive_full_challenges;
     use crate::prover::MvpProver;
     use crate::transfer_air::MvpWitness;
+    use p3_field::BasedVectorSpace;
 
     fn ch(a: u64, b: u64) -> Challenge {
         Challenge::from_basis_coefficients_fn(|i| {
@@ -345,7 +345,14 @@ mod tests {
         // via our function and via the literal formula from
         // fri/src/verifier.rs:604.
         for log_global in [3usize, 5, 10, 16] {
-            for index in [0usize, 1, 2, 7, (1 << log_global) - 1, 1 << (log_global - 1)] {
+            for index in [
+                0usize,
+                1,
+                2,
+                7,
+                (1 << log_global) - 1,
+                1 << (log_global - 1),
+            ] {
                 for log_height in 1..=log_global {
                     let ours = query_x(index, log_height, log_global);
                     let bits_reduced = log_global - log_height;
@@ -465,11 +472,7 @@ mod tests {
 
     // ---- compute_reduced_openings_for_query on real proofs ----
 
-    fn proof_and_pis(
-        n_s: usize,
-        n_o: usize,
-        seed: u64,
-    ) -> (Proof<MvpConfig>, Vec<Goldilocks>) {
+    fn proof_and_pis(n_s: usize, n_o: usize, seed: u64) -> (Proof<MvpConfig>, Vec<Goldilocks>) {
         let prover = MvpProver::new();
         let w = MvpWitness::deterministic_valid(n_s, n_o, seed);
         let (proof_bytes, _pi_bytes) = prover.prove(&w.encode()).unwrap();
@@ -517,8 +520,7 @@ mod tests {
         // uninit-state bugs in the α-batching loop.
         let (proof, pis) = proof_and_pis(2, 2, 0xDD_0002);
         let challenges = derive_full_challenges(&proof, &pis);
-        let zeta_next =
-            challenges.zeta * Goldilocks::two_adic_generator(proof.degree_bits);
+        let zeta_next = challenges.zeta * Goldilocks::two_adic_generator(proof.degree_bits);
         for q_pos in 0..4 {
             let q = challenges.query_indices[q_pos];
             let a = compute_reduced_openings_for_query(
@@ -552,8 +554,7 @@ mod tests {
         // trace_local is actually part of the α-batching input.
         let (mut proof, pis) = proof_and_pis(2, 2, 0xEE_0003);
         let challenges = derive_full_challenges(&proof, &pis);
-        let zeta_next =
-            challenges.zeta * Goldilocks::two_adic_generator(proof.degree_bits);
+        let zeta_next = challenges.zeta * Goldilocks::two_adic_generator(proof.degree_bits);
         let q_pos = 0;
         let q = challenges.query_indices[q_pos];
 
@@ -581,7 +582,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_ne!(ok.value, bad.value, "RO must change on tampered trace_local");
+        assert_ne!(
+            ok.value, bad.value,
+            "RO must change on tampered trace_local"
+        );
     }
 
     #[test]
@@ -589,8 +593,7 @@ mod tests {
         // Same invariant for quotient chunks.
         let (mut proof, pis) = proof_and_pis(2, 2, 0xFF_0004);
         let challenges = derive_full_challenges(&proof, &pis);
-        let zeta_next =
-            challenges.zeta * Goldilocks::two_adic_generator(proof.degree_bits);
+        let zeta_next = challenges.zeta * Goldilocks::two_adic_generator(proof.degree_bits);
         let q_pos = 0;
         let q = challenges.query_indices[q_pos];
 
@@ -618,7 +621,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_ne!(ok.value, bad.value, "RO must change on tampered chunk value");
+        assert_ne!(
+            ok.value, bad.value,
+            "RO must change on tampered chunk value"
+        );
     }
 
     #[test]
@@ -627,8 +633,7 @@ mod tests {
         // Catches bugs where the x is constant or the loop aliases.
         let (proof, pis) = proof_and_pis(2, 2, 0xA1_0005);
         let challenges = derive_full_challenges(&proof, &pis);
-        let zeta_next =
-            challenges.zeta * Goldilocks::two_adic_generator(proof.degree_bits);
+        let zeta_next = challenges.zeta * Goldilocks::two_adic_generator(proof.degree_bits);
 
         let q0 = challenges.query_indices[0];
         let q1 = challenges.query_indices[1];

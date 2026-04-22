@@ -45,16 +45,15 @@
 //! upstream helpers.
 
 use p3_commit::{Pcs, PolynomialSpace};
-use p3_field::{BasedVectorSpace, PrimeCharacteristicRing};
-use p3_goldilocks::Goldilocks;
+use p3_field::BasedVectorSpace;
 use p3_uni_stark::{
-    AirLayout, PcsError, Proof, StarkGenericConfig, VerificationError,
-    get_log_num_quotient_chunks, recompose_quotient_from_chunks, verify_constraints,
+    get_log_num_quotient_chunks, recompose_quotient_from_chunks, verify_constraints, AirLayout,
+    PcsError, Proof, StarkGenericConfig, VerificationError,
 };
 
-use crate::prover::{Challenge, MvpChallenger, MvpConfig, MvpPcs, Val, build_config};
+use crate::prover::{build_config, Challenge, MvpChallenger, MvpConfig, MvpPcs, Val};
 use crate::transfer_air::{
-    MvpTransferAir, air_num_public_values, derive_shape_from_public_inputs_len,
+    air_num_public_values, derive_shape_from_public_inputs_len, MvpTransferAir,
 };
 
 // ---------------------------------------------------------------------------
@@ -113,17 +112,15 @@ pub fn verify_ood_skip_pcs(
     let cfg = build_config();
     let pcs: &MvpPcs = cfg.pcs();
     let degree_bits = proof.degree_bits;
-    let degree = 1usize
-        .checked_shl(degree_bits as u32)
-        .ok_or_else(|| {
-            VerificationError::InvalidProofShape(
-                p3_uni_stark::InvalidProofShapeError::DegreeBitsTooLarge {
-                    air: None,
-                    maximum: usize::BITS as usize - 1,
-                    got: degree_bits,
-                },
-            )
-        })?;
+    let degree = 1usize.checked_shl(degree_bits as u32).ok_or_else(|| {
+        VerificationError::InvalidProofShape(
+            p3_uni_stark::InvalidProofShapeError::DegreeBitsTooLarge {
+                air: None,
+                maximum: usize::BITS as usize - 1,
+                got: degree_bits,
+            },
+        )
+    })?;
     let trace_domain =
         <MvpPcs as Pcs<Challenge, MvpChallenger>>::natural_domain_for_degree(pcs, degree);
     let init_trace_domain = trace_domain; // is_zk = 0 ⇒ init == trace
@@ -228,6 +225,8 @@ mod tests {
     use super::*;
     use crate::prover::MvpProver;
     use crate::transfer_air::MvpWitness;
+    use p3_field::PrimeCharacteristicRing;
+    use p3_goldilocks::Goldilocks;
 
     fn proof_for(
         n_s: usize,
@@ -269,9 +268,8 @@ mod tests {
         let first = proof.opened_values.trace_local[0];
         let flip = first + Challenge::ONE;
         proof.opened_values.trace_local[0] = flip;
-        let err = derive_and_verify_ood(&proof, &pis).expect_err(
-            "tampered trace_local must fail OOD",
-        );
+        let err =
+            derive_and_verify_ood(&proof, &pis).expect_err("tampered trace_local must fail OOD");
         matches!(err, VerificationError::OodEvaluationMismatch { .. });
     }
 
@@ -283,9 +281,8 @@ mod tests {
         // Flip one limb of quotient_chunks[0][0].
         let first = proof.opened_values.quotient_chunks[0][0];
         proof.opened_values.quotient_chunks[0][0] = first + Challenge::ONE;
-        let err = derive_and_verify_ood(&proof, &pis).expect_err(
-            "tampered quotient chunk must fail OOD",
-        );
+        let err =
+            derive_and_verify_ood(&proof, &pis).expect_err("tampered quotient chunk must fail OOD");
         matches!(err, VerificationError::OodEvaluationMismatch { .. });
     }
 
@@ -315,9 +312,8 @@ mod tests {
         let (alpha_ok, zeta_ok) = crate::fiat_shamir::derive_pre_pcs_challenges(&proof, &pis);
         // Swap alpha and zeta — both are extension elements of the same
         // type, but the identity should hold ONLY for the correct pair.
-        let err = verify_ood_skip_pcs(&proof, &pis, zeta_ok, alpha_ok).expect_err(
-            "OOD with swapped challenges must fail",
-        );
+        let err = verify_ood_skip_pcs(&proof, &pis, zeta_ok, alpha_ok)
+            .expect_err("OOD with swapped challenges must fail");
         matches!(err, VerificationError::OodEvaluationMismatch { .. });
     }
 

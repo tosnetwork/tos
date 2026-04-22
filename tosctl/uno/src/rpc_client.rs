@@ -43,7 +43,9 @@ impl RpcClient {
             "params": params,
         });
 
-        let resp = self.http.post(&self.base_url)
+        let resp = self
+            .http
+            .post(&self.base_url)
             .json(&body)
             .send()
             .await
@@ -54,13 +56,16 @@ impl RpcClient {
             let text = resp.text().await.unwrap_or_default();
             return Err(anyhow!("HTTP {status} from {method}: {text}"));
         }
-        let envelope: RpcEnvelope = resp.json().await
+        let envelope: RpcEnvelope = resp
+            .json()
+            .await
             .with_context(|| format!("decoding JSON-RPC response from {method}"))?;
 
         if let Some(err) = envelope.error {
             return Err(anyhow!("RPC error {}: {}", err.code, err.message));
         }
-        envelope.result
+        envelope
+            .result
             .ok_or_else(|| anyhow!("RPC response from {method} had neither result nor error"))
     }
 
@@ -77,10 +82,9 @@ impl RpcClient {
     /// `uno_getBlockFilter(seqno)` — returns the raw GCS filter bytes.
     pub async fn get_block_filter(&self, seqno: u64) -> Result<Vec<u8>> {
         let v = self.call("uno_getBlockFilter", json!([seqno])).await?;
-        let s: String = serde_json::from_value(v)
-            .context("get_block_filter: expected hex string")?;
-        hex::decode(s.trim_start_matches("0x"))
-            .context("decoding filter hex")
+        let s: String =
+            serde_json::from_value(v).context("get_block_filter: expected hex string")?;
+        hex::decode(s.trim_start_matches("0x")).context("decoding filter hex")
     }
 
     /// `uno_getOutputsAtBlock(seqno, from_index, limit)`. Returns the raw
@@ -91,24 +95,21 @@ impl RpcClient {
         from_index: u64,
         limit: u64,
     ) -> Result<Vec<Vec<u8>>> {
-        let v = self.call(
-            "uno_getOutputsAtBlock",
-            json!([seqno, from_index, limit]),
-        ).await?;
+        let v = self
+            .call("uno_getOutputsAtBlock", json!([seqno, from_index, limit]))
+            .await?;
         let raw: Vec<String> = serde_json::from_value(v)
             .context("get_outputs_at_block: expected array of hex strings")?;
         raw.into_iter()
-            .map(|s| hex::decode(s.trim_start_matches("0x"))
-                .context("decoding output hex"))
+            .map(|s| hex::decode(s.trim_start_matches("0x")).context("decoding output hex"))
             .collect()
     }
 
     /// `uno_getNullifierStatus(nf_hex)`.
     pub async fn get_nullifier_status(&self, nf: &[u8; 32]) -> Result<NullifierStatus> {
-        let v = self.call(
-            "uno_getNullifierStatus",
-            json!([hex::encode(nf)]),
-        ).await?;
+        let v = self
+            .call("uno_getNullifierStatus", json!([hex::encode(nf)]))
+            .await?;
         serde_json::from_value(v).context("decoding NullifierStatus")
     }
 
@@ -122,10 +123,9 @@ impl RpcClient {
     /// `uno_estimateFee(n_spends, n_outputs)` — minimum native-asset fee in
     /// nano-units. Returns a single u64 per §9.1.
     pub async fn estimate_fee(&self, n_spends: u8, n_outputs: u8) -> Result<u64> {
-        let v = self.call(
-            "uno_estimateFee",
-            json!([n_spends, n_outputs]),
-        ).await?;
+        let v = self
+            .call("uno_estimateFee", json!([n_spends, n_outputs]))
+            .await?;
         // Accept either a bare integer or a {"fee": N} envelope. The chain
         // handler currently returns a bare integer; wrapper form is future-proof.
         if let Some(n) = v.as_u64() {
@@ -145,7 +145,8 @@ impl RpcClient {
         // Server returns {"tx_hash": "<hex>"}
         let obj: serde_json::Map<String, Value> = serde_json::from_value(v.clone())
             .with_context(|| format!("send_transfer: unexpected response shape: {v:?}"))?;
-        let hash = obj.get("tx_hash")
+        let hash = obj
+            .get("tx_hash")
             .and_then(|x| x.as_str())
             .ok_or_else(|| anyhow!("send_transfer: response missing 'tx_hash'"))?;
         Ok(hash.trim_start_matches("0x").to_string())
@@ -161,7 +162,10 @@ struct RpcEnvelope {
 }
 
 #[derive(Debug, Deserialize)]
-struct RpcError { code: i64, message: String }
+struct RpcError {
+    code: i64,
+    message: String,
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChainInfo {

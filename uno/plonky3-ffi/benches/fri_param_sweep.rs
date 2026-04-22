@@ -50,10 +50,10 @@ use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
 use p3_fri::{FriParameters, TwoAdicFriPcs};
-use p3_goldilocks::{Goldilocks, Poseidon2Goldilocks, default_goldilocks_poseidon2_8};
+use p3_goldilocks::{default_goldilocks_poseidon2_8, Goldilocks, Poseidon2Goldilocks};
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
-use p3_uni_stark::{StarkConfig, prove, verify};
+use p3_uni_stark::{prove, verify, StarkConfig};
 
 use uno_plonky3_ffi::transfer_air::{MvpTransferAir, MvpWitness};
 
@@ -86,11 +86,7 @@ type SweepConfig = StarkConfig<SweepPcs, Challenge, SweepChallenger>;
 
 /// Build a `StarkConfig` with the given FRI parameters. Matches
 /// `prover.rs::build_config` byte-for-byte in every layer except FRI.
-fn build_sweep_config(
-    log_blowup: usize,
-    num_queries: usize,
-    query_pow_bits: usize,
-) -> SweepConfig {
+fn build_sweep_config(log_blowup: usize, num_queries: usize, query_pow_bits: usize) -> SweepConfig {
     let perm: Perm8 = default_goldilocks_poseidon2_8();
     let hash = SweepHash::new(perm.clone());
     let compress = SweepCompress::new(perm.clone());
@@ -248,8 +244,7 @@ fn run_one(
     // "log_blowup < AIR quotient degree" rather than panicking.
     let trace = witness.generate_trace();
     let warmup_proof = prove(&config, &air, trace, &pi);
-    let warmup_proof_bytes =
-        postcard::to_allocvec(&warmup_proof).expect("postcard serialize");
+    let warmup_proof_bytes = postcard::to_allocvec(&warmup_proof).expect("postcard serialize");
     if verify(&config, &air, &warmup_proof, &pi).is_err() {
         // AIR's quotient degree exceeds this blowup. Mark skipped.
         return None;
@@ -265,8 +260,7 @@ fn run_one(
 
     // Verify: reuse the warm-up proof for pure verifier cost.
     let verify_best = best_of(VERIFY_SAMPLES, || {
-        verify(&config, &air, &warmup_proof, &pi)
-            .expect("sample verify must succeed");
+        verify(&config, &air, &warmup_proof, &pi).expect("sample verify must succeed");
     });
 
     Some(Row {
@@ -339,9 +333,7 @@ fn main() {
                     prove_ms: 0.0,
                     verify_ms: 0.0,
                     proof_bytes: 0,
-                    conjectured_bits: conjectured_soundness_bits(
-                        log_blowup, num_queries, pow_bits,
-                    ),
+                    conjectured_bits: conjectured_soundness_bits(log_blowup, num_queries, pow_bits),
                     proven_bits: proven_soundness_bits(log_blowup, num_queries, pow_bits),
                     note: "AIR-incompatible (blowup < quotient degree)",
                 });
@@ -358,9 +350,7 @@ fn main() {
                     prove_ms: 0.0,
                     verify_ms: 0.0,
                     proof_bytes: 0,
-                    conjectured_bits: conjectured_soundness_bits(
-                        log_blowup, num_queries, pow_bits,
-                    ),
+                    conjectured_bits: conjectured_soundness_bits(log_blowup, num_queries, pow_bits),
                     proven_bits: proven_soundness_bits(log_blowup, num_queries, pow_bits),
                     note: "OOM/panic",
                 });

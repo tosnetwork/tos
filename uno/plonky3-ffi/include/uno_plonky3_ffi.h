@@ -10,114 +10,116 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-// Maximum spend count (§4.1 ConfigParam 84).
-#define MAX_SPENDS 4
-
-// Maximum output count (§4.1 ConfigParam 84).
-#define MAX_OUTPUTS 4
-
-// Minimum spend count — at least one spend is required for a Transfer.
-#define MIN_SPENDS 1
-
-// Minimum output count — at least one output is required.
-#define MIN_OUTPUTS 1
-
-// Width of the narrow Poseidon2 permutation (Merkle / IvkCm / Nf).
-#define POSEIDON2_WIDTH 8
-
-// Width of the wide Poseidon2 permutation (claim 2 / claim 6 note-
-// commitment absorb; §3.2). The 15-fe input (`domain_tag, d, pk_d,
-// ivk_commitment, value, rcm`) needs a width-16 sponge.
-#define POSEIDON2_WIDTH_16 16
-
-// S-box degree (α=7 on Goldilocks).
-#define POSEIDON2_SBOX_DEGREE 7
-
-// Number of committed intermediate registers per S-box at degree 7.
-#define POSEIDON2_SBOX_REGISTERS 1
-
-// Number of full rounds per half. Total `R_F = 8`. Same for widths 8 / 16.
-#define POSEIDON2_HALF_FULL_ROUNDS GOLDILOCKS_POSEIDON2_HALF_FULL_ROUNDS
-
-// Number of partial rounds. `R_P = 22` for width-8 Goldilocks (§16 #42).
-#define POSEIDON2_PARTIAL_ROUNDS GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8
-
-// Number of partial rounds for width-16 Goldilocks. Also 22.
-#define POSEIDON2_PARTIAL_ROUNDS_16 GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_16
-
-// Domain tag for the IVK-commitment Poseidon2.
-#define TAG_IVK_CM 105111591102868323
-
-// Domain tag for the note-commitment Poseidon2.
-#define TAG_CM 105111591001617969
-
-// Domain tag for the nullifier Poseidon2.
-#define TAG_NF 105111591185708593
-
-// Depth of the note-commitment Merkle tree (§2.3 / §10.2 ConfigParam 84).
-#define MERKLE_DEPTH 32
-
-// Global (tx-level) columns:
+// Per-block maximum Transfer count. See design doc §2.3.
 //
-// ```text
-//   [fee]                                            (1 col)
-//   [GS_ROW_SEL[0..MERKLE_DEPTH]]                    (32 cols, one-hot bank)
-//   [shared Cm/OutCm Poseidon2-16 block]             (316 cols, claim 2/6)
-//   [shared IvkCm/Nf Poseidon2-8 block]              (180 cols, claim 3/4)
-// ```
+// **v1 value: 4** (per `doc/uno-aggregation-design.md` §-1 pivot of
+// 2026-04-21). UNO v1 ships without block-level aggregation; each
+// Transfer carries its own ~520 KB per-Tx Plonky3 STARK on-chain.
+// Block size at 4 Tx × ~520 KB ≈ 2 MB typical (3.7 MB worst-case
+// 4/4 shape), ~16-32 Mbps validator bandwidth — consumer broadband
+// territory. TPS = 4 is 10× Zcash observed (~0.9), 2× Zcash Sapling
+// theoretical (~10), and plenty for 2026 launch. Scaling beyond 4
+// TPS uses additional wc=2 shardchains (wc=2a, wc=2b, ...) — TOS
+// architecture supports this natively.
 //
-// The 32 row selectors are the AIR's clock for all three shared
-// Poseidon2 blocks: `GS_ROW_SEL[k]` is `1` exactly on trace row `k` for
-// `k ∈ 0..32`, `0` on rows 32..63. Step 1 (K-air-col-share) introduced
-// them for the Merkle row-loop; step 2 (K-air-col-step2) reuses the
-// same bank for the Cm/IvkCm/Nf row-loops — no extra selector columns.
-#define GLOBAL_COLS (((1 + MERKLE_DEPTH) + POSEIDON2_COLS_PER_INSTANCE_16) + POSEIDON2_COLS_PER_INSTANCE)
+// **v2 target: 30** (to be restored when aggregation returns per
+// §-1 triggers). Matches original §1.4 success criterion #7
+// ("15–30 TPS sustained") at 1 s block cadence, under the v2
+// aggregation path where block prover time becomes the bottleneck
+// instead of bandwidth.
+#define BLOCK_TX_CAP 4
 
-// Width in bits of the bit-decomposition range check for `value_i` /
-// `value_j` (§4.2 claims 5 & 7). Each value is committed as 64 bit
-// columns so the AIR constrains `value < 2^64`; since
-// `p_Goldilocks = 2^64 − 2^32 + 1`, the additional 32 high-bit
-// combinations in `[2^64 − 2^32 + 1, 2^64)` are unreachable by a single
-// field element, so the bit decomposition is exact on canonical inputs.
-#define VALUE_BITS 64
+// Minimum aggregated Transfer count. Zero-Transfer blocks are legal
+// (empty block → empty aggregator proof), but the aggregator only
+// runs when N >= 1.
+#define BLOCK_TX_MIN 0
 
-// Per-spend proxy columns: leaf, d, value, ivk, ivk_commitment_claim,
-// pk_d, rcm, nk, pos (9 leading fields), plus 32 path-bit proxies, 32
-// sibling-hash proxies for the 32-level Merkle path (§2.3), and
-// VALUE_BITS bit columns for the explicit u64 range-check on `value_i`
-// (§4.2 claim 5).
-#define SPEND_PROXY_COLS (((9 + MERKLE_DEPTH) + MERKLE_DEPTH) + VALUE_BITS)
+#define CHALLENGE_DIM 2
 
-// Per-output proxy columns: cm_claim, d, pk_d, ivk_commitment, value,
-// rcm (6 leading fields), plus VALUE_BITS bit columns for the explicit
-// u64 range-check on `value_j` (§4.2 claim 7).
-#define OUTPUT_PROXY_COLS (6 + VALUE_BITS)
+// Binomial extension norm constant. `<Goldilocks as BinomiallyExtendable<2>>::W`.
+#define EXT_W 7
 
-// Narrow (width-8) Poseidon2 instances per spend after K-air-col-step2:
-// only the shared-Merkle slot remains. IvkCm + Nf are folded into a
-// single globally-shared row-looped block on rows 0..7.
-#define POSEIDON2_NARROW_PER_SPEND 1
+#define OP_KIND_COMBINE 0
 
-// Per-spend variable columns that are NOT constant across rows (i.e., not
-// included in the transition "proxies are constant" equality). Currently:
-// `S_CURRENT` (running Merkle digest).
-#define SPEND_VAR_COLS 1
+#define OP_KIND_IDLE 1
 
-// Wide (width-16) Poseidon2 instances per spend after K-air-col-step2:
-// zero (the claim-2 Cm compression is folded into the global shared
-// w=16 block on trace rows 0..3).
-#define POSEIDON2_WIDE_PER_SPEND 0
+#define NUM_OP_KINDS 2
 
-// Wide (width-16) Poseidon2 instances per output after K-air-col-step2:
-// zero (the claim-6 Cm compression is folded into the global shared
-// w=16 block on trace rows 4..7).
-#define POSEIDON2_WIDE_PER_OUTPUT 0
 
-// Default test chain_id ("UNOT" LE).
-#define CHAIN_ID_TEST 1414483541
 
-// Default test expiry_block for witness-derived public inputs.
-#define EXPIRY_BLOCK_TEST 100000
+#define KIND0 0
+
+#define KIND_END (KIND0 + NUM_OP_KINDS)
+
+#define P_AT_X KIND_END
+
+#define P_AT_Z0 (P_AT_X + 1)
+
+#define P_AT_Z_END (P_AT_Z0 + CHALLENGE_DIM)
+
+#define Z0 P_AT_Z_END
+
+#define Z_END (Z0 + CHALLENGE_DIM)
+
+#define X Z_END
+
+#define QUOT_INV0 (X + 1)
+
+#define QUOT_INV_END (QUOT_INV0 + CHALLENGE_DIM)
+
+#define DIFF_QUOT0 QUOT_INV_END
+
+#define DIFF_QUOT_END (DIFF_QUOT0 + CHALLENGE_DIM)
+
+#define ALPHA0 DIFF_QUOT_END
+
+#define ALPHA_END (ALPHA0 + CHALLENGE_DIM)
+
+#define ALPHA_POW_IN0 ALPHA_END
+
+#define ALPHA_POW_IN_END (ALPHA_POW_IN0 + CHALLENGE_DIM)
+
+#define ALPHA_POW_OUT0 ALPHA_POW_IN_END
+
+#define ALPHA_POW_OUT_END (ALPHA_POW_OUT0 + CHALLENGE_DIM)
+
+#define RO_IN0 ALPHA_POW_OUT_END
+
+#define RO_IN_END (RO_IN0 + CHALLENGE_DIM)
+
+#define RO_OUT0 RO_IN_END
+
+#define RO_OUT_END (RO_OUT0 + CHALLENGE_DIM)
+
+#define INITIAL_ALPHA_POW0 RO_OUT_END
+
+#define INITIAL_ALPHA_POW_END (INITIAL_ALPHA_POW0 + CHALLENGE_DIM)
+
+#define INITIAL_RO0 INITIAL_ALPHA_POW_END
+
+#define INITIAL_RO_END (INITIAL_RO0 + CHALLENGE_DIM)
+
+#define FINAL_RO0 INITIAL_RO_END
+
+#define FINAL_RO_END (FINAL_RO0 + CHALLENGE_DIM)
+
+#define WIDTH FINAL_RO_END
+
+// Current `aggregator_scheme_id`. Bumped on crypto-family migration.
+#define UNO_AGGREGATOR_SCHEME_ID_V1 1
+
+// Current `aggregator_version`. Bumped on framing-incompatible
+// changes within the same scheme_id.
+#define UNO_AGGREGATOR_VERSION_V1 1
+
+// Fixed framing overhead (bytes BEFORE the variable-length proof).
+// 1 + 1 + 2 + 32 + 4 = 40.
+#define UNO_BLOCK_EXTRA_HEADER_BYTES 40
+
+// Hard cap on `aggregated_proof_len`. 16 MB is orders above our
+// measured 400-800 KB envelope and above any plausible future WHIR
+// proof size — rejects adversarial inputs before allocating.
+#define UNO_BLOCK_EXTRA_MAX_PROOF_BYTES ((16 * 1024) * 1024)
 
 // Sponge width. Matches `Poseidon2Goldilocks<8>`.
 #define SPONGE_WIDTH 8
@@ -181,8 +183,6 @@
 
 #define OP_KIND_DUPLEX 2
 
-#define OP_KIND_IDLE 3
-
 // Number of distinct row kinds; matches the one-hot selector width.
 #define CHALLENGER_NUM_OP_KINDS 4
 
@@ -216,10 +216,6 @@
 
 #define OUT_BUF_LEN_FLAG_END (OUT_BUF_LEN_FLAG0 + (SPONGE_RATE + 1))
 
-#define KIND0 OUT_BUF_LEN_FLAG_END
-
-#define KIND_END (KIND0 + CHALLENGER_NUM_OP_KINDS)
-
 // Value absorbed on OBSERVE rows; constrained to 0 on non-OBSERVE rows
 // (not strictly required for soundness, but simplifies audit).
 #define OBSERVED_VALUE KIND_END
@@ -235,90 +231,16 @@
 // and "outputs match state_next[0..8]" with `is_duplex`.
 #define P2_BLOCK (SAMPLED_VALUE + 1)
 
-
-
-// Per-block maximum Transfer count. See design doc §2.3.
-//
-// **v1 value: 4** (per `doc/uno-aggregation-design.md` §-1 pivot of
-// 2026-04-21). UNO v1 ships without block-level aggregation; each
-// Transfer carries its own ~520 KB per-Tx Plonky3 STARK on-chain.
-// Block size at 4 Tx × ~520 KB ≈ 2 MB typical (3.7 MB worst-case
-// 4/4 shape), ~16-32 Mbps validator bandwidth — consumer broadband
-// territory. TPS = 4 is 10× Zcash observed (~0.9), 2× Zcash Sapling
-// theoretical (~10), and plenty for 2026 launch. Scaling beyond 4
-// TPS uses additional wc=2 shardchains (wc=2a, wc=2b, ...) — TOS
-// architecture supports this natively.
-//
-// **v2 target: 30** (to be restored when aggregation returns per
-// §-1 triggers). Matches original §1.4 success criterion #7
-// ("15–30 TPS sustained") at 1 s block cadence, under the v2
-// aggregation path where block prover time becomes the bottleneck
-// instead of bandwidth.
-#define BLOCK_TX_CAP 4
-
-// Minimum aggregated Transfer count. Zero-Transfer blocks are legal
-// (empty block → empty aggregator proof), but the aggregator only
-// runs when N >= 1.
-#define BLOCK_TX_MIN 0
-
-// Current `aggregator_scheme_id`. Bumped on crypto-family migration.
-#define UNO_AGGREGATOR_SCHEME_ID_V1 1
-
-// Current `aggregator_version`. Bumped on framing-incompatible
-// changes within the same scheme_id.
-#define UNO_AGGREGATOR_VERSION_V1 1
-
-// Fixed framing overhead (bytes BEFORE the variable-length proof).
-// 1 + 1 + 2 + 32 + 4 = 40.
-#define UNO_BLOCK_EXTRA_HEADER_BYTES 40
-
-// Hard cap on `aggregated_proof_len`. 16 MB is orders above our
-// measured 400-800 KB envelope and above any plausible future WHIR
-// proof size — rejects adversarial inputs before allocating.
-#define UNO_BLOCK_EXTRA_MAX_PROOF_BYTES ((16 * 1024) * 1024)
-
-// FRI `log_blowup` parameter. Matches `prover::build_config` (Option B).
-#define LOG_BLOWUP 3
-
-// FRI `log_final_poly_len` parameter. Matches `prover::build_config`.
-#define LOG_FINAL_POLY_LEN 0
-
-// Log of the final domain size after all folds.
-#define LOG_FINAL_HEIGHT (LOG_BLOWUP + LOG_FINAL_POLY_LEN)
-
-// Leaf-row width supported by this sub-phase: exactly RATE=4 Goldilocks
-// (single Poseidon2-w8 absorption block). Wider leaves land in a
-// follow-up sub-phase that pipelines the absorb rows.
-#define LEAF_WIDTH 4
-
-// Digest size (= DIGEST_ELEMS of MvpValMmcs).
 #define DIGEST_WIDTH 4
 
-#define OP_KIND_LEAF 0
+#define OP_KIND_COMPRESS 0
 
-#define OP_KIND_COMPRESS 1
-
-#define NUM_OP_KINDS 3
-
+// Reserved slot; unused at d-7-d but kept for forward compatibility.
+#define OP_KIND_RESERVED 2
 
 
-#define LEAF0 KIND_END
 
-#define LEAF_END (LEAF0 + LEAF_WIDTH)
-
-#define LEFT0 LEAF_END
-
-#define LEFT_END (LEFT0 + DIGEST_WIDTH)
-
-#define RIGHT0 LEFT_END
-
-#define RIGHT_END (RIGHT0 + DIGEST_WIDTH)
-
-#define DIGEST0 RIGHT_END
-
-#define DIGEST_END (DIGEST0 + DIGEST_WIDTH)
-
-#define CURRENT0 DIGEST_END
+#define CURRENT0 KIND_END
 
 #define CURRENT_END (CURRENT0 + DIGEST_WIDTH)
 
@@ -326,18 +248,27 @@
 
 #define SIBLING_END (SIBLING0 + DIGEST_WIDTH)
 
-#define INDEX_BIT SIBLING_END
+#define LEFT0 SIBLING_END
 
-#define ROOT0 (INDEX_BIT + 1)
+#define LEFT_END (LEFT0 + DIGEST_WIDTH)
+
+#define RIGHT0 LEFT_END
+
+#define RIGHT_END (RIGHT0 + DIGEST_WIDTH)
+
+#define INDEX_BIT RIGHT_END
+
+#define DIGEST0 (INDEX_BIT + 1)
+
+#define DIGEST_END (DIGEST0 + DIGEST_WIDTH)
+
+#define LEAF_DIGEST0 DIGEST_END
+
+#define LEAF_DIGEST_END (LEAF_DIGEST0 + DIGEST_WIDTH)
+
+#define ROOT0 LEAF_DIGEST_END
 
 #define ROOT_END (ROOT0 + DIGEST_WIDTH)
-
-// Extension field DIMENSION — Goldilocks's BinomialExtensionField<_, 2>.
-#define CHALLENGE_DIM 2
-
-// Binomial extension norm constant for Goldilocks D=2. Must match
-// `<Goldilocks as BinomiallyExtendable<2>>::W`.
-#define EXT_W 7
 
 #define OP_KIND_FOLD 0
 
@@ -371,67 +302,16 @@
 
 #define FINAL_FOLDED_END (FINAL_FOLDED0 + CHALLENGE_DIM)
 
-#define OP_KIND_COMBINE 0
+// FRI `log_blowup` parameter. Matches `prover::build_config` (Option B).
+#define LOG_BLOWUP 3
 
+// FRI `log_final_poly_len` parameter. Matches `prover::build_config`.
+#define LOG_FINAL_POLY_LEN 0
 
-
-#define P_AT_X KIND_END
-
-#define P_AT_Z0 (P_AT_X + 1)
-
-#define P_AT_Z_END (P_AT_Z0 + CHALLENGE_DIM)
-
-#define Z0 P_AT_Z_END
-
-#define Z_END (Z0 + CHALLENGE_DIM)
-
-#define X Z_END
-
-#define QUOT_INV0 (X + 1)
-
-#define QUOT_INV_END (QUOT_INV0 + CHALLENGE_DIM)
-
-#define DIFF_QUOT0 QUOT_INV_END
-
-#define DIFF_QUOT_END (DIFF_QUOT0 + CHALLENGE_DIM)
-
-#define ALPHA0 DIFF_QUOT_END
-
-#define ALPHA_END (ALPHA0 + CHALLENGE_DIM)
-
-#define ALPHA_POW_IN0 ALPHA_END
-
-#define ALPHA_POW_IN_END (ALPHA_POW_IN0 + CHALLENGE_DIM)
-
-#define ALPHA_POW_OUT0 ALPHA_POW_IN_END
-
-#define ALPHA_POW_OUT_END (ALPHA_POW_OUT0 + CHALLENGE_DIM)
-
-#define RO_IN0 ALPHA_POW_OUT_END
-
-#define RO_IN_END (RO_IN0 + CHALLENGE_DIM)
-
-#define RO_OUT0 RO_IN_END
-
-#define RO_OUT_END (RO_OUT0 + CHALLENGE_DIM)
-
-#define INITIAL_ALPHA_POW0 RO_OUT_END
-
-#define INITIAL_ALPHA_POW_END (INITIAL_ALPHA_POW0 + CHALLENGE_DIM)
-
-#define INITIAL_RO0 INITIAL_ALPHA_POW_END
-
-#define INITIAL_RO_END (INITIAL_RO0 + CHALLENGE_DIM)
-
-#define FINAL_RO0 INITIAL_RO_END
-
-#define FINAL_RO_END (FINAL_RO0 + CHALLENGE_DIM)
+// Log of the final domain size after all folds.
+#define LOG_FINAL_HEIGHT (LOG_BLOWUP + LOG_FINAL_POLY_LEN)
 
 #define OP_KIND_ABSORB 0
-
-// Reserved slot for a future non-absorb / non-idle kind (e.g.
-// COMPRESS once we re-unify with merkle_path_air).
-#define OP_KIND_RESERVED 2
 
 
 
@@ -466,11 +346,18 @@
 
 #define EXPECTED_DIGEST_END (EXPECTED_DIGEST0 + DIGEST_WIDTH)
 
+// Leaf-row width supported by this sub-phase: exactly RATE=4 Goldilocks
+// (single Poseidon2-w8 absorption block). Wider leaves land in a
+// follow-up sub-phase that pipelines the absorb rows.
+#define LEAF_WIDTH 4
+
+#define OP_KIND_LEAF 0
 
 
-#define LEAF_DIGEST0 DIGEST_END
 
-#define LEAF_DIGEST_END (LEAF_DIGEST0 + DIGEST_WIDTH)
+#define LEAF0 KIND_END
+
+#define LEAF_END (LEAF0 + LEAF_WIDTH)
 
 // Binomial-extension norm constant for Goldilocks D = 2.
 // Must match `<Goldilocks as BinomiallyExtendable<2>>::W`.
@@ -585,6 +472,115 @@
 
 // Total number of public-input Goldilocks elements bound in-circuit.
 #define NUM_BLOCK_PI_ELEMS 8
+
+// Maximum spend count (§4.1 ConfigParam 84).
+#define MAX_SPENDS 4
+
+// Maximum output count (§4.1 ConfigParam 84).
+#define MAX_OUTPUTS 4
+
+// Minimum spend count — at least one spend is required for a Transfer.
+#define MIN_SPENDS 1
+
+// Minimum output count — at least one output is required.
+#define MIN_OUTPUTS 1
+
+// Width of the narrow Poseidon2 permutation (Merkle / IvkCm / Nf).
+#define POSEIDON2_WIDTH 8
+
+// Width of the wide Poseidon2 permutation (claim 2 / claim 6 note-
+// commitment absorb; §3.2). The 15-fe input (`domain_tag, d, pk_d,
+// ivk_commitment, value, rcm`) needs a width-16 sponge.
+#define POSEIDON2_WIDTH_16 16
+
+// S-box degree (α=7 on Goldilocks).
+#define POSEIDON2_SBOX_DEGREE 7
+
+// Number of committed intermediate registers per S-box at degree 7.
+#define POSEIDON2_SBOX_REGISTERS 1
+
+// Number of full rounds per half. Total `R_F = 8`. Same for widths 8 / 16.
+#define POSEIDON2_HALF_FULL_ROUNDS GOLDILOCKS_POSEIDON2_HALF_FULL_ROUNDS
+
+// Number of partial rounds. `R_P = 22` for width-8 Goldilocks (§16 #42).
+#define POSEIDON2_PARTIAL_ROUNDS GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8
+
+// Number of partial rounds for width-16 Goldilocks. Also 22.
+#define POSEIDON2_PARTIAL_ROUNDS_16 GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_16
+
+// Domain tag for the IVK-commitment Poseidon2.
+#define TAG_IVK_CM 105111591102868323
+
+// Domain tag for the note-commitment Poseidon2.
+#define TAG_CM 105111591001617969
+
+// Domain tag for the nullifier Poseidon2.
+#define TAG_NF 105111591185708593
+
+// Depth of the note-commitment Merkle tree (§2.3 / §10.2 ConfigParam 84).
+#define MERKLE_DEPTH 32
+
+// Global (tx-level) columns:
+//
+// ```text
+//   [fee]                                            (1 col)
+//   [GS_ROW_SEL[0..MERKLE_DEPTH]]                    (32 cols, one-hot bank)
+//   [shared Cm/OutCm Poseidon2-16 block]             (316 cols, claim 2/6)
+//   [shared IvkCm/Nf Poseidon2-8 block]              (180 cols, claim 3/4)
+// ```
+//
+// The 32 row selectors are the AIR's clock for all three shared
+// Poseidon2 blocks: `GS_ROW_SEL[k]` is `1` exactly on trace row `k` for
+// `k ∈ 0..32`, `0` on rows 32..63. Step 1 (K-air-col-share) introduced
+// them for the Merkle row-loop; step 2 (K-air-col-step2) reuses the
+// same bank for the Cm/IvkCm/Nf row-loops — no extra selector columns.
+#define GLOBAL_COLS (((1 + MERKLE_DEPTH) + POSEIDON2_COLS_PER_INSTANCE_16) + POSEIDON2_COLS_PER_INSTANCE)
+
+// Width in bits of the bit-decomposition range check for `value_i` /
+// `value_j` (§4.2 claims 5 & 7). Each value is committed as 64 bit
+// columns so the AIR constrains `value < 2^64`; since
+// `p_Goldilocks = 2^64 − 2^32 + 1`, the additional 32 high-bit
+// combinations in `[2^64 − 2^32 + 1, 2^64)` are unreachable by a single
+// field element, so the bit decomposition is exact on canonical inputs.
+#define VALUE_BITS 64
+
+// Per-spend proxy columns: leaf, d, value, ivk, ivk_commitment_claim,
+// pk_d, rcm, nk, pos (9 leading fields), plus 32 path-bit proxies, 32
+// sibling-hash proxies for the 32-level Merkle path (§2.3), and
+// VALUE_BITS bit columns for the explicit u64 range-check on `value_i`
+// (§4.2 claim 5).
+#define SPEND_PROXY_COLS (((9 + MERKLE_DEPTH) + MERKLE_DEPTH) + VALUE_BITS)
+
+// Per-output proxy columns: cm_claim, d, pk_d, ivk_commitment, value,
+// rcm (6 leading fields), plus VALUE_BITS bit columns for the explicit
+// u64 range-check on `value_j` (§4.2 claim 7).
+#define OUTPUT_PROXY_COLS (6 + VALUE_BITS)
+
+// Narrow (width-8) Poseidon2 instances per spend after K-air-col-step2:
+// only the shared-Merkle slot remains. IvkCm + Nf are folded into a
+// single globally-shared row-looped block on rows 0..7.
+#define POSEIDON2_NARROW_PER_SPEND 1
+
+// Per-spend variable columns that are NOT constant across rows (i.e., not
+// included in the transition "proxies are constant" equality). Currently:
+// `S_CURRENT` (running Merkle digest).
+#define SPEND_VAR_COLS 1
+
+// Wide (width-16) Poseidon2 instances per spend after K-air-col-step2:
+// zero (the claim-2 Cm compression is folded into the global shared
+// w=16 block on trace rows 0..3).
+#define POSEIDON2_WIDE_PER_SPEND 0
+
+// Wide (width-16) Poseidon2 instances per output after K-air-col-step2:
+// zero (the claim-6 Cm compression is folded into the global shared
+// w=16 block on trace rows 4..7).
+#define POSEIDON2_WIDE_PER_OUTPUT 0
+
+// Default test chain_id ("UNOT" LE).
+#define CHAIN_ID_TEST 1414483541
+
+// Default test expiry_block for witness-derived public inputs.
+#define EXPIRY_BLOCK_TEST 100000
 
 // Result codes returned across the C ABI.
 //

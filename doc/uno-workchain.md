@@ -676,6 +676,43 @@ The signature fields (`spend_auth_sig[i]`) and the `^zk_proof` cell ref are **ex
 
 Every signature and every ZK-proof public input binds `tx_hash` (or equivalently, binds the same tuple transitively). Replay across chain_ids, schemes, or block heights is structurally impossible.
 
+### 4.1a Chunk-tree encoding (`^Cell` byte blobs)
+
+`enc_ciphertext`, `mlkem_ct`, and `zk_proof` are over-sized byte blobs (up to ~915 KB for `zk_proof` worst case) that do not fit in a single cell (max 127 B per §17). They are encoded as a **balanced 4-ary chunk tree** rooted at the `^Cell` ref. This is the canonical realization of §17.3's "4-ref fan-out, ≤ 6 levels" doctrine for all Uno oversized-blob fields.
+
+**Leaf cell** (holds raw bytes):
+- **Data bits**: `8·L`, where `L ∈ [1..127]` is the leaf's byte count. No length prefix, no type tag — `L` is inferred from the cell's bit length.
+- **Refs**: 0.
+- **Identification**: a cell with 0 refs is a leaf.
+
+**Internal cell** (fanout node):
+- **Data bits**: 0.
+- **Refs**: `k ∈ [1..4]` child refs, left-to-right in byte order.
+- **Identification**: a cell with ≥ 1 ref is internal.
+
+**Canonical construction** (deterministic — same input bytes ⇒ same root hash):
+
+1. Split the input byte sequence into chunks of 127 bytes, left-to-right. The last chunk may be shorter (1..127 B); zero-length input returns a null ref.
+2. Build leaf cells for each chunk in order; call this `level[0]`.
+3. While `len(level[k]) > 1`, group `level[k]` into consecutive chunks of 4 (last group may be 1..4 children) and build one internal cell per group with those children as refs. Call the result `level[k+1]`.
+4. `level[final]` has exactly one cell — this is the root. Return it.
+
+Edge case: if input is ≤ 127 B, the tree is a single leaf (no internal cells).
+
+**Depth bound**: for `N` leaves, tree depth is `⌈log₄(N)⌉`. At v1 worst case `N = ⌈915 KB / 127 B⌉ = 7370 leaves`, depth = `⌈log₄(7370)⌉ = 7` — well under `CellTraits::max_depth = 1024`. (The pre-V1-3c-gamma linear chain used depth `N-1 = 7369`, which hit the 1024 cap as a latent protocol bug; see §17.3 amendment history.)
+
+**Walk cost**: decoder visits every cell exactly once; total cells ≈ `N + N/4 + N/16 + ... ≈ 4N/3`, i.e. ~33 % overhead above the leaf count. For v1 `zk_proof` typical: ~4094 leaves + ~1365 internal = ~5459 cells per proof. Each internal cell serializes to ~5 B descriptor + 4 × 2 B refs = ~13 B; aggregate BoC overhead ≈ 18 KB on a 520 KB proof (3.5 %). Negligible.
+
+**Consensus-binding**: the 4-grouping rule, the left-to-right leaf order, and the 127 B chunk size are consensus-binding for `enc_ciphertext` / `mlkem_ct` because they determine the cell hashes covered by `tx_hash` via the `cell_hash(enc_ciphertext)` / `cell_hash(mlkem_ct)` terms in the §4.1 hash preimage. `zk_proof` is excluded from `tx_hash`; validators recover its byte stream from the bounded chunk tree and pass those bytes to the verifier, so its tree shape is an admission/resource-accounting constraint rather than a signed-message input.
+
+**Bounds check** (decoder): every decoder MUST enforce `total_leaves ≤ kChunkChainMaxChunks = 8192` during the DFS walk and MUST also cap total visited cells (`kChunkTreeMaxCells = 16384` in the reference implementations). The leaf bound caps payload bytes; the total-cell bound prevents malformed non-canonical trees from hiding excessive internal-node work behind a small leaf count. 8192 leaves ≈ 1040 KB, ~14 % above the 915 KB 4/4 worst case.
+
+Reference implementations:
+- C++: `uno/core/transaction.cpp::store_bytes_as_chunk_chain` / `load_bytes_from_chunk_chain`.
+- Rust: `tosctl/uno/src/boc_encode.rs::store_bytes_as_chunk_chain` / `boc_decode.rs::load_bytes_from_chunk_chain`.
+
+Both implementations are covered by the V1-3c cross-language parity test `tosctl/uno/tests/boc_parity.rs` at realistic v1 sizes (`zk_proof = 520 KB`, `mlkem_ct = 1088 B`, `enc_ciphertext = 579 B`).
+
 ### 4.2 What the ZK proof attests
 
 The Plonky3 Transfer AIR (for `scheme_id = 0x01`) proves the following claims simultaneously. All arithmetic is over Goldilocks; all hashes are Poseidon2-over-Goldilocks. **No curve operations appear inside the AIR** (§2.5); every identity claim is expressed as a hash-chain.
@@ -1041,13 +1078,68 @@ Classical primitives retained (with reasoning):
 
 #### Phase 1 — `scheme_id = 0x02` hybrid spend authorization
 
-**Trigger**: production-grade ML-DSA-65 (Dilithium3) C/C++ library with constant-time verify, ≥1 round of external cryptographic audit, and credible ≤10-year CRQC forecast.
+**Trigger (all three must be met)**:
 
-- Spend-auth signature = Schnorr-on-Ristretto255 **AND** ML-DSA-65. Both verify on every spend.
-- Requires extending `SpendDescription` to carry a second pubkey and a second signature (≈ 3.3 KB per spend).
+1. Production-grade ML-DSA-65 (FIPS 204 / Dilithium3) C/C++ library with constant-time verify (AVX2-optional) and a cross-platform signing API.
+2. ≥ 1 round of independent external cryptographic audit against that specific library version.
+3. Credible ≤ 10-year CRQC forecast from at least two independent assessments (e.g., NIST PQC panel, major central-bank / sovereign-risk body). A single alarmist signal is insufficient; the bar is a reputational quorum.
+
+Additional soft trigger (accelerator, not precondition): an adversarial HNDL event on any comparable classical-ECDL system that changes the community's urgency assessment.
+
+**Wire-format delta**:
+
+- Spend-auth signature = Schnorr-on-Ristretto255 **AND** ML-DSA-65. Both verify on every spend (logical AND, not OR — either breaking unilaterally must not forge spends).
+- `SpendDescription` extends to carry the ML-DSA-65 signature (3293 B). The ML-DSA-65 public key (1952 B) lives in the **Address** (§2.6) and is bound into `ivk_commitment`, not transmitted per spend — so the per-spend on-chain cost is the signature alone.
+- Per-spend growth: **+3.3 KB** (ML-DSA signature body).
+- Address growth: **+1.9 KB** (one-time, at key distribution — not per transaction).
+- 4/4 worst-case Transfer: +13.2 KB; at v1 `BLOCK_TX_CAP = 4` that is **+52.8 KB/block**. Under typical shape: **+6.6 KB/tx, +26 KB/block**.
+- Relative to the v1 per-Tx envelope (~655 KB typical, ~1.15 MB worst-case — dominated by the STARK proof), the signature delta is **< 2 %**. No consensus-level bandwidth pressure.
 - Note encryption, proof system, commitment/nullifier primitives all **unchanged** — only the spend-auth layer gains a PQ co-signature.
-- Tx size grows by ~13 KB for a 4-spend worst case; within TOS cell-tree capacity.
-- No note-migration is required; `scheme_id = 0x01` Transfers remain valid.
+- No note-migration is required; `scheme_id = 0x01` Transfers remain valid indefinitely (until Phase 4's reactive freeze, if triggered).
+
+**Prove-time delta — zero**. This is a load-bearing property of the v1 AIR design (decisions #30 + #31): **no curve operations appear inside the Transfer AIR**. Spend-auth signatures are verified off-circuit at §4.3 step 3, decoupled from the Plonky3 prover. Swapping / extending the signature scheme therefore requires no AIR change, no circuit rebuild, no prover hardware re-profile. Contrast Zcash Orchard, where Halo2's in-circuit `rk = ak + α·G` randomization means that any signature-scheme change implies a new circuit + re-audit; Uno traded that coupling for a pure hash-chain ownership binding (§4.2 claim 3), and this Phase-1 migration is the direct payoff.
+
+| Phase | Prove time (client) | STARK verify (validator) | Prover hardware profile |
+|---|---|---|---|
+| v1 (`scheme_id = 0x01`) | ~10–30 s per tx | ~25 ms per tx | §1.4a client tier |
+| Phase 1 (`scheme_id = 0x02`) | **unchanged** | **unchanged** | **unchanged** |
+
+**Verify-time delta — negligible**. Per-spend off-circuit overhead:
+
+| Step | v1 | Phase 1 | Delta |
+|---|---|---|---|
+| Schnorr-Ristretto verify | ~60 µs | ~60 µs | 0 |
+| ML-DSA-65 verify | — | ~200 µs | **+200 µs** |
+| Per-spend total | ~60 µs | ~260 µs | +200 µs |
+
+At `BLOCK_TX_CAP = 4` with 4/4 worst-case: +4 × 4 × 200 µs ≈ **+3.2 ms/block**. Compute-phase budget is 400 ms (§5.9), so the verify overhead is **< 1 %** of the block budget — well inside the noise floor of STARK verify variance.
+
+**Client-side signing delta**. ML-DSA-65 sign ≈ 200 µs on a modern mobile CPU (reference: liboqs / pq-crystals benchmarks). Per-spend signing overhead:
+
+| Step | v1 | Phase 1 |
+|---|---|---|
+| Schnorr sign | ~50 µs | ~50 µs |
+| ML-DSA-65 sign | — | ~200 µs |
+| Per-spend total | ~50 µs | ~250 µs |
+
+4-spend worst-case: +800 µs per Transfer, dominated by the ~10–30 s STARK prove (§7.2). User-perceptible impact: **0 %**.
+
+**Summary — cost snapshot for Phase 1 activation**:
+
+| Dimension | Delta | Note |
+|---|---|---|
+| Per-spend size | +3.3 KB | ML-DSA signature body |
+| Per-tx size | +1 to +2 % | Dominated by ~520 KB STARK proof |
+| Per-block size | +26–53 KB | Negligible vs ~2.6 MB/block typical |
+| Address size | +1.9 KB (one-time) | ML-DSA public key in §2.6 address |
+| Prove time | **0** | AIR decoupling (decisions #30 + #31) |
+| STARK verify time | **0** | Same circuit |
+| Off-circuit verify time | +3.2 ms/block worst-case | < 1 % of compute budget |
+| Client signing time | +800 µs/tx worst-case | Hidden in STARK prove latency |
+| Protocol fork | No | `scheme_id = 0x02` soft activation |
+| Note re-commitment | No | v1 notes remain spendable |
+
+Phase 1 is the **cheapest non-trivial PQ upgrade path that exists for a shielded L1**. The cost structure is a direct dividend of the v1 decisions #30–31 (no in-circuit curves) and the scheme-id crypto-agility frame (§2.0); we pay the 2 % wire-format tax, no other axis moves.
 
 #### Phase 2 — additional PQ hardening (optional, trigger-gated)
 
@@ -2028,15 +2120,15 @@ All over-sized data is stored as **cell trees** using the standard TOS idiom.
 
 | Artifact | Raw size | Representation | Cells | Walk depth |
 |---|---|---|---|---|
-| Plonky3 proof (typical 1-spend/2-output, FRI Option B pinned) | ~520 KB | contiguous byte blob via `CellString` | ~4,200 | ~6 levels |
-| Plonky3 proof (4-spend/4-output worst case) | ~915 KB | contiguous byte blob via `CellString` | ~7,400 | ~6 levels |
-| `enc_ciphertext` (per output) | ~580 B | `CellString` | ~5 | 1 level |
-| `mlkem_ct` (per output) | 1088 B | `CellString` | ~9 | 1 level |
+| Plonky3 proof (typical 1-spend/2-output, FRI Option B pinned) | ~520 KB | 4-ary chunk tree (§4.1a) | ~5,460 | 6 levels |
+| Plonky3 proof (4-spend/4-output worst case) | ~915 KB | 4-ary chunk tree (§4.1a) | ~9,800 | 7 levels |
+| `enc_ciphertext` (per output) | ~580 B | 4-ary chunk tree (§4.1a) | ~7 | 2 levels |
+| `mlkem_ct` (per output) | 1088 B | 4-ary chunk tree (§4.1a) | ~12 | 2 levels |
 | Commitment-tree frontier (32 Poseidon2-Goldilocks siblings) | ~1 KB | linked chain | ~8 | 1 level |
 | Anchor window (100 roots) | ~3.2 KB | ring buffer cell chain | ~25 | 1–2 levels |
 | Nullifier `vm::Dictionary` at 10 M | ~500 MB | 256-bit-keyed sparse dict | ~5 M | ~24 levels |
 
-Each cell carries ~32 bytes of representation-hash and depth metadata, so a 520 KB proof pays ~130 KB of cell-tree overhead (≈ 25 % bloat; ~4,200 cells × ~32 B). This is the fixed cost of persisting non-trivially-sized artifacts in the cell model; we accept it.
+Each cell carries ~32 bytes of representation-hash and depth metadata, so a 520 KB proof pays ~175 KB of cell-tree overhead (≈ 33 % bloat; ~5,460 cells × ~32 B; includes ~33 % internal-node overhead from the 4-ary fanout). This is the fixed cost of persisting non-trivially-sized artifacts in the cell model under the `CellTraits::max_depth = 1024` constraint; we accept it. See §4.1a for the chunk-tree wire format.
 
 ### 17.2 Concrete mitigations in v1
 
@@ -2047,7 +2139,9 @@ Each cell carries ~32 bytes of representation-hash and depth metadata, so a 520 
 
 ### 17.3 Cell-count scaling frontier
 
-Plonky3 proofs under the FRI Option B pin (~520 KB typical, ~915 KB worst-case per tx — per P.2 measurement, `doc/uno-p2-path-research.md`) translate to ~4,200–7,400 cells per proof. Tractable, but it makes **cell count per tx** — not inline bit width — the binding scaling axis. Proof-chain traversal must keep ≤ 6 levels (raised from the pre-pivot ~5-level target to accommodate the ~10× larger proofs); use all four refs per internal node where possible.
+Plonky3 proofs under the FRI Option B pin (~520 KB typical, ~915 KB worst-case per tx — per P.2 measurement, `doc/uno-p2-path-research.md`) translate to ~5,460–9,800 cells per proof (including 4-ary internal-node overhead, §4.1a). Tractable, but it makes **cell count per tx** — not inline bit width — the binding scaling axis. Proof-tree walk depth is `⌈log₄(leaf_count)⌉ = 6–7 levels` at v1 shapes, well under `CellTraits::max_depth = 1024`.
+
+**Amendment (V1-3c-gamma, 2026-04-22)**: pre-V1-3c the spec implied a "linked chain" / linear layout for oversized blobs. The C++ encoder `store_bytes_as_chunk_chain` followed that layout and produced linear depth = `N-1` for `N` chunks. At realistic v1 `zk_proof` sizes (~4094 chunks) this exceeded `CellTraits::max_depth = 1024`; the daemon's BoC deserializer rejected such Transfers with `"Depth is too big"`. The bug was latent because existing C++ codec tests (`uno/test/test-codec-shapes.cpp`) exercised the path with 64 B payloads only. V1-3c's cross-language parity bridge (`tosctl/uno/tests/boc_parity.rs`) first ran the path at realistic sizes and surfaced the regression. The fix formalizes §4.1a's 4-ary chunk-tree layout in both implementations; the consensus-binding cell-hashes are now defined by the tree structure, not the linear chain. This is a wire-format change applied pre-v1-launch; there is no backward-compatibility surface to preserve.
 
 Phase 3 (Tachyon-compatible) would move `enc_ciphertext` and `mlkem_ct` off-chain entirely, shrinking on-chain per-tx to just the proof + commitments + nullifiers. This is the long-term route to reducing cell-tree scaling pressure.
 

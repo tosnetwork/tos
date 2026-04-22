@@ -199,9 +199,16 @@ pub struct FoldRound {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum TraceBuildError {
-    TraceHeightNotPow2 { got: usize },
-    TraceHeightTooSmall { physical_rows: usize, trace_height: usize },
-    SZero { round: usize },
+    TraceHeightNotPow2 {
+        got: usize,
+    },
+    TraceHeightTooSmall {
+        physical_rows: usize,
+        trace_height: usize,
+    },
+    SZero {
+        round: usize,
+    },
 }
 
 /// Build a row-major trace for the fold chain.
@@ -242,8 +249,11 @@ pub fn build_trace(
     };
     let write_kind = |out: &mut [Goldilocks], kind: u8| {
         for k in 0..NUM_OP_KINDS {
-            out[col::KIND0 + k] =
-                if k as u8 == kind { Goldilocks::new(1) } else { zero };
+            out[col::KIND0 + k] = if k as u8 == kind {
+                Goldilocks::new(1)
+            } else {
+                zero
+            };
         }
     };
 
@@ -349,10 +359,7 @@ pub enum CheckError {
     FinalFoldedDrift { row: usize, limb: usize },
 }
 
-pub fn check_all_transitions(
-    trace: &[Goldilocks],
-    trace_height: usize,
-) -> Result<(), CheckError> {
+pub fn check_all_transitions(trace: &[Goldilocks], trace_height: usize) -> Result<(), CheckError> {
     let width = col::WIDTH;
     if trace.len() != trace_height * width {
         return Err(CheckError::TraceLengthMismatch {
@@ -603,8 +610,7 @@ where
             let pl: AB::Expr = local[col::PAIR_LEFT0 + i].into();
             let pr: AB::Expr = local[col::PAIR_RIGHT0 + i].into();
 
-            let expected_left =
-                (one() - bit.clone()) * cur.clone() + bit.clone() * sib.clone();
+            let expected_left = (one() - bit.clone()) * cur.clone() + bit.clone() * sib.clone();
             let expected_right = bit.clone() * cur + (one() - bit.clone()) * sib;
 
             builder.assert_zero(is_fold.clone() * (pl - expected_left));
@@ -645,7 +651,8 @@ where
 
             // Limb 0.
             let lhs0 = f0 * two_s.clone();
-            let rhs0 = s.clone() * (pl0 + pr0) + b0.clone() * d0.clone() + w() * b1.clone() * d1.clone();
+            let rhs0 =
+                s.clone() * (pl0 + pr0) + b0.clone() * d0.clone() + w() * b1.clone() * d1.clone();
             builder.assert_zero(is_fold.clone() * (lhs0 - rhs0));
 
             // Limb 1.
@@ -738,9 +745,7 @@ mod tests {
     }
 
     /// Build a handmade 3-round chain and return (initial, rounds, final).
-    fn handmade_3_round_chain(
-        initial: Challenge,
-    ) -> (Challenge, Vec<FoldRound>, Challenge) {
+    fn handmade_3_round_chain(initial: Challenge) -> (Challenge, Vec<FoldRound>, Challenge) {
         // Rounds are synthetic — the actual S/INDEX_BIT come from the
         // index schedule. Let's start at log_height=6 (64 rows) and
         // fold down via log_arity=1 each round.
@@ -953,8 +958,7 @@ mod tests {
         // Query 0's fold chain.
         let q_pos = 0;
         let domain_index = ch.query_indices[q_pos];
-        let zeta_next =
-            ch.zeta * Goldilocks::two_adic_generator(proof.degree_bits);
+        let zeta_next = ch.zeta * Goldilocks::two_adic_generator(proof.degree_bits);
         let ro = compute_reduced_openings_for_query(
             &proof,
             ch.zeta,
@@ -1014,8 +1018,8 @@ mod tests {
         final_folded: Challenge,
         trace_height: usize,
     ) -> RowMajorMatrix<Goldilocks> {
-        let flat = build_trace(initial_folded, rounds, final_folded, trace_height)
-            .expect("trace build");
+        let flat =
+            build_trace(initial_folded, rounds, final_folded, trace_height).expect("trace build");
         RowMajorMatrix::new(flat, col::WIDTH)
     }
 
@@ -1050,8 +1054,7 @@ mod tests {
 
         let q_pos = 0;
         let domain_index = ch.query_indices[q_pos];
-        let zeta_next =
-            ch.zeta * Goldilocks::two_adic_generator(proof.degree_bits);
+        let zeta_next = ch.zeta * Goldilocks::two_adic_generator(proof.degree_bits);
         let ro = compute_reduced_openings_for_query(
             &proof,
             ch.zeta,
@@ -1081,8 +1084,7 @@ mod tests {
         }
 
         let x_final = final_eval_x(idx, ch.log_global_max_height);
-        let final_folded =
-            eval_final_poly_horner(&proof.opening_proof.final_poly, x_final);
+        let final_folded = eval_final_poly_horner(&proof.opening_proof.final_poly, x_final);
 
         let trace_height = (num_rounds + 4).next_power_of_two();
         let trace = trace_matrix(initial_folded, &rounds, final_folded, trace_height);
@@ -1110,8 +1112,7 @@ mod tests {
     #[test]
     fn air_rejects_tampered_sibling() {
         let (initial, rounds, final_folded) = handmade_3_round_chain(ext(100, 200));
-        let mut flat =
-            build_trace(initial, &rounds, final_folded, 16).unwrap();
+        let mut flat = build_trace(initial, &rounds, final_folded, 16).unwrap();
         // Tamper row 0 SIBLING[0] → PAIR_LEFT/RIGHT selection fails
         // OR fold identity fails on a subsequent row.
         flat[col::SIBLING0] += gl(1);
@@ -1122,8 +1123,7 @@ mod tests {
     #[test]
     fn air_rejects_flipped_index_bit() {
         let (initial, rounds, final_folded) = handmade_3_round_chain(ext(100, 200));
-        let mut flat =
-            build_trace(initial, &rounds, final_folded, 16).unwrap();
+        let mut flat = build_trace(initial, &rounds, final_folded, 16).unwrap();
         // Flip row 0 INDEX_BIT — LEFT/RIGHT selection constraint fires.
         flat[col::INDEX_BIT] = if flat[col::INDEX_BIT] == gl(0) {
             gl(1)
@@ -1137,8 +1137,7 @@ mod tests {
     #[test]
     fn air_rejects_bad_inv_2s_witness() {
         let (initial, rounds, final_folded) = handmade_3_round_chain(ext(100, 200));
-        let mut flat =
-            build_trace(initial, &rounds, final_folded, 16).unwrap();
+        let mut flat = build_trace(initial, &rounds, final_folded, 16).unwrap();
         // Corrupt INV_2S on row 0 → 2·S·INV_2S ≠ 1.
         flat[col::INV_2S] += gl(1);
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
@@ -1148,8 +1147,7 @@ mod tests {
     #[test]
     fn air_rejects_tampered_folded_limb0() {
         let (initial, rounds, final_folded) = handmade_3_round_chain(ext(100, 200));
-        let mut flat =
-            build_trace(initial, &rounds, final_folded, 16).unwrap();
+        let mut flat = build_trace(initial, &rounds, final_folded, 16).unwrap();
         // Tamper row 0 FOLDED[0] — fold identity limb 0 fires.
         flat[col::FOLDED0] += gl(1);
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
@@ -1159,8 +1157,7 @@ mod tests {
     #[test]
     fn air_rejects_tampered_folded_limb1() {
         let (initial, rounds, final_folded) = handmade_3_round_chain(ext(100, 200));
-        let mut flat =
-            build_trace(initial, &rounds, final_folded, 16).unwrap();
+        let mut flat = build_trace(initial, &rounds, final_folded, 16).unwrap();
         flat[col::FOLDED0 + 1] += gl(1);
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         assert!(air_rejects(trace), "tampered FOLDED[1] must reject");
@@ -1169,8 +1166,7 @@ mod tests {
     #[test]
     fn air_rejects_broken_current_threading() {
         let (initial, rounds, final_folded) = handmade_3_round_chain(ext(100, 200));
-        let mut flat =
-            build_trace(initial, &rounds, final_folded, 16).unwrap();
+        let mut flat = build_trace(initial, &rounds, final_folded, 16).unwrap();
         // Row 1 CURRENT[0] should equal row 0 FOLDED[0]. Break it.
         let row1 = col::WIDTH;
         flat[row1 + col::CURRENT0] += gl(1);
@@ -1184,8 +1180,7 @@ mod tests {
     #[test]
     fn air_rejects_wrong_initial_folded_at_row0() {
         let (initial, rounds, final_folded) = handmade_3_round_chain(ext(100, 200));
-        let mut flat =
-            build_trace(initial, &rounds, final_folded, 16).unwrap();
+        let mut flat = build_trace(initial, &rounds, final_folded, 16).unwrap();
         // Tamper row 0 INITIAL_FOLDED[0] → CURRENT must equal it;
         // boundary at row 0 fires.
         flat[col::INITIAL_FOLDED0] += gl(1);
@@ -1212,8 +1207,7 @@ mod tests {
     #[test]
     fn air_rejects_initial_folded_drift() {
         let (initial, rounds, final_folded) = handmade_3_round_chain(ext(100, 200));
-        let mut flat =
-            build_trace(initial, &rounds, final_folded, 16).unwrap();
+        let mut flat = build_trace(initial, &rounds, final_folded, 16).unwrap();
         // Change row 2 INITIAL_FOLDED[0] — persistence transition
         // from row 1 → row 2 fires.
         let row2 = 2 * col::WIDTH;
@@ -1228,8 +1222,7 @@ mod tests {
     #[test]
     fn air_rejects_idle_mutation() {
         let (initial, rounds, final_folded) = handmade_3_round_chain(ext(100, 200));
-        let mut flat =
-            build_trace(initial, &rounds, final_folded, 16).unwrap();
+        let mut flat = build_trace(initial, &rounds, final_folded, 16).unwrap();
         // Row 5 is IDLE. Mutate SIBLING[0]. IDLE persistence fires.
         let row5 = 5 * col::WIDTH;
         flat[row5 + col::SIBLING0] += gl(1);

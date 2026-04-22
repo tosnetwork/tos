@@ -53,20 +53,40 @@ pub fn parse_output(bytes: &[u8]) -> Result<OutputDescription> {
     let mlkem_ct = r.read_varint_blob()?;
     let out_ciphertext = r.read_fixed::<80>()?;
     if r.remaining() != 0 {
-        return Err(anyhow!("trailing {} bytes after OutputDescription", r.remaining()));
+        return Err(anyhow!(
+            "trailing {} bytes after OutputDescription",
+            r.remaining()
+        ));
     }
-    Ok(OutputDescription { cm, epk, filter_tag, enc_ciphertext, mlkem_ct, out_ciphertext })
+    Ok(OutputDescription {
+        cm,
+        epk,
+        filter_tag,
+        enc_ciphertext,
+        mlkem_ct,
+        out_ciphertext,
+    })
 }
 
-struct Reader<'a> { buf: &'a [u8], pos: usize }
+struct Reader<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
 
 impl<'a> Reader<'a> {
-    fn new(buf: &'a [u8]) -> Self { Self { buf, pos: 0 } }
-    fn remaining(&self) -> usize { self.buf.len() - self.pos }
+    fn new(buf: &'a [u8]) -> Self {
+        Self { buf, pos: 0 }
+    }
+    fn remaining(&self) -> usize {
+        self.buf.len() - self.pos
+    }
 
     fn read_fixed<const N: usize>(&mut self) -> Result<[u8; N]> {
         if self.remaining() < N {
-            return Err(anyhow!("truncated: want {N} bytes, have {}", self.remaining()));
+            return Err(anyhow!(
+                "truncated: want {N} bytes, have {}",
+                self.remaining()
+            ));
         }
         let mut out = [0u8; N];
         out.copy_from_slice(&self.buf[self.pos..self.pos + N]);
@@ -83,7 +103,10 @@ impl<'a> Reader<'a> {
     fn read_varint_blob(&mut self) -> Result<Vec<u8>> {
         let n = self.read_varint()? as usize;
         if self.remaining() < n {
-            return Err(anyhow!("varint-blob truncated: want {n}, have {}", self.remaining()));
+            return Err(anyhow!(
+                "varint-blob truncated: want {n}, have {}",
+                self.remaining()
+            ));
         }
         let out = self.buf[self.pos..self.pos + n].to_vec();
         self.pos += n;
@@ -100,16 +123,21 @@ impl<'a> Reader<'a> {
             let b = self.buf[self.pos];
             self.pos += 1;
             v |= ((b & 0x7f) as u64) << shift;
-            if b & 0x80 == 0 { return Ok(v); }
+            if b & 0x80 == 0 {
+                return Ok(v);
+            }
             shift += 7;
-            if shift >= 64 { return Err(anyhow!("varint overflow")); }
+            if shift >= 64 {
+                return Err(anyhow!("varint overflow"));
+            }
         }
     }
 }
 
 /// Encode an `OutputDescription` back to the flattened layout. Used by tests.
 pub fn encode_output(o: &OutputDescription) -> Vec<u8> {
-    let mut out = Vec::with_capacity(32 + 32 + 2 + o.enc_ciphertext.len() + o.mlkem_ct.len() + 80 + 8);
+    let mut out =
+        Vec::with_capacity(32 + 32 + 2 + o.enc_ciphertext.len() + o.mlkem_ct.len() + 80 + 8);
     out.extend_from_slice(&o.cm);
     out.extend_from_slice(&o.epk);
     out.extend_from_slice(&o.filter_tag.to_le_bytes());
@@ -125,7 +153,10 @@ fn write_varint(out: &mut Vec<u8>, mut v: u64) {
     loop {
         let byte = (v & 0x7f) as u8;
         v >>= 7;
-        if v == 0 { out.push(byte); break; }
+        if v == 0 {
+            out.push(byte);
+            break;
+        }
         out.push(byte | 0x80);
     }
 }

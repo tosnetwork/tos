@@ -660,8 +660,7 @@ fn nf_changes_when_nk_changes() {
 fn cm_changes_when_value_changes() {
     let tx = build_fixture(1, 1);
     let o = &tx.outputs[0];
-    let cm_a =
-        compute_note_commitment(&o.d, &o.pk_d, &o.ivk_commitment, o.value, &o.rcm);
+    let cm_a = compute_note_commitment(&o.d, &o.pk_d, &o.ivk_commitment, o.value, &o.rcm);
     let cm_b = compute_note_commitment(
         &o.d,
         &o.pk_d,

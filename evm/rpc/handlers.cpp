@@ -1480,7 +1480,7 @@ static RpcResult handle_fee_history(const std::string& params, const std::string
         if (global_evm_state().has_block(i)) {
             base_fees += to_hex_quantity(blk.base_fee_per_gas);
             double ratio = blk.gas_limit > 0
-                ? static_cast<double>(blk.gas_used) / blk.gas_limit : 0.0;
+                ? static_cast<double>(blk.gas_used) / static_cast<double>(blk.gas_limit) : 0.0;
             // Spec wants float-typed JSON for gasUsedRatio (execution-apis
             // type: number, never int). Always emit as decimal so JSON
             // parsers infer `float`.

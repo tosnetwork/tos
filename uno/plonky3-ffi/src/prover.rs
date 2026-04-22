@@ -22,10 +22,10 @@ use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
 use p3_fri::{FriParameters, TwoAdicFriPcs};
-use p3_goldilocks::{Goldilocks, Poseidon2Goldilocks, default_goldilocks_poseidon2_8};
+use p3_goldilocks::{default_goldilocks_poseidon2_8, Goldilocks, Poseidon2Goldilocks};
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
-use p3_uni_stark::{StarkConfig, prove};
+use p3_uni_stark::{prove, StarkConfig};
 
 use crate::transfer_air::{MvpTransferAir, MvpWitness};
 use crate::Plonky3Status;
@@ -182,7 +182,9 @@ impl MvpProver {
     ///   (d) Claim 1 anchor consistency: for any spend,
     ///       `Poseidon2(leaf_i, sibling_i) ≠ anchor_proxy`.
     fn pre_check_witness(&self, w: &MvpWitness) -> Result<(), Plonky3Status> {
-        use crate::transfer_air::{witness_claim1_anchor_consistent, witness_claim2_leaf_consistent};
+        use crate::transfer_air::{
+            witness_claim1_anchor_consistent, witness_claim2_leaf_consistent,
+        };
 
         if w.fee >= crate::transfer_air::GOLDILOCKS_P {
             return Err(Plonky3Status::WitnessInvalid);

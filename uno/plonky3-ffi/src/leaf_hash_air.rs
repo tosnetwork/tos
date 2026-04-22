@@ -57,7 +57,7 @@ use p3_goldilocks::{default_goldilocks_poseidon2_8, Goldilocks};
 use p3_poseidon2_air::RoundConstants;
 use p3_symmetric::Permutation;
 
-use crate::merkle_path::{hash_leaf_row_ref, Digest};
+use crate::merkle_path::Digest;
 use crate::transfer_air::{
     eval_poseidon2, P2Cols, POSEIDON2_COLS_PER_INSTANCE, POSEIDON2_HALF_FULL_ROUNDS,
 };
@@ -141,7 +141,7 @@ pub const LEAF_HASH_AIR_FRAMING_WIDTH: usize = col::WIDTH;
 /// `merkle_path_air::gen_p2_witness`.
 pub(crate) fn gen_p2_witness(input: [Goldilocks; 8]) -> Vec<Goldilocks> {
     use p3_goldilocks::{
-        GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8, GenericPoseidon2LinearLayersGoldilocks,
+        GenericPoseidon2LinearLayersGoldilocks, GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8,
     };
     use p3_poseidon2_air::generate_trace_rows;
 
@@ -182,8 +182,13 @@ pub(crate) fn p2_group<T>(row: &[T]) -> &P2Cols<T> {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum TraceBuildError {
     LeafWidthZero,
-    TraceHeightNotPow2 { got: usize },
-    TraceHeightTooSmall { physical_rows: usize, trace_height: usize },
+    TraceHeightNotPow2 {
+        got: usize,
+    },
+    TraceHeightTooSmall {
+        physical_rows: usize,
+        trace_height: usize,
+    },
 }
 
 /// Build a row-major trace for absorbing a leaf of width `W` (multiple
@@ -223,7 +228,11 @@ pub fn build_trace(
 
     let write_kind = |out: &mut [Goldilocks], kind: u8| {
         for k in 0..NUM_OP_KINDS {
-            out[col::KIND0 + k] = if k as u8 == kind { Goldilocks::new(1) } else { zero_g };
+            out[col::KIND0 + k] = if k as u8 == kind {
+                Goldilocks::new(1)
+            } else {
+                zero_g
+            };
         }
     };
     let write_digest_expected = |out: &mut [Goldilocks]| {
@@ -236,8 +245,11 @@ pub fn build_trace(
         debug_assert!(block_len <= SPONGE_RATE);
         out[col::BLOCK_LEN] = Goldilocks::new(block_len as u64);
         for k in 0..=SPONGE_RATE {
-            out[col::BLOCK_LEN_FLAG0 + k] =
-                if k == block_len { Goldilocks::new(1) } else { zero_g };
+            out[col::BLOCK_LEN_FLAG0 + k] = if k == block_len {
+                Goldilocks::new(1)
+            } else {
+                zero_g
+            };
         }
     };
 
@@ -328,8 +340,7 @@ pub fn build_trace(
     //   P2 block is unconstrained relative to STATE_IN/OUT.
     for r in 0..trace_height {
         let base = r * width;
-        let is_absorb = flat[base + col::KIND0 + OP_KIND_ABSORB as usize]
-            == Goldilocks::new(1);
+        let is_absorb = flat[base + col::KIND0 + OP_KIND_ABSORB as usize] == Goldilocks::new(1);
         let input: [Goldilocks; 8] = if is_absorb {
             let mut s = [zero_g; 8];
             for i in 0..SPONGE_WIDTH {
@@ -381,10 +392,7 @@ pub enum CheckError {
 }
 
 /// Verify every constraint on a pre-built trace.
-pub fn check_all_transitions(
-    trace: &[Goldilocks],
-    trace_height: usize,
-) -> Result<(), CheckError> {
+pub fn check_all_transitions(trace: &[Goldilocks], trace_height: usize) -> Result<(), CheckError> {
     let width = col::WIDTH;
     if trace.len() != trace_height * width {
         return Err(CheckError::TraceLengthMismatch {
@@ -481,10 +489,7 @@ pub fn check_all_transitions(
             // STATE_IN[0..block_len] == BLOCK[0..block_len] (overwrite).
             for i in 0..block_len {
                 if local[col::STATE_IN0 + i] != local[col::BLOCK0 + i] {
-                    return Err(CheckError::StateInBlockOverwriteMismatch {
-                        row: r,
-                        col: i,
-                    });
+                    return Err(CheckError::StateInBlockOverwriteMismatch { row: r, col: i });
                 }
             }
             // STATE_IN[block_len..WIDTH]: carry from prev STATE_OUT
@@ -492,10 +497,7 @@ pub fn check_all_transitions(
             if is_first {
                 for i in block_len..SPONGE_WIDTH {
                     if local[col::STATE_IN0 + i] != zero {
-                        return Err(CheckError::StateInFirstRowNotOverwrite {
-                            row: r,
-                            col: i,
-                        });
+                        return Err(CheckError::StateInFirstRowNotOverwrite { row: r, col: i });
                     }
                 }
             } else {
@@ -656,9 +658,7 @@ where
         let flag_rate: AB::Expr = local[col::BLOCK_LEN_FLAG0 + SPONGE_RATE].into();
         builder.assert_zero(is_absorb.clone() * flag0.clone());
         builder.assert_zero(is_idle.clone() * (one() - flag0.clone()));
-        builder.assert_zero(
-            is_absorb.clone() * (one() - is_last.clone()) * (one() - flag_rate),
-        );
+        builder.assert_zero(is_absorb.clone() * (one() - is_last.clone()) * (one() - flag_rate));
 
         // =============================================================
         // ABSORB row: STATE_IN[i] = cond_block_use[i] · BLOCK[i]
@@ -738,8 +738,7 @@ where
         //               + cond_carry[i]   · local.STATE_OUT[i]
         //
         // Gate by (next_is_absorb · (1 - next_is_first)).
-        let next_is_absorb: AB::Expr =
-            next[col::KIND0 + OP_KIND_ABSORB as usize].into();
+        let next_is_absorb: AB::Expr = next[col::KIND0 + OP_KIND_ABSORB as usize].into();
         let next_is_first: AB::Expr = next[col::IS_FIRST].into();
         let carry_gate = next_is_absorb * (one() - next_is_first);
 
@@ -816,6 +815,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::merkle_path::hash_leaf_row_ref;
 
     fn gl(v: u64) -> Goldilocks {
         Goldilocks::new(v)
@@ -1037,10 +1037,12 @@ mod tests {
         // opened row into one 8-Goldilocks leaf (num_chunks = 4,
         // each chunk is DIMENSION = 2 Goldilocks).
         let quot_batch = &proof.opening_proof.query_proofs[0].input_proof[1];
-        let refs: Vec<&[Goldilocks]> =
-            quot_batch.opened_values.iter().map(|v| v.as_slice()).collect();
-        let flat_leaf: Vec<Goldilocks> =
-            refs.iter().flat_map(|r| r.iter().copied()).collect();
+        let refs: Vec<&[Goldilocks]> = quot_batch
+            .opened_values
+            .iter()
+            .map(|v| v.as_slice())
+            .collect();
+        let flat_leaf: Vec<Goldilocks> = refs.iter().flat_map(|r| r.iter().copied()).collect();
 
         // Upstream's multi-matrix leaf hash.
         let perm = default_goldilocks_poseidon2_8();
@@ -1048,10 +1050,8 @@ mod tests {
 
         // Our AIR trace.
         let trace_height = (flat_leaf.len() / SPONGE_RATE).next_power_of_two().max(2);
-        let trace = build_trace(&flat_leaf, expected, trace_height)
-            .expect("trace build");
-        check_all_transitions(&trace, trace_height)
-            .expect("real quot-commit leaf must check");
+        let trace = build_trace(&flat_leaf, expected, trace_height).expect("trace build");
+        check_all_transitions(&trace, trace_height).expect("real quot-commit leaf must check");
     }
 
     // ======================================================================
@@ -1117,15 +1117,16 @@ mod tests {
         let proof: Proof<MvpConfig> = postcard::from_bytes(&bytes).unwrap();
 
         let quot_batch = &proof.opening_proof.query_proofs[0].input_proof[1];
-        let refs: Vec<&[Goldilocks]> =
-            quot_batch.opened_values.iter().map(|v| v.as_slice()).collect();
-        let flat_leaf: Vec<Goldilocks> =
-            refs.iter().flat_map(|r| r.iter().copied()).collect();
+        let refs: Vec<&[Goldilocks]> = quot_batch
+            .opened_values
+            .iter()
+            .map(|v| v.as_slice())
+            .collect();
+        let flat_leaf: Vec<Goldilocks> = refs.iter().flat_map(|r| r.iter().copied()).collect();
         let perm = default_goldilocks_poseidon2_8();
         let expected = hash_multi_matrix_leaf_ref(&perm, &refs);
 
-        let trace_height =
-            (flat_leaf.len() / SPONGE_RATE).next_power_of_two().max(2) * 2;
+        let trace_height = (flat_leaf.len() / SPONGE_RATE).next_power_of_two().max(2) * 2;
         let trace = trace_matrix(&flat_leaf, expected, trace_height);
         let cfg = build_config();
         let air = LeafHashAirV1;
@@ -1167,7 +1168,10 @@ mod tests {
         // Row 0 is IS_FIRST. STATE_IN[4] should be 0 → set non-zero.
         flat[col::STATE_IN0 + 4] = gl(42);
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
-        assert!(air_rejects(trace), "non-zero first-row capacity must reject");
+        assert!(
+            air_rejects(trace),
+            "non-zero first-row capacity must reject"
+        );
     }
 
     #[test]
@@ -1255,8 +1259,7 @@ mod tests {
     #[test]
     fn air_prove_and_verify_partial_block_widths() {
         for width in [1, 2, 3, 5, 6, 7, 9, 13] {
-            let leaf: Vec<Goldilocks> =
-                (0..width as u64).map(|i| gl(i * 17 + 3)).collect();
+            let leaf: Vec<Goldilocks> = (0..width as u64).map(|i| gl(i * 17 + 3)).collect();
             let digest = compute_digest(&leaf);
             let num_rows = (width + SPONGE_RATE - 1) / SPONGE_RATE;
             let trace_height = num_rows.next_power_of_two().max(2);
@@ -1291,8 +1294,11 @@ mod tests {
         let trace_batch = &proof.opening_proof.query_proofs[0].input_proof[0];
         assert_eq!(trace_batch.opened_values.len(), 1);
         let leaf = &trace_batch.opened_values[0];
-        assert_eq!(leaf.len() % SPONGE_RATE, 1,
-                   "2/2 air_width should have W mod 4 == 1 (partial tail of 1 limb)");
+        assert_eq!(
+            leaf.len() % SPONGE_RATE,
+            1,
+            "2/2 air_width should have W mod 4 == 1 (partial tail of 1 limb)"
+        );
 
         let digest = compute_digest(leaf);
         let num_rows = (leaf.len() + SPONGE_RATE - 1) / SPONGE_RATE;
@@ -1310,8 +1316,7 @@ mod tests {
     #[test]
     fn air_rejects_tampered_partial_tail_block() {
         let width = 5; // 4+1
-        let leaf: Vec<Goldilocks> =
-            (0..width as u64).map(|i| gl(i + 100)).collect();
+        let leaf: Vec<Goldilocks> = (0..width as u64).map(|i| gl(i + 100)).collect();
         let digest = compute_digest(&leaf);
         let mut flat = build_trace(&leaf, digest, 16).unwrap();
         // Row 1 is the last ABSORB row (partial, block_len=1).
@@ -1332,8 +1337,7 @@ mod tests {
     #[test]
     fn air_rejects_wrong_block_len_flag() {
         let width = 5;
-        let leaf: Vec<Goldilocks> =
-            (0..width as u64).map(|i| gl(i + 200)).collect();
+        let leaf: Vec<Goldilocks> = (0..width as u64).map(|i| gl(i + 200)).collect();
         let digest = compute_digest(&leaf);
         let mut flat = build_trace(&leaf, digest, 16).unwrap();
         // Row 1's BLOCK_LEN_FLAG should have flag[1] = 1, others 0.

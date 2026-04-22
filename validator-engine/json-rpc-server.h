@@ -382,13 +382,12 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
 
   void alarm() override;
 
-  JsonRpcResponseCache cache_;
-
   static const std::set<std::string> &cacheable_methods();
 
   td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager_;
   td::actor::ActorOwn<http::HttpServer> http_;
   Options opts_;
+  JsonRpcResponseCache cache_;
   td::uint32 consensus_block_seqno_{0};
   td::int64 consensus_block_timestamp_{0};
 

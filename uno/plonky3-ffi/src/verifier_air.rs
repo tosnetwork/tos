@@ -174,12 +174,14 @@ pub fn prove_slot_stub(witness: &VerifierSlotWitness) -> Option<SlotProof> {
     // "proof". This is NOT cryptographic output — it's just a unique
     // deterministic handle the aggregator can thread through the rest
     // of the pipeline while we wire the A2 real prover.
-    let mut buf = Vec::with_capacity(witness.public_inputs.pi_bytes.len()
-                                      + witness.proof_bytes.len());
+    let mut buf =
+        Vec::with_capacity(witness.public_inputs.pi_bytes.len() + witness.proof_bytes.len());
     buf.extend_from_slice(&witness.public_inputs.pi_bytes);
     buf.extend_from_slice(&witness.proof_bytes);
     let hash = blake3::hash(&buf);
-    Some(SlotProof { bytes: hash.as_bytes().to_vec() })
+    Some(SlotProof {
+        bytes: hash.as_bytes().to_vec(),
+    })
 }
 
 /// Compute the canonical hash of a Transfer's public inputs — used by
@@ -230,7 +232,9 @@ mod tests {
     #[test]
     fn stub_rejects_malformed_pi_length() {
         let witness = VerifierSlotWitness {
-            public_inputs: VerifiedTransferPublicInputs { pi_bytes: vec![0; 100] },
+            public_inputs: VerifiedTransferPublicInputs {
+                pi_bytes: vec![0; 100],
+            },
             proof_bytes: vec![0; 500_000],
         };
         assert!(prove_slot_stub(&witness).is_none());
@@ -239,7 +243,9 @@ mod tests {
     #[test]
     fn stub_rejects_tiny_proof() {
         let witness = VerifierSlotWitness {
-            public_inputs: VerifiedTransferPublicInputs { pi_bytes: vec![0; 272] },
+            public_inputs: VerifiedTransferPublicInputs {
+                pi_bytes: vec![0; 272],
+            },
             proof_bytes: vec![0; 100],
         };
         assert!(prove_slot_stub(&witness).is_none());
@@ -248,7 +254,9 @@ mod tests {
     #[test]
     fn stub_emits_deterministic_32b_handle() {
         let witness = VerifierSlotWitness {
-            public_inputs: VerifiedTransferPublicInputs { pi_bytes: vec![0xA5; 272] },
+            public_inputs: VerifiedTransferPublicInputs {
+                pi_bytes: vec![0xA5; 272],
+            },
             proof_bytes: vec![0x5A; 520_000],
         };
         let p1 = prove_slot_stub(&witness).unwrap();
@@ -272,8 +280,12 @@ mod tests {
 
     #[test]
     fn hash_slot_pi_is_deterministic_and_domain_separated() {
-        let pi_a = VerifiedTransferPublicInputs { pi_bytes: vec![0x01; 272] };
-        let pi_b = VerifiedTransferPublicInputs { pi_bytes: vec![0x02; 272] };
+        let pi_a = VerifiedTransferPublicInputs {
+            pi_bytes: vec![0x01; 272],
+        };
+        let pi_b = VerifiedTransferPublicInputs {
+            pi_bytes: vec![0x02; 272],
+        };
         let h_a1 = hash_slot_public_inputs(&pi_a);
         let h_a2 = hash_slot_public_inputs(&pi_a);
         let h_b = hash_slot_public_inputs(&pi_b);

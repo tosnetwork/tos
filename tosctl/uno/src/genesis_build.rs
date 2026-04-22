@@ -84,8 +84,7 @@ pub const CHAIN_ID_TESTNET: u32 = 0x554E4F54;
 /// ASCII "UNOM" — 0x554E4F4D.
 pub const CHAIN_ID_MAINNET: u32 = 0x554E4F4D;
 
-const ADDRESS_PAYLOAD_BYTES: usize =
-    DIVERSIFIER + RISTRETTO_POINT + IVK_COMMITMENT + MLKEM768_PK;  // 1259
+const ADDRESS_PAYLOAD_BYTES: usize = DIVERSIFIER + RISTRETTO_POINT + IVK_COMMITMENT + MLKEM768_PK; // 1259
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -166,26 +165,30 @@ pub fn build_genesis_distribution(
     if airdrop_sum != GENESIS_AIRDROP_NANO {
         return Err(anyhow!(
             "uno/genesis: airdrop sum {} != §10.3 target {} (12,600,000 × 10^9 nano-UNO)",
-            airdrop_sum, GENESIS_AIRDROP_NANO
+            airdrop_sum,
+            GENESIS_AIRDROP_NANO
         ));
     }
     if treasury_sum != GENESIS_TREASURY_NANO {
         return Err(anyhow!(
             "uno/genesis: treasury sum {} != §10.3 target {} (5,250,000 × 10^9 nano-UNO)",
-            treasury_sum, GENESIS_TREASURY_NANO
+            treasury_sum,
+            GENESIS_TREASURY_NANO
         ));
     }
     if team_sum != GENESIS_TEAM_NANO {
         return Err(anyhow!(
             "uno/genesis: team sum {} != §10.3 target {} (3,150,000 × 10^9 nano-UNO)",
-            team_sum, GENESIS_TEAM_NANO
+            team_sum,
+            GENESIS_TEAM_NANO
         ));
     }
     let total = airdrop_sum + treasury_sum + team_sum;
     if total != GENESIS_TOTAL_SUPPLY_NANO {
         return Err(anyhow!(
             "uno/genesis: total supply {} != §10.3 fixed supply {}",
-            total, GENESIS_TOTAL_SUPPLY_NANO
+            total,
+            GENESIS_TOTAL_SUPPLY_NANO
         ));
     }
 
@@ -214,9 +217,8 @@ pub fn build_genesis_distribution(
     let treasury_sorted = sort_by_address_hash(inputs.treasury.clone());
     let team_sorted = sort_by_address_hash(inputs.team.clone());
 
-    let mut canonical: Vec<DistributionRecipient> = Vec::with_capacity(
-        airdrop_sorted.len() + treasury_sorted.len() + team_sorted.len(),
-    );
+    let mut canonical: Vec<DistributionRecipient> =
+        Vec::with_capacity(airdrop_sorted.len() + treasury_sorted.len() + team_sorted.len());
     canonical.extend(airdrop_sorted);
     canonical.extend(treasury_sorted);
     canonical.extend(team_sorted);
@@ -297,16 +299,14 @@ fn sum_category(list: &[DistributionRecipient], list_name: &'static str) -> Resu
                 i
             ));
         }
-        total = total.checked_add(r.value_nano).ok_or_else(|| {
-            anyhow!("uno/genesis: {} sum overflow at index {}", list_name, i)
-        })?;
+        total = total
+            .checked_add(r.value_nano)
+            .ok_or_else(|| anyhow!("uno/genesis: {} sum overflow at index {}", list_name, i))?;
     }
     Ok(total)
 }
 
-fn sort_by_address_hash(
-    mut list: Vec<DistributionRecipient>,
-) -> Vec<DistributionRecipient> {
+fn sort_by_address_hash(mut list: Vec<DistributionRecipient>) -> Vec<DistributionRecipient> {
     // Precompute keys so the sort is stable without hashing per comparison.
     let mut keyed: Vec<([u8; 32], DistributionRecipient)> = list
         .drain(..)
@@ -398,13 +398,27 @@ pub fn parse_recipient_csv(text: &str, source_name: &str) -> Result<Vec<Distribu
         let addr_bytes = hex::decode(addr_hex)
             .map_err(|e| anyhow!("{}:{}: hex-decode address: {}", source_name, lineno + 1, e))?;
         let address = Address::from_bytes(&addr_bytes).map_err(|e| {
-            anyhow!("{}:{}: parse address wire bytes: {}", source_name, lineno + 1, e)
+            anyhow!(
+                "{}:{}: parse address wire bytes: {}",
+                source_name,
+                lineno + 1,
+                e
+            )
         })?;
         let value_nano: u64 = value_str.parse().map_err(|e| {
-            anyhow!("{}:{}: parse value_nano ({}): {}", source_name, lineno + 1, value_str, e)
+            anyhow!(
+                "{}:{}: parse value_nano ({}): {}",
+                source_name,
+                lineno + 1,
+                value_str,
+                e
+            )
         })?;
 
-        out.push(DistributionRecipient { address, value_nano });
+        out.push(DistributionRecipient {
+            address,
+            value_nano,
+        });
     }
     Ok(out)
 }
@@ -436,7 +450,10 @@ mod tests {
         let mut next = |v: u64| {
             let a = mk_fvk_and_address(counter, counter);
             counter = counter.wrapping_add(1);
-            DistributionRecipient { address: a, value_nano: v }
+            DistributionRecipient {
+                address: a,
+                value_nano: v,
+            }
         };
         GenesisDistributionInputs {
             chain_id: CHAIN_ID_TESTNET,
@@ -532,8 +549,10 @@ mod tests {
         for i in 1..3 {
             let h_prev = canonical_address_hash(&out.notes[i - 1].address);
             let h_curr = canonical_address_hash(&out.notes[i].address);
-            assert!(h_prev < h_curr,
-                "airdrop section not sorted at index {i}: prev={h_prev:?}, curr={h_curr:?}");
+            assert!(
+                h_prev < h_curr,
+                "airdrop section not sorted at index {i}: prev={h_prev:?}, curr={h_curr:?}"
+            );
         }
         // Treasury section [3..5] must be sorted too.
         let h_prev = canonical_address_hash(&out.notes[3].address);

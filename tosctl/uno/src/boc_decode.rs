@@ -30,10 +30,12 @@
 //!     ref[2] → zk_proof chunk chain
 //! ```
 //!
-//! Chunk chains follow the CellString convention: up to 127 B inline per
-//! cell, 1 has_next bit, and (if set) first-ref is the next cell. Bounded
-//! by `K_CHUNK_CHAIN_MAX_CHUNKS = 8192` per-chain (post-V1 value, matches
-//! `uno/core/transaction.cpp` `kChunkChainMaxChunks`).
+//! Chunk chains follow the §4.1a 4-ary chunk tree: leaves hold 1..127 B
+//! inline with 0 refs; internal cells have 0 data bits and 1..4 refs to
+//! children (left-to-right in byte order). Tree depth = ⌈log₄(N_leaves)⌉
+//! (≤ 7 at v1 worst case). Total leaf count bounded by
+//! `K_CHUNK_CHAIN_MAX_CHUNKS = 8192`; total visited cells are also capped
+//! at `K_CHUNK_TREE_MAX_CELLS` to reject malformed internal-node expansion.
 
 use std::io::Cursor;
 
@@ -45,8 +47,10 @@ use crate::transfer::{
     MIN_OUTPUT_COUNT, MIN_SPEND_COUNT, OUT_CIPHERTEXT_BYTES,
 };
 
-// Mirror of `uno/core/transaction.cpp:72` `kChunkBytes`.
+// Mirror of `uno/core/transaction.cpp` `kChunkBytes`.
 const CHUNK_BYTES: usize = 127;
+// Mirror of `uno/core/transaction.cpp` `kChunkTreeFanout`. TOS Cell max_refs.
+const CHUNK_TREE_FANOUT: usize = 4;
 // Mirror of `kItemInlineHeadBytes`. Per-spend / per-output cells inline up
 // to 127 bytes with the remainder in a single continuation ref.
 const ITEM_INLINE_HEAD_BYTES: usize = 127;
@@ -59,6 +63,9 @@ const OUTPUT_INLINE_BYTES: usize = 32 + 32 + 2 + OUT_CIPHERTEXT_BYTES;
 const TRANSFER_HEADER_BITS: usize = (1 + 1 + 4 + 32 + 8 + 8 + 1 + 1) * 8;
 /// Mirror of `uno/core/transaction.cpp` `kChunkChainMaxChunks` (post-V1 8192).
 const K_CHUNK_CHAIN_MAX_CHUNKS: usize = 8192;
+/// Mirror of `uno/core/transaction.cpp` `kChunkTreeMaxCells`. Bounds
+/// malformed internal-node expansion even when leaf count is small.
+const K_CHUNK_TREE_MAX_CELLS: usize = K_CHUNK_CHAIN_MAX_CHUNKS * 2;
 /// §17 ≤ 5-level walk assertion. Mirror of `kMaxTransferRefDepth`.
 const MAX_TRANSFER_REF_DEPTH: u16 = 5;
 
@@ -92,12 +99,9 @@ pub enum DecodeError {
     /// inline size, continuation carries unexpected refs, trailing data,
     /// or ref-count mismatch on the parent fan-out cell).
     MalformedItem(String),
-    /// A chunk-chain exceeded `K_CHUNK_CHAIN_MAX_CHUNKS` cells without
-    /// reaching the terminal (has_next=0) marker. Likely a cycle or
-    /// adversarial oversize.
+    /// A chunk tree exceeded the leaf or total-cell decode bound.
     ChunkChainTooLong,
-    /// A chunk-chain cell has a non-`(8k+1)`-bit inline, or claims
-    /// has_next=1 with zero refs.
+    /// A chunk-tree cell violates the §4.1a leaf/internal shape.
     MalformedChunkCell(String),
     /// The `spends_root` / `outputs_root` subtree exceeds the 5-level
     /// §17 walk budget.
@@ -125,7 +129,10 @@ impl std::fmt::Display for DecodeError {
             Self::NullRef(which) => write!(f, "null ref: {which}"),
             Self::MalformedItem(s) => write!(f, "malformed item cell: {s}"),
             Self::ChunkChainTooLong => {
-                write!(f, "chunk chain exceeds {K_CHUNK_CHAIN_MAX_CHUNKS} cells")
+                write!(
+                    f,
+                    "chunk tree exceeds bounds: {K_CHUNK_CHAIN_MAX_CHUNKS} leaves / {K_CHUNK_TREE_MAX_CELLS} cells"
+                )
             }
             Self::MalformedChunkCell(s) => write!(f, "malformed chunk cell: {s}"),
             Self::WalkDepthExceeded { which, depth } => {
@@ -150,10 +157,7 @@ impl std::error::Error for DecodeError {}
 /// — if the continuation path was taken — past ref[0]. Any residual data
 /// or refs must be checked by the caller (mirrors the C++
 /// `spend_cs.size() != 0 || spend_cs.size_refs() != 0` tail check).
-fn load_item_chunked(
-    head_slice: &mut SliceData,
-    out: &mut [u8],
-) -> Result<(), DecodeError> {
+fn load_item_chunked(head_slice: &mut SliceData, out: &mut [u8]) -> Result<(), DecodeError> {
     let len = out.len();
     let head = core::cmp::min(len, ITEM_INLINE_HEAD_BYTES);
     if head_slice.remaining_bits() < head * 8 {
@@ -206,51 +210,72 @@ fn load_item_chunked(
 }
 
 /// Mirror of `uno/core/transaction.cpp::load_bytes_from_chunk_chain`.
-/// Walks a chunk-chain (up to 127 B per cell + 1 has_next bit + optional
-/// first-ref to next cell), bounded by `K_CHUNK_CHAIN_MAX_CHUNKS`.
+/// DFS-walks a 4-ary chunk tree (§4.1a):
+/// - Leaf cell (0 refs): 1..127 B inline, byte-aligned; bytes appended.
+/// - Internal cell (≥ 1 ref): 0 data bits, 1..4 refs; children walked
+///   left-to-right.
+///
+/// Bounded by `K_CHUNK_CHAIN_MAX_CHUNKS` cumulative leaf count. Any shape
+/// violation (non-byte-aligned bits, >127 B leaf, >4 refs, internal with
+/// data bits, null ref) returns `MalformedChunkCell`.
 fn load_bytes_from_chunk_chain(root: Cell) -> Result<Vec<u8>, DecodeError> {
     let mut out: Vec<u8> = Vec::new();
-    let mut cell = root;
-    for _ in 0..K_CHUNK_CHAIN_MAX_CHUNKS {
-        let cs = SliceData::load_cell(cell.clone()).map_err(|e| {
-            DecodeError::MalformedChunkCell(format!("load_cell: {e}"))
-        })?;
+    let mut leaf_count: usize = 0;
+    let mut cell_count: usize = 0;
+    let mut stack: Vec<Cell> = vec![root];
+    while let Some(cell) = stack.pop() {
+        cell_count += 1;
+        if cell_count > K_CHUNK_TREE_MAX_CELLS {
+            return Err(DecodeError::ChunkChainTooLong);
+        }
+        let cs = SliceData::load_cell(cell.clone())
+            .map_err(|e| DecodeError::MalformedChunkCell(format!("load_cell: {e}")))?;
         let bits = cs.remaining_bits();
-        if bits < 1 || (bits - 1) % 8 != 0 {
-            return Err(DecodeError::MalformedChunkCell(format!(
-                "chunk cell inline bits {bits} is not 8k+1"
-            )));
-        }
-        let data_bytes = (bits - 1) / 8;
-        if data_bytes > CHUNK_BYTES {
-            return Err(DecodeError::MalformedChunkCell(format!(
-                "chunk cell payload {data_bytes} B exceeds 127 B"
-            )));
-        }
-        let mut cs = cs;
-        if data_bytes > 0 {
+        let n_refs = cs.remaining_references();
+        if n_refs == 0 {
+            // Leaf: 1..127 B inline, byte-aligned.
+            leaf_count += 1;
+            if leaf_count > K_CHUNK_CHAIN_MAX_CHUNKS {
+                return Err(DecodeError::ChunkChainTooLong);
+            }
+            if bits == 0 || bits % 8 != 0 {
+                return Err(DecodeError::MalformedChunkCell(format!(
+                    "leaf bits {bits} not in 8..=1016 stepping by 8"
+                )));
+            }
+            let data_bytes = bits / 8;
+            if data_bytes > CHUNK_BYTES {
+                return Err(DecodeError::MalformedChunkCell(format!(
+                    "leaf payload {data_bytes} B exceeds 127 B"
+                )));
+            }
             let off = out.len();
             out.resize(off + data_bytes, 0u8);
+            let mut cs = cs;
             cs.get_next_bytes_to_slice(&mut out[off..])
-                .map_err(|e| DecodeError::MalformedChunkCell(format!("data fetch: {e}")))?;
+                .map_err(|e| DecodeError::MalformedChunkCell(format!("leaf fetch: {e}")))?;
+        } else {
+            // Internal: 0 bits, 1..4 refs, children pushed in reverse so
+            // DFS visits them left-to-right.
+            if bits != 0 {
+                return Err(DecodeError::MalformedChunkCell(format!(
+                    "internal cell has {bits} data bits (must be 0)"
+                )));
+            }
+            if n_refs > CHUNK_TREE_FANOUT {
+                return Err(DecodeError::MalformedChunkCell(format!(
+                    "internal cell has {n_refs} refs (>4)"
+                )));
+            }
+            for k in (0..n_refs).rev() {
+                let child = cs
+                    .reference(k)
+                    .map_err(|e| DecodeError::MalformedChunkCell(format!("fetch ref[{k}]: {e}")))?;
+                stack.push(child);
+            }
         }
-        let has_next = cs
-            .get_next_bit()
-            .map_err(|e| DecodeError::MalformedChunkCell(format!("has_next bit: {e}")))?;
-        if !has_next {
-            return Ok(out);
-        }
-        if cs.remaining_references() == 0 {
-            return Err(DecodeError::MalformedChunkCell(
-                "has_next=1 but no continuation ref".to_string(),
-            ));
-        }
-        let next = cs
-            .reference(0)
-            .map_err(|e| DecodeError::MalformedChunkCell(format!("fetch next ref: {e}")))?;
-        cell = next;
     }
-    Err(DecodeError::ChunkChainTooLong)
+    Ok(out)
 }
 
 /// §17 walk-depth gate. Mirrors the *intent* of the C++
@@ -278,11 +303,7 @@ fn load_bytes_from_chunk_chain(root: Cell) -> Result<Vec<u8>, DecodeError> {
 ///
 /// Including the Transfer root that holds the spends_root / outputs_root
 /// ref yields a total walk depth of 4 — under the ≤5 budget.
-fn structural_depth_bounded(
-    c: &Cell,
-    follow_all_refs: bool,
-    remaining: u16,
-) -> u16 {
+fn structural_depth_bounded(c: &Cell, follow_all_refs: bool, remaining: u16) -> u16 {
     if remaining == 0 {
         return 0;
     }
@@ -482,13 +503,9 @@ pub fn decode_transfer_boc(bytes: &[u8]) -> Result<Transfer, DecodeError> {
     })
 }
 
-fn parse_spends_root(
-    spends_root_ref: Cell,
-    sc: u8,
-) -> Result<Vec<SpendDescription>, DecodeError> {
-    let spends_root = SliceData::load_cell(spends_root_ref).map_err(|e| {
-        DecodeError::MalformedItem(format!("load spends_root cell: {e}"))
-    })?;
+fn parse_spends_root(spends_root_ref: Cell, sc: u8) -> Result<Vec<SpendDescription>, DecodeError> {
+    let spends_root = SliceData::load_cell(spends_root_ref)
+        .map_err(|e| DecodeError::MalformedItem(format!("load spends_root cell: {e}")))?;
     if spends_root.remaining_bits() != 0 {
         return Err(DecodeError::MalformedItem(
             "spends_root: unexpected inline data".to_string(),
@@ -503,9 +520,9 @@ fn parse_spends_root(
     }
     let mut spends = Vec::with_capacity(sc as usize);
     for i in 0..sc as usize {
-        let spend_ref = spends_root.reference(i).map_err(|e| {
-            DecodeError::MalformedItem(format!("per_spend[{i}] ref fetch: {e}"))
-        })?;
+        let spend_ref = spends_root
+            .reference(i)
+            .map_err(|e| DecodeError::MalformedItem(format!("per_spend[{i}] ref fetch: {e}")))?;
         let mut spend_cs = SliceData::load_cell(spend_ref)
             .map_err(|e| DecodeError::MalformedItem(format!("load per_spend[{i}]: {e}")))?;
         let mut buf = [0u8; SPEND_INLINE_BYTES];
@@ -542,9 +559,8 @@ fn parse_outputs_root(
     outputs_root_ref: Cell,
     oc: u8,
 ) -> Result<Vec<OutputDescription>, DecodeError> {
-    let outputs_root = SliceData::load_cell(outputs_root_ref).map_err(|e| {
-        DecodeError::MalformedItem(format!("load outputs_root cell: {e}"))
-    })?;
+    let outputs_root = SliceData::load_cell(outputs_root_ref)
+        .map_err(|e| DecodeError::MalformedItem(format!("load outputs_root cell: {e}")))?;
     if outputs_root.remaining_bits() != 0 {
         return Err(DecodeError::MalformedItem(
             "outputs_root: unexpected inline data".to_string(),
@@ -559,9 +575,9 @@ fn parse_outputs_root(
     }
     let mut outputs = Vec::with_capacity(oc as usize);
     for j in 0..oc as usize {
-        let out_ref = outputs_root.reference(j).map_err(|e| {
-            DecodeError::MalformedItem(format!("per_output[{j}] ref fetch: {e}"))
-        })?;
+        let out_ref = outputs_root
+            .reference(j)
+            .map_err(|e| DecodeError::MalformedItem(format!("per_output[{j}] ref fetch: {e}")))?;
         let mut out_cs = SliceData::load_cell(out_ref)
             .map_err(|e| DecodeError::MalformedItem(format!("load per_output[{j}]: {e}")))?;
         let mut buf = [0u8; OUTPUT_INLINE_BYTES];
@@ -589,14 +605,10 @@ fn parse_outputs_root(
         out_ct.copy_from_slice(&buf[66..66 + OUT_CIPHERTEXT_BYTES]);
 
         let enc_ct_root = out_cs.reference(0).map_err(|e| {
-            DecodeError::MalformedItem(format!(
-                "per_output[{j}]: fetch enc_ct ref: {e}"
-            ))
+            DecodeError::MalformedItem(format!("per_output[{j}]: fetch enc_ct ref: {e}"))
         })?;
         let mlkem_root = out_cs.reference(1).map_err(|e| {
-            DecodeError::MalformedItem(format!(
-                "per_output[{j}]: fetch mlkem_ct ref: {e}"
-            ))
+            DecodeError::MalformedItem(format!("per_output[{j}]: fetch mlkem_ct ref: {e}"))
         })?;
 
         let enc_ct_bytes = load_bytes_from_chunk_chain(enc_ct_root)?;
@@ -697,8 +709,8 @@ mod tests {
         for n_s in 1..=4 {
             for n_o in 1..=4 {
                 let tx = sample_transfer(n_s, n_o);
-                let bytes = encode_transfer_boc(&tx)
-                    .unwrap_or_else(|e| panic!("{n_s}/{n_o} encode: {e}"));
+                let bytes =
+                    encode_transfer_boc(&tx).unwrap_or_else(|e| panic!("{n_s}/{n_o} encode: {e}"));
                 let decoded = decode_transfer_boc(&bytes)
                     .unwrap_or_else(|e| panic!("{n_s}/{n_o} decode: {e}"));
                 assert_eq!(decoded.version, tx.version, "{n_s}/{n_o} version");
@@ -731,10 +743,7 @@ mod tests {
                         a.enc_ciphertext, b.enc_ciphertext,
                         "{n_s}/{n_o} output[{j}].enc_ciphertext"
                     );
-                    assert_eq!(
-                        a.mlkem_ct, b.mlkem_ct,
-                        "{n_s}/{n_o} output[{j}].mlkem_ct"
-                    );
+                    assert_eq!(a.mlkem_ct, b.mlkem_ct, "{n_s}/{n_o} output[{j}].mlkem_ct");
                     assert_eq!(
                         a.out_ciphertext, b.out_ciphertext,
                         "{n_s}/{n_o} output[{j}].out_ciphertext"

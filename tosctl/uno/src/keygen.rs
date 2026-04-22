@@ -21,13 +21,13 @@
 //! be dropped from the JSON schema.
 
 use anyhow::{anyhow, Context, Result};
+use bip39::Mnemonic;
 use blake2::digest::consts::{U32, U64};
 use blake2::{Blake2b, Digest};
-use bip39::Mnemonic;
 use curve25519_dalek::scalar::Scalar;
 use ml_kem::array::Array;
 use ml_kem::kem::{Decapsulate, Encapsulate};
-use ml_kem::{B32, Ciphertext, EncodedSizeUser, KemCore, MlKem768};
+use ml_kem::{Ciphertext, EncodedSizeUser, KemCore, MlKem768, B32};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
@@ -151,8 +151,8 @@ pub fn tos_seed_from_mnemonic(mnemonic: &str, passphrase: &str) -> Result<[u8; 3
 ///   - 32 raw bytes, or
 ///   - 64 hex characters (one line), trimmed of whitespace.
 pub fn tos_seed_from_file(path: &std::path::Path) -> Result<[u8; 32]> {
-    let raw = std::fs::read(path)
-        .with_context(|| format!("reading seed file {}", path.display()))?;
+    let raw =
+        std::fs::read(path).with_context(|| format!("reading seed file {}", path.display()))?;
     if raw.len() == 32 {
         let mut out = [0u8; 32];
         out.copy_from_slice(&raw);
@@ -161,10 +161,12 @@ pub fn tos_seed_from_file(path: &std::path::Path) -> Result<[u8; 32]> {
     let s = String::from_utf8(raw)
         .map_err(|_| anyhow!("seed file is neither 32 raw bytes nor ASCII hex"))?;
     let trimmed = s.trim();
-    let bytes = hex::decode(trimmed)
-        .map_err(|e| anyhow!("seed file hex decode: {e}"))?;
+    let bytes = hex::decode(trimmed).map_err(|e| anyhow!("seed file hex decode: {e}"))?;
     if bytes.len() != 32 {
-        return Err(anyhow!("seed hex must decode to 32 bytes, got {}", bytes.len()));
+        return Err(anyhow!(
+            "seed hex must decode to 32 bytes, got {}",
+            bytes.len()
+        ));
     }
     let mut out = [0u8; 32];
     out.copy_from_slice(&bytes);
@@ -200,7 +202,7 @@ pub fn derive_fvk(main_tos_seed: &[u8; 32]) -> Result<FullViewingKey> {
     let ivk = poseidon2::hash_tagged(tags::UNO_IVK_V1, &ivk_input);
 
     // (3) byte-oriented secrets
-    let ovk        = blake2b_256(&[tags::UNO_OVK_V1, &uno_seed]);
+    let ovk = blake2b_256(&[tags::UNO_OVK_V1, &uno_seed]);
     let mlkem_seed = blake2b_256(&[tags::UNO_MLKEM_V1, &uno_seed]);
 
     // (4) ML-KEM-768 deterministic key generation
@@ -226,9 +228,9 @@ pub fn derive_fvk(main_tos_seed: &[u8; 32]) -> Result<FullViewingKey> {
 
     Ok(FullViewingKey {
         uno_seed,
-        nk:         Digest32(nk),
-        ivk:        Digest32(ivk),
-        ovk:        Digest32(ovk),
+        nk: Digest32(nk),
+        ivk: Digest32(ivk),
+        ovk: Digest32(ovk),
         mlkem_seed: Digest32(mlkem_seed),
         pk_mlkem,
         sk_mlkem,
@@ -242,7 +244,10 @@ pub fn derive_fvk(main_tos_seed: &[u8; 32]) -> Result<FullViewingKey> {
 /// 7 → width-8 permutation.
 pub fn ivk_commitment(ivk: &[u8; DIGEST], diversifier_11: &[u8]) -> Result<[u8; DIGEST]> {
     if diversifier_11.len() != 11 {
-        return Err(anyhow!("diversifier must be 11 bytes, got {}", diversifier_11.len()));
+        return Err(anyhow!(
+            "diversifier must be 11 bytes, got {}",
+            diversifier_11.len()
+        ));
     }
     // ivk → 4 Goldilocks limbs (wrapped load, canonical fold for bytes).
     let mut fes = poseidon2::bytes_to_fes_wrapped(ivk);
@@ -262,17 +267,25 @@ pub fn ivk_commitment(ivk: &[u8; DIGEST], diversifier_11: &[u8]) -> Result<[u8; 
 pub fn mlkem_decap(sk_mlkem: &[u8], ct: &[u8]) -> Result<[u8; 32]> {
     type DK = <MlKem768 as KemCore>::DecapsulationKey;
     if sk_mlkem.len() != MLKEM768_SK {
-        return Err(anyhow!("sk_mlkem must be {MLKEM768_SK} bytes, got {}", sk_mlkem.len()));
+        return Err(anyhow!(
+            "sk_mlkem must be {MLKEM768_SK} bytes, got {}",
+            sk_mlkem.len()
+        ));
     }
     if ct.len() != crate::sizes::MLKEM768_CT {
-        return Err(anyhow!("mlkem_ct must be {} bytes, got {}", crate::sizes::MLKEM768_CT, ct.len()));
+        return Err(anyhow!(
+            "mlkem_ct must be {} bytes, got {}",
+            crate::sizes::MLKEM768_CT,
+            ct.len()
+        ));
     }
     let dk_arr = Array::<u8, <DK as EncodedSizeUser>::EncodedSize>::try_from(sk_mlkem)
         .map_err(|_| anyhow!("ml-kem decap key length mismatch"))?;
     let dk = DK::from_bytes(&dk_arr);
-    let ct_typed = Ciphertext::<MlKem768>::try_from(ct)
-        .map_err(|_| anyhow!("ml-kem ct length mismatch"))?;
-    let ss = dk.decapsulate(&ct_typed)
+    let ct_typed =
+        Ciphertext::<MlKem768>::try_from(ct).map_err(|_| anyhow!("ml-kem ct length mismatch"))?;
+    let ss = dk
+        .decapsulate(&ct_typed)
         .map_err(|_| anyhow!("ml-kem decap failed"))?;
     let mut out = [0u8; 32];
     out.copy_from_slice(ss.as_slice());
@@ -283,13 +296,17 @@ pub fn mlkem_decap(sk_mlkem: &[u8], ct: &[u8]) -> Result<[u8; 32]> {
 pub fn mlkem_encap(pk_mlkem: &[u8]) -> Result<(Vec<u8>, [u8; 32])> {
     type EK = <MlKem768 as KemCore>::EncapsulationKey;
     if pk_mlkem.len() != MLKEM768_PK {
-        return Err(anyhow!("pk_mlkem must be {MLKEM768_PK} bytes, got {}", pk_mlkem.len()));
+        return Err(anyhow!(
+            "pk_mlkem must be {MLKEM768_PK} bytes, got {}",
+            pk_mlkem.len()
+        ));
     }
     let ek_arr = Array::<u8, <EK as EncodedSizeUser>::EncodedSize>::try_from(pk_mlkem)
         .map_err(|_| anyhow!("ml-kem encap key length mismatch"))?;
     let ek = EK::from_bytes(&ek_arr);
     let mut rng = rand::thread_rng();
-    let (ct, ss) = ek.encapsulate(&mut rng)
+    let (ct, ss) = ek
+        .encapsulate(&mut rng)
         .map_err(|_| anyhow!("ml-kem encap failed"))?;
     let mut ss_bytes = [0u8; 32];
     ss_bytes.copy_from_slice(ss.as_slice());
@@ -306,7 +323,9 @@ mod tests {
 
     fn fixed_seed() -> [u8; 32] {
         let mut s = [0u8; 32];
-        for i in 0..32 { s[i] = i as u8; }
+        for i in 0..32 {
+            s[i] = i as u8;
+        }
         s
     }
 
@@ -315,12 +334,12 @@ mod tests {
         let seed = fixed_seed();
         let a = derive_fvk(&seed).unwrap();
         let b = derive_fvk(&seed).unwrap();
-        assert_eq!(a.nk.0,         b.nk.0);
-        assert_eq!(a.ivk.0,        b.ivk.0);
-        assert_eq!(a.ovk.0,        b.ovk.0);
+        assert_eq!(a.nk.0, b.nk.0);
+        assert_eq!(a.ivk.0, b.ivk.0);
+        assert_eq!(a.ovk.0, b.ovk.0);
         assert_eq!(a.mlkem_seed.0, b.mlkem_seed.0);
-        assert_eq!(a.pk_mlkem,     b.pk_mlkem);
-        assert_eq!(a.sk_mlkem,     b.sk_mlkem);
+        assert_eq!(a.pk_mlkem, b.pk_mlkem);
+        assert_eq!(a.sk_mlkem, b.sk_mlkem);
     }
 
     #[test]
@@ -329,7 +348,10 @@ mod tests {
         let fvk = derive_fvk(&seed).unwrap();
         // Raw bytes of uno_seed MUST NOT equal the input TOS seed (i.e. the
         // domain-separated BLAKE2b MUST have been applied).
-        assert_ne!(fvk.uno_seed, seed, "uno_seed must differ from main_tos_seed");
+        assert_ne!(
+            fvk.uno_seed, seed,
+            "uno_seed must differ from main_tos_seed"
+        );
     }
 
     #[test]
@@ -340,7 +362,10 @@ mod tests {
         let d2 = [0xbbu8; 11];
         let ic1 = ivk_commitment(&fvk.ivk.0, &d1).unwrap();
         let ic2 = ivk_commitment(&fvk.ivk.0, &d2).unwrap();
-        assert_ne!(ic1, ic2, "different diversifiers must yield different commitments");
+        assert_ne!(
+            ic1, ic2,
+            "different diversifiers must yield different commitments"
+        );
 
         // Same inputs → same commitment.
         let ic1b = ivk_commitment(&fvk.ivk.0, &d1).unwrap();

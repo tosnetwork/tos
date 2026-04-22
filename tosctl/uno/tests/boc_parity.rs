@@ -35,7 +35,9 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use tosctl_uno::boc_encode::encode_transfer_boc;
-use tosctl_uno::transfer::{OutputDescription, SpendDescription, Transfer, SCHEME_ID_V1, TRANSFER_VERSION};
+use tosctl_uno::transfer::{
+    OutputDescription, SpendDescription, Transfer, SCHEME_ID_V1, TRANSFER_VERSION,
+};
 
 // ---------------------------------------------------------------------------
 // Skip helper
@@ -72,29 +74,30 @@ fn bridge_path(test_name: &str) -> Option<&'static str> {
 /// uses only publicly-exported types, so this test does not depend on
 /// `#[cfg(test)]` internals of the crate.
 ///
-/// Sizing note (V1-3c-beta): production transfers carry enc_ciphertext
-/// ≈ 580 B and mlkem_ct = 1088 B — both chunked into multi-cell linear
-/// chains by `encode_transfer_boc`. The C++ decoder
-/// (`uno/core/transaction.cpp::decode_transfer`) enforces a §17 ≤5-level
-/// walk-depth gate evaluated as `outputs_root.get_depth() + 1 <= 5`,
-/// which — per TON/TOS cell-depth semantics — descends into the chunk
-/// chains and trips on any mlkem_ct chain of ≥ 2 cells. This is a known
-/// latent bug in the C++ gate: its in-source comment explicitly says it
-/// only meant to bound the STRUCTURAL walk (root → per_item → cont), not
-/// the enc_ct / mlkem_ct / zk_proof subtrees that carry their own
-/// `kChunkChainMaxChunks` bound. `tosctl/uno/src/boc_decode.rs`
-/// (V1-3c-alpha) reconciles this by computing a structural-only depth.
+/// Sizing note (V1-3c-beta + V1-3c-gamma): production transfers carry
+/// enc_ciphertext ≈ 580 B and mlkem_ct = 1088 B — both chunked into
+/// multi-cell linear chains by `encode_transfer_boc`. The C++ decoder's
+/// §17 walk-depth gate was originally implemented via
+/// `cell_depth_bounded(c) + 1 <= 5` which (per TOS cell-depth semantics)
+/// descended into the chunk chains and tripped on any mlkem_ct ≥ 2
+/// cells — rejecting honest v1 Transfers. V1-3c-gamma replaced that
+/// with `structural_walk_depth`, which follows only the structural
+/// tree (root → per_item → cont) and skips enc_ct / mlkem_ct / zk_proof
+/// refs. The enc_ct / mlkem_ct / zk_proof subchains carry their own
+/// `kChunkChainMaxChunks = 8192` bound.
 ///
-/// To exercise the happy-path bridge without tripping the latent C++ gate,
-/// we keep enc_ct / mlkem_ct / zk_proof payloads ≤ 127 B (single chunk
-/// each). This still exercises:
+/// With the gate fixed, this test runs at REALISTIC v1 payload sizes:
+///   - enc_ciphertext: 579 B (~5 cells)
+///   - mlkem_ct:      1088 B (~9 cells)  — the original trigger case
+///   - zk_proof:     520 KB (~4096 cells) — full measured per-Tx proof
+///
+/// This exercises:
 ///   - every Transfer header field,
 ///   - full 1..=4 × 1..=4 spend/output shape dispatch,
 ///   - per-spend and per-output inline-cell + continuation-ref layout,
+///   - multi-chunk chain-chain traversal through the C++ decoder's
+///     `load_bytes_from_chunk_chain` with realistic chunk counts,
 ///   - BLAKE3 content-binding of the three variable-length payloads.
-///
-/// Surfacing the decoder-side depth-gate bug against realistic shapes is
-/// a V1-3c-gamma scope item, not this test's job.
 fn sample_transfer(n_spends: usize, n_outputs: usize) -> Transfer {
     let mut spends = Vec::with_capacity(n_spends);
     for i in 0..n_spends {
@@ -114,13 +117,15 @@ fn sample_transfer(n_spends: usize, n_outputs: usize) -> Transfer {
     }
     let mut outputs = Vec::with_capacity(n_outputs);
     for j in 0..n_outputs {
-        // 64 B each — well under the 127 B single-chunk cap so the
-        // chunk chain stays depth 0 per blob (see sizing note above).
-        let mut enc_ct = vec![0u8; 64];
+        // Realistic v1 shape sizes (V1-3c-gamma): enc_ct ~579 B
+        // (~5 cells), mlkem_ct 1088 B (~9 cells). These trigger the
+        // multi-chunk chain traversal in the C++ decoder that was
+        // broken by the pre-gamma walk-depth gate.
+        let mut enc_ct = vec![0u8; 579];
         for (idx, b) in enc_ct.iter_mut().enumerate() {
             *b = (idx as u8).wrapping_mul(0x11).wrapping_add(j as u8);
         }
-        let mut mlkem_ct = vec![0u8; 96];
+        let mut mlkem_ct = vec![0u8; 1088];
         for (idx, b) in mlkem_ct.iter_mut().enumerate() {
             *b = (idx as u8).wrapping_mul(0x13).wrapping_add(j as u8);
         }
@@ -141,9 +146,10 @@ fn sample_transfer(n_spends: usize, n_outputs: usize) -> Transfer {
         outputs.push(output);
     }
 
-    // zk_proof: 64 B — single chunk. Same depth-gate rationale as enc_ct /
-    // mlkem_ct above.
-    let mut zk_proof = vec![0u8; 64];
+    // zk_proof: 520 KB realistic v1 typical-shape size (~4096 cells).
+    // V1-3c-gamma lets this traverse the full chunk chain through the
+    // daemon's decoder.
+    let mut zk_proof = vec![0u8; 520 * 1024];
     for (i, b) in zk_proof.iter_mut().enumerate() {
         *b = (i & 0xFF) as u8;
     }
@@ -226,12 +232,16 @@ impl Summary {
 
 fn hex_to_fixed<const N: usize>(s: &str) -> Result<[u8; N], String> {
     if s.len() != 2 * N {
-        return Err(format!("hex field: expected {} chars, got {}", 2 * N, s.len()));
+        return Err(format!(
+            "hex field: expected {} chars, got {}",
+            2 * N,
+            s.len()
+        ));
     }
     let mut out = [0u8; N];
     for i in 0..N {
-        let hi = u8::from_str_radix(&s[2 * i..2 * i + 1], 16)
-            .map_err(|e| format!("hex parse: {e}"))?;
+        let hi =
+            u8::from_str_radix(&s[2 * i..2 * i + 1], 16).map_err(|e| format!("hex parse: {e}"))?;
         let lo = u8::from_str_radix(&s[2 * i + 1..2 * i + 2], 16)
             .map_err(|e| format!("hex parse: {e}"))?;
         out[i] = (hi << 4) | lo;
@@ -261,35 +271,56 @@ fn parse_stdout(stdout: &str) -> Result<Summary, String> {
         }
         match tokens[0] {
             "version" => {
-                s.version = tokens.get(1).ok_or("missing value for version")?
-                    .parse().map_err(|e| format!("version parse: {e}"))?;
+                s.version = tokens
+                    .get(1)
+                    .ok_or("missing value for version")?
+                    .parse()
+                    .map_err(|e| format!("version parse: {e}"))?;
             }
             "scheme_id" => {
-                s.scheme_id = tokens.get(1).ok_or("missing value for scheme_id")?
-                    .parse().map_err(|e| format!("scheme_id parse: {e}"))?;
+                s.scheme_id = tokens
+                    .get(1)
+                    .ok_or("missing value for scheme_id")?
+                    .parse()
+                    .map_err(|e| format!("scheme_id parse: {e}"))?;
             }
             "chain_id" => {
-                s.chain_id = tokens.get(1).ok_or("missing value for chain_id")?
-                    .parse().map_err(|e| format!("chain_id parse: {e}"))?;
+                s.chain_id = tokens
+                    .get(1)
+                    .ok_or("missing value for chain_id")?
+                    .parse()
+                    .map_err(|e| format!("chain_id parse: {e}"))?;
             }
             "anchor" => {
                 s.anchor = hex_to_fixed::<32>(tokens.get(1).ok_or("missing anchor")?)?;
             }
             "expiry_block" => {
-                s.expiry_block = tokens.get(1).ok_or("missing expiry_block")?
-                    .parse().map_err(|e| format!("expiry_block parse: {e}"))?;
+                s.expiry_block = tokens
+                    .get(1)
+                    .ok_or("missing expiry_block")?
+                    .parse()
+                    .map_err(|e| format!("expiry_block parse: {e}"))?;
             }
             "fee" => {
-                s.fee = tokens.get(1).ok_or("missing fee")?
-                    .parse().map_err(|e| format!("fee parse: {e}"))?;
+                s.fee = tokens
+                    .get(1)
+                    .ok_or("missing fee")?
+                    .parse()
+                    .map_err(|e| format!("fee parse: {e}"))?;
             }
             "spend_count" => {
-                s.spend_count = tokens.get(1).ok_or("missing spend_count")?
-                    .parse().map_err(|e| format!("spend_count parse: {e}"))?;
+                s.spend_count = tokens
+                    .get(1)
+                    .ok_or("missing spend_count")?
+                    .parse()
+                    .map_err(|e| format!("spend_count parse: {e}"))?;
             }
             "output_count" => {
-                s.output_count = tokens.get(1).ok_or("missing output_count")?
-                    .parse().map_err(|e| format!("output_count parse: {e}"))?;
+                s.output_count = tokens
+                    .get(1)
+                    .ok_or("missing output_count")?
+                    .parse()
+                    .map_err(|e| format!("output_count parse: {e}"))?;
             }
             "tx_hash" => {
                 s.tx_hash = hex_to_fixed::<32>(tokens.get(1).ok_or("missing tx_hash")?)?;
@@ -302,9 +333,7 @@ fn parse_stdout(stdout: &str) -> Result<Summary, String> {
                         tokens.len()
                     ));
                 }
-                let idx: usize = tokens[1]
-                    .parse()
-                    .map_err(|e| format!("spend idx: {e}"))?;
+                let idx: usize = tokens[1].parse().map_err(|e| format!("spend idx: {e}"))?;
                 let row = SpendRow {
                     index: idx,
                     nullifier: hex_to_fixed::<32>(tokens[3])?,
@@ -322,12 +351,8 @@ fn parse_stdout(stdout: &str) -> Result<Summary, String> {
                         tokens.len()
                     ));
                 }
-                let idx: usize = tokens[1]
-                    .parse()
-                    .map_err(|e| format!("output idx: {e}"))?;
-                let filter_tag: u16 = tokens[7]
-                    .parse()
-                    .map_err(|e| format!("filter_tag: {e}"))?;
+                let idx: usize = tokens[1].parse().map_err(|e| format!("output idx: {e}"))?;
+                let filter_tag: u16 = tokens[7].parse().map_err(|e| format!("filter_tag: {e}"))?;
                 let row = OutputRow {
                     index: idx,
                     cm: hex_to_fixed::<32>(tokens[3])?,
@@ -340,9 +365,8 @@ fn parse_stdout(stdout: &str) -> Result<Summary, String> {
                 s.outputs.push(row);
             }
             "zk_proof_blake3" => {
-                s.zk_proof_blake3 = hex_to_fixed::<32>(
-                    tokens.get(1).ok_or("missing zk_proof_blake3")?,
-                )?;
+                s.zk_proof_blake3 =
+                    hex_to_fixed::<32>(tokens.get(1).ok_or("missing zk_proof_blake3")?)?;
             }
             _ => {
                 return Err(format!("unknown bridge output line: {line:?}"));
@@ -398,10 +422,16 @@ fn compare_summary(tx: &Transfer, s: &Summary) -> Result<(), String> {
         return Err(format!("version: rust={} cxx={}", tx.version, s.version));
     }
     if s.scheme_id != tx.scheme_id {
-        return Err(format!("scheme_id: rust={} cxx={}", tx.scheme_id, s.scheme_id));
+        return Err(format!(
+            "scheme_id: rust={} cxx={}",
+            tx.scheme_id, s.scheme_id
+        ));
     }
     if s.chain_id != tx.chain_id {
-        return Err(format!("chain_id: rust={:#x} cxx={:#x}", tx.chain_id, s.chain_id));
+        return Err(format!(
+            "chain_id: rust={:#x} cxx={:#x}",
+            tx.chain_id, s.chain_id
+        ));
     }
     if s.anchor != tx.anchor {
         return Err("anchor mismatch".to_string());
@@ -552,17 +582,14 @@ fn rust_encode_cxx_decode_sweep_all_shapes() {
     for n_s in 1..=4 {
         for n_o in 1..=4 {
             let tx = sample_transfer(n_s, n_o);
-            let bytes = encode_transfer_boc(&tx)
-                .unwrap_or_else(|e| panic!("encode {n_s}/{n_o}: {e}"));
+            let bytes =
+                encode_transfer_boc(&tx).unwrap_or_else(|e| panic!("encode {n_s}/{n_o}: {e}"));
             let run = run_bridge(bridge, &bytes);
             if run.status_code != Some(0) {
                 failed.push((
                     n_s,
                     n_o,
-                    format!(
-                        "bridge exit={:?} stderr={}",
-                        run.status_code, run.stderr
-                    ),
+                    format!("bridge exit={:?} stderr={}", run.status_code, run.stderr),
                 ));
                 continue;
             }

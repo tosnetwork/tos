@@ -357,7 +357,6 @@ void reset_uno_rpc_state_for_test() {
 
 namespace {
 constexpr int kErrInvalidParams       = -32602;
-constexpr int kErrMethodNotFound      = -32601;
 constexpr int kErrInternal            = -32603;
 constexpr int kErrRateLimited         = -32005;
 constexpr int kErrTooLarge            = -32600;

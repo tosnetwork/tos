@@ -37,10 +37,10 @@ use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use curve25519_dalek::ristretto::CompressedRistretto;
 use serde::{Deserialize, Serialize};
 
-use crate::{gcs, hybrid_kem, keygen, poseidon2, wire};
 use crate::keygen::FullViewingKey;
 use crate::rpc_client::RpcClient;
 use crate::sizes::DIVERSIFIER;
+use crate::{gcs, hybrid_kem, keygen, poseidon2, wire};
 
 /// Plaintext of an owned note, recovered from a successful trial-decrypt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,7 +94,13 @@ impl NotePlaintext {
         let mut rseed = [0u8; 32];
         rseed.copy_from_slice(&bytes[51..83]);
         let memo = bytes[83..].to_vec();
-        Ok(Self { d, pk_d, value, rseed, memo })
+        Ok(Self {
+            d,
+            pk_d,
+            value,
+            rseed,
+            memo,
+        })
     }
 }
 
@@ -113,12 +119,11 @@ pub async fn scan_block(
 ) -> Result<Vec<OwnedNote>> {
     // Fetch filter. Empty filter is allowed (block with zero outputs).
     let filter_bytes = rpc.get_block_filter(seqno).await.unwrap_or_default();
-    let filter_tags: std::collections::HashSet<u16> =
-        if filter_bytes.is_empty() {
-            Default::default()
-        } else {
-            gcs::decode(&filter_bytes)?.into_iter().collect()
-        };
+    let filter_tags: std::collections::HashSet<u16> = if filter_bytes.is_empty() {
+        Default::default()
+    } else {
+        gcs::decode(&filter_bytes)?.into_iter().collect()
+    };
 
     // Fetch outputs page by page.
     let mut owned = Vec::new();
@@ -126,14 +131,21 @@ pub async fn scan_block(
     let page_size = 128u64;
 
     loop {
-        let page = rpc.get_outputs_at_block(seqno, global_index, page_size).await?;
-        if page.is_empty() { break; }
+        let page = rpc
+            .get_outputs_at_block(seqno, global_index, page_size)
+            .await?;
+        if page.is_empty() {
+            break;
+        }
 
         for (i, raw) in page.iter().enumerate() {
             let out = match wire::parse_output(raw) {
                 Ok(o) => o,
                 Err(e) => {
-                    tracing_unreachable(&format!("skipping malformed output at idx {}: {e}", global_index + i as u64));
+                    tracing_unreachable(&format!(
+                        "skipping malformed output at idx {}: {e}",
+                        global_index + i as u64
+                    ));
                     continue;
                 }
             };
@@ -146,7 +158,9 @@ pub async fn scan_block(
                 if !filter_tags.is_empty() && !filter_tags.contains(&out.filter_tag) {
                     return Err(anyhow!(
                         "consistency violation: block {seqno} output {position} has \
-                         filter_tag={:#x} not in GCS filter set", out.filter_tag));
+                         filter_tag={:#x} not in GCS filter set",
+                        out.filter_tag
+                    ));
                 }
 
                 // Nullifier = Poseidon2("uno-nf-v1", nk, cm, pos)
@@ -163,7 +177,9 @@ pub async fn scan_block(
                 });
             }
         }
-        if (page.len() as u64) < page_size { break; }
+        if (page.len() as u64) < page_size {
+            break;
+        }
         global_index += page.len() as u64;
     }
 
@@ -196,7 +212,7 @@ pub fn try_open(
     // 1. s_dh' = ivk · epk (receiver-side ECDH, §2.7).
     let epk = match CompressedRistretto(out.epk).decompress() {
         Some(p) => p,
-        None => return Ok(None),  // non-canonical epk → not our note
+        None => return Ok(None), // non-canonical epk → not our note
     };
     let s_dh = fvk.ivk_scalar() * epk;
     let s_dh_compressed = s_dh.compress().to_bytes();
@@ -227,7 +243,10 @@ pub fn try_open(
     // 4. Derive nonce and AEAD-Open.
     let nonce_bytes = hybrid_kem::derive_nonce(&out.epk);
     let cipher = ChaCha20Poly1305::new(Key::from_slice(&k_aead));
-    let plaintext = match cipher.decrypt(Nonce::from_slice(&nonce_bytes), out.enc_ciphertext.as_slice()) {
+    let plaintext = match cipher.decrypt(
+        Nonce::from_slice(&nonce_bytes),
+        out.enc_ciphertext.as_slice(),
+    ) {
         Ok(pt) => pt,
         Err(_) => {
             // filter_tag matched but AEAD tag failed: a 1/2^16 false
@@ -241,7 +260,11 @@ pub fn try_open(
     // Sanity: the diversifier inside the plaintext should match the pk_d
     // that the sender encrypted to. We don't assert this (malformed
     // senders exist), but expose it in debug logging.
-    tracing_unreachable(&format!("opened note: d={}, value={}", hex::encode(note.d), note.value));
+    tracing_unreachable(&format!(
+        "opened note: d={}, value={}",
+        hex::encode(note.d),
+        note.value
+    ));
 
     Ok(Some(note))
 }

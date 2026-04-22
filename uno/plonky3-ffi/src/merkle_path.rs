@@ -129,11 +129,7 @@ pub fn hash_leaf_row_ref(perm: &Poseidon2Goldilocks<8>, input: &[Goldilocks]) ->
 ///   2. Apply the width-8 permutation.
 ///   3. Take the first 4 elements as the parent digest.
 #[inline]
-pub fn compress_pair_ref(
-    perm: &Poseidon2Goldilocks<8>,
-    left: &Digest,
-    right: &Digest,
-) -> Digest {
+pub fn compress_pair_ref(perm: &Poseidon2Goldilocks<8>, left: &Digest, right: &Digest) -> Digest {
     let mut pre = [Goldilocks::default(); SPONGE_WIDTH];
     pre[0..SPONGE_RATE].copy_from_slice(left);
     pre[SPONGE_RATE..SPONGE_WIDTH].copy_from_slice(right);
@@ -232,7 +228,9 @@ pub fn hash_multi_matrix_leaf_ref(
     // allocation per leaf. The algorithm is identical to
     // `hash_leaf_row_ref` applied to a single concatenated input.
     let mut state = [Goldilocks::default(); SPONGE_WIDTH];
-    let mut iter = matrices_values.iter().flat_map(|slice| slice.iter().copied());
+    let mut iter = matrices_values
+        .iter()
+        .flat_map(|slice| slice.iter().copied());
 
     'outer: loop {
         for i in 0..SPONGE_RATE {
@@ -297,7 +295,9 @@ pub fn verify_multi_matrix_merkle_path_ref(
 mod tests {
     use super::*;
     use p3_goldilocks::default_goldilocks_poseidon2_8;
-    use p3_symmetric::{CryptographicHasher, PaddingFreeSponge, PseudoCompressionFunction, TruncatedPermutation};
+    use p3_symmetric::{
+        CryptographicHasher, PaddingFreeSponge, PseudoCompressionFunction, TruncatedPermutation,
+    };
 
     type MvpHash = PaddingFreeSponge<Poseidon2Goldilocks<8>, 8, 4, 4>;
     type MvpCompress = TruncatedPermutation<Poseidon2Goldilocks<8>, 2, 4, 8>;
@@ -408,8 +408,10 @@ mod tests {
         let leaves: Vec<[Goldilocks; 4]> = (0..4)
             .map(|i| [gl(100 + i), gl(200 + i), gl(300 + i), gl(400 + i)])
             .collect();
-        let leaf_digests: Vec<Digest> =
-            leaves.iter().map(|row| hash_leaf_row_ref(&perm, row)).collect();
+        let leaf_digests: Vec<Digest> = leaves
+            .iter()
+            .map(|row| hash_leaf_row_ref(&perm, row))
+            .collect();
 
         // Level 1: compress (leaf[0], leaf[1]) and (leaf[2], leaf[3])
         let level1 = vec![
@@ -424,20 +426,40 @@ mod tests {
         // (idx & 1 == 0) → [digest, sibling]; second step: (idx & 1 == 1)
         // → [sibling, digest].
         let opening_proof = vec![leaf_digests[3], level1[0]];
-        assert!(verify_merkle_path_ref(&perm, &leaves[2], &opening_proof, 2, &root));
+        assert!(verify_merkle_path_ref(
+            &perm,
+            &leaves[2],
+            &opening_proof,
+            2,
+            &root
+        ));
 
         // Tamper a sibling → reject.
         let mut bad_proof = opening_proof.clone();
         bad_proof[0][0] += Goldilocks::new(1);
-        assert!(!verify_merkle_path_ref(&perm, &leaves[2], &bad_proof, 2, &root));
+        assert!(!verify_merkle_path_ref(
+            &perm, &leaves[2], &bad_proof, 2, &root
+        ));
 
         // Wrong index → reject.
-        assert!(!verify_merkle_path_ref(&perm, &leaves[2], &opening_proof, 3, &root));
+        assert!(!verify_merkle_path_ref(
+            &perm,
+            &leaves[2],
+            &opening_proof,
+            3,
+            &root
+        ));
 
         // Wrong leaf → reject.
         let mut bad_leaf = leaves[2];
         bad_leaf[0] += Goldilocks::new(1);
-        assert!(!verify_merkle_path_ref(&perm, &bad_leaf, &opening_proof, 2, &root));
+        assert!(!verify_merkle_path_ref(
+            &perm,
+            &bad_leaf,
+            &opening_proof,
+            2,
+            &root
+        ));
     }
 
     /// Validate against upstream's MerkleTreeMmcs::verify_batch on a
@@ -445,9 +467,9 @@ mod tests {
     /// single-matrix / binary / cap_height=0 verification path in full.
     #[test]
     fn verify_merkle_path_matches_upstream_verify_batch() {
-        use p3_commit::{Mmcs, BatchOpeningRef};
+        use p3_commit::{BatchOpeningRef, Mmcs};
         use p3_field::Field;
-        use p3_matrix::{Dimensions, dense::RowMajorMatrix};
+        use p3_matrix::{dense::RowMajorMatrix, Dimensions};
         use p3_merkle_tree::MerkleTreeMmcs;
 
         let (perm, hash, compress) = upstream_parts();
@@ -472,7 +494,10 @@ mod tests {
             // Upstream verify — sanity.
             mmcs.verify_batch(
                 &commit,
-                &[Dimensions { width: 4, height: 16 }],
+                &[Dimensions {
+                    width: 4,
+                    height: 16,
+                }],
                 row_idx,
                 BatchOpeningRef::new(&opened_values, &opening_proof),
             )
@@ -521,7 +546,13 @@ mod tests {
         let expected_root: Digest = commit.roots()[0];
 
         // Baseline: valid proof passes.
-        assert!(verify_merkle_path_ref(&perm, leaf_row, &opening_proof, row_idx, &expected_root));
+        assert!(verify_merkle_path_ref(
+            &perm,
+            leaf_row,
+            &opening_proof,
+            row_idx,
+            &expected_root
+        ));
 
         // Flip one limb of a sibling digest → reject.
         opening_proof[0][0] += Goldilocks::new(1);
@@ -551,8 +582,7 @@ mod tests {
             Goldilocks,
             [Goldilocks; 4],
         >>::hash_iter_slices(
-            &hash,
-            [m0.as_slice(), m1.as_slice(), m2.as_slice()],
+            &hash, [m0.as_slice(), m1.as_slice(), m2.as_slice()]
         );
         assert_eq!(ours, theirs, "multi-matrix leaf hash disagreement");
     }
@@ -593,7 +623,9 @@ mod tests {
             let theirs: [Goldilocks; 4] = <MvpHash as p3_symmetric::CryptographicHasher<
                 Goldilocks,
                 [Goldilocks; 4],
-            >>::hash_iter_slices(&hash, refs.iter().copied());
+            >>::hash_iter_slices(
+                &hash, refs.iter().copied()
+            );
             assert_eq!(
                 ours, theirs,
                 "random multi-matrix leaf hash disagreement ({} matrices)",
@@ -609,7 +641,7 @@ mod tests {
     fn verify_multi_matrix_merkle_path_matches_upstream() {
         use p3_commit::{BatchOpeningRef, Mmcs};
         use p3_field::Field;
-        use p3_matrix::{Dimensions, dense::RowMajorMatrix};
+        use p3_matrix::{dense::RowMajorMatrix, Dimensions};
         use p3_merkle_tree::MerkleTreeMmcs;
 
         let (perm, hash, compress) = upstream_parts();
@@ -659,8 +691,7 @@ mod tests {
             .expect("upstream must accept");
 
             // Our reference: verify via multi-matrix path.
-            let refs: Vec<&[Goldilocks]> =
-                opened_values.iter().map(|v| v.as_slice()).collect();
+            let refs: Vec<&[Goldilocks]> = opened_values.iter().map(|v| v.as_slice()).collect();
             assert!(
                 verify_multi_matrix_merkle_path_ref(
                     &perm,
@@ -759,7 +790,11 @@ mod tests {
             "num_chunks must be power-of-two ≥ 2, got {num_chunks}"
         );
         for chunk in &proof.opened_values.quotient_chunks {
-            assert_eq!(chunk.len(), 2, "each chunk opens exactly DIMENSION=2 values");
+            assert_eq!(
+                chunk.len(),
+                2,
+                "each chunk opens exactly DIMENSION=2 values"
+            );
         }
 
         // The full quotient-commit Merkle verification against a query
@@ -784,19 +819,16 @@ mod tests {
     /// configuration used in FRI commit-phase verification.
     #[test]
     fn verify_real_fri_commit_phase_opening() {
+        use crate::prover::MvpConfig;
         use crate::prover::{Challenge, MvpProver};
         use crate::transfer_air::MvpWitness;
-        use p3_field::BasedVectorSpace;
         use p3_uni_stark::Proof;
-        use crate::prover::MvpConfig;
 
         // Build a real 2/2 Transfer proof.
         let prover = MvpProver::new();
         let w = MvpWitness::deterministic_valid(2, 2, 0xC0DE_FEED);
         let (proof_bytes, _pis_bytes) = prover.prove(&w.encode()).expect("prove ok");
         let proof: Proof<MvpConfig> = postcard::from_bytes(&proof_bytes).expect("decode");
-
-        let (perm, _, _) = upstream_parts();
 
         // For each FRI query, verify every commit-phase Merkle path via
         // our reference. The query index sequence requires rebuilding
@@ -809,13 +841,9 @@ mod tests {
         assert_eq!(num_queries, challenges.query_indices.len());
 
         for (q, query_proof) in proof.opening_proof.query_proofs.iter().enumerate() {
-            let mut domain_index = challenges.query_indices[q];
-            // extra_query_index_bits = 0 for TwoAdicFriFolding, so we
-            // use domain_index directly.
-
             let mut log_current = challenges.log_global_max_height;
 
-            for (r, step) in query_proof.commit_phase_openings.iter().enumerate() {
+            for step in query_proof.commit_phase_openings.iter() {
                 let log_arity = step.log_arity as usize;
                 assert_eq!(log_arity, 1, "our pin is binary FRI");
                 let arity = 2;
@@ -848,8 +876,6 @@ mod tests {
                 // one-off) — but we can at least validate the shape:
                 assert!(step.opening_proof.len() <= log_current);
 
-                // Shift index for next round.
-                domain_index >>= log_arity;
                 log_current -= log_arity;
             }
 

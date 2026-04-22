@@ -9,6 +9,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <utility>
+#include <vector>
 
 #include "td/utils/Slice.h"
 #include "td/utils/logging.h"
@@ -68,71 +70,148 @@ inline void write_be_u64(uint8_t* p, uint64_t v) noexcept {
     }
 }
 
-// Chunk-chain max bytes per cell (mirror EVM bytecode chunk convention).
+// Chunk-tree leaf max bytes per cell (mirror EVM bytecode chunk convention).
+// 127 B = 1016 bits ≤ CellTraits::max_bits (1023).
 constexpr size_t kChunkBytes = 127;
-// Bound the decode walk. Must cover every chunk chain that appears
-// on-wire in a Transfer. Per v1 per-Tx-direct wire shape
-// (doc/uno-aggregation-design.md §-1, 2026-04-21), the Plonky3 zk_proof
-// is on-chain and up to ~915 KB at worst-case 4/4 shape. At 127 B per
-// chunk cell:
-//   worst-case zk_proof: 915 KB / 127 ≈ 7,370 chunks
-//   enc_ciphertext:     ~600 B         ≈     5 chunks
-//   mlkem_ct:          ~1,088 B         ≈     9 chunks
-// Pinned to 8192 (~10 % headroom above the 4/4 worst case). The
-// pre-V1 value 2048 was tuned for a hypothetical ~80 KB / 640-chunk
-// proof and a witness_commitment-only on-chain shape; the v1 pivot
-// puts the full proof back on-chain, so this ceiling rises proportionally.
+// Fanout of the 4-ary chunk tree (§4.1a). Bounded above by
+// CellTraits::max_refs = 4.
+constexpr size_t kChunkTreeFanout = 4;
+// Bound total leaf count during decode. Covers worst-case v1 zk_proof
+// (4/4 shape, ~915 KB → ~7,370 leaves) with ~10 % headroom. Pre-V1-3c
+// this was a bound on linear chain length; the 4-ary tree (§4.1a) replaces
+// the linear layout but we keep the same numerical bound — it now bounds
+// cumulative leaf count during DFS traversal, equivalent in role (caps
+// CPU/memory exposure against malicious oversized trees).
 constexpr size_t kChunkChainMaxChunks = 8192;
+// Defense-in-depth for malformed non-canonical trees: a valid canonical
+// 4-ary tree with 8192 leaves has ~10923 total cells. Cap all visited cells
+// well below the BoC/global depth limits so adversaries cannot hide excessive
+// internal-node work behind a small leaf count.
+constexpr size_t kChunkTreeMaxCells = kChunkChainMaxChunks * 2;
+
+struct ChunkTreeStats {
+    size_t bytes{0};
+    size_t leaves{0};
+    size_t cells{0};
+};
+
+bool scan_chunk_tree(td::Ref<vm::Cell> root, ChunkTreeStats& stats,
+                     std::string* out) noexcept {
+    if (root.is_null()) return false;
+    std::vector<td::Ref<vm::Cell>> stack;
+    stack.push_back(std::move(root));
+    while (!stack.empty()) {
+        auto cell = std::move(stack.back());
+        stack.pop_back();
+        if (cell.is_null()) return false;
+        if (++stats.cells > kChunkTreeMaxCells) return false;
+
+        auto cs = vm::load_cell_slice(cell);
+        const unsigned bits = cs.size();
+        const unsigned n_refs = cs.size_refs();
+        if (n_refs == 0) {
+            // Leaf: 1..127 B inline, byte-aligned.
+            if (++stats.leaves > kChunkChainMaxChunks) return false;
+            if (bits == 0 || bits % 8 != 0) return false;
+            const unsigned data_bytes = bits / 8;
+            if (data_bytes > kChunkBytes) return false;
+            stats.bytes += data_bytes;
+            if (out != nullptr) {
+                const size_t off = out->size();
+                out->resize(off + data_bytes);
+                if (!cs.fetch_bytes(reinterpret_cast<unsigned char*>(out->data() + off),
+                                    data_bytes)) {
+                    return false;
+                }
+            }
+        } else {
+            // Internal: 0 bits, 1..4 refs. Push children in reverse so DFS
+            // visits them left-to-right on the next iterations.
+            if (bits != 0) return false;
+            if (n_refs > kChunkTreeFanout) return false;
+            for (unsigned k = n_refs; k-- > 0; ) {
+                auto child = cs.prefetch_ref(k);
+                if (child.is_null()) return false;
+                stack.push_back(std::move(child));
+            }
+        }
+    }
+    return stats.leaves > 0;
+}
+
+bool chunk_tree_byte_length(td::Ref<vm::Cell> root, size_t& out) noexcept {
+    ChunkTreeStats stats;
+    if (!scan_chunk_tree(std::move(root), stats, nullptr)) return false;
+    out = stats.bytes;
+    return true;
+}
 
 }  // anonymous namespace
 
 // ---------------------------------------------------------------------------
-// Chunk chain helpers
+// Chunk tree helpers (§4.1a — balanced 4-ary chunk tree)
 // ---------------------------------------------------------------------------
+//
+// Wire format (consensus-binding; see doc/uno-workchain.md §4.1a):
+//   - Leaf cell:     L ∈ [1..127] bytes inline, 0 refs. Identified by 0 refs.
+//   - Internal cell: 0 data bits, 1..4 refs left-to-right in byte order.
+//                    Identified by ≥ 1 ref.
+//   - Empty input:   null Ref.
+//
+// Canonical construction:
+//   1. Split bytes into 127-byte chunks left-to-right (last chunk may be 1..127 B).
+//   2. Build leaf cells in order → level[0].
+//   3. While level.size() > 1: group by 4 left-to-right, build one internal per
+//      group, last group may have 1..4 children → level[k+1].
+//   4. Return level[final][0] (root).
+//
+// Depth = ⌈log₄(N)⌉ where N = leaf count. At v1 worst case (915 KB zk_proof,
+// 7370 leaves) depth = 7, well under CellTraits::max_depth = 1024.
+//
+// V1-3c-gamma rationale: the pre-V1-3c linear chain produced depth = N-1,
+// hitting the 1024 cap for any zk_proof > ~127 KB. See §17.3 amendment
+// history.
 
 td::Ref<vm::Cell> store_bytes_as_chunk_chain(td::Slice bytes) noexcept {
     if (bytes.empty()) return {};
-    td::Ref<vm::Cell> next;
-    size_t total = bytes.size();
-    size_t n_chunks = (total + kChunkBytes - 1) / kChunkBytes;
-    for (size_t i = n_chunks; i-- > 0;) {
-        size_t start = i * kChunkBytes;
-        size_t end = std::min(start + kChunkBytes, total);
-        size_t len = end - start;
+
+    // Step 1: build leaf cells in byte order.
+    const size_t total = bytes.size();
+    const size_t n_leaves = (total + kChunkBytes - 1) / kChunkBytes;
+    std::vector<td::Ref<vm::Cell>> level;
+    level.reserve(n_leaves);
+    for (size_t i = 0; i < n_leaves; ++i) {
+        const size_t start = i * kChunkBytes;
+        const size_t end = std::min(start + kChunkBytes, total);
+        const size_t len = end - start;
         vm::CellBuilder cb;
         cb.store_bytes(bytes.data() + start, len);
-        if (next.not_null()) {
-            cb.store_long(1, 1);
-            cb.store_ref(next);
-        } else {
-            cb.store_long(0, 1);
-        }
-        next = cb.finalize();
+        level.push_back(cb.finalize());
     }
-    return next;
+
+    // Step 2: fold 4-ary bottom-up until a single root remains.
+    while (level.size() > 1) {
+        std::vector<td::Ref<vm::Cell>> next_level;
+        next_level.reserve((level.size() + kChunkTreeFanout - 1) / kChunkTreeFanout);
+        for (size_t i = 0; i < level.size(); i += kChunkTreeFanout) {
+            const size_t group_end = std::min(i + kChunkTreeFanout, level.size());
+            vm::CellBuilder cb;
+            for (size_t j = i; j < group_end; ++j) {
+                cb.store_ref(level[j]);
+            }
+            next_level.push_back(cb.finalize());
+        }
+        level = std::move(next_level);
+    }
+    return level[0];
 }
 
 std::string load_bytes_from_chunk_chain(td::Ref<vm::Cell> root) noexcept {
     if (root.is_null()) return {};
     std::string out;
-    auto cell = root;
-    for (size_t i = 0; i < kChunkChainMaxChunks; ++i) {
-        if (cell.is_null()) break;
-        auto cs = vm::load_cell_slice(cell);
-        unsigned bits = cs.size();
-        if (bits < 1 || (bits - 1) % 8 != 0) return {};
-        unsigned data_bytes = (bits - 1) / 8;
-        if (data_bytes > 0) {
-            size_t off = out.size();
-            out.resize(off + data_bytes);
-            cs.fetch_bytes(reinterpret_cast<unsigned char*>(out.data() + off), data_bytes);
-        }
-        unsigned has_next = static_cast<unsigned>(cs.fetch_ulong(1));
-        if (has_next == 0) return out;
-        if (cs.size_refs() == 0) return {};
-        cell = cs.prefetch_ref(0);
-    }
-    return {};  // cycle / oversize — reject
+    ChunkTreeStats stats;
+    if (!scan_chunk_tree(std::move(root), stats, &out)) return {};
+    return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -509,54 +588,75 @@ bool load_item_chunked(vm::CellSlice& head_slice, uint8_t* out, size_t len) {
     return cont_cs.fetch_bytes(out + head, static_cast<unsigned>(rest));
 }
 
-// §17 ≤5-level walk assertion — invoked by the decoder after all refs have
-// been captured. Our encoder keeps depth at 4 from the Transfer root (plus
-// the internal depths of enc_ct / mlkem_ct / zk_proof, which are their own
-// bounded subchains); a decoded Transfer whose ref tree exceeds 5 levels is
-// a malformed / adversarial input and is rejected here.
+// §17 structural-walk-depth assertion — invoked by the decoder after
+// all refs have been captured. Bounds the STRUCTURAL ref tree of the
+// Transfer (root → spends_root / outputs_root → per-item → cont),
+// EXCLUDING the enc_ciphertext / mlkem_ct / zk_proof chunk-chain
+// subtrees which carry their own `kChunkChainMaxChunks` bound.
+//
+// V1-3c-gamma fix (2026-04-22): the previous `cell_depth_bounded`
+// helper below used `Cell::get_depth()`, which per TOS cell-depth
+// semantics descends into ALL refs — including chunk-chain subtrees.
+// On real v1 shapes (mlkem_ct ≥ 2 cells, enc_ct ~5 cells,
+// zk_proof ~4096 cells) the old gate computed
+// outputs_root.get_depth() ≥ 10 and rejected honest Transfers with
+// "ref-tree depth exceeds §17 5-level bound". The bug was latent
+// (no C++ test exercised realistic shapes through this gate, and
+// the pre-V1 value kChunkChainMaxChunks = 2048 kept zk_proof
+// off-chain in the witness_commitment shape) until V1-3c's cross-
+// language parity bridge surfaced it.
+//
+// The new walker follows ONLY:
+//   spends_root  → per_spend   → cont (ref [0] if any)
+//   outputs_root → per_output  → cont (ref [0] if any)
+// and explicitly SKIPS refs [1] / [2] on per_output cells (enc_ct,
+// mlkem_ct). For spends_root, per_spend cells only have ref [0]
+// (cont), so the skip is a no-op there.
+//
+// Defense-in-depth posture: the per-shape decode checks above
+// (`load_item_chunked` + exact inline-bit counts + exact trailing-
+// ref counts) already bound the structural tree to the encoder's
+// exact shape. This gate is redundant with those checks in the
+// honest-prover case but catches adversarial trees that might slip
+// through a load_item_chunked call if a future refactor weakens a
+// per-shape check.
 constexpr unsigned kMaxTransferRefDepth = 5;
 
-unsigned cell_depth_bounded(const td::Ref<vm::Cell>& c, unsigned budget) {
-    if (c.is_null() || budget == 0) return 0;
-    return static_cast<unsigned>(c->get_depth());
+unsigned structural_walk_depth(const td::Ref<vm::Cell>& items_root_ref) {
+    if (items_root_ref.is_null()) return 0;
+    auto root_cs = vm::load_cell_slice(items_root_ref);
+    unsigned max_child = 0;
+    for (unsigned i = 0; i < root_cs.size_refs(); ++i) {
+        auto item_ref = root_cs.prefetch_ref(i);
+        if (item_ref.is_null()) continue;
+        auto item_cs = vm::load_cell_slice(item_ref);
+        // per-item cell counts as 1 level. It may carry a `cont` ref at
+        // index 0 (another level). We explicitly do NOT descend into
+        // refs [1] and [2] on per_output cells — those are enc_ct and
+        // mlkem_ct chunk-chain roots, bounded by kChunkChainMaxChunks.
+        unsigned item_depth = 1;
+        if (item_cs.size_refs() > 0) {
+            auto cont_ref = item_cs.prefetch_ref(0);
+            if (cont_ref.not_null()) {
+                // cont cell has 0 refs (enforced by load_item_chunked).
+                item_depth = 2;
+            }
+        }
+        max_child = std::max(max_child, item_depth);
+    }
+    // items_root contributes 1 level (inline + refs).
+    return max_child + 1;
 }
 
-// Approximate wire_size_bytes for the fee calculation in §4.3 step 1.4.
-// Inline: 56 header + 128 * spend_count + 146 * output_count.
-// Ref-carried bytes for cells are not known without traversal; we use the
-// CellString-style estimated overhead (128 B/cell over the chain roots).
-// This is a deterministic function of (spend_count, output_count, chunk
-// counts), identical on every validator.
-size_t estimate_wire_size(const Transfer& tx) {
+// Approximate wire_size_bytes for the fee calculation in §4.3 step 1.4:
+// fixed inline bytes plus decoded ref-carried payload bytes. The chunk-tree
+// traversal that computes `ref_carried_bytes` also validates the tree shape,
+// so malformed oversized blobs fail admission instead of being undercharged.
+size_t estimate_wire_size(const Transfer& tx, size_t ref_carried_bytes) {
     size_t n = kTransferHeaderBytes
              + tx.spends.size()  * kSpendInlineBytes
              + tx.outputs.size() * kOutputInlineBytes;
-    auto count_chain = [](td::Ref<vm::Cell> root) -> size_t {
-        if (root.is_null()) return 0;
-        size_t bytes = 0;
-        auto cell = root;
-        for (size_t i = 0; i < kChunkChainMaxChunks; ++i) {
-            if (cell.is_null()) break;
-            auto cs = vm::load_cell_slice(cell);
-            unsigned bits = cs.size();
-            if (bits < 1 || (bits - 1) % 8 != 0) return bytes;
-            bytes += (bits - 1) / 8;
-            unsigned has_next = 0;
-            auto tmp = cs;
-            tmp.advance(bits - 1);
-            has_next = static_cast<unsigned>(tmp.fetch_ulong(1));
-            if (has_next == 0) break;
-            if (cs.size_refs() == 0) break;
-            cell = cs.prefetch_ref(0);
-        }
-        return bytes;
-    };
-    for (const auto& o : tx.outputs) {
-        n += count_chain(o.enc_ciphertext);
-        n += count_chain(o.mlkem_ct);
-    }
-    n += count_chain(tx.zk_proof);
-    return n;
+    return n + ref_carried_bytes;
 }
 
 }  // anonymous namespace
@@ -581,6 +681,7 @@ DecodeResult decode_transfer(vm::CellSlice body) noexcept {
 
     tx.spends.resize(sc);
     tx.outputs.resize(oc);
+    size_t ref_carried_bytes = 0;
 
     // Root cell layout: 3 refs (spends_root, outputs_root, zk_proof).
     if (body.size_refs() < 3) return err("missing spends_root / outputs_root / zk_proof refs");
@@ -649,19 +750,43 @@ DecodeResult decode_transfer(vm::CellSlice body) noexcept {
             o.mlkem_ct       = out_cs.prefetch_ref(1);
             if (o.enc_ciphertext.is_null()) return err("per-output cell: null enc_ciphertext");
             if (o.mlkem_ct.is_null())       return err("per-output cell: null mlkem_ct");
+
+            size_t enc_bytes = 0;
+            size_t mlkem_bytes = 0;
+            if (!chunk_tree_byte_length(o.enc_ciphertext, enc_bytes)) {
+                return err("per-output cell: malformed enc_ciphertext chunk tree");
+            }
+            if (!chunk_tree_byte_length(o.mlkem_ct, mlkem_bytes)) {
+                return err("per-output cell: malformed mlkem_ct chunk tree");
+            }
+            ref_carried_bytes += enc_bytes + mlkem_bytes;
         }
     }
 
     tx.zk_proof = zk_proof_ref;
+    {
+        size_t proof_bytes = 0;
+        if (!chunk_tree_byte_length(tx.zk_proof, proof_bytes)) {
+            return err("malformed zk_proof chunk tree");
+        }
+        ref_carried_bytes += proof_bytes;
+    }
 
-    // §17 walk-depth gate: reject malformed trees that exceed the 5-level
-    // budget. The per-item subtrees contribute depth 2 (item_cell →
-    // continuation), layered under spends_root / outputs_root → depth 4 from
-    // the Transfer root. Anything larger came from a hand-crafted adversary
-    // cell tree — refuse to admit.
+    // §17 structural-walk-depth gate: reject malformed trees that exceed
+    // the 5-level budget on the STRUCTURAL tree (root → items_root →
+    // per_item → cont), EXCLUDING the bounded enc_ct / mlkem_ct /
+    // zk_proof chunk-chain subtrees. See comment on
+    // `structural_walk_depth` above for the V1-3c-gamma fix rationale
+    // (the previous cell_depth_bounded(get_depth) check fired on honest
+    // v1 Transfers because it descended into chunk chains).
+    //
+    // Depth budget: items_root depth = 3 (items_root + per_item + cont);
+    // +1 for the Transfer root = 4 total. Under the 5-level bound.
+    // Anything larger came from a hand-crafted adversary cell tree —
+    // refuse to admit.
     auto gate = [](const td::Ref<vm::Cell>& c, unsigned bound) -> bool {
         if (c.is_null()) return true;
-        return cell_depth_bounded(c, bound) + 1u <= bound;
+        return structural_walk_depth(c) + 1u <= bound;
     };
     if (!gate(spends_root_ref,  kMaxTransferRefDepth) ||
         !gate(outputs_root_ref, kMaxTransferRefDepth)) {
@@ -675,7 +800,7 @@ DecodeResult decode_transfer(vm::CellSlice body) noexcept {
 
     // tx_hash is derived from the decoded form.
     tx.tx_hash = canonical_tx_hash(tx);
-    tx.wire_size_bytes = estimate_wire_size(tx);
+    tx.wire_size_bytes = estimate_wire_size(tx, ref_carried_bytes);
     return tx;
 }
 
