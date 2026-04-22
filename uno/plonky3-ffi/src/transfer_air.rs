@@ -589,6 +589,20 @@ impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for MvpTransferAir {
     }
 }
 
+/// Empty `LookupAir` impl — placeholder for M-P2 Phase 3b.
+///
+/// The default trait methods return empty vecs, which means "this AIR
+/// registers zero lookups / allocates zero aux columns". That matches
+/// the current `StarkInstance { lookups: Vec::new(), .. }` feeding in
+/// `prover.rs::MvpBatchProver::prove`.
+///
+/// Phase 3b replaces this with a non-trivial impl: `add_lookup_columns`
+/// allocates u16-limb columns and the 16-bit preprocessed range-table
+/// column; `get_lookups` returns one `Lookup<F>` per claim-5/7 u64
+/// value binding the u16 limbs to the range table via
+/// `register_lookup(Kind::Local, ...)`.
+impl<F: p3_field::Field> p3_lookup::LookupAir<F> for MvpTransferAir {}
+
 impl<AB> Air<AB> for MvpTransferAir
 where
     AB: AirBuilder<F = Goldilocks>,
