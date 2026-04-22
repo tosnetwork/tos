@@ -131,14 +131,14 @@ The Uno-specific hand-written portions are:
 |---|---:|---|---|
 | `SpendWitness` / `OutputWitness` field migration (u64 → [u8; 32] for d / pk_d / ivk / rcm / ivk_commitment); encode/decode updates   | ~80   | mechanical | reuse the existing byte-encode pattern used for rk_bytes / epk_bytes / cm_bytes |
 | `tosctl/uno/src/send.rs`: drop 11 `reduce_digest_to_proxy` calls; pass real 32-byte material through to MvpWitness                  | ~120  | mechanical | Agent A of the Phase 4b-step2 turn already audited every call site and confirmed real material is available at witness-build time |
-| `cm` 4-fe in-circuit derivation: expand `O_CM_CLAIM` from 1 col to 4 cols; claim 2/6 shared-wide-block binding exposes state[0..4]   | ~150  | cryptographer | direct edit of the row-4+j gated section in `transfer_air.rs`; delete `O_CM_LIMB0_REAL` + the Phase 4b-step2a copy-constraint |
+| `cm` 4-fe in-circuit derivation via 15-fe iterated-sponge Poseidon2-w=16 (see §4.1 for the full layout): doubles the shared wide-block rows from 8 to 16, adds input-packing + cross-bank state-carry + padding constraints; matches the tosctl / C++ validator layout exactly                        | **~420**  | cryptographer | revised 2026-04-22 after iterated-sponge audit. Was ~150 LOC under the simpler single-permutation assumption; agents A+B confirmed the production layout is a 15-fe wide sponge with "uno-cm-v1" tag across 2 permutations per cm. Good news: tosctl `output_cms[j]` already uses this layout, so step 1 is Rust-only catch-up. |
 | `nf` inputs switched from u64 proxies to real 32-byte material                                                                     | ~40   | cryptographer | `nf` already emits 4 fe from Phase 1; input wiring is the only change |
 | **Depth-32 Merkle walk upgraded to 4-fe state: `S_CURRENT` 1 col → 4 cols; `S_SIBLING0..31` 32 cols → 128 cols; per-level Poseidon2-w=8 AIR call rewired**   | **~400** | **cryptographer, bulk of the phase** | this is the hand-written gadget; see §4.3 for the shape |
 | PI binding cleanup: delete `G_ANCHOR_LIMB0_REAL`, `G_ANCHOR_PROXY`, `O_CM_LIMB0_REAL` cols and their row-0 copy-constraints; re-bind `PI[anchor+k]` / `PI[cm+k]` to the new 4-fe outputs directly                                                     | ~50   | mechanical | reverses the Phase 4b-step2a/b decoupling in favor of direct derivation-to-PI binding |
 | Wire `witness_cm_bytes_consistent` + `witness_anchor_bytes_consistent` into `pre_check_transfer_witness`                             | ~20   | trivial | helpers already exist in `transfer_air.rs`, just unused |
 | Regression tests: one per step boundary + one full 4/4 round-trip                                                                    | ~200  | engineer | mirror the style of `batch_range_check_round_trip_4_4_worst_case` |
 | Bench + golden re-gen runs                                                                                                           | N/A   | run time only | `cargo bench --bench shape_matrix`; `cargo test --release --test codec_parity_goldens` (Agent B confirmed goldens do not embed proof bytes, so the regen here is only for PI-shape confirmation) |
-| **Total new code**                                                                                                                   | **~1 060 LOC** | | (+ ~300 LOC of tests) |
+| **Total new code**                                                                                                                   | **~1 300 LOC** | | revised 2026-04-22 after iterated-sponge audit — was ~1 060 LOC; + ~300 LOC tests |
 
 ### 3.2 Time estimate
 
@@ -186,36 +186,114 @@ format — real 32-byte address material`.
 
 ### 4.1 Step 1 — cm derivation in-circuit, real inputs
 
-**Goal:** the shared-wide-block Poseidon2-w=16 on rows 0..7 consumes
-the real 32-byte inputs `(d, pk_d, ivk_commitment, value, rcm)`
-decoded as 4-limb vectors, and `O_CM_CLAIM` expands from 1 col to
-4 cols holding all 4 Poseidon2 output fe. `PI[pi_cm(j) + k]` is
-now driven by `O_CM_CLAIM[k]` directly (reverses Phase 4b-step2a's
-`O_CM_LIMB0_REAL` decoupling).
+**Goal:** the Rust AIR proves `cm_bytes` was produced by the SAME
+15-fe iterated Poseidon2-w=16 sponge that tosctl
+(`tosctl/uno/src/poseidon2.rs::hash_tagged`) and the C++ validator
+FFI consume. `PI[pi_cm(j) + k]` is then driven by the AIR's real
+Poseidon2 output, reversing Phase 4b-step2a's `O_CM_LIMB0_REAL`
+decoupling.
+
+**Scope correction (2026-04-22 agent re-audit).** The original §4.1
+text assumed a single Poseidon2-w=16 permutation over 5 real inputs
++ TAG at slot 0 + zeros elsewhere. That was wrong. Two parallel
+Explore sub-agents confirmed the actual production layout is a
+**15-fe wide-sponge iterated absorb** (rate 8 / capacity 8) with the
+"uno-cm-v1" domain tag, TWO permutations per cm:
+
+  Input field elements (15 total, order per
+  `uno/core/poseidon2.cpp::compute_note_commitment` +
+  `tosctl/uno/src/poseidon2.rs::hash_tagged`):
+
+    fes[0..1]    — d   (11 B diversifier, zero-padded to 16 B,
+                        split as 2 × u64 LE mod p)
+    fes[2..5]    — pk_d            (32 B → 4 × u64 LE mod p)
+    fes[6..9]    — ivk_commitment  (32 B → 4 × u64 LE mod p)
+    fes[10]      — value           (u64 mod p)
+    fes[11..14]  — rcm             (32 B → 4 × u64 LE mod p)
+
+  Sponge layout (Poseidon2-w=16):
+
+    Perm 1 input:
+      state[0..7]  = fes[0..7]
+      state[8..15] = "uno-cm-v1" packed as 8 × u64 LE (the capacity
+                     slot for domain separation; pinned across the
+                     whole absorb)
+    Perm 1 output: state' (full 16-fe state carried into perm 2).
+    Perm 2 input:
+      state[0..6] += fes[8..14]        (rate slots)
+      state[7]   += Goldilocks::ONE    (10* padding bit)
+      state[8..15] unchanged from perm 1 output
+    Perm 2 output: state[0..4] is the 4-fe cm digest.
 
 **AIR structure changes:**
 
 ```
 // pre-step3 (current)
-O_CM_CLAIM      : 1 col, bound to state[0] of shared-wide P2-w=16
-O_CM_LIMB0_REAL : 1 col, bound to witness.cm_bytes[0..8], drives PI
-O_CM_LIMB1..3   : 3 cols, bound to witness.cm_bytes[8..32], drive PI
+G_CM_SHARED_P2_16: 1 Poseidon2-w=16 block at rows 0..7,
+                   8 instances total (4 spend + 4 output at 4/4).
+                   Each instance absorbs (TAG_CM, d, pk_d, ivk_cm,
+                   value, rcm, 0..0) and emits state[0] as the
+                   cm / leaf proxy.
+O_CM_CLAIM      : 1 col, bound to state[0].
+O_CM_LIMB0_REAL : 1 col, bound to witness.cm_bytes[0..8],
+                  drives PI (Phase 4b-step2a decoupling).
+O_CM_LIMB1..3   : 3 cols, bound to witness.cm_bytes[8..32],
+                  drive PI (Phase 4b-step1).
 
-// post-step3
-O_CM_CLAIM[0..4]: 4 cols, bound to state[0..4] of shared-wide P2-w=16,
-                  AND drives PI[pi_cm(j) + k] for k ∈ 0..4.
-                  O_CM_LIMB0_REAL / O_CM_LIMB1..3 are deleted.
+// post-step1
+G_CM_SHARED_P2_16 doubles: rows 0..15 host two banks of 8 P2-w=16
+  instances each. Bank A (rows 0..7) is perm-1 of the sponge; bank
+  B (rows 8..15) is perm-2. Cross-bank constraints carry the full
+  16-fe state from bank A's output into bank B's input, with the
+  fes[8..14] + padding absorbed into state[0..7] between banks.
+  Input packing constraints verify d / pk_d / ivk_commitment / rcm
+  bytes decompose correctly into their 4-fe (or 2-fe for d) limbs.
+O_CM_CLAIM[0..4]: 4 cols, bound to bank B's state[0..4] output.
+                  Drives PI[pi_cm(j) + k] for k ∈ 0..4.
+O_CM_LIMB0_REAL / O_CM_LIMB1..3: deleted.
 ```
 
-**Soundness gain:** STARK now proves `cm_bytes == Poseidon2-w=16(
-TAG_CM, real_d, real_pk_d, real_ivk_commitment, value, real_rcm)`.
-The `witness_cm_bytes_consistent` pre-check becomes true and gets
-wired into `prover::pre_check_transfer_witness`.
+**Soundness gain:** STARK now proves the C++-identical
+`cm_bytes = Poseidon2-w=16-wide-sponge(TAG="uno-cm-v1", [real d,
+real pk_d, real ivk_commitment, value, real rcm])`. The
+`witness_cm_bytes_consistent` pre-check (already in
+`transfer_air.rs`, currently unwired) becomes true for all tosctl-
+produced witnesses and gets wired into
+`prover::pre_check_transfer_witness`.
+
+**Revised LOC estimate.** The original §3.1 estimate of ~150 LOC for
+step 1 was based on the simpler single-permutation assumption. The
+true 15-fe iterated-sponge layout requires ~350-450 LOC:
+
+  - Doubled shared-wide-block rows (rows 0..7 → rows 0..15)
+    + associated `GS_ROW_SEL` selector expansion: ~80 LOC
+  - Input-packing constraints (bytes → 2-fe or 4-fe limbs, mirroring
+    `uno/core/poseidon2.cpp::bytes_to_fes_wrapped`): ~70 LOC
+  - Cross-bank state carry + per-bank input-absorb addition
+    constraints: ~120 LOC
+  - Trace-gen for both permutations per instance, correct state
+    threading, and padding-bit emission: ~80 LOC
+  - Tag-block materialization (`state[8..15]` = "uno-cm-v1" packed):
+    ~30 LOC (cached constant)
+  - Column-layout cleanup (delete O_CM_LIMB0_REAL / LIMB1..3, rewire
+    PI bindings): ~40 LOC
+
+  Total: ~420 LOC new + ~50 LOC deletions. Net complexity closer to
+  a **half cryptographer-week in isolation**, vs. the plan-doc
+  original ~150 LOC / 1-2 days.
+
+**Good news from the agent audit.** tosctl's `output_cms[j]` is
+ALREADY computed via the 15-fe iterated sponge layout (not over u64
+proxies). So step 1 is a pure AIR-side change — no tosctl coordination
+needed for the cm side. The Rust AIR catches up to what tosctl +
+C++ already agree on.
 
 **Tests:** `prove_with_range_check` + `verify_with_range_check`
-round-trip at 1/1, 1/2, 4/4; `codec_parity_goldens` regen to confirm
-`cm_hex` field unchanged (it has always been cm_bytes; the AIR
-catching up does not change its observed value).
+round-trip at 1/1, 1/2, 4/4; wire
+`witness_cm_bytes_consistent`; `codec_parity_goldens` should show
+`cm_hex` byte-identical to pre-step1 (the value was already a
+valid tosctl cm; step 1 just adds the AIR proof that it's the
+correct derivation).
 
 ### 4.2 Step 2 — nf derivation in-circuit, real inputs
 
