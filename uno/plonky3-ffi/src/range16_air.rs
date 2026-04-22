@@ -1,53 +1,50 @@
-//! 16-bit range-table AIR — Phase 3b-step3 preparation.
+//! 16-bit range-table AIR — Phase 3b-step3 table-side wire-up.
 //!
-//! Scaffolds a standalone AIR whose preprocessed column is the
-//! canonical 16-bit range table (`table[i] == i` for `i ∈ 0..2^16`).
-//! This is the *table side* of the future cross-AIR `Kind::Global`
-//! LogUp lookup that `MvpTransferAir` will eventually register from
-//! its 4×u16 limb columns (§4.2 claims 5 & 7) per the
-//! `doc/uno-p2-path-research.md` Path (iii)-step-2 plan.
+//! Provides the *table side* of the cross-AIR `Kind::Global("u16_range")`
+//! LogUp lookup that `MvpTransferAir` registers from its 4×u16 limb
+//! columns (§4.2 claims 5 & 7). See `doc/uno-p2-path-research.md`
+//! Path (iii)-step-2.
 //!
-//! # Current scope (Phase 3b-step3-prep)
+//! # Shape
 //!
-//! This commit stops at the *module skeleton*:
+//!   * Preprocessed trace: 2^16 rows × 1 column. Row `i` holds
+//!     `Goldilocks::from(i)` — this is the canonical range table.
+//!   * Main trace: 2^16 rows × 1 column. Row `i` holds `mult[i]` — the
+//!     number of times table entry `i` is read by the *reader* AIR
+//!     (`MvpTransferAir`) across all its u16 limb columns and all
+//!     trace rows that contain limb data.
 //!
-//!   * `Range16Air` type definition.
-//!   * `BaseAir` / `Air` impls with no base constraints (LogUp is
-//!     the entire soundness argument; the table AIR has no row-local
-//!     relations).
-//!   * Preprocessed table trace generator (`preprocessed_trace_values`)
-//!     emitting a `RowMajorMatrix` of height `2^16` and width 1.
-//!   * A unit test (`preprocessed_table_has_expected_shape`) that pins
-//!     the shape + boundary values of the table so any future change
-//!     trips CI before it trips a prover run.
+//! # LogUp registration
 //!
-//! What is **NOT yet landed** here:
+//!   * `Kind::Global("u16_range")`, `Direction::Send`
+//!   * single-element tuple: `vec![preprocessed[0]]`
+//!   * multiplicity expression: `main[0]` (the mult column)
 //!
-//!   * `LookupAir::get_lookups` registering a `Kind::Global("u16_range")`
-//!     send of the preprocessed column with the multiplicity column —
-//!     that is Phase 3b-step3 proper.
-//!   * Corresponding `Kind::Global("u16_range")` receive on
-//!     `MvpTransferAir`'s `S_VALUE_LIMB0..` / `O_VALUE_LIMB0..`
-//!     limb columns.
-//!   * Wiring `Range16Air` into `MvpBatchProver::prove` as a second
-//!     instance alongside `MvpTransferAir`.
-//!   * Multiplicity column computation (counts how many times each
-//!     table entry is read across the transfer instance).
+//! The matching `Direction::Receive` on `MvpTransferAir`'s limb columns
+//! lands in a separate commit (see module docstring cross-reference
+//! below).
 //!
-//! # Why separate from `MvpTransferAir`
+//! # Global cumulative sum
 //!
-//! A 16-bit range table has `2^16 = 65 536` rows, vs. the
-//! `MvpTransferAir` main trace height of `2^6 = 64`. The two AIRs
-//! therefore cannot share a main trace. `p3-batch-stark` supports
-//! heterogeneous trace heights across a batch, tied together by
-//! `Kind::Global` LogUp cumulative-sum checks — that is the intended
-//! wiring pattern. See `third-party/plonky3-uno/batch-stark/tests/
-//! simple.rs::test_batch_stark_global_lookups_only` for a working
-//! reference of the cross-AIR pattern.
+//! Per Agent research report (confirmed at
+//! `lookup/src/logup.rs::verify_global_final_value`): the batch-stark
+//! prover/verifier check that the sum of per-instance cumulated values
+//! across all AIRs participating in the interaction is zero. So the
+//! Range16Air's Send running sum must cancel `MvpTransferAir`'s Receive
+//! running sum for the proof to validate.
 
-use p3_air::{Air, AirBuilder, BaseAir};
-use p3_field::PrimeCharacteristicRing;
+use alloc::string::ToString;
+use alloc::vec;
+use alloc::vec::Vec;
+
+extern crate alloc;
+
+use p3_air::symbolic::{AirLayout, SymbolicAirBuilder};
+use p3_air::{Air, AirBuilder, BaseAir, WindowAccess};
+use p3_field::{Field, PrimeCharacteristicRing};
 use p3_goldilocks::Goldilocks;
+use p3_lookup::lookup_traits::{Direction, Kind, Lookup};
+use p3_lookup::LookupAir;
 use p3_matrix::dense::RowMajorMatrix;
 
 /// `log2` of the 16-bit range-table height.
@@ -56,62 +53,79 @@ pub const LOG_RANGE_TABLE_HEIGHT: usize = 16;
 /// Height of the 16-bit range table (= `2^16`).
 pub const RANGE_TABLE_HEIGHT: usize = 1 << LOG_RANGE_TABLE_HEIGHT;
 
-/// Width of the `Range16Air` main trace: a single multiplicity column
-/// `mult[i]` recording how many times the preprocessed table entry
-/// `i` is read by other AIRs via `Kind::Global("u16_range")`. In the
-/// Phase 3b-step3-prep skeleton the main trace is not yet generated;
-/// the value is pinned here so callers wiring the full LogUp know the
-/// expected width ahead of time.
+/// Width of the `Range16Air` main trace: a single multiplicity column.
 pub const MAIN_TRACE_WIDTH: usize = 1;
 
-/// Width of the `Range16Air` preprocessed trace: a single column
-/// containing the canonical `table[i] == i` range table for
-/// `i ∈ 0..2^16`.
+/// Width of the `Range16Air` preprocessed trace: single range-table col.
 pub const PREPROCESSED_TRACE_WIDTH: usize = 1;
 
-/// Standalone 16-bit range-table AIR. Carries no state; the table is
-/// derived on-the-fly from the row index.
+/// Canonical `Kind::Global` interaction name for the u16 range lookup.
+/// `MvpTransferAir`'s `Direction::Receive` MUST use this exact string.
+pub const U16_RANGE_LOOKUP_NAME: &str = "u16_range";
+
+/// Standalone 16-bit range-table AIR.
+///
+/// `num_lookups` tracks how many lookups have been registered on this
+/// instance via `add_lookup_columns`; it's per-AIR local per the
+/// `test_batch_stark_global_lookups_only` pattern in the vendored tree.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct Range16Air;
+pub struct Range16Air {
+    /// Per-AIR lookup-column allocation counter. Starts at 0; bumped by
+    /// each `add_lookup_columns` call.
+    num_lookups: usize,
+}
 
 impl Range16Air {
-    /// Construct a new `Range16Air` instance. The AIR is stateless —
-    /// this is a no-arg constructor kept for parity with other AIR
-    /// modules in this crate (e.g. `MvpTransferAir::new`).
+    /// Construct a fresh `Range16Air` with zero lookups registered yet.
     pub const fn new() -> Self {
-        Self
+        Self { num_lookups: 0 }
     }
 
-    /// Materialize the preprocessed 16-bit range table as a
-    /// `RowMajorMatrix`. Column 0 row `i` contains `Goldilocks::from(i)`.
-    ///
-    /// Deterministic, no RNG, no allocation beyond the returned `Vec`.
-    /// The caller is expected to hand this matrix to
-    /// `p3_batch_stark::ProverData::from_airs_and_degrees` via the
-    /// `BaseAir::preprocessed_trace` path once step3 proper is wired.
+    /// Materialize the preprocessed 16-bit range table.
+    /// Column 0, row `i` = `Goldilocks::from(i)`.
     pub fn preprocessed_trace_values() -> RowMajorMatrix<Goldilocks> {
         let values: Vec<Goldilocks> = (0..RANGE_TABLE_HEIGHT as u64)
             .map(Goldilocks::from_u64)
             .collect();
         RowMajorMatrix::new(values, PREPROCESSED_TRACE_WIDTH)
     }
+
+    /// Build the main trace (multiplicity column) given a slice of
+    /// `u16` values that external AIRs will "receive" via the
+    /// `Kind::Global("u16_range")` lookup.
+    ///
+    /// For each value `v` in `reads`, `mult[v]` is incremented.
+    /// Entries not read have mult 0.
+    ///
+    /// Deterministic, no RNG.
+    pub fn build_main_trace(reads: &[u16]) -> RowMajorMatrix<Goldilocks> {
+        let mut mults = vec![0u64; RANGE_TABLE_HEIGHT];
+        for &v in reads {
+            mults[v as usize] += 1;
+        }
+        let values: Vec<Goldilocks> = mults.iter().copied().map(Goldilocks::from_u64).collect();
+        RowMajorMatrix::new(values, MAIN_TRACE_WIDTH)
+    }
 }
 
-impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for Range16Air {
+impl<F: PrimeCharacteristicRing + Send + Sync> BaseAir<F> for Range16Air {
     fn width(&self) -> usize {
         MAIN_TRACE_WIDTH
     }
 
+    fn preprocessed_trace(&self) -> Option<RowMajorMatrix<F>> {
+        let mut values: Vec<F> = Vec::with_capacity(RANGE_TABLE_HEIGHT);
+        for i in 0..RANGE_TABLE_HEIGHT as u64 {
+            values.push(F::from_u64(i));
+        }
+        Some(RowMajorMatrix::new(values, PREPROCESSED_TRACE_WIDTH))
+    }
+
     fn main_next_row_columns(&self) -> Vec<usize> {
-        // Range16 constraints are purely single-row (LogUp cumulative-
-        // sum updates are handled by the permutation trace, not by an
-        // Air::eval transition). No next-row columns are ever read.
         Vec::new()
     }
 
     fn max_constraint_degree(&self) -> Option<usize> {
-        // Degree-1 bound: the AIR has no base constraints, so the
-        // effective degree over the main trace is trivially 1.
         Some(1)
     }
 }
@@ -122,13 +136,49 @@ where
 {
     #[inline]
     fn eval(&self, _builder: &mut AB) {
-        // No base-AIR constraints. All soundness comes from the
-        // LogUp argument — which is NOT registered in this skeleton
-        // (see module docstring). A later `LookupAir::get_lookups`
-        // impl will send `(preprocessed[0], multiplicity)` pairs under
-        // the `Kind::Global("u16_range")` name; receivers on
-        // `MvpTransferAir` will consume each u16 limb value with
-        // multiplicity 1.
+        // No base-AIR constraints. All soundness lives in the LogUp
+        // argument registered via `LookupAir::get_lookups` below.
+    }
+}
+
+impl<F: Field> LookupAir<F> for Range16Air {
+    fn add_lookup_columns(&mut self) -> Vec<usize> {
+        let idx = self.num_lookups;
+        self.num_lookups += 1;
+        vec![idx]
+    }
+
+    fn get_lookups(&mut self) -> Vec<Lookup<F>> {
+        self.num_lookups = 0;
+
+        // Symbolic builder with a 1-col preprocessed + 1-col main layout.
+        let symbolic = SymbolicAirBuilder::<F>::new(AirLayout {
+            preprocessed_width: PREPROCESSED_TRACE_WIDTH,
+            main_width: MAIN_TRACE_WIDTH,
+            ..Default::default()
+        });
+        let main_window = symbolic.main();
+        let main_local = main_window.current_slice();
+        let prep_window = symbolic.preprocessed();
+        let prep_local = prep_window.current_slice();
+
+        // Element = preprocessed[0] (the table entry at this row).
+        // Multiplicity = main[0] (the mult column).
+        // Direction = Send.
+        let table_entry = prep_local[0];
+        let mult = main_local[0];
+
+        let lookup_inputs = vec![(
+            vec![table_entry.into()],
+            mult.into(),
+            Direction::Send,
+        )];
+
+        vec![LookupAir::register_lookup(
+            self,
+            Kind::Global(U16_RANGE_LOOKUP_NAME.to_string()),
+            &lookup_inputs,
+        )]
     }
 }
 
@@ -147,9 +197,6 @@ mod tests {
         assert_eq!(table.height(), RANGE_TABLE_HEIGHT);
         assert_eq!(table.width(), PREPROCESSED_TRACE_WIDTH);
 
-        // Boundary pins: first row is 0, last row is 2^16 - 1. Interior
-        // row sampled at u16::MAX / 2 to catch any off-by-one introduced
-        // by a future optimization.
         let first: Vec<Goldilocks> = table.row(0).unwrap().into_iter().collect();
         assert_eq!(first[0], Goldilocks::from_u64(0));
 
@@ -171,5 +218,38 @@ mod tests {
         assert_eq!(<Range16Air as BaseAir<Goldilocks>>::width(&air), 1);
         assert_eq!(LOG_RANGE_TABLE_HEIGHT, 16);
         assert_eq!(RANGE_TABLE_HEIGHT, 65_536);
+    }
+
+    #[test]
+    fn build_main_trace_counts_reads_correctly() {
+        // Three 42s, one 0, one 65535 — mult[0]=1, mult[42]=3, mult[65535]=1,
+        // all others 0.
+        let reads = [42u16, 42, 42, 0, u16::MAX];
+        let trace = Range16Air::build_main_trace(&reads);
+        assert_eq!(trace.height(), RANGE_TABLE_HEIGHT);
+        assert_eq!(trace.width(), MAIN_TRACE_WIDTH);
+
+        let get = |i: usize| -> Goldilocks {
+            trace.row(i).unwrap().into_iter().next().unwrap()
+        };
+        assert_eq!(get(0), Goldilocks::from_u64(1));
+        assert_eq!(get(42), Goldilocks::from_u64(3));
+        assert_eq!(get(u16::MAX as usize), Goldilocks::from_u64(1));
+        // A bystander entry should be zero.
+        assert_eq!(get(1000), Goldilocks::from_u64(0));
+    }
+
+    #[test]
+    fn lookup_air_registers_one_global_lookup() {
+        let mut air = Range16Air::new();
+        let lookups: Vec<Lookup<Goldilocks>> = LookupAir::<Goldilocks>::get_lookups(&mut air);
+        assert_eq!(lookups.len(), 1);
+        match &lookups[0].kind {
+            Kind::Global(name) => assert_eq!(name, U16_RANGE_LOOKUP_NAME),
+            Kind::Local => panic!("expected Kind::Global"),
+        }
+        assert_eq!(lookups[0].columns, vec![0]);
+        assert_eq!(lookups[0].element_exprs.len(), 1);
+        assert_eq!(lookups[0].element_exprs[0].len(), 1);
     }
 }
