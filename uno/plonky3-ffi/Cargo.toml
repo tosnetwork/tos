@@ -55,6 +55,7 @@ p3-merkle-tree = { path = "../../third-party/plonky3-uno/merkle-tree" }
 p3-poseidon2   = { path = "../../third-party/plonky3-uno/poseidon2" }
 p3-poseidon2-air = { path = "../../third-party/plonky3-uno/poseidon2-air" }
 p3-symmetric   = { path = "../../third-party/plonky3-uno/symmetric" }
+p3-batch-stark = { path = "../../third-party/plonky3-uno/batch-stark" }
 p3-uni-stark   = { path = "../../third-party/plonky3-uno/uni-stark" }
 p3-util        = { path = "../../third-party/plonky3-uno/util" }
 

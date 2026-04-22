@@ -1744,11 +1744,15 @@ impl MvpWitness {
 
         out.push(Goldilocks::from_u64(self.scheme_id as u64));
         out.push(Goldilocks::from_u64(self.chain_id as u64));
-        out.push(Goldilocks::from_u64(reduce_to_goldilocks(self.expiry_block)));
+        out.push(Goldilocks::from_u64(reduce_to_goldilocks(
+            self.expiry_block,
+        )));
         out.push(Goldilocks::from_u64(reduce_to_goldilocks(self.fee)));
 
         // anchor: limb 0 = anchor_proxy (AIR-bound); limbs 1..3 = 0.
-        out.push(Goldilocks::from_u64(reduce_to_goldilocks(self.anchor_proxy)));
+        out.push(Goldilocks::from_u64(reduce_to_goldilocks(
+            self.anchor_proxy,
+        )));
         for _ in 1..4 {
             out.push(Goldilocks::ZERO);
         }

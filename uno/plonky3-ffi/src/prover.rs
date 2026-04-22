@@ -17,6 +17,7 @@
 
 use std::sync::Arc;
 
+use p3_batch_stark::{prove_batch, ProverData, StarkInstance};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
@@ -182,24 +183,79 @@ impl MvpProver {
     ///   (d) Claim 1 anchor consistency: for any spend,
     ///       `Poseidon2(leaf_i, sibling_i) ≠ anchor_proxy`.
     fn pre_check_witness(&self, w: &MvpWitness) -> Result<(), Plonky3Status> {
-        use crate::transfer_air::{
-            witness_claim1_anchor_consistent, witness_claim2_leaf_consistent,
-        };
-
-        if w.fee >= crate::transfer_air::GOLDILOCKS_P {
-            return Err(Plonky3Status::WitnessInvalid);
-        }
-        if !w.balance_holds() {
-            return Err(Plonky3Status::WitnessInvalid);
-        }
-        if !witness_claim2_leaf_consistent(w) {
-            return Err(Plonky3Status::WitnessInvalid);
-        }
-        if !witness_claim1_anchor_consistent(w) {
-            return Err(Plonky3Status::WitnessInvalid);
-        }
-        Ok(())
+        pre_check_transfer_witness(w)
     }
+}
+
+/// Batch-STARK feasibility prover for Path (iii).
+///
+/// This uses the same Transfer AIR, same witness format, same public-input
+/// schema, and same §2.1 Option B FRI config as [`MvpProver`], but proves it
+/// through `p3_batch_stark::prove_batch` as a single-instance batch with no
+/// LogUp lookups yet. It intentionally runs beside the shipped uni-stark
+/// prover until the wider proof-format migration is ready.
+pub struct MvpBatchProver {
+    config: MvpConfig,
+}
+
+impl Default for MvpBatchProver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MvpBatchProver {
+    /// Build a batch-stark prover with the canonical Option B config.
+    pub fn new() -> Self {
+        Self {
+            config: build_config(),
+        }
+    }
+
+    /// Prove a witness through `p3_batch_stark`.
+    ///
+    /// Returns `(batch_proof_bytes, public_inputs_bytes)`. The proof bytes
+    /// are postcard-encoded `p3_batch_stark::BatchProof<MvpConfig>`.
+    pub fn prove(&self, witness_bytes: &[u8]) -> Result<(Vec<u8>, Vec<u8>), Plonky3Status> {
+        let witness = MvpWitness::decode(witness_bytes)?;
+        pre_check_transfer_witness(&witness)?;
+
+        let (n_s, n_o) = witness.shape();
+        let air = MvpTransferAir::new(n_s, n_o);
+        let trace = witness.generate_trace();
+        let public_inputs = witness.public_inputs();
+        let instances = [StarkInstance {
+            air: &air,
+            trace: &trace,
+            public_values: public_inputs,
+            lookups: Vec::new(),
+        }];
+        let prover_data = ProverData::empty(instances.len());
+
+        let proof = prove_batch(&self.config, &instances, &prover_data);
+        let proof_bytes =
+            postcard::to_allocvec(&proof).map_err(|_| Plonky3Status::InternalError)?;
+        let pi_bytes = witness.public_inputs_bytes();
+        Ok((proof_bytes, pi_bytes))
+    }
+}
+
+fn pre_check_transfer_witness(w: &MvpWitness) -> Result<(), Plonky3Status> {
+    use crate::transfer_air::{witness_claim1_anchor_consistent, witness_claim2_leaf_consistent};
+
+    if w.fee >= crate::transfer_air::GOLDILOCKS_P {
+        return Err(Plonky3Status::WitnessInvalid);
+    }
+    if !w.balance_holds() {
+        return Err(Plonky3Status::WitnessInvalid);
+    }
+    if !witness_claim2_leaf_consistent(w) {
+        return Err(Plonky3Status::WitnessInvalid);
+    }
+    if !witness_claim1_anchor_consistent(w) {
+        return Err(Plonky3Status::WitnessInvalid);
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -208,7 +264,9 @@ impl MvpProver {
 const _: fn() = || {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<MvpProver>();
+    assert_send_sync::<MvpBatchProver>();
     assert_send_sync::<Arc<MvpProver>>();
+    assert_send_sync::<Arc<MvpBatchProver>>();
 };
 
 // ---------------------------------------------------------------------------
@@ -233,6 +291,15 @@ mod tests {
         let prover = MvpProver::new();
         let w = MvpWitness::deterministic_valid(1, 2, 0xAAAA_0001);
         let (proof, pis) = prover.prove(&w.encode()).expect("prove 1/2");
+        assert!(!proof.is_empty());
+        assert_eq!(pis.len(), air_public_inputs_wire_len(1, 2));
+    }
+
+    #[test]
+    fn batch_prove_succeeds_on_valid_1_2() {
+        let prover = MvpBatchProver::new();
+        let w = MvpWitness::deterministic_valid(1, 2, 0xBABA_0001);
+        let (proof, pis) = prover.prove(&w.encode()).expect("batch prove 1/2");
         assert!(!proof.is_empty());
         assert_eq!(pis.len(), air_public_inputs_wire_len(1, 2));
     }
@@ -308,7 +375,10 @@ mod tests {
         let per_output = 40 + 32 + 32 + 2;
         let head = 10;
         let tail = 8 + 32 + 1 + 4 + 8;
-        assert_eq!(witness_wire.len(), head + per_spend * 4 + per_output * 4 + tail);
+        assert_eq!(
+            witness_wire.len(),
+            head + per_spend * 4 + per_output * 4 + tail
+        );
         assert_eq!(pi.len(), 608);
     }
 }

@@ -39,6 +39,7 @@
 //!   we add one layer (byte-level decode + shape dispatch) that is
 //!   equally pure.
 
+use p3_batch_stark::{verify_batch, BatchProof, CommonData};
 use p3_uni_stark::{verify, Proof};
 
 use crate::prover::{build_config, MvpConfig};
@@ -102,11 +103,62 @@ impl MvpVerifier {
     }
 }
 
+/// Batch-STARK verifier for the Path (iii) single-instance feasibility path.
+///
+/// This intentionally runs beside [`MvpVerifier`] until the shipped opaque
+/// proof format is switched from `p3_uni_stark::Proof` to
+/// `p3_batch_stark::BatchProof`. AIR shape dispatch and public-input decoding
+/// are identical to the shipped verifier.
+pub struct MvpBatchVerifier {
+    config: MvpConfig,
+}
+
+impl Default for MvpBatchVerifier {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MvpBatchVerifier {
+    /// Build a verifier with the canonical Option B config.
+    pub fn new() -> Self {
+        Self {
+            config: build_config(),
+        }
+    }
+
+    /// Verify a postcard-encoded `BatchProof<MvpConfig>` against PI bytes.
+    pub fn verify(&self, proof_bytes: &[u8], public_inputs_bytes: &[u8]) -> Plonky3Status {
+        let (n_s, n_o) = match derive_shape_from_public_inputs_len(public_inputs_bytes.len()) {
+            Ok(shape) => shape,
+            Err(e) => return e,
+        };
+
+        let public_inputs = match decode_public_inputs(public_inputs_bytes) {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+
+        let proof: BatchProof<MvpConfig> = match postcard::from_bytes(proof_bytes) {
+            Ok(p) => p,
+            Err(_) => return Plonky3Status::ProofDecodeFailed,
+        };
+
+        let air = MvpTransferAir::new(n_s, n_o);
+        let common = CommonData::empty(1);
+        match verify_batch(&self.config, &[air], &proof, &[public_inputs], &common) {
+            Ok(()) => Plonky3Status::Ok,
+            Err(_) => Plonky3Status::VerifyFailed,
+        }
+    }
+}
+
 // Static Send+Sync check so `Arc<MvpVerifier>` in the FFI handle is sound
 // for parallel verify across `num_cores` threads (§13 P.3).
 const _: fn() = || {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<MvpVerifier>();
+    assert_send_sync::<MvpBatchVerifier>();
 };
 
 // ---------------------------------------------------------------------------
@@ -115,7 +167,7 @@ const _: fn() = || {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prover::MvpProver;
+    use crate::prover::{MvpBatchProver, MvpProver};
     use crate::transfer_air::MvpWitness;
 
     fn valid_proof(n_s: usize, n_o: usize, seed: u64) -> (Vec<u8>, Vec<u8>) {
@@ -128,6 +180,31 @@ mod tests {
     fn verify_valid_1_1() {
         let (proof, pis) = valid_proof(1, 1, 0x1111_0001);
         assert_eq!(MvpVerifier::new().verify(&proof, &pis), Plonky3Status::Ok);
+    }
+
+    fn valid_batch_proof(n_s: usize, n_o: usize, seed: u64) -> (Vec<u8>, Vec<u8>) {
+        let prover = MvpBatchProver::new();
+        let w = MvpWitness::deterministic_valid(n_s, n_o, seed);
+        prover.prove(&w.encode()).expect("batch prove succeeds")
+    }
+
+    #[test]
+    fn batch_verify_valid_1_2() {
+        let (proof, pis) = valid_batch_proof(1, 2, 0xBADD_1200);
+        assert_eq!(
+            MvpBatchVerifier::new().verify(&proof, &pis),
+            Plonky3Status::Ok
+        );
+    }
+
+    #[test]
+    fn batch_verify_rejects_tampered_public_inputs() {
+        let (proof, mut pis) = valid_batch_proof(1, 2, 0xBADD_1201);
+        pis[8] ^= 0x01; // tamper chain_id limb.
+        assert_eq!(
+            MvpBatchVerifier::new().verify(&proof, &pis),
+            Plonky3Status::VerifyFailed
+        );
     }
 
     #[test]

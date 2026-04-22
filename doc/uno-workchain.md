@@ -671,11 +671,11 @@ tx_hash := BLAKE3(
 )
 ```
 
-The signature fields (`spend_auth_sig[i]`) and the `^zk_proof` cell ref are **excluded** — signing outputs over `tx_hash` would be circular, and the proof's public inputs bind the same tuple transitively. Cell-content fields (`enc_ciphertext`, `mlkem_ct`) are hashed via cell root, keeping `tx_hash` O(inline) to compute.
+The signature fields (`spend_auth_sig[i]`) and the `^zk_proof` cell ref are **excluded** — signing outputs over `tx_hash` would be circular, and validators verify the proof bytes separately against public inputs rebuilt from the signed transaction fields. Under the current R9 implementation status, those public inputs bind the transaction tuple at the transcript / wire layer; full in-circuit field-material binding is the Tier 2 work item in §4.3.
 
 `filter_tag` is included in `tx_hash` so malicious senders cannot substitute filter tags after the fact. Its correctness (match against actual `k_aead`) is **not** attested by the ZK proof — a wrong tag only causes the intended receiver to fail filter matching and fall back to full scan, not a consensus event.
 
-Every signature and every ZK-proof public input binds `tx_hash` (or equivalently, binds the same tuple transitively). Replay across chain_ids, schemes, or block heights is structurally impossible.
+Every signature and every validator-rebuilt ZK-proof public input is domain-bound by `scheme_id`, `chain_id`, and `expiry_block`. The current AIR consumes the proxy subset described in §4.3's R9 note; Tier 2 consumes the full field-material tuple. Replay across chain_ids, schemes, or block heights is structurally impossible.
 
 ### 4.1a Chunk-tree encoding (`^Cell` byte blobs)
 
@@ -718,7 +718,7 @@ Both implementations are covered by the V1-3c cross-language parity test `tosctl
 
 ### 4.2 What the ZK proof attests
 
-The Plonky3 Transfer AIR (for `scheme_id = 0x01`) proves the following claims simultaneously. All arithmetic is over Goldilocks; all hashes are Poseidon2-over-Goldilocks. **No curve operations appear inside the AIR** (§2.5); every identity claim is expressed as a hash-chain.
+The target Plonky3 Transfer AIR semantics (for `scheme_id = 0x01`) are the following claims proved simultaneously. All arithmetic is over Goldilocks; all hashes are Poseidon2-over-Goldilocks. **No curve operations appear inside the AIR** (§2.5); every identity claim is expressed as a hash-chain. The R9 implementation-status note in §4.3 records which current K-AIR constraints remain proxy-backed until the Tier 2 field-material pass.
 
 Per `SpendDescription` (index `i`):
 
@@ -768,7 +768,7 @@ Whole-tx balance:
 
 Public inputs visible to the verifier: `scheme_id`, `chain_id`, `expiry_block`, `fee`, `anchor`, per-spend `(nf_i, rk_i)`, per-output `(cm_j, epk_j, filter_tag_j)`. All other values are private witnesses.
 
-The Plonky3 proof attests claims 1–8 in one shot. The verifier additionally checks the per-spend Schnorr `spend_auth_sig` off-circuit. No separate balance proof, no binding signature, no in-circuit curve operations.
+At the specification target, the Plonky3 proof attests claims 1–8 in one shot. The verifier additionally checks the per-spend Schnorr `spend_auth_sig` off-circuit. No separate balance proof, no binding signature, no in-circuit curve operations.
 
 ### 4.3 Deterministic verification order
 
@@ -821,6 +821,20 @@ The Plonky3 proof attests claims 1–8 in one shot. The verifier additionally ch
    **Why `mod p_G` reduction**: `p_Goldilocks = 2⁶⁴ − 2³² + 1`; a uniformly random u64 chunk has probability `(2⁶⁴ − p_G) / 2⁶⁴ = 2⁻³²` of exceeding the field. For every 256-bit input (all are Poseidon2 / Schnorr / hybrid-KEM outputs — uniformly pseudo-random by construction), the aggregate bias across four chunks is ≈ 2⁻³⁰, negligible for soundness analysis. Adversary-controlled inputs (`scheme_id`, `chain_id`, `expiry_block`, `fee`, `filter_tag`) are asserted to fit without reduction at admission.
 
    **Cross-implementation parity is enforced by golden fixture**. P.1 (§13) produces `uno/test/golden/public-inputs-v1.hex`: a set of `(Transfer bytes, PublicInputs bytes)` pairs computed by A4's Rust encoder and re-verified by A5's C++ encoder on every CI run. Any byte-level drift is a breaking change to `scheme_id = 0x01` and triggers a `scheme_id` bump.
+
+   **R9 audit status — public-input parity vs. true field-material AIR (2026-04-22)**. The encoding above is the consensus target. Implementation closure is split into two deliberately separate tracks:
+
+   - **Tier 1 / launch blocker: dynamic public inputs.** The Rust prover witness must carry the real `scheme_id`, `chain_id`, `expiry_block`, `fee`, 4-limb `anchor`, per-spend `rk`, per-output `epk`, and per-output `filter_tag`, so `MvpWitness::public_inputs_bytes()` is byte-identical to C++ `build_plonky3_public_inputs(tx).to_bytes()` for the exact Transfer being submitted. This is a wire/validator-compatibility requirement: without it, a proof can be internally valid but fail validator-side STARK verify because the validator rebuilds different public inputs from the transaction.
+   - **Tier 2 / P.2 proper: true field-material AIR.** The current K-AIR shape still uses u64 proxy witness material for several in-circuit constraints: `anchor_proxy` is one Goldilocks limb, Merkle paths fold proxy leaves to that proxy anchor, and the proxy note-opening / nullifier paths do not yet consume every 32-byte transaction field as 4 Goldilocks limbs. After Tier 1, those real limbs are present in the public input transcript and are bound off-circuit through `tx_hash`, Schnorr spend signatures, admission checks, and validator state checks; however, they are not all fully constrained by the AIR itself. Tier 2 replaces those proxy bindings with real 4-limb field-material constraints.
+
+   Tier 2 TODOs:
+   - Bind the depth-32 Merkle path to the real 4-limb `anchor`, not only `anchor_proxy`.
+   - Compute/output `cm[4]` in-circuit from the full §3.2 15-field-element Poseidon2-16 absorb (`d`, `pk_d[4]`, `ivk_commitment[4]`, `value`, `rcm[4]`).
+   - Compute/output `nf[4]` from the real nullifier material (`nk`, real `cm[4]`, `pos`) instead of proxy low-limb material.
+   - Decide whether `rk`, `epk`, and `filter_tag` remain off-circuit/tx-hash-bound public fields or receive explicit AIR linkage; document the resulting soundness argument either way.
+   - Rebuild the witness layout, trace columns, column-sharing plan, Rust/C++ PI parity fixtures, FRI measurements, and external audit scope around the true field-material constraints.
+
+   Until Tier 2 lands, the v1 proof path must be described as **proxy AIR + consensus/public-input parity**, not as a complete field-material proof system. A launch before Tier 2 is a product/security-policy decision: it relies on proxy AIR soundness plus off-circuit `tx_hash`/signature/admission/state checks, and should be scoped accordingly in audit and launch materials.
 5. **Apply state transition** (only after steps 1–4 all pass):
    - For each output in declared order: `state.commitment_tree.append(output.cm)`; `state.next_position += 1`; record `output.filter_tag` into this block's filter accumulator (for `uno_getBlockFilter`, §9.1).
    - For each spend in declared order: `state.nullifier_set.insert(spend.nf)`; update the nullifier LRU.
@@ -1931,35 +1945,50 @@ Mirrors the EVM workchain's gate model.
 
 The two remaining skips in `test-uno-state-transition-golden` are behind `UNO_RUN_PROVE_FIXTURES=1` — they exercise slow prove-heavy records and are an intentional opt-in, not a gap. `validator-engine` links cleanly against the real `libuno_plonky3_ffi.a` via vendored corrosion-rs. All 45 design decisions in §16 are locked.
 
-**Overall v1 completion: approximately 87 %** by strict phase-weighted effort. Breakdown:
+**Overall v1 completion: approximately 86 %** by strict phase-weighted effort under the conservative R9 audit view. Breakdown:
 
 | Phase                                 | Weight | Done | Contribution |
 |---------------------------------------|-------:|-----:|-------------:|
 | P.0 Plonky3 toolchain bring-up        |   3 %  | 100 %|     3.00 %   |
 | P.1 Crypto scaffolding + primitives   |   7 %  | 100 %|     7.00 %   |
-| P.2 Transfer AIR + prover             |  35 %  |  88 %|    30.80 %   |
+| P.2 Transfer AIR + prover             |  35 %  |  82 %|    28.70 %   |
 | P.3 Parallel verifier (C++ FFI)       |   8 %  |  95 %|     7.60 %   |
 | P.4 State model + dispatch            |   7 %  | 100 %|     7.00 %   |
 | P.5 End-to-end compute + RPC          |   7 %  | 100 %|     7.00 %   |
 | P.6 Wallet (tosctl)                   |   8 %  | 100 %|     8.00 %   |
 | P.7 Conformance + audit + docs        |  25 %  |  70 %|    17.50 %   |
-| **Total**                             |**100 %**|     | **87.90 %** |
+| **Total**                             |**100 %**|     | **85.80 %** |
 
-P.2 bumped 75 → 88 % with the FRI Option B flip (experiment 9):
-proof 2.22 MB → 915 KB at 4/4 (−57 %), verify 109 → 26 ms (−76 %)
-— clears the §1.4 verify-time target at the 1/2 common case (14 ms).
-The remaining 12 % is the gap from 915 KB to the §3.4 ~100 KB target,
-which per `doc/uno-p2-path-research.md` requires Path (iii)
-batch-stark migration or an explicit §3.4 re-scope. P.3 bumped
-85 → 95 % because the verify-time drop makes the 4-core ≥ 3.5×
-scaling target effectively achievable (verify is now small enough
-that Amdahl serial overhead is a smaller fraction).
+P.2 previously looked like an 88 % item after the FRI Option B flip
+(experiment 9): proof 2.22 MB → 915 KB at 4/4 (−57 %), verify
+109 → 26 ms (−76 %) — clearing the §1.4 verify-time target at the
+1/2 common case (14 ms). R9 corrected that interpretation: the
+remaining work is not only the proof-size gap from 915 KB to the
+old §3.4 ~100 KB target. It has two distinct pieces:
+
+- **Tier 1 dynamic public inputs**: small but launch-blocking. Rust
+  witness public inputs must be byte-identical to validator-rebuilt
+  `PublicInputs(tx)` for real `scheme_id`, `chain_id`, `expiry_block`,
+  `anchor`, `rk`, `epk`, and `filter_tag`.
+- **Tier 2 true field-material AIR**: larger P.2-proper work. The current
+  AIR still uses u64 proxy material for several constraints; Tier 2
+  moves real 32-byte / 4-limb material into the AIR constraints. This is
+  tracked as post-v1 unless launch policy requires full field-material
+  proof soundness before mainnet. It is separate from the performance
+  path in `doc/uno-p2-path-research.md`.
+
+The performance gap still exists: closing the old ~100 KB envelope per
+`doc/uno-p2-path-research.md` requires Path (iii) batch-stark migration
+or an explicit §3.4 re-scope. P.3 remains at 95 % because the verify-time
+drop makes the 4-core ≥ 3.5× scaling target effectively achievable
+(verify is now small enough that Amdahl serial overhead is a smaller
+fraction).
 
 P.7's 70 % = 40 % §12 test matrix green (includes the **17-binary** set with K-codec-fuzzer closing the §12 P.2 "1 M iterations of random-bytes fuzz" line) + 5 % audit-scope document (`doc/uno-audit-scope.md`, K-audit-scope) + 5 % 60-day testnet runbook (`doc/uno-testnet-runbook.md`, K-testnet-runbook) + 10 % CI gate (`.github/workflows/uno-ci.yml`, K-ci-setup) + 5 % Prometheus metrics endpoint for the testnet's §5 monitoring signals (`uno/rpc/metrics.{h,cpp}` + `uno_getMetrics`, K-uno-metrics) + 5 % genesis distribution builder and `tosctl uno genesis build` CLI with cross-impl parity fixture (K-genesis-distribution, which also closed a pre-existing §3.1 rcm-tag bug). Remaining 20 % external audit execution + 10 % 60-day testnet run.
 
 The remaining ~17 % is concentrated in two blocks:
 
-- **P.2 AIR architectural pass** (~2–4 months of focused cryptographer work). Column-sharing and row-cycling have been exhausted on the current AIR structure — 7 experiments logged in `doc/uno-air-optimization-log.md` establish the viable paths forward:
+- **P.2 AIR architectural pass** (~2–4 months of focused cryptographer work). This now has two meanings that must not be conflated: (a) true field-material AIR soundness closure (replace u64 proxy constraints with real 4-limb `anchor`/`cm`/`nf` material and settle `rk`/`epk`/`filter_tag` linkage), and (b) proof-size/performance rearchitecture. Column-sharing and row-cycling have been exhausted on the current AIR structure — 7 experiments logged in `doc/uno-air-optimization-log.md` establish the viable performance paths forward:
     - K-air-col-share (step 1, strategy a): Merkle-level row loop across 32 rows.
     - K-air-col-step2 (step 2, strategies b + c): wide-Poseidon2 Cm/OutCm reuse + narrow-Poseidon2 IvkCm/Nf reuse, both riding the same row-selector bank.
     - K-air-col-step3 (step 3, investigated and stopped): tight shape alloc already in place; trace-height shrink yields only 2–4 % proof shrink; trace-height expansion is net-negative.
@@ -1979,7 +2008,7 @@ The `uno_workchain::UnoState` ODR collision in `uno/core/` has been resolved by 
 |---|---|---|---|
 | **P.0** Plonky3 toolchain bring-up | ✅ | Integrate Plonky3 Rust crates; write a minimum viable AIR (single-Poseidon2 hash + single Merkle-path verification); measure prove/verify times; validate C ABI approach via a "Hello World" Transfer-adjacent circuit. 2–3 weeks. | ✅ Plonky3 v0.5.1 pinned at commit `6374a36f`, vendored to `third-party/plonky3-uno/` (decision #43). MVP AIR produces and verifies; FFI round-trip works; Rust↔C++ build integrates cleanly (Agent A4 + I-C). |
 | **P.1** Crypto scaffolding + public-input golden fixture | ✅ | Goldilocks field ops, Poseidon2 over Goldilocks, Ristretto255, Schnorr-on-Ristretto255, ML-KEM-768, hybrid-KEM combiner, stealth-address derivation, note encryption. **Cross-agent consensus-binding test**: `uno/test/golden/public-inputs-v1.hex` — fixed Transfer inputs produce byte-identical serialized `PublicInputs` vectors (§4.3 step 4) from both A4's Rust encoder and A5's C++ encoder. Test vectors pass. | ✅ All 8 primitives landed by A3 (libsodium for Ristretto/ChaCha20/BLAKE2b, liboqs for ML-KEM-768, A4 FFI for Poseidon2-Goldilocks, in-tree C++ for Goldilocks). Public-input fixture cross-checked Rust↔C++ (I-B) — 272 B + 608 B records both match byte-for-byte. Real ML-KEM-768 via liboqs (`UNO_MLKEM_STUB` default dropped, M-liboqs). BLAKE3 via vendored avatar at `third-party/avatar-crypto/` (decision #41). Poseidon2-Goldilocks `t8`/`t16` permutations exposed through a stable C ABI for C++ consumers (K-poseidon2-ffi). |
-| **P.2** Transfer AIR + prover (Rust) | 🟡 | Hand-written Plonky3 AIR implementing claims 1–8 of §4.2: spends 1..4, outputs 1..4, in-circuit balance, Merkle paths, nullifier derivation, hash-chain key identity. Reference prover CLI in `tosctl`. | 🟡 All 8 AIR claims live over the full §4.1 envelope (1..4 × 1..4) with real Poseidon2 compression (M-P2 + K-AIR). **FRI Option B pinned 2026-04-20** (experiment 9, §16 decision #33 amended): `(log_blowup=3, num_queries=52, query_pow_bits=24)` — 180 conjectured / 102 proven bits, 40 % above the 128-bit design target. Column-sharing steps 1 + 2 (K-air-col-share + K-air-col-step2) reduced cols 27,837 → 2,081 (−92.5 %). Combined with FRI Option B, the measured delta at 4/4 worst case is proof **33 MB → 915 KB (−97.2 %)**, verify **790 ms → 26 ms (−96.7 %)**; verify at the common 1/2 shape is **14 ms, below the §1.4 20 ms target**. All 43 Rust FFI tests + 16 C++ §12 tests + 59 tosctl/uno tests green; public-input golden byte-identical. **Remaining ~9× gap to §3.4 ~100 KB envelope** is not a v1 blocker per `doc/uno-p2-path-research.md` — §3.4 re-scoped to ~1 MB worst case, within the 200 Mbps validator bandwidth budget. Closing the remaining gap requires Path (iii) `uni-stark → batch-stark` migration (post-v1 option). |
+| **P.2** Transfer AIR + prover (Rust) | 🟡 | Hand-written Plonky3 AIR implementing claims 1–8 of §4.2: spends 1..4, outputs 1..4, in-circuit balance, Merkle paths, nullifier derivation, hash-chain key identity. Reference prover CLI in `tosctl`. | 🟡 K-AIR implements the 8 claims over the full §4.1 envelope (1..4 × 1..4), but R9 clarified that several constraints are still proxy-backed (`anchor_proxy`, proxy note-opening material, proxy balance/nullifier inputs). **Tier 1** dynamic public inputs are a launch blocker: Rust prover PI bytes must match C++ `PublicInputs(tx)` for real `scheme_id`, `chain_id`, `expiry_block`, `anchor`, `rk`, `epk`, and `filter_tag`. **Tier 2** true field-material AIR is P.2 proper / post-v1 unless launch policy requires full field-material proof soundness before mainnet. **FRI Option B pinned 2026-04-20**: `(log_blowup=3, num_queries=52, query_pow_bits=24)` — 180 conjectured / 102 proven bits. Column-sharing steps 1 + 2 reduced cols 27,837 → 2,081 (−92.5 %); measured 4/4 proof **33 MB → 915 KB**, verify **790 ms → 26 ms**; common 1/2 verify **14 ms**. Public-input golden fixtures pin byte encoding, not complete field-material AIR soundness. The old ~100 KB envelope remains a post-v1 performance path (`uni-stark → batch-stark` / `doc/uno-p2-path-research.md`). |
 | **P.3** Parallel verifier in C++ (FFI) | 🟡 | Link `uno_plonky3_ffi` into validator via minimal C ABI. **Must support parallel verification across N worker threads (N = num_cores) with deterministic output ordering — this is an ACTIVATION PREREQUISITE, not a later release gate or optimization.** Per-tx signatures and proof verifies run concurrently in the pool; state mutations remain serialized by tx order. | 🟡 `ParallelVerifyPool` lands with process-singleton lifecycle, per-worker verifier handle, and input-order-stable `VerifyResult` vector. Batch apply re-checks the live nullifier set in declared tx order before each speculative `Ok` is applied, so same-batch double spends reject identically on serial and parallel paths. `test-uno-parallel-verify` passes 36/36 (determinism across 1/2/4/8 workers, byte-identical state root vs serial reference, and duplicate-nullifier same-batch regression coverage). Corrosion-rs v0.5.2 vendored at `third-party/corrosion/` and wired through the top-level CMake (K-corrosion): `libuno_plonky3_ffi.a` now links into `uno_workchain` PUBLIC, which in turn propagates to `validator-engine` / `create-hardfork` / `test-tos-collator`. Measured 4-core speedup 2.81×–3.01× on MVP AIR (8-core 3.61×–6.23×); the §1.4 ≥3.5× 4-core target is tied to P.2's column-count collapse — shrinking per-tx verify work lifts scaling into the target band. **Blocking for mainnet activation**, not for testnet. |
 | **P.4** State model + dispatch | ✅ | `UnoShardState`, commitment-tree cells, nullifier dict, anchor window, block-filter accumulator, init hook, dispatch (§8). | ✅ All components landed: A1 state/cell-state/genesis, A2 commitment-tree/nullifier-set/anchor-window/block-filter, A5 compute-phase/init/dispatch, thin dispatcher in `crypto/block/uno-workchain-dispatch.{h,cpp}` (namespace `uno_workchain_dispatch`, `0x55 'U'` marker cell). `libuno_workchain.a` builds clean. Restart-survival test green (K-restart-survival-drive): 20 valid + 5 invalid Transfers apply → serialize → deserialize → re-serialize yields byte-identical state root (§12 P.4). |
 | **P.5** End-to-end compute + RPC | ✅ | verify_transfer, apply_transfer, block-commit path. `uno_sendTransfer`, `uno_getAnchor`, `uno_getBlockFilter`, `uno_getOutputsAtBlock`, `uno_estimateFee`, `uno_getNullifierStatus`. | ✅ A5 verify/apply pipeline + A6 all 11 `uno_*` RPC methods + 3 subscription methods (N-P5). `validator-engine/json-rpc-server.cpp` surgical edit in place. Setter-DI bindings fully wired in `init.cpp` (A1 state reader → A6, A2 filter backend → A6, A5 admission → A6). End-of-block `notify_*` hooks emit included-tx + new-anchor events. Two-wallet end-to-end demo (`test-uno-end-to-end.cpp`) drives prove → admission → verify → scan → audit against the real A1/A2 state, A3 crypto, A5 codec, and a test-only Plonky3 proof override; passes with 0 skips (K-e2e-aead flipped the ovk-AEAD unwrap assertion from SKIP → PASSED). |
@@ -1988,7 +2017,7 @@ The `uno_workchain::UnoState` ODR collision in `uno/core/` has been resolved by 
 
 v1 release gate: all of P.0–P.7 ✅ + 60 days of 5-validator testnet stability.
 
-**Remaining critical path to mainnet**: P.2 AIR architectural pass (2–4 months; column-sharing is exhausted on the current structure per K-air-col-step3's negative finding — next steps are a cross-instance Poseidon2 scheduler, a structural AIR redesign, or FRI-parameter renegotiation) → automatic P.3 ≥ 3.5× 4-core scaling recovery once verify work shrinks below ~20 ms → P.7 external audit + 60-day 5-validator testnet (4–6 months including audit window; operational prep — audit-scope doc, testnet runbook, CI gate, metrics endpoint — all landed). P.5 and P.6 are ✅ and no longer on the critical path. Realistic v1 ship: **6–10 months** from the updated integration milestone above, assuming 3–4 senior engineers.
+**Remaining critical path to mainnet**: Tier 1 dynamic public-input closure → explicit launch-policy decision on Tier 2 (ship with proxy AIR + off-circuit binding, or require full field-material AIR before activation) → P.7 external audit + 60-day 5-validator testnet (4–6 months including audit window; operational prep — audit-scope doc, testnet runbook, CI gate, metrics endpoint — all landed). If Tier 2 is required before mainnet, add the P.2 AIR architectural pass (2–4 months; column-sharing is exhausted on the current structure per K-air-col-step3's negative finding, so next steps are a structural AIR redesign, a cross-instance Poseidon2 scheduler, or FRI-parameter renegotiation). P.5 and P.6 are ✅ and no longer on the critical path. Realistic v1 ship remains policy-dependent: **6–10 months** under the proxy-AIR v1 scope, longer if full Tier 2 field-material soundness is made a pre-mainnet gate.
 
 ---
 
