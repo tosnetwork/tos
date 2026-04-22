@@ -1078,13 +1078,68 @@ Classical primitives retained (with reasoning):
 
 #### Phase 1 — `scheme_id = 0x02` hybrid spend authorization
 
-**Trigger**: production-grade ML-DSA-65 (Dilithium3) C/C++ library with constant-time verify, ≥1 round of external cryptographic audit, and credible ≤10-year CRQC forecast.
+**Trigger (all three must be met)**:
 
-- Spend-auth signature = Schnorr-on-Ristretto255 **AND** ML-DSA-65. Both verify on every spend.
-- Requires extending `SpendDescription` to carry a second pubkey and a second signature (≈ 3.3 KB per spend).
+1. Production-grade ML-DSA-65 (FIPS 204 / Dilithium3) C/C++ library with constant-time verify (AVX2-optional) and a cross-platform signing API.
+2. ≥ 1 round of independent external cryptographic audit against that specific library version.
+3. Credible ≤ 10-year CRQC forecast from at least two independent assessments (e.g., NIST PQC panel, major central-bank / sovereign-risk body). A single alarmist signal is insufficient; the bar is a reputational quorum.
+
+Additional soft trigger (accelerator, not precondition): an adversarial HNDL event on any comparable classical-ECDL system that changes the community's urgency assessment.
+
+**Wire-format delta**:
+
+- Spend-auth signature = Schnorr-on-Ristretto255 **AND** ML-DSA-65. Both verify on every spend (logical AND, not OR — either breaking unilaterally must not forge spends).
+- `SpendDescription` extends to carry the ML-DSA-65 signature (3293 B). The ML-DSA-65 public key (1952 B) lives in the **Address** (§2.6) and is bound into `ivk_commitment`, not transmitted per spend — so the per-spend on-chain cost is the signature alone.
+- Per-spend growth: **+3.3 KB** (ML-DSA signature body).
+- Address growth: **+1.9 KB** (one-time, at key distribution — not per transaction).
+- 4/4 worst-case Transfer: +13.2 KB; at v1 `BLOCK_TX_CAP = 4` that is **+52.8 KB/block**. Under typical shape: **+6.6 KB/tx, +26 KB/block**.
+- Relative to the v1 per-Tx envelope (~655 KB typical, ~1.15 MB worst-case — dominated by the STARK proof), the signature delta is **< 2 %**. No consensus-level bandwidth pressure.
 - Note encryption, proof system, commitment/nullifier primitives all **unchanged** — only the spend-auth layer gains a PQ co-signature.
-- Tx size grows by ~13 KB for a 4-spend worst case; within TOS cell-tree capacity.
-- No note-migration is required; `scheme_id = 0x01` Transfers remain valid.
+- No note-migration is required; `scheme_id = 0x01` Transfers remain valid indefinitely (until Phase 4's reactive freeze, if triggered).
+
+**Prove-time delta — zero**. This is a load-bearing property of the v1 AIR design (decisions #30 + #31): **no curve operations appear inside the Transfer AIR**. Spend-auth signatures are verified off-circuit at §4.3 step 3, decoupled from the Plonky3 prover. Swapping / extending the signature scheme therefore requires no AIR change, no circuit rebuild, no prover hardware re-profile. Contrast Zcash Orchard, where Halo2's in-circuit `rk = ak + α·G` randomization means that any signature-scheme change implies a new circuit + re-audit; Uno traded that coupling for a pure hash-chain ownership binding (§4.2 claim 3), and this Phase-1 migration is the direct payoff.
+
+| Phase | Prove time (client) | STARK verify (validator) | Prover hardware profile |
+|---|---|---|---|
+| v1 (`scheme_id = 0x01`) | ~10–30 s per tx | ~25 ms per tx | §1.4a client tier |
+| Phase 1 (`scheme_id = 0x02`) | **unchanged** | **unchanged** | **unchanged** |
+
+**Verify-time delta — negligible**. Per-spend off-circuit overhead:
+
+| Step | v1 | Phase 1 | Delta |
+|---|---|---|---|
+| Schnorr-Ristretto verify | ~60 µs | ~60 µs | 0 |
+| ML-DSA-65 verify | — | ~200 µs | **+200 µs** |
+| Per-spend total | ~60 µs | ~260 µs | +200 µs |
+
+At `BLOCK_TX_CAP = 4` with 4/4 worst-case: +4 × 4 × 200 µs ≈ **+3.2 ms/block**. Compute-phase budget is 400 ms (§5.9), so the verify overhead is **< 1 %** of the block budget — well inside the noise floor of STARK verify variance.
+
+**Client-side signing delta**. ML-DSA-65 sign ≈ 200 µs on a modern mobile CPU (reference: liboqs / pq-crystals benchmarks). Per-spend signing overhead:
+
+| Step | v1 | Phase 1 |
+|---|---|---|
+| Schnorr sign | ~50 µs | ~50 µs |
+| ML-DSA-65 sign | — | ~200 µs |
+| Per-spend total | ~50 µs | ~250 µs |
+
+4-spend worst-case: +800 µs per Transfer, dominated by the ~10–30 s STARK prove (§7.2). User-perceptible impact: **0 %**.
+
+**Summary — cost snapshot for Phase 1 activation**:
+
+| Dimension | Delta | Note |
+|---|---|---|
+| Per-spend size | +3.3 KB | ML-DSA signature body |
+| Per-tx size | +1 to +2 % | Dominated by ~520 KB STARK proof |
+| Per-block size | +26–53 KB | Negligible vs ~2.6 MB/block typical |
+| Address size | +1.9 KB (one-time) | ML-DSA public key in §2.6 address |
+| Prove time | **0** | AIR decoupling (decisions #30 + #31) |
+| STARK verify time | **0** | Same circuit |
+| Off-circuit verify time | +3.2 ms/block worst-case | < 1 % of compute budget |
+| Client signing time | +800 µs/tx worst-case | Hidden in STARK prove latency |
+| Protocol fork | No | `scheme_id = 0x02` soft activation |
+| Note re-commitment | No | v1 notes remain spendable |
+
+Phase 1 is the **cheapest non-trivial PQ upgrade path that exists for a shielded L1**. The cost structure is a direct dividend of the v1 decisions #30–31 (no in-circuit curves) and the scheme-id crypto-agility frame (§2.0); we pay the 2 % wire-format tax, no other axis moves.
 
 #### Phase 2 — additional PQ hardening (optional, trigger-gated)
 
