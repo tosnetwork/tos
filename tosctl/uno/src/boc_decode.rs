@@ -1156,4 +1156,142 @@ mod tests {
     #[test]
     #[ignore = "§17 walk-depth gate covered by C++ fixture; fiddly to hand-craft in Rust"]
     fn rejects_walk_depth_exceeded() {}
+
+    /// Build a PrunedBranch cell that the adversary could use in a chunk-tree
+    /// ref position. PrunedBranches are valid BoC but MUST be rejected by
+    /// the chunk-tree decoder: on the C++ side they'd crash the validator
+    /// daemon via VmError inside a noexcept scan_chunk_tree; on the Rust
+    /// side the adversary could otherwise cook the stored hash to collide
+    /// with a canonical-tree hash and slip past the canonicality check.
+    /// Both decoders now explicitly reject non-Ordinary cell types.
+    fn pruned_branch_cell() -> Cell {
+        let mut cb = BuilderData::new();
+        cb.set_type(CellType::PrunedBranch);
+        cb.append_u8(u8::from(CellType::PrunedBranch))
+            .expect("type tag");
+        cb.append_u8(0x01).expect("level mask = 0x01 (level 1)");
+        // 32 B pruned hash (arbitrary — attacker choice).
+        cb.append_raw(&[0xDEu8; 32], 32 * 8).expect("pruned hash");
+        // 2 B pruned depth.
+        cb.append_u16(1).expect("pruned depth");
+        cb.finalize(MAX_DEPTH).expect("PrunedBranch finalize")
+    }
+
+    fn encode_with_special_cell_enc_ciphertext() -> Vec<u8> {
+        let tx = sample_transfer(1, 1);
+
+        let mut spend_inline = [0u8; SPEND_INLINE_BYTES];
+        spend_inline[0..32].copy_from_slice(&tx.spends[0].nullifier);
+        spend_inline[32..64].copy_from_slice(&tx.spends[0].rk);
+        spend_inline[64..128].copy_from_slice(&tx.spends[0].spend_auth_sig);
+        let mut spend_item = BuilderData::default();
+        spend_item
+            .append_raw(
+                &spend_inline[..ITEM_INLINE_HEAD_BYTES],
+                ITEM_INLINE_HEAD_BYTES * 8,
+            )
+            .expect("spend head");
+        let mut spend_cont = BuilderData::default();
+        spend_cont
+            .append_raw(&spend_inline[ITEM_INLINE_HEAD_BYTES..], 8)
+            .expect("spend cont");
+        spend_item
+            .checked_append_reference(spend_cont.finalize(MAX_DEPTH).expect("spend cont cell"))
+            .expect("spend cont ref");
+        let mut spends_root = BuilderData::default();
+        spends_root
+            .checked_append_reference(spend_item.finalize(MAX_DEPTH).expect("spend cell"))
+            .expect("spends_root ref");
+        let spends_root = spends_root.finalize(MAX_DEPTH).expect("spends_root");
+
+        let output = &tx.outputs[0];
+        let mut output_inline = [0u8; OUTPUT_INLINE_BYTES];
+        output_inline[0..32].copy_from_slice(&output.cm);
+        output_inline[32..64].copy_from_slice(&output.epk);
+        output_inline[64] = (output.filter_tag >> 8) as u8;
+        output_inline[65] = (output.filter_tag & 0xFF) as u8;
+        output_inline[66..66 + OUT_CIPHERTEXT_BYTES].copy_from_slice(&output.out_ciphertext);
+
+        let mut output_item = BuilderData::default();
+        output_item
+            .append_raw(
+                &output_inline[..ITEM_INLINE_HEAD_BYTES],
+                ITEM_INLINE_HEAD_BYTES * 8,
+            )
+            .expect("output head");
+        let mut output_cont = BuilderData::default();
+        output_cont
+            .append_raw(
+                &output_inline[ITEM_INLINE_HEAD_BYTES..],
+                (OUTPUT_INLINE_BYTES - ITEM_INLINE_HEAD_BYTES) * 8,
+            )
+            .expect("output cont");
+        output_item
+            .checked_append_reference(output_cont.finalize(MAX_DEPTH).expect("output cont cell"))
+            .expect("output cont ref");
+        // Attack: enc_ciphertext points at a PrunedBranch instead of an
+        // ordinary-cell chunk tree.
+        output_item
+            .checked_append_reference(pruned_branch_cell())
+            .expect("enc ref (PrunedBranch)");
+        output_item
+            .checked_append_reference(
+                store_bytes_as_chunk_chain(&output.mlkem_ct)
+                    .expect("mlkem encode")
+                    .expect("mlkem non-empty"),
+            )
+            .expect("mlkem ref");
+
+        let mut outputs_root = BuilderData::default();
+        outputs_root
+            .checked_append_reference(output_item.finalize(MAX_DEPTH).expect("output cell"))
+            .expect("outputs_root ref");
+        let outputs_root = outputs_root.finalize(MAX_DEPTH).expect("outputs_root");
+
+        let zk_proof = store_bytes_as_chunk_chain(&tx.zk_proof)
+            .expect("zk encode")
+            .expect("zk non-empty");
+
+        let mut root = BuilderData::default();
+        root.append_u8(tx.version).expect("version");
+        root.append_u8(tx.scheme_id).expect("scheme_id");
+        root.append_u32(tx.chain_id).expect("chain_id");
+        root.append_raw(&tx.anchor, 32 * 8).expect("anchor");
+        root.append_u64(tx.expiry_block).expect("expiry");
+        root.append_u64(tx.fee).expect("fee");
+        root.append_u8(1).expect("sc");
+        root.append_u8(1).expect("oc");
+        root.checked_append_reference(spends_root)
+            .expect("spends ref");
+        root.checked_append_reference(outputs_root)
+            .expect("outputs ref");
+        root.checked_append_reference(zk_proof).expect("zk ref");
+        let root = root.finalize(MAX_DEPTH).expect("root");
+
+        fn no_abort() -> bool {
+            false
+        }
+        let writer =
+            BocWriter::with_params([root], MAX_DEPTH, BocFlags::None, &no_abort).expect("writer");
+        let mut bytes = Vec::new();
+        writer.write(&mut bytes).expect("write");
+        bytes
+    }
+
+    #[test]
+    fn rejects_special_cell_in_chunk_tree() {
+        // Adversary substitutes a PrunedBranch for the enc_ciphertext chunk
+        // tree root. Must be rejected as `MalformedChunkCell` — NOT reach
+        // the later canonicality check (which, depending on the pruned
+        // hash the adversary picks, could collide with a canonical tree's
+        // repr_hash). The C++ parity here closes a validator-daemon DoS
+        // vector where `vm::load_cell_slice` on a special cell throws
+        // inside a noexcept function → std::terminate.
+        let bytes = encode_with_special_cell_enc_ciphertext();
+        let err = decode_transfer_boc(&bytes).expect_err("special cell must reject");
+        assert!(
+            matches!(err, DecodeError::MalformedChunkCell(ref s) if s.contains("non-ordinary")),
+            "expected MalformedChunkCell(non-ordinary), got {err:?}"
+        );
+    }
 }
