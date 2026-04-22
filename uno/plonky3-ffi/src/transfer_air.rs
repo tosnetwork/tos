@@ -114,17 +114,14 @@
 use core::borrow::Borrow;
 
 use p3_air::{Air, AirBuilder, BaseAir, WindowAccess};
-use p3_field::{Dup, PrimeCharacteristicRing, PrimeField64};
+use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use p3_goldilocks::{
     default_goldilocks_poseidon2_16, default_goldilocks_poseidon2_8,
     GenericPoseidon2LinearLayersGoldilocks, Goldilocks, GOLDILOCKS_POSEIDON2_HALF_FULL_ROUNDS,
     GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_16, GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8,
 };
 use p3_matrix::dense::RowMajorMatrix;
-use p3_poseidon2::GenericPoseidon2LinearLayers;
-use p3_poseidon2_air::{
-    num_cols as p2_num_cols, FullRound, PartialRound, Poseidon2Cols, RoundConstants, SBox,
-};
+use p3_poseidon2_air::{num_cols as p2_num_cols, Poseidon2Cols, RoundConstants};
 use p3_symmetric::Permutation;
 
 use crate::Plonky3Status;
@@ -568,45 +565,12 @@ impl MvpTransferAir {
     }
 }
 
-#[inline]
-fn beginning_full_round_constant_8<F: PrimeCharacteristicRing>(
-    round: usize,
-) -> [F; POSEIDON2_WIDTH] {
-    let src = &p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_INITIAL[round];
-    core::array::from_fn(|i| F::from_u64(src[i].as_canonical_u64()))
-}
-
-#[inline]
-fn beginning_full_round_constant_16<F: PrimeCharacteristicRing>(
-    round: usize,
-) -> [F; POSEIDON2_WIDTH_16] {
-    let src = &p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_16_EXTERNAL_INITIAL[round];
-    core::array::from_fn(|i| F::from_u64(src[i].as_canonical_u64()))
-}
-
-#[inline]
-fn ending_full_round_constant_8<F: PrimeCharacteristicRing>(round: usize) -> [F; POSEIDON2_WIDTH] {
-    let src = &p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_FINAL[round];
-    core::array::from_fn(|i| F::from_u64(src[i].as_canonical_u64()))
-}
-
-#[inline]
-fn ending_full_round_constant_16<F: PrimeCharacteristicRing>(
-    round: usize,
-) -> [F; POSEIDON2_WIDTH_16] {
-    let src = &p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_16_EXTERNAL_FINAL[round];
-    core::array::from_fn(|i| F::from_u64(src[i].as_canonical_u64()))
-}
-
-#[inline]
-fn partial_round_constant_8<F: PrimeCharacteristicRing>(round: usize) -> F {
-    F::from_u64(p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_INTERNAL[round].as_canonical_u64())
-}
-
-#[inline]
-fn partial_round_constant_16<F: PrimeCharacteristicRing>(round: usize) -> F {
-    F::from_u64(p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_16_INTERNAL[round].as_canonical_u64())
-}
+// (round-constant adapter fns removed in M-P2 Phase 2 — see note above on
+//  the handwritten Poseidon2 eval helpers that were deleted together with
+//  them. Round constants now flow through upstream `Poseidon2Air`'s
+//  `RoundConstants` via the `p2_air_8` / `p2_air_16` OnceLock singletons.
+//  `RoundConstants::new` consumes `p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_*`
+//  directly — the per-round `from_u64` adapter is no longer needed.)
 
 impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for MvpTransferAir {
     #[inline]
@@ -1082,165 +1046,92 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// Poseidon2 constraint evaluation (reimplemented here because the upstream
-// `p3_poseidon2_air::eval` is pub(crate); logic mirrors upstream byte-for-byte).
+// Poseidon2 constraint evaluation (M-P2 Phase 2 — delegated to upstream)
 // ---------------------------------------------------------------------------
+//
+// **Phase 2 swap (2026-04-22)**: we used to carry ~180 LOC of handwritten
+// round-eval helpers (`eval_full_round`, `eval_partial_round`, `eval_sbox`,
+// plus round-constant adapter fns) that "mirrored upstream byte-for-byte"
+// because `p3_poseidon2_air::eval` was `pub(crate)` at Plonky3 v0.5.1.
+// The vendored `third-party/plonky3-uno` was patched to `pub`-export
+// `eval` (1-char delta in `poseidon2-air/src/air.rs`); we now delegate
+// to the upstream implementation directly. Round constants come from
+// `p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_{8,16}_*` (decision #42)
+// identically to before; the `Poseidon2Air` singletons cache the
+// constructed `RoundConstants` once per process.
+
+type Poseidon2Air8 = p3_poseidon2_air::Poseidon2Air<
+    Goldilocks,
+    GenericPoseidon2LinearLayersGoldilocks,
+    POSEIDON2_WIDTH,
+    POSEIDON2_SBOX_DEGREE,
+    POSEIDON2_SBOX_REGISTERS,
+    POSEIDON2_HALF_FULL_ROUNDS,
+    POSEIDON2_PARTIAL_ROUNDS,
+>;
+
+type Poseidon2Air16 = p3_poseidon2_air::Poseidon2Air<
+    Goldilocks,
+    GenericPoseidon2LinearLayersGoldilocks,
+    POSEIDON2_WIDTH_16,
+    POSEIDON2_SBOX_DEGREE,
+    POSEIDON2_SBOX_REGISTERS,
+    POSEIDON2_HALF_FULL_ROUNDS,
+    POSEIDON2_PARTIAL_ROUNDS_16,
+>;
+
+fn p2_air_8() -> &'static Poseidon2Air8 {
+    use std::sync::OnceLock;
+    static AIR: OnceLock<Poseidon2Air8> = OnceLock::new();
+    AIR.get_or_init(|| {
+        Poseidon2Air8::new(RoundConstants::new(
+            p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_INITIAL,
+            p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_INTERNAL,
+            p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_FINAL,
+        ))
+    })
+}
+
+fn p2_air_16() -> &'static Poseidon2Air16 {
+    use std::sync::OnceLock;
+    static AIR: OnceLock<Poseidon2Air16> = OnceLock::new();
+    AIR.get_or_init(|| {
+        Poseidon2Air16::new(RoundConstants::new(
+            p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_16_EXTERNAL_INITIAL,
+            p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_16_INTERNAL,
+            p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_16_EXTERNAL_FINAL,
+        ))
+    })
+}
 
 pub(crate) fn eval_poseidon2<AB>(builder: &mut AB, local: &P2Cols<AB::Var>)
 where
-    AB: AirBuilder,
+    AB: AirBuilder<F = Goldilocks>,
 {
-    let mut state: [AB::Expr; POSEIDON2_WIDTH] = local.inputs.map(|x| x.into());
-
-    <GenericPoseidon2LinearLayersGoldilocks as GenericPoseidon2LinearLayers<
+    p3_poseidon2_air::eval::<
+        AB,
+        GenericPoseidon2LinearLayersGoldilocks,
         POSEIDON2_WIDTH,
-    >>::external_linear_layer(&mut state);
-
-    for round in 0..POSEIDON2_HALF_FULL_ROUNDS {
-        eval_full_round::<AB, POSEIDON2_WIDTH>(
-            &mut state,
-            &local.beginning_full_rounds[round],
-            &beginning_full_round_constant_8::<AB::F>(round),
-            builder,
-        );
-    }
-
-    for round in 0..POSEIDON2_PARTIAL_ROUNDS {
-        eval_partial_round::<AB, POSEIDON2_WIDTH>(
-            &mut state,
-            &local.partial_rounds[round],
-            &partial_round_constant_8::<AB::F>(round),
-            builder,
-        );
-    }
-
-    for round in 0..POSEIDON2_HALF_FULL_ROUNDS {
-        eval_full_round::<AB, POSEIDON2_WIDTH>(
-            &mut state,
-            &local.ending_full_rounds[round],
-            &ending_full_round_constant_8::<AB::F>(round),
-            builder,
-        );
-    }
+        POSEIDON2_SBOX_DEGREE,
+        POSEIDON2_SBOX_REGISTERS,
+        POSEIDON2_HALF_FULL_ROUNDS,
+        POSEIDON2_PARTIAL_ROUNDS,
+    >(p2_air_8(), builder, local);
 }
 
 fn eval_poseidon2_16<AB>(builder: &mut AB, local: &P2Cols16<AB::Var>)
 where
-    AB: AirBuilder,
+    AB: AirBuilder<F = Goldilocks>,
 {
-    let mut state: [AB::Expr; POSEIDON2_WIDTH_16] = local.inputs.map(|x| x.into());
-
-    <GenericPoseidon2LinearLayersGoldilocks as GenericPoseidon2LinearLayers<
-        POSEIDON2_WIDTH_16,
-    >>::external_linear_layer(&mut state);
-
-    for round in 0..POSEIDON2_HALF_FULL_ROUNDS {
-        eval_full_round_16::<AB>(
-            &mut state,
-            &local.beginning_full_rounds[round],
-            &beginning_full_round_constant_16::<AB::F>(round),
-            builder,
-        );
-    }
-
-    for round in 0..POSEIDON2_PARTIAL_ROUNDS_16 {
-        eval_partial_round_16::<AB>(
-            &mut state,
-            &local.partial_rounds[round],
-            &partial_round_constant_16::<AB::F>(round),
-            builder,
-        );
-    }
-
-    for round in 0..POSEIDON2_HALF_FULL_ROUNDS {
-        eval_full_round_16::<AB>(
-            &mut state,
-            &local.ending_full_rounds[round],
-            &ending_full_round_constant_16::<AB::F>(round),
-            builder,
-        );
-    }
-}
-
-#[inline]
-fn eval_full_round<AB: AirBuilder, const WIDTH: usize>(
-    state: &mut [AB::Expr; WIDTH],
-    full_round: &FullRound<AB::Var, WIDTH, POSEIDON2_SBOX_DEGREE, POSEIDON2_SBOX_REGISTERS>,
-    round_constants: &[AB::F; WIDTH],
-    builder: &mut AB,
-) where
-    GenericPoseidon2LinearLayersGoldilocks: GenericPoseidon2LinearLayers<WIDTH>,
-{
-    for (i, (s, r)) in state.iter_mut().zip(round_constants.iter()).enumerate() {
-        *s += r.dup();
-        eval_sbox(&full_round.sbox[i], s, builder);
-    }
-    <GenericPoseidon2LinearLayersGoldilocks as GenericPoseidon2LinearLayers<
-        WIDTH,
-    >>::external_linear_layer(state);
-    for (state_i, post_i) in state.iter_mut().zip(full_round.post) {
-        builder.assert_eq(state_i.clone(), post_i);
-        *state_i = post_i.into();
-    }
-}
-
-#[inline]
-fn eval_partial_round<AB: AirBuilder, const WIDTH: usize>(
-    state: &mut [AB::Expr; WIDTH],
-    partial_round: &PartialRound<AB::Var, WIDTH, POSEIDON2_SBOX_DEGREE, POSEIDON2_SBOX_REGISTERS>,
-    round_constant: &AB::F,
-    builder: &mut AB,
-) where
-    GenericPoseidon2LinearLayersGoldilocks: GenericPoseidon2LinearLayers<WIDTH>,
-{
-    state[0] += round_constant.dup();
-    eval_sbox(&partial_round.sbox, &mut state[0], builder);
-    builder.assert_eq(state[0].dup(), partial_round.post_sbox);
-    state[0] = partial_round.post_sbox.into();
-    <GenericPoseidon2LinearLayersGoldilocks as GenericPoseidon2LinearLayers<
-        WIDTH,
-    >>::internal_linear_layer(state);
-}
-
-#[inline]
-fn eval_full_round_16<AB: AirBuilder>(
-    state: &mut [AB::Expr; POSEIDON2_WIDTH_16],
-    full_round: &FullRound<
-        AB::Var,
+    p3_poseidon2_air::eval::<
+        AB,
+        GenericPoseidon2LinearLayersGoldilocks,
         POSEIDON2_WIDTH_16,
         POSEIDON2_SBOX_DEGREE,
         POSEIDON2_SBOX_REGISTERS,
-    >,
-    round_constants: &[AB::F; POSEIDON2_WIDTH_16],
-    builder: &mut AB,
-) {
-    eval_full_round::<AB, POSEIDON2_WIDTH_16>(state, full_round, round_constants, builder)
-}
-
-#[inline]
-fn eval_partial_round_16<AB: AirBuilder>(
-    state: &mut [AB::Expr; POSEIDON2_WIDTH_16],
-    partial_round: &PartialRound<
-        AB::Var,
-        POSEIDON2_WIDTH_16,
-        POSEIDON2_SBOX_DEGREE,
-        POSEIDON2_SBOX_REGISTERS,
-    >,
-    round_constant: &AB::F,
-    builder: &mut AB,
-) {
-    eval_partial_round::<AB, POSEIDON2_WIDTH_16>(state, partial_round, round_constant, builder)
-}
-
-#[inline]
-fn eval_sbox<AB: AirBuilder>(
-    sbox: &SBox<AB::Var, POSEIDON2_SBOX_DEGREE, POSEIDON2_SBOX_REGISTERS>,
-    x: &mut AB::Expr,
-    builder: &mut AB,
-) {
-    let committed_x3: AB::Expr = sbox.0[0].into();
-    builder.assert_eq(committed_x3.dup(), x.cube());
-    *x = committed_x3.square() * x.dup();
+        POSEIDON2_HALF_FULL_ROUNDS,
+        POSEIDON2_PARTIAL_ROUNDS_16,
+    >(p2_air_16(), builder, local);
 }
 
 // ---------------------------------------------------------------------------
