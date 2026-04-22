@@ -827,6 +827,20 @@ impl TransferWitness {
         // `uno/plonky3-ffi/src/transfer_air.rs:SpendWitness` for the exact
         // struct K-AIR tightened.
         let shared_d: [u8; 8] = shared_d_word.to_le_bytes();
+        // Phase 4b-step3-step0 (2026-04-22): P3SpendWitness widened its
+        // `{ivk, pk_d, rcm, nk}` fields from `u64` to `[u8; 32]`. Until
+        // step 1+ upgrades the AIR to consume real 32-byte material, we
+        // project the existing u64 proxies into `bytes[0..8]` with
+        // 24 bytes of zero padding — the AIR reads first-8-bytes as u64
+        // internally, preserving identical Poseidon2 / Merkle behavior.
+        let pad_u64_to_32 = |x: u64| -> [u8; 32] {
+            let mut buf = [0u8; 32];
+            buf[0..8].copy_from_slice(&x.to_le_bytes());
+            buf
+        };
+        let shared_ivk_bytes = pad_u64_to_32(shared_ivk);
+        let shared_pk_d_bytes = pad_u64_to_32(shared_pk_d);
+        let shared_rcm_bytes = pad_u64_to_32(shared_rcm);
         let mut p3_spends = Vec::with_capacity(n_s);
         for (i, note) in spends.iter().enumerate() {
             let nk = reduce_digest_to_proxy(b"uno-sw-nk", &note.nullifier);
@@ -838,10 +852,10 @@ impl TransferWitness {
                 leaf: shared_leaf,
                 d: shared_d,
                 value: v_per_spend,
-                ivk: shared_ivk,
-                pk_d: shared_pk_d,
-                rcm: shared_rcm,
-                nk,
+                ivk: shared_ivk_bytes,
+                pk_d: shared_pk_d_bytes,
+                rcm: shared_rcm_bytes,
+                nk: pad_u64_to_32(nk),
                 pos: shared_pos,
                 merkle_path: shared_merkle_path,
                 rk_bytes: spend_rk_bytes[i],
@@ -876,12 +890,22 @@ impl TransferWitness {
             } else {
                 v_per_out_base
             };
+            // Phase 4b-step3-step0: widen u64 proxies to [u8; 32].
+            // Same pad_u64_to_32 helper pattern as the spend block.
+            let mut d_bytes = [0u8; 32];
+            d_bytes[0..8].copy_from_slice(&d_proxy.to_le_bytes());
+            let mut pk_d_bytes = [0u8; 32];
+            pk_d_bytes[0..8].copy_from_slice(&pk_d_proxy.to_le_bytes());
+            let mut ivkcm_bytes = [0u8; 32];
+            ivkcm_bytes[0..8].copy_from_slice(&ivkcm_proxy.to_le_bytes());
+            let mut rcm_bytes = [0u8; 32];
+            rcm_bytes[0..8].copy_from_slice(&rcm_proxy.to_le_bytes());
             p3_outputs.push(P3OutputWitness {
-                d: d_proxy,
-                pk_d: pk_d_proxy,
-                ivk_commitment: ivkcm_proxy,
+                d: d_bytes,
+                pk_d: pk_d_bytes,
+                ivk_commitment: ivkcm_bytes,
                 value: value_proxy,
-                rcm: rcm_proxy,
+                rcm: rcm_bytes,
                 cm_bytes: output_cms[j],
                 epk_bytes: output_epk_bytes[j],
                 filter_tag: output_filter_tags[j],

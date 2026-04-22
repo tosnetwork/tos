@@ -354,7 +354,10 @@ mod tests {
         let honest_pi_bytes = honest.public_inputs_bytes();
 
         let mut bad = honest.clone();
-        bad.spends[0].ivk = bad.spends[0].ivk.wrapping_add(1);
+        // Phase 4b-step3-step0: widened ivk to [u8; 32]; poke the low
+        // byte to trip the same u64-proxy value the AIR derives via
+        // first_u64_proxy(&ivk).
+        bad.spends[0].ivk[0] = bad.spends[0].ivk[0].wrapping_add(1);
 
         match prover.prove(&bad.encode()) {
             Err(_) => {} // pre-check caught it

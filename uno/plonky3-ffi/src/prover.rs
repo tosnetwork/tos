@@ -822,12 +822,13 @@ mod tests {
             pi.len(),
             crate::transfer_air::air_width(4, 4),
         );
-        // V1-3c-round-8 档1 extended wire layout:
-        //   HEAD(10) + PER_SPEND(64 + 8·MERKLE_DEPTH + 32)·n_s
-        //           + PER_OUTPUT(40 + 32 + 32 + 2)·n_o
-        //           + TAIL(8 + 32 + 1 + 4 + 8)
-        let per_spend = 64 + 8 * MERKLE_DEPTH + 32;
-        let per_output = 40 + 32 + 32 + 2;
+        // M-P2 Phase 4b-step3-step0 widened wire layout:
+        //   HEAD(10)
+        //   + PER_SPEND(32 + 4·32 + 8·MERKLE_DEPTH + 32)·n_s     (448 each at depth 32)
+        //   + PER_OUTPUT(4·32 + 8 + 32 + 32 + 2)·n_o             (202 each)
+        //   + TAIL(8 + 32 + 1 + 4 + 8)                           (53)
+        let per_spend = 32 + 4 * 32 + 8 * MERKLE_DEPTH + 32;
+        let per_output = 4 * 32 + 8 + 32 + 32 + 2;
         let head = 10;
         let tail = 8 + 32 + 1 + 4 + 8;
         assert_eq!(

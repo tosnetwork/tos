@@ -1407,14 +1407,22 @@ pub struct SpendWitness {
     pub d: [u8; 8],
     /// Value being spent. Must be `< p_Goldilocks`.
     pub value: u64,
-    /// Private-witness `ivk` proxy.
-    pub ivk: u64,
-    /// Proxy for `pk_d.bytes`.
-    pub pk_d: u64,
-    /// Proxy for the note randomness `rcm`.
-    pub rcm: u64,
-    /// Proxy for the nullifier key `nk`.
-    pub nk: u64,
+    /// Raw 32-byte `ivk` (Ristretto255 scalar). Phase 4b-step3-step0
+    /// widened from `u64` proxy so tosctl can pass the real viewing
+    /// key through. The AIR in its current (pre-step3) shape still
+    /// derives a u64 proxy internally via
+    /// `u64::from_le_bytes(ivk[0..8].try_into().unwrap())` — claim 2 /
+    /// 3 semantics are unchanged until step 1+ lifts cm / nf to
+    /// 4-fe output.
+    pub ivk: [u8; 32],
+    /// Raw 32-byte `pk_d` (Ristretto255 compressed point). See `ivk`
+    /// doc for the same step0 widening note.
+    pub pk_d: [u8; 32],
+    /// Raw 32-byte note randomness `rcm`. Per-note value, not the
+    /// whole address.
+    pub rcm: [u8; 32],
+    /// Raw 32-byte nullifier key `nk` (from the spender's FVK).
+    pub nk: [u8; 32],
     /// Leaf position within the depth-32 commitment tree. Low bit is the
     /// level-0 path bit (§2.3, matching `commitment-tree.{h,cpp}`). Must
     /// satisfy `pos < 2^MERKLE_DEPTH` (upper bits in `pos` are discarded
@@ -1438,16 +1446,21 @@ pub struct SpendWitness {
 /// Single-output witness.
 #[derive(Debug, Clone)]
 pub struct OutputWitness {
-    /// Diversifier `d_j` proxy.
-    pub d: u64,
-    /// `pk_d_j` proxy.
-    pub pk_d: u64,
-    /// Recipient `ivk_commitment_j` proxy.
-    pub ivk_commitment: u64,
+    /// Raw diversifier `d_j` in 32-byte representation. The real
+    /// diversifier is 11 bytes; tosctl pads `bytes[0..11]` with the
+    /// real material and leaves `bytes[11..32]` zero. Phase 4b-step3-
+    /// step0 widened from `u64` proxy so tosctl can pass real
+    /// material through. The AIR (pre-step3) still derives a u64
+    /// proxy internally via the first 8 bytes.
+    pub d: [u8; 32],
+    /// Raw 32-byte recipient `pk_d_j`.
+    pub pk_d: [u8; 32],
+    /// Raw 32-byte recipient `ivk_commitment_j`.
+    pub ivk_commitment: [u8; 32],
     /// Output value (u64, Goldilocks-fits).
     pub value: u64,
-    /// `rcm_j` proxy.
-    pub rcm: u64,
+    /// Raw 32-byte per-output randomness `rcm_j`.
+    pub rcm: [u8; 32],
     /// Raw 32-byte `cm_j` (note commitment, §4.1). Used to populate all
     /// 4 PI limbs via `encode_256`; the current proxy AIR binds only the
     /// low-limb equality (`pi_cm[j] == cm_fe_computed_from_witness`).
@@ -1566,14 +1579,27 @@ impl MvpWitness {
                 .wrapping_mul(0x517c_c1b7_2722_0a95)
                 .wrapping_add((i as u64) * 0xC0FF_EE00);
             let nk = s.wrapping_mul(0xcbf2_9ce4_8422_2325) ^ 0xba11_00ba;
+            // Phase 4b-step3-step0: widened fields take `[u8; 32]`.
+            // For this deterministic_valid test fixture, project the
+            // legacy u64 proxy into `bytes[0..8]` with zero padding;
+            // the AIR reads `first_u64_proxy(&field)` internally, so
+            // the derived u64 is identical to pre-step0 behaviour.
+            let mut ivk_bytes = [0u8; 32];
+            ivk_bytes[0..8].copy_from_slice(&shared_ivk.to_le_bytes());
+            let mut pk_d_bytes = [0u8; 32];
+            pk_d_bytes[0..8].copy_from_slice(&shared_pk_d.to_le_bytes());
+            let mut rcm_bytes = [0u8; 32];
+            rcm_bytes[0..8].copy_from_slice(&shared_rcm.to_le_bytes());
+            let mut nk_bytes = [0u8; 32];
+            nk_bytes[0..8].copy_from_slice(&nk.to_le_bytes());
             spends.push(SpendWitness {
                 leaf: shared_leaf,
                 d: d_word.to_le_bytes(),
                 value: v_per_spend,
-                ivk: shared_ivk,
-                pk_d: shared_pk_d,
-                rcm: shared_rcm,
-                nk,
+                ivk: ivk_bytes,
+                pk_d: pk_d_bytes,
+                rcm: rcm_bytes,
+                nk: nk_bytes,
                 pos: shared_pos,
                 merkle_path: shared_path,
                 rk_bytes: [0u8; 32],
@@ -1611,12 +1637,24 @@ impl MvpWitness {
                 poseidon2_cm_fe(&perm16, d, pk_d, ivk_commitment, value, rcm).as_canonical_u64();
             let mut cm_bytes = [0u8; 32];
             cm_bytes[0..8].copy_from_slice(&cm_limb0.to_le_bytes());
+            // Phase 4b-step3-step0: widen u64 proxies to [u8; 32] with
+            // 8-byte low-limb projection + 24-byte zero padding (test
+            // fixture convention; real tosctl witnesses carry full
+            // 32-byte material).
+            let mut d_bytes = [0u8; 32];
+            d_bytes[0..8].copy_from_slice(&d.to_le_bytes());
+            let mut pk_d_bytes = [0u8; 32];
+            pk_d_bytes[0..8].copy_from_slice(&pk_d.to_le_bytes());
+            let mut ivk_commitment_bytes = [0u8; 32];
+            ivk_commitment_bytes[0..8].copy_from_slice(&ivk_commitment.to_le_bytes());
+            let mut rcm_bytes = [0u8; 32];
+            rcm_bytes[0..8].copy_from_slice(&rcm.to_le_bytes());
             outputs.push(OutputWitness {
-                d,
-                pk_d,
-                ivk_commitment,
+                d: d_bytes,
+                pk_d: pk_d_bytes,
+                ivk_commitment: ivk_commitment_bytes,
                 value,
-                rcm,
+                rcm: rcm_bytes,
                 cm_bytes,
                 epk_bytes: [0u8; 32],
                 filter_tag: 0,
@@ -1650,22 +1688,41 @@ impl MvpWitness {
     ///   `u64 anchor_proxy`.
     ///
     /// V1-3c-round-8 (档1) extended layout (this function):
-    ///   ... (legacy bytes above) ...
     ///   `[32 B] anchor_bytes || u8 scheme_id || u32 chain_id || u64 expiry_block`  (trailer)
     ///   Each spend: `[32 B] rk_bytes` appended (stride +32).
     ///   Each output: `[32 B] cm_bytes || [32 B] epk_bytes || u16 filter_tag` appended (stride +66).
     ///
-    /// Per-spend bytes: `64 + 8·MERKLE_DEPTH + 32 = 352 bytes`.
-    /// Per-output bytes: `40 + 32 + 32 + 2 = 106 bytes`.
-    /// Trailer: `8 (anchor_proxy) + 32 (anchor_bytes) + 1 + 4 + 8 = 53 bytes`.
-    /// Byte length: `10 (n_s+n_o+fee) + 352·n_s + 106·n_o + 53`.
+    /// M-P2 Phase 4b-step3-step0 widening (this revision): four spend
+    /// fields (`ivk`, `pk_d`, `rcm`, `nk`) and four output fields (`d`,
+    /// `pk_d`, `ivk_commitment`, `rcm`) move from `u64` (8 bytes each)
+    /// to `[u8; 32]` (32 bytes each) so tosctl can pass real address
+    /// material through instead of digest-reduced proxies. The AIR
+    /// itself is unchanged in this commit — trace-gen extracts a u64
+    /// proxy from `field[0..8]` (little-endian) at every existing
+    /// Poseidon2 / Merkle call site.
     ///
-    /// The extended layout is backwards-incompatible with legacy pre-档1
-    /// callers; callers inside this crate and `tosctl/uno` were updated
-    /// atomically. `decode()` enforces the new length.
+    /// Per-spend bytes: `leaf(8) + d(8) + value(8) + pos(8) +
+    ///   4·32 (ivk,pk_d,rcm,nk) + 8·MERKLE_DEPTH + 32 (rk_bytes) =
+    ///   32 + 128 + 256 + 32 = 448 bytes` (was 352 pre-step0).
+    /// Per-output bytes: `4·32 (d,pk_d,ivk_cm,rcm) + value(8) + cm(32)
+    ///   + epk(32) + filter_tag(2) = 128 + 8 + 64 + 2 = 202 bytes`
+    ///   (was 106 pre-step0).
+    /// Trailer: `8 (anchor_proxy) + 32 (anchor_bytes) + 1 + 4 + 8 = 53 bytes`.
+    /// Byte length: `10 (n_s+n_o+fee) + 448·n_s + 202·n_o + 53`.
+    ///
+    /// The extended layout is backwards-incompatible with the pre-step0
+    /// callers; callers inside this crate and `tosctl/uno` are updated
+    /// atomically. `decode()` enforces the new length. Wire blob is
+    /// transient tosctl → Rust-prover FFI only (no C++ consumer;
+    /// confirmed by the pre-commit Explore agent audit).
     pub fn encode(&self) -> Vec<u8> {
-        const PER_SPEND: usize = 64 + 8 * MERKLE_DEPTH + 32;
-        const PER_OUTPUT: usize = 40 + 32 + 32 + 2;
+        // Per-spend: leaf(8) + d(8) + value(8) + ivk(32) + pk_d(32)
+        //          + rcm(32) + nk(32) + pos(8) + path(8*MERKLE_DEPTH)
+        //          + rk_bytes(32) = 40 + 128 + 8 + 256 + 32 = 464.
+        const PER_SPEND: usize = 32 + 4 * 32 + 8 * MERKLE_DEPTH + 32;
+        // Per-output: d(32) + pk_d(32) + ivk_cm(32) + value(8) + rcm(32)
+        //           + cm(32) + epk(32) + filter_tag(2) = 202.
+        const PER_OUTPUT: usize = 4 * 32 + 8 + 32 + 32 + 2;
         const HEAD: usize = 10;
         const TAIL: usize = 8 + 32 + 1 + 4 + 8;
         let mut out = Vec::with_capacity(
@@ -1678,10 +1735,10 @@ impl MvpWitness {
             out.extend_from_slice(&s.leaf.to_le_bytes());
             out.extend_from_slice(&s.d);
             out.extend_from_slice(&s.value.to_le_bytes());
-            out.extend_from_slice(&s.ivk.to_le_bytes());
-            out.extend_from_slice(&s.pk_d.to_le_bytes());
-            out.extend_from_slice(&s.rcm.to_le_bytes());
-            out.extend_from_slice(&s.nk.to_le_bytes());
+            out.extend_from_slice(&s.ivk);
+            out.extend_from_slice(&s.pk_d);
+            out.extend_from_slice(&s.rcm);
+            out.extend_from_slice(&s.nk);
             out.extend_from_slice(&s.pos.to_le_bytes());
             for sib in &s.merkle_path {
                 out.extend_from_slice(&sib.to_le_bytes());
@@ -1689,11 +1746,11 @@ impl MvpWitness {
             out.extend_from_slice(&s.rk_bytes);
         }
         for o in &self.outputs {
-            out.extend_from_slice(&o.d.to_le_bytes());
-            out.extend_from_slice(&o.pk_d.to_le_bytes());
-            out.extend_from_slice(&o.ivk_commitment.to_le_bytes());
+            out.extend_from_slice(&o.d);
+            out.extend_from_slice(&o.pk_d);
+            out.extend_from_slice(&o.ivk_commitment);
             out.extend_from_slice(&o.value.to_le_bytes());
-            out.extend_from_slice(&o.rcm.to_le_bytes());
+            out.extend_from_slice(&o.rcm);
             out.extend_from_slice(&o.cm_bytes);
             out.extend_from_slice(&o.epk_bytes);
             out.extend_from_slice(&o.filter_tag.to_le_bytes());
@@ -1711,8 +1768,9 @@ impl MvpWitness {
     pub fn decode(bytes: &[u8]) -> Result<Self, Plonky3Status> {
         const HEAD: usize = 10;
         const TAIL: usize = 8 + 32 + 1 + 4 + 8;
-        const PER_SPEND: usize = 64 + 8 * MERKLE_DEPTH + 32;
-        const PER_OUTPUT: usize = 40 + 32 + 32 + 2;
+        // Must match `encode()` — see step0 widening doc there.
+        const PER_SPEND: usize = 32 + 4 * 32 + 8 * MERKLE_DEPTH + 32;
+        const PER_OUTPUT: usize = 4 * 32 + 8 + 32 + 32 + 2;
         if bytes.len() < HEAD + TAIL {
             return Err(Plonky3Status::WitnessInvalid);
         }
@@ -1743,14 +1801,18 @@ impl MvpWitness {
             if value >= GOLDILOCKS_P {
                 return Err(Plonky3Status::WitnessInvalid);
             }
-            let ivk = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
-            off += 8;
-            let pk_d = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
-            off += 8;
-            let rcm = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
-            off += 8;
-            let nk = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
-            off += 8;
+            let mut ivk = [0u8; 32];
+            ivk.copy_from_slice(&bytes[off..off + 32]);
+            off += 32;
+            let mut pk_d = [0u8; 32];
+            pk_d.copy_from_slice(&bytes[off..off + 32]);
+            off += 32;
+            let mut rcm = [0u8; 32];
+            rcm.copy_from_slice(&bytes[off..off + 32]);
+            off += 32;
+            let mut nk = [0u8; 32];
+            nk.copy_from_slice(&bytes[off..off + 32]);
+            off += 32;
             let pos = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
             off += 8;
             // `pos` must fit in MERKLE_DEPTH bits for the AIR's bit
@@ -1784,19 +1846,23 @@ impl MvpWitness {
         }
         let mut outputs = Vec::with_capacity(n_o);
         for _ in 0..n_o {
-            let d = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
-            off += 8;
-            let pk_d = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
-            off += 8;
-            let ivk_commitment = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
-            off += 8;
+            let mut d = [0u8; 32];
+            d.copy_from_slice(&bytes[off..off + 32]);
+            off += 32;
+            let mut pk_d = [0u8; 32];
+            pk_d.copy_from_slice(&bytes[off..off + 32]);
+            off += 32;
+            let mut ivk_commitment = [0u8; 32];
+            ivk_commitment.copy_from_slice(&bytes[off..off + 32]);
+            off += 32;
             let value = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
             off += 8;
             if value >= GOLDILOCKS_P {
                 return Err(Plonky3Status::WitnessInvalid);
             }
-            let rcm = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
-            off += 8;
+            let mut rcm = [0u8; 32];
+            rcm.copy_from_slice(&bytes[off..off + 32]);
+            off += 32;
             let mut cm_bytes = [0u8; 32];
             cm_bytes.copy_from_slice(&bytes[off..off + 32]);
             off += 32;
@@ -1923,7 +1989,10 @@ impl MvpWitness {
 
         for s in &self.spends {
             // nf_i: 4-limb Poseidon2 nullifier (AIR-bound).
-            let nf_limbs = poseidon2_nf_full(&perm, s.nk, s.leaf, s.pos);
+            // Phase 4b-step3-step0: widened nk field → u64 proxy via
+            // first_u64_proxy (AIR semantics unchanged).
+            let nf_limbs =
+                poseidon2_nf_full(&perm, first_u64_proxy(&s.nk), s.leaf, s.pos);
             for limb in nf_limbs {
                 out.push(limb);
             }
@@ -2048,13 +2117,15 @@ impl MvpWitness {
             let d_word = u64::from_le_bytes(s.d);
             let d_f = Goldilocks::from_u64(reduce_to_goldilocks(d_word));
             let leaf_f = Goldilocks::from_u64(reduce_to_goldilocks(s.leaf));
-            let pk_d_f = Goldilocks::from_u64(reduce_to_goldilocks(s.pk_d));
-            let rcm_f = Goldilocks::from_u64(reduce_to_goldilocks(s.rcm));
-            let ivk_f = Goldilocks::from_u64(reduce_to_goldilocks(s.ivk));
-            let nk_f = Goldilocks::from_u64(reduce_to_goldilocks(s.nk));
+            // Phase 4b-step3-step0: widened fields → u64 proxy via
+            // first_u64_proxy; AIR inputs unchanged.
+            let pk_d_f = Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.pk_d)));
+            let rcm_f = Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.rcm)));
+            let ivk_f = Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.ivk)));
+            let nk_f = Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.nk)));
             let pos_f = Goldilocks::from_u64(reduce_to_goldilocks(s.pos));
             let value_f = Goldilocks::from_u64(reduce_to_goldilocks(s.value));
-            let ivkcm_fe = poseidon2_ivk_commitment(&perm, s.ivk, d_word);
+            let ivkcm_fe = poseidon2_ivk_commitment(&perm, first_u64_proxy(&s.ivk), d_word);
 
             // Merkle-row-loop: level k goes on trace row k. The P2 witness
             // at rows 32..63 is the zero-input permutation (padding_p2).
@@ -2118,10 +2189,12 @@ impl MvpWitness {
 
         let mut row0_out_cm = Vec::with_capacity(n_o);
         for o in &self.outputs {
-            let d_f = Goldilocks::from_u64(reduce_to_goldilocks(o.d));
-            let pk_d_f = Goldilocks::from_u64(reduce_to_goldilocks(o.pk_d));
-            let ivk_cm_f = Goldilocks::from_u64(reduce_to_goldilocks(o.ivk_commitment));
-            let rcm_f = Goldilocks::from_u64(reduce_to_goldilocks(o.rcm));
+            // Phase 4b-step3-step0: widened output fields → u64 proxy.
+            let d_f = Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&o.d)));
+            let pk_d_f = Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&o.pk_d)));
+            let ivk_cm_f =
+                Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&o.ivk_commitment)));
+            let rcm_f = Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&o.rcm)));
             let value_f = Goldilocks::from_u64(reduce_to_goldilocks(o.value));
             let mut cm_in = [Goldilocks::ZERO; POSEIDON2_WIDTH_16];
             cm_in[0] = Goldilocks::from_u64(TAG_CM);
@@ -2142,16 +2215,18 @@ impl MvpWitness {
             .map(|s| {
                 let d_word = u64::from_le_bytes(s.d);
                 let d_f = Goldilocks::from_u64(reduce_to_goldilocks(d_word));
-                let ivkcm_fe = poseidon2_ivk_commitment(&perm, s.ivk, d_word);
+                let ivkcm_fe = poseidon2_ivk_commitment(&perm, first_u64_proxy(&s.ivk), d_word);
                 let mut v = Vec::with_capacity(SPEND_PROXY_COLS);
                 v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.leaf)));
                 v.push(d_f);
                 v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.value)));
-                v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.ivk)));
+                // Phase 4b-step3-step0: widened u64 proxy extraction
+                // from witness byte arrays.
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.ivk))));
                 v.push(ivkcm_fe);
-                v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.pk_d)));
-                v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.rcm)));
-                v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.nk)));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.pk_d))));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.rcm))));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.nk))));
                 v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.pos)));
                 for k in 0..MERKLE_DEPTH {
                     let bit = (s.pos >> k) & 1;
@@ -2185,14 +2260,22 @@ impl MvpWitness {
             .outputs
             .iter()
             .map(|o| {
-                let cm_fe = poseidon2_cm_fe(&perm16, o.d, o.pk_d, o.ivk_commitment, o.value, o.rcm);
+                // Phase 4b-step3-step0: widened output fields → u64
+                // proxy for Poseidon2 input; cm derivation shape
+                // unchanged.
+                let d_p = first_u64_proxy(&o.d);
+                let pk_d_p = first_u64_proxy(&o.pk_d);
+                let ivkcm_p = first_u64_proxy(&o.ivk_commitment);
+                let rcm_p = first_u64_proxy(&o.rcm);
+                let cm_fe =
+                    poseidon2_cm_fe(&perm16, d_p, pk_d_p, ivkcm_p, o.value, rcm_p);
                 let mut v = Vec::with_capacity(OUTPUT_PROXY_COLS);
                 v.push(cm_fe);
-                v.push(Goldilocks::from_u64(reduce_to_goldilocks(o.d)));
-                v.push(Goldilocks::from_u64(reduce_to_goldilocks(o.pk_d)));
-                v.push(Goldilocks::from_u64(reduce_to_goldilocks(o.ivk_commitment)));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(d_p)));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(pk_d_p)));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(ivkcm_p)));
                 v.push(Goldilocks::from_u64(reduce_to_goldilocks(o.value)));
-                v.push(Goldilocks::from_u64(reduce_to_goldilocks(o.rcm)));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(rcm_p)));
                 // Phase 3b-step2: 4 u16 limbs (was 64 bit columns).
                 let value_canon = reduce_to_goldilocks(o.value);
                 for k in 0..VALUE_LIMBS_U16 {
@@ -2323,6 +2406,18 @@ pub(crate) fn reduce_to_goldilocks(x: u64) -> u64 {
     } else {
         x
     }
+}
+
+/// Phase 4b-step3-step0 shim: extract the u64 proxy from the first 8
+/// bytes of a widened 32-byte witness field (little-endian). The AIR
+/// in its current pre-step3 shape still processes Poseidon2 / Merkle
+/// inputs as u64 proxies; lifting to full 4-fe inputs is Phase 4b-
+/// step3-step1..3 per `doc/uno-p2-phase4b-step3-plan.md`. Callers
+/// write `first_u64_proxy(&w.ivk)` etc. at every former
+/// `w.ivk` (u64) reference site.
+#[inline]
+pub(crate) fn first_u64_proxy(bytes: &[u8; 32]) -> u64 {
+    u64::from_le_bytes(bytes[0..8].try_into().unwrap())
 }
 
 /// 32-byte → 4 canonical-Goldilocks u64 limbs. Byte-identical mirror of
@@ -2485,14 +2580,17 @@ pub fn witness_claim2_leaf_consistent(w: &MvpWitness) -> bool {
     let perm16 = default_goldilocks_poseidon2_16();
     for s in &w.spends {
         let d_word = u64::from_le_bytes(s.d);
-        let ivkcm = poseidon2_ivk_commitment(&perm, s.ivk, d_word);
+        // Phase 4b-step3-step0: widened fields → u64 proxy. Claim 2
+        // derivation shape unchanged (still over u64 proxies; real
+        // 32-byte derivation is step 1+).
+        let ivkcm = poseidon2_ivk_commitment(&perm, first_u64_proxy(&s.ivk), d_word);
         let derived = poseidon2_cm(
             &perm16,
             d_word,
-            s.pk_d,
+            first_u64_proxy(&s.pk_d),
             ivkcm.as_canonical_u64(),
             s.value,
-            s.rcm,
+            first_u64_proxy(&s.rcm),
         );
         if derived != reduce_to_goldilocks(s.leaf) {
             return false;
@@ -2541,9 +2639,15 @@ pub fn witness_anchor_bytes_consistent(w: &MvpWitness) -> bool {
 pub fn witness_cm_bytes_consistent(w: &MvpWitness) -> bool {
     let perm16 = default_goldilocks_poseidon2_16();
     for o in &w.outputs {
-        let derived =
-            poseidon2_cm_fe(&perm16, o.d, o.pk_d, o.ivk_commitment, o.value, o.rcm)
-                .as_canonical_u64();
+        let derived = poseidon2_cm_fe(
+            &perm16,
+            first_u64_proxy(&o.d),
+            first_u64_proxy(&o.pk_d),
+            first_u64_proxy(&o.ivk_commitment),
+            o.value,
+            first_u64_proxy(&o.rcm),
+        )
+        .as_canonical_u64();
         let witness_limb0 =
             u64::from_le_bytes(o.cm_bytes[0..8].try_into().unwrap());
         if reduce_to_goldilocks(witness_limb0) != derived {
