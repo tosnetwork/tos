@@ -2693,4 +2693,71 @@ mod tests {
             Err(Plonky3Status::PublicInputDecodeFailed)
         ));
     }
+
+    /// Regression test for the Phase 3b-step3 N-bundled-tuple bug
+    /// (task #130). The original wire-up registered a single
+    /// `Kind::Global("u16_range")` lookup with 4·(n_s+n_o) input tuples
+    /// bundled inside. That raised the LogUp per-row constraint
+    /// polynomial degree to N+1 (denominator product of N linear
+    /// factors), which mis-interacted with batch-stark's quotient
+    /// sizing on wide AIRs and produced
+    /// `OodEvaluationMismatch { index: Some(0) }` at verify time while
+    /// prove succeeded. Fixed in dadc249ec by splitting into N
+    /// separate single-tuple `Kind::Global("u16_range")` lookups —
+    /// each a well-trodden degree-2 LogUp constraint.
+    ///
+    /// If someone accidentally re-bundles the tuples, this test fails
+    /// BEFORE the slow prove+verify round-trip does, so the
+    /// regression is caught at lint-level instead of during a CI
+    /// STARK run.
+    #[test]
+    fn lookupair_must_stay_single_tuple_per_limb() {
+        use p3_lookup::lookup_traits::{Kind, Lookup};
+        use p3_lookup::LookupAir;
+
+        for &(n_s, n_o) in &[(1, 1), (1, 2), (2, 2), (4, 4)] {
+            let mut air = MvpTransferAir::new(n_s, n_o);
+            let lookups: Vec<Lookup<Goldilocks>> = LookupAir::<Goldilocks>::get_lookups(&mut air);
+
+            let expected_count = 4 * (n_s + n_o);
+            assert_eq!(
+                lookups.len(),
+                expected_count,
+                "shape {}/{} must register {} single-tuple Kind::Global lookups, got {}. \
+                 Bundling into a single Lookup with multiple input tuples trips \
+                 OodEvaluationMismatch on verify — see commit dadc249ec.",
+                n_s,
+                n_o,
+                expected_count,
+                lookups.len(),
+            );
+
+            for (i, lk) in lookups.iter().enumerate() {
+                match &lk.kind {
+                    Kind::Global(name) => assert_eq!(
+                        name,
+                        crate::range16_air::U16_RANGE_LOOKUP_NAME,
+                        "shape {}/{} lookup {} must be Kind::Global(\"u16_range\"); got different name {:?}",
+                        n_s, n_o, i, name,
+                    ),
+                    Kind::Local => panic!(
+                        "shape {}/{} lookup {} must be Kind::Global, not Local",
+                        n_s, n_o, i,
+                    ),
+                }
+                assert_eq!(
+                    lk.element_exprs.len(),
+                    1,
+                    "shape {}/{} lookup {} must have exactly one input tuple, got {}",
+                    n_s, n_o, i, lk.element_exprs.len(),
+                );
+                assert_eq!(
+                    lk.element_exprs[0].len(),
+                    1,
+                    "shape {}/{} lookup {} tuple must be single-element (just the u16 limb), got {}",
+                    n_s, n_o, i, lk.element_exprs[0].len(),
+                );
+            }
+        }
+    }
 }
