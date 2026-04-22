@@ -72,29 +72,30 @@ fn bridge_path(test_name: &str) -> Option<&'static str> {
 /// uses only publicly-exported types, so this test does not depend on
 /// `#[cfg(test)]` internals of the crate.
 ///
-/// Sizing note (V1-3c-beta): production transfers carry enc_ciphertext
-/// ≈ 580 B and mlkem_ct = 1088 B — both chunked into multi-cell linear
-/// chains by `encode_transfer_boc`. The C++ decoder
-/// (`uno/core/transaction.cpp::decode_transfer`) enforces a §17 ≤5-level
-/// walk-depth gate evaluated as `outputs_root.get_depth() + 1 <= 5`,
-/// which — per TON/TOS cell-depth semantics — descends into the chunk
-/// chains and trips on any mlkem_ct chain of ≥ 2 cells. This is a known
-/// latent bug in the C++ gate: its in-source comment explicitly says it
-/// only meant to bound the STRUCTURAL walk (root → per_item → cont), not
-/// the enc_ct / mlkem_ct / zk_proof subtrees that carry their own
-/// `kChunkChainMaxChunks` bound. `tosctl/uno/src/boc_decode.rs`
-/// (V1-3c-alpha) reconciles this by computing a structural-only depth.
+/// Sizing note (V1-3c-beta + V1-3c-gamma): production transfers carry
+/// enc_ciphertext ≈ 580 B and mlkem_ct = 1088 B — both chunked into
+/// multi-cell linear chains by `encode_transfer_boc`. The C++ decoder's
+/// §17 walk-depth gate was originally implemented via
+/// `cell_depth_bounded(c) + 1 <= 5` which (per TOS cell-depth semantics)
+/// descended into the chunk chains and tripped on any mlkem_ct ≥ 2
+/// cells — rejecting honest v1 Transfers. V1-3c-gamma replaced that
+/// with `structural_walk_depth`, which follows only the structural
+/// tree (root → per_item → cont) and skips enc_ct / mlkem_ct / zk_proof
+/// refs. The enc_ct / mlkem_ct / zk_proof subchains carry their own
+/// `kChunkChainMaxChunks = 8192` bound.
 ///
-/// To exercise the happy-path bridge without tripping the latent C++ gate,
-/// we keep enc_ct / mlkem_ct / zk_proof payloads ≤ 127 B (single chunk
-/// each). This still exercises:
+/// With the gate fixed, this test runs at REALISTIC v1 payload sizes:
+///   - enc_ciphertext: 579 B (~5 cells)
+///   - mlkem_ct:      1088 B (~9 cells)  — the original trigger case
+///   - zk_proof:     520 KB (~4096 cells) — full measured per-Tx proof
+///
+/// This exercises:
 ///   - every Transfer header field,
 ///   - full 1..=4 × 1..=4 spend/output shape dispatch,
 ///   - per-spend and per-output inline-cell + continuation-ref layout,
+///   - multi-chunk chain-chain traversal through the C++ decoder's
+///     `load_bytes_from_chunk_chain` with realistic chunk counts,
 ///   - BLAKE3 content-binding of the three variable-length payloads.
-///
-/// Surfacing the decoder-side depth-gate bug against realistic shapes is
-/// a V1-3c-gamma scope item, not this test's job.
 fn sample_transfer(n_spends: usize, n_outputs: usize) -> Transfer {
     let mut spends = Vec::with_capacity(n_spends);
     for i in 0..n_spends {
@@ -114,13 +115,15 @@ fn sample_transfer(n_spends: usize, n_outputs: usize) -> Transfer {
     }
     let mut outputs = Vec::with_capacity(n_outputs);
     for j in 0..n_outputs {
-        // 64 B each — well under the 127 B single-chunk cap so the
-        // chunk chain stays depth 0 per blob (see sizing note above).
-        let mut enc_ct = vec![0u8; 64];
+        // Realistic v1 shape sizes (V1-3c-gamma): enc_ct ~579 B
+        // (~5 cells), mlkem_ct 1088 B (~9 cells). These trigger the
+        // multi-chunk chain traversal in the C++ decoder that was
+        // broken by the pre-gamma walk-depth gate.
+        let mut enc_ct = vec![0u8; 579];
         for (idx, b) in enc_ct.iter_mut().enumerate() {
             *b = (idx as u8).wrapping_mul(0x11).wrapping_add(j as u8);
         }
-        let mut mlkem_ct = vec![0u8; 96];
+        let mut mlkem_ct = vec![0u8; 1088];
         for (idx, b) in mlkem_ct.iter_mut().enumerate() {
             *b = (idx as u8).wrapping_mul(0x13).wrapping_add(j as u8);
         }
@@ -141,9 +144,10 @@ fn sample_transfer(n_spends: usize, n_outputs: usize) -> Transfer {
         outputs.push(output);
     }
 
-    // zk_proof: 64 B — single chunk. Same depth-gate rationale as enc_ct /
-    // mlkem_ct above.
-    let mut zk_proof = vec![0u8; 64];
+    // zk_proof: 520 KB realistic v1 typical-shape size (~4096 cells).
+    // V1-3c-gamma lets this traverse the full chunk chain through the
+    // daemon's decoder.
+    let mut zk_proof = vec![0u8; 520 * 1024];
     for (i, b) in zk_proof.iter_mut().enumerate() {
         *b = (i & 0xFF) as u8;
     }

@@ -30,10 +30,11 @@
 //!     ref[2] → zk_proof chunk chain
 //! ```
 //!
-//! Chunk chains follow the CellString convention: up to 127 B inline per
-//! cell, 1 has_next bit, and (if set) first-ref is the next cell. Bounded
-//! by `K_CHUNK_CHAIN_MAX_CHUNKS = 8192` per-chain (post-V1 value, matches
-//! `uno/core/transaction.cpp` `kChunkChainMaxChunks`).
+//! Chunk chains follow the §4.1a 4-ary chunk tree: leaves hold 1..127 B
+//! inline with 0 refs; internal cells have 0 data bits and 1..4 refs to
+//! children (left-to-right in byte order). Tree depth = ⌈log₄(N_leaves)⌉
+//! (≤ 7 at v1 worst case). Total leaf count bounded by
+//! `K_CHUNK_CHAIN_MAX_CHUNKS = 8192` during DFS walk.
 
 use std::io::Cursor;
 
@@ -45,8 +46,10 @@ use crate::transfer::{
     MIN_OUTPUT_COUNT, MIN_SPEND_COUNT, OUT_CIPHERTEXT_BYTES,
 };
 
-// Mirror of `uno/core/transaction.cpp:72` `kChunkBytes`.
+// Mirror of `uno/core/transaction.cpp` `kChunkBytes`.
 const CHUNK_BYTES: usize = 127;
+// Mirror of `uno/core/transaction.cpp` `kChunkTreeFanout`. TOS Cell max_refs.
+const CHUNK_TREE_FANOUT: usize = 4;
 // Mirror of `kItemInlineHeadBytes`. Per-spend / per-output cells inline up
 // to 127 bytes with the remainder in a single continuation ref.
 const ITEM_INLINE_HEAD_BYTES: usize = 127;
@@ -206,51 +209,67 @@ fn load_item_chunked(
 }
 
 /// Mirror of `uno/core/transaction.cpp::load_bytes_from_chunk_chain`.
-/// Walks a chunk-chain (up to 127 B per cell + 1 has_next bit + optional
-/// first-ref to next cell), bounded by `K_CHUNK_CHAIN_MAX_CHUNKS`.
+/// DFS-walks a 4-ary chunk tree (§4.1a):
+/// - Leaf cell (0 refs): 1..127 B inline, byte-aligned; bytes appended.
+/// - Internal cell (≥ 1 ref): 0 data bits, 1..4 refs; children walked
+///   left-to-right.
+///
+/// Bounded by `K_CHUNK_CHAIN_MAX_CHUNKS` cumulative leaf count. Any shape
+/// violation (non-byte-aligned bits, >127 B leaf, >4 refs, internal with
+/// data bits, null ref) returns `MalformedChunkCell`.
 fn load_bytes_from_chunk_chain(root: Cell) -> Result<Vec<u8>, DecodeError> {
     let mut out: Vec<u8> = Vec::new();
-    let mut cell = root;
-    for _ in 0..K_CHUNK_CHAIN_MAX_CHUNKS {
-        let cs = SliceData::load_cell(cell.clone()).map_err(|e| {
-            DecodeError::MalformedChunkCell(format!("load_cell: {e}"))
-        })?;
+    let mut leaf_count: usize = 0;
+    let mut stack: Vec<Cell> = vec![root];
+    while let Some(cell) = stack.pop() {
+        let cs = SliceData::load_cell(cell.clone())
+            .map_err(|e| DecodeError::MalformedChunkCell(format!("load_cell: {e}")))?;
         let bits = cs.remaining_bits();
-        if bits < 1 || (bits - 1) % 8 != 0 {
-            return Err(DecodeError::MalformedChunkCell(format!(
-                "chunk cell inline bits {bits} is not 8k+1"
-            )));
-        }
-        let data_bytes = (bits - 1) / 8;
-        if data_bytes > CHUNK_BYTES {
-            return Err(DecodeError::MalformedChunkCell(format!(
-                "chunk cell payload {data_bytes} B exceeds 127 B"
-            )));
-        }
-        let mut cs = cs;
-        if data_bytes > 0 {
+        let n_refs = cs.remaining_references();
+        if n_refs == 0 {
+            // Leaf: 1..127 B inline, byte-aligned.
+            leaf_count += 1;
+            if leaf_count > K_CHUNK_CHAIN_MAX_CHUNKS {
+                return Err(DecodeError::ChunkChainTooLong);
+            }
+            if bits == 0 || bits % 8 != 0 {
+                return Err(DecodeError::MalformedChunkCell(format!(
+                    "leaf bits {bits} not in 8..=1016 stepping by 8"
+                )));
+            }
+            let data_bytes = bits / 8;
+            if data_bytes > CHUNK_BYTES {
+                return Err(DecodeError::MalformedChunkCell(format!(
+                    "leaf payload {data_bytes} B exceeds 127 B"
+                )));
+            }
             let off = out.len();
             out.resize(off + data_bytes, 0u8);
+            let mut cs = cs;
             cs.get_next_bytes_to_slice(&mut out[off..])
-                .map_err(|e| DecodeError::MalformedChunkCell(format!("data fetch: {e}")))?;
+                .map_err(|e| DecodeError::MalformedChunkCell(format!("leaf fetch: {e}")))?;
+        } else {
+            // Internal: 0 bits, 1..4 refs, children pushed in reverse so
+            // DFS visits them left-to-right.
+            if bits != 0 {
+                return Err(DecodeError::MalformedChunkCell(format!(
+                    "internal cell has {bits} data bits (must be 0)"
+                )));
+            }
+            if n_refs > CHUNK_TREE_FANOUT {
+                return Err(DecodeError::MalformedChunkCell(format!(
+                    "internal cell has {n_refs} refs (>4)"
+                )));
+            }
+            for k in (0..n_refs).rev() {
+                let child = cs
+                    .reference(k)
+                    .map_err(|e| DecodeError::MalformedChunkCell(format!("fetch ref[{k}]: {e}")))?;
+                stack.push(child);
+            }
         }
-        let has_next = cs
-            .get_next_bit()
-            .map_err(|e| DecodeError::MalformedChunkCell(format!("has_next bit: {e}")))?;
-        if !has_next {
-            return Ok(out);
-        }
-        if cs.remaining_references() == 0 {
-            return Err(DecodeError::MalformedChunkCell(
-                "has_next=1 but no continuation ref".to_string(),
-            ));
-        }
-        let next = cs
-            .reference(0)
-            .map_err(|e| DecodeError::MalformedChunkCell(format!("fetch next ref: {e}")))?;
-        cell = next;
     }
-    Err(DecodeError::ChunkChainTooLong)
+    Ok(out)
 }
 
 /// §17 walk-depth gate. Mirrors the *intent* of the C++

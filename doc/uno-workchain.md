@@ -676,6 +676,43 @@ The signature fields (`spend_auth_sig[i]`) and the `^zk_proof` cell ref are **ex
 
 Every signature and every ZK-proof public input binds `tx_hash` (or equivalently, binds the same tuple transitively). Replay across chain_ids, schemes, or block heights is structurally impossible.
 
+### 4.1a Chunk-tree encoding (`^Cell` byte blobs)
+
+`enc_ciphertext`, `mlkem_ct`, and `zk_proof` are over-sized byte blobs (up to ~915 KB for `zk_proof` worst case) that do not fit in a single cell (max 127 B per §17). They are encoded as a **balanced 4-ary chunk tree** rooted at the `^Cell` ref. This is the canonical realization of §17.3's "4-ref fan-out, ≤ 6 levels" doctrine for all Uno oversized-blob fields.
+
+**Leaf cell** (holds raw bytes):
+- **Data bits**: `8·L`, where `L ∈ [1..127]` is the leaf's byte count. No length prefix, no type tag — `L` is inferred from the cell's bit length.
+- **Refs**: 0.
+- **Identification**: a cell with 0 refs is a leaf.
+
+**Internal cell** (fanout node):
+- **Data bits**: 0.
+- **Refs**: `k ∈ [1..4]` child refs, left-to-right in byte order.
+- **Identification**: a cell with ≥ 1 ref is internal.
+
+**Canonical construction** (deterministic — same input bytes ⇒ same root hash):
+
+1. Split the input byte sequence into chunks of 127 bytes, left-to-right. The last chunk may be shorter (1..127 B); zero-length input returns a null ref.
+2. Build leaf cells for each chunk in order; call this `level[0]`.
+3. While `len(level[k]) > 1`, group `level[k]` into consecutive chunks of 4 (last group may be 1..4 children) and build one internal cell per group with those children as refs. Call the result `level[k+1]`.
+4. `level[final]` has exactly one cell — this is the root. Return it.
+
+Edge case: if input is ≤ 127 B, the tree is a single leaf (no internal cells).
+
+**Depth bound**: for `N` leaves, tree depth is `⌈log₄(N)⌉`. At v1 worst case `N = ⌈915 KB / 127 B⌉ = 7370 leaves`, depth = `⌈log₄(7370)⌉ = 7` — well under `CellTraits::max_depth = 1024`. (The pre-V1-3c-gamma linear chain used depth `N-1 = 7369`, which hit the 1024 cap as a latent protocol bug; see §17.3 amendment history.)
+
+**Walk cost**: decoder visits every cell exactly once; total cells ≈ `N + N/4 + N/16 + ... ≈ 4N/3`, i.e. ~33 % overhead above the leaf count. For v1 `zk_proof` typical: ~4094 leaves + ~1365 internal = ~5459 cells per proof. Each internal cell serializes to ~5 B descriptor + 4 × 2 B refs = ~13 B; aggregate BoC overhead ≈ 18 KB on a 520 KB proof (3.5 %). Negligible.
+
+**Consensus-binding**: the 4-grouping rule, the left-to-right leaf order, and the 127 B chunk size are all consensus-binding — they determine cell hashes, which are covered by `tx_hash` via the `cell_hash(enc_ciphertext)` / `cell_hash(mlkem_ct)` terms in the §4.1 hash preimage, and by the STARK proof's public-input binding of the zk_proof root. Any divergence across implementations produces a different `tx_hash` and a consensus fork.
+
+**Bounds check** (decoder): every decoder MUST enforce `total_leaves ≤ kChunkChainMaxChunks = 8192` during the DFS walk. The counter bounds the cumulative cell count (and hence CPU/memory exposure) against a maliciously large tree; 8192 leaves ≈ 1040 KB, ~14 % above the 915 KB 4/4 worst case.
+
+Reference implementations:
+- C++: `uno/core/transaction.cpp::store_bytes_as_chunk_chain` / `load_bytes_from_chunk_chain`.
+- Rust: `tosctl/uno/src/boc_encode.rs::store_bytes_as_chunk_chain` / `boc_decode.rs::load_bytes_from_chunk_chain`.
+
+Both implementations are covered by the V1-3c cross-language parity test `tosctl/uno/tests/boc_parity.rs` at realistic v1 sizes (`zk_proof = 520 KB`, `mlkem_ct = 1088 B`, `enc_ciphertext = 579 B`).
+
 ### 4.2 What the ZK proof attests
 
 The Plonky3 Transfer AIR (for `scheme_id = 0x01`) proves the following claims simultaneously. All arithmetic is over Goldilocks; all hashes are Poseidon2-over-Goldilocks. **No curve operations appear inside the AIR** (§2.5); every identity claim is expressed as a hash-chain.
@@ -2028,15 +2065,15 @@ All over-sized data is stored as **cell trees** using the standard TOS idiom.
 
 | Artifact | Raw size | Representation | Cells | Walk depth |
 |---|---|---|---|---|
-| Plonky3 proof (typical 1-spend/2-output, FRI Option B pinned) | ~520 KB | contiguous byte blob via `CellString` | ~4,200 | ~6 levels |
-| Plonky3 proof (4-spend/4-output worst case) | ~915 KB | contiguous byte blob via `CellString` | ~7,400 | ~6 levels |
-| `enc_ciphertext` (per output) | ~580 B | `CellString` | ~5 | 1 level |
-| `mlkem_ct` (per output) | 1088 B | `CellString` | ~9 | 1 level |
+| Plonky3 proof (typical 1-spend/2-output, FRI Option B pinned) | ~520 KB | 4-ary chunk tree (§4.1a) | ~5,460 | 6 levels |
+| Plonky3 proof (4-spend/4-output worst case) | ~915 KB | 4-ary chunk tree (§4.1a) | ~9,800 | 7 levels |
+| `enc_ciphertext` (per output) | ~580 B | 4-ary chunk tree (§4.1a) | ~7 | 2 levels |
+| `mlkem_ct` (per output) | 1088 B | 4-ary chunk tree (§4.1a) | ~12 | 2 levels |
 | Commitment-tree frontier (32 Poseidon2-Goldilocks siblings) | ~1 KB | linked chain | ~8 | 1 level |
 | Anchor window (100 roots) | ~3.2 KB | ring buffer cell chain | ~25 | 1–2 levels |
 | Nullifier `vm::Dictionary` at 10 M | ~500 MB | 256-bit-keyed sparse dict | ~5 M | ~24 levels |
 
-Each cell carries ~32 bytes of representation-hash and depth metadata, so a 520 KB proof pays ~130 KB of cell-tree overhead (≈ 25 % bloat; ~4,200 cells × ~32 B). This is the fixed cost of persisting non-trivially-sized artifacts in the cell model; we accept it.
+Each cell carries ~32 bytes of representation-hash and depth metadata, so a 520 KB proof pays ~175 KB of cell-tree overhead (≈ 33 % bloat; ~5,460 cells × ~32 B; includes ~33 % internal-node overhead from the 4-ary fanout). This is the fixed cost of persisting non-trivially-sized artifacts in the cell model under the `CellTraits::max_depth = 1024` constraint; we accept it. See §4.1a for the chunk-tree wire format.
 
 ### 17.2 Concrete mitigations in v1
 
@@ -2047,7 +2084,9 @@ Each cell carries ~32 bytes of representation-hash and depth metadata, so a 520 
 
 ### 17.3 Cell-count scaling frontier
 
-Plonky3 proofs under the FRI Option B pin (~520 KB typical, ~915 KB worst-case per tx — per P.2 measurement, `doc/uno-p2-path-research.md`) translate to ~4,200–7,400 cells per proof. Tractable, but it makes **cell count per tx** — not inline bit width — the binding scaling axis. Proof-chain traversal must keep ≤ 6 levels (raised from the pre-pivot ~5-level target to accommodate the ~10× larger proofs); use all four refs per internal node where possible.
+Plonky3 proofs under the FRI Option B pin (~520 KB typical, ~915 KB worst-case per tx — per P.2 measurement, `doc/uno-p2-path-research.md`) translate to ~5,460–9,800 cells per proof (including 4-ary internal-node overhead, §4.1a). Tractable, but it makes **cell count per tx** — not inline bit width — the binding scaling axis. Proof-tree walk depth is `⌈log₄(leaf_count)⌉ = 6–7 levels` at v1 shapes, well under `CellTraits::max_depth = 1024`.
+
+**Amendment (V1-3c-gamma, 2026-04-22)**: pre-V1-3c the spec implied a "linked chain" / linear layout for oversized blobs. The C++ encoder `store_bytes_as_chunk_chain` followed that layout and produced linear depth = `N-1` for `N` chunks. At realistic v1 `zk_proof` sizes (~4094 chunks) this exceeded `CellTraits::max_depth = 1024`; the daemon's BoC deserializer rejected such Transfers with `"Depth is too big"`. The bug was latent because existing C++ codec tests (`uno/test/test-codec-shapes.cpp`) exercised the path with 64 B payloads only. V1-3c's cross-language parity bridge (`tosctl/uno/tests/boc_parity.rs`) first ran the path at realistic sizes and surfaced the regression. The fix formalizes §4.1a's 4-ary chunk-tree layout in both implementations; the consensus-binding cell-hashes are now defined by the tree structure, not the linear chain. This is a wire-format change applied pre-v1-launch; there is no backward-compatibility surface to preserve.
 
 Phase 3 (Tachyon-compatible) would move `enc_ciphertext` and `mlkem_ct` off-chain entirely, shrinking on-chain per-tx to just the proof + commitments + nullifiers. This is the long-term route to reducing cell-tree scaling pressure.
 

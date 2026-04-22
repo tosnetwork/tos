@@ -27,10 +27,13 @@
 //!     ref[2] → zk_proof chunk chain
 //! ```
 //!
-//! Chunk chains follow the CellString convention:
-//!   - Up to 127 bytes inline per cell.
-//!   - Trailing 1 bit: `1` = more chunks (1st ref is the next cell);
-//!     `0` = terminal chunk, no ref.
+//! Chunk chains follow the §4.1a 4-ary chunk tree spec:
+//!   - Leaf cell: 1..127 bytes inline, 0 refs (identified by 0 refs).
+//!   - Internal cell: 0 bits, 1..4 refs to children left-to-right.
+//!   - Canonical: leaves in byte order, fold by 4 bottom-up.
+//!   - Depth = ⌈log₄(N_leaves)⌉ ≤ 7 at v1 worst case, far under
+//!     CellTraits::max_depth = 1024 (see doc/uno-workchain.md §4.1a,
+//!     §17.3 amendment for V1-3c-gamma rationale).
 //!
 //! This module is the authoritative wallet-side encoder post-V1-3b.
 //! `transfer::encode_transfer_wire` is retained for unit-testing the
@@ -47,8 +50,11 @@ use crate::transfer::{
     OUT_CIPHERTEXT_BYTES,
 };
 
-// Mirror of `uno/core/transaction.cpp:72` `kChunkBytes`.
+// Mirror of `uno/core/transaction.cpp` `kChunkBytes`.
 const CHUNK_BYTES: usize = 127;
+// Mirror of `uno/core/transaction.cpp` `kChunkTreeFanout`. Bounded above
+// by the TOS Cell `max_refs = 4`.
+const CHUNK_TREE_FANOUT: usize = 4;
 // Mirror of `uno/core/transaction.cpp` `kItemInlineHeadBytes`. The per-spend
 // and per-output cells inline up to 127 bytes, with the remainder in a
 // single continuation ref.
@@ -66,39 +72,59 @@ const OUTPUT_INLINE_BYTES: usize = 32 + 32 + 2 + OUT_CIPHERTEXT_BYTES;
 // Chunk-chain helpers
 // ---------------------------------------------------------------------------
 
-/// Build a chunk-chain BoC Cell tree from a byte blob. Mirrors
+/// Build a 4-ary chunk-tree Cell from a byte blob (§4.1a). Mirrors
 /// `uno/core/transaction.cpp::store_bytes_as_chunk_chain`.
 ///
 /// Returns `Ok(None)` for an empty input (matches the C++ helper's
 /// "bytes.empty() -> {}" behavior). Non-empty inputs always produce a
 /// non-null Cell.
+///
+/// Wire format (consensus-binding, see `doc/uno-workchain.md §4.1a`):
+/// - Leaf cell: 1..127 B inline, 0 refs. Identified by 0 refs.
+/// - Internal cell: 0 bits, 1..4 refs left-to-right in byte order.
+///
+/// Canonical construction:
+/// 1. Split input into 127-byte chunks left-to-right; last chunk 1..127 B.
+/// 2. Build leaf cells in order.
+/// 3. Fold 4-ary bottom-up: each layer groups consecutive cells in chunks
+///    of 4 (last group may have 1..4), one internal cell per group, until
+///    a single root remains.
 fn store_bytes_as_chunk_chain(bytes: &[u8]) -> Result<Option<Cell>> {
     if bytes.is_empty() {
         return Ok(None);
     }
-    let total = bytes.len();
-    let n_chunks = (total + CHUNK_BYTES - 1) / CHUNK_BYTES;
 
-    // Build the chain back-to-front: terminal chunk first, then prepend.
-    let mut next: Option<Cell> = None;
-    for i in (0..n_chunks).rev() {
+    // Step 1: build leaf cells in byte order.
+    let total = bytes.len();
+    let n_leaves = (total + CHUNK_BYTES - 1) / CHUNK_BYTES;
+    let mut level: Vec<Cell> = Vec::with_capacity(n_leaves);
+    for i in 0..n_leaves {
         let start = i * CHUNK_BYTES;
         let end = core::cmp::min(start + CHUNK_BYTES, total);
         let chunk = &bytes[start..end];
-
         let mut cb = BuilderData::default();
-        // Inline bytes (8 bits × chunk.len()).
         cb.append_raw(chunk, chunk.len() * 8)?;
-        // has_next bit.
-        if let Some(n) = next.take() {
-            cb.append_bit_one()?;
-            cb.checked_append_reference(n)?;
-        } else {
-            cb.append_bit_zero()?;
-        }
-        next = Some(cb.finalize(chain_block::cell::MAX_DEPTH)?);
+        level.push(cb.finalize(MAX_DEPTH)?);
     }
-    Ok(next)
+
+    // Step 2: fold 4-ary bottom-up until a single root remains.
+    while level.len() > 1 {
+        let next_cap = (level.len() + CHUNK_TREE_FANOUT - 1) / CHUNK_TREE_FANOUT;
+        let mut next_level: Vec<Cell> = Vec::with_capacity(next_cap);
+        let mut i = 0;
+        while i < level.len() {
+            let group_end = core::cmp::min(i + CHUNK_TREE_FANOUT, level.len());
+            let mut cb = BuilderData::default();
+            for child in level.iter().take(group_end).skip(i) {
+                cb.checked_append_reference(child.clone())?;
+            }
+            next_level.push(cb.finalize(MAX_DEPTH)?);
+            i = group_end;
+        }
+        level = next_level;
+    }
+
+    Ok(Some(level.into_iter().next().unwrap()))
 }
 
 /// Build a "head + continuation" cell pair for a fixed-length inline
@@ -369,7 +395,6 @@ mod tests {
         // Sweep the 1..=4 × 1..=4 envelope. Every shape must encode
         // without panic and produce at least the 448-bit header + 3 refs.
         use chain_block::boc::BocReader;
-        use std::io::Cursor;
 
         for n_s in 1..=4 {
             for n_o in 1..=4 {
@@ -398,14 +423,21 @@ mod tests {
                     n_o,
                     "{n_s}/{n_o} outputs_root ref count"
                 );
-                // zk_proof chunk chain's first cell is at ref[2]; it has
-                // 127 B inline + 1 has-next bit = 1017 bits, and either
-                // 0 or 1 refs depending on payload size.
+                // zk_proof chunk-tree root is at ref[2]. Under §4.1a the
+                // root of a >127 B payload is an internal cell: 0 data
+                // bits, 1..4 refs. At sample_transfer's 520 KB zk_proof
+                // (~4193 leaves) the root sits at depth 7 and has 1..4
+                // refs depending on the trailing 4-group shape.
                 let zk_root = root.reference(2).expect("zk_proof");
                 assert_eq!(
                     zk_root.bit_length(),
-                    127 * 8 + 1,
-                    "zk_proof first cell: 127 B + 1 has_next bit"
+                    0,
+                    "zk_proof root is an internal cell (no data bits)"
+                );
+                let zk_root_refs = zk_root.references_count();
+                assert!(
+                    (1..=4).contains(&zk_root_refs),
+                    "zk_proof root has 1..4 refs; got {zk_root_refs}"
                 );
             }
         }
@@ -447,47 +479,63 @@ mod tests {
     }
 
     #[test]
-    fn boc_encode_chunk_chain_terminates_with_has_next_zero() {
+    fn boc_encode_chunk_tree_shape_and_depth() {
+        // §4.1a: chunk tree is a balanced 4-ary tree. Leaves hold 1..127
+        // bytes inline with 0 refs; internal cells have 0 data bits and
+        // 1..4 refs. Tree depth for N leaves = ⌈log₄(N)⌉. For
+        // sample_transfer's 520 KB zk_proof → 4193 leaves → depth 7.
         use chain_block::boc::BocReader;
         use std::io::Cursor;
 
         let tx = sample_transfer(1, 1);
         let bytes = encode_transfer_boc(&tx).expect("encode");
-        let mut cursor = Cursor::new(bytes.clone());
+        let mut cursor = Cursor::new(bytes);
         let parsed = BocReader::new()
             .set_max_cell_depth(MAX_DEPTH)
             .read(&mut cursor)
             .expect("read_boc");
         let root = &parsed.roots[0];
+        let zk_root = root.reference(2).expect("zk_proof root");
 
-        // Walk the zk_proof chunk chain to the tail — verify every
-        // intermediate cell has 127 B inline + 1 has_next bit + 1 ref,
-        // and the terminal cell has its has_next bit cleared + 0 refs.
-        let mut cell = root.reference(2).expect("zk_proof root").clone();
-        let mut depth = 0usize;
-        loop {
-            depth += 1;
+        // DFS-walk the tree counting leaves + max depth, validating shape
+        // at every cell.
+        let mut leaves = 0usize;
+        let mut max_depth = 0usize;
+        let mut stack: Vec<(Cell, usize)> = vec![(zk_root.clone(), 1)];
+        while let Some((cell, depth)) = stack.pop() {
+            max_depth = max_depth.max(depth);
             let bits = cell.bit_length();
             let refs = cell.references_count();
-
-            // Payload bytes = (bits - 1) / 8. Must be ≤ 127.
-            assert!(
-                bits >= 1 && (bits - 1) % 8 == 0,
-                "chunk cell has 8k+1 bits; got {bits}"
-            );
-            let payload_bytes = (bits - 1) / 8;
-            assert!(payload_bytes <= 127, "chunk payload ≤ 127 B");
-
             if refs == 0 {
-                // Terminal chunk — has_next bit should be 0.
-                break;
+                // Leaf.
+                leaves += 1;
+                assert!(bits > 0 && bits % 8 == 0, "leaf bits must be 8k; got {bits}");
+                let len = bits / 8;
+                assert!(len <= 127, "leaf payload ≤ 127 B; got {len}");
             } else {
-                assert_eq!(refs, 1, "non-terminal chunk has exactly 1 ref");
-                cell = cell.reference(0).unwrap().clone();
+                // Internal.
+                assert_eq!(bits, 0, "internal cell has 0 data bits; got {bits}");
+                assert!(
+                    (1..=4).contains(&refs),
+                    "internal cell has 1..4 refs; got {refs}"
+                );
+                for k in 0..refs {
+                    let child = cell.reference(k).expect("ref").clone();
+                    stack.push((child, depth + 1));
+                }
             }
-            assert!(depth < 10_000, "chunk chain too long, likely bug");
+            assert!(max_depth <= 20, "chunk tree depth runaway: {max_depth}");
         }
-        // 520 KB / 127 = ~4,096 chunks; assert we walked roughly that.
-        assert!(depth > 1000 && depth < 5000, "depth ~ 4,100 expected; got {depth}");
+
+        // 520 KB / 127 = 4193 leaves expected.
+        assert!(
+            (4000..=4300).contains(&leaves),
+            "expected ~4193 leaves; got {leaves}"
+        );
+        // ⌈log₄(4193)⌉ = 7. Add 1 for the root-layer count. Allow ±1 slack.
+        assert!(
+            (6..=8).contains(&max_depth),
+            "expected tree depth 6..=8; got {max_depth}"
+        );
     }
 }
