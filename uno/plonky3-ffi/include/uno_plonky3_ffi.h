@@ -473,6 +473,25 @@
 // Total number of public-input Goldilocks elements bound in-circuit.
 #define NUM_BLOCK_PI_ELEMS 8
 
+// `log2` of the 16-bit range-table height.
+#define LOG_RANGE_TABLE_HEIGHT 16
+
+// Height of the 16-bit range table (= `2^16`).
+#define RANGE_TABLE_HEIGHT (1 << LOG_RANGE_TABLE_HEIGHT)
+
+// Width of the `Range16Air` main trace: a single multiplicity column
+// `mult[i]` recording how many times the preprocessed table entry
+// `i` is read by other AIRs via `Kind::Global("u16_range")`. In the
+// Phase 3b-step3-prep skeleton the main trace is not yet generated;
+// the value is pinned here so callers wiring the full LogUp know the
+// expected width ahead of time.
+#define MAIN_TRACE_WIDTH 1
+
+// Width of the `Range16Air` preprocessed trace: a single column
+// containing the canonical `table[i] == i` range table for
+// `i ∈ 0..2^16`.
+#define PREPROCESSED_TRACE_WIDTH 1
+
 // Maximum spend count (§4.1 ConfigParam 84).
 #define MAX_SPENDS 4
 

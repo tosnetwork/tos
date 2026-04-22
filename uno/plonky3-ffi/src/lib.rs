@@ -73,6 +73,7 @@ pub mod open_input;
 pub mod permute;
 pub mod prover;
 pub mod query_verifier_air;
+pub mod range16_air;
 pub mod transfer_air;
 pub mod verifier;
 pub mod verifier_air;
