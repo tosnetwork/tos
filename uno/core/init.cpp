@@ -125,6 +125,10 @@ bool fetch_live_u64(vm::CellSlice& cs, uint64_t& out) {
     return true;
 }
 
+td::Bits256 cell_hash_bits(const td::Ref<vm::Cell>& cell) {
+    return td::Bits256{cell->get_hash().bits()};
+}
+
 // ---------------------------------------------------------------------------
 // LiveUnoState — A6 consensus UnoState backed by A2 primitives.
 // ---------------------------------------------------------------------------
@@ -186,7 +190,7 @@ class LiveUnoState : public UnoState {
     uint64_t burned_fees()const { return stats_burned_fees_; }
 
     // --- Config override (boot time) -----------------------------------------
-    void set_block_seqno(uint64_t s) { block_seqno_ = s; }
+    void set_block_seqno(uint64_t s);
 
     // --- Per-block staging ---------------------------------------------------
     // Called by compute-phase at end-of-tx (after apply_transfer returns Ok).
@@ -281,7 +285,10 @@ class LiveUnoState : public UnoState {
     std::unordered_map<std::string, TxStatusEntry> tx_status_index_;
 
     bool server_scan_enabled_{false};
-    bool hydrated_from_cell_{false};
+    mutable bool has_live_state_cell_hash_{false};
+    mutable td::Bits256 live_state_cell_hash_{};
+
+    void reset_consensus_state_to_empty_locked();
 };
 
 LiveUnoState::LiveUnoState()
@@ -304,6 +311,23 @@ LiveUnoState::LiveUnoState()
 }
 
 // ----- UnoState contract implementation ------------------------------------
+
+void LiveUnoState::reset_consensus_state_to_empty_locked() {
+    commitment_tree_ = std::make_unique<CommitmentTree>();
+    nullifier_set_ = std::make_unique<NullifierSet>();
+    anchor_window_ = std::make_unique<AnchorWindow>();
+
+    const NoteHash& empty_root = commitment_tree_->get_root();
+    std::copy(empty_root.begin(), empty_root.end(), current_root_.begin());
+    anchor_window_->push(empty_root);
+
+    next_output_global_index_ = 0;
+    stats_burned_fees_ = 0;
+    stats_tx_count_ = 0;
+    stats_note_count_ = 0;
+    has_live_state_cell_hash_ = false;
+    live_state_cell_hash_.set_zero();
+}
 
 bool LiveUnoState::anchor_window_contains(const td::Bits256& anchor) const {
     NoteHash h{};
@@ -386,16 +410,28 @@ td::Ref<vm::Cell> LiveUnoState::serialize_to_cell() const {
     if (!cb.store_ref_bool(std::move(tree_cell))) return {};
     if (!cb.store_ref_bool(std::move(nullifier_cell))) return {};
     if (!cb.store_ref_bool(std::move(meta_cell))) return {};
-    return cb.finalize();
+    auto out = cb.finalize();
+    if (out.not_null()) {
+        live_state_cell_hash_ = cell_hash_bits(out);
+        has_live_state_cell_hash_ = true;
+    }
+    return out;
 }
 
 bool LiveUnoState::hydrate_from_cell_if_needed(td::Ref<vm::Cell> root) {
     if (root.is_null()) {
+        std::lock_guard<std::mutex> lk(mutex_);
+        if (has_live_state_cell_hash_ || next_output_global_index_ != 0 ||
+            stats_burned_fees_ != 0 || stats_tx_count_ != 0 ||
+            stats_note_count_ != 0) {
+            reset_consensus_state_to_empty_locked();
+        }
         return true;
     }
 
+    const td::Bits256 incoming_hash = cell_hash_bits(root);
     std::lock_guard<std::mutex> lk(mutex_);
-    if (hydrated_from_cell_) {
+    if (has_live_state_cell_hash_ && live_state_cell_hash_ == incoming_hash) {
         return true;
     }
 
@@ -505,8 +541,14 @@ bool LiveUnoState::hydrate_from_cell_if_needed(td::Ref<vm::Cell> root) {
     stats_burned_fees_ = burned_fees;
     stats_tx_count_ = tx_count;
     stats_note_count_ = note_count;
-    hydrated_from_cell_ = true;
+    live_state_cell_hash_ = incoming_hash;
+    has_live_state_cell_hash_ = true;
     return true;
+}
+
+void LiveUnoState::set_block_seqno(uint64_t s) {
+    std::lock_guard<std::mutex> lk(mutex_);
+    block_seqno_ = s;
 }
 
 uint32_t LiveUnoState::expected_chain_id() const {
@@ -1133,6 +1175,9 @@ void init_uno_workchain(const std::string& db_root) {
                 cp.vm_final_state_hash.set_zero();
                 cp.vm_log = "uno: persisted state rejected";
                 return true;
+            }
+            if (g_live) {
+                g_live->set_block_seqno(block_seqno);
             }
             return run_compute_phase(
                 cp, in_msg_body, gas_limit,

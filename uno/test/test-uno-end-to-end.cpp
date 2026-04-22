@@ -390,7 +390,8 @@ static bool fetch_u64(vm::CellSlice& cs, uint64_t& out) {
 static bool assert_live_state_serializes(uint64_t expected_next_position,
                                          uint64_t expected_burned_fees,
                                          uint64_t expected_tx_count,
-                                         uint64_t expected_note_count) {
+                                         uint64_t expected_note_count,
+                                         bool expect_nullifier_root = true) {
     auto cell = uw::serialize_live_uno_state_for_test();
     if (cell.is_null()) {
         tprintf("  FAILED: LiveUnoState serialize_to_cell returned null\n");
@@ -431,8 +432,9 @@ static bool assert_live_state_serializes(uint64_t expected_next_position,
 
     auto nf_cell = cs.prefetch_ref(1);
     auto nf_cs = vm::load_cell_slice(nf_cell);
-    if (!nf_cs.fetch_long_bool(1, v) || v == 0) {
-        tprintf("  FAILED: live state nullifier wrapper not populated\n");
+    if (!nf_cs.fetch_long_bool(1, v) ||
+        ((v != 0) != expect_nullifier_root)) {
+        tprintf("  FAILED: live state nullifier wrapper presence mismatch\n");
         return false;
     }
 
@@ -506,6 +508,11 @@ static void test_two_wallet_e2e() {
     // Rotate end-of-block so anchor window captures the post-genesis root
     // and block_seqno advances to 1.
     uw::end_of_block_hook();
+    auto persisted_genesis_state = uw::serialize_live_uno_state_for_test();
+    if (persisted_genesis_state.is_null()) {
+        tprintf("  FAILED: genesis live state serialize returned null\n");
+        return;
+    }
 
     // Pull anchor via RPC.
     auto anchor_r = uw::handle_uno_rpc("uno_getAnchor", "[]", "1");
@@ -779,6 +786,24 @@ static void test_two_wallet_e2e() {
                                       /*expected_burned_fees=*/kFee,
                                       /*expected_tx_count=*/2,
                                       /*expected_note_count=*/3)) {
+        return;
+    }
+    if (!uw::hydrate_live_uno_state_from_cell_for_test(persisted_genesis_state)) {
+        tprintf("  FAILED: live state hydrate_from_cell rejected genesis cell\n");
+        return;
+    }
+    auto nfr_after_rewind = uw::handle_uno_rpc("uno_getNullifierStatus", params, "11");
+    if (!nfr_after_rewind || nfr_after_rewind->is_error ||
+        nfr_after_rewind->json.find("\"spent\":true") != std::string::npos) {
+        tprintf("  FAILED: hydrate did not rewind nullifier state: %s\n",
+                nfr_after_rewind ? nfr_after_rewind->json.c_str() : "(nullopt)");
+        return;
+    }
+    if (!assert_live_state_serializes(/*expected_next_position=*/1,
+                                      /*expected_burned_fees=*/0,
+                                      /*expected_tx_count=*/1,
+                                      /*expected_note_count=*/1,
+                                      /*expect_nullifier_root=*/false)) {
         return;
     }
 
