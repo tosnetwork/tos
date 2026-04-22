@@ -41,7 +41,7 @@
 use std::io::Cursor;
 
 use chain_block::boc::BocReader;
-use chain_block::cell::{Cell, SliceData, MAX_DEPTH};
+use chain_block::cell::{Cell, CellType, SliceData, MAX_DEPTH};
 
 use crate::boc_encode::store_bytes_as_chunk_chain;
 use crate::transfer::{
@@ -230,6 +230,19 @@ fn load_bytes_from_chunk_chain(root: Cell) -> Result<Vec<u8>, DecodeError> {
         cell_count += 1;
         if cell_count > K_CHUNK_TREE_MAX_CELLS {
             return Err(DecodeError::ChunkChainTooLong);
+        }
+        // §4.1a: chunk trees use ORDINARY cells only. Special cells
+        // (PrunedBranch, MerkleProof, LibraryReference, MerkleUpdate) are
+        // rejected explicitly — an adversary could otherwise pick a
+        // PrunedBranch's stored hash to collide with the canonical
+        // re-encode's repr_hash, slipping past the canonicality check below.
+        // C++ parity: `uno/core/transaction.cpp::scan_chunk_tree` applies
+        // the same guard (closing a validator-daemon DoS vector there).
+        if cell.cell_type() != CellType::Ordinary {
+            return Err(DecodeError::MalformedChunkCell(format!(
+                "chunk tree cell has non-ordinary type {:?}",
+                cell.cell_type()
+            )));
         }
         let cs = SliceData::load_cell(cell)
             .map_err(|e| DecodeError::MalformedChunkCell(format!("load_cell: {e}")))?;

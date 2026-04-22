@@ -681,11 +681,13 @@ Every signature and every ZK-proof public input binds `tx_hash` (or equivalently
 `enc_ciphertext`, `mlkem_ct`, and `zk_proof` are over-sized byte blobs (up to ~915 KB for `zk_proof` worst case) that do not fit in a single cell (max 127 B per §17). They are encoded as a **balanced 4-ary chunk tree** rooted at the `^Cell` ref. This is the canonical realization of §17.3's "4-ref fan-out, ≤ 6 levels" doctrine for all Uno oversized-blob fields.
 
 **Leaf cell** (holds raw bytes):
+- **Cell type**: ordinary cell only; special cells (`PrunedBranch`, `MerkleProof`, `MerkleUpdate`, `Library`) are invalid in chunk trees.
 - **Data bits**: `8·L`, where `L ∈ [1..127]` is the leaf's byte count. No length prefix, no type tag — `L` is inferred from the cell's bit length.
 - **Refs**: 0.
 - **Identification**: a cell with 0 refs is a leaf.
 
 **Internal cell** (fanout node):
+- **Cell type**: ordinary cell only.
 - **Data bits**: 0.
 - **Refs**: `k ∈ [1..4]` child refs, left-to-right in byte order.
 - **Identification**: a cell with ≥ 1 ref is internal.
@@ -701,11 +703,11 @@ Edge case: if input is ≤ 127 B, the tree is a single leaf (no internal cells).
 
 **Depth bound**: for `N` leaves, tree depth is `⌈log₄(N)⌉`. At v1 worst case `N = ⌈915 KB / 127 B⌉ = 7370 leaves`, depth = `⌈log₄(7370)⌉ = 7` — well under `CellTraits::max_depth = 1024`. (The pre-V1-3c-gamma linear chain used depth `N-1 = 7369`, which hit the 1024 cap as a latent protocol bug; see §17.3 amendment history.)
 
-**Walk cost**: decoder visits every cell exactly once; total cells ≈ `N + N/4 + N/16 + ... ≈ 4N/3`, i.e. ~33 % overhead above the leaf count. For v1 `zk_proof` typical: ~4094 leaves + ~1365 internal = ~5459 cells per proof. Each internal cell serializes to ~5 B descriptor + 4 × 2 B refs = ~13 B; aggregate BoC overhead ≈ 18 KB on a 520 KB proof (3.5 %). Negligible.
+**Walk cost**: decoder walks every child edge in the chunk tree; total canonical cells ≈ `N + N/4 + N/16 + ... ≈ 4N/3`, i.e. ~33 % overhead above the leaf count. For v1 `zk_proof` typical: ~4094 leaves + ~1365 internal = ~5459 cells per proof. Each internal cell serializes to ~5 B descriptor + 4 × 2 B refs = ~13 B; aggregate BoC overhead ≈ 18 KB on a 520 KB proof (3.5 %). Negligible.
 
 **Consensus-binding**: the 4-grouping rule, the left-to-right leaf order, and the 127 B chunk size are consensus-binding for `enc_ciphertext` / `mlkem_ct` because they determine the cell hashes covered by `tx_hash` via the `cell_hash(enc_ciphertext)` / `cell_hash(mlkem_ct)` terms in the §4.1 hash preimage. `zk_proof` is excluded from `tx_hash`; validators recover its byte stream from the bounded chunk tree and pass those bytes to the verifier, so its tree shape is an admission/resource-accounting constraint rather than a signed-message input.
 
-**Canonicality and bounds check** (decoder): every decoder MUST enforce `total_leaves ≤ kChunkChainMaxChunks = 8192` during the DFS walk, MUST cap total visited cells (`kChunkTreeMaxCells = 16384` in the reference implementations), and MUST reject a tree whose root hash differs from re-encoding the recovered byte stream with the canonical construction above. The leaf bound caps payload bytes; the total-cell bound and canonical root-hash check prevent malformed non-canonical trees from hiding excessive internal-node work behind a small leaf count. 8192 leaves ≈ 1040 KB, ~14 % above the 915 KB 4/4 worst case.
+**Canonicality and bounds check** (decoder): every decoder MUST reject special cells, MUST enforce `total_leaves ≤ kChunkChainMaxChunks = 8192` during the DFS walk, MUST cap total visited cells (`kChunkTreeMaxCells = 16384` in the reference implementations), and MUST reject a tree whose root hash differs from re-encoding the recovered byte stream with the canonical construction above. The leaf bound caps payload bytes; the total-cell bound and canonical root-hash check prevent malformed non-canonical trees from hiding excessive internal-node work behind a small leaf count. 8192 leaves ≈ 1040 KB, ~14 % above the 915 KB 4/4 worst case.
 
 Reference implementations:
 - C++: `uno/core/transaction.cpp::store_bytes_as_chunk_chain` / `load_bytes_from_chunk_chain`.
@@ -775,10 +777,11 @@ The Plonky3 proof attests claims 1–8 in one shot. The verifier additionally ch
    1. `version == 1`, `scheme_id == 0x01`, `chain_id == expected`.
    2. `expiry_block ≥ current_block` AND `expiry_block ≤ current_block + expiry_window_blocks` (ConfigParam 84).
    3. `1 ≤ spend_count ≤ 4`, `1 ≤ output_count ≤ 4`.
-   4. `fee ≥ min_fee_nano + fee_per_byte_nano · tx_size_bytes + fee_per_spend_nano · spend_count + fee_per_output_nano · output_count`.
-   5. `anchor` matches one of the 100 roots in `state.anchor_window`.
-   6. All `spend.nullifier` pairwise distinct within tx; all `output.cm` pairwise distinct within tx.
-   7. Every 32-byte Ristretto255 point field (`rk`, `epk`) decompresses to a valid non-identity point on Ristretto255.
+   4. `expiry_block < p_Goldilocks` and `fee < p_Goldilocks` (both are single-field public inputs; out-of-range values are deterministic rejects before public-input assembly).
+   5. `fee ≥ min_fee_nano + fee_per_byte_nano · tx_size_bytes + fee_per_spend_nano · spend_count + fee_per_output_nano · output_count`, evaluated with checked integer arithmetic. If the configured expression overflows `uint64`, the requirement is unpayable and the tx is rejected as insufficient-fee.
+   6. `anchor` matches one of the 100 roots in `state.anchor_window`.
+   7. All `spend.nullifier` pairwise distinct within tx; all `output.cm` pairwise distinct within tx.
+   8. Every 32-byte Ristretto255 point field (`rk`, `epk`) decompresses to a valid non-identity point on Ristretto255.
 2. **Nullifier not-spent**: for each spend, `nf ∉ nullifier_set` (LRU hit is sufficient for positive-lookup reject; negative LRU must be followed by a cell-dict lookup per §5.3).
 3. **Each `spend_auth_sig`** verifies as Schnorr-on-Ristretto255 under the corresponding `rk`, signed over `tx_hash` (BLAKE3 over canonical tx bytes excluding signatures and proof).
 4. **Plonky3 proof** verifies (covers claims 1–8 from §4.2). Public inputs are assembled into a canonical Goldilocks field-element vector. Verifier and prover must agree **bit-identically**; the encoding below is consensus-binding and pinned for `scheme_id = 0x01`.

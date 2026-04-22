@@ -43,6 +43,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -81,12 +82,40 @@ namespace {
 
 // §4.3 step 1.4: fee >= min_fee_nano + fee_per_byte·size + fee_per_spend·|S|
 //                + fee_per_output·|O|.
-uint64_t required_fee(const UnoState& state, const Transfer& tx) noexcept {
-    uint64_t size_bytes = tx.wire_size_bytes;
-    return state.min_fee_nano()
-         + state.fee_per_byte_nano()   * size_bytes
-         + state.fee_per_spend_nano()  * tx.spends.size()
-         + state.fee_per_output_nano() * tx.outputs.size();
+bool checked_add_u64(uint64_t a, uint64_t b, uint64_t& out) noexcept {
+    if (a > std::numeric_limits<uint64_t>::max() - b) return false;
+    out = a + b;
+    return true;
+}
+
+bool checked_mul_u64(uint64_t a, uint64_t b, uint64_t& out) noexcept {
+    if (a != 0 && b > std::numeric_limits<uint64_t>::max() / a) return false;
+    out = a * b;
+    return true;
+}
+
+bool add_fee_component(uint64_t& total, uint64_t rate, uint64_t units) noexcept {
+    uint64_t part = 0;
+    if (!checked_mul_u64(rate, units, part)) return false;
+    return checked_add_u64(total, part, total);
+}
+
+// §4.3 step 1.4. Returns false if the configured fee expression exceeds
+// uint64; no transaction can pay that requirement, so callers reject as
+// InsufficientFee instead of accepting a wrapped value.
+bool required_fee(const UnoState& state, const Transfer& tx, uint64_t& out) noexcept {
+    uint64_t total = state.min_fee_nano();
+    if (!add_fee_component(total, state.fee_per_byte_nano(), tx.wire_size_bytes)) {
+        return false;
+    }
+    if (!add_fee_component(total, state.fee_per_spend_nano(), tx.spends.size())) {
+        return false;
+    }
+    if (!add_fee_component(total, state.fee_per_output_nano(), tx.outputs.size())) {
+        return false;
+    }
+    out = total;
+    return true;
 }
 
 // Per-thread Plonky3 verifier holder. Lazy-initialised once per worker
@@ -138,8 +167,8 @@ VerifyResult verify_transfer_with_holder(const UnoState& state,
     if (tx.chain_id != state.expected_chain_id()) return VerifyResult::BadChainId;
 
     const uint64_t cur = state.current_block_seqno();
-    const uint64_t max_expiry = cur + state.expiry_window_blocks();
-    if (tx.expiry_block < cur || tx.expiry_block > max_expiry) {
+    if (tx.expiry_block < cur ||
+        tx.expiry_block - cur > state.expiry_window_blocks()) {
         return VerifyResult::ExpiryOutOfRange;
     }
     if (tx.spends.size() < kMinSpendCount || tx.spends.size() > kMaxSpendCount) {
@@ -148,7 +177,11 @@ VerifyResult verify_transfer_with_holder(const UnoState& state,
     if (tx.outputs.size() < kMinOutputCount || tx.outputs.size() > kMaxOutputCount) {
         return VerifyResult::BadOutputCount;
     }
-    if (tx.fee < required_fee(state, tx)) {
+    if (!public_input_scalars_fit_field(tx)) {
+        return VerifyResult::BadPublicInput;
+    }
+    uint64_t fee_floor = 0;
+    if (!required_fee(state, tx, fee_floor) || tx.fee < fee_floor) {
         return VerifyResult::InsufficientFee;
     }
 

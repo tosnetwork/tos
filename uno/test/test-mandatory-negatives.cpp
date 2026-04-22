@@ -474,6 +474,28 @@ static void test_stale_anchor_rejected_at_step_1_5() {
             uno_workchain::verify_result_name(r_good_anchor));
 }
 
+static void test_public_input_scalar_range_rejects_before_abort() {
+    tprintf("[TEST] test_public_input_scalar_range_rejects_before_abort\n");
+
+    FakeUnoState state;
+    uno_workchain::Transfer tx = make_syntactic_transfer_skeleton();
+    state.accept_anchor(tx.anchor);
+
+    // `fee` is encoded as one Goldilocks public-input element. Values
+    // >= p_Goldilocks are malformed: before this regression test they
+    // reached encode_u64(), which aborts the process. The verifier must
+    // reject deterministically before Schnorr / Plonky3 work.
+    tx.fee = uno_workchain::kPGoldilocks;
+    auto r = uno_workchain::verify_transfer_serial(state, tx);
+    if (r != uno_workchain::VerifyResult::BadPublicInput) {
+        tprintf("  FAILED: expected BadPublicInput for fee >= p_Goldilocks, got %s\n",
+                uno_workchain::verify_result_name(r));
+        return;
+    }
+
+    tprintf("  PASSED (fee >= p_Goldilocks -> BadPublicInput, no abort)\n");
+}
+
 static void test_inflation_rejected_at_air_claim_8() {
     tprintf("[TEST] test_inflation_rejected_at_air_claim_8\n");
     // Inflation is an IN-CIRCUIT reject — AIR claim 8 enforces
@@ -745,6 +767,7 @@ int main() {
     test_replay_rejected_at_nullifier();
     test_cross_chain_replay_rejected_at_plonky3();
     test_stale_anchor_rejected_at_step_1_5();
+    test_public_input_scalar_range_rejects_before_abort();
     test_inflation_rejected_at_air_claim_8();
     test_sender_linkage_chi_squared();
     test_receiver_linkage_chi_squared();

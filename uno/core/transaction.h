@@ -271,6 +271,12 @@ struct Plonky3PublicInputs {
 
 Plonky3PublicInputs build_plonky3_public_inputs(const Transfer& tx) noexcept;
 
+/// Return true iff every scalar that is encoded as a single Goldilocks
+/// public-input element is already in canonical field range. This must be
+/// checked before `build_plonky3_public_inputs()` on untrusted Transfers;
+/// otherwise a malformed `fee` or `expiry_block` would reach `encode_u64()`.
+bool public_input_scalars_fit_field(const Transfer& tx) noexcept;
+
 // ---------------------------------------------------------------------------
 // §4.3 step 4 encoding primitives (decision #5)
 // ---------------------------------------------------------------------------
@@ -281,8 +287,9 @@ inline constexpr uint64_t kPGoldilocks = 0xFFFFFFFF00000001ULL;
 
 /// Encode a u64 as one Goldilocks limb. `x` MUST satisfy `x < p_Goldilocks`;
 /// an out-of-range value is a consensus fault (adversary-controlled
-/// `expiry_block` / `fee` values are checked at admission per §4.3 step 4
-/// rationale). Returns `x` unchanged when in range; aborts otherwise.
+/// `expiry_block` / `fee` values are checked before public-input assembly per
+/// §4.3 step 4 rationale). Returns `x` unchanged when in range; aborts
+/// otherwise.
 uint64_t encode_u64(uint64_t x) noexcept;
 
 /// Encode a 32-byte field as 4 Goldilocks limbs (little-endian per §4.3

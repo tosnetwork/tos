@@ -358,6 +358,9 @@ static void case_reject_reason_mapping() {
         reject_reason_from_verify_result(40))) == "bad_proof",
         "VerifyResult::BadPlonky3Proof (40) -> bad_proof");
     EXPECT_TRUE(std::string(reject_reason_label(
+        reject_reason_from_verify_result(12))) == "malformed",
+        "VerifyResult::BadPublicInput (12) -> malformed");
+    EXPECT_TRUE(std::string(reject_reason_label(
         reject_reason_from_verify_result(90))) == "decode_error",
         "VerifyResult::DecodeError (90) -> decode_error");
     EXPECT_TRUE(std::string(reject_reason_label(

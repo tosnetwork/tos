@@ -106,7 +106,22 @@ bool scan_chunk_tree(td::Ref<vm::Cell> root, ChunkTreeStats& stats,
         if (cell.is_null()) return false;
         if (++stats.cells > kChunkTreeMaxCells) return false;
 
-        auto cs = vm::load_cell_slice(cell);
+        // §4.1a: chunk trees use ORDINARY cells only. Special cells
+        // (PrunedBranch, MerkleProof, Library, MerkleUpdate) are rejected
+        // EXPLICITLY here before calling vm::load_cell_slice, which would
+        // otherwise throw VmError on a special cell — and this function is
+        // noexcept, so a throw would std::terminate the validator daemon.
+        // That would be a trivial DoS vector: a single tx carrying a special
+        // cell in any chunk-tree ref position (enc_ct / mlkem_ct / zk_proof)
+        // would crash every validator that decodes it. This guard closes
+        // that vector; the canonicality re-encode + hash compare downstream
+        // in `load_bytes_from_chunk_chain` remains as defense-in-depth.
+        // We use `load_cell_slice_special(cell, is_special)` which (unlike
+        // `load_cell_slice`) does NOT throw on a special cell; instead it
+        // reports special-ness via the out-param and returns the raw slice.
+        bool is_special = false;
+        auto cs = vm::load_cell_slice_special(cell, is_special);
+        if (is_special) return false;
         const unsigned bits = cs.size();
         const unsigned n_refs = cs.size_refs();
         if (n_refs == 0) {
@@ -410,6 +425,10 @@ uint64_t encode_u64(uint64_t x) noexcept {
         std::abort();
     }
     return x;
+}
+
+bool public_input_scalars_fit_field(const Transfer& tx) noexcept {
+    return tx.expiry_block < kPGoldilocks && tx.fee < kPGoldilocks;
 }
 
 std::array<uint8_t, 32> encode_256(const uint8_t bytes[32]) noexcept {

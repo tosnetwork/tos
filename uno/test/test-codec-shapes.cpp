@@ -554,6 +554,35 @@ void test_malformed_chunk_tree_rejection() {
     tprintf("  PASSED  rejected with reason: \"%s\"\n", e.reason.c_str());
 }
 
+void test_special_chunk_tree_rejection() {
+    tprintf("[TEST] decode_transfer rejects special-cell enc_ciphertext chunk tree\n");
+
+    auto tx = build_transfer(1, 1);
+
+    // §4.1a chunk trees are ordinary cells only. A MerkleProof special cell
+    // used to make vm::load_cell_slice throw from a noexcept decoder helper,
+    // which would terminate the validator. It must now reject cleanly.
+    auto leaf = make_ref_cell("special-leaf", 0, 32);
+    tx.outputs[0].enc_ciphertext = vm::CellBuilder::create_merkle_proof(leaf);
+
+    auto enc = uno_workchain::encode_transfer(tx);
+    if (enc.is_error()) {
+        tprintf("  FAILED: baseline encode with special ref: %s\n",
+                enc.error().message().c_str());
+        return;
+    }
+
+    auto root = enc.move_as_ok();
+    auto cs = vm::load_cell_slice(root);
+    auto dr = uno_workchain::decode_transfer(cs);
+    if (std::holds_alternative<uno_workchain::Transfer>(dr)) {
+        tprintf("  FAILED: decoder accepted special-cell enc_ciphertext chunk tree\n");
+        return;
+    }
+    auto& e = std::get<uno_workchain::TransferDecodeError>(dr);
+    tprintf("  PASSED  rejected with reason: \"%s\"\n", e.reason.c_str());
+}
+
 void test_noncanonical_chunk_tree_rejection() {
     tprintf("[TEST] decode_transfer rejects non-canonical enc_ciphertext chunk tree\n");
 
@@ -613,6 +642,7 @@ int main() {
     }
     test_depth_bound_rejection();
     test_malformed_chunk_tree_rejection();
+    test_special_chunk_tree_rejection();
     test_noncanonical_chunk_tree_rejection();
 
     tprintf("\nTotal failures: %d, skips: %d\n",

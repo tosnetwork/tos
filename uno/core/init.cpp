@@ -59,6 +59,7 @@ UnoConfigView current_uno_config_view() noexcept;
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -589,14 +590,56 @@ std::optional<OutputsPage>     rpc_outputs_fetch_fn(uint64_t seqno,
 bool rpc_submit_external_message_fn(const std::string& tx_bytes,
                                      const uint8_t tx_hash[32]);
 
+bool checked_add_u64(uint64_t a, uint64_t b, uint64_t& out) noexcept {
+    if (a > std::numeric_limits<uint64_t>::max() - b) return false;
+    out = a + b;
+    return true;
+}
+
+bool checked_mul_u64(uint64_t a, uint64_t b, uint64_t& out) noexcept {
+    if (a != 0 && b > std::numeric_limits<uint64_t>::max() / a) return false;
+    out = a * b;
+    return true;
+}
+
+bool add_fee_component(uint64_t& total, uint64_t rate, uint64_t units) noexcept {
+    uint64_t part = 0;
+    if (!checked_mul_u64(rate, units, part)) return false;
+    return checked_add_u64(total, part, total);
+}
+
+bool compute_required_fee(uint64_t min_fee,
+                          uint64_t fee_per_byte,
+                          uint64_t fee_per_spend,
+                          uint64_t fee_per_output,
+                          uint64_t size_bytes,
+                          uint64_t n_spends,
+                          uint64_t n_outputs,
+                          uint64_t& out) noexcept {
+    uint64_t total = min_fee;
+    if (!add_fee_component(total, fee_per_byte, size_bytes)) return false;
+    if (!add_fee_component(total, fee_per_spend, n_spends)) return false;
+    if (!add_fee_component(total, fee_per_output, n_outputs)) return false;
+    out = total;
+    return true;
+}
+
 uint64_t rpc_estimate_fee_fn(uint32_t n_spends, uint32_t n_outputs) {
     auto cfg = current_uno_config_view();
     // Rough tx-size estimate; mirrors handlers.cpp's fallback branch.
     uint64_t est_bytes = 128ULL + (uint64_t)n_spends * 150 + (uint64_t)n_outputs * 1200;
-    return cfg.min_fee_nano
-         + cfg.fee_per_byte_nano   * est_bytes
-         + cfg.fee_per_spend_nano  * n_spends
-         + cfg.fee_per_output_nano * n_outputs;
+    uint64_t fee = 0;
+    if (!compute_required_fee(cfg.min_fee_nano,
+                              cfg.fee_per_byte_nano,
+                              cfg.fee_per_spend_nano,
+                              cfg.fee_per_output_nano,
+                              est_bytes,
+                              n_spends,
+                              n_outputs,
+                              fee)) {
+        return std::numeric_limits<uint64_t>::max();
+    }
+    return fee;
 }
 
 TxStatusResult rpc_tx_status_fn(const uint8_t tx_hash[32]) {
@@ -659,11 +702,22 @@ AdmissionResult rpc_admission_check_fn(const uint8_t* tx_bytes, size_t tx_len) {
     if (tx.chain_id  != cfg.chain_id)                { r.reason = AdmissionRejectReason::WrongChainId;  r.ok = false; bump_reject(r.reason); return r; }
     if (tx.spends.empty()  || tx.spends.size()  > cfg.max_spends_per_tx)  { r.reason = AdmissionRejectReason::TooManySpends;  r.ok = false; bump_reject(r.reason); return r; }
     if (tx.outputs.empty() || tx.outputs.size() > cfg.max_outputs_per_tx) { r.reason = AdmissionRejectReason::TooManyOutputs; r.ok = false; bump_reject(r.reason); return r; }
+    if (!public_input_scalars_fit_field(tx))         { r.reason = AdmissionRejectReason::Malformed;     r.ok = false; bump_reject(r.reason); return r; }
 
-    uint64_t required = cfg.min_fee_nano
-                      + cfg.fee_per_byte_nano   * tx.wire_size_bytes
-                      + cfg.fee_per_spend_nano  * tx.spends.size()
-                      + cfg.fee_per_output_nano * tx.outputs.size();
+    uint64_t required = 0;
+    if (!compute_required_fee(cfg.min_fee_nano,
+                              cfg.fee_per_byte_nano,
+                              cfg.fee_per_spend_nano,
+                              cfg.fee_per_output_nano,
+                              tx.wire_size_bytes,
+                              tx.spends.size(),
+                              tx.outputs.size(),
+                              required)) {
+        r.reason = AdmissionRejectReason::FeeBelowMin;
+        r.ok = false;
+        bump_reject(r.reason);
+        return r;
+    }
     if (tx.fee < required) { r.reason = AdmissionRejectReason::FeeBelowMin; r.ok = false; bump_reject(r.reason); return r; }
 
     if (!g_live->anchor_window_contains(tx.anchor)) {

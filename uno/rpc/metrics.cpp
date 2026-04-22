@@ -68,6 +68,7 @@ const char* verify_phase_label(VerifyPhase p) noexcept {
 //   9  DuplicateNullifierInTx   -> DuplicateNfInTx
 //  10  DuplicateCommitmentInTx  -> DuplicateCmInTx
 //  11  BadRistrettoPoint        -> BadPoint
+//  12  BadPublicInput           -> Malformed
 //  20  NullifierAlreadySpent
 //  30  BadSpendAuthSig          -> BadSig
 //  40  BadPlonky3Proof          -> BadProof
@@ -94,6 +95,7 @@ RejectReason reject_reason_from_verify_result(int v) noexcept {
         case 9:  return RejectReason::DuplicateNfInTx;
         case 10: return RejectReason::DuplicateCmInTx;
         case 11: return RejectReason::BadPoint;
+        case 12: return RejectReason::Malformed;
         case 20: return RejectReason::NullifierAlreadySpent;
         case 30: return RejectReason::BadSig;
         case 40: return RejectReason::BadProof;

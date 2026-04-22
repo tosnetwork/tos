@@ -108,6 +108,7 @@ const char* verify_result_name(VerifyResult r) noexcept {
         case VerifyResult::DuplicateNullifierInTx:  return "duplicate-nullifier-in-tx";
         case VerifyResult::DuplicateCommitmentInTx: return "duplicate-commitment-in-tx";
         case VerifyResult::BadRistrettoPoint:       return "bad-ristretto-point";
+        case VerifyResult::BadPublicInput:          return "bad-public-input";
         case VerifyResult::NullifierAlreadySpent:   return "nullifier-already-spent";
         case VerifyResult::BadSpendAuthSig:         return "bad-spend-auth-sig";
         case VerifyResult::BadPlonky3Proof:         return "bad-plonky3-proof";

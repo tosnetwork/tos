@@ -747,6 +747,7 @@ static void test_state_transition_apply() {
         if (v == "DuplicateNullifierInTx")   return VerifyResult::DuplicateNullifierInTx;
         if (v == "DuplicateCommitmentInTx")  return VerifyResult::DuplicateCommitmentInTx;
         if (v == "BadRistrettoPoint")        return VerifyResult::BadRistrettoPoint;
+        if (v == "BadPublicInput")           return VerifyResult::BadPublicInput;
         if (v == "NullifierAlreadySpent")    return VerifyResult::NullifierAlreadySpent;
         if (v == "BadSpendAuthSig")          return VerifyResult::BadSpendAuthSig;
         if (v == "BadPlonky3Proof")          return VerifyResult::BadPlonky3Proof;

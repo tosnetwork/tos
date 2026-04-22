@@ -102,6 +102,7 @@ enum class VerifyResult : int {
     DuplicateNullifierInTx      = 9,
     DuplicateCommitmentInTx     = 10,
     BadRistrettoPoint           = 11,
+    BadPublicInput              = 12,
     // nullifier set (§4.3 step 2)
     NullifierAlreadySpent       = 20,
     // sig verify (§4.3 step 3)
