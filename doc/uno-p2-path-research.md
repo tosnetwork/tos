@@ -378,6 +378,56 @@ positive):
 - Re-run all tests
 - **1–2 cryptographer-weeks**
 
+#### Progress log (M-P2 Phase 3b, 2026-04-22)
+
+iii-step-1 has landed:
+
+- `M-P2 Phase 0` (commit `5d9de8d3b`): batch-stark feasibility
+  side-by-side + R9 doc split (uni-stark pin retained; batch-stark
+  exists alongside for measurement).
+- `M-P2 Phase 1` (commit `6e86aea4b`): batch-stark round-trip + PI
+  parity sweep across all 1..4 × 1..4 shapes. Confirms single-
+  instance batch-stark is legal; no shape regression.
+- `M-P2 Phase 2` (commit `e3a43b4c6`): delegate Poseidon2 constraint
+  eval to upstream `p3-poseidon2-air` (vendored patch: re-export
+  `pub use air::*` + widen `eval` visibility to `pub`). Removes
+  ~180 LOC of handwritten Poseidon2 constraints.
+
+iii-step-2 is mid-flight — split into four sub-steps so each lands as
+a small atomic commit:
+
+- `M-P2 Phase 3a` (commit `e37f0914d`): link `p3-lookup` into the
+  workspace + a smoke test (`lookup_types_linkable_for_phase3b`) that
+  constructs an empty `Lookup<Goldilocks>` and verifies the type path.
+- `M-P2 Phase 3b-step1` (commit `ed388e4ca`): empty
+  `impl<F: Field> LookupAir<F> for MvpTransferAir {}` — type-level
+  preparation; does not yet register any lookups.
+- `M-P2 Phase 3b-step2` (commit `0e692fb01`): swap the 64 bit columns
+  (`VALUE_BITS = 64`) to 4 u16 limb columns (`VALUE_LIMBS_U16 = 4`)
+  and replace per-bit booleanness + weighted-bit-recon with weighted-
+  limb-recon. **Soundness gap — the per-limb `limb_k < 2^16`
+  range-check is NOT enforced by the AIR yet**; it lands in step3.
+  See the `VALUE_LIMBS_U16` docstring in
+  `uno/plonky3-ffi/src/transfer_air.rs` for the exact scope.
+- `M-P2 Phase 3b-step3` (NOT yet started): wire a `Kind::Global`
+  LogUp lookup from the 8 limb columns (4 spend × 4 output at worst
+  shape) into a new `Range16Air` AIR of height 2^16 = 65 536 with a
+  preprocessed range-table column. **Out of single-session scope**:
+  requires standing up a second batch-stark instance of very
+  different height, extending the prover/verifier to compute & check
+  the cross-AIR permutation product, and a measurement re-run to
+  validate the ≈−156 KB estimate. Aligns with the "1–2 cryptographer-
+  weeks" effort estimate above.
+
+Parallel/bundled with 3b-step3 (can happen in the same or later
+session):
+
+- M-P2 Phase 4: real 4-limb 32-byte field-material PI binding (the
+  Tier-1/Tier-2 split R9 — currently blocked because step2's
+  temporary soundness gap means we can't assert the Tier-2
+  invariants yet).
+- M-P2 Phase 5: switch FFI + regen goldens + validator integration.
+
 **Phase iii-step-3** (consensus-binding decision):
 - §16 decision-log amendment for the proof system change
 - §2.1 text update
