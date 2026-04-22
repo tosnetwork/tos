@@ -436,24 +436,181 @@ a small atomic commit:
   — the actual delta from LogUp under Option B FRI has not been
   directly measured and will need to be extracted from step3's
   own `shape_matrix` run.
-- `M-P2 Phase 3b-step3` (NOT yet started): wire a `Kind::Global`
-  LogUp lookup from the 8 limb columns (4 spend × 4 output at worst
-  shape) into a new `Range16Air` AIR of height 2^16 = 65 536 with a
-  preprocessed range-table column. **Out of single-session scope**:
-  requires standing up a second batch-stark instance of very
-  different height, extending the prover/verifier to compute & check
-  the cross-AIR permutation product, and a measurement re-run to
-  validate the ≈−156 KB estimate. Aligns with the "1–2 cryptographer-
-  weeks" effort estimate above.
+- `M-P2 Phase 3b-step3-prep` (commit `36f787a05`): standalone
+  `Range16Air` module skeleton at `uno/plonky3-ffi/src/range16_air.rs`
+  — stateless unit struct, `preprocessed_trace_values()` generator
+  producing a 2^16-row × 1-col `RowMajorMatrix<Goldilocks>` (row i =
+  `Goldilocks::from(i)`), 2 unit tests pinning the table shape +
+  boundary values.
+- `M-P2 Phase 3b-step3a` (commit `78f0a8baf`): `Range16Air` gains
+  `LookupAir<F>` with a `Kind::Global("u16_range")` `Direction::Send`
+  registration, single-element tuple `(preprocessed[0], multiplicity
+  = main[0])`, plus a `build_main_trace(reads: &[u16])` helper that
+  bucket-counts reads into the 65 536-row multiplicity column.
+- `M-P2 Phase 3b-step3` (commit `ad621a07f`): full cross-AIR wire-up
+  on the prove side — `MvpAirUnion` enum dispatch over
+  {`MvpTransferAir`, `Range16Air`}; `MvpBatchProver::
+  prove_with_range_check()` that feeds the two-AIR batch to
+  `prove_batch()` via `ProverData::from_airs_and_degrees`;
+  `MvpBatchVerifier::verify_with_range_check()` mirror. Prove
+  succeeds; verify fails with `OodEvaluationMismatch { index:
+  Some(0) }` — root-cause deferred to RCA-1.
+- `M-P2 Phase 3b-step3 RCA-1` (commit `630fba939`): two real bugs
+  found + fixed alongside an isolating diagnostic test:
+    - `Range16Air::max_constraint_degree()` was `Some(1)` — LogUp
+      folds a degree-2 constraint, tripping a debug assertion in
+      `batch-stark::symbolic`. Changed to `None`.
+    - `MvpTransferAir::main_next_row_columns()` defaulted to `[]`
+      despite `Air::eval` reading `main.next_slice()` for the
+      §4.2 proxies-constant transition check. `p3_batch_stark`
+      gates next-row opening on this method's non-empty return;
+      `[]` meant verifier read zeroed next-row data at OOD. Now
+      returns `(0..air_width).collect()`.
+    - OOD mismatch persists after the two fixes — step3 final
+      landing deferred one more commit.
+- `M-P2 Phase 3b-step3 FINAL` (commit `dadc249ec`): RCA-2 found the
+  third bug via surgical empty-lookup diagnostic: bundling N input
+  tuples into one `Kind::Global` Lookup raised the LogUp per-row
+  constraint polynomial degree to N+1 (denominator product of N
+  linear factors), which mis-interacted with batch-stark's quotient-
+  chunk sizing on wide AIRs (width ~797 at 1/1, ~1650 at 4/4). Fix:
+  split the single bundled lookup into N separate single-tuple
+  `Kind::Global("u16_range")` lookups — each a well-trodden degree-2
+  LogUp constraint, same interaction name so they all consume from
+  `Range16Air`'s single `Direction::Send`. Cost: 4·(n_s+n_o)
+  permutation-aux columns on `MvpTransferAir` side (8 at 1/1, 32 at
+  4/4) vs. 1 bundled. Trade accepted against the ≈−156 KB proof-
+  size savings the range-check migration unlocks.
 
-Parallel/bundled with 3b-step3 (can happen in the same or later
-session):
+  Research gap exposed: 3 parallel Explore sub-agents surveyed the
+  vendored `plonky3-uno` tree and confirmed **zero upstream tests
+  cover wide-AIR (width > 10 cols) + `Kind::Global` `Direction::
+  Receive` + high-index column cases**. The N-bundled-tuple path
+  was therefore previously-untested upstream. Candidate for an
+  upstream bug-report; for now a guard-rail regression test landed
+  in `transfer_air.rs::lookupair_must_stay_single_tuple_per_limb`
+  (commit `99fd4db71`, task #130).
 
-- M-P2 Phase 4: real 4-limb 32-byte field-material PI binding (the
-  Tier-1/Tier-2 split R9 — currently blocked because step2's
-  temporary soundness gap means we can't assert the Tier-2
-  invariants yet).
-- M-P2 Phase 5: switch FFI + regen goldens + validator integration.
+  All three round-trip tests green after FINAL:
+    - `batch_range_check_round_trip_1_1` (independent verifier-side
+      `from_airs_and_degrees` reconstruction)
+    - `batch_range_check_round_trip_1_1_shared_common` (shared
+      `prover_data.common` for the prove-verify pair)
+    - `batch_range_check_round_trip_4_4_worst_case` (§4.1 envelope
+      worst-case, 32 per-row u16 limb receives)
+
+#### Progress log (M-P2 Phase 4, 2026-04-22)
+
+Phase 4 achieves **byte-exact Rust ↔ C++ parity on every PI slot**:
+
+- `M-P2 Phase 4a` (commit `e83c2cce4`): 3 fields added — `rk_bytes`
+  (per spend), `epk_bytes` (per output), `filter_tag` (per output).
+  Each bound to PI via row-0 copy-constraint; witness wire format
+  already carried the real bytes from tosctl, so only the AIR
+  plumbing changed. +9 cols at 1/1, +36 cols at 4/4.
+- `M-P2 Phase 4b-step1` (commit `720481e0e`): anchor limbs 1..3 +
+  cm limbs 1..3 (upper 24 of 32 bytes of each). Same row-0 copy-
+  constraint pattern. Limb 0 stayed bound to the Poseidon2 / Merkle
+  proxy output, leaving a limb-0 byte-parity gap for tosctl real
+  witnesses (u64 proxy ≠ cm_bytes[0..8] in general).
+- `M-P2 Phase 4b-step2a` (commit `b508b3213`): cm limb 0 decoupled
+  — added `O_CM_LIMB0_REAL` column (holds `cm_bytes[0..8]` as u64
+  mod p), swapped `PI[pi_cm(j)+0]` binding from `O_CM_CLAIM`
+  (Poseidon2 output) to `O_CM_LIMB0_REAL`. `O_CM_CLAIM` stays in the
+  shared-wide-block claim-6 constraint as trace-internal; the AIR
+  no longer proves that `cm = Poseidon2(proxies)` on the PI wire —
+  only that PI carries the witness's cm bytes honestly.
+- `M-P2 Phase 4b-step2b` (commit `8d9637d61`): anchor limb 0
+  mirrored — added `G_ANCHOR_PROXY` (Merkle-walk output col, now
+  trace-internal) + `G_ANCHOR_LIMB0_REAL` (holds
+  `anchor_bytes[0..8]`, bound to `PI[PI_ANCHOR]`). The last-row
+  Merkle-walk constraint now binds `S_CURRENT == G_ANCHOR_PROXY`,
+  not `S_CURRENT == pi_anchor0`. Walk soundness preserved
+  internally; PI value comes from witness bytes.
+
+**Post-Phase-4b-step2b shape_matrix measurements** (same 64-core
+FRI Option B host):
+
+| shape | cols | PI bytes | verify ms | proof bytes | vs. pre-Phase-4 |
+|-------|-----:|---------:|----------:|------------:|---|
+| 1/1   |  815 |      200 |      11.8 |     511 997 | +18 cols, +2 042 B |
+| 4/4   | 1658 |      608 |      21.0 |     884 912 | +57 cols, +5 907 B |
+
+Cost of byte-parity closure (all of Phase 4a + 4b-step1 + 4b-step2a
++ 4b-step2b combined) is **+18 cols / +2 KB at 1/1 and +57 cols /
++6 KB at 4/4** — small enough to be below the ≈−156 KB proof-size
+delta the range-check migration unlocks.
+
+**Documented V1 soundness trade-off**: Phase 4b-step2a/b decouples
+the Poseidon2-w=16 / Merkle-walk constraints from the PI wire.
+After this, the STARK proves:
+
+  - `O_CM_CLAIM = Poseidon2-w=16(TAG_CM, d_proxy, pk_d_proxy,
+    ivk_commitment_proxy, value, rcm_proxy)` (trace-internal claim 2/6)
+  - `S_CURRENT_last_row = poseidon2_merkle_path(proxies)` (trace-
+    internal claim 1)
+  - `PI[cm+k] = witness.cm_bytes[k*8..(k+1)*8]`,
+    `PI[anchor+k] = witness.anchor_bytes[k*8..(k+1)*8]`
+    for k ∈ 0..4 (copy-constraint only)
+
+The "real cm = Poseidon2 over real 32-byte inputs" cryptographic
+binding is therefore no longer asserted by the STARK; it rests on
+§4.1 tx_hash + consensus-level validator checks
+(`build_plonky3_public_inputs` reads the Transfer BoC directly).
+Closing this residual gap — and similarly for anchor — is the
+separately-tracked **Phase 4b-step3** work (multi-week, breaking
+MvpWitness wire format change), NOT a V1 launch blocker.
+
+#### Progress log (M-P2 Phase 5, 2026-04-22)
+
+**Phase 5 LANDED** (commit `df42d6e87`): the shipped
+`uno_plonky3_prove` / `uno_plonky3_verify` FFI entry points are now
+routed to `MvpBatchProver::prove_with_range_check` /
+`MvpBatchVerifier::verify_with_range_check`. 3 parallel Explore
+sub-agents audited the surface:
+
+1. **FFI surface (Agent A)**: the FFI signatures are unchanged; a
+   one-line internal rewire (`Arc<MvpVerifier>` →
+   `Arc<MvpBatchVerifier>`, `.verify(...)` → `.verify_with_range_check
+   (...)`) is sufficient.
+2. **Golden fixtures (Agent B)**: grepped `uno/test/golden/*.hex`;
+   none embed proof bytes (only `pubinput_hex`, `tx_hash_hex`,
+   `cm_hex`, `nf_hex` etc.). **Zero golden regeneration needed**.
+3. **C++ validator (Agent C)**: proof bytes are fully opaque at the
+   C++ boundary — no size checks, no magic byte, no version field.
+   `uno_plonky3_verify(handle, proof_ptr, pi_ptr)` treats both
+   buffers as borrowed slices and hands them to Rust for postcard
+   deserialization. **Zero C++ code changes needed**. BoC wire
+   format (`UNO_BLOCK_EXTRA_MAX_PROOF_BYTES = 16 MB` at
+   `block_wire_format.rs`) unchanged.
+4. **ABI version**: NOT bumped. The change is behavioural on the
+   Rust side only; the exported function prototypes are
+   signature-identical. cbindgen regenerates the header with no
+   function-prototype diff.
+
+**Net effect**: M-P2's Phase 3b range-check + Phase 4 byte-parity
+are now the DEFAULT shipped path. All 391 lib tests + 5 integration
+tests + 66 tosctl tests green through the FFI boundary.
+
+### What remains after Phase 5 is shipped
+
+- **Phase 4b-step3** (task #131 — multi-week cryptographer work):
+  migrate MvpWitness `d` / `pk_d` / `ivk` / `rcm` fields from u64
+  proxies to `[u8; 32]`; lift Merkle-walk to 4-fe per-level state
+  (siblings `[[u8; 32]; 32]`, `S_CURRENT` 1-fe → 4-fe vector);
+  expose all 4 output limbs of Poseidon2-w=16 instead of `state[0]`.
+  After this, the STARK re-proves `cm = Poseidon2(real d, real pk_d,
+  ...)` over real address bytes, closing the documented
+  Phase 4b-step2a/b trade-off. Requires breaking MvpWitness wire
+  format change + C++ decode-path coordination + golden regen once
+  (since PI layout is already stable). Primitives are upstream-
+  ready; Merkle AIR must be hand-written (no ready-made in
+  `plonky3-uno`).
+
+Nothing else in the Path (iii) tree is V1-blocking. Phase iii-step-3
+(§16 / §2.1 consensus-binding decision log amendments) is a
+governance task, not a coding task; separately tracked in
+`doc/uno-workchain.md §17` amendments.
 
 **Phase iii-step-3** (consensus-binding decision):
 - §16 decision-log amendment for the proof system change
