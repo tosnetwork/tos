@@ -755,7 +755,12 @@ DecodeResult decode_transfer(vm::CellSlice body) noexcept {
     size_t ref_carried_bytes = 0;
 
     // Root cell layout: 3 refs (spends_root, outputs_root, zk_proof).
-    if (body.size_refs() < 3) return err("missing spends_root / outputs_root / zk_proof refs");
+    // Enforce the exact root shape before walking any potentially large
+    // chunk-tree refs. Otherwise a malformed root with an extra ref can force
+    // full enc_ct/mlkem_ct/zk_proof scans and only fail at the trailing-ref
+    // check below.
+    if (body.size() != 0) return err("root cell: unexpected trailing inline data");
+    if (body.size_refs() != 3) return err("root cell: expected exactly 3 refs");
 
     auto spends_root_ref  = body.prefetch_ref(0);
     auto outputs_root_ref = body.prefetch_ref(1);
@@ -876,8 +881,7 @@ DecodeResult decode_transfer(vm::CellSlice body) noexcept {
         return err("ref-tree depth exceeds §17 5-level bound");
     }
 
-    // Trailing bits / extra refs on the root are disallowed so re-encode
-    // yields byte-identical output.
+    // Defensive duplicate of the exact root-shape gate above.
     if (body.size() != 0) return err("root cell: unexpected trailing inline data");
     if (body.size_refs() != 0) return err("root cell: unexpected trailing refs");
 

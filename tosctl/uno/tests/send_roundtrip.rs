@@ -131,7 +131,8 @@ fn send_pipeline_builds_well_formed_transfer_with_real_proof() {
     assert_eq!(decoded, tx, "decode(encode(tx)) == tx");
 
     // tx_hash is deterministic from the decoded form.
-    let tx_hash_decoded = transfer::canonical_tx_hash(&decoded);
+    let tx_hash_decoded =
+        transfer::canonical_tx_hash_boc(&decoded).expect("canonical tx_hash from decoded transfer");
     assert_eq!(
         tx_hash, tx_hash_decoded,
         "tx_hash stable across encode/decode"
@@ -177,7 +178,7 @@ fn send_pipeline_builds_well_formed_transfer_with_real_proof() {
     let mut mutated = tx.clone();
     mutated.zk_proof[0] ^= 0xff;
     assert_eq!(
-        transfer::canonical_tx_hash(&mutated),
+        transfer::canonical_tx_hash_boc(&mutated).expect("canonical tx_hash from mutated transfer"),
         tx_hash,
         "tx_hash excludes zk_proof bytes"
     );

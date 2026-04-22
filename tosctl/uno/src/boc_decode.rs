@@ -151,6 +151,17 @@ impl std::error::Error for DecodeError {}
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+fn load_ordinary_item_slice(cell: Cell, context: &str) -> Result<SliceData, DecodeError> {
+    if cell.cell_type() != CellType::Ordinary {
+        return Err(DecodeError::MalformedItem(format!(
+            "{context}: non-ordinary cell type {:?}",
+            cell.cell_type()
+        )));
+    }
+    SliceData::load_cell(cell)
+        .map_err(|e| DecodeError::MalformedItem(format!("{context}: load_cell: {e}")))
+}
+
 /// Mirror of `uno/core/transaction.cpp::load_item_chunked`. Reads `len`
 /// bytes from the item cell's inline head (up to 127 B) plus, if
 /// `len > 127`, an exact-fit continuation ref.
@@ -186,8 +197,7 @@ fn load_item_chunked(head_slice: &mut SliceData, out: &mut [u8]) -> Result<(), D
     let cont_cell = head_slice
         .checked_drain_reference()
         .map_err(|e| DecodeError::MalformedItem(format!("drain cont ref: {e}")))?;
-    let cont_cs = SliceData::load_cell(cont_cell)
-        .map_err(|e| DecodeError::MalformedItem(format!("load cont cell: {e}")))?;
+    let cont_cs = load_ordinary_item_slice(cont_cell, "continuation")?;
 
     let rest = len - head;
     // Enforce shape: continuation cell holds exactly `rest` bytes inline
@@ -333,6 +343,9 @@ fn structural_depth_bounded(c: &Cell, follow_all_refs: bool, remaining: u16) -> 
     if remaining == 0 {
         return 0;
     }
+    if c.cell_type() != CellType::Ordinary {
+        return MAX_TRANSFER_REF_DEPTH + 1;
+    }
     let n = c.references_count();
     if n == 0 {
         return 1;
@@ -356,6 +369,9 @@ fn structural_depth_bounded(c: &Cell, follow_all_refs: bool, remaining: u16) -> 
 /// Evaluate the §17 5-level gate against the spends_root / outputs_root
 /// subtree as described in `structural_depth_bounded`.
 fn structural_walk_depth(root: &Cell, is_outputs_root: bool) -> u16 {
+    if root.cell_type() != CellType::Ordinary {
+        return MAX_TRANSFER_REF_DEPTH + 1;
+    }
     // From spends_root we follow every child; from outputs_root the
     // per_output cell has refs (cont, enc_ct, mlkem_ct) where only
     // ref[0] (the continuation) is structural.
@@ -409,6 +425,12 @@ pub fn decode_transfer_boc(bytes: &[u8]) -> Result<Transfer, DecodeError> {
     let root_cell = parsed.roots.into_iter().next().unwrap();
 
     // -- Load the root slice --
+    if root_cell.cell_type() != CellType::Ordinary {
+        return Err(DecodeError::BocParse(format!(
+            "root cell has non-ordinary type {:?}",
+            root_cell.cell_type()
+        )));
+    }
     let mut body = SliceData::load_cell(root_cell)
         .map_err(|e| DecodeError::BocParse(format!("load root cell: {e}")))?;
 
@@ -461,6 +483,9 @@ pub fn decode_transfer_boc(bytes: &[u8]) -> Result<Transfer, DecodeError> {
             got: output_count,
             max: MAX_OUTPUT_COUNT,
         });
+    }
+    if body.remaining_bits() != 0 {
+        return Err(DecodeError::TrailingData);
     }
 
     // -- Extract the 3 refs (spends_root, outputs_root, zk_proof) --
@@ -530,8 +555,7 @@ pub fn decode_transfer_boc(bytes: &[u8]) -> Result<Transfer, DecodeError> {
 }
 
 fn parse_spends_root(spends_root_ref: Cell, sc: u8) -> Result<Vec<SpendDescription>, DecodeError> {
-    let spends_root = SliceData::load_cell(spends_root_ref)
-        .map_err(|e| DecodeError::MalformedItem(format!("load spends_root cell: {e}")))?;
+    let spends_root = load_ordinary_item_slice(spends_root_ref, "spends_root")?;
     if spends_root.remaining_bits() != 0 {
         return Err(DecodeError::MalformedItem(
             "spends_root: unexpected inline data".to_string(),
@@ -549,8 +573,8 @@ fn parse_spends_root(spends_root_ref: Cell, sc: u8) -> Result<Vec<SpendDescripti
         let spend_ref = spends_root
             .reference(i)
             .map_err(|e| DecodeError::MalformedItem(format!("per_spend[{i}] ref fetch: {e}")))?;
-        let mut spend_cs = SliceData::load_cell(spend_ref)
-            .map_err(|e| DecodeError::MalformedItem(format!("load per_spend[{i}]: {e}")))?;
+        let context = format!("per_spend[{i}]");
+        let mut spend_cs = load_ordinary_item_slice(spend_ref, &context)?;
         let mut buf = [0u8; SPEND_INLINE_BYTES];
         load_item_chunked(&mut spend_cs, &mut buf)?;
         // No trailing data / refs permitted so re-encode is bit-identical.
@@ -585,8 +609,7 @@ fn parse_outputs_root(
     outputs_root_ref: Cell,
     oc: u8,
 ) -> Result<Vec<OutputDescription>, DecodeError> {
-    let outputs_root = SliceData::load_cell(outputs_root_ref)
-        .map_err(|e| DecodeError::MalformedItem(format!("load outputs_root cell: {e}")))?;
+    let outputs_root = load_ordinary_item_slice(outputs_root_ref, "outputs_root")?;
     if outputs_root.remaining_bits() != 0 {
         return Err(DecodeError::MalformedItem(
             "outputs_root: unexpected inline data".to_string(),
@@ -604,8 +627,8 @@ fn parse_outputs_root(
         let out_ref = outputs_root
             .reference(j)
             .map_err(|e| DecodeError::MalformedItem(format!("per_output[{j}] ref fetch: {e}")))?;
-        let mut out_cs = SliceData::load_cell(out_ref)
-            .map_err(|e| DecodeError::MalformedItem(format!("load per_output[{j}]: {e}")))?;
+        let context = format!("per_output[{j}]");
+        let mut out_cs = load_ordinary_item_slice(out_ref, &context)?;
         let mut buf = [0u8; OUTPUT_INLINE_BYTES];
         load_item_chunked(&mut out_cs, &mut buf)?;
         // After chunked load: exactly 2 remaining refs (enc_ct, mlkem_ct)
@@ -1175,6 +1198,78 @@ mod tests {
         // 2 B pruned depth.
         cb.append_u16(1).expect("pruned depth");
         cb.finalize(MAX_DEPTH).expect("PrunedBranch finalize")
+    }
+
+    fn library_reference_cell() -> Cell {
+        let mut cb = BuilderData::new();
+        cb.set_type(CellType::LibraryReference);
+        cb.append_u8(u8::from(CellType::LibraryReference))
+            .expect("library type tag");
+        cb.append_raw(&[0xCAu8; 32], 32 * 8).expect("library hash");
+        cb.finalize(MAX_DEPTH).expect("LibraryReference finalize")
+    }
+
+    fn write_boc(root: Cell) -> Vec<u8> {
+        fn no_abort() -> bool {
+            false
+        }
+        let writer =
+            BocWriter::with_params([root], MAX_DEPTH, BocFlags::None, &no_abort).expect("writer");
+        let mut bytes = Vec::new();
+        writer.write(&mut bytes).expect("write");
+        bytes
+    }
+
+    fn encoded_root(tx: &Transfer) -> Cell {
+        let bytes = encode_transfer_boc(tx).expect("encode_transfer_boc");
+        let mut cursor = std::io::Cursor::new(bytes);
+        let parsed = BocReader::new()
+            .set_max_cell_depth(MAX_DEPTH)
+            .read(&mut cursor)
+            .expect("read encoded BoC");
+        assert_eq!(parsed.roots.len(), 1);
+        parsed.roots.into_iter().next().expect("root")
+    }
+
+    fn transfer_root_with_refs(
+        tx: &Transfer,
+        spends_root: Cell,
+        outputs_root: Cell,
+        zk_proof: Cell,
+    ) -> Cell {
+        let mut root = BuilderData::default();
+        root.append_u8(tx.version).expect("version");
+        root.append_u8(tx.scheme_id).expect("scheme_id");
+        root.append_u32(tx.chain_id).expect("chain_id");
+        root.append_raw(&tx.anchor, 32 * 8).expect("anchor");
+        root.append_u64(tx.expiry_block).expect("expiry");
+        root.append_u64(tx.fee).expect("fee");
+        root.append_u8(tx.spends.len() as u8).expect("sc");
+        root.append_u8(tx.outputs.len() as u8).expect("oc");
+        root.checked_append_reference(spends_root)
+            .expect("spends ref");
+        root.checked_append_reference(outputs_root)
+            .expect("outputs ref");
+        root.checked_append_reference(zk_proof).expect("zk ref");
+        root.finalize(MAX_DEPTH).expect("root")
+    }
+
+    #[test]
+    fn rejects_special_cell_in_structural_ref() {
+        let tx = sample_transfer(1, 1);
+        let root = encoded_root(&tx);
+        let outputs_root = root.reference(1).expect("outputs_root");
+        let zk_proof = root.reference(2).expect("zk_proof");
+
+        let bad_root =
+            transfer_root_with_refs(&tx, library_reference_cell(), outputs_root, zk_proof);
+        let bytes = write_boc(bad_root);
+        let err = decode_transfer_boc(&bytes).expect_err("special structural ref must reject");
+        assert!(
+            matches!(err, DecodeError::MalformedItem(ref s)
+                if s.contains("spends_root") && s.contains("non-ordinary")),
+            "expected MalformedItem(non-ordinary spends_root), got {err:?}"
+        );
     }
 
     fn encode_with_special_cell_enc_ciphertext() -> Vec<u8> {

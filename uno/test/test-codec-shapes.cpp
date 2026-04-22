@@ -741,6 +741,61 @@ void test_noncanonical_chunk_tree_rejection() {
     tprintf("  PASSED  rejected with reason: \"%s\"\n", e.reason.c_str());
 }
 
+void test_root_shape_rejection_precedes_chunk_scan() {
+    tprintf("[TEST] decode_transfer rejects extra root ref before chunk-tree scan\n");
+
+    auto tx = build_transfer(1, 1);
+    auto enc = uno_workchain::encode_transfer(tx);
+    if (enc.is_error()) {
+        tprintf("  FAILED: baseline encode: %s\n",
+                enc.error().message().c_str());
+        ++g_test_failures;
+        return;
+    }
+
+    auto root = enc.move_as_ok();
+    auto root_cs = vm::load_cell_slice(root);
+    auto spends_root_ref  = root_cs.prefetch_ref(0);
+    auto outputs_root_ref = root_cs.prefetch_ref(1);
+
+    // A malformed zk_proof chunk tree that would be rejected if the decoder
+    // walked root ref[2]. The extra root ref must be rejected first, before
+    // any large chunk-tree traversal can be forced on an invalid root shape.
+    auto leaf = make_ref_cell("bad-zk-leaf", 0, 1);
+    vm::CellBuilder bad_zk;
+    bad_zk.store_long(0xAB, 8);
+    bad_zk.store_ref(leaf);
+    auto extra = make_ref_cell("extra-root-ref", 0, 1);
+
+    uint8_t hdr_bytes[56] = {0};
+    auto hdr_cs = vm::load_cell_slice(root);
+    hdr_cs.fetch_bytes(hdr_bytes, 56);
+
+    vm::CellBuilder cb;
+    cb.store_bytes(reinterpret_cast<const char*>(hdr_bytes), 56);
+    cb.store_ref(spends_root_ref);
+    cb.store_ref(outputs_root_ref);
+    cb.store_ref(bad_zk.finalize());
+    cb.store_ref(extra);
+
+    auto bad_root = cb.finalize();
+    auto bad_cs = vm::load_cell_slice(bad_root);
+    auto dr = uno_workchain::decode_transfer(bad_cs);
+    if (std::holds_alternative<uno_workchain::Transfer>(dr)) {
+        tprintf("  FAILED: decoder accepted root with extra ref\n");
+        ++g_test_failures;
+        return;
+    }
+    auto& e = std::get<uno_workchain::TransferDecodeError>(dr);
+    if (e.reason.find("expected exactly 3 refs") == std::string::npos) {
+        tprintf("  FAILED: expected early root-shape rejection, got \"%s\"\n",
+                e.reason.c_str());
+        ++g_test_failures;
+        return;
+    }
+    tprintf("  PASSED  rejected with reason: \"%s\"\n", e.reason.c_str());
+}
+
 }  // anonymous namespace
 
 int main() {
@@ -761,6 +816,7 @@ int main() {
     test_special_chunk_tree_rejection();
     test_special_structural_ref_rejection();
     test_noncanonical_chunk_tree_rejection();
+    test_root_shape_rejection_precedes_chunk_scan();
 
     tprintf("\nTotal failures: %d, skips: %d\n",
             g_test_failures.load(), g_test_skips.load());
