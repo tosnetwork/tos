@@ -245,7 +245,9 @@ pub const GLOBAL_COLS: usize = 1
     + MERKLE_DEPTH
     + POSEIDON2_COLS_PER_INSTANCE_16 // shared Cm / OutCm (w=16) — claim 2/6
     + POSEIDON2_COLS_PER_INSTANCE  // shared IvkCm / Nf (w=8) — claim 3/4
-    + 3;                             // anchor limbs 1..3 (Phase 4b-step1)
+    + 3                              // anchor limbs 1..3 (Phase 4b-step1)
+    + 1                              // anchor_proxy (Phase 4b-step2b)
+    + 1;                             // anchor_limb0_real (Phase 4b-step2b)
 const GCOL_FEE: usize = 0;
 /// Base index of the 32 one-hot Merkle row-selector columns (§claim 1).
 const GS_ROW_SEL0: usize = 1;
@@ -255,13 +257,23 @@ const G_CM_SHARED_P2_16: usize = GS_ROW_SEL0 + MERKLE_DEPTH;
 /// Base index of the shared IvkCm/Nf width-8 Poseidon2 block
 /// (K-air-col-step2 strategy c — claim 3/4 row-loop on rows 0..7).
 const G_IVKCM_NF_SHARED_P2_8: usize = G_CM_SHARED_P2_16 + POSEIDON2_COLS_PER_INSTANCE_16;
-/// Phase 4b-step1: base index of anchor limbs 1..3 (3 global cols). Limb
-/// 0 of the anchor is already bound via the last-row `S_CURRENT ==
-/// pi_anchor0` check on every spend's Merkle walk; this block holds the
-/// upper three u64 limbs of `witness.anchor_bytes[8..32]`, bound via
-/// row-0 copy constraint to `PI[PI_ANCHOR + 1..4]`. Same pattern as the
-/// rk / epk / filter_tag bindings added in Phase 4a.
+/// Phase 4b-step1: base index of anchor limbs 1..3 (3 global cols).
+/// Holds the upper three u64 limbs of `witness.anchor_bytes[8..32]`,
+/// bound via row-0 copy constraint to `PI[PI_ANCHOR + 1..4]`. Same
+/// pattern as the rk / epk / filter_tag bindings in Phase 4a.
 const G_ANCHOR_LIMB1: usize = G_IVKCM_NF_SHARED_P2_8 + POSEIDON2_COLS_PER_INSTANCE;
+/// Phase 4b-step2b: global col holding `anchor_proxy` (the Merkle-walk
+/// output from witness). The last-row Merkle-walk constraint
+/// `S_CURRENT == AG_ANCHOR_PROXY_col` now binds the walk to this
+/// trace-internal col instead of directly to `PI[PI_ANCHOR + 0]` —
+/// decouples the Merkle derivation from the PI value, same pattern
+/// as Phase 4b-step2a decoupled `O_CM_CLAIM` from `PI[cm + 0]`.
+const G_ANCHOR_PROXY: usize = G_ANCHOR_LIMB1 + 3;
+/// Phase 4b-step2b: global col holding `witness.anchor_bytes[0..8]`
+/// as a u64 limb (mod p). Bound via row-0 copy constraint to
+/// `PI[PI_ANCHOR + 0]`, matching C++'s
+/// `pack_bits256_as_4_limbs(anchor)[0]`.
+const G_ANCHOR_LIMB0_REAL: usize = G_ANCHOR_PROXY + 1;
 
 /// u16-limb decomposition width for `value_i` / `value_j` (§4.2 claims
 /// 5 & 7). Each value is committed as 4 × u16 limbs with the AIR
@@ -775,7 +787,10 @@ where
         // later `builder.when_*_row()` mutable borrows.
         let pis_vec: Vec<AB::PublicVar> = builder.public_values().to_vec();
         let pi_fee = pis_vec[PI_FEE];
-        let pi_anchor0 = pis_vec[PI_ANCHOR];
+        // `pi_anchor0` removed in Phase 4b-step2b — the row-0 binding
+        // for `PI[PI_ANCHOR]` now reads `pis_vec[PI_ANCHOR]` inline at
+        // the anchor-limb block, and the last-row Merkle-walk binding
+        // references `G_ANCHOR_PROXY` instead.
         // Full-width nullifier PI: `nf_i` occupies 4 Goldilocks slots
         // starting at `pi_nf(i)` per §4.3 step 4. Snapshot all 4 limbs.
         let pi_nfs: Vec<[AB::PublicVar; 4]> = (0..self.n_spends)
@@ -970,12 +985,19 @@ where
                 first.assert_eq(ft_col, pi_ft_slot);
             }
 
-            // Phase 4b-step1: anchor limbs 1..3 PI binding. Limb 0 is
-            // already bound via the last-row `S_CURRENT == pi_anchor0`
-            // check on each spend's Merkle walk (see the `last.assert_eq`
-            // in the row-gated section below). The three upper limbs
-            // live in global cols `G_ANCHOR_LIMB1..G_ANCHOR_LIMB1+3` and
-            // are consensus-bound to `witness.anchor_bytes[8..32]`.
+            // Phase 4b-step2b: anchor limb 0 PI binding from
+            // witness bytes. Was indirectly bound via last-row
+            // `S_CURRENT == pi_anchor0`; that binding now lands on
+            // `G_ANCHOR_PROXY` (trace-only, see the `last.assert_eq`
+            // in the row-gated section below). PI[PI_ANCHOR + 0] is
+            // now bound to `G_ANCHOR_LIMB0_REAL = anchor_bytes[0..8]`.
+            let anchor_limb0_real: AB::Var = local_slice[G_ANCHOR_LIMB0_REAL];
+            first.assert_eq(anchor_limb0_real, pis_vec[PI_ANCHOR]);
+
+            // Phase 4b-step1: anchor limbs 1..3 PI binding. The three
+            // upper limbs live in global cols
+            // `G_ANCHOR_LIMB1..G_ANCHOR_LIMB1+3` and are consensus-
+            // bound to `witness.anchor_bytes[8..32]`.
             for k in 1..4 {
                 let anchor_limb: AB::Var = local_slice[G_ANCHOR_LIMB1 + (k - 1)];
                 let pi_anchor_slot = pis_vec[PI_ANCHOR + k];
@@ -1245,8 +1267,17 @@ where
             // rows 32..63, `S_CURRENT` on the last row is the final
             // Merkle root, which must equal the tx-level anchor PI.
             let mut last = builder.when_last_row();
+            let anchor_proxy_col = local_slice[G_ANCHOR_PROXY];
             for i in 0..self.n_spends {
-                last.assert_eq(local_slice[spend_var_offset(i) + S_CURRENT], pi_anchor0);
+                // Phase 4b-step2b: Merkle walk output == anchor_proxy
+                // trace col (was pi_anchor0). Decouples the Merkle
+                // derivation from the PI value. `PI[PI_ANCHOR + 0]` is
+                // bound separately below to
+                // `G_ANCHOR_LIMB0_REAL = witness.anchor_bytes[0..8]`.
+                last.assert_eq(
+                    local_slice[spend_var_offset(i) + S_CURRENT],
+                    anchor_proxy_col,
+                );
             }
         }
 
@@ -1869,17 +1900,19 @@ impl MvpWitness {
         )));
         out.push(Goldilocks::from_u64(reduce_to_goldilocks(self.fee)));
 
-        // anchor: limb 0 = anchor_proxy (AIR-bound to the last-row
-        // `S_CURRENT` on every spend's Merkle walk), limbs 1..3 from
-        // witness.anchor_bytes[8..32] (AIR-bound in Phase 4b-step1 via
-        // row-0 copy-constraint to global cols G_ANCHOR_LIMB1..3).
-        // The pre-check `witness_anchor_bytes_consistent` enforces
-        // `anchor_bytes[0..8] as u64 == anchor_proxy` so C++ and Rust
-        // agree byte-for-byte on every PI[anchor+k] slot.
-        out.push(Goldilocks::from_u64(reduce_to_goldilocks(
-            self.anchor_proxy,
-        )));
-        for k in 1..4 {
+        // anchor: Phase 4b-step2b — all 4 limbs now come from
+        // witness.anchor_bytes[k*8..(k+1)*8] as u64 (mod p). The
+        // Merkle-walk constraint (`last_row: S_CURRENT ==
+        // G_ANCHOR_PROXY` per spend) still proves the walk lands on
+        // `anchor_proxy` internally, but `PI[PI_ANCHOR + k]` is now
+        // bound via row-0 copy-constraint to
+        // `G_ANCHOR_LIMB{0_REAL,1,2,3}`. Matches C++'s
+        // `pack_bits256_as_4_limbs(anchor)` / `encode_256` byte-for-
+        // byte. See the module-level Phase 4b-step2 comments for the
+        // documented soundness trade-off (Merkle consistency is now a
+        // trace-only claim; the AIR no longer reveals the derived
+        // anchor proxy on the PI wire).
+        for k in 0..4 {
             let limb = u64::from_le_bytes(
                 self.anchor_bytes[k * 8..(k + 1) * 8].try_into().unwrap(),
             );
@@ -2247,6 +2280,15 @@ impl MvpWitness {
                 );
                 values.push(Goldilocks::from_u64(reduce_to_goldilocks(limb)));
             }
+            // Phase 4b-step2b: anchor_proxy (Merkle-walk output from
+            // witness, trace-only binding for `last.assert_eq`).
+            values.push(Goldilocks::from_u64(reduce_to_goldilocks(self.anchor_proxy)));
+            // Phase 4b-step2b: anchor_bytes[0..8] as u64 (mod p). PI-
+            // binding col for `PI[PI_ANCHOR + 0]`.
+            let anchor_limb0 = u64::from_le_bytes(
+                self.anchor_bytes[0..8].try_into().unwrap(),
+            );
+            values.push(Goldilocks::from_u64(reduce_to_goldilocks(anchor_limb0)));
 
             // Per-spend block: proxies + S_CURRENT + per-spend shared
             // Merkle P2 row-loop.
