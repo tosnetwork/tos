@@ -70,6 +70,7 @@ UnoConfigView current_uno_config_view() noexcept;
 #include "block/uno-workchain-dispatch.h"
 #include "td/utils/logging.h"
 #include "vm/cells/CellBuilder.h"
+#include "vm/cellslice.h"
 
 namespace uno_workchain {
 
@@ -89,6 +90,11 @@ constexpr uint32_t kLiveUnoShardStateMagic = 0x554E4F53;  // "UNOS"
 constexpr unsigned kLiveUnoShardStateMagicBits = 32;
 constexpr uint8_t  kLiveShardStateVersion = 1;
 constexpr size_t   kLiveHashBytes = 32;
+constexpr unsigned kLiveStateRefCommitmentTree = 0;
+constexpr unsigned kLiveStateRefNullifierSet = 1;
+constexpr unsigned kLiveStateRefMeta = 2;
+constexpr unsigned kLiveMetaRefAnchorWindow = 0;
+constexpr unsigned kLiveMetaRefStats = 1;
 
 td::Ref<vm::Cell> encode_live_stats_cell(uint64_t burned_fees,
                                          uint64_t tx_count,
@@ -110,6 +116,13 @@ td::Ref<vm::Cell> build_live_meta_cell(td::Ref<vm::Cell> anchor_window_cell,
     if (!cb.store_ref_bool(std::move(anchor_window_cell))) return {};
     if (!cb.store_ref_bool(std::move(stats_cell))) return {};
     return cb.finalize();
+}
+
+bool fetch_live_u64(vm::CellSlice& cs, uint64_t& out) {
+    long long v = 0;
+    if (!cs.fetch_long_bool(64, v)) return false;
+    out = static_cast<uint64_t>(v);
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +161,7 @@ class LiveUnoState : public UnoState {
     void accumulate_filter_tag(uint16_t filter_tag) override;
     void bump_stats(uint64_t fee, uint64_t note_count_delta) override;
     td::Ref<vm::Cell> serialize_to_cell() const override;
+    bool hydrate_from_cell_if_needed(td::Ref<vm::Cell> root);
 
     uint32_t expected_chain_id() const override;
     uint64_t current_block_seqno() const override;
@@ -267,6 +281,7 @@ class LiveUnoState : public UnoState {
     std::unordered_map<std::string, TxStatusEntry> tx_status_index_;
 
     bool server_scan_enabled_{false};
+    bool hydrated_from_cell_{false};
 };
 
 LiveUnoState::LiveUnoState()
@@ -372,6 +387,126 @@ td::Ref<vm::Cell> LiveUnoState::serialize_to_cell() const {
     if (!cb.store_ref_bool(std::move(nullifier_cell))) return {};
     if (!cb.store_ref_bool(std::move(meta_cell))) return {};
     return cb.finalize();
+}
+
+bool LiveUnoState::hydrate_from_cell_if_needed(td::Ref<vm::Cell> root) {
+    if (root.is_null()) {
+        return true;
+    }
+
+    std::lock_guard<std::mutex> lk(mutex_);
+    if (hydrated_from_cell_) {
+        return true;
+    }
+
+    auto cs = vm::load_cell_slice(root);
+    long long v = 0;
+    if (!cs.fetch_long_bool(kLiveUnoShardStateMagicBits, v) ||
+        static_cast<uint32_t>(v) != kLiveUnoShardStateMagic) {
+        LOG(ERROR) << "uno-workchain: persisted state has bad magic";
+        return false;
+    }
+    if (!cs.fetch_long_bool(8, v) || v != kLiveShardStateVersion) {
+        LOG(ERROR) << "uno-workchain: persisted state has bad version";
+        return false;
+    }
+    if (!cs.fetch_long_bool(8, v) || v != kSchemeIdV1) {
+        LOG(ERROR) << "uno-workchain: persisted state has bad scheme_id";
+        return false;
+    }
+
+    uint64_t next_position = 0;
+    if (!fetch_live_u64(cs, next_position)) {
+        LOG(ERROR) << "uno-workchain: persisted state missing next_position";
+        return false;
+    }
+    unsigned char config_hash[kLiveHashBytes];
+    std::array<uint8_t, kLiveHashBytes> commitment_root{};
+    if (!cs.fetch_bytes(config_hash, kLiveHashBytes) ||
+        !cs.fetch_bytes(commitment_root.data(), kLiveHashBytes)) {
+        LOG(ERROR) << "uno-workchain: persisted state missing hash fields";
+        return false;
+    }
+    if (cs.size_refs() != 3) {
+        LOG(ERROR) << "uno-workchain: persisted state refs=" << cs.size_refs()
+                   << " expected=3";
+        return false;
+    }
+
+    auto tree_cell = cs.prefetch_ref(kLiveStateRefCommitmentTree);
+    auto nullifier_cell = cs.prefetch_ref(kLiveStateRefNullifierSet);
+    auto meta_cell = cs.prefetch_ref(kLiveStateRefMeta);
+    if (tree_cell.is_null() || nullifier_cell.is_null() || meta_cell.is_null()) {
+        LOG(ERROR) << "uno-workchain: persisted state has null sub-object ref";
+        return false;
+    }
+
+    auto tree = std::make_unique<CommitmentTree>();
+    NoteHash expected_root{};
+    std::copy(commitment_root.begin(), commitment_root.end(),
+              expected_root.begin());
+    if (!tree->deserialize_from_cell(std::move(tree_cell),
+                                     next_position,
+                                     expected_root)) {
+        LOG(ERROR) << "uno-workchain: persisted commitment tree rejected";
+        return false;
+    }
+
+    auto nf = std::make_unique<NullifierSet>();
+    {
+        auto nf_cs = vm::load_cell_slice(nullifier_cell);
+        long long has_root = 0;
+        if (!nf_cs.fetch_long_bool(1, has_root)) {
+            LOG(ERROR) << "uno-workchain: persisted nullifier wrapper missing tag";
+            return false;
+        }
+        td::Ref<vm::Cell> dict_root;
+        if (has_root) {
+            if (!nf_cs.fetch_ref_to(dict_root)) {
+                LOG(ERROR) << "uno-workchain: persisted nullifier wrapper missing root";
+                return false;
+            }
+        }
+        nf->load_from_cell(std::move(dict_root));
+    }
+
+    auto meta_cs = vm::load_cell_slice(meta_cell);
+    if (meta_cs.size_refs() != 2) {
+        LOG(ERROR) << "uno-workchain: persisted meta refs=" << meta_cs.size_refs()
+                   << " expected=2";
+        return false;
+    }
+
+    auto win = std::make_unique<AnchorWindow>();
+    auto anchor_cell = meta_cs.prefetch_ref(kLiveMetaRefAnchorWindow);
+    auto anchor_probe = vm::load_cell_slice(anchor_cell);
+    if (!(anchor_probe.size() == 0 && anchor_probe.size_refs() == 0) &&
+        !win->deserialize_from_cell(std::move(anchor_cell),
+                                    current_uno_config_view().anchor_window_size)) {
+        LOG(ERROR) << "uno-workchain: persisted anchor window rejected";
+        return false;
+    }
+
+    auto stats_cell = meta_cs.prefetch_ref(kLiveMetaRefStats);
+    auto stats_cs = vm::load_cell_slice(stats_cell);
+    uint64_t burned_fees = 0, tx_count = 0, note_count = 0;
+    if (!fetch_live_u64(stats_cs, burned_fees) ||
+        !fetch_live_u64(stats_cs, tx_count) ||
+        !fetch_live_u64(stats_cs, note_count)) {
+        LOG(ERROR) << "uno-workchain: persisted stats cell malformed";
+        return false;
+    }
+
+    commitment_tree_ = std::move(tree);
+    nullifier_set_ = std::move(nf);
+    anchor_window_ = std::move(win);
+    current_root_ = commitment_root;
+    next_output_global_index_ = next_position;
+    stats_burned_fees_ = burned_fees;
+    stats_tx_count_ = tx_count;
+    stats_note_count_ = note_count;
+    hydrated_from_cell_ = true;
+    return true;
 }
 
 uint32_t LiveUnoState::expected_chain_id() const {
@@ -934,6 +1069,10 @@ td::Ref<vm::Cell> serialize_live_uno_state_for_test() {
     return g_live ? g_live->serialize_to_cell() : td::Ref<vm::Cell>{};
 }
 
+bool hydrate_live_uno_state_from_cell_for_test(td::Ref<vm::Cell> root) {
+    return g_live && g_live->hydrate_from_cell_if_needed(std::move(root));
+}
+
 // ---------------------------------------------------------------------------
 // init_uno_workchain
 // ---------------------------------------------------------------------------
@@ -977,11 +1116,24 @@ void init_uno_workchain(const std::string& db_root) {
     // Step 5. Register the real compute handler with the dispatcher.
     uno_workchain_dispatch::set_uno_compute_handler(
         [](block::ComputePhase& cp,
+           td::Ref<vm::Cell> state_data,
            vm::CellSlice& in_msg_body,
            uint64_t gas_limit,
            uint64_t block_seqno,
            uint64_t timestamp,
            const uint8_t rand_seed[32]) -> bool {
+            if (g_live && !g_live->hydrate_from_cell_if_needed(std::move(state_data))) {
+                cp.skip_reason = block::ComputePhase::sk_bad_state;
+                cp.success = false;
+                cp.accepted = true;
+                cp.gas_used = 0;
+                cp.gas_limit = gas_limit;
+                cp.vm_steps = 1;
+                cp.vm_init_state_hash.set_zero();
+                cp.vm_final_state_hash.set_zero();
+                cp.vm_log = "uno: persisted state rejected";
+                return true;
+            }
             return run_compute_phase(
                 cp, in_msg_body, gas_limit,
                 *g_live,

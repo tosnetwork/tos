@@ -1943,7 +1943,7 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     }
     vm::CellSlice body_cs{*in_msg_body};
     bool ok = uno_workchain_dispatch::invoke_uno_compute(
-        cp, body_cs, cp.gas_limit,
+        cp, new_data, body_cs, cp.gas_limit,
         cfg.evm_block_seqno,                              // reuse block_seqno carrier
         static_cast<td::uint64>(account.now_),            // timestamp (block gen_utime)
         cfg.block_rand_seed.as_array().data());           // rand_seed (unused; Uno is deterministic)

@@ -30,6 +30,7 @@ namespace uno_workchain_dispatch {
 ///
 /// Parameters:
 ///   cp           — ComputePhase to populate with results
+///   state_data   — current executor StateInit.data (UnoShardState root)
 ///   in_msg_body  — body cell slice containing the Transfer wire payload
 ///   gas_limit    — max gas (advisory; Uno has no VM, verify cost is
 ///                  bounded by tx structure — see §8.4)
@@ -40,6 +41,7 @@ namespace uno_workchain_dispatch {
 /// Returns true if the phase completed (even on reject), false on infra error.
 using UnoComputeHandler = std::function<bool(
     block::ComputePhase& cp,
+    td::Ref<vm::Cell> state_data,
     vm::CellSlice& in_msg_body,
     uint64_t gas_limit,
     uint64_t block_seqno,
@@ -57,6 +59,7 @@ bool has_uno_compute_handler() noexcept;
 /// Precondition: has_uno_compute_handler() == true.
 bool invoke_uno_compute(
     block::ComputePhase& cp,
+    td::Ref<vm::Cell> state_data,
     vm::CellSlice& in_msg_body,
     uint64_t gas_limit,
     uint64_t block_seqno,

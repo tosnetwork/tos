@@ -160,6 +160,7 @@ void install_uno_submit_hook(
 void stage_output_wire_bytes_for_test(uint64_t global_index, std::string bytes);
 void reset_uno_state_for_test();
 td::Ref<vm::Cell> serialize_live_uno_state_for_test();
+bool hydrate_live_uno_state_from_cell_for_test(td::Ref<vm::Cell> root);
 void on_included_tx_from_compute(const uint8_t tx_hash[32],
                                   uint64_t fee_nano,
                                   uint64_t n_outputs);
@@ -753,6 +754,25 @@ static void test_two_wallet_e2e() {
     }
     if (nfr->json.find("\"spent\":true") == std::string::npos) {
         tprintf("  FAILED: expected spent:true, got %s\n", nfr->json.c_str());
+        return;
+    }
+    if (!assert_live_state_serializes(/*expected_next_position=*/3,
+                                      /*expected_burned_fees=*/kFee,
+                                      /*expected_tx_count=*/2,
+                                      /*expected_note_count=*/3)) {
+        return;
+    }
+    auto persisted_state = uw::serialize_live_uno_state_for_test();
+    uw::reset_uno_state_for_test();
+    if (!uw::hydrate_live_uno_state_from_cell_for_test(persisted_state)) {
+        tprintf("  FAILED: live state hydrate_from_cell rejected persisted cell\n");
+        return;
+    }
+    auto nfr_after_restart = uw::handle_uno_rpc("uno_getNullifierStatus", params, "10");
+    if (!nfr_after_restart || nfr_after_restart->is_error ||
+        nfr_after_restart->json.find("\"spent\":true") == std::string::npos) {
+        tprintf("  FAILED: persisted nullifier not restored after hydrate: %s\n",
+                nfr_after_restart ? nfr_after_restart->json.c_str() : "(nullopt)");
         return;
     }
     if (!assert_live_state_serializes(/*expected_next_position=*/3,

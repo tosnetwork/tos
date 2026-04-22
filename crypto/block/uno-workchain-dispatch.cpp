@@ -29,12 +29,14 @@ bool has_uno_compute_handler() noexcept {
 
 bool invoke_uno_compute(
     block::ComputePhase& cp,
+    td::Ref<vm::Cell> state_data,
     vm::CellSlice& in_msg_body,
     uint64_t gas_limit,
     uint64_t block_seqno,
     uint64_t timestamp,
     const uint8_t rand_seed[32]) {
-    return g_handler(cp, in_msg_body, gas_limit, block_seqno, timestamp, rand_seed);
+    return g_handler(cp, std::move(state_data), in_msg_body, gas_limit,
+                     block_seqno, timestamp, rand_seed);
 }
 
 }  // namespace uno_workchain_dispatch
