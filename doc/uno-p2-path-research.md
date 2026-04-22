@@ -409,6 +409,33 @@ a small atomic commit:
   range-check is NOT enforced by the AIR yet**; it lands in step3.
   See the `VALUE_LIMBS_U16` docstring in
   `uno/plonky3-ffi/src/transfer_air.rs` for the exact scope.
+
+  **Post-step2 shape_matrix measurements** (FRI Option B pin
+  `log_blowup=3, num_queries=52, pow_bits=24`; 192-core host,
+  best-of-5; re-runnable via `cargo bench --bench shape_matrix`):
+
+  | shape | cols | PI bytes | verify ms | proof bytes |
+  |-------|-----:|---------:|----------:|------------:|
+  | 1/1   |  797 |      200 |      11.6 |     509 955 |
+  | 1/2   |  807 |      272 |      11.6 |     513 395 |
+  | 2/2   | 1065 |      336 |      14.5 |     632 306 |
+  | 2/3   | 1075 |      408 |      14.6 |     636 656 |
+  | 3/3   | 1333 |      472 |      17.6 |     758 978 |
+  | 4/4   | 1601 |      608 |      20.5 |     879 005 |
+
+  Post-step2 4/4: **879 KB / 20.5 ms verify**.
+  Vs. pre-step2 Option B (recorded in `uno-aggregation-design.md`
+  as "~915 KB 4/4 worst case"): **−36 KB, −4 %** from removing the
+  480 spend/output bit-decomp columns at 4/4. Verify time drops
+  below the ≤ 20 ms §1.4 envelope on this host (noise-dependent on
+  smaller hosts).
+
+  Step3 LogUp wire-up is predicted to reduce this further by
+  −156 KB at 4/4 per the earlier estimate in this memo, but that
+  number was computed relative to the 2.22 MB FRI Option A baseline
+  — the actual delta from LogUp under Option B FRI has not been
+  directly measured and will need to be extracted from step3's
+  own `shape_matrix` run.
 - `M-P2 Phase 3b-step3` (NOT yet started): wire a `Kind::Global`
   LogUp lookup from the 8 limb columns (4 spend × 4 output at worst
   shape) into a new `Range16Air` AIR of height 2^16 = 65 536 with a
