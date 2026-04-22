@@ -455,6 +455,20 @@ fn pre_check_transfer_witness(w: &MvpWitness) -> Result<(), Plonky3Status> {
     if !witness_claim1_anchor_consistent(w) {
         return Err(Plonky3Status::WitnessInvalid);
     }
+    // NOTE: `witness_cm_bytes_consistent` and
+    // `witness_anchor_bytes_consistent` exist in transfer_air.rs as
+    // Phase 4b-step1 helpers but are NOT wired here yet. They enforce
+    // `cm_bytes[0..8] as u64 == poseidon2_cm_fe(proxies)` /
+    // `anchor_bytes[0..8] == anchor_proxy`, which is currently FALSE
+    // for real tosctl-built witnesses: `cm_bytes` is the 32-byte
+    // consensus commitment over real address material, while
+    // `poseidon2_cm_fe` runs Poseidon2 over u64 digest-reductions of
+    // that material. They fundamentally differ on limb 0.
+    //
+    // True limb-0 byte-parity with the C++ validator requires the
+    // real Phase 4b (AIR upgrade to compute cm / anchor from
+    // 32-byte inputs rather than u64 proxies). Step1 here only binds
+    // limbs 1..3 and leaves limb-0 on its existing proxy footing.
     Ok(())
 }
 

@@ -244,7 +244,8 @@ pub const MERKLE_DEPTH: usize = 32;
 pub const GLOBAL_COLS: usize = 1
     + MERKLE_DEPTH
     + POSEIDON2_COLS_PER_INSTANCE_16 // shared Cm / OutCm (w=16) — claim 2/6
-    + POSEIDON2_COLS_PER_INSTANCE; // shared IvkCm / Nf (w=8) — claim 3/4
+    + POSEIDON2_COLS_PER_INSTANCE  // shared IvkCm / Nf (w=8) — claim 3/4
+    + 3;                             // anchor limbs 1..3 (Phase 4b-step1)
 const GCOL_FEE: usize = 0;
 /// Base index of the 32 one-hot Merkle row-selector columns (§claim 1).
 const GS_ROW_SEL0: usize = 1;
@@ -254,6 +255,13 @@ const G_CM_SHARED_P2_16: usize = GS_ROW_SEL0 + MERKLE_DEPTH;
 /// Base index of the shared IvkCm/Nf width-8 Poseidon2 block
 /// (K-air-col-step2 strategy c — claim 3/4 row-loop on rows 0..7).
 const G_IVKCM_NF_SHARED_P2_8: usize = G_CM_SHARED_P2_16 + POSEIDON2_COLS_PER_INSTANCE_16;
+/// Phase 4b-step1: base index of anchor limbs 1..3 (3 global cols). Limb
+/// 0 of the anchor is already bound via the last-row `S_CURRENT ==
+/// pi_anchor0` check on every spend's Merkle walk; this block holds the
+/// upper three u64 limbs of `witness.anchor_bytes[8..32]`, bound via
+/// row-0 copy constraint to `PI[PI_ANCHOR + 1..4]`. Same pattern as the
+/// rk / epk / filter_tag bindings added in Phase 4a.
+const G_ANCHOR_LIMB1: usize = G_IVKCM_NF_SHARED_P2_8 + POSEIDON2_COLS_PER_INSTANCE;
 
 /// u16-limb decomposition width for `value_i` / `value_j` (§4.2 claims
 /// 5 & 7). Each value is committed as 4 × u16 limbs with the AIR
@@ -289,12 +297,18 @@ pub const RK_EPK_LIMBS: usize = 4;
 pub const SPEND_PROXY_COLS: usize =
     9 + MERKLE_DEPTH + MERKLE_DEPTH + VALUE_LIMBS_U16 + RK_EPK_LIMBS;
 
-/// Per-output proxy columns: cm_claim, d, pk_d, ivk_commitment, value,
-/// rcm (6 leading fields), VALUE_LIMBS_U16 u16-limb columns for the u64
-/// range-check on `value_j` (§4.2 claim 7), RK_EPK_LIMBS columns
-/// holding the output's `epk_bytes` limbs, and 1 column holding the
-/// per-output u16 `filter_tag` — all newly bound to PI in Phase 4a.
-pub const OUTPUT_PROXY_COLS: usize = 6 + VALUE_LIMBS_U16 + RK_EPK_LIMBS + 1;
+/// Per-output proxy columns: cm_claim (limb 0 of cm), d, pk_d,
+/// ivk_commitment, value, rcm (6 leading fields), VALUE_LIMBS_U16
+/// u16-limb columns for the u64 range-check on `value_j` (§4.2 claim
+/// 7), RK_EPK_LIMBS columns holding the output's `epk_bytes` limbs, 1
+/// column holding the per-output u16 `filter_tag` (all bound to PI in
+/// Phase 4a), and 3 columns holding the upper three u64 limbs of
+/// `cm_bytes[8..32]` for the PI binding added in Phase 4b-step1. Limb
+/// 0 of cm stays bound to the Poseidon2-w=16 output via
+/// `O_CM_CLAIM`; the pre-check in `witness_cm_bytes_consistent`
+/// enforces `cm_bytes[0..8] as u64 == poseidon2_cm_fe(...)` so the
+/// witness's own representation of cm is internally consistent.
+pub const OUTPUT_PROXY_COLS: usize = 6 + VALUE_LIMBS_U16 + RK_EPK_LIMBS + 1 + 3;
 
 /// Narrow (width-8) Poseidon2 instances per spend after K-air-col-step2:
 /// only the shared-Merkle slot remains. IvkCm + Nf are folded into a
@@ -358,6 +372,12 @@ const O_VALUE_LIMB0: usize = 6;
 const O_EPK_LIMB0: usize = O_VALUE_LIMB0 + VALUE_LIMBS_U16;
 /// Single column holding the u16 `filter_tag` (Phase 4a).
 const O_FILTER_TAG: usize = O_EPK_LIMB0 + RK_EPK_LIMBS;
+/// Base index of the 3 u64-limb columns holding `cm_bytes[8..32]`
+/// (Phase 4b-step1). Limb 0 of cm is at `O_CM_CLAIM` (col 0) and is
+/// bound by claim-2 / claim-6 to the Poseidon2-w=16 shared output.
+/// These 3 upper limbs come straight from witness bytes and are bound
+/// to PI via row-0 copy-constraint.
+const O_CM_LIMB1: usize = O_FILTER_TAG + 1;
 
 // ---------------------------------------------------------------------------
 // Shape-aware helpers
@@ -937,6 +957,35 @@ where
                 let ft_col: AB::Var = output_col(local_slice, self.n_spends, j, O_FILTER_TAG);
                 let pi_ft_slot = pis_vec[pi_filter_tag(self.n_spends, j)];
                 first.assert_eq(ft_col, pi_ft_slot);
+            }
+
+            // Phase 4b-step1: anchor limbs 1..3 PI binding. Limb 0 is
+            // already bound via the last-row `S_CURRENT == pi_anchor0`
+            // check on each spend's Merkle walk (see the `last.assert_eq`
+            // in the row-gated section below). The three upper limbs
+            // live in global cols `G_ANCHOR_LIMB1..G_ANCHOR_LIMB1+3` and
+            // are consensus-bound to `witness.anchor_bytes[8..32]`.
+            for k in 1..4 {
+                let anchor_limb: AB::Var = local_slice[G_ANCHOR_LIMB1 + (k - 1)];
+                let pi_anchor_slot = pis_vec[PI_ANCHOR + k];
+                first.assert_eq(anchor_limb, pi_anchor_slot);
+            }
+
+            // Phase 4b-step1: cm limbs 1..3 PI binding per output. Limb
+            // 0 is bound via `O_CM_CLAIM == pi_cms[j]` earlier in this
+            // block (claim 6) and `cm_claim == Poseidon2-w=16(...)` via
+            // the shared wide block on rows 0..7.
+            for j in 0..self.n_outputs {
+                for k in 1..4 {
+                    let cm_upper: AB::Var = output_col(
+                        local_slice,
+                        self.n_spends,
+                        j,
+                        O_CM_LIMB1 + (k - 1),
+                    );
+                    let pi_cm_slot = pis_vec[pi_cm(self.n_spends, j) + k];
+                    first.assert_eq(cm_upper, pi_cm_slot);
+                }
             }
 
             // Claim 8: balance. `Σ value_i - Σ value_j - fee == 0`.
@@ -1809,12 +1858,21 @@ impl MvpWitness {
         )));
         out.push(Goldilocks::from_u64(reduce_to_goldilocks(self.fee)));
 
-        // anchor: limb 0 = anchor_proxy (AIR-bound); limbs 1..3 = 0.
+        // anchor: limb 0 = anchor_proxy (AIR-bound to the last-row
+        // `S_CURRENT` on every spend's Merkle walk), limbs 1..3 from
+        // witness.anchor_bytes[8..32] (AIR-bound in Phase 4b-step1 via
+        // row-0 copy-constraint to global cols G_ANCHOR_LIMB1..3).
+        // The pre-check `witness_anchor_bytes_consistent` enforces
+        // `anchor_bytes[0..8] as u64 == anchor_proxy` so C++ and Rust
+        // agree byte-for-byte on every PI[anchor+k] slot.
         out.push(Goldilocks::from_u64(reduce_to_goldilocks(
             self.anchor_proxy,
         )));
-        for _ in 1..4 {
-            out.push(Goldilocks::ZERO);
+        for k in 1..4 {
+            let limb = u64::from_le_bytes(
+                self.anchor_bytes[k * 8..(k + 1) * 8].try_into().unwrap(),
+            );
+            out.push(Goldilocks::from_u64(reduce_to_goldilocks(limb)));
         }
 
         let perm = default_goldilocks_poseidon2_8();
@@ -1838,11 +1896,21 @@ impl MvpWitness {
         }
 
         for o in &self.outputs {
-            // cm_j: limb 0 = Poseidon2 proxy (AIR-bound); limbs 1..3 = 0.
+            // cm_j: limb 0 = Poseidon2-w=16 output (AIR-bound via the
+            // shared wide block on rows 0..7 + row-0 `cm_claim ==
+            // pi_cms[j]` equality); limbs 1..3 from
+            // witness.cm_bytes[8..32] (AIR-bound in Phase 4b-step1 via
+            // row-0 copy-constraint to output cols
+            // O_CM_LIMB1..O_CM_LIMB1+3). Pre-check
+            // `witness_cm_bytes_consistent` ensures
+            // `cm_bytes[0..8] as u64 == poseidon2_cm_fe(...)`.
             let cm = poseidon2_cm_fe(&perm16, o.d, o.pk_d, o.ivk_commitment, o.value, o.rcm);
             out.push(cm);
-            for _ in 1..4 {
-                out.push(Goldilocks::ZERO);
+            for k in 1..4 {
+                let limb = u64::from_le_bytes(
+                    o.cm_bytes[k * 8..(k + 1) * 8].try_into().unwrap(),
+                );
+                out.push(Goldilocks::from_u64(reduce_to_goldilocks(limb)));
             }
             // epk_j: 4 u64 limbs of epk_bytes (LE), reduced mod
             // Goldilocks. Phase 4a AIR-bound to output's
@@ -2101,6 +2169,20 @@ impl MvpWitness {
                     v.push(Goldilocks::from_u64(reduce_to_goldilocks(limb)));
                 }
                 v.push(Goldilocks::from_u64(o.filter_tag as u64));
+                // Phase 4b-step1: 3 upper u64 limbs of cm_bytes[8..32]
+                // (LE), reduced mod Goldilocks. Bound to PI[pi_cm(j)+k]
+                // for k in 1..4 by row-0 copy-constraint. cm_bytes[0..8]
+                // is NOT stored here — limb 0 is bound to the
+                // Poseidon2-w=16 output via `O_CM_CLAIM`; consistency
+                // between `cm_bytes[0..8] as u64` and the Poseidon2
+                // output is enforced by the `witness_cm_bytes_consistent`
+                // pre-check before prove.
+                for k in 1..4 {
+                    let limb = u64::from_le_bytes(
+                        o.cm_bytes[k * 8..(k + 1) * 8].try_into().unwrap(),
+                    );
+                    v.push(Goldilocks::from_u64(reduce_to_goldilocks(limb)));
+                }
                 debug_assert_eq!(v.len(), OUTPUT_PROXY_COLS);
                 v
             })
@@ -2143,6 +2225,16 @@ impl MvpWitness {
                 values.extend_from_slice(&row0_spend_nf[row_idx - 4]);
             } else {
                 values.extend_from_slice(&padding_p2);
+            }
+
+            // Phase 4b-step1: anchor limbs 1..3 (global cols, constant
+            // across rows). Same invariant as other proxy cols: identical
+            // value on every row; AIR eval binds row 0 only.
+            for k in 1..4 {
+                let limb = u64::from_le_bytes(
+                    self.anchor_bytes[k * 8..(k + 1) * 8].try_into().unwrap(),
+                );
+                values.push(Goldilocks::from_u64(reduce_to_goldilocks(limb)));
             }
 
             // Per-spend block: proxies + S_CURRENT + per-spend shared
@@ -2365,6 +2457,43 @@ pub fn witness_claim1_anchor_consistent(w: &MvpWitness) -> bool {
         let derived =
             poseidon2_merkle_path_root(&perm, s.leaf, s.pos, &s.merkle_path).as_canonical_u64();
         if derived != want {
+            return false;
+        }
+    }
+    true
+}
+
+/// Phase 4b-step1: true iff `witness.anchor_bytes[0..8] as u64 (mod p)
+/// == anchor_proxy`. Enforced as a prover-side pre-check so C++ and
+/// Rust emit byte-identical `PI[PI_ANCHOR + 0]`: C++ reads
+/// `encode_256(anchor_bytes)[0] = anchor_bytes[0..8] as u64 (mod p)`;
+/// Rust emits `anchor_proxy`; the AIR already binds `anchor_proxy ==
+/// PI[PI_ANCHOR + 0]` via the last-row `S_CURRENT` check. If the
+/// wallet populates `anchor_bytes[0..8]` from some other source, the
+/// two sides would disagree on PI limb 0 and STARK verify would fail
+/// downstream — better to reject at the structured-error boundary.
+pub fn witness_anchor_bytes_consistent(w: &MvpWitness) -> bool {
+    let anchor_limb0 = u64::from_le_bytes(w.anchor_bytes[0..8].try_into().unwrap());
+    reduce_to_goldilocks(anchor_limb0) == reduce_to_goldilocks(w.anchor_proxy)
+}
+
+/// Phase 4b-step1: true iff for every output,
+/// `witness.cm_bytes[0..8] as u64 (mod p) ==
+/// poseidon2_cm_fe(d, pk_d, ivk_commitment, value, rcm)`. Same
+/// rationale as `witness_anchor_bytes_consistent` but for the per-
+/// output cm limb-0 binding. C++ side reads
+/// `encode_256(cm_bytes)[0]`; Rust emits the Poseidon2-w=16 output.
+/// Pre-check rejects witnesses where the two disagree on the low
+/// 8 bytes.
+pub fn witness_cm_bytes_consistent(w: &MvpWitness) -> bool {
+    let perm16 = default_goldilocks_poseidon2_16();
+    for o in &w.outputs {
+        let derived =
+            poseidon2_cm_fe(&perm16, o.d, o.pk_d, o.ivk_commitment, o.value, o.rcm)
+                .as_canonical_u64();
+        let witness_limb0 =
+            u64::from_le_bytes(o.cm_bytes[0..8].try_into().unwrap());
+        if reduce_to_goldilocks(witness_limb0) != derived {
             return false;
         }
     }

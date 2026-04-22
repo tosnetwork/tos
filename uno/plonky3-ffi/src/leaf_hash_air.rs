@@ -1276,17 +1276,19 @@ mod tests {
     }
 
     /// Real trace-commit leaf end-to-end at the partial-tail edge
-    /// case. On a 2/2 Transfer proof, the trace-matrix width is NOT a
+    /// case. On a 1/2 Transfer proof the trace-matrix width is NOT a
     /// multiple of `SPONGE_RATE = 4`, so the final absorbed block has
     /// fewer than 4 lanes. We hash the real trace-commit leaf and
     /// verify the STARK proves correctly over this layout.
     ///
     /// The exact `W mod 4` tail-size changes when the AIR adds proxy
-    /// columns (e.g. Phase 4a rk/epk/filter_tag bindings shifted
-    /// `W mod 4` from 1 to 3 at 2/2); the assertion below only requires
-    /// a non-zero tail so partial-tail coverage is preserved across
-    /// column-layout edits without coupling this test to the absolute
-    /// column count.
+    /// columns (e.g. Phase 4a shifted `W mod 4` from 1 to 3 at 2/2;
+    /// Phase 4b-step1 shifted 2/2 from 3 to 0 so the partial-tail
+    /// case moved to 1/2). Shape choice is whichever deterministic
+    /// shape currently lands on `W mod 4 != 0`; the assertion below
+    /// just requires a non-zero tail so partial-tail coverage is
+    /// preserved across column-layout edits without coupling this
+    /// test to the absolute column count.
     #[test]
     fn air_prove_and_verify_real_trace_commit_leaf_partial_tail() {
         use crate::prover::{MvpConfig, MvpProver};
@@ -1294,7 +1296,7 @@ mod tests {
         use p3_uni_stark::Proof;
 
         let prover = MvpProver::new();
-        let w = MvpWitness::deterministic_valid(2, 2, 0x7E57_D7C0);
+        let w = MvpWitness::deterministic_valid(1, 2, 0x7E57_D7C0);
         let (bytes, _) = prover.prove(&w.encode()).unwrap();
         let proof: Proof<MvpConfig> = postcard::from_bytes(&bytes).unwrap();
 
@@ -1305,10 +1307,10 @@ mod tests {
         assert_ne!(
             leaf.len() % SPONGE_RATE,
             0,
-            "2/2 air_width should land on a partial-tail sponge block \
-             (W mod 4 != 0); update the AIR column layout if this \
-             starts failing so this test keeps covering the partial \
-             tail case (leaf.len() = {})",
+            "1/2 air_width should land on a partial-tail sponge block \
+             (W mod 4 != 0); if this starts failing, find a different \
+             shape whose air_width has W mod 4 != 0 so this test keeps \
+             covering the partial tail case (leaf.len() = {})",
             leaf.len(),
         );
 
