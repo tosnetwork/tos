@@ -297,18 +297,16 @@ pub const RK_EPK_LIMBS: usize = 4;
 pub const SPEND_PROXY_COLS: usize =
     9 + MERKLE_DEPTH + MERKLE_DEPTH + VALUE_LIMBS_U16 + RK_EPK_LIMBS;
 
-/// Per-output proxy columns: cm_claim (limb 0 of cm), d, pk_d,
-/// ivk_commitment, value, rcm (6 leading fields), VALUE_LIMBS_U16
-/// u16-limb columns for the u64 range-check on `value_j` (§4.2 claim
-/// 7), RK_EPK_LIMBS columns holding the output's `epk_bytes` limbs, 1
-/// column holding the per-output u16 `filter_tag` (all bound to PI in
-/// Phase 4a), and 3 columns holding the upper three u64 limbs of
-/// `cm_bytes[8..32]` for the PI binding added in Phase 4b-step1. Limb
-/// 0 of cm stays bound to the Poseidon2-w=16 output via
-/// `O_CM_CLAIM`; the pre-check in `witness_cm_bytes_consistent`
-/// enforces `cm_bytes[0..8] as u64 == poseidon2_cm_fe(...)` so the
-/// witness's own representation of cm is internally consistent.
-pub const OUTPUT_PROXY_COLS: usize = 6 + VALUE_LIMBS_U16 + RK_EPK_LIMBS + 1 + 3;
+/// Per-output proxy columns: cm_claim (Poseidon2-w=16 output, trace-
+/// only after Phase 4b-step2a), d, pk_d, ivk_commitment, value, rcm (6
+/// leading fields), VALUE_LIMBS_U16 u16-limb columns for the u64
+/// range-check on `value_j` (§4.2 claim 7), RK_EPK_LIMBS columns
+/// holding `epk_bytes` limbs, 1 column holding the u16 `filter_tag`
+/// (Phase 4a), 3 columns for `cm_bytes[8..32]` upper limbs (Phase 4b-
+/// step1), and 1 column for `cm_bytes[0..8]` limb 0 (Phase 4b-step2a)
+/// — bound to `PI[pi_cm(j) + 0]` via row-0 copy-constraint, replacing
+/// the previous `cm_claim == pi_cms[j]` binding.
+pub const OUTPUT_PROXY_COLS: usize = 6 + VALUE_LIMBS_U16 + RK_EPK_LIMBS + 1 + 3 + 1;
 
 /// Narrow (width-8) Poseidon2 instances per spend after K-air-col-step2:
 /// only the shared-Merkle slot remains. IvkCm + Nf are folded into a
@@ -373,11 +371,17 @@ const O_EPK_LIMB0: usize = O_VALUE_LIMB0 + VALUE_LIMBS_U16;
 /// Single column holding the u16 `filter_tag` (Phase 4a).
 const O_FILTER_TAG: usize = O_EPK_LIMB0 + RK_EPK_LIMBS;
 /// Base index of the 3 u64-limb columns holding `cm_bytes[8..32]`
-/// (Phase 4b-step1). Limb 0 of cm is at `O_CM_CLAIM` (col 0) and is
-/// bound by claim-2 / claim-6 to the Poseidon2-w=16 shared output.
-/// These 3 upper limbs come straight from witness bytes and are bound
-/// to PI via row-0 copy-constraint.
+/// (Phase 4b-step1). Bound to PI limbs 1..3 via row-0 copy-constraint.
 const O_CM_LIMB1: usize = O_FILTER_TAG + 1;
+/// Single column holding `cm_bytes[0..8]` as a u64 limb (Phase 4b-
+/// step2a). Bound to `PI[pi_cm(j) + 0]` via row-0 copy-constraint,
+/// replacing the prior `O_CM_CLAIM`-to-PI binding. `O_CM_CLAIM` still
+/// exists and is still constrained to the Poseidon2-w=16 output via
+/// the shared wide block on rows 0..7, but it no longer directly
+/// drives the PI value — this decoupling is what achieves byte parity
+/// with C++'s `encode_256(cm_bytes)[0]`, at the documented cost of
+/// weakening claim-2's on-PI soundness.
+const O_CM_LIMB0_REAL: usize = O_CM_LIMB1 + 3;
 
 // ---------------------------------------------------------------------------
 // Shape-aware helpers
@@ -907,16 +911,23 @@ where
             }
 
             // Per-output row-0 bindings (claim 7 bit-decomp of value_j,
-            // and the `cm_claim == pi_cms[j]` equality — proxies are
-            // constant across rows, so row-0 suffices for these).
+            // and the cm limb-0 PI binding).
             for j in 0..self.n_outputs {
-                let cm_claim = output_col(local_slice, self.n_spends, j, O_CM_CLAIM);
                 let value_out = output_col(local_slice, self.n_spends, j, O_VALUE);
 
-                // Claim 6 (output half): bind the per-output `cm_claim`
-                // proxy to PI. The `cm_claim = Poseidon2(...)` half of
-                // claim 6 is gated on row 4+j via the shared wide block.
-                first.assert_eq(cm_claim, pi_cms[j]);
+                // Phase 4b-step2a: bind `PI[pi_cm(j) + 0]` to the new
+                // witness-bytes col `O_CM_LIMB0_REAL` (= cm_bytes[0..8]
+                // as u64 mod p) instead of the Poseidon2-derived
+                // `O_CM_CLAIM`. `O_CM_CLAIM` still participates in the
+                // shared-wide-block claim-6 `cm_claim = Poseidon2
+                // (proxies)` constraint on row 4+j, so trace integrity
+                // is preserved, but the PI value now comes from
+                // `witness.cm_bytes[0..8]` — matching C++'s
+                // `encode_256(cm_bytes)[0]`. See the module docstring
+                // for the documented soundness trade-off.
+                let cm_limb0_real: AB::Var =
+                    output_col(local_slice, self.n_spends, j, O_CM_LIMB0_REAL);
+                first.assert_eq(cm_limb0_real, pi_cms[j]);
 
                 // Claim 7: u64 range-check on `value_j` via 4×u16 limbs.
                 // Phase 3b-step2: see claim-5 comment above. Range-check
@@ -1876,7 +1887,6 @@ impl MvpWitness {
         }
 
         let perm = default_goldilocks_poseidon2_8();
-        let perm16 = default_goldilocks_poseidon2_16();
 
         for s in &self.spends {
             // nf_i: 4-limb Poseidon2 nullifier (AIR-bound).
@@ -1896,17 +1906,14 @@ impl MvpWitness {
         }
 
         for o in &self.outputs {
-            // cm_j: limb 0 = Poseidon2-w=16 output (AIR-bound via the
-            // shared wide block on rows 0..7 + row-0 `cm_claim ==
-            // pi_cms[j]` equality); limbs 1..3 from
-            // witness.cm_bytes[8..32] (AIR-bound in Phase 4b-step1 via
-            // row-0 copy-constraint to output cols
-            // O_CM_LIMB1..O_CM_LIMB1+3). Pre-check
-            // `witness_cm_bytes_consistent` ensures
-            // `cm_bytes[0..8] as u64 == poseidon2_cm_fe(...)`.
-            let cm = poseidon2_cm_fe(&perm16, o.d, o.pk_d, o.ivk_commitment, o.value, o.rcm);
-            out.push(cm);
-            for k in 1..4 {
+            // cm_j: Phase 4b-step2a — all 4 limbs now come from
+            // witness.cm_bytes[k*8..(k+1)*8] as u64 (mod p). The
+            // Poseidon2-w=16 proxy-derivation (poseidon2_cm_fe) still
+            // constrains the `O_CM_CLAIM` trace column via the shared
+            // wide block, but no longer drives PI. Matches C++'s
+            // `pack_bits256_as_4_limbs(o.cm)` / `encode_256` output
+            // byte-for-byte.
+            for k in 0..4 {
                 let limb = u64::from_le_bytes(
                     o.cm_bytes[k * 8..(k + 1) * 8].try_into().unwrap(),
                 );
@@ -2171,18 +2178,22 @@ impl MvpWitness {
                 v.push(Goldilocks::from_u64(o.filter_tag as u64));
                 // Phase 4b-step1: 3 upper u64 limbs of cm_bytes[8..32]
                 // (LE), reduced mod Goldilocks. Bound to PI[pi_cm(j)+k]
-                // for k in 1..4 by row-0 copy-constraint. cm_bytes[0..8]
-                // is NOT stored here — limb 0 is bound to the
-                // Poseidon2-w=16 output via `O_CM_CLAIM`; consistency
-                // between `cm_bytes[0..8] as u64` and the Poseidon2
-                // output is enforced by the `witness_cm_bytes_consistent`
-                // pre-check before prove.
+                // for k in 1..4 by row-0 copy-constraint.
                 for k in 1..4 {
                     let limb = u64::from_le_bytes(
                         o.cm_bytes[k * 8..(k + 1) * 8].try_into().unwrap(),
                     );
                     v.push(Goldilocks::from_u64(reduce_to_goldilocks(limb)));
                 }
+                // Phase 4b-step2a: cm_bytes[0..8] as a single u64 limb,
+                // reduced mod Goldilocks. This is the PI binding for
+                // cm limb 0 — bound to `PI[pi_cm(j) + 0]` via row-0
+                // copy-constraint. `O_CM_CLAIM` (col 0) stays on its
+                // Poseidon2 derivation but no longer touches PI.
+                let cm_limb0 = u64::from_le_bytes(
+                    o.cm_bytes[0..8].try_into().unwrap(),
+                );
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(cm_limb0)));
                 debug_assert_eq!(v.len(), OUTPUT_PROXY_COLS);
                 v
             })
