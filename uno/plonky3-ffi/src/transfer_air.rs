@@ -666,44 +666,60 @@ impl<F: p3_field::Field> p3_lookup::LookupAir<F> for MvpTransferAir {
         let main_window = symbolic.main();
         let main_local = main_window.current_slice();
 
-        // Build 4·(n_s + n_o) `(element, multiplicity, Direction)` tuples
-        // — one per u16 limb column. All receive with multiplicity 1.
-        let total = 4 * (self.n_spends + self.n_outputs);
+        // Register 4·(n_s + n_o) SEPARATE Kind::Global lookups — one per
+        // u16 limb column, each with a single-element single-input tuple.
+        //
+        // Why not one lookup with 4·(n_s+n_o) input tuples? A bundled
+        // single-lookup registration would compile and the prover would
+        // produce a proof, but verify trips `OodEvaluationMismatch`:
+        // bundling N tuples into one lookup raises the lookup
+        // constraint's polynomial degree to N+ (denominator product of
+        // N linear factors), which appears to mis-interact with the
+        // shape-dependent symbolic-width computation in
+        // `batch-stark::symbolic` for wide AIRs. Splitting into N
+        // single-tuple lookups keeps each constraint at degree 2 —
+        // the well-trodden LogUp case — at the cost of N aux cols in
+        // the permutation trace.
+        //
+        // All N lookups share the same `Kind::Global("u16_range")`
+        // name, so they all consume from the same Range16Air Send.
         let one = p3_air::symbolic::SymbolicExpression::Leaf(
             p3_air::BaseLeaf::Constant(F::ONE),
         );
-        let mut lookup_inputs: Vec<p3_lookup::lookup_traits::LookupInput<F>> =
-            Vec::with_capacity(total);
+        let mut lookups: Vec<p3_lookup::lookup_traits::Lookup<F>> =
+            Vec::with_capacity(4 * (self.n_spends + self.n_outputs));
+
+        let name = || {
+            p3_lookup::lookup_traits::Kind::Global(String::from(
+                crate::range16_air::U16_RANGE_LOOKUP_NAME,
+            ))
+        };
+
         for i in 0..self.n_spends {
             for k in 0..VALUE_LIMBS_U16 {
                 let col = spend_proxy_offset(i) + S_VALUE_LIMB0 + k;
                 let limb = main_local[col];
-                lookup_inputs.push((
+                let inputs = vec![(
                     vec![limb.into()],
                     one.clone(),
                     p3_lookup::lookup_traits::Direction::Receive,
-                ));
+                )];
+                lookups.push(p3_lookup::LookupAir::register_lookup(self, name(), &inputs));
             }
         }
         for j in 0..self.n_outputs {
             for k in 0..VALUE_LIMBS_U16 {
                 let col = output_proxy_offset(self.n_spends, j) + O_VALUE_LIMB0 + k;
                 let limb = main_local[col];
-                lookup_inputs.push((
+                let inputs = vec![(
                     vec![limb.into()],
                     one.clone(),
                     p3_lookup::lookup_traits::Direction::Receive,
-                ));
+                )];
+                lookups.push(p3_lookup::LookupAir::register_lookup(self, name(), &inputs));
             }
         }
-
-        vec![p3_lookup::LookupAir::register_lookup(
-            self,
-            p3_lookup::lookup_traits::Kind::Global(
-                String::from(crate::range16_air::U16_RANGE_LOOKUP_NAME),
-            ),
-            &lookup_inputs,
-        )]
+        lookups
     }
 }
 

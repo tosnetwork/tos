@@ -645,21 +645,15 @@ mod tests {
     }
 
     /// M-P2 Phase 3b-step3: full prove + verify round-trip for the
-    /// cross-AIR u16 range-check LogUp at shape 1/1.
-    ///
-    /// KNOWN BROKEN in this commit — verifier returns
-    /// `OodEvaluationMismatch { index: Some(0) }`. The prove path
-    /// generates a well-formed `BatchProof<MvpConfig>` (see the
-    /// `batch_prove_with_range_check_smoke_1_1` sibling test that
-    /// asserts postcard round-trip), but re-running
-    /// `ProverData::from_airs_and_degrees` on the verifier side
-    /// apparently does not reconstruct a byte-identical
-    /// `common.lookups` / preprocessed commit. Root-cause analysis
-    /// is the blocker for step3 final-commit; this `#[ignore]` marker
-    /// lets us land the prove-side infrastructure atomically without
-    /// regressing existing tests.
+    /// cross-AIR u16 range-check LogUp at shape 1/1. Exercises
+    /// `prove_with_range_check` + `verify_with_range_check` through
+    /// independent `ProverData::from_airs_and_degrees` reconstruction
+    /// on the verifier side. Green here confirms the
+    /// Kind::Global("u16_range") cumulative sum balances across
+    /// {MvpTransferAir receive, Range16Air send} and the AIR+lookup
+    /// combined constraint accumulator agrees between prover and
+    /// verifier at the OOD point.
     #[test]
-    #[ignore = "M-P2 step3-final: verifier-side reconstruction drifts from prover, causing OodEvaluationMismatch; root-cause TBD"]
     fn batch_range_check_round_trip_1_1() {
         use crate::verifier::MvpBatchVerifier;
 
@@ -678,32 +672,39 @@ mod tests {
         );
     }
 
-    /// Diagnostic: prove + verify with SHARED `prover_data.common`
-    /// (matches the passing plonky3-uno simple.rs cross-AIR test
-    /// pattern — all 4 of those tests reuse `&prover_data.common` on
-    /// the verifier side; none independently reconstruct).
-    ///
-    /// This test isolated the bug WAS NOT independent-reconstruction
-    /// drift (shared-common still fails with the same
-    /// `OodEvaluationMismatch { index: Some(0) }`). Two real bugs
-    /// were found and fixed along the way:
-    ///   (a) `Range16Air::max_constraint_degree` was `Some(1)` which
-    ///       under-counts the LogUp-folded degree-2 lookup constraint
-    ///       — debug assert in `batch_stark::symbolic` trips.
-    ///   (b) `MvpTransferAir::main_next_row_columns` defaulted to `[]`
-    ///       despite the AIR reading `main.next_slice()` for the §4.2
-    ///       "proxies are constant across rows" transition check —
-    ///       latent since uni-stark auto-opens next-row regardless,
-    ///       but batch-stark gates next-row opening on this method.
-    ///
-    /// After both fixes this test still fails with the same OOD error,
-    /// meaning a third bug remains — likely in the lookup-element
-    /// column indices (symbolic vs. actual-trace offset), or in how
-    /// the permutation trace for MvpTransferAir is populated relative
-    /// to what the lookup constraint expects. Marked #[ignore] until
-    /// step3-final-RCA.
+    /// M-P2 Phase 3b-step3: cross-AIR LogUp round-trip at the §4.1
+    /// worst-case envelope shape 4/4. Exercises 4·(4+4) = 32 per-row
+    /// u16 limb receives against the 65 536-entry Range16Air send.
+    /// This is the consensus-binding worst case that the real
+    /// validator path will hit.
     #[test]
-    #[ignore = "M-P2 step3-final-RCA: third bug remains after fixing Range16 degree + Transfer main_next_row; see batch_prove_with_range_check_smoke_1_1 for the prove-side reachability"]
+    fn batch_range_check_round_trip_4_4_worst_case() {
+        use crate::verifier::MvpBatchVerifier;
+
+        let prover = MvpBatchProver::new();
+        let verifier = MvpBatchVerifier::new();
+
+        let w = MvpWitness::deterministic_valid(4, 4, 0xB16B_4004);
+        let (proof, pis) = prover
+            .prove_with_range_check(&w.encode())
+            .expect("prove_with_range_check 4/4");
+        let status = verifier.verify_with_range_check(&proof, &pis);
+        assert_eq!(
+            status,
+            Plonky3Status::Ok,
+            "verify_with_range_check did not return Ok at 4/4: {status:?}"
+        );
+    }
+
+    /// Regression test mirroring the passing plonky3-uno simple.rs
+    /// cross-AIR pattern — prove + verify using a SHARED
+    /// `prover_data.common` passed to both sides (vs.
+    /// `batch_range_check_round_trip_1_1` which reconstructs on the
+    /// verifier side via `MvpBatchVerifier::verify_with_range_check`).
+    /// Both tests now pass together, confirming that
+    /// `ProverData::from_airs_and_degrees` is deterministic across
+    /// fresh reconstructions with identical inputs.
+    #[test]
     fn batch_range_check_round_trip_1_1_shared_common() {
         use crate::range16_air::{Range16Air, LOG_RANGE_TABLE_HEIGHT};
         use crate::transfer_air::{MvpTransferAir, LOG_TRACE_HEIGHT};
