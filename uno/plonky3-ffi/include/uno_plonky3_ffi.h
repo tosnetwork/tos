@@ -546,7 +546,7 @@
 // `k ∈ 0..32`, `0` on rows 32..63. Step 1 (K-air-col-share) introduced
 // them for the Merkle row-loop; step 2 (K-air-col-step2) reuses the
 // same bank for the Cm/IvkCm/Nf row-loops — no extra selector columns.
-#define GLOBAL_COLS (((1 + MERKLE_DEPTH) + POSEIDON2_COLS_PER_INSTANCE_16) + POSEIDON2_COLS_PER_INSTANCE)
+#define GLOBAL_COLS ((((((1 + MERKLE_DEPTH) + POSEIDON2_COLS_PER_INSTANCE_16) + POSEIDON2_COLS_PER_INSTANCE) + 3) + 1) + 1)
 
 // u16-limb decomposition width for `value_i` / `value_j` (§4.2 claims
 // 5 & 7). Each value is committed as 4 × u16 limbs with the AIR
@@ -581,12 +581,16 @@
 // Phase 4a.
 #define SPEND_PROXY_COLS ((((9 + MERKLE_DEPTH) + MERKLE_DEPTH) + VALUE_LIMBS_U16) + RK_EPK_LIMBS)
 
-// Per-output proxy columns: cm_claim, d, pk_d, ivk_commitment, value,
-// rcm (6 leading fields), VALUE_LIMBS_U16 u16-limb columns for the u64
+// Per-output proxy columns: cm_claim (Poseidon2-w=16 output, trace-
+// only after Phase 4b-step2a), d, pk_d, ivk_commitment, value, rcm (6
+// leading fields), VALUE_LIMBS_U16 u16-limb columns for the u64
 // range-check on `value_j` (§4.2 claim 7), RK_EPK_LIMBS columns
-// holding the output's `epk_bytes` limbs, and 1 column holding the
-// per-output u16 `filter_tag` — all newly bound to PI in Phase 4a.
-#define OUTPUT_PROXY_COLS (((6 + VALUE_LIMBS_U16) + RK_EPK_LIMBS) + 1)
+// holding `epk_bytes` limbs, 1 column holding the u16 `filter_tag`
+// (Phase 4a), 3 columns for `cm_bytes[8..32]` upper limbs (Phase 4b-
+// step1), and 1 column for `cm_bytes[0..8]` limb 0 (Phase 4b-step2a)
+// — bound to `PI[pi_cm(j) + 0]` via row-0 copy-constraint, replacing
+// the previous `cm_claim == pi_cms[j]` binding.
+#define OUTPUT_PROXY_COLS (((((6 + VALUE_LIMBS_U16) + RK_EPK_LIMBS) + 1) + 3) + 1)
 
 // Narrow (width-8) Poseidon2 instances per spend after K-air-col-step2:
 // only the shared-Merkle slot remains. IvkCm + Nf are folded into a
@@ -648,22 +652,30 @@ enum Plonky3Status
 typedef int32_t Plonky3Status;
 #endif // __cplusplus
 
-// Opaque handle to an initialized Plonky3 reference prover.
+// Opaque handle to an initialized Plonky3 prover.
 //
 // Constructed by [`uno_plonky3_prover_init`], destroyed by
-// [`uno_plonky3_prover_free`]. Not used by the validator; used by
-// `tosctl` for witness-generation and by integration tests.
+// [`uno_plonky3_prover_free`]. Used by `tosctl` wallets for
+// witness-to-proof generation. Internally runs the production
+// batch-stark prover with cross-AIR u16 range-check
+// (`MvpBatchProver::prove_with_range_check`) so the proof bytes
+// returned here verify against [`Plonky3VerifierHandle`] on the
+// validator side.
 typedef struct Plonky3ProverHandle Plonky3ProverHandle;
 
 // Opaque handle to an initialized Plonky3 verifier.
 //
 // Constructed by [`uno_plonky3_verifier_init`] and destroyed by
-// [`uno_plonky3_verifier_free`]. Internally holds the Plonky3 `StarkConfig`
-// and a reference to the statically-configured MVP AIR instance.
+// [`uno_plonky3_verifier_free`]. Internally holds the Plonky3
+// `StarkConfig` and the two-AIR (`MvpTransferAir` + `Range16Air`)
+// batch-stark verifier with the cross-AIR u16 range-check LogUp
+// wired — the full M-P2 production path as of Phase 5 (commit
+// migrating from the pre-M-P2 uni-stark verifier).
 //
-// Thread-safety: the handle is `Send + Sync` and may be used concurrently
-// from multiple threads. This is required by design doc §13 P.3 (parallel
-// verify across `num_cores` workers is an activation prerequisite).
+// Thread-safety: the handle is `Send + Sync` and may be used
+// concurrently from multiple threads. Required by design doc §13
+// P.3 (parallel verify across `num_cores` workers is an activation
+// prerequisite).
 typedef struct Plonky3VerifierHandle Plonky3VerifierHandle;
 
 // Opaque handle to an initialized block-level aggregated-proof verifier.

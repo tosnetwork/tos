@@ -123,23 +123,31 @@ impl Plonky3Status {
 /// Opaque handle to an initialized Plonky3 verifier.
 ///
 /// Constructed by [`uno_plonky3_verifier_init`] and destroyed by
-/// [`uno_plonky3_verifier_free`]. Internally holds the Plonky3 `StarkConfig`
-/// and a reference to the statically-configured MVP AIR instance.
+/// [`uno_plonky3_verifier_free`]. Internally holds the Plonky3
+/// `StarkConfig` and the two-AIR (`MvpTransferAir` + `Range16Air`)
+/// batch-stark verifier with the cross-AIR u16 range-check LogUp
+/// wired — the full M-P2 production path as of Phase 5 (commit
+/// migrating from the pre-M-P2 uni-stark verifier).
 ///
-/// Thread-safety: the handle is `Send + Sync` and may be used concurrently
-/// from multiple threads. This is required by design doc §13 P.3 (parallel
-/// verify across `num_cores` workers is an activation prerequisite).
+/// Thread-safety: the handle is `Send + Sync` and may be used
+/// concurrently from multiple threads. Required by design doc §13
+/// P.3 (parallel verify across `num_cores` workers is an activation
+/// prerequisite).
 pub struct Plonky3VerifierHandle {
-    inner: Arc<verifier::MvpVerifier>,
+    inner: Arc<verifier::MvpBatchVerifier>,
 }
 
-/// Opaque handle to an initialized Plonky3 reference prover.
+/// Opaque handle to an initialized Plonky3 prover.
 ///
 /// Constructed by [`uno_plonky3_prover_init`], destroyed by
-/// [`uno_plonky3_prover_free`]. Not used by the validator; used by
-/// `tosctl` for witness-generation and by integration tests.
+/// [`uno_plonky3_prover_free`]. Used by `tosctl` wallets for
+/// witness-to-proof generation. Internally runs the production
+/// batch-stark prover with cross-AIR u16 range-check
+/// (`MvpBatchProver::prove_with_range_check`) so the proof bytes
+/// returned here verify against [`Plonky3VerifierHandle`] on the
+/// validator side.
 pub struct Plonky3ProverHandle {
-    inner: Arc<prover::MvpProver>,
+    inner: Arc<prover::MvpBatchProver>,
 }
 
 /// Opaque handle to an initialized block-level aggregated-proof verifier.
@@ -320,7 +328,7 @@ pub unsafe extern "C" fn uno_plonky3_verifier_init(
             return Plonky3Status::NullPointer;
         }
         let handle = Box::new(Plonky3VerifierHandle {
-            inner: Arc::new(verifier::MvpVerifier::new()),
+            inner: Arc::new(verifier::MvpBatchVerifier::new()),
         });
         // SAFETY: caller promises out_handle is a valid, writable pointer.
         unsafe {
@@ -389,7 +397,11 @@ pub unsafe extern "C" fn uno_plonky3_verify(
             return Plonky3Status::NullPointer;
         };
 
-        handle.inner.verify(proof_bytes, pi_bytes)
+        // Phase 5: route through the batch-stark + cross-AIR u16 range-
+        // check path. Proof bytes must be a postcard-encoded
+        // `BatchProof<MvpConfig>`; legacy `Proof<MvpConfig>` uni-stark
+        // bytes are rejected with `ProofDecodeFailed`.
+        handle.inner.verify_with_range_check(proof_bytes, pi_bytes)
     })
 }
 
@@ -408,7 +420,7 @@ pub unsafe extern "C" fn uno_plonky3_prover_init(out_handle: *mut *mut Plonky3Pr
             return Plonky3Status::NullPointer;
         }
         let handle = Box::new(Plonky3ProverHandle {
-            inner: Arc::new(prover::MvpProver::new()),
+            inner: Arc::new(prover::MvpBatchProver::new()),
         });
         // SAFETY: caller promise.
         unsafe {
@@ -468,7 +480,10 @@ pub unsafe extern "C" fn uno_plonky3_prove(
             return Plonky3Status::NullPointer;
         };
 
-        match handle.inner.prove(witness_bytes) {
+        // Phase 5: route through the batch-stark + cross-AIR u16 range-
+        // check path. Returns postcard-encoded `BatchProof<MvpConfig>`
+        // bytes + unchanged `MvpWitness::public_inputs_bytes()` bytes.
+        match handle.inner.prove_with_range_check(witness_bytes) {
             Ok((proof_bytes, public_inputs_bytes)) => {
                 // We return the proof + its derived public-input vector
                 // concatenated: [u32_le proof_len][proof_bytes][pi_bytes].
