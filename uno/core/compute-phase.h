@@ -148,8 +148,10 @@ bool run_compute_phase(
 //      installed `ParallelVerifyPool` (falling back to serial verify if
 //      no pool is installed).
 //   2. Serially applies `apply_transfer` in declared tx-order for every
-//      result == Ok. Tx-order preservation is the load-bearing invariant
-//      that §12 P.5 "Cross-validator determinism" depends on.
+//      result == Ok, after re-checking the live nullifier set against
+//      earlier accepted txs in the same batch. Tx-order preservation is the
+//      load-bearing invariant that §12 P.5 "Cross-validator determinism"
+//      depends on.
 //
 // Returns the per-tx VerifyResults in input order, one per Transfer. The
 // caller populates the per-tx `ComputePhase` records from these results;

@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -95,6 +96,31 @@ struct ChunkTreeStats {
     size_t cells{0};
 };
 
+// Safe wrapper around `vm::load_cell_slice` that (a) rejects null refs,
+// (b) rejects any non-ordinary (special) cell without throwing, and
+// (c) catches any stray exceptions so the calling noexcept function
+// cannot std::terminate. Every position in `decode_transfer` /
+// `decode_transfer_bytes` that walks an adversary-controlled ref tree
+// MUST go through this helper — the bare `vm::load_cell_slice(cell)`
+// throws on special cells (PrunedBranch, MerkleProof, Library,
+// MerkleUpdate) and on Library cells outside a VM context, which from
+// a noexcept caller turns into a validator-daemon crash. See §4.1a
+// and the V1-3c-round-4 audit history for the discovered attack
+// vectors (Library cell at spends_root / outputs_root / per-item /
+// continuation positions; all fixed here).
+bool load_ordinary_cell_slice(const td::Ref<vm::Cell>& cell,
+                              vm::CellSlice& out) noexcept {
+    if (cell.is_null()) return false;
+    try {
+        bool is_special = false;
+        out = vm::load_cell_slice_special(cell, is_special);
+        if (is_special) return false;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 bool scan_chunk_tree(td::Ref<vm::Cell> root, ChunkTreeStats& stats,
                      std::string* out) noexcept {
     if (root.is_null()) return false;
@@ -106,22 +132,11 @@ bool scan_chunk_tree(td::Ref<vm::Cell> root, ChunkTreeStats& stats,
         if (cell.is_null()) return false;
         if (++stats.cells > kChunkTreeMaxCells) return false;
 
-        // §4.1a: chunk trees use ORDINARY cells only. Special cells
-        // (PrunedBranch, MerkleProof, Library, MerkleUpdate) are rejected
-        // EXPLICITLY here before calling vm::load_cell_slice, which would
-        // otherwise throw VmError on a special cell — and this function is
-        // noexcept, so a throw would std::terminate the validator daemon.
-        // That would be a trivial DoS vector: a single tx carrying a special
-        // cell in any chunk-tree ref position (enc_ct / mlkem_ct / zk_proof)
-        // would crash every validator that decodes it. This guard closes
-        // that vector; the canonicality re-encode + hash compare downstream
-        // in `load_bytes_from_chunk_chain` remains as defense-in-depth.
-        // We use `load_cell_slice_special(cell, is_special)` which (unlike
-        // `load_cell_slice`) does NOT throw on a special cell; instead it
-        // reports special-ness via the out-param and returns the raw slice.
-        bool is_special = false;
-        auto cs = vm::load_cell_slice_special(cell, is_special);
-        if (is_special) return false;
+        // §4.1a: chunk trees use ordinary cells only. Route every load through
+        // the safe wrapper so special / malformed cells reject instead of
+        // throwing out of this noexcept decoder path.
+        vm::CellSlice cs;
+        if (!load_ordinary_cell_slice(cell, cs)) return false;
         const unsigned bits = cs.size();
         const unsigned n_refs = cs.size_refs();
         if (n_refs == 0) {
@@ -617,7 +632,10 @@ bool load_item_chunked(vm::CellSlice& head_slice, uint8_t* out, size_t len) {
     auto cont_ref = head_slice.prefetch_ref(0);
     head_slice.advance_refs(1);
     if (cont_ref.is_null()) return false;
-    auto cont_cs = vm::load_cell_slice(cont_ref);
+    // Continuation must be an ordinary cell. A special cell here would
+    // throw from vm::load_cell_slice → std::terminate the validator.
+    vm::CellSlice cont_cs;
+    if (!load_ordinary_cell_slice(cont_ref, cont_cs)) return false;
     const size_t rest = len - head;
     // Enforce shape: continuation cell holds exactly `rest` bytes inline and
     // zero refs. Extra data / refs is a malformed tx.
@@ -660,14 +678,24 @@ bool load_item_chunked(vm::CellSlice& head_slice, uint8_t* out, size_t len) {
 // per-shape check.
 constexpr unsigned kMaxTransferRefDepth = 5;
 
-unsigned structural_walk_depth(const td::Ref<vm::Cell>& items_root_ref) {
+unsigned structural_walk_depth(const td::Ref<vm::Cell>& items_root_ref) noexcept {
     if (items_root_ref.is_null()) return 0;
-    auto root_cs = vm::load_cell_slice(items_root_ref);
+    vm::CellSlice root_cs;
+    // A special cell at items_root / per-item is caught by decode_transfer
+    // earlier; returning UINT_MAX here forces the §17 gate to reject any
+    // tree that slipped past the earlier ordinary-only check (defensive —
+    // we must not throw from this noexcept helper).
+    if (!load_ordinary_cell_slice(items_root_ref, root_cs)) {
+        return std::numeric_limits<unsigned>::max();
+    }
     unsigned max_child = 0;
     for (unsigned i = 0; i < root_cs.size_refs(); ++i) {
         auto item_ref = root_cs.prefetch_ref(i);
         if (item_ref.is_null()) continue;
-        auto item_cs = vm::load_cell_slice(item_ref);
+        vm::CellSlice item_cs;
+        if (!load_ordinary_cell_slice(item_ref, item_cs)) {
+            return std::numeric_limits<unsigned>::max();
+        }
         // per-item cell counts as 1 level. It may carry a `cont` ref at
         // index 0 (another level). We explicitly do NOT descend into
         // refs [1] and [2] on per_output cells — those are enc_ct and
@@ -735,7 +763,10 @@ DecodeResult decode_transfer(vm::CellSlice body) noexcept {
 
     // --- spends array (spends_root → per_spend[i] → cont) ---
     {
-        auto spends_root = vm::load_cell_slice(spends_root_ref);
+        vm::CellSlice spends_root;
+        if (!load_ordinary_cell_slice(spends_root_ref, spends_root)) {
+            return err("spends_root: must be an ordinary cell (no special / Library)");
+        }
         if (spends_root.size() != 0) return err("spends_root: unexpected inline data");
         if (spends_root.size_refs() != sc) {
             return err("spends_root: ref count does not match spend_count");
@@ -743,7 +774,10 @@ DecodeResult decode_transfer(vm::CellSlice body) noexcept {
         for (uint8_t i = 0; i < sc; ++i) {
             auto spend_ref = spends_root.prefetch_ref(i);
             if (spend_ref.is_null()) return err("spends_root: null per-spend ref");
-            auto spend_cs = vm::load_cell_slice(spend_ref);
+            vm::CellSlice spend_cs;
+            if (!load_ordinary_cell_slice(spend_ref, spend_cs)) {
+                return err("per-spend cell: must be an ordinary cell (no special / Library)");
+            }
             uint8_t buf[kSpendInlineBytes] = {0};
             if (!load_item_chunked(spend_cs, buf, kSpendInlineBytes)) {
                 return err("per-spend cell: malformed chunked payload");
@@ -761,7 +795,10 @@ DecodeResult decode_transfer(vm::CellSlice body) noexcept {
 
     // --- outputs array (outputs_root → per_output[j] → cont + enc_ct + mlkem_ct) ---
     {
-        auto outputs_root = vm::load_cell_slice(outputs_root_ref);
+        vm::CellSlice outputs_root;
+        if (!load_ordinary_cell_slice(outputs_root_ref, outputs_root)) {
+            return err("outputs_root: must be an ordinary cell (no special / Library)");
+        }
         if (outputs_root.size() != 0) return err("outputs_root: unexpected inline data");
         if (outputs_root.size_refs() != oc) {
             return err("outputs_root: ref count does not match output_count");
@@ -769,7 +806,10 @@ DecodeResult decode_transfer(vm::CellSlice body) noexcept {
         for (uint8_t j = 0; j < oc; ++j) {
             auto out_ref = outputs_root.prefetch_ref(j);
             if (out_ref.is_null()) return err("outputs_root: null per-output ref");
-            auto out_cs = vm::load_cell_slice(out_ref);
+            vm::CellSlice out_cs;
+            if (!load_ordinary_cell_slice(out_ref, out_cs)) {
+                return err("per-output cell: must be an ordinary cell (no special / Library)");
+            }
             uint8_t buf[kOutputInlineBytes];
             if (!load_item_chunked(out_cs, buf, kOutputInlineBytes)) {
                 return err("per-output cell: malformed chunked inline payload");
@@ -861,7 +901,15 @@ DecodeResult decode_transfer_bytes(td::Slice raw_bytes) noexcept {
     if (root.is_null()) {
         return err("decode_transfer_bytes: null root cell from BoC");
     }
-    auto cs = vm::load_cell_slice(root);
+    // std_boc_deserialize with default allow_nonzero_level=false rejects
+    // a root with level > 0, but a level-0 special cell (e.g. a Library
+    // cell, which always has level 0) would still pass and then throw
+    // from vm::load_cell_slice inside this noexcept function. Use the
+    // safe wrapper.
+    vm::CellSlice cs;
+    if (!load_ordinary_cell_slice(root, cs)) {
+        return err("decode_transfer_bytes: root must be an ordinary cell");
+    }
     return decode_transfer(cs);
 }
 

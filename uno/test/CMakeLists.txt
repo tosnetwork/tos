@@ -54,7 +54,9 @@ add_executable(test-uno-codec-parity          test-codec-parity.cpp)
 # P.3 parallel verify pool (§13 P.3): determinism vs serial reference,
 # repeat-under-thread-pressure invariant, and a min-of-3 scaling
 # micro-benchmark for the 4-core ≥ 3.5x ideal target from §1.4.
-add_executable(test-uno-parallel-verify       test-parallel-verify.cpp)
+add_executable(test-uno-parallel-verify
+               test-parallel-verify.cpp
+               fixtures/valid_transfer_fixture.cpp)
 # P.5 done-when gate (§13): two-wallet end-to-end demo that drives the full
 # prove → admission → verify → scan → audit lifecycle against the real A1/A2
 # state, A3 crypto primitives, and A5 codec. Plonky3 verify is covered by

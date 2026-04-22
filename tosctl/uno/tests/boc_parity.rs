@@ -666,3 +666,140 @@ fn cxx_decode_rejects_truncated_boc() {
         run.stderr
     );
 }
+
+/// V1-3c round-4 audit: adversary plants a **LibraryReference** cell
+/// at an outer-spine ref position (here `spends_root`).
+///
+/// Why LibraryReference specifically: PrunedBranch, MerkleProof, and
+/// MerkleUpdate all have level ≥ 1, which propagates up and makes the
+/// root cell have level > 0, which `std_boc_deserialize` rejects at
+/// the default `allow_nonzero_level = false` layer. Library cells
+/// always have level 0, so they slip through the outer BoC guard and
+/// reach our `decode_transfer` ref-tree walk — precisely where the
+/// pre-round-4 `vm::load_cell_slice` would throw VmError inside a
+/// noexcept function → `std::terminate` → validator daemon crash.
+///
+/// Post-round-4: every ref-tree `load_cell_slice` is routed through
+/// `load_ordinary_cell_slice`, which uses the non-throwing
+/// `vm::load_cell_slice_special` variant and rejects special cells
+/// explicitly with a specific decode error.
+///
+/// This test asserts the bridge exits 1 with a decode error (not 134
+/// / 139 / signal-terminated — all of which would indicate a crash).
+#[test]
+fn cxx_decode_rejects_special_cell_at_spends_root() {
+    use chain_block::boc::{BocFlags, BocWriter};
+    use chain_block::cell::{BuilderData, CellType, IBitstring, MAX_DEPTH};
+
+    let bridge = match bridge_path("cxx_decode_rejects_special_cell_at_spends_root") {
+        Some(p) => p,
+        None => return,
+    };
+
+    let tx = sample_transfer(1, 1);
+
+    // LibraryReference cell at spends_root position (level 0, bypasses
+    // the `allow_nonzero_level = false` guard in std_boc_deserialize):
+    //   tag: 0x02 (CellType::LibraryReference), 256 bits of library hash.
+    //   Total data = 264 bits = 33 bytes.
+    let mut lib = BuilderData::new();
+    lib.set_type(CellType::LibraryReference);
+    lib.append_u8(u8::from(CellType::LibraryReference))
+        .expect("lib type tag");
+    lib.append_raw(&[0xCAu8; 32], 32 * 8).expect("library hash");
+    let library_spends_root = lib.finalize(MAX_DEPTH).expect("LibraryReference finalize");
+
+    use tosctl_uno::boc_encode::store_bytes_as_chunk_chain;
+
+    // Build a valid outputs_root + zk_proof for the rest of the tx.
+    let output = &tx.outputs[0];
+    const OUT_INLINE: usize = 32 + 32 + 2 + 80;
+    let mut out_bytes = [0u8; OUT_INLINE];
+    out_bytes[0..32].copy_from_slice(&output.cm);
+    out_bytes[32..64].copy_from_slice(&output.epk);
+    out_bytes[64] = (output.filter_tag >> 8) as u8;
+    out_bytes[65] = (output.filter_tag & 0xFF) as u8;
+    out_bytes[66..146].copy_from_slice(&output.out_ciphertext);
+
+    let mut output_item = BuilderData::default();
+    output_item
+        .append_raw(&out_bytes[..127], 127 * 8)
+        .expect("out head");
+    let mut cont = BuilderData::default();
+    cont.append_raw(&out_bytes[127..], (OUT_INLINE - 127) * 8)
+        .expect("out cont");
+    output_item
+        .checked_append_reference(cont.finalize(MAX_DEPTH).expect("cont finalize"))
+        .expect("cont ref");
+    output_item
+        .checked_append_reference(
+            store_bytes_as_chunk_chain(&output.enc_ciphertext)
+                .expect("enc encode")
+                .expect("enc non-empty"),
+        )
+        .expect("enc ref");
+    output_item
+        .checked_append_reference(
+            store_bytes_as_chunk_chain(&output.mlkem_ct)
+                .expect("mlkem encode")
+                .expect("mlkem non-empty"),
+        )
+        .expect("mlkem ref");
+
+    let mut outputs_root = BuilderData::default();
+    outputs_root
+        .checked_append_reference(output_item.finalize(MAX_DEPTH).expect("out item"))
+        .expect("outputs_root ref");
+    let outputs_root = outputs_root.finalize(MAX_DEPTH).expect("outputs_root");
+
+    let zk_proof = store_bytes_as_chunk_chain(&tx.zk_proof)
+        .expect("zk encode")
+        .expect("zk non-empty");
+
+    // Root cell with LibraryReference as ref[0] (spends_root).
+    let mut root = BuilderData::default();
+    root.append_u8(tx.version).expect("version");
+    root.append_u8(tx.scheme_id).expect("scheme_id");
+    root.append_u32(tx.chain_id).expect("chain_id");
+    root.append_raw(&tx.anchor, 32 * 8).expect("anchor");
+    root.append_u64(tx.expiry_block).expect("expiry");
+    root.append_u64(tx.fee).expect("fee");
+    root.append_u8(1).expect("sc");
+    root.append_u8(1).expect("oc");
+    root.checked_append_reference(library_spends_root)
+        .expect("library spends_root ref");
+    root.checked_append_reference(outputs_root)
+        .expect("outputs ref");
+    root.checked_append_reference(zk_proof).expect("zk ref");
+    let root = root.finalize(MAX_DEPTH).expect("root");
+
+    fn no_abort() -> bool {
+        false
+    }
+    let writer =
+        BocWriter::with_params([root], MAX_DEPTH, BocFlags::None, &no_abort).expect("writer");
+    let mut boc_bytes = Vec::new();
+    writer.write(&mut boc_bytes).expect("write");
+
+    let run = run_bridge(bridge, &boc_bytes);
+
+    assert_eq!(
+        run.status_code,
+        Some(1),
+        "bridge should exit 1 on special-cell spends_root; \
+         non-1 exit indicates the validator crashed (DoS regression). \
+         got={:?}\nstderr: {}",
+        run.status_code,
+        run.stderr
+    );
+    assert!(
+        run.stderr.contains("decode_failed:"),
+        "stderr should contain 'decode_failed:'; got: {}",
+        run.stderr
+    );
+    assert!(
+        run.stderr.contains("ordinary"),
+        "stderr should mention the ordinary-cell requirement; got: {}",
+        run.stderr
+    );
+}

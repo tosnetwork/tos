@@ -65,6 +65,11 @@
 
 namespace uno_workchain {
 
+namespace uno_crypto {
+using TestProofOverrideFn = bool(*)(td::Slice pi, td::Slice proof);
+extern std::atomic<TestProofOverrideFn> g_test_proof_override;
+}  // namespace uno_crypto
+
 // =============================================================================
 // Serial verify reference implementation
 //
@@ -250,6 +255,19 @@ VerifyResult verify_transfer_with_holder(const UnoState& state,
         if (proof_bytes.empty()) {
             return VerifyResult::BadPlonky3Proof;
         }
+
+        auto override =
+            uno_crypto::g_test_proof_override.load(std::memory_order_acquire);
+        if (override != nullptr) {
+            td::Slice pi_slice{
+                reinterpret_cast<const char*>(pi_bytes.data()),
+                pi_bytes.size()};
+            td::Slice proof_slice{proof_bytes.data(), proof_bytes.size()};
+            return override(pi_slice, proof_slice)
+                       ? VerifyResult::Ok
+                       : VerifyResult::BadPlonky3Proof;
+        }
+
         if (!holder.ensure_ready()) {
             return VerifyResult::BadPlonky3Proof;
         }

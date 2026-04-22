@@ -172,6 +172,15 @@ void apply_transfer(UnoState& state, const Transfer& tx) {
     state.bump_stats(tx.fee, tx.outputs.size());
 }
 
+bool has_live_nullifier_conflict(const UnoState& state, const Transfer& tx) {
+    for (const auto& s : tx.spends) {
+        if (state.nullifier_is_spent(s.nullifier)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // =============================================================================
 // ComputePhase population (§8.4 gas reporting)
 // =============================================================================
@@ -311,11 +320,14 @@ bool run_compute_phase(
 // Collator-facing: given N pre-decoded Transfers, run the §4.3 step 1–4
 // verify in parallel and apply successful ones serially in declared order.
 //
-// The pool guarantees that `results[i]` is the outcome of
-// `verify_transfer_serial(state, txs[i])` — byte-for-byte identical to a
-// simple for-loop over `verify_transfer_serial`. Apply then sweeps the
-// results vector linearly; for every `Ok` we mutate state in tx-order.
-// `Transfer`s whose verify returned an error leave the state untouched
+// Pool verification is speculative against the block pre-state. Apply then
+// sweeps the results vector linearly; for every speculative `Ok`, it first
+// re-checks live nullifier state after all earlier accepted txs have mutated
+// it. That preserves the same double-spend semantics as a sequential block
+// execution while still parallelising proof/signature work.
+//
+// `Transfer`s whose verify returned an error, or whose nullifier collides
+// with an earlier accepted tx in the same batch, leave the state untouched
 // (the per-tx ComputePhase record — constructed by the caller — flags
 // them as rejected; this function only reports the result vector).
 // =============================================================================
@@ -339,10 +351,10 @@ std::vector<VerifyResult> run_compute_phase_batch(
         }
     }
 
-    // Serial apply in declared tx-order. Any tx whose verify failed
-    // contributes zero state delta — the verify-before-mutate invariant
-    // of §4.3 is preserved per-tx just as in the pre-P.3 per-tx
-    // `run_compute_phase`.
+    // Serial apply in declared tx-order. Any tx whose verify failed, or whose
+    // nullifier was inserted by an earlier accepted tx in this batch, contributes
+    // zero state delta — the verify-before-mutate invariant of §4.3 is preserved
+    // per-tx just as in the pre-P.3 per-tx `run_compute_phase`.
     //
     // K-uno-metrics: same bookkeeping as `run_compute_phase`'s single-tx
     // path — a batched collator path should report identical admitted /
@@ -350,6 +362,12 @@ std::vector<VerifyResult> run_compute_phase_batch(
     auto& mreg = global_metrics_registry();
     for (std::size_t i = 0; i < n_txs; ++i) {
         if (results[i] == VerifyResult::Ok) {
+            if (has_live_nullifier_conflict(state, txs[i])) {
+                results[i] = VerifyResult::NullifierAlreadySpent;
+                mreg.inc_transfers_rejected(reject_reason_from_verify_result(
+                    static_cast<int>(results[i])));
+                continue;
+            }
             apply_transfer(state, txs[i]);
             mreg.inc_transfers_admitted();
         } else {
@@ -372,7 +390,8 @@ void end_of_block_hook() {
 
 // ---------------------------------------------------------------------------
 // Test-only: install a proof-verify override. Passing nullptr restores the
-// real Rust verifier. Only the two-wallet demo test uses this today.
+// real Rust verifier. Used by focused C++ tests that need to drive
+// post-proof compute/apply paths without carrying real Plonky3 witnesses.
 // ---------------------------------------------------------------------------
 void install_test_proof_override_for_test(
     bool(*fn)(td::Slice public_inputs, td::Slice proof)) {

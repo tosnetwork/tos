@@ -230,6 +230,56 @@ std::string boc_bytes(const td::Ref<vm::Cell>& root) {
     return std::string(s.data(), s.size());
 }
 
+td::Ref<vm::Cell> rebuild_transfer_root(
+    const td::Ref<vm::Cell>& original_root,
+    const td::Ref<vm::Cell>& spends_root,
+    const td::Ref<vm::Cell>& outputs_root,
+    const td::Ref<vm::Cell>& zk_proof) {
+    auto hdr_cs = vm::load_cell_slice(original_root);
+    uint8_t hdr_bytes[56] = {0};
+    hdr_cs.fetch_bytes(hdr_bytes, 56);
+
+    vm::CellBuilder cb;
+    cb.store_bytes(reinterpret_cast<const char*>(hdr_bytes), 56);
+    cb.store_ref(spends_root);
+    cb.store_ref(outputs_root);
+    cb.store_ref(zk_proof);
+    return cb.finalize();
+}
+
+td::Ref<vm::Cell> rebuild_cell_with_refs(
+    const td::Ref<vm::Cell>& original,
+    const std::vector<td::Ref<vm::Cell>>& refs) {
+    auto cs = vm::load_cell_slice(original);
+    const unsigned n_bytes = cs.size() / 8;
+    std::vector<uint8_t> inline_bytes(n_bytes);
+    if (n_bytes != 0) {
+        cs.fetch_bytes(inline_bytes.data(), n_bytes);
+    }
+
+    vm::CellBuilder cb;
+    if (!inline_bytes.empty()) {
+        cb.store_bytes(reinterpret_cast<const char*>(inline_bytes.data()),
+                       inline_bytes.size());
+    }
+    for (const auto& ref : refs) {
+        cb.store_ref(ref);
+    }
+    return cb.finalize();
+}
+
+void expect_decode_rejects(const char* label, const td::Ref<vm::Cell>& root) {
+    auto cs = vm::load_cell_slice(root);
+    auto dr = uno_workchain::decode_transfer(cs);
+    if (std::holds_alternative<uno_workchain::Transfer>(dr)) {
+        tprintf("  FAILED: decoder accepted %s\n", label);
+        return;
+    }
+    auto& e = std::get<uno_workchain::TransferDecodeError>(dr);
+    tprintf("  PASSED  %s rejected with reason: \"%s\"\n",
+            label, e.reason.c_str());
+}
+
 // Count cells reachable from `root` and track max walk depth. Used to spot-
 // check that the encoder keeps the Transfer ref-tree under the §17 ≤5 bound
 // (exclusive of the opaque enc_ct / mlkem_ct / zk_proof subtrees, whose
@@ -583,6 +633,72 @@ void test_special_chunk_tree_rejection() {
     tprintf("  PASSED  rejected with reason: \"%s\"\n", e.reason.c_str());
 }
 
+void test_special_structural_ref_rejection() {
+    tprintf("[TEST] decode_transfer rejects special cells in structural refs\n");
+
+    auto tx = build_transfer(1, 1);
+    tx.tx_hash = uno_workchain::canonical_tx_hash(tx);
+    auto enc = uno_workchain::encode_transfer(tx);
+    if (enc.is_error()) {
+        tprintf("  FAILED: baseline encode: %s\n", enc.error().message().c_str());
+        return;
+    }
+
+    auto root = enc.move_as_ok();
+    auto root_cs = vm::load_cell_slice(root);
+    auto spends_root_ref  = root_cs.prefetch_ref(0);
+    auto outputs_root_ref = root_cs.prefetch_ref(1);
+    auto zk_proof_ref     = root_cs.prefetch_ref(2);
+
+    auto special_leaf = make_ref_cell("special-structural-leaf", 0, 32);
+    auto special = vm::CellBuilder::create_merkle_proof(special_leaf);
+
+    expect_decode_rejects(
+        "special spends_root",
+        rebuild_transfer_root(root, special, outputs_root_ref, zk_proof_ref));
+    expect_decode_rejects(
+        "special outputs_root",
+        rebuild_transfer_root(root, spends_root_ref, special, zk_proof_ref));
+
+    auto spends_root_cs = vm::load_cell_slice(spends_root_ref);
+    auto real_spend_ref = spends_root_cs.prefetch_ref(0);
+    auto outputs_root_cs = vm::load_cell_slice(outputs_root_ref);
+    auto real_output_ref = outputs_root_cs.prefetch_ref(0);
+
+    auto special_per_spend_root =
+        vm::CellBuilder().store_ref(special).finalize();
+    expect_decode_rejects(
+        "special per-spend cell",
+        rebuild_transfer_root(root, special_per_spend_root,
+                              outputs_root_ref, zk_proof_ref));
+
+    auto special_per_output_root =
+        vm::CellBuilder().store_ref(special).finalize();
+    expect_decode_rejects(
+        "special per-output cell",
+        rebuild_transfer_root(root, spends_root_ref,
+                              special_per_output_root, zk_proof_ref));
+
+    auto bad_spend_cont = rebuild_cell_with_refs(real_spend_ref, {special});
+    auto bad_spend_cont_root =
+        vm::CellBuilder().store_ref(bad_spend_cont).finalize();
+    expect_decode_rejects(
+        "special per-spend continuation",
+        rebuild_transfer_root(root, bad_spend_cont_root,
+                              outputs_root_ref, zk_proof_ref));
+
+    auto real_output_cs = vm::load_cell_slice(real_output_ref);
+    auto bad_output_cont = rebuild_cell_with_refs(
+        real_output_ref,
+        {special, real_output_cs.prefetch_ref(1), real_output_cs.prefetch_ref(2)});
+    auto bad_output_cont_root =
+        vm::CellBuilder().store_ref(bad_output_cont).finalize();
+    expect_decode_rejects(
+        "special per-output continuation",
+        rebuild_transfer_root(root, spends_root_ref,
+                              bad_output_cont_root, zk_proof_ref));
+}
+
 void test_noncanonical_chunk_tree_rejection() {
     tprintf("[TEST] decode_transfer rejects non-canonical enc_ciphertext chunk tree\n");
 
@@ -643,6 +759,7 @@ int main() {
     test_depth_bound_rejection();
     test_malformed_chunk_tree_rejection();
     test_special_chunk_tree_rejection();
+    test_special_structural_ref_rejection();
     test_noncanonical_chunk_tree_rejection();
 
     tprintf("\nTotal failures: %d, skips: %d\n",

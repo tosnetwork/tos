@@ -89,7 +89,7 @@ const OUTPUT_INLINE_BYTES: usize = 32 + 32 + 2 + OUT_CIPHERTEXT_BYTES;
 /// 3. Fold 4-ary bottom-up: each layer groups consecutive cells in chunks
 ///    of 4 (last group may have 1..4), one internal cell per group, until
 ///    a single root remains.
-pub(crate) fn store_bytes_as_chunk_chain(bytes: &[u8]) -> Result<Option<Cell>> {
+pub fn store_bytes_as_chunk_chain(bytes: &[u8]) -> Result<Option<Cell>> {
     if bytes.is_empty() {
         return Ok(None);
     }

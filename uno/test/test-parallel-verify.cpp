@@ -21,13 +21,11 @@
       * Real Plonky3 proof verify — that would require A4's Rust FFI
         to be linked into this test binary. Here we use a deterministic
         per-thread verifier stub (see `plonky3_stub.cpp`-style weak
-        overrides at the bottom of this file) that always returns
-        `VerifyFailed`. Every tx therefore rejects at step 4 with
-        `BadPlonky3Proof` — but the earlier deterministic steps (§4.3
-        step 1 cheap checks, step 1.7 Ristretto decompression,
-        step 2 nullifier set, step 3 Schnorr verify) are exercised
-        fully and are precisely where the determinism invariant can be
-        observed to break if the pool mis-orders results.
+        overrides at the bottom of this file) that returns `VerifyFailed`
+        for normal generated proofs, and `Ok` only for an explicit test
+        marker. The generated stream therefore still rejects at step 4
+        with `BadPlonky3Proof`, while the marker path can exercise
+        post-verify batch application.
       * A3-real Schnorr sig verify — we feed syntactically-valid
         compressed Ristretto points and zero signatures, which causes
         libsodium's verify to return mismatch. That is a legitimate
@@ -42,6 +40,7 @@
 #include "uno/core/compute-phase.h"
 #include "uno/core/parallel-verify.h"
 #include "uno/core/transaction.h"
+#include "uno/test/fixtures/valid_transfer_fixture.h"
 
 #include <array>
 #include <atomic>
@@ -58,6 +57,11 @@
 
 #include "td/utils/UInt.h"
 #include "vm/cells/CellBuilder.h"
+
+namespace uno_workchain {
+void install_test_proof_override_for_test(
+    bool(*fn)(td::Slice public_inputs, td::Slice proof));
+}  // namespace uno_workchain
 
 // ---------------------------------------------------------------------------
 // Plonky3 FFI weak stubs
@@ -105,8 +109,14 @@ __attribute__((weak)) void uno_plonky3_verifier_free(
 
 __attribute__((weak)) int32_t uno_plonky3_verify(
     const Plonky3VerifierHandle * /*handle*/,
-    Plonky3ProofBytes /*proof*/,
+    Plonky3ProofBytes proof,
     Plonky3PublicInputs /*public_inputs*/) {
+    if (proof.ptr != nullptr && proof.len >= 4 &&
+        proof.ptr[0] == 'O' && proof.ptr[1] == 'K' &&
+        proof.ptr[2] == 'O' && proof.ptr[3] == 'K') {
+        return 0;  // Plonky3Status::Ok, test-only success marker.
+    }
+
     // Simulate real-verify cost and always report VerifyFailed. The
     // short busy-loop gives the scaling benchmark something measurable
     // to divide across cores (without it we'd be measuring Schnorr and
@@ -404,6 +414,100 @@ static GeneratedTxs make_tx_stream(size_t n) {
 }
 
 // ---------------------------------------------------------------------------
+// Batch-apply regression fixture
+//
+// A parallel batch verifies all txs against the same pre-state. That is safe
+// for proof/signature work, but nullifier admission is stateful across earlier
+// accepted txs in the same block. This fixture creates two byte-identical,
+// fully-valid-up-to-proof Transfers with the same nullifier, then marks their
+// proof bytes with the test-only "OKOK" stub marker so both speculative verify
+// results become Ok. The batch apply loop must admit only the first.
+// ---------------------------------------------------------------------------
+struct BatchRunResult {
+    std::vector<uno_workchain::VerifyResult> results;
+    std::string                              signature;
+};
+
+static void force_stub_ok_proof(uno_workchain::Transfer& tx) {
+    uint8_t proof_payload[32] = {0};
+    proof_payload[0] = 'O';
+    proof_payload[1] = 'K';
+    proof_payload[2] = 'O';
+    proof_payload[3] = 'K';
+    tx.zk_proof = uno_workchain::store_bytes_as_chunk_chain(
+        td::Slice(reinterpret_cast<const char*>(proof_payload),
+                  sizeof(proof_payload)));
+}
+
+static bool stub_ok_marker_proof(td::Slice /*public_inputs*/,
+                                 td::Slice proof) {
+    return proof.size() >= 4 &&
+           proof.data()[0] == 'O' && proof.data()[1] == 'K' &&
+           proof.data()[2] == 'O' && proof.data()[3] == 'K';
+}
+
+static uno_workchain::test_fixtures::ValidTransferFixture
+make_duplicate_nullifier_fixture() {
+    namespace tf = uno_workchain::test_fixtures;
+
+    auto alice = tf::make_wallet("Alice", 0xA1);
+    auto bob   = tf::make_wallet("Bob",   0xB2);
+
+    td::Bits256 anchor;
+    for (int i = 0; i < 32; ++i) {
+        anchor.data()[i] = static_cast<uint8_t>(0xC0 ^ i);
+    }
+
+    tf::ValidTransferParams params;
+    params.sender       = &alice;
+    params.receiver     = &bob;
+    params.spend_value  = 1'000'000;
+    params.fee_nano     = 1'000;
+    params.anchor       = anchor;
+    params.expiry_block = 128;
+    params.chain_id     = 0xC0FFEE;
+
+    tf::OutputSpec to_bob;
+    to_bob.value = 600'000;
+    params.outputs.push_back(to_bob);
+
+    tf::OutputSpec change;
+    change.value = 399'000;
+    params.outputs.push_back(change);
+
+    auto fx = tf::make_valid_transfer(params);
+    force_stub_ok_proof(fx.tx);
+    return fx;
+}
+
+static BatchRunResult run_duplicate_nullifier_batch(size_t workers) {
+    auto fx = make_duplicate_nullifier_fixture();
+
+    FakeUnoState state;
+    state.accept_anchor(fx.tx.anchor);
+
+    std::vector<uno_workchain::Transfer> txs;
+    txs.reserve(2);
+    txs.push_back(fx.tx);
+    txs.push_back(fx.tx);
+
+    uno_workchain::shutdown_parallel_verify_pool();
+    uno_workchain::install_test_proof_override_for_test(&stub_ok_marker_proof);
+    if (workers != 0) {
+        uno_workchain::install_parallel_verify_pool(workers);
+    }
+
+    BatchRunResult out;
+    out.results = uno_workchain::run_compute_phase_batch(
+        state, txs.data(), txs.size());
+    out.signature = state.signature();
+
+    uno_workchain::shutdown_parallel_verify_pool();
+    uno_workchain::install_test_proof_override_for_test(nullptr);
+    return out;
+}
+
+// ---------------------------------------------------------------------------
 // Test 1 — parallel-vs-serial determinism golden
 // ---------------------------------------------------------------------------
 
@@ -530,7 +634,44 @@ static void test_determinism_repeat() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 3 — scaling micro-benchmark
+// Test 3 — same-batch duplicate nullifier rejects in declared order
+// ---------------------------------------------------------------------------
+static void test_batch_duplicate_nullifier_rejected_once() {
+    tprintf("[TEST] batch duplicate-nullifier admission (serial + parallel)\n");
+
+    auto serial = run_duplicate_nullifier_batch(0);
+    EXPECT_EQ_U64(serial.results.size(), 2, "serial duplicate result size");
+    EXPECT_EQ_U64(static_cast<int>(serial.results[0]),
+                  static_cast<int>(uno_workchain::VerifyResult::Ok),
+                  "serial first duplicate result");
+    EXPECT_EQ_U64(static_cast<int>(serial.results[1]),
+                  static_cast<int>(uno_workchain::VerifyResult::NullifierAlreadySpent),
+                  "serial second duplicate result");
+    EXPECT_TRUE(serial.signature.find(
+                    "tx_count=1 total_fee=1000 total_outputs=2\n") !=
+                    std::string::npos,
+                "serial applies only first duplicate-nullifier tx");
+
+    auto parallel = run_duplicate_nullifier_batch(2);
+    EXPECT_EQ_U64(parallel.results.size(), 2, "parallel duplicate result size");
+    EXPECT_EQ_U64(static_cast<int>(parallel.results[0]),
+                  static_cast<int>(uno_workchain::VerifyResult::Ok),
+                  "parallel first duplicate result");
+    EXPECT_EQ_U64(static_cast<int>(parallel.results[1]),
+                  static_cast<int>(uno_workchain::VerifyResult::NullifierAlreadySpent),
+                  "parallel second duplicate result");
+    EXPECT_TRUE(parallel.signature.find(
+                    "tx_count=1 total_fee=1000 total_outputs=2\n") !=
+                    std::string::npos,
+                "parallel applies only first duplicate-nullifier tx");
+    EXPECT_TRUE(serial.signature == parallel.signature,
+                "serial and parallel duplicate-nullifier state match");
+
+    tprintf("  PASSED (second same-batch spend rejected; one state delta)\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 4 — scaling micro-benchmark
 //
 // Not a pass/fail on absolute numbers — reports wall-clock for 1 / 2 / 4 / 8
 // workers so operators can eyeball §1.4's 4-core ≥ 3.5× ideal target. We
@@ -592,6 +733,7 @@ int main() {
 
     test_determinism_parallel_vs_serial();
     test_determinism_repeat();
+    test_batch_duplicate_nullifier_rejected_once();
     test_scaling_bench();
 
     tprintf("\nTotal passes: %d, failures: %d\n",
