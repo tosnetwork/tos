@@ -17,7 +17,7 @@
       output_count:uint8  (1..4)
       spends[spend_count]:SpendDescription
       outputs[output_count]:OutputDescription
-      zk_proof:^Cell   (Plonky3 STARK proof; CellString-style chunk chain)
+      zk_proof:^Cell   (Plonky3 STARK proof; canonical §4.1a chunk tree)
 
     SpendDescription (128 B payload):
       nullifier:bits256 || rk:bits256 || spend_auth_sig:bits512
@@ -42,10 +42,10 @@
                              ref[0] → 19-byte continuation cell (152 bits, 0 refs)
                              ref[1] → enc_ciphertext
                              ref[2] → mlkem_ct
-        ref[2] → zk_proof chunk chain
+        ref[2] → zk_proof chunk tree
 
     Max walk depth from root (not counting the enc_ct / mlkem_ct / zk_proof
-    internal chains, which own their own depth budgets per §17.1): **4**
+    internal chunk trees, which own their own depth budgets per §17.1): **4**
     levels — tight under the ≤5 bound for all 1..4 × 1..4 shapes.
 
     Source: TOS-specific adapter — consensus-critical codec.
@@ -296,7 +296,7 @@ uint64_t encode_u64(uint64_t x) noexcept;
 std::array<uint8_t, 32> encode_256(const uint8_t bytes[32]) noexcept;
 
 // ---------------------------------------------------------------------------
-// Raw cell-chain helpers (used internally; exposed for tests)
+// Raw chunk-tree helpers (used internally; exposed for tests)
 // ---------------------------------------------------------------------------
 
 /// Store a byte blob of arbitrary length into the canonical §4.1a 4-ary
@@ -305,8 +305,8 @@ std::array<uint8_t, 32> encode_256(const uint8_t bytes[32]) noexcept;
 td::Ref<vm::Cell> store_bytes_as_chunk_chain(td::Slice bytes) noexcept;
 
 /// Walk a chunk tree produced by `store_bytes_as_chunk_chain` and return the
-/// concatenated bytes. Bounded walk (rejects malformed / oversized trees).
-/// Returns empty string on malformed input or null root.
+/// concatenated bytes. Bounded walk (rejects malformed, non-canonical, or
+/// oversized trees). Returns empty string on malformed input or null root.
 std::string load_bytes_from_chunk_chain(td::Ref<vm::Cell> root) noexcept;
 
 }  // namespace uno_workchain

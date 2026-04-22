@@ -22,12 +22,12 @@
 //!                each → per_output cell:
 //!                         127 B head of 146 B inline
 //!                         ref[0] → 19 B continuation (inline, 0 refs)
-//!                         ref[1] → enc_ciphertext chunk chain
-//!                         ref[2] → mlkem_ct chunk chain
-//!     ref[2] → zk_proof chunk chain
+//!                         ref[1] → enc_ciphertext chunk tree
+//!                         ref[2] → mlkem_ct chunk tree
+//!     ref[2] → zk_proof chunk tree
 //! ```
 //!
-//! Chunk chains follow the §4.1a 4-ary chunk tree spec:
+//! Chunk trees follow the §4.1a 4-ary spec:
 //!   - Leaf cell: 1..127 bytes inline, 0 refs (identified by 0 refs).
 //!   - Internal cell: 0 bits, 1..4 refs to children left-to-right.
 //!   - Canonical: leaves in byte order, fold by 4 bottom-up.
@@ -69,7 +69,7 @@ const SPEND_INLINE_BYTES: usize = 32 + 32 + 64;
 const OUTPUT_INLINE_BYTES: usize = 32 + 32 + 2 + OUT_CIPHERTEXT_BYTES;
 
 // ---------------------------------------------------------------------------
-// Chunk-chain helpers
+// Chunk-tree helpers
 // ---------------------------------------------------------------------------
 
 /// Build a 4-ary chunk-tree Cell from a byte blob (§4.1a). Mirrors
@@ -89,7 +89,7 @@ const OUTPUT_INLINE_BYTES: usize = 32 + 32 + 2 + OUT_CIPHERTEXT_BYTES;
 /// 3. Fold 4-ary bottom-up: each layer groups consecutive cells in chunks
 ///    of 4 (last group may have 1..4), one internal cell per group, until
 ///    a single root remains.
-fn store_bytes_as_chunk_chain(bytes: &[u8]) -> Result<Option<Cell>> {
+pub(crate) fn store_bytes_as_chunk_chain(bytes: &[u8]) -> Result<Option<Cell>> {
     if bytes.is_empty() {
         return Ok(None);
     }
@@ -187,7 +187,7 @@ pub fn encode_transfer_boc(tx: &Transfer) -> Result<Vec<u8>> {
     }
     if tx.zk_proof.is_empty() {
         return Err(anyhow!(
-            "encode_transfer_boc: zk_proof must be non-empty (chunk chain requires ≥ 1 cell)"
+            "encode_transfer_boc: zk_proof must be non-empty (chunk tree requires >= 1 cell)"
         ));
     }
     for (i, o) in tx.outputs.iter().enumerate() {
@@ -250,7 +250,7 @@ pub fn encode_transfer_boc(tx: &Transfer) -> Result<Vec<u8>> {
     }
     let outputs_root_cell = outputs_root.finalize(chain_block::cell::MAX_DEPTH)?;
 
-    // -- zk_proof chunk chain --
+    // -- zk_proof chunk tree --
     let zk_proof_cell = store_bytes_as_chunk_chain(&tx.zk_proof)?
         .ok_or_else(|| anyhow!("zk_proof is unexpectedly empty"))?;
 
@@ -270,10 +270,10 @@ pub fn encode_transfer_boc(tx: &Transfer) -> Result<Vec<u8>> {
 
     let root_cell = root.finalize(MAX_DEPTH)?;
 
-    // v1 zk_proof chunk chain is ~7,400 cells deep at worst-case 4/4
-    // shape; this exceeds chain_block's `MAX_SAFE_DEPTH = 2048` default.
-    // Use BocWriter::with_params directly to pin a higher depth cap that
-    // matches the daemon's kChunkChainMaxChunks ceiling (8192 post-V1).
+    // v1 zk_proof chunk tree has ~7,400 leaves / ~9,800 cells at worst-case
+    // 4/4 shape, but only ~7 levels of depth. Use BocWriter::with_params
+    // directly so wallet emission stays pinned to the daemon's explicit
+    // depth ceiling instead of chain_block policy defaults.
     fn no_abort() -> bool {
         false
     }

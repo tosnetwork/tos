@@ -616,7 +616,7 @@ Transfer :=
   output_count      : uint8                      // 1..4
   spends            : Array<SpendDescription, spend_count>
   outputs           : Array<OutputDescription, output_count>
-  zk_proof          : ^Cell                      // Plonky3 STARK proof, serialized via CellString
+  zk_proof          : ^Cell                      // Plonky3 STARK proof, serialized via canonical §4.1a chunk tree
 
 SpendDescription :=
   nullifier         : bits256                    // nf = Poseidon2("uno-nf-v1", nk, cm, pos)
@@ -637,7 +637,7 @@ Inline field sizes:
 - Each `SpendDescription` inline: `32+32+64 = 128` bytes (no `cv`).
 - Each `OutputDescription` inline (excluding `enc_ciphertext` and `mlkem_ct` refs): `32+32+2+80 = 146` bytes (no `cv`, plus `filter_tag`).
 - No `binding_sig` on the tx.
-- `zk_proof` is a ref to a cell chain — Plonky3 STARK proof under the pinned §2.1 Option B FRI parameters. **Measured v1 envelope (2026-04-20, FRI Option B)**: ~520 KB for a 1-spend/2-output Transfer, ~915 KB worst-case 4/4; the original design-phase target of ~52 KB typical / ~100 KB worst-case is deferred to a post-v1 AIR architectural pass (`uni-stark → batch-stark` per `doc/uno-p2-path-research.md` Path iii). **Bandwidth implication at v1 `BLOCK_TX_CAP = 4`**: typical 1/2 mix gives ~520 KB × 4 TPS ≈ **~2 MB/s (~16 Mbps)** per-validator outbound; worst-case 4/4 mix gives ~915 KB × 4 ≈ **~3.6 MB/s (~29 Mbps)**. Both well inside the residential-fiber profile (§1.4a, 25–50 Mbps sustained), which is the key design consequence of the 2026-04-21 per-Tx pivot. A v2 return to 30 TPS/shard via block aggregation (§14, `doc/uno-aggregation-design.md` §-1) would collapse block-proof to ~420 KB/block regardless of 1/2 vs 4/4 mix, yielding ~420 KB/s — a ~5× bandwidth improvement at the cost of specialized prover hardware. See §17.1 for the full cell-tree cost analysis.
+- `zk_proof` is a ref to a canonical §4.1a chunk tree — Plonky3 STARK proof under the pinned §2.1 Option B FRI parameters. **Measured v1 envelope (2026-04-20, FRI Option B)**: ~520 KB for a 1-spend/2-output Transfer, ~915 KB worst-case 4/4; the original design-phase target of ~52 KB typical / ~100 KB worst-case is deferred to a post-v1 AIR architectural pass (`uni-stark → batch-stark` per `doc/uno-p2-path-research.md` Path iii). **Bandwidth implication at v1 `BLOCK_TX_CAP = 4`**: typical 1/2 mix gives ~520 KB × 4 TPS ≈ **~2 MB/s (~16 Mbps)** per-validator outbound; worst-case 4/4 mix gives ~915 KB × 4 ≈ **~3.6 MB/s (~29 Mbps)**. Both well inside the residential-fiber profile (§1.4a, 25–50 Mbps sustained), which is the key design consequence of the 2026-04-21 per-Tx pivot. A v2 return to 30 TPS/shard via block aggregation (§14, `doc/uno-aggregation-design.md` §-1) would collapse block-proof to ~420 KB/block regardless of 1/2 vs 4/4 mix, yielding ~420 KB/s — a ~5× bandwidth improvement at the cost of specialized prover hardware. See §17.1 for the full cell-tree cost analysis.
 
 `enc_ciphertext` layout (~580 B total, unchanged from v1 design pre-Plonky3):
 - 84 B: `Note` plaintext fields packed and aligned (11 B `d` + 32 B `pk_d` + 8 B `value` + 32 B `rseed` + 1 B padding = 84 B).
@@ -645,13 +645,13 @@ Inline field sizes:
 - 16 B: Poly1305 authentication tag.
 - 12 B ChaCha20 nonce is derived deterministically from `epk` (`BLAKE3("uno-nonce-v1" || compress(epk))[0..12]`), not transmitted.
 
-`mlkem_ct` layout: 1088 B ML-KEM-768 ciphertext, serialized via `CellString` (~9 cells).
+`mlkem_ct` layout: 1088 B ML-KEM-768 ciphertext, serialized via the canonical §4.1a chunk tree (~12 cells including internal nodes).
 
 **Size breakdown** (typical 1-spend / 2-output tx, FRI Option B):
 - Inline tx body: `56 + 128 + 2×146 = 476` bytes.
-- Ref cell chain for 2 × `enc_ciphertext` (~580 B each, ~5 cells): ~1.4 KB with overhead.
-- Ref cell chain for 2 × `mlkem_ct` (~1088 B each, ~9 cells): ~2.4 KB with overhead.
-- Ref cell chain for `zk_proof` (~520 KB Plonky3 proof, ~4,200 cells): ~650 KB with overhead.
+- Ref chunk trees for 2 × `enc_ciphertext` (~580 B each, ~7 cells): ~1.4 KB with overhead.
+- Ref chunk trees for 2 × `mlkem_ct` (~1088 B each, ~12 cells): ~2.4 KB with overhead.
+- Ref chunk tree for `zk_proof` (~520 KB Plonky3 proof, ~5,460 cells): ~650 KB with overhead.
 - **Total: ~655 KB per typical tx.** Worst-case 4-spend / 4-output with ~915 KB proof: ~1.15 MB.
 
 Larger than a Halo2-based shielded tx (~15 KB) due to the STARK proof size; larger than the pre-pivot design-phase target (~68 KB / ~135 KB) by an order of magnitude, per the P.2 re-scoping in `doc/uno-p2-path-research.md`. This is the intrinsic cost of PQ-native proving at 180-bit conjectured soundness without a post-v1 `uni-stark → batch-stark` AIR rearchitecture. Bandwidth impact analyzed in §5.9 and §7.4; the 2026-04-21 per-Tx pivot (`BLOCK_TX_CAP = 4`) keeps per-validator bandwidth in residential-fiber territory despite the ~10× per-Tx proof bloat. A conscious trade against Phase 2 proof-system migration debt.
@@ -705,7 +705,7 @@ Edge case: if input is ≤ 127 B, the tree is a single leaf (no internal cells).
 
 **Consensus-binding**: the 4-grouping rule, the left-to-right leaf order, and the 127 B chunk size are consensus-binding for `enc_ciphertext` / `mlkem_ct` because they determine the cell hashes covered by `tx_hash` via the `cell_hash(enc_ciphertext)` / `cell_hash(mlkem_ct)` terms in the §4.1 hash preimage. `zk_proof` is excluded from `tx_hash`; validators recover its byte stream from the bounded chunk tree and pass those bytes to the verifier, so its tree shape is an admission/resource-accounting constraint rather than a signed-message input.
 
-**Bounds check** (decoder): every decoder MUST enforce `total_leaves ≤ kChunkChainMaxChunks = 8192` during the DFS walk and MUST also cap total visited cells (`kChunkTreeMaxCells = 16384` in the reference implementations). The leaf bound caps payload bytes; the total-cell bound prevents malformed non-canonical trees from hiding excessive internal-node work behind a small leaf count. 8192 leaves ≈ 1040 KB, ~14 % above the 915 KB 4/4 worst case.
+**Canonicality and bounds check** (decoder): every decoder MUST enforce `total_leaves ≤ kChunkChainMaxChunks = 8192` during the DFS walk, MUST cap total visited cells (`kChunkTreeMaxCells = 16384` in the reference implementations), and MUST reject a tree whose root hash differs from re-encoding the recovered byte stream with the canonical construction above. The leaf bound caps payload bytes; the total-cell bound and canonical root-hash check prevent malformed non-canonical trees from hiding excessive internal-node work behind a small leaf count. 8192 leaves ≈ 1040 KB, ~14 % above the 915 KB 4/4 worst case.
 
 Reference implementations:
 - C++: `uno/core/transaction.cpp::store_bytes_as_chunk_chain` / `load_bytes_from_chunk_chain`.
@@ -1002,7 +1002,7 @@ TOS simplex consensus runs a global block rate (ConfigParam 30); per-workchain b
 | Stage | Typical |
 |---|---|
 | Consensus overhead (catchain rounds, proposal, propagation) | 400–500 ms |
-| Block commit WriteBatch | 25–55 ms (slightly higher than Halo2 era due to larger proof cell chains) |
+| Block commit WriteBatch | 25–55 ms (slightly higher than Halo2 era due to larger proof chunk trees) |
 | Mempool drain + signature routing | 20 ms |
 | End-of-block compact filter compilation (§2.8) | 1–2 ms |
 | **Remaining for compute phase** | **~400–500 ms** |
@@ -1526,7 +1526,7 @@ UnoConfig :=
   version                : uint8   = 1
   chain_id               : uint32
   min_fee_nano           : uint64  = 100_000     // 0.0001 UNO baseline; DoS floor
-  fee_per_byte_nano      : uint64  = 10          // per inline byte (excludes ref cell chains)
+  fee_per_byte_nano      : uint64  = 10          // per decoded inline + ref-carried payload byte
   fee_per_spend_nano     : uint64  = 50_000      // 0.00005 UNO per SpendDescription
   fee_per_output_nano    : uint64  = 50_000      // 0.00005 UNO per OutputDescription
   max_spends_per_tx      : uint8   = 4
@@ -2134,7 +2134,7 @@ Each cell carries ~32 bytes of representation-hash and depth metadata, so a 520 
 
 - **Nullifier LRU** (§5.3 M2) — short-circuits the 24-level dict lookup for recent entries. The single largest performance lever we have at the 1 s block cadence.
 - **Plonky3 proof serialization tuning** — target compact encoding for the Transfer AIR during P.2 (prover) + P.3 (verifier FFI) bring-up. Goal: minimize FRI query footprint without reducing soundness parameters.
-- **Reuse `CellString`** (`crypto/vm/cells/CellString.h`) for contiguous byte arrays (proofs, `enc_ciphertext`, `mlkem_ct`). Avoids hand-rolling cell-chain code; consistent with the rest of the codebase.
+- **Canonical 4-ary chunk trees** (§4.1a) for contiguous byte arrays (proofs, `enc_ciphertext`, `mlkem_ct`). This avoids the linear-depth `CellString` pitfall for 520–915 KB proof blobs while keeping the root hash deterministic across implementations.
 - **Reserved root-cell ref** (§5.1) — one of the four refs on `UnoShardState` is intentionally unused, giving Phase 1 / Phase 3 extensions a single-ref budget to add state without a cell-schema migration.
 
 ### 17.3 Cell-count scaling frontier

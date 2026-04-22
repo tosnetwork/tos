@@ -139,9 +139,25 @@ bool scan_chunk_tree(td::Ref<vm::Cell> root, ChunkTreeStats& stats,
     return stats.leaves > 0;
 }
 
-bool chunk_tree_byte_length(td::Ref<vm::Cell> root, size_t& out) noexcept {
+bool cell_hash_equal(const td::Ref<vm::Cell>& a,
+                     const td::Ref<vm::Cell>& b) noexcept {
+    if (a.is_null() || b.is_null()) return a.is_null() == b.is_null();
+    return std::memcmp(a->get_hash().as_slice().data(),
+                       b->get_hash().as_slice().data(), 32) == 0;
+}
+
+bool canonical_chunk_tree_byte_length(td::Ref<vm::Cell> root,
+                                      size_t& out) noexcept {
+    auto original = root;
     ChunkTreeStats stats;
-    if (!scan_chunk_tree(std::move(root), stats, nullptr)) return false;
+    std::string bytes;
+    if (!scan_chunk_tree(std::move(root), stats, &bytes)) return false;
+
+    auto canonical = store_bytes_as_chunk_chain(td::Slice(bytes.data(), bytes.size()));
+    if (canonical.is_null() || !cell_hash_equal(original, canonical)) {
+        return false;
+    }
+
     out = stats.bytes;
     return true;
 }
@@ -208,9 +224,12 @@ td::Ref<vm::Cell> store_bytes_as_chunk_chain(td::Slice bytes) noexcept {
 
 std::string load_bytes_from_chunk_chain(td::Ref<vm::Cell> root) noexcept {
     if (root.is_null()) return {};
+    auto original = root;
     std::string out;
     ChunkTreeStats stats;
     if (!scan_chunk_tree(std::move(root), stats, &out)) return {};
+    auto canonical = store_bytes_as_chunk_chain(td::Slice(out.data(), out.size()));
+    if (canonical.is_null() || !cell_hash_equal(original, canonical)) return {};
     return out;
 }
 
@@ -753,11 +772,11 @@ DecodeResult decode_transfer(vm::CellSlice body) noexcept {
 
             size_t enc_bytes = 0;
             size_t mlkem_bytes = 0;
-            if (!chunk_tree_byte_length(o.enc_ciphertext, enc_bytes)) {
-                return err("per-output cell: malformed enc_ciphertext chunk tree");
+            if (!canonical_chunk_tree_byte_length(o.enc_ciphertext, enc_bytes)) {
+                return err("per-output cell: malformed/non-canonical enc_ciphertext chunk tree");
             }
-            if (!chunk_tree_byte_length(o.mlkem_ct, mlkem_bytes)) {
-                return err("per-output cell: malformed mlkem_ct chunk tree");
+            if (!canonical_chunk_tree_byte_length(o.mlkem_ct, mlkem_bytes)) {
+                return err("per-output cell: malformed/non-canonical mlkem_ct chunk tree");
             }
             ref_carried_bytes += enc_bytes + mlkem_bytes;
         }
@@ -766,8 +785,8 @@ DecodeResult decode_transfer(vm::CellSlice body) noexcept {
     tx.zk_proof = zk_proof_ref;
     {
         size_t proof_bytes = 0;
-        if (!chunk_tree_byte_length(tx.zk_proof, proof_bytes)) {
-            return err("malformed zk_proof chunk tree");
+        if (!canonical_chunk_tree_byte_length(tx.zk_proof, proof_bytes)) {
+            return err("malformed/non-canonical zk_proof chunk tree");
         }
         ref_carried_bytes += proof_bytes;
     }

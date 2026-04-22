@@ -25,23 +25,25 @@
 //!                each → per_output cell:
 //!                         127 B head of 146 B inline
 //!                         ref[0] → 19 B continuation (inline, 0 refs)
-//!                         ref[1] → enc_ciphertext chunk chain
-//!                         ref[2] → mlkem_ct chunk chain
-//!     ref[2] → zk_proof chunk chain
+//!                         ref[1] → enc_ciphertext chunk tree
+//!                         ref[2] → mlkem_ct chunk tree
+//!     ref[2] → zk_proof chunk tree
 //! ```
 //!
-//! Chunk chains follow the §4.1a 4-ary chunk tree: leaves hold 1..127 B
+//! Chunk trees follow the §4.1a 4-ary spec: leaves hold 1..127 B
 //! inline with 0 refs; internal cells have 0 data bits and 1..4 refs to
 //! children (left-to-right in byte order). Tree depth = ⌈log₄(N_leaves)⌉
 //! (≤ 7 at v1 worst case). Total leaf count bounded by
 //! `K_CHUNK_CHAIN_MAX_CHUNKS = 8192`; total visited cells are also capped
-//! at `K_CHUNK_TREE_MAX_CELLS` to reject malformed internal-node expansion.
+//! at `K_CHUNK_TREE_MAX_CELLS`, and the root hash must match canonical
+//! re-encoding of the recovered byte stream.
 
 use std::io::Cursor;
 
 use chain_block::boc::BocReader;
 use chain_block::cell::{Cell, SliceData, MAX_DEPTH};
 
+use crate::boc_encode::store_bytes_as_chunk_chain;
 use crate::transfer::{
     OutputDescription, SpendDescription, Transfer, MAX_OUTPUT_COUNT, MAX_SPEND_COUNT,
     MIN_OUTPUT_COUNT, MIN_SPEND_COUNT, OUT_CIPHERTEXT_BYTES,
@@ -215,10 +217,11 @@ fn load_item_chunked(head_slice: &mut SliceData, out: &mut [u8]) -> Result<(), D
 /// - Internal cell (≥ 1 ref): 0 data bits, 1..4 refs; children walked
 ///   left-to-right.
 ///
-/// Bounded by `K_CHUNK_CHAIN_MAX_CHUNKS` cumulative leaf count. Any shape
-/// violation (non-byte-aligned bits, >127 B leaf, >4 refs, internal with
-/// data bits, null ref) returns `MalformedChunkCell`.
+/// Bounded by `K_CHUNK_CHAIN_MAX_CHUNKS` cumulative leaf count and
+/// `K_CHUNK_TREE_MAX_CELLS` total cells. Any shape violation, bound breach,
+/// or non-canonical root hash returns a decode error.
 fn load_bytes_from_chunk_chain(root: Cell) -> Result<Vec<u8>, DecodeError> {
+    let original_root = root.clone();
     let mut out: Vec<u8> = Vec::new();
     let mut leaf_count: usize = 0;
     let mut cell_count: usize = 0;
@@ -228,7 +231,7 @@ fn load_bytes_from_chunk_chain(root: Cell) -> Result<Vec<u8>, DecodeError> {
         if cell_count > K_CHUNK_TREE_MAX_CELLS {
             return Err(DecodeError::ChunkChainTooLong);
         }
-        let cs = SliceData::load_cell(cell.clone())
+        let cs = SliceData::load_cell(cell)
             .map_err(|e| DecodeError::MalformedChunkCell(format!("load_cell: {e}")))?;
         let bits = cs.remaining_bits();
         let n_refs = cs.remaining_references();
@@ -274,6 +277,16 @@ fn load_bytes_from_chunk_chain(root: Cell) -> Result<Vec<u8>, DecodeError> {
                 stack.push(child);
             }
         }
+    }
+    let canonical = store_bytes_as_chunk_chain(&out)
+        .map_err(|e| DecodeError::MalformedChunkCell(format!("canonical re-encode: {e}")))?
+        .ok_or_else(|| {
+            DecodeError::MalformedChunkCell("canonical re-encode returned null".to_string())
+        })?;
+    if canonical.repr_hash() != original_root.repr_hash() {
+        return Err(DecodeError::MalformedChunkCell(
+            "chunk tree is not canonical".to_string(),
+        ));
     }
     Ok(out)
 }
@@ -466,7 +479,7 @@ pub fn decode_transfer_boc(bytes: &[u8]) -> Result<Transfer, DecodeError> {
     // -- outputs_root: fan-out cell with exactly `oc` refs and empty inline --
     let outputs = parse_outputs_root(outputs_root_ref.clone(), output_count)?;
 
-    // -- zk_proof chunk chain --
+    // -- zk_proof chunk tree --
     let zk_proof = load_bytes_from_chunk_chain(zk_proof_ref)?;
 
     // -- §17 5-level walk gate on the two subtrees. --
@@ -638,7 +651,7 @@ mod tests {
         OutputDescription, SpendDescription, Transfer, SCHEME_ID_V1, TRANSFER_VERSION,
     };
     use chain_block::boc::{BocFlags, BocWriter};
-    use chain_block::cell::{BuilderData, IBitstring};
+    use chain_block::cell::{BuilderData, Cell, IBitstring};
 
     /// Local copy of `boc_encode::tests::sample_transfer` — the encoder's
     /// helper is not pub, so we duplicate the logic here. Identical to the
@@ -844,7 +857,7 @@ mod tests {
         );
     }
 
-    /// Full 520 KB zk_proof filler — proves the chunk-chain walker
+    /// Full 520 KB zk_proof filler — proves the chunk-tree walker
     /// handles the v1 worst-case without tripping any inner depth limit.
     #[test]
     fn accepts_real_proof_size_zk_proof() {
@@ -854,6 +867,138 @@ mod tests {
         let decoded = decode_transfer_boc(&bytes).expect("decode");
         assert_eq!(decoded.zk_proof.len(), tx.zk_proof.len());
         assert_eq!(decoded.zk_proof, tx.zk_proof);
+    }
+
+    fn leaf_cell(bytes: &[u8]) -> Cell {
+        let mut cb = BuilderData::default();
+        cb.append_raw(bytes, bytes.len() * 8).expect("leaf bits");
+        cb.finalize(MAX_DEPTH).expect("leaf finalize")
+    }
+
+    fn noncanonical_chunk_tree() -> Cell {
+        let leaf0 = leaf_cell(&[0x11u8; 127]);
+        let leaf1 = leaf_cell(&[0x22u8; 73]);
+
+        let mut inner = BuilderData::default();
+        inner.checked_append_reference(leaf0).expect("inner ref0");
+        inner.checked_append_reference(leaf1).expect("inner ref1");
+        let inner = inner.finalize(MAX_DEPTH).expect("inner finalize");
+
+        // Valid shape, non-canonical grouping: canonical 200-byte encoding
+        // attaches the two leaves directly to the root, without this extra
+        // one-child internal wrapper.
+        let mut root = BuilderData::default();
+        root.checked_append_reference(inner).expect("root ref");
+        root.finalize(MAX_DEPTH).expect("root finalize")
+    }
+
+    fn encode_with_noncanonical_enc_ciphertext() -> Vec<u8> {
+        let tx = sample_transfer(1, 1);
+
+        let mut spend_inline = [0u8; SPEND_INLINE_BYTES];
+        spend_inline[0..32].copy_from_slice(&tx.spends[0].nullifier);
+        spend_inline[32..64].copy_from_slice(&tx.spends[0].rk);
+        spend_inline[64..128].copy_from_slice(&tx.spends[0].spend_auth_sig);
+        let mut spend_item = BuilderData::default();
+        spend_item
+            .append_raw(
+                &spend_inline[..ITEM_INLINE_HEAD_BYTES],
+                ITEM_INLINE_HEAD_BYTES * 8,
+            )
+            .expect("spend head");
+        let mut spend_cont = BuilderData::default();
+        spend_cont
+            .append_raw(&spend_inline[ITEM_INLINE_HEAD_BYTES..], 8)
+            .expect("spend cont");
+        spend_item
+            .checked_append_reference(spend_cont.finalize(MAX_DEPTH).expect("spend cont cell"))
+            .expect("spend cont ref");
+        let mut spends_root = BuilderData::default();
+        spends_root
+            .checked_append_reference(spend_item.finalize(MAX_DEPTH).expect("spend cell"))
+            .expect("spends_root ref");
+        let spends_root = spends_root.finalize(MAX_DEPTH).expect("spends_root");
+
+        let output = &tx.outputs[0];
+        let mut output_inline = [0u8; OUTPUT_INLINE_BYTES];
+        output_inline[0..32].copy_from_slice(&output.cm);
+        output_inline[32..64].copy_from_slice(&output.epk);
+        output_inline[64] = (output.filter_tag >> 8) as u8;
+        output_inline[65] = (output.filter_tag & 0xFF) as u8;
+        output_inline[66..66 + OUT_CIPHERTEXT_BYTES].copy_from_slice(&output.out_ciphertext);
+
+        let mut output_item = BuilderData::default();
+        output_item
+            .append_raw(
+                &output_inline[..ITEM_INLINE_HEAD_BYTES],
+                ITEM_INLINE_HEAD_BYTES * 8,
+            )
+            .expect("output head");
+        let mut output_cont = BuilderData::default();
+        output_cont
+            .append_raw(
+                &output_inline[ITEM_INLINE_HEAD_BYTES..],
+                (OUTPUT_INLINE_BYTES - ITEM_INLINE_HEAD_BYTES) * 8,
+            )
+            .expect("output cont");
+        output_item
+            .checked_append_reference(output_cont.finalize(MAX_DEPTH).expect("output cont cell"))
+            .expect("output cont ref");
+        output_item
+            .checked_append_reference(noncanonical_chunk_tree())
+            .expect("enc ref");
+        output_item
+            .checked_append_reference(
+                store_bytes_as_chunk_chain(&output.mlkem_ct)
+                    .expect("mlkem encode")
+                    .expect("mlkem non-empty"),
+            )
+            .expect("mlkem ref");
+
+        let mut outputs_root = BuilderData::default();
+        outputs_root
+            .checked_append_reference(output_item.finalize(MAX_DEPTH).expect("output cell"))
+            .expect("outputs_root ref");
+        let outputs_root = outputs_root.finalize(MAX_DEPTH).expect("outputs_root");
+
+        let zk_proof = store_bytes_as_chunk_chain(&tx.zk_proof)
+            .expect("zk encode")
+            .expect("zk non-empty");
+
+        let mut root = BuilderData::default();
+        root.append_u8(tx.version).expect("version");
+        root.append_u8(tx.scheme_id).expect("scheme_id");
+        root.append_u32(tx.chain_id).expect("chain_id");
+        root.append_raw(&tx.anchor, 32 * 8).expect("anchor");
+        root.append_u64(tx.expiry_block).expect("expiry");
+        root.append_u64(tx.fee).expect("fee");
+        root.append_u8(1).expect("sc");
+        root.append_u8(1).expect("oc");
+        root.checked_append_reference(spends_root)
+            .expect("spends ref");
+        root.checked_append_reference(outputs_root)
+            .expect("outputs ref");
+        root.checked_append_reference(zk_proof).expect("zk ref");
+        let root = root.finalize(MAX_DEPTH).expect("root");
+
+        fn no_abort() -> bool {
+            false
+        }
+        let writer =
+            BocWriter::with_params([root], MAX_DEPTH, BocFlags::None, &no_abort).expect("writer");
+        let mut bytes = Vec::new();
+        writer.write(&mut bytes).expect("write");
+        bytes
+    }
+
+    #[test]
+    fn rejects_noncanonical_chunk_tree() {
+        let bytes = encode_with_noncanonical_enc_ciphertext();
+        let err = decode_transfer_boc(&bytes).expect_err("non-canonical tree must reject");
+        assert!(
+            matches!(err, DecodeError::MalformedChunkCell(ref s) if s.contains("not canonical")),
+            "expected non-canonical chunk rejection, got {err:?}"
+        );
     }
 
     // TODO (V1-3c-beta follow-up): fuzz-style crafting of a 6-level-deep
@@ -867,11 +1012,11 @@ mod tests {
                 C++ fixture covers this; follow-up in V1-3c-beta"]
     fn rejects_walk_depth_exceeded() {}
 
-    // TODO (V1-3c-beta follow-up): craft a chunk chain that exceeds
+    // TODO (V1-3c-beta follow-up): craft a chunk tree that exceeds
     // K_CHUNK_CHAIN_MAX_CHUNKS (8192) cells. Needs ~1 MiB+ of filler
     // at 127 B/chunk, plus adversarial continuation-only cells to extend
     // past the 915 KB worst-case. Not blocking for happy-path parity.
     #[test]
-    #[ignore = "requires > 8192 chunk chain; follow-up in V1-3c-beta"]
+    #[ignore = "requires > 8192 chunk tree leaves; follow-up in V1-3c-beta"]
     fn rejects_chunk_chain_too_long() {}
 }

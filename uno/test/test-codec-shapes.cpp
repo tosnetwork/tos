@@ -554,6 +554,48 @@ void test_malformed_chunk_tree_rejection() {
     tprintf("  PASSED  rejected with reason: \"%s\"\n", e.reason.c_str());
 }
 
+void test_noncanonical_chunk_tree_rejection() {
+    tprintf("[TEST] decode_transfer rejects non-canonical enc_ciphertext chunk tree\n");
+
+    auto tx = build_transfer(1, 1);
+
+    // Same logical byte stream as two leaves, but wrapped in an extra
+    // one-child internal node:
+    //
+    //   bad_root -> inner -> leaf[127 B], leaf[73 B]
+    //
+    // The shape is otherwise valid. The canonical §4.1a tree for those
+    // 200 bytes is a single internal root with the two leaves directly
+    // attached, so the root hash must differ and decode must reject.
+    auto leaf0 = make_ref_cell("noncanon-a", 0, 127);
+    auto leaf1 = make_ref_cell("noncanon-b", 0, 73);
+    auto inner = vm::CellBuilder()
+        .store_ref(leaf0)
+        .store_ref(leaf1)
+        .finalize();
+    auto bad_root = vm::CellBuilder()
+        .store_ref(inner)
+        .finalize();
+    tx.outputs[0].enc_ciphertext = bad_root;
+
+    auto enc = uno_workchain::encode_transfer(tx);
+    if (enc.is_error()) {
+        tprintf("  FAILED: baseline encode with non-canonical ref: %s\n",
+                enc.error().message().c_str());
+        return;
+    }
+
+    auto root = enc.move_as_ok();
+    auto cs = vm::load_cell_slice(root);
+    auto dr = uno_workchain::decode_transfer(cs);
+    if (std::holds_alternative<uno_workchain::Transfer>(dr)) {
+        tprintf("  FAILED: decoder accepted non-canonical enc_ciphertext chunk tree\n");
+        return;
+    }
+    auto& e = std::get<uno_workchain::TransferDecodeError>(dr);
+    tprintf("  PASSED  rejected with reason: \"%s\"\n", e.reason.c_str());
+}
+
 }  // anonymous namespace
 
 int main() {
@@ -571,6 +613,7 @@ int main() {
     }
     test_depth_bound_rejection();
     test_malformed_chunk_tree_rejection();
+    test_noncanonical_chunk_tree_rejection();
 
     tprintf("\nTotal failures: %d, skips: %d\n",
             g_test_failures.load(), g_test_skips.load());
