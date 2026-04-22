@@ -56,6 +56,12 @@ p3-poseidon2   = { path = "../../third-party/plonky3-uno/poseidon2" }
 p3-poseidon2-air = { path = "../../third-party/plonky3-uno/poseidon2-air" }
 p3-symmetric   = { path = "../../third-party/plonky3-uno/symmetric" }
 p3-batch-stark = { path = "../../third-party/plonky3-uno/batch-stark" }
+# M-P2 Phase 3 (scaffolding-only for this commit): LogUp lookup gadget.
+# Used by the batch-stark prover to enforce argumentwise-multiplicative
+# equality between trace columns and a preprocessed 16-bit range table,
+# once the AIR is wired up to decompose u64 values into u16 limbs. See
+# doc/uno-p2-path-research.md §Path iii for the −156 KB/4-4 estimate.
+p3-lookup      = { path = "../../third-party/plonky3-uno/lookup" }
 p3-uni-stark   = { path = "../../third-party/plonky3-uno/uni-stark" }
 p3-util        = { path = "../../third-party/plonky3-uno/util" }
 

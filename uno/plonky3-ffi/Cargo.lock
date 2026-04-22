@@ -1086,6 +1086,7 @@ dependencies = [
  "p3-field",
  "p3-fri",
  "p3-goldilocks",
+ "p3-lookup",
  "p3-matrix",
  "p3-merkle-tree",
  "p3-poseidon2",

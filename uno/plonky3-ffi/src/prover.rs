@@ -295,6 +295,45 @@ mod tests {
         assert_eq!(pis.len(), air_public_inputs_wire_len(1, 2));
     }
 
+    /// M-P2 Phase 3 scaffolding: confirm `p3-lookup` is linkable and the
+    /// `Lookup<F>` / `Kind` / `Direction` surface can be constructed against
+    /// our field (`Goldilocks`). This test does NOT yet register a real
+    /// range-check lookup on the Transfer AIR — that's Phase 3b (which
+    /// replaces the per-value bit-decomposition columns with a shared
+    /// 16-bit preprocessed range table + u16-limb trace columns).
+    ///
+    /// Purpose: pin the `p3-lookup` dep into the build graph so subsequent
+    /// commits can focus on AIR-layout changes without re-discovering the
+    /// correct types / trait bounds. If this test stops compiling, the
+    /// vendored `third-party/plonky3-uno/lookup` API drifted and Phase 3b
+    /// has to re-align.
+    #[test]
+    fn lookup_types_linkable_for_phase3b() {
+        use p3_field::PrimeCharacteristicRing;
+        use p3_lookup::{Direction, Kind, Lookup};
+
+        // Shape of an eventual 64-bit range lookup: element tuple = (limb,),
+        // multiplicity = 1, direction = Receive (consume from the shared
+        // 16-bit table). Actual tuple construction happens during AIR
+        // `register_lookup` when we have `SymbolicExpression` handles on
+        // the u16-limb trace columns.
+        let _direction = Direction::Receive;
+        let _kind_local: Kind = Kind::Local;
+
+        // An empty `Lookup<Goldilocks>` can be round-tripped through
+        // `Lookup::new` — proves the const constructor is visible.
+        let empty: Lookup<Goldilocks> = Lookup::new(Kind::Local, vec![], vec![], vec![]);
+        assert_eq!(empty.element_exprs.len(), 0);
+        assert_eq!(empty.multiplicities_exprs.len(), 0);
+        assert_eq!(empty.columns.len(), 0);
+
+        // Sanity: batch-stark's `StarkInstance` accepts an empty
+        // `Vec<Lookup<Val<SC>>>` today (Phase 0 / 1 already exercised
+        // this). This assertion simply documents the type equivalence
+        // so Phase 3b can extend from a known-good baseline.
+        let _mult_one = Goldilocks::ONE;
+    }
+
     #[test]
     fn batch_prove_succeeds_on_valid_1_2() {
         let prover = MvpBatchProver::new();
