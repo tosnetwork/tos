@@ -25,6 +25,7 @@
 
 pub mod address;
 pub mod balance;
+pub mod boc_decode;
 pub mod boc_encode;
 pub mod gcs;
 pub mod genesis_build;

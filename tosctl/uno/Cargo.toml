@@ -38,6 +38,9 @@ edition     = "2021"
 license     = "GPL-3.0"
 description = "Uno Workchain (wc=2) wallet CLI — P.6 foundation"
 publish     = false
+# V1-3c-beta: build.rs propagates the optional BOC_PARITY_BRIDGE env var
+# into the test binaries via rustc-env. See `build.rs` for rationale.
+build       = "build.rs"
 
 [[bin]]
 name = "tosctl-uno"
