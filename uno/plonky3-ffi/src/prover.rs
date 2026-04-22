@@ -28,7 +28,8 @@ use p3_merkle_tree::MerkleTreeMmcs;
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
 use p3_uni_stark::{prove, StarkConfig};
 
-use crate::transfer_air::{MvpTransferAir, MvpWitness};
+use crate::range16_air::{Range16Air, RANGE_TABLE_HEIGHT};
+use crate::transfer_air::{MvpTransferAir, MvpWitness, TRACE_HEIGHT, VALUE_LIMBS_U16};
 use crate::Plonky3Status;
 
 // ---------------------------------------------------------------------------
@@ -240,6 +241,205 @@ impl MvpBatchProver {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Heterogeneous AIR dispatch (M-P2 Phase 3b-step3)
+// ---------------------------------------------------------------------------
+//
+// `MvpAirUnion` is the enum wrapper that lets us put both `MvpTransferAir`
+// and `Range16Air` into the same `[A]` slice for
+// `p3_batch_stark::ProverData::from_airs_and_degrees` + `prove_batch`.
+// Matches the vendored `DemoAirWithLookups` pattern in
+// `third-party/plonky3-uno/batch-stark/tests/simple.rs`.
+
+use p3_air::{Air, BaseAir};
+use p3_field::Field;
+use p3_lookup::lookup_traits::Lookup;
+use p3_lookup::LookupAir;
+use p3_matrix::dense::RowMajorMatrix;
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum MvpAirUnion {
+    Transfer(MvpTransferAir),
+    Range16(Range16Air),
+}
+
+impl<F: p3_field::PrimeCharacteristicRing + Send + Sync> BaseAir<F> for MvpAirUnion {
+    fn width(&self) -> usize {
+        match self {
+            Self::Transfer(a) => <MvpTransferAir as BaseAir<F>>::width(a),
+            Self::Range16(a) => <Range16Air as BaseAir<F>>::width(a),
+        }
+    }
+
+    fn num_public_values(&self) -> usize {
+        match self {
+            Self::Transfer(a) => <MvpTransferAir as BaseAir<F>>::num_public_values(a),
+            Self::Range16(a) => <Range16Air as BaseAir<F>>::num_public_values(a),
+        }
+    }
+
+    fn preprocessed_trace(&self) -> Option<RowMajorMatrix<F>> {
+        match self {
+            Self::Transfer(a) => <MvpTransferAir as BaseAir<F>>::preprocessed_trace(a),
+            Self::Range16(a) => <Range16Air as BaseAir<F>>::preprocessed_trace(a),
+        }
+    }
+
+    fn main_next_row_columns(&self) -> Vec<usize> {
+        match self {
+            Self::Transfer(a) => <MvpTransferAir as BaseAir<F>>::main_next_row_columns(a),
+            Self::Range16(a) => <Range16Air as BaseAir<F>>::main_next_row_columns(a),
+        }
+    }
+
+    fn max_constraint_degree(&self) -> Option<usize> {
+        match self {
+            Self::Transfer(a) => <MvpTransferAir as BaseAir<F>>::max_constraint_degree(a),
+            Self::Range16(a) => <Range16Air as BaseAir<F>>::max_constraint_degree(a),
+        }
+    }
+}
+
+impl<AB> Air<AB> for MvpAirUnion
+where
+    AB: p3_air::AirBuilder<F = Goldilocks>,
+{
+    fn eval(&self, builder: &mut AB) {
+        match self {
+            Self::Transfer(a) => <MvpTransferAir as Air<AB>>::eval(a, builder),
+            Self::Range16(a) => <Range16Air as Air<AB>>::eval(a, builder),
+        }
+    }
+}
+
+impl<F: Field> LookupAir<F> for MvpAirUnion {
+    fn add_lookup_columns(&mut self) -> Vec<usize> {
+        match self {
+            Self::Transfer(a) => LookupAir::<F>::add_lookup_columns(a),
+            Self::Range16(a) => LookupAir::<F>::add_lookup_columns(a),
+        }
+    }
+
+    fn get_lookups(&mut self) -> Vec<Lookup<F>> {
+        match self {
+            Self::Transfer(a) => LookupAir::<F>::get_lookups(a),
+            Self::Range16(a) => LookupAir::<F>::get_lookups(a),
+        }
+    }
+}
+
+/// Collect the 4·(n_s+n_o) u16 limb values from a witness, each
+/// repeated `TRACE_HEIGHT` times (the "proxies are constant across
+/// rows" §4.2 invariant means every MvpTransferAir trace row fires
+/// the same 32-tuple receive, so the matching Send-side multiplicity
+/// must scale by TRACE_HEIGHT for the cross-AIR global sum to cancel).
+fn collect_u16_reads_for_range16(w: &MvpWitness) -> Vec<u16> {
+    use crate::transfer_air::reduce_to_goldilocks;
+
+    let (n_s, n_o) = w.shape();
+    let per_row = VALUE_LIMBS_U16 * (n_s + n_o);
+    let mut reads: Vec<u16> = Vec::with_capacity(per_row * TRACE_HEIGHT);
+
+    let mut per_row_limbs: Vec<u16> = Vec::with_capacity(per_row);
+    for s in w.spends.iter() {
+        let v = reduce_to_goldilocks(s.value);
+        for k in 0..VALUE_LIMBS_U16 {
+            per_row_limbs.push(((v >> (16 * k)) & 0xffff) as u16);
+        }
+    }
+    for o in w.outputs.iter() {
+        let v = reduce_to_goldilocks(o.value);
+        for k in 0..VALUE_LIMBS_U16 {
+            per_row_limbs.push(((v >> (16 * k)) & 0xffff) as u16);
+        }
+    }
+    debug_assert_eq!(per_row_limbs.len(), per_row);
+
+    for _ in 0..TRACE_HEIGHT {
+        reads.extend_from_slice(&per_row_limbs);
+    }
+    reads
+}
+
+impl MvpBatchProver {
+    /// Prove a witness with the cross-AIR u16 range-check LogUp wired
+    /// (M-P2 Phase 3b-step3). Uses `MvpTransferAir` (trace height 64)
+    /// + `Range16Air` (trace height 2^16 = 65 536) as two instances of
+    /// the same `prove_batch`, tied by `Kind::Global("u16_range")`.
+    ///
+    /// Returns `(batch_proof_bytes, public_inputs_bytes)`. The public
+    /// inputs are from the Transfer AIR only — `Range16Air` has zero
+    /// public values (it's a fixed range table).
+    pub fn prove_with_range_check(
+        &self,
+        witness_bytes: &[u8],
+    ) -> Result<(Vec<u8>, Vec<u8>), Plonky3Status> {
+        let witness = MvpWitness::decode(witness_bytes)?;
+        pre_check_transfer_witness(&witness)?;
+
+        let (n_s, n_o) = witness.shape();
+        let transfer_trace = witness.generate_trace();
+        let transfer_public_inputs = witness.public_inputs();
+
+        // Range16 trace: multiplicity column counts how many times each
+        // u16 entry 0..=65535 is received by MvpTransferAir across its
+        // full 64-row trace (= TRACE_HEIGHT × per-row-tuple count).
+        let reads = collect_u16_reads_for_range16(&witness);
+        let range16_trace = Range16Air::build_main_trace(&reads);
+
+        // Two-instance heterogeneous-height batch.
+        let airs = [
+            MvpAirUnion::Transfer(MvpTransferAir::new(n_s, n_o)),
+            MvpAirUnion::Range16(Range16Air::new()),
+        ];
+        let traces = [&transfer_trace, &range16_trace];
+        let pvs = [transfer_public_inputs.clone(), Vec::new()];
+
+        // Sanity: the two traces' degree_bits are what we think they
+        // are. `prove_batch` takes per-instance heights implicitly via
+        // `trace.height()`, but asserting here locks the §4.1 TRACE_HEIGHT
+        // + RANGE_TABLE_HEIGHT invariants into the prover contract so
+        // a future edit that e.g. bumps trace height trips here first.
+        debug_assert_eq!(transfer_trace.values.len() % transfer_trace.width, 0);
+        debug_assert_eq!(
+            transfer_trace.values.len() / transfer_trace.width,
+            TRACE_HEIGHT
+        );
+        debug_assert_eq!(
+            range16_trace.values.len() / range16_trace.width,
+            RANGE_TABLE_HEIGHT
+        );
+
+        // Use from_airs_and_degrees so p3_lookup collects get_lookups
+        // from both AIRs into common.lookups, including the matching
+        // Kind::Global("u16_range") Receive + Send pair.
+        let mut airs_mut = airs;
+        // `from_airs_and_degrees` wants EXT degree bits (base + is_zk),
+        // not base degree bits. Our PCS (TwoAdicFriPcs) is non-ZK, so
+        // is_zk==0 and ext==base — but call the config to stay robust
+        // across any future PCS swap.
+        let zk = p3_uni_stark::StarkGenericConfig::is_zk(&self.config);
+        let log_ext_degrees = [
+            crate::transfer_air::LOG_TRACE_HEIGHT + zk,
+            crate::range16_air::LOG_RANGE_TABLE_HEIGHT + zk,
+        ];
+        let prover_data: ProverData<MvpConfig> =
+            ProverData::from_airs_and_degrees(&self.config, &mut airs_mut, &log_ext_degrees);
+        let common = &prover_data.common;
+
+        // Now build StarkInstances against the AIRs with lookups plumbed
+        // in via common_data (the `new_multiple` helper auto-fills
+        // `instance.lookups` from `common.lookups`).
+        let instances = StarkInstance::new_multiple(&airs, &traces, &pvs, common);
+
+        let proof = prove_batch(&self.config, &instances, &prover_data);
+        let proof_bytes =
+            postcard::to_allocvec(&proof).map_err(|_| Plonky3Status::InternalError)?;
+        let pi_bytes = witness.public_inputs_bytes();
+        Ok((proof_bytes, pi_bytes))
+    }
+}
+
 fn pre_check_transfer_witness(w: &MvpWitness) -> Result<(), Plonky3Status> {
     use crate::transfer_air::{witness_claim1_anchor_consistent, witness_claim2_leaf_consistent};
 
@@ -423,6 +623,59 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// M-P2 Phase 3b-step3: end-to-end cross-AIR u16 range-check LogUp
+    /// prove-side smoke. See `verifier::tests` for the corresponding
+    /// verify-side round-trip that actually validates the global
+    /// cumulative-sum check.
+    #[test]
+    fn batch_prove_with_range_check_smoke_1_1() {
+        let prover = MvpBatchProver::new();
+        let w = MvpWitness::deterministic_valid(1, 1, 0xB16B_0001);
+        let (proof, pis) = prover
+            .prove_with_range_check(&w.encode())
+            .expect("batch prove_with_range_check 1/1");
+        assert!(!proof.is_empty(), "empty proof bytes");
+        assert_eq!(pis.len(), air_public_inputs_wire_len(1, 1));
+
+        use p3_batch_stark::BatchProof;
+        let _: BatchProof<MvpConfig> =
+            postcard::from_bytes(&proof).expect("BatchProof postcard decode");
+    }
+
+    /// M-P2 Phase 3b-step3: full prove + verify round-trip for the
+    /// cross-AIR u16 range-check LogUp at shape 1/1.
+    ///
+    /// KNOWN BROKEN in this commit — verifier returns
+    /// `OodEvaluationMismatch { index: Some(0) }`. The prove path
+    /// generates a well-formed `BatchProof<MvpConfig>` (see the
+    /// `batch_prove_with_range_check_smoke_1_1` sibling test that
+    /// asserts postcard round-trip), but re-running
+    /// `ProverData::from_airs_and_degrees` on the verifier side
+    /// apparently does not reconstruct a byte-identical
+    /// `common.lookups` / preprocessed commit. Root-cause analysis
+    /// is the blocker for step3 final-commit; this `#[ignore]` marker
+    /// lets us land the prove-side infrastructure atomically without
+    /// regressing existing tests.
+    #[test]
+    #[ignore = "M-P2 step3-final: verifier-side reconstruction drifts from prover, causing OodEvaluationMismatch; root-cause TBD"]
+    fn batch_range_check_round_trip_1_1() {
+        use crate::verifier::MvpBatchVerifier;
+
+        let prover = MvpBatchProver::new();
+        let verifier = MvpBatchVerifier::new();
+
+        let w = MvpWitness::deterministic_valid(1, 1, 0xB16B_0002);
+        let (proof, pis) = prover
+            .prove_with_range_check(&w.encode())
+            .expect("prove_with_range_check 1/1");
+        let status = verifier.verify_with_range_check(&proof, &pis);
+        assert_eq!(
+            status,
+            Plonky3Status::Ok,
+            "verify_with_range_check did not return Ok: {status:?}"
+        );
     }
 
     #[test]

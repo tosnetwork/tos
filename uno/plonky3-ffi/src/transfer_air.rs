@@ -544,6 +544,12 @@ pub struct MvpTransferAir {
     pub n_spends: usize,
     /// Number of outputs (1..=4).
     pub n_outputs: usize,
+    /// Per-AIR-local counter for `LookupAir::add_lookup_columns` column
+    /// allocations. Always starts at 0 in `new()` / `default()`; mutated
+    /// only when `LookupAir::get_lookups` calls register_lookup. The
+    /// field is not part of the AIR's semantic identity — two values
+    /// that differ only in `num_lookups` represent the same AIR.
+    num_lookups: usize,
 }
 
 impl Default for MvpTransferAir {
@@ -561,6 +567,7 @@ impl MvpTransferAir {
         Self {
             n_spends,
             n_outputs,
+            num_lookups: 0,
         }
     }
 
@@ -601,19 +608,91 @@ impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for MvpTransferAir {
     }
 }
 
-/// Empty `LookupAir` impl — placeholder for M-P2 Phase 3b.
+/// `LookupAir` impl — M-P2 Phase 3b-step3 reader side.
 ///
-/// The default trait methods return empty vecs, which means "this AIR
-/// registers zero lookups / allocates zero aux columns". That matches
-/// the current `StarkInstance { lookups: Vec::new(), .. }` feeding in
-/// `prover.rs::MvpBatchProver::prove`.
+/// Registers a single `Kind::Global("u16_range")` lookup whose
+/// `Direction::Receive` input list holds **all** u16 limb columns from
+/// the per-spend and per-output proxy blocks (4 limbs/value × n_spends
+/// spends × 1 value-per-spend  +  4 limbs/value × n_outputs outputs ×
+/// 1 value-per-output = 4·(n_spends + n_outputs) receives at
+/// multiplicity 1).
 ///
-/// Phase 3b replaces this with a non-trivial impl: `add_lookup_columns`
-/// allocates u16-limb columns and the 16-bit preprocessed range-table
-/// column; `get_lookups` returns one `Lookup<F>` per claim-5/7 u64
-/// value binding the u16 limbs to the range table via
-/// `register_lookup(Kind::Local, ...)`.
-impl<F: p3_field::Field> p3_lookup::LookupAir<F> for MvpTransferAir {}
+/// The matching `Direction::Send` side lives in `range16_air` under the
+/// identical interaction name
+/// [`range16_air::U16_RANGE_LOOKUP_NAME`].
+///
+/// NB on trace rows: the LogUp gadget evaluates each `Lookup` on every
+/// row of this AIR's main trace (64 rows). Because the u16 limb columns
+/// are "constant across rows" per the §4.2 proxies-are-constant
+/// transition invariant, each limb value is received 64× per prove.
+/// `MvpBatchProver::prove` bakes this row-count into the multiplicity
+/// column it feeds to `Range16Air::build_main_trace` so the global sum
+/// balances out to zero in the cross-AIR cumulative check.
+impl<F: p3_field::Field> p3_lookup::LookupAir<F> for MvpTransferAir {
+    fn add_lookup_columns(&mut self) -> Vec<usize> {
+        let idx = self.num_lookups;
+        self.num_lookups += 1;
+        vec![idx]
+    }
+
+    fn get_lookups(&mut self) -> Vec<p3_lookup::lookup_traits::Lookup<F>> {
+        self.num_lookups = 0;
+
+        let width = air_width(self.n_spends, self.n_outputs);
+        let num_pvs = air_num_public_values(self.n_spends, self.n_outputs);
+
+        let symbolic = p3_air::symbolic::SymbolicAirBuilder::<F>::new(
+            p3_air::symbolic::AirLayout {
+                main_width: width,
+                num_public_values: num_pvs,
+                ..Default::default()
+            },
+        );
+        let main_window = symbolic.main();
+        let main_local = main_window.current_slice();
+
+        // Build 4·(n_s + n_o) `(element, multiplicity, Direction)` tuples
+        // — one per u16 limb column. All receive with multiplicity 1.
+        let total = 4 * (self.n_spends + self.n_outputs);
+        let one = p3_air::symbolic::SymbolicExpression::Leaf(
+            p3_air::BaseLeaf::Constant(F::ONE),
+        );
+        let mut lookup_inputs: Vec<p3_lookup::lookup_traits::LookupInput<F>> =
+            Vec::with_capacity(total);
+        for i in 0..self.n_spends {
+            for k in 0..VALUE_LIMBS_U16 {
+                let col = spend_proxy_offset(i) + S_VALUE_LIMB0 + k;
+                let limb = main_local[col];
+                lookup_inputs.push((
+                    vec![limb.into()],
+                    one.clone(),
+                    p3_lookup::lookup_traits::Direction::Receive,
+                ));
+            }
+        }
+        for j in 0..self.n_outputs {
+            for k in 0..VALUE_LIMBS_U16 {
+                let col = output_proxy_offset(self.n_spends, j) + O_VALUE_LIMB0 + k;
+                let limb = main_local[col];
+                lookup_inputs.push((
+                    vec![limb.into()],
+                    one.clone(),
+                    p3_lookup::lookup_traits::Direction::Receive,
+                ));
+            }
+        }
+
+        vec![p3_lookup::LookupAir::register_lookup(
+            self,
+            p3_lookup::lookup_traits::Kind::Global(
+                String::from(crate::range16_air::U16_RANGE_LOOKUP_NAME),
+            ),
+            &lookup_inputs,
+        )]
+    }
+}
+
+
 
 impl<AB> Air<AB> for MvpTransferAir
 where

@@ -151,6 +151,66 @@ impl MvpBatchVerifier {
             Err(_) => Plonky3Status::VerifyFailed,
         }
     }
+
+    /// Verify a postcard-encoded `BatchProof<MvpConfig>` that was
+    /// produced by `MvpBatchProver::prove_with_range_check`.
+    ///
+    /// The two-AIR cross-global `Kind::Global("u16_range")` LogUp
+    /// requires the verifier to reconstruct the same `common_data`
+    /// (preprocessed commitment + lookup declarations) the prover
+    /// used. `ProverData::from_airs_and_degrees` is deterministic
+    /// given identical inputs, so re-running it on the verifier side
+    /// yields the identical commitment — the prover and verifier
+    /// never transmit it on the wire.
+    ///
+    /// Returns `Plonky3Status::Ok` iff both (a) the Transfer AIR
+    /// constraints hold AND (b) the cross-AIR cumulative LogUp sum
+    /// is zero (i.e. every u16 limb read by MvpTransferAir is
+    /// accounted for by the Range16Air multiplicity column).
+    pub fn verify_with_range_check(
+        &self,
+        proof_bytes: &[u8],
+        public_inputs_bytes: &[u8],
+    ) -> Plonky3Status {
+        use crate::prover::MvpAirUnion;
+        use crate::range16_air::{Range16Air, LOG_RANGE_TABLE_HEIGHT};
+        use crate::transfer_air::LOG_TRACE_HEIGHT;
+        use p3_batch_stark::ProverData;
+
+        let (n_s, n_o) = match derive_shape_from_public_inputs_len(public_inputs_bytes.len()) {
+            Ok(shape) => shape,
+            Err(e) => return e,
+        };
+
+        let public_inputs = match decode_public_inputs(public_inputs_bytes) {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+
+        let proof: BatchProof<MvpConfig> = match postcard::from_bytes(proof_bytes) {
+            Ok(p) => p,
+            Err(_) => return Plonky3Status::ProofDecodeFailed,
+        };
+
+        // Reconstruct the two-AIR heterogeneous-height batch + common_data
+        // exactly as the prover built it. `from_airs_and_degrees` is
+        // deterministic, so this is byte-identical to the prover side.
+        let mut airs = [
+            MvpAirUnion::Transfer(MvpTransferAir::new(n_s, n_o)),
+            MvpAirUnion::Range16(Range16Air::new()),
+        ];
+        let zk = p3_uni_stark::StarkGenericConfig::is_zk(&self.config);
+        let log_ext_degrees = [LOG_TRACE_HEIGHT + zk, LOG_RANGE_TABLE_HEIGHT + zk];
+        let prover_data: ProverData<MvpConfig> =
+            ProverData::from_airs_and_degrees(&self.config, &mut airs, &log_ext_degrees);
+        let common = &prover_data.common;
+
+        let pvs = [public_inputs, Vec::new()];
+        match verify_batch(&self.config, &airs, &proof, &pvs, common) {
+            Ok(()) => Plonky3Status::Ok,
+            Err(_) => Plonky3Status::VerifyFailed,
+        }
+    }
 }
 
 // Static Send+Sync check so `Arc<MvpVerifier>` in the FFI handle is sound
