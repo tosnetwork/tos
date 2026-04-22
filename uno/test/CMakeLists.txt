@@ -168,6 +168,15 @@ add_executable(generate-state-transitions-v1     generate-state-transitions-v1.c
 target_link_libraries(generate-state-transitions-v1 PRIVATE uno_workchain)
 target_include_directories(generate-state-transitions-v1 PRIVATE ${CMAKE_SOURCE_DIR})
 
+# V1-3c-beta cross-language BoC byte-parity bridge. Driven over stdin/stdout
+# by `tosctl/uno/tests/boc_parity.rs`. Reads BoC bytes from stdin, decodes
+# via the production `uno_workchain::decode_transfer_bytes`, dumps the
+# decoded Transfer fields to stdout in a stable line-based format. NOT
+# registered with ctest — this is a helper binary, not a test.
+add_executable(boc-parity-bridge                 boc-parity-bridge.cpp)
+target_link_libraries(boc-parity-bridge PRIVATE uno_workchain)
+target_include_directories(boc-parity-bridge PRIVATE ${CMAKE_SOURCE_DIR})
+
 foreach(_t test-uno-transfer
            test-uno-determinism
            test-uno-filter
