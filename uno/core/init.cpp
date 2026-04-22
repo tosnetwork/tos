@@ -85,6 +85,33 @@ namespace uno_workchain {
 
 namespace {
 
+constexpr uint32_t kLiveUnoShardStateMagic = 0x554E4F53;  // "UNOS"
+constexpr unsigned kLiveUnoShardStateMagicBits = 32;
+constexpr uint8_t  kLiveShardStateVersion = 1;
+constexpr size_t   kLiveHashBytes = 32;
+
+td::Ref<vm::Cell> encode_live_stats_cell(uint64_t burned_fees,
+                                         uint64_t tx_count,
+                                         uint64_t note_count) {
+    vm::CellBuilder cb;
+    cb.store_long(static_cast<long long>(burned_fees), 64);
+    cb.store_long(static_cast<long long>(tx_count), 64);
+    cb.store_long(static_cast<long long>(note_count), 64);
+    return cb.finalize();
+}
+
+td::Ref<vm::Cell> build_live_meta_cell(td::Ref<vm::Cell> anchor_window_cell,
+                                       td::Ref<vm::Cell> stats_cell) {
+    if (anchor_window_cell.is_null() || stats_cell.is_null()) {
+        LOG(ERROR) << "uno-workchain: cannot serialize live meta cell with null refs";
+        return {};
+    }
+    vm::CellBuilder cb;
+    if (!cb.store_ref_bool(std::move(anchor_window_cell))) return {};
+    if (!cb.store_ref_bool(std::move(stats_cell))) return {};
+    return cb.finalize();
+}
+
 // ---------------------------------------------------------------------------
 // LiveUnoState — A6 consensus UnoState backed by A2 primitives.
 // ---------------------------------------------------------------------------
@@ -306,13 +333,45 @@ void LiveUnoState::bump_stats(uint64_t fee, uint64_t note_count_delta) {
 }
 
 td::Ref<vm::Cell> LiveUnoState::serialize_to_cell() const {
-    // P.5 scope: we don't materialise the full UnoShardState cell here (that
-    // lives in A1's cell-state.cpp and requires A1's UnoShardState facade
-    // which is not in our TU).  Compute-phase accepts a null ref as "state
-    // unchanged at the cell level"; CellDb dedup handles the no-op write.
-    // The two-wallet demo test exercises consensus-visible state through the
-    // in-memory structures, not through serialized cells.
-    return {};
+    std::lock_guard<std::mutex> lk(mutex_);
+
+    auto tree_cell = commitment_tree_->serialize_to_cell();
+    vm::CellBuilder nf_cb;
+    if (!nullifier_set_->append_to_builder(nf_cb)) {
+        LOG(ERROR) << "uno-workchain: failed to serialize nullifier wrapper";
+        return {};
+    }
+    auto nullifier_cell = nf_cb.finalize();
+    auto anchor_cell = anchor_window_->serialize_to_cell();
+    if (anchor_cell.is_null()) {
+        vm::CellBuilder empty_anchor;
+        anchor_cell = empty_anchor.finalize();
+    }
+
+    if (tree_cell.is_null() || nullifier_cell.is_null() || anchor_cell.is_null()) {
+        LOG(ERROR) << "uno-workchain: live state sub-object serialization failed";
+        return {};
+    }
+
+    auto stats_cell = encode_live_stats_cell(
+        stats_burned_fees_, stats_tx_count_, stats_note_count_);
+    auto meta_cell = build_live_meta_cell(std::move(anchor_cell),
+                                          std::move(stats_cell));
+    if (meta_cell.is_null()) return {};
+
+    std::array<uint8_t, kLiveHashBytes> config_hash{};
+
+    vm::CellBuilder cb;
+    cb.store_long(kLiveUnoShardStateMagic, kLiveUnoShardStateMagicBits);
+    cb.store_long(kLiveShardStateVersion, 8);
+    cb.store_long(kSchemeIdV1, 8);
+    cb.store_long(static_cast<long long>(next_output_global_index_), 64);
+    cb.store_bytes(config_hash.data(), kLiveHashBytes);
+    cb.store_bytes(current_root_.data(), kLiveHashBytes);
+    if (!cb.store_ref_bool(std::move(tree_cell))) return {};
+    if (!cb.store_ref_bool(std::move(nullifier_cell))) return {};
+    if (!cb.store_ref_bool(std::move(meta_cell))) return {};
+    return cb.finalize();
 }
 
 uint32_t LiveUnoState::expected_chain_id() const {
@@ -869,6 +928,10 @@ void install_uno_submit_hook(bool(*fn)(const std::string&, const uint8_t[32])) {
 void reset_uno_state_for_test() {
     g_live.reset();
     g_live = std::make_unique<LiveUnoState>();
+}
+
+td::Ref<vm::Cell> serialize_live_uno_state_for_test() {
+    return g_live ? g_live->serialize_to_cell() : td::Ref<vm::Cell>{};
 }
 
 // ---------------------------------------------------------------------------

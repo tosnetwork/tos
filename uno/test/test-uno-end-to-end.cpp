@@ -59,6 +59,7 @@
 #include "block/transaction.h"     // block::ComputePhase
 #include "vm/cells/CellBuilder.h"
 #include "vm/cells/CellSlice.h"
+#include "vm/cellslice.h"
 #include "td/utils/SharedSlice.h"
 #include "td/utils/crypto.h"
 
@@ -158,6 +159,7 @@ void install_uno_submit_hook(
     bool(*fn)(const std::string& tx_bytes, const uint8_t tx_hash[32]));
 void stage_output_wire_bytes_for_test(uint64_t global_index, std::string bytes);
 void reset_uno_state_for_test();
+td::Ref<vm::Cell> serialize_live_uno_state_for_test();
 void on_included_tx_from_compute(const uint8_t tx_hash[32],
                                   uint64_t fee_nano,
                                   uint64_t n_outputs);
@@ -376,6 +378,97 @@ static bool submit_capture(const std::string& tx_bytes, const uint8_t tx_hash[32
     return true;
 }
 static bool always_ok_proof(td::Slice /*pi*/, td::Slice /*proof*/) { return true; }
+
+static bool fetch_u64(vm::CellSlice& cs, uint64_t& out) {
+    long long v = 0;
+    if (!cs.fetch_long_bool(64, v)) return false;
+    out = static_cast<uint64_t>(v);
+    return true;
+}
+
+static bool assert_live_state_serializes(uint64_t expected_next_position,
+                                         uint64_t expected_burned_fees,
+                                         uint64_t expected_tx_count,
+                                         uint64_t expected_note_count) {
+    auto cell = uw::serialize_live_uno_state_for_test();
+    if (cell.is_null()) {
+        tprintf("  FAILED: LiveUnoState serialize_to_cell returned null\n");
+        return false;
+    }
+
+    auto cs = vm::load_cell_slice(cell);
+    long long v = 0;
+    if (!cs.fetch_long_bool(32, v) || static_cast<uint32_t>(v) != 0x554E4F53) {
+        tprintf("  FAILED: live state magic mismatch\n");
+        return false;
+    }
+    if (!cs.fetch_long_bool(8, v) || v != 1) {
+        tprintf("  FAILED: live state version mismatch\n");
+        return false;
+    }
+    if (!cs.fetch_long_bool(8, v) || v != 1) {
+        tprintf("  FAILED: live state scheme_id mismatch\n");
+        return false;
+    }
+    uint64_t next_position = 0;
+    if (!fetch_u64(cs, next_position) ||
+        next_position != expected_next_position) {
+        tprintf("  FAILED: live state next_position=%llu expected=%llu\n",
+                (unsigned long long)next_position,
+                (unsigned long long)expected_next_position);
+        return false;
+    }
+    unsigned char scratch[32];
+    if (!cs.fetch_bytes(scratch, 32) || !cs.fetch_bytes(scratch, 32)) {
+        tprintf("  FAILED: live state hash fields missing\n");
+        return false;
+    }
+    if (cs.size_refs() != 3) {
+        tprintf("  FAILED: live state refs=%u expected=3\n", cs.size_refs());
+        return false;
+    }
+
+    auto nf_cell = cs.prefetch_ref(1);
+    auto nf_cs = vm::load_cell_slice(nf_cell);
+    if (!nf_cs.fetch_long_bool(1, v) || v == 0) {
+        tprintf("  FAILED: live state nullifier wrapper not populated\n");
+        return false;
+    }
+
+    auto meta_cell = cs.prefetch_ref(2);
+    auto meta_cs = vm::load_cell_slice(meta_cell);
+    if (meta_cs.size_refs() != 2) {
+        tprintf("  FAILED: live meta refs=%u expected=2\n", meta_cs.size_refs());
+        return false;
+    }
+
+    auto stats_cell = meta_cs.prefetch_ref(1);
+    auto stats_cs = vm::load_cell_slice(stats_cell);
+    uint64_t burned_fees = 0, tx_count = 0, note_count = 0;
+    if (!fetch_u64(stats_cs, burned_fees) ||
+        !fetch_u64(stats_cs, tx_count) ||
+        !fetch_u64(stats_cs, note_count)) {
+        tprintf("  FAILED: live stats cell malformed\n");
+        return false;
+    }
+    if (burned_fees != expected_burned_fees ||
+        tx_count != expected_tx_count ||
+        note_count != expected_note_count) {
+        tprintf("  FAILED: live stats mismatch fee=%llu/%llu tx=%llu/%llu notes=%llu/%llu\n",
+                (unsigned long long)burned_fees,
+                (unsigned long long)expected_burned_fees,
+                (unsigned long long)tx_count,
+                (unsigned long long)expected_tx_count,
+                (unsigned long long)note_count,
+                (unsigned long long)expected_note_count);
+        return false;
+    }
+    tprintf("  live-state: serialized next_position=%llu tx=%llu notes=%llu\n",
+            (unsigned long long)next_position,
+            (unsigned long long)tx_count,
+            (unsigned long long)note_count);
+    return true;
+}
 
 // ---------------------------------------------------------------------------
 // The test
@@ -660,6 +753,12 @@ static void test_two_wallet_e2e() {
     }
     if (nfr->json.find("\"spent\":true") == std::string::npos) {
         tprintf("  FAILED: expected spent:true, got %s\n", nfr->json.c_str());
+        return;
+    }
+    if (!assert_live_state_serializes(/*expected_next_position=*/3,
+                                      /*expected_burned_fees=*/kFee,
+                                      /*expected_tx_count=*/2,
+                                      /*expected_note_count=*/3)) {
         return;
     }
 
