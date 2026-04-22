@@ -1611,7 +1611,7 @@ impl MvpWitness {
     /// Derive public inputs per §4.3 step 4.
     ///
     /// Layout (per-element 8 B LE Goldilocks):
-    /// ```
+    /// ```text
     ///   [scheme_id, chain_id, expiry_block, fee]          (4 header scalars)
     ///   [anchor as 4 limbs — limb 0 = anchor_proxy]       (4 anchor limbs)
     ///   for each spend i:
