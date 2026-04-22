@@ -527,13 +527,25 @@ fn compare_summary(tx: &Transfer, s: &Summary) -> Result<(), String> {
                     possible C++/Rust wire-format divergence (re-check V1-3b)"
             .to_string());
     }
-    // tx_hash: intentionally not compared to a Rust-side expected value
-    // here — V1-3c-gamma owns reconciling the canonical_tx_hash formula
-    // between the flat Rust encoder and the cell-root hash-based C++
-    // encoder. We still assert the bridge produced a non-zero hash (a
-    // trivial well-formedness check).
-    if s.tx_hash == [0u8; 32] {
-        return Err("tx_hash is all-zero — decoder likely didn't populate it".to_string());
+    // V1-3c-round-7: cross-language canonical_tx_hash parity is
+    // consensus-critical for Schnorr sig verify (§4.3 step 3). The Rust
+    // `canonical_tx_hash_boc` uses BoC cell-root hashes for enc_ct /
+    // mlkem_ct, byte-identical to the C++ `canonical_tx_hash` →
+    // `append_cell_hash` path. If the two diverge, every Rust-wallet-
+    // submitted Transfer is rejected by validators as BadSpendAuthSig.
+    //
+    // Direct compare here closes the regression: any future change that
+    // would break sig verify in the field surfaces as this assertion
+    // failure instead.
+    let rust_tx_hash = tosctl_uno::transfer::canonical_tx_hash_boc(tx)
+        .map_err(|e| format!("canonical_tx_hash_boc failed: {e}"))?;
+    if s.tx_hash != rust_tx_hash {
+        return Err(format!(
+            "tx_hash parity: rust={} cxx={} \
+             — Schnorr verify would fail on every validator",
+            hex::encode(rust_tx_hash),
+            hex::encode(s.tx_hash)
+        ));
     }
     Ok(())
 }

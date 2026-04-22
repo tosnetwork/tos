@@ -73,7 +73,7 @@ use crate::scan::{self, OwnedNote};
 use crate::schnorr;
 use crate::sizes::{MLKEM768_CT, MLKEM768_PK};
 use crate::transfer::{
-    canonical_tx_hash, compute_note_commitment, compute_rcm, encode_transfer_wire,
+    canonical_tx_hash_boc, compute_note_commitment, compute_rcm, encode_transfer_wire,
     NoteCommitmentInputs, OutputDescription, SpendDescription, Transfer,
     DEFAULT_EXPIRY_DELTA_BLOCKS, MAX_OUTPUT_COUNT, MAX_SPEND_COUNT, OUT_CIPHERTEXT_BYTES,
     SCHEME_ID_V1, TRANSFER_VERSION,
@@ -220,7 +220,7 @@ pub async fn execute(args: &SendArgs) -> Result<SendSummary> {
     )?;
 
     // (h) tx_hash + Schnorr-sign each spend under its fresh rk.
-    let signed_tx = sign_spends(tx, &sel.rsk_keys);
+    let signed_tx = sign_spends(tx, &sel.rsk_keys)?;
 
     // (i) Serialize, submit (unless dry-run).
     //
@@ -233,7 +233,14 @@ pub async fn execute(args: &SendArgs) -> Result<SendSummary> {
     // encode_transfer). The flat encoder is retained for the offline
     // send_roundtrip integration test, which does not exercise the
     // daemon decoder.
-    let tx_hash = canonical_tx_hash(&signed_tx);
+    //
+    // V1-3c-round-7 fix: tx_hash uses the BoC cell-root hash for
+    // enc_ct / mlkem_ct (canonical_tx_hash_boc) so the signature we
+    // compute matches what the C++ daemon recomputes at decode time.
+    // The old canonical_tx_hash (BLAKE3-proxy) diverged → every
+    // validator Schnorr verify would fail with BadSpendAuthSig.
+    let tx_hash = canonical_tx_hash_boc(&signed_tx)
+        .context("canonical_tx_hash_boc (daemon-parity tx_hash)")?;
     let tx_bytes = crate::boc_encode::encode_transfer_boc(&signed_tx)
         .context("encoding Transfer to BoC bytes")?;
 
@@ -572,12 +579,16 @@ fn build_output(recipient: &Address, value: u64, memo: Option<&str>) -> Result<O
 // Schnorr sign pass
 // ---------------------------------------------------------------------------
 
-fn sign_spends(mut tx: Transfer, rsk_keys: &[schnorr::SpendKeyPair]) -> Transfer {
-    let tx_hash = canonical_tx_hash(&tx);
+fn sign_spends(mut tx: Transfer, rsk_keys: &[schnorr::SpendKeyPair]) -> Result<Transfer> {
+    // V1-3c-round-7: must use canonical_tx_hash_boc (BoC cell-root hash for
+    // enc_ct / mlkem_ct) so validators recompute the same tx_hash during
+    // decode and Schnorr verify succeeds. The scaffold canonical_tx_hash
+    // uses BLAKE3(bytes) as a proxy, which diverges from the C++ daemon.
+    let tx_hash = canonical_tx_hash_boc(&tx).context("sign_spends: canonical_tx_hash_boc")?;
     for (spend, kp) in tx.spends.iter_mut().zip(rsk_keys.iter()) {
         spend.spend_auth_sig = schnorr::sign(kp, &tx_hash);
     }
-    tx
+    Ok(tx)
 }
 
 // ---------------------------------------------------------------------------
@@ -1036,8 +1047,9 @@ pub fn test_build_transfer(
     let sel = select_notes(notes, amount, fee)
         .ok_or_else(|| anyhow!("test_build_transfer: insufficient funds"))?;
     let tx = build_transfer(fvk, recipient, &sel, anchor, chain_id, expiry_block, memo)?;
-    let signed = sign_spends(tx, &sel.rsk_keys);
-    let hash = canonical_tx_hash(&signed);
+    let signed = sign_spends(tx, &sel.rsk_keys)?;
+    let hash =
+        canonical_tx_hash_boc(&signed).context("test_build_transfer: canonical_tx_hash_boc")?;
     // Test helper intentionally stays on the flat `encode_transfer_wire`
     // so `tests/send_roundtrip.rs` can round-trip through the
     // tosctl-uno-internal `decode_transfer_wire`. Production submission

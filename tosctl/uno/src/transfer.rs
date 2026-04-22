@@ -56,7 +56,7 @@
 //! already accepts for `OutputDescription` (see `wire.rs`) — the receive
 //! side is the ground truth for P.6.
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use p3_field::PrimeCharacteristicRing;
 use p3_goldilocks::Goldilocks;
 
@@ -248,6 +248,83 @@ pub fn canonical_tx_hash(tx: &Transfer) -> [u8; 32] {
         buf.extend_from_slice(&o.out_ciphertext);
     }
     blake3_32(&buf)
+}
+
+/// Production-path canonical `tx_hash` — byte-identical to
+/// `uno/core/transaction.cpp::canonical_tx_hash` at every position.
+///
+/// The difference from the scaffold `canonical_tx_hash` above is the
+/// `cell_hash(x)` term for `enc_ciphertext` and `mlkem_ct`:
+///
+/// * The scaffold uses `BLAKE3(bytes)` as a proxy — convenient for
+///   offline structural tests but NOT parity-compatible with the C++
+///   daemon (which uses the TOS cell-root hash over the canonical
+///   4-ary chunk tree per §4.1a).
+/// * This function builds the canonical chunk trees for `enc_ciphertext`
+///   and `mlkem_ct` via `boc_encode::store_bytes_as_chunk_chain` and
+///   hashes them with `chain_block::Cell::repr_hash()` — byte-identical
+///   to the C++ `c->get_hash()` call.
+///
+/// **V1 launch blocker (round-7 audit, 2026-04-22)**: every Rust-signed
+/// Transfer was using the scaffold `canonical_tx_hash` for
+/// `spend_auth_sig`, which meant validators computed a different
+/// `tx.tx_hash` during decode and the Schnorr verify at §4.3 step 3
+/// always failed. Production send / sign paths now route through THIS
+/// function. The scaffold remains for the offline `send_roundtrip`
+/// integration test, which does not exercise the daemon decoder.
+pub fn canonical_tx_hash_boc(tx: &Transfer) -> Result<[u8; 32]> {
+    use crate::boc_encode::store_bytes_as_chunk_chain;
+
+    let mut enc_ct_hashes: Vec<[u8; 32]> = Vec::with_capacity(tx.outputs.len());
+    let mut mlkem_ct_hashes: Vec<[u8; 32]> = Vec::with_capacity(tx.outputs.len());
+    for (j, o) in tx.outputs.iter().enumerate() {
+        let enc_cell = store_bytes_as_chunk_chain(&o.enc_ciphertext)
+            .with_context(|| format!("canonical_tx_hash_boc: enc_ct[{j}] encode"))?
+            .ok_or_else(|| {
+                anyhow!("canonical_tx_hash_boc: enc_ct[{j}] empty (daemon rejects null refs)")
+            })?;
+        let mlkem_cell = store_bytes_as_chunk_chain(&o.mlkem_ct)
+            .with_context(|| format!("canonical_tx_hash_boc: mlkem_ct[{j}] encode"))?
+            .ok_or_else(|| {
+                anyhow!("canonical_tx_hash_boc: mlkem_ct[{j}] empty (daemon rejects null refs)")
+            })?;
+        let enc_h = enc_cell.repr_hash();
+        let mlkem_h = mlkem_cell.repr_hash();
+        let mut enc_h32 = [0u8; 32];
+        enc_h32.copy_from_slice(enc_h.as_slice());
+        let mut mlkem_h32 = [0u8; 32];
+        mlkem_h32.copy_from_slice(mlkem_h.as_slice());
+        enc_ct_hashes.push(enc_h32);
+        mlkem_ct_hashes.push(mlkem_h32);
+    }
+
+    let mut buf: Vec<u8> = Vec::with_capacity(
+        TRANSFER_HEADER_BYTES
+            + tx.spends.len() * 64
+            + tx.outputs.len() * (32 + 32 + 2 + 32 + 32 + 80),
+    );
+    buf.push(tx.version);
+    buf.push(tx.scheme_id);
+    buf.extend_from_slice(&tx.chain_id.to_be_bytes());
+    buf.extend_from_slice(&tx.anchor);
+    buf.extend_from_slice(&tx.expiry_block.to_be_bytes());
+    buf.extend_from_slice(&tx.fee.to_be_bytes());
+    buf.push(tx.spends.len() as u8);
+    buf.push(tx.outputs.len() as u8);
+    for s in &tx.spends {
+        buf.extend_from_slice(&s.nullifier);
+        buf.extend_from_slice(&s.rk);
+        // spend_auth_sig intentionally excluded per §4.1.
+    }
+    for (j, o) in tx.outputs.iter().enumerate() {
+        buf.extend_from_slice(&o.cm);
+        buf.extend_from_slice(&o.epk);
+        buf.extend_from_slice(&o.filter_tag.to_be_bytes());
+        buf.extend_from_slice(&enc_ct_hashes[j]);
+        buf.extend_from_slice(&mlkem_ct_hashes[j]);
+        buf.extend_from_slice(&o.out_ciphertext);
+    }
+    Ok(blake3_32(&buf))
 }
 
 fn blake3_32(data: &[u8]) -> [u8; 32] {
