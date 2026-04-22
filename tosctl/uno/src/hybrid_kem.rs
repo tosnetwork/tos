@@ -32,9 +32,9 @@ pub fn derive_key(
     mlkem_ct: &[u8],
 ) -> [u8; AEAD_KEY] {
     assert_eq!(s_dh_compressed_32.len(), RISTRETTO_POINT);
-    assert_eq!(s_pq_32.len(),              32);
-    assert_eq!(epk_compressed_32.len(),    RISTRETTO_POINT);
-    assert_eq!(mlkem_ct.len(),             crate::sizes::MLKEM768_CT);
+    assert_eq!(s_pq_32.len(), 32);
+    assert_eq!(epk_compressed_32.len(), RISTRETTO_POINT);
+    assert_eq!(mlkem_ct.len(), crate::sizes::MLKEM768_CT);
 
     let ct_hash = {
         let mut h = blake3::Hasher::new();
@@ -74,7 +74,7 @@ mod tests {
     fn derivation_is_deterministic() {
         let s_dh = [0x11u8; 32];
         let s_pq = [0x22u8; 32];
-        let epk  = [0x33u8; 32];
+        let epk = [0x33u8; 32];
         let mlkem_ct = vec![0x44u8; crate::sizes::MLKEM768_CT];
         let k1 = derive_key(&s_dh, &s_pq, &epk, &mlkem_ct);
         let k2 = derive_key(&s_dh, &s_pq, &epk, &mlkem_ct);
@@ -93,7 +93,9 @@ mod tests {
     #[test]
     fn ct_binding_is_effective() {
         // Flipping any byte of the mlkem_ct must change k_aead.
-        let s_dh = [0u8; 32]; let s_pq = [0u8; 32]; let epk = [0u8; 32];
+        let s_dh = [0u8; 32];
+        let s_pq = [0u8; 32];
+        let epk = [0u8; 32];
         let mut ct = vec![0u8; crate::sizes::MLKEM768_CT];
         let k1 = derive_key(&s_dh, &s_pq, &epk, &ct);
         ct[0] ^= 1;

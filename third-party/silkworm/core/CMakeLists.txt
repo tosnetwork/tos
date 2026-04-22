@@ -122,5 +122,6 @@ else()
     -Wno-missing-field-initializers
     -Wno-unused-variable
     -Wno-deprecated-declarations
+    $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-deprecated-literal-operator>
   )
 endif()

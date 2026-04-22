@@ -56,7 +56,10 @@ use crate::tags;
 /// exposes to the A3 C++ code). This matches the §2.6 footnote binding.
 pub fn derive_diversified_base_point(diversifier_11: &[u8]) -> Result<RistrettoPoint> {
     if diversifier_11.len() != DIVERSIFIER {
-        return Err(anyhow!("diversifier must be 11 bytes, got {}", diversifier_11.len()));
+        return Err(anyhow!(
+            "diversifier must be 11 bytes, got {}",
+            diversifier_11.len()
+        ));
     }
     let uniform_64 = keygen::blake2b_512(&[tags::UNO_DIVERSIFIER_V1, diversifier_11]);
     Ok(RistrettoPoint::from_uniform_bytes(&uniform_64))
@@ -90,7 +93,10 @@ impl Address {
     /// Build from the wallet FVK and a chosen 11-byte diversifier.
     pub fn build(fvk: &FullViewingKey, diversifier_11: &[u8]) -> Result<Self> {
         if diversifier_11.len() != DIVERSIFIER {
-            return Err(anyhow!("diversifier must be 11 bytes, got {}", diversifier_11.len()));
+            return Err(anyhow!(
+                "diversifier must be 11 bytes, got {}",
+                diversifier_11.len()
+            ));
         }
         let mut d = [0u8; DIVERSIFIER];
         d.copy_from_slice(diversifier_11);
@@ -133,7 +139,10 @@ impl Address {
     /// well-formedness is only checked by `ML-KEM-768.Encap`).
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         if bytes.len() != ADDRESS {
-            return Err(anyhow!("address must be {ADDRESS} bytes, got {}", bytes.len()));
+            return Err(anyhow!(
+                "address must be {ADDRESS} bytes, got {}",
+                bytes.len()
+            ));
         }
         let mut d = [0u8; DIVERSIFIER];
         d.copy_from_slice(&bytes[0..11]);
@@ -154,7 +163,12 @@ impl Address {
             return Err(anyhow!("pk_mlkem must be {MLKEM768_PK} bytes"));
         }
 
-        Ok(Address { d, pk_d, ivk_commitment: ivk_cm, pk_mlkem })
+        Ok(Address {
+            d,
+            pk_d,
+            ivk_commitment: ivk_cm,
+            pk_mlkem,
+        })
     }
 
     /// Encode to the string form `<hrp><base58(addr_bytes || checksum)>`.
@@ -182,7 +196,9 @@ impl Address {
         }
         let (hrp, rest) = s.split_at(4);
         if hrp != "uno1" && hrp != "unos" {
-            return Err(anyhow!("unknown address HRP {hrp:?}; expected uno1 (testnet) or unos (mainnet)"));
+            return Err(anyhow!(
+                "unknown address HRP {hrp:?}; expected uno1 (testnet) or unos (mainnet)"
+            ));
         }
         let decoded = base58_decode(rest)?;
         if decoded.len() < 5 {
@@ -239,8 +255,12 @@ fn base58_encode(input: &[u8]) -> String {
     }
 
     let mut s = String::with_capacity(zeros + out_rev.len());
-    for _ in 0..zeros { s.push('1'); }
-    for b in out_rev.iter().rev() { s.push(*b as char); }
+    for _ in 0..zeros {
+        s.push('1');
+    }
+    for b in out_rev.iter().rev() {
+        s.push(*b as char);
+    }
     s
 }
 
@@ -267,7 +287,9 @@ fn base58_decode(input: &str) -> Result<Vec<u8>> {
     }
 
     let mut out = Vec::with_capacity(zeros + n.len());
-    for _ in 0..zeros { out.push(0); }
+    for _ in 0..zeros {
+        out.push(0);
+    }
     out.extend_from_slice(&n);
     Ok(out)
 }
@@ -283,7 +305,9 @@ mod tests {
 
     fn fixed_seed() -> [u8; 32] {
         let mut s = [0u8; 32];
-        for i in 0..32 { s[i] = i as u8; }
+        for i in 0..32 {
+            s[i] = i as u8;
+        }
         s
     }
 
@@ -350,9 +374,12 @@ mod tests {
         let fvk = derive_fvk(&fixed_seed()).unwrap();
         let a = Address::build(&fvk, &[1u8; 11]).unwrap();
         let b = Address::build(&fvk, &[2u8; 11]).unwrap();
-        assert_ne!(a.pk_d,           b.pk_d);
+        assert_ne!(a.pk_d, b.pk_d);
         assert_ne!(a.ivk_commitment, b.ivk_commitment);
-        assert_eq!(a.pk_mlkem,       b.pk_mlkem, "pk_mlkem is shared across diversifiers");
+        assert_eq!(
+            a.pk_mlkem, b.pk_mlkem,
+            "pk_mlkem is shared across diversifiers"
+        );
     }
 
     #[test]

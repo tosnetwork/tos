@@ -35,6 +35,11 @@ set(TOS_VALIDATOR_SOURCE
 
 add_library(tos_validator STATIC ${TOS_VALIDATOR_SOURCE})
 
+target_compile_options(tos_validator PRIVATE
+  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-cast-qual>
+  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-deprecated-literal-operator>
+)
+
 target_include_directories(tos_validator PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>/..

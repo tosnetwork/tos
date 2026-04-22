@@ -22,10 +22,7 @@ pub struct Balance {
 }
 
 /// Compute balance from a scan result + live nullifier queries.
-pub async fn balance_for_notes(
-    rpc: &RpcClient,
-    owned: &[OwnedNote],
-) -> Result<Balance> {
+pub async fn balance_for_notes(rpc: &RpcClient, owned: &[OwnedNote]) -> Result<Balance> {
     let mut total: u128 = 0;
     let mut unspent = Vec::new();
     let mut spent_count = 0;

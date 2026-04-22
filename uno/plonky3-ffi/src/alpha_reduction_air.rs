@@ -176,9 +176,16 @@ pub struct AlphaStep {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum TraceBuildError {
-    TraceHeightNotPow2 { got: usize },
-    TraceHeightTooSmall { physical_rows: usize, trace_height: usize },
-    ZequalsXAtStep { step: usize },
+    TraceHeightNotPow2 {
+        got: usize,
+    },
+    TraceHeightTooSmall {
+        physical_rows: usize,
+        trace_height: usize,
+    },
+    ZequalsXAtStep {
+        step: usize,
+    },
 }
 
 /// Build a row-major trace for an α-combine chain of `steps.len()` rows.
@@ -213,16 +220,18 @@ pub fn build_trace(
     let zero_g = Goldilocks::default();
 
     let write_ext = |out: &mut [Goldilocks], base: usize, v: Challenge| {
-        let limbs =
-            <Challenge as BasedVectorSpace<Goldilocks>>::as_basis_coefficients_slice(&v);
+        let limbs = <Challenge as BasedVectorSpace<Goldilocks>>::as_basis_coefficients_slice(&v);
         for i in 0..CHALLENGE_DIM {
             out[base + i] = limbs[i];
         }
     };
     let write_kind = |out: &mut [Goldilocks], kind: u8| {
         for k in 0..NUM_OP_KINDS {
-            out[col::KIND0 + k] =
-                if k as u8 == kind { Goldilocks::new(1) } else { zero_g };
+            out[col::KIND0 + k] = if k as u8 == kind {
+                Goldilocks::new(1)
+            } else {
+                zero_g
+            };
         }
     };
 
@@ -246,9 +255,7 @@ pub fn build_trace(
         if denom.is_zero() {
             return Err(TraceBuildError::ZequalsXAtStep { step: r });
         }
-        let quot_inv = denom
-            .try_inverse()
-            .expect("denom ≠ 0 ⇒ invertible");
+        let quot_inv = denom.try_inverse().expect("denom ≠ 0 ⇒ invertible");
         write_ext(row, col::QUOT_INV0, quot_inv);
 
         let diff = step.p_at_z - step.p_at_x;
@@ -321,17 +328,19 @@ pub enum CheckError {
 /// binomial-extension norm W = EXT_W. Both limbs of the product
 /// are returned as base-field values.
 #[inline]
-fn ext_mul_base(a0: Goldilocks, a1: Goldilocks, b0: Goldilocks, b1: Goldilocks) -> (Goldilocks, Goldilocks) {
+fn ext_mul_base(
+    a0: Goldilocks,
+    a1: Goldilocks,
+    b0: Goldilocks,
+    b1: Goldilocks,
+) -> (Goldilocks, Goldilocks) {
     let w = Goldilocks::new(EXT_W);
     let out0 = a0 * b0 + w * a1 * b1;
     let out1 = a0 * b1 + a1 * b0;
     (out0, out1)
 }
 
-pub fn check_all_transitions(
-    trace: &[Goldilocks],
-    trace_height: usize,
-) -> Result<(), CheckError> {
+pub fn check_all_transitions(trace: &[Goldilocks], trace_height: usize) -> Result<(), CheckError> {
     let width = col::WIDTH;
     if trace.len() != trace_height * width {
         return Err(CheckError::TraceLengthMismatch {
@@ -562,13 +571,13 @@ where
         builder.assert_eq(kind_sum, one());
 
         // Helper — extension multiplication expressed per-limb with W.
-        let ext_mul = |a0: AB::Expr, a1: AB::Expr, b0: AB::Expr, b1: AB::Expr|
-            -> (AB::Expr, AB::Expr) {
-            // (a0 + a1·u) · (b0 + b1·u) = (a0·b0 + W·a1·b1) + (a0·b1 + a1·b0)·u
-            let p0 = a0.clone() * b0.clone() + w() * a1.clone() * b1.clone();
-            let p1 = a0 * b1 + a1 * b0;
-            (p0, p1)
-        };
+        let ext_mul =
+            |a0: AB::Expr, a1: AB::Expr, b0: AB::Expr, b1: AB::Expr| -> (AB::Expr, AB::Expr) {
+                // (a0 + a1·u) · (b0 + b1·u) = (a0·b0 + W·a1·b1) + (a0·b1 + a1·b0)·u
+                let p0 = a0.clone() * b0.clone() + w() * a1.clone() * b1.clone();
+                let p1 = a0 * b1 + a1 * b0;
+                (p0, p1)
+            };
 
         // ============================================================
         // (1) COMBINE — QUOT_INV · (Z − X) == 1.
@@ -664,8 +673,7 @@ where
 
         // CURRENT threading on COMBINE rows: next.ALPHA_POW_IN =
         // local.ALPHA_POW_OUT; next.RO_IN = local.RO_OUT.
-        let next_is_combine: AB::Expr =
-            next[col::KIND0 + OP_KIND_COMBINE as usize].into();
+        let next_is_combine: AB::Expr = next[col::KIND0 + OP_KIND_COMBINE as usize].into();
         for i in 0..CHALLENGE_DIM {
             let n_api: AB::Expr = next[col::ALPHA_POW_IN0 + i].into();
             let l_apo: AB::Expr = local[col::ALPHA_POW_OUT0 + i].into();
@@ -823,8 +831,7 @@ mod tests {
             x: gl(42),
         }];
         let fr = Challenge::ZERO;
-        let err =
-            build_trace(Challenge::ONE, Challenge::ZERO, alpha, &steps, fr, 4).unwrap_err();
+        let err = build_trace(Challenge::ONE, Challenge::ZERO, alpha, &steps, fr, 4).unwrap_err();
         assert_eq!(err, TraceBuildError::ZequalsXAtStep { step: 0 });
     }
 
@@ -911,10 +918,7 @@ mod tests {
         let wrong_final = ext(9999, 8888);
         let trace = build_trace(iap, ir, alpha, &steps, wrong_final, 8).unwrap();
         let err = check_all_transitions(&trace, 8).unwrap_err();
-        assert!(matches!(
-            err,
-            CheckError::LastRowFinalRoMismatch { .. }
-        ));
+        assert!(matches!(err, CheckError::LastRowFinalRoMismatch { .. }));
     }
 
     #[test]
@@ -1011,8 +1015,7 @@ mod tests {
             trace_height,
         )
         .expect("trace build");
-        check_all_transitions(&trace, trace_height)
-            .expect("real α-combine chain must check");
+        check_all_transitions(&trace, trace_height).expect("real α-combine chain must check");
     }
 
     // ======================================================================
@@ -1070,8 +1073,7 @@ mod tests {
     #[test]
     fn air_rejects_tampered_quot_inv() {
         let (alpha, iap, ir, steps, fr) = sample_3_step();
-        let mut flat =
-            build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
+        let mut flat = build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
         flat[col::QUOT_INV0] += gl(1);
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         assert!(air_rejects(trace), "tampered QUOT_INV must reject");
@@ -1080,8 +1082,7 @@ mod tests {
     #[test]
     fn air_rejects_tampered_diff_quot() {
         let (alpha, iap, ir, steps, fr) = sample_3_step();
-        let mut flat =
-            build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
+        let mut flat = build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
         flat[col::DIFF_QUOT0] += gl(1);
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         assert!(air_rejects(trace), "tampered DIFF_QUOT must reject");
@@ -1090,8 +1091,7 @@ mod tests {
     #[test]
     fn air_rejects_tampered_alpha_pow_out() {
         let (alpha, iap, ir, steps, fr) = sample_3_step();
-        let mut flat =
-            build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
+        let mut flat = build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
         flat[col::ALPHA_POW_OUT0 + 1] += gl(1);
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         assert!(air_rejects(trace), "tampered ALPHA_POW_OUT must reject");
@@ -1100,8 +1100,7 @@ mod tests {
     #[test]
     fn air_rejects_tampered_ro_out() {
         let (alpha, iap, ir, steps, fr) = sample_3_step();
-        let mut flat =
-            build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
+        let mut flat = build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
         flat[col::RO_OUT0] += gl(1);
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         assert!(air_rejects(trace), "tampered RO_OUT must reject");
@@ -1110,22 +1109,17 @@ mod tests {
     #[test]
     fn air_rejects_broken_alpha_pow_threading() {
         let (alpha, iap, ir, steps, fr) = sample_3_step();
-        let mut flat =
-            build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
+        let mut flat = build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
         let row1 = col::WIDTH;
         flat[row1 + col::ALPHA_POW_IN0] += gl(1);
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
-        assert!(
-            air_rejects(trace),
-            "broken ALPHA_POW threading must reject"
-        );
+        assert!(air_rejects(trace), "broken ALPHA_POW threading must reject");
     }
 
     #[test]
     fn air_rejects_broken_ro_threading() {
         let (alpha, iap, ir, steps, fr) = sample_3_step();
-        let mut flat =
-            build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
+        let mut flat = build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
         let row1 = col::WIDTH;
         flat[row1 + col::RO_IN0] += gl(1);
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
@@ -1135,8 +1129,7 @@ mod tests {
     #[test]
     fn air_rejects_alpha_drift() {
         let (alpha, iap, ir, steps, fr) = sample_3_step();
-        let mut flat =
-            build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
+        let mut flat = build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
         let row2 = 2 * col::WIDTH;
         flat[row2 + col::ALPHA0] += gl(1);
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
@@ -1146,8 +1139,7 @@ mod tests {
     #[test]
     fn air_rejects_initial_alpha_pow_mismatch_row0() {
         let (alpha, iap, ir, steps, fr) = sample_3_step();
-        let mut flat =
-            build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
+        let mut flat = build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
         flat[col::INITIAL_ALPHA_POW0] += gl(1);
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         assert!(
@@ -1171,8 +1163,7 @@ mod tests {
     #[test]
     fn air_rejects_idle_mutation() {
         let (alpha, iap, ir, steps, fr) = sample_3_step();
-        let mut flat =
-            build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
+        let mut flat = build_trace(iap, ir, alpha, &steps, fr, 16).unwrap();
         let row5 = 5 * col::WIDTH;
         flat[row5 + col::P_AT_X] += gl(1);
         let trace = RowMajorMatrix::new(flat, col::WIDTH);

@@ -75,7 +75,9 @@ impl<'a> BitReader<'a> {
                 return Some(v);
             }
             shift += 7;
-            if shift >= 64 { return None; }
+            if shift >= 64 {
+                return None;
+            }
         }
     }
 }
@@ -83,23 +85,31 @@ impl<'a> BitReader<'a> {
 /// Decode a block filter into the ordered list of `filter_tag` u16 values.
 pub fn decode(bytes: &[u8]) -> Result<Vec<u16>> {
     let mut r = BitReader::new(bytes);
-    let n = r.read_varint().ok_or_else(|| anyhow!("gcs: varint N truncated"))? as usize;
+    let n = r
+        .read_varint()
+        .ok_or_else(|| anyhow!("gcs: varint N truncated"))? as usize;
 
     let mut out = Vec::with_capacity(n);
-    let mut last: u32 = 0;  // u32 to cover the "tagᵢ₋₁ doesn't exist yet" convention (-1)
+    let mut last: u32 = 0; // u32 to cover the "tagᵢ₋₁ doesn't exist yet" convention (-1)
     let mut first = true;
     for i in 0..n {
         // Unary quotient.
         let mut q: u32 = 0;
         loop {
-            let bit = r.read_bit().ok_or_else(|| anyhow!("gcs: unary q truncated at i={i}"))?;
-            if !bit { break; }
+            let bit = r
+                .read_bit()
+                .ok_or_else(|| anyhow!("gcs: unary q truncated at i={i}"))?;
+            if !bit {
+                break;
+            }
             q += 1;
             if q > 16 {
                 return Err(anyhow!("gcs: quotient overflow at i={i}"));
             }
         }
-        let rem = r.read_bits(GCS_P).ok_or_else(|| anyhow!("gcs: remainder truncated at i={i}"))?;
+        let rem = r
+            .read_bits(GCS_P)
+            .ok_or_else(|| anyhow!("gcs: remainder truncated at i={i}"))?;
         let delta = ((q << GCS_P) | rem) as u32;
         let tag = if first {
             first = false;
@@ -147,7 +157,9 @@ pub fn encode(tags: &[u16]) -> Vec<u8> {
         };
         let q = delta >> GCS_P;
         let r = delta & GCS_P_MASK;
-        for _ in 0..q { bw.write_bit(true); }
+        for _ in 0..q {
+            bw.write_bit(true);
+        }
         bw.write_bit(false);
         bw.write_bits(r, GCS_P);
         last = tag as i32;
@@ -164,7 +176,12 @@ struct BitWriter {
 
 impl BitWriter {
     fn new() -> Self {
-        Self { bytes: Vec::new(), cur: 0, n: 0, byte_aligned: true }
+        Self {
+            bytes: Vec::new(),
+            cur: 0,
+            n: 0,
+            byte_aligned: true,
+        }
     }
 
     fn write_byte(&mut self, b: u8) {

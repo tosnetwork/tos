@@ -59,7 +59,7 @@ const DS_CHALLENGE: &[u8] = b"uno-schnorr-chal-v1";
 #[derive(Clone)]
 pub struct SpendKeyPair {
     pub rsk: Scalar,
-    pub rk:  [u8; 32],
+    pub rk: [u8; 32],
 }
 
 impl std::fmt::Debug for SpendKeyPair {

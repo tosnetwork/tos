@@ -31,9 +31,7 @@
 //! Truncated output is the first 4 state elements.
 
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
-use p3_goldilocks::{
-    default_goldilocks_poseidon2_16, Goldilocks, Poseidon2Goldilocks,
-};
+use p3_goldilocks::{default_goldilocks_poseidon2_16, Goldilocks, Poseidon2Goldilocks};
 use p3_symmetric::Permutation;
 
 use crate::sizes::DIGEST;
@@ -57,12 +55,18 @@ fn perm16() -> &'static Poseidon2Goldilocks<16> {
 
 /// Fallible parse: wire limb (u64 LE) → Goldilocks, rejecting non-canonical.
 pub fn limb_to_fe(limb: u64) -> Option<Goldilocks> {
-    if limb >= P_GL { None } else { Some(Goldilocks::from_u64(limb)) }
+    if limb >= P_GL {
+        None
+    } else {
+        Some(Goldilocks::from_u64(limb))
+    }
 }
 
 /// Decode 32 wire-bytes as 4 canonical Goldilocks limbs.
 pub fn digest_to_fes(bytes: &[u8]) -> Option<[Goldilocks; 4]> {
-    if bytes.len() != DIGEST { return None; }
+    if bytes.len() != DIGEST {
+        return None;
+    }
     let mut out = [Goldilocks::ZERO; 4];
     for i in 0..4 {
         let mut limb_le = [0u8; 8];
@@ -197,7 +201,11 @@ mod tests {
 
     #[test]
     fn hash_tagged_is_deterministic() {
-        let fes = [Goldilocks::from_u64(1), Goldilocks::from_u64(2), Goldilocks::from_u64(3)];
+        let fes = [
+            Goldilocks::from_u64(1),
+            Goldilocks::from_u64(2),
+            Goldilocks::from_u64(3),
+        ];
         let a = hash_tagged(b"uno-nk-v1", &fes);
         let b = hash_tagged(b"uno-nk-v1", &fes);
         assert_eq!(a, b);
@@ -207,11 +215,13 @@ mod tests {
     fn hash_tagged_bytes_and_fes_agree_for_canonical_input() {
         // All three limbs < P_GL, so wrapped-load == identity.
         let bytes: [u8; 24] = [
-            1, 0, 0, 0, 0, 0, 0, 0,
-            2, 0, 0, 0, 0, 0, 0, 0,
-            3, 0, 0, 0, 0, 0, 0, 0,
+            1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0,
         ];
-        let fes = [Goldilocks::from_u64(1), Goldilocks::from_u64(2), Goldilocks::from_u64(3)];
+        let fes = [
+            Goldilocks::from_u64(1),
+            Goldilocks::from_u64(2),
+            Goldilocks::from_u64(3),
+        ];
         let a = hash_tagged_bytes(b"uno-test-tag", &bytes);
         let b = hash_tagged(b"uno-test-tag", &fes);
         assert_eq!(a, b);

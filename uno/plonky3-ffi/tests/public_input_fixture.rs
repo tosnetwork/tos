@@ -76,36 +76,56 @@ fn decode_fixture_transfer(bytes: &[u8]) -> Option<FixtureTransfer> {
     if bytes.len() < 1 + 4 + 8 + 8 + 1 + 1 + 32 {
         return None;
     }
-    let scheme_id = bytes[off]; off += 1;
-    let chain_id = u32::from_le_bytes(bytes[off..off + 4].try_into().ok()?); off += 4;
-    let expiry_block = u64::from_le_bytes(bytes[off..off + 8].try_into().ok()?); off += 8;
-    let fee = u64::from_le_bytes(bytes[off..off + 8].try_into().ok()?); off += 8;
-    let sc = bytes[off]; off += 1;
-    let oc = bytes[off]; off += 1;
+    let scheme_id = bytes[off];
+    off += 1;
+    let chain_id = u32::from_le_bytes(bytes[off..off + 4].try_into().ok()?);
+    off += 4;
+    let expiry_block = u64::from_le_bytes(bytes[off..off + 8].try_into().ok()?);
+    off += 8;
+    let fee = u64::from_le_bytes(bytes[off..off + 8].try_into().ok()?);
+    off += 8;
+    let sc = bytes[off];
+    off += 1;
+    let oc = bytes[off];
+    off += 1;
     let mut anchor = [0u8; 32];
-    anchor.copy_from_slice(&bytes[off..off + 32]); off += 32;
+    anchor.copy_from_slice(&bytes[off..off + 32]);
+    off += 32;
 
     let need = off + (sc as usize) * 64 + (oc as usize) * (32 + 32 + 2);
-    if bytes.len() < need { return None; }
+    if bytes.len() < need {
+        return None;
+    }
 
     let mut spends = Vec::with_capacity(sc as usize);
     for _ in 0..sc {
         let mut nf = [0u8; 32];
-        nf.copy_from_slice(&bytes[off..off + 32]); off += 32;
+        nf.copy_from_slice(&bytes[off..off + 32]);
+        off += 32;
         let mut rk = [0u8; 32];
-        rk.copy_from_slice(&bytes[off..off + 32]); off += 32;
+        rk.copy_from_slice(&bytes[off..off + 32]);
+        off += 32;
         spends.push(FixtureSpend { nullifier: nf, rk });
     }
     let mut outputs = Vec::with_capacity(oc as usize);
     for _ in 0..oc {
         let mut cm = [0u8; 32];
-        cm.copy_from_slice(&bytes[off..off + 32]); off += 32;
+        cm.copy_from_slice(&bytes[off..off + 32]);
+        off += 32;
         let mut epk = [0u8; 32];
-        epk.copy_from_slice(&bytes[off..off + 32]); off += 32;
-        let filter_tag = u16::from_le_bytes(bytes[off..off + 2].try_into().ok()?); off += 2;
-        outputs.push(FixtureOutput { cm, epk, filter_tag });
+        epk.copy_from_slice(&bytes[off..off + 32]);
+        off += 32;
+        let filter_tag = u16::from_le_bytes(bytes[off..off + 2].try_into().ok()?);
+        off += 2;
+        outputs.push(FixtureOutput {
+            cm,
+            epk,
+            filter_tag,
+        });
     }
-    if off != bytes.len() { return None; }
+    if off != bytes.len() {
+        return None;
+    }
 
     Some(FixtureTransfer {
         scheme_id,
@@ -119,9 +139,7 @@ fn decode_fixture_transfer(bytes: &[u8]) -> Option<FixtureTransfer> {
 }
 
 fn build_public_inputs(tx: &FixtureTransfer) -> Vec<u8> {
-    let mut out = Vec::with_capacity(
-        64 + 64 * tx.spends.len() + 72 * tx.outputs.len()
-    );
+    let mut out = Vec::with_capacity(64 + 64 * tx.spends.len() + 72 * tx.outputs.len());
     out.extend_from_slice(&encode_u64_nonstrict(tx.scheme_id as u64));
     out.extend_from_slice(&encode_u64_nonstrict(tx.chain_id as u64));
     out.extend_from_slice(&encode_u64(tx.expiry_block));
@@ -156,7 +174,9 @@ fn parse_fixture_file(path: &Path) -> Vec<Record> {
     let mut cur_pubinput: Option<String> = None;
     for (line_no, raw_line) in text.lines().enumerate() {
         let line = raw_line.trim_end();
-        if line.is_empty() || line.starts_with('#') { continue; }
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
         let (k, rest) = match line.split_once(':') {
             Some((k, rest)) => (k.trim(), rest.trim()),
             None => panic!("fixture line {}: no ':' separator: {line}", line_no + 1),
@@ -175,8 +195,10 @@ fn parse_fixture_file(path: &Path) -> Vec<Record> {
             cur_pubinput = None;
         }
     }
-    assert!(cur_transfer.is_none() && cur_pubinput.is_none(),
-            "fixture file ends with unpaired transfer_hex/pubinput_hex");
+    assert!(
+        cur_transfer.is_none() && cur_pubinput.is_none(),
+        "fixture file ends with unpaired transfer_hex/pubinput_hex"
+    );
     records
 }
 
@@ -205,7 +227,11 @@ fn fixture_path() -> PathBuf {
     // uno/test/golden/public-inputs-v1.hex, i.e. "../test/golden/..." from
     // CARGO_MANIFEST_DIR.
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest.join("..").join("test").join("golden").join("public-inputs-v1.hex")
+    manifest
+        .join("..")
+        .join("test")
+        .join("golden")
+        .join("public-inputs-v1.hex")
 }
 
 // ---------------------------------------------------------------------------
@@ -216,7 +242,10 @@ fn fixture_path() -> PathBuf {
 fn fixture_records_match_byte_for_byte() {
     let path = fixture_path();
     let records = parse_fixture_file(&path);
-    assert!(!records.is_empty(), "fixture must contain at least one record");
+    assert!(
+        !records.is_empty(),
+        "fixture must contain at least one record"
+    );
 
     for (idx, rec) in records.iter().enumerate() {
         let tx_bytes = hex_decode(&rec.transfer_hex);

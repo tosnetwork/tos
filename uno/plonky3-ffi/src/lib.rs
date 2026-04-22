@@ -49,33 +49,33 @@
 //! test fixtures are byte-identical across machines.
 
 #![deny(unsafe_op_in_unsafe_fn)]
-#![warn(missing_docs)]
+#![allow(missing_docs)]
 #![allow(clippy::missing_safety_doc)]
 
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
 
-pub mod transfer_air;
-pub mod prover;
-pub mod verifier;
-pub mod permute;
-pub mod verifier_air;
-pub mod challenger_air;
 pub mod aggregator;
-pub mod block_wire_format;
-pub mod fiat_shamir;
-pub mod ood_eval;
-pub mod fri_arith;
-pub mod merkle_path;
-pub mod open_input;
-pub mod fri_verify;
-pub mod merkle_path_air;
-pub mod fold_air;
 pub mod alpha_reduction_air;
-pub mod query_verifier_air;
-pub mod leaf_hash_air;
+pub mod block_wire_format;
+pub mod challenger_air;
 pub mod compression_path_air;
+pub mod fiat_shamir;
+pub mod fold_air;
+pub mod fri_arith;
+pub mod fri_verify;
+pub mod leaf_hash_air;
+pub mod merkle_path;
+pub mod merkle_path_air;
 pub mod monolithic_verifier_air;
+pub mod ood_eval;
+pub mod open_input;
+pub mod permute;
+pub mod prover;
+pub mod query_verifier_air;
+pub mod transfer_air;
+pub mod verifier;
+pub mod verifier_air;
 
 /// Result codes returned across the C ABI.
 ///
@@ -383,8 +383,7 @@ pub unsafe extern "C" fn uno_plonky3_verify(
         let Some(proof_bytes) = (unsafe { slice_from_parts(proof.ptr, proof.len) }) else {
             return Plonky3Status::NullPointer;
         };
-        let Some(pi_bytes) =
-            (unsafe { slice_from_parts(public_inputs.ptr, public_inputs.len) })
+        let Some(pi_bytes) = (unsafe { slice_from_parts(public_inputs.ptr, public_inputs.len) })
         else {
             return Plonky3Status::NullPointer;
         };
@@ -402,9 +401,7 @@ pub unsafe extern "C" fn uno_plonky3_verify(
 /// # Safety
 /// `out_handle` must be a valid writable pointer.
 #[no_mangle]
-pub unsafe extern "C" fn uno_plonky3_prover_init(
-    out_handle: *mut *mut Plonky3ProverHandle,
-) -> i32 {
+pub unsafe extern "C" fn uno_plonky3_prover_init(out_handle: *mut *mut Plonky3ProverHandle) -> i32 {
     ffi_guard(|| {
         if out_handle.is_null() {
             return Plonky3Status::NullPointer;
@@ -466,8 +463,7 @@ pub unsafe extern "C" fn uno_plonky3_prove(
         }
         let handle = unsafe { &*handle };
 
-        let Some(witness_bytes) = (unsafe { slice_from_parts(witness.ptr, witness.len) })
-        else {
+        let Some(witness_bytes) = (unsafe { slice_from_parts(witness.ptr, witness.len) }) else {
             return Plonky3Status::NullPointer;
         };
 
@@ -491,11 +487,7 @@ pub unsafe extern "C" fn uno_plonky3_prove(
                 std::mem::forget(boxed);
                 // SAFETY: out_proof is non-null & writable per caller.
                 unsafe {
-                    *out_proof = Plonky3OwnedProof {
-                        ptr,
-                        len,
-                        cap: len,
-                    };
+                    *out_proof = Plonky3OwnedProof { ptr, len, cap: len };
                 }
                 Plonky3Status::Ok
             }
@@ -837,9 +829,7 @@ pub unsafe extern "C" fn uno_block_verifier_init(
 /// `handle` must be from [`uno_block_verifier_init`] and not already
 /// freed. Passing null is safe and a no-op.
 #[no_mangle]
-pub unsafe extern "C" fn uno_block_verifier_free(
-    handle: *mut UnoBlockVerifierHandle,
-) {
+pub unsafe extern "C" fn uno_block_verifier_free(handle: *mut UnoBlockVerifierHandle) {
     if handle.is_null() {
         return;
     }
@@ -897,12 +887,8 @@ pub unsafe extern "C" fn uno_block_verifier_verify(
 
         match aggregator::verify_block(&pi_rust, &agg_proof) {
             Ok(()) => Plonky3Status::Ok,
-            Err(aggregator::BlockVerifyError::ProofMalformed) => {
-                Plonky3Status::ProofDecodeFailed
-            }
-            Err(aggregator::BlockVerifyError::StarkVerifyFailed) => {
-                Plonky3Status::VerifyFailed
-            }
+            Err(aggregator::BlockVerifyError::ProofMalformed) => Plonky3Status::ProofDecodeFailed,
+            Err(aggregator::BlockVerifyError::StarkVerifyFailed) => Plonky3Status::VerifyFailed,
         }
     })
 }
@@ -958,8 +944,7 @@ mod ffi_tests {
         // Build a valid 1-spend / 1-output witness via the transfer_air
         // module helper. P.2 scale-to-envelope: the MvpWitness API now
         // takes explicit shape parameters.
-        let witness =
-            transfer_air::MvpWitness::deterministic_valid(1, 1, 0x1234_5678_9abc_def0);
+        let witness = transfer_air::MvpWitness::deterministic_valid(1, 1, 0x1234_5678_9abc_def0);
         let witness_bytes = witness.encode();
 
         // Prove.
@@ -978,8 +963,7 @@ mod ffi_tests {
         assert!(!out_proof.ptr.is_null());
 
         // Unpack [u32 proof_len][proof][public_inputs].
-        let owned =
-            unsafe { std::slice::from_raw_parts(out_proof.ptr, out_proof.len) }.to_vec();
+        let owned = unsafe { std::slice::from_raw_parts(out_proof.ptr, out_proof.len) }.to_vec();
         let proof_len = u32::from_le_bytes([owned[0], owned[1], owned[2], owned[3]]) as usize;
         let proof_bytes = &owned[4..4 + proof_len];
         let pi_bytes = &owned[4 + proof_len..];
@@ -1026,11 +1010,8 @@ mod ffi_tests {
         unsafe { uno_plonky3_prover_init(&mut p) };
 
         // Honest witness + its declared public inputs.
-        let honest_witness = transfer_air::MvpWitness::deterministic_valid(
-            1,
-            1,
-            0xcafe_f00d_dead_beef,
-        );
+        let honest_witness =
+            transfer_air::MvpWitness::deterministic_valid(1, 1, 0xcafe_f00d_dead_beef);
         let honest_pi_bytes = honest_witness.public_inputs_bytes();
 
         // Adversary's tampered witness: flip a sibling bit of spend 0's
@@ -1065,8 +1046,7 @@ mod ffi_tests {
             // the proof and re-verify against the HONEST PI.
             let owned =
                 unsafe { std::slice::from_raw_parts(out_proof.ptr, out_proof.len) }.to_vec();
-            let proof_len =
-                u32::from_le_bytes([owned[0], owned[1], owned[2], owned[3]]) as usize;
+            let proof_len = u32::from_le_bytes([owned[0], owned[1], owned[2], owned[3]]) as usize;
             let proof_bytes = &owned[4..4 + proof_len];
 
             let rc = unsafe {
@@ -1134,7 +1114,10 @@ mod ffi_tests {
             )
         };
         assert_eq!(rc, Plonky3Status::Ok.as_i32());
-        assert_eq!(parsed.scheme_id, block_wire_format::UNO_AGGREGATOR_SCHEME_ID_V1);
+        assert_eq!(
+            parsed.scheme_id,
+            block_wire_format::UNO_AGGREGATOR_SCHEME_ID_V1
+        );
         assert_eq!(parsed.version, block_wire_format::UNO_AGGREGATOR_VERSION_V1);
         assert_eq!(parsed.n_transfers, 3);
         assert_eq!(parsed.tx_pi_merkle_root, [0x7e; 32]);
@@ -1177,7 +1160,10 @@ mod ffi_tests {
         let mut parsed = UnoBlockExtraParsed::EMPTY;
         let rc = unsafe {
             uno_block_extra_decode(
-                UnoBlockExtraBytes { ptr: std::ptr::null(), len: 64 },
+                UnoBlockExtraBytes {
+                    ptr: std::ptr::null(),
+                    len: 64,
+                },
                 &mut parsed,
             )
         };
@@ -1267,7 +1253,10 @@ mod ffi_tests {
         let mut parsed = UnoBlockExtraParsed::EMPTY;
         let rc = unsafe {
             uno_block_extra_decode(
-                UnoBlockExtraBytes { ptr: out.ptr, len: out.len },
+                UnoBlockExtraBytes {
+                    ptr: out.ptr,
+                    len: out.len,
+                },
                 &mut parsed,
             )
         };
@@ -1287,13 +1276,7 @@ mod ffi_tests {
         let mut out = Plonky3OwnedProof::EMPTY;
         let bad_n = (crate::aggregator::BLOCK_TX_CAP + 1) as u16;
         let rc = unsafe {
-            uno_block_extra_encode_v1(
-                bad_n,
-                [0u8; 32].as_ptr(),
-                std::ptr::null(),
-                0,
-                &mut out,
-            )
+            uno_block_extra_encode_v1(bad_n, [0u8; 32].as_ptr(), std::ptr::null(), 0, &mut out)
         };
         assert_eq!(rc, Plonky3Status::WitnessInvalid.as_i32());
         assert!(out.ptr.is_null());
@@ -1333,29 +1316,30 @@ mod ffi_tests {
     #[test]
     fn block_verifier_ffi_round_trip() {
         use crate::merkle_path::{compress_pair_ref, hash_leaf_row_ref};
-        use crate::monolithic_verifier_air::{
-            AlphaStep, BundleSpec, FoldRound, MerkleOpening,
-        };
+        use crate::monolithic_verifier_air::{AlphaStep, BundleSpec, FoldRound, MerkleOpening};
         use crate::prover::Challenge;
         use p3_field::BasedVectorSpace;
         use p3_goldilocks::{default_goldilocks_poseidon2_8, Goldilocks};
 
-        fn gl(v: u64) -> Goldilocks { Goldilocks::new(v) }
+        fn gl(v: u64) -> Goldilocks {
+            Goldilocks::new(v)
+        }
         fn ext(a: u64, b: u64) -> Challenge {
             Challenge::from_basis_coefficients_fn(|i| if i == 0 { gl(a) } else { gl(b) })
         }
 
         let perm = default_goldilocks_poseidon2_8();
-        let leaf: Vec<Goldilocks> =
-            (0..8u64).map(|j| gl(100 + j * 17 + 1)).collect();
-        let sib_leaf: Vec<Goldilocks> =
-            (0..8u64).map(|j| gl(200 + j * 23 + 3)).collect();
+        let leaf: Vec<Goldilocks> = (0..8u64).map(|j| gl(100 + j * 17 + 1)).collect();
+        let sib_leaf: Vec<Goldilocks> = (0..8u64).map(|j| gl(200 + j * 23 + 3)).collect();
         let dig = hash_leaf_row_ref(&perm, &leaf);
         let sib = hash_leaf_row_ref(&perm, &sib_leaf);
         let root = compress_pair_ref(&perm, &dig, &sib);
 
         let alpha_steps = vec![AlphaStep {
-            p_at_x: gl(7), p_at_z: ext(11, 13), z: ext(17, 19), x: gl(23),
+            p_at_x: gl(7),
+            p_at_z: ext(11, 13),
+            z: ext(17, 19),
+            x: gl(23),
         }];
         let opening = vec![sib];
         let mp = vec![MerkleOpening {
@@ -1386,8 +1370,8 @@ mod ffi_tests {
             n_transfers: 1,
             tx_pi_merkle_root: [0u8; 32],
         };
-        let proof = aggregator::prove_block(&pi_rust, std::slice::from_ref(&bundle), 16)
-            .expect("prove");
+        let proof =
+            aggregator::prove_block(&pi_rust, std::slice::from_ref(&bundle), 16).expect("prove");
 
         // Init handle.
         let mut handle: *mut UnoBlockVerifierHandle = std::ptr::null_mut();

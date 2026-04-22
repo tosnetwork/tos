@@ -42,14 +42,12 @@
 //!   base limbs before handing to `verify_merkle_path_ref`.
 
 use p3_field::{BasedVectorSpace, PrimeCharacteristicRing, TwoAdicField};
-use p3_goldilocks::{Goldilocks, Poseidon2Goldilocks, default_goldilocks_poseidon2_8};
+use p3_goldilocks::{default_goldilocks_poseidon2_8, Goldilocks, Poseidon2Goldilocks};
 use p3_uni_stark::Proof;
 
 use crate::fiat_shamir::FullChallenges;
 use crate::fri_arith::{eval_final_poly_horner, final_eval_x, fold_row_ref};
-use crate::merkle_path::{
-    Digest, verify_merkle_path_ref, verify_multi_matrix_merkle_path_ref,
-};
+use crate::merkle_path::{verify_merkle_path_ref, verify_multi_matrix_merkle_path_ref, Digest};
 use crate::open_input::{alpha_combine_matrix_point, query_x, OpenInputShapeError};
 use crate::prover::{Challenge, MvpConfig};
 
@@ -209,8 +207,7 @@ pub fn verify_query_ref(
     }
 
     // --- α-combine openings into a single reduced_opening `ro`. ---
-    let zeta_next =
-        challenges.zeta * Goldilocks::two_adic_generator(proof.degree_bits);
+    let zeta_next = challenges.zeta * Goldilocks::two_adic_generator(proof.degree_bits);
     let trace_next = proof
         .opened_values
         .trace_next
@@ -267,9 +264,7 @@ pub fn verify_query_ref(
     //             (c) `fold_row_ref` to get next height's eval
     //             (d) shift `domain_index` right by `log_arity`
     // ==================================================================
-    if query_proof.commit_phase_openings.len()
-        != proof.opening_proof.commit_phase_commits.len()
-    {
+    if query_proof.commit_phase_openings.len() != proof.opening_proof.commit_phase_commits.len() {
         return Err(VerifyQueryError::CommitPhaseMerkleMismatch { round: 0 });
     }
 
@@ -289,7 +284,10 @@ pub fn verify_query_ref(
         // tested for arity up to 4, but the Merkle-path reconstruction
         // below assumes binary to keep the reference auditable.
         if log_arity != 1 {
-            return Err(VerifyQueryError::UnexpectedLogArity { round, got: log_arity });
+            return Err(VerifyQueryError::UnexpectedLogArity {
+                round,
+                got: log_arity,
+            });
         }
         let arity = 1usize << log_arity;
 
@@ -332,8 +330,7 @@ pub fn verify_query_ref(
         let leaf_row: Vec<Goldilocks> = evals
             .iter()
             .flat_map(|c| {
-                <Challenge as BasedVectorSpace<Goldilocks>>::as_basis_coefficients_slice(c)
-                    .to_vec()
+                <Challenge as BasedVectorSpace<Goldilocks>>::as_basis_coefficients_slice(c).to_vec()
             })
             .collect();
         let commit_root: Digest = commit.roots()[0];
@@ -418,11 +415,7 @@ mod tests {
     use crate::prover::MvpProver;
     use crate::transfer_air::MvpWitness;
 
-    fn proof_and_pis(
-        n_s: usize,
-        n_o: usize,
-        seed: u64,
-    ) -> (Proof<MvpConfig>, Vec<Goldilocks>) {
+    fn proof_and_pis(n_s: usize, n_o: usize, seed: u64) -> (Proof<MvpConfig>, Vec<Goldilocks>) {
         let prover = MvpProver::new();
         let w = MvpWitness::deterministic_valid(n_s, n_o, seed);
         let (proof_bytes, _) = prover.prove(&w.encode()).unwrap();
@@ -467,8 +460,7 @@ mod tests {
             4,
         > = MerkleTreeMmcs::new(hash, compress, 0);
 
-        let trace_batch =
-            &proof.opening_proof.query_proofs[query_position].input_proof[0];
+        let trace_batch = &proof.opening_proof.query_proofs[query_position].input_proof[0];
         let trace_commit = &proof.commitments.trace;
         // The trace LDE height is 2^log_global_max_height.
         let height = 1usize << ch.log_global_max_height;
@@ -540,8 +532,7 @@ mod tests {
         let new_cap = p3_symmetric::MerkleCap::new(vec![bad_root]);
         proof.commitments.trace = new_cap;
 
-        let err = verify_query_ref(&proof, &ch, 0)
-            .expect_err("tampered trace root must reject");
+        let err = verify_query_ref(&proof, &ch, 0).expect_err("tampered trace root must reject");
         matches!(err, VerifyQueryError::TraceMerkleMismatch);
     }
 
@@ -554,11 +545,10 @@ mod tests {
         verify_all_queries_ref(&proof, &ch).expect("baseline");
 
         // Flip one limb of the quotient batch's opened values at query 0.
-        proof.opening_proof.query_proofs[0].input_proof[1].opened_values[0][0] +=
-            Goldilocks::ONE;
+        proof.opening_proof.query_proofs[0].input_proof[1].opened_values[0][0] += Goldilocks::ONE;
 
-        let err = verify_query_ref(&proof, &ch, 0)
-            .expect_err("tampered quotient opening must reject");
+        let err =
+            verify_query_ref(&proof, &ch, 0).expect_err("tampered quotient opening must reject");
         matches!(err, VerifyQueryError::QuotientMerkleMismatch);
     }
 
@@ -592,8 +582,7 @@ mod tests {
         // to isolate the final-poly check.).
         proof.opening_proof.final_poly[0] += Challenge::ONE;
 
-        let err = verify_query_ref(&proof, &ch, 0)
-            .expect_err("tampered final_poly must reject");
+        let err = verify_query_ref(&proof, &ch, 0).expect_err("tampered final_poly must reject");
         matches!(err, VerifyQueryError::FinalPolyMismatch);
     }
 
@@ -605,11 +594,9 @@ mod tests {
         let ch = derive_full_challenges(&proof, &pis);
         verify_all_queries_ref(&proof, &ch).expect("baseline");
 
-        proof.opening_proof.query_proofs[0].input_proof[0].opened_values[0][0] +=
-            Goldilocks::ONE;
+        proof.opening_proof.query_proofs[0].input_proof[0].opened_values[0][0] += Goldilocks::ONE;
 
-        let err = verify_query_ref(&proof, &ch, 0)
-            .expect_err("tampered trace opening must reject");
+        let err = verify_query_ref(&proof, &ch, 0).expect_err("tampered trace opening must reject");
         matches!(err, VerifyQueryError::TraceMerkleMismatch);
     }
 

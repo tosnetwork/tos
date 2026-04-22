@@ -20,9 +20,8 @@ use std::path::PathBuf;
 use tosctl_uno::address::Address;
 use tosctl_uno::genesis_build::{
     build_genesis_distribution, build_genesis_notes_json, canonical_address_hash,
-    derive_genesis_rseed, DistributionRecipient, GenesisDistributionInputs,
-    CHAIN_ID_TESTNET, GENESIS_AIRDROP_NANO, GENESIS_TEAM_NANO, GENESIS_TOTAL_SUPPLY_NANO,
-    GENESIS_TREASURY_NANO,
+    derive_genesis_rseed, DistributionRecipient, GenesisDistributionInputs, CHAIN_ID_TESTNET,
+    GENESIS_AIRDROP_NANO, GENESIS_TEAM_NANO, GENESIS_TOTAL_SUPPLY_NANO, GENESIS_TREASURY_NANO,
 };
 use tosctl_uno::keygen::derive_fvk;
 
@@ -112,7 +111,11 @@ fn golden_fixture_matches_builder_output() {
 
     if golden != json {
         // Surface a helpful diff prefix before the assertion fails.
-        let prefix_len = golden.chars().zip(json.chars()).take_while(|(a, b)| a == b).count();
+        let prefix_len = golden
+            .chars()
+            .zip(json.chars())
+            .take_while(|(a, b)| a == b)
+            .count();
         eprintln!(
             "golden mismatch (common prefix {} chars).\n  golden[len {}]: {:?}...\n  built [len {}]: {:?}...",
             prefix_len,
@@ -122,7 +125,10 @@ fn golden_fixture_matches_builder_output() {
             &json.chars().skip(prefix_len.saturating_sub(16)).take(80).collect::<String>(),
         );
     }
-    assert_eq!(golden, json, "golden fixture drifted; regenerate with UNO_GENESIS_REGEN=1");
+    assert_eq!(
+        golden, json,
+        "golden fixture drifted; regenerate with UNO_GENESIS_REGEN=1"
+    );
 }
 
 #[test]
@@ -157,9 +163,22 @@ fn fixture_round_trips_through_serde_json() {
         // recipient hex block has the expected shapes.
         let rcp = &note["recipient"];
         assert_eq!(hex::decode(rcp["d"].as_str().unwrap()).unwrap().len(), 11);
-        assert_eq!(hex::decode(rcp["pk_d"].as_str().unwrap()).unwrap().len(), 32);
-        assert_eq!(hex::decode(rcp["ivk_commitment"].as_str().unwrap()).unwrap().len(), 32);
-        assert_eq!(hex::decode(rcp["pk_mlkem"].as_str().unwrap()).unwrap().len(), 1184);
+        assert_eq!(
+            hex::decode(rcp["pk_d"].as_str().unwrap()).unwrap().len(),
+            32
+        );
+        assert_eq!(
+            hex::decode(rcp["ivk_commitment"].as_str().unwrap())
+                .unwrap()
+                .len(),
+            32
+        );
+        assert_eq!(
+            hex::decode(rcp["pk_mlkem"].as_str().unwrap())
+                .unwrap()
+                .len(),
+            1184
+        );
     }
 
     // Sections are sorted by canonical_address_hash; per-section totals
@@ -197,8 +216,10 @@ fn fixture_loader_compatible_shape() {
     // Top-level must NOT contain a scheme_id field (the builder omits it;
     // the loader treats it as optional and defaults to kSchemeIdV1).
     let obj = v.as_object().unwrap();
-    assert!(!obj.contains_key("scheme_id"),
-        "builder must not emit scheme_id; loader defaults it");
+    assert!(
+        !obj.contains_key("scheme_id"),
+        "builder must not emit scheme_id; loader defaults it"
+    );
     assert!(obj.contains_key("chain_id"));
     assert!(obj.contains_key("total_supply_nano"));
     assert!(obj.contains_key("notes"));

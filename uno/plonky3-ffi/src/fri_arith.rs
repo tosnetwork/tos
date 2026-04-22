@@ -159,11 +159,7 @@ fn reverse_slice_index_bits<T: Copy>(slice: &mut [T]) {
 /// degree `< n` with `L(xs[i]) = ys[i]`.
 ///
 /// Line-matches `third-party/plonky3-uno/fri/src/two_adic_pcs.rs:221-261`.
-fn lagrange_interpolate_at_ref(
-    xs: &[Goldilocks],
-    ys: &[Challenge],
-    z: Challenge,
-) -> Challenge {
+fn lagrange_interpolate_at_ref(xs: &[Goldilocks], ys: &[Challenge], z: Challenge) -> Challenge {
     assert_eq!(xs.len(), ys.len());
     let n = xs.len();
     if n == 0 {
@@ -198,7 +194,10 @@ fn lagrange_interpolate_at_ref(
     let diffs: Vec<Challenge> = xs.iter().map(|&x| z - x).collect();
     let diff_invs: Vec<Challenge> = diffs
         .iter()
-        .map(|d| d.try_inverse().expect("already early-returned on zero diff"))
+        .map(|d| {
+            d.try_inverse()
+                .expect("already early-returned on zero diff")
+        })
         .collect();
 
     // L(z) = prod_i (z - xs[i])
@@ -268,7 +267,13 @@ mod tests {
 
     fn ch(a: u64, b: u64) -> Challenge {
         use p3_field::BasedVectorSpace;
-        Challenge::from_basis_coefficients_fn(|i| if i == 0 { Goldilocks::new(a) } else { Goldilocks::new(b) })
+        Challenge::from_basis_coefficients_fn(|i| {
+            if i == 0 {
+                Goldilocks::new(a)
+            } else {
+                Goldilocks::new(b)
+            }
+        })
     }
 
     /// Upstream reference folder used for parity tests. The `InputProof`
@@ -354,7 +359,10 @@ mod tests {
             let evals = vec![ch(rand_u64(), rand_u64()), ch(rand_u64(), rand_u64())];
             let ours = fold_row_ref(index, log_height, log_arity, beta, &evals);
             let theirs = upstream_fold_row(index, log_height, log_arity, beta, &evals);
-            assert_eq!(ours, theirs, "random fold_row disagreement at index={index}");
+            assert_eq!(
+                ours, theirs,
+                "random fold_row disagreement at index={index}"
+            );
         }
     }
 
@@ -421,7 +429,11 @@ mod tests {
     fn eval_final_poly_single_coef_is_constant() {
         // Horner over a 1-element poly must return that element regardless of x.
         let coeffs = vec![ch(123, 456)];
-        for x in [Goldilocks::new(1), Goldilocks::new(2), Goldilocks::new(999_999)] {
+        for x in [
+            Goldilocks::new(1),
+            Goldilocks::new(2),
+            Goldilocks::new(999_999),
+        ] {
             assert_eq!(eval_final_poly_horner(&coeffs, x), coeffs[0]);
         }
     }
@@ -435,7 +447,14 @@ mod tests {
         // combinations.
         for log_global in [3usize, 5, 10, 16] {
             let g = Goldilocks::two_adic_generator(log_global);
-            for index in [0usize, 1, 2, 7, (1 << log_global) - 1, 1 << (log_global - 1)] {
+            for index in [
+                0usize,
+                1,
+                2,
+                7,
+                (1 << log_global) - 1,
+                1 << (log_global - 1),
+            ] {
                 let ours = final_eval_x(index, log_global);
                 let theirs = g.exp_u64(reverse_bits_len(index, log_global) as u64);
                 assert_eq!(

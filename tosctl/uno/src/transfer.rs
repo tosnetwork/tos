@@ -192,7 +192,11 @@ pub fn compute_note_commitment(input: &NoteCommitmentInputs<'_>) -> [u8; DIGEST]
 }
 
 fn wrap_u64(v: u64) -> u64 {
-    if v >= P_GL { v - P_GL } else { v }
+    if v >= P_GL {
+        v - P_GL
+    } else {
+        v
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -262,12 +266,18 @@ pub fn encode_transfer_wire(tx: &Transfer) -> Result<Vec<u8>> {
     if tx.spends.is_empty() || tx.spends.len() > MAX_SPEND_COUNT as usize {
         return Err(anyhow!(
             "encode_transfer_wire: spend_count {} out of [{},{}]",
-            tx.spends.len(), MIN_SPEND_COUNT, MAX_SPEND_COUNT));
+            tx.spends.len(),
+            MIN_SPEND_COUNT,
+            MAX_SPEND_COUNT
+        ));
     }
     if tx.outputs.is_empty() || tx.outputs.len() > MAX_OUTPUT_COUNT as usize {
         return Err(anyhow!(
             "encode_transfer_wire: output_count {} out of [{},{}]",
-            tx.outputs.len(), MIN_OUTPUT_COUNT, MAX_OUTPUT_COUNT));
+            tx.outputs.len(),
+            MIN_OUTPUT_COUNT,
+            MAX_OUTPUT_COUNT
+        ));
     }
 
     let mut out = Vec::new();
@@ -322,7 +332,11 @@ pub fn decode_transfer_wire(bytes: &[u8]) -> Result<Transfer> {
         let nullifier = r.read_fixed::<32>()?;
         let rk = r.read_fixed::<32>()?;
         let spend_auth_sig = r.read_fixed::<64>()?;
-        spends.push(SpendDescription { nullifier, rk, spend_auth_sig });
+        spends.push(SpendDescription {
+            nullifier,
+            rk,
+            spend_auth_sig,
+        });
     }
     let mut outputs = Vec::with_capacity(output_count as usize);
     for _ in 0..output_count {
@@ -333,16 +347,31 @@ pub fn decode_transfer_wire(bytes: &[u8]) -> Result<Transfer> {
         let mlkem_ct = r.read_varint_blob()?;
         let out_ciphertext = r.read_fixed::<OUT_CIPHERTEXT_BYTES>()?;
         outputs.push(OutputDescription {
-            cm, epk, filter_tag, enc_ciphertext, mlkem_ct, out_ciphertext,
+            cm,
+            epk,
+            filter_tag,
+            enc_ciphertext,
+            mlkem_ct,
+            out_ciphertext,
         });
     }
     let zk_proof = r.read_varint_blob()?;
     if r.remaining() != 0 {
-        return Err(anyhow!("decode: trailing {} bytes after zk_proof", r.remaining()));
+        return Err(anyhow!(
+            "decode: trailing {} bytes after zk_proof",
+            r.remaining()
+        ));
     }
     Ok(Transfer {
-        version, scheme_id, chain_id, anchor, expiry_block, fee,
-        spends, outputs, zk_proof,
+        version,
+        scheme_id,
+        chain_id,
+        anchor,
+        expiry_block,
+        fee,
+        spends,
+        outputs,
+        zk_proof,
     })
 }
 
@@ -350,11 +379,18 @@ pub fn decode_transfer_wire(bytes: &[u8]) -> Result<Transfer> {
 // Small wire reader/writer helpers
 // ---------------------------------------------------------------------------
 
-struct Reader<'a> { buf: &'a [u8], pos: usize }
+struct Reader<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
 
 impl<'a> Reader<'a> {
-    fn new(buf: &'a [u8]) -> Self { Self { buf, pos: 0 } }
-    fn remaining(&self) -> usize { self.buf.len() - self.pos }
+    fn new(buf: &'a [u8]) -> Self {
+        Self { buf, pos: 0 }
+    }
+    fn remaining(&self) -> usize {
+        self.buf.len() - self.pos
+    }
 
     fn read_fixed<const N: usize>(&mut self) -> Result<[u8; N]> {
         if self.remaining() < N {
@@ -365,7 +401,9 @@ impl<'a> Reader<'a> {
         self.pos += N;
         Ok(out)
     }
-    fn read_u8(&mut self) -> Result<u8> { Ok(self.read_fixed::<1>()?[0]) }
+    fn read_u8(&mut self) -> Result<u8> {
+        Ok(self.read_fixed::<1>()?[0])
+    }
     fn read_be_u16(&mut self) -> Result<u16> {
         Ok(u16::from_be_bytes(self.read_fixed::<2>()?))
     }
@@ -382,11 +420,16 @@ impl<'a> Reader<'a> {
             if self.pos >= self.buf.len() {
                 return Err(anyhow!("decode: varint truncated"));
             }
-            let b = self.buf[self.pos]; self.pos += 1;
+            let b = self.buf[self.pos];
+            self.pos += 1;
             v |= ((b & 0x7f) as u64) << shift;
-            if b & 0x80 == 0 { return Ok(v); }
+            if b & 0x80 == 0 {
+                return Ok(v);
+            }
             shift += 7;
-            if shift >= 64 { return Err(anyhow!("decode: varint overflow")); }
+            if shift >= 64 {
+                return Err(anyhow!("decode: varint overflow"));
+            }
         }
     }
     fn read_varint_blob(&mut self) -> Result<Vec<u8>> {
@@ -404,7 +447,10 @@ fn write_varint(out: &mut Vec<u8>, mut v: u64) {
     loop {
         let byte = (v & 0x7f) as u8;
         v >>= 7;
-        if v == 0 { out.push(byte); return; }
+        if v == 0 {
+            out.push(byte);
+            return;
+        }
         out.push(byte | 0x80);
     }
 }
@@ -457,15 +503,27 @@ mod tests {
         // Mutate the sig. tx_hash must NOT change.
         let mut tx2 = tx.clone();
         tx2.spends[0].spend_auth_sig[0] ^= 1;
-        assert_eq!(h1, canonical_tx_hash(&tx2), "sig mutation must not affect tx_hash");
+        assert_eq!(
+            h1,
+            canonical_tx_hash(&tx2),
+            "sig mutation must not affect tx_hash"
+        );
         // Mutate the zk_proof. tx_hash must NOT change.
         let mut tx3 = tx.clone();
         tx3.zk_proof[0] ^= 1;
-        assert_eq!(h1, canonical_tx_hash(&tx3), "zk_proof mutation must not affect tx_hash");
+        assert_eq!(
+            h1,
+            canonical_tx_hash(&tx3),
+            "zk_proof mutation must not affect tx_hash"
+        );
         // Mutate nullifier. tx_hash MUST change.
         let mut tx4 = tx.clone();
         tx4.spends[0].nullifier[0] ^= 1;
-        assert_ne!(h1, canonical_tx_hash(&tx4), "nullifier mutation must affect tx_hash");
+        assert_ne!(
+            h1,
+            canonical_tx_hash(&tx4),
+            "nullifier mutation must affect tx_hash"
+        );
     }
 
     #[test]
@@ -475,21 +533,37 @@ mod tests {
         let ivk_cm = [0x03u8; 32];
         let rcm = [0x04u8; 32];
         let cm_a = compute_note_commitment(&NoteCommitmentInputs {
-            d: &d, pk_d_bytes: &pk_d, ivk_commitment: &ivk_cm, value: 10, rcm: &rcm,
+            d: &d,
+            pk_d_bytes: &pk_d,
+            ivk_commitment: &ivk_cm,
+            value: 10,
+            rcm: &rcm,
         });
         let cm_b = compute_note_commitment(&NoteCommitmentInputs {
-            d: &d, pk_d_bytes: &pk_d, ivk_commitment: &ivk_cm, value: 10, rcm: &rcm,
+            d: &d,
+            pk_d_bytes: &pk_d,
+            ivk_commitment: &ivk_cm,
+            value: 10,
+            rcm: &rcm,
         });
         assert_eq!(cm_a, cm_b);
 
         // Changing each input changes the commitment.
         let cm_value = compute_note_commitment(&NoteCommitmentInputs {
-            d: &d, pk_d_bytes: &pk_d, ivk_commitment: &ivk_cm, value: 11, rcm: &rcm,
+            d: &d,
+            pk_d_bytes: &pk_d,
+            ivk_commitment: &ivk_cm,
+            value: 11,
+            rcm: &rcm,
         });
         assert_ne!(cm_a, cm_value);
         let d2 = [0x99u8; 11];
         let cm_d = compute_note_commitment(&NoteCommitmentInputs {
-            d: &d2, pk_d_bytes: &pk_d, ivk_commitment: &ivk_cm, value: 10, rcm: &rcm,
+            d: &d2,
+            pk_d_bytes: &pk_d,
+            ivk_commitment: &ivk_cm,
+            value: 10,
+            rcm: &rcm,
         });
         assert_ne!(cm_a, cm_d);
     }

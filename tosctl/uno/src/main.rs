@@ -91,10 +91,7 @@ fn run_genesis_build(args: &GenesisBuildArgs) -> Result<()> {
             &treasury_text,
             &args.treasury.display().to_string(),
         )?,
-        team: genesis_build::parse_recipient_csv(
-            &team_text,
-            &args.team.display().to_string(),
-        )?,
+        team: genesis_build::parse_recipient_csv(&team_text, &args.team.display().to_string())?,
     };
 
     let json = genesis_build::build_genesis_notes_json(&inputs)?;
@@ -102,8 +99,7 @@ fn run_genesis_build(args: &GenesisBuildArgs) -> Result<()> {
     if args.out == "-" {
         println!("{}", json);
     } else {
-        std::fs::write(&args.out, &json)
-            .with_context(|| format!("writing {}", args.out))?;
+        std::fs::write(&args.out, &json).with_context(|| format!("writing {}", args.out))?;
         eprintln!(
             "wrote genesis-notes JSON ({} notes, chain_id=0x{:08X}) to {}",
             inputs.airdrop.len() + inputs.treasury.len() + inputs.team.len(),
@@ -119,7 +115,10 @@ fn parse_chain_id_arg(s: &str) -> Result<u32> {
         "mainnet" => Ok(genesis_build::CHAIN_ID_MAINNET),
         "testnet" => Ok(genesis_build::CHAIN_ID_TESTNET),
         other => {
-            if let Some(hex) = other.strip_prefix("0x").or_else(|| other.strip_prefix("0X")) {
+            if let Some(hex) = other
+                .strip_prefix("0x")
+                .or_else(|| other.strip_prefix("0X"))
+            {
                 u32::from_str_radix(hex, 16)
                     .map_err(|e| anyhow!("invalid --chain-id hex {:?}: {}", other, e))
             } else {
@@ -158,7 +157,11 @@ fn run_keygen(args: &KeygenArgs) -> Result<()> {
     let main_tos_seed = match (&args.seed, &args.from_tos_seed) {
         (Some(m), None) => keygen::tos_seed_from_mnemonic(m, &args.passphrase)?,
         (None, Some(p)) => keygen::tos_seed_from_file(p)?,
-        _ => return Err(anyhow!("keygen requires exactly one of --seed or --from-tos-seed")),
+        _ => {
+            return Err(anyhow!(
+                "keygen requires exactly one of --seed or --from-tos-seed"
+            ))
+        }
     };
 
     let fvk = keygen::derive_fvk(&main_tos_seed)?;
@@ -167,8 +170,7 @@ fn run_keygen(args: &KeygenArgs) -> Result<()> {
     if args.out == "-" {
         println!("{}", json);
     } else {
-        std::fs::write(&args.out, &json)
-            .with_context(|| format!("writing {}", args.out))?;
+        std::fs::write(&args.out, &json).with_context(|| format!("writing {}", args.out))?;
         eprintln!("wrote FVK to {}", args.out);
     }
     Ok(())
@@ -200,8 +202,8 @@ struct AddressArgs {
 fn run_address(args: &AddressArgs) -> Result<()> {
     let fvk_json = std::fs::read_to_string(&args.fvk)
         .with_context(|| format!("reading FVK from {}", args.fvk.display()))?;
-    let fvk: keygen::FullViewingKey = serde_json::from_str(&fvk_json)
-        .context("parsing FVK JSON")?;
+    let fvk: keygen::FullViewingKey =
+        serde_json::from_str(&fvk_json).context("parsing FVK JSON")?;
 
     let d: [u8; 11] = match (&args.diversifier, args.random) {
         (Some(hex_d), false) => {
@@ -236,10 +238,10 @@ fn run_address(args: &AddressArgs) -> Result<()> {
     }
 
     let out = AddressOut {
-        diversifier:    hex::encode(addr.d),
-        pk_d:           hex::encode(addr.pk_d),
+        diversifier: hex::encode(addr.d),
+        pk_d: hex::encode(addr.pk_d),
         ivk_commitment: hex::encode(addr.ivk_commitment),
-        pk_mlkem_hex:   hex::encode(&addr.pk_mlkem),
+        pk_mlkem_hex: hex::encode(&addr.pk_mlkem),
         wire_bytes_hex: hex::encode(addr.to_bytes()),
         address_string: addr_string,
     };
@@ -280,7 +282,10 @@ async fn run_scan(args: &ScanArgs) -> Result<()> {
         }
     };
 
-    eprintln!("scanning blocks [{}, {}) via {}", args.from_block, end, args.rpc);
+    eprintln!(
+        "scanning blocks [{}, {}) via {}",
+        args.from_block, end, args.rpc
+    );
     let owned = scan::scan_range(&rpc, &fvk, args.from_block, end).await?;
     println!("{}", serde_json::to_string_pretty(&owned)?);
     eprintln!("found {} owned notes", owned.len());
@@ -393,12 +398,12 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.cmd {
-        Command::Keygen(args)    => run_keygen(&args),
-        Command::Address(args)   => run_address(&args),
-        Command::Scan(args)      => block_on(run_scan(&args)),
-        Command::Balance(args)   => block_on(run_balance(&args)),
+        Command::Keygen(args) => run_keygen(&args),
+        Command::Address(args) => run_address(&args),
+        Command::Scan(args) => block_on(run_scan(&args)),
+        Command::Balance(args) => block_on(run_balance(&args)),
         Command::ChainInfo(args) => block_on(run_chain_info(&args)),
-        Command::Send(args)      => block_on(run_send(&args)),
+        Command::Send(args) => block_on(run_send(&args)),
         Command::Genesis(GenesisCmd::Build(args)) => run_genesis_build(&args),
     }
 }

@@ -51,9 +51,7 @@
 //!     design doc §2 for the `Transfer.zk_proof` field deprecation
 //!     and new block-level `aggregated_proof` field)
 
-use crate::verifier_air::{
-    hash_slot_public_inputs, VerifiedTransferPublicInputs, VerifierSlotWitness,
-};
+use crate::verifier_air::{hash_slot_public_inputs, VerifierSlotWitness};
 
 // ---------------------------------------------------------------------------
 // Block-level throughput cap
@@ -398,8 +396,7 @@ pub fn prove_block(
     let air = MonolithicVerifierAirV1;
     let proof = prove(&cfg, &air, trace, &pi_felts);
 
-    let proof_bytes = postcard::to_allocvec(&proof)
-        .map_err(|_| AggregatorError::SlotMismatch)?;
+    let proof_bytes = postcard::to_allocvec(&proof).map_err(|_| AggregatorError::SlotMismatch)?;
 
     // Enforce the wire-format size cap up front, so a freshly proven
     // block that can't be transmitted is caught at prove-time rather
@@ -430,14 +427,13 @@ pub fn verify_block(
 ) -> Result<(), BlockVerifyError> {
     use p3_uni_stark::verify;
 
-    let decoded: p3_uni_stark::Proof<_> = postcard::from_bytes(&proof.bytes)
-        .map_err(|_| BlockVerifyError::ProofMalformed)?;
+    let decoded: p3_uni_stark::Proof<_> =
+        postcard::from_bytes(&proof.bytes).map_err(|_| BlockVerifyError::ProofMalformed)?;
 
     let cfg = build_config();
     let air = MonolithicVerifierAirV1;
     let pi_felts = block_public_inputs_to_field_elements(pi);
-    verify(&cfg, &air, &decoded, &pi_felts)
-        .map_err(|_| BlockVerifyError::StarkVerifyFailed)
+    verify(&cfg, &air, &decoded, &pi_felts).map_err(|_| BlockVerifyError::StarkVerifyFailed)
 }
 
 // ---------------------------------------------------------------------------
@@ -503,7 +499,10 @@ mod tests {
             n_transfers: w.len() as u16,
             tx_pi_merkle_root: w.compute_pi_merkle_root(),
         };
-        assert_eq!(prove_block_stub(&pi, &w), Err(AggregatorError::TooManySlots));
+        assert_eq!(
+            prove_block_stub(&pi, &w),
+            Err(AggregatorError::TooManySlots)
+        );
     }
 
     #[test]
@@ -518,7 +517,10 @@ mod tests {
             n_transfers: 1,
             tx_pi_merkle_root: [0; 32],
         };
-        assert_eq!(prove_block_stub(&pi, &w), Err(AggregatorError::SlotMalformed(0)));
+        assert_eq!(
+            prove_block_stub(&pi, &w),
+            Err(AggregatorError::SlotMalformed(0))
+        );
     }
 
     #[test]
@@ -532,7 +534,10 @@ mod tests {
             n_transfers: 1,
             tx_pi_merkle_root: [0xDE; 32], // doesn't match
         };
-        assert_eq!(prove_block_stub(&pi, &w), Err(AggregatorError::SlotMismatch));
+        assert_eq!(
+            prove_block_stub(&pi, &w),
+            Err(AggregatorError::SlotMismatch)
+        );
     }
 
     #[test]
@@ -565,7 +570,9 @@ mod tests {
         };
         let p_small = prove_block_stub(&pi_small, &small).unwrap();
 
-        let slots: Vec<_> = (0..BLOCK_TX_CAP).map(|i| dummy_slot(i as u8, (i + 1) as u8)).collect();
+        let slots: Vec<_> = (0..BLOCK_TX_CAP)
+            .map(|i| dummy_slot(i as u8, (i + 1) as u8))
+            .collect();
         let large = AggregatorWitness::new(slots);
         let pi_large = BlockPublicInputs {
             chain_id: 0,
@@ -606,8 +613,7 @@ mod tests {
 
         let perm = default_goldilocks_poseidon2_8();
         let leaf: Vec<Goldilocks> = (0..8u64).map(|j| gl(100 + j * 17 + 1)).collect();
-        let sib_leaf: Vec<Goldilocks> =
-            (0..8u64).map(|j| gl(200 + j * 23 + 3)).collect();
+        let sib_leaf: Vec<Goldilocks> = (0..8u64).map(|j| gl(200 + j * 23 + 3)).collect();
         let dig = hash_leaf_row_ref(&perm, &leaf);
         let sib = hash_leaf_row_ref(&perm, &sib_leaf);
         let root = compress_pair_ref(&perm, &dig, &sib);
@@ -708,10 +714,7 @@ mod tests {
     // A6-1.6: in-circuit PI binding tests
     // =======================================================================
 
-    fn tiny_bundle_and_pi() -> (
-        BundleStorage,
-        BlockPublicInputs,
-    ) {
+    fn tiny_bundle_and_pi() -> (BundleStorage, BlockPublicInputs) {
         let mut root = [0u8; 32];
         for (i, b) in root.iter_mut().enumerate() {
             *b = ((i as u8).wrapping_mul(29)).wrapping_add(5);

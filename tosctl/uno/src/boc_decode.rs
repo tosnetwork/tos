@@ -157,10 +157,7 @@ impl std::error::Error for DecodeError {}
 /// — if the continuation path was taken — past ref[0]. Any residual data
 /// or refs must be checked by the caller (mirrors the C++
 /// `spend_cs.size() != 0 || spend_cs.size_refs() != 0` tail check).
-fn load_item_chunked(
-    head_slice: &mut SliceData,
-    out: &mut [u8],
-) -> Result<(), DecodeError> {
+fn load_item_chunked(head_slice: &mut SliceData, out: &mut [u8]) -> Result<(), DecodeError> {
     let len = out.len();
     let head = core::cmp::min(len, ITEM_INLINE_HEAD_BYTES);
     if head_slice.remaining_bits() < head * 8 {
@@ -306,11 +303,7 @@ fn load_bytes_from_chunk_chain(root: Cell) -> Result<Vec<u8>, DecodeError> {
 ///
 /// Including the Transfer root that holds the spends_root / outputs_root
 /// ref yields a total walk depth of 4 — under the ≤5 budget.
-fn structural_depth_bounded(
-    c: &Cell,
-    follow_all_refs: bool,
-    remaining: u16,
-) -> u16 {
+fn structural_depth_bounded(c: &Cell, follow_all_refs: bool, remaining: u16) -> u16 {
     if remaining == 0 {
         return 0;
     }
@@ -510,13 +503,9 @@ pub fn decode_transfer_boc(bytes: &[u8]) -> Result<Transfer, DecodeError> {
     })
 }
 
-fn parse_spends_root(
-    spends_root_ref: Cell,
-    sc: u8,
-) -> Result<Vec<SpendDescription>, DecodeError> {
-    let spends_root = SliceData::load_cell(spends_root_ref).map_err(|e| {
-        DecodeError::MalformedItem(format!("load spends_root cell: {e}"))
-    })?;
+fn parse_spends_root(spends_root_ref: Cell, sc: u8) -> Result<Vec<SpendDescription>, DecodeError> {
+    let spends_root = SliceData::load_cell(spends_root_ref)
+        .map_err(|e| DecodeError::MalformedItem(format!("load spends_root cell: {e}")))?;
     if spends_root.remaining_bits() != 0 {
         return Err(DecodeError::MalformedItem(
             "spends_root: unexpected inline data".to_string(),
@@ -531,9 +520,9 @@ fn parse_spends_root(
     }
     let mut spends = Vec::with_capacity(sc as usize);
     for i in 0..sc as usize {
-        let spend_ref = spends_root.reference(i).map_err(|e| {
-            DecodeError::MalformedItem(format!("per_spend[{i}] ref fetch: {e}"))
-        })?;
+        let spend_ref = spends_root
+            .reference(i)
+            .map_err(|e| DecodeError::MalformedItem(format!("per_spend[{i}] ref fetch: {e}")))?;
         let mut spend_cs = SliceData::load_cell(spend_ref)
             .map_err(|e| DecodeError::MalformedItem(format!("load per_spend[{i}]: {e}")))?;
         let mut buf = [0u8; SPEND_INLINE_BYTES];
@@ -570,9 +559,8 @@ fn parse_outputs_root(
     outputs_root_ref: Cell,
     oc: u8,
 ) -> Result<Vec<OutputDescription>, DecodeError> {
-    let outputs_root = SliceData::load_cell(outputs_root_ref).map_err(|e| {
-        DecodeError::MalformedItem(format!("load outputs_root cell: {e}"))
-    })?;
+    let outputs_root = SliceData::load_cell(outputs_root_ref)
+        .map_err(|e| DecodeError::MalformedItem(format!("load outputs_root cell: {e}")))?;
     if outputs_root.remaining_bits() != 0 {
         return Err(DecodeError::MalformedItem(
             "outputs_root: unexpected inline data".to_string(),
@@ -587,9 +575,9 @@ fn parse_outputs_root(
     }
     let mut outputs = Vec::with_capacity(oc as usize);
     for j in 0..oc as usize {
-        let out_ref = outputs_root.reference(j).map_err(|e| {
-            DecodeError::MalformedItem(format!("per_output[{j}] ref fetch: {e}"))
-        })?;
+        let out_ref = outputs_root
+            .reference(j)
+            .map_err(|e| DecodeError::MalformedItem(format!("per_output[{j}] ref fetch: {e}")))?;
         let mut out_cs = SliceData::load_cell(out_ref)
             .map_err(|e| DecodeError::MalformedItem(format!("load per_output[{j}]: {e}")))?;
         let mut buf = [0u8; OUTPUT_INLINE_BYTES];
@@ -617,14 +605,10 @@ fn parse_outputs_root(
         out_ct.copy_from_slice(&buf[66..66 + OUT_CIPHERTEXT_BYTES]);
 
         let enc_ct_root = out_cs.reference(0).map_err(|e| {
-            DecodeError::MalformedItem(format!(
-                "per_output[{j}]: fetch enc_ct ref: {e}"
-            ))
+            DecodeError::MalformedItem(format!("per_output[{j}]: fetch enc_ct ref: {e}"))
         })?;
         let mlkem_root = out_cs.reference(1).map_err(|e| {
-            DecodeError::MalformedItem(format!(
-                "per_output[{j}]: fetch mlkem_ct ref: {e}"
-            ))
+            DecodeError::MalformedItem(format!("per_output[{j}]: fetch mlkem_ct ref: {e}"))
         })?;
 
         let enc_ct_bytes = load_bytes_from_chunk_chain(enc_ct_root)?;
@@ -725,8 +709,8 @@ mod tests {
         for n_s in 1..=4 {
             for n_o in 1..=4 {
                 let tx = sample_transfer(n_s, n_o);
-                let bytes = encode_transfer_boc(&tx)
-                    .unwrap_or_else(|e| panic!("{n_s}/{n_o} encode: {e}"));
+                let bytes =
+                    encode_transfer_boc(&tx).unwrap_or_else(|e| panic!("{n_s}/{n_o} encode: {e}"));
                 let decoded = decode_transfer_boc(&bytes)
                     .unwrap_or_else(|e| panic!("{n_s}/{n_o} decode: {e}"));
                 assert_eq!(decoded.version, tx.version, "{n_s}/{n_o} version");
@@ -759,10 +743,7 @@ mod tests {
                         a.enc_ciphertext, b.enc_ciphertext,
                         "{n_s}/{n_o} output[{j}].enc_ciphertext"
                     );
-                    assert_eq!(
-                        a.mlkem_ct, b.mlkem_ct,
-                        "{n_s}/{n_o} output[{j}].mlkem_ct"
-                    );
+                    assert_eq!(a.mlkem_ct, b.mlkem_ct, "{n_s}/{n_o} output[{j}].mlkem_ct");
                     assert_eq!(
                         a.out_ciphertext, b.out_ciphertext,
                         "{n_s}/{n_o} output[{j}].out_ciphertext"

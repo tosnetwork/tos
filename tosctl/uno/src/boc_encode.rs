@@ -277,12 +277,7 @@ pub fn encode_transfer_boc(tx: &Transfer) -> Result<Vec<u8>> {
     fn no_abort() -> bool {
         false
     }
-    let writer = BocWriter::with_params(
-        [root_cell],
-        MAX_DEPTH,
-        BocFlags::None,
-        &no_abort,
-    )?;
+    let writer = BocWriter::with_params([root_cell], MAX_DEPTH, BocFlags::None, &no_abort)?;
     let mut buf = Vec::new();
     writer.write(&mut buf)?;
     Ok(buf)
@@ -398,8 +393,8 @@ mod tests {
         for n_s in 1..=4 {
             for n_o in 1..=4 {
                 let tx = sample_transfer(n_s, n_o);
-                let bytes = encode_transfer_boc(&tx)
-                    .unwrap_or_else(|e| panic!("{n_s}/{n_o} encode: {e}"));
+                let bytes =
+                    encode_transfer_boc(&tx).unwrap_or_else(|e| panic!("{n_s}/{n_o} encode: {e}"));
                 let mut cursor = std::io::Cursor::new(bytes);
                 let parsed = BocReader::new()
                     .set_max_cell_depth(MAX_DEPTH)
@@ -508,7 +503,10 @@ mod tests {
             if refs == 0 {
                 // Leaf.
                 leaves += 1;
-                assert!(bits > 0 && bits % 8 == 0, "leaf bits must be 8k; got {bits}");
+                assert!(
+                    bits > 0 && bits % 8 == 0,
+                    "leaf bits must be 8k; got {bits}"
+                );
                 let len = bits / 8;
                 assert!(len <= 127, "leaf payload ≤ 127 B; got {len}");
             } else {

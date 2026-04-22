@@ -21,6 +21,10 @@ set(VALIDATOR_ENGINE_SOURCE
 )
 
 add_executable(validator-engine ${VALIDATOR_ENGINE_SOURCE})
+target_compile_options(validator-engine PRIVATE
+  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-cast-qual>
+  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-deprecated-literal-operator>
+)
 target_link_libraries(validator-engine metrics overlay tdutils tdactor adnl tl_api dht
   rldp rldp2 quic catchain validatorsession full-node validator tos_validator validator
   fift-lib memprof git ${JEMALLOC_LIBRARIES})
@@ -33,6 +37,10 @@ if (JEMALLOC_FOUND)
 endif()
 
 add_executable(test-json-rpc-cache test-json-rpc-cache.cpp ${VALIDATOR_ENGINE_JSON_RPC_SOURCE})
+target_compile_options(test-json-rpc-cache PRIVATE
+  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-cast-qual>
+  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-deprecated-literal-operator>
+)
 target_link_libraries(test-json-rpc-cache metrics overlay tdutils tdactor adnl tl_api dht
   rldp rldp2 quic catchain validatorsession full-node validator tos_validator validator
   fift-lib memprof git ${JEMALLOC_LIBRARIES})

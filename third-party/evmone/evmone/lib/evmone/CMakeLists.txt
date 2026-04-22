@@ -49,6 +49,8 @@ if(CABLE_COMPILER_GNULIKE)
         evmone PRIVATE
         -fno-exceptions
         $<$<CXX_COMPILER_ID:GNU>:-Wstack-usage=2900>
+        $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-deprecated-literal-operator>
+        $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-missing-field-initializers>
     )
     if(NOT SANITIZE MATCHES undefined)
         # RTTI can be disabled except for UBSan which checks vptr integrity.

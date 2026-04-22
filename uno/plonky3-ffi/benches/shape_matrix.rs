@@ -42,9 +42,7 @@
 use std::time::{Duration, Instant};
 
 use uno_plonky3_ffi::prover::MvpProver;
-use uno_plonky3_ffi::transfer_air::{
-    air_public_inputs_wire_len, air_width, MvpWitness,
-};
+use uno_plonky3_ffi::transfer_air::{air_public_inputs_wire_len, air_width, MvpWitness};
 use uno_plonky3_ffi::verifier::MvpVerifier;
 use uno_plonky3_ffi::Plonky3Status;
 
@@ -59,14 +57,7 @@ const SAMPLES: usize = 5;
 /// in the emitted Markdown table. Chosen to span the (1,1)..(4,4) envelope
 /// along both axes without running all 16 combinations (the interior shapes
 /// are well-approximated by the diagonal + one off-diagonal point).
-const SHAPES: &[(usize, usize)] = &[
-    (1, 1),
-    (1, 2),
-    (2, 2),
-    (2, 3),
-    (3, 3),
-    (4, 4),
-];
+const SHAPES: &[(usize, usize)] = &[(1, 1), (1, 2), (2, 2), (2, 3), (3, 3), (4, 4)];
 
 /// One row of the output table.
 struct Row {
@@ -184,13 +175,7 @@ fn main() {
     for r in &rows {
         println!(
             "| {}/{}   | {:>4} | {:>8} | {:>8.1} | {:>9.1} | {:>11} |",
-            r.shape.0,
-            r.shape.1,
-            r.cols,
-            r.pi_bytes,
-            r.prove_ms,
-            r.verify_ms,
-            r.proof_bytes,
+            r.shape.0, r.shape.1, r.cols, r.pi_bytes, r.prove_ms, r.verify_ms, r.proof_bytes,
         );
     }
     println!();

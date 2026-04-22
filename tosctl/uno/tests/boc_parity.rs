@@ -35,7 +35,9 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use tosctl_uno::boc_encode::encode_transfer_boc;
-use tosctl_uno::transfer::{OutputDescription, SpendDescription, Transfer, SCHEME_ID_V1, TRANSFER_VERSION};
+use tosctl_uno::transfer::{
+    OutputDescription, SpendDescription, Transfer, SCHEME_ID_V1, TRANSFER_VERSION,
+};
 
 // ---------------------------------------------------------------------------
 // Skip helper
@@ -230,12 +232,16 @@ impl Summary {
 
 fn hex_to_fixed<const N: usize>(s: &str) -> Result<[u8; N], String> {
     if s.len() != 2 * N {
-        return Err(format!("hex field: expected {} chars, got {}", 2 * N, s.len()));
+        return Err(format!(
+            "hex field: expected {} chars, got {}",
+            2 * N,
+            s.len()
+        ));
     }
     let mut out = [0u8; N];
     for i in 0..N {
-        let hi = u8::from_str_radix(&s[2 * i..2 * i + 1], 16)
-            .map_err(|e| format!("hex parse: {e}"))?;
+        let hi =
+            u8::from_str_radix(&s[2 * i..2 * i + 1], 16).map_err(|e| format!("hex parse: {e}"))?;
         let lo = u8::from_str_radix(&s[2 * i + 1..2 * i + 2], 16)
             .map_err(|e| format!("hex parse: {e}"))?;
         out[i] = (hi << 4) | lo;
@@ -265,35 +271,56 @@ fn parse_stdout(stdout: &str) -> Result<Summary, String> {
         }
         match tokens[0] {
             "version" => {
-                s.version = tokens.get(1).ok_or("missing value for version")?
-                    .parse().map_err(|e| format!("version parse: {e}"))?;
+                s.version = tokens
+                    .get(1)
+                    .ok_or("missing value for version")?
+                    .parse()
+                    .map_err(|e| format!("version parse: {e}"))?;
             }
             "scheme_id" => {
-                s.scheme_id = tokens.get(1).ok_or("missing value for scheme_id")?
-                    .parse().map_err(|e| format!("scheme_id parse: {e}"))?;
+                s.scheme_id = tokens
+                    .get(1)
+                    .ok_or("missing value for scheme_id")?
+                    .parse()
+                    .map_err(|e| format!("scheme_id parse: {e}"))?;
             }
             "chain_id" => {
-                s.chain_id = tokens.get(1).ok_or("missing value for chain_id")?
-                    .parse().map_err(|e| format!("chain_id parse: {e}"))?;
+                s.chain_id = tokens
+                    .get(1)
+                    .ok_or("missing value for chain_id")?
+                    .parse()
+                    .map_err(|e| format!("chain_id parse: {e}"))?;
             }
             "anchor" => {
                 s.anchor = hex_to_fixed::<32>(tokens.get(1).ok_or("missing anchor")?)?;
             }
             "expiry_block" => {
-                s.expiry_block = tokens.get(1).ok_or("missing expiry_block")?
-                    .parse().map_err(|e| format!("expiry_block parse: {e}"))?;
+                s.expiry_block = tokens
+                    .get(1)
+                    .ok_or("missing expiry_block")?
+                    .parse()
+                    .map_err(|e| format!("expiry_block parse: {e}"))?;
             }
             "fee" => {
-                s.fee = tokens.get(1).ok_or("missing fee")?
-                    .parse().map_err(|e| format!("fee parse: {e}"))?;
+                s.fee = tokens
+                    .get(1)
+                    .ok_or("missing fee")?
+                    .parse()
+                    .map_err(|e| format!("fee parse: {e}"))?;
             }
             "spend_count" => {
-                s.spend_count = tokens.get(1).ok_or("missing spend_count")?
-                    .parse().map_err(|e| format!("spend_count parse: {e}"))?;
+                s.spend_count = tokens
+                    .get(1)
+                    .ok_or("missing spend_count")?
+                    .parse()
+                    .map_err(|e| format!("spend_count parse: {e}"))?;
             }
             "output_count" => {
-                s.output_count = tokens.get(1).ok_or("missing output_count")?
-                    .parse().map_err(|e| format!("output_count parse: {e}"))?;
+                s.output_count = tokens
+                    .get(1)
+                    .ok_or("missing output_count")?
+                    .parse()
+                    .map_err(|e| format!("output_count parse: {e}"))?;
             }
             "tx_hash" => {
                 s.tx_hash = hex_to_fixed::<32>(tokens.get(1).ok_or("missing tx_hash")?)?;
@@ -306,9 +333,7 @@ fn parse_stdout(stdout: &str) -> Result<Summary, String> {
                         tokens.len()
                     ));
                 }
-                let idx: usize = tokens[1]
-                    .parse()
-                    .map_err(|e| format!("spend idx: {e}"))?;
+                let idx: usize = tokens[1].parse().map_err(|e| format!("spend idx: {e}"))?;
                 let row = SpendRow {
                     index: idx,
                     nullifier: hex_to_fixed::<32>(tokens[3])?,
@@ -326,12 +351,8 @@ fn parse_stdout(stdout: &str) -> Result<Summary, String> {
                         tokens.len()
                     ));
                 }
-                let idx: usize = tokens[1]
-                    .parse()
-                    .map_err(|e| format!("output idx: {e}"))?;
-                let filter_tag: u16 = tokens[7]
-                    .parse()
-                    .map_err(|e| format!("filter_tag: {e}"))?;
+                let idx: usize = tokens[1].parse().map_err(|e| format!("output idx: {e}"))?;
+                let filter_tag: u16 = tokens[7].parse().map_err(|e| format!("filter_tag: {e}"))?;
                 let row = OutputRow {
                     index: idx,
                     cm: hex_to_fixed::<32>(tokens[3])?,
@@ -344,9 +365,8 @@ fn parse_stdout(stdout: &str) -> Result<Summary, String> {
                 s.outputs.push(row);
             }
             "zk_proof_blake3" => {
-                s.zk_proof_blake3 = hex_to_fixed::<32>(
-                    tokens.get(1).ok_or("missing zk_proof_blake3")?,
-                )?;
+                s.zk_proof_blake3 =
+                    hex_to_fixed::<32>(tokens.get(1).ok_or("missing zk_proof_blake3")?)?;
             }
             _ => {
                 return Err(format!("unknown bridge output line: {line:?}"));
@@ -402,10 +422,16 @@ fn compare_summary(tx: &Transfer, s: &Summary) -> Result<(), String> {
         return Err(format!("version: rust={} cxx={}", tx.version, s.version));
     }
     if s.scheme_id != tx.scheme_id {
-        return Err(format!("scheme_id: rust={} cxx={}", tx.scheme_id, s.scheme_id));
+        return Err(format!(
+            "scheme_id: rust={} cxx={}",
+            tx.scheme_id, s.scheme_id
+        ));
     }
     if s.chain_id != tx.chain_id {
-        return Err(format!("chain_id: rust={:#x} cxx={:#x}", tx.chain_id, s.chain_id));
+        return Err(format!(
+            "chain_id: rust={:#x} cxx={:#x}",
+            tx.chain_id, s.chain_id
+        ));
     }
     if s.anchor != tx.anchor {
         return Err("anchor mismatch".to_string());
@@ -556,17 +582,14 @@ fn rust_encode_cxx_decode_sweep_all_shapes() {
     for n_s in 1..=4 {
         for n_o in 1..=4 {
             let tx = sample_transfer(n_s, n_o);
-            let bytes = encode_transfer_boc(&tx)
-                .unwrap_or_else(|e| panic!("encode {n_s}/{n_o}: {e}"));
+            let bytes =
+                encode_transfer_boc(&tx).unwrap_or_else(|e| panic!("encode {n_s}/{n_o}: {e}"));
             let run = run_bridge(bridge, &bytes);
             if run.status_code != Some(0) {
                 failed.push((
                     n_s,
                     n_o,
-                    format!(
-                        "bridge exit={:?} stderr={}",
-                        run.status_code, run.stderr
-                    ),
+                    format!("bridge exit={:?} stderr={}", run.status_code, run.stderr),
                 ));
                 continue;
             }

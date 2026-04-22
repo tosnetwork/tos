@@ -59,7 +59,6 @@
 
 use p3_goldilocks::{default_goldilocks_poseidon2_8, Goldilocks};
 use p3_poseidon2_air::RoundConstants;
-use p3_symmetric::Permutation;
 
 use crate::merkle_path::{compress_pair_ref, Digest};
 use crate::transfer_air::{
@@ -125,7 +124,7 @@ pub const COMPRESSION_PATH_AIR_FRAMING_WIDTH: usize = col::WIDTH;
 
 pub(crate) fn gen_p2_witness(input: [Goldilocks; 8]) -> Vec<Goldilocks> {
     use p3_goldilocks::{
-        GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8, GenericPoseidon2LinearLayersGoldilocks,
+        GenericPoseidon2LinearLayersGoldilocks, GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8,
     };
     use p3_poseidon2_air::generate_trace_rows;
 
@@ -164,9 +163,17 @@ pub(crate) fn p2_group<T>(row: &[T]) -> &P2Cols<T> {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum TraceBuildError {
-    TraceHeightNotPow2 { got: usize },
-    TraceHeightTooSmall { physical_rows: usize, trace_height: usize },
-    IndexOutOfBoundsForPath { index: usize, path_len: usize },
+    TraceHeightNotPow2 {
+        got: usize,
+    },
+    TraceHeightTooSmall {
+        physical_rows: usize,
+        trace_height: usize,
+    },
+    IndexOutOfBoundsForPath {
+        index: usize,
+        path_len: usize,
+    },
     EmptyPath,
 }
 
@@ -224,8 +231,11 @@ pub fn build_trace(
     };
     let write_kind = |out: &mut [Goldilocks], kind: u8| {
         for k in 0..NUM_OP_KINDS {
-            out[col::KIND0 + k] =
-                if k as u8 == kind { Goldilocks::new(1) } else { zero_g };
+            out[col::KIND0 + k] = if k as u8 == kind {
+                Goldilocks::new(1)
+            } else {
+                zero_g
+            };
         }
     };
 
@@ -271,8 +281,7 @@ pub fn build_trace(
     // Populate the P2 block on every row.
     for row_idx in 0..trace_height {
         let base = row_idx * width;
-        let is_compress = flat[base + col::KIND0 + OP_KIND_COMPRESS as usize]
-            == Goldilocks::new(1);
+        let is_compress = flat[base + col::KIND0 + OP_KIND_COMPRESS as usize] == Goldilocks::new(1);
         let input: [Goldilocks; 8] = if is_compress {
             let mut s = [zero_g; 8];
             for i in 0..DIGEST_WIDTH {
@@ -313,10 +322,7 @@ pub enum CheckError {
     LastRowDigestNotRoot { col: usize },
 }
 
-pub fn check_all_transitions(
-    trace: &[Goldilocks],
-    trace_height: usize,
-) -> Result<(), CheckError> {
+pub fn check_all_transitions(trace: &[Goldilocks], trace_height: usize) -> Result<(), CheckError> {
     let width = col::WIDTH;
     if trace.len() != trace_height * width {
         return Err(CheckError::TraceLengthMismatch {
@@ -426,8 +432,7 @@ pub fn check_all_transitions(
     // Row-0 boundary: CURRENT == LEAF_DIGEST (if COMPRESS).
     {
         let row0 = row(0);
-        let is_compress_0 =
-            row0[col::KIND0 + OP_KIND_COMPRESS as usize] == one;
+        let is_compress_0 = row0[col::KIND0 + OP_KIND_COMPRESS as usize] == one;
         if is_compress_0 {
             for i in 0..DIGEST_WIDTH {
                 if row0[col::CURRENT0 + i] != row0[col::LEAF_DIGEST0 + i] {
@@ -489,8 +494,7 @@ where
         let zero = || fe(0);
         let one = || fe(1);
 
-        let is_compress: AB::Expr =
-            local[col::KIND0 + OP_KIND_COMPRESS as usize].into();
+        let is_compress: AB::Expr = local[col::KIND0 + OP_KIND_COMPRESS as usize].into();
         let is_idle: AB::Expr = local[col::KIND0 + OP_KIND_IDLE as usize].into();
 
         // KIND one-hot.
@@ -510,10 +514,8 @@ where
             let sib: AB::Expr = local[col::SIBLING0 + i].into();
             let left: AB::Expr = local[col::LEFT0 + i].into();
             let right: AB::Expr = local[col::RIGHT0 + i].into();
-            let expected_left =
-                (one() - bit.clone()) * cur.clone() + bit.clone() * sib.clone();
-            let expected_right =
-                bit.clone() * cur + (one() - bit.clone()) * sib;
+            let expected_left = (one() - bit.clone()) * cur.clone() + bit.clone() * sib.clone();
+            let expected_right = bit.clone() * cur + (one() - bit.clone()) * sib;
             builder.assert_zero(is_compress.clone() * (left - expected_left));
             builder.assert_zero(is_compress.clone() * (right - expected_right));
         }
@@ -532,8 +534,7 @@ where
         }
 
         // CURRENT threading on COMPRESS transitions.
-        let next_is_compress: AB::Expr =
-            next[col::KIND0 + OP_KIND_COMPRESS as usize].into();
+        let next_is_compress: AB::Expr = next[col::KIND0 + OP_KIND_COMPRESS as usize].into();
         for i in 0..DIGEST_WIDTH {
             let n_cur: AB::Expr = next[col::CURRENT0 + i].into();
             let l_dg: AB::Expr = local[col::DIGEST0 + i].into();
@@ -625,7 +626,11 @@ mod tests {
         let mut openings = Vec::with_capacity(4);
         for idx in 0..4usize {
             let sib0 = leaf_digests[idx ^ 1];
-            let sib1 = if (idx >> 1) & 1 == 0 { level1[1] } else { level1[0] };
+            let sib1 = if (idx >> 1) & 1 == 0 {
+                level1[1]
+            } else {
+                level1[0]
+            };
             openings.push((leaf_digests[idx], vec![sib0, sib1], idx));
         }
         (leaf_digests, openings, root)
@@ -638,8 +643,7 @@ mod tests {
         root: Digest,
         trace_height: usize,
     ) -> RowMajorMatrix<Goldilocks> {
-        let flat = build_trace(leaf_digest, path, index, root, trace_height)
-            .expect("trace");
+        let flat = build_trace(leaf_digest, path, index, root, trace_height).expect("trace");
         RowMajorMatrix::new(flat, col::WIDTH)
     }
 
@@ -690,8 +694,7 @@ mod tests {
         for (ld, path, idx) in &openings {
             let trace = trace_matrix(*ld, path, *idx, root, 16);
             let proof = prove(&cfg, &air, trace, &[]);
-            verify(&cfg, &air, &proof, &[])
-                .expect("valid compression path must verify");
+            verify(&cfg, &air, &proof, &[]).expect("valid compression path must verify");
         }
     }
 
@@ -706,8 +709,7 @@ mod tests {
         // trace builder would compute a different final digest — it
         // won't match root, so last-row boundary fires. Alternative:
         // build with real path, then post-tamper SIBLING column.
-        let mut flat =
-            build_trace(ld, &openings[0].1, idx, root, 16).unwrap();
+        let mut flat = build_trace(ld, &openings[0].1, idx, root, 16).unwrap();
         flat[col::SIBLING0] += gl(1);
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         assert!(air_rejects(trace), "tampered sibling must reject");
@@ -736,7 +738,10 @@ mod tests {
         bad_root[0] += gl(1);
         let flat = build_trace(ld, &path, idx, bad_root, 16).unwrap();
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
-        assert!(air_rejects(trace), "wrong ROOT must reject at last-row boundary");
+        assert!(
+            air_rejects(trace),
+            "wrong ROOT must reject at last-row boundary"
+        );
     }
 
     #[test]
@@ -745,7 +750,11 @@ mod tests {
         let (ld, path, idx) = openings[0].clone();
         let mut flat = build_trace(ld, &path, idx, root, 16).unwrap();
         // Flip INDEX_BIT on row 0 → LEFT/RIGHT selection constraint fires.
-        flat[col::INDEX_BIT] = if flat[col::INDEX_BIT] == gl(0) { gl(1) } else { gl(0) };
+        flat[col::INDEX_BIT] = if flat[col::INDEX_BIT] == gl(0) {
+            gl(1)
+        } else {
+            gl(0)
+        };
         let trace = RowMajorMatrix::new(flat, col::WIDTH);
         assert!(air_rejects(trace), "flipped INDEX_BIT must reject");
     }
@@ -775,10 +784,8 @@ mod tests {
         let leaves: Vec<Vec<Goldilocks>> = (0..4)
             .map(|i| (0..8).map(|j| gl((i * 100 + j * 13 + 1) as u64)).collect())
             .collect();
-        let leaf_digests: Vec<Digest> = leaves
-            .iter()
-            .map(|l| hash_leaf_row_ref(&perm, l))
-            .collect();
+        let leaf_digests: Vec<Digest> =
+            leaves.iter().map(|l| hash_leaf_row_ref(&perm, l)).collect();
         let level1 = vec![
             compress_pair_ref(&perm, &leaf_digests[0], &leaf_digests[1]),
             compress_pair_ref(&perm, &leaf_digests[2], &leaf_digests[3]),
@@ -805,8 +812,7 @@ mod tests {
         let cp_trace = RowMajorMatrix::new(cp_flat, col::WIDTH);
         let cp_air = CompressionPathAirV1;
         let cp_proof = prove(&cfg, &cp_air, cp_trace, &[]);
-        verify(&cfg, &cp_air, &cp_proof, &[])
-            .expect("compression path must verify");
+        verify(&cfg, &cp_air, &cp_proof, &[]).expect("compression path must verify");
 
         // Cross-binding: leaf_hash's EXPECTED_DIGEST == compression's
         // LEAF_DIGEST. Since we built both traces using the same

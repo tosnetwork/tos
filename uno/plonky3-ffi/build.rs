@@ -27,7 +27,9 @@ fn main() {
     // an offline CI where the developer toolchain lacks cbindgen but the
     // committed header is authoritative.
     if env::var_os("UNO_PLONKY3_SKIP_CBINDGEN").is_some() {
-        println!("cargo:warning=UNO_PLONKY3_SKIP_CBINDGEN set; leaving include/uno_plonky3_ffi.h as-is");
+        println!(
+            "cargo:warning=UNO_PLONKY3_SKIP_CBINDGEN set; leaving include/uno_plonky3_ffi.h as-is"
+        );
         return;
     }
 

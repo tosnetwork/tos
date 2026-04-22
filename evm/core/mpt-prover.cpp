@@ -80,12 +80,6 @@ struct KV {
     Bytes value;
 };
 
-size_t common_prefix_len(ByteView a, ByteView b, size_t start) {
-    size_t i = start;
-    while (i < a.size() && i < b.size() && a[i] == b[i]) ++i;
-    return i - start;
-}
-
 std::shared_ptr<TrieNode> build_subtree(
     const std::vector<KV*>& items,
     size_t depth) {

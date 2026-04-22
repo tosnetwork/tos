@@ -116,15 +116,14 @@ use core::borrow::Borrow;
 use p3_air::{Air, AirBuilder, BaseAir, WindowAccess};
 use p3_field::{Dup, PrimeCharacteristicRing, PrimeField64};
 use p3_goldilocks::{
-    GOLDILOCKS_POSEIDON2_HALF_FULL_ROUNDS, GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_16,
-    GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8, Goldilocks,
-    GenericPoseidon2LinearLayersGoldilocks, default_goldilocks_poseidon2_16,
-    default_goldilocks_poseidon2_8,
+    default_goldilocks_poseidon2_16, default_goldilocks_poseidon2_8,
+    GenericPoseidon2LinearLayersGoldilocks, Goldilocks, GOLDILOCKS_POSEIDON2_HALF_FULL_ROUNDS,
+    GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_16, GOLDILOCKS_POSEIDON2_PARTIAL_ROUNDS_8,
 };
 use p3_matrix::dense::RowMajorMatrix;
 use p3_poseidon2::GenericPoseidon2LinearLayers;
 use p3_poseidon2_air::{
-    FullRound, PartialRound, Poseidon2Cols, RoundConstants, SBox, num_cols as p2_num_cols,
+    num_cols as p2_num_cols, FullRound, PartialRound, Poseidon2Cols, RoundConstants, SBox,
 };
 use p3_symmetric::Permutation;
 
@@ -248,7 +247,7 @@ pub const MERKLE_DEPTH: usize = 32;
 pub const GLOBAL_COLS: usize = 1
     + MERKLE_DEPTH
     + POSEIDON2_COLS_PER_INSTANCE_16 // shared Cm / OutCm (w=16) — claim 2/6
-    + POSEIDON2_COLS_PER_INSTANCE;   // shared IvkCm / Nf (w=8) — claim 3/4
+    + POSEIDON2_COLS_PER_INSTANCE; // shared IvkCm / Nf (w=8) — claim 3/4
 const GCOL_FEE: usize = 0;
 /// Base index of the 32 one-hot Merkle row-selector columns (§claim 1).
 const GS_ROW_SEL0: usize = 1;
@@ -257,8 +256,7 @@ const GS_ROW_SEL0: usize = 1;
 const G_CM_SHARED_P2_16: usize = GS_ROW_SEL0 + MERKLE_DEPTH;
 /// Base index of the shared IvkCm/Nf width-8 Poseidon2 block
 /// (K-air-col-step2 strategy c — claim 3/4 row-loop on rows 0..7).
-const G_IVKCM_NF_SHARED_P2_8: usize =
-    G_CM_SHARED_P2_16 + POSEIDON2_COLS_PER_INSTANCE_16;
+const G_IVKCM_NF_SHARED_P2_8: usize = G_CM_SHARED_P2_16 + POSEIDON2_COLS_PER_INSTANCE_16;
 
 /// Width in bits of the bit-decomposition range check for `value_i` /
 /// `value_j` (§4.2 claims 5 & 7). Each value is committed as 64 bit
@@ -273,8 +271,7 @@ pub const VALUE_BITS: usize = 64;
 /// sibling-hash proxies for the 32-level Merkle path (§2.3), and
 /// VALUE_BITS bit columns for the explicit u64 range-check on `value_i`
 /// (§4.2 claim 5).
-pub const SPEND_PROXY_COLS: usize =
-    9 + MERKLE_DEPTH + MERKLE_DEPTH + VALUE_BITS;
+pub const SPEND_PROXY_COLS: usize = 9 + MERKLE_DEPTH + MERKLE_DEPTH + VALUE_BITS;
 
 /// Per-output proxy columns: cm_claim, d, pk_d, ivk_commitment, value,
 /// rcm (6 leading fields), plus VALUE_BITS bit columns for the explicit
@@ -345,9 +342,7 @@ const O_VALUE_BIT0: usize = 6;
 /// are globally shared (row-looped on rows 0..7) and live in `GLOBAL_COLS`.
 #[inline]
 pub const fn per_spend_cols() -> usize {
-    SPEND_PROXY_COLS
-        + SPEND_VAR_COLS
-        + POSEIDON2_COLS_PER_INSTANCE // shared Merkle (row-loop)
+    SPEND_PROXY_COLS + SPEND_VAR_COLS + POSEIDON2_COLS_PER_INSTANCE // shared Merkle (row-loop)
 }
 
 /// Per-output block width after K-air-col-step2: proxies only; the
@@ -461,8 +456,7 @@ fn spend_p2_group<T>(row: &[T], i: usize, s: SpendP2) -> &P2Cols<T> {
 /// rows 0..3 and claim 6 (output Cm) on rows 4..7.
 #[inline]
 fn shared_cm_p2_group<T>(row: &[T]) -> &P2Cols16<T> {
-    let group: &[T] =
-        &row[G_CM_SHARED_P2_16..G_CM_SHARED_P2_16 + POSEIDON2_COLS_PER_INSTANCE_16];
+    let group: &[T] = &row[G_CM_SHARED_P2_16..G_CM_SHARED_P2_16 + POSEIDON2_COLS_PER_INSTANCE_16];
     <[T] as Borrow<P2Cols16<T>>>::borrow(group)
 }
 
@@ -470,8 +464,8 @@ fn shared_cm_p2_group<T>(row: &[T]) -> &P2Cols16<T> {
 /// 0..3 and claim 4 (Nf) on rows 4..7.
 #[inline]
 fn shared_ivkcm_nf_p2_group<T>(row: &[T]) -> &P2Cols<T> {
-    let group: &[T] = &row[G_IVKCM_NF_SHARED_P2_8
-        ..G_IVKCM_NF_SHARED_P2_8 + POSEIDON2_COLS_PER_INSTANCE];
+    let group: &[T] =
+        &row[G_IVKCM_NF_SHARED_P2_8..G_IVKCM_NF_SHARED_P2_8 + POSEIDON2_COLS_PER_INSTANCE];
     <[T] as Borrow<P2Cols<T>>>::borrow(group)
 }
 
@@ -518,8 +512,14 @@ const fn pi_filter_tag(n_spends: usize, j: usize) -> usize {
 // Silence unused warnings for field-tag indices that the proxy-shape AIR
 // does not constrain today (reserved for future slices).
 #[allow(dead_code)]
-const _UNUSED_PI: (usize, usize, usize, fn(usize) -> usize, fn(usize, usize) -> usize, fn(usize, usize) -> usize) =
-    (PI_SCHEME, PI_CHAIN, PI_EXPIRY, pi_rk, pi_epk, pi_filter_tag);
+const _UNUSED_PI: (
+    usize,
+    usize,
+    usize,
+    fn(usize) -> usize,
+    fn(usize, usize) -> usize,
+    fn(usize, usize) -> usize,
+) = (PI_SCHEME, PI_CHAIN, PI_EXPIRY, pi_rk, pi_epk, pi_filter_tag);
 
 // ---------------------------------------------------------------------------
 // AIR definition
@@ -569,7 +569,9 @@ impl MvpTransferAir {
 }
 
 #[inline]
-fn beginning_full_round_constant_8<F: PrimeCharacteristicRing>(round: usize) -> [F; POSEIDON2_WIDTH] {
+fn beginning_full_round_constant_8<F: PrimeCharacteristicRing>(
+    round: usize,
+) -> [F; POSEIDON2_WIDTH] {
     let src = &p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_8_EXTERNAL_INITIAL[round];
     core::array::from_fn(|i| F::from_u64(src[i].as_canonical_u64()))
 }
@@ -714,8 +716,7 @@ where
         // committing non-boolean values that sum to 1).
         for k in 0..MERKLE_DEPTH {
             let s: AB::Expr = local_slice[GS_ROW_SEL0 + k].into();
-            let one_minus_s: AB::Expr =
-                AB::Expr::from(AB::F::from_u64(1)) - s.clone();
+            let one_minus_s: AB::Expr = AB::Expr::from(AB::F::from_u64(1)) - s.clone();
             builder.assert_zero(s * one_minus_s);
         }
 
@@ -737,27 +738,23 @@ where
                 let leaf = spend_col(local_slice, i, S_LEAF);
 
                 // Claim 1 seed: `S_CURRENT` on row 0 starts at `leaf`.
-                let s_current_row0 =
-                    local_slice[spend_var_offset(i) + S_CURRENT];
+                let s_current_row0 = local_slice[spend_var_offset(i) + S_CURRENT];
                 first.assert_eq(s_current_row0.into(), leaf.into());
 
                 // Row-0 bit booleanity for 32 path-bit proxies (they are
                 // constant across rows by the transition "proxies are
                 // constant" check, so booleanity on row 0 propagates).
                 for k in 0..MERKLE_DEPTH {
-                    let b: AB::Var =
-                        spend_col(local_slice, i, S_PATH_BIT0 + k);
+                    let b: AB::Var = spend_col(local_slice, i, S_PATH_BIT0 + k);
                     let b_expr: AB::Expr = b.into();
-                    let one_minus_b: AB::Expr =
-                        AB::Expr::from(AB::F::from_u64(1)) - b_expr.clone();
+                    let one_minus_b: AB::Expr = AB::Expr::from(AB::F::from_u64(1)) - b_expr.clone();
                     first.assert_zero(b_expr * one_minus_b);
                 }
 
                 // Pos bit-decomposition: `pos == Σ_k b_k · 2^k`.
                 let mut pos_recon: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
                 for k in 0..MERKLE_DEPTH {
-                    let b: AB::Var =
-                        spend_col(local_slice, i, S_PATH_BIT0 + k);
+                    let b: AB::Var = spend_col(local_slice, i, S_PATH_BIT0 + k);
                     let weight = AB::F::from_u64(1u64 << k);
                     pos_recon = pos_recon + AB::Expr::from(weight) * b.into();
                 }
@@ -766,11 +763,9 @@ where
                 // Claim 5: explicit u64 range-check on `value_i`.
                 let mut value_recon: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
                 for k in 0..VALUE_BITS {
-                    let b: AB::Var =
-                        spend_col(local_slice, i, S_VALUE_BIT0 + k);
+                    let b: AB::Var = spend_col(local_slice, i, S_VALUE_BIT0 + k);
                     let b_expr: AB::Expr = b.into();
-                    let one_minus_b =
-                        AB::Expr::from(AB::F::from_u64(1)) - b_expr.clone();
+                    let one_minus_b = AB::Expr::from(AB::F::from_u64(1)) - b_expr.clone();
                     first.assert_zero(b_expr.clone() * one_minus_b);
                     let weight = if k == 63 {
                         AB::F::from_u64(1u64 << 63)
@@ -797,15 +792,9 @@ where
                 // Claim 7: explicit u64 range-check on `value_j`.
                 let mut value_recon: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
                 for k in 0..VALUE_BITS {
-                    let b: AB::Var = output_col(
-                        local_slice,
-                        self.n_spends,
-                        j,
-                        O_VALUE_BIT0 + k,
-                    );
+                    let b: AB::Var = output_col(local_slice, self.n_spends, j, O_VALUE_BIT0 + k);
                     let b_expr: AB::Expr = b.into();
-                    let one_minus_b =
-                        AB::Expr::from(AB::F::from_u64(1)) - b_expr.clone();
+                    let one_minus_b = AB::Expr::from(AB::F::from_u64(1)) - b_expr.clone();
                     first.assert_zero(b_expr.clone() * one_minus_b);
                     let weight = if k == 63 {
                         AB::F::from_u64(1u64 << 63)
@@ -823,9 +812,7 @@ where
                 sum = sum + spend_col::<AB::Var>(local_slice, i, S_VALUE).into();
             }
             for j in 0..self.n_outputs {
-                sum = sum
-                    - output_col::<AB::Var>(local_slice, self.n_spends, j, O_VALUE)
-                        .into();
+                sum = sum - output_col::<AB::Var>(local_slice, self.n_spends, j, O_VALUE).into();
             }
             sum = sum - local_slice[GCOL_FEE].into();
             first.assert_zero(sum);
@@ -862,13 +849,10 @@ where
         // equality `sel_r · (a - b) == 0` is degree 2.
         {
             let shared_cm = shared_cm_p2_group::<AB::Var>(local_slice);
-            let shared_cm_out =
-                &shared_cm.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
-            let shared_ivkcm_nf =
-                shared_ivkcm_nf_p2_group::<AB::Var>(local_slice);
-            let shared_ivkcm_nf_out = &shared_ivkcm_nf.ending_full_rounds
-                [POSEIDON2_HALF_FULL_ROUNDS - 1]
-                .post;
+            let shared_cm_out = &shared_cm.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
+            let shared_ivkcm_nf = shared_ivkcm_nf_p2_group::<AB::Var>(local_slice);
+            let shared_ivkcm_nf_out =
+                &shared_ivkcm_nf.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
 
             // --- Wide Cm block: spend row-0..(n_spends-1) bindings ------
             for i in 0..self.n_spends {
@@ -876,11 +860,8 @@ where
                 let leaf = spend_col::<AB::Var>(local_slice, i, S_LEAF);
                 let d = spend_col::<AB::Var>(local_slice, i, S_D);
                 let pk_d = spend_col::<AB::Var>(local_slice, i, S_PK_D);
-                let ivk_commitment_claim = spend_col::<AB::Var>(
-                    local_slice,
-                    i,
-                    S_IVK_COMMITMENT_CLAIM,
-                );
+                let ivk_commitment_claim =
+                    spend_col::<AB::Var>(local_slice, i, S_IVK_COMMITMENT_CLAIM);
                 let value = spend_col::<AB::Var>(local_slice, i, S_VALUE);
                 let rcm = spend_col::<AB::Var>(local_slice, i, S_RCM);
 
@@ -891,95 +872,56 @@ where
                             - AB::Expr::from(AB::F::from_u64(TAG_CM))),
                 );
                 // inputs[1..6] = d, pk_d, ivk_commitment_claim, value, rcm
+                builder.assert_zero(sel.clone() * (AB::Expr::from(shared_cm.inputs[1]) - d.into()));
+                builder
+                    .assert_zero(sel.clone() * (AB::Expr::from(shared_cm.inputs[2]) - pk_d.into()));
                 builder.assert_zero(
                     sel.clone()
-                        * (AB::Expr::from(shared_cm.inputs[1]) - d.into()),
+                        * (AB::Expr::from(shared_cm.inputs[3]) - ivk_commitment_claim.into()),
                 );
                 builder.assert_zero(
-                    sel.clone()
-                        * (AB::Expr::from(shared_cm.inputs[2]) - pk_d.into()),
+                    sel.clone() * (AB::Expr::from(shared_cm.inputs[4]) - value.into()),
                 );
-                builder.assert_zero(
-                    sel.clone()
-                        * (AB::Expr::from(shared_cm.inputs[3])
-                            - ivk_commitment_claim.into()),
-                );
-                builder.assert_zero(
-                    sel.clone()
-                        * (AB::Expr::from(shared_cm.inputs[4]) - value.into()),
-                );
-                builder.assert_zero(
-                    sel.clone()
-                        * (AB::Expr::from(shared_cm.inputs[5]) - rcm.into()),
-                );
+                builder
+                    .assert_zero(sel.clone() * (AB::Expr::from(shared_cm.inputs[5]) - rcm.into()));
                 for k in 6..POSEIDON2_WIDTH_16 {
-                    builder.assert_zero(
-                        sel.clone() * AB::Expr::from(shared_cm.inputs[k]),
-                    );
+                    builder.assert_zero(sel.clone() * AB::Expr::from(shared_cm.inputs[k]));
                 }
                 // Claim 2 output binding: `cm == leaf_i`.
-                builder.assert_zero(
-                    sel * (AB::Expr::from(shared_cm_out[0]) - leaf.into()),
-                );
+                builder.assert_zero(sel * (AB::Expr::from(shared_cm_out[0]) - leaf.into()));
             }
 
             // --- Wide Cm block: output rows 4..(4+n_outputs-1) bindings -
             for j in 0..self.n_outputs {
                 let sel: AB::Expr = local_slice[GS_ROW_SEL0 + 4 + j].into();
-                let cm_claim = output_col::<AB::Var>(
-                    local_slice,
-                    self.n_spends,
-                    j,
-                    O_CM_CLAIM,
-                );
+                let cm_claim = output_col::<AB::Var>(local_slice, self.n_spends, j, O_CM_CLAIM);
                 let d = output_col::<AB::Var>(local_slice, self.n_spends, j, O_D);
-                let pk_d =
-                    output_col::<AB::Var>(local_slice, self.n_spends, j, O_PK_D);
-                let ivk_cm = output_col::<AB::Var>(
-                    local_slice,
-                    self.n_spends,
-                    j,
-                    O_IVK_COMMITMENT,
-                );
-                let value_out =
-                    output_col::<AB::Var>(local_slice, self.n_spends, j, O_VALUE);
-                let rcm =
-                    output_col::<AB::Var>(local_slice, self.n_spends, j, O_RCM);
+                let pk_d = output_col::<AB::Var>(local_slice, self.n_spends, j, O_PK_D);
+                let ivk_cm = output_col::<AB::Var>(local_slice, self.n_spends, j, O_IVK_COMMITMENT);
+                let value_out = output_col::<AB::Var>(local_slice, self.n_spends, j, O_VALUE);
+                let rcm = output_col::<AB::Var>(local_slice, self.n_spends, j, O_RCM);
 
                 builder.assert_zero(
                     sel.clone()
                         * (AB::Expr::from(shared_cm.inputs[0])
                             - AB::Expr::from(AB::F::from_u64(TAG_CM))),
                 );
+                builder.assert_zero(sel.clone() * (AB::Expr::from(shared_cm.inputs[1]) - d.into()));
+                builder
+                    .assert_zero(sel.clone() * (AB::Expr::from(shared_cm.inputs[2]) - pk_d.into()));
                 builder.assert_zero(
-                    sel.clone()
-                        * (AB::Expr::from(shared_cm.inputs[1]) - d.into()),
+                    sel.clone() * (AB::Expr::from(shared_cm.inputs[3]) - ivk_cm.into()),
                 );
                 builder.assert_zero(
-                    sel.clone()
-                        * (AB::Expr::from(shared_cm.inputs[2]) - pk_d.into()),
+                    sel.clone() * (AB::Expr::from(shared_cm.inputs[4]) - value_out.into()),
                 );
-                builder.assert_zero(
-                    sel.clone()
-                        * (AB::Expr::from(shared_cm.inputs[3]) - ivk_cm.into()),
-                );
-                builder.assert_zero(
-                    sel.clone()
-                        * (AB::Expr::from(shared_cm.inputs[4]) - value_out.into()),
-                );
-                builder.assert_zero(
-                    sel.clone()
-                        * (AB::Expr::from(shared_cm.inputs[5]) - rcm.into()),
-                );
+                builder
+                    .assert_zero(sel.clone() * (AB::Expr::from(shared_cm.inputs[5]) - rcm.into()));
                 for k in 6..POSEIDON2_WIDTH_16 {
-                    builder.assert_zero(
-                        sel.clone() * AB::Expr::from(shared_cm.inputs[k]),
-                    );
+                    builder.assert_zero(sel.clone() * AB::Expr::from(shared_cm.inputs[k]));
                 }
                 // Claim 6 output binding: `cm_claim == Poseidon2(...)`.
-                builder.assert_zero(
-                    sel * (AB::Expr::from(shared_cm_out[0]) - cm_claim.into()),
-                );
+                builder.assert_zero(sel * (AB::Expr::from(shared_cm_out[0]) - cm_claim.into()));
             }
 
             // --- Narrow IvkCm block: rows 0..(n_spends-1) --------------
@@ -987,11 +929,8 @@ where
                 let sel: AB::Expr = local_slice[GS_ROW_SEL0 + i].into();
                 let ivk = spend_col::<AB::Var>(local_slice, i, S_IVK);
                 let d = spend_col::<AB::Var>(local_slice, i, S_D);
-                let ivk_commitment_claim = spend_col::<AB::Var>(
-                    local_slice,
-                    i,
-                    S_IVK_COMMITMENT_CLAIM,
-                );
+                let ivk_commitment_claim =
+                    spend_col::<AB::Var>(local_slice, i, S_IVK_COMMITMENT_CLAIM);
 
                 builder.assert_zero(
                     sel.clone()
@@ -999,23 +938,17 @@ where
                             - AB::Expr::from(AB::F::from_u64(TAG_IVK_CM))),
                 );
                 builder.assert_zero(
-                    sel.clone()
-                        * (AB::Expr::from(shared_ivkcm_nf.inputs[1]) - ivk.into()),
+                    sel.clone() * (AB::Expr::from(shared_ivkcm_nf.inputs[1]) - ivk.into()),
                 );
                 builder.assert_zero(
-                    sel.clone()
-                        * (AB::Expr::from(shared_ivkcm_nf.inputs[2]) - d.into()),
+                    sel.clone() * (AB::Expr::from(shared_ivkcm_nf.inputs[2]) - d.into()),
                 );
                 for k in 3..POSEIDON2_WIDTH {
-                    builder.assert_zero(
-                        sel.clone() * AB::Expr::from(shared_ivkcm_nf.inputs[k]),
-                    );
+                    builder.assert_zero(sel.clone() * AB::Expr::from(shared_ivkcm_nf.inputs[k]));
                 }
                 // Claim 3 output binding: `ivk_commitment_claim == ...`.
                 builder.assert_zero(
-                    sel
-                        * (AB::Expr::from(shared_ivkcm_nf_out[0])
-                            - ivk_commitment_claim.into()),
+                    sel * (AB::Expr::from(shared_ivkcm_nf_out[0]) - ivk_commitment_claim.into()),
                 );
             }
 
@@ -1032,28 +965,22 @@ where
                             - AB::Expr::from(AB::F::from_u64(TAG_NF))),
                 );
                 builder.assert_zero(
-                    sel.clone()
-                        * (AB::Expr::from(shared_ivkcm_nf.inputs[1]) - nk.into()),
+                    sel.clone() * (AB::Expr::from(shared_ivkcm_nf.inputs[1]) - nk.into()),
                 );
                 builder.assert_zero(
-                    sel.clone()
-                        * (AB::Expr::from(shared_ivkcm_nf.inputs[2]) - leaf.into()),
+                    sel.clone() * (AB::Expr::from(shared_ivkcm_nf.inputs[2]) - leaf.into()),
                 );
                 builder.assert_zero(
-                    sel.clone()
-                        * (AB::Expr::from(shared_ivkcm_nf.inputs[3]) - pos.into()),
+                    sel.clone() * (AB::Expr::from(shared_ivkcm_nf.inputs[3]) - pos.into()),
                 );
                 for k in 4..POSEIDON2_WIDTH {
-                    builder.assert_zero(
-                        sel.clone() * AB::Expr::from(shared_ivkcm_nf.inputs[k]),
-                    );
+                    builder.assert_zero(sel.clone() * AB::Expr::from(shared_ivkcm_nf.inputs[k]));
                 }
                 // Claim 4: bind all 4 limbs of `nf_i` to the PI.
                 for limb in 0..4 {
                     builder.assert_zero(
                         sel.clone()
-                            * (AB::Expr::from(shared_ivkcm_nf_out[limb])
-                                - pi_nfs[i][limb].into()),
+                            * (AB::Expr::from(shared_ivkcm_nf_out[limb]) - pi_nfs[i][limb].into()),
                     );
                 }
             }
@@ -1075,8 +1002,7 @@ where
             // current row).
             let mut is_merkle: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
             for k in 0..MERKLE_DEPTH {
-                is_merkle =
-                    is_merkle + AB::Expr::from(local_slice[GS_ROW_SEL0 + k]);
+                is_merkle = is_merkle + AB::Expr::from(local_slice[GS_ROW_SEL0 + k]);
             }
 
             for i in 0..self.n_spends {
@@ -1085,52 +1011,37 @@ where
                 let mut sib_sel: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
                 for k in 0..MERKLE_DEPTH {
                     let sel: AB::Expr = local_slice[GS_ROW_SEL0 + k].into();
-                    let bit_k: AB::Var =
-                        spend_col(local_slice, i, S_PATH_BIT0 + k);
-                    let sib_k: AB::Var =
-                        spend_col(local_slice, i, S_SIBLING0 + k);
+                    let bit_k: AB::Var = spend_col(local_slice, i, S_PATH_BIT0 + k);
+                    let sib_k: AB::Var = spend_col(local_slice, i, S_SIBLING0 + k);
                     b_sel = b_sel + sel.clone() * bit_k.into();
                     sib_sel = sib_sel + sel * sib_k.into();
                 }
-                let one_minus_b_sel: AB::Expr =
-                    AB::Expr::from(AB::F::from_u64(1)) - b_sel.clone();
-                let cur: AB::Expr =
-                    local_slice[spend_var_offset(i) + S_CURRENT].into();
+                let one_minus_b_sel: AB::Expr = AB::Expr::from(AB::F::from_u64(1)) - b_sel.clone();
+                let cur: AB::Expr = local_slice[spend_var_offset(i) + S_CURRENT].into();
 
                 let left_sel: AB::Expr =
                     one_minus_b_sel.clone() * cur.clone() + b_sel.clone() * sib_sel.clone();
-                let right_sel: AB::Expr =
-                    b_sel * cur.clone() + one_minus_b_sel * sib_sel;
+                let right_sel: AB::Expr = b_sel * cur.clone() + one_minus_b_sel * sib_sel;
 
-                let merkle =
-                    spend_p2_group::<AB::Var>(local_slice, i, SpendP2::Merkle);
+                let merkle = spend_p2_group::<AB::Var>(local_slice, i, SpendP2::Merkle);
                 // Active-row input bindings (gated by is_merkle).
+                builder
+                    .assert_zero(is_merkle.clone() * (AB::Expr::from(merkle.inputs[0]) - left_sel));
                 builder.assert_zero(
-                    is_merkle.clone()
-                        * (AB::Expr::from(merkle.inputs[0]) - left_sel),
-                );
-                builder.assert_zero(
-                    is_merkle.clone()
-                        * (AB::Expr::from(merkle.inputs[1]) - right_sel),
+                    is_merkle.clone() * (AB::Expr::from(merkle.inputs[1]) - right_sel),
                 );
                 for pad in 2..POSEIDON2_WIDTH {
-                    builder.assert_zero(
-                        is_merkle.clone() * AB::Expr::from(merkle.inputs[pad]),
-                    );
+                    builder.assert_zero(is_merkle.clone() * AB::Expr::from(merkle.inputs[pad]));
                 }
 
                 // Transition: advance (active) or latch (inactive).
-                let next_cur: AB::Expr =
-                    next_slice[spend_var_offset(i) + S_CURRENT].into();
+                let next_cur: AB::Expr = next_slice[spend_var_offset(i) + S_CURRENT].into();
                 let merkle_out_0: AB::Expr = AB::Expr::from(
-                    merkle.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1]
-                        .post[0],
+                    merkle.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post[0],
                 );
                 let mut t = builder.when_transition();
                 // Active: next.S_CURRENT == P2.output[0].
-                t.assert_zero(
-                    is_merkle.clone() * (next_cur.clone() - merkle_out_0),
-                );
+                t.assert_zero(is_merkle.clone() * (next_cur.clone() - merkle_out_0));
                 // Inactive: next.S_CURRENT == S_CURRENT.
                 let one_minus_is_merkle: AB::Expr =
                     AB::Expr::from(AB::F::from_u64(1)) - is_merkle.clone();
@@ -1142,10 +1053,7 @@ where
             // Merkle root, which must equal the tx-level anchor PI.
             let mut last = builder.when_last_row();
             for i in 0..self.n_spends {
-                last.assert_eq(
-                    local_slice[spend_var_offset(i) + S_CURRENT],
-                    pi_anchor0,
-                );
+                last.assert_eq(local_slice[spend_var_offset(i) + S_CURRENT], pi_anchor0);
             }
         }
 
@@ -1257,12 +1165,7 @@ where
 #[inline]
 fn eval_full_round<AB: AirBuilder, const WIDTH: usize>(
     state: &mut [AB::Expr; WIDTH],
-    full_round: &FullRound<
-        AB::Var,
-        WIDTH,
-        POSEIDON2_SBOX_DEGREE,
-        POSEIDON2_SBOX_REGISTERS,
-    >,
+    full_round: &FullRound<AB::Var, WIDTH, POSEIDON2_SBOX_DEGREE, POSEIDON2_SBOX_REGISTERS>,
     round_constants: &[AB::F; WIDTH],
     builder: &mut AB,
 ) where
@@ -1284,12 +1187,7 @@ fn eval_full_round<AB: AirBuilder, const WIDTH: usize>(
 #[inline]
 fn eval_partial_round<AB: AirBuilder, const WIDTH: usize>(
     state: &mut [AB::Expr; WIDTH],
-    partial_round: &PartialRound<
-        AB::Var,
-        WIDTH,
-        POSEIDON2_SBOX_DEGREE,
-        POSEIDON2_SBOX_REGISTERS,
-    >,
+    partial_round: &PartialRound<AB::Var, WIDTH, POSEIDON2_SBOX_DEGREE, POSEIDON2_SBOX_REGISTERS>,
     round_constant: &AB::F,
     builder: &mut AB,
 ) where
@@ -1474,13 +1372,9 @@ impl MvpWitness {
                 .wrapping_add((k as u64).wrapping_mul(0x94D0_49BB_1331_11EB));
             shared_path[k] = mix & ((1u64 << 62) - 1);
         }
-        let shared_anchor = poseidon2_merkle_path_root(
-            &perm,
-            shared_leaf,
-            shared_pos,
-            &shared_path,
-        )
-        .as_canonical_u64();
+        let shared_anchor =
+            poseidon2_merkle_path_root(&perm, shared_leaf, shared_pos, &shared_path)
+                .as_canonical_u64();
 
         // Build spends; all share the path so the anchor is identical per
         // spend. Only `nk` differs for distinct nullifiers.
@@ -1554,7 +1448,8 @@ impl MvpWitness {
     /// Byte length: `18 + (64 + 8·MERKLE_DEPTH)·n_s + 40·n_o`.
     pub fn encode(&self) -> Vec<u8> {
         let per_spend = 64 + 8 * MERKLE_DEPTH;
-        let mut out = Vec::with_capacity(18 + per_spend * self.spends.len() + 40 * self.outputs.len());
+        let mut out =
+            Vec::with_capacity(18 + per_spend * self.spends.len() + 40 * self.outputs.len());
         out.push(self.spends.len() as u8);
         out.push(self.outputs.len() as u8);
         out.extend_from_slice(&self.fee.to_le_bytes());
@@ -1656,8 +1551,7 @@ impl MvpWitness {
             off += 8;
             let pk_d = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
             off += 8;
-            let ivk_commitment =
-                u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+            let ivk_commitment = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
             off += 8;
             let value = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
             off += 8;
@@ -1712,7 +1606,9 @@ impl MvpWitness {
         out.push(Goldilocks::from_u64(self.fee));
 
         // anchor: limb 0 = anchor_proxy; limbs 1..3 = 0.
-        out.push(Goldilocks::from_u64(reduce_to_goldilocks(self.anchor_proxy)));
+        out.push(Goldilocks::from_u64(reduce_to_goldilocks(
+            self.anchor_proxy,
+        )));
         for _ in 1..4 {
             out.push(Goldilocks::ZERO);
         }
@@ -1734,8 +1630,7 @@ impl MvpWitness {
         }
 
         for o in &self.outputs {
-            let cm =
-                poseidon2_cm_fe(&perm16, o.d, o.pk_d, o.ivk_commitment, o.value, o.rcm);
+            let cm = poseidon2_cm_fe(&perm16, o.d, o.pk_d, o.ivk_commitment, o.value, o.rcm);
             out.push(cm);
             for _ in 1..4 {
                 out.push(Goldilocks::ZERO);
@@ -1847,7 +1742,11 @@ impl MvpWitness {
             for k in 0..MERKLE_DEPTH {
                 let bit = (s.pos >> k) & 1;
                 let sib = reduce_to_goldilocks(s.merkle_path[k]);
-                let (left, right) = if bit == 0 { (current, sib) } else { (sib, current) };
+                let (left, right) = if bit == 0 {
+                    (current, sib)
+                } else {
+                    (sib, current)
+                };
                 let mut input = [Goldilocks::ZERO; POSEIDON2_WIDTH];
                 input[0] = Goldilocks::from_u64(left);
                 input[1] = Goldilocks::from_u64(right);
@@ -1953,8 +1852,7 @@ impl MvpWitness {
             .outputs
             .iter()
             .map(|o| {
-                let cm_fe =
-                    poseidon2_cm_fe(&perm16, o.d, o.pk_d, o.ivk_commitment, o.value, o.rcm);
+                let cm_fe = poseidon2_cm_fe(&perm16, o.d, o.pk_d, o.ivk_commitment, o.value, o.rcm);
                 let mut v = Vec::with_capacity(OUTPUT_PROXY_COLS);
                 v.push(cm_fe);
                 v.push(Goldilocks::from_u64(reduce_to_goldilocks(o.d)));
@@ -2096,7 +1994,11 @@ fn poseidon2_merkle_path_root(
     for k in 0..MERKLE_DEPTH {
         let bit = (pos >> k) & 1;
         let sib = reduce_to_goldilocks(path[k]);
-        let (left, right) = if bit == 0 { (current, sib) } else { (sib, current) };
+        let (left, right) = if bit == 0 {
+            (current, sib)
+        } else {
+            (sib, current)
+        };
         current = poseidon2_merkle_step(perm, left, right).as_canonical_u64();
     }
     Goldilocks::from_u64(current)
@@ -2204,8 +2106,7 @@ pub fn witness_claim1_anchor_consistent(w: &MvpWitness) -> bool {
     let want = reduce_to_goldilocks(w.anchor_proxy);
     for s in &w.spends {
         let derived =
-            poseidon2_merkle_path_root(&perm, s.leaf, s.pos, &s.merkle_path)
-                .as_canonical_u64();
+            poseidon2_merkle_path_root(&perm, s.leaf, s.pos, &s.merkle_path).as_canonical_u64();
         if derived != want {
             return false;
         }
@@ -2234,7 +2135,10 @@ mod tests {
         for n_s in MIN_SPENDS..=MAX_SPENDS {
             for n_o in MIN_OUTPUTS..=MAX_OUTPUTS {
                 let len = air_public_inputs_wire_len(n_s, n_o);
-                assert_eq!(derive_shape_from_public_inputs_len(len).unwrap(), (n_s, n_o));
+                assert_eq!(
+                    derive_shape_from_public_inputs_len(len).unwrap(),
+                    (n_s, n_o)
+                );
             }
         }
     }
@@ -2253,7 +2157,10 @@ mod tests {
         let w22 = air_width(2, 2);
         let w44 = air_width(4, 4);
         assert!(w11 < w12 && w12 < w22 && w22 < w44);
-        assert_eq!(w44, GLOBAL_COLS + 4 * per_spend_cols() + 4 * per_output_cols());
+        assert_eq!(
+            w44,
+            GLOBAL_COLS + 4 * per_spend_cols() + 4 * per_output_cols()
+        );
     }
 
     #[test]

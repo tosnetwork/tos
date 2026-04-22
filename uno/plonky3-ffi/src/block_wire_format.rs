@@ -122,11 +122,7 @@ impl UnoBlockExtra {
     /// # Panics
     /// - if `n_transfers > BLOCK_TX_CAP` (caller should clamp).
     /// - if `proof.bytes.len() > UNO_BLOCK_EXTRA_MAX_PROOF_BYTES`.
-    pub fn v1(
-        n_transfers: u16,
-        tx_pi_merkle_root: [u8; 32],
-        proof: AggregatedProof,
-    ) -> Self {
+    pub fn v1(n_transfers: u16, tx_pi_merkle_root: [u8; 32], proof: AggregatedProof) -> Self {
         assert!(
             n_transfers as usize <= BLOCK_TX_CAP,
             "UnoBlockExtra::v1: n_transfers {n_transfers} > BLOCK_TX_CAP {BLOCK_TX_CAP}"
@@ -262,7 +258,9 @@ mod tests {
         let extra = UnoBlockExtra::v1(
             3,
             [0xaa; 32],
-            AggregatedProof { bytes: vec![0xde, 0xad, 0xbe, 0xef] },
+            AggregatedProof {
+                bytes: vec![0xde, 0xad, 0xbe, 0xef],
+            },
         );
         let encoded = encode(&extra);
         assert_eq!(encoded[0], UNO_AGGREGATOR_SCHEME_ID_V1);
@@ -289,15 +287,22 @@ mod tests {
     fn decode_rejects_short_header() {
         let short = vec![0u8; UNO_BLOCK_EXTRA_HEADER_BYTES - 1];
         let err = decode(&short).unwrap_err();
-        assert_eq!(err, DecodeError::ShortHeader {
-            got: UNO_BLOCK_EXTRA_HEADER_BYTES - 1,
-        });
+        assert_eq!(
+            err,
+            DecodeError::ShortHeader {
+                got: UNO_BLOCK_EXTRA_HEADER_BYTES - 1,
+            }
+        );
     }
 
     #[test]
     fn decode_rejects_unknown_scheme_id() {
         let mut bytes = encode(&UnoBlockExtra::v1(
-            1, [0; 32], AggregatedProof { bytes: vec![1, 2, 3] },
+            1,
+            [0; 32],
+            AggregatedProof {
+                bytes: vec![1, 2, 3],
+            },
         ));
         bytes[0] = 0x99; // unknown scheme
         let err = decode(&bytes).unwrap_err();
@@ -307,44 +312,65 @@ mod tests {
     #[test]
     fn decode_rejects_unknown_version() {
         let mut bytes = encode(&UnoBlockExtra::v1(
-            1, [0; 32], AggregatedProof { bytes: vec![1, 2, 3] },
+            1,
+            [0; 32],
+            AggregatedProof {
+                bytes: vec![1, 2, 3],
+            },
         ));
         bytes[1] = 0x02; // unknown version for v1 scheme
         let err = decode(&bytes).unwrap_err();
-        assert_eq!(err, DecodeError::UnknownVersion {
-            scheme_id: UNO_AGGREGATOR_SCHEME_ID_V1,
-            got: 0x02,
-        });
+        assert_eq!(
+            err,
+            DecodeError::UnknownVersion {
+                scheme_id: UNO_AGGREGATOR_SCHEME_ID_V1,
+                got: 0x02,
+            }
+        );
     }
 
     #[test]
     fn decode_rejects_too_many_transfers() {
         // Forge n_transfers = BLOCK_TX_CAP + 1.
         let mut bytes = encode(&UnoBlockExtra::v1(
-            1, [0; 32], AggregatedProof { bytes: vec![1, 2, 3] },
+            1,
+            [0; 32],
+            AggregatedProof {
+                bytes: vec![1, 2, 3],
+            },
         ));
         let bad = (BLOCK_TX_CAP as u16) + 1;
         bytes[2..4].copy_from_slice(&bad.to_le_bytes());
         let err = decode(&bytes).unwrap_err();
-        assert_eq!(err, DecodeError::TooManyTransfers {
-            got: bad,
-            cap: BLOCK_TX_CAP as u16,
-        });
+        assert_eq!(
+            err,
+            DecodeError::TooManyTransfers {
+                got: bad,
+                cap: BLOCK_TX_CAP as u16,
+            }
+        );
     }
 
     #[test]
     fn decode_rejects_length_mismatch() {
         let extra = UnoBlockExtra::v1(
-            1, [0; 32], AggregatedProof { bytes: vec![1, 2, 3, 4, 5] },
+            1,
+            [0; 32],
+            AggregatedProof {
+                bytes: vec![1, 2, 3, 4, 5],
+            },
         );
         let mut encoded = encode(&extra);
         // Corrupt declared length: claim 10 instead of 5.
         encoded[36..40].copy_from_slice(&10u32.to_le_bytes());
         let err = decode(&encoded).unwrap_err();
-        assert_eq!(err, DecodeError::ProofLengthMismatch {
-            declared: 10,
-            remaining: 5,
-        });
+        assert_eq!(
+            err,
+            DecodeError::ProofLengthMismatch {
+                declared: 10,
+                remaining: 5,
+            }
+        );
     }
 
     #[test]
@@ -357,10 +383,13 @@ mod tests {
         let bad_len = UNO_BLOCK_EXTRA_MAX_PROOF_BYTES + 1;
         bytes[36..40].copy_from_slice(&bad_len.to_le_bytes());
         let err = decode(&bytes).unwrap_err();
-        assert_eq!(err, DecodeError::ProofTooLarge {
-            got: bad_len,
-            cap: UNO_BLOCK_EXTRA_MAX_PROOF_BYTES,
-        });
+        assert_eq!(
+            err,
+            DecodeError::ProofTooLarge {
+                got: bad_len,
+                cap: UNO_BLOCK_EXTRA_MAX_PROOF_BYTES,
+            }
+        );
     }
 
     /// Wire-format stability guard: if any of these offsets changes,
@@ -383,10 +412,7 @@ mod tests {
         };
         let extra = UnoBlockExtra::v1(4, [0x7e; 32], proof);
         let encoded = encode(&extra);
-        assert_eq!(
-            encoded.len(),
-            UNO_BLOCK_EXTRA_HEADER_BYTES + 512 * 1024
-        );
+        assert_eq!(encoded.len(), UNO_BLOCK_EXTRA_HEADER_BYTES + 512 * 1024);
         let decoded = decode(&encoded).expect("512 KB round-trip");
         assert_eq!(decoded, extra);
     }

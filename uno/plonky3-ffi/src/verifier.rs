@@ -39,11 +39,11 @@
 //!   we add one layer (byte-level decode + shape dispatch) that is
 //!   equally pure.
 
-use p3_uni_stark::{Proof, verify};
+use p3_uni_stark::{verify, Proof};
 
-use crate::prover::{MvpConfig, build_config};
+use crate::prover::{build_config, MvpConfig};
 use crate::transfer_air::{
-    MvpTransferAir, decode_public_inputs, derive_shape_from_public_inputs_len,
+    decode_public_inputs, derive_shape_from_public_inputs_len, MvpTransferAir,
 };
 use crate::Plonky3Status;
 

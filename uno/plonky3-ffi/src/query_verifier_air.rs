@@ -65,7 +65,7 @@ use crate::fiat_shamir::FullChallenges;
 use crate::fold_air::{self, FoldAirV1, FoldRound};
 use crate::fri_arith::{eval_final_poly_horner, final_eval_x};
 use crate::open_input::query_x;
-use crate::prover::{build_config, Challenge, MvpConfig, MvpPcs};
+use crate::prover::{build_config, Challenge, MvpConfig};
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -77,11 +77,18 @@ pub enum QueryVerifyError {
     /// `query_position` exceeds the proof's query count.
     QueryPositionOutOfRange { got: usize, max: usize },
     /// Trace-opening width mismatch with claimed trace_local length.
-    TraceWidthMismatch { trace_opened: usize, trace_local: usize },
+    TraceWidthMismatch {
+        trace_opened: usize,
+        trace_local: usize,
+    },
     /// Number of quotient opened values ≠ number of claimed quotient_chunks.
     QuotientBatchCountMismatch { opened: usize, claimed: usize },
     /// Per-chunk opening width doesn't match DIMENSION pattern.
-    QuotientChunkWidthMismatch { chunk: usize, opened: usize, claimed: usize },
+    QuotientChunkWidthMismatch {
+        chunk: usize,
+        opened: usize,
+        claimed: usize,
+    },
     /// α-reduction AIR STARK verify failed.
     AlphaAirVerify(VerificationError<p3_uni_stark::PcsError<MvpConfig>>),
     /// Fold AIR STARK verify failed.
@@ -277,12 +284,10 @@ pub fn prove_query_verifier(
         challenges.log_global_max_height,
         challenges.log_global_max_height,
     );
-    let zeta_next =
-        challenges.zeta * Goldilocks::two_adic_generator(proof.degree_bits);
+    let zeta_next = challenges.zeta * Goldilocks::two_adic_generator(proof.degree_bits);
 
     // --- 1) α-reduction chain ---
-    let alpha_steps =
-        collect_alpha_steps(proof, challenges, query_position, zeta_next, x)?;
+    let alpha_steps = collect_alpha_steps(proof, challenges, query_position, zeta_next, x)?;
     // Simulate to get FINAL_RO.
     let final_ro = simulate_alpha(alpha_steps.iter(), challenges.fri_alpha);
 
@@ -295,29 +300,22 @@ pub fn prove_query_verifier(
         final_ro,
         alpha_trace_height,
     )?;
-    let alpha_matrix =
-        RowMajorMatrix::new(alpha_flat, alpha_reduction_air::col::WIDTH);
+    let alpha_matrix = RowMajorMatrix::new(alpha_flat, alpha_reduction_air::col::WIDTH);
     let cfg = build_config();
     let alpha_air = AlphaReductionAirV1;
     let alpha_proof = prove(&cfg, &alpha_air, alpha_matrix, &[]);
 
     // --- 2) Fold chain ---
-    let (rounds, idx_after, _log_h_after) =
-        collect_fold_rounds(proof, challenges, query_position);
+    let (rounds, idx_after, _log_h_after) = collect_fold_rounds(proof, challenges, query_position);
     let x_final = final_eval_x(idx_after, challenges.log_global_max_height);
-    let final_folded =
-        eval_final_poly_horner(&proof.opening_proof.final_poly, x_final);
+    let final_folded = eval_final_poly_horner(&proof.opening_proof.final_poly, x_final);
 
     // Cross-binding requirement: α's FINAL_RO = fold's INITIAL_FOLDED.
     let initial_folded = final_ro;
 
     let fold_trace_height = (rounds.len() + 4).next_power_of_two();
-    let fold_flat = fold_air::build_trace(
-        initial_folded,
-        &rounds,
-        final_folded,
-        fold_trace_height,
-    )?;
+    let fold_flat =
+        fold_air::build_trace(initial_folded, &rounds, final_folded, fold_trace_height)?;
     let fold_matrix = RowMajorMatrix::new(fold_flat, fold_air::col::WIDTH);
     let fold_air_v1 = FoldAirV1;
     let fold_proof = prove(&cfg, &fold_air_v1, fold_matrix, &[]);
@@ -332,9 +330,7 @@ pub fn prove_query_verifier(
 }
 
 /// Verify one query's orchestrated proof.
-pub fn verify_query_verifier(
-    aggregated: &QueryVerifierProof,
-) -> Result<(), QueryVerifyError> {
+pub fn verify_query_verifier(aggregated: &QueryVerifierProof) -> Result<(), QueryVerifyError> {
     let cfg = build_config();
     let alpha_air = AlphaReductionAirV1;
     let fold_air_v1 = FoldAirV1;
@@ -372,10 +368,7 @@ pub fn verify_query_verifier(
     Ok(())
 }
 
-fn simulate_alpha<'a, I: Iterator<Item = &'a AlphaStep>>(
-    steps: I,
-    alpha: Challenge,
-) -> Challenge {
+fn simulate_alpha<'a, I: Iterator<Item = &'a AlphaStep>>(steps: I, alpha: Challenge) -> Challenge {
     use p3_field::{Field, PrimeCharacteristicRing};
     let mut alpha_pow = Challenge::ONE;
     let mut ro = Challenge::ZERO;
@@ -506,16 +499,12 @@ pub fn prove_full_query(
     let perm = default_goldilocks_poseidon2_8();
     let trace_leaf_digest: Digest = hash_leaf_row_ref(&perm, trace_leaf);
 
-    let leaf_rows = (trace_leaf.len() + leaf_hash_air::SPONGE_RATE - 1)
-        / leaf_hash_air::SPONGE_RATE;
+    let leaf_rows =
+        (trace_leaf.len() + leaf_hash_air::SPONGE_RATE - 1) / leaf_hash_air::SPONGE_RATE;
     let lh_trace_height = leaf_rows.next_power_of_two().max(16);
 
-    let lh_flat = leaf_hash_air::build_trace(
-        trace_leaf,
-        trace_leaf_digest,
-        lh_trace_height,
-    )
-    .map_err(FullQueryVerifyError::LeafHashTraceBuild)?;
+    let lh_flat = leaf_hash_air::build_trace(trace_leaf, trace_leaf_digest, lh_trace_height)
+        .map_err(FullQueryVerifyError::LeafHashTraceBuild)?;
     let lh_matrix = RowMajorMatrix::new(lh_flat, leaf_hash_air::col::WIDTH);
     let cfg = build_config();
     let lh_air = LeafHashAirV1;
@@ -568,15 +557,11 @@ pub fn prove_full_query(
     // flattened vec gives identical output, which we use as the
     // EXPECTED_DIGEST for leaf_hash_air.
     let quot_leaf_digest: Digest = hash_leaf_row_ref(&perm, &quot_leaf_flat);
-    let qlh_rows = (quot_leaf_flat.len() + leaf_hash_air::SPONGE_RATE - 1)
-        / leaf_hash_air::SPONGE_RATE;
+    let qlh_rows =
+        (quot_leaf_flat.len() + leaf_hash_air::SPONGE_RATE - 1) / leaf_hash_air::SPONGE_RATE;
     let qlh_trace_height = qlh_rows.next_power_of_two().max(16);
-    let qlh_flat = leaf_hash_air::build_trace(
-        &quot_leaf_flat,
-        quot_leaf_digest,
-        qlh_trace_height,
-    )
-    .map_err(FullQueryVerifyError::LeafHashTraceBuild)?;
+    let qlh_flat = leaf_hash_air::build_trace(&quot_leaf_flat, quot_leaf_digest, qlh_trace_height)
+        .map_err(FullQueryVerifyError::LeafHashTraceBuild)?;
     let qlh_matrix = RowMajorMatrix::new(qlh_flat, leaf_hash_air::col::WIDTH);
     let quot_leaf_hash_proof = prove(&cfg, &lh_air, qlh_matrix, &[]);
 
@@ -627,7 +612,6 @@ pub fn prove_full_query(
     for (r, opening) in query.commit_phase_openings.iter().enumerate() {
         let log_arity = opening.log_arity as usize;
         debug_assert_eq!(log_arity, 1, "binary FRI");
-        let arity = 1usize << log_arity;
         let sibling = opening.sibling_values[0];
         let bit = round_idx & 1;
 
@@ -649,8 +633,7 @@ pub fn prove_full_query(
         let parent_idx = round_idx >> log_arity;
 
         // Commit-phase tree root at round r.
-        let round_root: Digest =
-            proof.opening_proof.commit_phase_commits[r].roots()[0];
+        let round_root: Digest = proof.opening_proof.commit_phase_commits[r].roots()[0];
         commit_phase_roots.push(round_root);
 
         // Build merkle_path_air trace. The tree depth here is
@@ -705,9 +688,7 @@ pub fn prove_full_query(
 }
 
 /// Verify the full per-query bundle — all four STARKs plus cross-binding.
-pub fn verify_full_query(
-    aggregated: &FullQueryProof,
-) -> Result<(), FullQueryVerifyError> {
+pub fn verify_full_query(aggregated: &FullQueryProof) -> Result<(), FullQueryVerifyError> {
     let cfg = build_config();
 
     verify(&cfg, &AlphaReductionAirV1, &aggregated.alpha_proof, &[])
@@ -736,9 +717,8 @@ pub fn verify_full_query(
     // d-8-c: per-round commit-phase Merkle STARKs.
     use crate::merkle_path_air::MerklePathAirV1;
     for (r, mp_proof) in aggregated.commit_phase_merkle_proofs.iter().enumerate() {
-        verify(&cfg, &MerklePathAirV1, mp_proof, &[]).map_err(|_| {
-            FullQueryVerifyError::SubProofVerify("commit_phase_merkle_round")
-        })?;
+        verify(&cfg, &MerklePathAirV1, mp_proof, &[])
+            .map_err(|_| FullQueryVerifyError::SubProofVerify("commit_phase_merkle_round"))?;
         let _ = r;
     }
     // Sanity: commit_phase_roots[r] == proof.commitments.commit_phase_commits[r] is
@@ -791,24 +771,21 @@ mod tests {
     #[test]
     fn orchestrated_query_verifier_accepts_valid_2_2_query_0() {
         let (proof, ch) = real_proof_with_challenges(2, 2, 0xAB1_0001);
-        let aggregated =
-            prove_query_verifier(&proof, &ch, 0).expect("prove must succeed");
+        let aggregated = prove_query_verifier(&proof, &ch, 0).expect("prove must succeed");
         verify_query_verifier(&aggregated).expect("verify must accept");
     }
 
     #[test]
     fn orchestrated_query_verifier_accepts_valid_1_1_query_0() {
         let (proof, ch) = real_proof_with_challenges(1, 1, 0xAB1_0002);
-        let aggregated =
-            prove_query_verifier(&proof, &ch, 0).expect("prove must succeed");
+        let aggregated = prove_query_verifier(&proof, &ch, 0).expect("prove must succeed");
         verify_query_verifier(&aggregated).expect("verify must accept");
     }
 
     #[test]
     fn orchestrated_query_verifier_accepts_valid_4_4_query_0() {
         let (proof, ch) = real_proof_with_challenges(4, 4, 0xAB1_0003);
-        let aggregated =
-            prove_query_verifier(&proof, &ch, 0).expect("prove must succeed");
+        let aggregated = prove_query_verifier(&proof, &ch, 0).expect("prove must succeed");
         verify_query_verifier(&aggregated).expect("verify 4/4 q0 must accept");
     }
 
@@ -818,8 +795,7 @@ mod tests {
     #[test]
     fn orchestrated_query_verifier_accepts_valid_2_2_query_7() {
         let (proof, ch) = real_proof_with_challenges(2, 2, 0xAB1_0004);
-        let aggregated =
-            prove_query_verifier(&proof, &ch, 7).expect("prove must succeed");
+        let aggregated = prove_query_verifier(&proof, &ch, 7).expect("prove must succeed");
         verify_query_verifier(&aggregated).expect("verify must accept");
     }
 
@@ -839,10 +815,8 @@ mod tests {
             ch.log_global_max_height,
             ch.log_global_max_height,
         );
-        let zeta_next =
-            ch.zeta * Goldilocks::two_adic_generator(proof.degree_bits);
-        let steps =
-            collect_alpha_steps(&proof, &ch, 0, zeta_next, x).unwrap();
+        let zeta_next = ch.zeta * Goldilocks::two_adic_generator(proof.degree_bits);
+        let steps = collect_alpha_steps(&proof, &ch, 0, zeta_next, x).unwrap();
         let expected_ro = simulate_alpha(steps.iter(), ch.fri_alpha);
         assert_eq!(
             aggregated.ro, expected_ro,
@@ -857,8 +831,7 @@ mod tests {
 
         let (_, idx_after, _) = collect_fold_rounds(&proof, &ch, 0);
         let x_final = final_eval_x(idx_after, ch.log_global_max_height);
-        let expected =
-            eval_final_poly_horner(&proof.opening_proof.final_poly, x_final);
+        let expected = eval_final_poly_horner(&proof.opening_proof.final_poly, x_final);
         assert_eq!(
             aggregated.final_folded, expected,
             "bundle final_folded must equal eval_final_poly"
@@ -970,8 +943,11 @@ mod tests {
         let aggregated = prove_full_query(&proof, &ch, 0).unwrap();
         let perm = default_goldilocks_poseidon2_8();
         let quot_batch = &proof.opening_proof.query_proofs[0].input_proof[1];
-        let refs: Vec<&[Goldilocks]> =
-            quot_batch.opened_values.iter().map(|v| v.as_slice()).collect();
+        let refs: Vec<&[Goldilocks]> = quot_batch
+            .opened_values
+            .iter()
+            .map(|v| v.as_slice())
+            .collect();
         let expected_mmm = hash_multi_matrix_leaf_ref(&perm, &refs);
         assert_eq!(
             aggregated.quot_leaf_digest, expected_mmm,

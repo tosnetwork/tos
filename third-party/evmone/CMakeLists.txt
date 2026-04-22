@@ -91,5 +91,6 @@ else()
     PRIVATE -fno-exceptions
             $<$<CXX_COMPILER_ID:GNU>:-Wno-attributes>
             $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-unknown-attributes>
+            $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-deprecated-literal-operator>
   )
 endif()
