@@ -63,8 +63,18 @@ constexpr uint64_t kMaxRpcRequestsPerSec = 100;
 constexpr uint64_t kMaxRpcBurst          = 1000;
 constexpr uint64_t kMaxSendTxPerSec      = 20;    // tighter: admission does work
 constexpr uint64_t kMaxSendTxBurst       = 50;
-constexpr size_t   kMaxRpcParamsSize     = 1u << 20;  // 1 MB
-constexpr size_t   kMaxSendTxHexSize     = 256 * 1024;  // 256 KB hex ≈ 128 KB binary
+// V1-3c-round-6 (2026-04-22): both caps were sized for the pre-pivot
+// ~52 KB proof target. Post V1-3c-gamma (per-Tx direct) the v1 wire
+// envelope is ~655 KB typical / ~1.15 MB worst-case 4/4 (see
+// doc/uno-workchain.md §4.1 and §17.1), dominated by the 520-915 KB
+// Plonky3 STARK proof. Hex-encoded + JSON overhead the worst-case tx
+// is ~2.30 MB on the wire. We raise the caps to 3 MB (≈ 30 % safety
+// headroom over the 4/4 worst case) so honest v1 Transfers can be
+// submitted via `uno_sendTransfer`. `kMaxSendTxPerSec = 20` already
+// caps per-validator ingress bandwidth at 20 × ~2.3 MB/s ≈ 46 MB/s,
+// within the residential-fiber profile per §1.4a.
+constexpr size_t   kMaxRpcParamsSize     = 3u * 1024 * 1024;  // 3 MB
+constexpr size_t   kMaxSendTxHexSize     = 3u * 1024 * 1024;  // 3 MB hex ≈ 1.5 MB binary
 
 struct RateLimiter {
     std::mutex mutex;

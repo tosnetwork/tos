@@ -196,6 +196,65 @@ static void test_send_transfer_rejects_admission_fail() {
     tprintf("  PASSED\n");
 }
 
+// V1-3c-round-6 regression: the original RPC caps (kMaxRpcParamsSize = 1 MB,
+// kMaxSendTxHexSize = 256 KB) were sized for the pre-pivot ~52 KB proof
+// target. After the V1-3c-gamma per-Tx pivot, typical v1 tx is ~655 KB
+// binary (~1.31 MB hex) and worst-case 4/4 is ~1.15 MB binary (~2.30 MB
+// hex). If the caps regress to their pre-pivot values, honest wallets
+// cannot submit any real Transfer via uno_sendTransfer — silent v1 launch
+// blocker. This test exercises the realistic worst-case size through the
+// RPC plumbing.
+static void test_send_transfer_accepts_v1_worst_case_size() {
+    tprintf("[TEST] test_send_transfer_accepts_v1_worst_case_size\n");
+
+    uno_workchain::reset_uno_rpc_state_for_test();
+    uno_workchain::set_admission_check_fn(fake_admission);
+    uno_workchain::set_submit_external_message_hook(fake_submit);
+    g_submit_count = 0;
+    g_last_submit_bytes.clear();
+
+    // Build a ~1.15 MB "blob" to simulate worst-case 4/4 Transfer per
+    // doc/uno-workchain.md §4.1 sizing. Hex-encoded JSON params will be
+    // ~2.30 MB — both kMaxSendTxHexSize and kMaxRpcParamsSize must
+    // accommodate this.
+    constexpr size_t kV1WorstCaseBinary = 1'150'000;
+    std::vector<uint8_t> blob(kV1WorstCaseBinary);
+    for (size_t i = 0; i < blob.size(); ++i) {
+        blob[i] = static_cast<uint8_t>(i & 0xFF);
+    }
+
+    std::string hex;
+    static const char* H = "0123456789abcdef";
+    hex.resize(blob.size() * 2);
+    for (size_t i = 0; i < blob.size(); ++i) {
+        hex[2*i]     = H[(blob[i] >> 4) & 0xf];
+        hex[2*i + 1] = H[blob[i] & 0xf];
+    }
+    std::string params = "[\"" + hex + "\"]";
+
+    auto r = uno_workchain::handle_uno_rpc("uno_sendTransfer", params, "v1max");
+    if (!r) {
+        tprintf("  FAILED: handle_uno_rpc returned nullopt\n");
+        return;
+    }
+    if (r->is_error) {
+        tprintf("  FAILED: handle_uno_rpc rejected v1 worst-case tx: %s\n",
+                r->json.c_str());
+        tprintf("          (RPC caps probably regressed below 3 MB — v1 launch blocker)\n");
+        return;
+    }
+    if (g_submit_count != 1) {
+        tprintf("  FAILED: submit hook fired %d times (expected 1)\n", g_submit_count);
+        return;
+    }
+    if (g_last_submit_bytes.size() != blob.size()) {
+        tprintf("  FAILED: submitted bytes size %zu != blob size %zu\n",
+                g_last_submit_bytes.size(), blob.size());
+        return;
+    }
+    tprintf("  PASSED (1.15 MB binary ≈ 2.30 MB hex passed through caps)\n");
+}
+
 static void test_method_registry() {
     tprintf("[TEST] test_method_registry\n");
     const char* methods[] = {
@@ -244,6 +303,7 @@ int main() {
     test_send_transfer_roundtrip();
     test_send_transfer_rejects_bad_hex();
     test_send_transfer_rejects_admission_fail();
+    test_send_transfer_accepts_v1_worst_case_size();
     test_wire_codec_byte_identical();
 
     tprintf("\nTotal failures: %d, skips: %d\n",
