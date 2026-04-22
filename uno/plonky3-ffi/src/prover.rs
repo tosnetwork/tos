@@ -304,6 +304,88 @@ mod tests {
         assert_eq!(pis.len(), air_public_inputs_wire_len(1, 2));
     }
 
+    /// M-P2 Phase 1: sweep the full 1..4 × 1..4 envelope through the
+    /// batch-stark prover + verifier round-trip.
+    ///
+    /// The batch path uses the SAME AIR / witness / public-input schema
+    /// as the uni-stark path, so every shape that the uni-stark prover
+    /// accepts must also succeed through batch-stark. Public-input byte
+    /// lengths are also asserted — they come from the same
+    /// `MvpWitness::public_inputs_bytes()` function for both provers and
+    /// must be shape-identical (`air_public_inputs_wire_len(n_s, n_o)`).
+    ///
+    /// This is the Phase 1 feasibility gate: if any shape fails here,
+    /// subsequent phases (Poseidon2Air swap, LogUp lookups, real 4-limb
+    /// field material) are blocked.
+    #[test]
+    fn batch_prove_verify_round_trip_all_shapes() {
+        use crate::verifier::MvpBatchVerifier;
+
+        let prover = MvpBatchProver::new();
+        let verifier = MvpBatchVerifier::new();
+
+        for n_s in 1..=4 {
+            for n_o in 1..=4 {
+                let seed = 0xBA7C_0000_u64 | ((n_s as u64) << 4) | (n_o as u64);
+                let w = MvpWitness::deterministic_valid(n_s, n_o, seed);
+                let (proof, pis) = prover
+                    .prove(&w.encode())
+                    .unwrap_or_else(|e| panic!("batch prove {n_s}/{n_o} failed: {e:?}"));
+                assert!(!proof.is_empty(), "{n_s}/{n_o}: empty proof");
+                assert_eq!(
+                    pis.len(),
+                    air_public_inputs_wire_len(n_s, n_o),
+                    "{n_s}/{n_o}: PI byte length mismatch"
+                );
+
+                // Round-trip through the batch verifier.
+                let status = verifier.verify(&proof, &pis);
+                assert_eq!(
+                    status,
+                    Plonky3Status::Ok,
+                    "{n_s}/{n_o}: batch verify did not return Ok: {status:?}"
+                );
+            }
+        }
+    }
+
+    /// M-P2 Phase 1: per-shape public-input byte-length parity between
+    /// the uni-stark prover path and the batch-stark prover path.
+    ///
+    /// PI bytes are derived from the witness via the same
+    /// `public_inputs_bytes()` function regardless of prover choice, so
+    /// the two paths must agree slot-for-slot on length. (Proof bytes
+    /// differ by format; we do NOT assert proof-byte equality — the
+    /// uni-stark `Proof` struct and the batch-stark `BatchProof` struct
+    /// have different postcard schemas by design.)
+    #[test]
+    fn batch_and_uni_stark_pi_shape_parity() {
+        let uni_prover = MvpProver::new();
+        let batch_prover = MvpBatchProver::new();
+
+        for n_s in 1..=4 {
+            for n_o in 1..=4 {
+                let seed = 0xBA22_0000_u64 | ((n_s as u64) << 4) | (n_o as u64);
+                let w = MvpWitness::deterministic_valid(n_s, n_o, seed);
+                let wire = w.encode();
+
+                let (_uni_proof, uni_pis) = uni_prover
+                    .prove(&wire)
+                    .unwrap_or_else(|e| panic!("uni prove {n_s}/{n_o}: {e:?}"));
+                let (_batch_proof, batch_pis) = batch_prover
+                    .prove(&wire)
+                    .unwrap_or_else(|e| panic!("batch prove {n_s}/{n_o}: {e:?}"));
+
+                assert_eq!(
+                    uni_pis, batch_pis,
+                    "{n_s}/{n_o}: uni-stark PI bytes and batch-stark PI bytes diverged — the \
+                     shared `MvpWitness::public_inputs_bytes()` source was somehow reached \
+                     through different code paths"
+                );
+            }
+        }
+    }
+
     #[test]
     fn prove_succeeds_on_valid_2_2() {
         let prover = MvpProver::new();
