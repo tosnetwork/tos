@@ -272,18 +272,29 @@ const G_IVKCM_NF_SHARED_P2_8: usize = G_CM_SHARED_P2_16 + POSEIDON2_COLS_PER_INS
 /// verify) until step3 is committed.
 pub const VALUE_LIMBS_U16: usize = 4;
 
+/// u64-limb decomposition width for `rk` / `epk` (Phase 4a field-
+/// material binding). Each 32-byte Ristretto255 compressed pubkey is
+/// split into 4 little-endian u64 limbs matching the C++ validator's
+/// `encode_256` encoding used at `build_plonky3_public_inputs`.
+/// Limbs are constant across trace rows (proxies-are-constant invariant).
+pub const RK_EPK_LIMBS: usize = 4;
+
 /// Per-spend proxy columns: leaf, d, value, ivk, ivk_commitment_claim,
 /// pk_d, rcm, nk, pos (9 leading fields), plus 32 path-bit proxies, 32
-/// sibling-hash proxies for the 32-level Merkle path (§2.3), and
+/// sibling-hash proxies for the 32-level Merkle path (§2.3),
 /// VALUE_LIMBS_U16 u16-limb columns for the u64 range-check on `value_i`
-/// (§4.2 claim 5; range-check deferred to Phase 3b-step3 LogUp).
-pub const SPEND_PROXY_COLS: usize = 9 + MERKLE_DEPTH + MERKLE_DEPTH + VALUE_LIMBS_U16;
+/// (§4.2 claim 5), and RK_EPK_LIMBS columns holding the 4-limb
+/// decomposition of the spend's `rk_bytes` for the PI binding added in
+/// Phase 4a.
+pub const SPEND_PROXY_COLS: usize =
+    9 + MERKLE_DEPTH + MERKLE_DEPTH + VALUE_LIMBS_U16 + RK_EPK_LIMBS;
 
 /// Per-output proxy columns: cm_claim, d, pk_d, ivk_commitment, value,
-/// rcm (6 leading fields), plus VALUE_LIMBS_U16 u16-limb columns for the
-/// u64 range-check on `value_j` (§4.2 claim 7; range-check deferred to
-/// Phase 3b-step3 LogUp).
-pub const OUTPUT_PROXY_COLS: usize = 6 + VALUE_LIMBS_U16;
+/// rcm (6 leading fields), VALUE_LIMBS_U16 u16-limb columns for the u64
+/// range-check on `value_j` (§4.2 claim 7), RK_EPK_LIMBS columns
+/// holding the output's `epk_bytes` limbs, and 1 column holding the
+/// per-output u16 `filter_tag` — all newly bound to PI in Phase 4a.
+pub const OUTPUT_PROXY_COLS: usize = 6 + VALUE_LIMBS_U16 + RK_EPK_LIMBS + 1;
 
 /// Narrow (width-8) Poseidon2 instances per spend after K-air-col-step2:
 /// only the shared-Merkle slot remains. IvkCm + Nf are folded into a
@@ -330,6 +341,8 @@ const S_SIBLING0: usize = S_PATH_BIT0 + MERKLE_DEPTH;
 /// Base index of the 4×u16 limb-decomposition columns for `value_i`
 /// (claim 5). Phase 3b-step2: was `S_VALUE_BIT0` (64 bit columns).
 const S_VALUE_LIMB0: usize = S_SIBLING0 + MERKLE_DEPTH;
+/// Base index of the 4 u64-limb columns holding `rk_bytes` (Phase 4a).
+const S_RK_LIMB0: usize = S_VALUE_LIMB0 + VALUE_LIMBS_U16;
 
 // ---- Per-output column indices (within an output proxy block) ----
 const O_CM_CLAIM: usize = 0;
@@ -341,6 +354,10 @@ const O_RCM: usize = 5;
 /// Base index of the 4×u16 limb-decomposition columns for `value_j`
 /// (claim 7). Phase 3b-step2: was `O_VALUE_BIT0` (64 bit columns).
 const O_VALUE_LIMB0: usize = 6;
+/// Base index of the 4 u64-limb columns holding `epk_bytes` (Phase 4a).
+const O_EPK_LIMB0: usize = O_VALUE_LIMB0 + VALUE_LIMBS_U16;
+/// Single column holding the u16 `filter_tag` (Phase 4a).
+const O_FILTER_TAG: usize = O_EPK_LIMB0 + RK_EPK_LIMBS;
 
 // ---------------------------------------------------------------------------
 // Shape-aware helpers
@@ -518,17 +535,12 @@ const fn pi_filter_tag(n_spends: usize, j: usize) -> usize {
     8 + n_spends * 8 + j * 9 + 8
 }
 
-// Silence unused warnings for field-tag indices that the proxy-shape AIR
-// does not constrain today (reserved for future slices).
+// `PI_SCHEME` / `PI_CHAIN` / `PI_EXPIRY` are populated by
+// `public_inputs()` but not individually referenced by the AIR today
+// (the proxy AIR does not bind header scalars — they are consensus-
+// checked at the block-level tx_hash). Silence the unused-const lint.
 #[allow(dead_code)]
-const _UNUSED_PI: (
-    usize,
-    usize,
-    usize,
-    fn(usize) -> usize,
-    fn(usize, usize) -> usize,
-    fn(usize, usize) -> usize,
-) = (PI_SCHEME, PI_CHAIN, PI_EXPIRY, pi_rk, pi_epk, pi_filter_tag);
+const _UNUSED_PI: (usize, usize, usize) = (PI_SCHEME, PI_CHAIN, PI_EXPIRY);
 
 // ---------------------------------------------------------------------------
 // AIR definition
@@ -897,6 +909,34 @@ where
                     value_recon = value_recon + AB::Expr::from(weight) * limb.into();
                 }
                 first.assert_eq(value_out.into(), value_recon);
+            }
+
+            // Phase 4a: per-spend PI binding for `rk_bytes` (4 u64
+            // limbs). Copy-constraint `PI[pi_rk(i) + k] == trace_col[
+            // S_RK_LIMB0 + k]` for each spend i, limb k ∈ 0..4. Cols
+            // are constant across rows (proxies-are-constant), so the
+            // row-0 assertion suffices to bind PI for the full trace.
+            for i in 0..self.n_spends {
+                for k in 0..RK_EPK_LIMBS {
+                    let rk_col: AB::Var = spend_col(local_slice, i, S_RK_LIMB0 + k);
+                    let pi_rk_slot = pis_vec[pi_rk(i) + k];
+                    first.assert_eq(rk_col, pi_rk_slot);
+                }
+            }
+
+            // Phase 4a: per-output PI binding for `epk_bytes` (4 u64
+            // limbs) + `filter_tag` (1 u16). Same rationale as the rk
+            // binding above.
+            for j in 0..self.n_outputs {
+                for k in 0..RK_EPK_LIMBS {
+                    let epk_col: AB::Var =
+                        output_col(local_slice, self.n_spends, j, O_EPK_LIMB0 + k);
+                    let pi_epk_slot = pis_vec[pi_epk(self.n_spends, j) + k];
+                    first.assert_eq(epk_col, pi_epk_slot);
+                }
+                let ft_col: AB::Var = output_col(local_slice, self.n_spends, j, O_FILTER_TAG);
+                let pi_ft_slot = pis_vec[pi_filter_tag(self.n_spends, j)];
+                first.assert_eq(ft_col, pi_ft_slot);
             }
 
             // Claim 8: balance. `Σ value_i - Σ value_j - fee == 0`.
@@ -1786,9 +1826,14 @@ impl MvpWitness {
             for limb in nf_limbs {
                 out.push(limb);
             }
-            // rk_i: 4 × 0 (deferred to M-P2).
-            for _ in 0..4 {
-                out.push(Goldilocks::ZERO);
+            // rk_i: 4 u64 limbs of rk_bytes (LE), reduced mod Goldilocks.
+            // Phase 4a AIR-bound to spend's S_RK_LIMB0..S_RK_LIMB0+4
+            // proxy cols. Matches C++ validator `encode_256`.
+            for k in 0..RK_EPK_LIMBS {
+                let limb = u64::from_le_bytes(
+                    s.rk_bytes[k * 8..(k + 1) * 8].try_into().unwrap(),
+                );
+                out.push(Goldilocks::from_u64(reduce_to_goldilocks(limb)));
             }
         }
 
@@ -1799,12 +1844,18 @@ impl MvpWitness {
             for _ in 1..4 {
                 out.push(Goldilocks::ZERO);
             }
-            // epk_j: 4 × 0 (deferred to M-P2).
-            for _ in 0..4 {
-                out.push(Goldilocks::ZERO);
+            // epk_j: 4 u64 limbs of epk_bytes (LE), reduced mod
+            // Goldilocks. Phase 4a AIR-bound to output's
+            // O_EPK_LIMB0..O_EPK_LIMB0+4 proxy cols.
+            for k in 0..RK_EPK_LIMBS {
+                let limb = u64::from_le_bytes(
+                    o.epk_bytes[k * 8..(k + 1) * 8].try_into().unwrap(),
+                );
+                out.push(Goldilocks::from_u64(reduce_to_goldilocks(limb)));
             }
-            // filter_tag_j: 0 (deferred to M-P2).
-            out.push(Goldilocks::ZERO);
+            // filter_tag_j: 1 u16-wide field element. Phase 4a AIR-
+            // bound to output's O_FILTER_TAG proxy col.
+            out.push(Goldilocks::from_u64(o.filter_tag as u64));
         }
 
         debug_assert_eq!(out.len(), air_num_public_values(n_s, n_o));
@@ -2008,6 +2059,15 @@ impl MvpWitness {
                     let limb = (value_canon >> (16 * k)) & 0xffff;
                     v.push(Goldilocks::from_u64(limb));
                 }
+                // Phase 4a: 4 u64 limbs from rk_bytes (LE), each reduced
+                // mod Goldilocks. Matches C++ `encode_256` — consensus-
+                // binding byte-for-byte with validator PI.
+                for k in 0..RK_EPK_LIMBS {
+                    let limb = u64::from_le_bytes(
+                        s.rk_bytes[k * 8..(k + 1) * 8].try_into().unwrap(),
+                    );
+                    v.push(Goldilocks::from_u64(reduce_to_goldilocks(limb)));
+                }
                 debug_assert_eq!(v.len(), SPEND_PROXY_COLS);
                 v
             })
@@ -2031,6 +2091,16 @@ impl MvpWitness {
                     let limb = (value_canon >> (16 * k)) & 0xffff;
                     v.push(Goldilocks::from_u64(limb));
                 }
+                // Phase 4a: 4 u64 limbs of epk_bytes (LE), + 1 filter_tag
+                // column. All reduced mod Goldilocks; matches C++
+                // `encode_256` + the u16 `filter_tag` PI encoding.
+                for k in 0..RK_EPK_LIMBS {
+                    let limb = u64::from_le_bytes(
+                        o.epk_bytes[k * 8..(k + 1) * 8].try_into().unwrap(),
+                    );
+                    v.push(Goldilocks::from_u64(reduce_to_goldilocks(limb)));
+                }
+                v.push(Goldilocks::from_u64(o.filter_tag as u64));
                 debug_assert_eq!(v.len(), OUTPUT_PROXY_COLS);
                 v
             })

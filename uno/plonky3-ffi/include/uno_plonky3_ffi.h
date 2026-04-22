@@ -479,17 +479,10 @@
 // Height of the 16-bit range table (= `2^16`).
 #define RANGE_TABLE_HEIGHT (1 << LOG_RANGE_TABLE_HEIGHT)
 
-// Width of the `Range16Air` main trace: a single multiplicity column
-// `mult[i]` recording how many times the preprocessed table entry
-// `i` is read by other AIRs via `Kind::Global("u16_range")`. In the
-// Phase 3b-step3-prep skeleton the main trace is not yet generated;
-// the value is pinned here so callers wiring the full LogUp know the
-// expected width ahead of time.
+// Width of the `Range16Air` main trace: a single multiplicity column.
 #define MAIN_TRACE_WIDTH 1
 
-// Width of the `Range16Air` preprocessed trace: a single column
-// containing the canonical `table[i] == i` range table for
-// `i ∈ 0..2^16`.
+// Width of the `Range16Air` preprocessed trace: single range-table col.
 #define PREPROCESSED_TRACE_WIDTH 1
 
 // Maximum spend count (§4.1 ConfigParam 84).
@@ -572,18 +565,28 @@
 // verify) until step3 is committed.
 #define VALUE_LIMBS_U16 4
 
+// u64-limb decomposition width for `rk` / `epk` (Phase 4a field-
+// material binding). Each 32-byte Ristretto255 compressed pubkey is
+// split into 4 little-endian u64 limbs matching the C++ validator's
+// `encode_256` encoding used at `build_plonky3_public_inputs`.
+// Limbs are constant across trace rows (proxies-are-constant invariant).
+#define RK_EPK_LIMBS 4
+
 // Per-spend proxy columns: leaf, d, value, ivk, ivk_commitment_claim,
 // pk_d, rcm, nk, pos (9 leading fields), plus 32 path-bit proxies, 32
-// sibling-hash proxies for the 32-level Merkle path (§2.3), and
+// sibling-hash proxies for the 32-level Merkle path (§2.3),
 // VALUE_LIMBS_U16 u16-limb columns for the u64 range-check on `value_i`
-// (§4.2 claim 5; range-check deferred to Phase 3b-step3 LogUp).
-#define SPEND_PROXY_COLS (((9 + MERKLE_DEPTH) + MERKLE_DEPTH) + VALUE_LIMBS_U16)
+// (§4.2 claim 5), and RK_EPK_LIMBS columns holding the 4-limb
+// decomposition of the spend's `rk_bytes` for the PI binding added in
+// Phase 4a.
+#define SPEND_PROXY_COLS ((((9 + MERKLE_DEPTH) + MERKLE_DEPTH) + VALUE_LIMBS_U16) + RK_EPK_LIMBS)
 
 // Per-output proxy columns: cm_claim, d, pk_d, ivk_commitment, value,
-// rcm (6 leading fields), plus VALUE_LIMBS_U16 u16-limb columns for the
-// u64 range-check on `value_j` (§4.2 claim 7; range-check deferred to
-// Phase 3b-step3 LogUp).
-#define OUTPUT_PROXY_COLS (6 + VALUE_LIMBS_U16)
+// rcm (6 leading fields), VALUE_LIMBS_U16 u16-limb columns for the u64
+// range-check on `value_j` (§4.2 claim 7), RK_EPK_LIMBS columns
+// holding the output's `epk_bytes` limbs, and 1 column holding the
+// per-output u16 `filter_tag` — all newly bound to PI in Phase 4a.
+#define OUTPUT_PROXY_COLS (((6 + VALUE_LIMBS_U16) + RK_EPK_LIMBS) + 1)
 
 // Narrow (width-8) Poseidon2 instances per spend after K-air-col-step2:
 // only the shared-Merkle slot remains. IvkCm + Nf are folded into a

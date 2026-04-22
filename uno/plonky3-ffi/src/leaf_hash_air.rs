@@ -1275,12 +1275,20 @@ mod tests {
         }
     }
 
-    /// Width-1305 trace-commit leaf end-to-end. This is the load-bearing
-    /// real-world test: on a 2/2 Transfer proof, the trace matrix has
-    /// width ~1305 (air_width(2, 2)) which is 4·326 + 1 = partial-tail
-    /// case. We hash the real trace-commit leaf and verify the STARK.
+    /// Real trace-commit leaf end-to-end at the partial-tail edge
+    /// case. On a 2/2 Transfer proof, the trace-matrix width is NOT a
+    /// multiple of `SPONGE_RATE = 4`, so the final absorbed block has
+    /// fewer than 4 lanes. We hash the real trace-commit leaf and
+    /// verify the STARK proves correctly over this layout.
+    ///
+    /// The exact `W mod 4` tail-size changes when the AIR adds proxy
+    /// columns (e.g. Phase 4a rk/epk/filter_tag bindings shifted
+    /// `W mod 4` from 1 to 3 at 2/2); the assertion below only requires
+    /// a non-zero tail so partial-tail coverage is preserved across
+    /// column-layout edits without coupling this test to the absolute
+    /// column count.
     #[test]
-    fn air_prove_and_verify_real_trace_commit_leaf_width_1305() {
+    fn air_prove_and_verify_real_trace_commit_leaf_partial_tail() {
         use crate::prover::{MvpConfig, MvpProver};
         use crate::transfer_air::MvpWitness;
         use p3_uni_stark::Proof;
@@ -1294,10 +1302,14 @@ mod tests {
         let trace_batch = &proof.opening_proof.query_proofs[0].input_proof[0];
         assert_eq!(trace_batch.opened_values.len(), 1);
         let leaf = &trace_batch.opened_values[0];
-        assert_eq!(
+        assert_ne!(
             leaf.len() % SPONGE_RATE,
-            1,
-            "2/2 air_width should have W mod 4 == 1 (partial tail of 1 limb)"
+            0,
+            "2/2 air_width should land on a partial-tail sponge block \
+             (W mod 4 != 0); update the AIR column layout if this \
+             starts failing so this test keeps covering the partial \
+             tail case (leaf.len() = {})",
+            leaf.len(),
         );
 
         let digest = compute_digest(leaf);
