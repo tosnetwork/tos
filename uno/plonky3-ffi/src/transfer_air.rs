@@ -255,25 +255,35 @@ const G_CM_SHARED_P2_16: usize = GS_ROW_SEL0 + MERKLE_DEPTH;
 /// (K-air-col-step2 strategy c — claim 3/4 row-loop on rows 0..7).
 const G_IVKCM_NF_SHARED_P2_8: usize = G_CM_SHARED_P2_16 + POSEIDON2_COLS_PER_INSTANCE_16;
 
-/// Width in bits of the bit-decomposition range check for `value_i` /
-/// `value_j` (§4.2 claims 5 & 7). Each value is committed as 64 bit
-/// columns so the AIR constrains `value < 2^64`; since
-/// `p_Goldilocks = 2^64 − 2^32 + 1`, the additional 32 high-bit
-/// combinations in `[2^64 − 2^32 + 1, 2^64)` are unreachable by a single
-/// field element, so the bit decomposition is exact on canonical inputs.
-pub const VALUE_BITS: usize = 64;
+/// u16-limb decomposition width for `value_i` / `value_j` (§4.2 claims
+/// 5 & 7). Each value is committed as 4 × u16 limbs with the AIR
+/// enforcing `value == Σ_k limb_k · 2^{16k}`; the per-limb range-check
+/// `limb_k < 2^16` is discharged by a LogUp lookup against a preprocessed
+/// 16-bit range table (M-P2 Phase 3b). Since
+/// `p_Goldilocks = 2^64 − 2^32 + 1`, the extra high-bit combinations in
+/// `[2^64 − 2^32 + 1, 2^64)` are unreachable by a single field element,
+/// so 4×u16 decomp is exact on canonical inputs.
+///
+/// Phase 3b-step2 (this commit): swap 64 bit columns → 4 u16 limb columns.
+/// The per-bit `b·(1−b) == 0` constraints are deleted here; the per-limb
+/// `limb_k < 2^16` range-check is NOT enforced by this AIR yet — it lands
+/// in Phase 3b-step3 via LogUp. Callers therefore see a temporarily
+/// weaker soundness surface (values can violate u64 range and still
+/// verify) until step3 is committed.
+pub const VALUE_LIMBS_U16: usize = 4;
 
 /// Per-spend proxy columns: leaf, d, value, ivk, ivk_commitment_claim,
 /// pk_d, rcm, nk, pos (9 leading fields), plus 32 path-bit proxies, 32
 /// sibling-hash proxies for the 32-level Merkle path (§2.3), and
-/// VALUE_BITS bit columns for the explicit u64 range-check on `value_i`
-/// (§4.2 claim 5).
-pub const SPEND_PROXY_COLS: usize = 9 + MERKLE_DEPTH + MERKLE_DEPTH + VALUE_BITS;
+/// VALUE_LIMBS_U16 u16-limb columns for the u64 range-check on `value_i`
+/// (§4.2 claim 5; range-check deferred to Phase 3b-step3 LogUp).
+pub const SPEND_PROXY_COLS: usize = 9 + MERKLE_DEPTH + MERKLE_DEPTH + VALUE_LIMBS_U16;
 
 /// Per-output proxy columns: cm_claim, d, pk_d, ivk_commitment, value,
-/// rcm (6 leading fields), plus VALUE_BITS bit columns for the explicit
-/// u64 range-check on `value_j` (§4.2 claim 7).
-pub const OUTPUT_PROXY_COLS: usize = 6 + VALUE_BITS;
+/// rcm (6 leading fields), plus VALUE_LIMBS_U16 u16-limb columns for the
+/// u64 range-check on `value_j` (§4.2 claim 7; range-check deferred to
+/// Phase 3b-step3 LogUp).
+pub const OUTPUT_PROXY_COLS: usize = 6 + VALUE_LIMBS_U16;
 
 /// Narrow (width-8) Poseidon2 instances per spend after K-air-col-step2:
 /// only the shared-Merkle slot remains. IvkCm + Nf are folded into a
@@ -317,8 +327,9 @@ const S_POS: usize = 8;
 // proxies. Path bit `k` is `(pos >> k) & 1` (low→high bit order).
 const S_PATH_BIT0: usize = 9;
 const S_SIBLING0: usize = S_PATH_BIT0 + MERKLE_DEPTH;
-/// Base index of the 64-bit range-check columns for `value_i` (claim 5).
-const S_VALUE_BIT0: usize = S_SIBLING0 + MERKLE_DEPTH;
+/// Base index of the 4×u16 limb-decomposition columns for `value_i`
+/// (claim 5). Phase 3b-step2: was `S_VALUE_BIT0` (64 bit columns).
+const S_VALUE_LIMB0: usize = S_SIBLING0 + MERKLE_DEPTH;
 
 // ---- Per-output column indices (within an output proxy block) ----
 const O_CM_CLAIM: usize = 0;
@@ -327,8 +338,9 @@ const O_PK_D: usize = 2;
 const O_IVK_COMMITMENT: usize = 3;
 const O_VALUE: usize = 4;
 const O_RCM: usize = 5;
-/// Base index of the 64-bit range-check columns for `value_j` (claim 7).
-const O_VALUE_BIT0: usize = 6;
+/// Base index of the 4×u16 limb-decomposition columns for `value_j`
+/// (claim 7). Phase 3b-step2: was `O_VALUE_BIT0` (64 bit columns).
+const O_VALUE_LIMB0: usize = 6;
 
 // ---------------------------------------------------------------------------
 // Shape-aware helpers
@@ -738,19 +750,16 @@ where
                 }
                 first.assert_eq(pos.into(), pos_recon);
 
-                // Claim 5: explicit u64 range-check on `value_i`.
+                // Claim 5: u64 range-check on `value_i` via 4×u16 limbs.
+                // Phase 3b-step2: enforce `value = Σ_k limb_k · 2^{16k}`.
+                // The per-limb `limb_k < 2^16` check lands in step3 via
+                // LogUp against a preprocessed 16-bit range table — NOT
+                // enforced by this AIR yet. (Temporary soundness gap.)
                 let mut value_recon: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
-                for k in 0..VALUE_BITS {
-                    let b: AB::Var = spend_col(local_slice, i, S_VALUE_BIT0 + k);
-                    let b_expr: AB::Expr = b.into();
-                    let one_minus_b = AB::Expr::from(AB::F::from_u64(1)) - b_expr.clone();
-                    first.assert_zero(b_expr.clone() * one_minus_b);
-                    let weight = if k == 63 {
-                        AB::F::from_u64(1u64 << 63)
-                    } else {
-                        AB::F::from_u64(1u64 << k)
-                    };
-                    value_recon = value_recon + AB::Expr::from(weight) * b_expr;
+                for k in 0..VALUE_LIMBS_U16 {
+                    let limb: AB::Var = spend_col(local_slice, i, S_VALUE_LIMB0 + k);
+                    let weight = AB::F::from_u64(1u64 << (16 * k));
+                    value_recon = value_recon + AB::Expr::from(weight) * limb.into();
                 }
                 first.assert_eq(value.into(), value_recon);
             }
@@ -767,19 +776,15 @@ where
                 // claim 6 is gated on row 4+j via the shared wide block.
                 first.assert_eq(cm_claim, pi_cms[j]);
 
-                // Claim 7: explicit u64 range-check on `value_j`.
+                // Claim 7: u64 range-check on `value_j` via 4×u16 limbs.
+                // Phase 3b-step2: see claim-5 comment above. Range-check
+                // deferred to step3 LogUp.
                 let mut value_recon: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
-                for k in 0..VALUE_BITS {
-                    let b: AB::Var = output_col(local_slice, self.n_spends, j, O_VALUE_BIT0 + k);
-                    let b_expr: AB::Expr = b.into();
-                    let one_minus_b = AB::Expr::from(AB::F::from_u64(1)) - b_expr.clone();
-                    first.assert_zero(b_expr.clone() * one_minus_b);
-                    let weight = if k == 63 {
-                        AB::F::from_u64(1u64 << 63)
-                    } else {
-                        AB::F::from_u64(1u64 << k)
-                    };
-                    value_recon = value_recon + AB::Expr::from(weight) * b_expr;
+                for k in 0..VALUE_LIMBS_U16 {
+                    let limb: AB::Var =
+                        output_col(local_slice, self.n_spends, j, O_VALUE_LIMB0 + k);
+                    let weight = AB::F::from_u64(1u64 << (16 * k));
+                    value_recon = value_recon + AB::Expr::from(weight) * limb.into();
                 }
                 first.assert_eq(value_out.into(), value_recon);
             }
@@ -1886,11 +1891,12 @@ impl MvpWitness {
                 for k in 0..MERKLE_DEPTH {
                     v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.merkle_path[k])));
                 }
-                // Bit-decompose value into VALUE_BITS = 64 bits.
+                // Decompose value into VALUE_LIMBS_U16 = 4 u16 limbs
+                // (low-to-high). Phase 3b-step2: was 64 bit columns.
                 let value_canon = reduce_to_goldilocks(s.value);
-                for k in 0..VALUE_BITS {
-                    let bit = (value_canon >> k) & 1;
-                    v.push(Goldilocks::from_u64(bit));
+                for k in 0..VALUE_LIMBS_U16 {
+                    let limb = (value_canon >> (16 * k)) & 0xffff;
+                    v.push(Goldilocks::from_u64(limb));
                 }
                 debug_assert_eq!(v.len(), SPEND_PROXY_COLS);
                 v
@@ -1909,10 +1915,11 @@ impl MvpWitness {
                 v.push(Goldilocks::from_u64(reduce_to_goldilocks(o.ivk_commitment)));
                 v.push(Goldilocks::from_u64(reduce_to_goldilocks(o.value)));
                 v.push(Goldilocks::from_u64(reduce_to_goldilocks(o.rcm)));
+                // Phase 3b-step2: 4 u16 limbs (was 64 bit columns).
                 let value_canon = reduce_to_goldilocks(o.value);
-                for k in 0..VALUE_BITS {
-                    let bit = (value_canon >> k) & 1;
-                    v.push(Goldilocks::from_u64(bit));
+                for k in 0..VALUE_LIMBS_U16 {
+                    let limb = (value_canon >> (16 * k)) & 0xffff;
+                    v.push(Goldilocks::from_u64(limb));
                 }
                 debug_assert_eq!(v.len(), OUTPUT_PROXY_COLS);
                 v

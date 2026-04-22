@@ -536,25 +536,35 @@
 // same bank for the Cm/IvkCm/Nf row-loops — no extra selector columns.
 #define GLOBAL_COLS (((1 + MERKLE_DEPTH) + POSEIDON2_COLS_PER_INSTANCE_16) + POSEIDON2_COLS_PER_INSTANCE)
 
-// Width in bits of the bit-decomposition range check for `value_i` /
-// `value_j` (§4.2 claims 5 & 7). Each value is committed as 64 bit
-// columns so the AIR constrains `value < 2^64`; since
-// `p_Goldilocks = 2^64 − 2^32 + 1`, the additional 32 high-bit
-// combinations in `[2^64 − 2^32 + 1, 2^64)` are unreachable by a single
-// field element, so the bit decomposition is exact on canonical inputs.
-#define VALUE_BITS 64
+// u16-limb decomposition width for `value_i` / `value_j` (§4.2 claims
+// 5 & 7). Each value is committed as 4 × u16 limbs with the AIR
+// enforcing `value == Σ_k limb_k · 2^{16k}`; the per-limb range-check
+// `limb_k < 2^16` is discharged by a LogUp lookup against a preprocessed
+// 16-bit range table (M-P2 Phase 3b). Since
+// `p_Goldilocks = 2^64 − 2^32 + 1`, the extra high-bit combinations in
+// `[2^64 − 2^32 + 1, 2^64)` are unreachable by a single field element,
+// so 4×u16 decomp is exact on canonical inputs.
+//
+// Phase 3b-step2 (this commit): swap 64 bit columns → 4 u16 limb columns.
+// The per-bit `b·(1−b) == 0` constraints are deleted here; the per-limb
+// `limb_k < 2^16` range-check is NOT enforced by this AIR yet — it lands
+// in Phase 3b-step3 via LogUp. Callers therefore see a temporarily
+// weaker soundness surface (values can violate u64 range and still
+// verify) until step3 is committed.
+#define VALUE_LIMBS_U16 4
 
 // Per-spend proxy columns: leaf, d, value, ivk, ivk_commitment_claim,
 // pk_d, rcm, nk, pos (9 leading fields), plus 32 path-bit proxies, 32
 // sibling-hash proxies for the 32-level Merkle path (§2.3), and
-// VALUE_BITS bit columns for the explicit u64 range-check on `value_i`
-// (§4.2 claim 5).
-#define SPEND_PROXY_COLS (((9 + MERKLE_DEPTH) + MERKLE_DEPTH) + VALUE_BITS)
+// VALUE_LIMBS_U16 u16-limb columns for the u64 range-check on `value_i`
+// (§4.2 claim 5; range-check deferred to Phase 3b-step3 LogUp).
+#define SPEND_PROXY_COLS (((9 + MERKLE_DEPTH) + MERKLE_DEPTH) + VALUE_LIMBS_U16)
 
 // Per-output proxy columns: cm_claim, d, pk_d, ivk_commitment, value,
-// rcm (6 leading fields), plus VALUE_BITS bit columns for the explicit
-// u64 range-check on `value_j` (§4.2 claim 7).
-#define OUTPUT_PROXY_COLS (6 + VALUE_BITS)
+// rcm (6 leading fields), plus VALUE_LIMBS_U16 u16-limb columns for the
+// u64 range-check on `value_j` (§4.2 claim 7; range-check deferred to
+// Phase 3b-step3 LogUp).
+#define OUTPUT_PROXY_COLS (6 + VALUE_LIMBS_U16)
 
 // Narrow (width-8) Poseidon2 instances per spend after K-air-col-step2:
 // only the shared-Merkle slot remains. IvkCm + Nf are folded into a
