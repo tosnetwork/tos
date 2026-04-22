@@ -1001,22 +1001,146 @@ mod tests {
         );
     }
 
-    // TODO (V1-3c-beta follow-up): fuzz-style crafting of a 6-level-deep
-    // per-spend continuation chain to exercise the §17 walk-depth gate.
-    // Skipped here because hand-crafting a BocWriter cell tree with a
-    // controlled depth-6 subtree requires threading custom CellBuilder
-    // chains that bypass the encoder's invariants. The gate itself is
-    // covered by the C++ decoder's fixture.
-    #[test]
-    #[ignore = "fiddly to craft a 6-level-deep per-spend ref tree by hand; \
-                C++ fixture covers this; follow-up in V1-3c-beta"]
-    fn rejects_walk_depth_exceeded() {}
+    /// Build a deeply-shared chunk "tree" whose DFS visit count blows past
+    /// both `K_CHUNK_CHAIN_MAX_CHUNKS = 8192` leaf pops and
+    /// `K_CHUNK_TREE_MAX_CELLS = 16384` total pops, while the on-wire BoC
+    /// stays at only 8 unique cells (BoC dedup).
+    ///
+    /// Shape: 1 leaf + 7 internal cells. Each internal carries 4 refs all
+    /// pointing at the same child cell. At depth 7 above the leaf:
+    ///   4⁷ = 16384 leaf visits → trips the 8192 leaf cap on the 8193rd pop.
+    fn deep_shared_chunk_tree() -> Cell {
+        let leaf = leaf_cell(&[0x5Au8; 127]);
+        let mut current = leaf;
+        for _ in 0..7 {
+            let mut internal = BuilderData::default();
+            for _ in 0..CHUNK_TREE_FANOUT {
+                internal
+                    .checked_append_reference(current.clone())
+                    .expect("internal ref");
+            }
+            current = internal.finalize(MAX_DEPTH).expect("internal finalize");
+        }
+        current
+    }
 
-    // TODO (V1-3c-beta follow-up): craft a chunk tree that exceeds
-    // K_CHUNK_CHAIN_MAX_CHUNKS (8192) cells. Needs ~1 MiB+ of filler
-    // at 127 B/chunk, plus adversarial continuation-only cells to extend
-    // past the 915 KB worst-case. Not blocking for happy-path parity.
+    fn encode_with_oversized_enc_ciphertext() -> Vec<u8> {
+        let tx = sample_transfer(1, 1);
+
+        let mut spend_inline = [0u8; SPEND_INLINE_BYTES];
+        spend_inline[0..32].copy_from_slice(&tx.spends[0].nullifier);
+        spend_inline[32..64].copy_from_slice(&tx.spends[0].rk);
+        spend_inline[64..128].copy_from_slice(&tx.spends[0].spend_auth_sig);
+        let mut spend_item = BuilderData::default();
+        spend_item
+            .append_raw(
+                &spend_inline[..ITEM_INLINE_HEAD_BYTES],
+                ITEM_INLINE_HEAD_BYTES * 8,
+            )
+            .expect("spend head");
+        let mut spend_cont = BuilderData::default();
+        spend_cont
+            .append_raw(&spend_inline[ITEM_INLINE_HEAD_BYTES..], 8)
+            .expect("spend cont");
+        spend_item
+            .checked_append_reference(spend_cont.finalize(MAX_DEPTH).expect("spend cont cell"))
+            .expect("spend cont ref");
+        let mut spends_root = BuilderData::default();
+        spends_root
+            .checked_append_reference(spend_item.finalize(MAX_DEPTH).expect("spend cell"))
+            .expect("spends_root ref");
+        let spends_root = spends_root.finalize(MAX_DEPTH).expect("spends_root");
+
+        let output = &tx.outputs[0];
+        let mut output_inline = [0u8; OUTPUT_INLINE_BYTES];
+        output_inline[0..32].copy_from_slice(&output.cm);
+        output_inline[32..64].copy_from_slice(&output.epk);
+        output_inline[64] = (output.filter_tag >> 8) as u8;
+        output_inline[65] = (output.filter_tag & 0xFF) as u8;
+        output_inline[66..66 + OUT_CIPHERTEXT_BYTES].copy_from_slice(&output.out_ciphertext);
+
+        let mut output_item = BuilderData::default();
+        output_item
+            .append_raw(
+                &output_inline[..ITEM_INLINE_HEAD_BYTES],
+                ITEM_INLINE_HEAD_BYTES * 8,
+            )
+            .expect("output head");
+        let mut output_cont = BuilderData::default();
+        output_cont
+            .append_raw(
+                &output_inline[ITEM_INLINE_HEAD_BYTES..],
+                (OUTPUT_INLINE_BYTES - ITEM_INLINE_HEAD_BYTES) * 8,
+            )
+            .expect("output cont");
+        output_item
+            .checked_append_reference(output_cont.finalize(MAX_DEPTH).expect("output cont cell"))
+            .expect("output cont ref");
+        output_item
+            .checked_append_reference(deep_shared_chunk_tree())
+            .expect("enc ref");
+        output_item
+            .checked_append_reference(
+                store_bytes_as_chunk_chain(&output.mlkem_ct)
+                    .expect("mlkem encode")
+                    .expect("mlkem non-empty"),
+            )
+            .expect("mlkem ref");
+
+        let mut outputs_root = BuilderData::default();
+        outputs_root
+            .checked_append_reference(output_item.finalize(MAX_DEPTH).expect("output cell"))
+            .expect("outputs_root ref");
+        let outputs_root = outputs_root.finalize(MAX_DEPTH).expect("outputs_root");
+
+        let zk_proof = store_bytes_as_chunk_chain(&tx.zk_proof)
+            .expect("zk encode")
+            .expect("zk non-empty");
+
+        let mut root = BuilderData::default();
+        root.append_u8(tx.version).expect("version");
+        root.append_u8(tx.scheme_id).expect("scheme_id");
+        root.append_u32(tx.chain_id).expect("chain_id");
+        root.append_raw(&tx.anchor, 32 * 8).expect("anchor");
+        root.append_u64(tx.expiry_block).expect("expiry");
+        root.append_u64(tx.fee).expect("fee");
+        root.append_u8(1).expect("sc");
+        root.append_u8(1).expect("oc");
+        root.checked_append_reference(spends_root)
+            .expect("spends ref");
+        root.checked_append_reference(outputs_root)
+            .expect("outputs ref");
+        root.checked_append_reference(zk_proof).expect("zk ref");
+        let root = root.finalize(MAX_DEPTH).expect("root");
+
+        fn no_abort() -> bool {
+            false
+        }
+        let writer =
+            BocWriter::with_params([root], MAX_DEPTH, BocFlags::None, &no_abort).expect("writer");
+        let mut bytes = Vec::new();
+        writer.write(&mut bytes).expect("write");
+        bytes
+    }
+
     #[test]
-    #[ignore = "requires > 8192 chunk tree leaves; follow-up in V1-3c-beta"]
-    fn rejects_chunk_chain_too_long() {}
+    fn rejects_chunk_chain_too_long() {
+        // Adversary constructs a deeply-shared chunk "tree" (8 unique cells,
+        // but DFS visits 4⁷ = 16384 leaves via refcount dedup). Decoder
+        // must hit the 8192 leaf cap (or 16384 cell cap) and reject.
+        let bytes = encode_with_oversized_enc_ciphertext();
+        let err = decode_transfer_boc(&bytes).expect_err("oversized tree must reject");
+        assert!(
+            matches!(err, DecodeError::ChunkChainTooLong),
+            "expected ChunkChainTooLong, got {err:?}"
+        );
+    }
+
+    // TODO (V1-3c-beta follow-up): fuzz-style crafting of a 6-level-deep
+    // per-spend continuation chain for the §17 walk-depth gate. Separate
+    // from chunk-tree bounds; §17 bounds structural spine depth, not chunk
+    // subtree depth. C++ fixture covers this already.
+    #[test]
+    #[ignore = "§17 walk-depth gate covered by C++ fixture; fiddly to hand-craft in Rust"]
+    fn rejects_walk_depth_exceeded() {}
 }
