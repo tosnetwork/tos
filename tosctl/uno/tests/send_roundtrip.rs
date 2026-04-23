@@ -271,6 +271,7 @@ fn test_real_proof_verifies_against_ffi_verifier() {
         &[bob_diversifier, alice_notes[0].diversifier], // output d
         &[bob_addr.pk_d, bob_addr.pk_d],                // output pk_d (change reuses shape)
         &[bob_addr.ivk_commitment, bob_addr.ivk_commitment],
+        &[[0x77u8; 32], [0x88u8; 32]], // output_rcms
         50, // fee
         &anchor,
         0x01u8,        // scheme_id (V1-3c-round-8 档1)

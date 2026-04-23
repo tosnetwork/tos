@@ -372,8 +372,9 @@ fn build_transfer(
         return Err(anyhow!("build_transfer: output count overflow"));
     }
 
-    let recipient_out = build_output(recipient, sel.recipient_value, memo)?;
+    let (recipient_out, recipient_rcm) = build_output(recipient, sel.recipient_value, memo)?;
     let mut outputs = vec![recipient_out];
+    let mut output_rcms: Vec<[u8; 32]> = vec![recipient_rcm];
 
     if sel.needs_change {
         // Construct a self-address using the wallet's *first* spend note's
@@ -385,8 +386,9 @@ fn build_transfer(
         let self_addr = Address::build(fvk, &d_change)?;
         // Change notes omit the user-facing memo to reduce the metadata
         // surface returned to the sender via `ovk`-scanned audit paths.
-        let change_out = build_output(&self_addr, sel.change_value, None)?;
+        let (change_out, change_rcm) = build_output(&self_addr, sel.change_value, None)?;
         outputs.push(change_out);
+        output_rcms.push(change_rcm);
     }
 
     // Spends: nullifier + stub (zeroed) sig for now, real sig comes from
@@ -455,6 +457,7 @@ fn build_transfer(
         &output_addrs_d,
         &output_addrs_pk_d,
         &output_addrs_ivk_cm,
+        &output_rcms,
         sel.fee,
         anchor,
         SCHEME_ID_V1,
@@ -482,7 +485,11 @@ fn build_transfer(
 
 /// Build a single `OutputDescription`: hybrid-KEM encrypt the note plaintext,
 /// derive `cm` + `filter_tag`.
-fn build_output(recipient: &Address, value: u64, memo: Option<&str>) -> Result<OutputDescription> {
+fn build_output(
+    recipient: &Address,
+    value: u64,
+    memo: Option<&str>,
+) -> Result<(OutputDescription, [u8; 32])> {
     if recipient.pk_mlkem.len() != MLKEM768_PK {
         return Err(anyhow!("build_output: recipient.pk_mlkem is wrong size"));
     }
@@ -580,14 +587,17 @@ fn build_output(recipient: &Address, value: u64, memo: Option<&str>) -> Result<O
     out_ciphertext[32..64].copy_from_slice(d2.as_bytes());
     // Last 16 bytes: zero (Poly1305-style reserved slot).
 
-    Ok(OutputDescription {
-        cm,
-        epk: epk_compressed,
-        filter_tag,
-        enc_ciphertext,
-        mlkem_ct,
-        out_ciphertext,
-    })
+    Ok((
+        OutputDescription {
+            cm,
+            epk: epk_compressed,
+            filter_tag,
+            enc_ciphertext,
+            mlkem_ct,
+            out_ciphertext,
+        },
+        rcm,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -707,6 +717,7 @@ impl TransferWitness {
         output_addrs_d: &[[u8; 11]],
         output_addrs_pk_d: &[[u8; 32]],
         output_addrs_ivk_cm: &[[u8; 32]],
+        output_rcms: &[[u8; 32]],
         fee: u64,
         anchor: &[u8; 32],
         scheme_id: u8,
@@ -737,6 +748,7 @@ impl TransferWitness {
             || output_addrs_d.len() != n_o
             || output_addrs_pk_d.len() != n_o
             || output_addrs_ivk_cm.len() != n_o
+            || output_rcms.len() != n_o
             || spend_rk_bytes.len() != n_s
             || output_epk_bytes.len() != n_o
             || output_filter_tags.len() != n_o
@@ -862,50 +874,32 @@ impl TransferWitness {
             });
         }
 
-        // Proxy balance: Σ p3_spends.value = n_s · v_per_spend. Spread
-        // `total_in - fee` across outputs, last output absorbs the
-        // remainder. Individual proxy output values are a pure proxy;
-        // they do NOT need to equal the real output values (the AIR's
-        // claim 8 binds *proxy* values).
-        let total_in: u128 = (n_s as u128) * (v_per_spend as u128);
-        if total_in < fee as u128 {
-            return Err(anyhow!(
-                "TransferWitness: proxy total_in {} < fee {}",
-                total_in,
-                fee
-            ));
-        }
-        let total_out: u128 = total_in - (fee as u128);
-        let v_per_out_base: u64 = (total_out / (n_o as u128)) as u64;
-        let remainder: u64 = (total_out - (v_per_out_base as u128) * (n_o as u128)) as u64;
-
+        // Balance accounting: the wallet already ensured
+        //   Σ spend_values == Σ output_values + fee
+        // at the top of `build` (line ~751), so real output_values[j]
+        // satisfy the AIR's claim-8 value-conservation binding directly.
+        // Pre-step3-step1.1-tosctl, we used proxy values because other
+        // fields were proxies too; now that output d/pk_d/ivk_cm/rcm are
+        // REAL 32-byte bytes (required for the 15-fe iterated sponge to
+        // produce `compute_note_commitment`-byte-identical `cm`), the
+        // value absorbed at fes[10] must also be real. Otherwise the AIR-
+        // computed `O_CM_SPONGE_OUT` would diverge from `witness.cm_bytes`
+        // and step 1.3-pi could not bind them together.
         let mut p3_outputs = Vec::with_capacity(n_o);
         for j in 0..n_o {
-            let d_proxy = reduce_digest_to_proxy_slice(b"uno-ow-d", &output_addrs_d[j]);
-            let pk_d_proxy = reduce_digest_to_proxy(b"uno-ow-pk_d", &output_addrs_pk_d[j]);
-            let ivkcm_proxy = reduce_digest_to_proxy(b"uno-ow-ivkcm", &output_addrs_ivk_cm[j]);
-            let rcm_proxy = reduce_digest_to_proxy(b"uno-ow-rcm", &output_cms[j]);
-            let value_proxy = if j + 1 == n_o {
-                v_per_out_base + remainder
-            } else {
-                v_per_out_base
-            };
-            // Phase 4b-step3-step0: widen u64 proxies to [u8; 32].
-            // Same pad_u64_to_32 helper pattern as the spend block.
+            // Phase 4b-step3-step1.1-tosctl: widen u64 proxies → real
+            // 32-byte fields. Diversifier is 11 B real + 21 B zero-pad,
+            // matching `uno/core/poseidon2.cpp::compute_note_commitment`
+            // (which reads bytes[0..16] as 2 u64 LE) and the AIR's
+            // `pack_diversifier_as_2fe` helper.
             let mut d_bytes = [0u8; 32];
-            d_bytes[0..8].copy_from_slice(&d_proxy.to_le_bytes());
-            let mut pk_d_bytes = [0u8; 32];
-            pk_d_bytes[0..8].copy_from_slice(&pk_d_proxy.to_le_bytes());
-            let mut ivkcm_bytes = [0u8; 32];
-            ivkcm_bytes[0..8].copy_from_slice(&ivkcm_proxy.to_le_bytes());
-            let mut rcm_bytes = [0u8; 32];
-            rcm_bytes[0..8].copy_from_slice(&rcm_proxy.to_le_bytes());
+            d_bytes[0..11].copy_from_slice(&output_addrs_d[j]);
             p3_outputs.push(P3OutputWitness {
                 d: d_bytes,
-                pk_d: pk_d_bytes,
-                ivk_commitment: ivkcm_bytes,
-                value: value_proxy,
-                rcm: rcm_bytes,
+                pk_d: output_addrs_pk_d[j],
+                ivk_commitment: output_addrs_ivk_cm[j],
+                value: output_values[j],
+                rcm: output_rcms[j],
                 cm_bytes: output_cms[j],
                 epk_bytes: output_epk_bytes[j],
                 filter_tag: output_filter_tags[j],
@@ -1196,7 +1190,7 @@ mod tests {
         let fvk = keygen::derive_fvk(&fixed_seed()).unwrap();
         let d = [0x55u8; 11];
         let addr = Address::build(&fvk, &d).unwrap();
-        let out = build_output(&addr, 42_000, Some("hi")).unwrap();
+        let (out, _rcm) = build_output(&addr, 42_000, Some("hi")).unwrap();
         let wire_out = crate::wire::OutputDescription {
             cm: out.cm,
             epk: out.epk,
@@ -1231,6 +1225,7 @@ mod tests {
             &[[0x22u8; 11]],
             &[[0x33u8; 32]],
             &[[0x44u8; 32]],
+            &[[0x77u8; 32]], // output_rcms
             10,
             &[0xAAu8; 32],
             SCHEME_ID_V1,
