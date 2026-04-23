@@ -68,6 +68,8 @@ pub mod leaf_hash_air;
 pub mod merkle_path;
 pub mod merkle_path_air;
 pub mod monolithic_verifier_air;
+pub mod monolithic_verifier_columns;
+pub mod monolithic_verifier_trace;
 pub mod ood_eval;
 pub mod open_input;
 pub mod permute;
