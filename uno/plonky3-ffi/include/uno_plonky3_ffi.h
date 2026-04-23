@@ -601,7 +601,14 @@
 // compressions — matching the `pack_32b_as_4fe(sibling)` layout that
 // tosctl threads through. Net +96 cols/spend
 // (`MERKLE_DEPTH · (SIBLING_FES_PER_LEVEL - 1) = 32 · 3 = 96`).
-#define SPEND_PROXY_COLS ((((((9 + MERKLE_DEPTH) + (MERKLE_DEPTH * SIBLING_FES_PER_LEVEL)) + VALUE_LIMBS_U16) + RK_EPK_LIMBS) + 38) + 16)
+//
+// Phase 4b-step3-step5b-decomp adds 67 additional cols per spend (11
+// fe-limb cols — `S_D_FE1`, `S_PK_D_FE1..3`, `S_IVK_COMMITMENT_FE0..3`,
+// `S_RCM_FE1..3` — plus 56 u16 limb cols for the 14 fe-limb × 4 u16
+// decomposition: d×2 + pk_d×4 + ivk_cm×4 + rcm×4) that prepare the
+// spend cm sponge input layout. Mirror of the output-side step
+// 1.2c/f + step 1.3-fields block, on the spend side.
+#define SPEND_PROXY_COLS ((((((((9 + MERKLE_DEPTH) + (MERKLE_DEPTH * SIBLING_FES_PER_LEVEL)) + VALUE_LIMBS_U16) + RK_EPK_LIMBS) + 38) + 16) + 67) + 16)
 
 // Per-output proxy columns: cm_claim (Poseidon2-w=16 output, trace-
 // only after Phase 4b-step2a), d, pk_d, ivk_commitment, value, rcm (6
