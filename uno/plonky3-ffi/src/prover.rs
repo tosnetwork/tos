@@ -328,17 +328,37 @@ impl<F: Field> LookupAir<F> for MvpAirUnion {
     }
 }
 
-/// Collect the 4·(n_s+n_o) u16 limb values from a witness, each
-/// repeated `TRACE_HEIGHT` times (the "proxies are constant across
-/// rows" §4.2 invariant means every MvpTransferAir trace row fires
-/// the same 32-tuple receive, so the matching Send-side multiplicity
-/// must scale by TRACE_HEIGHT for the cross-AIR global sum to cancel).
+/// Collect all u16 limb values from a witness, each repeated
+/// `TRACE_HEIGHT` times (the "proxies are constant across rows"
+/// §4.2 invariant means every MvpTransferAir trace row fires the
+/// same tuple receive, so the matching Send-side multiplicity must
+/// scale by TRACE_HEIGHT for the cross-AIR global sum to cancel).
+///
+/// Per-row layout (ordered to match the receive-side in
+/// `MvpTransferAir::get_lookups`):
+///
+///   * Phase 3b-step2: 4 u16 limbs per spend `value`
+///     + 4 u16 limbs per output `value`
+///       (total: 4·(n_s + n_o))
+///   * Phase 4b-step3-step1.3-fields: 56 u16 limbs per output
+///     (14 fe-limbs × 4 u16) for the d/pk_d/ivk_cm/rcm fe-limb
+///     cols — each fe-limb is the canonical u64 of an 8-byte LE
+///     chunk of the corresponding 32-byte witness field, split
+///     into 4 × u16 LE.
 fn collect_u16_reads_for_range16(w: &MvpWitness) -> Vec<u16> {
     use crate::transfer_air::reduce_to_goldilocks;
 
     let (n_s, n_o) = w.shape();
-    let per_row = VALUE_LIMBS_U16 * (n_s + n_o);
+    let per_row = VALUE_LIMBS_U16 * (n_s + n_o) + 56 * n_o;
     let mut reads: Vec<u16> = Vec::with_capacity(per_row * TRACE_HEIGHT);
+
+    // Helper: push 4 u16 limbs (LE, low→high) of a canonical u64
+    // into the per-row buffer.
+    fn push_u16_limbs(buf: &mut Vec<u16>, u: u64) {
+        for k in 0..4 {
+            buf.push(((u >> (16 * k)) & 0xffff) as u16);
+        }
+    }
 
     let mut per_row_limbs: Vec<u16> = Vec::with_capacity(per_row);
     for s in w.spends.iter() {
@@ -351,6 +371,42 @@ fn collect_u16_reads_for_range16(w: &MvpWitness) -> Vec<u16> {
         let v = reduce_to_goldilocks(o.value);
         for k in 0..VALUE_LIMBS_U16 {
             per_row_limbs.push(((v >> (16 * k)) & 0xffff) as u16);
+        }
+    }
+    // Phase 4b-step3-step1.3-fields: 56 u16 limbs per output for
+    // the 14 fe-limb proxy cols. Extract each u16 directly from
+    // the real 32-byte witness bytes via 8-byte LE chunks reduced
+    // to Goldilocks canonical form — identical to what trace-gen
+    // pushes into the new `O_{D,PK_D,IVK_COMMITMENT,RCM}_LIMB0..`
+    // cols, and identical to what `pack_*_as_*fe(...)` emits.
+    for o in w.outputs.iter() {
+        // d: 2 fe-limbs (bytes[0..8], bytes[8..16])
+        for i in 0..2 {
+            let u = reduce_to_goldilocks(u64::from_le_bytes(
+                o.d[i * 8..(i + 1) * 8].try_into().unwrap(),
+            ));
+            push_u16_limbs(&mut per_row_limbs, u);
+        }
+        // pk_d: 4 fe-limbs
+        for i in 0..4 {
+            let u = reduce_to_goldilocks(u64::from_le_bytes(
+                o.pk_d[i * 8..(i + 1) * 8].try_into().unwrap(),
+            ));
+            push_u16_limbs(&mut per_row_limbs, u);
+        }
+        // ivk_commitment: 4 fe-limbs
+        for i in 0..4 {
+            let u = reduce_to_goldilocks(u64::from_le_bytes(
+                o.ivk_commitment[i * 8..(i + 1) * 8].try_into().unwrap(),
+            ));
+            push_u16_limbs(&mut per_row_limbs, u);
+        }
+        // rcm: 4 fe-limbs
+        for i in 0..4 {
+            let u = reduce_to_goldilocks(u64::from_le_bytes(
+                o.rcm[i * 8..(i + 1) * 8].try_into().unwrap(),
+            ));
+            push_u16_limbs(&mut per_row_limbs, u);
         }
     }
     debug_assert_eq!(per_row_limbs.len(), per_row);

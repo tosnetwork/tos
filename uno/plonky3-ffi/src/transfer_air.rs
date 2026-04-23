@@ -317,9 +317,13 @@ pub const SPEND_PROXY_COLS: usize =
 /// (Phase 4a), 3 columns for `cm_bytes[8..32]` upper limbs (Phase 4b-
 /// step1), and 1 column for `cm_bytes[0..8]` limb 0 (Phase 4b-step2a)
 /// — bound to `PI[pi_cm(j) + 0]` via row-0 copy-constraint, replacing
-/// the previous `cm_claim == pi_cms[j]` binding.
+/// the previous `cm_claim == pi_cms[j]` binding. Phase 4b-step3-
+/// step1.3-fields adds 56 additional u16 limb cols per output (14 fe-
+/// limbs × 4 u16 limbs) that decompose each of the d/pk_d/ivk_cm/rcm
+/// fe-limb proxy cols into its canonical u64 → 4×u16 limb form. Each
+/// limb is range-checked via the cross-AIR `u16_range` LogUp.
 pub const OUTPUT_PROXY_COLS: usize =
-    6 + VALUE_LIMBS_U16 + RK_EPK_LIMBS + 1 + 4 + 8 + 5 + 5 + 8;
+    6 + VALUE_LIMBS_U16 + RK_EPK_LIMBS + 1 + 4 + 8 + 5 + 5 + 8 + 56;
 
 /// Narrow (width-8) Poseidon2 instances per spend after K-air-col-step2:
 /// only the shared-Merkle slot remains. IvkCm + Nf are folded into a
@@ -459,6 +463,35 @@ const O_RCM_FE3: usize = O_RCM_FE2 + 1;
 /// proxy "constant across rows" invariant, this carries the rate slots
 /// across the 4-row gap between the two sponge permutations.
 const O_SPONGE_CARRY_RATE: usize = O_RCM_FE3 + 1;
+
+/// Phase 4b-step3-step1.3-fields: base index of the 56 u16 limb
+/// columns that decompose each output fe-limb proxy into its canonical
+/// u64 → 4×u16 LE form. Layout (grouped by field, matching the 15-fe
+/// sponge input order):
+///
+///   O_D_LIMB0..O_D_LIMB0+7      — 2 fe-limbs × 4 u16   (d)
+///   O_PK_D_LIMB0..+15           — 4 fe-limbs × 4 u16   (pk_d)
+///   O_IVK_COMMITMENT_LIMB0..+15 — 4 fe-limbs × 4 u16   (ivk_commitment)
+///   O_RCM_LIMB0..+15            — 4 fe-limbs × 4 u16   (rcm)
+///
+/// Note `O_VALUE` already has its own 4-limb decomposition via the
+/// existing `O_VALUE_LIMB0..3` cols (Phase 3b-step2), so the 15-fe
+/// sponge input's single `value_fe` at fes[10] reuses those cols — no
+/// new limb block is needed for value.
+///
+/// Each of the 14 fe-limb proxy cols is constrained in the AIR eval
+/// to equal `Σ_k limb_k · 2^{16k}`, and each of the 56 new u16 cols
+/// is range-checked via the cross-AIR `u16_range` LogUp (same `name`
+/// as the existing value-limb receives). Together these close the
+/// remaining soundness gap from step 1.2c/f: a malicious prover can
+/// no longer pick arbitrary Goldilocks values in the fe-limb cols —
+/// each must be the canonical u64 reduction of the corresponding
+/// 8-byte LE chunk of the 32-byte witness field, matching what
+/// `pack_*_as_*fe` emits off-circuit.
+const O_D_LIMB0: usize = O_SPONGE_CARRY_RATE + 8;
+const O_PK_D_LIMB0: usize = O_D_LIMB0 + 8;
+const O_IVK_COMMITMENT_LIMB0: usize = O_PK_D_LIMB0 + 16;
+const O_RCM_LIMB0: usize = O_IVK_COMMITMENT_LIMB0 + 16;
 
 // ---------------------------------------------------------------------------
 // Shape-aware helpers
@@ -738,12 +771,15 @@ impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for MvpTransferAir {
 
 /// `LookupAir` impl — M-P2 Phase 3b-step3 reader side.
 ///
-/// Registers a single `Kind::Global("u16_range")` lookup whose
-/// `Direction::Receive` input list holds **all** u16 limb columns from
-/// the per-spend and per-output proxy blocks (4 limbs/value × n_spends
-/// spends × 1 value-per-spend  +  4 limbs/value × n_outputs outputs ×
-/// 1 value-per-output = 4·(n_spends + n_outputs) receives at
-/// multiplicity 1).
+/// Registers `Kind::Global("u16_range")` lookups whose
+/// `Direction::Receive` input lists hold all u16 limb columns from
+/// the per-spend and per-output proxy blocks:
+///
+///   Phase 3b-step2 value cols:   4·(n_spends + n_outputs)
+///   Phase 4b-step3-step1.3 fe-limb cols: 56·n_outputs
+///
+/// Total receives per row: 4·n_spends + (4 + 56)·n_outputs =
+///   4·n_spends + 60·n_outputs. All at multiplicity 1.
 ///
 /// The matching `Direction::Send` side lives in `range16_air` under the
 /// identical interaction name
@@ -800,7 +836,7 @@ impl<F: p3_field::Field> p3_lookup::LookupAir<F> for MvpTransferAir {
             p3_air::BaseLeaf::Constant(F::ONE),
         );
         let mut lookups: Vec<p3_lookup::lookup_traits::Lookup<F>> =
-            Vec::with_capacity(4 * (self.n_spends + self.n_outputs));
+            Vec::with_capacity(4 * self.n_spends + 60 * self.n_outputs);
 
         let name = || {
             p3_lookup::lookup_traits::Kind::Global(String::from(
@@ -830,6 +866,37 @@ impl<F: p3_field::Field> p3_lookup::LookupAir<F> for MvpTransferAir {
                     p3_lookup::lookup_traits::Direction::Receive,
                 )];
                 lookups.push(p3_lookup::LookupAir::register_lookup(self, name(), &inputs));
+            }
+        }
+        // Phase 4b-step3-step1.3-fields: register `u16_range` receives
+        // for the 56 new fe-limb u16 cols per output (14 fe-limbs × 4
+        // u16 limbs). Each receive carries multiplicity 1; the matching
+        // Send side in `Range16Air` is sized so the cross-AIR cumulative
+        // sum balances out across all receive cols × TRACE_HEIGHT rows.
+        for j in 0..self.n_outputs {
+            let base = output_proxy_offset(self.n_spends, j);
+            for limb_base in &[
+                O_D_LIMB0,
+                O_PK_D_LIMB0,
+                O_IVK_COMMITMENT_LIMB0,
+                O_RCM_LIMB0,
+            ] {
+                // Each fe-limb block has `n_fe_limbs * 4` u16 cols.
+                let n_fe_limbs = match *limb_base {
+                    x if x == O_D_LIMB0 => 2,
+                    _ => 4,
+                };
+                for k in 0..(n_fe_limbs * 4) {
+                    let col = base + limb_base + k;
+                    let limb = main_local[col];
+                    let inputs = vec![(
+                        vec![limb.into()],
+                        one.clone(),
+                        p3_lookup::lookup_traits::Direction::Receive,
+                    )];
+                    lookups
+                        .push(p3_lookup::LookupAir::register_lookup(self, name(), &inputs));
+                }
             }
         }
         lookups
@@ -1548,6 +1615,75 @@ where
                         sel.clone()
                             * (AB::Expr::from(shared_ivkcm_nf_out[limb]) - pi_nfs[i][limb].into()),
                     );
+                }
+            }
+        }
+
+        // ---- Phase 4b-step3-step1.3-fields: fe-limb u16 decomposition ---
+        //
+        // For each of the 14 output fe-limb proxy cols (d_fes[0..2],
+        // pk_d_fes[0..4], ivk_cm_fes[0..4], rcm_fes[0..4]), constrain
+        // that the fe-limb col equals the u64 reconstruction of its 4
+        // new u16 sub-limb cols:
+        //
+        //   fe_limb == Σ_{k=0..3} limb_k · 2^{16k}
+        //
+        // Combined with the cross-AIR `u16_range` LogUp that bounds
+        // each `limb_k` to `0..=0xffff`, this proves the fe-limb is
+        // the canonical u64 of the corresponding 8-byte LE chunk of
+        // the 32-byte witness field — exactly what `pack_*_as_*fe`
+        // emits off-circuit. Closes the step 1.2c/f decoupling gap:
+        // a malicious prover can no longer put arbitrary Goldilocks
+        // values in the sponge rate slots.
+        //
+        // Same decomposition pattern as the existing `O_VALUE_LIMB0`
+        // constraint in the first-row block above. These constraints
+        // are NOT row-gated — they hold on every row, which is sound
+        // because both the fe-limb and limb cols are in the proxy
+        // block (constant-across-rows per §4.2 transition invariant).
+        //
+        // Note: `O_VALUE` (fes[10]) is already covered by the existing
+        // `O_VALUE_LIMB0..3` decomposition in the first-row block, so
+        // it is NOT included here (no duplicate cols).
+        {
+            // (fe_col_offset, limb_base_offset) pairs for the 14
+            // output fe-limbs that need decomposition.
+            let fe_limb_pairs: [(usize, usize); 14] = [
+                // d_fes[0..2] → O_D_LIMB0..O_D_LIMB0+8
+                (O_D,                  O_D_LIMB0),
+                (O_D_FE1,              O_D_LIMB0 + 4),
+                // pk_d_fes[0..4] → O_PK_D_LIMB0..O_PK_D_LIMB0+16
+                (O_PK_D,               O_PK_D_LIMB0),
+                (O_PK_D_FE1,           O_PK_D_LIMB0 + 4),
+                (O_PK_D_FE2,           O_PK_D_LIMB0 + 8),
+                (O_PK_D_FE3,           O_PK_D_LIMB0 + 12),
+                // ivk_cm_fes[0..4] → O_IVK_COMMITMENT_LIMB0..+16
+                (O_IVK_COMMITMENT,     O_IVK_COMMITMENT_LIMB0),
+                (O_IVK_COMMITMENT_FE1, O_IVK_COMMITMENT_LIMB0 + 4),
+                (O_IVK_COMMITMENT_FE2, O_IVK_COMMITMENT_LIMB0 + 8),
+                (O_IVK_COMMITMENT_FE3, O_IVK_COMMITMENT_LIMB0 + 12),
+                // rcm_fes[0..4] → O_RCM_LIMB0..+16
+                (O_RCM,                O_RCM_LIMB0),
+                (O_RCM_FE1,            O_RCM_LIMB0 + 4),
+                (O_RCM_FE2,            O_RCM_LIMB0 + 8),
+                (O_RCM_FE3,            O_RCM_LIMB0 + 12),
+            ];
+            for j in 0..self.n_outputs {
+                for (fe_col_offset, limb_base_offset) in &fe_limb_pairs {
+                    let fe_col: AB::Var =
+                        output_col(local_slice, self.n_spends, j, *fe_col_offset);
+                    let mut recon: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
+                    for k in 0..4 {
+                        let limb: AB::Var = output_col(
+                            local_slice,
+                            self.n_spends,
+                            j,
+                            *limb_base_offset + k,
+                        );
+                        let weight = AB::F::from_u64(1u64 << (16 * k));
+                        recon = recon + AB::Expr::from(weight) * limb.into();
+                    }
+                    builder.assert_zero(fe_col.into() - recon);
                 }
             }
         }
@@ -2793,6 +2929,42 @@ impl MvpWitness {
                 for fe in sponge_bank1_out_rate[j].iter() {
                     v.push(*fe);
                 }
+                // Phase 4b-step3-step1.3-fields: decompose each of the
+                // 14 output fe-limb proxy cols (d[0..2], pk_d[0..4],
+                // ivk_cm[0..4], rcm[0..4]) into 4 u16 limbs (LE,
+                // low-to-high). The AIR eval binds each fe-limb col to
+                // `Σ_k limb_k · 2^{16k}` and the cross-AIR `u16_range`
+                // LogUp bounds each limb to `0..=0xffff`, closing the
+                // step 1.2c/f decoupling gap: the prover can no longer
+                // pick non-canonical Goldilocks values for the sponge
+                // rate slots — each fe-limb must be the canonical
+                // u64 of the corresponding 8-byte LE chunk.
+                //
+                // Note `O_VALUE` already has its own 4-limb
+                // decomposition at `O_VALUE_LIMB0..3` (Phase 3b-step2),
+                // so fes[10] (== `O_VALUE`) is NOT duplicated here.
+                let push_u16_limbs = |v: &mut Vec<Goldilocks>, fe: Goldilocks| {
+                    let u = fe.as_canonical_u64();
+                    for k in 0..4 {
+                        let limb = (u >> (16 * k)) & 0xffff;
+                        v.push(Goldilocks::from_u64(limb));
+                    }
+                };
+                // d_fes[0..2]  (2 fe-limbs × 4 u16 = 8 cols)
+                push_u16_limbs(&mut v, d_fes[0]);
+                push_u16_limbs(&mut v, d_fes[1]);
+                // pk_d_fes[0..4]  (4 fe-limbs × 4 u16 = 16 cols)
+                for k in 0..4 {
+                    push_u16_limbs(&mut v, pk_d_fes[k]);
+                }
+                // ivk_cm_fes[0..4]  (4 fe-limbs × 4 u16 = 16 cols)
+                for k in 0..4 {
+                    push_u16_limbs(&mut v, ivk_cm_fes[k]);
+                }
+                // rcm_fes[0..4]  (4 fe-limbs × 4 u16 = 16 cols)
+                for k in 0..4 {
+                    push_u16_limbs(&mut v, rcm_fes[k]);
+                }
                 debug_assert_eq!(v.len(), OUTPUT_PROXY_COLS);
                 v
             })
@@ -3517,7 +3689,10 @@ mod tests {
             let mut air = MvpTransferAir::new(n_s, n_o);
             let lookups: Vec<Lookup<Goldilocks>> = LookupAir::<Goldilocks>::get_lookups(&mut air);
 
-            let expected_count = 4 * (n_s + n_o);
+            // Phase 4b-step3-step1.3-fields: 4·(n_s + n_o) value-limb
+            // receives + 56·n_o fe-limb receives (14 fe-limbs × 4 u16
+            // limbs per output: d×2 + pk_d×4 + ivk_cm×4 + rcm×4).
+            let expected_count = 4 * (n_s + n_o) + 56 * n_o;
             assert_eq!(
                 lookups.len(),
                 expected_count,
