@@ -1161,6 +1161,36 @@ where
                 builder.assert_zero(sel * (AB::Expr::from(shared_cm_out[0]) - cm_claim.into()));
             }
 
+            // --- Phase 4b-step3-step1.2b: sponge bank-1 capacity pin ----
+            //
+            // On row 8+j (j ∈ 0..n_outputs), the shared_cm block hosts
+            // output j's sponge perm-1 witness (see step 1.2a trace-gen).
+            // This constraint block pins the capacity slots (state[8..15])
+            // to the "uno-cm-v1" tag block — a fixed constant per §3.2.
+            // Together with step 1.2c (rate-slot fe-limb bindings,
+            // bank1→bank2 state carry, bank2-output binding to
+            // O_CM_SPONGE_OUT), this ratifies the iterated sponge
+            // derivation end-to-end.
+            //
+            // Soundness gain right now: a malicious prover can NO LONGER
+            // put arbitrary values in `shared_cm.inputs[8..15]` on rows
+            // 8+j for j ∈ 0..n_outputs — they must equal the tag block.
+            // Without this pin, the sponge "domain separation" would not
+            // be enforced. Rate-slot pinning remains a step-1.2c job.
+            let tag = uno_cm_v1_tag_block();
+            for j in 0..self.n_outputs {
+                let sel: AB::Expr = local_slice[GS_ROW_SEL0 + 8 + j].into();
+                for k in 0..8 {
+                    let expected_tag_fe =
+                        AB::F::from_u64(tag[k].as_canonical_u64());
+                    builder.assert_zero(
+                        sel.clone()
+                            * (AB::Expr::from(shared_cm.inputs[8 + k])
+                                - AB::Expr::from(expected_tag_fe)),
+                    );
+                }
+            }
+
             // --- Narrow IvkCm block: rows 0..(n_spends-1) --------------
             for i in 0..self.n_spends {
                 let sel: AB::Expr = local_slice[GS_ROW_SEL0 + i].into();
