@@ -780,7 +780,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::merkle_path::hash_leaf_row_ref;
+    use crate::fri_arith::fold_row_ref;
+    use crate::merkle_path::{compress_pair_ref, hash_leaf_row_ref, Digest};
+    use crate::prover::Challenge;
+    use crate::transfer_air::POSEIDON2_COLS_PER_INSTANCE;
+    use p3_goldilocks::default_goldilocks_poseidon2_8;
 
     /// A6-1.6: test PI = all-zero 8-element Goldilocks array. Test
     /// traces use `block_pi_zero()` to populate BLOCK_PI cols to zero,

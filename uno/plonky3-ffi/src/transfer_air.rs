@@ -1779,6 +1779,7 @@ mod tests {
     use super::*;
     use crate::Plonky3Status;
     use p3_goldilocks::{default_goldilocks_poseidon2_16, default_goldilocks_poseidon2_8};
+    use p3_symmetric::Permutation;
 
     #[test]
     fn shape_math_matches_envelope() {
