@@ -21,9 +21,13 @@ byte-parity locked in by 5 tests in `tosctl/uno/tests/phase4b_step3_sponge_parit
 — the Uno PQ-native positioning is no longer contradicted by an
 internal 64-bit proxy binding.
 
-**Remaining (non-blocking)**: re-run `cargo bench --bench shape_matrix`
-on the wider post-step3 trace before mainnet activation; estimated 4/4
-proof growth ≤ ~150 KB / verify ≤ ~5 ms vs. the 2026-04-22 baseline.
+**Post-Phase-4b-step3 shape_matrix (2026-04-23, 192-core host)**:
+4/4 at **2 593 cols / 1 073 KB proof / 30.8 ms verify**. Deltas vs.
+2026-04-22 baseline (1 658 / 885 KB / 21 ms): +935 cols (+56 %),
++188 KB proof (+21 %), +9.8 ms verify (+47 %). Verify remains well
+under §1.4 ≤100 ms gate with 3× margin; width growth tracks the real
+32-byte material AIR cols (+96 siblings/spend + 54 decomp/carry cols).
+See `doc/uno-workchain.md §13` for the full 6-shape table.
 
 **Scope:** strict cryptographic soundness closure. Phase 4b-step3
 does NOT improve byte parity (already closed by Phase 4a + 4b-step1
