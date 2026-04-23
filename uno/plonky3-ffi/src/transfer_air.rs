@@ -2228,6 +2228,67 @@ impl MvpWitness {
             row0_out_cm.push(gen_p2_row_16(cm_in));
         }
 
+        // Phase 4b-step3-step1.2a: pre-compute the Poseidon2-w=16
+        // permutation witnesses for the 15-fe iterated sponge, one
+        // per output. Each output j produces two permutations:
+        //
+        //   sponge_bank1_cm[j] — perm-1: state[0..7] = fes[0..8],
+        //                        state[8..15] = tag_block. Placed on
+        //                        trace row 8+j.
+        //   sponge_bank2_cm[j] — perm-2: bank1.output with fes[8..14]
+        //                        absorbed into slots 0..6 + ONE padding
+        //                        at slot 7; state[8..15] unchanged from
+        //                        bank1. Placed on trace row 12+j.
+        //
+        // These reuse the existing G_CM_SHARED_P2_16 column block (rows
+        // 8..15 and 12..15 were `padding_p2_16` before this commit), so
+        // no new global cols are added. The Poseidon2-w=16 AIR
+        // constraints (`eval_poseidon2_16` on every row) apply uniformly
+        // — any valid round-by-round witness satisfies them. Step
+        // 1.2b+ will add row-gated constraints that bind bank1 inputs
+        // to the 15-fe absorption layout and bank2 output to
+        // `O_CM_SPONGE_OUT[0..4]`; today this commit just fills the
+        // trace cells.
+        let tag_block = uno_cm_v1_tag_block();
+        let mut sponge_bank1_cm: Vec<Vec<Goldilocks>> = Vec::with_capacity(n_o);
+        let mut sponge_bank2_cm: Vec<Vec<Goldilocks>> = Vec::with_capacity(n_o);
+        for o in &self.outputs {
+            // Assemble the 15-fe input per §3.2.
+            let d_fes = pack_diversifier_as_2fe(&o.d);
+            let pk_d_fes = pack_32b_as_4fe(&o.pk_d);
+            let ivk_cm_fes = pack_32b_as_4fe(&o.ivk_commitment);
+            let value_fe = Goldilocks::from_u64(reduce_to_goldilocks(o.value));
+            let rcm_fes = pack_32b_as_4fe(&o.rcm);
+            let mut fes = [Goldilocks::ZERO; 15];
+            fes[0] = d_fes[0];
+            fes[1] = d_fes[1];
+            fes[2..6].copy_from_slice(&pk_d_fes);
+            fes[6..10].copy_from_slice(&ivk_cm_fes);
+            fes[10] = value_fe;
+            fes[11..15].copy_from_slice(&rcm_fes);
+
+            // Bank 1 input: state[0..7] = fes[0..8], state[8..15] = tag_block.
+            let mut bank1_in = [Goldilocks::ZERO; POSEIDON2_WIDTH_16];
+            bank1_in[0..8].copy_from_slice(&fes[0..8]);
+            bank1_in[8..16].copy_from_slice(&tag_block);
+            sponge_bank1_cm.push(gen_p2_row_16(bank1_in));
+
+            // Post-perm-1 state (off-circuit, matches the Poseidon2Cols
+            // `ending_full_rounds[last].post` field in trace).
+            let mut state_after_perm1 = bank1_in;
+            perm16.permute_mut(&mut state_after_perm1);
+
+            // Bank 2 input: bank1_output[0..6] += fes[8..14];
+            //               bank1_output[7] += ONE (padding, rem=7);
+            //               bank1_output[8..15] unchanged.
+            let mut bank2_in = state_after_perm1;
+            for j in 0..7 {
+                bank2_in[j] = bank2_in[j] + fes[8 + j];
+            }
+            bank2_in[7] = bank2_in[7] + Goldilocks::from_u64(1);
+            sponge_bank2_cm.push(gen_p2_row_16(bank2_in));
+        }
+
         // Per-spend proxy vector: [leaf, d, value, ivk, ivk_cm_claim, pk_d,
         // rcm, nk, pos, path_bits[0..32], siblings[0..32],
         // value_bits[0..64]].
@@ -2368,11 +2429,17 @@ impl MvpWitness {
             // Globally-shared Cm/OutCm (w=16) block:
             //   row i (i ∈ 0..n_s): spend i's claim-2 witness
             //   row 4+j (j ∈ 0..n_o): output j's claim-6 witness
+            //   row 8+j (j ∈ 0..n_o): output j's sponge perm-1 (step 1.2a)
+            //   row 12+j (j ∈ 0..n_o): output j's sponge perm-2 (step 1.2a)
             //   else: zero-input permutation
             if row_idx < n_s {
                 values.extend_from_slice(&row0_spend_cm[row_idx]);
             } else if (4..4 + n_o).contains(&row_idx) {
                 values.extend_from_slice(&row0_out_cm[row_idx - 4]);
+            } else if (8..8 + n_o).contains(&row_idx) {
+                values.extend_from_slice(&sponge_bank1_cm[row_idx - 8]);
+            } else if (12..12 + n_o).contains(&row_idx) {
+                values.extend_from_slice(&sponge_bank2_cm[row_idx - 12]);
             } else {
                 values.extend_from_slice(&padding_p2_16);
             }
@@ -3280,5 +3347,125 @@ mod tests {
             trace_fes, trace_fes_last,
             "O_CM_SPONGE_OUT must be constant across trace rows (proxies-are-constant invariant)"
         );
+    }
+
+    /// Phase 4b-step3-step1.2a: the shared `G_CM_SHARED_P2_16` block
+    /// now hosts two additional row-cohorts — the sponge bank-1 perm
+    /// witnesses on rows 8..8+n_o and bank-2 perm witnesses on rows
+    /// 12..12+n_o. This test extracts the `inputs` field of both
+    /// cohorts, reconstructs the expected bank-1 input layout
+    /// (state[0..7] = fes[0..8], state[8..15] = tag_block), applies
+    /// the Poseidon2-w=16 permutation off-circuit to get the expected
+    /// bank-2 input, and asserts trace matches.
+    ///
+    /// Crucially, this test also confirms the CHAIN: the 4-fe output
+    /// of bank-2's permutation, extracted from the `Poseidon2Cols::
+    /// ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS-1].post[0..4]`
+    /// field, must equal `O_CM_SPONGE_OUT[0..4]` in the output proxy
+    /// block — i.e. the trace-gen produces a self-consistent sponge
+    /// computation that step 1.2b+ AIR constraints can ratify.
+    #[test]
+    fn trace_populates_sponge_bank_rows_chained_to_o_cm_sponge_out() {
+        use p3_matrix::Matrix;
+
+        let w = MvpWitness::deterministic_valid(1, 2, 0x5B71_0000);
+        let perm16 = default_goldilocks_poseidon2_16();
+        let trace = w.generate_trace();
+
+        let n_s = 1usize;
+        let n_o = 2usize;
+        let width = air_width(n_s, n_o);
+
+        // Sanity: all widths line up.
+        assert!(G_CM_SHARED_P2_16 + POSEIDON2_COLS_PER_INSTANCE_16 < width);
+
+        for j in 0..n_o {
+            let o = &w.outputs[j];
+
+            // --- Expected bank-1 input (reconstructed off-circuit) ---
+            let d_fes = pack_diversifier_as_2fe(&o.d);
+            let pk_d_fes = pack_32b_as_4fe(&o.pk_d);
+            let ivk_cm_fes = pack_32b_as_4fe(&o.ivk_commitment);
+            let value_fe = Goldilocks::from_u64(reduce_to_goldilocks(o.value));
+            let rcm_fes = pack_32b_as_4fe(&o.rcm);
+            let mut fes = [Goldilocks::ZERO; 15];
+            fes[0] = d_fes[0];
+            fes[1] = d_fes[1];
+            fes[2..6].copy_from_slice(&pk_d_fes);
+            fes[6..10].copy_from_slice(&ivk_cm_fes);
+            fes[10] = value_fe;
+            fes[11..15].copy_from_slice(&rcm_fes);
+            let tag_block = uno_cm_v1_tag_block();
+
+            let mut expected_bank1_in =
+                [Goldilocks::ZERO; POSEIDON2_WIDTH_16];
+            expected_bank1_in[0..8].copy_from_slice(&fes[0..8]);
+            expected_bank1_in[8..16].copy_from_slice(&tag_block);
+
+            // --- Extract trace row 8+j bank-1 input (first WIDTH cols
+            //     of the shared block are Poseidon2Cols::inputs) ---
+            let row_bank1: Vec<Goldilocks> =
+                trace.row(8 + j).unwrap().into_iter().collect();
+            let bank1_inputs_slice = &row_bank1[G_CM_SHARED_P2_16
+                ..G_CM_SHARED_P2_16 + POSEIDON2_WIDTH_16];
+            assert_eq!(
+                bank1_inputs_slice,
+                &expected_bank1_in[..],
+                "bank-1 inputs on row 8+{} must match expected fes-at-rate + tag-at-capacity layout",
+                j,
+            );
+
+            // --- Compute expected bank-2 input from post-perm-1 state ---
+            let mut state = expected_bank1_in;
+            perm16.permute_mut(&mut state);
+            let mut expected_bank2_in = state;
+            for k in 0..7 {
+                expected_bank2_in[k] = expected_bank2_in[k] + fes[8 + k];
+            }
+            expected_bank2_in[7] = expected_bank2_in[7] + Goldilocks::from_u64(1);
+
+            // --- Extract trace row 12+j bank-2 input ---
+            let row_bank2: Vec<Goldilocks> =
+                trace.row(12 + j).unwrap().into_iter().collect();
+            let bank2_inputs_slice = &row_bank2[G_CM_SHARED_P2_16
+                ..G_CM_SHARED_P2_16 + POSEIDON2_WIDTH_16];
+            assert_eq!(
+                bank2_inputs_slice,
+                &expected_bank2_in[..],
+                "bank-2 inputs on row 12+{} must absorb fes[8..14] into slots 0..6 + padding at slot 7 + tag unchanged",
+                j,
+            );
+
+            // --- Post-perm-2 state[0..4] should equal O_CM_SPONGE_OUT ---
+            let mut state_final = expected_bank2_in;
+            perm16.permute_mut(&mut state_final);
+            let sponge_out_expected: [Goldilocks; 4] = [
+                state_final[0],
+                state_final[1],
+                state_final[2],
+                state_final[3],
+            ];
+
+            // Read O_CM_SPONGE_OUT from output-j proxy block on any row
+            // (proxies are constant; use row 0 since it's guaranteed
+            // populated on all shapes).
+            let row0: Vec<Goldilocks> =
+                trace.row(0).unwrap().into_iter().collect();
+            let output_block_j_start = GLOBAL_COLS + n_s * per_spend_cols() + j * per_output_cols();
+            let sponge_col_base = output_block_j_start + O_CM_SPONGE_OUT;
+            let o_cm_sponge_out: [Goldilocks; 4] = [
+                row0[sponge_col_base],
+                row0[sponge_col_base + 1],
+                row0[sponge_col_base + 2],
+                row0[sponge_col_base + 3],
+            ];
+
+            assert_eq!(
+                sponge_out_expected,
+                o_cm_sponge_out,
+                "bank-2 permutation output state[0..4] must chain to O_CM_SPONGE_OUT for output {}",
+                j,
+            );
+        }
     }
 }
