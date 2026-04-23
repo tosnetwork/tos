@@ -7,8 +7,13 @@ cryptographic bindings of `cm`, `nf`, `leaf`, and the depth-32
 Merkle walk against the real 32-byte recipient / spender material.
 
 **Status (2026-04-23):** Step 0 ✅ + Step 1 ✅ + Step 2a/2b-decomp ✅ + Step 3c ✅
-landed. Step 2b-AIR + Step 3a in flight (Step 3a delegated to background
-agent per the §4.3 blueprint). Step 4 pending. Tracked as task #131.
++ Step 3a ✅ landed. Step 2b-AIR + Step 2b-cleanup pending. Step 4 pending.
+Tracked as task #131.
+
+**Keystone milestone:** `a0ff246ae` landed 4-fe Merkle walk — anchor binding
+goes from single-Goldilocks-fe (~64-bit) to 256-bit. Cryptographic-soundness
+floor of the AIR now exceeds the FRI Option B soundness tier (180-bit
+conjectured / 102-bit proven) at every claim except nf (pending 2b-AIR).
 
 **Scope:** strict cryptographic soundness closure. Phase 4b-step3
 does NOT improve byte parity (already closed by Phase 4a + 4b-step1
@@ -30,9 +35,9 @@ shipped Transfer AIR proves:
 | 1 | `Σ spend.value = Σ output.value + fee`      | u64 arithmetic    | real (128-bit via STARK) |
 | 2 | each `value < 2^64` via 4×u16 + LogUp       | u16 limbs         | real (128-bit via STARK + LogUp) |
 | 3 | `cm_bytes = Poseidon2-w=16-iterated-sponge("uno-cm-v1", real d, real pk_d, real ivk_commitment, value, real rcm)` | **real 32-byte** | ✅ **strong** (step 1) |
-| 4 | trace-internal `anchor_proxy = Poseidon2-Merkle-walk(leaf_proxy, [sib_proxies])`, 32 levels | u64 proxies       | **weak** (step 3a in flight) |
+| 4 | `anchor_bytes = Poseidon2-Merkle-walk-4fe(real leaf[32B], [real siblings[32B]]), 32 levels` | **real 32-byte** | ✅ **strong** (step 3a) |
 | 5 | `PI[cm+k] = O_CM_SPONGE_OUT[k]` (AIR-derived) | real 32-byte | ✅ **strong** (step 1.3-pi) |
-| 6 | `PI[anchor+k] = witness.anchor_bytes[k*8..(k+1)*8]` copy-constraint   | byte copy         | copy-only (step 3a will lift) |
+| 6 | `PI[anchor+k] = S_CURRENT_FE[k]` last-row 4-fe binding | **real 32-byte** | ✅ **strong** (step 3a) |
 
 The "weak" rows are the target of this plan. The u64 proxies
 currently used by the AIR are digest-reductions of the real 32-byte
@@ -352,7 +357,7 @@ Pending:
                 and output[0..4] → PI[pi_nf(i)+0..4]. ~200 LOC.
   2b-cleanup  — ⏳ delete legacy narrow-Nf block on rows 4..(4+n_s-1). ~30 LOC.
 
-### 4.3 Step 3 — Merkle walk 4-fe state 🟡 IN PROGRESS
+### 4.3 Step 3 — Merkle walk 4-fe state ✅ COMPLETE
 
 **Goal:** the depth-32 Merkle walk threads a 4-fe state through all
 32 levels. Each level's Poseidon2-w=8 compression is
@@ -423,17 +428,22 @@ Sub-commits landed:
                 +768 B/spend). AIR still uses `first_u64_proxy` per sibling
                 until step 3a lands.
 
-In flight:
+Sub-commits landed:
   3a-plan    — ✅ detailed blueprint produced by Plan subagent (task #137):
                 col-layout diff, AIR constraint pseudocode, trace-gen outline,
                 fixture helper `poseidon2_merkle_path_root_4fe`, anchor-PI
                 cleanup recommendation (bundle G_ANCHOR_* deletion in 3a),
                 9 migration gotchas, ~270 LOC estimate.
-  3a-code    — 🔄 background agent `a6674c12` executing the blueprint in
-                isolated worktree. Will land as commit after test validation.
+  3a         — ✅ `a0ff246ae` 4-fe Merkle walk — anchor 64→256-bit binding.
                 SPEND_VAR_COLS: 1 → 4; siblings 32 → 128 cols/spend; new
                 `S_CURRENT_FE[0..4]` Merkle digest; last-row direct anchor
-                binding `PI[PI_ANCHOR + 0..4] == S_CURRENT_FE[0..4]`.
+                binding `PI[PI_ANCHOR + 0..4] == S_CURRENT_FE[0..4]`; all
+                three `G_ANCHOR_*` global cols retired. Full plonky3-ffi
+                lib suite green (397/397); tosctl send_roundtrip green.
+                +510/-211 LOC across transfer_air.rs, verifier.rs,
+                tosctl/uno/src/send.rs, cbindgen header.
+                New test `merkle_walk_4fe_matches_reference_fixture` proves
+                trace-gen self-consistency independent of AIR constraints.
 
 Deferred to follow-up `step3a-fields` (optional, defense-in-depth, ~300 LOC):
 per-sibling u16 decomposition + LogUp range-check (128 fes × 4 u16 per spend).
