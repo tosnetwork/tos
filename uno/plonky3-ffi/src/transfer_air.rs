@@ -951,9 +951,12 @@ impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for MvpTransferAir {
 ///
 ///   Phase 3b-step2 value cols:            4·(n_spends + n_outputs)
 ///   Phase 4b-step3-step1.3 output fe-limb:        56·n_outputs
-///   Phase 4b-step3-step2b-decomp spend fe-limb:   32·n_spends
+///   Phase 4b-step3-step2b-decomp spend fe-limb:   32·n_spends (nk + leaf)
+///   Phase 4b-step3-step5b-decomp spend fe-limb:   56·n_spends (d + pk_d
+///                                                  + ivk_commitment + rcm)
 ///
-/// Total receives per row: 36·n_spends + 60·n_outputs.
+/// Total receives per row: 4·(n_spends + n_outputs) + 56·n_outputs
+///                        + 88·n_spends.
 /// All at multiplicity 1.
 ///
 /// The matching `Direction::Send` side lives in `range16_air` under the
@@ -1010,8 +1013,17 @@ impl<F: p3_field::Field> p3_lookup::LookupAir<F> for MvpTransferAir {
         let one = p3_air::symbolic::SymbolicExpression::Leaf(
             p3_air::BaseLeaf::Constant(F::ONE),
         );
+        // Phase 4b-step3-step5e: capacity reflects the post-step-5b
+        // formula `4·(n_s+n_o) + 56·n_o + 88·n_s`; the earlier
+        // `36·n_s + 60·n_o` wrote off the Phase 3b-step2 value cols
+        // (4 per spend + 4 per output, which are the `4·(n_s+n_o)`
+        // term). Full breakdown in the block-doc above.
         let mut lookups: Vec<p3_lookup::lookup_traits::Lookup<F>> =
-            Vec::with_capacity(36 * self.n_spends + 60 * self.n_outputs);
+            Vec::with_capacity(
+                4 * (self.n_spends + self.n_outputs)
+                    + 56 * self.n_outputs
+                    + 88 * self.n_spends,
+            );
 
         let name = || {
             p3_lookup::lookup_traits::Kind::Global(String::from(
@@ -4493,27 +4505,20 @@ fn poseidon2_ivk_commitment(
     state[0]
 }
 
-/// Phase 4b-step3-step5c-sponge: legacy u64-proxy single-perm cm
-/// helper. No longer used by trace-gen, fixture, or pre-check — the
-/// spend-side claim 2 now runs through
-/// `poseidon2_cm_full_sponge(...)` (15-fe iterated sponge). Kept
-/// `#[allow(dead_code)]` so historical regression tests that compare
-/// against the old single-perm digest can still build; scheduled for
-/// deletion alongside `poseidon2_cm_fe` once the output-side `O_CM_CLAIM`
-/// legacy claim-6 block is retired.
-#[allow(dead_code)]
-fn poseidon2_cm(
-    perm16: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH_16]>,
-    d: u64,
-    pk_d: u64,
-    ivk_cm: u64,
-    value: u64,
-    rcm: u64,
-) -> u64 {
-    poseidon2_cm_fe(perm16, d, pk_d, ivk_cm, value, rcm).as_canonical_u64()
-}
-
-/// Wide-sponge Poseidon2-16 for the 15-fe note-commitment input per §3.2.
+/// Phase 4b-step3-step5e: **output-side legacy only** — retire with
+/// the `O_CM_CLAIM` trace col. `poseidon2_cm_fe` is still called in
+/// trace-gen at line ~3889 to populate `O_CM_CLAIM` (Phase 4b-step2a
+/// decoupled this from PI; Phase 4b-step3-step1.3-pi rewired PI to
+/// `O_CM_SPONGE_OUT`, so `O_CM_CLAIM` is now dead weight on the trace
+/// side but still bound by the legacy claim-6 single-perm constraint
+/// block at `transfer_air.rs:1141` — retiring the col + constraint is
+/// a separate cleanup commit). Once both the col and the output-side
+/// claim-6 AIR block are removed, `poseidon2_cm_fe` can be deleted.
+///
+/// The u64-returning wrapper `poseidon2_cm()` that formerly lived here
+/// was deleted by step 5e (Codex follow-up finding 3) — had no
+/// callers, and the single-line `.as_canonical_u64()` was shadowing
+/// the real helper.
 fn poseidon2_cm_fe(
     perm16: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH_16]>,
     d: u64,
@@ -4874,6 +4879,41 @@ mod tests {
                     Err(Plonky3Status::WitnessInvalid)
                 ),
                 "decode must reject non-zero d[{}]",
+                offset_in_d
+            );
+        }
+    }
+
+    /// Phase 4b-step3-step5e: mirror of
+    /// `witness_decode_rejects_non_canonical_diversifier_padding` on
+    /// the spend side. Step 5a-wire added a decoder rejection for
+    /// `SpendWitness.d[11..32] != 0` (same rationale as the output-side
+    /// check: `pack_diversifier_as_2fe` absorbs `d[0..16]`, so
+    /// `d[11..15]` would change the proven cm and `d[16..31]` would be
+    /// unconstrained garbage). Codex follow-up audit finding 1
+    /// (`doc/uno-phase4b-step5-codex-audit.md`) flagged that without
+    /// this regression, a later refactor could silently weaken the
+    /// check.
+    #[test]
+    fn witness_decode_rejects_non_canonical_spend_diversifier_padding() {
+        let w = MvpWitness::deterministic_valid(1, 1, 0xD1FF_5005);
+        let good = w.encode();
+        MvpWitness::decode(&good).expect("honest witness must decode");
+
+        // Spend 0's d starts at: HEAD(10) + leaf(32) = offset 42.
+        // Wire layout per `encode()`: leaf(32) + d(32) + value(8) +
+        // ivk(32) + pk_d(32) + ivk_commitment(32) + rcm(32) + nk(32)
+        // + pos(8) + merkle_path(32·MERKLE_DEPTH) + rk_bytes(32).
+        let spend0_d_off = 10 + 32;
+        for offset_in_d in 11..32 {
+            let mut bad = good.clone();
+            bad[spend0_d_off + offset_in_d] = 0xAB;
+            assert!(
+                matches!(
+                    MvpWitness::decode(&bad),
+                    Err(Plonky3Status::WitnessInvalid)
+                ),
+                "decode must reject non-zero spend0.d[{}]",
                 offset_in_d
             );
         }
