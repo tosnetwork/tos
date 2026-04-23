@@ -319,7 +319,7 @@ pub const SPEND_PROXY_COLS: usize =
 /// — bound to `PI[pi_cm(j) + 0]` via row-0 copy-constraint, replacing
 /// the previous `cm_claim == pi_cms[j]` binding.
 pub const OUTPUT_PROXY_COLS: usize =
-    6 + VALUE_LIMBS_U16 + RK_EPK_LIMBS + 1 + 3 + 1 + 4 + 8 + 5 + 5 + 8;
+    6 + VALUE_LIMBS_U16 + RK_EPK_LIMBS + 1 + 4 + 8 + 5 + 5 + 8;
 
 /// Narrow (width-8) Poseidon2 instances per spend after K-air-col-step2:
 /// only the shared-Merkle slot remains. IvkCm + Nf are folded into a
@@ -383,38 +383,15 @@ const O_VALUE_LIMB0: usize = 6;
 const O_EPK_LIMB0: usize = O_VALUE_LIMB0 + VALUE_LIMBS_U16;
 /// Single column holding the u16 `filter_tag` (Phase 4a).
 const O_FILTER_TAG: usize = O_EPK_LIMB0 + RK_EPK_LIMBS;
-/// Base index of the 3 u64-limb columns holding `cm_bytes[8..32]`
-/// (Phase 4b-step1). Bound to PI limbs 1..3 via row-0 copy-constraint.
-const O_CM_LIMB1: usize = O_FILTER_TAG + 1;
-/// Single column holding `cm_bytes[0..8]` as a u64 limb (Phase 4b-
-/// step2a). Bound to `PI[pi_cm(j) + 0]` via row-0 copy-constraint,
-/// replacing the prior `O_CM_CLAIM`-to-PI binding. `O_CM_CLAIM` still
-/// exists and is still constrained to the Poseidon2-w=16 output via
-/// the shared wide block on rows 0..7, but it no longer directly
-/// drives the PI value — this decoupling is what achieves byte parity
-/// with C++'s `encode_256(cm_bytes)[0]`, at the documented cost of
-/// weakening claim-2's on-PI soundness.
-const O_CM_LIMB0_REAL: usize = O_CM_LIMB1 + 3;
 /// Phase 4b-step3-step1.1: base index of the 4 trace columns holding
 /// the output of the 15-fe iterated-sponge `poseidon2_cm_full_sponge`
-/// over `witness.o.{d, pk_d, ivk_commitment, value, rcm}`. Purely a
-/// data column in this commit — NO AIR constraint binds it to
-/// `witness.cm_bytes` yet. Step 1.2 adds the in-circuit Poseidon2
-/// AIR constraints that ratify this column against the sponge
-/// derivation; step 1.3 then re-couples `PI[pi_cm(j) + k]` to
-/// `O_CM_SPONGE_OUT[k]` (replacing the Phase 4b-step2a copy-
-/// constraint from `O_CM_LIMB0_REAL` / `O_CM_LIMB1..3`).
-///
-/// For today's commit, the column's value WILL differ from
-/// `witness.cm_bytes` for all tosctl-produced witnesses: tosctl
-/// currently passes zero-padded u64 proxies in `P3OutputWitness::
-/// {d, pk_d, ivk_commitment, rcm}`, so the sponge-over-zero-
-/// padded-proxies output does not equal the real
-/// `compute_note_commitment` bytes. Making these equal is the
-/// separate step 1.1-tosctl refactor (thread real recipient
-/// material through `TransferWitness::build()`), tracked in
-/// `doc/uno-p2-phase4b-step3-plan.md §4.1`.
-const O_CM_SPONGE_OUT: usize = O_CM_LIMB0_REAL + 1;
+/// over `witness.o.{d, pk_d, ivk_commitment, value, rcm}`. Bound by
+/// step 1.2b-f in-circuit Poseidon2 AIR constraints to the sponge
+/// derivation, and by step 1.3-pi to `PI[pi_cm(j) + 0..4]` via row-0
+/// copy-constraint. Superseded the Phase 4b-step1 / Phase 4b-step2a
+/// witness-bytes path (`O_CM_LIMB0_REAL` + `O_CM_LIMB1..3`) which
+/// was trimmed out by step 1.3-cleanup.
+const O_CM_SPONGE_OUT: usize = O_FILTER_TAG + 1;
 /// Phase 4b-step3-step1.2d: base index of the 8 "carry capacity" cols
 /// holding the bank-1 Poseidon2-w=16 output's capacity slots
 /// (`state[8..16]` after perm-1). These are pinned by AIR constraints
@@ -2756,24 +2733,6 @@ impl MvpWitness {
                     v.push(Goldilocks::from_u64(reduce_to_goldilocks(limb)));
                 }
                 v.push(Goldilocks::from_u64(o.filter_tag as u64));
-                // Phase 4b-step1: 3 upper u64 limbs of cm_bytes[8..32]
-                // (LE), reduced mod Goldilocks. Bound to PI[pi_cm(j)+k]
-                // for k in 1..4 by row-0 copy-constraint.
-                for k in 1..4 {
-                    let limb = u64::from_le_bytes(
-                        o.cm_bytes[k * 8..(k + 1) * 8].try_into().unwrap(),
-                    );
-                    v.push(Goldilocks::from_u64(reduce_to_goldilocks(limb)));
-                }
-                // Phase 4b-step2a: cm_bytes[0..8] as a single u64 limb,
-                // reduced mod Goldilocks. This is the PI binding for
-                // cm limb 0 — bound to `PI[pi_cm(j) + 0]` via row-0
-                // copy-constraint. `O_CM_CLAIM` (col 0) stays on its
-                // Poseidon2 derivation but no longer touches PI.
-                let cm_limb0 = u64::from_le_bytes(
-                    o.cm_bytes[0..8].try_into().unwrap(),
-                );
-                v.push(Goldilocks::from_u64(reduce_to_goldilocks(cm_limb0)));
                 // Phase 4b-step3-step1.1: O_CM_SPONGE_OUT[0..4] — the
                 // 4-fe digest produced by the 15-fe iterated Poseidon2
                 // sponge over the widened witness fields. AIR-bound
@@ -3358,30 +3317,35 @@ pub fn witness_anchor_bytes_consistent(w: &MvpWitness) -> bool {
     reduce_to_goldilocks(anchor_limb0) == reduce_to_goldilocks(w.anchor_proxy)
 }
 
-/// Phase 4b-step1: true iff for every output,
-/// `witness.cm_bytes[0..8] as u64 (mod p) ==
-/// poseidon2_cm_fe(d, pk_d, ivk_commitment, value, rcm)`. Same
-/// rationale as `witness_anchor_bytes_consistent` but for the per-
-/// output cm limb-0 binding. C++ side reads
-/// `encode_256(cm_bytes)[0]`; Rust emits the Poseidon2-w=16 output.
-/// Pre-check rejects witnesses where the two disagree on the low
-/// 8 bytes.
+/// Phase 4b-step3-step1.3-pi: true iff for every output, all 4 LE
+/// u64 limbs of `witness.cm_bytes` (reduced mod Goldilocks) equal the
+/// 4-fe output of the 15-fe iterated Poseidon2-w=16 sponge over
+/// (d, pk_d, ivk_commitment, value, rcm). Post-step-1.3-pi, the AIR
+/// binds `PI[pi_cm(j) + k]` to `O_CM_SPONGE_OUT[k]` — so a mismatch
+/// here guarantees verify-time rejection. Surfacing the error at the
+/// wallet pre-check boundary is friendlier than an opaque FFI
+/// `VerifyFailed`.
+///
+/// Supersedes the Phase 4b-step1 single-limb check that tested
+/// `encode_256(cm_bytes)[0] == poseidon2_cm_fe(...)`; the full 32 B
+/// are now consensus-bound.
 pub fn witness_cm_bytes_consistent(w: &MvpWitness) -> bool {
     let perm16 = default_goldilocks_poseidon2_16();
     for o in &w.outputs {
-        let derived = poseidon2_cm_fe(
+        let derived = poseidon2_cm_full_sponge(
             &perm16,
-            first_u64_proxy(&o.d),
-            first_u64_proxy(&o.pk_d),
-            first_u64_proxy(&o.ivk_commitment),
+            &o.d,
+            &o.pk_d,
+            &o.ivk_commitment,
             o.value,
-            first_u64_proxy(&o.rcm),
-        )
-        .as_canonical_u64();
-        let witness_limb0 =
-            u64::from_le_bytes(o.cm_bytes[0..8].try_into().unwrap());
-        if reduce_to_goldilocks(witness_limb0) != derived {
-            return false;
+            &o.rcm,
+        );
+        for k in 0..4 {
+            let witness_limb =
+                u64::from_le_bytes(o.cm_bytes[k * 8..(k + 1) * 8].try_into().unwrap());
+            if reduce_to_goldilocks(witness_limb) != derived[k].as_canonical_u64() {
+                return false;
+            }
         }
     }
     true
