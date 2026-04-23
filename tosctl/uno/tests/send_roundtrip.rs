@@ -248,7 +248,7 @@ fn send_pipeline_handles_single_output_no_change() {
 /// prove→verify loop end-to-end for the 1-spend / 2-output shape.
 #[test]
 fn test_real_proof_verifies_against_ffi_verifier() {
-    let _alice = keygen::derive_fvk(&seed_for(0x55)).expect("alice fvk");
+    let alice = keygen::derive_fvk(&seed_for(0x55)).expect("alice fvk");
     let bob = keygen::derive_fvk(&seed_for(0x66)).expect("bob fvk");
     let bob_diversifier = [0x77u8; 11];
     let bob_addr = Address::build(&bob, &bob_diversifier).expect("bob addr");
@@ -290,6 +290,7 @@ fn test_real_proof_verifies_against_ffi_verifier() {
     let witness = send::TransferWitness::build(
         &alice_notes,
         &[2_000],                                       // spend values
+        &[alice.nk.0], // spend_nks — real 32 B alice.nk (step 2-tosctl)
         &output_values_real,                            // recipient + change
         &expected_cms,                                  // output cms (real sponge output)
         &output_d_real,                                 // output d

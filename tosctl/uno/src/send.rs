@@ -448,10 +448,16 @@ fn build_transfer(
     let spend_rk_bytes: Vec<[u8; 32]> = spends.iter().map(|s| s.rk).collect();
     let output_epk_bytes: Vec<[u8; 32]> = outputs.iter().map(|o| o.epk).collect();
     let output_filter_tags: Vec<u16> = outputs.iter().map(|o| o.filter_tag).collect();
+    // Phase 4b-step3-step2-tosctl: real 32-byte `nk` per spend. A single
+    // wallet's FVK owns every selected note in a single `build_transfer`
+    // call, so all spends share `fvk.nk.0`. Precondition for step 2-AIR
+    // (in-circuit nf = Poseidon2(TAG_NF, nk, cm, pos) from real 32 B nk).
+    let spend_nks: Vec<[u8; 32]> = vec![fvk.nk.0; sel.notes.len()];
 
     let witness = TransferWitness::build(
         &sel.notes,
         &spend_values,
+        &spend_nks,
         &output_values,
         &output_cms,
         &output_addrs_d,
@@ -712,6 +718,7 @@ impl TransferWitness {
     pub fn build(
         spends: &[OwnedNote],
         spend_values: &[u64],
+        spend_nks: &[[u8; 32]],
         output_values: &[u64],
         output_cms: &[[u8; 32]],
         output_addrs_d: &[[u8; 11]],
@@ -744,6 +751,7 @@ impl TransferWitness {
             ));
         }
         if spend_values.len() != n_s
+            || spend_nks.len() != n_s
             || output_cms.len() != n_o
             || output_addrs_d.len() != n_o
             || output_addrs_pk_d.len() != n_o
@@ -841,10 +849,23 @@ impl TransferWitness {
         let shared_d: [u8; 8] = shared_d_word.to_le_bytes();
         // Phase 4b-step3-step0 (2026-04-22): P3SpendWitness widened its
         // `{ivk, pk_d, rcm, nk}` fields from `u64` to `[u8; 32]`. Until
-        // step 1+ upgrades the AIR to consume real 32-byte material, we
-        // project the existing u64 proxies into `bytes[0..8]` with
-        // 24 bytes of zero padding — the AIR reads first-8-bytes as u64
-        // internally, preserving identical Poseidon2 / Merkle behavior.
+        // step 1+ upgrades the AIR to consume real 32-byte material for
+        // `ivk` / `pk_d` / `rcm`, we project those u64 proxies into
+        // `bytes[0..8]` with 24 bytes of zero padding — the AIR reads
+        // first-8-bytes as u64 internally, preserving identical
+        // Poseidon2 / Merkle behavior.
+        //
+        // Phase 4b-step3-step2-tosctl (2026-04-23): `nk` is now carried
+        // as REAL 32-byte wallet material (`fvk.nk.0` threaded through
+        // `spend_nks`). The AIR's current nf derivation still extracts
+        // `first_u64_proxy(&s.nk)` = low 8 bytes internally, so trace-
+        // gen and public_inputs() remain self-consistent; this commit's
+        // only effect is that the witness now carries the full 32 B
+        // preimage of the real `nk` = Poseidon2("uno-nk-v1", uno_seed)
+        // (see `tosctl/uno/src/keygen.rs`). Step 2-AIR (follow-up) will
+        // widen the nf permutation to consume all 32 B so `PI[pi_nf(i)]`
+        // becomes byte-identical to the C++ validator's
+        // `pack_bits256_as_4_limbs(derive_nullifier(nk, cm, pos))`.
         let pad_u64_to_32 = |x: u64| -> [u8; 32] {
             let mut buf = [0u8; 32];
             buf[0..8].copy_from_slice(&x.to_le_bytes());
@@ -855,7 +876,6 @@ impl TransferWitness {
         let shared_rcm_bytes = pad_u64_to_32(shared_rcm);
         let mut p3_spends = Vec::with_capacity(n_s);
         for (i, note) in spends.iter().enumerate() {
-            let nk = reduce_digest_to_proxy(b"uno-sw-nk", &note.nullifier);
             // Per-spend real position is available via `note.position`, but
             // for the proxy AIR every spend shares `(leaf, path, pos)`; the
             // real position is NOT bound to any PI in the current AIR.
@@ -867,7 +887,7 @@ impl TransferWitness {
                 ivk: shared_ivk_bytes,
                 pk_d: shared_pk_d_bytes,
                 rcm: shared_rcm_bytes,
-                nk: pad_u64_to_32(nk),
+                nk: spend_nks[i],
                 pos: shared_pos,
                 merkle_path: shared_merkle_path,
                 rk_bytes: spend_rk_bytes[i],
@@ -1237,6 +1257,7 @@ mod tests {
         let witness = TransferWitness::build(
             &[note],
             &[1_000],
+            &[[0x99u8; 32]], // spend_nks — real 32 B nk material (step 2-tosctl)
             &[990],
             &[expected_cm],
             &[d_addr],
