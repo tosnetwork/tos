@@ -319,7 +319,7 @@ pub const SPEND_PROXY_COLS: usize =
 /// — bound to `PI[pi_cm(j) + 0]` via row-0 copy-constraint, replacing
 /// the previous `cm_claim == pi_cms[j]` binding.
 pub const OUTPUT_PROXY_COLS: usize =
-    6 + VALUE_LIMBS_U16 + RK_EPK_LIMBS + 1 + 3 + 1 + 4 + 8;
+    6 + VALUE_LIMBS_U16 + RK_EPK_LIMBS + 1 + 3 + 1 + 4 + 8 + 5;
 
 /// Narrow (width-8) Poseidon2 instances per spend after K-air-col-step2:
 /// only the shared-Merkle slot remains. IvkCm + Nf are folded into a
@@ -426,6 +426,39 @@ const O_CM_SPONGE_OUT: usize = O_CM_LIMB0_REAL + 1;
 /// sponge-absorb-doesn't-touch-capacity rule — without needing cross-
 /// row AIR access.
 const O_SPONGE_CARRY_CAP: usize = O_CM_SPONGE_OUT + 4;
+/// Phase 4b-step3-step1.2c: upper-fe-limb output-proxy columns that
+/// complete the bank-1 sponge absorb layout. Together with the existing
+/// single-fe proxies (`O_D`, `O_PK_D`, `O_IVK_COMMITMENT`, whose values
+/// coincide with the low-limb fe of each field via
+/// `pack_*_as_*fe(...)[0]`), these 5 cols hold the remaining fes that
+/// bank-1 absorbs into its rate slots on row 8+j:
+///
+///   shared_cm.inputs[0] = O_D             = d_fes[0]
+///   shared_cm.inputs[1] = O_D_FE1         = d_fes[1]           (NEW)
+///   shared_cm.inputs[2] = O_PK_D          = pk_d_fes[0]
+///   shared_cm.inputs[3] = O_PK_D_FE1      = pk_d_fes[1]        (NEW)
+///   shared_cm.inputs[4] = O_PK_D_FE2      = pk_d_fes[2]        (NEW)
+///   shared_cm.inputs[5] = O_PK_D_FE3      = pk_d_fes[3]        (NEW)
+///   shared_cm.inputs[6] = O_IVK_COMMITMENT = ivk_cm_fes[0]
+///   shared_cm.inputs[7] = O_IVK_COMMITMENT_FE1 = ivk_cm_fes[1] (NEW)
+///
+/// The AIR constraint in §4.1 step 1.2c pins `shared_cm.inputs[0..8]`
+/// on row 8+j to exactly this layout, so the prover can no longer put
+/// arbitrary values in bank-1's rate slots.
+///
+/// Soundness caveat for this sub-step: these cols are currently
+/// trace-populated from `pack_*_as_*fe(&witness.o.*)` but have NO AIR
+/// constraint binding them to the underlying 32-byte witness fields.
+/// Step 1.3-fields will add per-field byte→fe decomposition cols +
+/// constraints so that `O_*_FE{k}` is provably the k-th LE u64 limb
+/// of the witness bytes. Until then, a malicious prover could still
+/// pick any fe-limb values — but the sponge output would then be
+/// unable to match `O_CM_SPONGE_OUT`, which step 1.3 will wire to PI.
+const O_D_FE1: usize = O_SPONGE_CARRY_CAP + 8;
+const O_PK_D_FE1: usize = O_D_FE1 + 1;
+const O_PK_D_FE2: usize = O_PK_D_FE1 + 1;
+const O_PK_D_FE3: usize = O_PK_D_FE2 + 1;
+const O_IVK_COMMITMENT_FE1: usize = O_PK_D_FE3 + 1;
 
 // ---------------------------------------------------------------------------
 // Shape-aware helpers
@@ -1169,6 +1202,60 @@ where
                 }
                 // Claim 6 output binding: `cm_claim == Poseidon2(...)`.
                 builder.assert_zero(sel * (AB::Expr::from(shared_cm_out[0]) - cm_claim.into()));
+            }
+
+            // --- Phase 4b-step3-step1.2c: sponge bank-1 rate-slot pin --
+            //
+            // On row 8+j (j ∈ 0..n_outputs), bind the bank-1
+            // permutation's rate-slot inputs (`shared_cm.inputs[0..8]`)
+            // to the 8 fe-limbs that make up the first half of the
+            // 15-fe absorb: d_fes[0..2], pk_d_fes[0..4], ivk_cm_fes[0..2].
+            // The low-limb fes coincide with the existing single-fe
+            // proxies (`O_D`, `O_PK_D`, `O_IVK_COMMITMENT`); the 5
+            // upper-limb cols are new in step 1.2c
+            // (`O_D_FE1`, `O_PK_D_FE1..3`, `O_IVK_COMMITMENT_FE1`).
+            //
+            // Soundness gain: with this + step 1.2b (tag pin) +
+            // step 1.2d (capacity carry) + step 1.2e (bank-2 output
+            // binding), the prover no longer has freedom in bank-1's
+            // entire 16-slot input state — every slot is either a
+            // pinned constant (tag) or a pinned column. Bank-2 rate
+            // slots remain step 1.2f (absorb `bank1.out + fes[8..14]`
+            // + ONE padding at slot 7).
+            //
+            // Caveat: `O_{D,PK_D,IVK_COMMITMENT,*_FE*}` cols are NOT yet
+            // constrained to the 32-byte witness fields — they are
+            // data-column proxies. Step 1.3-fields adds byte→fe
+            // decomposition constraints. Until then, prover malleability
+            // is bounded by: whatever (d, pk_d, ivk_cm) the prover
+            // picks, the sponge output is uniquely determined, and
+            // step 1.3 will bind that output to PI.
+            for j in 0..self.n_outputs {
+                let sel: AB::Expr = local_slice[GS_ROW_SEL0 + 8 + j].into();
+                // Map bank-1 rate slot index -> output proxy col offset.
+                let slot_to_col = [
+                    O_D,               // inputs[0] = d_fes[0]
+                    O_D_FE1,           // inputs[1] = d_fes[1]
+                    O_PK_D,            // inputs[2] = pk_d_fes[0]
+                    O_PK_D_FE1,        // inputs[3] = pk_d_fes[1]
+                    O_PK_D_FE2,        // inputs[4] = pk_d_fes[2]
+                    O_PK_D_FE3,        // inputs[5] = pk_d_fes[3]
+                    O_IVK_COMMITMENT,  // inputs[6] = ivk_cm_fes[0]
+                    O_IVK_COMMITMENT_FE1, // inputs[7] = ivk_cm_fes[1]
+                ];
+                for k in 0..8 {
+                    let rate_col = output_col::<AB::Var>(
+                        local_slice,
+                        self.n_spends,
+                        j,
+                        slot_to_col[k],
+                    );
+                    builder.assert_zero(
+                        sel.clone()
+                            * (AB::Expr::from(shared_cm.inputs[k])
+                                - rate_col.into()),
+                    );
+                }
             }
 
             // --- Phase 4b-step3-step1.2b: sponge bank-1 capacity pin ----
@@ -2559,6 +2646,27 @@ impl MvpWitness {
                 for fe in sponge_bank1_out_cap[j].iter() {
                     v.push(*fe);
                 }
+                // Phase 4b-step3-step1.2c: upper fe limbs of d, pk_d,
+                // and ivk_commitment that bank-1 absorbs into its rate
+                // slots 1, 3, 4, 5, 7 on row 8+j. These 5 cols
+                // complement the existing single-fe proxies
+                // (`O_D`, `O_PK_D`, `O_IVK_COMMITMENT`) so that the
+                // full 8-fe bank-1 input matches the iterated-sponge
+                // layout per §4.1:
+                //   inputs[0..=1] = d_fes[0..=1]
+                //   inputs[2..=5] = pk_d_fes[0..=3]
+                //   inputs[6..=7] = ivk_cm_fes[0..=1]
+                // Trace-gen uses the same `pack_*_as_*fe` helpers as
+                // `poseidon2_cm_full_sponge`, so the column values are
+                // byte-identical to what bank-1 absorbs on row 8+j.
+                let d_fes = pack_diversifier_as_2fe(&o.d);
+                let pk_d_fes = pack_32b_as_4fe(&o.pk_d);
+                let ivk_cm_fes = pack_32b_as_4fe(&o.ivk_commitment);
+                v.push(d_fes[1]);
+                v.push(pk_d_fes[1]);
+                v.push(pk_d_fes[2]);
+                v.push(pk_d_fes[3]);
+                v.push(ivk_cm_fes[1]);
                 debug_assert_eq!(v.len(), OUTPUT_PROXY_COLS);
                 v
             })
