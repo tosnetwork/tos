@@ -6,7 +6,9 @@ M-P2 Phase 4b-step2a/b, so the STARK itself proves the real
 cryptographic bindings of `cm`, `nf`, `leaf`, and the depth-32
 Merkle walk against the real 32-byte recipient / spender material.
 
-**Status:** Plan only. No code landed yet. Tracked as task #131.
+**Status (2026-04-23):** Step 0 ✅ + Step 1 ✅ + Step 2a/2b-decomp ✅ + Step 3c ✅
+landed. Step 2b-AIR + Step 3a in flight (Step 3a delegated to background
+agent per the §4.3 blueprint). Step 4 pending. Tracked as task #131.
 
 **Scope:** strict cryptographic soundness closure. Phase 4b-step3
 does NOT improve byte parity (already closed by Phase 4a + 4b-step1
@@ -27,10 +29,10 @@ shipped Transfer AIR proves:
 |---|---|---|---|
 | 1 | `Σ spend.value = Σ output.value + fee`      | u64 arithmetic    | real (128-bit via STARK) |
 | 2 | each `value < 2^64` via 4×u16 + LogUp       | u16 limbs         | real (128-bit via STARK + LogUp) |
-| 3 | trace-internal `cm_claim = Poseidon2-w=16(TAG_CM, d_proxy, pk_d_proxy, ivk_commitment_proxy, value, rcm_proxy)` | u64 proxies       | **weak** |
-| 4 | trace-internal `anchor_proxy = Poseidon2-Merkle-walk(leaf_proxy, [sib_proxies])`, 32 levels | u64 proxies       | **weak** |
-| 5 | `PI[cm+k] = witness.cm_bytes[k*8..(k+1)*8]` (k=0..3), copy-constraint | byte copy         | copy-only, not derivation |
-| 6 | `PI[anchor+k] = witness.anchor_bytes[k*8..(k+1)*8]` copy-constraint   | byte copy         | copy-only, not derivation |
+| 3 | `cm_bytes = Poseidon2-w=16-iterated-sponge("uno-cm-v1", real d, real pk_d, real ivk_commitment, value, real rcm)` | **real 32-byte** | ✅ **strong** (step 1) |
+| 4 | trace-internal `anchor_proxy = Poseidon2-Merkle-walk(leaf_proxy, [sib_proxies])`, 32 levels | u64 proxies       | **weak** (step 3a in flight) |
+| 5 | `PI[cm+k] = O_CM_SPONGE_OUT[k]` (AIR-derived) | real 32-byte | ✅ **strong** (step 1.3-pi) |
+| 6 | `PI[anchor+k] = witness.anchor_bytes[k*8..(k+1)*8]` copy-constraint   | byte copy         | copy-only (step 3a will lift) |
 
 The "weak" rows are the target of this plan. The u64 proxies
 currently used by the AIR are digest-reductions of the real 32-byte
@@ -164,7 +166,7 @@ existing lib test suite, and can be committed independently. Steps
 1–3 each progressively reduce the Poseidon2 / Merkle "proxy surface"
 until every derivation runs over real 32-byte material.
 
-### 4.0 Step 0 — witness wire-format refactor (AIR unchanged)
+### 4.0 Step 0 — witness wire-format refactor (AIR unchanged) ✅ COMPLETE
 
 **Goal:** expand `SpendWitness` / `OutputWitness` to carry real
 32-byte material for `d`, `pk_d`, `ivk`, `ivk_commitment`, `rcm`;
@@ -184,7 +186,10 @@ unchanged).
 **Commit message prefix:** `M-P2 Phase 4b-step3-0: witness wire
 format — real 32-byte address material`.
 
-### 4.1 Step 1 — cm derivation in-circuit, real inputs
+**Landed as `42c6550ef`** (`M-P2 Phase 4b-step3-step0: widen MvpWitness
+u64 proxy fields to [u8; 32]`).
+
+### 4.1 Step 1 — cm derivation in-circuit, real inputs ✅ COMPLETE
 
 **Goal:** the Rust AIR proves `cm_bytes` was produced by the SAME
 15-fe iterated Poseidon2-w=16 sponge that tosctl
@@ -295,35 +300,28 @@ round-trip at 1/1, 1/2, 4/4; wire
 valid tosctl cm; step 1 just adds the AIR proof that it's the
 correct derivation).
 
-**Status (2026-04-22): Step 1 functionally complete.** Commits:
+**Status (2026-04-23): Step 1 complete + defense-in-depth hardening landed.** Commits:
 
-  1.0  — `50045938f` cross-crate sponge byte-parity tests
-  1.1  — `8a4f75c31` O_CM_SPONGE_OUT trace col (data-only)
-  1.2a — `81d30c246` trace-gen fills sponge bank rows
-  1.2b — `e9a6b8622` AIR pins bank-1 input capacity (tag block)
-  1.2c — `5bc0a2ba5` AIR pins bank-1 input rate slots
-  1.2d — `b187f99fa` AIR carries bank-1 out cap → bank-2 in cap
-  1.2e — `9397b2da7` AIR binds bank-2 output to O_CM_SPONGE_OUT
-  1.2f — `5cf965204` AIR closes bank-2 rate absorb (carry + fes + 10*)
-  1.1-tosctl — `96d6ed9d5` thread real 32 B recipient fields + real rcm
-  1.3-pi     — `016b2b5bf` PI[pi_cm] now driven by AIR-ratified sponge
-  1.3-cleanup — `8ce78a572` delete dead O_CM_LIMB0_REAL / O_CM_LIMB1..3
+  1.0  — ✅ `50045938f` cross-crate sponge byte-parity tests
+  1.1  — ✅ `8a4f75c31` O_CM_SPONGE_OUT trace col (data-only)
+  1.2a — ✅ `81d30c246` trace-gen fills sponge bank rows
+  1.2b — ✅ `e9a6b8622` AIR pins bank-1 input capacity (tag block)
+  1.2c — ✅ `5bc0a2ba5` AIR pins bank-1 input rate slots
+  1.2d — ✅ `b187f99fa` AIR carries bank-1 out cap → bank-2 in cap
+  1.2e — ✅ `9397b2da7` AIR binds bank-2 output to O_CM_SPONGE_OUT
+  1.2f — ✅ `5cf965204` AIR closes bank-2 rate absorb (carry + fes + 10*)
+  1.1-tosctl — ✅ `96d6ed9d5` thread real 32 B recipient fields + real rcm
+  1.3-pi     — ✅ `016b2b5bf` PI[pi_cm] now driven by AIR-ratified sponge
+  1.3-cleanup — ✅ `8ce78a572` delete dead O_CM_LIMB0_REAL / O_CM_LIMB1..3
+  1.3-fields — ✅ `172e079e9` u16 limb decomposition for output fe-limb cols
+                (+56 u16 cols/output, 14 fe-limbs × 4 u16, LogUp range-check)
 
-`OUTPUT_PROXY_COLS` landed at 45 (from 23 pre-step-1.2, incl. +22
-for the fe-limb proxies + carry cols that close the sponge
-absorb/carry chain end-to-end, minus -4 from the step-1.3-cleanup
-deletion of the legacy witness-bytes path).
+`OUTPUT_PROXY_COLS` landed at **101** post-1.3-fields (45 post-1.3-cleanup
++ 56 for the u16 limbs). Each d/pk_d/ivk_cm/rcm fe-limb is now
+AIR-provably the canonical u64 reduction of its 8-byte LE witness
+chunk — byte→fe decomposition soundness closed.
 
-Remaining optional hardening in step 1: **step 1.3-fields** —
-byte→fe decomposition constraints binding each `O_*_FE*` col to a
-specific 8-byte slice of the underlying 32 B `P3OutputWitness`
-field. Today a malicious prover could pick fe-limb values that
-differ from `u64::from_le_bytes(witness.field[k*8..(k+1)*8])` and
-still satisfy the sponge AIR + PI copy-constraint — the soundness
-leak is bounded by Poseidon2 2nd-preimage resistance, so this is
-defense-in-depth rather than a consensus-binding gap. ~40 LOC.
-
-### 4.2 Step 2 — nf derivation in-circuit, real inputs
+### 4.2 Step 2 — nf derivation in-circuit, real inputs 🟡 IN PROGRESS
 
 **Goal:** `nf = Poseidon2-w=8(TAG_NF, real_nk, real_cm[4], pos)` where
 the inputs are drawn from the step-1 real 4-fe cm and real 32-byte
@@ -339,7 +337,22 @@ cols.
 **Soundness gain:** nullifier binding is now a real-material
 derivation, matching the protocol-layer definition of nf.
 
-### 4.3 Step 3 — Merkle walk 4-fe state
+**Status (2026-04-23): tosctl + wire-format prep landed; AIR rewrite pending.**
+
+Sub-commits landed:
+  2-tosctl    — ✅ `b41af594e` thread real 32 B nk (fvk.nk.0) through SpendWitness
+  2a-leaf     — ✅ `9a5c93861` widen SpendWitness.leaf from u64 to [u8; 32]
+  2b-decomp   — ✅ `690fa6492` spend-side nk + leaf fe-limb + u16 decomposition
+                (mirror of 1.3-fields on spend side; +38 cols/spend)
+
+Pending:
+  2b-AIR      — ⏳ switch nf Poseidon2 block from narrow w=8 (single u64 proxy)
+                to wide w=16 single-perm on new shared-wide rows 16..(15+n_s),
+                with inputs (TAG_NF, nk_fes[0..4], leaf_fes[0..4], pos, 0·6)
+                and output[0..4] → PI[pi_nf(i)+0..4]. ~200 LOC.
+  2b-cleanup  — ⏳ delete legacy narrow-Nf block on rows 4..(4+n_s-1). ~30 LOC.
+
+### 4.3 Step 3 — Merkle walk 4-fe state 🟡 IN PROGRESS
 
 **Goal:** the depth-32 Merkle walk threads a 4-fe state through all
 32 levels. Each level's Poseidon2-w=8 compression is
@@ -402,7 +415,31 @@ proof-byte growth expected; bench re-run required for precise delta.
 This is the keystone of the phase — after step 3 commits, the AIR
 proves the full protocol-level cryptographic shape.
 
-### 4.4 Step 4 — cleanup, regen, doc
+**Status (2026-04-23): wire-format precondition landed; core AIR rewrite in flight.**
+
+Sub-commits landed:
+  3c         — ✅ `36beca92a` widen SpendWitness.merkle_path siblings from
+                `[u64; 32]` to `[[u8; 32]; 32]` (PER_SPEND 472 → 1240 B/spend,
+                +768 B/spend). AIR still uses `first_u64_proxy` per sibling
+                until step 3a lands.
+
+In flight:
+  3a-plan    — ✅ detailed blueprint produced by Plan subagent (task #137):
+                col-layout diff, AIR constraint pseudocode, trace-gen outline,
+                fixture helper `poseidon2_merkle_path_root_4fe`, anchor-PI
+                cleanup recommendation (bundle G_ANCHOR_* deletion in 3a),
+                9 migration gotchas, ~270 LOC estimate.
+  3a-code    — 🔄 background agent `a6674c12` executing the blueprint in
+                isolated worktree. Will land as commit after test validation.
+                SPEND_VAR_COLS: 1 → 4; siblings 32 → 128 cols/spend; new
+                `S_CURRENT_FE[0..4]` Merkle digest; last-row direct anchor
+                binding `PI[PI_ANCHOR + 0..4] == S_CURRENT_FE[0..4]`.
+
+Deferred to follow-up `step3a-fields` (optional, defense-in-depth, ~300 LOC):
+per-sibling u16 decomposition + LogUp range-check (128 fes × 4 u16 per spend).
+Soundness gap is bounded by Poseidon2 2nd-preimage like step 1.3-fields.
+
+### 4.4 Step 4 — cleanup, regen, doc ⏳ PENDING
 
 **Goal:** remove the Phase 4b-step2a/b "decoupling" comments from
 `transfer_air.rs` (their trade-off is now reversed); re-run
