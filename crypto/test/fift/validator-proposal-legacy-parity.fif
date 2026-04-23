@@ -57,6 +57,11 @@ query-id val-signature 25 expire-at 9 proposal-hash config-vote-req-ext>B config
     legacy-config-vote-ext-request B, b>
   "config vote int body matches pre-extraction inline cell" test-cell-eq
 
+Masterchain addr256 val-signature 25 expire-at 9 proposal-hash config-vote-req-ext>B config-vote-ext-msg
+  <b val-signature B, 25 expire-at 9 proposal-hash config-vote-req-ext>B B, b>
+  <b b{1000100} s, Masterchain addr256 addr, 0 Tomi, 0 1 i, swap append-msg-body b>
+  "config vote ext msg matches pre-extraction inline cell" test-cell-eq
+
 9 elect-id complaint-hash complaint-vote-req>B
   legacy-complaint-vote-request
   "complaint vote request matches pre-extraction inline bytes" test-bytes-eq
