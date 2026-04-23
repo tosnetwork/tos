@@ -847,6 +847,27 @@ impl TransferWitness {
         let anchor_proxy =
             poseidon2_merkle_path_root(&perm, shared_leaf, shared_pos, &shared_merkle_path);
 
+        // Phase 4b-step3-step3c (2026-04-23): P3SpendWitness widened
+        // `merkle_path: [u64; 32]` → `[[u8; 32]; 32]`. The local
+        // `poseidon2_merkle_path_root` helper above still consumes
+        // the legacy `[u64; 32]` proxy path (its signature is
+        // internal to tosctl's anchor computation), so we widen to
+        // bytes here in a second buffer to hand to the AIR wire.
+        // Each u64 sibling is projected into `bytes[0..8]` with
+        // 24-byte zero pad — same pattern as `shared_leaf_bytes`
+        // above. The AIR reads `first_u64_proxy(&s.merkle_path[k])`
+        // (low 8 bytes) internally for the legacy single-fe Merkle
+        // walk, so the derived u64 per sibling is identical to
+        // pre-step3c behaviour. Step 3a will lift the AIR walk to
+        // consume 4-fe sibling state.
+        let shared_merkle_path_bytes: [[u8; 32]; P3_MERKLE_DEPTH] = {
+            let mut buf = [[0u8; 32]; P3_MERKLE_DEPTH];
+            for k in 0..P3_MERKLE_DEPTH {
+                buf[k][0..8].copy_from_slice(&shared_merkle_path[k].to_le_bytes());
+            }
+            buf
+        };
+
         // Per-spend: distinguish only `nk` from the real note material; all
         // other fields are shared so the AIR's per-spend Merkle step
         // produces the same `anchor_proxy`. `pos` is also shared — the AIR
@@ -854,7 +875,7 @@ impl TransferWitness {
         // spend's walk lands on the anchor PI.
         //
         // The AIR's `SpendWitness` is: `{ leaf, d: [u8;8], value, ivk,
-        // pk_d, rcm, nk, pos, merkle_path: [u64; 32] }`. See
+        // pk_d, rcm, nk, pos, merkle_path: [[u8; 32]; 32] }`. See
         // `uno/plonky3-ffi/src/transfer_air.rs:SpendWitness` for the exact
         // struct K-AIR tightened.
         let shared_d: [u8; 8] = shared_d_word.to_le_bytes();
@@ -900,7 +921,7 @@ impl TransferWitness {
                 rcm: shared_rcm_bytes,
                 nk: spend_nks[i],
                 pos: shared_pos,
-                merkle_path: shared_merkle_path,
+                merkle_path: shared_merkle_path_bytes,
                 rk_bytes: spend_rk_bytes[i],
             });
         }

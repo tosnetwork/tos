@@ -2045,10 +2045,18 @@ pub struct SpendWitness {
     /// satisfy `pos < 2^MERKLE_DEPTH` (upper bits in `pos` are discarded
     /// when the witness is encoded because only 32 path bits are stored).
     pub pos: u64,
-    /// 32-level Merkle path: each entry is the sibling hash proxy
-    /// (single Goldilocks fe) at level `k`. Level 0 is the first layer
-    /// above the leaf.
-    pub merkle_path: [u64; MERKLE_DEPTH],
+    /// 32-level Merkle path: each entry is the raw 32-byte sibling hash
+    /// at level `k`. Level 0 is the first layer above the leaf. Phase
+    /// 4b-step3-step3c widened from `u64` single-fe proxy (per-entry)
+    /// to `[u8; 32]` so tosctl can thread the real 32-byte sibling
+    /// digests through. The AIR in its current (pre-step3a) shape
+    /// still derives a single-fe proxy via
+    /// `first_u64_proxy(&s.merkle_path[k])` (low 8 bytes) for the
+    /// legacy single-fe Merkle walk — no AIR logic changes here.
+    /// Step 3a will lift the Merkle walk to a 4-fe state by
+    /// decomposing each sibling via `pack_32b_as_4fe` for the
+    /// `(left[4] ‖ right[4]) → out[4]` compression.
+    pub merkle_path: [[u8; 32]; MERKLE_DEPTH],
     /// Raw 32-byte `rk` (compressed Ristretto255 spend-auth pubkey, §4.1).
     /// Consensus-binding: C++ `build_plonky3_public_inputs` encodes this
     /// via `encode_256` → 4 Goldilocks limbs. V1-3c-round-8 (档1) added
@@ -2188,6 +2196,16 @@ impl MvpWitness {
             poseidon2_merkle_path_root(&perm, shared_leaf, shared_pos, &shared_path)
                 .as_canonical_u64();
 
+        // Phase 4b-step3-step3c: widen siblings from `[u64; 32]` to
+        // `[[u8; 32]; 32]`. Fixture projects each legacy u64 proxy into
+        // bytes[0..8] with zero pad (same 8-byte-low-limb convention
+        // as leaf / d / nk above); real tosctl witnesses now carry
+        // full 32-byte sibling digests.
+        let mut shared_path_bytes = [[0u8; 32]; MERKLE_DEPTH];
+        for k in 0..MERKLE_DEPTH {
+            shared_path_bytes[k][0..8].copy_from_slice(&shared_path[k].to_le_bytes());
+        }
+
         // Build spends; all share the path so the anchor is identical per
         // spend. Only `nk` differs for distinct nullifiers.
         let mut spends = Vec::with_capacity(n_spends);
@@ -2225,7 +2243,7 @@ impl MvpWitness {
                 rcm: rcm_bytes,
                 nk: nk_bytes,
                 pos: shared_pos,
-                merkle_path: shared_path,
+                merkle_path: shared_path_bytes,
                 rk_bytes: [0u8; 32],
             });
         }
@@ -2352,12 +2370,15 @@ impl MvpWitness {
     pub fn encode(&self) -> Vec<u8> {
         // Per-spend: leaf(32) + d(8) + value(8) + pos(8)
         //          + ivk(32) + pk_d(32) + rcm(32) + nk(32)
-        //          + path(8*MERKLE_DEPTH) + rk_bytes(32)
-        //          = 32 + 24 + 4·32 + 256 + 32 = 472.
+        //          + path(32*MERKLE_DEPTH) + rk_bytes(32)
+        //          = 32 + 24 + 4·32 + 1024 + 32 = 1240.
         // Phase 4b-step3-step2a widened leaf from u64 (8 B) to [u8;32]
-        // so tosctl can thread the real spent-note commitment through
-        // to the AIR. Net wire bump: +24 B per spend (448 -> 472).
-        const PER_SPEND: usize = 32 + 3 * 8 + 4 * 32 + 8 * MERKLE_DEPTH + 32;
+        // (448 -> 472, +24 B/spend).
+        // Phase 4b-step3-step3c widened per-level Merkle sibling from
+        // u64 (8 B) to [u8;32] so tosctl can thread real 32-byte
+        // sibling digests through. Net wire bump per spend:
+        // (32-8)·MERKLE_DEPTH = 24·32 = +768 B (472 -> 1240).
+        const PER_SPEND: usize = 32 + 3 * 8 + 4 * 32 + 32 * MERKLE_DEPTH + 32;
         // Per-output: d(32) + pk_d(32) + ivk_cm(32) + value(8) + rcm(32)
         //           + cm(32) + epk(32) + filter_tag(2) = 202.
         const PER_OUTPUT: usize = 4 * 32 + 8 + 32 + 32 + 2;
@@ -2379,7 +2400,7 @@ impl MvpWitness {
             out.extend_from_slice(&s.nk);
             out.extend_from_slice(&s.pos.to_le_bytes());
             for sib in &s.merkle_path {
-                out.extend_from_slice(&sib.to_le_bytes());
+                out.extend_from_slice(sib);
             }
             out.extend_from_slice(&s.rk_bytes);
         }
@@ -2407,7 +2428,7 @@ impl MvpWitness {
         const HEAD: usize = 10;
         const TAIL: usize = 8 + 32 + 1 + 4 + 8;
         // Must match `encode()` — see step0 widening doc there.
-        const PER_SPEND: usize = 32 + 3 * 8 + 4 * 32 + 8 * MERKLE_DEPTH + 32;
+        const PER_SPEND: usize = 32 + 3 * 8 + 4 * 32 + 32 * MERKLE_DEPTH + 32;
         const PER_OUTPUT: usize = 4 * 32 + 8 + 32 + 32 + 2;
         if bytes.len() < HEAD + TAIL {
             return Err(Plonky3Status::WitnessInvalid);
@@ -2459,13 +2480,10 @@ impl MvpWitness {
             if pos >= (1u64 << MERKLE_DEPTH) {
                 return Err(Plonky3Status::WitnessInvalid);
             }
-            let mut merkle_path = [0u64; MERKLE_DEPTH];
+            let mut merkle_path = [[0u8; 32]; MERKLE_DEPTH];
             for sib in merkle_path.iter_mut() {
-                *sib = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
-                off += 8;
-                if *sib >= GOLDILOCKS_P {
-                    return Err(Plonky3Status::WitnessInvalid);
-                }
+                sib.copy_from_slice(&bytes[off..off + 32]);
+                off += 32;
             }
             let mut rk_bytes = [0u8; 32];
             rk_bytes.copy_from_slice(&bytes[off..off + 32]);
@@ -2774,7 +2792,7 @@ impl MvpWitness {
             let mut current = reduce_to_goldilocks(first_u64_proxy(&s.leaf));
             for k in 0..MERKLE_DEPTH {
                 let bit = (s.pos >> k) & 1;
-                let sib = reduce_to_goldilocks(s.merkle_path[k]);
+                let sib = reduce_to_goldilocks(first_u64_proxy(&s.merkle_path[k]));
                 let (left, right) = if bit == 0 {
                     (current, sib)
                 } else {
@@ -2951,7 +2969,7 @@ impl MvpWitness {
                     v.push(Goldilocks::from_u64(bit));
                 }
                 for k in 0..MERKLE_DEPTH {
-                    v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.merkle_path[k])));
+                    v.push(Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.merkle_path[k]))));
                 }
                 // Decompose value into VALUE_LIMBS_U16 = 4 u16 limbs
                 // (low-to-high). Phase 3b-step2: was 64 bit columns.
@@ -3642,11 +3660,20 @@ pub fn witness_claim1_anchor_consistent(w: &MvpWitness) -> bool {
     let perm = default_goldilocks_poseidon2_8();
     let want = reduce_to_goldilocks(w.anchor_proxy);
     for s in &w.spends {
+        // Phase 4b-step3-step3c: siblings are now [u8;32]. The legacy
+        // single-fe Merkle walk still consumes a u64 proxy per level,
+        // so project each sibling's first 8 bytes into a `[u64; 32]`
+        // at the call site (helper signature unchanged — step 3a will
+        // rewrite the walk over 4-fe state and retire this proxy).
+        let mut path_u64 = [0u64; MERKLE_DEPTH];
+        for k in 0..MERKLE_DEPTH {
+            path_u64[k] = first_u64_proxy(&s.merkle_path[k]);
+        }
         let derived = poseidon2_merkle_path_root(
             &perm,
             first_u64_proxy(&s.leaf),
             s.pos,
-            &s.merkle_path,
+            &path_u64,
         )
         .as_canonical_u64();
         if derived != want {

@@ -905,14 +905,17 @@ mod tests {
             pi.len(),
             crate::transfer_air::air_width(4, 4),
         );
-        // M-P2 Phase 4b-step3-step2a widened wire layout:
+        // M-P2 Phase 4b-step3-step3c widened wire layout:
         //   HEAD(10)
-        //   + PER_SPEND(32 + 3·8 + 4·32 + 8·MERKLE_DEPTH + 32)·n_s  (472 each at depth 32)
+        //   + PER_SPEND(32 + 3·8 + 4·32 + 32·MERKLE_DEPTH + 32)·n_s (1240 each at depth 32)
         //   + PER_OUTPUT(4·32 + 8 + 32 + 32 + 2)·n_o                (202 each)
         //   + TAIL(8 + 32 + 1 + 4 + 8)                              (53)
         // Step 2a bumped PER_SPEND from 448 → 472 (+24 B/spend) by
-        // widening `leaf: u64 → [u8; 32]`.
-        let per_spend = 32 + 3 * 8 + 4 * 32 + 8 * MERKLE_DEPTH + 32;
+        // widening `leaf: u64 → [u8; 32]`. Step 3c bumped PER_SPEND
+        // from 472 → 1240 (+768 B/spend = (32-8)·MERKLE_DEPTH) by
+        // widening each per-level Merkle sibling from u64 to [u8;32].
+        // Total witness wire at 4/4: 10 + 1240·4 + 202·4 + 53 = 5 831 B.
+        let per_spend = 32 + 3 * 8 + 4 * 32 + 32 * MERKLE_DEPTH + 32;
         let per_output = 4 * 32 + 8 + 32 + 32 + 2;
         let head = 10;
         let tail = 8 + 32 + 1 + 4 + 8;
@@ -920,6 +923,7 @@ mod tests {
             witness_wire.len(),
             head + per_spend * 4 + per_output * 4 + tail
         );
+        assert_eq!(witness_wire.len(), 5_831);
         assert_eq!(pi.len(), 608);
     }
 }
