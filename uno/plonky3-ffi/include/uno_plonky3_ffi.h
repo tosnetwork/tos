@@ -589,8 +589,12 @@
 // (Phase 4a), 3 columns for `cm_bytes[8..32]` upper limbs (Phase 4b-
 // step1), and 1 column for `cm_bytes[0..8]` limb 0 (Phase 4b-step2a)
 // — bound to `PI[pi_cm(j) + 0]` via row-0 copy-constraint, replacing
-// the previous `cm_claim == pi_cms[j]` binding.
-#define OUTPUT_PROXY_COLS (((((6 + VALUE_LIMBS_U16) + RK_EPK_LIMBS) + 1) + 3) + 1)
+// the previous `cm_claim == pi_cms[j]` binding. Phase 4b-step3-
+// step1.3-fields adds 56 additional u16 limb cols per output (14 fe-
+// limbs × 4 u16 limbs) that decompose each of the d/pk_d/ivk_cm/rcm
+// fe-limb proxy cols into its canonical u64 → 4×u16 limb form. Each
+// limb is range-checked via the cross-AIR `u16_range` LogUp.
+#define OUTPUT_PROXY_COLS (((((((((6 + VALUE_LIMBS_U16) + RK_EPK_LIMBS) + 1) + 4) + 8) + 5) + 5) + 8) + 56)
 
 // Narrow (width-8) Poseidon2 instances per spend after K-air-col-step2:
 // only the shared-Merkle slot remains. IvkCm + Nf are folded into a

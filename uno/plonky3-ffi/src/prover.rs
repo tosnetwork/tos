@@ -878,12 +878,14 @@ mod tests {
             pi.len(),
             crate::transfer_air::air_width(4, 4),
         );
-        // M-P2 Phase 4b-step3-step0 widened wire layout:
+        // M-P2 Phase 4b-step3-step2a widened wire layout:
         //   HEAD(10)
-        //   + PER_SPEND(32 + 4·32 + 8·MERKLE_DEPTH + 32)·n_s     (448 each at depth 32)
-        //   + PER_OUTPUT(4·32 + 8 + 32 + 32 + 2)·n_o             (202 each)
-        //   + TAIL(8 + 32 + 1 + 4 + 8)                           (53)
-        let per_spend = 32 + 4 * 32 + 8 * MERKLE_DEPTH + 32;
+        //   + PER_SPEND(32 + 3·8 + 4·32 + 8·MERKLE_DEPTH + 32)·n_s  (472 each at depth 32)
+        //   + PER_OUTPUT(4·32 + 8 + 32 + 32 + 2)·n_o                (202 each)
+        //   + TAIL(8 + 32 + 1 + 4 + 8)                              (53)
+        // Step 2a bumped PER_SPEND from 448 → 472 (+24 B/spend) by
+        // widening `leaf: u64 → [u8; 32]`.
+        let per_spend = 32 + 3 * 8 + 4 * 32 + 8 * MERKLE_DEPTH + 32;
         let per_output = 4 * 32 + 8 + 32 + 32 + 2;
         let head = 10;
         let tail = 8 + 32 + 1 + 4 + 8;

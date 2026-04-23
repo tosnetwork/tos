@@ -1888,8 +1888,15 @@ where
 /// Single-spend witness.
 #[derive(Debug, Clone)]
 pub struct SpendWitness {
-    /// Single-fe proxy for the spent note commitment `cm` (= Merkle leaf).
-    pub leaf: u64,
+    /// Raw 32-byte spent-note commitment `cm` (= Merkle leaf). Phase 4b-
+    /// step3-step2a widened from `u64` single-fe proxy so tosctl can
+    /// thread the real 32-byte note commitment through. The AIR in its
+    /// current (pre-step2b) shape still derives a u64 proxy internally
+    /// via `first_u64_proxy(&s.leaf)` — narrow-nf claim 4 and the
+    /// per-spend Merkle walk both still use the low 8 bytes only.
+    /// Step 2b will add 4-fe leaf decomposition cols + widen the nf
+    /// derivation to consume them in-circuit.
+    pub leaf: [u8; 32],
     /// Diversifier `d` proxy (8 B LE).
     pub d: [u8; 8],
     /// Value being spent. Must be `< p_Goldilocks`.
@@ -2079,8 +2086,15 @@ impl MvpWitness {
             rcm_bytes[0..8].copy_from_slice(&shared_rcm.to_le_bytes());
             let mut nk_bytes = [0u8; 32];
             nk_bytes[0..8].copy_from_slice(&nk.to_le_bytes());
+            // Phase 4b-step3-step2a: widen leaf from single-fe u64 to
+            // [u8; 32]. Fixture projects the legacy u64 proxy into
+            // bytes[0..8] with zero pad (same 8-byte-low-limb convention
+            // as d/pk_d/ivk/rcm above); real tosctl witnesses now carry
+            // the full 32-byte note commitment.
+            let mut leaf_bytes = [0u8; 32];
+            leaf_bytes[0..8].copy_from_slice(&shared_leaf.to_le_bytes());
             spends.push(SpendWitness {
-                leaf: shared_leaf,
+                leaf: leaf_bytes,
                 d: d_word.to_le_bytes(),
                 value: v_per_spend,
                 ivk: ivk_bytes,
@@ -2213,10 +2227,14 @@ impl MvpWitness {
     /// transient tosctl → Rust-prover FFI only (no C++ consumer;
     /// confirmed by the pre-commit Explore agent audit).
     pub fn encode(&self) -> Vec<u8> {
-        // Per-spend: leaf(8) + d(8) + value(8) + ivk(32) + pk_d(32)
-        //          + rcm(32) + nk(32) + pos(8) + path(8*MERKLE_DEPTH)
-        //          + rk_bytes(32) = 40 + 128 + 8 + 256 + 32 = 464.
-        const PER_SPEND: usize = 32 + 4 * 32 + 8 * MERKLE_DEPTH + 32;
+        // Per-spend: leaf(32) + d(8) + value(8) + pos(8)
+        //          + ivk(32) + pk_d(32) + rcm(32) + nk(32)
+        //          + path(8*MERKLE_DEPTH) + rk_bytes(32)
+        //          = 32 + 24 + 4·32 + 256 + 32 = 472.
+        // Phase 4b-step3-step2a widened leaf from u64 (8 B) to [u8;32]
+        // so tosctl can thread the real spent-note commitment through
+        // to the AIR. Net wire bump: +24 B per spend (448 -> 472).
+        const PER_SPEND: usize = 32 + 3 * 8 + 4 * 32 + 8 * MERKLE_DEPTH + 32;
         // Per-output: d(32) + pk_d(32) + ivk_cm(32) + value(8) + rcm(32)
         //           + cm(32) + epk(32) + filter_tag(2) = 202.
         const PER_OUTPUT: usize = 4 * 32 + 8 + 32 + 32 + 2;
@@ -2229,7 +2247,7 @@ impl MvpWitness {
         out.push(self.outputs.len() as u8);
         out.extend_from_slice(&self.fee.to_le_bytes());
         for s in &self.spends {
-            out.extend_from_slice(&s.leaf.to_le_bytes());
+            out.extend_from_slice(&s.leaf);
             out.extend_from_slice(&s.d);
             out.extend_from_slice(&s.value.to_le_bytes());
             out.extend_from_slice(&s.ivk);
@@ -2266,7 +2284,7 @@ impl MvpWitness {
         const HEAD: usize = 10;
         const TAIL: usize = 8 + 32 + 1 + 4 + 8;
         // Must match `encode()` — see step0 widening doc there.
-        const PER_SPEND: usize = 32 + 4 * 32 + 8 * MERKLE_DEPTH + 32;
+        const PER_SPEND: usize = 32 + 3 * 8 + 4 * 32 + 8 * MERKLE_DEPTH + 32;
         const PER_OUTPUT: usize = 4 * 32 + 8 + 32 + 32 + 2;
         if bytes.len() < HEAD + TAIL {
             return Err(Plonky3Status::WitnessInvalid);
@@ -2288,8 +2306,9 @@ impl MvpWitness {
         let mut off = 10;
         let mut spends = Vec::with_capacity(n_s);
         for _ in 0..n_s {
-            let leaf = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
-            off += 8;
+            let mut leaf = [0u8; 32];
+            leaf.copy_from_slice(&bytes[off..off + 32]);
+            off += 32;
             let mut d = [0u8; 8];
             d.copy_from_slice(&bytes[off..off + 8]);
             off += 8;
@@ -2489,7 +2508,7 @@ impl MvpWitness {
             // Phase 4b-step3-step0: widened nk field → u64 proxy via
             // first_u64_proxy (AIR semantics unchanged).
             let nf_limbs =
-                poseidon2_nf_full(&perm, first_u64_proxy(&s.nk), s.leaf, s.pos);
+                poseidon2_nf_full(&perm, first_u64_proxy(&s.nk), first_u64_proxy(&s.leaf), s.pos);
             for limb in nf_limbs {
                 out.push(limb);
             }
@@ -2613,7 +2632,7 @@ impl MvpWitness {
         for s in &self.spends {
             let d_word = u64::from_le_bytes(s.d);
             let d_f = Goldilocks::from_u64(reduce_to_goldilocks(d_word));
-            let leaf_f = Goldilocks::from_u64(reduce_to_goldilocks(s.leaf));
+            let leaf_f = Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.leaf)));
             // Phase 4b-step3-step0: widened fields → u64 proxy via
             // first_u64_proxy; AIR inputs unchanged.
             let pk_d_f = Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.pk_d)));
@@ -2628,8 +2647,8 @@ impl MvpWitness {
             // at rows 32..63 is the zero-input permutation (padding_p2).
             let mut per_spend_merkle = Vec::with_capacity(TRACE_HEIGHT);
             let mut per_spend_current = Vec::with_capacity(TRACE_HEIGHT);
-            per_spend_current.push(Goldilocks::from_u64(reduce_to_goldilocks(s.leaf)));
-            let mut current = reduce_to_goldilocks(s.leaf);
+            per_spend_current.push(Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.leaf))));
+            let mut current = reduce_to_goldilocks(first_u64_proxy(&s.leaf));
             for k in 0..MERKLE_DEPTH {
                 let bit = (s.pos >> k) & 1;
                 let sib = reduce_to_goldilocks(s.merkle_path[k]);
@@ -2793,7 +2812,7 @@ impl MvpWitness {
                 let d_f = Goldilocks::from_u64(reduce_to_goldilocks(d_word));
                 let ivkcm_fe = poseidon2_ivk_commitment(&perm, first_u64_proxy(&s.ivk), d_word);
                 let mut v = Vec::with_capacity(SPEND_PROXY_COLS);
-                v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.leaf)));
+                v.push(Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.leaf))));
                 v.push(d_f);
                 v.push(Goldilocks::from_u64(reduce_to_goldilocks(s.value)));
                 // Phase 4b-step3-step0: widened u64 proxy extraction
@@ -3453,7 +3472,7 @@ pub fn witness_claim2_leaf_consistent(w: &MvpWitness) -> bool {
             s.value,
             first_u64_proxy(&s.rcm),
         );
-        if derived != reduce_to_goldilocks(s.leaf) {
+        if derived != reduce_to_goldilocks(first_u64_proxy(&s.leaf)) {
             return false;
         }
     }
@@ -3466,8 +3485,13 @@ pub fn witness_claim1_anchor_consistent(w: &MvpWitness) -> bool {
     let perm = default_goldilocks_poseidon2_8();
     let want = reduce_to_goldilocks(w.anchor_proxy);
     for s in &w.spends {
-        let derived =
-            poseidon2_merkle_path_root(&perm, s.leaf, s.pos, &s.merkle_path).as_canonical_u64();
+        let derived = poseidon2_merkle_path_root(
+            &perm,
+            first_u64_proxy(&s.leaf),
+            s.pos,
+            &s.merkle_path,
+        )
+        .as_canonical_u64();
         if derived != want {
             return false;
         }

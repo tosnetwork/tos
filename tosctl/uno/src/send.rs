@@ -812,6 +812,17 @@ impl TransferWitness {
             shared_rcm,
         );
         let shared_leaf = shared_leaf_fe.as_canonical_u64();
+        // Phase 4b-step3-step2a: widen leaf from u64 single-fe proxy to
+        // [u8; 32] on the wire. For this scaffold-path witness (all
+        // spends share one Merkle leaf by AIR convention), project the
+        // u64 proxy into bytes[0..8] with zero-pad. Real per-note cm
+        // threading will come with step 3 (per-spend distinct leaves)
+        // since today every spend shares one leaf, one path, one pos.
+        let shared_leaf_bytes: [u8; 32] = {
+            let mut buf = [0u8; 32];
+            buf[0..8].copy_from_slice(&shared_leaf.to_le_bytes());
+            buf
+        };
 
         // Claim 1: 32-level Merkle path (§2.3, K-AIR-tightened AIR). We walk
         // the depth-32 tree from leaf to root, folding with a shared sibling
@@ -881,7 +892,7 @@ impl TransferWitness {
             // real position is NOT bound to any PI in the current AIR.
             let _ = (i, spend_values, note.position);
             p3_spends.push(P3SpendWitness {
-                leaf: shared_leaf,
+                leaf: shared_leaf_bytes,
                 d: shared_d,
                 value: v_per_spend,
                 ivk: shared_ivk_bytes,
