@@ -4,10 +4,6 @@ library Validator  // Validator request, vote, and signed body codecs
 "Key.fif" include
 "Msg.fif" include
 
-variable @config-vote-ext-wc
-variable @config-vote-ext-addr
-variable @config-vote-ext-signature
-variable @config-vote-ext-to-sign
 variable @normalize-vote-expire-base
 
 // ( S -- B )
@@ -48,10 +44,11 @@ variable @normalize-vote-expire-base
 } : config-vote-int-body
 
 // ( wc addr signature to-sign -- c )
-{ @config-vote-ext-to-sign ! @config-vote-ext-signature ! @config-vote-ext-addr ! @config-vote-ext-wc !
-  <b @config-vote-ext-signature @ B, @config-vote-ext-to-sign @ B, b>
-  <b b{1000100} s, @config-vote-ext-wc @ @config-vote-ext-addr @ addr, 0 Tomi, 0 1 i,
-    swap append-msg-body b>
+// Build inner signed body from (signature, to-sign), then wrap the outer
+// external-message envelope using (wc, addr) carried through the stack.
+{ swap <b swap B, swap B, b>
+  -rot
+  <b b{1000100} s, -rot addr, 0 Tomi, 0 1 i, swap append-msg-body b>
 } : config-vote-ext-msg
 
 // ( validator-idx elect-id complaint-hash -- B )
