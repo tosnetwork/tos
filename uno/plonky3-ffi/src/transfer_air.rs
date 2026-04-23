@@ -65,7 +65,7 @@
 //!                   + 1·POSEIDON2_COLS_PER_INSTANCE    // SHARED claim 3/4 IvkCm/Nf (w=8)
 //!
 //! per_spend_cols()  = SPEND_PROXY_COLS
-//!                   + 1                                // S_CURRENT (Merkle running val)
+//!                   + 4                                // S_CURRENT_FE[0..4] (4-fe Merkle digest)
 //!                   + 1·POSEIDON2_COLS_PER_INSTANCE    // SHARED Merkle (w=8, row-loop)
 //! per_output_cols() = OUTPUT_PROXY_COLS
 //! ```
@@ -74,7 +74,10 @@
 //! per-output compressions across trace rows:
 //!
 //! - **Merkle (w=8, shared per spend)**: rows 0..31 carry the 32 Merkle
-//!   levels of that spend via a running-digest column `S_CURRENT`.
+//!   levels of that spend via a 4-fe running-digest
+//!   `S_CURRENT_FE[0..4]` (step 3a widening from the legacy single-fe
+//!   `S_CURRENT`). Each level performs a
+//!   `(left[4] ‖ right[4]) → out[4]` Poseidon2-w=8 compression.
 //! - **Cm/OutCm (w=16, shared globally — K-air-col-step2 strategy b)**:
 //!   rows 0..3 carry spend `i`'s claim-2 Cm compression, rows 4..7 carry
 //!   output `j`'s claim-6 Cm compression. Row-0 bindings check `cm ==
@@ -241,13 +244,18 @@ pub const MERKLE_DEPTH: usize = 32;
 /// `k ∈ 0..32`, `0` on rows 32..63. Step 1 (K-air-col-share) introduced
 /// them for the Merkle row-loop; step 2 (K-air-col-step2) reuses the
 /// same bank for the Cm/IvkCm/Nf row-loops — no extra selector columns.
+///
+/// Phase 4b-step3-step3a cleanup: the Phase 4b-step1 / Phase 4b-step2b
+/// anchor-limb global cols (`G_ANCHOR_LIMB1..3`, `G_ANCHOR_PROXY`,
+/// `G_ANCHOR_LIMB0_REAL`) are retired. Post step 3a the Merkle walk
+/// carries a full 4-fe digest in `S_CURRENT_FE[0..4]` and the
+/// last-row binding pins each of those cols directly to
+/// `PI[PI_ANCHOR + 0..4]` — so the single-u64 anchor indirection is
+/// no longer needed.
 pub const GLOBAL_COLS: usize = 1
     + MERKLE_DEPTH
     + POSEIDON2_COLS_PER_INSTANCE_16 // shared Cm / OutCm (w=16) — claim 2/6
-    + POSEIDON2_COLS_PER_INSTANCE  // shared IvkCm / Nf (w=8) — claim 3/4
-    + 3                              // anchor limbs 1..3 (Phase 4b-step1)
-    + 1                              // anchor_proxy (Phase 4b-step2b)
-    + 1;                             // anchor_limb0_real (Phase 4b-step2b)
+    + POSEIDON2_COLS_PER_INSTANCE;  // shared IvkCm / Nf (w=8) — claim 3/4
 const GCOL_FEE: usize = 0;
 /// Base index of the 32 one-hot Merkle row-selector columns (§claim 1).
 const GS_ROW_SEL0: usize = 1;
@@ -257,23 +265,6 @@ const G_CM_SHARED_P2_16: usize = GS_ROW_SEL0 + MERKLE_DEPTH;
 /// Base index of the shared IvkCm/Nf width-8 Poseidon2 block
 /// (K-air-col-step2 strategy c — claim 3/4 row-loop on rows 0..7).
 const G_IVKCM_NF_SHARED_P2_8: usize = G_CM_SHARED_P2_16 + POSEIDON2_COLS_PER_INSTANCE_16;
-/// Phase 4b-step1: base index of anchor limbs 1..3 (3 global cols).
-/// Holds the upper three u64 limbs of `witness.anchor_bytes[8..32]`,
-/// bound via row-0 copy constraint to `PI[PI_ANCHOR + 1..4]`. Same
-/// pattern as the rk / epk / filter_tag bindings in Phase 4a.
-const G_ANCHOR_LIMB1: usize = G_IVKCM_NF_SHARED_P2_8 + POSEIDON2_COLS_PER_INSTANCE;
-/// Phase 4b-step2b: global col holding `anchor_proxy` (the Merkle-walk
-/// output from witness). The last-row Merkle-walk constraint
-/// `S_CURRENT == AG_ANCHOR_PROXY_col` now binds the walk to this
-/// trace-internal col instead of directly to `PI[PI_ANCHOR + 0]` —
-/// decouples the Merkle derivation from the PI value, same pattern
-/// as Phase 4b-step2a decoupled `O_CM_CLAIM` from `PI[cm + 0]`.
-const G_ANCHOR_PROXY: usize = G_ANCHOR_LIMB1 + 3;
-/// Phase 4b-step2b: global col holding `witness.anchor_bytes[0..8]`
-/// as a u64 limb (mod p). Bound via row-0 copy constraint to
-/// `PI[PI_ANCHOR + 0]`, matching C++'s
-/// `pack_bits256_as_4_limbs(anchor)[0]`.
-const G_ANCHOR_LIMB0_REAL: usize = G_ANCHOR_PROXY + 1;
 
 /// u16-limb decomposition width for `value_i` / `value_j` (§4.2 claims
 /// 5 & 7). Each value is committed as 4 × u16 limbs with the AIR
@@ -301,20 +292,31 @@ pub const RK_EPK_LIMBS: usize = 4;
 
 /// Per-spend proxy columns: leaf, d, value, ivk, ivk_commitment_claim,
 /// pk_d, rcm, nk, pos (9 leading fields), plus 32 path-bit proxies, 32
-/// sibling-hash proxies for the 32-level Merkle path (§2.3),
-/// VALUE_LIMBS_U16 u16-limb columns for the u64 range-check on `value_i`
-/// (§4.2 claim 5), and RK_EPK_LIMBS columns holding the 4-limb
-/// decomposition of the spend's `rk_bytes` for the PI binding added in
-/// Phase 4a. Phase 4b-step3-step2b-decomp adds 38 additional cols per
-/// spend (6 single-fe cols — upper 3 fes each of nk and leaf — plus 32
-/// u16 limb cols — 4 fes × 4 u16 each for nk and leaf) that decompose
-/// the 32-byte `nk` and `leaf` witness fields into their canonical
-/// 4-fe × 4×u16 LE form. Each u16 limb is range-checked via the cross-
-/// AIR `u16_range` LogUp; each fe-limb col is AIR-bound to
+/// × 4-fe sibling-hash proxy blocks for the 32-level Merkle path
+/// (§2.3), VALUE_LIMBS_U16 u16-limb columns for the u64 range-check on
+/// `value_i` (§4.2 claim 5), and RK_EPK_LIMBS columns holding the
+/// 4-limb decomposition of the spend's `rk_bytes` for the PI binding
+/// added in Phase 4a. Phase 4b-step3-step2b-decomp adds 38 additional
+/// cols per spend (6 single-fe cols — upper 3 fes each of nk and leaf
+/// — plus 32 u16 limb cols — 4 fes × 4 u16 each for nk and leaf) that
+/// decompose the 32-byte `nk` and `leaf` witness fields into their
+/// canonical 4-fe × 4×u16 LE form. Each u16 limb is range-checked via
+/// the cross-AIR `u16_range` LogUp; each fe-limb col is AIR-bound to
 /// `Σ_k limb_k · 2^{16k}`. Mirror of the output-side step 1.3-fields
 /// block (`O_D_LIMB0`..`O_RCM_LIMB0`).
-pub const SPEND_PROXY_COLS: usize =
-    9 + MERKLE_DEPTH + MERKLE_DEPTH + VALUE_LIMBS_U16 + RK_EPK_LIMBS + 38;
+///
+/// Phase 4b-step3-step3a widens sibling proxies from 1 fe/level to 4
+/// fe/level (`SIBLING_FES_PER_LEVEL = 4`) so the Merkle walk runs a
+/// full 4-fe Goldilocks digest through the 32 Poseidon2-w=8
+/// compressions — matching the `pack_32b_as_4fe(sibling)` layout that
+/// tosctl threads through. Net +96 cols/spend
+/// (`MERKLE_DEPTH · (SIBLING_FES_PER_LEVEL - 1) = 32 · 3 = 96`).
+pub const SPEND_PROXY_COLS: usize = 9
+    + MERKLE_DEPTH
+    + MERKLE_DEPTH * SIBLING_FES_PER_LEVEL
+    + VALUE_LIMBS_U16
+    + RK_EPK_LIMBS
+    + 38;
 
 /// Per-output proxy columns: cm_claim (Poseidon2-w=16 output, trace-
 /// only after Phase 4b-step2a), d, pk_d, ivk_commitment, value, rcm (6
@@ -337,12 +339,31 @@ pub const OUTPUT_PROXY_COLS: usize =
 /// single globally-shared row-looped block on rows 0..7.
 pub const POSEIDON2_NARROW_PER_SPEND: usize = 1;
 
+/// Phase 4b-step3-step3a: number of Goldilocks field elements per
+/// Merkle-path sibling. Step 3a widens from 1 (legacy single-u64
+/// proxy) to 4 so the Merkle walk runs a full 4-fe digest through
+/// each of the 32 Poseidon2-w=8 compressions
+/// (`(left[4] ‖ right[4]) → out[4]`). Each sibling is the
+/// `pack_32b_as_4fe(s.merkle_path[k])` decomposition.
+pub const SIBLING_FES_PER_LEVEL: usize = 4;
+
 /// Per-spend variable columns that are NOT constant across rows (i.e., not
-/// included in the transition "proxies are constant" equality). Currently:
-/// `S_CURRENT` (running Merkle digest).
-pub const SPEND_VAR_COLS: usize = 1;
-/// Offset of `S_CURRENT` within the per-spend variable block.
-const S_CURRENT: usize = 0;
+/// included in the transition "proxies are constant" equality).
+/// Phase 4b-step3-step3a: widened from 1 to 4 so the Merkle-walk
+/// running digest `S_CURRENT_FE[0..4]` carries a full 4-fe state
+/// through the 32 levels of `(left[4] ‖ right[4]) → out[4]`
+/// Poseidon2-w=8 compressions.
+pub const SPEND_VAR_COLS: usize = 4;
+/// Offset of the low fe of the Merkle-walk running digest within the
+/// per-spend variable block. The four digest cols live at
+/// `S_CURRENT_FE0`..`S_CURRENT_FE3 = S_CURRENT_FE0 + 3`.
+const S_CURRENT_FE0: usize = 0;
+#[allow(dead_code)]
+const S_CURRENT_FE1: usize = 1;
+#[allow(dead_code)]
+const S_CURRENT_FE2: usize = 2;
+#[allow(dead_code)]
+const S_CURRENT_FE3: usize = 3;
 
 /// Wide (width-16) Poseidon2 instances per spend after K-air-col-step2:
 /// zero (the claim-2 Cm compression is folded into the global shared
@@ -370,13 +391,20 @@ const S_PK_D: usize = 5;
 const S_RCM: usize = 6;
 const S_NK: usize = 7;
 const S_POS: usize = 8;
-// Merkle path: MERKLE_DEPTH path-bit proxies, then MERKLE_DEPTH sibling
-// proxies. Path bit `k` is `(pos >> k) & 1` (low→high bit order).
+// Merkle path: MERKLE_DEPTH path-bit proxies, then
+// `MERKLE_DEPTH * SIBLING_FES_PER_LEVEL` sibling-limb proxies (Phase
+// 4b-step3-step3a: 4 fes per level). Path bit `k` is
+// `(pos >> k) & 1` (low→high bit order); sibling limb `m` of level `k`
+// lives at `S_SIBLING0 + k · SIBLING_FES_PER_LEVEL + m` and equals
+// `pack_32b_as_4fe(s.merkle_path[k])[m]`.
 const S_PATH_BIT0: usize = 9;
 const S_SIBLING0: usize = S_PATH_BIT0 + MERKLE_DEPTH;
 /// Base index of the 4×u16 limb-decomposition columns for `value_i`
 /// (claim 5). Phase 3b-step2: was `S_VALUE_BIT0` (64 bit columns).
-const S_VALUE_LIMB0: usize = S_SIBLING0 + MERKLE_DEPTH;
+/// Phase 4b-step3-step3a: sibling block widened to 4 fe/level, so
+/// this offset shifts by `MERKLE_DEPTH · (SIBLING_FES_PER_LEVEL - 1)
+/// = 96` cols.
+const S_VALUE_LIMB0: usize = S_SIBLING0 + MERKLE_DEPTH * SIBLING_FES_PER_LEVEL;
 /// Base index of the 4 u64-limb columns holding `rk_bytes` (Phase 4a).
 const S_RK_LIMB0: usize = S_VALUE_LIMB0 + VALUE_LIMBS_U16;
 
@@ -543,7 +571,8 @@ const O_RCM_LIMB0: usize = O_IVK_COMMITMENT_LIMB0 + 16;
 // Shape-aware helpers
 // ---------------------------------------------------------------------------
 
-/// Per-spend block width after K-air-col-step2: proxies + `S_CURRENT` +
+/// Per-spend block width after K-air-col-step2: proxies +
+/// `S_CURRENT_FE[0..4]` (4-fe Merkle digest, step 3a widening) +
 /// the shared Merkle Poseidon2-w8 slot. IvkCm (w=8), Cm (w=16), Nf (w=8)
 /// are globally shared (row-looped on rows 0..7) and live in `GLOBAL_COLS`.
 #[inline]
@@ -607,7 +636,7 @@ pub fn derive_shape_from_public_inputs_len(
 //
 // Spend block layout (contiguous within the spend-i region):
 //     [SPEND_PROXY_COLS]                            (constant across rows)
-//   | [SPEND_VAR_COLS: S_CURRENT]                   (running Merkle digest)
+//   | [SPEND_VAR_COLS: S_CURRENT_FE[0..4]]          (running Merkle 4-fe digest)
 //   | [shared Merkle P2 (w=8) : 180]                (rows 0..31 = 32 levels)
 //
 // Output block layout:
@@ -618,8 +647,8 @@ const fn spend_proxy_offset(i: usize) -> usize {
     GLOBAL_COLS + i * per_spend_cols()
 }
 
-/// Offset of `S_CURRENT` (running Merkle digest) within spend `i`. Placed
-/// immediately after the constant-across-rows proxies.
+/// Offset of `S_CURRENT_FE[0..4]` (running Merkle 4-fe digest) within
+/// spend `i`. Placed immediately after the constant-across-rows proxies.
 #[inline]
 const fn spend_var_offset(i: usize) -> usize {
     spend_proxy_offset(i) + SPEND_PROXY_COLS
@@ -1087,9 +1116,20 @@ where
                 let pos = spend_col(local_slice, i, S_POS);
                 let leaf = spend_col(local_slice, i, S_LEAF);
 
-                // Claim 1 seed: `S_CURRENT` on row 0 starts at `leaf`.
-                let s_current_row0 = local_slice[spend_var_offset(i) + S_CURRENT];
-                first.assert_eq(s_current_row0.into(), leaf.into());
+                // Phase 4b-step3-step3a: claim-1 seed — the 4-fe running
+                // digest `S_CURRENT_FE[0..4]` on row 0 must equal the
+                // 4-fe decomposition of `s.leaf` as bound by the
+                // step2b-decomp cols. `S_CURRENT_FE0` matches the
+                // existing single-fe `S_LEAF` proxy (low fe); the
+                // upper three fes match `S_LEAF_FE{1..3}`.
+                let leaf_fe_srcs = [S_LEAF, S_LEAF_FE1, S_LEAF_FE2, S_LEAF_FE3];
+                for m in 0..4 {
+                    let cur_fe_m: AB::Var =
+                        local_slice[spend_var_offset(i) + S_CURRENT_FE0 + m];
+                    let leaf_fe_m: AB::Var = spend_col(local_slice, i, leaf_fe_srcs[m]);
+                    first.assert_eq(cur_fe_m, leaf_fe_m);
+                }
+                let _ = leaf; // silence unused-var: legacy single-fe proxy read
 
                 // Row-0 bit booleanity for 32 path-bit proxies (they are
                 // constant across rows by the transition "proxies are
@@ -1196,24 +1236,12 @@ where
                 first.assert_eq(ft_col, pi_ft_slot);
             }
 
-            // Phase 4b-step2b: anchor limb 0 PI binding from
-            // witness bytes. Was indirectly bound via last-row
-            // `S_CURRENT == pi_anchor0`; that binding now lands on
-            // `G_ANCHOR_PROXY` (trace-only, see the `last.assert_eq`
-            // in the row-gated section below). PI[PI_ANCHOR + 0] is
-            // now bound to `G_ANCHOR_LIMB0_REAL = anchor_bytes[0..8]`.
-            let anchor_limb0_real: AB::Var = local_slice[G_ANCHOR_LIMB0_REAL];
-            first.assert_eq(anchor_limb0_real, pis_vec[PI_ANCHOR]);
-
-            // Phase 4b-step1: anchor limbs 1..3 PI binding. The three
-            // upper limbs live in global cols
-            // `G_ANCHOR_LIMB1..G_ANCHOR_LIMB1+3` and are consensus-
-            // bound to `witness.anchor_bytes[8..32]`.
-            for k in 1..4 {
-                let anchor_limb: AB::Var = local_slice[G_ANCHOR_LIMB1 + (k - 1)];
-                let pi_anchor_slot = pis_vec[PI_ANCHOR + k];
-                first.assert_eq(anchor_limb, pi_anchor_slot);
-            }
+            // Phase 4b-step3-step3a: anchor PI bindings retired from
+            // row 0. All 4 anchor limbs are now bound on the last row
+            // from the 4-fe Merkle-walk digest `S_CURRENT_FE[0..4]` —
+            // see the last-row block below. The Phase 4b-step1 /
+            // step2b `G_ANCHOR_LIMB1..3` + `G_ANCHOR_LIMB0_REAL` +
+            // `G_ANCHOR_PROXY` global cols are deleted.
 
             // Phase 4b-step3-step1.3-pi: cm limbs 1..3 PI binding per
             // output, from the AIR-ratified sponge output cols
@@ -1811,17 +1839,32 @@ where
             }
         }
 
-        // ---- Per-row Merkle row-loop constraints (K-air-col-share #1) ---
+        // ---- Per-row Merkle row-loop constraints (step 3a: 4-fe) --------
         //
         // Let `is_merkle = Σ_k GS_ROW_SEL[k]`. On Merkle rows (0..31)
         // `is_merkle = 1`; on padding rows (32..63) `is_merkle = 0`.
         //
-        // Selected bit/sibling: `b = Σ_k sel[k] · bit_k`, similarly `sib`.
+        // Per-row selected bit `b = Σ_k sel[k] · bit_k` and selected
+        // 4-fe sibling `sib_sel_fes[m] = Σ_k sel[k] · sib[k][m]` for
+        // `m ∈ 0..4`.
         //
-        // Active rows: bind P2.inputs to (left, right, 0*6); assert
-        //   next.S_CURRENT = P2.output[0].
-        // Inactive rows: latch next.S_CURRENT = S_CURRENT. P2.inputs are
-        //   unconstrained (prover fills zero-input permutation witness).
+        // Active rows: bind P2.inputs[0..4] to `left_fes[4]` and
+        //   inputs[4..8] to `right_fes[4]`, where
+        //     left_fes = (1-b)·cur_fes + b·sib_sel_fes
+        //     right_fes = b·cur_fes + (1-b)·sib_sel_fes.
+        //   Assert `next.S_CURRENT_FE[m] = P2.output[m]` for all 4 fes.
+        //   NOTE: the previous `inputs[pad] == 0` zero-pad assertion for
+        //   slots 2..8 is DELETED — post step 3a every slot 0..7 carries
+        //   a pinned expression (left|right), not a zero pad.
+        // Inactive rows: latch `next.S_CURRENT_FE[m] = S_CURRENT_FE[m]`.
+        //   P2.inputs are unconstrained (prover fills zero-input
+        //   permutation witness).
+        //
+        // Last row: all 4 digest fes must equal `PI[PI_ANCHOR + 0..4]`.
+        // The Phase 4b-step1 / step2b `G_ANCHOR_LIMB*` global cols are
+        // retired; the anchor is now end-to-end AIR-derived from the
+        // 4-fe leaf + 4-fe siblings through 32 Poseidon2-w=8
+        // `(left ‖ right) → out` compressions.
         {
             // is_merkle as a reusable expression (sum of selectors on the
             // current row).
@@ -1831,63 +1874,87 @@ where
             }
 
             for i in 0..self.n_spends {
-                // Selected bit/sibling at this row.
+                // Per-row selected bit `b_sel = Σ_k sel_k · bit_k`.
                 let mut b_sel: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
-                let mut sib_sel: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
                 for k in 0..MERKLE_DEPTH {
                     let sel: AB::Expr = local_slice[GS_ROW_SEL0 + k].into();
                     let bit_k: AB::Var = spend_col(local_slice, i, S_PATH_BIT0 + k);
-                    let sib_k: AB::Var = spend_col(local_slice, i, S_SIBLING0 + k);
-                    b_sel = b_sel + sel.clone() * bit_k.into();
-                    sib_sel = sib_sel + sel * sib_k.into();
+                    b_sel = b_sel + sel * bit_k.into();
                 }
-                let one_minus_b_sel: AB::Expr = AB::Expr::from(AB::F::from_u64(1)) - b_sel.clone();
-                let cur: AB::Expr = local_slice[spend_var_offset(i) + S_CURRENT].into();
 
-                let left_sel: AB::Expr =
-                    one_minus_b_sel.clone() * cur.clone() + b_sel.clone() * sib_sel.clone();
-                let right_sel: AB::Expr = b_sel * cur.clone() + one_minus_b_sel * sib_sel;
+                // Per-row selected 4-fe sibling `sib_sel_fes[m] = Σ_k sel_k
+                // · sib[k][m]`.
+                let mut sib_sel_fes: [AB::Expr; SIBLING_FES_PER_LEVEL] =
+                    core::array::from_fn(|_| AB::Expr::from(AB::F::from_u64(0)));
+                for k in 0..MERKLE_DEPTH {
+                    let sel: AB::Expr = local_slice[GS_ROW_SEL0 + k].into();
+                    for m in 0..SIBLING_FES_PER_LEVEL {
+                        let sib_km: AB::Var = spend_col(
+                            local_slice,
+                            i,
+                            S_SIBLING0 + SIBLING_FES_PER_LEVEL * k + m,
+                        );
+                        sib_sel_fes[m] = sib_sel_fes[m].clone() + sel.clone() * sib_km.into();
+                    }
+                }
+
+                let one_minus_b: AB::Expr =
+                    AB::Expr::from(AB::F::from_u64(1)) - b_sel.clone();
+                let cur_fes: [AB::Expr; 4] = core::array::from_fn(|m| {
+                    local_slice[spend_var_offset(i) + S_CURRENT_FE0 + m].into()
+                });
+                let left_fes: [AB::Expr; 4] = core::array::from_fn(|m| {
+                    one_minus_b.clone() * cur_fes[m].clone()
+                        + b_sel.clone() * sib_sel_fes[m].clone()
+                });
+                let right_fes: [AB::Expr; 4] = core::array::from_fn(|m| {
+                    b_sel.clone() * cur_fes[m].clone()
+                        + one_minus_b.clone() * sib_sel_fes[m].clone()
+                });
 
                 let merkle = spend_p2_group::<AB::Var>(local_slice, i, SpendP2::Merkle);
-                // Active-row input bindings (gated by is_merkle).
-                builder
-                    .assert_zero(is_merkle.clone() * (AB::Expr::from(merkle.inputs[0]) - left_sel));
-                builder.assert_zero(
-                    is_merkle.clone() * (AB::Expr::from(merkle.inputs[1]) - right_sel),
-                );
-                for pad in 2..POSEIDON2_WIDTH {
-                    builder.assert_zero(is_merkle.clone() * AB::Expr::from(merkle.inputs[pad]));
+                // Active-row input bindings (gated by is_merkle): pin all
+                // 8 rate slots to (left[4] ‖ right[4]). No zero-pad.
+                for m in 0..4 {
+                    builder.assert_zero(
+                        is_merkle.clone()
+                            * (AB::Expr::from(merkle.inputs[m]) - left_fes[m].clone()),
+                    );
+                    builder.assert_zero(
+                        is_merkle.clone()
+                            * (AB::Expr::from(merkle.inputs[4 + m]) - right_fes[m].clone()),
+                    );
                 }
 
-                // Transition: advance (active) or latch (inactive).
-                let next_cur: AB::Expr = next_slice[spend_var_offset(i) + S_CURRENT].into();
-                let merkle_out_0: AB::Expr = AB::Expr::from(
-                    merkle.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post[0],
-                );
-                let mut t = builder.when_transition();
-                // Active: next.S_CURRENT == P2.output[0].
-                t.assert_zero(is_merkle.clone() * (next_cur.clone() - merkle_out_0));
-                // Inactive: next.S_CURRENT == S_CURRENT.
+                // Transition: advance (active) or latch (inactive) each
+                // of the 4 running-digest cols.
                 let one_minus_is_merkle: AB::Expr =
                     AB::Expr::from(AB::F::from_u64(1)) - is_merkle.clone();
-                t.assert_zero(one_minus_is_merkle * (next_cur - cur));
+                let mut t = builder.when_transition();
+                for m in 0..4 {
+                    let next_cur_m: AB::Expr =
+                        next_slice[spend_var_offset(i) + S_CURRENT_FE0 + m].into();
+                    let cur_m: AB::Expr = cur_fes[m].clone();
+                    let p2_out_m: AB::Expr = AB::Expr::from(
+                        merkle.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post[m],
+                    );
+                    t.assert_zero(is_merkle.clone() * (next_cur_m.clone() - p2_out_m));
+                    t.assert_zero(one_minus_is_merkle.clone() * (next_cur_m - cur_m));
+                }
             }
 
             // Last-row anchor binding: after 32 active rows + latching on
-            // rows 32..63, `S_CURRENT` on the last row is the final
-            // Merkle root, which must equal the tx-level anchor PI.
+            // rows 32..63, `S_CURRENT_FE[0..4]` on the last row is the
+            // final Merkle root, which must equal the 4 limbs of the
+            // tx-level anchor PI.
             let mut last = builder.when_last_row();
-            let anchor_proxy_col = local_slice[G_ANCHOR_PROXY];
             for i in 0..self.n_spends {
-                // Phase 4b-step2b: Merkle walk output == anchor_proxy
-                // trace col (was pi_anchor0). Decouples the Merkle
-                // derivation from the PI value. `PI[PI_ANCHOR + 0]` is
-                // bound separately below to
-                // `G_ANCHOR_LIMB0_REAL = witness.anchor_bytes[0..8]`.
-                last.assert_eq(
-                    local_slice[spend_var_offset(i) + S_CURRENT],
-                    anchor_proxy_col,
-                );
+                for m in 0..4 {
+                    last.assert_eq(
+                        local_slice[spend_var_offset(i) + S_CURRENT_FE0 + m],
+                        pis_vec[PI_ANCHOR + m],
+                    );
+                }
             }
         }
 
@@ -2113,9 +2180,12 @@ pub struct MvpWitness {
     pub spends: Vec<SpendWitness>,
     /// Output descriptions (len ∈ [1, 4]).
     pub outputs: Vec<OutputWitness>,
-    /// Shared anchor proxy (limb 0 of the 256-bit anchor). Derived by the
-    /// constructor from the first spend's Merkle step so honest witnesses
-    /// are self-consistent. The AIR binds `pi_anchor[0] == anchor_proxy`.
+    /// Legacy single-u64 anchor proxy (pre-step-3a Merkle-walk output).
+    /// Phase 4b-step3-step3a: kept for wire-compat; AIR no longer reads.
+    /// The post-step-3a AIR derives all 4 anchor limbs from the 4-fe
+    /// Merkle walk and binds them directly to `PI[PI_ANCHOR + 0..4]`;
+    /// this field plays no role in the constraint system. Full wire-
+    /// field deletion is a follow-up.
     pub anchor_proxy: u64,
     /// Raw 32-byte anchor (§4.1). PI slots 4..7 are the 4 `encode_256`
     /// limbs of these bytes. For self-consistency callers should arrange
@@ -2192,6 +2262,11 @@ impl MvpWitness {
                 .wrapping_add((k as u64).wrapping_mul(0x94D0_49BB_1331_11EB));
             shared_path[k] = mix & ((1u64 << 62) - 1);
         }
+        // Legacy single-fe anchor_proxy — kept for wire-compat with
+        // the MvpWitness.anchor_proxy field (Phase 4b-step3-step3a
+        // retired the AIR reader of this field but the wire layout
+        // still carries it). NOT the anchor the AIR binds to PI —
+        // see `anchor_bytes` below, which is the 4-fe walk output.
         let shared_anchor =
             poseidon2_merkle_path_root(&perm, shared_leaf, shared_pos, &shared_path)
                 .as_canonical_u64();
@@ -2313,10 +2388,26 @@ impl MvpWitness {
             });
         }
 
-        // Same treatment for anchor_bytes: project `anchor_proxy` (= the
-        // limb the AIR binds) into the low 8 bytes of anchor_bytes.
-        let mut anchor_bytes = [0u8; 32];
-        anchor_bytes[0..8].copy_from_slice(&shared_anchor.to_le_bytes());
+        // Phase 4b-step3-step3a: compute `anchor_bytes` as the output
+        // of the 4-fe Merkle walk (matching the AIR's post-step-3a
+        // last-row binding `S_CURRENT_FE[0..4] == PI[PI_ANCHOR+0..4]`
+        // where `PI[PI_ANCHOR+k] = encode_256(anchor_bytes)[k]`).
+        // The low 8 bytes are no longer `shared_anchor.to_le_bytes()`
+        // — that was the legacy single-u64-proxy walk, which is a
+        // different digest; only the 4-fe walk matches the in-circuit
+        // computation.
+        //
+        // We still pick a representative `s` from `spends` to thread
+        // (leaf, pos, merkle_path) — all spends share the same path
+        // per this fixture's convention.
+        let leaf0_bytes = &spends[0].leaf;
+        let path0 = &spends[0].merkle_path;
+        let anchor_bytes = poseidon2_merkle_path_root_4fe_bytes(
+            &perm,
+            leaf0_bytes,
+            shared_pos,
+            path0,
+        );
 
         Self {
             scheme_id: 0x01,
@@ -2766,7 +2857,9 @@ impl MvpWitness {
         //   - `row0_spend_ivkcm / _cm / _nf`: the single-row permutation
         //     witnesses for claims 3/2/4 (placed on trace row 0 only).
         let mut merkle_rows: Vec<Vec<Vec<Goldilocks>>> = Vec::with_capacity(n_s);
-        let mut s_current_vals: Vec<Vec<Goldilocks>> = Vec::with_capacity(n_s);
+        // Phase 4b-step3-step3a: running Merkle digest is now 4-fe per
+        // row. Previously `Vec<Vec<Goldilocks>>` (single-fe).
+        let mut s_current_vals_fes: Vec<Vec<[Goldilocks; 4]>> = Vec::with_capacity(n_s);
         let mut row0_spend_ivkcm = Vec::with_capacity(n_s);
         let mut row0_spend_cm = Vec::with_capacity(n_s);
         let mut row0_spend_nf = Vec::with_capacity(n_s);
@@ -2784,42 +2877,50 @@ impl MvpWitness {
             let value_f = Goldilocks::from_u64(reduce_to_goldilocks(s.value));
             let ivkcm_fe = poseidon2_ivk_commitment(&perm, first_u64_proxy(&s.ivk), d_word);
 
-            // Merkle-row-loop: level k goes on trace row k. The P2 witness
-            // at rows 32..63 is the zero-input permutation (padding_p2).
+            // Phase 4b-step3-step3a: 4-fe Merkle walk. Level k goes on
+            // trace row k. Each level performs a Poseidon2-w=8
+            // `(left[4] ‖ right[4]) → out[4]` compression with `left` /
+            // `right` selected by path bit `(pos >> k) & 1`. State is
+            // decomposed as `pack_32b_as_4fe` throughout.
+            let leaf_fes: [Goldilocks; 4] = pack_32b_as_4fe(&s.leaf);
+            let mut cur_state: [Goldilocks; 4] = leaf_fes;
             let mut per_spend_merkle = Vec::with_capacity(TRACE_HEIGHT);
-            let mut per_spend_current = Vec::with_capacity(TRACE_HEIGHT);
-            per_spend_current.push(Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.leaf))));
-            let mut current = reduce_to_goldilocks(first_u64_proxy(&s.leaf));
+            let mut per_spend_current_fes: Vec<[Goldilocks; 4]> =
+                Vec::with_capacity(TRACE_HEIGHT);
+            per_spend_current_fes.push(cur_state);
             for k in 0..MERKLE_DEPTH {
                 let bit = (s.pos >> k) & 1;
-                let sib = reduce_to_goldilocks(first_u64_proxy(&s.merkle_path[k]));
+                let sib_fes: [Goldilocks; 4] = pack_32b_as_4fe(&s.merkle_path[k]);
                 let (left, right) = if bit == 0 {
-                    (current, sib)
+                    (cur_state, sib_fes)
                 } else {
-                    (sib, current)
+                    (sib_fes, cur_state)
                 };
                 let mut input = [Goldilocks::ZERO; POSEIDON2_WIDTH];
-                input[0] = Goldilocks::from_u64(left);
-                input[1] = Goldilocks::from_u64(right);
+                for m in 0..4 {
+                    input[m] = left[m];
+                }
+                for m in 0..4 {
+                    input[4 + m] = right[m];
+                }
                 let mut state = input;
                 perm.permute_mut(&mut state);
                 per_spend_merkle.push(gen_p2_row(input));
-                current = state[0].as_canonical_u64();
-                per_spend_current.push(Goldilocks::from_u64(current));
+                cur_state = [state[0], state[1], state[2], state[3]];
+                per_spend_current_fes.push(cur_state);
             }
             // Latch rows 32..63: pad P2 with zero-input permutation, and
-            // hold S_CURRENT at the final anchor value.
-            let anchor_f = Goldilocks::from_u64(current);
+            // hold the 4-fe running digest at the final anchor value.
             while per_spend_merkle.len() < TRACE_HEIGHT {
                 per_spend_merkle.push(padding_p2.clone());
             }
-            while per_spend_current.len() < TRACE_HEIGHT {
-                per_spend_current.push(anchor_f);
+            while per_spend_current_fes.len() < TRACE_HEIGHT {
+                per_spend_current_fes.push(cur_state);
             }
             debug_assert_eq!(per_spend_merkle.len(), TRACE_HEIGHT);
-            debug_assert_eq!(per_spend_current.len(), TRACE_HEIGHT);
+            debug_assert_eq!(per_spend_current_fes.len(), TRACE_HEIGHT);
             merkle_rows.push(per_spend_merkle);
-            s_current_vals.push(per_spend_current);
+            s_current_vals_fes.push(per_spend_current_fes);
 
             let mut ivkcm_in = [Goldilocks::ZERO; POSEIDON2_WIDTH];
             ivkcm_in[0] = Goldilocks::from_u64(TAG_IVK_CM);
@@ -2968,8 +3069,15 @@ impl MvpWitness {
                     let bit = (s.pos >> k) & 1;
                     v.push(Goldilocks::from_u64(bit));
                 }
+                // Phase 4b-step3-step3a: 4 fes per level via
+                // `pack_32b_as_4fe(&s.merkle_path[k])`. Was 1 u64-proxy
+                // per level pre-step-3a. Total sibling cols:
+                // `MERKLE_DEPTH · SIBLING_FES_PER_LEVEL = 32 · 4 = 128`.
                 for k in 0..MERKLE_DEPTH {
-                    v.push(Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.merkle_path[k]))));
+                    let sib_fes = pack_32b_as_4fe(&s.merkle_path[k]);
+                    for m in 0..SIBLING_FES_PER_LEVEL {
+                        v.push(sib_fes[m]);
+                    }
                 }
                 // Decompose value into VALUE_LIMBS_U16 = 4 u16 limbs
                 // (low-to-high). Phase 3b-step2: was 64 bit columns.
@@ -3209,30 +3317,20 @@ impl MvpWitness {
                 values.extend_from_slice(&padding_p2);
             }
 
-            // Phase 4b-step1: anchor limbs 1..3 (global cols, constant
-            // across rows). Same invariant as other proxy cols: identical
-            // value on every row; AIR eval binds row 0 only.
-            for k in 1..4 {
-                let limb = u64::from_le_bytes(
-                    self.anchor_bytes[k * 8..(k + 1) * 8].try_into().unwrap(),
-                );
-                values.push(Goldilocks::from_u64(reduce_to_goldilocks(limb)));
-            }
-            // Phase 4b-step2b: anchor_proxy (Merkle-walk output from
-            // witness, trace-only binding for `last.assert_eq`).
-            values.push(Goldilocks::from_u64(reduce_to_goldilocks(self.anchor_proxy)));
-            // Phase 4b-step2b: anchor_bytes[0..8] as u64 (mod p). PI-
-            // binding col for `PI[PI_ANCHOR + 0]`.
-            let anchor_limb0 = u64::from_le_bytes(
-                self.anchor_bytes[0..8].try_into().unwrap(),
-            );
-            values.push(Goldilocks::from_u64(reduce_to_goldilocks(anchor_limb0)));
+            // Phase 4b-step3-step3a cleanup: Phase 4b-step1 / step2b
+            // anchor-limb global cols (`G_ANCHOR_LIMB1..3`,
+            // `G_ANCHOR_PROXY`, `G_ANCHOR_LIMB0_REAL`) retired. All 4
+            // anchor-limb PI slots are now last-row-bound from the
+            // 4-fe Merkle-walk digest `S_CURRENT_FE[0..4]`.
 
-            // Per-spend block: proxies + S_CURRENT + per-spend shared
-            // Merkle P2 row-loop.
+            // Per-spend block: proxies + S_CURRENT_FE[0..4] +
+            // per-spend shared Merkle P2 row-loop.
             for i in 0..n_s {
                 values.extend_from_slice(&spend_proxies[i]);
-                values.push(s_current_vals[i][row_idx]);
+                let cur_fes = s_current_vals_fes[i][row_idx];
+                for m in 0..4 {
+                    values.push(cur_fes[m]);
+                }
                 values.extend_from_slice(&merkle_rows[i][row_idx]);
             }
             // Per-output block: proxies only (Cm moved to global block).
@@ -3536,6 +3634,7 @@ fn poseidon2_merkle_step(
 
 /// Compute the Merkle root for a 32-level path: at each level `k`, combine
 /// `current` with `path[k]` under the bit `(pos >> k) & 1` ordering.
+#[allow(dead_code)]
 fn poseidon2_merkle_path_root(
     perm: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH]>,
     leaf: u64,
@@ -3554,6 +3653,54 @@ fn poseidon2_merkle_path_root(
         current = poseidon2_merkle_step(perm, left, right).as_canonical_u64();
     }
     Goldilocks::from_u64(current)
+}
+
+/// Phase 4b-step3-step3a: 4-fe Merkle root via Poseidon2-w=8
+/// `(left[4] ‖ right[4]) → out[4]` compression. Mirror of the AIR's
+/// post-step-3a last-row binding; callers pass raw 32-byte leaf +
+/// sibling bytes (each decomposed by `pack_32b_as_4fe`), this
+/// function applies the 32-level walk off-circuit and returns the
+/// 4-fe anchor digest.
+pub(crate) fn poseidon2_merkle_path_root_4fe(
+    perm: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH]>,
+    leaf_bytes: &[u8; 32],
+    pos: u64,
+    path_bytes: &[[u8; 32]; MERKLE_DEPTH],
+) -> [Goldilocks; 4] {
+    let mut cur: [Goldilocks; 4] = pack_32b_as_4fe(leaf_bytes);
+    for k in 0..MERKLE_DEPTH {
+        let bit = (pos >> k) & 1;
+        let sib: [Goldilocks; 4] = pack_32b_as_4fe(&path_bytes[k]);
+        let (left, right) = if bit == 0 { (cur, sib) } else { (sib, cur) };
+        let mut state = [Goldilocks::ZERO; POSEIDON2_WIDTH];
+        for m in 0..4 {
+            state[m] = left[m];
+        }
+        for m in 0..4 {
+            state[4 + m] = right[m];
+        }
+        perm.permute_mut(&mut state);
+        cur = [state[0], state[1], state[2], state[3]];
+    }
+    cur
+}
+
+/// Bytes wrapper around `poseidon2_merkle_path_root_4fe`: packs the
+/// 4-fe digest into 32 LE bytes (8 B per Goldilocks limb). Useful for
+/// test fixtures that need to round-trip anchor-bytes through the
+/// 4-fe walk.
+pub(crate) fn poseidon2_merkle_path_root_4fe_bytes(
+    perm: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH]>,
+    leaf_bytes: &[u8; 32],
+    pos: u64,
+    path_bytes: &[[u8; 32]; MERKLE_DEPTH],
+) -> [u8; 32] {
+    let fes = poseidon2_merkle_path_root_4fe(perm, leaf_bytes, pos, path_bytes);
+    let mut out = [0u8; 32];
+    for (i, fe) in fes.iter().enumerate() {
+        out[i * 8..(i + 1) * 8].copy_from_slice(&fe.as_canonical_u64().to_le_bytes());
+    }
+    out
 }
 
 fn poseidon2_ivk_commitment(
@@ -3654,28 +3801,21 @@ pub fn witness_claim2_leaf_consistent(w: &MvpWitness) -> bool {
     true
 }
 
-/// True iff for every spend, folding the 32-level Merkle path reproduces
-/// `anchor_proxy`.
+/// True iff for every spend, folding the 32-level Merkle path with a
+/// 4-fe Poseidon2-w=8 walk reproduces the 4-fe decomposition of
+/// `witness.anchor_bytes`.
+///
+/// Phase 4b-step3-step3a rewrote the reference from the legacy single-
+/// u64-proxy walk (`anchor_proxy`) to the full 4-fe walk: both the
+/// leaf and every sibling feed in as `pack_32b_as_4fe(&field)`, and
+/// the target is `pack_32b_as_4fe(&w.anchor_bytes)`. This matches the
+/// AIR's last-row binding after step 3a.
 pub fn witness_claim1_anchor_consistent(w: &MvpWitness) -> bool {
     let perm = default_goldilocks_poseidon2_8();
-    let want = reduce_to_goldilocks(w.anchor_proxy);
+    let want: [Goldilocks; 4] = pack_32b_as_4fe(&w.anchor_bytes);
     for s in &w.spends {
-        // Phase 4b-step3-step3c: siblings are now [u8;32]. The legacy
-        // single-fe Merkle walk still consumes a u64 proxy per level,
-        // so project each sibling's first 8 bytes into a `[u64; 32]`
-        // at the call site (helper signature unchanged — step 3a will
-        // rewrite the walk over 4-fe state and retire this proxy).
-        let mut path_u64 = [0u64; MERKLE_DEPTH];
-        for k in 0..MERKLE_DEPTH {
-            path_u64[k] = first_u64_proxy(&s.merkle_path[k]);
-        }
-        let derived = poseidon2_merkle_path_root(
-            &perm,
-            first_u64_proxy(&s.leaf),
-            s.pos,
-            &path_u64,
-        )
-        .as_canonical_u64();
+        let derived =
+            poseidon2_merkle_path_root_4fe(&perm, &s.leaf, s.pos, &s.merkle_path);
         if derived != want {
             return false;
         }
@@ -3683,18 +3823,20 @@ pub fn witness_claim1_anchor_consistent(w: &MvpWitness) -> bool {
     true
 }
 
-/// Phase 4b-step1: true iff `witness.anchor_bytes[0..8] as u64 (mod p)
-/// == anchor_proxy`. Enforced as a prover-side pre-check so C++ and
-/// Rust emit byte-identical `PI[PI_ANCHOR + 0]`: C++ reads
-/// `encode_256(anchor_bytes)[0] = anchor_bytes[0..8] as u64 (mod p)`;
-/// Rust emits `anchor_proxy`; the AIR already binds `anchor_proxy ==
-/// PI[PI_ANCHOR + 0]` via the last-row `S_CURRENT` check. If the
-/// wallet populates `anchor_bytes[0..8]` from some other source, the
-/// two sides would disagree on PI limb 0 and STARK verify would fail
-/// downstream — better to reject at the structured-error boundary.
-pub fn witness_anchor_bytes_consistent(w: &MvpWitness) -> bool {
-    let anchor_limb0 = u64::from_le_bytes(w.anchor_bytes[0..8].try_into().unwrap());
-    reduce_to_goldilocks(anchor_limb0) == reduce_to_goldilocks(w.anchor_proxy)
+/// Phase 4b-step3-step3a: no-op — the pre-step-3a invariant
+/// `anchor_bytes[0..8] == anchor_proxy` is no longer meaningful.
+/// `anchor_bytes` is now the 4-fe Merkle walk output (matches the
+/// AIR's last-row binding to `PI[PI_ANCHOR + 0..4]`), while
+/// `anchor_proxy` is the legacy single-fe walk output kept only for
+/// wire-compat. Callers that need the fresh consistency check should
+/// use [`witness_claim1_anchor_consistent`], which derives the 4-fe
+/// walk off-circuit and compares against `pack_32b_as_4fe(anchor_bytes)`.
+///
+/// This stub is retained so downstream callers that previously ran
+/// the check do not break at the type-signature level; it always
+/// returns true. Real soundness lives in `witness_claim1_anchor_consistent`.
+pub fn witness_anchor_bytes_consistent(_w: &MvpWitness) -> bool {
+    true
 }
 
 /// Phase 4b-step3-step1.3-pi: true iff for every output, all 4 LE
@@ -4244,5 +4386,54 @@ mod tests {
                 j,
             );
         }
+    }
+
+    /// Phase 4b-step3-step3a: verify that the trace-gen 4-fe Merkle
+    /// walk output — read from `S_CURRENT_FE[0..4]` on the last trace
+    /// row — matches `pack_32b_as_4fe(&w.anchor_bytes)` off-circuit.
+    /// This pins the trace-gen contract for the new `S_CURRENT_FE`
+    /// cols (step 3a's replacement for the legacy single-fe
+    /// `S_CURRENT`) and closes the AIR's last-row anchor binding.
+    #[test]
+    fn merkle_walk_4fe_matches_reference_fixture() {
+        use p3_matrix::Matrix;
+
+        let w = MvpWitness::deterministic_valid(1, 1, 0x4FE_0_ABCD);
+        let trace = w.generate_trace();
+        let n_s = 1usize;
+
+        // Read S_CURRENT_FE[0..4] on last row of spend 0's var block.
+        let last_row_idx = TRACE_HEIGHT - 1;
+        let last_row: Vec<Goldilocks> =
+            trace.row(last_row_idx).unwrap().into_iter().collect();
+        let var_base = GLOBAL_COLS
+            + 0 * per_spend_cols()
+            + SPEND_PROXY_COLS; // `spend_var_offset(0)` inline
+        let trace_fes: [Goldilocks; 4] = [
+            last_row[var_base + S_CURRENT_FE0],
+            last_row[var_base + S_CURRENT_FE0 + 1],
+            last_row[var_base + S_CURRENT_FE0 + 2],
+            last_row[var_base + S_CURRENT_FE0 + 3],
+        ];
+
+        let expected = pack_32b_as_4fe(&w.anchor_bytes);
+        assert_eq!(
+            trace_fes, expected,
+            "last-row S_CURRENT_FE[0..4] must equal pack_32b_as_4fe(anchor_bytes)"
+        );
+
+        // Also cross-check against the off-circuit 4-fe walk helper.
+        let perm = default_goldilocks_poseidon2_8();
+        let s = &w.spends[0];
+        let helper_out =
+            poseidon2_merkle_path_root_4fe(&perm, &s.leaf, s.pos, &s.merkle_path);
+        assert_eq!(
+            trace_fes, helper_out,
+            "trace-gen 4-fe walk must match poseidon2_merkle_path_root_4fe helper"
+        );
+
+        // Unused n_s silencer (the GLOBAL_COLS arithmetic above uses
+        // index 0 inline; keep the let-binding for readers).
+        let _ = n_s;
     }
 }

@@ -395,9 +395,17 @@ mod tests {
         }
     }
 
-    /// Adversarial: tamper the anchor_proxy (i.e. lie about which tree
+    /// Adversarial: tamper the anchor bytes (i.e. lie about which tree
     /// root the spend was proven against). Cross-verify against honest
     /// PI must reject.
+    ///
+    /// Phase 4b-step3-step3a: pre-step-3a this test mutated
+    /// `anchor_proxy` (the legacy single-u64 AIR-bound anchor). Post
+    /// step-3a the AIR no longer reads `anchor_proxy` — all 4 anchor
+    /// PI limbs derive from `witness.anchor_bytes` via the Merkle-walk
+    /// 4-fe digest. Flipping a byte of `anchor_bytes[0..8]` changes
+    /// `PI[PI_ANCHOR + 0]` and thus decouples the bad witness's PI
+    /// from the honest PI — cross-verify MUST reject.
     #[test]
     fn verify_rejects_adversarial_wrong_anchor() {
         let prover = MvpProver::new();
@@ -405,7 +413,11 @@ mod tests {
         let honest_pi_bytes = honest.public_inputs_bytes();
 
         let mut bad = honest.clone();
-        bad.anchor_proxy = bad.anchor_proxy.wrapping_add(42);
+        // Flip a bit inside `anchor_bytes[0..8]` so PI limb 0 differs
+        // while the Merkle walk on the honest path still produces the
+        // honest anchor (prover_side_check won't catch this; the AIR
+        // verify must).
+        bad.anchor_bytes[0] ^= 0x01;
 
         match prover.prove(&bad.encode()) {
             Err(_) => {}

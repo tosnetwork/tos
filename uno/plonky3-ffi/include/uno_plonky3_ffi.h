@@ -546,7 +546,15 @@
 // `k ∈ 0..32`, `0` on rows 32..63. Step 1 (K-air-col-share) introduced
 // them for the Merkle row-loop; step 2 (K-air-col-step2) reuses the
 // same bank for the Cm/IvkCm/Nf row-loops — no extra selector columns.
-#define GLOBAL_COLS ((((((1 + MERKLE_DEPTH) + POSEIDON2_COLS_PER_INSTANCE_16) + POSEIDON2_COLS_PER_INSTANCE) + 3) + 1) + 1)
+//
+// Phase 4b-step3-step3a cleanup: the Phase 4b-step1 / Phase 4b-step2b
+// anchor-limb global cols (`G_ANCHOR_LIMB1..3`, `G_ANCHOR_PROXY`,
+// `G_ANCHOR_LIMB0_REAL`) are retired. Post step 3a the Merkle walk
+// carries a full 4-fe digest in `S_CURRENT_FE[0..4]` and the
+// last-row binding pins each of those cols directly to
+// `PI[PI_ANCHOR + 0..4]` — so the single-u64 anchor indirection is
+// no longer needed.
+#define GLOBAL_COLS (((1 + MERKLE_DEPTH) + POSEIDON2_COLS_PER_INSTANCE_16) + POSEIDON2_COLS_PER_INSTANCE)
 
 // u16-limb decomposition width for `value_i` / `value_j` (§4.2 claims
 // 5 & 7). Each value is committed as 4 × u16 limbs with the AIR
@@ -574,19 +582,26 @@
 
 // Per-spend proxy columns: leaf, d, value, ivk, ivk_commitment_claim,
 // pk_d, rcm, nk, pos (9 leading fields), plus 32 path-bit proxies, 32
-// sibling-hash proxies for the 32-level Merkle path (§2.3),
-// VALUE_LIMBS_U16 u16-limb columns for the u64 range-check on `value_i`
-// (§4.2 claim 5), and RK_EPK_LIMBS columns holding the 4-limb
-// decomposition of the spend's `rk_bytes` for the PI binding added in
-// Phase 4a. Phase 4b-step3-step2b-decomp adds 38 additional cols per
-// spend (6 single-fe cols — upper 3 fes each of nk and leaf — plus 32
-// u16 limb cols — 4 fes × 4 u16 each for nk and leaf) that decompose
-// the 32-byte `nk` and `leaf` witness fields into their canonical
-// 4-fe × 4×u16 LE form. Each u16 limb is range-checked via the cross-
-// AIR `u16_range` LogUp; each fe-limb col is AIR-bound to
+// × 4-fe sibling-hash proxy blocks for the 32-level Merkle path
+// (§2.3), VALUE_LIMBS_U16 u16-limb columns for the u64 range-check on
+// `value_i` (§4.2 claim 5), and RK_EPK_LIMBS columns holding the
+// 4-limb decomposition of the spend's `rk_bytes` for the PI binding
+// added in Phase 4a. Phase 4b-step3-step2b-decomp adds 38 additional
+// cols per spend (6 single-fe cols — upper 3 fes each of nk and leaf
+// — plus 32 u16 limb cols — 4 fes × 4 u16 each for nk and leaf) that
+// decompose the 32-byte `nk` and `leaf` witness fields into their
+// canonical 4-fe × 4×u16 LE form. Each u16 limb is range-checked via
+// the cross-AIR `u16_range` LogUp; each fe-limb col is AIR-bound to
 // `Σ_k limb_k · 2^{16k}`. Mirror of the output-side step 1.3-fields
 // block (`O_D_LIMB0`..`O_RCM_LIMB0`).
-#define SPEND_PROXY_COLS (((((9 + MERKLE_DEPTH) + MERKLE_DEPTH) + VALUE_LIMBS_U16) + RK_EPK_LIMBS) + 38)
+//
+// Phase 4b-step3-step3a widens sibling proxies from 1 fe/level to 4
+// fe/level (`SIBLING_FES_PER_LEVEL = 4`) so the Merkle walk runs a
+// full 4-fe Goldilocks digest through the 32 Poseidon2-w=8
+// compressions — matching the `pack_32b_as_4fe(sibling)` layout that
+// tosctl threads through. Net +96 cols/spend
+// (`MERKLE_DEPTH · (SIBLING_FES_PER_LEVEL - 1) = 32 · 3 = 96`).
+#define SPEND_PROXY_COLS (((((9 + MERKLE_DEPTH) + (MERKLE_DEPTH * SIBLING_FES_PER_LEVEL)) + VALUE_LIMBS_U16) + RK_EPK_LIMBS) + 38)
 
 // Per-output proxy columns: cm_claim (Poseidon2-w=16 output, trace-
 // only after Phase 4b-step2a), d, pk_d, ivk_commitment, value, rcm (6
@@ -608,10 +623,21 @@
 // single globally-shared row-looped block on rows 0..7.
 #define POSEIDON2_NARROW_PER_SPEND 1
 
+// Phase 4b-step3-step3a: number of Goldilocks field elements per
+// Merkle-path sibling. Step 3a widens from 1 (legacy single-u64
+// proxy) to 4 so the Merkle walk runs a full 4-fe digest through
+// each of the 32 Poseidon2-w=8 compressions
+// (`(left[4] ‖ right[4]) → out[4]`). Each sibling is the
+// `pack_32b_as_4fe(s.merkle_path[k])` decomposition.
+#define SIBLING_FES_PER_LEVEL 4
+
 // Per-spend variable columns that are NOT constant across rows (i.e., not
-// included in the transition "proxies are constant" equality). Currently:
-// `S_CURRENT` (running Merkle digest).
-#define SPEND_VAR_COLS 1
+// included in the transition "proxies are constant" equality).
+// Phase 4b-step3-step3a: widened from 1 to 4 so the Merkle-walk
+// running digest `S_CURRENT_FE[0..4]` carries a full 4-fe state
+// through the 32 levels of `(left[4] ‖ right[4]) → out[4]`
+// Poseidon2-w=8 compressions.
+#define SPEND_VAR_COLS 4
 
 // Wide (width-16) Poseidon2 instances per spend after K-air-col-step2:
 // zero (the claim-2 Cm compression is folded into the global shared

@@ -958,6 +958,33 @@ impl TransferWitness {
             });
         }
 
+        // Phase 4b-step3-step3a (2026-04-23): the AIR's Merkle walk
+        // is now a 4-fe Goldilocks digest over the full 32-byte leaf
+        // + 32-byte siblings (no longer a single-u64-proxy walk). The
+        // AIR last-row constraint binds `S_CURRENT_FE[0..4] ==
+        // PI[PI_ANCHOR + 0..4]`, and PI derives from
+        // `encode_256(anchor_bytes)`. So the wallet's `anchor_bytes`
+        // must equal the output of the 4-fe walk over the witness
+        // path — NOT the RPC-provided tree root (which was what the
+        // old single-u64-proxy walk scaffold used).
+        //
+        // This is a proxy-AIR artefact: the synthetic `shared_leaf` /
+        // `shared_merkle_path` that `TransferWitness::build` produces
+        // is not the real commitment-tree path, so the 4-fe walk
+        // output isn't the real tree root either. Binding the real
+        // RPC anchor into the proof requires the consensus-binding
+        // AIR refactor (M-P2 task: per-spend real `cm_i` + real
+        // per-leaf Merkle path). Until then, the wallet-emitted
+        // `anchor_bytes` is the synthetic walk output, matching what
+        // the AIR constrains.
+        let anchor_bytes_4fe = poseidon2_merkle_path_root_4fe_bytes(
+            &perm,
+            &shared_leaf_bytes,
+            shared_pos,
+            &shared_merkle_path_bytes,
+        );
+        let _ = anchor; // RPC anchor not AIR-bound in this scaffold path
+
         Ok(Self {
             inner: MvpWitness {
                 scheme_id,
@@ -967,7 +994,7 @@ impl TransferWitness {
                 spends: p3_spends,
                 outputs: p3_outputs,
                 anchor_proxy,
-                anchor_bytes: *anchor,
+                anchor_bytes: anchor_bytes_4fe,
             },
         })
     }
@@ -1074,6 +1101,49 @@ fn poseidon2_merkle_path_root(
         current = poseidon2_merkle_step(perm, left, right).as_canonical_u64();
     }
     current
+}
+
+/// Phase 4b-step3-step3a: 4-fe Merkle root (bytes wrapper).
+/// Inlined here — the `uno_plonky3_ffi::transfer_air::
+/// poseidon2_merkle_path_root_4fe_bytes` public helper exists, but
+/// tosctl and the FFI consume two distinct `p3_goldilocks` crates
+/// (git-pathed vs vendored), so they see incompatible
+/// `Poseidon2Goldilocks<8>` types. Body is a byte-for-byte mirror
+/// of the FFI helper over this crate's own perm type.
+fn poseidon2_merkle_path_root_4fe_bytes(
+    perm: &Poseidon2Goldilocks<8>,
+    leaf_bytes: &[u8; 32],
+    pos: u64,
+    path_bytes: &[[u8; 32]; P3_MERKLE_DEPTH],
+) -> [u8; 32] {
+    let pack_32b_as_4fe = |b: &[u8; 32]| -> [Goldilocks; 4] {
+        let mut out = [Goldilocks::ZERO; 4];
+        for i in 0..4 {
+            let limb = u64::from_le_bytes(b[i * 8..(i + 1) * 8].try_into().unwrap());
+            out[i] = Goldilocks::from_u64(reduce_u64_to_gl(limb));
+        }
+        out
+    };
+    let mut cur: [Goldilocks; 4] = pack_32b_as_4fe(leaf_bytes);
+    for k in 0..P3_MERKLE_DEPTH {
+        let bit = (pos >> k) & 1;
+        let sib: [Goldilocks; 4] = pack_32b_as_4fe(&path_bytes[k]);
+        let (left, right) = if bit == 0 { (cur, sib) } else { (sib, cur) };
+        let mut state = [Goldilocks::ZERO; 8];
+        for m in 0..4 {
+            state[m] = left[m];
+        }
+        for m in 0..4 {
+            state[4 + m] = right[m];
+        }
+        perm.permute_mut(&mut state);
+        cur = [state[0], state[1], state[2], state[3]];
+    }
+    let mut out = [0u8; 32];
+    for (i, fe) in cur.iter().enumerate() {
+        out[i * 8..(i + 1) * 8].copy_from_slice(&fe.as_canonical_u64().to_le_bytes());
+    }
+    out
 }
 
 fn poseidon2_ivk_commitment(perm: &Poseidon2Goldilocks<8>, ivk: u64, d: u64) -> Goldilocks {
