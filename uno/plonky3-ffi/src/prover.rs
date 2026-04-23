@@ -905,19 +905,23 @@ mod tests {
             pi.len(),
             crate::transfer_air::air_width(4, 4),
         );
-        // M-P2 Phase 4b-step3-step3c widened wire layout:
+        // M-P2 Phase 4b-step3-step5a-wire widened wire layout:
         //   HEAD(10)
-        //   + PER_SPEND(32 + 3·8 + 4·32 + 32·MERKLE_DEPTH + 32)·n_s (1240 each at depth 32)
+        //   + PER_SPEND(32 + 32 + 8 + 32 + 4·32 + 8 + 32·MERKLE_DEPTH + 32)·n_s (1296 each at depth 32)
         //   + PER_OUTPUT(4·32 + 8 + 32 + 32 + 2)·n_o                (202 each)
-        //   + TAIL(8 + 32 + 1 + 4 + 8)                              (53)
+        //   + TAIL(32 + 1 + 4 + 8)                                  (45)
         // Step 2a bumped PER_SPEND from 448 → 472 (+24 B/spend) by
         // widening `leaf: u64 → [u8; 32]`. Step 3c bumped PER_SPEND
         // from 472 → 1240 (+768 B/spend = (32-8)·MERKLE_DEPTH) by
         // widening each per-level Merkle sibling from u64 to [u8;32].
+        // Step 5a-wire bumped PER_SPEND from 1240 → 1296 (+56 B/spend):
+        // widened `d: [u8; 8] → [u8; 32]` (+24 B) and added
+        // `ivk_commitment: [u8; 32]` (+32 B) so the spend-side cm
+        // sponge (step 5c) can absorb the full 15-fe input.
         // Phase 4b-step3-step4: anchor_proxy (8 B) retired — AIR binds
         // all 4 anchor PI limbs via the 4-fe Merkle walk. TAIL: 53 → 45.
-        // Total witness wire at 4/4: 10 + 1240·4 + 202·4 + 45 = 5 823 B.
-        let per_spend = 32 + 3 * 8 + 4 * 32 + 32 * MERKLE_DEPTH + 32;
+        // Total witness wire at 4/4: 10 + 1296·4 + 202·4 + 45 = 6 047 B.
+        let per_spend = 32 + 32 + 8 + 32 + 4 * 32 + 8 + 32 * MERKLE_DEPTH + 32;
         let per_output = 4 * 32 + 8 + 32 + 32 + 2;
         let head = 10;
         let tail = 32 + 1 + 4 + 8;
@@ -925,7 +929,7 @@ mod tests {
             witness_wire.len(),
             head + per_spend * 4 + per_output * 4 + tail
         );
-        assert_eq!(witness_wire.len(), 5_823);
+        assert_eq!(witness_wire.len(), 6_047);
         assert_eq!(pi.len(), 608);
     }
 }

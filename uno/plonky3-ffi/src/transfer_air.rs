@@ -2231,10 +2231,28 @@ pub struct SpendWitness {
     /// Step 2b will add 4-fe leaf decomposition cols + widen the nf
     /// derivation to consume them in-circuit.
     pub leaf: [u8; 32],
-    /// Diversifier `d` proxy (8 B LE).
-    pub d: [u8; 8],
+    /// Raw diversifier `d_i` in 32-byte representation. The real
+    /// diversifier is 11 bytes; tosctl pads `bytes[0..11]` with the
+    /// real material and leaves `bytes[11..32]` zero. Phase 4b-step3-
+    /// step5a-wire widened from `[u8; 8]` so tosctl can pass real
+    /// per-note diversifier material through to the spend-side cm
+    /// sponge (step 5c). The AIR (pre-step5c) still derives a u64
+    /// proxy internally via `first_u64_proxy(&s.d)` — low 8 bytes; the
+    /// real 32-byte material is only absorbed once step 5c lands.
+    /// Bytes `d[11..32]` must be canonical zero (decoder enforces);
+    /// mirrors the same rejection on `OutputWitness.d`.
+    pub d: [u8; 32],
     /// Value being spent. Must be `< p_Goldilocks`.
     pub value: u64,
+    /// Raw 32-byte `ivk_commitment_i` (spender's address commitment,
+    /// §2.6). Phase 4b-step3-step5a-wire added so the spend-side cm
+    /// sponge (step 5c) can absorb it as 4 fes at `fes[6..10]` of the
+    /// 15-fe input, matching the output-side layout. Derived off-chain
+    /// by tosctl as `Poseidon2("uno-ivk-cm-v1", ivk, d)` — byte-
+    /// identical to the output-side `OutputWitness.ivk_commitment`.
+    /// The AIR (pre-step5c) consumes only `first_u64_proxy(&s.ivk_commitment)`
+    /// (low 8 bytes) via the legacy single-perm path.
+    pub ivk_commitment: [u8; 32],
     /// Raw 32-byte `ivk` (Ristretto255 scalar). Phase 4b-step3-step0
     /// widened from `u64` proxy so tosctl can pass the real viewing
     /// key through. The AIR in its current (pre-step3) shape still
@@ -2413,6 +2431,31 @@ impl MvpWitness {
             shared_path_bytes[k][0..8].copy_from_slice(&shared_path[k].to_le_bytes());
         }
 
+        // Phase 4b-step3-step5a-wire: widened `d` from `[u8; 8]` to
+        // `[u8; 32]`, populate bytes[0..8] from `shared_d_word.to_le_bytes()`
+        // with the remainder zero-padded — matches the "u64 proxy in low
+        // 8 bytes" convention used by every other widened field in this
+        // fixture. Bytes [11..32] must be zero (decoder rejects non-zero
+        // padding; d[8..11] may hold high bits of the proxy u64 but
+        // tosctl honest witnesses keep those zero as well).
+        let mut shared_d_bytes = [0u8; 32];
+        shared_d_bytes[0..8].copy_from_slice(&d_word.to_le_bytes());
+        // Force d[8..32] = 0 so the decoder's canonical-padding check
+        // holds even if d_word were to set bits 56..64 (62-bit mask
+        // above keeps bit 62+ zero so d_bytes[7] can only have bits
+        // 0..5 set; bits 56..63 stay zero which is fine).
+        debug_assert!(shared_d_bytes[11..].iter().all(|b| *b == 0));
+
+        // Phase 4b-step3-step5a-wire: compute `shared_ivk_commitment`
+        // from the 32-byte FVK-mirror `shared_ivk` + 11-byte diversifier
+        // prefix via the existing helper. For the fixture all spends
+        // share (ivk, d), so all spends share ivk_commitment too. The
+        // AIR still reads `first_u64_proxy(&s.ivk_commitment)` for the
+        // legacy single-perm claim until step 5c.
+        let mut shared_ivk_commitment_bytes = [0u8; 32];
+        shared_ivk_commitment_bytes[0..8]
+            .copy_from_slice(&ivkcm.as_canonical_u64().to_le_bytes());
+
         // Build spends; all share the path so the anchor is identical per
         // spend. Only `nk` differs for distinct nullifiers.
         let mut spends = Vec::with_capacity(n_spends);
@@ -2443,10 +2486,11 @@ impl MvpWitness {
             leaf_bytes[0..8].copy_from_slice(&shared_leaf.to_le_bytes());
             spends.push(SpendWitness {
                 leaf: leaf_bytes,
-                d: d_word.to_le_bytes(),
+                d: shared_d_bytes,
                 value: v_per_spend,
                 ivk: ivk_bytes,
                 pk_d: pk_d_bytes,
+                ivk_commitment: shared_ivk_commitment_bytes,
                 rcm: rcm_bytes,
                 nk: nk_bytes,
                 pos: shared_pos,
@@ -2590,17 +2634,23 @@ impl MvpWitness {
     /// transient tosctl → Rust-prover FFI only (no C++ consumer;
     /// confirmed by the pre-commit Explore agent audit).
     pub fn encode(&self) -> Vec<u8> {
-        // Per-spend: leaf(32) + d(8) + value(8) + pos(8)
-        //          + ivk(32) + pk_d(32) + rcm(32) + nk(32)
+        // Per-spend: leaf(32) + d(32) + value(8) + ivk_commitment(32)
+        //          + ivk(32) + pk_d(32) + rcm(32) + nk(32) + pos(8)
         //          + path(32*MERKLE_DEPTH) + rk_bytes(32)
-        //          = 32 + 24 + 4·32 + 1024 + 32 = 1240.
+        //          = 32 + 32 + 8 + 32 + 4·32 + 8 + 32·32 + 32 = 1296.
         // Phase 4b-step3-step2a widened leaf from u64 (8 B) to [u8;32]
         // (448 -> 472, +24 B/spend).
         // Phase 4b-step3-step3c widened per-level Merkle sibling from
         // u64 (8 B) to [u8;32] so tosctl can thread real 32-byte
         // sibling digests through. Net wire bump per spend:
         // (32-8)·MERKLE_DEPTH = 24·32 = +768 B (472 -> 1240).
-        const PER_SPEND: usize = 32 + 3 * 8 + 4 * 32 + 32 * MERKLE_DEPTH + 32;
+        // Phase 4b-step3-step5a-wire widened `d` from `[u8; 8]` to
+        // `[u8; 32]` (+24 B/spend) and added `ivk_commitment: [u8; 32]`
+        // (+32 B/spend) so the spend-side cm sponge (step 5c) can
+        // absorb the full 15-fe input (d_fes(2) + pk_d_fes(4) +
+        // ivk_commitment_fes(4) + value(1) + rcm_fes(4)). Net bump
+        // 1240 -> 1296 (+56 B/spend).
+        const PER_SPEND: usize = 32 + 32 + 8 + 32 + 4 * 32 + 8 + 32 * MERKLE_DEPTH + 32;
         // Per-output: d(32) + pk_d(32) + ivk_cm(32) + value(8) + rcm(32)
         //           + cm(32) + epk(32) + filter_tag(2) = 202.
         const PER_OUTPUT: usize = 4 * 32 + 8 + 32 + 32 + 2;
@@ -2621,6 +2671,7 @@ impl MvpWitness {
             out.extend_from_slice(&s.value.to_le_bytes());
             out.extend_from_slice(&s.ivk);
             out.extend_from_slice(&s.pk_d);
+            out.extend_from_slice(&s.ivk_commitment);
             out.extend_from_slice(&s.rcm);
             out.extend_from_slice(&s.nk);
             out.extend_from_slice(&s.pos.to_le_bytes());
@@ -2651,8 +2702,8 @@ impl MvpWitness {
     pub fn decode(bytes: &[u8]) -> Result<Self, Plonky3Status> {
         const HEAD: usize = 10;
         const TAIL: usize = 32 + 1 + 4 + 8; // anchor_bytes + scheme + chain + expiry
-        // Must match `encode()` — see step0 widening doc there.
-        const PER_SPEND: usize = 32 + 3 * 8 + 4 * 32 + 32 * MERKLE_DEPTH + 32;
+        // Must match `encode()` — see step5a-wire widening doc there.
+        const PER_SPEND: usize = 32 + 32 + 8 + 32 + 4 * 32 + 8 + 32 * MERKLE_DEPTH + 32;
         const PER_OUTPUT: usize = 4 * 32 + 8 + 32 + 32 + 2;
         if bytes.len() < HEAD + TAIL {
             return Err(Plonky3Status::WitnessInvalid);
@@ -2677,9 +2728,19 @@ impl MvpWitness {
             let mut leaf = [0u8; 32];
             leaf.copy_from_slice(&bytes[off..off + 32]);
             off += 32;
-            let mut d = [0u8; 8];
-            d.copy_from_slice(&bytes[off..off + 8]);
-            off += 8;
+            let mut d = [0u8; 32];
+            d.copy_from_slice(&bytes[off..off + 32]);
+            off += 32;
+            // Phase 4b-step3-step5a-wire: reject non-canonical
+            // diversifier, mirroring the output-side rejection added in
+            // step 4c. The spend-side cm sponge (step 5c) consumes
+            // `d[0..16]` via `pack_diversifier_as_2fe`; bytes
+            // `d[11..32]` must be zero so the wire has a single
+            // canonical representation and no claim can be forged for
+            // a diversifier that has no 11-byte spec preimage.
+            if d[11..].iter().any(|b| *b != 0) {
+                return Err(Plonky3Status::WitnessInvalid);
+            }
             let value = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
             off += 8;
             if value >= GOLDILOCKS_P {
@@ -2690,6 +2751,9 @@ impl MvpWitness {
             off += 32;
             let mut pk_d = [0u8; 32];
             pk_d.copy_from_slice(&bytes[off..off + 32]);
+            off += 32;
+            let mut ivk_commitment = [0u8; 32];
+            ivk_commitment.copy_from_slice(&bytes[off..off + 32]);
             off += 32;
             let mut rcm = [0u8; 32];
             rcm.copy_from_slice(&bytes[off..off + 32]);
@@ -2718,6 +2782,7 @@ impl MvpWitness {
                 value,
                 ivk,
                 pk_d,
+                ivk_commitment,
                 rcm,
                 nk,
                 pos,
@@ -3008,7 +3073,12 @@ impl MvpWitness {
         let mut row0_spend_ivkcm = Vec::with_capacity(n_s);
         let mut row0_spend_cm = Vec::with_capacity(n_s);
         for s in &self.spends {
-            let d_word = u64::from_le_bytes(s.d);
+            // Phase 4b-step3-step5a-wire: widened `d` from `[u8; 8]` to
+            // `[u8; 32]`. AIR still reads `first_u64_proxy(&s.d)` (low
+            // 8 bytes) until step 5c replaces the single-perm cm claim
+            // with the iterated sponge over real d_fes / pk_d_fes /
+            // ivk_commitment_fes / value / rcm_fes.
+            let d_word = first_u64_proxy(&s.d);
             let d_f = Goldilocks::from_u64(reduce_to_goldilocks(d_word));
             // Phase 4b-step3-step0: widened fields → u64 proxy via
             // first_u64_proxy; AIR inputs unchanged.
@@ -3243,7 +3313,10 @@ impl MvpWitness {
             .iter()
             .enumerate()
             .map(|(i, s)| {
-                let d_word = u64::from_le_bytes(s.d);
+                // Phase 4b-step3-step5a-wire: widened `d` → [u8; 32].
+                // Low 8 bytes via `first_u64_proxy` remain the legacy
+                // AIR input until step 5c.
+                let d_word = first_u64_proxy(&s.d);
                 let d_f = Goldilocks::from_u64(reduce_to_goldilocks(d_word));
                 let ivkcm_fe = poseidon2_ivk_commitment(&perm, first_u64_proxy(&s.ivk), d_word);
                 let mut v = Vec::with_capacity(SPEND_PROXY_COLS);
@@ -4093,7 +4166,11 @@ pub fn witness_claim2_leaf_consistent(w: &MvpWitness) -> bool {
     let perm = default_goldilocks_poseidon2_8();
     let perm16 = default_goldilocks_poseidon2_16();
     for s in &w.spends {
-        let d_word = u64::from_le_bytes(s.d);
+        // Phase 4b-step3-step5a-wire: widened `d` → [u8; 32]; AIR
+        // proxy derivation still consumes low 8 bytes only. Step 5d
+        // will swap this legacy single-perm check for the 4-fe sponge
+        // digest comparison against pack_32b_as_4fe(&s.leaf).
+        let d_word = first_u64_proxy(&s.d);
         // Phase 4b-step3-step0: widened fields → u64 proxy. Claim 2
         // derivation shape unchanged (still over u64 proxies; real
         // 32-byte derivation is step 1+).
@@ -4330,8 +4407,8 @@ mod tests {
 
         // Locate and mutate output 0's `d[11]` (first non-canonical byte).
         // Wire layout from encode(): HEAD(10) + PER_SPEND·n_s + [output 0 starts:
-        // d(32) + pk_d(32) + ...]. PER_SPEND post-step-3c = 32 + 3·8 + 4·32 + 32·32 + 32 = 1240.
-        let output0_d_off = 10 + 1240 * 1; // n_s = 1
+        // d(32) + pk_d(32) + ...]. PER_SPEND post-step-5a-wire = 32 + 32 + 8 + 32 + 4·32 + 8 + 32·32 + 32 = 1296.
+        let output0_d_off = 10 + 1296 * 1; // n_s = 1
         for offset_in_d in 11..32 {
             let mut bad = good.clone();
             bad[output0_d_off + offset_in_d] = 0xAB;

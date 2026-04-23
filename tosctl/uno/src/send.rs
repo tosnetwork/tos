@@ -876,11 +876,30 @@ impl TransferWitness {
         // does not constrain distinct leaves/positions, only that each
         // spend's walk lands on the anchor PI.
         //
-        // The AIR's `SpendWitness` is: `{ leaf, d: [u8;8], value, ivk,
-        // pk_d, rcm, nk, pos, merkle_path: [[u8; 32]; 32] }`. See
-        // `uno/plonky3-ffi/src/transfer_air.rs:SpendWitness` for the exact
-        // struct K-AIR tightened.
-        let shared_d: [u8; 8] = shared_d_word.to_le_bytes();
+        // The AIR's `SpendWitness` is: `{ leaf, d: [u8;32], value, ivk,
+        // pk_d, ivk_commitment, rcm, nk, pos, merkle_path: [[u8; 32]; 32] }`.
+        // See `uno/plonky3-ffi/src/transfer_air.rs:SpendWitness` for
+        // the exact struct K-AIR tightened.
+        //
+        // Phase 4b-step3-step5a-wire (2026-04-23): P3SpendWitness
+        // widened `d: [u8; 8] → [u8; 32]` and added `ivk_commitment:
+        // [u8; 32]`. Real per-note material (d, ivk_commitment) should
+        // be sourced from OwnedNote once the wallet threads them
+        // through (scan.rs carries `diversifier: [u8; 11]` today but
+        // not pk_d/rseed/ivk_commitment — step 5a-wire only widens the
+        // proxy projection so the wire + AIR types match; step 5c will
+        // demand real bytes and switch the AIR to the sponge claim).
+        // Bytes `d[11..32]` must stay zero (decoder enforces).
+        let shared_d: [u8; 32] = {
+            let mut buf = [0u8; 32];
+            buf[0..8].copy_from_slice(&shared_d_word.to_le_bytes());
+            // `shared_d_word` is masked to 62 bits above, so
+            // byte 7 has bits 56..61 set at most (bits 56..63 include
+            // only 6 real bits); byte 7 may be non-zero but bytes
+            // [8..32] are guaranteed zero.
+            debug_assert!(buf[11..].iter().all(|b| *b == 0));
+            buf
+        };
         // Phase 4b-step3-step0 (2026-04-22): P3SpendWitness widened its
         // `{ivk, pk_d, rcm, nk}` fields from `u64` to `[u8; 32]`. Until
         // step 1+ upgrades the AIR to consume real 32-byte material for
@@ -908,6 +927,13 @@ impl TransferWitness {
         let shared_ivk_bytes = pad_u64_to_32(shared_ivk);
         let shared_pk_d_bytes = pad_u64_to_32(shared_pk_d);
         let shared_rcm_bytes = pad_u64_to_32(shared_rcm);
+        // Phase 4b-step3-step5a-wire: project the legacy single-fe
+        // ivk_commitment proxy (derived above via `poseidon2_ivk_commitment`)
+        // into `bytes[0..8]` with 24 B of zero pad. The AIR still
+        // reads `first_u64_proxy(&s.ivk_commitment)` for its legacy
+        // single-perm claim-2 binding until step 5c switches the
+        // spend cm sponge to consume all 4 fes.
+        let shared_ivk_commitment_bytes = pad_u64_to_32(ivkcm_fe.as_canonical_u64());
         let mut p3_spends = Vec::with_capacity(n_s);
         for (i, note) in spends.iter().enumerate() {
             // Per-spend real position is available via `note.position`, but
@@ -920,6 +946,7 @@ impl TransferWitness {
                 value: v_per_spend,
                 ivk: shared_ivk_bytes,
                 pk_d: shared_pk_d_bytes,
+                ivk_commitment: shared_ivk_commitment_bytes,
                 rcm: shared_rcm_bytes,
                 nk: spend_nks[i],
                 pos: shared_pos,
