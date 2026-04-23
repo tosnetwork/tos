@@ -352,14 +352,26 @@ Sub-commits landed:
                 (mirror of 1.3-fields on spend side; +38 cols/spend)
 
 Landed:
-  2b-AIR      — ✅ `b92a6bdbb` nf Poseidon2 block moved from narrow w=8
-                to wide w=16 single-perm on shared_cm rows 16..(15+n_s).
-                Inputs (TAG_NF, nk_fes[0..4], leaf_fes[0..4], pos, 0·6)
-                pinned; output[0..4] → PI[pi_nf(i)+0..4]. 64→256-bit.
-                154+/32- LOC.
+  2b-AIR-v1   — ⚠️ `b92a6bdbb` nf Poseidon2 block moved from narrow w=8
+                to wide w=16 SINGLE-PERM with `state[0] = TAG_NF` u64
+                constant. Self-consistent (Rust prover + Rust FFI
+                verifier agree) but **NOT spec-compliant** — C++
+                `derive_nullifier` uses iterated sponge with tag block.
+                Preserved in history for audit; superseded by v2.
   2b-cleanup  — ✅ `0e23eef30` deleted legacy `poseidon2_nf_full` narrow
                 helper + unused `nk_f` / `leaf_f` / `pos_f` trace-gen
                 locals. -26 LOC.
+  2b-AIR-v2   — ✅ `9add1ad0f` **spec-compliant** iterated Poseidon2-w=16
+                sponge: bank-1 on row 16+i with `state[0..8] =
+                (nk_fes, leaf_fes)`, `state[8..16] = pack_tag_block
+                ("uno-nf-v1")`; bank-2 on row 20+i with `inputs[0] +=
+                pos`, `inputs[1] += 1` (10* padding), carry rate/cap
+                from bank-1. Added `S_NF_CARRY_{CAP,RATE}[0..8]`
+                per-spend cols (+16). Cross-crate byte-parity tests
+                prove `poseidon2_nf_full_wide_bytes` byte-identical to
+                `hash_tagged(b"uno-nf-v1", 9 fes)`. Closes the nf
+                consensus-compatibility gap with C++ validator.
+                359+/83- LOC.
 
 ### 4.3 Step 3 — Merkle walk 4-fe state ✅ COMPLETE
 
