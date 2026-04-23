@@ -188,6 +188,18 @@ std::string sign_b64(const td::Ed25519::PrivateKey& private_key, td::Slice data)
   return td::base64_encode(private_key.sign(data).move_as_ok().as_slice());
 }
 
+// Field-level check that a base64 signature actually verifies against the
+// to-sign payload. Catches sign-side bugs (wrong-length output, key mismatch,
+// data corruption) that root-hash regression cannot detect on its own — a
+// broken `sign_b64` would produce a different-but-internally-consistent BOC
+// whose root hash would just become the new golden.
+void check_signature_b64(const td::Ed25519::PublicKey& public_key, td::Slice data,
+                         td::Slice signature_b64) {
+  auto sig = td::base64_decode(signature_b64).move_as_ok();
+  CHECK(sig.size() == 64);
+  CHECK(public_key.verify_signature(data, sig).is_ok());
+}
+
 std::string build_validator_elect_request(td::uint32 elect_time, td::uint32 max_factor, td::Slice src_addr,
                                           td::Slice adnl_addr) {
   std::string out = "\x65\x4c\x50\x74";
@@ -319,6 +331,7 @@ std::string run_validator_fift_script_regression() {
   auto request = request_run.source_lookup.read_file("validator-to-sign.bin").move_as_ok().data;
   CHECK(request == request_expected);
   auto signature_b64 = sign_b64(private_key, request);
+  check_signature_b64(public_key, request, signature_b64);
 
   auto signed_lookup = fift::create_mem_source_lookup(load_source("smartcont/validator-elect-signed.fif")).move_as_ok();
   signed_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
@@ -382,6 +395,7 @@ std::string run_governance_vote_fift_script_regression() {
   auto config_req = config_req_run.source_lookup.read_file("validator-to-sign.req").move_as_ok().data;
   CHECK(config_req == build_config_vote_ext_request(kConfigVoteSeqno, expire_at, kValidatorIndex, kProposalHash));
   auto config_signature_b64 = sign_b64(private_key, config_req);
+  check_signature_b64(public_key, config_req, config_signature_b64);
 
   auto config_int_req_lookup =
       fift::create_mem_source_lookup(load_source("smartcont/config-proposal-vote-req.fif")).move_as_ok();
@@ -393,6 +407,7 @@ std::string run_governance_vote_fift_script_regression() {
   auto config_int_req = config_int_req_run.source_lookup.read_file("validator-to-sign.req").move_as_ok().data;
   CHECK(config_int_req == build_config_vote_int_request(kValidatorIndex, kProposalHash));
   auto config_int_signature_b64 = sign_b64(private_key, config_int_req);
+  check_signature_b64(public_key, config_int_req, config_int_signature_b64);
 
   auto config_signed_lookup =
       fift::create_mem_source_lookup(load_source("smartcont/config-proposal-vote-signed.fif")).move_as_ok();
@@ -427,6 +442,7 @@ std::string run_governance_vote_fift_script_regression() {
   auto complaint_req = complaint_req_run.source_lookup.read_file("validator-to-sign.req").move_as_ok().data;
   CHECK(complaint_req == build_complaint_vote_request(kValidatorIndex, kElectId, kComplaintHash));
   auto complaint_signature_b64 = sign_b64(private_key, complaint_req);
+  check_signature_b64(public_key, complaint_req, complaint_signature_b64);
 
   auto complaint_signed_lookup =
       fift::create_mem_source_lookup(load_source("smartcont/complaint-vote-signed.fif")).move_as_ok();

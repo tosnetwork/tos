@@ -160,9 +160,7 @@ This word already exists and should remain in
 | `complaint-vote-query-id` | `( query-time complaint-hash -- query-id )` | Derive the stable query id used by the complaint vote message body. | [`complaint-vote-signed.fif`](../crypto/smartcont/complaint-vote-signed.fif) |
 | `complaint-vote-body` | `( query-id signature to-sign -- c )` | Build the signed complaint vote message body. | [`complaint-vote-signed.fif`](../crypto/smartcont/complaint-vote-signed.fif) |
 
-### Optional convenience words
-
-These are useful, but they are not required for the first implementation pass.
+### Convenience words
 
 | Word | Stack | Purpose | Candidate scripts |
 | --- | --- | --- | --- |
