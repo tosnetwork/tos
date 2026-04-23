@@ -25,7 +25,7 @@ ENV CC=/usr/bin/clang-21
 ENV CXX=/usr/bin/clang++-21
 
 # Install uv (pinned version)
-RUN curl -LsSf https://astral.sh/uv/0.7.12/install.sh | sh
+RUN curl -LsSf https://astral.sh/uv/0.11.7/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
 
 # Verify tools
@@ -53,7 +53,7 @@ ENV CC=/usr/bin/clang-21
 ENV CXX=/usr/bin/clang++-21
 
 # Install uv (pinned version)
-RUN curl -LsSf https://astral.sh/uv/0.7.12/install.sh | sh
+RUN curl -LsSf https://astral.sh/uv/0.11.7/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
 
 RUN clang-21 --version && uv --version
