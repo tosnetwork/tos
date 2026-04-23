@@ -55,4 +55,4 @@ target_include_directories(tos_validator PUBLIC
 )
 
 target_link_libraries(tos_validator PRIVATE tdutils tdactor adnl tl_api tl_lite_api tl-lite-utils dht tdfec
-  overlay catchain validatorsession tos_crypto tos_block)
+  overlay catchain validatorsession tos_crypto tos_block evm_workchain)
