@@ -10,16 +10,26 @@ Merkle walk against the real 32-byte recipient / spender material.
 Step 0 + Step 1 + Step 2 + Step 3 + Step 4 landed. Tracked as task #131.
 
 **Keystone milestone:** after step 2b-AIR-v2 (`9add1ad0f`) + step 3a
-(`a0ff246ae`) + step 4 (`8d6ad205b`), every cryptographic claim in the
-AIR runs over real 32-byte material with ≥256-bit binding. The nf
-derivation is spec-compliant iterated Poseidon2-w=16 sponge under
-`"uno-nf-v1"` tag block (previous single-perm v1 at `b92a6bdbb` was
-self-consistent but diverged from C++ — superseded by v2). Cross-crate
-byte-parity locked in by 5 tests in `tosctl/uno/tests/phase4b_step3_sponge_parity.rs`
-(3 cm + 2 nf). The FRI Option B soundness tier (180-bit conjectured /
-102-bit proven) is now the limiting factor, not the AIR's claim depth
-— the Uno PQ-native positioning is no longer contradicted by an
-internal 64-bit proxy binding.
+(`a0ff246ae`) + step 4 (`8d6ad205b`), the **output-side** cryptographic
+claims + anchor + nf all run over real 32-byte material with ≥256-bit
+binding. The nf derivation is spec-compliant iterated Poseidon2-w=16
+sponge under `"uno-nf-v1"` tag block (previous single-perm v1 at
+`b92a6bdbb` was self-consistent but diverged from C++ — superseded by
+v2). Cross-crate byte-parity locked in by 5 tests in
+`tosctl/uno/tests/phase4b_step3_sponge_parity.rs` (3 cm + 2 nf).
+
+**Known out-of-scope gap (Codex audit finding 1,
+`doc/uno-phase4b-step3-codex-audit.md`):** the **spend-side claim 2**
+`leaf_i = Poseidon2("uno-cm-v1", real d_i, real pk_d_i, …)` was NOT
+migrated in Phase 4b-step3. The AIR's spend-row constraint still binds
+`shared_cm.inputs = (TAG_CM, d_u64_proxy, …)` via the legacy single-
+permutation u64-proxy path and `SpendWitness.d` is still `[u8; 8]`.
+This is a well-formedness claim (does the spender own a correctly-
+constructed note?) rather than a consensus binding — the two hard
+consensus bindings on the spend side are Merkle inclusion (✅ step 3a)
+and nullifier derivation (✅ step 2b-AIR-v2), both over real 32-byte
+material. Closing this gap requires mirroring step 1.2 on the spend
+side (~250 LOC) and is tracked as a follow-up.
 
 **Post-Phase-4b-step3 shape_matrix (2026-04-23, 192-core host)**:
 4/4 at **2 593 cols / 1 073 KB proof / 30.8 ms verify**. Deltas vs.

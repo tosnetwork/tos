@@ -2730,6 +2730,19 @@ impl MvpWitness {
             let mut d = [0u8; 32];
             d.copy_from_slice(&bytes[off..off + 32]);
             off += 32;
+            // Phase 4b-step3-step4c: reject non-canonical diversifier.
+            // C++ `compute_note_commitment` consumes an 11-byte diversifier
+            // zero-padded to 16 B; `pack_diversifier_as_2fe` on this side
+            // absorbs `d[0..16]` directly. Without this check a caller
+            // could set `d[11..16]` to non-zero and produce a `cm` proof
+            // for a diversifier that has no valid 11-B preimage — spec-
+            // domain mismatch (Codex audit finding 2, doc/uno-phase4b-
+            // step3-codex-audit.md). Bytes [16..32] are never absorbed
+            // but we reject them too so the wire form has a single
+            // canonical representation.
+            if d[11..].iter().any(|b| *b != 0) {
+                return Err(Plonky3Status::WitnessInvalid);
+            }
             let mut pk_d = [0u8; 32];
             pk_d.copy_from_slice(&bytes[off..off + 32]);
             off += 32;
@@ -4301,6 +4314,36 @@ mod tests {
             MvpWitness::decode(&bytes),
             Err(Plonky3Status::WitnessInvalid)
         ));
+    }
+
+    /// Phase 4b-step3-step4c: guards against Codex audit finding 2
+    /// (`doc/uno-phase4b-step3-codex-audit.md`). A witness with any
+    /// non-zero byte in `OutputWitness.d[11..32]` does not correspond
+    /// to a valid 11-byte diversifier under the C++ / spec preimage
+    /// domain; the decoder must reject.
+    #[test]
+    fn witness_decode_rejects_non_canonical_diversifier_padding() {
+        // Honest 1/1 witness first.
+        let w = MvpWitness::deterministic_valid(1, 1, 0xD1FF_0001);
+        let good = w.encode();
+        MvpWitness::decode(&good).expect("honest witness must decode");
+
+        // Locate and mutate output 0's `d[11]` (first non-canonical byte).
+        // Wire layout from encode(): HEAD(10) + PER_SPEND·n_s + [output 0 starts:
+        // d(32) + pk_d(32) + ...]. PER_SPEND post-step-3c = 32 + 3·8 + 4·32 + 32·32 + 32 = 1240.
+        let output0_d_off = 10 + 1240 * 1; // n_s = 1
+        for offset_in_d in 11..32 {
+            let mut bad = good.clone();
+            bad[output0_d_off + offset_in_d] = 0xAB;
+            assert!(
+                matches!(
+                    MvpWitness::decode(&bad),
+                    Err(Plonky3Status::WitnessInvalid)
+                ),
+                "decode must reject non-zero d[{}]",
+                offset_in_d
+            );
+        }
     }
 
     #[test]
