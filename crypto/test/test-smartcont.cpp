@@ -17,6 +17,8 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <cctype>
+#include <cstdlib>
 #include <bitset>
 #include <set>
 #include <tuple>
@@ -47,6 +49,7 @@
 #include "td/utils/base64.h"
 #include "td/utils/crypto.h"
 #include "td/utils/filesystem.h"
+#include "td/utils/misc.h"
 #include "td/utils/port/path.h"
 #include "td/utils/tests.h"
 #include "vm/dict.h"
@@ -60,6 +63,127 @@ std::string current_dir() {
 std::string load_source(std::string name) {
   return td::read_file_str(current_dir() + "../../crypto/" + name).move_as_ok();
 }
+
+namespace {
+
+constexpr td::uint32 kDeterministicZerostateNow = 1700000000;
+constexpr td::Slice kMainWalletPkHex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+constexpr td::Slice kConfigMasterPkHex = "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f";
+
+std::string shell_quote(td::Slice value) {
+  std::string result = "'";
+  for (auto c : value) {
+    if (c == '\'') {
+      result += "'\\''";
+    } else {
+      result += c;
+    }
+  }
+  result += "'";
+  return result;
+}
+
+bool is_word_char(char c) {
+  auto uc = static_cast<unsigned char>(c);
+  return std::isalnum(uc) != 0 || c == '_';
+}
+
+std::string replace_word_token(std::string input, td::Slice from, td::Slice to) {
+  std::size_t pos = 0;
+  while ((pos = input.find(from.str(), pos)) != std::string::npos) {
+    auto left_ok = pos == 0 || !is_word_char(input[pos - 1]);
+    auto right_pos = pos + from.size();
+    auto right_ok = right_pos >= input.size() || !is_word_char(input[right_pos]);
+    if (left_ok && right_ok) {
+      input.replace(pos, from.size(), to.str());
+      pos += to.size();
+    } else {
+      pos += from.size();
+    }
+  }
+  return input;
+}
+
+std::string create_state_binary() {
+  return td::PathView(td::realpath("/proc/self/exe").move_as_ok()).parent_dir().str() + "crypto/create-state";
+}
+
+std::string fift_lib_dir() {
+  return current_dir() + "../../crypto/fift/lib/";
+}
+
+std::string smartcont_dir() {
+  return current_dir() + "../../crypto/smartcont/";
+}
+
+void write_deterministic_zerostate_keys(const std::string& dir) {
+  td::write_file(dir + TD_DIR_SLASH + "main-wallet.pk", td::hex_decode(kMainWalletPkHex).move_as_ok()).ensure();
+  td::write_file(dir + TD_DIR_SLASH + "config-master.pk", td::hex_decode(kConfigMasterPkHex).move_as_ok()).ensure();
+}
+
+void append_state_hash_summary(std::string& summary, const std::string& dir, const std::string& state_name) {
+  auto boc = td::read_file(dir + TD_DIR_SLASH + state_name + ".boc").move_as_ok();
+  auto file_hash = td::read_file(dir + TD_DIR_SLASH + state_name + ".fhash").move_as_ok();
+  auto root_hash = td::read_file(dir + TD_DIR_SLASH + state_name + ".rhash").move_as_ok();
+
+  CHECK(td::sha256(boc.as_slice()) == file_hash.as_slice().str());
+  CHECK(vm::std_boc_deserialize(boc.as_slice()).move_as_ok()->get_hash().as_slice() == root_hash.as_slice());
+
+  summary += PSTRING() << state_name << ".boc_size=" << boc.as_slice().size() << "\n";
+  summary += PSTRING() << state_name << ".file_hash=" << td::buffer_to_hex(file_hash.as_slice()) << "\n";
+  summary += PSTRING() << state_name << ".root_hash=" << td::buffer_to_hex(root_hash.as_slice()) << "\n";
+}
+
+void append_optional_hex_summary(std::string& summary, const std::string& dir, const std::string& file_name) {
+  auto file = td::read_file(dir + TD_DIR_SLASH + file_name);
+  if (file.is_ok()) {
+    summary += PSTRING() << file_name << "=" << td::buffer_to_hex(file.ok().as_slice()) << "\n";
+  }
+}
+
+std::string run_zerostate_regression(td::Slice script_name) {
+  auto temp_dir = td::mkdtemp("/tmp", "tos-zerostate").move_as_ok();
+  SCOPE_EXIT {
+    td::rmrf(temp_dir).ignore();
+  };
+
+  write_deterministic_zerostate_keys(temp_dir);
+
+  auto patched_script =
+      replace_word_token(load_source(PSTRING() << "smartcont/" << script_name), "now", td::Slice(td::to_string(kDeterministicZerostateNow)));
+  auto script_path = temp_dir + TD_DIR_SLASH + script_name.str();
+  td::write_file(script_path, patched_script).ensure();
+
+  auto stdout_path = temp_dir + TD_DIR_SLASH + "stdout.txt";
+  auto stderr_path = temp_dir + TD_DIR_SLASH + "stderr.txt";
+  auto include_path = PSTRING() << fift_lib_dir() << ":" << smartcont_dir();
+  auto command =
+      PSTRING() << "cd " << shell_quote(temp_dir) << " && " << shell_quote(create_state_binary()) << " -I "
+                << shell_quote(include_path) << " " << shell_quote(script_path) << " > " << shell_quote(stdout_path)
+                << " 2> " << shell_quote(stderr_path);
+
+  auto rc = std::system(command.c_str());
+  if (rc != 0) {
+    auto stderr = td::read_file_str(stderr_path);
+    if (stderr.is_ok()) {
+      LOG(ERROR) << stderr.move_as_ok();
+    }
+    LOG(ERROR) << "create-state command failed: " << command;
+  }
+  CHECK(rc == 0);
+
+  std::string summary = PSTRING() << "script=" << script_name << "\n";
+  append_state_hash_summary(summary, temp_dir, "basestate0");
+  append_state_hash_summary(summary, temp_dir, "evmstate1");
+  append_state_hash_summary(summary, temp_dir, "zerostate");
+  append_optional_hex_summary(summary, temp_dir, "main-wallet.addr");
+  append_optional_hex_summary(summary, temp_dir, "config-master.addr");
+  append_optional_hex_summary(summary, temp_dir, "elector.addr");
+  append_optional_hex_summary(summary, temp_dir, "testgiver.addr");
+  return summary;
+}
+
+}  // namespace
 
 td::Ref<vm::Cell> get_wallet_v3_source() {
   std::string code = R"ABCD(
@@ -315,6 +439,42 @@ TEST(Toslib, HighloadWalletV2) {
   LOG(ERROR) << "---fift scripts----";
   vm::load_cell_slice(vm::std_boc_deserialize(wallet_query).move_as_ok()).print_rec(std::cerr);
   CHECK(vm::std_boc_deserialize(wallet_query).move_as_ok()->get_hash() == gift_message->get_hash());
+}
+
+TEST(Toslib, AutoDnsFiftScript) {
+  const td::Slice auto_dns_addr = "Ef9Tj6fMJP+OqhAdhKXxq36DL+HYSzCc3+9O6UNzqsgPfYFX";
+  auto fift_output =
+      fift::mem_run_fift(load_source("smartcont/auto-dns.fif"),
+                         {"aba", auto_dns_addr.str(), "prolong", "alpha.beta", "60"})
+          .move_as_ok();
+
+  auto boc = fift_output.source_lookup.read_file("dns-msg-body.boc").move_as_ok().data;
+  CHECK(vm::std_boc_deserialize(boc).move_as_ok().not_null());
+}
+
+TEST(Toslib, ManualDnsFiftScript) {
+  auto source_lookup = fift::create_mem_source_lookup(load_source("smartcont/manual-dns-manage.fif")).move_as_ok();
+  auto priv_key = td::Ed25519::generate_private_key().move_as_ok();
+  std::string addr_file(36, '\0');
+
+  source_lookup.write_file("dns-wallet.pk", priv_key.as_octet_string().as_slice()).ensure();
+  source_lookup.write_file("dns-wallet-dns1.addr", td::Slice(addr_file)).ensure();
+
+  auto fift_output = fift::mem_run_fift(std::move(source_lookup),
+                                        {"aba", "dns-wallet", "1", "add", "alpha.beta", "cat", "1", "text",
+                                         "hello", "delete", "beta.alpha", "cat", "7"})
+                         .move_as_ok();
+
+  auto boc = fift_output.source_lookup.read_file("dns-query.boc").move_as_ok().data;
+  CHECK(vm::std_boc_deserialize(boc).move_as_ok().not_null());
+}
+
+TEST(Toslib, GenZerostateFiftRegression) {
+  REGRESSION_VERIFY(run_zerostate_regression("gen-zerostate.fif"));
+}
+
+TEST(Toslib, GenZerostateTestFiftRegression) {
+  REGRESSION_VERIFY(run_zerostate_regression("gen-zerostate-test.fif"));
 }
 
 TEST(Toslib, RestrictedWallet) {

@@ -1,5 +1,6 @@
 #!/usr/bin/fift -s
 "TosUtil.fif" include
+"WalletCommon.fif" include
 "GetOpt.fif" include
 
 { show-options-help 1 halt } : usage
@@ -56,11 +57,8 @@ load-address
 ."Source wallet address = " 2dup .addr cr 6 .Addr cr
 file-base +".pk" load-keypair nip constant wallet_pk
 
-def? body-boc-file { @' body-boc-file file>B B>boc } { comment simple-transfer-body } cond
-constant body-cell
-
-def? init-file { @' init-file file>B B>boc <s b{11} swap |_ } { b{0} } cond
-=: state-init
+comment wallet-body-cell constant body-cell
+wallet-state-init =: state-init
 
 ."Transferring " amount .TM+cc ."to account "
 dest_addr 2dup bounce 7 + .Addr ." = " .addr

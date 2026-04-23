@@ -1,0 +1,29 @@
+library Msg  // Shared message builders
+"Addr.fif" include
+"Currency.fif" include
+
+1 constant tos-global-id  // TOS mainnet global_id for anti-replay protection
+
+// serialize simple transfers with long comments
+// b B n -- b'
+recursive append-long-bytes {
+  over Blen over <= { drop B, } {
+    B| <b swap 127 append-long-bytes b> -rot B, swap ref,
+  } cond
+} swap !
+// b S n -- b'
+{ swap $>B swap append-long-bytes } : append-long-string
+// S -- c
+{ <b over $len { 0 32 u, swap 36 append-long-string } { nip } cond b>
+} : simple-transfer-body
+
+// b body -- b'
+{ tuck <s 2dup 1 s-fits-with? not rot over 1 i, -rot
+  { drop swap ref, } { s, nip } cond
+} : append-msg-body
+// ng wc addr bounce body -- c
+{ <b b{01} s, rot 1 i, b{000100} s, 2swap addr, rot Tomi,
+  0 9 64 32 + + 1+ u, swap append-msg-body b>
+} : create-int-msg
+// c m -- c'
+{ <b swap 8 u, swap ref, b> } : create-order

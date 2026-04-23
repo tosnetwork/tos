@@ -36,8 +36,10 @@ dup dup 31 boc+>B dup Bx. cr
 dup "evmstate1" +suffix +".boc" tuck B>file
 ."(Initial EVM workchain state saved to file " type .")" cr
 Bhashu dup =: evmstate1_fhash
+."file hash=" dup 64x. space 256 u>B dup B>base64url type cr
 "evmstate1" +suffix +".fhash" B>file
 hashu dup =: evmstate1_rhash
+."root hash=" dup 64x. space 256 u>B dup B>base64url type cr
 "evmstate1" +suffix +".rhash" B>file
 
 evmstate1_rhash evmstate1_fhash now 0 4 8 1 add-evm-workchain
@@ -244,9 +246,20 @@ config.param_proposals_setup!
 // deposit bit_pps cell_pps
 TM$100 1 500 config.complaint_prices!
 
-"validator-keys" +suffix +".pub" file>B
-{ dup Blen } { 32 B| swap dup ."Validator public key = " Bx. cr
-  17 add-validator } while drop
+{ file>B { dup Blen } {
+    32 B| swap dup ."Validator public key = " Bx. cr
+    17 add-validator
+  } while drop
+} : load-keys-from-file
+
+false =: keys-from-file
+keys-from-file
+{ "validator-keys" +suffix +".pub" load-keys-from-file
+} {
+  VPK'xrQTSOn2F9RjLgeHdSS0uIvde4Lv49l+/KXfJe0I7wYatz6e
+  B64{8E9AbL8blhRiBUoZt/b/vIo3+iZzglLKiL8MTf0g6Sg=} 256 B>u@
+  1 add-adnl-validator
+} cond
 // newkeypair nip dup ."Validator #1 public key = " Bx. cr
 // 17 add-validator
 // newkeypair nip dup ."Validator #2 public key = " Bx. cr

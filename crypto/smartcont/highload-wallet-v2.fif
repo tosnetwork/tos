@@ -1,5 +1,6 @@
 #!/usr/bin/fift -s
 "TosUtil.fif" include
+"WalletCommon.fif" include
 "GetOpt.fif" include
 
 { show-options-help 1 halt } : usage
@@ -49,26 +50,11 @@ variable order#   order# 0!
   orders @ 16 udict!+ not abort"cannot add order to dictionary"
   orders ! order# 1+!
 } : add-order
-// b body -- b'
-{ tuck <s 2dup 1 s-fits-with? not rot over 1 i, -rot
-  { drop swap ref, } { s, nip } cond
-} : append-msg-body
-// ng wc addr bounce body -- c
-{ <b b{01} s, rot 1 i, b{000100} s, 2swap addr, rot Tomi,
-  0 9 64 32 + + 1+ u, swap append-msg-body b>
-} : create-int-msg
-// ng wc addr bnc --
-{ ."Transferring " 3 roll .TM ."to account "
-  -rot 2dup 4 pick 7 + .Addr ." = " .addr ." bounce=" . cr
-} : .transfer
 // addr$ ng -- c
 { swap parse-smc-addr force-bounce or allow-bounce and  // ng wc addr bnc
   2over 2over .transfer
   <b 0 32 u, b> create-int-msg
 } : create-simple-transfer
-// c m -- c'
-{ <b swap 8 u, swap ref, b> } : create-order
-
 // addr$ ng --
 { create-simple-transfer send-mode create-order add-order } : send
 { bl word bl word $>TM send } : SEND

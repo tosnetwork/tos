@@ -1,5 +1,6 @@
 #!/usr/bin/fift -s
 "TosUtil.fif" include
+"DNS.fif" include
 "GetOpt.fif" include
 
 { show-options-help 1 halt } : usage
@@ -57,10 +58,6 @@ variable Values  dictnew Values !
 { @end? abort"adnl address expected"
   @next parse-adnl-addr
 } : cl-parse-adnl-addr
-{ <b x{9fd3} s, -rot Addr, 0 8 u, b> } : serialize-smc-addr
-{ <b x{ba93} s, -rot Addr, b> } : serialize-next-resolver
-{ <b x{ad01} s, swap 256 u, 0 8 u, b> } : serialize-adnl-addr
-{ <b x{1eda01} s, over $len 8 u, swap $, b> } : serialize-text
 { @end? abort"subdomain record value expected" @next
   dup "smc" $= { drop cl-parse-smc-addr serialize-smc-addr } {
   dup "next" $= { drop cl-parse-smc-addr serialize-next-resolver } {
@@ -77,17 +74,6 @@ variable Values  dictnew Values !
 } : parse-action
 { { @end? not } { parse-action } while } : parse-actions
 parse-actions
-
-// ( S -- S1 .. Sn n )
-{ 1 swap { dup "." $pos dup 0>= } { $| 1 $| nip rot 1+ swap } while drop swap
-} : split-by-dots
-// ( S -- s )
-{ dup $len dup 0= abort"subdomain cannot be empty" 126 > abort"subdomain too long"
-  dup 0 chr $pos 1+ abort"subdomain contains null characters"
-  split-by-dots <b {  // ... S b
-    swap dup $len 0= abort"empty subdomain component" $, 0 8 u,
-  } rot times b> <s
-} : subdomain>s
 
 main-op ( _( `add 0x72656764 ) _( `update 0x75706464 ) _( `prolong 0x70726f6c ) )
 assq-val not abort"unknown main operation"

@@ -1,0 +1,34 @@
+library Key  // Key loading and public key codecs
+
+// Private key load/generate
+// ( fname -- pubkey privkey )
+{ dup ."Loading private key from file " type cr
+  file>B dup Blen 32 <> abort"Private key must be exactly 32 bytes long"
+  dup priv>pub swap
+} : load-keypair
+// ( fname -- pubkey privkey )
+{ dup file-exists?
+  { load-keypair }
+  { dup newkeypair swap rot over swap B>file
+    rot ."Saved new private key to file " type cr
+  } cond
+} : load-generate-keypair
+
+// ( S -- x )  parse public key
+{ dup $len 48 <> abort"public key must be 48 characters long"
+  base64url>B dup Blen 36 <> abort"public key must be 48 characters long"
+  34 B| 16 B>u@ over crc16 <> abort"crc16 mismatch in public key"
+  16 B>u@+ 0x3ee6 <> abort"invalid tag in public key"
+  256 B>u@
+} : parse-pubkey
+{ bl word parse-pubkey 1 'nop } ::_ PK'
+// ( x -- S )  serialize public key
+{ 256 u>B B{3ee6} swap B+ dup crc16 16 u>B B+ B>base64 } : pubkey>$
+{ pubkey>$ type } : .pubkey
+
+// ( S -- x )  parse validator-encoded public key
+{ base64>B dup Blen 36 <> abort"public key with magic must be 36 bytes long"
+  4 B| swap 32 B>u@ 0xC6B41348 <> abort"unknown magic for public key (not Ed25519)"
+} : parse-val-pubkey
+{ bl word parse-val-pubkey 1 'nop } ::_ VPK'
+{ char } word base64>B 1 'nop } ::_ B64{

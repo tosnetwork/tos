@@ -1,5 +1,6 @@
 #!/usr/bin/fift -s
 "TosUtil.fif" include
+"DNS.fif" include
 "GetOpt.fif" include
 
 { show-options-help 1 halt } : usage
@@ -81,32 +82,10 @@ file-base +"-dns" +contractid +".addr" load-address
 
 ."Actions: " Actions @ list-reverse .l cr
 
-// ( S -- S1 .. Sn n )
-{ 1 swap { dup "." $pos dup 0>= } { $| 1 $| nip rot 1+ swap } while drop swap
-} : split-by-dots
-// ( S -- s )
-{ dup $len dup 0= abort"subdomain cannot be empty" 126 > abort"subdomain too long"
-  dup 0 chr $pos 1+ abort"subdomain contains null characters"
-  split-by-dots <b {  // ... S b
-    swap dup $len 0= abort"empty subdomain component" $, 0 8 u,
-  } rot times b> <s
-} : subdomain>s
-// ( b V -- b' )
-{ dup first
-  dup `smc eq? { drop untriple 2swap drop x{9fd3} s, -rot Addr, 0 8 u, } {
-  dup `next eq? { drop untriple 2swap drop x{ba93} s, -rot Addr, } {
-  dup `adnl eq? { drop second swap x{ad01} s, swap 256 u, 0 8 u, } {
-  dup `text eq? { drop second swap x{1eda01} s, over $len 8 u, swap $, } {
-    abort"unknown value type"
-  } cond } cond } cond } cond
-} : value,
-{ subdomain>s dup sbits 3 >>
-  dup 63 > { drop s>c dict, } { rot swap 7 u, swap s, } cond
-} : subdomain,
 // ( A -- b )
 { dup first
   dup `add eq? {
-    drop 4 untuple <b swap value, b> -rot
+    drop 4 untuple <b swap dns-value, b> -rot
     <b 11 6 u, swap 256 u, swap subdomain,
     swap dict, nip } {
   dup `delete eq? {

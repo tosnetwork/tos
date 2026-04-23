@@ -52,6 +52,39 @@ td::Result<std::string> load_Asm_fif(std::string dir = "") {
 td::Result<std::string> load_TosUtil_fif(std::string dir = "") {
   return load_source("TosUtil.fif", dir);
 }
+td::Result<std::string> load_Addr_fif(std::string dir = "") {
+  return load_source("Addr.fif", dir);
+}
+td::Result<std::string> load_Key_fif(std::string dir = "") {
+  return load_source("Key.fif", dir);
+}
+td::Result<std::string> load_Currency_fif(std::string dir = "") {
+  return load_source("Currency.fif", dir);
+}
+td::Result<std::string> load_Msg_fif(std::string dir = "") {
+  return load_source("Msg.fif", dir);
+}
+td::Result<std::string> load_WalletCommon_fif(std::string dir = "") {
+  return load_source("WalletCommon.fif", dir);
+}
+td::Result<std::string> load_DNS_fif(std::string dir = "") {
+  return load_source("DNS.fif", dir);
+}
+td::Result<std::string> load_State_fif(std::string dir = "") {
+  return load_source("State.fif", dir);
+}
+td::Result<std::string> load_Config_fif(std::string dir = "") {
+  return load_source("Config.fif", dir);
+}
+td::Result<std::string> load_Workchain_fif(std::string dir = "") {
+  return load_source("Workchain.fif", dir);
+}
+td::Result<std::string> load_Assert_fif(std::string dir = "") {
+  return load_source("Assert.fif", dir);
+}
+td::Result<std::string> load_Test_fif(std::string dir = "") {
+  return load_source("Test.fif", dir);
+}
 td::Result<std::string> load_Lists_fif(std::string dir = "") {
   return load_source("Lists.fif", dir);
 }
@@ -135,6 +168,50 @@ td::Result<fift::SourceLookup> create_source_lookup(std::string&& main, bool nee
     {
       TRY_RESULT(f, load_Lists_fif(dir));
       loader->add_file("/Lists.fif", std::move(f));
+    }
+    {
+      TRY_RESULT(f, load_Addr_fif(dir));
+      loader->add_file("/Addr.fif", std::move(f));
+    }
+    {
+      TRY_RESULT(f, load_Key_fif(dir));
+      loader->add_file("/Key.fif", std::move(f));
+    }
+    {
+      TRY_RESULT(f, load_Currency_fif(dir));
+      loader->add_file("/Currency.fif", std::move(f));
+    }
+    {
+      TRY_RESULT(f, load_Msg_fif(dir));
+      loader->add_file("/Msg.fif", std::move(f));
+    }
+    {
+      TRY_RESULT(f, load_WalletCommon_fif(dir));
+      loader->add_file("/WalletCommon.fif", std::move(f));
+    }
+    {
+      TRY_RESULT(f, load_DNS_fif(dir));
+      loader->add_file("/DNS.fif", std::move(f));
+    }
+    {
+      TRY_RESULT(f, load_State_fif(dir));
+      loader->add_file("/State.fif", std::move(f));
+    }
+    {
+      TRY_RESULT(f, load_Config_fif(dir));
+      loader->add_file("/Config.fif", std::move(f));
+    }
+    {
+      TRY_RESULT(f, load_Workchain_fif(dir));
+      loader->add_file("/Workchain.fif", std::move(f));
+    }
+    {
+      TRY_RESULT(f, load_Assert_fif(dir));
+      loader->add_file("/Assert.fif", std::move(f));
+    }
+    {
+      TRY_RESULT(f, load_Test_fif(dir));
+      loader->add_file("/Test.fif", std::move(f));
     }
     {
       TRY_RESULT(f, load_TosUtil_fif(dir));

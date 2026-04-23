@@ -1,0 +1,3 @@
+"Assert.fif" include
+
+1 2 "intentional equality failure" assert-eq

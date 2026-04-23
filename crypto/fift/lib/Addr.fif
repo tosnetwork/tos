@@ -1,0 +1,200 @@
+library Addr  // Address, ADNL, and MsgAddress helpers
+
+-1 constant Masterchain
+0 constant Basechain
+
+// Parse smart-contract address
+// ( S -- workchain addr bounce? )
+{ $>smca not abort"invalid smart-contract address"
+  1 and 0=
+} : parse-smc-addr
+
+// ( x -- ) Displays a 64-digit hex number
+{ 64 0x. } : 64x.
+{ 64 0X. } : 64X.
+// ( wc addr -- )  Show address in <workchain>:<account> form
+{ swap ._ .":" 64x. } : .addr
+// ( wc addr flags -- )  Show address in base64url form
+{ smca>$ type } : .Addr
+// ( wc addr fname -- )  Save address to file in 36-byte format
+{ -rot 256 u>B swap 32 i>B B+ swap B>file } : save-address
+// ( wc addr fname -- )  Save address and print message
+{ dup ."(Saving address to file " type .")" cr save-address
+} : save-address-verbose
+
+// ( fname -- wc addr )  Load address from file
+{ file>B 32 B|
+  dup Blen { 32 B>i@ } { drop Basechain } cond
+  swap 256 B>u@
+} : load-address
+// ( fname -- wc addr )  Load address from file and print message
+{ dup ."(Loading address from file " type .")" cr load-address
+} : load-address-verbose
+// Parse string as address or load address from file (if string is prefixed by @)
+// ( S default-bounce -- workchain addr bounce? )
+{ over $len 0= abort"empty smart-contract address"
+  swap dup 1 $| swap "@" $=
+  { nip load-address rot } { drop nip parse-smc-addr } cond
+} : parse-load-address
+
+// ( hex-str -- addr )  Parses ADNL address
+{ dup $len 64 <> abort"ADNL address must consist of exactly 64 hexadecimal characters"
+  (hex-number) 1 <> abort"ADNL address must consist of 64 hexadecimal characters"
+  dup 256 ufits not abort"invalid ADNL address"
+} : parse-adnl-address
+
+// ( b wc addr -- b' )  Serializes address into Builder b
+{ -rot 8 i, swap 256 u, } : addr,
+{ over 8 fits { rot b{100} s, -rot addr, } {
+  rot b{110} s, 256 9 u, rot 32 i, swap 256 u, } cond
+} : Addr,
+
+// adnl address parser
+{ 256 u>B B{2D} swap B+ dup crc16 16 u>B B+ } : adnl-preconv
+{ swap 32 /mod dup 26 < { 65 } { 24 } cond + rot swap hold } : Base32#
+{ <# ' Base32# 8 times #> } : Base32#*8
+{ "" over Blen 5 / { swap 40 B>u@+ Base32#*8 nip rot swap $+ } swap times nip } : B>Base32
+
+// ( x -- S )  Converts an adnl-address from a 256-bit integer to a string
+{ adnl-preconv B>Base32 1 $| nip } : adnl>$
+
+{ 65 - dup 0>= { -33 and dup 26 < } { 41 + dup 25 > over 32 < and } cond ?dup nip } : Base32-digit?
+{ Base32-digit? not abort"not a Base32 digit" } : Base32-digit
+{ 0 { over $len } { swap 1 $| -rot (char) Base32-digit swap 5 << + } while nip } : Base32-number
+{ B{} { over $len } { swap 8 $| -rot Base32-number 40 u>B B+ } while nip } : Base32>B
+
+// ( S -- x )  Converts an adnl address from a string to 256-bit integer
+{ dup $len 55 <> abort"not 55 alphanumeric characters" "F" swap $+ Base32>B
+  33 B| 16 B>u@ over crc16 <> abort"crc16 checksum mismatch"
+  8 B>u@+ 0x2D <> abort"not a valid adnl address" 256 B>u@ } : $>adnl
+
+{ 65 - dup 0>= { -33 and 10 + dup 16 < } { 17 + dup 0>= over 10 < and } cond ?dup nip } : hex-digit?
+// ( S -- x -1 or 0 )  Parses a hexadecimal integer
+{ dup $len {
+    0 {
+      4 << swap 1 $| -rot (char) hex-digit?  // S a d -1 or S a 0
+      { + over $len 0= } { drop -1 true } cond
+    } until
+    dup 0< { 2drop false } { nip true } cond
+  } { drop false } cond
+} : hex$>u?
+// ( S -- x )
+{ hex$>u? not abort"not a hexadecimal number" } : hex$>u
+
+{ dup $len 64 = { hex$>u } {
+  dup $len 55 = { $>adnl } {
+    true abort"invalid adnl address"
+  } cond } cond
+} : parse-adnl-addr
+{ adnl>$ type } : .adnl
+{ bl word parse-adnl-addr 1 'nop } ::_ adnl:
+
+// Get anycast depth / rewrite_pfx or return 0
+// ( S -- x y S )
+{
+    // maybe
+    1 u@+ swap 0 >
+    {
+        // anycast_info$_ depth:(#<= 30) { depth >= 1 }
+        //    rewrite_pfx:(bits depth) = Anycast;
+        30 u@+ swap // get depth
+
+        dup 1 > {
+            dup 2 roll swap u@+ // get rewrite_pfx
+            // return depth, rewrite_pfx, slice
+        }
+        {
+            drop // drop depth (<=1)
+            0 0 2 roll // set anycast to none
+        } cond
+    }
+    {
+        0 0 2 roll // set anycast to none
+    } cond
+} : maybe-anycast
+
+// Rewrite first bits of addr with anycast info
+{ // input: anycast depth, rewrite_pfx, workchain, slice, address length
+    4 -roll
+    3 roll dup dup 0 = { 2drop 2 roll drop }
+    {
+        rot swap u@+ swap drop
+        3 roll
+        <b swap 3 roll u, b> <s swap |+
+    } cond // rewrite first bits of address with rewrite_pfx
+    2 roll
+    u@+ // get address
+} : parse-address-with-anycast
+
+// Parse Slice S and return:
+// 0 `addr_none S - if addr_none$00 is parsed
+// addr `addr_extern S - if addr_extern$01 is parsed
+// wc addr `addr_std S - if addr_std$10 is parsed
+// wc addr `addr_var S - if addr_var$11 is parsed
+// ( S -- 0 A S or addr A S or wc addr A S )
+{ 2 u@+ swap dup 0>  // Get addr: addr_none$00 / addr_extern$01 / addr_std$10 / addr_var$11
+    { // if greater that zero
+       dup 1 >
+       {
+            2 =
+            {
+                // if addr_std$10
+                // anycast:(Maybe Anycast)
+                // workchain_id:int8
+                // address:bits256  = MsgAddressInt;
+                maybe-anycast // get anycast depth, bits, slice
+                8 i@+ // get workchain
+                256 parse-address-with-anycast
+                `addr-std swap
+            }
+
+            {
+                // if addr_var$11
+                // anycast:(Maybe Anycast)
+                // addr_len:(## 9)
+                // workchain_id:int32
+                // address:(bits addr_len) = MsgAddressInt;
+                maybe-anycast // get anycast depth, bits, slice
+                9 u@+  // get addr_len
+                32 i@+ // get workchain
+                swap 2 -roll // move workchain to needed position
+                swap parse-address-with-anycast
+                `addr-var swap
+            } cond
+
+       }
+       {
+            drop // drop header (dup for statement upper)
+            // if addr_extern$01
+            // addr_extern$01 len:(## 9)
+            // external_address:(bits len)
+            9 u@+ swap  // bit len
+            u@+ // external_address
+            `addr-extern swap
+       } cond
+    }
+    {
+        swap
+        // if addr_none$00
+        `addr-none swap
+    } cond
+} : addr@+
+
+{ addr@+ drop } : addr@
+
+// User-friendly prints output of addr@
+// (0 A or addr A or wc addr A -- )
+{
+    dup `addr-none eq?
+    { 2drop ."addr_none" }
+    {
+        `addr-extern eq?
+        { (dump) type }
+        { (x.) swap (dump) ":" $+ swap $+ type }
+        cond
+    }
+    cond
+} : print-addr // print addr with workchain
+
+forget maybe-anycast
+forget parse-address-with-anycast

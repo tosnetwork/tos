@@ -1,0 +1,17 @@
+library WalletCommon  // Wallet script helpers shared across CLI scripts
+"Addr.fif" include
+"Currency.fif" include
+"Msg.fif" include
+
+// comment -- body-cell
+{ def? body-boc-file { drop @' body-boc-file file>B B>boc } { simple-transfer-body } cond
+} : wallet-body-cell
+
+// -- state-init
+{ def? init-file { @' init-file file>B B>boc <s b{11} swap |_ } { b{0} } cond
+} : wallet-state-init
+
+// ng wc addr bounce --
+{ ."Transferring " 3 roll .TM ."to account "
+  -rot 2dup 4 pick 7 + .Addr ." = " .addr ." bounce=" . cr
+} : .transfer

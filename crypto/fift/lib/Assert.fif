@@ -1,0 +1,20 @@
+library Assert  // Shared assertion and structural equality helpers for Fift tests
+"Lists.fif" include
+
+{ equal? } : same?
+{ shash swap shash B= } : slice-eq?
+{ <s shash swap <s shash B= } : cell-eq?
+{ b> <s shash swap b> <s shash B= } : builder-eq?
+
+// ( flag msg -- )
+{ swap { drop } { "assertion failed: " swap $+ abort } cond } : assert
+// ( flag msg -- )
+{ swap not swap assert } : assert-not
+// ( left right msg -- )
+{ -rot same? swap assert } : assert-eq
+// ( left right msg -- )
+{ -rot slice-eq? swap assert } : assert-slice-eq
+// ( left right msg -- )
+{ -rot cell-eq? swap assert } : assert-cell-eq
+// ( left right msg -- )
+{ -rot builder-eq? swap assert } : assert-builder-eq

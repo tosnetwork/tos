@@ -100,6 +100,14 @@ TEST(Fift, bug_ufits) {
   run_fift("bug_ufits.fif");
 }
 
+TEST(Fift, test_assert) {
+  run_fift("assert-test.fif");
+}
+
+TEST(Fift, test_assert_failure) {
+  run_fift("assert-fail.fif", true);
+}
+
 TEST(Fift, test_dict) {
   run_fift("testdict.fif");
 }

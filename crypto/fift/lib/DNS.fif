@@ -1,0 +1,32 @@
+library DNS  // DNS subdomain and record codecs
+"Addr.fif" include
+
+{ <b x{9fd3} s, -rot Addr, 0 8 u, b> } : serialize-smc-addr
+{ <b x{ba93} s, -rot Addr, b> } : serialize-next-resolver
+{ <b x{ad01} s, swap 256 u, 0 8 u, b> } : serialize-adnl-addr
+{ <b x{1eda01} s, over $len 8 u, swap $, b> } : serialize-text
+
+// ( S -- S1 .. Sn n )
+{ 1 swap { dup "." $pos dup 0>= } { $| 1 $| nip rot 1+ swap } while drop swap
+} : split-by-dots
+// ( S -- s )
+{ dup $len dup 0= abort"subdomain cannot be empty" 126 > abort"subdomain too long"
+  dup 0 chr $pos 1+ abort"subdomain contains null characters"
+  split-by-dots <b {
+    swap dup $len 0= abort"empty subdomain component" $, 0 8 u,
+  } rot times b> <s
+} : subdomain>s
+
+// ( b V -- b' )
+{ dup first
+  dup `smc eq? { drop untriple 2swap drop x{9fd3} s, -rot Addr, 0 8 u, } {
+  dup `next eq? { drop untriple 2swap drop x{ba93} s, -rot Addr, } {
+  dup `adnl eq? { drop second swap x{ad01} s, swap 256 u, 0 8 u, } {
+  dup `text eq? { drop second swap x{1eda01} s, over $len 8 u, swap $, } {
+    abort"unknown value type"
+  } cond } cond } cond } cond
+} : dns-value,
+
+{ subdomain>s dup sbits 3 >>
+  dup 63 > { drop s>c dict, } { rot swap 7 u, swap s, } cond
+} : subdomain,

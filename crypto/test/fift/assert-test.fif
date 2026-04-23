@@ -1,0 +1,14 @@
+"Test.fif" include
+
+."assert/test helper smoke" cr
+test-reset
+
+123 123 "integer equality" test-eq
+"abc" "abc" "string equality" test-eq
+1 2 pair 1 2 pair "tuple equality" test-eq
+x{1234} x{1234} "slice equality" test-slice-eq
+<b x{1234} s, b> <b x{1234} s, b> "cell equality" test-cell-eq
+<b 0x1234 16 u, <b 0x1234 16 u, "builder equality" test-builder-eq
+0 "false is false" test-not
+
+test-summary

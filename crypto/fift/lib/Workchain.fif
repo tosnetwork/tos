@@ -1,0 +1,31 @@
+library Workchain  // Workchain descriptor builders
+"State.fif" include
+
+variable workchain-dict
+// root-hash file-hash enable-utime actual-min-split min-split max-split workchain-id --
+{ <b x{a6} s, 5 roll 32 u, 4 roll 8 u, 3 roll 8 u, rot 8 u, x{e000} s,
+  3 roll 256 u, rot 256 u, 0 32 u, x{1} s, -1 32 i, 0 64 u, b>
+  dup isWorkchainDescr? not abort"invalid WorkchainDescr created"
+  <s swap workchain-dict @ 32 idict!+ 0= abort"cannot add workchain"
+  workchain-dict !
+} : add-std-workchain
+// EVM workchain (wc=1): same layout as add-std-workchain but vm_version=0x45564D ("EVM")
+// instead of -1, so the host-chain dispatch routes wc=1 transactions to evmone
+// (see crypto/block/evm-workchain/evm-config-param.cpp::build_evm_workchain_descr).
+// root-hash file-hash enable-utime actual-min-split min-split max-split workchain-id --
+{ <b x{a6} s, 5 roll 32 u, 4 roll 8 u, 3 roll 8 u, rot 8 u, x{e000} s,
+  3 roll 256 u, rot 256 u, 0 32 u, x{1} s, 0x45564D 32 i, 0 64 u, b>
+  dup isWorkchainDescr? not abort"invalid WorkchainDescr created"
+  <s swap workchain-dict @ 32 idict!+ 0= abort"cannot add workchain"
+  workchain-dict !
+} : add-evm-workchain
+// --
+{ workchain-dict @ dict>s s>c 12 config! } : config.workchains!
+
+// workchain-id -- wc-zero-state
+{ <b x{9023afe2} s, globalid@ 32 i, 0 8 i, swap 32 i, 1 63 << 64 u,
+  0 64 i, now 32 u, 0 64 i, -1 32 i, <b 0 67 u, b> ref, 0 1 u,
+  <b 0 11 u, b> ref,
+  <b 0 128 10 + 1+ 1+ u, b> ref, 0 1 u, b>
+  dup isShardState? not abort"invalid ShardState created"
+} : mkemptyShardState

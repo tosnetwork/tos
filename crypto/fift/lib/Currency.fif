@@ -1,0 +1,118 @@
+library Currency  // Tomi amounts, unit helpers, and CurrencyCollection
+"Lists.fif" include
+
+// Tomi utilities
+1000000000 constant Tomi
+1000000 constant mTomi
+1000 constant uTomi
+1 constant nTomi
+{ Tomi swap */r } : Tomi*/
+{ mTomi swap */r } : mTomi*/
+{ uTomi swap */r } : uTomi*/
+{ /r } : nTomi*/
+{ Tomi * } : Tomi*
+{ mTomi * } : mTomi*
+{ uTomi * } : uTomi*
+'nop : nTomi*
+{ (number) dup { 1- ' Tomi*/ ' Tomi* cond true } if
+} : $>TM?
+// ( S -- nanotomis )
+{ $>TM? not abort"not a valid Tomi amount"
+} : $>TM
+{ bl word $>TM 1 'nop } ::_ TM$
+// ( nanotomis -- S )
+{ dup abs <# ' # 9 times char . hold #s rot sign #>
+nip -trailing0 } : (.TM)
+{ (.TM) ."TM$" type } : .TM_
+{ .TM_ space } : .TM
+
+// b x -- b'  ( serializes a Tomi amount )
+{ -1 { 1+ 2dup 8 * ufits } until
+  rot over 4 u, -rot 8 * u, } : Tomi,
+// s -- x s'  ( deserializes a Tomi amount )
+{ 4 u@+ swap 8 * u@+ } : Tomi@+
+// s -- x
+{ 4 u@+ swap 8 * u@ } : Tomi@
+
+// currency collections
+// b x --> b'  ( serializes a VarUInteger32 )
+{ -1 { 1+ 2dup 8 * ufits } until
+  rot over 5 u, -rot 8 * u, } : VarUInt32,
+// s --> x  ( deserializes a VarUInteger32 )
+{ 5 u@+ swap 8 * u@ } : VarUInt32@
+32 constant cc-key-bits
+' VarUInt32, : val,
+' VarUInt32@ : val@
+// d k v -- d'
+{ <b swap val, b> <s swap rot cc-key-bits idict!+ not abort"cannot add key-value to CurrencyCollection"
+} : +newccpair
+{ dup { -rot tuck swap cc-key-bits idict@- { val@ 2swap -rot + } { swap rot } cond +newccpair
+  } { 2drop } cond
+} : +ccpair
+dictnew constant cc0   // zero currency collection
+// ( v k -- d )  Creates currency collection representing v units of currency k
+{ cc0 swap rot +ccpair } : of-cc
+{ dictnew { over null? not } { swap uncons -rot unpair +ccpair } while nip } : list>cc
+{ dup null? { ."(null)" drop } { val@ ._ } cond } dup : .maybeVarUInt32 : .val
+{ swap cc-key-bits { rot { ."+" } if .val ."*$" ._ true true } idictforeach drop } : (.cc)
+{ false (.cc) { ."0" } ifnot } : .cc_
+{ .cc_ space } : .cc
+{ true (.cc) drop } : .+cc_
+{ .+cc_ space } : .+cc
+{ cc-key-bits { rot . ."-> " swap .val .val ."; " true } dictdiff drop cr } : show-cc-diff
+{ cc-key-bits { val@ swap val@ + val, true } dictmerge } : cc+
+{ null swap cc-key-bits { val@ pair swap cons true } idictforeach drop } : cc>list-rev
+{ cc>list-rev list-reverse } : cc>list
+forget val,  forget val@  forget .val
+
+// ( S -- x -1 or 0 )
+{ (number) dup 2 = { -rot 2drop } if 1 = } : int?
+{ int? dup { drop dup 0< { drop false } { true } cond } if } : pos-int?
+// ( S -- k v -1 or 0 )  Parses expression <value>*<currency> or <value>*$<currency>
+{ dup "*" $pos dup 0< { 2drop false } {
+  $| dup $len 2 < { 2drop false } {
+  1 $| nip dup 1 $| swap "$" $= { swap } if drop
+  int? dup { over 32 fits { 2drop false } ifnot } if
+  not { drop false } {
+  swap pos-int? not { drop false } {
+  true
+  } cond } cond } cond } cond
+} : cc-key-value?
+// ( S -- D -1 or 0 )  Parses an extra currency collection
+// e.g. "10000*$3+7777*$-11" means "10000 units of currency #3 and 7777 units of currency #-11"
+{ dictnew {  // S D
+    swap dup "+" $pos dup 0< { drop null -rot } { $| 1 $| nip -rot } cond
+    cc-key-value? { +ccpair over null? dup { rot drop true } if } { 2drop false true } cond
+  } until
+} : $>xcc?
+{ $>xcc? not abort"invalid extra currency collection" } : $>xcc
+{ char } word dup $len { $>xcc } { drop dictnew } cond 1 'nop } ::_ CX{
+
+// complete currency collections
+{ $>xcc? { true } { drop false } cond } : end-parse-cc
+// ( S -- x D -1 or 0 )  Parses a currency collection
+// e.g. "1.2+300*$2" means "1200000000ng plus 300 units of currency #2"
+{ 0 swap dup "+" $pos dup 0< { drop dup
+      $>TM? { nip nip dictnew true } { end-parse-cc } cond
+    } { over swap $| swap $>TM? { 2swap 2drop swap 1 $| nip } { drop
+  } cond end-parse-cc } cond
+} : $>cc?
+{ $>cc? not abort"invalid currency collection" } : $>cc
+{ char } word dup $len { $>cc } { drop 0 dictnew } cond 2 'nop } ::_ CC{
+// ( x D -- )
+{ swap ?dup { .TM_ .+cc_ } { .cc_ } cond } : .TM+cc_
+{ .TM+cc_ space } : .TM+cc
+{ -rot Tomi, swap dict, } : Tomi+cc,
+
+{ 10 << } : *Ki
+{ 20 << } : *Mi
+{ 30 << } : *Gi
+{ 10 <</r } : */Ki
+{ 20 <</r } : */Mi
+{ 30 <</r } : */Gi
+{ 1000 * } : *K
+{ 1000000 * } : *M
+{ 1000000000 * } : *G
+{ 1000 swap */r } : */K
+{ 1000000 swap */r } : */M
+{ 1000000000 swap */r } : */G

@@ -1,0 +1,24 @@
+library Test  // Small test harness helpers for Fift scripts
+"Assert.fif" include
+
+variable test-total
+variable test-passed
+
+{ test-total 0! test-passed 0! } : test-reset
+{ test-total @ } : tests-total@
+{ test-passed @ } : tests-passed@
+
+// ( flag msg -- )
+{ 1 test-total +! assert 1 test-passed +! } : test-assert
+// ( flag msg -- )
+{ 1 test-total +! assert-not 1 test-passed +! } : test-not
+// ( left right msg -- )
+{ 1 test-total +! assert-eq 1 test-passed +! } : test-eq
+// ( left right msg -- )
+{ 1 test-total +! assert-slice-eq 1 test-passed +! } : test-slice-eq
+// ( left right msg -- )
+{ 1 test-total +! assert-cell-eq 1 test-passed +! } : test-cell-eq
+// ( left right msg -- )
+{ 1 test-total +! assert-builder-eq 1 test-passed +! } : test-builder-eq
+
+{ ."tests passed: " tests-passed@ . ." / " tests-total@ . cr } : test-summary
