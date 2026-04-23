@@ -629,16 +629,13 @@ fn sign_spends(mut tx: Transfer, rsk_keys: &[schnorr::SpendKeyPair]) -> Result<T
 use std::cell::Cell;
 use uno_plonky3_ffi::prover::MvpProver;
 use uno_plonky3_ffi::transfer_air::{
-    MvpWitness, OutputWitness as P3OutputWitness, SpendWitness as P3SpendWitness,
-    MAX_OUTPUTS as P3_MAX_OUTPUTS, MAX_SPENDS as P3_MAX_SPENDS, MERKLE_DEPTH as P3_MERKLE_DEPTH,
-    TAG_CM, TAG_IVK_CM,
+    poseidon2_cm_full_sponge_bytes, MvpWitness, OutputWitness as P3OutputWitness,
+    SpendWitness as P3SpendWitness, MAX_OUTPUTS as P3_MAX_OUTPUTS, MAX_SPENDS as P3_MAX_SPENDS,
+    MERKLE_DEPTH as P3_MERKLE_DEPTH, TAG_CM, TAG_IVK_CM,
 };
 
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
-use p3_goldilocks::{
-    default_goldilocks_poseidon2_16, default_goldilocks_poseidon2_8, Goldilocks,
-    Poseidon2Goldilocks,
-};
+use p3_goldilocks::{default_goldilocks_poseidon2_8, Goldilocks, Poseidon2Goldilocks};
 use p3_symmetric::Permutation;
 
 /// Goldilocks prime. Mirrors `uno_plonky3_ffi::transfer_air::GOLDILOCKS_P`
@@ -798,31 +795,8 @@ impl TransferWitness {
         }
 
         let perm = default_goldilocks_poseidon2_8();
-        let perm16 = default_goldilocks_poseidon2_16();
         // Claim 3: ivk_commitment = Poseidon2-8(TAG_IVK_CM, ivk, d) — width-8.
         let ivkcm_fe = poseidon2_ivk_commitment(&perm, shared_ivk, shared_d_word);
-        // Claim 2: cm = Poseidon2-16(TAG_CM, d, pk_d, ivk_commitment, value, rcm)
-        // — wide-sponge per §3.2 / K-AIR's claim 2.
-        let shared_leaf_fe = poseidon2_cm(
-            &perm16,
-            shared_d_word,
-            shared_pk_d,
-            ivkcm_fe.as_canonical_u64(),
-            v_per_spend,
-            shared_rcm,
-        );
-        let shared_leaf = shared_leaf_fe.as_canonical_u64();
-        // Phase 4b-step3-step2a: widen leaf from u64 single-fe proxy to
-        // [u8; 32] on the wire. For this scaffold-path witness (all
-        // spends share one Merkle leaf by AIR convention), project the
-        // u64 proxy into bytes[0..8] with zero-pad. Real per-note cm
-        // threading will come with step 3 (per-spend distinct leaves)
-        // since today every spend shares one leaf, one path, one pos.
-        let shared_leaf_bytes: [u8; 32] = {
-            let mut buf = [0u8; 32];
-            buf[0..8].copy_from_slice(&shared_leaf.to_le_bytes());
-            buf
-        };
 
         // Claim 1: 32-level Merkle path (§2.3, K-AIR-tightened AIR). We walk
         // the depth-32 tree from leaf to root, folding with a shared sibling
@@ -929,11 +903,36 @@ impl TransferWitness {
         let shared_rcm_bytes = pad_u64_to_32(shared_rcm);
         // Phase 4b-step3-step5a-wire: project the legacy single-fe
         // ivk_commitment proxy (derived above via `poseidon2_ivk_commitment`)
-        // into `bytes[0..8]` with 24 B of zero pad. The AIR still
-        // reads `first_u64_proxy(&s.ivk_commitment)` for its legacy
-        // single-perm claim-2 binding until step 5c switches the
-        // spend cm sponge to consume all 4 fes.
+        // into `bytes[0..8]` with 24 B of zero pad. Pre-step-5c the AIR
+        // still read `first_u64_proxy(&s.ivk_commitment)` for its
+        // legacy single-perm claim-2 binding; step 5c closes the
+        // iterated sponge over all 4 fes, but because all 4 fe-limbs
+        // are zero when the padding is zero (bytes[8..32] == 0), the
+        // sponge output remains deterministic from the wallet's
+        // `ivkcm_fe` proxy value — good enough for the proxy witness
+        // scaffold to produce a valid leaf. Real per-note 32-byte
+        // material threading via OwnedNote is a follow-up (this
+        // scaffold path is only exercised by send_roundtrip tests).
         let shared_ivk_commitment_bytes = pad_u64_to_32(ivkcm_fe.as_canonical_u64());
+        // Phase 4b-step3-step5c-sponge: shared leaf = 15-fe iterated
+        // Poseidon2-w=16 sponge output over the just-computed 32-byte
+        // witness bytes. Pre-step-5c this was the legacy single-perm
+        // `poseidon2_cm(d, pk_d, ivkcm, value, rcm)` digest projected
+        // into `leaf[0..8]`; that byte layout does NOT match the
+        // sponge closure the AIR now ratifies.
+        //
+        // Uses the `*_bytes` wrapper because tosctl and
+        // uno_plonky3_ffi use distinct `p3_goldilocks` crate versions
+        // (git-pathed vs vendored at the same commit), and the
+        // Goldilocks type does not cross the crate boundary — see the
+        // `phase4b_step3_sponge_parity` test module docs for context.
+        let shared_leaf_bytes: [u8; 32] = poseidon2_cm_full_sponge_bytes(
+            &shared_d,
+            &shared_pk_d_bytes,
+            &shared_ivk_commitment_bytes,
+            v_per_spend,
+            &shared_rcm_bytes,
+        );
         let mut p3_spends = Vec::with_capacity(n_s);
         for (i, note) in spends.iter().enumerate() {
             // Per-spend real position is available via `note.position`, but
@@ -1149,9 +1148,14 @@ fn poseidon2_ivk_commitment(perm: &Poseidon2Goldilocks<8>, ivk: u64, d: u64) -> 
     state[0]
 }
 
-/// Note-commitment Poseidon2-Goldilocks-16 (wide sponge per §3.2 / AIR
-/// claim 2). Inputs `[TAG_CM, d, pk_d, ivk_commitment, value, rcm]` padded
-/// with zeros to width 16; output limb 0 is the commitment proxy.
+/// Note-commitment Poseidon2-Goldilocks-16 (legacy single-perm
+/// u64-proxy, pre-step-5c). Phase 4b-step3-step5c-sponge replaced the
+/// scaffold-path claim-2 derivation with
+/// `poseidon2_cm_full_sponge(...)` (15-fe iterated sponge, byte-
+/// identical to the AIR's new bank-1/bank-2 closure). This helper is
+/// kept `#[allow(dead_code)]` so test fixtures that cross-check the
+/// legacy u64-proxy digest still compile.
+#[allow(dead_code)]
 fn poseidon2_cm(
     perm16: &Poseidon2Goldilocks<16>,
     d: u64,

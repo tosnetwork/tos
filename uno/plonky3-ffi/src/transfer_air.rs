@@ -333,11 +333,13 @@ pub const SPEND_PROXY_COLS: usize = 9
     + RK_EPK_LIMBS
     + 38
     + 16  // Phase 4b-step3-step2b-AIR-v2: S_NF_CARRY_{CAP,RATE}[0..8]
-    + 67; // Phase 4b-step3-step5b-decomp: 11 spend cm fe-limb proxy cols
+    + 67  // Phase 4b-step3-step5b-decomp: 11 spend cm fe-limb proxy cols
           //   (S_D_FE1, S_PK_D_FE1..3, S_IVK_COMMITMENT_FE0..3, S_RCM_FE1..3)
           // + 56 u16 cols (d×2 + pk_d×4 + ivk_cm×4 + rcm×4 = 14 fe-limbs
           //   × 4 u16 limbs; NOTE value already has S_VALUE_LIMB0..3 from
           //   Phase 3b-step2, not duplicated).
+    + 16; // Phase 4b-step3-step5c-sponge: S_CM_CARRY_{CAP,RATE}[0..8]
+          // bank-1 → bank-2 carry cols for the spend cm iterated sponge.
 
 /// Per-output proxy columns: cm_claim (Poseidon2-w=16 output, trace-
 /// only after Phase 4b-step2a), d, pk_d, ivk_commitment, value, rcm (6
@@ -526,6 +528,23 @@ const S_IVK_COMMITMENT_LIMB0: usize = S_PK_D_LIMB0 + 16;
 /// Phase 4b-step3-step5b-decomp: base index of the 16 u16 limb cols
 /// decomposing the 4 fe-limbs of `rcm`.
 const S_RCM_LIMB0: usize = S_IVK_COMMITMENT_LIMB0 + 16;
+/// Phase 4b-step3-step5c-sponge: base index of the 8 "spend cm carry
+/// cap" cols holding the bank-1 Poseidon2-w=16 output's capacity
+/// slots (`state[8..16]` after perm-1) for the spend cm iterated
+/// sponge. Pinned by AIR constraints to bank-1 post-permutation
+/// capacity on row i AND to bank-2 input capacity on row 24+i. The
+/// proxies-are-constant transition invariant carries these across
+/// the 24-row gap. Mirror of `O_SPONGE_CARRY_CAP` on the output side
+/// (step 1.2d) and `S_NF_CARRY_CAP0` for the nf sponge (step 2b-AIR-v2).
+const S_CM_CARRY_CAP0: usize = S_RCM_LIMB0 + 16;
+/// Phase 4b-step3-step5c-sponge: base index of the 8 "spend cm carry
+/// rate" cols holding the bank-1 Poseidon2-w=16 output's rate slots
+/// (`state[0..8]` after perm-1) for the spend cm iterated sponge.
+/// Pinned by AIR constraints to bank-1 post-permutation rate on row
+/// i AND used as the "bank-1 out term" in bank-2's absorb addition
+/// on row 24+i. Mirror of `O_SPONGE_CARRY_RATE` (step 1.2f) and
+/// `S_NF_CARRY_RATE0` (step 2b-AIR-v2).
+const S_CM_CARRY_RATE0: usize = S_CM_CARRY_CAP0 + 8;
 
 // ---- Per-output column indices (within an output proxy block) ----
 const O_CM_CLAIM: usize = 0;
@@ -1420,41 +1439,179 @@ where
             let shared_ivkcm_nf_out =
                 &shared_ivkcm_nf.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
 
-            // --- Wide Cm block: spend row-0..(n_spends-1) bindings ------
+            // --- Phase 4b-step3-step5c-sponge: spend cm bank-1 (row i) ---
+            //
+            // Replaces the pre-step-5c single-perm u64-proxy claim-2
+            // block (which had `inputs = (TAG_CM, d, pk_d, ivkcm_claim,
+            // value, rcm, 0·10)` and `output[0] == S_LEAF`) with bank-1
+            // of the iterated Poseidon2-w=16 sponge that matches the
+            // output-side step 1.2c layout byte-for-byte. Closes Codex
+            // audit finding 1 (doc/uno-phase4b-step3-codex-audit.md):
+            // the spend-side claim 2 now absorbs the FULL 15-fe input
+            // (d_fes(2) + pk_d_fes(4) + ivk_commitment_fes(4) + value(1)
+            // + rcm_fes(4)) and binds the sponge's final 4-fe digest to
+            // `pack_32b_as_4fe(&s.leaf)` — the cryptographic equivalent
+            // of `compute_note_commitment` on the spend side.
+            //
+            // On row i (i ∈ 0..n_spends):
+            //   shared_cm.inputs[0..=1] = d_fes[0..=1]
+            //                            (S_D, S_D_FE1)
+            //   shared_cm.inputs[2..=5] = pk_d_fes[0..=3]
+            //                            (S_PK_D, S_PK_D_FE1..3)
+            //   shared_cm.inputs[6..=7] = ivk_commitment_fes[0..=1]
+            //                            (S_IVK_COMMITMENT_FE0,
+            //                             S_IVK_COMMITMENT_FE1)
+            //   shared_cm.inputs[8..16] = uno_cm_v1_tag_block()
+            //                            (capacity, constant)
+            //   shared_cm_out[0..8]     == S_CM_CARRY_RATE[0..8]
+            //                            (bank-1 rate carry)
+            //   shared_cm_out[8..16]    == S_CM_CARRY_CAP[0..8]
+            //                            (bank-1 capacity carry)
+            let cm_tag_block = uno_cm_v1_tag_block();
             for i in 0..self.n_spends {
                 let sel: AB::Expr = local_slice[GS_ROW_SEL0 + i].into();
-                let leaf = spend_col::<AB::Var>(local_slice, i, S_LEAF);
-                let d = spend_col::<AB::Var>(local_slice, i, S_D);
-                let pk_d = spend_col::<AB::Var>(local_slice, i, S_PK_D);
-                let ivk_commitment_claim =
-                    spend_col::<AB::Var>(local_slice, i, S_IVK_COMMITMENT_CLAIM);
-                let value = spend_col::<AB::Var>(local_slice, i, S_VALUE);
-                let rcm = spend_col::<AB::Var>(local_slice, i, S_RCM);
-
-                // inputs[0] = TAG_CM
-                builder.assert_zero(
-                    sel.clone()
-                        * (AB::Expr::from(shared_cm.inputs[0])
-                            - AB::Expr::from(AB::F::from_u64(TAG_CM))),
-                );
-                // inputs[1..6] = d, pk_d, ivk_commitment_claim, value, rcm
-                builder.assert_zero(sel.clone() * (AB::Expr::from(shared_cm.inputs[1]) - d.into()));
-                builder
-                    .assert_zero(sel.clone() * (AB::Expr::from(shared_cm.inputs[2]) - pk_d.into()));
-                builder.assert_zero(
-                    sel.clone()
-                        * (AB::Expr::from(shared_cm.inputs[3]) - ivk_commitment_claim.into()),
-                );
-                builder.assert_zero(
-                    sel.clone() * (AB::Expr::from(shared_cm.inputs[4]) - value.into()),
-                );
-                builder
-                    .assert_zero(sel.clone() * (AB::Expr::from(shared_cm.inputs[5]) - rcm.into()));
-                for k in 6..POSEIDON2_WIDTH_16 {
-                    builder.assert_zero(sel.clone() * AB::Expr::from(shared_cm.inputs[k]));
+                // inputs[0..8] pinned to the 8 low fes (d_fes[0..2] +
+                // pk_d_fes[0..4] + ivk_commitment_fes[0..2]).
+                let slot_to_col = [
+                    S_D,                   // inputs[0] = d_fes[0]
+                    S_D_FE1,               // inputs[1] = d_fes[1]
+                    S_PK_D,                // inputs[2] = pk_d_fes[0]
+                    S_PK_D_FE1,            // inputs[3] = pk_d_fes[1]
+                    S_PK_D_FE2,            // inputs[4] = pk_d_fes[2]
+                    S_PK_D_FE3,            // inputs[5] = pk_d_fes[3]
+                    S_IVK_COMMITMENT_FE0,  // inputs[6] = ivk_cm_fes[0]
+                    S_IVK_COMMITMENT_FE1,  // inputs[7] = ivk_cm_fes[1]
+                ];
+                for k in 0..8 {
+                    let rate_col = spend_col::<AB::Var>(local_slice, i, slot_to_col[k]);
+                    builder.assert_zero(
+                        sel.clone()
+                            * (AB::Expr::from(shared_cm.inputs[k]) - rate_col.into()),
+                    );
                 }
-                // Claim 2 output binding: `cm == leaf_i`.
-                builder.assert_zero(sel * (AB::Expr::from(shared_cm_out[0]) - leaf.into()));
+                // inputs[8..16] pinned to "uno-cm-v1" tag block (constant).
+                for k in 0..8 {
+                    let tag_fe = AB::F::from_u64(cm_tag_block[k].as_canonical_u64());
+                    builder.assert_zero(
+                        sel.clone()
+                            * (AB::Expr::from(shared_cm.inputs[8 + k])
+                                - AB::Expr::from(tag_fe)),
+                    );
+                }
+                // shared_cm_out[0..8] (bank-1 rate) → S_CM_CARRY_RATE[0..8].
+                for k in 0..8 {
+                    let carry_col = spend_col::<AB::Var>(local_slice, i, S_CM_CARRY_RATE0 + k);
+                    builder.assert_zero(
+                        sel.clone()
+                            * (AB::Expr::from(shared_cm_out[k]) - carry_col.into()),
+                    );
+                }
+                // shared_cm_out[8..16] (bank-1 cap) → S_CM_CARRY_CAP[0..8].
+                for k in 0..8 {
+                    let carry_col = spend_col::<AB::Var>(local_slice, i, S_CM_CARRY_CAP0 + k);
+                    builder.assert_zero(
+                        sel.clone()
+                            * (AB::Expr::from(shared_cm_out[8 + k]) - carry_col.into()),
+                    );
+                }
+            }
+
+            // --- Phase 4b-step3-step5c-sponge: spend cm bank-2 (row 24+i) ---
+            //
+            // Bank-2 absorbs fes[8..=14] into rate slots 0..6 + ONE
+            // padding at slot 7 (10* padding bit since rem=7 after
+            // bank-1's 8-fe absorb), with rate[0..8] + capacity[8..16]
+            // coming from bank-1's carry cols (same constant-across-rows
+            // trick used by step 1.2f-in / step 2b-AIR-v2). The post-
+            // permutation state[0..4] is the final 4-fe cm digest — THE
+            // closure of claim 2: bank-2.out[0..4] == leaf_fes[0..4].
+            //
+            // Layout per spend i (row 24+i):
+            //   shared_cm.inputs[0]      == S_CM_CARRY_RATE[0] + S_IVK_COMMITMENT_FE2
+            //                               (fes[8] absorb = ivk_cm_fes[2])
+            //   shared_cm.inputs[1]      == S_CM_CARRY_RATE[1] + S_IVK_COMMITMENT_FE3
+            //                               (fes[9] absorb = ivk_cm_fes[3])
+            //   shared_cm.inputs[2]      == S_CM_CARRY_RATE[2] + S_VALUE
+            //                               (fes[10] absorb = value)
+            //   shared_cm.inputs[3]      == S_CM_CARRY_RATE[3] + S_RCM
+            //                               (fes[11] absorb = rcm_fes[0])
+            //   shared_cm.inputs[4]      == S_CM_CARRY_RATE[4] + S_RCM_FE1
+            //                               (fes[12] absorb = rcm_fes[1])
+            //   shared_cm.inputs[5]      == S_CM_CARRY_RATE[5] + S_RCM_FE2
+            //                               (fes[13] absorb = rcm_fes[2])
+            //   shared_cm.inputs[6]      == S_CM_CARRY_RATE[6] + S_RCM_FE3
+            //                               (fes[14] absorb = rcm_fes[3])
+            //   shared_cm.inputs[7]      == S_CM_CARRY_RATE[7] + 1
+            //                               (10* padding bit)
+            //   shared_cm.inputs[8+k]    == S_CM_CARRY_CAP[k]
+            //                               for k ∈ 0..8 (capacity carry)
+            //   shared_cm_out[0]         == S_LEAF        (= leaf_fes[0])
+            //   shared_cm_out[1]         == S_LEAF_FE1    (= leaf_fes[1])
+            //   shared_cm_out[2]         == S_LEAF_FE2    (= leaf_fes[2])
+            //   shared_cm_out[3]         == S_LEAF_FE3    (= leaf_fes[3])
+            //
+            // This final 4-fe equality is the CLAIM-2 CLOSURE: leaf ==
+            // Poseidon2("uno-cm-v1", full 15-fe input), bit-identical
+            // to the output-side step 1.2e+f bindings. Combined with
+            // step 5b-decomp's u16-range-checked limb decomposition of
+            // each input fe-limb, the prover can no longer forge a
+            // leaf for arbitrary field-element inputs — the leaf must
+            // be the canonical sponge output of the real 32-byte
+            // witness bytes for d / pk_d / ivk_commitment / rcm.
+            for i in 0..self.n_spends {
+                let sel: AB::Expr = local_slice[GS_ROW_SEL0 + 24 + i].into();
+                // inputs[0..7] = carry_rate[k] + absorb_term_k for
+                // k ∈ 0..7 (absorb fes[8..14], no absorb on k=7 —
+                // padding bit lives there).
+                let fe_slot_cols = [
+                    S_IVK_COMMITMENT_FE2, // fes[8]
+                    S_IVK_COMMITMENT_FE3, // fes[9]
+                    S_VALUE,              // fes[10]
+                    S_RCM,                // fes[11]
+                    S_RCM_FE1,            // fes[12]
+                    S_RCM_FE2,            // fes[13]
+                    S_RCM_FE3,            // fes[14]
+                ];
+                for k in 0..7 {
+                    let carry_col =
+                        spend_col::<AB::Var>(local_slice, i, S_CM_CARRY_RATE0 + k);
+                    let fe_col =
+                        spend_col::<AB::Var>(local_slice, i, fe_slot_cols[k]);
+                    builder.assert_zero(
+                        sel.clone()
+                            * (AB::Expr::from(shared_cm.inputs[k])
+                                - (AB::Expr::from(carry_col) + AB::Expr::from(fe_col))),
+                    );
+                }
+                // Padding slot 7: inputs[7] = carry[7] + ONE.
+                let carry_col_7 =
+                    spend_col::<AB::Var>(local_slice, i, S_CM_CARRY_RATE0 + 7);
+                builder.assert_zero(
+                    sel.clone()
+                        * (AB::Expr::from(shared_cm.inputs[7])
+                            - (AB::Expr::from(carry_col_7)
+                                + AB::Expr::from(AB::F::from_u64(1)))),
+                );
+                // inputs[8..16] = carry_cap[0..8] (capacity carry).
+                for k in 0..8 {
+                    let carry_col =
+                        spend_col::<AB::Var>(local_slice, i, S_CM_CARRY_CAP0 + k);
+                    builder.assert_zero(
+                        sel.clone()
+                            * (AB::Expr::from(shared_cm.inputs[8 + k]) - carry_col.into()),
+                    );
+                }
+                // Claim 2 closure: bank-2 output rate slots 0..4 bind
+                // all 4 limbs of `leaf_i`. S_LEAF holds fe[0], the
+                // upper fes live in S_LEAF_FE1..3 (from step 2b-decomp).
+                let leaf_cols = [S_LEAF, S_LEAF_FE1, S_LEAF_FE2, S_LEAF_FE3];
+                for (k, col_offset) in leaf_cols.iter().enumerate() {
+                    let leaf_col = spend_col::<AB::Var>(local_slice, i, *col_offset);
+                    builder.assert_zero(
+                        sel.clone()
+                            * (AB::Expr::from(shared_cm_out[k]) - leaf_col.into()),
+                    );
+                }
             }
 
             // --- Wide Cm block: output rows 4..(4+n_outputs-1) bindings -
@@ -2545,16 +2702,13 @@ impl MvpWitness {
         let v_per_spend: u64 = 0x0001_0000 + (seed & 0xFF_FFFF);
         let fee: u64 = 0x100 + (seed & 0xFFF);
 
-        // Derived shared leaf via claim-2 Poseidon2-16 (wide sponge).
+        // Derived shared leaf. Computed below from the 15-fe iterated
+        // sponge once `shared_*_bytes` are built, so the AIR's step-5c
+        // `shared_cm_out[0..4] == (S_LEAF, S_LEAF_FE1..3)` binding
+        // holds. Pre-step-5c this was a single-perm `poseidon2_cm(...)`
+        // over u64 proxies; that value DID NOT match the sponge output
+        // and would trip the claim-2 closure today.
         let ivkcm = poseidon2_ivk_commitment(&perm, shared_ivk, d_word);
-        let shared_leaf = poseidon2_cm(
-            &perm16,
-            d_word,
-            shared_pk_d,
-            ivkcm.as_canonical_u64(),
-            v_per_spend,
-            shared_rcm,
-        );
 
         // Shared 32-level Merkle path: siblings fixed per seed; position
         // fixed per seed. All spends share `(leaf, path, pos)` so that the
@@ -2627,13 +2781,27 @@ impl MvpWitness {
             rcm_bytes[0..8].copy_from_slice(&shared_rcm.to_le_bytes());
             let mut nk_bytes = [0u8; 32];
             nk_bytes[0..8].copy_from_slice(&nk.to_le_bytes());
-            // Phase 4b-step3-step2a: widen leaf from single-fe u64 to
-            // [u8; 32]. Fixture projects the legacy u64 proxy into
-            // bytes[0..8] with zero pad (same 8-byte-low-limb convention
-            // as d/pk_d/ivk/rcm above); real tosctl witnesses now carry
-            // the full 32-byte note commitment.
+            // Phase 4b-step3-step5c-sponge: spend leaf now matches the
+            // 15-fe iterated Poseidon2-w=16 sponge output (4 fes → 32 B
+            // via LE u64 packing). Pre-step-5c this was the low 8 bytes
+            // of the legacy single-perm `poseidon2_cm(...)` — that
+            // digest does NOT equal the sponge output, so the AIR's
+            // bank-2 closure `shared_cm_out[0..4] == S_LEAF_FE[0..4]`
+            // would trip. The sponge output IS `compute_note_commitment`
+            // byte-for-byte.
+            let sponge_leaf_fes = poseidon2_cm_full_sponge(
+                &perm16,
+                &shared_d_bytes,
+                &pk_d_bytes,
+                &shared_ivk_commitment_bytes,
+                v_per_spend,
+                &rcm_bytes,
+            );
             let mut leaf_bytes = [0u8; 32];
-            leaf_bytes[0..8].copy_from_slice(&shared_leaf.to_le_bytes());
+            for k in 0..4 {
+                leaf_bytes[k * 8..(k + 1) * 8]
+                    .copy_from_slice(&sponge_leaf_fes[k].as_canonical_u64().to_le_bytes());
+            }
             spends.push(SpendWitness {
                 leaf: leaf_bytes,
                 d: shared_d_bytes,
@@ -3221,22 +3389,19 @@ impl MvpWitness {
         // row. Previously `Vec<Vec<Goldilocks>>` (single-fe).
         let mut s_current_vals_fes: Vec<Vec<[Goldilocks; 4]>> = Vec::with_capacity(n_s);
         let mut row0_spend_ivkcm = Vec::with_capacity(n_s);
-        let mut row0_spend_cm = Vec::with_capacity(n_s);
         for s in &self.spends {
             // Phase 4b-step3-step5a-wire: widened `d` from `[u8; 8]` to
-            // `[u8; 32]`. AIR still reads `first_u64_proxy(&s.d)` (low
-            // 8 bytes) until step 5c replaces the single-perm cm claim
-            // with the iterated sponge over real d_fes / pk_d_fes /
-            // ivk_commitment_fes / value / rcm_fes.
+            // `[u8; 32]`. Legacy `d_word` / `d_f` only feed the narrow
+            // claim-3 IvkCm block below (w=8); the spend-side cm claim
+            // now runs through the 15-fe iterated sponge (bank-1 on
+            // row i, bank-2 on row 24+i — see step5c-sponge section
+            // below).
             let d_word = first_u64_proxy(&s.d);
             let d_f = Goldilocks::from_u64(reduce_to_goldilocks(d_word));
             // Phase 4b-step3-step0: widened fields → u64 proxy via
-            // first_u64_proxy; AIR inputs unchanged.
-            let pk_d_f = Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.pk_d)));
-            let rcm_f = Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.rcm)));
+            // first_u64_proxy for the narrow claim-3 IvkCm block only.
             let ivk_f = Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.ivk)));
-            let value_f = Goldilocks::from_u64(reduce_to_goldilocks(s.value));
-            let ivkcm_fe = poseidon2_ivk_commitment(&perm, first_u64_proxy(&s.ivk), d_word);
+            let _ = poseidon2_ivk_commitment(&perm, first_u64_proxy(&s.ivk), d_word);
 
             // Phase 4b-step3-step3a: 4-fe Merkle walk. Level k goes on
             // trace row k. Each level performs a Poseidon2-w=8
@@ -3288,16 +3453,82 @@ impl MvpWitness {
             ivkcm_in[1] = ivk_f;
             ivkcm_in[2] = d_f;
             row0_spend_ivkcm.push(gen_p2_row(ivkcm_in));
+        }
 
-            let mut cm_in = [Goldilocks::ZERO; POSEIDON2_WIDTH_16];
-            cm_in[0] = Goldilocks::from_u64(TAG_CM);
-            cm_in[1] = d_f;
-            cm_in[2] = pk_d_f;
-            cm_in[3] = ivkcm_fe;
-            cm_in[4] = value_f;
-            cm_in[5] = rcm_f;
-            row0_spend_cm.push(gen_p2_row_16(cm_in));
+        // Phase 4b-step3-step5c-sponge: spend cm iterated-sponge witness
+        // per spend. Bank-1 lives on shared_cm row i, bank-2 on row
+        // 24+i. Mirror of the output cm sponge (step 1.2a) and nf
+        // sponge (step 2b-AIR-v2), with the 15-fe input per §3.2:
+        //
+        //   fes[0..1]   = d   (pack_diversifier_as_2fe)
+        //   fes[2..5]   = pk_d            (pack_32b_as_4fe)
+        //   fes[6..9]   = ivk_commitment  (pack_32b_as_4fe)
+        //   fes[10]     = value
+        //   fes[11..14] = rcm             (pack_32b_as_4fe)
+        //
+        //   Bank 1: state[0..8]  = fes[0..8]
+        //           state[8..16] = uno_cm_v1_tag_block()
+        //   Bank 2: state[0..7]  = bank1_out[0..7] + fes[8..14]
+        //           state[7]     = bank1_out[7] + 1   (10* padding)
+        //           state[8..16] = bank1_out[8..16]
+        //
+        // Output bank2[0..4] → S_LEAF / S_LEAF_FE1..3 (AIR-ratified in
+        // step 5c-sponge closure). Byte-identical to
+        // `poseidon2_cm_full_sponge(&perm16, &s.d, &s.pk_d, &s.ivk_commitment, s.value, &s.rcm)`.
+        //
+        // Bank-1 output rate + capacity captured for the per-spend
+        // `S_CM_CARRY_{CAP,RATE}[0..8]` proxy cols; AIR constraints
+        // then bind bank-2 inputs to those carried values + 10*
+        // padding at slot 7 + fes[8..=14] absorb.
+        let cm_tag_block_trace = uno_cm_v1_tag_block();
+        let mut spend_cm_bank1: Vec<Vec<Goldilocks>> = Vec::with_capacity(n_s);
+        let mut spend_cm_bank2: Vec<Vec<Goldilocks>> = Vec::with_capacity(n_s);
+        let mut spend_cm_out_cap: Vec<[Goldilocks; 8]> = Vec::with_capacity(n_s);
+        let mut spend_cm_out_rate: Vec<[Goldilocks; 8]> = Vec::with_capacity(n_s);
+        for s in &self.spends {
+            // Assemble the 15-fe input per §3.2.
+            let d_fes = pack_diversifier_as_2fe(&s.d);
+            let pk_d_fes = pack_32b_as_4fe(&s.pk_d);
+            let ivk_cm_fes = pack_32b_as_4fe(&s.ivk_commitment);
+            let value_fe = Goldilocks::from_u64(reduce_to_goldilocks(s.value));
+            let rcm_fes = pack_32b_as_4fe(&s.rcm);
+            let mut fes = [Goldilocks::ZERO; 15];
+            fes[0] = d_fes[0];
+            fes[1] = d_fes[1];
+            fes[2..6].copy_from_slice(&pk_d_fes);
+            fes[6..10].copy_from_slice(&ivk_cm_fes);
+            fes[10] = value_fe;
+            fes[11..15].copy_from_slice(&rcm_fes);
 
+            // Bank 1 input: state[0..8] = fes[0..8], state[8..16] = tag_block.
+            let mut bank1_in = [Goldilocks::ZERO; POSEIDON2_WIDTH_16];
+            bank1_in[0..8].copy_from_slice(&fes[0..8]);
+            bank1_in[8..16].copy_from_slice(&cm_tag_block_trace);
+            spend_cm_bank1.push(gen_p2_row_16(bank1_in));
+
+            // Post-perm-1 state (off-circuit; matches the Poseidon2-w=16
+            // sub-AIR on row i).
+            let mut state_after_perm1 = bank1_in;
+            perm16.permute_mut(&mut state_after_perm1);
+
+            // Save bank-1 output capacity for S_CM_CARRY_CAP[0..8].
+            let mut out_cap = [Goldilocks::ZERO; 8];
+            out_cap.copy_from_slice(&state_after_perm1[8..16]);
+            spend_cm_out_cap.push(out_cap);
+            // Save bank-1 output rate for S_CM_CARRY_RATE[0..8].
+            let mut out_rate = [Goldilocks::ZERO; 8];
+            out_rate.copy_from_slice(&state_after_perm1[0..8]);
+            spend_cm_out_rate.push(out_rate);
+
+            // Bank 2 input: bank1_output[0..7] += fes[8..14];
+            //               bank1_output[7] += ONE (padding bit, rem=7);
+            //               bank1_output[8..16] unchanged.
+            let mut bank2_in = state_after_perm1;
+            for j in 0..7 {
+                bank2_in[j] = bank2_in[j] + fes[8 + j];
+            }
+            bank2_in[7] = bank2_in[7] + Goldilocks::from_u64(1);
+            spend_cm_bank2.push(gen_p2_row_16(bank2_in));
         }
 
         // Phase 4b-step3-step2b-AIR-v2: nf iterated-sponge witness per
@@ -3608,6 +3839,23 @@ impl MvpWitness {
                 for k in 0..4 {
                     push_u16_limbs(&mut v, rcm_fes[k]);
                 }
+                // Phase 4b-step3-step5c-sponge: S_CM_CARRY_CAP[0..8] —
+                // bank-1 Poseidon2-w=16 output capacity slots. AIR
+                // constraint on row i pins these to bank-1.post[8+k];
+                // row 24+i pins bank-2.inputs[8+k] to them. Carries the
+                // capacity across the 24-row gap via the proxies-are-
+                // constant invariant.
+                for fe in spend_cm_out_cap[i].iter() {
+                    v.push(*fe);
+                }
+                // Phase 4b-step3-step5c-sponge: S_CM_CARRY_RATE[0..8] —
+                // bank-1 post-permutation rate slots. Row i pins these
+                // to bank-1.post[0..8]; row 24+i uses them as the
+                // "bank-1 out term" in bank-2's input-absorb addition
+                // `bank-2.inputs[k] = carry_rate[k] + absorb_term_k`.
+                for fe in spend_cm_out_rate[i].iter() {
+                    v.push(*fe);
+                }
                 debug_assert_eq!(v.len(), SPEND_PROXY_COLS);
                 v
             })
@@ -3767,15 +4015,16 @@ impl MvpWitness {
             }
 
             // Globally-shared Cm/OutCm (w=16) block:
-            //   row i (i ∈ 0..n_s): spend i's claim-2 witness
+            //   row i (i ∈ 0..n_s): spend i's cm sponge bank-1 (step 5c)
             //   row 4+j (j ∈ 0..n_o): output j's claim-6 witness
             //   row 8+j (j ∈ 0..n_o): output j's sponge perm-1 (step 1.2a)
             //   row 12+j (j ∈ 0..n_o): output j's sponge perm-2 (step 1.2a)
             //   row 16+i (i ∈ 0..n_s): spend i's nf sponge bank-1 (step 2b-AIR-v2)
             //   row 20+i (i ∈ 0..n_s): spend i's nf sponge bank-2 (step 2b-AIR-v2)
+            //   row 24+i (i ∈ 0..n_s): spend i's cm sponge bank-2 (step 5c)
             //   else: zero-input permutation
             if row_idx < n_s {
-                values.extend_from_slice(&row0_spend_cm[row_idx]);
+                values.extend_from_slice(&spend_cm_bank1[row_idx]);
             } else if (4..4 + n_o).contains(&row_idx) {
                 values.extend_from_slice(&row0_out_cm[row_idx - 4]);
             } else if (8..8 + n_o).contains(&row_idx) {
@@ -3786,6 +4035,8 @@ impl MvpWitness {
                 values.extend_from_slice(&spend_nf_bank1[row_idx - 16]);
             } else if (20..20 + n_s).contains(&row_idx) {
                 values.extend_from_slice(&spend_nf_bank2[row_idx - 20]);
+            } else if (24..24 + n_s).contains(&row_idx) {
+                values.extend_from_slice(&spend_cm_bank2[row_idx - 24]);
             } else {
                 values.extend_from_slice(&padding_p2_16);
             }
@@ -4242,6 +4493,15 @@ fn poseidon2_ivk_commitment(
     state[0]
 }
 
+/// Phase 4b-step3-step5c-sponge: legacy u64-proxy single-perm cm
+/// helper. No longer used by trace-gen, fixture, or pre-check — the
+/// spend-side claim 2 now runs through
+/// `poseidon2_cm_full_sponge(...)` (15-fe iterated sponge). Kept
+/// `#[allow(dead_code)]` so historical regression tests that compare
+/// against the old single-perm digest can still build; scheduled for
+/// deletion alongside `poseidon2_cm_fe` once the output-side `O_CM_CLAIM`
+/// legacy claim-6 block is retired.
+#[allow(dead_code)]
 fn poseidon2_cm(
     perm16: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH_16]>,
     d: u64,
@@ -4356,30 +4616,30 @@ pub fn poseidon2_nf_full_wide_bytes(
 // drift here silently accepts constraint-violating witnesses at debug
 // build time, but release builds catch them at verify.
 
-/// True iff for every spend, `leaf_i == Poseidon2-16("uno-cm-v1", d_i,
-/// pk_d_i, ivk_commitment_i, value_i, rcm_i)` (wide sponge per §3.2).
+/// True iff for every spend, `pack_32b_as_4fe(&s.leaf) ==
+/// poseidon2_cm_full_sponge(&s.d, &s.pk_d, &s.ivk_commitment, s.value,
+/// &s.rcm)` — the 15-fe iterated sponge per §3.2 of `doc/uno-workchain.md`
+/// and `compute_note_commitment` on the tosctl / C++ side.
+///
+/// Phase 4b-step3-step5c-sponge (2026-04-23): switched from the legacy
+/// single-perm u64-proxy `poseidon2_cm(...)` check to the full 4-fe
+/// sponge digest comparison, mirroring the AIR's new bank-1/bank-2
+/// sponge closure on spend rows i / 24+i. Closes Codex audit finding
+/// 1: the pre-check and the AIR constraint now agree on what leaf
+/// means.
 pub fn witness_claim2_leaf_consistent(w: &MvpWitness) -> bool {
-    let perm = default_goldilocks_poseidon2_8();
     let perm16 = default_goldilocks_poseidon2_16();
     for s in &w.spends {
-        // Phase 4b-step3-step5a-wire: widened `d` → [u8; 32]; AIR
-        // proxy derivation still consumes low 8 bytes only. Step 5d
-        // will swap this legacy single-perm check for the 4-fe sponge
-        // digest comparison against pack_32b_as_4fe(&s.leaf).
-        let d_word = first_u64_proxy(&s.d);
-        // Phase 4b-step3-step0: widened fields → u64 proxy. Claim 2
-        // derivation shape unchanged (still over u64 proxies; real
-        // 32-byte derivation is step 1+).
-        let ivkcm = poseidon2_ivk_commitment(&perm, first_u64_proxy(&s.ivk), d_word);
-        let derived = poseidon2_cm(
+        let derived: [Goldilocks; 4] = poseidon2_cm_full_sponge(
             &perm16,
-            d_word,
-            first_u64_proxy(&s.pk_d),
-            ivkcm.as_canonical_u64(),
+            &s.d,
+            &s.pk_d,
+            &s.ivk_commitment,
             s.value,
-            first_u64_proxy(&s.rcm),
+            &s.rcm,
         );
-        if derived != reduce_to_goldilocks(first_u64_proxy(&s.leaf)) {
+        let want: [Goldilocks; 4] = pack_32b_as_4fe(&s.leaf);
+        if derived != want {
             return false;
         }
     }
