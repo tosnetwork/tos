@@ -36,9 +36,12 @@
 //! - **Claim 4 — Nullifier**: `nf_i = Poseidon2("uno-nf-v1", nk_i, cm_i,
 //!   pos_i)`. Row-0 binding: `nf_i == public_inputs[nf_i][0]`.
 //!
-//! - **Claim 5 — Range `value_i < 2^64`**: trivially enforced by
-//!   Goldilocks field arithmetic (§4.2 claim 5); flagged
-//!   `TODO(uno-p2-u64-range-explicit)` in case the base field widens.
+//! - **Claim 5 — Range `value_i < 2^64`**: M-P2 Phase 3b-step3 enforces
+//!   this explicitly via cross-AIR LogUp range-check — `MvpTransferAir`
+//!   sends 4 × u16 limb decomposition of `value_i` into `Range16Air`
+//!   (height 2^16, preprocessed range-table) per the `Kind::Global
+//!   ("u16_range")` contract. See `S_VALUE_LIMB0..3` and
+//!   `prover::collect_u16_reads_for_range16`.
 //!
 //! **Per output `j`**:
 //!
@@ -112,7 +115,12 @@
 //!
 //! Width-8 Poseidon2-Goldilocks with audited `GOLDILOCKS_POSEIDON2_RC_8_*`
 //! constants (decision #42). Full-width Poseidon2-16 for claim 2/6's
-//! 15-field-element absorb is `TODO(uno-p2-wide)`.
+//! 15-field-element iterated-sponge absorb LANDED in M-P2 Phase 4b-step3
+//! (step 1.2, commits `81d30c246` → `5cf965204`): bank-1 on shared-wide
+//! rows 8+j + bank-2 on rows 12+j, with `uno_cm_v1_tag_block` pinned at
+//! capacity and `O_SPONGE_CARRY_{CAP,RATE}` cols threading the 4-row
+//! gap between permutations. Same iterated pattern is used for nf
+//! (9 fes, step 2b-AIR-v2 `9add1ad0f`, rows 16+i / 20+i).
 
 use core::borrow::Borrow;
 
@@ -2341,7 +2349,9 @@ impl MvpWitness {
     /// `(leaf, sibling)` pairs are equal). Only `(nk, pos)` differ
     /// per-spend to produce distinct nullifiers. This is a test-fixture
     /// construction — real wallets produce distinct leaves per spend
-    /// over a 32-level Merkle chain (`TODO(uno-p2-merkle32)`).
+    /// over a 32-level Merkle chain. The 32-level depth walk landed in
+    /// M-P2 K-AIR; the 4-fe per-level state (real 32-byte siblings,
+    /// 256-bit anchor binding) landed in Phase 4b-step3-step3a (`a0ff246ae`).
     ///
     /// Balance construction: `value_i = v` constant per spend; total in
     /// is `n_s · v`; `fee` is chosen small; output values split
