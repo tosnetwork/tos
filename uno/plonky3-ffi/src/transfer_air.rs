@@ -318,7 +318,8 @@ pub const SPEND_PROXY_COLS: usize =
 /// step1), and 1 column for `cm_bytes[0..8]` limb 0 (Phase 4b-step2a)
 /// — bound to `PI[pi_cm(j) + 0]` via row-0 copy-constraint, replacing
 /// the previous `cm_claim == pi_cms[j]` binding.
-pub const OUTPUT_PROXY_COLS: usize = 6 + VALUE_LIMBS_U16 + RK_EPK_LIMBS + 1 + 3 + 1;
+pub const OUTPUT_PROXY_COLS: usize =
+    6 + VALUE_LIMBS_U16 + RK_EPK_LIMBS + 1 + 3 + 1 + 4;
 
 /// Narrow (width-8) Poseidon2 instances per spend after K-air-col-step2:
 /// only the shared-Merkle slot remains. IvkCm + Nf are folded into a
@@ -394,6 +395,27 @@ const O_CM_LIMB1: usize = O_FILTER_TAG + 1;
 /// with C++'s `encode_256(cm_bytes)[0]`, at the documented cost of
 /// weakening claim-2's on-PI soundness.
 const O_CM_LIMB0_REAL: usize = O_CM_LIMB1 + 3;
+/// Phase 4b-step3-step1.1: base index of the 4 trace columns holding
+/// the output of the 15-fe iterated-sponge `poseidon2_cm_full_sponge`
+/// over `witness.o.{d, pk_d, ivk_commitment, value, rcm}`. Purely a
+/// data column in this commit — NO AIR constraint binds it to
+/// `witness.cm_bytes` yet. Step 1.2 adds the in-circuit Poseidon2
+/// AIR constraints that ratify this column against the sponge
+/// derivation; step 1.3 then re-couples `PI[pi_cm(j) + k]` to
+/// `O_CM_SPONGE_OUT[k]` (replacing the Phase 4b-step2a copy-
+/// constraint from `O_CM_LIMB0_REAL` / `O_CM_LIMB1..3`).
+///
+/// For today's commit, the column's value WILL differ from
+/// `witness.cm_bytes` for all tosctl-produced witnesses: tosctl
+/// currently passes zero-padded u64 proxies in `P3OutputWitness::
+/// {d, pk_d, ivk_commitment, rcm}`, so the sponge-over-zero-
+/// padded-proxies output does not equal the real
+/// `compute_note_commitment` bytes. Making these equal is the
+/// separate step 1.1-tosctl refactor (thread real recipient
+/// material through `TransferWitness::build()`), tracked in
+/// `doc/uno-p2-phase4b-step3-plan.md §4.1`.
+#[allow(dead_code)]  // referenced by step1.2's AIR constraints (future commit)
+const O_CM_SPONGE_OUT: usize = O_CM_LIMB0_REAL + 1;
 
 // ---------------------------------------------------------------------------
 // Shape-aware helpers
@@ -2310,6 +2332,19 @@ impl MvpWitness {
                     o.cm_bytes[0..8].try_into().unwrap(),
                 );
                 v.push(Goldilocks::from_u64(reduce_to_goldilocks(cm_limb0)));
+                // Phase 4b-step3-step1.1: O_CM_SPONGE_OUT[0..4] — the
+                // 4-fe digest produced by the 15-fe iterated Poseidon2
+                // sponge over the widened witness fields. No AIR
+                // constraint binds this to anything yet; it's data-only
+                // scaffolding for step 1.2's in-circuit sponge. Uses
+                // the already-byte-parity-tested
+                // `poseidon2_cm_full_sponge` helper (see
+                // `tosctl/uno/tests/phase4b_step3_sponge_parity.rs`).
+                let sponge_out =
+                    poseidon2_cm_full_sponge(&perm16, &o.d, &o.pk_d, &o.ivk_commitment, o.value, &o.rcm);
+                for fe in &sponge_out {
+                    v.push(*fe);
+                }
                 debug_assert_eq!(v.len(), OUTPUT_PROXY_COLS);
                 v
             })
@@ -3171,6 +3206,79 @@ mod tests {
             4,
             "poseidon2 cm output limbs collide unexpectedly: {:?}",
             digest.map(|l| l.as_canonical_u64()),
+        );
+    }
+
+    /// Phase 4b-step3-step1.1: verify that `generate_trace` populates
+    /// the new `O_CM_SPONGE_OUT[0..4]` output-proxy columns with the
+    /// same 4-fe digest that `poseidon2_cm_full_sponge` would produce
+    /// on the witness's (d, pk_d, ivk_commitment, value, rcm) tuple.
+    ///
+    /// This test pins the trace-gen contract for the new columns —
+    /// step 1.2's in-circuit Poseidon2 AIR constraints will ratify
+    /// the same values, and step 1.3 will re-couple PI to them.
+    #[test]
+    fn trace_populates_o_cm_sponge_out_from_helper() {
+        use p3_matrix::Matrix;
+
+        let w = MvpWitness::deterministic_valid(1, 2, 0xC05_5_1100);
+        let perm16 = default_goldilocks_poseidon2_16();
+        let trace = w.generate_trace();
+
+        let n_s = 1usize;
+        let width = air_width(n_s, 2);
+        // The output_proxy block starts at
+        //   GLOBAL_COLS + n_s*per_spend_cols() + j*per_output_cols()
+        // for output j; see `output_proxy_offset` in the module.
+        let output_block_0_start = GLOBAL_COLS + n_s * per_spend_cols();
+
+        // On row 0, read the O_CM_SPONGE_OUT[0..4] slice from output 0.
+        let row0: Vec<Goldilocks> = trace.row(0).unwrap().into_iter().collect();
+        let sponge_col_base = output_block_0_start + O_CM_SPONGE_OUT;
+        let trace_fes: [Goldilocks; 4] = [
+            row0[sponge_col_base],
+            row0[sponge_col_base + 1],
+            row0[sponge_col_base + 2],
+            row0[sponge_col_base + 3],
+        ];
+
+        // Reference: directly call the helper on output 0's witness
+        // fields.
+        let o = &w.outputs[0];
+        let expected =
+            poseidon2_cm_full_sponge(&perm16, &o.d, &o.pk_d, &o.ivk_commitment, o.value, &o.rcm);
+
+        assert_eq!(
+            trace_fes, expected,
+            "trace-gen O_CM_SPONGE_OUT must match poseidon2_cm_full_sponge on (d, pk_d, ivk_commitment, value, rcm) tuple"
+        );
+
+        // Sanity: column is inside the trace-row width bounds.
+        assert!(
+            sponge_col_base + 3 < width,
+            "O_CM_SPONGE_OUT cols must fit inside air_width({},{})={}",
+            n_s,
+            2,
+            width,
+        );
+
+        // Sanity: the same column on any later row should hold the
+        // same values (output proxies are constant across rows per
+        // the §4.2 invariant).
+        let row_last: Vec<Goldilocks> = trace
+            .row(crate::transfer_air::TRACE_HEIGHT - 1)
+            .unwrap()
+            .into_iter()
+            .collect();
+        let trace_fes_last: [Goldilocks; 4] = [
+            row_last[sponge_col_base],
+            row_last[sponge_col_base + 1],
+            row_last[sponge_col_base + 2],
+            row_last[sponge_col_base + 3],
+        ];
+        assert_eq!(
+            trace_fes, trace_fes_last,
+            "O_CM_SPONGE_OUT must be constant across trace rows (proxies-are-constant invariant)"
         );
     }
 }
