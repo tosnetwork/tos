@@ -50,6 +50,16 @@ jobs:
         key: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.os }}-shared-ccache-${{ steps.date-stamp.outputs.timestamp }}
         restore-keys: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.os }}-shared-ccache
 
+    # Rust toolchain needed for corrosion-rs / libuno_plonky3_ffi
+    # (`cmake ..` calls `find_package(Rust)` via `third-party/corrosion`
+    # since M-P2 Phase 2; pinned 1.91.1 matches tosctl/src/rust-toolchain.toml
+    # and .github/workflows/uno-ci.yml).
+    - name: Install pinned Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: 1.91.1
+        profile: minimal
+
     - name: Build TOS
       run: |
         mkdir -p ~/.ccache
