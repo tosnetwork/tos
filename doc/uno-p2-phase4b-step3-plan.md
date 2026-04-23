@@ -6,14 +6,15 @@ M-P2 Phase 4b-step2a/b, so the STARK itself proves the real
 cryptographic bindings of `cm`, `nf`, `leaf`, and the depth-32
 Merkle walk against the real 32-byte recipient / spender material.
 
-**Status (2026-04-23):** Step 0 ✅ + Step 1 ✅ + Step 2a/2b-decomp ✅ + Step 3c ✅
-+ Step 3a ✅ landed. Step 2b-AIR + Step 2b-cleanup pending. Step 4 pending.
-Tracked as task #131.
+**Status (2026-04-23):** Step 0 ✅ + Step 1 ✅ + Step 2 ✅ + Step 3 ✅ landed.
+Only Step 4 (golden regen + doc) remains. Tracked as task #131.
 
-**Keystone milestone:** `a0ff246ae` landed 4-fe Merkle walk — anchor binding
-goes from single-Goldilocks-fe (~64-bit) to 256-bit. Cryptographic-soundness
-floor of the AIR now exceeds the FRI Option B soundness tier (180-bit
-conjectured / 102-bit proven) at every claim except nf (pending 2b-AIR).
+**Keystone milestone:** after `b92a6bdbb` (step 2b-AIR) + `0e23eef30`
+(step 2b-cleanup), every cryptographic claim in the AIR runs over real
+32-byte material with ≥256-bit binding. The FRI Option B soundness tier
+(180-bit conjectured / 102-bit proven) is now the limiting factor, not
+the AIR's claim depth — i.e., the PQ-native positioning is no longer
+contradicted by a single weak 64-bit Merkle/nf binding.
 
 **Scope:** strict cryptographic soundness closure. Phase 4b-step3
 does NOT improve byte parity (already closed by Phase 4a + 4b-step1
@@ -326,7 +327,7 @@ correct derivation).
 AIR-provably the canonical u64 reduction of its 8-byte LE witness
 chunk — byte→fe decomposition soundness closed.
 
-### 4.2 Step 2 — nf derivation in-circuit, real inputs 🟡 IN PROGRESS
+### 4.2 Step 2 — nf derivation in-circuit, real inputs ✅ COMPLETE
 
 **Goal:** `nf = Poseidon2-w=8(TAG_NF, real_nk, real_cm[4], pos)` where
 the inputs are drawn from the step-1 real 4-fe cm and real 32-byte
@@ -350,12 +351,15 @@ Sub-commits landed:
   2b-decomp   — ✅ `690fa6492` spend-side nk + leaf fe-limb + u16 decomposition
                 (mirror of 1.3-fields on spend side; +38 cols/spend)
 
-Pending:
-  2b-AIR      — ⏳ switch nf Poseidon2 block from narrow w=8 (single u64 proxy)
-                to wide w=16 single-perm on new shared-wide rows 16..(15+n_s),
-                with inputs (TAG_NF, nk_fes[0..4], leaf_fes[0..4], pos, 0·6)
-                and output[0..4] → PI[pi_nf(i)+0..4]. ~200 LOC.
-  2b-cleanup  — ⏳ delete legacy narrow-Nf block on rows 4..(4+n_s-1). ~30 LOC.
+Landed:
+  2b-AIR      — ✅ `b92a6bdbb` nf Poseidon2 block moved from narrow w=8
+                to wide w=16 single-perm on shared_cm rows 16..(15+n_s).
+                Inputs (TAG_NF, nk_fes[0..4], leaf_fes[0..4], pos, 0·6)
+                pinned; output[0..4] → PI[pi_nf(i)+0..4]. 64→256-bit.
+                154+/32- LOC.
+  2b-cleanup  — ✅ `0e23eef30` deleted legacy `poseidon2_nf_full` narrow
+                helper + unused `nk_f` / `leaf_f` / `pos_f` trace-gen
+                locals. -26 LOC.
 
 ### 4.3 Step 3 — Merkle walk 4-fe state ✅ COMPLETE
 
