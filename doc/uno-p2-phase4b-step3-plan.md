@@ -6,30 +6,36 @@ M-P2 Phase 4b-step2a/b, so the STARK itself proves the real
 cryptographic bindings of `cm`, `nf`, `leaf`, and the depth-32
 Merkle walk against the real 32-byte recipient / spender material.
 
-**Status (2026-04-23):** **Phase 4b-step3 CLOSED.** All 5 steps ✅:
-Step 0 + Step 1 + Step 2 + Step 3 + Step 4 landed. Tracked as task #131.
+**Status (2026-04-23):** **Phase 4b-step3 CLOSED + spend-side claim 2 CLOSED.**
+All 5 steps + step 5 (4 sub-commits: 5a-wire / 5b-decomp / 5c-sponge / 5d-close) landed.
+Tracked as task #131.
 
 **Keystone milestone:** after step 2b-AIR-v2 (`9add1ad0f`) + step 3a
-(`a0ff246ae`) + step 4 (`8d6ad205b`), the **output-side** cryptographic
-claims + anchor + nf all run over real 32-byte material with ≥256-bit
-binding. The nf derivation is spec-compliant iterated Poseidon2-w=16
-sponge under `"uno-nf-v1"` tag block (previous single-perm v1 at
+(`a0ff246ae`) + step 4 (`8d6ad205b`) + **step 5c-sponge (current)**, the
+**output-side AND spend-side** cryptographic claims + anchor + nf all
+run over real 32-byte material with ≥256-bit binding. The spend-side
+claim 2 (`leaf_i = Poseidon2("uno-cm-v1", real d_i, real pk_d_i, real
+ivk_commitment_i, value_i, real rcm_i)`) now runs through the same
+15-fe iterated Poseidon2-w=16 sponge as the output-side cm derivation,
+with bank-1 on row i / bank-2 on row 24+i and per-spend
+`S_CM_CARRY_{CAP,RATE}[0..8]` proxy cols for the cross-perm carry.
+The nf derivation is spec-compliant iterated Poseidon2-w=16 sponge
+under `"uno-nf-v1"` tag block (previous single-perm v1 at
 `b92a6bdbb` was self-consistent but diverged from C++ — superseded by
-v2). Cross-crate byte-parity locked in by 5 tests in
-`tosctl/uno/tests/phase4b_step3_sponge_parity.rs` (3 cm + 2 nf).
+v2). Cross-crate byte-parity locked in by the tests in
+`tosctl/uno/tests/phase4b_step3_sponge_parity.rs` (3 cm + 2 nf; the
+spend-side sponge is byte-identical to the output-side sponge by
+construction — same tag block, same 15-fe layout — so existing tests
+cover both sides).
 
-**Known out-of-scope gap (Codex audit finding 1,
-`doc/uno-phase4b-step3-codex-audit.md`):** the **spend-side claim 2**
-`leaf_i = Poseidon2("uno-cm-v1", real d_i, real pk_d_i, …)` was NOT
-migrated in Phase 4b-step3. The AIR's spend-row constraint still binds
-`shared_cm.inputs = (TAG_CM, d_u64_proxy, …)` via the legacy single-
-permutation u64-proxy path and `SpendWitness.d` is still `[u8; 8]`.
-This is a well-formedness claim (does the spender own a correctly-
-constructed note?) rather than a consensus binding — the two hard
-consensus bindings on the spend side are Merkle inclusion (✅ step 3a)
-and nullifier derivation (✅ step 2b-AIR-v2), both over real 32-byte
-material. Closing this gap requires mirroring step 1.2 on the spend
-side (~250 LOC) and is tracked as a follow-up.
+**Codex audit finding 1 (`doc/uno-phase4b-step3-codex-audit.md`): CLOSED
+by step 5a-d.** The spend-side claim 2 is now proved by the same 15-fe
+iterated Poseidon2-w=16 sponge as the output side. `SpendWitness.d` is
+widened to `[u8; 32]` (+ canonical `d[11..32] == 0` decoder check),
+and `SpendWitness.ivk_commitment: [u8; 32]` is a new field. Every
+slot of the 15-fe absorb is AIR-pinned to a u16-range-checked fe-limb
+col that decomposes a real 32-byte witness byte (no 64-bit proxy
+reduction remains on the spend side).
 
 **Post-Phase-4b-step3 shape_matrix (2026-04-23, 192-core host)**:
 4/4 at **2 593 cols / 1 073 KB proof / 30.8 ms verify**. Deltas vs.

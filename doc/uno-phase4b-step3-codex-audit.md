@@ -68,7 +68,7 @@ statement is FALSE on the spend path.
 
 ## Triage disposition (filled in by downstream commits)
 
-- **Finding 1**: doc scope-honesty update to be landed immediately; spend-side sponge implementation tracked as a follow-up task.
-- **Finding 2**: decoder-level rejection of non-zero `d[11..32]` + regression test to be landed immediately.
+- **Finding 1**: **FIXED by step 5a-d (2026-04-23).** Spend-side cm now runs through the same 15-fe iterated Poseidon2-w=16 sponge as the output-side cm, with bank-1 on row i / bank-2 on row 24+i under the shared wide Poseidon2-w=16 block. `SpendWitness.d: [u8; 8] → [u8; 32]` (step 5a-wire), `SpendWitness.ivk_commitment: [u8; 32]` added, 11 fe-limb proxy cols + 56 u16 decomposition cols per spend for d / pk_d / ivk_commitment / rcm (step 5b-decomp), `S_CM_CARRY_{CAP,RATE}[0..8]` carry cols for the cross-perm rate/capacity chain (step 5c-sponge). Bank-2 output rate slots 0..4 bind `shared_cm_out[0..4] == (S_LEAF, S_LEAF_FE1..3) == pack_32b_as_4fe(&s.leaf)` — the real 4-fe claim-2 closure. `witness_claim2_leaf_consistent()` switched from the legacy `poseidon2_cm(...)` u64-proxy check to `pack_32b_as_4fe(&s.leaf) == poseidon2_cm_full_sponge(&s.d, &s.pk_d, &s.ivk_commitment, s.value, &s.rcm)` (step 5d-close). The audited statement `cm[4]_i = Poseidon2-hash_tagged("uno-cm-v1", real …)` is now TRUE on both output AND spend paths.
+- **Finding 2**: decoder-level rejection of non-zero `d[11..32]` + regression test (landed 2026-04-23 in `227277104` for output-side, and in step 5a-wire for spend-side).
 
-See follow-up commits for `codex-finding-1-doc-honest-scope` and `codex-finding-2-diversifier-padding-reject`.
+See follow-up commits for `codex-finding-1-doc-honest-scope` (landed 2026-04-23) and `codex-finding-2-diversifier-padding-reject` (landed 2026-04-23). Finding 1 follow-up (actual implementation) landed in step 5a-d sequence (commits `1156cd82b` → step 5d-close — this commit).

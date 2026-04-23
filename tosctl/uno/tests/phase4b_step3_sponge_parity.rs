@@ -1,4 +1,5 @@
-//! Phase 4b-step3-step1.0 cross-crate byte-parity regression test.
+//! Phase 4b-step3-step1.0 + step 5d cross-crate byte-parity
+//! regression tests.
 //!
 //! Validates that the off-circuit Poseidon2-w=16 15-fe iterated-sponge
 //! `poseidon2_cm_full_sponge_bytes` helper landed in
@@ -7,6 +8,14 @@
 //! which is in turn byte-identical to the C++ validator's
 //! `compute_note_commitment` per the 3-agent audit summary in
 //! `doc/uno-p2-phase4b-step3-plan.md §4.1`.
+//!
+//! Phase 4b-step3-step5d (2026-04-23) extends the suite with a spend-
+//! side cm test vector. The spend-side cm sponge (step 5c-sponge) uses
+//! the SAME helper as the output-side cm sponge (step 1.2), so in
+//! principle the original tests already cover it; adding an explicit
+//! spend-flavored test guards against layout drift in the AIR's
+//! bank-1 slot_to_col map (which differs from the output-side col
+//! names but targets the same field-element positions).
 //!
 //! When step 1.2 adds the in-circuit Poseidon2 AIR constraints that
 //! ratify `poseidon2_cm_full_sponge`, the whole chain will be:
@@ -208,6 +217,55 @@ fn rust_air_nf_matches_tosctl_hash_tagged_byte_for_byte() {
         "Rust AIR poseidon2_nf_full_wide_bytes must match tosctl \
          hash_tagged byte-for-byte for the same 9-fe input with \
          'uno-nf-v1' tag.\n\
+         air    = {:02x?}\n\
+         tosctl = {:02x?}",
+        air_bytes, tosctl_bytes,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4b-step3-step5d-close: spend-side cm sponge parity
+// ---------------------------------------------------------------------------
+//
+// The spend-side cm sponge (step 5c-sponge) uses the SAME 15-fe iterated
+// Poseidon2-w=16 sponge layout as the output-side cm sponge (step 1.2),
+// so `poseidon2_cm_full_sponge_bytes` is the single source of truth for
+// both. These tests pin the helper against `hash_tagged(b"uno-cm-v1",
+// 15 fes)` — tosctl's production path — on spend-flavored test vectors
+// to guard against a regression where the helper drifts from the AIR's
+// spend-side bank-1/bank-2 closure. Each field passed in here
+// corresponds to a `SpendWitness` field (d / pk_d / ivk_commitment /
+// value / rcm), the 5 inputs the AIR's step 5c-sponge bank-2 closure
+// binds to `leaf == pack_32b_as_4fe(sponge_out)`.
+
+/// Spend-side test vector: distinct bytes per field catch a layout-
+/// transposition bug on the AIR's slot_to_col map.
+#[test]
+fn rust_air_spend_cm_sponge_matches_tosctl_hash_tagged() {
+    // Realistic-ish shape: 11-byte diversifier + zero pad, non-zero
+    // pk_d / ivk_commitment / rcm.
+    let d = {
+        let mut buf = [0u8; 32];
+        buf[..11].copy_from_slice(b"unodiv-spnd");
+        buf
+    };
+    let pk_d: [u8; 32] = core::array::from_fn(|i| 0x50 + i as u8);
+    let ivk_commitment: [u8; 32] = core::array::from_fn(|i| 0x30 + i as u8);
+    let value: u64 = 0xFEED_BEEF_0000_1234;
+    let rcm: [u8; 32] = core::array::from_fn(|i| 0xA0 + i as u8);
+
+    let air_bytes = poseidon2_cm_full_sponge_bytes(
+        &d, &pk_d, &ivk_commitment, value, &rcm,
+    );
+    let tosctl_bytes = tosctl_hash_tagged_bytes(&d, &pk_d, &ivk_commitment, value, &rcm);
+
+    assert_eq!(
+        air_bytes, tosctl_bytes,
+        "spend-side cm sponge (Rust AIR helper) must match tosctl \
+         hash_tagged byte-for-byte on a spend-flavored test vector. \
+         If this fails after step 5c-sponge lands, either the AIR's \
+         slot_to_col map or the helper's pack_* ordering drifted from \
+         the output-side layout.\n\
          air    = {:02x?}\n\
          tosctl = {:02x?}",
         air_bytes, tosctl_bytes,
