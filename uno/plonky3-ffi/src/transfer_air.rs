@@ -1680,38 +1680,95 @@ where
                 );
             }
 
-            // --- Narrow Nf block: rows 4..(4+n_spends-1) ---------------
+            // --- Phase 4b-step3-step2b-AIR: wide Nf block ---------------
+            //
+            // On row 16+i (i ∈ 0..n_spends), the shared_cm Poseidon2-
+            // w=16 block hosts spend i's nullifier-derivation permutation
+            // with REAL 32-byte nk + 32-byte leaf + pos inputs:
+            //
+            //   inputs[0]       = TAG_NF                (domain tag)
+            //   inputs[1..5]    = nk_fes[0..4]          (4 fes of nk bytes)
+            //   inputs[5..9]    = leaf_fes[0..4]        (4 fes of cm bytes)
+            //   inputs[9]       = pos                   (1 fe)
+            //   inputs[10..16]  = 0                     (padding)
+            //
+            // The fe-limb cols come from the step-2b-decomp block:
+            //   nk_fes   = [S_NK, S_NK_FE1, S_NK_FE2, S_NK_FE3]
+            //   leaf_fes = [S_LEAF, S_LEAF_FE1, S_LEAF_FE2, S_LEAF_FE3]
+            // Both sets are AIR-provably canonical u64 reductions of
+            // their 32-byte witness bytes via step 2b-decomp's u16 +
+            // LogUp range-check path.
+            //
+            // Output state[0..4] → PI[pi_nf(i) + 0..4], raising nf
+            // binding soundness from single-fe proxy (~64-bit) to full
+            // 4-fe digest (~256-bit). Matches C++ validator's
+            // `derive_nullifier(nk, cm, pos)` byte-for-byte.
+            //
+            // Supersedes the Phase 4a / Phase 4b-step0 narrow Nf block
+            // on narrow-w=8 rows 4..(4+n_spends-1) which consumed low-
+            // u64 proxies via `first_u64_proxy(&s.{nk,leaf})`. Narrow
+            // rows 4+i now host a zero-input permutation padding_p2.
+            //
+            // Constraint cost: (TAG + 4 nk + 4 leaf + pos + 6 zeros) =
+            // 16 degree-2 input pins + 4 degree-2 output-PI bindings per
+            // spend. All row-gated by GS_ROW_SEL[16 + i].
             for i in 0..self.n_spends {
-                let sel: AB::Expr = local_slice[GS_ROW_SEL0 + 4 + i].into();
-                let nk = spend_col::<AB::Var>(local_slice, i, S_NK);
-                let leaf = spend_col::<AB::Var>(local_slice, i, S_LEAF);
+                let sel: AB::Expr = local_slice[GS_ROW_SEL0 + 16 + i].into();
+                let nk_cols = [
+                    spend_col::<AB::Var>(local_slice, i, S_NK),
+                    spend_col::<AB::Var>(local_slice, i, S_NK_FE1),
+                    spend_col::<AB::Var>(local_slice, i, S_NK_FE2),
+                    spend_col::<AB::Var>(local_slice, i, S_NK_FE3),
+                ];
+                let leaf_cols = [
+                    spend_col::<AB::Var>(local_slice, i, S_LEAF),
+                    spend_col::<AB::Var>(local_slice, i, S_LEAF_FE1),
+                    spend_col::<AB::Var>(local_slice, i, S_LEAF_FE2),
+                    spend_col::<AB::Var>(local_slice, i, S_LEAF_FE3),
+                ];
                 let pos = spend_col::<AB::Var>(local_slice, i, S_POS);
 
+                // inputs[0] = TAG_NF
                 builder.assert_zero(
                     sel.clone()
-                        * (AB::Expr::from(shared_ivkcm_nf.inputs[0])
+                        * (AB::Expr::from(shared_cm.inputs[0])
                             - AB::Expr::from(AB::F::from_u64(TAG_NF))),
                 );
+                // inputs[1..5] = nk_fes[0..4]
+                for (k, col) in nk_cols.iter().enumerate() {
+                    builder.assert_zero(
+                        sel.clone()
+                            * (AB::Expr::from(shared_cm.inputs[1 + k]) - (*col).into()),
+                    );
+                }
+                // inputs[5..9] = leaf_fes[0..4]
+                for (k, col) in leaf_cols.iter().enumerate() {
+                    builder.assert_zero(
+                        sel.clone()
+                            * (AB::Expr::from(shared_cm.inputs[5 + k]) - (*col).into()),
+                    );
+                }
+                // inputs[9] = pos
                 builder.assert_zero(
-                    sel.clone() * (AB::Expr::from(shared_ivkcm_nf.inputs[1]) - nk.into()),
+                    sel.clone() * (AB::Expr::from(shared_cm.inputs[9]) - pos.into()),
                 );
-                builder.assert_zero(
-                    sel.clone() * (AB::Expr::from(shared_ivkcm_nf.inputs[2]) - leaf.into()),
-                );
-                builder.assert_zero(
-                    sel.clone() * (AB::Expr::from(shared_ivkcm_nf.inputs[3]) - pos.into()),
-                );
-                for k in 4..POSEIDON2_WIDTH {
-                    builder.assert_zero(sel.clone() * AB::Expr::from(shared_ivkcm_nf.inputs[k]));
+                // inputs[10..16] = 0 (padding)
+                for k in 10..POSEIDON2_WIDTH_16 {
+                    builder.assert_zero(sel.clone() * AB::Expr::from(shared_cm.inputs[k]));
                 }
                 // Claim 4: bind all 4 limbs of `nf_i` to the PI.
                 for limb in 0..4 {
                     builder.assert_zero(
                         sel.clone()
-                            * (AB::Expr::from(shared_ivkcm_nf_out[limb]) - pi_nfs[i][limb].into()),
+                            * (AB::Expr::from(shared_cm_out[limb]) - pi_nfs[i][limb].into()),
                     );
                 }
             }
+
+            // Silence "unused" warning on the narrow block's output
+            // binding — kept in scope above for ivk_cm (claim 3) which
+            // still runs on narrow rows 0..(n_spends-1).
+            let _ = shared_ivkcm_nf_out;
         }
 
         // ---- Phase 4b-step3-step1.3-fields: fe-limb u16 decomposition ---
@@ -2733,14 +2790,16 @@ impl MvpWitness {
             out.push(Goldilocks::from_u64(reduce_to_goldilocks(limb)));
         }
 
-        let perm = default_goldilocks_poseidon2_8();
+        let perm16 = default_goldilocks_poseidon2_16();
 
         for s in &self.spends {
             // nf_i: 4-limb Poseidon2 nullifier (AIR-bound).
-            // Phase 4b-step3-step0: widened nk field → u64 proxy via
-            // first_u64_proxy (AIR semantics unchanged).
-            let nf_limbs =
-                poseidon2_nf_full(&perm, first_u64_proxy(&s.nk), first_u64_proxy(&s.leaf), s.pos);
+            // Phase 4b-step3-step2b-AIR: nf now derived from the real
+            // 32-byte `nk` + 32-byte `leaf` (cm) + `pos` via a single
+            // Poseidon2-w=16 permutation on shared-wide row 16+i, per
+            // the AIR constraint block. Matches the C++ validator's
+            // `derive_nullifier` which consumes the same 10-fe input.
+            let nf_limbs = poseidon2_nf_full_wide(&perm16, &s.nk, &s.leaf, s.pos);
             for limb in nf_limbs {
                 out.push(limb);
             }
@@ -2862,7 +2921,6 @@ impl MvpWitness {
         let mut s_current_vals_fes: Vec<Vec<[Goldilocks; 4]>> = Vec::with_capacity(n_s);
         let mut row0_spend_ivkcm = Vec::with_capacity(n_s);
         let mut row0_spend_cm = Vec::with_capacity(n_s);
-        let mut row0_spend_nf = Vec::with_capacity(n_s);
         for s in &self.spends {
             let d_word = u64::from_le_bytes(s.d);
             let d_f = Goldilocks::from_u64(reduce_to_goldilocks(d_word));
@@ -2937,12 +2995,29 @@ impl MvpWitness {
             cm_in[5] = rcm_f;
             row0_spend_cm.push(gen_p2_row_16(cm_in));
 
-            let mut nf_in = [Goldilocks::ZERO; POSEIDON2_WIDTH];
+            // Phase 4b-step3-step2b-AIR: narrow-nf trace row is no
+            // longer populated — narrow rows 4+i now write zero-input
+            // padding_p2. The wide-nf witness (below) replaces it on
+            // shared_cm rows 16+i.
+            let _ = (nk_f, leaf_f, pos_f);
+        }
+
+        // Phase 4b-step3-step2b-AIR: wide-nf Poseidon2-16 witness per
+        // spend. Input layout: (TAG_NF, nk_fes[0..4], leaf_fes[0..4],
+        // pos, 0*6). Bank lives on shared_cm row 16+i; output state[0..4]
+        // is AIR-bound to `PI[pi_nf(i) + 0..4]`. Matches the C++
+        // validator's `derive_nullifier(nk, cm, pos)` byte-for-byte via
+        // the `poseidon2_nf_full_wide` helper.
+        let mut row0_spend_nf_wide: Vec<Vec<Goldilocks>> = Vec::with_capacity(n_s);
+        for s in &self.spends {
+            let nk_fes = pack_32b_as_4fe(&s.nk);
+            let leaf_fes = pack_32b_as_4fe(&s.leaf);
+            let mut nf_in = [Goldilocks::ZERO; POSEIDON2_WIDTH_16];
             nf_in[0] = Goldilocks::from_u64(TAG_NF);
-            nf_in[1] = nk_f;
-            nf_in[2] = leaf_f;
-            nf_in[3] = pos_f;
-            row0_spend_nf.push(gen_p2_row(nf_in));
+            nf_in[1..5].copy_from_slice(&nk_fes);
+            nf_in[5..9].copy_from_slice(&leaf_fes);
+            nf_in[9] = Goldilocks::from_u64(reduce_to_goldilocks(s.pos));
+            row0_spend_nf_wide.push(gen_p2_row_16(nf_in));
         }
 
         let mut row0_out_cm = Vec::with_capacity(n_o);
@@ -3292,6 +3367,7 @@ impl MvpWitness {
             //   row 4+j (j ∈ 0..n_o): output j's claim-6 witness
             //   row 8+j (j ∈ 0..n_o): output j's sponge perm-1 (step 1.2a)
             //   row 12+j (j ∈ 0..n_o): output j's sponge perm-2 (step 1.2a)
+            //   row 16+i (i ∈ 0..n_s): spend i's wide-nf witness (step 2b-AIR)
             //   else: zero-input permutation
             if row_idx < n_s {
                 values.extend_from_slice(&row0_spend_cm[row_idx]);
@@ -3301,18 +3377,25 @@ impl MvpWitness {
                 values.extend_from_slice(&sponge_bank1_cm[row_idx - 8]);
             } else if (12..12 + n_o).contains(&row_idx) {
                 values.extend_from_slice(&sponge_bank2_cm[row_idx - 12]);
+            } else if (16..16 + n_s).contains(&row_idx) {
+                values.extend_from_slice(&row0_spend_nf_wide[row_idx - 16]);
             } else {
                 values.extend_from_slice(&padding_p2_16);
             }
 
             // Globally-shared IvkCm/Nf (w=8) block:
             //   row i (i ∈ 0..n_s): spend i's claim-3 (IvkCm) witness
-            //   row 4+i (i ∈ 0..n_s): spend i's claim-4 (Nf) witness
-            //   else: zero-input permutation
+            //   else: zero-input permutation (padding_p2)
+            //
+            // Phase 4b-step3-step2b-AIR: rows 4..(4+n_s-1) used to host
+            // the narrow-nf (claim 4) witness; that derivation moved to
+            // the wide-w=16 block on rows 16..(15+n_s) with real 4-fe
+            // nk + 4-fe cm + pos inputs. Narrow rows 4+i now just carry
+            // a zero-input Poseidon2 permutation witness which satisfies
+            // the narrow sub-AIR trivially — the old constraint block
+            // is deleted and `row0_spend_nf` (narrow) is no longer built.
             if row_idx < n_s {
                 values.extend_from_slice(&row0_spend_ivkcm[row_idx]);
-            } else if (4..4 + n_s).contains(&row_idx) {
-                values.extend_from_slice(&row0_spend_nf[row_idx - 4]);
             } else {
                 values.extend_from_slice(&padding_p2);
             }
@@ -3747,8 +3830,47 @@ fn poseidon2_cm_fe(
     state[0]
 }
 
-/// Full-width nullifier computation per §4.3 step 4: `nf_i` occupies 4
-/// Goldilocks elements (the first 4 limbs of the post-permutation state).
+/// Phase 4b-step3-step2b-AIR: full-width nullifier computation over real
+/// 4-fe `nk` + real 4-fe `cm` + `pos`. Layout (Poseidon2-w=16 single
+/// perm):
+///
+///   state[0]     = TAG_NF
+///   state[1..5]  = pack_32b_as_4fe(&nk_bytes)
+///   state[5..9]  = pack_32b_as_4fe(&cm_bytes)
+///   state[9]     = pos (mod p)
+///   state[10..16]= 0 (padding)
+///
+/// Returns `[state[0..4] after permutation]` — the 4-fe nf digest that
+/// goes to `PI[pi_nf(i) + 0..4]`. Superseded the pre-step-2b single-
+/// u64-proxy `poseidon2_nf_full` (retained below for reference; its
+/// caller sites were all migrated to this helper).
+///
+/// Soundness: binding goes from ~64-bit (low 8 B of nk + low 8 B of
+/// leaf + pos, all reduced to single Goldilocks fes) to 256-bit (full
+/// 32-byte nk + 32-byte cm). Matches the protocol-layer definition of
+/// `nf = Poseidon2("uno-nf-v1", real_nk, real_cm, pos)` in
+/// `uno/core/poseidon2.cpp::derive_nullifier`.
+fn poseidon2_nf_full_wide(
+    perm: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH_16]>,
+    nk_bytes: &[u8; 32],
+    cm_bytes: &[u8; 32],
+    pos: u64,
+) -> [Goldilocks; 4] {
+    let nk_fes = pack_32b_as_4fe(nk_bytes);
+    let cm_fes = pack_32b_as_4fe(cm_bytes);
+    let mut state = [Goldilocks::ZERO; POSEIDON2_WIDTH_16];
+    state[0] = Goldilocks::from_u64(TAG_NF);
+    state[1..5].copy_from_slice(&nk_fes);
+    state[5..9].copy_from_slice(&cm_fes);
+    state[9] = Goldilocks::from_u64(reduce_to_goldilocks(pos));
+    perm.permute_mut(&mut state);
+    [state[0], state[1], state[2], state[3]]
+}
+
+/// Legacy single-fe proxy nf computation (pre-step-2b-AIR). Retained
+/// only as a comparison reference; no live callers. Step 2b-cleanup
+/// will delete this.
+#[allow(dead_code)]
 fn poseidon2_nf_full(
     perm: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH]>,
     nk: u64,
