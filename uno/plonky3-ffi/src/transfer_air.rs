@@ -319,7 +319,7 @@ pub const SPEND_PROXY_COLS: usize =
 /// — bound to `PI[pi_cm(j) + 0]` via row-0 copy-constraint, replacing
 /// the previous `cm_claim == pi_cms[j]` binding.
 pub const OUTPUT_PROXY_COLS: usize =
-    6 + VALUE_LIMBS_U16 + RK_EPK_LIMBS + 1 + 3 + 1 + 4;
+    6 + VALUE_LIMBS_U16 + RK_EPK_LIMBS + 1 + 3 + 1 + 4 + 8;
 
 /// Narrow (width-8) Poseidon2 instances per spend after K-air-col-step2:
 /// only the shared-Merkle slot remains. IvkCm + Nf are folded into a
@@ -414,8 +414,18 @@ const O_CM_LIMB0_REAL: usize = O_CM_LIMB1 + 3;
 /// separate step 1.1-tosctl refactor (thread real recipient
 /// material through `TransferWitness::build()`), tracked in
 /// `doc/uno-p2-phase4b-step3-plan.md §4.1`.
-#[allow(dead_code)]  // referenced by step1.2's AIR constraints (future commit)
 const O_CM_SPONGE_OUT: usize = O_CM_LIMB0_REAL + 1;
+/// Phase 4b-step3-step1.2d: base index of the 8 "carry capacity" cols
+/// holding the bank-1 Poseidon2-w=16 output's capacity slots
+/// (`state[8..16]` after perm-1). These are pinned by AIR constraints
+/// to bank-1's post-permutation capacity on row 8+j, AND to bank-2's
+/// input capacity on row 12+j. Because output proxy cols are "constant
+/// across rows" per the §4.2 invariant (enforced by the existing
+/// `OUTPUT_PROXY_COLS` transition loop), the two rows' constraints
+/// ratify `bank-1.out.cap == bank-2.in.cap` — exactly the
+/// sponge-absorb-doesn't-touch-capacity rule — without needing cross-
+/// row AIR access.
+const O_SPONGE_CARRY_CAP: usize = O_CM_SPONGE_OUT + 4;
 
 // ---------------------------------------------------------------------------
 // Shape-aware helpers
@@ -1191,6 +1201,61 @@ where
                 }
             }
 
+            // --- Phase 4b-step3-step1.2d-out: bank-1 cap → carry col ----
+            //
+            // On row 8+j, bind the bank-1 permutation's post-state
+            // capacity slots (`state[8..15]` after perm-1) to output j's
+            // `O_SPONGE_CARRY_CAP[0..8]` proxy columns. Combined with
+            // the proxies-are-constant transition invariant (enforced
+            // by the trailing `OUTPUT_PROXY_COLS` loop), this lets us
+            // "read" the same carry-cap values on row 12+j without a
+            // cross-row AIR access, which the sub-AIR interface does
+            // not provide for non-adjacent rows.
+            for j in 0..self.n_outputs {
+                let sel: AB::Expr = local_slice[GS_ROW_SEL0 + 8 + j].into();
+                for k in 0..8 {
+                    let carry_col = output_col::<AB::Var>(
+                        local_slice,
+                        self.n_spends,
+                        j,
+                        O_SPONGE_CARRY_CAP + k,
+                    );
+                    builder.assert_zero(
+                        sel.clone()
+                            * (AB::Expr::from(shared_cm_out[8 + k])
+                                - carry_col.into()),
+                    );
+                }
+            }
+
+            // --- Phase 4b-step3-step1.2d-in: carry col → bank-2 cap -----
+            //
+            // On row 12+j, bind the bank-2 permutation's input capacity
+            // slots (`shared_cm.inputs[8..15]`) to output j's
+            // `O_SPONGE_CARRY_CAP[0..8]` proxy columns. Paired with the
+            // -out block above, this closes the sponge-capacity carry
+            // chain: bank-1.out.cap == carry == bank-2.in.cap, matching
+            // the iterated-sponge rule that absorb does not touch the
+            // capacity portion. Without this, a malicious prover could
+            // substitute arbitrary capacity in bank-2 and forge a cm
+            // output.
+            for j in 0..self.n_outputs {
+                let sel: AB::Expr = local_slice[GS_ROW_SEL0 + 12 + j].into();
+                for k in 0..8 {
+                    let carry_col = output_col::<AB::Var>(
+                        local_slice,
+                        self.n_spends,
+                        j,
+                        O_SPONGE_CARRY_CAP + k,
+                    );
+                    builder.assert_zero(
+                        sel.clone()
+                            * (AB::Expr::from(shared_cm.inputs[8 + k])
+                                - carry_col.into()),
+                    );
+                }
+            }
+
             // --- Phase 4b-step3-step1.2e: sponge bank-2 output ↔ OUT ----
             //
             // On row 12+j (j ∈ 0..n_outputs), the shared_cm block hosts
@@ -1209,9 +1274,8 @@ where
             // without a separate round-trip test needing to re-run the
             // permutation in-circuit.
             //
-            // Still missing from step 1.2 (tracked as step 1.2c/d):
+            // Still missing from step 1.2 (tracked as step 1.2c/f):
             //   - bank-1 rate-slot fe-limb absorption
-            //   - bank-1 → bank-2 state carry across rows 8+j → 12+j
             //   - bank-2 rate-slot fe-absorb (fes[8..14] + ONE padding)
             //
             // Those are independent incremental commits.
@@ -2323,6 +2387,10 @@ impl MvpWitness {
         let tag_block = uno_cm_v1_tag_block();
         let mut sponge_bank1_cm: Vec<Vec<Goldilocks>> = Vec::with_capacity(n_o);
         let mut sponge_bank2_cm: Vec<Vec<Goldilocks>> = Vec::with_capacity(n_o);
+        // Phase 4b-step3-step1.2d: save bank-1 output capacity
+        // (state[8..16] after perm-1) per output so the output proxy
+        // block can carry it via `O_SPONGE_CARRY_CAP[0..8]`.
+        let mut sponge_bank1_out_cap: Vec<[Goldilocks; 8]> = Vec::with_capacity(n_o);
         for o in &self.outputs {
             // Assemble the 15-fe input per §3.2.
             let d_fes = pack_diversifier_as_2fe(&o.d);
@@ -2348,6 +2416,11 @@ impl MvpWitness {
             // `ending_full_rounds[last].post` field in trace).
             let mut state_after_perm1 = bank1_in;
             perm16.permute_mut(&mut state_after_perm1);
+
+            // Save bank-1 output capacity for carry-col population.
+            let mut out_cap = [Goldilocks::ZERO; 8];
+            out_cap.copy_from_slice(&state_after_perm1[8..16]);
+            sponge_bank1_out_cap.push(out_cap);
 
             // Bank 2 input: bank1_output[0..6] += fes[8..14];
             //               bank1_output[7] += ONE (padding, rem=7);
@@ -2413,7 +2486,8 @@ impl MvpWitness {
         let output_proxies: Vec<Vec<Goldilocks>> = self
             .outputs
             .iter()
-            .map(|o| {
+            .enumerate()
+            .map(|(j, o)| {
                 // Phase 4b-step3-step0: widened output fields → u64
                 // proxy for Poseidon2 input; cm derivation shape
                 // unchanged.
@@ -2466,15 +2540,23 @@ impl MvpWitness {
                 v.push(Goldilocks::from_u64(reduce_to_goldilocks(cm_limb0)));
                 // Phase 4b-step3-step1.1: O_CM_SPONGE_OUT[0..4] — the
                 // 4-fe digest produced by the 15-fe iterated Poseidon2
-                // sponge over the widened witness fields. No AIR
-                // constraint binds this to anything yet; it's data-only
-                // scaffolding for step 1.2's in-circuit sponge. Uses
-                // the already-byte-parity-tested
-                // `poseidon2_cm_full_sponge` helper (see
-                // `tosctl/uno/tests/phase4b_step3_sponge_parity.rs`).
+                // sponge over the widened witness fields. AIR-bound
+                // by step1.2e to bank-2 output on row 12+j.
                 let sponge_out =
                     poseidon2_cm_full_sponge(&perm16, &o.d, &o.pk_d, &o.ivk_commitment, o.value, &o.rcm);
                 for fe in &sponge_out {
+                    v.push(*fe);
+                }
+                // Phase 4b-step3-step1.2d: O_SPONGE_CARRY_CAP[0..8] —
+                // bank-1 Poseidon2-w=16 output capacity (state[8..16]
+                // after perm-1). AIR constraint on row 8+j pins this
+                // col to bank-1.post[8+k]; row 12+j pins bank-2.inputs
+                // [8+k] to this col. Together with the output-proxy
+                // "constant across rows" transition invariant, this
+                // carries the capacity across the 4-row gap between
+                // the two sponge permutations without cross-row AIR
+                // access.
+                for fe in sponge_bank1_out_cap[j].iter() {
                     v.push(*fe);
                 }
                 debug_assert_eq!(v.len(), OUTPUT_PROXY_COLS);
