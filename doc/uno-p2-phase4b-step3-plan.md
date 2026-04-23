@@ -6,15 +6,24 @@ M-P2 Phase 4b-step2a/b, so the STARK itself proves the real
 cryptographic bindings of `cm`, `nf`, `leaf`, and the depth-32
 Merkle walk against the real 32-byte recipient / spender material.
 
-**Status (2026-04-23):** Step 0 ✅ + Step 1 ✅ + Step 2 ✅ + Step 3 ✅ landed.
-Only Step 4 (golden regen + doc) remains. Tracked as task #131.
+**Status (2026-04-23):** **Phase 4b-step3 CLOSED.** All 5 steps ✅:
+Step 0 + Step 1 + Step 2 + Step 3 + Step 4 landed. Tracked as task #131.
 
-**Keystone milestone:** after `b92a6bdbb` (step 2b-AIR) + `0e23eef30`
-(step 2b-cleanup), every cryptographic claim in the AIR runs over real
-32-byte material with ≥256-bit binding. The FRI Option B soundness tier
-(180-bit conjectured / 102-bit proven) is now the limiting factor, not
-the AIR's claim depth — i.e., the PQ-native positioning is no longer
-contradicted by a single weak 64-bit Merkle/nf binding.
+**Keystone milestone:** after step 2b-AIR-v2 (`9add1ad0f`) + step 3a
+(`a0ff246ae`) + step 4 (`8d6ad205b`), every cryptographic claim in the
+AIR runs over real 32-byte material with ≥256-bit binding. The nf
+derivation is spec-compliant iterated Poseidon2-w=16 sponge under
+`"uno-nf-v1"` tag block (previous single-perm v1 at `b92a6bdbb` was
+self-consistent but diverged from C++ — superseded by v2). Cross-crate
+byte-parity locked in by 5 tests in `tosctl/uno/tests/phase4b_step3_sponge_parity.rs`
+(3 cm + 2 nf). The FRI Option B soundness tier (180-bit conjectured /
+102-bit proven) is now the limiting factor, not the AIR's claim depth
+— the Uno PQ-native positioning is no longer contradicted by an
+internal 64-bit proxy binding.
+
+**Remaining (non-blocking)**: re-run `cargo bench --bench shape_matrix`
+on the wider post-step3 trace before mainnet activation; estimated 4/4
+proof growth ≤ ~150 KB / verify ≤ ~5 ms vs. the 2026-04-22 baseline.
 
 **Scope:** strict cryptographic soundness closure. Phase 4b-step3
 does NOT improve byte parity (already closed by Phase 4a + 4b-step1
@@ -465,7 +474,25 @@ Deferred to follow-up `step3a-fields` (optional, defense-in-depth, ~300 LOC):
 per-sibling u16 decomposition + LogUp range-check (128 fes × 4 u16 per spend).
 Soundness gap is bounded by Poseidon2 2nd-preimage like step 1.3-fields.
 
-### 4.4 Step 4 — cleanup, regen, doc ⏳ PENDING
+### 4.4 Step 4 — cleanup, regen, doc ✅ COMPLETE
+
+Sub-commits landed:
+  4a  — ✅ `8d6ad205b` retire `MvpWitness.anchor_proxy` wire field
+        (AIR no longer reads it). TAIL 53 → 45 B; total witness wire
+        at 4/4: 5 831 → 5 823 B. Deleted dead `poseidon2_merkle_step`
+        + `poseidon2_merkle_path_root` helpers in tosctl (legacy u64-
+        proxy anchor computation path).
+  4b  — ✅ this commit — plan doc §4.4 marked ✅; `doc/uno-workchain.md
+        §2 R9 audit status` rewritten to mark Tier 2 CLOSED with
+        commit trail; `§13 P.2 row` updated from mixed-status to
+        fully ✅ with Phase 4b-step3 commit references; `§13 critical
+        path` statement no longer lists Tier 2 as a policy gate;
+        `doc/uno-p2-path-research.md Path (iii) Progress log`
+        appended with the Phase 4b-step3 commit trail + soundness
+        summary. Goldens regen: `cargo test --test codec_parity_goldens`
+        produces zero diff on `uno/test/golden/codec-parity-v1.hex`
+        (the spec-side was always iterated-sponge; it's the AIR that
+        caught up).
 
 **Goal:** remove the Phase 4b-step2a/b "decoupling" comments from
 `transfer_air.rs` (their trade-off is now reversed); re-run

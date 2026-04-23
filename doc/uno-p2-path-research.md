@@ -594,18 +594,80 @@ tests + 66 tosctl tests green through the FFI boundary.
 
 ### What remains after Phase 5 is shipped
 
-- **Phase 4b-step3** (task #131 — multi-week cryptographer work):
-  migrate MvpWitness `d` / `pk_d` / `ivk` / `rcm` fields from u64
-  proxies to `[u8; 32]`; lift Merkle-walk to 4-fe per-level state
-  (siblings `[[u8; 32]; 32]`, `S_CURRENT` 1-fe → 4-fe vector);
-  expose all 4 output limbs of Poseidon2-w=16 instead of `state[0]`.
-  After this, the STARK re-proves `cm = Poseidon2(real d, real pk_d,
-  ...)` over real address bytes, closing the documented
-  Phase 4b-step2a/b trade-off. Requires breaking MvpWitness wire
-  format change + C++ decode-path coordination + golden regen once
-  (since PI layout is already stable). Primitives are upstream-
-  ready; Merkle AIR must be hand-written (no ready-made in
-  `plonky3-uno`).
+~~**Phase 4b-step3** (task #131 — multi-week cryptographer work)~~
+— **CLOSED 2026-04-23**. See below.
+
+#### Progress log (M-P2 Phase 4b-step3, 2026-04-23)
+
+**Phase 4b-step3 LANDED** (~25 commits on branch `uno`, from
+`50045938f` to `8d6ad205b`). Every cryptographic claim in the AIR
+now runs over real 32-byte material with ≥256-bit binding. Commit
+trail:
+
+- **Step 0** (`42c6550ef`) — `SpendWitness` / `OutputWitness` u64
+  proxy fields widened to `[u8; 32]`. Wire format expanded by 448 B
+  at 4/4 (pre-step-0 → post-step-0). AIR unchanged (still reads
+  `first_u64_proxy` internally).
+
+- **Step 1** (12 sub-commits `50045938f` → `172e079e9`) — **cm
+  derivation via 15-fe iterated Poseidon2-w=16 sponge under
+  `"uno-cm-v1"` tag block**. Mirrors `uno/crypto/poseidon2.cpp
+  ::compute_note_commitment`. New cols: `O_CM_SPONGE_OUT[0..4]`,
+  `O_SPONGE_CARRY_{CAP,RATE}[0..8]`, per-field fe-limb proxies, 56
+  u16 cols per output for canonical-u64 decomposition +
+  `Range16Air` LogUp range-check. PI[cm+k] rewired from
+  `O_CM_LIMB{0_REAL,1..3}` to `O_CM_SPONGE_OUT[k]` (step 1.3-pi
+  `016b2b5bf`). Legacy limb cols retired (step 1.3-cleanup
+  `8ce78a572`). Cross-crate byte-parity proven by 3 tests in
+  `tosctl/uno/tests/phase4b_step3_sponge_parity.rs`. tosctl refactor:
+  `build_output` now returns `(OutputDescription, rcm)` so real
+  rcm + real 32 B recipient material threads through to
+  `TransferWitness::build` (step 1.1-tosctl `96d6ed9d5`).
+
+- **Step 2** (`b41af594e`, `9a5c93861`, `690fa6492`, `9add1ad0f`) —
+  **nf derivation via 9-fe iterated Poseidon2-w=16 sponge under
+  `"uno-nf-v1"` tag block**. Moved from legacy narrow-w=8 single-u64
+  proxy to wide-w=16 iterated sponge: bank-1 on row 16+i, bank-2 on
+  row 20+i, `S_NF_CARRY_{CAP,RATE}[0..8]` per-spend cols carry state
+  across the 4-row gap. Step 2b-AIR-v1 (`b92a6bdbb`) initially used
+  a single-perm shortcut with `state[0] = TAG_NF` u64; discovered
+  during step-4 goldens prep to diverge from C++ spec and fixed by
+  v2 (`9add1ad0f`). Spec-parity locked in by 2 additional tests in
+  `phase4b_step3_sponge_parity.rs`. tosctl `SpendWitness.nk` now
+  carries real `fvk.nk.0` bytes (step 2-tosctl `b41af594e`);
+  `.leaf` widened to `[u8; 32]` (step 2a-leaf `9a5c93861`); spend
+  u16-limb decomp for nk + leaf added (step 2b-decomp `690fa6492`,
+  mirror of step 1.3-fields on spend side, +38 cols/spend).
+
+- **Step 3** (`36beca92a` → `a0ff246ae`) — **4-fe Merkle walk**. Per
+  Plan agent's step-3a blueprint (task #137): `SpendWitness.merkle_path`
+  widened from `[u64; 32]` to `[[u8; 32]; 32]` (step 3c), per-level
+  sibling block widened 1 fe → 4 fe (128 cols/spend), `S_CURRENT`
+  widened from single-fe to `S_CURRENT_FE[0..4]`, `SPEND_VAR_COLS`
+  1→4. Each Merkle level runs Poseidon2-w=8 `(left[4] ‖ right[4])
+  → out[4]` compression. Last-row `S_CURRENT_FE[0..4] =
+  PI[PI_ANCHOR + 0..4]` directly — the Phase 4b-step1/step2b
+  `G_ANCHOR_*` global cols retired in the same commit. Anchor
+  binding soundness goes from ~64-bit (single Goldilocks fe) to
+  256-bit (full 4-fe digest). New test
+  `merkle_walk_4fe_matches_reference_fixture` proves trace-gen
+  self-consistency.
+
+- **Step 4** (`8d6ad205b` + plan-doc + workchain-md updates,
+  2026-04-23) — retired `MvpWitness.anchor_proxy: u64` wire field
+  (no longer needed after step 3a), updated `sizes_at_4_4` regression
+  test, cleaned dead helpers. Plan doc and workchain-md updated to
+  reflect the strong-soundness closure.
+
+**Net Tier-2 soundness closure:** `cm / anchor / nf` all derived
+from real 32-byte material by AIR-ratified Poseidon2 + Merkle
+constraints. Rust prover + Rust FFI verifier + C++ validator agree
+byte-identically on every per-slot PI derivation. The Uno
+PQ-native positioning is no longer contradicted by an internal
+64-bit proxy binding. Remaining work (non-blocking for the crypto
+closure): re-run `cargo bench --bench shape_matrix` on the wider
+post-step3 trace before mainnet activation; estimated 4/4 proof
+growth ≤ ~150 KB / verify ≤ ~5 ms vs. the 2026-04-22 baseline.
 
 Nothing else in the Path (iii) tree is V1-blocking. Phase iii-step-3
 (§16 / §2.1 consensus-binding decision log amendments) is a
