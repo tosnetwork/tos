@@ -316,7 +316,8 @@ pub const SPEND_PROXY_COLS: usize = 9
     + MERKLE_DEPTH * SIBLING_FES_PER_LEVEL
     + VALUE_LIMBS_U16
     + RK_EPK_LIMBS
-    + 38;
+    + 38
+    + 16; // Phase 4b-step3-step2b-AIR-v2: S_NF_CARRY_{CAP,RATE}[0..8]
 
 /// Per-output proxy columns: cm_claim (Poseidon2-w=16 output, trace-
 /// only after Phase 4b-step2a), d, pk_d, ivk_commitment, value, rcm (6
@@ -446,6 +447,22 @@ const S_NK_LIMB0: usize = S_LEAF_FE3 + 1;
 /// columns decomposing the 4 fe-limbs of `leaf` — same shape as
 /// `S_NK_LIMB0`.
 const S_LEAF_LIMB0: usize = S_NK_LIMB0 + 16;
+/// Phase 4b-step3-step2b-AIR-v2: base index of the 8 "nf carry cap"
+/// cols holding the bank-1 Poseidon2-w=16 output's capacity slots
+/// (`state[8..16]` after perm-1) for the nf iterated sponge. Pinned
+/// by AIR constraints to bank-1 post-permutation capacity on row
+/// 16+i AND to bank-2 input capacity on row 20+i. The proxies-are-
+/// constant transition invariant carries these across the 4-row gap.
+/// Mirror of `O_SPONGE_CARRY_CAP` on the output side (step 1.2d).
+const S_NF_CARRY_CAP0: usize = S_LEAF_LIMB0 + 16;
+/// Phase 4b-step3-step2b-AIR-v2: base index of the 8 "nf carry rate"
+/// cols holding the bank-1 Poseidon2-w=16 output's rate slots
+/// (`state[0..8]` after perm-1) for the nf iterated sponge. Pinned
+/// by AIR constraints to bank-1 post-permutation rate on row 16+i
+/// AND used as the "bank1.out term" in bank-2's absorb addition on
+/// row 20+i. Mirror of `O_SPONGE_CARRY_RATE` on the output side
+/// (step 1.2f).
+const S_NF_CARRY_RATE0: usize = S_NF_CARRY_CAP0 + 8;
 
 // ---- Per-output column indices (within an output proxy block) ----
 const O_CM_CLAIM: usize = 0;
@@ -1680,38 +1697,54 @@ where
                 );
             }
 
-            // --- Phase 4b-step3-step2b-AIR: wide Nf block ---------------
+            // --- Phase 4b-step3-step2b-AIR-v2: nf iterated sponge -------
             //
-            // On row 16+i (i ∈ 0..n_spends), the shared_cm Poseidon2-
-            // w=16 block hosts spend i's nullifier-derivation permutation
-            // with REAL 32-byte nk + 32-byte leaf + pos inputs:
+            // Nullifier binding now uses the 9-fe iterated Poseidon2-w=16
+            // sponge with "uno-nf-v1" tag block, byte-identical to the
+            // C++ validator's `derive_nullifier` and the codec-parity
+            // test's `hash_tagged(b"uno-nf-v1", 9 fes)`. Replaces the
+            // step-2b-AIR-v1 single-perm attempt (commits b92a6bdbb +
+            // 0e23eef30) which used a u64-constant TAG_NF at slot 0 —
+            // not consensus-compatible with C++.
             //
-            //   inputs[0]       = TAG_NF                (domain tag)
-            //   inputs[1..5]    = nk_fes[0..4]          (4 fes of nk bytes)
-            //   inputs[5..9]    = leaf_fes[0..4]        (4 fes of cm bytes)
-            //   inputs[9]       = pos                   (1 fe)
-            //   inputs[10..16]  = 0                     (padding)
+            // Layout per spend i (rows gated by GS_ROW_SEL):
             //
-            // The fe-limb cols come from the step-2b-decomp block:
-            //   nk_fes   = [S_NK, S_NK_FE1, S_NK_FE2, S_NK_FE3]
-            //   leaf_fes = [S_LEAF, S_LEAF_FE1, S_LEAF_FE2, S_LEAF_FE3]
-            // Both sets are AIR-provably canonical u64 reductions of
-            // their 32-byte witness bytes via step 2b-decomp's u16 +
-            // LogUp range-check path.
+            //   Bank 1 — row 16+i:
+            //     shared_cm.inputs[0..4]   == nk_fes[0..4]
+            //                               (S_NK, S_NK_FE1..3)
+            //     shared_cm.inputs[4..8]   == leaf_fes[0..4]
+            //                               (S_LEAF, S_LEAF_FE1..3)
+            //     shared_cm.inputs[8..16]  == uno_nf_v1_tag_block()
+            //                               (constant, 8 fes)
+            //     shared_cm_out[0..8]      == S_NF_CARRY_RATE[0..8]
+            //                               (carry rate → row 20+i)
+            //     shared_cm_out[8..16]     == S_NF_CARRY_CAP[0..8]
+            //                               (carry cap  → row 20+i)
             //
-            // Output state[0..4] → PI[pi_nf(i) + 0..4], raising nf
-            // binding soundness from single-fe proxy (~64-bit) to full
-            // 4-fe digest (~256-bit). Matches C++ validator's
-            // `derive_nullifier(nk, cm, pos)` byte-for-byte.
+            //   Bank 2 — row 20+i:
+            //     shared_cm.inputs[0]      == S_NF_CARRY_RATE[0] + pos
+            //                               (fes[8] absorb = pos)
+            //     shared_cm.inputs[1]      == S_NF_CARRY_RATE[1] + 1
+            //                               (10* padding bit)
+            //     shared_cm.inputs[k]      == S_NF_CARRY_RATE[k]
+            //                               for k ∈ 2..8 (rate carry, no absorb)
+            //     shared_cm.inputs[8+k]    == S_NF_CARRY_CAP[k]
+            //                               for k ∈ 0..8 (capacity carry)
+            //     shared_cm_out[k]         == pi_nfs[i][k] for k ∈ 0..4
+            //                               (output → PI)
             //
-            // Supersedes the Phase 4a / Phase 4b-step0 narrow Nf block
-            // on narrow-w=8 rows 4..(4+n_spends-1) which consumed low-
-            // u64 proxies via `first_u64_proxy(&s.{nk,leaf})`. Narrow
-            // rows 4+i now host a zero-input permutation padding_p2.
+            // Carry cols are output-proxy-constant-across-rows per the
+            // existing SPEND_PROXY_COLS transition loop, so bank-1 row
+            // 16+i pins them and bank-2 row 20+i reads them — standard
+            // cross-row-via-proxy trick, mirror of step 1.2d/f.
             //
-            // Constraint cost: (TAG + 4 nk + 4 leaf + pos + 6 zeros) =
-            // 16 degree-2 input pins + 4 degree-2 output-PI bindings per
-            // spend. All row-gated by GS_ROW_SEL[16 + i].
+            // Soundness: nf binding goes from 64-bit (narrow-nf u64
+            // proxy) to 256-bit (real 32-byte nk + 32-byte cm absorbed
+            // into the full 16-fe sponge state with domain-separated
+            // tag).
+            let nf_tag_block = uno_nf_v1_tag_block();
+
+            // Bank-1 input pin + bank-1 output → carry cols (row 16+i).
             for i in 0..self.n_spends {
                 let sel: AB::Expr = local_slice[GS_ROW_SEL0 + 16 + i].into();
                 let nk_cols = [
@@ -1726,35 +1759,81 @@ where
                     spend_col::<AB::Var>(local_slice, i, S_LEAF_FE2),
                     spend_col::<AB::Var>(local_slice, i, S_LEAF_FE3),
                 ];
-                let pos = spend_col::<AB::Var>(local_slice, i, S_POS);
-
-                // inputs[0] = TAG_NF
-                builder.assert_zero(
-                    sel.clone()
-                        * (AB::Expr::from(shared_cm.inputs[0])
-                            - AB::Expr::from(AB::F::from_u64(TAG_NF))),
-                );
-                // inputs[1..5] = nk_fes[0..4]
+                // inputs[0..4] = nk_fes
                 for (k, col) in nk_cols.iter().enumerate() {
                     builder.assert_zero(
                         sel.clone()
-                            * (AB::Expr::from(shared_cm.inputs[1 + k]) - (*col).into()),
+                            * (AB::Expr::from(shared_cm.inputs[k]) - (*col).into()),
                     );
                 }
-                // inputs[5..9] = leaf_fes[0..4]
+                // inputs[4..8] = leaf_fes
                 for (k, col) in leaf_cols.iter().enumerate() {
                     builder.assert_zero(
                         sel.clone()
-                            * (AB::Expr::from(shared_cm.inputs[5 + k]) - (*col).into()),
+                            * (AB::Expr::from(shared_cm.inputs[4 + k]) - (*col).into()),
                     );
                 }
-                // inputs[9] = pos
+                // inputs[8..16] = "uno-nf-v1" tag block (constant)
+                for k in 0..8 {
+                    let tag_fe = AB::F::from_u64(nf_tag_block[k].as_canonical_u64());
+                    builder.assert_zero(
+                        sel.clone()
+                            * (AB::Expr::from(shared_cm.inputs[8 + k])
+                                - AB::Expr::from(tag_fe)),
+                    );
+                }
+                // shared_cm_out[0..8] (bank-1 rate) → S_NF_CARRY_RATE
+                for k in 0..8 {
+                    let carry_col = spend_col::<AB::Var>(local_slice, i, S_NF_CARRY_RATE0 + k);
+                    builder.assert_zero(
+                        sel.clone()
+                            * (AB::Expr::from(shared_cm_out[k]) - carry_col.into()),
+                    );
+                }
+                // shared_cm_out[8..16] (bank-1 cap) → S_NF_CARRY_CAP
+                for k in 0..8 {
+                    let carry_col = spend_col::<AB::Var>(local_slice, i, S_NF_CARRY_CAP0 + k);
+                    builder.assert_zero(
+                        sel.clone()
+                            * (AB::Expr::from(shared_cm_out[8 + k]) - carry_col.into()),
+                    );
+                }
+            }
+
+            // Bank-2 input absorb + bank-2 output → PI (row 20+i).
+            for i in 0..self.n_spends {
+                let sel: AB::Expr = local_slice[GS_ROW_SEL0 + 20 + i].into();
+                let pos = spend_col::<AB::Var>(local_slice, i, S_POS);
+                // inputs[0] = carry_rate[0] + pos
+                let carry_rate_0 = spend_col::<AB::Var>(local_slice, i, S_NF_CARRY_RATE0);
                 builder.assert_zero(
-                    sel.clone() * (AB::Expr::from(shared_cm.inputs[9]) - pos.into()),
+                    sel.clone()
+                        * (AB::Expr::from(shared_cm.inputs[0])
+                            - (AB::Expr::from(carry_rate_0) + pos.into())),
                 );
-                // inputs[10..16] = 0 (padding)
-                for k in 10..POSEIDON2_WIDTH_16 {
-                    builder.assert_zero(sel.clone() * AB::Expr::from(shared_cm.inputs[k]));
+                // inputs[1] = carry_rate[1] + 1  (10* padding bit)
+                let carry_rate_1 = spend_col::<AB::Var>(local_slice, i, S_NF_CARRY_RATE0 + 1);
+                builder.assert_zero(
+                    sel.clone()
+                        * (AB::Expr::from(shared_cm.inputs[1])
+                            - (AB::Expr::from(carry_rate_1)
+                                + AB::Expr::from(AB::F::from_u64(1)))),
+                );
+                // inputs[2..8] = carry_rate[2..8]  (rate carry, no absorb)
+                for k in 2..8 {
+                    let carry_col = spend_col::<AB::Var>(local_slice, i, S_NF_CARRY_RATE0 + k);
+                    builder.assert_zero(
+                        sel.clone()
+                            * (AB::Expr::from(shared_cm.inputs[k]) - carry_col.into()),
+                    );
+                }
+                // inputs[8..16] = carry_cap[0..8]  (capacity carry)
+                for k in 0..8 {
+                    let carry_col = spend_col::<AB::Var>(local_slice, i, S_NF_CARRY_CAP0 + k);
+                    builder.assert_zero(
+                        sel.clone()
+                            * (AB::Expr::from(shared_cm.inputs[8 + k]) - carry_col.into()),
+                    );
                 }
                 // Claim 4: bind all 4 limbs of `nf_i` to the PI.
                 for limb in 0..4 {
@@ -2994,22 +3073,61 @@ impl MvpWitness {
 
         }
 
-        // Phase 4b-step3-step2b-AIR: wide-nf Poseidon2-16 witness per
-        // spend. Input layout: (TAG_NF, nk_fes[0..4], leaf_fes[0..4],
-        // pos, 0*6). Bank lives on shared_cm row 16+i; output state[0..4]
-        // is AIR-bound to `PI[pi_nf(i) + 0..4]`. Matches the C++
-        // validator's `derive_nullifier(nk, cm, pos)` byte-for-byte via
-        // the `poseidon2_nf_full_wide` helper.
-        let mut row0_spend_nf_wide: Vec<Vec<Goldilocks>> = Vec::with_capacity(n_s);
+        // Phase 4b-step3-step2b-AIR-v2: nf iterated-sponge witness per
+        // spend. Bank-1 lives on shared_cm row 16+i, bank-2 on row
+        // 20+i. Mirror of the cm sponge (step 1.2a) with 9-fe input
+        // instead of 15-fe:
+        //
+        //   Bank 1: state[0..8]  = (nk_fes[0..4], cm_fes[0..4])
+        //           state[8..16] = pack_tag_block("uno-nf-v1")
+        //   Bank 2: state[0]     = bank1_out[0] + pos
+        //           state[1]     = bank1_out[1] + 1 (10* padding)
+        //           state[2..8]  = bank1_out[2..8]
+        //           state[8..16] = bank1_out[8..16]
+        //
+        // Output bank2[0..4] → PI[pi_nf(i) + 0..4]. Byte-identical to
+        // `uno/crypto/poseidon2.cpp::derive_nullifier` and the codec-
+        // parity helper `hash_tagged(b"uno-nf-v1", 9 fes)`.
+        //
+        // Bank-1 output rate + capacity captured for the per-spend
+        // `S_NF_CARRY_{CAP,RATE}[0..8]` proxy cols; AIR constraints
+        // then bind bank-2 inputs to those carried values + 10*
+        // padding + pos absorb.
+        let nf_tag_block = uno_nf_v1_tag_block();
+        let mut spend_nf_bank1: Vec<Vec<Goldilocks>> = Vec::with_capacity(n_s);
+        let mut spend_nf_bank2: Vec<Vec<Goldilocks>> = Vec::with_capacity(n_s);
+        let mut spend_nf_out_cap: Vec<[Goldilocks; 8]> = Vec::with_capacity(n_s);
+        let mut spend_nf_out_rate: Vec<[Goldilocks; 8]> = Vec::with_capacity(n_s);
         for s in &self.spends {
             let nk_fes = pack_32b_as_4fe(&s.nk);
             let leaf_fes = pack_32b_as_4fe(&s.leaf);
-            let mut nf_in = [Goldilocks::ZERO; POSEIDON2_WIDTH_16];
-            nf_in[0] = Goldilocks::from_u64(TAG_NF);
-            nf_in[1..5].copy_from_slice(&nk_fes);
-            nf_in[5..9].copy_from_slice(&leaf_fes);
-            nf_in[9] = Goldilocks::from_u64(reduce_to_goldilocks(s.pos));
-            row0_spend_nf_wide.push(gen_p2_row_16(nf_in));
+            // Bank 1 input: (nk_fes, leaf_fes) into rate slots; tag
+            // block into capacity slots.
+            let mut bank1_in = [Goldilocks::ZERO; POSEIDON2_WIDTH_16];
+            bank1_in[0..4].copy_from_slice(&nk_fes);
+            bank1_in[4..8].copy_from_slice(&leaf_fes);
+            bank1_in[8..16].copy_from_slice(&nf_tag_block);
+            spend_nf_bank1.push(gen_p2_row_16(bank1_in));
+
+            // Bank-1 post-permutation state (off-circuit; matches what
+            // the Poseidon2-w=16 sub-AIR emits on row 16+i).
+            let mut state_after_perm1 = bank1_in;
+            perm16.permute_mut(&mut state_after_perm1);
+
+            let mut out_cap = [Goldilocks::ZERO; 8];
+            out_cap.copy_from_slice(&state_after_perm1[8..16]);
+            spend_nf_out_cap.push(out_cap);
+            let mut out_rate = [Goldilocks::ZERO; 8];
+            out_rate.copy_from_slice(&state_after_perm1[0..8]);
+            spend_nf_out_rate.push(out_rate);
+
+            // Bank 2 input: absorb pos at slot 0, ONE padding at slot 1,
+            // rest of rate carried from bank1, capacity carried from
+            // bank1.
+            let mut bank2_in = state_after_perm1;
+            bank2_in[0] = bank2_in[0] + Goldilocks::from_u64(reduce_to_goldilocks(s.pos));
+            bank2_in[1] = bank2_in[1] + Goldilocks::ONE;
+            spend_nf_bank2.push(gen_p2_row_16(bank2_in));
         }
 
         let mut row0_out_cm = Vec::with_capacity(n_o);
@@ -3116,7 +3234,8 @@ impl MvpWitness {
         let spend_proxies: Vec<Vec<Goldilocks>> = self
             .spends
             .iter()
-            .map(|s| {
+            .enumerate()
+            .map(|(i, s)| {
                 let d_word = u64::from_le_bytes(s.d);
                 let d_f = Goldilocks::from_u64(reduce_to_goldilocks(d_word));
                 let ivkcm_fe = poseidon2_ivk_commitment(&perm, first_u64_proxy(&s.ivk), d_word);
@@ -3195,6 +3314,23 @@ impl MvpWitness {
                 // S_LEAF_LIMB0..15: 4 fes × 4 u16 (LE, low→high).
                 for k in 0..4 {
                     push_u16_limbs(&mut v, leaf_fes[k]);
+                }
+                // Phase 4b-step3-step2b-AIR-v2: S_NF_CARRY_CAP[0..8] —
+                // bank-1 Poseidon2-w=16 output capacity slots. AIR
+                // constraint on row 16+i pins these to bank-1.post[8+k];
+                // row 20+i pins bank-2.inputs[8+k] to them. Carries the
+                // capacity across the 4-row gap between bank-1 (row
+                // 16+i) and bank-2 (row 20+i).
+                for fe in spend_nf_out_cap[i].iter() {
+                    v.push(*fe);
+                }
+                // Phase 4b-step3-step2b-AIR-v2: S_NF_CARRY_RATE[0..8] —
+                // bank-1 post-permutation rate slots, carried so bank-2
+                // inputs[0..8] can be constrained as
+                //   bank-2.inputs[k] = carry_rate[k] + absorb_term_k
+                // where absorb_term is (pos, ONE, 0*6).
+                for fe in spend_nf_out_rate[i].iter() {
+                    v.push(*fe);
                 }
                 debug_assert_eq!(v.len(), SPEND_PROXY_COLS);
                 v
@@ -3359,7 +3495,8 @@ impl MvpWitness {
             //   row 4+j (j ∈ 0..n_o): output j's claim-6 witness
             //   row 8+j (j ∈ 0..n_o): output j's sponge perm-1 (step 1.2a)
             //   row 12+j (j ∈ 0..n_o): output j's sponge perm-2 (step 1.2a)
-            //   row 16+i (i ∈ 0..n_s): spend i's wide-nf witness (step 2b-AIR)
+            //   row 16+i (i ∈ 0..n_s): spend i's nf sponge bank-1 (step 2b-AIR-v2)
+            //   row 20+i (i ∈ 0..n_s): spend i's nf sponge bank-2 (step 2b-AIR-v2)
             //   else: zero-input permutation
             if row_idx < n_s {
                 values.extend_from_slice(&row0_spend_cm[row_idx]);
@@ -3370,7 +3507,9 @@ impl MvpWitness {
             } else if (12..12 + n_o).contains(&row_idx) {
                 values.extend_from_slice(&sponge_bank2_cm[row_idx - 12]);
             } else if (16..16 + n_s).contains(&row_idx) {
-                values.extend_from_slice(&row0_spend_nf_wide[row_idx - 16]);
+                values.extend_from_slice(&spend_nf_bank1[row_idx - 16]);
+            } else if (20..20 + n_s).contains(&row_idx) {
+                values.extend_from_slice(&spend_nf_bank2[row_idx - 20]);
             } else {
                 values.extend_from_slice(&padding_p2_16);
             }
@@ -3484,6 +3623,42 @@ pub(crate) fn first_u64_proxy(bytes: &[u8; 32]) -> u64 {
 //                    permute.
 //
 //   Output:          state[0..4]  (4 fe = 32 B after LE-u64 packing)
+
+/// Phase 4b-step3-step2b-AIR-v2: generic tag-block packer — mirror
+/// of `tosctl/uno/src/poseidon2.rs::pack_tag_block` and
+/// `uno/crypto/poseidon2.cpp::pack_domain_tag`. Packs the UTF-8
+/// bytes of a ≤ 64-byte domain tag into 8 Goldilocks field elements
+/// via 8-byte LE chunks + zero-pad in the trailing slot. Used to
+/// materialize the capacity slots of the width-16 iterated sponge
+/// for any tagged Uno derivation ("uno-cm-v1", "uno-nf-v1",
+/// "uno-ivk-cm-v1", etc).
+#[inline]
+pub fn pack_tag_block(tag: &[u8]) -> [Goldilocks; 8] {
+    let mut out = [Goldilocks::ZERO; 8];
+    let n = tag.len().min(64);
+    let full = (n / 8).min(8);
+    for i in 0..full {
+        let mut limb = [0u8; 8];
+        limb.copy_from_slice(&tag[i * 8..(i + 1) * 8]);
+        out[i] = Goldilocks::from_u64(u64::from_le_bytes(limb));
+    }
+    let rem = n - full * 8;
+    if rem > 0 && full < 8 {
+        let mut buf = [0u8; 8];
+        buf[..rem].copy_from_slice(&tag[full * 8..full * 8 + rem]);
+        out[full] = Goldilocks::from_u64(u64::from_le_bytes(buf));
+    }
+    out
+}
+
+/// Phase 4b-step3-step2b-AIR-v2: tag block for "uno-nf-v1" used by
+/// the 9-fe iterated-sponge nullifier derivation. Shape matches
+/// `uno_cm_v1_tag_block` exactly (9-byte tag: first fe = 8 bytes
+/// of "uno-nf-v", second fe = "1" + 7 zero-pad, rest zero).
+#[inline]
+pub fn uno_nf_v1_tag_block() -> [Goldilocks; 8] {
+    pack_tag_block(b"uno-nf-v1")
+}
 
 /// Domain tag "uno-cm-v1" packed as 8 Goldilocks field elements in
 /// the convention tosctl / C++ use for the capacity slots of the
@@ -3822,27 +3997,36 @@ fn poseidon2_cm_fe(
     state[0]
 }
 
-/// Phase 4b-step3-step2b-AIR: full-width nullifier computation over real
-/// 4-fe `nk` + real 4-fe `cm` + `pos`. Layout (Poseidon2-w=16 single
-/// perm):
+/// Phase 4b-step3-step2b-AIR-v2: nullifier computation via the 9-fe
+/// iterated Poseidon2-w=16 sponge with "uno-nf-v1" tag block —
+/// byte-identical to `uno/crypto/poseidon2.cpp::derive_nullifier` and
+/// the codec-parity test helper `hash_tagged(b"uno-nf-v1", 9 fes)`.
 ///
-///   state[0]     = TAG_NF
-///   state[1..5]  = pack_32b_as_4fe(&nk_bytes)
-///   state[5..9]  = pack_32b_as_4fe(&cm_bytes)
-///   state[9]     = pos (mod p)
-///   state[10..16]= 0 (padding)
+/// Layout:
+///   tag_block = pack_tag_block("uno-nf-v1")   — 8 fes, constant
+///   fes[0..8] = (nk_fes[0..4], cm_fes[0..4])  — 8 fes (rate-8 absorb)
+///   fes[8]    = pos                           — final fe
 ///
-/// Returns `[state[0..4] after permutation]` — the 4-fe nf digest that
-/// goes to `PI[pi_nf(i) + 0..4]`. Superseded the pre-step-2b single-
-/// u64-proxy `poseidon2_nf_full` (retained below for reference; its
-/// caller sites were all migrated to this helper).
+///   Bank 1:
+///     state[0..8]   = fes[0..8]
+///     state[8..16]  = tag_block              (capacity)
+///     permute → bank1_out
 ///
-/// Soundness: binding goes from ~64-bit (low 8 B of nk + low 8 B of
-/// leaf + pos, all reduced to single Goldilocks fes) to 256-bit (full
-/// 32-byte nk + 32-byte cm). Matches the protocol-layer definition of
-/// `nf = Poseidon2("uno-nf-v1", real_nk, real_cm, pos)` in
-/// `uno/core/poseidon2.cpp::derive_nullifier`.
-fn poseidon2_nf_full_wide(
+///   Bank 2:
+///     state[0]      = bank1_out[0] + pos     (fes[8] absorb)
+///     state[1]      = bank1_out[1] + 1       (10* padding)
+///     state[2..8]   = bank1_out[2..8]        (rate carry, no absorb)
+///     state[8..16]  = bank1_out[8..16]       (capacity carry)
+///     permute → bank2_out
+///
+///   Return bank2_out[0..4] — the 4-fe nf digest → PI[pi_nf(i) + 0..4].
+///
+/// Supersedes the Phase 4b-step3-step2b-AIR-v1 single-perm attempt
+/// (commits b92a6bdbb + 0e23eef30) which pinned `state[0] = TAG_NF`
+/// (a u64 constant) and bypassed the proper tag-block capacity
+/// mechanism — not spec-compliant against C++
+/// `build_plonky3_public_inputs` / `derive_nullifier`.
+pub fn poseidon2_nf_full_wide(
     perm: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH_16]>,
     nk_bytes: &[u8; 32],
     cm_bytes: &[u8; 32],
@@ -3850,15 +4034,40 @@ fn poseidon2_nf_full_wide(
 ) -> [Goldilocks; 4] {
     let nk_fes = pack_32b_as_4fe(nk_bytes);
     let cm_fes = pack_32b_as_4fe(cm_bytes);
+    let tag_block = uno_nf_v1_tag_block();
+    // Bank 1: rate absorb of 8 fes, tag pinned at capacity.
     let mut state = [Goldilocks::ZERO; POSEIDON2_WIDTH_16];
-    state[0] = Goldilocks::from_u64(TAG_NF);
-    state[1..5].copy_from_slice(&nk_fes);
-    state[5..9].copy_from_slice(&cm_fes);
-    state[9] = Goldilocks::from_u64(reduce_to_goldilocks(pos));
+    state[0..4].copy_from_slice(&nk_fes);
+    state[4..8].copy_from_slice(&cm_fes);
+    state[8..16].copy_from_slice(&tag_block);
+    perm.permute_mut(&mut state);
+    // Bank 2: partial absorb of the 1 remaining fe + 10* padding.
+    state[0] = state[0] + Goldilocks::from_u64(reduce_to_goldilocks(pos));
+    state[1] = state[1] + Goldilocks::ONE;
     perm.permute_mut(&mut state);
     [state[0], state[1], state[2], state[3]]
 }
 
+/// Phase 4b-step3-step2b-AIR-v2: cross-crate byte-parity wrapper around
+/// `poseidon2_nf_full_wide`. Constructs its own default
+/// `Poseidon2Goldilocks<16>` (so callers don't need the vendored
+/// `p3-goldilocks`) and packs the 4-fe digest into 32 LE bytes per
+/// Goldilocks limb. Designed for `tosctl/uno` integration tests that
+/// cannot directly reference the vendored-path `Goldilocks` type.
+pub fn poseidon2_nf_full_wide_bytes(
+    nk_bytes: &[u8; 32],
+    cm_bytes: &[u8; 32],
+    pos: u64,
+) -> [u8; 32] {
+    let perm16 = default_goldilocks_poseidon2_16();
+    let fes = poseidon2_nf_full_wide(&perm16, nk_bytes, cm_bytes, pos);
+    let mut out = [0u8; 32];
+    for i in 0..4 {
+        out[i * 8..(i + 1) * 8]
+            .copy_from_slice(&fes[i].as_canonical_u64().to_le_bytes());
+    }
+    out
+}
 
 // ---------------------------------------------------------------------------
 // Pre-check helpers (prover-side)

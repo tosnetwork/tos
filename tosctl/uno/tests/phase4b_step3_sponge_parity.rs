@@ -29,7 +29,7 @@
 
 use tosctl_uno::poseidon2::{bytes_to_fes_wrapped, hash_tagged};
 use uno_plonky3_ffi::transfer_air::{
-    poseidon2_cm_full_sponge_bytes, uno_cm_v1_tag_block_bytes,
+    poseidon2_cm_full_sponge_bytes, poseidon2_nf_full_wide_bytes, uno_cm_v1_tag_block_bytes,
 };
 
 // ---------------------------------------------------------------------------
@@ -172,5 +172,72 @@ fn uno_cm_v1_tag_block_matches_tosctl_pack() {
         got_bytes, want_bytes,
         "uno_cm_v1_tag_block must match the tosctl pack_tag_block \
          byte layout"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4b-step3-step2b-AIR-v2: nf iterated-sponge cross-crate parity
+// ---------------------------------------------------------------------------
+
+/// Cross-crate byte-parity check: `poseidon2_nf_full_wide_bytes` (Rust
+/// AIR helper) must equal `hash_tagged(b"uno-nf-v1", 9 fes)` (tosctl
+/// sponge, byte-identical to C++ `derive_nullifier`). This is the
+/// consensus-critical assertion that the Rust prover's nf derivation
+/// agrees with what the C++ validator would recompute.
+#[test]
+fn rust_air_nf_matches_tosctl_hash_tagged_byte_for_byte() {
+    let nk = [0x42u8; 32];
+    let cm = [0xABu8; 32];
+    let pos: u64 = 0x1234_5678_9ABC_DEF0;
+
+    // Path 1: Rust AIR helper.
+    let air_bytes = poseidon2_nf_full_wide_bytes(&nk, &cm, pos);
+
+    // Path 2: tosctl hash_tagged on 9-fe input (via bytes).
+    let mut buf = Vec::with_capacity(72);
+    buf.extend_from_slice(&nk);
+    buf.extend_from_slice(&cm);
+    buf.extend_from_slice(&pos.to_le_bytes());
+    assert_eq!(buf.len(), 72, "9 fes × 8 B = 72 B");
+    let fes = bytes_to_fes_wrapped(&buf);
+    assert_eq!(fes.len(), 9);
+    let tosctl_bytes = hash_tagged(b"uno-nf-v1", &fes);
+
+    assert_eq!(
+        air_bytes, tosctl_bytes,
+        "Rust AIR poseidon2_nf_full_wide_bytes must match tosctl \
+         hash_tagged byte-for-byte for the same 9-fe input with \
+         'uno-nf-v1' tag.\n\
+         air    = {:02x?}\n\
+         tosctl = {:02x?}",
+        air_bytes, tosctl_bytes,
+    );
+}
+
+/// All-zero inputs — guards against tag-block capacity regression.
+#[test]
+fn rust_air_nf_matches_tosctl_all_zero_inputs() {
+    let nk = [0u8; 32];
+    let cm = [0u8; 32];
+    let pos: u64 = 0;
+
+    let air_bytes = poseidon2_nf_full_wide_bytes(&nk, &cm, pos);
+
+    let mut buf = [0u8; 72];
+    let fes = bytes_to_fes_wrapped(&buf);
+    buf[0] = 0; // no-op, just silence "unused mut"
+    let _ = buf;
+    let tosctl_bytes = hash_tagged(b"uno-nf-v1", &fes);
+
+    assert_eq!(
+        air_bytes, tosctl_bytes,
+        "nf sponge parity must hold on all-zero inputs (tag-block \
+         capacity pinning is the only source of non-zero state)",
+    );
+    assert!(
+        air_bytes.iter().any(|b| *b != 0),
+        "all-zero nf digest indicates tag-block is not being loaded \
+         into the sponge capacity (bug in uno_nf_v1_tag_block or its \
+         state[8..16] placement)",
     );
 }
