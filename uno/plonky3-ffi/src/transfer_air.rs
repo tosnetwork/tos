@@ -305,9 +305,16 @@ pub const RK_EPK_LIMBS: usize = 4;
 /// VALUE_LIMBS_U16 u16-limb columns for the u64 range-check on `value_i`
 /// (§4.2 claim 5), and RK_EPK_LIMBS columns holding the 4-limb
 /// decomposition of the spend's `rk_bytes` for the PI binding added in
-/// Phase 4a.
+/// Phase 4a. Phase 4b-step3-step2b-decomp adds 38 additional cols per
+/// spend (6 single-fe cols — upper 3 fes each of nk and leaf — plus 32
+/// u16 limb cols — 4 fes × 4 u16 each for nk and leaf) that decompose
+/// the 32-byte `nk` and `leaf` witness fields into their canonical
+/// 4-fe × 4×u16 LE form. Each u16 limb is range-checked via the cross-
+/// AIR `u16_range` LogUp; each fe-limb col is AIR-bound to
+/// `Σ_k limb_k · 2^{16k}`. Mirror of the output-side step 1.3-fields
+/// block (`O_D_LIMB0`..`O_RCM_LIMB0`).
 pub const SPEND_PROXY_COLS: usize =
-    9 + MERKLE_DEPTH + MERKLE_DEPTH + VALUE_LIMBS_U16 + RK_EPK_LIMBS;
+    9 + MERKLE_DEPTH + MERKLE_DEPTH + VALUE_LIMBS_U16 + RK_EPK_LIMBS + 38;
 
 /// Per-output proxy columns: cm_claim (Poseidon2-w=16 output, trace-
 /// only after Phase 4b-step2a), d, pk_d, ivk_commitment, value, rcm (6
@@ -372,6 +379,45 @@ const S_SIBLING0: usize = S_PATH_BIT0 + MERKLE_DEPTH;
 const S_VALUE_LIMB0: usize = S_SIBLING0 + MERKLE_DEPTH;
 /// Base index of the 4 u64-limb columns holding `rk_bytes` (Phase 4a).
 const S_RK_LIMB0: usize = S_VALUE_LIMB0 + VALUE_LIMBS_U16;
+
+/// Phase 4b-step3-step2b-decomp: upper-fe-limb proxy columns holding
+/// the 3 high Goldilocks field elements of `nk` (the low fe is the
+/// existing `S_NK` col == `first_u64_proxy(&s.nk)`). Together these
+/// 4 cols (S_NK, S_NK_FE1..3) hold `pack_32b_as_4fe(&s.nk)` — the
+/// canonical 4-fe decomposition of the 32-byte witness `nk` field.
+///
+/// Populated trace-side from `pack_32b_as_4fe(&s.nk)[1..4]`; AIR-bound
+/// by the new u16-limb decomposition block (step2b-decomp) to
+/// `Σ_k S_NK_LIMB{fe·4+k} · 2^{16k}` for each fe. Consumed by
+/// step 2b-AIR (nf Poseidon2 with real 4-fe inputs) — this commit
+/// only adds the cols + decomposition constraints + LogUp receives;
+/// the nf sponge absorb layout is unchanged (still uses `S_NK` as a
+/// single u64 proxy).
+const S_NK_FE1: usize = S_RK_LIMB0 + RK_EPK_LIMBS;
+const S_NK_FE2: usize = S_NK_FE1 + 1;
+const S_NK_FE3: usize = S_NK_FE2 + 1;
+/// Phase 4b-step3-step2b-decomp: upper-fe-limb proxy columns for
+/// `leaf` — same shape as `S_NK_FE{1..3}`. Low fe is the existing
+/// `S_LEAF` col == `first_u64_proxy(&s.leaf)`.
+const S_LEAF_FE1: usize = S_NK_FE3 + 1;
+const S_LEAF_FE2: usize = S_LEAF_FE1 + 1;
+const S_LEAF_FE3: usize = S_LEAF_FE2 + 1;
+/// Phase 4b-step3-step2b-decomp: base index of the 16 u16 limb
+/// columns decomposing the 4 fe-limbs of `nk` into their canonical
+/// u64 → 4×u16 LE form (4 fes × 4 u16 = 16 cols). Mirrors
+/// `O_RCM_LIMB0`/etc on the output side (step 1.3-fields).
+///
+/// Each fe-limb col `(S_NK, S_NK_FE1..3)` is AIR-bound to
+/// `Σ_k limb_k · 2^{16k}` over its 4-col limb block, and each limb
+/// col is range-checked via the cross-AIR `u16_range` LogUp. Together
+/// these prove each `nk` fe-limb is the canonical u64 of the
+/// corresponding 8-byte LE chunk of `s.nk` — what
+/// `pack_32b_as_4fe(&s.nk)` emits off-circuit.
+const S_NK_LIMB0: usize = S_LEAF_FE3 + 1;
+/// Phase 4b-step3-step2b-decomp: base index of the 16 u16 limb
+/// columns decomposing the 4 fe-limbs of `leaf` — same shape as
+/// `S_NK_LIMB0`.
+const S_LEAF_LIMB0: usize = S_NK_LIMB0 + 16;
 
 // ---- Per-output column indices (within an output proxy block) ----
 const O_CM_CLAIM: usize = 0;
@@ -775,11 +821,12 @@ impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for MvpTransferAir {
 /// `Direction::Receive` input lists hold all u16 limb columns from
 /// the per-spend and per-output proxy blocks:
 ///
-///   Phase 3b-step2 value cols:   4·(n_spends + n_outputs)
-///   Phase 4b-step3-step1.3 fe-limb cols: 56·n_outputs
+///   Phase 3b-step2 value cols:            4·(n_spends + n_outputs)
+///   Phase 4b-step3-step1.3 output fe-limb:        56·n_outputs
+///   Phase 4b-step3-step2b-decomp spend fe-limb:   32·n_spends
 ///
-/// Total receives per row: 4·n_spends + (4 + 56)·n_outputs =
-///   4·n_spends + 60·n_outputs. All at multiplicity 1.
+/// Total receives per row: 36·n_spends + 60·n_outputs.
+/// All at multiplicity 1.
 ///
 /// The matching `Direction::Send` side lives in `range16_air` under the
 /// identical interaction name
@@ -836,7 +883,7 @@ impl<F: p3_field::Field> p3_lookup::LookupAir<F> for MvpTransferAir {
             p3_air::BaseLeaf::Constant(F::ONE),
         );
         let mut lookups: Vec<p3_lookup::lookup_traits::Lookup<F>> =
-            Vec::with_capacity(4 * self.n_spends + 60 * self.n_outputs);
+            Vec::with_capacity(36 * self.n_spends + 60 * self.n_outputs);
 
         let name = || {
             p3_lookup::lookup_traits::Kind::Global(String::from(
@@ -888,6 +935,26 @@ impl<F: p3_field::Field> p3_lookup::LookupAir<F> for MvpTransferAir {
                 };
                 for k in 0..(n_fe_limbs * 4) {
                     let col = base + limb_base + k;
+                    let limb = main_local[col];
+                    let inputs = vec![(
+                        vec![limb.into()],
+                        one.clone(),
+                        p3_lookup::lookup_traits::Direction::Receive,
+                    )];
+                    lookups
+                        .push(p3_lookup::LookupAir::register_lookup(self, name(), &inputs));
+                }
+            }
+        }
+        // Phase 4b-step3-step2b-decomp: register `u16_range` receives
+        // for the 32 new fe-limb u16 cols per spend (2 fields × 4 fe-
+        // limbs × 4 u16 limbs = 32). Mirror of the output-side block
+        // above for the `nk` / `leaf` spend witness fields.
+        for i in 0..self.n_spends {
+            let base = spend_proxy_offset(i);
+            for limb_base in &[S_NK_LIMB0, S_LEAF_LIMB0] {
+                for k in 0..16 {
+                    let col = base + *limb_base + k;
                     let limb = main_local[col];
                     let inputs = vec![(
                         vec![limb.into()],
@@ -1680,6 +1747,62 @@ where
                             j,
                             *limb_base_offset + k,
                         );
+                        let weight = AB::F::from_u64(1u64 << (16 * k));
+                        recon = recon + AB::Expr::from(weight) * limb.into();
+                    }
+                    builder.assert_zero(fe_col.into() - recon);
+                }
+            }
+        }
+
+        // ---- Phase 4b-step3-step2b-decomp: spend fe-limb u16 decomp ----
+        //
+        // Spend-side mirror of the output-side step 1.3-fields block
+        // above. For each of the 8 spend fe-limb proxy cols
+        // (nk_fes[0..4], leaf_fes[0..4]), constrain that the fe-limb
+        // col equals the u64 reconstruction of its 4 new u16 sub-limb
+        // cols:
+        //
+        //   fe_limb == Σ_{k=0..3} limb_k · 2^{16k}
+        //
+        // Combined with the cross-AIR `u16_range` LogUp that bounds
+        // each `limb_k` to `0..=0xffff`, this proves each spend fe-limb
+        // is the canonical u64 of the corresponding 8-byte LE chunk of
+        // the 32-byte `s.nk` / `s.leaf` witness field — exactly what
+        // `pack_32b_as_4fe(...)` emits off-circuit.
+        //
+        // Unblocks step 2b-AIR (nf Poseidon2 with real 4-fe inputs):
+        // that step will pin the nf sponge absorb layout to these
+        // newly-ratified fe-limb cols, so the prover can no longer
+        // pick non-canonical Goldilocks values for the nf input rate
+        // slots. This commit adds only the cols + decomposition +
+        // LogUp receives; the nf sponge still uses `S_NK` / `S_LEAF`
+        // as single-u64 proxies until step 2b-AIR lands.
+        //
+        // Not row-gated — both fe-limb and limb cols live in the
+        // proxy block (constant-across-rows per §4.2).
+        {
+            // (fe_col_offset, limb_base_offset) pairs for the 8 spend
+            // fe-limbs that need decomposition.
+            let fe_limb_pairs: [(usize, usize); 8] = [
+                // nk_fes[0..4] → S_NK_LIMB0..S_NK_LIMB0+16
+                (S_NK,         S_NK_LIMB0),
+                (S_NK_FE1,     S_NK_LIMB0 + 4),
+                (S_NK_FE2,     S_NK_LIMB0 + 8),
+                (S_NK_FE3,     S_NK_LIMB0 + 12),
+                // leaf_fes[0..4] → S_LEAF_LIMB0..S_LEAF_LIMB0+16
+                (S_LEAF,       S_LEAF_LIMB0),
+                (S_LEAF_FE1,   S_LEAF_LIMB0 + 4),
+                (S_LEAF_FE2,   S_LEAF_LIMB0 + 8),
+                (S_LEAF_FE3,   S_LEAF_LIMB0 + 12),
+            ];
+            for i in 0..self.n_spends {
+                for (fe_col_offset, limb_base_offset) in &fe_limb_pairs {
+                    let fe_col: AB::Var = spend_col(local_slice, i, *fe_col_offset);
+                    let mut recon: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
+                    for k in 0..4 {
+                        let limb: AB::Var =
+                            spend_col(local_slice, i, *limb_base_offset + k);
                         let weight = AB::F::from_u64(1u64 << (16 * k));
                         recon = recon + AB::Expr::from(weight) * limb.into();
                     }
@@ -2846,6 +2969,40 @@ impl MvpWitness {
                     );
                     v.push(Goldilocks::from_u64(reduce_to_goldilocks(limb)));
                 }
+                // Phase 4b-step3-step2b-decomp: 6 upper-fe proxy cols
+                // (3 each for nk + leaf) + 32 u16 limb cols (4 fes ×
+                // 4 u16 × 2 fields). Spend-side mirror of the output-
+                // side step 1.3-fields block. Low fes (`S_NK`, `S_LEAF`)
+                // are already pushed above at `S_NK` / `S_LEAF`
+                // positions; only the upper 3 fes per field are pushed
+                // here. The u16 limb blocks decompose ALL 4 fes per
+                // field (so the AIR can bind the existing low-fe proxy
+                // col to its limbs too).
+                let nk_fes = pack_32b_as_4fe(&s.nk);
+                let leaf_fes = pack_32b_as_4fe(&s.leaf);
+                // S_NK_FE1..3 (upper 3 fes of nk).
+                v.push(nk_fes[1]);
+                v.push(nk_fes[2]);
+                v.push(nk_fes[3]);
+                // S_LEAF_FE1..3 (upper 3 fes of leaf).
+                v.push(leaf_fes[1]);
+                v.push(leaf_fes[2]);
+                v.push(leaf_fes[3]);
+                // S_NK_LIMB0..15: 4 fes × 4 u16 (LE, low→high).
+                let push_u16_limbs = |v: &mut Vec<Goldilocks>, fe: Goldilocks| {
+                    let u = fe.as_canonical_u64();
+                    for k in 0..4 {
+                        let limb = (u >> (16 * k)) & 0xffff;
+                        v.push(Goldilocks::from_u64(limb));
+                    }
+                };
+                for k in 0..4 {
+                    push_u16_limbs(&mut v, nk_fes[k]);
+                }
+                // S_LEAF_LIMB0..15: 4 fes × 4 u16 (LE, low→high).
+                for k in 0..4 {
+                    push_u16_limbs(&mut v, leaf_fes[k]);
+                }
                 debug_assert_eq!(v.len(), SPEND_PROXY_COLS);
                 v
             })
@@ -3713,10 +3870,12 @@ mod tests {
             let mut air = MvpTransferAir::new(n_s, n_o);
             let lookups: Vec<Lookup<Goldilocks>> = LookupAir::<Goldilocks>::get_lookups(&mut air);
 
-            // Phase 4b-step3-step1.3-fields: 4·(n_s + n_o) value-limb
-            // receives + 56·n_o fe-limb receives (14 fe-limbs × 4 u16
-            // limbs per output: d×2 + pk_d×4 + ivk_cm×4 + rcm×4).
-            let expected_count = 4 * (n_s + n_o) + 56 * n_o;
+            // Phase 4b-step3-step2b-decomp: 4·(n_s + n_o) value-limb
+            // receives + 56·n_o output fe-limb receives (14 fe-limbs ×
+            // 4 u16 limbs per output: d×2 + pk_d×4 + ivk_cm×4 + rcm×4)
+            // + 32·n_s spend fe-limb receives (8 fe-limbs × 4 u16 limbs
+            // per spend: nk×4 + leaf×4).
+            let expected_count = 4 * (n_s + n_o) + 56 * n_o + 32 * n_s;
             assert_eq!(
                 lookups.len(),
                 expected_count,

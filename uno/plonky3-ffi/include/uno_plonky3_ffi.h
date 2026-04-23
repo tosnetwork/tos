@@ -578,8 +578,15 @@
 // VALUE_LIMBS_U16 u16-limb columns for the u64 range-check on `value_i`
 // (§4.2 claim 5), and RK_EPK_LIMBS columns holding the 4-limb
 // decomposition of the spend's `rk_bytes` for the PI binding added in
-// Phase 4a.
-#define SPEND_PROXY_COLS ((((9 + MERKLE_DEPTH) + MERKLE_DEPTH) + VALUE_LIMBS_U16) + RK_EPK_LIMBS)
+// Phase 4a. Phase 4b-step3-step2b-decomp adds 38 additional cols per
+// spend (6 single-fe cols — upper 3 fes each of nk and leaf — plus 32
+// u16 limb cols — 4 fes × 4 u16 each for nk and leaf) that decompose
+// the 32-byte `nk` and `leaf` witness fields into their canonical
+// 4-fe × 4×u16 LE form. Each u16 limb is range-checked via the cross-
+// AIR `u16_range` LogUp; each fe-limb col is AIR-bound to
+// `Σ_k limb_k · 2^{16k}`. Mirror of the output-side step 1.3-fields
+// block (`O_D_LIMB0`..`O_RCM_LIMB0`).
+#define SPEND_PROXY_COLS (((((9 + MERKLE_DEPTH) + MERKLE_DEPTH) + VALUE_LIMBS_U16) + RK_EPK_LIMBS) + 38)
 
 // Per-output proxy columns: cm_claim (Poseidon2-w=16 output, trace-
 // only after Phase 4b-step2a), d, pk_d, ivk_commitment, value, rcm (6

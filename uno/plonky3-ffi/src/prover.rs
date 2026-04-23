@@ -345,11 +345,15 @@ impl<F: Field> LookupAir<F> for MvpAirUnion {
 ///     cols — each fe-limb is the canonical u64 of an 8-byte LE
 ///     chunk of the corresponding 32-byte witness field, split
 ///     into 4 × u16 LE.
+///   * Phase 4b-step3-step2b-decomp: 32 u16 limbs per spend
+///     (8 fe-limbs × 4 u16) for the nk/leaf fe-limb cols — same
+///     extraction shape as the output fe-limb block above,
+///     applied to `s.nk` and `s.leaf`.
 fn collect_u16_reads_for_range16(w: &MvpWitness) -> Vec<u16> {
     use crate::transfer_air::reduce_to_goldilocks;
 
     let (n_s, n_o) = w.shape();
-    let per_row = VALUE_LIMBS_U16 * (n_s + n_o) + 56 * n_o;
+    let per_row = VALUE_LIMBS_U16 * (n_s + n_o) + 56 * n_o + 32 * n_s;
     let mut reads: Vec<u16> = Vec::with_capacity(per_row * TRACE_HEIGHT);
 
     // Helper: push 4 u16 limbs (LE, low→high) of a canonical u64
@@ -405,6 +409,29 @@ fn collect_u16_reads_for_range16(w: &MvpWitness) -> Vec<u16> {
         for i in 0..4 {
             let u = reduce_to_goldilocks(u64::from_le_bytes(
                 o.rcm[i * 8..(i + 1) * 8].try_into().unwrap(),
+            ));
+            push_u16_limbs(&mut per_row_limbs, u);
+        }
+    }
+    // Phase 4b-step3-step2b-decomp: 32 u16 limbs per spend for the
+    // 8 fe-limb proxy cols (nk×4 + leaf×4). Mirror of the output-side
+    // fe-limb block above — extract each u16 directly from the real
+    // 32-byte `s.nk` / `s.leaf` bytes via 8-byte LE chunks reduced
+    // to Goldilocks canonical form, identical to what trace-gen
+    // pushes into the new `S_{NK,LEAF}_LIMB0..` cols and what
+    // `pack_32b_as_4fe(...)` emits.
+    for s in w.spends.iter() {
+        // nk: 4 fe-limbs
+        for i in 0..4 {
+            let u = reduce_to_goldilocks(u64::from_le_bytes(
+                s.nk[i * 8..(i + 1) * 8].try_into().unwrap(),
+            ));
+            push_u16_limbs(&mut per_row_limbs, u);
+        }
+        // leaf: 4 fe-limbs
+        for i in 0..4 {
+            let u = reduce_to_goldilocks(u64::from_le_bytes(
+                s.leaf[i * 8..(i + 1) * 8].try_into().unwrap(),
             ));
             push_u16_limbs(&mut per_row_limbs, u);
         }
