@@ -2924,14 +2924,11 @@ impl MvpWitness {
         for s in &self.spends {
             let d_word = u64::from_le_bytes(s.d);
             let d_f = Goldilocks::from_u64(reduce_to_goldilocks(d_word));
-            let leaf_f = Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.leaf)));
             // Phase 4b-step3-step0: widened fields → u64 proxy via
             // first_u64_proxy; AIR inputs unchanged.
             let pk_d_f = Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.pk_d)));
             let rcm_f = Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.rcm)));
             let ivk_f = Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.ivk)));
-            let nk_f = Goldilocks::from_u64(reduce_to_goldilocks(first_u64_proxy(&s.nk)));
-            let pos_f = Goldilocks::from_u64(reduce_to_goldilocks(s.pos));
             let value_f = Goldilocks::from_u64(reduce_to_goldilocks(s.value));
             let ivkcm_fe = poseidon2_ivk_commitment(&perm, first_u64_proxy(&s.ivk), d_word);
 
@@ -2995,11 +2992,6 @@ impl MvpWitness {
             cm_in[5] = rcm_f;
             row0_spend_cm.push(gen_p2_row_16(cm_in));
 
-            // Phase 4b-step3-step2b-AIR: narrow-nf trace row is no
-            // longer populated — narrow rows 4+i now write zero-input
-            // padding_p2. The wide-nf witness (below) replaces it on
-            // shared_cm rows 16+i.
-            let _ = (nk_f, leaf_f, pos_f);
         }
 
         // Phase 4b-step3-step2b-AIR: wide-nf Poseidon2-16 witness per
@@ -3867,24 +3859,6 @@ fn poseidon2_nf_full_wide(
     [state[0], state[1], state[2], state[3]]
 }
 
-/// Legacy single-fe proxy nf computation (pre-step-2b-AIR). Retained
-/// only as a comparison reference; no live callers. Step 2b-cleanup
-/// will delete this.
-#[allow(dead_code)]
-fn poseidon2_nf_full(
-    perm: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH]>,
-    nk: u64,
-    cm: u64,
-    pos: u64,
-) -> [Goldilocks; 4] {
-    let mut state = [Goldilocks::ZERO; POSEIDON2_WIDTH];
-    state[0] = Goldilocks::from_u64(TAG_NF);
-    state[1] = Goldilocks::from_u64(reduce_to_goldilocks(nk));
-    state[2] = Goldilocks::from_u64(reduce_to_goldilocks(cm));
-    state[3] = Goldilocks::from_u64(reduce_to_goldilocks(pos));
-    perm.permute_mut(&mut state);
-    [state[0], state[1], state[2], state[3]]
-}
 
 // ---------------------------------------------------------------------------
 // Pre-check helpers (prover-side)
