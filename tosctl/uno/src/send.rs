@@ -844,8 +844,10 @@ impl TransferWitness {
             domain[16..24].copy_from_slice(&(k as u64).to_le_bytes());
             shared_merkle_path[k] = reduce_digest_to_proxy_slice(&domain, anchor);
         }
-        let anchor_proxy =
-            poseidon2_merkle_path_root(&perm, shared_leaf, shared_pos, &shared_merkle_path);
+        // Phase 4b-step3-step4: `anchor_proxy: u64` field retired from
+        // MvpWitness (Rust AIR now binds all 4 anchor limbs via the
+        // 4-fe Merkle walk). tosctl no longer needs to compute a
+        // single-fe anchor — only the 32-byte `anchor_bytes_4fe` below.
 
         // Phase 4b-step3-step3c (2026-04-23): P3SpendWitness widened
         // `merkle_path: [u64; 32]` → `[[u8; 32]; 32]`. The local
@@ -993,7 +995,6 @@ impl TransferWitness {
                 fee,
                 spends: p3_spends,
                 outputs: p3_outputs,
-                anchor_proxy,
                 anchor_bytes: anchor_bytes_4fe,
             },
         })
@@ -1068,40 +1069,6 @@ fn reduce_digest_to_proxy_slice(domain: &[u8], bytes: &[u8]) -> u64 {
 // Inlined here (crate-private in the FFI) so the wallet can compute the
 // witness's `leaf` / `anchor_proxy` fields byte-identically with the
 // prover's pre_check.
-
-/// Single Merkle-level Poseidon2-Goldilocks-8 compression matching the AIR's
-/// claim-1 step (§2.3). Position bit selects ordering: `bit=0` →
-/// `parent = Poseidon2(cur, sib)`, `bit=1` → `parent = Poseidon2(sib, cur)`.
-fn poseidon2_merkle_step(perm: &Poseidon2Goldilocks<8>, left: u64, right: u64) -> Goldilocks {
-    let mut state = [Goldilocks::ZERO; 8];
-    state[0] = Goldilocks::from_u64(reduce_u64_to_gl(left));
-    state[1] = Goldilocks::from_u64(reduce_u64_to_gl(right));
-    perm.permute_mut(&mut state);
-    state[0]
-}
-
-/// Fold a 32-level Merkle path under `pos`'s low→high bit order, matching
-/// the AIR's claim-1 constraint and `poseidon2_merkle_path_root` in the
-/// reference prover. Returns the anchor proxy (u64 canonical).
-fn poseidon2_merkle_path_root(
-    perm: &Poseidon2Goldilocks<8>,
-    leaf: u64,
-    pos: u64,
-    path: &[u64; P3_MERKLE_DEPTH],
-) -> u64 {
-    let mut current = reduce_u64_to_gl(leaf);
-    for k in 0..P3_MERKLE_DEPTH {
-        let bit = (pos >> k) & 1;
-        let sib = reduce_u64_to_gl(path[k]);
-        let (left, right) = if bit == 0 {
-            (current, sib)
-        } else {
-            (sib, current)
-        };
-        current = poseidon2_merkle_step(perm, left, right).as_canonical_u64();
-    }
-    current
-}
 
 /// Phase 4b-step3-step3a: 4-fe Merkle root (bytes wrapper).
 /// Inlined here — the `uno_plonky3_ffi::transfer_air::

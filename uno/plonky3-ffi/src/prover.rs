@@ -914,16 +914,18 @@ mod tests {
         // widening `leaf: u64 → [u8; 32]`. Step 3c bumped PER_SPEND
         // from 472 → 1240 (+768 B/spend = (32-8)·MERKLE_DEPTH) by
         // widening each per-level Merkle sibling from u64 to [u8;32].
-        // Total witness wire at 4/4: 10 + 1240·4 + 202·4 + 53 = 5 831 B.
+        // Phase 4b-step3-step4: anchor_proxy (8 B) retired — AIR binds
+        // all 4 anchor PI limbs via the 4-fe Merkle walk. TAIL: 53 → 45.
+        // Total witness wire at 4/4: 10 + 1240·4 + 202·4 + 45 = 5 823 B.
         let per_spend = 32 + 3 * 8 + 4 * 32 + 32 * MERKLE_DEPTH + 32;
         let per_output = 4 * 32 + 8 + 32 + 32 + 2;
         let head = 10;
-        let tail = 8 + 32 + 1 + 4 + 8;
+        let tail = 32 + 1 + 4 + 8;
         assert_eq!(
             witness_wire.len(),
             head + per_spend * 4 + per_output * 4 + tail
         );
-        assert_eq!(witness_wire.len(), 5_831);
+        assert_eq!(witness_wire.len(), 5_823);
         assert_eq!(pi.len(), 608);
     }
 }

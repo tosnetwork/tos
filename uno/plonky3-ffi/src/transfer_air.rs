@@ -2317,16 +2317,11 @@ pub struct MvpWitness {
     /// Output descriptions (len ∈ [1, 4]).
     pub outputs: Vec<OutputWitness>,
     /// Legacy single-u64 anchor proxy (pre-step-3a Merkle-walk output).
-    /// Phase 4b-step3-step3a: kept for wire-compat; AIR no longer reads.
-    /// The post-step-3a AIR derives all 4 anchor limbs from the 4-fe
-    /// Merkle walk and binds them directly to `PI[PI_ANCHOR + 0..4]`;
-    /// this field plays no role in the constraint system. Full wire-
-    /// field deletion is a follow-up.
-    pub anchor_proxy: u64,
     /// Raw 32-byte anchor (§4.1). PI slots 4..7 are the 4 `encode_256`
-    /// limbs of these bytes. For self-consistency callers should arrange
-    /// `anchor_bytes[0..8]` = `anchor_proxy.to_le_bytes()`; the AIR only
-    /// enforces the low-limb equality, so higher limbs are free.
+    /// limbs of these bytes. Post Phase 4b-step3-step3a the AIR derives
+    /// all 4 limbs from the 4-fe Merkle walk and binds them directly
+    /// to `PI[PI_ANCHOR + 0..4]`; callers arrange `anchor_bytes` to
+    /// equal the Merkle root of the tree they're proving against.
     /// V1-3c-round-8 (档1) — see `rk_bytes` note on SpendWitness.
     pub anchor_bytes: [u8; 32],
 }
@@ -2398,15 +2393,6 @@ impl MvpWitness {
                 .wrapping_add((k as u64).wrapping_mul(0x94D0_49BB_1331_11EB));
             shared_path[k] = mix & ((1u64 << 62) - 1);
         }
-        // Legacy single-fe anchor_proxy — kept for wire-compat with
-        // the MvpWitness.anchor_proxy field (Phase 4b-step3-step3a
-        // retired the AIR reader of this field but the wire layout
-        // still carries it). NOT the anchor the AIR binds to PI —
-        // see `anchor_bytes` below, which is the 4-fe walk output.
-        let shared_anchor =
-            poseidon2_merkle_path_root(&perm, shared_leaf, shared_pos, &shared_path)
-                .as_canonical_u64();
-
         // Phase 4b-step3-step3c: widen siblings from `[u64; 32]` to
         // `[[u8; 32]; 32]`. Fixture projects each legacy u64 proxy into
         // bytes[0..8] with zero pad (same 8-byte-low-limb convention
@@ -2552,7 +2538,6 @@ impl MvpWitness {
             fee,
             spends,
             outputs,
-            anchor_proxy: shared_anchor,
             anchor_bytes,
         }
     }
@@ -2610,7 +2595,10 @@ impl MvpWitness {
         //           + cm(32) + epk(32) + filter_tag(2) = 202.
         const PER_OUTPUT: usize = 4 * 32 + 8 + 32 + 32 + 2;
         const HEAD: usize = 10;
-        const TAIL: usize = 8 + 32 + 1 + 4 + 8;
+        // Phase 4b-step3-step4: anchor_proxy (8 B) removed — PI anchor
+        // limbs now come from the AIR's 4-fe Merkle walk via
+        // S_CURRENT_FE[0..4]. TAIL: 53 → 45 B.
+        const TAIL: usize = 32 + 1 + 4 + 8;
         let mut out = Vec::with_capacity(
             HEAD + PER_SPEND * self.spends.len() + PER_OUTPUT * self.outputs.len() + TAIL,
         );
@@ -2641,7 +2629,6 @@ impl MvpWitness {
             out.extend_from_slice(&o.epk_bytes);
             out.extend_from_slice(&o.filter_tag.to_le_bytes());
         }
-        out.extend_from_slice(&self.anchor_proxy.to_le_bytes());
         out.extend_from_slice(&self.anchor_bytes);
         out.push(self.scheme_id);
         out.extend_from_slice(&self.chain_id.to_le_bytes());
@@ -2653,7 +2640,7 @@ impl MvpWitness {
     /// see `encode()` doc for the field order).
     pub fn decode(bytes: &[u8]) -> Result<Self, Plonky3Status> {
         const HEAD: usize = 10;
-        const TAIL: usize = 8 + 32 + 1 + 4 + 8;
+        const TAIL: usize = 32 + 1 + 4 + 8; // anchor_bytes + scheme + chain + expiry
         // Must match `encode()` — see step0 widening doc there.
         const PER_SPEND: usize = 32 + 3 * 8 + 4 * 32 + 32 * MERKLE_DEPTH + 32;
         const PER_OUTPUT: usize = 4 * 32 + 8 + 32 + 32 + 2;
@@ -2766,8 +2753,6 @@ impl MvpWitness {
                 filter_tag,
             });
         }
-        let anchor_proxy = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
-        off += 8;
         let mut anchor_bytes = [0u8; 32];
         anchor_bytes.copy_from_slice(&bytes[off..off + 32]);
         off += 32;
@@ -2786,7 +2771,6 @@ impl MvpWitness {
             fee,
             spends,
             outputs,
-            anchor_proxy,
             anchor_bytes,
         })
     }
@@ -4236,7 +4220,7 @@ mod tests {
                 let w2 = MvpWitness::decode(&bytes).unwrap();
                 assert_eq!(w.shape(), w2.shape());
                 assert_eq!(w.fee, w2.fee);
-                assert_eq!(w.anchor_proxy, w2.anchor_proxy);
+                assert_eq!(w.anchor_bytes, w2.anchor_bytes);
                 assert_eq!(w.spends.len(), w2.spends.len());
                 assert_eq!(w.outputs.len(), w2.outputs.len());
             }
