@@ -76,6 +76,8 @@ pub mod query_verifier_air;
 pub mod range16_air;
 pub mod transfer_air;
 pub mod transfer_columns;
+pub mod transfer_preimage;
+pub mod transfer_sponge;
 pub mod verifier;
 pub mod verifier_air;
 
