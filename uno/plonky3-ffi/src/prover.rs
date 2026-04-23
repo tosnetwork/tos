@@ -349,11 +349,17 @@ impl<F: Field> LookupAir<F> for MvpAirUnion {
 ///     (8 fe-limbs × 4 u16) for the nk/leaf fe-limb cols — same
 ///     extraction shape as the output fe-limb block above,
 ///     applied to `s.nk` and `s.leaf`.
+///   * Phase 4b-step3-step5b-decomp: +56 u16 limbs per spend for the
+///     14 new fe-limb proxy cols (d×2 + pk_d×4 + ivk_cm×4 + rcm×4).
+///     Mirror of the output-side 1.3-fields block on the spend side.
 fn collect_u16_reads_for_range16(w: &MvpWitness) -> Vec<u16> {
     use crate::transfer_air::reduce_to_goldilocks;
 
     let (n_s, n_o) = w.shape();
-    let per_row = VALUE_LIMBS_U16 * (n_s + n_o) + 56 * n_o + 32 * n_s;
+    // Phase 4b-step3-step5b-decomp: per-spend u16 receives bump from
+    // 32 (nk×4 + leaf×4) to 88 (+ d×2 + pk_d×4 + ivk_cm×4 + rcm×4 =
+    // 14 fe-limbs × 4 u16 = 56 new u16 cols).
+    let per_row = VALUE_LIMBS_U16 * (n_s + n_o) + 56 * n_o + 88 * n_s;
     let mut reads: Vec<u16> = Vec::with_capacity(per_row * TRACE_HEIGHT);
 
     // Helper: push 4 u16 limbs (LE, low→high) of a canonical u64
@@ -432,6 +438,40 @@ fn collect_u16_reads_for_range16(w: &MvpWitness) -> Vec<u16> {
         for i in 0..4 {
             let u = reduce_to_goldilocks(u64::from_le_bytes(
                 s.leaf[i * 8..(i + 1) * 8].try_into().unwrap(),
+            ));
+            push_u16_limbs(&mut per_row_limbs, u);
+        }
+    }
+    // Phase 4b-step3-step5b-decomp: 56 u16 limbs per spend for the
+    // 14 new fe-limb proxy cols (d×2 + pk_d×4 + ivk_cm×4 + rcm×4).
+    // Mirror of the output-side fe-limb block above — identical
+    // extraction shape (8-byte LE chunks reduced to Goldilocks).
+    for s in w.spends.iter() {
+        // d: 2 fe-limbs (bytes[0..8], bytes[8..16])
+        for i in 0..2 {
+            let u = reduce_to_goldilocks(u64::from_le_bytes(
+                s.d[i * 8..(i + 1) * 8].try_into().unwrap(),
+            ));
+            push_u16_limbs(&mut per_row_limbs, u);
+        }
+        // pk_d: 4 fe-limbs
+        for i in 0..4 {
+            let u = reduce_to_goldilocks(u64::from_le_bytes(
+                s.pk_d[i * 8..(i + 1) * 8].try_into().unwrap(),
+            ));
+            push_u16_limbs(&mut per_row_limbs, u);
+        }
+        // ivk_commitment: 4 fe-limbs
+        for i in 0..4 {
+            let u = reduce_to_goldilocks(u64::from_le_bytes(
+                s.ivk_commitment[i * 8..(i + 1) * 8].try_into().unwrap(),
+            ));
+            push_u16_limbs(&mut per_row_limbs, u);
+        }
+        // rcm: 4 fe-limbs
+        for i in 0..4 {
+            let u = reduce_to_goldilocks(u64::from_le_bytes(
+                s.rcm[i * 8..(i + 1) * 8].try_into().unwrap(),
             ));
             push_u16_limbs(&mut per_row_limbs, u);
         }

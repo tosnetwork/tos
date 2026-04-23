@@ -319,13 +319,25 @@ pub const RK_EPK_LIMBS: usize = 4;
 /// compressions — matching the `pack_32b_as_4fe(sibling)` layout that
 /// tosctl threads through. Net +96 cols/spend
 /// (`MERKLE_DEPTH · (SIBLING_FES_PER_LEVEL - 1) = 32 · 3 = 96`).
+///
+/// Phase 4b-step3-step5b-decomp adds 67 additional cols per spend (11
+/// fe-limb cols — `S_D_FE1`, `S_PK_D_FE1..3`, `S_IVK_COMMITMENT_FE0..3`,
+/// `S_RCM_FE1..3` — plus 56 u16 limb cols for the 14 fe-limb × 4 u16
+/// decomposition: d×2 + pk_d×4 + ivk_cm×4 + rcm×4) that prepare the
+/// spend cm sponge input layout. Mirror of the output-side step
+/// 1.2c/f + step 1.3-fields block, on the spend side.
 pub const SPEND_PROXY_COLS: usize = 9
     + MERKLE_DEPTH
     + MERKLE_DEPTH * SIBLING_FES_PER_LEVEL
     + VALUE_LIMBS_U16
     + RK_EPK_LIMBS
     + 38
-    + 16; // Phase 4b-step3-step2b-AIR-v2: S_NF_CARRY_{CAP,RATE}[0..8]
+    + 16  // Phase 4b-step3-step2b-AIR-v2: S_NF_CARRY_{CAP,RATE}[0..8]
+    + 67; // Phase 4b-step3-step5b-decomp: 11 spend cm fe-limb proxy cols
+          //   (S_D_FE1, S_PK_D_FE1..3, S_IVK_COMMITMENT_FE0..3, S_RCM_FE1..3)
+          // + 56 u16 cols (d×2 + pk_d×4 + ivk_cm×4 + rcm×4 = 14 fe-limbs
+          //   × 4 u16 limbs; NOTE value already has S_VALUE_LIMB0..3 from
+          //   Phase 3b-step2, not duplicated).
 
 /// Per-output proxy columns: cm_claim (Poseidon2-w=16 output, trace-
 /// only after Phase 4b-step2a), d, pk_d, ivk_commitment, value, rcm (6
@@ -471,6 +483,49 @@ const S_NF_CARRY_CAP0: usize = S_LEAF_LIMB0 + 16;
 /// row 20+i. Mirror of `O_SPONGE_CARRY_RATE` on the output side
 /// (step 1.2f).
 const S_NF_CARRY_RATE0: usize = S_NF_CARRY_CAP0 + 8;
+
+// --- Phase 4b-step3-step5b-decomp: spend cm sponge fe-limb proxies ---
+//
+// Mirror of the output-side `O_D_FE1` / `O_PK_D_FE1..3` /
+// `O_IVK_COMMITMENT_FE1..3` / `O_RCM_FE1..3` cols (step 1.2c/f) on
+// the spend side. These hold the remaining Goldilocks field elements
+// of each 32-byte witness field that the cm sponge needs to absorb,
+// complementing the low-fe single-u64 proxies (`S_D`, `S_PK_D`,
+// `S_RCM`) that already exist. `ivk_commitment` is a NEW 32-byte
+// witness field (added in step 5a-wire): all 4 fes are added here
+// — `S_IVK_COMMITMENT_FE0` is the low fe, distinct from the
+// legacy claim-3 narrow-w=8 output `S_IVK_COMMITMENT_CLAIM`.
+//
+// Populated trace-side from `pack_diversifier_as_2fe(&s.d)` (d) /
+// `pack_32b_as_4fe(&s.{pk_d,ivk_commitment,rcm})`; AIR-bound by the
+// step 5b-decomp u16-limb decomposition block to
+// `Σ_k limb_k · 2^{16k}` for each fe, closing the "fe is canonical
+// u64 of 8-byte LE witness chunk" soundness gap. Consumed by step
+// 5c-sponge to wire the bank-1 / bank-2 iterated sponge.
+const S_D_FE1: usize = S_NF_CARRY_RATE0 + 8;
+const S_PK_D_FE1: usize = S_D_FE1 + 1;
+const S_PK_D_FE2: usize = S_PK_D_FE1 + 1;
+const S_PK_D_FE3: usize = S_PK_D_FE2 + 1;
+const S_IVK_COMMITMENT_FE0: usize = S_PK_D_FE3 + 1;
+const S_IVK_COMMITMENT_FE1: usize = S_IVK_COMMITMENT_FE0 + 1;
+const S_IVK_COMMITMENT_FE2: usize = S_IVK_COMMITMENT_FE1 + 1;
+const S_IVK_COMMITMENT_FE3: usize = S_IVK_COMMITMENT_FE2 + 1;
+const S_RCM_FE1: usize = S_IVK_COMMITMENT_FE3 + 1;
+const S_RCM_FE2: usize = S_RCM_FE1 + 1;
+const S_RCM_FE3: usize = S_RCM_FE2 + 1;
+/// Phase 4b-step3-step5b-decomp: base index of the 8 u16 limb cols
+/// decomposing the 2 fe-limbs of `d` (via `pack_diversifier_as_2fe`)
+/// into u16 LE limbs. Fes[0..2] each → 4 u16 = 8 cols.
+const S_D_LIMB0: usize = S_RCM_FE3 + 1;
+/// Phase 4b-step3-step5b-decomp: base index of the 16 u16 limb cols
+/// decomposing the 4 fe-limbs of `pk_d` — same shape as `O_PK_D_LIMB0`.
+const S_PK_D_LIMB0: usize = S_D_LIMB0 + 8;
+/// Phase 4b-step3-step5b-decomp: base index of the 16 u16 limb cols
+/// decomposing the 4 fe-limbs of `ivk_commitment`.
+const S_IVK_COMMITMENT_LIMB0: usize = S_PK_D_LIMB0 + 16;
+/// Phase 4b-step3-step5b-decomp: base index of the 16 u16 limb cols
+/// decomposing the 4 fe-limbs of `rcm`.
+const S_RCM_LIMB0: usize = S_IVK_COMMITMENT_LIMB0 + 16;
 
 // ---- Per-output column indices (within an output proxy block) ----
 const O_CM_CLAIM: usize = 0;
@@ -1008,6 +1063,37 @@ impl<F: p3_field::Field> p3_lookup::LookupAir<F> for MvpTransferAir {
             let base = spend_proxy_offset(i);
             for limb_base in &[S_NK_LIMB0, S_LEAF_LIMB0] {
                 for k in 0..16 {
+                    let col = base + *limb_base + k;
+                    let limb = main_local[col];
+                    let inputs = vec![(
+                        vec![limb.into()],
+                        one.clone(),
+                        p3_lookup::lookup_traits::Direction::Receive,
+                    )];
+                    lookups
+                        .push(p3_lookup::LookupAir::register_lookup(self, name(), &inputs));
+                }
+            }
+        }
+        // Phase 4b-step3-step5b-decomp: register `u16_range` receives
+        // for the 56 new fe-limb u16 cols per spend (d×8 + pk_d×16 +
+        // ivk_cm×16 + rcm×16 = 56; value is covered by the
+        // `S_VALUE_LIMB0..3` registration above). Mirror of the
+        // output-side step 1.3-fields block.
+        for i in 0..self.n_spends {
+            let base = spend_proxy_offset(i);
+            for limb_base in &[
+                S_D_LIMB0,
+                S_PK_D_LIMB0,
+                S_IVK_COMMITMENT_LIMB0,
+                S_RCM_LIMB0,
+            ] {
+                // d has 2 fes (8 u16 limbs); others have 4 fes (16 u16 limbs).
+                let n_fe_limbs = match *limb_base {
+                    x if x == S_D_LIMB0 => 2,
+                    _ => 4,
+                };
+                for k in 0..(n_fe_limbs * 4) {
                     let col = base + *limb_base + k;
                     let limb = main_local[col];
                     let inputs = vec![(
@@ -1967,6 +2053,70 @@ where
                 (S_LEAF_FE1,   S_LEAF_LIMB0 + 4),
                 (S_LEAF_FE2,   S_LEAF_LIMB0 + 8),
                 (S_LEAF_FE3,   S_LEAF_LIMB0 + 12),
+            ];
+            for i in 0..self.n_spends {
+                for (fe_col_offset, limb_base_offset) in &fe_limb_pairs {
+                    let fe_col: AB::Var = spend_col(local_slice, i, *fe_col_offset);
+                    let mut recon: AB::Expr = AB::Expr::from(AB::F::from_u64(0));
+                    for k in 0..4 {
+                        let limb: AB::Var =
+                            spend_col(local_slice, i, *limb_base_offset + k);
+                        let weight = AB::F::from_u64(1u64 << (16 * k));
+                        recon = recon + AB::Expr::from(weight) * limb.into();
+                    }
+                    builder.assert_zero(fe_col.into() - recon);
+                }
+            }
+        }
+
+        // ---- Phase 4b-step3-step5b-decomp: spend cm sponge fe-limb u16 ---
+        //
+        // Mirror of the output-side step 1.3-fields block on the spend
+        // side for the 15-fe cm sponge input (d×2 + pk_d×4 + ivk_cm×4
+        // + value×1 + rcm×4 = 15 fe-limbs). 14 fe-limbs decompose into
+        // 4 u16 limbs each here (the 15th, `value`, already has its own
+        // 4-limb decomposition at `S_VALUE_LIMB0..3` from Phase 3b-
+        // step2 — do NOT duplicate).
+        //
+        //   fe_limb == Σ_{k=0..3} limb_k · 2^{16k}
+        //
+        // Combined with the cross-AIR `u16_range` LogUp that bounds
+        // each `limb_k` to `0..=0xffff`, this proves the fe-limb is
+        // the canonical u64 of the corresponding 8-byte LE chunk of
+        // the 32-byte witness field — exactly what
+        // `pack_diversifier_as_2fe(&s.d)` and
+        // `pack_32b_as_4fe(&s.{pk_d,ivk_commitment,rcm})` emit off-
+        // circuit. Unblocks step 5c-sponge: the prover can no longer
+        // put arbitrary Goldilocks values in the spend cm sponge rate
+        // slots.
+        //
+        // Not row-gated — both fe-limb and limb cols live in the
+        // proxy block (constant-across-rows per §4.2).
+        {
+            let fe_limb_pairs: [(usize, usize); 14] = [
+                // d_fes[0..2] → S_D_LIMB0..S_D_LIMB0+8
+                // Note: fe[0] is the existing `S_D` single-u64 proxy,
+                // which coincides with `pack_diversifier_as_2fe(&s.d)[0]`
+                // (first 8 bytes of d). fe[1] is the new `S_D_FE1`.
+                (S_D,                    S_D_LIMB0),
+                (S_D_FE1,                S_D_LIMB0 + 4),
+                // pk_d_fes[0..4] → S_PK_D_LIMB0..S_PK_D_LIMB0+16
+                (S_PK_D,                 S_PK_D_LIMB0),
+                (S_PK_D_FE1,             S_PK_D_LIMB0 + 4),
+                (S_PK_D_FE2,             S_PK_D_LIMB0 + 8),
+                (S_PK_D_FE3,             S_PK_D_LIMB0 + 12),
+                // ivk_commitment_fes[0..4] → S_IVK_COMMITMENT_LIMB0..+16
+                // All 4 fes are new (S_IVK_COMMITMENT_CLAIM is the
+                // legacy claim-3 narrow output, a different field).
+                (S_IVK_COMMITMENT_FE0,   S_IVK_COMMITMENT_LIMB0),
+                (S_IVK_COMMITMENT_FE1,   S_IVK_COMMITMENT_LIMB0 + 4),
+                (S_IVK_COMMITMENT_FE2,   S_IVK_COMMITMENT_LIMB0 + 8),
+                (S_IVK_COMMITMENT_FE3,   S_IVK_COMMITMENT_LIMB0 + 12),
+                // rcm_fes[0..4] → S_RCM_LIMB0..S_RCM_LIMB0+16
+                (S_RCM,                  S_RCM_LIMB0),
+                (S_RCM_FE1,              S_RCM_LIMB0 + 4),
+                (S_RCM_FE2,              S_RCM_LIMB0 + 8),
+                (S_RCM_FE3,              S_RCM_LIMB0 + 12),
             ];
             for i in 0..self.n_spends {
                 for (fe_col_offset, limb_base_offset) in &fe_limb_pairs {
@@ -3412,6 +3562,52 @@ impl MvpWitness {
                 for fe in spend_nf_out_rate[i].iter() {
                     v.push(*fe);
                 }
+                // Phase 4b-step3-step5b-decomp: 11 new fe-limb cols
+                // for the spend cm sponge input (d×2 + pk_d×4 +
+                // ivk_cm×4 + rcm×4 = 14 fe-limbs; `S_D` / `S_PK_D` /
+                // `S_RCM` already hold the low fe of d / pk_d / rcm,
+                // so only 3 × 3 = 9 upper fes + 2 d/ivkcm new cols
+                // are pushed here. `S_IVK_COMMITMENT_FE0..3` are all
+                // new — the legacy `S_IVK_COMMITMENT_CLAIM` col is
+                // the narrow-claim-3 output, a different field).
+                // Mirror of the output-side step 1.2c/f fe-limb pushes.
+                let d_fes = pack_diversifier_as_2fe(&s.d);
+                let pk_d_fes = pack_32b_as_4fe(&s.pk_d);
+                let ivk_cm_fes = pack_32b_as_4fe(&s.ivk_commitment);
+                let rcm_fes = pack_32b_as_4fe(&s.rcm);
+                // S_D_FE1 (d fe[1]).
+                v.push(d_fes[1]);
+                // S_PK_D_FE1..3 (pk_d fes[1..4]).
+                v.push(pk_d_fes[1]);
+                v.push(pk_d_fes[2]);
+                v.push(pk_d_fes[3]);
+                // S_IVK_COMMITMENT_FE0..3 (all 4 fes of ivk_commitment).
+                v.push(ivk_cm_fes[0]);
+                v.push(ivk_cm_fes[1]);
+                v.push(ivk_cm_fes[2]);
+                v.push(ivk_cm_fes[3]);
+                // S_RCM_FE1..3 (rcm fes[1..4]).
+                v.push(rcm_fes[1]);
+                v.push(rcm_fes[2]);
+                v.push(rcm_fes[3]);
+                // Phase 4b-step3-step5b-decomp: 56 u16 limb cols
+                // (d×8 + pk_d×16 + ivk_cm×16 + rcm×16). Same
+                // `push_u16_limbs` helper as the nk/leaf block above.
+                // d: 2 fe-limbs × 4 u16 = 8 cols (S_D_LIMB0..7).
+                push_u16_limbs(&mut v, d_fes[0]);
+                push_u16_limbs(&mut v, d_fes[1]);
+                // pk_d: 4 fe-limbs × 4 u16 = 16 cols.
+                for k in 0..4 {
+                    push_u16_limbs(&mut v, pk_d_fes[k]);
+                }
+                // ivk_commitment: 4 fe-limbs × 4 u16 = 16 cols.
+                for k in 0..4 {
+                    push_u16_limbs(&mut v, ivk_cm_fes[k]);
+                }
+                // rcm: 4 fe-limbs × 4 u16 = 16 cols.
+                for k in 0..4 {
+                    push_u16_limbs(&mut v, rcm_fes[k]);
+                }
                 debug_assert_eq!(v.len(), SPEND_PROXY_COLS);
                 v
             })
@@ -4458,12 +4654,13 @@ mod tests {
             let mut air = MvpTransferAir::new(n_s, n_o);
             let lookups: Vec<Lookup<Goldilocks>> = LookupAir::<Goldilocks>::get_lookups(&mut air);
 
-            // Phase 4b-step3-step2b-decomp: 4·(n_s + n_o) value-limb
+            // Phase 4b-step3-step5b-decomp: 4·(n_s + n_o) value-limb
             // receives + 56·n_o output fe-limb receives (14 fe-limbs ×
             // 4 u16 limbs per output: d×2 + pk_d×4 + ivk_cm×4 + rcm×4)
-            // + 32·n_s spend fe-limb receives (8 fe-limbs × 4 u16 limbs
-            // per spend: nk×4 + leaf×4).
-            let expected_count = 4 * (n_s + n_o) + 56 * n_o + 32 * n_s;
+            // + 88·n_s spend fe-limb receives (22 fe-limbs × 4 u16 limbs
+            // per spend: nk×4 + leaf×4 from step 2b-decomp (32) +
+            // d×2 + pk_d×4 + ivk_cm×4 + rcm×4 from step 5b-decomp (56)).
+            let expected_count = 4 * (n_s + n_o) + 56 * n_o + 88 * n_s;
             assert_eq!(
                 lookups.len(),
                 expected_count,
