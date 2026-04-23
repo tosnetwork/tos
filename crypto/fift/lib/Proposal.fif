@@ -1,0 +1,33 @@
+library Proposal  // Governance proposal and complaint envelope codecs
+
+// ( query-time param-idx -- query-id )
+{ swap 32 << + } : proposal-query-id
+
+// ( param-idx param-value old-hash -- c )
+{ 3 0 reverse <b x{f3} s, swap 32 i, swap dict, swap tuck 0>= tuck 1 i,
+  -rot { 256 u, } { drop } cond b>
+} : proposal-param-ref
+
+// ( query-id expire-at proposal-ref critical? -- c )
+{ 4 0 reverse <b x{6e565052} s, swap 64 u, swap 32 u, swap ref, swap 1 i, b>
+} : proposal-body
+
+// ( query-time complaint-hash -- query-id )
+{ swap 32 << swap 32 1<< mod + } : complaint-envelope-query-id
+
+// ( query-id election-id complaint -- c )
+{ 3 0 reverse <b x{52674370} s, swap 64 u, swap 32 u, swap <s s, b>
+} : complaint-envelope-body
+
+// ( filename-or-null -- c|null )
+{ dup "null" $= { drop null } { file>B B>boc } cond
+} : load-proposal-value-or-null
+
+// ( src-file -- c )
+{ include dup <s 12 u@ 0xFF0 <> abort"not valid smart contract code"
+  <b swap ref, b>
+} : load-upgrade-code-param-value
+
+// ( filename -- complaint complaint-hash )
+{ file>B B>boc dup hash over <s 8 u@ 0xbc <> abort"Not a valid ValidatorComplaint"
+} : load-validator-complaint

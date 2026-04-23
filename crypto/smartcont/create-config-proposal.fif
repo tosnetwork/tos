@@ -1,5 +1,6 @@
 #!/usr/bin/fift -s
 "TosUtil.fif" include
+"Proposal.fif" include
 "GetOpt.fif" include
 
 { show-options-help 1 halt } : usage
@@ -36,7 +37,7 @@ boc-filename dup "null" $= {
   ."New value of configuration parameter" param-idx . ."is null" cr drop null
 } {
   ."Loading new value of configuration parameter " param-idx . ."from file " dup type cr
-  boc-filename file>B B>boc
+  load-proposal-value-or-null
   dup <s csr. cr
 } cond
 =: param-value
@@ -46,14 +47,12 @@ param-value param-idx is-valid-config? not abort"not a valid value for chosen co
 critical { ."Critical" } { ."Non-critical" } cond
 ." configuration proposal will expire at " expire-at . ."(in " expire-in . ."seconds)" cr
 
-now 32 << param-idx + =: query-id
+now param-idx proposal-query-id =: query-id
 ."Query id is " query-id . cr
 
 // create message body
-<b x{6e565052} s, query-id 64 u, expire-at 32 u,
-  <b x{f3} s, param-idx 32 i, param-value dict,
-     old-hash tuck 0>= tuck 1 i, -rot { 256 u, } { drop } cond b> ref,
-  critical 1 i, b>
+param-idx param-value old-hash proposal-param-ref
+query-id expire-at rot critical proposal-body
 
 dup ."resulting internal message body: " <s csr. cr
 2 boc+>B dup Bx. cr

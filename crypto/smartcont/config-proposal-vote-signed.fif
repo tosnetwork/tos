@@ -1,5 +1,6 @@
 #!/usr/bin/fift -s
 "TosUtil.fif" include
+"Validator.fif" include
 "GetOpt.fif" include
 
 "vote-query.boc" =: savefile
@@ -25,21 +26,16 @@ internal? {
   $next true parse-load-address drop over 1+ abort"configuration smart contract must be in masterchain"
     2=: config-addr
   $next parse-int =: seqno
-  $next parse-int dup 30 1<< < { now + 1000 + 2000 /c 2000 * } if
-    dup =: expire-at
-    dup now <= abort"expiration time must be in the future"
-    32 ufits not abort"invalid expiration time"
+  $next parse-int now normalize-vote-expire-at
+    =: expire-at
 } ifnot
 $# dup 4 < swap 5 > or ' usage if
 $1 parse-int dup =: val-idx
   16 ufits not abort"validator index out of range"
 $2 parse-int dup =: prop-hash
   256 ufits not abort"invalid proposal hash"
-$3 base64>B dup Blen 36 <> abort"validator Ed25519 public key must be exactly 36 bytes long"
-  32 B>u@+ 0xC6B41348 <> abort"invalid Ed25519 public key: unknown magic number"
-  =: pubkey
-$4 base64>B dup Blen 64 <> abort"validator Ed25519 signature must be exactly 64 bytes long"
-  =: signature
+$3 parse-val-pubkey =: pubkey
+$4 parse-val-signature =: signature
 $5 savefile replace-if-null =: savefile
 
 internal? {
@@ -51,20 +47,18 @@ internal? {
 ."to vote for configuration proposal 0x" prop-hash 64x.
 ."on behalf of validator with index " val-idx . "and public key" pubkey Bx. cr
 
-internal? { B{566f7445} } {
-  B{566f7465} seqno 32 u>B B+ expire-at 32 u>B B+
-} cond
-val-idx 16 u>B B+ prop-hash 256 u>B B+ dup =: to_sign
+internal? { val-idx prop-hash config-vote-req-int>B } {
+  seqno expire-at val-idx prop-hash config-vote-req-ext>B
+} cond dup =: to_sign
 ."String to sign is " Bx. cr
 
-to_sign signature pubkey ed25519_chksign not abort"Ed25519 signature is invalid"
+to_sign signature pubkey check-val-signature
 ."Provided a valid Ed25519 signature " signature Bx. ." with validator public key " pubkey Bx. cr
 
-now 32 << prop-hash 32 1<< mod + =: query-id
+now prop-hash config-vote-query-id =: query-id
 
-<b internal? { x{566f7465} s, query-id 64 u, }
-   { b{1000100} s, config-addr addr, 0 Tomi, b{00} s, } cond
-   signature B, to_sign B, b>
+internal? { query-id signature to_sign config-vote-int-body }
+{ config-addr signature to_sign config-vote-ext-msg } cond
 cr
 internal? { ."Internal message body is " } { ."External message is " } cond
 dup <s csr. cr

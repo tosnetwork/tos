@@ -2,6 +2,7 @@ library Assert  // Shared assertion and structural equality helpers for Fift tes
 "Lists.fif" include
 
 { equal? } : same?
+{ B= } : bytes-eq?
 { shash swap shash B= } : slice-eq?
 { <s shash swap <s shash B= } : cell-eq?
 { b> <s shash swap b> <s shash B= } : builder-eq?
@@ -12,6 +13,8 @@ library Assert  // Shared assertion and structural equality helpers for Fift tes
 { swap not swap assert } : assert-not
 // ( left right msg -- )
 { -rot same? swap assert } : assert-eq
+// ( left right msg -- )
+{ -rot bytes-eq? swap assert } : assert-bytes-eq
 // ( left right msg -- )
 { -rot slice-eq? swap assert } : assert-slice-eq
 // ( left right msg -- )

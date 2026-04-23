@@ -1,5 +1,6 @@
 #!/usr/bin/fift -s
 "TosUtil.fif" include
+"Validator.fif" include
 
 { ."usage: " @' $0 type ." <wallet-addr> <elect-utime> <max-factor> <adnl-addr> <validator-pubkey> <validator-signature> <savefile> <amount>" cr
   ."Creates a message body for participating in validator elections starting at <elect-utime> on behalf of smart-contract with address <wallet-addr> (prefix with '@' to load address from file) and hexadecimal adnl address <adnl-addr> (empty string or '0' for none)." cr
@@ -17,11 +18,8 @@ $3 (number) dup 0= abort"<max-factor> must be a real number 1..100"
 dup 65536 < over 6553600 > or abort"<max-factor> must be a real number 1..100"
 constant max_factor
 $4 dup $len 1 > { parse-adnl-address } { drop 0 } cond constant adnl_addr
-$5 base64>B dup Blen 36 <> abort"validator Ed25519 public key must be exactly 36 bytes long"
-  32 B>u@+ 0xC6B41348 <> abort"invalid Ed25519 public key: unknown magic number"
-  constant pubkey
-$6 base64>B dup Blen 64 <> abort"validator Ed25519 signature must be exactly 64 bytes long"
-constant signature
+$5 parse-val-pubkey constant pubkey
+$6 parse-val-signature constant signature
 $7 constant output_fname
 $8 $>TM =: amount
 
@@ -30,15 +28,14 @@ $8 $>TM =: amount
 ." with maximal stake factor with respect to the minimal stake " max_factor ._
 ."/65536 and validator ADNL address " adnl_addr 64x. cr
 
-B{654c5074} elect_time 32 u>B B+ max_factor 32 u>B B+ src_addr 256 u>B B+ adnl_addr 256 u>B B+
+elect_time max_factor src_addr adnl_addr validator-elect-req>B
 ."String to sign is: " dup Bx. cr constant to_sign
 
-to_sign signature pubkey ed25519_chksign not abort"Ed25519 signature is invalid"
+to_sign signature pubkey check-val-signature
 ."Provided a valid Ed25519 signature " signature Bx. ." with validator public key " pubkey Bx. cr
 now dup constant query_id ."query_id set to " . cr
 
-<b x{4e73744b} s, query_id 64 u, amount Tomi, pubkey B, elect_time 32 u, max_factor 32 u, adnl_addr 256 u,
-  <b signature B, b> ref, b>
+query_id amount pubkey elect_time max_factor adnl_addr signature validator-elect-body+stake
 cr ."Message body is " dup <s csr. cr
 
 2 boc+>B output_fname tuck B>file ."Saved to file " type cr

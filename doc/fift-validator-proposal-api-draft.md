@@ -9,6 +9,16 @@ This document records a concrete API draft for the next two candidate Fift libra
 
 The goal is to separate reusable protocol encoding from script-local CLI handling.
 
+## Implementation Status
+
+Implemented in the current tree:
+
+- `crypto/fift/lib/Validator.fif`
+- `crypto/fift/lib/Proposal.fif`
+- migrations of the validator, governance-vote, and governance-proposal scripts listed below
+- focused Fift unit coverage in `crypto/test/fift/validator-proposal-test.fif`
+- deterministic script regression coverage in `crypto/test/test-smartcont.cpp`
+
 This document follows the same first-principles approach used in
 [`fift-library-gap-analysis.md`](./fift-library-gap-analysis.md):
 
@@ -71,6 +81,7 @@ Library words should not call `now` internally for protocol construction.
 
 Instead, the caller should pass:
 
+- `query-time` when deriving a `query-id`
 - `query-id`
 - `expire-at`
 - `seqno`
@@ -142,11 +153,11 @@ This word already exists and should remain in
 | `validator-elect-body+stake` | `( query-id amount pubkey elect-utime max-factor adnl-addr signature -- c )` | Build the signed election body variant that embeds stake amount. | [`single-nominator-pool/validator-elect-signed.fif`](../crypto/smartcont/single-nominator-pool/validator-elect-signed.fif), [`liquid-staking/controller-elect-signed.fif`](../crypto/smartcont/liquid-staking/controller-elect-signed.fif) |
 | `config-vote-req-ext>B` | `( seqno expire-at validator-idx proposal-hash -- B )` | Build the unsigned bytestring for an external config vote. | [`config-proposal-vote-req.fif`](../crypto/smartcont/config-proposal-vote-req.fif), [`config-proposal-vote-signed.fif`](../crypto/smartcont/config-proposal-vote-signed.fif) |
 | `config-vote-req-int>B` | `( validator-idx proposal-hash -- B )` | Build the unsigned bytestring for an internal config vote. | Same two config vote scripts |
-| `config-vote-query-id` | `( proposal-hash -- query-id )` | Derive the stable query id used by the signed config vote body. | [`config-proposal-vote-signed.fif`](../crypto/smartcont/config-proposal-vote-signed.fif) |
+| `config-vote-query-id` | `( query-time proposal-hash -- query-id )` | Derive the stable query id used by the signed config vote body. | [`config-proposal-vote-signed.fif`](../crypto/smartcont/config-proposal-vote-signed.fif) |
 | `config-vote-int-body` | `( query-id signature to-sign -- c )` | Build the body of an internal message carrying a signed config vote. | [`config-proposal-vote-signed.fif`](../crypto/smartcont/config-proposal-vote-signed.fif) |
 | `config-vote-ext-msg` | `( config-addr signature to-sign -- c )` | Build the external message carrying a signed config vote. | [`config-proposal-vote-signed.fif`](../crypto/smartcont/config-proposal-vote-signed.fif) |
 | `complaint-vote-req>B` | `( validator-idx elect-id complaint-hash -- B )` | Build the bytestring to sign for complaint voting. | [`complaint-vote-req.fif`](../crypto/smartcont/complaint-vote-req.fif), [`complaint-vote-signed.fif`](../crypto/smartcont/complaint-vote-signed.fif) |
-| `complaint-vote-query-id` | `( complaint-hash -- query-id )` | Derive the stable query id used by the complaint vote message body. | [`complaint-vote-signed.fif`](../crypto/smartcont/complaint-vote-signed.fif) |
+| `complaint-vote-query-id` | `( query-time complaint-hash -- query-id )` | Derive the stable query id used by the complaint vote message body. | [`complaint-vote-signed.fif`](../crypto/smartcont/complaint-vote-signed.fif) |
 | `complaint-vote-body` | `( query-id signature to-sign -- c )` | Build the signed complaint vote message body. | [`complaint-vote-signed.fif`](../crypto/smartcont/complaint-vote-signed.fif) |
 
 ### Optional convenience words
@@ -155,7 +166,7 @@ These are useful, but they are not required for the first implementation pass.
 
 | Word | Stack | Purpose | Candidate scripts |
 | --- | --- | --- | --- |
-| `normalize-vote-expire-at` | `( n -- expire-at )` | Normalize the current "absolute or relative" expiration input convention. | [`config-proposal-vote-req.fif`](../crypto/smartcont/config-proposal-vote-req.fif), [`config-proposal-vote-signed.fif`](../crypto/smartcont/config-proposal-vote-signed.fif) |
+| `normalize-vote-expire-at` | `( raw-expire-at query-time -- expire-at )` | Normalize the current "absolute or relative" expiration input convention. | [`config-proposal-vote-req.fif`](../crypto/smartcont/config-proposal-vote-req.fif), [`config-proposal-vote-signed.fif`](../crypto/smartcont/config-proposal-vote-signed.fif) |
 
 ## `Proposal.fif` API Draft
 
@@ -163,10 +174,10 @@ These are useful, but they are not required for the first implementation pass.
 
 | Word | Stack | Purpose | Move from scripts |
 | --- | --- | --- | --- |
-| `proposal-query-id` | `( param-idx -- query-id )` | Derive the standard governance proposal query id from the target config parameter index. | [`create-config-proposal.fif`](../crypto/smartcont/create-config-proposal.fif), [`create-config-upgrade-proposal.fif`](../crypto/smartcont/create-config-upgrade-proposal.fif), [`create-elector-upgrade-proposal.fif`](../crypto/smartcont/create-elector-upgrade-proposal.fif) |
+| `proposal-query-id` | `( query-time param-idx -- query-id )` | Derive the standard governance proposal query id from the target config parameter index. | [`create-config-proposal.fif`](../crypto/smartcont/create-config-proposal.fif), [`create-config-upgrade-proposal.fif`](../crypto/smartcont/create-config-upgrade-proposal.fif), [`create-elector-upgrade-proposal.fif`](../crypto/smartcont/create-elector-upgrade-proposal.fif) |
 | `proposal-param-ref` | `( param-idx param-value old-hash -- c )` | Build the inner reference cell that stores the parameter index, parameter value, and optional old hash guard. | Same three proposal scripts |
 | `proposal-body` | `( query-id expire-at proposal-ref critical? -- c )` | Build the outer governance proposal body cell. | Same three proposal scripts |
-| `complaint-envelope-query-id` | `( complaint-hash -- query-id )` | Derive the stable query id for an elector complaint envelope. | [`envelope-complaint.fif`](../crypto/smartcont/envelope-complaint.fif) |
+| `complaint-envelope-query-id` | `( query-time complaint-hash -- query-id )` | Derive the stable query id for an elector complaint envelope. | [`envelope-complaint.fif`](../crypto/smartcont/envelope-complaint.fif) |
 | `complaint-envelope-body` | `( query-id election-id complaint -- c )` | Build the elector complaint envelope body cell. | [`envelope-complaint.fif`](../crypto/smartcont/envelope-complaint.fif) |
 
 ### Script-loading words
@@ -242,21 +253,21 @@ Target scripts:
 
 To keep the first patch set small and low-risk, the order should be:
 
-1. Implement the pure `Validator.fif` core words:
+1. Implement the pure `Validator.fif` core words. Completed.
    - `parse-val-signature`
    - `check-val-signature`
    - `validator-elect-req>B`
    - `validator-elect-body`
    - `config-vote-req-ext>B`
    - `complaint-vote-req>B`
-2. Implement the pure `Proposal.fif` core words:
+2. Implement the pure `Proposal.fif` core words. Completed.
    - `proposal-query-id`
    - `proposal-param-ref`
    - `proposal-body`
    - `complaint-envelope-query-id`
    - `complaint-envelope-body`
-3. Migrate the scripts to those words.
-4. Add the optional loading and normalization helpers after the core split is stable.
+3. Migrate the scripts to those words. Completed.
+4. Add the optional loading and normalization helpers after the core split is stable. Completed.
 
 ## Non-Goals
 

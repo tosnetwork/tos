@@ -1,5 +1,6 @@
 #!/usr/bin/fift -s
 "TosUtil.fif" include
+"Validator.fif" include
 "GetOpt.fif" include
 
 "validator-to-sign.req" =: savefile
@@ -21,10 +22,8 @@ $1 "-i" $= { $next drop true =: internal? } if
 
 internal? {
   $next parse-int =: seqno
-  $next parse-int dup 30 1<< < { now + 1000 + 2000 /c 2000 * } if
-    dup =: expire-at
-    dup now <= abort"expiration time must be in the future"
-    32 ufits not abort"invalid expiration time"
+  $next parse-int now normalize-vote-expire-at
+    =: expire-at
 } ifnot
 $# dup 2 < swap 3 > or ' usage if
 $1 parse-int dup =: val-idx
@@ -37,10 +36,9 @@ $3 savefile replace-if-null =: savefile
 ."to vote for configuration proposal 0x" prop-hash 64x.
 ."on behalf of validator with index " val-idx . cr
 
-internal? { B{566f7445} } {
-  B{566f7465} seqno 32 u>B B+ expire-at 32 u>B B+
+internal? { val-idx prop-hash config-vote-req-int>B } {
+  seqno expire-at val-idx prop-hash config-vote-req-ext>B
 } cond
-val-idx 16 u>B B+ prop-hash 256 u>B B+
 dup Bx. cr
 dup B>base64url type cr
 savefile tuck B>file ."Saved to file " type cr

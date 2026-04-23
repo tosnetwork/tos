@@ -1,0 +1,128 @@
+"Test.fif" include
+"Asm.fif" include
+"Validator.fif" include
+"Proposal.fif" include
+
+."validator/proposal helper smoke" cr
+test-reset
+
+"xrQTSAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f" constant val-pubkey$
+"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+Pw==" constant val-signature$
+
+val-pubkey$ parse-val-pubkey =: val-pubkey
+val-signature$ parse-val-signature =: val-signature
+
+val-pubkey B{000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F}
+  "parse validator pubkey" test-bytes-eq
+val-signature B{000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F202122232425262728292A2B2C2D2E2F303132333435363738393A3B3C3D3E3F}
+  "parse validator signature" test-bytes-eq
+
+0x11223344 constant elect-time
+0x55667788 constant max-factor
+0xA0A1A2A3A4A5A6A7A8A9AAABACADAEAFB0B1B2B3B4B5B6B7B8B9BABBBCBDBEBF constant src-addr
+0xC0C1C2C3C4C5C6C7C8C9CACBCCCDCECFD0D1D2D3D4D5D6D7D8D9DADBDCDDDEDF constant adnl-addr
+0x8899AABBCCDDEEFF constant query-id
+0x10203040 constant proposal-hash
+0x20304050 constant complaint-hash
+0x12345678 constant expire-at
+321987654321 constant amount
+17 constant param-idx
+-1000 constant upgrade-param-idx
+
+elect-time max-factor src-addr adnl-addr validator-elect-req>B
+  B{654C50741122334455667788A0A1A2A3A4A5A6A7A8A9AAABACADAEAFB0B1B2B3B4B5B6B7B8B9BABBBCBDBEBFC0C1C2C3C4C5C6C7C8C9CACBCCCDCECFD0D1D2D3D4D5D6D7D8D9DADBDCDDDEDF}
+  "validator elect request bytes" test-bytes-eq
+
+query-id val-pubkey elect-time max-factor adnl-addr val-signature validator-elect-body
+  <b x{4e73744b} s, query-id 64 u, val-pubkey B, elect-time 32 u, max-factor 32 u, adnl-addr 256 u,
+    <b val-signature B, b> ref, b>
+  "validator elect body" test-cell-eq
+
+query-id amount val-pubkey elect-time max-factor adnl-addr val-signature validator-elect-body+stake
+  <b x{4e73744b} s, query-id 64 u, amount Tomi, val-pubkey B, elect-time 32 u, max-factor 32 u, adnl-addr 256 u,
+    <b val-signature B, b> ref, b>
+  "validator elect body with stake" test-cell-eq
+
+25 expire-at 9 proposal-hash config-vote-req-ext>B
+  B{566F7465000000191234567800090000000000000000000000000000000000000000000000000000000010203040}
+  "config vote ext request bytes" test-bytes-eq
+
+9 proposal-hash config-vote-req-int>B
+  B{566F744500090000000000000000000000000000000000000000000000000000000010203040}
+  "config vote int request bytes" test-bytes-eq
+
+44 proposal-hash config-vote-query-id
+  44 32 << proposal-hash 32 1<< mod +
+  "config vote query id" test-eq
+
+query-id val-signature 25 expire-at 9 proposal-hash config-vote-req-ext>B config-vote-int-body
+  <b x{566f7465} s, query-id 64 u, val-signature B,
+    25 expire-at 9 proposal-hash config-vote-req-ext>B B, b>
+  "config vote int body" test-cell-eq
+
+Masterchain src-addr val-signature 25 expire-at 9 proposal-hash config-vote-req-ext>B config-vote-ext-msg
+  <b val-signature B, 25 expire-at 9 proposal-hash config-vote-req-ext>B B, b>
+  <b b{1000100} s, Masterchain src-addr addr, 0 Tomi, 0 1 i, swap append-msg-body b>
+  "config vote ext msg" test-cell-eq
+
+9 0x89ABCDEF complaint-hash complaint-vote-req>B
+  B{56744350000989ABCDEF0000000000000000000000000000000000000000000000000000000020304050}
+  "complaint vote request bytes" test-bytes-eq
+
+77 complaint-hash complaint-vote-query-id
+  77 32 << complaint-hash 32 1<< mod +
+  "complaint vote query id" test-eq
+
+query-id val-signature 9 0x89ABCDEF complaint-hash complaint-vote-req>B complaint-vote-body
+  <b x{56744370} s, query-id 64 u, val-signature B,
+    9 0x89ABCDEF complaint-hash complaint-vote-req>B B, b>
+  "complaint vote body" test-cell-eq
+
+55 param-idx proposal-query-id
+  55 32 << param-idx +
+  "proposal query id" test-eq
+
+<b 0xCAFE 16 u, b> =: param-value
+param-idx param-value -1 proposal-param-ref
+  <b x{f3} s, param-idx 32 i, param-value dict, 0 1 i, b>
+  "proposal param ref without old hash" test-cell-eq
+
+upgrade-param-idx param-value proposal-hash proposal-param-ref
+  <b x{f3} s, upgrade-param-idx 32 i, param-value dict, true 1 i, proposal-hash 256 u, b>
+  "proposal param ref with old hash" test-cell-eq
+
+query-id expire-at upgrade-param-idx param-value proposal-hash proposal-param-ref true proposal-body
+  <b x{6e565052} s, query-id 64 u, expire-at 32 u,
+    <b x{f3} s, upgrade-param-idx 32 i, param-value dict, true 1 i, proposal-hash 256 u, b> ref,
+    true 1 i, b>
+  "proposal body" test-cell-eq
+
+80 complaint-hash complaint-envelope-query-id
+  80 32 << complaint-hash 32 1<< mod +
+  "complaint envelope query id" test-eq
+
+<b 0xbc 8 u, 0x1234 16 u, b> =: complaint
+query-id 0x12345678 complaint complaint-envelope-body
+  <b x{52674370} s, query-id 64 u, 0x12345678 32 u, complaint <s s, b>
+  "complaint envelope body" test-cell-eq
+
+"null" load-proposal-value-or-null null "load null proposal value" test-eq
+
+param-value 2 boc+>B "proposal-value.boc" B>file
+"proposal-value.boc" load-proposal-value-or-null param-value "load proposal value from file" test-cell-eq
+
+complaint 2 boc+>B "complaint.boc" B>file
+"complaint.boc" load-validator-complaint
+=: loaded-hash
+=: loaded-complaint
+loaded-complaint complaint "load validator complaint cell" test-cell-eq
+loaded-hash complaint hash "load validator complaint hash" test-eq
+
+"wallet-v3-code.fif" load-upgrade-code-param-value
+<b "wallet-v3-code.fif" include dup <s 12 u@ 0xFF0 <> abort"not valid smart contract code" ref, b>
+  "load upgrade code param value" test-cell-eq
+
+10 1000 normalize-vote-expire-at 1000 > "normalize relative expire-at" test-assert
+0x90000000 1000 normalize-vote-expire-at 0x90000000 "preserve absolute expire-at" test-eq
+
+test-summary

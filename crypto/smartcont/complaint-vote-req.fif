@@ -1,5 +1,6 @@
 #!/usr/bin/fift -s
 "TosUtil.fif" include
+"Validator.fif" include
 "GetOpt.fif" include
 
 "validator-to-sign.req" =: savefile
@@ -23,7 +24,7 @@ $4 savefile replace-if-null =: savefile
 ."Creating a request to vote for complaint 0x" compl-hash 64x. ."of past validator set " elect-id .
 ."on behalf of current validator with index " val-idx . cr
 
-B{56744350} val-idx 16 u>B B+ elect-id 32 u>B B+ compl-hash 256 u>B B+
+val-idx elect-id compl-hash complaint-vote-req>B
 dup Bx. cr
 dup B>base64url type cr
 savefile tuck B>file ."Saved to file " type cr

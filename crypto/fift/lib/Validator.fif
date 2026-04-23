@@ -1,0 +1,72 @@
+library Validator  // Validator request, vote, and signed body codecs
+"Addr.fif" include
+"Currency.fif" include
+"Key.fif" include
+"Msg.fif" include
+
+variable @config-vote-ext-wc
+variable @config-vote-ext-addr
+variable @config-vote-ext-signature
+variable @config-vote-ext-to-sign
+variable @normalize-vote-expire-base
+
+// ( S -- B )
+{ base64>B dup Blen 64 <> abort"validator Ed25519 signature must be exactly 64 bytes long"
+} : parse-val-signature
+
+// ( to-sign signature pubkey -- )
+{ ed25519_chksign not abort"Ed25519 signature is invalid"
+} : check-val-signature
+
+// ( elect-utime max-factor src-addr adnl-addr -- B )
+{ 4 0 reverse B{654c5074} swap 32 u>B B+ swap 32 u>B B+ swap 256 u>B B+ swap 256 u>B B+
+} : validator-elect-req>B
+
+// ( query-id pubkey elect-utime max-factor adnl-addr signature -- c )
+{ <b x{4e73744b} s, 6 roll 64 u, 5 roll B, 4 roll 32 u, 3 roll 32 u, rot 256 u,
+  swap <b swap B, b> ref, b>
+} : validator-elect-body
+
+// ( query-id amount pubkey elect-utime max-factor adnl-addr signature -- c )
+{ <b x{4e73744b} s, 7 roll 64 u, 6 roll Tomi, 5 roll B, 4 roll 32 u, 3 roll 32 u, rot 256 u,
+  swap <b swap B, b> ref, b>
+} : validator-elect-body+stake
+
+// ( seqno expire-at validator-idx proposal-hash -- B )
+{ 4 0 reverse B{566f7465} swap 32 u>B B+ swap 32 u>B B+ swap 16 u>B B+ swap 256 u>B B+
+} : config-vote-req-ext>B
+
+// ( validator-idx proposal-hash -- B )
+{ 2 0 reverse B{566f7445} swap 16 u>B B+ swap 256 u>B B+
+} : config-vote-req-int>B
+
+// ( query-time proposal-hash -- query-id )
+{ swap 32 << swap 32 1<< mod + } : config-vote-query-id
+
+// ( query-id signature to-sign -- c )
+{ <b x{566f7465} s, 3 roll 64 u, rot B, swap B, b>
+} : config-vote-int-body
+
+// ( wc addr signature to-sign -- c )
+{ @config-vote-ext-to-sign ! @config-vote-ext-signature ! @config-vote-ext-addr ! @config-vote-ext-wc !
+  <b @config-vote-ext-signature @ B, @config-vote-ext-to-sign @ B, b>
+  <b b{1000100} s, @config-vote-ext-wc @ @config-vote-ext-addr @ addr, 0 Tomi, 0 1 i,
+    swap append-msg-body b>
+} : config-vote-ext-msg
+
+// ( validator-idx elect-id complaint-hash -- B )
+{ 3 0 reverse B{56744350} swap 16 u>B B+ swap 32 u>B B+ swap 256 u>B B+
+} : complaint-vote-req>B
+
+// ( query-time complaint-hash -- query-id )
+{ swap 32 << swap 32 1<< mod + } : complaint-vote-query-id
+
+// ( query-id signature to-sign -- c )
+{ <b x{56744370} s, 3 roll 64 u, rot B, swap B, b>
+} : complaint-vote-body
+
+// ( raw-expire-at query-time -- expire-at )
+{ @normalize-vote-expire-base ! dup 30 1<< < { @normalize-vote-expire-base @ + 1000 + 2000 /c 2000 * } if
+  dup @normalize-vote-expire-base @ <= abort"expiration time must be in the future"
+  dup 32 ufits not abort"invalid expiration time"
+} : normalize-vote-expire-at

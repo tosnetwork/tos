@@ -15,6 +15,8 @@ variable test-passed
 // ( left right msg -- )
 { 1 test-total +! assert-eq 1 test-passed +! } : test-eq
 // ( left right msg -- )
+{ 1 test-total +! assert-bytes-eq 1 test-passed +! } : test-bytes-eq
+// ( left right msg -- )
 { 1 test-total +! assert-slice-eq 1 test-passed +! } : test-slice-eq
 // ( left right msg -- )
 { 1 test-total +! assert-cell-eq 1 test-passed +! } : test-cell-eq

@@ -1,5 +1,6 @@
 #!/usr/bin/fift -s
 "TosUtil.fif" include
+"Proposal.fif" include
 "GetOpt.fif" include
 
 { show-options-help 1 halt } : usage
@@ -28,16 +29,14 @@ $3 "complaint-msg-body.boc" replace-if-null =: savefile
 expire-in now + =: expire-at
 
 boc-filename dup ."Loading complaint from file `" type ."`" cr
-file>B B>boc dup =: complaint hash =: c-hash
-complaint <s 8 u@ 0xbc <> abort"Not a valid ValidatorComplaint"
+load-validator-complaint =: c-hash =: complaint
 complaint <s csr.
 
 // ." complaint envelope will expire at " expire-at . ."(in " expire-in . ."seconds)" cr
-now 32 << c-hash 0xffffffff and or =: query-id
+now c-hash complaint-envelope-query-id =: query-id
 ."Query id is " query-id . cr
 
-<b x{52674370} s, query-id 64 u, election-id 32 u,
-   complaint <s s, b>
+query-id election-id complaint complaint-envelope-body
 
 dup ."resulting internal message body: " <s csr. cr
 2 boc+>B dup Bx. cr

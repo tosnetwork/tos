@@ -1,5 +1,6 @@
 #!/usr/bin/fift -s
 "TosUtil.fif" include
+"Validator.fif" include
 
 { ."usage: " @' $0 type ." <wallet-addr> <elect-utime> <max-factor> <adnl-addr> [<savefile>]" cr
   ."Creates a request to participate in validator elections starting at <elect-utime> on behalf of smart-contract with address <wallet-addr> (prefix with '@' to load address from file) and hexadecimal adnl address <adnl-addr> (empty string or '0' for none)." cr
@@ -24,7 +25,7 @@ def? $5 { @' $5 } { "validator-to-sign.bin" } cond constant output_fname
 ." with maximal stake factor with respect to the minimal stake " max_factor ._
 ."/65536 and validator ADNL address " adnl_addr 64x. cr
 
-B{654c5074} elect_time 32 u>B B+ max_factor 32 u>B B+ src_addr 256 u>B B+ adnl_addr 256 u>B B+
+elect_time max_factor src_addr adnl_addr validator-elect-req>B
 dup Bx. cr
 dup B>base64url type cr
 output_fname tuck B>file ."Saved to file " type cr

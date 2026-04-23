@@ -108,6 +108,10 @@ TEST(Fift, test_assert_failure) {
   run_fift("assert-fail.fif", true);
 }
 
+TEST(Fift, test_validator_proposal) {
+  run_fift("validator-proposal-test.fif");
+}
+
 TEST(Fift, test_dict) {
   run_fift("testdict.fif");
 }
