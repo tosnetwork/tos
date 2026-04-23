@@ -319,7 +319,7 @@ pub const SPEND_PROXY_COLS: usize =
 /// — bound to `PI[pi_cm(j) + 0]` via row-0 copy-constraint, replacing
 /// the previous `cm_claim == pi_cms[j]` binding.
 pub const OUTPUT_PROXY_COLS: usize =
-    6 + VALUE_LIMBS_U16 + RK_EPK_LIMBS + 1 + 3 + 1 + 4 + 8 + 5;
+    6 + VALUE_LIMBS_U16 + RK_EPK_LIMBS + 1 + 3 + 1 + 4 + 8 + 5 + 5 + 8;
 
 /// Narrow (width-8) Poseidon2 instances per spend after K-air-col-step2:
 /// only the shared-Merkle slot remains. IvkCm + Nf are folded into a
@@ -459,6 +459,29 @@ const O_PK_D_FE1: usize = O_D_FE1 + 1;
 const O_PK_D_FE2: usize = O_PK_D_FE1 + 1;
 const O_PK_D_FE3: usize = O_PK_D_FE2 + 1;
 const O_IVK_COMMITMENT_FE1: usize = O_PK_D_FE3 + 1;
+/// Phase 4b-step3-step1.2f: upper-fe-limb output-proxy columns that
+/// complete the bank-2 sponge absorb layout. Together with the existing
+/// single-fe proxies (`O_VALUE`, `O_RCM`, which coincide with value_fe
+/// and rcm_fes[0]) these 5 cols hold the remaining fes[8..14] that
+/// bank-2 absorbs into its rate slots on row 12+j:
+///
+///   bank2.inputs[k] = bank1.out[k] + fes[8+k] for k ∈ 0..6
+///   bank2.inputs[7] = bank1.out[7] + ONE      (10* padding)
+///
+/// fes[8..14] map onto ivk_cm_fes[2..=3], value_fe, rcm_fes[0..=3].
+const O_IVK_COMMITMENT_FE2: usize = O_IVK_COMMITMENT_FE1 + 1;
+const O_IVK_COMMITMENT_FE3: usize = O_IVK_COMMITMENT_FE2 + 1;
+const O_RCM_FE1: usize = O_IVK_COMMITMENT_FE3 + 1;
+const O_RCM_FE2: usize = O_RCM_FE1 + 1;
+const O_RCM_FE3: usize = O_RCM_FE2 + 1;
+/// Phase 4b-step3-step1.2f: base index of the 8 "carry rate" cols
+/// holding bank-1's Poseidon2-w=16 output rate slots (`state[0..8]`
+/// after perm-1). AIR constraint on row 8+j binds these to
+/// `shared_cm_out[0..8]`; row 12+j uses them as the "bank-1 output rate
+/// term" in bank-2's input-absorb addition. Together with the output-
+/// proxy "constant across rows" invariant, this carries the rate slots
+/// across the 4-row gap between the two sponge permutations.
+const O_SPONGE_CARRY_RATE: usize = O_RCM_FE3 + 1;
 
 // ---------------------------------------------------------------------------
 // Shape-aware helpers
@@ -1288,6 +1311,30 @@ where
                 }
             }
 
+            // --- Phase 4b-step3-step1.2f-out: bank-1 rate → carry col --
+            //
+            // On row 8+j, bind the bank-1 permutation's post-state
+            // rate slots (`state[0..8]` after perm-1) to output j's
+            // `O_SPONGE_CARRY_RATE[0..8]` proxy columns. Paired with
+            // the -in block below, this closes the sponge-rate carry
+            // chain for bank-2's absorb addition.
+            for j in 0..self.n_outputs {
+                let sel: AB::Expr = local_slice[GS_ROW_SEL0 + 8 + j].into();
+                for k in 0..8 {
+                    let carry_col = output_col::<AB::Var>(
+                        local_slice,
+                        self.n_spends,
+                        j,
+                        O_SPONGE_CARRY_RATE + k,
+                    );
+                    builder.assert_zero(
+                        sel.clone()
+                            * (AB::Expr::from(shared_cm_out[k])
+                                - carry_col.into()),
+                    );
+                }
+            }
+
             // --- Phase 4b-step3-step1.2d-out: bank-1 cap → carry col ----
             //
             // On row 8+j, bind the bank-1 permutation's post-state
@@ -1341,6 +1388,76 @@ where
                                 - carry_col.into()),
                     );
                 }
+            }
+
+            // --- Phase 4b-step3-step1.2f-in: bank-2 rate absorb --------
+            //
+            // On row 12+j, bind the bank-2 permutation's input rate
+            // slots (`shared_cm.inputs[0..8]`) to
+            // `bank1.out.rate + fes[8..14]` (with 10* padding at
+            // slot 7), using the per-row carry cols populated by
+            // step 1.2f-out above. fes[8..14] map onto the upper
+            // fe limbs of ivk_commitment / value / rcm:
+            //
+            //   inputs[0] = carry_rate[0] + O_IVK_COMMITMENT_FE2
+            //   inputs[1] = carry_rate[1] + O_IVK_COMMITMENT_FE3
+            //   inputs[2] = carry_rate[2] + O_VALUE
+            //   inputs[3] = carry_rate[3] + O_RCM
+            //   inputs[4] = carry_rate[4] + O_RCM_FE1
+            //   inputs[5] = carry_rate[5] + O_RCM_FE2
+            //   inputs[6] = carry_rate[6] + O_RCM_FE3
+            //   inputs[7] = carry_rate[7] + ONE  (10* padding)
+            //
+            // Soundness: combined with step 1.2c (bank-1 rate pin),
+            // 1.2b (tag pin), 1.2d (capacity carry), 1.2e (bank-2
+            // output), and 1.2f-out (bank-1 output rate carry), the
+            // full iterated-sponge derivation is now AIR-ratified
+            // end-to-end on the (d, pk_d, ivk_cm, value, rcm) fe-limb
+            // proxies. The remaining gap before step 1.3 is the
+            // byte→fe decomposition of these proxies (step 1.3-fields).
+            for j in 0..self.n_outputs {
+                let sel: AB::Expr = local_slice[GS_ROW_SEL0 + 12 + j].into();
+                let fe_slot_cols = [
+                    O_IVK_COMMITMENT_FE2, // fes[8]
+                    O_IVK_COMMITMENT_FE3, // fes[9]
+                    O_VALUE,              // fes[10]
+                    O_RCM,                // fes[11]
+                    O_RCM_FE1,            // fes[12]
+                    O_RCM_FE2,            // fes[13]
+                    O_RCM_FE3,            // fes[14]
+                ];
+                for k in 0..7 {
+                    let carry_col = output_col::<AB::Var>(
+                        local_slice,
+                        self.n_spends,
+                        j,
+                        O_SPONGE_CARRY_RATE + k,
+                    );
+                    let fe_col = output_col::<AB::Var>(
+                        local_slice,
+                        self.n_spends,
+                        j,
+                        fe_slot_cols[k],
+                    );
+                    builder.assert_zero(
+                        sel.clone()
+                            * (AB::Expr::from(shared_cm.inputs[k])
+                                - (AB::Expr::from(carry_col) + AB::Expr::from(fe_col))),
+                    );
+                }
+                // Padding slot 7: inputs[7] = carry[7] + ONE.
+                let carry_col_7 = output_col::<AB::Var>(
+                    local_slice,
+                    self.n_spends,
+                    j,
+                    O_SPONGE_CARRY_RATE + 7,
+                );
+                builder.assert_zero(
+                    sel.clone()
+                        * (AB::Expr::from(shared_cm.inputs[7])
+                            - (AB::Expr::from(carry_col_7)
+                                + AB::Expr::from(AB::F::from_u64(1)))),
+                );
             }
 
             // --- Phase 4b-step3-step1.2e: sponge bank-2 output ↔ OUT ----
@@ -2478,6 +2595,10 @@ impl MvpWitness {
         // (state[8..16] after perm-1) per output so the output proxy
         // block can carry it via `O_SPONGE_CARRY_CAP[0..8]`.
         let mut sponge_bank1_out_cap: Vec<[Goldilocks; 8]> = Vec::with_capacity(n_o);
+        // Phase 4b-step3-step1.2f: save bank-1 output rate slots
+        // (state[0..8] after perm-1) per output so the output proxy
+        // block can carry them via `O_SPONGE_CARRY_RATE[0..8]`.
+        let mut sponge_bank1_out_rate: Vec<[Goldilocks; 8]> = Vec::with_capacity(n_o);
         for o in &self.outputs {
             // Assemble the 15-fe input per §3.2.
             let d_fes = pack_diversifier_as_2fe(&o.d);
@@ -2508,6 +2629,11 @@ impl MvpWitness {
             let mut out_cap = [Goldilocks::ZERO; 8];
             out_cap.copy_from_slice(&state_after_perm1[8..16]);
             sponge_bank1_out_cap.push(out_cap);
+            // Save bank-1 output rate slots for carry-col population
+            // (step 1.2f).
+            let mut out_rate = [Goldilocks::ZERO; 8];
+            out_rate.copy_from_slice(&state_after_perm1[0..8]);
+            sponge_bank1_out_rate.push(out_rate);
 
             // Bank 2 input: bank1_output[0..6] += fes[8..14];
             //               bank1_output[7] += ONE (padding, rem=7);
@@ -2662,11 +2788,29 @@ impl MvpWitness {
                 let d_fes = pack_diversifier_as_2fe(&o.d);
                 let pk_d_fes = pack_32b_as_4fe(&o.pk_d);
                 let ivk_cm_fes = pack_32b_as_4fe(&o.ivk_commitment);
+                let rcm_fes = pack_32b_as_4fe(&o.rcm);
                 v.push(d_fes[1]);
                 v.push(pk_d_fes[1]);
                 v.push(pk_d_fes[2]);
                 v.push(pk_d_fes[3]);
                 v.push(ivk_cm_fes[1]);
+                // Phase 4b-step3-step1.2f: upper fe limbs of
+                // ivk_commitment and rcm that bank-2 absorbs into its
+                // rate slots on row 12+j. Combined with `O_VALUE` and
+                // `O_RCM` (== rcm_fes[0]), these complete the
+                // bank-2 absorb layout fes[8..=14].
+                v.push(ivk_cm_fes[2]);
+                v.push(ivk_cm_fes[3]);
+                v.push(rcm_fes[1]);
+                v.push(rcm_fes[2]);
+                v.push(rcm_fes[3]);
+                // Phase 4b-step3-step1.2f: bank-1 output rate slots
+                // (state[0..8] after perm-1) carried forward to row
+                // 12+j as the "bank-1 output term" in bank-2's input
+                // absorb addition.
+                for fe in sponge_bank1_out_rate[j].iter() {
+                    v.push(*fe);
+                }
                 debug_assert_eq!(v.len(), OUTPUT_PROXY_COLS);
                 v
             })
