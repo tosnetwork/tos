@@ -1,0 +1,4 @@
+"Proposal.fif" include
+
+"<b 0 8 u, b>\n" $>B "bad-code.fif" B>file
+"bad-code.fif" load-upgrade-code-param-value drop

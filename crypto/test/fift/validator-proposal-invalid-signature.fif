@@ -1,0 +1,3 @@
+"Validator.fif" include
+
+"AQ==" parse-val-signature drop

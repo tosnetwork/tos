@@ -112,6 +112,26 @@ TEST(Fift, test_validator_proposal) {
   run_fift("validator-proposal-test.fif");
 }
 
+TEST(Fift, test_validator_proposal_legacy_parity) {
+  run_fift("validator-proposal-legacy-parity.fif");
+}
+
+TEST(Fift, test_validator_proposal_invalid_signature) {
+  run_fift("validator-proposal-invalid-signature.fif", true);
+}
+
+TEST(Fift, test_validator_proposal_expire_fail) {
+  run_fift("validator-proposal-expire-fail.fif", true);
+}
+
+TEST(Fift, test_validator_proposal_invalid_complaint) {
+  run_fift("validator-proposal-invalid-complaint.fif", true);
+}
+
+TEST(Fift, test_validator_proposal_invalid_upgrade_code) {
+  run_fift("validator-proposal-invalid-upgrade-code.fif", true);
+}
+
 TEST(Fift, test_dict) {
   run_fift("testdict.fif");
 }

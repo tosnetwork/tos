@@ -1,0 +1,4 @@
+"Proposal.fif" include
+
+<b 0xAB 8 u, 0x1234 16 u, b> 2 boc+>B "bad-complaint.boc" B>file
+"bad-complaint.boc" load-validator-complaint 2drop
