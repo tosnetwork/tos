@@ -263,15 +263,39 @@ fn test_real_proof_verifies_against_ffi_verifier() {
     // The recipient-address material mirrors what `send::build_transfer`
     // feeds into `TransferWitness::build`. For the test we use the
     // recipient's real address fields so the proxy PIs are deterministic.
+    //
+    // Phase 4b-step3-step1.3-pi: `output_cms` must equal the 15-fe
+    // iterated-sponge output over (d, pk_d, ivk_commitment, value, rcm)
+    // — the AIR now binds PI[pi_cm(j) + k] to O_CM_SPONGE_OUT[k], so a
+    // mismatch between `output_cms[j]` and the real cm derivation
+    // would fail the row-0 copy-constraint at verify time.
+    let output_rcms_real: [[u8; 32]; 2] = [[0x77u8; 32], [0x88u8; 32]];
+    let output_d_real: [[u8; 11]; 2] = [bob_diversifier, alice_notes[0].diversifier];
+    let output_pk_d_real: [[u8; 32]; 2] = [bob_addr.pk_d, bob_addr.pk_d];
+    let output_ivk_cm_real: [[u8; 32]; 2] =
+        [bob_addr.ivk_commitment, bob_addr.ivk_commitment];
+    let output_values_real: [u64; 2] = [1_500, 450];
+    let expected_cms: Vec<[u8; 32]> = (0..2)
+        .map(|j| {
+            transfer::compute_note_commitment(&transfer::NoteCommitmentInputs {
+                d: &output_d_real[j],
+                pk_d_bytes: &output_pk_d_real[j],
+                ivk_commitment: &output_ivk_cm_real[j],
+                value: output_values_real[j],
+                rcm: &output_rcms_real[j],
+            })
+        })
+        .collect();
+
     let witness = send::TransferWitness::build(
         &alice_notes,
         &[2_000],                                       // spend values
-        &[1_500, 450],                                  // recipient + change
-        &[[0x01u8; 32], [0x02u8; 32]],                  // output cms
-        &[bob_diversifier, alice_notes[0].diversifier], // output d
-        &[bob_addr.pk_d, bob_addr.pk_d],                // output pk_d (change reuses shape)
-        &[bob_addr.ivk_commitment, bob_addr.ivk_commitment],
-        &[[0x77u8; 32], [0x88u8; 32]], // output_rcms
+        &output_values_real,                            // recipient + change
+        &expected_cms,                                  // output cms (real sponge output)
+        &output_d_real,                                 // output d
+        &output_pk_d_real,                              // output pk_d (change reuses shape)
+        &output_ivk_cm_real,
+        &output_rcms_real, // output_rcms
         50, // fee
         &anchor,
         0x01u8,        // scheme_id (V1-3c-round-8 档1)

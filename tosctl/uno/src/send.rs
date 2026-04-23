@@ -1217,15 +1217,32 @@ mod tests {
     fn plonky3_prove_produces_real_proof() {
         // Single-spend / single-output witness at the smallest shape.
         let note = owned_note(1_000, 0x42);
+        // Phase 4b-step3-step1.3-pi: the AIR now binds PI[pi_cm(0)+k]
+        // to the 15-fe iterated-sponge output, so `output_cms[j]` must
+        // equal `compute_note_commitment(d, pk_d, ivk_commitment,
+        // value, rcm)` — otherwise prove+verify fails the copy-
+        // constraint on row 0. Compute it from the real test fields
+        // instead of hardcoding an arbitrary [0x11; 32].
+        let d_addr = [0x22u8; 11];
+        let pk_d_real = [0x33u8; 32];
+        let ivk_cm_real = [0x44u8; 32];
+        let rcm_real = [0x77u8; 32];
+        let expected_cm = compute_note_commitment(&NoteCommitmentInputs {
+            d: &d_addr,
+            pk_d_bytes: &pk_d_real,
+            ivk_commitment: &ivk_cm_real,
+            value: 990,
+            rcm: &rcm_real,
+        });
         let witness = TransferWitness::build(
             &[note],
             &[1_000],
             &[990],
-            &[[0x11u8; 32]],
-            &[[0x22u8; 11]],
-            &[[0x33u8; 32]],
-            &[[0x44u8; 32]],
-            &[[0x77u8; 32]], // output_rcms
+            &[expected_cm],
+            &[d_addr],
+            &[pk_d_real],
+            &[ivk_cm_real],
+            &[rcm_real],
             10,
             &[0xAAu8; 32],
             SCHEME_ID_V1,

@@ -1018,19 +1018,31 @@ where
             for j in 0..self.n_outputs {
                 let value_out = output_col(local_slice, self.n_spends, j, O_VALUE);
 
-                // Phase 4b-step2a: bind `PI[pi_cm(j) + 0]` to the new
-                // witness-bytes col `O_CM_LIMB0_REAL` (= cm_bytes[0..8]
-                // as u64 mod p) instead of the Poseidon2-derived
-                // `O_CM_CLAIM`. `O_CM_CLAIM` still participates in the
-                // shared-wide-block claim-6 `cm_claim = Poseidon2
-                // (proxies)` constraint on row 4+j, so trace integrity
-                // is preserved, but the PI value now comes from
-                // `witness.cm_bytes[0..8]` — matching C++'s
-                // `encode_256(cm_bytes)[0]`. See the module docstring
-                // for the documented soundness trade-off.
-                let cm_limb0_real: AB::Var =
-                    output_col(local_slice, self.n_spends, j, O_CM_LIMB0_REAL);
-                first.assert_eq(cm_limb0_real, pi_cms[j]);
+                // Phase 4b-step3-step1.3-pi: bind `PI[pi_cm(j) + 0]` to
+                // the AIR-ratified 15-fe iterated-sponge output
+                // `O_CM_SPONGE_OUT[0]`, superseding the Phase 4b-step2a
+                // witness-bytes binding from `O_CM_LIMB0_REAL`. Step
+                // 1.2b-f chained Poseidon2 constraints now prove that
+                // `O_CM_SPONGE_OUT[0..4]` equals
+                //   Poseidon2-w=16-wide-sponge(
+                //       "uno-cm-v1",
+                //       [d, pk_d, ivk_commitment, value, rcm]_fe15)
+                // and step 1.1-tosctl ensures tosctl's witness uses
+                // the REAL 32-byte (d, pk_d, ivk_commitment, rcm) +
+                // real value, so the sponge output is byte-identical
+                // to `witness.cm_bytes[0..8]` as a u64 LE mod p.
+                //
+                // Soundness delta: this closes the Phase 4b-step2a
+                // decoupling gap — PI cm is no longer just "whatever
+                // witness claims" but "the AIR-derived Poseidon2
+                // output over (d, pk_d, ivk_commitment, value, rcm)".
+                // Combined with the shared-wide-block claim-2 / claim-6
+                // proxy-Poseidon2 bindings (which stay for now, as
+                // they are part of the Merkle-leaf / nullifier chain),
+                // the cm PI is end-to-end AIR-ratified.
+                let cm_sponge_limb0: AB::Var =
+                    output_col(local_slice, self.n_spends, j, O_CM_SPONGE_OUT);
+                first.assert_eq(cm_sponge_limb0, pi_cms[j]);
 
                 // Claim 7: u64 range-check on `value_j` via 4×u16 limbs.
                 // Phase 3b-step2: see claim-5 comment above. Range-check
@@ -1092,20 +1104,21 @@ where
                 first.assert_eq(anchor_limb, pi_anchor_slot);
             }
 
-            // Phase 4b-step1: cm limbs 1..3 PI binding per output. Limb
-            // 0 is bound via `O_CM_CLAIM == pi_cms[j]` earlier in this
-            // block (claim 6) and `cm_claim == Poseidon2-w=16(...)` via
-            // the shared wide block on rows 0..7.
+            // Phase 4b-step3-step1.3-pi: cm limbs 1..3 PI binding per
+            // output, from the AIR-ratified sponge output cols
+            // `O_CM_SPONGE_OUT[1..4]`, superseding the Phase 4b-step1
+            // witness-bytes binding from `O_CM_LIMB1..3`. See the limb-0
+            // block above for the full soundness argument.
             for j in 0..self.n_outputs {
                 for k in 1..4 {
-                    let cm_upper: AB::Var = output_col(
+                    let cm_sponge_limb: AB::Var = output_col(
                         local_slice,
                         self.n_spends,
                         j,
-                        O_CM_LIMB1 + (k - 1),
+                        O_CM_SPONGE_OUT + k,
                     );
                     let pi_cm_slot = pis_vec[pi_cm(self.n_spends, j) + k];
-                    first.assert_eq(cm_upper, pi_cm_slot);
+                    first.assert_eq(cm_sponge_limb, pi_cm_slot);
                 }
             }
 
@@ -1988,16 +2001,6 @@ impl MvpWitness {
             } else {
                 v_per_out_base
             };
-            // Synthesize cm_bytes from the Poseidon2 output so the AIR's
-            // low-limb binding holds when `public_inputs()` re-derives
-            // `cm_limb0` via `poseidon2_cm_fe`. `deterministic_valid` is a
-            // test fixture; it doesn't carry real 32-byte cm material, so
-            // we project `cm_limb0` into `cm_bytes[0..8]` and leave the
-            // rest zero. Real production wallets populate all 32 bytes.
-            let cm_limb0 =
-                poseidon2_cm_fe(&perm16, d, pk_d, ivk_commitment, value, rcm).as_canonical_u64();
-            let mut cm_bytes = [0u8; 32];
-            cm_bytes[0..8].copy_from_slice(&cm_limb0.to_le_bytes());
             // Phase 4b-step3-step0: widen u64 proxies to [u8; 32] with
             // 8-byte low-limb projection + 24-byte zero padding (test
             // fixture convention; real tosctl witnesses carry full
@@ -2010,6 +2013,26 @@ impl MvpWitness {
             ivk_commitment_bytes[0..8].copy_from_slice(&ivk_commitment.to_le_bytes());
             let mut rcm_bytes = [0u8; 32];
             rcm_bytes[0..8].copy_from_slice(&rcm.to_le_bytes());
+            // Phase 4b-step3-step1.3-pi: synthesize cm_bytes from the
+            // 15-fe iterated-sponge output so the AIR's new PI binding
+            // (`O_CM_SPONGE_OUT[0..4] == PI[pi_cm(j) + 0..4]`) holds.
+            // Pre-step-1.3 this fixture projected only `poseidon2_cm_fe`
+            // (the OLD single-perm 6-input u64-proxy Poseidon2) into
+            // cm_bytes[0..8], which diverges from the sponge output and
+            // would break the round-trip here.
+            let sponge_out = poseidon2_cm_full_sponge(
+                &perm16,
+                &d_bytes,
+                &pk_d_bytes,
+                &ivk_commitment_bytes,
+                value,
+                &rcm_bytes,
+            );
+            let mut cm_bytes = [0u8; 32];
+            for k in 0..4 {
+                cm_bytes[k * 8..(k + 1) * 8]
+                    .copy_from_slice(&sponge_out[k].as_canonical_u64().to_le_bytes());
+            }
             outputs.push(OutputWitness {
                 d: d_bytes,
                 pk_d: pk_d_bytes,
