@@ -295,6 +295,34 @@ round-trip at 1/1, 1/2, 4/4; wire
 valid tosctl cm; step 1 just adds the AIR proof that it's the
 correct derivation).
 
+**Status (2026-04-22): Step 1 functionally complete.** Commits:
+
+  1.0  — `50045938f` cross-crate sponge byte-parity tests
+  1.1  — `8a4f75c31` O_CM_SPONGE_OUT trace col (data-only)
+  1.2a — `81d30c246` trace-gen fills sponge bank rows
+  1.2b — `e9a6b8622` AIR pins bank-1 input capacity (tag block)
+  1.2c — `5bc0a2ba5` AIR pins bank-1 input rate slots
+  1.2d — `b187f99fa` AIR carries bank-1 out cap → bank-2 in cap
+  1.2e — `9397b2da7` AIR binds bank-2 output to O_CM_SPONGE_OUT
+  1.2f — `5cf965204` AIR closes bank-2 rate absorb (carry + fes + 10*)
+  1.1-tosctl — `96d6ed9d5` thread real 32 B recipient fields + real rcm
+  1.3-pi     — `016b2b5bf` PI[pi_cm] now driven by AIR-ratified sponge
+  1.3-cleanup — `8ce78a572` delete dead O_CM_LIMB0_REAL / O_CM_LIMB1..3
+
+`OUTPUT_PROXY_COLS` landed at 45 (from 23 pre-step-1.2, incl. +22
+for the fe-limb proxies + carry cols that close the sponge
+absorb/carry chain end-to-end, minus -4 from the step-1.3-cleanup
+deletion of the legacy witness-bytes path).
+
+Remaining optional hardening in step 1: **step 1.3-fields** —
+byte→fe decomposition constraints binding each `O_*_FE*` col to a
+specific 8-byte slice of the underlying 32 B `P3OutputWitness`
+field. Today a malicious prover could pick fe-limb values that
+differ from `u64::from_le_bytes(witness.field[k*8..(k+1)*8])` and
+still satisfy the sponge AIR + PI copy-constraint — the soundness
+leak is bounded by Poseidon2 2nd-preimage resistance, so this is
+defense-in-depth rather than a consensus-binding gap. ~40 LOC.
+
 ### 4.2 Step 2 — nf derivation in-circuit, real inputs
 
 **Goal:** `nf = Poseidon2-w=8(TAG_NF, real_nk, real_cm[4], pos)` where
