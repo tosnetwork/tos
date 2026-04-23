@@ -2463,7 +2463,7 @@ pub(crate) fn first_u64_proxy(bytes: &[u8; 32]) -> u64 {
 /// zero-padded. Only the first fe holds a non-zero u64 for this
 /// 9-byte tag.
 #[inline]
-pub(crate) fn uno_cm_v1_tag_block() -> [Goldilocks; 8] {
+pub fn uno_cm_v1_tag_block() -> [Goldilocks; 8] {
     // Mirror of `tosctl/uno/src/poseidon2.rs::pack_tag_block` for
     // the specific tag "uno-cm-v1" (9 ASCII bytes). The tag fits
     // inside one 8-byte chunk + 1 trailing byte in the second
@@ -2491,7 +2491,7 @@ pub(crate) fn uno_cm_v1_tag_block() -> [Goldilocks; 8] {
 /// `tosctl/uno/src/poseidon2.rs::bytes_to_fes_wrapped` for a 32 B
 /// input + C++ `pack_bytes32_as_4`.
 #[inline]
-pub(crate) fn pack_32b_as_4fe(bytes: &[u8; 32]) -> [Goldilocks; 4] {
+pub fn pack_32b_as_4fe(bytes: &[u8; 32]) -> [Goldilocks; 4] {
     let mut out = [Goldilocks::ZERO; 4];
     for i in 0..4 {
         let limb = u64::from_le_bytes(bytes[i * 8..(i + 1) * 8].try_into().unwrap());
@@ -2506,7 +2506,7 @@ pub(crate) fn pack_32b_as_4fe(bytes: &[u8; 32]) -> [Goldilocks; 4] {
 /// 2 × u64 LE mod p; bytes[16..32] are not looked at (they are
 /// expected to be zero and play no role in the sponge).
 #[inline]
-pub(crate) fn pack_diversifier_as_2fe(d: &[u8; 32]) -> [Goldilocks; 2] {
+pub fn pack_diversifier_as_2fe(d: &[u8; 32]) -> [Goldilocks; 2] {
     [
         Goldilocks::from_u64(reduce_to_goldilocks(
             u64::from_le_bytes(d[0..8].try_into().unwrap()),
@@ -2530,8 +2530,52 @@ pub(crate) fn pack_diversifier_as_2fe(d: &[u8; 32]) -> [Goldilocks; 2] {
 ///
 /// Returns `[Goldilocks; 4]` — pack them with
 /// `as_canonical_u64().to_le_bytes()` to get 32-byte cm.
+/// Cross-crate byte-parity wrapper around `poseidon2_cm_full_sponge`:
+/// constructs its own default `Poseidon2Goldilocks<16>` (so callers
+/// don't need to import the vendored `p3-goldilocks`) and packs the
+/// 4-fe digest into 32 LE bytes per Goldilocks limb.
+///
+/// Designed for `tosctl/uno` integration tests that cannot directly
+/// reference the vendored-path `Goldilocks` type (Cargo resolves
+/// `p3-field` / `p3-goldilocks` to two distinct crates for the
+/// vendored vs. git-pathed consumers).
+///
+/// Output format matches `tosctl::poseidon2::hash_tagged(b"uno-cm-v1",
+/// fes_15)` byte-for-byte for equivalent inputs — see
+/// `tosctl/uno/tests/phase4b_step3_sponge_parity.rs`.
 #[allow(dead_code)]
-pub(crate) fn poseidon2_cm_full_sponge(
+pub fn poseidon2_cm_full_sponge_bytes(
+    d: &[u8; 32],
+    pk_d: &[u8; 32],
+    ivk_commitment: &[u8; 32],
+    value: u64,
+    rcm: &[u8; 32],
+) -> [u8; 32] {
+    let perm16 = default_goldilocks_poseidon2_16();
+    let digest = poseidon2_cm_full_sponge(&perm16, d, pk_d, ivk_commitment, value, rcm);
+    let mut out = [0u8; 32];
+    for (i, fe) in digest.iter().enumerate() {
+        out[i * 8..(i + 1) * 8].copy_from_slice(&fe.as_canonical_u64().to_le_bytes());
+    }
+    out
+}
+
+/// Cross-crate byte-equivalent of `uno_cm_v1_tag_block()`: packs the
+/// 8-fe tag block into 64 LE bytes (8 B per fe). Enables byte-level
+/// parity checks from crates that cannot directly see the vendored
+/// `Goldilocks` type.
+#[allow(dead_code)]
+pub fn uno_cm_v1_tag_block_bytes() -> [u8; 64] {
+    let tag_fes = uno_cm_v1_tag_block();
+    let mut out = [0u8; 64];
+    for (i, fe) in tag_fes.iter().enumerate() {
+        out[i * 8..(i + 1) * 8].copy_from_slice(&fe.as_canonical_u64().to_le_bytes());
+    }
+    out
+}
+
+#[allow(dead_code)]
+pub fn poseidon2_cm_full_sponge(
     perm16: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH_16]>,
     d: &[u8; 32],
     pk_d: &[u8; 32],
