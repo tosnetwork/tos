@@ -78,6 +78,7 @@ pub mod transfer_air;
 pub mod transfer_columns;
 pub mod transfer_preimage;
 pub mod transfer_sponge;
+pub mod transfer_witness;
 pub mod verifier;
 pub mod verifier_air;
 
