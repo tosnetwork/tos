@@ -1191,6 +1191,47 @@ where
                 }
             }
 
+            // --- Phase 4b-step3-step1.2e: sponge bank-2 output ↔ OUT ----
+            //
+            // On row 12+j (j ∈ 0..n_outputs), the shared_cm block hosts
+            // output j's sponge perm-2 witness. Its post-permutation
+            // state[0..4] is the final 4-fe cm digest. This constraint
+            // binds that output to the `O_CM_SPONGE_OUT[0..4]` cols in
+            // output j's proxy block — a 4-fe equality per output.
+            //
+            // Since output proxy cols are constant-across-rows, reading
+            // `O_CM_SPONGE_OUT[k]` on row 12+j gives the same value as
+            // row 0 where `trace_populates_o_cm_sponge_out_from_helper`
+            // checks it against `poseidon2_cm_full_sponge(...)`. This
+            // two-step equivalence (AIR proves bank2-output == proxy-
+            // col on row 12+j, unit test proves proxy-col == helper
+            // off-circuit) means the sponge digest is AIR-ratified
+            // without a separate round-trip test needing to re-run the
+            // permutation in-circuit.
+            //
+            // Still missing from step 1.2 (tracked as step 1.2c/d):
+            //   - bank-1 rate-slot fe-limb absorption
+            //   - bank-1 → bank-2 state carry across rows 8+j → 12+j
+            //   - bank-2 rate-slot fe-absorb (fes[8..14] + ONE padding)
+            //
+            // Those are independent incremental commits.
+            for j in 0..self.n_outputs {
+                let sel: AB::Expr = local_slice[GS_ROW_SEL0 + 12 + j].into();
+                for k in 0..4 {
+                    let sponge_out_col = output_col::<AB::Var>(
+                        local_slice,
+                        self.n_spends,
+                        j,
+                        O_CM_SPONGE_OUT + k,
+                    );
+                    builder.assert_zero(
+                        sel.clone()
+                            * (AB::Expr::from(shared_cm_out[k])
+                                - sponge_out_col.into()),
+                    );
+                }
+            }
+
             // --- Narrow IvkCm block: rows 0..(n_spends-1) --------------
             for i in 0..self.n_spends {
                 let sel: AB::Expr = local_slice[GS_ROW_SEL0 + i].into();
