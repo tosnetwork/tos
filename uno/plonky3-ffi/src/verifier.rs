@@ -237,6 +237,7 @@ impl MvpBatchVerifier {
 /// [`crate::uno_mine_uno_verify`] and from Rust-side integration tests.
 pub fn verify_mine_uno(proof_bytes: &[u8], public_inputs_bytes: &[u8]) -> Plonky3Status {
     use crate::mine_uno_air::MineUnoAir;
+    use crate::mine_uno_columns::LOG_MINE_TRACE_HEIGHT;
     use crate::mine_uno_witness::decode_mine_public_inputs;
     use crate::prover::build_config;
 
@@ -253,6 +254,24 @@ pub fn verify_mine_uno(proof_bytes: &[u8], public_inputs_bytes: &[u8]) -> Plonky
         Ok(p) => p,
         Err(_) => return Plonky3Status::ProofDecodeFailed,
     };
+
+    // Pin the trace height. The MineUno AIR commits its row layout to a
+    // fixed 4-stage selector shift register (rows 0..3 are CM_P1, CM_P2,
+    // POW_P1, POW_P2; rows 4..7 are padding). With the underlying
+    // p3_uni_stark verifier accepting any `degree_bits`, an attacker
+    // could submit a 2-row proof: the selector pulse only reaches CM_P1
+    // → CM_P2, never lighting up POW_P1 / POW_P2, so the gated
+    // Poseidon2 input pinning + digest binding for the PoW chain never
+    // fires. The PI's `pow_hash` is bound to the row-0 witness proxy
+    // (transition-constant across rows) but with no constraint forcing
+    // it to equal the AIR's actual two-perm digest, the prover can
+    // commit ANY pow_hash value — including one < target — and pass the
+    // C++ `pow_hash < state.mine_target()` gate without proving the
+    // PoW sponge. Reject any proof whose declared trace height differs
+    // from `LOG_MINE_TRACE_HEIGHT` BEFORE invoking the verifier.
+    if proof.degree_bits != LOG_MINE_TRACE_HEIGHT {
+        return Plonky3Status::VerifyFailed;
+    }
 
     let config = build_config();
     let air = MineUnoAir::new();
