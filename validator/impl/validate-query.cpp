@@ -291,8 +291,8 @@ void ValidateQuery::start_up() {
     return;
   }
   if (workchain() != tos::masterchainId && workchain() != tos::basechainId &&
-      workchain() != evm_workchain::kWorkchainId) {
-    soft_reject_query("can validate block candidates only for masterchain (-1), base workchain (0), and EVM workchain (1)");
+      workchain() != evm_workchain::kWorkchainId && workchain() != 2 /* uno_workchain::kWorkchainId */) {
+    soft_reject_query("can validate block candidates only for masterchain (-1), base workchain (0), EVM workchain (1), and UNO workchain (2)");
     return;
   }
   if (!shard_.is_valid_ext()) {

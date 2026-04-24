@@ -138,13 +138,21 @@ Bhashu dup =: evmstate1_fhash 256 u>B "evmstate1.fhash" B>file
 hashu dup =: evmstate1_rhash 256 u>B "evmstate1.rhash" B>file
 evmstate1_rhash evmstate1_fhash now {monitor_min_split} {split} dup 1 add-evm-workchain-v2
 
-// UNO workchain (wc=2) zerostate: empty ShardState (no pre-seeded accounts).
-// The UNO commitment tree / nullifier set lives inside the single-executor
-// account at address 0x…01 and is materialised lazily on first mine/transfer;
-// the mainnet distribution-builder (uno/core/genesis.h) is TODO per
-// gen-zerostate.fif. vm_version=0x554E4F31 on the descriptor routes wc=2
-// traffic to the Plonky3 STARK verifier.
-2 mkemptyShardState
+// UNO workchain (wc=2) zerostate: ShardState whose accounts:^ShardAccounts ref
+// is pre-populated with the single UNO executor account at 0x…01 as
+// acc_uninit — built deterministically by the C++ word
+// `uno-zerostate-accounts-cell` registered in create-state.cpp. The executor
+// needs to exist in ShardAccounts from block 0 so the collator can route
+// ext_in_msgs (`uno_sendMineUno`, `uno_sendTransfer`) to it; otherwise the
+// lookup returns null and every inbound wc=2 tx is dropped before compute
+// phase. The first MineUno activates the account (acc_uninit → acc_active
+// with the 0x55 'U' code marker + serialised UnoShardState as data). The
+// commitment tree / nullifier set / anchor window are materialised lazily
+// inside UnoShardState on that first tx — the mainnet distribution-builder
+// (uno/core/genesis.h) is still TODO per gen-zerostate.fif. vm_version=
+// 0x554E4F31 on the descriptor routes wc=2 traffic to the Plonky3 STARK
+// verifier.
+uno-zerostate-accounts-cell 2 mkShardStateWithAccounts
 dup dup 31 boc+>B dup "unostate2.boc" B>file
 Bhashu dup =: unostate2_fhash 256 u>B "unostate2.fhash" B>file
 hashu dup =: unostate2_rhash 256 u>B "unostate2.rhash" B>file

@@ -151,9 +151,14 @@ void Collator::start_up() {
     is_key_block_ = true;
   }
   // 1. check validity of parameters, especially prev_blocks, shard and min_mc_block_id
+  // wc=2 (UNO workchain) uses the same TVM-free collation path as wc=1 EVM:
+  // ext_in_msgs are routed to the seeded executor account (see
+  // uno_workchain::build_uno_zerostate_accounts_cell()), compute-phase dispatch
+  // lives in crypto/block/transaction.cpp (line ~1938+), wc=2 routing literal
+  // to avoid a uno/core/workchain.h include here.
   if (workchain() != tos::masterchainId && workchain() != tos::basechainId &&
-      workchain() != evm_workchain::kWorkchainId) {
-    fatal_error(-667, "can create block candidates only for masterchain (-1), base workchain (0), and EVM workchain (1)");
+      workchain() != evm_workchain::kWorkchainId && workchain() != 2 /* uno_workchain::kWorkchainId */) {
+    fatal_error(-667, "can create block candidates only for masterchain (-1), base workchain (0), EVM workchain (1), and UNO workchain (2)");
     return;
   }
   if (is_busy()) {

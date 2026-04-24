@@ -275,7 +275,15 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
   // Structural validation (BOC/TLB) and rate-limiting still apply.
   // Must short-circuit BEFORE run_fetch_account_state(), which expects
   // the workchain's block storage to be populated by a TVM-style collator.
-  if (wc == 1 /* evm_workchain::kWorkchainId */) {
+  //
+  // UNO workchain (workchain 2): same rationale — wc=2 uses the shielded-
+  // pool compute phase (Plonky3 STARK verify), not TVM. Signature / nullifier
+  // / anchor checks all run inside `uno_workchain::run_compute_phase` at
+  // collation time; the ext-message pool has no way to validate the body
+  // (the executor account's state isn't reachable from a TVM Account).
+  // Must short-circuit for the same reason as wc=1.
+  if (wc == 1 /* evm_workchain::kWorkchainId */ ||
+      wc == 2 /* uno_workchain::kWorkchainId */) {
     auto [wait, promise] = td::actor::StartedTask<>::make_bridge();
     promise.set_value(td::Unit{});
     co_return CheckResult{.message = message, .wait_allow_broadcast = std::move(wait)};
