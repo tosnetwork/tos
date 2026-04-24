@@ -521,8 +521,8 @@ TEST(Misc, idn_to_ascii) {
   test_idn_to_ascii_one("bücher.tld", "xn--bcher-kva.tld");
   test_idn_to_ascii_one("кто.рф", "xn--j1ail.xn--p1ai");
   test_idn_to_ascii_one("wіkіреdіа.org", "xn--wkd-8cdx9d7hbd.org");
-  test_idn_to_ascii_one("cnwin2k8中国.avol.com", "xn--cnwin2k8-sd0mx14e.avol.com");
-  test_idn_to_ascii_one("win-2k12r2-addc.阿伯测阿伯测ad.hai.com", "win-2k12r2-addc.xn--ad-tl3ca3569aba8944eca.hai.com");
+  test_idn_to_ascii_one("cnwin2k8.café.avol.com", "cnwin2k8.xn--caf-dma.avol.com");
+  test_idn_to_ascii_one("win-2k12r2-addc.café-ad.hai.com", "win-2k12r2-addc.xn--caf-ad-dva.hai.com");
   test_idn_to_ascii_one("✌.ws", "xn--7bi.ws");
   //  test_idn_to_ascii_one("✌️.ws", "xn--7bi.ws"); // needs nameprep to succeed
   test_idn_to_ascii_one("⛧", "xn--59h");

@@ -29,7 +29,7 @@
 | `~/tos/tosctl` operator docs | ✅ README.md, JSON output on 15 commands, mnemonic aliases |
 | `~/tos/tosctl` Rust TVM stack | ✅ tos_vm + tos_executor + tos_assembler + tos_emulator + tos_sandbox (86K lines) |
 | `~/tos/tosctl` contract CLI | ✅ deploy contract, account run-method, account send-boc |
-| legacy operator shell 87 命令平替 | 90/90 Full ✅ |
+| legacy operator shell 87-command replacement | 90/90 Full ✅ |
 
 ## Remaining work
 

@@ -92,7 +92,7 @@ pub struct SpendWitness {
     pub merkle_path: [[u8; 32]; MERKLE_DEPTH],
     /// Raw 32-byte `rk` (compressed Ristretto255 spend-auth pubkey, §4.1).
     /// Consensus-binding: C++ `build_plonky3_public_inputs` encodes this
-    /// via `encode_256` → 4 Goldilocks limbs. V1-3c-round-8 (档1) added
+    /// via `encode_256` → 4 Goldilocks limbs. V1-3c-round-8 (tier-1) added
     /// this field so Rust-side PI bytes match the C++ build byte-for-byte
     /// (previously the 4 rk slots were all-zero, breaking STARK verify
     /// on a real validator). The AIR proxy claims do not bind these
@@ -122,7 +122,7 @@ pub struct OutputWitness {
     /// Raw 32-byte `cm_j` (note commitment, §4.1). Used to populate all
     /// 4 PI limbs via `encode_256`; the current proxy AIR binds only the
     /// low-limb equality (`pi_cm[j] == cm_fe_computed_from_witness`).
-    /// V1-3c-round-8 (档1) — see `rk_bytes` note on SpendWitness.
+    /// V1-3c-round-8 (tier-1) — see `rk_bytes` note on SpendWitness.
     pub cm_bytes: [u8; 32],
     /// Raw 32-byte `epk_j` (compressed Ristretto255 ephemeral pubkey, §4.1).
     pub epk_bytes: [u8; 32],
@@ -152,7 +152,7 @@ pub struct MvpWitness {
     /// all 4 limbs from the 4-fe Merkle walk and binds them directly
     /// to `PI[PI_ANCHOR + 0..4]`; callers arrange `anchor_bytes` to
     /// equal the Merkle root of the tree they're proving against.
-    /// V1-3c-round-8 (档1) — see `rk_bytes` note on SpendWitness.
+    /// V1-3c-round-8 (tier-1) — see `rk_bytes` note on SpendWitness.
     pub anchor_bytes: [u8; 32],
 }
 
@@ -413,14 +413,14 @@ impl MvpWitness {
 
     /// Wire-encode for FFI.
     ///
-    /// Legacy layout (pre-档1):
+    /// Legacy layout (pre-tier-1):
     ///   `u8 n_s || u8 n_o || u64 fee ||`
     ///   `(u64 leaf || [8 B] d || u64 value || u64 ivk || u64 pk_d || u64 rcm
     ///    || u64 nk || u64 pos || u64 path[0..32]) × n_s ||`
     ///   `(u64 d || u64 pk_d || u64 ivk_commitment || u64 value || u64 rcm) × n_o ||`
     ///   `u64 anchor_proxy`.
     ///
-    /// V1-3c-round-8 (档1) extended layout (this function):
+    /// V1-3c-round-8 (tier-1) extended layout (this function):
     ///   `[32 B] anchor_bytes || u8 scheme_id || u32 chain_id || u64 expiry_block`  (trailer)
     ///   Each spend: `[32 B] rk_bytes` appended (stride +32).
     ///   Each output: `[32 B] cm_bytes || [32 B] epk_bytes || u16 filter_tag` appended (stride +66).
@@ -512,7 +512,7 @@ impl MvpWitness {
         out
     }
 
-    /// Decode a witness from the wire format (档1 extended layout —
+    /// Decode a witness from the wire format (tier-1 extended layout —
     /// see `encode()` doc for the field order).
     pub fn decode(bytes: &[u8]) -> Result<Self, Plonky3Status> {
         const HEAD: usize = 10;
@@ -701,7 +701,7 @@ impl MvpWitness {
     ///     [filter_tag_j as u16 → 1 limb — zero in proxy]  (1 filter_tag)
     /// ```
     ///
-    /// **V1-3c-round-8 (档1, 2026-04-22)**: this is a partial fix. The
+    /// **V1-3c-round-8 (tier-1, 2026-04-22)**: this is a partial fix. The
     /// header scalars `scheme_id` / `chain_id` / `expiry_block` are now
     /// threaded from the witness (no more hardcoded `CHAIN_ID_TEST` /
     /// `EXPIRY_BLOCK_TEST`), which is the subset of PI slots that the
@@ -721,7 +721,7 @@ impl MvpWitness {
     ///   real values at those slots, so full byte parity is still a
     ///   **M-P2** responsibility (real 32-byte field-material AIR).
     ///
-    /// **档1 net effect for v1 launch**: closes the hardcoded-constant
+    /// **Tier-1 net effect for v1 launch**: closes the hardcoded-constant
     /// hazard for `scheme_id` / `chain_id` / `expiry_block`. Full
     /// Rust-prover ↔ C++ validator STARK verify parity still requires
     /// M-P2 (see `doc/uno-workchain.md §4.1` proxy-AIR notes).

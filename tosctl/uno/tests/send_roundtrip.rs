@@ -299,7 +299,7 @@ fn test_real_proof_verifies_against_ffi_verifier() {
         &output_rcms_real, // output_rcms
         50, // fee
         &anchor,
-        0x01u8,        // scheme_id (V1-3c-round-8 档1)
+        0x01u8,        // scheme_id (V1-3c-round-8 tier-1)
         0x00ABCDEFu32, // chain_id
         12345u64,      // expiry_block
         &[[0x10u8; 32]],                // spend_rk_bytes

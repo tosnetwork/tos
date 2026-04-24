@@ -160,7 +160,7 @@ pub fn uno_cm_v1_tag_block_bytes() -> [u8; 64] {
 /// * each chunk reduced via a single conditional subtract (safe for
 ///   `x ∈ [0, 2·p_Goldilocks)`, which covers any u64).
 ///
-/// Used by `MvpWitness::public_inputs` (档1) to pack raw `anchor` / `rk`
+/// Used by `MvpWitness::public_inputs` (tier-1) to pack raw `anchor` / `rk`
 /// / `cm` / `epk` bytes into the PI vector so Rust-prover PIs byte-match
 /// C++ `build_plonky3_public_inputs(tx)` slot-for-slot.
 #[inline]

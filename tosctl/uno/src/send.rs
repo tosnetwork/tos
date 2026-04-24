@@ -440,7 +440,7 @@ fn build_transfer(
         v
     };
 
-    // V1-3c-round-8 档1: thread the consensus-header fields + per-spend rk
+    // V1-3c-round-8 tier-1: thread the consensus-header fields + per-spend rk
     // + per-output epk / filter_tag into the witness so Rust-prover PIs
     // byte-match C++ `build_plonky3_public_inputs(tx)`. Previously these
     // slots were emitted as all-zero or hardcoded test constants, which
@@ -704,7 +704,7 @@ impl TransferWitness {
     /// - `fee`: tx-level fee.
     /// - `anchor`: 32-byte anchor (§4.1 commitment-tree root).
     /// - `scheme_id`, `chain_id`, `expiry_block`: consensus-header fields
-    ///   bound into the PI (V1-3c-round-8 档1). Previously hardcoded to
+    ///   bound into the PI (V1-3c-round-8 tier-1). Previously hardcoded to
     ///   `CHAIN_ID_TEST` / `EXPIRY_BLOCK_TEST` at the AIR layer; now threaded
     ///   from the real Transfer so Rust-prover PIs byte-match C++.
     /// - `spend_rk_bytes` / `output_epk_bytes` / `output_filter_tags`: the
