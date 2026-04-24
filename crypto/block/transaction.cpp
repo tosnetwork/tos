@@ -47,9 +47,23 @@
 
 namespace {
 constexpr tos::WorkchainId kEvmWorkchainId = 1;
+constexpr tos::WorkchainId kUnoWorkchainId = 2;
 
 bool is_evm_workchain(tos::WorkchainId wc) {
   return wc == kEvmWorkchainId;
+}
+
+bool is_uno_workchain(tos::WorkchainId wc) {
+  return wc == kUnoWorkchainId;
+}
+
+/// wc=1 (EVM) and wc=2 (UNO) are gas-metered by their own compute-phase
+/// dispatchers, not TVM. They must bypass the legacy "zero balance →
+/// skip compute" TVM gate so an ext_in_msg to an `acc_uninit` executor
+/// account can still be dispatched (the account activates inside the
+/// branch — see `prepare_compute_phase` §Uno Workchain dispatch).
+bool has_custom_compute_phase(tos::WorkchainId wc) {
+  return is_evm_workchain(wc) || is_uno_workchain(wc);
 }
 
 /**
@@ -1860,6 +1874,7 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
   compute_phase = std::make_unique<ComputePhase>();
   ComputePhase& cp = *(compute_phase.get());
   const bool evm_ord = is_evm_workchain(account.workchain) && trans_type == tr_ord;
+  const bool custom_ord = has_custom_compute_phase(account.workchain) && trans_type == tr_ord;
   if (cfg.global_version >= 9) {
     original_balance = balance;
     if (msg_balance_remaining.is_valid()) {
@@ -1868,8 +1883,10 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
   } else {
     original_balance -= total_fees;
   }
-  if (!evm_ord && td::sgn(balance.tomis) <= 0) {
-    // no gas
+  if (!custom_ord && td::sgn(balance.tomis) <= 0) {
+    // no gas — TVM only. wc=1 (EVM) / wc=2 (UNO) have their own gas models
+    // and route below regardless of TOS balance, so an ext_in_msg can bring
+    // an `acc_uninit` executor account up from zero balance.
     cp.skip_reason = ComputePhase::sk_no_gas;
     return true;
   }

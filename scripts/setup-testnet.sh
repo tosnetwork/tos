@@ -264,7 +264,8 @@ ExecStart=$INSTALL_BIN/tos-validator-engine \\
   --quic-flood-control -1 \\
   --json-rpc-address 127.0.0.1:$JSONRPC_PORT \\
   -l $NODE_DIR/log \\
-  -t 4
+  -t 4 \\
+  -v 3
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=65536
