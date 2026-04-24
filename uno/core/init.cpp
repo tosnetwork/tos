@@ -411,6 +411,23 @@ void LiveUnoState::reset_consensus_state_to_empty_locked() {
     stats_note_count_ = 0;
     has_live_state_cell_hash_ = false;
     live_state_cell_hash_.set_zero();
+
+    // Reset mining fields back to genesis-time defaults so a "hydrate
+    // from null" (equivalent to re-entering genesis state) leaves the
+    // chain at epoch=0 / full supply / initial target. Without this, a
+    // same-process re-hydrate to empty can leave stale mine_epoch_ /
+    // mine_remaining_ / mine_target_ from a prior hydrate session.
+    // Respect the UNO_INIT_MINE_TARGET_HEX env-override path for
+    // parity with the constructor defaults.
+    mine_epoch_     = 0;
+    mine_remaining_ = kMineSupplyNano;
+    if (const auto* override_target = try_load_env_mine_target()) {
+        std::copy(override_target->begin(), override_target->end(),
+                  mine_target_.begin());
+    } else {
+        std::copy(std::begin(kInitMineTargetBE), std::end(kInitMineTargetBE),
+                  mine_target_.begin());
+    }
 }
 
 bool LiveUnoState::anchor_window_contains(const td::Bits256& anchor) const {

@@ -569,6 +569,16 @@ pub async fn execute(args: &MineArgs) -> Result<MineSummary> {
     let rpc = RpcClient::new(&args.node_url)?;
     let (epoch, target, remaining_pre) = fetch_mine_state(&rpc).await?;
 
+    // 2b. Fetch chain_id from the node. Previously hardcoded to
+    // 0x554E4F54 ("UNOT", testnet) which caused every mainnet
+    // submission to be rejected with `BadChainId`. uno_chainInfo is
+    // the single source of truth — use whatever the node reports.
+    let chain_info = rpc
+        .chain_info()
+        .await
+        .context("uno_chainInfo: failed to fetch chain_id from node")?;
+    let chain_id = chain_info.chain_id;
+
     // 3. Compute era / mint value.
     let era = era_from_epoch(epoch);
     let mint_value = mine_reward_for_era(era);
@@ -658,7 +668,7 @@ pub async fn execute(args: &MineArgs) -> Result<MineSummary> {
                 tx_kind:       crate::mine_uno::TX_KIND_MINE_UNO,
                 version:       1, // kMineUnoVersion
                 scheme_id:     1, // kSchemeIdV1
-                chain_id:      0x554E4F54, // "UNOT" (testnet); mainnet = UNOM
+                chain_id,                  // fetched from node via uno_chainInfo
                 public_inputs: public_inputs.clone(),
                 zk_proof:      None,
             };

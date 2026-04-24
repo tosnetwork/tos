@@ -189,8 +189,11 @@ pub struct ChainInfo {
     pub head_seqno: u64,
     #[serde(default)]
     pub executor: Option<String>,
+    // Server emits hex-encoded single-byte scheme IDs like ["01"]; decode
+    // as strings rather than u32 (which would fail with "invalid type:
+    // string '01'").
     #[serde(default)]
-    pub active_schemes: Vec<u32>,
+    pub active_schemes: Vec<String>,
     #[serde(default)]
     pub anchor_window_size: u64,
 }
