@@ -369,32 +369,218 @@ Phases can run in parallel:
 - C alone = **4-6 weeks**
 - All three deliverable in **~6 weeks** with parallel execution
 
+## Pre-Mine Policy
+
+**0% team / foundation pre-mine across all three coins.** Public
+positioning: "TOS network has zero pre-mine; all coins must be mined."
+
+Sole exception: a **negligible system bootstrap reserve** on TOS for
+protocol-required smart contracts (elector, config, stage wallets).
+These are functional necessities, not allocations to humans/teams:
+
+| TOS system reserve | Purpose | Amount |
+|---|---|---|
+| Elector contract | Validator election | 500 TOS |
+| Config contract | Governance container | ~0 (symbolic) |
+| Stage 1/2/3 wallets | Bootstrap operational accounts | ~2,000 TOS |
+| Main wallet residue | Storage rent dust | < 100 TOS |
+| **Total** | | **~3,000 TOS = 0.003 %** of 100M cap |
+
+eTOS and UNO have **zero** system reserve — EVM contract deployments
+don't pre-fund accounts; UNO's mine pool starts at full 21M.
+
+For comparison: Zcash had 20% Founders' Reward; Litecoin had ~0%
+pre-mine; Monero had ~0.6%; Bitcoin had 0%. TOS network at 0.003%
+system reserve is essentially Bitcoin-equivalent.
+
+## Initial Difficulty Calibration
+
+These are the values to write into the genesis configuration. They
+assume a small initial network at launch (5-30 miners). Auto-
+retargeting will converge to actual hashrate within minutes (TOS/eTOS)
+or ~1 hour (UNO).
+
+### TOS (SHA-256, target_delta = 60s)
+
+Hardware baseline:
+- Modern CPU: ~50 MH/s
+- Mid-range GPU (RTX 3060): ~5 GH/s
+- ASIC (rare for SHA-256 small hashrate): up to 10 TH/s
+
+Assume 5-10 GPU miners at launch (~25 GH/s total).
+
+```
+hashes per solve = 25 GH/s × 60s = 1.5 × 10¹²
+log₂(1.5e12)     ≈ 40.4
+init_cpl         = 40
+```
+
+Genesis configuration (parameters to `new-pow-testgiver.fif`):
+
+| Parameter | Value | Justification |
+|---|---|---|
+| `min_cpl` | **24** | Lower bound (2²⁴ hashes ≈ < 1s on one CPU; prevents dust attack) |
+| `init_cpl` | **40** | Initial complexity (2⁴⁰ ≈ 1.1T hashes; 5-10 GPU miners → ~60s solves) |
+| `max_cpl` | **64** | Upper bound (2⁶⁴ ≈ 18 EH; allows ASIC-scale future) |
+
+Convergence: 5-10 solves (~5-10 minutes after launch).
+
+### eTOS (keccak-256, target_delta = 12s)
+
+Hardware baseline:
+- CPU: ~5-10 MH/s keccak
+- Mid GPU: ~30 MH/s keccak per worker
+- High-end GPU (RTX 4090): ~80 MH/s
+- ETH PoW ASIC (Innosilicon A11): ~1.5 GH/s
+
+Assume 20-30 ETH miners migrating at launch (~1.5 GH/s total).
+
+```
+hashes per solve = 1.5 GH/s × 12s = 1.8 × 10¹⁰
+log₂(1.8e10)     ≈ 34
+init_target      = 2^(256-34) = 2^222
+```
+
+Genesis configuration (Solidity constructor):
+
+| Parameter | Value |
+|---|---|
+| `target` | `type(uint256).max >> 34` (= 2²²² shifted) |
+| `minCpl` | 28 |
+| `maxCpl` | 64 |
+| `targetDelta` | 12 (seconds) |
+| `reward` | 2 ether (= 2 × 10¹⁸ wei) |
+
+Convergence: ~10 solves (~120 seconds after launch).
+
+### UNO (Poseidon2 over Goldilocks, target_delta = 600s)
+
+Hardware baseline (Plonky3 reference implementation):
+- Single-thread Poseidon2: ~1 M ops/sec
+- 32-thread Threadripper / Ryzen 9: ~25 M ops/sec
+- 64-core EPYC: ~50 M ops/sec
+- **No GPU advantage** (Goldilocks small-field arithmetic resists batching)
+- **No ASIC** (none exist; small-field hardware impractical)
+
+Assume 5-10 CPU miners at launch (each 32-thread Ryzen ~20 M/s → ~150 M/s total).
+
+```
+hashes per solve = 150 M/s × 600s = 9 × 10¹⁰
+log₂(9e10)       ≈ 36.4
+init_target      = 2^(256 - 37) = 2^219
+```
+
+Genesis configuration (UNO zerostate):
+
+| Constant | Value | Notes |
+|---|---|---|
+| `kInitMineTarget` | `2²¹⁹` | Initial target (CPU at ~150 M/s → ~600s/solve) |
+| `kHalvingEra` | 210,000 solves | Bitcoin-clone (≈ 4 years per era) |
+| `kInitReward` | 50 × 10⁹ nano-UNO (50 UNO) | Bitcoin-clone initial subsidy |
+
+**Important**: UNO retargeting should be MORE aggressive than TOS/eTOS
+because CPU network hashrate is more volatile (a single EPYC server
+joining can double network rate):
+
+```
+TOS/eTOS retargeting factor ∈ [7/8, 9/8]   ← TON / TOS standard
+UNO   retargeting factor ∈ [3/4, 4/3]      ← faster convergence
+```
+
+Convergence: ~5 solves (~50 min) after launch. First hour is volatile
+but acceptable.
+
+### Difficulty calibration risk + mitigation
+
+If initial values are too low: first miners sweep multiple solves
+before retargeting catches up (TON's actual launch experience —
+industrial pools dominated first hour). Mitigation: difficulty should
+be **slightly conservative** (i.e., harder than estimated).
+
+If initial values are too high: nothing mines for hours; community
+panic. Mitigation: launch announcement explicitly notes "first 1 hour
+is calibration window; difficulty will auto-adjust."
+
+The values above lean **conservative** (slightly harder than baseline
+estimate) to favor robustness over speed.
+
+## Miner Binary Distribution
+
+CI-driven via GitHub Releases. Three workflows in
+`.github/workflows/`:
+
+### `release-tos-pow-miner.yml`
+
+Builds TON-inherited `pow-miner` (`crypto/util/pow-miner-*.cpp`).
+
+| Platform | Built artifact |
+|---|---|
+| linux-x86-64 | `tos-pow-miner-linux-x64-{version}.tar.gz` |
+| linux-arm64 | `tos-pow-miner-linux-arm64-{version}.tar.gz` |
+| macos-x86-64 | `tos-pow-miner-macos-x64-{version}.tar.gz` |
+| macos-arm64 | `tos-pow-miner-macos-arm64-{version}.tar.gz` |
+| windows-x86-64 | `tos-pow-miner-windows-x64-{version}.zip` |
+
+### `release-tosctl.yml`
+
+Builds full `tosctl` Rust binary including `tosctl uno mine` subcommand
+(Task #12 deliverable). Same platform matrix.
+
+### `release-etos-config.yml`
+
+Does NOT build a new miner (we reuse ethminer / T-Rex / lolMiner).
+Packages stratum config templates + adapter scripts:
+
+```
+etos-miner-config-{version}/
+├── README.md                  # quick start
+├── ethminer-stratum.conf      # config for ethminer
+├── trex-stratum.conf          # config for T-Rex
+├── stratum-adapter.py         # bridges TOS RPC ↔ standard stratum
+└── etos-pool-example.toml     # template for pool operators
+```
+
+### Release process
+
+1. Tag `v0.1.0-rc1` → CI builds for all platforms
+2. Each binary signed with cosign (sigstore)
+3. SBOM (Software Bill of Materials) attached
+4. Changelog auto-generated from git log
+5. Release page links to:
+   - Mining-Design.md (this doc) for parameters
+   - Quick-start guide for each coin
+   - Discord / community for support
+
+### Reproducible builds
+
+Where feasible:
+- Pin Rust toolchain version
+- Pin C++ compiler + flags
+- Pin third-party dep versions
+- Document exact build commands so independent verifiers can reproduce
+  the published binaries from source
+
 ## Open Questions (post-design)
 
-1. **TOS / eTOS Giver bootstrap difficulty**: initial `target_complexity`
-   value — too low and an early miner sweeps quickly; too high and
-   nothing mines for hours. Need simulation-based calibration before
-   genesis.
+1. **Empirical difficulty validation**: theoretical calibration above
+   should be validated by simulating launch on a private testnet
+   before mainnet. Plan: 1-week testnet with realistic miner count
+   to verify retargeting converges as expected.
 
-2. **UNO initial difficulty calibration**: same problem, but harder
-   because we have no historical CPU Poseidon2 hashrate baseline.
-   Recommend: ~24-bit difficulty at launch, let auto-retargeting
-   converge over first 2-3 days.
-
-3. **Miner client distribution**: do we ship binaries for tosctl uno
-   mine (and reference TOS/eTOS clients), or rely on community to
-   build from source? Recommended: ship pre-built Linux x86-64 / macOS
-   ARM64 binaries from CI, source available for everyone else.
-
-4. **Mining pool software**: TOS and eTOS will spawn pools naturally
+2. **Mining pool software**: TOS and eTOS will spawn pools naturally
    (Bitcoin/ETH ecosystem already supports this). UNO might not get
    pools quickly because it's CPU-only and pool overhead may outweigh
    solo mining benefits — fine, more democratic.
 
-5. **Re-tuning post-launch**: difficulty auto-adjusts, but reward
+3. **Re-tuning post-launch**: difficulty auto-adjusts, but reward
    amounts and halving schedules are baked into AIR / contracts.
    Modifying them requires hard-fork (TVM/EVM) or scheme_id bump (UNO).
    Treat as consensus-critical; no governance pathway in v1.
+
+4. **eTOS binary signing for ETH ecosystem trust**: the major ETH
+   miner clients we recommend (ethminer, T-Rex) should be installed
+   via their own official sources for security. Our packaged config
+   templates explicitly point users to upstream miner downloads.
 
 ## Related Docs
 
