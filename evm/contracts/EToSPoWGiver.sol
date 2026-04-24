@@ -2,7 +2,7 @@
 pragma solidity ^0.8.26;
 
 /// @title  EToSPoWGiver — eTOS Proof-of-Work distribution contract (wc=1 EVM)
-/// @notice Mirrors TON's `pow-testgiver-code.fc` but for the EVM workchain.
+/// @notice Mirrors the TOS TVM giver but for the EVM workchain.
 ///         Miners submit a keccak-256 Proof-of-Work to receive `reward` eTOS.
 ///         Difficulty auto-adjusts toward `targetDelta` seconds per solve,
 ///         using the same multiplicative factor ∈ [7/8, 9/8] as the TVM giver.
@@ -19,7 +19,7 @@ pragma solidity ^0.8.26;
 ///         Each variable occupies its own 32-byte slot (no packing) so that
 ///         genesis storage seeds can be trivially written as slot → 32-byte value.
 ///
-/// Difficulty semantics (analogous to TON pow-testgiver-code.fc):
+/// Difficulty semantics (analogous to the TVM giver):
 ///   A hash h (keccak-256, 256-bit) is valid iff uint256(h) < target.
 ///   Higher target ⇒ easier mining (more hashes satisfy the condition).
 ///   Expected hashes per solve = 2^256 / target.
@@ -43,7 +43,7 @@ pragma solidity ^0.8.26;
 ///   maxCpl      = 228    (2^64 complexity bits ceiling → target ceiling = 2^228)
 ///
 /// Anti-replay: the `rseed` field must match the stored seed (lower bytes16).
-///   The `rdata1` and `rdata2` fields must be equal (anti-replay pair from TON).
+///   The `rdata1` and `rdata2` fields must be equal (anti-replay pair from the TVM giver).
 ///   Seed is rotated after each solve using `blockhash(block.number - 1)`.
 ///
 /// Funds: each giver is pre-funded with 10 M eTOS (= 10_000_000e18 wei) at
@@ -146,9 +146,9 @@ contract EToSPoWGiver {
     /// @param rdata1 Additional nonce data; must equal rdata2 (anti-replay pair).
     /// @param rdata2 Additional nonce data; must equal rdata1 (anti-replay pair).
     ///
-    /// @dev  Hash preimage format (mirrors TON convention, adapted for EVM):
+    /// @dev  Hash preimage format (mirrors the TOS convention, adapted for EVM):
     ///         h = keccak256(abi.encode(uint32(0x706f7754), nonce, whom, expire, rseed, rdata1))
-    ///       0x706f7754 = "powT" magic selector matching TON's op-code 0x4d696e65 analog.
+    ///       0x706f7754 = "powT" magic selector matching the TVM giver op-code analog.
     function mine(
         uint256 nonce,
         address whom,
@@ -203,7 +203,7 @@ contract EToSPoWGiver {
     // Internal helpers
     // -------------------------------------------------------------------------
 
-    /// @notice Adjust the PoW target using the TON multiplicative formula.
+    /// @notice Adjust the PoW target using the TOS multiplicative formula.
     ///
     /// @dev  Direct translation of pow-testgiver-code.fc lines 28–33:
     ///

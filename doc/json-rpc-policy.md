@@ -51,7 +51,7 @@ normalization that tos-http-api provides, keeping client code portable.
 
 Public method names (`sendBoc`, `getAddressInformation`, `runGetMethod`, etc.)
 follow the tos-http-api naming exactly.  No aliases or renames are introduced.
-This allows existing client libraries (e.g. `tonweb`, `toncenter-sdk`) to
+This allows existing client libraries (e.g. legacy web and API SDKs) to
 target the embedded server with a URL change only, without code modifications.
 
 ## R13: Security

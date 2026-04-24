@@ -13,6 +13,6 @@ const getRandom = (min:number, max:number) => {
     return Math.random() * (max - min) + min;
 }
 
-export const getRandomTon = (min:number, max:number): bigint => {
+export const getRandomTos = (min:number, max:number): bigint => {
     return toNano(getRandom(min, max).toFixed(9));
 }

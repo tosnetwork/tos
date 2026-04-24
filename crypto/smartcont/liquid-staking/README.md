@@ -2,8 +2,8 @@
 
 ## Origin
 
-- FunC source from [TOS Blockchain liquid-staking-contract](https://github.com/ton-blockchain/liquid-staking-contract)
-- Fift deployment scripts from [igroman787/jetton_pool](https://github.com/igroman787/jetton_pool) (used by mytonctrl)
+- FunC source from the TOS liquid-staking contract suite.
+- Fift deployment scripts from [igroman787/jetton_pool](https://github.com/igroman787/jetton_pool) (used by legacy ops tooling)
 
 ## Purpose
 

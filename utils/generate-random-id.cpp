@@ -51,7 +51,7 @@ int main(int argc, char *argv[]) {
 
   std::string mode = "";
 
-  std::string name = "id_ton";
+  std::string name = "id_tos";
 
   p.add_option('m', "mode", "sets mode (one of id/adnl/dht/keys/adnlid)", [&](td::Slice key) { mode = key.str(); });
   p.add_option('h', "help", "prints this help", [&]() {

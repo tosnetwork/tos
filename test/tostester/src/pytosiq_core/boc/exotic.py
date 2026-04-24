@@ -12,7 +12,7 @@ class CellTypes:
 
 
 class LevelMask:
-    # https://github.com/xssnick/tonutils-go/blob/master/tvm/cell/level.go#L17
+    # Mirrors the legacy Go level mask layout.
     def __init__(self, m: int):
         self._m = m
         self._level = self.get_level()
@@ -41,4 +41,3 @@ class LevelMask:
 
     def is_significant(self, level: int):
         return level == 0 or (self._m >> (level - 1)) % 2 != 0
-

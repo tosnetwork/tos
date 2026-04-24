@@ -1374,7 +1374,7 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
 // Same as sendBocReturnHash but with "ignore errors" semantics.
 // If the liteserver send fails, instead of returning the raw liteserver error,
 // this method returns a structured error with code -32600 (keeping the original
-// error message). This matches the ton-http-api-cpp behavior where
+// error message). This matches the HTTP API behavior where
 // ignore_errors=true normalizes error handling for fire-and-forget use cases.
 // The hash is still computed and included even on failure.
 

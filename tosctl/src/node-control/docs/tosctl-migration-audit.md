@@ -19,7 +19,7 @@ Current state:
   - background service model
   - REST API / auth / snapshot machinery
 - The **protocol-facing business logic** is still TOS-oriented:
-  - `ton_http_api` naming and RPC assumptions
+  - `chain_rpc` naming and RPC assumptions
   - Elector wrapper
   - single nominator pool wrapper
   - validator set parsing from config params `15/34/36`
@@ -116,10 +116,10 @@ Required changes:
 #### Module names that can stay temporarily but should eventually be renamed
 
 - `commands::nodectl::*`
-- `ton_http_api`
-- `TonHttpApiConfig`
-- `TonWalletVersion`
-- `ton_utils`
+- `chain_rpc`
+- `ChainRpcConfig`
+- `WalletVersion`
+- `chain_utils`
 
 Reason:
 
@@ -137,14 +137,14 @@ These modules are not just naming issues. They encode protocol and RPC assumptio
 Files:
 
 - `common/src/app_config.rs`
-- `commands/src/commands/nodectl/config_ton_http_api_cmd.rs`
+- `commands/src/commands/nodectl/config_chain_rpc_cmd.rs`
 - `contracts/src/provider.rs`
 - `chain-rpc-client/*`
 
 Current assumption:
 
 - chain access happens through TOS-style JSON-RPC / JSON-RPC compatible interfaces
-- config field is explicitly `ton_http_api`
+- config field is explicitly `chain_rpc`
 - default endpoint is `http://127.0.0.1:3301/`
 
 Risk:
@@ -384,7 +384,7 @@ Tasks:
 ## 4. Immediate Next Engineering Tasks
 
 1. Finish user-facing renames in `src/node-control/docs/*`
-2. Rename `ton_http_api` config/CLI surfaces to a neutral TOS-facing name while preserving backward compatibility
+2. Rename `chain_rpc` config/CLI surfaces to a neutral TOS-facing name while preserving backward compatibility
 3. Write a compatibility checklist for:
    - Elector
    - Single nominator pool

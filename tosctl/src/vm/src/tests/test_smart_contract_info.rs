@@ -142,7 +142,7 @@ fn extract_json_string_field(json: &str, field: &str) -> anyhow::Result<String> 
 }
 
 fn should_dump_external_boc_response() -> bool {
-    std::env::var("TON_VM_DUMP_ELECTOR_RESPONSE")
+    std::env::var("TOS_VM_DUMP_ELECTOR_RESPONSE")
         .map(|value| {
             let value = value.trim();
             value == "1" || value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("yes")
@@ -451,7 +451,7 @@ fn test_convert_stack() {
         tuple = StackItem::tuple(vec![StackItem::int(n), tuple]);
     }
     let items = convert_stack(&[tuple.clone()]).unwrap();
-    let result = convert_ton_stack(&items).unwrap();
+    let result = convert_tos_stack(&items).unwrap();
     assert_eq!(result.len(), 1);
     assert_eq!(result[0], tuple);
 }

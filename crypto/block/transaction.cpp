@@ -1003,7 +1003,7 @@ bool Transaction::unpack_input_msg(bool ihr_delivered, const ActionPhaseConfig* 
       if (has_custom_compute_phase(account.workchain)) {
         // wc=1 (EVM) and wc=2 (UNO) use their own balance/gas accounting
         // inside their custom compute-phase dispatchers. Do not require a
-        // mirrored TON balance just to admit the external message into
+        // mirrored native balance just to admit the external message into
         // compute — UNO's executor account sits at balance=0 forever by
         // design (it's a pure dispatcher; miners pay fees in nano-UNO
         // internally via run_mine_uno_compute_phase). Without this
@@ -1075,7 +1075,7 @@ bool Transaction::unpack_input_msg(bool ihr_delivered, const ActionPhaseConfig* 
       cfg->mc_blackhole_addr.value() == account.addr) {
     blackhole_burned.tomis = msg_balance_remaining.tomis;
     msg_balance_remaining.tomis = td::zero_refint();
-    LOG(DEBUG) << "Burning " << blackhole_burned.tomis << " nanoton (blackhole address)";
+    LOG(DEBUG) << "Burning " << blackhole_burned.tomis << " nanotomi (blackhole address)";
   }
   return true;
 }
@@ -1463,7 +1463,7 @@ td::uint64 Transaction::gas_bought_for(const ComputePhaseConfig& cfg, td::RefInt
 bool Transaction::compute_gas_limits(ComputePhase& cp, const ComputePhaseConfig& cfg) {
   if (has_custom_compute_phase(account.workchain) && trans_type == tr_ord) {
     // wc=1 (EVM) and wc=2 (UNO) transactions meter gas inside their own
-    // compute-phase dispatchers. Keep TON-side gas admission out of the
+    // compute-phase dispatchers. Keep basechain gas admission out of the
     // way — the TVM path buys gas from account balance, which would
     // reject UNO's balance=0 executor account here.
     cp.gas_max = cfg.gas_limit;

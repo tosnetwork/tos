@@ -19,17 +19,17 @@ This document defines what should be absorbed, what should remain as low-level i
 
 An additional explicit goal is now required:
 
-3. `tosctl` must reach functional coverage of the operator command surface that TOS operators currently expect from `mytonctrl`
+3. `tosctl` must reach functional coverage of the operator command surface that TOS operators currently expect from `legacy operator shell`
 
 This does not mean copying the original interactive UX or preserving every short alias verbatim. It means:
 
-- every operational workflow exposed by `mytonctrl` must have a first-class `tosctl` path
-- routine validator operations must not require switching back to `mytonctrl`
-- legacy `mytonctrl` command names may exist as compatibility aliases, but the primary UX should follow the `tosctl` command model
+- every operational workflow exposed by `legacy operator shell` must have a first-class `tosctl` path
+- routine validator operations must not require switching back to `legacy operator shell`
+- legacy command names may exist as compatibility aliases, but the primary UX should follow the `tosctl` command model
 
 The detailed parity mapping is tracked in:
 
-- `doc/tosctl-mytonctrl-parity-design.md`
+- `doc/tosctl-legacy-operator-parity-design.md`
 
 ## Design Principles
 
@@ -38,8 +38,8 @@ The detailed parity mapping is tracked in:
 - Node-native functionality should live in `validator-engine` when it depends on local node state and should be exposed over stable APIs.
 - Multi-step operational procedures should move into `tosctl`.
 - Low-level developer tools may remain standalone, but should not be required for routine validator operations.
-- `mytonctrl` parity should be evaluated by workflow coverage, not by whether the old short command aliases survive.
-- Declarative configuration, live node control, host lifecycle, and chain-facing contract actions should be separated cleanly even when `mytonctrl` mixed them together.
+- `legacy operator shell` parity should be evaluated by workflow coverage, not by whether the old short command aliases survive.
+- Declarative configuration, live node control, host lifecycle, and chain-facing contract actions should be separated cleanly even when `legacy operator shell` mixed them together.
 
 ## Current Fragmentation
 
@@ -87,7 +87,7 @@ The current TOS operator experience is spread across the following categories.
 
 ### Legacy Operator Surface
 
-- `mytonctrl` host lifecycle commands
+- `legacy operator shell` host lifecycle commands
 - wallet and pool management commands
 - validator voting and complaint workflows
 - collator and collation-whitelist commands
@@ -175,7 +175,7 @@ Expected `tosctl` ownership:
 
 This removes the current shell plus Python dependency chain for normal operator setup.
 
-The same `tosctl` surface should also absorb the host-oriented install and mode-management workflows that TOS operators currently perform through `mytonctrl`.
+The same `tosctl` surface should also absorb the host-oriented install and mode-management workflows that TOS operators currently perform through `legacy operator shell`.
 
 #### 3. Key, Zerostate, and Config Generation
 
@@ -240,9 +240,9 @@ Target outcome:
 
 The current Python test-tool placement under `test/` is not an appropriate long-term home for operator observability.
 
-#### 8. MyTonCtrl Workflow Parity
+#### 8. Legacy Operator Shell Workflow Parity
 
-`tosctl` should absorb the practical command families that make `mytonctrl` the de facto TOS operator shell today.
+`tosctl` should absorb the practical command families that make `legacy operator shell` the de facto TOS operator shell today.
 
 Required parity domains:
 
@@ -256,7 +256,7 @@ Required parity domains:
 - alert-bot setup and alert lifecycle
 - liquid staking controller workflows
 
-Parity does not require a one-to-one clone of `mytonctrl` internals. It does require a documented `tosctl` replacement path for every operator-visible command.
+Parity does not require a one-to-one clone of `legacy operator shell` internals. It does require a documented `tosctl` replacement path for every operator-visible command.
 
 ## Keep as Low-Level Internal Tools
 
@@ -299,14 +299,14 @@ They should remain available for protocol engineering, contract development, for
 - `tosctl` wrappers for validator control-plane operations
 - `tosctl` service management replacing `testnet-ctl.sh`
 - `tosctl` bootstrap/install flow replacing `setup-testnet.sh`
-- `tosctl` command families that replace the core `mytonctrl` validator, wallet, pool, backup, and status workflows
+- `tosctl` command families that replace the core `legacy operator shell` validator, wallet, pool, backup, and status workflows
 
 ### P1
 
 - `tosctl` chain/account/DNS commands replacing routine `lite-client` usage
 - `tosctl` wrapping zerostate, key, and config generation
 - `tosctl` support for RLDP/site operations
-- `tosctl` parity for collator, overlay, governance, and alert workflows now carried by `mytonctrl`
+- `tosctl` parity for collator, overlay, governance, and alert workflows now carried by `legacy operator shell`
 - `tosctl` DHT/ADNL diagnostics
 
 ### P2

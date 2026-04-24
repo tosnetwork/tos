@@ -8,7 +8,7 @@ import { VotingResults } from '../../wrappers/VotingResults';
 import { VoteKeeper } from '../../wrappers/VoteKeeper';
 import '@ton-community/test-utils';
 import { compile } from '@ton-community/blueprint';
-import { assertVoteChain, differentAddress, getRandom, getRandomDuration, getRandomExp, getRandomInt, getRandomPayload, getRandomTon, voteCtx, ActiveWallet, ActiveJettonWallet, pickWinnerResult, sortBalanceResult } from "../utils";
+import { assertVoteChain, differentAddress, getRandom, getRandomDuration, getRandomExp, getRandomInt, getRandomPayload, getRandomTos, voteCtx, ActiveWallet, ActiveJettonWallet, pickWinnerResult, sortBalanceResult } from "../utils";
 import { VotingTests } from '../../wrappers/VotingTests';
 import { VoteKeeperTests } from '../../wrappers/VoteKeeperTests';
 import { Op } from '../../Ops';
@@ -63,9 +63,9 @@ describe('DAO integrational', () => {
         user1 = await blockchain.treasury('user1');
         user2 = await blockchain.treasury('user2');
         user3 = await blockchain.treasury('user3');
-        initialUser1Balance = getRandomTon(100, 1000);
-        initialUser2Balance = getRandomTon(100, 1000);
-        initialUser3Balance = getRandomTon(100, 1000);
+        initialUser1Balance = getRandomTos(100, 1000);
+        initialUser2Balance = getRandomTos(100, 1000);
+        initialUser3Balance = getRandomTos(100, 1000);
         defaultContent = beginCell().endCell();
         votingId = 0n;
         DAO = blockchain.openContract(
@@ -181,7 +181,7 @@ describe('DAO integrational', () => {
 
 
             const mintAmount = comp.isEq || comp.hasZero
-                             ? getRandomTon(1, 10)
+                             ? getRandomTos(1, 10)
                              : 0n;
             /*
              * Now, since we have to carry state across all tests
@@ -247,7 +247,7 @@ describe('DAO integrational', () => {
             expirationDate = getRandomExp();
             let voting = await votingContract(votingId);
 
-            const randTon    = getRandomTon(1, 2000);
+            const randTos    = getRandomTos(1, 2000);
             const payload    = getRandomPayload();
             const minExec    = toNano('0.1');
 
@@ -458,7 +458,7 @@ describe('DAO integrational', () => {
 
     //    it('jetton owner can not transfer just after voting', async () => {
     //        const user1JettonWallet = await userWallet(user1.address);
-    //        let transferResult = await user1JettonWallet.sendTransfer(user1.getSender(), toNano('0.1'), //tons
+    //        let transferResult = await user1JettonWallet.sendTransfer(user1.getSender(), toNano('0.1'), //TOS
     //               1n, user1.address,
     //               user1.address, null, toNano('0.05'), null);
     //        expect(transferResult.transactions).toHaveTransaction({ //failed transfer
@@ -470,13 +470,13 @@ describe('DAO integrational', () => {
 
     //    it('jetton owner can transfer tokens which did not vote', async () => {
     //        const user2JettonWallet = await userWallet(user2.address);
-    //        const transferVal = getRandomTon(2, 10);
-    //        await user2JettonWallet.sendTransfer(user2.getSender(), toNano('0.15'), //tons
+    //        const transferVal = getRandomTos(2, 10);
+    //        await user2JettonWallet.sendTransfer(user2.getSender(), toNano('0.15'), //TOS
     //               transferVal, user1.address,
     //               user1.address, null, toNano('0.05'), null);
     //        const user1JettonWallet = await userWallet(user1.address);
     //        expect(await user1JettonWallet.getJettonBalance()).toEqual(transferVal);
-    //        let transferResult = await user1JettonWallet.sendTransfer(user1.getSender(), toNano('0.15'), //tons
+    //        let transferResult = await user1JettonWallet.sendTransfer(user1.getSender(), toNano('0.15'), //TOS
     //               1n, user2.address,
     //               user1.address, null, toNano('0.05'), null);
     //        expect(transferResult.transactions).not.toHaveTransaction({ //failed transfer
@@ -956,7 +956,7 @@ describe('DAO integrational', () => {
 
     //        let voting = await votingContract(++votingId);
 
-    //        const execAmount = getRandomTon(1, 10);
+    //        const execAmount = getRandomTos(1, 10);
     //        const votingRes = await DAO.sendCreateSimpleMsgVoting(user1.getSender(),
     //            expirationDate,
     //            execAmount, // minimal_execution_amount
@@ -991,7 +991,7 @@ describe('DAO integrational', () => {
 
     //        let voting = await votingContract(++votingId);
 
-    //        const execAmount = getRandomTon(1, 10);
+    //        const execAmount = getRandomTos(1, 10);
     //        const votingRes = await DAO.sendCreateSimpleMsgVoting(user1.getSender(),
     //            expirationDate,
     //            execAmount, // minimal_execution_amount
@@ -1028,7 +1028,7 @@ describe('DAO integrational', () => {
 
     //        let voting = await testVotingContract(++votingId);
 
-    //        const execAmount = getRandomTon(1, 10);
+    //        const execAmount = getRandomTos(1, 10);
     //        const votingRes = await DAO.sendCreateSimpleMsgVoting(user1.getSender(),
     //            expirationDate,
     //            execAmount, // minimal_execution_amount
@@ -1081,7 +1081,7 @@ describe('DAO integrational', () => {
 
     //        let voting = await testVotingContract(++votingId);
 
-    //        const execAmount = getRandomTon(1, 10);
+    //        const execAmount = getRandomTos(1, 10);
     //        const votingRes = await DAO.sendCreateSimpleMsgVoting(user1.getSender(),
     //            expirationDate,
     //            execAmount, // minimal_execution_amount
@@ -1140,7 +1140,7 @@ describe('DAO integrational', () => {
 
     //        let voting = await testVotingContract(++votingId);
 
-    //        const execAmount = getRandomTon(1, 10);
+    //        const execAmount = getRandomTos(1, 10);
     //        const votingRes = await DAO.sendCreateSimpleMsgVoting(user1.getSender(),
     //            expirationDate,
     //            execAmount, // minimal_execution_amount
@@ -1179,7 +1179,7 @@ describe('DAO integrational', () => {
 
     //        let voting = await votingContract(++votingId);
 
-    //        const execAmount = getRandomTon(1, 10);
+    //        const execAmount = getRandomTos(1, 10);
     //        let   res        = await DAO.sendCreateSimpleMsgVoting(user1.getSender(),
     //                                                      expirationDate,
     //                                                      execAmount, // minimal_execution_amount
@@ -1244,7 +1244,7 @@ describe('DAO integrational', () => {
 
     //        let voting = await votingContract(++votingId);
 
-    //        const execAmount = getRandomTon(1, 10);
+    //        const execAmount = getRandomTos(1, 10);
     //        let   res        = await DAO.sendCreateSimpleMsgVoting(user1.getSender(),
     //                                                      expirationDate,
     //                                                      execAmount, // minimal_execution_amount
@@ -1732,8 +1732,8 @@ describe('DAO integrational', () => {
             expect(resultsData.votesAgainst).toEqual(0n);
         });
         it('VotingResults should not receive the results before init', async () => {
-            votedFor = getRandomTon(1, 1000);
-            votedAgainst = getRandomTon(1, 1000);
+            votedFor = getRandomTos(1, 1000);
+            votedAgainst = getRandomTos(1, 1000);
             sendVoteResBody = VotingResults.createVoteResult(votingId, votedFor, votedAgainst);
             const sendVoteResRes = await blockchain.sendMessage(internal({
                 from: DAO.address,

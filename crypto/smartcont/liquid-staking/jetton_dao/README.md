@@ -20,7 +20,7 @@ This contract system implements Jetton with ability to vote. Jetton Master (mint
 # Acknowledgments
 This DAO is based on ideas of [Nikita Kuznetsov](https://github.com/KuznetsovNikita), developer of [OpenMask](https://github.com/OpenProduct/openmask-extension). 
 In particular:
-- Expiration date based limitation of jetton transfers. Alternatively, to prevent double voting, jettons can have a [flavour/version](https://github.com/ton-blockchain/TIPs/issues/74#issuecomment-1113132709) which depends on votings these jettons participated and complex mixing rules.
+- Expiration date based limitation of jetton transfers. Alternatively, to prevent double voting, jettons can have a flavour/version which depends on votings these jettons participated and complex mixing rules.
 - *Voting Proposal checks expiration date* flow. Alternatively, to authorize expiration_date, it is possible to make expiration data a part of voting proposal init state and make checks of expiration date on wallet.
 - *VoteKeeper* way to prohibit multiple votes from one wallet. Alternatively, list of already made votes can be stored in wallet in dictionary (it is not that bad in this case, since this dictionary is in sole control of wallet owner).
 

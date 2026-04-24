@@ -1154,15 +1154,15 @@ fn serialize_jetton_bridge_params(
     serialize_coins(&mut map, "bridge_mint_fee", &pl.prices.bridge_mint_fee, mode);
     serialize_coins(
         &mut map,
-        "wallet_min_tons_for_storage",
-        &pl.prices.wallet_min_tons_for_storage,
+        "wallet_min_tos_for_storage",
+        &pl.prices.wallet_min_tos_for_storage,
         mode,
     );
     serialize_coins(&mut map, "wallet_gas_consumption", &pl.prices.wallet_gas_consumption, mode);
     serialize_coins(
         &mut map,
-        "minter_min_tons_for_storage",
-        &pl.prices.minter_min_tons_for_storage,
+        "minter_min_tos_for_storage",
+        &pl.prices.minter_min_tos_for_storage,
         mode,
     );
     serialize_coins(

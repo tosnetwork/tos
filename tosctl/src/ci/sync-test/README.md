@@ -1,6 +1,6 @@
 # Sync Test
 
-Automated mainnet sync test for the TOS Rust Node. Builds a node image from the current commit, deploys it to Kubernetes via the public [`tos-rust-node`](https://github.com/rsquad/ton-rust-node) Helm chart, and waits for the node to fully sync with the network. Reports the result as a GitHub commit status on the triggering commit.
+Automated mainnet sync test for the TOS Rust Node. Builds a node image from the current commit, deploys it to Kubernetes via the public [`tos-rust-node`](https://github.com/rsquad/TOS Rust-node) Helm chart, and waits for the node to fully sync with the network. Reports the result as a GitHub commit status on the triggering commit.
 
 ## How it works
 
@@ -26,10 +26,10 @@ The watcher runs as a sidecar container alongside the node. Every 60 seconds it 
 
 | Metric | Description |
 |--------|-------------|
-| `ton_node_engine_sync_status` | Sync state machine (see stages below) |
-| `ton_node_engine_last_mc_block_seqno` | Latest applied masterchain block seqno |
-| `ton_node_engine_timediff_seconds` | Seconds between now and last applied MC block |
-| `ton_node_engine_shards_timediff_seconds` | Seconds between now and MC block last processed by shard client |
+| `tos_node_engine_sync_status` | Sync state machine (see stages below) |
+| `tos_node_engine_last_mc_block_seqno` | Latest applied masterchain block seqno |
+| `tos_node_engine_timediff_seconds` | Seconds between now and last applied MC block |
+| `tos_node_engine_shards_timediff_seconds` | Seconds between now and MC block last processed by shard client |
 
 **Sync stages** (`sync_status` values):
 
@@ -205,7 +205,7 @@ Set via GitHub Secret `SYNCTEST_NODE_IP`. CI uses it in both the node config (AD
 
 ### Helm chart version
 
-In `.github/workflows/sync-test.yml`, env `HELM_CHART_VERSION`. Must match a published version of `oci://ghcr.io/rsquad/ton-rust-node/helm/node`.
+In `.github/workflows/sync-test.yml`, env `HELM_CHART_VERSION`. Must match a published version of `oci://ghcr.io/rsquad/TOS Rust-node/helm/node`.
 
 ### Resources
 

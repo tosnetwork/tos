@@ -36,8 +36,8 @@ This layer enables DApp developers to connect user wallets, request transaction 
 
 | Source | What | Why |
 |--------|------|-----|
-| TON Connect `@tonconnect/sdk` | Bridge protocol, session encryption (NaCl box), EventSource for server-push | Proven protocol for wallet-DApp communication in TON-like chains |
-| TON Connect `@tonconnect/protocol` | Message types, connect/disconnect/sendTransaction flow | Battle-tested wire format |
+| Connect protocol SDK | Bridge protocol, session encryption (NaCl box), EventSource for server-push | Proven protocol for wallet-DApp communication in TOS-like chains |
+| Connect protocol wire format | Message types, connect/disconnect/sendTransaction flow | Battle-tested wire format |
 | wagmi | React hooks pattern (`useAccount`, `useBalance`, `useSendTransaction`), config/provider pattern, zustand store | DApp developers from Ethereum expect these hook names |
 | wagmi | Core/React separation (framework-agnostic core, React bindings on top) | Enables Vue/Solid/Svelte bindings later |
 | RainbowKit | `<ConnectButton />` component, `getDefaultConfig()`, theming system | Best-in-class DX for "just add a connect button" |
@@ -47,11 +47,11 @@ This layer enables DApp developers to connect user wallets, request transaction 
 
 | Source | Problem | Our approach |
 |--------|---------|--------------|
-| TON Connect UI | Built with Solid.js — adds framework dependency for non-React apps | Vanilla JS with no framework dependency |
-| TON Connect | Wallet list fetched from remote URL (centralization risk) | Ship default wallet list in SDK; allow remote override |
+| Connect protocol UI | Built with Solid.js — adds framework dependency for non-React apps | Vanilla JS with no framework dependency |
+| Connect protocol | Wallet list fetched from remote URL (centralization risk) | Ship default wallet list in SDK; allow remote override |
 | wagmi | Requires TanStack Query as peer dependency (heavy for simple DApps) | Built-in lightweight query cache; TanStack Query as optional enhancement |
 | RainbowKit | Requires WalletConnect projectId (registration friction) | TOS bridge is permissionless; no registration required |
-| TON Connect | No React hooks for chain data (balance, transactions) — only connection | Full chain data hooks in `@tos/react` |
+| Connect protocol | No React hooks for chain data (balance, transactions) — only connection | Full chain data hooks in `@tos/react` |
 
 ---
 
@@ -213,8 +213,8 @@ interface ConnectRequest {
 }
 
 type ConnectItem =
-  | { name: "ton_addr" }                           // request wallet address
-  | { name: "ton_proof"; payload: string };         // request ownership proof
+  | { name: "tos_addr" }                           // request wallet address
+  | { name: "tos_proof"; payload: string };         // request ownership proof
 
 interface ConnectedAccount {
   address: string;         // raw form "workchain:hex"
@@ -279,18 +279,18 @@ interface SignDataResponse {
 }
 
 // ── Connect item replies (from wallet) ────────────────── ✅
-type ConnectItemReply = TonAddressItemReply | TonProofItemReply;
+type ConnectItemReply = TosAddressItemReply | TosProofItemReply;
 
-interface TonAddressItemReply {
-  name: "ton_addr";
+interface TosAddressItemReply {
+  name: "tos_addr";
   address: string;         // raw form
   network: string;         // chain ID
   publicKey: string;       // hex Ed25519 public key
   walletStateInit: string; // base64 BOC
 }
 
-interface TonProofItemReply {
-  name: "ton_proof";
+interface TosProofItemReply {
+  name: "tos_proof";
   proof: {
     timestamp: number;
     domain: { lengthBytes: number; value: string };
@@ -370,7 +370,7 @@ Anyone can run their own bridge server. The bridge protocol is open and permissi
 
 ### Security Considerations
 
-**ton_proof verification (backend):**
+**tos_proof verification (backend):**
 - Always validate `proof.timestamp` is within acceptable window (e.g., last 5 minutes)
 - Always validate `proof.domain.value` matches your DApp's domain
 - Always validate `proof.payload` matches the nonce you generated
@@ -1071,7 +1071,7 @@ import { TosConnectProvider, ConnectButton } from "@tos/connect-react";
 // Connect/disconnect                                                    ✅
 function useConnect(): {
   connect: (wallet?: WalletInfo, request?: ConnectRequest) => void;
-  // wallet=undefined → opens modal; request=ConnectRequest → adds ton_proof etc.
+  // wallet=undefined → opens modal; request=ConnectRequest → adds tos_proof etc.
   disconnect: () => Promise<void>;
   connected: boolean;
   connecting: boolean;
@@ -1157,14 +1157,14 @@ function SignInButton() {
     // Request address + ownership proof on connect
     connect(undefined, {
       items: [
-        { name: "ton_addr" },
-        { name: "ton_proof", payload: "my-server-nonce-" + Date.now() },
+        { name: "tos_addr" },
+        { name: "tos_proof", payload: "my-server-nonce-" + Date.now() },
       ],
     });
   };
 
   if (connected && wallet?.connectItems) {
-    const proof = wallet.connectItems.find(i => i.name === "ton_proof");
+    const proof = wallet.connectItems.find(i => i.name === "tos_proof");
     // Send proof.proof to your backend for verification
     return <p>Signed in as {wallet.account.address}</p>;
   }
@@ -1339,15 +1339,15 @@ const ConnectErrorCodes = {
 
 ---
 
-## Differences from TON Connect
+## Differences from Connect protocol
 
-| Aspect | TON Connect | TOS Connect |
+| Aspect | Connect protocol | TOS Connect |
 |--------|------------|-------------|
 | UI framework | Solid.js (adds dependency) | Vanilla JS (zero dependency) |
 | React hooks for chain data | Not provided — only connection | Full hooks: `useBalance`, `useSendTransaction`, `useJettonBalance`, etc. |
 | Wallet list source | Remote URL only (centralization) | Built-in default list + optional remote |
 | Bridge registration | Requires setup | Permissionless default bridge |
-| Layer 5 integration | Separate from ton-core/ton | Built on `@tos/client` and `@tos/core` |
+| Layer 5 integration | Separate from /core and /client | Built on `@tos/client` and `@tos/core` |
 | Account capability | Not available | `useAccountCapability()` — TOS-native |
 | RPC access from hooks | Not available | `useClient()` gives full TosClient |
 | State management | Custom EventEmitter | `useSyncExternalStore` (React 18 native) |
@@ -1355,7 +1355,7 @@ const ConnectErrorCodes = {
 | Theme customization | Limited | CSS variables + theme prop |
 | Disconnect callback | Via EventEmitter | `useOnDisconnect()` hook |
 | Address display | Raw format | Friendly base64url (EQBx...4kF) by default |
-| Security guidance | Minimal | ton_proof verification, address-key binding docs |
+| Security guidance | Minimal | tos_proof verification, address-key binding docs |
 | i18n | English only | 10 built-in locales + custom translations |
 
 ## Comparison with Ethereum Stack
@@ -1481,7 +1481,7 @@ Phase 1-2 can be developed in parallel. Phase 3-4 depend on Phase 1.
 - [x] Bundle size < 50KB gzipped for `@tos/connect-react` (excluding React) — ✅ ESM 18KB uncompressed (~6KB gzipped)
 - [x] All hooks clean up subscriptions on unmount (no memory leaks) — ✅ All `useEffect` return cleanup functions, `setInterval` cleared on unmount
 - [x] `signData()` can sign text payload and return valid Ed25519 signature — ✅ `signData()` method on `TosConnect`, `SignDataRequest { type, data, domain }`
-- [x] `ton_proof` authentication flow works end-to-end (connect → verify on backend) — ✅ `ConnectItem { name: "ton_proof", payload }` → `TonProofItemReply` with proof object
+- [x] `tos_proof` authentication flow works end-to-end (connect → verify on backend) — ✅ `ConnectItem { name: "tos_proof", payload }` → `TosProofItemReply` with proof object
 - [x] SSR (Next.js) renders without errors (no window/localStorage on server) — ✅ All packages guard browser APIs with `isBrowser()` / `typeof window` checks; `TosConnect` lazy-loaded via `dynamic import()`
 - [x] React Native connection via deeplinks works with AsyncStorage — ✅ `ConnectStorage` interface is async; `MemoryStorageAdapter` as fallback; RN can provide custom storage
 - [x] `useTransactions` infinite scroll works with automatic lt/hash cursor management — ✅ Tracks `{ lt, hash }` cursor, `fetchNextPage()`, `hasNextPage`, resets on address change
@@ -1511,15 +1511,15 @@ Phase 1-2 can be developed in parallel. Phase 3-4 depend on Phase 1.
 | Round | Angle | Issue | Fix |
 |-------|-------|-------|-----|
 | 1 | Scope table format | "npm Name" column had descriptions, not package names | Fixed to single "npm Package" + "Purpose" columns |
-| 2 | Missing signData | TON Connect supports data signing (authentication); not in TosConnect | Added `signData()` method + `SignDataRequest`/`SignDataResponse` types |
-| 3 | ConnectItemReply undefined | `ConnectedWallet` referenced `ConnectItemReply[]` — never defined | Added `TonAddressItemReply` and `TonProofItemReply` types |
+| 2 | Missing signData | Connect protocol supports data signing (authentication); not in TosConnect | Added `signData()` method + `SignDataRequest`/`SignDataResponse` types |
+| 3 | ConnectItemReply undefined | `ConnectedWallet` referenced `ConnectItemReply[]` — never defined | Added `TosAddressItemReply` and `TosProofItemReply` types |
 | 4 | connect() return type | Returns `string` but injected wallets don't produce a link | Changed to `string \| null` with documentation |
 | 5 | No protocol version | Wire protocol needs versioning for future evolution | Added `static readonly PROTOCOL_VERSION = 2` |
 | 6 | Missing pause/unpause | App backgrounded → should stop bridge polling | Added `pauseConnection()` and `unpauseConnection()` |
 | 7 | Session TTL hardcoded | 24h not configurable; too short for some DApps | Added `sessionTtl` option to constructor |
 | 8 | No auto-reconnect | Bridge connection drops silently | Added `reconnect` config with `maxRetries` and `backoffMs` |
 | 9 | "3-line" claim inaccurate | Example is actually ~10 lines of code | Changed to "minimal integration" |
-| 10 | No auth example | `ton_proof` for "Sign in with TOS" not shown | Added full authentication example with proof verification |
+| 10 | No auth example | `tos_proof` for "Sign in with TOS" not shown | Added full authentication example with proof verification |
 | 11 | useSendTransaction routing unclear | Connect protocol vs direct RPC — not explained | Added comment explaining routing based on provider context |
 | 12 | useWallet defined twice | In both @tos/react and @tos/connect-react | Clarified: useWallet is @tos/connect-react only; data hooks are @tos/react |
 | 13 | No `enabled` option | wagmi hooks have `enabled` to conditionally skip queries | Added `enabled?: boolean` to useBalance, useEstimateFee, useContractRead |
@@ -1529,7 +1529,7 @@ Phase 1-2 can be developed in parallel. Phase 3-4 depend on Phase 1.
 | 17 | TosConnectProvider unclear | Relationship to TosProvider not documented | Documented: internally composes TosProvider + TosConnect + UI |
 | 18 | No refetch intervals | Balance auto-refresh behavior not specified | Added caching table with default intervals per hook |
 | 19 | No transactions infinite scroll | `useTransactions` has `fetchNextPage` but cursor management not shown | Added example with automatic lt/hash cursor management |
-| 20 | Missing useConnect request param | Can't pass ton_proof request during connect | Added `request?: ConnectRequest` param to `connect()` |
+| 20 | Missing useConnect request param | Can't pass tos_proof request during connect | Added `request?: ConnectRequest` param to `connect()` |
 | 21 | No wallet metadata hook | After connection, can't access wallet name/icon | Added `useWalletInfo()` hook |
 | 22 | Amount string/bigint mismatch | Protocol uses string, SDK hooks use bigint | Documented: hooks accept bigint, convert internally |
 | 23 | ConnectButton.Custom typing | `children` render prop had weak typing | Replaced with `ConnectButton.Custom` + typed `ConnectButtonRenderProps` |
@@ -1559,7 +1559,7 @@ Phase 1-2 can be developed in parallel. Phase 3-4 depend on Phase 1.
 | 47 | useSignData missing from connect-react | Was removed from @tos/react but not added to @tos/connect-react | Added to connection hooks section |
 | 48 | No disconnect event hook | DApp can't react to external wallet disconnect | Added `useOnDisconnect(callback)` |
 | 49 | No multi-message mention | TOS supports 1-4 messages per tx but not documented | Added `messages` count note with maxMessages feature link |
-| 50 | No ton_proof security guidance | Backend verification of ton_proof not documented | Added security section: timestamp, domain, nonce, signature, address-key binding |
+| 50 | No tos_proof security guidance | Backend verification of tos_proof not documented | Added security section: timestamp, domain, nonce, signature, address-key binding |
 | 51 | No bridge rate limiting | Public bridge has no abuse prevention docs | Added rate limiting guidance for public and self-hosted bridges |
 | 52 | No address display format | ConnectButton shows raw "0:abc..." instead of friendly format | Added Address Display section with format table |
 | 53 | No theme customization details | "theme" prop mentioned but no CSS variables documented | Added Theme Customization section with CSS variables list |
@@ -1592,7 +1592,7 @@ Phase 1-2 can be developed in parallel. Phase 3-4 depend on Phase 1.
 | 80 | SendConfirmation mismatch | Layer 5 returns `{ hash, seqnoBefore }` but connect protocol returns `{ boc }` | Documented both return paths; hook normalizes |
 | 81 | No connect protocol request ID | sendTransaction needs request tracking for timeout/cancel | Included via `signal: AbortSignal` and `onRequestSent` callback |
 | 82 | sendTransaction no cancel | User closes modal but request still pending in wallet | Added `signal?: AbortSignal` to sendTransaction and signData |
-| 83 | Manifest missing fields | TON Connect manifest has termsOfServiceUrl and privacyPolicyUrl | Added both optional fields + field table |
+| 83 | Manifest missing fields | Connect protocol manifest has termsOfServiceUrl and privacyPolicyUrl | Added both optional fields + field table |
 | 84 | Manifest no origin validation | Wallets should verify manifest.url matches DApp origin | Added security note |
 | 85 | SendWithFee example broken | Used undefined `wallet.address` and `dest` | Fixed: uses `useWallet()` hook, added recipient input |
 | 86 | SendWithFee fee calculation | Only showed gas_fee, not total | Fixed: shows `gas_fee + fwd_fee` sum |

@@ -1,7 +1,7 @@
 # TOS Tooling: Unified Next-Steps
 
 > Single source of truth for remaining work across `~/tos` and `~/tos/tosctl`.
-> Replaces the scattered P0/P1/P2 lists that were in `validator-engine-json-rpc-gap-plan.md` and `tosctl-mytonctrl-implementation-backlog.md`.
+> Replaces the scattered P0/P1/P2 lists that were in `validator-engine-json-rpc-gap-plan.md` and `tosctl-legacy-operator-implementation-backlog.md`.
 >
 > Last updated: 2026-04-14
 
@@ -25,11 +25,11 @@
 | `~/tos/tosctl` contract wrappers | ✅ SingleNominator + NominatorPool + LiquidController (48 tests) |
 | `~/tos/tosctl` control-client TL | ✅ 13+ methods (collator, whitelist, config, stats, overlay, quic) |
 | `~/tos/tosctl` alert system | ✅ Config schema + 5 commands (Telegram + webhook) |
-| `~/tos/tosctl` supply chain | ✅ toncenter-rs vendored as toscenter-rs, pytoniq_core vendored as pytosiq_core |
+| `~/tos/tosctl` supply chain | ✅ legacy Rust client vendored as toscenter-rs, legacy Python core vendored as pytosiq_core |
 | `~/tos/tosctl` operator docs | ✅ README.md, JSON output on 15 commands, mnemonic aliases |
 | `~/tos/tosctl` Rust TVM stack | ✅ tos_vm + tos_executor + tos_assembler + tos_emulator + tos_sandbox (86K lines) |
 | `~/tos/tosctl` contract CLI | ✅ deploy contract, account run-method, account send-boc |
-| mytonctrl 87 命令平替 | 90/90 Full ✅ |
+| legacy operator shell 87 命令平替 | 90/90 Full ✅ |
 
 ## Remaining work
 
@@ -63,7 +63,7 @@
 | 14 | Advanced/explorer APIs | `~/tos` | All implemented: getMasterchainBlockSignatures, getShardBlockProof, getLibraries, getTokenData, tryLocateTx, tryLocateResultTx, tryLocateSourceTx, getConsensusBlock, getOutMsgQueueSize, getConfigAll, getTransactionsStd, getBlockTransactionsExt, runGetMethodStd, sendBocReturnHashNoError, detectHash. JSON-RPC now 35 methods. | ✅ Done |
 | 15 | JSON-RPC Prometheus metrics | `~/tos` | 9 metric families exported via `--exporter-address`: requests_total, errors_total, active_requests, cache_hits/misses, cache_entries, uptime, per-method request/error counters with `{method="..."}` labels. | ✅ Done |
 | 16 | OpenAPI 3.1 specification | `~/tos` | `doc/openapi.yaml` — machine-readable API contract for all 35 methods + healthcheck/readyz. | ✅ Done |
-| 17 | Rust TVM crates | `~/tos/tosctl` | tos_vm (61K), tos_executor (15K), tos_assembler (7K), tos_emulator — ported from ton-rust, TOS-adapted. Full workspace compiles. | ✅ Done |
+| 17 | Rust TVM crates | `~/tos/tosctl` | tos_vm (61K), tos_executor (15K), tos_assembler (7K), tos_emulator — ported from TOS Rust, TOS-adapted. Full workspace compiles. | ✅ Done |
 | 18 | tos_sandbox (Rust Sandbox) | `~/tos/tosctl` | Local blockchain simulator: Blockchain, SandboxContract, Treasury, MessageBuilder, compile_func(), 13 tests passing. | ✅ Done |
 | 19 | tosctl contract CLI commands | `~/tos/tosctl` | `deploy contract`, `account run-method`, `account send-boc` — closes all 3 CLI gaps for contract dev/ops. | ✅ Done |
 | 20 | License unification | `~/tos` | Unified to GPL v3. Removed LGPL v2, GPLv2, LGPLv2. Third-party MIT/Apache retained. | ✅ Done |
@@ -72,7 +72,7 @@
 
 | Criterion | Status | Blocked by |
 |---|---|---|
-| Every mytonctrl command has tosctl replacement | ✅ 90/90 Full | — |
+| Every legacy operator shell command has tosctl replacement | ✅ 90/90 Full | — |
 | Staking contracts verified on TOS chain | ⚠️ Needs vault | #1 (requires VAULT_URL for key management) |
 | pytest JSON-RPC suite (484 tests) | ✅ Done | — |
 | E2E CLI test | ✅ Done (JSON-RPC 21/21, CLI 17/17) | — |

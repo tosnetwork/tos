@@ -119,7 +119,7 @@ paths:
       summary: Detect address forms
       tags: [utils]
       parameters:
-        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TosAddr'}}
       responses:
         '200': {$ref: '#/components/responses/DetectAddressResponse'}
     post:
@@ -134,7 +134,7 @@ paths:
               type: object
               required: [address]
               properties:
-                address: {$ref: '#/components/schemas/TonAddr'}
+                address: {$ref: '#/components/schemas/TosAddr'}
       responses:
         '200': {$ref: '#/components/responses/DetectAddressResponse'}
 
@@ -144,7 +144,7 @@ paths:
       summary: Detect hash encodings (base64, base64url, hex)
       tags: [utils]
       parameters:
-        - {name: hash, in: query, required: true, schema: {$ref: '#/components/schemas/TonHash'}}
+        - {name: hash, in: query, required: true, schema: {$ref: '#/components/schemas/TosHash'}}
       responses:
         '200': {$ref: '#/components/responses/DetectHashResponse'}
     post:
@@ -159,7 +159,7 @@ paths:
               type: object
               required: [hash]
               properties:
-                hash: {$ref: '#/components/schemas/TonHash'}
+                hash: {$ref: '#/components/schemas/TosHash'}
       responses:
         '200': {$ref: '#/components/responses/DetectHashResponse'}
 
@@ -194,7 +194,7 @@ paths:
       summary: Unpack user-friendly address to raw form
       tags: [utils]
       parameters:
-        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TosAddr'}}
       responses:
         '200': {$ref: '#/components/responses/StringResultResponse'}
     post:
@@ -209,7 +209,7 @@ paths:
               type: object
               required: [address]
               properties:
-                address: {$ref: '#/components/schemas/TonAddr'}
+                address: {$ref: '#/components/schemas/TosAddr'}
       responses:
         '200': {$ref: '#/components/responses/StringResultResponse'}
 
@@ -222,7 +222,7 @@ paths:
       summary: Get raw account state
       tags: [accounts]
       parameters:
-        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TosAddr'}}
         - {name: seqno, in: query, schema: {type: integer, description: 'MC block seqno (optional, default latest)'}}
       responses:
         '200':
@@ -247,7 +247,7 @@ paths:
               type: object
               required: [address]
               properties:
-                address: {$ref: '#/components/schemas/TonAddr'}
+                address: {$ref: '#/components/schemas/TosAddr'}
                 seqno: {type: integer}
       responses:
         '200':
@@ -267,7 +267,7 @@ paths:
       summary: Get extended account state
       tags: [accounts]
       parameters:
-        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TosAddr'}}
         - {name: seqno, in: query, schema: {type: integer}}
       responses:
         '200':
@@ -292,7 +292,7 @@ paths:
               type: object
               required: [address]
               properties:
-                address: {$ref: '#/components/schemas/TonAddr'}
+                address: {$ref: '#/components/schemas/TosAddr'}
                 seqno: {type: integer}
       responses:
         '200':
@@ -312,7 +312,7 @@ paths:
       summary: Get wallet information (type, seqno, balance)
       tags: [accounts]
       parameters:
-        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TosAddr'}}
         - {name: seqno, in: query, schema: {type: integer}}
       responses:
         '200':
@@ -337,7 +337,7 @@ paths:
               type: object
               required: [address]
               properties:
-                address: {$ref: '#/components/schemas/TonAddr'}
+                address: {$ref: '#/components/schemas/TosAddr'}
                 seqno: {type: integer}
       responses:
         '200':
@@ -357,7 +357,7 @@ paths:
       summary: Get account balance in nanotomis
       tags: [accounts]
       parameters:
-        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TosAddr'}}
         - {name: seqno, in: query, schema: {type: integer}}
       responses:
         '200': {$ref: '#/components/responses/StringResultResponse'}
@@ -373,7 +373,7 @@ paths:
               type: object
               required: [address]
               properties:
-                address: {$ref: '#/components/schemas/TonAddr'}
+                address: {$ref: '#/components/schemas/TosAddr'}
                 seqno: {type: integer}
       responses:
         '200': {$ref: '#/components/responses/StringResultResponse'}
@@ -384,7 +384,7 @@ paths:
       summary: Get account state (active, uninitialized, frozen)
       tags: [accounts]
       parameters:
-        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TosAddr'}}
         - {name: seqno, in: query, schema: {type: integer}}
       responses:
         '200': {$ref: '#/components/responses/StringResultResponse'}
@@ -400,7 +400,7 @@ paths:
               type: object
               required: [address]
               properties:
-                address: {$ref: '#/components/schemas/TonAddr'}
+                address: {$ref: '#/components/schemas/TosAddr'}
                 seqno: {type: integer}
       responses:
         '200': {$ref: '#/components/responses/StringResultResponse'}
@@ -411,7 +411,7 @@ paths:
       summary: Get token (NFT/Jetton) metadata from a contract
       tags: [accounts]
       parameters:
-        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TosAddr'}}
         - {name: seqno, in: query, schema: {type: integer}}
       responses:
         '200': {$ref: '#/components/responses/GenericOkResponse'}
@@ -427,7 +427,7 @@ paths:
               type: object
               required: [address]
               properties:
-                address: {$ref: '#/components/schemas/TonAddr'}
+                address: {$ref: '#/components/schemas/TosAddr'}
                 seqno: {type: integer}
       responses:
         '200': {$ref: '#/components/responses/GenericOkResponse'}
@@ -528,7 +528,7 @@ paths:
                   - $ref: '#/components/schemas/OkResponse'
                   - type: object
                     properties:
-                      result: {$ref: '#/components/schemas/TonBlockIdExt'}
+                      result: {$ref: '#/components/schemas/TosBlockIdExt'}
     post:
       operationId: lookupBlock_post
       summary: Look up a block
@@ -556,7 +556,7 @@ paths:
                   - $ref: '#/components/schemas/OkResponse'
                   - type: object
                     properties:
-                      result: {$ref: '#/components/schemas/TonBlockIdExt'}
+                      result: {$ref: '#/components/schemas/TosBlockIdExt'}
 
   /shards:
     get:
@@ -581,7 +581,7 @@ paths:
                           '@type': {type: string, enum: ['blocks.shards']}
                           shards:
                             type: array
-                            items: {$ref: '#/components/schemas/TonBlockIdExt'}
+                            items: {$ref: '#/components/schemas/TosBlockIdExt'}
     post:
       operationId: shards_post
       summary: Get shard block IDs
@@ -609,7 +609,7 @@ paths:
                           '@type': {type: string, enum: ['blocks.shards']}
                           shards:
                             type: array
-                            items: {$ref: '#/components/schemas/TonBlockIdExt'}
+                            items: {$ref: '#/components/schemas/TosBlockIdExt'}
 
   /getBlockHeader:
     get:
@@ -830,7 +830,7 @@ paths:
         starts from the latest transaction.
       tags: [transactions]
       parameters:
-        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TosAddr'}}
         - {name: limit, in: query, schema: {type: integer, default: 10, maximum: 100}}
         - {name: lt, in: query, schema: {type: string, description: 'Start from this logical time'}}
         - {name: hash, in: query, schema: {type: string, description: 'Transaction hash at lt (base64 or hex)'}}
@@ -848,7 +848,7 @@ paths:
               type: object
               required: [address]
               properties:
-                address: {$ref: '#/components/schemas/TonAddr'}
+                address: {$ref: '#/components/schemas/TosAddr'}
                 limit: {type: integer, default: 10, maximum: 100}
                 lt: {type: string}
                 hash: {type: string}
@@ -861,7 +861,7 @@ paths:
       summary: Get account transactions (standardized format)
       tags: [transactions]
       parameters:
-        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: address, in: query, required: true, schema: {$ref: '#/components/schemas/TosAddr'}}
         - {name: limit, in: query, schema: {type: integer, default: 10, maximum: 100}}
         - {name: lt, in: query, schema: {type: string}}
         - {name: hash, in: query, schema: {type: string}}
@@ -888,7 +888,7 @@ paths:
               type: object
               required: [address]
               properties:
-                address: {$ref: '#/components/schemas/TonAddr'}
+                address: {$ref: '#/components/schemas/TosAddr'}
                 limit: {type: integer, default: 10, maximum: 100}
                 lt: {type: string}
                 hash: {type: string}
@@ -910,8 +910,8 @@ paths:
       summary: Locate a transaction by source, destination, and created_lt
       tags: [transactions]
       parameters:
-        - {name: source, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
-        - {name: destination, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: source, in: query, required: true, schema: {$ref: '#/components/schemas/TosAddr'}}
+        - {name: destination, in: query, required: true, schema: {$ref: '#/components/schemas/TosAddr'}}
         - {name: created_lt, in: query, required: true, schema: {type: string}}
       responses:
         '200': {$ref: '#/components/responses/GenericOkResponse'}
@@ -927,8 +927,8 @@ paths:
               type: object
               required: [source, destination, created_lt]
               properties:
-                source: {$ref: '#/components/schemas/TonAddr'}
-                destination: {$ref: '#/components/schemas/TonAddr'}
+                source: {$ref: '#/components/schemas/TosAddr'}
+                destination: {$ref: '#/components/schemas/TosAddr'}
                 created_lt: {type: string}
       responses:
         '200': {$ref: '#/components/responses/GenericOkResponse'}
@@ -939,8 +939,8 @@ paths:
       summary: Locate the result (inbound) transaction
       tags: [transactions]
       parameters:
-        - {name: source, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
-        - {name: destination, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: source, in: query, required: true, schema: {$ref: '#/components/schemas/TosAddr'}}
+        - {name: destination, in: query, required: true, schema: {$ref: '#/components/schemas/TosAddr'}}
         - {name: created_lt, in: query, required: true, schema: {type: string}}
       responses:
         '200': {$ref: '#/components/responses/GenericOkResponse'}
@@ -956,8 +956,8 @@ paths:
               type: object
               required: [source, destination, created_lt]
               properties:
-                source: {$ref: '#/components/schemas/TonAddr'}
-                destination: {$ref: '#/components/schemas/TonAddr'}
+                source: {$ref: '#/components/schemas/TosAddr'}
+                destination: {$ref: '#/components/schemas/TosAddr'}
                 created_lt: {type: string}
       responses:
         '200': {$ref: '#/components/responses/GenericOkResponse'}
@@ -968,8 +968,8 @@ paths:
       summary: Locate the source (outbound) transaction
       tags: [transactions]
       parameters:
-        - {name: source, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
-        - {name: destination, in: query, required: true, schema: {$ref: '#/components/schemas/TonAddr'}}
+        - {name: source, in: query, required: true, schema: {$ref: '#/components/schemas/TosAddr'}}
+        - {name: destination, in: query, required: true, schema: {$ref: '#/components/schemas/TosAddr'}}
         - {name: created_lt, in: query, required: true, schema: {type: string}}
       responses:
         '200': {$ref: '#/components/responses/GenericOkResponse'}
@@ -985,8 +985,8 @@ paths:
               type: object
               required: [source, destination, created_lt]
               properties:
-                source: {$ref: '#/components/schemas/TonAddr'}
-                destination: {$ref: '#/components/schemas/TonAddr'}
+                source: {$ref: '#/components/schemas/TosAddr'}
+                destination: {$ref: '#/components/schemas/TosAddr'}
                 created_lt: {type: string}
       responses:
         '200': {$ref: '#/components/responses/GenericOkResponse'}
@@ -1135,7 +1135,7 @@ paths:
               type: object
               required: [address, method]
               properties:
-                address: {$ref: '#/components/schemas/TonAddr'}
+                address: {$ref: '#/components/schemas/TosAddr'}
                 method:
                   type: string
                   description: Get-method name (e.g. "seqno", "get_nft_data")
@@ -1178,7 +1178,7 @@ paths:
               type: object
               required: [address, method]
               properties:
-                address: {$ref: '#/components/schemas/TonAddr'}
+                address: {$ref: '#/components/schemas/TosAddr'}
                 method: {type: string}
                 stack:
                   type: array
@@ -1307,7 +1307,7 @@ paths:
               type: object
               required: [address, body]
               properties:
-                address: {$ref: '#/components/schemas/TonAddr'}
+                address: {$ref: '#/components/schemas/TosAddr'}
                 body: {type: string, description: 'Base64-encoded BOC of the message body'}
                 init_code: {type: string, description: 'Base64-encoded BOC of StateInit code (optional)'}
                 init_data: {type: string, description: 'Base64-encoded BOC of StateInit data (optional)'}
@@ -1340,7 +1340,7 @@ paths:
               type: object
               required: [address, body]
               properties:
-                address: {$ref: '#/components/schemas/TonAddr'}
+                address: {$ref: '#/components/schemas/TosAddr'}
                 body: {type: string, description: 'Base64-encoded BOC of the message body'}
                 init_code: {type: string, description: 'Base64-encoded BOC (optional, for deploy)'}
                 init_data: {type: string, description: 'Base64-encoded BOC (optional, for deploy)'}
@@ -1915,15 +1915,15 @@ components:
 
   schemas:
     # ── Shared primitives ──────────────────────────────────────────────
-    TonAddr:
+    TosAddr:
       type: string
       description: TOS address in any form (raw, friendly bounceable/non-bounceable)
 
-    TonHash:
+    TosHash:
       type: string
       description: 256-bit hash in hex or base64
 
-    TonBlockIdExt:
+    TosBlockIdExt:
       type: object
       properties:
         '@type': {type: string, enum: ['tos.blockIdExt']}
@@ -1965,7 +1965,7 @@ components:
         sync_lag_seconds: {type: integer}
         last_block_utime: {type: integer}
         node_time: {type: integer}
-        last_block: {$ref: '#/components/schemas/TonBlockIdExt'}
+        last_block: {$ref: '#/components/schemas/TosBlockIdExt'}
         error: {type: string}
 
     # ── Account results ────────────────────────────────────────────────
@@ -1978,7 +1978,7 @@ components:
         code: {type: string, description: 'Base64-encoded BOC of contract code'}
         data: {type: string, description: 'Base64-encoded BOC of contract data'}
         last_transaction_id: {$ref: '#/components/schemas/InternalTransactionId'}
-        block_id: {$ref: '#/components/schemas/TonBlockIdExt'}
+        block_id: {$ref: '#/components/schemas/TosBlockIdExt'}
         sync_utime: {type: integer}
         extra_currencies: {type: array, items: {type: object}}
         state: {type: string, enum: [active, uninitialized, frozen]}
@@ -1997,7 +1997,7 @@ components:
         balance: {type: integer, description: 'Balance in nanotomis (integer)'}
         extra_currencies: {type: array, items: {type: object}}
         last_transaction_id: {$ref: '#/components/schemas/InternalTransactionId'}
-        block_id: {$ref: '#/components/schemas/TonBlockIdExt'}
+        block_id: {$ref: '#/components/schemas/TosBlockIdExt'}
         sync_utime: {type: integer}
         account_state:
           type: object
@@ -2035,7 +2035,7 @@ components:
       description: Masterchain info (getMasterchainInfo result)
       properties:
         '@type': {type: string, enum: ['blocks.masterchainInfo']}
-        last: {$ref: '#/components/schemas/TonBlockIdExt'}
+        last: {$ref: '#/components/schemas/TosBlockIdExt'}
         state_root_hash: {type: string}
         init:
           type: object
@@ -2060,7 +2060,7 @@ components:
       description: Validator signatures for a masterchain block
       properties:
         '@type': {type: string, enum: ['blocks.blockSignatures']}
-        id: {$ref: '#/components/schemas/TonBlockIdExt'}
+        id: {$ref: '#/components/schemas/TosBlockIdExt'}
         signatures:
           type: array
           items:
@@ -2075,7 +2075,7 @@ components:
       description: Block transactions (getBlockTransactions result)
       properties:
         '@type': {type: string, enum: ['blocks.transactions']}
-        id: {$ref: '#/components/schemas/TonBlockIdExt'}
+        id: {$ref: '#/components/schemas/TosBlockIdExt'}
         req_count: {type: integer}
         incomplete: {type: boolean}
         transactions:
@@ -2099,7 +2099,7 @@ components:
             type: object
             properties:
               '@type': {type: string, enum: ['raw.transaction']}
-              block_id: {$ref: '#/components/schemas/TonBlockIdExt'}
+              block_id: {$ref: '#/components/schemas/TosBlockIdExt'}
               data: {type: string, description: 'Base64-encoded transaction BOC'}
               utime: {type: integer}
               transaction_id: {$ref: '#/components/schemas/InternalTransactionId'}

@@ -1,5 +1,5 @@
 /**
- * TOS/TON compatible Address class.
+ * TOS-compatible Address class.
  * Friendly format uses CRC16 checksum (CCITT).
  * Operates on Uint8Array only -- no Buffer dependency.
  */
@@ -66,7 +66,7 @@ function parseFriendlyAddress(src: string): {
 }
 
 /**
- * Represents a TOS/TON blockchain address with workchain and 256-bit hash.
+ * Represents a TOS blockchain address with workchain and 256-bit hash.
  *
  * Supports both raw format (`workchain:hex_hash`) and friendly base64 format
  * with CRC16 checksum. Instances are immutable and frozen after construction.

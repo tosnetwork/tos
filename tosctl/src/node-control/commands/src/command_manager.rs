@@ -92,7 +92,7 @@ impl CommandManager {
                 Ok(None)
             }
 
-            // ─── Hidden shortcuts (mytonctrl-style mnemonics) ───────
+            // ─── Hidden shortcuts (legacy-style mnemonics) ─────────
             Commands::WalletLs => {
                 use crate::commands::nodectl::wallet_cmd::WalletCmd;
                 WalletCmd::run_ls_shortcut().await?;

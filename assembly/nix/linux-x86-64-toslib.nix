@@ -62,9 +62,9 @@ stdenv227.mkDerivation {
   doInstallCheck = false;
 
   cmakeFlags = [
-    "-DTON_USE_ABSEIL=ON"
+    "-DTOS_USE_ABSEIL=ON"
     "-DNIX=ON"
-    "-DTON_ONLY_TOSLIB=ON"
+    "-DTOS_ONLY_TOSLIB=ON"
   ];
 
   LDFLAGS = [

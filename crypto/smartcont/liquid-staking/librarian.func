@@ -3,7 +3,7 @@
 #include "stdlib.func";
 
 const int DEFAULT_DURATION = 3600 * 24 * 365 * 10;
-const int ONE_TON = 1000000000;
+const int ONE_TOS = 1000000000;
 
 const int op::register_library = 0x7f567a32;
 const int op::upgrade_code = 0x3a6a2217;
@@ -115,8 +115,8 @@ cell get_fundamental_addresses() inline {
         if(blackhole_active) {
             (_, int found?) = fundamental.udict_get?(256, my_addr_hash);
             if(found?) {
-                ;; send everything except one ton, ignore errors
-                raw_reserve(ONE_TON, 2);
+                ;; send everything except one TOS, ignore errors
+                raw_reserve(ONE_TOS, 2);
                 send_message_back(blackhole, op::excesses, query_id, 0, 2 | 128);
             }
         }

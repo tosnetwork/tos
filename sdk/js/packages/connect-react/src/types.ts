@@ -106,7 +106,7 @@ export interface ConnectButtonRenderProps {
   connected: boolean;
   /** The connected wallet's address, or null. */
   address: Address | null;
-  /** The connected wallet's balance in nanotons, or null. */
+  /** The connected wallet's balance in nanotomis, or null. */
   balance: bigint | null;
   /** Display name of the connected wallet, or null. */
   walletName: string | null;

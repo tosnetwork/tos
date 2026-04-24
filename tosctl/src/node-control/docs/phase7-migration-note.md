@@ -28,7 +28,7 @@ Network params: `global_id=3`, 3 validators, election period 2400s, min stake 10
 tosctl config generate --output tosctl-test.json --force
 ```
 
-Generates valid JSON config with `chain_rpc`, `elections`, `http`, `log` sections. All field names use TOS-neutral naming (`chain_rpc` not `ton_http_api`).
+Generates valid JSON config with `chain_rpc`, `elections`, `http`, `log` sections. All field names use TOS-neutral naming (`chain_rpc` not `chain_rpc`).
 
 ### Node Add — PASS
 

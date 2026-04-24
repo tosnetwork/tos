@@ -169,7 +169,7 @@ cargo +1.91.1 build --release
 ## Notes on pow-miner Status
 
 The `pow-miner` C++ source (`crypto/util/pow-miner-*.cpp`) is inherited from
-the TON codebase (Task #11). Once that source and its CMake target are merged,
+the TOS codebase (Task #11). Once that source and its CMake target are merged,
 the `release-tos-pow-miner.yml` workflow will build it automatically on each
 tag push. Until then, the workflow will fail at the "Build pow-miner" step
 and can be re-triggered once the source is in place.

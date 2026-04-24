@@ -67,7 +67,7 @@ fn parse_shard_state_unsplit(ss: ShardStateUnsplit) {
 }
 
 #[test]
-fn test_real_ton_shardstate() {
+fn test_real_tos_shardstate() {
     // getstate (-1,8000000000000000,0)
     let in_path = "src/tests/data/shard_state.boc";
     println!("ShardState file: {:?}", in_path);

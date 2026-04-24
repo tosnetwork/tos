@@ -22,7 +22,7 @@ use crate::{
 #[cfg(feature = "cross_check")]
 use std::sync::Arc;
 use std::sync::LazyLock;
-// use ton_assembler::compile_code_to_cell; // removed: ton_assembler dependency removed
+// use tos_assembler::compile_code_to_cell; // removed assembler dependency
 use chain_block::{
     base64_decode, read_single_root_boc, AccStatusChange, Account, AccountId, AccountStatus,
     AccountStorage, AddSub, BuilderData, Cell, Coins, ComputeSkipReason, ConfigParam8,
@@ -244,7 +244,7 @@ pub fn create_int_msg(
     create_int_msg_workchain(-1, src, dest, value, bounce, lt)
 }
 
-// Commented out: depends on ton_assembler which has been removed
+// Commented out: depends on the removed assembler crate
 // pub fn create_send_two_messages_code() -> Cell {
 //     compile_code_to_cell(
 //         "
@@ -677,7 +677,7 @@ impl ExecutionCaseResult {
     }
 }
 
-// Commented out: depends on ton_assembler which has been removed
+// Commented out: depends on the removed assembler crate
 // pub fn execute_transaction_case(
 //     start_balance: u64,
 //     code: &str,
@@ -712,7 +712,7 @@ pub fn execute_acc_with_message_and_time(
     ExecutionCaseResult { acc, tr_res }
 }
 
-// Commented out: depends on ton_assembler which has been removed
+// Commented out: depends on the removed assembler crate
 // pub fn execute_custom_transaction(
 //     start_balance: u64,
 //     code: &str,
@@ -861,7 +861,7 @@ pub fn replay_transaction(
     let state_libs = mc.libraries().clone().inner();
 
     // let config = chain_block_json::debug_possible_config_params(&extra.config_params).unwrap();
-    // std::fs::write("d:\\ton_config.json", config).unwrap();
+    // std::fs::write("d:\\tos_config.json", config).unwrap();
 
     let tx_lt = transaction.logical_time();
     let mut params = execute_params(tx_lt);

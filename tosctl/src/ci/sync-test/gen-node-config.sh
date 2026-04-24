@@ -12,7 +12,7 @@ CTL_KEY=$(openssl rand -base64 32)
 cat <<EOF
 {
   "log_config_name": "/main/logs.config.yml",
-  "ton_global_config_name": "/main/global.config.json",
+  "tos_global_config_name": "/main/global.config.json",
   "internal_db_path": "/db",
   "restore_db": true,
   "sync_by_archives": true,

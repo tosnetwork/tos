@@ -17,7 +17,7 @@ established cryptocurrency archetype:
 
 | Coin | Maps to | Hash family | Mining hardware | Distribution speed |
 |---|---|---|---|---|
-| **TOS** | TON | SHA-256 | GPU / ASIC | ~1.9 years (fast) |
+| **TOS** | TOS native | SHA-256 | GPU / ASIC | ~1.9 years (fast) |
 | **eTOS** | Ethereum (pre-Merge) | keccak-256 | GPU | ~1.9 years (fast) |
 | **UNO** | Bitcoin (privacy variant) | Poseidon2 | CPU only | ~30 years (slow, halving) |
 
@@ -30,7 +30,7 @@ ecosystem, while avoiding a single point of mining-economy failure.
 
 ### Mechanism
 
-**PoW Giver smart contract**, inherited verbatim from TON. Code at
+**PoW Giver smart contract**, TOS native. Code at
 `crypto/smartcont/pow-testgiver-code.fc` (FunC). Instantiated via
 `crypto/smartcont/new-pow-testgiver.fif` (Fift).
 
@@ -41,12 +41,12 @@ ecosystem, while avoiding a single point of mining-economy failure.
 | Total supply | 100,000,000 TOS |
 | Number of Givers | 10 |
 | Per-Giver supply | 10,000,000 TOS |
-| Hash algorithm | SHA-256 (TON-inherited) |
+| Hash algorithm | SHA-256 (TOS-native) |
 | Reward per solve | **10 TOS** |
 | Target solve interval (per Giver) | **60 seconds** |
 | Difficulty min log2 (`min_cpl`) | 24 |
 | Difficulty max log2 (`max_cpl`) | 42 |
-| Difficulty adjustment | Auto (factor ∈ [7/8, 9/8] per solve, TON formula) |
+| Difficulty adjustment | Auto (factor ∈ [7/8, 9/8] per solve, TOS formula) |
 | Halving | None (flat distribution) |
 
 ### Distribution math
@@ -64,7 +64,7 @@ network throughput                            = 10 × (10 TOS / 60s)
 
 ### Mining workflow
 
-1. Miner runs `pow-miner` (TON-inherited C++ client at `crypto/util/pow-miner-*.cpp`)
+1. Miner runs `pow-miner` (TOS-native C++ client at `crypto/util/pow-miner-*.cpp`)
 2. Client polls Giver contract for `(seed, target_complexity)`
 3. Multi-thread SHA-256 search for `nonce` such that `sha256(msg(nonce)) < target_complexity`
 4. On success: client constructs `mine` external message, submits to wc=0
@@ -82,7 +82,7 @@ Helper library included by both genesis scripts. Defines:
   `( giver_id amount interval min_cpl init_cpl max_cpl -- )`
   and registers one PoW Giver contract on the masterchain genesis state.
 - Uses `PowGiverCode` loaded from `auto/pow-testgiver-code.fif` (inherited
-  verbatim from TON, byte-identical).
+  verbatim from the TOS native implementation, byte-identical).
 - Deterministic contract addresses: `AllOnes * (5 + giver_id)`
   — Giver 1 → `-1:6666...6`, ..., Giver 10 → `-1:FFFF...F`
 - Saves keypairs to `pow-giver-{N}.pk`, addresses to `pow-giver-{N}.addr`.
@@ -120,8 +120,8 @@ ls *.boc                      # → basestate0 evmstate1 unostate2 zerostate
 
 ### Miner ecosystem
 
-Inherited from TON's mining tooling. Binary clients available; mining
-pools can be operated identically to TON.
+Inherited from the TOS native implementation's mining tooling. Binary clients available; mining
+pools can be operated with the same TOS workflow.
 
 ---
 
@@ -130,7 +130,7 @@ pools can be operated identically to TON.
 ### Mechanism
 
 **PoW Giver Solidity contract** (new), deployed at genesis to wc=1.
-Mirrors TON's `pow-testgiver-code.fc` logic but for the EVM execution
+Mirrors TOS `pow-testgiver-code.fc` logic but for the EVM execution
 environment.
 
 ### Parameters
@@ -222,7 +222,7 @@ contract EToSPoWGiver {
         require(ok, "transfer failed");
     }
 
-    function _adjustDifficulty() internal { /* TON formula */ }
+    function _adjustDifficulty() internal { /* TOS formula */ }
 }
 ```
 
@@ -487,13 +487,13 @@ race-condition rejection test.
 
 1. Modify `gen-zerostate.fif` line 94 area to deploy 10 Givers
    (10M each, 10 TOS reward, 60s delta) instead of monolithic main wallet
-2. Verify TON-inherited `pow-testgiver-code.fc` works without changes
-3. Add documentation pointing miners at the existing TON pow-miner client
+2. Verify TOS-native `pow-testgiver-code.fc` works without changes
+3. Add documentation pointing miners at the existing TOS pow-miner client
 4. Integration test on local testnet
 
 ### Phase B: eTOS PoW Giver (Task #10) — ~1-2 weeks
 
-1. Write `EToSPoWGiver.sol` (mirror TON contract logic in Solidity)
+1. Write `EToSPoWGiver.sol` (mirror TOS contract logic in Solidity)
 2. Compile + deploy 10 instances at genesis via `evm-zerostate-from-alloc`
 3. Write reference miner client (or document existing ethminer
    configuration)
@@ -727,7 +727,7 @@ because CPU network hashrate is more volatile (a single EPYC server
 joining can double network rate):
 
 ```
-TOS/eTOS retargeting factor ∈ [7/8, 9/8]   ← TON / TOS standard
+TOS/eTOS retargeting factor ∈ [7/8, 9/8]   ← TOS standard
 UNO   retargeting factor ∈ [3/4, 4/3]      ← faster convergence
 ```
 
@@ -737,7 +737,7 @@ but acceptable.
 ### Difficulty calibration risk + mitigation
 
 If initial values are too low: first miners sweep multiple solves
-before retargeting catches up (TON's actual launch experience —
+before retargeting catches up (early launch experience —
 industrial pools dominated first hour). Mitigation: difficulty should
 be **slightly conservative** (i.e., harder than estimated).
 
@@ -755,7 +755,7 @@ CI-driven via GitHub Releases. Three workflows in
 
 ### `release-tos-pow-miner.yml`
 
-Builds TON-inherited `pow-miner` (`crypto/util/pow-miner-*.cpp`).
+Builds TOS-native `pow-miner` (`crypto/util/pow-miner-*.cpp`).
 
 | Platform | Built artifact |
 |---|---|
@@ -831,5 +831,5 @@ Where feasible:
 - [Zerostate.md §Initial Token Supply](Zerostate.md#initial-token-supply-per-workchain-issuance) — supply caps confirmed in genesis layer
 - [Validator-Local.md](Validator-Local.md) — local testnet runbook (will need post-implementation update)
 - [uno-workchain.md](uno-workchain.md) — UNO design and §10 economics
-- TON's `crypto/smartcont/pow-testgiver-code.fc` — TOS Giver code (inherited verbatim)
+- TOS `crypto/smartcont/pow-testgiver-code.fc` — TOS Giver code (inherited verbatim)
 - Bitcoin whitepaper — UNO's distribution mathematics reference

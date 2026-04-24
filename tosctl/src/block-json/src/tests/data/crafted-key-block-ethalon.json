@@ -1184,12 +1184,12 @@
         "bridge_burn_fee": "023e8",
         "bridge_mint_fee_dec": "2000",
         "bridge_mint_fee": "027d0",
-        "wallet_min_tons_for_storage_dec": "3000",
-        "wallet_min_tons_for_storage": "02bb8",
+        "wallet_min_tos_for_storage_dec": "3000",
+        "wallet_min_tos_for_storage": "02bb8",
         "wallet_gas_consumption_dec": "4000",
         "wallet_gas_consumption": "02fa0",
-        "minter_min_tons_for_storage_dec": "5000",
-        "minter_min_tons_for_storage": "031388",
+        "minter_min_tos_for_storage_dec": "5000",
+        "minter_min_tos_for_storage": "031388",
         "discover_gas_consumption_dec": "6000",
         "discover_gas_consumption": "031770"
       }

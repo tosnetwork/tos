@@ -95,7 +95,7 @@ async function main() {
     .storeUint(21, 32)                    // op: mint
     .storeUint(0, 64)                     // query_id
     .storeAddress(adminAddr)              // destination
-    .storeCoins(toNano("0.5"))            // forward_ton_amount
+    .storeCoins(toNano("0.5"))            // forward amount
     .storeRef(
       beginCell()
         .storeUint(0x178d4519, 32)        // op: internal_transfer

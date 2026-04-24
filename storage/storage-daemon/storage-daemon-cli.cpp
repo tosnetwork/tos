@@ -952,7 +952,7 @@ class StorageDaemonCli : public td::actor::Actor {
       td::TerminalIO::out() << "set-provider-params [--accept x] [--rate x] [--max-span x] [--min-file-size x] "
                                "[--max-file-size x]\tSet parameters of the smart contract\n";
       td::TerminalIO::out() << "\t--accept\tAccept new contracts: 0 (no) or 1 (yes)\n";
-      td::TerminalIO::out() << "\t--rate\tPrice of storage, nanoTON per MB*day\n";
+      td::TerminalIO::out() << "\t--rate\tPrice of storage, nanoTOS per MB*day\n";
       td::TerminalIO::out() << "\t--max-span\n";
       td::TerminalIO::out() << "\t--min-file-size\tMinimal total size of a bag of files (bytes)\n";
       td::TerminalIO::out() << "\t--max-file-size\tMaximal total size of a bag of files (bytes)\n";
@@ -969,7 +969,7 @@ class StorageDaemonCli : public td::actor::Actor {
       td::TerminalIO::out()
           << "withdraw-all\tSend bounty from all storage contracts (where at least 1 TOS is available) "
              "to the main contract\n";
-      td::TerminalIO::out() << "send-coins <address> <amount> [--message msg]\tSend <amount> nanoTON to <address> from "
+      td::TerminalIO::out() << "send-coins <address> <amount> [--message msg]\tSend <amount> nanoTOS to <address> from "
                                "the main contract\n";
       td::TerminalIO::out()
           << "close-contract <address>\tClose storage contract <address> and delete bag (if possible)\n";
@@ -1446,7 +1446,7 @@ class StorageDaemonCli : public td::actor::Actor {
         return;
       }
       td::TerminalIO::out() << "Saved message body to file\n";
-      td::TerminalIO::out() << "Rate (nanoTON per mb*day): " << obj->rate_ << "\n";
+      td::TerminalIO::out() << "Rate (nanoTOS per mb*day): " << obj->rate_ << "\n";
       td::TerminalIO::out() << "Max span: " << obj->max_span_ << "\n";
       td::actor::send_closure(SelfId, &StorageDaemonCli::command_finished, td::Status::OK());
     });
@@ -1529,7 +1529,7 @@ class StorageDaemonCli : public td::actor::Actor {
       auto params = R.move_as_ok();
       td::TerminalIO::out() << "Storage provider parameters:\n";
       td::TerminalIO::out() << "Accept new contracts: " << params->accept_new_contracts_ << "\n";
-      td::TerminalIO::out() << "Rate (nanoTON per day*MB): " << params->rate_per_mb_day_ << "\n";
+      td::TerminalIO::out() << "Rate (nanoTOS per day*MB): " << params->rate_per_mb_day_ << "\n";
       td::TerminalIO::out() << "Max span: " << (td::uint32)params->max_span_ << "\n";
       auto min_size = (td::uint64)params->minimal_file_size_, max_size = (td::uint64)params->maximal_file_size_;
       td::TerminalIO::out() << "Min file size: " << td::format::as_size(min_size) << " (" << min_size << ")\n";

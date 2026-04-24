@@ -7,11 +7,11 @@
 # or timed out. Reports the result as a GitHub commit status.
 #
 # Metrics used (from /metrics on the node's metrics port):
-#   ton_node_engine_sync_status          — sync state machine (6 = synced, 8 = db broken)
-#   ton_node_engine_last_mc_block_seqno  — latest masterchain block applied
-#   ton_node_engine_timediff_seconds     — seconds between now and last MC block
-#   ton_node_engine_shards_timediff_seconds — seconds between now and MC block
-#                                            last processed by shard client
+#   sync status metric          — sync state machine (6 = synced, 8 = db broken)
+#   last masterchain seqno      — latest masterchain block applied
+#   masterchain timediff        — seconds between now and last MC block
+#   shard timediff              — seconds between now and MC block last
+#                                  processed by shard client
 #
 # Sync stages (sync_status values, ordered by normal flow):
 #   0 = not_set        Initial state, node just started
@@ -113,10 +113,10 @@ while true; do
   # Fetch all metrics in one request.
   prom=$(curl -sf "$METRICS" 2>/dev/null) || { sleep "$POLL_INTERVAL"; continue; }
 
-  status=$(metric "$prom" "ton_node_engine_sync_status")
-  seqno=$(metric "$prom" "ton_node_engine_last_mc_block_seqno")
-  timediff=$(metric "$prom" "ton_node_engine_timediff_seconds")
-  shards_td=$(metric "$prom" "ton_node_engine_shards_timediff_seconds")
+  status=$(metric "$prom" "tos_node_engine_sync_status")
+  seqno=$(metric "$prom" "tos_node_engine_last_mc_block_seqno")
+  timediff=$(metric "$prom" "tos_node_engine_timediff_seconds")
+  shards_td=$(metric "$prom" "tos_node_engine_shards_timediff_seconds")
   status=${status:-0}
   seqno=${seqno:-0}
   timediff=${timediff:--}

@@ -325,7 +325,7 @@ impl SmartContractInfo {
     }
 
     pub fn as_temp_data_item(&self) -> StackItem {
-        // let config = ton_block_json::debug_config(&self.config_params).unwrap();
+        // let config = chain_block_json::debug_config(&self.config_params).unwrap();
         // std::fs::write("d:\\config.json", config)?;
         // extra read some config params for usage tree
         {
@@ -462,7 +462,7 @@ pub fn convert_stack(items: &[StackItem]) -> Result<Vec<StackEntry>> {
     Ok(result)
 }
 
-pub fn convert_ton_stack(items: &[StackEntry]) -> Result<Vec<StackItem>> {
+pub fn convert_tos_stack(items: &[StackEntry]) -> Result<Vec<StackItem>> {
     let mut result = Vec::with_capacity(items.len());
     for item in items {
         let stack_item = match item {
@@ -472,7 +472,7 @@ pub fn convert_ton_stack(items: &[StackEntry]) -> Result<Vec<StackItem>> {
                 StackItem::cell(cell)
             }
             StackEntry::Tvm_StackEntryList(list) => {
-                let elements = convert_ton_stack(list.list.elements())?;
+                let elements = convert_tos_stack(list.list.elements())?;
                 let mut tuple = StackItem::None;
                 for elem in elements.into_iter().rev() {
                     tuple = StackItem::tuple(vec![elem, tuple]);
@@ -490,7 +490,7 @@ pub fn convert_ton_stack(items: &[StackEntry]) -> Result<Vec<StackItem>> {
                 StackItem::slice(slice)
             }
             StackEntry::Tvm_StackEntryTuple(tuple) => {
-                let elements = convert_ton_stack(tuple.tuple.elements())?;
+                let elements = convert_tos_stack(tuple.tuple.elements())?;
                 StackItem::tuple(elements)
             }
             StackEntry::Tvm_StackEntryUnsupported => {
@@ -518,7 +518,7 @@ pub fn run_smc_method(
     smc_info.block_lt = gen_lt;
     smc_info.trans_lt = gen_lt;
 
-    let mut storage = convert_ton_stack(&stack)?;
+    let mut storage = convert_tos_stack(&stack)?;
     storage.push(StackItem::int(method_id));
     let stack = Stack::with_storage(storage);
 

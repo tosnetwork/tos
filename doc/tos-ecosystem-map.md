@@ -1,4 +1,4 @@
-# TON Ecosystem Tools & Libraries Distribution Map
+# Legacy Ecosystem Tools & Libraries Distribution Map
 
 ## TOS Consolidation View
 
@@ -8,32 +8,32 @@ Version 1.0 | Generated from ~/tos monorepo analysis | 2026-04
 
 ## Layer 6: Wallets & DApps
 
-### TON Ecosystem (Fragmented)
+### Legacy Ecosystem (Fragmented)
 
 | Project | Status |
 |---------|--------|
-| tonweb (JS SDK) | Independent repo, npm publish, version out of sync with node |
-| tonkeeper (Mobile) | Closed-source, independent dev, depends on tonapi.io |
-| ton-connect (Protocol) | Independent repo, independent versioning, each wallet implements differently |
+| legacy web SDK | Independent repo, npm publish, version out of sync with node |
+| legacy mobile wallet | Closed-source, independent dev, depends on hosted API service |
+| connect protocol | Independent repo, independent versioning, each wallet implements differently |
 
 ### TOS (Consolidated)
 
 - ✅ Compatible with existing wallets — no SDK modification needed
-- ✅ Method names aligned with tonweb/toncenter, clients only need to change URL
+- ✅ Method names aligned with legacy web/API conventions, clients only need to change URL
 - ✅ New `account.capability` API provides standardized capability discovery
 
 ---
 
 ## Layer 5: SDKs & Client Libraries
 
-### TON Ecosystem (Fragmented)
+### Legacy Ecosystem (Fragmented)
 
 | Library | Language | Issues |
 |---------|----------|--------|
-| toncenter-sdk | JS/TS | Independent repo, depends on toncenter.com, version fragmentation |
-| pytoniq | Python | Independent repo, different maintainer, inconsistent API style |
-| tongo | Go | Independent repo, custom serialization, self-managed compatibility |
-| ton-kotlin | Kotlin/JVM | Independent repo, update lag |
+| legacy API SDK | JS/TS | Independent repo, depends on hosted API service, version fragmentation |
+| Python SDK | Python | Independent repo, different maintainer, inconsistent API style |
+| Go SDK | Go | Independent repo, custom serialization, self-managed compatibility |
+| Kotlin SDK | Kotlin/JVM | Independent repo, update lag |
 
 ### TOS (Consolidated)
 
@@ -47,11 +47,11 @@ Version 1.0 | Generated from ~/tos monorepo analysis | 2026-04
 
 ## Layer 4: Operations Tooling
 
-### TON Ecosystem (Fragmented)
+### Legacy Ecosystem (Fragmented)
 
 | Tool | Issues |
 |------|--------|
-| mytonctrl (Python) | Independent repo/install, Python scripts patchwork, depends on system Python, no unified config, no daemon mode |
+| legacy ops controller (Python) | Independent repo/install, Python scripts patchwork, depends on system Python, no unified config, no daemon mode |
 | Staking/Election scripts | Scattered across repos, manual validator ops, each implements own key management, no alerting, inconsistent docs |
 | Monitoring & Keys | Prometheus self-configured, keys stored as raw files on disk, no Vault integration, no Telegram alerts |
 
@@ -72,13 +72,13 @@ Version 1.0 | Generated from ~/tos monorepo analysis | 2026-04
 
 ## Layer 3: API Layer (Query & Submit)
 
-### TON Ecosystem (Fragmented — 3+ independent paths)
+### Legacy Ecosystem (Fragmented — 3+ independent paths)
 
 | API Server | Issues |
 |------------|--------|
-| ton-http-api (Python) | Independent repo/process, requires Python runtime, needs liteserver connection, hosted at toncenter.com, version out of sync, extra ops burden |
-| tonapi.io (Commercial) | Closed-source SaaS, richer features but paid, vendor lock-in risk, not self-hostable, different API style |
-| ton-http-api-cpp (3rd party) | Third-party C++ impl, independent compile/deploy, needs liteserver, extra process, maintained independently |
+| HTTP API service (Python) | Independent repo/process, requires Python runtime, needs liteserver connection, hosted API service, version out of sync, extra ops burden |
+| commercial API | Closed-source SaaS, richer features but paid, vendor lock-in risk, not self-hostable, different API style |
+| HTTP API C++ service (3rd party) | Third-party C++ impl, independent compile/deploy, needs liteserver, extra process, maintained independently |
 
 ### TOS (Consolidated — embedded in validator-engine)
 
@@ -97,7 +97,7 @@ Version 1.0 | Generated from ~/tos monorepo analysis | 2026-04
 
 ## Layer 2: Node / Validator
 
-### TON Ecosystem
+### Legacy Ecosystem
 
 | Component | Issues |
 |-----------|--------|
@@ -116,7 +116,7 @@ Version 1.0 | Generated from ~/tos monorepo analysis | 2026-04
 
 ## Layer 1: Protocol & VM & Smart Contracts
 
-### TON Ecosystem (C++ only)
+### Legacy Ecosystem (C++ only)
 
 | Component | Issues |
 |-----------|--------|
@@ -154,7 +154,7 @@ Version 1.0 | Generated from ~/tos monorepo analysis | 2026-04
 
 ## Layer 0: Network Transport
 
-### TON Ecosystem
+### Legacy Ecosystem
 
 - ADNL + RLDP + DHT — C++ only, no standalone library for other languages
 
@@ -167,10 +167,10 @@ Version 1.0 | Generated from ~/tos monorepo analysis | 2026-04
 
 ## Summary: Key Differences
 
-| Dimension | TON Ecosystem | TOS Consolidated | Status |
+| Dimension | Legacy Ecosystem | TOS Consolidated | Status |
 |-----------|---------------|------------------|--------|
-| API Layer | 3+ independent projects (toncenter/tonapi/cpp) | Embedded in validator-engine, single process | ✅ |
-| Ops Tooling | mytonctrl (Python) + scattered scripts | tosctl (Rust, 90 commands, single binary) | ✅ |
+| API Layer | 3+ independent projects (hosted API / commercial API / C++) | Embedded in validator-engine, single process | ✅ |
+| Ops Tooling | legacy Python ops controller + scattered scripts | tosctl (Rust, 90 commands, single binary) | ✅ |
 | SDKs | Each language in independent repo, versions diverge | Vendored (toscenter-rs/pytosiq), supply chain controlled | ✅ |
 | Virtual Machine | C++ only | C++ + Rust dual-stack (86K lines) | ✅ |
 | Permission Model | None (wallets guess) | account.capability + role separation (planned) | 🔧 In progress |

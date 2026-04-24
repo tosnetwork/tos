@@ -68,7 +68,7 @@ export class Builder {
         return 1023 - this.bits;
     }
 
-    /** Alias for remainingBits (TON compat) */
+    /** Alias for remainingBits */
     get availableBits(): number {
         return 1023 - this.bits;
     }
@@ -78,7 +78,7 @@ export class Builder {
         return 4 - this.refs;
     }
 
-    /** Alias for remainingRefs (TON compat) */
+    /** Alias for remainingRefs */
     get availableRefs(): number {
         return 4 - this.refs;
     }

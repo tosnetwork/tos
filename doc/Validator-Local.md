@@ -864,7 +864,7 @@ Difficulty hint: for local single-miner smoke tests you can lower the zerostate 
 
 ### Persistent State (UNO)
 
-UNO shardstate is a standard TON cell tree — there is **no** separate per-node `.boc` file (unlike EVM's optional `evm-state.boc` dev-mode checkpoint). The root cell layout (`uno/core/state.h` + `uno/core/cell-state.cpp`) carries four refs:
+UNO shardstate is a standard TOS cell tree — there is **no** separate per-node `.boc` file (unlike EVM's optional `evm-state.boc` dev-mode checkpoint). The root cell layout (`uno/core/state.h` + `uno/core/cell-state.cpp`) carries four refs:
 
 | ref | Contents                                                                 |
 |-----|--------------------------------------------------------------------------|

@@ -1,6 +1,6 @@
 /**
  * Compute cell hashes, depths, and level mask.
- * Replicates TON C++ DataCell.cpp logic.
+ * Replicates the C++ DataCell.cpp logic.
  */
 
 import { BitString } from '../BitString';

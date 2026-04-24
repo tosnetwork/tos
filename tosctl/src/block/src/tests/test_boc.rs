@@ -411,7 +411,7 @@ fn test_boc_write_crc() -> Result<()> {
 }
 
 #[test]
-fn test_real_ton_boc2() -> Result<()> {
+fn test_real_tos_boc2() -> Result<()> {
     // Compatibility checking
 
     let input = "B5EE9C7241040301000000004600024789FF86EE2B1CE113242F7CAE3511009B84F9E460D38773688AF808406AA75537991A11900102002C20DDA4F260F8005F04ED44D0D31F30A4C8CB1FC9ED540008000000005A785C4E";

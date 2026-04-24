@@ -9,7 +9,7 @@ import { compile } from '@ton-community/blueprint';
 import { Conf, Op } from "../PoolConstants";
 import { randomAddress } from '../contracts/jetton_dao/tests/utils';
 import { Errors } from '../PoolConstants';
-import { differentAddress, getRandomInt, getRandomTon } from '../utils';
+import { differentAddress, getRandomInt, getRandomTos } from '../utils';
 import { getMsgPrices } from '../fees';
 import { flattenTransaction } from '@ton-community/test-utils';
 
@@ -331,7 +331,7 @@ describe('Governor actions tests', () => {
             it('Closing deposit should prevent anyone from furhter deposits', async() => {
                 const poolBefore = await pool.getFullData();
                 const governor   = bc.sender(newGovernor);
-                const depoAmount = getRandomTon(100000, 200000);
+                const depoAmount = getRandomTos(100000, 200000);
                 if(poolBefore.depositsOpen) {
                     await pool.sendSetDepositSettings(governor, toNano('1'), poolBefore.optimisticDepositWithdrawals, false);
                 }
@@ -422,7 +422,7 @@ describe('Governor actions tests', () => {
             it('Pool in halted state should prevent haltable ops', async () => {
                 const haltedOps = [
                     // Withdraw is not haltable since in any case we need handle and send jettons back
-                    async () => pool.sendDeposit(bc.sender(randomAddress()), getRandomTon(100000, 200000)),
+                    async () => pool.sendDeposit(bc.sender(randomAddress()), getRandomTos(100000, 200000)),
                     // Loan request
                     async () => bc.sendMessage(internal({
                         from: controller.address,
@@ -560,7 +560,7 @@ describe('Governor actions tests', () => {
  
         const poolBefore = await pool.getFullData();
         expect(poolBefore.sudoer).toEqualAddress(deployer.address);
-        const msgVal  = getRandomTon(1, 10);
+        const msgVal  = getRandomTos(1, 10);
         const curTime = Date.now();
         const testMsg = internal({
             from: pool.address,

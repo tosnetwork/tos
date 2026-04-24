@@ -192,7 +192,7 @@ describe("formatBalance", () => {
   });
 
   it("formats fractional amounts correctly", () => {
-    // 1,234,567,890,000 nanotons = 1234.567890000
+    // 1,234,567,890,000 nanotomis = 1234.567890000
     expect(formatBalance("1234567890000")).toBe("1,234.56");
   });
 

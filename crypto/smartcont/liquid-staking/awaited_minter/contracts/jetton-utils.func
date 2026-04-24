@@ -1,17 +1,17 @@
 #include "params.func";
 
-const int jetton_transfer_amount = 62000000; ;; 0.062 TON
+const int jetton_transfer_amount = 62000000; ;; 0.062 TOS
 
-;; wallet_min_ton_balance = wallet_burn_fee
+;; wallet_min_balance = wallet_burn_fee
 ;;                        + fwd_fee (to minter)
 ;;                        + minter_burn_fee (burn_gas_usage)
 ;;                        + fwd_fee * 5 (consigliere compensation)
 ;;                        + fwd_fee (compensation sending)
 ;;                        + jetton_transfer_amount (OR fwd_fee for asset delivery. keeping max)
 ;;                        + fwd_fee; ;; forward fee for excesses (value can be 1 nton, fwd_fee will be anyway)
-;;             = 0.0812401 -> 0.1 TON
+;;             = 0.0812401 -> 0.1 TOS
 
-const int wallet_min_ton_balance = 100000000; ;; 0.1 TON
+const int wallet_min_tos_balance = 100000000; ;; 0.1 TOS
 
 
 cell pack_jetton_wallet_data (int balance, slice owner, slice consigliere, slice jetton_master, cell token_wallet_code) inline {

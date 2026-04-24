@@ -12,7 +12,7 @@
 use criterion::{criterion_group, criterion_main, Criterion, SamplingMode};
 use pprof::criterion::{Output, PProfProfiler};
 use std::time::Duration;
-// use ton_assembler::compile_code_to_cell;
+// use tos_assembler::compile_code_to_cell;
 use chain_block::{Deserializable, SliceData, StateInit};
 use tos_vm::{
     executor::{gas::gas_state::Gas, Engine},

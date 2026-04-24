@@ -426,7 +426,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     while (!post_path.empty() && post_path.back() == '/') post_path.pop_back();
 
     // Match ANY known API method path for POST REST (body = params JSON, no envelope).
-    // This matches ton-http-api-cpp behavior where ALL methods accept POST.
+    // This matches HTTP API behavior where ALL methods accept POST.
     // /jsonRPC is NOT matched here — it uses the standard JSON-RPC envelope.
     static const std::set<std::string> post_rest_paths = {
         "/detectAddress", "/detectHash", "/packAddress", "/unpackAddress",
@@ -1031,7 +1031,7 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
     handle_getLibraries(params, std::move(req_id), std::move(promise));
   } else if (method == "getTokenData") {
     handle_getTokenData(params, std::move(req_id), std::move(promise));
-  // New APIs (parity with ton-http-api-cpp)
+  // New APIs (HTTP API parity)
   } else if (method == "detectHash") {
     handle_detectHash(params, std::move(req_id), std::move(promise));
   } else if (method == "getOutMsgQueueSize") {

@@ -870,7 +870,7 @@ fn test_suspended_addresses() {
 }
 
 #[test]
-fn test_real_ton_config_params() {
+fn test_real_tos_config_params() {
     let bytes = std::fs::read("src/tests/data/config.boc").unwrap();
     let cell = read_single_root_boc(bytes).unwrap();
     let config1 = ConfigParams::with_address_and_params(AccountId::from([1; 32]), Some(cell));

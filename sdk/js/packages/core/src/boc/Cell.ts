@@ -17,7 +17,7 @@ import { bytesToBase64, bytesToHex, base64ToBytes, hexToBytes } from '../utils/e
 export { CellType } from './cell/CellType';
 
 /**
- * Immutable TVM Cell: the fundamental data unit in the TOS/TON blockchain.
+ * Immutable TVM Cell: the fundamental data unit in the TOS blockchain.
  *
  * A Cell holds up to 1023 bits and up to 4 references to other Cells.
  * Cells are content-addressed by their SHA-256 hash. Use {@link beginCell}

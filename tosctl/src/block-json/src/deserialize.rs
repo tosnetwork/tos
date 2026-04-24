@@ -638,9 +638,9 @@ impl StateParser {
         let prices = JettonBridgePrices {
             bridge_burn_fee: p.get_coins("bridge_burn_fee")?,
             bridge_mint_fee: p.get_coins("bridge_mint_fee")?,
-            wallet_min_tons_for_storage: p.get_coins("wallet_min_tons_for_storage")?,
+            wallet_min_tos_for_storage: p.get_coins("wallet_min_tos_for_storage")?,
             wallet_gas_consumption: p.get_coins("wallet_gas_consumption")?,
-            minter_min_tons_for_storage: p.get_coins("minter_min_tons_for_storage")?,
+            minter_min_tos_for_storage: p.get_coins("minter_min_tos_for_storage")?,
             discover_gas_consumption: p.get_coins("discover_gas_consumption")?,
         };
         Ok(JettonBridgeParams {

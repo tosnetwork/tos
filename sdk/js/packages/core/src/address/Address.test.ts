@@ -12,7 +12,7 @@ const RAW =
 const HASH_HEX =
     '2cf55953e92efbeadab7ba725c3f93a0b23f842cbba72d7b8e6f510a70e422e3';
 
-// Friendly addresses from ton-core reference tests
+// Friendly addresses from reference tests
 const FRIENDLY_NON_BOUNCEABLE_TEST =
     '0QAs9VlT6S776tq3unJcP5Ogsj-ELLunLXuOb1EKcOQi4-QO';
 const FRIENDLY_BOUNCEABLE_TEST =

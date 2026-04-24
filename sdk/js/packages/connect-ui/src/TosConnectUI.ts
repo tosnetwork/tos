@@ -10,7 +10,7 @@
  * import { TosConnectUI } from "@tos/connect-ui";
  *
  * const ui = new TosConnectUI({
- *   manifestUrl: "https://myapp.com/tonconnect-manifest.json",
+ *   manifestUrl: "https://myapp.com/tosconnect-manifest.json",
  *   buttonRootId: "tos-connect-button",
  * });
  * ```
@@ -178,7 +178,7 @@ export class TosConnectUI {
     // Build the connect request
     const connectRequest: ConnectRequest = request ?? {
       manifestUrl: this.manifestUrl,
-      items: [{ name: "ton_addr" }],
+      items: [{ name: "tos_addr" }],
     };
 
     if (wallet.injected && wallet.jsBridgeKey) {
@@ -512,7 +512,7 @@ export class TosConnectUI {
       // Connect to injected wallet
       const connectRequest: ConnectRequest = {
         manifestUrl: this.manifestUrl,
-        items: [{ name: "ton_addr" }],
+        items: [{ name: "tos_addr" }],
       };
       this.connectInjected(wallet, connectRequest);
     } else {
@@ -545,7 +545,7 @@ export class TosConnectUI {
 
       // Extract account info from connect items
       const addrItem = (result.items as Array<{ name: string; address?: string; network?: string; publicKey?: string; walletStateInit?: string }>)
-        .find((item) => item.name === "ton_addr");
+        .find((item) => item.name === "tos_addr");
 
       if (!addrItem?.address) {
         throw new Error("Wallet did not return an address");

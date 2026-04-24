@@ -68,11 +68,11 @@ export function shortenAddress(address: string, prefixLen = 4, suffixLen = 3): s
 }
 
 /**
- * Format a nanoton balance to a human-readable string.
+ * Format a nanotomis balance to a human-readable string.
  * e.g. 1234567890000n -> "1,234.57"
  */
-export function formatBalance(nanotons: string | bigint, decimals = 2): string {
-  const value = typeof nanotons === "string" ? BigInt(nanotons) : nanotons;
+export function formatBalance(nanotomis: string | bigint, decimals = 2): string {
+  const value = typeof nanotomis === "string" ? BigInt(nanotomis) : nanotomis;
   const NANO = 1_000_000_000n;
   const absValue = value < 0n ? -value : value;
   const whole = value / NANO;

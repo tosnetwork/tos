@@ -916,7 +916,7 @@ impl Engine {
     }
 
     simple_commands! {
-        enumerate_ton_commands
+        enumerate_tos_commands
 
         MULADDDIVMOD                         => 0xA9, 0x80
         MULADDDIVMODR                        => 0xA9, 0x81
@@ -970,6 +970,6 @@ impl Engine {
     pub fn add_simple_commands(&mut self) {
         self.add_commands(Self::enumerate_simple_commands());
 
-        self.add_commands(Self::enumerate_ton_commands());
+        self.add_commands(Self::enumerate_tos_commands());
     }
 }

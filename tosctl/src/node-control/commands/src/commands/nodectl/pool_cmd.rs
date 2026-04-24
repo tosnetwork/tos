@@ -2833,7 +2833,7 @@ impl PoolLiquidControllerStopWithdrawCmd {
         }
 
         // Step 2: withdraw remaining validator funds
-        // MIN_TONS_FOR_STORAGE = 2 TOS, leave that in the contract
+        // MIN_TOS_FOR_STORAGE = 2 TOS, leave that in the contract
         let min_storage: u64 = 2_000_000_000;
         // Re-query balance after potential loan return
         let current_balance = wrapper.balance().await?;

@@ -1,14 +1,14 @@
-() send_mint_message(slice minter, int query_id, slice destination, int amount, int notification_ton, int forward_ton, int total_ton, int mode) impure inline_ref {
+() send_mint_message(slice minter, int query_id, slice destination, int amount, int notification_tos, int forward_tos, int total_tos, int mode) impure inline_ref {
     builder mint_request = begin_cell()
             .store_body_header(payout::mint, query_id)
             .store_slice(destination)
             .store_coins(amount) ;; max 124 bit
-            .store_coins(notification_ton)
-            .store_coins(forward_ton);
+            .store_coins(notification_tos)
+            .store_coins(forward_tos);
     var msg = begin_cell()
             .store_msg_flags(msgflag::BOUNCEABLE)
             .store_slice(minter)
-            .store_coins(total_ton) ;;TRANSFER_NOTIFICATION_AMOUNT + JETTON_WALLET_FEE + MINT_FEE)
+            .store_coins(total_tos) ;;TRANSFER_NOTIFICATION_AMOUNT + JETTON_WALLET_FEE + MINT_FEE)
             .store_msgbody_prefix_slice()
             .store_builder(mint_request);
     send_raw_message(msg.end_cell(), mode); ;; pay transfer fees separately, revert on errors

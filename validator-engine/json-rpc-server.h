@@ -324,7 +324,7 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
       std::string req_id,
       td::Promise<HttpReturn> promise);
 
-  // Method handlers — new APIs (parity with ton-http-api-cpp)
+  // Method handlers — new APIs (HTTP API parity)
   void handle_detectHash(td::JsonObject &params, std::string req_id,
                          td::Promise<HttpReturn> promise);
   void handle_getOutMsgQueueSize(td::JsonObject &params, std::string req_id,

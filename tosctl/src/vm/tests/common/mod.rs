@@ -14,7 +14,7 @@
 pub mod test_framework;
 use std::sync::LazyLock;
 pub use test_framework::*;
-// use ton_assembler::CompileError;
+// use tos_assembler::CompileError;
 use chain_block::{
     Account, BuilderData, Cell, ConfigParamEnum, CurrencyCollection, Deserializable, ExceptionCode,
     MerkleProof, MsgAddressInt, Serializable, ShardAccount, ShardStateUnsplit, SliceData,
@@ -48,7 +48,7 @@ pub static MC_STATE_ROOT: LazyLock<Cell> = LazyLock::new(|| {
         .unwrap();
     mc_state.update_config_smc().unwrap();
     // mc_state.write_to_file(mc_state_name).unwrap();
-    // let mc_state = ton_block_json::debug_state(mc_state).unwrap();
+    // let mc_state = chain_block_json::debug_state(mc_state).unwrap();
     // std::fs::write("../target/mc_state.json", mc_state).unwrap();
 
     mc_state.serialize().unwrap()

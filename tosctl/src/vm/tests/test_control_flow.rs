@@ -11,7 +11,7 @@
  */
 mod common;
 use common::*;
-// use ton_assembler::CompileError;
+// use tos_assembler::CompileError;
 use chain_block::ExceptionCode;
 use tos_vm::{
     int,

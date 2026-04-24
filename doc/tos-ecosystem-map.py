@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate TON/TOS ecosystem map PDF with Chinese support."""
+"""Generate Legacy/TOS ecosystem map PDF with Chinese support."""
 
 from fpdf import FPDF
 
@@ -61,23 +61,23 @@ def build_pdf():
     pdf.set_font("CJK", "B", 18)
     pdf.set_text_color(20, 50, 100)
     pdf.set_xy(10, 8)
-    pdf.cell(0, 10, "TON 生态工具 & 库分布全景图  (TOS 对照 / 整合视图)", ln=1)
+    pdf.cell(0, 10, "旧生态工具 & 库分布全景图  (TOS 对照 / 整合视图)", ln=1)
     pdf.set_font("CJK", "", 9)
     pdf.set_text_color(120, 120, 120)
     pdf.set_xy(10, 18)
     pdf.cell(0, 5, "Version 1.0  |  Generated from ~/tos monorepo analysis  |  2026-04", ln=1)
 
     TOP = 28
-    LEFT_TON = 12       # TON column x
+    LEFT_LEGACY = 12       # source column x
     LEFT_TOS = 215      # TOS column x
-    W_TON = 190         # TON column width
+    W_LEGACY = 190         # source column width
     W_TOS = 190         # TOS column width
 
     # Column headers
     pdf.set_font("CJK", "B", 12)
     pdf.set_text_color(180, 60, 60)
-    pdf.set_xy(LEFT_TON + 50, TOP)
-    pdf.cell(0, 7, "TON 生态 (分散)", ln=0)
+    pdf.set_xy(LEFT_LEGACY + 50, TOP)
+    pdf.cell(0, 7, "旧生态 (分散)", ln=0)
     pdf.set_text_color(40, 120, 60)
     pdf.set_xy(LEFT_TOS + 55, TOP)
     pdf.cell(0, 7, "TOS 整合 (Monorepo)", ln=0)
@@ -88,15 +88,15 @@ def build_pdf():
     # Layer 6: 钱包 & DApp
     # ═══════════════════════════════════════════════════════════════
     h = 32
-    pdf.section_box(LEFT_TON, row_y, W_TON, h,
+    pdf.section_box(LEFT_LEGACY, row_y, W_LEGACY, h,
                     "Layer 6: 钱包 & DApp", fill=(255, 245, 235))
-    pdf.inner_box(LEFT_TON + 4, row_y + 9, 55, 20, "tonweb (JS SDK)",
+    pdf.inner_box(LEFT_LEGACY + 4, row_y + 9, 55, 20, "legacy web SDK",
                   ["独立仓库, npm 发布", "版本与节点不同步"],
                   fill=(255, 235, 230), border_color=(200, 140, 140))
-    pdf.inner_box(LEFT_TON + 63, row_y + 9, 55, 20, "tonkeeper (移动钱包)",
-                  ["闭源, 独立开发", "API 依赖 tonapi.io"],
+    pdf.inner_box(LEFT_LEGACY + 63, row_y + 9, 55, 20, "旧移动钱包",
+                  ["闭源, 独立开发", "依赖托管 API"],
                   fill=(255, 235, 230), border_color=(200, 140, 140))
-    pdf.inner_box(LEFT_TON + 122, row_y + 9, 64, 20, "ton-connect (协议)",
+    pdf.inner_box(LEFT_LEGACY + 122, row_y + 9, 64, 20, "connect protocol",
                   ["独立仓库, 独立版本", "钱包各自实现"],
                   fill=(255, 235, 230), border_color=(200, 140, 140))
 
@@ -104,7 +104,7 @@ def build_pdf():
                     "Layer 6: 钱包 & DApp", fill=(235, 255, 240))
     pdf.inner_box(LEFT_TOS + 4, row_y + 9, W_TOS - 8, 20,
                   "兼容现有钱包 — 无需修改 SDK",
-                  ["方法名与 tonweb/toncenter 对齐, 客户端只需换 URL",
+                  ["方法名与 legacy web/API 约定对齐, 客户端只需换 URL",
                    "新增 account.capability API 提供标准化能力发现"],
                   fill=(230, 255, 235), border_color=(140, 200, 150))
 
@@ -114,18 +114,18 @@ def build_pdf():
     # Layer 5: SDK & 客户端库
     # ═══════════════════════════════════════════════════════════════
     h = 40
-    pdf.section_box(LEFT_TON, row_y, W_TON, h,
+    pdf.section_box(LEFT_LEGACY, row_y, W_LEGACY, h,
                     "Layer 5: SDK & 客户端库", fill=(255, 245, 235))
-    pdf.inner_box(LEFT_TON + 4, row_y + 9, 44, 28, "toncenter-sdk",
-                  ["JS/TS, 独立仓库", "依赖 toncenter.com", "版本碎片化"],
+    pdf.inner_box(LEFT_LEGACY + 4, row_y + 9, 44, 28, "legacy API SDK",
+                  ["JS/TS, 独立仓库", "依赖托管 API", "版本碎片化"],
                   fill=(255, 235, 230), border_color=(200, 140, 140))
-    pdf.inner_box(LEFT_TON + 52, row_y + 9, 44, 28, "pytoniq (Python)",
+    pdf.inner_box(LEFT_LEGACY + 52, row_y + 9, 44, 28, "Python SDK",
                   ["独立仓库", "维护者不同", "API 风格不统一"],
                   fill=(255, 235, 230), border_color=(200, 140, 140))
-    pdf.inner_box(LEFT_TON + 100, row_y + 9, 44, 28, "tongo (Go)",
+    pdf.inner_box(LEFT_LEGACY + 100, row_y + 9, 44, 28, "Go SDK",
                   ["独立仓库", "自定义序列化", "兼容性自行保证"],
                   fill=(255, 235, 230), border_color=(200, 140, 140))
-    pdf.inner_box(LEFT_TON + 148, row_y + 9, 38, 28, "ton-kotlin",
+    pdf.inner_box(LEFT_LEGACY + 148, row_y + 9, 38, 28, "Kotlin SDK",
                   ["独立仓库", "JVM 生态", "更新滞后"],
                   fill=(255, 235, 230), border_color=(200, 140, 140))
 
@@ -147,17 +147,17 @@ def build_pdf():
     # Layer 4: 运维工具
     # ═══════════════════════════════════════════════════════════════
     h = 48
-    pdf.section_box(LEFT_TON, row_y, W_TON, h,
+    pdf.section_box(LEFT_LEGACY, row_y, W_LEGACY, h,
                     "Layer 4: 运维工具", fill=(255, 245, 235))
-    pdf.inner_box(LEFT_TON + 4, row_y + 9, 58, 36, "mytonctrl (Python)",
+    pdf.inner_box(LEFT_LEGACY + 4, row_y + 9, 58, 36, "旧运维控制器",
                   ["独立仓库, 独立安装", "Python 脚本拼凑", "依赖系统 Python 环境",
                    "无统一配置管理", "无守护进程模式"],
                   fill=(255, 235, 230), border_color=(200, 140, 140))
-    pdf.inner_box(LEFT_TON + 66, row_y + 9, 58, 36, "质押/选举脚本",
+    pdf.inner_box(LEFT_LEGACY + 66, row_y + 9, 58, 36, "质押/选举脚本",
                   ["散落在多个仓库", "validator 操作手动", "密钥管理各自实现",
                    "无告警集成", "文档不一致"],
                   fill=(255, 235, 230), border_color=(200, 140, 140))
-    pdf.inner_box(LEFT_TON + 128, row_y + 9, 58, 36, "监控 & 密钥",
+    pdf.inner_box(LEFT_LEGACY + 128, row_y + 9, 58, 36, "监控 & 密钥",
                   ["Prometheus 需自己配", "密钥文件裸存磁盘", "无 Vault 集成",
                    "无 Telegram 告警", "运维经验口口相传"],
                   fill=(255, 235, 230), border_color=(200, 140, 140))
@@ -180,18 +180,18 @@ def build_pdf():
     # Layer 3: API 层
     # ═══════════════════════════════════════════════════════════════
     h = 50
-    pdf.section_box(LEFT_TON, row_y, W_TON, h,
+    pdf.section_box(LEFT_LEGACY, row_y, W_LEGACY, h,
                     "Layer 3: API 层 (查询 & 提交)", fill=(255, 245, 235))
-    pdf.inner_box(LEFT_TON + 4, row_y + 9, 58, 38, "ton-http-api (Python)",
+    pdf.inner_box(LEFT_LEGACY + 4, row_y + 9, 58, 38, "HTTP API 服务",
                   ["独立仓库/进程", "需要 Python 运行时", "需连接 liteserver",
-                   "toncenter.com 托管", "版本与节点不同步",
+                   "托管 API 服务", "版本与节点不同步",
                    "运维需额外维护"],
                   fill=(255, 235, 230), border_color=(200, 140, 140))
-    pdf.inner_box(LEFT_TON + 66, row_y + 9, 58, 38, "tonapi.io (商业)",
+    pdf.inner_box(LEFT_LEGACY + 66, row_y + 9, 58, 38, "商业 API",
                   ["闭源, SaaS 服务", "功能更丰富但收费", "供应商锁定风险",
                    "不可自托管", "API 风格不同于其他"],
                   fill=(255, 225, 220), border_color=(200, 120, 120))
-    pdf.inner_box(LEFT_TON + 128, row_y + 9, 58, 38, "ton-http-api-cpp",
+    pdf.inner_box(LEFT_LEGACY + 128, row_y + 9, 58, 38, "HTTP API C++ 服务",
                   ["第三方 C++ 实现", "独立编译/部署", "需连接 liteserver",
                    "额外进程", "维护独立于核心团队"],
                   fill=(255, 235, 230), border_color=(200, 140, 140))
@@ -214,13 +214,13 @@ def build_pdf():
     # Layer 2: 节点/验证器
     # ═══════════════════════════════════════════════════════════════
     h = 38
-    pdf.section_box(LEFT_TON, row_y, W_TON, h,
+    pdf.section_box(LEFT_LEGACY, row_y, W_LEGACY, h,
                     "Layer 2: 节点 / 验证器", fill=(255, 245, 235))
-    pdf.inner_box(LEFT_TON + 4, row_y + 9, 88, 26, "validator-engine (C++)",
+    pdf.inner_box(LEFT_LEGACY + 4, row_y + 9, 88, 26, "validator-engine (C++)",
                   ["独立编译, 无内嵌 API", "必须外挂 API 层进程",
                    "liteserver 协议供 lite-client 查询"],
                   fill=(255, 235, 230), border_color=(200, 140, 140))
-    pdf.inner_box(LEFT_TON + 96, row_y + 9, 90, 26, "lite-client + console",
+    pdf.inner_box(LEFT_LEGACY + 96, row_y + 9, 90, 26, "lite-client + console",
                   ["lite-client: 命令行查询工具", "validator-engine-console: 控制台",
                    "功能有限, 无批量/自动化支持"],
                   fill=(255, 235, 230), border_color=(200, 140, 140))
@@ -245,14 +245,14 @@ def build_pdf():
     # Layer 1: 协议 & VM & 智能合约
     # ═══════════════════════════════════════════════════════════════
     h = 45
-    pdf.section_box(LEFT_TON, row_y, W_TON, h,
+    pdf.section_box(LEFT_LEGACY, row_y, W_LEGACY, h,
                     "Layer 1: 协议 & 虚拟机 & 智能合约", fill=(255, 245, 235))
-    pdf.inner_box(LEFT_TON + 4, row_y + 9, 88, 33, "C++ only",
+    pdf.inner_box(LEFT_LEGACY + 4, row_y + 9, 88, 33, "C++ only",
                   ["TVM 虚拟机 (C++)", "block 区块格式 (C++)",
                    "crypto 密码学 (C++)", "FunC 编译器 (C++)",
                    "只有 C++ 实现, 其他语言需 FFI"],
                   fill=(255, 235, 230), border_color=(200, 140, 140))
-    pdf.inner_box(LEFT_TON + 96, row_y + 9, 90, 33, "emulator (C++ FFI)",
+    pdf.inner_box(LEFT_LEGACY + 96, row_y + 9, 90, 33, "emulator (C++ FFI)",
                   ["交易模拟需调用 C++ 库", "WASM 编译可用但性能差",
                    "移动端/浏览器集成困难", "没有纯 Rust/Go/Python 替代"],
                   fill=(255, 235, 230), border_color=(200, 140, 140))
@@ -278,9 +278,9 @@ def build_pdf():
     # Layer 0: 网络传输
     # ═══════════════════════════════════════════════════════════════
     h = 28
-    pdf.section_box(LEFT_TON, row_y, W_TON, h,
+    pdf.section_box(LEFT_LEGACY, row_y, W_LEGACY, h,
                     "Layer 0: 网络传输", fill=(245, 240, 255))
-    pdf.inner_box(LEFT_TON + 4, row_y + 9, W_TON - 8, 16, "ADNL + RLDP + DHT (C++ only)",
+    pdf.inner_box(LEFT_LEGACY + 4, row_y + 9, W_LEGACY - 8, 16, "ADNL + RLDP + DHT (C++ only)",
                   ["只有 C++ 实现, 无独立库可供其他语言使用"],
                   fill=(240, 235, 255), border_color=(170, 150, 200))
 
@@ -303,9 +303,9 @@ def build_pdf():
     row_y += 10
 
     table_data = [
-        ("维度",          "TON 生态",                          "TOS 整合"),
-        ("API 层",        "3+ 独立项目 (toncenter/tonapi/cpp)", "内嵌 validator-engine, 单进程"),
-        ("运维工具",      "mytonctrl (Python) + 散落脚本",      "tosctl (Rust, 90 命令, 单二进制)"),
+        ("维度",          "旧生态",                          "TOS 整合"),
+        ("API 层",        "3+ 独立项目 (托管 API / 商业 API / C++)", "内嵌 validator-engine, 单进程"),
+        ("运维工具",      "旧 Python 运维控制器 + 散落脚本",      "tosctl (Rust, 90 命令, 单二进制)"),
         ("SDK",           "每种语言独立仓库, 版本各自为政",      "vendored (toscenter-rs/pytosiq), 供应链可控"),
         ("虚拟机",        "只有 C++",                           "C++ + Rust 双栈 (86K 行)"),
         ("权限模型",      "无 (钱包自己猜)",                    "account.capability + 角色分离 (规划中)"),
@@ -314,7 +314,7 @@ def build_pdf():
     ]
 
     col_widths = [50, 150, 190]
-    for i, (dim, ton, tos_val) in enumerate(table_data):
+    for i, (dim, legacy, tos_val) in enumerate(table_data):
         x = 12
         if i == 0:
             pdf.set_fill_color(60, 90, 140)
@@ -342,7 +342,7 @@ def build_pdf():
         else:
             pdf.set_font("CJK", "", 8.5)
             pdf.set_text_color(160, 60, 60) if i > 0 else None
-        pdf.cell(col_widths[1], h_row, ton, border=1, fill=True)
+        pdf.cell(col_widths[1], h_row, legacy, border=1, fill=True)
 
         if i > 0:
             pdf.set_text_color(40, 120, 60)
@@ -354,6 +354,6 @@ def build_pdf():
 
 if __name__ == "__main__":
     pdf = build_pdf()
-    out = "/home/tomi/tos/doc/ton-ecosystem-map.pdf"
+    out = "/home/tomi/tos/doc/tos-ecosystem-map.pdf"
     pdf.output(out)
     print(f"PDF saved to {out}")

@@ -74,7 +74,7 @@ export const getRandomInt = (min:number, max:number, mode: roundMode = roundMode
     return res;
 }
 
-export const getRandomTon = (min:number, max:number): bigint => {
+export const getRandomTos = (min:number, max:number): bigint => {
     return toNano(getRandom(min, max).toFixed(9));
 }
 
@@ -91,7 +91,7 @@ export const renewExp = (cur:bigint) => {
 }
 
 export const getRandomPayload = (): Cell => {
-    return beginCell().storeCoins(getRandomTon(1, 2000)).endCell();
+    return beginCell().storeCoins(getRandomTos(1, 2000)).endCell();
 }
 
 export const commonMsg = (op:bigint | number, query_id:bigint | number = 0) => {

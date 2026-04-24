@@ -11,7 +11,7 @@
  */
 mod common;
 use common::*;
-// use ton_assembler::compile_code_to_cell;
+// use tos_assembler::compile_code_to_cell;
 use chain_block::{ExceptionCode, SliceData};
 use tos_vm::{
     executor::gas::gas_state::Gas,

@@ -1,5 +1,5 @@
 *target
-/tl/ton_api/src/ton
+/tl/tos_api/src/tos
 *.DS_Store
 /.vscode
 .env

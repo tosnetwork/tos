@@ -70,7 +70,7 @@ use tl_api::{
         },
         tos_node::{
             customoverlayid::CustomOverlayId, fastsyncoverlayid::FastSyncOverlayId,
-            shardid::ShardId as TonNodeShardId, shardpublicoverlayid::ShardPublicOverlayId,
+            shardid::ShardId as TosNodeShardId, shardpublicoverlayid::ShardPublicOverlayId,
         },
         validator_session::{
             blockupdate::BlockUpdate as ValidatorSessionBlockUpdate,
@@ -240,7 +240,7 @@ impl OverlayUtils {
     ) -> Result<Arc<OverlayShortId>> {
         let id = FastSyncOverlayId {
             zero_state_file_hash: UInt256::with_array(*zero_state_file_hash),
-            shard: TonNodeShardId { workchain, shard },
+            shard: TosNodeShardId { workchain, shard },
         };
         let overlay_key = OverlayKey { name: hash(id)?.to_vec() };
         Ok(OverlayShortId::from_data(hash(overlay_key)?))

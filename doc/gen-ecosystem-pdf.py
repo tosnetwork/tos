@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate TON/TOS ecosystem map PDF from structured data (English only)."""
+"""Generate Legacy/TOS ecosystem map PDF from structured data (English only)."""
 from fpdf import FPDF
 
 
@@ -50,27 +50,27 @@ def build():
     pdf.set_font("Helvetica", "B", 18)
     pdf.set_text_color(20, 50, 100)
     pdf.set_xy(12, 8)
-    pdf.cell(0, 10, "TON Ecosystem Tools & Libraries Distribution Map")
+    pdf.cell(0, 10, "Legacy Ecosystem Tools & Libraries Distribution Map")
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(130, 130, 130)
     pdf.set_xy(12, 17)
     pdf.cell(0, 5, "TOS Consolidation View  |  v1.0  |  2026-04  |  Source: ~/tos monorepo")
 
     # ── Layout constants ─────────────────────────────────────────
-    LT = 12       # TON col x
+    LT = 12       # source column x
     LR = 215      # TOS col x
     W  = 190      # col width
     Y  = 28
 
     # Column headers
-    pdf.heading(LT + 55, Y, "TON Ecosystem (Fragmented)", 12, (180, 60, 60))
+    pdf.heading(LT + 55, Y, "Legacy Ecosystem (Fragmented)", 12, (180, 60, 60))
     pdf.heading(LR + 50, Y, "TOS (Consolidated / Monorepo)", 12, (40, 120, 60))
     Y += 10
 
     # ── Colors ───────────────────────────────────────────────────
-    TON_SEC  = (255, 245, 235)
-    TON_CARD = (255, 238, 232)
-    TON_BDR  = (200, 145, 145)
+    LEGACY_SEC  = (255, 245, 235)
+    LEGACY_CARD = (255, 238, 232)
+    LEGACY_BDR  = (200, 145, 145)
     TOS_SEC  = (235, 255, 240)
     TOS_CARD = (232, 255, 238)
     TOS_BDR  = (140, 200, 150)
@@ -83,21 +83,21 @@ def build():
     # Layer 6 — Wallets & DApps
     # ═════════════════════════════════════════════════════════════
     H = 30
-    pdf.section(LT, Y, W, H, "Layer 6 : Wallets & DApps", TON_SEC)
-    pdf.card(LT+3, Y+9, 58, 18, "tonweb (JS SDK)",
+    pdf.section(LT, Y, W, H, "Layer 6 : Wallets & DApps", LEGACY_SEC)
+    pdf.card(LT+3, Y+9, 58, 18, "legacy web SDK",
              ["Independent repo, npm publish", "Version out of sync with node"],
-             TON_CARD, TON_BDR)
-    pdf.card(LT+64, Y+9, 58, 18, "tonkeeper (Mobile wallet)",
-             ["Closed-source, independent dev", "Depends on tonapi.io"],
-             TON_CARD, TON_BDR)
-    pdf.card(LT+125, Y+9, 62, 18, "ton-connect (Protocol)",
+             LEGACY_CARD, LEGACY_BDR)
+    pdf.card(LT+64, Y+9, 58, 18, "legacy mobile wallet",
+             ["Closed-source, independent dev", "Depends on hosted API"],
+             LEGACY_CARD, LEGACY_BDR)
+    pdf.card(LT+125, Y+9, 62, 18, "connect protocol",
              ["Independent repo & versioning", "Each wallet implements its own"],
-             TON_CARD, TON_BDR)
+             LEGACY_CARD, LEGACY_BDR)
 
     pdf.section(LR, Y, W, H, "Layer 6 : Wallets & DApps", TOS_SEC)
     pdf.card(LR+3, Y+9, W-6, 18,
              "Compatible with existing wallets -- no SDK changes needed",
-             ["Method names aligned with tonweb/toncenter; clients just change URL",
+             ["Method names aligned with legacy web/API conventions; clients just change URL",
               "New account.capability API for standardized capability discovery"],
              TOS_CARD, TOS_BDR, TOS_TC)
     Y += H + 3
@@ -106,19 +106,19 @@ def build():
     # Layer 5 — SDKs
     # ═════════════════════════════════════════════════════════════
     H = 36
-    pdf.section(LT, Y, W, H, "Layer 5 : SDKs & Client Libraries", TON_SEC)
-    pdf.card(LT+3,  Y+9, 45, 24, "toncenter-sdk (JS)",
-             ["Independent repo", "Depends on toncenter.com", "Version fragmentation"],
-             TON_CARD, TON_BDR)
-    pdf.card(LT+51, Y+9, 45, 24, "pytoniq (Python)",
+    pdf.section(LT, Y, W, H, "Layer 5 : SDKs & Client Libraries", LEGACY_SEC)
+    pdf.card(LT+3,  Y+9, 45, 24, "legacy API SDK",
+             ["Independent repo", "Depends on hosted API", "Version fragmentation"],
+             LEGACY_CARD, LEGACY_BDR)
+    pdf.card(LT+51, Y+9, 45, 24, "Python SDK",
              ["Independent repo", "Different maintainer", "Inconsistent API style"],
-             TON_CARD, TON_BDR)
-    pdf.card(LT+99, Y+9, 45, 24, "tongo (Go)",
+             LEGACY_CARD, LEGACY_BDR)
+    pdf.card(LT+99, Y+9, 45, 24, "Go SDK",
              ["Independent repo", "Custom serialization", "Self-managed compat"],
-             TON_CARD, TON_BDR)
-    pdf.card(LT+147, Y+9, 40, 24, "ton-kotlin (JVM)",
+             LEGACY_CARD, LEGACY_BDR)
+    pdf.card(LT+147, Y+9, 40, 24, "Kotlin SDK",
              ["Independent repo", "Update lag", "JVM ecosystem"],
-             TON_CARD, TON_BDR)
+             LEGACY_CARD, LEGACY_BDR)
 
     pdf.section(LR, Y, W, H, "Layer 5 : SDKs & Client Libraries", TOS_SEC)
     pdf.card(LR+3,  Y+9, 60, 24, "toscenter-rs (Rust)",
@@ -136,22 +136,22 @@ def build():
     # Layer 4 — Ops Tooling
     # ═════════════════════════════════════════════════════════════
     H = 46
-    pdf.section(LT, Y, W, H, "Layer 4 : Operations Tooling", TON_SEC)
-    pdf.card(LT+3,  Y+9, 60, 34, "mytonctrl (Python)",
+    pdf.section(LT, Y, W, H, "Layer 4 : Operations Tooling", LEGACY_SEC)
+    pdf.card(LT+3,  Y+9, 60, 34, "legacy ops controller",
              ["Independent repo & install", "Python scripts patchwork",
               "Depends on system Python", "No unified config mgmt",
               "No daemon mode", "No built-in alerting"],
-             TON_CARD, TON_BDR)
+             LEGACY_CARD, LEGACY_BDR)
     pdf.card(LT+66, Y+9, 60, 34, "Staking / Election scripts",
              ["Scattered across repos", "Manual validator operations",
               "Each implements own key mgmt", "No alerting integration",
               "Inconsistent documentation"],
-             TON_CARD, TON_BDR)
+             LEGACY_CARD, LEGACY_BDR)
     pdf.card(LT+129, Y+9, 58, 34, "Monitoring & Key mgmt",
              ["Prometheus: self-configured", "Keys: raw files on disk",
               "No Vault integration", "No Telegram alerts",
               "Ops knowledge: tribal"],
-             TON_CARD, TON_BDR)
+             LEGACY_CARD, LEGACY_BDR)
 
     pdf.section(LR, Y, W, H, "Layer 4 : Operations Tooling", TOS_SEC)
     pdf.card(LR+3, Y+9, W-6, 34,
@@ -169,22 +169,22 @@ def build():
     # Layer 3 — API
     # ═════════════════════════════════════════════════════════════
     H = 46
-    pdf.section(LT, Y, W, H, "Layer 3 : API Layer (Query & Submit)", TON_SEC)
-    pdf.card(LT+3,  Y+9, 60, 34, "ton-http-api (Python)",
+    pdf.section(LT, Y, W, H, "Layer 3 : API Layer (Query & Submit)", LEGACY_SEC)
+    pdf.card(LT+3,  Y+9, 60, 34, "HTTP API service",
              ["Independent repo / process", "Requires Python runtime",
-              "Needs liteserver connection", "Hosted at toncenter.com",
+              "Needs liteserver connection", "Hosted API service",
               "Version out of sync with node", "Extra ops maintenance"],
-             TON_CARD, TON_BDR)
-    pdf.card(LT+66, Y+9, 60, 34, "tonapi.io (Commercial)",
+             LEGACY_CARD, LEGACY_BDR)
+    pdf.card(LT+66, Y+9, 60, 34, "commercial API",
              ["Closed-source, SaaS", "Richer features but paid",
               "Vendor lock-in risk", "Not self-hostable",
               "Different API style"],
              (255, 228, 225), (200, 120, 120))
-    pdf.card(LT+129, Y+9, 58, 34, "ton-http-api-cpp (3rd party)",
+    pdf.card(LT+129, Y+9, 58, 34, "HTTP API C++ service",
              ["Third-party C++ implementation", "Independent compile/deploy",
               "Needs liteserver connection", "Extra process to maintain",
               "Maintained outside core team"],
-             TON_CARD, TON_BDR)
+             LEGACY_CARD, LEGACY_BDR)
 
     pdf.section(LR, Y, W, H, "Layer 3 : API Layer (embedded in validator-engine)", TOS_SEC)
     pdf.card(LR+3, Y+9, W-6, 34,
@@ -202,16 +202,16 @@ def build():
     # Layer 2 — Node / Validator
     # ═════════════════════════════════════════════════════════════
     H = 34
-    pdf.section(LT, Y, W, H, "Layer 2 : Node / Validator", TON_SEC)
+    pdf.section(LT, Y, W, H, "Layer 2 : Node / Validator", LEGACY_SEC)
     pdf.card(LT+3,  Y+9, 90, 22, "validator-engine (C++)",
              ["Independent compile, no embedded API",
               "Must run external API process",
               "Liteserver protocol for lite-client queries"],
-             TON_CARD, TON_BDR)
+             LEGACY_CARD, LEGACY_BDR)
     pdf.card(LT+96, Y+9, 90, 22, "lite-client + validator-engine-console",
              ["CLI query tool + control console",
               "Limited, no batch/automation support"],
-             TON_CARD, TON_BDR)
+             LEGACY_CARD, LEGACY_BDR)
 
     pdf.section(LR, Y, W, H, "Layer 2 : Node / Validator", TOS_SEC)
     pdf.card(LR+3,  Y+9, 114, 22,
@@ -230,18 +230,18 @@ def build():
     # Layer 1 — Protocol & VM
     # ═════════════════════════════════════════════════════════════
     H = 42
-    pdf.section(LT, Y, W, H, "Layer 1 : Protocol & VM & Smart Contracts", TON_SEC)
+    pdf.section(LT, Y, W, H, "Layer 1 : Protocol & VM & Smart Contracts", LEGACY_SEC)
     pdf.card(LT+3,  Y+9, 90, 30, "C++ only",
              ["TVM virtual machine (C++)", "block format (C++)",
               "crypto primitives (C++)", "FunC compiler (C++)",
               "Only C++ impl; other languages need FFI"],
-             TON_CARD, TON_BDR)
+             LEGACY_CARD, LEGACY_BDR)
     pdf.card(LT+96, Y+9, 90, 30, "emulator (C++ FFI)",
              ["Tx emulation requires C++ library call",
               "WASM available but poor performance",
               "Mobile/browser integration difficult",
               "No pure Rust/Go/Python alternative"],
-             TON_CARD, TON_BDR)
+             LEGACY_CARD, LEGACY_BDR)
 
     pdf.section(LR, Y, W, H, "Layer 1 : Protocol & VM & Smart Contracts", TOS_SEC)
     pdf.card(LR+3,  Y+9, 90, 30,
@@ -290,9 +290,9 @@ def build():
     Y += 12
 
     rows = [
-        ("Dimension",        "TON Ecosystem",                               "TOS Consolidated"),
-        ("API Layer",        "3+ independent projects (toncenter/tonapi/cpp)", "Embedded in validator-engine, single process"),
-        ("Ops Tooling",      "mytonctrl (Python) + scattered scripts",       "tosctl (Rust, 90 cmds, single binary)"),
+        ("Dimension",        "Legacy Ecosystem",                               "TOS Consolidated"),
+        ("API Layer",        "3+ independent projects (hosted API / commercial API / C++)", "Embedded in validator-engine, single process"),
+        ("Ops Tooling",      "legacy Python ops controller + scattered scripts",       "tosctl (Rust, 90 cmds, single binary)"),
         ("SDKs",             "Each language: independent repo, versions diverge", "Vendored (toscenter-rs/pytosiq), supply chain controlled"),
         ("Virtual Machine",  "C++ only",                                     "C++ + Rust dual-stack (86K lines)"),
         ("Permission Model", "None (wallets guess)",                         "account.capability + role separation (planned)"),
@@ -301,7 +301,7 @@ def build():
     ]
 
     CW = [60, 170, 170]
-    for i, (dim, ton, tos) in enumerate(rows):
+    for i, (dim, legacy, tos) in enumerate(rows):
         x = 12
         rh = 10
         if i == 0:
@@ -320,14 +320,14 @@ def build():
             pdf.set_font("Helvetica", "B", 9)
         pdf.cell(CW[0], rh, dim, border=1, fill=True)
 
-        # TON column
+        # Source column
         if i == 0:
             pdf.set_text_color(255, 255, 255)
             pdf.set_font("Helvetica", "B", 10)
         else:
             pdf.set_text_color(160, 60, 60)
             pdf.set_font("Helvetica", "", 9)
-        pdf.cell(CW[1], rh, ton, border=1, fill=True)
+        pdf.cell(CW[1], rh, legacy, border=1, fill=True)
 
         # TOS column
         if i == 0:

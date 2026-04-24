@@ -132,7 +132,7 @@ void JsonRpcServer::handle_detectAddress(td::JsonObject &params, std::string req
 // ─── detectHash ──────────────────────────────────────────────────────────
 // Pure utility method (no backend query). Accepts a hash in base64, base64url,
 // or hex form, decodes it to raw bytes, and returns all three encodings.
-// Aligned with ton-http-api-cpp DetectHashHandler / DetectHashResult.
+// Aligned with the HTTP API DetectHashHandler / DetectHashResult.
 
 static td::Result<std::string> decode_hash_input(const std::string& hash) {
   if (hash.empty()) {

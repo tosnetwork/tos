@@ -1,6 +1,6 @@
 /**
  * BOC (Bag of Cells) serialization and deserialization.
- * Compatible with TON binary format.
+ * Compatible with the TOS binary format.
  */
 
 import { BitReader } from '../BitReader';

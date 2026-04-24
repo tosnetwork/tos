@@ -5,7 +5,7 @@
 #include "params.func";
 #include "messages.func";
 ;;
-;;  TON NFT Item Smart Contract
+;;  TOS NFT Item Smart Contract
 ;;
 
 {-
@@ -14,8 +14,8 @@
 
 
 const int ONE_COIN = 1000000000;
-const int min_tons_for_storage = 9 * ONE_COIN / 100; ;; 0.09 TON
-const int burn_notification_amount = ONE_COIN / 100; ;; 0.01 TON
+const int min_tos_for_storage = 9 * ONE_COIN / 100; ;; 0.09 TOS
+const int burn_notification_amount = ONE_COIN / 100; ;; 0.01 TOS
 
 ;;
 ;;  Storage
@@ -124,7 +124,7 @@ global slice collection;
     int forward_amount = in_msg_body~load_coins();
     throw_unless(error::no_forward_payload, slice_bits(in_msg_body) >= 1);
 
-    int rest_amount = my_balance - min_tons_for_storage;
+    int rest_amount = my_balance - min_tos_for_storage;
     if (forward_amount) {
       rest_amount -= (forward_amount + fwd_fees);
     }
@@ -133,7 +133,7 @@ global slice collection;
       rest_amount -= fwd_fees;
     }
 
-    throw_unless(error::not_enough_tons, rest_amount >= 0); ;; base nft spends fixed amount of gas, will not check for response
+    throw_unless(error::not_enough_tos, rest_amount >= 0); ;; base nft spends fixed amount of gas, will not check for response
 
     if (forward_amount) {
       send_msg(new_owner, forward_amount, op::ownership_assigned, query_id, begin_cell().store_slice(owner).store_slice(in_msg_body), sendmode::PAY_FEES_SEPARETELY);  ;; paying fees, revert on errors
@@ -189,12 +189,12 @@ global slice collection;
       slice next = in_msg_body~load_msg_addr();
       store_data_full(owner, amount, prev, next);
 
-      raw_reserve(min_tons_for_storage, 2);
+      raw_reserve(min_tos_for_storage, 2);
       send_msg(owner, 0, op::ownership_assigned, query_id,
                  begin_cell()
                    .store_uint(0, 2) ;; prev_owner:MsgAddress - addr_none
                    .store_bool(false), ;; forward_payload:(Either Cell ^Cell) - empty
-                 sendmode::CARRY_ALL_BALANCE | sendmode::IGNORE_ERRORS);  ;; all except min_tons_for_storage
+                 sendmode::CARRY_ALL_BALANCE | sendmode::IGNORE_ERRORS);  ;; all except min_tos_for_storage
       return ();
     }
 

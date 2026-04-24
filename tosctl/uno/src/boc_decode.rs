@@ -322,7 +322,7 @@ fn load_bytes_from_chunk_chain(root: Cell) -> Result<Vec<u8>, DecodeError> {
 /// zk_proof — those have their own `K_CHUNK_CHAIN_MAX_CHUNKS` bound.
 ///
 /// C++ `cell_depth_bounded` returns `Cell::get_depth()`, which in the
-/// TON semantics used by the daemon walks the whole subtree; the check
+/// TOS daemon semantics walk the whole subtree; the check
 /// `get_depth()+1 ≤ 5` is latent because real v1 shapes (with 4096+
 /// -cell zk_proof chains) would trivially bust it. The in-source comment
 /// above the gate (§17 ≤5-level) spells out the author's intent: bound

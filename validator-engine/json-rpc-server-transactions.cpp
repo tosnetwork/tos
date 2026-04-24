@@ -1140,7 +1140,7 @@ void JsonRpcServer::handle_tryLocateSourceTx(td::JsonObject &params, std::string
 
 // ─── getTransactionsStd ──────────────────────────────────────────────────
 // Returns raw.transactions object (with @type, transactions[], previous_transaction_id)
-// as specified by the ton-http-api-cpp v2 schema TransactionsStd type.
+// as specified by the HTTP API v2 schema TransactionsStd type.
 
 void JsonRpcServer::handle_getTransactionsStd(td::JsonObject &params, std::string req_id,
                                               td::Promise<HttpReturn> promise) {

@@ -2,7 +2,7 @@
  * @tos/client — ContractProvider interface.
  *
  * This is the per-contract adapter that the `open()` function injects as the
- * first argument to contract methods.  It mirrors the shape used by @ton/core
+ * first argument to contract methods.  It mirrors the standard provider shape
  * so that contract wrapper libraries remain portable.
  */
 

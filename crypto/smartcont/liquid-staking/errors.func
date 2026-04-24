@@ -18,7 +18,7 @@ const int error::deposit_amount_too_low = 0xf200;
 const int error::deposits_are_closed = 0xf201;
 const int error::output_amount_is_zero = 0xf202;
 
-const int error::not_enough_TON_to_process = 0xf300;
+const int error::not_enough_TOS_to_process = 0xf300;
 
 const int error::controller_in_wrong_workchain = 0xf400;
 const int error::credit_book_too_deep = 0xf401;

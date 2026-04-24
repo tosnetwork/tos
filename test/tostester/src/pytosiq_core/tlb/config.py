@@ -1607,24 +1607,24 @@ class JettonBridgePrices(TlbScheme):
     """
     // Note that chains in which bridge, minter and jetton-wallet operate are fixated
     jetton_bridge_prices#_ bridge_burn_fee:Coins bridge_mint_fee:Coins
-                           wallet_min_tons_for_storage:Coins
+                           wallet_min_tos_for_storage:Coins
                            wallet_gas_consumption:Coins
-                           minter_min_tons_for_storage:Coins
+                           minter_min_tos_for_storage:Coins
                            discover_gas_consumption:Coins = JettonBridgePrices;
     """
     def __init__(self,
                  bridge_burn_fee: int,
                  bridge_mint_fee: int,
-                 wallet_min_tons_for_storage: int,
+                 wallet_min_tos_for_storage: int,
                  wallet_gas_consumption: int,
-                 minter_min_tons_for_storage: int,
+                 minter_min_tos_for_storage: int,
                  discover_gas_consumption: int,
                  ):
         self.bridge_burn_fee = bridge_burn_fee
         self.bridge_mint_fee = bridge_mint_fee
-        self.wallet_min_tons_for_storage = wallet_min_tons_for_storage
+        self.wallet_min_tos_for_storage = wallet_min_tos_for_storage
         self.wallet_gas_consumption = wallet_gas_consumption
-        self.minter_min_tons_for_storage = minter_min_tons_for_storage
+        self.minter_min_tos_for_storage = minter_min_tos_for_storage
         self.discover_gas_consumption = discover_gas_consumption
 
     @classmethod
@@ -1636,9 +1636,9 @@ class JettonBridgePrices(TlbScheme):
         return cls(
             bridge_burn_fee=cell_slice.load_coins(),
             bridge_mint_fee=cell_slice.load_coins(),
-            wallet_min_tons_for_storage=cell_slice.load_coins(),
+            wallet_min_tos_for_storage=cell_slice.load_coins(),
             wallet_gas_consumption=cell_slice.load_coins(),
-            minter_min_tons_for_storage=cell_slice.load_coins(),
+            minter_min_tos_for_storage=cell_slice.load_coins(),
             discover_gas_consumption=cell_slice.load_coins(),
         )
 

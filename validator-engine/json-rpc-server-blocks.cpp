@@ -274,7 +274,7 @@ void JsonRpcServer::handle_shards(td::JsonObject &params, std::string req_id,
             if (!first) sb << ",";
             first = false;
             auto& blk = sh.blk_;
-            sb << "{\"@type\":\"ton.blockIdExt\""
+            sb << "{\"@type\":\"tos.blockIdExt\""
                << ",\"workchain\":" << blk.id.workchain
                << ",\"shard\":\"" << blk.id.shard << "\""
                << ",\"seqno\":" << blk.id.seqno

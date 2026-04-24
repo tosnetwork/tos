@@ -29,7 +29,7 @@ use tos_vm::{
     SmartContractInfo,
 };
 
-// Tests commented out: depend on ton_assembler which has been removed
+// Tests commented out: depend on the removed assembler crate
 // #[cfg(test)]
 // #[path = "tests/test_ordinary_transaction.rs"]
 // mod tests1;

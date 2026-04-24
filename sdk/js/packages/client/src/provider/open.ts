@@ -5,7 +5,7 @@
  * auto-injects a {@link ContractProvider} as the first argument to any
  * method whose first parameter is typed as `ContractProvider`.
  *
- * This mirrors the pattern used by @ton/core's `openContract()`.
+ * This mirrors the standard `openContract()` pattern.
  *
  * ## How it works
  *

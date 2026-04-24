@@ -226,7 +226,7 @@ Instead, TVM workchain enters maintenance mode:
   thresholds where basechain auto-sharding activates in practice.
 - FunC language upgrade (v0.5.0 / v0.6.0) — already retired; the
   archived `func-v0.5.0` branch and its documents are gone.
-- Rewriting `func` or `fift` in Rust — ton-rust's precedent (they
+- Rewriting `func` or `fift` in Rust — TOS Rust's precedent (they
   rewrote node/TVM/emulator in Rust but left FunC and Fift alone)
   stands as the right judgement. These are stable legacy C++
   binaries that can sit untouched for years.

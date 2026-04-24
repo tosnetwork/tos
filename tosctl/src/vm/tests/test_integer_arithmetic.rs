@@ -11,7 +11,7 @@
  */
 mod common;
 use common::*;
-// use ton_assembler::CompileError;
+// use tos_assembler::CompileError;
 use tos_vm::{
     int,
     stack::{integer::IntegerData, StackItem},

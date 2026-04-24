@@ -16,4 +16,4 @@ int is_resolvable?(slice addr) inline {
 const int max_voting_duration = 2592000; ;; 30 days
 
 ;; minimum amount to execute send results
-const int send_result_chain_cost = 25000000; ;; 0.025 TON
+const int send_result_chain_cost = 25000000; ;; 0.025 TOS

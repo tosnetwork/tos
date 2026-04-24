@@ -341,7 +341,7 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
           std::string block_id_json = "null";
           if (f->id_) {
             block_id_json = PSTRING()
-                << "{\"@type\":\"ton.blockIdExt\""
+                << "{\"@type\":\"tos.blockIdExt\""
                 << ",\"workchain\":" << f->id_->workchain_
                 << ",\"shard\":\"" << f->id_->shard_ << "\""
                 << ",\"seqno\":" << f->id_->seqno_

@@ -533,7 +533,7 @@ impl ObserveAlertSetupCmd {
                 config
                     .alerts
                     .rules
-                    .push(AlertRule::BalanceLow { address, threshold_tons: threshold });
+                    .push(AlertRule::BalanceLow { address, threshold_tos: threshold });
             }
             "skip" | "" => {}
             other => {
@@ -633,8 +633,8 @@ impl ObserveAlertLsCmd {
                     AlertRule::SyncLag { threshold_seconds } => {
                         serde_json::json!({"type": "sync_lag", "threshold_seconds": threshold_seconds})
                     }
-                    AlertRule::BalanceLow { address, threshold_tons } => {
-                        serde_json::json!({"type": "balance_low", "address": address, "threshold_tons": threshold_tons})
+                    AlertRule::BalanceLow { address, threshold_tos } => {
+                        serde_json::json!({"type": "balance_low", "address": address, "threshold_tos": threshold_tos})
                     }
                 }
             }).collect();
@@ -721,7 +721,7 @@ impl ObserveAlertLsCmd {
                                 threshold_seconds
                             );
                         }
-                        AlertRule::BalanceLow { address, threshold_tons } => {
+                        AlertRule::BalanceLow { address, threshold_tos } => {
                             let addr_display = if address.len() > 20 {
                                 format!("{}...", &address[..20])
                             } else {
@@ -732,7 +732,7 @@ impl ObserveAlertLsCmd {
                                 i + 1,
                                 "balance_low",
                                 addr_display,
-                                threshold_tons
+                                threshold_tos
                             );
                         }
                     }

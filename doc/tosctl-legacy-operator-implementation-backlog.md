@@ -1,8 +1,8 @@
-# TOSCTL MyTonCtrl Implementation Backlog
+# TOSCTL Legacy Operator Shell Implementation Backlog
 
 ## Purpose
 
-This document turns the `mytonctrl` parity design into an implementation backlog for `tosctl`.
+This document turns the `legacy operator shell` parity design into an implementation backlog for `tosctl`.
 
 It answers:
 
@@ -12,7 +12,7 @@ It answers:
 
 This backlog is based on:
 
-- `doc/tosctl-mytonctrl-parity-design.md`
+- `doc/tosctl-legacy-operator-parity-design.md`
 - the current Rust CLI command tree under `src/node-control/commands/src/commands`
 
 ## Current Implementation Baseline
@@ -27,7 +27,7 @@ Current top-level `tosctl` commands:
 - `key`
 - `service`
 
-Current state relative to `mytonctrl` parity:
+Current state relative to `legacy operator shell` parity:
 
 - declarative config management: partially covered
 - service API and automation: partially covered
@@ -51,7 +51,7 @@ Current state relative to `mytonctrl` parity:
 
 ### 1. Host Lifecycle
 
-| Target `tosctl` command | MyTonCtrl source commands | Status | Notes |
+| Target `tosctl` command | Legacy Operator Shell source commands | Status | Notes |
 |---|---|---|---|
 | `tosctl host about` | `about` | Missing | No `host` group exists yet |
 | `tosctl host status` | `status` | Missing | Some status exists through `api` and `service`, but not host parity |
@@ -67,7 +67,7 @@ Current state relative to `mytonctrl` parity:
 
 ### 2. Backup and Recovery
 
-| Target `tosctl` command | MyTonCtrl source commands | Status | Notes |
+| Target `tosctl` command | Legacy Operator Shell source commands | Status | Notes |
 |---|---|---|---|
 | `tosctl backup create` | `create_backup` | Missing | No backup group exists |
 | `tosctl backup restore` | `restore_backup` | Missing | Requires safety prompts and overwrite policy |
@@ -75,7 +75,7 @@ Current state relative to `mytonctrl` parity:
 
 ### 3. Wallet Operations
 
-| Target `tosctl` command | MyTonCtrl source commands | Status | Notes |
+| Target `tosctl` command | Legacy Operator Shell source commands | Status | Notes |
 |---|---|---|---|
 | `tosctl wallet create` | `nw` | Missing | `config wallet add` is declarative, not imperative creation |
 | `tosctl wallet activate` | `aw` | Missing | Could reuse existing wallet/message helpers |
@@ -89,7 +89,7 @@ Current state relative to `mytonctrl` parity:
 
 ### 4. Basic Pool Operations
 
-| Target `tosctl` command | MyTonCtrl source commands | Status | Notes |
+| Target `tosctl` command | Legacy Operator Shell source commands | Status | Notes |
 |---|---|---|---|
 | `tosctl pool ls` | `pools_list` | Partial | `config pool ls` exists, but that is config inventory |
 | `tosctl pool rm` | `delete_pool` | Partial | `config pool rm` exists, but parity semantics differ |
@@ -98,7 +98,7 @@ Current state relative to `mytonctrl` parity:
 
 ### 5. Nominator Pool Operations
 
-| Target `tosctl` command | MyTonCtrl source commands | Status | Notes |
+| Target `tosctl` command | Legacy Operator Shell source commands | Status | Notes |
 |---|---|---|---|
 | `tosctl pool nominator create` | `new_pool` | Missing | Different from current `deploy pool` |
 | `tosctl pool nominator activate` | `activate_pool` | Missing | Needs local pool artifact handling |
@@ -108,7 +108,7 @@ Current state relative to `mytonctrl` parity:
 
 ### 6. Single Nominator Pool Operations
 
-| Target `tosctl` command | MyTonCtrl source commands | Status | Notes |
+| Target `tosctl` command | Legacy Operator Shell source commands | Status | Notes |
 |---|---|---|---|
 | `tosctl pool single create` | `new_single_pool` | Missing | Not covered by current deploy surface |
 | `tosctl pool single activate` | `activate_single_pool` | Missing | Needs explicit workflow |
@@ -116,7 +116,7 @@ Current state relative to `mytonctrl` parity:
 
 ### 7. Liquid Staking Controller Operations
 
-| Target `tosctl` command | MyTonCtrl source commands | Status | Notes |
+| Target `tosctl` command | Legacy Operator Shell source commands | Status | Notes |
 |---|---|---|---|
 | `tosctl pool liquid controller create` | `create_controllers` | Missing | No liquid staking support today |
 | `tosctl pool liquid controller update` | `update_controllers` | Missing | Same domain |
@@ -134,7 +134,7 @@ Current state relative to `mytonctrl` parity:
 
 ### 8. Validator Voting and Governance
 
-| Target `tosctl` command | MyTonCtrl source commands | Status | Notes |
+| Target `tosctl` command | Legacy Operator Shell source commands | Status | Notes |
 |---|---|---|---|
 | `tosctl vote offer ls` | `ol` | Missing | Current voting is service-side automation, not explicit CLI parity |
 | `tosctl vote offer diff` | `od` | Missing | No parity command |
@@ -148,7 +148,7 @@ Current state relative to `mytonctrl` parity:
 
 ### 9. Collator and Validator-Console Derived Operations
 
-| Target `tosctl` command | MyTonCtrl source commands | Status | Notes |
+| Target `tosctl` command | Legacy Operator Shell source commands | Status | Notes |
 |---|---|---|---|
 | `tosctl node collator add` | `add_collator` | Missing | No `node` group yet |
 | `tosctl node collator rm` | `delete_collator` | Missing | Same |
@@ -167,7 +167,7 @@ Current state relative to `mytonctrl` parity:
 
 ### 10. Custom Overlay Operations
 
-| Target `tosctl` command | MyTonCtrl source commands | Status | Notes |
+| Target `tosctl` command | Legacy Operator Shell source commands | Status | Notes |
 |---|---|---|---|
 | `tosctl node overlay add` | `add_custom_overlay` | Missing | No overlay support yet |
 | `tosctl node overlay ls` | `list_custom_overlays` | Missing | No overlay support yet |
@@ -175,7 +175,7 @@ Current state relative to `mytonctrl` parity:
 
 ### 11. Account Utility Operations
 
-| Target `tosctl` command | MyTonCtrl source commands | Status | Notes |
+| Target `tosctl` command | Legacy Operator Shell source commands | Status | Notes |
 |---|---|---|---|
 | `tosctl account status` | `vas` | Missing | No generic account command group yet |
 | `tosctl account txs` | `vah` | Missing | Same |
@@ -185,7 +185,7 @@ Current state relative to `mytonctrl` parity:
 
 ### 12. Alert and Telemetry Operations
 
-| Target `tosctl` command | MyTonCtrl source commands | Status | Notes |
+| Target `tosctl` command | Legacy Operator Shell source commands | Status | Notes |
 |---|---|---|---|
 | `tosctl observe alert enable` | `enable_alert` | Missing | No alert command group yet |
 | `tosctl observe alert disable` | `disable_alert` | Missing | Same |
@@ -197,7 +197,7 @@ Current state relative to `mytonctrl` parity:
 
 ### 13. Expert / Integration Operations
 
-| Target `tosctl` command | MyTonCtrl source commands | Status | Notes |
+| Target `tosctl` command | Legacy Operator Shell source commands | Status | Notes |
 |---|---|---|---|
 | `tosctl admin btc-teleport rm` | `remove_btc_teleport` | Missing | Keep as admin-only |
 
@@ -345,7 +345,7 @@ Deliver:
 
 - `pool liquid ...`
 - `admin btc-teleport rm`
-- optional aliases for high-traffic `mytonctrl` mnemonics
+- optional aliases for high-traffic `legacy operator shell` mnemonics
 
 Repository split:
 
@@ -405,14 +405,14 @@ Most P0, P1, P2 items have been implemented, but not all are fully functional. S
 
 Parity should not be considered complete until all of the following are true:
 
-1. every `mytonctrl` public command has a documented `tosctl` replacement path
+1. every `legacy operator shell` public command has a documented `tosctl` replacement path
 2. every replacement path exists as a first-class `tosctl` command or a documented compatibility alias
-3. operator docs no longer require `mytonctrl` for routine TOS workflows
+3. operator docs no longer require `legacy operator shell` for routine TOS workflows
 4. at least the P0 and P1 command families have table and JSON output modes where applicable
 
 ## Summary
 
-`tosctl` already has useful building blocks, but today it only covers a small part of `mytonctrl` as an operator shell.
+`tosctl` already has useful building blocks, but today it only covers a small part of `legacy operator shell` as an operator shell.
 
 This backlog is the execution layer for closing that gap. The intended implementation order is:
 
@@ -434,7 +434,7 @@ The `~/tos` side of the parity plan is now substantially complete. All milestone
 | 5. Alerts, Overlays, Sidecar | ✅ Readyz, metrics, overlay TL | No |
 | 6. Liquid Staking | Not yet assessed | Possibly |
 
-**mytonctrl parity implementation is substantially started.** All 87 public commands have tosctl subcommand registrations, but not all are fully functional: 78 are full end-to-end implementations, 5 are partial (do some real work but key parts are missing), 6 are guided (print instructions but do not perform the operation), and install wizard is not implemented.
+**legacy operator shell parity implementation is substantially started.** All 87 public commands have tosctl subcommand registrations, but not all are fully functional: 78 are full end-to-end implementations, 5 are partial (do some real work but key parts are missing), 6 are guided (print instructions but do not perform the operation), and install wizard is not implemented.
 
 ### Implementation status (2026-04-13)
 

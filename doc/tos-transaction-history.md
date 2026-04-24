@@ -63,7 +63,7 @@ The tuple `(account, lt, hash)` uniquely identifies a transaction on-chain. Any 
 |---|---|---|
 | `@type` | string | Always `"raw.transaction"` |
 | `transaction_id` | object | Primary identifier: `{lt, hash}` (see `InternalTransactionId` schema) |
-| `block_id` | object | Containing block (see `TonBlockIdExt` schema) |
+| `block_id` | object | Containing block (see `TosBlockIdExt` schema) |
 | `utime` | integer | Unix timestamp of the block containing this transaction |
 | `fee` | string | Total fees charged, in nanotomis |
 | `account` | string | 256-bit account address in hex |

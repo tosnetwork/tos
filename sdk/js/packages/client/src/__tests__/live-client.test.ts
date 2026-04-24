@@ -45,7 +45,7 @@ async function isNodeUp(): Promise<boolean> {
 // Resolve once at module level so describe.skipIf gets a boolean.
 const nodeAvailable = await isNodeUp();
 
-// Well-known addresses on any TOS / TON-compatible chain
+// Well-known addresses on any TOS-compatible chain
 const CONFIG_ADDRESS =
   "-1:5555555555555555555555555555555555555555555555555555555555555555";
 const ELECTOR_ADDRESS =
@@ -170,7 +170,7 @@ describe.skipIf(!nodeAvailable)("TosClient live integration", () => {
   it("lookupBlock(-1, shard, 1) returns a BlockIdExt for masterchain block 1", async () => {
     const block: BlockIdExt = await client.lookupBlock(-1, MC_SHARD, 1);
     expect(block).toBeDefined();
-    expect(block["@type"]).toBe("ton.blockIdExt");
+    expect(block["@type"]).toBe("tos.blockIdExt");
     expect(block.workchain).toBe(-1);
     expect(block.seqno).toBe(1);
     expect(block.shard).toBeTruthy();

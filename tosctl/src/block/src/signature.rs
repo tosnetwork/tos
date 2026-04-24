@@ -407,7 +407,7 @@ const BLOCK_SIGNATURES_SIMPLEX_TAG: u8 = 0x12;
 ///
 /// Contains signatures from Simplex consensus along with the context
 /// needed to verify them. Unlike ordinary signatures which sign
-/// `ton_blockId(root_hash, file_hash)`, Simplex signatures sign
+/// `tos_blockId(root_hash, file_hash)`, Simplex signatures sign
 /// `consensus.dataToSign(session_id, vote)` where vote is a
 /// notarize or finalize vote containing the CandidateId.
 #[derive(Clone, Debug, Eq, PartialEq)]

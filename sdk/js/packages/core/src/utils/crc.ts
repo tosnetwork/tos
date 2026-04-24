@@ -6,7 +6,7 @@
 /**
  * Compute CRC16 CCITT (XModem variant, poly 0x1021).
  *
- * Used in TON/TOS friendly address encoding for checksum verification.
+ * Used in TOS friendly address encoding for checksum verification.
  *
  * @param data - Input bytes
  * @returns 2-byte CRC16 checksum as Uint8Array

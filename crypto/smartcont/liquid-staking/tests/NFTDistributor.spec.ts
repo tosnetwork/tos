@@ -6,7 +6,7 @@ import { JettonMinter as DAOJettonMinter } from '../contracts/jetton_dao/wrapper
 import '@ton-community/test-utils';
 import { compile } from '@ton-community/blueprint';
 import { randomAddress } from '@ton-community/test-utils';
-import { getRandomInt, getRandomTon, computedGeneric } from '../utils'
+import { getRandomInt, getRandomTos, computedGeneric } from '../utils'
 
 
 const SLUGGISH_TESTS = false;
@@ -73,7 +73,7 @@ describe('Distributor NFT Collection', () => {
         shares = new Map<string, bigint>();
         totalBill = 0n;
         for (let addr of [deployer.address, notDeployer.address, randomAddress()]) {
-            const share = getRandomTon(1, 100000);
+            const share = getRandomTos(1, 100000);
             totalBill += share;
             shares.set(addr.toString(), share);
         }
@@ -125,7 +125,7 @@ describe('Distributor NFT Collection', () => {
     }
     async function needInit() {
         await loadSnapshot("uninitialized");
-        const mintResult = await collection.sendMint(deployer.getSender(), randomAddress(), getRandomTon(1, 100));
+        const mintResult = await collection.sendMint(deployer.getSender(), randomAddress(), getRandomTos(1, 100));
         expect(mintResult.transactions).toHaveTransaction({
             to: collection.address,
             success: false,
@@ -138,7 +138,7 @@ describe('Distributor NFT Collection', () => {
        const dataBefore = await collection.getCollectionData();
        for (let i = 0; i < nftAmount; i++) {
            const addr = randomAddress();
-           const share = getRandomTon(1, 100000);
+           const share = getRandomTos(1, 100000);
            sharesExtended.set(addr.toString(), share);
            const mintResult = await collection.sendMint(deployer.getSender(), addr, share);
            expect(mintResult.transactions).toHaveTransaction({
@@ -160,7 +160,7 @@ describe('Distributor NFT Collection', () => {
     }
     async function distribute(asset: "TOS" | "Jetton", _shares: Map<string, bigint>) {
         // no snapshots, "inline". taken out to test again with a lot of NFTs
-        const assetAmount = getRandomTon(100, 10000);
+        const assetAmount = getRandomTos(100, 10000);
         const billBefore = await collection.getTotalBill();
         const dataBefore = await collection.getCollectionData();
         const collectionSmc = await blockchain.getContract(collection.address);
@@ -268,7 +268,7 @@ describe('Distributor NFT Collection', () => {
         expect(billAfter.billsCount).toEqual(0n);
         expect(billAfter.totalBill).toEqual(0n);
     }
-    describe("Distributing TOSs", () => {
+    describe("Distributing TOS", () => {
         beforeAll(async () => {
             initDistribution = {
                 active: false,
@@ -292,7 +292,7 @@ describe('Distributor NFT Collection', () => {
 
         it("should not mint not from admin", async () => {
             await loadSnapshot("initialized");
-            const mintResult = await collection.sendMint(notDeployer.getSender(), randomAddress(), getRandomTon(1, 100));
+            const mintResult = await collection.sendMint(notDeployer.getSender(), randomAddress(), getRandomTos(1, 100));
             expect(mintResult.transactions).toHaveTransaction({
                 to: collection.address,
                 success: false,
@@ -304,7 +304,7 @@ describe('Distributor NFT Collection', () => {
 
         it('should deploy item not from admin with failed init', async () => {
             await loadSnapshot("minted");
-            const mintBody = PayoutCollection.mintMessage(notDeployer.address, getRandomTon(1, 100));
+            const mintBody = PayoutCollection.mintMessage(notDeployer.address, getRandomTos(1, 100));
             const collectionData = await collection.getCollectionData();
             const index = collectionData.nextItemIndex;
             const nftAddress = await collection.getNFTAddress(index);
@@ -340,7 +340,7 @@ describe('Distributor NFT Collection', () => {
             const collectionData = await collection.getCollectionData();
             const index = collectionData.nextItemIndex;
             const nftAddress = await collection.getNFTAddress(index);
-            const mintResult = await collection.sendMint(deployer.getSender(), randomAddress(), getRandomTon(1, 100));
+            const mintResult = await collection.sendMint(deployer.getSender(), randomAddress(), getRandomTos(1, 100));
             expect(mintResult.transactions).toHaveTransaction({
                 from: collection.address,
                 to: nftAddress,
@@ -417,7 +417,7 @@ describe('Distributor NFT Collection', () => {
                 success: true,
             });
         });
-        it("should distribute TOSs", async () => {
+        it("should distribute TOS", async () => {
             await loadSnapshot("minted");
             await distribute("TOS", shares);
             snapshots.set("distributed", blockchain.snapshot());
@@ -433,7 +433,7 @@ describe('Distributor NFT Collection', () => {
         });
         it("should start distribution and take a snapshot before the chain end", async () => {
             await loadSnapshot("minted");
-            const assetAmount = getRandomTon(100, 10000);
+            const assetAmount = getRandomTos(100, 10000);
             const collectionSmc = await blockchain.getContract(collection.address);
             collectionSmc.receiveMessage(internal({
                 from: deployer.address,
@@ -519,14 +519,14 @@ describe('Distributor NFT Collection', () => {
         });
         it("should deploy collection with jetton distribution", deploy);
         it("should mint NFT", mint)
-        it("should not start distribution of TOSs", async () => {
+        it("should not start distribution of TOS", async () => {
             await loadSnapshot("minted");
             const sendStartResult = await collection.sendStartDistribution(deployer.getSender(), toNano(1000));
             expect(sendStartResult.transactions).toHaveTransaction({
                 from: deployer.address,
                 to: collection.address,
                 success: false,
-                exitCode: Errors.cannot_distribute_tons
+                exitCode: Errors.cannot_distribute_tos
             });
         });
         it("should distribute Jettons", async () => {

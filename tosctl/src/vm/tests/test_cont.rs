@@ -7,7 +7,7 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-// use ton_assembler::{compile_code, compile_code_to_cell, CompileError};
+// use tos_assembler::{compile_code, compile_code_to_cell, CompileError};
 use chain_block::{ExceptionCode, SliceData};
 use tos_vm::{
     int,

@@ -9,7 +9,7 @@
  * This file has been modified from its original version.
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-// use ton_assembler::CompileError;
+// use tos_assembler::CompileError;
 use tos_vm::{
     int,
     stack::{integer::IntegerData, StackItem},

@@ -1,6 +1,6 @@
 name: Release TOS pow-miner
 
-# Builds the TON-inherited pow-miner binary for multiple platforms and
+# Builds the TOS pow-miner binary for multiple platforms and
 # publishes the artifacts to the GitHub Release created by the tag push.
 #
 # Trigger: push of any tag matching "v*" (e.g. v0.1.0, v1.2.3-rc1).

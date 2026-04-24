@@ -215,8 +215,8 @@ export class InjectedBridge {
 // ---------------------------------------------------------------------------
 
 function payloadToConnectedWallet(payload: ConnectEventPayload): ConnectedWallet {
-  const addrItem = payload.items.find((i) => i.name === "ton_addr");
-  if (!addrItem || addrItem.name !== "ton_addr") {
+  const addrItem = payload.items.find((i) => i.name === "tos_addr");
+  if (!addrItem || addrItem.name !== "tos_addr") {
     throw walletNotFoundError("Wallet did not return an address");
   }
 

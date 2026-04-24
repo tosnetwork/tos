@@ -18,11 +18,11 @@ This design assumes the long-term TOS model:
 
 It now also assumes an explicit migration goal:
 
-- `tosctl` must fully cover the operator command surface that TOS operators currently get from `mytonctrl`
+- `tosctl` must fully cover the operator command surface that TOS operators currently get from `legacy operator shell`
 
 Detailed parity mapping lives in:
 
-- `doc/tosctl-mytonctrl-parity-design.md`
+- `doc/tosctl-legacy-operator-parity-design.md`
 
 ## Command Design Principles
 
@@ -55,7 +55,7 @@ This covers part of the existing Rust control plane, but does not yet absorb:
 - observability and consensus inspection
 - most imperative wallet and pool workflows
 - backup and restore
-- collator, overlay, alert, and host-mode workflows exposed by `mytonctrl`
+- collator, overlay, alert, and host-mode workflows exposed by `legacy operator shell`
 
 ## Proposed Top-Level Command Tree
 
@@ -225,7 +225,7 @@ Expected responsibilities:
 
 Purpose:
 
-- absorb host-local lifecycle and operator-shell commands that `mytonctrl` currently owns
+- absorb host-local lifecycle and operator-shell commands that `legacy operator shell` currently owns
 
 Status:
 
@@ -244,16 +244,16 @@ Expected responsibilities:
 
 Maps from current tooling:
 
-- `mytonctrl status`
-- `mytonctrl status_modes`
-- `mytonctrl status_settings`
-- `mytonctrl enable_mode`
-- `mytonctrl disable_mode`
-- `mytonctrl update`
-- `mytonctrl upgrade`
-- `mytonctrl about`
-- `mytonctrl download_archive_blocks`
-- `mytonctrl benchmark`
+- `legacy operator shell status`
+- `legacy operator shell status_modes`
+- `legacy operator shell status_settings`
+- `legacy operator shell enable_mode`
+- `legacy operator shell disable_mode`
+- `legacy operator shell update`
+- `legacy operator shell upgrade`
+- `legacy operator shell about`
+- `legacy operator shell download_archive_blocks`
+- `legacy operator shell benchmark`
 
 Boundary:
 
@@ -467,7 +467,7 @@ tosctl wallet send
 
 Maps from current tooling:
 
-- `mytonctrl` wallet commands such as `nw`, `aw`, `wl`, `iw`, `ew`, `dw`, `mg`, `mgtp`
+- `legacy operator shell` wallet commands such as `nw`, `aw`, `wl`, `iw`, `ew`, `dw`, `mg`, `mgtp`
 - part of the current `config wallet send` imperative surface
 
 Boundary:
@@ -500,7 +500,7 @@ tosctl pool liquid ...
 
 Maps from current tooling:
 
-- `mytonctrl` basic pool commands
+- `legacy operator shell` basic pool commands
 - nominator-pool commands
 - single-nominator commands
 - liquid-staking controller commands
@@ -574,7 +574,7 @@ Boundary:
 - `account` is generic chain account interaction
 - wallet-specific policy and config remain under existing wallet-related commands
 
-This group should also absorb account bookmarks and account-history inspection from `mytonctrl` utilities.
+This group should also absorb account bookmarks and account-history inspection from `legacy operator shell` utilities.
 
 ### 15. `tosctl dns`
 
@@ -705,9 +705,9 @@ Maps from current tooling:
 - `show-validator-set`
 - session log parsing
 - service snapshots
-- `mytonctrl check_ef`
-- `mytonctrl` alert-bot commands
-- `mytonctrl` Prometheus-related telemetry workflows
+- `legacy operator shell check_ef`
+- `legacy operator shell` alert-bot commands
+- `legacy operator shell` Prometheus-related telemetry workflows
 
 Examples:
 
@@ -874,7 +874,7 @@ Recommended sequence:
 2. add `host`, `backup`, `wallet`, `pool`, `vote`
 3. add `chain`, `account`, `dns`
 4. move docs from script/binary workflows to `tosctl`
-5. deprecate direct legacy UX and direct `mytonctrl` dependency
+5. deprecate direct legacy UX and direct `legacy operator shell` dependency
 
 ## Recommended Delivery Order
 

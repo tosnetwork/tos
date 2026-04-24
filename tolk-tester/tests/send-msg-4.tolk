@@ -7,11 +7,11 @@ type LiquidityDepositAddress = address
 
 type LiquidityDepositDestination = LiquidityDepositWithInitData | LiquidityDepositAddress
 
-struct (0x1b434676) AddLiquidityPartTon {
+struct (0x1b434676) AddLiquidityPartTos {
     destination: LiquidityDepositDestination
 }
 
-type AllowedMessages = AddLiquidityPartTon
+type AllowedMessages = AddLiquidityPartTos
 
 fun main() {
     val msgCell = beginCell().
@@ -23,7 +23,7 @@ fun main() {
     val msg = lazy AllowedMessages.fromCell(msgCell);
 
     match (msg) {
-        AddLiquidityPartTon => {
+        AddLiquidityPartTos => {
             // dynamic union: the compiler inserts lots of IFs at runtime to handle this
             var destination: address | AutoDeployAddress;
 

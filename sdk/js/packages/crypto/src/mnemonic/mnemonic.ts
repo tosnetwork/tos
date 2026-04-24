@@ -15,7 +15,7 @@ function normalizeMnemonic(mnemonic: string[]): string[] {
 }
 
 /**
- * Compute entropy from a mnemonic array, following the TON C++ implementation:
+ * Compute entropy from a mnemonic array, following the TOS C++ implementation:
  *   hmac_sha512(mnemonic_words_joined_by_space, password)
  */
 async function mnemonicToEntropy(
@@ -27,12 +27,12 @@ async function mnemonicToEntropy(
 
 /**
  * Check if entropy qualifies as a "basic seed".
- * pbkdf2_sha512(entropy, "TON seed version", iterations/256, 64)[0] === 0
+ * pbkdf2_sha512(entropy, seed version salt, iterations/256, 64)[0] === 0
  */
 async function isBasicSeed(entropy: Uint8Array): Promise<boolean> {
   const seed = await pbkdf2_sha512(
     entropy,
-    "TON seed version",
+    "TOS seed version",
     Math.max(1, Math.floor(PBKDF_ITERATIONS / 256)),
     64,
   );
@@ -41,10 +41,10 @@ async function isBasicSeed(entropy: Uint8Array): Promise<boolean> {
 
 /**
  * Check if entropy qualifies as a "password seed".
- * pbkdf2_sha512(entropy, "TON fast seed version", 1, 64)[0] === 1
+ * pbkdf2_sha512(entropy, fast seed version salt, 1, 64)[0] === 1
  */
 async function isPasswordSeed(entropy: Uint8Array): Promise<boolean> {
-  const seed = await pbkdf2_sha512(entropy, "TON fast seed version", 1, 64);
+  const seed = await pbkdf2_sha512(entropy, "TOS fast seed version", 1, 64);
   return seed[0] === 1;
 }
 
@@ -124,7 +124,7 @@ async function getSecureRandomNumber(min: number, max: number): Promise<number> 
 // ---------------------------------------------------------------------------
 
 /**
- * Generate a new TON/TOS-compatible mnemonic phrase.
+ * Generate a new TOS-compatible mnemonic phrase.
  *
  * Generates random words from the BIP-39 wordlist and verifies that they
  * produce a valid basic seed before returning.
@@ -162,7 +162,7 @@ export async function mnemonicGenerate(
 }
 
 /**
- * Validate a TON/TOS-compatible mnemonic phrase.
+ * Validate a TOS-compatible mnemonic phrase.
  *
  * Checks that all words are in the wordlist and that the mnemonic
  * produces a valid basic seed.
@@ -225,7 +225,7 @@ export async function mnemonicToPrivateKey(
   password?: string | null,
 ): Promise<KeyPair> {
   const normalized = normalizeMnemonic(mnemonic);
-  const seed = await mnemonicToSeed(normalized, "TON default seed", password);
+  const seed = await mnemonicToSeed(normalized, "TOS default seed", password);
   const kp = keyPairFromSeed(seed.slice(0, 32));
   seed.fill(0); // wipe sensitive seed material
   return kp;
@@ -251,5 +251,5 @@ export async function mnemonicToHDSeed(
   password?: string | null,
 ): Promise<Uint8Array> {
   const normalized = normalizeMnemonic(mnemonic);
-  return mnemonicToSeed(normalized, "TON HD Keys seed", password);
+  return mnemonicToSeed(normalized, "TOS HD Keys seed", password);
 }

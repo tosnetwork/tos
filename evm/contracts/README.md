@@ -2,7 +2,7 @@
 
 ## Overview
 
-`EToSPoWGiver.sol` is the eTOS Proof-of-Work distribution contract deployed on the TOS wc=1 EVM workchain at genesis. It mirrors the logic of TON's `pow-testgiver-code.fc` (TVM/FunC) but implemented in Solidity for the EVM environment.
+`EToSPoWGiver.sol` is the eTOS Proof-of-Work distribution contract deployed on the TOS wc=1 EVM workchain at genesis. It mirrors the logic of TOS `pow-testgiver-code.fc` (TVM/FunC) but implemented in Solidity for the EVM environment.
 
 10 instances are deployed at genesis, each pre-funded with 10 M eTOS. Miners submit keccak-256 PoW solutions to claim 2 eTOS rewards. Difficulty auto-adjusts toward a 12-second solve interval.
 

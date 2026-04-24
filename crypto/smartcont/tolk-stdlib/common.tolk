@@ -69,7 +69,7 @@ type intN = builtin
 /// overflow will happen at serialization to a cell/builder, NOT at assignment. 
 type uintN = builtin
 
-/// `coins` is a special primitive representing "nanotoncoins". One TOS = 10^9 nanotoncoins.
+/// `coins` is a special primitive representing nanotomis. One TOS = 10^9 nanotomis.
 /// You can create coins with `tos()` function: `tos("0.05")` (actually, `int` 50000000 at runtime).
 /// Arithmetic operations on `coins` degrade to 257-bit `int` type.
 type coins = builtin
@@ -279,7 +279,7 @@ fun T.fromTuple(packedObject: array<unknown>): T
     Mathematical primitives.
  */
 
-/// Converts a constant floating-point string to nanotoncoins.
+/// Converts a constant floating-point string to nanotomis.
 /// Example: `tos("0.05")` is equal to 50000000.
 /// Note, that `tos()` requires a constant string; `tos(some_var)` is an error.
 @pure
@@ -358,7 +358,7 @@ struct contract
 fun contract.getAddress(): address
     asm "MYADDR"
 
-/// Returns the balance (in nanotoncoins) of the smart contract at the start of Computation Phase.
+/// Returns the balance (in nanotomis) of the smart contract at the start of Computation Phase.
 @pure
 fun contract.getOriginalBalance(): coins
     asm "BALANCE" "FIRST"
@@ -1206,7 +1206,7 @@ fun slice.preloadUint(self, len: int): int
 fun slice.preloadBits(self, len: int): slice
     builtin
 
-/// Loads the serialized amount of nanotoncoins (any unsigned integer up to `2^120 - 1`).
+/// Loads the serialized amount of nanotomis (any unsigned integer up to `2^120 - 1`).
 @pure
 fun slice.loadCoins(mutate self): coins
     asm( -> 1 0) "LDTOMIS"
@@ -1348,7 +1348,7 @@ fun builder.storeAddressAny(mutate self, addrAny: any_address): self
 fun builder.storeAddressNone(mutate self): self
     asm "b{00} STSLICECONST"
 
-/// Stores the amount of nanotoncoins into a builder.
+/// Stores the amount of nanotomis into a builder.
 @pure
 fun builder.storeCoins(mutate self, x: coins): self
     builtin
@@ -1528,7 +1528,7 @@ fun slice.loadAddressAny(mutate self): any_address
     Reserving Toscoins on balance and its flags.
  */
 
-/// mode = 0: Reserve exact amount of nanotoncoins
+/// mode = 0: Reserve exact amount of nanotomis
 const RESERVE_MODE_EXACT_AMOUNT = 0
 /// +1: Actually reserves all but amount, meaning `currentContractBalance - amount`
 const RESERVE_MODE_ALL_BUT_AMOUNT = 1
@@ -1543,12 +1543,12 @@ const RESERVE_MODE_BOUNCE_ON_ACTION_FAIL = 16
 
 /// Creates an output action which would reserve Toscoins on balance.
 /// For `reserveMode` consider constants above.
-fun reserveToncoinsOnBalance(nanoTonCoins: coins, reserveMode: int): void
+fun reserveToscoinsOnBalance(nanoTosCoins: coins, reserveMode: int): void
     asm "RAWRESERVE"
 
-/// Similar to [reserveToncoinsOnBalance], but also accepts a dictionary extraAmount (represented by a cell or null)
+/// Similar to reserving native coins on balance, but also accepts a dictionary extraAmount (represented by a cell or null)
 /// with extra currencies. In this way currencies other than Toscoin can be reserved.
-fun reserveExtraCurrenciesOnBalance(nanoTonCoins: coins, extraAmount: dict, reserveMode: int): void
+fun reserveExtraCurrenciesOnBalance(nanoTosCoins: coins, extraAmount: dict, reserveMode: int): void
     asm "RAWRESERVEX"
 
 
@@ -1690,7 +1690,7 @@ type OldBounceMode = bool
 struct CreateMessageOptions<TBody = void> {
     /// whether a message will bounce back on error, and what piece of outgoing `body` it will contain
     bounce: BounceMode | OldBounceMode
-    /// message value: attached toss (or toss + extra currencies)
+    /// message value: attached TOS (or TOS + extra currencies)
     value: coins | (coins, ExtraCurrenciesMap)
     /// destination is either a provided address, or is auto-calculated by stateInit
     dest: address               // either just send a message to some address
@@ -1912,7 +1912,7 @@ fun sendRawMessage(msg: cell, mode: int): void
 /// ```
 struct InMessage {
     senderAddress: address          // an internal address from which the message arrived
-    valueCoins: coins               // tos amount attached to an incoming message
+    valueCoins: coins               // TOS amount attached to an incoming message
     valueExtra: ExtraCurrenciesMap  // extra currencies attached to an incoming message
     originalForwardFee: coins       // fee that was paid by the sender
     createdLt: uint64               // logical time when a message was created
@@ -1933,7 +1933,7 @@ struct InMessage {
 /// ```
 struct InMessageBounced {
     senderAddress: address          // an internal address from which the message was bounced
-    valueCoins: coins               // tos amount attached to a message
+    valueCoins: coins               // TOS amount attached to a message
     valueExtra: ExtraCurrenciesMap  // extra currencies attached to a message
     originalForwardFee: coins       // comission that the sender has payed to send this message
     createdLt: uint64               // logical time when a message was created (and bounced)
@@ -2016,5 +2016,4 @@ fun slice.skipMessageQueryId(mutate self): self
 @deprecated("use `createMessage` instead of composing messages manually")
 fun builder.storeMessageQueryId(mutate self, queryId: int): self
     asm(queryId self) "64 STU"
-
 

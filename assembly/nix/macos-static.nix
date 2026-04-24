@@ -36,9 +36,9 @@ pkgs.llvmPackages_14.stdenv.mkDerivation {
   configureFlags = [];
 
   cmakeFlags = [
-    "-DTON_USE_ABSEIL=OFF"
+    "-DTOS_USE_ABSEIL=OFF"
     "-DNIX=ON"
-    "-DTON_USE_JEMALLOC=ON"
+    "-DTOS_USE_JEMALLOC=ON"
     "-DCMAKE_CROSSCOMPILING=OFF"
     "-DCMAKE_LINK_SEARCH_START_STATIC=ON"
     "-DCMAKE_LINK_SEARCH_END_STATIC=ON"

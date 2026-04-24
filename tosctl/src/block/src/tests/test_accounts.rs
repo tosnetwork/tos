@@ -487,7 +487,7 @@ fn test_account_status_serialization() {
     write_read_and_assert(as_orig);
 }
 
-fn get_real_ton_state(filename: &str) -> (ShardStateUnsplit, Cell) {
+fn get_real_tos_state(filename: &str) -> (ShardStateUnsplit, Cell) {
     let root = BocReader::new()
         .read(&mut File::open(filename).expect("Error open boc file"))
         .expect("Error deserializing boc file")
@@ -504,7 +504,7 @@ fn test_real_account_serde() {
         ["src/tests/data/7992DD77CEB677577A7D5A8B6F388CDA76B4D0DDE16FF5004C87215E6ADF84DD.boc"];
     for state_file in state_files {
         println!("state file: {}", state_file);
-        let (state, _) = get_real_ton_state(state_file);
+        let (state, _) = get_real_tos_state(state_file);
         state
             .read_accounts()
             .unwrap()

@@ -9,7 +9,7 @@
  * This file has been modified from its original version.
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-// use ton_assembler::compile_code_to_cell;
+// use tos_assembler::compile_code_to_cell;
 use chain_block::{ExceptionCode, SliceData};
 use tos_vm::{
     int,

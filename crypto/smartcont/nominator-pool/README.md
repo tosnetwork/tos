@@ -2,7 +2,7 @@
 
 ## Origin
 
-FunC source from [TOS Blockchain](https://github.com/ton-blockchain/nominator-pool), copied from tos-c/crypto/func/auto-tests/legacy_tests/nominator-pool/.
+FunC source from TOS contract examples, copied from tos-c/crypto/func/auto-tests/legacy_tests/nominator-pool/.
 
 ## Purpose
 
@@ -32,6 +32,6 @@ Multi-nominator staking pool supporting up to ~40 nominators pooling funds for o
 Adapted for TOS. The contract uses `load_coins()`/`store_coins()` throughout (never raw
 `load_grams`/`store_grams`), and the bundled `stdlib.fc` has been replaced with the TOS
 system stdlib where these are aliased to `LDTOMIS`/`STTOMIS`. Constants renamed:
-`ONE_TON` -> `ONE_TOS`, `MIN_TONS_FOR_STORAGE` -> `MIN_TOS_FOR_STORAGE`. No logic changes.
+legacy unit constants -> TOS unit constants. No logic changes.
 
 Compile with the TOS FunC compiler.

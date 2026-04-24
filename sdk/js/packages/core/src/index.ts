@@ -1,7 +1,7 @@
 /**
  * @tos/core -- TOS Blockchain TypeScript SDK foundation layer.
  *
- * Compatible with the TON Cell/BOC binary format.
+ * Compatible with the TOS Cell/BOC binary format.
  * No Buffer dependency -- isomorphic with Uint8Array only.
  */
 

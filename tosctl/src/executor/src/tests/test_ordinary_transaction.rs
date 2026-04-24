@@ -17,7 +17,7 @@ use crate::{
     EXTRA_FLAG_FULL_BODY_BOUNCE, EXTRA_FLAG_NEW_BOUNCE_FORMAT, RESULT_CODE_INCORRECT_SRC_ADDRESS,
 };
 use pretty_assertions::assert_eq;
-use ton_assembler::compile_code_to_cell;
+use tos_assembler::compile_code_to_cell;
 use chain_block::{
     accounts::{Account, AccountStorage, StorageInfo},
     messages::{CommonMsgInfo, ExternalInboundMessageHeader, Message, MsgAddressInt},

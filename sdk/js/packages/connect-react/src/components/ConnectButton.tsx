@@ -31,9 +31,9 @@ function formatAddress(addr: Address): string {
   return `${str.slice(0, 6)}...${str.slice(-4)}`;
 }
 
-/** Format a nanoton balance as a human-readable string. */
-function formatBalance(nanotons: bigint): string {
-  const full = fromNano(nanotons);
+/** Format a nanotomis balance as a human-readable string. */
+function formatBalance(nanotomis: bigint): string {
+  const full = fromNano(nanotomis);
   // Truncate to 2 decimal places
   const dotIndex = full.indexOf(".");
   if (dotIndex === -1) return full;

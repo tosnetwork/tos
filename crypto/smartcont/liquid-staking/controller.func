@@ -1,5 +1,4 @@
 ;; TOS Liquid Staking Controller Contract
-;; Adapted from the TON liquid-staking controller for the TOS network.
 ;;
 ;; The validator has his own wallet on which he holds his own coins for operating.
 ;; From this wallet (s)he sends commands to this validator-controller (mostly `new_stake`, `update_validator_set` and `recover_stake`).
@@ -25,20 +24,20 @@
 #include "halter_requests.func";
 
 
-const int ONE_TON = 1000000000;
-const int ELECTOR_OPERATION_VALUE = 103 * ONE_TON / 100 ;
-const int MIN_REQUEST_LOAN_VALUE = ONE_TON ; ;; should cover controller and pool gas
-const int MIN_TONS_FOR_STORAGE = 2 * ONE_TON; ;; 2 TON
-const int DEPOSIT_FEE = ONE_TON / 4; ;; 0.25 TON
-const int WITHDRAWAL_FEE = ONE_TON / 4; ;; 0.25 TON
-const int MIN_STAKE_TO_SEND = 50000 * ONE_TON; ;; 50 000 TON
+const int ONE_TOS = 1000000000;
+const int ELECTOR_OPERATION_VALUE = 103 * ONE_TOS / 100 ;
+const int MIN_REQUEST_LOAN_VALUE = ONE_TOS ; ;; should cover controller and pool gas
+const int MIN_TOS_FOR_STORAGE = 2 * ONE_TOS; ;; 2 TOS
+const int DEPOSIT_FEE = ONE_TOS / 4; ;; 0.25 TOS
+const int WITHDRAWAL_FEE = ONE_TOS / 4; ;; 0.25 TOS
+const int MIN_STAKE_TO_SEND = 50000 * ONE_TOS; ;; 50 000 TOS
 
 ;; Time in seconds for validator to make mandatory actions, such as
 ;; recover stake or update hash
 const int GRACE_PERIOD = 600;
 ;; Fines for validator for overdue actions
-const int HASH_UPDATE_FINE = 10 * ONE_TON;
-const int STAKE_RECOVER_FINE = 10 * ONE_TON;
+const int HASH_UPDATE_FINE = 10 * ONE_TOS;
+const int STAKE_RECOVER_FINE = 10 * ONE_TOS;
 
 ;; Whole storage is put to global variables
 
@@ -142,7 +141,7 @@ int check_new_stake_msg(slice cs);
                 ;; Note, this request will be processed even in halted state
                 state = state::REST;
                 if( borrowed_amount ) {
-                  if(balance >= MIN_TONS_FOR_STORAGE + borrowed_amount) {
+                  if(balance >= MIN_TOS_FOR_STORAGE + borrowed_amount) {
                     send_msg(pool,
                              borrowed_amount, ;; TODO add fee???
                              begin_cell().store_body_header(pool::loan_repayment, query_id).end_cell(),
@@ -190,7 +189,7 @@ int check_new_stake_msg(slice cs);
                 if(state == state::INSOLVENT) {
                     ;; we add WITHDRAWAL_FEE below to ensure there is enough money to process
                     ;; and send bounty in return_unused_loan
-                    if (balance > MIN_TONS_FOR_STORAGE + STAKE_RECOVER_FINE + borrowed_amount + WITHDRAWAL_FEE) {
+                    if (balance > MIN_TOS_FOR_STORAGE + STAKE_RECOVER_FINE + borrowed_amount + WITHDRAWAL_FEE) {
                         state = state::REST;
                     }
                 }
@@ -203,7 +202,7 @@ int check_new_stake_msg(slice cs);
                 int credit_amount = in_msg_body~load_coins();
                 borrowed_amount += credit_amount;
                 in_msg_body.end_parse();
-                throw_unless(error::credit_interest_too_high, credit_amount < muldiv(msg_value, max_expected_interest + SHARE_BASIS, SHARE_BASIS) + ONE_TON);
+                throw_unless(error::credit_interest_too_high, credit_amount < muldiv(msg_value, max_expected_interest + SHARE_BASIS, SHARE_BASIS) + ONE_TOS);
                 max_expected_interest = 0;
                 if(state == state::SENT_BORROWING_REQUEST) {
                   state = state::REST;
@@ -223,7 +222,7 @@ int check_new_stake_msg(slice cs);
             }  elseif (op == governor::return_available_funds) {
                 assert_state!(state::INSOLVENT);
                 assert_sender!(sender_address, governor);
-                int available_funds = balance - MIN_TONS_FOR_STORAGE - WITHDRAWAL_FEE;
+                int available_funds = balance - MIN_TOS_FOR_STORAGE - WITHDRAWAL_FEE;
                 available_funds = min( available_funds, borrowed_amount);
                 send_msg(pool,
                         available_funds,
@@ -254,14 +253,13 @@ int check_new_stake_msg(slice cs);
                     ;; So we are waiting for the change of 3 validator sets.
 
                     ;; ADDITIONAL NOTE:
-                    ;; In a special case (if the network was down), the config theoretically can refuse the elector to save a new round after election - https://github.com/ton-blockchain/ton/blob/b38d227a469666d83ac535ad2eea80cb49d911b8/crypto/smartcont/config-code.fc#L494
-                    ;; and the elector will start a new election - https://github.com/ton-blockchain/ton/blob/b38d227a469666d83ac535ad2eea80cb49d911b8/crypto/smartcont/elector-code.fc#L364
+                    ;; In a special case (if the network was down), the config theoretically can refuse the elector to save a new round after election
+                    ;; and the elector will start a new election
                     ;; in this case, our pool will have to skip the round, but it will be able to recover stake later
 
                     throw_unless(error::too_early_stake_recover_attempt_count, validator_set_changes_count >= 2);
                     int time_since_unfreeze = now() - validator_set_change_time - stake_held_for;
                     throw_unless(error::too_early_stake_recover_attempt_time, (validator_set_changes_count > 2) | (time_since_unfreeze > 60));
-                    ;; https://github.com/ton-blockchain/ton/blob/b38d227a469666d83ac535ad2eea80cb49d911b8/crypto/smartcont/elector-code.fc#L887
                     throw_unless(error::too_low_recover_stake_value, msg_value >= ELECTOR_OPERATION_VALUE);
 
                     cell payload = begin_cell().store_body_header(elector::recover_stake, query_id).end_cell();
@@ -274,7 +272,7 @@ int check_new_stake_msg(slice cs);
                     if( (time_since_unfreeze < GRACE_PERIOD) | (borrowed_amount == 0) ) {
                       assert_sender!(sender_address, validator);
                     } else {
-                      if(balance - msg_value - STAKE_RECOVER_FINE >= MIN_TONS_FOR_STORAGE) {
+                      if(balance - msg_value - STAKE_RECOVER_FINE >= MIN_TOS_FOR_STORAGE) {
                         ifnot( equal_slice_bits(sender_address, validator)) {
                           send_msg(sender_address, STAKE_RECOVER_FINE, null(), msgflag::NON_BOUNCEABLE, sendmode::IGNORE_ERRORS);
                         }
@@ -305,7 +303,7 @@ int check_new_stake_msg(slice cs);
                       assert_sender!(sender_address, validator);
                       send_excesses(sender_address);
                     } else {
-                      if(balance - HASH_UPDATE_FINE >= MIN_TONS_FOR_STORAGE) {
+                      if(balance - HASH_UPDATE_FINE >= MIN_TOS_FOR_STORAGE) {
                         ifnot( equal_slice_bits(sender_address, validator)) {
                           send_msg(sender_address, HASH_UPDATE_FINE, null(), msgflag::NON_BOUNCEABLE, sendmode::IGNORE_ERRORS);
                         }
@@ -319,7 +317,7 @@ int check_new_stake_msg(slice cs);
                     in_msg_body.end_parse();
                     throw_unless(error::incorrect_withdrawal_amount, request_amount > 0);
 
-                    raw_reserve(MIN_TONS_FOR_STORAGE, 2);
+                    raw_reserve(MIN_TOS_FOR_STORAGE, 2);
                     send_msg(validator,
                              request_amount,
                              begin_cell().store_body_header(controller::validator_withdrawal, query_id).end_cell(),
@@ -345,7 +343,7 @@ int check_new_stake_msg(slice cs);
 
                     throw_unless(error::incorrect_new_stake::value_lt_minimum, value >= MIN_STAKE_TO_SEND);
 
-                    int overdue_fine_and_storage = (HASH_UPDATE_FINE * 3) + STAKE_RECOVER_FINE + MIN_TONS_FOR_STORAGE;
+                    int overdue_fine_and_storage = (HASH_UPDATE_FINE * 3) + STAKE_RECOVER_FINE + MIN_TOS_FOR_STORAGE;
 
                     throw_unless(error::incorrect_new_stake::value_too_high, balance - value >=  overdue_fine_and_storage);
                     (_, stake_held_for, int elections_end_before) = get_validator_config();
@@ -403,7 +401,7 @@ int check_new_stake_msg(slice cs);
                   int overdue_fine = (HASH_UPDATE_FINE * 3) + STAKE_RECOVER_FINE;
                   int interest_payment = muldiv(max_loan, max_interest, SHARE_BASIS);
                   int validator_amount = balance - borrowed_amount;
-                  throw_unless(error::too_high_loan_request_amount, validator_amount >= (MIN_TONS_FOR_STORAGE + overdue_fine) + elector_fine + interest_payment);
+                  throw_unless(error::too_high_loan_request_amount, validator_amount >= (MIN_TOS_FOR_STORAGE + overdue_fine) + elector_fine + interest_payment);
 
                   cell payload = begin_cell()
                                              .store_body_header(pool::request_loan, query_id)
@@ -422,7 +420,7 @@ int check_new_stake_msg(slice cs);
                     (int utime_since, int utime_until, cell vset) = get_current_validator_set();
                     throw_unless(error::too_early_loan_return, utime_since > borrowing_time); ;; load was requested in previous round
                     int overdue = now() - utime_since;
-                    if(balance >= MIN_TONS_FOR_STORAGE + borrowed_amount) {
+                    if(balance >= MIN_TOS_FOR_STORAGE + borrowed_amount) {
                       send_msg(pool,
                                borrowed_amount, ;; TODO add fee???
                                begin_cell().store_body_header(pool::loan_repayment, query_id).end_cell(),
@@ -434,7 +432,7 @@ int check_new_stake_msg(slice cs);
                         assert_sender!(sender_address, validator);
                         send_excesses(sender_address);
                       } else {
-                        if(balance >=  MIN_TONS_FOR_STORAGE + borrowed_amount + STAKE_RECOVER_FINE) {
+                        if(balance >=  MIN_TOS_FOR_STORAGE + borrowed_amount + STAKE_RECOVER_FINE) {
                           ifnot( equal_slice_bits(sender_address, validator)) {
                             send_msg(sender_address, STAKE_RECOVER_FINE, null(), msgflag::NON_BOUNCEABLE, sendmode::IGNORE_ERRORS);
                           }
@@ -521,14 +519,12 @@ slice elector_address() inline_ref {
     return make_address(MASTERCHAIN, elector);
 }
 
-;; https://github.com/ton-blockchain/ton/blob/ae5c0720143e231c32c3d2034cfe4e533a16d969/crypto/block/block.tlb#L584
 int is_elector_address(slice address) inline_ref {
   return equal_slice_bits(address, elector_address());
 }
 
 
 ;; check the validity of the new_stake message
-;; https://github.com/ton-blockchain/ton/blob/b38d227a469666d83ac535ad2eea80cb49d911b8/crypto/smartcont/elector-code.fc#L208
 int check_new_stake_msg(slice cs) impure inline_ref {
     var validator_pubkey = cs~load_uint(256);
     var stake_at = cs~load_uint(32);
@@ -570,7 +566,7 @@ int get_max_stake_value() method_id {
     int balance = pair_first(get_balance());
     int overdue_fine = (HASH_UPDATE_FINE * 3) + STAKE_RECOVER_FINE;
     ;; we add ELECTOR_OPERATION_VALUE to ensure room for storage fees and so on
-    int value = balance - MIN_TONS_FOR_STORAGE - overdue_fine - ELECTOR_OPERATION_VALUE;
+    int value = balance - MIN_TOS_FOR_STORAGE - overdue_fine - ELECTOR_OPERATION_VALUE;
     if(value < MIN_STAKE_TO_SEND) {
         return -1;
     }
@@ -593,7 +589,7 @@ int get_max_stake_value() method_id {
     int overdue_fine = (HASH_UPDATE_FINE * 3) + STAKE_RECOVER_FINE;
     int interest_payment = muldiv(credit, interest, SHARE_BASIS);
     int validator_amount = balance - borrowed_amount;
-    return (MIN_TONS_FOR_STORAGE + overdue_fine + elector_fine + interest_payment,
+    return (MIN_TOS_FOR_STORAGE + overdue_fine + elector_fine + interest_payment,
             validator_amount);
 }
 

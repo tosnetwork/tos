@@ -120,7 +120,7 @@
 \section*{Introduction}
 \markbothsame{Introduction}
 
-This document provides a detailed description of the TOS Blockchain, including its precise block format, validity conditions, TOS Virtual Machine (TVM) invocation details, smart-contract creation process, and cryptographic signatures. In this respect it is a continuation of the TOS whitepaper (cf.~\cite{TON}), so we freely use the terminology introduced in that document.
+This document provides a detailed description of the TOS Blockchain, including its precise block format, validity conditions, TOS Virtual Machine (TVM) invocation details, smart-contract creation process, and cryptographic signatures. In this respect it is a continuation of the TOS whitepaper (cf.~\cite{TOS}), so we freely use the terminology introduced in that document.
 
 Chapter~\ptref{sect:overview} provides a general overview of the TOS Blockchain and its design principles, with particular attention to the introduction of compatibility and validity conditions and the implementation of message delivery guarantees. More detailed information, such as the TL-B schemes that describe the serialization of all required data structures into trees or collections (``bags'') of cells, is provided in subsequent chapters, culminating in a complete description of the TOS Blockchain (shardchain and masterchain) block layout in Chapter~\ptref{sect:block.layout}.
 
@@ -141,7 +141,7 @@ Please note that the current version of this document describes a preliminary te
 This chapter provides an overview of the main features and design principles of the TOS Blockchain. More detail on each topic is provided in subsequent chapters.
 
 \mysubsection{Everything is a bag of cells}
-All data in the blocks and state of the TOS Blockchain is represented as a collection of {\em cells\/} (cf.~\cite[2.5]{TON}). Therefore, this chapter begins with a general discussion of cells.
+All data in the blocks and state of the TOS Blockchain is represented as a collection of {\em cells\/} (cf.~\cite[2.5]{TOS}). Therefore, this chapter begins with a general discussion of cells.
 
 \nxsubpoint\emb{TVM cells}
 Recall that the TOS Blockchain, as well as the TOS Virtual Machine (TVM; cf.~\cite{TVM}), represents all permanently stored data as a {\em collection\/} or {\em bag\/} of so-called {\em cells}. Each cell consists of up to 1023 data bits and up to four references to other cells. Cyclic cell references are not allowed, so the cells are usually organized into {\em trees of cells\/}, or rather {\em directed acyclic graphs (DAGs) of cells}.\footnote{Completely identical cells are often identified in memory and in disk storage; this is the reason why trees of cells are transparently transformed into DAGs of cells. From this perspective, a DAG is just a storage optimization of the underlying tree of cells, irrelevant for most considerations.} Any value of an abstract algebraic (dependent) data type may be represented (serialized) as a tree of cells. The precise way of representing values of an abstract data type as a tree of cells is expressed by means of a {\em TL-B scheme\/}.\footnote{Cf.~\cite[3.3.3--4]{TVM}, where an example is given and explained, pending a more complete reference} A more thorough discussion of different kinds of cells may be found in~\cite[3.1]{TVM}.
@@ -450,7 +450,7 @@ Such an assignment can be achieved by first assigning logical time $\LT(e)$ to a
 
 In most cases when we need to assign logical time intervals, we use the minimal logical time intervals just described.
 
-\nxsubpoint\label{sp:lt.ton.blkch}\emb{Logical time in the TOS Blockchain}
+\nxsubpoint\label{sp:lt.tos.blkch}\emb{Logical time in the TOS Blockchain}
 The TOS Blockchain assigns logical time and logical time intervals to several of its components.
 
 For instance, each outbound message created in a transaction is assigned its {\em logical creation time}; for this purpose, the creation of an outbound message is considered an atomic event, logically dependent on the previous message created by the same transaction, as well as on the previous transaction of the same account, on the inbound message processed by the same transaction, and on all events contained in the blocks referred to by hashes contained in the block with the same transaction. As a consequence, {\em outbound messages created by the same smart contract have strictly increasing logical creation times.} The transaction itself is considered a collection of atomic events, and is assigned a logical time interval (cf.~\ptref{sp:trans.lt} for a more precise description).
@@ -471,7 +471,7 @@ Every shardchain block contains the hash of the most recent masterchain block in
 In particular, when we say that a block {\em must\/} import in its {\em InMsgDescr\/} the messages from the {\em OutMsgQueue\/} of the states of all neighboring shardchains, it means that precisely the blocks of other shardchains visible to that block must be taken into account, and at the same time the block cannot contain messages from ``invisible'' blocks, even if they are otherwise correct.
 
 \mysubsection{Configurable parameters and smart contracts}\label{p:conf.params}
-Recall that the TOS Blockchain has several so-called ``configurable parameters'' (cf.~\cite{TON}), which are either certain values or certain smart contracts residing in the masterchain. This section discusses the storage of and access to these configurable parameters.
+Recall that the TOS Blockchain has several so-called ``configurable parameters'' (cf.~\cite{TOS}), which are either certain values or certain smart contracts residing in the masterchain. This section discusses the storage of and access to these configurable parameters.
 
 \nxsubpoint\emb{Examples of configurable parameters}
 The properties of the blockchain controlled by configurable parameters include:
@@ -705,7 +705,7 @@ In the representation of a block as a tree, or rather a DAG, of cells, the two d
 This section exposes the details of the hypercube routing protocol employed by the TOS Blockchain to achieve guaranteed delivery of messages between smart contracts residing in arbitrary shardchains. For the purposes of this document, we will refer to the variant of hypercube routing employed by the TOS Blockchain as Hypercube Routing (HR).
 
 \nxsubpoint\label{sp:msg.uniq}\emb{Message uniqueness}
-Before continuing, let us observe that any (internal) message is {\em unique}. Recall that a message contains its full source address along with its logical creation time, and all outbound messages created by the same smart contract have strictly increasing logical creation times (cf.~\ptref{sp:lt.ton.blkch}); therefore, the combination of the full source address and the logical creation time uniquely defines the message. Since we assume the chosen hash function $\Sha$ to be collision resistant, {\em a message is uniquely determined by its hash}, so we can identify two messages if we know that their hashes coincide.
+Before continuing, let us observe that any (internal) message is {\em unique}. Recall that a message contains its full source address along with its logical creation time, and all outbound messages created by the same smart contract have strictly increasing logical creation times (cf.~\ptref{sp:lt.tos.blkch}); therefore, the combination of the full source address and the logical creation time uniquely defines the message. Since we assume the chosen hash function $\Sha$ to be collision resistant, {\em a message is uniquely determined by its hash}, so we can identify two messages if we know that their hashes coincide.
 
 This does not extend to external messages ``from nowhere'', which have no source addresses. Special care must be taken to prevent replay attacks related to such messages, especially by designers of user wallet smart contracts. One possible solution is to include a sequence number in the body of such messages, and keep the count of external messages already processed inside the smart-contract persistent data, refusing to process an external message if its sequence number differs from this count.
 
@@ -882,7 +882,7 @@ The two last lines define type \texttt{MsgAddress} to be the internal union of t
 The first two constructors, \texttt{addr\_none} and \texttt{addr\_extern}, are used for source addresses of ``messages from nowhere'' (inbound external messages), and for destination addresses of ``messages to nowhere'' (outbound external messages). The \texttt{addr\_extern} constructor defines an ``external address'', which is ignored by the TOS Blockchain software altogether (which treats \texttt{addr\_extern} as a longer variant of \texttt{addr\_none}), but may be used by external software for its own purposes. For example, a special external service may inspect the destination address of all outbound external messages found in all blocks of the TOS Blockchain, and, if a special magic number is present in the \texttt{external\_address} field, parse the remainder as an IP address and UDP port or a (TOS Network) ADNL address, and send a datagram with a copy of the message to the network address thus obtained.
 
 \nxsubpoint\emb{Internal addresses}
-The two remaining constructors, \texttt{addr\_std} and \texttt{addr\_var}, represent internal addresses. The first of them, \texttt{addr\_std}, represents a signed 8-bit $\workchainid$ (sufficient for the masterchain and for the basic workchain) and a 256-bit internal address in the selected workchain. The second of them, \texttt{addr\_var}, represents addresses in workchains with a ``large'' $\workchainid$, or internal addresses of length not equal to 256. Both of these constructors have an optional \texttt{anycast} value, absent by default, which enables ``address rewriting'' when present.\footnote{{\em Address rewriting\/} is a feature used to implement ``anycast addresses'' employed by the so-called {\em large\/} or {\em global\/} smart contracts (cf.~\cite[2.3.18]{TON}), which can have instances in several shardchains. When address rewriting is enabled, a message may be routed to and processed by a smart contract with an address coinciding with the destination address up to the first $d$ bits, where $d\leq 32$ is the ``splitting depth'' of the smart contract indicated in the {\tt anycast.depth} field (cf.~\ptref{sp:nh.anycast}). Otherwise, the addresses must match exactly.}
+The two remaining constructors, \texttt{addr\_std} and \texttt{addr\_var}, represent internal addresses. The first of them, \texttt{addr\_std}, represents a signed 8-bit $\workchainid$ (sufficient for the masterchain and for the basic workchain) and a 256-bit internal address in the selected workchain. The second of them, \texttt{addr\_var}, represents addresses in workchains with a ``large'' $\workchainid$, or internal addresses of length not equal to 256. Both of these constructors have an optional \texttt{anycast} value, absent by default, which enables ``address rewriting'' when present.\footnote{{\em Address rewriting\/} is a feature used to implement ``anycast addresses'' employed by the so-called {\em large\/} or {\em global\/} smart contracts (cf.~\cite[2.3.18]{TOS}), which can have instances in several shardchains. When address rewriting is enabled, a message may be routed to and processed by a smart contract with an address coinciding with the destination address up to the first $d$ bits, where $d\leq 32$ is the ``splitting depth'' of the smart contract indicated in the {\tt anycast.depth} field (cf.~\ptref{sp:nh.anycast}). Otherwise, the addresses must match exactly.}
 
 The validators must use \texttt{addr\_std} instead of \texttt{addr\_var} whenever possible, but must be ready to accept \texttt{addr\_var} in inbound messages. The \texttt{addr\_var} constructor is intended for future extensions.
 
@@ -899,7 +899,7 @@ nanograms$_ amount:(VarUInteger 16) = Grams;
 \end{verbatim}
 If one wants to represent $x$ nanograms, one selects an integer $\ell<16$ such that $x<2^{8\ell}$, and serializes first $\ell$ as an unsigned 4-bit integer, then $x$ itself as an unsigned $8\ell$-bit integer. Notice that four zero bits represent a zero amount of Grams.
 
-Recall (cf.~\cite[A]{TON}) that the original total supply of Grams is fixed at five billion (i.e., $5\cdot10^{18}<2^{63}$ nanograms), and is expected to grow very slowly. Therefore, all the amounts of Grams encountered in practice will fit in unsigned or even signed 64-bit integers. The validators may use the 64-bit integer representation of Grams in their internal computations; however, the serialization of these values the blockchain is another matter.
+Recall (cf.~\cite[A]{TOS}) that the original total supply of Grams is fixed at five billion (i.e., $5\cdot10^{18}<2^{63}$ nanograms), and is expected to grow very slowly. Therefore, all the amounts of Grams encountered in practice will fit in unsigned or even signed 64-bit integers. The validators may use the 64-bit integer representation of Grams in their internal computations; however, the serialization of these values the blockchain is another matter.
 
 \nxsubpoint\emb{Representing collections of arbitrary currencies}\label{sp:extra.curr}
 Recall that the TOS Blockchain allows its users to define arbitrary cryptocurrencies or tokens apart from the Gram, provided some conditions are met. Such additional cryptocurrencies are identified by 32-bit $\currencyid$s. The list of defined additional cryptocurrencies is a part of the blockchain configuration, stored in the masterchain.
@@ -937,7 +937,7 @@ message$_ {X:Type} info:CommonMsgInfo
 \end{verbatim}
 The meaning of this scheme is as follows.
 
-Type \texttt{Message $X$} describes a message with the body (or payload) of type $X$. Its serialization starts with \texttt{info} of type \texttt{CommonMsgInfo}, which comes in three flavors: for internal messages, inbound external messages, and outbound external messages, respectively. All of them have a source address \texttt{src} and destination address \texttt{dest}, which are external or internal according to the chosen constructor. Apart from that, an internal message may bear some \texttt{value} in Grams and other defined currencies (cf.~\ptref{sp:extra.curr}), and all messages generated inside the TOS Blockchain have a logical creation time \texttt{created\_lt} (cf.~\ptref{sp:lt.ton.blkch}) and creation unixtime \texttt{created\_at}, both automatically set by the generating transaction. The creation unixtime equals the creation unixtime of the block containing the generating transaction.
+Type \texttt{Message $X$} describes a message with the body (or payload) of type $X$. Its serialization starts with \texttt{info} of type \texttt{CommonMsgInfo}, which comes in three flavors: for internal messages, inbound external messages, and outbound external messages, respectively. All of them have a source address \texttt{src} and destination address \texttt{dest}, which are external or internal according to the chosen constructor. Apart from that, an internal message may bear some \texttt{value} in Grams and other defined currencies (cf.~\ptref{sp:extra.curr}), and all messages generated inside the TOS Blockchain have a logical creation time \texttt{created\_lt} (cf.~\ptref{sp:lt.tos.blkch}) and creation unixtime \texttt{created\_at}, both automatically set by the generating transaction. The creation unixtime equals the creation unixtime of the block containing the generating transaction.
 
 \nxsubpoint\emb{Forwarding and IHR fees. Total value of an internal message}
 Internal messages define an \texttt{ihr\_fee} in Grams, which is subtracted from the value attached to the message and awarded to the validators of the destination shardchain if they include the message by the IHR mechanism. The \texttt{fwd\_fee} is the original total forwarding fee paid for using the HR mechanism; it is automatically computed from some configuration parameters and the size of the message at the time the message is generated.
@@ -1281,7 +1281,7 @@ According to the Infinite Sharding Paradigm and the actor model, the three princ
 In contrast with messages, which have essentially the same headers throughout all workchains of the TOS Blockchain, and accounts, which have at least some common parts (the address and the balance), our discussion of transactions is necessarily limited to the masterchain and the basic workchain. Other workchains may define completely different kinds of transactions.
 
 \nxsubpoint\label{sp:trans.lt}\emb{Logical time of a transaction}
-Each transaction $t$ has a logical time interval $\LT^\bullet(t)=[\LT^-(t),\LT^+(t))$ assigned to it (cf.~\ptref{sp:lt.ton.blkch} and~\ptref{sp:logic.time.interval}). By convention, a transaction $t$ generating $n$ outbound messages $m_1$, \dots, $m_n$ is assigned a logical time interval of length $n+1$, so that
+Each transaction $t$ has a logical time interval $\LT^\bullet(t)=[\LT^-(t),\LT^+(t))$ assigned to it (cf.~\ptref{sp:lt.tos.blkch} and~\ptref{sp:logic.time.interval}). By convention, a transaction $t$ generating $n$ outbound messages $m_1$, \dots, $m_n$ is assigned a logical time interval of length $n+1$, so that
 \begin{equation}
   \LT^+(t)=\LT^-(t)+n+1\quad.
 \end{equation}
@@ -2093,7 +2093,7 @@ The construction of~\ptref{sp:merkle.octet.str} is applied in particular to the 
 \bibitem{Ed25519}
   {\sc Daniel J.~Bernstein, Niels Duif, Tanja Lange et al.}, {\sl High-speed high-security signatures} (2012), {\it Journal of Cryptographic Engineering} {\bf 2} (2), pp.~77--89. Available at \url{https://ed25519.cr.yp.to/ed25519-20110926.pdf}.
 
-\bibitem{TON}
+\bibitem{TOS}
   {\sc N.~Durov}, {\sl Telegram Open Network}, 2017.
 
 \bibitem{TVM}
@@ -2222,7 +2222,7 @@ A private key for Curve25519 cryptography is usually defined as a {\em secret ex
 
 If a party wants to send a message $M$ to another party, which has public key $x_A$ (and private key $a$), the following computations are performed. A one-time random secret exponent $b$ is generated, and $x_B:=x_{[b]G}$ and $x_{[b]A}$ are computed using a Montgomery ladder. After that, the message $M$ is encrypted by a symmetric cypher such as AES using the 256-bit ``shared secret'' $S:=x_{[b]A}$ as a key, and 256-bit integer (``one-time public key'') $x_B$ is prepended to the encrypted message. Once the party with public key $x_A$ receives this message, it can compute $x_{[a]B}$ starting from $x_B$ (transmitted with the encrypted message) and the private key $a$. Since $x_{[a]B}=x_{[ab]G}=x_{[b]A}=S$, the receiving party recovers the shared secret $S$ and is able to decrypt the remainder of the message.
 
-\nxsubpoint\label{sp:ton.curve25519}\emb{Public and private keys for TOS Curve25519 cryptography}
+\nxsubpoint\label{sp:tos.curve25519}\emb{Public and private keys for TOS Curve25519 cryptography}
 TOS uses another form for public and private keys of Curve25519 cryptography, borrowed from Ed25519 cryptography.
 
 A private key for TOS Curve25519 cryptography is just a random 256-bit string $k$. It is used by computing $\SHA{512}(k)$, taking the first 256 bits of the result, interpreting them as a little-endian 256-bit integer $a$, clearing bits $0$, $1$, $2$, and $255$ of $a$, and setting bit $254$ so as to obtain a value $2^{254}\leq a<2^{255}$, divisible by eight. The value $a$ thus obtained is the {\em secret exponent\/} corresponding to $k$; meanwhile, the remaining 256 bits of $\SHA{512}(k)$ constitute the {\em secret salt\/} $k''$.
@@ -2230,7 +2230,7 @@ A private key for TOS Curve25519 cryptography is just a random 256-bit string $k
 The public key corresponding to $k$---or to the secret exponent $a$---is just the $x$-coordinate $x_A$ of the point $A:=[a]G$. Once $a$ and $x_A$ are computed, they are used in exactly the same way as in~\ptref{sp:std.curve25519}. In particular, if $x_A$ needs to be serialized, it is serialized into 32 octets as an unsigned little-endian 256-bit integer.
 
 \nxsubpoint\emb{Curve25519 is used in the TOS Network}
-Notice that the asymmetric Curve25519 cryptography described in~\ptref{sp:ton.curve25519} is extensively used by the TOS Network, especially the ADNL (Abstract Datagram Network Layer) protocol. However, TOS Blockchain needs elliptic curve cryptography mostly for signatures. For this purpose, Ed25519 signatures described in the next section are used.
+Notice that the asymmetric Curve25519 cryptography described in~\ptref{sp:tos.curve25519} is extensively used by the TOS Network, especially the ADNL (Abstract Datagram Network Layer) protocol. However, TOS Blockchain needs elliptic curve cryptography mostly for signatures. For this purpose, Ed25519 signatures described in the next section are used.
 
 \mysubsection{Ed25519 cryptography}\label{p:ed25519}
 Ed25519 cryptography is extensively used for fast cryptographic signatures by both the TOS Blockchain and the TOS Network. This section describes the variant of Ed25519 cryptography used by TOS. An important difference from the standard approaches (as defined by D.~Bernstein et al.\ in~\cite{Ed25519}) is that TOS provides automatic conversion of private and public Ed25519 keys into Curve25519 keys, so that the same keys could be used both for encrypting/decrypting and for signing messages.
@@ -2301,12 +2301,12 @@ If it is sufficient to know $\pm P$ up to sign, one can ignore $x_P\bmod 2$ and 
 \nxsubpoint\label{sp:ed25519.priv.key}\emb{Private key for Ed25519}
 A {\em private key\/} for Ed25519 is just an arbitrary 256-bit string $k$. A {\em secret exponent\/} $a$ and {\em secret salt\/} $k''$ are derived from $k$ by first computing $\SHA{512}(k)$, and then taking the first 256 bits of this $\SHA{512}$ as the little-endian representation of $a$ (but with bits 255, 2, 1, and 0 cleared, and bit 254 set); the last 256 bits of $\SHA{512}(k)$ then constitute $k''$.
 
-This is essentially the same procedure as described in~\ptref{sp:ton.curve25519}, but with Curve25519 replaced by the birationally equivalent curve Ed25519. (In fact, it is the other way around: this procedure is standard for Ed25519-based elliptic curve cryptography, and TOS extends the procedure to Curve25519.)
+This is essentially the same procedure as described in~\ptref{sp:tos.curve25519}, but with Curve25519 replaced by the birationally equivalent curve Ed25519. (In fact, it is the other way around: this procedure is standard for Ed25519-based elliptic curve cryptography, and TOS extends the procedure to Curve25519.)
 
 \nxsubpoint\emb{Public key for Ed25519}
 A {\em public key\/} corresponding to a private key $k$ for Ed25519 is the standard representation (cf.~\ptref{sp:ed25519.std.pt}) of the point $A=[a]G'$, where $a$ is the secret exponent (cf.~\ptref{sp:ed25519.priv.key}) defined by the private key~$k$.
 
-Notice that $\phi(A)$ is the public key for Curve25519 defined by the same private key $k$ according to~\ptref{sp:ton.curve25519} and~\eqref{eq:phi.power.iso}. In this way, we can convert public keys for Ed25519 into corresponding public keys for Curve25519, and vice versa. Private keys do not need to be transformed at all.
+Notice that $\phi(A)$ is the public key for Curve25519 defined by the same private key $k$ according to~\ptref{sp:tos.curve25519} and~\eqref{eq:phi.power.iso}. In this way, we can convert public keys for Ed25519 into corresponding public keys for Curve25519, and vice versa. Private keys do not need to be transformed at all.
 
 \nxsubpoint\emb{Cryptographic Ed25519-signatures}
 If a message (octet string) $M$ needs to be signed by a private key $k$ defining secret exponent $a$ and secret salt $k''$, the following computations are performed:

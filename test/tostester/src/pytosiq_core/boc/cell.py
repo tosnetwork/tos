@@ -138,7 +138,7 @@ class Cell(NullCell):
         return self._hashes[hash_index]
 
     def calculate_hashes(self) -> None:
-        # https://github.com/xssnick/tonutils-go/blob/master/tvm/cell/proof.go#L169
+        # Mirrors the legacy Go cell proof hash layout.
         total_hash_count = self.level_mask.get_hash_index() + 1
         hash_count = total_hash_count
         if self.type_ == CellTypes.pruned_branch:

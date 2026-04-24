@@ -9,7 +9,7 @@
  * import { TosConnectUI } from "@tos/connect-ui";
  *
  * const ui = new TosConnectUI({
- *   manifestUrl: "https://myapp.com/tonconnect-manifest.json",
+ *   manifestUrl: "https://myapp.com/tosconnect-manifest.json",
  *   buttonRootId: "tos-connect-button",
  *   theme: "auto",
  *   language: "en",

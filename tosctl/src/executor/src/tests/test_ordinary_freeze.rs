@@ -16,7 +16,7 @@ use super::*;
 mod common;
 use common::*;
 use pretty_assertions::assert_eq;
-use ton_assembler::compile_code_to_cell;
+use tos_assembler::compile_code_to_cell;
 use chain_block::{
     AccStatusChange, Account, AccountStatus, Coins, ComputeSkipReason, CurrencyCollection,
     GetRepresentationHash, InternalMessageHeader, MsgAddressInt, MsgAddressIntOrNone, OutAction,

@@ -8,11 +8,11 @@
 ;; Jettons discoverable smart contract
 
 ;; 6905(computational_gas_price) * 1000(cur_gas_price) = 6905000
-;; ceil(6905000) = 10000000 ~= 0.01 TON
+;; ceil(6905000) = 10000000 ~= 0.01 TOS
 const int provide_address_gas_consumption = 10000000;
 
-const int start_distribution_gas_usage = 10000000; ;; 0.01 TON
-const int burn_gas_usage = 15000000; ;; 0.013087 -> 0.015 TON
+const int start_distribution_gas_usage = 10000000; ;; 0.01 TOS
+const int burn_gas_usage = 15000000; ;; 0.013087 -> 0.015 TOS
 
 ;; minter_storage#_ total_supply: Coins
 ;;     admin_address: MsgAddress
@@ -72,7 +72,7 @@ const int burn_gas_usage = 15000000; ;; 0.013087 -> 0.015 TON
     send_raw_message(msg.end_cell(), IGNORE_ERRORS);
 }
 
-() send_tons(slice to_address, int amount, int query_id) impure inline {
+() send_tos(slice to_address, int amount, int query_id) impure inline {
     var msg = begin_cell()
             .store_msg_flag(msg_flag::non_bounceable)
             .store_slice(to_address)
@@ -170,20 +170,20 @@ const int burn_gas_usage = 15000000; ;; 0.013087 -> 0.015 TON
         throw_if(error::mint_after_distribution_start, distribution_started);
         slice to_address = in_msg_body~load_msg_addr();
         int jetton_amount = in_msg_body~load_coins();
-        int forward_ton_amount = in_msg_body~load_coins();
-        int total_ton_amount = in_msg_body~load_coins();
-        int new_wallet_ton_balance = total_ton_amount - forward_ton_amount - start_distribution_gas_usage; ;; mint wallet fee is 0.01 TON, like start_fee
-        throw_unless(error::wallet_balance_below_min, new_wallet_ton_balance >= wallet_min_ton_balance);
+        int forward_tos_amount = in_msg_body~load_coins();
+        int total_tos_amount = in_msg_body~load_coins();
+        int new_wallet_tos_balance = total_tos_amount - forward_tos_amount - start_distribution_gas_usage; ;; mint wallet fee is 0.01 TOS, like start_fee
+        throw_unless(error::wallet_balance_below_min, new_wallet_tos_balance >= wallet_min_tos_balance);
         cell mint_request = begin_cell()
                 .store_op(op::internal_transfer)
                 .store_query_id(query_id)
                 .store_coins(jetton_amount) ;; max 124 bit
                 .store_uint(0, 2) ;; from_address, addr_none$00
                 .store_uint(0, 2) ;; response_address, addr_none$00
-                .store_coins(forward_ton_amount) ;; forward_amount, 4 bits if zero
+                .store_coins(forward_tos_amount) ;; forward_amount, 4 bits if zero
                 .store_uint(0, 1) ;; no forward_payload, 1 bit
                 .end_cell();
-        mint_tokens(to_address, total_ton_amount, mint_request);
+        mint_tokens(to_address, total_tos_amount, mint_request);
         save_data(total_supply + jetton_amount, admin_address, distribution, content);
         return ();
     }
@@ -219,7 +219,7 @@ const int burn_gas_usage = 15000000; ;; 0.013087 -> 0.015 TON
         throw_unless(error::unauthorized_start_request, equal_slice_bits(sender_address, admin_address));
         throw_if(error::distribution_already_started, distribution_started);
         int jettons? = distr~load_uint(1);
-        throw_if(error::cannot_distribute_tons, jettons?);
+        throw_if(error::cannot_distribute_tos, jettons?);
 
         distribution = begin_cell()
                         .store_uint(1, 1) ;; started
@@ -255,7 +255,7 @@ const int burn_gas_usage = 15000000; ;; 0.013087 -> 0.015 TON
             send_transfer_jettons_request(wallet_owner_address, share_amount, jetton_transfer_amount, my_jetton_wallet_address, query_id);
             new_distr = new_distr.store_slice(my_jetton_wallet_address);
         } else {
-            send_tons(wallet_owner_address, share_amount, query_id);
+            send_tos(wallet_owner_address, share_amount, query_id);
             to_reserve -= share_amount;
         }
         distribution = new_distr.end_cell();
@@ -285,7 +285,7 @@ const int burn_gas_usage = 15000000; ;; 0.013087 -> 0.015 TON
                     .store_op(op::excesses)
                     .store_query_id(query_id);
 
-            raw_reserve(to_reserve, 0); ;; reserve all but incoming value and maybe the TON share
+            raw_reserve(to_reserve, 0); ;; reserve all but incoming value and maybe the TOS share
             send_raw_message(msg.end_cell(), IGNORE_ERRORS | CARRY_REMAINING_BALANCE);
         }
         return ();

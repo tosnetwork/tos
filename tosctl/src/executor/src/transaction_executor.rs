@@ -94,7 +94,7 @@ pub enum IncorrectCheckRewrite {
     Other,
 }
 
-// Tests commented out: depend on ton_assembler which has been removed
+// Tests commented out: depend on the removed assembler crate
 // #[cfg(test)]
 // #[path = "tests/test_tr_phases.rs"]
 // mod tests;

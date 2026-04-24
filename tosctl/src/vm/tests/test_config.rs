@@ -203,10 +203,10 @@ mod getparam {
         }
     }
 
-    // TODO: re-enable when ton_assembler is adapted as tos_assembler
+    // TODO: re-enable when the assembler crate is adapted
     // #[test]
     // fn my_code_gas() {
-    //     let code = ton_assembler::compile_code_to_cell(
+    //     let code = tos_assembler::compile_code_to_cell(
     //         "
     //         MYCODE
     //         CTOS ; 100 gas

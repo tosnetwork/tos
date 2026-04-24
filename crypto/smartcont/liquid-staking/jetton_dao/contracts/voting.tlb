@@ -31,13 +31,13 @@ nanograms$_ amount:(VarUInteger 16) = Grams;
 
 _ grams:Grams = Coins;
 
-mint#1674b0a0 query_id:uint64 destination:MsgAddress jetton_amount:Coins forward_ton_amount:Coins total_ton_amount:Coins = InternalMsgBody;
+mint#1674b0a0 query_id:uint64 destination:MsgAddress jetton_amount:Coins forward_tos_amount:Coins total_tos_amount:Coins = InternalMsgBody;
 change_admin#4840664f query_id:uint64 new_admin_address:MsgAddress = InternalMsgBody;
 change_content#5773d1f5 new_content:^Cell = InternalMsgBody;
 upgrade_code#34aea60d query_id:uint64 self_code:(Maybe ^Cell) voting_code:(Maybe ^Cell) = InternalMsgBody;
 
 
-withdraw_tons#6d8e5e3c query_id:uint64 = InternalMsgBody;
+withdraw_tos#6d8e5e3c query_id:uint64 = InternalMsgBody;
 withdraw_jettons#768a50b2 query_id:uint64 wallet:MsgAddressInt amount:Coins = InternalMsgBody;
 
 /*

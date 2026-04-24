@@ -178,7 +178,7 @@ export function detectHash(hash: string): HashInfo {
  * Compute the deterministic contract address from a workchain and StateInit.
  *
  * The address is derived from the SHA-256 hash of the serialized StateInit cell,
- * matching the on-chain address computation in the TOS/TON VM.
+ * matching the on-chain address computation in the TOS VM.
  *
  * @param workchain - Workchain ID (0 for basechain, -1 for masterchain)
  * @param init - StateInit containing the contract code and initial data cells

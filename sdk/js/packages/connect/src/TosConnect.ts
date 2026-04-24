@@ -25,7 +25,7 @@ import type {
   WalletInfo,
   ConnectEventPayload,
   ConnectErrorPayload,
-  TonAddressItemReply,
+  TosAddressItemReply,
 } from "./types.js";
 import {
   TosConnectError,
@@ -193,7 +193,7 @@ export class TosConnect {
 
     const connectRequest: ConnectRequest = {
       manifestUrl: this.manifestUrl,
-      items: request?.items ?? [{ name: "ton_addr" }],
+      items: request?.items ?? [{ name: "tos_addr" }],
     };
 
     // ------ Injected path ------
@@ -570,8 +570,8 @@ export class TosConnect {
       case "connect": {
         const payload = event.payload as ConnectEventPayload;
         const addrItem = payload.items.find(
-          (i) => i.name === "ton_addr",
-        ) as TonAddressItemReply | undefined;
+          (i) => i.name === "tos_addr",
+        ) as TosAddressItemReply | undefined;
 
         if (!addrItem) {
           this.notifyError(

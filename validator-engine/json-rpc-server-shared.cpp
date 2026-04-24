@@ -17,7 +17,7 @@ td::Result<block::StdAddress> parse_address_param(td::JsonObject& params) {
 
 std::string format_block_id_json(const tos::lite_api::tosNode_blockIdExt& blk) {
   return PSTRING()
-      << "{\"@type\":\"ton.blockIdExt\""
+      << "{\"@type\":\"tos.blockIdExt\""
       << ",\"workchain\":" << blk.workchain_
       << ",\"shard\":\"" << blk.shard_ << "\""
       << ",\"seqno\":" << blk.seqno_
@@ -28,7 +28,7 @@ std::string format_block_id_json(const tos::lite_api::tosNode_blockIdExt& blk) {
 
 std::string format_zero_state_json(const tos::lite_api::tosNode_zeroStateIdExt& zs) {
   return PSTRING()
-      << "{\"@type\":\"ton.blockIdExt\""
+      << "{\"@type\":\"tos.blockIdExt\""
       << ",\"workchain\":" << zs.workchain_
       << ",\"shard\":\"-9223372036854775808\""
       << ",\"seqno\":0"

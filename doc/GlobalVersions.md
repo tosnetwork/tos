@@ -71,7 +71,7 @@ Operations for working with Merkle proofs, where cells can have non-zero level a
 ## Version 7
 __Enabled in mainnet on 2024-04-18__
 
-[Explicitly nullify](https://github.com/ton-blockchain/ton/pull/957/files) `due_payment` after due reimbursment.
+Explicitly nullify `due_payment` after due reimbursement.
 
 ## Version 8
 __Enabled in mainnet on 2024-08-25__
@@ -104,7 +104,7 @@ Example: if the last masterchain block seqno is `19071` then the list contains b
 - Fix exception code in some TVM instructions: now `stk_und` has priority over other error codes.
   - `PFXDICTADD`, `PFXDICTSET`, `PFXDICTREPLACE`, `PFXDICTDEL`, `GETGASFEE`, `GETSTORAGEFEE`, `GETFORWARDFEE`, `GETORIGINALFWDFEE`, `GETGASFEESIMPLE`, `GETFORWARDFEESIMPLE`, `HASHEXT`
 - Now setting the contract code to a library cell does not consume additional gas on execution of the code.
-- Temporary increase gas limit for some accounts (see [this post](https://t.me/tondev_news/129) for details, `override_gas_limit` in `transaction.cpp` for the list of accounts).
+- Temporary increase gas limit for some accounts (`override_gas_limit` in `transaction.cpp` contains the list of accounts).
 - Fix recursive jump to continuations with non-null control data.
 
 ## Version 10

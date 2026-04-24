@@ -9,7 +9,7 @@ export abstract class Errors {
 		not_enough_jettons : 706,
 		unauthorized_incoming_transfer : 707,
 		malformed_forward_payload : 708,
-		not_enough_tons : 709,
+		not_enough_tos : 709,
 		burn_fee_not_matched : 711,
 		unknown_action : 0xFFFF,
 		unknown_action_bounced : 0xFFF0,

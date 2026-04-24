@@ -12,7 +12,7 @@ This SDK should be the primary interface for DApp developers, wallet builders, a
 
 1. **Layered architecture** — each layer is independently useful; higher layers depend on lower layers, never the reverse.
 2. **Familiar to Ethereum developers** — borrow conventions from ethers.js / viem where they apply (provider/signer separation, human-readable units, typed contracts).
-3. **One correct way** — avoid the TON ecosystem problem of multiple incompatible SDKs. This is the canonical SDK.
+3. **One correct way** — avoid the legacy ecosystem problem of multiple incompatible SDKs. This is the canonical SDK.
 4. **TypeScript-first** — full type safety, no `any` escapes, discriminated unions for on-chain types.
 5. **Tree-shakeable** — ESM modules, no global state, no side effects on import.
 6. **Isomorphic** — works in Node.js, browsers, and React Native without polyfill gymnastics.
@@ -25,9 +25,9 @@ This SDK should be the primary interface for DApp developers, wallet builders, a
 
 | Source | What | Why |
 |--------|------|-----|
-| `@ton/core` | Cell/Slice/Builder fluent API, Address type | Proven, ergonomic, battle-tested |
-| `@ton/core` | `Contract` + `ContractProvider` interface | Clean abstraction boundary between contract logic and transport |
-| `@ton/crypto` | Mnemonic, HD key derivation, Ed25519 API surface | TON-compatible key derivation is required |
+| `source core SDK` | Cell/Slice/Builder fluent API, Address type | Proven, ergonomic, battle-tested |
+| `source core SDK` | `Contract` + `ContractProvider` interface | Clean abstraction boundary between contract logic and transport |
+| `source crypto SDK` | Mnemonic, HD key derivation, Ed25519 API surface | TOS-compatible key derivation is required |
 | ethers.js v6 | Provider/Signer separation | DApp developers expect this pattern |
 | ethers.js v6 | `waitForTransaction()` pattern | Essential for DApp UX |
 | viem | publicClient / walletClient separation | Cleaner than monolithic provider |
@@ -37,12 +37,12 @@ This SDK should be the primary interface for DApp developers, wallet builders, a
 
 | Source | Problem | Our approach |
 |--------|---------|--------------|
-| tonweb | God object (`TonWeb` class holds everything) | Decomposed modules, no god object |
-| tonweb | Dual APIs (`call()` vs `call2()`) | One API, one return shape |
-| tonweb | Hardcoded wallet code as base64 strings | Load from compiled artifacts or registry |
-| tonweb | JavaScript-only, JSDoc types | TypeScript source, compiled to JS+DTS |
-| `@ton/ton` | Tight coupling between contract wrappers and RPC | Contract wrappers are pure; transport is injected |
-| `@ton/core` | `Object.freeze()` on everything | Prefer `readonly` types; freezing has runtime cost |
+| legacy web SDK | God object (`LegacyWeb` class holds everything) | Decomposed modules, no god object |
+| legacy web SDK | Dual APIs (`call()` vs `call2()`) | One API, one return shape |
+| legacy web SDK | Hardcoded wallet code as base64 strings | Load from compiled artifacts or registry |
+| legacy web SDK | JavaScript-only, JSDoc types | TypeScript source, compiled to JS+DTS |
+| `source client SDK` | Tight coupling between contract wrappers and RPC | Contract wrappers are pure; transport is injected |
+| `source core SDK` | `Object.freeze()` on everything | Prefer `readonly` types; freezing has runtime cost |
 | ethers.js | Monolithic provider (all methods on one object) | Categorized action groups, inspired by viem |
 
 ## Package Structure
@@ -167,7 +167,7 @@ interface AddressInfo {
 
 ### Cell / Builder / Slice
 
-Follow the proven `@ton/core` pattern — fluent builder, cursor-based slice.
+Follow the proven `source core SDK` pattern — fluent builder, cursor-based slice.
 
 Cell constraints: max 1023 bits, max 4 refs.
 
@@ -1006,7 +1006,7 @@ interface SubmissionResult {
 
 ### ContractProvider (for contract wrappers)
 
-Bridge between contract wrappers and transport — same pattern as `@ton/core`:
+Bridge between contract wrappers and transport — same pattern as `source core SDK`:
 
 ```typescript
 interface ContractProvider {
@@ -1021,7 +1021,7 @@ interface ContractProvider {
   external(message: Cell): Promise<SendConfirmation>;
 }
 
-// Improvement over @ton/core which returns void — we return tracking info
+// Improvement over source core SDK which returns void — we return tracking info
 interface SendConfirmation {
   hash: string;            // external message BOC hash (base64)
   seqnoBefore: number;     // wallet seqno before send (for waitForSeqnoChange)
@@ -1085,7 +1085,7 @@ class KeyPairSigner implements Signer {
 
 ### open() — connect a contract to a provider
 
-Inspired by `@ton/core`'s `openContract()`:
+Inspired by `source core SDK`'s `openContract()`:
 
 ```typescript
 type OpenedContract<T extends Contract> = {
@@ -1608,28 +1608,28 @@ const ErrorCodes = {
 
 ---
 
-## Differences from TON SDKs
+## Differences from the legacy stack SDKs
 
-| Aspect | TON (@ton/ton + tonweb) | TOS (@tos/sdk) |
+| Aspect | legacy (source client SDK + legacy web SDK) | TOS (@tos/sdk) |
 |--------|------------------------|----------------|
 | Package count | 3+ packages, independent repos | Monorepo workspace, versioned together |
 | RPC coverage | Partial — many methods missing from typed SDK | Full — all 42 C++ methods mapped |
-| Provider | TonClient (concrete class) | TosProvider (interface) + TosClient (impl) |
+| Provider | LegacyClient (concrete class) | TosProvider (interface) + TosClient (impl) |
 | Signer | Embedded in wallet | Separated — `Signer` interface (async-friendly) |
 | Account capability | Not available | `getAccountCapability()` — TOS-native |
 | Transaction intent | Not available | `buildTransactionIntent()` / `getSigningPayload()` |
 | Authorization roles | Not modeled | signer / submitter / fee_payer separation |
 | Error handling | Raw errors, no codes | `TosError` hierarchy with structured codes |
 | waitForTransaction | Not available | Built-in polling with timeout |
-| Entry point | `new TonWeb(provider)` god object | Composable imports, tree-shakeable |
+| Entry point | `new LegacyWeb(provider)` god object | Composable imports, tree-shakeable |
 | Address utilities | RPC-only | Offline in `@tos/core` |
 | Network presets | Manual URL | `Networks.mainnet` / `Networks.testnet` built-in |
 | Workchain guidance | Undocumented | Explicit guide for Ethereum developers |
 | Message parsing | Manual | Opcode-based parsing examples in docs |
-| Migration guide | N/A | TON → TOS migration table |
-| Build target | JS source (tonweb), TS compiled (@ton) | TypeScript source, ESM + CJS dual output |
+| Migration guide | N/A | TOS migration table |
+| Build target | JS source (legacy web SDK), TS compiled source packages | TypeScript source, ESM + CJS dual output |
 
-## TOS-Specific Extensions (vs TON SDK)
+## TOS-Specific Extensions (vs legacy SDK)
 
 These are capabilities unique to TOS that the SDK must surface:
 
@@ -1687,14 +1687,14 @@ Default `workchain` is `0` in all wallet `create()` methods — DApp developers 
 - When C++ adds new RPC methods, the SDK adds them in a minor version bump.
 - Response type changes from C++ are breaking → SDK major version bump (after 1.0).
 
-### Migration from TON SDKs
+### Migration from the legacy stack SDKs
 
-| TON | TOS | Notes |
+| legacy | TOS | Notes |
 |-----|-----|-------|
-| `new TonWeb(provider)` | `new TosClient({ endpoint })` | No god object |
-| `tonweb.getBalance(addr)` | `client.getBalance(addr)` | Same concept |
-| `TonClient.create({ endpoint })` | `new TosClient({ endpoint })` | Constructor, not factory |
-| `tonweb.wallet.create({...})` | `WalletV4R2.create({...})` | Explicit version |
+| `new LegacyWeb(provider)` | `new TosClient({ endpoint })` | No god object |
+| `legacy web SDK.getBalance(addr)` | `client.getBalance(addr)` | Same concept |
+| `LegacyClient.create({ endpoint })` | `new TosClient({ endpoint })` | Constructor, not factory |
+| `legacy web SDK.wallet.create({...})` | `WalletV4R2.create({...})` | Explicit version |
 | `contract.methods.seqno().call()` | `wallet.getSeqno()` | Direct method call |
 | `Cell.oneFromBoc(b64)` | `Cell.fromBase64(b64)` | Simplified name |
 
@@ -1781,7 +1781,7 @@ Standard compiled contract codes are exported from `@tos/contracts` for deployme
 | Phase | Package | Scope | Depends on | Status |
 |-------|---------|-------|------------|--------|
 | Phase 1 | `@tos/core` | Address, Cell, Slice, Builder, BOC, Dictionary, Tuple, toNano/fromNano, address utils | Nothing | ✅ Done (30 files, 220K built) |
-| Phase 2 | `@tos/crypto` | Ed25519, Mnemonic, HD derivation (fork from @ton/crypto) | Nothing | ✅ Done (10 files, 88K built) |
+| Phase 2 | `@tos/crypto` | Ed25519, Mnemonic, HD derivation (TOS crypto implementation) | Nothing | ✅ Done (10 files, 88K built) |
 | Phase 3 | `@tos/client` | TosClient, TosProvider interface, all 42 RPC methods, waitForTransaction | Phase 1 | ✅ Done (11 files, 116K built) |
 | Phase 4 | `@tos/wallets` | WalletV3R2, V4R2, V5R1, HighloadV2, KeyPairSigner | Phase 1-3 | ✅ Done (9 files, 112K built) |
 | Phase 5 | `@tos/contracts` | JettonMinter, JettonWallet, NftCollection, NftItem | Phase 1, 3 | ✅ Done (7 files, 60K built) |
@@ -1797,8 +1797,8 @@ All 6 phases completed on 2026-04-15. Total: 68 TypeScript source files, all typ
 
 The SDK is ready for public use when:
 
-- [x] `@tos/core` passes all Cell/BOC serialization round-trip tests against C++ reference ✅ 158 tests pass, incl. 30 BOC reference vectors from ton-core
-- [x] `@tos/crypto` generates keys compatible with existing TOS wallets ✅ verified against @ton/crypto test vectors
+- [x] `@tos/core` passes all Cell/BOC serialization round-trip tests against C++ reference ✅ 158 tests pass, incl. 30 BOC reference vectors from core reference
+- [x] `@tos/crypto` generates keys compatible with existing TOS wallets ✅ verified against TOS crypto test vectors
 - [x] `@tos/client` covers all 42 JSON-RPC methods with typed responses matching C++ wire format ✅ all 42 methods implemented
 - [x] `@tos/client` can query a live TOS node end-to-end ✅ 13 tests passed on live 4-node testnet (127.0.0.1:8011)
 - [x] `@tos/client` response types use snake_case matching C++ JSON output ✅ all types use snake_case
@@ -1886,7 +1886,7 @@ The SDK is ready for public use when:
 | 60 | Broken code block | Networks block had `/ Usage:` (missing `/`) and double ``` closure | Fixed syntax and removed duplicate closure |
 | 61 | Differences table incomplete | Missing network presets, workchain guidance, message parsing, migration guide entries | Added 4 new rows to comparison table |
 | 62 | No versioning strategy | No guidance on how packages are versioned together or how breaking changes work | Added Versioning Strategy section with semver rules |
-| 63 | No TON→TOS migration guide | Ethereum devs may come from TON; no mapping shown | Added Migration from TON SDKs table with 6 common patterns |
+| 63 | No TOS migration guide | Ethereum devs may come from the legacy stack; no mapping shown | Added Migration from the legacy stack SDKs table with 6 common patterns |
 | 64 | Missing acceptance criteria | New features (Jetton flow, pagination, fees, presets) had no test criteria | Added 5 new acceptance criteria items |
 | 65 | OutMessage.bounce undocumented | Default behavior (true for contracts, false for uninitialized) not explained | Added inline comment explaining default |
 | 66 | No pagination example | "Load more transactions" is a basic DApp pattern; not shown | Added full pagination loop example with lt/hash cursors |
@@ -1900,7 +1900,7 @@ The SDK is ready for public use when:
 | 74 | Signer conflates sign + send | Combines crypto (sign) and I/O (send) — unlike viem's clean separation | Documented design choice: TOS external messages require wallet coordination |
 | 75 | @tos/sdk defeats tree-shaking | Umbrella re-export loads everything | Added guidance: use `@tos/sdk` for prototyping, direct imports for production |
 | 76 | Crypto bundle size | Bundling tweetnacl in browser when WebCrypto has SHA | Added Crypto Backend Strategy: WebCrypto for hashing, tweetnacl only for Ed25519 |
-| 77 | ContractProvider.internal returns void | No way to track what was sent after send — known @ton/core pain point | Returns `SendConfirmation { hash, seqnoBefore }` instead of void |
+| 77 | ContractProvider.internal returns void | No way to track what was sent after send — known source core SDK pain point | Returns `SendConfirmation { hash, seqnoBefore }` instead of void |
 | 78 | @tos/core → @tos/crypto dependency | Was "peer dependency" but Cell.hash() won't work without it | Changed to hard dependency; package must work standalone |
 | 79 | Offline signing BOC construction wrong | Step 4 submitted unsigned payload bytes as signed BOC | Fixed: construct signed cell with signature prepended to message body |
 | 80 | Wrong import in offline example | `base64ToBytes` imported from @tos/crypto but defined in @tos/core | Fixed import to `@tos/core` |

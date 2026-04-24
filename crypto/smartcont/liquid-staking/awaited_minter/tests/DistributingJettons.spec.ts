@@ -117,14 +117,14 @@ describe('DistributingJettons', () => {
         noDistributionSnapshot = blockchain.snapshot();
     });
 
-    it('should not start distribution of toss', async () => {
+    it('should not start distribution of TOS', async () => {
         const startResult = await jettonMinter.sendStartDistribution(deployer.getSender(), toNano('2000'));
 
         expect(startResult.transactions).toHaveTransaction({
             from: deployer.address,
             to: jettonMinter.address,
             aborted: true,
-            exitCode: 70  // error::cannot_distribute_toss
+            exitCode: 70  // error::cannot_distribute_tos
         });
     });
 
@@ -219,7 +219,7 @@ describe('DistributingJettons', () => {
 
         let sentAmount = toNano('2000');
         let forwardAmount = toNano('0.05');
-        const transferResult = await assetDeployerWallet.sendTransfer(deployer.getSender(), toNano('0.1'), //toss
+        const transferResult = await assetDeployerWallet.sendTransfer(deployer.getSender(), toNano('0.1'), //TOS
                sentAmount, jettonMinter.address,
                deployer.address, Cell.EMPTY, forwardAmount, Cell.EMPTY);
 
@@ -256,7 +256,7 @@ describe('DistributingJettons', () => {
         const consigliereAssetWallet = await userWallet(consigliere.address, assetJettonMinter);
         const initialConsigliereWalletBalance = await consigliereJettonWallet.getJettonBalance();
 
-        const burnResult = await deployerJettonWallet.sendBurn(deployer.getSender(), toNano('0.1'), // tos amount
+        const burnResult = await deployerJettonWallet.sendBurn(deployer.getSender(), toNano('0.1'), // TOS amount
                              initialDeployerWalletBalance, deployer.address, Cell.EMPTY); // amount, response address, custom payload
 
         await consigliereJettonWallet.sendBurn(consigliere.getSender(), toNano('0.1'),
@@ -289,7 +289,7 @@ describe('DistributingJettons', () => {
 
         const spentTOS = toNano('0.1');
 
-        const burnResult = await deployerJettonWallet.sendBurn(consigliere.getSender(), spentTOS, // tos amount
+        const burnResult = await deployerJettonWallet.sendBurn(consigliere.getSender(), spentTOS, // TOS amount
                              initialDeployerWalletBalance, consigliere.address, null); // amount, response address (no matter - will be overwritten), custom payload
 
         expect(burnResult.transactions).toHaveTransaction({
@@ -310,7 +310,7 @@ describe('DistributingJettons', () => {
         expect(burnResult.transactions).toHaveTransaction({
             from: jettonMinter.address,
             to: consigliere.address,
-            value: (x) => x! > spentTOS, // consigliere should get all the spent TOSs + extra for fees
+            value: (x) => x! > spentTOS, // consigliere should get all the spent TOS + extra for fees
             success: true,
             op: 0xd53276db
         });
@@ -333,7 +333,7 @@ describe('DistributingJettons', () => {
         let forwardAmount = toNano('0.05');
 
         // transfer asset jettons to JettonWallet
-        await deployerAssetWallet.sendTransfer(deployer.getSender(), toNano('0.1'), // toss
+        await deployerAssetWallet.sendTransfer(deployer.getSender(), toNano('0.1'), // TOS
                sentAmount, deployerJettonWallet.address,
                deployer.address, null, forwardAmount, null);
 

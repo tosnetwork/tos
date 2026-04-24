@@ -27,7 +27,7 @@ Besides the work of the core team, this update also includes contributions from
 - InfiniteSec team [https://x.com/infsec_io](https://x.com/infsec_io)
 - Christos from [Cantina and Spearbit](https://cantina.xyz)
 - [@killme8848](https://t.me/killme8848)
-- [Tosred team](https://github.com/tonred)
+- Tosred team
 - [ret2happy](https://x.com/ret2happy)
 
 ## 2026.02 Update
@@ -64,7 +64,7 @@ Besides the work of the core team, this update also includes contributions from 
 
 ## 2025.11 Update
 
-1. [TVM version v12](./doc/GlobalVersions.md) update: [forbid unused high bits in extra_flags](https://github.com/ton-blockchain/TEPs/pull/503/commits/d949d70d5a69026d273cbbc07653d12c4373117a), [bounce extra_flags equal to initial message extra_flags](https://github.com/ton-blockchain/TEPs/pull/503/commits/d33ff342d69de04f1c33d11360dcf06b63a6c21e), [new TVM opcodes](https://github.com/ton-blockchain/ton/commit/ecd8fbb833c408eb34ec1aa4516e9e4344b54a22).
+1. [TVM version v12](./doc/GlobalVersions.md) update: forbid unused high bits in extra_flags, bounce extra_flags equal to initial message extra_flags, new TVM opcodes.
 2. Abseil upgrade
 3. Improvements in node synchronisation
 4. Fixing rare ArchiveManager issues
@@ -86,7 +86,7 @@ Besides the work of the core team, this update is based on the efforts of the To
 
 ## 2025.07 Accelerator Update
 
-Separation of validation and collation processes that allows to host them on independent machines and achieve full horizontal scaling. [More details in documentation](https://docs.ton.org/v3/documentation/infra/nodes/validation/collators)
+Separation of validation and collation processes that allows to host them on independent machines and achieve full horizontal scaling.
 
 ## 2025.06 Update
 
@@ -107,7 +107,7 @@ Besides the work of the core team, this update is based on the efforts of the RS
 3. [TVM version v10](./doc/GlobalVersions.md)
 4. Overlay broadcast speed up and improved network stats.
 5. Fixed some issues in toslib
-6. [Added normalized hash](https://github.com/ton-blockchain/TEPs/pull/467)
+6. Added normalized hash
 7. Fix SDBEGINS(Q) in Asm.fif
 
 Besides the work of the core team, this update is based on the efforts of  @Stanislav-Povolotsky (toslib fixes); @ice-charon (toslib fixes); RSquad team (due payments improvements in v10); Arayz, Robinlzw, @wy666444 @Lucian-code233 from TosBit (improvements in RUNVM); @Skydev0h and @pyAndr3w (Asm.fif).
@@ -124,7 +124,7 @@ Besides the work of the core team, this update is based on the efforts of  @Stan
   * Initial sync progress
 6. Fixes in logging, TOS Storage, external message checking, persistent state downloading, UB in toslib
 
-Besides the work of the core team, this update is based on the efforts of  @Sild from StonFi(UB in toslib).
+Besides the work of the core team, this update is based on external contributor efforts (UB in toslib).
 
 ## 2025.02 Update
 1. Series of improvement/fixes for `Config8.version >= 9`, check [GlobalVersions.md](./doc/GlobalVersions.md)
@@ -137,7 +137,7 @@ Besides the work of the core team, this update is based on the efforts of  @Sild
 8. Validator console improvement: dashed names, better shard formats
 
 
-Besides the work of the core team, this update is based on the efforts of  @dbaranovstonfi from StonFi(libraries in emulator), @Rexagon (ret on deep jumps), @tvorogme from DTon (`advance_ext`), Nan from Zellic (`stk_und` and JNI)
+Besides the work of the core team, this update is based on external contributor efforts covering emulator libraries, deep-jump returns, `advance_ext`, `stk_und`, and JNI.
 
 ## 2024.12 Update
 
@@ -182,7 +182,7 @@ Besides the work of the core team, this update is based on the efforts of @krigg
 4. A number of fixes and improvements for emulator and toslib: correct work with config_addr, not accepted externals, bounces, debug ops gas consumption, added version and c5 dump, fixed toslib crashes
 5. Added new flags and commands to the node, in particular `--fast-state-serializer`, `getcollatoroptionsjson`, `setcollatoroptionsjson`
 
-Besides the work of the core team, this update is based on the efforts of @krigga (emulator), stonfi team, in particular @dbaranovstonfi and @hey-researcher (emulator), and  @loeul, @xiaoxianBoy, @simlecode (typos in comments and docs).
+Besides the work of the core team, this update is based on emulator and documentation contributions from external contributors.
 
 
 
@@ -272,7 +272,7 @@ Read [more](https://blog.tos.network/technical-report-december-5-inscriptions-la
 5. Changes to storage due payment: now due payment is collected in Storage Phase, however for bouncable messages fee amount can not exceed balance of account prior to message.
 
 
-Besides the work of the core team, this update is based on the efforts of @aleksej-paschenko (emulator improvements), @akifoq (security improvements), Trail of Bits auditor as well as all participants of [TEP-88 discussion](https://github.com/ton-blockchain/TEPs/pull/88).
+Besides the work of the core team, this update is based on the efforts of @aleksej-paschenko (emulator improvements), @akifoq (security improvements), Trail of Bits auditor, and protocol-review participants.
 
 ## 2023.10 Update
 1. A series of additional security checks in node: special cells in action list, init state in external messages, peers data prior to saving to disk.
@@ -298,7 +298,7 @@ Besides the work of the core team, this update is based on the efforts of @aleks
 ## 2023.04 Update
 1. CPU load optimization: previous DHT reconnect policy was too aggressive
 2. Network throughput improvements: granular control on external message broadcast, optimize celldb GC, adjust state serialization and block downloading timings, rldp2 for states and archives
-3. Update for Fift (namespaces) and Fift libraries (list of improvements: https://github.com/ton-blockchain/ton/issues/631)
+3. Update for Fift namespaces and Fift libraries.
 4. Better handling of incorrect inputs in funC: fix UB and prevent crashes on some inputs, improve optimizing int consts and unused variables in FunC, fix analyzing repeat loop. FunC version is increase to 0.4.3.
 5. `listBlockTransactionsExt` in liteserver added
 6. Tvm emulator improvements
@@ -354,8 +354,8 @@ Besides the work of the core team, this update is based on the efforts of @tvoro
 * Added detailed network stats for overlays (can be accessed via `validator-console`)
 * Improved auto-builds for wide range of systems.
 * Added extended error information for unaccepted external messages: `exit_code` and TVM trace (where applicable).
-* [Improved catchain DoS resistance](https://github.com/ton-blockchain/ton/blob/master/doc/catchain-dos.md)
-* A series of FunC improvements, summarized [here](https://github.com/ton-blockchain/ton/pull/378)
+* Improved catchain DoS resistance
+* A series of FunC improvements
 #### Update delay
 Update coincided with persistent state serialization event which lead to block production speed deterioration (issue substantially mitigated in update itself). This phenomena was aggravated by the fact that after update some validators lost ability to participate in block creation. The last was caused by threshold based hardcoded protocol version bump, where threshold was set in such manner (based on block height with value higher than 9m), that it eluded detection in private net tests. The update was temporarily paused and resumed after persistent state serialization ended and issues with block creation were resolved.
 
@@ -375,5 +375,3 @@ Besides the work of the core team, this update is based on the efforts of @aweso
 * Improved Liteserver DoS resistance for running getmethods.
 
 Besides the work of the core team, this update is based on the efforts of @tvorogme (added support for slice arguments and noted bugs in Asm.fif), @akifoq (fixed bug in Asm.fif), @cryshado (noted strange behavior of LS, which, upon inspection, turned out to be a vector of DoS attack).
-
-

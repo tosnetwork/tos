@@ -18,7 +18,7 @@ use crate::{
 
 mod common;
 use common::*;
-use ton_assembler::compile_code_to_cell;
+use tos_assembler::compile_code_to_cell;
 use chain_block::{
     AccStatusChange, Account, AccountId, AccountStatus, BuilderData, Coins, ComputeSkipReason,
     ConfigParamEnum, CurrencyCollection, ExtOutMessageHeader, ExternalInboundMessageHeader,

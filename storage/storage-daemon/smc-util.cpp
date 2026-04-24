@@ -236,7 +236,7 @@ void FabricContractWrapper::send_internal_message(ContractAddress dest, td::RefI
                                                   td::Promise<td::Unit> promise) {
   td::Bits256 body_hash = vm::CellBuilder().append_cellslice(body).finalize_novm()->get_hash().bits();
   LOG(DEBUG) << "send_internal_message " << address_.to_string() << " -> " << dest.to_string() << ", " << coins
-             << " nanoTON, body=" << body_hash.to_hex();
+             << " nanoTOS, body=" << body_hash.to_hex();
   CHECK(coins->sgn() >= 0);
   pending_messages_.push(PendingMessage{dest, std::move(coins), std::move(body), body_hash, std::move(promise)});
   if (!send_message_at_ && !current_ext_message_) {

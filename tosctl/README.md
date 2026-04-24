@@ -1,6 +1,6 @@
 # tosctl -- TOS Node Operator Tool
 
-`tosctl` is the operator CLI and automation daemon for TOS validator nodes. It replaces `mytonctrl` and the scattered collection of legacy shell scripts, Python utilities, and standalone binaries with a single Rust tool.
+`tosctl` is the operator CLI and automation daemon for TOS validator nodes. It replaces legacy operator shells and the scattered collection of shell scripts, Python utilities, and standalone binaries with a single Rust tool.
 
 `tosctl` manages nodes, wallets, pools, elections, voting, backups, alerts, and observability from one configuration file and one binary.
 

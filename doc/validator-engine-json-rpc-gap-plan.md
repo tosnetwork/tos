@@ -1462,7 +1462,7 @@ This plan keeps the work incremental and reviewable while moving `validator-engi
 
 ## Implementation Progress (2026-04-13)
 
-**mytonctrl parity is substantially started but not fully complete.** All 87 public commands have tosctl subcommand registrations (89 total with 2 TOS additions), but not all are fully functional: 78 full + 5 partial + 6 guided + install wizard not implemented. The embedded JSON-RPC surface has 21 methods and 3 HTTP endpoints.
+**legacy operator shell parity is substantially started but not fully complete.** All 87 public commands have tosctl subcommand registrations (89 total with 2 TOS additions), but not all are fully functional: 78 full + 5 partial + 6 guided + install wizard not implemented. The embedded JSON-RPC surface has 21 methods and 3 HTTP endpoints.
 
 ### What is done
 

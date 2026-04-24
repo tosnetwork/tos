@@ -16,7 +16,7 @@ One node binary (`validator-engine`) serves all three workchains. One canonical 
 
 Different workloads want different trade-offs. TOS does not try to fit them into one VM.
 
-- **Throughput and scale** are solved by TVM's asynchronous message passing + horizontal sharding (the TON-lineage design). The native layer is where 100K+ TPS is realistic, and where contract-to-contract message fan-out is cheap.
+- **Throughput and scale** are solved by TVM's asynchronous message passing + horizontal sharding (the TOS native design). The native layer is where 100K+ TPS is realistic, and where contract-to-contract message fan-out is cheap.
 - **Developer familiarity and the Ethereum tool stack** are solved by running a real EVM as a separate workchain. Solidity contracts deploy as-is; MetaMask, ethers.js, Remix, and Foundry talk to wc=1 through standard JSON-RPC without modification.
 - **Terminal privacy and post-quantum safety** require a protocol-level commitment, not a bolt-on. Uno is a native (not bridged, not retrofitted) privacy chain built on a hash-based STARK proof system — post-quantum at ship, with no Phase 2 migration debt.
 
@@ -26,11 +26,11 @@ Each workchain keeps its own invariants. The masterchain provides shared consens
 
 ## Native Layer (workchain 0) — Asynchronous, Sharded, TVM
 
-The native layer is the direct lineage of the TON architecture: an actor-style, message-driven execution model that scales horizontally through dynamic sharding.
+The native layer is the TOS native architecture: an actor-style, message-driven execution model that scales horizontally through dynamic sharding.
 
 ### Execution model
 
-Every account on wc=0 is an **actor**. A contract call is an **asynchronous message** delivered to an actor's inbox; execution reads the message, mutates local state, and can emit zero or more outbound messages. There are no synchronous cross-contract calls — two contracts interact by passing messages. The TVM (TON Virtual Machine) executes contract bytecode per message, with:
+Every account on wc=0 is an **actor**. A contract call is an **asynchronous message** delivered to an actor's inbox; execution reads the message, mutates local state, and can emit zero or more outbound messages. There are no synchronous cross-contract calls — two contracts interact by passing messages. The TVM (TOS Virtual Machine) executes contract bytecode per message, with:
 
 - deterministic, cell-native state (every account's storage is a Merkle tree of TVM cells)
 - gas metering in nano-TOS, billed from the message
@@ -170,4 +170,4 @@ Build instructions — including Uno workchain prerequisites (liboqs, corrosion-
 
 This repository is licensed under the GNU General Public License v3.0. See [`LICENSE`](LICENSE).
 
-TOS is built on top of foundational work originally developed by Telegram (TON), EverX, Erigon, and RSquad Blockchain Lab. The Uno workchain additionally builds on Polygon's Plonky3 toolkit, NIST PQC finalists (ML-KEM-768), and the Zcash Orchard specification family. This repository continues that line of work as its own system while explicitly acknowledging those prior technical foundations.
+TOS is built on top of foundational open-source blockchain work originally developed by Telegram, EverX, Erigon, and RSquad Blockchain Lab. The Uno workchain additionally builds on Polygon's Plonky3 toolkit, NIST PQC finalists (ML-KEM-768), and the Zcash Orchard specification family. This repository continues that line of work as its own system while explicitly acknowledging those prior technical foundations.

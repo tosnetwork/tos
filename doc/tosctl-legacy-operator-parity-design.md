@@ -1,8 +1,8 @@
-# TOSCTL MyTonCtrl Parity Design
+# TOSCTL Legacy Operator Shell Parity Design
 
 ## Purpose
 
-This document defines how `tosctl` should fully cover the operator command surface that TOS operators currently associate with `mytonctrl`.
+This document defines how `tosctl` should fully cover the operator command surface that TOS operators currently associate with `legacy operator shell`.
 
 The goal is not to preserve the old interactive Python shell. The goal is to preserve workflow coverage while migrating to a clearer Rust CLI model.
 
@@ -10,19 +10,19 @@ This document is the parity baseline for:
 
 - command planning
 - migration tracking
-- future deprecation of direct `mytonctrl` usage in TOS environments
+- future deprecation of direct `legacy operator shell` usage in TOS environments
 
 ## Scope
 
 This parity plan covers the public command surface registered by:
 
-- `mytonctrl/mytonctrl.py`
-- `mytonctrl/modules/*.py`
+- `legacy operator shell main module`
+- `legacy operator shell modules`
 
 It covers both:
 
 - commands with direct operational semantics
-- feature areas that imply required `tosctl` support even when the original implementation was tightly coupled to `mytonctrl` internals
+- feature areas that imply required `tosctl` support even when the original implementation was tightly coupled to `legacy operator shell` internals
 
 It does not require:
 
@@ -32,7 +32,7 @@ It does not require:
 
 ## Audit Status
 
-This document has been cross-checked against the command names registered through `add_command(...)` in the current `mytonctrl` source tree.
+This document has been cross-checked against the command names registered through `add_command(...)` in the current `legacy operator shell` source tree.
 
 Audit result at the time of writing:
 
@@ -42,16 +42,16 @@ Audit result at the time of writing:
 
 Audit method:
 
-- extract the public command names from `mytonctrl/mytonctrl.py` and `mytonctrl/modules/*.py`
+- extract the public command names from `legacy operator shell main module` and `legacy operator shell modules`
 - verify that every discovered command has an explicit replacement path in the mapping tables below
 
-This section should be updated whenever `mytonctrl` adds or removes public commands.
+This section should be updated whenever `legacy operator shell` adds or removes public commands.
 
 ## Design Rules
 
-- Every `mytonctrl` operator workflow must have a documented `tosctl` replacement path.
+- Every `legacy operator shell` operator workflow must have a documented `tosctl` replacement path.
 - `tosctl` primary commands should use descriptive names, not short console mnemonics.
-- Old `mytonctrl` names may be retained as optional aliases where migration value is high.
+- Old `legacy operator shell` names may be retained as optional aliases where migration value is high.
 - Declarative config editing should remain under `config`.
 - Imperative host actions should live under `host`, `install`, `init`, or `backup`.
 - Imperative live-node actions should live under `node`.
@@ -59,7 +59,7 @@ This section should be updated whenever `mytonctrl` adds or removes public comma
 
 ## Target Command Model
 
-The `tosctl` command tree should be extended so that `mytonctrl` parity does not distort existing command boundaries.
+The `tosctl` command tree should be extended so that `legacy operator shell` parity does not distort existing command boundaries.
 
 Target tree:
 
@@ -94,7 +94,7 @@ tosctl
 
 Purpose:
 
-- replace `mytonctrl` commands that manage node host state, installation state, runtime mode, and operator-local settings
+- replace `legacy operator shell` commands that manage node host state, installation state, runtime mode, and operator-local settings
 
 Target groups:
 
@@ -124,7 +124,7 @@ tosctl install wizard
 
 Purpose:
 
-- replace `mytonctrl` backup and restore workflows with explicit, auditable commands
+- replace `legacy operator shell` backup and restore workflows with explicit, auditable commands
 
 Target group:
 
@@ -286,7 +286,7 @@ tosctl observe efficiency
 
 Purpose:
 
-- replace `mytonctrl` alert-bot lifecycle and expose telemetry as first-class operational features
+- replace `legacy operator shell` alert-bot lifecycle and expose telemetry as first-class operational features
 
 Target group:
 
@@ -308,7 +308,7 @@ tosctl observe metrics show
 
 ### Host Lifecycle and General Shell Commands
 
-| `mytonctrl` command | Target `tosctl` command | Notes |
+| `legacy operator shell` command | Target `tosctl` command | Notes |
 |---|---|---|
 | `about` | `tosctl host about` | Static version and environment info |
 | `update` | `tosctl host update` | Refresh package or source metadata |
@@ -327,14 +327,14 @@ tosctl observe metrics show
 
 ### Backup Commands
 
-| `mytonctrl` command | Target `tosctl` command | Notes |
+| `legacy operator shell` command | Target `tosctl` command | Notes |
 |---|---|---|
 | `create_backup` | `tosctl backup create` | Must preserve preflight and temp-dir handling |
 | `restore_backup` | `tosctl backup restore` | Must preserve confirmation and safety checks |
 
 ### Wallet Commands
 
-| `mytonctrl` command | Target `tosctl` command | Notes |
+| `legacy operator shell` command | Target `tosctl` command | Notes |
 |---|---|---|
 | `nw` | `tosctl wallet create` | Replace short alias with explicit command |
 | `aw` | `tosctl wallet activate` | Support single wallet or `--all` |
@@ -348,7 +348,7 @@ tosctl observe metrics show
 
 ### Basic Pool Commands
 
-| `mytonctrl` command | Target `tosctl` command | Notes |
+| `legacy operator shell` command | Target `tosctl` command | Notes |
 |---|---|---|
 | `pools_list` | `tosctl pool ls` | Pool inventory and status |
 | `delete_pool` | `tosctl pool rm` | Local pool config deletion |
@@ -357,7 +357,7 @@ tosctl observe metrics show
 
 ### Nominator Pool Commands
 
-| `mytonctrl` command | Target `tosctl` command | Notes |
+| `legacy operator shell` command | Target `tosctl` command | Notes |
 |---|---|---|
 | `new_pool` | `tosctl pool nominator create` | Create local nominator pool deployment bundle |
 | `activate_pool` | `tosctl pool nominator activate` | Activate/deploy pool |
@@ -367,7 +367,7 @@ tosctl observe metrics show
 
 ### Single Nominator Pool Commands
 
-| `mytonctrl` command | Target `tosctl` command | Notes |
+| `legacy operator shell` command | Target `tosctl` command | Notes |
 |---|---|---|
 | `new_single_pool` | `tosctl pool single create` | Single-nominator pool creation |
 | `activate_single_pool` | `tosctl pool single activate` | Deployment path |
@@ -375,7 +375,7 @@ tosctl observe metrics show
 
 ### Liquid Staking Controller Commands
 
-| `mytonctrl` command | Target `tosctl` command | Notes |
+| `legacy operator shell` command | Target `tosctl` command | Notes |
 |---|---|---|
 | `create_controllers` | `tosctl pool liquid controller create` | Create controller set |
 | `update_controllers` | `tosctl pool liquid controller update` | Alias to same workflow or refresh variant |
@@ -393,7 +393,7 @@ tosctl observe metrics show
 
 ### Validator Voting and Status Commands
 
-| `mytonctrl` command | Target `tosctl` command | Notes |
+| `legacy operator shell` command | Target `tosctl` command | Notes |
 |---|---|---|
 | `vo` | `tosctl vote offer cast` | Preserve multi-offer batch support |
 | `ve` | `tosctl vote election cast` | Election-entry action |
@@ -407,7 +407,7 @@ tosctl observe metrics show
 
 ### Collator and Whitelist Commands
 
-| `mytonctrl` command | Target `tosctl` command | Notes |
+| `legacy operator shell` command | Target `tosctl` command | Notes |
 |---|---|---|
 | `add_collator` | `tosctl node collator add` | Validator-side collator list mutation |
 | `delete_collator` | `tosctl node collator rm` | Remove collator from validator list |
@@ -423,7 +423,7 @@ tosctl observe metrics show
 
 ### Collator Config Commands
 
-| `mytonctrl` command | Target `tosctl` command | Notes |
+| `legacy operator shell` command | Target `tosctl` command | Notes |
 |---|---|---|
 | `set_collation_config` | `tosctl node collator-config set` | Accept local file or URL |
 | `update_collation_config` | `tosctl node collator-config refresh` | Re-apply configured source |
@@ -431,7 +431,7 @@ tosctl observe metrics show
 
 ### Custom Overlay Commands
 
-| `mytonctrl` command | Target `tosctl` command | Notes |
+| `legacy operator shell` command | Target `tosctl` command | Notes |
 |---|---|---|
 | `add_custom_overlay` | `tosctl node overlay add` | Add static or dynamic overlay |
 | `list_custom_overlays` | `tosctl node overlay ls` | Show configured overlays |
@@ -439,7 +439,7 @@ tosctl observe metrics show
 
 ### Account Utility Commands
 
-| `mytonctrl` command | Target `tosctl` command | Notes |
+| `legacy operator shell` command | Target `tosctl` command | Notes |
 |---|---|---|
 | `vas` | `tosctl account status` | Account status and code/data summary |
 | `vah` | `tosctl account txs` | Account history |
@@ -449,7 +449,7 @@ tosctl observe metrics show
 
 ### Alert Commands
 
-| `mytonctrl` command | Target `tosctl` command | Notes |
+| `legacy operator shell` command | Target `tosctl` command | Notes |
 |---|---|---|
 | `enable_alert` | `tosctl observe alert enable` | Per-alert or global enable |
 | `disable_alert` | `tosctl observe alert disable` | Per-alert or global disable |
@@ -459,17 +459,17 @@ tosctl observe metrics show
 
 ### Expert and Integration Commands
 
-| `mytonctrl` command | Target `tosctl` command | Notes |
+| `legacy operator shell` command | Target `tosctl` command | Notes |
 |---|---|---|
 | `remove_btc_teleport` | `tosctl admin btc-teleport rm` | Keep outside normal operator path |
 
 ## Feature Parity Beyond Direct Commands
 
-Some `mytonctrl` modules matter even without their own public console commands.
+Some `legacy operator shell` modules matter even without their own public console commands.
 
 ### Liteserver Mode
 
-`mytonctrl` has an explicit liteserver mode model. `tosctl` should cover this through:
+`legacy operator shell` has an explicit liteserver mode model. `tosctl` should cover this through:
 
 - `tosctl host mode enable liteserver`
 - `tosctl host mode disable liteserver`
@@ -477,7 +477,7 @@ Some `mytonctrl` modules matter even without their own public console commands.
 
 ### Prometheus Integration
 
-`mytonctrl` includes Prometheus-oriented metric export logic. `tosctl` should preserve the capability through:
+`legacy operator shell` includes Prometheus-oriented metric export logic. `tosctl` should preserve the capability through:
 
 - `tosctl observe metrics show`
 - `tosctl observe metrics push`
@@ -485,7 +485,7 @@ Some `mytonctrl` modules matter even without their own public console commands.
 
 ### TOS HTTP API, LS Proxy, and TOS Storage
 
-`mytonctrl` installer manages sidecar services such as `tos-http-api`, liteserver proxy, and TOS storage. TOS should not clone these blindly, but the workflow must still exist:
+`legacy operator shell` installer manages sidecar services such as `tos-http-api`, liteserver proxy, and TOS storage. TOS should not clone these blindly, but the workflow must still exist:
 
 - replace `tos-http-api` with embedded JSON-RPC in `validator-engine`
 - expose proxy and storage sidecars through `tosctl install` and `tosctl host mode`
@@ -523,7 +523,7 @@ Aliases are optional and should never replace descriptive commands in documentat
 - `vote`
 - `node` basic status and collator list
 
-This phase closes the most visible `mytonctrl` gap.
+This phase closes the most visible `legacy operator shell` gap.
 
 ### Phase 2
 
@@ -540,11 +540,11 @@ This phase closes the most visible `mytonctrl` gap.
 
 ## Summary
 
-`tosctl` is not yet at `mytonctrl` parity today. This document defines the target state where every operator-facing `mytonctrl` command has a first-class `tosctl` replacement.
+`tosctl` is not yet at `legacy operator shell` parity today. This document defines the target state where every operator-facing `legacy operator shell` command has a first-class `tosctl` replacement.
 
 The replacement should be:
 
 - more structured
 - better separated by workflow
 - API-backed where possible
-- compatible enough that TOS operators do not need to fall back to `mytonctrl`
+- compatible enough that TOS operators do not need to fall back to `legacy operator shell`

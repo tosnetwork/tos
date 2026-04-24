@@ -5,7 +5,7 @@ export abstract class Op {
 	static readonly excesses = 0xd53276db;
 	static readonly burn = 0x595f07bc;
 	static readonly burn_notification = 0x7bdd97de;
-	static readonly withdraw_tons = 0x6d8e5e3c;
+	static readonly withdraw_tos = 0x6d8e5e3c;
 	static readonly withdraw_jettons = 0x768a50b2;
 	
 	static readonly vote = 0x69fb306c;

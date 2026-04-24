@@ -128,7 +128,7 @@ std::string ParsedAccountState::to_address_info_json() const {
       << ",\"last_transaction_id\":{\"@type\":\"internal.transactionId\""
       << ",\"lt\":\"" << last_trans_lt << "\""
       << ",\"hash\":" << td::JsonString(td::Slice(last_trans_hash_b64)) << "}"
-      << ",\"block_id\":{\"@type\":\"ton.blockIdExt\""
+      << ",\"block_id\":{\"@type\":\"tos.blockIdExt\""
       << ",\"workchain\":" << blk_workchain
       << ",\"shard\":\"" << blk_shard << "\""
       << ",\"seqno\":" << blk_seqno
@@ -151,7 +151,7 @@ std::string ParsedAccountState::to_extended_info_json(const std::string& addr_st
       << ",\"last_transaction_id\":{\"@type\":\"internal.transactionId\""
       << ",\"lt\":\"" << last_trans_lt << "\""
       << ",\"hash\":" << td::JsonString(td::Slice(last_trans_hash_b64)) << "}"
-      << ",\"block_id\":{\"@type\":\"ton.blockIdExt\""
+      << ",\"block_id\":{\"@type\":\"tos.blockIdExt\""
       << ",\"workchain\":" << blk_workchain
       << ",\"shard\":\"" << blk_shard << "\""
       << ",\"seqno\":" << blk_seqno

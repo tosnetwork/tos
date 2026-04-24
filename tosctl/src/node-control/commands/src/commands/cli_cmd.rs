@@ -42,7 +42,7 @@ pub enum Commands {
     #[command(name = "service")]
     Service(ServiceCmd),
 
-    // ─── New operator commands (mytonctrl parity) ────────────────────
+    // ─── New operator commands (legacy operator parity) ─────────────
     /// Host lifecycle, modes, settings, updates
     #[command(name = "host")]
     Host(HostCmd),
@@ -77,7 +77,7 @@ pub enum Commands {
     #[command(name = "install")]
     Install(InstallCmd),
 
-    // ─── Hidden shortcuts (mytonctrl-style mnemonics) ───────────────
+    // ─── Hidden shortcuts (legacy-style mnemonics) ─────────────────
     /// Shortcut: list wallets (alias for `wallet ls`)
     #[command(name = "wl", hide = true)]
     WalletLs,

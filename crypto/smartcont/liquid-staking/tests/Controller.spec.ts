@@ -6,7 +6,7 @@ import '@ton-community/test-utils';
 import { compile } from '@ton-community/blueprint';
 import { FlatTransactionComparable, randomAddress } from "@ton-community/test-utils";
 import { calcMaxPunishment, getElectionsConf, getValidatorsConf, getVset, loadConfig, packValidatorsSet } from "../wrappers/ValidatorUtils";
-import { buff2bigint, computedGeneric, differentAddress, getMsgExcess, getRandomInt, getRandomTon, sendBulkMessage } from "../utils";
+import { buff2bigint, computedGeneric, differentAddress, getMsgExcess, getRandomInt, getRandomTos, sendBulkMessage } from "../utils";
 import { Conf, ControllerState, Errors, Op } from "../PoolConstants";
 import { computeMessageForwardFees, getMsgPrices } from "../fees";
 
@@ -477,7 +477,7 @@ describe('Cotroller mock', () => {
     it('Controller credit should only be accepted from pool address', async() => {
       const notPool = differentAddress(poolAddress);
       const stateBefore  = await getContractData(controller.address);
-      const borrowAmount = getRandomTon(100000, 200000)
+      const borrowAmount = getRandomTos(100000, 200000)
       // 2000 TOS interest
       const msgVal       = borrowAmount + toNano('2000');
       let res = await controller.sendCredit(bc.sender(notPool), borrowAmount, msgVal);
@@ -675,7 +675,7 @@ describe('Cotroller mock', () => {
         expect(higherReq - baseReq).toEqual(expStakeGrow);
       });
       it('Test max punishment calculation', async () => {
-        const testStake = getRandomTon(100000, 200000);
+        const testStake = getRandomTos(100000, 200000);
         const confDict  = loadConfig(bc.config);
 
         confDict.set(40, beginCell()
@@ -789,7 +789,7 @@ describe('Cotroller mock', () => {
         if(getCurTime() < electStarted)
           bc.now = curVset.utime_unitl - eConf.begin_before + 1;
 
-        const loanAmount  = getRandomTon(10000, 20000);
+        const loanAmount  = getRandomTos(10000, 20000);
         const maxInterest = getRandomInt(100, 300) << 8;
         const reqLoanMsg  = Controller.requestLoanMessage(loanAmount, loanAmount, maxInterest);
         const controllerSmc = await bc.getContract(controller.address);
@@ -838,7 +838,7 @@ describe('Cotroller mock', () => {
         expect(res.transactions).not.toHaveTransaction(bounceTx);
         // Checking less that requested interest
         await loadSnapshot('creditAwaited');
-        res = await controller.sendCredit(poolSender, maxExpValue - BigInt(getRandomTon(1, 20)), loanAmount);
+        res = await controller.sendCredit(poolSender, maxExpValue - BigInt(getRandomTos(1, 20)), loanAmount);
         expect(res.transactions).toHaveTransaction({
           on: controller.address,
           from: poolAddress,
@@ -856,7 +856,7 @@ describe('Cotroller mock', () => {
       if(getCurTime() < electStarted)
         bc.now = curVset.utime_unitl - eConf.begin_before + 1;
 
-      const loanAmount   = getRandomTon(100000, 200000);
+      const loanAmount   = getRandomTos(100000, 200000);
       const interest     = loanAmount * BigInt(Conf.testInterest) / Conf.shareBase;
       const borrowAmount = loanAmount + interest;
       const stateBefore  = await controller.getControllerData();
@@ -881,7 +881,7 @@ describe('Cotroller mock', () => {
     it.skip('Borrow time should not update if already not 0', async () => {
       await loadSnapshot('borrowed');
       const dataBefore   = await controller.getControllerData();
-      const loanAmount   = getRandomTon(100000, 200000);
+      const loanAmount   = getRandomTos(100000, 200000);
       const interest     = loanAmount * BigInt(Conf.testInterest) / Conf.shareBase;
       const borrowAmount = loanAmount + interest;
 
@@ -1074,7 +1074,7 @@ describe('Cotroller mock', () => {
       it('Loan repayment bounce only accepted from pool', async () => {
         const controllerSmc = await bc.getContract(controller.address);
         const notPool = differentAddress(poolAddress);
-        const repay   = getRandomTon(100000, 200000);
+        const repay   = getRandomTos(100000, 200000);
         const stateBefore = await getControllerState();
         const res = controllerSmc.receiveMessage(internal({
           from: notPool,
@@ -1089,7 +1089,7 @@ describe('Cotroller mock', () => {
       it('Loan repayment bounce from pool should trigger borrow amount recovery', async () => {
         const controllerSmc = await bc.getContract(controller.address);
         const notPool = differentAddress(poolAddress);
-        const repay   = getRandomTon(100000, 200000);
+        const repay   = getRandomTos(100000, 200000);
         const bounceTime = getCurTime();
         const res = controllerSmc.receiveMessage(internal({
           from: poolAddress,
@@ -1198,7 +1198,7 @@ describe('Cotroller mock', () => {
       });
       it('New stake should be accounted correctly', async () => {
         const stateBefore = await controller.getControllerData();
-        const deposit = stateBefore.borrowedAmount + getRandomTon(1000, 2000);
+        const deposit = stateBefore.borrowedAmount + getRandomTos(1000, 2000);
         const newStakeMsg = Controller.newStakeMessage(deposit,
                                                        controller.address,
                                                        validator.keys.publicKey,
@@ -1761,7 +1761,7 @@ describe('Cotroller mock', () => {
 
         for(let i = 1; i < 4; i++) {
           const newSetCell = randVset();
-          const msgVal     = getRandomTon(1, 10);
+          const msgVal     = getRandomTos(1, 10);
           const changeTime = getCurTime();
           const res = await controller.sendUpdateHash(vSender, msgVal);
           const dataAfter = await controller.getControllerData();

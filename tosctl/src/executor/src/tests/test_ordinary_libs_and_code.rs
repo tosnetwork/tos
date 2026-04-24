@@ -14,7 +14,7 @@
 use super::*;
 use pretty_assertions::assert_eq;
 use std::sync::LazyLock;
-use ton_assembler::compile_code_to_cell;
+use tos_assembler::compile_code_to_cell;
 use chain_block::{
     AccountId, AccountStatus, BuilderData, Cell, Coins, CurrencyCollection, GetRepresentationHash,
     HashmapE, MsgAddressInt, Serializable, SliceData, StateInit, Status, TrComputePhase,
@@ -346,7 +346,7 @@ fn test_my_code() {
 #[test]
 fn test_library_cell_code() {
     cross_check::disable_cross_check(); // need to support mc_state_proof update
-    let my_code = ton_assembler::compile_code_to_cell(
+    let my_code = tos_assembler::compile_code_to_cell(
         "
         MYCODE
         CTOS ; 100 gas

@@ -89,7 +89,7 @@ export class JettonWallet implements Contract {
      * The message follows TEP-74 `transfer` layout:
      *   op(32) query_id(64) amount(coins) destination(address)
      *   response_destination(address) custom_payload(maybe-ref)
-     *   forward_ton_amount(coins) forward_payload(either)
+     *   forward amount(coins) forward_payload(either)
      *
      * @param args.to              - new owner of the jettons
      * @param args.amount          - number of jettons to transfer (indivisible units)

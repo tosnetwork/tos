@@ -1,5 +1,5 @@
 # Config vars
-clippy                     = ton_block ton_block_json emulator ton_tl
+clippy                     = chain_block chain_block_json tos_emulator tl_api
 simple                     = adnl block block_json emulator nodectl node secrets-vault tl
 ci_run                     = block executor vm
 perf_cmd                   = "record -F 997 --call-graph dwarf,16384 -g -o ./target/perf.data"
@@ -20,11 +20,11 @@ check:
 	@cargo check --all --tests --release --features "xp25"
 
 clippy:
-	@cargo clippy --package ton_block --release --no-deps
-	@cargo clippy --package ton_block_json --release --no-deps
-#	@cargo clippy --package emulator --release --no-deps
-	@cargo clippy --package ton_api --release --no-deps
-	@cargo clippy --package ton_assembler --release --no-deps
+	@cargo clippy --package chain_block --release --no-deps
+	@cargo clippy --package chain_block_json --release --no-deps
+#	@cargo clippy --package tos_emulator --release --no-deps
+	@cargo clippy --package tl_api --release --no-deps
+	@cargo clippy --package tos_assembler --release --no-deps
 	@cargo clippy --package lockfree --release --no-deps
 
 docker-image:
@@ -53,9 +53,9 @@ fmt:
 	@cargo +nightly fmt $(check) --manifest-path ./node-control/elections/Cargo.toml
 	@cargo +nightly fmt $(check) --manifest-path ./node-control/nodectl/Cargo.toml
 	@cargo +nightly fmt $(check) --manifest-path ./node-control/service/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./node-control/ton-http-api-client/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./tl/ton_api/Cargo.toml
-	@cargo +nightly fmt $(check) --manifest-path ./tl/ton_tl_codegen/Cargo.toml
+	@cargo +nightly fmt $(check) --manifest-path ./node-control/chain-rpc-client/Cargo.toml
+	@cargo +nightly fmt $(check) --manifest-path ./tl/api/Cargo.toml
+	@cargo +nightly fmt $(check) --manifest-path ./tl/codegen/Cargo.toml
 	@cargo +nightly fmt $(check) --manifest-path ./secrets-vault/Cargo.toml
 	@cargo +nightly fmt $(check) --manifest-path ./vm/Cargo.toml
 	@rustfmt +nightly $(check) --edition 2021 --config-path ./ ./common/src/*.rs
@@ -65,11 +65,20 @@ fmt:
 
 test: $(addprefix test-, $(simple)) $(addprefix test-ci_run-, $(ci_run))
 
-test-ci_run-%:
-	@cargo test $(what) $(config) --package ton_$* --features "ci_run" -- --nocapture
+test-ci_run-block:
+	@cargo test $(what) $(config) --package chain_block --features "ci_run" -- --nocapture
 
-test-%:
-	@cargo test $(what) $(config) --package ton_$* -- --nocapture
+test-ci_run-executor:
+	@cargo test $(what) $(config) --package tos_executor --features "ci_run" -- --nocapture
+
+test-ci_run-vm:
+	@cargo test $(what) $(config) --package tos_vm --features "ci_run" -- --nocapture
+
+test-block:
+	@cargo test $(what) $(config) --package chain_block -- --nocapture
+
+test-block_json:
+	@cargo test $(what) $(config) --package chain_block_json -- --nocapture
 
 test-adnl:
 	@cargo test test_adnl_$(what) $(config) --package adnl --features "client,server,node,telemetry" -- --nocapture
@@ -98,8 +107,8 @@ test-storage:
 	@cargo test $(what) $(config) --package storage -- --nocapture
 
 test-tl:
-	@cargo test $(what) $(config) --package ton_tl_codegen -- --nocapture
-	@cargo test $(what) $(config) --package ton_api -- --nocapture
+	@cargo test $(what) $(config) --package tl_codegen -- --nocapture
+	@cargo test $(what) $(config) --package tl_api -- --nocapture
 
 test-emulator:
 	@cargo test $(what) $(config) --package emulator -- --nocapture
@@ -115,7 +124,7 @@ xp25-test-adnl:
 	@cargo test test_rldp $(config) --package adnl --features "client,server,node, xp25" -- --nocapture
 
 xp25-test-block:
-	@cargo test $(what) $(config) --package ton_block --features "ci_run,xp25" -- --nocapture
+	@cargo test $(what) $(config) --package chain_block --features "ci_run,xp25" -- --nocapture
 
 xp25-test-node:
 	@cargo test $(what) $(config) --bins --features "ci_run,xp25" -- --nocapture

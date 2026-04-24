@@ -10,9 +10,9 @@
 // Core building blocks
 // ---------------------------------------------------------------------------
 
-/** Block identifier with hashes (matches ton.blockIdExt). */
+/** Block identifier with hashes. */
 export interface BlockIdExt {
-  "@type": "ton.blockIdExt";
+  "@type": "tos.blockIdExt";
   workchain: number;
   shard: string;
   seqno: number;
@@ -113,7 +113,7 @@ export interface MasterchainInfo {
   last: BlockIdExt;
   state_root_hash: string;
   init: {
-    "@type": "ton.blockIdExt";
+    "@type": "tos.blockIdExt";
     workchain: number;
     shard: string;
     seqno: number;

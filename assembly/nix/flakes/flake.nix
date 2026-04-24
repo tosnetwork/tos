@@ -45,7 +45,7 @@
 
           dontAddStaticConfigureFlags = stdenv.isDarwin;
 
-          cmakeFlags = [ "-DTON_USE_ABSEIL=OFF" "-DNIX=ON" ] ++ optionals staticMusl [
+          cmakeFlags = [ "-DTOS_USE_ABSEIL=OFF" "-DNIX=ON" ] ++ optionals staticMusl [
             "-DCMAKE_CROSSCOMPILING=OFF" # pkgsStatic sets cross
           ] ++ optionals (staticGlibc || staticMusl) [
             "-DCMAKE_LINK_SEARCH_START_STATIC=ON"

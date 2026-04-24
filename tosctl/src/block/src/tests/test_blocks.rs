@@ -255,7 +255,7 @@ fn read_file_de_and_serialise(filename: &Path) -> Cell {
 }
 
 #[test]
-fn test_real_ton_boc() {
+fn test_real_tos_boc() {
     for entry in read_dir(Path::new("src/tests/data")).expect("Error reading BOCs dir") {
         let entry = entry.unwrap();
         let in_path = entry.path();
@@ -275,7 +275,7 @@ fn test_real_ton_boc() {
 }
 
 #[test]
-fn test_real_ton_mgs() {
+fn test_real_tos_mgs() {
     //let in_path = Path::new("src/tests/data/wallet-query.boc");
     //let in_path = Path::new("src/tests/data/new-wallet-query.boc");
     //let in_path = Path::new("src/tests/data/send-to-query.boc");
@@ -395,7 +395,7 @@ fn test_real_block(in_path: &Path) -> Block {
 }
 
 #[test]
-fn test_real_ton_key_block() {
+fn test_real_tos_key_block() {
     let in_path = Path::new("src/tests/data/key_block.boc");
     let block = test_real_block(in_path);
     let block = Block::construct_from_cell(block.serialize().unwrap()).unwrap();
@@ -410,7 +410,7 @@ fn test_real_ton_key_block() {
 }
 
 #[test]
-fn test_all_real_ton_block_with_transaction() {
+fn test_all_real_tos_block_with_transaction() {
     for entry in read_dir(Path::new("src/tests/data/block_with_transaction"))
         .expect("Error reading BOCs dir")
     {
@@ -431,7 +431,7 @@ fn test_all_real_ton_block_with_transaction() {
 }
 
 #[test]
-fn test_real_ton_config() {
+fn test_real_tos_config() {
     // to get current config run lite_client with saveconfig config.boc
     let in_path = Path::new("src/tests/data/config.boc");
     println!("Config file: {:?}", in_path);

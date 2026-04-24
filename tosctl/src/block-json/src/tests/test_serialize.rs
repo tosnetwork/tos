@@ -999,9 +999,9 @@ fn test_crafted_key_block_into_json() {
         prices: JettonBridgePrices {
             bridge_burn_fee: 1000.into(),
             bridge_mint_fee: 2000.into(),
-            wallet_min_tons_for_storage: 3000.into(),
+            wallet_min_tos_for_storage: 3000.into(),
             wallet_gas_consumption: 4000.into(),
-            minter_min_tons_for_storage: 5000.into(),
+            minter_min_tos_for_storage: 5000.into(),
             discover_gas_consumption: 6000.into(),
         },
         state_flags: 17,

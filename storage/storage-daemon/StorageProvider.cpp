@@ -842,7 +842,7 @@ void StorageProvider::send_coins(ContractAddress dest, td::RefInt256 amount, std
     }
     b.store_bytes(td::Slice(message));
   }
-  LOG(INFO) << "Sending " << amount << " nanoTON to " << dest.to_string();
+  LOG(INFO) << "Sending " << amount << " nanoTOS to " << dest.to_string();
   td::actor::send_closure(contract_wrapper_, &FabricContractWrapper::send_internal_message, dest, amount,
                           b.finalize_novm(), std::move(promise));
 }

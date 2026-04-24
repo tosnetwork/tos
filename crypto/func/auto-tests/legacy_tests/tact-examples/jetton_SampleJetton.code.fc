@@ -82,13 +82,13 @@ cell __tact_dict_get_code(cell dict, int id) inline {
 }
 
 builder __gen_write_TokenTransferInternal(builder build_0, (int, int, slice, slice, int, slice) v) inline_ref {
-    var (v'queryId, v'amount, v'from, v'responseAddress, v'forwardTonAmount, v'forwardPayload) = v;
+    var (v'queryId, v'amount, v'from, v'responseAddress, v'forwardTosAmount, v'forwardPayload) = v;
     build_0 = store_uint(build_0, 395134233, 32);
     build_0 = build_0.store_uint(v'queryId, 64);
     build_0 = build_0.store_coins(v'amount);
     build_0 = __tact_store_address(build_0, v'from);
     build_0 = __tact_store_address_opt(build_0, v'responseAddress);
-    build_0 = build_0.store_coins(v'forwardTonAmount);
+    build_0 = build_0.store_coins(v'forwardTosAmount);
     build_0 = build_0.store_slice(v'forwardPayload);
     return build_0;
 }

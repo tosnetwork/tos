@@ -1,12 +1,12 @@
 cmake_minimum_required(VERSION 3.1 FATAL_ERROR)
 
-project(TonExample VERSION 1.0 LANGUAGES CXX)
+project(TosExample VERSION 1.0 LANGUAGES CXX)
 
 find_package(Toslib 0.5 REQUIRED)
 
-add_executable(tonjson_example tonjson_example.cpp)
-target_link_libraries(tonjson_example PRIVATE Toslib::ToslibJson)
-set_property(TARGET tonjson_example PROPERTY CXX_STANDARD 11)
+add_executable(tosjson_example tosjson_example.cpp)
+target_link_libraries(tosjson_example PRIVATE Toslib::ToslibJson)
+set_property(TARGET tosjson_example PROPERTY CXX_STANDARD 11)
 
 add_executable(toslib_example toslib_example.cpp)
 

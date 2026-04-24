@@ -91,7 +91,7 @@
 \emergencystretch=2em
 
 \title{The Open System}
-\author{TOMI SETSU\\Based on the original TON paper by Dr.\ Nikolai Durov}
+\author{TOMI SETSU\\Based on the original TOS paper by Dr.\ Nikolai Durov}
 \begin{document}
 
 %\pagestyle{myheadings}
@@ -101,7 +101,7 @@
   The aim of this text is to provide a first description of The Open
   System (TOS) and its blockchain, networking, storage, service and
   execution technologies. This document is written on top of the
-  original TON paper, preserving its architecture and broad
+  original TOS paper, preserving its architecture and broad
   explanatory structure while adapting it to the TOS codebase,
   product direction, consensus evolution, operational model and
   workchain strategy.
@@ -111,7 +111,7 @@
 \markbothsame{Introduction}
 
 {\em The Open System (TOS)} is a fast, secure and scalable
-multichain network project. It keeps the original TON
+multichain network project. It keeps the original TOS
 architecture of a tightly-coupled masterchain, workchains and
 shardchains, but is developed as its own system with its own runtime,
 tooling, operator model, standards surfaces and roadmap. One may
@@ -139,7 +139,7 @@ testing.
 \tableofcontents
 
 \clearpage
-\mysection{Brief Description of TOS Components}\label{sect:ton.components}
+\mysection{Brief Description of TOS Components}\label{sect:tos.components}
 
 {\em The Open System (TOS)} is a combination of the
 following components:
@@ -162,13 +162,13 @@ following components:
   smart contracts), but also able to support arbitrary distributed
   services, blockchain-related or not.
 \item A distributed file storage technology {\em (TOS Storage;}
-  cf.~\ptref{sp:ex.ton.storage}), accessible through {\em TOS
+  cf.~\ptref{sp:ex.tos.storage}), accessible through {\em TOS
     Network}, used by the TOS Blockchain to store archive copies of
   blocks and status data (snapshots), but also available for storing
   arbitrary files for users or other services running on the platform,
   with torrent-like access technology.
 \item A network proxy/anonymizer layer {\em (TOS Proxy;}
-  cf.~\ptref{sp:ex.ton.proxy} and~\ptref{sp:tunnels}), similar to the
+  cf.~\ptref{sp:ex.tos.proxy} and~\ptref{sp:tunnels}), similar to the
   $I^2P$ (Invisible Internet Project), used to hide the identity and
   IP addresses of {\em TOS Network\/} nodes if necessary (e.g., nodes
   committing transactions from accounts with large amounts of
@@ -187,13 +187,13 @@ following components:
   interfaces (cf.~\ptref{sp:pub.int.smartc}) enabling browser-like or
   smartphone application interaction. These formal interfaces and
   persistent service entry points can be published in the TOS
-  Blockchain (cf.~\ptref{sp:ui.ton.dns}); actual nodes providing
+  Blockchain (cf.~\ptref{sp:ui.tos.dns}); actual nodes providing
   service at any given moment can be looked up through the {\em TOS
     DHT\/} starting from information published in the TOS Blockchain
   (cf.~\ptref{sp:loc.serv}). Services may create smart contracts in
   the TOS Blockchain to offer some guarantees to their clients
   (cf.~\ptref{sp:mixed.serv}).
-\item {\em TOS DNS\/} (cf.~\ptref{sp:ton.dns}), a service for
+\item {\em TOS DNS\/} (cf.~\ptref{sp:tos.dns}), a service for
   assigning human-readable names to accounts, smart contracts,
   services and network nodes.
 \item A canonical operator and machine-facing surface, centered on the
@@ -214,7 +214,7 @@ blockchain, they turn out to have useful and interesting functionality
 by themselves. Combined, they allow the platform to host more
 versatile applications than it would be possible by just using the TOS
 Blockchain (cf.~\ptref{sp:blockchain.facebook}
-and~\ptref{sect:ton.service.impl}).
+and~\ptref{sect:tos.service.impl}).
 
 \clearpage
 \mysection{TOS Blockchain}\label{sect:blockchain}
@@ -687,7 +687,7 @@ declared as acceptable cryptocurrencies by the receiving workchain.
 The simplest form of such messaging is a value transfer from one
 (usually not a smart-contract) account to another.
 
-\nxsubpoint\label{sp:tonvm} \embt(TOS Virtual Machine.)  The {\em TOS
+\nxsubpoint\label{sp:tosvm} \embt(TOS Virtual Machine.)  The {\em TOS
   Virtual Machine (TVM)} is the virtual machine used to execute smart-contract
 code in the masterchain and in the basic workchain. Other workchains
 may use other virtual machines alongside or instead of the TVM. In
@@ -3760,7 +3760,7 @@ instantly while preserving a consistent state of all shardchains). As
 such, it will be a truly scalable general-purpose blockchain project,
 capable of accommodating essentially any applications that can be
 implemented in a blockchain at all. When augmented by the other
-components of the TOS Project (cf.~\ptref{sect:ton.components}), its
+components of the TOS Project (cf.~\ptref{sect:tos.components}), its
 possibilities expand even further.
 
 \nxsubpoint\label{sp:blockchain.facebook} \embtx(Is it possible to
@@ -3827,7 +3827,7 @@ distributed off-chain storage (such as FileCoin or TOS Storage) would
 be a better idea. This is the reason why TOS is not just a blockchain
 project, but a collection of several components (TOS P2P Network, TOS
 Storage, TOS Services) centered around the TOS Blockchain as outlined
-in Chapters~\ptref{sect:ton.components} and~\ptref{sect:services}.
+in Chapters~\ptref{sect:tos.components} and~\ptref{sect:services}.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %
@@ -4000,7 +4000,7 @@ projects---can be added on the level of the TOS Abstract Datagram
 Network Layer, without affecting the functionality of all higher-level
 TOS network protocols, which would be agnostic of such an
 addition. This opportunity is exploited by the {\em TOS Proxy\/}
-service (cf.~\ptref{sp:ex.ton.proxy}).
+service (cf.~\ptref{sp:ex.tos.proxy}).
 
 \nxsubpoint\label{sp:net.startup} \embt(Zero channel and the bootstrap
 problem.)  Normally, a TOS ADNL node will have some ``neighbor
@@ -4247,7 +4247,7 @@ tracker'', where all nodes interested in a certain ``torrent'' (i.e.,
 a certain file) can find other nodes that are interested in the same
 torrent, or already have a copy.
 
-{\em TOS Storage\/} (cf.~\ptref{sp:ex.ton.storage}) uses this
+{\em TOS Storage\/} (cf.~\ptref{sp:ex.tos.storage}) uses this
 technology to find the nodes that have a copy of a required file
 (e.g., a snapshot of the state of a shardchain, or an old
 block). However, its more important use is to create ``overlay
@@ -4373,7 +4373,7 @@ In most cases, the overlay network is implemented using some protocol
 built upon the network protocol of the larger network. It may use the
 same addresses as the larger network, or use custom addresses.
 
-\nxsubpoint\label{sp:ton.overlays} \embt(Overlay networks in TOS.)
+\nxsubpoint\label{sp:tos.overlays} \embt(Overlay networks in TOS.)
 Overlay networks in TOS are built upon the ADNL protocol discussed
 in~\ptref{sect:ANL}; they use 256-bit ADNL abstract addresses as
 addresses in the overlay networks as well. Each node usually selects
@@ -4464,7 +4464,7 @@ This enables the joining member to populate her ``adjacency'' or
 ``neighbor list'' with respect to the overlay network, by selecting
 some newly-learned network nodes and establishing links to them (i.e.,
 dedicated ADNL point-to-point channels, as outlined
-in~\ptref{sp:ton.overlays}). After that, special messages are sent to
+in~\ptref{sp:tos.overlays}). After that, special messages are sent to
 all neighbors indicating that the new member is ready to work in the
 overlay network. The neighbors include their links to the new member
 in their neighbor lists.
@@ -4659,7 +4659,7 @@ of the services that will be provided by the TOS Project itself,
 either from the very beginning or at a later time.
 
 \mysubsection{TOS Service Implementation Strategies}%
-\label{sect:ton.service.impl}
+\label{sect:tos.service.impl}
 
 We start with a discussion of how different blockchain and
 network-related applications and services may be implemented inside
@@ -4702,7 +4702,7 @@ designed to keep files on behalf of other applications and services,
 even though a human user might use it directly as well. A hypothetical
 ``Facebook in a blockchain'' (cf.~\ptref{sp:blockchain.facebook}) or
 some messaging application, if made available through the TOS Network (i.e.,
-implemented as a ``tos-service''; cf.~\ptref{sp:telegram.ton.serv}),
+implemented as a ``tos-service''; cf.~\ptref{sp:telegram.tos.serv}),
 would rather be an {\em application}, even though some ``bots'' might
 access it automatically without human intervention.
 
@@ -4768,7 +4768,7 @@ the TOS Network, almost without using the TOS Blockchain.
 The TOS Blockchain might be used only to locate the abstract address
 or addresses of the service, as outlined in~\ptref{sp:loc.serv},
 perhaps with the aid of a service such as the TOS DNS
-(cf.~\ptref{sp:ton.dns}) to facilitate translation of domain-like
+(cf.~\ptref{sp:tos.dns}) to facilitate translation of domain-like
 human-readable strings into abstract addresses.
 
 To the extent the ADNL network (i.e., the TOS Network) is similar to
@@ -4799,7 +4799,7 @@ ecosystem as well. This is facilitated somewhat by the existence of
 services such as the TOS DNS, which exploit the TOS Blockchain and the
 TOS DHT to translate TOS domain names into abstract addresses.
 
-\nxsubpoint\label{sp:telegram.ton.serv} \embt(A messaging application
+\nxsubpoint\label{sp:telegram.tos.serv} \embt(A messaging application
 as a tos-service; custom protocols over RLDP.)  We would like to
 mention in passing that a modern messaging protocol can be embedded
 into the RLDP protocol discussed in~\ptref{sp:RLDP}, thus effectively
@@ -4819,7 +4819,7 @@ still be kept in the TOS Blockchain (i.e., an immutable public
 ledger), and any misbehavior of the service or of its users could be
 punished by smart contracts.
 
-\nxsubpoint\label{sp:ex.ton.storage} \embt(Example: keeping files
+\nxsubpoint\label{sp:ex.tos.storage} \embt(Example: keeping files
 off-chain; TOS Storage.)  An example of such a service is given by
 {\em TOS Storage}. In its simplest form, it allows users to store
 files off-chain, by keeping on-chain only a hash of the file to be
@@ -4886,7 +4886,7 @@ contracts. This is similar to what ``fog computing'' platforms, such
 as Golem (\url{https://golem.network/}) or SONM
 (\url{https://sonm.io/}), promise to deliver.
 
-\nxsubpoint\label{sp:ex.ton.proxy} \embt(Example: TOS Proxy is a fog
+\nxsubpoint\label{sp:ex.tos.proxy} \embt(Example: TOS Proxy is a fog
 service.)  {\em TOS Proxy\/} provides yet another example of a fog
 service, where nodes wishing to offer their services (with or without
 compensation) as tunnels for ADNL network traffic might register,
@@ -4976,13 +4976,13 @@ expensive than maintaining registries in side-chains
 
 \mysubsection{Accessing TOS Services}
 
-We have discussed in~\ptref{sect:ton.service.impl} the different
+We have discussed in~\ptref{sect:tos.service.impl} the different
 approaches one might employ for creating new services and applications
 residing in the TOS ecosystem. Now we discuss how these services might
 be accessed, and some of the ``helper services'' that will be provided
 by TOS, including {\em TOS DNS\/} and {\em TOS Storage}.
 
-\nxsubpoint\label{sp:ton.dns} \embt(TOS DNS: a mostly on-chain
+\nxsubpoint\label{sp:tos.dns} \embt(TOS DNS: a mostly on-chain
 hierarchical domain name service.)  The {\em TOS DNS\/} is a
 predefined service, which uses a collection of smart contracts to keep
 a map from human-readable domain names to (256-bit) addresses of ADNL
@@ -5222,7 +5222,7 @@ contracts from the wallet client application in a user-friendly way by
 filling and submitting certain forms, provided these smart contracts
 have published their interfaces.
 
-\nxsubpoint\label{sp:ui.ton.serv} \embt(User interface of a
+\nxsubpoint\label{sp:ui.tos.serv} \embt(User interface of a
 ``tos-service''.)  It turns out that ``tos-services'' (i.e., services
 residing in the TOS Network and accepting queries through the ADNL and
 RLDP protocols of~\ptref{sect:network}; cf.~\ptref{sp:pure.net.serv})
@@ -5237,7 +5237,7 @@ an RPC query to the abstract address of the ``tos-service'' in
 question, and the response to this query is parsed and displayed
 according to the formal interface (i.e., a TL-scheme).
 
-\nxsubpoint\label{sp:ui.ton.dns} \embt(Locating user interfaces via
+\nxsubpoint\label{sp:ui.tos.dns} \embt(Locating user interfaces via
 TOS DNS.)  The TOS DNS record containing an abstract address of a
 tos-service or a smart-contract account identifier might also contain
 an optional field describing the public (user) interface of that
@@ -5259,7 +5259,7 @@ interesting opportunity arises at this point. A light wallet and TOS
 entity explorer, implementing the above functionality, can be embedded
 into smartphone messaging, wallet or browser-style client
 applications. Users would be able to send hyperlinks to TOS entities
-and resources by including TOS URIs (cf.~\ptref{sp:ton.uri}) in
+and resources by including TOS URIs (cf.~\ptref{sp:tos.uri}) in
 messages; such hyperlinks, if selected, may be opened internally by
 the receiving client application, and interaction with the chosen
 entity will begin.
@@ -5284,14 +5284,14 @@ support may be announced in the corresponding TOS DNS record.
 \nxsubpoint \embt(Hyperlinks.)  Notice that the HTML pages returned by
 tos-sites may contain {\em tos-hyperlinks}---that is, references to
 other tos-sites, smart contracts and accounts by means of specially
-crafted URI schemes (cf.~\ptref{sp:ton.uri})---containing either
+crafted URI schemes (cf.~\ptref{sp:tos.uri})---containing either
 abstract network addresses, account identifiers, or human-readable TOS
 DNS domains. Then a ``tos-browser'' might follow such a hyperlink when
 the user selects it, detect the interface to be used, and display a
 user interface form as outlined in \ptref{sp:ui.smartc}
-and~\ptref{sp:ui.ton.serv}.
+and~\ptref{sp:ui.tos.serv}.
 
-\nxsubpoint\label{sp:ton.uri} \embt(Hyperlink URLs may specify some
+\nxsubpoint\label{sp:tos.uri} \embt(Hyperlink URLs may specify some
 parameters.)  The hyperlink URLs may contain not only a TOS DNS
 domain or an abstract address of the service in question, but also the
 name of the method to be invoked and some or all of its parameters. A
@@ -5314,7 +5314,7 @@ means of suitable TOS URLs. In that case, once the user fills and
 submits that custom form, the corresponding action is taken, either
 immediately or after an explicit confirmation.
 
-\nxsubpoint\label{sp:ton.www} \embt(TOS WWW.)  All of the above will
+\nxsubpoint\label{sp:tos.www} \embt(TOS WWW.)  All of the above will
 lead to the creation of a whole web of cross-referencing entities,
 residing in the TOS Network, which would be accessible to the end user
 through a tos-browser, providing the user with a WWW-like browsing

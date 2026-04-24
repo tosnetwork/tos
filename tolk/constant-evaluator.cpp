@@ -117,7 +117,7 @@ static void parse_any_std_address(std::string_view str, SrcRange range, unsigned
 }
 
 // internal helper: for `tos("0.05")`, parse string literal "0.05" to 50000000
-static td::RefInt256 parse_nanotons_as_floating_string(SrcRange range, std::string_view str) {
+static td::RefInt256 parse_nanotomis_as_floating_string(SrcRange range, std::string_view str) {
   bool is_negative = false;
   size_t i = 0;
 
@@ -152,7 +152,7 @@ static td::RefInt256 parse_nanotons_as_floating_string(SrcRange range, std::stri
     } else if (c >= '0' && c <= '9') {
       fractional_part = fractional_part * 10 + (c - '0');
       if (++fractional_digits > 9) {
-        err("too many digits after a dot, nanotons are 10^9").fire(range);
+        err("too many digits after a dot, nanotomis are 10^9").fire(range);
       }
     } else {
       err("argument is not a valid number like \"0.05\"").fire(range);
@@ -328,7 +328,7 @@ static ConstValExpression parse_vertex_call_to_compile_time_function(V<ast_funct
 
   if (f_name == "tos") {
     return create_const_cast(   // insert "50000000 as coins"
-      ConstValInt{parse_nanotons_as_floating_string(v_arg->range, str)},
+      ConstValInt{parse_nanotomis_as_floating_string(v_arg->range, str)},
       TypeDataCoins::create()
     );
   }

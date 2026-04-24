@@ -296,7 +296,7 @@ fn test_merkle_proof_hi_hashes2() {
     );
 }
 
-fn get_real_ton_block(filename: &str) -> (Block, Cell) {
+fn get_real_tos_block(filename: &str) -> (Block, Cell) {
     let root = BocReader::new()
         .read(&mut File::open(filename).expect("Error open boc file"))
         .expect("Error deserializing boc file")
@@ -307,7 +307,7 @@ fn get_real_ton_block(filename: &str) -> (Block, Cell) {
     (block, root)
 }
 
-fn get_real_ton_state(filename: &str) -> (ShardStateUnsplit, Cell) {
+fn get_real_tos_state(filename: &str) -> (ShardStateUnsplit, Cell) {
     let root = BocReader::new()
         .read(&mut File::open(filename).expect("Error open boc file"))
         .expect("Error deserializing boc file")
@@ -327,7 +327,7 @@ fn test_check_block_info_proof() {
     ];
 
     for block_file in block_files {
-        let (_, block_root) = get_real_ton_block(block_file);
+        let (_, block_root) = get_real_tos_block(block_file);
 
         // construct usage tree
         let usage_tree = UsageTree::with_root(block_root.clone());
@@ -364,7 +364,7 @@ fn get_tr_from_block(block: &Block) -> Transaction {
 }
 
 fn test_check_transaction_proof(wrong: bool, block_file: &str) -> Result<()> {
-    let (block, block_root) = get_real_ton_block(block_file);
+    let (block, block_root) = get_real_tos_block(block_file);
     let mut transaction = get_tr_from_block(&block);
     if wrong {
         transaction.set_now(123);
@@ -470,7 +470,7 @@ fn test_check_msg_proof() {
     ];
 
     for (i, block_file) in block_files.iter().enumerate() {
-        let (block, block_root) = get_real_ton_block(block_file);
+        let (block, block_root) = get_real_tos_block(block_file);
 
         let block_id = block.hash().unwrap();
 
@@ -515,7 +515,7 @@ fn test_check_correct_account_proof() {
     for state_file in state_files {
         println!("state file: {}", state_file);
 
-        let (state, state_root) = get_real_ton_state(state_file);
+        let (state, state_root) = get_real_tos_state(state_file);
 
         state
             .read_accounts()
@@ -546,7 +546,7 @@ fn test_check_wrong_account_proof() {
     for state_file in state_files {
         println!("state file: {}", state_file);
 
-        let (state, state_root) = get_real_ton_state(state_file);
+        let (state, state_root) = get_real_tos_state(state_file);
 
         state
             .read_accounts()

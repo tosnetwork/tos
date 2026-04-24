@@ -17,7 +17,7 @@ mod common;
 use common::*;
 use rand::prelude::{Rng, StdRng};
 use std::panic;
-use ton_assembler::compile_code_to_cell;
+use tos_assembler::compile_code_to_cell;
 use chain_block::{
     accounts::Account, AccountId, BuilderData, Coins, CurrencyCollection,
     ExternalInboundMessageHeader, InternalMessageHeader, MsgAddressInt, Serializable, SliceData,

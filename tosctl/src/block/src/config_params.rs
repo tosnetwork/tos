@@ -3654,18 +3654,18 @@ impl Deserializable for OracleBridgeParams {
 }
 
 // jetton_bridge_prices#_ bridge_burn_fee:Coins bridge_mint_fee:Coins
-//                        wallet_min_tons_for_storage:Coins
+//                        wallet_min_tos_for_storage:Coins
 //                        wallet_gas_consumption:Coins
-//                        minter_min_tons_for_storage:Coins
+//                        minter_min_tos_for_storage:Coins
 //                        discover_gas_consumption:Coins = JettonBridgePrices;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct JettonBridgePrices {
     pub bridge_burn_fee: Coins,
     pub bridge_mint_fee: Coins,
-    pub wallet_min_tons_for_storage: Coins,
+    pub wallet_min_tos_for_storage: Coins,
     pub wallet_gas_consumption: Coins,
-    pub minter_min_tons_for_storage: Coins,
+    pub minter_min_tos_for_storage: Coins,
     pub discover_gas_consumption: Coins,
 }
 
@@ -3673,9 +3673,9 @@ impl Serializable for JettonBridgePrices {
     fn write_to(&self, cell: &mut BuilderData) -> Result<()> {
         self.bridge_burn_fee.write_to(cell)?;
         self.bridge_mint_fee.write_to(cell)?;
-        self.wallet_min_tons_for_storage.write_to(cell)?;
+        self.wallet_min_tos_for_storage.write_to(cell)?;
         self.wallet_gas_consumption.write_to(cell)?;
-        self.minter_min_tons_for_storage.write_to(cell)?;
+        self.minter_min_tos_for_storage.write_to(cell)?;
         self.discover_gas_consumption.write_to(cell)?;
         Ok(())
     }
@@ -3685,16 +3685,16 @@ impl Deserializable for JettonBridgePrices {
     fn construct_from(slice: &mut SliceData) -> Result<Self> {
         let bridge_burn_fee = Coins::construct_from(slice)?;
         let bridge_mint_fee = Coins::construct_from(slice)?;
-        let wallet_min_tons_for_storage = Coins::construct_from(slice)?;
+        let wallet_min_tos_for_storage = Coins::construct_from(slice)?;
         let wallet_gas_consumption = Coins::construct_from(slice)?;
-        let minter_min_tons_for_storage = Coins::construct_from(slice)?;
+        let minter_min_tos_for_storage = Coins::construct_from(slice)?;
         let discover_gas_consumption = Coins::construct_from(slice)?;
         Ok(Self {
             bridge_burn_fee,
             bridge_mint_fee,
-            wallet_min_tons_for_storage,
+            wallet_min_tos_for_storage,
             wallet_gas_consumption,
-            minter_min_tons_for_storage,
+            minter_min_tos_for_storage,
             discover_gas_consumption,
         })
     }

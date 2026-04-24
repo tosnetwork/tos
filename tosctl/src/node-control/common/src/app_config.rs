@@ -703,7 +703,7 @@ pub enum AlertRule {
     #[serde(rename = "sync_lag")]
     SyncLag { threshold_seconds: u32 },
     #[serde(rename = "balance_low")]
-    BalanceLow { address: String, threshold_tons: f64 },
+    BalanceLow { address: String, threshold_tos: f64 },
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]

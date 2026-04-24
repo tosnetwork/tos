@@ -10,7 +10,7 @@ This document compares the wallet versions that are explicitly modeled in the cu
 - `wallet v4 r2`
 - `wallet v5 r1`
 
-The goal is practical interoperability guidance for implementers. This is an implementation-oriented document based on the current repository state. It does not attempt to restate external TON/TOS ecosystem history beyond what can be verified locally.
+The goal is practical interoperability guidance for implementers. This is an implementation-oriented document based on the current repository state. It does not attempt to restate external TOS ecosystem history beyond what can be verified locally.
 
 ## 2. Scope and Evidence
 

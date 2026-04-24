@@ -61,7 +61,7 @@ enum EOfCrc32: uint32 {
 
 enum Amounts: coins {
     zero = tos("0"),
-    nanoton = 1,
+    nanotomi = 1,
     small = tos("0.0001"),
     more = tos("0.05"),
     more1,

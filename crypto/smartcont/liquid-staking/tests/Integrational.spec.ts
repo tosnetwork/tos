@@ -13,7 +13,7 @@ import { setConsigliere } from "../wrappers/PayoutMinter.compile";
 import { Conf, ControllerState, Errors, Op } from "../PoolConstants";
 import { PayoutCollection, Conf as NFTConf, Op as NFTOp } from "../wrappers/PayoutNFTCollection";
 import { PayoutItem } from "../wrappers/PayoutNFTItem";
-import { testJettonTransfer, buff2bigint, computedGeneric, getRandomTon, testControllerMeta, getExternals, testLog, testLogRepayment, testMintMsg, assertLog, muldivExtra, testJettonNotification, filterTransaction, findTransaction, testJettonBurnNotification, approximatelyEqual, Txiterator, executeTill, differentAddress, executeFrom } from "../utils";
+import { testJettonTransfer, buff2bigint, computedGeneric, getRandomTos, testControllerMeta, getExternals, testLog, testLogRepayment, testMintMsg, assertLog, muldivExtra, testJettonNotification, filterTransaction, findTransaction, testJettonBurnNotification, approximatelyEqual, Txiterator, executeTill, differentAddress, executeFrom } from "../utils";
 import { ElectorTest } from "../wrappers/ElectorTest";
 import { getElectionsConf, getStakeConf, getValidatorsConf, getVset, loadConfig, packStakeConf, packValidatorsConf } from "../wrappers/ValidatorUtils";
 import { ConfigTest } from "../wrappers/ConfigTest";
@@ -1148,9 +1148,9 @@ describe('Integrational tests', () => {
         snapStates.set('deployed', bc.snapshot());
     });
     describe('Simple', () => {
-    it('Two deposits with same amount should get same amount of depo jetons/pTOSS/TOSs', async () => {
+    it('Two deposits with same amount should get same amount of depo jettons/pTOS/TOS', async () => {
         const prevState  = bc.snapshot();
-        const depoAmount = getRandomTon(10000, 20000);
+        const depoAmount = getRandomTos(10000, 20000);
         const [nm1, nm2] = await bc.createWallets(2);
         expect(await compareBalance(nm1, nm2)).toBe(true);
         const initialBalance = await nm1.getBalance();
@@ -1247,7 +1247,7 @@ describe('Integrational tests', () => {
         expect((await pool.getFullData()).totalBalance).toEqual(Conf.finalizeRoundFee);
         let i = 0;
         while(deposited < sConf.min_stake * 3n) {
-            const depo   = getRandomTon(150000, 200000);
+            const depo   = getRandomTos(150000, 200000);
             const depositor = await bc.treasury(`Depo:${i}`);
             const depoRes   = await assertDeposit(depositor.getSender(), depo, i, i == 0);
             depositors.push(depoRes);
@@ -1258,7 +1258,7 @@ describe('Integrational tests', () => {
         // Now some repetitive deposits to check if it will add up
         let repeats: MintChunk[] = [];
         for(let k = 0; k < depositors.length; k++) {
-            const depo = getRandomTon(15000, 20000);
+            const depo = getRandomTos(15000, 20000);
             let j = getRandomInt(1, 3, 2);
             const depoSender = bc.sender(depositors[k].address);
             for (let l = 0; l < j; l++) {
@@ -1418,7 +1418,7 @@ describe('Integrational tests', () => {
         await nextRound();
         let res = await controller.sendUpdateHash(validator.wallet.getSender());
         waitUnlock(res.transactions[1].now);
-        await elector.sendTickTock("tock"); // Announce elecitons
+        await elector.sendTickTock("tock"); // Announce elections
         await elector.sendTickTock("tock"); // Update credits
 
         res = await controller.sendRecoverStake(validator.wallet.getSender());
@@ -1474,7 +1474,7 @@ describe('Integrational tests', () => {
 
             const withdrawCount = getRandomInt(1, 3);
             for(let k = 0; k < withdrawCount; k++) {
-                const amount = getRandomTon(10000, 50000);
+                const amount = getRandomTos(10000, 50000);
                 const idx    = totalCount + k;
                 const wRes   = await assertWithdraw(sender, amount, false, false, poolBefore.totalBalance, poolBefore.supply, idx, idx == 0);
                 withdrawals.push(wRes);
@@ -1502,9 +1502,9 @@ describe('Integrational tests', () => {
         const share   = BigInt(getRandomInt(2, 4));
         const depositor = depositors[depoIdx];
         const sender  = bc.sender(depositor.address);
-        const pton    = await getUserJetton(depositor.address);
+        const ptos    = await getUserJetton(depositor.address);
 
-        const balanceBefore = await pton.getJettonBalance();
+        const balanceBefore = await ptos.getJettonBalance();
         const burnAmount = balanceBefore / share;
         const stateBefore = await getContractData(pool.address);
         const poolBefore = await pool.getFullData();
@@ -1530,7 +1530,7 @@ describe('Integrational tests', () => {
         // Transaction is not abborted so there is a possibility that data has changed
         expect(stateBefore).toEqualCell(await getContractData(pool.address));
         // Jetton balance hasn't changed
-        expect(await pton.getJettonBalance()).toEqual(balanceBefore);
+        expect(await ptos.getJettonBalance()).toEqual(balanceBefore);
     });
     });
     describe('Optimistic', () => {
@@ -1569,8 +1569,8 @@ describe('Integrational tests', () => {
                 const depositor  = await bc.treasury(`Depo:${i}`);
                 depoAddresses.push(depositor.address);
                 for(let k = 0; k < depoCount; k++) {
-                    const depo       = k == 0 ? getRandomTon(150000, 200000) : getRandomTon(10000, 20000);
-                    const pton = await getUserJetton(depositor.address);
+                    const depo       = k == 0 ? getRandomTos(150000, 200000) : getRandomTos(10000, 20000);
+                    const ptos = await getUserJetton(depositor.address);
                     const mintAmount = await assertOptimisticDeposit(depositor.getSender(),
                                                                      depo,
                                                                      - Conf.finalizeRoundFee);
@@ -1596,7 +1596,7 @@ describe('Integrational tests', () => {
             const prevState  = bc.snapshot();
             const [nm1, nm2] = await bc.createWallets(2);
             const initialBalance = await nm1.getBalance();
-            const depoAmount = getRandomTon(100000, 200000);
+            const depoAmount = getRandomTos(100000, 200000);
             const minted1    = await assertOptimisticDeposit(nm1.getSender(), depoAmount, - Conf.finalizeRoundFee);
             const minted2    = await assertOptimisticDeposit(nm2.getSender(), depoAmount, - Conf.finalizeRoundFee);
             expect(minted1).toEqual(minted2);
@@ -1605,15 +1605,15 @@ describe('Integrational tests', () => {
             expect(await compareBalance(nm1, nm2, true)).toBe(true);
             // Same round withdraw
             const burnAmount = depoAmount / 3n;
-            const pton1 = bc.openContract(DAOWallet.createFromAddress(
+            const ptos1 = bc.openContract(DAOWallet.createFromAddress(
                 await poolJetton.getWalletAddress(nm1.address)
             ));
-            const pton2 = bc.openContract(DAOWallet.createFromAddress(
+            const ptos2 = bc.openContract(DAOWallet.createFromAddress(
                 await poolJetton.getWalletAddress(nm2.address)
             ));
 
-            const res1 = await pton1.sendBurnWithParams(nm1.getSender(), toNano('1.05'), burnAmount, nm1.address, false, false);
-            const res2 = await pton2.sendBurnWithParams(nm2.getSender(), toNano('1.05'), burnAmount, nm2.address, false, false);
+            const res1 = await ptos1.sendBurnWithParams(nm1.getSender(), toNano('1.05'), burnAmount, nm1.address, false, false);
+            const res2 = await ptos2.sendBurnWithParams(nm2.getSender(), toNano('1.05'), burnAmount, nm2.address, false, false);
             const withdrawlTx1 = findTransaction(res1.transactions, {
                 from: pool.address,
                 to: nm1.address,
@@ -1654,12 +1654,12 @@ describe('Integrational tests', () => {
             const loanRes = await assertGetLoan(controller, sConf.min_stake, true);
             snapStates.set('has_loan', bc.snapshot());
             // Now pool funds are working, so not all of the deposit is available for withdraw
-            const catPton = await getUserJetton(cat);
-            const balanceBefore = await catPton.getJettonBalance();
-            const res = await catPton.sendBurnWithParams(cat.getSender(), toNano('1.05'), depoRes, cat.address, false, true);
+            const catPtos = await getUserJetton(cat);
+            const balanceBefore = await catPtos.getJettonBalance();
+            const res = await catPtos.sendBurnWithParams(cat.getSender(), toNano('1.05'), depoRes, cat.address, false, true);
             // Burned
             expect(res.transactions).toHaveTransaction({
-                from: catPton.address,
+                from: catPtos.address,
                 to: poolJetton.address,
                 op: Op.jetton.burn_notification,
                 body: (x) => testJettonBurnNotification(x!,{
@@ -1669,20 +1669,20 @@ describe('Integrational tests', () => {
             });
             // Expect pool jetton mint back
             await assertPoolJettonMint(res.transactions, depoRes, cat.address);
-            expect(await balanceBefore).toEqual(await catPton.getJettonBalance());
+            expect(await balanceBefore).toEqual(await catPtos.getJettonBalance());
             await bc.loadFrom(prevState);
         });
         it('Should not be possible to fail distribution action phase with low burn msg value', async() => {
             await loadSnapshot('has_loan');
             const cat = await bc.treasury('FatCat');
-            const catPton = await getUserJetton(cat);
+            const catPtos = await getUserJetton(cat);
             const poolBefore = await pool.getFullData();
             const minimalValue = 774578013n + 1n // fwd_fee + 2 * gas_consumption + burn_notification
             const burnAmount = 1n;
-            const res = await catPton.sendBurnWithParams(cat.getSender(), minimalValue, burnAmount, cat.address, false, false);
+            const res = await catPtos.sendBurnWithParams(cat.getSender(), minimalValue, burnAmount, cat.address, false, false);
             // pTOSs burned
             expect(res.transactions).toHaveTransaction({
-                from: catPton.address,
+                from: catPtos.address,
                 to: poolJetton.address,
                 op: Op.jetton.burn_notification,
                 body: (x) => testJettonBurnNotification(x!, {
@@ -1703,9 +1703,9 @@ describe('Integrational tests', () => {
             await loadSnapshot('pre_withdraw');
             const cat     = await bc.treasury('FatCat');
 
-            const pton        = await getUserJetton(cat);
-            const ptonBalance = await pton.getJettonBalance();
-            const firstFrac   = ptonBalance / 2n;
+            const ptos        = await getUserJetton(cat);
+            const ptosBalance = await ptos.getJettonBalance();
+            const firstFrac   = ptosBalance / 2n;
             // Withdraws some pessimisticly
             const mintRes = await assertWithdraw(cat.getSender(), firstFrac, false, false, 0n, 0n, 0, true);
             const stateBefore = await getContractData(pool.address);
@@ -1714,9 +1714,9 @@ describe('Integrational tests', () => {
             expect(poolBefore.requestedForWithdrawal).toEqual(firstFrac);
             // Next round happens
             await nextRound();
-            const expBurn = ptonBalance - firstFrac;
+            const expBurn = ptosBalance - firstFrac;
             // And then some more is requested with fill_or kill to guarantee cactch case
-            const res = await pton.sendBurnWithParams(cat.getSender(),
+            const res = await ptos.sendBurnWithParams(cat.getSender(),
                                                       toNano('1.05'),
                                                       expBurn, cat.address,
                                                       true, // waitRound -> pessimistic
@@ -1764,7 +1764,7 @@ describe('Integrational tests', () => {
                 const newController = getNewController(deploy.transactions)
                 controllers.push(newController);
                 // Loan amount doesn't matter
-                const loanAmount = getRandomTon(10000, 20000);
+                const loanAmount = getRandomTos(10000, 20000);
                 await newController.sendApprove(deployer.getSender());
                 await assertGetLoan(newController, loanAmount, true);
                 const interest  = loanAmount * BigInt(interestRate) / Conf.shareBase;
@@ -1784,7 +1784,7 @@ describe('Integrational tests', () => {
             // Just in case test that exactly this rate is used while calculating deposit rate
             const depositor = await bc.treasury('TotallyRandom');
 
-            await assertOptimisticDeposit(depositor.getSender(), getRandomTon(1000, 2000), totalExpProfit);
+            await assertOptimisticDeposit(depositor.getSender(), getRandomTos(1000, 2000), totalExpProfit);
         });
         it('Should be able to withdraw in same round', async() => {
             await loadSnapshot('opt_depo');
@@ -1794,8 +1794,8 @@ describe('Integrational tests', () => {
             for(let i = 0; i < depoAddresses.length; i++) {
                 // Burn share
                 const share = BigInt(getRandomInt(2, 4, 2));
-                const pton  = await getUserJetton(depoAddresses[i]);
-                const burnAmount = await pton.getJettonBalance(); // / share;
+                const ptos  = await getUserJetton(depoAddresses[i]);
+                const burnAmount = await ptos.getJettonBalance(); // / share;
                 const owner      = bc.sender(depoAddresses[i]);
                 const res        = await assertWithdraw(owner, burnAmount, true, true, balance, supply, 0, false);
                 expect(res.burnt).toEqual(burnAmount);
@@ -1809,7 +1809,7 @@ describe('Integrational tests', () => {
             // Optimists don't wait
             const poolBefore = await pool.getFullData();
             await controller.sendTopUp(validator.wallet.getSender(), sConf.min_stake);
-            const loanAmount = getRandomTon(1000, 2000);
+            const loanAmount = getRandomTos(1000, 2000);
             await assertGetLoan(controller, loanAmount, true);
             const poolAfter    = await pool.getFullData();
             // Projected balance should not change because loan profit compensates for finalize round fee
@@ -1927,15 +1927,15 @@ describe('Integrational tests', () => {
             }
             runNmAction = async (depositor) => {
                 const sender    = depositor.getSender();
-                const ptonBalance = await getUserJettonBalance(depositor.address);
-                const tonBalance  = await depositor.getBalance();
+                const ptosBalance = await getUserJettonBalance(depositor.address);
+                const tosBalance  = await depositor.getBalance();
                 let actionId: number;
                 if(roundId > 0) {
-                    if(ptonBalance == 0n) {
+                    if(ptosBalance == 0n) {
                         // Can only deposit
                         actionId = 0;
                     }
-                    else if(tonBalance == 0n){
+                    else if(tosBalance == 0n){
                         // Nothing to deposit
                         actionId = 1;
                     }
@@ -1950,7 +1950,7 @@ describe('Integrational tests', () => {
                 }
                 if(actionId == 0) {
                     let depoRes: bigint | MintChunk;
-                    const depoAmount = getRandomTon(1n , tonBalance);
+                    const depoAmount = getRandomTos(1n , tosBalance);
                     if(optimistic) {
                         depoRes = await assertOptimisticDeposit(sender, depoAmount, profit);
                     }
@@ -1962,7 +1962,7 @@ describe('Integrational tests', () => {
                 else {
                     let withdrawRes: DistributionResult;
                     let done = false;
-                    const withdrawAmount = getRandomTon(1n , ptonBalance);
+                    const withdrawAmount = getRandomTos(1n , ptosBalance);
 
                     withdrawRes = await assertWithdraw(sender,
                                                        withdrawAmount,
@@ -2110,7 +2110,7 @@ describe('Integrational tests', () => {
 
             // Increasing validator part just in case
             await controller.sendTopUp(validator.wallet.getSender(), toNano('100000'));
-            const loanAmount = getRandomTon(10000, 20000);
+            const loanAmount = getRandomTos(10000, 20000);
             const expInterest = loanAmount * BigInt(Conf.testInterest) / Conf.shareBase;
             const reqMsg = internal({
                 from: validator.wallet.address,
@@ -2219,7 +2219,7 @@ describe('Integrational tests', () => {
         await nextRound();
         // Updating round
         const res = await pool.sendTouch(deployer.getSender());
-        const ptonBalance = await userJetton.getJettonBalance();
+        const ptosBalance = await userJetton.getJettonBalance();
         // Should never mint 0 pool jettons
         expect(res.transactions).not.toHaveTransaction({
             to: poolJetton.address,
@@ -2229,7 +2229,7 @@ describe('Integrational tests', () => {
             })
         });
         // User should get his pTOSs
-        expect(ptonBalance).toBeGreaterThan(0n);
+        expect(ptosBalance).toBeGreaterThan(0n);
     });
     });
 
@@ -2255,8 +2255,8 @@ describe('Integrational tests', () => {
         let totalWithdrawn = 0n;
         for (let chunk of depositors) {
             const owner = bc.sender(chunk.address);
-            const ownerPton = await getUserJetton(chunk.address);
-            await ownerPton.sendBurnWithParams(owner, toNano('1.05'), chunk.amount, chunk.address, false, false);
+            const ownerPtos = await getUserJetton(chunk.address);
+            await ownerPtos.sendBurnWithParams(owner, toNano('1.05'), chunk.amount, chunk.address, false, false);
             totalWithdrawn += chunk.amount;
             if(totalWithdrawn + totalCredit > balanceBefore) {
                 break;

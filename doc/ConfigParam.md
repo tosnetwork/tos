@@ -514,7 +514,7 @@ Per-chain parameters for wc=2 (Uno shielded workchain). See [uno-workchain.md §
 
 **Fee schedule**: a typical 1-spend/2-output `Transfer` costs `100k + 10·476 + 50k + 100k ≈ 255 k nano-UNO ≈ 0.000255 UNO`; worst-case 4-spend/4-output costs `~0.000514 UNO`. At sustained 20 TPS of typical txs this burns `~160 k UNO/year` (`~0.76 %` of the 21 M supply), asymptotically approaching but never exceeding the target 1-2% annual burn rate as adoption grows. See [uno-workchain.md §10.2](uno-workchain.md) for derivation.
 
-**Why 84 and not 26**: wc-specific protocol params follow the TOS convention established by the bridge/workchain-extension cluster at 71-82. Core-band gaps (26, 27, 38, 41, 42) are reserved for low-numbered core-protocol extensions that TON upstream may backfill; 84 is adjacent to the existing 71-82 cluster and unlikely to clash.
+**Why 84 and not 26**: wc-specific protocol params follow the TOS convention established by the bridge/workchain-extension cluster at 71-82. Core-band gaps (26, 27, 38, 41, 42) are reserved for low-numbered core-protocol extensions that TOS upstream may backfill; 84 is adjacent to the existing 71-82 cluster and unlikely to clash.
 
 **Activation**: the param is installed at zerostate (`crypto/smartcont/gen-zerostate.fif`) alongside the wc=2 workchain descriptor in ConfigParam 12. No runtime governance upgrade path is required for v1, but the param is mutable through the standard proposal flow (ConfigParam 11) if future rate-adjustment is needed. `max_spends_per_tx`, `max_outputs_per_tx`, and `tree_depth` are effectively consensus-binding (mutating them breaks AIR public-input shape); treat them as frozen after genesis.
 

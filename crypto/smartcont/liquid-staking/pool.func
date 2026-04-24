@@ -1,5 +1,4 @@
 ;; TOS Liquid Staking Pool Contract
-;; Adapted from the TON liquid-staking pool for the TOS network.
 
 #include "stdlib.func";
 #include "types.func";
@@ -38,7 +37,7 @@ global slice jetton_minter;
 global int supply;
 
 global slice deposit_payout;
-global int requested_for_deposit;    ;; in TONs
+global int requested_for_deposit;    ;; in TOS
 global slice withdrawal_payout;
 global int requested_for_withdrawal; ;; in jettons
 
@@ -68,23 +67,23 @@ const int DISBALANCE_TOLERANCE = 30; ;; x/256
 const int JETTONS_WORKCHAIN = 0;
 const int MAX_LOAN_DICT_DEPTH = 12;
 
-const int ONE_TON = 1000000000;
-const int MIN_TONS_FOR_STORAGE = 10 * ONE_TON; ;; 10 TON
+const int ONE_TOS = 1000000000;
+const int MIN_TOS_FOR_STORAGE = 10 * ONE_TOS; ;; 10 TOS
 const int CONTROLLER_WORKCHAIN = MASTERCHAIN;
 
-const int SERVICE_NOTIFICATION_AMOUNT = 2 * ONE_TON / 100;
+const int SERVICE_NOTIFICATION_AMOUNT = 2 * ONE_TOS / 100;
 ;; finalize fee goes to
 ;;   a) SERVICE_NOTIFICATION_AMOUNT to interest manager
-;;   b) TRANSFER_NOTIFICATION_AMOUNT for ton distribution start
+;;   b) TRANSFER_NOTIFICATION_AMOUNT for TOS distribution start
 ;;   c) TRANSFER_NOTIFICATION_AMOUNT + POOL_JETTON_WALLET_FEE + POOL_JETTON_MINT_FEE for jetton distribution
 ;;   d) Gas fees
-const int FINALIZE_ROUND_FEE = ONE_TON;
-const int DEPOSIT_FEE = ONE_TON;
-const int WITHDRAWAL_FEE = ONE_TON / 2;
-const int TRANSFER_NOTIFICATION_AMOUNT = ONE_TON / 10;
-const int MAX_POOL_GAS_ON_USER_ACTION = ONE_TON / 3;
-const int PAYOUT_DISTRIBUTION_AMOUNT = ONE_TON / 5; ;; we will get excesses back
-const int MINTER_DEPLOY_FEE = ONE_TON / 10;
+const int FINALIZE_ROUND_FEE = ONE_TOS;
+const int DEPOSIT_FEE = ONE_TOS;
+const int WITHDRAWAL_FEE = ONE_TOS / 2;
+const int TRANSFER_NOTIFICATION_AMOUNT = ONE_TOS / 10;
+const int MAX_POOL_GAS_ON_USER_ACTION = ONE_TOS / 3;
+const int PAYOUT_DISTRIBUTION_AMOUNT = ONE_TOS / 5; ;; we will get excesses back
+const int MINTER_DEPLOY_FEE = ONE_TOS / 10;
 
 
 #include "pool_storage.func";
@@ -117,7 +116,7 @@ int current_round_index() inline {
 -}
 #include "pool_mint_helpers.func";
 
-() initiate_distribution_of_tons (int available_balance, int round_id) impure;
+() initiate_distribution_of_tos (int available_balance, int round_id) impure;
 () initiate_distribution_of_pool_jettons (int round_id) impure;
 
 (int, int) _get_projected_conversion_ratio () inline;
@@ -189,13 +188,13 @@ int muldiv_extra(int a, int b, int c) inline {
         slice response_address = in_msg_body~load_msg_addr();
         ;; after that point we should not revert because jettons should not be lost
         try {
-            throw_unless(error::not_enough_TON_to_process, msg_value > WITHDRAWAL_FEE);
+            throw_unless(error::not_enough_TOS_to_process, msg_value > WITHDRAWAL_FEE);
             int request_immediate_withdrawal_if_possible = ~ in_msg_body~load_bool();
             int fill_or_kill = in_msg_body~load_bool();
             update_round(pair_first(get_balance()) - msg_value);
             assert_not_halted!(); ;; otherwise mint back
             int approximate_amount = muldiv(jetton_amount, total_balance, supply);
-            int available_funds = balance - msg_value - MIN_TONS_FOR_STORAGE - sent_during_rotation;
+            int available_funds = balance - msg_value - MIN_TOS_FOR_STORAGE - sent_during_rotation;
 
             if(optimistic_deposit_withdrawals &
                     request_immediate_withdrawal_if_possible &
@@ -292,7 +291,7 @@ int muldiv_extra(int a, int b, int c) inline {
                 int deposit_amount = msg_value - DEPOSIT_FEE;
                 throw_unless(error::deposit_amount_too_low, deposit_amount > 0);
                 if(optimistic_deposit_withdrawals) {
-                    ;; we convert TON to Jetton at projected (expected) price at the round end
+                    ;; we convert TOS to Jetton at projected (expected) price at the round end
                     (int expected_balance, int expected_supply) = _get_projected_conversion_ratio();
 
                     int amount = muldiv_extra(deposit_amount, expected_supply, expected_balance);
@@ -322,7 +321,7 @@ int muldiv_extra(int a, int b, int c) inline {
               ;; maybe too harsh conditions
               int creditable_funds = balance
                                      - muldiv_extra(requested_for_withdrawal, total_balance, supply)
-                                     - MIN_TONS_FOR_STORAGE;
+                                     - MIN_TOS_FOR_STORAGE;
               var [_, _, _, borrowed, _, _, _] = current_round_borrowers;
               int available_funds = min( creditable_funds, muldiv(256 + DISBALANCE_TOLERANCE, total_balance, 512) - borrowed );
 
@@ -547,19 +546,19 @@ int muldiv_extra(int a, int b, int c) inline {
 }
 
 () finalize_deposit_withdrawal_round (int available_balance, int round_id) {
-    initiate_distribution_of_tons(available_balance, round_id);
+    initiate_distribution_of_tos(available_balance, round_id);
     initiate_distribution_of_pool_jettons(round_id);
 }
 
-() initiate_distribution_of_tons(available_balance, round_id) impure {
-    ;; Sends tons for distribution, in proportion to
+() initiate_distribution_of_tos(available_balance, round_id) impure {
+    ;; Sends TOS for distribution, in proportion to
     ;; the number requested before the start of the round.
     ifnot(requested_for_withdrawal) {
         return ();
     }
-    int ton_withdrawal = muldiv(requested_for_withdrawal, total_balance, supply);
+    int tos_withdrawal = muldiv(requested_for_withdrawal, total_balance, supply);
     slice prev_withdrawal_payout = withdrawal_payout;
-    if(available_balance < ton_withdrawal + MIN_TONS_FOR_STORAGE) {
+    if(available_balance < tos_withdrawal + MIN_TOS_FOR_STORAGE) {
       ;; not enough money to withdraw
       ;; Note that this halt may not be saved to the storage
       ;; if update_round not called from loan_repayment->last_one->update_round:
@@ -576,12 +575,12 @@ int muldiv_extra(int a, int b, int c) inline {
         withdrawal_payout = null();
     }
 
-    total_balance -= ton_withdrawal;
-    sent_during_rotation += ton_withdrawal + TRANSFER_NOTIFICATION_AMOUNT;
+    total_balance -= tos_withdrawal;
+    sent_during_rotation += tos_withdrawal + TRANSFER_NOTIFICATION_AMOUNT;
     var msg = begin_cell()
             .store_msg_flags(msgflag::BOUNCEABLE)
             .store_slice(prev_withdrawal_payout)
-            .store_coins(ton_withdrawal + TRANSFER_NOTIFICATION_AMOUNT)
+            .store_coins(tos_withdrawal + TRANSFER_NOTIFICATION_AMOUNT)
             .store_msgbody_prefix_slice()
             .store_body_header(payouts::start_distribution, cur_lt());
     send_raw_message(msg.end_cell(), sendmode::REGULAR);
@@ -737,7 +736,7 @@ int calculate_loan_amount(int min_loan, int max_loan, int max_interest) method_i
 
     int creditable_funds = pair_first(get_balance())
             - muldiv_extra(requested_for_withdrawal, total_balance, supply)
-            - MIN_TONS_FOR_STORAGE;
+            - MIN_TOS_FOR_STORAGE;
     var [_, _, _, borrowed, _, _, _] = current_round_borrowers;
     int available_funds = min( creditable_funds, muldiv(256 + DISBALANCE_TOLERANCE, total_balance, 512) - borrowed );
 

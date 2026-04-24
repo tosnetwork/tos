@@ -23,7 +23,7 @@ impl IntegerData {
     }
 
     /// Converts value to 0x hex notation, in case of negative number
-    /// display - sign before 0x prefix as tonconter does
+    /// display - sign before 0x prefix as the counter does
     pub fn to_str_hex(&self) -> String {
         match &self.value {
             None => "NaN".to_string(),

@@ -13,7 +13,7 @@ if [ ! -z "$GLOBAL_CONFIG_URL" ]; then
     wget -q $GLOBAL_CONFIG_URL -O /var/tos-work/db/tos-global.config
 else
     echo -e "\e[1;33m[=]\e[0m No global config provided, downloading mainnet default."
-    wget -q https://api.tontech.io/tos/wallet-mainnet.autoconf.json -O /var/tos-work/db/tos-global.config
+    wget -q https://tos.network/global-config.json -O /var/tos-work/db/tos-global.config
 fi
 
 if [ -z "$VALIDATOR_PORT" ]; then

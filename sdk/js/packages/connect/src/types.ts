@@ -70,12 +70,12 @@ export interface WalletInfo {
 // ---------------------------------------------------------------------------
 
 /** Items a DApp can request during the connect handshake. */
-export type ConnectItemName = "ton_addr" | "ton_proof";
+export type ConnectItemName = "tos_addr" | "tos_proof";
 
 /** A single item in a connect request. */
 export interface ConnectItem {
   name: ConnectItemName;
-  /** Required for `ton_proof` — arbitrary payload the wallet must sign. */
+  /** Required for the proof item; arbitrary payload the wallet must sign. */
   payload?: string;
 }
 
@@ -135,18 +135,18 @@ export interface SignDataFeature {
 // ---------------------------------------------------------------------------
 
 /** A reply to a single ConnectItem. */
-export type ConnectItemReply = TonAddressItemReply | TonProofItemReply;
+export type ConnectItemReply = TosAddressItemReply | TosProofItemReply;
 
-export interface TonAddressItemReply {
-  name: "ton_addr";
+export interface TosAddressItemReply {
+  name: "tos_addr";
   address: string;
   network: TosChain;
   publicKey: string;
   walletStateInit: string;
 }
 
-export interface TonProofItemReply {
-  name: "ton_proof";
+export interface TosProofItemReply {
+  name: "tos_proof";
   proof: {
     timestamp: number;
     domain: {
@@ -173,7 +173,7 @@ export interface ConnectedWallet {
 export interface TransactionMessage {
   /** Destination address (raw or friendly). */
   address: string;
-  /** Amount in nanotons (decimal string). */
+  /** Amount in nanotomis (decimal string). */
   amount: string;
   /** Optional: state init for deploying a contract (base64 BOC). */
   stateInit?: string;

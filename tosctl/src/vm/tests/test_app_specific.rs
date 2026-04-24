@@ -9,7 +9,7 @@
  * This file has been modified from its original version.
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-// use ton_assembler::compile_code_to_cell;
+// use tos_assembler::compile_code_to_cell;
 use chain_block::{
     ed25519_generate_private_key, AnycastInfo, BuilderData, Cell, CurrencyCollection,
     ExceptionCode, HashmapE, HashmapType, IBitstring, InternalMessageHeader, Message, MsgAddress,

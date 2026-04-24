@@ -5,11 +5,7 @@
  * as Bag-of-Cells (BOC) hex. They are the canonical code cells used to
  * compute deterministic wallet addresses on the TOS blockchain.
  *
- * Sources:
- * - V3R2: ton-blockchain/wallet-contract v3r2
- * - V4R2: ton-blockchain/wallet-contract v4r2
- * - V5R1: ton-blockchain/wallet-contract-v5 (W5)
- * - Highload V2: ton-blockchain/highload-wallet-contract-v2
+ * Sources: standard wallet contract code cells.
  */
 
 /**

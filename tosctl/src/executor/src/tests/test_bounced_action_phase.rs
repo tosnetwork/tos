@@ -14,7 +14,7 @@
 mod common;
 
 use common::*;
-use ton_assembler::compile_code_to_cell;
+use tos_assembler::compile_code_to_cell;
 use chain_block::{
     AccStatusChange, AccountStatus, AnycastInfo, Coins, CurrencyCollection, InternalMessageHeader,
     Message, MsgAddressInt, MsgAddressIntOrNone, Serializable, SliceData, StorageUsed,

@@ -117,8 +117,8 @@ struct Wrapper<T> {
     item: T
 }
 
-const wOneTon = Wrapper<coins> { item: tos("0.5") * 2 }
-const wNoTon: Wrapper<int> = { item: 0 }
+const wOneTos = Wrapper<coins> { item: tos("0.5") * 2 }
+const wNoTos: Wrapper<int> = { item: 0 }
 const wNoSubParams: Wrapper<SubParams>? = null
 
 struct Point {
@@ -235,8 +235,8 @@ fun test15() {
 
 @method_id(116)
 fun test16() {
-    __expect_type(wOneTon, "Wrapper<coins>");
-    return (wOneTon, wNoTon, wNoSubParams)
+    __expect_type(wOneTos, "Wrapper<coins>");
+    return (wOneTos, wNoTos, wNoSubParams)
 }
 
 @method_id(117)

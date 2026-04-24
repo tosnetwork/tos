@@ -313,7 +313,7 @@ Every EVM transfer touches at least sender + recipient. Every contract creation 
 
 ### What mirror would need to start working
 
-Synthesize a full `AccountBlock` + `HASH_UPDATE` for each touched EVM account. This is a complete re-implementation of TON's native transaction machinery inside the EVM workchain, and it introduces N AccountBlocks per tx, O(N) validate-query work per tx, O(N) cell allocation per tx, O(N) `AccountBlocks` dict growth per tx, etc. It also changes the meaning of per-workchain block gas accounting. This is weeks of work with no clear upside over single-executor, which works today by construction.
+Synthesize a full `AccountBlock` + `HASH_UPDATE` for each touched EVM account. This is a complete re-implementation of TOS native transaction machinery inside the EVM workchain, and it introduces N AccountBlocks per tx, O(N) validate-query work per tx, O(N) cell allocation per tx, O(N) `AccountBlocks` dict growth per tx, etc. It also changes the meaning of per-workchain block gas accounting. This is weeks of work with no clear upside over single-executor, which works today by construction.
 
 ## Implementation plan (delta against commit `a6631a16`)
 

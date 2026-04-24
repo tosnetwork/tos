@@ -270,10 +270,10 @@ describe('Pool', () => {
 
     });
 
-    it('should pay out tons', async () => {
+    it('should pay out TOS', async () => {
 
-        let awaitedTonMinter = blockchain.openContract(await pool.getWithdrawalMinter());
-        let myWithdrawalWalletAddress = await awaitedTonMinter.getWalletAddress(deployer.address);
+        let awaitedTosMinter = blockchain.openContract(await pool.getWithdrawalMinter());
+        let myWithdrawalWalletAddress = await awaitedTosMinter.getWalletAddress(deployer.address);
         let myWithdrawalWallet = blockchain.openContract(WithdrawalWallet.createFromAddress(myWithdrawalWalletAddress));
 
         // rotate round another time
@@ -286,7 +286,7 @@ describe('Pool', () => {
 
         expect(roundRotateResult.transactions).toHaveTransaction({
             from: pool.address,
-            on: awaitedTonMinter.address,
+            on: awaitedTosMinter.address,
             op: Op.payout.start_distribution, // start_distribution
             success: true,
         });

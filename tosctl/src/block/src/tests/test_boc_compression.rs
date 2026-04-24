@@ -318,9 +318,9 @@ fn test_vector_1_single_leaf_cell() {
     );
 }
 
-// Ton encoded cell compatibility test
+// TOS encoded cell compatibility test
 #[test]
-fn test_vector_1_ton_encoded() {
+fn test_vector_1_tos_encoded() {
     let compressed = hex::decode("000000125200000001000100700100a054455354").unwrap();
     println!("Compressed data:   {}", hex::encode(&compressed));
     println!(
@@ -344,7 +344,7 @@ fn test_vector_1_ton_encoded() {
 
 /// Vector 2: Parent-Child (Two Cells) - RFC encoded sample (C++ canonical output)
 #[test]
-fn test_vector_2_parent_child_ton_encoded() {
+fn test_vector_2_parent_child_tos_encoded() {
     let compressed = hex::decode("000000195200000001000100e00201a000a080cafebabedeadbeef").unwrap();
     let decompressed =
         boc_decompress_improved_structure_lz4(compressed.clone(), 1024 * 1024).unwrap();
@@ -355,7 +355,7 @@ fn test_vector_2_parent_child_ton_encoded() {
 
 /// Vector 3: Two Root Cells - RFC encoded sample (C++ canonical output)
 #[test]
-fn test_vector_3_two_roots_ton_encoded() {
+fn test_vector_3_two_roots_tos_encoded() {
     let compressed =
         hex::decode("0000001c920000000200000001000100d00200a000a02222222211111111").unwrap();
     let decompressed =
@@ -367,7 +367,7 @@ fn test_vector_3_two_roots_ton_encoded() {
 
 /// Vector 4: Deep Chain (4 Levels) - RFC encoded sample (C++ canonical output)
 #[test]
-fn test_vector_4_deep_chain_ton_encoded() {
+fn test_vector_4_deep_chain_tos_encoded() {
     let compressed = hex::decode(
         "000000255200000001000100300401a00200f00400a0e011111111222222223333333344444444",
     )
@@ -381,7 +381,7 @@ fn test_vector_4_deep_chain_ton_encoded() {
 
 /// Vector 5: Fan-Out (1 Parent, 4 Children) - RFC encoded sample
 #[test]
-fn test_vector_5_fan_out_ton_encoded() {
+fn test_vector_5_fan_out_tos_encoded() {
     let compressed = hex::decode(
         "0000002c5200000001000100430504a0000200f0071b00bbbbbbbbaa000303aa000202aa000101aa000000",
     )
@@ -395,7 +395,7 @@ fn test_vector_5_fan_out_ton_encoded() {
 
 /// Vector 6: DAG with Shared Cell - RFC encoded sample
 #[test]
-fn test_vector_6_dag_shared_ton_encoded() {
+fn test_vector_6_dag_shared_tos_encoded() {
     let compressed = hex::decode(
         "000000255200000001000100f00b0402a001a001a000a090500f0000aaaa0001bbbb00025a5a5a00",
     )
@@ -409,7 +409,7 @@ fn test_vector_6_dag_shared_ton_encoded() {
 
 /// Vector 7: Large Data Cell (256 bits) - RFC encoded sample
 #[test]
-fn test_vector_7_large_data_256bits_ton_encoded() {
+fn test_vector_7_large_data_256bits_tos_encoded() {
     let compressed =
         hex::decode("0000002f52000000010001008f01002101deadbeef04000450efdeadbeef").unwrap();
     let decompressed =
@@ -421,7 +421,7 @@ fn test_vector_7_large_data_256bits_ton_encoded() {
 
 /// Vector 8: Non-Byte-Aligned Data (37 bits) - RFC encoded sample
 #[test]
-fn test_vector_8_non_byte_aligned_37bits_ton_encoded() {
+fn test_vector_8_non_byte_aligned_37bits_tos_encoded() {
     let compressed = hex::decode("000000135200000001000100800100a5a879bdffff").unwrap();
     let decompressed =
         boc_decompress_improved_structure_lz4(compressed.clone(), 1024 * 1024).unwrap();
@@ -432,7 +432,7 @@ fn test_vector_8_non_byte_aligned_37bits_ton_encoded() {
 
 /// Vector 9: Empty Data Cell with Reference - RFC encoded sample (C++ canonical output)
 #[test]
-fn test_vector_9_empty_data_with_ref_ton_encoded() {
+fn test_vector_9_empty_data_with_ref_tos_encoded() {
     let compressed = hex::decode("000000155200000001000100a002018000a08012345678").unwrap();
     let decompressed =
         boc_decompress_improved_structure_lz4(compressed.clone(), 1024 * 1024).unwrap();
@@ -443,7 +443,7 @@ fn test_vector_9_empty_data_with_ref_ton_encoded() {
 
 /// Vector 10: Generic API with Algorithm Prefix - RFC encoded sample
 #[test]
-fn test_vector_10_algorithm_prefix_ton_encoded() {
+fn test_vector_10_algorithm_prefix_tos_encoded() {
     let compressed = hex::decode("01000000125200000001000100700100a0abcdef01").unwrap();
     let decompressed = boc_decompress(&compressed, 1024 * 1024).unwrap();
     assert_eq!(decompressed.len(), 1);

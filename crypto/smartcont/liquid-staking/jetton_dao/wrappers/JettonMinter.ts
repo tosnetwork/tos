@@ -49,17 +49,17 @@ export class JettonMinter implements Contract {
         });
     }
 
-    static mintMessage(to: Address, jetton_amount: bigint, forward_ton_amount: bigint, total_ton_amount: bigint,) {
+    static mintMessage(to: Address, jetton_amount: bigint, forward_tos_amount: bigint, total_tos_amount: bigint,) {
         return beginCell().storeUint(Op.minter.mint, 32).storeUint(0, 64) // op, queryId
                           .storeAddress(to).storeCoins(jetton_amount)
-                          .storeCoins(forward_ton_amount).storeCoins(total_ton_amount)
+                          .storeCoins(forward_tos_amount).storeCoins(total_tos_amount)
                .endCell();
     }
-    async sendMint(provider: ContractProvider, via: Sender, to: Address, jetton_amount: bigint, forward_ton_amount: bigint, total_ton_amount: bigint,) {
+    async sendMint(provider: ContractProvider, via: Sender, to: Address, jetton_amount: bigint, forward_tos_amount: bigint, total_tos_amount: bigint,) {
         await provider.internal(via, {
             sendMode: SendMode.PAY_GAS_SEPARATELY,
-            body: JettonMinter.mintMessage(to, jetton_amount, forward_ton_amount, total_ton_amount,),
-            value: total_ton_amount + toNano("0.1"),
+            body: JettonMinter.mintMessage(to, jetton_amount, forward_tos_amount, total_tos_amount,),
+            value: total_tos_amount + toNano("0.1"),
         });
     }
 
