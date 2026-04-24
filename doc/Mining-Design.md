@@ -358,12 +358,49 @@ input no longer matches chain state.
 
 ### Genesis wiring
 
+**Implemented in uno-mine-v1 Phase 2.** Three files were modified:
+
+#### `uno/core/state.h` (modified)
+
+Replaced the `TODO(uno-mine-v1, Phase 2)` block with four real struct
+fields on `UnoShardState`:
+
+```cpp
+uint64_t mine_remaining{0};             // 21M nano-UNO at genesis
+uint32_t mine_epoch{0};                 // cumulative successful solves
+std::array<uint8_t, 32> mine_target{};  // current PoW target (256-bit BE)
+uint32_t halving_era{0};                // = mine_epoch / kEraSize (cached)
+```
+
+#### `uno/core/cell-state.cpp` (modified)
+
+Extended `UnoShardState` serialization to include a new `kMetaRefMiningState`
+(ref 2) inside the existing MetaCell. Layout: 64 + 32 + 256 + 32 = 384 bits
+inline, no sub-refs. Old 2-ref meta cells deserialize with zeroed mining fields
+(backward compatible). `workchain.h` constant `kMetaRefCount` bumped 2 → 3.
+
+#### `uno/core/genesis.cpp` (modified)
+
+`build_zerostate_state()` now initializes all four mining fields:
+
+```cpp
+s.mine_remaining = kMineSupplyNano;          // = 21,000,000 × 10^9 nano-UNO
+s.mine_epoch     = 0;
+std::copy(kInitMineTargetBE, ..., s.mine_target.begin());  // 2^219 in 32-byte BE
+s.halving_era    = 0;
+```
+
+`kMineSupplyNano` and `kInitMineTargetBE` are defined in
+`uno/core/mine_constants.h`. `kMineSupplyNano` equals
+`kGenesisTotalSupplyNano` from `genesis.h` (both 21,000,000 × 10^9);
+they live in different namespaces serving different consumers.
+
 UNO zerostate (Task #12 + ongoing UNO genesis wiring):
 ```
 mine_remaining   = 21,000,000 × 10⁹ nano-UNO  (= 2.1e16)
 mine_epoch       = 0
-mine_target      = (initial difficulty TBD via simulation)
-halving_table    = [50, 25, 12.5, 6.25, ...] UNO per era
+mine_target      = 2^219 in 32-byte big-endian (kInitMineTargetBE)
+halving_table    = [50, 25, 12.5, 6.25, ...] UNO per era (baked into AIR)
 era_size         = 210,000 solves
 ```
 

@@ -100,19 +100,33 @@ inline td::Ref<vm::Cell> serialize_state_or_null(const UnoShardState& state) {
 /// mismatch surfaces as a replay failure against the genesis state.
 std::array<uint8_t, kHashBytes> compute_config_hash(td::Slice config_cell_bytes);
 
-/// Helper that builds the MetaCell (anchor_window + stats) independently,
-/// useful for tests and for the genesis path that wants to assemble the
-/// meta cell before pushing an anchor. Returns a null cell if either
-/// sub-cell is null.
+/// Helper that builds the MetaCell (anchor_window + stats + mining_state)
+/// independently, useful for tests and for the genesis path that wants to
+/// assemble the meta cell before pushing an anchor. Returns a null cell if
+/// any sub-cell is null.
+///
+/// The mining_state_cell is the Phase-2 addition (uno-mine-v1); pass the
+/// result of encode_mining_state_cell() here.
 // TODO(uno-integration): Agent 2's AnchorWindow and the inline StatsCell
 // serialisers must expose matching names; adjust once Agent 2 lands.
 td::Ref<vm::Cell> build_meta_cell(td::Ref<vm::Cell> anchor_window_cell,
-                                  td::Ref<vm::Cell> stats_cell);
+                                  td::Ref<vm::Cell> stats_cell,
+                                  td::Ref<vm::Cell> mining_state_cell);
 
 /// Encode a UnoStats struct inline into a single cell: 192 bits, no refs.
 td::Ref<vm::Cell> encode_stats_cell(const UnoStats& stats);
 
 /// Decode a StatsCell back into UnoStats. Returns false on schema mismatch.
 bool decode_stats_cell(td::Ref<vm::Cell> cell, UnoStats& out);
+
+/// Encode the four mining-state fields (mine_remaining, mine_epoch,
+/// mine_target, halving_era) into a single cell.
+/// Layout: 64 + 32 + 256 + 32 = 384 bits inline, no refs.
+/// Added per uno-mine-v1 Phase 2; see doc/uno-mine-air-constraints.md.
+td::Ref<vm::Cell> encode_mining_state_cell(const UnoShardState& state);
+
+/// Decode a mining-state cell back into the four mining fields of `out`.
+/// Returns false on schema mismatch. All four fields are zeroed on failure.
+bool decode_mining_state_cell(td::Ref<vm::Cell> cell, UnoShardState& out);
 
 }  // namespace uno_workchain

@@ -132,7 +132,8 @@ constexpr unsigned kStateRefCount          = 4;
 /// Ref slot indices inside the MetaCell (§5.1).
 constexpr unsigned kMetaRefAnchorWindow = 0;
 constexpr unsigned kMetaRefStats        = 1;
-constexpr unsigned kMetaRefCount        = 2;
+constexpr unsigned kMetaRefMiningState  = 2;  // added per uno-mine-v1 Phase 2
+constexpr unsigned kMetaRefCount        = 3;  // bumped from 2 → 3 for mining state
 
 /// Dictionary key width for the nullifier set (§5.3): 256-bit.
 constexpr unsigned kNullifierKeyBits = kHashBits;

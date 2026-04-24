@@ -38,6 +38,41 @@
 namespace uno_workchain {
 
 // ---------------------------------------------------------------------------
+// Mining state cell
+// ---------------------------------------------------------------------------
+
+td::Ref<vm::Cell> encode_mining_state_cell(const UnoShardState& state) {
+    vm::CellBuilder cb;
+    // Inline: 64 + 32 + 256 + 32 = 384 bits ≤ 1023. No refs.
+    cb.store_long(static_cast<long long>(state.mine_remaining), 64);
+    cb.store_long(static_cast<long long>(state.mine_epoch),     32);
+    cb.store_bytes(state.mine_target.data(), 32);
+    cb.store_long(static_cast<long long>(state.halving_era),    32);
+    return cb.finalize();
+}
+
+bool decode_mining_state_cell(td::Ref<vm::Cell> cell, UnoShardState& out) {
+    // Zero all four fields before attempting decode so callers see a safe
+    // state on partial failure.
+    out.mine_remaining = 0;
+    out.mine_epoch     = 0;
+    out.mine_target.fill(0);
+    out.halving_era    = 0;
+
+    if (cell.is_null()) return false;
+    auto cs = vm::load_cell_slice(cell);
+    long long v = 0;
+    if (!cs.fetch_long_bool(64, v)) return false;
+    out.mine_remaining = static_cast<uint64_t>(v);
+    if (!cs.fetch_long_bool(32, v)) return false;
+    out.mine_epoch = static_cast<uint32_t>(v);
+    if (!cs.fetch_bytes(out.mine_target.data(), 32)) return false;
+    if (!cs.fetch_long_bool(32, v)) return false;
+    out.halving_era = static_cast<uint32_t>(v);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Stats cell
 // ---------------------------------------------------------------------------
 
@@ -68,8 +103,10 @@ bool decode_stats_cell(td::Ref<vm::Cell> cell, UnoStats& out) {
 // ---------------------------------------------------------------------------
 
 td::Ref<vm::Cell> build_meta_cell(td::Ref<vm::Cell> anchor_window_cell,
-                                  td::Ref<vm::Cell> stats_cell) {
-    if (anchor_window_cell.is_null() || stats_cell.is_null()) {
+                                  td::Ref<vm::Cell> stats_cell,
+                                  td::Ref<vm::Cell> mining_state_cell) {
+    if (anchor_window_cell.is_null() || stats_cell.is_null() ||
+        mining_state_cell.is_null()) {
         LOG(ERROR) << "uno/cell-state: build_meta_cell received null ref(s)";
         return {};
     }
@@ -77,6 +114,8 @@ td::Ref<vm::Cell> build_meta_cell(td::Ref<vm::Cell> anchor_window_cell,
     // Meta cell is pure refs; no inline bits.
     if (!cb.store_ref_bool(std::move(anchor_window_cell))) return {};
     if (!cb.store_ref_bool(std::move(stats_cell))) return {};
+    // Ref 2: mining state (added per uno-mine-v1 Phase 2).
+    if (!cb.store_ref_bool(std::move(mining_state_cell))) return {};
     return cb.finalize();
 }
 
@@ -140,7 +179,11 @@ td::Ref<vm::Cell> serialize_state(const UnoShardState& state) {
     auto stats_cell = encode_stats_cell(state.stats);
     if (stats_cell.is_null()) return {};
 
-    auto meta_cell = build_meta_cell(std::move(anchor_cell), std::move(stats_cell));
+    auto mining_cell = encode_mining_state_cell(state);
+    if (mining_cell.is_null()) return {};
+
+    auto meta_cell = build_meta_cell(std::move(anchor_cell), std::move(stats_cell),
+                                     std::move(mining_cell));
     if (meta_cell.is_null()) return {};
 
     vm::CellBuilder cb;
@@ -257,11 +300,14 @@ bool deserialize_state(td::Ref<vm::Cell> root, UnoShardState& out) {
         out.nullifier_set = std::move(nf);
     }
 
-    // Meta cell: anchor window + stats.
+    // Meta cell: anchor window + stats + mining state (Phase 2).
+    // Accept both 2-ref (pre-Phase-2) and 3-ref (Phase-2+) meta cells for
+    // backward compatibility: old states deserialize with zeroed mining fields.
     auto meta_cs = vm::load_cell_slice(meta_cell);
-    if (meta_cs.size_refs() != 2) {
-        LOG(ERROR) << "uno/cell-state: meta cell refs=" << meta_cs.size_refs()
-                   << ", expected 2";
+    const unsigned meta_refs = meta_cs.size_refs();
+    if (meta_refs < 2) {
+        LOG(ERROR) << "uno/cell-state: meta cell refs=" << meta_refs
+                   << ", expected at least 2";
         return false;
     }
     auto anchor_cell = meta_cs.prefetch_ref(kMetaRefAnchorWindow);
@@ -285,6 +331,16 @@ bool deserialize_state(td::Ref<vm::Cell> root, UnoShardState& out) {
     if (!decode_stats_cell(std::move(stats_cell), out.stats)) {
         LOG(ERROR) << "uno/cell-state: stats cell deserialize failed";
         return false;
+    }
+
+    // Mining state (Phase 2): present only in 3-ref meta cells.
+    // Old 2-ref cells leave the four fields at their zero-initialised defaults.
+    if (meta_refs >= 3) {
+        auto mining_cell = meta_cs.prefetch_ref(kMetaRefMiningState);
+        if (!decode_mining_state_cell(std::move(mining_cell), out)) {
+            LOG(ERROR) << "uno/cell-state: mining state cell deserialize failed";
+            return false;
+        }
     }
 
     return true;

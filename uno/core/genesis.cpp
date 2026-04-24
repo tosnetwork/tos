@@ -69,6 +69,7 @@
 #include "uno/core/genesis.h"
 #include "uno/core/cell-state.h"
 #include "uno/core/config-param.h"
+#include "uno/core/mine_constants.h"
 #include "uno/core/workchain.h"
 #include "uno/crypto/bech32m.h"
 
@@ -216,6 +217,16 @@ UnoShardState build_zerostate_state(const GenesisDistribution& dist) {
     // config_hash is populated after cell-state serialization, where the
     // caller also has the live ConfigParam 84 bytes in hand.  Leave zero
     // here; init code overwrites before writing to disk.
+
+    // Mining state (uno-mine-v1 Phase 2; see doc/uno-mine-air-constraints.md).
+    // mine_remaining starts at the full 21M UNO cap in nano-UNO units.
+    // mine_epoch and halving_era start at 0 (no solves yet).
+    // mine_target is the genesis initial difficulty (2^219 in 32-byte BE).
+    s.mine_remaining = kMineSupplyNano;         // = 21,000,000 × 10^9 nano-UNO
+    s.mine_epoch     = 0;
+    std::copy(std::begin(kInitMineTargetBE), std::end(kInitMineTargetBE),
+              s.mine_target.begin());
+    s.halving_era    = 0;
 
     return s;
 }
