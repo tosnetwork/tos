@@ -43,6 +43,25 @@ hashu dup =: evmstate1_rhash
 "evmstate1" +suffix +".rhash" B>file
 
 evmstate1_rhash evmstate1_fhash now 0 4 8 1 add-evm-workchain
+
+// UNO workchain (wc=2): empty initial state; vm_version=0x554E4F31 routes
+// to the Plonky3 STARK verifier. See comment in gen-zerostate.fif about
+// mainnet needing a distribution-built ShardState via build_zerostate_state_cell.
+2 mkemptyShardState
+
+cr ."initial UNO workchain state is:" cr dup <s csr. cr
+dup dup 31 boc+>B dup Bx. cr
+dup "unostate2" +suffix +".boc" tuck B>file
+."(Initial UNO workchain state saved to file " type .")" cr
+Bhashu dup =: unostate2_fhash
+."file hash=" dup 64x. space 256 u>B dup B>base64url type cr
+"unostate2" +suffix +".fhash" B>file
+hashu dup =: unostate2_rhash
+."root hash=" dup 64x. space 256 u>B dup B>base64url type cr
+"unostate2" +suffix +".rhash" B>file
+
+unostate2_rhash unostate2_fhash now 0 4 8 2 add-uno-workchain
+
 config.workchains!
 
 // SmartContract #1 (Simple wallet)

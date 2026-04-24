@@ -49,6 +49,38 @@ hashu dup =: evmstate1_rhash
 "evmstate1" +suffix +".rhash" B>file
 
 evmstate1_rhash evmstate1_fhash now 0 4 8 1 add-evm-workchain
+
+// Initial state of Workchain 2 (UNO workchain)
+// vm_version=0x554E4F31 ("UNO1") in the WorkchainDescr (set by
+// add-uno-workchain) routes wc=2 transactions to the Plonky3 STARK
+// verifier (see uno/core/workchain.h::kVmVersion).
+//
+// TODO(uno-genesis-wiring): currently mkemptyShardState produces an empty
+// UNO zerostate. For a real launch, the wc=2 ShardState must be generated
+// from a `GenesisDistribution` via `uno_workchain::build_zerostate_state_cell`
+// (uno/core/genesis.h) which materialises the 60/25/15 airdrop/treasury/team
+// note-commitment leaves into the initial commitment tree. The total supply
+// is pinned to 200 M UNO by `kGenesisTotalSupplyNano` (120 M / 50 M / 30 M
+// per category). The distribution-builder tool is not yet wired into this
+// Fift pipeline — supply / distribution inputs are TBD; tracking issue:
+// "UNO mainnet genesis wiring" (see doc/uno-workchain.md §10.3 + uno/core/genesis.h
+// `TODO(uno-design-gap)` markers).
+
+2 mkemptyShardState
+
+cr ."initial UNO workchain state is:" cr dup <s csr. cr
+dup dup 31 boc+>B dup Bx. cr
+dup "unostate2" +suffix +".boc" tuck B>file
+."(Initial UNO workchain state saved to file " type .")" cr
+Bhashu dup =: unostate2_fhash
+."file hash=" dup 64x. space 256 u>B dup B>base64url type cr
+"unostate2" +suffix +".fhash" B>file
+hashu dup =: unostate2_rhash
+."root hash=" dup 64x. space 256 u>B dup B>base64url type cr
+"unostate2" +suffix +".rhash" B>file
+
+unostate2_rhash unostate2_fhash now 0 4 8 2 add-uno-workchain
+
 config.workchains!
 
 /*
@@ -91,7 +123,7 @@ WCode3 // code
    B,
 b> // data
 empty_cell // libs
-TM$4999999000 allocated-balance - // balance
+TM$200000000 allocated-balance - // balance (target total supply: 200 M TOS)
 0 // split_depth
 0 // ticktock
 AllOnes 1 * // address
