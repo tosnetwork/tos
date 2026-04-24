@@ -436,10 +436,20 @@ VerifyResult apply_mine_uno(UnoState& state, const MineUno& tx) noexcept {
         return chain_r;
     }
 
-    // ---- Step 3: FFI verify (Rust Plonky3 STARK) ----
-    // The decoder populates `tx.proof_blob` with the concatenated
-    // `[u32 LE proof_len][proof][96 B Plonky3 PI]` layout — peel both
-    // halves apart and hand them to `uno_mine_uno_verify`.
+    // ---- Step 3: split proof blob + bind PI to header (cheap) BEFORE the
+    //              expensive STARK verify, so a forged-header replay
+    //              attack can't force every validator to pay the full
+    //              proof-verification cost (~50ms+) on a tx that's
+    //              guaranteed to fail later. PI/header binding is O(1)
+    //              memcmp; do it first.
+    //
+    // PI layout (public_inputs_bytes, 12 × 8 = 96 LE bytes):
+    //   [ 0.. 8) PI_EPOCH          u64 LE
+    //   [ 8..16) PI_VALUE           u64 LE
+    //   [16..48) PI_OUTPUT_CM_BASE  4 fes × 8 B LE (= 32 B cm bytes)
+    //   [48..80) PI_POW_HASH_BASE   (checked in step 4 below)
+    //   [80..88) PI_REMAINING_PRE   u64 LE
+    //   [88..96) PI_REMAINING_POST  u64 LE
     //
     // `::Plonky3PublicInputs` / `::Plonky3ProofBytes` are the C FFI structs
     // from uno_plonky3_ffi.h (global namespace). The unqualified names
@@ -453,20 +463,11 @@ VerifyResult apply_mine_uno(UnoState& state, const MineUno& tx) noexcept {
         if (!split_proof_blob(tmp, proof_slice, pi_slice)) {
             return VerifyResult::BadPlonky3Proof;
         }
-        ::Plonky3ProofBytes fp{
-            reinterpret_cast<const uint8_t*>(proof_slice.data()),
-            proof_slice.size()
-        };
-        ::Plonky3PublicInputs fpi{
-            reinterpret_cast<const uint8_t*>(pi_slice.data()),
-            pi_slice.size()
-        };
-        int32_t rc = uno_mine_uno_verify(fp, fpi);
-        if (rc != 0) {
+        if (pi_slice.size() != 96) {
             return VerifyResult::BadPlonky3Proof;
         }
 
-        // ---- Step 3b: bind PI to tx header ----
+        // ---- Step 3a: PI ↔ header binding (PRE-verify, cheap O(1)) ----
         // The STARK verifier only checks the proof against the 96-byte
         // PI blob — it does not compare those 12 Goldilocks field elements
         // to any of the per-tx header fields. Without an explicit binding
@@ -477,17 +478,6 @@ VerifyResult apply_mine_uno(UnoState& state, const MineUno& tx) noexcept {
         // `remaining_post` from the header — a replay-with-forged-outputs
         // attack. Verify each non-`pow_hash` PI field byte-for-byte
         // against the header before trusting either half.
-        //
-        // PI layout (public_inputs_bytes, 12 × 8 = 96 LE bytes):
-        //   [ 0.. 8) PI_EPOCH          u64 LE
-        //   [ 8..16) PI_VALUE           u64 LE
-        //   [16..48) PI_OUTPUT_CM_BASE  4 fes × 8 B LE (= 32 B cm bytes)
-        //   [48..80) PI_POW_HASH_BASE   (checked separately below)
-        //   [80..88) PI_REMAINING_PRE   u64 LE
-        //   [88..96) PI_REMAINING_POST  u64 LE
-        if (pi_slice.size() != 96) {
-            return VerifyResult::BadPlonky3Proof;
-        }
         auto pi_read_u64_le = [&](size_t off) -> uint64_t {
             uint64_t v = 0;
             for (size_t i = 0; i < 8; ++i) {
@@ -509,6 +499,21 @@ VerifyResult apply_mine_uno(UnoState& state, const MineUno& tx) noexcept {
                         tx.public_inputs.output_cm.data(),
                         32) != 0) {
             return VerifyResult::PiHeaderMismatch;
+        }
+
+        // ---- Step 3b: FFI verify (Rust Plonky3 STARK) — expensive ----
+        // Now that header/PI consistency is proven, pay the STARK cost.
+        ::Plonky3ProofBytes fp{
+            reinterpret_cast<const uint8_t*>(proof_slice.data()),
+            proof_slice.size()
+        };
+        ::Plonky3PublicInputs fpi{
+            reinterpret_cast<const uint8_t*>(pi_slice.data()),
+            pi_slice.size()
+        };
+        int32_t rc = uno_mine_uno_verify(fp, fpi);
+        if (rc != 0) {
+            return VerifyResult::BadPlonky3Proof;
         }
 
         // ---- Step 4: PoW difficulty threshold ----

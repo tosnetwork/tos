@@ -428,6 +428,18 @@ async fn run_mine(args: &MineCliArgs) -> Result<()> {
     };
     let summary = mine::execute(&mine_args).await?;
     println!("{}", serde_json::to_string_pretty(&summary)?);
+
+    // mine::execute returns Ok(MineSummary) for any post-search outcome
+    // (including prove/encode/submit failures, captured in the
+    // proof_status string). Convert non-success statuses into a process
+    // exit error so automation can rely on the CLI exit code rather
+    // than parsing the JSON. Successful run reports "submitted:<hash>".
+    if !summary.proof_status.starts_with("submitted:") {
+        return Err(anyhow::anyhow!(
+            "mining run did not result in a submitted proof: {}",
+            summary.proof_status
+        ));
+    }
     Ok(())
 }
 
