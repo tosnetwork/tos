@@ -256,42 +256,127 @@ fn mine_uno_golden_fixture_regen_or_pin() {
 }
 
 // ---------------------------------------------------------------------------
-// Ignored tests — require Phase 2 AIR implementation
+// End-to-end prove + verify round-trip tests
+//
+// These tests were previously `#[ignore]`-stubs while the MineUno AIR was
+// under construction. Phase 3b + Task #17 landed the full prove / verify
+// path (`uno_plonky3_ffi::prover::prove_mine_uno` +
+// `uno_plonky3_ffi::verifier::verify_mine_uno`), so they now exercise the
+// real STARK end-to-end — at the golden-fixture / integration-test level,
+// independent of the `tosctl mine` CLI path that
+// `tosctl_uno::mine::tests::prove_mine_uno_real_proof_roundtrips` already
+// covers.
+//
+// Consistency note: the AIR's row-0 public-input binding requires
+// `pi.output_cm` to equal the off-circuit
+// `Poseidon2("uno-cm-v1", d, pk_d, ivk_cm, value, rcm)` of the witness.
+// We therefore build an `uno_plonky3_ffi::mine_uno_witness::MineUnoWitness`
+// directly (via `deterministic_valid`) rather than the wallet-native
+// `tosctl_uno::mine_uno::MineUnoWitness`, which doesn't carry the raw
+// 32-byte fields needed for the FFI wire format.
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore] // requires AIR implementation; mark ignored until parallel agent lands prover
 fn mine_uno_proof_round_trips_through_verifier() {
-    // 1. Build witness
-    let _w = mk_mine_witness(0);
-    // 2. Call uno_plonky3_ffi::prove_mine_uno (NOT YET IMPLEMENTED)
-    // 3. Call uno_plonky3_ffi::verify_mine_uno (NOT YET IMPLEMENTED)
-    // 4. Assert verify succeeds
-    //
-    // This test is `#[ignore]` until the parallel agent's AIR work lands.
-    // To run later:
-    //   cargo test --release --test mine_genesis_golden -- --ignored mine_uno_proof_round_trips_through_verifier
-    todo!("prove_mine_uno / verify_mine_uno FFI symbols not yet defined (Phase 2)")
+    use uno_plonky3_ffi::mine_uno_witness::MineUnoWitness as FfiWitness;
+    use uno_plonky3_ffi::prover::prove_mine_uno;
+    use uno_plonky3_ffi::verifier::verify_mine_uno;
+    use uno_plonky3_ffi::Plonky3Status;
+
+    // Build a deterministic valid witness at epoch 0 (era-0 reward = 50 UNO).
+    let w = FfiWitness::deterministic_valid(0, 0xA11C_0001);
+
+    // Prove.
+    let (proof_bytes, pi_bytes) = prove_mine_uno(&w.encode())
+        .expect("prove_mine_uno must succeed on a deterministic_valid witness");
+    assert!(!proof_bytes.is_empty(), "proof bytes must be non-empty");
+    assert!(!pi_bytes.is_empty(), "public-input bytes must be non-empty");
+
+    // Verify.
+    let status = verify_mine_uno(&proof_bytes, &pi_bytes);
+    assert_eq!(
+        status,
+        Plonky3Status::Ok,
+        "verify_mine_uno must accept the proof we just produced (got {status:?})",
+    );
 }
 
 #[test]
-#[ignore] // requires AIR + chain state
 fn mine_uno_invalid_proof_rejected() {
-    // 1. Build witness + prove
-    let _w = mk_mine_witness(0);
-    // 2. Call prove_mine_uno (NOT YET IMPLEMENTED)
-    // 3. Tamper with proof bytes (flip a byte mid-proof)
-    // 4. Assert verify_mine_uno returns false / Err
-    todo!("prove_mine_uno / verify_mine_uno FFI symbols not yet defined (Phase 2)")
+    use uno_plonky3_ffi::mine_uno_witness::MineUnoWitness as FfiWitness;
+    use uno_plonky3_ffi::prover::prove_mine_uno;
+    use uno_plonky3_ffi::verifier::verify_mine_uno;
+    use uno_plonky3_ffi::Plonky3Status;
+
+    // Produce a valid (proof, pi) pair first.
+    let w = FfiWitness::deterministic_valid(0, 0xDEAD_BEEF);
+    let (mut proof_bytes, pi_bytes) =
+        prove_mine_uno(&w.encode()).expect("prove_mine_uno must succeed");
+    assert!(!proof_bytes.is_empty(), "proof bytes must be non-empty");
+
+    // Sanity: the untampered proof verifies.
+    assert_eq!(
+        verify_mine_uno(&proof_bytes, &pi_bytes),
+        Plonky3Status::Ok,
+        "baseline proof must verify before we tamper with it",
+    );
+
+    // Tamper with a byte near the middle of the proof. Flip one bit —
+    // enough to break a Merkle path / FRI query without disturbing the
+    // postcard framing of the outer `Proof<MvpConfig>` struct (which
+    // would otherwise bounce out at `ProofDecodeFailed` before the
+    // STARK check even runs).
+    let mid = proof_bytes.len() / 2;
+    proof_bytes[mid] ^= 0x01;
+
+    let status = verify_mine_uno(&proof_bytes, &pi_bytes);
+    assert_ne!(
+        status,
+        Plonky3Status::Ok,
+        "verify_mine_uno must reject a tampered proof (got Ok)",
+    );
 }
 
 #[test]
-#[ignore] // requires chain-state fields from parallel agent A
 fn mine_uno_witness_epoch_at_first_halving_boundary() {
-    // epoch = 210_000 → era 1 → reward = 25 UNO
-    let w = mk_mine_witness(210_000);
-    assert_eq!(w.value_nano, 25 * 1_000_000_000);
-    w.validate().expect("epoch 210000 witness must validate");
-    // Attempt to prove with epoch at the boundary — requires AIR.
-    todo!("prove_mine_uno not yet implemented (Phase 2)")
+    use uno_plonky3_ffi::mine_uno_witness::MineUnoWitness as FfiWitness;
+    use uno_plonky3_ffi::prover::prove_mine_uno;
+    use uno_plonky3_ffi::verifier::verify_mine_uno;
+    use uno_plonky3_ffi::Plonky3Status;
+
+    // tosctl_uno halving-table self-check (independent of the STARK).
+    // `mk_mine_witness` uses the wallet-native witness shape and
+    // computes value_nano via the mine_constants halving table.
+    let wallet_witness = mk_mine_witness(210_000);
+    assert_eq!(
+        wallet_witness.value_nano,
+        25 * 1_000_000_000,
+        "epoch 210000 is the first halving boundary — era 1 = 25 UNO",
+    );
+    wallet_witness
+        .validate()
+        .expect("epoch 210000 witness must validate");
+
+    // Build the FFI witness at the same boundary. `deterministic_valid`
+    // ignores `epoch` for the value-derivation (it hard-codes era 0 =
+    // 50 UNO internally), so we patch value_nano + the conservation
+    // pair by hand to land on era 1 = 25 UNO before encoding.
+    let mut w = FfiWitness::deterministic_valid(210_000, 0xBA11_0001);
+    let era_1_reward: u64 = 25 * 1_000_000_000;
+    w.value_nano = era_1_reward;
+    w.remaining_post = w.remaining_pre - era_1_reward;
+    assert_eq!(w.epoch, 210_000, "epoch must be at halving boundary");
+    assert_eq!(w.value_nano, era_1_reward, "era 1 reward must be 25 UNO");
+
+    // Prove + verify at the boundary epoch.
+    let (proof_bytes, pi_bytes) = prove_mine_uno(&w.encode())
+        .expect("prove_mine_uno must succeed at epoch 210000 (era 1)");
+    assert!(!proof_bytes.is_empty(), "proof bytes must be non-empty");
+
+    let status = verify_mine_uno(&proof_bytes, &pi_bytes);
+    assert_eq!(
+        status,
+        Plonky3Status::Ok,
+        "verify_mine_uno must accept the epoch-210000 proof (got {status:?})",
+    );
 }
