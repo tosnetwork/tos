@@ -501,8 +501,40 @@ VerifyResult apply_mine_uno(UnoState& state, const MineUno& tx) noexcept {
             return VerifyResult::PiHeaderMismatch;
         }
 
-        // ---- Step 3b: FFI verify (Rust Plonky3 STARK) — expensive ----
-        // Now that header/PI consistency is proven, pay the STARK cost.
+        // ---- Step 3c: PoW difficulty threshold (cheap, BEFORE FFI verify) ----
+        // pow_hash is committed in the STARK PI at indices 6..9 (4
+        // Goldilocks field elements). PI wire format = N_PUBLIC_INPUTS ×
+        // u64 LE (96 bytes total). pow_hash occupies bytes [48..80). The
+        // miner's off-circuit `compute_mine_pow_hash` / `hash_below_target`
+        // use the same byte layout and a big-endian lexicographic
+        // comparison (`hash < target`). Mirror it here so the chain
+        // rejects any proof whose hash does not satisfy the difficulty,
+        // regardless of whether the AIR itself allowed it. AIR does not
+        // constrain hash < target because target is chain-state, not
+        // witness — this C++ gate is the only place difficulty is enforced.
+        //
+        // This check is O(1) memcmp; run it BEFORE the expensive STARK
+        // verify so a non-winning but otherwise valid proof can't force
+        // every validator to pay full STARK verification cost on a tx
+        // that's guaranteed to fail. Combined with step 3a (PI/header
+        // bind) the cheap-rejects-first-then-expensive pattern caps the
+        // worst-case validator CPU per malicious submission at O(1).
+        static constexpr size_t kPowHashPiOffset = 6 * 8;  // PI_POW_HASH_BASE × 8
+        if (pi_slice.size() < kPowHashPiOffset + 32) {
+            return VerifyResult::BadPlonky3Proof;
+        }
+        std::array<uint8_t, 32> pow_hash{};
+        std::memcpy(pow_hash.data(), pi_slice.data() + kPowHashPiOffset, 32);
+        if (!(pow_hash < tx.public_inputs.target)) {
+            // pow_hash >= target — difficulty not met.
+            return VerifyResult::PowHashAboveTarget;
+        }
+
+        // ---- Step 3d: FFI verify (Rust Plonky3 STARK) — expensive ----
+        // Now that header/PI consistency + PoW threshold are proven, pay
+        // the STARK cost. AIR enforces that the committed pow_hash IS
+        // the correct Poseidon2 output for (epoch, nonce, output_cm) so
+        // an attacker can't forge a low pow_hash without a valid proof.
         ::Plonky3ProofBytes fp{
             reinterpret_cast<const uint8_t*>(proof_slice.data()),
             proof_slice.size()
@@ -514,28 +546,6 @@ VerifyResult apply_mine_uno(UnoState& state, const MineUno& tx) noexcept {
         int32_t rc = uno_mine_uno_verify(fp, fpi);
         if (rc != 0) {
             return VerifyResult::BadPlonky3Proof;
-        }
-
-        // ---- Step 4: PoW difficulty threshold ----
-        // pow_hash is committed in the STARK PI at indices 6..9 (4
-        // Goldilocks field elements). PI wire format = N_PUBLIC_INPUTS ×
-        // u64 LE (96 bytes total). pow_hash occupies bytes [48..80). The
-        // miner's off-circuit `compute_mine_pow_hash` / `hash_below_target`
-        // use the same byte layout and a big-endian lexicographic
-        // comparison (`hash < target`). Mirror it here so the chain
-        // rejects any proof whose hash does not satisfy the difficulty,
-        // regardless of whether the AIR itself allowed it. AIR does not
-        // constrain hash < target because target is chain-state, not
-        // witness — this C++ gate is the only place difficulty is enforced.
-        static constexpr size_t kPowHashPiOffset = 6 * 8;  // PI_POW_HASH_BASE × 8
-        if (pi_slice.size() < kPowHashPiOffset + 32) {
-            return VerifyResult::BadPlonky3Proof;
-        }
-        std::array<uint8_t, 32> pow_hash{};
-        std::memcpy(pow_hash.data(), pi_slice.data() + kPowHashPiOffset, 32);
-        if (!(pow_hash < tx.public_inputs.target)) {
-            // pow_hash >= target — difficulty not met.
-            return VerifyResult::PowHashAboveTarget;
         }
     }
 
