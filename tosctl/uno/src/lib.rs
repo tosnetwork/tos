@@ -31,6 +31,8 @@ pub mod gcs;
 pub mod genesis_build;
 pub mod hybrid_kem;
 pub mod keygen;
+pub mod mine_constants;
+pub mod mine_uno;
 pub mod poseidon2;
 pub mod rpc_client;
 pub mod scan;

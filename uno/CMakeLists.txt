@@ -25,6 +25,9 @@ set(UNO_CORE_AGENT5
   core/parallel-verify.cpp
   core/cell-codec.cpp
   core/init.cpp
+  # Phase 1: MineUno tx kind skeleton (data structures + constants).
+  # Phase 2 will add decode/encode/apply implementations here.
+  core/mine_uno.cpp
 )
 
 set(UNO_CORE_AGENT1

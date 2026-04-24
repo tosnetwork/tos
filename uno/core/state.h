@@ -87,6 +87,26 @@ struct UnoShardState {
 
     // Ref 3 of the root cell is RESERVED (§5.1). Absent by design.
 
+    // TODO(uno-mine-v1, Phase 2): add mining state fields here:
+    //   uint64_t mine_remaining;     // 21M nano-UNO at genesis, monotonically decreases
+    //   uint32_t mine_epoch;         // cumulative successful solves
+    //   std::array<uint8_t, 32> mine_target;  // current PoW difficulty target (32 B big-endian)
+    //   uint32_t halving_era;        // = mine_epoch / kEraSize (derived, stored for fast lookup)
+    //
+    // These fields require coordinated changes in:
+    //   - uno/core/cell-state.cpp   : add encode/decode for the new fields in a
+    //                                 new MetaCell ref (kMetaRefMiningState = 2,
+    //                                 pushing kMetaRefCount from 2 to 3).
+    //   - uno/core/genesis.cpp      : initialize mine_remaining = kMineSupplyNano,
+    //                                 mine_epoch = 0, mine_target = kInitMineTargetBE,
+    //                                 halving_era = 0 in build_zerostate_state().
+    //   - uno/core/compute-phase.cpp: apply_mine_uno() reads remaining_pre from
+    //                                 state, validates, writes remaining_post +
+    //                                 epoch/era/target back.
+    //
+    // See doc/uno-mine-air-constraints.md for the full constraint spec.
+    // See uno/core/mine_constants.h for kMineSupplyNano, kInitMineTargetBE, kEraSize.
+
     UnoShardState();
     ~UnoShardState();
 

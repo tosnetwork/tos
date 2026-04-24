@@ -300,6 +300,9 @@ The MineUno STARK proof must enforce all of:
 5. **Cap**: `remaining_post ≥ 0` (no minting beyond 21M)
 6. **Address well-form**: recipient address fields (d/pk_d/ivk_commitment/pk_mlkem) are valid sizes
 
+Full constraint specification (mathematical formulations, edge cases, and
+Phase 2 implementation plan): **[doc/uno-mine-air-constraints.md](uno-mine-air-constraints.md)**
+
 Witness:
 - Private: `nonce`, `recipient address (1259 B)`, `rseed (32 B)`
 - Public: `epoch`, `target`, `value`, `output_cm`, `remaining_pre`, `remaining_post`
