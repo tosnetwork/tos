@@ -63,11 +63,12 @@ Liquid staking system where validators borrow from a pool to increase their stak
 | `generate-loan-request.fif` | Generate loan request |
 | `withdraw-controller.fif` | Withdraw from controller |
 
-### Tests (`tests/*.ts`)
-TypeScript test suite (requires Blueprint/TOS testing framework):
-- Controller.spec.ts, ControllerPool.spec.ts
-- Governor.spec.ts, Integrational.spec.ts
-- SmokeNFT.spec.ts, DepositFees.spec.ts, WithdrawFees.spec.ts, etc.
+### Removed TypeScript Tooling
+
+The previous Blueprint/Jest TypeScript test and deployment helpers were
+removed from this directory because they depended on external npm toolchain
+packages. Keep this suite limited to the FunC, Fift, TLB, and BOC contract
+assets that are consumed by the TOS tree.
 
 ## TOS Compatibility
 
@@ -76,4 +77,4 @@ Not yet audited. This is the most complex contract suite. Requires:
 2. Verify `load_coins()`/`store_coins()` mapping
 3. Verify elector interface compatibility
 4. Verify Jetton standard compatibility on TOS
-5. Port TypeScript tests to TOS testing environment
+5. Add TOS-native tests without external npm toolchain dependencies
