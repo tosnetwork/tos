@@ -11,6 +11,13 @@
     Layout origin: uno-workchain.md §2.0, §5.1, §5.6, §10.1, §10.2, §10.4.
 */
 #pragma once
+#ifndef UNO_WORKCHAIN_H_
+#define UNO_WORKCHAIN_H_
+// NOTE: guard-macro is paired with `#pragma once` so transaction.h can
+// detect whether this header is in scope (it hosts an optional copy of
+// `kTransferVersion` / `kSchemeIdV1` for TUs that include transaction.h
+// without workchain.h; see transaction.h §"Fixed wire constants").
+#endif
 
 #include <cstdint>
 #include <cstddef>

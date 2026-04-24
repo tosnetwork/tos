@@ -90,7 +90,11 @@ inline const char* verify_result_label(VerifyResult r) noexcept {
 // opaque type + init/free/verify entry points. The block-level verifier
 // (A6-3 RAII wrapper) uses these to replace per-Tx Plonky3 verify with
 // one block-level aggregated-proof verify.
-inline constexpr std::uint32_t kExpectedAbiVersion = 3;
+//
+// v4 (MineUno Phase 3): adds `uno_mine_uno_prove` / `uno_mine_uno_verify`
+// C-ABI entry points. Existing Transfer verify surface unchanged;
+// compute-phase now dispatches tx_kind=0x02 to the MineUno path.
+inline constexpr std::uint32_t kExpectedAbiVersion = 4;
 
 // RAII wrapper around an `UnoPlonky3VerifierHandle`.
 //

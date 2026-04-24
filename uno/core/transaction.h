@@ -72,8 +72,17 @@ namespace uno_workchain {
 // Fixed wire constants (mirror §4.1)
 // ---------------------------------------------------------------------------
 
+// `kTransferVersion` and `kSchemeIdV1` are canonically defined in
+// `uno/core/workchain.h`. We gate the transaction.h-local copies behind
+// a guard so a TU that pulls in BOTH headers (compute-phase.cpp after
+// the MineUno dispatch addition — transaction.h + mine_uno.h → workchain.h)
+// does not see a duplicate-definition error. TUs that include transaction.h
+// without workchain.h (older test files) still get the constant via the
+// fallback branch; the numeric value is identical.
+#ifndef UNO_WORKCHAIN_H_  // defined by uno/core/workchain.h
 constexpr uint8_t  kTransferVersion       = 1;       // byte 0
 constexpr uint8_t  kSchemeIdV1            = 0x01;    // byte 1 — Plonky3 / Goldilocks / Poseidon2
+#endif
 constexpr uint8_t  kMaxSpendCount         = 4;       // §10.2
 constexpr uint8_t  kMaxOutputCount        = 4;       // §10.2
 constexpr uint8_t  kMinSpendCount         = 1;

@@ -118,6 +118,11 @@ add_executable(test-uno-genesis-loader           test-genesis-loader.cpp)
 # Also loads the Rust golden fixture (uno/test/golden/mine-uno-witness-v1.json)
 # when present. AIR proof tests are SKIP placeholders until Phase 2 lands.
 add_executable(test-uno-mine-loader               test-uno-mine-loader.cpp)
+# K-mine-cpp: Phase 2 MineUno codec + apply round-trip. Pins
+# decode_mine_uno / encode_mine_uno / canonical_mine_uno_hash /
+# apply_mine_uno (including verify-before-mutate on bogus-proof reject)
+# against the struct layout in mine_uno.h.
+add_executable(test-mine-uno-cpp                  test-mine-uno-cpp.cpp)
 
 # K-bech32m: §2.6 AddressEnvelope codec round-trips and reject paths (bad HRP,
 # HRP/network mismatch, flipped checksum symbol, flipped payload byte, short
@@ -202,6 +207,7 @@ foreach(_t test-uno-transfer
            test-uno-nullifier-warm-lru
            test-uno-genesis-loader
            test-uno-mine-loader
+           test-mine-uno-cpp
            test-uno-bech32m-envelope
            test-uno-subscriptions
            test-uno-metrics

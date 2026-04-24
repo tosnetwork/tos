@@ -99,6 +99,16 @@ RejectReason reject_reason_from_verify_result(int v) noexcept {
         case 20: return RejectReason::NullifierAlreadySpent;
         case 30: return RejectReason::BadSig;
         case 40: return RejectReason::BadProof;
+        // MineUno-specific (uno-mine-v1 §3.2) — reuse the closest existing
+        // Prometheus label so dashboards don't need to grow a new bucket per
+        // tx kind. 41/42 (epoch/remaining race) and 45 (conservation) map to
+        // `other`; 44 (halving reward) maps to `other`; 46 (unknown tx kind)
+        // maps to `malformed`.
+        case 41: return RejectReason::Other;
+        case 42: return RejectReason::Other;
+        case 44: return RejectReason::Other;
+        case 45: return RejectReason::Other;
+        case 46: return RejectReason::Malformed;
         case 90: return RejectReason::DecodeError;
         default: return RejectReason::Other;
     }

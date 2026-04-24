@@ -30,6 +30,7 @@
 #include "td/utils/logging.h"
 #include "vm/cells/CellBuilder.h"
 
+#include "uno/core/mine_uno.h"
 #include "uno/core/parallel-verify.h"
 #include "uno/core/transaction.h"
 #include "uno/rpc/metrics.h"
@@ -112,6 +113,11 @@ const char* verify_result_name(VerifyResult r) noexcept {
         case VerifyResult::NullifierAlreadySpent:   return "nullifier-already-spent";
         case VerifyResult::BadSpendAuthSig:         return "bad-spend-auth-sig";
         case VerifyResult::BadPlonky3Proof:         return "bad-plonky3-proof";
+        case VerifyResult::EpochRaceDetected:       return "epoch-race-detected";
+        case VerifyResult::RemainingRaceDetected:   return "remaining-race-detected";
+        case VerifyResult::InvalidHalvingReward:    return "invalid-halving-reward";
+        case VerifyResult::BadMineConservation:     return "bad-mine-conservation";
+        case VerifyResult::UnknownTxKind:           return "unknown-tx-kind";
         case VerifyResult::DecodeError:             return "decode-error";
     }
     return "unknown";
@@ -204,6 +210,111 @@ uint64_t compute_gas_used(const Transfer& tx) noexcept {
 // Dispatcher entry point
 // =============================================================================
 
+// ---------------------------------------------------------------------------
+// MineUno helpers (uno-mine-v1 §3 / §4)
+//
+// The dispatch path peeks at byte 0 of the in_msg_body slice to distinguish
+// Transfer (version=0x01 as byte 0) from MineUno (tx_kind=0x02 as byte 0).
+// Any other value is rejected with VerifyResult::UnknownTxKind.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Peek at byte 0 without advancing the slice. Returns std::nullopt if the
+// slice has fewer than 8 bits.
+bool peek_first_byte(const vm::CellSlice& cs, uint8_t& out) noexcept {
+    if (!cs.have(8u)) return false;
+    out = static_cast<uint8_t>(cs.prefetch_ulong(8));
+    return true;
+}
+
+// Populate `cp` for a rejected tx with a given VerifyResult. Mirrors the
+// Transfer reject-path shape exactly (same field assignments in the same
+// order), so dashboards / JSON-RPC consumers see identical cp records.
+void populate_reject_cp(block::ComputePhase& cp,
+                        VerifyResult vr,
+                        uint64_t gas_used,
+                        uint64_t gas_limit) {
+    cp.success    = false;
+    cp.accepted   = true;
+    cp.gas_used   = gas_used;
+    cp.gas_limit  = gas_limit;
+    cp.gas_credit = 0;
+    cp.gas_max    = gas_limit;
+    cp.exit_code  = kExitCodeRejectBase + static_cast<int>(vr);
+    cp.vm_steps   = 1;
+    cp.vm_init_state_hash.set_zero();
+    cp.vm_final_state_hash.set_zero();
+    cp.vm_log = std::string("uno: reject ") + verify_result_name(vr);
+}
+
+// ---- MineUno dispatch -------------------------------------------------------
+
+bool run_mine_uno_compute_phase(
+    block::ComputePhase& cp,
+    vm::CellSlice& in_msg_body,
+    uint64_t gas_limit,
+    UnoState& state) {
+
+    auto decoded = decode_mine_uno(in_msg_body);
+    if (auto* err_ptr = std::get_if<MineUnoDecodeError>(&decoded)) {
+        global_metrics_registry().inc_transfers_rejected(
+            RejectReason::DecodeError);
+        LOG(WARNING) << "uno-workchain(mine): decode failed: " << err_ptr->reason;
+        cp.skip_reason = block::ComputePhase::sk_bad_state;
+        populate_reject_cp(cp, VerifyResult::DecodeError, 0, gas_limit);
+        cp.vm_log = std::string("uno-mine: ") + err_ptr->reason;
+        return true;
+    }
+    MineUno tx = std::move(std::get<MineUno>(decoded));
+    const uint64_t gas_used = compute_gas_used_mine_uno(tx);
+
+    VerifyResult vr = apply_mine_uno(state, tx);
+    if (vr != VerifyResult::Ok) {
+        global_metrics_registry().inc_transfers_rejected(
+            reject_reason_from_verify_result(static_cast<int>(vr)));
+        auto h = canonical_mine_uno_hash(tx);
+        LOG(INFO) << "uno-workchain(mine): reject tx=" << h.to_hex()
+                  << " reason=" << verify_result_name(vr);
+        populate_reject_cp(cp, vr, gas_used, gas_limit);
+        return true;
+    }
+
+    // K-uno-metrics: count accepted MineUnos. We reuse
+    // `inc_transfers_admitted()` rather than adding a new counter so the
+    // existing `uno_transfers_admitted_total` dashboard-bound metric
+    // reflects the total mined + transferred tx volume. A future K-mine-
+    // metrics task can split these into two counters.
+    global_metrics_registry().inc_transfers_admitted();
+    auto tx_hash = canonical_mine_uno_hash(tx);
+    LOG(INFO) << "uno-workchain(mine): apply tx=" << tx_hash.to_hex()
+              << " epoch=" << tx.public_inputs.epoch
+              << " value_nano=" << tx.public_inputs.value_nano;
+
+    // Fire the same subscription hook Transfer uses so wallets see the
+    // MineUno land in their includedTx channel. Fee = 0, outputs = 1.
+    on_included_tx_from_compute(
+        reinterpret_cast<const uint8_t*>(tx_hash.data()),
+        /*fee=*/0,
+        /*n_outputs=*/1);
+
+    cp.new_data = state.serialize_to_cell();
+    cp.actions  = vm::CellBuilder{}.finalize();
+    cp.success    = true;
+    cp.accepted   = true;
+    cp.gas_used   = gas_used;
+    cp.gas_limit  = gas_limit;
+    cp.gas_credit = 0;
+    cp.gas_max    = gas_limit;
+    cp.exit_code  = 0;
+    cp.vm_steps   = 1;
+    cp.vm_init_state_hash.set_zero();
+    cp.vm_final_state_hash.set_zero();
+    return true;
+}
+
+}  // anonymous namespace
+
 bool run_compute_phase(
     block::ComputePhase& cp,
     vm::CellSlice& in_msg_body,
@@ -215,6 +326,33 @@ bool run_compute_phase(
     (void)timestamp;
     (void)rand_seed;
     (void)block_seqno;  // Uno uses state.current_block_seqno() for determinism.
+
+    // --- Step 0: Dispatch on byte-0 discriminator ---
+    // Transfer's byte 0 is `version=0x01`; MineUno's byte 0 is
+    // `tx_kind=0x02`. Anything else is rejected with UnknownTxKind.
+    uint8_t disc = 0;
+    if (!peek_first_byte(in_msg_body, disc)) {
+        global_metrics_registry().inc_transfers_rejected(
+            RejectReason::DecodeError);
+        LOG(WARNING) << "uno-workchain: empty / sub-byte body; cannot dispatch";
+        cp.skip_reason = block::ComputePhase::sk_bad_state;
+        populate_reject_cp(cp, VerifyResult::DecodeError, 0, gas_limit);
+        cp.vm_log = "uno: empty body";
+        return true;
+    }
+    if (disc == kTxKindMineUno) {
+        return run_mine_uno_compute_phase(cp, in_msg_body, gas_limit, state);
+    }
+    if (disc != kTransferVersion) {
+        global_metrics_registry().inc_transfers_rejected(
+            RejectReason::Malformed);
+        LOG(WARNING) << "uno-workchain: unknown tx discriminator byte 0x"
+                     << std::hex << static_cast<int>(disc);
+        cp.skip_reason = block::ComputePhase::sk_bad_state;
+        populate_reject_cp(cp, VerifyResult::UnknownTxKind, 0, gas_limit);
+        cp.vm_log = "uno: unknown tx kind";
+        return true;
+    }
 
     // --- Step 1: Decode Transfer wire body ---
     auto decoded = decode_transfer(in_msg_body);
@@ -376,6 +514,45 @@ std::vector<VerifyResult> run_compute_phase_batch(
         }
     }
 
+    return results;
+}
+
+// =============================================================================
+// MineUno batch entry point (uno-mine-v1 §4.3 strategy (a) — separate batch
+// per tx kind)
+//
+// Collator-facing: given N pre-decoded MineUnos, run the §3 chain checks +
+// STARK verify (via `apply_mine_uno`) serially in declared order. No
+// parallel-verify pool is installed for MineUno yet — the STARK verify is
+// fast enough (small AIR, single-thread) that the first pass serialises
+// apply + verify together. A future K-mine-parallel-verify task can split
+// these lanes apart.
+//
+// Tx-order preservation matters for epoch race protection: miner A's tx
+// lands first → `state.mine_epoch` advances → miner B's tx sees stale
+// epoch → rejected with EpochRaceDetected. This exactly mirrors Transfer's
+// nullifier-already-spent semantics.
+// =============================================================================
+std::vector<VerifyResult> run_compute_phase_batch_mine_uno(
+    UnoState&          state,
+    const MineUno*     txs,
+    std::size_t        n_txs) {
+
+    std::vector<VerifyResult> results;
+    if (n_txs == 0) return results;
+    results.reserve(n_txs);
+
+    auto& mreg = global_metrics_registry();
+    for (std::size_t i = 0; i < n_txs; ++i) {
+        VerifyResult r = apply_mine_uno(state, txs[i]);
+        results.push_back(r);
+        if (r == VerifyResult::Ok) {
+            mreg.inc_transfers_admitted();
+        } else {
+            mreg.inc_transfers_rejected(
+                reject_reason_from_verify_result(static_cast<int>(r)));
+        }
+    }
     return results;
 }
 

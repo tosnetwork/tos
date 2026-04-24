@@ -31,6 +31,13 @@
 #include <variant>
 #include <vector>
 
+#include "td/utils/Slice.h"          // td::Slice / td::BufferSlice
+#include "td/utils/Status.h"         // td::Result
+#include "td/utils/UInt.h"           // td::Bits256
+#include "td/utils/buffer.h"         // td::BufferSlice
+#include "vm/cells/Cell.h"           // td::Ref<vm::Cell>
+#include "vm/cells/CellSlice.h"      // vm::CellSlice
+
 #include "uno/core/genesis.h"        // GenesisAddress (recipient type)
 #include "uno/core/mine_constants.h" // kMineHashTag, mine_reward_for_era, …
 #include "uno/core/workchain.h"      // kSchemeIdV1, kHashBytes, …
@@ -196,8 +203,14 @@ struct MineUno {
     uint8_t  scheme_id{kSchemeIdV1};
     uint32_t chain_id{0};
     MineUnoPublicInputs public_inputs;
-    // zk_proof: Ref<Cell> — added in Phase 2 when the codec is implemented.
-    // Placeholder comment only; the Phase 2 decoder will carry a td::Ref<vm::Cell>.
+
+    /// Phase 2: the zk_proof ref is carried as a parsed concatenated blob
+    /// `[u32 LE proof_len][proof_bytes][96 B Plonky3 PI]` — mirrors the
+    /// layout emitted by the Rust `uno_mine_uno_prove` FFI (see
+    /// uno/plonky3-ffi/src/lib.rs line 977). The `encode_mine_uno` path
+    /// passes this blob into `store_bytes_as_chunk_chain` to build the
+    /// canonical 4-ary chunk tree for the root cell's ref[0].
+    std::vector<uint8_t> proof_blob{};
 
     // Populated by decoder (Phase 2):
     size_t      wire_size_bytes{0};
@@ -208,7 +221,7 @@ struct MineUno {
     //   BLAKE3(tx_kind ‖ version ‖ scheme_id ‖ chain_id ‖ epoch ‖
     //          target ‖ value_nano ‖ output_cm ‖ remaining_pre ‖
     //          remaining_post)
-    // Implementation is Phase 2 (canonical_mine_uno_hash in transaction.cpp).
+    // Implementation: canonical_mine_uno_hash (mine_uno.cpp).
 };
 
 // ---------------------------------------------------------------------------
@@ -248,5 +261,39 @@ inline bool check_conservation(const MineUnoPublicInputs& pi) noexcept {
     if (pi.remaining_pre < pi.value_nano) { return false; }
     return pi.remaining_post == (pi.remaining_pre - pi.value_nano);
 }
+
+// ---------------------------------------------------------------------------
+// Phase 2 codec + hash entry points (doc/uno-mine-cpp-integration-spec.md)
+// ---------------------------------------------------------------------------
+
+/// Decode a MineUno from a message-body CellSlice. The body carries the
+/// canonical §1 wire envelope: 99-byte inline header + 1 ref to the
+/// zk_proof chunk tree. Returns a variant carrying either the decoded
+/// MineUno (with `proof_blob` populated from the chunk tree) or a
+/// `MineUnoDecodeError` with a short reason string.
+MineUnoDecodeResult decode_mine_uno(vm::CellSlice body) noexcept;
+
+/// Convenience overload for raw byte buffers (RPC / mempool admission).
+MineUnoDecodeResult decode_mine_uno_bytes(td::Slice raw_bytes) noexcept;
+
+/// Serialize a MineUno into a root cell, using the supplied `proof_blob`
+/// as the zk_proof chunk-tree payload. The blob layout is
+/// `[u32 LE proof_len][proof_bytes][96 B Plonky3 PI]` — identical to
+/// what `uno_mine_uno_prove` returns. Round-trips cleanly with
+/// `decode_mine_uno`.
+td::Result<td::Ref<vm::Cell>> encode_mine_uno(const MineUno& tx,
+                                              td::Slice proof_blob) noexcept;
+
+/// BoC-wrap the result of `encode_mine_uno`. Pairs with
+/// `decode_mine_uno_bytes` for JSON-RPC / mempool storage.
+td::Result<td::BufferSlice> encode_mine_uno_to_boc(const MineUno& tx,
+                                                   td::Slice proof_blob) noexcept;
+
+/// Canonical mempool-dedup / anti-replay hash. BLAKE3 over the 99-byte
+/// preimage `tx_kind || version || scheme_id || chain_id || epoch ||
+/// target || value_nano || output_cm || remaining_pre || remaining_post`.
+/// All multi-byte fields are big-endian. Matches the `canonical_mine_uno_hash`
+/// note in §2 of the spec.
+td::Bits256 canonical_mine_uno_hash(const MineUno& tx) noexcept;
 
 }  // namespace uno_workchain

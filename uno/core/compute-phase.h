@@ -25,6 +25,7 @@
 */
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -38,6 +39,8 @@ namespace uno_workchain {
 
 struct Transfer;  // uno/core/transaction.h — full def used by
                   // `run_compute_phase_batch` (§13 P.3).
+struct MineUno;   // uno/core/mine_uno.h — full def used by the MineUno
+                  // dispatch branch and `apply_mine_uno` / `compute_gas_used_mine_uno`.
 
 
 // ---------------------------------------------------------------------------
@@ -83,6 +86,29 @@ public:
     virtual uint64_t fee_per_byte_nano() const    = 0;
     virtual uint64_t fee_per_spend_nano() const   = 0;
     virtual uint64_t fee_per_output_nano() const  = 0;
+
+    // ------------------------------------------------------------------
+    // MineUno consensus state (uno-mine-v1; see doc/uno-mine-cpp-integration-spec.md)
+    //
+    // These mirror the four `mine_*` fields on UnoShardState (see state.h
+    // lines 90-94) and are read during §3 of the apply-mine-uno sequence
+    // to enforce epoch / remaining race protection. The abstract base
+    // provides default no-op / zero implementations so skeleton tests
+    // (test harnesses that inherit from UnoState without mine support)
+    // keep compiling; the production LiveUnoState override wires them to
+    // the real in-memory fields.
+    // ------------------------------------------------------------------
+    virtual uint32_t mine_epoch() const noexcept { return 0; }
+    virtual uint64_t mine_remaining() const noexcept { return 0; }
+    virtual std::array<uint8_t, 32> mine_target() const noexcept { return {}; }
+
+    /// Atomic state transition applied by `apply_mine_uno` on success.
+    /// - Advances `mine_epoch` by one.
+    /// - Overwrites `mine_remaining` with `new_remaining`.
+    /// Default is no-op so skeleton test states stay compile-clean.
+    virtual void advance_mine_state(uint64_t new_remaining) noexcept {
+        (void)new_remaining;
+    }
 };
 
 /// The return of `verify_transfer`. `Ok` means all §4.3 checks passed and
@@ -109,6 +135,12 @@ enum class VerifyResult : int {
     BadSpendAuthSig             = 30,
     // proof verify (§4.3 step 4)
     BadPlonky3Proof             = 40,
+    // MineUno-specific reject reasons (uno-mine-v1 §3.2)
+    EpochRaceDetected           = 41,
+    RemainingRaceDetected       = 42,
+    InvalidHalvingReward        = 44,
+    BadMineConservation         = 45,
+    UnknownTxKind               = 46,
     // catch-all (decode / codec)
     DecodeError                 = 90,
 };
@@ -167,6 +199,35 @@ std::vector<VerifyResult> run_compute_phase_batch(
     UnoState&               state,
     const Transfer*         txs,
     std::size_t             n_txs);
+
+// ---------------------------------------------------------------------------
+// MineUno apply / verify exports (uno-mine-v1 §3)
+//
+// `verify_mine_uno_chain_checks` runs the off-circuit sequence (epoch race,
+// remaining race, halving reward, conservation) but does NOT invoke the
+// Rust Plonky3 verifier. It is safe to call from a `const UnoState&` path.
+//
+// `apply_mine_uno` runs `verify_mine_uno_chain_checks`, then executes the
+// STARK verify via `uno_mine_uno_verify`, then mutates `state` on success.
+// On any failure, state is unchanged (verify-before-mutate invariant).
+//
+// `compute_gas_used_mine_uno` returns the advisory gas cost; MineUno has
+// no variable-length spend/output vector so the cost is a small constant
+// plus a per-byte surcharge, mirroring Transfer's `compute_gas_used`.
+// ---------------------------------------------------------------------------
+VerifyResult verify_mine_uno_chain_checks(const UnoState& state,
+                                          const MineUno&  tx) noexcept;
+VerifyResult apply_mine_uno(UnoState& state, const MineUno& tx) noexcept;
+uint64_t     compute_gas_used_mine_uno(const MineUno& tx) noexcept;
+
+/// Batch variant for MineUno txs — strategy (a), separate batch per kind.
+/// Applies each tx in declared order, running `apply_mine_uno` (chain
+/// checks + STARK verify + state mutation) serially. Returns the per-tx
+/// VerifyResult vector in input order. See uno-mine-v1 spec §4.3.
+std::vector<VerifyResult> run_compute_phase_batch_mine_uno(
+    UnoState&       state,
+    const MineUno*  txs,
+    std::size_t     n_txs);
 
 /// End-of-block hook. Called exactly once per wc=2 block after the last
 /// `run_compute_phase` / `run_compute_phase_batch` for that block. Drives:
