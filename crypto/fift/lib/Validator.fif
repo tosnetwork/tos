@@ -1,9 +1,16 @@
 library Validator  // Validator request, vote, and signed body codecs
 "Addr.fif" include
 "Currency.fif" include
-"Key.fif" include
+"Key.fif" include   // Transitive: not used here, re-exported for callers
+                    // (validator-elect-signed.fif etc.) that need PK' / parse-val-pubkey.
 "Msg.fif" include
 
+// Carries query-time across the `if` block and the post-check in
+// `normalize-vote-expire-at`. Intentionally retained as a `variable`
+// (not refactored to pure stack like `config-vote-ext-msg`) because
+// the name documents the value's role ("the base time we're
+// normalizing relative to") and is reused at two points across a
+// control-flow boundary.
 variable @normalize-vote-expire-base
 
 // ( S -- B )
@@ -19,12 +26,18 @@ variable @normalize-vote-expire-base
 } : validator-elect-req>B
 
 // ( query-id pubkey elect-utime max-factor adnl-addr signature -- c )
-{ <b x{4e73744b} s, 6 roll 64 u, 5 roll B, 4 roll 32 u, 3 roll 32 u, rot 256 u,
+// Defensive: pubkey is appended raw via `B,` (no length tag), so a
+// wrong-size pubkey would silently produce a malformed cell. Honest
+// callers route pubkey through parse-val-pubkey/PK' (Key.fif) which
+// already enforces 32 bytes; the check below catches direct callers.
+{ 4 pick Blen 32 <> abort"validator Ed25519 pubkey must be exactly 32 bytes long"
+  <b x{4e73744b} s, 6 roll 64 u, 5 roll B, 4 roll 32 u, 3 roll 32 u, rot 256 u,
   swap <b swap B, b> ref, b>
 } : validator-elect-body
 
 // ( query-id amount pubkey elect-utime max-factor adnl-addr signature -- c )
-{ <b x{4e73744b} s, 7 roll 64 u, 6 roll Tomi, 5 roll B, 4 roll 32 u, 3 roll 32 u, rot 256 u,
+{ 4 pick Blen 32 <> abort"validator Ed25519 pubkey must be exactly 32 bytes long"
+  <b x{4e73744b} s, 7 roll 64 u, 6 roll Tomi, 5 roll B, 4 roll 32 u, 3 roll 32 u, rot 256 u,
   swap <b swap B, b> ref, b>
 } : validator-elect-body+stake
 
