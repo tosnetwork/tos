@@ -15,16 +15,22 @@
 //! - [`MineUnoWitness::deterministic_valid`] for test fixtures
 
 use p3_field::{PrimeCharacteristicRing, PrimeField64};
-use p3_goldilocks::{default_goldilocks_poseidon2_16, Goldilocks};
+use p3_goldilocks::{
+    default_goldilocks_poseidon2_16, GenericPoseidon2LinearLayersGoldilocks, Goldilocks,
+};
 use p3_matrix::dense::RowMajorMatrix;
+use p3_poseidon2_air::{generate_trace_rows, RoundConstants};
 use p3_symmetric::Permutation;
 
 use crate::mine_uno_columns::*;
-use crate::transfer_preimage::{
-    encode_256_as_4_limbs, pack_32b_as_4fe, pack_diversifier_as_2fe, reduce_to_goldilocks,
-    GOLDILOCKS_P,
+use crate::transfer_columns::{
+    POSEIDON2_HALF_FULL_ROUNDS, POSEIDON2_PARTIAL_ROUNDS_16, POSEIDON2_SBOX_DEGREE,
+    POSEIDON2_SBOX_REGISTERS, POSEIDON2_WIDTH_16,
 };
-use crate::transfer_sponge::poseidon2_cm_full_sponge;
+use crate::transfer_preimage::{
+    encode_256_as_4_limbs, pack_32b_as_4fe, pack_diversifier_as_2fe, GOLDILOCKS_P,
+};
+use crate::transfer_sponge::{poseidon2_cm_full_sponge, uno_cm_v1_tag_block};
 use crate::Plonky3Status;
 
 // ---------------------------------------------------------------------------
@@ -273,12 +279,10 @@ impl MineUnoWitness {
 
     /// Generate the AIR trace matrix (`MINE_TRACE_HEIGHT × MINE_AIR_WIDTH`).
     ///
-    /// Phase 3a: this fills the witness-proxy columns and row selectors.
-    /// The Poseidon2-w16 shared block cells are left zero — Phase 3b will
-    /// populate them via `Poseidon2Air::generate_trace_rows` and wire the
-    /// AIR's sub-AIR constraints to close the proof. Until Phase 3b lands,
-    /// proofs built with this witness will fail verification at the
-    /// Poseidon2 sub-AIR boundary.
+    /// Phase 3b: fills all columns — row selectors, the shared Poseidon2-w16
+    /// block (via `p3_poseidon2_air::generate_trace_rows`), the witness
+    /// proxies, and the 16-cell carry proxy (rate + capacity) carrying
+    /// perm-1 post-state to perm-2's inputs within each chain.
     pub fn generate_trace(&self) -> RowMajorMatrix<Goldilocks> {
         let mut values = vec![Goldilocks::ZERO; MINE_TRACE_HEIGHT * MINE_AIR_WIDTH];
 
@@ -294,6 +298,103 @@ impl MineUnoWitness {
 
         let epoch_fe = Goldilocks::from_u64(u64::from(self.epoch));
         let value_fe = Goldilocks::from_u64(self.value_nano);
+
+        // --------------------------------------------------------------
+        // Phase 3b: build the 4 Poseidon2-w16 permutation witnesses.
+        // --------------------------------------------------------------
+        let perm16 = default_goldilocks_poseidon2_16();
+        let constants_16 = RoundConstants::new(
+            p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_16_EXTERNAL_INITIAL,
+            p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_16_INTERNAL,
+            p3_goldilocks::GOLDILOCKS_POSEIDON2_RC_16_EXTERNAL_FINAL,
+        );
+        let gen_p2_row_16 = |input: [Goldilocks; POSEIDON2_WIDTH_16]| -> Vec<Goldilocks> {
+            let mat = generate_trace_rows::<
+                Goldilocks,
+                GenericPoseidon2LinearLayersGoldilocks,
+                POSEIDON2_WIDTH_16,
+                POSEIDON2_SBOX_DEGREE,
+                POSEIDON2_SBOX_REGISTERS,
+                POSEIDON2_HALF_FULL_ROUNDS,
+                POSEIDON2_PARTIAL_ROUNDS_16,
+            >(vec![input], &constants_16, 0);
+            debug_assert_eq!(mat.values.len(), MINE_POSEIDON2_COLS_16);
+            mat.values
+        };
+        let padding_p2_16 = gen_p2_row_16([Goldilocks::ZERO; POSEIDON2_WIDTH_16]);
+
+        let cm_tag = uno_cm_v1_tag_block();
+        let mine_tag = uno_mine_v1_tag_block();
+
+        // Row 0 — CM perm-1 input.
+        let mut cm_p1_in = [Goldilocks::ZERO; POSEIDON2_WIDTH_16];
+        cm_p1_in[0] = d_fes[0];
+        cm_p1_in[1] = d_fes[1];
+        cm_p1_in[2..6].copy_from_slice(&pk_d_fes);
+        cm_p1_in[6] = ivk_cm_fes[0];
+        cm_p1_in[7] = ivk_cm_fes[1];
+        cm_p1_in[8..16].copy_from_slice(&cm_tag);
+        let cm_p1_trace = gen_p2_row_16(cm_p1_in);
+        // Off-circuit: the bank-1 output state.
+        let mut cm_p1_out = cm_p1_in;
+        perm16.permute_mut(&mut cm_p1_out);
+
+        // Row 1 — CM perm-2 input (uses bank-1 out + fe-absorb + 10* pad).
+        let mut cm_p2_in = cm_p1_out;
+        cm_p2_in[0] = cm_p2_in[0] + ivk_cm_fes[2];
+        cm_p2_in[1] = cm_p2_in[1] + ivk_cm_fes[3];
+        cm_p2_in[2] = cm_p2_in[2] + value_fe;
+        cm_p2_in[3] = cm_p2_in[3] + rcm_fes[0];
+        cm_p2_in[4] = cm_p2_in[4] + rcm_fes[1];
+        cm_p2_in[5] = cm_p2_in[5] + rcm_fes[2];
+        cm_p2_in[6] = cm_p2_in[6] + rcm_fes[3];
+        cm_p2_in[7] = cm_p2_in[7] + Goldilocks::ONE;
+        let cm_p2_trace = gen_p2_row_16(cm_p2_in);
+
+        // Row 2 — PoW perm-1 input.
+        let mut pow_p1_in = [Goldilocks::ZERO; POSEIDON2_WIDTH_16];
+        pow_p1_in[0] = epoch_fe;
+        pow_p1_in[1..5].copy_from_slice(&nonce_fes);
+        pow_p1_in[5..8].copy_from_slice(&output_cm_fes[0..3]);
+        pow_p1_in[8..16].copy_from_slice(&mine_tag);
+        let pow_p1_trace = gen_p2_row_16(pow_p1_in);
+        let mut pow_p1_out = pow_p1_in;
+        perm16.permute_mut(&mut pow_p1_out);
+
+        // Row 3 — PoW perm-2 input.
+        let mut pow_p2_in = pow_p1_out;
+        pow_p2_in[0] = pow_p2_in[0] + output_cm_fes[3];
+        pow_p2_in[1] = pow_p2_in[1] + Goldilocks::ONE;
+        // inputs[2..8] stay equal to pow_p1_out[2..8].
+        // inputs[8..16] stay equal to pow_p1_out[8..16] (capacity carry).
+        let pow_p2_trace = gen_p2_row_16(pow_p2_in);
+
+        // Carry proxies: each chain gets its own 16-cell block (8 rate +
+        // 8 cap). Row-constancy transition invariant propagates these
+        // across all 8 rows; per-chain selector-gated constraints in the
+        // AIR pin the values on the active perm-1 row and read them on
+        // the active perm-2 row. See mine_uno_columns.rs §carry-proxy
+        // for the design rationale (and deviation from spec §A).
+        let cm_carry_rate: [Goldilocks; 8] = {
+            let mut out = [Goldilocks::ZERO; 8];
+            out.copy_from_slice(&cm_p1_out[0..8]);
+            out
+        };
+        let cm_carry_cap: [Goldilocks; 8] = {
+            let mut out = [Goldilocks::ZERO; 8];
+            out.copy_from_slice(&cm_p1_out[8..16]);
+            out
+        };
+        let pow_carry_rate: [Goldilocks; 8] = {
+            let mut out = [Goldilocks::ZERO; 8];
+            out.copy_from_slice(&pow_p1_out[0..8]);
+            out
+        };
+        let pow_carry_cap: [Goldilocks; 8] = {
+            let mut out = [Goldilocks::ZERO; 8];
+            out.copy_from_slice(&pow_p1_out[8..16]);
+            out
+        };
 
         // Fill each row.
         for row in 0..MINE_TRACE_HEIGHT {
@@ -311,10 +412,17 @@ impl MineUnoWitness {
             }
             // Rows 4..7: all four selector cols remain ZERO (padding).
 
-            // Shared Poseidon2-w16 block: Phase 3a leaves zero; Phase 3b
-            // will populate the 316 cells per row via
-            // Poseidon2Air::generate_trace_rows on the appropriate state.
-            // TODO(Phase 3b): fill p2 cells.
+            // Shared Poseidon2-w16 block.
+            let p2_src: &[Goldilocks] = match row {
+                0 => &cm_p1_trace,
+                1 => &cm_p2_trace,
+                2 => &pow_p1_trace,
+                3 => &pow_p2_trace,
+                _ => &padding_p2_16,
+            };
+            values[row_base + N_ROW_SELECTORS
+                ..row_base + N_ROW_SELECTORS + MINE_POSEIDON2_COLS_16]
+                .copy_from_slice(p2_src);
 
             // Witness proxy columns (same on every row).
             values[row_base + COL_W_EPOCH] = epoch_fe;
@@ -328,6 +436,20 @@ impl MineUnoWitness {
                 values[row_base + COL_W_NONCE_FE0 + k] = nonce_fes[k];
                 values[row_base + COL_W_OUTPUT_CM_FE0 + k] = output_cm_fes[k];
                 values[row_base + COL_W_POW_HASH_FE0 + k] = pow_hash_fes[k];
+            }
+
+            // Carry proxies (4 × 8 cells: CM rate, CM cap, PoW rate, PoW
+            // cap). Constant across all rows courtesy of the transition-
+            // constancy loop in the AIR.
+            for k in 0..8 {
+                values[row_base + COL_CAP_CARRY_BASE + CARRY_CM_BASE + k] =
+                    cm_carry_rate[k];
+                values[row_base + COL_CAP_CARRY_BASE + CARRY_CM_BASE + 8 + k] =
+                    cm_carry_cap[k];
+                values[row_base + COL_CAP_CARRY_BASE + CARRY_POW_BASE + k] =
+                    pow_carry_rate[k];
+                values[row_base + COL_CAP_CARRY_BASE + CARRY_POW_BASE + 8 + k] =
+                    pow_carry_cap[k];
             }
         }
 
@@ -630,5 +752,91 @@ mod tests {
         // Re-run must give identical output.
         let fes2 = w.compute_pow_hash_fes();
         assert_eq!(fes, fes2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3b: off-circuit ↔ in-circuit parity and end-to-end prove/verify.
+    // -----------------------------------------------------------------------
+
+    /// Pull the 4-fe digest (post[0..4]) out of the Poseidon2 block of a
+    /// given trace row. The P2 block lives at offset `N_ROW_SELECTORS`
+    /// and the digest is the final `ending_full_rounds[HALF-1].post[0..4]`.
+    fn extract_p2_digest(
+        trace_values: &[Goldilocks],
+        row: usize,
+    ) -> [Goldilocks; 4] {
+        use core::borrow::Borrow;
+        let row_base = row * MINE_AIR_WIDTH;
+        let p2_cells = &trace_values
+            [row_base + N_ROW_SELECTORS..row_base + N_ROW_SELECTORS + MINE_POSEIDON2_COLS_16];
+        let p2_cols: &MineP2Cols<Goldilocks> =
+            <[Goldilocks] as Borrow<MineP2Cols<Goldilocks>>>::borrow(p2_cells);
+        let post =
+            &p2_cols.ending_full_rounds[POSEIDON2_HALF_FULL_ROUNDS - 1].post;
+        [post[0], post[1], post[2], post[3]]
+    }
+
+    #[test]
+    fn poseidon2_cm_sponge_matches_in_circuit_parity() {
+        let w = MineUnoWitness::deterministic_valid(42, 0xDEAD_BEEF);
+        let perm16 = default_goldilocks_poseidon2_16();
+
+        // Off-circuit reference.
+        let rcm = w.compute_rcm();
+        let off_circuit = poseidon2_cm_full_sponge(
+            &perm16,
+            &w.d,
+            &w.pk_d,
+            &w.ivk_commitment,
+            w.value_nano,
+            &rcm,
+        );
+
+        // In-circuit (row 1's post[0..4] = CM perm-2 digest).
+        let trace = w.generate_trace();
+        let in_circuit = extract_p2_digest(&trace.values, 1);
+
+        assert_eq!(
+            off_circuit, in_circuit,
+            "CM sponge digest mismatch between off-circuit helper and in-trace Poseidon2"
+        );
+    }
+
+    #[test]
+    fn poseidon2_pow_hash_matches_in_circuit_parity() {
+        let w = MineUnoWitness::deterministic_valid(7, 0x1234_5678);
+        let perm16 = default_goldilocks_poseidon2_16();
+
+        // Off-circuit reference (via the existing helper).
+        let cm_bytes = w.compute_output_cm_bytes();
+        let off_circuit =
+            poseidon2_mine_pow_hash(&perm16, w.epoch, &w.nonce, &cm_bytes);
+
+        // In-circuit (row 3's post[0..4] = PoW perm-2 digest).
+        let trace = w.generate_trace();
+        let in_circuit = extract_p2_digest(&trace.values, 3);
+
+        assert_eq!(
+            off_circuit, in_circuit,
+            "PoW sponge digest mismatch between off-circuit helper and in-trace Poseidon2"
+        );
+    }
+
+    #[test]
+    fn mine_uno_air_prove_verify_roundtrip() {
+        use p3_uni_stark::{prove, verify};
+
+        use crate::mine_uno_air::MineUnoAir;
+        use crate::prover::build_config;
+
+        let w = MineUnoWitness::deterministic_valid(42, 0xC0FF_EE);
+        let trace = w.generate_trace();
+        let public_inputs = w.public_inputs();
+        let cfg = build_config();
+        let air = MineUnoAir::new();
+
+        let proof = prove(&cfg, &air, trace, &public_inputs);
+        verify(&cfg, &air, &proof, &public_inputs)
+            .expect("MineUnoAir prove/verify round-trip must succeed");
     }
 }

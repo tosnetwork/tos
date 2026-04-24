@@ -201,12 +201,60 @@ pub const COL_W_POW_HASH_FE3: usize = WITNESS_PROXY_BASE + 27;
 pub const N_WITNESS_PROXY: usize = 28;
 
 // ---------------------------------------------------------------------------
+// Carry proxy columns (Phase 3b)
+// ---------------------------------------------------------------------------
+//
+// The CM and PoW chains each perform a 2-permutation iterated sponge.
+// The post-perm-1 state (both rate `state[0..8]` and capacity
+// `state[8..16]`) must flow into perm-2's input slots. Since perm-1 and
+// perm-2 live on adjacent trace rows (row 0 → row 1 for CM; row 2 → row
+// 3 for PoW) but the sub-AIR constraint interface only sees the current
+// row, we materialize the whole post-perm-1 state as a row-constant
+// proxy: the perm-1 row binds its post-state to the proxy, and the
+// perm-2 row reads the proxy (plus the next fe-absorb + ONE padding) as
+// its input. Same pattern as transfer_air.rs:1072-1149 which uses
+// separate `S_CM_CARRY_RATE` (8 cols) and `S_CM_CARRY_CAP` (8 cols).
+//
+// Deviation from Phase 3b spec §A.1 / §A.2: the spec called for only 8
+// carry columns shared across both chains. That allocation is incorrect
+// for two reasons:
+//   (1) The row-1 / row-3 rate-absorb constraints must read the perm-1
+//       output rate; a cap-only carry leaves the rate unconstrained.
+//   (2) The CM chain's perm-1 post-state differs from the PoW chain's
+//       perm-1 post-state in honest executions. A shared proxy plus the
+//       row-constancy transition invariant forces equality, which is
+//       hash-collision-level improbable.
+//
+// Resolution: allocate TWO independent carry blocks (rate + cap per
+// chain), 16 cells each = 32 total. The CM chain uses
+// `COL_CAP_CARRY_BASE[0..16]`, and the PoW chain uses
+// `COL_CAP_CARRY_BASE[16..32]`.
+
+/// Base offset for the 32-cell carry proxy block.
+/// - `COL_CAP_CARRY_BASE +  0..8`  : CM chain rate carry  (perm-1 post[0..8]).
+/// - `COL_CAP_CARRY_BASE +  8..16` : CM chain cap carry   (perm-1 post[8..16]).
+/// - `COL_CAP_CARRY_BASE + 16..24` : PoW chain rate carry (perm-1 post[0..8]).
+/// - `COL_CAP_CARRY_BASE + 24..32` : PoW chain cap carry  (perm-1 post[8..16]).
+pub const COL_CAP_CARRY_BASE: usize = WITNESS_PROXY_BASE + N_WITNESS_PROXY;
+
+/// CM chain carry offset (within the carry block).
+pub const CARRY_CM_BASE: usize = 0;
+
+/// PoW chain carry offset (within the carry block).
+pub const CARRY_POW_BASE: usize = 16;
+
+/// Carry proxy width (16 cells per chain × 2 chains = 32 cells).
+pub const N_CAP_CARRY_PROXY: usize = 32;
+
+// ---------------------------------------------------------------------------
 // Total AIR width
 // ---------------------------------------------------------------------------
 
 /// Total column count for the MineUno AIR.
-pub const MINE_AIR_WIDTH: usize =
-    N_ROW_SELECTORS + MINE_POSEIDON2_COLS_16 + N_WITNESS_PROXY;
+pub const MINE_AIR_WIDTH: usize = N_ROW_SELECTORS
+    + MINE_POSEIDON2_COLS_16
+    + N_WITNESS_PROXY
+    + N_CAP_CARRY_PROXY;
 
 // ---------------------------------------------------------------------------
 // Public-input layout
@@ -268,6 +316,19 @@ const _: () = assert!(MINE_TRACE_HEIGHT == 8, "MineUno trace must be 8 rows");
 const _: () = assert!(
     LOG_MINE_TRACE_HEIGHT == 3 && (1 << LOG_MINE_TRACE_HEIGHT) == MINE_TRACE_HEIGHT,
     "log2 trace height must match MINE_TRACE_HEIGHT"
+);
+const _: () = assert!(
+    N_CAP_CARRY_PROXY == 32,
+    "carry proxy must hold (8 rate + 8 cap) × 2 chains = 32 field elements"
+);
+const _: () = assert!(
+    MINE_AIR_WIDTH
+        == N_ROW_SELECTORS + MINE_POSEIDON2_COLS_16 + N_WITNESS_PROXY + N_CAP_CARRY_PROXY,
+    "AIR width must account for all column types"
+);
+const _: () = assert!(
+    COL_CAP_CARRY_BASE == WITNESS_PROXY_BASE + N_WITNESS_PROXY,
+    "capacity-carry proxy must follow the witness-proxy block"
 );
 
 // ---------------------------------------------------------------------------
