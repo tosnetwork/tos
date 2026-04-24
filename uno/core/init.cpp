@@ -104,6 +104,7 @@ constexpr unsigned kLiveStateRefNullifierSet = 1;
 constexpr unsigned kLiveStateRefMeta = 2;
 constexpr unsigned kLiveMetaRefAnchorWindow = 0;
 constexpr unsigned kLiveMetaRefStats = 1;
+constexpr unsigned kLiveMetaRefMiningState = 2;
 
 td::Ref<vm::Cell> encode_live_stats_cell(uint64_t burned_fees,
                                          uint64_t tx_count,
@@ -115,15 +116,42 @@ td::Ref<vm::Cell> encode_live_stats_cell(uint64_t burned_fees,
     return cb.finalize();
 }
 
+// Serialize the MineUno consensus fields (mine_remaining, mine_epoch,
+// mine_target, halving_era) into a single cell. Byte-identical to the
+// canonical block-producer format in `uno/core/cell-state.cpp::
+// encode_mining_state_cell` — keep the two in sync so persisted LiveUno
+// and zerostate-loader cells decode interchangeably. Without this,
+// mine_epoch / mine_remaining / mine_target reset to construction
+// defaults on every validator restart, letting an attacker replay a
+// fresh-chain mint flood.
+td::Ref<vm::Cell> encode_live_mining_state_cell(uint64_t mine_remaining,
+                                                uint32_t mine_epoch,
+                                                const std::array<uint8_t, 32>& mine_target) {
+    vm::CellBuilder cb;
+    // Inline: 64 + 32 + 256 + 32 = 384 bits; no refs.
+    cb.store_long(static_cast<long long>(mine_remaining), 64);
+    cb.store_long(static_cast<long long>(mine_epoch), 32);
+    cb.store_bytes(mine_target.data(), 32);
+    // halving_era is a deterministic function of mine_epoch, but we
+    // store it explicitly to match cell-state.cpp's canonical format.
+    const uint32_t halving_era =
+        mine_epoch / uno_workchain::kEraSize;
+    cb.store_long(static_cast<long long>(halving_era), 32);
+    return cb.finalize();
+}
+
 td::Ref<vm::Cell> build_live_meta_cell(td::Ref<vm::Cell> anchor_window_cell,
-                                       td::Ref<vm::Cell> stats_cell) {
-    if (anchor_window_cell.is_null() || stats_cell.is_null()) {
+                                       td::Ref<vm::Cell> stats_cell,
+                                       td::Ref<vm::Cell> mining_state_cell) {
+    if (anchor_window_cell.is_null() || stats_cell.is_null() ||
+        mining_state_cell.is_null()) {
         LOG(ERROR) << "uno-workchain: cannot serialize live meta cell with null refs";
         return {};
     }
     vm::CellBuilder cb;
     if (!cb.store_ref_bool(std::move(anchor_window_cell))) return {};
     if (!cb.store_ref_bool(std::move(stats_cell))) return {};
+    if (!cb.store_ref_bool(std::move(mining_state_cell))) return {};
     return cb.finalize();
 }
 
@@ -450,8 +478,11 @@ td::Ref<vm::Cell> LiveUnoState::serialize_to_cell() const {
 
     auto stats_cell = encode_live_stats_cell(
         stats_burned_fees_, stats_tx_count_, stats_note_count_);
+    auto mining_state_cell = encode_live_mining_state_cell(
+        mine_remaining_, mine_epoch_, mine_target_);
     auto meta_cell = build_live_meta_cell(std::move(anchor_cell),
-                                          std::move(stats_cell));
+                                          std::move(stats_cell),
+                                          std::move(mining_state_cell));
     if (meta_cell.is_null()) return {};
 
     std::array<uint8_t, kLiveHashBytes> config_hash{};
@@ -563,9 +594,14 @@ bool LiveUnoState::hydrate_from_cell_if_needed(td::Ref<vm::Cell> root) {
     }
 
     auto meta_cs = vm::load_cell_slice(meta_cell);
-    if (meta_cs.size_refs() != 2) {
-        LOG(ERROR) << "uno-workchain: persisted meta refs=" << meta_cs.size_refs()
-                   << " expected=2";
+    // Accept 2 refs (legacy: anchor + stats) OR 3 refs (current:
+    // anchor + stats + mining_state). Legacy states pre-date the
+    // K-mining-state-persist fix and keep the in-memory mining state
+    // at construction defaults on hydrate. Reject any other arity.
+    const unsigned meta_refs = meta_cs.size_refs();
+    if (meta_refs != 2 && meta_refs != 3) {
+        LOG(ERROR) << "uno-workchain: persisted meta refs=" << meta_refs
+                   << " expected=2 or 3";
         return false;
     }
 
@@ -589,6 +625,41 @@ bool LiveUnoState::hydrate_from_cell_if_needed(td::Ref<vm::Cell> root) {
         return false;
     }
 
+    // MineUno consensus fields — only present in 3-ref meta cells. On
+    // legacy 2-ref states, keep the in-memory defaults seeded by the
+    // constructor (kMineSupplyNano, epoch=0, env-override-or-mainnet
+    // target). Without this persist/hydrate loop, a validator restart
+    // would reset mine_epoch=0/mine_remaining=full-cap and allow a
+    // fresh mining run from genesis on an already-mined chain.
+    uint64_t persisted_mine_remaining = mine_remaining_;
+    uint32_t persisted_mine_epoch = mine_epoch_;
+    std::array<uint8_t, 32> persisted_mine_target = mine_target_;
+    if (meta_refs == 3) {
+        auto mining_cell = meta_cs.prefetch_ref(kLiveMetaRefMiningState);
+        auto mining_cs = vm::load_cell_slice(mining_cell);
+        long long v = 0;
+        if (!mining_cs.fetch_long_bool(64, v)) {
+            LOG(ERROR) << "uno-workchain: persisted mining_state missing remaining";
+            return false;
+        }
+        persisted_mine_remaining = static_cast<uint64_t>(v);
+        if (!mining_cs.fetch_long_bool(32, v)) {
+            LOG(ERROR) << "uno-workchain: persisted mining_state missing epoch";
+            return false;
+        }
+        persisted_mine_epoch = static_cast<uint32_t>(v);
+        if (!mining_cs.fetch_bytes(persisted_mine_target.data(), 32)) {
+            LOG(ERROR) << "uno-workchain: persisted mining_state missing target";
+            return false;
+        }
+        // halving_era is stored but derived from mine_epoch; we ignore
+        // the persisted value and recompute to avoid drift on reload.
+        if (!mining_cs.fetch_long_bool(32, v)) {
+            LOG(ERROR) << "uno-workchain: persisted mining_state missing halving_era";
+            return false;
+        }
+    }
+
     commitment_tree_ = std::move(tree);
     nullifier_set_ = std::move(nf);
     anchor_window_ = std::move(win);
@@ -597,6 +668,9 @@ bool LiveUnoState::hydrate_from_cell_if_needed(td::Ref<vm::Cell> root) {
     stats_burned_fees_ = burned_fees;
     stats_tx_count_ = tx_count;
     stats_note_count_ = note_count;
+    mine_remaining_ = persisted_mine_remaining;
+    mine_epoch_ = persisted_mine_epoch;
+    mine_target_ = persisted_mine_target;
     live_state_cell_hash_ = incoming_hash;
     has_live_state_cell_hash_ = true;
     return true;
