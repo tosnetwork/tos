@@ -163,7 +163,7 @@ The `--clean` flag stops any running services and removes previous `/data/` cont
    - Embeds 4 validator public keys via `add-validator`
    - Runs `build/crypto/create-state` with Fift include paths
    - Produces: `zerostate.boc`, `basestate0.boc`, `evmstate1.boc`, `unostate2.boc`, hash files, wallet/elector/config addresses
-   - **Initial token supply**: TOS = 200 M, EMO = 200 M, UNO = 21 M (Zcash-peer scarcity for the privacy workchain; see [Zerostate.md §Initial Token Supply](Zerostate.md#initial-token-supply-per-workchain-issuance) for the per-workchain configuration points — supply values live in `gen-zerostate.fif:94`, `evm/core/init.cpp::kSeedAmountEmo`, and `uno/core/genesis.h::kGenesisTotalSupplyNano`).
+   - **Initial token supply**: TOS = 200 M (shared across wc=0 TVM and wc=1 EVM via cross-workchain routing), UNO = 21 M (independent privacy workchain). See [Zerostate.md §Initial Token Supply](Zerostate.md#initial-token-supply-per-workchain-issuance) for configuration points — supply values live in `gen-zerostate.fif:94` (TOS) and `uno/core/genesis.h::kGenesisTotalSupplyNano` (UNO); `evm/core/init.cpp::kSeedAmountTos` is dev-only convenience seeding (10 K TOS × 10 Hardhat accounts), not genesis supply.
 
 6. **Key generation** (per node, inside Python):
    - 5 Ed25519 keypairs per node: fullnode, validator, liteserver, console_server, console_client
@@ -571,7 +571,7 @@ curl -s -X POST http://127.0.0.1:8011 \
 
 ### Pre-Funded Test Accounts
 
-On a fresh chain, `init_evm_workchain` seeds 10 test accounts with 20,000,000 EMO each (dev/test EMO supply: 200 M total across the 10 accounts). **These are the standard Hardhat / Anvil accounts — keys are public and well-known across the entire Ethereum tooling ecosystem. Do not use them on any production network.**
+On a fresh chain, `init_evm_workchain` seeds 10 test accounts with 10,000 TOS each (dev/test convenience: 100 K total across the 10 accounts). **These are the standard Hardhat / Anvil accounts — keys are public and well-known across the entire Ethereum tooling ecosystem. Do not use them on any production network.** TOS is the single native token shared across wc=0 (TVM) and wc=1 (EVM) — the 200 M cap lives in wc=0's main wallet at genesis; mainnet wc=1 funding flows in via the cross-workchain TOS routing path (TODO).
 
 **Mnemonic:** `test test test test test test test test test test test junk`
 **Derivation path:** `m/44'/60'/0'/0/N` (BIP-44 standard)
@@ -613,11 +613,11 @@ cast balance 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 \
    - Network name: `TOS EVM Local`
    - RPC URL: `http://127.0.0.1:8011` (or any of 8012/8013/8014)
    - Chain ID: `5525331`
-   - Currency symbol: `EMO`
+   - Currency symbol: `TOS`
 
 2. **Import a pre-funded test account** → Account menu → Import account → Private Key:
    - Paste any private key from the test accounts table above (start with #0: `0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80`)
-   - MetaMask will show the account with balance `20,000,000 EMO`
+   - MetaMask will show the account with balance `10,000 TOS`
 
 3. **Send a transaction** — works with any standard wallet flow.
 

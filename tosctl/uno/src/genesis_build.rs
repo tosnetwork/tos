@@ -64,8 +64,9 @@ use crate::transfer::{compute_note_commitment, compute_rcm, NoteCommitmentInputs
 
 /// 21,000,000 UNO × 10^9 nano-units/UNO = 2.1e16 nano-UNO.
 /// Matches Bitcoin / Zcash 21 M cap — UNO positions as the privacy-coin
-/// peer of ZEC/XMR. TOS (wc=0) and EMO (wc=1) use the larger 200 M
-/// supply appropriate for L1 platform / EVM gas roles.
+/// peer of ZEC/XMR. TOS (shared across wc=0 TVM and wc=1 EVM via
+/// cross-workchain routing) uses the larger 200 M cap; UNO keeps its
+/// own scarcity narrative independently on wc=2.
 pub const GENESIS_TOTAL_SUPPLY_NANO: u64 = 21_000_000 * 1_000_000_000;
 
 /// 60% = 12,600,000 UNO.

@@ -119,8 +119,10 @@ void verify_kzg_setup_loaded();
 /// `accounts:^ShardAccounts` field is set to this cell, so every chain
 /// generated from this commit has the test accounts present from genesis.
 /// Returns a cell suitable to be stored as the `^ShardAccounts` ref of a
-/// ShardState whose accounts dict contains 10 EVM EOAs each holding 20 M EMO
-/// (200 M total — the dev/test EMO supply; see `kSeedAmountEmo` in init.cpp).
+/// ShardState whose accounts dict contains 10 EVM EOAs each holding 10 K TOS
+/// (100 K total dev/test seed; see `kSeedAmountTos` in init.cpp). Real wc=1
+/// TOS balances arrive via cross-workchain TOS routing from wc=0, not from
+/// genesis seeding.
 ///
 /// Deterministic: same inputs (the constexpr kTestAccounts list and the
 /// EvmAccountData encoder) → byte-identical cell hash on every binary.

@@ -436,10 +436,13 @@ is organized around three concrete execution domains:
 \end{itemize}
 The current native-asset naming of these execution domains is
 likewise fixed in product terminology: {\em TOS\/} is the native
-asset of the base chain (Workchain Zero), {\em EMO\/} is the native
-asset of the EVM-oriented workchain (Workchain One), and {\em UNO\/}
-is the native asset of the privacy workchain (Workchain Two).
-These three domains share masterchain coordination, validator
+asset of the base chain (Workchain Zero) {\em and} the
+EVM-oriented workchain (Workchain One) — a single fungible token
+shared across both VMs via cross-workchain message routing — while
+{\em UNO\/} is the native asset of the privacy workchain
+(Workchain Two), independent of TOS by design (privacy preservation
+forbids a wc=2~$\leftrightarrow$~wc=0/wc=1 bridge).
+These domains share masterchain coordination, validator
 economics and the same node implementation. Users choose an execution
 domain per transaction; validators may advertise support and
 participate per workchain according to the corresponding on-chain
@@ -651,11 +654,14 @@ TOS}. It is the basic asset of Workchain Zero. It is also used for
 transaction fees, validator stakes, storage accounting and other
 protocol-native payments.
 
-In the current three-domain TOS product structure, Workchain One uses
-{\em EMO\/} as its native asset, while Workchain Two (Uno) uses {\em
-UNO\/} as its native asset. These workchain-native assets are
-distinct from the base-chain asset TOS even though all three
-workchains remain under one masterchain and one validator economy.
+In the current TOS product structure, Workchain One (the EVM-oriented
+workchain) uses {\em the same TOS asset\/} as the base chain — TOS
+flows between the TVM workchain and the EVM workchain via masterchain-
+routed cross-workchain messages, with a fixed 9-decimal $\leftrightarrow$
+18-decimal conversion (1 nano-tomi = $10^9$ wei). Workchain Two (Uno)
+uses {\em UNO\/} as its native asset, independent of TOS: privacy
+preservation precludes a wc=2 $\leftrightarrow$ wc=0/wc=1 value bridge,
+so UNO is fully contained within wc=2.
 
 In principle, other workchains may collect transaction fees in other
 tokens. In this case, some smart contract or protocol mechanism for

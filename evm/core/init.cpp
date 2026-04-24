@@ -69,9 +69,14 @@ IncrementalTrieCalculator& global_trie_calculator() {
 // =============================================================================
 //
 // On a fresh chain (or any restart where the EVM state is empty) we seed
-// 10 well-known test accounts with `kSeedAmountEmo` EMO each (20 M each =
-// 200 M total across the 10 accounts — EMO is the EVM workchain's native
-// token symbol, distinct from TOS on wc=0). The mnemonic and private
+// 10 well-known test accounts with `kSeedAmountTos` TOS each (10 K each =
+// 100 K total across the 10 accounts — dev/test convenience seeding).
+// TOS is the single native token shared across wc=0 (TVM) and wc=1 (EVM);
+// the global 200 M cap lives in wc=0's main wallet at genesis and flows to
+// wc=1 via cross-workchain message routing (TODO: see
+// `doc/cross-workchain-tos-routing-design.md`). For mainnet, disable this
+// runtime seed path and let real wc=1 balances arrive via cross-WC bridge
+// from wc=0. The mnemonic and private
 // keys below are the standard Hardhat / Anvil / ethers test accounts —
 // publicly documented, used by every Solidity tutorial and testnet on Earth.
 // They MUST NEVER hold real value on any production chain.
@@ -116,14 +121,14 @@ constexpr TestAccount kTestAccounts[] = {
      "2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6"},
 };
 
-// Per-account genesis seed for the 10 Hardhat/Anvil dev accounts. Total
-// across the 10 accounts is the dev/test EMO supply: 10 × 20 M = 200 M EMO,
-// aligned with the network-wide 200 M issuance target across TOS (wc=0) /
-// EMO (wc=1) / UNO (wc=2). For mainnet, override via `evm-zerostate-from-alloc`
-// with real allocations (Hive genesis.json shape) — this constant only seeds
-// the default dev/test config via the zero-arg
-// `build_evm_zerostate_accounts_cell()`.
-constexpr uint64_t kSeedAmountEmo = 20000000;  // 20 M EMO per account (10 × 20 M = 200 M total)
+// Per-account dev/test seed for the 10 Hardhat/Anvil accounts. Pure
+// developer convenience: 10 K TOS × 10 accounts = 100 K TOS materialised
+// at first-boot via `hydrate_global_state_if_empty`. This is NOT genesis
+// supply — TOS supply (200 M cap) lives in wc=0's main wallet; wc=1
+// balances arrive only via cross-workchain TOS routing (mainnet path).
+// For mainnet, gate this runtime seed off (or set it to 0) so wc=1
+// starts with zero TOS and is funded entirely via the cross-WC bridge.
+constexpr uint64_t kSeedAmountTos = 10000;  // 10 K TOS per account (dev/test only)
 
 bool parse_hex_address(const char* hex, evmc::address& out) {
     for (int i = 0; i < 20; ++i) {
@@ -146,13 +151,13 @@ void seed_test_accounts(EvmState& state) {
         return;
     }
 
-    // kSeedAmountEmo EMO = kSeedAmountEmo × 10^18 wei
-    intx::uint256 amount{kSeedAmountEmo};
+    // kSeedAmountTos TOS = kSeedAmountTos × 10^18 wei
+    intx::uint256 amount{kSeedAmountTos};
     for (int i = 0; i < 18; ++i) amount *= intx::uint256{10};
 
     LOG(WARNING) << "evm-workchain: seeding " << std::size(kTestAccounts)
                  << " TEST accounts (Hardhat/Anvil mnemonic) with "
-                 << kSeedAmountEmo << " EMO each";
+                 << kSeedAmountTos << " TOS each";
     LOG(WARNING) << "evm-workchain: ⚠️  TEST CREDENTIALS — DO NOT USE FOR REAL FUNDS";
     LOG(WARNING) << "evm-workchain: mnemonic: \"test test test test test test "
                     "test test test test test junk\"";
@@ -558,9 +563,9 @@ td::Ref<vm::Cell> build_evm_zerostate_accounts_cell(
 
 td::Ref<vm::Cell> build_evm_zerostate_accounts_cell() {
     // Backwards-compatible zero-arg overload: seeds the 10 Hardhat/Anvil
-    // standard test EOAs with kSeedAmountEmo EMO each. Internally translates
+    // standard test EOAs with kSeedAmountTos TOS each. Internally translates
     // to a GenesisAccount vector and forwards to the parameterised overload.
-    intx::uint256 amount{kSeedAmountEmo};
+    intx::uint256 amount{kSeedAmountTos};
     for (int i = 0; i < 18; ++i) amount *= intx::uint256{10};
 
     std::vector<GenesisAccount> accounts;
