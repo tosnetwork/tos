@@ -1,9 +1,0 @@
-node_modules
-temp
-build
-tags
-zad.md
-yarn.lock
-package-lock.json
-.idea/
-.prettierrc

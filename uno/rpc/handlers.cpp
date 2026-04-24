@@ -123,6 +123,11 @@ bool        g_rate_limit_enabled = false;
 
 }  // namespace
 
+bool try_consume_uno_sendtx_token() {
+    if (!g_rate_limit_enabled) return true;
+    return g_sendtx_limiter.try_consume();
+}
+
 void enable_uno_rpc_rate_limit(bool enable) {
     g_rate_limit_enabled = enable;
     if (enable) {

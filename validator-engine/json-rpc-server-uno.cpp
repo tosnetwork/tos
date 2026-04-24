@@ -215,6 +215,22 @@ handle_uno_get_mine_state(std::string req_id,
 void JsonRpcServer::handle_uno_sendMineUno(td::JsonValue& params_val,
                                             std::string req_id,
                                             td::Promise<HttpReturn> promise) {
+  // --- 0. Rate-limit ---
+  // Cap how many submit-paths a single source can drive per second.
+  // Without this, an attacker can forge PI fields (pow_hash=0,
+  // header-matching) to bypass apply_mine_uno's cheap pre-FFI checks
+  // and force every validator to pay full STARK verification cost
+  // (~50ms+) on each invalid proof. The pre-FFI checks reduce the
+  // forged-PI surface but can't AUTHENTICATE the PI without running
+  // the verifier. Token-bucket rate limit caps validator CPU per
+  // submitter at O(rate × verify_cost).
+  if (!uno_workchain::try_consume_uno_sendtx_token()) {
+    promise.set_value(make_eth_json_error(
+        -32005, "uno_sendMineUno: rate limit exceeded — try again shortly",
+        req_id, opts_.cors_origin));
+    return;
+  }
+
   // --- 1. Extract hex param ---
   std::string raw_hex;
   if (params_val.type() == td::JsonValue::Type::Array) {

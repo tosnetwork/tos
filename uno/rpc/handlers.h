@@ -219,6 +219,18 @@ void reset_uno_rpc_state_for_test();
 /// sites (validator-engine startup) should pass `true`.
 void enable_uno_rpc_rate_limit(bool enable);
 
+/// Try to consume one token from the global send-tx rate limiter.
+///
+/// Returns true if the call is allowed, false if the bucket is empty
+/// and the call should be rejected with a "rate-limited" error. Used
+/// by `uno_sendTransfer` AND `uno_sendMineUno` to bound how many
+/// expensive submit paths a single source can drive per second —
+/// caps the worst-case validator CPU per malicious submitter even
+/// when the cheap pre-FFI checks (header bind, PoW threshold) are
+/// bypassed by forging unauthenticated PI fields. When rate-limit
+/// is disabled (test mode), always returns true.
+bool try_consume_uno_sendtx_token();
+
 // ---------------------------------------------------------------------------
 // Admission-path hook for uno_sendTransfer
 //
