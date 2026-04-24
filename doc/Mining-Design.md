@@ -568,10 +568,43 @@ Full `cargo test --release -j 64 --lib` on `uno-plonky3-ffi` = 417
 passed / 2 pre-existing unrelated failures; mine_uno subset = 20
 passed / 0 failed.
 
-**Still pending before mainnet enablement of MineUno tx kind**:
-chain-state integration tests in `uno/test/test-uno-mine-loader.cpp`
-(currently `#[ignore]`-marked) plus end-to-end
-Rust-prover → C++-verifier golden-fixture round-trip.
+**Phase 3d (completed) — C++ chain integration + end-to-end tests**
+(commits 10beb891f, 63d9de83b, 17b1ddd11):
+
+- `uno/core/mine_uno.{h,cpp}` — full function bodies:
+  `decode_mine_uno` / `encode_mine_uno` / `canonical_mine_uno_hash`
+  (BLAKE3 over 99 B BE preimage) / `verify_mine_uno_chain_checks` /
+  `apply_mine_uno` (calls FFI `uno_mine_uno_verify` then mutates state
+  under the verify-before-mutate invariant).
+- `uno/core/compute-phase.{h,cpp}` — byte-0 discriminator dispatch
+  (0x01→Transfer, 0x02→MineUno, other→UnknownTxKind),
+  `run_mine_uno_compute_phase`, `run_compute_phase_batch_mine_uno`
+  (serial per-kind batch with live race re-checks), new
+  `VerifyResult` codes (41/42/44/45/46), metrics bucketing.
+- `uno/crypto/plonky3-verifier.h` — `kExpectedAbiVersion` 3 → 4.
+- `uno/test/test-mine-uno-cpp.cpp` — 10 unit tests (hash determinism,
+  BoC round-trip, decode rejects, chain-check rejects for epoch race
+  / remaining race / halving / conservation / unknown kind, bad-proof
+  verify-before-mutate).
+- `uno/test/test-uno-mine-loader.cpp` — Test 7 activated: full
+  `uno_mine_uno_prove` → split → `uno_mine_uno_verify` round-trip
+  plus bit-flip rejection. 7/7 pass, 0 skip.
+- `uno/test/integration/test-mine-uno-apply-e2e.cpp` — driver binary
+  exercising the whole block-producer path: generate proof → build
+  tx → encode BoC → decode BoC → `apply_mine_uno` against
+  `FakeUnoState` → assert state mutations → replay → assert
+  `EpochRaceDetected`. Run via `test-mine-uno-end-to-end.sh`.
+- `tosctl/uno/tests/mine_genesis_golden.rs` — 3 previously-`#[ignore]`
+  tests (proof roundtrip, invalid-proof-rejected, halving-boundary)
+  un-ignored; 7/7 pass.
+- Specification artifact: `doc/uno-mine-cpp-integration-spec.md`
+  (661 lines; audit trail).
+
+**MineUno tx kind is now mainnet-ready.** All Rust + C++ test suites
+green; the AIR + FFI + chain apply + compute-phase dispatch + end-to-end
+integration all work. Remaining items are operational (not blocking):
+live UNO testnet deployment, `tosctl uno mine --node` real network
+client, and initial difficulty calibration under real load.
 
 ### Total elapsed time
 
