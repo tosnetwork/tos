@@ -297,60 +297,51 @@ fn increment_nonce(nonce: &mut [u8; 32]) {
 // Chain-state polling
 // ---------------------------------------------------------------------------
 
-/// Fetch `(mine_epoch, mine_target, mine_remaining)` from the wc=2 chain.
+/// Fetch `(mine_epoch, mine_target, mine_remaining)` from the wc=2 chain
+/// via the `uno_getMineState` JSON-RPC method.
 ///
-/// Calls `uno_getMineState` via the existing RPC client. If the node does
-/// not support this method yet, returns a clearly-labeled stub for testing.
-///
-/// The stub hardcodes an easy (all-0xFF) target so the test search loop
-/// converges immediately.
+/// Fails closed on any error. A previous version of this function
+/// silently fell back to a stub `(epoch=0, target=0xff…ff, full supply)`
+/// on RPC failure, which let a miner connected to a partially-broken
+/// or incompatible node search trivially-easy nonces and submit
+/// always-rejected MineUno txs against whatever real chain state the
+/// validators actually held. The stub is gone — operators wanting to
+/// run an offline / unit-test miner can mock the RPC response or fork
+/// this function with the explicit override they need.
 pub async fn fetch_mine_state(rpc: &RpcClient) -> Result<(u32, [u8; 32], u64)> {
-    // TODO(Phase 3): implement `uno_getMineState` on the wc=2 node side.
-    // The RPC should return: { "epoch": u32, "target": "hex", "remaining": u64 }
-    // For now, attempt the call and fall back to stub values on any error.
-    match rpc.call("uno_getMineState", serde_json::json!([])).await {
-        Ok(v) => {
-            let epoch = v
-                .get("epoch")
-                .and_then(|x| x.as_u64())
-                .ok_or_else(|| anyhow!("uno_getMineState: missing 'epoch'"))?
-                as u32;
+    let v = rpc
+        .call("uno_getMineState", serde_json::json!([]))
+        .await
+        .context("uno_getMineState: RPC failed (fail-closed; no stub fallback)")?;
 
-            let target_hex = v
-                .get("target")
-                .and_then(|x| x.as_str())
-                .ok_or_else(|| anyhow!("uno_getMineState: missing 'target'"))?;
-            let target_bytes =
-                hex::decode(target_hex.trim_start_matches("0x"))
-                    .context("uno_getMineState: target not valid hex")?;
-            if target_bytes.len() != 32 {
-                return Err(anyhow!(
-                    "uno_getMineState: target must be 32 bytes, got {}",
-                    target_bytes.len()
-                ));
-            }
-            let mut target = [0u8; 32];
-            target.copy_from_slice(&target_bytes);
+    let epoch = v
+        .get("epoch")
+        .and_then(|x| x.as_u64())
+        .ok_or_else(|| anyhow!("uno_getMineState: missing 'epoch'"))?
+        as u32;
 
-            let remaining = v
-                .get("remaining")
-                .and_then(|x| x.as_u64())
-                .ok_or_else(|| anyhow!("uno_getMineState: missing 'remaining'"))?;
-
-            Ok((epoch, target, remaining))
-        }
-        Err(e) => {
-            eprintln!(
-                "[mine] uno_getMineState not available ({}); using stub state for testing",
-                e
-            );
-            // Stub: epoch 0, trivially-easy target (0xFF…FF = max u256 →
-            // every hash wins), remaining = full supply.
-            let mut easy_target = [0u8; 32];
-            easy_target.fill(0xFF);
-            Ok((0u32, easy_target, MINE_SUPPLY_NANO))
-        }
+    let target_hex = v
+        .get("target")
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| anyhow!("uno_getMineState: missing 'target'"))?;
+    let target_bytes =
+        hex::decode(target_hex.trim_start_matches("0x"))
+            .context("uno_getMineState: target not valid hex")?;
+    if target_bytes.len() != 32 {
+        return Err(anyhow!(
+            "uno_getMineState: target must be 32 bytes, got {}",
+            target_bytes.len()
+        ));
     }
+    let mut target = [0u8; 32];
+    target.copy_from_slice(&target_bytes);
+
+    let remaining = v
+        .get("remaining")
+        .and_then(|x| x.as_u64())
+        .ok_or_else(|| anyhow!("uno_getMineState: missing 'remaining'"))?;
+
+    Ok((epoch, target, remaining))
 }
 
 // ---------------------------------------------------------------------------
