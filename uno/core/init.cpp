@@ -1309,6 +1309,30 @@ void init_uno_workchain(const std::string& db_root) {
     LOG(WARNING) << "uno-workchain: initialising (workchain_id=2, db_root='"
                  << db_root << "')";
 
+    // Consensus warning: UNO_INIT_MINE_TARGET_HEX is honored at
+    // LiveUnoState construction and on the lazy-activate first-MineUno
+    // path (acc_uninit executor → hydrate(null) → use construction
+    // default). All validators in a network MUST agree on whether the
+    // env var is set, and on its value if set, or they will disagree
+    // on whether the first MineUno meets `state.mine_target()` →
+    // consensus split at bootstrap. Mainnet deployments must leave it
+    // unset; local-dev networks must set it identically across every
+    // validator (setup-testnet.sh propagates a single value via the
+    // generated systemd unit).
+    //
+    // Tracked followup: encode the canonical mining target into the
+    // wc=2 zerostate executor's StateInit.data via
+    // `build_uno_zerostate_accounts_cell` so chain-state — not env —
+    // is the single source of truth.
+    if (const char* env = std::getenv("UNO_INIT_MINE_TARGET_HEX"); env != nullptr) {
+        LOG(WARNING) << "uno-workchain: UNO_INIT_MINE_TARGET_HEX="
+                     << env
+                     << " — operator override active. Every validator in this"
+                        " network must use the SAME value or you will get a"
+                        " consensus split on the first MineUno tx. Unset on"
+                        " mainnet.";
+    }
+
     // Step 1. State. Live state with A2-backed sub-objects.
     g_live = std::make_unique<LiveUnoState>();
 
