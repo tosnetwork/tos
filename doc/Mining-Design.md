@@ -73,11 +73,50 @@ network throughput                            = 10 × (10 TOS / 60s)
 
 ### Genesis wiring
 
-`crypto/smartcont/gen-zerostate.fif` modifications (Task #11):
-- Reduce `TM$100000000 allocated-balance -` (line 94) to leave 100M for
-  Giver pool instead of main wallet
-- Instantiate 10 PoW Givers via `new-pow-testgiver.fif` pattern, each
-  pre-funded with 10M TOS
+**Implemented in Task #11.** Three files were modified / created:
+
+#### `crypto/smartcont/pow-giver-helpers.fif` (new)
+
+Helper library included by both genesis scripts. Defines:
+- `deploy-pow-giver` — word that takes
+  `( giver_id amount interval min_cpl init_cpl max_cpl -- )`
+  and registers one PoW Giver contract on the masterchain genesis state.
+- Uses `PowGiverCode` loaded from `auto/pow-testgiver-code.fif` (inherited
+  verbatim from TON, byte-identical).
+- Deterministic contract addresses: `AllOnes * (5 + giver_id)`
+  — Giver 1 → `-1:6666...6`, ..., Giver 10 → `-1:FFFF...F`
+- Saves keypairs to `pow-giver-{N}.pk`, addresses to `pow-giver-{N}.addr`.
+
+#### `crypto/smartcont/gen-zerostate.fif` (modified)
+
+Changes vs. original:
+1. Main wallet balance changed from `TM$100000000 allocated-balance -`
+   to `TM$3000 allocated-balance -` (small system reserve; see §Pre-Mine
+   Policy for the accounting rationale).
+2. After the main wallet `register_smc` block, includes
+   `pow-giver-helpers.fif` and deploys 10 Givers with production params:
+   `amount=TM$10000000, interval=60, min_cpl=24, init_cpl=40, max_cpl=64`
+3. Total allocated balance after givers ≈ 100,003,000 TOS printed as
+   a sanity check.
+
+#### `crypto/smartcont/gen-zerostate-test.fif` (modified)
+
+Same structure as production but with `init_cpl=28` (2^28 ≈ 268M hashes,
+solvable in ~1s on a CPU) for fast local testing. The testnet's
+SmartContract #2 (free test tomi giver) was moved from `AllOnes*6` to
+`AllOnes*2` to avoid an address collision with PoW Giver #1.
+
+#### Verification
+
+```bash
+mkdir /tmp/tos-giver-test && cd /tmp/tos-giver-test
+/home/tomi/tos/build/crypto/create-state \
+  -I /home/tomi/tos/crypto/fift/lib:/home/tomi/tos/crypto/smartcont \
+  /home/tomi/tos/crypto/smartcont/gen-zerostate.fif
+ls pow-giver-*.addr | wc -l   # → 10
+ls pow-giver-*.pk  | wc -l   # → 10
+ls *.boc                      # → basestate0 evmstate1 unostate2 zerostate
+```
 
 ### Miner ecosystem
 

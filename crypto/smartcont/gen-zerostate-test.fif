@@ -28,8 +28,11 @@ hashu dup =: basestate0_rhash
 // root-hash file-hash start-at actual-min-split min-split-depth max-split-depth wc-id
 basestate0_rhash basestate0_fhash now 0 4 8 0 add-std-workchain
 
-// EVM workchain (wc=1): empty initial state; vm_version=0x45564D routes to evmone
-1 mkemptyShardState
+// EVM workchain (wc=1): 10 EToSPoWGiver contracts deployed at genesis.
+// Each giver is pre-funded with 10M eTOS (12-second target, 2 eTOS reward).
+// Addresses: 0x1000000000000000000000000000000000000001 .. 0x100000000000000000000000000000000000000a
+// See: evm/contracts/EToSPoWGiver.sol and doc/Mining-Design.md §eTOS Mining.
+"etos-pow-givers.fif" include  // leaves wc=1 ShardState cell on stack
 
 cr ."initial EVM workchain state is:" cr dup <s csr. cr
 dup dup 31 boc+>B dup Bx. cr
@@ -104,6 +107,35 @@ Masterchain over
 2dup ."wallet address = " .addr cr 2dup 6 .Addr cr
 "main-wallet" +suffix +".addr" save-address-verbose
 
+/*
+ *
+ * PoW Givers (SmartContracts) — 10 × 10 M TOS (testnet)
+ *
+ * Testnet parameters use a lower init_cpl (28 instead of 40) so that
+ * a single CPU can solve the first block quickly during local testing.
+ * All other parameters match production.
+ *
+ * Addresses are deterministic: AllOnes * (5 + giver_id)
+ *   Giver 1 -> -1:6666...6 through Giver 10 -> -1:FFFF...F
+ * Keys saved to pow-giver-{N}.pk; addresses to pow-giver-{N}.addr
+ *
+ * See doc/Mining-Design.md §"TOS Mining (wc=0 TVM)" for full specification.
+ */
+"pow-giver-helpers.fif" include
+
+// giver_id amount interval min_cpl init_cpl max_cpl
+// init_cpl=28: 2^28 ≈ 268M hashes, solvable in ~1s on a modern CPU
+1  TM$10000000  60  24  28  64  deploy-pow-giver
+2  TM$10000000  60  24  28  64  deploy-pow-giver
+3  TM$10000000  60  24  28  64  deploy-pow-giver
+4  TM$10000000  60  24  28  64  deploy-pow-giver
+5  TM$10000000  60  24  28  64  deploy-pow-giver
+6  TM$10000000  60  24  28  64  deploy-pow-giver
+7  TM$10000000  60  24  28  64  deploy-pow-giver
+8  TM$10000000  60  24  28  64  deploy-pow-giver
+9  TM$10000000  60  24  28  64  deploy-pow-giver
+10 TM$10000000  60  24  28  64  deploy-pow-giver
+
 // SmartContract #2 (Simple money giver for test network)
 <{ SETCP0 DUP IFNOTRET // return if recv_internal
    DUP 85143 INT EQUAL IFJMP:<{    // "seqno" get-method
@@ -123,7 +155,10 @@ Masterchain over
 <b 0 32 u, b> // data
 empty_cell    // libraries
 TM$1000       // initial balance (1k test Tomis)
-0 0 AllOnes 6 * 6 register_smc
+// Address AllOnes*2 = -1:2222...2222 avoids collision with PoW Givers
+// (which occupy AllOnes*6 through AllOnes*15) and other genesis contracts
+// (AllOnes*0=main-wallet, *3=elector, *5=config).
+0 0 AllOnes 2 * 6 register_smc
 dup make_special dup constant smc2_addr
 Masterchain over
 2dup ."free test tomi giver address = " .addr cr 2dup 6 .Addr cr

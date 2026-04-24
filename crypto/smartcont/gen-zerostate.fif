@@ -30,12 +30,12 @@ hashu dup =: basestate0_rhash
 basestate0_rhash basestate0_fhash now 0 4 8 0 add-std-workchain
 
 // Initial state of Workchain 1 (EVM workchain)
-// Same empty ShardState shape as basechain — actual EVM accounts are
-// created at runtime via eth_sendRawTransaction. The vm_version=0x45564D
-// in the WorkchainDescr (set by add-evm-workchain) selects the evmone
-// executor in Transaction::prepare_compute_phase for wc=1 messages.
+// 10 EToSPoWGiver contracts are deployed at genesis using evm-zerostate-from-alloc.
+// Each giver is pre-funded with 10M eTOS and mines at a 12-second target interval.
+// Addresses: 0x1000000000000000000000000000000000000001 .. 0x100000000000000000000000000000000000000a
+// See: evm/contracts/EToSPoWGiver.sol and doc/Mining-Design.md §eTOS Mining.
 
-1 mkemptyShardState
+"etos-pow-givers.fif" include  // leaves wc=1 ShardState cell on stack
 
 cr ."initial EVM workchain state is:" cr dup <s csr. cr
 dup dup 31 boc+>B dup Bx. cr
@@ -123,7 +123,7 @@ WCode3 // code
    B,
 b> // data
 empty_cell // libs
-TM$100000000 allocated-balance - // balance (target total supply: 100 M TOS)
+TM$3000 allocated-balance - // balance: small system reserve (~3 K TOS)
 0 // split_depth
 0 // ticktock
 AllOnes 1 * // address
@@ -133,6 +133,45 @@ dup make_special dup constant smc1_addr
 Masterchain over
 2dup ."main wallet address = " .addr cr 2dup 6 .Addr cr
 "main-wallet" +suffix +".addr" save-address-verbose
+
+/*
+ *
+ * PoW Givers (SmartContracts #11..#20) — 10 × 10 M TOS
+ *
+ * Total mining supply: 100,000,000 TOS
+ * Parameters (production mainnet):
+ *   amount       = 10 TOS per solve
+ *   interval     = 60 s target solve time
+ *   min_cpl      = 24   (2^24 hashes ≈ <1s on one CPU; prevents dust attacks)
+ *   init_cpl     = 40   (2^40 ≈ 1.1T hashes; calibrated for 5-10 GPU miners)
+ *   max_cpl      = 64   (2^64 allows ASIC-scale future hashrate)
+ *
+ * Addresses are deterministic: AllOnes * (5 + giver_id)
+ *   Giver 1  → -1:6666...6666  (AllOnes * 6)
+ *   Giver 2  → -1:7777...7777  (AllOnes * 7)
+ *   ...
+ *   Giver 10 → -1:FFFF...FFFF  (AllOnes * 15)
+ * Keys are saved to pow-giver-{N}.pk; addresses to pow-giver-{N}.addr
+ *
+ * Math:  10 Givers × 10 M TOS / (10 TOS/60s) ≈ 1.9 years to full distribution
+ * See doc/Mining-Design.md §"TOS Mining (wc=0 TVM)" for full specification.
+ */
+"pow-giver-helpers.fif" include
+
+// giver_id amount interval min_cpl init_cpl max_cpl
+1  TM$10000000  60  24  40  64  deploy-pow-giver
+2  TM$10000000  60  24  40  64  deploy-pow-giver
+3  TM$10000000  60  24  40  64  deploy-pow-giver
+4  TM$10000000  60  24  40  64  deploy-pow-giver
+5  TM$10000000  60  24  40  64  deploy-pow-giver
+6  TM$10000000  60  24  40  64  deploy-pow-giver
+7  TM$10000000  60  24  40  64  deploy-pow-giver
+8  TM$10000000  60  24  40  64  deploy-pow-giver
+9  TM$10000000  60  24  40  64  deploy-pow-giver
+10 TM$10000000  60  24  40  64  deploy-pow-giver
+
+// Sanity: total allocated ≈ 100 M TOS (10×10M givers) + ~6 K system reserve.
+."Total allocated balance after PoW Givers = " allocated-balance .TM cr
 
 /*
  *
