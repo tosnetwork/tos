@@ -124,6 +124,18 @@ add_executable(test-uno-mine-loader               test-uno-mine-loader.cpp)
 # against the struct layout in mine_uno.h.
 add_executable(test-mine-uno-cpp                  test-mine-uno-cpp.cpp)
 
+# Mainnet-5: end-to-end MineUno apply driver. Produces a real Plonky3
+# STARK proof via `uno_mine_uno_prove` FFI, builds a MineUno BoC, runs
+# the full compute-phase apply path (decode → chain checks → FFI verify
+# → state mutation → commitment append), and asserts replay rejection.
+# Driven by uno/test/integration/test-mine-uno-end-to-end.sh. Not
+# registered with ctest (uses a non-ctest harness + produces a real
+# ~20s STARK proof, too heavy for the default unit-test cycle).
+add_executable(test-mine-uno-apply-e2e
+               integration/test-mine-uno-apply-e2e.cpp)
+target_link_libraries(test-mine-uno-apply-e2e PRIVATE uno_workchain)
+target_include_directories(test-mine-uno-apply-e2e PRIVATE ${CMAKE_SOURCE_DIR})
+
 # K-bech32m: §2.6 AddressEnvelope codec round-trips and reject paths (bad HRP,
 # HRP/network mismatch, flipped checksum symbol, flipped payload byte, short
 # payload, unknown version, mixed case, illegal charset). Also pins the

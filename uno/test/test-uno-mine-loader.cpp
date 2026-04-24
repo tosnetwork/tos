@@ -16,8 +16,13 @@
       5. test_public_inputs_wire_roundtrip — to_wire / from_wire (via Rust mirror)
       6. test_load_rust_mine_golden_fixture — cross-impl parity via JSON fixture
 
-    Tests 7+ (AIR proof verification) are TODO/SKIP placeholders; will be
-    enabled when the parallel AIR agent's work lands.
+    Test 7 drives the real Plonky3 MineUno STARK prove + verify round-trip
+    through the `uno_mine_uno_prove` / `uno_mine_uno_verify` FFI. The
+    witness is a deterministic valid one (mirrored from
+    `uno_plonky3_ffi::mine_uno_witness::MineUnoWitness::deterministic_valid`)
+    so the test is hermetic and independent of any on-disk golden proof file.
+    Also asserts a tampered-proof path (bit-flip inside the proof bytes)
+    returns non-Ok — exercising the verifier reject surface.
 
     Build target: test-uno-mine-loader (see uno/test/CMakeLists.txt)
     CMake: cmake --build /home/tomi/tos/build --target test-uno-mine-loader -j 64
@@ -39,6 +44,7 @@
 
 #include "uno/core/mine_constants.h"
 #include "uno/core/mine_uno.h"
+#include "uno_plonky3_ffi.h"                 // uno_mine_uno_prove / _verify
 
 // ---------------------------------------------------------------------------
 // Tracked-printf harness (identical to test-genesis-loader.cpp)
@@ -609,14 +615,196 @@ static void test_load_rust_mine_golden_fixture() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 7 (placeholder) — AIR proof verification (SKIP until Phase 2)
+// Test 7 — AIR prove + verify round-trip through the FFI
+//
+// Mirrors `uno_plonky3_ffi::mine_uno_witness::MineUnoWitness::
+// deterministic_valid(epoch=0, seed)` from the Rust side so the C++ test
+// is self-contained (no on-disk proof fixture). The `expand(salt)` helper
+// below is a byte-exact port of the Rust xorshift used in
+// `deterministic_valid`; the resulting 192-byte wire witness is passed
+// directly to `uno_mine_uno_prove`. The prover emits
+// `[u32 LE proof_len][proof_bytes][public_input_bytes]`, which we split
+// and feed to `uno_mine_uno_verify`. Also asserts a tampered-proof path
+// returns non-Ok.
+//
+// Prover cost: ~15-25 s on a 192-CPU workstation; fine for a single test.
 // ---------------------------------------------------------------------------
 
-static void test_mine_uno_proof_verify_placeholder() {
-    tprintf("[TEST] test_mine_uno_proof_verify_placeholder\n");
-    tprintf("  SKIP: AIR proof verification requires Phase 2 implementation "
-            "(uno_plonky3_ffi::prove_mine_uno / verify_mine_uno not yet "
-            "defined). Will be enabled when the parallel AIR agent lands.\n");
+namespace mine_test {
+
+// Byte-exact port of `deterministic_valid`'s `expand(salt)` from
+// uno/plonky3-ffi/src/mine_uno_witness.rs (lines 467-478). The Rust
+// source:
+//
+//     let expand = |salt: u64| -> [u8; 32] {
+//         let mut out = [0u8; 32];
+//         let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ salt;
+//         for chunk in out.chunks_mut(8) {
+//             x ^= x << 13;
+//             x ^= x >>  7;
+//             x ^= x << 17;
+//             chunk.copy_from_slice(&x.to_le_bytes());
+//         }
+//         out
+//     };
+static std::array<uint8_t, 32> rust_expand(uint64_t seed, uint64_t salt) {
+    std::array<uint8_t, 32> out{};
+    uint64_t x = seed * 0x9E37'79B9'7F4A'7C15ULL;
+    x ^= salt;
+    for (size_t chunk = 0; chunk < 4; ++chunk) {
+        x ^= x << 13;
+        x ^= x >>  7;
+        x ^= x << 17;
+        for (size_t i = 0; i < 8; ++i) {
+            out[chunk * 8 + i] = static_cast<uint8_t>((x >> (i * 8)) & 0xFF);
+        }
+    }
+    return out;
+}
+
+// Build the 192-byte canonical wire-encoded MineUnoWitness mirroring
+// `MineUnoWitness::deterministic_valid(epoch, seed).encode()`. Layout
+// (from uno/plonky3-ffi/src/mine_uno_witness.rs lines 88-100):
+//
+//   0       4     epoch           (u32 LE)
+//   4       32    nonce           ([u8; 32])
+//   36      32    d               ([u8; 32], bytes [11..32] MUST be zero)
+//   68      32    pk_d            ([u8; 32])
+//   100     32    ivk_commitment  ([u8; 32])
+//   132     8     value_nano      (u64 LE)
+//   140     32    rseed           ([u8; 32])
+//   172     8     remaining_pre   (u64 LE)
+//   180     8     remaining_post  (u64 LE)
+//   188     4     _reserved       (zero)
+static std::vector<uint8_t> build_deterministic_witness_bytes(uint32_t epoch,
+                                                              uint64_t seed) {
+    std::vector<uint8_t> out(192, 0);
+
+    // epoch (LE)
+    for (size_t i = 0; i < 4; ++i) out[i] = (epoch >> (i * 8)) & 0xFF;
+
+    auto nonce          = rust_expand(seed, 0xD11D11ULL);                   // unused; nonce salt is 0xA110_CE_00
+    (void)nonce;
+    // Rust `deterministic_valid`:
+    //   d_raw    = expand(0xD11_D11);  // d[11..32] cleared
+    //   nonce    = expand(0xA110_CE_00);
+    //   pk_d     = expand(0xAF_AF_AF);
+    //   ivk_cm   = expand(0x1_CE_1_CE);
+    //   rseed    = expand(0x5EED_5EED);
+    auto d_raw     = rust_expand(seed, 0xD11D11ULL);
+    auto nonce_raw = rust_expand(seed, 0xA110CE00ULL);
+    auto pk_d_raw  = rust_expand(seed, 0xAFAFAFULL);
+    auto ivk_raw   = rust_expand(seed, 0x1CE1CEULL);
+    auto rseed_raw = rust_expand(seed, 0x5EED5EEDULL);
+    // `d_raw`: zero bytes [11..32] (Rust does `for byte in d_raw.iter_mut().skip(11)`).
+    for (size_t i = 11; i < 32; ++i) d_raw[i] = 0;
+
+    std::memcpy(&out[4],   nonce_raw.data(), 32);
+    std::memcpy(&out[36],  d_raw.data(),     32);
+    std::memcpy(&out[68],  pk_d_raw.data(),  32);
+    std::memcpy(&out[100], ivk_raw.data(),   32);
+
+    const uint64_t value_nano     = 50ULL * 1'000'000'000ULL;
+    const uint64_t remaining_pre  = 21'000'000ULL * 1'000'000'000ULL;
+    const uint64_t remaining_post = remaining_pre - value_nano;
+
+    auto write_u64_le = [&](size_t off, uint64_t v) {
+        for (size_t i = 0; i < 8; ++i) out[off + i] = (v >> (i * 8)) & 0xFF;
+    };
+    write_u64_le(132, value_nano);
+    std::memcpy(&out[140], rseed_raw.data(), 32);
+    write_u64_le(172, remaining_pre);
+    write_u64_le(180, remaining_post);
+    // out[188..192] reserved zero (already initialized).
+    return out;
+}
+
+}  // namespace mine_test
+
+static void test_mine_uno_proof_verify() {
+    tprintf("[TEST] test_mine_uno_proof_verify\n");
+
+    // Build a deterministic valid witness (byte-parity with the Rust-side
+    // `MineUnoWitness::deterministic_valid(0, 0xC0FF_EE)` fixture).
+    auto witness_bytes = mine_test::build_deterministic_witness_bytes(
+        /*epoch=*/0, /*seed=*/0xC0FF'EEULL);
+    if (witness_bytes.size() != 192) {
+        tprintf("  FAILED: witness encoding has wrong length %zu (want 192)\n",
+                witness_bytes.size());
+        return;
+    }
+
+    // Prove.
+    Plonky3OwnedProof owned{};
+    int32_t rc = uno_mine_uno_prove(
+        ::Plonky3Witness{witness_bytes.data(), witness_bytes.size()},
+        &owned);
+    if (rc != 0) {
+        tprintf("  FAILED: uno_mine_uno_prove returned rc=%d (expected 0=Ok). "
+                "If this is a link-time stub / mismatched FFI, rebuild "
+                "uno_plonky3_ffi.\n", rc);
+        return;
+    }
+    if (owned.ptr == nullptr || owned.len < 4) {
+        tprintf("  FAILED: prove returned empty/undersized owned buffer "
+                "(ptr=%p, len=%zu)\n", (void*)owned.ptr, (size_t)owned.len);
+        uno_plonky3_proof_free(owned);
+        return;
+    }
+
+    // Split [u32 LE proof_len][proof_bytes][public_input_bytes].
+    const uint8_t* bytes = owned.ptr;
+    uint32_t proof_len = (uint32_t)bytes[0]
+                       | ((uint32_t)bytes[1] <<  8)
+                       | ((uint32_t)bytes[2] << 16)
+                       | ((uint32_t)bytes[3] << 24);
+    if (owned.len < (size_t)4 + proof_len) {
+        tprintf("  FAILED: owned buffer len %zu < 4 + proof_len %u\n",
+                (size_t)owned.len, (unsigned)proof_len);
+        uno_plonky3_proof_free(owned);
+        return;
+    }
+    const uint8_t* proof_bytes = bytes + 4;
+    const uint8_t* pi_bytes    = bytes + 4 + proof_len;
+    size_t pi_len              = owned.len - 4 - proof_len;
+
+    // Public-input bytes must be the 96-byte (12 × 8) MineUno PI encoding.
+    if (pi_len != 96) {
+        tprintf("  FAILED: public-input len = %zu, expected 96 (12 × 8)\n", pi_len);
+        uno_plonky3_proof_free(owned);
+        return;
+    }
+
+    // Positive verify.
+    int32_t v_rc = uno_mine_uno_verify(
+        ::Plonky3ProofBytes{proof_bytes, proof_len},
+        ::Plonky3PublicInputs{pi_bytes, pi_len});
+    if (v_rc != 0) {
+        tprintf("  FAILED: uno_mine_uno_verify rejected a freshly-produced "
+                "proof (rc=%d)\n", v_rc);
+        uno_plonky3_proof_free(owned);
+        return;
+    }
+
+    // Negative verify — flip one bit in the middle of the proof bytes and
+    // confirm the verifier rejects. Copy into a mutable buffer first; the
+    // `owned` buffer must not be mutated (it's a Rust Vec we will free).
+    {
+        std::vector<uint8_t> tampered(proof_bytes, proof_bytes + proof_len);
+        tampered[tampered.size() / 2] ^= 0x01;
+        int32_t t_rc = uno_mine_uno_verify(
+            ::Plonky3ProofBytes{tampered.data(), tampered.size()},
+            ::Plonky3PublicInputs{pi_bytes, pi_len});
+        if (t_rc == 0) {
+            tprintf("  FAILED: uno_mine_uno_verify accepted a tampered proof "
+                    "(bit-flipped mid-proof-bytes) — expected non-Ok\n");
+            uno_plonky3_proof_free(owned);
+            return;
+        }
+    }
+
+    uno_plonky3_proof_free(owned);
+    tprintf("  PASSED (STARK prove+verify round-trip, tampered proof rejected)\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -634,7 +822,7 @@ int main() {
     test_check_conservation();
     test_public_inputs_wire_layout();
     test_load_rust_mine_golden_fixture();
-    test_mine_uno_proof_verify_placeholder();
+    test_mine_uno_proof_verify();
 
     tprintf("\nTotal: passed=%d, failures=%d, skips=%d\n",
             g_passes.load(), g_failures.load(), g_skips.load());

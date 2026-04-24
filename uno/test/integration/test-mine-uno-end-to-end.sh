@@ -1,43 +1,95 @@
 #!/usr/bin/env bash
-# UNO MineUno end-to-end integration test (Phase 2).
 #
-# Currently a placeholder — will be functional after:
-#   1. Chain state fields land (parallel agent A):
-#      mine_remaining, mine_epoch, mine_target, halving_era in UnoShardState
-#   2. AIR implementation lands (parallel agent B):
-#      uno/plonky3-ffi/src/mine_uno_air.rs + prove/verify FFI
-#   3. tosctl mine CLI lands (parallel agent C):
-#      tosctl-uno mine --threads 4 --address <address.json>
+# UNO MineUno end-to-end integration test.
 #
-# When the above land, this script should:
-#   1. Start a local wc=2 network (test/integration/.network/) with genesis
-#      mine_remaining = 21_000_000_000_000_000 nano-UNO (21 M UNO)
-#   2. Query the chain: mine_epoch=0, mine_target=2^219, mine_remaining=supply
-#   3. Run: tosctl-uno mine --threads 4 --address alice.json --out mine.tx
-#      (should find a winning nonce and produce a MineUno proof in ~30-60s)
-#   4. Submit mine.tx to the wc=2 collator
-#   5. Wait for inclusion in the next block (≤ 400ms TOS Simplex cadence)
-#   6. Query: eth_getBalance (or uno_getBalance) for alice's address
-#      → balance should have increased by 50 UNO (50_000_000_000 nano-UNO)
-#   7. Verify on-chain: mine_epoch=1, mine_remaining decreased by 50 UNO
-#   8. Test race protection: submit a duplicate mine.tx with stale remaining_pre
-#      → second submission must be rejected with remaining_pre mismatch error
+# Exercises the FULL C++ compute-phase apply pipeline against a REAL
+# Plonky3 STARK proof produced live by the in-tree Rust prover FFI.
 #
-# Usage (once Phase 2 lands):
-#   cd /home/tomi/tos
-#   uno/test/integration/test-mine-uno-end-to-end.sh
+# What this script validates (end-to-end; no mocks on the crypto path):
 #
-# CI integration: add this to the Phase 2 CI pipeline as a separate job
-# after chain-state + AIR + tosctl mine all pass their unit tests.
+#   1. `uno_mine_uno_prove` FFI produces a valid proof + 96-byte PI
+#      blob from a deterministic witness.
+#   2. The C++ MineUno BoC codec round-trips: encode_mine_uno_to_boc →
+#      decode_mine_uno_bytes → identical fields, identical proof blob.
+#   3. `uno_workchain::apply_mine_uno`:
+#        - runs `verify_mine_uno_chain_checks` (epoch, remaining,
+#          halving reward, conservation),
+#        - calls `uno_mine_uno_verify` on the real proof bytes,
+#        - mutates FakeUnoState: epoch += 1, remaining -= 50 UNO,
+#          appends PI.output_cm to commitments, accumulates a filter
+#          tag.
+#   4. Replay attack: resubmitting the same tx against the mutated
+#      state returns `VerifyResult::EpochRaceDetected` and leaves
+#      state unchanged.
+#
+# Why not spin up a full wc=2 node?
+#   A full-node e2e needs collator + RPC + genesis spin-up (~minutes
+#   of setup and a heavy fixture tree). We instead drive the exact
+#   same compute-phase entry point (`apply_mine_uno`) that the block
+#   producer calls per tx. The crypto is NOT mocked — the STARK proof
+#   is generated live in-process. A full-network e2e can be layered on
+#   top of this once `tosctl uno mine` + a UNO RPC endpoint are both
+#   live against a long-lived test network.
+#
+# Usage:
+#   bash uno/test/integration/test-mine-uno-end-to-end.sh
+#
+# Wall clock: ~22-30 s (dominated by the single STARK prove).
+# Exit code:  0 on PASS, non-zero on FAIL.
 
 set -euo pipefail
 
-echo "TODO: end-to-end MineUno test requires:"
-echo "  - test/integration/.network/ running with wc=2 (chain-state fields from parallel agent A)"
-echo "  - tosctl uno mine --threads 4 finding a winning nonce (tosctl agent C)"
-echo "  - submitted MineUnoTx accepted by the wc=2 collator (AIR agent B)"
-echo "  - subsequent eth_getBalance / RPC query showing miner's UNO balance increased"
-echo "  - race-condition rejection test (stale remaining_pre)"
-echo ""
-echo "Exiting 0 (placeholder)."
-exit 0
+# Resolve repo root relative to this script so the test is runnable
+# from any cwd.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+
+BUILD_DIR="${UNO_BUILD_DIR:-${REPO_ROOT}/build}"
+BIN="${BUILD_DIR}/uno/test/test-mine-uno-apply-e2e"
+
+echo "============================================================"
+echo "UNO MineUno end-to-end integration test"
+echo "============================================================"
+echo "Repo root: ${REPO_ROOT}"
+echo "Build dir: ${BUILD_DIR}"
+echo
+
+# Build the driver binary if missing. This is a guard rail — the
+# binary is one `cmake --build` away once CMake has been configured.
+if [ ! -x "${BIN}" ]; then
+    echo "[build] ${BIN} not found — building..."
+    if ! command -v cmake >/dev/null 2>&1; then
+        echo "SKIP: cmake not on PATH and ${BIN} is not pre-built."
+        echo "      Build manually: cmake --build ${BUILD_DIR} \\"
+        echo "                          --target test-mine-uno-apply-e2e -j 64"
+        exit 0
+    fi
+    if [ ! -d "${BUILD_DIR}" ]; then
+        echo "SKIP: ${BUILD_DIR} does not exist. Configure the CMake build first:"
+        echo "      cmake -S ${REPO_ROOT} -B ${BUILD_DIR} -G Ninja -DCMAKE_BUILD_TYPE=Release"
+        exit 0
+    fi
+    cmake --build "${BUILD_DIR}" --target test-mine-uno-apply-e2e -j 64
+fi
+
+if [ ! -x "${BIN}" ]; then
+    echo "FAIL: ${BIN} is still missing after build attempt." >&2
+    exit 1
+fi
+
+# Run the full apply pipeline.
+echo "[run] ${BIN}"
+echo
+"${BIN}"
+rc=$?
+
+echo
+if [ "${rc}" -eq 0 ]; then
+    echo "============================================================"
+    echo "PASS: MineUno end-to-end apply pipeline green."
+    echo "============================================================"
+else
+    echo "FAIL: test-mine-uno-apply-e2e exited with code ${rc}" >&2
+fi
+
+exit "${rc}"
