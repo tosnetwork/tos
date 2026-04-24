@@ -106,9 +106,11 @@ RejectReason reject_reason_from_verify_result(int v) noexcept {
         // maps to `malformed`.
         case 41: return RejectReason::Other;
         case 42: return RejectReason::Other;
+        case 43: return RejectReason::Other;       // BadMineTarget
         case 44: return RejectReason::Other;
         case 45: return RejectReason::Other;
         case 46: return RejectReason::Malformed;
+        case 47: return RejectReason::BadProof;    // PowHashAboveTarget
         case 90: return RejectReason::DecodeError;
         default: return RejectReason::Other;
     }

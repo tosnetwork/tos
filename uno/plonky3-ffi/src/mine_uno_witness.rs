@@ -542,6 +542,27 @@ pub fn uno_mine_v1_tag_block() -> [Goldilocks; 8] {
 ///
 ///   output = state[0..4]  (= 4-limb 256-bit digest)
 /// ```
+/// Convenience byte-in/byte-out wrapper around `poseidon2_mine_pow_hash`
+/// for external callers (e.g. the tosctl miner) who can't link against
+/// this crate's `p3_goldilocks` type directly. Returns the 32-byte LE-
+/// per-limb encoding of the 4-fe digest — byte-identical to PI bytes
+/// 48..80 emitted by `public_inputs_bytes()`, which is what the on-chain
+/// `apply_mine_uno` compares to `state.mine_target()`.
+pub fn compute_mine_pow_hash_bytes(
+    epoch: u32,
+    nonce: &[u8; 32],
+    output_cm: &[u8; 32],
+) -> [u8; 32] {
+    let perm16 = default_goldilocks_poseidon2_16();
+    let fes = poseidon2_mine_pow_hash(&perm16, epoch, nonce, output_cm);
+    let mut out = [0u8; 32];
+    for i in 0..4 {
+        out[i * 8..i * 8 + 8]
+            .copy_from_slice(&fes[i].as_canonical_u64().to_le_bytes());
+    }
+    out
+}
+
 pub fn poseidon2_mine_pow_hash(
     perm16: &impl Permutation<[Goldilocks; 16]>,
     epoch: u32,

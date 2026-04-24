@@ -138,9 +138,11 @@ enum class VerifyResult : int {
     // MineUno-specific reject reasons (uno-mine-v1 §3.2)
     EpochRaceDetected           = 41,
     RemainingRaceDetected       = 42,
+    BadMineTarget               = 43,  // tx.public_inputs.target != state.mine_target()
     InvalidHalvingReward        = 44,
     BadMineConservation         = 45,
     UnknownTxKind               = 46,
+    PowHashAboveTarget          = 47,  // pow_hash >= state.mine_target() (failed PoW)
     // catch-all (decode / codec)
     DecodeError                 = 90,
 };

@@ -390,6 +390,20 @@ VerifyResult verify_mine_uno_chain_checks(const UnoState& state,
         return VerifyResult::RemainingRaceDetected;
     }
 
+    // ---- Step 2b: target binding ----
+    // The 32-byte BE target declared in the tx header must equal the live
+    // chain target. This binds the proof's pow_hash (computed via the AIR
+    // against no explicit target) to the current difficulty. Without this
+    // check, a miner could submit a proof that passed easy-target mining
+    // against a stale target. AIR does NOT include target in PI by design
+    // (target is chain-state, not witness) — enforcement happens here.
+    {
+        const auto chain_target = state.mine_target();
+        if (pi.target != chain_target) {
+            return VerifyResult::BadMineTarget;
+        }
+    }
+
     // ---- Step 5: conservation (redundant with AIR but cheap off-circuit) ----
     if (!check_conservation(pi)) {
         return VerifyResult::BadMineConservation;
@@ -438,6 +452,28 @@ VerifyResult apply_mine_uno(UnoState& state, const MineUno& tx) noexcept {
         int32_t rc = uno_mine_uno_verify(fp, fpi);
         if (rc != 0) {
             return VerifyResult::BadPlonky3Proof;
+        }
+
+        // ---- Step 4: PoW difficulty threshold ----
+        // pow_hash is committed in the STARK PI at indices 6..9 (4
+        // Goldilocks field elements). PI wire format = N_PUBLIC_INPUTS ×
+        // u64 LE (96 bytes total). pow_hash occupies bytes [48..80). The
+        // miner's off-circuit `compute_mine_pow_hash` / `hash_below_target`
+        // use the same byte layout and a big-endian lexicographic
+        // comparison (`hash < target`). Mirror it here so the chain
+        // rejects any proof whose hash does not satisfy the difficulty,
+        // regardless of whether the AIR itself allowed it. AIR does not
+        // constrain hash < target because target is chain-state, not
+        // witness — this C++ gate is the only place difficulty is enforced.
+        static constexpr size_t kPowHashPiOffset = 6 * 8;  // PI_POW_HASH_BASE × 8
+        if (pi_slice.size() < kPowHashPiOffset + 32) {
+            return VerifyResult::BadPlonky3Proof;
+        }
+        std::array<uint8_t, 32> pow_hash{};
+        std::memcpy(pow_hash.data(), pi_slice.data() + kPowHashPiOffset, 32);
+        if (!(pow_hash < tx.public_inputs.target)) {
+            // pow_hash >= target — difficulty not met.
+            return VerifyResult::PowHashAboveTarget;
         }
     }
 

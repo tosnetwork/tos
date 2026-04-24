@@ -79,30 +79,39 @@ pub struct MineResult {
 // Poseidon2 PoW hash
 // ---------------------------------------------------------------------------
 
-/// Compute the PoW hash per the spec:
+/// Compute the PoW hash. Must match the AIR's
+/// `uno_plonky3_ffi::mine_uno_witness::poseidon2_mine_pow_hash` exactly
+/// — that is the value committed into PI indices 6..9 and compared
+/// against `state.mine_target()` by `apply_mine_uno` on the C++ side.
 ///
-/// ```text
-/// h = Poseidon2("uno-mine-v1" ‖ epoch(u32,LE padded to 8 B) ‖ nonce(32B) ‖ output_cm(32B))
-/// ```
+/// Structure (mirrors `uno_mine_v1_tag_block()`):
+///   state[0..8]   = epoch ‖ nonce_fes[0..4] ‖ output_cm_fes[0..3]
+///   state[8..16]  = tag_block:
+///                    tag[0] = u64_le("uno-mine")           (8 bytes)
+///                    tag[1] = u64_le("v1" + 6 zero bytes)   (note: no "-"!)
+///                    tag[2..8] = 0
+///   permute
+///   state[0]   += output_cm_fes[3]
+///   state[1]   += ONE    (10* padding)
+///   permute
+///   output   = fes_to_digest(state[0..4])
 ///
-/// Input packing: epoch is placed in one Goldilocks element (u64 LE, value
-/// = epoch as u32); nonce and output_cm are each split into 4 elements
-/// (8-byte LE limbs, wrapped-load). Total: 1 + 4 + 4 = 9 field elements.
-/// The sponge branches to the iterated path (len=9 > 8).
+/// Historical trap: passing `MINE_HASH_TAG = b"uno-mine-v1"` to tosctl's
+/// `pack_tag_block` produced `tag[1] = "-v1\\0\\0\\0\\0\\0"`, which the AIR
+/// does NOT use. The AIR hard-codes a no-dash tag split ("uno-mine" +
+/// "v1"). Honest miners that used the dash-tag hash produced proofs
+/// whose PI pow_hash (computed by the AIR from the no-dash tag) failed
+/// the on-chain target check.
 pub fn compute_mine_pow_hash(epoch: u32, nonce: &[u8; 32], output_cm: &[u8; 32]) -> [u8; DIGEST] {
-    let mut fes: Vec<Goldilocks> = Vec::with_capacity(9);
-
-    // epoch → 1 fe (u64, canonical)
-    fes.push(Goldilocks::from_u64(epoch as u64));
-
-    // nonce → 4 fes (8-byte LE chunks, wrapped-load)
-    fes.extend(poseidon2::bytes_to_fes_wrapped(nonce));
-
-    // output_cm → 4 fes (same)
-    fes.extend(poseidon2::bytes_to_fes_wrapped(output_cm));
-
-    debug_assert_eq!(fes.len(), 9);
-    poseidon2::hash_tagged(MINE_HASH_TAG, &fes)
+    // Delegate to the single source of truth in `uno_plonky3_ffi` so the
+    // miner, AIR, PI encoding, and on-chain `apply_mine_uno` all use the
+    // exact same Poseidon2-w16 instance (round constants, linear layers)
+    // and the exact same tag_block splitting ("uno-mine" + "v1", no
+    // dash). A previous local re-implementation drifted from the AIR
+    // because it depended on a different `p3-goldilocks` git revision
+    // than the fork uno_plonky3_ffi is pinned to — honest miners
+    // produced proofs whose PI pow_hash failed the chain target check.
+    uno_plonky3_ffi::mine_uno_witness::compute_mine_pow_hash_bytes(epoch, nonce, output_cm)
 }
 
 /// Returns `true` if `hash < target` under big-endian byte comparison.
@@ -191,21 +200,48 @@ pub fn search_nonce(
             let recipient_ivk_commitment = cfg.recipient.ivk_commitment;
 
             scope.spawn(move |_| {
-                // Each worker gets its own rseed and computes its own output_cm.
+                use uno_plonky3_ffi::mine_uno_witness::MineUnoWitness as FfiWitness;
+
+                // Each worker gets its own rseed and computes its own
+                // output_cm. Crucially we compute rcm + output_cm via the
+                // AIR's OWN off-circuit helpers (FfiWitness::compute_rcm
+                // / compute_output_cm_bytes), not tosctl's parallel
+                // `transfer::compute_rcm` + `compute_note_commitment`.
+                // The two paths diverge — tosctl's compute_rcm uses a
+                // 9-fe iterated sponge over "uno-rcm-v1" while the AIR
+                // uses a single-permutation width-16 sponge with
+                // TAG_RCM pinned into state[8]. If the miner searched
+                // against tosctl-rcm's output_cm but the AIR proves
+                // AIR-rcm's output_cm, the resulting pow_hash committed
+                // in PI[48..80] diverges from the miner's search
+                // result and fails the on-chain `pow_hash < target`
+                // difficulty gate.
                 let mut rseed = [0u8; DIGEST];
                 OsRng.fill_bytes(&mut rseed);
 
-                let rcm = crate::transfer::compute_rcm(&rseed);
-                let output_cm = {
-                    let input = NoteCommitmentInputs {
-                        d: &recipient_diversifier,
-                        pk_d_bytes: &recipient_pk_d,
-                        ivk_commitment: &recipient_ivk_commitment,
-                        value: mint_value,
-                        rcm: &rcm,
-                    };
-                    compute_note_commitment(&input)
+                // Pad 11-byte diversifier into the 32-byte canonical
+                // form FfiWitness expects.
+                let mut d32 = [0u8; 32];
+                d32[..11].copy_from_slice(&recipient_diversifier);
+
+                // Build an FfiWitness just long enough to call the
+                // off-circuit helpers. The fields we don't need (nonce,
+                // remaining_pre/post) are placeholders here; they're
+                // overwritten with the winning values at submit time.
+                let mut ffi_w = FfiWitness {
+                    epoch,
+                    nonce: [0u8; DIGEST],
+                    d: d32,
+                    pk_d: recipient_pk_d,
+                    ivk_commitment: recipient_ivk_commitment,
+                    value_nano: mint_value,
+                    rseed,
+                    remaining_pre: 0,
+                    remaining_post: 0,
                 };
+                let output_cm = ffi_w.compute_output_cm_bytes();
+                // `ffi_w` lives to be mutated (nonce) in the hot loop.
+                let _ = &mut ffi_w;
 
                 // Random starting nonce, incremented sequentially.
                 let mut nonce = [0u8; DIGEST];
@@ -938,13 +974,23 @@ mod tests {
             remaining_post: MINE_SUPPLY_NANO - value,
         };
 
-        let proof_bytes = prove_mine_uno_stub(&w, &pi)
+        let blob = prove_mine_uno_stub(&w, &pi)
             .expect("real STARK prover must succeed on a consistent witness + PI");
-        assert!(!proof_bytes.is_empty(), "proof bytes must be non-empty");
+        assert!(!blob.is_empty(), "proof blob must be non-empty");
 
-        // Round-trip through the verifier.
-        let pi_bytes = ffi_witness.public_inputs_bytes();
-        let status = verify_mine_uno(&proof_bytes, &pi_bytes);
+        // prove_mine_uno_stub returns the daemon wire format:
+        //   [u32 LE proof_len][proof bytes][96 B PI]
+        // verify_mine_uno expects proof and PI separately, so split the
+        // blob before the round-trip (same split the C++ apply path
+        // does via split_proof_blob in uno/core/mine_uno.cpp).
+        assert!(blob.len() >= 4 + 96, "blob too short to carry proof_len+PI");
+        let proof_len = u32::from_le_bytes(blob[0..4].try_into().unwrap()) as usize;
+        assert_eq!(blob.len(), 4 + proof_len + 96, "blob shape mismatch");
+        let proof_bytes = &blob[4..4 + proof_len];
+        let pi_bytes = &blob[4 + proof_len..];
+        assert_eq!(pi_bytes.len(), 96);
+
+        let status = verify_mine_uno(proof_bytes, pi_bytes);
         assert_eq!(
             status,
             uno_plonky3_ffi::Plonky3Status::Ok,

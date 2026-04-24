@@ -115,9 +115,11 @@ const char* verify_result_name(VerifyResult r) noexcept {
         case VerifyResult::BadPlonky3Proof:         return "bad-plonky3-proof";
         case VerifyResult::EpochRaceDetected:       return "epoch-race-detected";
         case VerifyResult::RemainingRaceDetected:   return "remaining-race-detected";
+        case VerifyResult::BadMineTarget:           return "bad-mine-target";
         case VerifyResult::InvalidHalvingReward:    return "invalid-halving-reward";
         case VerifyResult::BadMineConservation:     return "bad-mine-conservation";
         case VerifyResult::UnknownTxKind:           return "unknown-tx-kind";
+        case VerifyResult::PowHashAboveTarget:      return "pow-hash-above-target";
         case VerifyResult::DecodeError:             return "decode-error";
     }
     return "unknown";
