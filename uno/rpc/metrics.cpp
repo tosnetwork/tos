@@ -111,6 +111,8 @@ RejectReason reject_reason_from_verify_result(int v) noexcept {
         case 45: return RejectReason::Other;
         case 46: return RejectReason::Malformed;
         case 47: return RejectReason::BadProof;    // PowHashAboveTarget
+        case 48: return RejectReason::BadProof;    // PiHeaderMismatch
+        case 49: return RejectReason::Other;       // ZeroValueMineUno
         case 90: return RejectReason::DecodeError;
         default: return RejectReason::Other;
     }

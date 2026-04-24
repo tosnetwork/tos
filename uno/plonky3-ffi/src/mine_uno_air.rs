@@ -176,6 +176,60 @@ where
         }
 
         // -------------------------------------------------------------------
+        // Constraint 2b — Row-selector shift-register (pin to specific rows)
+        // -------------------------------------------------------------------
+        //
+        // Booleanity + mutex above are necessary but NOT sufficient: a
+        // malicious prover could set ALL selectors to 0 on every row, which
+        // trivially satisfies both and disables every selector-gated
+        // constraint downstream (the Poseidon2 input/output pinning, the
+        // carry-proxy binding, and the digest→proxy binding). The witness
+        // proxy columns — including `pow_hash_fe[0..4]` — then become
+        // unconstrained, letting the prover set pow_hash to anything and
+        // still pass the C++ `pow_hash < target` gate.
+        //
+        // Pin the selectors to their intended rows with a 4-stage shift
+        // register:
+        //   row 0: CM_P1 = 1, others = 0
+        //   row 1: CM_P2 = 1, others = 0    (= row0.CM_P1 shifted)
+        //   row 2: POW_P1 = 1, others = 0   (= row1.CM_P2 shifted)
+        //   row 3: POW_P2 = 1, others = 0   (= row2.POW_P1 shifted)
+        //   row 4..7: all selectors = 0     (padding; shift expires)
+        //
+        // Mirrors Transfer's GS_ROW_SEL pattern at `transfer_air.rs:541-563`.
+        {
+            let mut first = builder.when_first_row();
+            first.assert_eq(
+                local_slice[COL_SEL_CM_P1].into(),
+                AB::Expr::from(AB::F::from_u64(1)),
+            );
+            first.assert_zero(local_slice[COL_SEL_CM_P2].into());
+            first.assert_zero(local_slice[COL_SEL_POW_P1].into());
+            first.assert_zero(local_slice[COL_SEL_POW_P2].into());
+        }
+        {
+            let mut t = builder.when_transition();
+            // Shift register: next[k] = local[k - 1] for the four selectors.
+            // next.CM_P1 = 0  (pulse exits, never re-enters)
+            t.assert_zero(next_slice[COL_SEL_CM_P1].into());
+            // next.CM_P2 = local.CM_P1
+            t.assert_eq(
+                next_slice[COL_SEL_CM_P2].into(),
+                local_slice[COL_SEL_CM_P1].into(),
+            );
+            // next.POW_P1 = local.CM_P2
+            t.assert_eq(
+                next_slice[COL_SEL_POW_P1].into(),
+                local_slice[COL_SEL_CM_P2].into(),
+            );
+            // next.POW_P2 = local.POW_P1
+            t.assert_eq(
+                next_slice[COL_SEL_POW_P2].into(),
+                local_slice[COL_SEL_POW_P1].into(),
+            );
+        }
+
+        // -------------------------------------------------------------------
         // Constraint 3 — Witness proxy columns are constant across rows
         // -------------------------------------------------------------------
         //

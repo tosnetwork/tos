@@ -120,6 +120,8 @@ const char* verify_result_name(VerifyResult r) noexcept {
         case VerifyResult::BadMineConservation:     return "bad-mine-conservation";
         case VerifyResult::UnknownTxKind:           return "unknown-tx-kind";
         case VerifyResult::PowHashAboveTarget:      return "pow-hash-above-target";
+        case VerifyResult::PiHeaderMismatch:        return "pi-header-mismatch";
+        case VerifyResult::ZeroValueMineUno:        return "zero-value-mine-uno";
         case VerifyResult::DecodeError:             return "decode-error";
     }
     return "unknown";

@@ -143,6 +143,8 @@ enum class VerifyResult : int {
     BadMineConservation         = 45,
     UnknownTxKind               = 46,
     PowHashAboveTarget          = 47,  // pow_hash >= state.mine_target() (failed PoW)
+    PiHeaderMismatch            = 48,  // STARK PI != tx header (replay / forgery)
+    ZeroValueMineUno            = 49,  // value_nano == 0 (post-cap free tx spam)
     // catch-all (decode / codec)
     DecodeError                 = 90,
 };

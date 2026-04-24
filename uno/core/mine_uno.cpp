@@ -404,6 +404,18 @@ VerifyResult verify_mine_uno_chain_checks(const UnoState& state,
         }
     }
 
+    // ---- Step 2c: post-cap guard ----
+    // Reject value_nano == 0: after the cap era, mine_reward_for_epoch
+    // returns 0 and conservation/halving both hold trivially for a no-op
+    // tx (remaining_post == remaining_pre, value == 0). Without this gate
+    // any party with a valid STARK proof could flood wc=2 with accepted-
+    // but-free MineUno txs, each appending an output commitment cell and
+    // growing state unboundedly. Also catches the degenerate case where a
+    // prover accidentally proves value==0 mid-era.
+    if (pi.value_nano == 0) {
+        return VerifyResult::ZeroValueMineUno;
+    }
+
     // ---- Step 5: conservation (redundant with AIR but cheap off-circuit) ----
     if (!check_conservation(pi)) {
         return VerifyResult::BadMineConservation;
@@ -452,6 +464,51 @@ VerifyResult apply_mine_uno(UnoState& state, const MineUno& tx) noexcept {
         int32_t rc = uno_mine_uno_verify(fp, fpi);
         if (rc != 0) {
             return VerifyResult::BadPlonky3Proof;
+        }
+
+        // ---- Step 3b: bind PI to tx header ----
+        // The STARK verifier only checks the proof against the 96-byte
+        // PI blob — it does not compare those 12 Goldilocks field elements
+        // to any of the per-tx header fields. Without an explicit binding
+        // check, a single valid (proof, pi) pair could be submitted with
+        // an arbitrarily-tampered MineUno header: the chain would run the
+        // PoW/target check on the PI's pow_hash (from the proof) while
+        // mutating state using `tx.public_inputs.output_cm` /
+        // `remaining_post` from the header — a replay-with-forged-outputs
+        // attack. Verify each non-`pow_hash` PI field byte-for-byte
+        // against the header before trusting either half.
+        //
+        // PI layout (public_inputs_bytes, 12 × 8 = 96 LE bytes):
+        //   [ 0.. 8) PI_EPOCH          u64 LE
+        //   [ 8..16) PI_VALUE           u64 LE
+        //   [16..48) PI_OUTPUT_CM_BASE  4 fes × 8 B LE (= 32 B cm bytes)
+        //   [48..80) PI_POW_HASH_BASE   (checked separately below)
+        //   [80..88) PI_REMAINING_PRE   u64 LE
+        //   [88..96) PI_REMAINING_POST  u64 LE
+        if (pi_slice.size() != 96) {
+            return VerifyResult::BadPlonky3Proof;
+        }
+        auto pi_read_u64_le = [&](size_t off) -> uint64_t {
+            uint64_t v = 0;
+            for (size_t i = 0; i < 8; ++i) {
+                v |= static_cast<uint64_t>(static_cast<uint8_t>(pi_slice[off + i])) << (8 * i);
+            }
+            return v;
+        };
+        const uint64_t pi_epoch          = pi_read_u64_le(0);
+        const uint64_t pi_value          = pi_read_u64_le(8);
+        const uint64_t pi_remaining_pre  = pi_read_u64_le(80);
+        const uint64_t pi_remaining_post = pi_read_u64_le(88);
+        if (pi_epoch != static_cast<uint64_t>(tx.public_inputs.epoch) ||
+            pi_value != tx.public_inputs.value_nano ||
+            pi_remaining_pre != tx.public_inputs.remaining_pre ||
+            pi_remaining_post != tx.public_inputs.remaining_post) {
+            return VerifyResult::PiHeaderMismatch;
+        }
+        if (std::memcmp(pi_slice.data() + 16,
+                        tx.public_inputs.output_cm.data(),
+                        32) != 0) {
+            return VerifyResult::PiHeaderMismatch;
         }
 
         // ---- Step 4: PoW difficulty threshold ----
