@@ -436,13 +436,17 @@ is organized around three concrete execution domains:
 \end{itemize}
 The current native-asset naming of these execution domains is
 likewise fixed in product terminology: {\em TOS\/} is the native
-asset of the base chain (Workchain Zero) {\em and} the
-EVM-oriented workchain (Workchain One) — a single fungible token
-shared across both VMs via cross-workchain message routing — while
+asset of the base chain (Workchain Zero), {\em eTOS\/} is the
+native asset of the EVM-oriented workchain (Workchain One), and
 {\em UNO\/} is the native asset of the privacy workchain
-(Workchain Two), independent of TOS by design (privacy preservation
-forbids a wc=2~$\leftrightarrow$~wc=0/wc=1 bridge).
-These domains share masterchain coordination, validator
+(Workchain Two). All three are economically independent — there
+are no on-chain bridges between any two of them. Conceptual
+1:1~parity between TOS and eTOS (they share the ``TOS'' brand and
+are designed to trade at parity) is realised by external markets,
+not by protocol-level routing. UNO never participates in cross-
+token flows by design (privacy preservation forbids a
+wc=2~$\leftrightarrow$~wc=0/wc=1 value bridge).
+These three domains share masterchain coordination, validator
 economics and the same node implementation. Users choose an execution
 domain per transaction; validators may advertise support and
 participate per workchain according to the corresponding on-chain
@@ -655,13 +659,15 @@ transaction fees, validator stakes, storage accounting and other
 protocol-native payments.
 
 In the current TOS product structure, Workchain One (the EVM-oriented
-workchain) uses {\em the same TOS asset\/} as the base chain — TOS
-flows between the TVM workchain and the EVM workchain via masterchain-
-routed cross-workchain messages, with a fixed 9-decimal $\leftrightarrow$
-18-decimal conversion (1 nano-tomi = $10^9$ wei). Workchain Two (Uno)
-uses {\em UNO\/} as its native asset, independent of TOS: privacy
-preservation precludes a wc=2 $\leftrightarrow$ wc=0/wc=1 value bridge,
-so UNO is fully contained within wc=2.
+workchain) uses {\em eTOS\/} as its native asset — distinct from TOS
+on Workchain Zero, with its own 100~M supply cap and 18-decimal wei
+denomination matching Ethereum tooling. There is no on-chain bridge
+between TOS and eTOS; conceptual 1:1~parity is realised by external
+markets (analogous to ETH~$\leftrightarrow$~wETH or
+BTC~$\leftrightarrow$~WBTC). Workchain Two (Uno) uses {\em UNO\/} as
+its native asset, also independent: privacy preservation precludes
+a wc=2~$\leftrightarrow$~wc=0/wc=1 value bridge, so UNO is fully
+contained within wc=2.
 
 In principle, other workchains may collect transaction fees in other
 tokens. In this case, some smart contract or protocol mechanism for

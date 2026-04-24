@@ -121,10 +121,10 @@ struct GenesisDistributionInputs {
 ///
 /// 21,000,000 UNO × 10^9 nano-units/UNO = 2.1e16 nano-UNO.
 /// Matches Bitcoin / Zcash 21 M cap — UNO positions as the privacy-coin
-/// peer of ZEC/XMR (uno-workchain.md Decision #36). TOS (shared across
-/// wc=0 TVM and wc=1 EVM via cross-workchain routing) uses the larger
-/// 200 M cap appropriate for L1 platform + EVM gas; UNO keeps its own
-/// scarcity narrative independently on wc=2.
+/// peer of ZEC/XMR (uno-workchain.md Decision #36). Sister tokens TOS
+/// (wc=0, 100 M) and eTOS (wc=1 EVM, 100 M) are economically independent
+/// of UNO; no on-chain bridge between any pair (privacy preservation
+/// precludes wc=2 ↔ wc=0/wc=1 value flow per uno-workchain.md §1.5).
 constexpr uint64_t kGenesisTotalSupplyNano = 21'000'000ULL * 1'000'000'000ULL;
 
 /// Per-category targets. Chosen so the rounded integer split is exact:

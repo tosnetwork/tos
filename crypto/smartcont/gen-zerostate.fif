@@ -123,7 +123,7 @@ WCode3 // code
    B,
 b> // data
 empty_cell // libs
-TM$200000000 allocated-balance - // balance (target total supply: 200 M TOS)
+TM$100000000 allocated-balance - // balance (target total supply: 100 M TOS)
 0 // split_depth
 0 // ticktock
 AllOnes 1 * // address

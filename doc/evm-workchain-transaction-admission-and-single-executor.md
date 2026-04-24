@@ -257,7 +257,7 @@ The wc=1 `accounts:^ShardAccounts` dictionary has exactly **one** entry forever 
 
 Fift script (extended via `create-state.cpp`):
 
-1. Build `CellEvmState` seeded with the 10 Hardhat/Anvil test EOAs (nonce=0, balance=10,000 TOS wei each — dev/test convenience seeding, 100 K TOS total). TOS is the single native token shared across wc=0 and wc=1 via cross-workchain routing; this dev seed is unrelated to the 200 M TOS genesis supply on wc=0.
+1. Build `CellEvmState` seeded with the 10 Hardhat/Anvil test EOAs (nonce=0, balance=10,000,000 eTOS wei each — dev/test eTOS supply 100 M total). eTOS is the wc=1-native token, independent of TOS on wc=0; no on-chain bridge between them.
 2. Serialize into a `cp.new_data`-shaped cell: magic + `^account_dict_root` + 256-bit Ethereum MPT root.
 3. Build an executor `Account` cell whose `StateInit.data` is the cell above and whose `StateInit.code` is the marker.
 4. Wrap into `ShardAccount`; insert at key `kEvmExecutorAddress` into an `AugmentedDictionary{256, aug_ShardAccounts}`.
@@ -347,7 +347,7 @@ Phase E is complete when:
 1. `bash test/evm-workchain/proof-mirror-not-canonical.sh` exits 0 (currently 2).
 2. All existing 41 unit tests still pass (new tests replace deleted ones one-for-one).
 3. On a fresh testnet after `setup-testnet.sh --clean`:
-   - `eth_getBalance` for any test EOA returns 10,000 TOS **before the first wc=1 block is produced** (because zerostate already carries the executor with the inner world pre-populated, and hydration reads it on first collator wake).
+   - `eth_getBalance` for any test EOA returns 10,000,000 eTOS **before the first wc=1 block is produced** (because zerostate already carries the executor with the inner world pre-populated, and hydration reads it on first collator wake).
    - Send a transfer; `eth_sendRawTransaction` returns a tx hash; receipt arrives within 30s; balances move as expected.
    - `kill -9` validator@1; restart; within 60s the validator rejoins consensus and its `eth_getBalance` / `eth_getTransactionCount` / `eth_getCode` all return post-tx values correctly.
 4. Deploy a contract; `eth_getCode(contractAddress)` returns the bytecode; restart; `eth_getCode(contractAddress)` still returns the same bytecode.

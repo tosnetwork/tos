@@ -303,36 +303,41 @@ All fee and gas parameters can be adjusted through on-chain governance after the
 
 ## Initial Token Supply (per-workchain issuance)
 
-TOS ships **two** native tokens — **TOS** (shared across wc=0 TVM and wc=1 EVM) and **UNO** (independent on wc=2). **Initial supply is NOT a ConfigParam** — it is set at zero-state construction time and cannot be changed by on-chain governance after genesis.
+TOS ships **three** native tokens, each independent and confined to its own workchain — there are **no on-chain bridges** between any of them. Cross-token swap (e.g., 1 TOS ↔ 1 eTOS) is conceptual and realised by external exchanges. **Initial supply is NOT a ConfigParam** — it is set at zero-state construction time and cannot be changed by on-chain governance after genesis.
 
-| Token | Lives on | Decimals | Target Supply | Role | Where configured | Determinism |
-|---|---|---|---|---|---|---|
-| **TOS** | master (`-1`) + wc=0 (TVM) **+ wc=1 (EVM)** via cross-WC routing | 9 nano-tomi (TVM) ↔ 18 wei (EVM); 1 nano-tomi = 10⁹ wei | **200,000,000 TOS** total cap | L1 platform gas + staking + EVM dapp gas | `crypto/smartcont/gen-zerostate.fif` line 94 (`TM$200000000 allocated-balance -`); 100% lives in wc=0 main wallet at genesis | Baked into `zerostate.boc` at genesis; wc=1 starts empty (apart from dev seed) and is funded by cross-WC routing from wc=0 |
-| **UNO** | wc=2 (STARK) | 9 nano-UNO | **21,000,000 UNO** total cap | Privacy "digital gold" (peer of Bitcoin / Zcash) | `uno/core/genesis.h` `kGenesisTotalSupplyNano` constexpr, split 60 / 25 / 15 = 12.6 M / 5.25 M / 3.15 M | Baked into `unostate2.boc` via `build_zerostate_state_cell(GenesisDistribution)`; **independent of TOS** — no bridge between wc=2 and wc=0/wc=1 (privacy-preservation requirement, uno-workchain.md §1.5) |
+| Token | Lives on | Decimals | Target Supply | Role | Where configured |
+|---|---|---|---|---|---|
+| **TOS** | master (`-1`) + wc=0 (TVM) | 9 (nano-tomi) | **100,000,000 TOS** | L1 platform gas + staking | `crypto/smartcont/gen-zerostate.fif` line 94 (`TM$100000000 allocated-balance -`) |
+| **eTOS** | wc=1 (EVM) | 18 (wei) | **100,000,000 eTOS** | EVM gas + dapp economy | `evm/core/init.cpp::kSeedAmountETos` constexpr (10 Hardhat dev accounts × 10 M each) — dev/test seeding; mainnet uses `evm-zerostate-from-alloc` |
+| **UNO** | wc=2 (STARK) | 9 (nano-UNO) | **21,000,000 UNO** | Privacy "digital gold" (peer of Bitcoin / Zcash) | `uno/core/genesis.h::kGenesisTotalSupplyNano` constexpr; split 60 / 25 / 15 = 12.6 M / 5.25 M / 3.15 M |
 
-### TOS (shared, wc=0 + wc=1)
+**No on-chain bridges.** Each token lives in its own workchain and never moves to another. Conceptual 1:1 parity between TOS and eTOS (sharing the "TOS" narrative and pricing benchmark) is realised by **external markets** — users buy/sell TOS for eTOS on centralised or decentralised exchanges, just like ETH ↔ wETH or BTC ↔ WBTC. UNO never participates in any cross-token flow (privacy preservation requirement, uno-workchain.md §1.5).
 
-TOS is the single native token across both the TVM workchain (wc=0) and the EVM workchain (wc=1). At genesis:
+### TOS (wc=0 TVM)
 
-- **wc=0 TVM**: main wallet on masterchain absorbs the residual supply after subtracting `allocated-balance` (running total of stage allocations + system contracts):
-  ```fif
-  TM$200000000 allocated-balance - // balance = target - already-allocated
-  register_smc                     // adds this to allocated-balance
-  ```
-  To change the target, edit the `TM$<N>` literal on `gen-zerostate.fif` line 94.
+The main wallet on masterchain absorbs the residual supply after subtracting `allocated-balance` (running total of stage 1/2/3 allocations + system contracts like the elector):
 
-- **wc=1 EVM**: starts empty at genesis (`mkemptyShardState`). For dev/test convenience, the runtime `hydrate_global_state_if_empty` seeds 10 Hardhat/Anvil EOAs with 10,000 TOS each (100 K total — see `evm/core/init.cpp::kSeedAmountTos`). **This is NOT genesis supply** — it is a dev convenience that materialises balances "out of thin air" on first boot. For mainnet, gate this off (set `kSeedAmountTos` to 0 or guard with a `--dev` flag) so wc=1 starts truly empty and is funded entirely via cross-WC routing.
+```fif
+TM$100000000 allocated-balance - // balance = target - already-allocated
+register_smc                     // adds this to allocated-balance
+```
 
-#### Cross-workchain TOS routing (TODO — separate epic)
+To change the TOS target supply, edit the `TM$<N>` literal on `gen-zerostate.fif` line 94. The value is in whole TOS (nano-tomi under the hood).
 
-For TOS to actually flow between wc=0 and wc=1, the network needs a deterministic mechanism that:
-- Translates wc=0 → wc=1 internal messages into EVM account `balance += value × 10⁹` (nano-tomi → wei conversion);
-- Lets wc=1 EVM contracts call a precompile (e.g., `0x0...0100`) that burns wei and emits a wc=0 outbound message;
-- Rejects sub-nano-tomi precision (any wei value not a multiple of 10⁹) at the precompile boundary.
+### eTOS (wc=1 EVM)
 
-The existing `evm/core/bridge.{cpp,h}` is a placeholder scaffold predating this design and is **not** the production routing layer. See `doc/cross-workchain-tos-routing-design.md` (TODO) for the full design.
+The dev/test eTOS distribution seeds 10 Hardhat/Anvil standard EOAs with `kSeedAmountETos = 10_000_000` eTOS each (100 M total). **This is dev/test only** — the private keys are public and documented in `evm/core/init.cpp`. For mainnet:
 
-Until cross-WC routing is wired, mainnet wc=1 will only have whatever balances are present from the dev seed (or zero in production builds where the seed is gated off).
+1. Prepare a Hive-style `genesis.json` with real recipient addresses and balances (total 100 M eTOS = 100 M × 10¹⁸ wei).
+2. Use `translate-genesis.py` (see `doc/evm-workchain-transaction-admission-and-single-executor.md` Phase D) to convert to a Fift tuple.
+3. Replace the `mkemptyShardState` call on wc=1 in `gen-zerostate.fif` with:
+   ```fif
+   <allocation-tuple> evm-zerostate-from-alloc  // builds wc=1 accounts cell
+   ... wrap into ShardState ...
+   ```
+4. Gate the runtime `seed_test_accounts` path (init.cpp) so it no-ops on mainnet (the idempotency check `if (state.read_account(first_addr).has_value()) skip` already handles this when the zerostate carries pre-populated accounts).
+
+There is **no protocol-level bridge** between TOS (wc=0) and eTOS (wc=1). The two are economically distinct tokens with their own supply caps and their own genesis distributions; users wishing to "convert" between them transact on external exchanges.
 
 ### UNO (privacy workchain, wc=2)
 
