@@ -50,6 +50,7 @@ class Zerostate:
     masterchain: WorkchainState
     shardchain: WorkchainState
     evmchain: WorkchainState  # EVM workchain (wc=1)
+    unochain: WorkchainState  # UNO workchain (wc=2)
     main_wallet_key: nacl.signing.SigningKey
     main_wallet_address: Address
 
@@ -100,6 +101,16 @@ wc_master setworkchain
   workchain-dict !
 }} : add-evm-workchain-v2
 
+// UNO workchain (wc=2) — same as add-std-workchain-v2 but vm_version=0x554E4F31
+// ("UNO1"), which routes wc=2 transactions to the Plonky3 STARK verifier
+// (see uno/core/workchain.h::kVmVersion).
+{{ <b x{{a7}} s, 5 roll 32 u, 4 roll 8 u, 3 roll 8 u, rot 8 u, x{{e000}} s,
+  3 roll 256 u, rot 256 u, 0 32 u, x{{1}} s, 0x554E4F31 32 i, 0 64 u, x{{0}} s, 20 32 u, 20 32 u, 10 32 u, 1000 32 u, 0 8 u, b>
+  dup isWorkchainDescr? not abort"invalid WorkchainDescr created"
+  <s swap workchain-dict @ 32 idict!+ 0= abort"cannot add workchain"
+  workchain-dict !
+}} : add-uno-workchain-v2
+
 dup dup 31 boc+>B dup "basestate0.boc" B>file
 Bhashu dup =: basestate0_fhash 256 u>B "basestate0.fhash" B>file
 hashu dup =: basestate0_rhash 256 u>B "basestate0.rhash" B>file
@@ -126,6 +137,18 @@ dup dup 31 boc+>B dup "evmstate1.boc" B>file
 Bhashu dup =: evmstate1_fhash 256 u>B "evmstate1.fhash" B>file
 hashu dup =: evmstate1_rhash 256 u>B "evmstate1.rhash" B>file
 evmstate1_rhash evmstate1_fhash now {monitor_min_split} {split} dup 1 add-evm-workchain-v2
+
+// UNO workchain (wc=2) zerostate: empty ShardState (no pre-seeded accounts).
+// The UNO commitment tree / nullifier set lives inside the single-executor
+// account at address 0x…01 and is materialised lazily on first mine/transfer;
+// the mainnet distribution-builder (uno/core/genesis.h) is TODO per
+// gen-zerostate.fif. vm_version=0x554E4F31 on the descriptor routes wc=2
+// traffic to the Plonky3 STARK verifier.
+2 mkemptyShardState
+dup dup 31 boc+>B dup "unostate2.boc" B>file
+Bhashu dup =: unostate2_fhash 256 u>B "unostate2.fhash" B>file
+hashu dup =: unostate2_rhash 256 u>B "unostate2.rhash" B>file
+unostate2_rhash unostate2_fhash now {monitor_min_split} {split} dup 2 add-uno-workchain-v2
 
 config.workchains!
 
@@ -411,6 +434,11 @@ def create_zerostate(
             file=state_dir / "evmstate1.boc",
             file_hash=(state_dir / "evmstate1.fhash").read_bytes(),
             root_hash=(state_dir / "evmstate1.rhash").read_bytes(),
+        ),
+        unochain=WorkchainState(
+            file=state_dir / "unostate2.boc",
+            file_hash=(state_dir / "unostate2.fhash").read_bytes(),
+            root_hash=(state_dir / "unostate2.rhash").read_bytes(),
         ),
         main_wallet_key=nacl.signing.SigningKey(pk),
         main_wallet_address=Address((addr_wc, addr_hash)),
