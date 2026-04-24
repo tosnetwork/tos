@@ -2,6 +2,30 @@
 
 This document records the exact steps used to configure and run a production-style local TOS testnet with 4 validator nodes on a single machine. This setup serves as the reference for future production deployments.
 
+## Three-chain topology
+
+The local testnet carries **three independent workchains** under one validator set and one masterchain:
+
+| wc  | Chain                        | vm_version                      | Role                              | Total supply | Distribution                                           |
+|-----|------------------------------|---------------------------------|-----------------------------------|--------------|--------------------------------------------------------|
+| `-1` | **masterchain**              | (reserved)                      | Consensus / config                | —            | —                                                      |
+| `0` | **TOS** (native TVM)         | `-1` (TVM)                      | Primary smart-contract chain      | 100 M TOS    | 10 × PoW Givers + ~3 K TOS system reserve              |
+| `1` | **eTOS** (EVM)               | `0x45564D` ("EVM") = `4544077`  | Ethereum-compatible chain (evmone)| 100 M eTOS   | 10 Hardhat test accounts (10 M each); `chainId=0x544F53` (5 525 331); JSON-RPC at `127.0.0.1:801N` |
+| `2` | **UNO** (privacy / STARK)    | `0x554E4F31` ("UNO1") = `1431195441` | Zcash/Penumbra-style privacy payments with Plonky3 STARK proofs, Bitcoin-clone halving | 21 M UNO | **Empty at genesis — 0 pre-funded accounts, all UNO mined.** Mining via `tosctl-uno mine` (CPU Poseidon2, 600 s target, 50 UNO/solve, halving every 210 K solves) |
+
+All three chains share the **same validator set**, the **same catchain consensus**, and the **same** `/data/tos-global.json`. Deployment is a single `setup-testnet.sh` invocation — no per-chain activation flag is needed; wc=1 and wc=2 are wired into the zerostate from birth (via `add-evm-workchain` + `add-uno-workchain` in `crypto/smartcont/gen-zerostate.fif`, §50-84). Verify post-genesis with:
+
+```bash
+tos-lite-client -C /data/tos-global.json -v 0 -c "getconfig 12" -c "quit" \
+  | grep -E "vm_version"
+# Expect three leaves:
+#   vm_version:-1          → wc=0 TVM
+#   vm_version:4544077     → wc=1 EVM      (0x45564D)
+#   vm_version:1431195441  → wc=2 UNO1     (0x554E4F31)
+```
+
+Per-chain details are at [EVM Workchain (Workchain 1)](#evm-workchain-workchain-1) and [UNO Workchain (Workchain 2)](#uno-workchain-workchain-2) below.
+
 ## Architecture
 
 ```
@@ -84,6 +108,14 @@ The setup creates two directory trees:
 
 Ports are auto-assigned by the `tostester.Network` class starting from base port 2000.
 
+All three workchains (wc=0 TVM, wc=1 EVM, wc=2 UNO) share the same per-node UDP/TCP ports above — they are separated by workchain id inside the validator, not by network port. Chain-specific access surfaces:
+
+| Chain | Access surface          | Port per node (nodes 1..4) |
+|-------|-------------------------|----------------------------|
+| wc=0  | Liteserver (lite-client)| 2003 / 2006 / 2009 / 2012  |
+| wc=1  | Liteserver **and** Ethereum-compatible JSON-RPC (`eth_*`) | Liteserver 2003-2012; JSON-RPC 8011 / 8012 / 8013 / 8014 |
+| wc=2  | Liteserver only (no dedicated UNO RPC surface yet — `tosctl-uno` talks via the standard liteserver / a companion RPC daemon; see §UNO Workchain below) | 2003 / 2006 / 2009 / 2012 |
+
 ## systemd Services
 
 | Service | Unit File | Description |
@@ -162,8 +194,23 @@ The `--clean` flag stops any running services and removes previous `/data/` cont
    - Sets `global_id = 3` (dev network)
    - Embeds 4 validator public keys via `add-validator`
    - Runs `build/crypto/create-state` with Fift include paths
-   - Produces: `zerostate.boc`, `basestate0.boc`, `evmstate1.boc`, `unostate2.boc`, hash files, wallet/elector/config addresses
-   - **Initial token supply**: TOS = 100 M (wc=0 TVM), eTOS = 100 M (wc=1 EVM, independent), UNO = 21 M (wc=2 privacy, independent). Three independent supplies — 1:1 conceptual swap rate between TOS and eTOS is realised by external exchanges, not by any on-chain bridge. See [Zerostate.md §Initial Token Supply](Zerostate.md#initial-token-supply-per-workchain-issuance) for configuration points — supply values live in `gen-zerostate.fif:94` (TOS), `evm/core/init.cpp::kSeedAmountETos` (eTOS), and `uno/core/genesis.h::kGenesisTotalSupplyNano` (UNO).
+   - Produces the four BoC blobs the network needs, plus their hash files and deterministic wallet / elector / config addresses:
+     | File                 | Contents                                               |
+     |----------------------|--------------------------------------------------------|
+     | `zerostate.boc`      | Masterchain (wc=-1) zerostate                          |
+     | `basestate0.boc`     | wc=0 TVM shardstate (TOS)                              |
+     | `evmstate1.boc`      | wc=1 EVM shardstate (eTOS) — activated by `add-evm-workchain` |
+     | `unostate2.boc`      | wc=2 UNO shardstate (privacy) — activated by `add-uno-workchain` (tostester, commit `b3bf82b26`) |
+
+   Per-workchain wiring:
+
+   | wc | vm_version                         | Total supply   | Genesis distribution                                                                 |
+   |----|------------------------------------|----------------|--------------------------------------------------------------------------------------|
+   | 0  | `-1` (TVM)                         | 100 M TOS      | PoW Giver skeleton + `TM$3000` system reserve (elector / config / stage wallets)     |
+   | 1  | `0x45564D` ("EVM") = `4544077`     | 100 M eTOS     | 10 Hardhat test accounts × 10 M eTOS each (well-known keys; dev only — see §EVM)     |
+   | 2  | `0x554E4F31` ("UNO1") = `1431195441` | 21 M UNO max  | **Empty shardstate — 0 pre-funded accounts.** All 21 M must be mined (CPU Poseidon2 PoW, 600 s target, 50 UNO/solve, Bitcoin-clone halving every 210 K solves). `mkemptyShardState` in `gen-zerostate.fif:69`. |
+
+   All three supplies are economically independent — no on-chain bridge between any pair. See [Zerostate.md §Initial Token Supply](Zerostate.md#initial-token-supply-per-workchain-issuance) for configuration points — supply values live in `gen-zerostate.fif:94` (TOS), `evm/core/init.cpp::kSeedAmountETos` (eTOS), and `uno/core/genesis.h::kGenesisTotalSupplyNano` (UNO).
 
 6. **Key generation** (per node, inside Python):
    - 5 Ed25519 keypairs per node: fullnode, validator, liteserver, console_server, console_client
@@ -640,6 +687,214 @@ The atomic single-WriteBatch commit (TOS + EVM together) is the production targe
 | `state_hash` mismatch on validators | Some nodes have EVM enabled, others don't | All validators must run the same evm-workchain binary version |
 | BoC load failure on restart | Schema mismatch | Delete `{db_root}/evm-state.boc` to start fresh |
 
+## UNO Workchain (Workchain 2)
+
+The local testnet supports the UNO privacy workchain at `workchain_id = 2` (alongside masterchain `-1`, TOS basechain `0`, and EVM `1`). UNO is a Zcash/Penumbra-style shielded-payments chain: all values, recipients, and senders are hidden inside Plonky3 STARK proofs over the Goldilocks field. There is no VM — transactions are verified by the generic compute-phase dispatcher, which routes by the tx-body byte-0 discriminator (`0x01` Transfer / `0x02` MineUno) to the `uno_plonky3_ffi` verifier (ABI v4). UNO's native coin is distributed **solely by mining** (CPU-only Poseidon2 PoW, 600 s target interval, 50 UNO/solve initial reward, halving every 210 000 solves); no genesis airdrop, no pre-funded test accounts.
+
+Consensus status: the MineUno tx-kind landed end-to-end as of Phase 3d (commits `12837af7f..17b1ddd11`); tostester wiring that materialises `unostate2.boc` into the local zerostate landed in `b3bf82b26`.
+
+### Architecture
+
+```
+UNO tx (Transfer or MineUno, built by tosctl-uno)
+   │
+   ├── tosctl-uno mine  (CPU Poseidon2 PoW search)
+   │      ↓  nonce found + Plonky3 prove_mine_uno (~30–60 s CPU)
+   │   MineUno tx body = 0x02 ‖ schema-v1 ‖ public_inputs(92 B) ‖ proof(~200 KB)
+   │      ↓
+   │   liteServer_sendMessage (port 2003/2006/2009/2012) → ExtMessagePool (wc==2)
+   │      ↓
+   │   Collator picks up message → uno_workchain dispatcher
+   │      ↓
+   │   compute-phase.cpp byte-0 discriminator dispatch:
+   │        0x01 → Transfer compute-phase → uno_plonky3_verify
+   │        0x02 → MineUno   compute-phase → verify_mine_uno_chain_checks
+   │                                       → uno_mine_uno_verify (FFI v4)
+   │                                       → apply_mine_uno (verify-before-mutate)
+   │      ↓
+   │   UnoShardState mutated: commitment_tree.append(output_cm);
+   │                          mine_remaining -= value; mine_epoch += 1;
+   │                          halving_era recomputed from epoch
+   │      ↓
+   │   Block produced → UNO state included in wc=2 shardstate root hash
+   │
+   └── (Transfer path: user wallets scan via ivk; no public RPC surface yet)
+```
+
+### Constants
+
+| Item                              | Value                                             | Source |
+|-----------------------------------|---------------------------------------------------|--------|
+| `workchain_id`                    | `2`                                               | `uno/core/workchain.h` (`kWorkchainId`) |
+| `vm_version`                      | `0x554E4F31` ("UNO1") = `1431195441`              | `uno/core/workchain.h` (`kVmVersion`) |
+| `vm_mode`                         | `0`                                               | `uno/core/workchain.h` (`kVmMode`) |
+| `chain_id` (testnet)              | `0x554E4F54` ("UNOT")                             | `uno/core/workchain.h` (`kChainIdTestnet`) |
+| `chain_id` (mainnet)              | `0x554E4F4D` ("UNOM")                             | `uno/core/workchain.h` (`kChainIdMainnet`) |
+| Total supply (cap)                | **21 000 000 UNO** (= 2.1 × 10¹⁶ nano-UNO)        | `uno/core/genesis.h` (`kGenesisTotalSupplyNano`) / `uno/core/mine_constants.h` (`kMineSupplyNano`) |
+| Initial mining reward (era 0)     | **50 UNO** (5 × 10¹⁰ nano-UNO)                    | `uno/core/mine_constants.h` (`kInitMineReward`) |
+| Halving period                    | **210 000 solves** per era (Bitcoin-clone)        | `uno/core/mine_constants.h` (`kEraSize`) |
+| Target solve interval             | **600 s** (Bitcoin 10-min block time)             | `uno/core/mine_constants.h` (`kTargetSolveSeconds`) |
+| Retarget factor bounds            | `[3/4, 4/3]` (more aggressive than TOS's `[7/8, 9/8]`) | `uno/core/mine_constants.h` (`kRetargetMin/MaxNum/Den`) |
+| Initial PoW target                | `2^219` (big-endian 32-byte, byte[4] = `0x08`)    | `uno/core/mine_constants.h` (`kInitMineTargetBE`) |
+| Hash algorithm                    | Poseidon2 over Goldilocks (PQ-native; CPU-only)   | `kMineHashTag = "uno-mine-v1"` |
+| Proof system                      | Plonky3 STARK + FRI, ABI v4                       | `uno/plonky3-ffi/include/uno_plonky3_ffi.h` |
+| Expected proof size               | ~200 KB                                           | see [Mining-Design.md §UNO Mining](Mining-Design.md) |
+| `uno_plonky3_abi_version()`       | `4`                                               | `uno/crypto/plonky3-verifier.h` (`kExpectedAbiVersion`) |
+
+### Initialization in validator-engine
+
+`validator-engine.cpp:2338` calls `uno_workchain::init_uno_workchain(db_root_)` at startup (immediately after `evm_workchain::init_evm_workchain`). This:
+
+1. Constructs a `LiveUnoState` singleton (nullifier set + commitment tree + anchor window + mining-state cells)
+2. Warms the nullifier-set LRU (1 M entries by default — §5.9 / §10.2)
+3. Registers the Uno compute handler with the generic workchain dispatcher — subsequent compute-phase calls for wc=2 land in `uno/core/compute-phase.cpp`'s byte-0 discriminator, which forwards to `verify_mine_uno_chain_checks` + `apply_mine_uno` for MineUno txs and to the Plonky3 Transfer verifier for Transfer txs
+4. Defers Plonky3 FRI-parameter materialization to the first verify call (v1 unit tests that never verify don't pay the cost)
+
+No additional CLI flags are needed — the UNO workchain is built in.
+
+### Activating the UNO Workchain on the Network
+
+The UNO workchain (`wc=2`) is **already wired into the build**: `gen-zerostate.fif:53-84` registers it via `add-uno-workchain` (analog of `add-evm-workchain`), and the tostester pipeline used by `setup-testnet.sh` produces the matching `unostate2.boc`, `.fhash`, and `.rhash`. Each node's `static/` directory gets a symlink to the UNO zerostate alongside TOS and EVM.
+
+**To deploy from scratch (clean network — destroys existing state):**
+
+```bash
+# 0. Build and install the latest binaries
+cd ~/tos
+cmake --build build -j$(nproc) --target validator-engine create-state lite-client dht-server
+sudo install -m755 build/validator-engine/validator-engine /usr/local/bin/tos-validator-engine
+sudo install -m755 build/lite-client/lite-client /usr/local/bin/tos-lite-client
+sudo install -m755 build/dht-server/dht-server /usr/local/bin/tos-dht-server
+sudo install -m755 build/crypto/create-state /usr/local/bin/tos-create-state
+
+# 1. Stop existing testnet (if any) and wipe state
+sudo ./scripts/testnet-ctl.sh stop || true
+sudo rm -rf /data/testnet /data/dht /data/tos1 /data/tos2 /data/tos3 /data/tos4 \
+            /data/tos-global.json /data/testnet-ports.json
+
+# 2. Re-run setup — this regenerates zerostate WITH wc=2 (tostester b3bf82b26+)
+sudo REPO_ROOT=$(pwd) ./scripts/setup-testnet.sh
+
+# 3. Start
+sudo ./scripts/testnet-ctl.sh start
+
+# 4. Wait ~10 s for sync, then verify (see below)
+```
+
+**To activate on an existing chain (no reset, governance path):**
+
+A masterchain proposal containing the updated ConfigParam 12 with a new `workchain_v2` leaf for wc=2, `vm_version = 0x554E4F31`, `vm_mode = 0`. **No dedicated builder helper exists yet** — the analog of `build_evm_workchain_descr()` (from `crypto/block/evm-workchain/evm-config-param.cpp`) would need to live in `crypto/block/uno-workchain/` or be reused out of the existing `add-uno-workchain` Fift primitive. Submit via the standard config-update flow. All validators must already be running a binary that includes the `uno_workchain` module (FFI ABI v4 or later) before the proposal goes live — otherwise they will diverge on the first wc=2 block.
+
+### Verification
+
+After the network is running with UNO enabled:
+
+```bash
+# 1. Confirm the wc=2 WorkchainDescr is present in ConfigParam 12
+tos-lite-client -C /data/tos-global.json -v 0 -c "getconfig 12" -c "quit" \
+  | grep -E "vm_version" 
+# Expect three hits: vm_version:-1 (TOS), vm_version:4544077 (EVM),
+#                    vm_version:1431195441 (UNO1 = 0x554E4F31)
+
+# 2. Confirm a wc=2 shard descriptor exists post-genesis (shards list).
+#    Three leaves total are expected: wc=0 (shard_descr_new, advancing),
+#    wc=1 (shard_descr_new, advancing), wc=2 (shard_descr, seq_no:0 until
+#    the first MineUno tx advances it).
+tos-lite-client -C /data/tos-global.json -v 0 -c "allshards" -c "quit" \
+  | grep -cE "leaf:\(shard_descr"
+# Expect: 3
+
+# 3. Bootstrap progress (server should show increasing masterchain seqno)
+tos-lite-client -C /data/tos-global.json -v 0 -c "last" -c "quit"
+```
+
+Full end-to-end flow (mining + tx submission) is in **Mining Quick Start** below.
+
+### Pre-Funded Accounts (UNO)
+
+**Zero.** Unlike wc=1 EVM (10 Hardhat accounts × 10 M eTOS), the UNO zerostate is an empty shardstate: `gen-zerostate.fif:69` calls `2 mkemptyShardState` — no notes, no balances, no test recipients. The entire 21 M UNO supply comes from mining only.
+
+This is intentional:
+- Privacy coins with pre-mined distributions expose launch participants' holdings (Zcash's 20 % Founders' Reward was widely criticised).
+- UNO's positioning is "PQ-native Bitcoin" — a 0 % pre-mine matches Bitcoin's original distribution.
+- Genesis wiring for a future non-empty zerostate (60 % airdrop / 25 % treasury / 15 % team per `uno/core/genesis.h:111-138`) exists in code but is **not** used by the local testnet — the comment at `gen-zerostate.fif:58-67` explicitly documents the TODO.
+
+Details: [Mining-Design.md §UNO Mining (wc=2 STARK / Privacy)](Mining-Design.md) and [Mining-Design.md §Pre-Mine Policy](Mining-Design.md).
+
+### Mining Quick Start
+
+The `tosctl-uno` binary (built out of `tosctl/uno/`) exposes the UNO CLI. The mine subcommand takes a **recipient-address JSON** produced by `tosctl-uno address` (not a raw key file — the address is a 1259-byte `diversifier ‖ pk_d ‖ ivk_commitment ‖ pk_mlkem` payload).
+
+```bash
+# 0. Build tosctl-uno
+cd ~/tos
+cargo build --release --bin tosctl-uno -p tosctl-uno
+
+# 1. Generate a FVK from a BIP-39 mnemonic (or --from-tos-seed <PATH>)
+./target/release/tosctl-uno keygen \
+  --seed "test test test test test test test test test test test junk" \
+  --out /tmp/alice-fvk.json
+
+# 2. Derive a diversified recipient address (testnet HRP = "uno1")
+./target/release/tosctl-uno address \
+  --fvk /tmp/alice-fvk.json --random --hrp uno1 \
+  > /tmp/alice-recipient.json
+
+# 3. Mine: search for a valid Poseidon2 nonce, generate a Plonky3 MineUno
+#    proof, and submit it via the node's RPC endpoint.
+./target/release/tosctl-uno mine \
+  --recipient /tmp/alice-recipient.json \
+  --node http://127.0.0.1:8080 \
+  --threads 4 \
+  --max-time 1800
+
+# 4. Verify the chain advanced — the wc=2 shard leaf (previously at seq_no:0
+#    with file_hash matching unostate2.fhash) should now show a non-zero
+#    seq_no and a different root_hash.
+tos-lite-client -C /data/tos-global.json -v 0 -c "allshards" -c "quit" \
+  | grep -E "leaf:\(shard_descr" | tail -1
+```
+
+Notes on flags:
+- `tosctl-uno mine` takes `--recipient`, `--node`, `--threads`, `--max-time` — there is **no** `--target-bits` flag (difficulty is read live from chain state, not forced by the miner) and no `--key-file` flag (the miner only needs the public recipient bytes; the secret is held by the wallet).
+- `--threads` defaults to `num_cpus::get()` (all logical CPUs).
+- If your node does not yet expose an HTTP RPC at port 8080, the miner will fail at the chain-state poll step. Direct `tos-lite-client -c "sendfile <boc>"` submission requires a pre-built MineUno BoC; the `tosctl-uno mine` binary is the canonical submitter.
+
+Difficulty hint: for local single-miner smoke tests you can lower the zerostate target manually in `uno/core/mine_constants.h` (`kInitMineTargetBE`) — e.g., from `2^219` to `2^40` — and rebuild + reset. The genesis `2^219` target assumes ~150 M Poseidon2 ops/s total network hashrate and will not solve in reasonable wall-clock time on a single box. Mainnet calibration is in [Mining-Design.md §Initial Difficulty Calibration / UNO](Mining-Design.md).
+
+### Persistent State (UNO)
+
+UNO shardstate is a standard TON cell tree — there is **no** separate per-node `.boc` file (unlike EVM's optional `evm-state.boc` dev-mode checkpoint). The root cell layout (`uno/core/state.h` + `uno/core/cell-state.cpp`) carries four refs:
+
+| ref | Contents                                                                 |
+|-----|--------------------------------------------------------------------------|
+| 0   | Commitment tree (append-only Poseidon2 Merkle tree, 32-depth)            |
+| 1   | Nullifier set (256-bit keyed dict; spent-note markers)                   |
+| 2   | MetaCell (anchor window + stats + **mining-state sub-ref** at ref 2)     |
+| 3   | Reserved for v1.1 / Phase 1 extensions                                   |
+
+The mining-state sub-ref (added in uno-mine-v1 Phase 2, bumped `kMetaRefCount` 2 → 3 in `uno/core/workchain.h:143`) stores 384 bits inline:
+
+- `mine_remaining` (u64) — nano-UNO still available to mint; starts at `kMineSupplyNano` = 21 M × 10⁹
+- `mine_epoch` (u32) — cumulative accepted MineUno solves
+- `mine_target` (32 B big-endian) — current PoW target (auto-retargeted per solve)
+- `halving_era` (u32) — cached `= mine_epoch / kEraSize`
+
+Old 2-ref MetaCells (pre-Phase-2) deserialize with zeroed mining fields for backward compatibility. Chain state is fully reconstructable from the masterchain + wc=2 block history; no sidecar files needed.
+
+### Troubleshooting UNO
+
+| Symptom                                                   | Cause                                                                                           | Fix                                                                                           |
+|-----------------------------------------------------------|-------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|
+| MineUno tx rejected with `unknown-tx-kind` (VerifyResult 46) | Tx-body byte 0 is not `0x01` Transfer / `0x02` MineUno; binary / schema mismatch between miner and validator. | Rebuild both `tosctl-uno` and the validator from the same tree; confirm ABI via `uno_plonky3_abi_version() == 4`. |
+| `epoch-race-detected` (VerifyResult 41)                   | Another miner's MineUno tx landed for the same `mine_epoch`; your proof's `epoch` field is now stale. | Poll chain state, re-fetch `(epoch, target, remaining_pre)`, rebuild proof, resubmit. `tosctl-uno mine` does this automatically on the next loop iteration. |
+| `remaining-race-detected` (VerifyResult 42)               | The supply drained concurrently (another miner mined while you were proving).                   | Same as above — refresh chain state; if `mine_remaining < mine_reward_for_era(era_from_epoch(epoch))`, mining is over. |
+| `invalid-halving-reward` (VerifyResult 44)                | `value` in your proof doesn't match `mine_reward_for_era(era_from_epoch(epoch))`.               | Check the halving table in `uno/core/mine_constants.h`; the Rust mirror is in `tosctl/uno/src/mine_constants.rs` — the two must stay byte-identical. |
+| `bad-mine-conservation` (VerifyResult 45)                 | `remaining_pre − value ≠ remaining_post` in the public inputs.                                  | Off-circuit bug in the miner; resync chain state before the prove step. |
+| `bad-plonky3-proof` (VerifyResult 15)                     | FFI v4 verifier rejected the proof bytes (tampered, wrong ABI, or built against different field params). | Verify `uno_plonky3_abi_version()` matches on both sides — expected value: `4`. Rebuild either the validator or tosctl-uno if they disagree. |
+| wc=2 shard doesn't advance after submitting MineUno tx    | Tx was rejected by compute-phase before block inclusion.                                        | `sudo journalctl -u tos-validator@1 --since "1 min ago" \| grep -E "mine_uno\|VerifyResult"` — the exit reason is logged with the matching `verify_result_name()` string. |
+| Miner spins forever, no proof found                       | `kInitMineTargetBE = 2^219` is the mainnet-calibration target; a single local box ≈ 25 Mops/s can't meet it in under a day. | For local dev, patch `kInitMineTargetBE` to `2^40` (byte[28] = 0x01 rest zero) and rebuild + reset the testnet; or run multiple high-CPU miners. |
+
 ## Production Deployment Notes
 
 For production, the following changes are needed:
@@ -660,3 +915,7 @@ For production, the following changes are needed:
 - [Validator.md](Validator.md) — Production validator operation
 - [FullNode.md](FullNode.md) — Full node setup
 - [ConfigParam.md](ConfigParam.md) — Blockchain configuration parameters
+- [Mining-Design.md](Mining-Design.md) — Three-coin mining design (TOS / eTOS / UNO) — parameters, distribution math, and miner-ecosystem mapping
+- [uno-workchain.md](uno-workchain.md) — UNO workchain architecture (privacy model, AIR, key hierarchy, compute-phase flow)
+- [uno-mine-air-constraints.md](uno-mine-air-constraints.md) — MineUno AIR constraint specification (columns, PIs, row-selector logic)
+- [Zerostate.md](Zerostate.md) — Per-workchain zerostate layout (how `zerostate.boc` / `basestate0.boc` / `evmstate1.boc` / `unostate2.boc` fit together)
