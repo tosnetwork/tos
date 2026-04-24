@@ -81,6 +81,9 @@ mod transfer_columns;
 mod transfer_preimage;
 mod transfer_sponge;
 mod transfer_witness;
+pub mod mine_uno_air;
+mod mine_uno_columns;
+mod mine_uno_witness;
 pub mod verifier;
 pub mod verifier_air;
 

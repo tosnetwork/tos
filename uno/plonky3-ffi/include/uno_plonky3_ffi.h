@@ -662,6 +662,121 @@
 // Default test expiry_block for witness-derived public inputs.
 #define EXPIRY_BLOCK_TEST 100000
 
+// Domain tag for the MineUno PoW hash sponge.
+// ASCII: `0x01_75_6E_6F_6D_69_6E_65` = `"uno-mine"` with version-flag MSB.
+// First byte 0x01 is the scheme version flag (matches TAG_CM, TAG_NF
+// convention in `transfer_columns.rs`).
+#define TAG_MINE 105111591169125989
+
+// log2(trace height). 8 rows is enough for 4 Poseidon2 permutations + 4
+// padding rows, with comfortable headroom for the FRI low-degree extension.
+#define LOG_MINE_TRACE_HEIGHT 3
+
+// Trace height (= 2^LOG_MINE_TRACE_HEIGHT = 8 rows).
+#define MINE_TRACE_HEIGHT (1 << LOG_MINE_TRACE_HEIGHT)
+
+// Row 0: row-selector for the cm sponge's first permutation
+// (absorb diversifier + pk_d + ivk_commitment partial).
+#define COL_SEL_CM_P1 0
+
+// Row 1: row-selector for the cm sponge's second permutation
+// (absorb ivk_commitment continuation + value + rcm).
+#define COL_SEL_CM_P2 1
+
+// Row 2: row-selector for the PoW sponge's first permutation.
+#define COL_SEL_POW_P1 2
+
+// Row 3: row-selector for the PoW sponge's second permutation.
+#define COL_SEL_POW_P2 3
+
+// Total row-selector columns (the shared P2 block follows immediately).
+#define N_ROW_SELECTORS 4
+
+// Base index of the witness proxy block (immediately after row selectors
+// and the shared P2 column block).
+#define WITNESS_PROXY_BASE (N_ROW_SELECTORS + MINE_POSEIDON2_COLS_16)
+
+// `epoch` (1 fe). Equals `PI[0]`.
+#define COL_W_EPOCH WITNESS_PROXY_BASE
+
+// `value_nano` (1 fe). Equals `PI[5]`.
+#define COL_W_VALUE (WITNESS_PROXY_BASE + 1)
+
+// Diversifier `d` packed into 2 fes via `pack_diversifier_as_2fe`
+// (16-byte zero-padded preimage). Mirrors the output side of Transfer.
+#define COL_W_D_FE0 (WITNESS_PROXY_BASE + 2)
+
+#define COL_W_D_FE1 (WITNESS_PROXY_BASE + 3)
+
+// `pk_d` packed as 4 fes via `pack_32b_as_4fe`.
+#define COL_W_PK_D_FE0 (WITNESS_PROXY_BASE + 4)
+
+#define COL_W_PK_D_FE3 (WITNESS_PROXY_BASE + 7)
+
+// `ivk_commitment` packed as 4 fes via `pack_32b_as_4fe`.
+#define COL_W_IVK_CM_FE0 (WITNESS_PROXY_BASE + 8)
+
+#define COL_W_IVK_CM_FE3 (WITNESS_PROXY_BASE + 11)
+
+// `rcm` packed as 4 fes (= Poseidon2("uno-rcm-v1", rseed); off-circuit).
+#define COL_W_RCM_FE0 (WITNESS_PROXY_BASE + 12)
+
+#define COL_W_RCM_FE3 (WITNESS_PROXY_BASE + 15)
+
+// `nonce` packed as 4 fes via `pack_32b_as_4fe`.
+#define COL_W_NONCE_FE0 (WITNESS_PROXY_BASE + 16)
+
+#define COL_W_NONCE_FE3 (WITNESS_PROXY_BASE + 19)
+
+// `output_cm` packed as 4 fes (the cm sponge's output, also PI[6..10]).
+#define COL_W_OUTPUT_CM_FE0 (WITNESS_PROXY_BASE + 20)
+
+#define COL_W_OUTPUT_CM_FE3 (WITNESS_PROXY_BASE + 23)
+
+// `pow_hash` packed as 4 fes (the pow sponge's output; chain checks
+// against target off-circuit).
+#define COL_W_POW_HASH_FE0 (WITNESS_PROXY_BASE + 24)
+
+#define COL_W_POW_HASH_FE3 (WITNESS_PROXY_BASE + 27)
+
+// Total witness proxy columns.
+#define N_WITNESS_PROXY 28
+
+// Total column count for the MineUno AIR.
+#define MINE_AIR_WIDTH ((N_ROW_SELECTORS + MINE_POSEIDON2_COLS_16) + N_WITNESS_PROXY)
+
+// Public-input index for `epoch`.
+#define PI_EPOCH 0
+
+// Public-input index for `value_nano`.
+#define PI_VALUE 1
+
+// Public-input base index for `output_cm` (4 limbs follow at PI[2..6]).
+#define PI_OUTPUT_CM_BASE 2
+
+// Public-input base index for `pow_hash` (4 limbs follow at PI[6..10]).
+#define PI_POW_HASH_BASE 6
+
+// Public-input index for `remaining_pre`.
+#define PI_REMAINING_PRE 10
+
+// Public-input index for `remaining_post`.
+#define PI_REMAINING_POST 11
+
+// Total public-input vector length (Goldilocks elements).
+#define N_PUBLIC_INPUTS 12
+
+// Total public-input wire byte length (`N_PUBLIC_INPUTS * 8`).
+#define PUBLIC_INPUT_BYTES (N_PUBLIC_INPUTS * 8)
+
+// Wire byte length for [`MineUnoWitness`].
+#define MINE_UNO_WITNESS_BYTES 192
+
+// Domain tag for the rcm derivation Poseidon2 (single-perm, 4-fe → 4-fe).
+// ASCII `"uno-rcm-v1"` — version flag prefix + "uno-rcm" + "v1" tail.
+// Stored as the first Goldilocks element of the capacity block.
+#define TAG_RCM 105111591252618614
+
 // Result codes returned across the C ABI.
 //
 // These are stable wire values; renumbering is a breaking change. C++ side
@@ -873,6 +988,8 @@ typedef struct {
     // Matches `BlockPublicInputs.tx_pi_merkle_root`.
     uint8_t tx_pi_merkle_root[32];
 } UnoBlockPublicInputsView;
+
+
 
 
 

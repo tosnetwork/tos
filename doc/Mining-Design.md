@@ -500,14 +500,50 @@ race-condition rejection test.
 4. Unit tests: PoW verification, difficulty adjustment, anti-replay
 5. Integration test on local testnet
 
-### Phase C: UNO MineUno AIR (Task #12) — ~4-6 weeks
+### Phase C: UNO MineUno AIR
 
-1. Add MineUno tx kind to AIR (~2-3 weeks)
-2. Witness/prover integration (~1 week)
-3. Verifier + chain-state checks (~3 days)
-4. `tosctl uno mine` CPU-multi-thread client (~1 week)
-5. Zerostate wiring (mine_remaining init, halving table) (~2 days)
-6. End-to-end testnet test (~1 week)
+**Phase 3a (completed)** — skeleton + witness + AIR shell:
+
+- `uno/plonky3-ffi/src/mine_uno_columns.rs` — column layout, PI indices,
+  domain tags, trace dimensions (8 rows × `MINE_AIR_WIDTH` cols)
+- `uno/plonky3-ffi/src/mine_uno_witness.rs` — `MineUnoWitness` struct with
+  encode/decode (192 B wire), `public_inputs` (12 Goldilocks = 96 B),
+  `generate_trace`, off-circuit `compute_output_cm_fes` +
+  `compute_pow_hash_fes` using `poseidon2_cm_full_sponge` (cm) and a
+  new `poseidon2_mine_pow_hash` (9-fe iterated sponge mirroring
+  `poseidon2_nf_full_wide`)
+- `uno/plonky3-ffi/src/mine_uno_air.rs` — `MineUnoAir` with BaseAir +
+  Air<AB>, row-selector booleanity + mutual-exclusivity, witness-proxy
+  constant-across-rows transitions, row-0 PI bindings (epoch, value,
+  output_cm, pow_hash, remaining_pre, remaining_post), in-circuit
+  conservation (`remaining_post + value == remaining_pre`)
+- 13 unit tests pass (witness round-trip, PI shape, trace dimensions,
+  selector one-hot, proxy constancy, AIR dimension match); full
+  `cargo test --lib` = 410/410 (pre-existing 2 failures unrelated)
+
+**Phase 3b (pending) — REQUIRED before mainnet** — Poseidon2 sub-AIR + FFI:
+
+1. Wire `eval_poseidon2_16` to the shared Poseidon2-w16 column block
+2. Populate Poseidon2 trace cells via `Poseidon2Air::generate_trace_rows`
+3. Per-row input/output pinning constraints (see §TODO blocks in
+   `mine_uno_air.rs` for the exact layout per row)
+4. Capacity-carry proxy columns (pattern from `transfer_air.rs:~1663-1830`)
+5. FFI entry points `uno_mine_uno_prove` / `uno_mine_uno_verify` in
+   `lib.rs`, bumping `uno_plonky3_abi_version()` 3 → 4
+6. `tosctl uno mine` replaces `prove_mine_uno_stub` with real FFI call
+7. End-to-end golden-fixture test: Rust prover → C++ verifier round-trip
+8. Chain-state integration tests (`uno/test/test-uno-mine-loader.cpp`
+   `#[ignore]`-marked tests become enabled)
+
+**Without Phase 3b, MineUno proofs are not cryptographically sound** —
+a malicious prover can substitute arbitrary (output_cm, pow_hash) in
+proxy columns and pass the Phase 3a structural constraints. DO NOT
+enable MineUno tx kind on mainnet until Phase 3b lands.
+
+**Phase 3b estimate**: 2-3 weeks. The Poseidon2 sub-AIR wiring is the
+bulk; FFI wiring afterward is mechanical (~1 day).
+
+**Legacy total estimate** (both phases together): ~4-6 weeks.
 
 ### Total elapsed time
 
