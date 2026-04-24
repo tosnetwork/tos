@@ -231,22 +231,6 @@ void JsonRpcServer::handle_uno_sendMineUno(td::JsonValue& params_val,
     return;
   }
 
-  // --- 1b. Rate-limit (dedicated MineUno bucket; consumed AFTER param
-  //         shape validation so cheap-shape rejects don't starve honest
-  //         submitters). Caps how many submit-paths a single source can
-  //         drive per second. Without this, an attacker can forge PI
-  //         fields (pow_hash=0, header-matching) to bypass
-  //         apply_mine_uno's cheap pre-FFI checks and force every
-  //         validator to pay full STARK verification cost (~50ms+) per
-  //         invalid proof. Separate bucket from uno_sendTransfer so
-  //         flooders can't starve honest Transfers. ---
-  if (!uno_workchain::try_consume_uno_send_mine_uno_token()) {
-    promise.set_value(make_eth_json_error(
-        -32005, "uno_sendMineUno: rate limit exceeded — try again shortly",
-        req_id, opts_.cors_origin));
-    return;
-  }
-
   std::string raw_bytes;
   if (!decode_hex(raw_hex, raw_bytes)) {
     promise.set_value(make_eth_json_error(
@@ -266,6 +250,23 @@ void JsonRpcServer::handle_uno_sendMineUno(td::JsonValue& params_val,
   if (auto* err = std::get_if<uno_workchain::MineUnoDecodeError>(&decode_r)) {
     promise.set_value(make_eth_json_error(
         -32602, std::string("uno_sendMineUno: decode failed: ") + err->reason,
+        req_id, opts_.cors_origin));
+    return;
+  }
+
+  // --- 2b. Rate-limit (dedicated MineUno bucket; consumed AFTER cheap
+  //         shape + hex + BoC + MineUno decode rejects so junk hex,
+  //         empty BoCs, and non-MineUno blobs do NOT drain the honest
+  //         miner token budget). Caps how many submit-paths a single
+  //         source can drive per second. Without this, an attacker can
+  //         forge PI fields (pow_hash=0, header-matching) to bypass
+  //         apply_mine_uno's cheap pre-FFI checks and force every
+  //         validator to pay full STARK verification cost (~50ms+) per
+  //         invalid proof. Separate bucket from uno_sendTransfer so
+  //         flooders can't starve honest Transfers. ---
+  if (!uno_workchain::try_consume_uno_send_mine_uno_token()) {
+    promise.set_value(make_eth_json_error(
+        -32005, "uno_sendMineUno: rate limit exceeded — try again shortly",
         req_id, opts_.cors_origin));
     return;
   }
