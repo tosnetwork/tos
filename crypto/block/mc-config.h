@@ -391,7 +391,11 @@ struct MsgPrices {
 struct SizeLimitsConfig {
   // Default values are used when not present in global config
   struct ExtMsgLimits {
-    td::uint32 max_size = 65535;
+    // 1 MiB default — accommodates UNO MineUno tx (proof + PI ≈ 255 KiB
+    // wrapped in 99-byte header + chunk tree). Legacy TON-only networks
+    // that want the historical 64 KiB cap can still override via
+    // ConfigParam 43. See uno/core/mine_uno.h §1 wire format.
+    td::uint32 max_size = 1u << 20;
     td::uint16 max_depth = 512;
   };
   td::uint32 max_msg_bits = 1 << 21;

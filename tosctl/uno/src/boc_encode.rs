@@ -284,6 +284,57 @@ pub fn encode_transfer_boc(tx: &Transfer) -> Result<Vec<u8>> {
 }
 
 // ---------------------------------------------------------------------------
+// MineUno BoC encoder
+// ---------------------------------------------------------------------------
+
+/// Encode a `MineUno` tx to a BoC byte buffer accepted by the daemon's
+/// `uno_sendMineUno` RPC. Mirrors `uno/core/mine_uno.cpp::encode_mine_uno_to_boc`:
+///
+/// ```text
+///   root cell (99 bytes inline, 1 ref)
+///     inline:  tx_kind(1) version(1) scheme_id(1) chain_id(4)
+///              ‖ PublicInputs(92)              [= 99 B total]
+///     ref[0]   zk_proof chunk tree (§4.1a canonical 4-ary)
+/// ```
+///
+/// `proof_blob` is the postcard-encoded Plonky3 proof + 96-byte LE
+/// Goldilocks public-inputs bundle emitted by `prove_mine_uno`'s FFI.
+/// `tx.zk_proof` is NOT used here (it's a sibling in-memory representation
+/// kept for tests); the canonical daemon wire format takes `proof_blob`
+/// directly from the prover.
+pub fn encode_mine_uno_boc(
+    tx: &crate::mine_uno::MineUno,
+    proof_blob: &[u8],
+) -> Result<Vec<u8>> {
+    if proof_blob.is_empty() {
+        return Err(anyhow!(
+            "encode_mine_uno_boc: proof_blob must be non-empty (chunk tree requires >= 1 cell)"
+        ));
+    }
+
+    // 1. 99-byte inline header.
+    let header = tx.encode_header();
+
+    // 2. Proof chunk tree (shared helper with Transfer).
+    let proof_cell = store_bytes_as_chunk_chain(proof_blob)?
+        .ok_or_else(|| anyhow!("encode_mine_uno_boc: proof chunk tree unexpectedly empty"))?;
+
+    // 3. Root cell: inline 99 B (= 792 bits) + 1 ref.
+    let mut root = BuilderData::default();
+    root.append_raw(&header, 99 * 8)?;
+    root.checked_append_reference(proof_cell)?;
+    let root_cell = root.finalize(MAX_DEPTH)?;
+
+    fn no_abort() -> bool {
+        false
+    }
+    let writer = BocWriter::with_params([root_cell], MAX_DEPTH, BocFlags::None, &no_abort)?;
+    let mut buf = Vec::new();
+    writer.write(&mut buf)?;
+    Ok(buf)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

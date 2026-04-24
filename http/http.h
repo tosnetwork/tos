@@ -193,10 +193,14 @@ class HttpRequest {
   }
 
   static constexpr size_t low_watermark() {
-    return 1 << 14;
+    return 1 << 16;  // 64 KiB
   }
+  // High watermark = max_payload_size (1 MiB). Prevents reader backpressure
+  // for request bodies up to the declared max. The previous 128 KiB value
+  // hung the HTTP parser on requests > 128 KiB (e.g. uno_sendMineUno BoCs,
+  // which carry a ~250 KiB STARK proof hex-encoded to ~500 KiB).
   static constexpr size_t high_watermark() {
-    return 1 << 17;
+    return 1 << 20;  // 1 MiB
   }
 
   static td::Result<std::unique_ptr<HttpRequest>> create(std::string method, std::string url,

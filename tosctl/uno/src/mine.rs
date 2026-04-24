@@ -339,6 +339,11 @@ pub async fn fetch_mine_state(rpc: &RpcClient) -> Result<(u32, [u8; 32], u64)> {
 ///      (we're in the same cargo workspace; no need to bounce through
 ///      the C ABI).
 ///   3. Return the proof bytes.
+/// Returns the proof blob in the daemon's canonical wire format:
+/// `[u32 LE proof_len][proof][96 B PI]`. This matches what
+/// `uno_mine_uno_prove` / `uno_mine_uno_verify` use on the C-ABI, and what
+/// `decode_mine_uno_bytes` on the C++ side expects to find in the zk_proof
+/// chunk-tree ref of the tx BoC.
 pub fn prove_mine_uno_stub(
     witness: &MineUnoWitness,
     public_inputs: &MineUnoPublicInputs,
@@ -379,16 +384,37 @@ pub fn prove_mine_uno_stub(
         public_inputs.epoch, public_inputs.value_nano, public_inputs.remaining_pre
     );
     let t0 = std::time::Instant::now();
-    let (proof_bytes, _pi_bytes) = prove_mine_uno(&witness_bytes)
+    let (proof_bytes, pi_bytes) = prove_mine_uno(&witness_bytes)
         .map_err(|s| anyhow!("uno_plonky3_ffi::prove_mine_uno failed: {:?}", s))?;
     let elapsed_ms = t0.elapsed().as_millis();
+
+    // Pack into the daemon's canonical wire format:
+    //   [u32 LE proof_len][proof bytes][96 B public inputs]
+    // This is the exact layout `uno_mine_uno_prove` emits on the C ABI and
+    // what `decode_mine_uno_bytes` expects inside the zk_proof chunk-tree
+    // ref of the MineUno BoC.
+    if pi_bytes.len() != 96 {
+        return Err(anyhow!(
+            "prove_mine_uno returned PI of {} bytes, expected 96",
+            pi_bytes.len()
+        ));
+    }
+    let proof_len_u32: u32 = proof_bytes.len().try_into().map_err(|_| {
+        anyhow!("prove_mine_uno: proof length {} exceeds u32", proof_bytes.len())
+    })?;
+    let mut blob = Vec::with_capacity(4 + proof_bytes.len() + 96);
+    blob.extend_from_slice(&proof_len_u32.to_le_bytes());
+    blob.extend_from_slice(&proof_bytes);
+    blob.extend_from_slice(&pi_bytes);
+
     eprintln!(
-        "[mine] STARK proof generated in {} ms ({} bytes)",
+        "[mine] STARK proof generated in {} ms (proof={} B, pi=96 B, blob={} B)",
         elapsed_ms,
-        proof_bytes.len()
+        proof_bytes.len(),
+        blob.len(),
     );
 
-    Ok(proof_bytes)
+    Ok(blob)
 }
 
 // ---------------------------------------------------------------------------
@@ -585,15 +611,44 @@ pub async fn execute(args: &MineArgs) -> Result<MineSummary> {
     };
     public_inputs.validate()?;
 
-    // 8. Call prover (stub).
+    // 8. Call prover + submit the resulting BoC to wc=2 via uno_sendMineUno.
     let proof_status = match prove_mine_uno_stub(&witness, &public_inputs) {
-        Ok(_proof_bytes) => {
-            // TODO(Phase 3): submit via rpc.send_mine_uno(&proof_bytes).
-            "proof_generated_and_submitted".to_string()
+        Ok(proof_bytes) => {
+            // Build the canonical MineUno tx shell — tx_kind/version/scheme_id
+            // + PublicInputs mirror what encode_mine_uno_to_boc expects on
+            // the C++ side. The actual proof bytes travel in the chunk-tree
+            // ref, not in the struct's `zk_proof` field.
+            let tx = crate::mine_uno::MineUno {
+                tx_kind:       crate::mine_uno::TX_KIND_MINE_UNO,
+                version:       1, // kMineUnoVersion
+                scheme_id:     1, // kSchemeIdV1
+                chain_id:      0x554E4F54, // "UNOT" (testnet); mainnet = UNOM
+                public_inputs: public_inputs.clone(),
+                zk_proof:      None,
+            };
+            match crate::boc_encode::encode_mine_uno_boc(&tx, &proof_bytes) {
+                Ok(boc) => match rpc.send_mine_uno(&boc).await {
+                    Ok(tx_hash) => {
+                        eprintln!(
+                            "[mine] uno_sendMineUno accepted: tx_hash={}, boc_size={}B, proof_size={}B",
+                            tx_hash, boc.len(), proof_bytes.len()
+                        );
+                        format!("submitted:{tx_hash}")
+                    }
+                    Err(e) => {
+                        eprintln!("[mine] uno_sendMineUno failed: {e}");
+                        format!("submit_failed:{e}")
+                    }
+                },
+                Err(e) => {
+                    eprintln!("[mine] encode_mine_uno_boc failed: {e}");
+                    format!("encode_failed:{e}")
+                }
+            }
         }
         Err(e) => {
-            eprintln!("[mine] prover stub: {e}");
-            format!("stub_mode:{e}")
+            eprintln!("[mine] prover: {e}");
+            format!("prove_failed:{e}")
         }
     };
 

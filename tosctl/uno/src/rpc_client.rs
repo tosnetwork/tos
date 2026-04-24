@@ -49,7 +49,7 @@ impl RpcClient {
             .json(&body)
             .send()
             .await
-            .with_context(|| format!("POST {}", self.base_url))?;
+            .map_err(|e| anyhow!("POST {} ({method}): reqwest error: {e:#}", self.base_url))?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -149,6 +149,21 @@ impl RpcClient {
             .get("tx_hash")
             .and_then(|x| x.as_str())
             .ok_or_else(|| anyhow!("send_transfer: response missing 'tx_hash'"))?;
+        Ok(hash.trim_start_matches("0x").to_string())
+    }
+
+    /// `uno_sendMineUno(hex_boc)` — submit a MineUno tx BoC for wc=2.
+    /// Returns the server-reported canonical_mine_uno_hash as a hex
+    /// string (no 0x prefix). The server echoes this synchronously after
+    /// liteServer_sendMessage accepts the BoC into ExtMessagePool; chain
+    /// inclusion is asynchronous and must be polled via uno_getMineState.
+    pub async fn send_mine_uno(&self, tx_boc: &[u8]) -> Result<String> {
+        let blob_hex = hex::encode(tx_boc);
+        let v = self.call("uno_sendMineUno", json!([blob_hex])).await?;
+        // Server returns a bare quoted hex string: "<64-hex>".
+        let hash = v
+            .as_str()
+            .ok_or_else(|| anyhow!("send_mine_uno: unexpected response shape: {v:?}"))?;
         Ok(hash.trim_start_matches("0x").to_string())
     }
 }
