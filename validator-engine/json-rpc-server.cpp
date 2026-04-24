@@ -244,6 +244,12 @@ void JsonRpcServer::listen(td::IPAddress addr) {
   CHECK(http_.empty());
   // Enable EVM RPC rate limiting for the production server
   evm_workchain::enable_evm_rpc_rate_limit(true);
+  // Enable UNO RPC rate limiting (gate on uno_sendTransfer +
+  // uno_sendMineUno). Without this, the per-method rate-limit checks in
+  // uno_sendMineUno (forged-PI DoS hardening, K-mine-rate-limit) and
+  // uno_sendTransfer are inert — `try_consume_uno_sendtx_token` returns
+  // true on every call when g_rate_limit_enabled is false.
+  uno_workchain::enable_uno_rpc_rate_limit(true);
   auto callback = std::make_shared<HttpCallback>(actor_id(this));
   http_ = td::actor::create_actor<http::HttpServer>(
       PSTRING() << "JsonRPC@" << addr, addr, std::move(callback));

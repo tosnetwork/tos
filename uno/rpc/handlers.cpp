@@ -63,6 +63,11 @@ constexpr uint64_t kMaxRpcRequestsPerSec = 100;
 constexpr uint64_t kMaxRpcBurst          = 1000;
 constexpr uint64_t kMaxSendTxPerSec      = 20;    // tighter: admission does work
 constexpr uint64_t kMaxSendTxBurst       = 50;
+// MineUno gets its own bucket to prevent forged-PI MineUno floods from
+// starving honest uno_sendTransfer submissions. STARK verify is the
+// expensive cost (~50ms+ per call); cap at 5/sec sustained, 20 burst.
+constexpr uint64_t kMaxSendMineUnoPerSec = 5;
+constexpr uint64_t kMaxSendMineUnoBurst  = 20;
 // V1-3c-round-6 (2026-04-22): both caps were sized for the pre-pivot
 // ~52 KB proof target. Post V1-3c-gamma (per-Tx direct) the v1 wire
 // envelope is ~655 KB typical / ~1.15 MB worst-case 4/4 (see
@@ -119,6 +124,7 @@ struct RateLimiter {
 
 RateLimiter g_rpc_limiter{kMaxRpcBurst, kMaxRpcRequestsPerSec};
 RateLimiter g_sendtx_limiter{kMaxSendTxBurst, kMaxSendTxPerSec};
+RateLimiter g_send_mine_uno_limiter{kMaxSendMineUnoBurst, kMaxSendMineUnoPerSec};
 bool        g_rate_limit_enabled = false;
 
 }  // namespace
@@ -128,11 +134,17 @@ bool try_consume_uno_sendtx_token() {
     return g_sendtx_limiter.try_consume();
 }
 
+bool try_consume_uno_send_mine_uno_token() {
+    if (!g_rate_limit_enabled) return true;
+    return g_send_mine_uno_limiter.try_consume();
+}
+
 void enable_uno_rpc_rate_limit(bool enable) {
     g_rate_limit_enabled = enable;
     if (enable) {
         g_rpc_limiter.reset();
         g_sendtx_limiter.reset();
+        g_send_mine_uno_limiter.reset();
     }
 }
 
@@ -360,6 +372,7 @@ std::optional<MineStateSnapshot> get_mine_state_snapshot() {
 void reset_uno_rpc_state_for_test() {
     g_rpc_limiter.reset();
     g_sendtx_limiter.reset();
+    g_send_mine_uno_limiter.reset();
     g_rate_limit_enabled = false;
     g_head_state.store(nullptr);
     g_mine_state.store(nullptr);
