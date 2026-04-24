@@ -1000,10 +1000,16 @@ bool Transaction::unpack_input_msg(bool ihr_delivered, const ActionPhaseConfig* 
         LOG(DEBUG) << "computed fwd fees set to zero for special account";
         fees_c.first = fees_c.second = 0;
       }
-      if (is_evm_workchain(account.workchain)) {
-        // EVM workchain uses its own balance/gas accounting inside the EVM
-        // executor. Do not require a mirrored TON balance just to admit the
-        // external message into compute.
+      if (has_custom_compute_phase(account.workchain)) {
+        // wc=1 (EVM) and wc=2 (UNO) use their own balance/gas accounting
+        // inside their custom compute-phase dispatchers. Do not require a
+        // mirrored TON balance just to admit the external message into
+        // compute — UNO's executor account sits at balance=0 forever by
+        // design (it's a pure dispatcher; miners pay fees in nano-UNO
+        // internally via run_mine_uno_compute_phase). Without this
+        // exemption, unpack_input_msg fails at `balance.tomis < in_fwd_fee`
+        // and the tx is rejected with -701 before the compute handler
+        // ever sees it.
         in_fwd_fee = td::zero_refint();
       } else {
         in_fwd_fee = td::make_refint(fees_c.first);
@@ -1455,13 +1461,15 @@ td::uint64 Transaction::gas_bought_for(const ComputePhaseConfig& cfg, td::RefInt
  * @returns True if the gas limits were successfully computed, false otherwise.
  */
 bool Transaction::compute_gas_limits(ComputePhase& cp, const ComputePhaseConfig& cfg) {
-  if (is_evm_workchain(account.workchain) && trans_type == tr_ord) {
-    // EVM workchain transactions buy gas from the sender's EVM balance inside
-    // the EVM executor. Keep TON-side gas admission out of the way.
+  if (has_custom_compute_phase(account.workchain) && trans_type == tr_ord) {
+    // wc=1 (EVM) and wc=2 (UNO) transactions meter gas inside their own
+    // compute-phase dispatchers. Keep TON-side gas admission out of the
+    // way — the TVM path buys gas from account balance, which would
+    // reject UNO's balance=0 executor account here.
     cp.gas_max = cfg.gas_limit;
     cp.gas_limit = cfg.gas_limit;
     cp.gas_credit = 0;
-    LOG(DEBUG) << "EVM workchain gas limits: max=" << cp.gas_max << ", limit=" << cp.gas_limit
+    LOG(DEBUG) << "custom-compute workchain gas limits: max=" << cp.gas_max << ", limit=" << cp.gas_limit
                << ", credit=" << cp.gas_credit;
     return true;
   }
