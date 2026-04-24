@@ -112,6 +112,13 @@ add_executable(test-uno-nullifier-warm-lru
 # short rseed, negative value, supply mismatch). See test file header for scope.
 add_executable(test-uno-genesis-loader           test-genesis-loader.cpp)
 
+# K-mine-loader: Phase 1 MineUno constants + cross-impl fixture parity.
+# Tests mine_reward_for_era, era_from_epoch, check_value_matches_halving,
+# check_conservation, and the 92-byte wire layout of MineUnoPublicInputs.
+# Also loads the Rust golden fixture (uno/test/golden/mine-uno-witness-v1.json)
+# when present. AIR proof tests are SKIP placeholders until Phase 2 lands.
+add_executable(test-uno-mine-loader               test-uno-mine-loader.cpp)
+
 # K-bech32m: §2.6 AddressEnvelope codec round-trips and reject paths (bad HRP,
 # HRP/network mismatch, flipped checksum symbol, flipped payload byte, short
 # payload, unknown version, mixed case, illegal charset). Also pins the
@@ -194,6 +201,7 @@ foreach(_t test-uno-transfer
            test-uno-mandatory-negatives
            test-uno-nullifier-warm-lru
            test-uno-genesis-loader
+           test-uno-mine-loader
            test-uno-bech32m-envelope
            test-uno-subscriptions
            test-uno-metrics
@@ -263,5 +271,6 @@ set_tests_properties(
     test-uno-codec-parity
     test-uno-state-transition-golden
     test-uno-genesis-loader
+    test-uno-mine-loader
     PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")

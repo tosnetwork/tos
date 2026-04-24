@@ -71,33 +71,28 @@ constexpr const char kMineHashTag[] = "uno-mine-v1";
 /// Poseidon2(tag ‖ epoch ‖ nonce ‖ cm) < target (numerically, as 4 Goldilocks
 /// field elements compared lexicographically in little-endian limb order).
 ///
-/// Bit 219 set: bytes [0..27] are 0x00, byte 27 has bit (219 % 8 = 3) set,
-/// i.e., 0x08; bytes [28..31] are 0xFF.
-///
 /// Stored as a 32-byte big-endian array matching the MineUnoPublicInputs wire.
+///
+/// Derivation: 2^219 = 0x08 << 216, so in big-endian the only non-zero byte
+/// is byte[4] = 0x08 (because `(31 - 219/8) = 31 - 27 = 4`, and the bit within
+/// that byte is `219 % 8 = 3`, i.e., value `1 << 3 = 0x08`).
+///
+/// Byte layout:
+///   bytes [0..3]  = 0x00
+///   byte  [4]     = 0x08   ← the single set bit is here
+///   bytes [5..31] = 0x00
+///
+/// Mirror: `INIT_MINE_TARGET_BE` in tosctl/uno/src/mine_constants.rs (byte-identical).
 constexpr uint8_t kInitMineTargetBE[32] = {
-    // bytes 0..26: all zero (bits 255..219+1 must be zero for threshold)
-    0x00, 0x00, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00,
-    // byte 27: bit 219 % 8 = bit 3 from MSB → 0x08
-    // 256 - 219 = 37 bits from MSB clear → bit at position 219 (0-indexed from
-    // LSB) = byte index (from MSB) = 32 - 1 - 219/8 = 32 - 1 - 27 = 4...
-    // Simplified: 2^219 in 32-byte big-endian: byte 32-1-219/8 = byte 4,
-    // bit 219%8 = 3. So byte[4] = 0x08; bytes[0..3]=0, bytes[5..31]=0xFF.
-    // Recalculate: 219 bits from LSB → byte index from LSB = 219/8 = 27,
-    // bit within byte = 219%8 = 3. Big-endian byte index = 31-27 = 4.
-    // So byte[4] = (1<<3) = 0x08, bytes[0..3] = 0x00, bytes[5..31] = 0xFF.
-    //
-    // Correction: target = 2^219 means all values BELOW 2^219 are valid.
-    // In big-endian 32-byte representation: byte[4] = 0x08, all lower bytes
-    // (bytes[5..31]) are 0x00 — the threshold is exactly 2^219.
-    // Values with hash < 2^219: hash[0..3]=0, hash[4] < 0x08, OR
-    // hash[4] == 0x08 and remaining all 0 (but that's the threshold itself).
+    // bytes 0..3: zero (bits 255..220 must be zero for threshold 2^219)
+    0x00, 0x00, 0x00, 0x00,
+    // byte 4: 2^219 → big-endian byte 4 = (1 << 3) = 0x08
     0x08,
-    // bytes 28..31: 0x00 (the threshold 2^219 has only bit 219 set, all others 0)
-    0x00, 0x00, 0x00, 0x00
+    // bytes 5..31: zero (threshold is exactly 2^219 with lower bits zero)
+    0x00, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00
 };
 
 // ---------------------------------------------------------------------------

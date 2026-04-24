@@ -99,6 +99,7 @@ p3-symmetric     = { git = "https://github.com/Plonky3/Plonky3", rev = "6374a36f
 
 # ---- misc ------------------------------------------------------------------
 rand             = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
+rayon            = "1.10"
 zeroize          = { version = "1", features = ["zeroize_derive"] }
 
 # ---- Plonky3 prover (real Transfer AIR) ------------------------------------

@@ -13,7 +13,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
-use tosctl_uno::{address, balance, genesis_build, keygen, rpc_client, scan, send};
+use tosctl_uno::{address, balance, genesis_build, keygen, mine, rpc_client, scan, send};
 
 /// Uno Workchain (wc=2) wallet CLI — P.6 foundation build.
 #[derive(Debug, Parser)]
@@ -39,6 +39,10 @@ enum Command {
     /// proof (M-P2 integration point) — the resulting tx will be rejected
     /// by any real validator until the Transfer AIR lands.
     Send(SendArgs),
+    /// CPU multi-thread Poseidon2 PoW miner for the wc=2 UNO workchain.
+    /// Polls chain state, searches for a winning nonce, invokes the Plonky3
+    /// prover (stub until Phase 3), and submits a MineUno tx.
+    Mine(MineCliArgs),
     /// Genesis-distribution tooling (§10.3 builder).
     #[command(subcommand)]
     Genesis(GenesisCmd),
@@ -391,6 +395,43 @@ async fn run_send(args: &SendArgs) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// Mine
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, clap::Args)]
+struct MineCliArgs {
+    /// Path to the recipient address JSON file (output of `tosctl uno address`).
+    /// The file must contain: diversifier, pk_d, ivk_commitment, pk_mlkem_hex.
+    #[arg(long, required = true)]
+    recipient: std::path::PathBuf,
+
+    /// RPC URL of the wc=2 node (e.g. http://localhost:8080).
+    #[arg(long, default_value = "http://localhost:8080")]
+    node: String,
+
+    /// Number of search threads. Defaults to the number of available logical
+    /// CPUs reported by the OS.
+    #[arg(long)]
+    threads: Option<usize>,
+
+    /// Maximum wall-clock seconds to search before giving up. Default: infinite.
+    #[arg(long)]
+    max_time: Option<u64>,
+}
+
+async fn run_mine(args: &MineCliArgs) -> Result<()> {
+    let mine_args = mine::MineArgs {
+        recipient_path: args.recipient.clone(),
+        node_url: args.node.clone(),
+        threads: args.threads,
+        max_time_secs: args.max_time,
+    };
+    let summary = mine::execute(&mine_args).await?;
+    println!("{}", serde_json::to_string_pretty(&summary)?);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Runtime entrypoint
 // ---------------------------------------------------------------------------
 
@@ -404,6 +445,7 @@ fn main() -> Result<()> {
         Command::Balance(args) => block_on(run_balance(&args)),
         Command::ChainInfo(args) => block_on(run_chain_info(&args)),
         Command::Send(args) => block_on(run_send(&args)),
+        Command::Mine(args) => block_on(run_mine(&args)),
         Command::Genesis(GenesisCmd::Build(args)) => run_genesis_build(&args),
     }
 }

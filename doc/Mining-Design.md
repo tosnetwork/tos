@@ -411,6 +411,74 @@ Poseidon2 mining ecosystem to inherit. The client is part of the tosctl
 deliverable (Task #12). Reference design: Monero's xmrig (CPU-mining
 client architecture), but with Poseidon2 substitution.
 
+### Test infrastructure
+
+Test scaffolding landed as part of Phase 2 TDD setup. Tests serve as
+acceptance criteria — non-ignored tests pass today; `#[ignore]`-marked Rust
+tests and SKIP-marked C++ tests become active when the parallel AIR/state
+agents finish their work.
+
+#### Rust tests (`tosctl/uno/tests/mine_genesis_golden.rs`)
+
+| Test | Status | What it covers |
+|---|---|---|
+| `mine_uno_witness_round_trips_through_serde` | **passes** | MineUnoWitness JSON round-trip + field sizes |
+| `mine_uno_public_inputs_round_trip` | **passes** | 92-byte wire encoding / decoding of MineUnoPublicInputs |
+| `mine_uno_halving_table_matches_bitcoin_curve` | **passes** | Bitcoin-clone halving table for eras 0–36, geometric sum cap |
+| `mine_uno_golden_fixture_regen_or_pin` | **passes** | Golden fixture regen (UNO_MINE_REGEN=1) or consistency pin |
+| `mine_uno_proof_round_trips_through_verifier` | **`#[ignore]`** | prove_mine_uno + verify_mine_uno FFI (Phase 2 AIR) |
+| `mine_uno_invalid_proof_rejected` | **`#[ignore]`** | Tampered proof bytes rejected by verifier (Phase 2 AIR) |
+| `mine_uno_witness_epoch_at_first_halving_boundary` | **`#[ignore]`** | epoch=210000 → era 1 reward; requires AIR prover |
+
+Run non-ignored tests:
+```bash
+cargo test --release --manifest-path tosctl/uno/Cargo.toml --test mine_genesis_golden
+```
+
+Regenerate golden fixture:
+```bash
+UNO_MINE_REGEN=1 cargo test --release --manifest-path tosctl/uno/Cargo.toml --test mine_genesis_golden
+```
+
+#### C++ tests (`uno/test/test-uno-mine-loader.cpp`)
+
+| Test | Status | What it covers |
+|---|---|---|
+| `test_mine_reward_for_era` | **passes** | Halving table arithmetic + supply cap invariant |
+| `test_era_from_epoch` | **passes** | era_from_epoch boundary arithmetic (epoch 0, 209999, 210000, 420000) |
+| `test_check_value_matches_halving` | **passes** | check_value_matches_halving gate (era 0 + era 1, wrong values) |
+| `test_check_conservation` | **passes** | check_conservation gate (happy path, over-mint, tampered post) |
+| `test_public_inputs_wire_layout` | **passes** | MineUnoPublicInputs 92-byte wire layout byte-positions |
+| `test_load_rust_mine_golden_fixture` | **SKIP** (fixture absent) / **passes** (present) | Cross-impl parity: Rust golden ↔ C++ constants |
+| `test_mine_uno_proof_verify_placeholder` | **SKIP** | prove_mine_uno / verify_mine_uno (Phase 2 AIR) |
+
+Build:
+```bash
+cmake --build /home/tomi/tos/build --target test-uno-mine-loader -j 64
+```
+
+Run:
+```bash
+/home/tomi/tos/build/uno/test/test-uno-mine-loader
+```
+
+Golden fixture cross-impl parity test activates automatically when the file exists:
+```bash
+UNO_MINE_REGEN=1 cargo test --release --manifest-path tosctl/uno/Cargo.toml --test mine_genesis_golden
+# then re-run the C++ test to exercise the cross-impl path
+```
+
+#### Integration test placeholder (`uno/test/integration/test-mine-uno-end-to-end.sh`)
+
+A bash script placeholder; exits 0 immediately. Will be functional once:
+1. Chain-state fields (parallel agent A): `mine_remaining`, `mine_epoch`, `mine_target`, `halving_era` in `UnoShardState`.
+2. AIR implementation (parallel agent B): `mine_uno_air.rs`, `prove_mine_uno`, `verify_mine_uno` FFI.
+3. tosctl mine CLI (parallel agent C): `tosctl-uno mine --threads 4`.
+
+When all three land, the script exercises the full mining lifecycle:
+nonce search → STARK prove → submit MineUnoTx → verify balance increase →
+race-condition rejection test.
+
 ---
 
 ## Implementation Roadmap
