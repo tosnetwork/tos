@@ -20,11 +20,16 @@
 */
 #include "uno/core/init.h"
 #include "uno/core/compute-phase.h"
+// genesis.h transitively pulls workchain.h (defines UNO_WORKCHAIN_H_), which
+// must come before transaction.h so transaction.h's guarded redefinition of
+// kTransferVersion / kSchemeIdV1 is suppressed. Reorder is load-bearing.
+#include "uno/core/genesis.h"         // try_load_env_mine_target
 #include "uno/core/transaction.h"
 #include "uno/core/commitment-tree.h"
 #include "uno/core/nullifier-set.h"
 #include "uno/core/anchor-window.h"
 #include "uno/core/block-filter.h"
+#include "uno/core/mine_constants.h"  // kInitMineTargetBE, kMineSupplyNano
 
 #include "uno/rpc/handlers.h"
 #include "uno/rpc/filter-service.h"
@@ -175,6 +180,19 @@ class LiveUnoState : public UnoState {
     uint64_t fee_per_spend_nano() const override;
     uint64_t fee_per_output_nano() const override;
 
+    // MineUno state accessors (uno-mine-v1). Read / write the three
+    // consensus `mine_*` fields held on this live shard state. Serves both
+    // the compute-phase `apply_mine_uno` path and the `uno_getMineState`
+    // RPC accessor (via `mine_state_snapshot()` below).
+    uint32_t mine_epoch() const noexcept override;
+    uint64_t mine_remaining() const noexcept override;
+    std::array<uint8_t, 32> mine_target() const noexcept override;
+    void advance_mine_state(uint64_t new_remaining) noexcept override;
+
+    /// Snapshot of the three mining fields, taken under the state mutex.
+    /// Used by `rpc_mine_state_fn` to feed `uno_getMineState`.
+    MineStateSnapshot mine_state_snapshot() const;
+
     // --- Mutable accessors (bound by init_uno_workchain) ---------------------
     CommitmentTree&     commitment_tree()     { return *commitment_tree_; }
     NullifierSet&       nullifier_set()       { return *nullifier_set_; }
@@ -269,6 +287,17 @@ class LiveUnoState : public UnoState {
     // Block bookkeeping
     uint64_t block_seqno_{0};
 
+    // MineUno consensus state (uno-mine-v1; mirrors UnoShardState.mine_*).
+    // Initialised at construction to genesis defaults (mainnet/testnet
+    // `kInitMineTargetBE = 2^219`, full 21 M supply, epoch 0). The dev-mode
+    // gate on `global_id == kDevGlobalId` is applied separately by the
+    // genesis loader (uno-difficulty task #29); this TU unconditionally
+    // seeds the mainnet default so `uno_getMineState` returns a sensible
+    // value before the zero-state hydrate path lands the per-network gate.
+    mutable uint32_t                mine_epoch_{0};
+    mutable uint64_t                mine_remaining_{0};
+    mutable std::array<uint8_t, 32> mine_target_{};
+
     // Per-block scratch: outputs produced by the tx currently being applied.
     std::vector<OutputRecord> pending_tx_outputs_;
 
@@ -308,6 +337,29 @@ LiveUnoState::LiveUnoState()
 
     const char* env = std::getenv("UNO_ALLOW_SERVER_SCAN");
     server_scan_enabled_ = (env && std::string(env) == "1");
+
+    // Seed MineUno consensus state with genesis defaults. Resolution
+    // order matches `build_zerostate_state()` in uno/core/genesis.cpp so
+    // `uno_getMineState` returns a snapshot consistent with what would
+    // be baked into a freshly-built unostate2 BoC:
+    //   1. `UNO_INIT_MINE_TARGET_HEX` env var (operator override; logged
+    //      at WARNING). Used by local testnets to drop difficulty to
+    //      something a single CPU box can solve. Set in the systemd unit.
+    //   2. Otherwise `kInitMineTargetBE` (2^219, mainnet / public testnet).
+    // The global_id-gated `kDevMineTargetBE` (2^40) selection lives in
+    // `build_zerostate_state` and applies when a real zerostate BoC is
+    // produced via `build_zerostate_state_cell`; LiveUnoState's defaults
+    // are reached on the empty-shardstate path (tostester, mkemptyShardState)
+    // and so rely on the env-var hook to escape the mainnet target.
+    mine_epoch_ = 0;
+    mine_remaining_ = kMineSupplyNano;
+    if (const auto* override_target = try_load_env_mine_target()) {
+        std::copy(override_target->begin(), override_target->end(),
+                  mine_target_.begin());
+    } else {
+        std::copy(std::begin(kInitMineTargetBE), std::end(kInitMineTargetBE),
+                  mine_target_.begin());
+    }
 }
 
 // ----- UnoState contract implementation ------------------------------------
@@ -577,6 +629,42 @@ uint64_t LiveUnoState::fee_per_output_nano() const {
     return current_uno_config_view().fee_per_output_nano;
 }
 
+// ----- MineUno state accessors ---------------------------------------------
+
+uint32_t LiveUnoState::mine_epoch() const noexcept {
+    std::lock_guard<std::mutex> lk(mutex_);
+    return mine_epoch_;
+}
+
+uint64_t LiveUnoState::mine_remaining() const noexcept {
+    std::lock_guard<std::mutex> lk(mutex_);
+    return mine_remaining_;
+}
+
+std::array<uint8_t, 32> LiveUnoState::mine_target() const noexcept {
+    std::lock_guard<std::mutex> lk(mutex_);
+    return mine_target_;
+}
+
+void LiveUnoState::advance_mine_state(uint64_t new_remaining) noexcept {
+    std::lock_guard<std::mutex> lk(mutex_);
+    ++mine_epoch_;
+    mine_remaining_ = new_remaining;
+    // `mine_target_` is rewritten by the retarget step driven from
+    // `apply_mine_uno` (uno-mine-v1 Phase 2). This accessor only advances
+    // epoch + remaining; the target-retarget mutator is a separate method
+    // landed alongside the retarget algorithm.
+}
+
+MineStateSnapshot LiveUnoState::mine_state_snapshot() const {
+    std::lock_guard<std::mutex> lk(mutex_);
+    MineStateSnapshot s;
+    s.epoch     = mine_epoch_;
+    s.remaining = mine_remaining_;
+    s.target    = mine_target_;
+    return s;
+}
+
 std::array<uint8_t, 32> LiveUnoState::commitment_tree_root() const {
     std::lock_guard<std::mutex> lk(mutex_);
     return current_root_;
@@ -789,6 +877,9 @@ std::unique_ptr<LiveUnoState> g_live;
 // RPC setter shims. They route through the global singleton.
 HeadStateSnapshot rpc_head_state_fn() {
     return g_live ? g_live->head_snapshot() : HeadStateSnapshot{};
+}
+MineStateSnapshot rpc_mine_state_fn() {
+    return g_live ? g_live->mine_state_snapshot() : MineStateSnapshot{};
 }
 std::optional<std::array<uint8_t, 32>> rpc_anchor_at_seqno_fn(uint64_t seqno) {
     if (!g_live) return std::nullopt;
@@ -1189,6 +1280,7 @@ void init_uno_workchain(const std::string& db_root) {
     // consults an atomic<fn*> that defaults to nullptr ("unavailable"). These
     // calls flip every pointer to a concrete accessor routed through g_live.
     set_head_state_fn(rpc_head_state_fn);
+    set_mine_state_fn(rpc_mine_state_fn);
     set_anchor_at_seqno_fn(rpc_anchor_at_seqno_fn);
     set_frontier_fn(rpc_frontier_fn);
     set_nullifier_lookup_fn(rpc_nullifier_lookup_fn);

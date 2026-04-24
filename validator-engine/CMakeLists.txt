@@ -12,6 +12,7 @@ set(VALIDATOR_ENGINE_JSON_RPC_SOURCE
   json-rpc-server-token.cpp
   json-rpc-server-utils.cpp
   json-rpc-server-shared.cpp
+  json-rpc-server-uno.cpp
 )
 
 set(VALIDATOR_ENGINE_SOURCE

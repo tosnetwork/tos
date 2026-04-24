@@ -247,6 +247,12 @@ Type=simple
 User=tos
 Group=tos
 UMask=0077
+# UNO dev-mode mining target = 2^252 (BE byte[0]=0x10, others=0). Semantics:
+# hash < target is valid, so LARGER target means EASIER. 2^252 gives ~1/16
+# probability per Poseidon2 hash — a single CPU thread finds a valid nonce
+# in microseconds. Matches kDevMineTargetBE in uno/core/mine_constants.h.
+# NEVER set this on mainnet — it would let anyone mint all 21 M UNO instantly.
+Environment=UNO_INIT_MINE_TARGET_HEX=1000000000000000000000000000000000000000000000000000000000000000
 WorkingDirectory=$NODE_DIR
 ExecStart=$INSTALL_BIN/tos-validator-engine \\
   -C /data/tos-global.json \\

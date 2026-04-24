@@ -59,6 +59,21 @@ struct RpcResult {
 // starts cleanly even if uno state has not yet been bootstrapped.
 // ===========================================================================
 
+/// Mining-state snapshot used by `uno_getMineState` (wc=2 MineUno PoW).
+/// Mirrors the three mutable `mine_*` fields on `UnoShardState`
+/// (see `uno/core/state.h`):
+///   * `epoch`     — cumulative successful MineUno solves so far (0 at genesis).
+///   * `target`    — current PoW difficulty threshold, 32-byte big-endian.
+///   * `remaining` — nano-UNO left in the 21 M supply cap.
+///
+/// Consumed by `tosctl-uno mine`'s `fetch_mine_state()` to pick witness
+/// values for the Plonky3 MineUno prover.
+struct MineStateSnapshot {
+    uint32_t                epoch{0};
+    std::array<uint8_t, 32> target{};
+    uint64_t                remaining{0};
+};
+
 /// Per-head snapshot. Populated by Agent 1/2's state reader.
 struct HeadStateSnapshot {
     uint32_t    chain_id{0};
@@ -135,6 +150,7 @@ struct OutputRecord {
 // --- Accessor function-pointer types ---------------------------------------
 
 using HeadStateFn          = HeadStateSnapshot (*)();
+using MineStateFn          = MineStateSnapshot (*)();
 using AnchorAtSeqnoFn      = std::optional<std::array<uint8_t, 32>> (*)(uint64_t);
 using FrontierFn           = std::vector<std::array<uint8_t, 32>> (*)();
 using NullifierLookupFn    = NullifierStatusResult (*)(const uint8_t nf[32]);
@@ -146,6 +162,7 @@ using OutputsForIvkFn      = std::vector<OutputRecord> (*)(const uint8_t ivk[32]
 // --- Accessor setters (called from uno/core/init.cpp) ----------------------
 
 void set_head_state_fn(HeadStateFn fn);
+void set_mine_state_fn(MineStateFn fn);
 void set_anchor_at_seqno_fn(AnchorAtSeqnoFn fn);
 void set_frontier_fn(FrontierFn fn);
 void set_nullifier_lookup_fn(NullifierLookupFn fn);
@@ -174,6 +191,14 @@ std::optional<RpcResult> handle_uno_rpc(
 // ---------------------------------------------------------------------------
 // Test / integration hooks
 // ---------------------------------------------------------------------------
+
+/// Read the current MineUno consensus state through the installed
+/// `MineStateFn` accessor. Used by the validator-engine JSON-RPC handler
+/// `uno_getMineState` (see `validator-engine/json-rpc-server-uno.cpp`).
+/// Returns `std::nullopt` if no accessor has been bound yet (the UnoState
+/// singleton was not initialised) — caller emits a structured JSON-RPC
+/// "state unavailable" error in that case.
+std::optional<MineStateSnapshot> get_mine_state_snapshot();
 
 /// Reset all per-process RPC state (rate limiter, cached head snapshot, any
 /// sticky dispatch state). Intended for unit tests only.

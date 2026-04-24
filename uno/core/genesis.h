@@ -198,7 +198,33 @@ std::array<uint8_t, 32> derive_genesis_rseed(uint32_t address_index);
 ///
 /// Returns a populated state on success and logs ERROR + returns
 /// `UnoShardState::make_empty()` on any failure.
-UnoShardState build_zerostate_state(const GenesisDistribution& dist);
+///
+/// `global_id` is the TOS masterchain `global_id` (ConfigParam 19) that
+/// will host this wc=2 state. It gates the genesis PoW target via
+/// `select_init_mine_target(global_id)` (`uno/core/mine_constants.h`):
+///   * global_id == 3 (local dev)        → kDevMineTargetBE (2^40)
+///   * global_id == 1 (mainnet)          → kInitMineTargetBE (2^219)
+///   * global_id == -3 (public testnet)  → kInitMineTargetBE (2^219)
+/// Default = 1 (mainnet) so callers that don't yet know the host-chain
+/// global_id keep the production target. The genesis-relaxed target is
+/// only acceptable on a network operator-controlled local chain.
+///
+/// The override `UNO_INIT_MINE_TARGET_HEX=<64-hex>` env var, when set,
+/// supersedes the global_id-derived choice — used by the chain-boot tool
+/// to inject custom calibration without recompiling. The env-var path
+/// applies on a fresh genesis only; once the resulting BoC is on disk,
+/// changing the env var has no effect until the chain is wiped.
+UnoShardState build_zerostate_state(const GenesisDistribution& dist,
+                                    int32_t global_id = 1);
+
+/// Returns a pointer to a 32-byte BE mine_target loaded from the
+/// `UNO_INIT_MINE_TARGET_HEX` env var, or nullptr if the env var is unset
+/// or malformed. Cached after first call so all four dev validators in a
+/// local testnet observe the same value even if one starts after the env
+/// var was unset. Used by both `build_zerostate_state` (genesis) and
+/// `LiveUnoState` (live in-memory state seeded at validator startup) so
+/// the env-var override is consistent across both code paths.
+const std::array<uint8_t, 32>* try_load_env_mine_target();
 
 /// K-genesis-loader convenience wrapper: takes a raw `std::vector<GenesisNote>`
 /// and returns the corresponding `UnoShardState`. For each note, if
@@ -214,8 +240,11 @@ UnoShardState build_zerostate_state(const GenesisDistribution& dist);
 UnoShardState build_genesis_state(const std::vector<GenesisNote>& notes);
 
 /// Convenience: build_zerostate_state + serialize via `cell-state.h`. Used
-/// by `init_uno_workchain` to write the initial StateInit.data.
-td::Ref<vm::Cell> build_zerostate_state_cell(const GenesisDistribution& dist);
+/// by `init_uno_workchain` to write the initial StateInit.data. See the
+/// `build_zerostate_state` doc for the `global_id` semantics — it gates
+/// the genesis PoW target between mainnet (2^219) and local-dev (2^40).
+td::Ref<vm::Cell> build_zerostate_state_cell(const GenesisDistribution& dist,
+                                              int32_t global_id = 1);
 
 /// Build the wc=2 zerostate root cell the masterchain registry consumes
 /// (ConfigParam 12 refers to its root_hash + file_hash via
@@ -227,10 +256,15 @@ td::Ref<vm::Cell> build_zerostate_state_cell(const GenesisDistribution& dist);
 ///                     zerostate used in dev-net smoke tests).
 /// @param out_root     [out] Root hash of the resulting cell.
 /// @param out_file     [out] BoC file hash of the resulting cell.
+/// @param global_id    TOS masterchain `global_id` (ConfigParam 19); gates
+///                     the genesis PoW target (mainnet=1 → 2^219, dev=3 →
+///                     2^40). Defaults to 1 (mainnet) for callers that
+///                     have not yet been threaded through.
 /// @return             Cell on success, null Ref on failure.
 td::Ref<vm::Cell> build_zerostate(const GenesisDistribution& dist,
                                    tos::RootHash& out_root,
-                                   tos::FileHash& out_file);
+                                   tos::FileHash& out_file,
+                                   int32_t global_id = 1);
 
 // ---------------------------------------------------------------------------
 // Genesis-notes JSON I/O

@@ -95,6 +95,70 @@ constexpr uint8_t kInitMineTargetBE[32] = {
     0x00, 0x00, 0x00
 };
 
+/// Local dev / testnet (masterchain `global_id == 3`) mining target — 2^252.
+///
+/// Purpose: allows a single CPU box (~25 Mops/s Poseidon2) to find a valid
+/// nonce in seconds so integration tests and local smoke tests can actually
+/// mine blocks without standing up a globally-distributed miner pool.
+/// Mainnet (`global_id == 1`) and public testnet (`global_id == -3`) must
+/// keep `kInitMineTargetBE = 2^219`; this relaxed target is NEVER acceptable
+/// there — accepting it on a real network would let anyone mint the entire
+/// 21 M UNO cap in minutes.
+///
+/// Semantics: a PoW hash `h` is valid iff `h < target` (interpreted as
+/// 256-bit BE unsigned). LARGER target = EASIER mining (more valid hashes).
+/// The probability that a random hash passes = target / 2^256.
+///
+/// Value here: 2^252 → probability = 2^252 / 2^256 = 1/16. A single thread
+/// doing ~1M Poseidon2 hashes/s finds a valid nonce in ~16 microseconds
+/// on average. Multi-thread local mining is essentially instantaneous.
+///
+/// Gating convention (matches `gen-zerostate*.fif` / `tostester/zerostate.py`):
+///   mainnet        global_id =  1  → kInitMineTargetBE (2^219) ~2^-37 prob
+///   public testnet global_id = -3  → kInitMineTargetBE (2^219) ~2^-37 prob
+///   local dev      global_id =  3  → kDevMineTargetBE  (2^252) ~2^-4  prob
+/// Selected at genesis time by `select_init_mine_target(global_id)` and by
+/// `build_zerostate_state(dist, global_id)` (see `uno/core/genesis.cpp`).
+///
+/// Byte-index derivation: target 2^252 sets bit 252 in a 256-bit BE value.
+/// Bit 252 is bit 4 of byte[0] (which holds bits 255..248 from MSB).
+///   byte index = (255 - 252) / 8 = 0
+///   bit-in-byte = 252 % 8 = 4    → value 1 << 4 = 0x10
+/// Hence byte[0] = 0x10, all other bytes zero.
+///
+/// Verified by `test_dev_mine_target_bytes` in test-uno-mine-loader.cpp.
+constexpr uint8_t kDevMineTargetBE[32] = {
+    // byte 0: 2^252 → 1 << 4 = 0x10 (the single non-zero byte)
+    0x10,
+    // bytes 1..31: zero
+    0x00, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+/// TOS masterchain `global_id` reserved for local-dev chains (matches the
+/// `3 setglobalid` in `test/tostester/src/tostester/zerostate.py`). See the
+/// `kDevMineTargetBE` comment for the mainnet / testnet / dev mapping.
+/// Independent of the wc=2 `chain_id` (UNOM/UNOT) in §10.4 — that is a
+/// separate namespace.
+constexpr int32_t kDevGlobalId = 3;
+
+/// Select the genesis PoW target for the given TOS masterchain `global_id`.
+///
+/// Returns a pointer to one of the 32-byte constants above:
+///   * `global_id == kDevGlobalId` (3)  → `kDevMineTargetBE` (2^252)
+///   * any other value                  → `kInitMineTargetBE` (2^219)
+///
+/// This is the single consensus-critical gate for dev-mode difficulty
+/// relaxation; every code path that seeds `UnoShardState::mine_target` at
+/// chain-boot should route through this helper so the two values cannot
+/// drift out of sync.
+constexpr const uint8_t* select_init_mine_target(int32_t global_id) noexcept {
+    return (global_id == kDevGlobalId) ? kDevMineTargetBE
+                                       : kInitMineTargetBE;
+}
+
 // ---------------------------------------------------------------------------
 // Computed constants (verifiable at compile time)
 // ---------------------------------------------------------------------------
@@ -172,5 +236,27 @@ static_assert(kMineSupplyNano == 21'000'000ULL * 1'000'000'000ULL,
               "kMineSupplyNano must be 21M UNO in nano-UNO");
 // kEraSize matches Bitcoin.
 static_assert(kEraSize == 210'000, "kEraSize must be Bitcoin-clone 210000");
+
+// kInitMineTargetBE byte layout: byte[4] = 0x08, all others zero (= 2^219).
+static_assert(kInitMineTargetBE[4] == 0x08,
+              "kInitMineTargetBE byte 4 must be 0x08 (the only non-zero byte)");
+// kDevMineTargetBE byte layout: byte[0] = 0x10, all others zero (= 2^252).
+// Semantics: hash < target means valid. Larger target = easier mining.
+// 2^252 gives ~1/16 probability per hash — trivially findable on one CPU.
+static_assert(kDevMineTargetBE[0] == 0x10,
+              "kDevMineTargetBE byte 0 must be 0x10 (the only non-zero byte)");
+static_assert(kDevMineTargetBE[1] == 0x00,
+              "kDevMineTargetBE bytes 1..31 must be zero");
+// Dev gate selects the relaxed target for global_id==3 only; every other
+// global_id (mainnet=1, public testnet=-3, future workchains, etc.) must
+// receive the production 2^219 threshold. Any drift here is a hard-fork.
+static_assert(select_init_mine_target(kDevGlobalId) == kDevMineTargetBE,
+              "global_id == 3 must select the relaxed dev target");
+static_assert(select_init_mine_target(1) == kInitMineTargetBE,
+              "global_id == 1 (mainnet) must select kInitMineTargetBE");
+static_assert(select_init_mine_target(-3) == kInitMineTargetBE,
+              "global_id == -3 (public testnet) must select kInitMineTargetBE");
+static_assert(select_init_mine_target(0) == kInitMineTargetBE,
+              "global_id == 0 (unspecified) must default to kInitMineTargetBE");
 
 }  // namespace uno_workchain

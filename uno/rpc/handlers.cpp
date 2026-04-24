@@ -318,6 +318,7 @@ bool extract_nth_uint(const std::string& params, size_t n, uint64_t& out) {
 namespace {
 
 std::atomic<HeadStateFn>         g_head_state{nullptr};
+std::atomic<MineStateFn>         g_mine_state{nullptr};
 std::atomic<AnchorAtSeqnoFn>     g_anchor_at_seqno{nullptr};
 std::atomic<FrontierFn>          g_frontier{nullptr};
 std::atomic<NullifierLookupFn>   g_nullifier_lookup{nullptr};
@@ -336,6 +337,7 @@ void set_submit_external_message_hook(SubmitExternalMessageFn fn) {
 // Setter definitions for the upstream-accessor hooks declared in handlers.h.
 // Agents 1/2/5 call these from uno/core/init.cpp at validator-engine startup.
 void set_head_state_fn(HeadStateFn fn)                 { g_head_state.store(fn); }
+void set_mine_state_fn(MineStateFn fn)                 { g_mine_state.store(fn); }
 void set_anchor_at_seqno_fn(AnchorAtSeqnoFn fn)        { g_anchor_at_seqno.store(fn); }
 void set_frontier_fn(FrontierFn fn)                    { g_frontier.store(fn); }
 void set_nullifier_lookup_fn(NullifierLookupFn fn)     { g_nullifier_lookup.store(fn); }
@@ -344,11 +346,18 @@ void set_estimate_fee_fn(EstimateFeeFn fn)             { g_estimate_fee.store(fn
 void set_tx_status_fn(TxStatusLookupFn fn)             { g_tx_status.store(fn); }
 void set_outputs_for_ivk_fn(OutputsForIvkFn fn)        { g_outputs_for_ivk.store(fn); }
 
+std::optional<MineStateSnapshot> get_mine_state_snapshot() {
+    auto fn = g_mine_state.load(std::memory_order_acquire);
+    if (!fn) { return std::nullopt; }
+    return fn();
+}
+
 void reset_uno_rpc_state_for_test() {
     g_rpc_limiter.reset();
     g_sendtx_limiter.reset();
     g_rate_limit_enabled = false;
     g_head_state.store(nullptr);
+    g_mine_state.store(nullptr);
     g_anchor_at_seqno.store(nullptr);
     g_frontier.store(nullptr);
     g_nullifier_lookup.store(nullptr);

@@ -42,9 +42,12 @@
 #include "td/utils/Status.h"
 #include "td/utils/filesystem.h"
 
+#include "uno/core/genesis.h"                // build_zerostate_state
 #include "uno/core/mine_constants.h"
 #include "uno/core/mine_uno.h"
 #include "uno_plonky3_ffi.h"                 // uno_mine_uno_prove / _verify
+
+#include <cstdlib>                           // ::unsetenv
 
 // ---------------------------------------------------------------------------
 // Tracked-printf harness (identical to test-genesis-loader.cpp)
@@ -615,6 +618,182 @@ static void test_load_rust_mine_golden_fixture() {
 }
 
 // ---------------------------------------------------------------------------
+// Test 6.5 — kDevMineTargetBE byte layout + select_init_mine_target() gate
+//
+// Pins the dev-mode mining target (2^252) added for single-CPU-box local
+// smoke tests. Semantics: hash < target is valid; LARGER target = EASIER.
+// 2^252 gives ~1/16 probability per hash so a single thread finds a valid
+// nonce in microseconds.
+//
+// Asserts:
+//   - kDevMineTargetBE is exactly 2^252: byte[0] = 0x10, every other byte
+//     zero. Derivation: bit 252 sits in byte[0] (bits 255..248 from MSB),
+//     bit position 252 % 8 = 4, so value 1 << 4 = 0x10.
+//   - select_init_mine_target(3) picks kDevMineTargetBE (local dev).
+//   - select_init_mine_target(1) picks kInitMineTargetBE (mainnet).
+//   - select_init_mine_target(-3) picks kInitMineTargetBE (public testnet).
+//   - select_init_mine_target(0) and other values default to mainnet.
+//
+// This is the consensus-critical sanity gate: accidentally selecting the
+// 2^252 target on mainnet would let any hobbyist mint the entire 21 M UNO
+// cap in seconds.
+// ---------------------------------------------------------------------------
+
+static void test_dev_mine_target_bytes() {
+    tprintf("[TEST] test_dev_mine_target_bytes\n");
+
+    using uno_workchain::kDevMineTargetBE;
+    using uno_workchain::kInitMineTargetBE;
+    using uno_workchain::select_init_mine_target;
+    using uno_workchain::kDevGlobalId;
+
+    // --- Byte layout of kDevMineTargetBE (2^252) --------------------------
+    for (size_t i = 0; i < 32; ++i) {
+        const uint8_t expected = (i == 0) ? 0x10 : 0x00;
+        if (kDevMineTargetBE[i] != expected) {
+            tprintf("  FAILED: kDevMineTargetBE[%zu] = 0x%02x, expected 0x%02x\n",
+                    i, kDevMineTargetBE[i], expected);
+            return;
+        }
+    }
+
+    // --- Sanity: kInitMineTargetBE byte[4] = 0x08, rest 0 (2^219) ---------
+    for (size_t i = 0; i < 32; ++i) {
+        const uint8_t expected = (i == 4) ? 0x08 : 0x00;
+        if (kInitMineTargetBE[i] != expected) {
+            tprintf("  FAILED: kInitMineTargetBE[%zu] = 0x%02x, expected 0x%02x\n",
+                    i, kInitMineTargetBE[i], expected);
+            return;
+        }
+    }
+
+    // --- Gate: global_id → target mapping ---------------------------------
+    if (select_init_mine_target(kDevGlobalId) != kDevMineTargetBE) {
+        tprintf("  FAILED: select_init_mine_target(3) did not pick kDevMineTargetBE\n");
+        return;
+    }
+    // Mainnet must NOT get the relaxed target.
+    if (select_init_mine_target(1) != kInitMineTargetBE) {
+        tprintf("  FAILED: select_init_mine_target(1) did not pick kInitMineTargetBE "
+                "(mainnet difficulty leaked!)\n");
+        return;
+    }
+    // Public testnet (global_id = -3) must also get the production target.
+    if (select_init_mine_target(-3) != kInitMineTargetBE) {
+        tprintf("  FAILED: select_init_mine_target(-3) did not pick kInitMineTargetBE\n");
+        return;
+    }
+    // Every other global_id must default to mainnet too.
+    for (int32_t gid : {0, 2, 4, 42, -1, -2, -4, 0x100}) {
+        if (select_init_mine_target(gid) != kInitMineTargetBE) {
+            tprintf("  FAILED: select_init_mine_target(%d) did not default to "
+                    "kInitMineTargetBE\n", gid);
+            return;
+        }
+    }
+
+    // --- Cross-check: kDevMineTargetBE > kInitMineTargetBE ---------------
+    // Dev target (2^252) must be strictly larger than mainnet target (2^219)
+    // byte-by-byte in BE so the same sort order a 256-bit compare would use.
+    // That is the defining "easier" property.
+    bool dev_larger = false;
+    for (size_t i = 0; i < 32; ++i) {
+        if (kDevMineTargetBE[i] != kInitMineTargetBE[i]) {
+            dev_larger = kDevMineTargetBE[i] > kInitMineTargetBE[i];
+            break;
+        }
+    }
+    if (!dev_larger) {
+        tprintf("  FAILED: kDevMineTargetBE must be > kInitMineTargetBE to be easier\n");
+        return;
+    }
+
+    tprintf("  PASSED (kDevMineTargetBE is 2^252; global_id gate routes correctly)\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 6.6 — build_zerostate_state honours the global_id gate
+//
+// Drives the genesis builder with both global_id = 1 (mainnet) and
+// global_id = 3 (local dev) and confirms the resulting UnoShardState's
+// `mine_target` field matches the corresponding 32-byte constant.
+// ---------------------------------------------------------------------------
+
+static void test_build_zerostate_state_mine_target_gate() {
+    tprintf("[TEST] test_build_zerostate_state_mine_target_gate\n");
+
+    uno_workchain::GenesisDistribution empty_dist;
+    empty_dist.chain_id = uno_workchain::kChainIdTestnet;
+    // No notes → empty distribution; build_zerostate_state still populates
+    // the mining-state fields.
+
+    // Clear any UNO_INIT_MINE_TARGET_HEX override so the gate decides.
+    // The `try_load_env_mine_target` probe in genesis.cpp is cached on first
+    // call, so setting this env var here only has effect if no previous
+    // test already probed it. We defensively unset.
+    ::unsetenv("UNO_INIT_MINE_TARGET_HEX");
+
+    // --- Mainnet path: global_id = 1 → kInitMineTargetBE (2^219) ---------
+    {
+        auto state = uno_workchain::build_zerostate_state(empty_dist, /*global_id=*/1);
+        for (size_t i = 0; i < 32; ++i) {
+            if (state.mine_target[i] != uno_workchain::kInitMineTargetBE[i]) {
+                tprintf("  FAILED: mainnet mine_target[%zu] = 0x%02x, "
+                        "expected kInitMineTargetBE[%zu] = 0x%02x\n",
+                        i, state.mine_target[i], i,
+                        uno_workchain::kInitMineTargetBE[i]);
+                return;
+            }
+        }
+    }
+
+    // --- Dev path: global_id = 3 → kDevMineTargetBE (2^252) --------------
+    {
+        auto state = uno_workchain::build_zerostate_state(empty_dist, /*global_id=*/3);
+        for (size_t i = 0; i < 32; ++i) {
+            if (state.mine_target[i] != uno_workchain::kDevMineTargetBE[i]) {
+                tprintf("  FAILED: dev mine_target[%zu] = 0x%02x, "
+                        "expected kDevMineTargetBE[%zu] = 0x%02x\n",
+                        i, state.mine_target[i], i,
+                        uno_workchain::kDevMineTargetBE[i]);
+                return;
+            }
+        }
+    }
+
+    // --- Public testnet path: global_id = -3 → kInitMineTargetBE --------
+    {
+        auto state = uno_workchain::build_zerostate_state(empty_dist, /*global_id=*/-3);
+        for (size_t i = 0; i < 32; ++i) {
+            if (state.mine_target[i] != uno_workchain::kInitMineTargetBE[i]) {
+                tprintf("  FAILED: public-testnet mine_target[%zu] = 0x%02x, "
+                        "expected kInitMineTargetBE[%zu] = 0x%02x\n",
+                        i, state.mine_target[i], i,
+                        uno_workchain::kInitMineTargetBE[i]);
+                return;
+            }
+        }
+    }
+
+    // Supporting sanity: mine_remaining seeded to the 21M cap in all paths.
+    auto state_dev = uno_workchain::build_zerostate_state(empty_dist, 3);
+    if (state_dev.mine_remaining != uno_workchain::kMineSupplyNano) {
+        tprintf("  FAILED: dev state.mine_remaining = %llu, expected "
+                "kMineSupplyNano %llu\n",
+                (unsigned long long)state_dev.mine_remaining,
+                (unsigned long long)uno_workchain::kMineSupplyNano);
+        return;
+    }
+    if (state_dev.mine_epoch != 0 || state_dev.halving_era != 0) {
+        tprintf("  FAILED: dev state has non-zero epoch / era at genesis\n");
+        return;
+    }
+
+    tprintf("  PASSED (build_zerostate_state gate routes mainnet → 2^219, "
+            "dev → 2^252)\n");
+}
+
+// ---------------------------------------------------------------------------
 // Test 7 — AIR prove + verify round-trip through the FFI
 //
 // Mirrors `uno_plonky3_ffi::mine_uno_witness::MineUnoWitness::
@@ -822,6 +1001,8 @@ int main() {
     test_check_conservation();
     test_public_inputs_wire_layout();
     test_load_rust_mine_golden_fixture();
+    test_dev_mine_target_bytes();
+    test_build_zerostate_state_mine_target_gate();
     test_mine_uno_proof_verify();
 
     tprintf("\nTotal: passed=%d, failures=%d, skips=%d\n",

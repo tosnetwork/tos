@@ -145,7 +145,54 @@ namespace uno_workchain {
 // `anchor_window_push`, ...) with A2's method-based API. The zerostate path
 // default-constructs each sub-object and drives it through append() / push().
 
-UnoShardState build_zerostate_state(const GenesisDistribution& dist) {
+// ---------------------------------------------------------------------------
+// Dev-mode mining-target override (UNO_INIT_MINE_TARGET_HEX).
+//
+// Read once at first call; subsequent calls reuse the cached decision so
+// the four dev validators in a local testnet all see the same target even
+// if one of them gets started after the env var was unset. Returns nullptr
+// when the env var is unset / malformed; in that case the caller falls
+// back to `select_init_mine_target(global_id)`.
+//
+// The env-var path is the deliberate escape hatch for chain-boot operators
+// who need a target that isn't either mainnet's 2^219 or dev's 2^40 (e.g.
+// reproducing a particular historical difficulty for forensic replay).
+// On mainnet it should remain unset.
+// ---------------------------------------------------------------------------
+const std::array<uint8_t, 32>* try_load_env_mine_target() {
+    static std::array<uint8_t, 32> cached{};
+    static bool                   cached_set{false};
+    static bool                   probed{false};
+    if (probed) return cached_set ? &cached : nullptr;
+    probed = true;
+
+    const char* env = std::getenv("UNO_INIT_MINE_TARGET_HEX");
+    if (env == nullptr) return nullptr;
+    td::Slice body(env);
+    if (body.size() >= 2 && body[0] == '0' && (body[1] == 'x' || body[1] == 'X')) {
+        body = body.substr(2);
+    }
+    if (body.size() != 64) {
+        LOG(ERROR) << "uno/genesis: UNO_INIT_MINE_TARGET_HEX must be 64 hex "
+                   << "chars (got " << body.size() << "); ignoring override";
+        return nullptr;
+    }
+    auto bytes_r = td::hex_decode(body);
+    if (bytes_r.is_error() || bytes_r.ok().size() != 32) {
+        LOG(ERROR) << "uno/genesis: UNO_INIT_MINE_TARGET_HEX malformed "
+                   << "(non-hex / wrong length); ignoring override";
+        return nullptr;
+    }
+    auto bytes = bytes_r.move_as_ok();
+    std::memcpy(cached.data(), bytes.data(), 32);
+    cached_set = true;
+    LOG(WARNING) << "uno/genesis: UNO_INIT_MINE_TARGET_HEX override active "
+                 << "(target=" << env << ")";
+    return &cached;
+}
+
+UnoShardState build_zerostate_state(const GenesisDistribution& dist,
+                                    int32_t global_id) {
     UnoShardState s = UnoShardState::make_empty();
     s.version = kShardStateVersion;
     s.scheme_id = kSchemeIdV1;
@@ -221,18 +268,32 @@ UnoShardState build_zerostate_state(const GenesisDistribution& dist) {
     // Mining state (uno-mine-v1 Phase 2; see doc/uno-mine-air-constraints.md).
     // mine_remaining starts at the full 21M UNO cap in nano-UNO units.
     // mine_epoch and halving_era start at 0 (no solves yet).
-    // mine_target is the genesis initial difficulty (2^219 in 32-byte BE).
+    // mine_target selection order (decreasing priority):
+    //   1. `UNO_INIT_MINE_TARGET_HEX` env var (operator override; see the
+    //      `try_load_env_mine_target` helper above). Intended for chain-boot
+    //      calibration work; unset on mainnet.
+    //   2. `select_init_mine_target(global_id)` — hard-wired mainnet
+    //      (2^219, kInitMineTargetBE) vs local-dev (2^40, kDevMineTargetBE)
+    //      split. `global_id == 3` means local dev per gen-zerostate-test.fif
+    //      and test/tostester/src/tostester/zerostate.py; every other value
+    //      keeps the production target.
     s.mine_remaining = kMineSupplyNano;         // = 21,000,000 × 10^9 nano-UNO
     s.mine_epoch     = 0;
-    std::copy(std::begin(kInitMineTargetBE), std::end(kInitMineTargetBE),
-              s.mine_target.begin());
+    if (const auto* override_target = try_load_env_mine_target()) {
+        std::copy(override_target->begin(), override_target->end(),
+                  s.mine_target.begin());
+    } else {
+        const uint8_t* selected = select_init_mine_target(global_id);
+        std::copy(selected, selected + 32, s.mine_target.begin());
+    }
     s.halving_era    = 0;
 
     return s;
 }
 
-td::Ref<vm::Cell> build_zerostate_state_cell(const GenesisDistribution& dist) {
-    auto s = build_zerostate_state(dist);
+td::Ref<vm::Cell> build_zerostate_state_cell(const GenesisDistribution& dist,
+                                              int32_t global_id) {
+    auto s = build_zerostate_state(dist, global_id);
     if (s.is_empty() && !dist.notes.empty()) {
         LOG(ERROR) << "uno/genesis: build_zerostate_state returned empty "
                    << "despite " << dist.notes.size() << " genesis notes";
@@ -247,8 +308,9 @@ td::Ref<vm::Cell> build_zerostate_state_cell(const GenesisDistribution& dist) {
 
 td::Ref<vm::Cell> build_zerostate(const GenesisDistribution& dist,
                                    tos::RootHash& out_root,
-                                   tos::FileHash& out_file) {
-    auto state_cell = build_zerostate_state_cell(dist);
+                                   tos::FileHash& out_file,
+                                   int32_t global_id) {
+    auto state_cell = build_zerostate_state_cell(dist, global_id);
     if (state_cell.is_null()) {
         LOG(ERROR) << "uno/genesis: inner state cell build failed";
         return {};
