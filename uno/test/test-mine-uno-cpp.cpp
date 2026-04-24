@@ -394,9 +394,16 @@ static void test_apply_rejects_bad_proof_no_mutation() {
     size_t   before_tags  = state.filter_tags_.size();
 
     auto result = uw::apply_mine_uno(state, tx);
-    if (result != uw::VerifyResult::BadPlonky3Proof) {
+    // After the round-5 reordering, the cheap O(1) PI/header binding check
+    // runs BEFORE the expensive FFI verify, so dummy proof bytes paired
+    // with a non-matching dummy PI (as constructed by make_dummy_proof_blob)
+    // are rejected as PiHeaderMismatch instead of BadPlonky3Proof. Either
+    // is correct — both reject without state mutation, which is what the
+    // verify-before-mutate invariant actually cares about.
+    if (result != uw::VerifyResult::BadPlonky3Proof &&
+        result != uw::VerifyResult::PiHeaderMismatch) {
         tprintf("  FAILED: apply_mine_uno returned %s; expected BadPlonky3Proof "
-                "(the dummy proof must fail FFI verify)\n",
+                "or PiHeaderMismatch (dummy proof must fail before mutation)\n",
                 uw::verify_result_name(result));
         return;
     }

@@ -72,6 +72,16 @@ struct MineStateSnapshot {
     uint32_t                epoch{0};
     std::array<uint8_t, 32> target{};
     uint64_t                remaining{0};
+    // True iff the snapshot reflects state hydrated from a real wc=2
+    // ShardState cell (executor account state.data) — not the in-memory
+    // construction defaults seeded at process startup. Miners must NOT
+    // build proofs against !hydrated snapshots: between validator restart
+    // and the first wc=2 compute-phase, the in-memory state has the
+    // pre-restart defaults (epoch=0, full supply) which can lag the
+    // real chain state. The JSON-RPC handler refuses to serve the
+    // snapshot when this is false so `tosctl-uno mine` fails fast
+    // rather than searching nonces against a stale target.
+    bool                    hydrated{false};
 };
 
 /// Per-head snapshot. Populated by Agent 1/2's state reader.

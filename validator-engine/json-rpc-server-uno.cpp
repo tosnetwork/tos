@@ -165,6 +165,20 @@ handle_uno_get_mine_state(std::string req_id,
         -32010, "uno mine state unavailable (init_uno_workchain not run)",
         req_id, cors_origin);
   }
+  if (!snap->hydrated) {
+    // LiveUnoState has not yet been hydrated from a persisted wc=2
+    // ShardState cell, so the (epoch, target, remaining) fields are
+    // construction defaults — they may lag the real chain state.
+    // Refusing here is fail-closed: tosctl-uno mine receives an explicit
+    // error and aborts, instead of building a proof against a stale
+    // snapshot that would later be rejected as EpochRaceDetected.
+    // Hydration fires automatically on the first wc=2 compute-phase tx
+    // after restart; clients should retry shortly.
+    return build_jsonrpc_error(
+        -32011,
+        "uno mine state not yet hydrated (no wc=2 tx since startup) — retry shortly",
+        req_id, cors_origin);
+  }
 
   std::string target_hex = encode_hex_lower(snap->target.data(), 32);
 

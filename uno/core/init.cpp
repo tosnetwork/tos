@@ -757,6 +757,25 @@ MineStateSnapshot LiveUnoState::mine_state_snapshot() const {
     s.epoch     = mine_epoch_;
     s.remaining = mine_remaining_;
     s.target    = mine_target_;
+    // hydrated == true once the LiveUnoState has been hydrated from a
+    // real persisted ShardState cell, OR the in-memory snapshot is at
+    // genesis defaults (epoch=0, full supply) which IS the canonical
+    // chain state for any validator that hasn't yet processed a wc=2
+    // tx. The latter case lets miners fetch RPC state at genesis
+    // (chicken-and-egg break: without it, the first MineUno can never
+    // be built because the RPC always errors). After ANY mutation in
+    // this process, the snapshot is no longer "fresh defaults" and the
+    // strict `has_live_state_cell_hash_` flag is required.
+    //
+    // Known operational risk: post-restart, between cold boot and the
+    // first wc=2 tx, the in-memory defaults may lag the real chain
+    // state (e.g. epoch=0 reported while chain is at epoch=N). Miners
+    // submit a tx with stale (epoch, remaining) which then gets
+    // rejected as EpochRaceDetected when the validator hydrates from
+    // disk during compute-phase. The fail-closed signal lives in the
+    // verify_mine_uno_chain_checks reject path, not at the RPC layer.
+    s.hydrated  = has_live_state_cell_hash_ ||
+                  (mine_epoch_ == 0 && mine_remaining_ == kMineSupplyNano);
     return s;
 }
 

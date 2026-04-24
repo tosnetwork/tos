@@ -1985,20 +1985,29 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     // so compute_state() packs it into the executor account's StateInit.data
     // — making state delta part of the TOS block state_hash. Identical
     // mechanism as the wc=1 branch above.
-    if (cp.new_data.not_null()) {
+    //
+    // Account activation (acc_uninit → acc_active) is gated on cp.success
+    // AND cp.new_data being present. Reject paths in run_mine_uno_compute_phase
+    // / run_compute_phase set cp.success = false and leave cp.new_data null;
+    // unconditionally activating + installing the marker code on those rejects
+    // would mean a malformed first MineUno still mutates account state from
+    // uninit → active with empty data, which is observably non-no-op even
+    // though no consensus state changed. Mirror EVM's behaviour: state-delta
+    // and activation only happen when the custom executor accepts the tx.
+    if (cp.success && cp.new_data.not_null()) {
       new_data = cp.new_data;
-    }
-    // Activate the executor account if currently uninit (first message).
-    if (acc_status == Account::acc_uninit) {
-      acc_status = Account::acc_active;
-      was_activated = true;
-    }
-    // Install the canonical 0x55 'U' code-marker cell if this account has no
-    // code yet — same pattern as EVM, single cell hash across every wc=2
-    // account (and wc=2 only has one executor account anyway). CellDb dedup
-    // means every validator reuses the same ref.
-    if (new_code.is_null()) {
-      new_code = uno_workchain_dispatch::get_uno_code_marker_cell();
+      // Activate the executor account if currently uninit (first message).
+      if (acc_status == Account::acc_uninit) {
+        acc_status = Account::acc_active;
+        was_activated = true;
+      }
+      // Install the canonical 0x55 'U' code-marker cell if this account has no
+      // code yet — same pattern as EVM, single cell hash across every wc=2
+      // account (and wc=2 only has one executor account anyway). CellDb dedup
+      // means every validator reuses the same ref.
+      if (new_code.is_null()) {
+        new_code = uno_workchain_dispatch::get_uno_code_marker_cell();
+      }
     }
 
     return true;
