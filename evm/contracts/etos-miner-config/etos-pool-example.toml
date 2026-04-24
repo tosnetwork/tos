@@ -1,0 +1,103 @@
+# etos-pool-example.toml — Template configuration for eTOS pool operators
+#
+# This file is a starting point for running a mining pool for the eTOS
+# workchain (wc=1, EVM). It follows the open-ethereum-pool configuration
+# format. Adapt to your pool software as needed.
+#
+# Reference:
+#   doc/Mining-Design.md §eTOS Mining
+#   evm/contracts/etos-miner-config/README.md
+#
+# IMPORTANT: Replace all placeholder values (marked with <...>) before
+# deploying. Never expose your fee wallet private key.
+
+# ---------------------------------------------------------------------------
+# Pool identity
+# ---------------------------------------------------------------------------
+[pool]
+name       = "<YOUR_POOL_NAME>"
+url        = "stratum+tcp://<YOUR_POOL_DOMAIN>:4444"
+fee        = 1.0    # pool fee in percent (1.0 = 1%)
+coin       = "eTOS"
+algorithm  = "keccak-256"
+
+# Pool operator wallet — receives the pool fee deductions
+fee_wallet = "<POOL_OPERATOR_ETOS_ADDRESS>"
+
+# ---------------------------------------------------------------------------
+# TOS node connection
+# ---------------------------------------------------------------------------
+[node]
+# JSON-RPC endpoint of your TOS full node (wc=1 EVM)
+rpc_url    = "http://<YOUR_TOS_NODE_IP>:8081"
+ws_url     = "ws://<YOUR_TOS_NODE_IP>:8082"
+
+# Interval in milliseconds to poll the node for new work
+poll_ms    = 500
+
+# ---------------------------------------------------------------------------
+# eTOS PoW Giver contract addresses (10 Givers, deployed at genesis)
+# These are the addresses of the EToSPoWGiver.sol instances.
+# Replace with actual genesis addresses once the mainnet genesis is published.
+# ---------------------------------------------------------------------------
+[givers]
+addresses = [
+    "0x<GIVER_01_ADDRESS>",
+    "0x<GIVER_02_ADDRESS>",
+    "0x<GIVER_03_ADDRESS>",
+    "0x<GIVER_04_ADDRESS>",
+    "0x<GIVER_05_ADDRESS>",
+    "0x<GIVER_06_ADDRESS>",
+    "0x<GIVER_07_ADDRESS>",
+    "0x<GIVER_08_ADDRESS>",
+    "0x<GIVER_09_ADDRESS>",
+    "0x<GIVER_10_ADDRESS>",
+]
+
+# ---------------------------------------------------------------------------
+# Stratum server
+# ---------------------------------------------------------------------------
+[stratum]
+listen     = "0.0.0.0:4444"
+max_miners = 1000
+timeout_s  = 120
+
+# Vardiff (variable difficulty) settings
+[stratum.vardiff]
+enabled       = true
+target_time   = 12       # seconds — matches eTOS target_delta
+retarget_time = 60       # recalculate difficulty every 60 seconds
+min_diff      = 1000
+max_diff      = 1000000000
+
+# ---------------------------------------------------------------------------
+# Payout settings
+# ---------------------------------------------------------------------------
+[payout]
+# Minimum balance a miner must accumulate before receiving payout
+threshold_etos  = 0.1
+
+# How often to process payouts (cron expression: every hour)
+schedule        = "0 * * * *"
+
+# Gas price for payout transactions (in gwei)
+gas_price_gwei  = 1
+
+# ---------------------------------------------------------------------------
+# Database (for tracking shares and pending payouts)
+# ---------------------------------------------------------------------------
+[database]
+# Redis is the most common choice for open-ethereum-pool forks
+type    = "redis"
+host    = "127.0.0.1"
+port    = 6379
+db      = 0
+# password = "<REDIS_PASSWORD>"
+
+# ---------------------------------------------------------------------------
+# API server (for pool dashboard / miners to check stats)
+# ---------------------------------------------------------------------------
+[api]
+listen   = "0.0.0.0:8080"
+# Serve a public stats endpoint at GET /stats
+cors     = true
