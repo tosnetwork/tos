@@ -163,7 +163,7 @@ The `--clean` flag stops any running services and removes previous `/data/` cont
    - Embeds 4 validator public keys via `add-validator`
    - Runs `build/crypto/create-state` with Fift include paths
    - Produces: `zerostate.boc`, `basestate0.boc`, `evmstate1.boc`, `unostate2.boc`, hash files, wallet/elector/config addresses
-   - **Initial token supply (TOS / EMO / UNO)**: 200 M per workchain. See [Zerostate.md §Initial Token Supply](Zerostate.md#initial-token-supply-per-workchain-issuance) for the per-workchain configuration points (supply values live in `gen-zerostate.fif:94`, `evm/core/init.cpp::kSeedAmountEmo`, and `uno/core/genesis.h::kGenesisTotalSupplyNano`).
+   - **Initial token supply**: TOS = 200 M, EMO = 200 M, UNO = 21 M (Zcash-peer scarcity for the privacy workchain; see [Zerostate.md §Initial Token Supply](Zerostate.md#initial-token-supply-per-workchain-issuance) for the per-workchain configuration points — supply values live in `gen-zerostate.fif:94`, `evm/core/init.cpp::kSeedAmountEmo`, and `uno/core/genesis.h::kGenesisTotalSupplyNano`).
 
 6. **Key generation** (per node, inside Python):
    - 5 Ed25519 keypairs per node: fullnode, validator, liteserver, console_server, console_client

@@ -14,12 +14,12 @@
 //!
 //! # Canonical constants (§10.3)
 //!
-//! | Category        | UNO         | nano-UNO             |
-//! |-----------------|-------------|----------------------|
-//! | Airdrop (60%)   | 120,000,000 | 120_000_000e9        |
-//! | Treasury (25%)  |  50,000,000 |  50_000_000e9        |
-//! | Team (15%)      |  30,000,000 |  30_000_000e9        |
-//! | **Total**       | 200,000,000 | 200_000_000e9 = 2.0e17 |
+//! | Category        | UNO        | nano-UNO            |
+//! |-----------------|------------|---------------------|
+//! | Airdrop (60%)   | 12,600,000 | 12_600_000e9        |
+//! | Treasury (25%)  | 5,250,000  |  5_250_000e9        |
+//! | Team (15%)      | 3,150,000  |  3_150_000e9        |
+//! | **Total**       | 21,000,000 | 21_000_000e9 = 2.1e16 |
 //!
 //! # Output JSON schema
 //!
@@ -62,19 +62,20 @@ use crate::transfer::{compute_note_commitment, compute_rcm, NoteCommitmentInputs
 // Canonical §10.3 constants — MUST match `uno/core/genesis.h`.
 // ---------------------------------------------------------------------------
 
-/// 200,000,000 UNO × 10^9 nano-units/UNO = 2.0e17 nano-UNO.
-/// (Raised from the original 21,000,000 cap per network-wide 200 M
-/// issuance alignment across TOS / EMO / UNO.)
-pub const GENESIS_TOTAL_SUPPLY_NANO: u64 = 200_000_000 * 1_000_000_000;
+/// 21,000,000 UNO × 10^9 nano-units/UNO = 2.1e16 nano-UNO.
+/// Matches Bitcoin / Zcash 21 M cap — UNO positions as the privacy-coin
+/// peer of ZEC/XMR. TOS (wc=0) and EMO (wc=1) use the larger 200 M
+/// supply appropriate for L1 platform / EVM gas roles.
+pub const GENESIS_TOTAL_SUPPLY_NANO: u64 = 21_000_000 * 1_000_000_000;
 
-/// 60% = 120,000,000 UNO.
-pub const GENESIS_AIRDROP_NANO: u64 = 120_000_000 * 1_000_000_000;
+/// 60% = 12,600,000 UNO.
+pub const GENESIS_AIRDROP_NANO: u64 = 12_600_000 * 1_000_000_000;
 
-/// 25% = 50,000,000 UNO.
-pub const GENESIS_TREASURY_NANO: u64 = 50_000_000 * 1_000_000_000;
+/// 25% = 5,250,000 UNO.
+pub const GENESIS_TREASURY_NANO: u64 = 5_250_000 * 1_000_000_000;
 
-/// 15% = 30,000,000 UNO.
-pub const GENESIS_TEAM_NANO: u64 = 30_000_000 * 1_000_000_000;
+/// 15% = 3,150,000 UNO.
+pub const GENESIS_TEAM_NANO: u64 = 3_150_000 * 1_000_000_000;
 
 /// Domain-separation tag for per-note rseed derivation. Byte-identical to
 /// the C++ `kGenesisRseedTagV1` constant.

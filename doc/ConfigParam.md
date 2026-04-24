@@ -54,7 +54,7 @@ The canonical TL-B schema is in [block.tlb](../crypto/block/block.tlb). Initial 
 |-------|------|-------|-------------|
 | `to_mint` | ExtraCurrencyCollection | (see zerostate) | Dictionary of extra currency IDs and amounts to mint each block |
 
-> **Note on main token supply.** ConfigParams 6 and 7 govern **extra (mintable) currencies only** — side-channel assets like governance tokens or test currencies that live alongside the native ones. The three native supplies — **TOS** (wc=0), **EMO** (wc=1), **UNO** (wc=2) — are **not** ConfigParams. They are set at zero-state construction time and cannot be mutated by on-chain governance after genesis. See [Zerostate.md §Initial Token Supply](Zerostate.md#initial-token-supply-per-workchain-issuance) for the per-workchain configuration points (target: 200 M per token).
+> **Note on main token supply.** ConfigParams 6 and 7 govern **extra (mintable) currencies only** — side-channel assets like governance tokens or test currencies that live alongside the native ones. The three native supplies — **TOS** (wc=0), **EMO** (wc=1), **UNO** (wc=2) — are **not** ConfigParams. They are set at zero-state construction time and cannot be mutated by on-chain governance after genesis. See [Zerostate.md §Initial Token Supply](Zerostate.md#initial-token-supply-per-workchain-issuance) for the per-workchain configuration points: TOS and EMO are sized at **200 M each** (L1 platform / EVM gas); UNO is sized at **21 M** (Zcash-peer scarcity).
 
 ## ConfigParam 8 — Global Version
 

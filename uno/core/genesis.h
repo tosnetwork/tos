@@ -119,17 +119,18 @@ struct GenesisDistributionInputs {
 /// loader BOTH pin these — any future change requires a `scheme_id` bump
 /// because the zerostate state root is bound to the resulting cm set.
 ///
-/// 200,000,000 UNO × 10^9 nano-units/UNO = 2.0e17 nano-UNO.
-/// (Raised from the original 21,000,000 cap per network-wide 200 M
-/// issuance alignment across TOS / EMO / UNO; supersedes uno-workchain.md
-/// Decision #36.)
-constexpr uint64_t kGenesisTotalSupplyNano = 200'000'000ULL * 1'000'000'000ULL;
+/// 21,000,000 UNO × 10^9 nano-units/UNO = 2.1e16 nano-UNO.
+/// Matches Bitcoin / Zcash 21 M cap — UNO positions as the privacy-coin
+/// peer of ZEC/XMR (uno-workchain.md Decision #36). TOS (wc=0) and EMO
+/// (wc=1) use the larger 200 M supply appropriate for L1 platform / EVM
+/// gas roles; UNO keeps its own scarcity narrative.
+constexpr uint64_t kGenesisTotalSupplyNano = 21'000'000ULL * 1'000'000'000ULL;
 
-/// Per-category targets. 200M is divisible by 20 so 60/25/15 still lands
-/// on whole-UNO boundaries (120M / 50M / 30M).
-constexpr uint64_t kGenesisAirdropNano  = 120'000'000ULL * 1'000'000'000ULL;  // 60%
-constexpr uint64_t kGenesisTreasuryNano =  50'000'000ULL * 1'000'000'000ULL;  // 25%
-constexpr uint64_t kGenesisTeamNano     =  30'000'000ULL * 1'000'000'000ULL;  // 15%
+/// Per-category targets. Chosen so the rounded integer split is exact:
+/// 21M is divisible by 20 so 60/25/15 lands on whole-UNO boundaries.
+constexpr uint64_t kGenesisAirdropNano  = 12'600'000ULL * 1'000'000'000ULL;  // 60%
+constexpr uint64_t kGenesisTreasuryNano =  5'250'000ULL * 1'000'000'000ULL;  // 25%
+constexpr uint64_t kGenesisTeamNano     =  3'150'000ULL * 1'000'000'000ULL;  // 15%
 
 static_assert(kGenesisAirdropNano + kGenesisTreasuryNano + kGenesisTeamNano
               == kGenesisTotalSupplyNano,

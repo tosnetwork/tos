@@ -828,7 +828,7 @@ std::array<uint8_t, 32> derive_genesis_rseed(uint32_t address_index) {
     //
     // u32 big-endian so the wire layout matches the Rust-side derivation
     // byte-for-byte; the 4-byte index width accommodates up to
-    // ~4.3 billion recipients (more than enough for any plausible 200 M
+    // ~4.3 billion recipients (more than enough for any plausible 21 M
     // UNO airdrop).
     uint8_t idx_be[4] = {
         static_cast<uint8_t>((address_index >> 24) & 0xFF),

@@ -480,7 +480,7 @@ static void test_load_address_envelope_form() {
 // ---------------------------------------------------------------------------
 // K-genesis-distribution: §10.3 60/25/15 builder round-trip.
 //
-// Feeds a 6-entry distribution summing exactly to 200 M UNO through
+// Feeds a 6-entry distribution summing exactly to 21 M UNO through
 // `build_genesis_notes_json`, parses the resulting JSON via
 // `load_genesis_distribution`, and asserts:
 //   - the loader accepts the builder's output byte-for-byte (schema parity)

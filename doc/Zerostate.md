@@ -305,13 +305,13 @@ All fee and gas parameters can be adjusted through on-chain governance after the
 
 TOS ships three native tokens, each with its own supply, its own decimal convention, and its own genesis-configuration surface. **Initial supply is NOT a ConfigParam** — it is set at zero-state construction time and cannot be changed by on-chain governance after genesis.
 
-The network-wide target is **200 M per token** across all three workchains:
+The supply is sized per the role of each token: **TOS and EMO at 200 M** (L1 platform / EVM gas — needs liquidity for staking and dapp tx fees); **UNO at 21 M** (privacy-coin scarcity, peer of Zcash / Bitcoin):
 
-| Token | Workchain | Decimals | Target Supply | Where configured | Determinism |
-|---|---|---|---|---|---|
-| **TOS** | master (`-1`) + wc=0 | 9 (nano-tomi) | 200,000,000 TOS | `crypto/smartcont/gen-zerostate.fif` line 94 (`TM$200000000 allocated-balance -`) | Baked into `zerostate.boc` at genesis |
-| **EMO** | wc=1 (EVM) | 18 (wei) | 200,000,000 EMO | `evm/core/init.cpp` `kSeedAmountEmo` constexpr (10 Hardhat dev accounts × 20 M each) | **Currently runtime-seeded** on first boot via `hydrate_global_state_if_empty`; mainnet path uses `evm-zerostate-from-alloc` Fift word |
-| **UNO** | wc=2 (STARK) | 9 (nano-UNO) | 200,000,000 UNO | `uno/core/genesis.h` `kGenesisTotalSupplyNano` constexpr, split 60 / 25 / 15 = 120 M / 50 M / 30 M | Baked into `unostate2.boc` via `build_zerostate_state_cell(GenesisDistribution)` — distribution builder tool not yet wired into the Fift pipeline; `gen-zerostate.fif` currently emits an empty `unostate2.boc` and tracks this as `TODO(uno-genesis-wiring)` |
+| Token | Workchain | Decimals | Target Supply | Role | Where configured | Determinism |
+|---|---|---|---|---|---|---|
+| **TOS** | master (`-1`) + wc=0 | 9 (nano-tomi) | 200,000,000 TOS | L1 platform gas + staking | `crypto/smartcont/gen-zerostate.fif` line 94 (`TM$200000000 allocated-balance -`) | Baked into `zerostate.boc` at genesis |
+| **EMO** | wc=1 (EVM) | 18 (wei) | 200,000,000 EMO | EVM gas + dapp economy | `evm/core/init.cpp` `kSeedAmountEmo` constexpr (10 Hardhat dev accounts × 20 M each) | **Currently runtime-seeded** on first boot via `hydrate_global_state_if_empty`; mainnet path uses `evm-zerostate-from-alloc` Fift word |
+| **UNO** | wc=2 (STARK) | 9 (nano-UNO) | 21,000,000 UNO | Privacy "digital gold" (peer of ZEC/BTC) | `uno/core/genesis.h` `kGenesisTotalSupplyNano` constexpr, split 60 / 25 / 15 = 12.6 M / 5.25 M / 3.15 M | Baked into `unostate2.boc` via `build_zerostate_state_cell(GenesisDistribution)` — distribution builder tool not yet wired into the Fift pipeline; `gen-zerostate.fif` currently emits an empty `unostate2.boc` and tracks this as `TODO(uno-genesis-wiring)` |
 
 ### TOS (native, wc=0)
 
@@ -339,13 +339,13 @@ The dev/test EMO distribution seeds 10 Hardhat/Anvil standard EOAs with `kSeedAm
 
 ### UNO (privacy workchain, wc=2)
 
-UNO uses a Zcash-style shielded commitment model — supply exists as note commitments in the initial commitment tree. The 200 M supply is constexpr-pinned at three sites that **must stay in sync**:
+UNO uses a Zcash-style shielded commitment model — supply exists as note commitments in the initial commitment tree. **The 21 M cap matches Bitcoin / Zcash** — UNO is positioned as the privacy-coin peer of ZEC/XMR and inherits the "digital scarcity" narrative (uno-workchain.md Decision #36). The supply is constexpr-pinned at three sites that **must stay in sync**:
 
 - C++: `uno/core/genesis.h` (`kGenesisTotalSupplyNano`, `kGenesisAirdropNano`, `kGenesisTreasuryNano`, `kGenesisTeamNano`)
 - Rust: `tosctl/uno/src/genesis_build.rs` (`GENESIS_TOTAL_SUPPLY_NANO`, `GENESIS_AIRDROP_NANO`, `GENESIS_TREASURY_NANO`, `GENESIS_TEAM_NANO`)
 - Golden fixture: `uno/test/golden/genesis-distribution-v1.json` (regenerate via `UNO_GENESIS_REGEN=1 cargo test --release --test genesis_build_golden -p tosctl-uno`)
 
-The 60 / 25 / 15 split lands on clean integer boundaries (120 M / 50 M / 30 M). Changing the total forces a `scheme_id` bump on the UNO side because the zerostate cm-set root is consensus-binding.
+The 60 / 25 / 15 split lands on clean integer boundaries (12.6 M / 5.25 M / 3.15 M). Changing the total forces a `scheme_id` bump on the UNO side because the zerostate cm-set root is consensus-binding.
 
 **Wiring status:** `add-uno-workchain` Fift word is in `Workchain.fif` and `gen-zerostate.fif` registers wc=2 with an empty initial `unostate2.boc`. The distribution-building pipeline (`GenesisDistributionInputs{airdrop, treasury, team}` → `build_zerostate_state_cell` → `unostate2.boc`) is not yet wired into the Fift script — mainnet launch requires either a `create-uno-state` standalone tool or an extension to `create-state` that consumes `zerostate-genesis-notes.json`. Until that tool exists, wc=2 boots with an empty commitment tree (no UNO in circulation).
 
