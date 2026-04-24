@@ -521,29 +521,57 @@ race-condition rejection test.
   selector one-hot, proxy constancy, AIR dimension match); full
   `cargo test --lib` = 410/410 (pre-existing 2 failures unrelated)
 
-**Phase 3b (pending) — REQUIRED before mainnet** — Poseidon2 sub-AIR + FFI:
+**Phase 3b (completed)** — Poseidon2 sub-AIR wiring:
 
-1. Wire `eval_poseidon2_16` to the shared Poseidon2-w16 column block
-2. Populate Poseidon2 trace cells via `Poseidon2Air::generate_trace_rows`
-3. Per-row input/output pinning constraints (see §TODO blocks in
-   `mine_uno_air.rs` for the exact layout per row)
-4. Capacity-carry proxy columns (pattern from `transfer_air.rs:~1663-1830`)
-5. FFI entry points `uno_mine_uno_prove` / `uno_mine_uno_verify` in
-   `lib.rs`, bumping `uno_plonky3_abi_version()` 3 → 4
-6. `tosctl uno mine` replaces `prove_mine_uno_stub` with real FFI call
-7. End-to-end golden-fixture test: Rust prover → C++ verifier round-trip
-8. Chain-state integration tests (`uno/test/test-uno-mine-loader.cpp`
-   `#[ignore]`-marked tests become enabled)
+- `eval_poseidon2_16` delegation on every row (incl. zero-state padding
+  on rows 4–7) — every cell in the 316-col Poseidon2-w16 block is
+  constrained to encode a valid permutation
+- Poseidon2 trace cells populated via
+  `p3_poseidon2_air::generate_trace_rows` for 4 permutations:
+  CM perm-1 (row 0), CM perm-2 (row 1), PoW perm-1 (row 2),
+  PoW perm-2 (row 3)
+- Per-row-selector-gated rate + capacity input pinning for all 4
+  active rows (maps onto the 15-fe CM sponge and 9-fe PoW sponge)
+- **32 capacity-carry proxy columns** — deviation from original spec:
+  each chain gets its own 16-cell block (8 rate + 8 cap) at offset
+  348 to carry perm-1 post-state (`post[0..16]`) into perm-2's inputs.
+  Per-chain separation is required; a shared carry block would force
+  `cm_p1_out == pow_p1_out` via the row-constancy transition invariant.
+- Digest bindings: row-1 `post[0..4]` = `COL_W_OUTPUT_CM_FE[0..4]`,
+  row-3 `post[0..4]` = `COL_W_POW_HASH_FE[0..4]`
+- 3 new parity/roundtrip tests: CM sponge ↔ `poseidon2_cm_full_sponge`
+  parity, PoW hash ↔ `poseidon2_mine_pow_hash` parity, full
+  `MineUnoAir` prove/verify roundtrip
+- Investigation artifact: `doc/uno-mine-phase3b-spec.md` (718 lines,
+  kept as audit trail)
 
-**Without Phase 3b, MineUno proofs are not cryptographically sound** —
-a malicious prover can substitute arbitrary (output_cm, pow_hash) in
-proxy columns and pass the Phase 3a structural constraints. DO NOT
-enable MineUno tx kind on mainnet until Phase 3b lands.
+**Phase 3c (completed) — FFI wiring + ABI v4** (Task #17):
 
-**Phase 3b estimate**: 2-3 weeks. The Poseidon2 sub-AIR wiring is the
-bulk; FFI wiring afterward is mechanical (~1 day).
+- `uno/plonky3-ffi/src/prover.rs::prove_mine_uno` — decode witness,
+  generate trace, `p3_uni_stark::prove`, postcard-serialize
+- `uno/plonky3-ffi/src/verifier.rs::verify_mine_uno` — decode PI via
+  `decode_mine_public_inputs`, postcard-deserialize proof,
+  `p3_uni_stark::verify`
+- C-ABI entry points `uno_mine_uno_prove` and `uno_mine_uno_verify`
+  in `lib.rs`, same allocation pattern as `uno_plonky3_prove/_verify`
+- `uno_plonky3_abi_version()` bumped 3 → 4 with doc history entry
+- `cbindgen`-regenerated `include/uno_plonky3_ffi.h` contains both
+  new declarations
+- `tosctl uno mine` replaces `prove_mine_uno_stub` with a real call
+  to `uno_plonky3_ffi::prover::prove_mine_uno` (direct Rust API);
+  adds ABI version guard at startup
+- 4 new FFI-surface tests (roundtrip, tampered-PI rejection,
+  short-witness rejection, null-out rejection) + tosctl
+  `prove_mine_uno_real_proof_roundtrips` — all green
 
-**Legacy total estimate** (both phases together): ~4-6 weeks.
+Full `cargo test --release -j 64 --lib` on `uno-plonky3-ffi` = 417
+passed / 2 pre-existing unrelated failures; mine_uno subset = 20
+passed / 0 failed.
+
+**Still pending before mainnet enablement of MineUno tx kind**:
+chain-state integration tests in `uno/test/test-uno-mine-loader.cpp`
+(currently `#[ignore]`-marked) plus end-to-end
+Rust-prover → C++-verifier golden-fixture round-trip.
 
 ### Total elapsed time
 

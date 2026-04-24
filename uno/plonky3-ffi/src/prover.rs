@@ -563,6 +563,50 @@ impl MvpBatchProver {
     }
 }
 
+// ---------------------------------------------------------------------------
+// MineUno prover (Phase 3 — final FFI wiring)
+// ---------------------------------------------------------------------------
+//
+// The MineUno AIR has ONE shape (unlike Transfer's 16 shapes), so no shape
+// dispatch is needed. The entry point takes a canonical wire-encoded
+// witness, decodes it, generates the trace, and runs `p3_uni_stark::prove`
+// against the same Option B `StarkConfig` used by the Transfer path.
+//
+// Proof bytes are postcard-encoded `p3_uni_stark::Proof<MvpConfig>` — the
+// same serialization the Transfer `MvpProver::prove` path emits (for
+// cross-path binary-format parity on disk and across the FFI). The
+// corresponding verifier is `verify_mine_uno(...)` in verifier.rs.
+
+/// Run the MineUno STARK prover against a wire-encoded
+/// [`crate::mine_uno_witness::MineUnoWitness`].
+///
+/// Returns `(proof_bytes, public_inputs_bytes)`:
+///   * `proof_bytes` — postcard-encoded `p3_uni_stark::Proof<MvpConfig>`.
+///   * `public_inputs_bytes` — `N_PUBLIC_INPUTS * 8 = 96` bytes, derived
+///     from the witness via `MineUnoWitness::public_inputs_bytes()`.
+///
+/// Errors:
+///   * [`Plonky3Status::WitnessInvalid`] — witness decode failed (wrong
+///     length, non-canonical limbs, broken conservation, bad diversifier
+///     padding).
+///   * [`Plonky3Status::InternalError`] — postcard serialization failed
+///     (should never happen in practice).
+pub fn prove_mine_uno(witness_bytes: &[u8]) -> Result<(Vec<u8>, Vec<u8>), Plonky3Status> {
+    use crate::mine_uno_air::MineUnoAir;
+    use crate::mine_uno_witness::MineUnoWitness;
+
+    let witness = MineUnoWitness::decode(witness_bytes)?;
+    let trace = witness.generate_trace();
+    let public_inputs = witness.public_inputs();
+
+    let config = build_config();
+    let air = MineUnoAir::new();
+    let proof = prove(&config, &air, trace, &public_inputs);
+    let proof_bytes = postcard::to_allocvec(&proof).map_err(|_| Plonky3Status::InternalError)?;
+    let pi_bytes = witness.public_inputs_bytes();
+    Ok((proof_bytes, pi_bytes))
+}
+
 fn pre_check_transfer_witness(w: &MvpWitness) -> Result<(), Plonky3Status> {
     use crate::transfer_air::{witness_claim1_anchor_consistent, witness_claim2_leaf_consistent};
 

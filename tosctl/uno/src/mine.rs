@@ -318,32 +318,77 @@ pub async fn fetch_mine_state(rpc: &RpcClient) -> Result<(u32, [u8; 32], u64)> {
 }
 
 // ---------------------------------------------------------------------------
-// Plonky3 prover stub
+// Plonky3 prover (Phase 3 — real AIR call)
 // ---------------------------------------------------------------------------
 
-/// Stub for the Plonky3 STARK prover invocation.
+/// Run the real Plonky3 STARK prover for a `MineUnoWitness` + matching
+/// `MineUnoPublicInputs` (the latter supplies `remaining_pre` /
+/// `remaining_post`, which are PI-only conservation fields).
 ///
-/// **TODO(Phase 3)**: Replace with a real call to
-/// `uno_plonky3_ffi::prove_mine_uno(witness, public_inputs)`.
+/// Returns the postcard-encoded `Proof<MvpConfig>` bytes on success. The
+/// full `[u32_le proof_len][proof][pi]` owned buffer that
+/// `uno_mine_uno_prove` emits via the C ABI is unpacked here — callers
+/// get just the proof half back; the PI can always be rederived from
+/// the witness (or from the passed-in `public_inputs` struct) so we do
+/// not round-trip it.
 ///
-/// This stub prints the witness/PI summary and returns an error so the
-/// CLI pipeline can be exercised end-to-end before the AIR lands.
+/// Construction sequence:
+///   1. Convert `MineUnoWitness` (wallet-native) → the FFI-side
+///      `uno_plonky3_ffi::mine_uno_witness::MineUnoWitness`.
+///   2. Call the direct Rust API `uno_plonky3_ffi::prover::prove_mine_uno`
+///      (we're in the same cargo workspace; no need to bounce through
+///      the C ABI).
+///   3. Return the proof bytes.
 pub fn prove_mine_uno_stub(
     witness: &MineUnoWitness,
     public_inputs: &MineUnoPublicInputs,
 ) -> Result<Vec<u8>> {
-    // TODO(Phase 3): replace with real call to uno_plonky3_ffi::prove_mine_uno
-    // Currently returns a placeholder Err so the CLI can be tested end-to-end
-    // before the AIR implementation lands.
-    eprintln!("[stub] would generate STARK proof for MineUno tx");
-    eprintln!("       witness.nonce    = {:?}...", &witness.nonce[..8]);
-    eprintln!("       witness.epoch    = {}", witness.epoch);
-    eprintln!("       public_inputs.epoch       = {}", public_inputs.epoch);
-    eprintln!("       public_inputs.value_nano  = {}", public_inputs.value_nano);
-    eprintln!("       public_inputs.output_cm   = {}", hex::encode(public_inputs.output_cm));
-    eprintln!("       public_inputs.remaining_pre  = {}", public_inputs.remaining_pre);
-    eprintln!("       public_inputs.remaining_post = {}", public_inputs.remaining_post);
-    Err(anyhow!("Phase 3 prover not yet implemented — see prove_mine_uno_stub in mine.rs"))
+    use uno_plonky3_ffi::mine_uno_witness::MineUnoWitness as FfiWitness;
+    use uno_plonky3_ffi::prover::prove_mine_uno;
+
+    // Startup ABI version guard — catches a shipped-binary / linked-lib
+    // skew early. MineUno FFI landed at ABI v4.
+    let abi = uno_plonky3_ffi::uno_plonky3_abi_version();
+    if abi < 4 {
+        return Err(anyhow!(
+            "uno_plonky3_ffi ABI version {} < 4 (MineUno prover requires v4+)",
+            abi
+        ));
+    }
+
+    // Pad the 11-byte diversifier into the canonical 32-byte form
+    // (bytes [11..32] MUST be zero — enforced by the FFI decoder).
+    let mut d = [0u8; 32];
+    d[..11].copy_from_slice(&witness.recipient.diversifier);
+
+    let ffi_witness = FfiWitness {
+        epoch:           witness.epoch,
+        nonce:           witness.nonce,
+        d,
+        pk_d:            witness.recipient.pk_d_compressed,
+        ivk_commitment:  witness.recipient.ivk_commitment,
+        value_nano:      witness.value_nano,
+        rseed:           witness.rseed,
+        remaining_pre:   public_inputs.remaining_pre,
+        remaining_post:  public_inputs.remaining_post,
+    };
+    let witness_bytes = ffi_witness.encode();
+
+    eprintln!(
+        "[mine] generating STARK proof (epoch={}, value={}, remaining_pre={}) …",
+        public_inputs.epoch, public_inputs.value_nano, public_inputs.remaining_pre
+    );
+    let t0 = std::time::Instant::now();
+    let (proof_bytes, _pi_bytes) = prove_mine_uno(&witness_bytes)
+        .map_err(|s| anyhow!("uno_plonky3_ffi::prove_mine_uno failed: {:?}", s))?;
+    let elapsed_ms = t0.elapsed().as_millis();
+    eprintln!(
+        "[mine] STARK proof generated in {} ms ({} bytes)",
+        elapsed_ms,
+        proof_bytes.len()
+    );
+
+    Ok(proof_bytes)
 }
 
 // ---------------------------------------------------------------------------
@@ -783,27 +828,72 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // 9. Test: prove_mine_uno_stub returns Err (expected until Phase 3)
+    // 9. Test: prove_mine_uno_stub produces a real Plonky3 proof (Phase 3)
     // -----------------------------------------------------------------------
 
+    /// Phase 3 real-prover smoke test: build a consistent witness + PI,
+    /// call the FFI prover, check we get non-empty proof bytes back, and
+    /// verify them via the FFI verifier round-trip.
+    ///
+    /// Consistency constraint: `public_inputs.output_cm` MUST equal the
+    /// off-circuit `Poseidon2("uno-cm-v1", d, pk_d, ivk_cm, value, rcm)`
+    /// derived from the witness, otherwise the AIR's row-0 PI binding
+    /// fails. We obtain the correct `output_cm` via
+    /// `FfiWitness::compute_output_cm_bytes` and mirror it into PI.
     #[test]
-    fn prove_mine_uno_stub_returns_err() {
-        let w = MineUnoWitness {
-            epoch: 0,
+    fn prove_mine_uno_real_proof_roundtrips() {
+        use uno_plonky3_ffi::mine_uno_witness::MineUnoWitness as FfiWitness;
+        use uno_plonky3_ffi::verifier::verify_mine_uno;
+
+        let recipient = test_address();
+        let epoch = 0u32;
+        let value = INIT_MINE_REWARD;
+
+        // Build the FFI witness first so we can compute the consistent
+        // output_cm for the PI struct.
+        let mut d = [0u8; 32];
+        d[..11].copy_from_slice(&recipient.diversifier);
+        let ffi_witness = FfiWitness {
+            epoch,
             nonce: [0xBBu8; 32],
-            recipient: test_address(),
-            value_nano: INIT_MINE_REWARD,
+            d,
+            pk_d: recipient.pk_d_compressed,
+            ivk_commitment: recipient.ivk_commitment,
+            value_nano: value,
             rseed: [0xCCu8; 32],
+            remaining_pre: MINE_SUPPLY_NANO,
+            remaining_post: MINE_SUPPLY_NANO - value,
+        };
+        let output_cm = ffi_witness.compute_output_cm_bytes();
+
+        // Wallet-native witness + PI (matches what `execute()` builds).
+        let w = MineUnoWitness {
+            epoch,
+            nonce: ffi_witness.nonce,
+            recipient,
+            value_nano: value,
+            rseed: ffi_witness.rseed,
         };
         let pi = MineUnoPublicInputs {
-            epoch: 0,
+            epoch,
             target: { let mut t = [0u8; 32]; t.fill(0xFF); t },
-            value_nano: INIT_MINE_REWARD,
-            output_cm: [0xAAu8; 32],
+            value_nano: value,
+            output_cm,
             remaining_pre: MINE_SUPPLY_NANO,
-            remaining_post: MINE_SUPPLY_NANO - INIT_MINE_REWARD,
+            remaining_post: MINE_SUPPLY_NANO - value,
         };
-        let result = prove_mine_uno_stub(&w, &pi);
-        assert!(result.is_err(), "stub prover must return Err until Phase 3 lands");
+
+        let proof_bytes = prove_mine_uno_stub(&w, &pi)
+            .expect("real STARK prover must succeed on a consistent witness + PI");
+        assert!(!proof_bytes.is_empty(), "proof bytes must be non-empty");
+
+        // Round-trip through the verifier.
+        let pi_bytes = ffi_witness.public_inputs_bytes();
+        let status = verify_mine_uno(&proof_bytes, &pi_bytes);
+        assert_eq!(
+            status,
+            uno_plonky3_ffi::Plonky3Status::Ok,
+            "verify_mine_uno must accept the proof we just produced",
+        );
     }
 }

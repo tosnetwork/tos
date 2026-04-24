@@ -83,7 +83,7 @@ mod transfer_sponge;
 mod transfer_witness;
 pub mod mine_uno_air;
 mod mine_uno_columns;
-mod mine_uno_witness;
+pub mod mine_uno_witness;
 pub mod verifier;
 pub mod verifier_air;
 
@@ -919,6 +919,110 @@ pub unsafe extern "C" fn uno_block_verifier_verify(
 }
 
 // ---------------------------------------------------------------------------
+// MineUno prove / verify FFI surface (Phase 3 — final wiring)
+//
+// The MineUno AIR ships with a single shape (no `n_spends × n_outputs`
+// dispatch). Prove and verify take byte buffers directly — no opaque
+// handle is needed because the underlying `StarkConfig` is cheap to
+// rebuild per call (the Transfer path holds one only because a handle
+// was already baked into the wider Phase 5 lifecycle). Matching the
+// simpler shape keeps the MineUno FFI easy to consume from wc=2
+// wallets / tosctl.
+//
+// Memory discipline mirrors `uno_plonky3_prove`: on `Ok` the proof +
+// public-input buffer is returned concatenated as
+// `[u32 LE proof_len][proof_bytes][public_input_bytes]` via a heap
+// `Plonky3OwnedProof`. Callers free with [`uno_plonky3_proof_free`].
+// ---------------------------------------------------------------------------
+
+/// Run the MineUno STARK prover against a canonical
+/// [`crate::mine_uno_witness::MineUnoWitness`] wire encoding.
+///
+/// On `Ok`, `*out_proof` is populated with a heap-allocated buffer
+/// containing `[u32 LE proof_len][proof_bytes][public_input_bytes]`; the
+/// caller MUST free via [`uno_plonky3_proof_free`] exactly once. On any
+/// non-Ok return, `*out_proof` is cleared to an empty descriptor and the
+/// caller must NOT attempt to free it.
+///
+/// # Safety
+/// - `witness` must describe a valid, readable byte range (`ptr` non-
+///   null and `[ptr, ptr+len)` readable for the duration of the call),
+///   or an empty descriptor (`len == 0`). The bytes must be a canonical
+///   wire-encoded `MineUnoWitness` (see `mine_uno_witness::MINE_UNO_WITNESS_BYTES`).
+/// - `out_proof` must be a valid, aligned, writable pointer to a
+///   `Plonky3OwnedProof`. Previous contents are overwritten.
+#[no_mangle]
+pub unsafe extern "C" fn uno_mine_uno_prove(
+    witness: Plonky3Witness,
+    out_proof: *mut Plonky3OwnedProof,
+) -> i32 {
+    ffi_guard(|| {
+        if out_proof.is_null() {
+            return Plonky3Status::NullPointer;
+        }
+        // SAFETY: caller guarantees writability of out_proof.
+        unsafe {
+            *out_proof = Plonky3OwnedProof::EMPTY;
+        }
+
+        let Some(witness_bytes) = (unsafe { slice_from_parts(witness.ptr, witness.len) }) else {
+            return Plonky3Status::NullPointer;
+        };
+
+        match prover::prove_mine_uno(witness_bytes) {
+            Ok((proof_bytes, public_inputs_bytes)) => {
+                // Concatenated owned layout: `[u32 LE proof_len][proof][pi]`.
+                // Mirrors `uno_plonky3_prove` so the caller-side free path
+                // is identical across the two prove entry points.
+                let mut out = Vec::with_capacity(4 + proof_bytes.len() + public_inputs_bytes.len());
+                out.extend_from_slice(&(proof_bytes.len() as u32).to_le_bytes());
+                out.extend_from_slice(&proof_bytes);
+                out.extend_from_slice(&public_inputs_bytes);
+                out.shrink_to_fit();
+
+                let mut boxed = out.into_boxed_slice();
+                let ptr = boxed.as_mut_ptr();
+                let len = boxed.len();
+                std::mem::forget(boxed);
+                // SAFETY: out_proof is non-null & writable per caller.
+                unsafe {
+                    *out_proof = Plonky3OwnedProof { ptr, len, cap: len };
+                }
+                Plonky3Status::Ok
+            }
+            Err(status) => status,
+        }
+    })
+}
+
+/// Verify a MineUno STARK proof against its public-input bytes.
+///
+/// Returns:
+/// - [`Plonky3Status::Ok`] iff the proof is valid for the public inputs.
+/// - A specific decode / length / verify error code otherwise.
+///
+/// # Safety
+/// - `proof` and `public_inputs` buffers must each describe a valid
+///   readable byte range for the duration of the call (or an empty
+///   descriptor with `len == 0`).
+#[no_mangle]
+pub unsafe extern "C" fn uno_mine_uno_verify(
+    proof: Plonky3ProofBytes,
+    public_inputs: Plonky3PublicInputs,
+) -> i32 {
+    ffi_guard(|| {
+        let Some(proof_bytes) = (unsafe { slice_from_parts(proof.ptr, proof.len) }) else {
+            return Plonky3Status::NullPointer;
+        };
+        let Some(pi_bytes) = (unsafe { slice_from_parts(public_inputs.ptr, public_inputs.len) })
+        else {
+            return Plonky3Status::NullPointer;
+        };
+        verifier::verify_mine_uno(proof_bytes, pi_bytes)
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Version / ABI probe
 // ---------------------------------------------------------------------------
 
@@ -926,19 +1030,19 @@ pub unsafe extern "C" fn uno_block_verifier_verify(
 /// `Plonky3Verifier::init()` to catch a version-skew between the shipped
 /// Rust static-lib and the compiled C++ header.
 ///
-/// Current value: 3 (bumped from 2 by A6-2, which adds
-/// [`UnoBlockPublicInputsView`], [`UnoBlockVerifierHandle`],
-/// [`uno_block_verifier_init`], [`uno_block_verifier_free`], and
-/// [`uno_block_verifier_verify`] to the FFI surface). Bump on any
-/// layout change to existing FFI structs or any
-/// addition/removal of FFI entry points.
+/// Current value: 4 (bumped from 3 by Phase 3 final wiring, which adds
+/// [`uno_mine_uno_prove`] and [`uno_mine_uno_verify`] to the FFI surface
+/// for the MineUno AIR). Bump on any layout change to existing FFI
+/// structs or any addition/removal of FFI entry points.
 ///
 /// History:
 /// - v1 → v2 (A6-1): UnoBlockExtra{Bytes,Parsed} + wire-format entry points.
 /// - v2 → v3 (A6-2): UnoBlockPublicInputsView + block-verifier handle.
+/// - v3 → v4 (MineUno Phase 3): uno_mine_uno_prove / uno_mine_uno_verify
+///   for the MineUno AIR.
 #[no_mangle]
 pub extern "C" fn uno_plonky3_abi_version() -> u32 {
-    3
+    4
 }
 
 // ---------------------------------------------------------------------------
@@ -1103,10 +1207,10 @@ mod ffi_tests {
     }
 
     /// The ABI-version probe must return a positive integer.
-    /// v3 added the A6-2 block-verifier handle entry points.
+    /// v4 added `uno_mine_uno_prove` / `uno_mine_uno_verify`.
     #[test]
     fn abi_version_probe() {
-        assert_eq!(uno_plonky3_abi_version(), 3);
+        assert_eq!(uno_plonky3_abi_version(), 4);
     }
 
     // =======================================================================
@@ -1489,5 +1593,168 @@ mod ffi_tests {
     fn block_verifier_ffi_free_null_is_noop() {
         // No observable state — just must not crash.
         unsafe { uno_block_verifier_free(std::ptr::null_mut()) };
+    }
+
+    // =======================================================================
+    // MineUno FFI — Phase 3 final wiring
+    //
+    // Exercises the C-ABI `uno_mine_uno_prove` + `uno_mine_uno_verify`
+    // entry points on a deterministic witness. Mirrors the Transfer FFI
+    // round-trip test (`ffi_roundtrip_valid_witness`) so a breakage in
+    // either path trips independently.
+    // =======================================================================
+
+    /// Prove + verify round-trip through the MineUno C ABI. Equivalent to
+    /// `mine_uno_air::tests::mine_uno_air_prove_verify_roundtrip` but
+    /// routed through the pointer-based FFI surface, including the
+    /// `[u32 proof_len][proof][pi]` owned-buffer layout.
+    #[test]
+    fn mine_uno_ffi_roundtrip_valid_witness() {
+        use crate::mine_uno_witness::MineUnoWitness;
+
+        // Deterministic witness (same fixture as the in-Rust roundtrip).
+        let w = MineUnoWitness::deterministic_valid(0, 0xC0FF_EE);
+        let witness_bytes = w.encode();
+
+        // Prove.
+        let mut out_proof = Plonky3OwnedProof::EMPTY;
+        let rc = unsafe {
+            uno_mine_uno_prove(
+                Plonky3Witness {
+                    ptr: witness_bytes.as_ptr(),
+                    len: witness_bytes.len(),
+                },
+                &mut out_proof,
+            )
+        };
+        assert_eq!(
+            rc,
+            Plonky3Status::Ok.as_i32(),
+            "uno_mine_uno_prove must succeed"
+        );
+        assert!(!out_proof.ptr.is_null());
+
+        // Unpack [u32 LE proof_len][proof_bytes][public_inputs_bytes].
+        let owned = unsafe { std::slice::from_raw_parts(out_proof.ptr, out_proof.len) }.to_vec();
+        assert!(owned.len() >= 4);
+        let proof_len = u32::from_le_bytes([owned[0], owned[1], owned[2], owned[3]]) as usize;
+        assert!(owned.len() >= 4 + proof_len);
+        let proof_bytes = &owned[4..4 + proof_len];
+        let pi_bytes = &owned[4 + proof_len..];
+
+        // PI byte length == `N_PUBLIC_INPUTS * 8` (= 96) for the single
+        // MineUno shape.
+        assert_eq!(pi_bytes.len(), crate::mine_uno_air::PUBLIC_INPUT_BYTES);
+
+        // Verify.
+        let rc = unsafe {
+            uno_mine_uno_verify(
+                Plonky3ProofBytes {
+                    ptr: proof_bytes.as_ptr(),
+                    len: proof_bytes.len(),
+                },
+                Plonky3PublicInputs {
+                    ptr: pi_bytes.as_ptr(),
+                    len: pi_bytes.len(),
+                },
+            )
+        };
+        assert_eq!(
+            rc,
+            Plonky3Status::Ok.as_i32(),
+            "uno_mine_uno_verify must accept a valid proof"
+        );
+
+        // Cleanup.
+        unsafe { uno_plonky3_proof_free(out_proof) };
+    }
+
+    /// Tampering with the public-input bytes must cause verify to reject.
+    /// Flipping a bit of `output_cm` decouples the PI from the proof
+    /// transcript — the STARK verifier MUST NOT return Ok.
+    #[test]
+    fn mine_uno_ffi_rejects_tampered_public_inputs() {
+        use crate::mine_uno_witness::MineUnoWitness;
+
+        let w = MineUnoWitness::deterministic_valid(3, 0xDEAD_BEEF);
+        let witness_bytes = w.encode();
+
+        let mut out_proof = Plonky3OwnedProof::EMPTY;
+        let rc = unsafe {
+            uno_mine_uno_prove(
+                Plonky3Witness {
+                    ptr: witness_bytes.as_ptr(),
+                    len: witness_bytes.len(),
+                },
+                &mut out_proof,
+            )
+        };
+        assert_eq!(rc, Plonky3Status::Ok.as_i32());
+
+        let owned = unsafe { std::slice::from_raw_parts(out_proof.ptr, out_proof.len) }.to_vec();
+        let proof_len = u32::from_le_bytes([owned[0], owned[1], owned[2], owned[3]]) as usize;
+        let proof_bytes = &owned[4..4 + proof_len];
+        let mut pi_bytes = owned[4 + proof_len..].to_vec();
+        // Flip a low-bit in the first limb of output_cm (byte offset
+        // PI_OUTPUT_CM_BASE*8 = 16 inside the PI byte vector).
+        pi_bytes[16] ^= 0x01;
+
+        let rc = unsafe {
+            uno_mine_uno_verify(
+                Plonky3ProofBytes {
+                    ptr: proof_bytes.as_ptr(),
+                    len: proof_bytes.len(),
+                },
+                Plonky3PublicInputs {
+                    ptr: pi_bytes.as_ptr(),
+                    len: pi_bytes.len(),
+                },
+            )
+        };
+        assert_ne!(
+            rc,
+            Plonky3Status::Ok.as_i32(),
+            "verify MUST reject a tampered-PI proof"
+        );
+
+        unsafe { uno_plonky3_proof_free(out_proof) };
+    }
+
+    /// A malformed witness (wrong byte length) is rejected by the decode
+    /// step with `WitnessInvalid`, and `*out_proof` must stay empty so a
+    /// naive caller that always free()'s cannot double-free nothing.
+    #[test]
+    fn mine_uno_ffi_rejects_short_witness() {
+        let short = vec![0u8; 10];
+        let mut out_proof = Plonky3OwnedProof::EMPTY;
+        let rc = unsafe {
+            uno_mine_uno_prove(
+                Plonky3Witness {
+                    ptr: short.as_ptr(),
+                    len: short.len(),
+                },
+                &mut out_proof,
+            )
+        };
+        assert_eq!(rc, Plonky3Status::WitnessInvalid.as_i32());
+        assert!(out_proof.ptr.is_null());
+        assert_eq!(out_proof.len, 0);
+        assert_eq!(out_proof.cap, 0);
+    }
+
+    /// `uno_mine_uno_prove` with a null `out_proof` must return
+    /// `NullPointer` and not crash.
+    #[test]
+    fn mine_uno_ffi_prove_null_out_rejects() {
+        let rc = unsafe {
+            uno_mine_uno_prove(
+                Plonky3Witness {
+                    ptr: std::ptr::null(),
+                    len: 0,
+                },
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(rc, Plonky3Status::NullPointer.as_i32());
     }
 }

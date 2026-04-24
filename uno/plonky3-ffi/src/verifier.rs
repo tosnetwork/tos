@@ -213,6 +213,55 @@ impl MvpBatchVerifier {
     }
 }
 
+// ---------------------------------------------------------------------------
+// MineUno verifier (Phase 3 — final FFI wiring)
+// ---------------------------------------------------------------------------
+//
+// Consensus-critical path for the MineUno AIR. There is ONE shape (unlike
+// Transfer's 16 shapes), so no shape dispatch: public-input length MUST
+// equal `PUBLIC_INPUT_BYTES` (= 96) or we reject at decode.
+//
+// Proof bytes are postcard-encoded `p3_uni_stark::Proof<MvpConfig>`, the
+// exact format produced by `prove_mine_uno`. The verifier runs against
+// the same Option B `StarkConfig` the prover uses (`build_config()`), so
+// the two paths are byte-identical by construction.
+
+/// Verify a MineUno STARK proof against its public-input bytes.
+///
+/// Returns [`Plonky3Status::Ok`] iff the proof is cryptographically valid
+/// for the given public inputs. On any failure path the function returns
+/// a specific error code — `PublicInputLengthMismatch`,
+/// `PublicInputDecodeFailed`, `ProofDecodeFailed`, or `VerifyFailed`.
+///
+/// This is the entry point called from the C ABI
+/// [`crate::uno_mine_uno_verify`] and from Rust-side integration tests.
+pub fn verify_mine_uno(proof_bytes: &[u8], public_inputs_bytes: &[u8]) -> Plonky3Status {
+    use crate::mine_uno_air::MineUnoAir;
+    use crate::mine_uno_witness::decode_mine_public_inputs;
+    use crate::prover::build_config;
+
+    // Decode + length-check the public inputs. `decode_mine_public_inputs`
+    // returns `PublicInputLengthMismatch` / `PublicInputDecodeFailed` as
+    // appropriate, both of which propagate straight through.
+    let public_inputs = match decode_mine_public_inputs(public_inputs_bytes) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+
+    // Deserialize the proof.
+    let proof: Proof<MvpConfig> = match postcard::from_bytes(proof_bytes) {
+        Ok(p) => p,
+        Err(_) => return Plonky3Status::ProofDecodeFailed,
+    };
+
+    let config = build_config();
+    let air = MineUnoAir::new();
+    match verify(&config, &air, &proof, &public_inputs) {
+        Ok(()) => Plonky3Status::Ok,
+        Err(_) => Plonky3Status::VerifyFailed,
+    }
+}
+
 // Static Send+Sync check so `Arc<MvpVerifier>` in the FFI handle is sound
 // for parallel verify across `num_cores` threads (§13 P.3).
 const _: fn() = || {

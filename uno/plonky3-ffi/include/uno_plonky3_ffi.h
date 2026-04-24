@@ -742,8 +742,24 @@
 // Total witness proxy columns.
 #define N_WITNESS_PROXY 28
 
+// Base offset for the 32-cell carry proxy block.
+// - `COL_CAP_CARRY_BASE +  0..8`  : CM chain rate carry  (perm-1 post[0..8]).
+// - `COL_CAP_CARRY_BASE +  8..16` : CM chain cap carry   (perm-1 post[8..16]).
+// - `COL_CAP_CARRY_BASE + 16..24` : PoW chain rate carry (perm-1 post[0..8]).
+// - `COL_CAP_CARRY_BASE + 24..32` : PoW chain cap carry  (perm-1 post[8..16]).
+#define COL_CAP_CARRY_BASE (WITNESS_PROXY_BASE + N_WITNESS_PROXY)
+
+// CM chain carry offset (within the carry block).
+#define CARRY_CM_BASE 0
+
+// PoW chain carry offset (within the carry block).
+#define CARRY_POW_BASE 16
+
+// Carry proxy width (16 cells per chain × 2 chains = 32 cells).
+#define N_CAP_CARRY_PROXY 32
+
 // Total column count for the MineUno AIR.
-#define MINE_AIR_WIDTH ((N_ROW_SELECTORS + MINE_POSEIDON2_COLS_16) + N_WITNESS_PROXY)
+#define MINE_AIR_WIDTH (((N_ROW_SELECTORS + MINE_POSEIDON2_COLS_16) + N_WITNESS_PROXY) + N_CAP_CARRY_PROXY)
 
 // Public-input index for `epoch`.
 #define PI_EPOCH 0
@@ -1169,20 +1185,50 @@ int32_t uno_block_verifier_verify(const UnoBlockVerifierHandle *handle,
                                   const UnoBlockPublicInputsView *pi,
                                   Plonky3ProofBytes proof);
 
+// Run the MineUno STARK prover against a canonical
+// [`crate::mine_uno_witness::MineUnoWitness`] wire encoding.
+//
+// On `Ok`, `*out_proof` is populated with a heap-allocated buffer
+// containing `[u32 LE proof_len][proof_bytes][public_input_bytes]`; the
+// caller MUST free via [`uno_plonky3_proof_free`] exactly once. On any
+// non-Ok return, `*out_proof` is cleared to an empty descriptor and the
+// caller must NOT attempt to free it.
+//
+// # Safety
+// - `witness` must describe a valid, readable byte range (`ptr` non-
+//   null and `[ptr, ptr+len)` readable for the duration of the call),
+//   or an empty descriptor (`len == 0`). The bytes must be a canonical
+//   wire-encoded `MineUnoWitness` (see `mine_uno_witness::MINE_UNO_WITNESS_BYTES`).
+// - `out_proof` must be a valid, aligned, writable pointer to a
+//   `Plonky3OwnedProof`. Previous contents are overwritten.
+int32_t uno_mine_uno_prove(Plonky3Witness witness, Plonky3OwnedProof *out_proof);
+
+// Verify a MineUno STARK proof against its public-input bytes.
+//
+// Returns:
+// - [`Plonky3Status::Ok`] iff the proof is valid for the public inputs.
+// - A specific decode / length / verify error code otherwise.
+//
+// # Safety
+// - `proof` and `public_inputs` buffers must each describe a valid
+//   readable byte range for the duration of the call (or an empty
+//   descriptor with `len == 0`).
+int32_t uno_mine_uno_verify(Plonky3ProofBytes proof, Plonky3PublicInputs public_inputs);
+
 // Returns the ABI revision of this crate. The C++ bridge checks this at
 // `Plonky3Verifier::init()` to catch a version-skew between the shipped
 // Rust static-lib and the compiled C++ header.
 //
-// Current value: 3 (bumped from 2 by A6-2, which adds
-// [`UnoBlockPublicInputsView`], [`UnoBlockVerifierHandle`],
-// [`uno_block_verifier_init`], [`uno_block_verifier_free`], and
-// [`uno_block_verifier_verify`] to the FFI surface). Bump on any
-// layout change to existing FFI structs or any
-// addition/removal of FFI entry points.
+// Current value: 4 (bumped from 3 by Phase 3 final wiring, which adds
+// [`uno_mine_uno_prove`] and [`uno_mine_uno_verify`] to the FFI surface
+// for the MineUno AIR). Bump on any layout change to existing FFI
+// structs or any addition/removal of FFI entry points.
 //
 // History:
 // - v1 → v2 (A6-1): UnoBlockExtra{Bytes,Parsed} + wire-format entry points.
 // - v2 → v3 (A6-2): UnoBlockPublicInputsView + block-verifier handle.
+// - v3 → v4 (MineUno Phase 3): uno_mine_uno_prove / uno_mine_uno_verify
+//   for the MineUno AIR.
 uint32_t uno_plonky3_abi_version(void);
 
 // Width-8 Poseidon2-Goldilocks permutation, in place.
