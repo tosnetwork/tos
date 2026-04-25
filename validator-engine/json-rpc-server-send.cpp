@@ -171,9 +171,20 @@ static td::Result<td::int64> estimate_calc_fwd_fees(td::Ref<vm::Cell> list, bloc
   }
   for (int i = n - 1; i >= 0; --i) {
     vm::CellSlice cs = load_cell_slice(actions[i]);
-    CHECK(cs.fetch_ref().not_null());
+    // Codex audit (round 5, finding #1): the previous code asserted with
+    // `CHECK(cs.fetch_ref().not_null())` and `CHECK(tag >= 0)`. Both refs
+    // and tags here come from VM-produced action cells under attacker
+    // control via `estimateFee` — a malformed c5 list would crash the
+    // validator daemon. Mirror the defensive style of the production
+    // action phase at crypto/block/transaction.cpp:2257-2330: return a
+    // structured RPC error instead.
+    if (cs.fetch_ref().is_null()) {
+      return td::Status::Error("estimate_fee: action cell missing next-ref");
+    }
     int tag = block::gen::t_OutAction.get_tag(cs);
-    CHECK(tag >= 0);
+    if (tag < 0) {
+      return td::Status::Error("estimate_fee: action cell has unrecognized tag");
+    }
     switch (tag) {
       case block::gen::OutAction::action_set_code:
         return td::Status::Error("estimate_fee: action_set_code unsupported");

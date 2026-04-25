@@ -359,6 +359,8 @@ void FullNodeFastSyncOverlay::init() {
     }
     void receive_query(adnl::AdnlNodeIdShort src, overlay::OverlayIdShort overlay_id, td::BufferSlice data,
                        td::Promise<td::BufferSlice> promise) override {
+      // Codex audit (round 5, finding #3): see custom-overlays equivalent.
+      promise.set_error(td::Status::Error("fast-sync overlay does not support queries"));
     }
     void receive_broadcast(PublicKeyHash src, overlay::OverlayIdShort overlay_id, td::BufferSlice data) override {
       td::actor::send_closure(node_, &FullNodeFastSyncOverlay::receive_broadcast, src, std::move(data));

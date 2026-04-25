@@ -30,6 +30,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <map>
+#include <memory>
 #include <mutex>
 
 namespace tos {
@@ -49,12 +51,18 @@ namespace {
 //
 // Mirroring shard's full RateLimiter would require plumbing a shared_ptr
 // through `FullNodeMaster::create` to all callers — out of scope for this
-// audit pass. Instead, install a simple process-global token bucket sized
-// for the heavy-query envelope (16 burst, 4/s sustained). Lightweight,
-// self-contained, no signature changes. The bucket gates ALL master
-// queries; lookup-only queries (cheap) are also throttled — acceptable
-// given the master is meant for slave-validator coordination, not high-
-// throughput public traffic.
+// audit pass. Instead install a simple process-wide bucket here:
+//
+// Codex audit (round 5, finding #2): the round-4 fix used ONE process-wide
+// bucket. A single misbehaving / aggressive peer could burn the entire
+// 16-burst / 4-per-sec budget and starve every other peer. Add a
+// per-source bucket (keyed by `adnl::AdnlNodeIdShort`) with the global
+// bucket as a backstop. A query is admitted only when BOTH buckets allow
+// it, so the global cap still bounds total master CPU/IO and the
+// per-source cap stops one peer from monopolising it. Per-source map
+// grows by adnl id; in practice the slave set is small (validator-set
+// scale), but cap entries with a soft eviction every 1000 unique sources
+// to bound worst-case memory under spray attacks.
 struct MasterIngressLimiter {
     std::mutex mutex;
     uint64_t   tokens;
@@ -72,6 +80,8 @@ struct MasterIngressLimiter {
                 std::chrono::steady_clock::now().time_since_epoch()).count());
     }
 
+    // Refill + try-consume; takes the mutex internally. Returns true on
+    // success.
     bool try_consume() {
         std::lock_guard<std::mutex> lock(mutex);
         uint64_t now = now_sec();
@@ -87,7 +97,36 @@ struct MasterIngressLimiter {
 
 constexpr uint64_t kMasterIngressBurst  = 16;
 constexpr uint64_t kMasterIngressPerSec = 4;
+constexpr uint64_t kPerSourceBurst      = 4;   // tighter than global
+constexpr uint64_t kPerSourcePerSec     = 1;
+constexpr size_t   kMaxTrackedSources   = 1000;
+
 MasterIngressLimiter g_master_ingress_limiter{kMasterIngressBurst, kMasterIngressPerSec};
+
+struct PerSourceLimiterMap {
+    std::mutex                              mutex;
+    // Use std::map for deterministic iteration on eviction. Value is
+    // unique_ptr because MasterIngressLimiter contains a std::mutex
+    // (non-movable / non-copyable).
+    std::map<adnl::AdnlNodeIdShort, std::unique_ptr<MasterIngressLimiter>> buckets;
+
+    bool try_consume(adnl::AdnlNodeIdShort src) {
+        std::lock_guard<std::mutex> lock(mutex);
+        auto it = buckets.find(src);
+        if (it == buckets.end()) {
+            if (buckets.size() >= kMaxTrackedSources) {
+                // Soft cap: drop the oldest-by-key entry. Coarse (assumes
+                // uniformly distributed adnl ids) but bounded.
+                buckets.erase(buckets.begin());
+            }
+            it = buckets.emplace(src,
+                std::make_unique<MasterIngressLimiter>(kPerSourceBurst, kPerSourcePerSec)).first;
+        }
+        return it->second->try_consume();
+    }
+};
+
+PerSourceLimiterMap g_per_source_master_limiter;
 
 }  // namespace
 
@@ -490,7 +529,14 @@ void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNo
 
 void FullNodeMasterImpl::receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice query,
                                        td::Promise<td::BufferSlice> promise) {
-  // Codex audit (round 4, finding #3): per-method ingress rate limit.
+  // Codex audit (round 4 #3 + round 5 #2): per-source bucket gates one
+  // peer's share; global bucket is the backstop on aggregate cost. Both
+  // must allow. Per-source consumption first so a peer that hits its own
+  // cap does not also deplete the global bucket on every reject.
+  if (!g_per_source_master_limiter.try_consume(src)) {
+    promise.set_error(td::Status::Error(ErrorCode::failure, "too many requests from this source"));
+    return;
+  }
   if (!g_master_ingress_limiter.try_consume()) {
     promise.set_error(td::Status::Error(ErrorCode::failure, "too many requests"));
     return;

@@ -304,6 +304,10 @@ void FullNodeCustomOverlay::init() {
     }
     void receive_query(adnl::AdnlNodeIdShort src, overlay::OverlayIdShort overlay_id, td::BufferSlice data,
                        td::Promise<td::BufferSlice> promise) override {
+      // Codex audit (round 5, finding #3): empty body silently dropped the
+      // promise, hanging the caller until its own timeout. Custom overlays
+      // do not service queries — return an explicit unsupported-query error.
+      promise.set_error(td::Status::Error("custom overlay does not support queries"));
     }
     void receive_broadcast(PublicKeyHash src, overlay::OverlayIdShort overlay_id, td::BufferSlice data) override {
       td::actor::send_closure(node_, &FullNodeCustomOverlay::receive_broadcast, src, std::move(data));
