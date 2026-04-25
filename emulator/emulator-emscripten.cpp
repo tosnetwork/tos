@@ -218,7 +218,10 @@ const char* emulate_with_emulator(void* em, const char* libs, const char* accoun
       !transaction_emulator_set_unixtime(em, decoded_params.utime) ||
       !transaction_emulator_set_ignore_chksig(em, decoded_params.ignore_chksig) ||
       !transaction_emulator_set_debug_enabled(em, decoded_params.debug_enabled) || !rand_seed_set || !prev_blocks_set) {
-    transaction_emulator_destroy(em);
+    // Codex audit (round 16, finding #2): the caller (`emulate()` below)
+    // owns `em` and unconditionally destroys it on return. Destroying it
+    // here too caused a double-free under setter failure. Leave the
+    // handle alone — caller-owned cleanup is sufficient.
     return strdup(R"({"fail":true,"message":"Can't set params"})");
   }
 

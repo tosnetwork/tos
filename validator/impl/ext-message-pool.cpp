@@ -86,6 +86,19 @@ constexpr uint64_t kWc2IngressBurst  = 20;
 constexpr uint64_t kWc2IngressPerSec = 5;
 WcExtMsgRateLimiter g_wc2_ingress_limiter{kWc2IngressBurst, kWc2IngressPerSec};
 
+// Codex audit (round 16, finding #1): Transfers also run a Plonky3 STARK
+// verify on the collator side (uno/core/parallel-verify.cpp:250 →
+// transfer_air verify), comparable in cost to MineUno. The round-15 #3
+// fix made Transfer bypass the MineUno bucket entirely, leaving
+// raw-sendBoc Transfer flooding uncapped at this layer. Add a
+// dedicated Transfer bucket — same shape (5/s sustained, 20 burst).
+// Independent from the MineUno bucket so neither path can starve the
+// other; honest RPC traffic still goes through the per-method limiter
+// in uno/rpc/handlers.cpp first.
+constexpr uint64_t kWc2TransferBurst  = 20;
+constexpr uint64_t kWc2TransferPerSec = 5;
+WcExtMsgRateLimiter g_wc2_transfer_limiter{kWc2TransferBurst, kWc2TransferPerSec};
+
 }  // namespace
 
 td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_add_external_message(td::BufferSlice data,
@@ -419,17 +432,22 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
     // body byte, so re-walk the cell tree here. Failure to peek (e.g.
     // body decode error) defaults to consuming the bucket — fail-closed.
     if (wc == 2) {
-      bool need_limit = true;  // default fail-closed
+      // Codex audit (round 15 #3 + round 16 #1): wc=2 has TWO expensive
+      // body kinds at the collator: MineUno (STARK proof verify) and
+      // Transfer (Plonky3 transfer_air verify). Discriminate by body
+      // byte 0 (UNO wire-format §1: 0x01 → Transfer, 0x02 → MineUno)
+      // and charge each to its own independent bucket so a flood of
+      // one kind cannot starve the other. Body decode failure / unknown
+      // discriminator falls back to charging the MineUno bucket
+      // (fail-closed; matches the round-15 default).
+      enum BodyKind : uint8_t { kUnknown = 0, kTransfer = 1, kMineUno = 2 };
+      BodyKind kind = kUnknown;
       try {
         auto root = message->root_cell();
         if (root.not_null()) {
           bool root_special = false;
           auto cs = vm::load_cell_slice_special(root, root_special);
           if (!root_special) {
-            // ext_in_msg_info$10 + addr_none$00 (2+2 bits) + dest:MsgAddressInt
-            // + import_fee:Grams + init:Maybe(Either StateInit ^StateInit)
-            // + body:Either X ^X. We don't need the dest address, so unpack
-            // the Message::Record to reach the body slice directly.
             block::gen::Message::Record m;
             if (block::gen::t_Message_Any.unpack(cs, m)) {
               auto body_cs = m.body.write();
@@ -460,19 +478,25 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
               } else if (body_inline_valid) {
                 got_disc = peek_byte(body_inline, disc);
               }
-              if (got_disc && disc == 0x01 /* Transfer */) {
-                need_limit = false;
+              if (got_disc) {
+                if (disc == 0x01) kind = kTransfer;
+                else if (disc == 0x02) kind = kMineUno;
               }
-              // disc == 0x02 → MineUno (need_limit stays true)
-              // unknown disc → fail-closed (need_limit stays true)
             }
           }
         }
       } catch (...) {
-        // peek failed; fail-closed (still rate-limited).
+        // peek failed; fall through with kind=kUnknown (charged to MineUno bucket).
       }
-      if (need_limit && !g_wc2_ingress_limiter.try_consume()) {
-        co_return td::Status::Error("wc=2 ext-msg ingress rate-limited");
+      if (kind == kTransfer) {
+        if (!g_wc2_transfer_limiter.try_consume()) {
+          co_return td::Status::Error("wc=2 transfer ingress rate-limited");
+        }
+      } else {
+        // MineUno or unknown — fail-closed onto the MineUno bucket.
+        if (!g_wc2_ingress_limiter.try_consume()) {
+          co_return td::Status::Error("wc=2 ext-msg ingress rate-limited");
+        }
       }
     }
     auto [wait, promise] = td::actor::StartedTask<>::make_bridge();

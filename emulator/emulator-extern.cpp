@@ -354,6 +354,8 @@ bool transaction_emulator_set_unixtime(void *transaction_emulator, uint32_t unix
 }
 
 bool transaction_emulator_set_lt(void *transaction_emulator, uint64_t lt) {
+  // Codex audit (round 16, finding #3): null-handle guard.
+  if (transaction_emulator == nullptr) return false;
   auto emulator = static_cast<emulator::TransactionEmulator *>(transaction_emulator);
 
   emulator->set_lt(lt);
@@ -362,6 +364,8 @@ bool transaction_emulator_set_lt(void *transaction_emulator, uint64_t lt) {
 }
 
 bool transaction_emulator_set_rand_seed(void *transaction_emulator, const char *rand_seed_hex) {
+  // Codex audit (round 16, finding #3): null-handle guard.
+  if (transaction_emulator == nullptr) return false;
   auto emulator = static_cast<emulator::TransactionEmulator *>(transaction_emulator);
 
   auto rand_seed_hex_slice = td::Slice(rand_seed_hex);
@@ -503,6 +507,8 @@ void *tvm_emulator_create(const char *code, const char *data, int vm_log_verbosi
 }
 
 bool tvm_emulator_set_libraries(void *tvm_emulator, const char *libs_boc) {
+  // Codex audit (round 16, finding #3): null-handle guard.
+  if (tvm_emulator == nullptr) return false;
   vm::Dictionary libs{256};
   auto libs_cell = boc_b64_to_cell(libs_boc);
   if (libs_cell.is_error()) {
@@ -680,6 +686,10 @@ const char *tvm_emulator_run_get_method(void *tvm_emulator, int method_id, const
   // PrunedBranch / Library / Merkle*. The stack BoC is FFI-callee-supplied,
   // so anyone embedding the emulator could terminate the host process.
   // Wrap in a function-try-block and use the special-aware loader.
+  // Codex audit (round 16, finding #3): null-handle guard.
+  if (tvm_emulator == nullptr) {
+    ERROR_RESPONSE("tvm_emulator_run_get_method: null handle");
+  }
   auto stack_cell = boc_b64_to_cell(stack_boc);
   if (stack_cell.is_error()) {
     ERROR_RESPONSE(PSTRING() << "Couldn't deserialize stack cell: " << stack_cell.move_as_error().to_string());
@@ -859,6 +869,10 @@ const char *tvm_emulator_send_external_message(void *tvm_emulator, const char *m
   // and terminates the embedding host. Wrap in function-try-block AND
   // reject special roots before the call. Also defensively handle any
   // throw from the cell_to_boc_b64 .move_as_ok() chain below.
+  // Codex audit (round 16, finding #3): null-handle guard.
+  if (tvm_emulator == nullptr) {
+    ERROR_RESPONSE("tvm_emulator_send_external_message: null handle");
+  }
   auto message_body_cell = boc_b64_to_cell(message_body_boc);
   if (message_body_cell.is_error()) {
     ERROR_RESPONSE(PSTRING() << "Can't deserialize message body boc: " << message_body_cell.move_as_error());
@@ -906,6 +920,10 @@ const char *tvm_emulator_send_external_message(void *tvm_emulator, const char *m
 const char *tvm_emulator_send_internal_message(void *tvm_emulator, const char *message_body_boc, uint64_t amount) try {
   // Codex audit (round 14, finding #2): same hardening as
   // tvm_emulator_send_external_message above.
+  // Codex audit (round 16, finding #3): null-handle guard.
+  if (tvm_emulator == nullptr) {
+    ERROR_RESPONSE("tvm_emulator_send_internal_message: null handle");
+  }
   auto message_body_cell = boc_b64_to_cell(message_body_boc);
   if (message_body_cell.is_error()) {
     ERROR_RESPONSE(PSTRING() << "Can't deserialize message body boc: " << message_body_cell.move_as_error());
