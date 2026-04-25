@@ -576,4 +576,20 @@ TEST(Emulator, ffi_null_guards) {
   tvm_emulator_destroy(tvm_emulator);
 
   run_method_detailed_result_destroy(nullptr);
+
+  // Codex SDK-FFI audit (S4.2): cover the S3.1 raw-string null guards.
+  // td::Slice(const char*) CHECKs non-null; without these guards the
+  // following calls would abort the test process instead of returning
+  // false. Use a freshly-created handle so the test is not coupled to
+  // earlier handle state.
+  void *te = transaction_emulator_create(config_boc, 0);
+  CHECK(te != nullptr);
+  CHECK(!transaction_emulator_set_rand_seed(te, nullptr));
+  transaction_emulator_destroy(te);
+
+  void *tve = tvm_emulator_create("te6cckEBBAEAHgABFP8A9KQT9LzyyAsBAgFiAgMABtBfBAAJofpP8E8XmGlj",
+                                  "te6cckEBAQEAAgAAAEysuc0=", 1);
+  CHECK(tve != nullptr);
+  CHECK(!tvm_emulator_set_extra_currencies(tve, nullptr));
+  tvm_emulator_destroy(tve);
 }
