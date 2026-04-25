@@ -1004,14 +1004,26 @@ class Query {
     }
   };
 
-  td::Result<td::int64> calc_fwd_fees(td::Ref<vm::Cell> list, block::MsgPrices** msg_prices, bool is_masterchain) {
+  td::Result<td::int64> calc_fwd_fees(td::Ref<vm::Cell> list, block::MsgPrices** msg_prices, bool is_masterchain) try {
+    // Codex audit (round 9, finding #3): port the hardened pattern from
+    // validator-engine/json-rpc-server-send.cpp::estimate_calc_fwd_fees
+    // (round 5 #1 + round 6 #1). The previous bare `load_cell_slice` +
+    // `CHECK` pair would crash the embedding process if a contract emitted
+    // a malformed/special action list (PrunedBranch / Library / Merkle*
+    // throws inside load_cell_slice; CHECK aborts on missing-ref/bad-tag).
+    // Switch to special-aware loader + structured rejects + function-try
+    // catching VmError / std::exception / catch-all.
     td::int64 res = 0;
     std::vector<td::Ref<vm::Cell>> actions;
     int n{0};
     int max_actions = 20;
     while (true) {
       actions.push_back(list);
-      auto cs = load_cell_slice(std::move(list));
+      bool special = false;
+      auto cs = vm::load_cell_slice_special(std::move(list), special);
+      if (special) {
+        return td::Status::Error("action list invalid: traversal hit a special cell");
+      }
       if (!cs.size_ext()) {
         break;
       }
@@ -1025,10 +1037,18 @@ class Query {
       }
     }
     for (int i = n - 1; i >= 0; --i) {
-      vm::CellSlice cs = load_cell_slice(actions[i]);
-      CHECK(cs.fetch_ref().not_null());
+      bool special = false;
+      vm::CellSlice cs = vm::load_cell_slice_special(actions[i], special);
+      if (special) {
+        return td::Status::Error("estimate_fee: action cell is special");
+      }
+      if (cs.fetch_ref().is_null()) {
+        return td::Status::Error("estimate_fee: action cell missing next-ref");
+      }
       int tag = block::gen::t_OutAction.get_tag(cs);
-      CHECK(tag >= 0);
+      if (tag < 0) {
+        return td::Status::Error("estimate_fee: action cell has unrecognized tag");
+      }
       switch (tag) {
         case block::gen::OutAction::action_set_code:
           return td::Status::Error("estimate_fee: action_set_code unsupported");
@@ -1076,6 +1096,12 @@ class Query {
       }
     }
     return res;
+  } catch (const vm::VmError& e) {
+    return td::Status::Error(PSLICE() << "estimate_fee: vm error: " << e.get_msg());
+  } catch (const std::exception& e) {
+    return td::Status::Error(PSLICE() << "estimate_fee: exception: " << e.what());
+  } catch (...) {
+    return td::Status::Error("estimate_fee: unknown exception during action parsing");
   }
   td::Result<std::pair<Fee, std::vector<Fee>>> estimate_fees(bool ignore_chksig, const LastConfigState& state,
                                                              vm::Dictionary& libraries) {
@@ -2694,6 +2720,36 @@ toslib_api::object_ptr<toslib_api::Object> ToslibClient::do_static_request(
   return toslib_api::make_object<toslib_api::accountAddress>(r_account_address.ok().rserialize(true));
 }
 
+// Codex audit (round 9, finding #2): wrap std_boc_deserialize with a
+// special-cell-root reject. Downstream consumers
+// (`tos::GenericAccount::create_ext_message`,
+// `tos::SmartContract::send_external_message`) are declared `noexcept`
+// and call bare `load_cell_slice_ref()` on the body / init refs; a
+// PrunedBranch / Library / Merkle* root would throw and terminate the
+// embedding process. Mirrors validator-engine's
+// `parse_optional_boc_string` / `parse_optional_boc_field`. Use the
+// special-aware loader to detect; catch the load itself in case of a
+// malformed cell.
+static td::Result<td::Ref<vm::Cell>> deserialize_safe_boc_root(
+    td::Slice data, td::Slice field_name) {
+  TRY_RESULT_PREFIX(cell, vm::std_boc_deserialize(data),
+                    ToslibError::InvalidBagOfCells(field_name));
+  if (cell.not_null()) {
+    try {
+      bool special = false;
+      (void)vm::load_cell_slice_special(cell, special);
+      if (special) {
+        return ToslibError::InvalidBagOfCells(field_name)
+            .move_as_error_prefix("special-cell root rejected: ");
+      }
+    } catch (...) {
+      return ToslibError::InvalidBagOfCells(field_name)
+          .move_as_error_prefix("unloadable cell root: ");
+    }
+  }
+  return cell;
+}
+
 td::Status ToslibClient::do_request(toslib_api::guessAccountRevision& request,
                                     td::Promise<object_ptr<toslib_api::accountRevisionList>>&& promise) {
   std::vector<Target> targets;
@@ -3582,11 +3638,12 @@ td::Status ToslibClient::do_request(const toslib_api::raw_createAndSendMessage& 
   }
   td::Ref<vm::Cell> init_state;
   if (!request.initial_account_state_.empty()) {
-    TRY_RESULT_PREFIX(new_init_state, vm::std_boc_deserialize(request.initial_account_state_),
-                      ToslibError::InvalidBagOfCells("initial_account_state"));
+    // Codex audit (round 9, finding #2): special-aware BOC root validation.
+    TRY_RESULT(new_init_state,
+               deserialize_safe_boc_root(request.initial_account_state_, "initial_account_state"));
     init_state = std::move(new_init_state);
   }
-  TRY_RESULT_PREFIX(data, vm::std_boc_deserialize(request.data_), ToslibError::InvalidBagOfCells("data"));
+  TRY_RESULT(data, deserialize_safe_boc_root(request.data_, "data"));
   TRY_RESULT(account_address, get_account_address(request.destination_->account_address_));
   auto message = tos::GenericAccount::create_ext_message(account_address, std::move(init_state), std::move(data));
 
@@ -4519,11 +4576,12 @@ td::Status ToslibClient::do_request(const toslib_api::raw_createQuery& request,
 
   td::optional<tos::SmartContract::State> smc_state;
   if (!request.init_code_.empty()) {
-    TRY_RESULT_PREFIX(code, vm::std_boc_deserialize(request.init_code_), ToslibError::InvalidBagOfCells("init_code"));
-    TRY_RESULT_PREFIX(data, vm::std_boc_deserialize(request.init_data_), ToslibError::InvalidBagOfCells("init_data"));
+    // Codex audit (round 9, finding #2): special-aware BOC root validation.
+    TRY_RESULT(code, deserialize_safe_boc_root(request.init_code_, "init_code"));
+    TRY_RESULT(data, deserialize_safe_boc_root(request.init_data_, "init_data"));
     smc_state = tos::SmartContract::State{std::move(code), std::move(data)};
   }
-  TRY_RESULT_PREFIX(body, vm::std_boc_deserialize(request.body_), ToslibError::InvalidBagOfCells("body"));
+  TRY_RESULT(body, deserialize_safe_boc_root(request.body_, "body"));
 
   td::Promise<td::unique_ptr<Query>> new_promise =
       promise.send_closure(actor_id(this), &ToslibClient::finish_create_query);

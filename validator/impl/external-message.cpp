@@ -147,7 +147,17 @@ td::Result<Ref<ExtMessageQ>> ExtMessageQ::create_ext_message(td::BufferSlice dat
     // same vm::Cell instance, so pointer equality is correct.
     std::unordered_set<const vm::Cell*> visited;
     std::vector<td::Ref<vm::Cell>> stack{ext_msg};
-    constexpr size_t kMaxScannedCells = 4096;  // generous; worst-case wc=2 ext_in_msg is ~262 KiB / few hundred cells
+    // Codex audit (round 8 #1, refined round 9 #1): the previous 4096-cell
+    // budget was below worst-case ext_in_msg envelopes for wc=2 (UNO chunk
+    // trees can approach ~2048 cells today plus future headroom) and wc=1
+    // (1 MiB cap → up to ~20K cells worst case). Derive the budget from
+    // the configured ext-msg `max_size` (default 1 MiB) using the canonical
+    // ~64 bytes/cell ratio; clamp at a hard floor (4096) and a generous
+    // ceiling (65536) to keep the visited-set bounded under any operator
+    // mis-config.
+    const size_t cells_from_size = static_cast<size_t>(limits.max_size) / 64u;
+    const size_t kMaxScannedCells =
+        std::min(static_cast<size_t>(65536), std::max(static_cast<size_t>(4096), cells_from_size));
     size_t popped = 0;
     while (!stack.empty()) {
       auto c = std::move(stack.back());
