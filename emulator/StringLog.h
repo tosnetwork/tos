@@ -1,5 +1,4 @@
-#ifndef TOS_STRINGLOG_H
-#define TOS_STRINGLOG_H
+#pragma once
 
 #include <thread>
 
@@ -24,5 +23,3 @@ class StringLog : public td::LogInterface {
  private:
   std::string str;
 };
-
-#endif  //TOS_STRINGLOG_H

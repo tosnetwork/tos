@@ -959,10 +959,11 @@ impl NodeOverlayCmd {
                     for overlay in &result.overlays {
                         println!("  Overlay: {}", overlay.name.green());
                         println!(
-                            "    Nodes: {}  Sender shards: {}  Skip public msg send: {}",
+                            "    Nodes: {}  Sender shards: {}  Skip public msg send: {}  Use QUIC: {}",
                             overlay.nodes.len(),
                             overlay.sender_shards.len(),
                             overlay.skip_public_msg_send,
+                            overlay.use_quic,
                         );
                         for node in &overlay.nodes {
                             println!(

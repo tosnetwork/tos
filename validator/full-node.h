@@ -74,6 +74,7 @@ struct CustomOverlayParams {
   std::set<adnl::AdnlNodeIdShort> block_senders_;
   std::vector<ShardIdFull> sender_shards_;
   bool skip_public_msg_send_ = false;
+  bool use_quic_ = false;
 
   bool send_shard(const ShardIdFull& shard) const;
   static CustomOverlayParams fetch(const tos_api::engine_validator_customOverlay& f);

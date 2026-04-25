@@ -17,6 +17,8 @@
     Copyright 2019-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#pragma once
+
 #include "td/utils/Random.h"
 
 #include "http-client.h"

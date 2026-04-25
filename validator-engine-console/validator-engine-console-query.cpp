@@ -1388,6 +1388,9 @@ td::Status ShowCustomOverlaysQuery::receive(td::BufferSlice data) {
     if (overlay->skip_public_msg_send_) {
       td::TerminalIO::out() << "Don't send external messages to public overlays\n";
     }
+    if (overlay->use_quic_) {
+      td::TerminalIO::out() << "Use QUIC for custom overlay broadcasts\n";
+    }
     td::TerminalIO::out() << "\n";
   }
   return td::Status::OK();

@@ -30,6 +30,8 @@ pub struct CustomOverlayConfig {
     pub sender_shards: Vec<ShardDescriptor>,
     #[serde(default)]
     pub skip_public_msg_send: bool,
+    #[serde(default)]
+    pub use_quic: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

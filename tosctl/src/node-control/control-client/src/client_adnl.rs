@@ -632,6 +632,7 @@ fn custom_overlay_config_to_tl(
         nodes,
         sender_shards,
         skip_public_msg_send: bool_to_tl(config.skip_public_msg_send),
+        use_quic: bool_to_tl(config.use_quic),
     })
 }
 
@@ -662,6 +663,7 @@ fn tl_to_custom_overlay_config(
         nodes,
         sender_shards,
         skip_public_msg_send: tl_to_bool(&tl.skip_public_msg_send),
+        use_quic: tl_to_bool(&tl.use_quic),
     }
 }
 
