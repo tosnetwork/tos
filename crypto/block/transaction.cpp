@@ -28,6 +28,7 @@
 #include "td/utils/bits.h"
 #include "td/utils/uint128.h"
 #include "tos/tos-shard.h"
+#include <cstring>
 #include "vm/vm.h"
 
 #define FAIL_UNLESS_MSG(condition, msg) \
@@ -1962,6 +1963,22 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
   // Mirrors the wc=1 branch above. See doc/uno-workchain.md §8.2.
   if (uno_workchain_dispatch::has_uno_compute_handler() &&
       account.workchain == 2 /* uno_workchain::kWorkchainId — avoid header dep */) {
+    // Codex audit (round 4, finding #1): defense-in-depth — even though
+    // ExtMessagePool::check_message rejects non-executor wc=2 ingress,
+    // the dispatch layer must also refuse so collator-injected msgs and
+    // non-RPC code paths can't drive arbitrary wc=2 accounts into the
+    // UNO compute phase. Skip with sk_bad_state (same as null body).
+    // Bytes hardcoded to keep the no-header-dep convention noted above.
+    {
+      static constexpr unsigned char kUnoExecutorAddr[32] = {
+          0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,
+          0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 1,
+      };
+      if (std::memcmp(account.addr.data(), kUnoExecutorAddr, 32) != 0) {
+        cp.skip_reason = ComputePhase::sk_bad_state;
+        return true;
+      }
+    }
     if (in_msg_body.is_null()) {
       cp.skip_reason = ComputePhase::sk_bad_state;
       return true;

@@ -23,6 +23,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <mutex>
 
 namespace tos::validator {
@@ -349,6 +350,23 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
   // Must short-circuit for the same reason as wc=1.
   if (wc == 1 /* evm_workchain::kWorkchainId */ ||
       wc == 2 /* uno_workchain::kWorkchainId */) {
+    // Codex audit (round 4, finding #1): wc=2 hosts a SINGLE executor
+    // account at `uno_workchain::kUnoExecutorAddressBytes` (0x00…01) which
+    // owns the entire UnoShardState. Reject ext_in_msgs targeted at any
+    // other wc=2 address — accepting them would let a caller spin up
+    // parallel per-account UnoStates and (potentially) replay nullifiers
+    // against state the real executor never sees. Bytes hardcoded to
+    // avoid pulling uno/core/workchain.h into validator/impl/ — same
+    // header-avoidance convention as the wc==2 literal above.
+    if (wc == 2) {
+      static constexpr unsigned char kUnoExecutorAddr[32] = {
+          0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,
+          0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 1,
+      };
+      if (std::memcmp(addr.data(), kUnoExecutorAddr, 32) != 0) {
+        co_return td::Status::Error("wc=2 ext-msg destination is not the uno executor");
+      }
+    }
     // Codex audit (round 2, finding #2): rate-limit wc=2 ingress to bound
     // forged-MineUno DoS via raw sendBoc / liteServer_sendMessage paths.
     // wc=1 (EVM) is left unchanged here — its compute phase does not run

@@ -868,20 +868,39 @@ void JsonRpcServer::process_batch_step(std::shared_ptr<BatchState> state) {
   // Drain synchronous (non-Object) elements.
   while (state->cursor < state->elements.size()) {
     std::size_t i = state->cursor;
-    // Codex audit (round 2, finding #6): batch-level deadline. If we have
-    // crossed the request_timeout budget, fill remaining elements with a
-    // timeout error and finalize. Notifications (no id) are still dropped
-    // from the output array per spec.
-    if (state->deadline.is_in_past()) {
+    // Codex audit (round 2 #6, refined round 4 #4): batch-level deadline.
+    // Only enforce when the deadline was actually initialized — a default-
+    // constructed `td::Timestamp` is "already in the past" (sentinel value),
+    // so an unguarded `is_in_past()` would short-circuit every batch when
+    // `request_timeout == 0` (no-timeout config).
+    //
+    // Per JSON-RPC 2.0, each response in a batch echoes the original element's
+    // id verbatim. Extract the id from the still-present element fields rather
+    // than emitting a uniform "null" for every timed-out request.
+    if (state->deadline && state->deadline.is_in_past()) {
       while (state->cursor < state->elements.size()) {
         std::size_t j = state->cursor;
-        if (!state->is_notification[j]) {
-          auto err = make_eth_json_error(
-              -32603, "Request batch timed out", "null", state->cors);
-          state->responses[j] = extract_response_body(err);
-        } else {
+        if (state->is_notification[j]) {
           state->responses[j] = "";
+          state->cursor++;
+          continue;
         }
+        std::string elem_id = "null";
+        if (state->elements[j].type() == td::JsonValue::Type::Object) {
+          auto &obj = state->elements[j].get_object();
+          for (auto &fv : obj.field_values_) {
+            if (fv.first != "id") continue;
+            if (fv.second.type() == td::JsonValue::Type::String) {
+              elem_id = PSTRING() << td::JsonString(td::Slice(fv.second.get_string()));
+            } else if (fv.second.type() == td::JsonValue::Type::Number) {
+              elem_id = fv.second.get_number().str();
+            }
+            break;
+          }
+        }
+        auto err = make_eth_json_error(
+            -32603, "Request batch timed out", elem_id, state->cors);
+        state->responses[j] = extract_response_body(err);
         state->cursor++;
       }
       break;

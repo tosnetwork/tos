@@ -28,11 +28,68 @@
 #include "full-node-master.hpp"
 #include "full-node-shard-queries.hpp"
 
+#include <atomic>
+#include <chrono>
+#include <mutex>
+
 namespace tos {
 
 namespace validator {
 
 namespace fullnode {
+
+namespace {
+
+// Codex audit (round 4, finding #3): the shard endpoint runs every query
+// through a `RateLimiter<>` (see full-node-shard.cpp:743-750), but the
+// master endpoint had no per-method rate limit. An ADNL peer could
+// repeatedly issue heavy `getArchiveSlice` / `downloadPersistentStateSliceV2`
+// queries (each up to 16 MiB after R3.2's max_size cap) and drive disk I/O
+// + bandwidth on the master.
+//
+// Mirroring shard's full RateLimiter would require plumbing a shared_ptr
+// through `FullNodeMaster::create` to all callers — out of scope for this
+// audit pass. Instead, install a simple process-global token bucket sized
+// for the heavy-query envelope (16 burst, 4/s sustained). Lightweight,
+// self-contained, no signature changes. The bucket gates ALL master
+// queries; lookup-only queries (cheap) are also throttled — acceptable
+// given the master is meant for slave-validator coordination, not high-
+// throughput public traffic.
+struct MasterIngressLimiter {
+    std::mutex mutex;
+    uint64_t   tokens;
+    uint64_t   max_tokens;
+    uint64_t   refill_rate;
+    uint64_t   last_refill;
+
+    MasterIngressLimiter(uint64_t max_tok, uint64_t rate)
+        : tokens(max_tok), max_tokens(max_tok), refill_rate(rate),
+          last_refill(now_sec()) {}
+
+    static uint64_t now_sec() {
+        return static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+    }
+
+    bool try_consume() {
+        std::lock_guard<std::mutex> lock(mutex);
+        uint64_t now = now_sec();
+        if (now > last_refill) {
+            tokens = std::min(tokens + (now - last_refill) * refill_rate, max_tokens);
+            last_refill = now;
+        }
+        if (tokens == 0) return false;
+        --tokens;
+        return true;
+    }
+};
+
+constexpr uint64_t kMasterIngressBurst  = 16;
+constexpr uint64_t kMasterIngressPerSec = 4;
+MasterIngressLimiter g_master_ingress_limiter{kMasterIngressBurst, kMasterIngressPerSec};
+
+}  // namespace
 
 void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_getNextBlockDescription &query,
                                        td::Promise<td::BufferSlice> promise) {
@@ -433,6 +490,11 @@ void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNo
 
 void FullNodeMasterImpl::receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice query,
                                        td::Promise<td::BufferSlice> promise) {
+  // Codex audit (round 4, finding #3): per-method ingress rate limit.
+  if (!g_master_ingress_limiter.try_consume()) {
+    promise.set_error(td::Status::Error(ErrorCode::failure, "too many requests"));
+    return;
+  }
   auto BX = fetch_tl_prefix<tos_api::tosNode_query>(query, true);
   if (BX.is_error()) {
     promise.set_error(td::Status::Error(ErrorCode::protoviolation, "cannot parse tosnode query"));

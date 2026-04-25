@@ -522,7 +522,7 @@ td::Ref<vm::Cell> LiveUnoState::serialize_to_cell() const {
     return out;
 }
 
-bool LiveUnoState::hydrate_from_cell_if_needed(td::Ref<vm::Cell> root) {
+bool LiveUnoState::hydrate_from_cell_if_needed(td::Ref<vm::Cell> root) try {
     if (root.is_null()) {
         std::lock_guard<std::mutex> lk(mutex_);
         if (has_live_state_cell_hash_ || next_output_global_index_ != 0 ||
@@ -539,7 +539,21 @@ bool LiveUnoState::hydrate_from_cell_if_needed(td::Ref<vm::Cell> root) {
         return true;
     }
 
-    auto cs = vm::load_cell_slice(root);
+    // Codex audit (round 4, finding #6): use the special-cell-aware loader
+    // for the root and refuse to hydrate from PrunedBranch/MerkleProof/
+    // MerkleUpdate/Library cells. The bare `vm::load_cell_slice` throws on
+    // those (and on Library cells outside a VM context) — without the
+    // `try`/catch wrapper around this whole function, an attacker who can
+    // inject a malformed prior UnoShardState into the execution context
+    // (e.g. via a forged collation) would crash the validator daemon
+    // instead of getting `sk_bad_state`. The function-try-block at the
+    // bottom catches anything missed by per-site checks.
+    bool root_is_special = false;
+    auto cs = vm::load_cell_slice_special(root, root_is_special);
+    if (root_is_special) {
+        LOG(ERROR) << "uno-workchain: persisted state root is a special cell";
+        return false;
+    }
     long long v = 0;
     if (!cs.fetch_long_bool(kLiveUnoShardStateMagicBits, v) ||
         static_cast<uint32_t>(v) != kLiveUnoShardStateMagic) {
@@ -691,6 +705,18 @@ bool LiveUnoState::hydrate_from_cell_if_needed(td::Ref<vm::Cell> root) {
     live_state_cell_hash_ = incoming_hash;
     has_live_state_cell_hash_ = true;
     return true;
+} catch (const std::exception& e) {
+    // Codex audit (round 4, finding #6): function-try-block. The remaining
+    // `vm::load_cell_slice(X)` calls below the root check (nullifier wrapper,
+    // meta wrapper, anchor probe, stats, mining_state) all walk caller-
+    // controlled refs and throw on special cells. Catch here so a malformed
+    // persisted state returns `false` (→ sk_bad_state at the dispatch
+    // layer) rather than crashing the validator daemon.
+    LOG(ERROR) << "uno-workchain: persisted state hydrate threw: " << e.what();
+    return false;
+} catch (...) {
+    LOG(ERROR) << "uno-workchain: persisted state hydrate threw (non-std)";
+    return false;
 }
 
 void LiveUnoState::set_block_seqno(uint64_t s) {

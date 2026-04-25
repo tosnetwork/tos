@@ -47,9 +47,28 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
   bool has_seqno = seqno_r.is_ok() && seqno_r.ok() > 0;
   td::int32 seqno = has_seqno ? static_cast<td::int32>(seqno_r.ok()) : 0;
 
+  // Codex audit (round 4, finding #2): same shared-Slot pattern as R3.3 in
+  // runGetMethod — keep promise + req_id reachable from the step-1 outer
+  // callback so lookupBlock / getMasterchainInfo errors don't drop the
+  // HTTP promise. Sequential single-actor execution makes the unguarded
+  // settled-flag safe.
+  struct Slot {
+    td::Promise<HttpReturn> promise;
+    std::string req_id;
+    bool settled{false};
+    void settle_error(int code, const std::string& msg) {
+      if (settled) return;
+      settled = true;
+      promise.set_value(make_json_error(code, msg, req_id));
+    }
+  };
+  auto slot = std::make_shared<Slot>();
+  slot->promise = std::move(promise);
+  slot->req_id = std::move(req_id);
+
   // Step 2 lambda: query config at a resolved block
-  auto do_query_config = [config_id, req_id = std::move(req_id),
-                          self_id = actor_id(this), promise = std::move(promise)](
+  auto do_query_config = [config_id, slot,
+                          self_id = actor_id(this)](
       tos::tl_object_ptr<tos::lite_api::tosNode_blockIdExt> block_id) mutable {
         std::vector<td::int32> param_list = {config_id};
         auto inner = tos::serialize_tl_object(
@@ -62,11 +81,9 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
         td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
             std::move(query),
             td::PromiseCreator::lambda(
-                [config_id, req_id = std::move(req_id), promise = std::move(promise)](
-                    td::Result<td::BufferSlice> R) mutable {
+                [config_id, slot](td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "getConfigParam failed: " << R.error(), req_id));
+            slot->settle_error(-32603, PSTRING() << "getConfigParam failed: " << R.error());
             return;
           }
           auto data = R.move_as_ok();
@@ -74,8 +91,7 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
           auto F = tos::fetch_tl_object<tos::lite_api::liteServer_configInfo>(
               std::move(data), true);
           if (F.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse configInfo: " << F.error(), req_id));
+            slot->settle_error(-32603, PSTRING() << "parse configInfo: " << F.error());
             return;
           }
           auto f = F.move_as_ok();
@@ -85,38 +101,37 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
           auto state_r = block::check_extract_state_proof(
               blk_id, f->state_proof_.as_slice(), f->config_proof_.as_slice());
           if (state_r.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "state proof error: " << state_r.error(), req_id));
+            slot->settle_error(-32603, PSTRING() << "state proof error: " << state_r.error());
             return;
           }
 
           auto cfg_r = block::Config::extract_from_state(state_r.move_as_ok(), 0);
           if (cfg_r.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "config extract error: " << cfg_r.error(), req_id));
+            slot->settle_error(-32603, PSTRING() << "config extract error: " << cfg_r.error());
             return;
           }
           auto cfg = cfg_r.move_as_ok();
 
           auto param_cell = cfg->get_config_param(config_id);
           if (param_cell.is_null()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "config param " << config_id << " not found", req_id));
+            slot->settle_error(-32603, PSTRING() << "config param " << config_id << " not found");
             return;
           }
 
           // Serialize cell to BOC, then base64
           auto boc_r = vm::std_boc_serialize(param_cell);
           if (boc_r.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "BOC serialize error: " << boc_r.error(), req_id));
+            slot->settle_error(-32603, PSTRING() << "BOC serialize error: " << boc_r.error());
             return;
           }
           auto b64 = td::base64_encode(boc_r.ok().as_slice());
 
-          promise.set_value(make_json_ok(
-              PSTRING() << "{\"@type\":\"configInfo\",\"config\":{\"@type\":\"tvm.cell\",\"bytes\":" << td::JsonString(td::Slice(b64)) << "}}",
-              req_id));
+          if (!slot->settled) {
+            slot->settled = true;
+            slot->promise.set_value(make_json_ok(
+                PSTRING() << "{\"@type\":\"configInfo\",\"config\":{\"@type\":\"tvm.cell\",\"bytes\":" << td::JsonString(td::Slice(b64)) << "}}",
+                slot->req_id));
+          }
         }));
   };  // end of do_query_config
 
@@ -130,10 +145,16 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
     auto lookup_query = tos::serialize_tl_object(
         tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(lookup_inner)), true);
     send_liteserver_query(std::move(lookup_query),
-        [do_query_config = std::move(do_query_config)](td::Result<td::BufferSlice> R) mutable {
-          if (R.is_error()) return;
+        [do_query_config = std::move(do_query_config), slot](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) {
+            slot->settle_error(-32603, PSTRING() << "lookupBlock: " << R.error());
+            return;
+          }
           auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(R.move_as_ok(), true);
-          if (lb_r.is_error()) return;
+          if (lb_r.is_error()) {
+            slot->settle_error(-32603, PSTRING() << "parse lookupBlock: " << lb_r.error());
+            return;
+          }
           do_query_config(std::move(lb_r.move_as_ok()->id_));
         });
   } else {
@@ -142,10 +163,16 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
     auto mc_query = tos::serialize_tl_object(
         tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
     send_liteserver_query(std::move(mc_query),
-        [do_query_config = std::move(do_query_config)](td::Result<td::BufferSlice> R) mutable {
-          if (R.is_error()) return;
+        [do_query_config = std::move(do_query_config), slot](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) {
+            slot->settle_error(-32603, PSTRING() << "getMasterchainInfo: " << R.error());
+            return;
+          }
           auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(R.move_as_ok(), true);
-          if (mc_r.is_error()) return;
+          if (mc_r.is_error()) {
+            slot->settle_error(-32603, PSTRING() << "parse getMasterchainInfo: " << mc_r.error());
+            return;
+          }
           do_query_config(std::move(mc_r.move_as_ok()->last_));
         });
   }

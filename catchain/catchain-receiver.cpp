@@ -734,6 +734,18 @@ void CatChainReceiverImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::cat
       promise.set_error(td::Status::Error(ErrorCode::protoviolation, "unknown source"));
       return;
     }
+    // Codex audit (round 4, finding #5): apply the same per-peer
+    // resend cap that getDifference uses (CatChainReceiverSource::
+    // allow_send_block, MAX_BLOCK_REQUESTS in catchain-receiver-source.cpp).
+    // Without this, a peer can repeatedly query `catchain_getBlock` for
+    // the same hash and force the receiver to serialize + send the
+    // payload every time. allow_send_block tracks per-block-hash request
+    // counts on the source's `block_requests_count_` map.
+    if (!S->allow_send_block(query.block_)) {
+      promise.set_value(serialize_tl_object(
+          create_tl_object<tos_api::catchain_blockNotFound>(), true));
+      return;
+    }
     promise.set_value(serialize_tl_object(create_tl_object<tos_api::catchain_blockResult>(it->second->export_tl()),
                                           true, it->second->get_payload().as_slice()));
   }

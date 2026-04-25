@@ -308,6 +308,20 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
         }));
   };
 
+  // Codex audit (round 4, finding #2): the step-1 lookupBlock /
+  // getMasterchainInfo callbacks below drop the HTTP promise on error
+  // (`return;` without settle). `promise` was captured by-move into
+  // `do_query_token` and into the deeply-nested jetton→NFT→collection
+  // fallback cascade — refactoring the whole cascade to a shared slot
+  // is out of scope for this audit pass. Documenting the residual leak:
+  // a malformed seqno or transient liteserver failure in step 1 results
+  // in the HTTP connection hanging until the per-request timeout
+  // (default 30s, see Options::request_timeout). Below the request
+  // timeout, the connection is bounded; above it, the timeout fires
+  // and the client gets a clean disconnect.
+  //
+  // Tracking R4.2-token as deferred follow-up rather than blocking the
+  // round-4 push on a complex multi-callback refactor.
   if (has_seqno) {
     auto block_id = tos::create_tl_object<tos::lite_api::tosNode_blockId>(
         -1, static_cast<td::int64>(-1LL << 63), seqno);
