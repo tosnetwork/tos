@@ -413,16 +413,17 @@ VerifyResult verify_mine_uno_chain_checks(const UnoState& state,
 
     const auto& pi = tx.public_inputs;
 
-    // ---- Step 0b: timestamp monotonicity (consensus rule) ----
-    // Reject any solve whose containing block's gen_utime is not strictly
-    // greater than the last accepted solve's timestamp. This is hard
-    // consensus, not a soft clamp: without it, two MineUnos in the same
-    // masterchain block (or a stale-clock validator) would yield
-    // actual_seconds == 0 in the retarget formula and let an attacker
-    // game the clamp. The first-ever solve (last_solve_ts == 0) is
-    // accepted unconditionally — any positive gen_utime advances the
-    // window-start anchor.
-    if (state.last_solve_ts() != 0 && gen_utime <= state.last_solve_ts()) {
+    // ---- Step 0b: timestamp non-decreasing (consensus rule) ----
+    // Audit #7 (2026-04-26): relaxed from strict `>` to `>=`. Two solves
+    // landing in different blocks but the same masterchain second are now
+    // both accepted. Previously the strict check censored every solve after
+    // the first that shared a wall-clock second, which became a liveness
+    // bug under burst-solve conditions (low difficulty, high hashrate, or
+    // nodes with second-resolution clocks). Backwards-going clocks are
+    // still rejected. The retarget math (compute_retargeted_pow_target)
+    // already clamps `actual_seconds == 0` to the floor, so allowing
+    // same-second deltas does not create a "free" target softening.
+    if (state.last_solve_ts() != 0 && gen_utime < state.last_solve_ts()) {
         return VerifyResult::TimestampNotMonotonic;
     }
 

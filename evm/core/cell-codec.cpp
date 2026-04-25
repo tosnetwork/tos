@@ -195,13 +195,19 @@ bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
     }
     if (cs.size() < 256) return false;
     cs.fetch_bytes(eth_state_root_out.bytes, 32);
-    if (cs.size() >= 1) {
-        auto has_cache = cs.fetch_ulong(1);
-        if (has_cache == 1) {
-            if (cs.size_refs() == 0) return false;
-            rpc_cache_root_out = cs.fetch_ref();
-        }
+    // The has_cache Maybe-tag is mandatory in v2 (we always emit it);
+    // refuse cells that omit it rather than silently treating absence as 0.
+    if (cs.size() < 1) return false;
+    auto has_cache = cs.fetch_ulong(1);
+    if (has_cache == 1) {
+        if (cs.size_refs() == 0) return false;
+        rpc_cache_root_out = cs.fetch_ref();
     }
+    // Audit #3 (2026-04-26): require canonical encoding. Two cells with the
+    // same logical content must produce the same cell hash; trailing bits or
+    // unaccounted refs would let a peer construct multiple distinct cell
+    // hashes for the same EVM state, breaking account-data identity.
+    if (cs.size() != 0 || cs.size_refs() != 0) return false;
     return true;
 }
 

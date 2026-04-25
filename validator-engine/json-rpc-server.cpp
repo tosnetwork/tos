@@ -41,10 +41,15 @@ namespace tos {
 // DoS.  See test/conformance/manual-rpc/http_large_request_body.io for the
 // regression test that pins this behaviour.
 //
-// Cap: 1 MiB — comfortably accommodates complex `eth_simulateV1` and
-// `eth_call` requests with many state overrides (Geth defaults to 5 MiB,
-// Erigon to 1 MiB).
-static constexpr std::size_t kJsonRpcMaxRequestBodyBytes = 1u << 20;
+// Cap: 4 MiB — must accommodate the largest legitimate `uno_sendTransfer`
+// payload, which post V1-3c-gamma is ~2.30 MB hex+JSON for a worst-case 4/4
+// shape (cf. uno/rpc/handlers.cpp:71-93). Audit #9 (2026-04-26) raised this
+// from 1 MiB; without the bump the per-method cap in
+// json-rpc-server-uno.cpp:498 (3 MiB) was unreachable because every body
+// >1 MiB was rejected upstream first. Geth defaults to 5 MiB, Erigon to
+// 1 MiB; 4 MiB sits between them and leaves ~70 % headroom over the
+// post-pivot worst case.
+static constexpr std::size_t kJsonRpcMaxRequestBodyBytes = 4u << 20;
 
 // Drain the entire payload into a single contiguous buffer.  Returns an
 // error status if the body would exceed `kJsonRpcMaxRequestBodyBytes`

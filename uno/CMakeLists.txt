@@ -292,13 +292,36 @@ target_link_libraries(uno_workchain
 option(UNO_DEVNET_ALLOW_ENV_TARGET
        "Allow UNO_INIT_MINE_TARGET_HEX env override of MineUno target (devnet only)"
        OFF)
+
+# Audit #10 (2026-04-26): production / public-testnet build flag. CI release
+# jobs MUST configure with `-DTOS_PRODUCTION_BUILD=ON`. When that flag is on,
+# any opt-in that compromises consensus determinism (currently
+# UNO_DEVNET_ALLOW_ENV_TARGET) is a hard CMake error so that a misconfigured
+# release artifact cannot ship.
+option(TOS_PRODUCTION_BUILD
+       "Production / public-testnet build — refuse devnet escape hatches"
+       OFF)
+
 if (UNO_DEVNET_ALLOW_ENV_TARGET)
+  if (TOS_PRODUCTION_BUILD)
+    message(FATAL_ERROR
+      "uno_workchain: TOS_PRODUCTION_BUILD=ON forbids UNO_DEVNET_ALLOW_ENV_TARGET=ON. "
+      "The UNO_INIT_MINE_TARGET_HEX env var lets each validator override the MineUno "
+      "difficulty target independently; mixing differently-configured validators on "
+      "the same network splits the chain at the first MineUno tx. Either turn the "
+      "env-target flag off or do not configure with TOS_PRODUCTION_BUILD=ON.")
+  endif()
   message(WARNING
     "uno_workchain: UNO_DEVNET_ALLOW_ENV_TARGET=ON — the UNO_INIT_MINE_TARGET_HEX "
     "env var will override the MineUno difficulty target at runtime. This is a "
     "consensus-critical parameter; do NOT ship this binary to a network you do "
     "not fully control.")
   target_compile_definitions(uno_workchain PRIVATE UNO_DEVNET_ALLOW_ENV_TARGET=1)
+endif()
+
+if (TOS_PRODUCTION_BUILD)
+  target_compile_definitions(uno_workchain PRIVATE TOS_PRODUCTION_BUILD=1)
+  message(STATUS "uno_workchain: TOS_PRODUCTION_BUILD=ON — devnet escape hatches refused")
 endif()
 
 # -----------------------------------------------------------------------------

@@ -6,6 +6,7 @@
 
 #include "td/db/RocksDb.h"
 #include "td/utils/port/path.h"
+#include "tos/quorum.h"
 #include "validator/consensus/simplex/bus.h"
 #include "validator/fabric.h"
 #include "validator/validator-group.hpp"
@@ -247,7 +248,9 @@ class BridgeImpl final : public IValidatorGroup {
         bus->local_id = bus->validator_set.back();
       }
 
-      total_weight += el.weight;
+      // Audit #8 (2026-04-26): defence-in-depth checked accumulation,
+      // mirroring crypto/block/validator-set.cpp's ctor sum.
+      CHECK(tos::checked_add_validator_weight(total_weight, el.weight));
       ++idx;
     }
     bus->total_weight = total_weight;

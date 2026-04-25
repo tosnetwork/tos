@@ -187,6 +187,34 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     // --- Step 4: Execute the transaction against the local state ---
     auto exec_result = execute_evm_transaction(decoded.txn, block, state, config);
 
+    // Audit #2 (2026-04-26): pre-validation failures (bad nonce, insufficient
+    // funds, intrinsic gas exceeds limit, EIP-1559/4844 violations, EIP-3607
+    // sender-has-code, EIP-2681 nonce-at-max) must NOT be admitted as accepted
+    // transactions. The previous behaviour mapped them to cp.accepted=true with
+    // gas_used=0, which let an attacker spam the block with free invalid txs.
+    // A pre-validation reject leaves state untouched (run_evm early-returned
+    // before any state mutation), so we short-circuit with sk_bad_state and
+    // no side effects.
+    if (exec_result.disposition == EvmTxDisposition::InvalidPreValidation) {
+        LOG(WARNING) << "evm-workchain: tx rejected at pre-validation: "
+                     << exec_result.error_message;
+        cp.skip_reason = block::ComputePhase::sk_bad_state;
+        cp.accepted = false;
+        cp.success = false;
+        cp.gas_used = 0;
+        cp.gas_limit = gas_limit;
+        cp.gas_credit = 0;
+        cp.gas_max = gas_limit;
+        cp.exit_code = 1;
+        cp.vm_steps = 0;
+        cp.vm_init_state_hash.set_zero();
+        cp.vm_final_state_hash.set_zero();
+        if (!exec_result.error_message.empty()) {
+            cp.vm_log = exec_result.error_message;
+        }
+        return nullptr;  // No side effects, cp.new_data stays untouched
+    }
+
     auto fx = std::make_shared<EvmBlockSideEffects>();
     auto tx_hash = decoded.txn.hash();
     fx->tx_hash = tx_hash;
@@ -219,11 +247,22 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     fx->logs = exec_result.logs;
 
     // --- Step 5d: Compute EVM stateRoot (always, for cp.new_data) ---
+    //
+    // Audit #1 (2026-04-26): use a FRESH per-compute IncrementalTrieCalculator
+    // and full recompute (nullptr change sets). The previous global cache held
+    // mutable state across candidate blocks and the dirty set only tracked
+    // sender / to / beneficiary / CREATE — inner-call touched accounts and
+    // storage slots were not tracked, so two validators that had processed
+    // different rejected candidates could compute different eth_state_root
+    // for the same accepted block → state hash divergence / chain halt.
+    // Each compute now starts from a fresh local state (built from the
+    // previous block's cp.new_data) and a fresh trie calculator, so the
+    // result is purely a function of the serialized state at that point.
     evmc::bytes32 evm_state_root;
     {
         std::unique_lock trie_lock(state.mutex());
-        evm_state_root = global_trie_calculator().compute_state_root(
-            state, &state.account_changes(), &state.storage_changes());
+        IncrementalTrieCalculator calc;
+        evm_state_root = calc.compute_state_root(state, nullptr, nullptr);
         state.clear_change_tracking();
     }
 
@@ -237,6 +276,24 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
                 evm_state_cell = cs->serialize_to_cell();
             }
         }
+
+        // Audit #1 invariant: the cell tree we persist as cp.new_data must
+        // round-trip to exactly the state root we just hashed in 5d. Catches
+        // any divergence between the in-memory EvmState we hashed and its
+        // serialized form (canonicalization bug, missing field, etc.) — a
+        // silent mismatch would let any node that restored state from the
+        // cell tree compute a different root than the network agreed on,
+        // i.e. divergence on restart or on a fresh validator joining mid-life.
+        if (evm_state_cell.not_null()) {
+            auto verify_cell_state = std::make_unique<CellEvmState>();
+            CHECK(verify_cell_state->load_from_cell(evm_state_cell));
+            EvmState verify_state(std::move(verify_cell_state));
+            std::unique_lock vlock(verify_state.mutex());
+            IncrementalTrieCalculator vcalc;
+            auto verify_root = vcalc.compute_state_root(verify_state, nullptr, nullptr);
+            CHECK(verify_root == evm_state_root);
+        }
+
         vm::CellBuilder data_cb;
         data_cb.store_long(0x45564Dll, 24);  // EVM magic
         if (evm_state_cell.not_null()) {
@@ -263,7 +320,11 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     fx->block.base_fee_per_gas = block.header.base_fee_per_gas.value_or(0);
     fx->block.transaction_hashes.push_back(tx_hash);
     fx->block.state_root = evm_state_root;
-    fx->block.parent_hash = evmc::bytes32{};  // see EIP-2935 caveat above
+    // Audit #5 (2026-04-26): thread the real wc=1 parent block hash through
+    // to fx->block.parent_hash. The previous behaviour wrote a zero parent
+    // hash here, which made the reported eth-block hash inconsistent with
+    // the EIP-2935 ring-buffer write and broke RPC block hash continuity.
+    std::memcpy(fx->block.parent_hash.bytes, parent_block_hash, 32);
 
     {
         uint8_t bloom[256] = {};
@@ -284,10 +345,15 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
         std::memcpy(fx->block.logs_bloom, bloom, 256);
     }
 
-    fx->block.transactions_root = compute_transactions_root(
-        fx->block.transaction_hashes, state);
-    fx->block.receipts_root = compute_receipts_root(
-        fx->block.transaction_hashes, state);
+    // Audit #5 (2026-04-26): derive block roots from the side-effect buffer
+    // records, NOT from EvmState — at compute time fx->transaction and
+    // fx->receipt are not yet published (publication is deferred to
+    // post-accept; cf. F4/F6), so the state-lookup variants would silently
+    // substitute default-empty records and emit wrong roots.
+    fx->block.transactions_root = compute_transactions_root_from_records(
+        std::vector<StoredTransaction>{fx->transaction});
+    fx->block.receipts_root = compute_receipts_root_from_records(
+        std::vector<StoredReceipt>{fx->receipt});
 
     {
         silkworm::BlockHeader hdr{};

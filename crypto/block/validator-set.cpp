@@ -18,6 +18,7 @@
 
 #include "auto/tl/tos_api.h"
 #include "block/block.h"
+#include "tos/quorum.h"
 
 #include "mc-config.h"
 #include "validator-set.h"
@@ -42,7 +43,12 @@ ValidatorSet::ValidatorSet(tos::CatchainSeqno cc_seqno, tos::ShardIdFull from, s
   ids_map_.reserve(ids_.size());
 
   for (std::size_t i = 0; i < ids_.size(); i++) {
-    total_weight_ += ids_[i].weight;
+    // Audit #8 (2026-04-26): defence-in-depth checked accumulation. The
+    // primary cap lives in mc-config.cpp's unpack_validator_set, but any
+    // path constructing a ValidatorSet directly (test fixtures, custom
+    // tooling) would otherwise inherit the original unchecked sum and
+    // could re-introduce the UINT64_MAX/3 quorum-overflow risk.
+    CHECK(tos::checked_add_validator_weight(total_weight_, ids_[i].weight));
     ids_map_.emplace_back(tos::PublicKey{tos::pubkeys::Ed25519{ids_[i].key}}.compute_short_id().bits256_value(), i);
   }
 

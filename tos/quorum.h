@@ -62,4 +62,24 @@ inline ValidatorWeight two_thirds_plus_one(ValidatorWeight total_weight) {
   return static_cast<ValidatorWeight>(q);
 }
 
+// Audit #8 (2026-04-26): defence-in-depth helper for any path that
+// accumulates a validator set's total weight. The primary cap lives in
+// crypto/block/mc-config.cpp, but second-tier paths (ValidatorSet ctor,
+// consensus bridge init, certificate voted-weight) historically used
+// unchecked `total += weight`. Future paths that bypass mc-config (test
+// fixtures, custom tooling, bridges) would silently re-introduce overflow.
+//
+// Usage: `if (!checked_add_validator_weight(acc, w)) { /* reject */ }`.
+// Returns false on:
+//   * w == 0 (zero-weight validators are not allowed by protocol)
+//   * acc + w would exceed kMaxTotalValidatorWeight (preserves the
+//     UINT64_MAX/3 invariant the quorum helpers above depend on).
+inline bool checked_add_validator_weight(ValidatorWeight& acc,
+                                         ValidatorWeight w) noexcept {
+  if (w == 0) return false;
+  if (w > kMaxTotalValidatorWeight - acc) return false;
+  acc += w;
+  return true;
+}
+
 }  // namespace tos

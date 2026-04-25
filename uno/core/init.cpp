@@ -1591,6 +1591,27 @@ void init_uno_workchain(const std::string& db_root) {
     LOG(WARNING) << "uno-workchain: initialising (workchain_id=2, db_root='"
                  << db_root << "')";
 
+    // Audit #10 (2026-04-26): emit build flags so operators can see at a
+    // glance whether they are running a binary that honours devnet escape
+    // hatches. CI release jobs configure with `-DTOS_PRODUCTION_BUILD=ON`,
+    // which makes UNO_DEVNET_ALLOW_ENV_TARGET=ON a hard CMake error; this
+    // log line surfaces both flags in case a non-CI-built binary is
+    // accidentally deployed to a public network.
+    LOG(WARNING) << "uno-workchain: build flags: "
+                 << "TOS_PRODUCTION_BUILD="
+#ifdef TOS_PRODUCTION_BUILD
+                 << "ON"
+#else
+                 << "OFF"
+#endif
+                 << ", UNO_DEVNET_ALLOW_ENV_TARGET="
+#ifdef UNO_DEVNET_ALLOW_ENV_TARGET
+                 << "ON"
+#else
+                 << "OFF"
+#endif
+                 ;
+
     // UNO_INIT_MINE_TARGET_HEX env override is gated on a build-time
     // flag (UNO_DEVNET_ALLOW_ENV_TARGET, default OFF). Production
     // validator binaries silently ignore the env var; only devnet builds

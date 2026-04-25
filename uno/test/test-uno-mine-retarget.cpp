@@ -412,14 +412,16 @@ static void test_timestamp_monotonicity() {
     std::memcpy(tx.public_inputs.target.data(), uw::kInitMineTargetBE, 32);
     tx.public_inputs.output_cm.fill(0xAA);
 
-    // gen_utime == last_solve_ts → reject.
+    // Audit #7 (2026-04-26): same-second solves are now accepted at the
+    // timestamp gate (they may still be rejected by EpochRaceDetected or
+    // RemainingRaceDetected upstream, depending on the chain state).
+    // gen_utime == last_solve_ts → must NOT be rejected as TimestampNotMonotonic.
     auto r1 = uw::verify_mine_uno_chain_checks(s, tx, /*gen_utime=*/1'000'000);
-    if (r1 != uw::VerifyResult::TimestampNotMonotonic) {
-        tprintf("  FAILED: gen_utime == last_solve_ts returned %s; expected TimestampNotMonotonic\n",
-                uw::verify_result_name(r1));
+    if (r1 == uw::VerifyResult::TimestampNotMonotonic) {
+        tprintf("  FAILED: gen_utime == last_solve_ts wrongly rejected as TimestampNotMonotonic\n");
         return;
     }
-    // gen_utime < last_solve_ts → reject.
+    // gen_utime < last_solve_ts → reject (clock going backwards).
     auto r2 = uw::verify_mine_uno_chain_checks(s, tx, /*gen_utime=*/999'999);
     if (r2 != uw::VerifyResult::TimestampNotMonotonic) {
         tprintf("  FAILED: gen_utime < last_solve_ts returned %s; expected TimestampNotMonotonic\n",

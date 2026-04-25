@@ -194,4 +194,31 @@ evmc::bytes32 compute_receipts_root(const std::vector<evmc::bytes32>& tx_hashes,
     return silkworm::trie::root_hash(receipts, encode_stored_receipt);
 }
 
+// ---------------------------------------------------------------------------
+// Audit #5 (2026-04-26): state-less variants. The consensus compute path
+// constructs StoredTransaction / StoredReceipt records inline (in fx) and
+// must derive the block roots from those records directly — at compute time
+// the records are not yet stored in EvmState (publication is deferred to
+// post-accept), so the state-lookup variants would silently substitute
+// default-empty records and produce wrong transactionsRoot/receiptsRoot.
+// ---------------------------------------------------------------------------
+
+evmc::bytes32 compute_transactions_root_from_records(
+    const std::vector<StoredTransaction>& txns) {
+    if (txns.empty()) {
+        silkworm::trie::HashBuilder hb;
+        return hb.root_hash();
+    }
+    return silkworm::trie::root_hash(txns, encode_stored_transaction);
+}
+
+evmc::bytes32 compute_receipts_root_from_records(
+    const std::vector<StoredReceipt>& receipts) {
+    if (receipts.empty()) {
+        silkworm::trie::HashBuilder hb;
+        return hb.root_hash();
+    }
+    return silkworm::trie::root_hash(receipts, encode_stored_receipt);
+}
+
 }  // namespace evm_workchain

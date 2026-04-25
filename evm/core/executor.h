@@ -31,6 +31,28 @@
 
 namespace evm_workchain {
 
+/// Disposition of an EVM execution attempt.
+///
+/// Audit #2 (2026-04-26): pre-validation failures (bad nonce, insufficient
+/// funds, intrinsic gas exceeds limit, EIP-1559 / 4844 violations, EIP-3607
+/// sender-has-code, nonce-at-max) must be distinguishable from a transaction
+/// that was admitted, executed, and reverted. The host-chain compute phase
+/// uses this disposition to decide whether to admit the tx as cp.accepted=true
+/// (Executed*) or short-circuit to cp.skip_reason=sk_bad_state with cp.accepted
+/// =false (InvalidPreValidation). Mapping all three to a single "success" bool
+/// allowed free blockspace spam: bad-nonce txs returned gas_used=0 yet were
+/// still booked as accepted transactions.
+enum class EvmTxDisposition {
+    /// Pre-execution validation rejected the tx (default for default-constructed
+    /// ExecutionResult, so any unset code path is treated as "never executed").
+    InvalidPreValidation = 0,
+    /// EVM ran, txn reverted (gas charged, state writes journaled-and-rolled-back
+    /// but balance/nonce side-effects from gas accounting persist).
+    ExecutedReverted = 1,
+    /// EVM ran successfully (gas charged, state writes committed).
+    ExecutedSucceeded = 2,
+};
+
 /// Canonical EVM execution result returned to the host chain.
 struct ExecutionResult {
     bool success{false};
@@ -40,6 +62,7 @@ struct ExecutionResult {
     std::vector<silkworm::Log> logs;
     std::string error_message;
     std::optional<evmc::address> contract_address;  // set for CREATE
+    EvmTxDisposition disposition{EvmTxDisposition::InvalidPreValidation};
 };
 
 /// Execute a single EVM transaction against the workchain state.

@@ -283,6 +283,12 @@ static ExecutionResult run_evm(
     auto call_result = evm.execute(txn, execution_gas);
 
     result.success = (call_result.status == EVMC_SUCCESS);
+    // Audit #2: any path that reaches the EVM execute() call has passed
+    // pre-validation, so the result is either ExecutedSucceeded or
+    // ExecutedReverted. Pre-validation failures early-return above and
+    // keep the default InvalidPreValidation.
+    result.disposition = result.success ? EvmTxDisposition::ExecutedSucceeded
+                                        : EvmTxDisposition::ExecutedReverted;
     result.return_data = std::move(call_result.data);
     if (!result.success) {
         result.error_message = call_result.error_message;

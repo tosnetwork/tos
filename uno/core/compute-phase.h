@@ -163,7 +163,7 @@ enum class VerifyResult : int {
     PowHashAboveTarget          = 47,  // pow_hash >= state.mine_target() (failed PoW)
     PiHeaderMismatch            = 48,  // STARK PI != tx header (replay / forgery)
     ZeroValueMineUno            = 49,  // value_nano == 0 (post-cap free tx spam)
-    TimestampNotMonotonic       = 50,  // gen_utime <= state.last_solve_ts() (consensus rule)
+    TimestampNotMonotonic       = 50,  // gen_utime < state.last_solve_ts() (consensus rule; same-second is OK after audit #7)
     // catch-all (decode / codec)
     DecodeError                 = 90,
 };

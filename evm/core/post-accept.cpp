@@ -148,17 +148,28 @@ namespace {
 
 constexpr size_t kMaxStashedSideEffects = 4096;
 
-struct EvmTxHashKey {
+// Audit #4 (2026-04-26): key by (block_seqno, tx_hash). Tx-hash-only keying
+// silently dropped the second candidate's fx when the same tx appeared in
+// two candidate blocks (e.g. BFT-rejected A followed by candidate B with a
+// different seqno) — apply at BFT-accept time then read the wrong block
+// context (number, timestamp, parent_hash, tx_index) into the receipt /
+// log / block summary records.
+struct EvmStashKey {
+    uint64_t seqno{};
     evmc::bytes32 v{};
-    bool operator==(const EvmTxHashKey& o) const noexcept {
-        return std::memcmp(v.bytes, o.v.bytes, 32) == 0;
+    bool operator==(const EvmStashKey& o) const noexcept {
+        return seqno == o.seqno && std::memcmp(v.bytes, o.v.bytes, 32) == 0;
     }
 };
 
-struct EvmTxHashKeyHasher {
-    size_t operator()(const EvmTxHashKey& k) const noexcept {
+struct EvmStashKeyHasher {
+    size_t operator()(const EvmStashKey& k) const noexcept {
         size_t h = 0;
         std::memcpy(&h, k.v.bytes, sizeof(h));
+        // Mix in the seqno so distinct seqnos with the same tx_hash bucket
+        // separately. xor-with-rotated-shift is enough — collision rate is
+        // a soft concern (linear-scan eviction handles it gracefully).
+        h ^= (k.seqno + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2));
         return h;
     }
 };
@@ -170,7 +181,7 @@ struct StashedEntry {
 
 struct StashedCache {
     std::mutex mu;
-    std::unordered_map<EvmTxHashKey, StashedEntry, EvmTxHashKeyHasher> map;
+    std::unordered_map<EvmStashKey, StashedEntry, EvmStashKeyHasher> map;
 
     static uint64_t now_us() noexcept {
         return static_cast<uint64_t>(
@@ -199,15 +210,21 @@ StashedCache& g_stashed_cache() {
 
 }  // namespace
 
-void stash_side_effects(const evmc::bytes32& tx_hash, EvmBlockSideEffects fx) {
+void stash_side_effects(uint64_t block_seqno,
+                        const evmc::bytes32& tx_hash,
+                        EvmBlockSideEffects fx) {
     auto& c = g_stashed_cache();
     std::lock_guard<std::mutex> lock(c.mu);
-    EvmTxHashKey key{tx_hash};
+    EvmStashKey key{block_seqno, tx_hash};
     auto it = c.map.find(key);
     if (it != c.map.end()) {
-        // Re-validation of the same candidate produced bitwise-identical
-        // side effects (compute is pure). Refresh the timestamp so the
-        // entry stays warm and skip the rewrite.
+        // Audit #4 (2026-04-26): on collision, REPLACE rather than skip.
+        // Block-context-dependent fields (block.number, receipt.tx_index,
+        // block.timestamp, etc.) can drift between re-runs of the same
+        // candidate seqno (timestamp re-derivation, validator-set
+        // re-rolling, replay attack surfaces). The freshest fx is the
+        // most likely to align with the eventually-accepted candidate.
+        it->second.fx = std::move(fx);
         it->second.inserted_at_us = StashedCache::now_us();
         return;
     }
@@ -218,10 +235,10 @@ void stash_side_effects(const evmc::bytes32& tx_hash, EvmBlockSideEffects fx) {
 }
 
 std::optional<EvmBlockSideEffects>
-take_side_effects(const evmc::bytes32& tx_hash) {
+take_side_effects(uint64_t block_seqno, const evmc::bytes32& tx_hash) {
     auto& c = g_stashed_cache();
     std::lock_guard<std::mutex> lock(c.mu);
-    auto it = c.map.find(EvmTxHashKey{tx_hash});
+    auto it = c.map.find(EvmStashKey{block_seqno, tx_hash});
     if (it == c.map.end()) return std::nullopt;
     EvmBlockSideEffects out = std::move(it->second.fx);
     c.map.erase(it);
@@ -355,11 +372,11 @@ try_derive_evm_tx_hash_from_message(const td::Ref<vm::Cell>& msg) noexcept {
     return txn.hash();
 }
 
-bool apply_stashed_side_effects_for_message(
+bool apply_stashed_side_effects_for_message(uint64_t accepted_block_seqno,
     const td::Ref<vm::Cell>& msg) noexcept {
     auto tx_hash = try_derive_evm_tx_hash_from_message(msg);
     if (!tx_hash) return false;
-    auto fx = take_side_effects(*tx_hash);
+    auto fx = take_side_effects(accepted_block_seqno, *tx_hash);
     if (!fx) return false;
     apply_block_side_effects(*fx);
     return true;

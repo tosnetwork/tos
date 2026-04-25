@@ -1159,10 +1159,14 @@ void ValidatorManagerImpl::cleanup_applied_external_messages(BlockHandle handle,
       auto block_root = block->root_cell();
       if (block_root.not_null() && tlb::unpack_cell(block_root, blk) &&
           tlb::unpack_cell(blk.extra, extra)) {
+        // Audit #4 (2026-04-26): pass the accepted block's seqno through to
+        // apply, so the deferred-apply queue's (seqno, tx_hash) key matches
+        // the (seqno, tx_hash) used at stash time.
+        const uint64_t accepted_seqno = block->block_id().id.seqno;
         vm::AugmentedDictionary in_msg_dict{vm::load_cell_slice_ref(extra.in_msg_descr), 256,
                                             block::tlb::aug_InMsgDescrDefault};
         in_msg_dict.check_for_each_extra(
-            [](td::Ref<vm::CellSlice> value, td::Ref<vm::CellSlice>, td::ConstBitPtr, int key_len) {
+            [accepted_seqno](td::Ref<vm::CellSlice> value, td::Ref<vm::CellSlice>, td::ConstBitPtr, int key_len) {
               if (key_len != 256) return true;
               int tag = block::gen::t_InMsg.get_tag(*value);
               if (tag != block::gen::InMsg::msg_import_ext) return true;
@@ -1171,7 +1175,7 @@ void ValidatorManagerImpl::cleanup_applied_external_messages(BlockHandle handle,
               if (!block::gen::t_InMsg.unpack_msg_import_ext(cs, msg, transaction)) {
                 return true;
               }
-              evm_workchain::apply_stashed_side_effects_for_message(msg);
+              evm_workchain::apply_stashed_side_effects_for_message(accepted_seqno, msg);
               return true;
             });
       }
