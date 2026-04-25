@@ -162,7 +162,12 @@ function(GetGitState _working_dir)
 
     RunGitCommand(show -s "--format=%s" ${object})
     if(exit_code EQUAL 0)
-        # Escape quotes
+        # Escape backslashes BEFORE quotes — otherwise a literal `\"`
+        # in the commit subject becomes `\\"` after the quote pass,
+        # which the C++ parser reads as `\\` (escaped backslash) +
+        # `"` (terminating the string), leaving the rest of the
+        # subject as bare tokens.
+        string(REPLACE "\\" "\\\\" output "${output}")
         string(REPLACE "\"" "\\\"" output "${output}")
         set(ENV{GIT_COMMIT_SUBJECT} "${output}")
     endif()
@@ -170,7 +175,8 @@ function(GetGitState _working_dir)
     RunGitCommand(show -s "--format=%b" ${object})
     if(exit_code EQUAL 0)
         if(output)
-            # Escape quotes
+            # Same backslash-then-quote ordering as the subject above.
+            string(REPLACE "\\" "\\\\" output "${output}")
             string(REPLACE "\"" "\\\"" output "${output}")
             # Escape line breaks in the commit message.
             string(REPLACE "\r\n" "\\r\\n\\\r\n" safe "${output}")
