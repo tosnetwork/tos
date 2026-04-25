@@ -162,8 +162,16 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
   }
 
   void on_overlay_message(adnl::AdnlNodeIdShort src_adnl_id, td::BufferSlice data) {
-    auto peer = adnl_id_to_peer_.at(src_adnl_id);
-    owning_bus().publish<IncomingProtocolMessage>(peer.idx, std::move(data));
+    // Codex audit (round 10, finding #3): bare `.at(...)` throws if the
+    // ADNL src is not in our peer table — possible if a peer that left the
+    // overlay races a final message past unsubscribe. Drop the message
+    // instead of throwing.
+    auto it = adnl_id_to_peer_.find(src_adnl_id);
+    if (it == adnl_id_to_peer_.end()) {
+      LOG(WARNING) << "private-overlay: dropping message from unknown adnl src " << src_adnl_id;
+      return;
+    }
+    owning_bus().publish<IncomingProtocolMessage>(it->second.idx, std::move(data));
   }
 
   void on_overlay_broadcast(PublicKeyHash src, td::BufferSlice data, td::BufferSlice extra) {
@@ -171,10 +179,28 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
       return;
     }
 
-    auto parsed_extra = fetch_tl_object<tos_api::consensus_broadcastExtra>(extra, true).move_as_ok();
+    // Codex audit (round 10, finding #3): the previous code called
+    // `.move_as_ok()` on the parse Result without checking — a malformed
+    // `consensus_broadcastExtra` from any authorized validator crashed the
+    // daemon. Mirror precheck_broadcast's parse-error handling.
+    auto parsed_extra_r = fetch_tl_object<tos_api::consensus_broadcastExtra>(extra, true);
+    if (parsed_extra_r.is_error()) {
+      LOG(WARNING) << "private-overlay: dropping broadcast with malformed extra from " << src
+                   << ": " << parsed_extra_r.move_as_error();
+      return;
+    }
+    auto parsed_extra = parsed_extra_r.move_as_ok();
+
+    // Same `.at(src)` throw vector as on_overlay_message. The precheck
+    // already rejects unknown src, but defense-in-depth here is cheap.
+    auto peer_it = short_id_to_peer_.find(src);
+    if (peer_it == short_id_to_peer_.end()) {
+      LOG(WARNING) << "private-overlay: dropping broadcast from unknown short_id src " << src;
+      return;
+    }
 
     auto& bus = *owning_bus();
-    auto peer = short_id_to_peer_.at(src);
+    auto peer = peer_it->second;
     auto maybe_candidate = Candidate::deserialize(std::move(data), bus, peer.idx, parsed_extra->slot_);
 
     if (maybe_candidate.is_error()) {
@@ -195,7 +221,13 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
     }
 
     auto& bus = *owning_bus();
-    auto peer = short_id_to_peer_.at(src).idx;
+    // Codex audit (round 10, finding #3): bare `.at(src)` throws if the
+    // src is not in the overlay membership map. Return a structured error.
+    auto peer_it = short_id_to_peer_.find(src);
+    if (peer_it == short_id_to_peer_.end()) {
+      co_return td::Status::Error("Precheck failed: src is not in private overlay membership");
+    }
+    auto peer = peer_it->second.idx;
     td::uint32 slot = parsed_extra.move_as_ok()->slot_;
     if (peer != bus.collator_schedule->expected_collator_for(slot)) {
       co_return td::Status::Error("Precheck failed: Broadcast is not from the expected collator");

@@ -1180,13 +1180,23 @@ class Query {
 
  private:
   Raw raw_;
-  static unsigned output_actions_count(td::Ref<vm::Cell> list) {
+  static unsigned output_actions_count(td::Ref<vm::Cell> list) try {
+    // Codex audit (round 10, finding #4): same hardening as
+    // SmartContract::Answer::output_actions_count — VM-produced action
+    // cells can be special and bare load_cell_slice throws.
     int i = -1;
     do {
       ++i;
-      list = load_cell_slice(std::move(list)).prefetch_ref();
+      bool special = false;
+      auto cs = vm::load_cell_slice_special(std::move(list), special);
+      if (special) {
+        return static_cast<unsigned>(i);
+      }
+      list = cs.prefetch_ref();
     } while (list.not_null());
     return static_cast<unsigned>(i);
+  } catch (...) {
+    return 0;
   }
 };
 
@@ -3967,8 +3977,19 @@ class GenericCreateSendGrams : public ToslibQueryActor {
     auto status = downcast_call2<td::Status>(
         *message.data_, td::overloaded(
                             [&](toslib_api::msg_dataRaw& text) {
-                              TRY_RESULT(body, vm::std_boc_deserialize(text.body_));
-                              TRY_RESULT(init_state, vm::std_boc_deserialize(text.init_state_, true));
+                              // Codex audit (round 10, finding #1): the body
+                              // BoC ends up in WalletInterface::store_gift_message
+                              // which uses bare load_cell_slice — a special root
+                              // throws and the embedding process std::terminate's.
+                              // Use the safe loader (mirrors R9.2 helper).
+                              TRY_RESULT(body, deserialize_safe_boc_root(text.body_, "msg_dataRaw.body"));
+                              td::Ref<vm::Cell> init_state;
+                              if (!text.init_state_.empty()) {
+                                TRY_RESULT(parsed_init,
+                                           deserialize_safe_boc_root(text.init_state_,
+                                                                     "msg_dataRaw.init_state"));
+                                init_state = std::move(parsed_init);
+                              }
                               res.body = std::move(body);
                               res.init_state = std::move(init_state);
                               return td::Status::OK();

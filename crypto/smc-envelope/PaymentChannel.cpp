@@ -144,7 +144,7 @@ td::Ref<vm::Cell> SignedPromise::create_and_serialize(const td::Ed25519::Private
   return res;
 }
 
-bool SignedPromise::unpack(td::Ref<vm::Cell> cell) {
+bool SignedPromise::unpack(td::Ref<vm::Cell> cell) try {
   block::gen::ChanSignedPromise::Record rec;
   if (!tlb::unpack_cell(cell, rec)) {
     return false;
@@ -164,13 +164,31 @@ bool SignedPromise::unpack(td::Ref<vm::Cell> cell) {
   if (!rec.sig->prefetch_maybe_ref(sig_cell)) {
     return false;
   }
+  // Codex audit (round 10, finding #2): the optional sig ref was loaded
+  // with bare `vm::load_cell_slice` — a special cell (PrunedBranch /
+  // Library / Merkle*) at this position throws and crashes any host
+  // unpacking an attacker-supplied promise BoC (toslib pchan_unpackPromise).
+  // Use the special-aware loader and refuse special cells. Function-try
+  // catches any other VmError surfaced from earlier `tlb::unpack_cell`
+  // / `tlb::csr_unpack` paths through malformed cells.
+  if (sig_cell.is_null()) {
+    return false;
+  }
+  bool special = false;
+  vm::CellSlice cs = vm::load_cell_slice_special(sig_cell, special);
+  if (special) {
+    return false;
+  }
   td::SecureString signature(64);
-  vm::CellSlice cs = vm::load_cell_slice(sig_cell);
   if (!cs.prefetch_bytes(signature.as_mutable_slice())) {
     return false;
   }
   o_signature = std::move(signature);
   return true;
+} catch (const vm::VmError&) {
+  return false;
+} catch (...) {
+  return false;
 }
 
 td::Ref<vm::Cell> StateInit::serialize() const {

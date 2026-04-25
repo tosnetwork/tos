@@ -30,13 +30,27 @@
 #include "transaction.h"
 
 namespace tos {
-unsigned SmartContract::Answer::output_actions_count(td::Ref<vm::Cell> list) {
+unsigned SmartContract::Answer::output_actions_count(td::Ref<vm::Cell> list) try {
+  // Codex audit (round 10, finding #4): bare `load_cell_slice` throws on
+  // PrunedBranch / Library / Merkle* — VM-emitted action lists are
+  // attacker-influenced (contract output). The function-try-block plus
+  // special-aware loader keeps the helper noexcept-safe so DEBUG fee
+  // simulation (and any future caller) can't crash the embedding host.
   int i = -1;
   do {
     ++i;
-    list = load_cell_slice(std::move(list)).prefetch_ref();
+    bool special = false;
+    auto cs = vm::load_cell_slice_special(std::move(list), special);
+    if (special) {
+      // Truncate the count at the first special cell — caller uses this
+      // for diagnostic prints; better than throwing.
+      return static_cast<unsigned>(i);
+    }
+    list = cs.prefetch_ref();
   } while (list.not_null());
   return static_cast<unsigned>(i);
+} catch (...) {
+  return 0;
 }
 namespace {
 
