@@ -13,6 +13,13 @@
 #include "tvm-emulator.hpp"
 
 td::Result<td::Ref<vm::Cell>> boc_b64_to_cell(const char *boc) {
+  // Codex SDK-FFI audit (S2.1): `td::Slice(const char*)` CHECKs non-null
+  // (Slice.h:176) and aborts the host process on null. Many emulator
+  // FFI exports forward attacker-controlled `const char*` here; convert
+  // null into a structured error at this single chokepoint.
+  if (boc == nullptr) {
+    return td::Status::Error("boc_b64_to_cell: null input");
+  }
   TRY_RESULT_PREFIX(boc_decoded, td::base64_decode(td::Slice(boc)), "Can't decode base64 boc: ");
   return vm::std_boc_deserialize(boc_decoded);
 }
@@ -556,6 +563,9 @@ bool tvm_emulator_set_c7(void *tvm_emulator, const char *address, uint32_t unixt
   // across the C ABI.
   // Codex audit (round 15, finding #2): null-handle guard.
   if (tvm_emulator == nullptr) return false;
+  // Codex SDK-FFI audit (S2.1): `td::Slice(const char*)` CHECKs non-null;
+  // null `address` or `rand_seed_hex` would abort the host. Reject early.
+  if (address == nullptr || rand_seed_hex == nullptr) return false;
   auto emulator = static_cast<emulator::TvmEmulator *>(tvm_emulator);
   auto std_address = block::StdAddress::parse(td::Slice(address));
   if (std_address.is_error()) {
@@ -784,6 +794,12 @@ TvmEulatorEmulateRunMethodResponse emulate_run_method(uint32_t len, const char *
   // either deref a null Ref<Cell> or throw out of this entry point and
   // crash the embedding host. Wrap in function-try-block, validate ref
   // counts, and use the special-aware loader.
+  // Codex SDK-FFI audit (S2.1): null params_boc with non-zero len would
+  // construct an invalid Slice and read garbage; len==0 with non-null
+  // ptr is also nonsensical. Reject both shapes early.
+  if (params_boc == nullptr || len == 0) {
+    return {nullptr, nullptr};
+  }
   auto params_cell = vm::std_boc_deserialize(td::Slice(params_boc, len));
   if (params_cell.is_error()) {
     return {nullptr, nullptr};

@@ -82,18 +82,32 @@ td::Ref<MultisigWallet> MultisigWallet::create(td::Ref<vm::Cell> data) {
       true, State{tos::SmartContractCode::get_code(tos::SmartContractCode::Multisig), std::move(data)});
 }
 
-int MultisigWallet::processed(td::uint64 query_id) const {
+int MultisigWallet::processed(td::uint64 query_id) const try {
+  // Codex SDK-FFI audit (S2.2): defensive layer. The full Result<T>
+  // migration (R13.4) is still deferred — public signature remains plain
+  // value — but stack pops can throw on a malformed get-method result
+  // from a hostile contract / lite-server. Catch at the boundary and
+  // return -1 ("unknown") rather than aborting the embedding host.
   auto res = run_get_method("processed?", {td::make_refint(query_id)});
+  if (!res.success) return -1;
   return res.stack.write().pop_smallint_range(1, -1);
+} catch (...) {
+  return -1;
 }
 
-MultisigWallet::QueryState MultisigWallet::get_query_state(td::uint64 query_id) const {
+MultisigWallet::QueryState MultisigWallet::get_query_state(td::uint64 query_id) const try {
+  // Codex SDK-FFI audit (S2.2): defensive layer; on any failure return a
+  // QueryState::Unknown sentinel rather than aborting the host.
   auto ans = run_get_method("get_query_state", {td::make_refint(query_id)});
+  QueryState res;
+  if (!ans.success) {
+    res.state = QueryState::Unknown;
+    return res;
+  }
 
   auto mask = ans.stack.write().pop_int();
   auto state = ans.stack.write().pop_smallint_range(1, -1);
 
-  QueryState res;
   if (state == 1) {
     res.state = QueryState::Unknown;
   } else if (state == 0) {
@@ -107,10 +121,16 @@ MultisigWallet::QueryState MultisigWallet::get_query_state(td::uint64 query_id) 
     res.state = QueryState::Sent;
   }
   return res;
+} catch (...) {
+  QueryState res;
+  res.state = QueryState::Unknown;
+  return res;
 }
 
-std::vector<td::SecureString> MultisigWallet::get_public_keys() const {
+std::vector<td::SecureString> MultisigWallet::get_public_keys() const try {
+  // Codex SDK-FFI audit (S2.2): defensive layer; empty vector on failure.
   auto ans = run_get_method("get_public_keys");
+  if (!ans.success) return {};
   auto dict_root = ans.stack.write().pop_cell();
   vm::Dictionary dict(std::move(dict_root), 8);
   std::vector<td::SecureString> res;
@@ -121,10 +141,15 @@ std::vector<td::SecureString> MultisigWallet::get_public_keys() const {
     return true;
   });
   return res;
+} catch (...) {
+  return {};
 }
 
 td::Ref<vm::Cell> MultisigWallet::create_init_data(td::uint32 wallet_id, std::vector<td::SecureString> public_keys,
-                                                   int k) const {
+                                                   int k) const try {
+  // Codex SDK-FFI audit (S2.2): defensive layer. Replace the previous
+  // CHECK(res.code == 0) abort with a null-cell return on get-method
+  // failure or pop exception.
   vm::Dictionary pk(8);
   for (size_t i = 0; i < public_keys.size(); i++) {
     auto key = pk.integer_key(td::make_refint(i), 8, false);
@@ -132,8 +157,12 @@ td::Ref<vm::Cell> MultisigWallet::create_init_data(td::uint32 wallet_id, std::ve
   }
   auto res = run_get_method("create_init_state", {td::make_refint(wallet_id), td::make_refint(public_keys.size()),
                                                   td::make_refint(k), pk.get_root_cell()});
-  CHECK(res.code == 0);
+  if (!res.success || res.code != 0) {
+    return {};
+  }
   return res.stack.write().pop_cell();
+} catch (...) {
+  return {};
 }
 
 td::Ref<vm::Cell> MultisigWallet::create_init_data_fast(td::uint32 wallet_id, std::vector<td::SecureString> public_keys,

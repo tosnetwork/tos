@@ -238,7 +238,13 @@ std::shared_ptr<const block::Config> try_fetch_config_from_c7(td::Ref<vm::Tuple>
   auto config_addr_cell = config_dict->lookup_ref(td::BitArray<32>::zero());
   tos::StdSmcAddress config_addr;
   if (config_addr_cell.is_null()) {
-    config_addr = tos::StdSmcAddress::zero();
+    // Codex SDK-FFI audit (S2.3): the previous code silently substituted
+    // StdSmcAddress::zero() for a missing config param 0. A C7 dictionary
+    // without param 0 is malformed; rejecting matches the special/wrong-
+    // sized rejects below so the get-method is never executed under an
+    // unintended zero config address.
+    LOG(WARNING) << "Config parameter 0 missing; rejecting C7 config";
+    return nullptr;
   } else {
     bool config_addr_special = false;
     auto config_addr_cs =
