@@ -5361,6 +5361,17 @@ void ToslibClient::finish_dns_resolve(std::string name, td::Bits256 category, td
       TRY_STATUS_PROMISE(promise, td::Status::Error("next resolver error: domain split not at a component boundary "));
     }
 
+    // Codex audit (round 12, finding #2): the previous code unconditionally
+    // called `data.get<EntryDataNextResolver>()` based on `partially_resolved`
+    // being true, but a malicious DNS resolver can mark a record partial
+    // while returning a different variant (Text/AdnlAddress/SmcAddress/etc.).
+    // `td::Variant::get<T>()` CHECKs the active alternative and aborts the
+    // process on mismatch — turning a hostile DNS reply into an SDK kill.
+    // Validate the variant tag before dereferencing.
+    if (entries[0].data.type != tos::ManualDns::EntryData::NextResolver) {
+      TRY_STATUS_PROMISE(promise,
+          ToslibError::Internal("partially-resolved DNS entry is not a next-resolver record"));
+    }
     auto address = entries[0].data.data.get<tos::ManualDns::EntryDataNextResolver>().resolver;
     return do_dns_request(prefix, category, ttl - 1, std::move(block_id), address, std::move(promise));
   }

@@ -219,7 +219,13 @@ td::Ref<vm::Cell> Data::init_state() {
 }
 }  // namespace pchan
 
-td::Result<PaymentChannel::Info> PaymentChannel::get_info() const {
+td::Result<PaymentChannel::Info> PaymentChannel::get_info() const try {
+  // Codex audit (round 12, finding #4): the previous code ignored both
+  // `extract_std_address` results (so a malformed pchan-code account
+  // would silently default to (0, 0)) and bare-loaded `data_rec.state`
+  // / `data_rec.config` ref slices (which throw on PrunedBranch /
+  // Library / Merkle*). Wrap the whole function in a try-block and
+  // check every fallible call.
   block::gen::ChanData::Record data_rec;
   if (!tlb::unpack_cell(get_state().data, data_rec)) {
     return td::Status::Error("Can't unpack data");
@@ -231,13 +237,23 @@ td::Result<PaymentChannel::Info> PaymentChannel::get_info() const {
   pchan::Config config;
   config.a_key = td::SecureString(config_rec.a_key.as_slice());
   config.b_key = td::SecureString(config_rec.b_key.as_slice());
-  block::tlb::t_MsgAddressInt.extract_std_address(vm::load_cell_slice_ref(config_rec.a_addr), config.a_addr);
-  block::tlb::t_MsgAddressInt.extract_std_address(vm::load_cell_slice_ref(config_rec.b_addr), config.b_addr);
+  if (!block::tlb::t_MsgAddressInt.extract_std_address(
+          vm::load_cell_slice_ref(config_rec.a_addr), config.a_addr)) {
+    return td::Status::Error("Can't extract a_addr");
+  }
+  if (!block::tlb::t_MsgAddressInt.extract_std_address(
+          vm::load_cell_slice_ref(config_rec.b_addr), config.b_addr)) {
+    return td::Status::Error("Can't extract b_addr");
+  }
   config.init_timeout = static_cast<td::int32>(config_rec.init_timeout);
   config.close_timeout = static_cast<td::int32>(config_rec.close_timeout);
   config.channel_id = static_cast<td::int64>(config_rec.channel_id);
 
-  auto state_cs = vm::load_cell_slice(data_rec.state);
+  bool state_special = false;
+  auto state_cs = vm::load_cell_slice_special(data_rec.state, state_special);
+  if (state_special) {
+    return td::Status::Error("ChanData state is a special cell");
+  }
   Info res;
   switch (block::gen::t_ChanState.check_tag(state_cs)) {
     case block::gen::ChanState::chan_state_init: {
@@ -296,7 +312,13 @@ td::Result<PaymentChannel::Info> PaymentChannel::get_info() const {
   res.description = block::gen::t_ChanState.as_string_ref(data_rec.state);
 
   return std::move(res);
-}  // namespace tos
+} catch (const vm::VmError& e) {
+  return td::Status::Error(PSLICE() << "PaymentChannel::get_info: vm error: " << e.get_msg());
+} catch (const std::exception& e) {
+  return td::Status::Error(PSLICE() << "PaymentChannel::get_info: " << e.what());
+} catch (...) {
+  return td::Status::Error("PaymentChannel::get_info: unknown exception");
+}
 
 td::optional<td::int32> PaymentChannel::guess_revision(const vm::Cell::Hash& code_hash) {
   for (auto i : tos::SmartContractCode::get_revisions(tos::SmartContractCode::PaymentChannel)) {

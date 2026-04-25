@@ -113,17 +113,29 @@ td::Result<td::Ref<vm::Cell>> DnsInterface::EntryData::as_cell() const {
   //dns_smc_address#9fd3 smc_addr:MsgAddressInt flags:(## 8) { flags <= 1 } cap_list:flags . 0?SmcCapList = DNSRecord;   // often in record #1
 }
 
-td::Result<DnsInterface::EntryData> DnsInterface::EntryData::from_cellslice(vm::CellSlice& cs) {
+td::Result<DnsInterface::EntryData> DnsInterface::EntryData::from_cellslice(vm::CellSlice& cs) try {
+  // Codex audit (round 12, finding #1): every `tlb::unpack(cs, dns)`
+  // return value used to be ignored before dereferencing the record's
+  // fields. A malicious DNS contract / lite-server returning a malformed
+  // dnsresolve stack cell could either return garbage downstream or
+  // throw out of nested helpers. Check every unpack result, and wrap
+  // the whole function in a try-block so any VmError surfaced by
+  // CellText::load / extract_std_address / Record decoding becomes a
+  // structured error rather than a host crash.
   switch (block::gen::t_DNSRecord.get_tag(cs)) {
     case block::gen::DNSRecord::dns_text: {
       block::gen::DNSRecord::Record_dns_text dns;
-      tlb::unpack(cs, dns);
+      if (!tlb::unpack(cs, dns)) {
+        return td::Status::Error("DNSRecord dns_text: malformed record");
+      }
       TRY_RESULT(text, vm::CellText::load(dns.x.write()));
       return EntryData::text(std::move(text));
     }
     case block::gen::DNSRecord::dns_next_resolver: {
       block::gen::DNSRecord::Record_dns_next_resolver dns;
-      tlb::unpack(cs, dns);
+      if (!tlb::unpack(cs, dns)) {
+        return td::Status::Error("DNSRecord dns_next_resolver: malformed record");
+      }
       tos::WorkchainId wc;
       tos::StdSmcAddress addr;
       if (!block::tlb::t_MsgAddressInt.extract_std_address(dns.resolver, wc, addr)) {
@@ -133,12 +145,16 @@ td::Result<DnsInterface::EntryData> DnsInterface::EntryData::from_cellslice(vm::
     }
     case block::gen::DNSRecord::dns_adnl_address: {
       block::gen::DNSRecord::Record_dns_adnl_address dns;
-      tlb::unpack(cs, dns);
+      if (!tlb::unpack(cs, dns)) {
+        return td::Status::Error("DNSRecord dns_adnl_address: malformed record");
+      }
       return EntryData::adnl_address(dns.adnl_addr);
     }
     case block::gen::DNSRecord::dns_smc_address: {
       block::gen::DNSRecord::Record_dns_smc_address dns;
-      tlb::unpack(cs, dns);
+      if (!tlb::unpack(cs, dns)) {
+        return td::Status::Error("DNSRecord dns_smc_address: malformed record");
+      }
       tos::WorkchainId wc;
       tos::StdSmcAddress addr;
       if (!block::tlb::t_MsgAddressInt.extract_std_address(dns.smc_addr, wc, addr)) {
@@ -148,11 +164,19 @@ td::Result<DnsInterface::EntryData> DnsInterface::EntryData::from_cellslice(vm::
     }
     case block::gen::DNSRecord::dns_storage_address: {
       block::gen::DNSRecord::Record_dns_storage_address dns;
-      tlb::unpack(cs, dns);
+      if (!tlb::unpack(cs, dns)) {
+        return td::Status::Error("DNSRecord dns_storage_address: malformed record");
+      }
       return EntryData::storage_address(dns.bag_id);
     }
   }
   return td::Status::Error("Unknown entry data");
+} catch (const vm::VmError& e) {
+  return td::Status::Error(PSLICE() << "DNSRecord decode threw: " << e.get_msg());
+} catch (const std::exception& e) {
+  return td::Status::Error(PSLICE() << "DNSRecord decode threw: " << e.what());
+} catch (...) {
+  return td::Status::Error("DNSRecord decode threw (unknown exception)");
 }
 
 SmartContract::Args DnsInterface::resolve_args_raw(td::Slice encoded_name, td::Bits256 category,

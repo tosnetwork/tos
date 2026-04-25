@@ -614,12 +614,20 @@ bool tvm_emulator_set_debug_enabled(void *tvm_emulator, bool debug_enabled) {
   return true;
 }
 
-const char *tvm_emulator_run_get_method(void *tvm_emulator, int method_id, const char *stack_boc) {
+const char *tvm_emulator_run_get_method(void *tvm_emulator, int method_id, const char *stack_boc) try {
+  // Codex audit (round 12, finding #3): bare `load_cell_slice` throws on
+  // PrunedBranch / Library / Merkle*. The stack BoC is FFI-callee-supplied,
+  // so anyone embedding the emulator could terminate the host process.
+  // Wrap in a function-try-block and use the special-aware loader.
   auto stack_cell = boc_b64_to_cell(stack_boc);
   if (stack_cell.is_error()) {
     ERROR_RESPONSE(PSTRING() << "Couldn't deserialize stack cell: " << stack_cell.move_as_error().to_string());
   }
-  auto stack_cs = vm::load_cell_slice(stack_cell.move_as_ok());
+  bool stack_special = false;
+  auto stack_cs = vm::load_cell_slice_special(stack_cell.move_as_ok(), stack_special);
+  if (stack_special) {
+    ERROR_RESPONSE("stack BoC root is a special cell");
+  }
   td::Ref<vm::Stack> stack;
   if (!vm::Stack::deserialize_to(stack_cs, stack)) {
     ERROR_RESPONSE(PSTRING() << "Couldn't deserialize stack");
@@ -655,6 +663,12 @@ const char *tvm_emulator_run_get_method(void *tvm_emulator, int method_id, const
   json_obj.leave();
 
   return strdup(jb.string_builder().as_cslice().c_str());
+} catch (const vm::VmError& e) {
+  ERROR_RESPONSE(PSTRING() << "tvm_emulator_run_get_method: vm error: " << e.get_msg());
+} catch (const std::exception& e) {
+  ERROR_RESPONSE(PSTRING() << "tvm_emulator_run_get_method: " << e.what());
+} catch (...) {
+  ERROR_RESPONSE("tvm_emulator_run_get_method: unknown exception");
 }
 
 struct TvmEulatorEmulateRunMethodResponse {
@@ -662,18 +676,36 @@ struct TvmEulatorEmulateRunMethodResponse {
   const char *log;
 };
 
-TvmEulatorEmulateRunMethodResponse emulate_run_method(uint32_t len, const char *params_boc, int64_t gas_limit) {
+TvmEulatorEmulateRunMethodResponse emulate_run_method(uint32_t len, const char *params_boc, int64_t gas_limit) try {
+  // Codex audit (round 12, finding #3): the previous version called
+  // `fetch_ref()` four times without checking ref counts and then
+  // bare-loaded each ref with `load_cell_slice` (throws on special
+  // cells). FFI input is callee-controlled, so a malformed BoC could
+  // either deref a null Ref<Cell> or throw out of this entry point and
+  // crash the embedding host. Wrap in function-try-block, validate ref
+  // counts, and use the special-aware loader.
   auto params_cell = vm::std_boc_deserialize(td::Slice(params_boc, len));
   if (params_cell.is_error()) {
     return {nullptr, nullptr};
   }
-  auto params_cs = vm::load_cell_slice(params_cell.move_as_ok());
+  bool params_special = false;
+  auto params_cs = vm::load_cell_slice_special(params_cell.move_as_ok(), params_special);
+  if (params_special || params_cs.size_refs() < 4) {
+    return {nullptr, nullptr};
+  }
   auto code = params_cs.fetch_ref();
   auto data = params_cs.fetch_ref();
 
-  auto stack_cs = vm::load_cell_slice(params_cs.fetch_ref());
-  auto params = vm::load_cell_slice(params_cs.fetch_ref());
-  auto c7_cs = vm::load_cell_slice(params.fetch_ref());
+  bool stack_special = false;
+  auto stack_cs = vm::load_cell_slice_special(params_cs.fetch_ref(), stack_special);
+  if (stack_special) return {nullptr, nullptr};
+  auto params_ref = params_cs.fetch_ref();
+  bool params_inner_special = false;
+  auto params = vm::load_cell_slice_special(params_ref, params_inner_special);
+  if (params_inner_special || params.size_refs() < 2) return {nullptr, nullptr};
+  bool c7_special = false;
+  auto c7_cs = vm::load_cell_slice_special(params.fetch_ref(), c7_special);
+  if (c7_special) return {nullptr, nullptr};
   auto libs = vm::Dictionary(params.fetch_ref(), 256);
 
   auto method_id = params_cs.fetch_long(32);
@@ -720,6 +752,8 @@ TvmEulatorEmulateRunMethodResponse emulate_run_method(uint32_t len, const char *
   memcpy(rn + 4, sok.data(), sz);
 
   return {rn, strdup(result.vm_log.data())};
+} catch (...) {
+  return {nullptr, nullptr};
 }
 
 const char *tvm_emulator_emulate_run_method(uint32_t len, const char *params_boc, int64_t gas_limit) {
