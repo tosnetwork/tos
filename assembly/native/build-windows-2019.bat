@@ -35,10 +35,19 @@ echo Current dir %cd%
 
 mkdir build
 cd build
+
+REM Audit #10 (2026-04-26): CI builds always produce deployable artifacts;
+REM gate against the devnet escape hatch. Mirrors build-ubuntu-shared.sh.
+SET TOS_PROD_FLAG=
+IF "%GITHUB_ACTIONS%"=="true" SET TOS_PROD_FLAG=-DTOS_PRODUCTION_BUILD=ON
+IF "%TOS_PRODUCTION_BUILD%"=="1" SET TOS_PROD_FLAG=-DTOS_PRODUCTION_BUILD=ON
+IF "%TOS_PRODUCTION_BUILD%"=="ON" SET TOS_PROD_FLAG=-DTOS_PRODUCTION_BUILD=ON
+
 cmake -GNinja  -DCMAKE_BUILD_TYPE=Release ^
 -DCCACHE_FOUND= ^
 -DCMAKE_CXX_COMPILER_LAUNCHER= ^
 -DPORTABLE=1 ^
+%TOS_PROD_FLAG% ^
 -DCMAKE_CXX_FLAGS="/DTD_WINDOWS=1 /EHsc /bigobj" ..
 
 IF %errorlevel% NEQ 0 (

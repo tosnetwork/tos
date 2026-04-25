@@ -4,12 +4,50 @@
 */
 #include "evm/core/cell-codec.h"
 
+#include "evm/core/cell-state.h"
+#include "evm/core/incremental-trie.h"
+#include "evm/core/state.h"
+
 #include "vm/cells/CellBuilder.h"
 #include "vm/cells/CellSlice.h"
+#include "vm/excno.hpp"
 
 #include <cstring>
+#include <memory>
+#include <mutex>
 
 namespace evm_workchain {
+
+namespace {
+
+bool bytes32_equal(const evmc::bytes32& a, const evmc::bytes32& b) noexcept {
+    return std::memcmp(a.bytes, b.bytes, 32) == 0;
+}
+
+bool verify_declared_eth_state_root(const td::Ref<vm::Cell>& state_root,
+                                    const evmc::bytes32& declared) noexcept {
+    try {
+        auto cell_state = std::make_unique<CellEvmState>();
+        if (state_root.not_null() && !cell_state->load_from_cell(state_root)) {
+            return false;
+        }
+        EvmState state(std::move(cell_state));
+        std::unique_lock lock(state.mutex());
+        IncrementalTrieCalculator calc;
+        auto computed = calc.compute_state_root(state, nullptr, nullptr);
+        return bytes32_equal(computed, declared);
+    } catch (vm::VmError&) {
+        return false;
+    } catch (vm::VmVirtError&) {
+        return false;
+    } catch (std::exception&) {
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
+
+}  // namespace
 
 td::Ref<vm::Cell> encode_evm_account_data(const silkworm::Account& acct,
                                           const td::Ref<vm::Cell>& storage_root,
@@ -183,32 +221,45 @@ bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
                         td::Ref<vm::Cell>& rpc_cache_root_out) {
     state_root_out = {};
     rpc_cache_root_out = {};
-    if (cell.is_null()) return false;
-    auto cs = vm::load_cell_slice(cell);
-    if (cs.size() < kEvmMagicBits + 1 + 256) return false;
-    auto magic = cs.fetch_ulong(kEvmMagicBits);
-    if (magic != kEvmAccountMagic) return false;
-    auto has_root = cs.fetch_ulong(1);
-    if (has_root == 1) {
-        if (cs.size_refs() == 0) return false;
-        state_root_out = cs.fetch_ref();
+    try {
+        if (cell.is_null()) return false;
+        auto cs = vm::load_cell_slice(cell);
+        if (cs.size() < kEvmMagicBits + 1 + 256) return false;
+        auto magic = cs.fetch_ulong(kEvmMagicBits);
+        if (magic != kEvmAccountMagic) return false;
+        auto has_root = cs.fetch_ulong(1);
+        if (has_root == 1) {
+            if (cs.size_refs() == 0) return false;
+            state_root_out = cs.fetch_ref();
+        }
+        if (cs.size() < 256) return false;
+        cs.fetch_bytes(eth_state_root_out.bytes, 32);
+        // The has_cache Maybe-tag is mandatory in v2 (we always emit it);
+        // refuse cells that omit it rather than silently treating absence as 0.
+        if (cs.size() < 1) return false;
+        auto has_cache = cs.fetch_ulong(1);
+        if (has_cache == 1) {
+            if (cs.size_refs() == 0) return false;
+            rpc_cache_root_out = cs.fetch_ref();
+        }
+        // Audit #3 (2026-04-26): require canonical encoding. Two cells with the
+        // same logical content must produce the same cell hash; trailing bits or
+        // unaccounted refs would let a peer construct multiple distinct cell
+        // hashes for the same EVM state, breaking account-data identity.
+        if (cs.size() != 0 || cs.size_refs() != 0) return false;
+        // Audit #5 follow-up: the declared eth_state_root is consensus-visible
+        // account data. Reject stale/forged roots before they can seed snapshot
+        // compute or restart hydration.
+        return verify_declared_eth_state_root(state_root_out, eth_state_root_out);
+    } catch (vm::VmError&) {
+        return false;
+    } catch (vm::VmVirtError&) {
+        return false;
+    } catch (std::exception&) {
+        return false;
+    } catch (...) {
+        return false;
     }
-    if (cs.size() < 256) return false;
-    cs.fetch_bytes(eth_state_root_out.bytes, 32);
-    // The has_cache Maybe-tag is mandatory in v2 (we always emit it);
-    // refuse cells that omit it rather than silently treating absence as 0.
-    if (cs.size() < 1) return false;
-    auto has_cache = cs.fetch_ulong(1);
-    if (has_cache == 1) {
-        if (cs.size_refs() == 0) return false;
-        rpc_cache_root_out = cs.fetch_ref();
-    }
-    // Audit #3 (2026-04-26): require canonical encoding. Two cells with the
-    // same logical content must produce the same cell hash; trailing bits or
-    // unaccounted refs would let a peer construct multiple distinct cell
-    // hashes for the same EVM state, breaking account-data identity.
-    if (cs.size() != 0 || cs.size_refs() != 0) return false;
-    return true;
 }
 
 }  // namespace evm_workchain

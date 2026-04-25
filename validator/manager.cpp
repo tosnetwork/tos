@@ -22,6 +22,7 @@
 
 #include "auto/tl/lite_api.h"
 #include "auto/tl/tos_api_json.h"
+#include "block/block.h"
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "common/delay.h"
@@ -1148,36 +1149,63 @@ void ValidatorManagerImpl::cleanup_applied_external_messages(BlockHandle handle,
   // ext-msg in this canonically-applied block. Compute is pure and
   // stashes captured effects under the EVM tx_hash; nothing reaches the
   // RPC cache / subscriptions until BFT accepts the block (this hook).
-  // Walk in_msg_descr identically to AppliedExtMessageCleanupActor and
-  // hand each ext_in_msg to the bridge, which derives the EVM tx_hash
-  // and drains the matching cache entry.
+  // Walk the executor account's transaction dictionary in LT order and hand
+  // those ext_in_msgs to the bridge. Transaction order matters for Ethereum
+  // tx_index, cumulative_gas_used, logs bloom, transactionsRoot, and
+  // receiptsRoot.
   if (block.not_null() && block->block_id().is_valid() &&
       block->block_id().id.workchain == 1) {
     try {
       block::gen::Block::Record blk;
+      block::gen::BlockInfo::Record info;
       block::gen::BlockExtra::Record extra;
       auto block_root = block->root_cell();
       if (block_root.not_null() && tlb::unpack_cell(block_root, blk) &&
+          tlb::unpack_cell(blk.info, info) &&
           tlb::unpack_cell(blk.extra, extra)) {
         // Audit #4 (2026-04-26): pass the accepted block's seqno through to
         // apply, so the deferred-apply queue's (seqno, tx_hash) key matches
         // the (seqno, tx_hash) used at stash time.
         const uint64_t accepted_seqno = block->block_id().id.seqno;
-        vm::AugmentedDictionary in_msg_dict{vm::load_cell_slice_ref(extra.in_msg_descr), 256,
-                                            block::tlb::aug_InMsgDescrDefault};
-        in_msg_dict.check_for_each_extra(
-            [accepted_seqno](td::Ref<vm::CellSlice> value, td::Ref<vm::CellSlice>, td::ConstBitPtr, int key_len) {
-              if (key_len != 256) return true;
-              int tag = block::gen::t_InMsg.get_tag(*value);
-              if (tag != block::gen::InMsg::msg_import_ext) return true;
-              vm::CellSlice cs{*value};
-              td::Ref<vm::Cell> msg, transaction;
-              if (!block::gen::t_InMsg.unpack_msg_import_ext(cs, msg, transaction)) {
-                return true;
+        td::Bits256 parent_hash = td::Bits256::zero();
+        if (handle) {
+          parent_hash = handle->one_prev(true).root_hash;
+        }
+
+        std::vector<td::Ref<vm::Cell>> evm_msgs;
+        td::Bits256 evm_addr;
+        evm_addr.set_zero();
+        evm_addr.data()[31] = 1;
+        vm::AugmentedDictionary account_blocks_dict{vm::load_cell_slice_ref(extra.account_blocks), 256,
+                                                    block::tlb::aug_ShardAccountBlocks};
+        auto ab_csr = account_blocks_dict.lookup(evm_addr);
+        if (ab_csr.not_null()) {
+          block::gen::AccountBlock::Record acc_block;
+          if (tlb::csr_unpack(std::move(ab_csr), acc_block) && acc_block.account_addr == evm_addr) {
+            vm::AugmentedDictionary trans_dict{vm::DictNonEmpty(), std::move(acc_block.transactions), 64,
+                                               block::tlb::aug_AccountTransactions};
+            td::BitArray<64> cur_lt{0};
+            bool allow_same = true;
+            while (true) {
+              auto tvalue = trans_dict.extract_value_ref(
+                  trans_dict.vm::DictionaryFixed::lookup_nearest_key(cur_lt.bits(), 64, true, allow_same));
+              if (tvalue.is_null()) {
+                break;
               }
-              evm_workchain::apply_stashed_side_effects_for_message(accepted_seqno, msg);
-              return true;
-            });
+              allow_same = false;
+              td::Ref<vm::Cell> msg;
+              if (block::get_transaction_in_msg(tvalue, msg) && msg.not_null()) {
+                evm_msgs.push_back(std::move(msg));
+              }
+            }
+          }
+        }
+
+        if (!evm_msgs.empty()) {
+          evm_workchain::apply_stashed_side_effects_for_messages(
+              accepted_seqno, info.gen_utime, extra.rand_seed.as_array().data(),
+              parent_hash.data(), evm_msgs);
+        }
       }
     } catch (vm::VmError &err) {
       LOG(WARNING) << "evm post-accept walk: vm error on block "

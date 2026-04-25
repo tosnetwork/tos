@@ -494,7 +494,18 @@ td::Ref<vm::Cell> build_evm_zerostate_accounts_cell(
 
     // Build cp.new_data v2-shaped cell:
     //   magic + has_root:1 + ^state_root + bits256:eth_root + has_cache:1
-    // eth_state_root at genesis is zero (recomputed on first tx).
+    // eth_state_root is the full trie root of the serialized genesis state.
+    evmc::bytes32 eth_state_root{};
+    {
+        auto root_state = std::make_unique<CellEvmState>();
+        if (state_root.not_null()) {
+            CHECK(root_state->load_from_cell(state_root));
+        }
+        EvmState evm_state(std::move(root_state));
+        std::unique_lock lock(evm_state.mutex());
+        IncrementalTrieCalculator calc;
+        eth_state_root = calc.compute_state_root(evm_state, nullptr, nullptr);
+    }
     // rpc_cache_root at genesis is nothing (no cache yet).
     vm::CellBuilder data_cb;
     data_cb.store_long(static_cast<long long>(kEvmAccountMagic), kEvmMagicBits);
@@ -504,7 +515,7 @@ td::Ref<vm::Cell> build_evm_zerostate_accounts_cell(
     } else {
         data_cb.store_long(0, 1);
     }
-    data_cb.store_zeroes(256);  // eth_state_root = 0 at genesis
+    data_cb.store_bytes(reinterpret_cast<const char*>(eth_state_root.bytes), 32);
     data_cb.store_long(0, 1);   // rpc_cache_root = nothing (Phase F.2)
     auto cp_new_data_cell = data_cb.finalize();
 
@@ -774,10 +785,12 @@ void init_evm_workchain(const std::string& db_root) {
             // candidates that lost BFT.
             if (cp.evm_side_effects) {
                 auto tx_hash = cp.evm_side_effects->tx_hash;
-                // Audit #4 (2026-04-26): key by (block_seqno, tx_hash) so
-                // the same EVM tx hashed into two different candidate seqnos
-                // each gets its own stash slot.
-                stash_side_effects(block_seqno, tx_hash, *cp.evm_side_effects);
+                // Audit #4 (2026-04-26): key by accepted-block context plus
+                // tx_hash so rejected candidates with the same tx cannot
+                // publish stale receipt/log/block records post-accept.
+                stash_side_effects(block_seqno, timestamp, rand_seed,
+                                   parent_block_hash, tx_hash,
+                                   *cp.evm_side_effects);
             }
             return ok;
         });

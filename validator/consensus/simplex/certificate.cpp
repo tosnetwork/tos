@@ -32,7 +32,9 @@ td::Result<td::Ref<Certificate<T>>> Certificate<T>::from_tl(tl::voteSignatureSet
 
     auto validator = PeerValidatorId{who}.get_using(bus);
     signatures.emplace_back(VoteSignature{validator.idx, std::move(signature->signature_)});
-    voted_weight += validator.weight;
+    if (!tos::checked_add_validator_weight(voted_weight, validator.weight)) {
+      return td::Status::Error("Validator vote weight sum exceeds protocol cap");
+    }
   }
 
   if (voted_weight < tos::two_thirds_plus_one(bus.total_weight)) {

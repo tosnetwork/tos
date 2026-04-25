@@ -30,6 +30,7 @@
 #include "evm/core/cell-state.h"
 #include "evm/core/compute-phase.h"
 #include "evm/core/init.h"
+#include "evm/core/incremental-trie.h"
 #include "evm/core/post-accept.h"
 #include "evm/core/state.h"
 #include "evm/core/transaction.h"
@@ -86,11 +87,23 @@ namespace ew = evm_workchain;
 // Helpers
 // ---------------------------------------------------------------------------
 
+static evmc::bytes32 compute_eth_state_root_from_cell(td::Ref<vm::Cell> state_root) {
+    auto cell_state = std::make_unique<ew::CellEvmState>();
+    if (state_root.not_null()) {
+        CHECK(cell_state->load_from_cell(state_root));
+    }
+    ew::EvmState state(std::move(cell_state));
+    std::unique_lock lock(state.mutex());
+    ew::IncrementalTrieCalculator calc;
+    return calc.compute_state_root(state, nullptr, nullptr);
+}
+
 // Build a `cp.new_data` v2 cell wrapping the supplied state_root cell. Same
 // layout that `run_evm_compute_phase_snapshot` itself emits (and that the
 // genesis builder produces): magic + has_root + ^state_root + 256-bit
-// eth_state_root (zero here) + has_cache=0.
+// verified eth_state_root + has_cache=0.
 static td::Ref<vm::Cell> wrap_state_root_as_account_data(td::Ref<vm::Cell> state_root) {
+    auto eth_state_root = compute_eth_state_root_from_cell(state_root);
     vm::CellBuilder cb;
     cb.store_long(static_cast<long long>(ew::kEvmAccountMagic), ew::kEvmMagicBits);
     if (state_root.not_null()) {
@@ -99,7 +112,7 @@ static td::Ref<vm::Cell> wrap_state_root_as_account_data(td::Ref<vm::Cell> state
     } else {
         cb.store_long(0, 1);
     }
-    cb.store_zeroes(256);
+    cb.store_bytes(reinterpret_cast<const char*>(eth_state_root.bytes), 32);
     cb.store_long(0, 1);
     return cb.finalize();
 }

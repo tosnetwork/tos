@@ -6,6 +6,7 @@
 #include "evm/core/post-accept-bridge.h"
 
 #include "evm/core/init.h"
+#include "evm/core/state-root.h"
 #include "evm/core/transaction.h"
 #include "evm/core/workchain.h"
 #include "evm/rpc/cache-codec.h"
@@ -19,9 +20,12 @@
 #include "vm/excno.hpp"
 
 #include <ethash/keccak.hpp>
+#include <silkworm/core/common/empty_hashes.hpp>
 #include <silkworm/core/rlp/encode.hpp>
+#include <silkworm/core/types/block.hpp>
 #include <silkworm/core/types/transaction.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <mutex>
@@ -148,17 +152,21 @@ namespace {
 
 constexpr size_t kMaxStashedSideEffects = 4096;
 
-// Audit #4 (2026-04-26): key by (block_seqno, tx_hash). Tx-hash-only keying
-// silently dropped the second candidate's fx when the same tx appeared in
-// two candidate blocks (e.g. BFT-rejected A followed by candidate B with a
-// different seqno) — apply at BFT-accept time then read the wrong block
-// context (number, timestamp, parent_hash, tx_index) into the receipt /
-// log / block summary records.
+// Audit #4 (2026-04-26): bind tx_hash to candidate block context. A tx hash
+// alone is not enough because rejected candidates may contain the same EVM tx
+// under different timestamp / rand seed / parent context.
 struct EvmStashKey {
     uint64_t seqno{};
+    uint64_t timestamp{};
+    evmc::bytes32 rand_seed{};
+    evmc::bytes32 parent_hash{};
     evmc::bytes32 v{};
     bool operator==(const EvmStashKey& o) const noexcept {
-        return seqno == o.seqno && std::memcmp(v.bytes, o.v.bytes, 32) == 0;
+        return seqno == o.seqno &&
+               timestamp == o.timestamp &&
+               std::memcmp(rand_seed.bytes, o.rand_seed.bytes, 32) == 0 &&
+               std::memcmp(parent_hash.bytes, o.parent_hash.bytes, 32) == 0 &&
+               std::memcmp(v.bytes, o.v.bytes, 32) == 0;
     }
 };
 
@@ -166,10 +174,17 @@ struct EvmStashKeyHasher {
     size_t operator()(const EvmStashKey& k) const noexcept {
         size_t h = 0;
         std::memcpy(&h, k.v.bytes, sizeof(h));
-        // Mix in the seqno so distinct seqnos with the same tx_hash bucket
-        // separately. xor-with-rotated-shift is enough — collision rate is
-        // a soft concern (linear-scan eviction handles it gracefully).
-        h ^= (k.seqno + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2));
+        auto mix = [&h](uint64_t x) {
+            h ^= (x + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2));
+        };
+        mix(k.seqno);
+        mix(k.timestamp);
+        uint64_t r0 = 0;
+        uint64_t p0 = 0;
+        std::memcpy(&r0, k.rand_seed.bytes, sizeof(r0));
+        std::memcpy(&p0, k.parent_hash.bytes, sizeof(p0));
+        mix(r0);
+        mix(p0);
         return h;
     }
 };
@@ -208,22 +223,129 @@ StashedCache& g_stashed_cache() {
     return c;
 }
 
+EvmStashKey make_stash_key(uint64_t block_seqno,
+                           uint64_t timestamp,
+                           const uint8_t rand_seed[32],
+                           const uint8_t parent_block_hash[32],
+                           const evmc::bytes32& tx_hash) {
+    EvmStashKey key{};
+    key.seqno = block_seqno;
+    key.timestamp = timestamp;
+    std::memcpy(key.rand_seed.bytes, rand_seed, 32);
+    std::memcpy(key.parent_hash.bytes, parent_block_hash, 32);
+    key.v = tx_hash;
+    return key;
+}
+
+void add_to_bloom(uint8_t bloom[256], const uint8_t* data, size_t len) {
+    auto h = ethash::keccak256(data, len);
+    for (int i = 0; i < 6; i += 2) {
+        uint16_t bit = (static_cast<uint16_t>(h.bytes[i]) << 8 | h.bytes[i + 1]) & 0x7FF;
+        bloom[bit / 8] |= (1 << (bit % 8));
+    }
+}
+
+void recompute_block_hash(StoredBlock& block) {
+    silkworm::BlockHeader hdr{};
+    std::memcpy(hdr.parent_hash.bytes, block.parent_hash.bytes, 32);
+    hdr.ommers_hash = silkworm::kEmptyListHash;
+    std::memcpy(hdr.state_root.bytes, block.state_root.bytes, 32);
+    std::memcpy(hdr.transactions_root.bytes, block.transactions_root.bytes, 32);
+    std::memcpy(hdr.receipts_root.bytes, block.receipts_root.bytes, 32);
+    std::memcpy(hdr.logs_bloom.data(), block.logs_bloom, 256);
+    hdr.difficulty = 0;
+    hdr.number = block.number;
+    hdr.gas_limit = block.gas_limit;
+    hdr.gas_used = block.gas_used;
+    hdr.timestamp = block.timestamp;
+    const std::string client_id = "evm-workchain/0.1.0";
+    hdr.extra_data.assign(client_id.begin(), client_id.end());
+    hdr.base_fee_per_gas = block.base_fee_per_gas;
+    hdr.withdrawals_root = silkworm::kEmptyRoot;
+    hdr.blob_gas_used = 0;
+    hdr.excess_blob_gas = 0;
+    hdr.parent_beacon_block_root = evmc::bytes32{};
+    {
+        evmc::bytes32 rh{};
+        static const uint8_t kSha256Empty[32] = {
+            0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14,
+            0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f, 0xb9, 0x24,
+            0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c,
+            0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52, 0xb8, 0x55};
+        std::memcpy(rh.bytes, kSha256Empty, 32);
+        hdr.requests_hash = rh;
+    }
+    const auto eth_hash = hdr.hash();
+    std::memcpy(block.hash.bytes, eth_hash.bytes, 32);
+}
+
+void finalize_block_side_effects(std::vector<EvmBlockSideEffects>& fxs,
+                                 uint64_t accepted_block_seqno,
+                                 uint64_t accepted_timestamp,
+                                 const uint8_t parent_block_hash[32]) {
+    if (fxs.empty()) return;
+
+    std::vector<StoredTransaction> txs;
+    std::vector<StoredReceipt> receipts;
+    txs.reserve(fxs.size());
+    receipts.reserve(fxs.size());
+
+    StoredBlock block = fxs.back().block;
+    block.number = accepted_block_seqno;
+    block.timestamp = accepted_timestamp;
+    std::memcpy(block.parent_hash.bytes, parent_block_hash, 32);
+    block.state_root = fxs.back().block.state_root;
+    block.transaction_hashes.clear();
+    block.gas_used = 0;
+    std::memset(block.logs_bloom, 0, sizeof(block.logs_bloom));
+
+    for (size_t i = 0; i < fxs.size(); ++i) {
+        auto& fx = fxs[i];
+        fx.receipt.block_number = accepted_block_seqno;
+        fx.receipt.tx_index = static_cast<uint32_t>(i);
+        fx.transaction.block_number = accepted_block_seqno;
+        fx.transaction.tx_index = static_cast<uint32_t>(i);
+
+        block.gas_used += fx.receipt.gas_used;
+        fx.receipt.cumulative_gas_used = block.gas_used;
+
+        txs.push_back(fx.transaction);
+        receipts.push_back(fx.receipt);
+        block.transaction_hashes.push_back(fx.tx_hash);
+
+        for (const auto& log : fx.logs) {
+            add_to_bloom(block.logs_bloom, log.address.bytes, 20);
+            for (const auto& topic : log.topics) {
+                add_to_bloom(block.logs_bloom, topic.bytes, 32);
+            }
+        }
+        fx.has_block = false;
+    }
+
+    block.transactions_root = compute_transactions_root_from_records(txs);
+    block.receipts_root = compute_receipts_root_from_records(receipts);
+    recompute_block_hash(block);
+
+    fxs.back().has_block = true;
+    fxs.back().block = block;
+}
+
 }  // namespace
 
 void stash_side_effects(uint64_t block_seqno,
+                        uint64_t timestamp,
+                        const uint8_t rand_seed[32],
+                        const uint8_t parent_block_hash[32],
                         const evmc::bytes32& tx_hash,
                         EvmBlockSideEffects fx) {
     auto& c = g_stashed_cache();
     std::lock_guard<std::mutex> lock(c.mu);
-    EvmStashKey key{block_seqno, tx_hash};
+    EvmStashKey key = make_stash_key(block_seqno, timestamp, rand_seed,
+                                     parent_block_hash, tx_hash);
     auto it = c.map.find(key);
     if (it != c.map.end()) {
-        // Audit #4 (2026-04-26): on collision, REPLACE rather than skip.
-        // Block-context-dependent fields (block.number, receipt.tx_index,
-        // block.timestamp, etc.) can drift between re-runs of the same
-        // candidate seqno (timestamp re-derivation, validator-set
-        // re-rolling, replay attack surfaces). The freshest fx is the
-        // most likely to align with the eventually-accepted candidate.
+        // Same candidate context re-run. Snapshot compute is deterministic
+        // for identical inputs; replacement refreshes eviction age.
         it->second.fx = std::move(fx);
         it->second.inserted_at_us = StashedCache::now_us();
         return;
@@ -235,10 +357,16 @@ void stash_side_effects(uint64_t block_seqno,
 }
 
 std::optional<EvmBlockSideEffects>
-take_side_effects(uint64_t block_seqno, const evmc::bytes32& tx_hash) {
+take_side_effects(uint64_t block_seqno,
+                  uint64_t timestamp,
+                  const uint8_t rand_seed[32],
+                  const uint8_t parent_block_hash[32],
+                  const evmc::bytes32& tx_hash) {
     auto& c = g_stashed_cache();
     std::lock_guard<std::mutex> lock(c.mu);
-    auto it = c.map.find(EvmStashKey{block_seqno, tx_hash});
+    auto key = make_stash_key(block_seqno, timestamp, rand_seed,
+                              parent_block_hash, tx_hash);
+    auto it = c.map.find(key);
     if (it == c.map.end()) return std::nullopt;
     EvmBlockSideEffects out = std::move(it->second.fx);
     c.map.erase(it);
@@ -372,14 +500,32 @@ try_derive_evm_tx_hash_from_message(const td::Ref<vm::Cell>& msg) noexcept {
     return txn.hash();
 }
 
-bool apply_stashed_side_effects_for_message(uint64_t accepted_block_seqno,
-    const td::Ref<vm::Cell>& msg) noexcept {
-    auto tx_hash = try_derive_evm_tx_hash_from_message(msg);
-    if (!tx_hash) return false;
-    auto fx = take_side_effects(accepted_block_seqno, *tx_hash);
-    if (!fx) return false;
-    apply_block_side_effects(*fx);
-    return true;
+size_t apply_stashed_side_effects_for_messages(
+    uint64_t accepted_block_seqno,
+    uint64_t accepted_timestamp,
+    const uint8_t rand_seed[32],
+    const uint8_t parent_block_hash[32],
+    const std::vector<td::Ref<vm::Cell>>& msgs) noexcept {
+    std::vector<EvmBlockSideEffects> fxs;
+    fxs.reserve(msgs.size());
+    for (const auto& msg : msgs) {
+        auto tx_hash = try_derive_evm_tx_hash_from_message(msg);
+        if (!tx_hash) continue;
+        auto fx = take_side_effects(accepted_block_seqno, accepted_timestamp,
+                                    rand_seed, parent_block_hash, *tx_hash);
+        if (!fx) {
+            LOG(WARNING) << "evm post-accept: missing stashed side effects for accepted tx";
+            continue;
+        }
+        fxs.push_back(std::move(*fx));
+    }
+
+    finalize_block_side_effects(fxs, accepted_block_seqno, accepted_timestamp,
+                                parent_block_hash);
+    for (const auto& fx : fxs) {
+        apply_block_side_effects(fx);
+    }
+    return fxs.size();
 }
 
 }  // namespace evm_workchain

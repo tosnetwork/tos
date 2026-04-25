@@ -49,6 +49,15 @@ if [ -n "${TOS_ARCH}" ]; then
   CMAKE_EXTRA_ARGS+=(-DTOS_ARCH=${TOS_ARCH})
 fi
 
+# Audit #10 (2026-04-26): same CI-gating logic as build-ubuntu-shared.sh.
+# CI builds always produce deployable artifacts; gate against the devnet
+# escape hatch.
+if [ "${GITHUB_ACTIONS}" = "true" ] || \
+   [ "${TOS_PRODUCTION_BUILD:-0}" = "1" ] || \
+   [ "${TOS_PRODUCTION_BUILD:-}" = "ON" ]; then
+  CMAKE_EXTRA_ARGS+=(-DTOS_PRODUCTION_BUILD=ON)
+fi
+
 cmake -GNinja .. \
 -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
 -DPORTABLE=1 \

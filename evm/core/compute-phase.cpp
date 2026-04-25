@@ -218,6 +218,7 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     auto fx = std::make_shared<EvmBlockSideEffects>();
     auto tx_hash = decoded.txn.hash();
     fx->tx_hash = tx_hash;
+    std::memcpy(fx->rand_seed.bytes, rand_seed, 32);
 
     // --- Step 5a: Capture receipt ---
     fx->receipt.success = exec_result.success;

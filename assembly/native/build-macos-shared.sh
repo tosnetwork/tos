@@ -59,10 +59,20 @@ else
   export CCACHE_DISABLE=1
 fi
 
+CMAKE_EXTRA_ARGS=()
+# Audit #10 (2026-04-26): CI builds always produce deployable artifacts;
+# gate against the devnet escape hatch. Mirrors build-ubuntu-shared.sh.
+if [ "${GITHUB_ACTIONS}" = "true" ] || \
+   [ "${TOS_PRODUCTION_BUILD:-0}" = "1" ] || \
+   [ "${TOS_PRODUCTION_BUILD:-}" = "ON" ]; then
+  CMAKE_EXTRA_ARGS+=(-DTOS_PRODUCTION_BUILD=ON)
+fi
+
 cmake -GNinja -DCMAKE_BUILD_TYPE=Release .. \
 -DCMAKE_CXX_FLAGS="-nostdinc++ -isystem ${SDKROOT}/usr/include/c++/v1 -isystem ${SDKROOT}/usr/include" \
 -DCMAKE_SYSROOT="$(xcrun --show-sdk-path)" \
--DCMAKE_INSTALL_PREFIX="$(pwd)/install"
+-DCMAKE_INSTALL_PREFIX="$(pwd)/install" \
+"${CMAKE_EXTRA_ARGS[@]}"
 
 test $? -eq 0 || { echo "Can't configure tos"; exit 1; }
 

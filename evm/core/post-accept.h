@@ -47,6 +47,7 @@ namespace evm_workchain {
 struct EvmBlockSideEffects {
     /// Tx-level records.
     evmc::bytes32 tx_hash{};
+    evmc::bytes32 rand_seed{};
     StoredReceipt receipt{};
     StoredTransaction transaction{};
     std::vector<silkworm::Log> logs{};
@@ -91,28 +92,29 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx);
 // oldest-touched entry is evicted (linear scan; same pattern as
 // WcExtMsgPerPeerLimiter::evict_oldest_locked in ext-message-pool.cpp).
 
-/// Stash one transaction's side effects for later post-accept apply.
-/// `tx_hash` MUST equal `fx.tx_hash`; `block_seqno` MUST equal
-/// `fx.receipt.block_number`. Safe to call from concurrent compute
-/// coroutines.
+/// Stash one transaction's side effects for later post-accept apply. Safe to
+/// call from concurrent compute coroutines.
 ///
-/// Audit #4 (2026-04-26): the key is (block_seqno, tx_hash). Two candidates
-/// containing the same EVM tx at different seqnos each get their own slot.
-/// On collision (same key), the entry is REPLACED — block-context-dependent
-/// fields (block.number, receipt.block_number, etc.) can change between
-/// re-runs of the same candidate seqno (e.g. timestamp drift), so the
-/// freshest fx is the one most likely to match the eventually-accepted
-/// candidate at apply time.
+/// Audit #4 (2026-04-26): the key binds tx_hash to accepted-block context
+/// (seqno, timestamp, rand seed, parent hash), so a BFT-rejected candidate
+/// with the same EVM tx cannot publish stale receipt/log/block records.
 void stash_side_effects(uint64_t block_seqno,
+                        uint64_t timestamp,
+                        const uint8_t rand_seed[32],
+                        const uint8_t parent_block_hash[32],
                         const evmc::bytes32& tx_hash,
                         EvmBlockSideEffects fx);
 
-/// Look up and remove the cached side effects for `(block_seqno, tx_hash)`.
+/// Look up and remove the cached side effects for an accepted block context.
 /// Returns std::nullopt if the entry was never stashed or was already taken
 /// (or evicted). The caller is responsible for invoking
 /// `apply_block_side_effects` on the returned value.
 std::optional<EvmBlockSideEffects>
-take_side_effects(uint64_t block_seqno, const evmc::bytes32& tx_hash);
+take_side_effects(uint64_t block_seqno,
+                  uint64_t timestamp,
+                  const uint8_t rand_seed[32],
+                  const uint8_t parent_block_hash[32],
+                  const evmc::bytes32& tx_hash);
 
 /// Number of currently-stashed entries. Test/diagnostics only.
 size_t stashed_side_effects_count() noexcept;
@@ -135,5 +137,15 @@ bool is_evm_executor_address(const unsigned char addr[32]) noexcept;
 /// recovery; only the RLP envelope is needed for the hash.
 std::optional<evmc::bytes32>
 try_derive_evm_tx_hash_from_message(const td::Ref<vm::Cell>& msg) noexcept;
+
+/// Apply all stashed side effects for an accepted block in transaction order.
+/// This finalizes block-wide tx/receipt roots, cumulative gas, tx_index, and
+/// logs bloom before publishing records to the RPC cache.
+size_t apply_stashed_side_effects_for_messages(
+    uint64_t accepted_block_seqno,
+    uint64_t accepted_timestamp,
+    const uint8_t rand_seed[32],
+    const uint8_t parent_block_hash[32],
+    const std::vector<td::Ref<vm::Cell>>& msgs) noexcept;
 
 }  // namespace evm_workchain
