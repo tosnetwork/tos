@@ -253,7 +253,25 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
           if (decoded.is_ok()) {
             auto cell = vm::std_boc_deserialize(td::Slice(decoded.ok()));
             if (cell.is_ok()) {
-              stack.push(vm::StackEntry(vm::load_cell_slice_ref(cell.move_as_ok())));
+              auto cell_root = cell.move_as_ok();
+              // Codex audit (round 7, finding #3): bare load_cell_slice_ref
+              // throws on PrunedBranch / Library / Merkle* roots — JSON-RPC
+              // input is attacker-controlled. Use the special-aware loader
+              // to detect special cells and skip silently (matches the
+              // existing "decode-error → drop" convention for this loop).
+              if (cell_root.not_null()) {
+                try {
+                  bool special = false;
+                  (void)vm::load_cell_slice_special(cell_root, special);
+                  if (!special) {
+                    stack.push(vm::StackEntry(vm::load_cell_slice_ref(cell_root)));
+                  }
+                } catch (...) {
+                  // Stay silent — the surrounding loop ignores per-entry
+                  // failures and the resulting empty stack will produce an
+                  // explicit RPC error downstream if invalid.
+                }
+              }
             }
           }
         }
@@ -511,7 +529,25 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
           if (decoded.is_ok()) {
             auto cell = vm::std_boc_deserialize(td::Slice(decoded.ok()));
             if (cell.is_ok()) {
-              stack.push(vm::StackEntry(vm::load_cell_slice_ref(cell.move_as_ok())));
+              auto cell_root = cell.move_as_ok();
+              // Codex audit (round 7, finding #3): bare load_cell_slice_ref
+              // throws on PrunedBranch / Library / Merkle* roots — JSON-RPC
+              // input is attacker-controlled. Use the special-aware loader
+              // to detect special cells and skip silently (matches the
+              // existing "decode-error → drop" convention for this loop).
+              if (cell_root.not_null()) {
+                try {
+                  bool special = false;
+                  (void)vm::load_cell_slice_special(cell_root, special);
+                  if (!special) {
+                    stack.push(vm::StackEntry(vm::load_cell_slice_ref(cell_root)));
+                  }
+                } catch (...) {
+                  // Stay silent — the surrounding loop ignores per-entry
+                  // failures and the resulting empty stack will produce an
+                  // explicit RPC error downstream if invalid.
+                }
+              }
             }
           }
         }

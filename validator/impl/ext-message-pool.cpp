@@ -382,22 +382,25 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
   // Must short-circuit for the same reason as wc=1.
   if (wc == 1 /* evm_workchain::kWorkchainId */ ||
       wc == 2 /* uno_workchain::kWorkchainId */) {
-    // Codex audit (round 4, finding #1): wc=2 hosts a SINGLE executor
-    // account at `uno_workchain::kUnoExecutorAddressBytes` (0x00…01) which
-    // owns the entire UnoShardState. Reject ext_in_msgs targeted at any
-    // other wc=2 address — accepting them would let a caller spin up
-    // parallel per-account UnoStates and (potentially) replay nullifiers
-    // against state the real executor never sees. Bytes hardcoded to
-    // avoid pulling uno/core/workchain.h into validator/impl/ — same
-    // header-avoidance convention as the wc==2 literal above.
-    if (wc == 2) {
-      static constexpr unsigned char kUnoExecutorAddr[32] = {
-          0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,
-          0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 1,
-      };
-      if (std::memcmp(addr.data(), kUnoExecutorAddr, 32) != 0) {
-        co_return td::Status::Error("wc=2 ext-msg destination is not the uno executor");
-      }
+    // Codex audit (round 4 #1, round 7 #1): both EVM (wc=1) and UNO (wc=2)
+    // host a SINGLE outer executor account at the canonical 0x00…01 address
+    // — `evm_workchain::kEvmExecutorAddressBytes` and
+    // `uno_workchain::kUnoExecutorAddressBytes`. Reject ext_in_msgs targeted
+    // at any other wc=1 / wc=2 address — accepting them would let a caller
+    // (a) drive arbitrary wc=1 accounts into the EVM compute phase, or
+    // (b) spin up parallel per-account UnoStates and (potentially) replay
+    // nullifiers against state the real executor never sees. Address
+    // bytes hardcoded to avoid pulling evm/core/workchain.h or
+    // uno/core/workchain.h into validator/impl/ — same header-avoidance
+    // convention as the wc==1/wc==2 literals above.
+    static constexpr unsigned char kSingleExecutorAddr[32] = {
+        0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,
+        0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 1,
+    };
+    if (std::memcmp(addr.data(), kSingleExecutorAddr, 32) != 0) {
+      co_return td::Status::Error(wc == 1
+          ? "wc=1 ext-msg destination is not the evm executor"
+          : "wc=2 ext-msg destination is not the uno executor");
     }
     // Codex audit (round 2, finding #2): rate-limit wc=2 ingress to bound
     // forged-MineUno DoS via raw sendBoc / liteServer_sendMessage paths.

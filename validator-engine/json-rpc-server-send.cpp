@@ -105,7 +105,25 @@ static td::Result<td::Ref<vm::Cell>> parse_optional_boc_field(td::JsonObject& pa
   if (cell_r.is_error()) {
     return td::Status::Error(PSTRING() << "Invalid BOC in '" << name << "'");
   }
-  return cell_r.move_as_ok();
+  auto cell = cell_r.move_as_ok();
+  // Codex audit (round 7, finding #3): reject special root cells from
+  // attacker-supplied BOCs at the JSON-RPC boundary. Downstream helpers
+  // (GenericAccount / SmartContract / runGetMethod stack deserialize)
+  // call bare `load_cell_slice_ref()` and throw on PrunedBranch /
+  // Library / Merkle* cells, crashing the daemon. We probe via the
+  // special-aware loader; the load itself is also caught defensively.
+  if (cell.not_null()) {
+    try {
+      bool special = false;
+      (void)vm::load_cell_slice_special(cell, special);
+      if (special) {
+        return td::Status::Error(PSTRING() << "BOC root in '" << name << "' is a special cell");
+      }
+    } catch (...) {
+      return td::Status::Error(PSTRING() << "BOC root in '" << name << "' is unloadable");
+    }
+  }
+  return cell;
 }
 
 static td::RefInt256 estimate_compute_threshold(const block::GasLimitsPrices& cfg) {

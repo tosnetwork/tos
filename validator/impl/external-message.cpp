@@ -125,6 +125,35 @@ td::Result<Ref<ExtMessageQ>> ExtMessageQ::create_ext_message(td::BufferSlice dat
     return td::Status::Error(PSLICE() << "Can't parse destination address");
   }
 
+  // Codex audit (round 7, finding #2): the wc=1 / wc=2 fast path in
+  // ExtMessagePool::check_message skips TVM preflight, so a special body
+  // ref (PrunedBranch / Library / MerkleProof / MerkleUpdate) flows
+  // directly to compute-phase unpack which uses bare load_cell_slice_ref
+  // and throws — crashing the daemon. Reject special cells anywhere in
+  // the message tree at admission. We walk the tree iteratively rather
+  // than relying on validate_ref because validate_ref does not refuse
+  // level-0 special cells in the body branch.
+  {
+    std::vector<td::Ref<vm::Cell>> stack{ext_msg};
+    while (!stack.empty()) {
+      auto c = std::move(stack.back());
+      stack.pop_back();
+      if (c.is_null()) continue;
+      vm::CellSlice cs2{vm::NoVmOrd{}, c};
+      if (cs2.is_special()) {
+        return td::Status::Error("external message tree contains a special cell");
+      }
+      for (unsigned i = 0, n = cs2.size_refs(); i < n; ++i) {
+        stack.push_back(cs2.prefetch_ref(i));
+      }
+      // Bound traversal to the depth we already accept (max_depth) to
+      // keep this O(cells_in_tree) and not pathological under deep refs.
+      if (stack.size() > limits.max_depth * 16u) {
+        return td::Status::Error("external message tree too wide for special-cell scan");
+      }
+    }
+  }
+
   TRY_RESULT(hash_norm, get_ext_in_msg_hash_norm(ext_msg));
   return Ref<ExtMessageQ>{true, std::move(data), std::move(ext_msg), dest_prefix, wc, addr, hash, hash_norm};
 }

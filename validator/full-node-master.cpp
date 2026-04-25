@@ -97,32 +97,65 @@ struct MasterIngressLimiter {
 
 constexpr uint64_t kMasterIngressBurst  = 16;
 constexpr uint64_t kMasterIngressPerSec = 4;
-constexpr uint64_t kPerSourceBurst      = 4;   // tighter than global
 constexpr uint64_t kPerSourcePerSec     = 1;
+constexpr uint64_t kPerSourceFreshBurst = 1;   // codex r7 #4: new bucket only gets 1 token, not full burst
 constexpr size_t   kMaxTrackedSources   = 1000;
+constexpr uint64_t kPerSourceIdleSec    = 300; // 5 min idle → eligible for eviction
 
 MasterIngressLimiter g_master_ingress_limiter{kMasterIngressBurst, kMasterIngressPerSec};
 
 struct PerSourceLimiterMap {
-    std::mutex                              mutex;
-    // Use std::map for deterministic iteration on eviction. Value is
-    // unique_ptr because MasterIngressLimiter contains a std::mutex
-    // (non-movable / non-copyable).
-    std::map<adnl::AdnlNodeIdShort, std::unique_ptr<MasterIngressLimiter>> buckets;
+    std::mutex mutex;
+    struct Entry {
+        std::unique_ptr<MasterIngressLimiter> limiter;
+        uint64_t last_use_sec;
+    };
+    // Codex audit (round 7, finding #4): the round-5 implementation evicted
+    // `buckets.begin()` (lowest adnl-id bytes) when the cap was hit and gave
+    // every fresh bucket a full `kPerSourceBurst` token allowance. An attacker
+    // churning through fresh adnl ids could (a) evict legitimate peers'
+    // accumulated history and (b) effectively run at the global cap by
+    // burning the fresh-bucket burst on every new identity.
+    //
+    // New design: track last-use time per source. On cap-pressure, evict the
+    // longest-idle entry (real LRU). New buckets are seeded with only
+    // `kPerSourceFreshBurst` (1) tokens — they refill at the normal rate, but
+    // a churn attacker no longer gets a free 4-burst per identity.
+    std::map<adnl::AdnlNodeIdShort, Entry> buckets;
 
     bool try_consume(adnl::AdnlNodeIdShort src) {
         std::lock_guard<std::mutex> lock(mutex);
+        uint64_t now = MasterIngressLimiter::now_sec();
         auto it = buckets.find(src);
         if (it == buckets.end()) {
             if (buckets.size() >= kMaxTrackedSources) {
-                // Soft cap: drop the oldest-by-key entry. Coarse (assumes
-                // uniformly distributed adnl ids) but bounded.
-                buckets.erase(buckets.begin());
+                // LRU eviction: scan for the longest-idle entry. Map is small
+                // bounded (1000 entries); linear scan is cheap.
+                auto victim = buckets.end();
+                uint64_t oldest = now;
+                for (auto cur = buckets.begin(); cur != buckets.end(); ++cur) {
+                    if (cur->second.last_use_sec < oldest) {
+                        oldest = cur->second.last_use_sec;
+                        victim = cur;
+                    }
+                }
+                // Only evict if the victim is truly idle. If even the oldest
+                // entry is fresh (cap reached under sustained load from many
+                // active peers), fall through and reject this new source —
+                // the global limiter still bounds aggregate load.
+                if (victim != buckets.end() && now - oldest >= kPerSourceIdleSec) {
+                    buckets.erase(victim);
+                } else {
+                    return false;
+                }
             }
             it = buckets.emplace(src,
-                std::make_unique<MasterIngressLimiter>(kPerSourceBurst, kPerSourcePerSec)).first;
+                Entry{std::make_unique<MasterIngressLimiter>(
+                          kPerSourceFreshBurst, kPerSourcePerSec),
+                      now}).first;
         }
-        return it->second->try_consume();
+        it->second.last_use_sec = now;
+        return it->second.limiter->try_consume();
     }
 };
 

@@ -1915,6 +1915,23 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
   // route to the EVM executor instead of TVM.
   if (evm_workchain_dispatch::has_evm_compute_handler() &&
       account.workchain == 1 /* evm_workchain::kWorkchainId — avoid header dep */) {
+    // Codex audit (round 7, finding #1): mirror the wc=2 executor-address
+    // gate (R4.1) — the EVM workchain hosts a SINGLE outer account at
+    // `evm_workchain::kEvmExecutorAddressBytes` (0x00…01) which carries
+    // the entire EVM world state. Reject ext_in_msgs to other wc=1
+    // addresses so a caller cannot drive arbitrary wc=1 accounts into
+    // the EVM compute phase. Bytes hardcoded to keep the no-header-dep
+    // convention noted on the workchain literal above.
+    {
+      static constexpr unsigned char kEvmExecutorAddr[32] = {
+          0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,
+          0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 1,
+      };
+      if (std::memcmp(account.addr.data(), kEvmExecutorAddr, 32) != 0) {
+        cp.skip_reason = ComputePhase::sk_bad_state;
+        return true;
+      }
+    }
     if (in_msg_body.is_null()) {
       cp.skip_reason = ComputePhase::sk_bad_state;
       return true;
