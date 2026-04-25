@@ -3583,7 +3583,12 @@ auto to_any_promise(td::Promise<td::Unit>&& promise) {
 
 td::Status ToslibClient::do_request(const toslib_api::raw_sendMessage& request,
                                     td::Promise<object_ptr<toslib_api::ok>>&& promise) {
-  TRY_RESULT_PREFIX(body, vm::std_boc_deserialize(request.body_), ToslibError::InvalidBagOfCells("body"));
+  // Codex SDK-FFI audit (S1.7): R10.1 / R9.2 introduced
+  // `deserialize_safe_boc_root` to keep attacker-supplied BoCs out of
+  // noexcept consumers, but this raw-message path was not migrated.
+  // `block::gen::t_Message_Any.print_ref` walks the cell and bare-loads
+  // it — special root → throw → embedding host crash.
+  TRY_RESULT(body, deserialize_safe_boc_root(request.body_, "body"));
   std::ostringstream os;
   block::gen::t_Message_Any.print_ref(os, body);
   LOG(ERROR) << os.str();
@@ -3630,7 +3635,10 @@ td::Result<td::Bits256> get_ext_in_msg_hash_norm(td::Ref<vm::Cell> ext_in_msg_ce
 
 td::Status ToslibClient::do_request(const toslib_api::raw_sendMessageReturnHash& request,
                                     td::Promise<object_ptr<toslib_api::raw_extMessageInfo>>&& promise) {
-  TRY_RESULT_PREFIX(body, vm::std_boc_deserialize(request.body_), ToslibError::InvalidBagOfCells("body"));
+  // Codex SDK-FFI audit (S1.7): same hardening as raw_sendMessage above.
+  // `get_ext_in_msg_hash_norm` calls `tlb::type_unpack_cell` which walks
+  // the body cell and throws on special.
+  TRY_RESULT(body, deserialize_safe_boc_root(request.body_, "body"));
   auto hash = body->get_hash().as_slice().str();
   TRY_RESULT(hash_norm, get_ext_in_msg_hash_norm(body));
 

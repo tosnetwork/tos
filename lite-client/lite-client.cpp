@@ -2158,9 +2158,19 @@ void TestNode::got_account_state(tos::BlockIdExt ref_blk, tos::BlockIdExt blk, t
         out << "account frozen (no StateInit to save into file)" << std::endl;
         return;
     }
-    CHECK(store.state.write().fetch_ulong(1) == 1);  // account_init$1 _:StateInit = AccountState;
+    // Codex SDK-FFI audit (S1.9): a malicious lite-server can return
+    // an account "active" tag with a malformed StateInit payload. The
+    // CHECK pair would abort the CLI; convert to structured error
+    // returns so the user sees a diagnostic instead.
+    if (store.state.write().fetch_ulong(1) != 1) {
+      out << "active account state has unexpected tag" << std::endl;
+      return;
+    }
     block::gen::StateInit::Record state;
-    CHECK(tlb::csr_unpack(store.state, state));
+    if (!tlb::csr_unpack(store.state, state)) {
+      out << "failed to unpack StateInit" << std::endl;
+      return;
+    }
     Ref<vm::Cell> cell;
     const char* name = "<unknown-information>";
     if (mode == 0) {
@@ -2280,9 +2290,16 @@ void TestNode::run_smc_method(int mode, tos::BlockIdExt ref_blk, tos::BlockIdExt
                                                      << " frozen (cannot run any methods)"));
         return;
     }
-    CHECK(store.state.write().fetch_ulong(1) == 1);  // account_init$1 _:StateInit = AccountState;
+    // Codex SDK-FFI audit (S1.9): see equivalent above.
+    if (store.state.write().fetch_ulong(1) != 1) {
+      promise.set_error(td::Status::Error("active account state has unexpected tag"));
+      return;
+    }
     block::gen::StateInit::Record state_init;
-    CHECK(tlb::csr_unpack(store.state, state_init));
+    if (!tlb::csr_unpack(store.state, state_init)) {
+      promise.set_error(td::Status::Error("failed to unpack StateInit"));
+      return;
+    }
     auto code = state_init.code->prefetch_ref();
     auto data = state_init.data->prefetch_ref();
     auto stack = td::make_ref<vm::Stack>(std::move(params));

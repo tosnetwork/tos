@@ -215,7 +215,14 @@ td::Ref<vm::Tuple> prepare_vm_c7(SmartContract::Args args, td::Ref<vm::Cell> cod
   return vm::make_tuple_ref(std::move(tuple_ref));
 }
 
-std::shared_ptr<const block::Config> try_fetch_config_from_c7(td::Ref<vm::Tuple> c7) {
+std::shared_ptr<const block::Config> try_fetch_config_from_c7(td::Ref<vm::Tuple> c7) try {
+  // Codex SDK-FFI audit (S1.5): SDK callers can hand attacker-controlled
+  // C7 tuples; the previous code bare-loaded the config-address cell
+  // (throws on PrunedBranch / Library / Merkle*) and silently downgraded
+  // a malformed config-address to zero, so the caller's get-method ran
+  // under a partially-bogus config. Use the special-aware loader and
+  // return nullptr (no config) on any structural problem; wrap the whole
+  // function in a try-block to absorb any surprise VmError.
   if (c7.is_null() || c7->size() < 1) {
     return nullptr;
   }
@@ -233,13 +240,18 @@ std::shared_ptr<const block::Config> try_fetch_config_from_c7(td::Ref<vm::Tuple>
   if (config_addr_cell.is_null()) {
     config_addr = tos::StdSmcAddress::zero();
   } else {
-    auto config_addr_cs = vm::load_cell_slice(std::move(config_addr_cell));
-    if (config_addr_cs.size() != 0x100) {
-      LOG(WARNING) << "Config parameter 0 with config address has wrong size";
-      config_addr = tos::StdSmcAddress::zero();
-    } else {
-      config_addr_cs.fetch_bits_to(config_addr);
+    bool config_addr_special = false;
+    auto config_addr_cs =
+        vm::load_cell_slice_special(std::move(config_addr_cell), config_addr_special);
+    if (config_addr_special) {
+      LOG(WARNING) << "Config parameter 0 root is a special cell; rejecting C7 config";
+      return nullptr;
     }
+    if (config_addr_cs.size() != 0x100) {
+      LOG(WARNING) << "Config parameter 0 with config address has wrong size; rejecting C7 config";
+      return nullptr;
+    }
+    config_addr_cs.fetch_bits_to(config_addr);
   }
   auto global_config =
       block::Config(config_cell, std::move(config_addr),
@@ -250,6 +262,12 @@ std::shared_ptr<const block::Config> try_fetch_config_from_c7(td::Ref<vm::Tuple>
     return nullptr;
   }
   return std::make_shared<block::Config>(std::move(global_config));
+} catch (const vm::VmError& e) {
+  LOG(WARNING) << "try_fetch_config_from_c7: vm error: " << e.get_msg();
+  return nullptr;
+} catch (...) {
+  LOG(WARNING) << "try_fetch_config_from_c7: unknown exception";
+  return nullptr;
 }
 
 SmartContract::Answer run_smartcont(SmartContract::State state, td::Ref<vm::Stack> stack, td::Ref<vm::Tuple> c7,

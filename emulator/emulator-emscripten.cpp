@@ -21,6 +21,11 @@ struct TransactionEmulationParams {
 };
 
 td::Result<TransactionEmulationParams> decode_transaction_emulation_params(const char* json) {
+  // Codex SDK-FFI audit (S1.4): JS/WASM caller may pass nullptr;
+  // `std::string(nullptr)` is undefined behavior. Reject up front.
+  if (json == nullptr) {
+    return td::Status::Error("decode_transaction_emulation_params: null params");
+  }
   TransactionEmulationParams params;
 
   std::string json_str(json);
@@ -81,6 +86,10 @@ struct GetMethodParams {
 };
 
 td::Result<GetMethodParams> decode_get_method_params(const char* json) {
+  // Codex SDK-FFI audit (S1.4): same null-param guard.
+  if (json == nullptr) {
+    return td::Status::Error("decode_get_method_params: null params");
+  }
   GetMethodParams params;
 
   std::string json_str(json);

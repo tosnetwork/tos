@@ -129,6 +129,9 @@ const char *transaction_emulator_emulate_transaction(void *transaction_emulator,
   // shard_account / message BoCs are FFI-callee-supplied. Wrap the entire
   // function in a function-try-block so a malformed BoC returns a
   // structured ERROR_RESPONSE instead of std::terminate-ing the host.
+  if (transaction_emulator == nullptr) {
+    ERROR_RESPONSE("transaction_emulator_emulate_transaction: null handle");
+  }
   auto emulator = static_cast<emulator::TransactionEmulator *>(transaction_emulator);
 
   auto message_cell_r = boc_b64_to_cell(message_boc);
@@ -257,6 +260,9 @@ const char *transaction_emulator_emulate_tick_tock_transaction(void *transaction
                                                                const char *shard_account_boc, bool is_tock) try {
   // Codex audit (round 13, finding #1): same hardening as
   // transaction_emulator_emulate_transaction.
+  if (transaction_emulator == nullptr) {
+    ERROR_RESPONSE("transaction_emulator_emulate_tick_tock_transaction: null handle");
+  }
   auto emulator = static_cast<emulator::TransactionEmulator *>(transaction_emulator);
 
   auto shard_account_cell = boc_b64_to_cell(shard_account_boc);
@@ -395,6 +401,7 @@ bool transaction_emulator_set_ignore_chksig(void *transaction_emulator, bool ign
 }
 
 bool transaction_emulator_set_config(void *transaction_emulator, const char *config_boc) {
+  if (transaction_emulator == nullptr || config_boc == nullptr) return false;
   auto emulator = static_cast<emulator::TransactionEmulator *>(transaction_emulator);
 
   auto global_config_res = decode_config(config_boc);
@@ -409,10 +416,23 @@ bool transaction_emulator_set_config(void *transaction_emulator, const char *con
 }
 
 void config_deleter(block::Config *ptr) {
-  // We do not delete the config object, since ownership management is delegated to the caller
+  // We do not delete the config object, since ownership management is delegated to the caller.
+  //
+  // Codex SDK-FFI audit (S1.2): UAF contract WARNING. The caller-owned
+  // block::Config* must outlive every TransactionEmulator/TvmEmulator
+  // that was handed it via *_set_config_object. The emulator stores a
+  // shared_ptr with this no-op deleter, so destroying the config while
+  // an emulator still references it causes use-after-free on the next
+  // emulate/run_get_method call. Safe order: create config → create
+  // emulator(s) → set_config_object → run → destroy emulator(s) →
+  // destroy config. The Emscripten wrappers do not hit this path —
+  // they pass `config_boc` which decodes inline into an owned config.
 }
 
 bool transaction_emulator_set_config_object(void *transaction_emulator, void *config) {
+  // Codex SDK-FFI audit (S1.2): see config_deleter doc — caller MUST
+  // keep `config` alive until the emulator is destroyed.
+  if (transaction_emulator == nullptr || config == nullptr) return false;
   auto emulator = static_cast<emulator::TransactionEmulator *>(transaction_emulator);
 
   std::shared_ptr<block::Config> config_ptr(static_cast<block::Config *>(config), config_deleter);
@@ -451,6 +471,7 @@ bool transaction_emulator_set_prev_blocks_info(void *transaction_emulator, const
   // Codex audit (round 14, finding #1): `vm::StackEntry::deserialize`
   // walks the caller-supplied cell and bare-loads it; a special root
   // throws across the C ABI. Wrap in function-try-block.
+  if (transaction_emulator == nullptr) return false;
   auto emulator = static_cast<emulator::TransactionEmulator *>(transaction_emulator);
 
   if (info_boc != nullptr) {
@@ -636,7 +657,7 @@ bool tvm_emulator_set_extra_currencies(void *tvm_emulator, const char *extra_cur
 }
 
 bool tvm_emulator_set_config_object(void *tvm_emulator, void *config) {
-  if (tvm_emulator == nullptr) return false;
+  if (tvm_emulator == nullptr || config == nullptr) return false;
   auto emulator = static_cast<emulator::TvmEmulator *>(tvm_emulator);
   auto global_config = std::shared_ptr<block::Config>(static_cast<block::Config *>(config), config_deleter);
   emulator->set_config(global_config);
@@ -645,6 +666,7 @@ bool tvm_emulator_set_config_object(void *tvm_emulator, void *config) {
 
 bool tvm_emulator_set_prev_blocks_info(void *tvm_emulator, const char *info_boc) try {
   // Codex audit (round 14, finding #1): see TransactionEmulator equivalent.
+  if (tvm_emulator == nullptr) return false;
   auto emulator = static_cast<emulator::TvmEmulator *>(tvm_emulator);
 
   if (info_boc != nullptr) {
@@ -857,6 +879,7 @@ TvmEulatorEmulateRunMethodResponse emulate_run_method(uint32_t len, const char *
 
 const char *tvm_emulator_emulate_run_method(uint32_t len, const char *params_boc, int64_t gas_limit) {
   auto result = emulate_run_method(len, params_boc, gas_limit);
+  free(const_cast<char *>(result.log));
   return result.response;
 }
 
@@ -866,6 +889,7 @@ void *tvm_emulator_emulate_run_method_detailed(uint32_t len, const char *params_
 }
 
 void run_method_detailed_result_destroy(void *detailed_result) {
+  if (detailed_result == nullptr) return;
   auto result = static_cast<TvmEulatorEmulateRunMethodResponse *>(detailed_result);
   free(const_cast<char *>(result->response));
   free(const_cast<char *>(result->log));
