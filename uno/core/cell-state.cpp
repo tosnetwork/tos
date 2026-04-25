@@ -41,27 +41,57 @@ namespace uno_workchain {
 // Mining state cell
 // ---------------------------------------------------------------------------
 
+// Mining state cell — v2 layout. MUST stay byte-identical to
+// `encode_live_mining_state_cell` in uno/core/init.cpp; LiveUnoState
+// hydrates v2 cells exclusively (older v1 cells are rejected, see
+// init.cpp::hydrate_from_cell_if_needed). When this codec writes v1,
+// a freshly-bootstrapped chain whose zerostate goes through
+// build_zerostate_state_cell cannot hydrate at all.
+//
+// v2 layout — total 488 bits inline, no refs:
+//   [0..7]    version sentinel (= 0x02)                         8 bits
+//   [8..71]   mine_remaining                                    64 bits
+//   [72..103] mine_epoch                                        32 bits
+//   [104..359] mine_target                                     256 bits
+//   [360..391] halving_era                                      32 bits
+//   [392..423] retarget_window_start_ts                         32 bits
+//   [424..455] retarget_window_start_epoch                      32 bits
+//   [456..487] last_solve_ts                                    32 bits
+constexpr uint8_t kMiningStateCellVersion = 2;
+
 td::Ref<vm::Cell> encode_mining_state_cell(const UnoShardState& state) {
     vm::CellBuilder cb;
-    // Inline: 64 + 32 + 256 + 32 = 384 bits ≤ 1023. No refs.
-    cb.store_long(static_cast<long long>(state.mine_remaining), 64);
-    cb.store_long(static_cast<long long>(state.mine_epoch),     32);
+    cb.store_long(static_cast<long long>(kMiningStateCellVersion),       8);
+    cb.store_long(static_cast<long long>(state.mine_remaining),         64);
+    cb.store_long(static_cast<long long>(state.mine_epoch),             32);
     cb.store_bytes(state.mine_target.data(), 32);
-    cb.store_long(static_cast<long long>(state.halving_era),    32);
+    cb.store_long(static_cast<long long>(state.halving_era),            32);
+    cb.store_long(static_cast<long long>(state.retarget_window_start_ts),    32);
+    cb.store_long(static_cast<long long>(state.retarget_window_start_epoch), 32);
+    cb.store_long(static_cast<long long>(state.last_solve_ts),               32);
     return cb.finalize();
 }
 
 bool decode_mining_state_cell(td::Ref<vm::Cell> cell, UnoShardState& out) {
-    // Zero all four fields before attempting decode so callers see a safe
+    // Zero all fields before attempting decode so callers see a safe
     // state on partial failure.
     out.mine_remaining = 0;
     out.mine_epoch     = 0;
     out.mine_target.fill(0);
     out.halving_era    = 0;
+    out.retarget_window_start_ts    = 0;
+    out.retarget_window_start_epoch = 0;
+    out.last_solve_ts               = 0;
 
     if (cell.is_null()) return false;
     auto cs = vm::load_cell_slice(cell);
     long long v = 0;
+    if (!cs.fetch_long_bool(8, v)) return false;
+    if (static_cast<uint8_t>(v) != kMiningStateCellVersion) {
+        LOG(ERROR) << "uno/cell-state: mining_state cell version=" << v
+                   << " expected=" << static_cast<unsigned>(kMiningStateCellVersion);
+        return false;
+    }
     if (!cs.fetch_long_bool(64, v)) return false;
     out.mine_remaining = static_cast<uint64_t>(v);
     if (!cs.fetch_long_bool(32, v)) return false;
@@ -69,6 +99,12 @@ bool decode_mining_state_cell(td::Ref<vm::Cell> cell, UnoShardState& out) {
     if (!cs.fetch_bytes(out.mine_target.data(), 32)) return false;
     if (!cs.fetch_long_bool(32, v)) return false;
     out.halving_era = static_cast<uint32_t>(v);
+    if (!cs.fetch_long_bool(32, v)) return false;
+    out.retarget_window_start_ts = static_cast<uint32_t>(v);
+    if (!cs.fetch_long_bool(32, v)) return false;
+    out.retarget_window_start_epoch = static_cast<uint32_t>(v);
+    if (!cs.fetch_long_bool(32, v)) return false;
+    out.last_solve_ts = static_cast<uint32_t>(v);
     return true;
 }
 

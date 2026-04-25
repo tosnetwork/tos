@@ -38,9 +38,12 @@
 #include "vm/cells/Cell.h"
 #include "vm/cells/CellSlice.h"
 
+#include "uno/core/cell-state.h"
 #include "uno/core/compute-phase.h"
 #include "uno/core/mine_constants.h"
 #include "uno/core/mine_uno.h"
+#include "uno/core/state.h"
+#include "vm/cellslice.h"
 
 // ---------------------------------------------------------------------------
 // Tracked-printf harness (mirrors test-mine-uno-cpp.cpp)
@@ -538,6 +541,70 @@ static void test_mul_div_u256_be_helper() {
 }
 
 // ---------------------------------------------------------------------------
+// Test 9 — cell-state codec parity (zerostate ↔ LiveUnoState v2)
+//
+// Pins the byte-level agreement between cell-state.cpp's
+// encode_mining_state_cell (used by build_zerostate_state_cell) and
+// init.cpp's hydrate path. If either codec drifts off v2, a freshly-
+// bootstrapped chain whose zerostate is built by build_zerostate_state_cell
+// can no longer be hydrated by LiveUnoState — which means the chain
+// cannot start. Round-trip both directions to catch a single-side
+// regression on either codec.
+// ---------------------------------------------------------------------------
+
+static void test_cell_state_mining_codec_v2_roundtrip() {
+    tprintf("[TEST] test_cell_state_mining_codec_v2_roundtrip\n");
+
+    uno_workchain::UnoShardState src;
+    src.mine_remaining              = 21'000'000ULL * 1'000'000'000ULL - 50ULL * 1'000'000'000ULL;
+    src.mine_epoch                  = 7;
+    std::memcpy(src.mine_target.data(), uno_workchain::kInitMineTargetBE, 32);
+    src.halving_era                 = 0;
+    src.retarget_window_start_ts    = 1'700'000'000;
+    src.retarget_window_start_epoch = 0;
+    src.last_solve_ts               = 1'700'003'600;
+
+    auto cell = uno_workchain::encode_mining_state_cell(src);
+    if (cell.is_null()) {
+        tprintf("  FAILED: encode_mining_state_cell returned null\n");
+        ++g_failures;
+        return;
+    }
+
+    uno_workchain::UnoShardState dst;
+    if (!uno_workchain::decode_mining_state_cell(cell, dst)) {
+        tprintf("  FAILED: decode_mining_state_cell rejected the v2 cell\n");
+        ++g_failures;
+        return;
+    }
+
+    if (dst.mine_remaining != src.mine_remaining ||
+        dst.mine_epoch != src.mine_epoch ||
+        dst.mine_target != src.mine_target ||
+        dst.halving_era != src.halving_era ||
+        dst.retarget_window_start_ts != src.retarget_window_start_ts ||
+        dst.retarget_window_start_epoch != src.retarget_window_start_epoch ||
+        dst.last_solve_ts != src.last_solve_ts) {
+        tprintf("  FAILED: round-trip field mismatch\n");
+        ++g_failures;
+        return;
+    }
+
+    // Ensure exact-shape: no trailing data after a v2 cell.
+    auto cs = vm::load_cell_slice(cell);
+    if (cs.size() != 488 || cs.size_refs() != 0) {
+        tprintf("  FAILED: v2 cell shape bits=%u refs=%u (expected 488/0)\n",
+                static_cast<unsigned>(cs.size()),
+                static_cast<unsigned>(cs.size_refs()));
+        ++g_failures;
+        return;
+    }
+
+    tprintf("  PASSED (v2 cell layout round-trips with retarget bookkeeping)\n");
+    ++g_passes;
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -554,6 +621,7 @@ int main() {
     test_restart_determinism();
     test_timestamp_monotonicity();
     test_mul_div_u256_be_helper();
+    test_cell_state_mining_codec_v2_roundtrip();
 
     tprintf("\nTotal: passed=%d, failures=%d, skips=%d\n",
             g_passes.load(), g_failures.load(), g_skips.load());

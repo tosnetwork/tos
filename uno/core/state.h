@@ -93,6 +93,14 @@ struct UnoShardState {
     std::array<uint8_t, 32> mine_target{};  // current PoW difficulty target (256-bit BE)
     uint32_t halving_era{0};                // = mine_epoch / kEraSize (cached for AIR access)
 
+    // Retarget bookkeeping. Persisted alongside mine_target so a hydrate
+    // round-trip is byte-identical and the retarget window survives
+    // restart. All zero at genesis — the first solve seeds
+    // retarget_window_start_ts and retarget_window_start_epoch.
+    uint32_t retarget_window_start_ts{0};
+    uint32_t retarget_window_start_epoch{0};
+    uint32_t last_solve_ts{0};
+
     UnoShardState();
     ~UnoShardState();
 
