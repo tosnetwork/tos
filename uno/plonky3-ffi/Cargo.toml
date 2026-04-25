@@ -127,15 +127,25 @@ lto             = "thin"
 codegen-units   = 1
 debug           = false
 overflow-checks = false
-# Panic strategy: we use `abort` so FFI can never unwind across the C ABI
-# boundary. Any verifier error is a returned int, not a panic.
-panic           = "abort"
+# Panic strategy: `unwind` so that `ffi_guard` (`std::panic::catch_unwind`)
+# in src/lib.rs can convert a stray `.unwrap()` / `assert!` from the
+# verifier path into a returned `InternalError`. Under `panic = "abort"`
+# (the previous setting) `catch_unwind` is a no-op and any panic from a
+# malformed proof aborted the validator process — exactly what the FFI
+# guard was supposed to prevent. Codex audit (round 1, finding #4).
+#
+# Safety: `extern "C"` functions in this crate must not let a panic
+# unwind across the C ABI boundary; every entry point is wrapped in
+# `ffi_guard`. Modern rustc additionally aborts at the C boundary if
+# a panic ever escapes the guard (defense-in-depth).
+panic           = "unwind"
 
 [profile.dev]
-# Keep dev builds usable for P.2 prover iteration; but still no panic=unwind
-# (matches release, so FFI behavior is identical across build profiles).
+# Keep dev builds usable for P.2 prover iteration. Match release on
+# panic strategy so FFI behavior is identical across build profiles
+# (see release-profile rationale above).
 opt-level = 1
-panic     = "abort"
+panic     = "unwind"
 
 # ---------------------------------------------------------------------------
 # Determinism notes (see design doc §4.3 "No randomness, no wall-clock,

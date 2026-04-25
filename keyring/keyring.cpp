@@ -25,6 +25,9 @@
 
 #include "keyring.hpp"
 
+#include <sys/stat.h>
+#include <sys/types.h>
+
 namespace tos {
 
 namespace keyring {
@@ -56,6 +59,18 @@ td::Result<KeyringImpl::PrivateKeyDescr*> KeyringImpl::load_key(PublicKeyHash ke
   }
 
   auto name = db_root_ + "/" + key_hash.bits256_value().to_hex();
+
+  // Codex audit (round 1, finding #7): warn if a private key file is
+  // group/world-readable. Keys are stored unencrypted; permissive mode bits
+  // turn host/backup compromise into key compromise. Don't refuse to load
+  // (operators with intentionally-relaxed perms exist and we don't want to
+  // brick a running validator), but make the misconfiguration loud.
+  struct stat st;
+  if (::stat(name.c_str(), &st) == 0 && (st.st_mode & 0077) != 0) {
+    LOG(ERROR) << "keyring: key file " << name << " has insecure permissions "
+               << std::oct << (st.st_mode & 0777) << std::dec
+               << " (expected 0600). Run: chmod 0600 " << name;
+  }
 
   auto R = td::read_file_secure(td::CSlice{name});
   if (R.is_error()) {
@@ -90,7 +105,16 @@ void KeyringImpl::add_key(PrivateKey key, bool is_temp, td::Promise<td::Unit> pr
     auto S = key.export_as_slice();
     auto name = db_root_ + "/" + short_id.bits256_value().to_hex();
 
-    td::write_file(td::CSlice(name), S.as_slice()).ensure();
+    // Codex audit (round 1, finding #7): atomic_write_file does temp + fsync +
+    // rename so a partial write or crash mid-write cannot leave a corrupt key
+    // on disk. The follow-up `chmod` tightens to owner-only — `td::write_file`
+    // honors the process umask, which is operator-controlled and may leave
+    // the file group/world-readable.
+    td::atomic_write_file(td::CSlice(name), S.as_slice()).ensure();
+    if (::chmod(name.c_str(), 0600) != 0) {
+      LOG(ERROR) << "keyring: failed to chmod " << name
+                 << " to 0600: " << td::Status::PosixError(errno, "chmod");
+    }
   }
   promise.set_value(td::Unit());
 }

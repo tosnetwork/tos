@@ -254,6 +254,32 @@ void JsonRpcServer::listen(td::IPAddress addr) {
   http_ = td::actor::create_actor<http::HttpServer>(
       PSTRING() << "JsonRPC@" << addr, addr, std::move(callback));
   LOG(WARNING) << "JSON-RPC server listening on " << addr;
+
+  // Codex audit (round 1, finding #2): refuse to silently expose a write-
+  // enabled, unauthenticated RPC surface on a non-loopback address. Operators
+  // who really want this must pass `--json-rpc-readonly` or `--json-rpc-api-key`.
+  // We deliberately do NOT change the historical defaults (readonly=false,
+  // empty api_key, cors=*) here — only loudly refuse the dangerous combination.
+  bool is_loopback = false;
+  {
+    auto ip_str = addr.get_ip_str().str();
+    if (ip_str == "127.0.0.1" || ip_str == "::1" || ip_str == "0:0:0:0:0:0:0:1") {
+      is_loopback = true;
+    }
+  }
+  if (!is_loopback && !opts_.readonly && opts_.api_key.empty()) {
+    LOG(ERROR) << "JSON-RPC: refusing to listen on non-loopback address " << addr
+               << " with write methods enabled and no API key. "
+               << "Set --json-rpc-readonly or --json-rpc-api-key.";
+    http_ = {};
+    return;
+  }
+  if (!is_loopback && opts_.cors_origin == "*" && !opts_.readonly) {
+    LOG(WARNING) << "JSON-RPC: serving non-loopback address " << addr
+                 << " with CORS Access-Control-Allow-Origin=\"*\" while write "
+                 << "methods are enabled. Set --json-rpc-cors-origin to a "
+                 << "specific origin in production.";
+  }
 }
 
 // ─── HTTP callback ────────────────────────────────────────────────────────
@@ -274,9 +300,17 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
                                td::Promise<HttpReturn> promise) {
   auto method = request->method();
   auto url = request->url();
-  LOG(INFO) << "json-rpc: received " << method << " " << url
-            << " payload_completed=" << payload->parse_completed()
-            << " ready_bytes=" << payload->ready_bytes();
+  // Codex audit (round 1, finding #2): never log the raw URL — query strings
+  // can carry the API key (X-API-Key fallback) or other operator secrets and
+  // this log line runs BEFORE auth. Strip the query string for logging only;
+  // the live `url` value below is still used unmodified for routing.
+  {
+    auto qpos = url.find('?');
+    auto path = qpos == std::string::npos ? url : url.substr(0, qpos);
+    LOG(INFO) << "json-rpc: received " << method << " " << path
+              << " payload_completed=" << payload->parse_completed()
+              << " ready_bytes=" << payload->ready_bytes();
+  }
 
   // OPTIONS — CORS preflight on any path
   if (method == "OPTIONS") {
@@ -661,6 +695,16 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
     params_val = td::JsonValue::make_object(td::JsonObject());
   }
 
+  // Readonly gate (centralized — see is_write_method). Must run BEFORE the
+  // per-method fast paths below or `eth_sendRawTransaction` / `uno_send*`
+  // would bypass `--json-rpc-readonly`.
+  if (opts_.readonly && is_write_method(method)) {
+    promise.set_value(make_eth_json_error(
+        -32601, "Write methods are disabled (server is in readonly mode)",
+        req_id, opts_.cors_origin));
+    return;
+  }
+
   // eth_sendRawTransaction: route to async handler (submits to ExtMessagePool)
   if (method == "eth_sendRawTransaction") {
     handle_eth_sendRawTransaction(params_val, std::move(req_id), std::move(promise));
@@ -933,14 +977,11 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
         }
       });
 
-  // Write-method gate: reject send-family methods in readonly mode
-  if (opts_.readonly &&
-      (method == "sendBoc" || method == "sendBocReturnHash" ||
-       method == "sendBocReturnHashNoError" || method == "sendQuery" ||
-       method == "submitSignedTransaction" ||
-       method == "grantAccountDelegation" || method == "revokeAccountDelegation" ||
-       method == "grantAccountSession" || method == "revokeAccountSession" ||
-       method == "grantAccountAgent" || method == "revokeAccountAgent")) {
+  // Defense-in-depth: a request that reaches dispatch_method has already been
+  // gated centrally in process_single_object_request (and the REST adapters).
+  // Re-check anyway so a future caller that bypasses the upper layer cannot
+  // sneak through.
+  if (opts_.readonly && is_write_method(method)) {
     promise.set_value(make_eth_json_error(-32601,
         "Write methods are disabled (server is in readonly mode)", req_id));
     return;
@@ -1385,38 +1426,46 @@ static bool constant_time_compare(const std::string &a, const std::string &b) {
   return result == 0;
 }
 
+// Centralized write-method registry.
+// Codex audit (round 1, finding #1): the per-method fast path for
+// `eth_sendRawTransaction`, `uno_sendMineUno`, and the `uno_*` write methods
+// (e.g. `uno_sendTransfer`) used to short-circuit `process_single_object_request`
+// BEFORE the readonly gate at `dispatch_method`. Readonly mode therefore only
+// blocked legacy `sendBoc`/`sendQuery`/account-write methods, not EVM/UNO
+// submissions. Centralize here so any caller (single-object dispatch, batch,
+// REST POST, GET adapter) checks once.
+bool JsonRpcServer::is_write_method(const std::string &method) {
+  static const std::set<std::string> writes = {
+      // Legacy TOS write methods (also gated in dispatch_method, kept for parity).
+      "sendBoc", "sendBocReturnHash", "sendBocReturnHashNoError", "sendQuery",
+      "submitSignedTransaction",
+      "grantAccountDelegation", "revokeAccountDelegation",
+      "grantAccountSession", "revokeAccountSession",
+      "grantAccountAgent", "revokeAccountAgent",
+      // EVM workchain (wc=1).
+      "eth_sendRawTransaction",
+      // Uno workchain (wc=2): both the synchronous Transfer admission path
+      // and the asynchronous MineUno submission path emit external messages.
+      "uno_sendTransfer",
+      "uno_sendMineUno",
+  };
+  return writes.count(method) > 0;
+}
+
 bool JsonRpcServer::check_api_key(const RequestPtr &request,
                                   td::Promise<HttpReturn> &promise) {
   if (opts_.api_key.empty()) {
     return true;  // no auth configured
   }
 
-  // Check X-API-Key header
+  // Codex audit (round 1, finding #2): only the X-API-Key header is accepted.
+  // The previous `?api_key=...` query-string fallback leaked the key into
+  // access logs, browser history, intermediary proxies, and our own
+  // `LOG(INFO) << "json-rpc: received ..."` (which ran before auth). Header-
+  // only is the standard practice and keeps the secret out of URLs.
   auto key_header = request->get_header("X-API-Key");
   if (!key_header.empty() && constant_time_compare(key_header, opts_.api_key)) {
     return true;
-  }
-
-  // Check api_key query parameter in URL
-  auto url = request->url();
-  auto qpos = url.find('?');
-  if (qpos != std::string::npos) {
-    std::string qs = url.substr(qpos + 1);
-    size_t pos = 0;
-    while (pos < qs.size()) {
-      auto amp = qs.find('&', pos);
-      auto token = qs.substr(pos, amp == std::string::npos ? std::string::npos : amp - pos);
-      pos = amp == std::string::npos ? qs.size() : amp + 1;
-      if (token.empty()) continue;
-      auto eq = token.find('=');
-      if (eq != std::string::npos) {
-        auto key = token.substr(0, eq);
-        auto val = token.substr(eq + 1);
-        if (key == "api_key" && constant_time_compare(val, opts_.api_key)) {
-          return true;
-        }
-      }
-    }
   }
 
   // Auth failed

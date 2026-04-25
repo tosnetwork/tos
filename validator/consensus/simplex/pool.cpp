@@ -434,18 +434,29 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
       auto tl_certificate = maybe_tl_certificate.move_as_ok();
       auto raw_vote = Vote::from_tl(*tl_certificate->vote_);
 
-      bool is_too_new = raw_vote.referenced_slot() >= first_too_new_slot;
+      // Codex audit (round 1, finding #3): too-new certificates used to call
+      // `state_->slot_at(referenced_slot)` AFTER `Certificate::from_tl`,
+      // which materializes the future slot. `tracked_slots_interval()` then
+      // returns `end = referenced_slot + 1`, and the alarm / standstill loops
+      // walk `[begin, end)` calling `slot_at(i)` for every i — turning one
+      // stored future slot into massive state and iteration growth. Forging
+      // a certificate still requires a 2f+1 quorum signature, but a single
+      // byzantine quorum is sufficient. Drop too-new certificates outright;
+      // we will pick the chain back up via vote/cert messages once `now_`
+      // catches up (mirror the too-new-vote behavior at line 406).
+      if (raw_vote.referenced_slot() >= first_too_new_slot) {
+        LOG(WARNING) << "Dropping too new certificate from " << message->source
+                     << " : slot=" << raw_vote.referenced_slot()
+                     << ", current_slot=" << now_;
+        return;
+      }
 
-      std::optional<State::SlotRef> slot;
-
-      if (!is_too_new) {
-        slot = state_->slot_at(raw_vote.referenced_slot());
-        if (!slot.has_value()) {
-          return;
-        }
-        if (!slot->state->certs.needs(raw_vote)) {
-          return;
-        }
+      auto slot = state_->slot_at(raw_vote.referenced_slot());
+      if (!slot.has_value()) {
+        return;
+      }
+      if (!slot->state->certs.needs(raw_vote)) {
+        return;
       }
 
       auto maybe_certificate = Certificate<Vote>::from_tl(std::move(*tl_certificate), bus);
@@ -454,14 +465,6 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
                      << maybe_certificate.move_as_error();
         ban(message->source);
         return;
-      }
-
-      if (is_too_new) {
-        slot = state_->slot_at(raw_vote.referenced_slot());
-        CHECK(slot.has_value());
-        if (!slot->state->certs.needs(raw_vote)) {
-          return;
-        }
       }
 
       handle_certificate(maybe_certificate.move_as_ok());

@@ -7,7 +7,11 @@ publish = false
 [dependencies]
 lockfree = { path = "../" }
 benchsuite = { path = "benchsuite" }
-thread_local = "*"
+# Codex audit (round 1, finding #8): pin a major version range instead of
+# the wildcard `*` so a `cargo update` here cannot silently pull a major
+# bump. The benchmark crate is gated out of the production CMake build by
+# its own [workspace] block; this is purely defense for `cargo bench` users.
+thread_local = "1.1"
 
 [workspace]
 members = ["benchsuite", "."]

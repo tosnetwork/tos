@@ -382,6 +382,12 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   bool check_api_key(const RequestPtr &request,
                      td::Promise<HttpReturn> &promise);
 
+  // Returns true iff `method` mutates chain state via this server. Centralized
+  // so `opts_.readonly` can be enforced once before any fast-path dispatch
+  // (eth_sendRawTransaction, uno_sendMineUno, uno_sendTransfer, sendBoc, …).
+  // Adding a new write method? Add it here.
+  static bool is_write_method(const std::string &method);
+
   // Cache-aware dispatch: checks cache for read-only methods, delegates to
   // dispatch_method() on miss, and stores successful results.
   void cached_dispatch_method(std::string method, td::JsonObject &params,

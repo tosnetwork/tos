@@ -41,6 +41,13 @@ static const td::uint32 OVERLAY_MAX_ALLOWED_PACKET_SIZE = 16 * 1024 * 1024;
 static const double NEIGHBOURS_ROTATE_INTERVAL_MIN = 60;
 static const double NEIGHBOURS_ROTATE_INTERVAL_MAX = 120;
 static const td::uint32 GET_DIFFERENCE_MAX_SEND = 100;
+// Codex audit (round 1, finding #6): even with the 100-block cap, a single
+// `getDifference` query could fan out to 100 × `max_serialized_block_size`
+// bytes (default 16 KiB → 1.6 MiB; configurable higher). Cap total response
+// bytes per query so a peer cannot use undersized requests to flood us with
+// oversized blocks. 1.6 MiB matches the default-config worst case so normal
+// syncing is unaffected.
+static const td::uint64 GET_DIFFERENCE_MAX_RESPONSE_BYTES = 100ULL * 16ULL * 1024ULL;
 static const double GET_DIFFERENCE_TIMEOUT = 5.0;
 static const double GET_BLOCK_TIMEOUT = 2.0;
 static const td::uint32 MAX_PENDING_DEPS = 16;
@@ -694,9 +701,20 @@ void CatChainReceiverImpl::receive_query_from_overlay(adnl::AdnlNodeIdShort src,
   }
   TD_PERF_COUNTER(catchain_query_process);
   td::PerfWarningTimer t{"catchain query process", 0.05};
+  // Codex audit (round 1, finding #5): resolve the source ONCE here and
+  // reject early if the ADNL id is unknown. The previous code path
+  // dereferenced `get_source_by_adnl_id(src)` directly on the malformed-TL
+  // branch, and `process_query` used `CHECK(S != nullptr)` — either crashed
+  // the validator on an unknown-source query.
+  CatChainReceiverSource *src_node = get_source_by_adnl_id(src);
+  if (src_node == nullptr) {
+    VLOG(CATCHAIN_WARNING) << this << ": query from unknown adnl src " << src;
+    promise.set_error(td::Status::Error(ErrorCode::protoviolation, "unknown source"));
+    return;
+  }
   auto F = fetch_tl_object<tos_api::Function>(data.clone(), true);
   if (F.is_error()) {
-    callback_->on_custom_query(get_source_by_adnl_id(src)->get_hash(), std::move(data), std::move(promise));
+    callback_->on_custom_query(src_node->get_hash(), std::move(data), std::move(promise));
     return;
   }
   auto f = F.move_as_ok();
@@ -709,8 +727,13 @@ void CatChainReceiverImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::cat
   if (it == blocks_.end() || it->second->get_height() == 0 || !it->second->initialized()) {
     promise.set_value(serialize_tl_object(create_tl_object<tos_api::catchain_blockNotFound>(), true));
   } else {
+    // Resolution is now guaranteed at receive_query_from_overlay; keep the
+    // null-check as a defensive guard but never abort.
     CatChainReceiverSource *S = get_source_by_adnl_id(src);
-    CHECK(S != nullptr);
+    if (S == nullptr) {
+      promise.set_error(td::Status::Error(ErrorCode::protoviolation, "unknown source"));
+      return;
+    }
     promise.set_value(serialize_tl_object(create_tl_object<tos_api::catchain_blockResult>(it->second->export_tl()),
                                           true, it->second->get_payload().as_slice()));
   }
@@ -768,8 +791,16 @@ void CatChainReceiverImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::cat
   }
   CHECK(right > 0);
   CatChainReceiverSource *S0 = get_source_by_adnl_id(src);
-  CHECK(S0 != nullptr);
-  for (td::uint32 i = 0; i < get_sources_cnt(); i++) {
+  if (S0 == nullptr) {
+    // Codex audit (round 1, finding #5): never CHECK on caller-supplied src.
+    promise.set_error(td::Status::Error(ErrorCode::protoviolation, "unknown source"));
+    return;
+  }
+  // Codex audit (round 1, finding #6): cap total response bytes per query
+  // — the 100-block limit alone allows large blocks to amplify the response.
+  td::uint64 sent_bytes = 0;
+  bool budget_exhausted = false;
+  for (td::uint32 i = 0; i < get_sources_cnt() && !budget_exhausted; i++) {
     if (vt[i] >= 0 && my_vt[i] > vt[i]) {
       CatChainReceiverSource *S = get_source(i);
       td::int32 t = (my_vt[i] - vt[i] > right) ? right : (my_vt[i] - vt[i]);
@@ -781,6 +812,14 @@ void CatChainReceiverImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::cat
           CHECK(!M->get_payload().empty());
           td::BufferSlice BB = serialize_tl_object(block, true, M->get_payload().as_slice());
           CHECK(BB.size() <= opts_.max_serialized_block_size);
+          if (sent_bytes + BB.size() > GET_DIFFERENCE_MAX_RESPONSE_BYTES) {
+            // Roll vt[i] back so the difference reply tells the peer this
+            // block was NOT sent, prompting a follow-up `getBlock`.
+            vt[i] -= 1;
+            budget_exhausted = true;
+            break;
+          }
+          sent_bytes += BB.size();
           td::actor::send_closure(overlay_manager_, &overlay::Overlays::send_message, src,
                                   get_source(local_idx_)->get_adnl_id(), overlay_id_, std::move(BB));
         }

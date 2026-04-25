@@ -12,7 +12,12 @@ path = ".."
 [dependencies.fuzzsuite]
 path = "fuzzsuite"
 [dependencies.libfuzzer-sys]
-git = "https://github.com/rust-fuzz/libfuzzer-sys.git"
+# Codex audit (round 1, finding #8): pin to a published crates.io release
+# instead of tracking the git HEAD of `rust-fuzz/libfuzzer-sys`. The fuzz
+# crate is gated out of the production CMake build by its own [workspace]
+# block, but anyone running `cargo fuzz` against this manifest used to
+# fetch arbitrary upstream changes.
+version = "0.4"
 
 # Prevent this from interfering with workspaces
 [workspace]
