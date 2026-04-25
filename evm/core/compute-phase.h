@@ -55,6 +55,11 @@ namespace evm_workchain {
 /// @param block_seqno  Host-chain block sequence number → block.number.
 /// @param timestamp    Host-chain block Unix timestamp.
 /// @param rand_seed    Host-chain 256-bit block random seed.
+/// @param parent_block_hash wc=1 parent block's root_hash, threaded in by
+///                          the host so the EIP-2935 system call writes
+///                          the real parent hash into the historical-
+///                          block-hash ring buffer instead of zero. May
+///                          be all-zero on block 0 / non-EVM contexts.
 /// @return             true if the phase completed (even on EVM revert);
 ///                     false only on infrastructure failure.
 bool run_evm_compute_phase_snapshot(
@@ -64,7 +69,8 @@ bool run_evm_compute_phase_snapshot(
     uint64_t gas_limit,
     uint64_t block_seqno,
     uint64_t timestamp,
-    const uint8_t rand_seed[32]);
+    const uint8_t rand_seed[32],
+    const uint8_t parent_block_hash[32]);
 
 /// Legacy global-state variant. Retained for the test harness and any
 /// historical call site that still hands an EvmState in directly. New

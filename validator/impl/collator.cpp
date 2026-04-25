@@ -2279,6 +2279,14 @@ bool Collator::fetch_config_params() {
   // per-account walk.
   if (workchain() == evm_workchain::kWorkchainId) {
     compute_phase_cfg_.evm_block_seqno = static_cast<td::uint64>(new_block_seqno);
+    // Thread the wc=1 parent block's root_hash so the snapshot compute
+    // path's EIP-2935 system call writes the real parent hash (not zero)
+    // into the historical-block-hash ring buffer. prev_blocks[0] is the
+    // wc=1 prior block when collating wc=1; for genesis (no prev) leave
+    // the default-zeroed value.
+    if (!prev_blocks.empty()) {
+      compute_phase_cfg_.evm_parent_block_hash = prev_blocks[0].root_hash;
+    }
     // Hydration of g_evm_state from canonical ShardAccounts used to live
     // here so the legacy compute path could read pre-state from the
     // singleton. Snapshot compute decodes pre-state from the per-tx

@@ -1947,7 +1947,8 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
         cp, new_data, body_cs, cp.gas_limit,
         cfg.evm_block_seqno,                              // block.number — wc=1 shard seqno
         static_cast<td::uint64>(account.now_),            // timestamp (block gen_utime)
-        cfg.block_rand_seed.as_array().data());           // rand_seed
+        cfg.block_rand_seed.as_array().data(),            // rand_seed
+        cfg.evm_parent_block_hash.data());                // EIP-2935 parent_hash
     if (!ok) {
       compute_phase.reset();
       return false;

@@ -761,10 +761,11 @@ void init_evm_workchain(const std::string& db_root) {
            uint64_t gas_limit,
            uint64_t block_seqno,
            uint64_t timestamp,
-           const uint8_t rand_seed[32]) -> bool {
+           const uint8_t rand_seed[32],
+           const uint8_t parent_block_hash[32]) -> bool {
             bool ok = run_evm_compute_phase_snapshot(
                 cp, std::move(account_data), in_msg_body, gas_limit,
-                block_seqno, timestamp, rand_seed);
+                block_seqno, timestamp, rand_seed, parent_block_hash);
             // Publish RPC-observability records into g_evm_state and the
             // cache DB. Compute itself does not touch global mutable
             // state — the dedup inside `apply_block_side_effects` keeps

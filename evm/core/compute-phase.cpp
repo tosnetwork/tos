@@ -84,7 +84,8 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     EvmState& state,
     uint64_t block_seqno,
     uint64_t timestamp,
-    const uint8_t rand_seed[32]) {
+    const uint8_t rand_seed[32],
+    const uint8_t parent_block_hash[32]) {
 
     // --- Step 1: Extract the raw Ethereum transaction from the message body ---
     auto payload_opt = extract_evm_payload(in_msg_body);
@@ -108,14 +109,22 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     auto block = make_evm_block(block_seqno, timestamp, rand_seed, gas_limit);
     const auto& config = evm_chain_config();
 
-    // EIP-1559 base fee: snapshot path has no parent-block lookup (the
-    // pure compute can't read g_evm_state's block ring buffer), so
-    // canonicalise to the spec initial base fee. The legacy global path
-    // computed it from the previous block's gas usage; that derivation is
-    // a host-chain accounting nicety, not a consensus requirement, and
-    // re-introducing it here would require carrying the parent header
-    // through `account_data` — out of scope for this refactor.
+    // EIP-1559 base fee. All validators use the same fixed value so
+    // gas accounting is consensus-deterministic across collator /
+    // validator / restart. A "real" EIP-1559 base fee derived from the
+    // parent block's gas usage would require threading parent
+    // base_fee_per_gas + gas_used + gas_limit through ComputePhaseConfig
+    // — tracked separately; not consensus-blocking because the fixed
+    // value is the same on every node.
     block.header.base_fee_per_gas = intx::uint256{kInitialBaseFee};
+
+    // Set the block's parent_hash from the host-supplied wc=1 parent
+    // block root (zero on block 0). The snapshot variant gets a real
+    // value through `parent_block_hash`; the legacy global-state path
+    // passes zeros (matches its prior behaviour). The header is read by
+    // silkworm when computing the Ethereum-shaped block hash exposed to
+    // RPC and by the EIP-2935 system call below.
+    std::memcpy(block.header.parent_hash.bytes, parent_block_hash, 32);
 
     // --- Step 3b: EIP-4788 / EIP-2935 system calls (Cancun+ / Pectra+) ---
     {
@@ -145,17 +154,17 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
         }
 
         if (rev >= EVMC_PRAGUE && block_seqno > 0) {
-            // The local state has no historical block-hash ring, so
-            // parent_hash here is zero. Same caveat as base_fee above:
-            // host-chain wc=1 doesn't carry per-block parent metadata
-            // through the snapshot input, and the EIP-2935 ring is RPC-
-            // observability rather than consensus-binding for our use.
-            evmc::bytes32 parent_hash_bytes{};
+            // EIP-2935 historical-block-hash ring buffer write. The
+            // host threads the wc=1 parent block's root_hash in via
+            // `parent_block_hash`; we re-use the value already stored
+            // on the block header above. Contracts that read the ring
+            // buffer (L2 fraud-proof helpers, etc.) get the actual
+            // parent hash instead of zero.
             silkworm::Transaction sys_txn{};
             sys_txn.type = silkworm::TransactionType::kSystem;
             sys_txn.to = silkworm::protocol::kHistoryStorageAddress;
             sys_txn.data = silkworm::Bytes{
-                silkworm::ByteView{parent_hash_bytes.bytes, 32}};
+                silkworm::ByteView{block.header.parent_hash.bytes, 32}};
             sys_txn.set_sender(silkworm::protocol::kSystemAddress);
             std::unique_lock sys_lock(state.mutex());
             silkworm::IntraBlockState sys_ibs(state.state());
@@ -348,7 +357,8 @@ bool run_evm_compute_phase_snapshot(
     uint64_t gas_limit,
     uint64_t block_seqno,
     uint64_t timestamp,
-    const uint8_t rand_seed[32]) {
+    const uint8_t rand_seed[32],
+    const uint8_t parent_block_hash[32]) {
 
     auto local_state = build_local_state_from_account_data(std::move(account_data));
     if (!local_state) {
@@ -359,7 +369,7 @@ bool run_evm_compute_phase_snapshot(
 
     auto fx = run_compute_against_state(
         cp, in_msg_body, gas_limit, *local_state,
-        block_seqno, timestamp, rand_seed);
+        block_seqno, timestamp, rand_seed, parent_block_hash);
 
     if (fx) {
         cp.evm_side_effects = std::move(fx);
@@ -379,9 +389,13 @@ bool run_evm_compute_phase(
     uint64_t timestamp,
     const uint8_t rand_seed[32]) {
 
+    // Legacy global-state path: no parent block hash plumbed in.
+    // Pass zeros (matches its prior EIP-2935 behaviour) so the legacy
+    // entry point retains identical semantics to before.
+    static const uint8_t kZeroParentHash[32] = {0};
     auto fx = run_compute_against_state(
         cp, in_msg_body, gas_limit, state,
-        block_seqno, timestamp, rand_seed);
+        block_seqno, timestamp, rand_seed, kZeroParentHash);
 
     if (fx) {
         cp.evm_side_effects = std::move(fx);

@@ -37,6 +37,11 @@ namespace evm_workchain_dispatch {
 ///   block_seqno  — host-chain block sequence number (for block.number)
 ///   timestamp    — host-chain block Unix timestamp
 ///   rand_seed    — 256-bit block random seed
+///   parent_block_hash — wc=1 parent block's root_hash (32 bytes), used
+///                       for the EIP-2935 historical-block-hash ring
+///                       buffer write so contracts get the real parent
+///                       hash instead of zero. All-zero on block 0 and
+///                       on non-EVM contexts.
 ///
 /// Returns true if the phase completed (even on revert), false on infra error.
 using EvmComputeHandler = std::function<bool(
@@ -46,7 +51,8 @@ using EvmComputeHandler = std::function<bool(
     uint64_t gas_limit,
     uint64_t block_seqno,
     uint64_t timestamp,
-    const uint8_t rand_seed[32])>;
+    const uint8_t rand_seed[32],
+    const uint8_t parent_block_hash[32])>;
 
 /// Register the EVM compute phase handler.
 /// Called once by the evm_workchain module during initialisation.
@@ -64,7 +70,8 @@ bool invoke_evm_compute(
     uint64_t gas_limit,
     uint64_t block_seqno,
     uint64_t timestamp,
-    const uint8_t rand_seed[32]);
+    const uint8_t rand_seed[32],
+    const uint8_t parent_block_hash[32]);
 
 /// Canonical "EVM activated account" code marker cell.
 ///

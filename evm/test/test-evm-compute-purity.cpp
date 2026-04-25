@@ -214,9 +214,10 @@ static ComputeOutcome run_once(td::Ref<vm::Cell> account_data,
     auto body_cs = vm::load_cell_slice(body_cell);
     block::ComputePhase cp{};
     uint8_t rand_seed[32] = {};
+    uint8_t parent_block_hash[32] = {};
     bool ok = ew::run_evm_compute_phase_snapshot(
         cp, std::move(account_data), body_cs, gas_limit,
-        block_seqno, timestamp, rand_seed);
+        block_seqno, timestamp, rand_seed, parent_block_hash);
     return ComputeOutcome{ok, cp.success, cp.skip_reason, cp.new_data};
 }
 

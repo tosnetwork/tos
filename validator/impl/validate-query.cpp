@@ -1122,6 +1122,13 @@ bool ValidateQuery::fetch_config_params() {
     // hashes, so the announced ShardState new_hash matches by construction.
     if (workchain() == evm_workchain::kWorkchainId) {
       compute_phase_cfg_.evm_block_seqno = static_cast<td::uint64>(id_.id.seqno);
+      // Mirror collator.cpp: thread wc=1 parent block root_hash so the
+      // EIP-2935 system call uses the actual parent hash. The validator
+      // must agree with the collator on this value or cp.new_data
+      // diverges (parent_hash is written into a state slot).
+      if (!prev_blocks.empty()) {
+        compute_phase_cfg_.evm_parent_block_hash = prev_blocks[0].root_hash;
+      }
       // No g_evm_state hydration here — see matching comment in
       // collator.cpp. Snapshot compute pulls pre-state from the per-tx
       // account_data cell directly.

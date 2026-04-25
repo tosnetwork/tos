@@ -143,6 +143,13 @@ struct ComputePhaseConfig {
   // across collator and validate-query passes. Zero for non-EVM contexts.
   td::uint64 evm_block_seqno = 0;
 
+  // EVM workchain (wc=1): the wc=1 parent block's root_hash, used for
+  // EIP-2935 historical-block-hash ring buffer writes inside the snapshot
+  // compute phase. Zero on non-EVM contexts and at block 0. Threaded in
+  // here (rather than being read out of g_evm_state's block ring) to keep
+  // compute pure under the audit fix that closed compute-phase non-purity.
+  td::Bits256 evm_parent_block_hash = td::Bits256::zero();
+
   ComputePhaseConfig() : gas_price(0), gas_limit(0), special_gas_limit(0), gas_credit(0) {
     compute_threshold();
   }
