@@ -369,6 +369,17 @@ void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNo
 
 void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_getArchiveSlice &query,
                                        td::Promise<td::BufferSlice> promise) {
+  // Codex audit (round 3, finding #2): mirror the shard endpoint's
+  // `max_size_` guard (validator/full-node-shard.cpp:637-640) — without it,
+  // an ADNL peer can request arbitrarily large or negative slices, driving
+  // disk I/O / bandwidth on the master. The shard endpoint also charges a
+  // request-cost limiter; the master path lacks one (no `limiter_` member).
+  // Validation is the minimum-viable fix; a per-method limiter is a
+  // larger change and is left as a follow-up.
+  if (query.max_size_ < 0 || query.max_size_ > (1 << 24)) {
+    promise.set_error(td::Status::Error(ErrorCode::protoviolation, "invalid max_size"));
+    return;
+  }
   td::actor::send_closure(validator_manager_, &ValidatorManagerInterface::get_archive_slice, query.archive_id_,
                           query.offset_, query.max_size_, std::move(promise));
 }
@@ -386,6 +397,11 @@ void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNo
 void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src,
                                        tos_api::tosNode_downloadPersistentStateSliceV2 &query,
                                        td::Promise<td::BufferSlice> promise) {
+  // Codex audit (round 3, finding #2): mirror shard validation (full-node-shard.cpp:700-703).
+  if (query.max_size_ < 0 || query.max_size_ > (1 << 24)) {
+    promise.set_error(td::Status::Error(ErrorCode::protoviolation, "invalid max_size"));
+    return;
+  }
   auto P = td::PromiseCreator::lambda(
       [SelfId = actor_id(this), promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {

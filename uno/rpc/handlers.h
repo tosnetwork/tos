@@ -235,6 +235,17 @@ bool try_consume_uno_sendtx_token();
 /// is disabled (test mode), always returns true.
 bool try_consume_uno_send_mine_uno_token();
 
+/// Maximum hex blob size (in characters) accepted by `uno_sendMineUno`.
+/// Codex audit (round 3, finding #1): the previous design intentionally
+/// consumed the rate-limit token AFTER hex+BoC+MineUno decode so junk hex
+/// would not drain the honest-miner token bucket. That left CPU cost on
+/// the decode path uncapped — an attacker could submit gigantic hex blobs
+/// and force decode work without consuming a token. Adding a raw size
+/// cap before `decode_hex` closes that gap without changing the existing
+/// post-decode token policy. 1 MiB hex (~512 KiB binary) comfortably
+/// covers typical MineUno BoCs (~262 KiB) and matches the ext-msg cap.
+size_t max_uno_send_mine_uno_hex_size();
+
 // ---------------------------------------------------------------------------
 // Admission-path hook for uno_sendTransfer
 //

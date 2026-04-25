@@ -280,10 +280,30 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
 
   auto params_boc = params_boc_r.move_as_ok();
 
-  // Step 2 lambda: runSmcMethod at a resolved block
+  // Codex audit (round 3, finding #3): hold promise + req_id in a shared
+  // slot so the step-1 (block-resolve) outer callback can settle the HTTP
+  // promise on lookupBlock / masterchain-info errors. Previously promise
+  // was captured by-move into `do_run_method`; the outer lambda dropped
+  // errors with `return;` and the connection hung until HTTP timeout.
+  // Shared state is sequential (single actor), so no settle-twice race.
+  struct Slot {
+    td::Promise<HttpReturn> promise;
+    std::string req_id;
+    bool settled{false};
+    void settle_error(int code, const std::string& msg) {
+      if (settled) return;
+      settled = true;
+      promise.set_value(make_json_error(code, msg, req_id));
+    }
+  };
+  auto slot = std::make_shared<Slot>();
+  slot->promise = std::move(promise);
+  slot->req_id = std::move(req_id);
+
+  // Step 2 lambda: runSmcMethod at a resolved block. Now captures `slot`
+  // (shared) instead of consuming promise/req_id.
   auto do_run_method = [addr, method_id, params_boc = std::move(params_boc),
-                        req_id = std::move(req_id), self_id = actor_id(this),
-                        promise = std::move(promise)](
+                        slot, self_id = actor_id(this)](
       tos::tl_object_ptr<tos::lite_api::tosNode_blockIdExt> block_id) mutable {
         auto inner = tos::serialize_tl_object(
             tos::create_tl_object<tos::lite_api::liteServer_runSmcMethod>(
@@ -298,19 +318,16 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
         td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
             std::move(query),
             td::PromiseCreator::lambda(
-                [req_id = std::move(req_id), promise = std::move(promise)](
-                    td::Result<td::BufferSlice> R) mutable {
+                [slot](td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "runSmcMethod: " << R.error(), req_id));
+            slot->settle_error(-32603, PSTRING() << "runSmcMethod: " << R.error());
             return;
           }
 
           auto F = tos::fetch_tl_object<tos::lite_api::liteServer_runMethodResult>(
               R.move_as_ok(), true);
           if (F.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse runMethodResult: " << F.error(), req_id));
+            slot->settle_error(-32603, PSTRING() << "parse runMethodResult: " << F.error());
             return;
           }
           auto f = F.move_as_ok();
@@ -359,7 +376,10 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
               << ",\"block_id\":" << block_id_json
               << "}";
 
-          promise.set_value(make_json_ok(result, req_id));
+          if (!slot->settled) {
+            slot->settled = true;
+            slot->promise.set_value(make_json_ok(result, slot->req_id));
+          }
         }));
   };  // end of do_run_method
 
@@ -373,10 +393,18 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
     auto lookup_query = tos::serialize_tl_object(
         tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(lookup_inner)), true);
     send_liteserver_query(std::move(lookup_query),
-        [do_run_method = std::move(do_run_method)](td::Result<td::BufferSlice> R) mutable {
-          if (R.is_error()) return;
+        [do_run_method = std::move(do_run_method), slot](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) {
+            slot->settle_error(-32603,
+                PSTRING() << "lookupBlock: " << R.error());
+            return;
+          }
           auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(R.move_as_ok(), true);
-          if (lb_r.is_error()) return;
+          if (lb_r.is_error()) {
+            slot->settle_error(-32603,
+                PSTRING() << "parse lookupBlock result: " << lb_r.error());
+            return;
+          }
           do_run_method(std::move(lb_r.move_as_ok()->id_));
         });
   } else {
@@ -385,10 +413,18 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
     auto mc_query = tos::serialize_tl_object(
         tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
     send_liteserver_query(std::move(mc_query),
-        [do_run_method = std::move(do_run_method)](td::Result<td::BufferSlice> R) mutable {
-          if (R.is_error()) return;
+        [do_run_method = std::move(do_run_method), slot](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) {
+            slot->settle_error(-32603,
+                PSTRING() << "getMasterchainInfo: " << R.error());
+            return;
+          }
           auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(R.move_as_ok(), true);
-          if (mc_r.is_error()) return;
+          if (mc_r.is_error()) {
+            slot->settle_error(-32603,
+                PSTRING() << "parse getMasterchainInfo: " << mc_r.error());
+            return;
+          }
           do_run_method(std::move(mc_r.move_as_ok()->last_));
         });
   }
@@ -502,10 +538,25 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
 
   auto params_boc = params_boc_r.move_as_ok();
 
+  // Codex audit (round 3, finding #3): same fix as legacy runGetMethod
+  // above — see comment there for rationale.
+  struct Slot {
+    td::Promise<HttpReturn> promise;
+    std::string req_id;
+    bool settled{false};
+    void settle_error(int code, const std::string& msg) {
+      if (settled) return;
+      settled = true;
+      promise.set_value(make_json_error(code, msg, req_id));
+    }
+  };
+  auto slot = std::make_shared<Slot>();
+  slot->promise = std::move(promise);
+  slot->req_id = std::move(req_id);
+
   // Step 2 lambda: runSmcMethod at a resolved block
   auto do_run_method = [addr, method_id, params_boc = std::move(params_boc),
-                        req_id = std::move(req_id), self_id = actor_id(this),
-                        promise = std::move(promise)](
+                        slot, self_id = actor_id(this)](
       tos::tl_object_ptr<tos::lite_api::tosNode_blockIdExt> block_id) mutable {
         auto inner = tos::serialize_tl_object(
             tos::create_tl_object<tos::lite_api::liteServer_runSmcMethod>(
@@ -520,19 +571,16 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
         td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
             std::move(query),
             td::PromiseCreator::lambda(
-                [req_id = std::move(req_id), promise = std::move(promise)](
-                    td::Result<td::BufferSlice> R) mutable {
+                [slot](td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "runSmcMethod: " << R.error(), req_id));
+            slot->settle_error(-32603, PSTRING() << "runSmcMethod: " << R.error());
             return;
           }
 
           auto F = tos::fetch_tl_object<tos::lite_api::liteServer_runMethodResult>(
               R.move_as_ok(), true);
           if (F.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse runMethodResult: " << F.error(), req_id));
+            slot->settle_error(-32603, PSTRING() << "parse runMethodResult: " << F.error());
             return;
           }
           auto f = F.move_as_ok();
@@ -568,7 +616,10 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
               << ",\"exit_code\":" << f->exit_code_
               << "}";
 
-          promise.set_value(make_json_ok(result, req_id));
+          if (!slot->settled) {
+            slot->settled = true;
+            slot->promise.set_value(make_json_ok(result, slot->req_id));
+          }
         }));
   };  // end of do_run_method
 
@@ -582,10 +633,18 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
     auto lookup_query = tos::serialize_tl_object(
         tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(lookup_inner)), true);
     send_liteserver_query(std::move(lookup_query),
-        [do_run_method = std::move(do_run_method)](td::Result<td::BufferSlice> R) mutable {
-          if (R.is_error()) return;
+        [do_run_method = std::move(do_run_method), slot](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) {
+            slot->settle_error(-32603,
+                PSTRING() << "lookupBlock: " << R.error());
+            return;
+          }
           auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(R.move_as_ok(), true);
-          if (lb_r.is_error()) return;
+          if (lb_r.is_error()) {
+            slot->settle_error(-32603,
+                PSTRING() << "parse lookupBlock result: " << lb_r.error());
+            return;
+          }
           do_run_method(std::move(lb_r.move_as_ok()->id_));
         });
   } else {
@@ -594,10 +653,18 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
     auto mc_query = tos::serialize_tl_object(
         tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
     send_liteserver_query(std::move(mc_query),
-        [do_run_method = std::move(do_run_method)](td::Result<td::BufferSlice> R) mutable {
-          if (R.is_error()) return;
+        [do_run_method = std::move(do_run_method), slot](td::Result<td::BufferSlice> R) mutable {
+          if (R.is_error()) {
+            slot->settle_error(-32603,
+                PSTRING() << "getMasterchainInfo: " << R.error());
+            return;
+          }
           auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(R.move_as_ok(), true);
-          if (mc_r.is_error()) return;
+          if (mc_r.is_error()) {
+            slot->settle_error(-32603,
+                PSTRING() << "parse getMasterchainInfo: " << mc_r.error());
+            return;
+          }
           do_run_method(std::move(mc_r.move_as_ok()->last_));
         });
   }

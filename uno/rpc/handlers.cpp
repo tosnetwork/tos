@@ -151,6 +151,13 @@ bool try_consume_uno_send_mine_uno_token() {
     return g_send_mine_uno_limiter.try_consume();
 }
 
+size_t max_uno_send_mine_uno_hex_size() {
+    // Codex audit (round 3, finding #1): see header doc. 1 MiB hex caps
+    // the predecode CPU envelope while still admitting typical MineUno
+    // BoCs (~262 KiB) with comfortable headroom.
+    return 1u * 1024 * 1024;
+}
+
 void enable_uno_rpc_rate_limit(bool enable) {
     g_rate_limit_enabled = enable;
     if (enable) {
