@@ -546,3 +546,34 @@ TEST(Emulator, tvm_emulator_extra_currencies) {
   CHECK(ec_balance[100] == 20000);
   CHECK(ec_balance[200] == 1);
 }
+
+TEST(Emulator, ffi_null_guards) {
+  CHECK(!transaction_emulator_set_config(nullptr, config_boc));
+  CHECK(!transaction_emulator_set_config(nullptr, nullptr));
+  CHECK(!transaction_emulator_set_config_object(nullptr, nullptr));
+  CHECK(!transaction_emulator_set_prev_blocks_info(nullptr, nullptr));
+  CHECK(!tvm_emulator_set_config_object(nullptr, nullptr));
+  CHECK(!tvm_emulator_set_prev_blocks_info(nullptr, nullptr));
+
+  void *transaction_emulator = transaction_emulator_create(config_boc, 0);
+  CHECK(transaction_emulator != nullptr);
+  CHECK(!transaction_emulator_set_config(transaction_emulator, nullptr));
+  CHECK(!transaction_emulator_set_config_object(transaction_emulator, nullptr));
+  transaction_emulator_destroy(transaction_emulator);
+
+  const char *transaction_result = transaction_emulator_emulate_transaction(nullptr, "", "");
+  CHECK(transaction_result != nullptr);
+  string_destroy(transaction_result);
+
+  const char *tick_tock_result = transaction_emulator_emulate_tick_tock_transaction(nullptr, "", false);
+  CHECK(tick_tock_result != nullptr);
+  string_destroy(tick_tock_result);
+
+  void *tvm_emulator = tvm_emulator_create("te6cckEBBAEAHgABFP8A9KQT9LzyyAsBAgFiAgMABtBfBAAJofpP8E8XmGlj",
+                                           "te6cckEBAQEAAgAAAEysuc0=", 1);
+  CHECK(tvm_emulator != nullptr);
+  CHECK(!tvm_emulator_set_config_object(tvm_emulator, nullptr));
+  tvm_emulator_destroy(tvm_emulator);
+
+  run_method_detailed_result_destroy(nullptr);
+}
