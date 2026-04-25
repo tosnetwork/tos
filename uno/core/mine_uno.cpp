@@ -781,12 +781,10 @@ std::array<uint8_t, 32> compute_retargeted_pow_target(
     auto cap_t   = mul_div_u256_be(old_target, kRetargetMaxNum,
                                    kRetargetMaxDen, ovf_cap);
 
-    // actual_seconds == 0 (two solves in the same masterchain block, or
-    // a same-second window) ⇒ "infinite hashrate" ⇒ clamp to floor (3/4).
-    // The timestamp-monotonicity check rejects gen_utime == last_solve_ts
-    // at the per-tx level, but the window's first/last delta can still
-    // drift to 0 if the window opens and closes at the same gen_utime
-    // across edge-case test fixtures. Treat it as harder, never softer.
+    // actual_seconds == 0 (two accepted solves in the same masterchain second,
+    // or a same-second retarget window) ⇒ "infinite hashrate" ⇒ clamp to floor
+    // (3/4). The per-tx timestamp check now permits gen_utime == last_solve_ts
+    // after audit #7; treat a zero-width window as harder, never softer.
     if (actual_seconds == 0) {
         return floor_t;
     }

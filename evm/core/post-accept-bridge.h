@@ -33,6 +33,8 @@ bool is_evm_executor_address(const unsigned char addr[32]) noexcept;
 /// Look up cached side effects for the accepted block's EVM messages, finalize
 /// block-wide receipt/transaction roots, and publish them via
 /// `apply_block_side_effects`. Messages must be passed in transaction order.
+/// If an entry is missing, publish only the complete prefix so tx_index and
+/// cumulativeGasUsed are never shifted onto later accepted transactions.
 ///
 /// Audit #4 (2026-04-26): the lookup key binds tx_hash to seqno, timestamp,
 /// rand seed, and parent hash so rejected candidates cannot collide with the

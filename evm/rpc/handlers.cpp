@@ -478,12 +478,14 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
     stored_block.receipts_root = compute_receipts_root(
         stored_block.transaction_hashes, evm_state);
 
-    // Compute incremental state root (Erigon-style MPT)
-    // Needs lock since compute_state_root reads from InMemoryState.
+    // Compute state root with a fresh full recompute. This RPC fallback is not
+    // the consensus compute path, but it should still avoid the old process-wide
+    // trie cache hazard: internal-call writes may not be represented in the
+    // top-level account/storage change sets.
     {
         std::unique_lock trie_lock(evm_state.mutex());
-        stored_block.state_root = global_trie_calculator().compute_state_root(
-            evm_state, &evm_state.account_changes(), &evm_state.storage_changes());
+        IncrementalTrieCalculator calc;
+        stored_block.state_root = calc.compute_state_root(evm_state, nullptr, nullptr);
         evm_state.clear_change_tracking();
     }
 

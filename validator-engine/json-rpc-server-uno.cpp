@@ -501,10 +501,10 @@ void JsonRpcServer::handle_uno_sendTransfer(td::JsonValue& params_val,
   // (see uno/rpc/handlers.cpp:71-93 and doc/uno-workchain.md §17.1). The
   // previous 1 MiB hex (~512 KiB binary) cap rejected legitimate 4/4
   // Transfers and pushed wallets onto the raw sendBoc path. Note: the
-  // chain-config ExtMsgLimits.max_size (default 1 MiB at
-  // crypto/block/mc-config.h:398) and kJsonRpcMaxRequestBodyBytes also
-  // need to be raised in lockstep before this cap is reachable in
-  // production — see follow-up below.
+  // The outer JsonRpcServer request-body cap is 4 MiB and the default
+  // ConfigParam-43 ExtMsgLimits.max_size fallback is 2 MiB, so this 3 MiB hex
+  // cap is reachable on new chains. Existing chains with an explicit smaller
+  // ConfigParam 43 still need an ops/governance update.
   static constexpr size_t kMaxUnoSendTransferHexSize = 3u * 1024 * 1024;
   if (raw_hex.size() > kMaxUnoSendTransferHexSize) {
     promise.set_value(make_eth_json_error(

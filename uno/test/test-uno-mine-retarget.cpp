@@ -18,7 +18,7 @@
       5. test_mid_range_no_clamp             — 144 @ 540s avg → 540/600 ratio
       6. test_restart_determinism            — serialize + hydrate mid-window
                                                yields identical post-retarget
-      7. test_timestamp_monotonicity         — gen_utime <= last_solve_ts rejects
+      7. test_timestamp_monotonicity         — gen_utime < last_solve_ts rejects
       8. test_mul_div_u256_be_helper         — big-int helper edge cases
 
     Build target: test-uno-mine-retarget (see uno/test/CMakeLists.txt).

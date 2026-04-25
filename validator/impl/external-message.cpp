@@ -149,8 +149,9 @@ td::Result<Ref<ExtMessageQ>> ExtMessageQ::create_ext_message(td::BufferSlice dat
     // Derive the scan budget from configured max_size. The previous fixed
     // 4096-cell budget was below worst-case ext_in_msg envelopes for wc=2
     // (UNO chunk trees can approach ~2048 cells today plus future headroom)
-    // and wc=1 (1 MiB cap → up to ~20K cells worst case). Use the
-    // configured ext-msg `max_size` (default 1 MiB) with the canonical
+    // and wc=1 (large BoCs can approach tens of thousands of cells in the
+    // worst case). Use the configured ext-msg `max_size` (default 2 MiB)
+    // with the canonical
     // ~64 bytes/cell ratio; clamp at a hard floor (4096) and a generous
     // ceiling (65536) to keep the visited-set bounded under any operator
     // mis-config.

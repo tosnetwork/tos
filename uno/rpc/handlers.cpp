@@ -79,17 +79,11 @@ constexpr uint64_t kMaxSendMineUnoBurst  = 20;
 // caps per-validator ingress bandwidth at 20 × ~2.3 MB/s ≈ 46 MB/s,
 // within the residential-fiber profile per §1.4a.
 //
-// These 3 MB caps are aspirational:
-// the upstream `kJsonRpcMaxRequestBodyBytes` (1 MiB at
-// validator-engine/json-rpc-server.cpp:47) and the default
-// `SizeLimitsConfig::ExtMsgLimits::max_size` (1 MiB at
-// crypto/block/mc-config.h:398) both reject anything > 1 MiB before the
-// RPC handler / ExtMessagePool sees it. Worst-case 4/4 Transfers are
-// therefore not actually submittable via `uno_sendTransfer` today — but
-// `uno_sendTransfer` is also unwired in production. Once the JsonRpcServer
-// intercept mirrors `uno_sendMineUno`, the upstream caps need a coordinated
-// bump or a per-method/per-workchain override. Until then this 3 MB cap only
-// affects future-proofing.
+// The production JsonRpcServer interceptor uses the same 3 MiB hex cap.
+// Its request-body cap is 4 MiB, and the default ConfigParam-43
+// ExtMsgLimits.max_size fallback is 2 MiB. Existing deployed chains that
+// have an explicit smaller ConfigParam 43 still need a governance/config
+// update before worst-case 4/4 Transfers are accepted on-chain.
 constexpr size_t   kMaxRpcParamsSize     = 3u * 1024 * 1024;  // 3 MB
 constexpr size_t   kMaxSendTxHexSize     = 3u * 1024 * 1024;  // 3 MB hex ≈ 1.5 MB binary
 

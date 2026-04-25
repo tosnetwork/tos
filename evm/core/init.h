@@ -29,16 +29,12 @@ class AugmentedDictionary;
 namespace evm_workchain {
 
 class EvmState;
-class IncrementalTrieCalculator;
 
 /// Register the EVM compute phase handler with the host chain.
 void init_evm_workchain(const std::string& db_root = "");
 
 /// Access the global EVM workchain state singleton.
 EvmState& global_evm_state();
-
-/// Access the global incremental trie calculator.
-IncrementalTrieCalculator& global_trie_calculator();
 
 /// Build the inner Account cell for a wc=1 EVM account.
 ///

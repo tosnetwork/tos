@@ -251,13 +251,12 @@ uint64_t     compute_gas_used_mine_uno(const MineUno& tx) noexcept;
 /// checks + STARK verify + state mutation) serially. Returns the per-tx
 /// VerifyResult vector in input order. See uno-mine-v1 spec §4.3.
 ///
-/// The `gen_utime` parameter is the masterchain `gen_utime` of the
-/// containing block; every tx in the batch shares the same value. The
-/// per-tx timestamp-monotonicity check uses `state.last_solve_ts()`,
-/// which advances after each accepted apply, so two MineUnos in the same
-/// block trip the monotonicity guard (gen_utime == last_solve_ts) — only
-/// the first wins. This matches the design in
-/// doc/uno-mine-cpp-integration-spec.md.
+/// The `gen_utime` parameter is the masterchain `gen_utime` of the containing
+/// block; every tx in the batch shares the same value. Same-second solves are
+/// allowed after audit #7. If two MineUnos are built for the same pre-state
+/// epoch/remaining pair, the first accepted apply advances state and the later
+/// one loses through the epoch/remaining race checks, not through the timestamp
+/// guard.
 std::vector<VerifyResult> run_compute_phase_batch_mine_uno(
     UnoState&       state,
     const MineUno*  txs,

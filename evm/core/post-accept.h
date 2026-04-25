@@ -138,9 +138,12 @@ bool is_evm_executor_address(const unsigned char addr[32]) noexcept;
 std::optional<evmc::bytes32>
 try_derive_evm_tx_hash_from_message(const td::Ref<vm::Cell>& msg) noexcept;
 
-/// Apply all stashed side effects for an accepted block in transaction order.
+/// Apply stashed side effects for an accepted block in transaction order.
 /// This finalizes block-wide tx/receipt roots, cumulative gas, tx_index, and
-/// logs bloom before publishing records to the RPC cache.
+/// logs bloom before publishing records to the RPC cache. If a stashed entry
+/// is missing, only the complete prefix is published; suffix records are
+/// dropped instead of compressing tx_index/cumulativeGasUsed onto the wrong
+/// on-chain positions.
 size_t apply_stashed_side_effects_for_messages(
     uint64_t accepted_block_seqno,
     uint64_t accepted_timestamp,

@@ -132,11 +132,11 @@ All initial config values are set via Fift helper words:
 13 capCreateStats capBounceMsgBody or ... config.version!
 
 // ConfigParam 16: validator counts
-1000 100 13 config.validator_num!
+40 20 3 config.validator_num!
 // max_validators max_main_validators min_validators
 
 // ConfigParam 17: stake limits
-TM$10000 TM$10000000 TM$500000 sg~3 config.validator_stake_limits!
+TM$300000 TM$10000000 TM$900000 sg~3 config.validator_stake_limits!
 // min_stake max_stake min_total_stake max_stake_factor
 
 // ConfigParam 15: election timing
@@ -151,26 +151,26 @@ elector_addr config.elector_smc!
 1 500 1000 500000 config.storage_prices!
 
 // ConfigParam 21: basechain gas prices
-1000 sg* 1 *M dup 10000 10 *M TM$0.1 TM$1.0 1000 1000000
+26214400 30 *M 30 *M 10000 60 *M TM$0.1 TM$1.0 100 40000
   config.gas_prices!
 // gas_price gas_limit special_gas_limit gas_credit block_gas_limit
 //   freeze_due_limit delete_due_limit flat_gas_limit flat_gas_price
 
 // ConfigParam 20: masterchain gas prices
-10000 sg* 1 *M 10 *M 10000 10 *M TM$0.1 TM$1.0 1000 10000000
+655360000 1 *M 70 *M 10000 2500000 TM$0.1 TM$1.0 100 1000000
   config.mc_gas_prices!
 
 // ConfigParam 25: basechain forwarding prices
-1000000 1000 sg* 100000 sg* 3/2 sg*/ 1/3 sg*/ 1/3 sg*/
+400000 26214400 2621440000 3/2 sg*/ 1/3 sg*/ 1/3 sg*/
   config.fwd_prices!
 // lump_price bit_price cell_price ihr_factor first_frac next_frac
 
 // ConfigParam 24: masterchain forwarding prices
-10000000 10000 sg* 1000000 sg* 3/2 sg*/ 1/3 sg*/ 1/3 sg*/
+10000000 655360000 65536000000 3/2 sg*/ 1/3 sg*/ 1/3 sg*/
   config.mc_fwd_prices!
 
 // ConfigParam 28: catchain params
-250 250 1000 3 true config.catchain_params!
+250 250 1000 5 true config.catchain_params!
 // mc_lifetime shard_lifetime shard_validators_count shard_val_num mc_shuffle
 
 // ConfigParam 29: consensus params
@@ -285,7 +285,7 @@ The following table maps Fift calls in the zero state script to their recommende
 | `config.validator_stake_limits!` | 17 | min=300K TOS, max=10M TOS, total=900K TOS, factor=3x |
 | `config.election_params!` | 15 | 65536 / 32768 / 8192 / 32768 |
 | `config.storage_prices!` | 18 | 1 / 500 / 1000 / 500000 |
-| `config.gas_prices!` | 21 | gas_price=26M, limit=1M, block=10M |
+| `config.gas_prices!` | 21 | gas_price=26M, limit=30M, block=60M |
 | `config.mc_gas_prices!` | 20 | gas_price=655M, limit=1M, block=2.5M |
 | `config.fwd_prices!` | 25 | lump=400K, bit=26M, cell=2.6G |
 | `config.mc_fwd_prices!` | 24 | lump=10M, bit=655M, cell=65G |

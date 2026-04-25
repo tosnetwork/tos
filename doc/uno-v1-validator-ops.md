@@ -55,8 +55,8 @@ Rationale:
   retain only the last N blocks of proof bodies (trees, nullifier set,
   and filters are small and kept indefinitely).
 - **Network** — 4 TPS × 520 KB = ~16 Mbps outbound at the typical
-  1-spend/2-output mix; 4/4 worst case triples that and stays under 50 Mbps
-  sustained.
+  1-spend/2-output mix; 4/4 worst case is ~29 Mbps and stays under
+  50 Mbps sustained.
 
 This is intentionally a **consumer-broadband** profile — the direct
 corollary of the 2026-04-21 per-Tx pivot (pre-pivot 200 Mbps sustained

@@ -29,7 +29,7 @@ cleared.
 
 | # | Signal                                | Target (7-day rolling)                                    | Alarm action                                |
 |---|---------------------------------------|-----------------------------------------------------------|---------------------------------------------|
-| 1 | Sustained transaction throughput      | ≥ 15 TPS under synthetic load, burst ≥ 30 TPS (§1.4 #7)   | Backpressure triage, re-check admission path |
+| 1 | Sustained transaction throughput      | ≥ 4 TPS per wc=2 shard under synthetic load (`BLOCK_TX_CAP = 4`) | Backpressure triage, re-check admission path |
 | 2 | Plonky3 verify latency, single thread | Median < 150 ms, P99 < 500 ms (relaxed §1.4 target — see §9.4 stability gate) | Profile, correlate against proof shape       |
 | 3 | Cross-validator state-root agreement  | Byte-identical across all 5 validators at every block     | **Immediate halt, see §8.1**                 |
 | 4 | Unexplained forks                     | 0                                                         | **Immediate halt, see §8.4**                 |
@@ -323,7 +323,7 @@ Expected behaviour:
 
 - `uno_sendTransfer` returns a tx hash.
 - The tx is included **within 5 blocks** (≤ ~5 s at 1 s block time) under
-  light load; under sustained synthetic 15 TPS load, within 10 blocks.
+  light load; under sustained synthetic 4 TPS load, within 10 blocks.
 - `tosctl uno scan` on wallet B sees the incoming note within one block
   after inclusion (§5.8 wallet sync budget).
 - `tosctl uno balance` on wallet B increments by the exact sent amount

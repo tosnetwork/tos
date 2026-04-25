@@ -12,6 +12,7 @@
       2. collator_validator_agree_on_state_root
       3. fork_order_independence
       4. restart_validator_matches_collator
+      5. post_accept_missing_side_effect_keeps_prefix_indices
 
     Build target: test-evm-compute-purity (see evm/test/CMakeLists.txt)
 */
@@ -29,6 +30,7 @@
 #include "evm/core/cell-codec.h"
 #include "evm/core/cell-state.h"
 #include "evm/core/compute-phase.h"
+#include "evm/core/external-message.h"
 #include "evm/core/init.h"
 #include "evm/core/incremental-trie.h"
 #include "evm/core/post-accept.h"
@@ -453,6 +455,113 @@ static void test_restart_validator_matches_collator() {
 }
 
 // ---------------------------------------------------------------------------
+// Test 5 — post_accept_missing_side_effect_keeps_prefix_indices
+// ---------------------------------------------------------------------------
+//
+// If the deferred side-effect cache misses in the middle of an accepted
+// block, post-accept must not compress later records onto the missing
+// tx_index. Publish only the complete prefix so tx_index and
+// cumulativeGasUsed remain exact for every emitted record.
+
+static ew::EvmBlockSideEffects make_test_side_effect(
+    const SignedRawTx& tx,
+    const evmc::address& recipient,
+    uint64_t gas_used,
+    uint8_t root_marker) {
+    ew::EvmBlockSideEffects fx;
+    fx.tx_hash = tx.hash;
+    fx.receipt.success = true;
+    fx.receipt.gas_used = gas_used;
+    fx.receipt.cumulative_gas_used = gas_used;
+    fx.receipt.from = tx.sender;
+    fx.receipt.to = recipient;
+    fx.transaction.from = tx.sender;
+    fx.transaction.to = recipient;
+    fx.transaction.value = intx::uint256{1'000'000};
+    fx.transaction.nonce = 0;
+    fx.transaction.gas_limit = 50'000;
+    fx.transaction.gas_price = intx::uint256{1'000'000'000};
+    fx.transaction.raw_rlp = tx.raw_rlp;
+    fx.has_block = true;
+    fx.block.gas_used = gas_used;
+    fx.block.gas_limit = 30'000'000;
+    fx.block.base_fee_per_gas = intx::uint256{1'000'000'000};
+    fx.block.transaction_hashes.push_back(tx.hash);
+    fx.block.state_root.bytes[31] = root_marker;
+    return fx;
+}
+
+static void test_post_accept_missing_side_effect_keeps_prefix_indices() {
+    tprintf("[TEST] post_accept_missing_side_effect_keeps_prefix_indices\n");
+
+    evmc::address recipient{};
+    recipient.bytes[19] = 0x73;
+    auto tx0 = make_signed_transfer(/*key_seed=*/0xF40001, /*nonce=*/0, recipient);
+    auto tx1 = make_signed_transfer(/*key_seed=*/0xF40002, /*nonce=*/0, recipient);
+    auto tx2 = make_signed_transfer(/*key_seed=*/0xF40003, /*nonce=*/0, recipient);
+    if (!tx0 || !tx1 || !tx2) {
+        tprintf("  FAILED: could not sign test txs\n");
+        return;
+    }
+
+    std::vector<td::Ref<vm::Cell>> msgs;
+    msgs.push_back(ew::build_evm_external_message(tx0->raw_rlp.data(),
+                                                  tx0->raw_rlp.size(),
+                                                  tx0->sender));
+    msgs.push_back(ew::build_evm_external_message(tx1->raw_rlp.data(),
+                                                  tx1->raw_rlp.size(),
+                                                  tx1->sender));
+    msgs.push_back(ew::build_evm_external_message(tx2->raw_rlp.data(),
+                                                  tx2->raw_rlp.size(),
+                                                  tx2->sender));
+    if (msgs[0].is_null() || msgs[1].is_null() || msgs[2].is_null()) {
+        tprintf("  FAILED: could not build external messages\n");
+        return;
+    }
+
+    const uint64_t block_seqno = 424242;
+    const uint64_t timestamp = 1800000000;
+    uint8_t rand_seed[32] = {};
+    uint8_t parent_hash[32] = {};
+    rand_seed[31] = 0x5a;
+    parent_hash[31] = 0xa5;
+
+    const size_t before_stash_count = ew::stashed_side_effects_count();
+    ew::stash_side_effects(block_seqno, timestamp, rand_seed, parent_hash,
+                           tx0->hash,
+                           make_test_side_effect(*tx0, recipient, 21'000, 0x10));
+    // Intentionally do not stash tx1: this simulates eviction / restart /
+    // compute-side omission in the middle of the accepted block.
+    ew::stash_side_effects(block_seqno, timestamp, rand_seed, parent_hash,
+                           tx2->hash,
+                           make_test_side_effect(*tx2, recipient, 23'000, 0x30));
+
+    size_t applied = ew::apply_stashed_side_effects_for_messages(
+        block_seqno, timestamp, rand_seed, parent_hash, msgs);
+
+    auto stored0 = ew::global_evm_state().get_transaction_copy(tx0->hash);
+    auto receipt0 = ew::global_evm_state().get_receipt_copy(tx0->hash);
+    auto stored2 = ew::global_evm_state().get_transaction_copy(tx2->hash);
+    auto block = ew::global_evm_state().get_block_copy(block_seqno);
+    bool block_ok = ew::global_evm_state().has_block(block_seqno) &&
+                    block.transaction_hashes.size() == 1 &&
+                    block.transaction_hashes[0] == tx0->hash &&
+                    block.gas_used == 21'000;
+    bool tx0_ok = stored0 && stored0->tx_index == 0 &&
+                  receipt0 && receipt0->tx_index == 0 &&
+                  receipt0->cumulative_gas_used == 21'000;
+    bool suffix_dropped = !stored2.has_value() &&
+                          ew::stashed_side_effects_count() == before_stash_count;
+
+    if (applied != 1 || !tx0_ok || !block_ok || !suffix_dropped) {
+        tprintf("  FAILED: applied=%zu tx0_ok=%d block_ok=%d suffix_dropped=%d\n",
+                applied, tx0_ok, block_ok, suffix_dropped);
+        return;
+    }
+    tprintf("  PASSED (missing middle side-effect publishes exact prefix only)\n");
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -461,16 +570,16 @@ int main() {
     tprintf("EVM Workchain — compute-phase purity (P1 audit closure) tests\n");
     tprintf("==============================================================\n\n");
 
-    // Bring up g_evm_state + g_trie_calc + the dispatch handler. The
-    // snapshot path calls into global_trie_calculator() and the
-    // post-accept apply layer reads global_evm_state(); both null-check
-    // would crash without a prior init.
+    // Bring up g_evm_state + the dispatch handler. Snapshot compute uses
+    // per-call trie calculators; the post-accept apply layer still reads
+    // global_evm_state(), so init must run before the tests.
     ew::init_evm_workchain();
 
     test_same_block_validated_twice_is_idempotent();
     test_collator_validator_agree_on_state_root();
     test_fork_order_independence();
     test_restart_validator_matches_collator();
+    test_post_accept_missing_side_effect_keeps_prefix_indices();
 
     tprintf("\nTotal: passed=%d, failures=%d, skips=%d\n",
             g_passes.load(), g_failures.load(), g_skips.load());

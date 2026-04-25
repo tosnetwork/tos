@@ -47,7 +47,8 @@ std::unique_ptr<EvmState> build_local_state_from_account_data(
         evmc::bytes32 eth_state_root{};
         td::Ref<vm::Cell> rpc_cache_root;
         if (!decode_cp_new_data(account_data, state_root, eth_state_root,
-                                rpc_cache_root)) {
+                                rpc_cache_root,
+                                /*verify_eth_state_root=*/false)) {
             return nullptr;
         }
         if (state_root.not_null() && !cell_state->load_from_cell(state_root)) {
@@ -278,13 +279,11 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
             }
         }
 
-        // Audit #1 invariant: the cell tree we persist as cp.new_data must
-        // round-trip to exactly the state root we just hashed in 5d. Catches
-        // any divergence between the in-memory EvmState we hashed and its
-        // serialized form (canonicalization bug, missing field, etc.) — a
-        // silent mismatch would let any node that restored state from the
-        // cell tree compute a different root than the network agreed on,
-        // i.e. divergence on restart or on a fresh validator joining mid-life.
+        // Audit #1 debug invariant: the cell tree we persist as cp.new_data
+        // must round-trip to exactly the state root we just hashed in 5d.
+        // Keep this as a debug/test guard so production avoids a second
+        // O(N log N) trie pass per transaction.
+#ifndef NDEBUG
         if (evm_state_cell.not_null()) {
             auto verify_cell_state = std::make_unique<CellEvmState>();
             CHECK(verify_cell_state->load_from_cell(evm_state_cell));
@@ -294,6 +293,7 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
             auto verify_root = vcalc.compute_state_root(verify_state, nullptr, nullptr);
             CHECK(verify_root == evm_state_root);
         }
+#endif
 
         vm::CellBuilder data_cb;
         data_cb.store_long(0x45564Dll, 24);  // EVM magic

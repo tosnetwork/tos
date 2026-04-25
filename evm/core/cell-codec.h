@@ -72,8 +72,11 @@ void bytes32_to_key(const evmc::bytes32& v, unsigned char out[32]);
 /// On success returns true and populates the output refs/value. `state_root`
 /// may be null if `has_state_root` was zero (valid per the encoder, used at
 /// genesis when the executor account exists with no inner state). The decoder
-/// requires canonical v2 shape, rejects trailing bits/refs, and verifies that
-/// `eth_state_root` is the full trie root recomputed from `state_root`.
+/// requires canonical v2 shape, rejects trailing bits/refs, and by default
+/// verifies that `eth_state_root` is the full trie root recomputed from
+/// `state_root`. Hot snapshot compute may pass `verify_eth_state_root=false`
+/// after canonical decode because it executes from `state_root` and writes a
+/// freshly recomputed root into the next cp.new_data.
 ///
 /// Used by both the snapshot compute path (to seed a per-call CellEvmState
 /// from the block-declared pre-state) and the global-state hydration path
@@ -81,7 +84,8 @@ void bytes32_to_key(const evmc::bytes32& v, unsigned char out[32]);
 bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
                         td::Ref<vm::Cell>& state_root_out,
                         evmc::bytes32& eth_state_root_out,
-                        td::Ref<vm::Cell>& rpc_cache_root_out);
+                        td::Ref<vm::Cell>& rpc_cache_root_out,
+                        bool verify_eth_state_root = true);
 
 // ---------------------------------------------------------------------------
 // EVM bytecode cell encoding (Phase D.2)

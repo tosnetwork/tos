@@ -218,7 +218,8 @@ std::string decode_evm_bytecode(td::Ref<vm::Cell> root) {
 bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
                         td::Ref<vm::Cell>& state_root_out,
                         evmc::bytes32& eth_state_root_out,
-                        td::Ref<vm::Cell>& rpc_cache_root_out) {
+                        td::Ref<vm::Cell>& rpc_cache_root_out,
+                        bool verify_eth_state_root) {
     state_root_out = {};
     rpc_cache_root_out = {};
     try {
@@ -247,9 +248,13 @@ bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
         // unaccounted refs would let a peer construct multiple distinct cell
         // hashes for the same EVM state, breaking account-data identity.
         if (cs.size() != 0 || cs.size_refs() != 0) return false;
+        if (!verify_eth_state_root) {
+            return true;
+        }
         // Audit #5 follow-up: the declared eth_state_root is consensus-visible
-        // account data. Reject stale/forged roots before they can seed snapshot
-        // compute or restart hydration.
+        // account data. Reject stale/forged roots before they can seed restart
+        // hydration. The snapshot compute path may opt out after canonical
+        // decode because it runs from state_root and emits a fresh full root.
         return verify_declared_eth_state_root(state_root_out, eth_state_root_out);
     } catch (vm::VmError&) {
         return false;

@@ -194,6 +194,11 @@ struct StashedEntry {
     uint64_t inserted_at_us{};
 };
 
+struct IndexedSideEffects {
+    uint32_t tx_index{};
+    EvmBlockSideEffects fx;
+};
+
 struct StashedCache {
     std::mutex mu;
     std::unordered_map<EvmStashKey, StashedEntry, EvmStashKeyHasher> map;
@@ -279,7 +284,7 @@ void recompute_block_hash(StoredBlock& block) {
     std::memcpy(block.hash.bytes, eth_hash.bytes, 32);
 }
 
-void finalize_block_side_effects(std::vector<EvmBlockSideEffects>& fxs,
+void finalize_block_side_effects(std::vector<IndexedSideEffects>& fxs,
                                  uint64_t accepted_block_seqno,
                                  uint64_t accepted_timestamp,
                                  const uint8_t parent_block_hash[32]) {
@@ -290,21 +295,21 @@ void finalize_block_side_effects(std::vector<EvmBlockSideEffects>& fxs,
     txs.reserve(fxs.size());
     receipts.reserve(fxs.size());
 
-    StoredBlock block = fxs.back().block;
+    StoredBlock block = fxs.back().fx.block;
     block.number = accepted_block_seqno;
     block.timestamp = accepted_timestamp;
     std::memcpy(block.parent_hash.bytes, parent_block_hash, 32);
-    block.state_root = fxs.back().block.state_root;
+    block.state_root = fxs.back().fx.block.state_root;
     block.transaction_hashes.clear();
     block.gas_used = 0;
     std::memset(block.logs_bloom, 0, sizeof(block.logs_bloom));
 
-    for (size_t i = 0; i < fxs.size(); ++i) {
-        auto& fx = fxs[i];
+    for (auto& indexed : fxs) {
+        auto& fx = indexed.fx;
         fx.receipt.block_number = accepted_block_seqno;
-        fx.receipt.tx_index = static_cast<uint32_t>(i);
+        fx.receipt.tx_index = indexed.tx_index;
         fx.transaction.block_number = accepted_block_seqno;
-        fx.transaction.tx_index = static_cast<uint32_t>(i);
+        fx.transaction.tx_index = indexed.tx_index;
 
         block.gas_used += fx.receipt.gas_used;
         fx.receipt.cumulative_gas_used = block.gas_used;
@@ -326,8 +331,8 @@ void finalize_block_side_effects(std::vector<EvmBlockSideEffects>& fxs,
     block.receipts_root = compute_receipts_root_from_records(receipts);
     recompute_block_hash(block);
 
-    fxs.back().has_block = true;
-    fxs.back().block = block;
+    fxs.back().fx.has_block = true;
+    fxs.back().fx.block = block;
 }
 
 }  // namespace
@@ -506,24 +511,52 @@ size_t apply_stashed_side_effects_for_messages(
     const uint8_t rand_seed[32],
     const uint8_t parent_block_hash[32],
     const std::vector<td::Ref<vm::Cell>>& msgs) noexcept {
-    std::vector<EvmBlockSideEffects> fxs;
+    std::vector<IndexedSideEffects> fxs;
     fxs.reserve(msgs.size());
-    for (const auto& msg : msgs) {
+    bool saw_gap = false;
+    size_t first_gap_index = 0;
+    size_t dropped_after_gap = 0;
+    for (size_t msg_index = 0; msg_index < msgs.size(); ++msg_index) {
+        const auto& msg = msgs[msg_index];
         auto tx_hash = try_derive_evm_tx_hash_from_message(msg);
-        if (!tx_hash) continue;
+        if (!tx_hash) {
+            if (!saw_gap) {
+                saw_gap = true;
+                first_gap_index = msg_index;
+                LOG(WARNING) << "evm post-accept: cannot derive tx hash for accepted tx_index="
+                             << msg_index << "; publishing only complete prefix";
+            }
+            continue;
+        }
         auto fx = take_side_effects(accepted_block_seqno, accepted_timestamp,
                                     rand_seed, parent_block_hash, *tx_hash);
         if (!fx) {
-            LOG(WARNING) << "evm post-accept: missing stashed side effects for accepted tx";
+            if (!saw_gap) {
+                saw_gap = true;
+                first_gap_index = msg_index;
+                LOG(WARNING) << "evm post-accept: missing stashed side effects for accepted tx_index="
+                             << msg_index << "; publishing only complete prefix";
+            }
             continue;
         }
-        fxs.push_back(std::move(*fx));
+        if (saw_gap) {
+            ++dropped_after_gap;
+            continue;
+        }
+        fxs.push_back(IndexedSideEffects{static_cast<uint32_t>(msg_index),
+                                         std::move(*fx)});
+    }
+    if (dropped_after_gap != 0) {
+        LOG(WARNING) << "evm post-accept: discarded " << dropped_after_gap
+                     << " stashed side-effect record(s) after tx_index="
+                     << first_gap_index
+                     << " to avoid wrong tx_index/cumulativeGasUsed";
     }
 
     finalize_block_side_effects(fxs, accepted_block_seqno, accepted_timestamp,
                                 parent_block_hash);
-    for (const auto& fx : fxs) {
-        apply_block_side_effects(fx);
+    for (const auto& indexed : fxs) {
+        apply_block_side_effects(indexed.fx);
     }
     return fxs.size();
 }

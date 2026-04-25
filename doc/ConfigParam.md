@@ -447,14 +447,27 @@ Each `ValidatorDescr`:
 
 | Field | Type | Value | Description |
 |-------|------|-------|-------------|
-| `max_msg_bits` | uint32 | (default) | Maximum message size in bits |
-| `max_msg_cells` | uint32 | (default) | Maximum message size in cells |
-| `max_library_cells` | uint32 | (default) | Maximum library cells |
-| `max_vm_data_depth` | uint16 | (default) | Maximum depth of VM data structures |
-| `max_ext_msg_size` | uint32 | (default) | Maximum external message size (bytes) |
-| `max_ext_msg_depth` | uint16 | (default) | Maximum external message cell depth |
-| `max_acc_state_cells` | uint32 | (default) | Maximum account state size in cells |
-| `max_mc_acc_state_cells` | uint32 | (default) | Maximum masterchain account state size |
+| `max_msg_bits` | uint32 | **2,097,152** (2 Mi bits = 256 KiB) | Maximum message size in bits |
+| `max_msg_cells` | uint32 | **8,192** | Maximum message size in cells |
+| `max_library_cells` | uint32 | **1,000** | Maximum library cells |
+| `max_vm_data_depth` | uint16 | **512** | Maximum depth of VM data structures |
+| `max_ext_msg_size` | uint32 | **2,097,152** (2 MiB) | Maximum external message size in bytes |
+| `max_ext_msg_depth` | uint16 | **512** | Maximum external message cell depth |
+| `max_acc_state_cells` | uint32 | **65,536** | Maximum account state size in cells |
+| `max_mc_acc_state_cells` | uint32 | **2,048** | Maximum masterchain account state size |
+| `max_acc_public_libraries` | uint32 | **256** | Maximum public libraries attached to an account |
+| `defer_out_queue_size_limit` | uint32 | **256** | Deferred outbound-queue size limit |
+| `max_msg_extra_currencies` | uint32 | **2** | Maximum extra currencies in one message |
+| `max_acc_fixed_prefix_length` | uint32 | **8** | Maximum account fixed-prefix length |
+| `acc_state_cells_for_storage_dict` | uint32 | **26** | Account-state cell budget reserved for storage dictionary metadata |
+
+`max_ext_msg_size = 2 MiB` is the current code default when ConfigParam 43
+is absent. It is intentionally above the largest v1 UNO `Transfer` envelope
+(~1.15 MB binary for 4-spend / 4-output) and the `uno_sendTransfer` JSON-RPC
+admission cap (3 MiB hex, ~1.5 MiB binary; server request body cap 4 MiB).
+Already-deployed chains must update ConfigParam 43 through the normal
+governance/config proposal path; changing a node binary alone does not rewrite
+live chain config.
 
 ## ConfigParam 44 — Suspended Addresses
 
@@ -512,7 +525,7 @@ Per-chain parameters for wc=2 (Uno shielded workchain). See [uno-workchain.md §
 | `expiry_window_blocks` | uint32 | **64** | Max forward window for `expiry_block` (~64 s at 1 s block rate) |
 | `nullifier_lru_capacity` | uint32 | **1,000,000** | Advisory LRU entries (non-consensus) |
 
-**Fee schedule**: a typical 1-spend/2-output `Transfer` costs `100k + 10·476 + 50k + 100k ≈ 255 k nano-UNO ≈ 0.000255 UNO`; worst-case 4-spend/4-output costs `~0.000514 UNO`. At sustained 20 TPS of typical txs this burns `~160 k UNO/year` (`~0.76 %` of the 21 M supply), asymptotically approaching but never exceeding the target 1-2% annual burn rate as adoption grows. See [uno-workchain.md §10.2](uno-workchain.md) for derivation.
+**Fee schedule**: a typical 1-spend/2-output `Transfer` costs `100k + 10·476 + 50k + 100k ≈ 255 k nano-UNO ≈ 0.000255 UNO`; worst-case 4-spend/4-output costs `~0.000514 UNO`. At the v1 `BLOCK_TX_CAP = 4` ceiling, a saturated shard burns `~32 k UNO/year` (`~0.153 %` of the 21 M supply) at the typical 1/2 shape. The pre-pivot 20 TPS reference point was `~160 k UNO/year` (`~0.76 %`); v1 keeps the original launch fees and relies on the pre-agreed ConfigParam-11 escalation template if sustained saturation justifies a fee increase. See [uno-workchain.md §10.2](uno-workchain.md) for derivation.
 
 **Why 84 and not 26**: wc-specific protocol params follow the TOS convention established by the bridge/workchain-extension cluster at 71-82. Core-band gaps (26, 27, 38, 41, 42) are reserved for low-numbered core-protocol extensions that TOS upstream may backfill; 84 is adjacent to the existing 71-82 cluster and unlikely to clash.
 

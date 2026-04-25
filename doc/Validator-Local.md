@@ -700,7 +700,7 @@ UNO tx (Transfer or MineUno, built by tosctl-uno)
    │
    ├── tosctl-uno mine  (CPU Poseidon2 PoW search)
    │      ↓  nonce found + Plonky3 prove_mine_uno (~30–60 s CPU)
-   │   MineUno tx body = 0x02 ‖ schema-v1 ‖ public_inputs(92 B) ‖ proof(~200 KB)
+   │   MineUno tx body = 0x02 ‖ schema-v1 ‖ public_inputs(92 B) ‖ proof+PI blob(~255 KiB; BoC ~264 KiB)
    │      ↓
    │   liteServer_sendMessage (port 2003/2006/2009/2012) → ExtMessagePool (wc==2)
    │      ↓
