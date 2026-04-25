@@ -20,7 +20,10 @@
           proof blob, encode to BoC, decode it back (the same path a
           mempool admission would take).
        5. Drive `apply_mine_uno(state, tx)` against a minimal FakeUnoState
-          that starts at epoch=0, remaining=21 M UNO, target=2^219.
+          that starts at epoch=0, remaining=21 M UNO, using a synthetic target
+          set just above the proof's PI pow_hash. The deterministic fixture is
+          not a real mainnet-difficulty mining result, but this still exercises
+          the real pow_hash < target gate.
           Assert `VerifyResult::Ok` AND the state mutations:
              a. state.mine_epoch()      == 1
              b. state.mine_remaining()  == supply - 50 UNO
@@ -169,6 +172,27 @@ static std::array<uint8_t, 32> pi_output_cm(const uint8_t* pi) {
     return out;
 }
 
+static std::array<uint8_t, 32> pi_pow_hash(const uint8_t* pi) {
+    // PI[6..10] = pow_hash (4 × u64 LE = 32 raw bytes in sequence).
+    std::array<uint8_t, 32> out{};
+    std::memcpy(out.data(), pi + 48, 32);   // 6 × 8 offset = 48
+    return out;
+}
+
+static std::array<uint8_t, 32> strict_target_above(
+    const std::array<uint8_t, 32>& hash) {
+    auto target = hash;
+    for (size_t i = target.size(); i-- > 0;) {
+        if (target[i] != 0xff) {
+            ++target[i];
+            return target;
+        }
+        target[i] = 0;
+    }
+    target.fill(0xff);
+    return target;
+}
+
 // ---------------------------------------------------------------------------
 // Result-reporting harness (non-zero exit on any fail).
 // ---------------------------------------------------------------------------
@@ -233,7 +257,8 @@ int main() {
     tx.scheme_id = uw::kSchemeIdV1;
     tx.chain_id  = 0xDEAD'BEEF;
     tx.public_inputs.epoch          = static_cast<uint32_t>(pi_u64(pi_bytes, 0));
-    std::memcpy(tx.public_inputs.target.data(), uw::kInitMineTargetBE, 32);
+    auto pow_hash = pi_pow_hash(pi_bytes);
+    tx.public_inputs.target         = strict_target_above(pow_hash);
     tx.public_inputs.value_nano     = pi_u64(pi_bytes, 1);
     tx.public_inputs.output_cm      = pi_output_cm(pi_bytes);
     tx.public_inputs.remaining_pre  = pi_u64(pi_bytes, 10);
@@ -253,6 +278,8 @@ int main() {
     EXPECT(tx.public_inputs.remaining_post ==
               (uw::kMineSupplyNano - 50ULL * 1'000'000'000ULL),
           "PI.remaining_post must equal supply - era-0 reward");
+    EXPECT(tx.public_inputs.target > pow_hash,
+          "synthetic target must be strictly above PI.pow_hash");
 
     // Encode → decode round trip via BoC (same path a JSON-RPC admission
     // would take).
@@ -283,9 +310,30 @@ int main() {
     EXPECT(dtx.proof_blob.size() == tx.proof_blob.size(),
           "decoded proof_blob size matches");
 
+    // Step 4a: prove the cheap PoW gate rejects equality. This returns before
+    // the expensive STARK verify, so it pins the boundary without a second
+    // prover/verifier round.
+    {
+        std::printf("[4a/6] Asserting pow_hash == target is rejected.\n");
+        auto bad_tx = dtx;
+        bad_tx.public_inputs.target = pow_hash;
+        FakeMineUnoState bad_state;
+        bad_state.target_ = pow_hash;
+        auto bad_result = uw::apply_mine_uno(bad_state, bad_tx, /*gen_utime=*/0);
+        EXPECT(bad_result == uw::VerifyResult::PowHashAboveTarget,
+              "target equal to pow_hash must be rejected");
+        if (bad_result != uw::VerifyResult::PowHashAboveTarget) {
+            std::fprintf(stderr, "  equality result = %s\n",
+                         uw::verify_result_name(bad_result));
+            uno_plonky3_proof_free(owned);
+            return 1;
+        }
+    }
+
     // Step 5: apply against the fake state and assert mutations.
     std::printf("[4/6] Applying MineUno to FakeUnoState (real STARK verify)...\n");
     FakeMineUnoState state;
+    state.target_ = dtx.public_inputs.target;
     const uint32_t before_epoch = state.epoch_;
     const uint64_t before_rem   = state.remaining_;
     const size_t   before_cms   = state.commitments_.size();
