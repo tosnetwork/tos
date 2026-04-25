@@ -168,6 +168,4 @@ Build instructions — including Uno workchain prerequisites (liboqs, corrosion-
 
 ## License
 
-This repository is licensed under the GNU General Public License v3.0. See [`LICENSE`](LICENSE).
-
-TOS is built on top of foundational open-source blockchain work originally developed by Telegram, EverX, Erigon, and RSquad Blockchain Lab. The Uno workchain additionally builds on Polygon's Plonky3 toolkit, NIST PQC finalists (ML-KEM-768), and the Zcash Orchard specification family. This repository continues that line of work as its own system while explicitly acknowledging those prior technical foundations.
+This repository is licensed under the GNU General Public License v3.0. See [`LICENSE`](LICENSE). Third-party components, modifications, and foundational acknowledgments are catalogued in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

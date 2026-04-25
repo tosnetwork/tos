@@ -12,6 +12,17 @@ equivalent) text in-tree under the component's directory.
 
 ---
 
+## Foundational acknowledgments
+
+TOS is built on top of foundational open-source blockchain work originally
+developed by Telegram, EverX, Erigon, and RSquad Blockchain Lab. The Uno
+workchain additionally builds on Polygon's Plonky3 toolkit, NIST PQC
+finalists (ML-KEM-768), and the Zcash Orchard specification family. This
+repository continues that line of work as its own system while explicitly
+acknowledging those prior technical foundations.
+
+---
+
 ## `third-party/silkworm/`
 
 - **Project:** Silkworm — Ethereum execution layer in C++
