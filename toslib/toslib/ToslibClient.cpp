@@ -1181,9 +1181,8 @@ class Query {
  private:
   Raw raw_;
   static unsigned output_actions_count(td::Ref<vm::Cell> list) try {
-    // Codex audit (round 10, finding #4): same hardening as
-    // SmartContract::Answer::output_actions_count — VM-produced action
-    // cells can be special and bare load_cell_slice throws.
+    // Match SmartContract::Answer::output_actions_count hardening: VM-produced
+    // action cells can be special and bare load_cell_slice throws.
     int i = -1;
     do {
       ++i;
@@ -3977,11 +3976,11 @@ class GenericCreateSendGrams : public ToslibQueryActor {
     auto status = downcast_call2<td::Status>(
         *message.data_, td::overloaded(
                             [&](toslib_api::msg_dataRaw& text) {
-                              // Codex audit (round 10, finding #1): the body
-                              // BoC ends up in WalletInterface::store_gift_message
-                              // which uses bare load_cell_slice — a special root
-                              // throws and the embedding process std::terminate's.
-                              // Use the safe loader (mirrors R9.2 helper).
+                              // The body BoC ends up in
+                              // WalletInterface::store_gift_message, which uses
+                              // bare load_cell_slice. A special root throws and
+                              // terminates the embedding process, so use the
+                              // special-cell-aware loader.
                               TRY_RESULT(body, deserialize_safe_boc_root(text.body_, "msg_dataRaw.body"));
                               td::Ref<vm::Cell> init_state;
                               if (!text.init_state_.empty()) {

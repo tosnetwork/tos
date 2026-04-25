@@ -364,8 +364,8 @@ CatChainBlockHash CatChainReceivedBlock::block_hash(const CatChainReceiver *chai
 td::Status CatChainReceivedBlock::pre_validate_block(const CatChainReceiver *chain,
                                                      const tl_object_ptr<tos_api::catchain_block> &block,
                                                      const td::Slice &payload) {
-  // Codex audit (round 11, finding #3): the previous CHECK aborted the
-  // validator when a Byzantine catchain peer returned a fork-proof or a
+  // The previous CHECK aborted the validator when a Byzantine catchain peer
+  // returned a fork-proof or a
   // block with a mismatched incarnation. `pre_validate_block` is called
   // from `validate_block_sync` (network-input path); fail-closed but
   // structured. Mirror the other protocol-violation rejects below.

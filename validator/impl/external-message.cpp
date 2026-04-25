@@ -166,8 +166,8 @@ td::Result<Ref<ExtMessageQ>> ExtMessageQ::create_ext_message(td::BufferSlice dat
       if (++popped > kMaxScannedCells) {
         return td::Status::Error("external message tree too large for special-cell scan");
       }
-      // Codex audit (round 11, finding #1): the previous implementation
-      // built a `CellSlice{NoVmOrd{}, c}` and then called `cs2.is_special()`.
+      // The previous implementation built a `CellSlice{NoVmOrd{}, c}` and
+      // then called `cs2.is_special()`.
       // `NoVmOrd` returns an empty/invalid slice for special cells, and
       // `is_special()` dereferences the cell pointer — for some malformed
       // / pruned inputs that path can throw or read garbage. Use the

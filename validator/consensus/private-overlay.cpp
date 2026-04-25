@@ -162,10 +162,9 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
   }
 
   void on_overlay_message(adnl::AdnlNodeIdShort src_adnl_id, td::BufferSlice data) {
-    // Codex audit (round 10, finding #3): bare `.at(...)` throws if the
-    // ADNL src is not in our peer table — possible if a peer that left the
-    // overlay races a final message past unsubscribe. Drop the message
-    // instead of throwing.
+    // Bare `.at(...)` throws if the ADNL src is not in our peer table, which
+    // can happen if a peer that left the overlay races a final message past
+    // unsubscribe. Drop the message instead of throwing.
     auto it = adnl_id_to_peer_.find(src_adnl_id);
     if (it == adnl_id_to_peer_.end()) {
       LOG(WARNING) << "private-overlay: dropping message from unknown adnl src " << src_adnl_id;
@@ -179,8 +178,8 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
       return;
     }
 
-    // Codex audit (round 10, finding #3): the previous code called
-    // `.move_as_ok()` on the parse Result without checking — a malformed
+    // The previous code called `.move_as_ok()` on the parse Result without
+    // checking, so a malformed
     // `consensus_broadcastExtra` from any authorized validator crashed the
     // daemon. Mirror precheck_broadcast's parse-error handling.
     auto parsed_extra_r = fetch_tl_object<tos_api::consensus_broadcastExtra>(extra, true);
@@ -221,8 +220,8 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
     }
 
     auto& bus = *owning_bus();
-    // Codex audit (round 10, finding #3): bare `.at(src)` throws if the
-    // src is not in the overlay membership map. Return a structured error.
+    // Bare `.at(src)` throws if the src is not in the overlay membership map.
+    // Return a structured error.
     auto peer_it = short_id_to_peer_.find(src);
     if (peer_it == short_id_to_peer_.end()) {
       co_return td::Status::Error("Precheck failed: src is not in private overlay membership");
@@ -239,12 +238,10 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
   }
 
   void on_query(adnl::AdnlNodeIdShort src, td::BufferSlice data, td::Promise<td::BufferSlice> promise) {
-    // Codex audit (round 11, finding #2): the round-10 #3 fix covered
-    // on_overlay_message / on_overlay_broadcast / precheck_broadcast but
-    // missed this on_query handler. Same `.at(src)` throw vector — a
+    // Keep query handling consistent with message and broadcast paths. A
     // private-overlay query from an ADNL id absent from the consensus
-    // membership map (membership race / stale peer) used to throw out of
-    // the actor and tear down the validator.
+    // membership map (membership race or stale peer) must fail explicitly
+    // instead of throwing out of the actor.
     auto it = adnl_id_to_peer_.find(src);
     if (it == adnl_id_to_peer_.end()) {
       LOG(WARNING) << "private-overlay: dropping query from unknown adnl src " << src;

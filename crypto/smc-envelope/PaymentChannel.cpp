@@ -164,8 +164,8 @@ bool SignedPromise::unpack(td::Ref<vm::Cell> cell) try {
   if (!rec.sig->prefetch_maybe_ref(sig_cell)) {
     return false;
   }
-  // Codex audit (round 10, finding #2): the optional sig ref was loaded
-  // with bare `vm::load_cell_slice` — a special cell (PrunedBranch /
+  // The optional sig ref was loaded with bare `vm::load_cell_slice` — a
+  // special cell (PrunedBranch /
   // Library / Merkle*) at this position throws and crashes any host
   // unpacking an attacker-supplied promise BoC (toslib pchan_unpackPromise).
   // Use the special-aware loader and refuse special cells. Function-try

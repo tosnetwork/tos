@@ -31,11 +31,11 @@
 
 namespace tos {
 unsigned SmartContract::Answer::output_actions_count(td::Ref<vm::Cell> list) try {
-  // Codex audit (round 10, finding #4): bare `load_cell_slice` throws on
-  // PrunedBranch / Library / Merkle* — VM-emitted action lists are
-  // attacker-influenced (contract output). The function-try-block plus
-  // special-aware loader keeps the helper noexcept-safe so DEBUG fee
-  // simulation (and any future caller) can't crash the embedding host.
+  // Bare `load_cell_slice` throws on PrunedBranch / Library / Merkle*.
+  // VM-emitted action lists are attacker-influenced contract output. The
+  // function-try-block plus special-aware loader keeps the helper
+  // noexcept-safe so DEBUG fee simulation and future callers cannot crash
+  // the embedding host.
   int i = -1;
   do {
     ++i;
