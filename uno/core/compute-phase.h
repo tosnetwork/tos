@@ -73,6 +73,13 @@ public:
     virtual void accumulate_filter_tag(uint16_t filter_tag) = 0;
     virtual void bump_stats(uint64_t fee, uint64_t note_count_delta) = 0;
 
+    // Next-output-global-index read accessor. Returns the index that the
+    // *next* `append_commitment` will assign. Used by compute-phase to
+    // capture the base index before staging per-output wire bytes for the
+    // light-wallet output index. Default 0 so tests that subclass without
+    // overriding still link; LiveUnoState provides the real value.
+    virtual uint64_t next_output_global_index() const { return 0; }
+
     // Serialization entry point for cp.new_data. Agent 1 owns cell-state.cpp.
     // Returns a cell whose root is the canonical UnoShardState (§5.1).
     virtual td::Ref<vm::Cell> serialize_to_cell() const = 0;

@@ -36,7 +36,8 @@ class ExtMessagePool : public td::actor::Actor {
     td::Ref<ExtMessage> message;
     td::actor::StartedTask<> wait_allow_broadcast;
   };
-  td::actor::Task<CheckResult> check_add_external_message(td::BufferSlice data, int priority, bool add_to_mempool);
+  td::actor::Task<CheckResult> check_add_external_message(td::BufferSlice data, int priority, bool add_to_mempool,
+                                                          td::optional<PublicKeyHash> source_peer = {});
   void install_collator_queue(ShardIdFull shard, std::unique_ptr<ExtMsgCallback> callback);
   void cleanup_external_messages(ShardIdFull shard);
   // Workchain-agnostic expiry sweep.
@@ -169,7 +170,8 @@ class ExtMessagePool : public td::actor::Actor {
   };
   std::map<std::pair<WorkchainId, StdSmcAddress>, WalletInfo> wallets_;
 
-  td::actor::Task<CheckResult> check_message(td::Ref<ExtMessage> message, td::optional<td::uint32> &msg_seqno);
+  td::actor::Task<CheckResult> check_message(td::Ref<ExtMessage> message, td::optional<td::uint32> &msg_seqno,
+                                              td::optional<PublicKeyHash> source_peer = {});
   td::Result<td::uint32> check_message_to_wallet(td::Ref<ExtMessage> message, const WalletMessageProcessor *wallet,
                                                  block::Account acc, UnixTime utime, LogicalTime lt,
                                                  std::unique_ptr<block::ConfigInfo> config,

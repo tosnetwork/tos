@@ -201,6 +201,7 @@ class LiveUnoState : public UnoState {
     void insert_nullifier(const td::Bits256& nf) override;
     void accumulate_filter_tag(uint16_t filter_tag) override;
     void bump_stats(uint64_t fee, uint64_t note_count_delta) override;
+    uint64_t next_output_global_index() const override;
     td::Ref<vm::Cell> serialize_to_cell() const override;
     bool hydrate_from_cell_if_needed(td::Ref<vm::Cell> root);
 
@@ -444,6 +445,11 @@ bool LiveUnoState::nullifier_is_spent(const td::Bits256& nf) const {
     return nullifier_set_->contains(n);
 }
 
+uint64_t LiveUnoState::next_output_global_index() const {
+    std::lock_guard<std::mutex> lk(mutex_);
+    return next_output_global_index_;
+}
+
 void LiveUnoState::append_commitment(const td::Bits256& cm) {
     NoteHash h{};
     std::memcpy(h.data(), cm.data(), 32);
@@ -467,9 +473,23 @@ void LiveUnoState::accumulate_filter_tag(uint16_t filter_tag) {
 
 void LiveUnoState::bump_stats(uint64_t fee, uint64_t note_count_delta) {
     std::lock_guard<std::mutex> lk(mutex_);
-    stats_burned_fees_ += fee;
-    stats_tx_count_    += 1;
-    stats_note_count_  += note_count_delta;
+    // Saturating addition: these counters are observability-only (RPC
+    // snapshots, dashboards) and never re-enter consensus, so wrapping
+    // them at UINT64_MAX would silently corrupt monitoring without any
+    // code path noticing. Cap at UINT64_MAX instead. Reaching the cap
+    // requires ~10^19 events and would be visible in dashboards as a
+    // pinned counter — easy to detect and resolve via a state-format
+    // bump if a future chain ever approaches it.
+    auto saturating_add = [](uint64_t& acc, uint64_t delta) noexcept {
+        if (delta > UINT64_MAX - acc) {
+            acc = UINT64_MAX;
+        } else {
+            acc += delta;
+        }
+    };
+    saturating_add(stats_burned_fees_, fee);
+    saturating_add(stats_tx_count_, 1);
+    saturating_add(stats_note_count_, note_count_delta);
 }
 
 td::Ref<vm::Cell> LiveUnoState::serialize_to_cell() const {
@@ -625,14 +645,17 @@ bool LiveUnoState::hydrate_from_cell_if_needed(td::Ref<vm::Cell> root) try {
     }
 
     auto meta_cs = vm::load_cell_slice(meta_cell);
-    // Accept 2 refs (legacy: anchor + stats) OR 3 refs (current:
-    // anchor + stats + mining_state). Legacy states pre-date the
-    // K-mining-state-persist fix and keep the in-memory mining state
-    // at construction defaults on hydrate. Reject any other arity.
+    // Require exactly 3 refs (anchor + stats + mining_state). Earlier
+    // builds tolerated a 2-ref legacy meta cell and silently fell back
+    // to constructor defaults for the mining-consensus fields, which
+    // would reset mine_epoch=0 / mine_remaining=full-cap on any node
+    // that hydrated such a cell — reopening the mint schedule. Fail
+    // closed: a missing mining_state ref is a corrupt/stale persisted
+    // state, never an acceptable input.
     const unsigned meta_refs = meta_cs.size_refs();
-    if (meta_refs != 2 && meta_refs != 3) {
+    if (meta_refs != 3) {
         LOG(ERROR) << "uno-workchain: persisted meta refs=" << meta_refs
-                   << " expected=2 or 3";
+                   << " expected=3 (anchor + stats + mining_state)";
         return false;
     }
 
@@ -667,16 +690,14 @@ bool LiveUnoState::hydrate_from_cell_if_needed(td::Ref<vm::Cell> root) try {
         return false;
     }
 
-    // MineUno consensus fields — only present in 3-ref meta cells. On
-    // legacy 2-ref states, keep the in-memory defaults seeded by the
-    // constructor (kMineSupplyNano, epoch=0, env-override-or-mainnet
-    // target). Without this persist/hydrate loop, a validator restart
-    // would reset mine_epoch=0/mine_remaining=full-cap and allow a
-    // fresh mining run from genesis on an already-mined chain.
-    uint64_t persisted_mine_remaining = mine_remaining_;
-    uint32_t persisted_mine_epoch = mine_epoch_;
-    std::array<uint8_t, 32> persisted_mine_target = mine_target_;
-    if (meta_refs == 3) {
+    // MineUno consensus fields. mining_state ref is mandatory (enforced
+    // by the meta_refs == 3 check above) so this fully overwrites the
+    // constructor-seeded defaults — there is no fail-open path back to
+    // genesis values on hydrate.
+    uint64_t persisted_mine_remaining = 0;
+    uint32_t persisted_mine_epoch = 0;
+    std::array<uint8_t, 32> persisted_mine_target{};
+    {
         auto mining_cell = meta_cs.prefetch_ref(kLiveMetaRefMiningState);
         auto mining_cs = vm::load_cell_slice(mining_cell);
         long long v = 0;
@@ -1318,14 +1339,19 @@ void on_included_tx_from_compute(const uint8_t tx_hash[32],
     hex[64] = '\0';
     std::string hex_str(hex, 64);
 
-    // P.5 scope: compute-phase does not stage per-tx output wire bytes here
-    // (that path is driven explicitly by the two-wallet demo via
-    // stage_output_wire_bytes_for_test). We still record the tx and fire the
-    // included-tx subscription.
+    // record_included_tx() drains the pending_tx_outputs_ buffer that
+    // compute-phase populated via stage_output_bytes_from_compute() right
+    // before this hook fired. Pass an empty explicit-args vector so the
+    // staged-buffer path is taken.
     g_live->record_included_tx(h, fee_nano, /*tx_outputs=*/{});
     (void)n_outputs;
     global_uno_subscription_manager().notify_included_tx(hex_str,
         g_live->current_block_seqno(), fee_nano);
+}
+
+void stage_output_bytes_from_compute(uint64_t global_index, std::string bytes) {
+    if (!g_live) return;
+    g_live->stage_output_bytes(global_index, std::move(bytes));
 }
 
 void on_end_of_block_from_compute() {
@@ -1403,29 +1429,26 @@ void init_uno_workchain(const std::string& db_root) {
     LOG(WARNING) << "uno-workchain: initialising (workchain_id=2, db_root='"
                  << db_root << "')";
 
-    // Consensus warning: UNO_INIT_MINE_TARGET_HEX is honored at
-    // LiveUnoState construction and on the lazy-activate first-MineUno
-    // path (acc_uninit executor → hydrate(null) → use construction
-    // default). All validators in a network MUST agree on whether the
-    // env var is set, and on its value if set, or they will disagree
-    // on whether the first MineUno meets `state.mine_target()` →
-    // consensus split at bootstrap. Mainnet deployments must leave it
-    // unset; local-dev networks must set it identically across every
-    // validator (setup-testnet.sh propagates a single value via the
-    // generated systemd unit).
+    // UNO_INIT_MINE_TARGET_HEX env override is gated on a build-time
+    // flag (UNO_DEVNET_ALLOW_ENV_TARGET, default OFF). Production
+    // validator binaries silently ignore the env var; only devnet builds
+    // honor it and emit the consensus-split warning below. The intended
+    // initial target is selected at zerostate-build time from
+    // global_id (see select_init_mine_target() in mine_constants.h).
     //
     // Tracked followup: encode the canonical mining target into the
     // wc=2 zerostate executor's StateInit.data via
-    // `build_uno_zerostate_accounts_cell` so chain-state — not env —
-    // is the single source of truth.
+    // `build_uno_zerostate_accounts_cell` so chain-state — not env, not
+    // global_id — is the single source of truth.
+#ifdef UNO_DEVNET_ALLOW_ENV_TARGET
     if (const char* env = std::getenv("UNO_INIT_MINE_TARGET_HEX"); env != nullptr) {
         LOG(WARNING) << "uno-workchain: UNO_INIT_MINE_TARGET_HEX="
                      << env
-                     << " — operator override active. Every validator in this"
-                        " network must use the SAME value or you will get a"
-                        " consensus split on the first MineUno tx. Unset on"
-                        " mainnet.";
+                     << " — devnet override active (UNO_DEVNET_ALLOW_ENV_TARGET=ON)."
+                        " Every validator in this network must use the SAME value"
+                        " or you will get a consensus split on the first MineUno tx.";
     }
+#endif
 
     // Step 1. State. Live state with A2-backed sub-objects.
     g_live = std::make_unique<LiveUnoState>();

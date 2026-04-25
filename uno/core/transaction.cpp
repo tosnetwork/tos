@@ -1016,6 +1016,48 @@ td::Result<td::Ref<vm::Cell>> encode_transfer(const Transfer& tx) noexcept {
     return root.finalize();
 }
 
+std::string encode_output_description_to_bytes(const OutputDescription& o) noexcept {
+    if (o.enc_ciphertext.is_null() || o.mlkem_ct.is_null()) {
+        return {};
+    }
+    auto enc_r = vm::std_boc_serialize(o.enc_ciphertext);
+    if (enc_r.is_error()) return {};
+    auto mlk_r = vm::std_boc_serialize(o.mlkem_ct);
+    if (mlk_r.is_error()) return {};
+
+    auto enc_buf = enc_r.move_as_ok();
+    auto mlk_buf = mlk_r.move_as_ok();
+    const uint32_t enc_len = static_cast<uint32_t>(enc_buf.size());
+    const uint32_t mlk_len = static_cast<uint32_t>(mlk_buf.size());
+
+    constexpr size_t kFixed = 32 /*cm*/ + 32 /*epk*/ + 2 /*tag*/
+                              + kOutCiphertextBytes
+                              + 4 /*enc_len*/ + 4 /*mlk_len*/;
+    std::string out;
+    out.resize(kFixed + enc_len + mlk_len);
+    char* p = out.data();
+
+    auto put_u32_be = [](char* dst, uint32_t v) noexcept {
+        dst[0] = static_cast<char>((v >> 24) & 0xFF);
+        dst[1] = static_cast<char>((v >> 16) & 0xFF);
+        dst[2] = static_cast<char>((v >>  8) & 0xFF);
+        dst[3] = static_cast<char>(v        & 0xFF);
+    };
+
+    std::memcpy(p, o.cm.data(),  32); p += 32;
+    std::memcpy(p, o.epk.data(), 32); p += 32;
+    p[0] = static_cast<char>((o.filter_tag >> 8) & 0xFF);
+    p[1] = static_cast<char>(o.filter_tag        & 0xFF);
+    p += 2;
+    std::memcpy(p, o.out_ciphertext.data(), kOutCiphertextBytes); p += kOutCiphertextBytes;
+    put_u32_be(p, enc_len); p += 4;
+    std::memcpy(p, enc_buf.data(), enc_len); p += enc_len;
+    put_u32_be(p, mlk_len); p += 4;
+    std::memcpy(p, mlk_buf.data(), mlk_len);
+
+    return out;
+}
+
 td::Result<td::BufferSlice> encode_transfer_to_boc(const Transfer& tx) noexcept {
     // BoC envelope: `encode_transfer` produces the §4.1 root cell; we wrap it
     // in a standard BoC via `vm::std_boc_serialize` so the byte string is

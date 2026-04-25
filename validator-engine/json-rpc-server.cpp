@@ -724,13 +724,21 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
     return;
   }
 
-  // uno_sendMineUno: route to async handler (submits a wc=2 ext_in_msg
-  // through the same liteServer_sendMessage pipe as eth_sendRawTransaction).
-  // Intercepted BEFORE the `is_uno_rpc_method` registry below — that
-  // registry covers read-only uno_* methods that don't need access to
-  // `send_liteserver_query`.
+  // uno_sendMineUno / uno_sendTransfer: route to async handlers (each
+  // submits a wc=2 ext_in_msg through the same liteServer_sendMessage
+  // pipe as eth_sendRawTransaction). Intercepted BEFORE the
+  // `is_uno_rpc_method` registry below — that registry covers read-only
+  // uno_* methods that don't need access to `send_liteserver_query`.
+  // The registry also hosts a `handle_send_transfer` impl that the test
+  // harness uses with its own `g_submit_ext` callback; in production the
+  // interceptor below shadows it so wallets always go through the actor
+  // pipe.
   if (method == "uno_sendMineUno") {
     handle_uno_sendMineUno(params_val, std::move(req_id), std::move(promise));
+    return;
+  }
+  if (method == "uno_sendTransfer") {
+    handle_uno_sendTransfer(params_val, std::move(req_id), std::move(promise));
     return;
   }
 

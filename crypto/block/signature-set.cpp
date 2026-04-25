@@ -27,6 +27,7 @@
 #include "block-auto.h"
 #include "mc-config.h"
 #include "signature-set.h"
+#include "tos/quorum.h"
 
 namespace block {
 
@@ -86,7 +87,7 @@ class BlockSignatureSetBase : public BlockSignatureSet {
 
   virtual td::Result<td::BufferSlice> to_sign(tos::BlockIdExt block_id) const = 0;
   virtual bool check_threshold(tos::ValidatorWeight sig_weight, tos::ValidatorWeight total_weight) const {
-    return sig_weight * 3 > total_weight * 2;
+    return tos::has_quorum(sig_weight, total_weight);
   }
 
   size_t get_size() const override {

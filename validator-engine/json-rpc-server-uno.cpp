@@ -64,6 +64,37 @@ namespace tos {
 
 namespace {
 
+// Build the wc=2 ext_in_msg cell that wraps `body_root` for submission
+// to the Uno executor. Mirrors `build_evm_external_message()`; differs
+// only in workchain_id (= 2) and dest address (= kUnoExecutorAddressBytes).
+// Used by both `handle_uno_sendMineUno` and `handle_uno_sendTransfer`,
+// which only differ in how they decode and admission-check the body
+// before reaching this shared envelope step.
+td::Result<td::Ref<vm::Cell>> build_uno_ext_in_msg(td::Ref<vm::Cell> body_root) {
+  if (body_root.is_null()) {
+    return td::Status::Error("uno ext_in_msg: null body root cell");
+  }
+  vm::CellBuilder cb;
+  // CommonMsgInfo: ext_in_msg_info$10
+  cb.store_long(0b10, 2);
+  // src: addr_none$00
+  cb.store_long(0b00, 2);
+  // dest: addr_std$10, anycast=Nothing$0
+  cb.store_long(0b100, 3);
+  // workchain_id: int8 = 2
+  cb.store_long(uno_workchain::kWorkchainId, 8);
+  // address: bits256 = kUnoExecutorAddressBytes (0x00…01)
+  cb.store_bytes(reinterpret_cast<const char*>(uno_workchain::kUnoExecutorAddressBytes), 32);
+  // import_fee: Grams = 0 (VarUInteger 16; 4-bit length = 0)
+  cb.store_long(0, 4);
+  // init: Maybe (Either StateInit ^StateInit) = nothing$0
+  cb.store_long(0, 1);
+  // body: Either X ^X = right$1 (body as reference)
+  cb.store_long(1, 1);
+  cb.store_ref(std::move(body_root));
+  return cb.finalize();
+}
+
 int hex_nibble(char c) noexcept {
   if (c >= '0' && c <= '9') return c - '0';
   if (c >= 'a' && c <= 'f') return c - 'a' + 10;
@@ -415,6 +446,230 @@ void JsonRpcServer::handle_uno_sendMineUno(td::JsonValue& params_val,
         body += ",\"result\":";
         body += tx_hash_quoted;
         body += "}";
+        promise.set_value(build_raw_json_response(body, cors));
+      });
+}
+
+// ---------------------------------------------------------------------------
+// uno_sendTransfer
+//
+// Params: [hex_blob]  — hex-encoded Transfer BoC (the same wire-format
+// blob `tos-lite-client sendfile` would otherwise consume).
+// Result: {"tx_hash":"<64-char hex>"}.
+//
+// Pipeline:
+//   1. Hex decode → raw bytes.
+//   2. Run the §4.3a admission subset locally via the
+//      `uno_workchain::get_admission_check_fn()` accessor (installed by
+//      `init_uno_workchain`). On rejection, surface the structured
+//      reason to the client without touching the validator.
+//   3. Re-deserialise the BoC into a root cell.
+//   4. Wrap into a wc=2 `ext_in_msg` and submit through
+//      `liteServer_sendMessage` — same actor-context pipe as
+//      `uno_sendMineUno` and `eth_sendRawTransaction`.
+//   5. Return the admission-derived `tx_hash` so wallets can poll status.
+//
+// This handler is intercepted ahead of the read-only `uno_*` registry
+// in `JsonRpcServer::process_single_object_request`. The registry-side
+// `handle_send_transfer` in `uno/rpc/handlers.cpp` is retained for the
+// test harness (which installs its own `g_submit_ext` callback); in
+// production it is shadowed by this interceptor and never reached.
+// ---------------------------------------------------------------------------
+
+void JsonRpcServer::handle_uno_sendTransfer(td::JsonValue& params_val,
+                                             std::string req_id,
+                                             td::Promise<HttpReturn> promise) {
+  // --- 1. Extract hex param. Cheap; runs before the rate-limit token
+  //        consume so malformed-shape calls don't drain the bucket. ---
+  std::string raw_hex;
+  if (params_val.type() == td::JsonValue::Type::Array) {
+    auto& arr = params_val.get_array();
+    if (!arr.empty() && arr[0].type() == td::JsonValue::Type::String) {
+      raw_hex = arr[0].get_string().str();
+    }
+  }
+  if (raw_hex.empty()) {
+    promise.set_value(make_eth_json_error(
+        -32602, "uno_sendTransfer: expected [string hex_blob]",
+        req_id, opts_.cors_origin));
+    return;
+  }
+
+  // Hard size cap before hex decode. Mirrors the cap on uno_sendMineUno.
+  // Transfer BoCs are typically a few KiB — 1 MiB hex (~512 KiB binary)
+  // is comfortable headroom and matches the ext-msg size cap.
+  static constexpr size_t kMaxUnoSendTransferHexSize = 1u * 1024 * 1024;
+  if (raw_hex.size() > kMaxUnoSendTransferHexSize) {
+    promise.set_value(make_eth_json_error(
+        -32600, "uno_sendTransfer: hex_blob exceeds max size",
+        req_id, opts_.cors_origin));
+    return;
+  }
+
+  std::string raw_bytes;
+  if (!decode_hex(raw_hex, raw_bytes)) {
+    promise.set_value(make_eth_json_error(
+        -32602, "uno_sendTransfer: hex_blob is not valid hex",
+        req_id, opts_.cors_origin));
+    return;
+  }
+  if (raw_bytes.empty()) {
+    promise.set_value(make_eth_json_error(
+        -32602, "uno_sendTransfer: empty blob", req_id, opts_.cors_origin));
+    return;
+  }
+
+  // --- 1b. Rate-limit (Transfer bucket; consumed AFTER the cheap shape +
+  //         hex checks so junk hex does not drain honest-wallet tokens). ---
+  if (!uno_workchain::try_consume_uno_sendtx_token()) {
+    promise.set_value(make_eth_json_error(
+        -32005, "uno_sendTransfer: rate limit exceeded — try again shortly",
+        req_id, opts_.cors_origin));
+    return;
+  }
+
+  // --- 2. Run admission via the installed hook. ---
+  auto admit_fn = uno_workchain::get_admission_check_fn();
+  if (!admit_fn) {
+    promise.set_value(make_eth_json_error(
+        -32603, "uno_sendTransfer: admission check unavailable",
+        req_id, opts_.cors_origin));
+    return;
+  }
+  auto ar = admit_fn(reinterpret_cast<const uint8_t*>(raw_bytes.data()),
+                     raw_bytes.size());
+  if (!ar.ok) {
+    const char* why;
+    using R = uno_workchain::AdmissionRejectReason;
+    switch (ar.reason) {
+      case R::Malformed:        why = "malformed"; break;
+      case R::WrongChainId:     why = "wrong chain_id"; break;
+      case R::BadVersion:       why = "bad version / scheme_id"; break;
+      case R::ExpiryOutOfRange: why = "expiry_block out of range"; break;
+      case R::TooManySpends:    why = "spend_count out of [1,4]"; break;
+      case R::TooManyOutputs:   why = "output_count out of [1,4]"; break;
+      case R::FeeBelowMin:      why = "fee below minimum"; break;
+      case R::StaleAnchor:      why = "anchor not in window"; break;
+      case R::DuplicateNf:      why = "duplicate nullifier within tx"; break;
+      case R::DuplicateCm:      why = "duplicate commitment within tx"; break;
+      case R::BadPoint:         why = "ristretto point decompression failed"; break;
+      case R::NullifierSeen:    why = "nullifier already spent"; break;
+      case R::BadSpendAuthSig:  why = "bad spend_auth_sig"; break;
+      case R::UnavailableState: why = "state unavailable"; break;
+      default:                  why = "rejected"; break;
+    }
+    promise.set_value(make_eth_json_error(
+        -32020, std::string("uno_sendTransfer: admission rejected: ") + why,
+        req_id, opts_.cors_origin));
+    return;
+  }
+
+  // --- 3. Re-deserialise the caller BoC into a root cell. ---
+  auto root_r = vm::std_boc_deserialize(td::Slice(raw_bytes.data(), raw_bytes.size()));
+  if (root_r.is_error()) {
+    promise.set_value(make_eth_json_error(
+        -32602,
+        PSTRING() << "uno_sendTransfer: std_boc_deserialize failed: "
+                  << root_r.error(),
+        req_id, opts_.cors_origin));
+    return;
+  }
+  auto root_cell = root_r.move_as_ok();
+  if (root_cell.is_null()) {
+    promise.set_value(make_eth_json_error(
+        -32602, "uno_sendTransfer: null root cell from BoC",
+        req_id, opts_.cors_origin));
+    return;
+  }
+
+  // --- 4. Build wc=2 ext_in_msg and serialise. ---
+  td::Ref<vm::Cell> ext_msg;
+  try {
+    auto ext_r = build_uno_ext_in_msg(std::move(root_cell));
+    if (ext_r.is_error()) {
+      promise.set_value(make_eth_json_error(
+          -32603,
+          PSTRING() << "uno_sendTransfer: failed to build ext_in_msg cell: "
+                    << ext_r.error(),
+          req_id, opts_.cors_origin));
+      return;
+    }
+    ext_msg = ext_r.move_as_ok();
+  } catch (const std::exception& e) {
+    promise.set_value(make_eth_json_error(
+        -32603,
+        PSTRING() << "uno_sendTransfer: build ext_in_msg threw: " << e.what(),
+        req_id, opts_.cors_origin));
+    return;
+  } catch (...) {
+    promise.set_value(make_eth_json_error(
+        -32603, "uno_sendTransfer: build ext_in_msg threw",
+        req_id, opts_.cors_origin));
+    return;
+  }
+  if (ext_msg.is_null()) {
+    promise.set_value(make_eth_json_error(
+        -32603, "uno_sendTransfer: null ext_in_msg cell",
+        req_id, opts_.cors_origin));
+    return;
+  }
+
+  td::Result<td::BufferSlice> boc_r;
+  try {
+    boc_r = vm::std_boc_serialize(ext_msg);
+  } catch (const std::exception& e) {
+    promise.set_value(make_eth_json_error(
+        -32603,
+        PSTRING() << "uno_sendTransfer: BoC serialize threw: " << e.what(),
+        req_id, opts_.cors_origin));
+    return;
+  } catch (...) {
+    promise.set_value(make_eth_json_error(
+        -32603, "uno_sendTransfer: BoC serialize threw",
+        req_id, opts_.cors_origin));
+    return;
+  }
+  if (boc_r.is_error()) {
+    promise.set_value(make_eth_json_error(
+        -32603,
+        PSTRING() << "uno_sendTransfer: BoC serialize failed: " << boc_r.error(),
+        req_id, opts_.cors_origin));
+    return;
+  }
+  auto boc = boc_r.move_as_ok();
+
+  // --- 5. Submit via liteServer_sendMessage (actor-context pipe). ---
+  auto inner = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_sendMessage>(std::move(boc)),
+      true);
+  auto query = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)),
+      true);
+
+  std::string tx_hash_hex = encode_hex_lower(ar.tx_hash.data(), 32);
+  std::string tx_hash_json_quoted = "\"" + tx_hash_hex + "\"";
+
+  send_liteserver_query(
+      std::move(query),
+      [req_id = std::move(req_id),
+       tx_hash_quoted = std::move(tx_hash_json_quoted),
+       cors = opts_.cors_origin,
+       promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+        if (R.is_error()) {
+          std::string err_msg = std::string("uno_sendTransfer: submission failed: ") +
+                                R.error().message().str();
+          promise.set_value(build_jsonrpc_error(-32603, err_msg, req_id, cors));
+          return;
+        }
+        // The collator side has accepted the message. Echo the canonical
+        // tx_hash from admission so wallets can poll status.
+        std::string body;
+        body.reserve(96);
+        body += "{\"jsonrpc\":\"2.0\",\"id\":";
+        body += req_id.empty() ? std::string("null") : req_id;
+        body += ",\"result\":{\"tx_hash\":";
+        body += tx_hash_quoted;
+        body += "}}";
         promise.set_value(build_raw_json_response(body, cors));
       });
 }

@@ -251,7 +251,17 @@ UMask=0077
 # hash < target is valid, so LARGER target means EASIER. 2^252 gives ~1/16
 # probability per Poseidon2 hash — a single CPU thread finds a valid nonce
 # in microseconds. Matches kDevMineTargetBE in uno/core/mine_constants.h.
-# NEVER set this on mainnet — it would let anyone mint all 21 M UNO instantly.
+#
+# NOTE: This env var is ONLY honored by validator binaries built with
+# -DUNO_DEVNET_ALLOW_ENV_TARGET=ON. Production builds (the default) ignore
+# it and select the target from the zerostate global_id via
+# select_init_mine_target() — which already returns kDevMineTargetBE for
+# global_id == 3 (the local-dev id). For most local testnets you do not
+# need this env line at all; rebuild with the dev flag only if you must
+# override the target outside the dev global_id.
+#
+# NEVER set this on mainnet — it would let anyone mint all 21 M UNO instantly
+# (and an env-honoring binary would never have shipped to mainnet anyway).
 Environment=UNO_INIT_MINE_TARGET_HEX=1000000000000000000000000000000000000000000000000000000000000000
 WorkingDirectory=$NODE_DIR
 ExecStart=$INSTALL_BIN/tos-validator-engine \\

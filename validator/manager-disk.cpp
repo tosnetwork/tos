@@ -294,7 +294,11 @@ void ValidatorManagerImpl::get_key_block_proof_link(BlockIdExt block_id, td::Pro
   td::actor::send_closure(db_, &Db::get_key_block_proof, block_id, std::move(P));
 }
 
-td::actor::Task<> ValidatorManagerImpl::new_external_message_broadcast(td::BufferSlice data, int priority) {
+td::actor::Task<> ValidatorManagerImpl::new_external_message_broadcast(td::BufferSlice data, int priority,
+                                                                        td::optional<PublicKeyHash> source_peer) {
+  // Disk-replay manager does not run the wc=2 admission / rate limiter
+  // path, so source_peer is informational only here.
+  (void)source_peer;
   if (last_masterchain_state_.is_null()) {
     co_return td::Status::Error(ErrorCode::notready, "not ready");
   }

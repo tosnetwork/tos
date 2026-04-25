@@ -428,13 +428,15 @@ void ValidatorManagerImpl::get_key_block_proof_link(BlockIdExt block_id, td::Pro
   td::actor::send_closure(db_, &Db::get_key_block_proof, block_id, std::move(P));
 }
 
-td::actor::Task<> ValidatorManagerImpl::new_external_message_broadcast(td::BufferSlice data, int priority) {
+td::actor::Task<> ValidatorManagerImpl::new_external_message_broadcast(td::BufferSlice data, int priority,
+                                                                        td::optional<PublicKeyHash> source_peer) {
   if (!started_) {
     co_return td::Status::Error(ErrorCode::notready, "node not synced");
   }
   auto r_check_result =
       co_await td::actor::ask(ext_message_pool_, &ExtMessagePool::check_add_external_message, std::move(data), priority,
-                              /* add_to_mempool = */ is_validator() || !collator_nodes_.empty())
+                              /* add_to_mempool = */ is_validator() || !collator_nodes_.empty(),
+                              std::move(source_peer))
           .wrap();
   if (r_check_result.is_error()) {
     VLOG(VALIDATOR_DEBUG) << "Dropping external message broadcast (prio=" << priority
@@ -456,7 +458,8 @@ td::actor::Task<> ValidatorManagerImpl::new_external_message_broadcast(td::Buffe
 td::actor::Task<> ValidatorManagerImpl::new_external_message_query(td::BufferSlice data) {
   auto [message, wait_allow_broadcast] =
       co_await td::actor::ask(ext_message_pool_, &ExtMessagePool::check_add_external_message, std::move(data), 0,
-                              /* add_to_mempool = */ is_validator() || !collator_nodes_.empty());
+                              /* add_to_mempool = */ is_validator() || !collator_nodes_.empty(),
+                              td::optional<PublicKeyHash>{});
   new_external_message_query_cont(std::move(message), std::move(wait_allow_broadcast)).start().detach();
   co_return td::Unit{};
 }

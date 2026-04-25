@@ -181,13 +181,14 @@ static std::vector<uint8_t> make_dummy_proof_blob() {
 static void test_canonical_hash_determinism() {
     tprintf("[TEST] test_canonical_hash_determinism\n");
     auto tx = make_genesis_mine_tx();
+    tx.proof_blob = make_dummy_proof_blob();
     auto h1 = uw::canonical_mine_uno_hash(tx);
     auto h2 = uw::canonical_mine_uno_hash(tx);
     if (h1 != h2) {
         tprintf("  FAILED: canonical_mine_uno_hash is not stable across calls\n");
         return;
     }
-    // Changing any field must change the hash.
+    // Changing any header field must change the hash.
     auto tx2 = tx;
     tx2.public_inputs.epoch = 1;
     auto h3 = uw::canonical_mine_uno_hash(tx2);
@@ -195,7 +196,19 @@ static void test_canonical_hash_determinism() {
         tprintf("  FAILED: epoch perturbation did not change hash\n");
         return;
     }
-    tprintf("  PASSED (hash stable on identical input; distinct on perturbation)\n");
+    // K-mine-tx-hash-binds-proof: two MineUnos that share a header but
+    // carry different proof blobs MUST hash differently — otherwise
+    // mempool / RPC tx identity collides between a valid and an invalid
+    // proof for the same public inputs.
+    auto tx_other_proof = tx;
+    tx_other_proof.proof_blob[5] ^= 0xFF;  // flip a byte in the proof
+    auto h4 = uw::canonical_mine_uno_hash(tx_other_proof);
+    if (h1 == h4) {
+        tprintf("  FAILED: proof perturbation did not change hash — "
+                "tx hash is not bound to proof bytes\n");
+        return;
+    }
+    tprintf("  PASSED (hash stable; distinct on header AND proof perturbation)\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -236,8 +249,14 @@ static void test_encode_decode_round_trip() {
     if (dtx.proof_blob.size() != blob.size())                                { tprintf("  FAILED: proof_blob size\n"); return; }
     if (std::memcmp(dtx.proof_blob.data(), blob.data(), blob.size()) != 0)   { tprintf("  FAILED: proof_blob bytes\n"); return; }
 
-    // Canonical hash round-trips too.
-    if (uw::canonical_mine_uno_hash(tx) != uw::canonical_mine_uno_hash(dtx)) {
+    // Canonical hash round-trips too. The pre-encode `tx` has an empty
+    // proof_blob (the proof is supplied to encode_mine_uno via a
+    // separate slice), but the post-decode `dtx` has it populated from
+    // the chunk tree. Mirror that here so both sides hash the same
+    // `(header, proof)` pair.
+    auto tx_with_proof = tx;
+    tx_with_proof.proof_blob = blob;
+    if (uw::canonical_mine_uno_hash(tx_with_proof) != uw::canonical_mine_uno_hash(dtx)) {
         tprintf("  FAILED: canonical hash diverges across encode/decode\n");
         return;
     }

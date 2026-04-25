@@ -37,6 +37,7 @@
 #include "openssl/digest.hpp"
 #include "td/utils/bits.h"
 #include "td/utils/uint128.h"
+#include "tos/quorum.h"
 #include "tos/tos-shard.h"
 #include "tos/tos-types.h"
 #include "vm/dict.h"
@@ -696,8 +697,11 @@ td::Result<std::shared_ptr<TotalValidatorSet>> Config::unpack_validator_set(Ref<
       error = td::Status::Error(PSLICE() << "validator #" << i << " has zero weight");
       return false;
     }
-    if (descr.weight > ~(ptr->total_weight)) {
-      error = td::Status::Error("total weight of all validators in validator set exceeds 2^64");
+    if (descr.weight > tos::kMaxTotalValidatorWeight - ptr->total_weight) {
+      error = td::Status::Error(
+          "total weight of all validators in validator set exceeds protocol cap (UINT64_MAX/3); "
+          "this cap keeps the strict-2/3 quorum check (sig_weight*3 > total_weight*2) "
+          "and the (total_weight*2)/3+1 threshold safe in 64-bit arithmetic");
       return false;
     }
     ptr->list.emplace_back(sig_pubkey.pubkey, descr.weight, ptr->total_weight, descr.adnl_addr);

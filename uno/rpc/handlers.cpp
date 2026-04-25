@@ -378,6 +378,9 @@ void set_anchor_at_seqno_fn(AnchorAtSeqnoFn fn)        { g_anchor_at_seqno.store
 void set_frontier_fn(FrontierFn fn)                    { g_frontier.store(fn); }
 void set_nullifier_lookup_fn(NullifierLookupFn fn)     { g_nullifier_lookup.store(fn); }
 void set_admission_check_fn(AdmissionCheckFn fn)       { g_admission_check.store(fn); }
+AdmissionCheckFn get_admission_check_fn() {
+    return g_admission_check.load(std::memory_order_acquire);
+}
 void set_estimate_fee_fn(EstimateFeeFn fn)             { g_estimate_fee.store(fn); }
 void set_tx_status_fn(TxStatusLookupFn fn)             { g_tx_status.store(fn); }
 void set_outputs_for_ivk_fn(OutputsForIvkFn fn)        { g_outputs_for_ivk.store(fn); }

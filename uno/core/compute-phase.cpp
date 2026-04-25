@@ -47,6 +47,13 @@ void on_included_tx_from_compute(const uint8_t tx_hash[32],
                                   uint64_t fee_nano,
                                   uint64_t n_outputs);
 void on_end_of_block_from_compute();
+// Stage one OutputDescription's wire bytes for the light-wallet output
+// index, keyed by the commitment-tree global index. Called from
+// compute-phase after `apply_transfer` has appended the commitments —
+// the global index that a wallet will see for output `i` is
+// `base_global_index + i` where `base_global_index` is the value of
+// `state.next_output_global_index()` captured BEFORE the apply.
+void stage_output_bytes_from_compute(uint64_t global_index, std::string bytes);
 }  // namespace uno_workchain
 
 // =============================================================================
@@ -414,6 +421,10 @@ bool run_compute_phase(
     }
 
     // --- Step 3: apply (mutate) ---
+    // Capture the base global index BEFORE apply_transfer increments it
+    // per-commitment so we can stage the per-output wire bytes with the
+    // correct keys for the light-wallet output index.
+    const uint64_t base_global_index = state.next_output_global_index();
     apply_transfer(state, tx);
     // K-uno-metrics: count accepted Transfers.
     global_metrics_registry().inc_transfers_admitted();
@@ -421,6 +432,19 @@ bool run_compute_phase(
               << " spends=" << tx.spends.size()
               << " outputs=" << tx.outputs.size()
               << " fee=" << tx.fee;
+
+    // --- Stage per-output wire bytes for the light-wallet output index.
+    //     The wallet calls `uno_getOutputsAtBlock(seqno, ...)` to retrieve
+    //     these bytes and trial-decrypt against its IVK; without this
+    //     staging the RPC returns empty `bytes` fields and shielded notes
+    //     are invisible to receiving wallets. The included-tx hook below
+    //     drains the staged buffer into the per-block outputs slab.
+    for (size_t i = 0; i < tx.outputs.size(); ++i) {
+        std::string bytes = encode_output_description_to_bytes(tx.outputs[i]);
+        if (!bytes.empty()) {
+            stage_output_bytes_from_compute(base_global_index + i, std::move(bytes));
+        }
+    }
 
     // --- End-of-tx subscription notify (P.5) ---
     // §9.1 `includedTx` channel: wakes wallet subscribers that are watching

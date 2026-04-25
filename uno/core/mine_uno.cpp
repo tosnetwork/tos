@@ -344,16 +344,48 @@ td::Result<td::BufferSlice> encode_mine_uno_to_boc(const MineUno& tx,
 }
 
 // ===========================================================================
-// §2. canonical_mine_uno_hash (BLAKE3 over the 99-byte preimage)
+// §2. canonical_mine_uno_hash — RPC / mempool transaction-identity hash
+//
+// Binds both the 99-byte canonical header AND the proof blob so two
+// MineUno submissions that differ only in the proof (e.g. a valid proof
+// vs. an attacker-crafted invalid one with the same public inputs) get
+// distinct identifiers in the mempool, in subscriptions, and in any
+// status query that returns a tx hash to a wallet.
+//
+// Layout:
+//   BLAKE3( "uno-mine-tx-v1" (14 B) || header (99 B) || BLAKE3(proof_blob) (32 B) )
+//
+// The 14-byte ASCII domain-separation prefix tags this as a v1
+// transaction-identity hash and prevents cross-protocol collisions
+// against any other BLAKE3 caller in the codebase. Rev the prefix on
+// any future format change.
 // ===========================================================================
 
 td::Bits256 canonical_mine_uno_hash(const MineUno& tx) noexcept {
-    uint8_t buf[kMineUnoHeaderBytes];
-    pack_header(tx, buf);
-    td::Bits256 out{};
+    static constexpr char kDomainSep[] = "uno-mine-tx-v1";  // 14 B, no NUL
+
+    uint8_t header[kMineUnoHeaderBytes];
+    pack_header(tx, header);
+
+    uint8_t proof_digest[32];
+    // td::Slice asserts on (nullptr, 0); std::vector::data() is allowed
+    // to return nullptr when the vector is empty. Route through a
+    // guaranteed-non-null pointer so BLAKE3 of an empty proof blob still
+    // produces a well-defined digest (= BLAKE3 of the empty string).
+    static constexpr char kEmpty[] = "";
+    const char* proof_ptr = tx.proof_blob.empty()
+        ? kEmpty
+        : reinterpret_cast<const char*>(tx.proof_blob.data());
     ::uno_workchain::crypto::internal::blake3_hash(
-        td::Slice(reinterpret_cast<const char*>(buf), kMineUnoHeaderBytes),
-        reinterpret_cast<uint8_t*>(out.data()));
+        td::Slice(proof_ptr, tx.proof_blob.size()), proof_digest);
+
+    ::uno_workchain::crypto::internal::Blake3Hasher h;
+    h.update(td::Slice(kDomainSep, sizeof(kDomainSep) - 1));
+    h.update(td::Slice(reinterpret_cast<const char*>(header), kMineUnoHeaderBytes));
+    h.update(td::Slice(reinterpret_cast<const char*>(proof_digest), 32));
+
+    td::Bits256 out{};
+    h.finalize_32(reinterpret_cast<uint8_t*>(out.data()));
     return out;
 }
 

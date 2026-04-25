@@ -99,11 +99,82 @@ constexpr uint64_t kWc2TransferBurst  = 20;
 constexpr uint64_t kWc2TransferPerSec = 5;
 WcExtMsgRateLimiter g_wc2_transfer_limiter{kWc2TransferBurst, kWc2TransferPerSec};
 
+// Per-peer wc=2 ingress bucket. Process-global limiters above prevent
+// total wc=2 throughput from exceeding the configured rate, but on
+// their own they let a single noisy peer drain the entire shared
+// budget and starve every honest user. The per-peer bucket below is
+// consumed BEFORE the global bucket: if any one peer exceeds its own
+// rate, it is rejected without burning a global token, so honest peers
+// keep paying the same baseline rate even while a flooder is being
+// throttled.
+//
+// Bucket shape: 10 burst, 2 tokens/sec — strictly tighter than the
+// global limiters (so the global stays a useful backstop for the
+// many-peer-in-aggregate case) but still generous enough for normal
+// wallet / miner traffic from one source.
+//
+// Storage: the map is bounded at kMaxTrackedPeers; on insert when
+// full, the oldest-touched entry is evicted. Lookup is O(n) on
+// eviction but expected n is very small (only peers actively sending
+// wc=2 messages stay tracked).
+constexpr uint64_t kWc2PerPeerBurst   = 10;
+constexpr uint64_t kWc2PerPeerPerSec  = 2;
+constexpr size_t   kMaxTrackedPeers   = 4096;
+
+struct PublicKeyHashHasher {
+  size_t operator()(const PublicKeyHash& h) const noexcept {
+    // First 8 bytes of the 32-byte hash provide ~64 bits of entropy
+    // and avoid pulling in a SipHash dep just for this map.
+    auto s = h.as_slice();
+    size_t v = 0;
+    std::memcpy(&v, s.data(), sizeof(v));
+    return v;
+  }
+};
+
+class WcExtMsgPerPeerLimiter {
+ public:
+  bool try_consume(const PublicKeyHash& peer) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = buckets_.find(peer);
+    if (it == buckets_.end()) {
+      if (buckets_.size() >= kMaxTrackedPeers) {
+        evict_oldest_locked();
+      }
+      it = buckets_.try_emplace(peer, kWc2PerPeerBurst, kWc2PerPeerPerSec).first;
+    }
+    return it->second.try_consume();
+  }
+
+ private:
+  void evict_oldest_locked() {
+    // Linear scan: with kMaxTrackedPeers = 4096 this is at most ~10us
+    // per eviction and only fires when a new peer arrives at a full
+    // map. A full LRU would be sleeker but the map churn is dominated
+    // by sustained-rate honest traffic, not eviction.
+    auto oldest = buckets_.begin();
+    uint64_t oldest_t = oldest->second.last_refill;
+    for (auto it = std::next(buckets_.begin()); it != buckets_.end(); ++it) {
+      if (it->second.last_refill < oldest_t) {
+        oldest = it;
+        oldest_t = it->second.last_refill;
+      }
+    }
+    buckets_.erase(oldest);
+  }
+
+  std::mutex mutex_;
+  std::unordered_map<PublicKeyHash, WcExtMsgRateLimiter, PublicKeyHashHasher> buckets_;
+};
+
+WcExtMsgPerPeerLimiter g_wc2_per_peer_limiter;
+
 }  // namespace
 
 td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_add_external_message(td::BufferSlice data,
                                                                                         int priority,
-                                                                                        bool add_to_mempool) {
+                                                                                        bool add_to_mempool,
+                                                                                        td::optional<PublicKeyHash> source_peer) {
   if (last_masterchain_state_.is_null()) {
     co_return td::Status::Error(ErrorCode::notready, "not ready");
   }
@@ -114,7 +185,7 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_add_external_
     co_return td::Status::Error(PSTRING() << "too many external messages to address " << wc << ":" << addr.to_hex());
   }
   td::optional<td::uint32> msg_seqno;
-  auto result = co_await check_message(message, msg_seqno).wrap();
+  auto result = co_await check_message(message, msg_seqno, std::move(source_peer)).wrap();
   ++(result.is_ok() ? total_check_ext_messages_ok_ : total_check_ext_messages_error_);
   if (result.is_error()) {
     co_return result.move_as_error();
@@ -376,7 +447,8 @@ void ExtMessagePool::add_message_to_mempool(td::Ref<ExtMessage> message, int pri
 }
 
 td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::Ref<ExtMessage> message,
-                                                                           td::optional<td::uint32> &msg_seqno) {
+                                                                           td::optional<td::uint32> &msg_seqno,
+                                                                           td::optional<PublicKeyHash> source_peer) {
   WorkchainId wc = message->wc();
   StdSmcAddress addr = message->addr();
 
@@ -487,6 +559,16 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
         }
       } catch (...) {
         // peek failed; fall through with kind=kUnknown (charged to MineUno bucket).
+      }
+      // Per-peer bucket runs FIRST, before any global bucket consume,
+      // so a noisy peer is throttled without burning shared tokens that
+      // honest peers would otherwise use. When the caller did not
+      // supply a source peer (e.g. local-node-originated submissions),
+      // the per-peer step is skipped and the global bucket alone gates.
+      if (source_peer) {
+        if (!g_wc2_per_peer_limiter.try_consume(source_peer.value())) {
+          co_return td::Status::Error("wc=2 ext-msg per-peer rate-limited");
+        }
       }
       if (kind == kTransfer) {
         if (!g_wc2_transfer_limiter.try_consume()) {

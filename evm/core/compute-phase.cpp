@@ -71,90 +71,89 @@ bool run_evm_compute_phase(
         block.header.base_fee_per_gas = intx::uint256{kInitialBaseFee};
     }
 
-    // --- Step 3b: EIP-4788 beacon-roots system call (Cancun+, per-block) ---
+    // --- Step 3b: EIP-4788 / EIP-2935 system calls (Cancun+ / Pectra+) ---
     //
-    // Cancun's MergeRuleSet::initialize() invokes a system contract call to
-    // kBeaconRootsAddress at the start of every block, before user txs. We
-    // execute_evm_transaction() directly (bypassing rule-set wiring) so the
-    // hook must be reproduced here. The check is gated on the current chain
-    // config's revision: while cancun_time is unset (today's Shanghai
-    // baseline) `revision()` returns EVMC_SHANGHAI and this block is a
-    // no-op. Once `cancun_time = 0` flips it activates per-block.
+    // Cancun's MergeRuleSet::initialize() runs a system contract call to
+    // kBeaconRootsAddress at the start of every block, before user txs;
+    // Pectra adds an analogous call to kHistoryStorageAddress for the
+    // EIP-2935 historical-block-hash buffer. We execute_evm_transaction()
+    // directly (bypassing rule-set wiring) so both hooks must be
+    // reproduced here.
     //
-    // Per-block-once semantics: the compute-phase handler is invoked once
-    // per transaction. To run the hook only on the first tx of each block
-    // we keep a process-local high-water mark of the last block we hooked
-    // for. Validators replay deterministically (each starts the run with
-    // last_hooked_block = 0 and sweeps forward), so this matches across
-    // nodes. After a restart the marker resets to 0, but the hook is
-    // idempotent at the contract level (writes to a ring buffer keyed on
-    // timestamp) so re-firing for blocks already processed is safe.
+    // Per-block-once vs. per-tx: an earlier version of this code gated
+    // both hooks on a process-local `static std::atomic<uint64_t>
+    // s_last_hooked_block` high-water mark, intended to fire each system
+    // call exactly once per block. That gate was a consensus hazard: a
+    // validator that already processed block H in this process would
+    // SKIP the system call when re-validating a competing candidate at
+    // the same height, while a freshly restarted validator would RUN it
+    // — producing different EVM state roots from the same chain data.
+    //
+    // The system calls themselves are idempotent at the contract level:
+    //   - EIP-4788 writes `parent_beacon_block_root` and `timestamp`
+    //     into ring-buffer slots keyed on `block.timestamp`; both inputs
+    //     are constant per block, so re-running within the same block
+    //     overwrites the same slots with identical values.
+    //   - EIP-2935 writes `parent_hash` into a ring-buffer slot keyed on
+    //     `(block_seqno - 1) % 8191`; same property.
+    //
+    // So we remove the gate and let both hooks run on every EVM tx. The
+    // first tx in each block establishes the canonical writes; later
+    // txs in the same block write identical values to the same slots,
+    // producing no observable state-root change. CPU cost is small
+    // (~10 µs per system call) and the consensus-safety win is large.
     {
         const auto rev = config.revision(block_seqno, timestamp);
         if (rev >= EVMC_CANCUN) {
-            static std::atomic<uint64_t> s_last_hooked_block{0};
-            uint64_t prev = s_last_hooked_block.load(std::memory_order_relaxed);
-            if (block_seqno > prev &&
-                s_last_hooked_block.compare_exchange_strong(prev, block_seqno,
-                                                            std::memory_order_relaxed)) {
-                // Build the system tx exactly as silkworm's MergeRuleSet does.
-                block.header.parent_beacon_block_root = evmc::bytes32{};
-                silkworm::Transaction sys_txn{};
-                sys_txn.type = silkworm::TransactionType::kSystem;
-                sys_txn.to = silkworm::protocol::kBeaconRootsAddress;
-                sys_txn.data = silkworm::Bytes(32, 0);
-                sys_txn.set_sender(silkworm::protocol::kSystemAddress);
-                std::unique_lock sys_lock(state.mutex());
-                silkworm::IntraBlockState sys_ibs(state.state());
-                silkworm::EVM sys_evm(block, sys_ibs, config);
-                try {
-                    sys_evm.execute(sys_txn, silkworm::protocol::kSystemCallGasLimit);
-                    sys_ibs.destruct_touched_dead();
-                    sys_ibs.write_to_db(block_seqno);
-                } catch (const std::exception& e) {
-                    LOG(ERROR) << "evm-workchain: EIP-4788 system call threw at block "
-                               << block_seqno << ": " << e.what()
-                               << " (continuing — predeploy may be missing)";
-                } catch (...) {
-                    LOG(ERROR) << "evm-workchain: EIP-4788 system call threw at block "
-                               << block_seqno << " (unknown exception)";
-                }
+            // Build the system tx exactly as silkworm's MergeRuleSet does.
+            block.header.parent_beacon_block_root = evmc::bytes32{};
+            silkworm::Transaction sys_txn{};
+            sys_txn.type = silkworm::TransactionType::kSystem;
+            sys_txn.to = silkworm::protocol::kBeaconRootsAddress;
+            sys_txn.data = silkworm::Bytes(32, 0);
+            sys_txn.set_sender(silkworm::protocol::kSystemAddress);
+            std::unique_lock sys_lock(state.mutex());
+            silkworm::IntraBlockState sys_ibs(state.state());
+            silkworm::EVM sys_evm(block, sys_ibs, config);
+            try {
+                sys_evm.execute(sys_txn, silkworm::protocol::kSystemCallGasLimit);
+                sys_ibs.destruct_touched_dead();
+                sys_ibs.write_to_db(block_seqno);
+            } catch (const std::exception& e) {
+                LOG(ERROR) << "evm-workchain: EIP-4788 system call threw at block "
+                           << block_seqno << ": " << e.what()
+                           << " (continuing — predeploy may be missing)";
+            } catch (...) {
+                LOG(ERROR) << "evm-workchain: EIP-4788 system call threw at block "
+                           << block_seqno << " (unknown exception)";
             }
         }
 
-        // EIP-2935 (Pectra): Serve historical block hashes from state.
-        // Mirrors silkworm's MergeRuleSet::initialize. Per EIP, the system
-        // call writes parent_hash into the kHistoryStorageAddress
-        // ring-buffer keyed on (block_number - 1) % 8191. Skipped at
-        // block 0 (no parent).
+        // EIP-2935 (Pectra): writes parent_hash into the
+        // kHistoryStorageAddress ring buffer keyed on
+        // (block_number - 1) % 8191. Skipped at block 0 (no parent).
         if (rev >= EVMC_PRAGUE && block_seqno > 0) {
-            static std::atomic<uint64_t> s_last_hist_block{0};
-            uint64_t prev = s_last_hist_block.load(std::memory_order_relaxed);
-            if (block_seqno > prev &&
-                s_last_hist_block.compare_exchange_strong(prev, block_seqno,
-                                                          std::memory_order_relaxed)) {
-                auto parent_hash_bytes = state.get_block_hash(block_seqno - 1);
-                silkworm::Transaction sys_txn{};
-                sys_txn.type = silkworm::TransactionType::kSystem;
-                sys_txn.to = silkworm::protocol::kHistoryStorageAddress;
-                sys_txn.data = silkworm::Bytes{
-                    silkworm::ByteView{parent_hash_bytes.bytes, 32}};
-                sys_txn.set_sender(silkworm::protocol::kSystemAddress);
-                std::unique_lock sys_lock(state.mutex());
-                silkworm::IntraBlockState sys_ibs(state.state());
-                silkworm::EVM sys_evm(block, sys_ibs, config);
-                try {
-                    sys_evm.execute(sys_txn, silkworm::protocol::kSystemCallGasLimit);
-                    sys_ibs.destruct_touched_dead();
-                    sys_ibs.write_to_db(block_seqno);
-                } catch (const std::exception& e) {
-                    LOG(ERROR) << "evm-workchain: EIP-2935 system call threw at block "
-                               << block_seqno << ": " << e.what()
-                               << " (continuing — predeploy may be missing)";
-                } catch (...) {
-                    LOG(ERROR) << "evm-workchain: EIP-2935 system call threw at block "
-                               << block_seqno << " (unknown exception)";
-                }
+            auto parent_hash_bytes = state.get_block_hash(block_seqno - 1);
+            silkworm::Transaction sys_txn{};
+            sys_txn.type = silkworm::TransactionType::kSystem;
+            sys_txn.to = silkworm::protocol::kHistoryStorageAddress;
+            sys_txn.data = silkworm::Bytes{
+                silkworm::ByteView{parent_hash_bytes.bytes, 32}};
+            sys_txn.set_sender(silkworm::protocol::kSystemAddress);
+            std::unique_lock sys_lock(state.mutex());
+            silkworm::IntraBlockState sys_ibs(state.state());
+            silkworm::EVM sys_evm(block, sys_ibs, config);
+            try {
+                sys_evm.execute(sys_txn, silkworm::protocol::kSystemCallGasLimit);
+                sys_ibs.destruct_touched_dead();
+                sys_ibs.write_to_db(block_seqno);
+            } catch (const std::exception& e) {
+                LOG(ERROR) << "evm-workchain: EIP-2935 system call threw at block "
+                           << block_seqno << ": " << e.what()
+                           << " (continuing — predeploy may be missing)";
+            } catch (...) {
+                LOG(ERROR) << "evm-workchain: EIP-2935 system call threw at block "
+                           << block_seqno << " (unknown exception)";
             }
         }
     }

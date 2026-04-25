@@ -289,11 +289,18 @@ td::Result<td::Ref<vm::Cell>> encode_mine_uno(const MineUno& tx,
 td::Result<td::BufferSlice> encode_mine_uno_to_boc(const MineUno& tx,
                                                    td::Slice proof_blob) noexcept;
 
-/// Canonical mempool-dedup / anti-replay hash. BLAKE3 over the 99-byte
-/// preimage `tx_kind || version || scheme_id || chain_id || epoch ||
-/// target || value_nano || output_cm || remaining_pre || remaining_post`.
-/// All multi-byte fields are big-endian. Matches the `canonical_mine_uno_hash`
-/// note in §2 of the spec.
+/// Canonical RPC / mempool transaction-identity hash. Binds both the
+/// 99-byte canonical header and the proof blob, so two MineUno
+/// submissions that share a header but carry different proofs map to
+/// distinct hashes.
+///
+/// Computed as
+///   BLAKE3("uno-mine-tx-v1" || header(99 B) || BLAKE3(proof_blob))
+/// where the header is `tx_kind || version || scheme_id || chain_id ||
+/// epoch || target || value_nano || output_cm || remaining_pre ||
+/// remaining_post` (multi-byte fields big-endian). The leading 14-byte
+/// domain-separation prefix tags this as a v1 transaction-identity hash;
+/// any future format change must rev the prefix.
 td::Bits256 canonical_mine_uno_hash(const MineUno& tx) noexcept;
 
 }  // namespace uno_workchain

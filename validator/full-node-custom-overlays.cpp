@@ -135,7 +135,8 @@ void FullNodeCustomOverlay::process_broadcast(PublicKeyHash src, tos_api::tosNod
   VLOG(FULL_NODE_DEBUG) << "Got external message in custom overlay \"" << name_ << "\" from " << src
                         << " (priority=" << it->second << ")";
   td::actor::ask(validator_manager_, &ValidatorManagerInterface::new_external_message_broadcast,
-                 std::move(query.message_->data_), it->second)
+                 std::move(query.message_->data_), it->second,
+                 td::optional<PublicKeyHash>{src})
       .detach();
 }
 

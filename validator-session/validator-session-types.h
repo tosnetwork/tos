@@ -24,6 +24,7 @@
 #include "adnl/adnl-node-id.hpp"
 #include "crypto/common/bitstring.h"
 #include "td/utils/int_types.h"
+#include "tos/quorum.h"
 #include "tos/tos-types.h"
 
 namespace tos {
@@ -119,7 +120,7 @@ struct ValidatorSessionStats {
         if (approved_33pct_at <= 0.0 && approved_weight >= total_weight / 3 + 1) {
           approved_33pct_at = td::Clocks::system();
         }
-        if (approved_66pct_at <= 0.0 && approved_weight >= (total_weight * 2) / 3 + 1) {
+        if (approved_66pct_at <= 0.0 && approved_weight >= tos::two_thirds_plus_one(total_weight)) {
           approved_66pct_at = td::Clocks::system();
         }
       }
@@ -132,7 +133,7 @@ struct ValidatorSessionStats {
         if (signed_33pct_at <= 0.0 && signed_weight >= total_weight / 3 + 1) {
           signed_33pct_at = td::Clocks::system();
         }
-        if (signed_66pct_at <= 0.0 && signed_weight >= (total_weight * 2) / 3 + 1) {
+        if (signed_66pct_at <= 0.0 && signed_weight >= tos::two_thirds_plus_one(total_weight)) {
           signed_66pct_at = td::Clocks::system();
         }
       }

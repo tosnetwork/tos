@@ -300,14 +300,17 @@ bool deserialize_state(td::Ref<vm::Cell> root, UnoShardState& out) {
         out.nullifier_set = std::move(nf);
     }
 
-    // Meta cell: anchor window + stats + mining state (Phase 2).
-    // Accept both 2-ref (pre-Phase-2) and 3-ref (Phase-2+) meta cells for
-    // backward compatibility: old states deserialize with zeroed mining fields.
+    // Meta cell: anchor window + stats + mining state. Require exactly
+    // 3 refs — the 2-ref legacy shape is rejected because hydrating
+    // from it would silently leave the MineUno consensus fields
+    // (mine_epoch / mine_remaining / mine_target) at their zero
+    // defaults, which on a chain that has accepted MineUno would reset
+    // the mint schedule back to genesis.
     auto meta_cs = vm::load_cell_slice(meta_cell);
     const unsigned meta_refs = meta_cs.size_refs();
-    if (meta_refs < 2) {
+    if (meta_refs != 3) {
         LOG(ERROR) << "uno/cell-state: meta cell refs=" << meta_refs
-                   << ", expected at least 2";
+                   << ", expected=3 (anchor + stats + mining_state)";
         return false;
     }
     auto anchor_cell = meta_cs.prefetch_ref(kMetaRefAnchorWindow);
@@ -333,9 +336,8 @@ bool deserialize_state(td::Ref<vm::Cell> root, UnoShardState& out) {
         return false;
     }
 
-    // Mining state (Phase 2): present only in 3-ref meta cells.
-    // Old 2-ref cells leave the four fields at their zero-initialised defaults.
-    if (meta_refs >= 3) {
+    // Mining state. Always present (meta_refs == 3 enforced above).
+    {
         auto mining_cell = meta_cs.prefetch_ref(kMetaRefMiningState);
         if (!decode_mining_state_cell(std::move(mining_cell), out)) {
             LOG(ERROR) << "uno/cell-state: mining state cell deserialize failed";

@@ -178,6 +178,27 @@ td::Result<td::Ref<vm::Cell>> encode_transfer(const Transfer& tx) noexcept;
 /// wc=1 (`evm/rpc/cache-db.cpp` etc.).
 td::Result<td::BufferSlice> encode_transfer_to_boc(const Transfer& tx) noexcept;
 
+/// Serialize a single OutputDescription into the wire bytes consumed by
+/// the light-wallet `uno_getOutputsAtBlock` RPC.
+///
+/// Layout (canonical, big-endian where applicable):
+///
+///   [32 B]    cm                       — note commitment
+///   [32 B]    epk                      — sender ephemeral pubkey
+///   [ 2 B]    filter_tag               — block-filter selector (BE)
+///   [80 B]    out_ciphertext           — inline AEAD memo (kOutCiphertextBytes)
+///   [ 4 B]    enc_ciphertext_len       — length prefix (BE u32)
+///   [N  B]    enc_ciphertext           — std_boc_serialize of the cell ref
+///   [ 4 B]    mlkem_ct_len             — length prefix (BE u32)
+///   [N  B]    mlkem_ct                 — std_boc_serialize of the cell ref
+///
+/// The 4-byte BE length prefixes let a wallet parse the two variable-
+/// length BoC payloads without re-running the BoC framer. Returns an
+/// empty string if either ciphertext cell is null (which would only
+/// happen on a tx that failed encode validation, never after a
+/// successful apply).
+std::string encode_output_description_to_bytes(const OutputDescription& o) noexcept;
+
 // ---------------------------------------------------------------------------
 // Canonical tx hash (§4.1)
 // ---------------------------------------------------------------------------

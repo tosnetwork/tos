@@ -440,8 +440,11 @@ static bool assert_live_state_serializes(uint64_t expected_next_position,
 
     auto meta_cell = cs.prefetch_ref(2);
     auto meta_cs = vm::load_cell_slice(meta_cell);
-    if (meta_cs.size_refs() != 2) {
-        tprintf("  FAILED: live meta refs=%u expected=2\n", meta_cs.size_refs());
+    // Production state always serializes 3 refs (anchor + stats + mining_state).
+    // The legacy 2-ref shape was removed when the K-mining-state-persist
+    // hydrate path was made fail-closed against missing mining_state cells.
+    if (meta_cs.size_refs() != 3) {
+        tprintf("  FAILED: live meta refs=%u expected=3\n", meta_cs.size_refs());
         return false;
     }
 

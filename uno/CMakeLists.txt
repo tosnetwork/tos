@@ -100,14 +100,35 @@ target_include_directories(uno_workchain
 )
 
 # -----------------------------------------------------------------------------
+# TOS_DEV_STUBS — opt-in: allow the build to silently fall back to runtime-
+# aborting cryptographic stubs when the real backends (liboqs for ML-KEM,
+# Corrosion + the plonky3-ffi crate for the Plonky3 verifier) are not
+# available at configure time. Production validators must NOT ship with
+# stubs — a missing crypto dep would cause every Uno proof verification
+# to either fatal-abort the daemon (ML-KEM stub) or reject every Uno
+# transfer as BadPlonky3Proof (Plonky3 stub). Default OFF: missing deps
+# are a hard CMake error so this can never happen by accident.
+# -----------------------------------------------------------------------------
+option(TOS_DEV_STUBS
+       "Allow falling back to crypto/proof runtime-abort stubs when deps are missing (NOT for production)"
+       OFF)
+if (TOS_DEV_STUBS)
+  message(WARNING
+    "uno_workchain: TOS_DEV_STUBS=ON — missing liboqs / Corrosion / "
+    "plonky3-ffi will be tolerated and replaced with runtime-abort stubs. "
+    "This binary MUST NOT be deployed to a network you do not control.")
+endif()
+
+# -----------------------------------------------------------------------------
 # liboqs detection for ML-KEM-768.
 #
 # A3's mlkem768.{h,cpp} supports two build modes:
 #   - Production: links against system `liboqs` (Open Quantum Safe).
 #   - Stub: -DUNO_MLKEM_STUB=1 — all ML-KEM ops fatal-abort at runtime.
 #
-# The stub keeps the skeleton build green on hosts without liboqs installed;
-# I-C / full-build CI should install liboqs-dev and drop the stub.
+# Stub mode is gated behind TOS_DEV_STUBS=ON; production builds (the
+# default) require liboqs to be present at configure time and FATAL_ERROR
+# otherwise.
 #
 # Probe order:
 #   1. Honour caller-provided LIBOQS_INCLUDE_DIR / LIBOQS_LIBRARY (for CI and
@@ -175,10 +196,21 @@ if (LIBOQS_INCLUDE_DIR AND LIBOQS_LIBRARY)
     message(STATUS "uno_workchain: liboqs build lacks ML-KEM-768 derand encaps — deterministic encap will error at runtime")
   endif()
 else()
-  message(STATUS "uno_workchain: liboqs not found — ML-KEM-768 built with UNO_MLKEM_STUB=1 (runtime abort). "
-                 "Install liboqs-dev, or build liboqs from source (see uno/crypto/LIBOQS_VERSION.md) and re-configure with "
-                 "-DLIBOQS_INCLUDE_DIR=<prefix>/include -DLIBOQS_LIBRARY=<prefix>/lib/liboqs.a.")
-  target_compile_definitions(uno_workchain PRIVATE UNO_MLKEM_STUB=1)
+  if (TOS_DEV_STUBS)
+    message(STATUS "uno_workchain: liboqs not found — ML-KEM-768 built with UNO_MLKEM_STUB=1 (runtime abort). "
+                   "Install liboqs-dev, or build liboqs from source (see uno/crypto/LIBOQS_VERSION.md) and re-configure with "
+                   "-DLIBOQS_INCLUDE_DIR=<prefix>/include -DLIBOQS_LIBRARY=<prefix>/lib/liboqs.a.")
+    target_compile_definitions(uno_workchain PRIVATE UNO_MLKEM_STUB=1)
+  else()
+    message(FATAL_ERROR
+      "uno_workchain: liboqs is required for production validator builds but was "
+      "not found. Install liboqs-dev or build from source (see "
+      "uno/crypto/LIBOQS_VERSION.md) and re-configure with "
+      "-DLIBOQS_INCLUDE_DIR=<prefix>/include -DLIBOQS_LIBRARY=<prefix>/lib/liboqs.a. "
+      "If you are knowingly building a non-production binary that does not need "
+      "real ML-KEM (e.g. an early skeleton-build CI job), pass -DTOS_DEV_STUBS=ON "
+      "to fall back to a runtime-abort stub instead.")
+  endif()
 endif()
 
 # -----------------------------------------------------------------------------
@@ -195,10 +227,11 @@ endif()
 # `uno_poseidon2_goldilocks_permute_t8` against the real Rust symbols
 # instead of the weak-symbol stubs in uno/core/parallel-verify.cpp.
 #
-# Graceful fallback: if corrosion is missing (e.g. somebody wiped
+# When TOS_DEV_STUBS=ON: if corrosion is missing (e.g. somebody wiped
 # `third-party/corrosion/` in a stripped checkout), `find_package` returns
 # not-found and we keep the weak-symbol stubs. The build still succeeds,
-# just with verify() fatal-aborting at runtime.
+# just with verify() fatal-aborting (or returning BadPlonky3Proof) at
+# runtime. Default: missing corrosion / plonky3-ffi is a FATAL_ERROR.
 # -----------------------------------------------------------------------------
 # Corrosion is consumed via `add_subdirectory(third-party/corrosion)` from the
 # repo-root CMakeLists.txt; that path makes `corrosion_import_crate` a defined
@@ -220,11 +253,23 @@ if (Corrosion_FOUND AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/plonky3-ffi/Cargo.to
   )
   target_link_libraries(uno_workchain PUBLIC uno_plonky3_ffi)
 else()
-  message(STATUS "uno_workchain: Corrosion not found or plonky3-ffi crate absent "
-                 "— Plonky3 verifier bridge will fall back to weak-symbol stubs "
-                 "in uno/core/parallel-verify.cpp (verify() will fatal-abort at "
-                 "runtime). Install corrosion at third-party/corrosion/ to enable "
-                 "the real Rust verifier.")
+  if (TOS_DEV_STUBS)
+    message(STATUS "uno_workchain: Corrosion not found or plonky3-ffi crate absent "
+                   "— Plonky3 verifier bridge will fall back to weak-symbol stubs "
+                   "in uno/core/parallel-verify.cpp (verify() will fatal-abort at "
+                   "runtime). Install corrosion at third-party/corrosion/ to enable "
+                   "the real Rust verifier.")
+  else()
+    message(FATAL_ERROR
+      "uno_workchain: the Plonky3 verifier FFI is required for production "
+      "validator builds. Either Corrosion was not found or "
+      "${CMAKE_CURRENT_SOURCE_DIR}/plonky3-ffi/Cargo.toml is missing. Install "
+      "Corrosion (vendored at third-party/corrosion/ — re-clone the tos repo "
+      "without stripping submodules) and confirm uno/plonky3-ffi/ exists. "
+      "If you are knowingly building a non-production binary that does not need "
+      "the real verifier, pass -DTOS_DEV_STUBS=ON to fall back to weak-symbol "
+      "stubs instead.")
+  endif()
 endif()
 
 target_link_libraries(uno_workchain
@@ -232,6 +277,29 @@ target_link_libraries(uno_workchain
     tos_crypto           # cells, vm types, block types, dispatcher
     Threads::Threads     # §13 P.3: std::thread in uno/core/parallel-verify.cpp
 )
+
+# -----------------------------------------------------------------------------
+# UNO_DEVNET_ALLOW_ENV_TARGET — opt-in escape hatch that lets the
+# `UNO_INIT_MINE_TARGET_HEX` environment variable override the initial
+# MineUno difficulty target on validators built from this tree. The target
+# is consensus-critical: validators that disagree on it split the chain at
+# the first MineUno transaction, so production builds MUST leave this OFF
+# and rely on the global_id-driven `select_init_mine_target()` fallback
+# (kInitMineTargetBE for mainnet/public-testnet, kDevMineTargetBE for
+# local dev). Only enable this for ad-hoc devnet bring-up where a single
+# operator controls every validator binary.
+# -----------------------------------------------------------------------------
+option(UNO_DEVNET_ALLOW_ENV_TARGET
+       "Allow UNO_INIT_MINE_TARGET_HEX env override of MineUno target (devnet only)"
+       OFF)
+if (UNO_DEVNET_ALLOW_ENV_TARGET)
+  message(WARNING
+    "uno_workchain: UNO_DEVNET_ALLOW_ENV_TARGET=ON — the UNO_INIT_MINE_TARGET_HEX "
+    "env var will override the MineUno difficulty target at runtime. This is a "
+    "consensus-critical parameter; do NOT ship this binary to a network you do "
+    "not fully control.")
+  target_compile_definitions(uno_workchain PRIVATE UNO_DEVNET_ALLOW_ENV_TARGET=1)
+endif()
 
 # -----------------------------------------------------------------------------
 # BLAKE3 backend — decision #41: UNO_BLAKE3_AVATAR.

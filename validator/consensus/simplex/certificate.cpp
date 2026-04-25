@@ -5,6 +5,7 @@
  */
 
 #include "td/utils/overloaded.h"
+#include "tos/quorum.h"
 #include "validator/consensus/bus.h"
 
 #include "certificate.h"
@@ -34,7 +35,7 @@ td::Result<td::Ref<Certificate<T>>> Certificate<T>::from_tl(tl::voteSignatureSet
     voted_weight += validator.weight;
   }
 
-  if (voted_weight < (bus.total_weight * 2) / 3 + 1) {
+  if (voted_weight < tos::two_thirds_plus_one(bus.total_weight)) {
     return td::Status::Error("Not enough signatures in certificate");
   }
 

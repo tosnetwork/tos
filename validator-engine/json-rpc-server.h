@@ -216,6 +216,8 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   //     BEFORE that registry — see the dispatcher in json-rpc-server.cpp.
   void handle_uno_sendMineUno(td::JsonValue &params_val, std::string req_id,
                                td::Promise<HttpReturn> promise);
+  void handle_uno_sendTransfer(td::JsonValue &params_val, std::string req_id,
+                                td::Promise<HttpReturn> promise);
   void handle_getConfigParam(td::JsonObject &params, std::string req_id,
                              td::Promise<HttpReturn> promise);
   void handle_getAddressInformation(td::JsonObject &params, std::string req_id,

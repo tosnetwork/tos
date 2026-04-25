@@ -177,6 +177,13 @@ void set_anchor_at_seqno_fn(AnchorAtSeqnoFn fn);
 void set_frontier_fn(FrontierFn fn);
 void set_nullifier_lookup_fn(NullifierLookupFn fn);
 void set_admission_check_fn(AdmissionCheckFn fn);
+/// Read accessor for the admission-check hook installed via
+/// `set_admission_check_fn`. Returns nullptr if no hook is installed.
+/// Exposed so JSON-RPC interceptors that bypass the registry-style
+/// `handle_send_transfer` (e.g. the validator-engine `uno_sendTransfer`
+/// path that submits directly via `send_liteserver_query`) can run
+/// admission without duplicating the per-tx admission pipeline.
+AdmissionCheckFn get_admission_check_fn();
 void set_estimate_fee_fn(EstimateFeeFn fn);
 void set_tx_status_fn(TxStatusLookupFn fn);
 void set_outputs_for_ivk_fn(OutputsForIvkFn fn);

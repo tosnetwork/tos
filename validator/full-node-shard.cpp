@@ -152,11 +152,12 @@ void FullNodeShardImpl::check_broadcast(PublicKeyHash src, td::BufferSlice broad
     promise.set_error(td::Status::Error("rebroadcasting external messages is disabled"));
     promise = [](td::Result<td::Unit>) {};
   }
-  process_external_message_broadcast(*message, std::move(promise));
+  process_external_message_broadcast(src, *message, std::move(promise));
 }
 
-void FullNodeShardImpl::process_external_message_broadcast(tos_api::tosNode_externalMessageBroadcast &message,
-                                                           td::Promise<td::Unit> promise) {
+void FullNodeShardImpl::process_external_message_broadcast(PublicKeyHash src,
+                                                            tos_api::tosNode_externalMessageBroadcast &message,
+                                                            td::Promise<td::Unit> promise) {
   if (!active_) {
     return promise.set_error(td::Status::Error("cannot process broadcast: shard is not active"));
   }
@@ -170,7 +171,8 @@ void FullNodeShardImpl::process_external_message_broadcast(tos_api::tosNode_exte
     return;
   }
   td::actor::send_closure(validator_manager_, &ValidatorManagerInterface::new_external_message_broadcast,
-                          std::move(message.message_->data_), 0, std::move(promise));
+                          std::move(message.message_->data_), 0, td::optional<PublicKeyHash>{src},
+                          std::move(promise));
 }
 
 void FullNodeShardImpl::remove_neighbour(adnl::AdnlNodeIdShort id) {
@@ -769,7 +771,7 @@ void FullNodeShardImpl::process_broadcast(PublicKeyHash src, tos_api::tosNode_ih
 }
 
 void FullNodeShardImpl::process_broadcast(PublicKeyHash src, tos_api::tosNode_externalMessageBroadcast &query) {
-  process_external_message_broadcast(query, [](td::Result<td::Unit>) {});
+  process_external_message_broadcast(src, query, [](td::Result<td::Unit>) {});
 }
 
 void FullNodeShardImpl::process_broadcast(PublicKeyHash src, tos_api::tosNode_newShardBlockBroadcast &query) {

@@ -160,6 +160,15 @@ namespace uno_workchain {
 // On mainnet it should remain unset.
 // ---------------------------------------------------------------------------
 const std::array<uint8_t, 32>* try_load_env_mine_target() {
+#ifndef UNO_DEVNET_ALLOW_ENV_TARGET
+    // Production builds ignore UNO_INIT_MINE_TARGET_HEX. The MineUno
+    // initial difficulty is consensus-critical; reading it from the
+    // process environment would let two validators in the same network
+    // disagree on whether the first MineUno transaction meets the target
+    // and split the chain. The intended difficulty is selected at zero-
+    // state build time via select_init_mine_target(global_id).
+    return nullptr;
+#else
     static std::array<uint8_t, 32> cached{};
     static bool                   cached_set{false};
     static bool                   probed{false};
@@ -187,8 +196,9 @@ const std::array<uint8_t, 32>* try_load_env_mine_target() {
     std::memcpy(cached.data(), bytes.data(), 32);
     cached_set = true;
     LOG(WARNING) << "uno/genesis: UNO_INIT_MINE_TARGET_HEX override active "
-                 << "(target=" << env << ")";
+                 << "(target=" << env << ") — devnet build only";
     return &cached;
+#endif
 }
 
 UnoShardState build_zerostate_state(const GenesisDistribution& dist,
