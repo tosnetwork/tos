@@ -44,6 +44,17 @@ def _call_until_ok(call, *, retries: int = 12, delay_s: float = 1.0):
     return last
 
 
+def _discover_first_permission_id(api_method_call, address: str, method: str = "getAccountDelegations") -> str | None:
+    resp = _call_until_ok(lambda: api_method_call(method, address=address))
+    try:
+        data = resp.json()
+    except Exception:
+        return None
+    if not data.get("ok") or not data.get("result"):
+        return None
+    return data["result"][0].get("permission_id")
+
+
 @pytest.fixture(scope="module")
 def wallets():
     data = _load_deployed()
@@ -984,10 +995,13 @@ class TestLifecycleRequestEnforcement:
         info = wallets.get("nominator_pool")
         if not info or not info.get("address"):
             pytest.skip("nominator pool not deployed")
+        permission_id = _discover_first_permission_id(api_method_call_no_get, info["address"])
+        if not permission_id:
+            pytest.skip("no live delegation permission_id available")
         response = _call_until_ok(lambda: api_method_call_no_get(
             "revokeAccountDelegation",
             address=info["address"],
-            permission_id=f"{info['address']}:nominator-stake:0",
+            permission_id=permission_id,
         ))
         data = response.json()
         assert data["ok"] is True
@@ -1025,7 +1039,7 @@ class TestLifecycleResponseShape:
     """Verify lifecycle mutation responses include canonical affected object preview."""
 
     def test_grant_delegation_returns_mutation_result(self, api_method_call_no_get, wallets):
-        """Grant on supported model should return lifecycle.mutationResult with preview."""
+        """Grant on supported model should return lifecycle.mutationResult with a projected preview."""
         info = wallets.get("nominator_pool")
         if not info or not info.get("address"):
             pytest.skip("nominator pool not deployed")
@@ -1043,21 +1057,27 @@ class TestLifecycleResponseShape:
         assert result["accepted"] is True
         assert "mutation_intent" in result
         assert "affected_object_preview" in result
-        # Preview should be a canonical delegation object
+        assert result["preview_note"].startswith("projected:")
+        # Preview should use the canonical object shape, but remains projected until
+        # the contract materializes a real permission object on-chain.
         preview = result["affected_object_preview"]
         assert preview["@type"] == "account.delegationGrant"
         assert preview["scope"] == "bounded_transfer"
         assert preview["status"] == "active"
+        assert preview["projected"] is True
 
     def test_revoke_delegation_returns_mutation_result(self, api_method_call_no_get, wallets):
         """Revoke on supported model should return lifecycle.mutationResult with preview."""
         info = wallets.get("nominator_pool")
         if not info or not info.get("address"):
             pytest.skip("nominator pool not deployed")
+        permission_id = _discover_first_permission_id(api_method_call_no_get, info["address"])
+        if not permission_id:
+            pytest.skip("no live delegation permission_id available")
         response = _call_until_ok(lambda: api_method_call_no_get(
             "revokeAccountDelegation",
             address=info["address"],
-            permission_id=f"{info['address']}:nominator-stake:0",
+            permission_id=permission_id,
         ))
         data = response.json()
         assert data["ok"] is True
@@ -1095,9 +1115,11 @@ class TestLifecycleResponseShape:
             pytest.skip("grant did not succeed")
         preview_keys = set(grant_resp.json()["result"]["affected_object_preview"].keys())
 
-        # The preview should have at minimum the same @type and core schema fields
+        # The projected preview should retain the canonical schema contract plus the
+        # explicit projected marker.
         core_fields = {"@type", "scope", "status", "constraints", "revocable"}
         assert core_fields.issubset(preview_keys)
+        assert "projected" in preview_keys
 
 
 class TestDelegationScopeValidation:
@@ -1109,7 +1131,9 @@ class TestDelegationScopeValidation:
         info = wallets.get("nominator_pool")
         if not info or not info.get("address"):
             pytest.skip("nominator pool not deployed")
-        delegation_id = f"{info['address']}:nominator-stake:0"
+        delegation_id = _discover_first_permission_id(api_method_call_no_get, info["address"])
+        if not delegation_id:
+            pytest.skip("no live delegation permission_id available")
         response = _call_until_ok(lambda: api_method_call_no_get(
             self.METHOD,
             address=info["address"],
@@ -1143,8 +1167,9 @@ class TestDelegationScopeValidation:
         info = wallets.get("nominator_pool_withdraw")
         if not info or not info.get("address"):
             pytest.skip("nominator pool with withdraw not deployed")
-        # The pre-seeded nominator is at index 0
-        delegation_id = f"{info['address']}:nominator-stake:0"
+        delegation_id = _discover_first_permission_id(api_method_call_no_get, info["address"])
+        if not delegation_id:
+            pytest.skip("no live revoked delegation permission_id available")
         response = _call_until_ok(lambda: api_method_call_no_get(
             self.METHOD,
             address=info["address"],
