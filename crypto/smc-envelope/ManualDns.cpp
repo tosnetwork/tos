@@ -270,7 +270,16 @@ td::Result<td::uint32> ManualDns::get_wallet_id_or_throw() const {
     return 0;
   }
   //FIXME use get method
-  return static_cast<td::uint32>(vm::load_cell_slice(state_.data).fetch_ulong(32));
+  // Codex audit (round 14, finding #4): mirror the round-13 wallet
+  // helpers — `fetch_ulong(32)` on truncated state returns an EOF
+  // sentinel that gets cast to uint32 (0xFFFFFFFF) and propagates
+  // through `prepare(...)` into a wallet-id-tagged DNS update query.
+  // Hostile lite-server / account state could confuse SDK callers.
+  auto cs = vm::load_cell_slice(state_.data);
+  if (!cs.have(32)) {
+    return td::Status::Error("ManualDns::get_wallet_id: data slice too short");
+  }
+  return static_cast<td::uint32>(cs.fetch_ulong(32));
 }
 
 td::Result<td::Ref<vm::Cell>> ManualDns::create_set_value_unsigned(td::Bits256 category, td::Slice name,

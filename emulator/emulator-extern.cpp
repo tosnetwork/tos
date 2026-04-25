@@ -66,14 +66,25 @@ const char *external_not_accepted_response(std::string &&vm_log, int vm_exit_cod
 
 #define ERROR_RESPONSE(error) return error_response(error)
 
-td::Result<block::Config> decode_config(const char *config_boc) {
+td::Result<block::Config> decode_config(const char *config_boc) try {
+  // Codex audit (round 14, finding #1): all downstream callers of
+  // `decode_config` (`transaction_emulator_create`, `emulator_config_create`,
+  // `transaction_emulator_set_config`) check the returned Result, so
+  // converting any thrown VmError from `vm::load_cell_slice` /
+  // `block::Config::unpack` into a structured error here propagates
+  // cleanly. Without the function-try-block a malformed/special config
+  // BoC threw out of the C ABI and terminated the embedding host.
   TRY_RESULT_PREFIX(config_params_cell, boc_b64_to_cell(config_boc), "Can't deserialize config params boc: ");
   auto config_dict = std::make_unique<vm::Dictionary>(config_params_cell, 32);
   auto config_addr_cell = config_dict->lookup_ref(td::BitArray<32>::zero());
   if (config_addr_cell.is_null()) {
     return td::Status::Error("Can't find config address (param 0) is missing in config params");
   }
-  auto config_addr_cs = vm::load_cell_slice(std::move(config_addr_cell));
+  bool config_addr_special = false;
+  auto config_addr_cs = vm::load_cell_slice_special(std::move(config_addr_cell), config_addr_special);
+  if (config_addr_special) {
+    return td::Status::Error("config param 0 root is a special cell");
+  }
   if (config_addr_cs.size() != 0x100) {
     return td::Status::Error(PSLICE() << "configuration parameter 0 with config address has wrong size");
   }
@@ -84,6 +95,12 @@ td::Result<block::Config> decode_config(const char *config_boc) {
                     block::Config::needWorkchainInfo | block::Config::needSpecialSmc | block::Config::needCapabilities);
   TRY_STATUS_PREFIX(global_config.unpack(), "Can't unpack config params: ");
   return global_config;
+} catch (const vm::VmError& e) {
+  return td::Status::Error(PSLICE() << "decode_config: vm error: " << e.get_msg());
+} catch (const std::exception& e) {
+  return td::Status::Error(PSLICE() << "decode_config: " << e.what());
+} catch (...) {
+  return td::Status::Error("decode_config: unknown exception");
 }
 
 void *transaction_emulator_create(const char *config_params_boc, int vm_log_verbosity) {
@@ -418,7 +435,10 @@ bool transaction_emulator_set_debug_enabled(void *transaction_emulator, bool deb
   return true;
 }
 
-bool transaction_emulator_set_prev_blocks_info(void *transaction_emulator, const char *info_boc) {
+bool transaction_emulator_set_prev_blocks_info(void *transaction_emulator, const char *info_boc) try {
+  // Codex audit (round 14, finding #1): `vm::StackEntry::deserialize`
+  // walks the caller-supplied cell and bare-loads it; a special root
+  // throws across the C ABI. Wrap in function-try-block.
   auto emulator = static_cast<emulator::TransactionEmulator *>(transaction_emulator);
 
   if (info_boc != nullptr) {
@@ -443,6 +463,9 @@ bool transaction_emulator_set_prev_blocks_info(void *transaction_emulator, const
   }
 
   return true;
+} catch (...) {
+  LOG(ERROR) << "transaction_emulator_set_prev_blocks_info: exception";
+  return false;
 }
 
 void transaction_emulator_destroy(void *transaction_emulator) {
@@ -594,7 +617,8 @@ bool tvm_emulator_set_config_object(void *tvm_emulator, void *config) {
   return true;
 }
 
-bool tvm_emulator_set_prev_blocks_info(void *tvm_emulator, const char *info_boc) {
+bool tvm_emulator_set_prev_blocks_info(void *tvm_emulator, const char *info_boc) try {
+  // Codex audit (round 14, finding #1): see TransactionEmulator equivalent.
   auto emulator = static_cast<emulator::TvmEmulator *>(tvm_emulator);
 
   if (info_boc != nullptr) {
@@ -619,6 +643,9 @@ bool tvm_emulator_set_prev_blocks_info(void *tvm_emulator, const char *info_boc)
   }
 
   return true;
+} catch (...) {
+  LOG(ERROR) << "tvm_emulator_set_prev_blocks_info: exception";
+  return false;
 }
 
 bool tvm_emulator_set_gas_limit(void *tvm_emulator, int64_t gas_limit) {
@@ -727,6 +754,13 @@ TvmEulatorEmulateRunMethodResponse emulate_run_method(uint32_t len, const char *
   if (c7_special) return {nullptr, nullptr};
   auto libs = vm::Dictionary(params.fetch_ref(), 256);
 
+  // Codex audit (round 14, finding #3): method_id is fetched from
+  // attacker-controlled bytes; without `have(32)` the underlying
+  // `fetch_long(32)` returns an EOF sentinel that gets cast to int and
+  // executed as a method id. Reject early on truncated request.
+  if (!params_cs.have(32)) {
+    return {nullptr, nullptr};
+  }
   auto method_id = params_cs.fetch_long(32);
 
   td::Ref<vm::Stack> stack;
@@ -804,14 +838,25 @@ void run_method_detailed_result_destroy(void *detailed_result) {
   delete result;
 }
 
-const char *tvm_emulator_send_external_message(void *tvm_emulator, const char *message_body_boc) {
+const char *tvm_emulator_send_external_message(void *tvm_emulator, const char *message_body_boc) try {
+  // Codex audit (round 14, finding #2): SmartContract::send_external_message
+  // bare-loads the body cell — a special root throws across the C ABI
+  // and terminates the embedding host. Wrap in function-try-block AND
+  // reject special roots before the call. Also defensively handle any
+  // throw from the cell_to_boc_b64 .move_as_ok() chain below.
   auto message_body_cell = boc_b64_to_cell(message_body_boc);
   if (message_body_cell.is_error()) {
     ERROR_RESPONSE(PSTRING() << "Can't deserialize message body boc: " << message_body_cell.move_as_error());
   }
+  auto body_cell = message_body_cell.move_as_ok();
+  bool body_special = false;
+  (void)vm::load_cell_slice_special(body_cell, body_special);
+  if (body_special) {
+    ERROR_RESPONSE("message body root is a special cell");
+  }
 
   auto emulator = static_cast<emulator::TvmEmulator *>(tvm_emulator);
-  auto result = emulator->send_external_message(message_body_cell.move_as_ok());
+  auto result = emulator->send_external_message(std::move(body_cell));
 
   td::JsonBuilder jb;
   auto json_obj = jb.enter_object();
@@ -835,16 +880,30 @@ const char *tvm_emulator_send_external_message(void *tvm_emulator, const char *m
   json_obj.leave();
 
   return strdup(jb.string_builder().as_cslice().c_str());
+} catch (const vm::VmError& e) {
+  ERROR_RESPONSE(PSTRING() << "tvm_emulator_send_external_message: vm error: " << e.get_msg());
+} catch (const std::exception& e) {
+  ERROR_RESPONSE(PSTRING() << "tvm_emulator_send_external_message: " << e.what());
+} catch (...) {
+  ERROR_RESPONSE("tvm_emulator_send_external_message: unknown exception");
 }
 
-const char *tvm_emulator_send_internal_message(void *tvm_emulator, const char *message_body_boc, uint64_t amount) {
+const char *tvm_emulator_send_internal_message(void *tvm_emulator, const char *message_body_boc, uint64_t amount) try {
+  // Codex audit (round 14, finding #2): same hardening as
+  // tvm_emulator_send_external_message above.
   auto message_body_cell = boc_b64_to_cell(message_body_boc);
   if (message_body_cell.is_error()) {
     ERROR_RESPONSE(PSTRING() << "Can't deserialize message body boc: " << message_body_cell.move_as_error());
   }
+  auto body_cell = message_body_cell.move_as_ok();
+  bool body_special = false;
+  (void)vm::load_cell_slice_special(body_cell, body_special);
+  if (body_special) {
+    ERROR_RESPONSE("message body root is a special cell");
+  }
 
   auto emulator = static_cast<emulator::TvmEmulator *>(tvm_emulator);
-  auto result = emulator->send_internal_message(message_body_cell.move_as_ok(), amount);
+  auto result = emulator->send_internal_message(std::move(body_cell), amount);
 
   td::JsonBuilder jb;
   auto json_obj = jb.enter_object();
@@ -868,6 +927,12 @@ const char *tvm_emulator_send_internal_message(void *tvm_emulator, const char *m
   json_obj.leave();
 
   return strdup(jb.string_builder().as_cslice().c_str());
+} catch (const vm::VmError& e) {
+  ERROR_RESPONSE(PSTRING() << "tvm_emulator_send_internal_message: vm error: " << e.get_msg());
+} catch (const std::exception& e) {
+  ERROR_RESPONSE(PSTRING() << "tvm_emulator_send_internal_message: " << e.what());
+} catch (...) {
+  ERROR_RESPONSE("tvm_emulator_send_internal_message: unknown exception");
 }
 
 void tvm_emulator_destroy(void *tvm_emulator) {
