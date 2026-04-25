@@ -341,6 +341,11 @@ const char *transaction_emulator_emulate_tick_tock_transaction(void *transaction
 }
 
 bool transaction_emulator_set_unixtime(void *transaction_emulator, uint32_t unixtime) {
+  // Codex audit (round 15, finding #2): null-handle guard. Caller may have
+  // received nullptr from `transaction_emulator_create` (bad config) and
+  // bare-deref here would crash the host. The Emscripten wrapper already
+  // checks at create time, but other FFI clients may not.
+  if (transaction_emulator == nullptr) return false;
   auto emulator = static_cast<emulator::TransactionEmulator *>(transaction_emulator);
 
   emulator->set_unixtime(unixtime);
@@ -513,7 +518,14 @@ bool tvm_emulator_set_libraries(void *tvm_emulator, const char *libs_boc) {
 }
 
 bool tvm_emulator_set_c7(void *tvm_emulator, const char *address, uint32_t unixtime, uint64_t balance,
-                         const char *rand_seed_hex, const char *config_boc) {
+                         const char *rand_seed_hex, const char *config_boc) try {
+  // Codex audit (round 15, finding #1): R14.1 hardened decode_config but
+  // this entry point still rolled its own ad-hoc decode + unpack without
+  // the function-try-block. Reuse decode_config so a malformed/special
+  // config BoC produces a structured rejection rather than throwing
+  // across the C ABI.
+  // Codex audit (round 15, finding #2): null-handle guard.
+  if (tvm_emulator == nullptr) return false;
   auto emulator = static_cast<emulator::TvmEmulator *>(tvm_emulator);
   auto std_address = block::StdAddress::parse(td::Slice(address));
   if (std_address.is_error()) {
@@ -523,19 +535,12 @@ bool tvm_emulator_set_c7(void *tvm_emulator, const char *address, uint32_t unixt
 
   std::shared_ptr<block::Config> global_config;
   if (config_boc != nullptr) {
-    auto config_params_cell = boc_b64_to_cell(config_boc);
-    if (config_params_cell.is_error()) {
-      LOG(ERROR) << "Can't deserialize config params boc: " << config_params_cell.move_as_error();
+    auto decoded = decode_config(config_boc);
+    if (decoded.is_error()) {
+      LOG(ERROR) << "tvm_emulator_set_c7: " << decoded.move_as_error();
       return false;
     }
-    global_config = std::make_shared<block::Config>(
-        config_params_cell.move_as_ok(), td::Bits256::zero(),
-        block::Config::needWorkchainInfo | block::Config::needSpecialSmc | block::Config::needCapabilities);
-    auto unpack_res = global_config->unpack();
-    if (unpack_res.is_error()) {
-      LOG(ERROR) << "Can't unpack config params";
-      return false;
-    }
+    global_config = std::make_shared<block::Config>(decoded.move_as_ok());
   }
 
   auto rand_seed_hex_slice = td::Slice(rand_seed_hex);
@@ -555,6 +560,9 @@ bool tvm_emulator_set_c7(void *tvm_emulator, const char *address, uint32_t unixt
                    std::const_pointer_cast<const block::Config>(global_config));
 
   return true;
+} catch (...) {
+  LOG(ERROR) << "tvm_emulator_set_c7: exception";
+  return false;
 }
 
 bool tvm_emulator_set_extra_currencies(void *tvm_emulator, const char *extra_currencies) {
@@ -595,7 +603,14 @@ bool tvm_emulator_set_extra_currencies(void *tvm_emulator, const char *extra_cur
       }
 
       vm::CellBuilder cb;
-      block::tlb::t_VarUInteger_32.store_integer_value(cb, *amount);
+      // Codex audit (round 15, finding #5): VarUInteger 32 caps at 2^248-1.
+      // Previously the store_integer_value return was ignored — oversized
+      // amounts silently produced an under-encoded entry that downstream
+      // parsers would reject or misinterpret. Reject explicitly.
+      if (!block::tlb::t_VarUInteger_32.store_integer_value(cb, *amount)) {
+        LOG(ERROR) << "Extra currency amount does not fit in VarUInteger 32: " << amount_str;
+        return false;
+      }
       if (!dict.set_builder(td::BitArray<32>(currency_id.ok()), cb, vm::DictionaryBase::SetMode::Add)) {
         LOG(ERROR) << "Duplicate extra currency id";
         return false;

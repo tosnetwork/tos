@@ -96,10 +96,18 @@ td::Result<td::Ed25519::PublicKey> TestWallet::get_public_key_or_throw() const {
     return td::Status::Error("data is null");
   }
   //FIXME use get method
+  // Codex audit (round 15, finding #4): same hardening as the round-13
+  // wallet helpers — require the seqno + 256-bit pubkey bits before
+  // skip/fetch, and check fetch_bytes return.
   auto cs = vm::load_cell_slice(state_.data);
+  if (!cs.have(32 + 256)) {
+    return td::Status::Error("TestWallet::get_public_key: data slice too short");
+  }
   cs.skip_first(32);
   td::SecureString res(td::Ed25519::PublicKey::LENGTH);
-  cs.fetch_bytes(res.as_mutable_slice().ubegin(), td::narrow_cast<td::int32>(res.size()));
+  if (!cs.fetch_bytes(res.as_mutable_slice().ubegin(), td::narrow_cast<td::int32>(res.size()))) {
+    return td::Status::Error("TestWallet::get_public_key: fetch_bytes failed");
+  }
   return td::Ed25519::PublicKey(std::move(res));
 }
 

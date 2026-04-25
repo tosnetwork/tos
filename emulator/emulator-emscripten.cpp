@@ -246,6 +246,13 @@ const char* emulate_with_emulator(void* em, const char* libs, const char* accoun
 const char* emulate(const char* config, const char* libs, int verbosity, const char* account, const char* message,
                     const char* params) {
   auto em = transaction_emulator_create(config, verbosity);
+  // Codex audit (round 15, finding #2): transaction_emulator_create returns
+  // nullptr on bad config; the previous code passed nullptr through to
+  // setters that immediately deref the handle. Fail-fast with a structured
+  // JSON error.
+  if (em == nullptr) {
+    return strdup(R"({"fail":true,"message":"transaction_emulator_create returned null (bad config?)"})");
+  }
   auto result = emulate_with_emulator(em, libs, account, message, params);
   transaction_emulator_destroy(em);
   return result;
@@ -264,6 +271,10 @@ const char* run_get_method(const char* params, const char* stack, const char* co
   auto decoded_params = decoded_params_res.move_as_ok();
 
   auto tvm = tvm_emulator_create(decoded_params.code.c_str(), decoded_params.data.c_str(), decoded_params.verbosity);
+  // Codex audit (round 15, finding #2): same null-handle guard as emulate().
+  if (tvm == nullptr) {
+    return strdup(R"({"fail":true,"message":"tvm_emulator_create returned null"})");
+  }
 
   if ((decoded_params.libs && !tvm_emulator_set_libraries(tvm, decoded_params.libs.value().c_str())) ||
       !tvm_emulator_set_c7(tvm, decoded_params.address.c_str(), decoded_params.unixtime, decoded_params.balance,

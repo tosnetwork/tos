@@ -408,8 +408,72 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
     // STARK verification, and the EVM RPC layer already has a dedicated
     // limiter; an additional gate would burden the legitimate path more
     // than the (cheaper) attack.
-    if (wc == 2 && !g_wc2_ingress_limiter.try_consume()) {
-      co_return td::Status::Error("wc=2 ext-msg ingress rate-limited");
+    // Codex audit (round 15, finding #3): the round-2 single-bucket
+    // limiter on wc=2 conflated cheap Transfer admission with expensive
+    // MineUno STARK-verify, letting either path starve the other. Peek
+    // the body's first byte to discriminate (UNO wire-format §1: byte 0
+    // == 0x01 → Transfer, 0x02 → MineUno) and only consume the bucket
+    // for MineUno bodies. Transfer admission is cheap and doesn't need
+    // throttling at this layer; the per-method JSON-RPC limiter still
+    // applies on the RPC path. ExtMessage itself does not expose the
+    // body byte, so re-walk the cell tree here. Failure to peek (e.g.
+    // body decode error) defaults to consuming the bucket — fail-closed.
+    if (wc == 2) {
+      bool need_limit = true;  // default fail-closed
+      try {
+        auto root = message->root_cell();
+        if (root.not_null()) {
+          bool root_special = false;
+          auto cs = vm::load_cell_slice_special(root, root_special);
+          if (!root_special) {
+            // ext_in_msg_info$10 + addr_none$00 (2+2 bits) + dest:MsgAddressInt
+            // + import_fee:Grams + init:Maybe(Either StateInit ^StateInit)
+            // + body:Either X ^X. We don't need the dest address, so unpack
+            // the Message::Record to reach the body slice directly.
+            block::gen::Message::Record m;
+            if (block::gen::t_Message_Any.unpack(cs, m)) {
+              auto body_cs = m.body.write();
+              td::Ref<vm::Cell> body_ref;
+              vm::CellSlice body_inline;
+              bool body_inline_valid = false;
+              if (body_cs.fetch_ulong(1) == 1) {
+                if (body_cs.size_refs() >= 1) {
+                  body_ref = body_cs.fetch_ref();
+                }
+              } else {
+                body_inline = body_cs;
+                body_inline_valid = true;
+              }
+              auto peek_byte = [&](vm::CellSlice& s, uint8_t& out) -> bool {
+                if (!s.have(8)) return false;
+                out = static_cast<uint8_t>(s.prefetch_ulong(8));
+                return true;
+              };
+              uint8_t disc = 0xff;
+              bool got_disc = false;
+              if (body_ref.not_null()) {
+                bool body_special = false;
+                auto body_cs2 = vm::load_cell_slice_special(body_ref, body_special);
+                if (!body_special) {
+                  got_disc = peek_byte(body_cs2, disc);
+                }
+              } else if (body_inline_valid) {
+                got_disc = peek_byte(body_inline, disc);
+              }
+              if (got_disc && disc == 0x01 /* Transfer */) {
+                need_limit = false;
+              }
+              // disc == 0x02 → MineUno (need_limit stays true)
+              // unknown disc → fail-closed (need_limit stays true)
+            }
+          }
+        }
+      } catch (...) {
+        // peek failed; fail-closed (still rate-limited).
+      }
+      if (need_limit && !g_wc2_ingress_limiter.try_consume()) {
+        co_return td::Status::Error("wc=2 ext-msg ingress rate-limited");
+      }
     }
     auto [wait, promise] = td::actor::StartedTask<>::make_bridge();
     promise.set_value(td::Unit{});
