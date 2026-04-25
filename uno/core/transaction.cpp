@@ -374,8 +374,14 @@ td::Bits256 canonical_tx_hash(const Transfer& tx) noexcept {
             append_bytes(zeros, 32);
             return;
         }
-        auto slice = c->get_hash().as_slice();
-        append_bytes(reinterpret_cast<const uint8_t*>(slice.data()), 32);
+        // Bind the by-value `Hash` to a named local so its lifetime spans
+        // the append_bytes call below. `c->get_hash()` returns a temporary;
+        // taking `.as_slice().data()` directly into a Slice would dangle
+        // once the temporary dies at end of statement (caught by ASAN
+        // stack-use-after-scope at this line in test-uno-determinism /
+        // test-uno-end-to-end).
+        const auto hash = c->get_hash();
+        append_bytes(reinterpret_cast<const uint8_t*>(hash.as_slice().data()), 32);
     };
 
     // --- inline header ---
