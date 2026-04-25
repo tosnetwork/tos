@@ -129,6 +129,7 @@ const char* verify_result_name(VerifyResult r) noexcept {
         case VerifyResult::PowHashAboveTarget:      return "pow-hash-above-target";
         case VerifyResult::PiHeaderMismatch:        return "pi-header-mismatch";
         case VerifyResult::ZeroValueMineUno:        return "zero-value-mine-uno";
+        case VerifyResult::TimestampNotMonotonic:   return "timestamp-not-monotonic";
         case VerifyResult::DecodeError:             return "decode-error";
     }
     return "unknown";
@@ -265,7 +266,8 @@ bool run_mine_uno_compute_phase(
     block::ComputePhase& cp,
     vm::CellSlice& in_msg_body,
     uint64_t gas_limit,
-    UnoState& state) {
+    UnoState& state,
+    uint32_t  gen_utime) {
 
     auto decoded = decode_mine_uno(in_msg_body);
     if (auto* err_ptr = std::get_if<MineUnoDecodeError>(&decoded)) {
@@ -280,7 +282,7 @@ bool run_mine_uno_compute_phase(
     MineUno tx = std::move(std::get<MineUno>(decoded));
     const uint64_t gas_used = compute_gas_used_mine_uno(tx);
 
-    VerifyResult vr = apply_mine_uno(state, tx);
+    VerifyResult vr = apply_mine_uno(state, tx, gen_utime);
     if (vr != VerifyResult::Ok) {
         global_metrics_registry().inc_transfers_rejected(
             reject_reason_from_verify_result(static_cast<int>(vr)));
@@ -334,9 +336,18 @@ bool run_compute_phase(
     uint64_t block_seqno,
     uint64_t timestamp,
     const uint8_t rand_seed[32]) {
-    (void)timestamp;
     (void)rand_seed;
     (void)block_seqno;  // Uno uses state.current_block_seqno() for determinism.
+
+    // Masterchain `gen_utime` for the block containing this tx. Threaded
+    // through to `apply_mine_uno` so the timestamp-monotonicity check and
+    // the 144-solve retarget window can use a deterministic, validator-
+    // shared time source. The host-chain `timestamp` field is the
+    // unix-second `gen_utime` (block-auto.tlb: gen_utime:uint32). We
+    // narrow to u32 here — values above 2^32 would represent dates past
+    // year 2106 and are accepted only as the explicit consensus rule
+    // that any future-date block-time must fit u32.
+    const uint32_t gen_utime = static_cast<uint32_t>(timestamp);
 
     // --- Step 0: Dispatch on byte-0 discriminator ---
     // Transfer's byte 0 is `version=0x01`; MineUno's byte 0 is
@@ -352,7 +363,7 @@ bool run_compute_phase(
         return true;
     }
     if (disc == kTxKindMineUno) {
-        return run_mine_uno_compute_phase(cp, in_msg_body, gas_limit, state);
+        return run_mine_uno_compute_phase(cp, in_msg_body, gas_limit, state, gen_utime);
     }
     if (disc != kTransferVersion) {
         global_metrics_registry().inc_transfers_rejected(
@@ -564,7 +575,8 @@ std::vector<VerifyResult> run_compute_phase_batch(
 std::vector<VerifyResult> run_compute_phase_batch_mine_uno(
     UnoState&          state,
     const MineUno*     txs,
-    std::size_t        n_txs) {
+    std::size_t        n_txs,
+    uint32_t           gen_utime) {
 
     std::vector<VerifyResult> results;
     if (n_txs == 0) return results;
@@ -572,7 +584,7 @@ std::vector<VerifyResult> run_compute_phase_batch_mine_uno(
 
     auto& mreg = global_metrics_registry();
     for (std::size_t i = 0; i < n_txs; ++i) {
-        VerifyResult r = apply_mine_uno(state, txs[i]);
+        VerifyResult r = apply_mine_uno(state, txs[i], gen_utime);
         results.push_back(r);
         if (r == VerifyResult::Ok) {
             mreg.inc_transfers_admitted();

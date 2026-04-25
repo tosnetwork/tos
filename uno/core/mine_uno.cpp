@@ -401,7 +401,8 @@ td::Bits256 canonical_mine_uno_hash(const MineUno& tx) noexcept {
 // ---------------------------------------------------------------------------
 
 VerifyResult verify_mine_uno_chain_checks(const UnoState& state,
-                                          const MineUno&  tx) noexcept {
+                                          const MineUno&  tx,
+                                          uint32_t        gen_utime) noexcept {
     // ---- Step 0: version / scheme / chain identity ----
     if (tx.tx_kind != kTxKindMineUno)     return VerifyResult::UnknownTxKind;
     if (tx.version != kMineUnoVersion)    return VerifyResult::BadVersion;
@@ -411,6 +412,19 @@ VerifyResult verify_mine_uno_chain_checks(const UnoState& state,
     }
 
     const auto& pi = tx.public_inputs;
+
+    // ---- Step 0b: timestamp monotonicity (consensus rule) ----
+    // Reject any solve whose containing block's gen_utime is not strictly
+    // greater than the last accepted solve's timestamp. This is hard
+    // consensus, not a soft clamp: without it, two MineUnos in the same
+    // masterchain block (or a stale-clock validator) would yield
+    // actual_seconds == 0 in the retarget formula and let an attacker
+    // game the clamp. The first-ever solve (last_solve_ts == 0) is
+    // accepted unconditionally — any positive gen_utime advances the
+    // window-start anchor.
+    if (state.last_solve_ts() != 0 && gen_utime <= state.last_solve_ts()) {
+        return VerifyResult::TimestampNotMonotonic;
+    }
 
     // ---- Step 1: epoch race protection ----
     if (pi.epoch != state.mine_epoch()) {
@@ -461,9 +475,11 @@ VerifyResult verify_mine_uno_chain_checks(const UnoState& state,
     return VerifyResult::Ok;
 }
 
-VerifyResult apply_mine_uno(UnoState& state, const MineUno& tx) noexcept {
+VerifyResult apply_mine_uno(UnoState& state,
+                            const MineUno& tx,
+                            uint32_t       gen_utime) noexcept {
     // Steps 0/1/2/5/6 live in verify_mine_uno_chain_checks.
-    VerifyResult chain_r = verify_mine_uno_chain_checks(state, tx);
+    VerifyResult chain_r = verify_mine_uno_chain_checks(state, tx, gen_utime);
     if (chain_r != VerifyResult::Ok) {
         return chain_r;
     }
@@ -590,7 +606,7 @@ VerifyResult apply_mine_uno(UnoState& state, const MineUno& tx) noexcept {
     // index. Deferred to a future tree-wide membership index.
 
     // ---- Step 8: state mutations (epoch + remaining + commitment) ----
-    state.advance_mine_state(tx.public_inputs.remaining_post);
+    state.advance_mine_state(tx.public_inputs.remaining_post, gen_utime);
     state.append_commitment(tx.public_inputs.output_cm);
 
     // ---- Step 9: block-filter accumulation + stats ----
@@ -623,6 +639,177 @@ uint64_t compute_gas_used_mine_uno(const MineUno& tx) noexcept {
     constexpr uint64_t kMineFixedVerifyCost = 40'000;
     constexpr uint64_t kMinePerByteCost     = 2;
     return kMineFixedVerifyCost + kMinePerByteCost * tx.wire_size_bytes;
+}
+
+// ===========================================================================
+// §5. Difficulty retarget helpers (uno-mine-v1 Phase 2 retarget)
+//
+// Hand-rolled 256-bit big-endian × u64 ÷ u64 helper. We schoolbook-multiply
+// the 32-byte BE target by `mul` into a 320-bit (5 × u64) buffer, then
+// long-divide by `div`. Result is written back as 32 BE bytes. On true
+// quotient overflow (>2^256) we saturate to 0xFF…FF and signal via
+// out_overflow; on div == 0 same.
+//
+// Why hand-rolled rather than intx::uint256:
+//   - intx adds a third-party dependency cost for a 50-line task.
+//   - The target word here is exactly 256 bits and a u64 multiplier; a
+//     fixed 5-limb buffer is the simplest deterministic implementation.
+//   - Easy to fuzz in isolation; the unit tests in
+//     uno/test/test-uno-mine-retarget.cpp pin the corner cases that
+//     matter for consensus (target = 1, target = max, mul = 0, mul =
+//     UINT32_MAX, div = mul, div = mul + 1, etc.).
+// ===========================================================================
+
+namespace {
+
+// Read 32 BE bytes into 4 u64 limbs, limb[0] = most significant.
+inline void be_to_limbs(const std::array<uint8_t, 32>& be,
+                        uint64_t out[4]) noexcept {
+    for (int i = 0; i < 4; ++i) {
+        uint64_t v = 0;
+        for (int j = 0; j < 8; ++j) {
+            v = (v << 8) | static_cast<uint64_t>(be[i * 8 + j]);
+        }
+        out[i] = v;
+    }
+}
+
+// Write 4 u64 limbs (limb[0] = MS) back to 32 BE bytes.
+inline void limbs_to_be(const uint64_t in[4],
+                        std::array<uint8_t, 32>& out) noexcept {
+    for (int i = 0; i < 4; ++i) {
+        uint64_t v = in[i];
+        for (int j = 7; j >= 0; --j) {
+            out[i * 8 + j] = static_cast<uint8_t>(v & 0xFF);
+            v >>= 8;
+        }
+    }
+}
+
+// 64×64 → 128 multiply via __uint128_t (GCC/Clang). Splits the result into
+// (lo, hi) u64s. Available on every TOS-supported toolchain.
+inline void mul_u64(uint64_t a, uint64_t b, uint64_t& hi, uint64_t& lo) noexcept {
+    __uint128_t p = static_cast<__uint128_t>(a) * static_cast<__uint128_t>(b);
+    lo = static_cast<uint64_t>(p);
+    hi = static_cast<uint64_t>(p >> 64);
+}
+
+}  // anonymous namespace
+
+std::array<uint8_t, 32> mul_div_u256_be(const std::array<uint8_t, 32>& target,
+                                        uint64_t mul,
+                                        uint64_t div,
+                                        bool& out_overflow) noexcept {
+    out_overflow = false;
+    std::array<uint8_t, 32> out{};
+
+    if (div == 0) {
+        out_overflow = true;
+        out.fill(0xFF);
+        return out;
+    }
+    if (mul == 0) {
+        out.fill(0);
+        return out;
+    }
+
+    uint64_t a[4];
+    be_to_limbs(target, a);
+
+    // Multiply 256-bit a × 64-bit mul into 320-bit prod (5 u64 limbs,
+    // prod[0] = MS). Walk limbs from least-significant (a[3]) up so the
+    // carry chains naturally.
+    uint64_t prod[5] = {0, 0, 0, 0, 0};
+    {
+        uint64_t carry = 0;
+        for (int i = 3; i >= 0; --i) {
+            uint64_t hi = 0, lo = 0;
+            mul_u64(a[i], mul, hi, lo);
+            // Add lo to prod[i+1] (LS-side of this limb pair) with the
+            // pending carry, then propagate hi+carry up to prod[i].
+            __uint128_t s = static_cast<__uint128_t>(prod[i + 1]) +
+                            static_cast<__uint128_t>(lo) +
+                            static_cast<__uint128_t>(carry);
+            prod[i + 1] = static_cast<uint64_t>(s);
+            carry = static_cast<uint64_t>(s >> 64) + hi;
+        }
+        prod[0] = carry;
+    }
+
+    // Long-divide the 320-bit prod by `div`. Walk MS-to-LS, accumulating
+    // remainder in a __uint128_t so the next limb fits.
+    uint64_t q[5] = {0, 0, 0, 0, 0};
+    {
+        __uint128_t rem = 0;
+        for (int i = 0; i < 5; ++i) {
+            rem = (rem << 64) | static_cast<__uint128_t>(prod[i]);
+            __uint128_t qi = rem / div;
+            rem = rem - qi * div;
+            // qi can be up to (2^128 - 1) / div, but since each limb is 64
+            // bits and rem before division is at most (div - 1) * 2^64 +
+            // (2^64 - 1) < div * 2^64, the quotient qi fits in a u64.
+            q[i] = static_cast<uint64_t>(qi);
+        }
+    }
+
+    // q[0] is the overflow limb. If non-zero the true quotient does not
+    // fit in 256 bits — saturate to 0xFF…FF.
+    if (q[0] != 0) {
+        out_overflow = true;
+        out.fill(0xFF);
+        return out;
+    }
+    uint64_t low4[4] = {q[1], q[2], q[3], q[4]};
+    limbs_to_be(low4, out);
+    return out;
+}
+
+std::array<uint8_t, 32> compute_retargeted_pow_target(
+    const std::array<uint8_t, 32>& old_target,
+    uint64_t actual_seconds) noexcept {
+
+    // Compute the lower / upper clamp bounds first so we can short-
+    // circuit corner cases against them. Clamp formulas:
+    //   floor = old * kRetargetMinNum / kRetargetMinDen   (= old × 3/4 → harder)
+    //   cap   = old * kRetargetMaxNum / kRetargetMaxDen   (= old × 4/3 → easier)
+    // mul_div_u256_be saturates on overflow so a target near 2^256 still
+    // produces a well-defined cap (intx-equivalent saturating semantics).
+    bool ovf_floor = false, ovf_cap = false;
+    auto floor_t = mul_div_u256_be(old_target, kRetargetMinNum,
+                                   kRetargetMinDen, ovf_floor);
+    auto cap_t   = mul_div_u256_be(old_target, kRetargetMaxNum,
+                                   kRetargetMaxDen, ovf_cap);
+
+    // actual_seconds == 0 (two solves in the same masterchain block, or
+    // a same-second window) ⇒ "infinite hashrate" ⇒ clamp to floor (3/4).
+    // The timestamp-monotonicity check rejects gen_utime == last_solve_ts
+    // at the per-tx level, but the window's first/last delta can still
+    // drift to 0 if the window opens and closes at the same gen_utime
+    // across edge-case test fixtures. Treat it as harder, never softer.
+    if (actual_seconds == 0) {
+        return floor_t;
+    }
+
+    // Saturating-mul guarded multiply for `actual_seconds * old`. Bound
+    // actual_seconds at a sane upper value before multiplication so a
+    // wildly-future timestamp does not blow the clamp completely. Cap
+    // matches Bitcoin's 4× max-adjustment style: if actual > expected ×
+    // kRetargetMaxNum / kRetargetMaxDen we know the result lands above
+    // the cap anyway, so collapse the multiply to the cap directly.
+    bool ovf = false;
+    auto unclamped = mul_div_u256_be(old_target, actual_seconds,
+                                     kRetargetExpectedSeconds, ovf);
+
+    // Clamp.  All comparisons are byte-wise BE (the std::array<uint8_t,32>
+    // operator< does this lexicographically — same as the on-chain target
+    // comparison used in the PoW threshold check).
+    if (ovf || cap_t < unclamped) {
+        return cap_t;
+    }
+    if (unclamped < floor_t) {
+        return floor_t;
+    }
+    return unclamped;
 }
 
 }  // namespace uno_workchain

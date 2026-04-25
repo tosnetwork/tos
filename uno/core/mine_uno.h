@@ -303,4 +303,43 @@ td::Result<td::BufferSlice> encode_mine_uno_to_boc(const MineUno& tx,
 /// any future format change must rev the prefix.
 td::Bits256 canonical_mine_uno_hash(const MineUno& tx) noexcept;
 
+// ---------------------------------------------------------------------------
+// Difficulty retarget helpers (uno-mine-v1 Phase 2 retarget)
+// ---------------------------------------------------------------------------
+
+/// Multiply a 256-bit big-endian unsigned integer by `mul` (u64) and divide
+/// the result by `div` (u64), returning the quotient as a 256-bit big-endian
+/// unsigned integer. The intermediate product is held in 320 bits so the
+/// 256×64 multiply never overflows.
+///
+/// On overflow of the final quotient (i.e. the true quotient does not fit in
+/// 256 bits) the result is saturated to 0xFF...FF and `out_overflow` is set
+/// to true; otherwise `out_overflow` is false. `div == 0` is treated as
+/// overflow (saturate, set flag).
+///
+/// Deterministic: pure integer arithmetic, no floats, identical on every
+/// validator. Used by the difficulty retarget step to compute
+/// `old_target * actual_seconds / expected_seconds`.
+std::array<uint8_t, 32> mul_div_u256_be(const std::array<uint8_t, 32>& target,
+                                        uint64_t mul,
+                                        uint64_t div,
+                                        bool& out_overflow) noexcept;
+
+/// Compute the new PoW target after a retarget window closes, applying the
+/// Bitcoin-style clamp to [old * kRetargetMinNum/kRetargetMinDen,
+///                        old * kRetargetMaxNum/kRetargetMaxDen].
+///
+/// The unclamped formula is
+///   `new = old * actual_seconds / kRetargetExpectedSeconds`.
+///
+/// `actual_seconds == 0` is treated as "max hashrate, clamp to floor"
+/// (the floor is `old * kRetargetMinNum / kRetargetMinDen`, i.e. 3/4 of
+/// old → harder).
+///
+/// Returns the post-clamp target. Pure function over the inputs; safe to
+/// call from any consensus path.
+std::array<uint8_t, 32> compute_retargeted_pow_target(
+    const std::array<uint8_t, 32>& old_target,
+    uint64_t actual_seconds) noexcept;
+
 }  // namespace uno_workchain

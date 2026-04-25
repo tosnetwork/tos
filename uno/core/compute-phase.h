@@ -109,12 +109,23 @@ public:
     virtual uint64_t mine_remaining() const noexcept { return 0; }
     virtual std::array<uint8_t, 32> mine_target() const noexcept { return {}; }
 
+    /// Last accepted MineUno's masterchain `gen_utime` (seconds, u32). Zero
+    /// at genesis (no solves yet). Used by the timestamp-monotonicity
+    /// consensus check in `verify_mine_uno_chain_checks` and by the
+    /// 144-solve retarget window. Default returns 0 so skeleton states
+    /// stay compile-clean.
+    virtual uint32_t last_solve_ts() const noexcept { return 0; }
+
     /// Atomic state transition applied by `apply_mine_uno` on success.
     /// - Advances `mine_epoch` by one.
     /// - Overwrites `mine_remaining` with `new_remaining`.
+    /// - Records `gen_utime` as the new `last_solve_ts`.
+    /// - May trigger a difficulty retarget when the 144-solve window closes.
     /// Default is no-op so skeleton test states stay compile-clean.
-    virtual void advance_mine_state(uint64_t new_remaining) noexcept {
+    virtual void advance_mine_state(uint64_t new_remaining,
+                                    uint32_t gen_utime) noexcept {
         (void)new_remaining;
+        (void)gen_utime;
     }
 };
 
@@ -152,6 +163,7 @@ enum class VerifyResult : int {
     PowHashAboveTarget          = 47,  // pow_hash >= state.mine_target() (failed PoW)
     PiHeaderMismatch            = 48,  // STARK PI != tx header (replay / forgery)
     ZeroValueMineUno            = 49,  // value_nano == 0 (post-cap free tx spam)
+    TimestampNotMonotonic       = 50,  // gen_utime <= state.last_solve_ts() (consensus rule)
     // catch-all (decode / codec)
     DecodeError                 = 90,
 };
@@ -227,18 +239,30 @@ std::vector<VerifyResult> run_compute_phase_batch(
 // plus a per-byte surcharge, mirroring Transfer's `compute_gas_used`.
 // ---------------------------------------------------------------------------
 VerifyResult verify_mine_uno_chain_checks(const UnoState& state,
-                                          const MineUno&  tx) noexcept;
-VerifyResult apply_mine_uno(UnoState& state, const MineUno& tx) noexcept;
+                                          const MineUno&  tx,
+                                          uint32_t        gen_utime) noexcept;
+VerifyResult apply_mine_uno(UnoState& state,
+                            const MineUno& tx,
+                            uint32_t       gen_utime) noexcept;
 uint64_t     compute_gas_used_mine_uno(const MineUno& tx) noexcept;
 
 /// Batch variant for MineUno txs — strategy (a), separate batch per kind.
 /// Applies each tx in declared order, running `apply_mine_uno` (chain
 /// checks + STARK verify + state mutation) serially. Returns the per-tx
 /// VerifyResult vector in input order. See uno-mine-v1 spec §4.3.
+///
+/// The `gen_utime` parameter is the masterchain `gen_utime` of the
+/// containing block; every tx in the batch shares the same value. The
+/// per-tx timestamp-monotonicity check uses `state.last_solve_ts()`,
+/// which advances after each accepted apply, so two MineUnos in the same
+/// block trip the monotonicity guard (gen_utime == last_solve_ts) — only
+/// the first wins. This matches the design in
+/// doc/uno-mine-cpp-integration-spec.md.
 std::vector<VerifyResult> run_compute_phase_batch_mine_uno(
     UnoState&       state,
     const MineUno*  txs,
-    std::size_t     n_txs);
+    std::size_t     n_txs,
+    uint32_t        gen_utime);
 
 /// End-of-block hook. Called exactly once per wc=2 block after the last
 /// `run_compute_phase` / `run_compute_phase_batch` for that block. Drives:

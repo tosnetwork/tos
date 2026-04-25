@@ -30,6 +30,7 @@
 #include "uno/core/anchor-window.h"
 #include "uno/core/block-filter.h"
 #include "uno/core/mine_constants.h"  // kInitMineTargetBE, kMineSupplyNano
+#include "uno/core/mine_uno.h"        // compute_retargeted_pow_target
 
 #include "uno/rpc/handlers.h"
 #include "uno/rpc/filter-service.h"
@@ -98,6 +99,20 @@ namespace {
 constexpr uint32_t kLiveUnoShardStateMagic = 0x554E4F53;  // "UNOS"
 constexpr unsigned kLiveUnoShardStateMagicBits = 32;
 constexpr uint8_t  kLiveShardStateVersion = 1;
+
+// Internal version byte stored INSIDE the mining_state cell. Decoupled
+// from `kLiveShardStateVersion` (the outer LiveUnoState envelope version)
+// so mining-state schema bumps don't force the entire shard-state magic
+// to bounce. v1 (the implicit pre-retarget layout) was 384 bits with no
+// version prefix; v2 adds a leading u8 sentinel + 3×u32 retarget fields
+// (96 bits) for a total of 480 bits, still well under the 1023-bit cell
+// limit. Old persisted v1 cells are rejected at hydrate (the leading u8
+// will not equal kLiveMiningStateVersion v2 == 0x02 — and the v1 layout's
+// first 8 bits are the high byte of mine_remaining, which for any real
+// state on an active chain is 0x00). Hydrate also re-checks the
+// trailing-payload exact-shape rule, so a v1-shaped cell falling through
+// would fail the canonical check downstream regardless.
+constexpr uint8_t  kLiveMiningStateVersion = 2;
 constexpr size_t   kLiveHashBytes = 32;
 constexpr unsigned kLiveStateRefCommitmentTree = 0;
 constexpr unsigned kLiveStateRefNullifierSet = 1;
@@ -117,18 +132,32 @@ td::Ref<vm::Cell> encode_live_stats_cell(uint64_t burned_fees,
 }
 
 // Serialize the MineUno consensus fields (mine_remaining, mine_epoch,
-// mine_target, halving_era) into a single cell. Byte-identical to the
-// canonical block-producer format in `uno/core/cell-state.cpp::
-// encode_mining_state_cell` — keep the two in sync so persisted LiveUno
-// and zerostate-loader cells decode interchangeably. Without this,
-// mine_epoch / mine_remaining / mine_target reset to construction
-// defaults on every validator restart, letting an attacker replay a
-// fresh-chain mint flood.
-td::Ref<vm::Cell> encode_live_mining_state_cell(uint64_t mine_remaining,
-                                                uint32_t mine_epoch,
-                                                const std::array<uint8_t, 32>& mine_target) {
+// mine_target, halving_era, retarget bookkeeping) into a single cell.
+//
+// v2 layout (uno-mine-v1 Phase 2 retarget):
+//   [0..7]    version sentinel (= kLiveMiningStateVersion = 0x02)   8 bits
+//   [8..71]   mine_remaining                                       64 bits
+//   [72..103] mine_epoch                                           32 bits
+//   [104..359] mine_target                                        256 bits
+//   [360..391] halving_era                                         32 bits
+//   [392..423] retarget_window_start_ts                            32 bits
+//   [424..455] retarget_window_start_epoch                         32 bits
+//   [456..487] last_solve_ts                                       32 bits
+// Total: 488 bits inline, no refs. Fits comfortably under the 1023-bit
+// cell limit.
+//
+// v1 layout (pre-retarget) had no version sentinel and stopped at
+// halving_era (384 bits total). It is rejected at hydrate: the sentinel
+// byte must equal v2.
+td::Ref<vm::Cell> encode_live_mining_state_cell(
+    uint64_t mine_remaining,
+    uint32_t mine_epoch,
+    const std::array<uint8_t, 32>& mine_target,
+    uint32_t retarget_window_start_ts,
+    uint32_t retarget_window_start_epoch,
+    uint32_t last_solve_ts) {
     vm::CellBuilder cb;
-    // Inline: 64 + 32 + 256 + 32 = 384 bits; no refs.
+    cb.store_long(static_cast<long long>(kLiveMiningStateVersion), 8);
     cb.store_long(static_cast<long long>(mine_remaining), 64);
     cb.store_long(static_cast<long long>(mine_epoch), 32);
     cb.store_bytes(mine_target.data(), 32);
@@ -137,6 +166,9 @@ td::Ref<vm::Cell> encode_live_mining_state_cell(uint64_t mine_remaining,
     const uint32_t halving_era =
         mine_epoch / uno_workchain::kEraSize;
     cb.store_long(static_cast<long long>(halving_era), 32);
+    cb.store_long(static_cast<long long>(retarget_window_start_ts), 32);
+    cb.store_long(static_cast<long long>(retarget_window_start_epoch), 32);
+    cb.store_long(static_cast<long long>(last_solve_ts), 32);
     return cb.finalize();
 }
 
@@ -220,7 +252,9 @@ class LiveUnoState : public UnoState {
     uint32_t mine_epoch() const noexcept override;
     uint64_t mine_remaining() const noexcept override;
     std::array<uint8_t, 32> mine_target() const noexcept override;
-    void advance_mine_state(uint64_t new_remaining) noexcept override;
+    uint32_t last_solve_ts() const noexcept override;
+    void advance_mine_state(uint64_t new_remaining,
+                            uint32_t gen_utime) noexcept override;
 
     /// Snapshot of the three mining fields, taken under the state mutex.
     /// Used by `rpc_mine_state_fn` to feed `uno_getMineState`.
@@ -331,6 +365,20 @@ class LiveUnoState : public UnoState {
     mutable uint64_t                mine_remaining_{0};
     mutable std::array<uint8_t, 32> mine_target_{};
 
+    // Phase 2 difficulty retarget bookkeeping (uno-mine-v1 §retarget).
+    // Timestamps are masterchain `gen_utime` (Unix seconds, u32). The
+    // window opens on the first solve after chain start (or after the
+    // last retarget) and closes when `kRetargetWindowSolves` solves
+    // have accumulated. At that point the formula
+    //   actual = last_solve_ts_ - retarget_window_start_ts_
+    //   new    = clamp(old × actual / kRetargetExpectedSeconds, 3/4, 4/3)
+    // produces the new mine_target_, and the window resets to the
+    // current `gen_utime` / `mine_epoch`. Persisted in v2 mining_state
+    // cell. See `maybe_retarget()` for the cadence + clamp.
+    mutable uint32_t                retarget_window_start_ts_{0};
+    mutable uint32_t                retarget_window_start_epoch_{0};
+    mutable uint32_t                last_solve_ts_{0};
+
     // Per-block scratch: outputs produced by the tx currently being applied.
     std::vector<OutputRecord> pending_tx_outputs_;
 
@@ -351,6 +399,15 @@ class LiveUnoState : public UnoState {
     mutable td::Bits256 live_state_cell_hash_{};
 
     void reset_consensus_state_to_empty_locked();
+
+    // Window-close hook: called by `advance_mine_state` after every
+    // accepted solve. If the current window has accumulated
+    // `kRetargetWindowSolves` solves, recomputes `mine_target_` per the
+    // Bitcoin-classic clamped formula and rotates the window anchors to
+    // (gen_utime, mine_epoch_). Otherwise no-op. MUST be called with
+    // `mutex_` held (the public callers `advance_mine_state` /
+    // `reset_consensus_state_to_empty_locked` both already hold it).
+    void maybe_retarget_locked(uint32_t gen_utime) noexcept;
 };
 
 LiveUnoState::LiveUnoState()
@@ -429,6 +486,9 @@ void LiveUnoState::reset_consensus_state_to_empty_locked() {
         std::copy(std::begin(kInitMineTargetBE), std::end(kInitMineTargetBE),
                   mine_target_.begin());
     }
+    retarget_window_start_ts_    = 0;
+    retarget_window_start_epoch_ = 0;
+    last_solve_ts_               = 0;
 }
 
 bool LiveUnoState::anchor_window_contains(const td::Bits256& anchor) const {
@@ -516,7 +576,10 @@ td::Ref<vm::Cell> LiveUnoState::serialize_to_cell() const {
     auto stats_cell = encode_live_stats_cell(
         stats_burned_fees_, stats_tx_count_, stats_note_count_);
     auto mining_state_cell = encode_live_mining_state_cell(
-        mine_remaining_, mine_epoch_, mine_target_);
+        mine_remaining_, mine_epoch_, mine_target_,
+        retarget_window_start_ts_,
+        retarget_window_start_epoch_,
+        last_solve_ts_);
     auto meta_cell = build_live_meta_cell(std::move(anchor_cell),
                                           std::move(stats_cell),
                                           std::move(mining_state_cell));
@@ -697,10 +760,24 @@ bool LiveUnoState::hydrate_from_cell_if_needed(td::Ref<vm::Cell> root) try {
     uint64_t persisted_mine_remaining = 0;
     uint32_t persisted_mine_epoch = 0;
     std::array<uint8_t, 32> persisted_mine_target{};
+    uint32_t persisted_retarget_window_start_ts = 0;
+    uint32_t persisted_retarget_window_start_epoch = 0;
+    uint32_t persisted_last_solve_ts = 0;
     {
         auto mining_cell = meta_cs.prefetch_ref(kLiveMetaRefMiningState);
         auto mining_cs = vm::load_cell_slice(mining_cell);
         long long v = 0;
+        // v2 sentinel byte. Old v1 cells (no sentinel) are rejected here
+        // because their first byte is the high byte of mine_remaining
+        // (=0x00 for any real chain remaining < 2^56) which does not
+        // equal kLiveMiningStateVersion (= 0x02).
+        if (!mining_cs.fetch_long_bool(8, v) ||
+            static_cast<uint8_t>(v) != kLiveMiningStateVersion) {
+            LOG(ERROR) << "uno-workchain: persisted mining_state has bad version"
+                       << " (expected v" << static_cast<unsigned>(kLiveMiningStateVersion)
+                       << ", got " << v << ")";
+            return false;
+        }
         if (!mining_cs.fetch_long_bool(64, v)) {
             LOG(ERROR) << "uno-workchain: persisted mining_state missing remaining";
             return false;
@@ -721,6 +798,22 @@ bool LiveUnoState::hydrate_from_cell_if_needed(td::Ref<vm::Cell> root) try {
             LOG(ERROR) << "uno-workchain: persisted mining_state missing halving_era";
             return false;
         }
+        // v2 retarget bookkeeping fields.
+        if (!mining_cs.fetch_long_bool(32, v)) {
+            LOG(ERROR) << "uno-workchain: persisted mining_state missing retarget_window_start_ts";
+            return false;
+        }
+        persisted_retarget_window_start_ts = static_cast<uint32_t>(v);
+        if (!mining_cs.fetch_long_bool(32, v)) {
+            LOG(ERROR) << "uno-workchain: persisted mining_state missing retarget_window_start_epoch";
+            return false;
+        }
+        persisted_retarget_window_start_epoch = static_cast<uint32_t>(v);
+        if (!mining_cs.fetch_long_bool(32, v)) {
+            LOG(ERROR) << "uno-workchain: persisted mining_state missing last_solve_ts";
+            return false;
+        }
+        persisted_last_solve_ts = static_cast<uint32_t>(v);
         // Canonical exact-shape check.
         if (mining_cs.size() != 0 || mining_cs.size_refs() != 0) {
             LOG(ERROR) << "uno-workchain: persisted mining_state has trailing payload"
@@ -756,6 +849,9 @@ bool LiveUnoState::hydrate_from_cell_if_needed(td::Ref<vm::Cell> root) try {
     mine_remaining_ = persisted_mine_remaining;
     mine_epoch_ = persisted_mine_epoch;
     mine_target_ = persisted_mine_target;
+    retarget_window_start_ts_ = persisted_retarget_window_start_ts;
+    retarget_window_start_epoch_ = persisted_retarget_window_start_epoch;
+    last_solve_ts_ = persisted_last_solve_ts;
     live_state_cell_hash_ = incoming_hash;
     has_live_state_cell_hash_ = true;
     return true;
@@ -821,14 +917,80 @@ std::array<uint8_t, 32> LiveUnoState::mine_target() const noexcept {
     return mine_target_;
 }
 
-void LiveUnoState::advance_mine_state(uint64_t new_remaining) noexcept {
+uint32_t LiveUnoState::last_solve_ts() const noexcept {
+    std::lock_guard<std::mutex> lk(mutex_);
+    return last_solve_ts_;
+}
+
+void LiveUnoState::advance_mine_state(uint64_t new_remaining,
+                                      uint32_t gen_utime) noexcept {
     std::lock_guard<std::mutex> lk(mutex_);
     ++mine_epoch_;
     mine_remaining_ = new_remaining;
-    // `mine_target_` is rewritten by the retarget step driven from
-    // `apply_mine_uno` (uno-mine-v1 Phase 2). This accessor only advances
-    // epoch + remaining; the target-retarget mutator is a separate method
-    // landed alongside the retarget algorithm.
+    last_solve_ts_  = gen_utime;
+
+    // Window-anchor (re-)opening. The "no window open" sentinel is
+    // `retarget_window_start_ts_ == 0`. Two cases reach this branch:
+    //   1. Genesis / fresh state: never had a solve before. The very
+    //      first solve anchors the window at its own gen_utime and
+    //      epoch.
+    //   2. The previous solve closed a window via `maybe_retarget_locked`,
+    //      which left the anchor cleared. The next solve (= first of the
+    //      new window) anchors here.
+    // Bitcoin's convention is that a window of N solves spans (N-1)
+    // intervals between the FIRST and LAST timestamps; we anchor on the
+    // first, so the actual-vs-expected ratio is (last - first) /
+    // ((N - 1) * target_seconds).
+    if (retarget_window_start_ts_ == 0) {
+        retarget_window_start_ts_    = gen_utime;
+        retarget_window_start_epoch_ = mine_epoch_ - 1;
+    }
+    maybe_retarget_locked(gen_utime);
+}
+
+void LiveUnoState::maybe_retarget_locked(uint32_t gen_utime) noexcept {
+    // A retarget fires once `kRetargetWindowSolves` solves have
+    // accumulated since the window opened. We just incremented
+    // `mine_epoch_` in `advance_mine_state`, so the window includes
+    // epochs (start, start + N] inclusive of the solve that just
+    // landed. Bitcoin's convention is to use (N - 1) intervals between
+    // N timestamps, hence `kRetargetExpectedSeconds`.
+    const uint64_t solves_in_window =
+        static_cast<uint64_t>(mine_epoch_) -
+        static_cast<uint64_t>(retarget_window_start_epoch_);
+    if (solves_in_window < kRetargetWindowSolves) {
+        return;
+    }
+
+    // gen_utime is the timestamp of the LAST solve in the window
+    // (== last_solve_ts_ as written by the caller). Use it directly
+    // rather than re-reading the field for clarity.
+    const uint32_t last_ts = gen_utime;
+    const uint32_t first_ts = retarget_window_start_ts_;
+    // Saturating subtraction. `verify_mine_uno_chain_checks` rejects
+    // gen_utime <= last_solve_ts (per-tx) but the retarget window
+    // spans many txs; defensive clamp covers the corner where
+    // last_ts == first_ts (e.g. all 144 solves landed in the same
+    // masterchain second — a real possibility on dev nets).
+    const uint64_t actual_seconds = (last_ts >= first_ts)
+        ? static_cast<uint64_t>(last_ts - first_ts)
+        : 0ULL;
+
+    auto new_target = compute_retargeted_pow_target(mine_target_, actual_seconds);
+    LOG(INFO) << "uno-workchain(retarget): epoch=" << mine_epoch_
+              << " actual_s=" << actual_seconds
+              << " expected_s=" << kRetargetExpectedSeconds;
+    mine_target_ = new_target;
+
+    // Clear the window anchors. The NEXT solve will re-anchor them via
+    // the `retarget_window_start_ts_ == 0` branch in `advance_mine_state`.
+    // This matches Bitcoin's behaviour where a fresh window's first
+    // timestamp anchor is the FIRST solve of the new window, not the
+    // last solve of the previous one — so the (N-1)-interval expected
+    // duration is preserved exactly.
+    retarget_window_start_ts_    = 0;
+    retarget_window_start_epoch_ = 0;
+    (void)gen_utime;
 }
 
 MineStateSnapshot LiveUnoState::mine_state_snapshot() const {

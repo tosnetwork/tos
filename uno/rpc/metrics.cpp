@@ -113,6 +113,7 @@ RejectReason reject_reason_from_verify_result(int v) noexcept {
         case 47: return RejectReason::BadProof;    // PowHashAboveTarget
         case 48: return RejectReason::BadProof;    // PiHeaderMismatch
         case 49: return RejectReason::Other;       // ZeroValueMineUno
+        case 50: return RejectReason::Other;       // TimestampNotMonotonic
         case 90: return RejectReason::DecodeError;
         default: return RejectReason::Other;
     }

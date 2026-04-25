@@ -94,10 +94,15 @@ class FakeMineUnoState : public uw::UnoState {
     uint32_t mine_epoch() const noexcept override { return epoch_; }
     uint64_t mine_remaining() const noexcept override { return remaining_; }
     std::array<uint8_t, 32> mine_target() const noexcept override { return target_; }
-    void advance_mine_state(uint64_t new_remaining) noexcept override {
+    uint32_t last_solve_ts() const noexcept override { return last_solve_ts_; }
+    void advance_mine_state(uint64_t new_remaining,
+                            uint32_t gen_utime) noexcept override {
         epoch_ += 1;
         remaining_ = new_remaining;
+        last_solve_ts_ = gen_utime;
     }
+
+    uint32_t last_solve_ts_{0};
 };
 
 // ---------------------------------------------------------------------------
@@ -286,7 +291,7 @@ int main() {
     const size_t   before_cms   = state.commitments_.size();
     const size_t   before_tags  = state.filter_tags_.size();
 
-    auto result = uw::apply_mine_uno(state, dtx);
+    auto result = uw::apply_mine_uno(state, dtx, /*gen_utime=*/0);
     EXPECT(result == uw::VerifyResult::Ok, "apply_mine_uno must return Ok");
     if (result != uw::VerifyResult::Ok) {
         std::fprintf(stderr, "  result = %s\n", uw::verify_result_name(result));
@@ -313,7 +318,7 @@ int main() {
     // Step 6: resubmit the same tx — must fail with EpochRaceDetected
     // (state.mine_epoch() is now 1, pi.epoch is still 0).
     std::printf("[6/6] Resubmitting same tx — asserting EpochRaceDetected.\n");
-    auto replay_result = uw::apply_mine_uno(state, dtx);
+    auto replay_result = uw::apply_mine_uno(state, dtx, /*gen_utime=*/0);
     EXPECT(replay_result == uw::VerifyResult::EpochRaceDetected,
           "resubmitted tx must be rejected with EpochRaceDetected");
     // State must NOT mutate further.

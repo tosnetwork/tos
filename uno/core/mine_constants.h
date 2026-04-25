@@ -54,6 +54,20 @@ constexpr uint32_t kRetargetMinDen = 4;
 constexpr uint32_t kRetargetMaxNum = 4;
 constexpr uint32_t kRetargetMaxDen = 3;
 
+/// Number of accepted MineUno solves between difficulty retargets.
+/// Mirrors Bitcoin's 2016-block cadence scaled to UNO's ~24 h target window
+/// at the 600 s solve cadence (144 × 600 s = 86,400 s = 24 h). Only the
+/// first and last solve timestamps in the window are persisted; the
+/// retarget formula uses their delta as the actual elapsed time.
+constexpr uint32_t kRetargetWindowSolves = 144;
+
+/// Expected wall-clock seconds between the first and last solve in a
+/// retarget window: (kRetargetWindowSolves - 1) * kTargetSolveSeconds.
+/// Bitcoin uses (N-1) intervals for N blocks because the first block's
+/// timestamp anchors the window — same convention here.
+constexpr uint64_t kRetargetExpectedSeconds =
+    static_cast<uint64_t>(kRetargetWindowSolves - 1) * kTargetSolveSeconds;
+
 /// Domain-separation tag for the PoW hash.
 /// `Poseidon2("uno-mine-v1" ‖ epoch ‖ nonce ‖ output_cm)`.
 /// Must match the MineUno AIR constraint 1 (doc/uno-mine-air-constraints.md).

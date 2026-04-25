@@ -132,10 +132,15 @@ class FakeMineUnoState : public uw::UnoState {
     uint32_t mine_epoch() const noexcept override { return epoch_; }
     uint64_t mine_remaining() const noexcept override { return remaining_; }
     std::array<uint8_t, 32> mine_target() const noexcept override { return target_; }
-    void advance_mine_state(uint64_t new_remaining) noexcept override {
+    uint32_t last_solve_ts() const noexcept override { return last_solve_ts_; }
+    void advance_mine_state(uint64_t new_remaining,
+                            uint32_t gen_utime) noexcept override {
         epoch_ += 1;
         remaining_ = new_remaining;
+        last_solve_ts_ = gen_utime;
     }
+
+    uint32_t last_solve_ts_{0};
 };
 
 // ---------------------------------------------------------------------------
@@ -311,7 +316,7 @@ static void test_apply_chain_checks_epoch_race() {
     auto tx = make_genesis_mine_tx();  // public_inputs.epoch = 0
     uint32_t before_epoch = state.epoch_;
     uint64_t before_rem   = state.remaining_;
-    auto result = uw::verify_mine_uno_chain_checks(state, tx);
+    auto result = uw::verify_mine_uno_chain_checks(state, tx, /*gen_utime=*/0);
     if (result != uw::VerifyResult::EpochRaceDetected) {
         tprintf("  FAILED: verify returned %s; expected EpochRaceDetected\n",
                 uw::verify_result_name(result));
@@ -333,7 +338,7 @@ static void test_apply_chain_checks_remaining_race() {
     FakeMineUnoState state;
     state.remaining_ = uw::kMineSupplyNano - 1;   // already drained 1 nano-UNO
     auto tx = make_genesis_mine_tx();             // tx thinks remaining_pre = full supply
-    auto result = uw::verify_mine_uno_chain_checks(state, tx);
+    auto result = uw::verify_mine_uno_chain_checks(state, tx, /*gen_utime=*/0);
     if (result != uw::VerifyResult::RemainingRaceDetected) {
         tprintf("  FAILED: verify returned %s; expected RemainingRaceDetected\n",
                 uw::verify_result_name(result));
@@ -352,7 +357,7 @@ static void test_apply_chain_checks_halving() {
     auto tx = make_genesis_mine_tx();
     tx.public_inputs.value_nano = uw::kInitMineReward + 1;   // off by 1
     tx.public_inputs.remaining_post = tx.public_inputs.remaining_pre - tx.public_inputs.value_nano;
-    auto result = uw::verify_mine_uno_chain_checks(state, tx);
+    auto result = uw::verify_mine_uno_chain_checks(state, tx, /*gen_utime=*/0);
     if (result != uw::VerifyResult::InvalidHalvingReward) {
         tprintf("  FAILED: verify returned %s; expected InvalidHalvingReward\n",
                 uw::verify_result_name(result));
@@ -370,7 +375,7 @@ static void test_apply_chain_checks_conservation() {
     FakeMineUnoState state;
     auto tx = make_genesis_mine_tx();
     tx.public_inputs.remaining_post += 1;   // tampered
-    auto result = uw::verify_mine_uno_chain_checks(state, tx);
+    auto result = uw::verify_mine_uno_chain_checks(state, tx, /*gen_utime=*/0);
     if (result != uw::VerifyResult::BadMineConservation) {
         tprintf("  FAILED: verify returned %s; expected BadMineConservation\n",
                 uw::verify_result_name(result));
@@ -388,7 +393,7 @@ static void test_apply_chain_checks_bad_kind() {
     FakeMineUnoState state;
     auto tx = make_genesis_mine_tx();
     tx.tx_kind = 0x99;
-    auto result = uw::verify_mine_uno_chain_checks(state, tx);
+    auto result = uw::verify_mine_uno_chain_checks(state, tx, /*gen_utime=*/0);
     if (result != uw::VerifyResult::UnknownTxKind) {
         tprintf("  FAILED: verify returned %s; expected UnknownTxKind\n",
                 uw::verify_result_name(result));
@@ -412,7 +417,7 @@ static void test_apply_rejects_bad_proof_no_mutation() {
     size_t   before_cms   = state.commitments_.size();
     size_t   before_tags  = state.filter_tags_.size();
 
-    auto result = uw::apply_mine_uno(state, tx);
+    auto result = uw::apply_mine_uno(state, tx, /*gen_utime=*/0);
     // After the round-5 reordering, the cheap O(1) PI/header binding check
     // runs BEFORE the expensive FFI verify, so dummy proof bytes paired
     // with a non-matching dummy PI (as constructed by make_dummy_proof_blob)

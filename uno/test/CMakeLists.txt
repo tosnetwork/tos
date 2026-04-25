@@ -124,6 +124,12 @@ add_executable(test-uno-mine-loader               test-uno-mine-loader.cpp)
 # against the struct layout in mine_uno.h.
 add_executable(test-mine-uno-cpp                  test-mine-uno-cpp.cpp)
 
+# K-mine-retarget: Phase 2 difficulty retarget regression suite. Pins the
+# 144-solve windowed clamp formula, big-int mul_div_u256_be helper edge
+# cases, timestamp-monotonicity consensus rule, and snapshot/restart
+# determinism. Closes the P1 audit finding "mine_target_ never updated".
+add_executable(test-uno-mine-retarget             test-uno-mine-retarget.cpp)
+
 # Mainnet-5: end-to-end MineUno apply driver. Produces a real Plonky3
 # STARK proof via `uno_mine_uno_prove` FFI, builds a MineUno BoC, runs
 # the full compute-phase apply path (decode → chain checks → FFI verify
@@ -220,6 +226,7 @@ foreach(_t test-uno-transfer
            test-uno-genesis-loader
            test-uno-mine-loader
            test-mine-uno-cpp
+           test-uno-mine-retarget
            test-uno-bech32m-envelope
            test-uno-subscriptions
            test-uno-metrics
