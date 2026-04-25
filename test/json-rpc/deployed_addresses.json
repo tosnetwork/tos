@@ -1,38 +1,77 @@
 {
   "wallets": {
-    "wallet_v1": {
-      "address": "0:c269e7c6828a59f9bc2e2861e831d047073a5f49d17abb5031245faba5bfc19d",
-      "code_hash": "bcd75d29a1d932013cf31300c5d924a5f02eaa92cd830ec0330104ffbad07928"
-    },
-    "wallet_v3r2": {
-      "address": "0:de74541fdf2b44400ddde55a26ee5b9b293ef30ff1bd6fbe3daf5229850c888e",
-      "code_hash": "6c6caaf194af3660e7ae4c584785c1bda0d85fafd80e947d725105947cd11d7d"
-    },
     "wallet_v4r2": {
-      "address": "0:42e3db96eb9249a49431be129c39e4027657f9ccfdfff93c7ba2ba4a021606b0",
+      "address": "0:5be444c8b95404e7de48ea0efa447a21911e6a19893e36074f76e433db9c03f5",
       "code_hash": "e56efc6c2c9e1da65c36008e78baeb9974d2779c05f29edf4adf39b4dbabd994"
     },
     "wallet_v5r1": {
-      "address": "0:f3eb5fdc515aad1d15c2f6832a35aeddadd497a0931dc45ee3ac3a6e30a6efa0",
+      "address": "0:2871c41d18bd1420b2e3233cdabcd7c8cbf70a2297e2a31cb0daeaf58c661ccb",
       "code_hash": "e6c006f19fbabccd0d4852c1cc4ca3c6410914dc86f6611ccf8165cdcaafc6e0"
     },
+    "session_wallet": {
+      "address": "0:b01a439342902e8cbf63f079ca103dff53a9183810f78c518630fac5169abea3",
+      "code_hash": "0561efec675b370cdb3cffe929ef0b80e182b6e3aafcbda56613ad386e527aff",
+      "session_count": 2
+    },
+    "wallet_v1": {
+      "address": "0:f4b0f171fe98753e38ca98f1a15ac7a9356cfd187d534bf629dd78f10d780ed3",
+      "code_hash": "bcd75d29a1d932013cf31300c5d924a5f02eaa92cd830ec0330104ffbad07928"
+    },
+    "multisig": {
+      "address": "0:ed5de5e4b88810a88059e23456dfe19605e6babf44fe4eb99607e59616adc4e7",
+      "code_hash": "1a2b1207016361d584b4eef762457578798e0860d20c0ce0662c1ca17e65a56f",
+      "n": 3,
+      "k": 2
+    },
+    "nominator_pool": {
+      "address": "0:819483e9f7be67da6b8bfe643cc5d1293bcfe295030c47b2c8d57341b6cbd831",
+      "code_hash": "9a3ec14bc098f6b44064c305222caea2800f17dda85ee6a8198a7095ede10dcf",
+      "nominators_count": 1,
+      "validator_reward_share": 4000,
+      "max_nominators": 40,
+      "min_validator_stake": 1000000000,
+      "min_nominator_stake": 100000000
+    },
+    "restricted_expired": {
+      "address": "0:2c7979d7650d5f5f920437d4ef432b004dd894e786973fe937b6943a8550c5e7",
+      "code_hash": "aa5f0602a1c32f8dbc9cdd26d8cecd1f89ab0869f7c4c837dc8d405d390541f6",
+      "start_at": 0,
+      "reserve_amount": 0
+    },
+    "wallet_v3r2": {
+      "address": "0:07c7fcb2833ac55489b052f0737afc321596af16d223e75d36392ee920a94bf6",
+      "code_hash": "6c6caaf194af3660e7ae4c584785c1bda0d85fafd80e947d725105947cd11d7d"
+    },
     "highload_v1": {
-      "address": "0:6398769ede08c868a548442d6c0d5ab4c8a68eb763078768ebc9774b33dd3f7f",
+      "address": "0:7a789fdf7631b0bb5813da39cfedff75cb6ce1b4002515e8b46c7851125532e2",
       "code_hash": "9cec5155dcb2b37716c032c5ef85947c01e32c4405a2611ee8d1122afff0e0c1"
     },
+    "nominator_pool_withdraw": {
+      "address": "0:feae51b29c7c00837e17ddb02caddd48d451590a9be2d52097c605e376886b7b",
+      "code_hash": "9a3ec14bc098f6b44064c305222caea2800f17dda85ee6a8198a7095ede10dcf",
+      "nominators_count": 1,
+      "has_withdraw_request": true
+    },
+    "restricted": {
+      "address": "0:6c702f1bbe04fea77def8c0448055f7d5d3ce6f6f77a61d258ca47303bc5fb59",
+      "code_hash": "aa5f0602a1c32f8dbc9cdd26d8cecd1f89ab0869f7c4c837dc8d405d390541f6",
+      "start_at": 0,
+      "reserve_amount": 500000000
+    },
     "highload_v2": {
-      "address": "0:46c508ca2fe00fae7d35ef971a96c719a8fe94d03368a2697b548b689113cb3c",
+      "address": "0:02329a25a87ee5008ade7d6c1a34992111f11b95b662dfdc10e4b8a16ae34d2b",
       "code_hash": "de7d8832ddc838811f940ef0cecbbc95c6cd2cef83e9d22abce5e1a1dba5638a"
     }
   },
   "tokens": {
-    "jetton_master": {
-      "address": "-1:109306a27fa0dc038c711076ca53f5533c689e838dd8e97b2388c73404c5db0f",
-      "code_hash": "13f5d7a316c6d76e1053e88ac59b5de65a072a388451371dc5c5becbba13f50e"
-    },
     "nft_collection": {
-      "address": "-1:aeceb8174968bf84c83cae2f433208d03f6a558b72a738f923c2071435ca9f0e",
+      "address": "0:0337c9b4f8c4b1ed66ab9ac0d66c93b48d9ce9d485b09a252635889b0a1a930a",
       "code_hash": "64bb2d4661b5f2dc1a83bf5cbbe09e92ac0b460a1b879a5519386fca4c348bca"
+    },
+    "jetton_master": {
+      "address": "0:eb5c28567e9a851a55b7b3c6a6f25107720f2972594190e7e908a66288e28478",
+      "code_hash": "13f5d7a316c6d76e1053e88ac59b5de65a072a388451371dc5c5becbba13f50e",
+      "last_deploy_error": "Contract 0:d41fdd107eac889b22a5aacf1162fe099263293ba91d2f694bc777faed525691 did not become active within 30s"
     }
   }
 }
