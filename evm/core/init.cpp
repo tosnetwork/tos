@@ -766,20 +766,15 @@ void init_evm_workchain(const std::string& db_root) {
             bool ok = run_evm_compute_phase_snapshot(
                 cp, std::move(account_data), in_msg_body, gas_limit,
                 block_seqno, timestamp, rand_seed, parent_block_hash);
-            // Publish RPC-observability records into g_evm_state and the
-            // cache DB. Compute itself does not touch global mutable
-            // state — the dedup inside `apply_block_side_effects` keeps
-            // the operation idempotent across collator/validator/restart
-            // re-runs of the same (block, tx).
-            //
-            // True post-accept semantics (apply only after the validator
-            // manager has flushed the block) would require capturing
-            // side effects at the BlockData layer; the pragmatic seam
-            // here keeps the consensus-relevant invariant (cp.new_data
-            // is pure) while preserving the existing RPC behaviour. See
-            // post-accept.h for the in-flight design notes.
+            // Stash captured side effects under the EVM tx_hash; the
+            // validator manager publishes them post-BFT-accept via
+            // `take_side_effects` + `apply_block_side_effects` from
+            // `cleanup_applied_external_messages`. Applying at compute
+            // time would pollute the RPC cache with records from
+            // candidates that lost BFT.
             if (cp.evm_side_effects) {
-                apply_block_side_effects(*cp.evm_side_effects);
+                auto tx_hash = cp.evm_side_effects->tx_hash;
+                stash_side_effects(tx_hash, *cp.evm_side_effects);
             }
             return ok;
         });

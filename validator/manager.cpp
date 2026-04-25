@@ -22,8 +22,11 @@
 
 #include "auto/tl/lite_api.h"
 #include "auto/tl/tos_api_json.h"
+#include "block/block-auto.h"
+#include "block/block-parse.h"
 #include "common/delay.h"
 #include "common/stats.h"
+#include "evm/core/post-accept-bridge.h"
 #include "db/fileref.hpp"
 #include "downloaders/wait-block-data.hpp"
 #include "downloaders/wait-block-state-merge.hpp"
@@ -1141,6 +1144,46 @@ void ValidatorManagerImpl::complete_external_messages(std::vector<ExtMessage::Ha
 }
 
 void ValidatorManagerImpl::cleanup_applied_external_messages(BlockHandle handle, td::Ref<BlockData> block) {
+  // Drive deferred publication of EVM RPC side-effects for every wc=1
+  // ext-msg in this canonically-applied block. Compute is pure and
+  // stashes captured effects under the EVM tx_hash; nothing reaches the
+  // RPC cache / subscriptions until BFT accepts the block (this hook).
+  // Walk in_msg_descr identically to AppliedExtMessageCleanupActor and
+  // hand each ext_in_msg to the bridge, which derives the EVM tx_hash
+  // and drains the matching cache entry.
+  if (block.not_null() && block->block_id().is_valid() &&
+      block->block_id().id.workchain == 1) {
+    try {
+      block::gen::Block::Record blk;
+      block::gen::BlockExtra::Record extra;
+      auto block_root = block->root_cell();
+      if (block_root.not_null() && tlb::unpack_cell(block_root, blk) &&
+          tlb::unpack_cell(blk.extra, extra)) {
+        vm::AugmentedDictionary in_msg_dict{vm::load_cell_slice_ref(extra.in_msg_descr), 256,
+                                            block::tlb::aug_InMsgDescrDefault};
+        in_msg_dict.check_for_each_extra(
+            [](td::Ref<vm::CellSlice> value, td::Ref<vm::CellSlice>, td::ConstBitPtr, int key_len) {
+              if (key_len != 256) return true;
+              int tag = block::gen::t_InMsg.get_tag(*value);
+              if (tag != block::gen::InMsg::msg_import_ext) return true;
+              vm::CellSlice cs{*value};
+              td::Ref<vm::Cell> msg, transaction;
+              if (!block::gen::t_InMsg.unpack_msg_import_ext(cs, msg, transaction)) {
+                return true;
+              }
+              evm_workchain::apply_stashed_side_effects_for_message(msg);
+              return true;
+            });
+      }
+    } catch (vm::VmError &err) {
+      LOG(WARNING) << "evm post-accept walk: vm error on block "
+                   << block->block_id().to_str() << ": " << err.get_msg();
+    } catch (vm::VmVirtError &err) {
+      LOG(WARNING) << "evm post-accept walk: virt error on block "
+                   << block->block_id().to_str() << ": " << err.get_msg();
+    }
+  }
+
   if (applied_ext_message_cleanup_actor_.empty() || !handle) {
     return;
   }

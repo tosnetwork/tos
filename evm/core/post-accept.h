@@ -21,12 +21,22 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "evm/core/state.h"
 
 #include <evmc/evmc.hpp>
 #include <silkworm/core/types/log.hpp>
+
+namespace vm {
+class Cell;
+}  // namespace vm
+
+namespace td {
+template <class T>
+class Ref;
+}  // namespace td
 
 namespace evm_workchain {
 
@@ -62,5 +72,57 @@ struct EvmBlockSideEffects {
 /// process (collator-then-validator), which is the operational reality on
 /// a single-validator node.
 void apply_block_side_effects(const EvmBlockSideEffects& fx);
+
+// ---------------------------------------------------------------------------
+// Deferred-apply queue: bridges pure compute -> post-BFT-accept apply.
+// ---------------------------------------------------------------------------
+//
+// Compute fires for every candidate validation pass, including BFT-rejected
+// ones. If `apply_block_side_effects` ran inline at compute time, every
+// rejected candidate would still pollute the RPC cache with receipts /
+// logs / block records / subscription notifications.
+//
+// Instead the dispatch lambda stashes the captured side effects under
+// the EVM tx_hash. Only after the validator manager observes a canonical
+// block (`cleanup_applied_external_messages`) does the host walk wc=1
+// transactions in BlockData, look up the cached effects, and apply.
+//
+// Cache cap: kMaxStashedSideEffects = 4096. On insert when full, the
+// oldest-touched entry is evicted (linear scan; same pattern as
+// WcExtMsgPerPeerLimiter::evict_oldest_locked in ext-message-pool.cpp).
+
+/// Stash one transaction's side effects for later post-accept apply.
+/// `tx_hash` MUST equal the cached `fx.tx_hash`. Safe to call from
+/// concurrent compute coroutines.
+void stash_side_effects(const evmc::bytes32& tx_hash, EvmBlockSideEffects fx);
+
+/// Look up and remove the cached side effects for `tx_hash`. Returns
+/// std::nullopt if the entry was never stashed or was already taken
+/// (or evicted). The caller is responsible for invoking
+/// `apply_block_side_effects` on the returned value.
+std::optional<EvmBlockSideEffects>
+take_side_effects(const evmc::bytes32& tx_hash);
+
+/// Number of currently-stashed entries. Test/diagnostics only.
+size_t stashed_side_effects_count() noexcept;
+
+// ---------------------------------------------------------------------------
+// Helpers for the validator-manager seam.
+// ---------------------------------------------------------------------------
+
+/// True when `addr` (32-byte big-endian) matches the EVM executor account.
+/// Provided here so `validator/manager.cpp` does not need to include
+/// `evm/core/workchain.h` directly.
+bool is_evm_executor_address(const unsigned char addr[32]) noexcept;
+
+/// Decode an EVM external-message cell (`Message_Any` form built by
+/// `build_evm_external_message`) and compute the keccak256(RLP) tx hash.
+/// Returns std::nullopt for any parse failure — callers should treat that
+/// as "not an EVM tx" and skip rather than fail loudly.
+///
+/// Cheaper than `decode_evm_transaction` because it skips ECDSA sender
+/// recovery; only the RLP envelope is needed for the hash.
+std::optional<evmc::bytes32>
+try_derive_evm_tx_hash_from_message(const td::Ref<vm::Cell>& msg) noexcept;
 
 }  // namespace evm_workchain
