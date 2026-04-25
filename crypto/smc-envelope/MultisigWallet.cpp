@@ -181,9 +181,14 @@ td::Ref<vm::Cell> MultisigWallet::create_init_data_fast(td::uint32 wallet_id, st
   return cb.finalize();
 }
 
-td::Ref<vm::Cell> MultisigWallet::merge_queries(td::Ref<vm::Cell> a, td::Ref<vm::Cell> b) const {
+td::Ref<vm::Cell> MultisigWallet::merge_queries(td::Ref<vm::Cell> a, td::Ref<vm::Cell> b) const try {
+  // Codex SDK-FFI audit (S3.2): defensive layer (S2.2 pattern). Hostile
+  // contract / lite-server result no longer aborts the embedding host.
   auto res = run_get_method("merge_queries", {a, b});
+  if (!res.success) return {};
   return res.stack.write().pop_cell();
+} catch (...) {
+  return {};
 }
 
 MultisigWallet::Mask MultisigWallet::to_mask(td::RefInt256 mask) const {
@@ -196,28 +201,39 @@ MultisigWallet::Mask MultisigWallet::to_mask(td::RefInt256 mask) const {
   return res_mask;
 }
 
-std::pair<int, MultisigWallet::Mask> MultisigWallet::check_query_signatures(td::Ref<vm::Cell> a) const {
+std::pair<int, MultisigWallet::Mask> MultisigWallet::check_query_signatures(td::Ref<vm::Cell> a) const try {
+  // Codex SDK-FFI audit (S3.2): defensive layer; (-1, empty mask) on failure.
   auto ans = run_get_method("check_query_signatures", {a});
+  if (!ans.success) return std::make_pair(-1, Mask{});
 
   auto mask = ans.stack.write().pop_int();
   auto cnt = ans.stack.write().pop_smallint_range(128);
   return std::make_pair(cnt, to_mask(mask));
+} catch (...) {
+  return std::make_pair(-1, Mask{});
 }
 
-std::pair<int, int> MultisigWallet::get_n_k() const {
+std::pair<int, int> MultisigWallet::get_n_k() const try {
+  // Codex SDK-FFI audit (S3.2): defensive layer; (0, 0) on failure.
   auto ans = run_get_method("get_n_k");
+  if (!ans.success) return std::make_pair(0, 0);
   auto k = ans.stack.write().pop_smallint_range(128);
   auto n = ans.stack.write().pop_smallint_range(128);
   return std::make_pair(n, k);
+} catch (...) {
+  return std::make_pair(0, 0);
 }
 
-std::vector<MultisigWallet::Message> MultisigWallet::get_unsigned_messaged(int id) const {
+std::vector<MultisigWallet::Message> MultisigWallet::get_unsigned_messaged(int id) const try {
+  // Codex SDK-FFI audit (S3.2): defensive layer; empty vector on any
+  // get-method failure or stack/dict exception.
   SmartContract::Answer ans;
   if (id == -1) {
     ans = run_get_method("get_messages_unsigned");
   } else {
     ans = run_get_method("get_messages_unsigned_by_id", {td::make_refint(id)});
   }
+  if (!ans.success) return {};
   auto n_k = get_n_k();
 
   auto cell = ans.stack.write().pop_maybe_cell();
@@ -235,5 +251,7 @@ std::vector<MultisigWallet::Message> MultisigWallet::get_unsigned_messaged(int i
     return true;
   });
   return res;
+} catch (...) {
+  return {};
 }
 }  // namespace tos

@@ -379,6 +379,10 @@ bool transaction_emulator_set_lt(void *transaction_emulator, uint64_t lt) {
 bool transaction_emulator_set_rand_seed(void *transaction_emulator, const char *rand_seed_hex) {
   // Codex audit (round 16, finding #3): null-handle guard.
   if (transaction_emulator == nullptr) return false;
+  // Codex SDK-FFI audit (S3.1): td::Slice(const char*) CHECKs non-null;
+  // S2.1 fixed BoC strings via boc_b64_to_cell, but raw rand_seed_hex /
+  // extra_currencies strings still need explicit guards.
+  if (rand_seed_hex == nullptr) return false;
   auto emulator = static_cast<emulator::TransactionEmulator *>(transaction_emulator);
 
   auto rand_seed_hex_slice = td::Slice(rand_seed_hex);
@@ -607,6 +611,8 @@ bool tvm_emulator_set_c7(void *tvm_emulator, const char *address, uint32_t unixt
 
 bool tvm_emulator_set_extra_currencies(void *tvm_emulator, const char *extra_currencies) {
   if (tvm_emulator == nullptr) return false;
+  // Codex SDK-FFI audit (S3.1): td::Slice(const char*) CHECKs non-null.
+  if (extra_currencies == nullptr) return false;
   auto emulator = static_cast<emulator::TvmEmulator *>(tvm_emulator);
   vm::Dictionary dict{32};
   td::Slice extra_currencies_str{extra_currencies};

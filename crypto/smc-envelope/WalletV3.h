@@ -77,6 +77,12 @@ class RestrictedWallet : public WalletBase<RestrictedWallet, RestrictedWalletTra
 
   td::Result<Config> get_config() const {
     return TRY_VM([this]() -> td::Result<Config> {
+      // Codex SDK-FFI audit (S3.3): TRY_VM catches VM exceptions but
+      // not a null Ref<Cell> deref. Return Status::Error on absent
+      // account data so SDK callers see a structured failure.
+      if (get_state().data.is_null()) {
+        return td::Status::Error("RestrictedWallet::get_config: data is null");
+      }
       auto cs = vm::load_cell_slice(get_state().data);
       Config config;
       td::Ref<vm::Cell> dict_root;
