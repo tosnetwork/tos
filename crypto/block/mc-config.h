@@ -395,6 +395,18 @@ struct SizeLimitsConfig {
     // wrapped in 99-byte header + chunk tree). Legacy deployments that
     // want the historical 64 KiB cap can still override via
     // ConfigParam 43. See uno/core/mine_uno.h §1 wire format.
+    //
+    // Audit #9 (2026-04-26) follow-up: post V1-3c-gamma `uno_sendTransfer`
+    // worst-case 4/4 envelope is ~1.15 MB binary (see uno/rpc/handlers.cpp
+    // §preamble). The per-method JSON-RPC cap was raised to 3 MiB and
+    // kJsonRpcMaxRequestBodyBytes to 4 MiB so the RPC ingress no longer
+    // rejects honest Transfers, but this `max_size` remains the BLOCK-level
+    // ext-msg cap and is read from chain-config (ConfigParam 43). To make
+    // the larger Transfers actually submittable on a public network, ops
+    // must propose and apply a config update bumping `max_ext_msg_size` to
+    // at least 3 MiB BEFORE depending on the new RPC caps. Until then
+    // wallets that send 4/4 Transfers will see them rejected at ext-msg
+    // admission even after the RPC succeeds.
     td::uint32 max_size = 1u << 20;
     td::uint16 max_depth = 512;
   };

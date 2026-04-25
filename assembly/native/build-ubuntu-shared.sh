@@ -49,6 +49,17 @@ if [ -n "${TOS_ARCH}" ]; then
   CMAKE_EXTRA_ARGS+=(-DTOS_ARCH=${TOS_ARCH})
 fi
 
+# Audit #10 (2026-04-26): under CI we are always producing artifacts that
+# could be deployed, so any opt-in that compromises consensus determinism
+# (currently UNO_DEVNET_ALLOW_ENV_TARGET) becomes a hard CMake error.
+# Local dev builds default OFF; set TOS_PRODUCTION_BUILD=1 in the env to
+# opt in from outside CI.
+if [ "${GITHUB_ACTIONS}" = "true" ] || \
+   [ "${TOS_PRODUCTION_BUILD:-0}" = "1" ] || \
+   [ "${TOS_PRODUCTION_BUILD:-}" = "ON" ]; then
+  CMAKE_EXTRA_ARGS+=(-DTOS_PRODUCTION_BUILD=ON)
+fi
+
 cmake -GNinja .. \
 -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
 -DTOS_USE_JEMALLOC=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$(pwd)/install" \
