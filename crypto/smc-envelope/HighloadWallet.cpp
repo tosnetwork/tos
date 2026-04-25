@@ -70,6 +70,10 @@ td::Result<td::uint32> HighloadWallet::get_wallet_id() const {
       return 0;
     }
     auto cs = vm::load_cell_slice(state_.data);
+    // Codex audit (round 13, finding #3): see WalletV3 equivalent.
+    if (!cs.have(64)) {
+      return td::Status::Error("HighloadWallet::get_wallet_id: data slice too short");
+    }
     cs.skip_first(32);
     return static_cast<td::uint32>(cs.fetch_ulong(32));
   }());
@@ -81,9 +85,14 @@ td::Result<td::Ed25519::PublicKey> HighloadWallet::get_public_key() const {
       return td::Status::Error("data is null");
     }
     auto cs = vm::load_cell_slice(state_.data);
+    if (!cs.have(64 + 256)) {
+      return td::Status::Error("HighloadWallet::get_public_key: data slice too short");
+    }
     cs.skip_first(64);
     td::SecureString res(td::Ed25519::PublicKey::LENGTH);
-    cs.fetch_bytes(res.as_mutable_slice().ubegin(), td::narrow_cast<td::int32>(res.size()));
+    if (!cs.fetch_bytes(res.as_mutable_slice().ubegin(), td::narrow_cast<td::int32>(res.size()))) {
+      return td::Status::Error("HighloadWallet::get_public_key: fetch_bytes failed");
+    }
     return td::Ed25519::PublicKey(std::move(res));
   }());
 }

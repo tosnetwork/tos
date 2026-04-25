@@ -106,7 +106,12 @@ void *emulator_config_create(const char *config_params_boc) {
 }
 
 const char *transaction_emulator_emulate_transaction(void *transaction_emulator, const char *shard_account_boc,
-                                                     const char *message_boc) {
+                                                     const char *message_boc) try {
+  // Codex audit (round 13, finding #1): every `vm::load_cell_slice(X)`
+  // below throws on PrunedBranch / Library / Merkle*, and the
+  // shard_account / message BoCs are FFI-callee-supplied. Wrap the entire
+  // function in a function-try-block so a malformed BoC returns a
+  // structured ERROR_RESPONSE instead of std::terminate-ing the host.
   auto emulator = static_cast<emulator::TransactionEmulator *>(transaction_emulator);
 
   auto message_cell_r = boc_b64_to_cell(message_boc);
@@ -223,10 +228,18 @@ const char *transaction_emulator_emulate_transaction(void *transaction_emulator,
   return success_response(trans_boc_b64.move_as_ok(), new_shard_account_boc_b64.move_as_ok(),
                           std::move(emulation_success.vm_log), std::move(actions_boc_b64),
                           emulation_success.elapsed_time);
+} catch (const vm::VmError& e) {
+  ERROR_RESPONSE(PSTRING() << "transaction_emulator_emulate_transaction: vm error: " << e.get_msg());
+} catch (const std::exception& e) {
+  ERROR_RESPONSE(PSTRING() << "transaction_emulator_emulate_transaction: " << e.what());
+} catch (...) {
+  ERROR_RESPONSE("transaction_emulator_emulate_transaction: unknown exception");
 }
 
 const char *transaction_emulator_emulate_tick_tock_transaction(void *transaction_emulator,
-                                                               const char *shard_account_boc, bool is_tock) {
+                                                               const char *shard_account_boc, bool is_tock) try {
+  // Codex audit (round 13, finding #1): same hardening as
+  // transaction_emulator_emulate_transaction.
   auto emulator = static_cast<emulator::TransactionEmulator *>(transaction_emulator);
 
   auto shard_account_cell = boc_b64_to_cell(shard_account_boc);
@@ -302,6 +315,12 @@ const char *transaction_emulator_emulate_tick_tock_transaction(void *transaction
   return success_response(trans_boc_b64.move_as_ok(), new_shard_account_boc_b64.move_as_ok(),
                           std::move(emulation_success.vm_log), std::move(actions_boc_b64),
                           emulation_success.elapsed_time);
+} catch (const vm::VmError& e) {
+  ERROR_RESPONSE(PSTRING() << "transaction_emulator_emulate_tick_tock_transaction: vm error: " << e.get_msg());
+} catch (const std::exception& e) {
+  ERROR_RESPONSE(PSTRING() << "transaction_emulator_emulate_tick_tock_transaction: " << e.what());
+} catch (...) {
+  ERROR_RESPONSE("transaction_emulator_emulate_tick_tock_transaction: unknown exception");
 }
 
 bool transaction_emulator_set_unixtime(void *transaction_emulator, uint32_t unixtime) {
@@ -719,11 +738,23 @@ TvmEulatorEmulateRunMethodResponse emulate_run_method(uint32_t len, const char *
   if (!vm::Stack::deserialize_to(c7_cs, c7)) {
     return {nullptr, nullptr};
   }
+  // Codex audit (round 13, finding #2): the previous version called
+  // `c7->fetch(0).as_tuple()` without checking that c7 actually has any
+  // elements, and without verifying the top entry is a tuple. An attacker
+  // supplying valid stack BoC bytes that decode to an empty C7 (depth=0)
+  // hits underflow before the function-try-block can intercept.
+  if (c7->depth() != 1) {
+    return {nullptr, nullptr};
+  }
+  auto c7_tuple = c7->fetch(0).as_tuple();
+  if (c7_tuple.is_null()) {
+    return {nullptr, nullptr};
+  }
 
   auto emulator = new emulator::TvmEmulator(code, data);
   emulator->set_vm_verbosity_level(0);
   emulator->set_gas_limit(gas_limit);
-  emulator->set_c7_raw(c7->fetch(0).as_tuple());
+  emulator->set_c7_raw(std::move(c7_tuple));
   if (!libs.is_empty()) {
     emulator->set_libraries(std::move(libs));
   }

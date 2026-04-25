@@ -89,7 +89,12 @@ td::Result<td::uint32> Wallet::get_seqno_or_throw() const {
     return 0;
   }
   //FIXME use get method
-  return static_cast<td::uint32>(vm::load_cell_slice(state_.data).fetch_ulong(32));
+  // Codex audit (round 13, finding #3): require ≥32 bits before fetch.
+  auto cs = vm::load_cell_slice(state_.data);
+  if (!cs.have(32)) {
+    return td::Status::Error("Wallet::get_seqno: data slice too short");
+  }
+  return static_cast<td::uint32>(cs.fetch_ulong(32));
 }
 
 td::Result<td::Ed25519::PublicKey> Wallet::get_public_key() const {
@@ -102,9 +107,16 @@ td::Result<td::Ed25519::PublicKey> Wallet::get_public_key_or_throw() const {
   }
   //FIXME use get method
   auto cs = vm::load_cell_slice(state_.data);
+  // Codex audit (round 13, finding #3): require seqno + 256-bit pubkey
+  // bits before skip/fetch; check fetch_bytes return.
+  if (!cs.have(32 + 256)) {
+    return td::Status::Error("Wallet::get_public_key: data slice too short");
+  }
   cs.skip_first(32);
   td::SecureString res(td::Ed25519::PublicKey::LENGTH);
-  cs.fetch_bytes(res.as_mutable_slice().ubegin(), td::narrow_cast<td::int32>(res.size()));
+  if (!cs.fetch_bytes(res.as_mutable_slice().ubegin(), td::narrow_cast<td::int32>(res.size()))) {
+    return td::Status::Error("Wallet::get_public_key: fetch_bytes failed");
+  }
   return td::Ed25519::PublicKey(std::move(res));
 }
 

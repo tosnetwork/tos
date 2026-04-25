@@ -23,6 +23,19 @@
 #include "MultisigWallet.h"
 #include "SmartContractCode.h"
 
+// Codex audit (round 13, finding #4): the public methods of MultisigWallet
+// (processed, get_query_state, get_public_keys, check_query_signatures,
+// get_n_k, get_unsigned_messaged) return plain values and ignore
+// `Answer.success`, then unchecked `pop_smallint_range / pop_int /
+// pop_cell / fetch_*` calls can throw VmError on a malformed get-method
+// result or malformed account state. Hardening these to return
+// `td::Result<...>` is a public API change — every caller (toslib,
+// validator-engine wallet helpers, etc.) needs to thread Result through.
+// Out of scope for this audit pass; the SDK helper crash is bounded to
+// the embedding caller (validator daemon does not call these), and a
+// proper Result<T> migration is tracked as a follow-up. Inline TODO
+// comments marker for future review.
+
 namespace tos {
 
 MultisigWallet::QueryBuilder::QueryBuilder(td::uint32 wallet_id, td::int64 query_id, td::Ref<vm::Cell> msg, int mode) {
