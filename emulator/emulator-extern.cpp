@@ -386,6 +386,7 @@ bool transaction_emulator_set_rand_seed(void *transaction_emulator, const char *
 }
 
 bool transaction_emulator_set_ignore_chksig(void *transaction_emulator, bool ignore_chksig) {
+  if (transaction_emulator == nullptr) return false;
   auto emulator = static_cast<emulator::TransactionEmulator *>(transaction_emulator);
 
   emulator->set_ignore_chksig(ignore_chksig);
@@ -422,6 +423,7 @@ bool transaction_emulator_set_config_object(void *transaction_emulator, void *co
 }
 
 bool transaction_emulator_set_libs(void *transaction_emulator, const char *shardchain_libs_boc) {
+  if (transaction_emulator == nullptr) return false;
   auto emulator = static_cast<emulator::TransactionEmulator *>(transaction_emulator);
 
   if (shardchain_libs_boc != nullptr) {
@@ -437,6 +439,7 @@ bool transaction_emulator_set_libs(void *transaction_emulator, const char *shard
 }
 
 bool transaction_emulator_set_debug_enabled(void *transaction_emulator, bool debug_enabled) {
+  if (transaction_emulator == nullptr) return false;
   auto emulator = static_cast<emulator::TransactionEmulator *>(transaction_emulator);
 
   emulator->set_debug_enabled(debug_enabled);
@@ -572,6 +575,7 @@ bool tvm_emulator_set_c7(void *tvm_emulator, const char *address, uint32_t unixt
 }
 
 bool tvm_emulator_set_extra_currencies(void *tvm_emulator, const char *extra_currencies) {
+  if (tvm_emulator == nullptr) return false;
   auto emulator = static_cast<emulator::TvmEmulator *>(tvm_emulator);
   vm::Dictionary dict{32};
   td::Slice extra_currencies_str{extra_currencies};
@@ -632,6 +636,7 @@ bool tvm_emulator_set_extra_currencies(void *tvm_emulator, const char *extra_cur
 }
 
 bool tvm_emulator_set_config_object(void *tvm_emulator, void *config) {
+  if (tvm_emulator == nullptr) return false;
   auto emulator = static_cast<emulator::TvmEmulator *>(tvm_emulator);
   auto global_config = std::shared_ptr<block::Config>(static_cast<block::Config *>(config), config_deleter);
   emulator->set_config(global_config);
@@ -670,12 +675,14 @@ bool tvm_emulator_set_prev_blocks_info(void *tvm_emulator, const char *info_boc)
 }
 
 bool tvm_emulator_set_gas_limit(void *tvm_emulator, int64_t gas_limit) {
+  if (tvm_emulator == nullptr) return false;
   auto emulator = static_cast<emulator::TvmEmulator *>(tvm_emulator);
   emulator->set_gas_limit(gas_limit);
   return true;
 }
 
 bool tvm_emulator_set_debug_enabled(void *tvm_emulator, bool debug_enabled) {
+  if (tvm_emulator == nullptr) return false;
   auto emulator = static_cast<emulator::TvmEmulator *>(tvm_emulator);
   emulator->set_debug_enabled(debug_enabled);
   return true;
@@ -810,7 +817,10 @@ TvmEulatorEmulateRunMethodResponse emulate_run_method(uint32_t len, const char *
     return {nullptr, nullptr};
   }
 
-  auto emulator = new emulator::TvmEmulator(code, data);
+  // Codex audit (round 17, finding #2): the round-12 function-try-block
+  // does not run the explicit `delete emulator` on exception, leaking
+  // the heap allocation. Use unique_ptr for RAII cleanup.
+  auto emulator = std::make_unique<emulator::TvmEmulator>(code, data);
   emulator->set_vm_verbosity_level(0);
   emulator->set_gas_limit(gas_limit);
   emulator->set_c7_raw(std::move(c7_tuple));
@@ -818,7 +828,6 @@ TvmEulatorEmulateRunMethodResponse emulate_run_method(uint32_t len, const char *
     emulator->set_libraries(std::move(libs));
   }
   auto result = emulator->run_get_method(int(method_id), stack);
-  delete emulator;
 
   vm::CellBuilder stack_cb;
   if (!result.stack->serialize(stack_cb)) {
