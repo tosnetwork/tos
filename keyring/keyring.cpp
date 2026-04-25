@@ -25,8 +25,13 @@
 
 #include "keyring.hpp"
 
+#include <cerrno>
+#include <cstdio>
+#include <cstring>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 namespace tos {
 
@@ -104,13 +109,61 @@ void KeyringImpl::add_key(PrivateKey key, bool is_temp, td::Promise<td::Unit> pr
   if (!is_temp && key.exportable()) {
     auto S = key.export_as_slice();
     auto name = db_root_ + "/" + short_id.bits256_value().to_hex();
+    auto tmp_name = name + ".tmp";
 
-    // Codex audit (round 1, finding #7): atomic_write_file does temp + fsync +
-    // rename so a partial write or crash mid-write cannot leave a corrupt key
-    // on disk. The follow-up `chmod` tightens to owner-only — `td::write_file`
-    // honors the process umask, which is operator-controlled and may leave
-    // the file group/world-readable.
-    td::atomic_write_file(td::CSlice(name), S.as_slice()).ensure();
+    // Codex audit (round 2, finding #4): write the temp file with mode 0600
+    // FROM CREATION so the umask-honoring `td::atomic_write_file` cannot
+    // leave the key material readable by other users for the brief window
+    // between write and rename. O_EXCL refuses any pre-existing tmp file
+    // (would mean another concurrent writer or a stale crash artifact);
+    // we unlink + retry once to recover from the latter without silently
+    // overwriting a possibly-attacker-controlled symlink.
+    auto write_tmp = [&]() -> int {
+      return ::open(tmp_name.c_str(),
+                    O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
+                    0600);
+    };
+    int fd = write_tmp();
+    if (fd < 0 && errno == EEXIST) {
+      LOG(WARNING) << "keyring: removing stale " << tmp_name
+                   << " (likely from a previous crashed write)";
+      ::unlink(tmp_name.c_str());
+      fd = write_tmp();
+    }
+    if (fd < 0) {
+      LOG(FATAL) << "keyring: cannot open " << tmp_name << " for write: "
+                 << td::Status::PosixError(errno, "open");
+    }
+    auto data = S.as_slice();
+    size_t off = 0;
+    while (off < data.size()) {
+      ssize_t n = ::write(fd, data.data() + off, data.size() - off);
+      if (n < 0) {
+        if (errno == EINTR) continue;
+        ::close(fd);
+        ::unlink(tmp_name.c_str());
+        LOG(FATAL) << "keyring: write " << tmp_name << " failed: "
+                   << td::Status::PosixError(errno, "write");
+      }
+      off += static_cast<size_t>(n);
+    }
+    if (::fsync(fd) != 0) {
+      ::close(fd);
+      ::unlink(tmp_name.c_str());
+      LOG(FATAL) << "keyring: fsync " << tmp_name << " failed: "
+                 << td::Status::PosixError(errno, "fsync");
+    }
+    ::close(fd);
+    if (::rename(tmp_name.c_str(), name.c_str()) != 0) {
+      ::unlink(tmp_name.c_str());
+      LOG(FATAL) << "keyring: rename " << tmp_name << " -> " << name
+                 << " failed: " << td::Status::PosixError(errno, "rename");
+    }
+    // Belt-and-suspenders: rename preserves source mode bits, but call
+    // chmod(0600) again in case the source mode was somehow widened
+    // between open() and rename() (e.g. a hostile mode change on the tmp
+    // path before rename). Failure here is not fatal — the file already
+    // has restrictive bits from O_EXCL+0600 above.
     if (::chmod(name.c_str(), 0600) != 0) {
       LOG(ERROR) << "keyring: failed to chmod " << name
                  << " to 0600: " << td::Status::PosixError(errno, "chmod");

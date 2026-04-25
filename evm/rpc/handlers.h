@@ -60,6 +60,19 @@ void reset_evm_rpc_filter_state_for_test();
 /// Production code should call enable_evm_rpc_rate_limit(true) at startup.
 void enable_evm_rpc_rate_limit(bool enable);
 
+/// Try to consume one token from the global EVM RPC bucket. Used by the
+/// `eth_sendRawTransaction` fast path in `json-rpc-server-send.cpp`, which
+/// dispatches BEFORE `handle_eth_rpc` and therefore needs to hit the bucket
+/// itself. Returns true when rate-limiting is disabled (test mode) or when
+/// a token is available; false when the bucket is empty.
+/// Codex audit (round 2, finding #1).
+bool try_consume_evm_rpc_token();
+
+/// Maximum size in bytes of a raw eth_sendRawTransaction hex blob (after
+/// the optional `0x` prefix). Mirrors `kMaxRpcParamsSize` so the fast path
+/// rejects oversized blobs BEFORE the expensive hex/RLP decode.
+size_t max_eth_send_raw_tx_hex_size();
+
 /// Test helper: reset rate limiter token buckets to full capacity.
 void reset_evm_rpc_rate_limit_for_test();
 

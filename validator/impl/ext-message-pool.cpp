@@ -21,7 +21,72 @@
 #include "fabric.h"
 #include "transaction.h"
 
+#include <atomic>
+#include <chrono>
+#include <mutex>
+
 namespace tos::validator {
+
+namespace {
+
+// Codex audit (round 2, finding #2): the wc=2 short-circuit in `check_message`
+// previously admitted ANY structurally-valid wc=2 ext_in_msg without rate
+// limiting. The MineUno limiter in `uno/rpc/handlers.cpp` only fires on the
+// `uno_sendMineUno` JSON-RPC path; raw `sendBoc` and `liteServer_sendMessage`
+// reach `mine_uno::verify` (~50ms STARK verify each) with no throttle. Add a
+// process-global token bucket here that gates ALL wc=2 ext-message ingress
+// regardless of how the message arrives.
+//
+// Bucket shape mirrors `g_send_mine_uno_limiter` (5/s sustained, 20 burst)
+// — same threat model. Defined locally to avoid creating a downward link
+// from `validator` to `uno_workchain`. Token consumption happens BEFORE the
+// expensive collator-side verify, so a flood is rejected with a cheap
+// `co_return td::Status::Error` before any STARK work.
+//
+// We deliberately rate-limit ALL wc=2 ext-msg ingress (Transfer + MineUno)
+// from a single bucket here rather than discriminating by body byte 0:
+//   - The CellSlice walk to peek the body byte from a `vm::Cell` ref adds
+//     parsing complexity inside an actor task.
+//   - In production, `uno_sendTransfer` is currently unwired (round-2
+//     finding #3) so legitimate Transfer ingress at this layer is rare.
+//   - The JSON-RPC layer still applies its own per-method bucket BEFORE
+//     this one, so honest RPC traffic is unaffected.
+struct WcExtMsgRateLimiter {
+    std::mutex mutex;
+    uint64_t   tokens;
+    uint64_t   max_tokens;
+    uint64_t   refill_rate;
+    uint64_t   last_refill;
+
+    WcExtMsgRateLimiter(uint64_t max_tok, uint64_t rate)
+        : tokens(max_tok), max_tokens(max_tok), refill_rate(rate),
+          last_refill(now_sec()) {}
+
+    static uint64_t now_sec() {
+        return static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+    }
+
+    bool try_consume() {
+        std::lock_guard<std::mutex> lock(mutex);
+        uint64_t now = now_sec();
+        if (now > last_refill) {
+            tokens = std::min(tokens + (now - last_refill) * refill_rate, max_tokens);
+            last_refill = now;
+        }
+        if (tokens == 0) return false;
+        --tokens;
+        return true;
+    }
+};
+
+constexpr uint64_t kWc2IngressBurst  = 20;
+constexpr uint64_t kWc2IngressPerSec = 5;
+WcExtMsgRateLimiter g_wc2_ingress_limiter{kWc2IngressBurst, kWc2IngressPerSec};
+
+}  // namespace
+
 td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_add_external_message(td::BufferSlice data,
                                                                                         int priority,
                                                                                         bool add_to_mempool) {
@@ -284,6 +349,15 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
   // Must short-circuit for the same reason as wc=1.
   if (wc == 1 /* evm_workchain::kWorkchainId */ ||
       wc == 2 /* uno_workchain::kWorkchainId */) {
+    // Codex audit (round 2, finding #2): rate-limit wc=2 ingress to bound
+    // forged-MineUno DoS via raw sendBoc / liteServer_sendMessage paths.
+    // wc=1 (EVM) is left unchanged here — its compute phase does not run
+    // STARK verification, and the EVM RPC layer already has a dedicated
+    // limiter; an additional gate would burden the legitimate path more
+    // than the (cheaper) attack.
+    if (wc == 2 && !g_wc2_ingress_limiter.try_consume()) {
+      co_return td::Status::Error("wc=2 ext-msg ingress rate-limited");
+    }
     auto [wait, promise] = td::actor::StartedTask<>::make_bridge();
     promise.set_value(td::Unit{});
     co_return CheckResult{.message = message, .wait_allow_broadcast = std::move(wait)};

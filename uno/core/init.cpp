@@ -1204,16 +1204,32 @@ AdmissionResult rpc_admission_check_fn(const uint8_t* tx_bytes, size_t tx_len) {
 // External-message submit hook. In production this goes through the
 // validator-engine liteServer_sendMessage path; see validator-engine.cpp. For
 // standalone boot / tests we allow an override via a process-global callback.
+//
+// Codex audit (round 2, finding #3): in the current builds NOTHING in the
+// validator-engine installs a production override here — only the test
+// harness does, via `install_uno_submit_hook`. Result: `uno_sendTransfer`
+// always returns the structured `kErrSubmitUnavailable` error to clients in
+// production. This is a feature gap (not a vulnerability — admission still
+// runs and the failure is loud). Wiring it up requires mirroring the
+// `uno_sendMineUno` pipeline (intercept in `JsonRpcServer::process_single_
+// object_request`, wrap raw bytes in a TVM cell, build a wc=2 `ext_in_msg`,
+// submit via `send_liteserver_query`) because the actor-sync gap means the
+// process-global callback shape here cannot reach `send_liteserver_query`.
+// Until that refactor lands, the handler will continue to surface
+// kErrSubmitUnavailable, which clients treat as "use raw sendBoc".
 std::atomic<bool(*)(const std::string&, const uint8_t[32])> g_submit_override{nullptr};
 bool rpc_submit_external_message_fn(const std::string& tx_bytes,
                                      const uint8_t tx_hash[32]) {
     auto fn = g_submit_override.load(std::memory_order_acquire);
     if (fn) return fn(tx_bytes, tx_hash);
     // No validator-engine hook installed — fail gracefully. The test harness
-    // overrides this via `install_uno_submit_hook(...)`.
+    // overrides this via `install_uno_submit_hook(...)`. See the codex-2
+    // comment block above for why this is the production path today.
     LOG(WARNING) << "uno-workchain: sendTransfer submit attempted without an "
                  << "installed validator-engine hook (tx_bytes=" << tx_bytes.size()
-                 << " B)";
+                 << " B). Clients should fall back to raw sendBoc until the "
+                 << "JSON-RPC intercept lands; see init.cpp comment for "
+                 << "rpc_submit_external_message_fn.";
     (void)tx_hash;
     return false;
 }

@@ -39,6 +39,7 @@
 #include "evm/core/external-message.h"
 #include "evm/core/workchain.h"
 #include "evm/core/block-context.h"  // evm_chain_config
+#include "evm/rpc/handlers.h"        // try_consume_evm_rpc_token (codex r2 #1)
 #include <silkworm/core/protocol/validation.hpp>
 #include <sstream>
 
@@ -1455,6 +1456,22 @@ void JsonRpcServer::handle_eth_sendRawTransaction(td::JsonValue &params_val,
   }
   if (raw_hex.empty()) {
     promise.set_value(make_eth_json_error(-32602, "Missing raw transaction hex parameter", req_id));
+    return;
+  }
+
+  // Codex audit (round 2, finding #1): the fast path used to skip BOTH the
+  // size cap and the rate limiter that `handle_eth_rpc` applies, so an
+  // attacker could submit unbounded raw tx blobs and burn CPU/memory in
+  // hex+RLP decode before the ExtMessagePool ever saw the message.
+  // Apply the same guards inline here.
+  if (raw_hex.size() > evm_workchain::max_eth_send_raw_tx_hex_size()) {
+    promise.set_value(make_eth_json_error(
+        -32600, "raw transaction hex exceeds max size", req_id));
+    return;
+  }
+  if (!evm_workchain::try_consume_evm_rpc_token()) {
+    promise.set_value(make_eth_json_error(
+        -32005, "rate limit exceeded", req_id));
     return;
   }
 
