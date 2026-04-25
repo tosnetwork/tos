@@ -30,6 +30,13 @@ td::Result<TransactionEmulationParams> decode_transaction_emulation_params(const
 
   std::string json_str(json);
   TRY_RESULT(input_json, td::json_decode(td::MutableSlice(json_str)));
+  // Codex SDK-FFI audit (S6.1): JsonValue::get_object() CHECKs the
+  // discriminant. Syntactically valid non-object JSON (e.g. `[]`,
+  // `null`, `"x"`) would abort the WASM module. Convert to a structured
+  // decode error.
+  if (input_json.type() != td::JsonValue::Type::Object) {
+    return td::Status::Error("decode_transaction_emulation_params: params must be a JSON object");
+  }
   auto& obj = input_json.get_object();
 
   TRY_RESULT(utime_field, obj.extract_required_field("utime", td::JsonValue::Type::Number));
@@ -94,6 +101,11 @@ td::Result<GetMethodParams> decode_get_method_params(const char* json) {
 
   std::string json_str(json);
   TRY_RESULT(input_json, td::json_decode(td::MutableSlice(json_str)));
+  // Codex SDK-FFI audit (S6.1): same JSON-root-type check as
+  // decode_transaction_emulation_params.
+  if (input_json.type() != td::JsonValue::Type::Object) {
+    return td::Status::Error("decode_get_method_params: params must be a JSON object");
+  }
   auto& obj = input_json.get_object();
 
   TRY_RESULT(code, obj.get_required_string_field("code"));
