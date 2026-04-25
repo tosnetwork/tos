@@ -51,31 +51,54 @@ bool toslib_response_await_ready(ToslibResponse *response) {
 void toslib_response_await_suspend(ToslibResponse *response, const void *continuation) {
   // Codex SDK-FFI audit (S4.1): null-handle no-op.
   if (response == nullptr) return;
+  // Codex SDK-FFI audit (S5.3): the Continuation ctor CHECKs that
+  // `value` is neither 0 (cancel_tag) nor UINTPTR_MAX (resolved_tag).
+  // Validate at the wrapper before constructing — same FFI-boundary
+  // pattern used elsewhere — so a malicious or buggy binding cannot
+  // abort the host with a reserved sentinel value.
+  auto cont_value = reinterpret_cast<uintptr_t>(continuation);
+  if (cont_value == 0 || cont_value == UINTPTR_MAX) return;
   response->await_suspend({continuation});
 }
 
 bool toslib_response_is_error(ToslibResponse *response) {
   // Codex SDK-FFI audit (S4.1): null-handle reports error (true).
   if (response == nullptr) return true;
+  // Codex SDK-FFI audit (S5.2): FFIAwaitable::result() CHECKs readiness
+  // (FFIAwaitable.h:78) — callers that get here before await_ready()
+  // would abort the host. Treat not-ready as "is_error" so callers
+  // following the bool-check pattern stop and read the error path
+  // (which now also returns safe sentinels below).
+  if (!response->await_ready()) return true;
   return response->result().is_error();
 }
 
 int toslib_response_get_error_code(ToslibResponse *response) {
-  // Codex SDK-FFI audit (S4.1): null-handle returns -1.
+  // Codex SDK-FFI audit (S4.1 + S5.2): null/not-ready → -1; success
+  // variant → 0 (no error to report).
   if (response == nullptr) return -1;
-  return response->result().error().code();
+  if (!response->await_ready()) return -1;
+  auto &r = response->result();
+  if (!r.is_error()) return 0;
+  return r.error().code();
 }
 
 const char *toslib_response_get_error_message(ToslibResponse *response) {
-  // Codex SDK-FFI audit (S4.1): null-handle returns empty C string.
+  // Codex SDK-FFI audit (S4.1 + S5.2): null/not-ready/wrong-variant → "".
   if (response == nullptr) return "";
-  return response->result().error().message().data();
+  if (!response->await_ready()) return "";
+  auto &r = response->result();
+  if (!r.is_error()) return "";
+  return r.error().message().data();
 }
 
 const char *toslib_response_get_response(ToslibResponse *response) {
-  // Codex SDK-FFI audit (S4.1): null-handle returns empty C string.
+  // Codex SDK-FFI audit (S4.1 + S5.2): null/not-ready/wrong-variant → "".
   if (response == nullptr) return "";
-  return response->result().ok().data();
+  if (!response->await_ready()) return "";
+  auto &r = response->result();
+  if (r.is_error()) return "";
+  return r.ok().data();
 }
 
 // ===== Engine Console =====
@@ -164,14 +187,17 @@ bool toslib_engine_console_is_error(ToslibEngineConsole *console) {
 }
 
 int toslib_engine_console_get_error_code(ToslibEngineConsole *console) {
-  // Codex SDK-FFI audit (S4.1): null-handle returns -1.
+  // Codex SDK-FFI audit (S4.1 + S5.2): null/non-error variant → 0.
+  // td::Result::error() CHECKs the error variant.
   if (console == nullptr) return -1;
+  if (!console->client.is_error()) return 0;
   return console->client.error().code();
 }
 
 const char *toslib_engine_console_get_error_message(ToslibEngineConsole *console) {
-  // Codex SDK-FFI audit (S4.1): null-handle returns empty C string.
+  // Codex SDK-FFI audit (S4.1 + S5.2): null/non-error variant → "".
   if (console == nullptr) return "";
+  if (!console->client.is_error()) return "";
   return console->client.error().message().data();
 }
 

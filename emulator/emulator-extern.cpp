@@ -453,7 +453,11 @@ bool transaction_emulator_set_config_object(void *transaction_emulator, void *co
   return true;
 }
 
-bool transaction_emulator_set_libs(void *transaction_emulator, const char *shardchain_libs_boc) {
+bool transaction_emulator_set_libs(void *transaction_emulator, const char *shardchain_libs_boc) try {
+  // Codex SDK-FFI audit (S5.1): `vm::Dictionary(libs_cell, 256)` validates
+  // the dictionary at construction (crypto/vm/dict.cpp:123) and throws on
+  // structurally invalid libs cells. Without a function-try-block the
+  // throw escapes the C ABI and terminates the embedding host.
   if (transaction_emulator == nullptr) return false;
   auto emulator = static_cast<emulator::TransactionEmulator *>(transaction_emulator);
 
@@ -467,6 +471,15 @@ bool transaction_emulator_set_libs(void *transaction_emulator, const char *shard
   }
 
   return true;
+} catch (const vm::VmError& e) {
+  LOG(ERROR) << "transaction_emulator_set_libs: vm error: " << e.get_msg();
+  return false;
+} catch (const std::exception& e) {
+  LOG(ERROR) << "transaction_emulator_set_libs: " << e.what();
+  return false;
+} catch (...) {
+  LOG(ERROR) << "transaction_emulator_set_libs: unknown exception";
+  return false;
 }
 
 bool transaction_emulator_set_debug_enabled(void *transaction_emulator, bool debug_enabled) {
@@ -541,8 +554,10 @@ void *tvm_emulator_create(const char *code, const char *data, int vm_log_verbosi
   return emulator;
 }
 
-bool tvm_emulator_set_libraries(void *tvm_emulator, const char *libs_boc) {
+bool tvm_emulator_set_libraries(void *tvm_emulator, const char *libs_boc) try {
   // Codex audit (round 16, finding #3): null-handle guard.
+  // Codex SDK-FFI audit (S5.1): see TransactionEmulator equivalent —
+  // vm::Dictionary throws on structurally invalid libs cells.
   if (tvm_emulator == nullptr) return false;
   vm::Dictionary libs{256};
   auto libs_cell = boc_b64_to_cell(libs_boc);
@@ -556,6 +571,15 @@ bool tvm_emulator_set_libraries(void *tvm_emulator, const char *libs_boc) {
   emulator->set_libraries(std::move(libs));
 
   return true;
+} catch (const vm::VmError& e) {
+  LOG(ERROR) << "tvm_emulator_set_libraries: vm error: " << e.get_msg();
+  return false;
+} catch (const std::exception& e) {
+  LOG(ERROR) << "tvm_emulator_set_libraries: " << e.what();
+  return false;
+} catch (...) {
+  LOG(ERROR) << "tvm_emulator_set_libraries: unknown exception";
+  return false;
 }
 
 bool tvm_emulator_set_c7(void *tvm_emulator, const char *address, uint32_t unixtime, uint64_t balance,
