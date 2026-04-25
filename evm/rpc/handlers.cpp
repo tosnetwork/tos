@@ -126,10 +126,10 @@ void enable_evm_rpc_rate_limit(bool enable) {
     }
 }
 
-// Codex audit (round 2, finding #1): expose the global EVM bucket so the
+// Expose the global EVM bucket so the
 // `eth_sendRawTransaction` fast path in `validator-engine/json-rpc-server-send.cpp`
 // can consume a token before its expensive hex+RLP decode. Without this, the
-// fast path bypassed BOTH the size cap and the rate limiter that the generic
+// fast path bypassed both the size cap and the rate limiter that the generic
 // `handle_eth_rpc` dispatcher applies.
 bool try_consume_evm_rpc_token() {
     if (!g_rate_limit_enabled) return true;

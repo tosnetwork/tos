@@ -47,8 +47,8 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
   bool has_seqno = seqno_r.is_ok() && seqno_r.ok() > 0;
   td::int32 seqno = has_seqno ? static_cast<td::int32>(seqno_r.ok()) : 0;
 
-  // Codex audit (round 4, finding #2): same shared-Slot pattern as R3.3 in
-  // runGetMethod — keep promise + req_id reachable from the step-1 outer
+  // Use the same shared-Slot pattern as runGetMethod: keep promise + req_id
+  // reachable from the step-1 outer
   // callback so lookupBlock / getMasterchainInfo errors don't drop the
   // HTTP promise. Sequential single-actor execution makes the unguarded
   // settled-flag safe.

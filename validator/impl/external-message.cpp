@@ -128,8 +128,7 @@ td::Result<Ref<ExtMessageQ>> ExtMessageQ::create_ext_message(td::BufferSlice dat
     return td::Status::Error(PSLICE() << "Can't parse destination address");
   }
 
-  // Codex audit (round 7 #2, narrowed round 8 #3, hardened round 8 #1):
-  // the wc=1 / wc=2 fast path in ExtMessagePool::check_message skips
+  // The wc=1 / wc=2 fast path in ExtMessagePool::check_message skips
   // TVM preflight, so a special body ref (PrunedBranch / Library /
   // MerkleProof / MerkleUpdate) flows directly to compute-phase unpack
   // which uses bare load_cell_slice_ref and throws — crashing the
@@ -140,18 +139,18 @@ td::Result<Ref<ExtMessageQ>> ExtMessageQ::create_ext_message(td::BufferSlice dat
   //
   // The walk uses a visited set keyed by cell hash + a hard total-cell
   // budget so a DAG with repeated refs cannot trigger exponential
-  // re-traversal (round 8 #1).
+  // re-traversal.
   if (wc == 1 || wc == 2) {
     // Use the cell pointer for visited-set key — Ref<Cell> shared
     // ownership means two refs to the same logical cell point to the
     // same vm::Cell instance, so pointer equality is correct.
     std::unordered_set<const vm::Cell*> visited;
     std::vector<td::Ref<vm::Cell>> stack{ext_msg};
-    // Codex audit (round 8 #1, refined round 9 #1): the previous 4096-cell
-    // budget was below worst-case ext_in_msg envelopes for wc=2 (UNO chunk
-    // trees can approach ~2048 cells today plus future headroom) and wc=1
-    // (1 MiB cap → up to ~20K cells worst case). Derive the budget from
-    // the configured ext-msg `max_size` (default 1 MiB) using the canonical
+    // Derive the scan budget from configured max_size. The previous fixed
+    // 4096-cell budget was below worst-case ext_in_msg envelopes for wc=2
+    // (UNO chunk trees can approach ~2048 cells today plus future headroom)
+    // and wc=1 (1 MiB cap → up to ~20K cells worst case). Use the
+    // configured ext-msg `max_size` (default 1 MiB) with the canonical
     // ~64 bytes/cell ratio; clamp at a hard floor (4096) and a generous
     // ceiling (65536) to keep the visited-set bounded under any operator
     // mis-config.

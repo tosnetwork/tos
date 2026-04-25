@@ -231,10 +231,10 @@ void JsonRpcServer::handle_uno_sendMineUno(td::JsonValue& params_val,
     return;
   }
 
-  // Codex audit (round 3, finding #1): hard size cap BEFORE hex/BoC/MineUno
-  // decode. The post-decode rate-limit token at step 2b deliberately runs
-  // AFTER decode (per round-12 design — junk hex shouldn't drain the
-  // honest-miner bucket), but that left the decode CPU cost uncapped.
+  // Apply a hard size cap before hex/BoC/MineUno decode. The post-decode
+  // rate-limit token deliberately runs after decode so junk hex does not
+  // drain the honest-miner bucket, but that leaves the decode CPU cost
+  // uncapped.
   // Reject oversized blobs cheaply here.
   if (raw_hex.size() > uno_workchain::max_uno_send_mine_uno_hex_size()) {
     promise.set_value(make_eth_json_error(

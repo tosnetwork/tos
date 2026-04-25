@@ -254,7 +254,7 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
             auto cell = vm::std_boc_deserialize(td::Slice(decoded.ok()));
             if (cell.is_ok()) {
               auto cell_root = cell.move_as_ok();
-              // Codex audit (round 7, finding #3): bare load_cell_slice_ref
+              // Bare load_cell_slice_ref
               // throws on PrunedBranch / Library / Merkle* roots — JSON-RPC
               // input is attacker-controlled. Use the special-aware loader
               // to detect special cells and skip silently (matches the
@@ -298,7 +298,7 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
 
   auto params_boc = params_boc_r.move_as_ok();
 
-  // Codex audit (round 3, finding #3): hold promise + req_id in a shared
+  // Hold promise + req_id in a shared
   // slot so the step-1 (block-resolve) outer callback can settle the HTTP
   // promise on lookupBlock / masterchain-info errors. Previously promise
   // was captured by-move into `do_run_method`; the outer lambda dropped
@@ -530,7 +530,7 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
             auto cell = vm::std_boc_deserialize(td::Slice(decoded.ok()));
             if (cell.is_ok()) {
               auto cell_root = cell.move_as_ok();
-              // Codex audit (round 7, finding #3): bare load_cell_slice_ref
+              // Bare load_cell_slice_ref
               // throws on PrunedBranch / Library / Merkle* roots — JSON-RPC
               // input is attacker-controlled. Use the special-aware loader
               // to detect special cells and skip silently (matches the
@@ -574,8 +574,7 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
 
   auto params_boc = params_boc_r.move_as_ok();
 
-  // Codex audit (round 3, finding #3): same fix as legacy runGetMethod
-  // above — see comment there for rationale.
+  // Use the same shared-slot lifetime pattern as legacy runGetMethod above.
   struct Slot {
     td::Promise<HttpReturn> promise;
     std::string req_id;

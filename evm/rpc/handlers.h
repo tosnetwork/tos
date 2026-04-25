@@ -65,7 +65,7 @@ void enable_evm_rpc_rate_limit(bool enable);
 /// dispatches BEFORE `handle_eth_rpc` and therefore needs to hit the bucket
 /// itself. Returns true when rate-limiting is disabled (test mode) or when
 /// a token is available; false when the bucket is empty.
-/// Codex audit (round 2, finding #1).
+/// Shared with the raw transaction fast path before expensive decoding.
 bool try_consume_evm_rpc_token();
 
 /// Maximum size in bytes of a raw eth_sendRawTransaction hex blob (after

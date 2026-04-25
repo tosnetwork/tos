@@ -539,7 +539,7 @@ bool LiveUnoState::hydrate_from_cell_if_needed(td::Ref<vm::Cell> root) try {
         return true;
     }
 
-    // Codex audit (round 4, finding #6): use the special-cell-aware loader
+    // Use the special-cell-aware loader
     // for the root and refuse to hydrate from PrunedBranch/MerkleProof/
     // MerkleUpdate/Library cells. The bare `vm::load_cell_slice` throws on
     // those (and on Library cells outside a VM context) — without the
@@ -655,7 +655,7 @@ bool LiveUnoState::hydrate_from_cell_if_needed(td::Ref<vm::Cell> root) try {
         LOG(ERROR) << "uno-workchain: persisted stats cell malformed";
         return false;
     }
-    // Codex audit (round 6, finding #5): require canonical exact-shape.
+    // Require canonical exact-shape.
     // Without trailing-payload checks, an attacker who can inject a
     // malformed prior persisted UnoShardState could carry ignored
     // bytes/refs that change the cell hash without changing the
@@ -700,14 +700,14 @@ bool LiveUnoState::hydrate_from_cell_if_needed(td::Ref<vm::Cell> root) try {
             LOG(ERROR) << "uno-workchain: persisted mining_state missing halving_era";
             return false;
         }
-        // Codex audit (round 6, finding #5): canonical exact-shape check.
+        // Canonical exact-shape check.
         if (mining_cs.size() != 0 || mining_cs.size_refs() != 0) {
             LOG(ERROR) << "uno-workchain: persisted mining_state has trailing payload"
                        << " bits=" << mining_cs.size() << " refs=" << mining_cs.size_refs();
             return false;
         }
     }
-    // Codex audit (round 6, finding #5): canonical exact-shape on meta_cs
+    // Canonical exact-shape on meta_cs
     // itself — meta has no inline data, only refs. We already validated
     // refs count (==2 or ==3) above. Reject any trailing data bits.
     if (meta_cs.size() != 0) {
@@ -715,7 +715,7 @@ bool LiveUnoState::hydrate_from_cell_if_needed(td::Ref<vm::Cell> root) try {
                    << " bits=" << meta_cs.size();
         return false;
     }
-    // Codex audit (round 6, finding #5): canonical exact-shape on the
+    // Canonical exact-shape on the
     // root cs. We've consumed magic+version+scheme+next_position+
     // 2×hash_bytes (=80 bits) and 3 refs (already enforced above).
     if (cs.size() != 0) {
@@ -739,7 +739,7 @@ bool LiveUnoState::hydrate_from_cell_if_needed(td::Ref<vm::Cell> root) try {
     has_live_state_cell_hash_ = true;
     return true;
 } catch (const std::exception& e) {
-    // Codex audit (round 4, finding #6): function-try-block. The remaining
+    // Function-try-block. The remaining
     // `vm::load_cell_slice(X)` calls below the root check (nullifier wrapper,
     // meta wrapper, anchor probe, stats, mining_state) all walk caller-
     // controlled refs and throw on special cells. Catch here so a malformed
@@ -1264,7 +1264,7 @@ AdmissionResult rpc_admission_check_fn(const uint8_t* tx_bytes, size_t tx_len) {
 // validator-engine liteServer_sendMessage path; see validator-engine.cpp. For
 // standalone boot / tests we allow an override via a process-global callback.
 //
-// Codex audit (round 2, finding #3): in the current builds NOTHING in the
+// In the current builds, nothing in the
 // validator-engine installs a production override here — only the test
 // harness does, via `install_uno_submit_hook`. Result: `uno_sendTransfer`
 // always returns the structured `kErrSubmitUnavailable` error to clients in
@@ -1282,7 +1282,7 @@ bool rpc_submit_external_message_fn(const std::string& tx_bytes,
     auto fn = g_submit_override.load(std::memory_order_acquire);
     if (fn) return fn(tx_bytes, tx_hash);
     // No validator-engine hook installed — fail gracefully. The test harness
-    // overrides this via `install_uno_submit_hook(...)`. See the codex-2
+    // overrides this via `install_uno_submit_hook(...)`. See the submit-hook
     // comment block above for why this is the production path today.
     LOG(WARNING) << "uno-workchain: sendTransfer submit attempted without an "
                  << "installed validator-engine hook (tx_bytes=" << tx_bytes.size()

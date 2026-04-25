@@ -38,8 +38,8 @@
 //!   below) actually catches a stray `.unwrap()`/`assert!` in verifier
 //!   internals and converts it into [`Plonky3Status::InternalError`].
 //!   Modern rustc additionally aborts at the C-ABI boundary if a panic
-//!   ever escapes the guard (defense-in-depth). Codex audit (round 1, F4)
-//!   flipped this from the prior `panic = "abort"` setting under which
+//!   ever escapes the guard (defense-in-depth). This replaced the prior
+//!   `panic = "abort"` setting under which
 //!   `catch_unwind` was a no-op and any verifier panic killed the
 //!   validator process.
 //!

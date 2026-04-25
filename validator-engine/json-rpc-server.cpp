@@ -255,7 +255,7 @@ void JsonRpcServer::listen(td::IPAddress addr) {
       PSTRING() << "JsonRPC@" << addr, addr, std::move(callback));
   LOG(WARNING) << "JSON-RPC server listening on " << addr;
 
-  // Codex audit (round 1, finding #2): refuse to silently expose a write-
+  // Refuse to silently expose a write-
   // enabled, unauthenticated RPC surface on a non-loopback address. Operators
   // who really want this must pass `--json-rpc-readonly` or `--json-rpc-api-key`.
   // We deliberately do NOT change the historical defaults (readonly=false,
@@ -281,8 +281,8 @@ void JsonRpcServer::listen(td::IPAddress addr) {
                  << "specific origin in production.";
   }
   if (!is_loopback && opts_.cors_origin != "*") {
-    // Codex audit (round 2, finding #7): warn that the configured restrictive
-    // origin is NOT enforced on every response path — many handlers still
+    // Warn that the configured restrictive
+    // origin is not enforced on every response path — many handlers still
     // emit Access-Control-Allow-Origin: * via the static helper defaults.
     // See JsonRpcServer::make_* doc-comment in the header. Until that
     // migration lands, treat this server's responses as world-readable from
@@ -313,7 +313,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
                                td::Promise<HttpReturn> promise) {
   auto method = request->method();
   auto url = request->url();
-  // Codex audit (round 1, finding #2): never log the raw URL — query strings
+  // Never log the raw URL — query strings
   // can carry the API key (X-API-Key fallback) or other operator secrets and
   // this log line runs BEFORE auth. Strip the query string for logging only;
   // the live `url` value below is still used unmodified for routing.
@@ -819,7 +819,7 @@ struct JsonRpcServer::BatchState {
   std::size_t cursor{0};
   td::Promise<HttpReturn> final_promise;
   std::string cors;
-  // Codex audit (round 2, finding #6): per-subquery timeouts in
+  // Per-subquery timeouts in
   // QueryTimeoutGuard let a 100-element batch (or any handler chaining
   // sequential liteserver queries) accumulate up to N × request_timeout
   // wall-clock time. Track a request-level deadline here so the batch
@@ -868,7 +868,7 @@ void JsonRpcServer::process_batch_step(std::shared_ptr<BatchState> state) {
   // Drain synchronous (non-Object) elements.
   while (state->cursor < state->elements.size()) {
     std::size_t i = state->cursor;
-    // Codex audit (round 2 #6, refined round 4 #4): batch-level deadline.
+    // Batch-level deadline.
     // Only enforce when the deadline was actually initialized — a default-
     // constructed `td::Timestamp` is "already in the past" (sentinel value),
     // so an unguarded `is_in_past()` would short-circuit every batch when
@@ -1488,7 +1488,7 @@ static bool constant_time_compare(const std::string &a, const std::string &b) {
 }
 
 // Centralized write-method registry.
-// Codex audit (round 1, finding #1): the per-method fast path for
+// The per-method fast path for
 // `eth_sendRawTransaction`, `uno_sendMineUno`, and the `uno_*` write methods
 // (e.g. `uno_sendTransfer`) used to short-circuit `process_single_object_request`
 // BEFORE the readonly gate at `dispatch_method`. Readonly mode therefore only
@@ -1519,7 +1519,7 @@ bool JsonRpcServer::check_api_key(const RequestPtr &request,
     return true;  // no auth configured
   }
 
-  // Codex audit (round 1, finding #2): only the X-API-Key header is accepted.
+  // Only the X-API-Key header is accepted.
   // The previous `?api_key=...` query-string fallback leaked the key into
   // access logs, browser history, intermediary proxies, and our own
   // `LOG(INFO) << "json-rpc: received ..."` (which ran before auth). Header-

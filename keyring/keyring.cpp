@@ -65,7 +65,7 @@ td::Result<KeyringImpl::PrivateKeyDescr*> KeyringImpl::load_key(PublicKeyHash ke
 
   auto name = db_root_ + "/" + key_hash.bits256_value().to_hex();
 
-  // Codex audit (round 1, finding #7): warn if a private key file is
+  // Warn if a private key file is
   // group/world-readable. Keys are stored unencrypted; permissive mode bits
   // turn host/backup compromise into key compromise. Don't refuse to load
   // (operators with intentionally-relaxed perms exist and we don't want to
@@ -111,7 +111,7 @@ void KeyringImpl::add_key(PrivateKey key, bool is_temp, td::Promise<td::Unit> pr
     auto name = db_root_ + "/" + short_id.bits256_value().to_hex();
     auto tmp_name = name + ".tmp";
 
-    // Codex audit (round 2, finding #4): write the temp file with mode 0600
+    // Write the temp file with mode 0600
     // FROM CREATION so the umask-honoring `td::atomic_write_file` cannot
     // leave the key material readable by other users for the brief window
     // between write and rename. O_EXCL refuses any pre-existing tmp file

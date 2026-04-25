@@ -68,7 +68,7 @@ constexpr uint64_t kMaxSendTxBurst       = 50;
 // expensive cost (~50ms+ per call); cap at 5/sec sustained, 20 burst.
 constexpr uint64_t kMaxSendMineUnoPerSec = 5;
 constexpr uint64_t kMaxSendMineUnoBurst  = 20;
-// V1-3c-round-6 (2026-04-22): both caps were sized for the pre-pivot
+// Size-limit update (2026-04-22): both caps were sized for the pre-pivot
 // ~52 KB proof target. Post V1-3c-gamma (per-Tx direct) the v1 wire
 // envelope is ~655 KB typical / ~1.15 MB worst-case 4/4 (see
 // doc/uno-workchain.md §4.1 and §17.1), dominated by the 520-915 KB
@@ -79,17 +79,17 @@ constexpr uint64_t kMaxSendMineUnoBurst  = 20;
 // caps per-validator ingress bandwidth at 20 × ~2.3 MB/s ≈ 46 MB/s,
 // within the residential-fiber profile per §1.4a.
 //
-// Codex audit (round 2, finding #5): these 3 MB caps are aspirational —
+// These 3 MB caps are aspirational:
 // the upstream `kJsonRpcMaxRequestBodyBytes` (1 MiB at
 // validator-engine/json-rpc-server.cpp:47) and the default
 // `SizeLimitsConfig::ExtMsgLimits::max_size` (1 MiB at
-// crypto/block/mc-config.h:398) both reject anything > 1 MiB BEFORE the
+// crypto/block/mc-config.h:398) both reject anything > 1 MiB before the
 // RPC handler / ExtMessagePool sees it. Worst-case 4/4 Transfers are
 // therefore not actually submittable via `uno_sendTransfer` today — but
-// `uno_sendTransfer` is also unwired in production (R2.3). Once R2.3 is
-// fixed (intercept in JsonRpcServer mirroring `uno_sendMineUno`), the
-// upstream caps need a coordinated bump or a per-method/per-workchain
-// override. Until then this 3 MB cap only affects future-proofing.
+// `uno_sendTransfer` is also unwired in production. Once the JsonRpcServer
+// intercept mirrors `uno_sendMineUno`, the upstream caps need a coordinated
+// bump or a per-method/per-workchain override. Until then this 3 MB cap only
+// affects future-proofing.
 constexpr size_t   kMaxRpcParamsSize     = 3u * 1024 * 1024;  // 3 MB
 constexpr size_t   kMaxSendTxHexSize     = 3u * 1024 * 1024;  // 3 MB hex ≈ 1.5 MB binary
 
@@ -152,7 +152,7 @@ bool try_consume_uno_send_mine_uno_token() {
 }
 
 size_t max_uno_send_mine_uno_hex_size() {
-    // Codex audit (round 3, finding #1): see header doc. 1 MiB hex caps
+    // See header doc. The 1 MiB hex cap bounds
     // the predecode CPU envelope while still admitting typical MineUno
     // BoCs (~262 KiB) with comfortable headroom.
     return 1u * 1024 * 1024;

@@ -39,7 +39,7 @@
 #include "evm/core/external-message.h"
 #include "evm/core/workchain.h"
 #include "evm/core/block-context.h"  // evm_chain_config
-#include "evm/rpc/handlers.h"        // try_consume_evm_rpc_token (codex r2 #1)
+#include "evm/rpc/handlers.h"        // try_consume_evm_rpc_token
 #include <silkworm/core/protocol/validation.hpp>
 #include <sstream>
 
@@ -106,7 +106,7 @@ static td::Result<td::Ref<vm::Cell>> parse_optional_boc_field(td::JsonObject& pa
     return td::Status::Error(PSTRING() << "Invalid BOC in '" << name << "'");
   }
   auto cell = cell_r.move_as_ok();
-  // Codex audit (round 7, finding #3): reject special root cells from
+  // Reject special root cells from
   // attacker-supplied BOCs at the JSON-RPC boundary. Downstream helpers
   // (GenericAccount / SmartContract / runGetMethod stack deserialize)
   // call bare `load_cell_slice_ref()` and throw on PrunedBranch /
@@ -169,8 +169,8 @@ static vm::GasLimits estimate_compute_gas_limits(td::RefInt256 balance, const bl
 
 static td::Result<td::int64> estimate_calc_fwd_fees(td::Ref<vm::Cell> list, block::MsgPrices** msg_prices,
                                                     bool is_masterchain) try {
-  // Codex audit (round 6, finding #1): the round-5 fix added structured
-  // errors for missing next-ref / bad tag, but `vm::load_cell_slice`
+  // Structured errors handle missing next-ref and bad tags, but
+  // `vm::load_cell_slice`
   // still throws on PrunedBranch / MerkleProof / MerkleUpdate / Library
   // cells (see crypto/vm/cells/CellSlice.cpp:1139). Production action
   // processing handles this with `load_cell_slice_special` (see
@@ -206,7 +206,7 @@ static td::Result<td::int64> estimate_calc_fwd_fees(td::Ref<vm::Cell> list, bloc
     if (special) {
       return td::Status::Error("estimate_fee: action cell is special");
     }
-    // Codex audit (round 5, finding #1): the previous code asserted with
+    // The previous code asserted with
     // `CHECK(cs.fetch_ref().not_null())` and `CHECK(tag >= 0)`. Both refs
     // and tags here come from VM-produced action cells under attacker
     // control via `estimateFee` — a malformed c5 list would crash the
@@ -265,7 +265,7 @@ static td::Result<td::int64> estimate_calc_fwd_fees(td::Ref<vm::Cell> list, bloc
   }
   return res;
 } catch (const vm::VmError& e) {
-  // Codex audit (round 6, finding #1): VM cell traversal can throw
+  // VM cell traversal can throw
   // for reasons not caught by the per-site special-cell check (e.g. a
   // CellSlice operation on a malformed cell). Convert to RPC error.
   return td::Status::Error(PSTRING() << "estimate_fee: vm error: " << e.get_msg());
@@ -352,8 +352,7 @@ static td::Result<td::Ref<vm::Cell>> parse_optional_boc_string(const std::string
     return td::Status::Error(PSTRING() << "Invalid BOC in '" << name << "'");
   }
   auto cell = cell_r.move_as_ok();
-  // Codex audit (round 8, finding #2): mirror parse_optional_boc_field
-  // (round 7 #3). Downstream consumers — notably
+  // Mirror parse_optional_boc_field. Downstream consumers — notably
   // GenericAccount::create_ext_message and SmartContract::send_external_msg
   // (declared noexcept, called from buildTransactionIntent /
   // getSigningPayload via build_external_message_cell) — invoke bare
@@ -1534,7 +1533,7 @@ void JsonRpcServer::handle_eth_sendRawTransaction(td::JsonValue &params_val,
     return;
   }
 
-  // Codex audit (round 2, finding #1): the fast path used to skip BOTH the
+  // The fast path used to skip both the
   // size cap and the rate limiter that `handle_eth_rpc` applies, so an
   // attacker could submit unbounded raw tx blobs and burn CPU/memory in
   // hex+RLP decode before the ExtMessagePool ever saw the message.

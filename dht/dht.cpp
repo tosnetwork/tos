@@ -354,7 +354,7 @@ void DhtMemberImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::dht_reques
 void DhtMemberImpl::receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice data,
                                   td::Promise<td::BufferSlice> promise) {
   if (client_only_) {
-    // Codex audit (round 7, finding #5): empty `return;` dropped the
+    // Empty `return;` dropped the
     // promise — caller waits on its own timeout. Set explicit error
     // so the peer immediately learns this node is client-only.
     promise.set_error(td::Status::Error("dht: client-only node does not serve queries"));

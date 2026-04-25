@@ -193,8 +193,8 @@ void JsonRpcServer::handle_shards(td::JsonObject &params, std::string req_id,
 
   auto self_id = actor_id(this);
 
-  // Codex audit (round 4, finding #2): shared-Slot pattern (see R3.3 in
-  // runGetMethod) so step-1 outer callbacks can settle the HTTP promise
+  // Use the shared-Slot pattern from runGetMethod so step-1 outer callbacks
+  // can settle the HTTP promise
   // on lookupBlock / getMasterchainInfo errors instead of hanging.
   struct Slot {
     td::Promise<HttpReturn> promise;

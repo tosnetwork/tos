@@ -41,7 +41,7 @@ static const td::uint32 OVERLAY_MAX_ALLOWED_PACKET_SIZE = 16 * 1024 * 1024;
 static const double NEIGHBOURS_ROTATE_INTERVAL_MIN = 60;
 static const double NEIGHBOURS_ROTATE_INTERVAL_MAX = 120;
 static const td::uint32 GET_DIFFERENCE_MAX_SEND = 100;
-// Codex audit (round 1, finding #6): even with the 100-block cap, a single
+// Even with the 100-block cap, a single
 // `getDifference` query could fan out to 100 × `max_serialized_block_size`
 // bytes (default 16 KiB → 1.6 MiB; configurable higher). Cap total response
 // bytes per query so a peer cannot use undersized requests to flood us with
@@ -701,7 +701,7 @@ void CatChainReceiverImpl::receive_query_from_overlay(adnl::AdnlNodeIdShort src,
   }
   TD_PERF_COUNTER(catchain_query_process);
   td::PerfWarningTimer t{"catchain query process", 0.05};
-  // Codex audit (round 1, finding #5): resolve the source ONCE here and
+  // Resolve the source once here and
   // reject early if the ADNL id is unknown. The previous code path
   // dereferenced `get_source_by_adnl_id(src)` directly on the malformed-TL
   // branch, and `process_query` used `CHECK(S != nullptr)` — either crashed
@@ -734,7 +734,7 @@ void CatChainReceiverImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::cat
       promise.set_error(td::Status::Error(ErrorCode::protoviolation, "unknown source"));
       return;
     }
-    // Codex audit (round 4, finding #5): apply the same per-peer
+    // Apply the same per-peer
     // resend cap that getDifference uses (CatChainReceiverSource::
     // allow_send_block, MAX_BLOCK_REQUESTS in catchain-receiver-source.cpp).
     // Without this, a peer can repeatedly query `catchain_getBlock` for
@@ -804,11 +804,11 @@ void CatChainReceiverImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::cat
   CHECK(right > 0);
   CatChainReceiverSource *S0 = get_source_by_adnl_id(src);
   if (S0 == nullptr) {
-    // Codex audit (round 1, finding #5): never CHECK on caller-supplied src.
+    // Never CHECK on caller-supplied src.
     promise.set_error(td::Status::Error(ErrorCode::protoviolation, "unknown source"));
     return;
   }
-  // Codex audit (round 1, finding #6): cap total response bytes per query
+  // Cap total response bytes per query
   // — the 100-block limit alone allows large blocks to amplify the response.
   td::uint64 sent_bytes = 0;
   bool budget_exhausted = false;
@@ -819,8 +819,8 @@ void CatChainReceiverImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::cat
       while (t-- > 0) {
         CatChainReceivedBlock *M = S->get_block(++vt[i]);
         CHECK(M != nullptr);
-        // Codex audit (round 2, finding #5): serialize + budget-check
-        // BEFORE `allow_send_block`. The previous order incremented
+        // Serialize and check the byte budget
+        // before `allow_send_block`. The previous order incremented
         // S0's per-block-hash request counter even when the block was
         // dropped by the byte-budget rollback below — an overly-eager
         // peer could exhaust its own MAX_BLOCK_REQUESTS quota for blocks

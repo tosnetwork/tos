@@ -361,8 +361,8 @@ pub(crate) fn poseidon2_ivk_commitment(
 /// claim-6 AIR block are removed, `poseidon2_cm_fe` can be deleted.
 ///
 /// The u64-returning wrapper `poseidon2_cm()` that formerly lived here
-/// was deleted by step 5e (Codex follow-up finding 3) — had no
-/// callers, and the single-line `.as_canonical_u64()` was shadowing
+/// was deleted by step 5e because it had no callers; the single-line
+/// `.as_canonical_u64()` was shadowing
 /// the real helper.
 pub(crate) fn poseidon2_cm_fe(
     perm16: &impl Permutation<[Goldilocks; POSEIDON2_WIDTH_16]>,

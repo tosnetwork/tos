@@ -33,7 +33,7 @@ void ShardBlockVerifier::start_up() {
     }
     void receive_query(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data,
                        td::Promise<td::BufferSlice> promise) override {
-      // Codex audit (round 5, finding #3): the ShardBlockVerifier ADNL
+      // The ShardBlockVerifier ADNL
       // subscription only accepts asynchronous `confirmBlocks` MESSAGES;
       // queries are not part of the protocol. Empty body would drop the
       // promise and hang the caller — return an explicit error instead.

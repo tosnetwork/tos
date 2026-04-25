@@ -783,9 +783,8 @@ where
             // block (which had `inputs = (TAG_CM, d, pk_d, ivkcm_claim,
             // value, rcm, 0·10)` and `output[0] == S_LEAF`) with bank-1
             // of the iterated Poseidon2-w=16 sponge that matches the
-            // output-side step 1.2c layout byte-for-byte. Closes Codex
-            // audit finding 1 (doc/uno-phase4b-step3-codex-audit.md):
-            // the spend-side claim 2 now absorbs the FULL 15-fe input
+            // output-side step 1.2c layout byte-for-byte. The spend-side
+            // claim 2 now absorbs the full 15-fe input
             // (d_fes(2) + pk_d_fes(4) + ivk_commitment_fes(4) + value(1)
             // + rcm_fes(4)) and binds the sponge's final 4-fe digest to
             // `pack_32b_as_4fe(&s.leaf)` — the cryptographic equivalent
@@ -1905,9 +1904,9 @@ mod tests {
         ));
     }
 
-    /// Phase 4b-step3-step4c: guards against Codex audit finding 2
-    /// (`doc/uno-phase4b-step3-codex-audit.md`). A witness with any
-    /// non-zero byte in `OutputWitness.d[11..32]` does not correspond
+    /// Phase 4b-step3-step4c: guard against non-canonical diversifier
+    /// padding. A witness with any non-zero byte in `OutputWitness.d[11..32]`
+    /// does not correspond
     /// to a valid 11-byte diversifier under the C++ / spec preimage
     /// domain; the decoder must reject.
     #[test]
@@ -1941,10 +1940,8 @@ mod tests {
     /// `SpendWitness.d[11..32] != 0` (same rationale as the output-side
     /// check: `pack_diversifier_as_2fe` absorbs `d[0..16]`, so
     /// `d[11..15]` would change the proven cm and `d[16..31]` would be
-    /// unconstrained garbage). Codex follow-up audit finding 1
-    /// (`doc/uno-phase4b-step5-codex-audit.md`) flagged that without
-    /// this regression, a later refactor could silently weaken the
-    /// check.
+    /// unconstrained garbage). Without this regression, a later refactor
+    /// could silently weaken the check.
     #[test]
     fn witness_decode_rejects_non_canonical_spend_diversifier_padding() {
         let w = MvpWitness::deterministic_valid(1, 1, 0xD1FF_5005);

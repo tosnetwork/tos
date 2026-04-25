@@ -30,7 +30,7 @@ namespace tos::validator {
 
 namespace {
 
-// Codex audit (round 2, finding #2): the wc=2 short-circuit in `check_message`
+// The wc=2 short-circuit in `check_message`
 // previously admitted ANY structurally-valid wc=2 ext_in_msg without rate
 // limiting. The MineUno limiter in `uno/rpc/handlers.cpp` only fires on the
 // `uno_sendMineUno` JSON-RPC path; raw `sendBoc` and `liteServer_sendMessage`
@@ -40,7 +40,7 @@ namespace {
 //
 // Bucket shape mirrors `g_send_mine_uno_limiter` (5/s sustained, 20 burst)
 // — same threat model. Defined locally to avoid creating a downward link
-// from `validator` to `uno_workchain`. Token consumption happens BEFORE the
+// from `validator` to `uno_workchain`. Token consumption happens before the
 // expensive collator-side verify, so a flood is rejected with a cheap
 // `co_return td::Status::Error` before any STARK work.
 //
@@ -48,9 +48,9 @@ namespace {
 // from a single bucket here rather than discriminating by body byte 0:
 //   - The CellSlice walk to peek the body byte from a `vm::Cell` ref adds
 //     parsing complexity inside an actor task.
-//   - In production, `uno_sendTransfer` is currently unwired (round-2
-//     finding #3) so legitimate Transfer ingress at this layer is rare.
-//   - The JSON-RPC layer still applies its own per-method bucket BEFORE
+//   - In production, `uno_sendTransfer` is currently unwired, so legitimate
+//     Transfer ingress at this layer is rare.
+//   - The JSON-RPC layer still applies its own per-method bucket before
 //     this one, so honest RPC traffic is unaffected.
 struct WcExtMsgRateLimiter {
     std::mutex mutex;
@@ -193,7 +193,7 @@ void ExtMessagePool::cleanup_external_messages(ShardIdFull shard) {
 }
 
 void ExtMessagePool::cleanup_expired_messages_all_workchains() {
-  // Codex audit (round 6, finding #2): the alarm previously called
+  // The alarm previously called
   // `cleanup_external_messages` only for masterchain (-1) and basechain (0),
   // so wc=1 (EVM) and wc=2 (UNO) ext-msgs accepted via the
   // `check_message` short-circuit never expired and accumulated forever.
@@ -264,7 +264,7 @@ bool ExtMessagePool::erase_message(int priority, const MessageId &id) {
 
   auto address = msg_opt.value()->address();
   auto hash_norm = msg_opt.value()->hash_norm;
-  // Codex audit (round 6, finding #3): remove the outer per-address index
+  // Remove the outer per-address index
   // entry once its inner hash-set drains to empty. Without this, a stream
   // of accepted-then-erased messages to distinct destinations grew the
   // `ext_addr_messages_` map without bound.
@@ -299,7 +299,7 @@ std::vector<std::pair<std::string, std::string>> ExtMessagePool::prepare_stats()
 
 void ExtMessagePool::alarm() {
   if (cleanup_mempool_at_.is_in_past()) {
-    // Codex audit (round 6, finding #2): the previous alarm only swept
+    // The previous alarm only swept
     // masterchain (-1) and basechain (0). Use the workchain-agnostic
     // sweep so wc=1 / wc=2 messages also expire after their 600s TTL.
     cleanup_expired_messages_all_workchains();
@@ -382,8 +382,8 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
   // Must short-circuit for the same reason as wc=1.
   if (wc == 1 /* evm_workchain::kWorkchainId */ ||
       wc == 2 /* uno_workchain::kWorkchainId */) {
-    // Codex audit (round 4 #1, round 7 #1): both EVM (wc=1) and UNO (wc=2)
-    // host a SINGLE outer executor account at the canonical 0x00…01 address
+    // Both EVM (wc=1) and UNO (wc=2)
+    // host a single outer executor account at the canonical 0x00…01 address
     // — `evm_workchain::kEvmExecutorAddressBytes` and
     // `uno_workchain::kUnoExecutorAddressBytes`. Reject ext_in_msgs targeted
     // at any other wc=1 / wc=2 address — accepting them would let a caller
@@ -402,7 +402,7 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_message(td::R
           ? "wc=1 ext-msg destination is not the evm executor"
           : "wc=2 ext-msg destination is not the uno executor");
     }
-    // Codex audit (round 2, finding #2): rate-limit wc=2 ingress to bound
+    // Rate-limit wc=2 ingress to bound
     // forged-MineUno DoS via raw sendBoc / liteServer_sendMessage paths.
     // wc=1 (EVM) is left unchanged here — its compute phase does not run
     // STARK verification, and the EVM RPC layer already has a dedicated

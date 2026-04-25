@@ -42,22 +42,22 @@ namespace fullnode {
 
 namespace {
 
-// Codex audit (round 4, finding #3): the shard endpoint runs every query
+// The shard endpoint runs every query
 // through a `RateLimiter<>` (see full-node-shard.cpp:743-750), but the
 // master endpoint had no per-method rate limit. An ADNL peer could
 // repeatedly issue heavy `getArchiveSlice` / `downloadPersistentStateSliceV2`
-// queries (each up to 16 MiB after R3.2's max_size cap) and drive disk I/O
+// queries (each up to 16 MiB after the max_size cap) and drive disk I/O
 // + bandwidth on the master.
 //
 // Mirroring shard's full RateLimiter would require plumbing a shared_ptr
 // through `FullNodeMaster::create` to all callers — out of scope for this
-// audit pass. Instead install a simple process-wide bucket here:
+// focused hardening change. Instead install a simple process-wide bucket here:
 //
-// Codex audit (round 5, finding #2): the round-4 fix used ONE process-wide
-// bucket. A single misbehaving / aggressive peer could burn the entire
+// A single process-wide bucket lets one misbehaving or aggressive peer burn
+// the entire
 // 16-burst / 4-per-sec budget and starve every other peer. Add a
 // per-source bucket (keyed by `adnl::AdnlNodeIdShort`) with the global
-// bucket as a backstop. A query is admitted only when BOTH buckets allow
+// bucket as a backstop. A query is admitted only when both buckets allow
 // it, so the global cap still bounds total master CPU/IO and the
 // per-source cap stops one peer from monopolising it. Per-source map
 // grows by adnl id; in practice the slave set is small (validator-set
@@ -94,7 +94,7 @@ struct MasterIngressLimiter {
         return true;
     }
 
-    // Codex audit (round 8, finding #4): refund a previously-consumed token
+    // Refund a previously-consumed token
     // when a downstream gate (per-source bucket) rejects. Bounded by
     // max_tokens so a refund storm cannot overflow the bucket.
     void refund() {
@@ -108,7 +108,7 @@ struct MasterIngressLimiter {
 constexpr uint64_t kMasterIngressBurst  = 16;
 constexpr uint64_t kMasterIngressPerSec = 4;
 constexpr uint64_t kPerSourcePerSec     = 1;
-constexpr uint64_t kPerSourceFreshBurst = 1;   // codex r7 #4: new bucket only gets 1 token, not full burst
+constexpr uint64_t kPerSourceFreshBurst = 1;   // new bucket only gets 1 token, not full burst
 constexpr size_t   kMaxTrackedSources   = 1000;
 constexpr uint64_t kPerSourceIdleSec    = 300; // 5 min idle → eligible for eviction
 
@@ -120,7 +120,7 @@ struct PerSourceLimiterMap {
         std::unique_ptr<MasterIngressLimiter> limiter;
         uint64_t last_use_sec;
     };
-    // Codex audit (round 7, finding #4): the round-5 implementation evicted
+    // The previous implementation evicted
     // `buckets.begin()` (lowest adnl-id bytes) when the cap was hit and gave
     // every fresh bucket a full `kPerSourceBurst` token allowance. An attacker
     // churning through fresh adnl ids could (a) evict legitimate peers'
@@ -508,7 +508,7 @@ void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNo
 
 void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_getArchiveSlice &query,
                                        td::Promise<td::BufferSlice> promise) {
-  // Codex audit (round 3, finding #2): mirror the shard endpoint's
+  // Mirror the shard endpoint's
   // `max_size_` guard (validator/full-node-shard.cpp:637-640) — without it,
   // an ADNL peer can request arbitrarily large or negative slices, driving
   // disk I/O / bandwidth on the master. The shard endpoint also charges a
@@ -536,7 +536,7 @@ void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNo
 void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src,
                                        tos_api::tosNode_downloadPersistentStateSliceV2 &query,
                                        td::Promise<td::BufferSlice> promise) {
-  // Codex audit (round 3, finding #2): mirror shard validation (full-node-shard.cpp:700-703).
+  // Mirror shard validation (full-node-shard.cpp:700-703).
   if (query.max_size_ < 0 || query.max_size_ > (1 << 24)) {
     promise.set_error(td::Status::Error(ErrorCode::protoviolation, "invalid max_size"));
     return;
@@ -572,7 +572,7 @@ void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNo
 
 void FullNodeMasterImpl::receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice query,
                                        td::Promise<td::BufferSlice> promise) {
-  // Codex audit (round 4 #3 + round 5 #2 + round 8 #4): per-source bucket
+  // The per-source bucket
   // gates one peer's share; global bucket is the backstop on aggregate
   // cost. Order matters — debit global FIRST (cheap reject if cap hit),
   // then per-source. If per-source rejects, refund the global token so a

@@ -434,8 +434,8 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
       auto tl_certificate = maybe_tl_certificate.move_as_ok();
       auto raw_vote = Vote::from_tl(*tl_certificate->vote_);
 
-      // Codex audit (round 1, finding #3): too-new certificates used to call
-      // `state_->slot_at(referenced_slot)` AFTER `Certificate::from_tl`,
+      // Too-new certificates used to call
+      // `state_->slot_at(referenced_slot)` after `Certificate::from_tl`,
       // which materializes the future slot. `tracked_slots_interval()` then
       // returns `end = referenced_slot + 1`, and the alarm / standstill loops
       // walk `[begin, end)` calling `slot_at(i)` for every i — turning one

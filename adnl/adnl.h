@@ -71,10 +71,10 @@ class Adnl : public AdnlSenderInterface {
     }
     virtual void receive_query(AdnlNodeIdShort src, AdnlNodeIdShort dst, td::BufferSlice data,
                                td::Promise<td::BufferSlice> promise) {
-      // Codex audit (round 6, finding #4): default to a structured error
+      // Default to a structured error
       // rather than silently dropping the promise. A subclass that handles
       // ADNL messages but not queries used to leave callers hanging on
-      // their own timeout — see e.g. ShardBlockVerifier (round 5 #3).
+      // their own timeout, as in message-only callbacks such as ShardBlockVerifier.
       promise.set_error(td::Status::Error("ADNL Callback subclass does not handle queries"));
     }
     virtual ~Callback() = default;

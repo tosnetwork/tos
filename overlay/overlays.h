@@ -312,10 +312,9 @@ class Overlays : public td::actor::Actor {
     }
     virtual void receive_query(adnl::AdnlNodeIdShort src, OverlayIdShort overlay_id, td::BufferSlice data,
                                td::Promise<td::BufferSlice> promise) {
-      // Codex audit (round 6, finding #4): default to a structured error
-      // rather than silently dropping the promise. See round 5 #3 for the
-      // overlay subclasses (custom-overlays, fast-sync-overlays) that
-      // previously had to override this with their own error stub.
+      // Default to a structured error rather than silently dropping the
+      // promise. Concrete overlay implementations that do not support
+      // queries should follow the same contract.
       promise.set_error(td::Status::Error("overlay Callback subclass does not handle queries"));
     }
     virtual void receive_broadcast(PublicKeyHash src, OverlayIdShort overlay_id, td::BufferSlice data) {

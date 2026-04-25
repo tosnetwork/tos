@@ -39,7 +39,7 @@ class ExtMessagePool : public td::actor::Actor {
   td::actor::Task<CheckResult> check_add_external_message(td::BufferSlice data, int priority, bool add_to_mempool);
   void install_collator_queue(ShardIdFull shard, std::unique_ptr<ExtMsgCallback> callback);
   void cleanup_external_messages(ShardIdFull shard);
-  // Codex audit (round 6, finding #2): workchain-agnostic expiry sweep.
+  // Workchain-agnostic expiry sweep.
   // The shard-specific overload above is shard-hardcoded by the alarm to
   // masterchain/basechain, leaving wc=1 / wc=2 messages stuck in the pool.
   void cleanup_expired_messages_all_workchains();

@@ -1005,12 +1005,13 @@ class Query {
   };
 
   td::Result<td::int64> calc_fwd_fees(td::Ref<vm::Cell> list, block::MsgPrices** msg_prices, bool is_masterchain) try {
-    // Codex audit (round 9, finding #3): port the hardened pattern from
+    // Use the hardened pattern from
     // validator-engine/json-rpc-server-send.cpp::estimate_calc_fwd_fees
-    // (round 5 #1 + round 6 #1). The previous bare `load_cell_slice` +
-    // `CHECK` pair would crash the embedding process if a contract emitted
-    // a malformed/special action list (PrunedBranch / Library / Merkle*
-    // throws inside load_cell_slice; CHECK aborts on missing-ref/bad-tag).
+    // for special-aware parsing and structured errors. The previous bare
+    // `load_cell_slice` + `CHECK` pair would crash the embedding process if
+    // a contract emitted a malformed/special action list (PrunedBranch /
+    // Library / Merkle* throws inside load_cell_slice; CHECK aborts on
+    // missing-ref/bad-tag).
     // Switch to special-aware loader + structured rejects + function-try
     // catching VmError / std::exception / catch-all.
     td::int64 res = 0;
@@ -2720,7 +2721,7 @@ toslib_api::object_ptr<toslib_api::Object> ToslibClient::do_static_request(
   return toslib_api::make_object<toslib_api::accountAddress>(r_account_address.ok().rserialize(true));
 }
 
-// Codex audit (round 9, finding #2): wrap std_boc_deserialize with a
+// Wrap std_boc_deserialize with a
 // special-cell-root reject. Downstream consumers
 // (`tos::GenericAccount::create_ext_message`,
 // `tos::SmartContract::send_external_message`) are declared `noexcept`
@@ -3638,7 +3639,7 @@ td::Status ToslibClient::do_request(const toslib_api::raw_createAndSendMessage& 
   }
   td::Ref<vm::Cell> init_state;
   if (!request.initial_account_state_.empty()) {
-    // Codex audit (round 9, finding #2): special-aware BOC root validation.
+    // Validate BOC roots with the special-cell-aware loader.
     TRY_RESULT(new_init_state,
                deserialize_safe_boc_root(request.initial_account_state_, "initial_account_state"));
     init_state = std::move(new_init_state);
@@ -4576,7 +4577,7 @@ td::Status ToslibClient::do_request(const toslib_api::raw_createQuery& request,
 
   td::optional<tos::SmartContract::State> smc_state;
   if (!request.init_code_.empty()) {
-    // Codex audit (round 9, finding #2): special-aware BOC root validation.
+    // Validate BOC roots with the special-cell-aware loader.
     TRY_RESULT(code, deserialize_safe_boc_root(request.init_code_, "init_code"));
     TRY_RESULT(data, deserialize_safe_boc_root(request.init_data_, "init_data"));
     smc_state = tos::SmartContract::State{std::move(code), std::move(data)};

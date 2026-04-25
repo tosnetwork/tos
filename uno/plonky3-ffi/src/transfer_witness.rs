@@ -92,8 +92,8 @@ pub struct SpendWitness {
     pub merkle_path: [[u8; 32]; MERKLE_DEPTH],
     /// Raw 32-byte `rk` (compressed Ristretto255 spend-auth pubkey, §4.1).
     /// Consensus-binding: C++ `build_plonky3_public_inputs` encodes this
-    /// via `encode_256` → 4 Goldilocks limbs. V1-3c-round-8 (tier-1) added
-    /// this field so Rust-side PI bytes match the C++ build byte-for-byte
+    /// via `encode_256` → 4 Goldilocks limbs. The tier-1 layout added this
+    /// field so Rust-side PI bytes match the C++ build byte-for-byte
     /// (previously the 4 rk slots were all-zero, breaking STARK verify
     /// on a real validator). The AIR proxy claims do not bind these
     /// slots; the constraint is satisfied solely by consensus-level
@@ -122,7 +122,7 @@ pub struct OutputWitness {
     /// Raw 32-byte `cm_j` (note commitment, §4.1). Used to populate all
     /// 4 PI limbs via `encode_256`; the current proxy AIR binds only the
     /// low-limb equality (`pi_cm[j] == cm_fe_computed_from_witness`).
-    /// V1-3c-round-8 (tier-1) — see `rk_bytes` note on SpendWitness.
+    /// Tier-1 layout — see `rk_bytes` note on SpendWitness.
     pub cm_bytes: [u8; 32],
     /// Raw 32-byte `epk_j` (compressed Ristretto255 ephemeral pubkey, §4.1).
     pub epk_bytes: [u8; 32],
@@ -152,7 +152,7 @@ pub struct MvpWitness {
     /// all 4 limbs from the 4-fe Merkle walk and binds them directly
     /// to `PI[PI_ANCHOR + 0..4]`; callers arrange `anchor_bytes` to
     /// equal the Merkle root of the tree they're proving against.
-    /// V1-3c-round-8 (tier-1) — see `rk_bytes` note on SpendWitness.
+    /// Tier-1 layout — see `rk_bytes` note on SpendWitness.
     pub anchor_bytes: [u8; 32],
 }
 
@@ -420,7 +420,7 @@ impl MvpWitness {
     ///   `(u64 d || u64 pk_d || u64 ivk_commitment || u64 value || u64 rcm) × n_o ||`
     ///   `u64 anchor_proxy`.
     ///
-    /// V1-3c-round-8 (tier-1) extended layout (this function):
+    /// Tier-1 extended layout (this function):
     ///   `[32 B] anchor_bytes || u8 scheme_id || u32 chain_id || u64 expiry_block`  (trailer)
     ///   Each spend: `[32 B] rk_bytes` appended (stride +32).
     ///   Each output: `[32 B] cm_bytes || [32 B] epk_bytes || u16 filter_tag` appended (stride +66).
@@ -615,9 +615,8 @@ impl MvpWitness {
             // zero-padded to 16 B; `pack_diversifier_as_2fe` on this side
             // absorbs `d[0..16]` directly. Without this check a caller
             // could set `d[11..16]` to non-zero and produce a `cm` proof
-            // for a diversifier that has no valid 11-B preimage — spec-
-            // domain mismatch (Codex audit finding 2, doc/uno-phase4b-
-            // step3-codex-audit.md). Bytes [16..32] are never absorbed
+            // for a diversifier that has no valid 11-B preimage — a spec
+            // domain mismatch. Bytes [16..32] are never absorbed
             // but we reject them too so the wire form has a single
             // canonical representation.
             if d[11..].iter().any(|b| *b != 0) {
@@ -701,7 +700,7 @@ impl MvpWitness {
     ///     [filter_tag_j as u16 → 1 limb — zero in proxy]  (1 filter_tag)
     /// ```
     ///
-    /// **V1-3c-round-8 (tier-1, 2026-04-22)**: this is a partial fix. The
+    /// **Tier-1 layout update (2026-04-22)**: this is a partial fix. The
     /// header scalars `scheme_id` / `chain_id` / `expiry_block` are now
     /// threaded from the witness (no more hardcoded `CHAIN_ID_TEST` /
     /// `EXPIRY_BLOCK_TEST`), which is the subset of PI slots that the
@@ -1601,9 +1600,8 @@ impl MvpWitness {
 /// Phase 4b-step3-step5c-sponge (2026-04-23): switched from the legacy
 /// single-perm u64-proxy `poseidon2_cm(...)` check to the full 4-fe
 /// sponge digest comparison, mirroring the AIR's new bank-1/bank-2
-/// sponge closure on spend rows i / 24+i. Closes Codex audit finding
-/// 1: the pre-check and the AIR constraint now agree on what leaf
-/// means.
+/// sponge closure on spend rows i / 24+i. The pre-check and the AIR
+/// constraint now agree on what leaf means.
 pub fn witness_claim2_leaf_consistent(w: &MvpWitness) -> bool {
     let perm16 = default_goldilocks_poseidon2_16();
     for s in &w.spends {
