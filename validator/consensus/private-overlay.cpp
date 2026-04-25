@@ -239,7 +239,19 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
   }
 
   void on_query(adnl::AdnlNodeIdShort src, td::BufferSlice data, td::Promise<td::BufferSlice> promise) {
-    auto peer = adnl_id_to_peer_.at(src);
+    // Codex audit (round 11, finding #2): the round-10 #3 fix covered
+    // on_overlay_message / on_overlay_broadcast / precheck_broadcast but
+    // missed this on_query handler. Same `.at(src)` throw vector — a
+    // private-overlay query from an ADNL id absent from the consensus
+    // membership map (membership race / stale peer) used to throw out of
+    // the actor and tear down the validator.
+    auto it = adnl_id_to_peer_.find(src);
+    if (it == adnl_id_to_peer_.end()) {
+      LOG(WARNING) << "private-overlay: dropping query from unknown adnl src " << src;
+      promise.set_value(create_serialize_tl_object<tl::requestError>());
+      return;
+    }
+    auto peer = it->second;
     auto request = std::make_shared<IncomingOverlayRequest>(peer.idx, std::move(data));
 
     auto task = [](BusHandle bus, auto message, auto promise) -> td::actor::Task<> {

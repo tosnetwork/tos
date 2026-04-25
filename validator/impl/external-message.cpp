@@ -166,8 +166,23 @@ td::Result<Ref<ExtMessageQ>> ExtMessageQ::create_ext_message(td::BufferSlice dat
       if (++popped > kMaxScannedCells) {
         return td::Status::Error("external message tree too large for special-cell scan");
       }
-      vm::CellSlice cs2{vm::NoVmOrd{}, c};
-      if (cs2.is_special()) {
+      // Codex audit (round 11, finding #1): the previous implementation
+      // built a `CellSlice{NoVmOrd{}, c}` and then called `cs2.is_special()`.
+      // `NoVmOrd` returns an empty/invalid slice for special cells, and
+      // `is_special()` dereferences the cell pointer — for some malformed
+      // / pruned inputs that path can throw or read garbage. Use the
+      // standard special-aware loader, which both returns a valid slice
+      // for ordinary cells and reports `special` cleanly. Wrap in try
+      // so any other VmError from cell traversal is converted to a
+      // structured reject.
+      bool special = false;
+      vm::CellSlice cs2;
+      try {
+        cs2 = vm::load_cell_slice_special(c, special);
+      } catch (...) {
+        return td::Status::Error("external message tree contains an unloadable cell");
+      }
+      if (special) {
         return td::Status::Error("external message tree contains a special cell");
       }
       for (unsigned i = 0, n = cs2.size_refs(); i < n; ++i) {

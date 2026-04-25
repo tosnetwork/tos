@@ -2360,7 +2360,18 @@ void TestNode::run_smc_method(int mode, tos::BlockIdExt ref_blk, tos::BlockIdExt
               td::Status::Error(PSLICE() << "cannot deserialize remote VM result boc: " << std::move(err)));
           return;
         }
-        auto cs = vm::load_cell_slice(res.move_as_ok());
+        // Codex audit (round 11, finding #4): a malicious lite-server can
+        // return a special-root result BoC; bare `load_cell_slice` would
+        // throw out of the surrounding catch (the catch only handles
+        // VmError/VmVirtError, not all special-cell exception flavors).
+        // Use the special-aware loader and reject special roots
+        // explicitly before VmStack::deserialize_to.
+        bool special = false;
+        auto cs = vm::load_cell_slice_special(res.move_as_ok(), special);
+        if (special) {
+          promise.set_error(td::Status::Error("remote VM result boc has a special root"));
+          return;
+        }
         Ref<vm::Stack> remote_stack;
         if (!(vm::Stack::deserialize_to(cs, remote_stack, 0) && cs.empty_ext())) {
           LOG(ERROR) << "remote VM result boc cannot be deserialized as a VmStack";
