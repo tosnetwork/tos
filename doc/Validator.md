@@ -85,4 +85,3 @@ Use the console for:
 
 - [FullNode.md](FullNode.md)
 - [ConfigParam.md](ConfigParam.md)
-- [Tests.md](Tests.md)

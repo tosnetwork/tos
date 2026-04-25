@@ -15,8 +15,6 @@ The goal is to answer:
 
 This document complements:
 
-- [tos-north-star.md](tos-north-star.md) (Direction 10: verification tiers as public architecture)
-- [tos-roadmap-12m.md](tos-roadmap-12m.md) (Q2: published trust tiers and recommended defaults)
 - [tos-standards-map.md](tos-standards-map.md) (Standard Family 7: trust and verification standards)
 - [tos-release-policy.md](tos-release-policy.md) (stability levels referenced in Section 6)
 

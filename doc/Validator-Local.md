@@ -676,7 +676,7 @@ EVM state is part of the TOS ShardState cell tree (atomic with TOS state) once t
 - On clean shutdown: state can be serialized to `{db_root}/evm-state.boc` (development mode)
 - On restart: the BoC is loaded if present
 
-The atomic single-WriteBatch commit (TOS + EVM together) is the production target. See `doc/evm-workchain-cell-native-state.md` for the full architecture.
+The atomic single-WriteBatch commit (TOS + EVM together) is the production target.
 
 ### Troubleshooting EVM
 
@@ -738,7 +738,7 @@ UNO tx (Transfer or MineUno, built by tosctl-uno)
 | Initial PoW target                | `2^219` (big-endian 32-byte, byte[4] = `0x08`)    | `uno/core/mine_constants.h` (`kInitMineTargetBE`) |
 | Hash algorithm                    | Poseidon2 over Goldilocks (PQ-native; CPU-only)   | `kMineHashTag = "uno-mine-v1"` |
 | Proof system                      | Plonky3 STARK + FRI, ABI v4                       | `uno/plonky3-ffi/include/uno_plonky3_ffi.h` |
-| Expected proof size               | ~200 KB                                           | see [Mining-Design.md §UNO Mining](Mining-Design.md) |
+| Expected proof size               | ~200 KB                                           | local-test target; production sizing is in [uno-workchain.md](uno-workchain.md) |
 | `uno_plonky3_abi_version()`       | `4`                                               | `uno/crypto/plonky3-verifier.h` (`kExpectedAbiVersion`) |
 
 ### Initialization in validator-engine
@@ -819,7 +819,7 @@ This is intentional:
 - UNO's positioning is "PQ-native Bitcoin" — a 0 % pre-mine matches Bitcoin's original distribution.
 - Genesis wiring for a future non-empty zerostate (60 % airdrop / 25 % treasury / 15 % team per `uno/core/genesis.h:111-138`) exists in code but is **not** used by the local testnet — the comment at `gen-zerostate.fif:58-67` explicitly documents the TODO.
 
-Details: [Mining-Design.md §UNO Mining (wc=2 STARK / Privacy)](Mining-Design.md) and [Mining-Design.md §Pre-Mine Policy](Mining-Design.md).
+The local testnet uses mining-only issuance with no pre-funded UNO accounts.
 
 ### Mining Quick Start
 
@@ -860,7 +860,7 @@ Notes on flags:
 - `--threads` defaults to `num_cpus::get()` (all logical CPUs).
 - If your node does not yet expose an HTTP RPC at port 8080, the miner will fail at the chain-state poll step. Direct `tos-lite-client -c "sendfile <boc>"` submission requires a pre-built MineUno BoC; the `tosctl-uno mine` binary is the canonical submitter.
 
-Difficulty hint: for local single-miner smoke tests you can lower the zerostate target manually in `uno/core/mine_constants.h` (`kInitMineTargetBE`) — e.g., from `2^219` to `2^40` — and rebuild + reset. The genesis `2^219` target assumes ~150 M Poseidon2 ops/s total network hashrate and will not solve in reasonable wall-clock time on a single box. Mainnet calibration is in [Mining-Design.md §Initial Difficulty Calibration / UNO](Mining-Design.md).
+Difficulty hint: for local single-miner smoke tests you can lower the zerostate target manually in `uno/core/mine_constants.h` (`kInitMineTargetBE`) — e.g., from `2^219` to `2^40` — and rebuild + reset. The genesis `2^219` target assumes ~150 M Poseidon2 ops/s total network hashrate and will not solve in reasonable wall-clock time on a single box.
 
 ### Persistent State (UNO)
 
@@ -915,7 +915,5 @@ For production, the following changes are needed:
 - [Validator.md](Validator.md) — Production validator operation
 - [FullNode.md](FullNode.md) — Full node setup
 - [ConfigParam.md](ConfigParam.md) — Blockchain configuration parameters
-- [Mining-Design.md](Mining-Design.md) — Three-coin mining design (TOS / eTOS / UNO) — parameters, distribution math, and miner-ecosystem mapping
 - [uno-workchain.md](uno-workchain.md) — UNO workchain architecture (privacy model, AIR, key hierarchy, compute-phase flow)
-- [uno-mine-air-constraints.md](uno-mine-air-constraints.md) — MineUno AIR constraint specification (columns, PIs, row-selector logic)
 - [Zerostate.md](Zerostate.md) — Per-workchain zerostate layout (how `zerostate.boc` / `basestate0.boc` / `evmstate1.boc` / `unostate2.boc` fit together)

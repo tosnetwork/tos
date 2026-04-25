@@ -13,11 +13,7 @@ The goal is to answer:
 
 > What compatibility promises does TOS make, how long do they last, and how are changes communicated?
 
-This document complements:
-
-- [tos-north-star.md](tos-north-star.md)
-- [tos-roadmap-12m.md](tos-roadmap-12m.md)
-- [tos-standards-map.md](tos-standards-map.md)
+This document complements [tos-standards-map.md](tos-standards-map.md).
 
 ## Policy Rule
 

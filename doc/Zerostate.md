@@ -329,7 +329,7 @@ To change the TOS target supply, edit the `TM$<N>` literal on `gen-zerostate.fif
 The dev/test eTOS distribution seeds 10 Hardhat/Anvil standard EOAs with `kSeedAmountETos = 10_000_000` eTOS each (100 M total). **This is dev/test only** — the private keys are public and documented in `evm/core/init.cpp`. For mainnet:
 
 1. Prepare a Hive-style `genesis.json` with real recipient addresses and balances (total 100 M eTOS = 100 M × 10¹⁸ wei).
-2. Use `translate-genesis.py` (see `doc/evm-workchain-transaction-admission-and-single-executor.md` Phase D) to convert to a Fift tuple.
+2. Use `translate-genesis.py` to convert to a Fift tuple.
 3. Replace the `mkemptyShardState` call on wc=1 in `gen-zerostate.fif` with:
    ```fif
    <allocation-tuple> evm-zerostate-from-alloc  // builds wc=1 accounts cell

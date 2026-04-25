@@ -31,9 +31,6 @@ this list, runners should skip it or flag it as expected. If a
 divergence is not on this list, it needs investigation before the
 next testnet deploy.
 
-Linked from `doc/evm-workchain-test-plan.md` §3 and §4 — see that
-doc for the overall test plan.
-
 ## Category A — False positives from chain-state divergence
 
 These appear when running `ethereum/execution-apis/tests/` against
@@ -465,8 +462,6 @@ than shipping "fixes" that paper over useful differences.
 
 ## References
 
-- `doc/evm-workchain-test-plan.md` — the parent test plan this doc
-  supports
 - `test/conformance/CONFORMANCE-FINDINGS.md` — the 2026-04-17
   execution-apis snapshot that seeded Category A
 - `test/conformance/differential_geth.py` — the runner whose output

@@ -6,9 +6,7 @@ bring up a `wc=2` testnet, what to monitor, how to respond to incidents, and
 how the day-60 stability gate is judged and signed off.
 
 Every reference back to the protocol spec is written as "§x.y" and resolves
-against [`doc/uno-workchain.md`](uno-workchain.md). Lifecycle context (wallet
-→ RPC → mempool → compute → persist → scan) is in
-[`doc/uno-tx-lifecycle.md`](uno-tx-lifecycle.md). Build prerequisites are in
+against [`doc/uno-workchain.md`](uno-workchain.md). Build prerequisites are in
 [`BUILD.md`](../BUILD.md).
 
 This document is itself the **P.7 mainnet-activation artifact**: once the
@@ -325,9 +323,7 @@ Expected behaviour:
 
 - `uno_sendTransfer` returns a tx hash.
 - The tx is included **within 5 blocks** (≤ ~5 s at 1 s block time) under
-  light load; under sustained synthetic 15 TPS load, within 10 blocks. The
-  lifecycle path is [`doc/uno-tx-lifecycle.md`](uno-tx-lifecycle.md) stages
-  [7]–[21].
+  light load; under sustained synthetic 15 TPS load, within 10 blocks.
 - `tosctl uno scan` on wallet B sees the incoming note within one block
   after inclusion (§5.8 wallet sync budget).
 - `tosctl uno balance` on wallet B increments by the exact sent amount
@@ -651,9 +647,6 @@ unresolved.
 
 - [`doc/uno-workchain.md`](uno-workchain.md) — full wc=2 protocol design
   (45 locked decisions, §1–§16).
-- [`doc/uno-tx-lifecycle.md`](uno-tx-lifecycle.md) — end-to-end
-  transaction lifecycle topology (wallet → RPC → mempool → compute →
-  persist → scan).
 - [`BUILD.md`](../BUILD.md) — C++ / Rust build instructions, liboqs
   install paths, Uno-specific configure output.
 - [`doc/Validator-Local.md`](Validator-Local.md) — base TOS validator

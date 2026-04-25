@@ -12,13 +12,10 @@ It answers the questions that operators and integrators must be able to resolve 
 
 This document is the operational counterpart to [tos-release-policy.md](tos-release-policy.md), which defines stability levels and compatibility promises. This document defines the process that enforces those promises.
 
-It addresses North Star Direction 9 ("Make governance and upgrade coordination a product surface") and Priority 9 ("Reduce ambiguity about governance and change management").
-
 This document complements:
 
 - [tos-release-policy.md](tos-release-policy.md) -- stability levels, compatibility windows, deprecation policy
 - [tos-standards-map.md](tos-standards-map.md) -- which surfaces are standards and who owns them
-- [tos-north-star.md](tos-north-star.md) -- long-term product direction
 
 ## 2. Change Categories
 

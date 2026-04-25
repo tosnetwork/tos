@@ -411,4 +411,3 @@ This flow will be promoted to Level 1 (Canonical Standard) when:
 - OpenAPI specification: `doc/openapi.yaml`
 - JSON-RPC design policy: `doc/json-rpc-policy.md`
 - Standards map: `doc/tos-standards-map.md`
-- 12-month roadmap: `doc/tos-roadmap-12m.md` (Q2: "one canonical wallet integration model from estimate to send to tracking")

@@ -90,4 +90,3 @@ Use the console and lite client to confirm:
 
 - [Validator.md](Validator.md)
 - [LiteClient.md](LiteClient.md)
-- [Tests.md](Tests.md)

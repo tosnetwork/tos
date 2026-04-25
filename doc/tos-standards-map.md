@@ -13,11 +13,6 @@ The goal is to answer:
 
 > Which parts of TOS must behave like standards, who depends on them, and what kind of stability is required?
 
-This document complements:
-
-- [tos-north-star.md](tos-north-star.md)
-- [tos-roadmap-12m.md](tos-roadmap-12m.md)
-
 ## Standards Rule
 
 TOS should distinguish clearly between:

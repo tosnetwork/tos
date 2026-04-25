@@ -1,7 +1,6 @@
 # UNO v1 Validator Operations Runbook
 
-> **Status**: draft for v1 launch — reflects the 2026-04-21 per-Tx pivot
-> recorded in [`doc/uno-aggregation-design.md`](uno-aggregation-design.md) §-1.
+> **Status**: draft for v1 launch — reflects the 2026-04-21 per-Tx pivot.
 > The pre-mainnet testnet procedure lives in
 > [`doc/uno-testnet-runbook.md`](uno-testnet-runbook.md) (60-day stability
 > gate). This document is the **mainnet** operator runbook that takes over
@@ -56,8 +55,7 @@ Rationale:
   retain only the last N blocks of proof bodies (trees, nullifier set,
   and filters are small and kept indefinitely).
 - **Network** — 4 TPS × 520 KB = ~16 Mbps outbound at the typical
-  1-spend/2-output mix ([`uno-aggregation-design.md`](uno-aggregation-design.md)
-  §-1); 4/4 worst case triples that and stays under 50 Mbps
+  1-spend/2-output mix; 4/4 worst case triples that and stays under 50 Mbps
   sustained.
 
 This is intentionally a **consumer-broadband** profile — the direct
@@ -582,9 +580,9 @@ A: (1) Earn validator rewards from the `wc=2` catchain share of
 masterchain revenue — mechanically identical to any other shard. (2)
 Participate in the most PQ-forward privacy chain shipping in 2026:
 UNO's stack (Plonky3 FRI over Goldilocks, Poseidon2, Schnorr-on-
-Ristretto255, ML-KEM-768) is the stack Ethereum has stated it intends
-to migrate to by 2030 ([`uno-aggregation-design.md`](uno-aggregation-design.md)
-§-1). UNO ships it four years early.
+Ristretto255, ML-KEM-768) is the same class of post-quantum-friendly
+stack Ethereum has discussed for its long-term direction. UNO ships it
+early.
 
 **Q: What's the additional hardware cost?**
 A: Marginal — on a typical `wc=0+wc=1` validator, UNO adds ~4 cores,
@@ -616,9 +614,8 @@ validator identity there is no consensus path into `wc=2`.
 
 **Q: What's the v2 upgrade path?**
 A: v2 is **block-level proof aggregation + WHIR/BaseFold PCS**, gated
-on five trigger conditions
-([`uno-aggregation-design.md`](uno-aggregation-design.md) §-1). When
-it lands, the validator hardware envelope tightens back toward a
+on implementation maturity, proof-system maturity, audit readiness,
+operator hardware impact, and ecosystem demand. When it lands, the validator hardware envelope tightens back toward a
 datacenter-leaning profile — v1 consumer-broadband operators may need
 to upgrade uplink or opt out. Known tradeoff, not on the v1 horizon.
 

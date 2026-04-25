@@ -13,7 +13,6 @@ This document complements:
 - [tos-wallet-send-track.md](tos-wallet-send-track.md) (send-and-track lifecycle)
 - [tos-trust-tiers.md](tos-trust-tiers.md) (verification model for each client type)
 - [tos-standards-map.md](tos-standards-map.md) (Standard Family 3: indexing and data standards)
-- [tos-roadmap-12m.md](tos-roadmap-12m.md) (Q2: "one explicit model for balances, transaction identifiers, outcomes, and historical lookup")
 
 All methods are accessed via `POST /jsonRPC` as standard JSON-RPC 2.0 requests, or via `POST /{methodName}` with a params JSON body. The OpenAPI definition is published in `doc/openapi.yaml`.
 
@@ -364,4 +363,3 @@ This section classifies the stability of each component of the transaction histo
 - Trust and verification tiers: `doc/tos-trust-tiers.md`
 - Standards map: `doc/tos-standards-map.md`
 - Release policy: `doc/tos-release-policy.md`
-- 12-month roadmap: `doc/tos-roadmap-12m.md` (Q2: "one explicit model for balances, transaction identifiers, outcomes, and historical lookup")
