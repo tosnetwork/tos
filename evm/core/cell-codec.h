@@ -63,6 +63,25 @@ void address_to_key(const evmc::address& addr, unsigned char out[32]);
 /// Convert a bytes32 directly to a 256-bit key (identity copy into out).
 void bytes32_to_key(const evmc::bytes32& v, unsigned char out[32]);
 
+/// Decode a `cp.new_data`-shaped cell (the cell that compute-phase writes
+/// into `Transaction::new_data` for wc=1 accounts). Layout:
+///
+///   v1: magic:24 + has_state_root:1 + [state_root:^Cell] + eth_state_root:bits256
+///   v2: same + Maybe ^EvmRpcCacheRoot (trailing bit, optional ref)
+///
+/// On success returns true and populates the output refs/value. `state_root`
+/// may be null if `has_state_root` was zero (valid per the encoder, used at
+/// genesis when the executor account exists with no inner state). v1 cells
+/// (no trailing Maybe bit) are accepted: `rpc_cache_root` comes back null.
+///
+/// Used by both the snapshot compute path (to seed a per-call CellEvmState
+/// from the block-declared pre-state) and the global-state hydration path
+/// (`populate_state_from_shard_accounts`).
+bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
+                        td::Ref<vm::Cell>& state_root_out,
+                        evmc::bytes32& eth_state_root_out,
+                        td::Ref<vm::Cell>& rpc_cache_root_out);
+
 // ---------------------------------------------------------------------------
 // EVM bytecode cell encoding (Phase D.2)
 // ---------------------------------------------------------------------------

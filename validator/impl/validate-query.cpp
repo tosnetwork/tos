@@ -1122,12 +1122,9 @@ bool ValidateQuery::fetch_config_params() {
     // hashes, so the announced ShardState new_hash matches by construction.
     if (workchain() == evm_workchain::kWorkchainId) {
       compute_phase_cfg_.evm_block_seqno = static_cast<td::uint64>(id_.id.seqno);
-      if (id_.id.seqno > 1 && ps_.account_dict_) {
-        auto hydrated = evm_workchain::hydrate_global_state_if_empty(*ps_.account_dict_);
-        if (hydrated > 0) {
-          LOG(WARNING) << "evm-workchain: hydrated world state from executor account (validate-query)";
-        }
-      }
+      // No g_evm_state hydration here — see matching comment in
+      // collator.cpp. Snapshot compute pulls pre-state from the per-tx
+      // account_data cell directly.
     } else {
       compute_phase_cfg_.evm_block_seqno = 0;
     }

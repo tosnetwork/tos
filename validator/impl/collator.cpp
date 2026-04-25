@@ -2279,12 +2279,11 @@ bool Collator::fetch_config_params() {
   // per-account walk.
   if (workchain() == evm_workchain::kWorkchainId) {
     compute_phase_cfg_.evm_block_seqno = static_cast<td::uint64>(new_block_seqno);
-    if (account_dict) {
-      auto hydrated = evm_workchain::hydrate_global_state_if_empty(*account_dict);
-      if (hydrated > 0) {
-        LOG(WARNING) << "evm-workchain: hydrated world state from executor account";
-      }
-    }
+    // Hydration of g_evm_state from canonical ShardAccounts used to live
+    // here so the legacy compute path could read pre-state from the
+    // singleton. Snapshot compute decodes pre-state from the per-tx
+    // `account_data` cell instead, so the trigger is unnecessary. RPC
+    // read paths still hydrate from the cache DB at process init.
   } else {
     compute_phase_cfg_.evm_block_seqno = 0;
   }

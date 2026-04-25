@@ -1937,8 +1937,14 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
       return true;
     }
     vm::CellSlice body_cs{*in_msg_body};
+    // `new_data` here is the account's pre-state cell — initialized from
+    // `_account.data` in Transaction's ctor (line 881) and only later
+    // overwritten by `cp.new_data` once compute completes. Passing it as
+    // `account_data` is what makes the EVM compute deterministic across
+    // collator/validator/restart roles: the handler decodes this cell into
+    // a fresh local CellEvmState and never touches g_evm_state.
     bool ok = evm_workchain_dispatch::invoke_evm_compute(
-        cp, body_cs, cp.gas_limit,
+        cp, new_data, body_cs, cp.gas_limit,
         cfg.evm_block_seqno,                              // block.number — wc=1 shard seqno
         static_cast<td::uint64>(account.now_),            // timestamp (block gen_utime)
         cfg.block_rand_seed.as_array().data());           // rand_seed

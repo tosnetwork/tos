@@ -16,6 +16,7 @@
 #include "evm/rpc/cache-codec.h"
 #include "evm/rpc/cache-db.h"
 #include "evm/core/compute-phase.h"
+#include "evm/core/post-accept.h"
 #include "evm/core/state.h"
 #include "evm/core/cell-state.h"
 #include "evm/core/incremental-trie.h"
@@ -367,43 +368,6 @@ void verify_kzg_setup_loaded() {
                     "evmone bundles the G2_1 point as a constexpr)";
 }
 
-
-// Decode a cp.new_data-shaped cell (see evm-compute-phase.cpp). Layout:
-//   v1: magic:24 + has_state_root:1 + [state_root:^Cell] + eth_state_root:bits256
-//   v2: same + Maybe ^EvmRpcCacheRoot (trailing bit, optional ref)
-//
-// Returns true if the cell parses. Backward-compatible: a v1 cell with
-// no trailing bit is treated as `rpc_cache_root = nothing`. state_root
-// may be null (has_state_root=0 case, valid per the encoder).
-static bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
-                               td::Ref<vm::Cell>& state_root_out,
-                               evmc::bytes32& eth_state_root_out,
-                               td::Ref<vm::Cell>& rpc_cache_root_out) {
-    state_root_out = {};
-    rpc_cache_root_out = {};
-    if (cell.is_null()) return false;
-    auto cs = vm::load_cell_slice(cell);
-    if (cs.size() < kEvmMagicBits + 1 + 256) return false;
-    auto magic = cs.fetch_ulong(kEvmMagicBits);
-    if (magic != kEvmAccountMagic) return false;
-    auto has_root = cs.fetch_ulong(1);
-    if (has_root == 1) {
-        if (cs.size_refs() == 0) return false;
-        state_root_out = cs.fetch_ref();
-    }
-    if (cs.size() < 256) return false;
-    cs.fetch_bytes(eth_state_root_out.bytes, 32);
-
-    // v2 trailing field — tolerate v1 cells (no remaining bits) as nothing.
-    if (cs.size() >= 1) {
-        auto has_cache = cs.fetch_ulong(1);
-        if (has_cache == 1) {
-            if (cs.size_refs() == 0) return false;
-            rpc_cache_root_out = cs.fetch_ref();
-        }
-    }
-    return true;
-}
 
 size_t populate_state_from_shard_accounts(
     EvmState& target,
@@ -792,15 +756,31 @@ void init_evm_workchain(const std::string& db_root) {
 
     evm_workchain_dispatch::set_evm_compute_handler(
         [](block::ComputePhase& cp,
+           td::Ref<vm::Cell> account_data,
            vm::CellSlice& in_msg_body,
            uint64_t gas_limit,
            uint64_t block_seqno,
            uint64_t timestamp,
            const uint8_t rand_seed[32]) -> bool {
-            return run_evm_compute_phase(
-                cp, in_msg_body, gas_limit,
-                *g_evm_state,
+            bool ok = run_evm_compute_phase_snapshot(
+                cp, std::move(account_data), in_msg_body, gas_limit,
                 block_seqno, timestamp, rand_seed);
+            // Publish RPC-observability records into g_evm_state and the
+            // cache DB. Compute itself does not touch global mutable
+            // state — the dedup inside `apply_block_side_effects` keeps
+            // the operation idempotent across collator/validator/restart
+            // re-runs of the same (block, tx).
+            //
+            // True post-accept semantics (apply only after the validator
+            // manager has flushed the block) would require capturing
+            // side effects at the BlockData layer; the pragmatic seam
+            // here keeps the consensus-relevant invariant (cp.new_data
+            // is pure) while preserving the existing RPC behaviour. See
+            // post-accept.h for the in-flight design notes.
+            if (cp.evm_side_effects) {
+                apply_block_side_effects(*cp.evm_side_effects);
+            }
+            return ok;
         });
 
     g_trie_calc = std::make_unique<IncrementalTrieCalculator>();

@@ -27,6 +27,11 @@ namespace evm_workchain_dispatch {
 ///
 /// Parameters:
 ///   cp           — ComputePhase to populate with results
+///   account_data — current executor StateInit.data cell (the cp.new_data
+///                  v2 layout), or null on first activation. The handler
+///                  decodes this into a per-call local CellEvmState so
+///                  cp.new_data is a pure function of the inputs (no
+///                  read/write of any process-global mutable state).
 ///   in_msg_body  — body cell slice containing the RLP payload
 ///   gas_limit    — max gas for this execution
 ///   block_seqno  — host-chain block sequence number (for block.number)
@@ -36,6 +41,7 @@ namespace evm_workchain_dispatch {
 /// Returns true if the phase completed (even on revert), false on infra error.
 using EvmComputeHandler = std::function<bool(
     block::ComputePhase& cp,
+    td::Ref<vm::Cell> account_data,
     vm::CellSlice& in_msg_body,
     uint64_t gas_limit,
     uint64_t block_seqno,
@@ -53,6 +59,7 @@ bool has_evm_compute_handler() noexcept;
 /// Precondition: has_evm_compute_handler() == true.
 bool invoke_evm_compute(
     block::ComputePhase& cp,
+    td::Ref<vm::Cell> account_data,
     vm::CellSlice& in_msg_body,
     uint64_t gas_limit,
     uint64_t block_seqno,

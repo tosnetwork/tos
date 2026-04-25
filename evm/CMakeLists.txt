@@ -25,6 +25,7 @@ set(EVM_SRC
   core/incremental-trie.cpp
   core/init.cpp
   core/mpt-prover.cpp
+  core/post-accept.cpp
   core/state.cpp
   core/state-root.cpp
   core/tracer.cpp

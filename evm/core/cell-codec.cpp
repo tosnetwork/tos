@@ -177,4 +177,32 @@ std::string decode_evm_bytecode(td::Ref<vm::Cell> root) {
     return {};
 }
 
+bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
+                        td::Ref<vm::Cell>& state_root_out,
+                        evmc::bytes32& eth_state_root_out,
+                        td::Ref<vm::Cell>& rpc_cache_root_out) {
+    state_root_out = {};
+    rpc_cache_root_out = {};
+    if (cell.is_null()) return false;
+    auto cs = vm::load_cell_slice(cell);
+    if (cs.size() < kEvmMagicBits + 1 + 256) return false;
+    auto magic = cs.fetch_ulong(kEvmMagicBits);
+    if (magic != kEvmAccountMagic) return false;
+    auto has_root = cs.fetch_ulong(1);
+    if (has_root == 1) {
+        if (cs.size_refs() == 0) return false;
+        state_root_out = cs.fetch_ref();
+    }
+    if (cs.size() < 256) return false;
+    cs.fetch_bytes(eth_state_root_out.bytes, 32);
+    if (cs.size() >= 1) {
+        auto has_cache = cs.fetch_ulong(1);
+        if (has_cache == 1) {
+            if (cs.size_refs() == 0) return false;
+            rpc_cache_root_out = cs.fetch_ref();
+        }
+    }
+    return true;
+}
+
 }  // namespace evm_workchain
