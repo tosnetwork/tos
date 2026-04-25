@@ -33,11 +33,15 @@
 //! - Take byte buffers as `(const uint8_t*, size_t)` pairs. Buffers are
 //!   borrowed for the duration of the call only; callees copy internally
 //!   if they need to retain anything (they do not).
-//! - Are **panic-free** at the ABI boundary. We set `panic = "abort"` in
-//!   Cargo.toml, and every FFI entry point is wrapped in
-//!   `std::panic::catch_unwind` so that a panic in Plonky3 internals
-//!   cannot unwind through C++ frames. A caught panic is reported as
-//!   [`Plonky3Status::InternalError`].
+//! - Are **panic-free** at the ABI boundary. We set `panic = "unwind"` in
+//!   Cargo.toml so that the `std::panic::catch_unwind` in `ffi_guard` (see
+//!   below) actually catches a stray `.unwrap()`/`assert!` in verifier
+//!   internals and converts it into [`Plonky3Status::InternalError`].
+//!   Modern rustc additionally aborts at the C-ABI boundary if a panic
+//!   ever escapes the guard (defense-in-depth). Codex audit (round 1, F4)
+//!   flipped this from the prior `panic = "abort"` setting under which
+//!   `catch_unwind` was a no-op and any verifier panic killed the
+//!   validator process.
 //!
 //! # Determinism
 //!

@@ -346,6 +346,17 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
                              td::Promise<td::BufferSlice> promise);
 
   // Utility: build JSON-RPC response
+  //
+  // Codex audit (round 2, finding #7): EVERY call site that omits the
+  // explicit `cors_origin` argument silently falls back to "*", which
+  // bypasses an operator-configured restrictive CORS origin. Of the 478
+  // response sites in `json-rpc-server*.cpp`, 474 currently omit the
+  // argument. Threading `opts_.cors_origin` through them all is purely
+  // mechanical and not done here to keep the audit-loop diff focused;
+  // until that migration lands, deployments that depend on a restrictive
+  // `cors_origin` setting MUST treat this server's responses as
+  // potentially world-readable from any browser origin. Track the
+  // migration as a follow-up rather than relying on these defaults.
   static HttpReturn make_raw_json_response(const std::string& json_body,
                                             const std::string& cors_origin = "*");
   static HttpReturn make_json_ok(std::string result_json, std::string id,

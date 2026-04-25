@@ -280,6 +280,19 @@ void JsonRpcServer::listen(td::IPAddress addr) {
                  << "methods are enabled. Set --json-rpc-cors-origin to a "
                  << "specific origin in production.";
   }
+  if (!is_loopback && opts_.cors_origin != "*") {
+    // Codex audit (round 2, finding #7): warn that the configured restrictive
+    // origin is NOT enforced on every response path — many handlers still
+    // emit Access-Control-Allow-Origin: * via the static helper defaults.
+    // See JsonRpcServer::make_* doc-comment in the header. Until that
+    // migration lands, treat this server's responses as world-readable from
+    // any browser origin.
+    LOG(WARNING) << "JSON-RPC: --json-rpc-cors-origin is set to \""
+                 << opts_.cors_origin << "\", but the response helpers still "
+                 << "default to \"*\" on most call sites. Browsers from any "
+                 << "origin can read responses until the threading migration "
+                 << "is complete (see header comment on JsonRpcServer::make_*).";
+  }
 }
 
 // ─── HTTP callback ────────────────────────────────────────────────────────
@@ -806,6 +819,14 @@ struct JsonRpcServer::BatchState {
   std::size_t cursor{0};
   td::Promise<HttpReturn> final_promise;
   std::string cors;
+  // Codex audit (round 2, finding #6): per-subquery timeouts in
+  // QueryTimeoutGuard let a 100-element batch (or any handler chaining
+  // sequential liteserver queries) accumulate up to N × request_timeout
+  // wall-clock time. Track a request-level deadline here so the batch
+  // driver can short-circuit any remaining elements with a timeout error
+  // once the per-request budget expires. Zero/unset deadline disables
+  // the gate (preserves current behavior when request_timeout == 0).
+  td::Timestamp deadline;
 };
 
 void JsonRpcServer::process_batch(std::vector<td::JsonValue> elements,
@@ -836,6 +857,9 @@ void JsonRpcServer::process_batch(std::vector<td::JsonValue> elements,
   state->responses.resize(state->elements.size());
   state->final_promise = std::move(promise);
   state->cors = opts_.cors_origin;
+  if (opts_.request_timeout > 0) {
+    state->deadline = td::Timestamp::in(opts_.request_timeout);
+  }
 
   process_batch_step(state);
 }
@@ -844,6 +868,24 @@ void JsonRpcServer::process_batch_step(std::shared_ptr<BatchState> state) {
   // Drain synchronous (non-Object) elements.
   while (state->cursor < state->elements.size()) {
     std::size_t i = state->cursor;
+    // Codex audit (round 2, finding #6): batch-level deadline. If we have
+    // crossed the request_timeout budget, fill remaining elements with a
+    // timeout error and finalize. Notifications (no id) are still dropped
+    // from the output array per spec.
+    if (state->deadline.is_in_past()) {
+      while (state->cursor < state->elements.size()) {
+        std::size_t j = state->cursor;
+        if (!state->is_notification[j]) {
+          auto err = make_eth_json_error(
+              -32603, "Request batch timed out", "null", state->cors);
+          state->responses[j] = extract_response_body(err);
+        } else {
+          state->responses[j] = "";
+        }
+        state->cursor++;
+      }
+      break;
+    }
     auto &el = state->elements[i];
     if (el.type() != td::JsonValue::Type::Object) {
       auto err = make_eth_json_error(

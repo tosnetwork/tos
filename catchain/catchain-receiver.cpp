@@ -807,22 +807,33 @@ void CatChainReceiverImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::cat
       while (t-- > 0) {
         CatChainReceivedBlock *M = S->get_block(++vt[i]);
         CHECK(M != nullptr);
-        if (S0->allow_send_block(M->get_hash())) {
-          auto block = create_tl_object<tos_api::catchain_blockUpdate>(M->export_tl());
-          CHECK(!M->get_payload().empty());
-          td::BufferSlice BB = serialize_tl_object(block, true, M->get_payload().as_slice());
-          CHECK(BB.size() <= opts_.max_serialized_block_size);
-          if (sent_bytes + BB.size() > GET_DIFFERENCE_MAX_RESPONSE_BYTES) {
-            // Roll vt[i] back so the difference reply tells the peer this
-            // block was NOT sent, prompting a follow-up `getBlock`.
-            vt[i] -= 1;
-            budget_exhausted = true;
-            break;
-          }
-          sent_bytes += BB.size();
-          td::actor::send_closure(overlay_manager_, &overlay::Overlays::send_message, src,
-                                  get_source(local_idx_)->get_adnl_id(), overlay_id_, std::move(BB));
+        // Codex audit (round 2, finding #5): serialize + budget-check
+        // BEFORE `allow_send_block`. The previous order incremented
+        // S0's per-block-hash request counter even when the block was
+        // dropped by the byte-budget rollback below — an overly-eager
+        // peer could exhaust its own MAX_BLOCK_REQUESTS quota for blocks
+        // it never received.
+        auto block = create_tl_object<tos_api::catchain_blockUpdate>(M->export_tl());
+        CHECK(!M->get_payload().empty());
+        td::BufferSlice BB = serialize_tl_object(block, true, M->get_payload().as_slice());
+        CHECK(BB.size() <= opts_.max_serialized_block_size);
+        if (sent_bytes + BB.size() > GET_DIFFERENCE_MAX_RESPONSE_BYTES) {
+          // Roll vt[i] back so the difference reply tells the peer this
+          // block was NOT sent, prompting a follow-up `getBlock`. Do
+          // NOT call `allow_send_block` — it debits the per-peer quota
+          // for a block we are not actually sending.
+          vt[i] -= 1;
+          budget_exhausted = true;
+          break;
         }
+        if (!S0->allow_send_block(M->get_hash())) {
+          // Per-peer re-request cap hit; skip this block but keep vt[i]
+          // advanced so the peer's view of "delivered" stays in sync.
+          continue;
+        }
+        sent_bytes += BB.size();
+        td::actor::send_closure(overlay_manager_, &overlay::Overlays::send_message, src,
+                                get_source(local_idx_)->get_adnl_id(), overlay_id_, std::move(BB));
       }
     }
   }
