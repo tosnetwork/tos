@@ -192,6 +192,26 @@ void ExtMessagePool::cleanup_external_messages(ShardIdFull shard) {
   }
 }
 
+void ExtMessagePool::cleanup_expired_messages_all_workchains() {
+  // Codex audit (round 6, finding #2): the alarm previously called
+  // `cleanup_external_messages` only for masterchain (-1) and basechain (0),
+  // so wc=1 (EVM) and wc=2 (UNO) ext-msgs accepted via the
+  // `check_message` short-circuit never expired and accumulated forever.
+  // Sweep ALL workchains here by message expiry alone, not shard.
+  for (auto &[priority, msgs] : ext_msgs_) {
+    std::vector<MessageId> to_erase;
+    for (size_t i = 0; i < msgs.ext_messages_.size(); i++) {
+      auto [key, msg] = msgs.ext_messages_.at(i);
+      if (msg->expired()) {
+        to_erase.push_back(key);
+      }
+    }
+    for (auto &id : to_erase) {
+      erase_message(priority, id);
+    }
+  }
+}
+
 void ExtMessagePool::complete_external_messages(std::vector<ExtMessage::Hash> to_delay,
                                                 std::vector<ExtMessage::Hash> to_delete) {
   for (auto &hash : to_delete) {
@@ -244,7 +264,17 @@ bool ExtMessagePool::erase_message(int priority, const MessageId &id) {
 
   auto address = msg_opt.value()->address();
   auto hash_norm = msg_opt.value()->hash_norm;
-  msgs.ext_addr_messages_[address].erase(id.hash);
+  // Codex audit (round 6, finding #3): remove the outer per-address index
+  // entry once its inner hash-set drains to empty. Without this, a stream
+  // of accepted-then-erased messages to distinct destinations grew the
+  // `ext_addr_messages_` map without bound.
+  auto addr_it = msgs.ext_addr_messages_.find(address);
+  if (addr_it != msgs.ext_addr_messages_.end()) {
+    addr_it->second.erase(id.hash);
+    if (addr_it->second.empty()) {
+      msgs.ext_addr_messages_.erase(addr_it);
+    }
+  }
   msgs.ext_messages_ = msgs.ext_messages_.erase(id);
   ext_messages_hashes_.erase(id.hash);
 
@@ -269,8 +299,10 @@ std::vector<std::pair<std::string, std::string>> ExtMessagePool::prepare_stats()
 
 void ExtMessagePool::alarm() {
   if (cleanup_mempool_at_.is_in_past()) {
-    cleanup_external_messages(ShardIdFull{masterchainId, shardIdAll});
-    cleanup_external_messages(ShardIdFull{basechainId, shardIdAll});
+    // Codex audit (round 6, finding #2): the previous alarm only swept
+    // masterchain (-1) and basechain (0). Use the workchain-agnostic
+    // sweep so wc=1 / wc=2 messages also expire after their 600s TTL.
+    cleanup_expired_messages_all_workchains();
     cleanup_mempool_at_ = td::Timestamp::in(250.0);
   }
   alarm_timestamp().relax(cleanup_mempool_at_);

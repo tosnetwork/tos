@@ -655,6 +655,17 @@ bool LiveUnoState::hydrate_from_cell_if_needed(td::Ref<vm::Cell> root) try {
         LOG(ERROR) << "uno-workchain: persisted stats cell malformed";
         return false;
     }
+    // Codex audit (round 6, finding #5): require canonical exact-shape.
+    // Without trailing-payload checks, an attacker who can inject a
+    // malformed prior persisted UnoShardState could carry ignored
+    // bytes/refs that change the cell hash without changing the
+    // semantic state — divergent state hash across validators that all
+    // believe they observe the same logical state.
+    if (stats_cs.size() != 0 || stats_cs.size_refs() != 0) {
+        LOG(ERROR) << "uno-workchain: persisted stats cell has trailing payload"
+                   << " bits=" << stats_cs.size() << " refs=" << stats_cs.size_refs();
+        return false;
+    }
 
     // MineUno consensus fields — only present in 3-ref meta cells. On
     // legacy 2-ref states, keep the in-memory defaults seeded by the
@@ -689,6 +700,28 @@ bool LiveUnoState::hydrate_from_cell_if_needed(td::Ref<vm::Cell> root) try {
             LOG(ERROR) << "uno-workchain: persisted mining_state missing halving_era";
             return false;
         }
+        // Codex audit (round 6, finding #5): canonical exact-shape check.
+        if (mining_cs.size() != 0 || mining_cs.size_refs() != 0) {
+            LOG(ERROR) << "uno-workchain: persisted mining_state has trailing payload"
+                       << " bits=" << mining_cs.size() << " refs=" << mining_cs.size_refs();
+            return false;
+        }
+    }
+    // Codex audit (round 6, finding #5): canonical exact-shape on meta_cs
+    // itself — meta has no inline data, only refs. We already validated
+    // refs count (==2 or ==3) above. Reject any trailing data bits.
+    if (meta_cs.size() != 0) {
+        LOG(ERROR) << "uno-workchain: persisted meta cell has trailing data bits"
+                   << " bits=" << meta_cs.size();
+        return false;
+    }
+    // Codex audit (round 6, finding #5): canonical exact-shape on the
+    // root cs. We've consumed magic+version+scheme+next_position+
+    // 2×hash_bytes (=80 bits) and 3 refs (already enforced above).
+    if (cs.size() != 0) {
+        LOG(ERROR) << "uno-workchain: persisted state root has trailing data bits"
+                   << " bits=" << cs.size();
+        return false;
     }
 
     commitment_tree_ = std::move(tree);
