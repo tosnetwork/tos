@@ -93,6 +93,16 @@ struct MasterIngressLimiter {
         --tokens;
         return true;
     }
+
+    // Codex audit (round 8, finding #4): refund a previously-consumed token
+    // when a downstream gate (per-source bucket) rejects. Bounded by
+    // max_tokens so a refund storm cannot overflow the bucket.
+    void refund() {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (tokens < max_tokens) {
+            ++tokens;
+        }
+    }
 };
 
 constexpr uint64_t kMasterIngressBurst  = 16;
@@ -562,16 +572,20 @@ void FullNodeMasterImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNo
 
 void FullNodeMasterImpl::receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice query,
                                        td::Promise<td::BufferSlice> promise) {
-  // Codex audit (round 4 #3 + round 5 #2): per-source bucket gates one
-  // peer's share; global bucket is the backstop on aggregate cost. Both
-  // must allow. Per-source consumption first so a peer that hits its own
-  // cap does not also deplete the global bucket on every reject.
-  if (!g_per_source_master_limiter.try_consume(src)) {
-    promise.set_error(td::Status::Error(ErrorCode::failure, "too many requests from this source"));
-    return;
-  }
+  // Codex audit (round 4 #3 + round 5 #2 + round 8 #4): per-source bucket
+  // gates one peer's share; global bucket is the backstop on aggregate
+  // cost. Order matters — debit global FIRST (cheap reject if cap hit),
+  // then per-source. If per-source rejects, refund the global token so a
+  // honest peer that hits its (very tight, fresh-burst=1) per-source cap
+  // does not also burn the global pool. This pattern keeps both caps
+  // strictly enforced AND avoids charging tokens for rejected requests.
   if (!g_master_ingress_limiter.try_consume()) {
     promise.set_error(td::Status::Error(ErrorCode::failure, "too many requests"));
+    return;
+  }
+  if (!g_per_source_master_limiter.try_consume(src)) {
+    g_master_ingress_limiter.refund();
+    promise.set_error(td::Status::Error(ErrorCode::failure, "too many requests from this source"));
     return;
   }
   auto BX = fetch_tl_prefix<tos_api::tosNode_query>(query, true);

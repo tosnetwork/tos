@@ -28,6 +28,9 @@
 #include "collator-impl.h"
 #include "external-message.hpp"
 
+#include <unordered_set>
+#include <vector>
+
 namespace tos {
 
 namespace validator {
@@ -125,31 +128,41 @@ td::Result<Ref<ExtMessageQ>> ExtMessageQ::create_ext_message(td::BufferSlice dat
     return td::Status::Error(PSLICE() << "Can't parse destination address");
   }
 
-  // Codex audit (round 7, finding #2): the wc=1 / wc=2 fast path in
-  // ExtMessagePool::check_message skips TVM preflight, so a special body
-  // ref (PrunedBranch / Library / MerkleProof / MerkleUpdate) flows
-  // directly to compute-phase unpack which uses bare load_cell_slice_ref
-  // and throws — crashing the daemon. Reject special cells anywhere in
-  // the message tree at admission. We walk the tree iteratively rather
-  // than relying on validate_ref because validate_ref does not refuse
-  // level-0 special cells in the body branch.
-  {
+  // Codex audit (round 7 #2, narrowed round 8 #3, hardened round 8 #1):
+  // the wc=1 / wc=2 fast path in ExtMessagePool::check_message skips
+  // TVM preflight, so a special body ref (PrunedBranch / Library /
+  // MerkleProof / MerkleUpdate) flows directly to compute-phase unpack
+  // which uses bare load_cell_slice_ref and throws — crashing the
+  // daemon. Reject special cells anywhere in the message tree at
+  // admission FOR THESE WORKCHAINS ONLY. Other workchains (TVM) may
+  // legitimately carry MerkleProof bodies (transaction.cpp:989 allows
+  // depth ≤2) and the TVM preflight catches errors structurally.
+  //
+  // The walk uses a visited set keyed by cell hash + a hard total-cell
+  // budget so a DAG with repeated refs cannot trigger exponential
+  // re-traversal (round 8 #1).
+  if (wc == 1 || wc == 2) {
+    // Use the cell pointer for visited-set key — Ref<Cell> shared
+    // ownership means two refs to the same logical cell point to the
+    // same vm::Cell instance, so pointer equality is correct.
+    std::unordered_set<const vm::Cell*> visited;
     std::vector<td::Ref<vm::Cell>> stack{ext_msg};
+    constexpr size_t kMaxScannedCells = 4096;  // generous; worst-case wc=2 ext_in_msg is ~262 KiB / few hundred cells
+    size_t popped = 0;
     while (!stack.empty()) {
       auto c = std::move(stack.back());
       stack.pop_back();
       if (c.is_null()) continue;
+      if (!visited.insert(c.get()).second) continue;
+      if (++popped > kMaxScannedCells) {
+        return td::Status::Error("external message tree too large for special-cell scan");
+      }
       vm::CellSlice cs2{vm::NoVmOrd{}, c};
       if (cs2.is_special()) {
         return td::Status::Error("external message tree contains a special cell");
       }
       for (unsigned i = 0, n = cs2.size_refs(); i < n; ++i) {
         stack.push_back(cs2.prefetch_ref(i));
-      }
-      // Bound traversal to the depth we already accept (max_depth) to
-      // keep this O(cells_in_tree) and not pathological under deep refs.
-      if (stack.size() > limits.max_depth * 16u) {
-        return td::Status::Error("external message tree too wide for special-cell scan");
       }
     }
   }

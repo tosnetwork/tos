@@ -351,7 +351,27 @@ static td::Result<td::Ref<vm::Cell>> parse_optional_boc_string(const std::string
   if (cell_r.is_error()) {
     return td::Status::Error(PSTRING() << "Invalid BOC in '" << name << "'");
   }
-  return cell_r.move_as_ok();
+  auto cell = cell_r.move_as_ok();
+  // Codex audit (round 8, finding #2): mirror parse_optional_boc_field
+  // (round 7 #3). Downstream consumers — notably
+  // GenericAccount::create_ext_message and SmartContract::send_external_msg
+  // (declared noexcept, called from buildTransactionIntent /
+  // getSigningPayload via build_external_message_cell) — invoke bare
+  // load_cell_slice_ref(body) which throws on PrunedBranch / Library /
+  // Merkle* roots. A throw from a noexcept function calls std::terminate,
+  // killing the validator daemon.
+  if (cell.not_null()) {
+    try {
+      bool special = false;
+      (void)vm::load_cell_slice_special(cell, special);
+      if (special) {
+        return td::Status::Error(PSTRING() << "BOC root in '" << name << "' is a special cell");
+      }
+    } catch (...) {
+      return td::Status::Error(PSTRING() << "BOC root in '" << name << "' is unloadable");
+    }
+  }
+  return cell;
 }
 
 static td::Result<InitialIntentInput> parse_initial_intent_input(td::JsonObject &params) {
