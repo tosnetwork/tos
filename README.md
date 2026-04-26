@@ -158,14 +158,6 @@ Full design in [`doc/uno-workchain.md`](doc/uno-workchain.md). Implementation un
 
 Build instructions — including Uno workchain prerequisites (liboqs, corrosion-rs, Rust toolchain) — are in [`BUILD.md`](BUILD.md).
 
-## Documentation
-
-- **EVM workchain**: [`doc/evm-workchain-topology.md`](doc/evm-workchain-topology.md), [`doc/evm-workchain-cell-native-state.md`](doc/evm-workchain-cell-native-state.md), [`doc/evm-workchain-test-plan.md`](doc/evm-workchain-test-plan.md)
-- **Uno workchain**: [`doc/uno-workchain.md`](doc/uno-workchain.md) (Draft v2, 45 locked decisions)
-- **Consensus**: [`doc/catchain.pdf`](doc/catchain.pdf), [`doc/simplex.pdf`](doc/simplex.pdf)
-- **RPC policy**: [`doc/json-rpc-policy.md`](doc/json-rpc-policy.md)
-- **Cell / block theory**: `doc/tblkch.tex`, `doc/fiftbase.tex`, `doc/func_v0.4.6.pdf`
-
 ## License
 
 This repository is licensed under the GNU General Public License v3.0. See [`LICENSE`](LICENSE). Third-party components, modifications, and foundational acknowledgments are catalogued in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
