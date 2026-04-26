@@ -141,6 +141,7 @@ struct EvmPostAcceptHealth {
 
 EvmPostAcceptHealth evm_post_accept_health() noexcept;
 void reset_evm_post_accept_health_for_tests() noexcept;
+void hydrate_evm_rpc_incomplete_indexes_from_cache() noexcept;
 
 /// True iff `tx_hash` belongs to an accepted EVM transaction whose public RPC
 /// receipt/transaction/log indexes were intentionally withheld because the

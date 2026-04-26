@@ -85,6 +85,7 @@ class DownloadState : public td::actor::Actor {
   td::uint64 prev_logged_sum_ = 0;
   td::Timer prev_logged_timer_;
   td::uint64 total_size_ = 0;
+  bool download_started_ = false;
 
   ProcessStatus status_;
 };

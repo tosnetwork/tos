@@ -741,6 +741,8 @@ void init_evm_workchain(const std::string& db_root) {
                              << log_blocks_hydrated << " blocks from rpc cache db"
                              << (log_decode_fails > 0 ? " (skipped " + std::to_string(log_decode_fails) + " corrupt entries)" : "");
             }
+
+            hydrate_evm_rpc_incomplete_indexes_from_cache();
         }
     }
 

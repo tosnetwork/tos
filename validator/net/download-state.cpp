@@ -24,11 +24,34 @@
 #include "download-state.hpp"
 #include "full-node.h"
 
+#include <algorithm>
+
 namespace tos {
 
 namespace validator {
 
 namespace fullnode {
+
+namespace {
+
+constexpr td::uint64 kPersistentStatePartSize = 1ULL << 21;
+constexpr td::uint64 kMaxPersistentStateDownloadBytes = 1ULL << 30;
+constexpr std::size_t kMaxPersistentStateDownloadParts =
+    static_cast<std::size_t>(kMaxPersistentStateDownloadBytes / kPersistentStatePartSize + 2);
+
+td::Status validate_persistent_state_size(td::uint64 size) {
+  if (size == 0) {
+    return td::Status::Error(ErrorCode::protoviolation, "persistent state has zero size");
+  }
+  if (size > kMaxPersistentStateDownloadBytes) {
+    return td::Status::Error(ErrorCode::protoviolation,
+                             PSTRING() << "persistent state too large: " << size << " > "
+                                       << kMaxPersistentStateDownloadBytes);
+  }
+  return td::Status::OK();
+}
+
+}  // namespace
 
 DownloadState::DownloadState(BlockIdExt block_id, BlockIdExt masterchain_block_id, PersistentStateType type,
                              adnl::AdnlNodeIdShort local_id, overlay::OverlayIdShort overlay_id,
@@ -194,8 +217,10 @@ void DownloadState::got_block_state_description(td::BufferSlice data) {
           },
           [&, self = this](tos_api::tosNode_preparedState &f) {
             if (masterchain_block_id_.is_valid()) {
+              // Downloading a prepared persistent state must be bounded by
+              // the peer-advertised total size first. Starting slices before
+              // this response lets a faulty peer stream chunks indefinitely.
               request_total_size();
-              got_block_state_part(td::BufferSlice{}, 0);
               return;
             }
             auto P = td::PromiseCreator::lambda([SelfId = actor_id(self)](td::Result<td::BufferSlice> R) {
@@ -235,6 +260,11 @@ void DownloadState::got_state_size(td::BufferSlice size_or_not_found) {
                                abort_query(td::Status::Error(ErrorCode::notready, "state not found"));
                              },
                              [&](tos_api::tosNode_persistentStateSize &f) {
+                               auto status = validate_persistent_state_size(f.size_);
+                               if (status.is_error()) {
+                                 abort_query(std::move(status));
+                                 return;
+                               }
                                total_size_ = f.size_;
                                got_block_state_part(td::BufferSlice{}, 0);
                              }));
@@ -266,13 +296,53 @@ void DownloadState::request_total_size() {
 }
 
 void DownloadState::got_total_size(td::uint64 size) {
+  auto status = validate_persistent_state_size(size);
+  if (status.is_error()) {
+    abort_query(std::move(status));
+    return;
+  }
   total_size_ = size;
+  if (!download_started_) {
+    got_block_state_part(td::BufferSlice{}, 0);
+  }
 }
 
 void DownloadState::got_block_state_part(td::BufferSlice data, td::uint32 requested_size) {
-  bool last_part = data.size() < requested_size;
+  if (total_size_ == 0) {
+    abort_query(td::Status::Error(ErrorCode::protoviolation,
+                                  "persistent state size is not known"));
+    return;
+  }
+  download_started_ = true;
+
+  if (requested_size != 0 && data.size() > requested_size) {
+    abort_query(td::Status::Error(ErrorCode::protoviolation,
+                                  PSTRING() << "persistent state part too large: "
+                                            << data.size() << " > " << requested_size));
+    return;
+  }
+  if (parts_.size() >= kMaxPersistentStateDownloadParts) {
+    abort_query(td::Status::Error(ErrorCode::protoviolation,
+                                  "persistent state has too many parts"));
+    return;
+  }
+  if (data.size() > total_size_ || sum_ > total_size_ - data.size()) {
+    abort_query(td::Status::Error(ErrorCode::protoviolation,
+                                  "persistent state stream exceeds advertised size"));
+    return;
+  }
+  if (data.size() > kMaxPersistentStateDownloadBytes ||
+      sum_ > kMaxPersistentStateDownloadBytes - data.size()) {
+    abort_query(td::Status::Error(ErrorCode::protoviolation,
+                                  "persistent state stream exceeds local size limit"));
+    return;
+  }
+
+  bool short_part = requested_size != 0 && data.size() < requested_size;
   sum_ += data.size();
-  parts_.push_back(std::move(data));
+  if (data.size() != 0) {
+    parts_.push_back(std::move(data));
+  }
 
   double elapsed = prev_logged_timer_.elapsed();
   if (elapsed > 5.0) {
@@ -297,7 +367,13 @@ void DownloadState::got_block_state_part(td::BufferSlice data, td::uint32 reques
     prev_logged_sum_ = sum_;
   }
 
-  if (last_part) {
+  if (short_part && sum_ != total_size_) {
+    abort_query(td::Status::Error(ErrorCode::protoviolation,
+                                  "persistent state stream ended before advertised size"));
+    return;
+  }
+
+  if (sum_ == total_size_) {
     status_.set_status(PSTRING() << block_id_.id.to_str() << " : " << sum_ << " bytes, finishing");
     td::BufferSlice res{td::narrow_cast<std::size_t>(sum_)};
     auto S = res.as_slice();
@@ -311,7 +387,8 @@ void DownloadState::got_block_state_part(td::BufferSlice data, td::uint32 reques
     return;
   }
 
-  td::uint32 part_size = 1 << 21;
+  td::uint32 part_size = static_cast<td::uint32>(
+      std::min<td::uint64>(kPersistentStatePartSize, total_size_ - sum_));
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), part_size](td::Result<td::BufferSlice> R) {
     if (R.is_error()) {
       td::actor::send_closure(SelfId, &DownloadState::abort_query, R.move_as_error());

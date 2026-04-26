@@ -15,6 +15,7 @@
 #include "evm/core/executor.h"
 
 #include <limits>
+#include <optional>
 
 #include <silkworm/core/execution/evm.hpp>
 #include <silkworm/core/protocol/intrinsic_gas.hpp>
@@ -24,6 +25,122 @@
 #include <silkworm/core/types/address.hpp>
 
 namespace evm_workchain {
+
+namespace {
+
+std::optional<std::string> prevalidate_evm_transaction_admission_locked(
+    const silkworm::Transaction& txn,
+    const silkworm::Block& block,
+    silkworm::IntraBlockState& state,
+    const silkworm::ChainConfig& config) {
+
+    auto sender_opt = txn.sender();
+    if (!sender_opt) {
+        return "sender not recovered";
+    }
+    const auto& sender = *sender_opt;
+    const auto rev = config.revision(block.header.number, block.header.timestamp);
+
+    if (txn.chain_id.has_value() &&
+        *txn.chain_id != intx::uint256{config.chain_id}) {
+        return "wrong chain id";
+    }
+
+    if (txn.type == silkworm::TransactionType::kBlob) {
+        return "blob transactions not supported on this chain";
+    }
+
+    if (auto vr_base = silkworm::protocol::pre_validate_common_base(
+            txn, rev, config.chain_id);
+        vr_base != silkworm::ValidationResult::kOk) {
+        return "pre_validate_common_base failed";
+    }
+    if (auto vr_forks = silkworm::protocol::pre_validate_common_forks(
+            txn, rev, /*blob_gas_price=*/std::nullopt);
+        vr_forks != silkworm::ValidationResult::kOk) {
+        return "pre_validate_common_forks failed";
+    }
+
+    if (rev >= EVMC_LONDON) {
+        auto sender_code_hash = state.get_code_hash(sender);
+        if (sender_code_hash != silkworm::kEmptyHash &&
+            sender_code_hash != evmc::bytes32{}) {
+            bool allowed_by_eip7702 = false;
+            if (rev >= EVMC_PRAGUE) {
+                auto code = state.get_code(sender);
+                allowed_by_eip7702 = silkworm::eip7702::is_code_delegated(code);
+            }
+            if (!allowed_by_eip7702) {
+                return "EIP-3607: sender has code";
+            }
+        }
+    }
+
+    if (rev >= EVMC_LONDON &&
+        txn.type != silkworm::TransactionType::kLegacy &&
+        txn.max_priority_fee_per_gas > txn.max_fee_per_gas) {
+        return "priority fee exceeds max fee";
+    }
+
+    const intx::uint256 bf = block.header.base_fee_per_gas.value_or(0);
+    if (rev >= EVMC_LONDON && txn.max_fee_per_gas < bf) {
+        return "max fee per gas below base fee";
+    }
+
+    if (txn.gas_limit > block.header.gas_limit) {
+        return "tx gas limit exceeds block gas limit";
+    }
+
+    auto intrinsic_pre = silkworm::protocol::intrinsic_gas(txn, rev);
+    if (intrinsic_pre > static_cast<intx::uint128>(txn.gas_limit)) {
+        return "intrinsic gas exceeds gas limit";
+    }
+
+    uint64_t sender_nonce = state.get_nonce(sender);
+    if (sender_nonce != txn.nonce) {
+        return "nonce mismatch: expected " + std::to_string(sender_nonce) +
+               ", got " + std::to_string(txn.nonce);
+    }
+    if (sender_nonce == std::numeric_limits<uint64_t>::max()) {
+        return "EIP-2681: nonce at max";
+    }
+
+    const intx::uint256 max_gas_price = (rev >= EVMC_LONDON &&
+                                           txn.type != silkworm::TransactionType::kLegacy)
+        ? txn.max_fee_per_gas
+        : txn.effective_gas_price(bf);
+    intx::uint512 max_cost = intx::uint512{txn.gas_limit} * intx::uint512{max_gas_price} +
+                              intx::uint512{txn.value};
+    if (rev >= EVMC_CANCUN &&
+        txn.type == silkworm::TransactionType::kBlob) {
+        max_cost += intx::uint512{txn.total_blob_gas()} *
+                    intx::uint512{txn.max_fee_per_blob_gas};
+    }
+    if (intx::uint512{state.get_balance(sender)} < max_cost) {
+        return "insufficient funds for gas + value";
+    }
+
+    if (rev >= EVMC_CANCUN &&
+        txn.type == silkworm::TransactionType::kBlob) {
+        const auto blob_price = block.header.blob_gas_price().value_or(0);
+        if (txn.max_fee_per_blob_gas < blob_price) {
+            return "max fee per blob gas below blob base fee";
+        }
+        if (txn.blob_versioned_hashes.empty()) {
+            return "blob tx must carry at least one blob";
+        }
+        constexpr uint8_t kKzgVersionedHash = 0x01;
+        for (const auto& h : txn.blob_versioned_hashes) {
+            if (h.bytes[0] != kKzgVersionedHash) {
+                return "blob versioned hash has wrong version byte";
+            }
+        }
+    }
+
+    return std::nullopt;
+}
+
+}  // namespace
 
 // Shared execution logic used by both execute (mutable) and call (read-only).
 static ExecutionResult run_evm(
@@ -421,6 +538,18 @@ ExecutionResult execute_evm_transaction(
     }
 
     return result;
+}
+
+std::optional<std::string> prevalidate_evm_transaction_admission(
+    const silkworm::Transaction& txn,
+    const silkworm::Block& block,
+    const EvmState& evm_state,
+    const silkworm::ChainConfig& config) {
+
+    std::unique_lock lock(evm_state.mutex());
+    auto& mutable_state = const_cast<silkworm::State&>(evm_state.state());
+    silkworm::IntraBlockState ibs(mutable_state);
+    return prevalidate_evm_transaction_admission_locked(txn, block, ibs, config);
 }
 
 ExecutionResult call_evm_transaction(

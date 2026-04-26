@@ -107,7 +107,7 @@ void compact_incomplete_order_locked(IncompleteIndex& idx) {
     idx.order.swap(compacted);
 }
 
-void mark_rpc_indexing_incomplete(const evmc::bytes32& tx_hash) noexcept {
+void mark_rpc_indexing_incomplete_memory(const evmc::bytes32& tx_hash) noexcept {
     auto& idx = g_incomplete_index();
     std::lock_guard<std::mutex> lock(idx.mu);
     if (idx.txs.insert(tx_hash).second) {
@@ -121,7 +121,18 @@ void mark_rpc_indexing_incomplete(const evmc::bytes32& tx_hash) noexcept {
     compact_incomplete_order_locked(idx);
 }
 
-void clear_rpc_indexing_incomplete(const evmc::bytes32& tx_hash) noexcept {
+void mark_rpc_indexing_incomplete(const evmc::bytes32& tx_hash) noexcept {
+    mark_rpc_indexing_incomplete_memory(tx_hash);
+    if (auto* cache = evm_rpc_cache_db()) {
+        auto status = cache->put_incomplete_transaction(bytes32_to_bits(tx_hash));
+        if (status.is_error()) {
+            LOG(WARNING) << "evm-rpc-cache: put incomplete tx marker failed: "
+                         << status.message();
+        }
+    }
+}
+
+void clear_rpc_indexing_incomplete_memory(const evmc::bytes32& tx_hash) noexcept {
     auto& idx = g_incomplete_index();
     std::lock_guard<std::mutex> lock(idx.mu);
     if (idx.txs.erase(tx_hash) == 0) {
@@ -135,6 +146,17 @@ void clear_rpc_indexing_incomplete(const evmc::bytes32& tx_hash) noexcept {
     }
     idx.order.swap(filtered);
     compact_incomplete_order_locked(idx);
+}
+
+void clear_rpc_indexing_incomplete(const evmc::bytes32& tx_hash) noexcept {
+    clear_rpc_indexing_incomplete_memory(tx_hash);
+    if (auto* cache = evm_rpc_cache_db()) {
+        auto status = cache->delete_incomplete_transaction(bytes32_to_bits(tx_hash));
+        if (status.is_error()) {
+            LOG(WARNING) << "evm-rpc-cache: delete incomplete tx marker failed: "
+                         << status.message();
+        }
+    }
 }
 
 uint64_t incomplete_indexed_transaction_count() noexcept {
@@ -165,7 +187,7 @@ void compact_incomplete_block_order_locked(IncompleteBlockIndex& idx) {
     idx.order.swap(compacted);
 }
 
-void mark_rpc_block_indexing_incomplete(uint64_t block_number) noexcept {
+void mark_rpc_block_indexing_incomplete_memory(uint64_t block_number) noexcept {
     auto& idx = g_incomplete_block_index();
     std::lock_guard<std::mutex> lock(idx.mu);
     if (idx.blocks.insert(block_number).second) {
@@ -179,7 +201,18 @@ void mark_rpc_block_indexing_incomplete(uint64_t block_number) noexcept {
     compact_incomplete_block_order_locked(idx);
 }
 
-void clear_rpc_block_indexing_incomplete(uint64_t block_number) noexcept {
+void mark_rpc_block_indexing_incomplete(uint64_t block_number) noexcept {
+    mark_rpc_block_indexing_incomplete_memory(block_number);
+    if (auto* cache = evm_rpc_cache_db()) {
+        auto status = cache->put_incomplete_block(block_number);
+        if (status.is_error()) {
+            LOG(WARNING) << "evm-rpc-cache: put incomplete block marker failed: "
+                         << status.message();
+        }
+    }
+}
+
+void clear_rpc_block_indexing_incomplete_memory(uint64_t block_number) noexcept {
     auto& idx = g_incomplete_block_index();
     std::lock_guard<std::mutex> lock(idx.mu);
     if (idx.blocks.erase(block_number) == 0) {
@@ -193,6 +226,17 @@ void clear_rpc_block_indexing_incomplete(uint64_t block_number) noexcept {
     }
     idx.order.swap(filtered);
     compact_incomplete_block_order_locked(idx);
+}
+
+void clear_rpc_block_indexing_incomplete(uint64_t block_number) noexcept {
+    clear_rpc_block_indexing_incomplete_memory(block_number);
+    if (auto* cache = evm_rpc_cache_db()) {
+        auto status = cache->delete_incomplete_block(block_number);
+        if (status.is_error()) {
+            LOG(WARNING) << "evm-rpc-cache: delete incomplete block marker failed: "
+                         << status.message();
+        }
+    }
 }
 
 uint64_t incomplete_indexed_block_count() noexcept {
@@ -771,16 +815,85 @@ void reset_evm_post_accept_health_for_tests() noexcept {
     clear_all_rpc_block_indexing_incomplete();
 }
 
+void hydrate_evm_rpc_incomplete_indexes_from_cache() noexcept {
+    auto* cache = evm_rpc_cache_db();
+    if (!cache) {
+        return;
+    }
+
+    size_t txs = 0;
+    auto tx_status = cache->for_each_incomplete_transaction(
+        [&txs](const td::Bits256& tx_hash_bits) -> td::Status {
+            evmc::bytes32 tx_hash{};
+            std::memcpy(tx_hash.bytes, tx_hash_bits.data(), 32);
+            mark_rpc_indexing_incomplete_memory(tx_hash);
+            ++txs;
+            return td::Status::OK();
+        });
+    if (tx_status.is_error()) {
+        LOG(WARNING) << "evm-rpc-cache: incomplete tx marker hydration failed: "
+                     << tx_status.message();
+    }
+
+    size_t blocks = 0;
+    auto block_status = cache->for_each_incomplete_block(
+        [&blocks](uint64_t block_number) -> td::Status {
+            mark_rpc_block_indexing_incomplete_memory(block_number);
+            ++blocks;
+            return td::Status::OK();
+        });
+    if (block_status.is_error()) {
+        LOG(WARNING) << "evm-rpc-cache: incomplete block marker hydration failed: "
+                     << block_status.message();
+    }
+
+    LOG(WARNING) << "evm-workchain: hydrated " << txs
+                 << " incomplete tx marker(s) and " << blocks
+                 << " incomplete block marker(s) from rpc cache db";
+}
+
 bool is_evm_rpc_indexing_incomplete(const evmc::bytes32& tx_hash) noexcept {
     auto& idx = g_incomplete_index();
-    std::lock_guard<std::mutex> lock(idx.mu);
-    return idx.txs.find(tx_hash) != idx.txs.end();
+    {
+        std::lock_guard<std::mutex> lock(idx.mu);
+        if (idx.txs.find(tx_hash) != idx.txs.end()) {
+            return true;
+        }
+    }
+    if (auto* cache = evm_rpc_cache_db()) {
+        auto r = cache->has_incomplete_transaction(bytes32_to_bits(tx_hash));
+        if (r.is_ok() && r.ok()) {
+            mark_rpc_indexing_incomplete_memory(tx_hash);
+            return true;
+        }
+        if (r.is_error()) {
+            LOG(WARNING) << "evm-rpc-cache: has incomplete tx marker failed: "
+                         << r.error().message();
+        }
+    }
+    return false;
 }
 
 bool is_evm_rpc_block_indexing_incomplete(uint64_t block_number) noexcept {
     auto& idx = g_incomplete_block_index();
-    std::lock_guard<std::mutex> lock(idx.mu);
-    return idx.blocks.find(block_number) != idx.blocks.end();
+    {
+        std::lock_guard<std::mutex> lock(idx.mu);
+        if (idx.blocks.find(block_number) != idx.blocks.end()) {
+            return true;
+        }
+    }
+    if (auto* cache = evm_rpc_cache_db()) {
+        auto r = cache->has_incomplete_block(block_number);
+        if (r.is_ok() && r.ok()) {
+            mark_rpc_block_indexing_incomplete_memory(block_number);
+            return true;
+        }
+        if (r.is_error()) {
+            LOG(WARNING) << "evm-rpc-cache: has incomplete block marker failed: "
+                         << r.error().message();
+        }
+    }
+    return false;
 }
 
 RpcCacheRebuildStats rebuild_rpc_cache_from_global_state(

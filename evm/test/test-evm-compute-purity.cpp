@@ -24,6 +24,7 @@
       14. post_accept_parser_rejects_special_cells
       15. post_accept_rejects_gas_used_overflow
       16. evm_state_size_budget_rejects_oversized_full_root
+      17. invalid_tx_prevalidation_runs_before_state_budget
 
     Build target: test-evm-compute-purity (see evm/test/CMakeLists.txt)
 */
@@ -180,7 +181,8 @@ static std::optional<SignedRawTx> make_signed_transfer(
     uint64_t nonce,
     const evmc::address& recipient,
     const intx::uint256& value = intx::uint256{1'000'000},
-    uint64_t gas_limit = 50'000) {
+    uint64_t gas_limit = 50'000,
+    uint64_t chain_id = ew::kEvmChainId) {
 
     auto* ctx = sec_ctx();
     uint8_t privkey[32] = {};
@@ -202,7 +204,7 @@ static std::optional<SignedRawTx> make_signed_transfer(
 
     silkworm::Transaction txn;
     txn.type = silkworm::TransactionType::kLegacy;
-    txn.chain_id = ew::kEvmChainId;
+    txn.chain_id = chain_id;
     txn.nonce = nonce;
     txn.max_fee_per_gas = 1'000'000'000;
     txn.max_priority_fee_per_gas = 1'000'000'000;
@@ -226,7 +228,7 @@ static std::optional<SignedRawTx> make_signed_transfer(
     txn.r = intx::be::unsafe::load<intx::uint256>(sig_bytes);
     txn.s = intx::be::unsafe::load<intx::uint256>(sig_bytes + 32);
     txn.odd_y_parity = (recovery_id == 1);
-    txn.set_v(intx::uint256{ew::kEvmChainId * 2 + 35 + recovery_id});
+    txn.set_v(intx::uint256{chain_id * 2 + 35 + recovery_id});
 
     silkworm::Bytes raw_rlp;
     silkworm::rlp::encode(raw_rlp, txn);
@@ -247,6 +249,7 @@ struct ComputeOutcome {
     int skip_reason{0};
     td::Ref<vm::Cell> new_data;
     std::shared_ptr<ew::EvmBlockSideEffects> fx;
+    std::string vm_log;
 };
 static ComputeOutcome run_once(td::Ref<vm::Cell> account_data,
                                 const silkworm::Bytes& raw_rlp,
@@ -263,7 +266,7 @@ static ComputeOutcome run_once(td::Ref<vm::Cell> account_data,
         cp, std::move(account_data), body_cs, gas_limit,
         block_seqno, timestamp, rand_seed, parent_block_hash);
     return ComputeOutcome{ok, cp.success, cp.skip_reason, cp.new_data,
-                          cp.evm_side_effects};
+                          cp.evm_side_effects, cp.vm_log};
 }
 
 // Compare two non-null cells by their canonical hash.
@@ -1089,17 +1092,54 @@ static void test_pending_side_effect_db_prunes_ttl_and_cap() {
     remaining += pending_present(*db, 12, 1012, rand_seed, parent_hash, test_bits256(12)) ? 1 : 0;
     bool cap_ok = cap_status.is_ok() && remaining <= 1;
 
+    auto incomplete_tx = test_bits256(0xd1);
+    bool saw_incomplete_tx = false;
+    auto put_tx_marker = db->put_incomplete_transaction(incomplete_tx);
+    auto has_tx_marker = db->has_incomplete_transaction(incomplete_tx);
+    auto walk_tx_marker = db->for_each_incomplete_transaction(
+        [&](const td::Bits256& tx_hash) -> td::Status {
+            if (std::memcmp(tx_hash.data(), incomplete_tx.data(), 32) == 0) {
+                saw_incomplete_tx = true;
+            }
+            return td::Status::OK();
+        });
+    auto del_tx_marker = db->delete_incomplete_transaction(incomplete_tx);
+    auto has_tx_after_delete = db->has_incomplete_transaction(incomplete_tx);
+
+    bool saw_incomplete_block = false;
+    constexpr uint64_t kIncompleteBlock = 424242;
+    auto put_block_marker = db->put_incomplete_block(kIncompleteBlock);
+    auto has_block_marker = db->has_incomplete_block(kIncompleteBlock);
+    auto walk_block_marker = db->for_each_incomplete_block(
+        [&](uint64_t block_number) -> td::Status {
+            if (block_number == kIncompleteBlock) saw_incomplete_block = true;
+            return td::Status::OK();
+        });
+    auto del_block_marker = db->delete_incomplete_block(kIncompleteBlock);
+    auto has_block_after_delete = db->has_incomplete_block(kIncompleteBlock);
+    bool incomplete_marker_ok =
+        put_tx_marker.is_ok() &&
+        has_tx_marker.is_ok() && has_tx_marker.ok() &&
+        walk_tx_marker.is_ok() && saw_incomplete_tx &&
+        del_tx_marker.is_ok() &&
+        has_tx_after_delete.is_ok() && !has_tx_after_delete.ok() &&
+        put_block_marker.is_ok() &&
+        has_block_marker.is_ok() && has_block_marker.ok() &&
+        walk_block_marker.is_ok() && saw_incomplete_block &&
+        del_block_marker.is_ok() &&
+        has_block_after_delete.is_ok() && !has_block_after_delete.ok();
+
     db.reset();
     std::system(("rm -rf " + tmp_root).c_str());
 
-    if (!put_ok || !ttl_ok || !cap_ok) {
+    if (!put_ok || !ttl_ok || !cap_ok || !incomplete_marker_ok) {
         ++g_failures;
-        tprintf("  FAILED: put=%d ttl=%d cap=%d remaining=%d\n",
-                put_ok, ttl_ok, cap_ok, remaining);
+        tprintf("  FAILED: put=%d ttl=%d cap=%d remaining=%d incomplete_marker=%d\n",
+                put_ok, ttl_ok, cap_ok, remaining, incomplete_marker_ok);
         return;
     }
     ++g_passes;
-    tprintf("  PASSED (pending side effects obey TTL prune and record cap)\n");
+    tprintf("  PASSED (pending side effects and incomplete markers are durable/bounded)\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -1256,6 +1296,45 @@ static void test_evm_state_size_budget_rejects_oversized_full_root() {
 }
 
 // ---------------------------------------------------------------------------
+// Test 17 — invalid_tx_prevalidation_runs_before_state_budget
+// ---------------------------------------------------------------------------
+
+static void test_invalid_tx_prevalidation_runs_before_state_budget() {
+    tprintf("[TEST] invalid_tx_prevalidation_runs_before_state_budget\n");
+
+    evmc::address recipient{};
+    recipient.bytes[19] = 0x77;
+    auto tx = make_signed_transfer(/*key_seed=*/0xF70001, /*nonce=*/0,
+                                   recipient, intx::uint256{1},
+                                   /*gas_limit=*/50'000,
+                                   /*chain_id=*/ew::kEvmChainId + 1);
+    if (!tx) {
+        ++g_failures;
+        tprintf("  FAILED: could not sign wrong-chain tx\n");
+        return;
+    }
+
+    auto account_data = make_account_data_with_funded_sender(
+        tx->sender, intx::uint256{1'000'000'000'000'000'000ULL}, 0);
+    auto out = run_once(account_data, tx->raw_rlp);
+
+    bool ok = out.ok &&
+              !out.success &&
+              !out.fx &&
+              out.skip_reason == block::ComputePhase::sk_bad_state &&
+              out.vm_log == "wrong chain id";
+    if (!ok) {
+        ++g_failures;
+        tprintf("  FAILED: ok=%d success=%d fx=%d skip=%d log='%s'\n",
+                out.ok, out.success, out.fx ? 1 : 0, out.skip_reason,
+                out.vm_log.c_str());
+        return;
+    }
+    ++g_passes;
+    tprintf("  PASSED (wrong-chain tx rejected by cheap prevalidation)\n");
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -1291,6 +1370,7 @@ int main() {
     test_post_accept_parser_rejects_special_cells();
     test_post_accept_rejects_gas_used_overflow();
     test_evm_state_size_budget_rejects_oversized_full_root();
+    test_invalid_tx_prevalidation_runs_before_state_budget();
 
     tprintf("\nTotal: passed=%d, failures=%d, skips=%d\n",
             g_passes.load(), g_failures.load(), g_skips.load());

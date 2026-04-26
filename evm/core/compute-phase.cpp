@@ -25,6 +25,7 @@
 #include <silkworm/core/types/block.hpp>
 #include <silkworm/core/types/transaction.hpp>
 
+#include <algorithm>
 #include <limits>
 #include <memory>
 
@@ -204,6 +205,29 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
         }
     }
 
+    // tos8 audit: reject cheap admission failures before EIP-4788/EIP-2935
+    // system calls and before the bounded full-state budget scan. Wrong
+    // chain-id, oversized gas limit, bad nonce, and insufficient-balance
+    // messages must not force an unpaid dictionary walk.
+    if (auto prevalidation_error = prevalidate_evm_transaction_admission(
+            decoded.txn, block, state, config)) {
+        LOG(WARNING) << "evm-workchain: tx rejected before stateRoot budget "
+                     << "preflight: " << *prevalidation_error;
+        cp.skip_reason = block::ComputePhase::sk_bad_state;
+        cp.accepted = false;
+        cp.success = false;
+        cp.gas_used = 0;
+        cp.gas_limit = gas_limit;
+        cp.gas_credit = 0;
+        cp.gas_max = gas_limit;
+        cp.exit_code = 1;
+        cp.vm_steps = 0;
+        cp.vm_init_state_hash.set_zero();
+        cp.vm_final_state_hash.set_zero();
+        cp.vm_log = *prevalidation_error;
+        return nullptr;
+    }
+
     // --- Step 3b: EIP-4788 / EIP-2935 system calls (Cancun+ / Pectra+) ---
     {
         const auto rev = config.revision(block_seqno, timestamp);
@@ -273,8 +297,10 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
             state, kMaxFullRootAccounts, kMaxFullRootStorageSlots);
         std::size_t possible_new_accounts = 0;
         std::size_t possible_new_storage_slots = 0;
+        const uint64_t bounded_gas_limit =
+            std::min(decoded.txn.gas_limit, block.header.gas_limit);
         bool could_exceed = full_root_budget_could_be_exceeded_after_tx(
-            size_stats, decoded.txn.gas_limit,
+            size_stats, bounded_gas_limit,
             possible_new_accounts, possible_new_storage_slots);
         if (size_stats.malformed || size_stats.exceeded || could_exceed) {
             LOG(WARNING) << "evm-workchain: rejecting EVM tx before execution "

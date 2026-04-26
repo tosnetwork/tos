@@ -49,6 +49,9 @@
 #include <cstring>
 #include <sstream>
 #include <chrono>
+#include <condition_variable>
+#include <limits>
+#include <mutex>
 
 namespace evm_workchain {
 
@@ -1283,9 +1286,22 @@ static RpcResult handle_debug_trace_transaction(const std::string& params, const
     auto block = make_evm_block(stored_tx->block_number, 0, rs);
     auto trace = trace_evm_transaction(txn, block, global_evm_state(), evm_chain_config());
 
+    // Codex round 6 (R6-H-12): cap the structLogs response. The tracer
+    // pushes one step per executed opcode (with up-to-1024-deep stack
+    // capture); a public caller can submit a long-running stored tx
+    // hash and force MB-scale JSON construction while the global EVM
+    // state lock is held inside `trace_evm_transaction`. 250'000 steps
+    // is generous (covers any realistic mainnet tx — L1 max ~30M gas
+    // ÷ ~3 gas/op ≈ 10M steps theoretical, but legitimate debug use
+    // hits a tiny fraction of that) and bounds worst-case output to
+    // a few tens of MB.
+    constexpr size_t kMaxTraceSteps = 250'000;
+    const size_t step_count = std::min(trace.steps.size(), kMaxTraceSteps);
+    const bool trace_truncated = trace.steps.size() > kMaxTraceSteps;
+
     // Build the structLogs JSON
     std::string logs = "[";
-    for (size_t i = 0; i < trace.steps.size(); ++i) {
+    for (size_t i = 0; i < step_count; ++i) {
         if (i > 0) logs += ",";
         const auto& s = trace.steps[i];
         logs += "{\"pc\":" + std::to_string(s.pc);
@@ -1305,7 +1321,14 @@ static RpcResult handle_debug_trace_transaction(const std::string& params, const
     std::string result = "{\"gas\":" + std::to_string(trace.gas_used) +
         ",\"failed\":" + (trace.success ? "false" : "true") +
         ",\"returnValue\":" + to_hex_data(trace.return_data.data(), trace.return_data.size()) +
-        ",\"structLogs\":" + logs + "}";
+        ",\"structLogs\":" + logs;
+    if (trace_truncated) {
+        // Non-spec extension: surface truncation as a top-level boolean
+        // so consumers can detect when the structLogs array is incomplete
+        // due to the per-request step cap.
+        result += ",\"truncated\":true";
+    }
+    result += "}";
 
     return {make_result(id, result), false};
 }
@@ -1342,6 +1365,12 @@ static RpcResult handle_eth_subscribe(const std::string& params, const std::stri
     }
 
     uint64_t sub_id = global_subscription_manager().subscribe(type, filter);
+    // Codex round 6 (R6-H-11): subscribe() returns 0 when the global
+    // active-subscription cap is reached. Surface that as an RPC error
+    // rather than handing the caller a useless "0" id.
+    if (sub_id == 0) {
+        return {make_error(id, -32000, "too many subscriptions"), true};
+    }
     return {make_result(id, to_hex_quantity(sub_id)), false};
 }
 
@@ -1968,16 +1997,20 @@ static RpcResult handle_new_filter(const std::string& params, const std::string&
         return *error;
     }
 
-    // Codex round 5 (H-08): apply the same `kMaxGetLogsBlockRange` cap
-    // that `eth_getLogs` enforces. Without this, a caller can stash a
-    // filter with a 10M-block range and force every `eth_getFilterLogs`
-    // poll to scan the whole range while holding the global filter
-    // mutex. Only enforced when both ends are fixed; open-ended
-    // `to_block=latest` filters are intentionally exempt because their
-    // active range grows incrementally with the chain head.
-    if (filter.has_fixed_to_block &&
-        filter.to_block > filter.from_block &&
-        (filter.to_block - filter.from_block) > kMaxGetLogsBlockRange) {
+    // Codex round 5 (H-08) + round 6 (R6-H-10): apply the same
+    // `kMaxGetLogsBlockRange` cap that `eth_getLogs` enforces. Without
+    // this, a caller can stash a filter with a 10M-block range and
+    // force every `eth_getFilterLogs` / `eth_getFilterChanges` poll to
+    // scan the whole range while holding the global filter mutex.
+    // Round 6 closes the open-ended-filter bypass: `fromBlock=0`,
+    // `toBlock="latest"` previously left `has_fixed_to_block=false` and
+    // skipped the cap, but the active range was still `0..head` and grew
+    // monotonically. We cap by `(head - from_block)` for those filters
+    // too, which is safe because the chain head only ever advances.
+    const uint64_t current_head = global_evm_state().block_number();
+    uint64_t effective_to = filter.has_fixed_to_block ? filter.to_block : current_head;
+    if (effective_to > filter.from_block &&
+        (effective_to - filter.from_block) > kMaxGetLogsBlockRange) {
         return {make_error(id, -32602,
                            "eth_newFilter: block range exceeds " +
                            std::to_string(kMaxGetLogsBlockRange)), true};
@@ -2044,6 +2077,19 @@ static RpcResult handle_get_filter_changes(const std::string& params, const std:
         return {make_result(id, "[]"), false};
     }
 
+    // Codex round 7 (R7-H-14): cap each poll's scan window so a long-
+    // running open-ended filter cannot rescan an unbounded historical
+    // range under the global filter mutex. The admission cap from R6 only
+    // bounds (head_at_creation - from_block); without a per-poll cap, a
+    // caller can defer polling, let the chain advance, and force one
+    // arbitrarily-large scan. Truncate the response to the first
+    // `kMaxGetLogsBlockRange` blocks; the next poll resumes where this
+    // one left off.
+    if (to_block > from_block &&
+        (to_block - from_block) > kMaxGetLogsBlockRange) {
+        to_block = from_block + kMaxGetLogsBlockRange;
+    }
+
     std::string arr = "[";
     if (f.type == FilterType::Logs) {
         auto logs = global_evm_state().get_logs(from_block, to_block,
@@ -2054,8 +2100,15 @@ static RpcResult handle_get_filter_changes(const std::string& params, const std:
             arr += format_log_json(logs[i]);
         }
     } else if (f.type == FilterType::Blocks) {
-        // Return block hashes for new blocks
-        for (uint64_t bn = from_block; bn <= current_block; ++bn) {
+        // Return block hashes for new blocks. Codex round 7 (R7-H-14):
+        // cap the per-poll scan window so a long-deferred poll cannot
+        // emit thousands of entries under the global filter mutex.
+        uint64_t scan_to = current_block;
+        if (scan_to > from_block &&
+            (scan_to - from_block) > kMaxGetLogsBlockRange) {
+            scan_to = from_block + kMaxGetLogsBlockRange;
+        }
+        for (uint64_t bn = from_block; bn <= scan_to; ++bn) {
             auto hash = global_evm_state().get_block_hash(bn);
             bool is_zero = true;
             for (auto b : hash.bytes) { if (b != 0) { is_zero = false; break; } }
@@ -2064,7 +2117,7 @@ static RpcResult handle_get_filter_changes(const std::string& params, const std:
                 arr += to_hex_data(hash.bytes, 32);
             }
         }
-        f.next_poll_block = current_block + 1;
+        f.next_poll_block = scan_to + 1;
     } else if (f.type == FilterType::PendingTx) {
         // Pending tx filter: return empty (we execute immediately, no mempool)
     }
@@ -2408,7 +2461,25 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
     }
 
     auto& state = global_evm_state();
-    auto acct = state.read_account(addr);
+
+    // Codex round 7 (R7-H-17): take the EvmState shared lock ONCE for
+    // the whole proof build, before any backend access. The previous
+    // ordering called `state.read_account(addr)` (which acquires and
+    // releases its own shared_lock) before `proof_lock`, so account
+    // fields could come from snapshot A while the storage / account
+    // tries below saw snapshot B — producing a signed proof that pins
+    // values from inconsistent snapshots. The per-slot read inside the
+    // response loop also re-entered `read_storage_copy` while
+    // `proof_lock` was already held, which is undefined behaviour for
+    // `std::shared_mutex` (recursive ownership is not portable).
+    // Replace both with direct backend access via `state.state()` —
+    // safe under our single-acquire shared lock.
+    constexpr size_t kMaxGetProofAccountIter = 1'000'000;
+    constexpr size_t kMaxGetProofStorageIter = 1'000'000;
+    constexpr size_t kMaxGetProofTotalAccountStorageIter = 1'000'000;
+    std::shared_lock proof_lock(state.mutex());
+    auto* cell_state = dynamic_cast<CellEvmState*>(&state.state());
+    auto acct = state.state().read_account(addr);
     silkworm::Account a;
     if (acct) a = *acct;
 
@@ -2473,32 +2544,23 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
         }
     }
 
-    // Codex round 5 (H-06): hold the EvmState shared lock across the
-    // full proof build. `state.state()` returns the underlying silkworm
-    // backend with a contract that the caller already owns the lock
-    // (see `evm/core/state.h:107`). Without it the iteration below can
-    // race a consensus mutation and observe a partially-updated
-    // dictionary, producing an inconsistent (but signed) proof. Also
+    // Codex round 5 (H-06) + round 7 (R7-H-17): caller already holds
+    // `proof_lock` (acquired immediately after argument parsing); we
     // bound the per-request iteration so a public caller cannot force
     // unbounded full-state walks: 1 M accounts and 1 M target-account
     // storage slots per request — orders of magnitude above any
-    // realistic legitimate use, far below the kind of state size that
-    // breaks the consensus full-root recompute (kMaxFullRootAccounts /
-    // kMaxFullRootStorageSlots).
-    constexpr size_t kMaxGetProofAccountIter = 1'000'000;
-    constexpr size_t kMaxGetProofStorageIter = 1'000'000;
-    std::shared_lock proof_lock(state.mutex());
+    // realistic legitimate use, far below the consensus full-root
+    // recompute caps (kMaxFullRootAccounts / kMaxFullRootStorageSlots).
 
     // ----- Build storage trie + storage proofs -----
     evmc::bytes32 storage_hash = silkworm::kEmptyRoot;
     std::map<silkworm::Bytes, silkworm::Bytes> storage_kv;
     bool storage_truncated = false;
     if (acct) {
-        auto* cs = dynamic_cast<CellEvmState*>(&state.state());
-        if (cs) {
+        if (cell_state) {
             size_t storage_iter = 0;
-            cs->for_each_storage(addr, [&](const evmc::bytes32& slot,
-                                            const evmc::bytes32& value) {
+            cell_state->for_each_storage(addr, [&](const evmc::bytes32& slot,
+                                                    const evmc::bytes32& value) {
                 if (storage_truncated) return;
                 if (++storage_iter > kMaxGetProofStorageIter) {
                     storage_truncated = true;
@@ -2525,12 +2587,38 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
     // Iterate every account, hash the address, RLP-encode the account.
     std::map<silkworm::Bytes, silkworm::Bytes> account_kv;
     bool account_truncated = false;
+    bool account_storage_truncated = false;
+    size_t account_storage_iter = 0;
+    auto compute_storage_root_for_account = [&](const evmc::address& owner) {
+        std::map<silkworm::Bytes, silkworm::Bytes> kv;
+        if (!cell_state) {
+            return silkworm::kEmptyRoot;
+        }
+        cell_state->for_each_storage(owner, [&](const evmc::bytes32& slot,
+                                                const evmc::bytes32& value) {
+            if (account_storage_truncated) return;
+            if (++account_storage_iter > kMaxGetProofTotalAccountStorageIter) {
+                account_storage_truncated = true;
+                return;
+            }
+            if (value == evmc::bytes32{}) return;
+            auto kh = ethash::keccak256(slot.bytes, 32);
+            silkworm::Bytes key(kh.bytes, kh.bytes + 32);
+            silkworm::Bytes val_rlp;
+            intx::uint256 v_int = intx::be::load<intx::uint256>(value);
+            silkworm::rlp::encode(val_rlp, v_int);
+            kv[std::move(key)] = std::move(val_rlp);
+        });
+        if (account_storage_truncated) {
+            return silkworm::kEmptyRoot;
+        }
+        return mpt_root(kv);
+    };
     {
-        auto* cs = dynamic_cast<CellEvmState*>(&state.state());
-        if (cs) {
+        if (cell_state) {
             size_t account_iter = 0;
-            cs->for_each_account([&](const unsigned char key[32],
-                                     const silkworm::Account& other_acct) {
+            cell_state->for_each_account([&](const unsigned char key[32],
+                                             const silkworm::Account& other_acct) {
                 if (account_truncated) return;
                 if (++account_iter > kMaxGetProofAccountIter) {
                     account_truncated = true;
@@ -2538,11 +2626,13 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
                 }
                 evmc::address other_addr{};
                 std::memcpy(other_addr.bytes, key + 12, 20);
-                // Each account also needs its own storage_hash for accurate proof.
-                // For non-target accounts we use kEmptyRoot (most accounts have
-                // no storage); the storage_hash matters only for the target.
-                evmc::bytes32 their_storage_hash = silkworm::kEmptyRoot;
-                if (other_addr == addr) their_storage_hash = storage_hash;
+                // Each account leaf commits to that account's storage root.
+                // Using kEmptyRoot for non-target accounts makes the account
+                // proof unverifiable as soon as any other account has storage.
+                evmc::bytes32 their_storage_hash =
+                    (other_addr == addr) ? storage_hash
+                                         : compute_storage_root_for_account(other_addr);
+                if (account_storage_truncated) return;
                 silkworm::Bytes acct_rlp = other_acct.rlp(their_storage_hash);
                 auto ah = ethash::keccak256(other_addr.bytes, 20);
                 silkworm::Bytes hashed_addr(ah.bytes, ah.bytes + 32);
@@ -2551,6 +2641,11 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
             if (account_truncated) {
                 return {make_error(id, -32603,
                                    "eth_getProof: account dictionary exceeds "
+                                   "RPC proof budget"), true};
+            }
+            if (account_storage_truncated) {
+                return {make_error(id, -32603,
+                                   "eth_getProof: account storage dictionaries exceed "
                                    "RPC proof budget"), true};
             }
         }
@@ -2623,7 +2718,12 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
     r += "\"storageProof\":[";
     for (size_t i = 0; i < slots.size(); i++) {
         if (i > 0) r += ",";
-        auto v = state.read_storage_copy(addr, a.incarnation, slots[i]);
+        // Codex round 7 (R7-H-17): use the underlying backend directly
+        // — `state.read_storage_copy` would re-acquire the same shared
+        // mutex under our `proof_lock`, which is UB for std::shared_mutex.
+        // `silkworm::State::read_storage` is `const noexcept` so a const
+        // reference is enough; no `const_cast` needed.
+        auto v = state.state().read_storage(addr, a.incarnation, slots[i]);
         // Per-slot proof. Same exclusion-proof reasoning as accountProof:
         // when the storage trie is empty (no slots, or account doesn't
         // exist so storage_kv was never populated), we emit the canonical
@@ -3172,15 +3272,6 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
         return {make_result(id, "[]"), false};
     }
 
-    // ---- Setup: one IBS lives across all simulated blocks ----
-    // Hold the EvmState lock for the entire simulation: we mutate the
-    // IntraBlockState (which wraps the underlying State) but never call
-    // write_to_db, so the change journal is local to this scope and
-    // discarded on return.
-    std::unique_lock lock(evm_state.mutex());
-    auto& mutable_state = const_cast<silkworm::State&>(evm_state.state());
-    silkworm::IntraBlockState ibs(mutable_state);
-
     // Constants reused for every block header we emit.
     const std::string zero_hash = "\"0x" + std::string(64, '0') + "\"";
     const std::string empty_root = "\"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\"";
@@ -3309,8 +3400,56 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
     // 256-block ceiling. Returning -38026 mimics the spec error text
     // ("too many blocks") that the conformance fixtures look for.
     constexpr size_t kMaxSimulatedBlocks = 256;
+    constexpr uint64_t kMaxSimulateEmittedBlocks = 256;
+    constexpr size_t kMaxSimulateResponseBytes = 16 * 1024 * 1024;
     if (bsc_entries.size() > kMaxSimulatedBlocks) {
         return {make_error(id, -38026, "too many blocks"), true};
+    }
+
+    // tos8 audit: validate implicit filler blocks before taking the global
+    // EVM state lock. `blockOverrides.number` can jump far ahead and would
+    // otherwise make one tiny public request emit unbounded filler JSON while
+    // holding evm_state.mutex(). The cap is on total emitted blocks, not just
+    // user-supplied blockStateCalls entries.
+    {
+        uint64_t check_bn = bn;
+        uint64_t check_prev_ts = prev_ts;
+        uint64_t check_emitted_blocks = 0;
+        for (const auto& bsc_entry : bsc_entries) {
+            SimulateBlockOverrides bo = parse_block_overrides_for_sim(bsc_entry);
+            if (!bo.number.has_value() && check_bn == std::numeric_limits<uint64_t>::max()) {
+                return {make_error(id, -38020,
+                                   "simulated block number overflow"), true};
+            }
+            uint64_t target_bn = bo.number.value_or(check_bn + 1);
+            if (bo.number.has_value() && *bo.number <= check_bn) {
+                return {make_error(id, -38020,
+                    "block numbers must be in order: " + std::to_string(*bo.number) +
+                    " <= " + std::to_string(check_bn)), true};
+            }
+            if (target_bn <= check_bn) target_bn = check_bn + 1;
+
+            uint64_t gap = 0;
+            if (target_bn > check_bn + 1) {
+                gap = target_bn - check_bn - 1;
+            }
+            if (check_emitted_blocks > kMaxSimulateEmittedBlocks ||
+                gap + 1 > kMaxSimulateEmittedBlocks - check_emitted_blocks) {
+                return {make_error(id, -32602,
+                                   "simulated block gap too large"), true};
+            }
+            check_emitted_blocks += gap + 1;
+
+            uint64_t target_ts = bo.time.value_or(check_prev_ts + 1);
+            if (bo.time.has_value() && *bo.time <= check_prev_ts) {
+                return {make_error(id, -38021,
+                    "block timestamps must be in order: " + std::to_string(*bo.time) +
+                    " <= " + std::to_string(check_prev_ts)), true};
+            }
+            if (target_ts < check_prev_ts) target_ts = check_prev_ts;
+            check_bn = target_bn;
+            check_prev_ts = target_ts;
+        }
     }
 
     // Codex round 3 (H-04): aggregate-gas + per-block-call budgets across
@@ -3326,6 +3465,19 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
     constexpr size_t kMaxSimulateCallsPerBlock = 1024;
     constexpr uint64_t kMaxSimulateTotalGas = 1'000'000'000ULL;
     uint64_t simulate_aggregate_gas_used = 0;
+    uint64_t emitted_blocks = 0;
+
+    auto response_size_exceeded = [&]() {
+        return out2.size() > kMaxSimulateResponseBytes;
+    };
+
+    // ---- Setup: one IBS lives across all simulated blocks ----
+    // Hold the EvmState lock for the actual simulation only. All filler-gap
+    // validation above has already run, so a rejected request never blocks
+    // unrelated EVM state readers/writers.
+    std::unique_lock lock(evm_state.mutex());
+    auto& mutable_state = const_cast<silkworm::State&>(evm_state.state());
+    silkworm::IntraBlockState ibs(mutable_state);
 
     for (const auto& bsc_entry : bsc_entries) {
         // ---- Per-block overrides ----
@@ -3356,13 +3508,29 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
         // Per spec: when blockOverrides.number jumps past bn+1, fillers
         // are emitted for the skipped range so the result chain stays
         // contiguous. The conformance fixtures include those fillers.
+        //
+        // tos8 audit: the same total-emitted-block cap was already checked
+        // before taking evm_state.mutex(); keep a defensive runtime check near
+        // the actual emitter so future edits cannot reintroduce an unbounded
+        // filler loop under the lock.
+        uint64_t gap = target_bn > bn ? target_bn - bn - 1 : 0;
+        if (emitted_blocks > kMaxSimulateEmittedBlocks ||
+            gap + 1 > kMaxSimulateEmittedBlocks - emitted_blocks) {
+            return {make_error(id, -32602,
+                               "simulated block gap too large"), true};
+        }
         uint64_t filler_ts = prev_ts + 1;
         for (uint64_t fbn = bn + 1; fbn < target_bn; ++fbn) {
             if (!first) out2 += ",";
             first = false;
             emit_filler_block(fbn, filler_ts, out2);
+            if (response_size_exceeded()) {
+                return {make_error(id, -32602,
+                                   "eth_simulateV1 response too large"), true};
+            }
             filler_ts++;
         }
+        emitted_blocks += gap + 1;
         bn = target_bn;
         if (!first) out2 += ",";
         first = false;
@@ -3718,6 +3886,10 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
             out2 += "}";
         }
         out2 += "]}";
+        if (response_size_exceeded()) {
+            return {make_error(id, -32602,
+                               "eth_simulateV1 response too large"), true};
+        }
     }
     out2 += "]";
     return {make_result(id, out2), false};
@@ -3834,6 +4006,19 @@ static RpcResult handle_get_filter_logs(const std::string& params, const std::st
     if (f.query_from_block > to_block) {
         return {make_result(id, "[]"), false};
     }
+    // Codex round 7 (R7-H-14): hard-cap the per-call scan window. Unlike
+    // `eth_getFilterChanges`, this handler is allowed to return the
+    // full historical match set — but a long-running open-ended filter
+    // could still rescan an unbounded `from..head` range every call.
+    // Reject when the requested window exceeds the configured cap so
+    // callers must chunk via `eth_getLogs`/explicit ranges.
+    if (to_block > f.query_from_block &&
+        (to_block - f.query_from_block) > kMaxGetLogsBlockRange) {
+        return {make_error(id, -32602,
+                           "eth_getFilterLogs: scan window exceeds " +
+                           std::to_string(kMaxGetLogsBlockRange) +
+                           "; use eth_getLogs with an explicit range"), true};
+    }
     auto logs = global_evm_state().get_logs(f.query_from_block, to_block,
                                             f.addresses, f.topics);
     std::string arr = "[";
@@ -3866,24 +4051,82 @@ static std::string post_accept_health_json() {
 }
 
 static RpcResult handle_debug_rpc_cache_health(const std::string& id) {
-    std::string r = "{";
-    r += "\"postAccept\":" + post_accept_health_json() + ",";
-    if (auto* cache = evm_rpc_cache_db()) {
-        r += "\"cacheOpen\":true,";
-        r += "\"receipts\":" + size_result_or_null(cache->count_receipts()) + ",";
-        r += "\"transactions\":" + size_result_or_null(cache->count_transactions()) + ",";
-        r += "\"blocks\":" + size_result_or_null(cache->count_blocks_by_number()) + ",";
-        r += "\"logBlocks\":" + size_result_or_null(cache->count_log_blocks()) + ",";
-        r += "\"pendingSideEffects\":" + size_result_or_null(cache->count_pending_side_effects());
-    } else {
-        r += "\"cacheOpen\":false,";
-        r += "\"receipts\":null,";
-        r += "\"transactions\":null,";
-        r += "\"blocks\":null,";
-        r += "\"logBlocks\":null,";
-        r += "\"pendingSideEffects\":null";
+    // Codex round 6 (R6-H-13) + round 7 (R7-H-15): the count_* methods
+    // perform full RocksDB prefix scans (`tddb/td/db/RocksDb.cpp::count`
+    // iterates every key), so a public caller hitting this method
+    // repeatedly forces O(N) cache scans per request. Cache the response
+    // under a short TTL AND coalesce concurrent expired-cache callers
+    // onto a single in-flight scan via a condition variable: the first
+    // expired caller refreshes; everyone else waits and serves the new
+    // response. Without coalescing, N callers arriving simultaneously
+    // after expiry would run N parallel full scans before any cache
+    // update lands.
+    static std::mutex s_cache_mu;
+    static std::condition_variable s_cache_cv;
+    static std::string s_cached_response;
+    static std::chrono::steady_clock::time_point s_cached_at{};
+    static bool s_refresh_in_flight = false;
+    constexpr auto kCacheHealthTtl = std::chrono::seconds(5);
+
+    {
+        std::unique_lock<std::mutex> lk(s_cache_mu);
+        auto fresh = [&] {
+            return !s_cached_response.empty() &&
+                   (std::chrono::steady_clock::now() - s_cached_at) < kCacheHealthTtl;
+        };
+        if (fresh()) {
+            return {make_result(id, s_cached_response), false};
+        }
+        if (s_refresh_in_flight) {
+            // Another thread is already refreshing — wait for it and
+            // serve the new value rather than starting a parallel scan.
+            s_cache_cv.wait(lk, [&] { return !s_refresh_in_flight; });
+            return {make_result(id, s_cached_response), false};
+        }
+        s_refresh_in_flight = true;
     }
-    r += "}";
+
+    // Build the response outside the mutex so other RPC threads can
+    // make progress (e.g. unrelated handlers). Mark the in-flight flag
+    // so concurrent debug_rpcCacheHealth callers coalesce on this one
+    // scan via the condition variable above.
+    std::string r;
+    try {
+        r = "{";
+        r += "\"postAccept\":" + post_accept_health_json() + ",";
+        if (auto* cache = evm_rpc_cache_db()) {
+            r += "\"cacheOpen\":true,";
+            r += "\"receipts\":" + size_result_or_null(cache->count_receipts()) + ",";
+            r += "\"transactions\":" + size_result_or_null(cache->count_transactions()) + ",";
+            r += "\"blocks\":" + size_result_or_null(cache->count_blocks_by_number()) + ",";
+            r += "\"logBlocks\":" + size_result_or_null(cache->count_log_blocks()) + ",";
+            r += "\"pendingSideEffects\":" + size_result_or_null(cache->count_pending_side_effects()) + ",";
+            r += "\"incompleteTransactions\":" + size_result_or_null(cache->count_incomplete_transactions()) + ",";
+            r += "\"incompleteBlocks\":" + size_result_or_null(cache->count_incomplete_blocks());
+        } else {
+            r += "\"cacheOpen\":false,";
+            r += "\"receipts\":null,";
+            r += "\"transactions\":null,";
+            r += "\"blocks\":null,";
+            r += "\"logBlocks\":null,";
+            r += "\"pendingSideEffects\":null,";
+            r += "\"incompleteTransactions\":null,";
+            r += "\"incompleteBlocks\":null";
+        }
+        r += "}";
+    } catch (...) {
+        std::lock_guard<std::mutex> lk(s_cache_mu);
+        s_refresh_in_flight = false;
+        s_cache_cv.notify_all();
+        throw;
+    }
+    {
+        std::lock_guard<std::mutex> lk(s_cache_mu);
+        s_cached_response = r;
+        s_cached_at = std::chrono::steady_clock::now();
+        s_refresh_in_flight = false;
+    }
+    s_cache_cv.notify_all();
     return {make_result(id, r), false};
 }
 

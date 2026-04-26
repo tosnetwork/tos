@@ -8,6 +8,10 @@ pow_giver="$root/evm/contracts/EToSPoWGiver.sol"
 pow_giver_fift="$root/crypto/smartcont/etos-pow-givers.fif"
 rpc_handlers="$root/evm/rpc/handlers.cpp"
 compute_phase="$root/evm/core/compute-phase.cpp"
+post_accept="$root/evm/core/post-accept.cpp"
+rpc_cache_db="$root/evm/rpc/cache-db.cpp"
+validator_download_state="$root/validator/net/download-state.cpp"
+validator_token_manager="$root/validator/token-manager.cpp"
 harness_paths=(
     "$root/test/conformance/hive/clients/tos/bootstrap-validators.sh"
     "$root/test/conformance/hive/clients/tos/tos.cmd"
@@ -67,6 +71,56 @@ if [ -z "$budget_line" ] || [ -z "$exec_line" ] || [ "$budget_line" -ge "$exec_l
     echo "evm production hardening check failed: EVM stateRoot budget preflight must run before transaction execution" >&2
     exit 1
 fi
+prevalidate_line=$(rg -n 'prevalidate_evm_transaction_admission\(.*decoded\.txn|prevalidate_evm_transaction_admission\(' "$compute_phase" | head -n1 | cut -d: -f1 || true)
+if [ -z "$prevalidate_line" ] || [ "$prevalidate_line" -ge "$budget_line" ]; then
+    echo "evm production hardening check failed: cheap EVM tx prevalidation must run before stateRoot budget scan" >&2
+    exit 1
+fi
+
+if ! rg -q 'kMaxSimulateEmittedBlocks' "$rpc_handlers" ||
+   ! rg -q 'simulated block gap too large' "$rpc_handlers" ||
+   ! rg -q 'kMaxSimulateResponseBytes' "$rpc_handlers"; then
+    echo "evm production hardening check failed: eth_simulateV1 must cap total emitted filler blocks and response bytes" >&2
+    exit 1
+fi
+
+if rg -n 'kMaxSimulateFillerJump[[:space:]]*=[[:space:]]*8192' "$rpc_handlers"; then
+    echo "evm production hardening check failed: eth_simulateV1 must not rely on the old per-entry 8192 filler cap" >&2
+    exit 1
+fi
+
+if ! rg -q 'kMaxPersistentStateDownloadBytes' "$validator_download_state" ||
+   ! rg -q 'persistent state stream exceeds advertised size|persistent state too large' "$validator_download_state" ||
+   ! rg -q 'download_started_' "$root/validator/net/download-state.hpp"; then
+    echo "evm production hardening check failed: persistent state downloader must validate total and cumulative size before streaming" >&2
+    exit 1
+fi
+
+if rg -n 'request_total_size\(\);[[:space:]]*got_block_state_part' "$validator_download_state"; then
+    echo "evm production hardening check failed: persistent state downloader must not start slices before total size is verified" >&2
+    exit 1
+fi
+
+if ! rg -q 'compute_storage_root_for_account' "$rpc_handlers"; then
+    echo "evm production hardening check failed: eth_getProof must use real storage roots for non-target accounts" >&2
+    exit 1
+fi
+
+if rg -n 'For non-target accounts we use kEmptyRoot|other_addr == addr\) their_storage_hash = storage_hash' "$rpc_handlers"; then
+    echo "evm production hardening check failed: eth_getProof must not approximate non-target storage roots as empty" >&2
+    exit 1
+fi
+
+if ! rg -q 'put_incomplete_transaction|put_incomplete_block|has_incomplete_transaction|has_incomplete_block' "$rpc_cache_db" ||
+   ! rg -q 'hydrate_evm_rpc_incomplete_indexes_from_cache|has_incomplete_transaction|has_incomplete_block' "$post_accept"; then
+    echo "evm production hardening check failed: post-accept incomplete indexes must be durable and restart-hydrated" >&2
+    exit 1
+fi
+
+if rg -n 'it->second\.promise\.set_value\(gen_token\(size, priority\)\)' "$validator_token_manager"; then
+    echo "evm production hardening check failed: TokenManager must wake pending requests with their own size/priority" >&2
+    exit 1
+fi
 
 if [[ "${TOS_CHECK_ETOS_GIVER_BYTECODE:-0}" == "1" ]]; then
     if ! command -v node >/dev/null 2>&1; then
@@ -94,15 +148,24 @@ const input = {
 
 let output = null;
 let compiler = null;
-for (const choice of [
-  ['npx', ['--yes', 'solc@0.8.26', '--standard-json']],
-  ['solc', ['--standard-json']],
-]) {
+const choices = [];
+if (process.env.TOS_SOLC_0_8_26) {
+  choices.push([process.env.TOS_SOLC_0_8_26, ['--standard-json']]);
+}
+if (process.env.HOME) {
+  choices.push([path.join(process.env.HOME, '.solcx/solc-v0.8.26'), ['--standard-json']]);
+}
+choices.push(['solc', ['--standard-json']]);
+if (process.env.TOS_ALLOW_NPX_SOLC === '1') {
+  choices.push(['npx', ['--yes', 'solc@0.8.26', '--standard-json']]);
+}
+for (const choice of choices) {
   try {
     output = cp.execFileSync(choice[0], choice[1], {
       input: JSON.stringify(input),
       encoding: 'utf8',
       maxBuffer: 20 * 1024 * 1024,
+      timeout: 30000,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     compiler = [choice[0], ...choice[1]].join(' ');
@@ -112,7 +175,7 @@ for (const choice of [
   }
 }
 if (!output) {
-  console.error('evm production hardening check failed: cannot run solc 0.8.26 standard-json');
+  console.error('evm production hardening check failed: cannot run pinned solc 0.8.26 standard-json (set TOS_SOLC_0_8_26 or install $HOME/.solcx/solc-v0.8.26; set TOS_ALLOW_NPX_SOLC=1 only for non-hermetic local fallback)');
   process.exit(1);
 }
 

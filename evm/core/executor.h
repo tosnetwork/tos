@@ -82,6 +82,18 @@ ExecutionResult execute_evm_transaction(
     EvmState& state,
     const silkworm::ChainConfig& config);
 
+/// Cheap consensus admission validation for a decoded transaction.
+///
+/// Runs the same pre-execution checks used by execute_evm_transaction, but
+/// stops before any state mutation or EVM bytecode execution. Returns
+/// std::nullopt when the transaction may proceed, or a human-readable reject
+/// reason when it must be treated as InvalidPreValidation.
+std::optional<std::string> prevalidate_evm_transaction_admission(
+    const silkworm::Transaction& txn,
+    const silkworm::Block& block,
+    const EvmState& state,
+    const silkworm::ChainConfig& config);
+
 /// Read-only EVM execution for eth_call / eth_estimateGas.
 ///
 /// Runs the transaction against a snapshot of the state — no state is

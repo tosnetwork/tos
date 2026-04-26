@@ -109,6 +109,21 @@ class EvmRpcCacheDb {
                                           size_t max_records);
     td::Result<size_t> count_pending_side_effects();
 
+    /// --- Durable RPC indexing-incomplete markers ---
+    td::Status put_incomplete_transaction(const td::Bits256& tx_hash);
+    td::Status delete_incomplete_transaction(const td::Bits256& tx_hash);
+    td::Result<bool> has_incomplete_transaction(const td::Bits256& tx_hash);
+    td::Status for_each_incomplete_transaction(
+        std::function<td::Status(const td::Bits256&)> cb);
+    td::Result<size_t> count_incomplete_transactions();
+
+    td::Status put_incomplete_block(uint64_t block_number);
+    td::Status delete_incomplete_block(uint64_t block_number);
+    td::Result<bool> has_incomplete_block(uint64_t block_number);
+    td::Status for_each_incomplete_block(
+        std::function<td::Status(uint64_t)> cb);
+    td::Result<size_t> count_incomplete_blocks();
+
     EvmRpcCacheDb(EvmRpcCacheDb&&);
     ~EvmRpcCacheDb();
 

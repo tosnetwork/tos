@@ -41,6 +41,7 @@ void TokenManager::get_token(size_t size, td::uint32 priority, td::Timestamp tim
 }
 
 void TokenManager::token_cleared(size_t size, td::uint32 priority) {
+  (void)size;
   (priority ? free_priority_tokens_ : free_tokens_)++;
   if (free_priority_tokens_ > max_priority_tokens_) {
     free_priority_tokens_--;
@@ -49,7 +50,9 @@ void TokenManager::token_cleared(size_t size, td::uint32 priority) {
 
   for (auto it = pending_.begin(); it != pending_.end();) {
     if (it->first.priority && (free_tokens_ || free_priority_tokens_)) {
-      it->second.promise.set_value(gen_token(size, priority));
+      auto requested_size = it->first.size;
+      auto requested_priority = it->first.priority;
+      it->second.promise.set_value(gen_token(requested_size, requested_priority));
       it = pending_.erase(it);
       if (free_priority_tokens_ > 0) {
         free_priority_tokens_--;
@@ -57,7 +60,9 @@ void TokenManager::token_cleared(size_t size, td::uint32 priority) {
         free_tokens_--;
       }
     } else if (!it->first.priority && free_tokens_) {
-      it->second.promise.set_value(gen_token(size, priority));
+      auto requested_size = it->first.size;
+      auto requested_priority = it->first.priority;
+      it->second.promise.set_value(gen_token(requested_size, requested_priority));
       it = pending_.erase(it);
       free_tokens_--;
     } else {

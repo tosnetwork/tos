@@ -191,6 +191,16 @@ static std::string extract_json_result_string(const std::string& json) {
     return json.substr(pos, end - pos);
 }
 
+static Bytes extract_first_account_proof_node(const std::string& json) {
+    const std::string key = "\"accountProof\":[\"";
+    auto pos = json.find(key);
+    if (pos == std::string::npos) return {};
+    pos += key.size();
+    auto end = json.find('"', pos);
+    if (end == std::string::npos) return {};
+    return hex_to_bytes(json.substr(pos, end - pos).c_str());
+}
+
 static bool json_result_is_null(const std::string& json) {
     return json.find("\"result\":null") != std::string::npos;
 }
@@ -997,6 +1007,21 @@ static void test_eth_rpc_block_lookup_and_log_filters() {
 
     bool ok = missing_block_ok && block_hash_filter_ok && receipt_bloom_ok &&
               historical_changes_ok && filter_logs_ok;
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_eth_simulate_v1_rejects_huge_filler_gap() {
+    printf("=== test_eth_simulate_v1_rejects_huge_filler_gap ===\n");
+
+    auto r = handle_eth_rpc(
+        "eth_simulateV1",
+        "[{\"blockStateCalls\":[{\"blockOverrides\":{\"number\":\"0xffffffffffffffff\"},\"calls\":[]}]}"
+        ",\"latest\"]",
+        "2601");
+
+    bool ok = r && r->is_error &&
+              r->json.find("simulated block gap too large") != std::string::npos;
+    printf("  response: %s\n", r ? r->json.c_str() : "NOT HANDLED");
     printf("  %s\n\n", ok ? "PASSED" : "FAILED");
 }
 
@@ -5226,6 +5251,18 @@ static void test_eth_get_proof_non_existence() {
     global_evm_state().seed_account(a1, intx::uint256{1'000'000}, 1);
     global_evm_state().seed_account(a2, intx::uint256{2'000'000}, 2);
     global_evm_state().seed_account(a3, intx::uint256{3'000'000}, 3);
+    {
+        std::unique_lock lock(global_evm_state().mutex());
+        auto* cs = dynamic_cast<evm_workchain::CellEvmState*>(
+            &global_evm_state().state());
+        if (cs) {
+            evmc::bytes32 slot{};
+            evmc::bytes32 value{};
+            slot.bytes[31] = 0x42;
+            value.bytes[31] = 0x99;
+            cs->update_storage(a3, /*incarnation=*/0, slot, evmc::bytes32{}, value);
+        }
+    }
 
     // Target a guaranteed-absent address.
     const char* missing_hex = "0xdead000000000000000000000000000000000000";
@@ -5241,11 +5278,30 @@ static void test_eth_get_proof_non_existence() {
         return;
     }
 
-    // --- Build the same account_kv map the RPC handler does, so we can
-    //     independently compute the expected trie root. ---
+    // --- Build the same canonical account_kv map the RPC handler must use.
+    //     Non-target accounts with storage are included to catch the tos8
+    //     regression where the handler used kEmptyRoot for their storageRoot.
+    auto storage_root_for = [](evm_workchain::CellEvmState* cs,
+                               const evmc::address& owner) {
+        std::map<silkworm::Bytes, silkworm::Bytes> storage_kv;
+        if (!cs) return silkworm::kEmptyRoot;
+        cs->for_each_storage(owner, [&](const evmc::bytes32& slot,
+                                        const evmc::bytes32& value) {
+            if (value == evmc::bytes32{}) return;
+            auto kh = ethash::keccak256(slot.bytes, 32);
+            silkworm::Bytes key(kh.bytes, kh.bytes + 32);
+            silkworm::Bytes val_rlp;
+            intx::uint256 v_int = intx::be::load<intx::uint256>(value);
+            silkworm::rlp::encode(val_rlp, v_int);
+            storage_kv[std::move(key)] = std::move(val_rlp);
+        });
+        return evm_workchain::mpt_root(storage_kv);
+    };
+
     std::map<silkworm::Bytes, silkworm::Bytes> account_kv;
     {
         evmc::address missing_addr = hex_to_addr(missing_hex);
+        std::unique_lock lock(global_evm_state().mutex());
         auto* cs = dynamic_cast<evm_workchain::CellEvmState*>(
             &global_evm_state().state());
         if (cs) {
@@ -5253,7 +5309,7 @@ static void test_eth_get_proof_non_existence() {
                                      const silkworm::Account& other_acct) {
                 evmc::address other_addr{};
                 std::memcpy(other_addr.bytes, key + 12, 20);
-                evmc::bytes32 their_storage_hash = silkworm::kEmptyRoot;
+                evmc::bytes32 their_storage_hash = storage_root_for(cs, other_addr);
                 if (other_addr == missing_addr) their_storage_hash = silkworm::kEmptyRoot;
                 silkworm::Bytes acct_rlp = other_acct.rlp(their_storage_hash);
                 auto ah = ethash::keccak256(other_addr.bytes, 20);
@@ -5302,6 +5358,15 @@ static void test_eth_get_proof_non_existence() {
     }
     printf("  keccak(proof[0]) == stateRoot: %s\n", root_ok ? "OK" : "WRONG");
 
+    auto rpc_first_node = extract_first_account_proof_node(rpc_resp->json);
+    bool rpc_root_ok = false;
+    if (!rpc_first_node.empty()) {
+        auto kh = ethash::keccak256(rpc_first_node.data(), rpc_first_node.size());
+        rpc_root_ok = (std::memcmp(kh.bytes, expected_root.bytes, 32) == 0);
+    }
+    printf("  RPC accountProof[0] commits to canonical stateRoot: %s\n",
+           rpc_root_ok ? "OK" : "WRONG");
+
     // (3) verify_mpt_proof gives kValidNonExistence
     silkworm::Bytes out_value;
     auto vr = evm_workchain::verify_mpt_proof(proof, expected_root,
@@ -5347,7 +5412,7 @@ static void test_eth_get_proof_non_existence() {
     printf("  storage non-existence proof (empty trie): %s\n",
            storage_ok ? "OK" : "WRONG");
 
-    bool pass = got_resp && kv_nonempty && proof_nonempty && root_ok &&
+    bool pass = got_resp && kv_nonempty && proof_nonempty && root_ok && rpc_root_ok &&
                 absence_ok && existence_ok && storage_ok;
     printf("  %s\n\n", pass ? "PASSED" : "FAILED");
 }
@@ -5950,6 +6015,7 @@ int main() {
     test_etos_pow_giver_replay_seed_rotation();
     test_eth_rpc();
     test_eth_rpc_block_lookup_and_log_filters();
+    test_eth_simulate_v1_rejects_huge_filler_gap();
     test_runtime_chain_id_override();
     test_signed_transaction();
     test_persistent_state();

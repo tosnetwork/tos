@@ -35,6 +35,16 @@ namespace evm_workchain {
 /// Max queued events per subscription before oldest are dropped.
 constexpr size_t kMaxPendingEventsPerSub = 10'000;
 
+/// Codex round 6 (R6-H-11): hard cap on the total number of active
+/// subscriptions across all callers. Without this, public RPC clients can
+/// accumulate subscription IDs without bound — every notify_* call iterates
+/// the full subscription map and appends events under the manager mutex,
+/// so attacker-created state directly scales publisher CPU and memory.
+/// 4096 is generous for legitimate use (heavy explorers/wallets typically
+/// hold a single-digit count of subs each, so this allows hundreds of
+/// connected clients) while bounding worst-case publisher work per event.
+constexpr size_t kMaxActiveSubscriptions = 4096;
+
 enum class SubscriptionType {
     NewHeads,
     Logs,

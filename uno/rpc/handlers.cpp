@@ -844,6 +844,12 @@ std::optional<RpcResult> handle_subscribe(const std::string& params,
                                     "unknown subscription channel: " + channel), true};
     }
     uint64_t sub_id = global_uno_subscription_manager().subscribe(t);
+    if (sub_id == 0) {
+        // Codex round 6 (R6-H-11): subscribe() returns 0 when the global
+        // active-subscription cap is hit.
+        return RpcResult{make_error(id, kErrInvalidParams,
+                                    "too many subscriptions"), true};
+    }
     std::string json = quote_json(to_hex(reinterpret_cast<const uint8_t*>(&sub_id), sizeof(sub_id)));
     return RpcResult{make_result(id, json), false};
 }

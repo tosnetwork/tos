@@ -24,6 +24,8 @@ namespace {
 //   0x04 + bits256 block_hash → block-by-hash cell     (Phase F.6, dup payload)
 //   0x05 + uint64-be          → per-block logs cell    (Phase F.6)
 //   0x06 + candidate context  → pending post-accept side effects
+//   0x07 + bits256 tx_hash    → durable tx indexing-incomplete marker
+//   0x08 + uint64-be          → durable block indexing-incomplete marker
 //
 // Block-by-number uses big-endian uint64 so RocksDB lexicographic iteration
 // returns blocks in chain order — handy for hydration replay.
@@ -33,12 +35,16 @@ constexpr uint8_t kBlockByNumberTag = 0x03;
 constexpr uint8_t kBlockByHashTag = 0x04;
 constexpr uint8_t kLogsByBlockTag = 0x05;
 constexpr uint8_t kPendingSideEffectsTag = 0x06;
+constexpr uint8_t kIncompleteTxTag = 0x07;
+constexpr uint8_t kIncompleteBlockTag = 0x08;
 constexpr size_t kReceiptKeyLen = 1 + 32;
 constexpr size_t kTransactionKeyLen = 1 + 32;
 constexpr size_t kBlockByNumberKeyLen = 1 + 8;
 constexpr size_t kBlockByHashKeyLen = 1 + 32;
 constexpr size_t kLogsByBlockKeyLen = 1 + 8;
 constexpr size_t kPendingSideEffectsKeyLen = 1 + 8 + 8 + 32 + 32 + 32;
+constexpr size_t kIncompleteTxKeyLen = 1 + 32;
+constexpr size_t kIncompleteBlockKeyLen = 1 + 8;
 
 void make_receipt_key(const td::Bits256& tx_hash, char out[kReceiptKeyLen]) {
     out[0] = static_cast<char>(kReceiptTag);
@@ -97,6 +103,16 @@ void make_pending_side_effects_key(uint64_t block_seqno,
 void make_pending_side_effects_upper_bound(uint64_t block_seqno, char out[1 + 8]) {
     out[0] = static_cast<char>(kPendingSideEffectsTag);
     store_be_u64(block_seqno, out + 1);
+}
+
+void make_incomplete_tx_key(const td::Bits256& tx_hash, char out[kIncompleteTxKeyLen]) {
+    out[0] = static_cast<char>(kIncompleteTxTag);
+    std::memcpy(out + 1, tx_hash.data(), 32);
+}
+
+void make_incomplete_block_key(uint64_t block_number, char out[kIncompleteBlockKeyLen]) {
+    out[0] = static_cast<char>(kIncompleteBlockTag);
+    store_be_u64(block_number, out + 1);
 }
 
 // Generic put: serialize cell, set under the given key, optionally flush.
@@ -458,6 +474,90 @@ td::Status EvmRpcCacheDb::prune_pending_side_effects(uint64_t keep_from_block_se
 
 td::Result<size_t> EvmRpcCacheDb::count_pending_side_effects() {
     char prefix = static_cast<char>(kPendingSideEffectsTag);
+    return db_->count(td::Slice{&prefix, 1});
+}
+
+td::Status EvmRpcCacheDb::put_incomplete_transaction(const td::Bits256& tx_hash) {
+    char key[kIncompleteTxKeyLen];
+    make_incomplete_tx_key(tx_hash, key);
+    static const char value[] = "1";
+    auto status = db_->set(td::Slice{key, kIncompleteTxKeyLen},
+                           td::Slice{value, 1});
+    if (status.is_error()) return status;
+    return db_->flush();
+}
+
+td::Status EvmRpcCacheDb::delete_incomplete_transaction(const td::Bits256& tx_hash) {
+    char key[kIncompleteTxKeyLen];
+    make_incomplete_tx_key(tx_hash, key);
+    auto status = db_->erase(td::Slice{key, kIncompleteTxKeyLen});
+    if (status.is_error()) return status;
+    return db_->flush();
+}
+
+td::Result<bool> EvmRpcCacheDb::has_incomplete_transaction(const td::Bits256& tx_hash) {
+    char key[kIncompleteTxKeyLen];
+    make_incomplete_tx_key(tx_hash, key);
+    std::string value;
+    auto status = db_->get(td::Slice{key, kIncompleteTxKeyLen}, value);
+    if (status.is_error()) return status.move_as_error();
+    return status.move_as_ok() != td::KeyValue::GetStatus::NotFound;
+}
+
+td::Status EvmRpcCacheDb::for_each_incomplete_transaction(
+    std::function<td::Status(const td::Bits256&)> cb) {
+    return db_->for_each([&cb](td::Slice key, td::Slice) -> td::Status {
+        if (key.size() != kIncompleteTxKeyLen) return td::Status::OK();
+        if (static_cast<uint8_t>(key[0]) != kIncompleteTxTag) return td::Status::OK();
+        td::Bits256 tx_hash;
+        std::memcpy(tx_hash.data(), key.data() + 1, 32);
+        return cb(tx_hash);
+    });
+}
+
+td::Result<size_t> EvmRpcCacheDb::count_incomplete_transactions() {
+    char prefix = static_cast<char>(kIncompleteTxTag);
+    return db_->count(td::Slice{&prefix, 1});
+}
+
+td::Status EvmRpcCacheDb::put_incomplete_block(uint64_t block_number) {
+    char key[kIncompleteBlockKeyLen];
+    make_incomplete_block_key(block_number, key);
+    static const char value[] = "1";
+    auto status = db_->set(td::Slice{key, kIncompleteBlockKeyLen},
+                           td::Slice{value, 1});
+    if (status.is_error()) return status;
+    return db_->flush();
+}
+
+td::Status EvmRpcCacheDb::delete_incomplete_block(uint64_t block_number) {
+    char key[kIncompleteBlockKeyLen];
+    make_incomplete_block_key(block_number, key);
+    auto status = db_->erase(td::Slice{key, kIncompleteBlockKeyLen});
+    if (status.is_error()) return status;
+    return db_->flush();
+}
+
+td::Result<bool> EvmRpcCacheDb::has_incomplete_block(uint64_t block_number) {
+    char key[kIncompleteBlockKeyLen];
+    make_incomplete_block_key(block_number, key);
+    std::string value;
+    auto status = db_->get(td::Slice{key, kIncompleteBlockKeyLen}, value);
+    if (status.is_error()) return status.move_as_error();
+    return status.move_as_ok() != td::KeyValue::GetStatus::NotFound;
+}
+
+td::Status EvmRpcCacheDb::for_each_incomplete_block(
+    std::function<td::Status(uint64_t)> cb) {
+    return db_->for_each([&cb](td::Slice key, td::Slice) -> td::Status {
+        if (key.size() != kIncompleteBlockKeyLen) return td::Status::OK();
+        if (static_cast<uint8_t>(key[0]) != kIncompleteBlockTag) return td::Status::OK();
+        return cb(load_be_u64(key.data() + 1));
+    });
+}
+
+td::Result<size_t> EvmRpcCacheDb::count_incomplete_blocks() {
+    char prefix = static_cast<char>(kIncompleteBlockTag);
     return db_->count(td::Slice{&prefix, 1});
 }
 
