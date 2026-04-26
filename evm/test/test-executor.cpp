@@ -4971,6 +4971,22 @@ static void test_receipt_reports_indexing_incomplete_after_post_accept_gap() {
     printf("=== test_receipt_reports_indexing_incomplete_after_post_accept_gap ===\n");
 
     reset_evm_post_accept_health_for_tests();
+    const std::string tmp_root =
+        "/tmp/tos-evm-incomplete-durable-" +
+        std::to_string(static_cast<long long>(getpid()));
+    std::system(("rm -rf " + tmp_root).c_str());
+    auto db_r = EvmRpcCacheDb::open(tmp_root);
+    if (db_r.is_error()) {
+        printf("  FAILED: cannot open temp cache DB: %s\n\n",
+               db_r.error().message().c_str());
+        return;
+    }
+    set_evm_rpc_cache_db(db_r.move_as_ok());
+    auto cleanup_cache = [&]() {
+        set_evm_rpc_cache_db(nullptr);
+        std::system(("rm -rf " + tmp_root).c_str());
+    };
+
     uint8_t rand_seed[32] = {};
     uint8_t parent_hash[32] = {};
     evmc::address recipient{};
@@ -4981,6 +4997,7 @@ static void test_receipt_reports_indexing_incomplete_after_post_accept_gap() {
     if (!signed_tx) {
         printf("  FAILED: could not build signed tx fixture\n\n");
         ++g_test_failures;
+        cleanup_cache();
         return;
     }
     std::vector<td::Ref<vm::Cell>> msgs{
@@ -5014,8 +5031,38 @@ static void test_receipt_reports_indexing_incomplete_after_post_accept_gap() {
     printf("  known missing receipt response: %s\n", r ? r->json.c_str() : "NOT HANDLED");
     printf("  known incomplete block response: %s\n", block_r ? block_r->json.c_str() : "NOT HANDLED");
     printf("  unknown receipt response: %s\n", unknown ? unknown->json.c_str() : "NOT HANDLED");
+
+    // Simulate a restart boundary for the incomplete index: memory markers are
+    // cleared, durable RPC-cache markers remain, and the same RPCs must still
+    // return indexing-incomplete rather than silently degrading to null.
+    reset_evm_post_accept_health_for_tests();
+    auto after_restart = handle_eth_rpc(
+        "eth_getTransactionReceipt",
+        "[\"" + missing_hash_hex + "\"]",
+        "9013");
+    auto block_after_restart = handle_eth_rpc(
+        "eth_getBlockByNumber",
+        "[\"0xf1b93\",false]",
+        "9014");
+    bool durable_tx_errors = after_restart && after_restart->is_error &&
+                             after_restart->json.find("indexing incomplete") != std::string::npos;
+    bool durable_block_errors = block_after_restart && block_after_restart->is_error &&
+                                block_after_restart->json.find("indexing incomplete") != std::string::npos;
+    ok = ok && durable_tx_errors && durable_block_errors;
+    printf("  durable missing receipt response: %s\n",
+           after_restart ? after_restart->json.c_str() : "NOT HANDLED");
+    printf("  durable incomplete block response: %s\n",
+           block_after_restart ? block_after_restart->json.c_str() : "NOT HANDLED");
+
+    if (auto* db = evm_rpc_cache_db()) {
+        td::Bits256 tx_bits;
+        std::memcpy(tx_bits.data(), signed_tx->hash.bytes, 32);
+        (void)db->delete_incomplete_transaction(tx_bits);
+        (void)db->delete_incomplete_block(990099);
+    }
     printf("  %s\n\n", ok ? "PASSED" : "FAILED");
     reset_evm_post_accept_health_for_tests();
+    cleanup_cache();
     if (!ok) {
         ++g_test_failures;
     }

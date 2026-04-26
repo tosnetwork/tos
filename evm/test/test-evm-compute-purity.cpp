@@ -1304,34 +1304,66 @@ static void test_invalid_tx_prevalidation_runs_before_state_budget() {
 
     evmc::address recipient{};
     recipient.bytes[19] = 0x77;
-    auto tx = make_signed_transfer(/*key_seed=*/0xF70001, /*nonce=*/0,
-                                   recipient, intx::uint256{1},
-                                   /*gas_limit=*/50'000,
-                                   /*chain_id=*/ew::kEvmChainId + 1);
-    if (!tx) {
-        ++g_failures;
-        tprintf("  FAILED: could not sign wrong-chain tx\n");
-        return;
+    constexpr uint64_t kBudgetFailingGasLimit = 1'000'000'000ULL;
+    constexpr uint64_t kTxGasLimitAboveBlock = kBudgetFailingGasLimit + 1;
+
+    struct Case {
+        const char* name;
+        uint32_t key_seed;
+        uint64_t nonce;
+        uint64_t tx_gas_limit;
+        uint64_t block_gas_limit;
+        uint64_t chain_id;
+        uint64_t account_nonce;
+        const char* expected_log_prefix;
+    };
+    const Case cases[] = {
+        {"wrong chain id", 0xF70001, 0, kBudgetFailingGasLimit,
+         kBudgetFailingGasLimit, ew::kEvmChainId + 1, 0, "wrong chain id"},
+        {"fork gas cap", 0xF70002, 0, kTxGasLimitAboveBlock,
+         kBudgetFailingGasLimit, ew::kEvmChainId, 0,
+         "pre_validate_common_forks failed"},
+        {"gas limit above block", 0xF70003, 0, 100'000,
+         50'000, ew::kEvmChainId, 0,
+         "tx gas limit exceeds block gas limit"},
+        {"nonce mismatch", 0xF70004, 7, 50'000,
+         1'000'000, ew::kEvmChainId, 0, "nonce mismatch:"},
+    };
+
+    for (const auto& tc : cases) {
+        auto tx = make_signed_transfer(tc.key_seed, tc.nonce, recipient,
+                                       intx::uint256{1}, tc.tx_gas_limit,
+                                       tc.chain_id);
+        if (!tx) {
+            ++g_failures;
+            tprintf("  FAILED: could not sign %s tx\n", tc.name);
+            return;
+        }
+
+        auto account_data = make_account_data_with_funded_sender(
+            tx->sender, intx::uint256{1'000'000'000'000'000'000ULL},
+            tc.account_nonce);
+        auto out = run_once(account_data, tx->raw_rlp,
+                            /*block_seqno=*/1,
+                            /*timestamp=*/1700000000,
+                            tc.block_gas_limit);
+
+        bool ok = out.ok &&
+                  !out.success &&
+                  !out.fx &&
+                  out.skip_reason == block::ComputePhase::sk_bad_state &&
+                  out.vm_log.rfind(tc.expected_log_prefix, 0) == 0;
+        if (!ok) {
+            ++g_failures;
+            tprintf("  FAILED: case=%s ok=%d success=%d fx=%d skip=%d log='%s'\n",
+                    tc.name, out.ok, out.success, out.fx ? 1 : 0,
+                    out.skip_reason, out.vm_log.c_str());
+            return;
+        }
     }
 
-    auto account_data = make_account_data_with_funded_sender(
-        tx->sender, intx::uint256{1'000'000'000'000'000'000ULL}, 0);
-    auto out = run_once(account_data, tx->raw_rlp);
-
-    bool ok = out.ok &&
-              !out.success &&
-              !out.fx &&
-              out.skip_reason == block::ComputePhase::sk_bad_state &&
-              out.vm_log == "wrong chain id";
-    if (!ok) {
-        ++g_failures;
-        tprintf("  FAILED: ok=%d success=%d fx=%d skip=%d log='%s'\n",
-                out.ok, out.success, out.fx ? 1 : 0, out.skip_reason,
-                out.vm_log.c_str());
-        return;
-    }
     ++g_passes;
-    tprintf("  PASSED (wrong-chain tx rejected by cheap prevalidation)\n");
+    tprintf("  PASSED (invalid txs are cheap-rejected before budget-failing gas scan)\n");
 }
 
 // ---------------------------------------------------------------------------
