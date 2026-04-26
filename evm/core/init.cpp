@@ -19,7 +19,6 @@
 #include "evm/core/post-accept.h"
 #include "evm/core/state.h"
 #include "evm/core/cell-state.h"
-#include "evm/core/incremental-trie.h"
 
 #include "vm/boc.h"
 #include "vm/cells/CellBuilder.h"
@@ -374,9 +373,12 @@ size_t populate_state_from_shard_accounts(
     evmc::bytes32 eth_state_root{};
     td::Ref<vm::Cell> rpc_cache_root;  // F.4 will hydrate from this
     td::Ref<vm::Cell> block_hashes_root;
+    td::Ref<vm::Cell> trie_witness_root;
     if (!decode_cp_new_data(cp_new_data_cell, state_root, eth_state_root,
                             rpc_cache_root, /*verify_eth_state_root=*/true,
-                            &block_hashes_root)) {
+                            &block_hashes_root,
+                            nullptr,
+                            &trie_witness_root)) {
         LOG(WARNING) << "evm-workchain: executor StateInit.data does not decode as cp.new_data";
         return 0;
     }
@@ -392,8 +394,17 @@ size_t populate_state_from_shard_accounts(
             LOG(ERROR) << "evm-workchain: hydration target is not a CellEvmState";
             return 0;
         }
-        if (!cs->load_from_cell(state_root)) {
+        if (!cs->load_from_cell(state_root, false)) {
             LOG(ERROR) << "evm-workchain: CellEvmState::load_from_cell failed during hydration";
+            return 0;
+        }
+        if (trie_witness_root.not_null()) {
+            if (!cs->load_trie_witness_from_cell(trie_witness_root)) {
+                LOG(ERROR) << "evm-workchain: CellEvmState::load_trie_witness_from_cell failed during hydration";
+                return 0;
+            }
+        } else if (!cs->rebuild_trie_witness()) {
+            LOG(ERROR) << "evm-workchain: CellEvmState trie witness rebuild failed during hydration";
             return 0;
         }
         if (!cs->load_block_hashes_from_cell(block_hashes_root)) {
@@ -410,7 +421,7 @@ td::Ref<vm::Cell> build_evm_zerostate_accounts_cell(
     const std::vector<GenesisAccount>& accounts) {
     // Phase D — parameterised version. Same single-executor wrapper as the
     // zero-arg overload (the wc=1 ShardAccounts dict contains exactly one
-    // entry, the executor, whose StateInit.data is a cp.new_data v4 cell
+    // entry, the executor, whose StateInit.data is a cp.new_data v5 cell
     // referencing a CellEvmState root); the only thing that varies is which
     // accounts are pre-populated inside that state.
     //
@@ -456,21 +467,12 @@ td::Ref<vm::Cell> build_evm_zerostate_accounts_cell(
     }
     auto state_root = cell_state.serialize_to_cell();
 
-    // Build cp.new_data v4-shaped cell:
+    // Build cp.new_data v5-shaped cell:
     //   magic + version:8 + has_root:1 + ^state_root + bits256:eth_root
     //   + has_cache:1 + has_block_hashes:1 + reserved_accumulator:1
-    // eth_state_root is the full trie root of the serialized genesis state.
-    evmc::bytes32 eth_state_root{};
-    {
-        auto root_state = std::make_unique<CellEvmState>();
-        if (state_root.not_null()) {
-            CHECK(root_state->load_from_cell(state_root));
-        }
-        EvmState evm_state(std::move(root_state));
-        std::unique_lock lock(evm_state.mutex());
-        IncrementalTrieCalculator calc;
-        eth_state_root = calc.compute_state_root(evm_state, nullptr, nullptr);
-    }
+    // eth_state_root comes from the persistent execution trie witness.
+    evmc::bytes32 eth_state_root = cell_state.ethereum_state_root_hash();
+    auto trie_witness_root = cell_state.serialize_trie_witness_to_cell();
     // rpc_cache_root at genesis is nothing (no cache yet).
     vm::CellBuilder data_cb;
     data_cb.store_long(static_cast<long long>(kEvmAccountMagic), kEvmMagicBits);
@@ -485,6 +487,12 @@ td::Ref<vm::Cell> build_evm_zerostate_accounts_cell(
     data_cb.store_long(0, 1);   // rpc_cache_root = nothing (Phase F.2)
     data_cb.store_long(0, 1);   // block_hashes_root = nothing at genesis
     data_cb.store_long(0, 1);   // reserved accumulator = absent at genesis
+    if (trie_witness_root.not_null()) {
+        data_cb.store_long(1, 1);
+        data_cb.store_ref(trie_witness_root);
+    } else {
+        data_cb.store_long(0, 1);
+    }
     auto cp_new_data_cell = data_cb.finalize();
 
     // Wrap as executor ShardAccount and insert as sole entry.

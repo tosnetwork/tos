@@ -23,8 +23,8 @@
       13. pending_side_effect_db_prunes_ttl_and_cap
       14. post_accept_parser_rejects_special_cells
       15. post_accept_rejects_gas_used_overflow
-      16. evm_state_size_budget_rejects_oversized_full_root
-      17. invalid_tx_prevalidation_runs_before_state_budget
+      16. cp_new_data_v5_requires_trie_witness
+      17. invalid_tx_prevalidation_runs_before_system_calls
 
     Build target: test-evm-compute-purity (see evm/test/CMakeLists.txt)
 */
@@ -112,20 +112,23 @@ static evmc::bytes32 compute_eth_state_root_from_cell(td::Ref<vm::Cell> state_ro
     if (state_root.not_null()) {
         CHECK(cell_state->load_from_cell(state_root));
     }
-    ew::EvmState state(std::move(cell_state));
-    std::unique_lock lock(state.mutex());
-    ew::IncrementalTrieCalculator calc;
-    return calc.compute_state_root(state, nullptr, nullptr);
+    return cell_state->ethereum_state_root_hash();
 }
 
-// Build a `cp.new_data` v4 cell wrapping the supplied state_root cell. Same
+// Build a `cp.new_data` v5 cell wrapping the supplied state_root cell. Same
 // layout that `run_evm_compute_phase_snapshot` itself emits (and that the
 // genesis builder produces): magic + version + has_root + ^state_root
 // + eth_state_root + has_cache=0 + has_block_hashes=0
-// + reserved_accumulator=0.
+// + reserved_accumulator=0 + trie_witness.
 static td::Ref<vm::Cell> wrap_state_root_with_declared_eth_root(
     td::Ref<vm::Cell> state_root,
     const evmc::bytes32& eth_state_root) {
+    auto cell_state = std::make_unique<ew::CellEvmState>();
+    if (state_root.not_null()) {
+        CHECK(cell_state->load_from_cell(state_root));
+    }
+    auto trie_witness_root = cell_state->serialize_trie_witness_to_cell();
+
     vm::CellBuilder cb;
     cb.store_long(static_cast<long long>(ew::kEvmAccountMagic), ew::kEvmMagicBits);
     cb.store_long(ew::kCpNewDataSchemaVersion, 8);
@@ -139,6 +142,12 @@ static td::Ref<vm::Cell> wrap_state_root_with_declared_eth_root(
     cb.store_long(0, 1);
     cb.store_long(0, 1);
     cb.store_long(0, 1);
+    if (trie_witness_root.not_null()) {
+        cb.store_long(1, 1);
+        cb.store_ref(trie_witness_root);
+    } else {
+        cb.store_long(0, 1);
+    }
     return cb.finalize();
 }
 
@@ -715,7 +724,7 @@ static void test_cp_new_data_declared_root_not_recomputed_per_tx() {
                 out.new_data.not_null());
         return;
     }
-    tprintf("  PASSED (compute skips per-tx full root verification; strict decode still rejects)\n");
+    tprintf("  PASSED (compute uses persisted witness; strict decode still rejects bad root)\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -1242,65 +1251,63 @@ static void test_post_accept_rejects_gas_used_overflow() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 16 — evm_state_size_budget_rejects_oversized_full_root
+// Test 16 — cp_new_data_v5_requires_trie_witness
 // ---------------------------------------------------------------------------
 
-static void test_evm_state_size_budget_rejects_oversized_full_root() {
-    tprintf("[TEST] evm_state_size_budget_rejects_oversized_full_root\n");
+static void test_cp_new_data_v5_requires_trie_witness() {
+    tprintf("[TEST] cp_new_data_v5_requires_trie_witness\n");
 
-    ew::EvmState mem_state;
-    for (uint8_t i = 0; i < 5; ++i) {
-        evmc::address addr{};
-        addr.bytes[19] = i + 1;
-        mem_state.seed_account(addr, intx::uint256{1}, 0);
-    }
+    ew::CellEvmState cs;
+    evmc::address addr{};
+    addr.bytes[19] = 0xAA;
+    silkworm::Account acct{};
+    acct.balance = intx::uint256{1};
+    cs.update_account(addr, std::nullopt, acct);
 
-    auto mem_stats = ew::estimate_evm_state_size_for_full_root(
-        mem_state, /*max_accounts=*/4, /*max_storage_slots=*/100);
+    auto state_root = cs.serialize_to_cell();
+    auto eth_state_root = cs.ethereum_state_root_hash();
 
-    auto cell_backend = std::make_unique<ew::CellEvmState>();
-    auto* raw_cell_backend = cell_backend.get();
-    ew::EvmState cell_state(std::move(cell_backend));
-    evmc::address cell_addr{};
-    cell_addr.bytes[19] = 0xAA;
-    cell_state.seed_account(cell_addr, intx::uint256{1}, 0);
-    {
-        std::unique_lock lock(cell_state.mutex());
-        for (uint8_t i = 0; i < 3; ++i) {
-            evmc::bytes32 slot{};
-            evmc::bytes32 value{};
-            slot.bytes[31] = i + 1;
-            value.bytes[31] = i + 11;
-            raw_cell_backend->update_storage(cell_addr, /*incarnation=*/0,
-                                             slot, evmc::bytes32{}, value);
-        }
-    }
-    auto cell_stats = ew::estimate_evm_state_size_for_full_root(
-        cell_state, /*max_accounts=*/10, /*max_storage_slots=*/2);
+    vm::CellBuilder missing_cb;
+    missing_cb.store_long(static_cast<long long>(ew::kEvmAccountMagic), ew::kEvmMagicBits);
+    missing_cb.store_long(ew::kCpNewDataSchemaVersion, 8);
+    missing_cb.store_long(1, 1);
+    missing_cb.store_ref(state_root);
+    missing_cb.store_bytes(reinterpret_cast<const char*>(eth_state_root.bytes), 32);
+    missing_cb.store_long(0, 1);  // rpc_cache
+    missing_cb.store_long(0, 1);  // block_hashes
+    missing_cb.store_long(0, 1);  // reserved accumulator
+    missing_cb.store_long(0, 1);  // missing trie witness must be rejected
+    auto missing_witness_cell = missing_cb.finalize();
 
-    bool ok = mem_stats.exceeded && !mem_stats.malformed && mem_stats.accounts == 5 &&
-              cell_stats.exceeded && !cell_stats.malformed &&
-              cell_stats.accounts == 1 && cell_stats.storage_slots == 3;
+    td::Ref<vm::Cell> decoded_state_root;
+    evmc::bytes32 decoded_root{};
+    td::Ref<vm::Cell> decoded_cache_root;
+    bool missing_decoded = ew::decode_cp_new_data(
+        missing_witness_cell, decoded_state_root, decoded_root, decoded_cache_root,
+        /*verify_eth_state_root=*/true);
+
+    auto valid_cell = wrap_state_root_as_account_data(state_root);
+    bool valid_decoded = ew::decode_cp_new_data(
+        valid_cell, decoded_state_root, decoded_root, decoded_cache_root,
+        /*verify_eth_state_root=*/true);
+
+    bool ok = !missing_decoded && valid_decoded;
     if (!ok) {
         ++g_failures;
-        tprintf("  FAILED: mem(accounts=%zu storage=%zu exceeded=%d malformed=%d) "
-                "cell(accounts=%zu storage=%zu exceeded=%d malformed=%d)\n",
-                mem_stats.accounts, mem_stats.storage_slots,
-                mem_stats.exceeded, mem_stats.malformed,
-                cell_stats.accounts, cell_stats.storage_slots,
-                cell_stats.exceeded, cell_stats.malformed);
+        tprintf("  FAILED: missing_decoded=%d valid_decoded=%d\n",
+                missing_decoded, valid_decoded);
         return;
     }
     ++g_passes;
-    tprintf("  PASSED (full-root state-size budget fails closed for memory and cell state)\n");
+    tprintf("  PASSED (v5 state cells must carry persistent trie witness)\n");
 }
 
 // ---------------------------------------------------------------------------
-// Test 17 — invalid_tx_prevalidation_runs_before_state_budget
+// Test 17 — invalid_tx_prevalidation_runs_before_system_calls
 // ---------------------------------------------------------------------------
 
-static void test_invalid_tx_prevalidation_runs_before_state_budget() {
-    tprintf("[TEST] invalid_tx_prevalidation_runs_before_state_budget\n");
+static void test_invalid_tx_prevalidation_runs_before_system_calls() {
+    tprintf("[TEST] invalid_tx_prevalidation_runs_before_system_calls\n");
 
     evmc::address recipient{};
     recipient.bytes[19] = 0x77;
@@ -1363,7 +1370,7 @@ static void test_invalid_tx_prevalidation_runs_before_state_budget() {
     }
 
     ++g_passes;
-    tprintf("  PASSED (invalid txs are cheap-rejected before budget-failing gas scan)\n");
+    tprintf("  PASSED (invalid txs are cheap-rejected before system calls)\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -1401,8 +1408,8 @@ int main() {
     test_pending_side_effect_db_prunes_ttl_and_cap();
     test_post_accept_parser_rejects_special_cells();
     test_post_accept_rejects_gas_used_overflow();
-    test_evm_state_size_budget_rejects_oversized_full_root();
-    test_invalid_tx_prevalidation_runs_before_state_budget();
+    test_cp_new_data_v5_requires_trie_witness();
+    test_invalid_tx_prevalidation_runs_before_system_calls();
 
     tprintf("\nTotal: passed=%d, failures=%d, skips=%d\n",
             g_passes.load(), g_failures.load(), g_skips.load());

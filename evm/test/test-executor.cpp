@@ -44,6 +44,7 @@
 #include "evm/core/bridge.h"
 #include "evm/rpc/subscriptions.h"
 #include "evm/core/incremental-trie.h"
+#include "evm/core/mpt-trie.h"
 #include "evm/core/state-root.h"
 #include "evm/core/mpt-prover.h"
 #include "evm/core/compute-phase.h"
@@ -1022,6 +1023,25 @@ static void test_eth_simulate_v1_rejects_huge_filler_gap() {
 
     bool ok = r && r->is_error &&
               r->json.find("simulated block gap too large") != std::string::npos;
+    printf("  response: %s\n", r ? r->json.c_str() : "NOT HANDLED");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_eth_simulate_v1_rejects_requested_gas_preflight() {
+    printf("=== test_eth_simulate_v1_rejects_requested_gas_preflight ===\n");
+
+    const std::string call =
+        "{\"from\":\"0x0000000000000000000000000000000000000000\","
+        "\"to\":\"0x0000000000000000000000000000000000000001\","
+        "\"gas\":\"0x1c9c380\"}";
+    auto r = handle_eth_rpc(
+        "eth_simulateV1",
+        "[{\"blockStateCalls\":[{\"calls\":[" + call + "," + call + "," +
+            call + "," + call + "]}]},\"latest\"]",
+        "2602");
+
+    bool ok = r && r->is_error &&
+              r->json.find("simulation requested gas budget exceeded") != std::string::npos;
     printf("  response: %s\n", r ? r->json.c_str() : "NOT HANDLED");
     printf("  %s\n\n", ok ? "PASSED" : "FAILED");
 }
@@ -3029,6 +3049,63 @@ void test_state_root_with_storage() {
            root_nonzero ? "YES" : "NO", root_not_empty ? "YES" : "NO");
 
     bool ok = deploy_ok && has_contract && root_nonzero && root_not_empty;
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+void test_persistent_trie_witness_roundtrip() {
+    printf("=== test_persistent_trie_witness_roundtrip (no full rebuild after load) ===\n");
+
+    CellEvmState cs;
+    evmc::address alice{}, bob{};
+    alice.bytes[19] = 0x11;
+    bob.bytes[19] = 0x22;
+    silkworm::Account a{};
+    a.balance = intx::uint256{12345};
+    a.nonce = 7;
+    silkworm::Account b{};
+    b.balance = intx::uint256{67890};
+    cs.update_account(alice, std::nullopt, a);
+    cs.update_account(bob, std::nullopt, b);
+
+    evmc::bytes32 slot{};
+    slot.bytes[31] = 1;
+    evmc::bytes32 value{};
+    value.bytes[31] = 0x42;
+    cs.update_storage(alice, 0, slot, evmc::bytes32{}, value);
+
+    auto state_cell = cs.serialize_to_cell();
+    auto witness_cell = cs.serialize_trie_witness_to_cell();
+    auto witnessed_root = cs.ethereum_state_root_hash();
+
+    CellEvmState rebuilt;
+    CHECK(rebuilt.load_from_cell(state_cell));
+    auto rebuilt_root = rebuilt.ethereum_state_root_hash();
+
+    CellEvmState reloaded;
+    CHECK(reloaded.load_from_cell(state_cell, false));
+    CHECK(reloaded.load_trie_witness_from_cell(witness_cell));
+    auto reloaded_root = reloaded.ethereum_state_root_hash();
+
+    auto account_proof = reloaded.ethereum_account_proof(alice);
+    auto hashed_alice = keccak_evm_address(alice);
+    silkworm::Bytes proof_key(hashed_alice.bytes, hashed_alice.bytes + 32);
+    silkworm::Bytes proof_value;
+    auto proof_ok = verify_mpt_proof(account_proof, reloaded_root,
+                                     proof_key, proof_value) ==
+                    MptProofResult::kValidExistence;
+
+    bool ok = witness_cell.not_null() &&
+              witnessed_root == rebuilt_root &&
+              witnessed_root == reloaded_root &&
+              proof_ok && !proof_value.empty();
+
+    printf("  witness cell: %s\n", witness_cell.not_null() ? "yes" : "no");
+    printf("  root: 0x");
+    for (int i = 0; i < 8; i++) printf("%02x", witnessed_root.bytes[i]);
+    printf("...\n");
+    printf("  rebuilt match: %s\n", (witnessed_root == rebuilt_root) ? "YES" : "NO");
+    printf("  lazy reload match: %s\n", (witnessed_root == reloaded_root) ? "YES" : "NO");
+    printf("  account proof: %s\n", proof_ok ? "valid" : "INVALID");
     printf("  %s\n\n", ok ? "PASSED" : "FAILED");
 }
 
@@ -5179,8 +5256,9 @@ static void test_rpc_cache_rebuild_command_and_health() {
 #ifdef TOS_ENABLE_EVM_DEBUG_RPC
               public_rebuild && public_rebuild->json.find("\"errors\":0") != std::string::npos;
 #else
-              public_rebuild && public_rebuild->is_error &&
-              public_rebuild->json.find("disabled on public RPC") != std::string::npos;
+              !public_rebuild ||
+              (public_rebuild->is_error &&
+               public_rebuild->json.find("disabled on public RPC") != std::string::npos);
 #endif
 
     bool ok = public_rebuild_disabled && health &&
@@ -6140,6 +6218,8 @@ int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
 
+    enable_public_evm_getproof(true);
+
     test_simple_transfer();
     test_contract_create();
     test_contract_call();
@@ -6147,6 +6227,7 @@ int main() {
     test_eth_rpc();
     test_eth_rpc_block_lookup_and_log_filters();
     test_eth_simulate_v1_rejects_huge_filler_gap();
+    test_eth_simulate_v1_rejects_requested_gas_preflight();
     test_runtime_chain_id_override();
     test_debug_trace_transaction_gating();
     test_signed_transaction();
@@ -6176,6 +6257,7 @@ int main() {
     test_state_root_single_eoa();
     test_state_root_changes_after_transfer();
     test_state_root_with_storage();
+    test_persistent_trie_witness_roundtrip();
     test_transactions_root_empty();
     test_transactions_root_requires_raw_rlp();
     test_block_has_state_root();

@@ -45,7 +45,7 @@ namespace evm_workchain {
 /// @param cp           ComputePhase to populate with results.
 /// @param account_data Cell that compute-phase produced for this account
 ///                     for the previous EVM executor transaction (or previous
-///                     block if this is the first tx in a block; cp.new_data v4 —
+///                     block if this is the first tx in a block; cp.new_data v5 —
 ///                     magic + version + state_root ref + eth_state_root
 ///                     + rpc_cache + block-hash history
 ///                     + reserved accumulator bit set to nothing).

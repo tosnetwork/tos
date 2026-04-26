@@ -5,8 +5,6 @@
 #include "evm/core/cell-codec.h"
 
 #include "evm/core/cell-state.h"
-#include "evm/core/incremental-trie.h"
-#include "evm/core/state.h"
 
 #include "vm/cells/CellBuilder.h"
 #include "vm/cells/CellSlice.h"
@@ -14,7 +12,6 @@
 
 #include <cstring>
 #include <memory>
-#include <mutex>
 
 namespace evm_workchain {
 
@@ -25,17 +22,27 @@ bool bytes32_equal(const evmc::bytes32& a, const evmc::bytes32& b) noexcept {
 }
 
 bool verify_declared_eth_state_root(const td::Ref<vm::Cell>& state_root,
+                                    const td::Ref<vm::Cell>& trie_witness_root,
                                     const evmc::bytes32& declared) noexcept {
     try {
         auto cell_state = std::make_unique<CellEvmState>();
-        if (state_root.not_null() && !cell_state->load_from_cell(state_root)) {
+        if (state_root.not_null() && !cell_state->load_from_cell(state_root, true)) {
             return false;
         }
-        EvmState state(std::move(cell_state));
-        std::unique_lock lock(state.mutex());
-        IncrementalTrieCalculator calc;
-        auto computed = calc.compute_state_root(state, nullptr, nullptr);
-        return bytes32_equal(computed, declared);
+        auto rebuilt = cell_state->ethereum_state_root_hash();
+        if (!bytes32_equal(rebuilt, declared)) {
+            return false;
+        }
+        if (trie_witness_root.not_null()) {
+            if (!cell_state->load_trie_witness_from_cell(trie_witness_root)) {
+                return false;
+            }
+            auto witnessed = cell_state->ethereum_state_root_hash();
+            if (!bytes32_equal(witnessed, declared)) {
+                return false;
+            }
+        }
+        return true;
     } catch (vm::VmError&) {
         return false;
     } catch (vm::VmVirtError&) {
@@ -260,7 +267,8 @@ bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
                         td::Ref<vm::Cell>& rpc_cache_root_out,
                         bool verify_eth_state_root,
                         td::Ref<vm::Cell>* block_hashes_root_out,
-                        td::Ref<vm::Cell>* block_accumulator_root_out) {
+                        td::Ref<vm::Cell>* block_accumulator_root_out,
+                        td::Ref<vm::Cell>* trie_witness_root_out) {
     state_root_out = {};
     rpc_cache_root_out = {};
     if (block_hashes_root_out) {
@@ -268,6 +276,9 @@ bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
     }
     if (block_accumulator_root_out) {
         *block_accumulator_root_out = {};
+    }
+    if (trie_witness_root_out) {
+        *trie_witness_root_out = {};
     }
     try {
         if (cell.is_null()) return false;
@@ -286,7 +297,7 @@ bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
         }
         if (cs.size() < 256) return false;
         cs.fetch_bytes(eth_state_root_out.bytes, 32);
-        // The has_cache Maybe-tag is mandatory in v4 (we always emit it);
+        // The has_cache Maybe-tag is mandatory in v5 (we always emit it);
         // refuse cells that omit it rather than silently treating absence as 0.
         if (cs.size() < 1) return false;
         auto has_cache = cs.fetch_ulong(1);
@@ -294,7 +305,7 @@ bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
             if (cs.size_refs() == 0) return false;
             rpc_cache_root_out = cs.fetch_ref();
         }
-        // The has_block_hashes Maybe-tag is mandatory in v4. TOS has not
+        // The has_block_hashes Maybe-tag is mandatory in v5. TOS has not
         // launched mainnet, so old cells are intentionally rejected rather
         // than silently decoded with empty BLOCKHASH history.
         if (cs.size() < 1) return false;
@@ -314,6 +325,20 @@ bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
         if (has_block_accumulator == 1) {
             return false;
         }
+        td::Ref<vm::Cell> trie_witness_root;
+        if (schema_version == kCpNewDataSchemaVersion) {
+            if (cs.size() < 1) return false;
+            auto has_trie_witness = cs.fetch_ulong(1);
+            if (has_trie_witness == 1) {
+                if (cs.size_refs() == 0) return false;
+                trie_witness_root = cs.fetch_ref();
+                if (trie_witness_root_out) {
+                    *trie_witness_root_out = trie_witness_root;
+                }
+            } else if (has_root == 1) {
+                return false;
+            }
+        }
         // Audit #3 (2026-04-26): require canonical encoding. Two cells with the
         // same logical content must produce the same cell hash; trailing bits or
         // unaccounted refs would let a peer construct multiple distinct cell
@@ -325,7 +350,8 @@ bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
         // Audit #5 follow-up: the declared eth_state_root is consensus-visible
         // account data. Reject stale/forged roots before they can seed restart
         // hydration and snapshot execution.
-        return verify_declared_eth_state_root(state_root_out, eth_state_root_out);
+        return verify_declared_eth_state_root(
+            state_root_out, trie_witness_root, eth_state_root_out);
     } catch (vm::VmError&) {
         return false;
     } catch (vm::VmVirtError&) {

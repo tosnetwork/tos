@@ -7,7 +7,6 @@
 */
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
 #include "tos/tos-types.h"  // tos::WorkchainId — existing chain type, unavoidable
 
@@ -35,14 +34,6 @@ constexpr tos::WorkchainId kWorkchainId = 1;
 /// that hard-coded the default continue to compile. Production code paths
 /// that read the chain id at runtime MUST use `current_evm_chain_id()`.
 constexpr uint64_t kEvmChainId = 0x544F53;  // "TOS" in ASCII — historical default
-
-/// Safety budget for the full Ethereum MPT state-root pass. Until wc=1
-/// persists a true incremental trie witness, accepted EVM transactions are
-/// rejected once state size exceeds this small synchronous rebuild envelope.
-/// This keeps validator host work bounded instead of tying one low-value EVM
-/// tx to consensus-sized account/storage dictionaries.
-constexpr std::size_t kMaxFullRootAccounts = 16'384;
-constexpr std::size_t kMaxFullRootStorageSlots = 65'536;
 
 /// Returns the chain id to use at runtime. Defaults to `kEvmChainId` until
 /// `set_evm_chain_id` is called by explicit test/devnet bootstrap code.
@@ -101,12 +92,14 @@ inline bool is_evm_workchain(tos::WorkchainId wc) noexcept {
 /// Fixed wc=1 TOS outer account that carries the entire EVM world state.
 ///
 /// Every EVM external message is routed to this address. Its `StateInit.data`
-/// is a cell in `cp.new_data` format (magic 0x45564D + schema_version=4
+/// is a cell in `cp.new_data` format (magic 0x45564D + schema_version=5
 /// + Maybe ^CellEvmState
 /// root + bits256 eth_state_root + Maybe ^block_hash_history
-/// + reserved accumulator bit set to nothing). On every block the compute phase
-/// updates this cell to reflect the post-execution world state, the EVM
-/// BLOCKHASH lookback window, and the single-transaction Ethereum block root.
+/// + reserved accumulator bit set to nothing + Maybe ^persistent_trie_witness).
+/// On every block the compute phase updates this cell to reflect the
+/// post-execution world state, the EVM BLOCKHASH lookback window, the
+/// persistent Ethereum trie witness, and the single-transaction Ethereum
+/// block root.
 ///
 /// 256-bit address = all zeros except the low bit set to 1:
 ///   0x0000000000000000000000000000000000000000000000000000000000000001

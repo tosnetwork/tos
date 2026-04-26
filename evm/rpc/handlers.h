@@ -60,6 +60,10 @@ void reset_evm_rpc_filter_state_for_test();
 /// Production code should call enable_evm_rpc_rate_limit(true) at startup.
 void enable_evm_rpc_rate_limit(bool enable);
 
+/// Enable public eth_getProof backed by the persistent execution trie witness.
+/// Enabled by default; production profiles may still turn it off by policy.
+void enable_public_evm_getproof(bool enable);
+
 /// Try to consume one token from the global EVM RPC bucket. Used by the
 /// `eth_sendRawTransaction` fast path in `json-rpc-server-send.cpp`, which
 /// dispatches BEFORE `handle_eth_rpc` and therefore needs to hit the bucket

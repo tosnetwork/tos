@@ -37,7 +37,8 @@ namespace {
 
 constexpr td::uint64 kPersistentStatePartSize = 1ULL << 21;
 constexpr td::uint64 kMaxPersistentStateDownloadBytes = 1ULL << 30;
-constexpr td::uint64 kMaxTotalPersistentStateDownloadBytes = 1ULL << 30;
+constexpr td::uint64 kMaxPersistentStateHeapBufferBytes = 256ULL << 20;
+constexpr td::uint64 kMaxTotalPersistentStateDownloadBytes = 512ULL << 20;
 
 std::atomic<td::uint64> g_persistent_state_download_bytes{0};
 
@@ -49,6 +50,12 @@ td::Status validate_persistent_state_size(td::uint64 size) {
     return td::Status::Error(ErrorCode::protoviolation,
                              PSTRING() << "persistent state too large: " << size << " > "
                                        << kMaxPersistentStateDownloadBytes);
+  }
+  if (size > kMaxPersistentStateHeapBufferBytes) {
+    return td::Status::Error(ErrorCode::notready,
+                             PSTRING() << "persistent state too large for heap downloader: " << size << " > "
+                                       << kMaxPersistentStateHeapBufferBytes
+                                       << " (streaming persistent-state downloader required)");
   }
   return td::Status::OK();
 }
@@ -145,7 +152,14 @@ td::Status DownloadState::prepare_download_buffer(td::uint64 size) {
   }
   reserved_download_bytes_ = size;
   total_size_ = size;
-  state_ = td::BufferSlice{td::narrow_cast<std::size_t>(total_size_)};
+  try {
+    state_ = td::BufferSlice{td::narrow_cast<std::size_t>(total_size_)};
+  } catch (...) {
+    release_download_memory();
+    total_size_ = 0;
+    return td::Status::Error(ErrorCode::notready,
+                             "cannot allocate persistent state download buffer");
+  }
   sum_ = 0;
   return td::Status::OK();
 }

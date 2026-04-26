@@ -23,12 +23,24 @@ namespace evm_workchain {
 
 namespace {
 
+constexpr unsigned long long kEvmTrieWitnessMagic = 0x545249ull;  // "TRI"
+constexpr unsigned kEvmTrieWitnessMagicBits = 24;
+constexpr unsigned kEvmTrieWitnessVersion = 1;
+
 bool decode_storage_slice(td::Ref<vm::CellSlice> value, evmc::bytes32& out) {
     out = {};
     if (value.is_null() || value->size() != 256 || value->size_refs() != 0) {
         return false;
     }
     return value.write().fetch_bytes(out.bytes, 32);
+}
+
+bool is_zero_bytes32(const evmc::bytes32& value) {
+    return value == evmc::bytes32{};
+}
+
+silkworm::ByteView bytes32_view(const evmc::bytes32& value) {
+    return silkworm::ByteView{value.bytes, 32};
 }
 
 bool validate_storage_root(td::Ref<vm::Cell> root) {
@@ -226,15 +238,24 @@ void CellEvmState::begin_block(silkworm::BlockNum, size_t) {
 }
 
 void CellEvmState::update_account(const evmc::address& address,
-                                   std::optional<silkworm::Account> /*initial*/,
+                                   std::optional<silkworm::Account> initial,
                                    std::optional<silkworm::Account> current) {
+    CHECK(ensure_trie_witness());
     unsigned char key[32];
     address_to_key(address, key);
 
     if (!current.has_value()) {
+        if (initial.has_value()) {
+            delta_stats_.deleted_accounts++;
+        }
         // Account deleted
         account_dict_.lookup_delete(td::ConstBitPtr{key}, 256);
+        storage_tries_.erase(address);
+        CHECK(update_account_trie_leaf(address, std::nullopt));
         return;
+    }
+    if (!initial.has_value()) {
+        delta_stats_.new_accounts++;
     }
 
     // Preserve existing storage + code refs when updating an existing account.
@@ -252,6 +273,7 @@ void CellEvmState::update_account(const evmc::address& address,
     vm::CellBuilder cb;
     cb.store_ref(data_cell);
     account_dict_.set_builder(td::ConstBitPtr{key}, 256, cb);
+    CHECK(update_account_trie_leaf(address, current));
 }
 
 void CellEvmState::update_account_code(const evmc::address& address,
@@ -259,6 +281,7 @@ void CellEvmState::update_account_code(const evmc::address& address,
                                         const evmc::bytes32& code_hash,
                                         silkworm::ByteView code) {
     if (code_hash == silkworm::kEmptyHash) return;
+    CHECK(ensure_trie_witness());
     code_[code_hash] = silkworm::Bytes{code.begin(), code.end()};
 
     // Also embed the bytecode in the account's EvmAccountData cell so it
@@ -279,14 +302,23 @@ void CellEvmState::update_account_code(const evmc::address& address,
     vm::CellBuilder vcb;
     vcb.store_ref(data_cell);
     account_dict_.set_builder(td::ConstBitPtr{key}, 256, vcb);
+    CHECK(update_account_trie_leaf(address, acct));
 }
 
 void CellEvmState::update_storage(const evmc::address& address,
                                    uint64_t /*incarnation*/,
                                    const evmc::bytes32& location,
-                                   const evmc::bytes32& /*initial*/,
+                                   const evmc::bytes32& initial,
                                    const evmc::bytes32& current) {
+    CHECK(ensure_trie_witness());
     static const evmc::bytes32 zero{};
+    const bool was_zero = is_zero_bytes32(initial);
+    const bool is_zero = is_zero_bytes32(current);
+    if (was_zero && !is_zero) {
+        delta_stats_.new_storage_slots++;
+    } else if (!was_zero && is_zero) {
+        delta_stats_.cleared_storage_slots++;
+    }
 
     auto storage_root = get_storage_root(address);
     vm::Dictionary storage(storage_root.is_null() ? td::Ref<vm::Cell>{} : storage_root,
@@ -303,7 +335,21 @@ void CellEvmState::update_storage(const evmc::address& address,
         storage.set_builder(td::ConstBitPtr{key}, 256, vb);
     }
 
+    auto hashed_slot = keccak_bytes32_value(location);
+    auto& storage_trie = storage_tries_[address];
+    if (current == zero) {
+        CHECK(storage_trie.erase_hashed(bytes32_view(hashed_slot)));
+        if (storage_trie.empty()) {
+            storage_tries_.erase(address);
+        }
+    } else {
+        auto encoded = encode_mpt_storage_value(current);
+        CHECK(storage_trie.upsert_hashed(bytes32_view(hashed_slot), encoded));
+    }
+
     set_storage_root(address, storage.get_root_cell());
+    auto acct = read_account(address);
+    CHECK(update_account_trie_leaf(address, acct));
 }
 
 // ---------------------------------------------------------------------------
@@ -449,14 +495,246 @@ CellEvmStateSizeStats CellEvmState::count_entries_bounded(
     return stats;
 }
 
+evmc::bytes32 CellEvmState::ethereum_state_root_hash() const {
+    if (!trie_witness_ready_) {
+        return evmc::bytes32{};
+    }
+    return account_trie_.root_hash();
+}
+
+evmc::bytes32 CellEvmState::ethereum_storage_root_hash(const evmc::address& address) const {
+    if (!trie_witness_ready_) {
+        return evmc::bytes32{};
+    }
+    auto it = storage_tries_.find(address);
+    if (it == storage_tries_.end()) {
+        return silkworm::kEmptyRoot;
+    }
+    return it->second.root_hash();
+}
+
+std::vector<silkworm::Bytes> CellEvmState::ethereum_account_proof(
+    const evmc::address& address) const {
+    if (!trie_witness_ready_) {
+        return {};
+    }
+    auto hashed = keccak_evm_address(address);
+    return account_trie_.proof(bytes32_view(hashed));
+}
+
+std::vector<silkworm::Bytes> CellEvmState::ethereum_storage_proof(
+    const evmc::address& address,
+    const evmc::bytes32& slot) const {
+    if (!trie_witness_ready_) {
+        return {};
+    }
+    auto it = storage_tries_.find(address);
+    if (it == storage_tries_.end()) {
+        return {};
+    }
+    auto hashed = keccak_bytes32_value(slot);
+    return it->second.proof(bytes32_view(hashed));
+}
+
+bool CellEvmState::rebuild_storage_trie_for_account(const evmc::address& address) {
+    MptTrie trie;
+    bool ok = for_each_storage_while(
+        address,
+        [&trie](const evmc::bytes32& slot, const evmc::bytes32& value) {
+            if (is_zero_bytes32(value)) {
+                return true;
+            }
+            auto hashed_slot = keccak_bytes32_value(slot);
+            auto encoded = encode_mpt_storage_value(value);
+            return trie.upsert_hashed(bytes32_view(hashed_slot), encoded);
+        });
+    if (!ok) {
+        return false;
+    }
+    if (trie.empty()) {
+        storage_tries_.erase(address);
+    } else {
+        storage_tries_[address] = std::move(trie);
+    }
+    return true;
+}
+
+bool CellEvmState::update_account_trie_leaf(
+    const evmc::address& address,
+    const std::optional<silkworm::Account>& account) {
+    auto hashed_addr = keccak_evm_address(address);
+    if (!account.has_value()) {
+        return account_trie_.erase_hashed(bytes32_view(hashed_addr));
+    }
+    evmc::bytes32 storage_root = silkworm::kEmptyRoot;
+    auto storage_it = storage_tries_.find(address);
+    if (storage_it != storage_tries_.end()) {
+        storage_root = storage_it->second.root_hash();
+    }
+    auto encoded = account->rlp(storage_root);
+    return account_trie_.upsert_hashed(bytes32_view(hashed_addr), encoded);
+}
+
+bool CellEvmState::rebuild_trie_witness() noexcept {
+    try {
+        account_trie_.clear();
+        storage_tries_.clear();
+        bool ok = for_each_account_while(
+            [this](const unsigned char key[32], const silkworm::Account& acct) {
+                evmc::address address{};
+                std::memcpy(address.bytes, key + 12, 20);
+                if (!rebuild_storage_trie_for_account(address)) {
+                    return false;
+                }
+                return update_account_trie_leaf(address, acct);
+            });
+        trie_witness_ready_ = ok;
+        return ok;
+    } catch (vm::VmError&) {
+        trie_witness_ready_ = false;
+        return false;
+    } catch (vm::VmVirtError&) {
+        trie_witness_ready_ = false;
+        return false;
+    } catch (std::exception&) {
+        trie_witness_ready_ = false;
+        return false;
+    } catch (...) {
+        trie_witness_ready_ = false;
+        return false;
+    }
+}
+
+bool CellEvmState::ensure_trie_witness() {
+    if (trie_witness_ready_) {
+        return true;
+    }
+    return rebuild_trie_witness();
+}
+
+td::Ref<vm::Cell> CellEvmState::serialize_trie_witness_to_cell() const {
+    if (!trie_witness_ready_) {
+        return {};
+    }
+    auto account_root = account_trie_.serialize_to_cell();
+
+    vm::Dictionary storage_dict(256);
+    vm::CellBuilder value_cb;
+    for (const auto& [address, trie] : storage_tries_) {
+        if (trie.empty()) {
+            continue;
+        }
+        auto root = trie.serialize_to_cell();
+        if (root.is_null()) {
+            continue;
+        }
+        unsigned char key[32];
+        address_to_key(address, key);
+        value_cb.store_ref(root);
+        CHECK(storage_dict.set_builder(td::ConstBitPtr{key}, 256, value_cb));
+        CHECK(value_cb.reset_bool());
+    }
+    auto storage_root = storage_dict.get_root_cell();
+
+    if (account_root.is_null() && storage_root.is_null()) {
+        return {};
+    }
+
+    vm::CellBuilder cb;
+    cb.store_long(static_cast<long long>(kEvmTrieWitnessMagic),
+                  kEvmTrieWitnessMagicBits);
+    cb.store_long(kEvmTrieWitnessVersion, 8);
+    if (account_root.not_null()) {
+        cb.store_long(1, 1);
+        cb.store_ref(account_root);
+    } else {
+        cb.store_long(0, 1);
+    }
+    if (storage_root.not_null()) {
+        cb.store_long(1, 1);
+        cb.store_ref(storage_root);
+    } else {
+        cb.store_long(0, 1);
+    }
+    return cb.finalize();
+}
+
+bool CellEvmState::load_trie_witness_from_cell(td::Ref<vm::Cell> root) {
+    account_trie_.clear();
+    storage_tries_.clear();
+    trie_witness_ready_ = false;
+    if (root.is_null()) {
+        trie_witness_ready_ = true;
+        return true;
+    }
+    try {
+        bool special = false;
+        auto cs = vm::load_cell_slice_special(root, special);
+        if (special) return false;
+        if (cs.size() < kEvmTrieWitnessMagicBits + 8 + 2) return false;
+        auto magic = cs.fetch_ulong(kEvmTrieWitnessMagicBits);
+        if (magic != kEvmTrieWitnessMagic) return false;
+        auto version = cs.fetch_ulong(8);
+        if (version != kEvmTrieWitnessVersion) return false;
+
+        auto has_account = cs.fetch_ulong(1);
+        if (has_account == 1) {
+            if (cs.size_refs() == 0) return false;
+            if (!account_trie_.load_from_cell(cs.fetch_ref())) return false;
+        }
+
+        auto has_storage = cs.fetch_ulong(1);
+        if (has_storage == 1) {
+            if (cs.size_refs() == 0) return false;
+            vm::Dictionary storage_dict(cs.fetch_ref(), 256);
+            bool ok = true;
+            bool walked = storage_dict.check_for_each(
+                [this, &ok](td::Ref<vm::CellSlice> value,
+                            td::ConstBitPtr key, int n) -> bool {
+                if (n != 256 || value.is_null() ||
+                    value->size() != 0 || value->size_refs() != 1) {
+                    ok = false;
+                    return false;
+                }
+                unsigned char key_bytes[32];
+                td::BitPtr{key_bytes}.copy_from(key, 256);
+                evmc::address address{};
+                std::memcpy(address.bytes, key_bytes + 12, 20);
+                MptTrie trie;
+                if (!trie.load_from_cell(value->prefetch_ref(0))) {
+                    ok = false;
+                    return false;
+                }
+                storage_tries_[address] = std::move(trie);
+                return true;
+            });
+            if (!walked || !ok) return false;
+        }
+        if (cs.size() != 0 || cs.size_refs() != 0) return false;
+        trie_witness_ready_ = true;
+        return true;
+    } catch (vm::VmError&) {
+        return false;
+    } catch (vm::VmVirtError&) {
+        return false;
+    } catch (std::exception&) {
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
+
 td::Ref<vm::Cell> CellEvmState::serialize_to_cell() const {
     return account_dict_root();
 }
 
-bool CellEvmState::load_from_cell(td::Ref<vm::Cell> root) {
+bool CellEvmState::load_from_cell(td::Ref<vm::Cell> root, bool rebuild_witness) {
     if (root.is_null()) {
         account_dict_ = vm::Dictionary(256);
         code_.clear();
+        account_trie_.clear();
+        storage_tries_.clear();
+        trie_witness_ready_ = true;
         return true;
     }
     try {
@@ -505,6 +783,12 @@ bool CellEvmState::load_from_cell(td::Ref<vm::Cell> root) {
         if (!walked || !ok) return false;
         account_dict_ = std::move(new_account_dict);
         code_ = std::move(new_code);
+        if (rebuild_witness) {
+            return rebuild_trie_witness();
+        }
+        account_trie_.clear();
+        storage_tries_.clear();
+        trie_witness_ready_ = false;
         return true;
     } catch (vm::VmError&) {
         return false;
@@ -592,6 +876,15 @@ bool CellEvmState::load_block_hashes_from_cell(td::Ref<vm::Cell> root) {
 
 void CellEvmState::clear_block_cache() {
     canonical_.clear();
+}
+
+void CellEvmState::set_storage_root_for_hydration(const evmc::address& address,
+                                                   td::Ref<vm::Cell> root) {
+    CHECK(ensure_trie_witness());
+    set_storage_root(address, std::move(root));
+    CHECK(rebuild_storage_trie_for_account(address));
+    auto acct = read_account(address);
+    CHECK(update_account_trie_leaf(address, acct));
 }
 
 // ---------------------------------------------------------------------------

@@ -25,9 +25,8 @@
 #include <silkworm/core/types/block.hpp>
 #include <silkworm/core/types/transaction.hpp>
 
-#include <algorithm>
-#include <limits>
 #include <memory>
+#include <string>
 
 #include "td/utils/logging.h"
 
@@ -35,43 +34,64 @@ namespace evm_workchain {
 
 namespace {
 
-// Use the cold-account access cost as a conservative lower bound so account
-// growth via CALL/CREATE/SELFDESTRUCT-style paths cannot outrun the preflight.
-constexpr uint64_t kMinGasPerNewAccount = 2600;
-constexpr uint64_t kMinGasPerNewStorageSlot = 20000;
-
-std::size_t max_items_creatable_by_gas(uint64_t gas_limit, uint64_t min_gas_per_item) {
-    if (min_gas_per_item == 0) {
-        return std::numeric_limits<std::size_t>::max();
-    }
-    uint64_t count = gas_limit / min_gas_per_item;
-    if (gas_limit % min_gas_per_item != 0) {
-        ++count;
-    }
-    if (count > static_cast<uint64_t>(std::numeric_limits<std::size_t>::max())) {
-        return std::numeric_limits<std::size_t>::max();
-    }
-    return static_cast<std::size_t>(count);
+void reject_compute_phase(block::ComputePhase& cp,
+                          uint64_t gas_limit,
+                          std::string vm_log) {
+    cp.skip_reason = block::ComputePhase::sk_bad_state;
+    cp.accepted = false;
+    cp.success = false;
+    cp.gas_used = 0;
+    cp.gas_limit = gas_limit;
+    cp.gas_credit = 0;
+    cp.gas_max = gas_limit;
+    cp.exit_code = 1;
+    cp.vm_steps = 0;
+    cp.vm_init_state_hash.set_zero();
+    cp.vm_final_state_hash.set_zero();
+    cp.vm_log = std::move(vm_log);
 }
 
-bool full_root_budget_could_be_exceeded_after_tx(
-    const EvmStateSizeStats& stats,
-    uint64_t tx_gas_limit,
-    std::size_t& possible_new_accounts,
-    std::size_t& possible_new_storage_slots) {
-    possible_new_accounts = max_items_creatable_by_gas(tx_gas_limit, kMinGasPerNewAccount);
-    possible_new_storage_slots = max_items_creatable_by_gas(tx_gas_limit, kMinGasPerNewStorageSlot);
-
-    if (stats.accounts > kMaxFullRootAccounts ||
-        stats.storage_slots > kMaxFullRootStorageSlots) {
+class CellStateRollbackSnapshot {
+  public:
+    bool capture(EvmState& state) {
+        std::unique_lock lock(state.mutex());
+        cell_state_ = dynamic_cast<CellEvmState*>(&state.state());
+        if (cell_state_ == nullptr) {
+            return false;
+        }
+        account_root_ = cell_state_->serialize_to_cell();
+        trie_witness_root_ = cell_state_->serialize_trie_witness_to_cell();
+        block_hashes_root_ = cell_state_->serialize_block_hashes_to_cell();
+        captured_ = true;
         return true;
     }
 
-    return possible_new_accounts > (kMaxFullRootAccounts - stats.accounts) ||
-           possible_new_storage_slots > (kMaxFullRootStorageSlots - stats.storage_slots);
-}
+    void restore(EvmState& state) {
+        if (!captured_) {
+            return;
+        }
+        std::unique_lock lock(state.mutex());
+        auto* current_cell_state = dynamic_cast<CellEvmState*>(&state.state());
+        if (current_cell_state != nullptr) {
+            CHECK(current_cell_state->load_from_cell(account_root_, false));
+            CHECK(current_cell_state->load_trie_witness_from_cell(trie_witness_root_));
+            CHECK(current_cell_state->load_block_hashes_from_cell(block_hashes_root_));
+            current_cell_state->reset_delta_stats();
+        }
+        state.clear_change_tracking();
+    }
 
-// Build a fresh EvmState seeded from `account_data` (the cp.new_data v4
+    bool captured() const noexcept { return captured_; }
+
+  private:
+    CellEvmState* cell_state_{nullptr};
+    td::Ref<vm::Cell> account_root_;
+    td::Ref<vm::Cell> trie_witness_root_;
+    td::Ref<vm::Cell> block_hashes_root_;
+    bool captured_{false};
+};
+
+// Build a fresh EvmState seeded from `account_data` (the cp.new_data v5
 // cell from the previous block). Returns nullptr if the cell is malformed
 // — caller must handle by emitting `sk_bad_state`. A null `account_data`
 // returns a genesis-equivalent state with the EIP-4788 / EIP-2935
@@ -86,6 +106,7 @@ std::unique_ptr<EvmState> build_local_state_from_account_data(
         evmc::bytes32 eth_state_root{};
         td::Ref<vm::Cell> rpc_cache_root;
         td::Ref<vm::Cell> block_hashes_root;
+        td::Ref<vm::Cell> trie_witness_root;
         // The cp.new_data cell itself is already bound by the TOS account
         // state root. Snapshot compute executes from state_root and writes a
         // fresh eth_state_root after the transaction, so doing a full
@@ -95,10 +116,19 @@ std::unique_ptr<EvmState> build_local_state_from_account_data(
         if (!decode_cp_new_data(account_data, state_root, eth_state_root,
                                 rpc_cache_root,
                                 /*verify_eth_state_root=*/false,
-                                &block_hashes_root)) {
+                                &block_hashes_root,
+                                nullptr,
+                                &trie_witness_root)) {
             return nullptr;
         }
-        if (state_root.not_null() && !cell_state->load_from_cell(state_root)) {
+        if (state_root.not_null() && !cell_state->load_from_cell(state_root, false)) {
+            return nullptr;
+        }
+        if (trie_witness_root.not_null()) {
+            if (!cell_state->load_trie_witness_from_cell(trie_witness_root)) {
+                return nullptr;
+            }
+        } else if (!cell_state->rebuild_trie_witness()) {
             return nullptr;
         }
         if (!cell_state->load_block_hashes_from_cell(block_hashes_root)) {
@@ -211,22 +241,14 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     // messages must not force an unpaid dictionary walk.
     if (auto prevalidation_error = prevalidate_evm_transaction_admission(
             decoded.txn, block, state, config)) {
-        LOG(WARNING) << "evm-workchain: tx rejected before stateRoot budget "
-                     << "preflight: " << *prevalidation_error;
-        cp.skip_reason = block::ComputePhase::sk_bad_state;
-        cp.accepted = false;
-        cp.success = false;
-        cp.gas_used = 0;
-        cp.gas_limit = gas_limit;
-        cp.gas_credit = 0;
-        cp.gas_max = gas_limit;
-        cp.exit_code = 1;
-        cp.vm_steps = 0;
-        cp.vm_init_state_hash.set_zero();
-        cp.vm_final_state_hash.set_zero();
-        cp.vm_log = *prevalidation_error;
+        LOG(WARNING) << "evm-workchain: tx rejected before system calls: "
+                     << *prevalidation_error;
+        reject_compute_phase(cp, gas_limit, *prevalidation_error);
         return nullptr;
     }
+
+    CellStateRollbackSnapshot rollback_snapshot;
+    rollback_snapshot.capture(state);
 
     // --- Step 3b: EIP-4788 / EIP-2935 system calls (Cancun+ / Pectra+) ---
     {
@@ -286,47 +308,17 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
         }
     }
 
-    // tos7 audit: do not let a transaction run EVM bytecode and only then
-    // discover that the post-state cannot be full-root recomputed.  The scan
-    // is bounded by the same caps as the full trie rebuild, and the gas-based
-    // growth bound is conservative: each new account or storage slot costs at
-    // least this much gas, so a transaction cannot exceed these maxima.
     {
-        std::unique_lock budget_lock(state.mutex());
-        auto size_stats = estimate_evm_state_size_for_full_root(
-            state, kMaxFullRootAccounts, kMaxFullRootStorageSlots);
-        std::size_t possible_new_accounts = 0;
-        std::size_t possible_new_storage_slots = 0;
-        const uint64_t bounded_gas_limit =
-            std::min(decoded.txn.gas_limit, block.header.gas_limit);
-        bool could_exceed = full_root_budget_could_be_exceeded_after_tx(
-            size_stats, bounded_gas_limit,
-            possible_new_accounts, possible_new_storage_slots);
-        if (size_stats.malformed || size_stats.exceeded || could_exceed) {
-            LOG(WARNING) << "evm-workchain: rejecting EVM tx before execution "
-                         << "because full stateRoot budget has insufficient headroom "
-                         << "at block #" << block_seqno
-                         << " (accounts=" << size_stats.accounts
-                         << ", storage_slots=" << size_stats.storage_slots
-                         << ", possible_new_accounts=" << possible_new_accounts
-                         << ", possible_new_storage_slots=" << possible_new_storage_slots
-                         << ", malformed=" << size_stats.malformed
-                         << ", exceeded=" << size_stats.exceeded
-                         << ", limits=" << kMaxFullRootAccounts << "/"
-                         << kMaxFullRootStorageSlots << ")";
-            cp.skip_reason = block::ComputePhase::sk_bad_state;
-            cp.accepted = false;
-            cp.success = false;
-            cp.gas_used = 0;
-            cp.gas_limit = gas_limit;
-            cp.gas_credit = 0;
-            cp.gas_max = gas_limit;
-            cp.exit_code = 1;
-            cp.vm_steps = 0;
-            cp.vm_init_state_hash.set_zero();
-            cp.vm_final_state_hash.set_zero();
-            cp.vm_log = "EVM stateRoot budget exceeded before execution";
-            return nullptr;
+        std::unique_lock witness_lock(state.mutex());
+        if (auto* cs = dynamic_cast<CellEvmState*>(&state.state())) {
+            if (!cs->trie_witness_ready() && !cs->rebuild_trie_witness()) {
+                witness_lock.unlock();
+                rollback_snapshot.restore(state);
+                reject_compute_phase(cp, gas_limit,
+                                     "EVM trie witness is malformed before execution");
+                return nullptr;
+            }
+            cs->reset_delta_stats();
         }
     }
 
@@ -344,20 +336,8 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     if (exec_result.disposition == EvmTxDisposition::InvalidPreValidation) {
         LOG(WARNING) << "evm-workchain: tx rejected at pre-validation: "
                      << exec_result.error_message;
-        cp.skip_reason = block::ComputePhase::sk_bad_state;
-        cp.accepted = false;
-        cp.success = false;
-        cp.gas_used = 0;
-        cp.gas_limit = gas_limit;
-        cp.gas_credit = 0;
-        cp.gas_max = gas_limit;
-        cp.exit_code = 1;
-        cp.vm_steps = 0;
-        cp.vm_init_state_hash.set_zero();
-        cp.vm_final_state_hash.set_zero();
-        if (!exec_result.error_message.empty()) {
-            cp.vm_log = exec_result.error_message;
-        }
+        rollback_snapshot.restore(state);
+        reject_compute_phase(cp, gas_limit, exec_result.error_message);
         return nullptr;  // No side effects, cp.new_data stays untouched
     }
 
@@ -394,63 +374,58 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     // --- Step 5c: Capture logs ---
     fx->logs = exec_result.logs;
 
-    // --- Step 5d: Compute EVM stateRoot (always, for cp.new_data) ---
-    //
-    // Audit #1 (2026-04-26): use a FRESH per-compute IncrementalTrieCalculator
-    // and full recompute (nullptr change sets). The previous global cache held
-    // mutable state across candidate blocks and the dirty set only tracked
-    // sender / to / beneficiary / CREATE — inner-call touched accounts and
-    // storage slots were not tracked, so two validators that had processed
-    // different rejected candidates could compute different eth_state_root
-    // for the same accepted block → state hash divergence / chain halt.
-    // Each compute now starts from a fresh local state (built from the
-    // previous executor transaction's cp.new_data) and a fresh trie calculator, so the
-    // result is purely a function of the serialized state at that point.
+    // --- Step 5d: Read EVM stateRoot from the persistent execution witness ---
     evmc::bytes32 evm_state_root;
     {
         std::unique_lock trie_lock(state.mutex());
-        auto size_stats = estimate_evm_state_size_for_full_root(
-            state, kMaxFullRootAccounts, kMaxFullRootStorageSlots);
-        if (size_stats.malformed || size_stats.exceeded) {
-            LOG(WARNING) << "evm-workchain: refusing full Ethereum stateRoot "
-                         << "recompute for block #" << block_seqno
-                         << " (accounts=" << size_stats.accounts
-                         << ", storage_slots=" << size_stats.storage_slots
-                         << ", malformed=" << size_stats.malformed
-                         << ", exceeded=" << size_stats.exceeded
-                         << ", limits=" << kMaxFullRootAccounts << "/"
-                         << kMaxFullRootStorageSlots << ")";
-            cp.skip_reason = block::ComputePhase::sk_bad_state;
+        if (auto* cs = dynamic_cast<CellEvmState*>(&state.state())) {
+            if (!cs->trie_witness_ready() && !cs->rebuild_trie_witness()) {
+                LOG(WARNING) << "evm-workchain: refusing Ethereum stateRoot "
+                             << "read because persistent trie witness is malformed "
+                             << "at block #" << block_seqno;
+                trie_lock.unlock();
+                rollback_snapshot.restore(state);
+                reject_compute_phase(cp, gas_limit,
+                                     "EVM trie witness malformed during root read");
+                return nullptr;
+            }
+            evm_state_root = cs->ethereum_state_root_hash();
+        } else {
+            IncrementalTrieCalculator calc;
+            evm_state_root = calc.compute_state_root(state, nullptr, nullptr);
+        }
+        if (evm_state_root == evmc::bytes32{}) {
+            LOG(WARNING) << "evm-workchain: refusing zero Ethereum stateRoot "
+                         << "at block #" << block_seqno;
+            trie_lock.unlock();
+            rollback_snapshot.restore(state);
+            reject_compute_phase(cp, gas_limit,
+                                 "EVM trie witness produced zero stateRoot");
             return nullptr;
         }
-        IncrementalTrieCalculator calc;
-        evm_state_root = calc.compute_state_root(state, nullptr, nullptr);
         state.clear_change_tracking();
     }
 
-    // --- Step 5e: Capture FULL EVM state cell tree for TOS account data ---
+    // --- Step 5e: Capture EVM state + trie witness cell trees for TOS account data ---
     td::Ref<vm::Cell> evm_state_cell;
+    td::Ref<vm::Cell> trie_witness_cell;
     {
         std::unique_lock root_lock(state.mutex());
         auto* cs = dynamic_cast<CellEvmState*>(&state.state());
         if (cs) {
             evm_state_cell = cs->serialize_to_cell();
+            trie_witness_cell = cs->serialize_trie_witness_to_cell();
         }
     }
 
-    // Audit #1 debug invariant: the cell tree we persist as cp.new_data
-    // must round-trip to exactly the state root we just hashed in 5d.
-    // Keep this as a debug/test guard so production avoids a second
-    // O(N log N) trie pass per transaction.
+    // Debug invariant: persisted cell state + trie witness must round-trip to
+    // the same Ethereum stateRoot without a full trie rebuild.
 #ifndef NDEBUG
-    if (evm_state_cell.not_null()) {
+    if (evm_state_cell.not_null() || trie_witness_cell.not_null()) {
         auto verify_cell_state = std::make_unique<CellEvmState>();
-        CHECK(verify_cell_state->load_from_cell(evm_state_cell));
-        EvmState verify_state(std::move(verify_cell_state));
-        std::unique_lock vlock(verify_state.mutex());
-        IncrementalTrieCalculator vcalc;
-        auto verify_root = vcalc.compute_state_root(verify_state, nullptr, nullptr);
-        CHECK(verify_root == evm_state_root);
+        CHECK(verify_cell_state->load_from_cell(evm_state_cell, false));
+        CHECK(verify_cell_state->load_trie_witness_from_cell(trie_witness_cell));
+        CHECK(verify_cell_state->ethereum_state_root_hash() == evm_state_root);
     }
 #endif
 
@@ -591,6 +566,12 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
             data_cb.store_long(0, 1);
         }
         data_cb.store_long(0, 1);  // block_accumulator = disabled/reserved
+        if (trie_witness_cell.not_null()) {
+            data_cb.store_long(1, 1);
+            data_cb.store_ref(trie_witness_cell);
+        } else {
+            data_cb.store_long(0, 1);
+        }
         cp.new_data = data_cb.finalize();
     }
 

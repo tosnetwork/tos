@@ -27,7 +27,7 @@ namespace evm_workchain {
 
 constexpr unsigned long long kEvmAccountMagic = 0x45564Dull;  // "EVM"
 constexpr int kEvmMagicBits = 24;
-constexpr unsigned kCpNewDataSchemaVersion = 4;
+constexpr unsigned kCpNewDataSchemaVersion = 5;
 
 /// Encode a silkworm::Account plus its storage root and (optional) bytecode
 /// chain into an EvmAccountData cell. Either ref may be null.
@@ -70,11 +70,12 @@ void bytes32_to_key(const evmc::bytes32& v, unsigned char out[32]);
 /// Decode a `cp.new_data`-shaped cell (the cell that compute-phase writes
 /// into `Transaction::new_data` for wc=1 accounts). Layout:
 ///
-///   v4: magic:24 + schema_version:uint8(4)
+///   v5: magic:24 + schema_version:uint8(5)
 ///       + has_state_root:1 + [state_root:^Cell]
 ///       + eth_state_root:bits256 + Maybe ^EvmRpcCacheRoot
 ///       + Maybe ^EvmBlockHashHistoryRoot
 ///       + Maybe ^ReservedBlockAccumulatorRoot (must be absent)
+///       + Maybe ^PersistentEthereumTrieWitness
 ///
 /// On success returns true and populates the output refs/value. `state_root`
 /// may be null if `has_state_root` was zero (valid per the encoder, used at
@@ -91,7 +92,8 @@ bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
                         td::Ref<vm::Cell>& rpc_cache_root_out,
                         bool verify_eth_state_root = true,
                         td::Ref<vm::Cell>* block_hashes_root_out = nullptr,
-                        td::Ref<vm::Cell>* block_accumulator_root_out = nullptr);
+                        td::Ref<vm::Cell>* block_accumulator_root_out = nullptr,
+                        td::Ref<vm::Cell>* trie_witness_root_out = nullptr);
 
 // ---------------------------------------------------------------------------
 // EVM bytecode cell encoding (Phase D.2)

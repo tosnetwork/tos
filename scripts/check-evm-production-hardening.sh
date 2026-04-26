@@ -12,6 +12,7 @@ post_accept="$root/evm/core/post-accept.cpp"
 rpc_cache_db="$root/evm/rpc/cache-db.cpp"
 validator_download_state="$root/validator/net/download-state.cpp"
 validator_token_manager="$root/validator/token-manager.cpp"
+cmake_lists="$root/CMakeLists.txt"
 harness_paths=(
     "$root/test/conformance/hive/clients/tos/bootstrap-validators.sh"
     "$root/test/conformance/hive/clients/tos/tos.cmd"
@@ -81,15 +82,43 @@ if awk '
     exit 1
 fi
 
-budget_line=$(rg -n 'EVM stateRoot budget exceeded before execution|rejecting EVM tx before execution' "$compute_phase" | head -n1 | cut -d: -f1 || true)
+if awk '
+  /^#ifdef TOS_ENABLE_EVM_DEBUG_RPC$/ { debug = 1; next }
+  /^#endif$/ { debug = 0; next }
+  /method == "debug_rebuildRpcCache" \|\|/ { if (!debug) bad = 1 }
+  /if \(method == "debug_rebuildRpcCache"\)/ { if (!debug) bad = 1 }
+  END { exit bad ? 0 : 1 }
+' "$rpc_handlers"; then
+    echo "evm production hardening check failed: debug_rebuildRpcCache dispatch must be debug-only" >&2
+    exit 1
+fi
+
+witness_line=$(rg -n 'trie_witness_ready' "$compute_phase" | head -n1 | cut -d: -f1 || true)
 exec_line=$(rg -n 'execute_evm_transaction\(decoded\.txn' "$compute_phase" | head -n1 | cut -d: -f1 || true)
-if [ -z "$budget_line" ] || [ -z "$exec_line" ] || [ "$budget_line" -ge "$exec_line" ]; then
-    echo "evm production hardening check failed: EVM stateRoot budget preflight must run before transaction execution" >&2
+if [ -z "$witness_line" ] || [ -z "$exec_line" ] || [ "$witness_line" -ge "$exec_line" ]; then
+    echo "evm production hardening check failed: persistent trie witness must be checked before transaction execution" >&2
     exit 1
 fi
 prevalidate_line=$(rg -n 'prevalidate_evm_transaction_admission\(.*decoded\.txn|prevalidate_evm_transaction_admission\(' "$compute_phase" | head -n1 | cut -d: -f1 || true)
-if [ -z "$prevalidate_line" ] || [ "$prevalidate_line" -ge "$budget_line" ]; then
-    echo "evm production hardening check failed: cheap EVM tx prevalidation must run before stateRoot budget scan" >&2
+if [ -z "$prevalidate_line" ] || [ "$prevalidate_line" -ge "$witness_line" ]; then
+    echo "evm production hardening check failed: cheap EVM tx prevalidation must run before trie witness checks" >&2
+    exit 1
+fi
+
+if rg -n 'estimate_evm_state_size_for_full_root|EVM stateRoot budget exceeded|stateRoot soft budget' "$compute_phase"; then
+    echo "evm production hardening check failed: compute phase must not gate stateRoot on full-state budget scans" >&2
+    exit 1
+fi
+
+if ! rg -q 'kCpNewDataSchemaVersion[[:space:]]*=[[:space:]]*5' "$root/evm/core/cell-codec.h" ||
+   ! rg -q 'trie_witness_root_out|PersistentEthereumTrieWitness|has_trie_witness' "$root/evm/core/cell-codec.cpp" "$root/evm/core/cell-codec.h"; then
+    echo "evm production hardening check failed: cp.new_data v5 must carry persistent trie witness" >&2
+    exit 1
+fi
+
+if ! rg -q 'class MptTrie|serialize_to_cell|proof\(' "$root/evm/core/mpt-trie.h" ||
+   ! rg -q 'rlp_cache|load_from_cell|upsert_hashed|erase_hashed' "$root/evm/core/mpt-trie.cpp"; then
+    echo "evm production hardening check failed: persistent Ethereum MPT witness backend is missing" >&2
     exit 1
 fi
 
@@ -100,12 +129,20 @@ if ! rg -q 'kMaxSimulateEmittedBlocks' "$rpc_handlers" ||
     exit 1
 fi
 
+if ! rg -q 'g_simulate_limiter|kMaxSimulateRequestsPerSec' "$rpc_handlers" ||
+   ! rg -q 'g_simulate_inflight|eth_simulateV1 already running' "$rpc_handlers" ||
+   ! rg -q 'kMaxSimulateTotalRequestedGas|simulation requested gas budget exceeded' "$rpc_handlers"; then
+    echo "evm production hardening check failed: eth_simulateV1 must have method limiter, single-inflight, and requested-gas preflight" >&2
+    exit 1
+fi
+
 if rg -n 'kMaxSimulateFillerJump[[:space:]]*=[[:space:]]*8192' "$rpc_handlers"; then
     echo "evm production hardening check failed: eth_simulateV1 must not rely on the old per-entry 8192 filler cap" >&2
     exit 1
 fi
 
 if ! rg -q 'kMaxPersistentStateDownloadBytes' "$validator_download_state" ||
+   ! rg -q 'kMaxPersistentStateHeapBufferBytes' "$validator_download_state" ||
    ! rg -q 'persistent state stream exceeds advertised size|persistent state too large' "$validator_download_state" ||
    ! rg -q 'download_started_' "$root/validator/net/download-state.hpp"; then
     echo "evm production hardening check failed: persistent state downloader must validate total and cumulative size before streaming" >&2
@@ -117,13 +154,28 @@ if rg -n 'request_total_size\(\);[[:space:]]*got_block_state_part' "$validator_d
     exit 1
 fi
 
-if ! rg -q 'compute_storage_root_for_account' "$rpc_handlers"; then
-    echo "evm production hardening check failed: eth_getProof must use real storage roots for non-target accounts" >&2
+if ! rg -q 'ethereum_account_proof|ethereum_storage_proof|ethereum_storage_root_hash' "$rpc_handlers"; then
+    echo "evm production hardening check failed: eth_getProof must use persistent trie witness proofs" >&2
     exit 1
 fi
 
-if rg -n 'For non-target accounts we use kEmptyRoot|other_addr == addr\) their_storage_hash = storage_hash' "$rpc_handlers"; then
-    echo "evm production hardening check failed: eth_getProof must not approximate non-target storage roots as empty" >&2
+if ! rg -q 'g_public_getproof_enabled[[:space:]]*=[[:space:]]*true' "$rpc_handlers"; then
+    echo "evm production hardening check failed: eth_getProof should default on after persistent proof backend is enabled" >&2
+    exit 1
+fi
+
+if rg -n 'generate_mpt_proof\(|mpt_root\(|compute_storage_root_for_account|For non-target accounts we use kEmptyRoot|other_addr == addr\) their_storage_hash = storage_hash' "$rpc_handlers"; then
+    echo "evm production hardening check failed: eth_getProof must not rebuild or approximate tries per request" >&2
+    exit 1
+fi
+
+if rg -n 'TOS_ALLOW_NPX_SOLC=1' "$cmake_lists"; then
+    echo "evm production hardening check failed: CI bytecode equivalence test must not enable npx solc fallback by default" >&2
+    exit 1
+fi
+
+if ! rg -q 'TOS_SOLC_0_8_26.*CACHE FILEPATH|if\(TOS_SOLC_0_8_26\)' "$cmake_lists"; then
+    echo "evm production hardening check failed: bytecode equivalence CTest must require a pinned solc path" >&2
     exit 1
 fi
 

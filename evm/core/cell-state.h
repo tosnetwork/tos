@@ -25,10 +25,12 @@
 #include <silkworm/core/state/state.hpp>
 #include <silkworm/core/types/account.hpp>
 
+#include "evm/core/mpt-trie.h"
 #include "vm/cells.h"
 #include "vm/dict.h"
 
 #include <cstddef>
+#include <map>
 #include <unordered_map>
 #include <mutex>
 
@@ -39,6 +41,13 @@ struct CellEvmStateSizeStats {
     size_t storage_slots{0};
     bool exceeded{false};
     bool malformed{false};
+};
+
+struct CellEvmStateDeltaStats {
+    size_t new_accounts{0};
+    size_t deleted_accounts{0};
+    size_t new_storage_slots{0};
+    size_t cleared_storage_slots{0};
 };
 
 /// silkworm::State implementation backed by a vm::Dictionary of EvmAccountData
@@ -138,6 +147,28 @@ class CellEvmState : public silkworm::State {
     CellEvmStateSizeStats count_entries_bounded(size_t max_accounts,
                                                 size_t max_storage_slots) const noexcept;
 
+    /// Track actual account/storage growth produced by the next write_to_db().
+    /// Kept for diagnostics/tests; stateRoot production now uses the
+    /// persistent Ethereum trie witness instead of full-state budget scans.
+    void reset_delta_stats() noexcept { delta_stats_ = {}; }
+    CellEvmStateDeltaStats delta_stats() const noexcept { return delta_stats_; }
+
+    /// Ethereum execution-layer MPT witness. These methods use the persisted
+    /// witness maintained by update_account/update_storage and do not walk the
+    /// full cell state on the hot path.
+    evmc::bytes32 ethereum_state_root_hash() const;
+    evmc::bytes32 ethereum_storage_root_hash(const evmc::address& address) const;
+    std::vector<silkworm::Bytes> ethereum_account_proof(const evmc::address& address) const;
+    std::vector<silkworm::Bytes> ethereum_storage_proof(const evmc::address& address,
+                                                        const evmc::bytes32& slot) const;
+    bool trie_witness_ready() const noexcept { return trie_witness_ready_; }
+    bool rebuild_trie_witness() noexcept;
+
+    /// Serialize/load the persistent Ethereum MPT witness. Null witness means
+    /// the empty state trie.
+    td::Ref<vm::Cell> serialize_trie_witness_to_cell() const;
+    bool load_trie_witness_from_cell(td::Ref<vm::Cell> root);
+
     /// Serialize the entire account dictionary into a single cell (suitable
     /// for storing in a ShardAccounts cell or a BoC).
     /// Returns a null cell if the dictionary is empty.
@@ -145,7 +176,7 @@ class CellEvmState : public silkworm::State {
 
     /// Replace the current account dictionary with one decoded from the given cell.
     /// Pass a null cell to start from empty.
-    bool load_from_cell(td::Ref<vm::Cell> root);
+    bool load_from_cell(td::Ref<vm::Cell> root, bool rebuild_trie_witness = true);
 
     /// Serialize / load the canonical EVM block-hash history used by
     /// BLOCKHASH and the EIP-2935 history-storage system call. The serialized
@@ -166,9 +197,7 @@ class CellEvmState : public silkworm::State {
     /// (silkworm's update_account drops the storage_root field). Public
     /// hydration-only entry point for the otherwise-private set_storage_root.
     void set_storage_root_for_hydration(const evmc::address& address,
-                                         td::Ref<vm::Cell> root) {
-        set_storage_root(address, std::move(root));
-    }
+                                         td::Ref<vm::Cell> root);
 
     // ----- Free helpers (used outside CellEvmState) -----
 
@@ -179,6 +208,10 @@ class CellEvmState : public silkworm::State {
 
     /// Write or clear the storage dict root for an account.
     void set_storage_root(const evmc::address& address, td::Ref<vm::Cell> root);
+    bool ensure_trie_witness();
+    bool rebuild_storage_trie_for_account(const evmc::address& address);
+    bool update_account_trie_leaf(const evmc::address& address,
+                                  const std::optional<silkworm::Account>& account);
 
     mutable vm::Dictionary account_dict_;  // 256-bit keys → EvmAccountData cells
 
@@ -190,6 +223,12 @@ class CellEvmState : public silkworm::State {
 
     // Read-code returns ByteView; needs persistent buffer (per-thread)
     static thread_local silkworm::Bytes tl_code_buf_;
+
+    MptTrie account_trie_;
+    std::map<evmc::address, MptTrie> storage_tries_;
+    bool trie_witness_ready_{true};
+
+    CellEvmStateDeltaStats delta_stats_;
 };
 
 }  // namespace evm_workchain

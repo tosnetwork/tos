@@ -67,6 +67,8 @@ static constexpr uint64_t kMaxGetLogsRequestsPerSec = 10; // tighter refill for 
 static constexpr uint64_t kMaxGetLogsBurst = 50;          // tighter burst for eth_getLogs
 static constexpr uint64_t kMaxGetProofRequestsPerSec = 2; // proof building is CPU-heavy
 static constexpr uint64_t kMaxGetProofBurst = 4;
+static constexpr uint64_t kMaxSimulateRequestsPerSec = 1; // simulation holds EVM state lock
+static constexpr uint64_t kMaxSimulateBurst = 2;
 static constexpr uint64_t kMaxGetLogsBlockRange = 10000;  // max toBlock - fromBlock
 static constexpr size_t   kMaxRpcParamsSize = 1 << 20;    // 1 MB
 
@@ -124,7 +126,9 @@ struct RateLimiter {
 static RateLimiter g_rpc_limiter{kMaxRpcBurst, kMaxRpcRequestsPerSec};
 static RateLimiter g_getlogs_limiter{kMaxGetLogsBurst, kMaxGetLogsRequestsPerSec};
 static RateLimiter g_getproof_limiter{kMaxGetProofBurst, kMaxGetProofRequestsPerSec};
+static RateLimiter g_simulate_limiter{kMaxSimulateBurst, kMaxSimulateRequestsPerSec};
 static std::atomic<uint32_t> g_getproof_inflight{0};
+static std::atomic<uint32_t> g_simulate_inflight{0};
 #ifdef TOS_ENABLE_EVM_DEBUG_RPC
 static std::atomic<uint32_t> g_debug_trace_inflight{0};
 #endif
@@ -164,6 +168,7 @@ class AtomicConcurrencyPermit {
 // Rate limiting is disabled by default so that test harnesses are not
 // affected.  Production code enables it via enable_evm_rpc_rate_limit().
 static bool g_rate_limit_enabled = false;
+static bool g_public_getproof_enabled = true;
 
 void enable_evm_rpc_rate_limit(bool enable) {
     g_rate_limit_enabled = enable;
@@ -171,7 +176,12 @@ void enable_evm_rpc_rate_limit(bool enable) {
         g_rpc_limiter.reset();
         g_getlogs_limiter.reset();
         g_getproof_limiter.reset();
+        g_simulate_limiter.reset();
     }
+}
+
+void enable_public_evm_getproof(bool enable) {
+    g_public_getproof_enabled = enable;
 }
 
 // Expose the global EVM bucket so the
@@ -193,6 +203,9 @@ void reset_evm_rpc_rate_limit_for_test() {
     g_rpc_limiter.reset();
     g_getlogs_limiter.reset();
     g_getproof_limiter.reset();
+    g_simulate_limiter.reset();
+    g_getproof_inflight.store(0, std::memory_order_relaxed);
+    g_simulate_inflight.store(0, std::memory_order_relaxed);
 }
 
 // ---------------------------------------------------------------------------
@@ -562,14 +575,19 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
     stored_block.receipts_root = compute_receipts_root(
         stored_block.transaction_hashes, evm_state);
 
-    // Compute state root with a fresh full recompute. This RPC fallback is not
-    // the consensus compute path, but it should still avoid the old process-wide
-    // trie cache hazard: internal-call writes may not be represented in the
-    // top-level account/storage change sets.
+    // Read stateRoot from the same persistent trie witness used by consensus.
     {
         std::unique_lock trie_lock(evm_state.mutex());
-        IncrementalTrieCalculator calc;
-        stored_block.state_root = calc.compute_state_root(evm_state, nullptr, nullptr);
+        if (auto* cs = dynamic_cast<CellEvmState*>(&evm_state.state())) {
+            if (!cs->trie_witness_ready() && !cs->rebuild_trie_witness()) {
+                return {make_error(id, -32603,
+                        "persistent trie witness unavailable for stateRoot"), true};
+            }
+            stored_block.state_root = cs->ethereum_state_root_hash();
+        } else {
+            IncrementalTrieCalculator calc;
+            stored_block.state_root = calc.compute_state_root(evm_state, nullptr, nullptr);
+        }
         evm_state.clear_change_tracking();
     }
 
@@ -2569,11 +2587,10 @@ static RpcResult handle_debug_get_raw_receipts(const std::string& params, const 
     return {make_result(id, out), false};
 }
 
-// --- eth_getProof: full MPT inclusion proofs ---
+// --- eth_getProof: persistent MPT witness proofs ---
 //
-// Builds an Ethereum-canonical MPT (Yellow Paper Appendix D) over all
-// hashed accounts to generate an accountProof. For each requested storage
-// slot, builds the per-account storage MPT and generates a proof.
+// Walks the execution-side Ethereum MPT witness persisted in cp.new_data.
+// It does not rebuild account or storage tries from the full flat state.
 //
 // All four fields are now correct for offline verification:
 //   - balance, nonce, codeHash: from CellEvmState
@@ -2581,8 +2598,7 @@ static RpcResult handle_debug_get_raw_receipts(const std::string& params, const 
 //   - accountProof: list of RLP-encoded MPT nodes (root → leaf for the address)
 //   - storageProof[i].proof: same, for each requested slot in the storage trie
 //
-// Cost: O(N_accounts) for the account trie build; O(N_slots) per storage trie.
-// This is acceptable for read-only RPC; not on the consensus path.
+// Cost: O(path length) per account/storage proof plus response serialization.
 
 static RpcResult handle_get_proof(const std::string& params, const std::string& id) {
     evmc::address addr{};
@@ -2609,12 +2625,13 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
     // `std::shared_mutex` (recursive ownership is not portable).
     // Replace both with direct backend access via `state.state()` —
     // safe under our single-acquire shared lock.
-    constexpr size_t kMaxGetProofAccountIter = 16'384;
-    constexpr size_t kMaxGetProofStorageIter = 65'536;
-    constexpr size_t kMaxGetProofTotalAccountStorageIter = 65'536;
     constexpr size_t kMaxGetProofResponseBytes = 8 * 1024 * 1024;
     std::shared_lock proof_lock(state.mutex());
-    auto* cell_state = dynamic_cast<CellEvmState*>(&state.state());
+    auto* cell_state = dynamic_cast<const CellEvmState*>(&state.state());
+    if (!cell_state || !cell_state->trie_witness_ready()) {
+        return {make_error(id, -32603,
+                           "eth_getProof: persistent trie witness unavailable"), true};
+    }
     auto acct = state.state().read_account(addr);
     silkworm::Account a;
     if (acct) a = *acct;
@@ -2624,14 +2641,10 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
     // Find the INNER array and scan only within its bounds so a later
     // blockhash string isn't mis-read as a storage key.
     //
-    // Codex round 4 (H-05): cap the number of storage keys accepted in
-    // a single `eth_getProof` request. Each requested slot drives a full
-    // MPT walk + RLP-formatted proof emission; an uncapped list lets a
-    // public caller force MB-scale responses and tens of seconds of CPU
-    // per request, bypassing both the EVM gas budgets and the block
-    // gas limit. Geth defaults to 1000 keys; we pick 256 — generous for
-    // legitimate wallets / explorers (a typical contract query uses 1-10
-    // slots) but tight enough to bound worst-case work and bandwidth.
+    // Cap storage keys even with persistent witness: each requested slot
+    // emits a path proof, and an uncapped list can still force large JSON
+    // responses. Geth defaults to 1000 keys; we pick 128 — generous for
+    // legitimate wallets / explorers while bounding bandwidth.
     // Reject excess keys with a JSON-RPC error rather than silently
     // truncating, so callers know they need to chunk their request.
     constexpr size_t kMaxGetProofStorageKeys = 128;
@@ -2680,164 +2693,12 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
         }
     }
 
-    // Codex round 5 (H-06) + round 7 (R7-H-17): caller already holds
-    // `proof_lock` (acquired immediately after argument parsing); we
-    // bound the per-request iteration so a public caller cannot force
-    // consensus-sized full-state walks. Until a persistent Ethereum proof
-    // backend exists, public eth_getProof is intentionally limited to a
-    // small synchronous proof budget and fails closed on larger states.
+    // Persistent witness path: proof generation walks only the MPT path
+    // nodes already carried in cp.new_data, matching execution-client trie
+    // behaviour instead of rebuilding account/storage tries per RPC call.
+    evmc::bytes32 storage_hash = cell_state->ethereum_storage_root_hash(addr);
+    auto account_proof = cell_state->ethereum_account_proof(addr);
 
-    // ----- Build storage trie + storage proofs -----
-    evmc::bytes32 storage_hash = silkworm::kEmptyRoot;
-    std::map<silkworm::Bytes, silkworm::Bytes> storage_kv;
-    bool storage_truncated = false;
-    if (acct) {
-        if (cell_state) {
-            size_t storage_iter = 0;
-            bool storage_completed = cell_state->for_each_storage_while(
-                addr,
-                [&](const evmc::bytes32& slot,
-                    const evmc::bytes32& value) {
-                if (++storage_iter > kMaxGetProofStorageIter) {
-                    storage_truncated = true;
-                    return false;
-                }
-                if (value == evmc::bytes32{}) return true;  // zero values absent from trie
-                auto kh = ethash::keccak256(slot.bytes, 32);
-                silkworm::Bytes key(kh.bytes, kh.bytes + 32);
-                silkworm::Bytes val_rlp;
-                intx::uint256 v_int = intx::be::load<intx::uint256>(value);
-                silkworm::rlp::encode(val_rlp, v_int);
-                storage_kv[std::move(key)] = std::move(val_rlp);
-                return true;
-            });
-            if (!storage_completed && !storage_truncated) {
-                return {make_error(id, -32603,
-                                   "eth_getProof: malformed target account storage"), true};
-            }
-            if (storage_truncated) {
-                return {make_error(id, -32603,
-                                   "eth_getProof: target account storage exceeds "
-                                   "RPC proof budget"), true};
-            }
-            storage_hash = mpt_root(storage_kv);
-        }
-    }
-
-    // ----- Build account trie + account proof -----
-    // Iterate every account, hash the address, RLP-encode the account.
-    std::map<silkworm::Bytes, silkworm::Bytes> account_kv;
-    bool account_truncated = false;
-    bool account_storage_truncated = false;
-    size_t account_storage_iter = 0;
-    auto compute_storage_root_for_account = [&](const evmc::address& owner) {
-        std::map<silkworm::Bytes, silkworm::Bytes> kv;
-        if (!cell_state) {
-            return silkworm::kEmptyRoot;
-        }
-        bool storage_completed = cell_state->for_each_storage_while(
-            owner,
-            [&](const evmc::bytes32& slot,
-                const evmc::bytes32& value) {
-            if (++account_storage_iter > kMaxGetProofTotalAccountStorageIter) {
-                account_storage_truncated = true;
-                return false;
-            }
-            if (value == evmc::bytes32{}) return true;
-            auto kh = ethash::keccak256(slot.bytes, 32);
-            silkworm::Bytes key(kh.bytes, kh.bytes + 32);
-            silkworm::Bytes val_rlp;
-            intx::uint256 v_int = intx::be::load<intx::uint256>(value);
-            silkworm::rlp::encode(val_rlp, v_int);
-            kv[std::move(key)] = std::move(val_rlp);
-            return true;
-        });
-        if (!storage_completed && !account_storage_truncated) {
-            account_storage_truncated = true;
-            return silkworm::kEmptyRoot;
-        }
-        if (account_storage_truncated) {
-            return silkworm::kEmptyRoot;
-        }
-        return mpt_root(kv);
-    };
-    {
-        if (cell_state) {
-            size_t account_iter = 0;
-            bool account_completed = cell_state->for_each_account_while(
-                [&](const unsigned char key[32],
-                    const silkworm::Account& other_acct) {
-                if (++account_iter > kMaxGetProofAccountIter) {
-                    account_truncated = true;
-                    return false;
-                }
-                evmc::address other_addr{};
-                std::memcpy(other_addr.bytes, key + 12, 20);
-                // Each account leaf commits to that account's storage root.
-                // Using kEmptyRoot for non-target accounts makes the account
-                // proof unverifiable as soon as any other account has storage.
-                evmc::bytes32 their_storage_hash =
-                    (other_addr == addr) ? storage_hash
-                                         : compute_storage_root_for_account(other_addr);
-                if (account_storage_truncated) return false;
-                silkworm::Bytes acct_rlp = other_acct.rlp(their_storage_hash);
-                auto ah = ethash::keccak256(other_addr.bytes, 20);
-                silkworm::Bytes hashed_addr(ah.bytes, ah.bytes + 32);
-                account_kv[std::move(hashed_addr)] = std::move(acct_rlp);
-                return true;
-            });
-            if (!account_completed && !account_truncated && !account_storage_truncated) {
-                return {make_error(id, -32603,
-                                   "eth_getProof: malformed account dictionary"), true};
-            }
-            if (account_truncated) {
-                return {make_error(id, -32603,
-                                   "eth_getProof: account dictionary exceeds "
-                                   "RPC proof budget"), true};
-            }
-            if (account_storage_truncated) {
-                return {make_error(id, -32603,
-                                   "eth_getProof: account storage dictionaries exceed "
-                                   "RPC proof budget"), true};
-            }
-        }
-    }
-
-    // Account proof for the target address.
-    //
-    // generate_mpt_proof() implements a real Yellow Paper Appendix D walk:
-    // starting from the root, it descends along the keccak(addr) nibble
-    // path, appending each encountered node's RLP encoding. Termination
-    // cases (all of which yield a cryptographically valid proof a verifier
-    // can independently check):
-    //   - Existence:    walk reaches a leaf whose path matches the target
-    //                   nibbles in full; proof[last] is the leaf with value.
-    //   - Non-existence A (different leaf): walk reaches a leaf whose key
-    //                   diverges from target; the leaf's HP-encoded path
-    //                   exposes the divergence.
-    //   - Non-existence B (empty branch slot): walk reaches a branch node
-    //                   whose entry at the matching nibble is empty (0x80);
-    //                   the branch RLP IS the proof of absence.
-    //   - Non-existence C (extension mismatch): walk reaches an extension
-    //                   whose path nibbles don't match the corresponding
-    //                   target nibbles; the extension's HP path exposes
-    //                   the divergence.
-    //
-    // This is verified end-to-end by test_eth_get_proof_non_existence in
-    // test-evm-executor.cpp (calls verify_mpt_proof on the output, asserts
-    // both keccak(proof[0]) == stateRoot and structural validity).
-    //
-    // generate_mpt_proof returns [] ONLY when the underlying trie itself
-    // is empty (no accounts at all — only happens at genesis with no
-    // allocs). The eth_getProof spec mandates accountProof be `list<string>`
-    // (never `list[]`); for the empty-trie case we fall back to a single-
-    // node proof of `0x80` (RLP encoding of the empty string), which is
-    // the canonical serialisation of the empty trie root node. Its
-    // keccak256 equals silkworm::kEmptyRoot, satisfying the "first node
-    // hashes to root" invariant a verifier checks.
-    auto target_hash = ethash::keccak256(addr.bytes, 20);
-    silkworm::Bytes target_key(target_hash.bytes, target_hash.bytes + 32);
-    auto account_proof = generate_mpt_proof(account_kv, target_key);
     if (account_proof.empty()) {
         // Empty trie → emit the canonical empty-trie node so the proof
         // shape matches geth's (list<str>, never list[]).
@@ -2900,13 +2761,7 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
         // `silkworm::State::read_storage` is `const noexcept` so a const
         // reference is enough; no `const_cast` needed.
         auto v = state.state().read_storage(addr, a.incarnation, slots[i]);
-        // Per-slot proof. Same exclusion-proof reasoning as accountProof:
-        // when the storage trie is empty (no slots, or account doesn't
-        // exist so storage_kv was never populated), we emit the canonical
-        // empty-trie root node 0x80 so the proof shape is list<str>.
-        auto sh = ethash::keccak256(slots[i].bytes, 32);
-        silkworm::Bytes slot_key(sh.bytes, sh.bytes + 32);
-        auto slot_proof = generate_mpt_proof(storage_kv, slot_key);
+        auto slot_proof = cell_state->ethereum_storage_proof(addr, slots[i]);
         if (slot_proof.empty()) {
             slot_proof.push_back(silkworm::Bytes{0x80});
         }
@@ -3181,6 +3036,57 @@ static SimulateBlockOverrides parse_block_overrides_for_sim(const std::string& b
 
     return bo;
 }
+
+static std::vector<std::string> extract_simulate_call_jsons(const std::string& bsc_entry) {
+    std::string calls_block;
+    auto cb_kw = bsc_entry.find("\"calls\"");
+    if (cb_kw != std::string::npos) {
+        auto cb_arr = bsc_entry.find('[', cb_kw + 7);
+        if (cb_arr != std::string::npos) {
+            int dd = 1;
+            size_t e = cb_arr + 1;
+            while (e < bsc_entry.size() && dd > 0) {
+                if (bsc_entry[e] == '[') {
+                    dd++;
+                } else if (bsc_entry[e] == ']') {
+                    dd--;
+                    if (dd == 0) break;
+                }
+                e++;
+            }
+            if (dd == 0) {
+                calls_block = bsc_entry.substr(cb_arr + 1, e - cb_arr - 1);
+            }
+        }
+    }
+
+    std::vector<std::string> call_jsons;
+    int cd = 0;
+    size_t cs = 0;
+    for (size_t j = 0; j < calls_block.size(); j++) {
+        if (calls_block[j] == '{') {
+            if (cd == 0) cs = j;
+            cd++;
+        } else if (calls_block[j] == '}') {
+            cd--;
+            if (cd == 0) {
+                call_jsons.push_back(calls_block.substr(cs, j - cs + 1));
+            }
+        }
+    }
+    return call_jsons;
+}
+
+struct SimulateCallPlan {
+    silkworm::Transaction txn;
+    bool nonce_missing{false};
+};
+
+struct SimulateBlockPlan {
+    std::string bsc_entry;
+    SimulateBlockOverrides overrides;
+    std::vector<SimulateCallPlan> calls;
+};
 
 // SELFDESTRUCT-emit-log tracer.
 //
@@ -3580,12 +3486,21 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
 
     // ---- Pre-loop top-level validation ----
     //
-    // Cap on block count. A real client would protect itself from a
-    // huge per-request memory blow-up; we mirror geth/erigon's
-    // 256-block ceiling. Returning -38026 mimics the spec error text
-    // ("too many blocks") that the conformance fixtures look for.
+    // Production defaults are intentionally tighter than the execution-apis
+    // conformance profile because this implementation runs simulations under
+    // the process-global EVM state lock. Builders that need the historical
+    // wider fixture envelope can compile with TOS_EVM_RPC_SIMULATE_CONFORMANCE_PROFILE.
+#ifndef TOS_EVM_RPC_SIMULATE_CONFORMANCE_PROFILE
+    constexpr size_t kMaxSimulatedBlocks = 32;
+    constexpr uint64_t kMaxSimulateEmittedBlocks = 64;
+    constexpr size_t kMaxSimulateCallsPerBlock = 64;
+    constexpr uint64_t kMaxSimulateTotalRequestedGas = 100'000'000ULL;
+#else
     constexpr size_t kMaxSimulatedBlocks = 256;
     constexpr uint64_t kMaxSimulateEmittedBlocks = 256;
+    constexpr size_t kMaxSimulateCallsPerBlock = 1024;
+    constexpr uint64_t kMaxSimulateTotalRequestedGas = 1'000'000'000ULL;
+#endif
     constexpr size_t kMaxSimulateResponseBytes = 16 * 1024 * 1024;
     if (bsc_entries.size() > kMaxSimulatedBlocks) {
         return {make_error(id, -38026, "too many blocks"), true};
@@ -3637,19 +3552,51 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
         }
     }
 
-    // Codex round 3 (H-04): aggregate-gas + per-block-call budgets across
-    // the whole simulation. The block cap above only bounds memory; with
-    // up to 256 blocks * unbounded calls/block * 30M gas/call, a single
-    // request could monopolize the EvmState lock for tens of seconds and
-    // burn billions of gas while legitimate eth_call traffic stalls. Geth
-    // accepts no aggregate cap because it isolates simulations per
-    // request handler — TOS reuses the global state lock here, so the
-    // budget is necessary. Numbers are generous for legitimate use
-    // (typical multi-call simulation: 1–5 blocks × 1–20 calls each =
-    // ~3-300M gas total) but tight enough that worst-case CPU is bounded.
-    constexpr size_t kMaxSimulateCallsPerBlock = 1024;
-    constexpr uint64_t kMaxSimulateTotalGas = 1'000'000'000ULL;
-    uint64_t simulate_aggregate_gas_used = 0;
+    // Build an execution plan and charge the budget against requested gas
+    // before the global EVM state mutex is taken. Rejecting only after
+    // gas_used is known lets one request run the whole budget plus one
+    // 30M-gas call under the lock.
+    AtomicConcurrencyPermit simulate_permit(g_simulate_inflight, 1);
+    if (!simulate_permit) {
+        return {make_error(id, -32005, "eth_simulateV1 already running"), true};
+    }
+
+    std::vector<SimulateBlockPlan> plan;
+    plan.reserve(bsc_entries.size());
+    uint64_t simulate_requested_gas = 0;
+    for (const auto& bsc_entry : bsc_entries) {
+        SimulateBlockPlan block_plan;
+        block_plan.bsc_entry = bsc_entry;
+        block_plan.overrides = parse_block_overrides_for_sim(bsc_entry);
+
+        auto call_jsons = extract_simulate_call_jsons(bsc_entry);
+        if (call_jsons.size() > kMaxSimulateCallsPerBlock) {
+            return {make_error(id, -38026, "too many calls in block"), true};
+        }
+
+        block_plan.calls.reserve(call_jsons.size());
+        for (const auto& call_json : call_jsons) {
+            SimulateCallPlan call_plan;
+            call_plan.txn = parse_call_object(call_json);
+            call_plan.txn.max_fee_per_gas = 0;
+            call_plan.txn.max_priority_fee_per_gas = 0;
+            call_plan.txn.max_fee_per_blob_gas = 0;
+            if (call_plan.txn.gas_limit < 21000) call_plan.txn.gas_limit = 21000;
+            if (call_plan.txn.gas_limit > kMaxReadOnlyRpcGas) {
+                call_plan.txn.gas_limit = kMaxReadOnlyRpcGas;
+            }
+            if (simulate_requested_gas >
+                kMaxSimulateTotalRequestedGas - call_plan.txn.gas_limit) {
+                return {make_error(id, -38026,
+                                   "simulation requested gas budget exceeded"), true};
+            }
+            simulate_requested_gas += call_plan.txn.gas_limit;
+            call_plan.nonce_missing = call_json.find("\"nonce\"") == std::string::npos;
+            block_plan.calls.push_back(std::move(call_plan));
+        }
+        plan.push_back(std::move(block_plan));
+    }
+
     uint64_t emitted_blocks = 0;
 
     auto response_size_exceeded = [&]() {
@@ -3664,9 +3611,10 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
     auto& mutable_state = const_cast<silkworm::State&>(evm_state.state());
     silkworm::IntraBlockState ibs(mutable_state);
 
-    for (const auto& bsc_entry : bsc_entries) {
+    for (const auto& block_plan : plan) {
+        const auto& bsc_entry = block_plan.bsc_entry;
         // ---- Per-block overrides ----
-        SimulateBlockOverrides bo = parse_block_overrides_for_sim(bsc_entry);
+        const SimulateBlockOverrides& bo = block_plan.overrides;
 
         uint64_t target_bn = bo.number.value_or(bn + 1);
         // Spec: block numbers must be strictly increasing across the
@@ -3735,61 +3683,18 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
         // Apply stateOverrides for this block on top of carryover IBS.
         apply_state_overrides(bsc_entry, ibs);
 
-        // Pull calls[] from the entry.
-        std::string calls_block;
-        auto cb_kw = bsc_entry.find("\"calls\"");
-        if (cb_kw != std::string::npos) {
-            auto cb_arr = bsc_entry.find('[', cb_kw + 7);
-            if (cb_arr != std::string::npos) {
-                int dd = 1;
-                size_t e = cb_arr + 1;
-                while (e < bsc_entry.size() && dd > 0) {
-                    if (bsc_entry[e] == '[') dd++;
-                    else if (bsc_entry[e] == ']') { dd--; if (dd == 0) break; }
-                    e++;
-                }
-                if (dd == 0) {
-                    calls_block = bsc_entry.substr(cb_arr + 1, e - cb_arr - 1);
-                }
-            }
-        }
-
-        std::vector<std::string> call_jsons;
-        {
-            int cd2 = 0;
-            size_t cs2 = 0;
-            for (size_t j = 0; j < calls_block.size(); j++) {
-                if (calls_block[j] == '{') { if (cd2 == 0) cs2 = j; cd2++; }
-                else if (calls_block[j] == '}') {
-                    cd2--;
-                    if (cd2 == 0) call_jsons.push_back(calls_block.substr(cs2, j - cs2 + 1));
-                }
-            }
-        }
-
-        // Codex round 3 (H-04): per-block call cap. Reject before
-        // execution to bound the inner loop's work.
-        if (call_jsons.size() > kMaxSimulateCallsPerBlock) {
-            return {make_error(id, -38026, "too many calls in block"), true};
-        }
-
         struct OneCall {
             silkworm::Transaction txn;
             ExecutionResult result;
             std::vector<silkworm::Log> synthetic_logs;
         };
         std::vector<OneCall> calls;
-        calls.reserve(call_jsons.size());
+        calls.reserve(block_plan.calls.size());
         uint64_t total_gas_used = 0;
 
-        for (size_t k = 0; k < call_jsons.size(); k++) {
+        for (size_t k = 0; k < block_plan.calls.size(); k++) {
             OneCall oc;
-            oc.txn = parse_call_object(call_jsons[k]);
-            oc.txn.max_fee_per_gas = 0;
-            oc.txn.max_priority_fee_per_gas = 0;
-            oc.txn.max_fee_per_blob_gas = 0;
-            if (oc.txn.gas_limit < 21000) oc.txn.gas_limit = 21000;
-            if (oc.txn.gas_limit > 30'000'000) oc.txn.gas_limit = 30'000'000;
+            oc.txn = block_plan.calls[k].txn;
 
             // Auto-fill the nonce when the caller omitted it (spec default
             // = "current sender nonce"). Without this, repeated calls from
@@ -3797,7 +3702,7 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
             // would fail the executor's nonce check (run_simulated_call
             // ignores that check, but the bump still mis-records the post
             // nonce in the IBS journal).
-            if (call_jsons[k].find("\"nonce\"") == std::string::npos) {
+            if (block_plan.calls[k].nonce_missing) {
                 if (auto s = oc.txn.sender()) oc.txn.nonce = ibs.get_nonce(*s);
             }
 
@@ -3819,16 +3724,6 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
                 oc.result.error_message = "simulate: unknown exception";
             }
             total_gas_used += oc.result.gas_used;
-            // Codex round 3 (H-04): aggregate-gas budget across the
-            // entire simulation. Reject as soon as the cumulative gas
-            // would exceed the limit; we have already executed the
-            // current call but stopping here bounds the worst case at
-            // (kMaxSimulateTotalGas + 30M).
-            simulate_aggregate_gas_used += oc.result.gas_used;
-            if (simulate_aggregate_gas_used > kMaxSimulateTotalGas) {
-                return {make_error(id, -38026,
-                                   "simulation aggregate gas budget exceeded"), true};
-            }
 
             // Synthesize an ETH-transfer log when traceTransfers is on,
             // the call succeeded, and value > 0. Emitter is the spec's
@@ -4381,13 +4276,9 @@ static RpcResult handle_debug_rpc_cache_health(const std::string& id) {
     return {make_result(id, r), false};
 }
 
+#ifdef TOS_ENABLE_EVM_DEBUG_RPC
 static RpcResult handle_debug_rebuild_rpc_cache(const std::string& params,
                                                 const std::string& id) {
-#ifndef TOS_ENABLE_EVM_DEBUG_RPC
-    (void)params;
-    return {make_error(id, -32601,
-                       "debug_rebuildRpcCache is disabled on public RPC"), true};
-#else
     const char* expected_token = std::getenv("TOS_EVM_DEBUG_RPC_TOKEN");
     const std::string provided_token = extract_json_string_value(params, "auth");
     if (expected_token == nullptr || expected_token[0] == '\0') {
@@ -4447,8 +4338,8 @@ static RpcResult handle_debug_rebuild_rpc_cache(const std::string& params,
     }
     r += "}";
     return {make_result(id, r), stats.errors != 0};
-#endif
 }
+#endif
 
 // --- Rejection handlers for methods we cannot implement (no node-side keys) ---
 
@@ -4526,7 +4417,7 @@ bool is_eth_rpc_method(const std::string& method) noexcept {
            method == "debug_rebuildRpcCache" ||
 #endif
            method == "debug_rpcCacheHealth" ||
-           method == "eth_getProof" ||
+           (g_public_getproof_enabled && method == "eth_getProof") ||
            method == "eth_createAccessList" ||
            method == "eth_simulateV1" ||
            // Rejection methods (we explicitly handle these to return informative errors):
@@ -4545,6 +4436,11 @@ std::optional<RpcResult> handle_eth_rpc(
         return RpcResult{make_error(id, -32600, "request params exceed max size"), true};
     }
 
+    if (method == "eth_getProof" && !g_public_getproof_enabled) {
+        return RpcResult{make_error(id, -32601,
+                                    "eth_getProof disabled by node policy"), true};
+    }
+
     // --- Production hardening: rate limiting ---
     if (g_rate_limit_enabled) {
         // Method-level rate limit for expensive queries
@@ -4556,6 +4452,11 @@ std::optional<RpcResult> handle_eth_rpc(
         if (method == "eth_getProof") {
             if (!g_getproof_limiter.try_consume()) {
                 return RpcResult{make_error(id, -32005, "eth_getProof rate limit exceeded"), true};
+            }
+        }
+        if (method == "eth_simulateV1") {
+            if (!g_simulate_limiter.try_consume()) {
+                return RpcResult{make_error(id, -32005, "eth_simulateV1 rate limit exceeded"), true};
             }
         }
         // Global rate limit for all methods
@@ -4623,7 +4524,9 @@ std::optional<RpcResult> handle_eth_rpc(
     if (method == "debug_getRawHeader")       return handle_debug_get_raw_header(params, id);
     if (method == "debug_getRawBlock")        return handle_debug_get_raw_block(params, id);
     if (method == "debug_getRawReceipts")     return handle_debug_get_raw_receipts(params, id);
+#ifdef TOS_ENABLE_EVM_DEBUG_RPC
     if (method == "debug_rebuildRpcCache")    return handle_debug_rebuild_rpc_cache(params, id);
+#endif
     if (method == "debug_rpcCacheHealth")     return handle_debug_rpc_cache_health(id);
     if (method == "eth_getProof")             return handle_get_proof(params, id);
     if (method == "eth_createAccessList")     return handle_create_access_list(params, id);
