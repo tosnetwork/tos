@@ -58,6 +58,9 @@ class DownloadState : public td::actor::Actor {
   void got_block_state(td::BufferSlice data);
 
  private:
+  td::Status prepare_download_buffer(td::uint64 size);
+  void release_download_memory();
+
   BlockIdExt block_id_;
   BlockIdExt masterchain_block_id_;
   PersistentStateType type_;
@@ -79,13 +82,13 @@ class DownloadState : public td::actor::Actor {
 
   BlockHandle handle_;
   td::BufferSlice state_;
-  std::vector<td::BufferSlice> parts_;
   td::uint64 sum_ = 0;
 
   td::uint64 prev_logged_sum_ = 0;
   td::Timer prev_logged_timer_;
   td::uint64 total_size_ = 0;
   bool download_started_ = false;
+  td::uint64 reserved_download_bytes_ = 0;
 
   ProcessStatus status_;
 };

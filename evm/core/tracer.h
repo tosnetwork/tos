@@ -16,6 +16,7 @@
 */
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -43,11 +44,14 @@ struct ExecutionTrace {
     uint64_t gas_used{0};
     silkworm::Bytes return_data;
     std::vector<TraceStep> steps;
+    bool truncated{false};
 };
 
 /// EVM tracer that collects structured logs for debug_traceTransaction.
 class StructLogTracer : public silkworm::EvmTracer {
   public:
+    explicit StructLogTracer(size_t max_steps) noexcept : max_steps_(max_steps) {}
+
     void on_execution_start(evmc_revision rev, const evmc_message& msg,
                             evmone::bytes_view code) noexcept override;
 
@@ -61,12 +65,15 @@ class StructLogTracer : public silkworm::EvmTracer {
 
     /// Get the collected trace.
     const std::vector<TraceStep>& steps() const noexcept { return steps_; }
+    std::vector<TraceStep> consume_steps() noexcept { return std::move(steps_); }
+    bool truncated() const noexcept { return truncated_; }
 
   private:
+    size_t max_steps_{0};
     std::vector<TraceStep> steps_;
     evmone::bytes_view code_;
-    int64_t prev_gas_{0};
     uint32_t depth_{1};
+    bool truncated_{false};
 };
 
 /// Execute a transaction with tracing enabled and return the trace.
@@ -74,6 +81,7 @@ ExecutionTrace trace_evm_transaction(
     const silkworm::Transaction& txn,
     const silkworm::Block& block,
     const EvmState& evm_state,
-    const silkworm::ChainConfig& config);
+    const silkworm::ChainConfig& config,
+    size_t max_steps);
 
 }  // namespace evm_workchain

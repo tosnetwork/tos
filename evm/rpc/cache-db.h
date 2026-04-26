@@ -33,6 +33,13 @@ class RocksDb;
 
 namespace evm_workchain {
 
+struct IncompleteMarkerPruneStats {
+    size_t expired_transactions{0};
+    size_t overflow_transactions{0};
+    size_t expired_blocks{0};
+    size_t overflow_blocks{0};
+};
+
 class EvmRpcCacheDb {
   public:
     /// Open (or create) a cache DB at `path`. The directory is created
@@ -123,6 +130,11 @@ class EvmRpcCacheDb {
     td::Status for_each_incomplete_block(
         std::function<td::Status(uint64_t)> cb);
     td::Result<size_t> count_incomplete_blocks();
+    td::Status prune_incomplete_markers(uint64_t now_unix_seconds,
+                                        uint64_t max_age_seconds,
+                                        size_t max_transactions,
+                                        size_t max_blocks,
+                                        IncompleteMarkerPruneStats* stats = nullptr);
 
     EvmRpcCacheDb(EvmRpcCacheDb&&);
     ~EvmRpcCacheDb();

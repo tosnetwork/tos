@@ -36,12 +36,13 @@ constexpr tos::WorkchainId kWorkchainId = 1;
 /// that read the chain id at runtime MUST use `current_evm_chain_id()`.
 constexpr uint64_t kEvmChainId = 0x544F53;  // "TOS" in ASCII — historical default
 
-/// Temporary safety budget for the full Ethereum MPT state-root pass. Until
-/// wc=1 persists a true incremental trie witness, accepted EVM transactions
-/// are rejected once state size exceeds this bound instead of letting a low
-/// gas transaction force unbounded host-side validator CPU.
-constexpr std::size_t kMaxFullRootAccounts = 100000;
-constexpr std::size_t kMaxFullRootStorageSlots = 1000000;
+/// Safety budget for the full Ethereum MPT state-root pass. Until wc=1
+/// persists a true incremental trie witness, accepted EVM transactions are
+/// rejected once state size exceeds this small synchronous rebuild envelope.
+/// This keeps validator host work bounded instead of tying one low-value EVM
+/// tx to consensus-sized account/storage dictionaries.
+constexpr std::size_t kMaxFullRootAccounts = 16'384;
+constexpr std::size_t kMaxFullRootStorageSlots = 65'536;
 
 /// Returns the chain id to use at runtime. Defaults to `kEvmChainId` until
 /// `set_evm_chain_id` is called by explicit test/devnet bootstrap code.

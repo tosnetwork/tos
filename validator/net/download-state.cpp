@@ -25,6 +25,7 @@
 #include "full-node.h"
 
 #include <algorithm>
+#include <atomic>
 
 namespace tos {
 
@@ -36,8 +37,9 @@ namespace {
 
 constexpr td::uint64 kPersistentStatePartSize = 1ULL << 21;
 constexpr td::uint64 kMaxPersistentStateDownloadBytes = 1ULL << 30;
-constexpr std::size_t kMaxPersistentStateDownloadParts =
-    static_cast<std::size_t>(kMaxPersistentStateDownloadBytes / kPersistentStatePartSize + 2);
+constexpr td::uint64 kMaxTotalPersistentStateDownloadBytes = 1ULL << 30;
+
+std::atomic<td::uint64> g_persistent_state_download_bytes{0};
 
 td::Status validate_persistent_state_size(td::uint64 size) {
   if (size == 0) {
@@ -49,6 +51,28 @@ td::Status validate_persistent_state_size(td::uint64 size) {
                                        << kMaxPersistentStateDownloadBytes);
   }
   return td::Status::OK();
+}
+
+bool try_reserve_persistent_state_download_memory(td::uint64 size) {
+  auto current = g_persistent_state_download_bytes.load(std::memory_order_relaxed);
+  for (;;) {
+    if (size > kMaxTotalPersistentStateDownloadBytes ||
+        current > kMaxTotalPersistentStateDownloadBytes - size) {
+      return false;
+    }
+    if (g_persistent_state_download_bytes.compare_exchange_weak(
+            current, current + size, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+      return true;
+    }
+  }
+}
+
+void release_persistent_state_download_memory(td::uint64 size) {
+  if (size == 0) {
+    return;
+  }
+  auto previous = g_persistent_state_download_bytes.fetch_sub(size, std::memory_order_acq_rel);
+  CHECK(previous >= size);
 }
 
 }  // namespace
@@ -79,6 +103,7 @@ DownloadState::DownloadState(BlockIdExt block_id, BlockIdExt masterchain_block_i
 }
 
 void DownloadState::abort_query(td::Status reason) {
+  release_download_memory();
   if (promise_) {
     LOG(WARNING) << "failed to download state " << block_id_.to_str() << " from " << download_from_ << ": " << reason;
     promise_.set_error(std::move(reason));
@@ -94,7 +119,35 @@ void DownloadState::finish_query() {
   if (promise_) {
     promise_.set_value(std::move(state_));
   }
+  release_download_memory();
   stop();
+}
+
+void DownloadState::release_download_memory() {
+  release_persistent_state_download_memory(reserved_download_bytes_);
+  reserved_download_bytes_ = 0;
+}
+
+td::Status DownloadState::prepare_download_buffer(td::uint64 size) {
+  auto status = validate_persistent_state_size(size);
+  if (status.is_error()) {
+    return status;
+  }
+  if (reserved_download_bytes_ != 0) {
+    return td::Status::Error(ErrorCode::protoviolation,
+                             "persistent state download size announced twice");
+  }
+  if (!try_reserve_persistent_state_download_memory(size)) {
+    return td::Status::Error(ErrorCode::notready,
+                             PSTRING() << "persistent state download memory budget exceeded: "
+                                       << size << " requested, "
+                                       << kMaxTotalPersistentStateDownloadBytes << " total budget");
+  }
+  reserved_download_bytes_ = size;
+  total_size_ = size;
+  state_ = td::BufferSlice{td::narrow_cast<std::size_t>(total_size_)};
+  sum_ = 0;
+  return td::Status::OK();
 }
 
 void DownloadState::start_up() {
@@ -260,12 +313,11 @@ void DownloadState::got_state_size(td::BufferSlice size_or_not_found) {
                                abort_query(td::Status::Error(ErrorCode::notready, "state not found"));
                              },
                              [&](tos_api::tosNode_persistentStateSize &f) {
-                               auto status = validate_persistent_state_size(f.size_);
+                               auto status = prepare_download_buffer(f.size_);
                                if (status.is_error()) {
                                  abort_query(std::move(status));
                                  return;
                                }
-                               total_size_ = f.size_;
                                got_block_state_part(td::BufferSlice{}, 0);
                              }));
 }
@@ -273,10 +325,12 @@ void DownloadState::got_state_size(td::BufferSlice size_or_not_found) {
 void DownloadState::request_total_size() {
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {
     if (R.is_error()) {
+      td::actor::send_closure(SelfId, &DownloadState::abort_query, R.move_as_error());
       return;
     }
     auto res = fetch_tl_object<tos_api::tosNode_persistentStateSize>(R.move_as_ok(), true);
     if (res.is_error()) {
+      td::actor::send_closure(SelfId, &DownloadState::abort_query, res.move_as_error());
       return;
     }
     td::actor::send_closure(SelfId, &DownloadState::got_total_size, res.ok()->size_);
@@ -296,12 +350,11 @@ void DownloadState::request_total_size() {
 }
 
 void DownloadState::got_total_size(td::uint64 size) {
-  auto status = validate_persistent_state_size(size);
+  auto status = prepare_download_buffer(size);
   if (status.is_error()) {
     abort_query(std::move(status));
     return;
   }
-  total_size_ = size;
   if (!download_started_) {
     got_block_state_part(td::BufferSlice{}, 0);
   }
@@ -321,11 +374,6 @@ void DownloadState::got_block_state_part(td::BufferSlice data, td::uint32 reques
                                             << data.size() << " > " << requested_size));
     return;
   }
-  if (parts_.size() >= kMaxPersistentStateDownloadParts) {
-    abort_query(td::Status::Error(ErrorCode::protoviolation,
-                                  "persistent state has too many parts"));
-    return;
-  }
   if (data.size() > total_size_ || sum_ > total_size_ - data.size()) {
     abort_query(td::Status::Error(ErrorCode::protoviolation,
                                   "persistent state stream exceeds advertised size"));
@@ -339,10 +387,12 @@ void DownloadState::got_block_state_part(td::BufferSlice data, td::uint32 reques
   }
 
   bool short_part = requested_size != 0 && data.size() < requested_size;
-  sum_ += data.size();
   if (data.size() != 0) {
-    parts_.push_back(std::move(data));
+    auto dst = state_.as_slice();
+    dst.remove_prefix(td::narrow_cast<std::size_t>(sum_));
+    dst.copy_from(data.as_slice());
   }
+  sum_ += data.size();
 
   double elapsed = prev_logged_timer_.elapsed();
   if (elapsed > 5.0) {
@@ -375,15 +425,7 @@ void DownloadState::got_block_state_part(td::BufferSlice data, td::uint32 reques
 
   if (sum_ == total_size_) {
     status_.set_status(PSTRING() << block_id_.id.to_str() << " : " << sum_ << " bytes, finishing");
-    td::BufferSlice res{td::narrow_cast<std::size_t>(sum_)};
-    auto S = res.as_slice();
-    for (auto &p : parts_) {
-      S.copy_from(p.as_slice());
-      S.remove_prefix(p.size());
-    }
-    parts_.clear();
-    CHECK(!S.size());
-    got_block_state(std::move(res));
+    got_block_state(std::move(state_));
     return;
   }
 

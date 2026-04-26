@@ -10,6 +10,9 @@
 #include "td/utils/port/path.h"
 #include "vm/boc.h"
 
+#include <algorithm>
+#include <chrono>
+#include <cstring>
 #include <memory>
 #include <vector>
 
@@ -113,6 +116,26 @@ void make_incomplete_tx_key(const td::Bits256& tx_hash, char out[kIncompleteTxKe
 void make_incomplete_block_key(uint64_t block_number, char out[kIncompleteBlockKeyLen]) {
     out[0] = static_cast<char>(kIncompleteBlockTag);
     store_be_u64(block_number, out + 1);
+}
+
+uint64_t current_unix_seconds() {
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count());
+}
+
+std::string make_incomplete_marker_value(uint64_t timestamp) {
+    char out[8];
+    store_be_u64(timestamp, out);
+    return std::string(out, sizeof(out));
+}
+
+uint64_t load_incomplete_marker_timestamp(td::Slice value) {
+    if (value.size() != 8) {
+        return 0;
+    }
+    return load_be_u64(value.data());
 }
 
 // Generic put: serialize cell, set under the given key, optionally flush.
@@ -480,9 +503,9 @@ td::Result<size_t> EvmRpcCacheDb::count_pending_side_effects() {
 td::Status EvmRpcCacheDb::put_incomplete_transaction(const td::Bits256& tx_hash) {
     char key[kIncompleteTxKeyLen];
     make_incomplete_tx_key(tx_hash, key);
-    static const char value[] = "1";
+    auto value = make_incomplete_marker_value(current_unix_seconds());
     auto status = db_->set(td::Slice{key, kIncompleteTxKeyLen},
-                           td::Slice{value, 1});
+                           td::Slice{value.data(), value.size()});
     if (status.is_error()) return status;
     return db_->flush();
 }
@@ -523,9 +546,9 @@ td::Result<size_t> EvmRpcCacheDb::count_incomplete_transactions() {
 td::Status EvmRpcCacheDb::put_incomplete_block(uint64_t block_number) {
     char key[kIncompleteBlockKeyLen];
     make_incomplete_block_key(block_number, key);
-    static const char value[] = "1";
+    auto value = make_incomplete_marker_value(current_unix_seconds());
     auto status = db_->set(td::Slice{key, kIncompleteBlockKeyLen},
-                           td::Slice{value, 1});
+                           td::Slice{value.data(), value.size()});
     if (status.is_error()) return status;
     return db_->flush();
 }
@@ -559,6 +582,89 @@ td::Status EvmRpcCacheDb::for_each_incomplete_block(
 td::Result<size_t> EvmRpcCacheDb::count_incomplete_blocks() {
     char prefix = static_cast<char>(kIncompleteBlockTag);
     return db_->count(td::Slice{&prefix, 1});
+}
+
+td::Status EvmRpcCacheDb::prune_incomplete_markers(
+    uint64_t now_unix_seconds,
+    uint64_t max_age_seconds,
+    size_t max_transactions,
+    size_t max_blocks,
+    IncompleteMarkerPruneStats* stats) {
+
+    struct Marker {
+        std::string key;
+        uint64_t timestamp{0};
+    };
+
+    std::vector<Marker> tx_markers;
+    std::vector<Marker> block_markers;
+    auto collect_status = db_->for_each(
+        [&](td::Slice key, td::Slice value) -> td::Status {
+            if (key.size() == kIncompleteTxKeyLen &&
+                static_cast<uint8_t>(key[0]) == kIncompleteTxTag) {
+                tx_markers.push_back(Marker{
+                    std::string(key.data(), key.size()),
+                    load_incomplete_marker_timestamp(value)});
+            } else if (key.size() == kIncompleteBlockKeyLen &&
+                       static_cast<uint8_t>(key[0]) == kIncompleteBlockTag) {
+                block_markers.push_back(Marker{
+                    std::string(key.data(), key.size()),
+                    load_incomplete_marker_timestamp(value)});
+            }
+            return td::Status::OK();
+        });
+    if (collect_status.is_error()) {
+        return collect_status;
+    }
+
+    std::vector<std::string> keys_to_delete;
+    auto prune = [&](std::vector<Marker>& markers,
+                     size_t max_count,
+                     size_t& expired,
+                     size_t& overflow) {
+        std::vector<Marker> retained;
+        retained.reserve(markers.size());
+        for (auto& marker : markers) {
+            bool is_expired = marker.timestamp != 0 &&
+                              max_age_seconds != 0 &&
+                              now_unix_seconds > marker.timestamp &&
+                              now_unix_seconds - marker.timestamp > max_age_seconds;
+            if (is_expired) {
+                keys_to_delete.push_back(std::move(marker.key));
+                ++expired;
+            } else {
+                retained.push_back(std::move(marker));
+            }
+        }
+        std::sort(retained.begin(), retained.end(),
+                  [](const Marker& a, const Marker& b) {
+                      if (a.timestamp != b.timestamp) return a.timestamp < b.timestamp;
+                      return a.key < b.key;
+                  });
+        while (retained.size() > max_count) {
+            keys_to_delete.push_back(std::move(retained.front().key));
+            retained.erase(retained.begin());
+            ++overflow;
+        }
+    };
+
+    IncompleteMarkerPruneStats local_stats;
+    auto& out = stats ? *stats : local_stats;
+    prune(tx_markers, max_transactions,
+          out.expired_transactions, out.overflow_transactions);
+    prune(block_markers, max_blocks,
+          out.expired_blocks, out.overflow_blocks);
+
+    for (const auto& key : keys_to_delete) {
+        auto erase_status = db_->erase(td::Slice{key.data(), key.size()});
+        if (erase_status.is_error()) {
+            return erase_status;
+        }
+    }
+    if (!keys_to_delete.empty()) {
+        return db_->flush();
+    }
+    return td::Status::OK();
 }
 
 EvmRpcCacheDb* evm_rpc_cache_db() {

@@ -29,17 +29,23 @@ void StructLogTracer::on_instruction_start(uint32_t pc,
                                             int64_t gas,
                                             const evmone::ExecutionState& /*state*/,
                                             const silkworm::IntraBlockState& /*ibs*/) noexcept {
+    if (!steps_.empty()) {
+        steps_.back().gas_cost = steps_.back().gas - gas;
+    }
+    if (truncated_) {
+        return;
+    }
+    if (steps_.size() >= max_steps_) {
+        truncated_ = true;
+        return;
+    }
+
     TraceStep step;
     step.pc = pc;
     step.op = (pc < code_.size()) ? code_[pc] : 0;
     step.gas = gas;
     step.stack_height = stack_height;
     step.depth = depth_;
-
-    // Gas cost = previous gas - current gas (for the previous instruction)
-    if (!steps_.empty()) {
-        steps_.back().gas_cost = steps_.back().gas - gas;
-    }
 
     // Capture top 16 stack values (or fewer)
     int capture = std::min(stack_height, 16);
@@ -50,13 +56,12 @@ void StructLogTracer::on_instruction_start(uint32_t pc,
     }
 
     steps_.push_back(std::move(step));
-    prev_gas_ = gas;
 }
 
 void StructLogTracer::on_execution_end(const evmc_result& /*result*/,
                                         const silkworm::IntraBlockState& /*ibs*/) noexcept {
     // Set gas_cost for the last instruction
-    if (!steps_.empty()) {
+    if (!steps_.empty() && !truncated_) {
         steps_.back().gas_cost = steps_.back().gas;  // remaining gas consumed
     }
 }
@@ -65,7 +70,8 @@ ExecutionTrace trace_evm_transaction(
     const silkworm::Transaction& txn,
     const silkworm::Block& block,
     const EvmState& evm_state,
-    const silkworm::ChainConfig& config) {
+    const silkworm::ChainConfig& config,
+    size_t max_steps) {
 
     ExecutionTrace trace;
 
@@ -81,7 +87,7 @@ ExecutionTrace trace_evm_transaction(
     silkworm::EVM evm(block, ibs, config);
 
     // Add the tracer
-    StructLogTracer tracer;
+    StructLogTracer tracer(max_steps);
     evm.add_tracer(tracer);
 
     auto rev = evm.revision();
@@ -98,7 +104,8 @@ ExecutionTrace trace_evm_transaction(
     trace.success = (call_result.status == EVMC_SUCCESS);
     trace.gas_used = txn.gas_limit - call_result.gas_left;
     trace.return_data = std::move(call_result.data);
-    trace.steps = tracer.steps();
+    trace.truncated = tracer.truncated();
+    trace.steps = tracer.consume_steps();
 
     return trace;
 }

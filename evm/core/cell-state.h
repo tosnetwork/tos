@@ -119,10 +119,15 @@ class CellEvmState : public silkworm::State {
     /// Iterate over every account in the dictionary, in nibbled key order.
     /// The callback receives the 256-bit address-padded key and the decoded Account.
     /// (The key's last 20 bytes are the EVM address.)
+    bool for_each_account_while(std::function<bool(const unsigned char key[32],
+                                                   const silkworm::Account&)> cb) const;
     void for_each_account(std::function<void(const unsigned char key[32],
                                               const silkworm::Account&)> cb) const;
 
     /// Iterate over every storage slot of one account.
+    bool for_each_storage_while(const evmc::address& address,
+                                std::function<bool(const evmc::bytes32& slot,
+                                                   const evmc::bytes32& value)> cb) const;
     void for_each_storage(const evmc::address& address,
                           std::function<void(const evmc::bytes32& slot,
                                               const evmc::bytes32& value)> cb) const;

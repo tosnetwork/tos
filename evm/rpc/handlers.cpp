@@ -44,6 +44,7 @@
 #include <silkworm/core/types/address.hpp>
 #include <intx/intx.hpp>
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -52,6 +53,7 @@
 #include <condition_variable>
 #include <limits>
 #include <mutex>
+#include <string_view>
 
 namespace evm_workchain {
 
@@ -63,6 +65,8 @@ static constexpr uint64_t kMaxRpcRequestsPerSec = 100;   // refill rate (tokens/
 static constexpr uint64_t kMaxRpcBurst = 1000;            // bucket capacity
 static constexpr uint64_t kMaxGetLogsRequestsPerSec = 10; // tighter refill for eth_getLogs
 static constexpr uint64_t kMaxGetLogsBurst = 50;          // tighter burst for eth_getLogs
+static constexpr uint64_t kMaxGetProofRequestsPerSec = 2; // proof building is CPU-heavy
+static constexpr uint64_t kMaxGetProofBurst = 4;
 static constexpr uint64_t kMaxGetLogsBlockRange = 10000;  // max toBlock - fromBlock
 static constexpr size_t   kMaxRpcParamsSize = 1 << 20;    // 1 MB
 
@@ -119,6 +123,43 @@ struct RateLimiter {
 
 static RateLimiter g_rpc_limiter{kMaxRpcBurst, kMaxRpcRequestsPerSec};
 static RateLimiter g_getlogs_limiter{kMaxGetLogsBurst, kMaxGetLogsRequestsPerSec};
+static RateLimiter g_getproof_limiter{kMaxGetProofBurst, kMaxGetProofRequestsPerSec};
+static std::atomic<uint32_t> g_getproof_inflight{0};
+#ifdef TOS_ENABLE_EVM_DEBUG_RPC
+static std::atomic<uint32_t> g_debug_trace_inflight{0};
+#endif
+
+class AtomicConcurrencyPermit {
+  public:
+    AtomicConcurrencyPermit(std::atomic<uint32_t>& counter, uint32_t max_inflight)
+        : counter_(counter) {
+        auto current = counter_.load(std::memory_order_relaxed);
+        while (current < max_inflight) {
+            if (counter_.compare_exchange_weak(
+                    current, current + 1,
+                    std::memory_order_acq_rel,
+                    std::memory_order_relaxed)) {
+                acquired_ = true;
+                return;
+            }
+        }
+    }
+
+    AtomicConcurrencyPermit(const AtomicConcurrencyPermit&) = delete;
+    AtomicConcurrencyPermit& operator=(const AtomicConcurrencyPermit&) = delete;
+
+    ~AtomicConcurrencyPermit() {
+        if (acquired_) {
+            counter_.fetch_sub(1, std::memory_order_acq_rel);
+        }
+    }
+
+    explicit operator bool() const noexcept { return acquired_; }
+
+  private:
+    std::atomic<uint32_t>& counter_;
+    bool acquired_{false};
+};
 
 // Rate limiting is disabled by default so that test harnesses are not
 // affected.  Production code enables it via enable_evm_rpc_rate_limit().
@@ -129,6 +170,7 @@ void enable_evm_rpc_rate_limit(bool enable) {
     if (enable) {
         g_rpc_limiter.reset();
         g_getlogs_limiter.reset();
+        g_getproof_limiter.reset();
     }
 }
 
@@ -150,6 +192,7 @@ size_t max_eth_send_raw_tx_hex_size() {
 void reset_evm_rpc_rate_limit_for_test() {
     g_rpc_limiter.reset();
     g_getlogs_limiter.reset();
+    g_getproof_limiter.reset();
 }
 
 // ---------------------------------------------------------------------------
@@ -181,6 +224,36 @@ static std::string to_hex_data(const uint8_t* data, size_t len) {
     }
     out += "\"";
     return out;
+}
+
+static bool append_bounded(std::string& out, std::string_view piece, size_t max_total_bytes) {
+    if (piece.size() > max_total_bytes || out.size() > max_total_bytes - piece.size()) {
+        return false;
+    }
+    out.append(piece.data(), piece.size());
+    return true;
+}
+
+static bool append_hex_data_bounded(std::string& out,
+                                    const uint8_t* data,
+                                    size_t len,
+                                    size_t max_total_bytes) {
+    constexpr size_t kHexWrapperBytes = 4;  // "0x"
+    if (len > (std::numeric_limits<size_t>::max() - kHexWrapperBytes) / 2) {
+        return false;
+    }
+    const size_t needed = kHexWrapperBytes + len * 2;
+    if (needed > max_total_bytes || out.size() > max_total_bytes - needed) {
+        return false;
+    }
+    out += "\"0x";
+    for (size_t i = 0; i < len; ++i) {
+        char buf[3];
+        std::snprintf(buf, sizeof(buf), "%02x", data[i]);
+        out.append(buf, 2);
+    }
+    out.push_back('"');
+    return true;
 }
 
 static std::string to_hex_addr(const evmc::address& addr) {
@@ -1217,6 +1290,7 @@ static RpcResult handle_get_transaction_by_hash(const std::string& params, const
 }
 
 // --- Ethereum opcode names (subset for trace output) ---
+#ifdef TOS_ENABLE_EVM_DEBUG_RPC
 static const char* opcode_name(uint8_t op) {
     static const char* names[256] = {};
     static bool init = false;
@@ -1255,6 +1329,22 @@ static const char* opcode_name(uint8_t op) {
 }
 
 static RpcResult handle_debug_trace_transaction(const std::string& params, const std::string& id) {
+    const char* expected_token = std::getenv("TOS_EVM_DEBUG_RPC_TOKEN");
+    const std::string provided_token = extract_json_string_value(params, "auth");
+    if (expected_token == nullptr || expected_token[0] == '\0') {
+        return {make_error(id, -32601,
+                           "debug_traceTransaction requires TOS_EVM_DEBUG_RPC_TOKEN"), true};
+    }
+    if (std::strlen(expected_token) < 16 || provided_token != expected_token) {
+        return {make_error(id, -32001,
+                           "debug_traceTransaction unauthorized"), true};
+    }
+    AtomicConcurrencyPermit permit(g_debug_trace_inflight, 1);
+    if (!permit) {
+        return {make_error(id, -32005,
+                           "debug_traceTransaction already running"), true};
+    }
+
     // Parse tx hash
     silkworm::Bytes hash_bytes;
     if (!parse_hex_bytes(params, hash_bytes) || hash_bytes.size() != 32) {
@@ -1282,56 +1372,96 @@ static RpcResult handle_debug_trace_transaction(const std::string& params, const
     txn.data = stored_tx->data;
     txn.set_sender(stored_tx->from);
 
+    constexpr size_t kMaxTraceSteps = 250'000;
+    constexpr size_t kMaxTraceResponseBytes = 32 * 1024 * 1024;
     uint8_t rs[32] = {};
     auto block = make_evm_block(stored_tx->block_number, 0, rs);
-    auto trace = trace_evm_transaction(txn, block, global_evm_state(), evm_chain_config());
+    auto trace = trace_evm_transaction(
+        txn, block, global_evm_state(), evm_chain_config(), kMaxTraceSteps);
 
-    // Codex round 6 (R6-H-12): cap the structLogs response. The tracer
-    // pushes one step per executed opcode (with up-to-1024-deep stack
-    // capture); a public caller can submit a long-running stored tx
-    // hash and force MB-scale JSON construction while the global EVM
-    // state lock is held inside `trace_evm_transaction`. 250'000 steps
-    // is generous (covers any realistic mainnet tx — L1 max ~30M gas
-    // ÷ ~3 gas/op ≈ 10M steps theoretical, but legitimate debug use
-    // hits a tiny fraction of that) and bounds worst-case output to
-    // a few tens of MB.
-    constexpr size_t kMaxTraceSteps = 250'000;
-    const size_t step_count = std::min(trace.steps.size(), kMaxTraceSteps);
-    const bool trace_truncated = trace.steps.size() > kMaxTraceSteps;
+    std::string result;
+    auto append_result = [&](std::string_view piece) {
+        return append_bounded(result, piece, kMaxTraceResponseBytes);
+    };
+    auto append_result_str = [&](const std::string& piece) {
+        return append_bounded(result, piece, kMaxTraceResponseBytes);
+    };
+    auto append_result_hex = [&](const uint8_t* data, size_t len) {
+        return append_hex_data_bounded(result, data, len, kMaxTraceResponseBytes);
+    };
 
-    // Build the structLogs JSON
-    std::string logs = "[";
-    for (size_t i = 0; i < step_count; ++i) {
-        if (i > 0) logs += ",";
-        const auto& s = trace.steps[i];
-        logs += "{\"pc\":" + std::to_string(s.pc);
-        logs += ",\"op\":\"" + std::string(opcode_name(s.op)) + "\"";
-        logs += ",\"gas\":" + std::to_string(s.gas);
-        logs += ",\"gasCost\":" + std::to_string(s.gas_cost);
-        logs += ",\"depth\":" + std::to_string(s.depth);
-        logs += ",\"stack\":[";
-        for (size_t j = 0; j < s.stack.size(); ++j) {
-            if (j > 0) logs += ",";
-            logs += "\"" + intx::hex(s.stack[j]) + "\"";
-        }
-        logs += "]}";
+    if (!append_result("{\"gas\":") ||
+        !append_result_str(std::to_string(trace.gas_used)) ||
+        !append_result(",\"failed\":") ||
+        !append_result(trace.success ? "false" : "true") ||
+        !append_result(",\"returnValue\":") ||
+        !append_result_hex(trace.return_data.data(), trace.return_data.size()) ||
+        !append_result(",\"structLogs\":["))
+    {
+        return {make_error(id, -32602,
+                           "debug_traceTransaction response too large"), true};
     }
-    logs += "]";
 
-    std::string result = "{\"gas\":" + std::to_string(trace.gas_used) +
-        ",\"failed\":" + (trace.success ? "false" : "true") +
-        ",\"returnValue\":" + to_hex_data(trace.return_data.data(), trace.return_data.size()) +
-        ",\"structLogs\":" + logs;
-    if (trace_truncated) {
+    for (size_t i = 0; i < trace.steps.size(); ++i) {
+        if (i > 0 && !append_result(",")) {
+            return {make_error(id, -32602,
+                               "debug_traceTransaction response too large"), true};
+        }
+        const auto& s = trace.steps[i];
+        if (!append_result("{\"pc\":") ||
+            !append_result_str(std::to_string(s.pc)) ||
+            !append_result(",\"op\":\"") ||
+            !append_result(opcode_name(s.op)) ||
+            !append_result("\",\"gas\":") ||
+            !append_result_str(std::to_string(s.gas)) ||
+            !append_result(",\"gasCost\":") ||
+            !append_result_str(std::to_string(s.gas_cost)) ||
+            !append_result(",\"depth\":") ||
+            !append_result_str(std::to_string(s.depth)) ||
+            !append_result(",\"stack\":["))
+        {
+            return {make_error(id, -32602,
+                               "debug_traceTransaction response too large"), true};
+        }
+        for (size_t j = 0; j < s.stack.size(); ++j) {
+            if (j > 0 && !append_result(",")) {
+                return {make_error(id, -32602,
+                                   "debug_traceTransaction response too large"), true};
+            }
+            if (!append_result("\"") ||
+                !append_result_str(intx::hex(s.stack[j])) ||
+                !append_result("\""))
+            {
+                return {make_error(id, -32602,
+                                   "debug_traceTransaction response too large"), true};
+            }
+        }
+        if (!append_result("]}")) {
+            return {make_error(id, -32602,
+                               "debug_traceTransaction response too large"), true};
+        }
+    }
+    if (!append_result("]")) {
+        return {make_error(id, -32602,
+                           "debug_traceTransaction response too large"), true};
+    }
+    if (trace.truncated) {
         // Non-spec extension: surface truncation as a top-level boolean
         // so consumers can detect when the structLogs array is incomplete
         // due to the per-request step cap.
-        result += ",\"truncated\":true";
+        if (!append_result(",\"truncated\":true")) {
+            return {make_error(id, -32602,
+                               "debug_traceTransaction response too large"), true};
+        }
     }
-    result += "}";
+    if (!append_result("}")) {
+        return {make_error(id, -32602,
+                           "debug_traceTransaction response too large"), true};
+    }
 
     return {make_result(id, result), false};
 }
+#endif
 
 static RpcResult handle_eth_subscribe(const std::string& params, const std::string& id) {
     // Parse subscription type: ["newHeads"], ["logs", {filter}], ["newPendingTransactions"]
@@ -2459,6 +2589,11 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
     if (!parse_hex_address(params, addr)) {
         return {make_error(id, -32602, "invalid address"), true};
     }
+    AtomicConcurrencyPermit permit(g_getproof_inflight, 1);
+    if (!permit) {
+        return {make_error(id, -32005,
+                           "eth_getProof already running"), true};
+    }
 
     auto& state = global_evm_state();
 
@@ -2474,9 +2609,10 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
     // `std::shared_mutex` (recursive ownership is not portable).
     // Replace both with direct backend access via `state.state()` —
     // safe under our single-acquire shared lock.
-    constexpr size_t kMaxGetProofAccountIter = 1'000'000;
-    constexpr size_t kMaxGetProofStorageIter = 1'000'000;
-    constexpr size_t kMaxGetProofTotalAccountStorageIter = 1'000'000;
+    constexpr size_t kMaxGetProofAccountIter = 16'384;
+    constexpr size_t kMaxGetProofStorageIter = 65'536;
+    constexpr size_t kMaxGetProofTotalAccountStorageIter = 65'536;
+    constexpr size_t kMaxGetProofResponseBytes = 8 * 1024 * 1024;
     std::shared_lock proof_lock(state.mutex());
     auto* cell_state = dynamic_cast<CellEvmState*>(&state.state());
     auto acct = state.state().read_account(addr);
@@ -2498,7 +2634,7 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
     // slots) but tight enough to bound worst-case work and bandwidth.
     // Reject excess keys with a JSON-RPC error rather than silently
     // truncating, so callers know they need to chunk their request.
-    constexpr size_t kMaxGetProofStorageKeys = 256;
+    constexpr size_t kMaxGetProofStorageKeys = 128;
     std::vector<evmc::bytes32> slots;
     auto kpos = params.find('[', params.find('[') + 1);
     auto kend = (kpos != std::string::npos) ? params.find(']', kpos + 1) : std::string::npos;
@@ -2523,7 +2659,7 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
             if (slots.size() >= kMaxGetProofStorageKeys) {
                 return {make_error(id, -32602,
                                    "eth_getProof: too many storage keys "
-                                   "(max 256 per request)"), true};
+                                   "(max 128 per request)"), true};
             }
             evmc::bytes32 s{};
             size_t nibble_offset = 64 - hex_len;  // left-pad nibbles
@@ -2547,10 +2683,9 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
     // Codex round 5 (H-06) + round 7 (R7-H-17): caller already holds
     // `proof_lock` (acquired immediately after argument parsing); we
     // bound the per-request iteration so a public caller cannot force
-    // unbounded full-state walks: 1 M accounts and 1 M target-account
-    // storage slots per request — orders of magnitude above any
-    // realistic legitimate use, far below the consensus full-root
-    // recompute caps (kMaxFullRootAccounts / kMaxFullRootStorageSlots).
+    // consensus-sized full-state walks. Until a persistent Ethereum proof
+    // backend exists, public eth_getProof is intentionally limited to a
+    // small synchronous proof budget and fails closed on larger states.
 
     // ----- Build storage trie + storage proofs -----
     evmc::bytes32 storage_hash = silkworm::kEmptyRoot;
@@ -2559,21 +2694,27 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
     if (acct) {
         if (cell_state) {
             size_t storage_iter = 0;
-            cell_state->for_each_storage(addr, [&](const evmc::bytes32& slot,
-                                                    const evmc::bytes32& value) {
-                if (storage_truncated) return;
+            bool storage_completed = cell_state->for_each_storage_while(
+                addr,
+                [&](const evmc::bytes32& slot,
+                    const evmc::bytes32& value) {
                 if (++storage_iter > kMaxGetProofStorageIter) {
                     storage_truncated = true;
-                    return;
+                    return false;
                 }
-                if (value == evmc::bytes32{}) return;  // zero values absent from trie
+                if (value == evmc::bytes32{}) return true;  // zero values absent from trie
                 auto kh = ethash::keccak256(slot.bytes, 32);
                 silkworm::Bytes key(kh.bytes, kh.bytes + 32);
                 silkworm::Bytes val_rlp;
                 intx::uint256 v_int = intx::be::load<intx::uint256>(value);
                 silkworm::rlp::encode(val_rlp, v_int);
                 storage_kv[std::move(key)] = std::move(val_rlp);
+                return true;
             });
+            if (!storage_completed && !storage_truncated) {
+                return {make_error(id, -32603,
+                                   "eth_getProof: malformed target account storage"), true};
+            }
             if (storage_truncated) {
                 return {make_error(id, -32603,
                                    "eth_getProof: target account storage exceeds "
@@ -2594,21 +2735,27 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
         if (!cell_state) {
             return silkworm::kEmptyRoot;
         }
-        cell_state->for_each_storage(owner, [&](const evmc::bytes32& slot,
-                                                const evmc::bytes32& value) {
-            if (account_storage_truncated) return;
+        bool storage_completed = cell_state->for_each_storage_while(
+            owner,
+            [&](const evmc::bytes32& slot,
+                const evmc::bytes32& value) {
             if (++account_storage_iter > kMaxGetProofTotalAccountStorageIter) {
                 account_storage_truncated = true;
-                return;
+                return false;
             }
-            if (value == evmc::bytes32{}) return;
+            if (value == evmc::bytes32{}) return true;
             auto kh = ethash::keccak256(slot.bytes, 32);
             silkworm::Bytes key(kh.bytes, kh.bytes + 32);
             silkworm::Bytes val_rlp;
             intx::uint256 v_int = intx::be::load<intx::uint256>(value);
             silkworm::rlp::encode(val_rlp, v_int);
             kv[std::move(key)] = std::move(val_rlp);
+            return true;
         });
+        if (!storage_completed && !account_storage_truncated) {
+            account_storage_truncated = true;
+            return silkworm::kEmptyRoot;
+        }
         if (account_storage_truncated) {
             return silkworm::kEmptyRoot;
         }
@@ -2617,12 +2764,12 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
     {
         if (cell_state) {
             size_t account_iter = 0;
-            cell_state->for_each_account([&](const unsigned char key[32],
-                                             const silkworm::Account& other_acct) {
-                if (account_truncated) return;
+            bool account_completed = cell_state->for_each_account_while(
+                [&](const unsigned char key[32],
+                    const silkworm::Account& other_acct) {
                 if (++account_iter > kMaxGetProofAccountIter) {
                     account_truncated = true;
-                    return;
+                    return false;
                 }
                 evmc::address other_addr{};
                 std::memcpy(other_addr.bytes, key + 12, 20);
@@ -2632,12 +2779,17 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
                 evmc::bytes32 their_storage_hash =
                     (other_addr == addr) ? storage_hash
                                          : compute_storage_root_for_account(other_addr);
-                if (account_storage_truncated) return;
+                if (account_storage_truncated) return false;
                 silkworm::Bytes acct_rlp = other_acct.rlp(their_storage_hash);
                 auto ah = ethash::keccak256(other_addr.bytes, 20);
                 silkworm::Bytes hashed_addr(ah.bytes, ah.bytes + 32);
                 account_kv[std::move(hashed_addr)] = std::move(acct_rlp);
+                return true;
             });
+            if (!account_completed && !account_truncated && !account_storage_truncated) {
+                return {make_error(id, -32603,
+                                   "eth_getProof: malformed account dictionary"), true};
+            }
             if (account_truncated) {
                 return {make_error(id, -32603,
                                    "eth_getProof: account dictionary exceeds "
@@ -2692,15 +2844,16 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
         account_proof.push_back(silkworm::Bytes{0x80});
     }
 
-    // Helper to format a list of RLP node bytes as JSON array of hex strings
-    auto format_proof = [](const std::vector<silkworm::Bytes>& proof) -> std::string {
-        std::string out = "[";
+    // Helper to append a list of RLP node bytes as JSON array of hex strings.
+    auto append_proof = [&](std::string& out,
+                            const std::vector<silkworm::Bytes>& proof) -> bool {
+        if (!append_bounded(out, "[", kMaxGetProofResponseBytes)) return false;
         for (size_t i = 0; i < proof.size(); ++i) {
-            if (i > 0) out += ",";
-            out += to_hex_data(proof[i].data(), proof[i].size());
+            if (i > 0 && !append_bounded(out, ",", kMaxGetProofResponseBytes)) return false;
+            if (!append_hex_data_bounded(out, proof[i].data(), proof[i].size(),
+                                         kMaxGetProofResponseBytes)) return false;
         }
-        out += "]";
-        return out;
+        return append_bounded(out, "]", kMaxGetProofResponseBytes);
     };
 
     // For non-existent accounts geth still surfaces canonical defaults
@@ -2708,16 +2861,39 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
     // silkworm::Account default-constructs with code_hash = kEmptyHash and
     // we already initialise storage_hash to kEmptyRoot above, so emitting
     // those fields directly produces the expected JSON.
-    std::string r = "{";
-    r += "\"address\":" + to_hex_addr(addr) + ",";
-    r += "\"balance\":" + to_hex_quantity(a.balance) + ",";
-    r += "\"nonce\":" + to_hex_quantity(a.nonce) + ",";
-    r += "\"codeHash\":" + to_hex_data(a.code_hash.bytes, 32) + ",";
-    r += "\"storageHash\":" + to_hex_data(storage_hash.bytes, 32) + ",";
-    r += "\"accountProof\":" + format_proof(account_proof) + ",";
-    r += "\"storageProof\":[";
+    std::string r;
+    auto append_r = [&](std::string_view piece) {
+        return append_bounded(r, piece, kMaxGetProofResponseBytes);
+    };
+    auto append_r_str = [&](const std::string& piece) {
+        return append_bounded(r, piece, kMaxGetProofResponseBytes);
+    };
+    auto append_r_hex = [&](const uint8_t* data, size_t len) {
+        return append_hex_data_bounded(r, data, len, kMaxGetProofResponseBytes);
+    };
+
+    if (!append_r("{\"address\":") ||
+        !append_r_str(to_hex_addr(addr)) ||
+        !append_r(",\"balance\":") ||
+        !append_r_str(to_hex_quantity(a.balance)) ||
+        !append_r(",\"nonce\":") ||
+        !append_r_str(to_hex_quantity(a.nonce)) ||
+        !append_r(",\"codeHash\":") ||
+        !append_r_hex(a.code_hash.bytes, 32) ||
+        !append_r(",\"storageHash\":") ||
+        !append_r_hex(storage_hash.bytes, 32) ||
+        !append_r(",\"accountProof\":") ||
+        !append_proof(r, account_proof) ||
+        !append_r(",\"storageProof\":["))
+    {
+        return {make_error(id, -32602,
+                           "eth_getProof response too large"), true};
+    }
     for (size_t i = 0; i < slots.size(); i++) {
-        if (i > 0) r += ",";
+        if (i > 0 && !append_r(",")) {
+            return {make_error(id, -32602,
+                               "eth_getProof response too large"), true};
+        }
         // Codex round 7 (R7-H-17): use the underlying backend directly
         // — `state.read_storage_copy` would re-acquire the same shared
         // mutex under our `proof_lock`, which is UB for std::shared_mutex.
@@ -2734,13 +2910,22 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
         if (slot_proof.empty()) {
             slot_proof.push_back(silkworm::Bytes{0x80});
         }
-        r += "{";
-        r += "\"key\":" + to_hex_data(slots[i].bytes, 32) + ",";
-        r += "\"value\":" + to_hex_quantity(intx::be::load<intx::uint256>(v)) + ",";
-        r += "\"proof\":" + format_proof(slot_proof);
-        r += "}";
+        if (!append_r("{\"key\":") ||
+            !append_r_hex(slots[i].bytes, 32) ||
+            !append_r(",\"value\":") ||
+            !append_r_str(to_hex_quantity(intx::be::load<intx::uint256>(v))) ||
+            !append_r(",\"proof\":") ||
+            !append_proof(r, slot_proof) ||
+            !append_r("}"))
+        {
+            return {make_error(id, -32602,
+                               "eth_getProof response too large"), true};
+        }
     }
-    r += "]}";
+    if (!append_r("]}")) {
+        return {make_error(id, -32602,
+                           "eth_getProof response too large"), true};
+    }
     return {make_result(id, r), false};
 }
 
@@ -3832,46 +4017,96 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
             std::memcpy(buf + 8, &kk, 8);
             auto txh = ethash::keccak256(buf, 16);
 
-            out2 += "{";
-            out2 += "\"status\":\"" + std::string(oc.result.success ? "0x1" : "0x0") + "\",";
-            out2 += "\"returnData\":" + to_hex_data(oc.result.return_data.data(), oc.result.return_data.size()) + ",";
-            out2 += "\"gasUsed\":" + to_hex_quantity(oc.result.gas_used) + ",";
-            out2 += "\"maxUsedGas\":" + to_hex_quantity(oc.result.gas_used) + ",";
+            std::string call_json;
+            const size_t call_budget = kMaxSimulateResponseBytes - out2.size();
+            auto append_call = [&](std::string_view piece) {
+                return append_bounded(call_json, piece, call_budget);
+            };
+            auto append_call_str = [&](const std::string& piece) {
+                return append_bounded(call_json, piece, call_budget);
+            };
+            auto append_call_hex = [&](const uint8_t* data, size_t len) {
+                return append_hex_data_bounded(call_json, data, len, call_budget);
+            };
+
+            if (!append_call("{") ||
+                !append_call("\"status\":\"") ||
+                !append_call(oc.result.success ? "0x1" : "0x0") ||
+                !append_call("\",\"returnData\":") ||
+                !append_call_hex(oc.result.return_data.data(), oc.result.return_data.size()) ||
+                !append_call(",\"gasUsed\":") ||
+                !append_call_str(to_hex_quantity(oc.result.gas_used)) ||
+                !append_call(",\"maxUsedGas\":") ||
+                !append_call_str(to_hex_quantity(oc.result.gas_used)) ||
+                !append_call(","))
+            {
+                return {make_error(id, -32602,
+                                   "eth_simulateV1 response too large"), true};
+            }
 
             // logs[]: synthetic transfer log first (when traceTransfers
             // on), then EVM-emitted logs. Per-log envelope mirrors what
             // eth_getLogs returns for real chain logs.
-            out2 += "\"logs\":[";
+            if (!append_call("\"logs\":[")) {
+                return {make_error(id, -32602,
+                                   "eth_simulateV1 response too large"), true};
+            }
             bool first_log = true;
-            auto emit_log = [&](const silkworm::Log& log) {
-                if (!first_log) out2 += ",";
+            auto emit_log = [&](const silkworm::Log& log) -> bool {
+                if (!first_log && !append_call(",")) return false;
                 first_log = false;
-                out2 += "{\"address\":" + to_hex_addr(log.address) + ",";
-                out2 += "\"topics\":[";
-                for (size_t ti = 0; ti < log.topics.size(); ti++) {
-                    if (ti > 0) out2 += ",";
-                    out2 += to_hex_data(log.topics[ti].bytes, 32);
+                if (!append_call("{\"address\":") ||
+                    !append_call_str(to_hex_addr(log.address)) ||
+                    !append_call(",\"topics\":["))
+                {
+                    return false;
                 }
-                out2 += "],\"data\":" + to_hex_data(log.data.data(), log.data.size()) + ",";
-                out2 += "\"blockHash\":" + zero_hash + ",";
-                out2 += "\"blockNumber\":" + to_hex_quantity(bn) + ",";
-                out2 += "\"blockTimestamp\":" + to_hex_quantity(target_ts) + ",";
-                out2 += "\"transactionHash\":" + to_hex_data(txh.bytes, 32) + ",";
-                out2 += "\"transactionIndex\":" + to_hex_quantity(static_cast<uint64_t>(k)) + ",";
-                out2 += "\"logIndex\":" + to_hex_quantity(block_log_index) + ",";
-                out2 += "\"removed\":false";
-                out2 += "}";
+                for (size_t ti = 0; ti < log.topics.size(); ti++) {
+                    if (ti > 0 && !append_call(",")) return false;
+                    if (!append_call_hex(log.topics[ti].bytes, 32)) return false;
+                }
+                if (!append_call("],\"data\":") ||
+                    !append_call_hex(log.data.data(), log.data.size()) ||
+                    !append_call(",\"blockHash\":") ||
+                    !append_call(zero_hash) ||
+                    !append_call(",\"blockNumber\":") ||
+                    !append_call_str(to_hex_quantity(bn)) ||
+                    !append_call(",\"blockTimestamp\":") ||
+                    !append_call_str(to_hex_quantity(target_ts)) ||
+                    !append_call(",\"transactionHash\":") ||
+                    !append_call_hex(txh.bytes, 32) ||
+                    !append_call(",\"transactionIndex\":") ||
+                    !append_call_str(to_hex_quantity(static_cast<uint64_t>(k))) ||
+                    !append_call(",\"logIndex\":") ||
+                    !append_call_str(to_hex_quantity(block_log_index)) ||
+                    !append_call(",\"removed\":false}"))
+                {
+                    return false;
+                }
                 block_log_index++;
+                return true;
             };
-            for (const auto& log : oc.synthetic_logs) emit_log(log);
-            for (const auto& log : oc.result.logs) emit_log(log);
-            out2 += "]";
+            for (const auto& log : oc.synthetic_logs) {
+                if (!emit_log(log)) {
+                    return {make_error(id, -32602,
+                                       "eth_simulateV1 response too large"), true};
+                }
+            }
+            for (const auto& log : oc.result.logs) {
+                if (!emit_log(log)) {
+                    return {make_error(id, -32602,
+                                       "eth_simulateV1 response too large"), true};
+                }
+            }
+            if (!append_call("]")) {
+                return {make_error(id, -32602,
+                                   "eth_simulateV1 response too large"), true};
+            }
 
             if (!oc.result.success) {
                 // Spec error envelope: code 3 = execution reverted; data
                 // = revert payload, message = human-readable. All three
                 // keys must be present for the shape to match.
-                std::string rev_data = to_hex_data(oc.result.return_data.data(), oc.result.return_data.size());
                 std::string msg;
                 if (oc.result.error_message.empty()) {
                     msg = "execution reverted";
@@ -3880,18 +4115,33 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
                 } else {
                     msg = "execution reverted: " + oc.result.error_message;
                 }
-                out2 += ",\"error\":{\"code\":3,\"message\":\"" + json_escape_string(msg) +
-                        "\",\"data\":" + rev_data + "}";
+                if (!append_call(",\"error\":{\"code\":3,\"message\":\"") ||
+                    !append_call_str(json_escape_string(msg)) ||
+                    !append_call("\",\"data\":") ||
+                    !append_call_hex(oc.result.return_data.data(), oc.result.return_data.size()) ||
+                    !append_call("}"))
+                {
+                    return {make_error(id, -32602,
+                                       "eth_simulateV1 response too large"), true};
+                }
             }
-            out2 += "}";
+            if (!append_call("}") ||
+                !append_bounded(out2, call_json, kMaxSimulateResponseBytes))
+            {
+                return {make_error(id, -32602,
+                                   "eth_simulateV1 response too large"), true};
+            }
         }
-        out2 += "]}";
-        if (response_size_exceeded()) {
+        if (!append_bounded(out2, "]}", kMaxSimulateResponseBytes) ||
+            response_size_exceeded()) {
             return {make_error(id, -32602,
                                "eth_simulateV1 response too large"), true};
         }
     }
-    out2 += "]";
+    if (!append_bounded(out2, "]", kMaxSimulateResponseBytes)) {
+        return {make_error(id, -32602,
+                           "eth_simulateV1 response too large"), true};
+    }
     return {make_result(id, out2), false};
 }
 
@@ -4045,7 +4295,8 @@ static std::string post_accept_health_json() {
     r += "\"malformedSpecialCellMessages\":" + std::to_string(h.malformed_special_cell_messages) + ",";
     r += "\"strictRootFailures\":" + std::to_string(h.strict_root_failures) + ",";
     r += "\"incompleteIndexedTransactions\":" + std::to_string(h.incomplete_indexed_transactions) + ",";
-    r += "\"incompleteIndexedBlocks\":" + std::to_string(h.incomplete_indexed_blocks);
+    r += "\"incompleteIndexedBlocks\":" + std::to_string(h.incomplete_indexed_blocks) + ",";
+    r += "\"prunedIncompleteMarkers\":" + std::to_string(h.pruned_incomplete_markers);
     r += "}";
     return r;
 }
@@ -4242,7 +4493,9 @@ bool is_eth_rpc_method(const std::string& method) noexcept {
            method == "net_listening" ||
            method == "net_peerCount" ||
            method == "web3_clientVersion" ||
+#ifdef TOS_ENABLE_EVM_DEBUG_RPC
            method == "debug_traceTransaction" ||
+#endif
            method == "eth_getBlockReceipts" ||
            method == "eth_subscribe" ||
            method == "eth_unsubscribe" ||
@@ -4300,6 +4553,11 @@ std::optional<RpcResult> handle_eth_rpc(
                 return RpcResult{make_error(id, -32005, "eth_getLogs rate limit exceeded"), true};
             }
         }
+        if (method == "eth_getProof") {
+            if (!g_getproof_limiter.try_consume()) {
+                return RpcResult{make_error(id, -32005, "eth_getProof rate limit exceeded"), true};
+            }
+        }
         // Global rate limit for all methods
         if (!g_rpc_limiter.try_consume()) {
             return RpcResult{make_error(id, -32005, "rate limit exceeded"), true};
@@ -4336,7 +4594,9 @@ std::optional<RpcResult> handle_eth_rpc(
     if (method == "eth_newPendingTransactionFilter") return handle_new_pending_transaction_filter(id);
     if (method == "eth_getFilterChanges")     return handle_get_filter_changes(params, id);
     if (method == "eth_uninstallFilter")      return handle_uninstall_filter(params, id);
+#ifdef TOS_ENABLE_EVM_DEBUG_RPC
     if (method == "debug_traceTransaction")  return handle_debug_trace_transaction(params, id);
+#endif
     if (method == "eth_getBlockReceipts")    return handle_get_block_receipts(params, id);
     if (method == "eth_subscribe")           return handle_eth_subscribe(params, id);
     if (method == "eth_unsubscribe")         return handle_eth_unsubscribe(params, id);

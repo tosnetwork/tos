@@ -137,6 +137,7 @@ struct EvmPostAcceptHealth {
     uint64_t strict_root_failures{0};
     uint64_t incomplete_indexed_transactions{0};
     uint64_t incomplete_indexed_blocks{0};
+    uint64_t pruned_incomplete_markers{0};
 };
 
 EvmPostAcceptHealth evm_post_accept_health() noexcept;

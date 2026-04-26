@@ -50,9 +50,11 @@ std::atomic<uint64_t> g_replay_failures{0};
 std::atomic<uint64_t> g_malformed_messages{0};
 std::atomic<uint64_t> g_malformed_special_cell_messages{0};
 std::atomic<uint64_t> g_strict_root_failures{0};
+std::atomic<uint64_t> g_pruned_incomplete_markers{0};
 
 constexpr size_t kMaxIncompleteIndexedTransactions = 10'000;
 constexpr size_t kMaxIncompleteIndexedBlocks = 10'000;
+constexpr uint64_t kIncompleteMarkerTtlSeconds = 24 * 60 * 60;
 
 struct Bytes32Hasher {
     size_t operator()(const evmc::bytes32& v) const noexcept {
@@ -801,6 +803,7 @@ EvmPostAcceptHealth evm_post_accept_health() noexcept {
         .strict_root_failures = g_strict_root_failures.load(std::memory_order_relaxed),
         .incomplete_indexed_transactions = incomplete_indexed_transaction_count(),
         .incomplete_indexed_blocks = incomplete_indexed_block_count(),
+        .pruned_incomplete_markers = g_pruned_incomplete_markers.load(std::memory_order_relaxed),
     };
 }
 
@@ -811,6 +814,7 @@ void reset_evm_post_accept_health_for_tests() noexcept {
     g_malformed_messages.store(0, std::memory_order_relaxed);
     g_malformed_special_cell_messages.store(0, std::memory_order_relaxed);
     g_strict_root_failures.store(0, std::memory_order_relaxed);
+    g_pruned_incomplete_markers.store(0, std::memory_order_relaxed);
     clear_all_rpc_indexing_incomplete();
     clear_all_rpc_block_indexing_incomplete();
 }
@@ -819,6 +823,32 @@ void hydrate_evm_rpc_incomplete_indexes_from_cache() noexcept {
     auto* cache = evm_rpc_cache_db();
     if (!cache) {
         return;
+    }
+
+    auto now = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count());
+    IncompleteMarkerPruneStats prune_stats;
+    auto prune_status = cache->prune_incomplete_markers(
+        now, kIncompleteMarkerTtlSeconds,
+        kMaxIncompleteIndexedTransactions,
+        kMaxIncompleteIndexedBlocks,
+        &prune_stats);
+    if (prune_status.is_error()) {
+        LOG(WARNING) << "evm-rpc-cache: incomplete marker prune failed: "
+                     << prune_status.message();
+    } else {
+        uint64_t pruned =
+            prune_stats.expired_transactions +
+            prune_stats.overflow_transactions +
+            prune_stats.expired_blocks +
+            prune_stats.overflow_blocks;
+        if (pruned != 0) {
+            g_pruned_incomplete_markers.fetch_add(pruned, std::memory_order_relaxed);
+            LOG(WARNING) << "evm-rpc-cache: pruned " << pruned
+                         << " stale/overflow incomplete marker(s)";
+        }
     }
 
     size_t txs = 0;

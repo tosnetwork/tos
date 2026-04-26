@@ -65,6 +65,22 @@ if ! rg -q 'TOS_EVM_DEBUG_RPC_TOKEN' "$rpc_handlers"; then
     exit 1
 fi
 
+if ! rg -q 'debug_traceTransaction requires TOS_EVM_DEBUG_RPC_TOKEN|debug_traceTransaction unauthorized' "$rpc_handlers"; then
+    echo "evm production hardening check failed: debug_traceTransaction must require debug RPC auth" >&2
+    exit 1
+fi
+
+if awk '
+  /^#ifdef TOS_ENABLE_EVM_DEBUG_RPC$/ { debug = 1; next }
+  /^#endif$/ { debug = 0; next }
+  /method == "debug_traceTransaction" \|\|/ { if (!debug) bad = 1 }
+  /if \(method == "debug_traceTransaction"\)/ { if (!debug) bad = 1 }
+  END { exit bad ? 0 : 1 }
+' "$rpc_handlers"; then
+    echo "evm production hardening check failed: debug_traceTransaction must be debug-only" >&2
+    exit 1
+fi
+
 budget_line=$(rg -n 'EVM stateRoot budget exceeded before execution|rejecting EVM tx before execution' "$compute_phase" | head -n1 | cut -d: -f1 || true)
 exec_line=$(rg -n 'execute_evm_transaction\(decoded\.txn' "$compute_phase" | head -n1 | cut -d: -f1 || true)
 if [ -z "$budget_line" ] || [ -z "$exec_line" ] || [ "$budget_line" -ge "$exec_line" ]; then

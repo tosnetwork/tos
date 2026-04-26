@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
+#include <array>
 #include <cassert>
 #include <algorithm>
 #include <atomic>
@@ -5256,6 +5257,89 @@ static void test_runtime_chain_id_override() {
     printf("  %s\n\n", all_ok ? "PASSED" : "FAILED");
 }
 
+static void test_debug_trace_transaction_gating() {
+    printf("=== test_debug_trace_transaction_gating ===\n");
+
+    const char* kZeroHash =
+        "[\"0x0000000000000000000000000000000000000000000000000000000000000000\"]";
+    bool method_visible = is_eth_rpc_method("debug_traceTransaction");
+    auto rpc = handle_eth_rpc("debug_traceTransaction", kZeroHash, "1");
+
+#ifdef TOS_ENABLE_EVM_DEBUG_RPC
+    bool auth_enforced = rpc.has_value() && rpc->is_error &&
+        rpc->json.find("TOS_EVM_DEBUG_RPC_TOKEN") != std::string::npos;
+    bool ok = method_visible && auth_enforced;
+    printf("  method visible under debug build: %s\n", method_visible ? "yes" : "NO");
+    printf("  auth enforced: %s\n", auth_enforced ? "yes" : "NO");
+#else
+    bool hidden_from_public_rpc = !method_visible && !rpc.has_value();
+    bool ok = hidden_from_public_rpc;
+    printf("  hidden from public allowlist: %s\n", hidden_from_public_rpc ? "yes" : "NO");
+#endif
+
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_cell_state_abortable_iterators() {
+    printf("=== test_cell_state_abortable_iterators ===\n");
+
+    evm_workchain::CellEvmState state;
+    evmc::address a1{}; a1.bytes[19] = 0x11;
+    evmc::address a2{}; a2.bytes[19] = 0x22;
+    evmc::address a3{}; a3.bytes[19] = 0x33;
+
+    for (const auto& [addr, nonce] : std::array<std::pair<evmc::address, uint64_t>, 3>{
+             std::pair{a1, 1}, std::pair{a2, 2}, std::pair{a3, 3}}) {
+        silkworm::Account acct{};
+        acct.balance = intx::uint256{nonce * 1000};
+        acct.nonce = nonce;
+        state.update_account(addr, std::nullopt, acct);
+    }
+
+    for (uint8_t i = 1; i <= 3; ++i) {
+        evmc::bytes32 slot{};
+        evmc::bytes32 value{};
+        slot.bytes[31] = i;
+        value.bytes[31] = static_cast<uint8_t>(0x40 + i);
+        state.update_storage(a1, 0, slot, evmc::bytes32{}, value);
+    }
+
+    size_t seen_accounts = 0;
+    bool account_completed = state.for_each_account_while(
+        [&](const unsigned char[32], const silkworm::Account&) {
+            ++seen_accounts;
+            return seen_accounts < 2;
+        });
+
+    size_t seen_storage = 0;
+    bool storage_completed = state.for_each_storage_while(
+        a1,
+        [&](const evmc::bytes32&, const evmc::bytes32&) {
+            ++seen_storage;
+            return seen_storage < 2;
+        });
+
+    size_t full_accounts = 0;
+    state.for_each_account([&](const unsigned char[32], const silkworm::Account&) {
+        ++full_accounts;
+    });
+    size_t full_storage = 0;
+    state.for_each_storage(a1, [&](const evmc::bytes32&, const evmc::bytes32&) {
+        ++full_storage;
+    });
+
+    bool ok = !account_completed && seen_accounts == 2 &&
+              !storage_completed && seen_storage == 2 &&
+              full_accounts == 3 && full_storage == 3;
+    printf("  account early-stop: %s (%zu seen, %zu total)\n",
+           (!account_completed && seen_accounts == 2) ? "OK" : "WRONG",
+           seen_accounts, full_accounts);
+    printf("  storage early-stop: %s (%zu seen, %zu total)\n",
+           (!storage_completed && seen_storage == 2) ? "OK" : "WRONG",
+           seen_storage, full_storage);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
 // -----------------------------------------------------------------------------
 // test_eth_get_proof_non_existence
 //
@@ -6064,6 +6148,7 @@ int main() {
     test_eth_rpc_block_lookup_and_log_filters();
     test_eth_simulate_v1_rejects_huge_filler_gap();
     test_runtime_chain_id_override();
+    test_debug_trace_transaction_gating();
     test_signed_transaction();
     test_persistent_state();
     test_config_param();
@@ -6110,6 +6195,7 @@ int main() {
     test_rpc_cache_codec_rejects_special_and_trailing_cells();
     test_receipt_reports_indexing_incomplete_after_post_accept_gap();
     test_rpc_cache_rebuild_command_and_health();
+    test_cell_state_abortable_iterators();
     test_eth_get_proof_non_existence();
     test_block_hash_canonical();
     test_state_test_runner_poc();

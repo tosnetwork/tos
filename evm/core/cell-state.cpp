@@ -310,10 +310,11 @@ void CellEvmState::update_storage(const evmc::address& address,
 // Cell-native extensions
 // ---------------------------------------------------------------------------
 
-void CellEvmState::for_each_account(
-    std::function<void(const unsigned char[32], const silkworm::Account&)> cb) const {
-    account_dict_.check_for_each([&cb](td::Ref<vm::CellSlice> value,
-                                        td::ConstBitPtr key, int n) -> bool {
+bool CellEvmState::for_each_account_while(
+    std::function<bool(const unsigned char[32], const silkworm::Account&)> cb) const {
+    bool completed = true;
+    account_dict_.check_for_each([&cb, &completed](td::Ref<vm::CellSlice> value,
+                                                   td::ConstBitPtr key, int n) -> bool {
         if (n != 256 || value.is_null() || value->size_refs() == 0) return true;
         auto data_cell = value->prefetch_ref(0);
         silkworm::Account acct;
@@ -321,37 +322,66 @@ void CellEvmState::for_each_account(
         if (!decode_evm_account_data(data_cell, acct, storage_root)) return true;
         unsigned char key_bytes[32];
         td::BitPtr{key_bytes}.copy_from(key, 256);
-        cb(key_bytes, acct);
-        return true;
+        completed = cb(key_bytes, acct);
+        return completed;
     });
+    return completed;
+}
+
+void CellEvmState::for_each_account(
+    std::function<void(const unsigned char[32], const silkworm::Account&)> cb) const {
+    (void)for_each_account_while(
+        [&cb](const unsigned char key[32], const silkworm::Account& acct) {
+            cb(key, acct);
+            return true;
+        });
+}
+
+bool CellEvmState::for_each_storage_while(
+    const evmc::address& address,
+    std::function<bool(const evmc::bytes32&, const evmc::bytes32&)> cb) const {
+    auto storage_root = get_storage_root(address);
+    if (storage_root.is_null()) return true;
+    bool completed = true;
+    try {
+        vm::Dictionary storage(storage_root, 256);
+        storage.check_for_each([&cb, &completed](td::Ref<vm::CellSlice> value,
+                                                 td::ConstBitPtr key, int n) -> bool {
+            if (n != 256) {
+                completed = false;
+                return false;
+            }
+            evmc::bytes32 slot{};
+            td::BitPtr{slot.bytes}.copy_from(key, 256);
+            evmc::bytes32 v{};
+            if (!decode_storage_slice(value, v)) {
+                completed = false;
+                return false;
+            }
+            completed = cb(slot, v);
+            return completed;
+        });
+    } catch (vm::VmError&) {
+        return false;
+    } catch (vm::VmVirtError&) {
+        return false;
+    } catch (std::exception&) {
+        return false;
+    } catch (...) {
+        return false;
+    }
+    return completed;
 }
 
 void CellEvmState::for_each_storage(
     const evmc::address& address,
     std::function<void(const evmc::bytes32&, const evmc::bytes32&)> cb) const {
-    auto storage_root = get_storage_root(address);
-    if (storage_root.is_null()) return;
-    try {
-        vm::Dictionary storage(storage_root, 256);
-        storage.check_for_each([&cb](td::Ref<vm::CellSlice> value,
-                                      td::ConstBitPtr key, int n) -> bool {
-            if (n != 256) return false;
-            evmc::bytes32 slot{};
-            td::BitPtr{slot.bytes}.copy_from(key, 256);
-            evmc::bytes32 v{};
-            if (!decode_storage_slice(value, v)) return false;
-            cb(slot, v);
+    (void)for_each_storage_while(
+        address,
+        [&cb](const evmc::bytes32& slot, const evmc::bytes32& value) {
+            cb(slot, value);
             return true;
         });
-    } catch (vm::VmError&) {
-        return;
-    } catch (vm::VmVirtError&) {
-        return;
-    } catch (std::exception&) {
-        return;
-    } catch (...) {
-        return;
-    }
 }
 
 CellEvmStateSizeStats CellEvmState::count_entries_bounded(
