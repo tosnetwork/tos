@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <fstream>
 #include <mutex>
 #include <thread>
 #include <unordered_set>
@@ -124,6 +125,42 @@ static Bytes hex_to_bytes(const char* hex) {
         out.push_back(static_cast<uint8_t>((hex_val(p[i]) << 4) | hex_val(p[i+1])));
     }
     return out;
+}
+
+static Bytes load_etos_pow_giver_runtime_from_fift() {
+    const char* candidates[] = {
+        "crypto/smartcont/etos-pow-givers.fif",
+        "../crypto/smartcont/etos-pow-givers.fif",
+        "../../crypto/smartcont/etos-pow-givers.fif",
+        "../../../crypto/smartcont/etos-pow-givers.fif",
+        "../../../../crypto/smartcont/etos-pow-givers.fif",
+        "../../../../../crypto/smartcont/etos-pow-givers.fif",
+    };
+
+    for (const char* path : candidates) {
+        std::ifstream in(path);
+        if (!in) {
+            continue;
+        }
+        std::string text;
+        char ch = 0;
+        while (in.get(ch)) {
+            text.push_back(ch);
+        }
+
+        const std::string suffix = "\" x>B constant etos-giver-code";
+        auto end = text.find(suffix);
+        if (end == std::string::npos) {
+            continue;
+        }
+        auto start = text.rfind('"', end == 0 ? 0 : end - 1);
+        if (start == std::string::npos || start + 1 >= end) {
+            continue;
+        }
+        auto hex = text.substr(start + 1, end - start - 1);
+        return hex_to_bytes(hex.c_str());
+    }
+    return {};
 }
 
 static evmc::address hex_to_addr(const char* hex) {
@@ -602,6 +639,120 @@ static void test_contract_call() {
         printf("  FAILED (value_correct=%d, nonce=%lu)\n\n",
                value_correct, (unsigned long)final_nonce);
     }
+}
+
+static void test_etos_pow_giver_replay_seed_rotation() {
+    printf("=== test_etos_pow_giver_replay_seed_rotation ===\n");
+
+    Bytes runtime = load_etos_pow_giver_runtime_from_fift();
+    if (runtime.empty()) {
+        printf("  FAILED: could not load etos-giver-code from crypto/smartcont/etos-pow-givers.fif\n\n");
+        return;
+    }
+
+    auto word = [](const intx::uint256& value) {
+        evmc::bytes32 out{};
+        auto be = intx::be::store<evmc::uint256be>(value);
+        std::memcpy(out.bytes, be.bytes, 32);
+        return out;
+    };
+
+    EvmState state;
+    evmc::address caller = hex_to_addr("0x10000000000000000000000000000000000000cc");
+    evmc::address giver = hex_to_addr("0x1000000000000000000000000000000000000001");
+    evmc::address recipient = hex_to_addr("0x10000000000000000000000000000000000000dd");
+    state.seed_account(caller, intx::uint256{10'000'000'000'000'000'000u}, 0);
+
+    const uint64_t timestamp = 1'700'000'000;
+    {
+        std::unique_lock lock(state.mutex());
+        silkworm::Account giver_account;
+        giver_account.nonce = 1;
+        giver_account.balance = intx::uint256{1'000'000};
+        giver_account.incarnation = 1;
+        auto code_hash = ethash::keccak256(runtime.data(), runtime.size());
+        std::memcpy(giver_account.code_hash.bytes, code_hash.bytes, 32);
+        state.state().update_account(giver, std::nullopt, giver_account);
+        state.state().update_account_code(
+            giver, giver_account.incarnation, giver_account.code_hash,
+            silkworm::ByteView(runtime.data(), runtime.size()));
+
+        evmc::bytes32 zero{};
+        evmc::bytes32 max_target{};
+        std::memset(max_target.bytes, 0xff, 32);
+        state.state().update_storage(giver, giver_account.incarnation, word(intx::uint256{1}), zero, max_target);
+        state.state().update_storage(giver, giver_account.incarnation, word(intx::uint256{2}), zero, word(intx::uint256{timestamp}));
+        state.state().update_storage(giver, giver_account.incarnation, word(intx::uint256{3}), zero, word(intx::uint256{12}));
+        state.state().update_storage(giver, giver_account.incarnation, word(intx::uint256{4}), zero, word(intx::uint256{1}));
+        state.state().update_storage(giver, giver_account.incarnation, word(intx::uint256{5}), zero, word(intx::uint256{1}));
+        state.state().update_storage(giver, giver_account.incarnation, word(intx::uint256{6}), zero, word(intx::uint256{255}));
+    }
+
+    const std::string signature =
+        "mine(uint256,address,uint32,bytes16,bytes32,bytes32)";
+    auto selector_hash = ethash::keccak256(
+        reinterpret_cast<const uint8_t*>(signature.data()), signature.size());
+
+    Bytes calldata;
+    calldata.insert(calldata.end(), selector_hash.bytes, selector_hash.bytes + 4);
+    auto append_uint = [&](const intx::uint256& value) {
+        auto be = intx::be::store<evmc::uint256be>(value);
+        calldata.insert(calldata.end(), be.bytes, be.bytes + 32);
+    };
+    auto append_address = [&](const evmc::address& address) {
+        calldata.insert(calldata.end(), 12, 0);
+        calldata.insert(calldata.end(), address.bytes, address.bytes + 20);
+    };
+    auto append_bytes16 = [&](const uint8_t bytes[16]) {
+        calldata.insert(calldata.end(), bytes, bytes + 16);
+        calldata.insert(calldata.end(), 16, 0);
+    };
+    auto append_bytes32 = [&](const uint8_t bytes[32]) {
+        calldata.insert(calldata.end(), bytes, bytes + 32);
+    };
+
+    uint8_t zero16[16] = {};
+    uint8_t zero32[32] = {};
+    append_uint(intx::uint256{42});          // PoW nonce
+    append_address(recipient);               // reward recipient
+    append_uint(intx::uint256{timestamp + 1000});  // expire
+    append_bytes16(zero16);                  // rseed == bytes16(seed), initial seed is zero
+    append_bytes32(zero32);                  // rdata1
+    append_bytes32(zero32);                  // rdata2
+
+    uint8_t rand_seed[32] = {};
+    auto block = make_evm_block(10, timestamp, rand_seed, 30'000'000);
+    const auto& config = evm_chain_config();
+
+    Transaction first;
+    first.type = TransactionType::kLegacy;
+    first.chain_id = kEvmChainId;
+    first.nonce = 0;
+    first.max_fee_per_gas = 1'000'000'000;
+    first.max_priority_fee_per_gas = 1'000'000'000;
+    first.gas_limit = 500'000;
+    first.to = giver;
+    first.value = 0;
+    first.data = calldata;
+    first.set_sender(caller);
+
+    auto first_result = execute_evm_transaction(first, block, state, config);
+
+    Transaction replay = first;
+    replay.nonce = 1;
+    replay.set_sender(caller);
+    auto second_result = execute_evm_transaction(replay, block, state, config);
+
+    auto recipient_balance = state.get_balance(recipient);
+    bool ok = first_result.success && !second_result.success && recipient_balance == intx::uint256{1};
+    printf("  first success:  %s gas=%lu\n",
+           first_result.success ? "true" : "false",
+           static_cast<unsigned long>(first_result.gas_used));
+    printf("  replay success: %s gas=%lu\n",
+           second_result.success ? "true" : "false",
+           static_cast<unsigned long>(second_result.gas_used));
+    printf("  recipient balance: %s\n", intx::to_string(recipient_balance).c_str());
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
 }
 
 static void test_eth_rpc() {
@@ -4797,19 +4948,52 @@ static void test_receipt_reports_indexing_incomplete_after_post_accept_gap() {
     reset_evm_post_accept_health_for_tests();
     uint8_t rand_seed[32] = {};
     uint8_t parent_hash[32] = {};
-    std::vector<td::Ref<vm::Cell>> msgs{make_library_special_cell_for_cache_test()};
+    evmc::address recipient{};
+    recipient.bytes[19] = 0x44;
+    auto signed_tx = make_signed_raw_transfer(/*key_seed=*/0x1C0FFEE,
+                                              /*nonce=*/0,
+                                              recipient);
+    if (!signed_tx) {
+        printf("  FAILED: could not build signed tx fixture\n\n");
+        ++g_test_failures;
+        return;
+    }
+    std::vector<td::Ref<vm::Cell>> msgs{
+        build_evm_external_message(signed_tx->raw_rlp.data(),
+                                   signed_tx->raw_rlp.size(),
+                                   signed_tx->sender)};
     (void)apply_stashed_side_effects_for_messages(
         990099, 1800000950, rand_seed, parent_hash, msgs);
 
+    auto missing_hash_hex = bytes_to_hex0x(
+        Bytes{signed_tx->hash.bytes, signed_tx->hash.bytes + 32});
     auto r = handle_eth_rpc(
         "eth_getTransactionReceipt",
-        "[\"0x1111111111111111111111111111111111111111111111111111111111111111\"]",
+        "[\"" + missing_hash_hex + "\"]",
         "9010");
-    bool ok = r && r->is_error &&
-              r->json.find("indexing incomplete") != std::string::npos;
-    printf("  receipt response: %s\n", r ? r->json.c_str() : "NOT HANDLED");
+    auto block_r = handle_eth_rpc(
+        "eth_getBlockByNumber",
+        "[\"0xf1b93\",false]",
+        "9012");
+    auto unknown = handle_eth_rpc(
+        "eth_getTransactionReceipt",
+        "[\"0x1111111111111111111111111111111111111111111111111111111111111111\"]",
+        "9011");
+    bool known_missing_errors = r && r->is_error &&
+                                r->json.find("indexing incomplete") != std::string::npos;
+    bool known_block_errors = block_r && block_r->is_error &&
+                              block_r->json.find("indexing incomplete") != std::string::npos;
+    bool unknown_returns_null = unknown && !unknown->is_error &&
+                                unknown->json.find("\"result\":null") != std::string::npos;
+    bool ok = known_missing_errors && known_block_errors && unknown_returns_null;
+    printf("  known missing receipt response: %s\n", r ? r->json.c_str() : "NOT HANDLED");
+    printf("  known incomplete block response: %s\n", block_r ? block_r->json.c_str() : "NOT HANDLED");
+    printf("  unknown receipt response: %s\n", unknown ? unknown->json.c_str() : "NOT HANDLED");
     printf("  %s\n\n", ok ? "PASSED" : "FAILED");
     reset_evm_post_accept_health_for_tests();
+    if (!ok) {
+        ++g_test_failures;
+    }
 }
 
 static td::Bits256 test_bits_from_bytes32(const evmc::bytes32& value) {
@@ -5763,6 +5947,7 @@ int main() {
     test_simple_transfer();
     test_contract_create();
     test_contract_call();
+    test_etos_pow_giver_replay_seed_rotation();
     test_eth_rpc();
     test_eth_rpc_block_lookup_and_log_filters();
     test_runtime_chain_id_override();

@@ -44,7 +44,10 @@ pragma solidity ^0.8.26;
 ///
 /// Anti-replay: the `rseed` field must match the stored seed (lower bytes16).
 ///   The `rdata1` and `rdata2` fields must be equal (anti-replay pair from the TVM giver).
-///   Seed is rotated after each solve using `blockhash(block.number - 1)`.
+///   Seed is rotated after each solve from the old seed, winning proof hash,
+///   parent block hash, recipient/proof data, this contract address, and the
+///   previous solve timestamp.  A repeated proof therefore cannot keep claiming
+///   rewards even when multiple calls land in the same EVM block.
 ///
 /// Funds: each giver is pre-funded with 10 M eTOS (= 10_000_000e18 wei) at
 ///   genesis.  The contract pays out `reward` per solve until empty.
@@ -182,11 +185,25 @@ contract EToSPoWGiver {
         // Contract must have enough balance to pay the reward
         require(address(this).balance >= reward, "giver exhausted");
 
+        bytes32 oldSeed = seed;
+        uint256 previousSuccess = lastSuccess;
+
         // Adjust difficulty before rotating seed (uses current timestamp)
         _adjustDifficulty();
 
-        // Rotate seed using the parent block hash (unpredictable at solve time)
-        seed = blockhash(block.number - 1);
+        // Rotate seed to a per-success value.  Using the parent hash alone lets
+        // every successful tx in the same block reset to the same seed, so bind
+        // this transition to the previous seed and this exact winning proof.
+        seed = keccak256(abi.encodePacked(
+            oldSeed,
+            h,
+            nonce,
+            whom,
+            rdata1,
+            blockhash(block.number - 1),
+            address(this),
+            previousSuccess
+        ));
 
         // Record solve time
         lastSuccess = block.timestamp;

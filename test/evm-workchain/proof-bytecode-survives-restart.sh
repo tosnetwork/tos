@@ -38,11 +38,15 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 RPC=http://127.0.0.1:8011
 DEPLOYER=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
-# Hardhat account #0 private key (pre-funded in zerostate).
+# Devnet fixture account #0 private key. This public Hardhat key must never be
+# assumed in production genesis/runtime.
 PRIV=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 
 log() { echo "[$(date +%H:%M:%S)] $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
+
+[ "${TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS:-}" = "1" ] || \
+  die "devnet fixture requires TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS=1; public Hardhat keys are not production genesis"
 
 # Discover node (nvm installs don't land in root's PATH under sudo).
 NODE="${NODE_BIN:-}"

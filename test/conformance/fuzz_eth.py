@@ -40,8 +40,18 @@ import urllib.request
 RPC = os.environ.get("RPC", "http://127.0.0.1:8011")
 DURATION = int(os.environ.get("DURATION_SECONDS", "300"))
 CHAIN_ID_HEX = "0x544f53"
+# Devnet fixture account. This public Hardhat key must never be assumed in
+# production genesis/runtime.
 HARDHAT_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 HARDHAT_ADDR = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+
+if os.environ.get("TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS") != "1":
+    print(
+        "fuzz_eth.py is a devnet fixture that requires "
+        "TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS=1",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 # Seed generation uses ethers in a local subprocess. This directory is
 # where ethers has been installed on dev hosts; override via ETHERS_DIR.

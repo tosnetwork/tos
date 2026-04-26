@@ -243,12 +243,24 @@ bool peek_first_byte(const vm::CellSlice& cs, uint8_t& out) noexcept {
 // Populate `cp` for a rejected tx with a given VerifyResult. Mirrors the
 // Transfer reject-path shape exactly (same field assignments in the same
 // order), so dashboards / JSON-RPC consumers see identical cp records.
+//
+// Codex round 1 (M-01): the `accepted` flag must be **false** for every
+// failure that lands here BEFORE successful body decode (DecodeError,
+// UnknownTxKind, empty body). Marking such failures as `accepted=true`
+// with `gas_used=0` mirrors the EVM bug closed under audit #2 — it
+// admits malformed wc=2 messages as free-blockspace transactions and
+// lets a raw-BOC attacker spam the executor with zero-fee no-ops.
+//
+// Post-decode verify failures (verify_transfer / apply_mine_uno
+// returning non-Ok on a parsed tx) are charged real `gas_used` and
+// remain `accepted=true` so the verifier work is not unbilled.
 void populate_reject_cp(block::ComputePhase& cp,
                         VerifyResult vr,
                         uint64_t gas_used,
-                        uint64_t gas_limit) {
+                        uint64_t gas_limit,
+                        bool accepted) {
     cp.success    = false;
-    cp.accepted   = true;
+    cp.accepted   = accepted;
     cp.gas_used   = gas_used;
     cp.gas_limit  = gas_limit;
     cp.gas_credit = 0;
@@ -275,7 +287,9 @@ bool run_mine_uno_compute_phase(
             RejectReason::DecodeError);
         LOG(WARNING) << "uno-workchain(mine): decode failed: " << err_ptr->reason;
         cp.skip_reason = block::ComputePhase::sk_bad_state;
-        populate_reject_cp(cp, VerifyResult::DecodeError, 0, gas_limit);
+        // Codex round 1 (M-01): pre-decode failure → cp.accepted=false.
+        populate_reject_cp(cp, VerifyResult::DecodeError, 0, gas_limit,
+                           /*accepted=*/false);
         cp.vm_log = std::string("uno-mine: ") + err_ptr->reason;
         return true;
     }
@@ -289,7 +303,9 @@ bool run_mine_uno_compute_phase(
         auto h = canonical_mine_uno_hash(tx);
         LOG(INFO) << "uno-workchain(mine): reject tx=" << h.to_hex()
                   << " reason=" << verify_result_name(vr);
-        populate_reject_cp(cp, vr, gas_used, gas_limit);
+        // Codex round 1 (M-01): post-decode verify failure → still
+        // cp.accepted=true so the verifier cycles are billed.
+        populate_reject_cp(cp, vr, gas_used, gas_limit, /*accepted=*/true);
         return true;
     }
 
@@ -358,7 +374,9 @@ bool run_compute_phase(
             RejectReason::DecodeError);
         LOG(WARNING) << "uno-workchain: empty / sub-byte body; cannot dispatch";
         cp.skip_reason = block::ComputePhase::sk_bad_state;
-        populate_reject_cp(cp, VerifyResult::DecodeError, 0, gas_limit);
+        // Codex round 1 (M-01): pre-decode failure → cp.accepted=false.
+        populate_reject_cp(cp, VerifyResult::DecodeError, 0, gas_limit,
+                           /*accepted=*/false);
         cp.vm_log = "uno: empty body";
         return true;
     }
@@ -371,7 +389,9 @@ bool run_compute_phase(
         LOG(WARNING) << "uno-workchain: unknown tx discriminator byte 0x"
                      << std::hex << static_cast<int>(disc);
         cp.skip_reason = block::ComputePhase::sk_bad_state;
-        populate_reject_cp(cp, VerifyResult::UnknownTxKind, 0, gas_limit);
+        // Codex round 1 (M-01): pre-decode failure → cp.accepted=false.
+        populate_reject_cp(cp, VerifyResult::UnknownTxKind, 0, gas_limit,
+                           /*accepted=*/false);
         cp.vm_log = "uno: unknown tx kind";
         return true;
     }
@@ -384,8 +404,11 @@ bool run_compute_phase(
             RejectReason::DecodeError);
         LOG(WARNING) << "uno-workchain: decode failed: " << err_ptr->reason;
         cp.skip_reason = block::ComputePhase::sk_bad_state;
+        // Codex round 1 (M-01): pre-decode failure → cp.accepted=false so
+        // a malformed Transfer body cannot be admitted as a free
+        // zero-gas transaction. Mirror the EVM audit #2 fix.
         cp.success = false;
-        cp.accepted = true;
+        cp.accepted = false;
         cp.gas_used = 0;
         cp.gas_limit = gas_limit;
         cp.exit_code = kExitCodeRejectBase + static_cast<int>(VerifyResult::DecodeError);

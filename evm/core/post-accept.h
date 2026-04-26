@@ -135,10 +135,24 @@ struct EvmPostAcceptHealth {
     uint64_t malformed_messages{0};
     uint64_t malformed_special_cell_messages{0};
     uint64_t strict_root_failures{0};
+    uint64_t incomplete_indexed_transactions{0};
+    uint64_t incomplete_indexed_blocks{0};
 };
 
 EvmPostAcceptHealth evm_post_accept_health() noexcept;
 void reset_evm_post_accept_health_for_tests() noexcept;
+
+/// True iff `tx_hash` belongs to an accepted EVM transaction whose public RPC
+/// receipt/transaction/log indexes were intentionally withheld because the
+/// post-accept side-effect stream had a gap. Unknown hashes must still return
+/// the normal Ethereum JSON-RPC `null`, not a global indexing error.
+bool is_evm_rpc_indexing_incomplete(const evmc::bytes32& tx_hash) noexcept;
+
+/// True iff the accepted EVM block at `block_number` could not publish a
+/// complete public RPC block/tx/receipt/log index. Number-keyed RPCs should
+/// report indexing-incomplete instead of treating the accepted block as
+/// unknown.
+bool is_evm_rpc_block_indexing_incomplete(uint64_t block_number) noexcept;
 
 struct RpcCacheRebuildStats {
     uint64_t from_block{0};
@@ -180,10 +194,10 @@ try_derive_evm_tx_hash_from_message(const td::Ref<vm::Cell>& msg) noexcept;
 
 /// Apply stashed side effects for an accepted block in transaction order.
 /// This finalizes block-wide tx/receipt roots, cumulative gas, tx_index, and
-/// logs bloom before publishing records to the RPC cache. If a stashed entry
-/// is missing, only the complete prefix is published; suffix records are
-/// dropped instead of compressing tx_index/cumulativeGasUsed onto the wrong
-/// on-chain positions.
+/// logs bloom before publishing records to the RPC cache. If any accepted EVM
+/// message is missing side effects or cannot be decoded, the whole block's
+/// public EVM indexes are withheld instead of publishing a partial prefix with
+/// misleading block/receipt semantics.
 size_t apply_stashed_side_effects_for_messages(
     uint64_t accepted_block_seqno,
     uint64_t accepted_timestamp,

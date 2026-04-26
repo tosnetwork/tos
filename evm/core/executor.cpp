@@ -19,6 +19,7 @@
 #include <silkworm/core/execution/evm.hpp>
 #include <silkworm/core/protocol/intrinsic_gas.hpp>
 #include <silkworm/core/protocol/param.hpp>
+#include <silkworm/core/protocol/validation.hpp>
 #include <silkworm/core/state/intra_block_state.hpp>
 #include <silkworm/core/types/address.hpp>
 
@@ -51,6 +52,65 @@ static ExecutionResult run_evm(
     // mutation occurs (nonce stays, balance stays, gas is not burned).
     // Skip entirely for read-only calls (eth_call / eth_estimateGas).
     if (commit_state) {
+        // Codex round 1 (H-01): chain-id binding. `eth_sendRawTransaction`
+        // already rejects wrong chain_id at the RPC layer, but consensus
+        // also accepts ext_in_msgs via `sendBoc` / liteServer that bypass
+        // the RPC. Without this check a foreign-chain tx (signed for
+        // mainnet, replayed onto TOS-EVM with the same key/nonce) would
+        // execute on wc=1 and bypass EIP-155 replay protection. Pre-EIP-155
+        // legacy txs (chain_id = nullopt) remain accepted — by spec they
+        // are not bound to any chain and Silkworm only enforces the equality
+        // when `chain_id.has_value()`.
+        if (txn.chain_id.has_value() &&
+            *txn.chain_id != intx::uint256{config.chain_id}) {
+            result.error_message = "wrong chain id";
+            result.gas_used = 0;
+            return result;
+        }
+
+        // Codex round 1 (H-01): consensus has no blob mempool — type-3
+        // (EIP-4844) txs cannot be admitted at this layer. The RPC
+        // gateway rejects them too, but a raw-BOC ingress path could
+        // otherwise smuggle a blob tx into compute, where the executor
+        // has no blob_versioned_hashes side-channel. Reject explicitly.
+        if (txn.type == silkworm::TransactionType::kBlob) {
+            result.error_message = "blob transactions not supported on this chain";
+            result.gas_used = 0;
+            return result;
+        }
+
+        // Codex round 2 (H-03): the RPC `eth_sendRawTransaction` admission
+        // path runs Silkworm's `pre_validate_common_base()` /
+        // `pre_validate_common_forks()` against every accepted tx, but
+        // raw-BOC ingress (`sendBoc` / liteServer-sendMessage → wc=1
+        // executor) bypasses RPC and lands directly in compute. Without
+        // these calls here, the consensus executor admits txs that RPC
+        // correctly rejects: EIP-3860 oversized initcode (Shanghai+),
+        // EIP-7702 SetCode tx with empty authorizations OR with
+        // contract-creation `to=null` (Prague+), EIP-7623 floor-cost
+        // violations (Prague+), EIP-7825 per-tx gas cap > 2^24 (Osaka+),
+        // unsupported transaction types at the current revision, and
+        // `maximum_gas_cost()` 256-bit overflow.
+        //
+        // Order of checks: our explicit blob rejection runs first
+        // because `pre_validate_common_forks` invokes
+        // `SILKWORM_ASSERT(blob_gas_price)` for type-3 txs (we pass
+        // `nullopt` for blob_gas_price — there is no blob mempool).
+        if (auto vr_base = silkworm::protocol::pre_validate_common_base(
+                txn, rev, config.chain_id);
+            vr_base != silkworm::ValidationResult::kOk) {
+            result.error_message = "pre_validate_common_base failed";
+            result.gas_used = 0;
+            return result;
+        }
+        if (auto vr_forks = silkworm::protocol::pre_validate_common_forks(
+                txn, rev, /*blob_gas_price=*/std::nullopt);
+            vr_forks != silkworm::ValidationResult::kOk) {
+            result.error_message = "pre_validate_common_forks failed";
+            result.gas_used = 0;
+            return result;
+        }
+
         // EIP-3607 (London+): reject txs from accounts that have code.
         // EIP-7702 (Prague+) exempts accounts whose code is a delegation
         // designator (0xef 0x01 0x00 || address).

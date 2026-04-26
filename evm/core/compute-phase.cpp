@@ -25,6 +25,7 @@
 #include <silkworm/core/types/block.hpp>
 #include <silkworm/core/types/transaction.hpp>
 
+#include <limits>
 #include <memory>
 
 #include "td/utils/logging.h"
@@ -32,6 +33,42 @@
 namespace evm_workchain {
 
 namespace {
+
+// Use the cold-account access cost as a conservative lower bound so account
+// growth via CALL/CREATE/SELFDESTRUCT-style paths cannot outrun the preflight.
+constexpr uint64_t kMinGasPerNewAccount = 2600;
+constexpr uint64_t kMinGasPerNewStorageSlot = 20000;
+
+std::size_t max_items_creatable_by_gas(uint64_t gas_limit, uint64_t min_gas_per_item) {
+    if (min_gas_per_item == 0) {
+        return std::numeric_limits<std::size_t>::max();
+    }
+    uint64_t count = gas_limit / min_gas_per_item;
+    if (gas_limit % min_gas_per_item != 0) {
+        ++count;
+    }
+    if (count > static_cast<uint64_t>(std::numeric_limits<std::size_t>::max())) {
+        return std::numeric_limits<std::size_t>::max();
+    }
+    return static_cast<std::size_t>(count);
+}
+
+bool full_root_budget_could_be_exceeded_after_tx(
+    const EvmStateSizeStats& stats,
+    uint64_t tx_gas_limit,
+    std::size_t& possible_new_accounts,
+    std::size_t& possible_new_storage_slots) {
+    possible_new_accounts = max_items_creatable_by_gas(tx_gas_limit, kMinGasPerNewAccount);
+    possible_new_storage_slots = max_items_creatable_by_gas(tx_gas_limit, kMinGasPerNewStorageSlot);
+
+    if (stats.accounts > kMaxFullRootAccounts ||
+        stats.storage_slots > kMaxFullRootStorageSlots) {
+        return true;
+    }
+
+    return possible_new_accounts > (kMaxFullRootAccounts - stats.accounts) ||
+           possible_new_storage_slots > (kMaxFullRootStorageSlots - stats.storage_slots);
+}
 
 // Build a fresh EvmState seeded from `account_data` (the cp.new_data v4
 // cell from the previous block). Returns nullptr if the cell is malformed
@@ -222,6 +259,48 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
                 LOG(ERROR) << "evm-workchain: EIP-2935 system call threw at block "
                            << block_seqno << " (unknown exception)";
             }
+        }
+    }
+
+    // tos7 audit: do not let a transaction run EVM bytecode and only then
+    // discover that the post-state cannot be full-root recomputed.  The scan
+    // is bounded by the same caps as the full trie rebuild, and the gas-based
+    // growth bound is conservative: each new account or storage slot costs at
+    // least this much gas, so a transaction cannot exceed these maxima.
+    {
+        std::unique_lock budget_lock(state.mutex());
+        auto size_stats = estimate_evm_state_size_for_full_root(
+            state, kMaxFullRootAccounts, kMaxFullRootStorageSlots);
+        std::size_t possible_new_accounts = 0;
+        std::size_t possible_new_storage_slots = 0;
+        bool could_exceed = full_root_budget_could_be_exceeded_after_tx(
+            size_stats, decoded.txn.gas_limit,
+            possible_new_accounts, possible_new_storage_slots);
+        if (size_stats.malformed || size_stats.exceeded || could_exceed) {
+            LOG(WARNING) << "evm-workchain: rejecting EVM tx before execution "
+                         << "because full stateRoot budget has insufficient headroom "
+                         << "at block #" << block_seqno
+                         << " (accounts=" << size_stats.accounts
+                         << ", storage_slots=" << size_stats.storage_slots
+                         << ", possible_new_accounts=" << possible_new_accounts
+                         << ", possible_new_storage_slots=" << possible_new_storage_slots
+                         << ", malformed=" << size_stats.malformed
+                         << ", exceeded=" << size_stats.exceeded
+                         << ", limits=" << kMaxFullRootAccounts << "/"
+                         << kMaxFullRootStorageSlots << ")";
+            cp.skip_reason = block::ComputePhase::sk_bad_state;
+            cp.accepted = false;
+            cp.success = false;
+            cp.gas_used = 0;
+            cp.gas_limit = gas_limit;
+            cp.gas_credit = 0;
+            cp.gas_max = gas_limit;
+            cp.exit_code = 1;
+            cp.vm_steps = 0;
+            cp.vm_init_state_hash.set_zero();
+            cp.vm_final_state_hash.set_zero();
+            cp.vm_log = "EVM stateRoot budget exceeded before execution";
+            return nullptr;
         }
     }
 

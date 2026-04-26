@@ -49,13 +49,13 @@ $ node e2e-wallet-test.js
 
 $ node full-rpc-test.js
   ✓ chainId is 5525331
-  ✓ Hardhat #0 balance == 10000 TOS
-  ✓ Hardhat #0 nonce >= 0
+  ✓ devnet fixture account #0 balance > 0
+  ✓ devnet fixture account #0 nonce >= 0
   ✓ gasPrice > 0
   ✓ blockNumber >= 0
   ✓ block has hash
   ✓ block has stateRoot
-  ✓ Hardhat #1 balance >= 10000
+  ✓ devnet fixture account #1 balance >= 10000
   ✓ eth_call to 0x00 returns "0x"
   ✓ estimateGas for transfer ~ 21000
   ✓ eth_getCode for zero address is "0x"

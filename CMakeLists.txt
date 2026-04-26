@@ -760,6 +760,12 @@ add_test(
   NAME test-evm-production-hardening-static
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-evm-production-hardening.sh
           ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(
+  NAME test-evm-etos-giver-bytecode-equivalence
+  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-evm-production-hardening.sh
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(test-evm-etos-giver-bytecode-equivalence
+  PROPERTIES ENVIRONMENT "TOS_CHECK_ETOS_GIVER_BYTECODE=1")
 
 add_executable(test-overlay test/test-overlay.cpp)
 target_link_libraries(test-overlay overlay tdutils tdactor adnl adnltest tl_api dht )

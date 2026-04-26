@@ -34,7 +34,8 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 RPC=http://127.0.0.1:8011
 SENDER=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 RECIPIENT=0x70997970C51812dc3A010C7d01b50e0d17dc79C8
-# Hardhat account #0 private key
+# Devnet fixture account #0 private key. This public Hardhat key must never be
+# assumed in production genesis/runtime.
 PRIV=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 
 # Randomize amount so the tx hash changes across reruns.
@@ -42,6 +43,9 @@ AMOUNT_ETH="$((RANDOM % 90 + 10)).$(printf '%02d' $((RANDOM % 100)))"
 
 log() { echo "[$(date +%H:%M:%S)] $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
+
+[ "${TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS:-}" = "1" ] || \
+  die "devnet fixture requires TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS=1; public Hardhat keys are not production genesis"
 
 # Accumulate failures but keep probing so the log shows every gap in
 # one run; set exit code at the end.

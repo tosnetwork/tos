@@ -10,7 +10,7 @@ The local testnet carries **three independent workchains** under one validator s
 |-----|------------------------------|---------------------------------|-----------------------------------|--------------|--------------------------------------------------------|
 | `-1` | **masterchain**              | (reserved)                      | Consensus / config                | —            | —                                                      |
 | `0` | **TOS** (native TVM)         | `-1` (TVM)                      | Primary smart-contract chain      | 100 M TOS    | 10 × PoW Givers + ~3 K TOS system reserve              |
-| `1` | **eTOS** (EVM)               | `0x45564D` ("EVM") = `4544077`  | Ethereum-compatible chain (evmone)| 100 M eTOS   | 10 Hardhat test accounts (10 M each); `chainId=0x544F53` (5 525 331); JSON-RPC at `127.0.0.1:801N` |
+| `1` | **eTOS** (EVM)               | `0x45564D` ("EVM") = `4544077`  | Ethereum-compatible chain (evmone)| 100 M eTOS   | 10 genesis EToSPoWGiver contracts (10 M each); `chainId=0x544F53` (5 525 331); JSON-RPC at `127.0.0.1:801N` |
 | `2` | **UNO** (privacy / STARK)    | `0x554E4F31` ("UNO1") = `1431195441` | Zcash/Penumbra-style privacy payments with Plonky3 STARK proofs, Bitcoin-clone halving | 21 M UNO | **Empty at genesis — 0 pre-funded accounts, all UNO mined.** Mining via `tosctl-uno mine` (CPU Poseidon2, 600 s target, 50 UNO/solve, halving every 210 K solves) |
 
 All three chains share the **same validator set**, the **same catchain consensus**, and the **same** `/data/tos-global.json`. Deployment is a single `setup-testnet.sh` invocation — no per-chain activation flag is needed; wc=1 and wc=2 are wired into the zerostate from birth (via `add-evm-workchain` + `add-uno-workchain` in `crypto/smartcont/gen-zerostate.fif`, §50-84). Verify post-genesis with:
@@ -203,7 +203,7 @@ The `--clean` flag stops any running services and removes previous `/data/` cont
    | wc | vm_version                         | Total supply   | Genesis distribution                                                                 |
    |----|------------------------------------|----------------|--------------------------------------------------------------------------------------|
    | 0  | `-1` (TVM)                         | 100 M TOS      | PoW Giver skeleton + `TM$3000` system reserve (elector / config / stage wallets)     |
-   | 1  | `0x45564D` ("EVM") = `4544077`     | 100 M eTOS     | 10 Hardhat test accounts × 10 M eTOS each (well-known keys; dev only — see §EVM)     |
+   | 1  | `0x45564D` ("EVM") = `4544077`     | 100 M eTOS     | 10 genesis EToSPoWGiver contracts × 10 M eTOS each; no public Hardhat accounts in production genesis |
    | 2  | `0x554E4F31` ("UNO1") = `1431195441` | 21 M UNO max  | **Empty shardstate — 0 pre-funded accounts.** All 21 M must be mined (CPU Poseidon2 PoW, 600 s target, 50 UNO/solve, Bitcoin-clone halving every 210 K solves). `mkemptyShardState` in `gen-zerostate.fif:69`. |
 
    All three supplies are economically independent — no on-chain bridge between any pair. See [Zerostate.md §Initial Token Supply](Zerostate.md#initial-token-supply-per-workchain-issuance) for configuration points — supply values live in `gen-zerostate.fif:94` (TOS), `evm/core/init.cpp::kSeedAmountETos` (eTOS), and `uno/core/genesis.h::kGenesisTotalSupplyNano` (UNO).
@@ -621,9 +621,11 @@ curl -s -X POST http://127.0.0.1:8011 \
   -d '{"jsonrpc":"2.0","method":"eth_getBalance","params":["0x0000000000000000000000000000000000000001","latest"],"id":1}'
 ```
 
-### Pre-Funded Test Accounts
+### Devnet-Only Hardhat Fixture Accounts
 
-On a fresh chain, `init_evm_workchain` seeds 10 test accounts with 10,000,000 eTOS each (dev/test eTOS supply: 100 M total across the 10 accounts). **These are the standard Hardhat / Anvil accounts — keys are public and well-known across the entire Ethereum tooling ecosystem. Do not use them on any production network.** eTOS is the wc=1 EVM native token, distinct from TOS on wc=0; the two have independent supplies (100 M each) and there is no on-chain bridge — 1:1 swap is conceptual, executed by external markets.
+Production/local production-style genesis no longer funds public Hardhat accounts. wc=1 eTOS supply is seeded into 10 `EToSPoWGiver` contracts under `crypto/smartcont/etos-pow-givers.fif`.
+
+The following Hardhat / Anvil keys are only for explicit devnet fixtures built with `TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS=1`. The keys are public and well-known across the Ethereum tooling ecosystem; never assume they are funded outside that devnet fixture mode. eTOS is the wc=1 EVM native token, distinct from TOS on wc=0; the two have independent supplies and there is no on-chain bridge — 1:1 swap is conceptual, executed by external markets.
 
 **Mnemonic:** `test test test test test test test test test test test junk`
 **Derivation path:** `m/44'/60'/0'/0/N` (BIP-44 standard)
@@ -641,14 +643,15 @@ On a fresh chain, `init_evm_workchain` seeds 10 test accounts with 10,000,000 eT
 | 8 | `0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f` | `0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97` |
 | 9 | `0xa0Ee7A142d267C1f36714E4a8F75612F20a79720` | `0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6` |
 
-The seeding is idempotent — if account #0 already has any state from a prior run, the seeding is skipped. To re-seed, wipe `/data/tos*/` and restart.
+The devnet fixture seeding is idempotent — if account #0 already has any state from a prior run, the seeding is skipped. To re-seed, wipe `/data/tos*/` and restart the devnet fixture build.
 
-To remove pre-funded accounts (production deployment), comment out the `seed_test_accounts(*g_evm_state);` call in `crypto/block/evm-workchain/evm-init.cpp`.
+Production deployments must not define `TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS`; the production path has no `seed_test_accounts` call to remove.
 
 #### Quick test with cast (Foundry)
 
 ```bash
-# Send 1 TOS from account #0 → account #1
+# Devnet fixture only: send 1 eTOS from account #0 -> account #1.
+# Requires a build/run with TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS=1.
 cast send 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 \
   --value 1ether \
   --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
@@ -667,9 +670,9 @@ cast balance 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 \
    - Chain ID: `5525331`
    - Currency symbol: `eTOS`
 
-2. **Import a pre-funded test account** → Account menu → Import account → Private Key:
+2. **Devnet fixture only: import a pre-funded test account** → Account menu → Import account → Private Key:
    - Paste any private key from the test accounts table above (start with #0: `0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80`)
-   - MetaMask will show the account with balance `10,000,000 eTOS`
+   - This balance exists only when the chain was explicitly started with `TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS=1`.
 
 3. **Send a transaction** — works with any standard wallet flow.
 
@@ -820,7 +823,7 @@ Full end-to-end flow (mining + tx submission) is in **Mining Quick Start** below
 
 ### Pre-Funded Accounts (UNO)
 
-**Zero.** Unlike wc=1 EVM (10 Hardhat accounts × 10 M eTOS), the UNO zerostate is an empty shardstate: `gen-zerostate.fif:69` calls `2 mkemptyShardState` — no notes, no balances, no test recipients. The entire 21 M UNO supply comes from mining only.
+**Zero.** Like production wc=1 EVM, the UNO zerostate does not fund public Hardhat-style accounts. UNO uses an empty shardstate: `gen-zerostate.fif:69` calls `2 mkemptyShardState` — no notes, no balances, no test recipients. The entire 21 M UNO supply comes from mining only.
 
 This is intentional:
 - Privacy coins with pre-mined distributions expose launch participants' holdings (Zcash's 20 % Founders' Reward was widely criticised).

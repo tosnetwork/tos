@@ -34,9 +34,11 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <deque>
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace evm_workchain {
 
@@ -49,10 +51,161 @@ std::atomic<uint64_t> g_malformed_messages{0};
 std::atomic<uint64_t> g_malformed_special_cell_messages{0};
 std::atomic<uint64_t> g_strict_root_failures{0};
 
+constexpr size_t kMaxIncompleteIndexedTransactions = 10'000;
+constexpr size_t kMaxIncompleteIndexedBlocks = 10'000;
+
+struct Bytes32Hasher {
+    size_t operator()(const evmc::bytes32& v) const noexcept {
+        uint64_t a = 0;
+        uint64_t b = 0;
+        std::memcpy(&a, v.bytes, sizeof(a));
+        std::memcpy(&b, v.bytes + 24, sizeof(b));
+        return static_cast<size_t>(a ^ (b + 0x9e3779b97f4a7c15ULL + (a << 6) + (a >> 2)));
+    }
+};
+
+struct IncompleteIndex {
+    std::mutex mu;
+    std::unordered_set<evmc::bytes32, Bytes32Hasher> txs;
+    std::deque<evmc::bytes32> order;
+};
+
+struct IncompleteBlockIndex {
+    std::mutex mu;
+    std::unordered_set<uint64_t> blocks;
+    std::deque<uint64_t> order;
+};
+
+IncompleteIndex& g_incomplete_index() {
+    static IncompleteIndex idx;
+    return idx;
+}
+
+IncompleteBlockIndex& g_incomplete_block_index() {
+    static IncompleteBlockIndex idx;
+    return idx;
+}
+
 td::Bits256 bytes32_to_bits(const evmc::bytes32& value) {
     td::Bits256 bits;
     std::memcpy(bits.data(), value.bytes, 32);
     return bits;
+}
+
+void compact_incomplete_order_locked(IncompleteIndex& idx) {
+    if (idx.order.size() <= kMaxIncompleteIndexedTransactions * 2) {
+        return;
+    }
+    std::unordered_set<evmc::bytes32, Bytes32Hasher> seen;
+    std::deque<evmc::bytes32> compacted;
+    for (const auto& tx_hash : idx.order) {
+        if (idx.txs.find(tx_hash) != idx.txs.end() &&
+            seen.insert(tx_hash).second) {
+            compacted.push_back(tx_hash);
+        }
+    }
+    idx.order.swap(compacted);
+}
+
+void mark_rpc_indexing_incomplete(const evmc::bytes32& tx_hash) noexcept {
+    auto& idx = g_incomplete_index();
+    std::lock_guard<std::mutex> lock(idx.mu);
+    if (idx.txs.insert(tx_hash).second) {
+        idx.order.push_back(tx_hash);
+    }
+    while (idx.txs.size() > kMaxIncompleteIndexedTransactions && !idx.order.empty()) {
+        auto oldest = idx.order.front();
+        idx.order.pop_front();
+        idx.txs.erase(oldest);
+    }
+    compact_incomplete_order_locked(idx);
+}
+
+void clear_rpc_indexing_incomplete(const evmc::bytes32& tx_hash) noexcept {
+    auto& idx = g_incomplete_index();
+    std::lock_guard<std::mutex> lock(idx.mu);
+    if (idx.txs.erase(tx_hash) == 0) {
+        return;
+    }
+    std::deque<evmc::bytes32> filtered;
+    for (const auto& existing : idx.order) {
+        if (existing != tx_hash) {
+            filtered.push_back(existing);
+        }
+    }
+    idx.order.swap(filtered);
+    compact_incomplete_order_locked(idx);
+}
+
+uint64_t incomplete_indexed_transaction_count() noexcept {
+    auto& idx = g_incomplete_index();
+    std::lock_guard<std::mutex> lock(idx.mu);
+    return idx.txs.size();
+}
+
+void clear_all_rpc_indexing_incomplete() noexcept {
+    auto& idx = g_incomplete_index();
+    std::lock_guard<std::mutex> lock(idx.mu);
+    idx.txs.clear();
+    idx.order.clear();
+}
+
+void compact_incomplete_block_order_locked(IncompleteBlockIndex& idx) {
+    if (idx.order.size() <= kMaxIncompleteIndexedBlocks * 2) {
+        return;
+    }
+    std::unordered_set<uint64_t> seen;
+    std::deque<uint64_t> compacted;
+    for (uint64_t block_number : idx.order) {
+        if (idx.blocks.find(block_number) != idx.blocks.end() &&
+            seen.insert(block_number).second) {
+            compacted.push_back(block_number);
+        }
+    }
+    idx.order.swap(compacted);
+}
+
+void mark_rpc_block_indexing_incomplete(uint64_t block_number) noexcept {
+    auto& idx = g_incomplete_block_index();
+    std::lock_guard<std::mutex> lock(idx.mu);
+    if (idx.blocks.insert(block_number).second) {
+        idx.order.push_back(block_number);
+    }
+    while (idx.blocks.size() > kMaxIncompleteIndexedBlocks && !idx.order.empty()) {
+        uint64_t oldest = idx.order.front();
+        idx.order.pop_front();
+        idx.blocks.erase(oldest);
+    }
+    compact_incomplete_block_order_locked(idx);
+}
+
+void clear_rpc_block_indexing_incomplete(uint64_t block_number) noexcept {
+    auto& idx = g_incomplete_block_index();
+    std::lock_guard<std::mutex> lock(idx.mu);
+    if (idx.blocks.erase(block_number) == 0) {
+        return;
+    }
+    std::deque<uint64_t> filtered;
+    for (uint64_t existing : idx.order) {
+        if (existing != block_number) {
+            filtered.push_back(existing);
+        }
+    }
+    idx.order.swap(filtered);
+    compact_incomplete_block_order_locked(idx);
+}
+
+uint64_t incomplete_indexed_block_count() noexcept {
+    auto& idx = g_incomplete_block_index();
+    std::lock_guard<std::mutex> lock(idx.mu);
+    return idx.blocks.size();
+}
+
+void clear_all_rpc_block_indexing_incomplete() noexcept {
+    auto& idx = g_incomplete_block_index();
+    std::lock_guard<std::mutex> lock(idx.mu);
+    idx.blocks.clear();
+    idx.order.clear();
 }
 
 }  // namespace
@@ -67,9 +220,25 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
     // is bounded and pushing dups would burn cache slots, and per-tx log
     // store appends per call. Bail early when this (block, tx_hash) is
     // already stored. Cheap (one hash-map lookup).
-    if (state.get_receipt_copy(fx.tx_hash).has_value()) {
+    //
+    // Codex round 1 (M-02): the dedup key MUST include block context
+    // (here: `block_number`). A bare-`tx_hash` key would silently keep
+    // the first receipt observed even when the same Ethereum tx later
+    // lands in a different accepted block (reorg / fork-import path) —
+    // leaving RPC `eth_getTransactionReceipt` pointing at a no-longer-
+    // canonical block. Compare existing.block_number against the
+    // incoming receipt and fall through to overwrite on mismatch.
+    // `store_receipt` / `store_transaction` are last-write-wins, so the
+    // records refresh cleanly; per-tx logs from the prior block remain
+    // attributed to that historical block_number — correct for RPC
+    // consumers that explicitly query the old number.
+    if (auto existing = state.get_receipt_copy(fx.tx_hash);
+        existing.has_value() &&
+        existing->block_number == fx.receipt.block_number) {
+        clear_rpc_indexing_incomplete(fx.tx_hash);
         return;
     }
+    clear_rpc_indexing_incomplete(fx.tx_hash);
 
     // Receipt: store in RAM, persist to cache DB.
     {
@@ -128,6 +297,7 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
 
     // Block summary (only the block's first tx carries this).
     if (fx.has_block) {
+        clear_rpc_block_indexing_incomplete(fx.block.number);
         state.store_block(fx.block);
         {
             std::unique_lock lock(state.mutex());
@@ -460,6 +630,10 @@ bool finalize_block_side_effects(std::vector<IndexedSideEffects>& fxs,
         if (fx.receipt.gas_used > block.gas_limit ||
             block.gas_used > block.gas_limit - fx.receipt.gas_used) {
             g_strict_root_failures.fetch_add(1, std::memory_order_relaxed);
+            for (const auto& pending : fxs) {
+                mark_rpc_indexing_incomplete(pending.fx.tx_hash);
+            }
+            mark_rpc_block_indexing_incomplete(accepted_block_seqno);
             LOG(WARNING) << "evm post-accept: refusing block #"
                          << accepted_block_seqno
                          << " side effects because gas_used would exceed "
@@ -489,6 +663,10 @@ bool finalize_block_side_effects(std::vector<IndexedSideEffects>& fxs,
     auto transactions_root = try_compute_transactions_root_from_records(txs);
     if (!transactions_root) {
         g_strict_root_failures.fetch_add(1, std::memory_order_relaxed);
+        for (const auto& indexed : fxs) {
+            mark_rpc_indexing_incomplete(indexed.fx.tx_hash);
+        }
+        mark_rpc_block_indexing_incomplete(accepted_block_seqno);
         LOG(WARNING) << "evm post-accept: cannot finalize block #"
                      << accepted_block_seqno
                      << " because at least one accepted tx lacks raw signed RLP";
@@ -577,6 +755,8 @@ EvmPostAcceptHealth evm_post_accept_health() noexcept {
         .malformed_messages = g_malformed_messages.load(std::memory_order_relaxed),
         .malformed_special_cell_messages = g_malformed_special_cell_messages.load(std::memory_order_relaxed),
         .strict_root_failures = g_strict_root_failures.load(std::memory_order_relaxed),
+        .incomplete_indexed_transactions = incomplete_indexed_transaction_count(),
+        .incomplete_indexed_blocks = incomplete_indexed_block_count(),
     };
 }
 
@@ -587,6 +767,20 @@ void reset_evm_post_accept_health_for_tests() noexcept {
     g_malformed_messages.store(0, std::memory_order_relaxed);
     g_malformed_special_cell_messages.store(0, std::memory_order_relaxed);
     g_strict_root_failures.store(0, std::memory_order_relaxed);
+    clear_all_rpc_indexing_incomplete();
+    clear_all_rpc_block_indexing_incomplete();
+}
+
+bool is_evm_rpc_indexing_incomplete(const evmc::bytes32& tx_hash) noexcept {
+    auto& idx = g_incomplete_index();
+    std::lock_guard<std::mutex> lock(idx.mu);
+    return idx.txs.find(tx_hash) != idx.txs.end();
+}
+
+bool is_evm_rpc_block_indexing_incomplete(uint64_t block_number) noexcept {
+    auto& idx = g_incomplete_block_index();
+    std::lock_guard<std::mutex> lock(idx.mu);
+    return idx.blocks.find(block_number) != idx.blocks.end();
 }
 
 RpcCacheRebuildStats rebuild_rpc_cache_from_global_state(
@@ -1066,9 +1260,14 @@ size_t apply_stashed_side_effects_for_messages(
                 saw_gap = true;
                 first_gap_index = msg_index;
                 LOG(WARNING) << "evm post-accept: cannot derive tx hash for accepted tx_index="
-                             << msg_index << "; publishing only complete prefix";
+                             << msg_index << "; withholding EVM RPC indexes for this block";
             }
             replay_available = false;
+            continue;
+        }
+        if (saw_gap) {
+            mark_rpc_indexing_incomplete(*tx_hash);
+            ++dropped_after_gap;
             continue;
         }
         auto fx = take_side_effects(accepted_block_seqno, accepted_timestamp,
@@ -1091,23 +1290,36 @@ size_t apply_stashed_side_effects_for_messages(
                     saw_gap = true;
                     first_gap_index = msg_index;
                     LOG(WARNING) << "evm post-accept: missing stashed side effects for accepted tx_index="
-                                 << msg_index << "; publishing only complete prefix";
+                                 << msg_index << "; withholding EVM RPC indexes for this block";
                 }
+                mark_rpc_indexing_incomplete(*tx_hash);
                 continue;
             }
-        }
-        if (saw_gap) {
-            ++dropped_after_gap;
-            continue;
         }
         fxs.push_back(IndexedSideEffects{static_cast<uint32_t>(msg_index),
                                          std::move(*fx)});
     }
     if (dropped_after_gap != 0) {
-        LOG(WARNING) << "evm post-accept: discarded " << dropped_after_gap
-                     << " stashed side-effect record(s) after tx_index="
+        LOG(WARNING) << "evm post-accept: withheld " << dropped_after_gap
+                     << " side-effect record(s) after tx_index="
                      << first_gap_index
-                     << " to avoid wrong tx_index/cumulativeGasUsed";
+                     << " to avoid partial EVM RPC indexes";
+    }
+    if (saw_gap) {
+        mark_rpc_block_indexing_incomplete(accepted_block_seqno);
+        for (const auto& indexed : fxs) {
+            mark_rpc_indexing_incomplete(indexed.fx.tx_hash);
+            stash_side_effects(accepted_block_seqno, accepted_timestamp,
+                               rand_seed, parent_block_hash,
+                               indexed.fx.tx_hash, indexed.fx);
+        }
+        if (!fxs.empty()) {
+            LOG(WARNING) << "evm post-accept: withheld " << fxs.size()
+                         << " complete prefix side-effect record(s) for block #"
+                         << accepted_block_seqno
+                         << " because a later accepted EVM tx was not indexable";
+        }
+        return 0;
     }
 
     if (!finalize_block_side_effects(fxs, accepted_block_seqno,

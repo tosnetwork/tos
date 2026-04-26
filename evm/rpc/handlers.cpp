@@ -45,6 +45,7 @@
 #include <intx/intx.hpp>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <sstream>
 #include <chrono>
@@ -521,10 +522,7 @@ static RpcResult handle_get_transaction_receipt(const std::string& params, const
 
     auto receipt = global_evm_state().get_receipt_copy(tx_hash);
     if (!receipt) {
-        auto health = evm_post_accept_health();
-        if (health.missing_side_effects != 0 || health.replay_failures != 0 ||
-            health.malformed_messages != 0 || health.malformed_special_cell_messages != 0 ||
-            health.strict_root_failures != 0) {
+        if (is_evm_rpc_indexing_incomplete(tx_hash)) {
             return {make_error(id, -32010,
                                "EVM RPC indexing incomplete; retry after cache repair"), true};
         }
@@ -791,6 +789,20 @@ static std::vector<silkworm::AccessListEntry> parse_access_list(const std::strin
     return out;
 }
 
+// Codex round 1 (H-02): hard cap on per-request gas for read-only RPC paths
+// (eth_call / eth_estimateGas / eth_createAccessList / debug_traceCall). The
+// executor only enforces `txn.gas_limit <= block.gas_limit` for `commit_state`
+// and `parse_hex_uint64` happily returns UINT64_MAX on oversized hex, so
+// without this cap a single request could keep the global EVM-state lock for
+// many seconds while burning billions of gas inside silkworm. Picked at 30M
+// to match Ethereum L1 block gas — generous for any legitimate simulation
+// while bounding worst-case CPU per request.
+inline constexpr uint64_t kMaxReadOnlyRpcGas = 30'000'000;
+
+inline uint64_t clamp_read_only_rpc_gas(uint64_t requested) noexcept {
+    return requested > kMaxReadOnlyRpcGas ? kMaxReadOnlyRpcGas : requested;
+}
+
 // Parse a call object from JSON-RPC params:
 //   [{"from":"0x...", "to":"0x...", "data":"0x...", "value":"0x...", "gas":"0x..."}, "latest"]
 // All fields are optional per Ethereum spec.
@@ -887,6 +899,8 @@ static RpcResult handle_call(const std::string& params, const std::string& id) {
     // For eth_call, gas price should be 0 (no balance needed for simulation).
     txn.max_fee_per_gas = 0;
     txn.max_priority_fee_per_gas = 0;
+    // Codex round 1 (H-02): clamp caller-supplied gas to the read-only cap.
+    txn.gas_limit = clamp_read_only_rpc_gas(txn.gas_limit);
 
     uint8_t rand_seed[32] = {};
     auto block = make_evm_block(
@@ -921,6 +935,8 @@ static RpcResult handle_estimate_gas(const std::string& params, const std::strin
     if (txn.gas_limit == 10'000'000) {
         txn.gas_limit = 30'000'000;
     }
+    // Codex round 1 (H-02): clamp caller-supplied gas to the read-only cap.
+    txn.gas_limit = clamp_read_only_rpc_gas(txn.gas_limit);
 
     uint8_t rand_seed[32] = {};
     auto block = make_evm_block(
@@ -1058,6 +1074,10 @@ static RpcResult handle_get_block_by_number(const std::string& params, const std
     auto blk = global_evm_state().get_block_copy(bn);
     if (global_evm_state().has_block(bn)) {
         return {make_result(id, format_block_json(blk, full_transactions)), false};
+    }
+    if (is_evm_rpc_block_indexing_incomplete(bn)) {
+        return {make_error(id, -32010,
+                           "EVM RPC indexing incomplete; retry after cache repair"), true};
     }
     return {make_result(id, "null"), false};
 }
@@ -1468,6 +1488,14 @@ static RpcResult handle_fee_history(const std::string& params, const std::string
     // Count entries by scanning for `[` after the first two scalars.
     // When absent, geth/erigon omit the `reward` field entirely; we keep
     // emitting it but with one zero per block for backward compat.
+    //
+    // Codex round 5 (H-07): bound the percentile array length. The
+    // response emits `block_count * reward_count` entries; with
+    // block_count capped at 1024 and reward_count uncapped, a single
+    // request near the 1 MiB params limit could fan out to a multi-MB
+    // response and burn proportional CPU on string concatenation. Geth
+    // caps `rewardPercentiles` at 100; we use 100 too.
+    constexpr size_t kMaxRewardPercentiles = 100;
     size_t reward_count = 1;
     {
         // Find the LAST `[` in params — that's the percentiles array
@@ -1486,6 +1514,11 @@ static RpcResult handle_fee_history(const std::string& params, const std::string
                 }
                 reward_count = any ? commas + 1 : 0;
             }
+        }
+        if (reward_count > kMaxRewardPercentiles) {
+            return {make_error(id, -32602,
+                               "eth_feeHistory: too many rewardPercentiles "
+                               "(max 100)"), true};
         }
     }
 
@@ -1639,6 +1672,10 @@ static std::string format_transaction_json(const evmc::bytes32& tx_hash, const S
 static RpcResult handle_get_block_tx_count_by_number(const std::string& params, const std::string& id) {
     uint64_t bn = parse_block_number_param(params);
     if (!global_evm_state().has_block(bn)) {
+        if (is_evm_rpc_block_indexing_incomplete(bn)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_result(id, "\"0x0\""), false};
     }
     auto blk = global_evm_state().get_block_copy(bn);
@@ -1667,6 +1704,10 @@ static RpcResult handle_get_tx_by_block_number_and_index(const std::string& para
     uint64_t tx_index = parse_second_hex_param(params);
 
     if (!global_evm_state().has_block(bn)) {
+        if (is_evm_rpc_block_indexing_incomplete(bn)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_result(id, "null"), false};
     }
     auto blk = global_evm_state().get_block_copy(bn);
@@ -1927,6 +1968,21 @@ static RpcResult handle_new_filter(const std::string& params, const std::string&
         return *error;
     }
 
+    // Codex round 5 (H-08): apply the same `kMaxGetLogsBlockRange` cap
+    // that `eth_getLogs` enforces. Without this, a caller can stash a
+    // filter with a 10M-block range and force every `eth_getFilterLogs`
+    // poll to scan the whole range while holding the global filter
+    // mutex. Only enforced when both ends are fixed; open-ended
+    // `to_block=latest` filters are intentionally exempt because their
+    // active range grows incrementally with the chain head.
+    if (filter.has_fixed_to_block &&
+        filter.to_block > filter.from_block &&
+        (filter.to_block - filter.from_block) > kMaxGetLogsBlockRange) {
+        return {make_error(id, -32602,
+                           "eth_newFilter: block range exceeds " +
+                           std::to_string(kMaxGetLogsBlockRange)), true};
+    }
+
     uint64_t fid = create_filter(FilterType::Logs,
                                  filter.addresses,
                                  filter.topics,
@@ -2145,6 +2201,10 @@ static RpcResult handle_get_raw_tx_by_block_number_and_index(const std::string& 
         }
     }
     if (!global_evm_state().has_block(bn)) {
+        if (is_evm_rpc_block_indexing_incomplete(bn)) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_result(id, "null"), false};
     }
     auto blk = global_evm_state().get_block_copy(bn);
@@ -2356,6 +2416,18 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
     //   ["0x<addr>", [ "0x<key1>", "0x<key2>", ... ], "<blockTag>"]
     // Find the INNER array and scan only within its bounds so a later
     // blockhash string isn't mis-read as a storage key.
+    //
+    // Codex round 4 (H-05): cap the number of storage keys accepted in
+    // a single `eth_getProof` request. Each requested slot drives a full
+    // MPT walk + RLP-formatted proof emission; an uncapped list lets a
+    // public caller force MB-scale responses and tens of seconds of CPU
+    // per request, bypassing both the EVM gas budgets and the block
+    // gas limit. Geth defaults to 1000 keys; we pick 256 — generous for
+    // legitimate wallets / explorers (a typical contract query uses 1-10
+    // slots) but tight enough to bound worst-case work and bandwidth.
+    // Reject excess keys with a JSON-RPC error rather than silently
+    // truncating, so callers know they need to chunk their request.
+    constexpr size_t kMaxGetProofStorageKeys = 256;
     std::vector<evmc::bytes32> slots;
     auto kpos = params.find('[', params.find('[') + 1);
     auto kend = (kpos != std::string::npos) ? params.find(']', kpos + 1) : std::string::npos;
@@ -2377,6 +2449,11 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
             if (hex_len == 0 || hex_len > 64) {
                 scan = e + 1; continue;
             }
+            if (slots.size() >= kMaxGetProofStorageKeys) {
+                return {make_error(id, -32602,
+                                   "eth_getProof: too many storage keys "
+                                   "(max 256 per request)"), true};
+            }
             evmc::bytes32 s{};
             size_t nibble_offset = 64 - hex_len;  // left-pad nibbles
             bool ok = true;
@@ -2396,14 +2473,37 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
         }
     }
 
+    // Codex round 5 (H-06): hold the EvmState shared lock across the
+    // full proof build. `state.state()` returns the underlying silkworm
+    // backend with a contract that the caller already owns the lock
+    // (see `evm/core/state.h:107`). Without it the iteration below can
+    // race a consensus mutation and observe a partially-updated
+    // dictionary, producing an inconsistent (but signed) proof. Also
+    // bound the per-request iteration so a public caller cannot force
+    // unbounded full-state walks: 1 M accounts and 1 M target-account
+    // storage slots per request — orders of magnitude above any
+    // realistic legitimate use, far below the kind of state size that
+    // breaks the consensus full-root recompute (kMaxFullRootAccounts /
+    // kMaxFullRootStorageSlots).
+    constexpr size_t kMaxGetProofAccountIter = 1'000'000;
+    constexpr size_t kMaxGetProofStorageIter = 1'000'000;
+    std::shared_lock proof_lock(state.mutex());
+
     // ----- Build storage trie + storage proofs -----
     evmc::bytes32 storage_hash = silkworm::kEmptyRoot;
     std::map<silkworm::Bytes, silkworm::Bytes> storage_kv;
+    bool storage_truncated = false;
     if (acct) {
         auto* cs = dynamic_cast<CellEvmState*>(&state.state());
         if (cs) {
+            size_t storage_iter = 0;
             cs->for_each_storage(addr, [&](const evmc::bytes32& slot,
                                             const evmc::bytes32& value) {
+                if (storage_truncated) return;
+                if (++storage_iter > kMaxGetProofStorageIter) {
+                    storage_truncated = true;
+                    return;
+                }
                 if (value == evmc::bytes32{}) return;  // zero values absent from trie
                 auto kh = ethash::keccak256(slot.bytes, 32);
                 silkworm::Bytes key(kh.bytes, kh.bytes + 32);
@@ -2412,6 +2512,11 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
                 silkworm::rlp::encode(val_rlp, v_int);
                 storage_kv[std::move(key)] = std::move(val_rlp);
             });
+            if (storage_truncated) {
+                return {make_error(id, -32603,
+                                   "eth_getProof: target account storage exceeds "
+                                   "RPC proof budget"), true};
+            }
             storage_hash = mpt_root(storage_kv);
         }
     }
@@ -2419,11 +2524,18 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
     // ----- Build account trie + account proof -----
     // Iterate every account, hash the address, RLP-encode the account.
     std::map<silkworm::Bytes, silkworm::Bytes> account_kv;
+    bool account_truncated = false;
     {
         auto* cs = dynamic_cast<CellEvmState*>(&state.state());
         if (cs) {
+            size_t account_iter = 0;
             cs->for_each_account([&](const unsigned char key[32],
                                      const silkworm::Account& other_acct) {
+                if (account_truncated) return;
+                if (++account_iter > kMaxGetProofAccountIter) {
+                    account_truncated = true;
+                    return;
+                }
                 evmc::address other_addr{};
                 std::memcpy(other_addr.bytes, key + 12, 20);
                 // Each account also needs its own storage_hash for accurate proof.
@@ -2436,6 +2548,11 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
                 silkworm::Bytes hashed_addr(ah.bytes, ah.bytes + 32);
                 account_kv[std::move(hashed_addr)] = std::move(acct_rlp);
             });
+            if (account_truncated) {
+                return {make_error(id, -32603,
+                                   "eth_getProof: account dictionary exceeds "
+                                   "RPC proof budget"), true};
+            }
         }
     }
 
@@ -3196,6 +3313,20 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
         return {make_error(id, -38026, "too many blocks"), true};
     }
 
+    // Codex round 3 (H-04): aggregate-gas + per-block-call budgets across
+    // the whole simulation. The block cap above only bounds memory; with
+    // up to 256 blocks * unbounded calls/block * 30M gas/call, a single
+    // request could monopolize the EvmState lock for tens of seconds and
+    // burn billions of gas while legitimate eth_call traffic stalls. Geth
+    // accepts no aggregate cap because it isolates simulations per
+    // request handler — TOS reuses the global state lock here, so the
+    // budget is necessary. Numbers are generous for legitimate use
+    // (typical multi-call simulation: 1–5 blocks × 1–20 calls each =
+    // ~3-300M gas total) but tight enough that worst-case CPU is bounded.
+    constexpr size_t kMaxSimulateCallsPerBlock = 1024;
+    constexpr uint64_t kMaxSimulateTotalGas = 1'000'000'000ULL;
+    uint64_t simulate_aggregate_gas_used = 0;
+
     for (const auto& bsc_entry : bsc_entries) {
         // ---- Per-block overrides ----
         SimulateBlockOverrides bo = parse_block_overrides_for_sim(bsc_entry);
@@ -3283,6 +3414,12 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
             }
         }
 
+        // Codex round 3 (H-04): per-block call cap. Reject before
+        // execution to bound the inner loop's work.
+        if (call_jsons.size() > kMaxSimulateCallsPerBlock) {
+            return {make_error(id, -38026, "too many calls in block"), true};
+        }
+
         struct OneCall {
             silkworm::Transaction txn;
             ExecutionResult result;
@@ -3329,6 +3466,16 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
                 oc.result.error_message = "simulate: unknown exception";
             }
             total_gas_used += oc.result.gas_used;
+            // Codex round 3 (H-04): aggregate-gas budget across the
+            // entire simulation. Reject as soon as the cumulative gas
+            // would exceed the limit; we have already executed the
+            // current call but stopping here bounds the worst case at
+            // (kMaxSimulateTotalGas + 30M).
+            simulate_aggregate_gas_used += oc.result.gas_used;
+            if (simulate_aggregate_gas_used > kMaxSimulateTotalGas) {
+                return {make_error(id, -38026,
+                                   "simulation aggregate gas budget exceeded"), true};
+            }
 
             // Synthesize an ETH-transfer log when traceTransfers is on,
             // the call succeeded, and value > 0. Emitter is the spec's
@@ -3590,6 +3737,10 @@ static RpcResult handle_create_access_list(const std::string& params, const std:
     txn.max_fee_per_gas = 0;
     txn.max_priority_fee_per_gas = 0;
     if (txn.gas_limit == 10'000'000) txn.gas_limit = 30'000'000;
+    // Codex round 1 (H-02): clamp caller-supplied gas to the read-only cap.
+    // This handler additionally holds the global EVM state mutex while
+    // executing, so an oversized gas budget can stall every other RPC.
+    txn.gas_limit = clamp_read_only_rpc_gas(txn.gas_limit);
 
     uint8_t rs[32] = {};
     auto block = make_evm_block(global_evm_state().block_number(),
@@ -3707,7 +3858,9 @@ static std::string post_accept_health_json() {
     r += "\"replayFailures\":" + std::to_string(h.replay_failures) + ",";
     r += "\"malformedMessages\":" + std::to_string(h.malformed_messages) + ",";
     r += "\"malformedSpecialCellMessages\":" + std::to_string(h.malformed_special_cell_messages) + ",";
-    r += "\"strictRootFailures\":" + std::to_string(h.strict_root_failures);
+    r += "\"strictRootFailures\":" + std::to_string(h.strict_root_failures) + ",";
+    r += "\"incompleteIndexedTransactions\":" + std::to_string(h.incomplete_indexed_transactions) + ",";
+    r += "\"incompleteIndexedBlocks\":" + std::to_string(h.incomplete_indexed_blocks);
     r += "}";
     return r;
 }
@@ -3741,20 +3894,40 @@ static RpcResult handle_debug_rebuild_rpc_cache(const std::string& params,
     return {make_error(id, -32601,
                        "debug_rebuildRpcCache is disabled on public RPC"), true};
 #else
+    const char* expected_token = std::getenv("TOS_EVM_DEBUG_RPC_TOKEN");
+    const std::string provided_token = extract_json_string_value(params, "auth");
+    if (expected_token == nullptr || expected_token[0] == '\0') {
+        return {make_error(id, -32601,
+                           "debug_rebuildRpcCache requires TOS_EVM_DEBUG_RPC_TOKEN"), true};
+    }
+    if (std::strlen(expected_token) < 16 || provided_token != expected_token) {
+        return {make_error(id, -32001,
+                           "debug_rebuildRpcCache unauthorized"), true};
+    }
+
     constexpr uint64_t kMaxRebuildBlocksPerCall = 128;
     uint64_t from = 0;
     uint64_t to = global_evm_state().block_number();
-    auto first = params.find("0x");
-    if (first != std::string::npos ||
-        params.find("\"latest\"") != std::string::npos ||
-        params.find("\"pending\"") != std::string::npos ||
-        params.find("\"safe\"") != std::string::npos ||
-        params.find("\"finalized\"") != std::string::npos) {
-        from = parse_block_number_param(params);
-        auto second = params.find("0x", first == std::string::npos ? 0 : first + 2);
-        if (second != std::string::npos) {
-            auto end = params.find_first_of("\",]}", second);
-            to = parse_hex_uint64(params.substr(second, end - second));
+    auto from_hex = extract_json_string_value(params, "fromBlock");
+    auto to_hex = extract_json_string_value(params, "toBlock");
+    if (!from_hex.empty()) {
+        from = parse_hex_uint64(from_hex);
+        if (!to_hex.empty()) {
+            to = parse_hex_uint64(to_hex);
+        }
+    } else {
+        auto first = params.find("0x");
+        if (first != std::string::npos ||
+            params.find("\"latest\"") != std::string::npos ||
+            params.find("\"pending\"") != std::string::npos ||
+            params.find("\"safe\"") != std::string::npos ||
+            params.find("\"finalized\"") != std::string::npos) {
+            from = parse_block_number_param(params);
+            auto second = params.find("0x", first == std::string::npos ? 0 : first + 2);
+            if (second != std::string::npos) {
+                auto end = params.find_first_of("\",]}", second);
+                to = parse_hex_uint64(params.substr(second, end - second));
+            }
         }
     }
     if (to < from || to - from + 1 > kMaxRebuildBlocksPerCall) {

@@ -3,12 +3,18 @@
 // Exercises: balance read, signed transfer, receipt, balance verification,
 // contract deployment (via raw bytecode), eth_call, gas estimation.
 
-const { ethers } = require('/tmp/evm-rpc-test/node_modules/ethers');
-
 const RPC = process.argv[2] || 'http://127.0.0.1:8011';
 const TX_TIMEOUT_MS = 30000;
 
-// Hardhat test account #0
+if (process.env.TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS !== '1') {
+    console.error('full-rpc-test.js is a devnet fixture that requires TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS=1');
+    process.exit(1);
+}
+
+const { ethers } = require('/tmp/evm-rpc-test/node_modules/ethers');
+
+// Devnet fixture account #0. This public Hardhat key must never be assumed in
+// production genesis/runtime.
 const PRIV_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 
 const COLORS = { ok: '\x1b[32m', fail: '\x1b[31m', dim: '\x1b[90m', reset: '\x1b[0m' };
@@ -40,11 +46,11 @@ async function main() {
     // 2. Balance of test account #0
     const balance = await provider.getBalance(wallet.address);
     const balanceTos = Number(ethers.formatEther(balance));
-    check('Hardhat #0 balance > 0', balanceTos > 0, `${balanceTos} TOS`);
+    check('devnet fixture account #0 balance > 0', balanceTos > 0, `${balanceTos} TOS`);
 
     // 3. Nonce of test account #0
     const nonce = await provider.getTransactionCount(wallet.address);
-    check('Hardhat #0 nonce >= 0', nonce >= 0, `${nonce}`);
+    check('devnet fixture account #0 nonce >= 0', nonce >= 0, `${nonce}`);
 
     // 4. Gas price
     const feeData = await provider.getFeeData();
@@ -62,7 +68,7 @@ async function main() {
     const recipient = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
     const recipientInitial = await provider.getBalance(recipient);
     const recipientInitialTos = Number(ethers.formatEther(recipientInitial));
-    check('Hardhat #1 balance >= 10000 (or modified)', recipientInitial >= 10000n, `${recipientInitialTos} TOS`);
+    check('devnet fixture account #1 balance >= 10000 (or modified)', recipientInitial >= 10000n, `${recipientInitialTos} TOS`);
 
     // 7. Static eth_call against zero contract
     try {

@@ -14,8 +14,17 @@
   args), it falls back to the receipt-only check; the F.6 form is
   `--verify <txHash> <blockNumber> <blockHash>`.
 */
-const { ethers } = require('/tmp/evm-rpc-test/node_modules/ethers');
 const URL = process.env.RPC || 'http://127.0.0.1:8011';
+
+if (process.env.TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS !== '1') {
+  console.error('proof-receipt-survives-restart.js is a devnet fixture that requires TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS=1');
+  process.exit(1);
+}
+
+const { ethers } = require('/tmp/evm-rpc-test/node_modules/ethers');
+
+// Devnet fixture account. This public Hardhat key must never be assumed in
+// production genesis/runtime.
 const PK = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 
 (async () => {

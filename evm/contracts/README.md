@@ -83,8 +83,10 @@ The binary can be obtained from:
 # Creation bytecode (for deploy via CREATE, used in tests):
 solc --bin --optimize --optimize-runs 200 EToSPoWGiver.sol -o build/
 
-# Runtime bytecode (for genesis seeding via evm-zerostate-from-alloc):
-solc --bin-runtime --optimize --optimize-runs 200 EToSPoWGiver.sol -o build_runtime/
+# Runtime bytecode (for genesis seeding via evm-zerostate-from-alloc).
+# Use deterministic metadata so the embedded genesis bytecode can be compared
+# exactly in review/CI:
+solc --bin-runtime --optimize --optimize-runs 200 --metadata-hash none EToSPoWGiver.sol -o build_runtime/
 
 # ABI (for miner client integration):
 solc --abi --optimize EToSPoWGiver.sol -o build_abi/
@@ -106,7 +108,7 @@ To regenerate the zerostate after contract changes:
 ```bash
 # Recompile
 cd /path/to/tos/evm/contracts
-solc --bin-runtime --optimize --optimize-runs 200 EToSPoWGiver.sol -o build_runtime/
+solc --bin-runtime --optimize --optimize-runs 200 --metadata-hash none EToSPoWGiver.sol -o build_runtime/
 BYTECODE=$(cat build_runtime/EToSPoWGiver.bin-runtime)
 
 # Update the hex literal in etos-pow-givers.fif:
@@ -156,7 +158,7 @@ h = keccak256(abi.encode(
 require(uint256(h) < currentTarget())
 ```
 
-The seed rotation happens inside `mine()`: `seed = blockhash(block.number - 1)`. Miners must poll `currentSeed()` before each attempt.
+The seed rotation happens inside `mine()` and is derived from the old seed, winning proof hash, proof inputs, parent block hash, contract address, and previous solve time. Miners must poll `currentSeed()` before each attempt because a successful solve changes the seed immediately, including within the same EVM block.
 
 ### Polling
 

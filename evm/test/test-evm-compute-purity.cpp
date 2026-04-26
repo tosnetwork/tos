@@ -12,7 +12,7 @@
       2. collator_validator_agree_on_state_root
       3. fork_order_independence
       4. restart_validator_matches_collator
-      5. post_accept_missing_side_effect_keeps_prefix_indices
+      5. post_accept_missing_side_effect_withholds_partial_block
       6. block_hash_history_roundtrip_and_read_header
       7. cp_new_data_declared_root_not_recomputed_per_tx
       8. same_block_second_evm_tx_is_rejected_without_accumulator
@@ -503,13 +503,13 @@ static void test_restart_validator_matches_collator() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 5 — post_accept_missing_side_effect_keeps_prefix_indices
+// Test 5 — post_accept_missing_side_effect_withholds_partial_block
 // ---------------------------------------------------------------------------
 //
 // If the deferred side-effect cache misses in the middle of an accepted
 // block, post-accept must not compress later records onto the missing
-// tx_index. Publish only the complete prefix so tx_index and
-// cumulativeGasUsed remain exact for every emitted record.
+// tx_index, and must not publish a partial block summary. Withhold all public
+// records for that block and mark the known tx hashes as indexing-incomplete.
 
 static ew::EvmBlockSideEffects make_test_side_effect(
     const SignedRawTx& tx,
@@ -539,8 +539,11 @@ static ew::EvmBlockSideEffects make_test_side_effect(
     return fx;
 }
 
-static void test_post_accept_missing_side_effect_keeps_prefix_indices() {
-    tprintf("[TEST] post_accept_missing_side_effect_keeps_prefix_indices\n");
+static void test_post_accept_missing_side_effect_withholds_partial_block() {
+    tprintf("[TEST] post_accept_missing_side_effect_withholds_partial_block\n");
+
+    ew::clear_stashed_side_effects_for_tests();
+    ew::reset_evm_post_accept_health_for_tests();
 
     evmc::address recipient{};
     recipient.bytes[19] = 0x73;
@@ -574,7 +577,6 @@ static void test_post_accept_missing_side_effect_keeps_prefix_indices() {
     rand_seed[31] = 0x5a;
     parent_hash[31] = 0xa5;
 
-    const size_t before_stash_count = ew::stashed_side_effects_count();
     ew::stash_side_effects(block_seqno, timestamp, rand_seed, parent_hash,
                            tx0->hash,
                            make_test_side_effect(*tx0, recipient, 21'000, 0x10));
@@ -590,23 +592,30 @@ static void test_post_accept_missing_side_effect_keeps_prefix_indices() {
     auto stored0 = ew::global_evm_state().get_transaction_copy(tx0->hash);
     auto receipt0 = ew::global_evm_state().get_receipt_copy(tx0->hash);
     auto stored2 = ew::global_evm_state().get_transaction_copy(tx2->hash);
-    auto block = ew::global_evm_state().get_block_copy(block_seqno);
-    bool block_ok = ew::global_evm_state().has_block(block_seqno) &&
-                    block.transaction_hashes.size() == 1 &&
-                    block.transaction_hashes[0] == tx0->hash &&
-                    block.gas_used == 21'000;
-    bool tx0_ok = stored0 && stored0->tx_index == 0 &&
-                  receipt0 && receipt0->tx_index == 0 &&
-                  receipt0->cumulative_gas_used == 21'000;
-    bool suffix_dropped = !stored2.has_value() &&
-                          ew::stashed_side_effects_count() == before_stash_count;
+    auto receipt2 = ew::global_evm_state().get_receipt_copy(tx2->hash);
+    auto health = ew::evm_post_accept_health();
+    bool no_partial_indexes = !stored0 && !receipt0 && !stored2 && !receipt2 &&
+                              !ew::global_evm_state().has_block(block_seqno);
+    bool incomplete_marked = health.missing_side_effects == 1 &&
+                             health.incomplete_indexed_transactions == 3 &&
+                             health.incomplete_indexed_blocks == 1;
+    bool side_effects_preserved = ew::stashed_side_effects_count() == 2;
 
-    if (applied != 1 || !tx0_ok || !block_ok || !suffix_dropped) {
-        tprintf("  FAILED: applied=%zu tx0_ok=%d block_ok=%d suffix_dropped=%d\n",
-                applied, tx0_ok, block_ok, suffix_dropped);
+    if (applied != 0 || !no_partial_indexes ||
+        !incomplete_marked || !side_effects_preserved) {
+        tprintf("  FAILED: applied=%zu no_partial=%d incomplete=%d preserved=%d "
+                "missing=%llu incomplete_txs=%llu incomplete_blocks=%llu stashed=%zu\n",
+                applied, no_partial_indexes, incomplete_marked,
+                side_effects_preserved,
+                static_cast<unsigned long long>(health.missing_side_effects),
+                static_cast<unsigned long long>(health.incomplete_indexed_transactions),
+                static_cast<unsigned long long>(health.incomplete_indexed_blocks),
+                ew::stashed_side_effects_count());
         return;
     }
-    tprintf("  PASSED (missing middle side-effect publishes exact prefix only)\n");
+    ew::clear_stashed_side_effects_for_tests();
+    ew::reset_evm_post_accept_health_for_tests();
+    tprintf("  PASSED (missing middle side-effect withholds partial block indexes)\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -1270,7 +1279,7 @@ int main() {
     test_collator_validator_agree_on_state_root();
     test_fork_order_independence();
     test_restart_validator_matches_collator();
-    test_post_accept_missing_side_effect_keeps_prefix_indices();
+    test_post_accept_missing_side_effect_withholds_partial_block();
     test_block_hash_history_roundtrip_and_read_header();
     test_cp_new_data_declared_root_not_recomputed_per_tx();
     test_same_block_second_evm_tx_is_rejected_without_accumulator();
