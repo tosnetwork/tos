@@ -401,6 +401,207 @@ If you are setting up a fresh development machine, the practical order is:
 
 This keeps both halves of the repository healthy and catches cross-surface breakage early.
 
+## macOS Native Build (Apple Silicon)
+
+The Linux prerequisites and Uno workchain prerequisites described above also apply on macOS, but the toolchain selection and a few environment details differ. The flow below mirrors `assembly/native/build-macos-shared.sh` and is the path used in CI.
+
+### Verified macOS environment
+
+- OS: macOS 26.4.1 (Darwin 25.4.0), Apple Silicon (M2, arm64), 16 GB RAM
+- Xcode SDK: `MacOSX26.4.sdk`
+- Compiler: Apple clang resolved via `xcrun --find clang(++)` — **not** Homebrew `llvm@21`
+- Build system: `cmake` 3.29 + `ninja` 1.13
+
+On macOS 15 and newer (which includes macOS 26.x), `assembly/native/build-macos-shared.sh` deliberately switches from Homebrew `llvm@21` to AppleClang. The Xcode toolchain links cleanly against the system SDK and avoids `libc++` divergence between two LLVM copies in the same binary.
+
+### macOS Prerequisites
+
+Install the Xcode command-line tools and the supporting Homebrew formulas:
+
+```bash
+xcode-select --install   # if not already installed
+
+brew install \
+  cmake \
+  ninja \
+  pkg-config \
+  automake \
+  autoconf \
+  libtool \
+  gnutls \
+  gmp \
+  secp256k1 \
+  zstd \
+  lz4 \
+  readline
+```
+
+The bundled `third-party/openssl` is built in-tree by the top-level CMake against a pinned `enable-quic` configuration, so do **not** rely on Homebrew `openssl@3` for the QUIC path — `ngtcp2` links against the in-tree archive.
+
+### Critical PATH ordering
+
+On a typical Homebrew install, `/opt/homebrew/opt/binutils/bin` precedes `/usr/bin` in `PATH`. This puts GNU `ar`, `ranlib`, and `nm` from `binutils 2.45+` ahead of Apple's BSD-format equivalents.
+
+**This breaks the macOS build.** The in-tree OpenSSL `Configure` script does not pin `AR` / `RANLIB`, so it picks up GNU `ar`. The resulting `libssl.a` and `libcrypto.a` use the GNU long-filename-table `/` extended-name member, which Apple's `ld64` cannot link, surfacing as:
+
+```
+ld: archive member '/' not a mach-o file in '.../third-party/openssl/lib/libssl.a'
+```
+
+That in turn fails the `ngtcp2` configure-time `check_symbol_exists(SSL_set_quic_tls_cbs ...)` link probe with the misleading top-level error:
+
+```
+Unable to build OpenSSL backend due to lack of QUIC support in
+  .../third-party/openssl/lib/libssl.a;.../third-party/openssl/lib/libcrypto.a
+```
+
+Fix: ensure `/usr/bin` precedes any `binutils` directory **for the entire build session**, before invoking `cmake`:
+
+```bash
+export PATH="/usr/bin:$PATH"
+which ar ranlib nm   # all three must resolve under /usr/bin
+```
+
+Apple's `ar` produces BSD-format archives that `ld64` accepts.
+
+### liboqs on macOS
+
+`uno_workchain` requires `liboqs` at the commit pinned in `uno/crypto/LIBOQS_VERSION.md`. Install to `$HOME/.local` (Path B from the Uno Workchain prerequisites above):
+
+```bash
+git clone https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs-src
+cd /tmp/liboqs-src
+git checkout 3cb781fd4737c900ad755ee0bb9e1949d0f68955
+
+PATH="/usr/bin:$PATH" cmake -S . -B /tmp/liboqs-build \
+  -DOQS_BUILD_ONLY_LIB=ON \
+  -DOQS_ENABLE_KEM_ML_KEM=ON \
+  -DBUILD_SHARED_LIBS=OFF \
+  -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_COMPILER="$(xcrun --find clang)"
+
+PATH="/usr/bin:$PATH" cmake --build /tmp/liboqs-build -j 8
+PATH="/usr/bin:$PATH" cmake --install /tmp/liboqs-build
+
+test -f "$HOME/.local/lib/liboqs.a"            # ~14 MB
+test -f "$HOME/.local/include/oqs/oqs.h"
+```
+
+The `PATH` prefix is required during this phase too — liboqs's CMake build also picks `ar`/`ranlib` from `PATH`.
+
+### Rust toolchain on macOS
+
+Identical to the Linux flow — install `rustup`, the workspace pins `1.91.1` via `tosctl/src/rust-toolchain.toml`. The Corrosion-driven `uno/plonky3-ffi` crate rides the same pin.
+
+```bash
+curl https://sh.rustup.rs -sSf | sh
+source "$HOME/.cargo/env"
+```
+
+### macOS Configure
+
+```bash
+cd /path/to/tos
+rm -rf build && mkdir build && cd build
+
+export PATH="/usr/bin:$PATH"
+export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+export CC="$(xcrun --find clang)"
+export CXX="$(xcrun --find clang++)"
+export CCACHE_DISABLE=1
+
+CMAKE_PREFIX_PATH="$HOME/.local" cmake -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CXX_FLAGS="-nostdinc++ -isystem ${SDKROOT}/usr/include/c++/v1 -isystem ${SDKROOT}/usr/include" \
+  -DCMAKE_SYSROOT="${SDKROOT}" \
+  -DCMAKE_INSTALL_PREFIX="$(pwd)/install" \
+  ..
+```
+
+The `-nostdinc++ -isystem ${SDKROOT}/usr/include/c++/v1` pair forces the build to use the SDK's `libc++`, neutralizing any stray Homebrew LLVM `libc++` headers that may otherwise leak in via `pkg-config` paths.
+
+Look for these confirmation lines:
+
+```
+-- uno_workchain: found liboqs at /Users/.../.local/lib/liboqs.a
+-- uno_workchain: liboqs exposes OQS_KEM_ml_kem_768_keypair_derand
+-- uno_workchain: liboqs exposes OQS_KEM_ml_kem_768_encaps_derand
+-- uno_workchain: Corrosion found — linking libuno_plonky3_ffi.a into uno_workchain
+-- uno_workchain: using vendored avatar BLAKE3 at .../third-party/avatar-crypto
+-- Found BLAS: .../Accelerate.framework
+```
+
+`Accelerate.framework` is Apple's BLAS implementation; it satisfies `silkworm-core`'s BLAS dependency without `libblas-dev`.
+
+Two informational messages on macOS that are **not** errors:
+
+- `Could NOT find Readline (this is NOT an error)` — the lite-client REPL falls back to a built-in line editor.
+- `Could NOT find ccache` — only matters if you opted into ccache.
+
+### macOS Build
+
+The verified target list mirrors `assembly/native/build-macos-shared.sh`:
+
+```bash
+ninja \
+  storage-daemon storage-daemon-cli blockchain-explorer \
+  toslib toslibjson toslib-cli \
+  validator-engine validator-engine-console \
+  func tolk fift \
+  lite-client \
+  generate-random-id json2tlo \
+  dht-server dht-ping-servers dht-resolve \
+  http-proxy rldp-http-proxy adnl-proxy \
+  create-state create-hardfork tlbc \
+  emulator proxy-liteserver
+```
+
+For a smoke check, build the keystone target alone — it transitively pulls in essentially the whole C++ tree (OpenSSL, ngtcp2, abseil, libff, evmone, silkworm-core, Plonky3 FFI, uno_workchain):
+
+```bash
+ninja validator-engine
+```
+
+Reference timing on M2 (8 physical cores, 16 GB):
+
+| Step | Wall time |
+|---|---:|
+| `cmake` configure | ~45 s |
+| `ninja validator-engine` (1239 nodes) | ~7 min |
+
+Two link-time warnings to expect, both harmless:
+
+- `ld: warning: ignoring duplicate libraries: ...` — CMake emits the same archive on multiple link lines; `ld64` deduplicates.
+- `ld: warning: object file (...blake3_neon.o) was built for newer 'macOS' version (26.4) than being linked (26.0)` — the BLAKE3 NEON object inherits the SDK target while the parent target uses an older `OSX_TARGET`. Cosmetic.
+
+### macOS Test
+
+```bash
+cd /path/to/tos/build
+ctest --output-on-failure -j 8
+```
+
+The Uno test binaries also work without further env tweaks because `liboqs` is statically linked from `$HOME/.local/lib/liboqs.a` at build time:
+
+```bash
+./uno/test/test-uno-primitive-parity
+./uno/test/test-uno-mandatory-negatives
+./uno/test/test-uno-end-to-end
+./uno/test/test-uno-parallel-verify
+```
+
+### Optional: drive the canonical script
+
+`assembly/native/build-macos-shared.sh` automates everything above except the `PATH` fix and the `liboqs` install. After installing `liboqs` to `$HOME/.local` and prefixing `/usr/bin` on `PATH`, the script can be invoked directly:
+
+```bash
+PATH="/usr/bin:$PATH" CMAKE_PREFIX_PATH="$HOME/.local" \
+  bash assembly/native/build-macos-shared.sh
+```
+
+Add `-t` to extend the target list with `all-tests`, `-a` to copy the deployable binaries into `./artifacts/`, or `-c` to enable `ccache`.
+
 ## Optional Nix Build Paths
 
 This tree also contains Nix-based build helpers under:
@@ -429,6 +630,25 @@ Observed result:
 
 - Build: success
 - Tests: `31/31` passed
+
+The macOS native flow has also been verified end-to-end:
+
+```bash
+export PATH="/usr/bin:$PATH"
+export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+CMAKE_PREFIX_PATH="$HOME/.local" cmake -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_COMPILER="$(xcrun --find clang)" \
+  -DCMAKE_CXX_COMPILER="$(xcrun --find clang++)" \
+  -DCMAKE_CXX_FLAGS="-nostdinc++ -isystem ${SDKROOT}/usr/include/c++/v1 -isystem ${SDKROOT}/usr/include" \
+  -DCMAKE_SYSROOT="${SDKROOT}" ..
+ninja validator-engine
+```
+
+Observed result on macOS 26.4.1, Apple Silicon (M2, 8 cores):
+
+- Configure: success in ~45 s
+- Build: success in ~7 min, producing a 35 MB `validator-engine/validator-engine` Mach-O arm64 binary that runs `--help` cleanly
 
 ## Notes
 
@@ -466,3 +686,26 @@ liboqs is not installed or CMake cannot find it. Either install to `/usr/local` 
 ### Test binary aborts with "FFI symbol `uno_poseidon2_goldilocks_permute_t8` not linked"
 
 The binary was built against the weak-symbol fallback in `uno/crypto/poseidon2.cpp` because corrosion wasn't active when CMake configured. Re-configure from a clean `build/` directory after confirming the Rust toolchain and `third-party/corrosion/` are in place.
+
+### `ld: archive member '/' not a mach-o file in '.../libssl.a'` (macOS only)
+
+The in-tree OpenSSL build was linked with GNU `ar` from Homebrew `binutils` instead of Apple's `ar`. The resulting GNU-format archive carries a `/` extended-name-table member that `ld64` rejects. This typically surfaces as the misleading `ngtcp2` error `Unable to build OpenSSL backend due to lack of QUIC support` at configure time.
+
+Fix: prepend `/usr/bin` to `PATH` before invoking CMake configure, so OpenSSL's `Configure` script picks Apple's `ar`/`ranlib`:
+
+```bash
+rm -rf build
+PATH="/usr/bin:$PATH" cmake -S . -B build ...
+```
+
+The `PATH` override must be in effect during the OpenSSL build phase (configure-time `execute_process`), not just at link time. See the **macOS Native Build → Critical PATH ordering** section above.
+
+### `Unable to build OpenSSL backend due to lack of QUIC support in ...` (macOS only)
+
+Almost always the same root cause as the previous entry — Apple `ld64` cannot link the GNU-format `libssl.a`, so `check_symbol_exists(SSL_set_quic_tls_cbs ...)` fails its link probe. Verify via:
+
+```bash
+nm /Users/.../build/third-party/openssl/lib/libssl.a | grep SSL_set_quic_tls_cbs
+```
+
+If the symbol is present in the archive but the link probe still fails, the issue is the archive format, not missing QUIC support. Apply the `PATH="/usr/bin:$PATH"` fix above.
