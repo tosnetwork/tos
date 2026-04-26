@@ -305,6 +305,14 @@ sudo systemctl restart tos-validator@2
 sudo journalctl -u tos-validator@3 -f --no-pager
 ```
 
+### Restarting one validator for upgrades
+
+Stopping a single validator for a binary upgrade or config reload is
+safe — TOS does not auto-slash for downtime, and the remaining 2 of 3
+nodes still meet the BFT-2/3 quorum so the chain keeps producing
+blocks. See [Validator.md → Maintenance and Graceful Shutdown](Validator.md#maintenance-and-graceful-shutdown)
+for the full operator procedure and the rationale.
+
 ### Lite-client
 
 ```bash
