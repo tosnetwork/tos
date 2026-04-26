@@ -115,9 +115,12 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
 
       Entry operator+(const Entry &other) const {
         Entry res = {.total_conns = total_conns + other.total_conns, .impl_stats = impl_stats + other.impl_stats};
-        res.impl_stats.mean_rtt = (static_cast<double>(total_conns) * impl_stats.mean_rtt +
-                                   static_cast<double>(other.total_conns) * other.impl_stats.mean_rtt) /
-                                  static_cast<double>(total_conns + other.total_conns);
+        auto tc = total_conns + other.total_conns;
+        if (tc > 0) {
+          res.impl_stats.mean_rtt = (static_cast<double>(total_conns) * impl_stats.mean_rtt +
+                                     static_cast<double>(other.total_conns) * other.impl_stats.mean_rtt) /
+                                    static_cast<double>(tc);
+        }
         return res;
       }
 
@@ -127,7 +130,9 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
         return res;
       }
 
-    } summary = {};
+    };
+
+    Entry summary = {.total_conns = 0};
     std::unordered_map<QuicConnectionId, Entry> per_conn = {};
   };
 

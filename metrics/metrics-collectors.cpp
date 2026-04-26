@@ -10,9 +10,14 @@ void CollectorWrapper::collect(MetricsPromise P) {
 
 td::actor::Task<MetricSet> CollectorWrapper::collect_coro() {
   MetricSet whole_set = {};
+  std::vector<td::actor::StartedTask<MetricSet>> futures;
+  futures.reserve(collector_closures_.size());
   for (auto &f : collector_closures_) {
-    auto [future, promise] = td::actor::StartedTask<metrics::MetricSet>::make_bridge();
+    auto [future, promise] = td::actor::StartedTask<MetricSet>::make_bridge();
     f(std::move(promise));
+    futures.push_back(std::move(future));
+  }
+  for (auto &future : futures) {
     auto metric_set = co_await std::move(future);
     whole_set = std::move(whole_set).join(std::move(metric_set));
   }

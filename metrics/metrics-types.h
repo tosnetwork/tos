@@ -61,5 +61,4 @@ struct Exposition {
   [[nodiscard]] std::string render() &&;
 };
 
-std::string concat_names(std::string name1, std::string name2);
 }  // namespace tos::metrics

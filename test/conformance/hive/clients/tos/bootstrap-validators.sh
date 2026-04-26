@@ -11,7 +11,7 @@
 #
 # This script is the bash port of the proven path that
 # `scripts/setup-testnet.sh` follows via Python+tostester. We avoid pulling
-# in the tostester package (Python 3.13, libtoslibjson.so, pytosiq_core,
+# in the tostester package (Python 3.14, libtoslibjson.so, pytosiq_core,
 # nacl, ...) so the runtime image stays close to the slim proxy build.
 #
 # Inputs (env):

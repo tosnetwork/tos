@@ -1456,6 +1456,7 @@ void ValidatorEngine::start_up() {
 #if TOS_USE_JEMALLOC
   td::actor::create_actor<JemallocStatsWriter>("mem-stat").release();
 #endif
+  exporter_ = tos::PrometheusExporter::create();
 }
 
 void ValidatorEngine::alarm() {

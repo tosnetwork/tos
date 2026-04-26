@@ -324,7 +324,7 @@ These fall into four categories:
 now functional. See `clients/tos/bootstrap-validators.sh`.
 
 The implementation does NOT pull in the Python `tostester` library
-(would have required Python 3.13 + `uv` + `nacl` + `pytosiq_core` +
+(would have required Python 3.14 + `uv` + `nacl` + `pytosiq_core` +
 the C `libtoslibjson.so`). Instead, it's a self-contained bash script
 that:
 
