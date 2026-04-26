@@ -26,53 +26,12 @@ using silkworm::ByteView;
 // Transaction RLP encoding
 // ---------------------------------------------------------------------------
 
-// Compute the RLP payload length for a StoredTransaction encoded as a
-// legacy Ethereum transaction: [nonce, gasPrice, gasLimit, to, value, data, v, r, s].
-// We encode v=0, r=0, s=0 since StoredTransaction does not carry signature fields.
-static size_t stored_tx_payload_length(const StoredTransaction& tx) {
-    size_t len = 0;
-    len += silkworm::rlp::length(tx.nonce);
-    len += silkworm::rlp::length(tx.gas_price);
-    len += silkworm::rlp::length(tx.gas_limit);
-    // "to": RLP-encode as 20-byte address or as empty string (for contract creation)
-    if (tx.to) {
-        len += silkworm::rlp::length(*tx.to);
-    } else {
-        len += silkworm::rlp::length(ByteView{});
-    }
-    len += silkworm::rlp::length(tx.value);
-    len += silkworm::rlp::length(ByteView{tx.data});
-    // v, r, s — we store 0 for all (no signature preserved in StoredTransaction)
-    len += silkworm::rlp::length(uint64_t{0});  // v
-    len += silkworm::rlp::length(intx::uint256{0});  // r
-    len += silkworm::rlp::length(intx::uint256{0});  // s
-    return len;
-}
-
-// Encode a StoredTransaction as RLP for trie root computation.
-// Format: legacy tx RLP list [nonce, gasPrice, gasLimit, to, value, data, v, r, s].
+// Encode the original signed transaction RLP for trie root computation.
+// No legacy fallback: TOS has not launched, so newly produced block records
+// must carry `raw_rlp`; callers use try_* APIs to fail closed before this
+// encoder is invoked.
 static void encode_stored_transaction(Bytes& to, const StoredTransaction& tx) {
-    if (!tx.raw_rlp.empty()) {
-        to.insert(to.end(), tx.raw_rlp.begin(), tx.raw_rlp.end());
-        return;
-    }
-
-    const size_t payload = stored_tx_payload_length(tx);
-    silkworm::rlp::encode_header(to, {.list = true, .payload_length = payload});
-
-    silkworm::rlp::encode(to, tx.nonce);
-    silkworm::rlp::encode(to, tx.gas_price);
-    silkworm::rlp::encode(to, tx.gas_limit);
-    if (tx.to) {
-        silkworm::rlp::encode(to, *tx.to);
-    } else {
-        silkworm::rlp::encode(to, ByteView{});
-    }
-    silkworm::rlp::encode(to, tx.value);
-    silkworm::rlp::encode(to, ByteView{tx.data});
-    silkworm::rlp::encode(to, uint64_t{0});        // v
-    silkworm::rlp::encode(to, intx::uint256{0});   // r
-    silkworm::rlp::encode(to, intx::uint256{0});   // s
+    to.insert(to.end(), tx.raw_rlp.begin(), tx.raw_rlp.end());
 }
 
 // Encode a StoredReceipt as RLP for trie root computation.
@@ -91,8 +50,9 @@ static void encode_stored_receipt(Bytes& to, const StoredReceipt& receipt) {
 // Public API
 // ---------------------------------------------------------------------------
 
-evmc::bytes32 compute_transactions_root(const std::vector<evmc::bytes32>& tx_hashes,
-                                         const EvmState& state) {
+std::optional<evmc::bytes32> try_compute_transactions_root(
+    const std::vector<evmc::bytes32>& tx_hashes,
+    const EvmState& state) {
     if (tx_hashes.empty()) {
         // Empty trie root = keccak256(RLP("")) = kEmptyRoot
         // silkworm::trie::HashBuilder::root_hash() returns this for empty input.
@@ -105,15 +65,19 @@ evmc::bytes32 compute_transactions_root(const std::vector<evmc::bytes32>& tx_has
     txns.reserve(tx_hashes.size());
     for (const auto& h : tx_hashes) {
         const auto* tx = state.get_transaction(h);
-        if (tx) {
-            txns.push_back(*tx);
-        } else {
-            // Fallback: insert a default/empty transaction so indices stay aligned
-            txns.emplace_back();
+        if (!tx || tx->raw_rlp.empty()) {
+            return std::nullopt;
         }
+        txns.push_back(*tx);
     }
 
     return silkworm::trie::root_hash(txns, encode_stored_transaction);
+}
+
+evmc::bytes32 compute_transactions_root(const std::vector<evmc::bytes32>& tx_hashes,
+                                         const EvmState& state) {
+    auto root = try_compute_transactions_root(tx_hashes, state);
+    return root.value_or(evmc::bytes32{});
 }
 
 evmc::bytes32 compute_receipts_root(const std::vector<evmc::bytes32>& tx_hashes,
@@ -149,9 +113,20 @@ evmc::bytes32 compute_receipts_root(const std::vector<evmc::bytes32>& tx_hashes,
 
 evmc::bytes32 compute_transactions_root_from_records(
     const std::vector<StoredTransaction>& txns) {
+    auto root = try_compute_transactions_root_from_records(txns);
+    return root.value_or(evmc::bytes32{});
+}
+
+std::optional<evmc::bytes32> try_compute_transactions_root_from_records(
+    const std::vector<StoredTransaction>& txns) {
     if (txns.empty()) {
         silkworm::trie::HashBuilder hb;
         return hb.root_hash();
+    }
+    for (const auto& tx : txns) {
+        if (tx.raw_rlp.empty()) {
+            return std::nullopt;
+        }
     }
     return silkworm::trie::root_hash(txns, encode_stored_transaction);
 }

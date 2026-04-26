@@ -59,6 +59,7 @@ class EvmRpcCacheDb {
     td::Result<td::Ref<vm::Cell>> get_transaction(const td::Bits256& tx_hash);
     td::Status for_each_transaction(
         std::function<td::Status(const td::Bits256&, td::Ref<vm::Cell>)> cb);
+    td::Result<size_t> count_transactions();
 
     /// --- Phase F.6: blocks (two parallel indexes) ---
     /// Block-by-number key uses big-endian 8-byte uint64 so RocksDB iteration
@@ -69,6 +70,7 @@ class EvmRpcCacheDb {
     td::Result<td::Ref<vm::Cell>> get_block_by_number(uint64_t block_number);
     td::Status for_each_block_by_number(
         std::function<td::Status(uint64_t, td::Ref<vm::Cell>)> cb);
+    td::Result<size_t> count_blocks_by_number();
 
     td::Status put_block_by_hash(const td::Bits256& block_hash, td::Ref<vm::Cell> cell);
     td::Result<td::Ref<vm::Cell>> get_block_by_hash(const td::Bits256& block_hash);
@@ -80,6 +82,7 @@ class EvmRpcCacheDb {
     td::Result<td::Ref<vm::Cell>> get_logs_for_block(uint64_t block_number);
     td::Status for_each_block_logs(
         std::function<td::Status(uint64_t, td::Ref<vm::Cell>)> cb);
+    td::Result<size_t> count_log_blocks();
 
     /// --- Deferred post-accept side effects ---
     /// Pending records are keyed by the full candidate context used by
@@ -102,6 +105,9 @@ class EvmRpcCacheDb {
                                            const td::Bits256& rand_seed,
                                            const td::Bits256& parent_hash,
                                            const td::Bits256& tx_hash);
+    td::Status prune_pending_side_effects(uint64_t keep_from_block_seqno,
+                                          size_t max_records);
+    td::Result<size_t> count_pending_side_effects();
 
     EvmRpcCacheDb(EvmRpcCacheDb&&);
     ~EvmRpcCacheDb();

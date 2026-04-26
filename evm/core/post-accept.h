@@ -24,6 +24,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "evm/core/state.h"
@@ -127,6 +128,36 @@ size_t stashed_side_effects_count() noexcept;
 /// exercising restart/eviction recovery from the RPC cache DB.
 void clear_stashed_side_effects_for_tests() noexcept;
 
+struct EvmPostAcceptHealth {
+    uint64_t missing_side_effects{0};
+    uint64_t replayed_side_effects{0};
+    uint64_t replay_failures{0};
+    uint64_t malformed_messages{0};
+    uint64_t strict_root_failures{0};
+};
+
+EvmPostAcceptHealth evm_post_accept_health() noexcept;
+void reset_evm_post_accept_health_for_tests() noexcept;
+
+struct RpcCacheRebuildStats {
+    uint64_t from_block{0};
+    uint64_t to_block{0};
+    uint64_t blocks_seen{0};
+    uint64_t blocks_written{0};
+    uint64_t transactions_written{0};
+    uint64_t receipts_written{0};
+    uint64_t log_blocks_written{0};
+    uint64_t errors{0};
+    std::string last_error;
+};
+
+/// Rebuild the durable RPC side-channel cache from the canonical in-memory
+/// block/tx/receipt/log indexes. This is an operator command for repairing
+/// a corrupted or missing RocksDB cache; it never mutates consensus state.
+RpcCacheRebuildStats rebuild_rpc_cache_from_global_state(
+    uint64_t from_block,
+    uint64_t to_block) noexcept;
+
 // ---------------------------------------------------------------------------
 // Helpers for the validator-manager seam.
 // ---------------------------------------------------------------------------
@@ -158,5 +189,22 @@ size_t apply_stashed_side_effects_for_messages(
     const uint8_t rand_seed[32],
     const uint8_t parent_block_hash[32],
     const std::vector<td::Ref<vm::Cell>>& msgs) noexcept;
+
+/// Variant used by the validator manager when the previous canonical shard
+/// state is available. If the memory stash and pending DB both miss, replay
+/// the accepted EVM message from `initial_account_data` instead of dropping
+/// the record.
+size_t apply_stashed_side_effects_for_messages(
+    uint64_t accepted_block_seqno,
+    uint64_t accepted_timestamp,
+    const uint8_t rand_seed[32],
+    const uint8_t parent_block_hash[32],
+    const std::vector<td::Ref<vm::Cell>>& msgs,
+    const std::vector<uint64_t>& gas_limits,
+    const td::Ref<vm::Cell>& initial_account_data) noexcept;
+
+bool extract_evm_executor_account_data_from_shard_state(
+    td::Ref<vm::Cell> shard_state_root,
+    td::Ref<vm::Cell>& account_data_out) noexcept;
 
 }  // namespace evm_workchain

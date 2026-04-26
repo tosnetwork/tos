@@ -496,7 +496,7 @@ td::Ref<vm::Cell> build_evm_zerostate_accounts_cell(
 
     // Build cp.new_data v4-shaped cell:
     //   magic + version:8 + has_root:1 + ^state_root + bits256:eth_root
-    //   + has_cache:1 + has_block_hashes:1 + has_block_accumulator:1
+    //   + has_cache:1 + has_block_hashes:1 + reserved_accumulator:1
     // eth_state_root is the full trie root of the serialized genesis state.
     evmc::bytes32 eth_state_root{};
     {
@@ -522,7 +522,7 @@ td::Ref<vm::Cell> build_evm_zerostate_accounts_cell(
     data_cb.store_bytes(reinterpret_cast<const char*>(eth_state_root.bytes), 32);
     data_cb.store_long(0, 1);   // rpc_cache_root = nothing (Phase F.2)
     data_cb.store_long(0, 1);   // block_hashes_root = nothing at genesis
-    data_cb.store_long(0, 1);   // block_accumulator = nothing at genesis
+    data_cb.store_long(0, 1);   // reserved accumulator = absent at genesis
     auto cp_new_data_cell = data_cb.finalize();
 
     // Wrap as executor ShardAccount and insert as sole entry.
@@ -579,12 +579,9 @@ void init_evm_workchain(const std::string& db_root) {
     // side-channel RPC cache DB at db_root + "/evm-rpc-cache" so
     // receipts survive restart without touching consensus.
 
-    // Read TOS_EVM_CHAIN_ID once at startup. Used by the Hive harness to
-    // boot a validator with a spec-mandated chain id (e.g. the
-    // execution-apis fixtures bake `0xc72dd9d5e883e`). Falls back to the
-    // historical default (`kEvmChainId` == 0x544F53). MUST NOT change on
-    // an existing chain — EIP-155 v-recovery and stored receipts assume a
-    // stable chain id (see contract on `set_evm_chain_id`).
+    // Production validators must not derive consensus-critical chain_id from
+    // process-local environment. Devnet/Hive builds may opt in explicitly.
+#ifdef TOS_DEVNET_ALLOW_EVM_CHAIN_ID_ENV
     if (const char* env = std::getenv("TOS_EVM_CHAIN_ID"); env && *env) {
         char* endp = nullptr;
         // Accept both decimal ("5525331") and hex ("0x544f53") forms.
@@ -600,6 +597,13 @@ void init_evm_workchain(const std::string& db_root) {
                          << kEvmChainId << std::dec << ")";
         }
     }
+#else
+    if (const char* env = std::getenv("TOS_EVM_CHAIN_ID"); env && *env) {
+        LOG(WARNING) << "evm-workchain: ignoring TOS_EVM_CHAIN_ID in this build; "
+                     << "chain_id is consensus-critical and must come from "
+                     << "the chain configuration";
+    }
+#endif
 
     LOG(WARNING) << "evm-workchain: initialising (workchain_id=1, chain_id="
                  << current_evm_chain_id() << ")";

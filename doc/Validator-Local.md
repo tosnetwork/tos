@@ -544,9 +544,9 @@ EVM transaction (via MetaMask, ethers.js, etc.)
 | Item | Value | Source |
 |------|-------|--------|
 | `workchain_id` | `1` | `crypto/block/evm-workchain/evm-workchain.h` (`kWorkchainId`) |
-| `chainId` (Ethereum) | `0x544F53` (5,525,331) | `kEvmChainId` — exposed via `eth_chainId` |
+| `chainId` (Ethereum) | `0x544F53` (5,525,331) | stored in ConfigParam 12 `vm_mode`; exposed via `eth_chainId` |
 | `vm_version` | `0x45564D` ("EVM") | `kVmVersion` — used in WorkchainDescr |
-| `vm_mode` | `0` | reserved for future use |
+| `vm_mode` | EVM `chainId` | consensus-bound; validators reject `wc=1` descriptors whose `vm_mode` is zero or mismatched |
 
 ### Initialization in validator-engine
 

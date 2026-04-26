@@ -22,6 +22,7 @@
 #include <mutex>
 #include <thread>
 #include <unordered_set>
+#include <unistd.h>
 
 #include "evm/core/workchain.h"
 #include "evm/core/init.h"
@@ -45,6 +46,7 @@
 #include "evm/core/mpt-prover.h"
 #include "evm/core/compute-phase.h"
 #include "evm/core/external-message.h"
+#include "evm/core/post-accept.h"
 #include <silkworm/core/common/empty_hashes.hpp>
 #include "vm/cells/CellBuilder.h"
 
@@ -1062,8 +1064,15 @@ static void test_config_param() {
     // Build WorkchainDescr
     auto descr = build_evm_workchain_descr(root_hash, file_hash, 0);
     printf("  descr: %s\n", descr.not_null() ? "created + TLB validated" : "FAILED");
+    auto chain_id = extract_evm_chain_id_from_workchain_descr(descr);
+    bool chain_id_ok = chain_id && *chain_id == current_evm_chain_id();
+    printf("  ConfigParam 12 chain_id: %s", chain_id_ok ? "OK" : "WRONG");
+    if (chain_id) {
+        printf(" (0x%llx)", static_cast<unsigned long long>(*chain_id));
+    }
+    printf("\n");
 
-    if (zerostate.not_null() && descr.not_null()) {
+    if (zerostate.not_null() && descr.not_null() && chain_id_ok) {
         printf("  PASSED\n\n");
     } else {
         printf("  FAILED\n\n");
@@ -2863,6 +2872,27 @@ void test_transactions_root_empty() {
     printf("  %s\n\n", ok ? "PASSED" : "FAILED");
 }
 
+void test_transactions_root_requires_raw_rlp() {
+    printf("=== test_transactions_root_requires_raw_rlp ===\n");
+
+    EvmState state;
+    evmc::bytes32 tx_hash{};
+    tx_hash.bytes[31] = 0x5a;
+    StoredTransaction tx;
+    tx.block_number = 1;
+    tx.tx_index = 0;
+    state.store_transaction(tx_hash, std::move(tx));
+
+    std::vector<evmc::bytes32> tx_hashes{tx_hash};
+    auto strict = try_compute_transactions_root(tx_hashes, state);
+    auto legacy = compute_transactions_root(tx_hashes, state);
+    bool ok = !strict && legacy == evmc::bytes32{};
+
+    printf("  try_compute_transactions_root: %s\n", strict ? "unexpected root" : "rejected");
+    printf("  non-try sentinel zero: %s\n", legacy == evmc::bytes32{} ? "yes" : "no");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
 void test_block_has_state_root() {
     printf("=== test_block_has_state_root (block stores non-zero stateRoot) ===\n");
     // Execute a transaction, manually build a StoredBlock with all roots,
@@ -2914,6 +2944,7 @@ void test_block_has_state_root() {
     stored_tx.gas_limit = txn.gas_limit;
     stored_tx.gas_price = txn.max_fee_per_gas;
     stored_tx.block_number = 1;
+    silkworm::rlp::encode(stored_tx.raw_rlp, txn);
     state.store_transaction(tx_hash, std::move(stored_tx));
 
     std::vector<evmc::bytes32> tx_hashes = {tx_hash};
@@ -4631,6 +4662,256 @@ static void test_persisted_logs_roundtrip() {
     printf("  %s\n\n", (count_ok && fields_ok && empty_ok && deterministic) ? "PASSED" : "FAILED");
 }
 
+static td::Ref<vm::Cell> make_library_special_cell_for_cache_test() {
+    unsigned char zero_hash[32] = {};
+    vm::CellBuilder cb;
+    cb.store_long(static_cast<long long>(vm::Cell::SpecialType::Library), 8);
+    cb.store_bytes(zero_hash, sizeof(zero_hash));
+    return cb.finalize(true);
+}
+
+static td::Ref<vm::Cell> make_empty_receipt_with_trailing_bit() {
+    vm::CellBuilder logs;
+    logs.store_long(0, 16);
+    logs.store_long(0, 1);
+
+    unsigned char zero_addr[20] = {};
+    vm::CellBuilder cb;
+    cb.store_long(static_cast<long long>(kPersistedReceiptMagic),
+                  kPersistedReceiptMagicBits);
+    cb.store_long(static_cast<long long>(silkworm::TransactionType::kLegacy), 8);
+    cb.store_long(1, 1);   // success
+    cb.store_long(0, 64);  // gas_used
+    cb.store_long(0, 64);  // cumulative_gas_used
+    cb.store_long(0, 64);  // block_number
+    cb.store_long(0, 32);  // tx_index
+    cb.store_bytes(zero_addr, sizeof(zero_addr));
+    cb.store_long(0, 2);   // to = none
+    cb.store_long(0, 2);   // contract_address = none
+    cb.store_long(0, 1);   // return_data = none
+    cb.store_ref(logs.finalize());
+    cb.store_long(1, 1);   // trailing garbage must be rejected
+    return cb.finalize();
+}
+
+static td::Ref<vm::Cell> make_empty_transaction_with_trailing_bit() {
+    unsigned char zero_addr[20] = {};
+    unsigned char zero_word[32] = {};
+    vm::CellBuilder meta;
+    meta.store_bytes(zero_word, sizeof(zero_word));  // value
+    meta.store_bytes(zero_word, sizeof(zero_word));  // gas_price
+    meta.store_long(0, 64);  // nonce
+    meta.store_long(0, 64);  // gas_limit
+    meta.store_long(0, 64);  // block_number
+    meta.store_long(0, 32);  // tx_index
+
+    vm::CellBuilder cb;
+    cb.store_long(static_cast<long long>(kPersistedTransactionMagic),
+                  kPersistedTransactionMagicBits);
+    cb.store_bytes(zero_addr, sizeof(zero_addr));
+    cb.store_long(0, 2);  // to = none
+    cb.store_ref(meta.finalize());
+    cb.store_long(0, 1);  // data = none
+    cb.store_long(0, 1);  // raw_rlp = none
+    cb.store_long(1, 1);  // trailing garbage must be rejected
+    return cb.finalize();
+}
+
+static td::Ref<vm::Cell> make_empty_block_with_trailing_bit() {
+    unsigned char zero_word[32] = {};
+    unsigned char zero_addr[20] = {};
+
+    vm::CellBuilder roots_a;
+    roots_a.store_bytes(zero_word, sizeof(zero_word));  // base_fee_per_gas
+    roots_a.store_bytes(zero_word, sizeof(zero_word));  // state_root
+
+    vm::CellBuilder roots_b;
+    roots_b.store_bytes(zero_word, sizeof(zero_word));  // transactions_root
+    roots_b.store_bytes(zero_word, sizeof(zero_word));  // receipts_root
+
+    unsigned char bloom[256] = {};
+    auto bloom_cell = encode_evm_bytecode(td::Slice{
+        reinterpret_cast<const char*>(bloom), sizeof(bloom)});
+
+    vm::CellBuilder hashes;
+    hashes.store_long(0, 24);
+    hashes.store_long(0, 1);
+
+    vm::CellBuilder cb;
+    cb.store_long(static_cast<long long>(kPersistedBlockMagic),
+                  kPersistedBlockMagicBits);
+    cb.store_long(0, 64);  // number
+    cb.store_long(0, 64);  // timestamp
+    cb.store_long(0, 64);  // gas_limit
+    cb.store_long(0, 64);  // gas_used
+    cb.store_bytes(zero_word, sizeof(zero_word));  // hash
+    cb.store_bytes(zero_word, sizeof(zero_word));  // parent_hash
+    cb.store_bytes(zero_addr, sizeof(zero_addr));  // miner
+    cb.store_ref(roots_a.finalize());
+    cb.store_ref(roots_b.finalize());
+    cb.store_ref(bloom_cell);
+    cb.store_ref(hashes.finalize());
+    cb.store_long(1, 1);  // trailing garbage must be rejected
+    return cb.finalize();
+}
+
+static td::Ref<vm::Cell> make_empty_indexed_logs_with_trailing_bit() {
+    vm::CellBuilder cb;
+    cb.store_long(0, 32);
+    cb.store_long(0, 1);
+    cb.store_long(1, 1);  // trailing garbage must be rejected
+    return cb.finalize();
+}
+
+static void test_rpc_cache_codec_rejects_special_and_trailing_cells() {
+    printf("=== test_rpc_cache_codec_rejects_special_and_trailing_cells ===\n");
+
+    auto special = make_library_special_cell_for_cache_test();
+    StoredReceipt receipt;
+    StoredTransaction txn;
+    StoredBlock block;
+    std::vector<IndexedLog> logs;
+
+    bool special_ok =
+        !decode_persisted_receipt(special, receipt) &&
+        !decode_persisted_transaction(special, txn) &&
+        !decode_persisted_block(special, block) &&
+        !decode_persisted_logs_for_block(special, logs);
+
+    bool trailing_ok =
+        !decode_persisted_receipt(make_empty_receipt_with_trailing_bit(), receipt) &&
+        !decode_persisted_transaction(make_empty_transaction_with_trailing_bit(), txn) &&
+        !decode_persisted_block(make_empty_block_with_trailing_bit(), block) &&
+        !decode_persisted_logs_for_block(make_empty_indexed_logs_with_trailing_bit(), logs);
+
+    printf("  special cells rejected: %s\n", special_ok ? "yes" : "no");
+    printf("  trailing bits rejected: %s\n", trailing_ok ? "yes" : "no");
+    printf("  %s\n\n", (special_ok && trailing_ok) ? "PASSED" : "FAILED");
+}
+
+static td::Bits256 test_bits_from_bytes32(const evmc::bytes32& value) {
+    td::Bits256 bits;
+    std::memcpy(bits.data(), value.bytes, 32);
+    return bits;
+}
+
+static void test_rpc_cache_rebuild_command_and_health() {
+    printf("=== test_rpc_cache_rebuild_command_and_health ===\n");
+
+    const std::string tmp_root =
+        "/tmp/tos-evm-rpc-cache-rebuild-" +
+        std::to_string(static_cast<long long>(getpid()));
+    std::system(("rm -rf " + tmp_root).c_str());
+    auto db_r = EvmRpcCacheDb::open(tmp_root);
+    if (db_r.is_error()) {
+        printf("  FAILED: cannot open temp cache DB: %s\n\n",
+               db_r.error().message().c_str());
+        return;
+    }
+    set_evm_rpc_cache_db(db_r.move_as_ok());
+
+    evmc::address recipient{};
+    recipient.bytes[19] = 0x9a;
+    auto signed_tx = make_signed_raw_transfer(/*key_seed=*/0xCACE01,
+                                              /*nonce=*/0,
+                                              recipient);
+    if (!signed_tx) {
+        printf("  FAILED: cannot create signed tx\n\n");
+        set_evm_rpc_cache_db(nullptr);
+        std::system(("rm -rf " + tmp_root).c_str());
+        return;
+    }
+
+    const uint64_t block_number = 880088;
+    StoredTransaction tx;
+    tx.from = signed_tx->sender;
+    tx.to = recipient;
+    tx.value = intx::uint256{1'000'000};
+    tx.nonce = 0;
+    tx.gas_limit = 50'000;
+    tx.gas_price = intx::uint256{1'000'000'000};
+    tx.block_number = block_number;
+    tx.tx_index = 0;
+    tx.raw_rlp = signed_tx->raw_rlp;
+
+    StoredReceipt receipt;
+    receipt.success = true;
+    receipt.gas_used = 21'000;
+    receipt.cumulative_gas_used = 21'000;
+    receipt.block_number = block_number;
+    receipt.tx_index = 0;
+    receipt.from = signed_tx->sender;
+    receipt.to = recipient;
+
+    StoredBlock block;
+    block.number = block_number;
+    block.timestamp = 1800000900;
+    block.gas_limit = 30'000'000;
+    block.gas_used = 21'000;
+    block.base_fee_per_gas = intx::uint256{1'000'000'000};
+    block.transaction_hashes.push_back(signed_tx->hash);
+    block.transactions_root =
+        *try_compute_transactions_root_from_records(std::vector<StoredTransaction>{tx});
+    block.receipts_root =
+        compute_receipts_root_from_records(std::vector<StoredReceipt>{receipt});
+    block.hash.bytes[31] = 0xee;
+
+    auto& state = global_evm_state();
+    state.store_transaction(signed_tx->hash, tx);
+    state.store_receipt(signed_tx->hash, receipt);
+    state.store_block(block);
+
+    auto rebuild = handle_eth_rpc(
+        "debug_rebuildRpcCache",
+        "[\"0xd6dd8\",\"0xd6dd8\"]",
+        "9001");
+    auto health = handle_eth_rpc("debug_rpcCacheHealth", "[]", "9002");
+
+    StoredTransaction decoded_tx;
+    StoredReceipt decoded_receipt;
+    StoredBlock decoded_block;
+    std::vector<IndexedLog> decoded_logs;
+    auto* cache = evm_rpc_cache_db();
+    auto tx_cell = cache->get_transaction(test_bits_from_bytes32(signed_tx->hash));
+    auto receipt_cell = cache->get_receipt(test_bits_from_bytes32(signed_tx->hash));
+    auto block_cell = cache->get_block_by_number(block_number);
+    auto log_cell = cache->get_logs_for_block(block_number);
+
+    bool tx_ok = tx_cell.is_ok() && tx_cell.ok().not_null();
+    if (tx_ok) {
+        tx_ok = decode_persisted_transaction(tx_cell.move_as_ok(), decoded_tx);
+    }
+    bool receipt_ok = receipt_cell.is_ok() && receipt_cell.ok().not_null();
+    if (receipt_ok) {
+        receipt_ok = decode_persisted_receipt(receipt_cell.move_as_ok(), decoded_receipt);
+    }
+    bool block_ok = block_cell.is_ok() && block_cell.ok().not_null();
+    if (block_ok) {
+        block_ok = decode_persisted_block(block_cell.move_as_ok(), decoded_block);
+    }
+    bool logs_ok = log_cell.is_ok() && log_cell.ok().not_null();
+    if (logs_ok) {
+        logs_ok = decode_persisted_logs_for_block(log_cell.move_as_ok(), decoded_logs);
+    }
+
+    bool ok = rebuild && health &&
+              rebuild->json.find("\"errors\":0") != std::string::npos &&
+              health->json.find("\"cacheOpen\":true") != std::string::npos &&
+              tx_ok && receipt_ok && block_ok && logs_ok &&
+              decoded_tx.raw_rlp == signed_tx->raw_rlp &&
+              decoded_receipt.cumulative_gas_used == 21'000 &&
+              decoded_block.number == block_number &&
+              decoded_logs.empty();
+
+    printf("  rebuild RPC: %s\n", rebuild ? rebuild->json.c_str() : "NOT HANDLED");
+    printf("  health RPC:  %s\n", health ? health->json.c_str() : "NOT HANDLED");
+    printf("  persisted tx/receipt/block/logs: %s\n", ok ? "OK" : "WRONG");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+
+    set_evm_rpc_cache_db(nullptr);
+    std::system(("rm -rf " + tmp_root).c_str());
+}
+
 // Verify that set_evm_chain_id() / current_evm_chain_id() round-trip and
 // that the eth_chainId / net_version RPC handlers report the override.
 // Restores the default at the end so subsequent tests still see 0x544F53.
@@ -5473,6 +5754,7 @@ int main() {
     test_state_root_changes_after_transfer();
     test_state_root_with_storage();
     test_transactions_root_empty();
+    test_transactions_root_requires_raw_rlp();
     test_block_has_state_root();
     test_state_root_cell_format();
     test_cell_codec_roundtrip();
@@ -5487,6 +5769,8 @@ int main() {
     test_persisted_transaction_roundtrip();
     test_persisted_block_roundtrip();
     test_persisted_logs_roundtrip();
+    test_rpc_cache_codec_rejects_special_and_trailing_cells();
+    test_rpc_cache_rebuild_command_and_health();
     test_eth_get_proof_non_existence();
     test_block_hash_canonical();
     test_state_test_runner_poc();

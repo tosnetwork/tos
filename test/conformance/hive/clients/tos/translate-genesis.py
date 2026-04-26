@@ -7,9 +7,9 @@
 # the container before launch) and emits two artifacts the container
 # bootstrap consumes:
 #
-#   1. /tmp/chain_id.txt    — decimal chain id (so tos.cmd can `export
-#                              TOS_EVM_CHAIN_ID=$(cat /tmp/chain_id.txt)`
-#                              before launching the validator).
+#   1. /tmp/chain_id.txt    — decimal chain id. Production validators ignore
+#                              TOS_EVM_CHAIN_ID; devnet-only validator builds
+#                              may opt into that env override for Hive.
 #
 #   2. /tmp/genesis-alloc.fif — Fift include file that pushes a tuple-of-
 #                                tuples onto the stack and calls

@@ -88,10 +88,12 @@ What changed in sprint #3 (was 21 → now 35):
   because the chain id mismatch causes signature recovery failure on
   every tx.
 
-The validator binary itself honours `TOS_EVM_CHAIN_ID` at startup
-(consumed by `evm_workchain::init_evm_workchain` — commit `02b791ef`),
-so a fresh-chain single-node bootstrap can serve the spec's chain id
-end-to-end without a recompile. See `crypto/block/evm-workchain/evm-init.cpp`.
+Production validator builds ignore `TOS_EVM_CHAIN_ID`; chain id is
+consensus-critical and must come from ConfigParam 12 `wc=1` `vm_mode`.
+Because TOS has not launched mainnet, validators do not accept the old
+`vm_mode = 0` descriptor shape.
+Hive/devnet experiments that need a temporary chain-id override must use a
+devnet-only build defining `TOS_DEVNET_ALLOW_EVM_CHAIN_ID_ENV`.
 
 The full validator path is **functional** as of sprint #5; see
 "Quick win 2" below.
@@ -177,7 +179,10 @@ bash test/conformance/hive/clients/tos/bootstrap-validators.sh
 ```
 
 (The `GENESIS_ALLOC_FIF` is the output of `translate-genesis.py` — see
-"Quick win 1" below for how to generate it.)
+"Quick win 1" below for how to generate it. The `TOS_EVM_CHAIN_ID`
+environment variable is written into the generated ConfigParam 12
+`vm_mode` and only affects validators in devnet-only builds compiled with
+`TOS_DEVNET_ALLOW_EVM_CHAIN_ID_ENV`.)
 
 ## Quick win 1: run rpc-compat fixtures via the proxy (35 PASS)
 
@@ -410,8 +415,9 @@ $ python3 test/conformance/hive/clients/tos/chain-rlp-replay.py \
 [chain-rlp-replay] CHAIN ID MISMATCH — upstream=0x544f53 expected=0xc72dd9d5e883e.
                   All transactions in chain.rlp are signed with chain id
                   0xc72dd9d5e883e; sending them to a chain reporting
-                  0x544f53 will be rejected with bad signature. Set
-                  TOS_EVM_CHAIN_ID before launching the validator.
+                  0x544f53 will be rejected with bad signature. Use a
+                  matching chain configuration, or a devnet-only validator
+                  build compiled with TOS_DEVNET_ALLOW_EVM_CHAIN_ID_ENV.
 EXIT=2
 ```
 

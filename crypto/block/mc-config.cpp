@@ -697,15 +697,14 @@ td::Result<std::shared_ptr<TotalValidatorSet>> Config::unpack_validator_set(Ref<
       error = td::Status::Error(PSLICE() << "validator #" << i << " has zero weight");
       return false;
     }
-    if (descr.weight > tos::kMaxTotalValidatorWeight - ptr->total_weight) {
+    auto weight_offset = ptr->total_weight;
+    if (!tos::checked_add_validator_weight(ptr->total_weight, descr.weight)) {
       error = td::Status::Error(
           "total weight of all validators in validator set exceeds protocol cap (UINT64_MAX/3); "
-          "this cap keeps the strict-2/3 quorum check (sig_weight*3 > total_weight*2) "
-          "and the (total_weight*2)/3+1 threshold safe in 64-bit arithmetic");
+          "this cap keeps tos::has_quorum() and tos::quorum_threshold() safe");
       return false;
     }
-    ptr->list.emplace_back(sig_pubkey.pubkey, descr.weight, ptr->total_weight, descr.adnl_addr);
-    ptr->total_weight += descr.weight;
+    ptr->list.emplace_back(sig_pubkey.pubkey, descr.weight, weight_offset, descr.adnl_addr);
     return true;
   };
 
@@ -2267,12 +2266,20 @@ bool WorkchainInfo::unpack(tos::WorkchainId wc, vm::CellSlice& cs) {
     zerostate_file_hash = info.zerostate_file_hash;
     version = info.version;
     if (basic) {
+      block::gen::WorkchainFormat::Record_wfmt_basic basic_fmt;
+      if (!tlb::csr_type_unpack(info.format, block::gen::WorkchainFormat{basic}, basic_fmt)) {
+        return false;
+      }
+      vm_version = basic_fmt.vm_version;
+      vm_mode = basic_fmt.vm_mode;
       min_addr_len = max_addr_len = addr_len_step = 256;
     } else {
       block::gen::WorkchainFormat::Record_wfmt_ext ext;
       if (!tlb::csr_type_unpack(info.format, block::gen::WorkchainFormat{basic}, ext)) {
         return false;
       }
+      vm_version = 0;
+      vm_mode = 0;
       min_addr_len = ext.min_addr_len;
       max_addr_len = ext.max_addr_len;
       addr_len_step = ext.addr_len_step;

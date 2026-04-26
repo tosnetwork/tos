@@ -225,6 +225,8 @@ fi
 # which hive doesn't care about but useful for in-container debugging.
 export RPC_BASE="$RPC_BIND_PORT"
 export PORT_BASE="${TOS_PORT_BASE:-2000}"
+# Production validators ignore this env var. It is only effective for
+# devnet-only builds compiled with TOS_DEVNET_ALLOW_EVM_CHAIN_ID_ENV.
 export TOS_EVM_CHAIN_ID="$CHAIN_ID_DEC"
 # Only forward the alloc fif if it actually exists (translate-genesis.py
 # may have failed silently or no /genesis.json was present).

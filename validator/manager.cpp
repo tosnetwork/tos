@@ -19,6 +19,7 @@
 */
 #include <algorithm>
 #include <fstream>
+#include <limits>
 
 #include "auto/tl/lite_api.h"
 #include "auto/tl/tos_api_json.h"
@@ -62,6 +63,40 @@
 namespace tos {
 
 namespace validator {
+
+namespace {
+
+uint64_t extract_evm_compute_gas_limit(td::Ref<vm::Cell> trans_ref) noexcept {
+  try {
+    block::gen::Transaction::Record trans;
+    if (!tlb::unpack_cell(std::move(trans_ref), trans)) {
+      return 0;
+    }
+    block::gen::TransactionDescr::Record_trans_ord descr;
+    if (!tlb::unpack_cell(trans.description, descr)) {
+      return 0;
+    }
+    block::gen::TrComputePhase::Record_tr_phase_compute_vm compute;
+    auto compute_cs = descr.compute_ph;
+    if (compute_cs.is_null() ||
+        !block::gen::t_TrComputePhase.unpack(compute_cs.write(), compute)) {
+      return 0;
+    }
+    if (compute.r1.gas_limit.is_null()) {
+      return 0;
+    }
+    auto gas_limit = block::tlb::t_VarUInteger_7.as_uint(*compute.r1.gas_limit);
+    return gas_limit == std::numeric_limits<uint64_t>::max() ? 0 : gas_limit;
+  } catch (vm::VmError&) {
+    return 0;
+  } catch (vm::VmVirtError&) {
+    return 0;
+  } catch (...) {
+    return 0;
+  }
+}
+
+}  // namespace
 
 void ValidatorManagerImpl::validate_block_is_next_proof(BlockIdExt prev_block_id, BlockIdExt next_block_id,
                                                         td::BufferSlice proof, td::Promise<td::Unit> promise) {
@@ -1173,6 +1208,7 @@ void ValidatorManagerImpl::cleanup_applied_external_messages(BlockHandle handle,
         }
 
         std::vector<td::Ref<vm::Cell>> evm_msgs;
+        std::vector<uint64_t> evm_gas_limits;
         td::Bits256 evm_addr;
         evm_addr.set_zero();
         evm_addr.data()[31] = 1;
@@ -1194,17 +1230,57 @@ void ValidatorManagerImpl::cleanup_applied_external_messages(BlockHandle handle,
               }
               allow_same = false;
               td::Ref<vm::Cell> msg;
+              auto gas_limit = extract_evm_compute_gas_limit(tvalue);
               if (block::get_transaction_in_msg(tvalue, msg) && msg.not_null()) {
                 evm_msgs.push_back(std::move(msg));
+                evm_gas_limits.push_back(gas_limit);
               }
             }
           }
         }
 
         if (!evm_msgs.empty()) {
-          evm_workchain::apply_stashed_side_effects_for_messages(
-              accepted_seqno, info.gen_utime, extra.rand_seed.as_array().data(),
-              parent_hash.data(), evm_msgs);
+          if (handle && accepted_seqno > 0) {
+            auto prev_block_id = handle->one_prev(true);
+            auto rand_seed = extra.rand_seed;
+            auto P = td::PromiseCreator::lambda(
+                [accepted_seqno, timestamp = info.gen_utime, rand_seed, parent_hash,
+                 evm_msgs = std::move(evm_msgs),
+                 evm_gas_limits = std::move(evm_gas_limits)](
+                    td::Result<td::Ref<ShardState>> R) mutable {
+                  td::Ref<vm::Cell> initial_account_data;
+                  bool have_replay_state = false;
+                  if (R.is_error()) {
+                    LOG(WARNING) << "evm post-accept: cannot load previous shard state for deterministic replay: "
+                                 << R.move_as_error();
+                  } else {
+                    auto prev_state = R.move_as_ok();
+                    have_replay_state =
+                        evm_workchain::extract_evm_executor_account_data_from_shard_state(
+                            prev_state.not_null() ? prev_state->root_cell() : td::Ref<vm::Cell>{},
+                            initial_account_data);
+                    if (!have_replay_state) {
+                      LOG(WARNING) << "evm post-accept: previous shard state does not expose EVM executor account data; "
+                                      "using side-effect cache only";
+                    }
+                  }
+                  if (have_replay_state) {
+                    evm_workchain::apply_stashed_side_effects_for_messages(
+                        accepted_seqno, timestamp, rand_seed.as_array().data(),
+                        parent_hash.data(), evm_msgs, evm_gas_limits,
+                        initial_account_data);
+                  } else {
+                    evm_workchain::apply_stashed_side_effects_for_messages(
+                        accepted_seqno, timestamp, rand_seed.as_array().data(),
+                        parent_hash.data(), evm_msgs);
+                  }
+                });
+            get_shard_state_from_db_short(prev_block_id, std::move(P));
+          } else {
+            evm_workchain::apply_stashed_side_effects_for_messages(
+                accepted_seqno, info.gen_utime, extra.rand_seed.as_array().data(),
+                parent_hash.data(), evm_msgs);
+          }
         }
       }
     } catch (vm::VmError &err) {

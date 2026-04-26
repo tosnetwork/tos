@@ -14,9 +14,13 @@
       4. restart_validator_matches_collator
       5. post_accept_missing_side_effect_keeps_prefix_indices
       6. block_hash_history_roundtrip_and_read_header
-      7. same_block_accumulator_persists_final_block_hash
-      8. cp_new_data_rejects_unversioned_legacy_layout
-      9. post_accept_recovers_persisted_side_effect_after_memory_loss
+      7. cp_new_data_declared_root_not_recomputed_per_tx
+      8. same_block_second_evm_tx_is_rejected_without_accumulator
+      9. cp_new_data_rejects_legacy_layouts
+      10. post_accept_recovers_persisted_side_effect_after_memory_loss
+      11. post_accept_replays_side_effect_after_stash_and_db_loss
+      12. chain_id_env_ignored_in_production_build
+      13. pending_side_effect_db_prunes_ttl_and_cap
 
     Build target: test-evm-compute-purity (see evm/test/CMakeLists.txt)
 */
@@ -111,10 +115,11 @@ static evmc::bytes32 compute_eth_state_root_from_cell(td::Ref<vm::Cell> state_ro
 // Build a `cp.new_data` v4 cell wrapping the supplied state_root cell. Same
 // layout that `run_evm_compute_phase_snapshot` itself emits (and that the
 // genesis builder produces): magic + version + has_root + ^state_root
-// + verified eth_state_root + has_cache=0 + has_block_hashes=0
-// + has_block_accumulator=0.
-static td::Ref<vm::Cell> wrap_state_root_as_account_data(td::Ref<vm::Cell> state_root) {
-    auto eth_state_root = compute_eth_state_root_from_cell(state_root);
+// + eth_state_root + has_cache=0 + has_block_hashes=0
+// + reserved_accumulator=0.
+static td::Ref<vm::Cell> wrap_state_root_with_declared_eth_root(
+    td::Ref<vm::Cell> state_root,
+    const evmc::bytes32& eth_state_root) {
     vm::CellBuilder cb;
     cb.store_long(static_cast<long long>(ew::kEvmAccountMagic), ew::kEvmMagicBits);
     cb.store_long(ew::kCpNewDataSchemaVersion, 8);
@@ -129,6 +134,12 @@ static td::Ref<vm::Cell> wrap_state_root_as_account_data(td::Ref<vm::Cell> state
     cb.store_long(0, 1);
     cb.store_long(0, 1);
     return cb.finalize();
+}
+
+static td::Ref<vm::Cell> wrap_state_root_as_account_data(td::Ref<vm::Cell> state_root) {
+    return wrap_state_root_with_declared_eth_root(
+        state_root,
+        compute_eth_state_root_from_cell(state_root));
 }
 
 // Build an account_data cell with `sender` seeded with `balance` and `nonce`.
@@ -632,16 +643,75 @@ static void test_block_hash_history_roundtrip_and_read_header() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 7 — same_block_accumulator_persists_final_block_hash
+// Test 7 — cp_new_data_declared_root_not_recomputed_per_tx
 // ---------------------------------------------------------------------------
 //
-// Multiple EVM txs can execute against the same single executor account in one
-// TOS block. The second transaction must see the first transaction's
-// accumulator through cp.new_data and persist a block hash for the cumulative
-// two-transaction Ethereum block, not a single-tx provisional header.
+// Full eth_state_root verification is still available to strict decoders, but
+// the hot compute path must not run a full trie recomputation before every tx.
+// A deliberately stale declared root should fail strict decode while snapshot
+// compute can still execute from the TOS-bound state_root cell.
 
-static void test_same_block_accumulator_persists_final_block_hash() {
-    tprintf("[TEST] same_block_accumulator_persists_final_block_hash\n");
+static void test_cp_new_data_declared_root_not_recomputed_per_tx() {
+    tprintf("[TEST] cp_new_data_declared_root_not_recomputed_per_tx\n");
+
+    evmc::address recipient{};
+    recipient.bytes[19] = 0x76;
+
+    auto tx = make_signed_transfer(/*key_seed=*/0xF50000, /*nonce=*/0, recipient);
+    if (!tx) {
+        tprintf("  FAILED: could not sign test tx\n");
+        return;
+    }
+
+    intx::uint256 balance{1};
+    for (int i = 0; i < 18; ++i) balance *= intx::uint256{10};
+    ew::CellEvmState cs;
+    silkworm::Account acct{};
+    acct.balance = balance;
+    cs.update_account(tx->sender, std::nullopt, acct);
+
+    auto state_root = cs.serialize_to_cell();
+    auto declared_root = compute_eth_state_root_from_cell(state_root);
+    declared_root.bytes[0] ^= 0x80;
+    auto bad_account_data = wrap_state_root_with_declared_eth_root(
+        state_root,
+        declared_root);
+
+    td::Ref<vm::Cell> decoded_state_root;
+    evmc::bytes32 decoded_eth_state_root{};
+    td::Ref<vm::Cell> decoded_cache_root;
+    bool strict_decoded = ew::decode_cp_new_data(
+        bad_account_data,
+        decoded_state_root,
+        decoded_eth_state_root,
+        decoded_cache_root,
+        /*verify_eth_state_root=*/true);
+
+    auto out = run_once(bad_account_data, tx->raw_rlp,
+                        /*block_seqno=*/818181,
+                        /*timestamp=*/1800000300);
+    if (strict_decoded || !out.ok || !out.success || out.new_data.is_null()) {
+        tprintf("  FAILED: strict_decoded=%d ok=%d success=%d new_data=%d\n",
+                strict_decoded,
+                out.ok,
+                out.success,
+                out.new_data.not_null());
+        return;
+    }
+    tprintf("  PASSED (compute skips per-tx full root verification; strict decode still rejects)\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 8 — same_block_second_evm_tx_is_rejected_without_accumulator
+// ---------------------------------------------------------------------------
+//
+// The old in-account block accumulator made cp.new_data grow with every EVM tx
+// in a TOS block. Until a bounded accumulator exists, we conservatively allow
+// only one EVM tx per TOS block and reject the second instead of persisting a
+// partial or quadratic accumulator.
+
+static void test_same_block_second_evm_tx_is_rejected_without_accumulator() {
+    tprintf("[TEST] same_block_second_evm_tx_is_rejected_without_accumulator\n");
 
     evmc::address recipient{};
     recipient.bytes[19] = 0x75;
@@ -669,41 +739,39 @@ static void test_same_block_accumulator_persists_final_block_hash() {
     auto out0 = run_once(account_data, tx0->raw_rlp, block_seqno, timestamp);
     auto out1 = run_once(out0.new_data, tx1->raw_rlp, block_seqno, timestamp);
 
-    auto persisted_hash = block_hash_from_account_data(out1.new_data, block_seqno);
-    bool ok = out0.success && out1.success &&
-              out0.fx && out1.fx &&
+    auto persisted_hash = block_hash_from_account_data(out0.new_data, block_seqno);
+    bool ok = out0.success && !out1.success &&
+              out1.skip_reason == block::ComputePhase::sk_bad_state &&
+              out0.fx && !out1.fx &&
               out0.fx->block.transaction_hashes.size() == 1 &&
-              out1.fx->block.transaction_hashes.size() == 2 &&
-              out1.fx->block.transaction_hashes[0] == tx0->hash &&
-              out1.fx->block.transaction_hashes[1] == tx1->hash &&
-              out1.fx->receipt.tx_index == 1 &&
-              out1.fx->receipt.cumulative_gas_used ==
-                  out0.fx->receipt.gas_used + out1.fx->receipt.gas_used &&
-              persisted_hash && *persisted_hash == out1.fx->block.hash;
+              out0.fx->block.transaction_hashes[0] == tx0->hash &&
+              out0.fx->receipt.tx_index == 0 &&
+              out0.fx->receipt.cumulative_gas_used == out0.fx->receipt.gas_used &&
+              persisted_hash && *persisted_hash == out0.fx->block.hash;
 
     if (!ok) {
-        tprintf("  FAILED: success=(%d,%d) sizes=(%zu,%zu) tx_index=%u persisted=%d\n",
+        tprintf("  FAILED: success=(%d,%d) skip=%d sizes=(%zu,%zu) persisted=%d\n",
                 out0.success,
                 out1.success,
+                out1.skip_reason,
                 out0.fx ? out0.fx->block.transaction_hashes.size() : 0,
                 out1.fx ? out1.fx->block.transaction_hashes.size() : 0,
-                out1.fx ? out1.fx->receipt.tx_index : 9999,
                 persisted_hash.has_value());
         return;
     }
-    tprintf("  PASSED (same-block accumulator persisted cumulative block hash)\n");
+    tprintf("  PASSED (second same-block EVM tx is rejected without an accumulator)\n");
 }
 
 // ---------------------------------------------------------------------------
-// Test 8 — cp_new_data_rejects_unversioned_legacy_layout
+// Test 9 — cp_new_data_rejects_legacy_layouts
 // ---------------------------------------------------------------------------
 //
 // TOS has not launched mainnet, so cp.new_data has no backwards-compatibility
-// decoder. Old unversioned layouts must fail closed instead of being
-// interpreted as v4 with missing optional roots.
+// decoder. Old unversioned layouts and the removed block-accumulator payload
+// must fail closed instead of being interpreted as current v4 state.
 
-static void test_cp_new_data_rejects_unversioned_legacy_layout() {
-    tprintf("[TEST] cp_new_data_rejects_unversioned_legacy_layout\n");
+static void test_cp_new_data_rejects_legacy_layouts() {
+    tprintf("[TEST] cp_new_data_rejects_legacy_layouts\n");
 
     auto eth_state_root = compute_eth_state_root_from_cell({});
     vm::CellBuilder cb;
@@ -720,15 +788,33 @@ static void test_cp_new_data_rejects_unversioned_legacy_layout() {
     td::Ref<vm::Cell> rpc_cache_root;
     bool decoded = ew::decode_cp_new_data(old_cell, state_root, decoded_root,
                                           rpc_cache_root);
-    if (decoded) {
-        tprintf("  FAILED: unversioned cp.new_data decoded as current schema\n");
+
+    vm::CellBuilder acc_ref_cb;
+    auto accumulator_ref = acc_ref_cb.finalize();
+    vm::CellBuilder acc_cb;
+    acc_cb.store_long(static_cast<long long>(ew::kEvmAccountMagic), ew::kEvmMagicBits);
+    acc_cb.store_long(ew::kCpNewDataSchemaVersion, 8);
+    acc_cb.store_long(0, 1);  // has_state_root
+    acc_cb.store_bytes(reinterpret_cast<const char*>(eth_state_root.bytes), 32);
+    acc_cb.store_long(0, 1);  // has_cache
+    acc_cb.store_long(0, 1);  // has_block_hashes
+    acc_cb.store_long(1, 1);  // removed block accumulator must be rejected
+    acc_cb.store_ref(accumulator_ref);
+    auto accumulator_cell = acc_cb.finalize();
+
+    bool accumulator_decoded = ew::decode_cp_new_data(
+        accumulator_cell, state_root, decoded_root, rpc_cache_root);
+    if (decoded || accumulator_decoded) {
+        tprintf("  FAILED: decoded legacy cp.new_data (unversioned=%d accumulator=%d)\n",
+                decoded,
+                accumulator_decoded);
         return;
     }
-    tprintf("  PASSED (unversioned cp.new_data is rejected)\n");
+    tprintf("  PASSED (legacy cp.new_data layouts are rejected)\n");
 }
 
 // ---------------------------------------------------------------------------
-// Test 9 — post_accept_recovers_persisted_side_effect_after_memory_loss
+// Test 10 — post_accept_recovers_persisted_side_effect_after_memory_loss
 // ---------------------------------------------------------------------------
 //
 // The in-memory stash is bounded and process-local. A pending copy in the RPC
@@ -813,6 +899,196 @@ static void test_post_accept_recovers_persisted_side_effect_after_memory_loss() 
 }
 
 // ---------------------------------------------------------------------------
+// Test 11 — post_accept_replays_side_effect_after_stash_and_db_loss
+// ---------------------------------------------------------------------------
+//
+// If both the process-local stash and pending DB are unavailable, post-accept
+// can still rebuild RPC side effects from canonical pre-state plus the
+// accepted message and block context.
+
+static void test_post_accept_replays_side_effect_after_stash_and_db_loss() {
+    tprintf("[TEST] post_accept_replays_side_effect_after_stash_and_db_loss\n");
+
+    ew::set_evm_rpc_cache_db(nullptr);
+    ew::clear_stashed_side_effects_for_tests();
+    ew::reset_evm_post_accept_health_for_tests();
+
+    evmc::address recipient{};
+    recipient.bytes[19] = 0x78;
+    auto tx = make_signed_transfer(/*key_seed=*/0xF50005, /*nonce=*/0, recipient);
+    if (!tx) {
+        tprintf("  FAILED: could not sign replay test tx\n");
+        return;
+    }
+    auto msg = ew::build_evm_external_message(tx->raw_rlp.data(),
+                                              tx->raw_rlp.size(),
+                                              tx->sender);
+    if (msg.is_null()) {
+        tprintf("  FAILED: could not build external message\n");
+        return;
+    }
+
+    intx::uint256 balance{1};
+    for (int i = 0; i < 18; ++i) balance *= intx::uint256{10};
+    auto pre_account_data =
+        make_account_data_with_funded_sender(tx->sender, balance, /*nonce=*/0);
+
+    const uint64_t block_seqno = 626262;
+    const uint64_t timestamp = 1800000400;
+    uint8_t rand_seed[32] = {};
+    uint8_t parent_hash[32] = {};
+    rand_seed[31] = 0x7a;
+    parent_hash[31] = 0xc5;
+
+    std::vector<td::Ref<vm::Cell>> msgs{msg};
+    std::vector<uint64_t> gas_limits{1'000'000};
+    size_t applied = ew::apply_stashed_side_effects_for_messages(
+        block_seqno, timestamp, rand_seed, parent_hash, msgs, gas_limits,
+        pre_account_data);
+
+    auto stored = ew::global_evm_state().get_transaction_copy(tx->hash);
+    auto receipt = ew::global_evm_state().get_receipt_copy(tx->hash);
+    auto block = ew::global_evm_state().get_block_copy(block_seqno);
+    auto health = ew::evm_post_accept_health();
+    bool ok = applied == 1 &&
+              stored && stored->tx_index == 0 &&
+              receipt && receipt->tx_index == 0 &&
+              receipt->cumulative_gas_used == receipt->gas_used &&
+              ew::global_evm_state().has_block(block_seqno) &&
+              block.transaction_hashes.size() == 1 &&
+              block.transaction_hashes[0] == tx->hash &&
+              health.replayed_side_effects == 1 &&
+              health.missing_side_effects == 0 &&
+              health.strict_root_failures == 0;
+
+    if (!ok) {
+        tprintf("  FAILED: applied=%zu stored=%d receipt=%d block_txs=%zu replayed=%llu missing=%llu strict=%llu\n",
+                applied,
+                stored.has_value(),
+                receipt.has_value(),
+                block.transaction_hashes.size(),
+                static_cast<unsigned long long>(health.replayed_side_effects),
+                static_cast<unsigned long long>(health.missing_side_effects),
+                static_cast<unsigned long long>(health.strict_root_failures));
+        return;
+    }
+    tprintf("  PASSED (post-accept replayed side effects without stash or pending DB)\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 12 — chain_id_env_ignored_in_production_build
+// ---------------------------------------------------------------------------
+//
+// The production binary must not derive consensus-critical EVM chain_id from
+// process-local environment. Devnet/Hive builds opt in with
+// TOS_DEVNET_ALLOW_EVM_CHAIN_ID_ENV and keep this test as an explicit skip.
+
+static void test_chain_id_env_ignored_in_production_build() {
+    tprintf("[TEST] chain_id_env_ignored_in_production_build\n");
+#ifdef TOS_DEVNET_ALLOW_EVM_CHAIN_ID_ENV
+    ++g_skips;
+    tprintf("  SKIPPED (devnet build intentionally allows TOS_EVM_CHAIN_ID)\n");
+#else
+    if (ew::current_evm_chain_id() != ew::kEvmChainId) {
+        ++g_failures;
+        tprintf("  FAILED: current=0x%llx expected=0x%llx\n",
+                static_cast<unsigned long long>(ew::current_evm_chain_id()),
+                static_cast<unsigned long long>(ew::kEvmChainId));
+        return;
+    }
+    ++g_passes;
+    tprintf("  PASSED (TOS_EVM_CHAIN_ID was ignored in this build)\n");
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Test 13 — pending_side_effect_db_prunes_ttl_and_cap
+// ---------------------------------------------------------------------------
+//
+// Pending side effects are best-effort non-consensus recovery records. They
+// must be prunable by block-seqno window and bounded by record count.
+
+static td::Bits256 test_bits256(uint8_t low_byte) {
+    td::Bits256 v;
+    v.set_zero();
+    v.data()[31] = low_byte;
+    return v;
+}
+
+static td::Ref<vm::Cell> tiny_pending_cell(uint64_t value) {
+    vm::CellBuilder cb;
+    cb.store_long(static_cast<long long>(value), 64);
+    return cb.finalize();
+}
+
+static bool pending_present(ew::EvmRpcCacheDb& db,
+                            uint64_t seqno,
+                            uint64_t timestamp,
+                            const td::Bits256& rand_seed,
+                            const td::Bits256& parent_hash,
+                            const td::Bits256& tx_hash) {
+    auto r = db.get_pending_side_effects(seqno, timestamp, rand_seed,
+                                         parent_hash, tx_hash);
+    return r.is_ok() && r.ok().not_null();
+}
+
+static void test_pending_side_effect_db_prunes_ttl_and_cap() {
+    tprintf("[TEST] pending_side_effect_db_prunes_ttl_and_cap\n");
+
+    const std::string tmp_root =
+        "/tmp/tos-evm-sidefx-prune-" + std::to_string(static_cast<long long>(getpid()));
+    std::system(("rm -rf " + tmp_root).c_str());
+
+    auto db_r = ew::EvmRpcCacheDb::open(tmp_root);
+    if (db_r.is_error()) {
+        ++g_failures;
+        tprintf("  FAILED: could not open cache DB: %s\n",
+                db_r.error().message().c_str());
+        return;
+    }
+    auto db = db_r.move_as_ok();
+
+    auto rand_seed = test_bits256(0xa1);
+    auto parent_hash = test_bits256(0xb2);
+    auto put = [&](uint64_t seqno, uint8_t tx_low) {
+        return db->put_pending_side_effects(seqno, 1000 + seqno,
+                                            rand_seed, parent_hash,
+                                            test_bits256(tx_low),
+                                            tiny_pending_cell(seqno)).is_ok();
+    };
+
+    bool put_ok = put(1, 1) && put(2, 2) && put(3, 3);
+    auto ttl_status = db->prune_pending_side_effects(/*keep_from_block_seqno=*/3,
+                                                     /*max_records=*/0);
+    bool ttl_ok = ttl_status.is_ok() &&
+                  !pending_present(*db, 1, 1001, rand_seed, parent_hash, test_bits256(1)) &&
+                  !pending_present(*db, 2, 1002, rand_seed, parent_hash, test_bits256(2)) &&
+                   pending_present(*db, 3, 1003, rand_seed, parent_hash, test_bits256(3));
+
+    put_ok = put_ok && put(10, 10) && put(11, 11) && put(12, 12);
+    auto cap_status = db->prune_pending_side_effects(/*keep_from_block_seqno=*/0,
+                                                     /*max_records=*/1);
+    int remaining = 0;
+    remaining += pending_present(*db, 3, 1003, rand_seed, parent_hash, test_bits256(3)) ? 1 : 0;
+    remaining += pending_present(*db, 10, 1010, rand_seed, parent_hash, test_bits256(10)) ? 1 : 0;
+    remaining += pending_present(*db, 11, 1011, rand_seed, parent_hash, test_bits256(11)) ? 1 : 0;
+    remaining += pending_present(*db, 12, 1012, rand_seed, parent_hash, test_bits256(12)) ? 1 : 0;
+    bool cap_ok = cap_status.is_ok() && remaining <= 1;
+
+    db.reset();
+    std::system(("rm -rf " + tmp_root).c_str());
+
+    if (!put_ok || !ttl_ok || !cap_ok) {
+        ++g_failures;
+        tprintf("  FAILED: put=%d ttl=%d cap=%d remaining=%d\n",
+                put_ok, ttl_ok, cap_ok, remaining);
+        return;
+    }
+    ++g_passes;
+    tprintf("  PASSED (pending side effects obey TTL prune and record cap)\n");
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -824,7 +1100,13 @@ int main() {
     // Bring up g_evm_state + the dispatch handler. Snapshot compute uses
     // per-call trie calculators; the post-accept apply layer still reads
     // global_evm_state(), so init must run before the tests.
+#ifndef TOS_DEVNET_ALLOW_EVM_CHAIN_ID_ENV
+    setenv("TOS_EVM_CHAIN_ID", "0xc72dd9d5e883e", 1);
+#endif
     ew::init_evm_workchain();
+#ifndef TOS_DEVNET_ALLOW_EVM_CHAIN_ID_ENV
+    unsetenv("TOS_EVM_CHAIN_ID");
+#endif
 
     test_same_block_validated_twice_is_idempotent();
     test_collator_validator_agree_on_state_root();
@@ -832,9 +1114,13 @@ int main() {
     test_restart_validator_matches_collator();
     test_post_accept_missing_side_effect_keeps_prefix_indices();
     test_block_hash_history_roundtrip_and_read_header();
-    test_same_block_accumulator_persists_final_block_hash();
-    test_cp_new_data_rejects_unversioned_legacy_layout();
+    test_cp_new_data_declared_root_not_recomputed_per_tx();
+    test_same_block_second_evm_tx_is_rejected_without_accumulator();
+    test_cp_new_data_rejects_legacy_layouts();
     test_post_accept_recovers_persisted_side_effect_after_memory_loss();
+    test_post_accept_replays_side_effect_after_stash_and_db_loss();
+    test_chain_id_env_ignored_in_production_build();
+    test_pending_side_effect_db_prunes_ttl_and_cap();
 
     tprintf("\nTotal: passed=%d, failures=%d, skips=%d\n",
             g_passes.load(), g_failures.load(), g_skips.load());

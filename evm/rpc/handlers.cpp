@@ -15,6 +15,7 @@
 #include "evm/core/workchain.h"
 #include "evm/core/init.h"
 #include "evm/core/state.h"
+#include "evm/core/post-accept.h"
 #include "evm/core/block-context.h"
 #include "evm/core/executor.h"
 #include "evm/core/transaction.h"
@@ -25,6 +26,7 @@
 #include "evm/core/access-list-tracer.h"
 #include "evm/core/cell-state.h"
 #include "evm/core/mpt-prover.h"
+#include "evm/rpc/cache-db.h"
 
 #include <silkworm/core/execution/evm.hpp>
 #include <silkworm/core/protocol/intrinsic_gas.hpp>
@@ -473,8 +475,13 @@ static RpcResult handle_send_raw_transaction(const std::string& params, const st
 
     // Compute transactionsRoot and receiptsRoot using proper Merkle Patricia Trie.
     // The trie root functions read from evm_state, which already has the stored tx/receipt.
-    stored_block.transactions_root = compute_transactions_root(
+    auto transactions_root = try_compute_transactions_root(
         stored_block.transaction_hashes, evm_state);
+    if (!transactions_root) {
+        return {make_error(id, -32603,
+                "missing raw signed tx rlp for canonical transactionsRoot"), true};
+    }
+    stored_block.transactions_root = *transactions_root;
     stored_block.receipts_root = compute_receipts_root(
         stored_block.transaction_hashes, evm_state);
 
@@ -3680,6 +3687,83 @@ static RpcResult handle_get_filter_logs(const std::string& params, const std::st
     return {make_result(id, arr), false};
 }
 
+static std::string size_result_or_null(td::Result<size_t> r) {
+    if (r.is_error()) return "null";
+    return std::to_string(r.move_as_ok());
+}
+
+static std::string post_accept_health_json() {
+    auto h = evm_post_accept_health();
+    std::string r = "{";
+    r += "\"missingSideEffects\":" + std::to_string(h.missing_side_effects) + ",";
+    r += "\"replayedSideEffects\":" + std::to_string(h.replayed_side_effects) + ",";
+    r += "\"replayFailures\":" + std::to_string(h.replay_failures) + ",";
+    r += "\"malformedMessages\":" + std::to_string(h.malformed_messages) + ",";
+    r += "\"strictRootFailures\":" + std::to_string(h.strict_root_failures);
+    r += "}";
+    return r;
+}
+
+static RpcResult handle_debug_rpc_cache_health(const std::string& id) {
+    std::string r = "{";
+    r += "\"postAccept\":" + post_accept_health_json() + ",";
+    if (auto* cache = evm_rpc_cache_db()) {
+        r += "\"cacheOpen\":true,";
+        r += "\"receipts\":" + size_result_or_null(cache->count_receipts()) + ",";
+        r += "\"transactions\":" + size_result_or_null(cache->count_transactions()) + ",";
+        r += "\"blocks\":" + size_result_or_null(cache->count_blocks_by_number()) + ",";
+        r += "\"logBlocks\":" + size_result_or_null(cache->count_log_blocks()) + ",";
+        r += "\"pendingSideEffects\":" + size_result_or_null(cache->count_pending_side_effects());
+    } else {
+        r += "\"cacheOpen\":false,";
+        r += "\"receipts\":null,";
+        r += "\"transactions\":null,";
+        r += "\"blocks\":null,";
+        r += "\"logBlocks\":null,";
+        r += "\"pendingSideEffects\":null";
+    }
+    r += "}";
+    return {make_result(id, r), false};
+}
+
+static RpcResult handle_debug_rebuild_rpc_cache(const std::string& params,
+                                                const std::string& id) {
+    uint64_t from = 0;
+    uint64_t to = global_evm_state().block_number();
+    auto first = params.find("0x");
+    if (first != std::string::npos ||
+        params.find("\"latest\"") != std::string::npos ||
+        params.find("\"pending\"") != std::string::npos ||
+        params.find("\"safe\"") != std::string::npos ||
+        params.find("\"finalized\"") != std::string::npos) {
+        from = parse_block_number_param(params);
+        auto second = params.find("0x", first == std::string::npos ? 0 : first + 2);
+        if (second != std::string::npos) {
+            auto end = params.find_first_of("\",]}", second);
+            to = parse_hex_uint64(params.substr(second, end - second));
+        }
+    }
+
+    auto stats = rebuild_rpc_cache_from_global_state(from, to);
+    std::string r = "{";
+    r += "\"fromBlock\":" + std::to_string(stats.from_block) + ",";
+    r += "\"toBlock\":" + std::to_string(stats.to_block) + ",";
+    r += "\"blocksSeen\":" + std::to_string(stats.blocks_seen) + ",";
+    r += "\"blocksWritten\":" + std::to_string(stats.blocks_written) + ",";
+    r += "\"transactionsWritten\":" + std::to_string(stats.transactions_written) + ",";
+    r += "\"receiptsWritten\":" + std::to_string(stats.receipts_written) + ",";
+    r += "\"logBlocksWritten\":" + std::to_string(stats.log_blocks_written) + ",";
+    r += "\"errors\":" + std::to_string(stats.errors) + ",";
+    r += "\"lastError\":";
+    if (stats.last_error.empty()) {
+        r += "null";
+    } else {
+        r += "\"" + json_escape_string(stats.last_error) + "\"";
+    }
+    r += "}";
+    return {make_result(id, r), stats.errors != 0};
+}
+
 // --- Rejection handlers for methods we cannot implement (no node-side keys) ---
 
 static RpcResult handle_unsupported_signing(const std::string& method, const std::string& id) {
@@ -3750,6 +3834,8 @@ bool is_eth_rpc_method(const std::string& method) noexcept {
            method == "debug_getRawHeader" ||
            method == "debug_getRawBlock" ||
            method == "debug_getRawReceipts" ||
+           method == "debug_rebuildRpcCache" ||
+           method == "debug_rpcCacheHealth" ||
            method == "eth_getProof" ||
            method == "eth_createAccessList" ||
            method == "eth_simulateV1" ||
@@ -3840,6 +3926,8 @@ std::optional<RpcResult> handle_eth_rpc(
     if (method == "debug_getRawHeader")       return handle_debug_get_raw_header(params, id);
     if (method == "debug_getRawBlock")        return handle_debug_get_raw_block(params, id);
     if (method == "debug_getRawReceipts")     return handle_debug_get_raw_receipts(params, id);
+    if (method == "debug_rebuildRpcCache")    return handle_debug_rebuild_rpc_cache(params, id);
+    if (method == "debug_rpcCacheHealth")     return handle_debug_rpc_cache_health(id);
     if (method == "eth_getProof")             return handle_get_proof(params, id);
     if (method == "eth_createAccessList")     return handle_create_access_list(params, id);
     if (method == "eth_simulateV1")           return handle_simulate_v1(params, id);

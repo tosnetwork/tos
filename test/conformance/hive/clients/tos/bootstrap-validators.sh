@@ -21,7 +21,9 @@
 #   GENESIS_ALLOC_FIF     optional Fift include emitting an alloc tuple +
 #                         calling evm-zerostate-from-alloc
 #                         (default: zero-arg evm-zerostate-accounts-cell)
-#   TOS_EVM_CHAIN_ID      decimal evm chain id; exported to validators
+#   TOS_EVM_CHAIN_ID      decimal evm chain id; only devnet-only validator
+#                         builds compiled with TOS_DEVNET_ALLOW_EVM_CHAIN_ID_ENV
+#                         consume it as an env override
 #   PORT_BASE             starting port (default 2000); contiguous block of 16 ports used
 #   READY_HOOK            optional command run once tos1 RPC is up
 #
@@ -362,9 +364,9 @@ wc_master setworkchain
   workchain-dict !
 } : add-std-workchain-v2
 
-// EVM workchain (wc=1) — vm_version=0x45564D ("EVM").
+// EVM workchain (wc=1) — vm_version=0x45564D ("EVM"), vm_mode=EVM chain id.
 { <b x{a7} s, 5 roll 32 u, 4 roll 8 u, 3 roll 8 u, rot 8 u, x{e000} s,
-  3 roll 256 u, rot 256 u, 0 32 u, x{1} s, 0x45564D 32 i, 0 64 u, x{0} s, 20 32 u, 20 32 u, 10 32 u, 1000 32 u, 0 8 u, b>
+  3 roll 256 u, rot 256 u, 0 32 u, x{1} s, 0x45564D 32 i, $TOS_EVM_CHAIN_ID 64 u, x{0} s, 20 32 u, 20 32 u, 10 32 u, 1000 32 u, 0 8 u, b>
   dup isWorkchainDescr? not abort"invalid WorkchainDescr created"
   <s swap workchain-dict @ 32 idict!+ 0= abort"cannot add workchain"
   workchain-dict !

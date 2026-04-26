@@ -16,6 +16,8 @@
 */
 #pragma once
 
+#include <optional>
+
 #include "vm/cells.h"
 #include "tos/tos-types.h"
 
@@ -43,5 +45,13 @@ td::Ref<vm::Cell> build_evm_workchain_descr(
 td::Ref<vm::Cell> build_evm_zerostate(
     tos::RootHash& root_hash,
     tos::FileHash& file_hash);
+
+/// Extract the EVM chain id bound into a wc=1 WorkchainDescr.
+///
+/// TOS binds the Ethereum-style EVM chain id to ConfigParam 12 by storing it
+/// in `WorkchainFormat::wfmt_basic.vm_mode`. Returns std::nullopt if `cell`
+/// is not a valid EVM WorkchainDescr.
+std::optional<uint64_t> extract_evm_chain_id_from_workchain_descr(
+    td::Ref<vm::Cell> cell) noexcept;
 
 }  // namespace evm_workchain

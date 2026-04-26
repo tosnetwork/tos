@@ -52,11 +52,10 @@ const silkworm::ChainConfig& evm_chain_config() noexcept {
     //    we have no blob mempool, so blob txs would otherwise stall in
     //    the collator
     //
-    // The chain_id is captured on first call (via current_evm_chain_id()),
-    // so any TOS_EVM_CHAIN_ID override applied during init_evm_workchain
-    // takes effect — provided init runs before the first transaction (it
-    // does, see validator-engine.cpp). Once captured the config is frozen
-    // because silkworm caches the pointer for the rest of the process.
+    // The chain_id is captured on first call (via current_evm_chain_id()).
+    // Production builds must bind it through chain configuration rather than
+    // process-local environment. Once captured the config is frozen because
+    // silkworm caches the pointer for the rest of the process.
     static const silkworm::ChainConfig config = [] {
         silkworm::ChainConfig c;
         c.chain_id = current_evm_chain_id();

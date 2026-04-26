@@ -6,6 +6,7 @@
 #include "evm/core/workchain.h"
 
 #include "vm/cellslice.h"
+#include "vm/cells/CellSlice.h"
 #include "vm/boc.h"
 #include "block/block-auto.h"
 #include "td/utils/logging.h"
@@ -56,10 +57,15 @@ td::Ref<vm::Cell> build_evm_workchain_descr(
 
     // WorkchainFormat basic=1 → wfmt_basic#1:
     //   tag(4 bits)=0x1, vm_version(32 bits signed), vm_mode(64 bits)
+    //
+    // Audit #5 follow-up: vm_mode is the on-chain EVM chain id. It is part
+    // of ConfigParam 12, hence part of the masterchain config proof, and
+    // collator/validator code rejects wc=1 if it differs from the runtime
+    // chain id.
     // Matches Fift: x{1} s, -1 32 i, 0 64 u,
     cb.store_long(0x1, 4);          // wfmt_basic tag (4 bits, matches x{1} in Fift)
     cb.store_long(kVmVersion, 32);  // vm_version = 0x45564D ("EVM"), signed int32
-    cb.store_long(kVmMode, 64);     // vm_mode = 0
+    cb.store_long(current_evm_chain_id(), 64);
 
     auto cell = cb.finalize();
 
@@ -70,7 +76,9 @@ td::Ref<vm::Cell> build_evm_workchain_descr(
     }
 
     LOG(WARNING) << "evm-workchain: built WorkchainDescr for workchain " << kWorkchainId
-                 << " (vm_version=0x" << std::hex << kVmVersion << std::dec << ")";
+                 << " (vm_version=0x" << std::hex << kVmVersion
+                 << ", evm_chain_id=0x" << current_evm_chain_id()
+                 << std::dec << ")";
     return cell;
 }
 
@@ -85,12 +93,12 @@ td::Ref<vm::Cell> build_evm_zerostate(
     //
     // The cell contains:
     //   magic(32) = 0x9023afe2 (shard_state#9023afe2 tag from block.tlb)
-    //   global_id(32) = chainId
+    //   global_id(32) = host global id placeholder
     //   workchain_id(32) = 2
 
     vm::CellBuilder cb;
     cb.store_long(0x9023afe2, 32);            // shard_state tag
-    cb.store_long(current_evm_chain_id(), 32);// global_id (runtime-overridable)
+    cb.store_long(0, 32);                     // global_id placeholder
     cb.store_long(kWorkchainId, 32);          // shard_ident.workchain_id (simplified)
     // Pad with zeros for the remaining required fields (simplified zerostate)
     cb.store_long(0, 64);               // shard_ident.shard_pfx_bits + shard_prefix
@@ -121,6 +129,42 @@ td::Ref<vm::Cell> build_evm_zerostate(
                  << ", file_hash=" << file_hash.to_hex();
 
     return cell;
+}
+
+std::optional<uint64_t> extract_evm_chain_id_from_workchain_descr(
+    td::Ref<vm::Cell> cell) noexcept {
+    if (cell.is_null()) return std::nullopt;
+    try {
+        if (!block::gen::t_WorkchainDescr.validate_ref(cell)) {
+            return std::nullopt;
+        }
+        bool special = false;
+        auto cs = vm::load_cell_slice_special(cell, special);
+        if (special) return std::nullopt;
+
+        if (cs.size() < 8) return std::nullopt;
+        auto tag = cs.fetch_ulong(8);
+        if (tag != 0xa6 && tag != 0xa7) return std::nullopt;
+
+        if (!cs.advance(32 + 8 + 8 + 8)) return std::nullopt;
+        if (cs.size() < 16) return std::nullopt;
+        auto basic = cs.fetch_ulong(1);
+        if (!basic) return std::nullopt;
+        if (!cs.advance(1 + 1 + 13)) return std::nullopt;
+        if (!cs.advance(256 + 256 + 32)) return std::nullopt;
+
+        if (cs.size() < 4 + 32 + 64) return std::nullopt;
+        auto fmt_tag = cs.fetch_ulong(4);
+        if (fmt_tag != 0x1) return std::nullopt;
+        auto vm_version = static_cast<int32_t>(cs.fetch_long(32));
+        auto vm_mode = static_cast<uint64_t>(cs.fetch_ulong(64));
+        if (vm_version != kVmVersion || vm_mode == kLegacyVmMode) {
+            return std::nullopt;
+        }
+        return vm_mode;
+    } catch (...) {
+        return std::nullopt;
+    }
 }
 
 }  // namespace evm_workchain

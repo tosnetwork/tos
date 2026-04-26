@@ -74,14 +74,13 @@ void bytes32_to_key(const evmc::bytes32& v, unsigned char out[32]);
 ///       + has_state_root:1 + [state_root:^Cell]
 ///       + eth_state_root:bits256 + Maybe ^EvmRpcCacheRoot
 ///       + Maybe ^EvmBlockHashHistoryRoot
-///       + Maybe ^EvmBlockAccumulatorRoot
+///       + Maybe ^ReservedBlockAccumulatorRoot (must be absent)
 ///
 /// On success returns true and populates the output refs/value. `state_root`
 /// may be null if `has_state_root` was zero (valid per the encoder, used at
 /// genesis when the executor account exists with no inner state). The decoder
-/// requires canonical v4 shape, rejects trailing bits/refs, and by default
-/// verifies that `eth_state_root` is the full trie root recomputed from
-/// `state_root`.
+/// requires canonical v4 shape, rejects trailing bits/refs, and can verify
+/// that `eth_state_root` is the full trie root recomputed from `state_root`.
 ///
 /// Used by both the snapshot compute path (to seed a per-call CellEvmState
 /// from the block-declared pre-state) and the global-state hydration path

@@ -217,7 +217,8 @@ def main() -> int:
                 f"All transactions in chain.rlp are signed with chain id "
                 f"{hex(args.expected_chain_id)}; sending them to a chain "
                 f"reporting {hex(actual)} will be rejected with bad signature. "
-                f"Set TOS_EVM_CHAIN_ID before launching the validator.\n"
+                f"Use a matching chain configuration, or a devnet-only validator "
+                f"build compiled with TOS_DEVNET_ALLOW_EVM_CHAIN_ID_ENV.\n"
             )
             return 2
 

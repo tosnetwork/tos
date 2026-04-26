@@ -29,6 +29,7 @@
 #include "block/output-queue-merger.h"
 #include "block/validator-set.h"
 #include "common/errorlog.h"
+#include "td/utils/format.h"
 #include "tos/tos-io.hpp"
 #include "tos/tos-tl.hpp"
 #include "vm/boc.h"
@@ -1256,6 +1257,22 @@ bool ValidateQuery::check_this_shard_mc_info() {
   }
   if (!wc_info_->basic) {
     return reject_query(PSTRING() << "cannot create new block for non-basic workchain " << workchain());
+  }
+  if (evm_workchain::is_evm_workchain(workchain())) {
+    if (wc_info_->vm_version != evm_workchain::kVmVersion) {
+      return reject_query(PSTRING()
+                          << "cannot validate EVM workchain block: ConfigParam 12 vm_version=0x"
+                          << td::format::as_hex(wc_info_->vm_version)
+                          << " does not match expected 0x"
+                          << td::format::as_hex(evm_workchain::kVmVersion));
+    }
+    if (wc_info_->vm_mode != evm_workchain::current_evm_chain_id()) {
+      return reject_query(PSTRING()
+                          << "cannot validate EVM workchain block: ConfigParam 12 vm_mode/chain_id=0x"
+                          << td::format::as_hex(wc_info_->vm_mode)
+                          << " does not match runtime chain_id=0x"
+                          << td::format::as_hex(evm_workchain::current_evm_chain_id()));
+    }
   }
   if (wc_info_->enabled_since && wc_info_->enabled_since > config_->utime) {
     return reject_query(PSTRING() << "cannot create new block for workchain " << workchain()

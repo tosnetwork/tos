@@ -48,7 +48,7 @@ namespace evm_workchain {
 ///                     block if this is the first tx in a block; cp.new_data v4 —
 ///                     magic + version + state_root ref + eth_state_root
 ///                     + rpc_cache + block-hash history
-///                     + current-block accumulator).
+///                     + reserved accumulator bit set to nothing).
 ///                     Pass null on first activation: the function builds a
 ///                     genesis-equivalent state with EIP-4788 / EIP-2935
 ///                     predeploys present so Cancun / Pectra system calls

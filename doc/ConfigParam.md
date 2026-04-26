@@ -150,9 +150,9 @@ For the EVM workchain (`wc=1`):
 | Subfield | Value | Description |
 |----------|-------|-------------|
 | `vm_version` | int32 = `0x45564D` ("EVM") | Selects evmone executor in `prepare_compute_phase` |
-| `vm_mode` | uint64 = 0 | reserved |
+| `vm_mode` | uint64 = `0x544F53` by default | EVM `chainId`; validators reject wc=1 descriptors whose value does not match the local consensus chain id |
 
-The workchain id `1` is the next slot after masterchain (`-1`) and basechain (`0`). Builder code: `crypto/block/evm-workchain/evm-config-param.cpp::build_evm_workchain_descr()`. The cell passes `block::gen::t_WorkchainDescr.validate_ref()`.
+The workchain id `1` is the next slot after masterchain (`-1`) and basechain (`0`). Builder code: `crypto/block/evm-workchain/evm-config-param.cpp::build_evm_workchain_descr()`. The cell passes `block::gen::t_WorkchainDescr.validate_ref()`. TOS has not launched mainnet, so the current format is strict: an EVM descriptor with legacy `vm_mode = 0`, an unknown `vm_version`, or a mismatched `chainId` is invalid rather than accepted for backward compatibility.
 
 ### Activating the EVM workchain
 

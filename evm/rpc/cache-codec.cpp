@@ -28,12 +28,28 @@
 
 #include "vm/cells/CellBuilder.h"
 #include "vm/cells/CellSlice.h"
+#include "vm/excno.hpp"
 
 #include <cstring>
 
 namespace evm_workchain {
 
 namespace {
+
+bool load_ordinary_slice(td::Ref<vm::Cell> cell, vm::CellSlice& out) noexcept {
+    if (cell.is_null()) return false;
+    try {
+        bool special = false;
+        out = vm::load_cell_slice_special(cell, special);
+        return !special;
+    } catch (vm::VmError&) {
+        return false;
+    } catch (vm::VmVirtError&) {
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers: variable-length bytes via the EVM bytecode chunk chain.
@@ -139,14 +155,17 @@ bool decode_topic_array(td::Ref<vm::Cell> cell, unsigned count,
     out.clear();
     if (count == 0) return cell.is_null();
     if (cell.is_null()) return false;
-    auto cs = vm::load_cell_slice(cell);
-    if (cs.size_refs() < count) return false;
+    vm::CellSlice cs;
+    if (!load_ordinary_slice(cell, cs)) return false;
+    if (cs.size() != 0 || cs.size_refs() != count) return false;
     out.resize(count);
     for (unsigned i = 0; i < count; ++i) {
         auto leaf = cs.prefetch_ref(i);
         if (leaf.is_null()) return false;
-        auto ls = vm::load_cell_slice(leaf);
+        vm::CellSlice ls;
+        if (!load_ordinary_slice(leaf, ls)) return false;
         if (!ls.fetch_bytes(out[i].bytes, 32)) return false;
+        if (ls.size() != 0 || ls.size_refs() != 0) return false;
     }
     return true;
 }
@@ -173,7 +192,8 @@ td::Ref<vm::Cell> encode_one_log(const silkworm::Log& log) {
 
 bool decode_one_log(td::Ref<vm::Cell> cell, silkworm::Log& out) {
     if (cell.is_null()) return false;
-    auto cs = vm::load_cell_slice(cell);
+    vm::CellSlice cs;
+    if (!load_ordinary_slice(cell, cs)) return false;
     long long magic = 0;
     if (!cs.fetch_long_bool(kPersistedLogMagicBits, magic) ||
         static_cast<unsigned long long>(magic) != kPersistedLogMagic) {
@@ -191,7 +211,8 @@ bool decode_one_log(td::Ref<vm::Cell> cell, silkworm::Log& out) {
     }
     if (!decode_topic_array(topics_cell, static_cast<unsigned>(count), out.topics)) return false;
 
-    return load_maybe_bytes(cs, out.data);
+    if (!load_maybe_bytes(cs, out.data)) return false;
+    return cs.size() == 0 && cs.size_refs() == 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -259,7 +280,8 @@ bool decode_log_list(td::Ref<vm::Cell> root, std::vector<silkworm::Log>& out) {
     constexpr size_t kMaxChunks = 4096;  // bound for safety
     for (size_t step = 0; step < kMaxChunks; ++step) {
         if (cell.is_null()) return false;
-        auto cs = vm::load_cell_slice(cell);
+        vm::CellSlice cs;
+        if (!load_ordinary_slice(cell, cs)) return false;
         long long count_field = 0;
         if (!cs.fetch_long_bool(16, count_field)) return false;
         if (total < 0) {
@@ -289,9 +311,11 @@ bool decode_log_list(td::Ref<vm::Cell> root, std::vector<silkworm::Log>& out) {
         // already consumed the count), then walk refs.
         long long has_next = 0;
         if (!cs.fetch_long_bool(1, has_next)) return false;
+        if (cs.size() != 0) return false;
         unsigned cont_refs = (has_next != 0) ? 1u : 0u;
         if (cont_refs > nrefs) return false;
         unsigned log_refs = nrefs - cont_refs;
+        if (log_refs > kLogsPerListChunk) return false;
 
         for (unsigned r = 0; r < log_refs; ++r) {
             silkworm::Log lg;
@@ -357,7 +381,8 @@ td::Ref<vm::Cell> encode_persisted_transaction_impl(const StoredTransaction& txn
 bool decode_persisted_transaction_impl(td::Ref<vm::Cell> cell, StoredTransaction& out) {
     out = StoredTransaction{};
     if (cell.is_null()) return false;
-    auto cs = vm::load_cell_slice(cell);
+    vm::CellSlice cs;
+    if (!load_ordinary_slice(cell, cs)) return false;
     long long magic = 0;
     if (!cs.fetch_long_bool(kPersistedTransactionMagicBits, magic) ||
         static_cast<unsigned long long>(magic) != kPersistedTransactionMagic) {
@@ -368,7 +393,8 @@ bool decode_persisted_transaction_impl(td::Ref<vm::Cell> cell, StoredTransaction
 
     if (cs.size_refs() == 0) return false;
     auto meta_cell = cs.fetch_ref();
-    auto meta_cs = vm::load_cell_slice(meta_cell);
+    vm::CellSlice meta_cs;
+    if (!load_ordinary_slice(meta_cell, meta_cs)) return false;
     if (!load_uint256(meta_cs, out.value)) return false;
     if (!load_uint256(meta_cs, out.gas_price)) return false;
     long long nonce = 0, gas_limit = 0, block_number = 0, tx_index = 0;
@@ -380,10 +406,11 @@ bool decode_persisted_transaction_impl(td::Ref<vm::Cell> cell, StoredTransaction
     out.gas_limit = static_cast<uint64_t>(gas_limit);
     out.block_number = static_cast<uint64_t>(block_number);
     out.tx_index = static_cast<uint32_t>(tx_index);
+    if (meta_cs.size() != 0 || meta_cs.size_refs() != 0) return false;
 
     if (!load_maybe_bytes(cs, out.data)) return false;
     if (!load_maybe_bytes(cs, out.raw_rlp)) return false;
-    return true;
+    return cs.size() == 0 && cs.size_refs() == 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -403,8 +430,10 @@ td::Ref<vm::Cell> encode_hash32(const evmc::bytes32& h) {
 
 bool decode_hash32(td::Ref<vm::Cell> cell, evmc::bytes32& out) {
     if (cell.is_null()) return false;
-    auto cs = vm::load_cell_slice(cell);
-    return cs.fetch_bytes(out.bytes, 32);
+    vm::CellSlice cs;
+    if (!load_ordinary_slice(cell, cs)) return false;
+    if (!cs.fetch_bytes(out.bytes, 32)) return false;
+    return cs.size() == 0 && cs.size_refs() == 0;
 }
 
 td::Ref<vm::Cell> encode_hash_list(const std::vector<evmc::bytes32>& hashes) {
@@ -457,7 +486,8 @@ bool decode_hash_list(td::Ref<vm::Cell> root, std::vector<evmc::bytes32>& out) {
     constexpr size_t kMaxChunks = 1 << 20;
     for (size_t step = 0; step < kMaxChunks; ++step) {
         if (cell.is_null()) return false;
-        auto cs = vm::load_cell_slice(cell);
+        vm::CellSlice cs;
+        if (!load_ordinary_slice(cell, cs)) return false;
         long long count_field = 0;
         if (!cs.fetch_long_bool(24, count_field)) return false;
         if (total < 0) {
@@ -467,9 +497,11 @@ bool decode_hash_list(td::Ref<vm::Cell> root, std::vector<evmc::bytes32>& out) {
         unsigned nrefs = cs.size_refs();
         long long has_next = 0;
         if (!cs.fetch_long_bool(1, has_next)) return false;
+        if (cs.size() != 0) return false;
         unsigned cont_refs = (has_next != 0) ? 1u : 0u;
         if (cont_refs > nrefs) return false;
         unsigned hash_refs = nrefs - cont_refs;
+        if (hash_refs > kHashesPerListChunk) return false;
         for (unsigned r = 0; r < hash_refs; ++r) {
             evmc::bytes32 h{};
             if (!decode_hash32(cs.prefetch_ref(r), h)) return false;
@@ -536,7 +568,8 @@ td::Ref<vm::Cell> encode_persisted_block_impl(const StoredBlock& block) {
 bool decode_persisted_block_impl(td::Ref<vm::Cell> cell, StoredBlock& out) {
     out = StoredBlock{};
     if (cell.is_null()) return false;
-    auto cs = vm::load_cell_slice(cell);
+    vm::CellSlice cs;
+    if (!load_ordinary_slice(cell, cs)) return false;
 
     long long magic = 0;
     if (!cs.fetch_long_bool(kPersistedBlockMagicBits, magic) ||
@@ -561,14 +594,19 @@ bool decode_persisted_block_impl(td::Ref<vm::Cell> cell, StoredBlock& out) {
     auto roots_b = cs.fetch_ref();
     auto bloom_cell = cs.fetch_ref();
     auto hashes_cell = cs.fetch_ref();
+    if (cs.size() != 0 || cs.size_refs() != 0) return false;
 
-    auto cs_a = vm::load_cell_slice(roots_a);
+    vm::CellSlice cs_a;
+    if (!load_ordinary_slice(roots_a, cs_a)) return false;
     if (!load_uint256(cs_a, out.base_fee_per_gas)) return false;
     if (!cs_a.fetch_bytes(out.state_root.bytes, 32)) return false;
+    if (cs_a.size() != 0 || cs_a.size_refs() != 0) return false;
 
-    auto cs_b = vm::load_cell_slice(roots_b);
+    vm::CellSlice cs_b;
+    if (!load_ordinary_slice(roots_b, cs_b)) return false;
     if (!cs_b.fetch_bytes(out.transactions_root.bytes, 32)) return false;
     if (!cs_b.fetch_bytes(out.receipts_root.bytes, 32)) return false;
+    if (cs_b.size() != 0 || cs_b.size_refs() != 0) return false;
 
     auto bloom_bytes = decode_evm_bytecode(bloom_cell);
     if (bloom_bytes.size() != 256) return false;
@@ -630,7 +668,8 @@ td::Ref<vm::Cell> encode_one_indexed_log(const IndexedLog& il) {
 
 bool decode_one_indexed_log(td::Ref<vm::Cell> cell, IndexedLog& out) {
     if (cell.is_null()) return false;
-    auto cs = vm::load_cell_slice(cell);
+    vm::CellSlice cs;
+    if (!load_ordinary_slice(cell, cs)) return false;
     long long magic = 0;
     if (!cs.fetch_long_bool(kPersistedIndexedLogMagicBits, magic) ||
         static_cast<unsigned long long>(magic) != kPersistedIndexedLogMagic) {
@@ -645,7 +684,9 @@ bool decode_one_indexed_log(td::Ref<vm::Cell> cell, IndexedLog& out) {
     out.log_index = static_cast<uint32_t>(log_index);
     out.tx_index = static_cast<uint32_t>(tx_index);
     if (cs.size_refs() == 0) return false;
-    return decode_one_log(cs.fetch_ref(), out.log);
+    auto log_ref = cs.fetch_ref();
+    if (cs.size() != 0 || cs.size_refs() != 0) return false;
+    return decode_one_log(log_ref, out.log);
 }
 
 td::Ref<vm::Cell> encode_indexed_log_list(const std::vector<IndexedLog>& logs) {
@@ -698,7 +739,8 @@ bool decode_indexed_log_list(td::Ref<vm::Cell> root, std::vector<IndexedLog>& ou
     constexpr size_t kMaxChunks = 1 << 20;
     for (size_t step = 0; step < kMaxChunks; ++step) {
         if (cell.is_null()) return false;
-        auto cs = vm::load_cell_slice(cell);
+        vm::CellSlice cs;
+        if (!load_ordinary_slice(cell, cs)) return false;
         long long count_field = 0;
         if (!cs.fetch_long_bool(32, count_field)) return false;
         if (total < 0) {
@@ -708,9 +750,11 @@ bool decode_indexed_log_list(td::Ref<vm::Cell> root, std::vector<IndexedLog>& ou
         unsigned nrefs = cs.size_refs();
         long long has_next = 0;
         if (!cs.fetch_long_bool(1, has_next)) return false;
+        if (cs.size() != 0) return false;
         unsigned cont_refs = (has_next != 0) ? 1u : 0u;
         if (cont_refs > nrefs) return false;
         unsigned log_refs = nrefs - cont_refs;
+        if (log_refs > kIndexedLogsPerChunk) return false;
         for (unsigned r = 0; r < log_refs; ++r) {
             IndexedLog il;
             if (!decode_one_indexed_log(cs.prefetch_ref(r), il)) return false;
@@ -755,7 +799,8 @@ td::Ref<vm::Cell> encode_persisted_receipt(const StoredReceipt& receipt) {
 bool decode_persisted_receipt(td::Ref<vm::Cell> cell, StoredReceipt& out) {
     out = StoredReceipt{};
     if (cell.is_null()) return false;
-    auto cs = vm::load_cell_slice(cell);
+    vm::CellSlice cs;
+    if (!load_ordinary_slice(cell, cs)) return false;
 
     long long magic = 0;
     if (!cs.fetch_long_bool(kPersistedReceiptMagicBits, magic) ||
@@ -801,7 +846,7 @@ bool decode_persisted_receipt(td::Ref<vm::Cell> cell, StoredReceipt& out) {
     auto logs_root = cs.fetch_ref();
     if (!decode_log_list(logs_root, out.logs)) return false;
 
-    return true;
+    return cs.size() == 0 && cs.size_refs() == 0;
 }
 
 }  // namespace evm_workchain

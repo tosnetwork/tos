@@ -445,6 +445,8 @@ struct WorkchainInfo : public td::CntObject {
   td::uint32 version;
   tos::RootHash zerostate_root_hash;
   tos::FileHash zerostate_file_hash;
+  int vm_version = 0;
+  td::uint64 vm_mode = 0;
   int min_addr_len, max_addr_len, addr_len_step;
 
   // Default values are used when split_merge_timings is not set in config

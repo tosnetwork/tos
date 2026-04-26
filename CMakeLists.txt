@@ -752,6 +752,10 @@ add_executable(test-validator-session-state test/test-validator-session-state.cp
 target_link_libraries(test-validator-session-state adnl dht rldp validatorsession tl_api)
 add_executable(test-quorum test/test-quorum.cpp)
 target_link_libraries(test-quorum tos_block tdutils)
+add_test(
+  NAME test-quorum-static-grep
+  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-quorum-static.sh
+          ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(test-overlay test/test-overlay.cpp)
 target_link_libraries(test-overlay overlay tdutils tdactor adnl adnltest tl_api dht )

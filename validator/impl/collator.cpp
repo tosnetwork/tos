@@ -32,6 +32,7 @@
 #include "crypto/openssl/rand.hpp"
 #include "td/actor/SharedFuture.h"
 #include "td/db/utils/BlobView.h"
+#include "td/utils/format.h"
 #include "td/utils/Random.h"
 #include "tos/tos-shard.h"
 #include "vm/boc.h"
@@ -1596,6 +1597,22 @@ bool Collator::check_this_shard_mc_info() {
   }
   if (!wc_info_->basic) {
     return fatal_error(PSTRING() << "cannot create new block for non-basic workchain " << workchain());
+  }
+  if (evm_workchain::is_evm_workchain(workchain())) {
+    if (wc_info_->vm_version != evm_workchain::kVmVersion) {
+      return fatal_error(PSTRING()
+                         << "cannot create EVM workchain block: ConfigParam 12 vm_version=0x"
+                         << td::format::as_hex(wc_info_->vm_version)
+                         << " does not match expected 0x"
+                         << td::format::as_hex(evm_workchain::kVmVersion));
+    }
+    if (wc_info_->vm_mode != evm_workchain::current_evm_chain_id()) {
+      return fatal_error(PSTRING()
+                         << "cannot create EVM workchain block: ConfigParam 12 vm_mode/chain_id=0x"
+                         << td::format::as_hex(wc_info_->vm_mode)
+                         << " does not match runtime chain_id=0x"
+                         << td::format::as_hex(evm_workchain::current_evm_chain_id()));
+    }
   }
   if (wc_info_->enabled_since && wc_info_->enabled_since > config_->utime) {
     return fatal_error(PSTRING() << "cannot create new block for workchain " << workchain()

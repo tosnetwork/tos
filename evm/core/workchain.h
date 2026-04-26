@@ -25,14 +25,10 @@ constexpr tos::WorkchainId kWorkchainId = 1;
 /// Exposed to wallets and JSON-RPC via `eth_chainId`. This is the
 /// Ethereum-style network identifier, not the internal workchain id.
 ///
-/// At runtime this default may be overridden by `current_evm_chain_id()`
-/// (see `set_evm_chain_id`). The override is set once during
-/// `init_evm_workchain` from the `TOS_EVM_CHAIN_ID` env var so a single
-/// validator-engine binary can boot a Hive-style genesis where the spec
-/// dictates a different chain id (e.g. `0xc72dd9d5e883e`). The override
-/// MUST only be applied to a fresh chain — EIP-155 signatures depend on
-/// chain id, so changing it on an existing chain invalidates every signed
-/// transaction in state.
+/// At runtime tests/devnet tooling may override this via
+/// `set_evm_chain_id()` before any EVM config is materialised. Production
+/// validators must not source this value from process-local environment; it
+/// is consensus-critical and must be bound by chain configuration.
 ///
 /// Kept as a `constexpr` so existing callers (unit tests, fixtures, etc.)
 /// that hard-coded the default continue to compile. Production code paths
@@ -40,14 +36,14 @@ constexpr tos::WorkchainId kWorkchainId = 1;
 constexpr uint64_t kEvmChainId = 0x544F53;  // "TOS" in ASCII — historical default
 
 /// Returns the chain id to use at runtime. Defaults to `kEvmChainId` until
-/// `set_evm_chain_id` is called (typically during `init_evm_workchain`).
+/// `set_evm_chain_id` is called by explicit test/devnet bootstrap code.
 ///
 /// Header-defined inline so the lookup is cheap and there is no extra
 /// translation unit dependency for callers.
 uint64_t current_evm_chain_id() noexcept;
 
-/// Override the runtime chain id. Intended to be called exactly once at
-/// process startup (before any block is processed or any RPC is served).
+/// Override the runtime chain id. Intended only for tests/devnet bootstrap,
+/// and only before any block is processed or any RPC is served.
 /// Calling this after the validator has accepted a block is undefined —
 /// EIP-155 v-recovery and stored receipts assume a stable chain id.
 void set_evm_chain_id(uint64_t chain_id) noexcept;
@@ -59,8 +55,13 @@ void set_evm_chain_id(uint64_t chain_id) noexcept;
 /// vm_version value that marks an account as running on the EVM executor.
 constexpr int32_t kVmVersion = 0x45564D;  // "EVM" in ASCII
 
-/// vm_mode — reserved, 0 for now.
-constexpr uint32_t kVmMode = 0;
+/// Legacy placeholder used before chain_id was bound into ConfigParam 12.
+///
+/// Current wc=1 WorkchainDescr values MUST store `current_evm_chain_id()` in
+/// `WorkchainFormat::wfmt_basic.vm_mode`; a zero vm_mode is rejected for the
+/// EVM workchain because TOS has not launched and has no legacy descriptor to
+/// preserve.
+constexpr uint32_t kLegacyVmMode = 0;
 
 // ---------------------------------------------------------------------------
 // Address model
@@ -94,9 +95,9 @@ inline bool is_evm_workchain(tos::WorkchainId wc) noexcept {
 /// is a cell in `cp.new_data` format (magic 0x45564D + schema_version=4
 /// + Maybe ^CellEvmState
 /// root + bits256 eth_state_root + Maybe ^block_hash_history
-/// + Maybe ^current_block_accumulator). On every block the compute phase
+/// + reserved accumulator bit set to nothing). On every block the compute phase
 /// updates this cell to reflect the post-execution world state, the EVM
-/// BLOCKHASH lookback window, and the in-progress Ethereum block roots.
+/// BLOCKHASH lookback window, and the single-transaction Ethereum block root.
 ///
 /// 256-bit address = all zeros except the low bit set to 1:
 ///   0x0000000000000000000000000000000000000000000000000000000000000001

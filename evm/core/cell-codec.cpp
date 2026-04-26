@@ -306,17 +306,13 @@ bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
                 *block_hashes_root_out = std::move(block_hashes_root);
             }
         }
-        // The in-progress block accumulator is mandatory as a Maybe-tag in v4.
-        // It lets later transactions in the same TOS block compute the final
-        // Ethereum transactionRoot/receiptRoot/blockHash cumulatively.
+        // The former in-progress block accumulator is now a reserved Maybe-tag.
+        // TOS has not launched mainnet, so reject cells that still carry it
+        // instead of traversing or preserving quadratic RPC payload history.
         if (cs.size() < 1) return false;
         auto has_block_accumulator = cs.fetch_ulong(1);
         if (has_block_accumulator == 1) {
-            if (cs.size_refs() == 0) return false;
-            auto block_accumulator_root = cs.fetch_ref();
-            if (block_accumulator_root_out) {
-                *block_accumulator_root_out = std::move(block_accumulator_root);
-            }
+            return false;
         }
         // Audit #3 (2026-04-26): require canonical encoding. Two cells with the
         // same logical content must produce the same cell hash; trailing bits or

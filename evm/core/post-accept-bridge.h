@@ -46,4 +46,25 @@ size_t apply_stashed_side_effects_for_messages(
     const uint8_t parent_block_hash[32],
     const std::vector<td::Ref<vm::Cell>>& msgs) noexcept;
 
+/// Same as above, but with enough canonical context to deterministically
+/// replay missing side effects. `initial_account_data` is the executor
+/// account's cp.new_data from the previous canonical shard state; it may be
+/// null when the executor account did not exist yet. `gas_limits` is indexed
+/// like `msgs` and carries the accepted transaction's TOS compute gas_limit.
+size_t apply_stashed_side_effects_for_messages(
+    uint64_t accepted_block_seqno,
+    uint64_t accepted_timestamp,
+    const uint8_t rand_seed[32],
+    const uint8_t parent_block_hash[32],
+    const std::vector<td::Ref<vm::Cell>>& msgs,
+    const std::vector<uint64_t>& gas_limits,
+    const td::Ref<vm::Cell>& initial_account_data) noexcept;
+
+/// Extract the EVM executor account's StateInit.data (`cp.new_data`) from a
+/// canonical ShardStateUnsplit root. Returns true when the shard state was
+/// parsed; `account_data_out` is null if the executor account is absent.
+bool extract_evm_executor_account_data_from_shard_state(
+    td::Ref<vm::Cell> shard_state_root,
+    td::Ref<vm::Cell>& account_data_out) noexcept;
+
 }  // namespace evm_workchain

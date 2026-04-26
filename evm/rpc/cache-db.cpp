@@ -11,6 +11,7 @@
 #include "vm/boc.h"
 
 #include <memory>
+#include <vector>
 
 namespace evm_workchain {
 
@@ -93,17 +94,29 @@ void make_pending_side_effects_key(uint64_t block_seqno,
     std::memcpy(out + 1 + 8 + 8 + 32 + 32, tx_hash.data(), 32);
 }
 
-// Generic put: serialize cell, set under the given key, flush.
+void make_pending_side_effects_upper_bound(uint64_t block_seqno, char out[1 + 8]) {
+    out[0] = static_cast<char>(kPendingSideEffectsTag);
+    store_be_u64(block_seqno, out + 1);
+}
+
+// Generic put: serialize cell, set under the given key, optionally flush.
 td::Status put_cell_with_key(td::RocksDb& db, td::Slice key, td::Ref<vm::Cell> cell,
-                              const char* what) {
+                             const char* what, bool flush_after = true,
+                             size_t max_serialized_bytes = 0) {
     if (cell.is_null()) {
         return td::Status::Error(PSLICE() << "evm-rpc-cache: null " << what << " cell");
     }
     auto serialized_r = vm::std_boc_serialize(cell);
     if (serialized_r.is_error()) return serialized_r.move_as_error();
     auto serialized = serialized_r.move_as_ok();
+    if (max_serialized_bytes != 0 && serialized.size() > max_serialized_bytes) {
+        return td::Status::Error(PSLICE()
+            << "evm-rpc-cache: " << what << " cell too large: "
+            << serialized.size() << " > " << max_serialized_bytes);
+    }
     auto set_status = db.set(key, td::Slice{serialized.as_slice()});
     if (set_status.is_error()) return set_status;
+    if (!flush_after) return td::Status::OK();
     return db.flush();
 }
 
@@ -252,6 +265,11 @@ td::Status EvmRpcCacheDb::for_each_transaction(
     });
 }
 
+td::Result<size_t> EvmRpcCacheDb::count_transactions() {
+    char prefix = static_cast<char>(kTransactionTag);
+    return db_->count(td::Slice{&prefix, 1});
+}
+
 td::Status EvmRpcCacheDb::put_block_by_number(uint64_t block_number, td::Ref<vm::Cell> cell) {
     char key[kBlockByNumberKeyLen];
     make_block_by_number_key(block_number, key);
@@ -279,6 +297,11 @@ td::Status EvmRpcCacheDb::for_each_block_by_number(
         }
         return cb(block_number, cell_r.move_as_ok());
     });
+}
+
+td::Result<size_t> EvmRpcCacheDb::count_blocks_by_number() {
+    char prefix = static_cast<char>(kBlockByNumberTag);
+    return db_->count(td::Slice{&prefix, 1});
 }
 
 td::Status EvmRpcCacheDb::put_block_by_hash(const td::Bits256& block_hash,
@@ -341,17 +364,25 @@ td::Status EvmRpcCacheDb::for_each_block_logs(
     });
 }
 
+td::Result<size_t> EvmRpcCacheDb::count_log_blocks() {
+    char prefix = static_cast<char>(kLogsByBlockTag);
+    return db_->count(td::Slice{&prefix, 1});
+}
+
 td::Status EvmRpcCacheDb::put_pending_side_effects(uint64_t block_seqno,
                                                     uint64_t timestamp,
                                                     const td::Bits256& rand_seed,
                                                     const td::Bits256& parent_hash,
                                                     const td::Bits256& tx_hash,
                                                     td::Ref<vm::Cell> cell) {
+    constexpr size_t kMaxPendingSideEffectBytes = 1 << 20;  // side-channel recovery cap
     char key[kPendingSideEffectsKeyLen];
     make_pending_side_effects_key(block_seqno, timestamp, rand_seed, parent_hash,
                                   tx_hash, key);
     return put_cell_with_key(*db_, td::Slice{key, kPendingSideEffectsKeyLen},
-                             std::move(cell), "pending-side-effects");
+                             std::move(cell), "pending-side-effects",
+                             /*flush_after=*/false,
+                             kMaxPendingSideEffectBytes);
 }
 
 td::Result<td::Ref<vm::Cell>> EvmRpcCacheDb::get_pending_side_effects(
@@ -375,8 +406,59 @@ td::Status EvmRpcCacheDb::delete_pending_side_effects(uint64_t block_seqno,
     make_pending_side_effects_key(block_seqno, timestamp, rand_seed, parent_hash,
                                   tx_hash, key);
     auto erase_status = db_->erase(td::Slice{key, kPendingSideEffectsKeyLen});
-    if (erase_status.is_error()) return erase_status;
+    return erase_status;
+}
+
+td::Status EvmRpcCacheDb::prune_pending_side_effects(uint64_t keep_from_block_seqno,
+                                                      size_t max_records) {
+    std::vector<std::string> keys_to_delete;
+    char begin[1] = {static_cast<char>(kPendingSideEffectsTag)};
+    char end[1 + 8];
+    make_pending_side_effects_upper_bound(keep_from_block_seqno, end);
+
+    auto old_walk = db_->for_each_in_range(
+        td::Slice{begin, 1}, td::Slice{end, sizeof(end)},
+        [&keys_to_delete](td::Slice key, td::Slice) -> td::Status {
+            if (key.size() == kPendingSideEffectsKeyLen &&
+                static_cast<uint8_t>(key[0]) == kPendingSideEffectsTag) {
+                keys_to_delete.push_back(key.str());
+            }
+            return td::Status::OK();
+        });
+    if (old_walk.is_error()) return old_walk;
+
+    if (max_records != 0) {
+        char prefix = static_cast<char>(kPendingSideEffectsTag);
+        auto count_r = db_->count(td::Slice{&prefix, 1});
+        if (count_r.is_error()) return count_r.move_as_error();
+        size_t total = count_r.move_as_ok();
+        if (total > max_records) {
+            size_t extra = total - max_records;
+            auto cap_walk = db_->for_each(
+                [&keys_to_delete, &extra](td::Slice key, td::Slice) -> td::Status {
+                    if (extra == 0) return td::Status::OK();
+                    if (key.size() == kPendingSideEffectsKeyLen &&
+                        static_cast<uint8_t>(key[0]) == kPendingSideEffectsTag) {
+                        keys_to_delete.push_back(key.str());
+                        --extra;
+                    }
+                    return td::Status::OK();
+                });
+            if (cap_walk.is_error()) return cap_walk;
+        }
+    }
+
+    if (keys_to_delete.empty()) return td::Status::OK();
+    for (const auto& key : keys_to_delete) {
+        auto erase_status = db_->erase(td::Slice{key});
+        if (erase_status.is_error()) return erase_status;
+    }
     return db_->flush();
+}
+
+td::Result<size_t> EvmRpcCacheDb::count_pending_side_effects() {
+    char prefix = static_cast<char>(kPendingSideEffectsTag);
+    return db_->count(td::Slice{&prefix, 1});
 }
 
 EvmRpcCacheDb* evm_rpc_cache_db() {
