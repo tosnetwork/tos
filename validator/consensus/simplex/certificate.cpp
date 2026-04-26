@@ -37,7 +37,7 @@ td::Result<td::Ref<Certificate<T>>> Certificate<T>::from_tl(tl::voteSignatureSet
     }
   }
 
-  if (voted_weight < tos::two_thirds_plus_one(bus.total_weight)) {
+  if (voted_weight < tos::quorum_threshold(bus.total_weight)) {
     return td::Status::Error("Not enough signatures in certificate");
   }
 

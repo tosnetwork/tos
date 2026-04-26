@@ -120,7 +120,7 @@ struct ValidatorSessionStats {
         if (approved_33pct_at <= 0.0 && approved_weight >= total_weight / 3 + 1) {
           approved_33pct_at = td::Clocks::system();
         }
-        if (approved_66pct_at <= 0.0 && approved_weight >= tos::two_thirds_plus_one(total_weight)) {
+        if (approved_66pct_at <= 0.0 && approved_weight >= tos::quorum_threshold(total_weight)) {
           approved_66pct_at = td::Clocks::system();
         }
       }
@@ -133,7 +133,7 @@ struct ValidatorSessionStats {
         if (signed_33pct_at <= 0.0 && signed_weight >= total_weight / 3 + 1) {
           signed_33pct_at = td::Clocks::system();
         }
-        if (signed_66pct_at <= 0.0 && signed_weight >= tos::two_thirds_plus_one(total_weight)) {
+        if (signed_66pct_at <= 0.0 && signed_weight >= tos::quorum_threshold(total_weight)) {
           signed_66pct_at = td::Clocks::system();
         }
       }

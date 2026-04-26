@@ -49,7 +49,7 @@ ValidatorSessionDescriptionImpl::ValidatorSessionDescriptionImpl(ValidatorSessio
     rev_sources_[sources_[i].id] = i;
   }
   total_weight_ = total_weight;
-  cutoff_weight_ = tos::two_thirds_plus_one(total_weight);
+  cutoff_weight_ = tos::quorum_threshold(total_weight);
   auto it = rev_sources_.find(local_id);
   CHECK(it != rev_sources_.end());
   self_idx_ = it->second;

@@ -321,7 +321,7 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
     slots_per_leader_window_ = bus.config.slots_per_leader_window;
     params_ = bus.config.noncritical_params;
 
-    weight_threshold_ = tos::two_thirds_plus_one(bus.total_weight);
+    weight_threshold_ = tos::quorum_threshold(bus.total_weight);
 
     state_.emplace(State(bus));
     state_->slot_at(0)->state->available_base = ParentId{};
