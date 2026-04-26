@@ -19,7 +19,8 @@
 
     TLB schema (PersistedReceipt only — full schema in the design doc):
 
-      persisted_receipt#52455054     // "REPT"
+      persisted_receipt#52505432     // "RPT2"
+        type:uint8                   // EIP-2718 transaction type
         success:Bool
         gas_used:uint64
         cumulative_gas_used:uint64
@@ -59,8 +60,8 @@
 
 namespace evm_workchain {
 
-// 32-bit cell magic ("REPT"). Matches the TLB schema in the design doc.
-constexpr unsigned long long kPersistedReceiptMagic = 0x52455054ull;
+// 32-bit cell magic ("RPT2"). Matches the TLB schema in the design doc.
+constexpr unsigned long long kPersistedReceiptMagic = 0x52505432ull;
 constexpr int kPersistedReceiptMagicBits = 32;
 
 constexpr unsigned long long kPersistedLogMagic = 0x4c4f4720ull;  // "LOG "

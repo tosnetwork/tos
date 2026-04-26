@@ -4282,12 +4282,24 @@ static void test_persisted_receipt_roundtrip() {
             return;
         }
     }
+    {
+        vm::CellBuilder old_magic;
+        old_magic.store_long(0x52455054ll, 32);  // obsolete "REPT"
+        StoredReceipt out;
+        bool rejected = !decode_persisted_receipt(old_magic.finalize(), out);
+        printf("  obsolete REPT magic rejected: %s\n", rejected ? "yes" : "no");
+        if (!rejected) {
+            printf("  FAILED (obsolete magic accepted)\n\n");
+            return;
+        }
+    }
 
     // Build a non-trivial StoredReceipt that exercises every field:
     //   - both optional address fields populated
     //   - non-empty return_data crossing the 127-byte chunk boundary
     //   - multiple logs with different topic counts and non-empty data
     StoredReceipt in;
+    in.type = silkworm::TransactionType::kDynamicFee;
     in.success = true;
     in.gas_used = 0x1234567890ABCDEFULL;
     in.cumulative_gas_used = 0xFEDCBA9876543210ULL;
@@ -4354,6 +4366,7 @@ static void test_persisted_receipt_roundtrip() {
     printf("  decode ok: %s\n", decoded ? "yes" : "no");
 
     bool scalars_ok = decoded &&
+        out.type == in.type &&
         out.success == in.success &&
         out.gas_used == in.gas_used &&
         out.cumulative_gas_used == in.cumulative_gas_used &&

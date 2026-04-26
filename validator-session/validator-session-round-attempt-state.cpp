@@ -77,7 +77,7 @@ bool SessionBlockCandidate::check_block_is_approved(ValidatorSessionDescription&
   ValidatorWeight w = 0;
   for (td::uint32 i = 0; i < desc.get_total_nodes(); i++) {
     if (approved_by_->at(i)) {
-      w += desc.get_node_weight(i);
+      CHECK(tos::checked_add_validator_weight(w, desc.get_node_weight(i)));
       if (w >= desc.get_cutoff_weight()) {
         return true;
       }
@@ -117,7 +117,7 @@ bool SessionVoteCandidate::check_block_is_voted(ValidatorSessionDescription& des
   ValidatorWeight w = 0;
   for (td::uint32 i = 0; i < desc.get_total_nodes(); i++) {
     if (voted_by_->at(i)) {
-      w += desc.get_node_weight(i);
+      CHECK(tos::checked_add_validator_weight(w, desc.get_node_weight(i)));
       if (w >= desc.get_cutoff_weight()) {
         return true;
       }
@@ -403,7 +403,7 @@ bool ValidatorSessionRoundAttemptState::check_attempt_is_precommitted(ValidatorS
   ValidatorWeight weight = 0;
   for (td::uint32 i = 0; i < desc.get_total_nodes(); i++) {
     if (precommitted_->at(i)) {
-      weight += desc.get_node_weight(i);
+      CHECK(tos::checked_add_validator_weight(weight, desc.get_node_weight(i)));
       if (weight >= desc.get_cutoff_weight()) {
         return true;
       }

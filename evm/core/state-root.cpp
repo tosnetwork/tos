@@ -8,15 +8,14 @@
 */
 #include "evm/core/state-root.h"
 
-#include <cstring>
-
 #include <silkworm/core/common/bytes.hpp>
 #include <silkworm/core/rlp/encode.hpp>
-#include <silkworm/core/rlp/encode_vector.hpp>
 #include <silkworm/core/trie/vector_root.hpp>
 #include <silkworm/core/types/address.hpp>
+#include <silkworm/core/types/bloom.hpp>
 #include <silkworm/core/types/evmc_bytes32.hpp>
 #include <silkworm/core/types/log.hpp>
+#include <silkworm/core/types/receipt.hpp>
 
 namespace evm_workchain {
 
@@ -53,6 +52,11 @@ static size_t stored_tx_payload_length(const StoredTransaction& tx) {
 // Encode a StoredTransaction as RLP for trie root computation.
 // Format: legacy tx RLP list [nonce, gasPrice, gasLimit, to, value, data, v, r, s].
 static void encode_stored_transaction(Bytes& to, const StoredTransaction& tx) {
+    if (!tx.raw_rlp.empty()) {
+        to.insert(to.end(), tx.raw_rlp.begin(), tx.raw_rlp.end());
+        return;
+    }
+
     const size_t payload = stored_tx_payload_length(tx);
     silkworm::rlp::encode_header(to, {.list = true, .payload_length = payload});
 
@@ -71,76 +75,16 @@ static void encode_stored_transaction(Bytes& to, const StoredTransaction& tx) {
     silkworm::rlp::encode(to, intx::uint256{0});   // s
 }
 
-// ---------------------------------------------------------------------------
-// Receipt RLP encoding
-// ---------------------------------------------------------------------------
-
-// Compute the RLP payload length for a StoredReceipt encoded as an
-// Ethereum receipt: [status, cumulativeGasUsed, logsBloom, logs].
-static size_t stored_receipt_payload_length(const StoredReceipt& receipt) {
-    size_t len = 0;
-    // status: boolean (1 = success, 0 = failure), RLP-encoded as integer
-    len += silkworm::rlp::length(receipt.success);
-    len += silkworm::rlp::length(receipt.cumulative_gas_used);
-
-    // logsBloom: 256 bytes (always fixed length as a byte string)
-    // We compute the bloom from receipt logs inline.
-    len += silkworm::rlp::length(ByteView{nullptr, 256});
-
-    // logs: RLP list of Log entries
-    // Each Log is [address, topics, data] — silkworm already provides rlp::length(Log)
-    size_t logs_payload = 0;
-    for (const auto& log : receipt.logs) {
-        logs_payload += silkworm::rlp::length(log);
-    }
-    len += silkworm::rlp::length_of_length(logs_payload) + logs_payload;
-
-    return len;
-}
-
-// Compute the 256-byte Ethereum bloom filter for a set of logs.
-// Reference: Silkworm ~/s/silkworm/core/types/bloom.cpp
-static void compute_receipt_bloom(const std::vector<silkworm::Log>& logs, uint8_t bloom[256]) {
-    std::memset(bloom, 0, 256);
-    for (const auto& log : logs) {
-        auto ah = ethash::keccak256(log.address.bytes, 20);
-        for (int i = 0; i < 6; i += 2) {
-            uint16_t bit = (static_cast<uint16_t>(ah.bytes[i]) << 8 | ah.bytes[i + 1]) & 0x7FF;
-            bloom[bit / 8] |= (1 << (bit % 8));
-        }
-        for (const auto& topic : log.topics) {
-            auto th = ethash::keccak256(topic.bytes, 32);
-            for (int i = 0; i < 6; i += 2) {
-                uint16_t bit = (static_cast<uint16_t>(th.bytes[i]) << 8 | th.bytes[i + 1]) & 0x7FF;
-                bloom[bit / 8] |= (1 << (bit % 8));
-            }
-        }
-    }
-}
-
 // Encode a StoredReceipt as RLP for trie root computation.
 // Format: receipt RLP list [status, cumulativeGasUsed, logsBloom, logs].
 static void encode_stored_receipt(Bytes& to, const StoredReceipt& receipt) {
-    const size_t payload = stored_receipt_payload_length(receipt);
-    silkworm::rlp::encode_header(to, {.list = true, .payload_length = payload});
-
-    silkworm::rlp::encode(to, receipt.success);
-    silkworm::rlp::encode(to, receipt.cumulative_gas_used);
-
-    // Logs bloom: compute and encode as 256-byte string
-    uint8_t bloom[256];
-    compute_receipt_bloom(receipt.logs, bloom);
-    silkworm::rlp::encode(to, ByteView{bloom, 256});
-
-    // Logs list: encode header then each log
-    size_t logs_payload = 0;
-    for (const auto& log : receipt.logs) {
-        logs_payload += silkworm::rlp::length(log);
-    }
-    silkworm::rlp::encode_header(to, {.list = true, .payload_length = logs_payload});
-    for (const auto& log : receipt.logs) {
-        silkworm::rlp::encode(to, log);
-    }
+    silkworm::Receipt sw_receipt;
+    sw_receipt.type = receipt.type;
+    sw_receipt.success = receipt.success;
+    sw_receipt.cumulative_gas_used = receipt.cumulative_gas_used;
+    sw_receipt.bloom = silkworm::logs_bloom(receipt.logs);
+    sw_receipt.logs = receipt.logs;
+    silkworm::rlp::encode(to, sw_receipt);
 }
 
 // ---------------------------------------------------------------------------

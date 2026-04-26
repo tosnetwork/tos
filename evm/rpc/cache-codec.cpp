@@ -734,6 +734,7 @@ bool decode_persisted_logs_for_block(td::Ref<vm::Cell> cell, std::vector<Indexed
 td::Ref<vm::Cell> encode_persisted_receipt(const StoredReceipt& receipt) {
     vm::CellBuilder cb;
     cb.store_long(static_cast<long long>(kPersistedReceiptMagic), kPersistedReceiptMagicBits);
+    cb.store_long(static_cast<long long>(receipt.type), 8);
     cb.store_long(receipt.success ? 1 : 0, 1);
     cb.store_long(static_cast<long long>(receipt.gas_used), 64);
     cb.store_long(static_cast<long long>(receipt.cumulative_gas_used), 64);
@@ -760,6 +761,21 @@ bool decode_persisted_receipt(td::Ref<vm::Cell> cell, StoredReceipt& out) {
     if (!cs.fetch_long_bool(kPersistedReceiptMagicBits, magic) ||
         static_cast<unsigned long long>(magic) != kPersistedReceiptMagic) {
         return false;
+    }
+
+    long long tx_type = 0;
+    if (!cs.fetch_long_bool(8, tx_type)) return false;
+    switch (static_cast<uint8_t>(tx_type)) {
+        case static_cast<uint8_t>(silkworm::TransactionType::kLegacy):
+        case static_cast<uint8_t>(silkworm::TransactionType::kAccessList):
+        case static_cast<uint8_t>(silkworm::TransactionType::kDynamicFee):
+        case static_cast<uint8_t>(silkworm::TransactionType::kBlob):
+        case static_cast<uint8_t>(silkworm::TransactionType::kSetCode):
+        case static_cast<uint8_t>(silkworm::TransactionType::kSystem):
+            out.type = static_cast<silkworm::TransactionType>(tx_type);
+            break;
+        default:
+            return false;
     }
 
     long long succ = 0;

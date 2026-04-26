@@ -72,9 +72,8 @@ class CellEvmState : public silkworm::State {
     // ----- silkworm::BlockState interface -----
 
     std::optional<silkworm::BlockHeader> read_header(
-        silkworm::BlockNum, const evmc::bytes32&) const noexcept override {
-        return std::nullopt;
-    }
+        silkworm::BlockNum block_num,
+        const evmc::bytes32& block_hash) const noexcept override;
 
     bool read_body(silkworm::BlockNum, const evmc::bytes32&,
                    silkworm::BlockBody&) const noexcept override {
@@ -128,6 +127,13 @@ class CellEvmState : public silkworm::State {
     /// Replace the current account dictionary with one decoded from the given cell.
     /// Pass a null cell to start from empty.
     bool load_from_cell(td::Ref<vm::Cell> root);
+
+    /// Serialize / load the canonical EVM block-hash history used by
+    /// BLOCKHASH and the EIP-2935 history-storage system call. The serialized
+    /// form keeps the latest 256 canonical hashes, which is exactly the EVM
+    /// lookback window.
+    td::Ref<vm::Cell> serialize_block_hashes_to_cell() const;
+    bool load_block_hashes_from_cell(td::Ref<vm::Cell> root);
 
     /// Direct read-only access to the underlying account dictionary cell.
     /// Useful for collator integration (sync to ShardAccounts).

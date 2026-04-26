@@ -26,6 +26,7 @@
 #include <silkworm/core/state/state.hpp>
 #include <silkworm/core/types/account.hpp>
 #include <silkworm/core/types/log.hpp>
+#include <silkworm/core/types/transaction.hpp>
 #include <silkworm/core/trie/prefix_set.hpp>
 
 namespace evm_workchain {
@@ -38,6 +39,7 @@ constexpr size_t kMaxCachedLogBlocks     = 256;
 
 /// Stored receipt for a processed transaction.
 struct StoredReceipt {
+    silkworm::TransactionType type{silkworm::TransactionType::kLegacy};
     bool success{false};
     uint64_t gas_used{0};
     uint64_t cumulative_gas_used{0};  // running total within block

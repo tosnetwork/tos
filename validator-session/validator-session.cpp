@@ -20,6 +20,7 @@
 #include "td/utils/Random.h"
 #include "td/utils/overloaded.h"
 #include "tos/tos-tl.hpp"
+#include "tos/quorum.h"
 
 #include "candidate-serializer.h"
 #include "validator-session.hpp"
@@ -1018,7 +1019,7 @@ void ValidatorSessionImpl::on_new_round(td::uint32 round) {
       if (sig) {
         CHECK(description().is_persistent(sig));
         export_sigs.emplace_back(description().get_source_id(i), sig->value().clone());
-        signatures_weight += description().get_node_weight(i);
+        CHECK(tos::checked_add_validator_weight(signatures_weight, description().get_node_weight(i)));
       }
     }
 
@@ -1030,7 +1031,7 @@ void ValidatorSessionImpl::on_new_round(td::uint32 round) {
       if (sig) {
         CHECK(description().is_persistent(sig));
         export_approve_sigs.emplace_back(description().get_source_id(i), sig->value().clone());
-        approve_signatures_weight += description().get_node_weight(i);
+        CHECK(tos::checked_add_validator_weight(approve_signatures_weight, description().get_node_weight(i)));
       }
     }
 
@@ -1233,24 +1234,26 @@ void ValidatorSessionImpl::get_validator_group_info_for_litequery(
     candidate->id_->collated_data_hash_ = block->get_block()->get_collated_data_file_hash();
 
     candidate->total_weight_ = description().get_total_weight();
-    candidate->approved_weight_ = 0;
-    candidate->signed_weight_ = 0;
+    ValidatorWeight approved_weight = 0;
     for (td::uint32 i = 0; i < description().get_total_nodes(); ++i) {
       if (real_state_->check_block_is_approved_by(description(), i, block->get_id())) {
-        candidate->approved_weight_ += description().get_node_weight(i);
+        CHECK(tos::checked_add_validator_weight(approved_weight, description().get_node_weight(i)));
       }
     }
+    candidate->approved_weight_ = static_cast<std::int64_t>(approved_weight);
+    ValidatorWeight signed_weight = 0;
     auto precommited = real_state_->get_cur_round_precommitted_block();
     if (SentBlock::get_block_id(precommited) == SentBlock::get_block_id(block->get_block())) {
       auto signatures = real_state_->get_cur_round_signatures();
       if (signatures) {
         for (td::uint32 i = 0; i < description().get_total_nodes(); ++i) {
           if (signatures->at(i)) {
-            candidate->signed_weight_ += description().get_node_weight(i);
+            CHECK(tos::checked_add_validator_weight(signed_weight, description().get_node_weight(i)));
           }
         }
       }
     }
+    candidate->signed_weight_ = static_cast<std::int64_t>(signed_weight);
     result.push_back(std::move(candidate));
   });
   promise.set_result(std::move(result));

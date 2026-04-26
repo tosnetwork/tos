@@ -44,7 +44,7 @@ ValidatorSessionDescriptionImpl::ValidatorSessionDescriptionImpl(ValidatorSessio
   ValidatorWeight total_weight = 0;
   for (td::uint32 i = 0; i < size; i++) {
     sources_.emplace_back(nodes[i]);
-    total_weight += sources_[i].weight;
+    CHECK(tos::checked_add_validator_weight(total_weight, sources_[i].weight));
     CHECK(rev_sources_.find(sources_[i].id) == rev_sources_.end());
     rev_sources_[sources_[i].id] = i;
   }

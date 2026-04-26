@@ -13,6 +13,7 @@
 #include "evm/core/cell-codec.h"
 #include "evm/core/init.h"
 #include "evm/core/post-accept.h"
+#include "evm/rpc/cache-codec.h"
 
 #include <ethash/keccak.hpp>
 #include "vm/cells/CellBuilder.h"
@@ -24,6 +25,7 @@
 #include <silkworm/core/types/block.hpp>
 #include <silkworm/core/types/transaction.hpp>
 
+#include <limits>
 #include <memory>
 
 #include "td/utils/logging.h"
@@ -32,27 +34,41 @@ namespace evm_workchain {
 
 namespace {
 
-// Build a fresh EvmState seeded from `account_data` (the cp.new_data v2
+// Build a fresh EvmState seeded from `account_data` (the cp.new_data v4
 // cell from the previous block). Returns nullptr if the cell is malformed
 // — caller must handle by emitting `sk_bad_state`. A null `account_data`
 // returns a genesis-equivalent state with the EIP-4788 / EIP-2935
 // predeploys present, so the very first transaction on a fresh executor
 // account works under Cancun / Pectra.
 std::unique_ptr<EvmState> build_local_state_from_account_data(
-    td::Ref<vm::Cell> account_data) {
+    td::Ref<vm::Cell> account_data,
+    td::Ref<vm::Cell>* block_accumulator_root_out = nullptr) {
     auto cell_state = std::make_unique<CellEvmState>();
+    if (block_accumulator_root_out) {
+        *block_accumulator_root_out = {};
+    }
 
     if (account_data.not_null()) {
         td::Ref<vm::Cell> state_root;
         evmc::bytes32 eth_state_root{};
         td::Ref<vm::Cell> rpc_cache_root;
+        td::Ref<vm::Cell> block_hashes_root;
+        td::Ref<vm::Cell> block_accumulator_root;
         if (!decode_cp_new_data(account_data, state_root, eth_state_root,
                                 rpc_cache_root,
-                                /*verify_eth_state_root=*/false)) {
+                                /*verify_eth_state_root=*/true,
+                                &block_hashes_root,
+                                &block_accumulator_root)) {
             return nullptr;
         }
         if (state_root.not_null() && !cell_state->load_from_cell(state_root)) {
             return nullptr;
+        }
+        if (!cell_state->load_block_hashes_from_cell(block_hashes_root)) {
+            return nullptr;
+        }
+        if (block_accumulator_root_out) {
+            *block_accumulator_root_out = std::move(block_accumulator_root);
         }
     }
 
@@ -74,6 +90,227 @@ std::unique_ptr<EvmState> build_local_state_from_account_data(
     return state;
 }
 
+struct EvmBlockAccumulator {
+    uint64_t number{0};
+    uint64_t timestamp{0};
+    uint64_t gas_limit{0};
+    intx::uint256 base_fee_per_gas{0};
+    evmc::bytes32 parent_hash{};
+    std::vector<evmc::bytes32> tx_hashes;
+    std::vector<StoredTransaction> transactions;
+    std::vector<StoredReceipt> receipts;
+};
+
+void store_uint256(vm::CellBuilder& cb, const intx::uint256& v) {
+    auto be = intx::be::store<evmc::uint256be>(v);
+    cb.store_bytes(be.bytes, 32);
+}
+
+bool load_uint256(vm::CellSlice& cs, intx::uint256& out) {
+    evmc::uint256be be{};
+    if (!cs.fetch_bytes(be.bytes, 32)) return false;
+    out = intx::be::load<intx::uint256>(be);
+    return true;
+}
+
+td::Ref<vm::Cell> encode_hash_list(const std::vector<evmc::bytes32>& hashes) {
+    td::Ref<vm::Cell> next;
+    for (auto it = hashes.rbegin(); it != hashes.rend(); ++it) {
+        vm::CellBuilder cb;
+        cb.store_bytes(it->bytes, 32);
+        cb.store_long(next.not_null() ? 1 : 0, 1);
+        if (next.not_null()) {
+            cb.store_ref(next);
+        }
+        next = cb.finalize();
+    }
+    return next;
+}
+
+bool decode_hash_list(td::Ref<vm::Cell> root, std::vector<evmc::bytes32>& out) {
+    out.clear();
+    constexpr size_t kMaxAccumulatorItems = 10000;
+    td::Ref<vm::Cell> cell = std::move(root);
+    try {
+        for (size_t i = 0; cell.not_null() && i < kMaxAccumulatorItems; ++i) {
+            bool special = false;
+            auto cs = vm::load_cell_slice_special(cell, special);
+            if (special || cs.size() != 257) return false;
+            evmc::bytes32 hash{};
+            if (!cs.fetch_bytes(hash.bytes, 32)) return false;
+            bool has_next = cs.fetch_ulong(1) != 0;
+            if (cs.size() != 0) return false;
+            if (cs.size_refs() != (has_next ? 1U : 0U)) return false;
+            out.push_back(hash);
+            cell = has_next ? cs.fetch_ref() : td::Ref<vm::Cell>{};
+        }
+        return cell.is_null();
+    } catch (vm::VmError&) {
+        return false;
+    } catch (vm::VmVirtError&) {
+        return false;
+    } catch (std::exception&) {
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
+
+td::Ref<vm::Cell> encode_transaction_list(const std::vector<StoredTransaction>& txs) {
+    td::Ref<vm::Cell> next;
+    for (auto it = txs.rbegin(); it != txs.rend(); ++it) {
+        vm::CellBuilder cb;
+        cb.store_long(next.not_null() ? 1 : 0, 1);
+        cb.store_ref(encode_persisted_transaction(*it));
+        if (next.not_null()) {
+            cb.store_ref(next);
+        }
+        next = cb.finalize();
+    }
+    return next;
+}
+
+bool decode_transaction_list(td::Ref<vm::Cell> root,
+                             std::vector<StoredTransaction>& out) {
+    out.clear();
+    constexpr size_t kMaxAccumulatorItems = 10000;
+    td::Ref<vm::Cell> cell = std::move(root);
+    try {
+        for (size_t i = 0; cell.not_null() && i < kMaxAccumulatorItems; ++i) {
+            bool special = false;
+            auto cs = vm::load_cell_slice_special(cell, special);
+            if (special || cs.size() != 1) return false;
+            bool has_next = cs.fetch_ulong(1) != 0;
+            if (cs.size_refs() != (has_next ? 2U : 1U)) return false;
+            StoredTransaction tx;
+            if (!decode_persisted_transaction(cs.fetch_ref(), tx)) return false;
+            out.push_back(std::move(tx));
+            cell = has_next ? cs.fetch_ref() : td::Ref<vm::Cell>{};
+        }
+        return cell.is_null();
+    } catch (vm::VmError&) {
+        return false;
+    } catch (vm::VmVirtError&) {
+        return false;
+    } catch (std::exception&) {
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
+
+td::Ref<vm::Cell> encode_receipt_list(const std::vector<StoredReceipt>& receipts) {
+    td::Ref<vm::Cell> next;
+    for (auto it = receipts.rbegin(); it != receipts.rend(); ++it) {
+        vm::CellBuilder cb;
+        cb.store_long(next.not_null() ? 1 : 0, 1);
+        cb.store_ref(encode_persisted_receipt(*it));
+        if (next.not_null()) {
+            cb.store_ref(next);
+        }
+        next = cb.finalize();
+    }
+    return next;
+}
+
+bool decode_receipt_list(td::Ref<vm::Cell> root,
+                         std::vector<StoredReceipt>& out) {
+    out.clear();
+    constexpr size_t kMaxAccumulatorItems = 10000;
+    td::Ref<vm::Cell> cell = std::move(root);
+    try {
+        for (size_t i = 0; cell.not_null() && i < kMaxAccumulatorItems; ++i) {
+            bool special = false;
+            auto cs = vm::load_cell_slice_special(cell, special);
+            if (special || cs.size() != 1) return false;
+            bool has_next = cs.fetch_ulong(1) != 0;
+            if (cs.size_refs() != (has_next ? 2U : 1U)) return false;
+            StoredReceipt receipt;
+            if (!decode_persisted_receipt(cs.fetch_ref(), receipt)) return false;
+            out.push_back(std::move(receipt));
+            cell = has_next ? cs.fetch_ref() : td::Ref<vm::Cell>{};
+        }
+        return cell.is_null();
+    } catch (vm::VmError&) {
+        return false;
+    } catch (vm::VmVirtError&) {
+        return false;
+    } catch (std::exception&) {
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
+
+td::Ref<vm::Cell> encode_block_accumulator(const EvmBlockAccumulator& acc) {
+    constexpr uint32_t kBlockAccumulatorMagic = 0x42414343;  // "BACC"
+    vm::CellBuilder cb;
+    cb.store_long(kBlockAccumulatorMagic, 32);
+    cb.store_long(acc.number, 64);
+    cb.store_long(acc.timestamp, 64);
+    cb.store_long(acc.gas_limit, 64);
+    store_uint256(cb, acc.base_fee_per_gas);
+    cb.store_bytes(acc.parent_hash.bytes, 32);
+    cb.store_maybe_ref(encode_hash_list(acc.tx_hashes));
+    cb.store_maybe_ref(encode_transaction_list(acc.transactions));
+    cb.store_maybe_ref(encode_receipt_list(acc.receipts));
+    return cb.finalize();
+}
+
+bool decode_block_accumulator(td::Ref<vm::Cell> root, EvmBlockAccumulator& out) {
+    constexpr uint32_t kBlockAccumulatorMagic = 0x42414343;  // "BACC"
+    out = {};
+    try {
+        if (root.is_null()) return false;
+        bool special = false;
+        auto cs = vm::load_cell_slice_special(root, special);
+        if (special) return false;
+        if (cs.size() < 32 + 64 + 64 + 64 + 256 + 256 + 3) return false;
+        if (cs.fetch_ulong(32) != kBlockAccumulatorMagic) return false;
+        out.number = cs.fetch_ulong(64);
+        out.timestamp = cs.fetch_ulong(64);
+        out.gas_limit = cs.fetch_ulong(64);
+        if (!load_uint256(cs, out.base_fee_per_gas)) return false;
+        if (!cs.fetch_bytes(out.parent_hash.bytes, 32)) return false;
+        auto has_hashes = cs.fetch_ulong(1);
+        td::Ref<vm::Cell> hashes_root;
+        if (has_hashes == 1) {
+            if (cs.size_refs() == 0) return false;
+            hashes_root = cs.fetch_ref();
+        }
+        auto has_transactions = cs.fetch_ulong(1);
+        td::Ref<vm::Cell> transactions_root;
+        if (has_transactions == 1) {
+            if (cs.size_refs() == 0) return false;
+            transactions_root = cs.fetch_ref();
+        }
+        auto has_receipts = cs.fetch_ulong(1);
+        td::Ref<vm::Cell> receipts_root;
+        if (has_receipts == 1) {
+            if (cs.size_refs() == 0) return false;
+            receipts_root = cs.fetch_ref();
+        }
+        if (cs.size() != 0 || cs.size_refs() != 0) return false;
+        if (!decode_hash_list(hashes_root, out.tx_hashes)) return false;
+        if (!decode_transaction_list(transactions_root, out.transactions)) return false;
+        if (!decode_receipt_list(receipts_root, out.receipts)) return false;
+        return out.tx_hashes.size() == out.transactions.size() &&
+               out.tx_hashes.size() == out.receipts.size();
+    } catch (vm::VmError&) {
+        return false;
+    } catch (vm::VmVirtError&) {
+        return false;
+    } catch (std::exception&) {
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool same_bytes32(const evmc::bytes32& a, const evmc::bytes32& b) {
+    return std::memcmp(a.bytes, b.bytes, 32) == 0;
+}
+
 // Core compute body, parameterised on the EvmState reference. Returns a
 // non-null EvmBlockSideEffects when the tx executed (success or revert);
 // returns nullptr only on infrastructure failure (caller should also have
@@ -86,7 +323,8 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     uint64_t block_seqno,
     uint64_t timestamp,
     const uint8_t rand_seed[32],
-    const uint8_t parent_block_hash[32]) {
+    const uint8_t parent_block_hash[32],
+    td::Ref<vm::Cell> block_accumulator_root = {}) {
 
     // --- Step 1: Extract the raw Ethereum transaction from the message body ---
     auto payload_opt = extract_evm_payload(in_msg_body);
@@ -119,13 +357,45 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     // value is the same on every node.
     block.header.base_fee_per_gas = intx::uint256{kInitialBaseFee};
 
-    // Set the block's parent_hash from the host-supplied wc=1 parent
-    // block root (zero on block 0). The snapshot variant gets a real
-    // value through `parent_block_hash`; the legacy global-state path
-    // passes zeros (matches its prior behaviour). The header is read by
-    // silkworm when computing the Ethereum-shaped block hash exposed to
-    // RPC and by the EIP-2935 system call below.
-    std::memcpy(block.header.parent_hash.bytes, parent_block_hash, 32);
+    // Prefer the canonical EVM parent hash carried in cp.new_data. The host
+    // parent block hash remains a fallback for the first block before any EVM
+    // history has been serialized.
+    evmc::bytes32 effective_parent_hash{};
+    std::memcpy(effective_parent_hash.bytes, parent_block_hash, 32);
+    if (block_seqno > 0) {
+        std::unique_lock hash_lock(state.mutex());
+        if (auto parent = state.state().canonical_hash(block_seqno - 1)) {
+            effective_parent_hash = *parent;
+        }
+    }
+    block.header.parent_hash = effective_parent_hash;
+
+    EvmBlockAccumulator prior_accumulator;
+    bool has_prior_accumulator = false;
+    if (block_accumulator_root.not_null()) {
+        if (!decode_block_accumulator(std::move(block_accumulator_root), prior_accumulator)) {
+            LOG(WARNING) << "evm-workchain: malformed block accumulator in cp.new_data";
+            cp.skip_reason = block::ComputePhase::sk_bad_state;
+            return nullptr;
+        }
+        if (prior_accumulator.number > block_seqno) {
+            LOG(WARNING) << "evm-workchain: future block accumulator in cp.new_data: "
+                         << prior_accumulator.number << " > " << block_seqno;
+            cp.skip_reason = block::ComputePhase::sk_bad_state;
+            return nullptr;
+        }
+        if (prior_accumulator.number == block_seqno) {
+            if (prior_accumulator.timestamp != timestamp ||
+                prior_accumulator.gas_limit != block.header.gas_limit ||
+                prior_accumulator.base_fee_per_gas != block.header.base_fee_per_gas.value_or(0) ||
+                !same_bytes32(prior_accumulator.parent_hash, effective_parent_hash)) {
+                LOG(WARNING) << "evm-workchain: block accumulator context mismatch in cp.new_data";
+                cp.skip_reason = block::ComputePhase::sk_bad_state;
+                return nullptr;
+            }
+            has_prior_accumulator = true;
+        }
+    }
 
     // --- Step 3b: EIP-4788 / EIP-2935 system calls (Cancun+ / Pectra+) ---
     {
@@ -222,6 +492,7 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     std::memcpy(fx->rand_seed.bytes, rand_seed, 32);
 
     // --- Step 5a: Capture receipt ---
+    fx->receipt.type = decoded.txn.type;
     fx->receipt.success = exec_result.success;
     fx->receipt.gas_used = exec_result.gas_used;
     fx->receipt.cumulative_gas_used = exec_result.gas_used;
@@ -258,7 +529,7 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     // different rejected candidates could compute different eth_state_root
     // for the same accepted block → state hash divergence / chain halt.
     // Each compute now starts from a fresh local state (built from the
-    // previous block's cp.new_data) and a fresh trie calculator, so the
+    // previous executor transaction's cp.new_data) and a fresh trie calculator, so the
     // result is purely a function of the serialized state at that point.
     evmc::bytes32 evm_state_root;
     {
@@ -268,93 +539,109 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
         state.clear_change_tracking();
     }
 
-    // --- Step 5e: Embed FULL EVM state cell tree in TOS account data cell ---
+    // --- Step 5e: Capture FULL EVM state cell tree for TOS account data ---
+    td::Ref<vm::Cell> evm_state_cell;
     {
-        td::Ref<vm::Cell> evm_state_cell;
-        {
-            std::unique_lock root_lock(state.mutex());
-            auto* cs = dynamic_cast<CellEvmState*>(&state.state());
-            if (cs) {
-                evm_state_cell = cs->serialize_to_cell();
-            }
+        std::unique_lock root_lock(state.mutex());
+        auto* cs = dynamic_cast<CellEvmState*>(&state.state());
+        if (cs) {
+            evm_state_cell = cs->serialize_to_cell();
         }
+    }
 
-        // Audit #1 debug invariant: the cell tree we persist as cp.new_data
-        // must round-trip to exactly the state root we just hashed in 5d.
-        // Keep this as a debug/test guard so production avoids a second
-        // O(N log N) trie pass per transaction.
+    // Audit #1 debug invariant: the cell tree we persist as cp.new_data
+    // must round-trip to exactly the state root we just hashed in 5d.
+    // Keep this as a debug/test guard so production avoids a second
+    // O(N log N) trie pass per transaction.
 #ifndef NDEBUG
-        if (evm_state_cell.not_null()) {
-            auto verify_cell_state = std::make_unique<CellEvmState>();
-            CHECK(verify_cell_state->load_from_cell(evm_state_cell));
-            EvmState verify_state(std::move(verify_cell_state));
-            std::unique_lock vlock(verify_state.mutex());
-            IncrementalTrieCalculator vcalc;
-            auto verify_root = vcalc.compute_state_root(verify_state, nullptr, nullptr);
-            CHECK(verify_root == evm_state_root);
-        }
+    if (evm_state_cell.not_null()) {
+        auto verify_cell_state = std::make_unique<CellEvmState>();
+        CHECK(verify_cell_state->load_from_cell(evm_state_cell));
+        EvmState verify_state(std::move(verify_cell_state));
+        std::unique_lock vlock(verify_state.mutex());
+        IncrementalTrieCalculator vcalc;
+        auto verify_root = vcalc.compute_state_root(verify_state, nullptr, nullptr);
+        CHECK(verify_root == evm_state_root);
+    }
 #endif
 
-        vm::CellBuilder data_cb;
-        data_cb.store_long(0x45564Dll, 24);  // EVM magic
-        if (evm_state_cell.not_null()) {
-            data_cb.store_long(1, 1);
-            data_cb.store_ref(evm_state_cell);
-        } else {
-            data_cb.store_long(0, 1);
-        }
-        data_cb.store_bytes(reinterpret_cast<const char*>(evm_state_root.bytes), 32);
-        data_cb.store_long(0, 1);
-        cp.new_data = data_cb.finalize();
-    }
     {
         vm::CellBuilder actions_cb;
         cp.actions = actions_cb.finalize();
     }
 
-    // --- Step 5f: Build block summary (always — apply will dedup) ---
+    // --- Step 5f: Build cumulative block summary (always — apply will dedup) ---
+    std::vector<evmc::bytes32> block_tx_hashes =
+        has_prior_accumulator ? prior_accumulator.tx_hashes : std::vector<evmc::bytes32>{};
+    std::vector<StoredTransaction> block_transactions =
+        has_prior_accumulator ? prior_accumulator.transactions : std::vector<StoredTransaction>{};
+    std::vector<StoredReceipt> block_receipts =
+        has_prior_accumulator ? prior_accumulator.receipts : std::vector<StoredReceipt>{};
+
+    if (block_tx_hashes.size() > std::numeric_limits<uint32_t>::max()) {
+        LOG(WARNING) << "evm-workchain: too many EVM txs in block accumulator";
+        cp.skip_reason = block::ComputePhase::sk_bad_state;
+        return nullptr;
+    }
+    const uint32_t current_tx_index = static_cast<uint32_t>(block_tx_hashes.size());
+    const uint64_t prior_gas_used =
+        block_receipts.empty() ? 0 : block_receipts.back().cumulative_gas_used;
+    if (exec_result.gas_used > std::numeric_limits<uint64_t>::max() - prior_gas_used) {
+        LOG(WARNING) << "evm-workchain: cumulative gas overflow in block accumulator";
+        cp.skip_reason = block::ComputePhase::sk_bad_state;
+        return nullptr;
+    }
+    const uint64_t cumulative_gas_used = prior_gas_used + exec_result.gas_used;
+
+    fx->receipt.tx_index = current_tx_index;
+    fx->receipt.cumulative_gas_used = cumulative_gas_used;
+    fx->transaction.tx_index = current_tx_index;
+
+    block_tx_hashes.push_back(tx_hash);
+    block_transactions.push_back(fx->transaction);
+    block_receipts.push_back(fx->receipt);
+
     fx->has_block = true;
     fx->block.number = block_seqno;
     fx->block.timestamp = timestamp;
-    fx->block.gas_used = exec_result.gas_used;
+    fx->block.gas_used = cumulative_gas_used;
     fx->block.gas_limit = block.header.gas_limit;
     fx->block.base_fee_per_gas = block.header.base_fee_per_gas.value_or(0);
-    fx->block.transaction_hashes.push_back(tx_hash);
+    fx->block.transaction_hashes = block_tx_hashes;
     fx->block.state_root = evm_state_root;
     // Audit #5 (2026-04-26): thread the real wc=1 parent block hash through
     // to fx->block.parent_hash. The previous behaviour wrote a zero parent
     // hash here, which made the reported eth-block hash inconsistent with
     // the EIP-2935 ring-buffer write and broke RPC block hash continuity.
-    std::memcpy(fx->block.parent_hash.bytes, parent_block_hash, 32);
+    fx->block.parent_hash = effective_parent_hash;
 
     {
         uint8_t bloom[256] = {};
-        for (const auto& log : exec_result.logs) {
-            auto ah = ethash::keccak256(log.address.bytes, 20);
-            for (int i = 0; i < 6; i += 2) {
-                uint16_t bit = (static_cast<uint16_t>(ah.bytes[i]) << 8 | ah.bytes[i + 1]) & 0x7FF;
-                bloom[bit / 8] |= (1 << (bit % 8));
-            }
-            for (const auto& topic : log.topics) {
-                auto th = ethash::keccak256(topic.bytes, 32);
+        for (const auto& receipt : block_receipts) {
+            for (const auto& log : receipt.logs) {
+                auto ah = ethash::keccak256(log.address.bytes, 20);
                 for (int i = 0; i < 6; i += 2) {
-                    uint16_t bit = (static_cast<uint16_t>(th.bytes[i]) << 8 | th.bytes[i + 1]) & 0x7FF;
+                    uint16_t bit = (static_cast<uint16_t>(ah.bytes[i]) << 8 | ah.bytes[i + 1]) & 0x7FF;
                     bloom[bit / 8] |= (1 << (bit % 8));
+                }
+                for (const auto& topic : log.topics) {
+                    auto th = ethash::keccak256(topic.bytes, 32);
+                    for (int i = 0; i < 6; i += 2) {
+                        uint16_t bit = (static_cast<uint16_t>(th.bytes[i]) << 8 | th.bytes[i + 1]) & 0x7FF;
+                        bloom[bit / 8] |= (1 << (bit % 8));
+                    }
                 }
             }
         }
         std::memcpy(fx->block.logs_bloom, bloom, 256);
     }
 
-    // Audit #5 (2026-04-26): derive block roots from the side-effect buffer
-    // records, NOT from EvmState — at compute time fx->transaction and
-    // fx->receipt are not yet published (publication is deferred to
-    // post-accept; cf. F4/F6), so the state-lookup variants would silently
-    // substitute default-empty records and emit wrong roots.
-    fx->block.transactions_root = compute_transactions_root_from_records(
-        std::vector<StoredTransaction>{fx->transaction});
-    fx->block.receipts_root = compute_receipts_root_from_records(
-        std::vector<StoredReceipt>{fx->receipt});
+    // Audit #5 (2026-04-26): derive block roots from the cumulative
+    // side-effect records carried in cp.new_data, NOT from EvmState. This
+    // lets the last transaction in a TOS block persist the final canonical
+    // Ethereum transactionsRoot/receiptsRoot/blockHash for the whole EVM block.
+    fx->block.transactions_root = compute_transactions_root_from_records(block_transactions);
+    fx->block.receipts_root = compute_receipts_root_from_records(block_receipts);
 
     {
         silkworm::BlockHeader hdr{};
@@ -388,6 +675,56 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
         }
         const auto eth_hash = hdr.hash();
         std::memcpy(fx->block.hash.bytes, eth_hash.bytes, 32);
+    }
+
+    // Persist the EVM block-hash history alongside the account dictionary so
+    // BLOCKHASH can be answered after snapshot rebuild or validator restart.
+    td::Ref<vm::Cell> block_hashes_cell;
+    {
+        std::unique_lock root_lock(state.mutex());
+        if (auto* cs = dynamic_cast<CellEvmState*>(&state.state())) {
+            cs->canonize_block(block_seqno, fx->block.hash);
+            block_hashes_cell = cs->serialize_block_hashes_to_cell();
+        }
+    }
+
+    EvmBlockAccumulator next_accumulator;
+    next_accumulator.number = block_seqno;
+    next_accumulator.timestamp = timestamp;
+    next_accumulator.gas_limit = fx->block.gas_limit;
+    next_accumulator.base_fee_per_gas = fx->block.base_fee_per_gas;
+    next_accumulator.parent_hash = effective_parent_hash;
+    next_accumulator.tx_hashes = block_tx_hashes;
+    next_accumulator.transactions = block_transactions;
+    next_accumulator.receipts = block_receipts;
+    auto block_accumulator_cell = encode_block_accumulator(next_accumulator);
+
+    // --- Step 5g: Embed FULL EVM state + block history in cp.new_data ---
+    {
+        vm::CellBuilder data_cb;
+        data_cb.store_long(static_cast<long long>(kEvmAccountMagic), kEvmMagicBits);
+        data_cb.store_long(kCpNewDataSchemaVersion, 8);
+        if (evm_state_cell.not_null()) {
+            data_cb.store_long(1, 1);
+            data_cb.store_ref(evm_state_cell);
+        } else {
+            data_cb.store_long(0, 1);
+        }
+        data_cb.store_bytes(reinterpret_cast<const char*>(evm_state_root.bytes), 32);
+        data_cb.store_long(0, 1);  // rpc_cache_root = nothing
+        if (block_hashes_cell.not_null()) {
+            data_cb.store_long(1, 1);
+            data_cb.store_ref(block_hashes_cell);
+        } else {
+            data_cb.store_long(0, 1);
+        }
+        if (block_accumulator_cell.not_null()) {
+            data_cb.store_long(1, 1);
+            data_cb.store_ref(block_accumulator_cell);
+        } else {
+            data_cb.store_long(0, 1);
+        }
+        cp.new_data = data_cb.finalize();
     }
 
     // --- Step 6: Map results back into the host-chain ComputePhase ---
@@ -427,7 +764,9 @@ bool run_evm_compute_phase_snapshot(
     const uint8_t rand_seed[32],
     const uint8_t parent_block_hash[32]) {
 
-    auto local_state = build_local_state_from_account_data(std::move(account_data));
+    td::Ref<vm::Cell> block_accumulator_root;
+    auto local_state = build_local_state_from_account_data(
+        std::move(account_data), &block_accumulator_root);
     if (!local_state) {
         LOG(WARNING) << "evm-workchain: account_data did not decode as cp.new_data";
         cp.skip_reason = block::ComputePhase::sk_bad_state;
@@ -436,7 +775,8 @@ bool run_evm_compute_phase_snapshot(
 
     auto fx = run_compute_against_state(
         cp, in_msg_body, gas_limit, *local_state,
-        block_seqno, timestamp, rand_seed, parent_block_hash);
+        block_seqno, timestamp, rand_seed, parent_block_hash,
+        std::move(block_accumulator_root));
 
     if (fx) {
         cp.evm_side_effects = std::move(fx);

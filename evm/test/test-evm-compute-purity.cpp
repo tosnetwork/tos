@@ -13,6 +13,10 @@
       3. fork_order_independence
       4. restart_validator_matches_collator
       5. post_accept_missing_side_effect_keeps_prefix_indices
+      6. block_hash_history_roundtrip_and_read_header
+      7. same_block_accumulator_persists_final_block_hash
+      8. cp_new_data_rejects_unversioned_legacy_layout
+      9. post_accept_recovers_persisted_side_effect_after_memory_loss
 
     Build target: test-evm-compute-purity (see evm/test/CMakeLists.txt)
 */
@@ -20,9 +24,12 @@
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <optional>
 #include <string>
+#include <unistd.h>
 
 #include "block/transaction.h"
 #include "block/evm-workchain-dispatch.h"
@@ -37,6 +44,7 @@
 #include "evm/core/state.h"
 #include "evm/core/transaction.h"
 #include "evm/core/workchain.h"
+#include "evm/rpc/cache-db.h"
 
 #include "vm/cells/CellBuilder.h"
 #include "vm/cellslice.h"
@@ -100,14 +108,16 @@ static evmc::bytes32 compute_eth_state_root_from_cell(td::Ref<vm::Cell> state_ro
     return calc.compute_state_root(state, nullptr, nullptr);
 }
 
-// Build a `cp.new_data` v2 cell wrapping the supplied state_root cell. Same
+// Build a `cp.new_data` v4 cell wrapping the supplied state_root cell. Same
 // layout that `run_evm_compute_phase_snapshot` itself emits (and that the
-// genesis builder produces): magic + has_root + ^state_root + 256-bit
-// verified eth_state_root + has_cache=0.
+// genesis builder produces): magic + version + has_root + ^state_root
+// + verified eth_state_root + has_cache=0 + has_block_hashes=0
+// + has_block_accumulator=0.
 static td::Ref<vm::Cell> wrap_state_root_as_account_data(td::Ref<vm::Cell> state_root) {
     auto eth_state_root = compute_eth_state_root_from_cell(state_root);
     vm::CellBuilder cb;
     cb.store_long(static_cast<long long>(ew::kEvmAccountMagic), ew::kEvmMagicBits);
+    cb.store_long(ew::kCpNewDataSchemaVersion, 8);
     if (state_root.not_null()) {
         cb.store_long(1, 1);
         cb.store_ref(state_root);
@@ -115,6 +125,8 @@ static td::Ref<vm::Cell> wrap_state_root_as_account_data(td::Ref<vm::Cell> state
         cb.store_long(0, 1);
     }
     cb.store_bytes(reinterpret_cast<const char*>(eth_state_root.bytes), 32);
+    cb.store_long(0, 1);
+    cb.store_long(0, 1);
     cb.store_long(0, 1);
     return cb.finalize();
 }
@@ -218,6 +230,7 @@ struct ComputeOutcome {
     bool success{false};
     int skip_reason{0};
     td::Ref<vm::Cell> new_data;
+    std::shared_ptr<ew::EvmBlockSideEffects> fx;
 };
 static ComputeOutcome run_once(td::Ref<vm::Cell> account_data,
                                 const silkworm::Bytes& raw_rlp,
@@ -233,13 +246,32 @@ static ComputeOutcome run_once(td::Ref<vm::Cell> account_data,
     bool ok = ew::run_evm_compute_phase_snapshot(
         cp, std::move(account_data), body_cs, gas_limit,
         block_seqno, timestamp, rand_seed, parent_block_hash);
-    return ComputeOutcome{ok, cp.success, cp.skip_reason, cp.new_data};
+    return ComputeOutcome{ok, cp.success, cp.skip_reason, cp.new_data,
+                          cp.evm_side_effects};
 }
 
 // Compare two non-null cells by their canonical hash.
 static bool cells_hash_equal(const td::Ref<vm::Cell>& a, const td::Ref<vm::Cell>& b) {
     if (a.is_null() || b.is_null()) return false;
     return a->get_hash() == b->get_hash();
+}
+
+static std::optional<evmc::bytes32> block_hash_from_account_data(
+    const td::Ref<vm::Cell>& account_data,
+    uint64_t block_number) {
+    td::Ref<vm::Cell> state_root;
+    evmc::bytes32 eth_state_root{};
+    td::Ref<vm::Cell> rpc_cache_root;
+    td::Ref<vm::Cell> block_hashes_root;
+    if (!ew::decode_cp_new_data(account_data, state_root, eth_state_root,
+                                rpc_cache_root, true, &block_hashes_root)) {
+        return std::nullopt;
+    }
+    ew::CellEvmState history;
+    if (!history.load_block_hashes_from_cell(block_hashes_root)) {
+        return std::nullopt;
+    }
+    return history.canonical_hash(block_number);
 }
 
 // ---------------------------------------------------------------------------
@@ -562,6 +594,225 @@ static void test_post_accept_missing_side_effect_keeps_prefix_indices() {
 }
 
 // ---------------------------------------------------------------------------
+// Test 6 — block_hash_history_roundtrip_and_read_header
+// ---------------------------------------------------------------------------
+//
+// BLOCKHASH walks backward from the current block's parent hash through
+// read_header(). The serialized cp.new_data history must survive reload and
+// synthesize parent links from the canonical hash map.
+
+static void test_block_hash_history_roundtrip_and_read_header() {
+    tprintf("[TEST] block_hash_history_roundtrip_and_read_header\n");
+
+    ew::CellEvmState state;
+    evmc::bytes32 h10{};
+    evmc::bytes32 h11{};
+    h10.bytes[31] = 0x10;
+    h11.bytes[31] = 0x11;
+    state.canonize_block(10, h10);
+    state.canonize_block(11, h11);
+
+    auto root = state.serialize_block_hashes_to_cell();
+    ew::CellEvmState loaded;
+    bool loaded_ok = loaded.load_block_hashes_from_cell(root);
+    auto canon10 = loaded.canonical_hash(10);
+    auto header11 = loaded.read_header(11, h11);
+    bool ok = loaded_ok &&
+              canon10 && *canon10 == h10 &&
+              header11 && header11->parent_hash == h10;
+
+    if (!ok) {
+        tprintf("  FAILED: loaded_ok=%d canon10=%d header11=%d\n",
+                loaded_ok,
+                canon10.has_value(),
+                header11.has_value());
+        return;
+    }
+    tprintf("  PASSED (serialized block-hash history supports read_header)\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 7 — same_block_accumulator_persists_final_block_hash
+// ---------------------------------------------------------------------------
+//
+// Multiple EVM txs can execute against the same single executor account in one
+// TOS block. The second transaction must see the first transaction's
+// accumulator through cp.new_data and persist a block hash for the cumulative
+// two-transaction Ethereum block, not a single-tx provisional header.
+
+static void test_same_block_accumulator_persists_final_block_hash() {
+    tprintf("[TEST] same_block_accumulator_persists_final_block_hash\n");
+
+    evmc::address recipient{};
+    recipient.bytes[19] = 0x75;
+    auto tx0 = make_signed_transfer(/*key_seed=*/0xF50001, /*nonce=*/0, recipient);
+    auto tx1 = make_signed_transfer(/*key_seed=*/0xF50002, /*nonce=*/0, recipient);
+    if (!tx0 || !tx1) {
+        tprintf("  FAILED: could not sign test txs\n");
+        return;
+    }
+
+    intx::uint256 balance{1};
+    for (int i = 0; i < 18; ++i) balance *= intx::uint256{10};
+    ew::CellEvmState cs;
+    silkworm::Account a0{};
+    a0.balance = balance;
+    cs.update_account(tx0->sender, std::nullopt, a0);
+    silkworm::Account a1{};
+    a1.balance = balance;
+    cs.update_account(tx1->sender, std::nullopt, a1);
+
+    auto account_data = wrap_state_root_as_account_data(cs.serialize_to_cell());
+    const uint64_t block_seqno = 777777;
+    const uint64_t timestamp = 1800000200;
+
+    auto out0 = run_once(account_data, tx0->raw_rlp, block_seqno, timestamp);
+    auto out1 = run_once(out0.new_data, tx1->raw_rlp, block_seqno, timestamp);
+
+    auto persisted_hash = block_hash_from_account_data(out1.new_data, block_seqno);
+    bool ok = out0.success && out1.success &&
+              out0.fx && out1.fx &&
+              out0.fx->block.transaction_hashes.size() == 1 &&
+              out1.fx->block.transaction_hashes.size() == 2 &&
+              out1.fx->block.transaction_hashes[0] == tx0->hash &&
+              out1.fx->block.transaction_hashes[1] == tx1->hash &&
+              out1.fx->receipt.tx_index == 1 &&
+              out1.fx->receipt.cumulative_gas_used ==
+                  out0.fx->receipt.gas_used + out1.fx->receipt.gas_used &&
+              persisted_hash && *persisted_hash == out1.fx->block.hash;
+
+    if (!ok) {
+        tprintf("  FAILED: success=(%d,%d) sizes=(%zu,%zu) tx_index=%u persisted=%d\n",
+                out0.success,
+                out1.success,
+                out0.fx ? out0.fx->block.transaction_hashes.size() : 0,
+                out1.fx ? out1.fx->block.transaction_hashes.size() : 0,
+                out1.fx ? out1.fx->receipt.tx_index : 9999,
+                persisted_hash.has_value());
+        return;
+    }
+    tprintf("  PASSED (same-block accumulator persisted cumulative block hash)\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 8 — cp_new_data_rejects_unversioned_legacy_layout
+// ---------------------------------------------------------------------------
+//
+// TOS has not launched mainnet, so cp.new_data has no backwards-compatibility
+// decoder. Old unversioned layouts must fail closed instead of being
+// interpreted as v4 with missing optional roots.
+
+static void test_cp_new_data_rejects_unversioned_legacy_layout() {
+    tprintf("[TEST] cp_new_data_rejects_unversioned_legacy_layout\n");
+
+    auto eth_state_root = compute_eth_state_root_from_cell({});
+    vm::CellBuilder cb;
+    cb.store_long(static_cast<long long>(ew::kEvmAccountMagic), ew::kEvmMagicBits);
+    cb.store_long(0, 1);  // old unversioned has_state_root
+    cb.store_bytes(reinterpret_cast<const char*>(eth_state_root.bytes), 32);
+    cb.store_long(0, 1);  // old has_cache
+    cb.store_long(0, 1);  // old has_block_hashes
+    cb.store_long(0, 1);  // old has_block_accumulator
+    auto old_cell = cb.finalize();
+
+    td::Ref<vm::Cell> state_root;
+    evmc::bytes32 decoded_root{};
+    td::Ref<vm::Cell> rpc_cache_root;
+    bool decoded = ew::decode_cp_new_data(old_cell, state_root, decoded_root,
+                                          rpc_cache_root);
+    if (decoded) {
+        tprintf("  FAILED: unversioned cp.new_data decoded as current schema\n");
+        return;
+    }
+    tprintf("  PASSED (unversioned cp.new_data is rejected)\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 9 — post_accept_recovers_persisted_side_effect_after_memory_loss
+// ---------------------------------------------------------------------------
+//
+// The in-memory stash is bounded and process-local. A pending copy in the RPC
+// cache DB must let post-accept recover an accepted tx if the memory map was
+// cleared before cleanup_applied_external_messages walks BlockData.
+
+static void test_post_accept_recovers_persisted_side_effect_after_memory_loss() {
+    tprintf("[TEST] post_accept_recovers_persisted_side_effect_after_memory_loss\n");
+
+    const std::string tmp_root =
+        "/tmp/tos-evm-sidefx-pending-" + std::to_string(static_cast<long long>(getpid()));
+    std::system(("rm -rf " + tmp_root).c_str());
+
+    auto db_r = ew::EvmRpcCacheDb::open(tmp_root);
+    if (db_r.is_error()) {
+        tprintf("  FAILED: could not open cache DB: %s\n",
+                db_r.error().message().c_str());
+        return;
+    }
+    ew::set_evm_rpc_cache_db(db_r.move_as_ok());
+
+    evmc::address recipient{};
+    recipient.bytes[19] = 0x74;
+    auto tx = make_signed_transfer(/*key_seed=*/0xF40004, /*nonce=*/0, recipient);
+    if (!tx) {
+        tprintf("  FAILED: could not sign test tx\n");
+        ew::set_evm_rpc_cache_db(nullptr);
+        std::system(("rm -rf " + tmp_root).c_str());
+        return;
+    }
+    auto msg = ew::build_evm_external_message(tx->raw_rlp.data(),
+                                              tx->raw_rlp.size(),
+                                              tx->sender);
+    if (msg.is_null()) {
+        tprintf("  FAILED: could not build external message\n");
+        ew::set_evm_rpc_cache_db(nullptr);
+        std::system(("rm -rf " + tmp_root).c_str());
+        return;
+    }
+
+    const uint64_t block_seqno = 525252;
+    const uint64_t timestamp = 1800000100;
+    uint8_t rand_seed[32] = {};
+    uint8_t parent_hash[32] = {};
+    rand_seed[31] = 0x6a;
+    parent_hash[31] = 0xb5;
+
+    ew::stash_side_effects(block_seqno, timestamp, rand_seed, parent_hash,
+                           tx->hash,
+                           make_test_side_effect(*tx, recipient, 22'000, 0x40));
+    ew::clear_stashed_side_effects_for_tests();
+
+    std::vector<td::Ref<vm::Cell>> msgs{msg};
+    size_t applied = ew::apply_stashed_side_effects_for_messages(
+        block_seqno, timestamp, rand_seed, parent_hash, msgs);
+
+    auto stored = ew::global_evm_state().get_transaction_copy(tx->hash);
+    auto receipt = ew::global_evm_state().get_receipt_copy(tx->hash);
+    auto block = ew::global_evm_state().get_block_copy(block_seqno);
+    bool ok = applied == 1 &&
+              stored && stored->tx_index == 0 &&
+              receipt && receipt->tx_index == 0 &&
+              receipt->cumulative_gas_used == 22'000 &&
+              ew::global_evm_state().has_block(block_seqno) &&
+              block.transaction_hashes.size() == 1 &&
+              block.transaction_hashes[0] == tx->hash &&
+              block.gas_used == 22'000;
+
+    ew::set_evm_rpc_cache_db(nullptr);
+    std::system(("rm -rf " + tmp_root).c_str());
+
+    if (!ok) {
+        tprintf("  FAILED: applied=%zu stored=%d receipt=%d block_txs=%zu gas=%llu\n",
+                applied,
+                stored.has_value(),
+                receipt.has_value(),
+                block.transaction_hashes.size(),
+                static_cast<unsigned long long>(block.gas_used));
+        return;
+    }
+    tprintf("  PASSED (post-accept recovered side effects from pending cache DB)\n");
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -580,6 +831,10 @@ int main() {
     test_fork_order_independence();
     test_restart_validator_matches_collator();
     test_post_accept_missing_side_effect_keeps_prefix_indices();
+    test_block_hash_history_roundtrip_and_read_header();
+    test_same_block_accumulator_persists_final_block_hash();
+    test_cp_new_data_rejects_unversioned_legacy_layout();
+    test_post_accept_recovers_persisted_side_effect_after_memory_loss();
 
     tprintf("\nTotal: passed=%d, failures=%d, skips=%d\n",
             g_passes.load(), g_failures.load(), g_skips.load());

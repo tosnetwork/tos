@@ -1882,7 +1882,6 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
   // ...
   compute_phase = std::make_unique<ComputePhase>();
   ComputePhase& cp = *(compute_phase.get());
-  const bool evm_ord = is_evm_workchain(account.workchain) && trans_type == tr_ord;
   const bool custom_ord = has_custom_compute_phase(account.workchain) && trans_type == tr_ord;
   if (cfg.global_version >= 9) {
     original_balance = balance;
@@ -1961,20 +1960,20 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
     // Propagate to Transaction::new_data so compute_state() packs it
     // into the account's StateInit data cell, making it part of the
     // ShardState cell tree and thus the block state_hash.
-    if (cp.new_data.not_null()) {
+    if (cp.accepted && cp.new_data.not_null()) {
       new_data = cp.new_data;
-    }
-    // Activate the account if currently uninit (first message to this address).
-    // StateInit requires acc_active for compute_state() to pack code+data.
-    if (acc_status == Account::acc_uninit) {
-      acc_status = Account::acc_active;
-      was_activated = true;
-    }
-    // Set a minimal code cell if none exists. The same canonical marker is
-    // used by the wc=1 ShardAccount wrapper in evm-cell-state.cpp, so all
-    // EVM accounts share one code cell hash and CellDb deduplicates it.
-    if (new_code.is_null()) {
-      new_code = evm_workchain_dispatch::get_evm_code_marker_cell();
+      // Activate the account only when this EVM transaction is accepted.
+      // Rejected compute must not install an active marker account.
+      if (acc_status == Account::acc_uninit) {
+        acc_status = Account::acc_active;
+        was_activated = true;
+      }
+      // Set a minimal code cell if none exists. The same canonical marker is
+      // used by the wc=1 ShardAccount wrapper in evm-cell-state.cpp, so all
+      // EVM accounts share one code cell hash and CellDb deduplicates it.
+      if (new_code.is_null()) {
+        new_code = evm_workchain_dispatch::get_evm_code_marker_cell();
+      }
     }
 
     return true;

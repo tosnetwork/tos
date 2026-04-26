@@ -153,7 +153,7 @@ struct GenesisAccount {
 /// Parameterised version of build_evm_zerostate_accounts_cell. Builds a
 /// CellEvmState seeded with the supplied allocations, wraps it the same
 /// way the zero-arg version does (single executor ShardAccount whose
-/// StateInit.data is a cp.new_data v2 cell), and returns the
+/// StateInit.data is a cp.new_data v4 cell), and returns the
 /// ShardAccounts cell.
 ///
 /// Deterministic: same `accounts` vector → byte-identical cell hash.

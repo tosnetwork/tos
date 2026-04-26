@@ -411,7 +411,10 @@ size_t populate_state_from_shard_accounts(
     td::Ref<vm::Cell> state_root;
     evmc::bytes32 eth_state_root{};
     td::Ref<vm::Cell> rpc_cache_root;  // F.4 will hydrate from this
-    if (!decode_cp_new_data(cp_new_data_cell, state_root, eth_state_root, rpc_cache_root)) {
+    td::Ref<vm::Cell> block_hashes_root;
+    if (!decode_cp_new_data(cp_new_data_cell, state_root, eth_state_root,
+                            rpc_cache_root, /*verify_eth_state_root=*/true,
+                            &block_hashes_root)) {
         LOG(WARNING) << "evm-workchain: executor StateInit.data does not decode as cp.new_data";
         return 0;
     }
@@ -431,6 +434,10 @@ size_t populate_state_from_shard_accounts(
             LOG(ERROR) << "evm-workchain: CellEvmState::load_from_cell failed during hydration";
             return 0;
         }
+        if (!cs->load_block_hashes_from_cell(block_hashes_root)) {
+            LOG(ERROR) << "evm-workchain: CellEvmState::load_block_hashes_from_cell failed during hydration";
+            return 0;
+        }
     }
     LOG(WARNING) << "evm-workchain: hydrated world state from executor cell (eth_state_root="
                  << td::Bits256{eth_state_root.bytes}.to_hex() << ")";
@@ -441,7 +448,7 @@ td::Ref<vm::Cell> build_evm_zerostate_accounts_cell(
     const std::vector<GenesisAccount>& accounts) {
     // Phase D — parameterised version. Same single-executor wrapper as the
     // zero-arg overload (the wc=1 ShardAccounts dict contains exactly one
-    // entry, the executor, whose StateInit.data is a cp.new_data v2 cell
+    // entry, the executor, whose StateInit.data is a cp.new_data v4 cell
     // referencing a CellEvmState root); the only thing that varies is which
     // accounts are pre-populated inside that state.
     //
@@ -487,8 +494,9 @@ td::Ref<vm::Cell> build_evm_zerostate_accounts_cell(
     }
     auto state_root = cell_state.serialize_to_cell();
 
-    // Build cp.new_data v2-shaped cell:
-    //   magic + has_root:1 + ^state_root + bits256:eth_root + has_cache:1
+    // Build cp.new_data v4-shaped cell:
+    //   magic + version:8 + has_root:1 + ^state_root + bits256:eth_root
+    //   + has_cache:1 + has_block_hashes:1 + has_block_accumulator:1
     // eth_state_root is the full trie root of the serialized genesis state.
     evmc::bytes32 eth_state_root{};
     {
@@ -504,6 +512,7 @@ td::Ref<vm::Cell> build_evm_zerostate_accounts_cell(
     // rpc_cache_root at genesis is nothing (no cache yet).
     vm::CellBuilder data_cb;
     data_cb.store_long(static_cast<long long>(kEvmAccountMagic), kEvmMagicBits);
+    data_cb.store_long(kCpNewDataSchemaVersion, 8);
     if (state_root.not_null()) {
         data_cb.store_long(1, 1);
         data_cb.store_ref(state_root);
@@ -512,6 +521,8 @@ td::Ref<vm::Cell> build_evm_zerostate_accounts_cell(
     }
     data_cb.store_bytes(reinterpret_cast<const char*>(eth_state_root.bytes), 32);
     data_cb.store_long(0, 1);   // rpc_cache_root = nothing (Phase F.2)
+    data_cb.store_long(0, 1);   // block_hashes_root = nothing at genesis
+    data_cb.store_long(0, 1);   // block_accumulator = nothing at genesis
     auto cp_new_data_cell = data_cb.finalize();
 
     // Wrap as executor ShardAccount and insert as sole entry.

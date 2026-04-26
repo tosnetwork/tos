@@ -346,10 +346,6 @@ ExecutionResult execute_evm_transaction(
     silkworm::IntraBlockState ibs(evm_state.state());
     auto result = run_evm(txn, block, ibs, config, /*commit_state=*/true);
 
-    // Store the block for BLOCKHASH opcode support.
-    auto block_hash = intx::be::store<evmc::bytes32>(intx::uint256{block.header.number});
-    evm_state.state().insert_block(block, block_hash);
-
     // Track changed accounts for incremental state root computation.
     // Sender, recipient, and beneficiary are always touched.
     if (auto s = txn.sender()) {

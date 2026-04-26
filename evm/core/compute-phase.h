@@ -44,8 +44,11 @@ namespace evm_workchain {
 ///
 /// @param cp           ComputePhase to populate with results.
 /// @param account_data Cell that compute-phase produced for this account
-///                     in the previous block (the cp.new_data v2 layout —
-///                     magic + state_root ref + eth_state_root + rpc_cache).
+///                     for the previous EVM executor transaction (or previous
+///                     block if this is the first tx in a block; cp.new_data v4 —
+///                     magic + version + state_root ref + eth_state_root
+///                     + rpc_cache + block-hash history
+///                     + current-block accumulator).
 ///                     Pass null on first activation: the function builds a
 ///                     genesis-equivalent state with EIP-4788 / EIP-2935
 ///                     predeploys present so Cancun / Pectra system calls
@@ -55,11 +58,10 @@ namespace evm_workchain {
 /// @param block_seqno  Host-chain block sequence number → block.number.
 /// @param timestamp    Host-chain block Unix timestamp.
 /// @param rand_seed    Host-chain 256-bit block random seed.
-/// @param parent_block_hash wc=1 parent block's root_hash, threaded in by
-///                          the host so the EIP-2935 system call writes
-///                          the real parent hash into the historical-
-///                          block-hash ring buffer instead of zero. May
-///                          be all-zero on block 0 / non-EVM contexts.
+/// @param parent_block_hash wc=1 parent block's root_hash fallback, threaded in
+///                          by the host for the first block before cp.new_data
+///                          carries canonical EVM block-hash history.
+///                          May be all-zero on block 0 / non-EVM contexts.
 /// @return             true if the phase completed (even on EVM revert);
 ///                     false only on infrastructure failure.
 bool run_evm_compute_phase_snapshot(

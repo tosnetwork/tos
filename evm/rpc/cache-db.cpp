@@ -22,6 +22,7 @@ namespace {
 //   0x03 + uint64-be          → block-by-number cell   (Phase F.6)
 //   0x04 + bits256 block_hash → block-by-hash cell     (Phase F.6, dup payload)
 //   0x05 + uint64-be          → per-block logs cell    (Phase F.6)
+//   0x06 + candidate context  → pending post-accept side effects
 //
 // Block-by-number uses big-endian uint64 so RocksDB lexicographic iteration
 // returns blocks in chain order — handy for hydration replay.
@@ -30,11 +31,13 @@ constexpr uint8_t kTransactionTag = 0x02;
 constexpr uint8_t kBlockByNumberTag = 0x03;
 constexpr uint8_t kBlockByHashTag = 0x04;
 constexpr uint8_t kLogsByBlockTag = 0x05;
+constexpr uint8_t kPendingSideEffectsTag = 0x06;
 constexpr size_t kReceiptKeyLen = 1 + 32;
 constexpr size_t kTransactionKeyLen = 1 + 32;
 constexpr size_t kBlockByNumberKeyLen = 1 + 8;
 constexpr size_t kBlockByHashKeyLen = 1 + 32;
 constexpr size_t kLogsByBlockKeyLen = 1 + 8;
+constexpr size_t kPendingSideEffectsKeyLen = 1 + 8 + 8 + 32 + 32 + 32;
 
 void make_receipt_key(const td::Bits256& tx_hash, char out[kReceiptKeyLen]) {
     out[0] = static_cast<char>(kReceiptTag);
@@ -74,6 +77,20 @@ void make_block_by_number_key(uint64_t block_number, char out[kBlockByNumberKeyL
 void make_logs_by_block_key(uint64_t block_number, char out[kLogsByBlockKeyLen]) {
     out[0] = static_cast<char>(kLogsByBlockTag);
     store_be_u64(block_number, out + 1);
+}
+
+void make_pending_side_effects_key(uint64_t block_seqno,
+                                   uint64_t timestamp,
+                                   const td::Bits256& rand_seed,
+                                   const td::Bits256& parent_hash,
+                                   const td::Bits256& tx_hash,
+                                   char out[kPendingSideEffectsKeyLen]) {
+    out[0] = static_cast<char>(kPendingSideEffectsTag);
+    store_be_u64(block_seqno, out + 1);
+    store_be_u64(timestamp, out + 1 + 8);
+    std::memcpy(out + 1 + 8 + 8, rand_seed.data(), 32);
+    std::memcpy(out + 1 + 8 + 8 + 32, parent_hash.data(), 32);
+    std::memcpy(out + 1 + 8 + 8 + 32 + 32, tx_hash.data(), 32);
 }
 
 // Generic put: serialize cell, set under the given key, flush.
@@ -322,6 +339,44 @@ td::Status EvmRpcCacheDb::for_each_block_logs(
         }
         return cb(block_number, cell_r.move_as_ok());
     });
+}
+
+td::Status EvmRpcCacheDb::put_pending_side_effects(uint64_t block_seqno,
+                                                    uint64_t timestamp,
+                                                    const td::Bits256& rand_seed,
+                                                    const td::Bits256& parent_hash,
+                                                    const td::Bits256& tx_hash,
+                                                    td::Ref<vm::Cell> cell) {
+    char key[kPendingSideEffectsKeyLen];
+    make_pending_side_effects_key(block_seqno, timestamp, rand_seed, parent_hash,
+                                  tx_hash, key);
+    return put_cell_with_key(*db_, td::Slice{key, kPendingSideEffectsKeyLen},
+                             std::move(cell), "pending-side-effects");
+}
+
+td::Result<td::Ref<vm::Cell>> EvmRpcCacheDb::get_pending_side_effects(
+    uint64_t block_seqno,
+    uint64_t timestamp,
+    const td::Bits256& rand_seed,
+    const td::Bits256& parent_hash,
+    const td::Bits256& tx_hash) {
+    char key[kPendingSideEffectsKeyLen];
+    make_pending_side_effects_key(block_seqno, timestamp, rand_seed, parent_hash,
+                                  tx_hash, key);
+    return get_cell_with_key(*db_, td::Slice{key, kPendingSideEffectsKeyLen});
+}
+
+td::Status EvmRpcCacheDb::delete_pending_side_effects(uint64_t block_seqno,
+                                                       uint64_t timestamp,
+                                                       const td::Bits256& rand_seed,
+                                                       const td::Bits256& parent_hash,
+                                                       const td::Bits256& tx_hash) {
+    char key[kPendingSideEffectsKeyLen];
+    make_pending_side_effects_key(block_seqno, timestamp, rand_seed, parent_hash,
+                                  tx_hash, key);
+    auto erase_status = db_->erase(td::Slice{key, kPendingSideEffectsKeyLen});
+    if (erase_status.is_error()) return erase_status;
+    return db_->flush();
 }
 
 EvmRpcCacheDb* evm_rpc_cache_db() {

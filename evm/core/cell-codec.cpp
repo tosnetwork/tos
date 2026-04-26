@@ -86,39 +86,49 @@ bool decode_evm_account_data(td::Ref<vm::Cell> cell,
     storage_root = {};
     code_root = {};
     if (cell.is_null()) return false;
-    auto cs = vm::load_cell_slice(cell);
-    // magic
-    long long magic = 0;
-    if (!cs.fetch_long_bool(kEvmMagicBits, magic) ||
-        static_cast<unsigned long long>(magic) != kEvmAccountMagic) {
+    try {
+        bool special = false;
+        auto cs = vm::load_cell_slice_special(cell, special);
+        if (special) return false;
+        // magic
+        long long magic = 0;
+        if (!cs.fetch_long_bool(kEvmMagicBits, magic) ||
+            static_cast<unsigned long long>(magic) != kEvmAccountMagic) {
+            return false;
+        }
+        // nonce
+        long long nonce = 0;
+        if (!cs.fetch_long_bool(64, nonce)) return false;
+        acct.nonce = static_cast<uint64_t>(nonce);
+        // balance
+        evmc::uint256be bal_be{};
+        if (!cs.fetch_bytes(bal_be.bytes, 32)) return false;
+        acct.balance = intx::be::load<intx::uint256>(bal_be);
+        // code_hash
+        if (!cs.fetch_bytes(acct.code_hash.bytes, 32)) return false;
+        // storage Maybe ^Cell
+        long long has_storage = 0;
+        if (!cs.fetch_long_bool(1, has_storage)) return false;
+        if (has_storage) {
+            if (!cs.fetch_ref_to(storage_root)) return false;
+        }
+        // code Maybe ^Cell
+        long long has_code = 0;
+        if (!cs.fetch_long_bool(1, has_code)) return false;
+        if (has_code && !cs.fetch_ref_to(code_root)) return false;
+        if (cs.size() != 0 || cs.size_refs() != 0) return false;
+        // incarnation is not part of cell schema (always 0 in our model)
+        acct.incarnation = 0;
+        return true;
+    } catch (vm::VmError&) {
+        return false;
+    } catch (vm::VmVirtError&) {
+        return false;
+    } catch (std::exception&) {
+        return false;
+    } catch (...) {
         return false;
     }
-    // nonce
-    long long nonce = 0;
-    if (!cs.fetch_long_bool(64, nonce)) return false;
-    acct.nonce = static_cast<uint64_t>(nonce);
-    // balance
-    evmc::uint256be bal_be{};
-    if (!cs.fetch_bytes(bal_be.bytes, 32)) return false;
-    acct.balance = intx::be::load<intx::uint256>(bal_be);
-    // code_hash
-    if (!cs.fetch_bytes(acct.code_hash.bytes, 32)) return false;
-    // storage Maybe ^Cell
-    long long has_storage = 0;
-    if (!cs.fetch_long_bool(1, has_storage)) return false;
-    if (has_storage) {
-        if (!cs.fetch_ref_to(storage_root)) return false;
-    }
-    // code Maybe ^Cell — optional; absent in legacy cells, so tolerate EOF.
-    if (cs.size() >= 1) {
-        long long has_code = 0;
-        if (cs.fetch_long_bool(1, has_code) && has_code) {
-            cs.fetch_ref_to(code_root);
-        }
-    }
-    // incarnation is not part of cell schema (always 0 in our model)
-    acct.incarnation = 0;
-    return true;
 }
 
 td::Ref<vm::Cell> encode_storage_value(const evmc::bytes32& value) {
@@ -127,13 +137,29 @@ td::Ref<vm::Cell> encode_storage_value(const evmc::bytes32& value) {
     return cb.finalize();
 }
 
+bool decode_storage_value(td::Ref<vm::Cell> cell, evmc::bytes32& out) {
+    out = {};
+    if (cell.is_null()) return false;
+    try {
+        bool special = false;
+        auto cs = vm::load_cell_slice_special(cell, special);
+        if (special) return false;
+        if (cs.size() != 256 || cs.size_refs() != 0) return false;
+        return cs.fetch_bytes(out.bytes, 32);
+    } catch (vm::VmError&) {
+        return false;
+    } catch (vm::VmVirtError&) {
+        return false;
+    } catch (std::exception&) {
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
+
 evmc::bytes32 decode_storage_value(td::Ref<vm::Cell> cell) {
     evmc::bytes32 v{};
-    if (cell.is_null()) return v;
-    auto cs = vm::load_cell_slice(cell);
-    if (cs.size() >= 256) {
-        cs.fetch_bytes(v.bytes, 32);
-    }
+    decode_storage_value(std::move(cell), v);
     return v;
 }
 
@@ -187,29 +213,42 @@ std::string decode_evm_bytecode(td::Ref<vm::Cell> root) {
     // Bound the walk so a malicious cell tree cannot DoS via cycles: 24 KB
     // EIP-170 max + headroom = ~256 chunks at 127 bytes/chunk.
     constexpr size_t kMaxChunks = 1024;
-    for (size_t i = 0; i < kMaxChunks; ++i) {
-        if (cell.is_null()) break;
-        auto cs = vm::load_cell_slice(cell);
-        unsigned bits = cs.size();
-        if (bits < 1 || (bits - 1) % 8 != 0) {
-            // Last bit is the Maybe tag; data must be byte-aligned.
-            return {};
+    try {
+        for (size_t i = 0; i < kMaxChunks; ++i) {
+            if (cell.is_null()) break;
+            bool special = false;
+            auto cs = vm::load_cell_slice_special(cell, special);
+            if (special) return {};
+            unsigned bits = cs.size();
+            if (bits < 1 || (bits - 1) % 8 != 0) {
+                // Last bit is the Maybe tag; data must be byte-aligned.
+                return {};
+            }
+            unsigned data_bytes = (bits - 1) / 8;
+            if (data_bytes > 0) {
+                size_t off = out.size();
+                out.resize(off + data_bytes);
+                cs.fetch_bytes(reinterpret_cast<unsigned char*>(out.data() + off), data_bytes);
+            } else {
+                // Skip zero data bytes (just the Maybe tag in this cell).
+                cs.advance(0);
+            }
+            unsigned has_next = static_cast<unsigned>(cs.fetch_ulong(1));
+            if (has_next == 0) {
+                if (cs.size_refs() != 0) return {};
+                return out;
+            }
+            if (cs.size_refs() != 1) return {};
+            cell = cs.prefetch_ref(0);
         }
-        unsigned data_bytes = (bits - 1) / 8;
-        if (data_bytes > 0) {
-            size_t off = out.size();
-            out.resize(off + data_bytes);
-            cs.fetch_bytes(reinterpret_cast<unsigned char*>(out.data() + off), data_bytes);
-        } else {
-            // Skip zero data bytes (just the Maybe tag in this cell).
-            cs.advance(0);
-        }
-        unsigned has_next = static_cast<unsigned>(cs.fetch_ulong(1));
-        if (has_next == 0) {
-            return out;
-        }
-        if (cs.size_refs() == 0) return {};
-        cell = cs.prefetch_ref(0);
+    } catch (vm::VmError&) {
+        return {};
+    } catch (vm::VmVirtError&) {
+        return {};
+    } catch (std::exception&) {
+        return {};
+    } catch (...) {
+        return {};
     }
     // Cycle / oversize — reject defensively.
     return {};
@@ -219,15 +258,27 @@ bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
                         td::Ref<vm::Cell>& state_root_out,
                         evmc::bytes32& eth_state_root_out,
                         td::Ref<vm::Cell>& rpc_cache_root_out,
-                        bool verify_eth_state_root) {
+                        bool verify_eth_state_root,
+                        td::Ref<vm::Cell>* block_hashes_root_out,
+                        td::Ref<vm::Cell>* block_accumulator_root_out) {
     state_root_out = {};
     rpc_cache_root_out = {};
+    if (block_hashes_root_out) {
+        *block_hashes_root_out = {};
+    }
+    if (block_accumulator_root_out) {
+        *block_accumulator_root_out = {};
+    }
     try {
         if (cell.is_null()) return false;
-        auto cs = vm::load_cell_slice(cell);
-        if (cs.size() < kEvmMagicBits + 1 + 256) return false;
+        bool special = false;
+        auto cs = vm::load_cell_slice_special(cell, special);
+        if (special) return false;
+        if (cs.size() < kEvmMagicBits + 8 + 1 + 256) return false;
         auto magic = cs.fetch_ulong(kEvmMagicBits);
         if (magic != kEvmAccountMagic) return false;
+        auto schema_version = cs.fetch_ulong(8);
+        if (schema_version != kCpNewDataSchemaVersion) return false;
         auto has_root = cs.fetch_ulong(1);
         if (has_root == 1) {
             if (cs.size_refs() == 0) return false;
@@ -235,13 +286,37 @@ bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
         }
         if (cs.size() < 256) return false;
         cs.fetch_bytes(eth_state_root_out.bytes, 32);
-        // The has_cache Maybe-tag is mandatory in v2 (we always emit it);
+        // The has_cache Maybe-tag is mandatory in v4 (we always emit it);
         // refuse cells that omit it rather than silently treating absence as 0.
         if (cs.size() < 1) return false;
         auto has_cache = cs.fetch_ulong(1);
         if (has_cache == 1) {
             if (cs.size_refs() == 0) return false;
             rpc_cache_root_out = cs.fetch_ref();
+        }
+        // The has_block_hashes Maybe-tag is mandatory in v4. TOS has not
+        // launched mainnet, so old cells are intentionally rejected rather
+        // than silently decoded with empty BLOCKHASH history.
+        if (cs.size() < 1) return false;
+        auto has_block_hashes = cs.fetch_ulong(1);
+        if (has_block_hashes == 1) {
+            if (cs.size_refs() == 0) return false;
+            auto block_hashes_root = cs.fetch_ref();
+            if (block_hashes_root_out) {
+                *block_hashes_root_out = std::move(block_hashes_root);
+            }
+        }
+        // The in-progress block accumulator is mandatory as a Maybe-tag in v4.
+        // It lets later transactions in the same TOS block compute the final
+        // Ethereum transactionRoot/receiptRoot/blockHash cumulatively.
+        if (cs.size() < 1) return false;
+        auto has_block_accumulator = cs.fetch_ulong(1);
+        if (has_block_accumulator == 1) {
+            if (cs.size_refs() == 0) return false;
+            auto block_accumulator_root = cs.fetch_ref();
+            if (block_accumulator_root_out) {
+                *block_accumulator_root_out = std::move(block_accumulator_root);
+            }
         }
         // Audit #3 (2026-04-26): require canonical encoding. Two cells with the
         // same logical content must produce the same cell hash; trailing bits or
@@ -253,8 +328,7 @@ bool decode_cp_new_data(const td::Ref<vm::Cell>& cell,
         }
         // Audit #5 follow-up: the declared eth_state_root is consensus-visible
         // account data. Reject stale/forged roots before they can seed restart
-        // hydration. The snapshot compute path may opt out after canonical
-        // decode because it runs from state_root and emits a fresh full root.
+        // hydration and snapshot execution.
         return verify_declared_eth_state_root(state_root_out, eth_state_root_out);
     } catch (vm::VmError&) {
         return false;

@@ -81,6 +81,28 @@ class EvmRpcCacheDb {
     td::Status for_each_block_logs(
         std::function<td::Status(uint64_t, td::Ref<vm::Cell>)> cb);
 
+    /// --- Deferred post-accept side effects ---
+    /// Pending records are keyed by the full candidate context used by
+    /// post-accept lookup. They are best-effort recovery for process restart
+    /// or in-memory stash eviction before the accepted block is applied.
+    td::Status put_pending_side_effects(uint64_t block_seqno,
+                                        uint64_t timestamp,
+                                        const td::Bits256& rand_seed,
+                                        const td::Bits256& parent_hash,
+                                        const td::Bits256& tx_hash,
+                                        td::Ref<vm::Cell> cell);
+    td::Result<td::Ref<vm::Cell>> get_pending_side_effects(
+        uint64_t block_seqno,
+        uint64_t timestamp,
+        const td::Bits256& rand_seed,
+        const td::Bits256& parent_hash,
+        const td::Bits256& tx_hash);
+    td::Status delete_pending_side_effects(uint64_t block_seqno,
+                                           uint64_t timestamp,
+                                           const td::Bits256& rand_seed,
+                                           const td::Bits256& parent_hash,
+                                           const td::Bits256& tx_hash);
+
     EvmRpcCacheDb(EvmRpcCacheDb&&);
     ~EvmRpcCacheDb();
 

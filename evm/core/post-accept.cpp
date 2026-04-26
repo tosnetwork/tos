@@ -16,6 +16,7 @@
 #include "td/utils/logging.h"
 
 #include "vm/cells/Cell.h"
+#include "vm/cells/CellBuilder.h"
 #include "vm/cells/CellSlice.h"
 #include "vm/excno.hpp"
 
@@ -107,6 +108,10 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx) {
     // Block summary (only the block's first tx carries this).
     if (fx.has_block) {
         state.store_block(fx.block);
+        {
+            std::unique_lock lock(state.mutex());
+            state.state().canonize_block(fx.block.number, fx.block.hash);
+        }
 
         if (auto* cache = evm_rpc_cache_db()) {
             auto cell = encode_persisted_block(fx.block);
@@ -242,6 +247,123 @@ EvmStashKey make_stash_key(uint64_t block_seqno,
     return key;
 }
 
+td::Bits256 bytes32_to_bits(const evmc::bytes32& value) {
+    td::Bits256 bits;
+    std::memcpy(bits.data(), value.bytes, 32);
+    return bits;
+}
+
+td::Ref<vm::Cell> encode_pending_side_effects(const EvmBlockSideEffects& fx) {
+    constexpr uint32_t kPendingSideEffectsMagic = 0x46585331;  // "FXS1"
+    vm::CellBuilder cb;
+    cb.store_long(kPendingSideEffectsMagic, 32);
+    cb.store_bytes(fx.tx_hash.bytes, 32);
+    cb.store_bytes(fx.rand_seed.bytes, 32);
+    cb.store_long(fx.has_block ? 1 : 0, 1);
+    cb.store_ref(encode_persisted_receipt(fx.receipt));
+    cb.store_ref(encode_persisted_transaction(fx.transaction));
+    if (fx.has_block) {
+        cb.store_ref(encode_persisted_block(fx.block));
+    }
+    return cb.finalize();
+}
+
+bool decode_pending_side_effects(td::Ref<vm::Cell> cell, EvmBlockSideEffects& out) {
+    constexpr uint32_t kPendingSideEffectsMagic = 0x46585331;  // "FXS1"
+    out = {};
+    try {
+        if (cell.is_null()) return false;
+        bool special = false;
+        auto cs = vm::load_cell_slice_special(cell, special);
+        if (special) return false;
+        if (cs.size() < 32 + 256 + 256 + 1) return false;
+        auto magic = cs.fetch_ulong(32);
+        if (magic != kPendingSideEffectsMagic) return false;
+        if (!cs.fetch_bytes(out.tx_hash.bytes, 32)) return false;
+        if (!cs.fetch_bytes(out.rand_seed.bytes, 32)) return false;
+        out.has_block = cs.fetch_ulong(1) != 0;
+        if (cs.size() != 0) return false;
+        const unsigned expected_refs = out.has_block ? 3 : 2;
+        if (cs.size_refs() != expected_refs) return false;
+        if (!decode_persisted_receipt(cs.fetch_ref(), out.receipt)) return false;
+        if (!decode_persisted_transaction(cs.fetch_ref(), out.transaction)) return false;
+        out.logs = out.receipt.logs;
+        if (out.has_block &&
+            !decode_persisted_block(cs.fetch_ref(), out.block)) {
+            return false;
+        }
+        return true;
+    } catch (vm::VmError&) {
+        return false;
+    } catch (vm::VmVirtError&) {
+        return false;
+    } catch (std::exception&) {
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
+
+void persist_pending_side_effects(uint64_t block_seqno,
+                                  uint64_t timestamp,
+                                  const EvmStashKey& key,
+                                  const EvmBlockSideEffects& fx) {
+    auto* cache = evm_rpc_cache_db();
+    if (!cache) return;
+    auto cell = encode_pending_side_effects(fx);
+    auto status = cache->put_pending_side_effects(
+        block_seqno, timestamp, bytes32_to_bits(key.rand_seed),
+        bytes32_to_bits(key.parent_hash), bytes32_to_bits(key.v), cell);
+    if (status.is_error()) {
+        LOG(WARNING) << "evm-rpc-cache: put_pending_side_effects failed for tx "
+                     << bytes32_to_bits(key.v).to_hex() << ": "
+                     << status.message();
+    }
+}
+
+void delete_pending_side_effects(uint64_t block_seqno,
+                                 uint64_t timestamp,
+                                 const EvmStashKey& key) {
+    auto* cache = evm_rpc_cache_db();
+    if (!cache) return;
+    auto status = cache->delete_pending_side_effects(
+        block_seqno, timestamp, bytes32_to_bits(key.rand_seed),
+        bytes32_to_bits(key.parent_hash), bytes32_to_bits(key.v));
+    if (status.is_error()) {
+        LOG(WARNING) << "evm-rpc-cache: delete_pending_side_effects failed for tx "
+                     << bytes32_to_bits(key.v).to_hex() << ": "
+                     << status.message();
+    }
+}
+
+std::optional<EvmBlockSideEffects> load_pending_side_effects(
+    uint64_t block_seqno,
+    uint64_t timestamp,
+    const EvmStashKey& key) {
+    auto* cache = evm_rpc_cache_db();
+    if (!cache) return std::nullopt;
+    auto cell_r = cache->get_pending_side_effects(
+        block_seqno, timestamp, bytes32_to_bits(key.rand_seed),
+        bytes32_to_bits(key.parent_hash), bytes32_to_bits(key.v));
+    if (cell_r.is_error()) {
+        LOG(WARNING) << "evm-rpc-cache: get_pending_side_effects failed for tx "
+                     << bytes32_to_bits(key.v).to_hex() << ": "
+                     << cell_r.error().message();
+        return std::nullopt;
+    }
+    auto cell = cell_r.move_as_ok();
+    if (cell.is_null()) return std::nullopt;
+    EvmBlockSideEffects fx;
+    if (!decode_pending_side_effects(cell, fx)) {
+        LOG(WARNING) << "evm-rpc-cache: corrupt pending side effects for tx "
+                     << bytes32_to_bits(key.v).to_hex();
+        delete_pending_side_effects(block_seqno, timestamp, key);
+        return std::nullopt;
+    }
+    delete_pending_side_effects(block_seqno, timestamp, key);
+    return fx;
+}
+
 void add_to_bloom(uint8_t bloom[256], const uint8_t* data, size_t len) {
     auto h = ethash::keccak256(data, len);
     for (int i = 0; i < 6; i += 2) {
@@ -286,8 +408,7 @@ void recompute_block_hash(StoredBlock& block) {
 
 void finalize_block_side_effects(std::vector<IndexedSideEffects>& fxs,
                                  uint64_t accepted_block_seqno,
-                                 uint64_t accepted_timestamp,
-                                 const uint8_t parent_block_hash[32]) {
+                                 uint64_t accepted_timestamp) {
     if (fxs.empty()) return;
 
     std::vector<StoredTransaction> txs;
@@ -298,7 +419,6 @@ void finalize_block_side_effects(std::vector<IndexedSideEffects>& fxs,
     StoredBlock block = fxs.back().fx.block;
     block.number = accepted_block_seqno;
     block.timestamp = accepted_timestamp;
-    std::memcpy(block.parent_hash.bytes, parent_block_hash, 32);
     block.state_root = fxs.back().fx.block.state_root;
     block.transaction_hashes.clear();
     block.gas_used = 0;
@@ -343,10 +463,12 @@ void stash_side_effects(uint64_t block_seqno,
                         const uint8_t parent_block_hash[32],
                         const evmc::bytes32& tx_hash,
                         EvmBlockSideEffects fx) {
-    auto& c = g_stashed_cache();
-    std::lock_guard<std::mutex> lock(c.mu);
     EvmStashKey key = make_stash_key(block_seqno, timestamp, rand_seed,
                                      parent_block_hash, tx_hash);
+    persist_pending_side_effects(block_seqno, timestamp, key, fx);
+
+    auto& c = g_stashed_cache();
+    std::lock_guard<std::mutex> lock(c.mu);
     auto it = c.map.find(key);
     if (it != c.map.end()) {
         // Same candidate context re-run. Snapshot compute is deterministic
@@ -367,21 +489,35 @@ take_side_effects(uint64_t block_seqno,
                   const uint8_t rand_seed[32],
                   const uint8_t parent_block_hash[32],
                   const evmc::bytes32& tx_hash) {
-    auto& c = g_stashed_cache();
-    std::lock_guard<std::mutex> lock(c.mu);
     auto key = make_stash_key(block_seqno, timestamp, rand_seed,
                               parent_block_hash, tx_hash);
-    auto it = c.map.find(key);
-    if (it == c.map.end()) return std::nullopt;
-    EvmBlockSideEffects out = std::move(it->second.fx);
-    c.map.erase(it);
-    return out;
+    std::optional<EvmBlockSideEffects> in_memory;
+    {
+        auto& c = g_stashed_cache();
+        std::lock_guard<std::mutex> lock(c.mu);
+        auto it = c.map.find(key);
+        if (it != c.map.end()) {
+            in_memory = std::move(it->second.fx);
+            c.map.erase(it);
+        }
+    }
+    if (in_memory) {
+        delete_pending_side_effects(block_seqno, timestamp, key);
+        return in_memory;
+    }
+    return load_pending_side_effects(block_seqno, timestamp, key);
 }
 
 size_t stashed_side_effects_count() noexcept {
     auto& c = g_stashed_cache();
     std::lock_guard<std::mutex> lock(c.mu);
     return c.map.size();
+}
+
+void clear_stashed_side_effects_for_tests() noexcept {
+    auto& c = g_stashed_cache();
+    std::lock_guard<std::mutex> lock(c.mu);
+    c.map.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -553,8 +689,7 @@ size_t apply_stashed_side_effects_for_messages(
                      << " to avoid wrong tx_index/cumulativeGasUsed";
     }
 
-    finalize_block_side_effects(fxs, accepted_block_seqno, accepted_timestamp,
-                                parent_block_hash);
+    finalize_block_side_effects(fxs, accepted_block_seqno, accepted_timestamp);
     for (const auto& indexed : fxs) {
         apply_block_side_effects(indexed.fx);
     }

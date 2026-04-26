@@ -621,7 +621,7 @@ bool ValidatorSessionRoundState::check_block_is_signed(ValidatorSessionDescripti
   ValidatorWeight weight = 0;
   for (td::uint32 i = 0; i < desc.get_total_nodes(); i++) {
     if (signatures_->at(i)) {
-      weight += desc.get_node_weight(i);
+      CHECK(tos::checked_add_validator_weight(weight, desc.get_node_weight(i)));
       if (weight >= desc.get_cutoff_weight()) {
         return true;
       }
@@ -1126,7 +1126,7 @@ void ValidatorSessionRoundState::dump(ValidatorSessionDescription& desc, td::Str
         auto s = desc.get_total_nodes();
         for (td::uint32 j = 0; j < s; j++) {
           if (x->at(j)) {
-            cnt += desc.get_node_weight(j);
+            CHECK(tos::checked_add_validator_weight(cnt, desc.get_node_weight(j)));
           }
         }
       }

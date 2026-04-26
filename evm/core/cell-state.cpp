@@ -15,9 +15,75 @@
 #include "vm/cells/CellBuilder.h"
 #include "vm/cells/CellSlice.h"
 
+#include <algorithm>
 #include <cstring>
+#include <vector>
 
 namespace evm_workchain {
+
+namespace {
+
+bool decode_storage_slice(td::Ref<vm::CellSlice> value, evmc::bytes32& out) {
+    out = {};
+    if (value.is_null() || value->size() != 256 || value->size_refs() != 0) {
+        return false;
+    }
+    return value.write().fetch_bytes(out.bytes, 32);
+}
+
+bool validate_storage_root(td::Ref<vm::Cell> root) {
+    if (root.is_null()) return true;
+    try {
+        bool special = false;
+        (void)vm::load_cell_slice_special(root, special);
+        if (special) return false;
+        vm::Dictionary storage(root, 256);
+        bool ok = true;
+        bool walked = storage.check_for_each([&ok](td::Ref<vm::CellSlice> value,
+                                                   td::ConstBitPtr /*key*/, int n) -> bool {
+            evmc::bytes32 ignored{};
+            if (n != 256 || !decode_storage_slice(value, ignored)) {
+                ok = false;
+                return false;
+            }
+            return true;
+        });
+        return walked && ok;
+    } catch (vm::VmError&) {
+        return false;
+    } catch (vm::VmVirtError&) {
+        return false;
+    } catch (std::exception&) {
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
+
+td::BitArray<64> block_num_key(silkworm::BlockNum block_num) {
+    td::BitArray<64> key;
+    key.store_ulong(block_num);
+    return key;
+}
+
+void prune_canonical_hashes(std::unordered_map<silkworm::BlockNum, evmc::bytes32>& canonical) {
+    constexpr size_t kEvmBlockHashWindow = 256;
+    if (canonical.size() <= kEvmBlockHashWindow) {
+        return;
+    }
+    std::vector<silkworm::BlockNum> nums;
+    nums.reserve(canonical.size());
+    for (const auto& [block_num, _] : canonical) {
+        nums.push_back(block_num);
+    }
+    std::sort(nums.begin(), nums.end());
+    const size_t remove_count = nums.size() - kEvmBlockHashWindow;
+    for (size_t i = 0; i < remove_count; ++i) {
+        canonical.erase(nums[i]);
+    }
+}
+
+}  // namespace
 
 thread_local silkworm::Bytes CellEvmState::tl_code_buf_;
 
@@ -61,17 +127,24 @@ silkworm::ByteView CellEvmState::read_code(
 evmc::bytes32 CellEvmState::read_storage(const evmc::address& address,
                                           uint64_t /*incarnation*/,
                                           const evmc::bytes32& location) const noexcept {
-    auto storage_root = get_storage_root(address);
-    if (storage_root.is_null()) return evmc::bytes32{};
-    vm::Dictionary storage(storage_root, 256);
-    unsigned char key[32];
-    bytes32_to_key(location, key);
-    auto cs = storage.lookup(td::ConstBitPtr{key}, 256);
-    if (cs.is_null()) return evmc::bytes32{};
-    // Storage value is stored inline as 256 bits in the slice
     evmc::bytes32 v{};
-    if (cs->size() >= 256) {
-        cs.write().fetch_bytes(v.bytes, 32);
+    try {
+        auto storage_root = get_storage_root(address);
+        if (storage_root.is_null()) return v;
+        vm::Dictionary storage(storage_root, 256);
+        unsigned char key[32];
+        bytes32_to_key(location, key);
+        auto cs = storage.lookup(td::ConstBitPtr{key}, 256);
+        if (cs.is_null()) return v;
+        decode_storage_slice(cs, v);
+    } catch (vm::VmError&) {
+        return evmc::bytes32{};
+    } catch (vm::VmVirtError&) {
+        return evmc::bytes32{};
+    } catch (std::exception&) {
+        return evmc::bytes32{};
+    } catch (...) {
+        return evmc::bytes32{};
     }
     return v;
 }
@@ -111,15 +184,37 @@ std::optional<evmc::bytes32> CellEvmState::canonical_hash(
 void CellEvmState::insert_block(const silkworm::Block& block,
                                  const evmc::bytes32& hash) {
     canonical_[block.header.number] = hash;
+    prune_canonical_hashes(canonical_);
 }
 
 void CellEvmState::canonize_block(silkworm::BlockNum block_num,
                                    const evmc::bytes32& block_hash) {
     canonical_[block_num] = block_hash;
+    prune_canonical_hashes(canonical_);
 }
 
 void CellEvmState::decanonize_block(silkworm::BlockNum block_num) {
     canonical_.erase(block_num);
+}
+
+std::optional<silkworm::BlockHeader> CellEvmState::read_header(
+    silkworm::BlockNum block_num,
+    const evmc::bytes32& block_hash) const noexcept {
+    auto it = canonical_.find(block_num);
+    if (it == canonical_.end() || it->second != block_hash) {
+        return std::nullopt;
+    }
+
+    silkworm::BlockHeader header{};
+    header.number = block_num;
+    if (block_num > 0) {
+        auto parent = canonical_.find(block_num - 1);
+        if (parent == canonical_.end()) {
+            return std::nullopt;
+        }
+        header.parent_hash = parent->second;
+    }
+    return header;
 }
 
 // ---------------------------------------------------------------------------
@@ -236,19 +331,27 @@ void CellEvmState::for_each_storage(
     std::function<void(const evmc::bytes32&, const evmc::bytes32&)> cb) const {
     auto storage_root = get_storage_root(address);
     if (storage_root.is_null()) return;
-    vm::Dictionary storage(storage_root, 256);
-    storage.check_for_each([&cb](td::Ref<vm::CellSlice> value,
-                                  td::ConstBitPtr key, int n) -> bool {
-        if (n != 256) return true;
-        evmc::bytes32 slot{};
-        td::BitPtr{slot.bytes}.copy_from(key, 256);
-        evmc::bytes32 v{};
-        if (value.not_null() && value->size() >= 256) {
-            value.write().fetch_bytes(v.bytes, 32);
-        }
-        cb(slot, v);
-        return true;
-    });
+    try {
+        vm::Dictionary storage(storage_root, 256);
+        storage.check_for_each([&cb](td::Ref<vm::CellSlice> value,
+                                      td::ConstBitPtr key, int n) -> bool {
+            if (n != 256) return false;
+            evmc::bytes32 slot{};
+            td::BitPtr{slot.bytes}.copy_from(key, 256);
+            evmc::bytes32 v{};
+            if (!decode_storage_slice(value, v)) return false;
+            cb(slot, v);
+            return true;
+        });
+    } catch (vm::VmError&) {
+        return;
+    } catch (vm::VmVirtError&) {
+        return;
+    } catch (std::exception&) {
+        return;
+    } catch (...) {
+        return;
+    }
 }
 
 td::Ref<vm::Cell> CellEvmState::serialize_to_cell() const {
@@ -261,29 +364,135 @@ bool CellEvmState::load_from_cell(td::Ref<vm::Cell> root) {
         code_.clear();
         return true;
     }
-    account_dict_ = vm::Dictionary(root, 256);
-    // Re-populate the bytecode map from the embedded code cells so that
-    // silkworm's read_code(address, code_hash) keeps working after restart.
-    code_.clear();
-    account_dict_.check_for_each([this](td::Ref<vm::CellSlice> value,
-                                         td::ConstBitPtr /*key*/, int n) -> bool {
-        if (n != 256 || value.is_null() || value->size_refs() == 0) return true;
-        silkworm::Account acct;
-        td::Ref<vm::Cell> storage_root, code_root;
-        if (!decode_evm_account_data(value->prefetch_ref(0), acct, storage_root, code_root)) {
+    try {
+        bool special = false;
+        (void)vm::load_cell_slice_special(root, special);
+        if (special) return false;
+
+        vm::Dictionary new_account_dict(root, 256);
+        std::unordered_map<evmc::bytes32, silkworm::Bytes> new_code;
+        bool ok = true;
+        bool walked = new_account_dict.check_for_each([&ok, &new_code](td::Ref<vm::CellSlice> value,
+                                                                        td::ConstBitPtr /*key*/, int n) -> bool {
+            if (n != 256 || value.is_null() || value->size() != 0 || value->size_refs() != 1) {
+                ok = false;
+                return false;
+            }
+            silkworm::Account acct;
+            td::Ref<vm::Cell> storage_root, code_root;
+            if (!decode_evm_account_data(value->prefetch_ref(0), acct, storage_root, code_root)) {
+                ok = false;
+                return false;
+            }
+            if (!validate_storage_root(storage_root)) {
+                ok = false;
+                return false;
+            }
+            if (acct.code_hash == silkworm::kEmptyHash) {
+                if (code_root.not_null()) {
+                    ok = false;
+                    return false;
+                }
+                return true;
+            }
+            if (code_root.is_null()) {
+                ok = false;
+                return false;
+            }
+            auto bytes = decode_evm_bytecode(code_root);
+            if (bytes.empty()) {
+                ok = false;
+                return false;
+            }
+            new_code[acct.code_hash] = silkworm::Bytes{bytes.begin(), bytes.end()};
             return true;
-        }
-        if (code_root.is_null() || acct.code_hash == silkworm::kEmptyHash) return true;
-        auto bytes = decode_evm_bytecode(code_root);
-        if (bytes.empty()) return true;
-        code_[acct.code_hash] = silkworm::Bytes{bytes.begin(), bytes.end()};
+        });
+        if (!walked || !ok) return false;
+        account_dict_ = std::move(new_account_dict);
+        code_ = std::move(new_code);
         return true;
-    });
-    return true;
+    } catch (vm::VmError&) {
+        return false;
+    } catch (vm::VmVirtError&) {
+        return false;
+    } catch (std::exception&) {
+        return false;
+    } catch (...) {
+        return false;
+    }
 }
 
 td::Ref<vm::Cell> CellEvmState::account_dict_root() const {
     return account_dict_.get_root_cell();
+}
+
+td::Ref<vm::Cell> CellEvmState::serialize_block_hashes_to_cell() const {
+    if (canonical_.empty()) return {};
+
+    std::vector<std::pair<silkworm::BlockNum, evmc::bytes32>> entries;
+    entries.reserve(canonical_.size());
+    for (const auto& entry : canonical_) {
+        entries.push_back(entry);
+    }
+    std::sort(entries.begin(), entries.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+    constexpr size_t kEvmBlockHashWindow = 256;
+    if (entries.size() > kEvmBlockHashWindow) {
+        entries.erase(entries.begin(), entries.end() - kEvmBlockHashWindow);
+    }
+
+    vm::Dictionary dict(64);
+    for (const auto& [block_num, hash] : entries) {
+        auto key = block_num_key(block_num);
+        vm::CellBuilder value_cb;
+        value_cb.store_bytes(hash.bytes, 32);
+        dict.set_builder(key.bits(), 64, value_cb);
+    }
+    return dict.get_root_cell();
+}
+
+bool CellEvmState::load_block_hashes_from_cell(td::Ref<vm::Cell> root) {
+    canonical_.clear();
+    if (root.is_null()) {
+        return true;
+    }
+    try {
+        bool special = false;
+        (void)vm::load_cell_slice_special(root, special);
+        if (special) return false;
+
+        vm::Dictionary dict(root, 64);
+        std::unordered_map<silkworm::BlockNum, evmc::bytes32> loaded;
+        bool ok = true;
+        bool walked = dict.check_for_each([&loaded, &ok](td::Ref<vm::CellSlice> value,
+                                                         td::ConstBitPtr key, int n) -> bool {
+            if (n != 64 || value.is_null() ||
+                value->size() != 256 || value->size_refs() != 0) {
+                ok = false;
+                return false;
+            }
+            td::BitArray<64> key_bits(key);
+            evmc::bytes32 hash{};
+            if (!value.write().fetch_bytes(hash.bytes, 32)) {
+                ok = false;
+                return false;
+            }
+            loaded[key_bits.to_ulong()] = hash;
+            return true;
+        });
+        if (!walked || !ok) return false;
+        prune_canonical_hashes(loaded);
+        canonical_ = std::move(loaded);
+        return true;
+    } catch (vm::VmError&) {
+        return false;
+    } catch (vm::VmVirtError&) {
+        return false;
+    } catch (std::exception&) {
+        return false;
+    } catch (...) {
+        return false;
+    }
 }
 
 void CellEvmState::clear_block_cache() {

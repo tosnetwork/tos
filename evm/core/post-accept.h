@@ -2,19 +2,21 @@
     EVM Workchain — post-accept side-effects application.
 
     The pure snapshot compute path (run_evm_compute_phase_snapshot) does NOT
-    write into the global EvmState or the side-channel RPC cache DB; doing
-    so during compute would re-introduce the consensus hazard the snapshot
-    refactor exists to close (collator and validator may call compute many
-    times against differently-mutated globals, producing divergent state
-    roots).
+    write into the global EvmState or the public side-channel RPC indexes;
+    doing so during compute would re-introduce the consensus hazard the
+    snapshot refactor exists to close (collator and validator may call
+    compute many times against differently-mutated globals, producing
+    divergent state roots). It may write a private pending recovery record
+    keyed by candidate context.
 
     Instead, every per-tx RPC observability record (receipt, transaction,
     logs, block summary) is collected in an `EvmBlockSideEffects` instance
-    that hangs off `block::ComputePhase::evm_side_effects`. After the block
-    is accepted by the validator manager, the host invokes
+    that hangs off `block::ComputePhase::evm_side_effects`. A pending copy is
+    also written to the RPC cache DB as a restart/eviction recovery record.
+    After the block is accepted by the validator manager, the host invokes
     `apply_block_side_effects` exactly once per (block_id, tx_index) to
-    publish those records into the in-memory state and the cache DB and to
-    fire subscription notifications.
+    publish those records into the in-memory state and the durable RPC indexes
+    and to fire subscription notifications.
 
     Source: TOS-specific adapter (not copied from ~/s).
 */
@@ -62,7 +64,7 @@ struct EvmBlockSideEffects {
 
 /// Publish one transaction's side effects: writes the receipt /
 /// transaction / logs / block records into `g_evm_state` and the
-/// side-channel RPC cache DB (if open), then fires subscription
+/// durable side-channel RPC indexes (if open), then fires subscription
 /// notifications. Called by the collator (post `create_block`) and the
 /// validator manager (post `cleanup_applied_external_messages`) for every
 /// wc=1 transaction in the accepted block.
@@ -80,13 +82,15 @@ void apply_block_side_effects(const EvmBlockSideEffects& fx);
 //
 // Compute fires for every candidate validation pass, including BFT-rejected
 // ones. If `apply_block_side_effects` ran inline at compute time, every
-// rejected candidate would still pollute the RPC cache with receipts /
-// logs / block records / subscription notifications.
+// rejected candidate would still pollute the durable receipt / log / block
+// RPC indexes and subscription notifications.
 //
-// Instead the dispatch lambda stashes the captured side effects under
-// the EVM tx_hash. Only after the validator manager observes a canonical
-// block (`cleanup_applied_external_messages`) does the host walk wc=1
-// transactions in BlockData, look up the cached effects, and apply.
+// Instead the dispatch lambda stashes the captured side effects under the
+// accepted-block context and EVM tx_hash. A durable pending copy is keyed the
+// same way, but it is not visible through the public RPC indexes. Only after
+// the validator manager observes a canonical block
+// (`cleanup_applied_external_messages`) does the host walk wc=1 transactions
+// in BlockData, look up the cached effects, and apply.
 //
 // Cache cap: kMaxStashedSideEffects = 4096. On insert when full, the
 // oldest-touched entry is evicted (linear scan; same pattern as
@@ -118,6 +122,10 @@ take_side_effects(uint64_t block_seqno,
 
 /// Number of currently-stashed entries. Test/diagnostics only.
 size_t stashed_side_effects_count() noexcept;
+
+/// Clear only the in-memory deferred-apply queue. Test-only helper for
+/// exercising restart/eviction recovery from the RPC cache DB.
+void clear_stashed_side_effects_for_tests() noexcept;
 
 // ---------------------------------------------------------------------------
 // Helpers for the validator-manager seam.
