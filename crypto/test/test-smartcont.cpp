@@ -22,6 +22,7 @@
 #include <bitset>
 #include <set>
 #include <tuple>
+#include <vector>
 
 #include "block/block-auto.h"
 #include "block/block-parse.h"
@@ -50,6 +51,7 @@
 #include "td/utils/crypto.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/misc.h"
+#include "td/utils/port/Stat.h"
 #include "td/utils/port/path.h"
 #include "td/utils/tests.h"
 #include "vm/boc.h"
@@ -132,7 +134,27 @@ std::string replace_word_token(std::string input, td::Slice from, td::Slice to) 
 }
 
 std::string create_state_binary() {
-  return td::PathView(td::realpath("/proc/self/exe").move_as_ok()).parent_dir().str() + "crypto/create-state";
+  std::vector<std::string> candidates;
+  if (const char* env_path = std::getenv("TOS_CREATE_STATE_BINARY")) {
+    candidates.emplace_back(env_path);
+  }
+  candidates.emplace_back("crypto/create-state");        // CTest from build/
+  candidates.emplace_back("build/crypto/create-state");  // direct run from repo root
+  candidates.emplace_back("../crypto/create-state");      // direct run from build/test/
+
+  for (const auto& candidate : candidates) {
+    auto real = td::realpath(candidate);
+    if (real.is_error()) {
+      continue;
+    }
+    auto path = real.move_as_ok();
+    auto info = td::stat(path);
+    if (info.is_ok() && info.ok().is_reg_) {
+      return path;
+    }
+  }
+  LOG(FATAL) << "Unable to locate crypto/create-state; set TOS_CREATE_STATE_BINARY";
+  return {};
 }
 
 std::string fift_lib_dir() {

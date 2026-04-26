@@ -155,9 +155,20 @@ if (process.env.TOS_SOLC_0_8_26) {
 if (process.env.HOME) {
   choices.push([path.join(process.env.HOME, '.solcx/solc-v0.8.26'), ['--standard-json']]);
 }
-choices.push(['solc', ['--standard-json']]);
 if (process.env.TOS_ALLOW_NPX_SOLC === '1') {
   choices.push(['npx', ['--yes', 'solc@0.8.26', '--standard-json']]);
+}
+try {
+  const version = cp.execFileSync('solc', ['--version'], {
+    encoding: 'utf8',
+    timeout: 10000,
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  if (/Version:\s+0\.8\.26\+|^0\.8\.26\+/.test(version)) {
+    choices.push(['solc', ['--standard-json']]);
+  }
+} catch (_) {
+  // solc is optional; pinned local and npx fallbacks are tried above.
 }
 for (const choice of choices) {
   try {
@@ -175,7 +186,7 @@ for (const choice of choices) {
   }
 }
 if (!output) {
-  console.error('evm production hardening check failed: cannot run pinned solc 0.8.26 standard-json (set TOS_SOLC_0_8_26 or install $HOME/.solcx/solc-v0.8.26; set TOS_ALLOW_NPX_SOLC=1 only for non-hermetic local fallback)');
+  console.error('evm production hardening check failed: cannot run pinned solc 0.8.26 standard-json (set TOS_SOLC_0_8_26, install $HOME/.solcx/solc-v0.8.26, install solc 0.8.26, or set TOS_ALLOW_NPX_SOLC=1 for local npx fallback)');
   process.exit(1);
 }
 
