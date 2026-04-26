@@ -14,9 +14,8 @@
 #   2. /tmp/genesis-alloc.fif — Fift include file that pushes a tuple-of-
 #                                tuples onto the stack and calls
 #                                `evm-zerostate-from-alloc`. The result is a
-#                                ShardAccounts cell suitable to be substituted
-#                                for the legacy `evm-zerostate-accounts-cell`
-#                                in `gen-zerostate.fif`.
+#                                ShardAccounts cell suitable to be wrapped
+#                                into the wc=1 ShardState.
 #
 # Each allocation is encoded as a 5-tuple matching the C++ word's contract
 # (see `interpret_evm_zerostate_from_alloc` in crypto/block/create-state.cpp):

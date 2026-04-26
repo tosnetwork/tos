@@ -3325,12 +3325,14 @@ static void test_genesis_alloc_parameterized() {
            dave_v2.bytes[0], dave_v2.bytes[31],
            dave_ok ? "OK" : "WRONG");
 
-    // Backwards-compat: the zero-arg overload still produces the canonical
-    // 10-EOA cell (validates that we didn't accidentally change the legacy
-    // hash by re-routing through the new code path).
     auto legacy_cell = build_evm_zerostate_accounts_cell();
+#ifdef TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS
     bool legacy_ok = legacy_cell.not_null();
-    printf("  zero-arg overload still produces a cell: %s\n", legacy_ok ? "OK" : "NULL");
+    printf("  devnet zero-arg test helper: %s\n", legacy_ok ? "OK" : "NULL");
+#else
+    bool legacy_ok = legacy_cell.is_null();
+    printf("  production zero-arg test helper disabled: %s\n", legacy_ok ? "OK" : "WRONG");
+#endif
 
     bool all_ok = cell_ok && deterministic && hydrated &&
                   alice_ok && charlie_acct_ok && charlie_code_ok &&
@@ -4789,6 +4791,27 @@ static void test_rpc_cache_codec_rejects_special_and_trailing_cells() {
     printf("  %s\n\n", (special_ok && trailing_ok) ? "PASSED" : "FAILED");
 }
 
+static void test_receipt_reports_indexing_incomplete_after_post_accept_gap() {
+    printf("=== test_receipt_reports_indexing_incomplete_after_post_accept_gap ===\n");
+
+    reset_evm_post_accept_health_for_tests();
+    uint8_t rand_seed[32] = {};
+    uint8_t parent_hash[32] = {};
+    std::vector<td::Ref<vm::Cell>> msgs{make_library_special_cell_for_cache_test()};
+    (void)apply_stashed_side_effects_for_messages(
+        990099, 1800000950, rand_seed, parent_hash, msgs);
+
+    auto r = handle_eth_rpc(
+        "eth_getTransactionReceipt",
+        "[\"0x1111111111111111111111111111111111111111111111111111111111111111\"]",
+        "9010");
+    bool ok = r && r->is_error &&
+              r->json.find("indexing incomplete") != std::string::npos;
+    printf("  receipt response: %s\n", r ? r->json.c_str() : "NOT HANDLED");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+    reset_evm_post_accept_health_for_tests();
+}
+
 static td::Bits256 test_bits_from_bytes32(const evmc::bytes32& value) {
     td::Bits256 bits;
     std::memcpy(bits.data(), value.bytes, 32);
@@ -4861,10 +4884,11 @@ static void test_rpc_cache_rebuild_command_and_health() {
     state.store_receipt(signed_tx->hash, receipt);
     state.store_block(block);
 
-    auto rebuild = handle_eth_rpc(
+    auto public_rebuild = handle_eth_rpc(
         "debug_rebuildRpcCache",
         "[\"0xd6dd8\",\"0xd6dd8\"]",
         "9001");
+    auto rebuild_stats = rebuild_rpc_cache_from_global_state(block_number, block_number);
     auto health = handle_eth_rpc("debug_rpcCacheHealth", "[]", "9002");
 
     StoredTransaction decoded_tx;
@@ -4894,8 +4918,19 @@ static void test_rpc_cache_rebuild_command_and_health() {
         logs_ok = decode_persisted_logs_for_block(log_cell.move_as_ok(), decoded_logs);
     }
 
-    bool ok = rebuild && health &&
-              rebuild->json.find("\"errors\":0") != std::string::npos &&
+    bool public_rebuild_disabled =
+#ifdef TOS_ENABLE_EVM_DEBUG_RPC
+              public_rebuild && public_rebuild->json.find("\"errors\":0") != std::string::npos;
+#else
+              public_rebuild && public_rebuild->is_error &&
+              public_rebuild->json.find("disabled on public RPC") != std::string::npos;
+#endif
+
+    bool ok = public_rebuild_disabled && health &&
+              rebuild_stats.errors == 0 &&
+              rebuild_stats.blocks_written == 1 &&
+              rebuild_stats.transactions_written == 1 &&
+              rebuild_stats.receipts_written == 1 &&
               health->json.find("\"cacheOpen\":true") != std::string::npos &&
               tx_ok && receipt_ok && block_ok && logs_ok &&
               decoded_tx.raw_rlp == signed_tx->raw_rlp &&
@@ -4903,7 +4938,12 @@ static void test_rpc_cache_rebuild_command_and_health() {
               decoded_block.number == block_number &&
               decoded_logs.empty();
 
-    printf("  rebuild RPC: %s\n", rebuild ? rebuild->json.c_str() : "NOT HANDLED");
+    printf("  public rebuild RPC: %s\n", public_rebuild ? public_rebuild->json.c_str() : "NOT HANDLED");
+    printf("  direct rebuild stats: blocks=%llu tx=%llu receipts=%llu errors=%llu\n",
+           static_cast<unsigned long long>(rebuild_stats.blocks_written),
+           static_cast<unsigned long long>(rebuild_stats.transactions_written),
+           static_cast<unsigned long long>(rebuild_stats.receipts_written),
+           static_cast<unsigned long long>(rebuild_stats.errors));
     printf("  health RPC:  %s\n", health ? health->json.c_str() : "NOT HANDLED");
     printf("  persisted tx/receipt/block/logs: %s\n", ok ? "OK" : "WRONG");
     printf("  %s\n\n", ok ? "PASSED" : "FAILED");
@@ -5770,6 +5810,7 @@ int main() {
     test_persisted_block_roundtrip();
     test_persisted_logs_roundtrip();
     test_rpc_cache_codec_rejects_special_and_trailing_cells();
+    test_receipt_reports_indexing_incomplete_after_post_accept_gap();
     test_rpc_cache_rebuild_command_and_health();
     test_eth_get_proof_non_existence();
     test_block_hash_canonical();

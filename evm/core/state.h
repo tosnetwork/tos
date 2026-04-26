@@ -124,8 +124,8 @@ class EvmState {
     /// One-shot flag: true at process start, becomes false after the first
     /// successful hydration from canonical ShardAccounts. Used by
     /// hydrate_global_state_if_empty() so the trigger fires once per process
-    /// even when seed_test_accounts has populated the singleton with a few
-    /// initial entries.
+    /// even when devnet-only bootstrap code has populated the singleton with
+    /// a few initial entries.
     bool needs_initial_hydration() const;
     void mark_initial_hydration_done();
 

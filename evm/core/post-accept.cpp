@@ -46,6 +46,7 @@ std::atomic<uint64_t> g_missing_side_effects{0};
 std::atomic<uint64_t> g_replayed_side_effects{0};
 std::atomic<uint64_t> g_replay_failures{0};
 std::atomic<uint64_t> g_malformed_messages{0};
+std::atomic<uint64_t> g_malformed_special_cell_messages{0};
 std::atomic<uint64_t> g_strict_root_failures{0};
 
 td::Bits256 bytes32_to_bits(const evmc::bytes32& value) {
@@ -456,6 +457,19 @@ bool finalize_block_side_effects(std::vector<IndexedSideEffects>& fxs,
         fx.transaction.block_number = accepted_block_seqno;
         fx.transaction.tx_index = indexed.tx_index;
 
+        if (fx.receipt.gas_used > block.gas_limit ||
+            block.gas_used > block.gas_limit - fx.receipt.gas_used) {
+            g_strict_root_failures.fetch_add(1, std::memory_order_relaxed);
+            LOG(WARNING) << "evm post-accept: refusing block #"
+                         << accepted_block_seqno
+                         << " side effects because gas_used would exceed "
+                         << "block gas limit or overflow (current="
+                         << block.gas_used << ", tx="
+                         << fx.receipt.gas_used << ", limit="
+                         << block.gas_limit << ")";
+            fxs.clear();
+            return false;
+        }
         block.gas_used += fx.receipt.gas_used;
         fx.receipt.cumulative_gas_used = block.gas_used;
 
@@ -561,6 +575,7 @@ EvmPostAcceptHealth evm_post_accept_health() noexcept {
         .replayed_side_effects = g_replayed_side_effects.load(std::memory_order_relaxed),
         .replay_failures = g_replay_failures.load(std::memory_order_relaxed),
         .malformed_messages = g_malformed_messages.load(std::memory_order_relaxed),
+        .malformed_special_cell_messages = g_malformed_special_cell_messages.load(std::memory_order_relaxed),
         .strict_root_failures = g_strict_root_failures.load(std::memory_order_relaxed),
     };
 }
@@ -570,6 +585,7 @@ void reset_evm_post_accept_health_for_tests() noexcept {
     g_replayed_side_effects.store(0, std::memory_order_relaxed);
     g_replay_failures.store(0, std::memory_order_relaxed);
     g_malformed_messages.store(0, std::memory_order_relaxed);
+    g_malformed_special_cell_messages.store(0, std::memory_order_relaxed);
     g_strict_root_failures.store(0, std::memory_order_relaxed);
 }
 
@@ -796,6 +812,28 @@ bool extract_evm_executor_account_data_from_shard_state(
 
 namespace {
 
+bool load_ordinary_slice_for_post_accept(const td::Ref<vm::Cell>& cell,
+                                         vm::CellSlice& out) noexcept {
+    if (cell.is_null()) return false;
+    try {
+        bool special = false;
+        out = vm::load_cell_slice_special(cell, special);
+        if (special) {
+            g_malformed_special_cell_messages.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        return true;
+    } catch (vm::VmError&) {
+        return false;
+    } catch (vm::VmVirtError&) {
+        return false;
+    } catch (std::exception&) {
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
+
 // Walk a parsed Message body cell-slice past CommonMsgInfo + init, return
 // the body slice (whether inline `left$0` or referenced `right$1`). The
 // caller has already confirmed the message is `ext_in_msg_info`.
@@ -803,7 +841,8 @@ std::optional<vm::CellSlice> read_ext_in_msg_body_slice(
     const td::Ref<vm::Cell>& msg) noexcept {
     if (msg.is_null()) return std::nullopt;
     try {
-        vm::CellSlice cs = vm::load_cell_slice(msg);
+        vm::CellSlice cs;
+        if (!load_ordinary_slice_for_post_accept(msg, cs)) return std::nullopt;
         // CommonMsgInfo: ext_in_msg_info$10
         if (cs.size() < 2) return std::nullopt;
         auto tag = cs.fetch_ulong(2);
@@ -875,12 +914,20 @@ std::optional<vm::CellSlice> read_ext_in_msg_body_slice(
         auto body_in_ref = cs.fetch_ulong(1);
         if (body_in_ref == 1) {
             if (!cs.have_refs()) return std::nullopt;
-            return vm::load_cell_slice(cs.prefetch_ref());
+            vm::CellSlice body;
+            if (!load_ordinary_slice_for_post_accept(cs.prefetch_ref(), body)) {
+                return std::nullopt;
+            }
+            return body;
         }
         return cs;
     } catch (vm::VmError&) {
         return std::nullopt;
     } catch (vm::VmVirtError&) {
+        return std::nullopt;
+    } catch (std::exception&) {
+        return std::nullopt;
+    } catch (...) {
         return std::nullopt;
     }
 }

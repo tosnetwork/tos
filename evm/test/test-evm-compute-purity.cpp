@@ -21,6 +21,9 @@
       11. post_accept_replays_side_effect_after_stash_and_db_loss
       12. chain_id_env_ignored_in_production_build
       13. pending_side_effect_db_prunes_ttl_and_cap
+      14. post_accept_parser_rejects_special_cells
+      15. post_accept_rejects_gas_used_overflow
+      16. evm_state_size_budget_rejects_oversized_full_root
 
     Build target: test-evm-compute-purity (see evm/test/CMakeLists.txt)
 */
@@ -31,6 +34,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unistd.h>
@@ -51,6 +55,7 @@
 #include "evm/rpc/cache-db.h"
 
 #include "vm/cells/CellBuilder.h"
+#include "vm/cells/Cell.h"
 #include "vm/cellslice.h"
 
 #include <silkworm/core/types/transaction.hpp>
@@ -1089,6 +1094,159 @@ static void test_pending_side_effect_db_prunes_ttl_and_cap() {
 }
 
 // ---------------------------------------------------------------------------
+// Test 14 — post_accept_parser_rejects_special_cells
+// ---------------------------------------------------------------------------
+
+static td::Ref<vm::Cell> make_library_special_cell_for_post_accept_test() {
+    unsigned char zero_hash[32] = {};
+    vm::CellBuilder cb;
+    cb.store_long(static_cast<long long>(vm::Cell::SpecialType::Library), 8);
+    cb.store_bytes(zero_hash, sizeof(zero_hash));
+    return cb.finalize(true);
+}
+
+static void test_post_accept_parser_rejects_special_cells() {
+    tprintf("[TEST] post_accept_parser_rejects_special_cells\n");
+
+    ew::reset_evm_post_accept_health_for_tests();
+    uint8_t rand_seed[32] = {};
+    uint8_t parent_hash[32] = {};
+    std::vector<td::Ref<vm::Cell>> msgs{
+        make_library_special_cell_for_post_accept_test()};
+
+    size_t applied = ew::apply_stashed_side_effects_for_messages(
+        737373, 1800000500, rand_seed, parent_hash, msgs);
+    auto health = ew::evm_post_accept_health();
+    bool ok = applied == 0 &&
+              health.malformed_messages == 1 &&
+              health.malformed_special_cell_messages >= 1;
+
+    if (!ok) {
+        ++g_failures;
+        tprintf("  FAILED: applied=%zu malformed=%llu special=%llu\n",
+                applied,
+                static_cast<unsigned long long>(health.malformed_messages),
+                static_cast<unsigned long long>(health.malformed_special_cell_messages));
+        return;
+    }
+    ++g_passes;
+    tprintf("  PASSED (special post-accept message cell rejected without crash)\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 15 — post_accept_rejects_gas_used_overflow
+// ---------------------------------------------------------------------------
+
+static void test_post_accept_rejects_gas_used_overflow() {
+    tprintf("[TEST] post_accept_rejects_gas_used_overflow\n");
+
+    ew::clear_stashed_side_effects_for_tests();
+    ew::reset_evm_post_accept_health_for_tests();
+
+    evmc::address recipient{};
+    recipient.bytes[19] = 0x88;
+    auto tx0 = make_signed_transfer(/*key_seed=*/0xF60001, /*nonce=*/0, recipient);
+    auto tx1 = make_signed_transfer(/*key_seed=*/0xF60002, /*nonce=*/0, recipient);
+    if (!tx0 || !tx1) {
+        ++g_failures;
+        tprintf("  FAILED: could not sign gas overflow test txs\n");
+        return;
+    }
+    auto msg0 = ew::build_evm_external_message(tx0->raw_rlp.data(), tx0->raw_rlp.size(), tx0->sender);
+    auto msg1 = ew::build_evm_external_message(tx1->raw_rlp.data(), tx1->raw_rlp.size(), tx1->sender);
+
+    const uint64_t block_seqno = 838383;
+    const uint64_t timestamp = 1800000600;
+    uint8_t rand_seed[32] = {};
+    uint8_t parent_hash[32] = {};
+    rand_seed[31] = 0x33;
+    parent_hash[31] = 0x44;
+
+    auto fx0 = make_test_side_effect(*tx0, recipient, 60, 0x51);
+    auto fx1 = make_test_side_effect(*tx1, recipient, 60, 0x52);
+    fx0.block.gas_limit = 100;
+    fx1.block.gas_limit = 100;
+
+    ew::stash_side_effects(block_seqno, timestamp, rand_seed, parent_hash, tx0->hash, fx0);
+    ew::stash_side_effects(block_seqno, timestamp, rand_seed, parent_hash, tx1->hash, fx1);
+
+    std::vector<td::Ref<vm::Cell>> msgs{msg0, msg1};
+    size_t applied = ew::apply_stashed_side_effects_for_messages(
+        block_seqno, timestamp, rand_seed, parent_hash, msgs);
+    auto health = ew::evm_post_accept_health();
+    bool ok = applied == 0 &&
+              health.strict_root_failures == 1 &&
+              !ew::global_evm_state().get_receipt_copy(tx0->hash) &&
+              !ew::global_evm_state().get_receipt_copy(tx1->hash);
+
+    if (!ok) {
+        ++g_failures;
+        tprintf("  FAILED: applied=%zu strict=%llu receipt0=%d receipt1=%d\n",
+                applied,
+                static_cast<unsigned long long>(health.strict_root_failures),
+                ew::global_evm_state().get_receipt_copy(tx0->hash).has_value(),
+                ew::global_evm_state().get_receipt_copy(tx1->hash).has_value());
+        return;
+    }
+    ++g_passes;
+    tprintf("  PASSED (post-accept rejects cumulative gas overflow/limit breach)\n");
+}
+
+// ---------------------------------------------------------------------------
+// Test 16 — evm_state_size_budget_rejects_oversized_full_root
+// ---------------------------------------------------------------------------
+
+static void test_evm_state_size_budget_rejects_oversized_full_root() {
+    tprintf("[TEST] evm_state_size_budget_rejects_oversized_full_root\n");
+
+    ew::EvmState mem_state;
+    for (uint8_t i = 0; i < 5; ++i) {
+        evmc::address addr{};
+        addr.bytes[19] = i + 1;
+        mem_state.seed_account(addr, intx::uint256{1}, 0);
+    }
+
+    auto mem_stats = ew::estimate_evm_state_size_for_full_root(
+        mem_state, /*max_accounts=*/4, /*max_storage_slots=*/100);
+
+    auto cell_backend = std::make_unique<ew::CellEvmState>();
+    auto* raw_cell_backend = cell_backend.get();
+    ew::EvmState cell_state(std::move(cell_backend));
+    evmc::address cell_addr{};
+    cell_addr.bytes[19] = 0xAA;
+    cell_state.seed_account(cell_addr, intx::uint256{1}, 0);
+    {
+        std::unique_lock lock(cell_state.mutex());
+        for (uint8_t i = 0; i < 3; ++i) {
+            evmc::bytes32 slot{};
+            evmc::bytes32 value{};
+            slot.bytes[31] = i + 1;
+            value.bytes[31] = i + 11;
+            raw_cell_backend->update_storage(cell_addr, /*incarnation=*/0,
+                                             slot, evmc::bytes32{}, value);
+        }
+    }
+    auto cell_stats = ew::estimate_evm_state_size_for_full_root(
+        cell_state, /*max_accounts=*/10, /*max_storage_slots=*/2);
+
+    bool ok = mem_stats.exceeded && !mem_stats.malformed && mem_stats.accounts == 5 &&
+              cell_stats.exceeded && !cell_stats.malformed &&
+              cell_stats.accounts == 1 && cell_stats.storage_slots == 3;
+    if (!ok) {
+        ++g_failures;
+        tprintf("  FAILED: mem(accounts=%zu storage=%zu exceeded=%d malformed=%d) "
+                "cell(accounts=%zu storage=%zu exceeded=%d malformed=%d)\n",
+                mem_stats.accounts, mem_stats.storage_slots,
+                mem_stats.exceeded, mem_stats.malformed,
+                cell_stats.accounts, cell_stats.storage_slots,
+                cell_stats.exceeded, cell_stats.malformed);
+        return;
+    }
+    ++g_passes;
+    tprintf("  PASSED (full-root state-size budget fails closed for memory and cell state)\n");
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -1121,6 +1279,9 @@ int main() {
     test_post_accept_replays_side_effect_after_stash_and_db_loss();
     test_chain_id_env_ignored_in_production_build();
     test_pending_side_effect_db_prunes_ttl_and_cap();
+    test_post_accept_parser_rejects_special_cells();
+    test_post_accept_rejects_gas_used_overflow();
+    test_evm_state_size_budget_rejects_oversized_full_root();
 
     tprintf("\nTotal: passed=%d, failures=%d, skips=%d\n",
             g_passes.load(), g_failures.load(), g_skips.load());

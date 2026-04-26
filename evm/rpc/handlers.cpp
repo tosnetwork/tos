@@ -521,6 +521,13 @@ static RpcResult handle_get_transaction_receipt(const std::string& params, const
 
     auto receipt = global_evm_state().get_receipt_copy(tx_hash);
     if (!receipt) {
+        auto health = evm_post_accept_health();
+        if (health.missing_side_effects != 0 || health.replay_failures != 0 ||
+            health.malformed_messages != 0 || health.malformed_special_cell_messages != 0 ||
+            health.strict_root_failures != 0) {
+            return {make_error(id, -32010,
+                               "EVM RPC indexing incomplete; retry after cache repair"), true};
+        }
         return {make_result(id, "null"), false};
     }
 
@@ -3699,6 +3706,7 @@ static std::string post_accept_health_json() {
     r += "\"replayedSideEffects\":" + std::to_string(h.replayed_side_effects) + ",";
     r += "\"replayFailures\":" + std::to_string(h.replay_failures) + ",";
     r += "\"malformedMessages\":" + std::to_string(h.malformed_messages) + ",";
+    r += "\"malformedSpecialCellMessages\":" + std::to_string(h.malformed_special_cell_messages) + ",";
     r += "\"strictRootFailures\":" + std::to_string(h.strict_root_failures);
     r += "}";
     return r;
@@ -3728,6 +3736,12 @@ static RpcResult handle_debug_rpc_cache_health(const std::string& id) {
 
 static RpcResult handle_debug_rebuild_rpc_cache(const std::string& params,
                                                 const std::string& id) {
+#ifndef TOS_ENABLE_EVM_DEBUG_RPC
+    (void)params;
+    return {make_error(id, -32601,
+                       "debug_rebuildRpcCache is disabled on public RPC"), true};
+#else
+    constexpr uint64_t kMaxRebuildBlocksPerCall = 128;
     uint64_t from = 0;
     uint64_t to = global_evm_state().block_number();
     auto first = params.find("0x");
@@ -3742,6 +3756,10 @@ static RpcResult handle_debug_rebuild_rpc_cache(const std::string& params,
             auto end = params.find_first_of("\",]}", second);
             to = parse_hex_uint64(params.substr(second, end - second));
         }
+    }
+    if (to < from || to - from + 1 > kMaxRebuildBlocksPerCall) {
+        return {make_error(id, -32602,
+                           "debug_rebuildRpcCache range too large"), true};
     }
 
     auto stats = rebuild_rpc_cache_from_global_state(from, to);
@@ -3762,6 +3780,7 @@ static RpcResult handle_debug_rebuild_rpc_cache(const std::string& params,
     }
     r += "}";
     return {make_result(id, r), stats.errors != 0};
+#endif
 }
 
 // --- Rejection handlers for methods we cannot implement (no node-side keys) ---
@@ -3834,7 +3853,9 @@ bool is_eth_rpc_method(const std::string& method) noexcept {
            method == "debug_getRawHeader" ||
            method == "debug_getRawBlock" ||
            method == "debug_getRawReceipts" ||
+#ifdef TOS_ENABLE_EVM_DEBUG_RPC
            method == "debug_rebuildRpcCache" ||
+#endif
            method == "debug_rpcCacheHealth" ||
            method == "eth_getProof" ||
            method == "eth_createAccessList" ||

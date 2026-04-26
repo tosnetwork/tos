@@ -109,18 +109,9 @@ void seed_eip2935_predeploy(EvmState& state);  // EIP-2935 (Pectra)
 /// terminate the process; serves as a startup-time canary.
 void verify_kzg_setup_loaded();
 
-/// Build a ShardAccounts dict cell containing the 10 pre-funded test EOAs.
-///
-/// Used at zerostate generation (Phase C): the wc=1 zerostate's
-/// `accounts:^ShardAccounts` field is set to this cell, so every chain
-/// generated from this commit has the test accounts present from genesis.
-/// Returns a cell suitable to be stored as the `^ShardAccounts` ref of a
-/// ShardState whose accounts dict contains 10 EVM EOAs each holding 10 M eTOS
-/// (100 M total — the dev/test eTOS supply; see `kSeedAmountETos` in init.cpp).
-/// eTOS is the wc=1-native token; there is no on-chain bridge to TOS on wc=0.
-///
-/// Deterministic: same inputs (the constexpr kTestAccounts list and the
-/// EvmAccountData encoder) → byte-identical cell hash on every binary.
+/// Devnet-only default ShardAccounts builder. Production builds return a null
+/// cell here; use the parameterised `build_evm_zerostate_accounts_cell(allocs)`
+/// / Fift `evm-zerostate-from-alloc` path for every real network.
 td::Ref<vm::Cell> build_evm_zerostate_accounts_cell();
 
 // =============================================================================
@@ -130,7 +121,7 @@ td::Ref<vm::Cell> build_evm_zerostate_accounts_cell();
 // Allows zerostate to be built from arbitrary Ethereum-style allocs (the
 // `alloc` field of a Hive `genesis.json`, the EELS / execution-apis fixture
 // pre-state, an EIP-4788 predeploy seed, etc.) instead of the hard-coded
-// 10 Hardhat EOAs.
+// public tutorial EOAs.
 //
 // The data shape mirrors Ethereum's GenesisAccount JSON:
 //   address  → evmc::address
@@ -157,8 +148,8 @@ struct GenesisAccount {
 /// ShardAccounts cell.
 ///
 /// Deterministic: same `accounts` vector → byte-identical cell hash.
-/// The zero-arg overload simply calls this with the hard-coded 10
-/// Hardhat/Anvil EOAs.
+/// The zero-arg overload is disabled in production and only exists for
+/// devnet/test builds that explicitly opt into public tutorial accounts.
 td::Ref<vm::Cell> build_evm_zerostate_accounts_cell(
     const std::vector<GenesisAccount>& accounts);
 

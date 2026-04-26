@@ -203,8 +203,8 @@ fi
 # so we spin up the minimum viable topology inside one container:
 #   - 1 DHT node (loopback, distinct port)
 #   - 4 tos-validator-engine processes, all on 127.0.0.1, distinct ports
-#   - shared zerostate built from $GENESIS_ALLOC_FIF (or built-in 10 EOAs
-#     when no /genesis.json was supplied)
+#   - shared zerostate built from $GENESIS_ALLOC_FIF, or the explicit
+#     etos-pow-givers.fif genesis when no /genesis.json was supplied
 #   - validator 1's JSON-RPC bound to $RPC_BIND_PORT (= 8545 for hive)
 #
 # All heavy lifting is in bootstrap-validators.sh; this section just sets
@@ -276,5 +276,5 @@ CHAIN_RLP="${HIVE_CHAIN_RLP_PATH:-/chain.rlp}"
     log "TOS-VALIDATOR-NOT-READY (eth_chainId not responsive after 240s)"
 ) &
 
-log "Starting 4-validator + DHT bootstrap (rpc-base=$RPC_BASE, chainId=$CHAIN_ID_DEC, alloc=${GENESIS_ALLOC_FIF:-builtin})"
+log "Starting 4-validator + DHT bootstrap (rpc-base=$RPC_BASE, chainId=$CHAIN_ID_DEC, alloc=${GENESIS_ALLOC_FIF:-etos-pow-givers.fif})"
 exec /usr/local/bin/tos-bootstrap-validators

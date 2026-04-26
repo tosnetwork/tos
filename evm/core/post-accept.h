@@ -133,6 +133,7 @@ struct EvmPostAcceptHealth {
     uint64_t replayed_side_effects{0};
     uint64_t replay_failures{0};
     uint64_t malformed_messages{0};
+    uint64_t malformed_special_cell_messages{0};
     uint64_t strict_root_failures{0};
 };
 

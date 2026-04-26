@@ -13,6 +13,7 @@
 #include "evm/core/cell-codec.h"
 #include "evm/core/init.h"
 #include "evm/core/post-accept.h"
+#include "evm/core/workchain.h"
 
 #include <ethash/keccak.hpp>
 #include "vm/cells/CellBuilder.h"
@@ -69,14 +70,11 @@ std::unique_ptr<EvmState> build_local_state_from_account_data(
 
     auto state = std::make_unique<EvmState>(std::move(cell_state));
 
-    // First-activation seeding: the genesis builder
-    // (build_evm_zerostate_accounts_cell) primes the 10 Hardhat dev EOAs
-    // on a real chain start, but the snapshot path also runs in the test
-    // harness and during the very first compute on an executor account
-    // that was activated mid-life (no zerostate). Mirror what
-    // init_evm_workchain does for g_evm_state so behaviour is identical
-    // regardless of whether `account_data` was null because we're at
-    // genesis or because the caller hasn't wired the executor yet.
+    // First-activation seeding for protocol predeploys. Production genesis
+    // account allocations come from the parameterised alloc path, while this
+    // snapshot path also runs in tests or when an executor account is first
+    // activated mid-life. Mirror init_evm_workchain's protocol predeploy setup
+    // without introducing any default funded EOAs.
     if (account_data.is_null()) {
         seed_eip4788_predeploy(*state);
         seed_eip2935_predeploy(*state);
@@ -306,6 +304,20 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     evmc::bytes32 evm_state_root;
     {
         std::unique_lock trie_lock(state.mutex());
+        auto size_stats = estimate_evm_state_size_for_full_root(
+            state, kMaxFullRootAccounts, kMaxFullRootStorageSlots);
+        if (size_stats.malformed || size_stats.exceeded) {
+            LOG(WARNING) << "evm-workchain: refusing full Ethereum stateRoot "
+                         << "recompute for block #" << block_seqno
+                         << " (accounts=" << size_stats.accounts
+                         << ", storage_slots=" << size_stats.storage_slots
+                         << ", malformed=" << size_stats.malformed
+                         << ", exceeded=" << size_stats.exceeded
+                         << ", limits=" << kMaxFullRootAccounts << "/"
+                         << kMaxFullRootStorageSlots << ")";
+            cp.skip_reason = block::ComputePhase::sk_bad_state;
+            return nullptr;
+        }
         IncrementalTrieCalculator calc;
         evm_state_root = calc.compute_state_root(state, nullptr, nullptr);
         state.clear_change_tracking();

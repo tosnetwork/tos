@@ -60,71 +60,35 @@ EvmState& global_evm_state() {
     return *g_evm_state;
 }
 
-// =============================================================================
-// PRE-FUNDED TEST ACCOUNTS  --  TEST CREDENTIALS, DO NOT USE FOR REAL FUNDS
-// =============================================================================
-//
-// On a fresh chain (or any restart where the EVM state is empty) we seed
-// 10 well-known test accounts with `kSeedAmountETos` eTOS each (10 M each =
-// 100 M total across the 10 accounts — exactly the dev/test eTOS supply).
-// eTOS is the EVM workchain (wc=1) native token, distinct from TOS on wc=0.
-// There is no on-chain bridge between TOS and eTOS; conceptual 1:1 parity
-// is realised by external exchanges, not by protocol-level routing.
-// For mainnet, override via `evm-zerostate-from-alloc` with a real
-// recipient list (Hive genesis.json shape) summing to 100 M eTOS.
-// The mnemonic and private
-// keys below are the standard Hardhat / Anvil / ethers test accounts —
-// publicly documented, used by every Solidity tutorial and testnet on Earth.
-// They MUST NEVER hold real value on any production chain.
-//
-// Mnemonic:  "test test test test test test test test test test test junk"
-// Derivation path: m/44'/60'/0'/0/N (BIP-44 standard for ETH)
-//
-// To regenerate:
-//   npx ts-node -e 'console.log(ethers.Wallet.fromPhrase("test test test ..."))'
-//   cast wallet derive "test test test test test test test test test test test junk" -i N
-//
-// =============================================================================
-
 namespace {
+
+#ifdef TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS
 
 struct TestAccount {
     const char* address;   // 40 hex chars, no 0x prefix
-    const char* privkey;   // 64 hex chars, no 0x prefix
 };
 
-// Hardhat / Anvil standard accounts #0..#9
+// Devnet-only public Ethereum tutorial accounts #0..#9. Production builds
+// never compile this table or seed these accounts. Private keys intentionally
+// do not live under evm/core; tests that need signing use their own fixtures.
 constexpr TestAccount kTestAccounts[] = {
-    {"f39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-     "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"},
-    {"70997970C51812dc3A010C7d01b50e0d17dc79C8",
-     "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"},
-    {"3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
-     "5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"},
-    {"90F79bf6EB2c4f870365E785982E1f101E93b906",
-     "7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6"},
-    {"15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
-     "47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a"},
-    {"9965507D1a55bcC2695C58ba16FB37d819B0A4dc",
-     "8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba"},
-    {"976EA74026E726554dB657fA54763abd0C3a0aa9",
-     "92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e"},
-    {"14dC79964da2C08b23698B3D3cc7Ca32193d9955",
-     "4bbbf85ce3377467afe5d46f804f221813b2bb87f24d81f60f1fcdbf7cbf4356"},
-    {"23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
-     "dbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97"},
-    {"a0Ee7A142d267C1f36714E4a8F75612F20a79720",
-     "2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6"},
+    {"f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"},
+    {"70997970C51812dc3A010C7d01b50e0d17dc79C8"},
+    {"3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"},
+    {"90F79bf6EB2c4f870365E785982E1f101E93b906"},
+    {"15d34AAf54267DB7D7c367839AAf71A00a2C6A65"},
+    {"9965507D1a55bcC2695C58ba16FB37d819B0A4dc"},
+    {"976EA74026E726554dB657fA54763abd0C3a0aa9"},
+    {"14dC79964da2C08b23698B3D3cc7Ca32193d9955"},
+    {"23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f"},
+    {"a0Ee7A142d267C1f36714E4a8F75612F20a79720"},
 };
 
-// Per-account genesis seed for the 10 Hardhat/Anvil dev accounts. Total
-// across the 10 accounts is the dev/test eTOS supply: 10 × 10 M = 100 M
-// eTOS, matching the network-wide 100 M cap on wc=1. For mainnet,
-// override via `evm-zerostate-from-alloc` with real allocations (Hive
-// genesis.json shape) — this constant only seeds the default dev/test
-// config via the zero-arg `build_evm_zerostate_accounts_cell()`.
 constexpr uint64_t kSeedAmountETos = 10000000;  // 10 M eTOS per account (10 × 10 M = 100 M total)
 
+#endif  // TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS
+
+#ifdef TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS
 bool parse_hex_address(const char* hex, evmc::address& out) {
     for (int i = 0; i < 20; ++i) {
         unsigned x;
@@ -151,11 +115,8 @@ void seed_test_accounts(EvmState& state) {
     for (int i = 0; i < 18; ++i) amount *= intx::uint256{10};
 
     LOG(WARNING) << "evm-workchain: seeding " << std::size(kTestAccounts)
-                 << " TEST accounts (Hardhat/Anvil mnemonic) with "
+                 << " devnet test accounts with "
                  << kSeedAmountETos << " eTOS each";
-    LOG(WARNING) << "evm-workchain: ⚠️  TEST CREDENTIALS — DO NOT USE FOR REAL FUNDS";
-    LOG(WARNING) << "evm-workchain: mnemonic: \"test test test test test test "
-                    "test test test test test junk\"";
 
     for (const auto& a : kTestAccounts) {
         evmc::address addr{};
@@ -164,6 +125,7 @@ void seed_test_accounts(EvmState& state) {
         LOG(WARNING) << "evm-workchain:   0x" << a.address;
     }
 }
+#endif  // TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS
 
 }  // anonymous namespace
 
@@ -542,9 +504,14 @@ td::Ref<vm::Cell> build_evm_zerostate_accounts_cell(
 }
 
 td::Ref<vm::Cell> build_evm_zerostate_accounts_cell() {
-    // Backwards-compatible zero-arg overload: seeds the 10 Hardhat/Anvil
-    // standard test EOAs with kSeedAmountETos eTOS each. Internally translates
-    // to a GenesisAccount vector and forwards to the parameterised overload.
+#ifndef TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS
+    LOG(ERROR) << "evm-workchain: zero-arg EVM test zerostate helper is "
+                  "disabled in production; use evm-zerostate-from-alloc";
+    return {};
+#else
+    // Devnet-only zero-arg overload: seeds public tutorial accounts with
+    // kSeedAmountETos eTOS each. Production genesis must use the
+    // parameterised evm-zerostate-from-alloc path instead.
     intx::uint256 amount{kSeedAmountETos};
     for (int i = 0; i < 18; ++i) amount *= intx::uint256{10};
 
@@ -558,13 +525,14 @@ td::Ref<vm::Cell> build_evm_zerostate_accounts_cell() {
         accounts.push_back(std::move(g));
     }
     return build_evm_zerostate_accounts_cell(accounts);
+#endif
 }
 
 size_t hydrate_global_state_if_empty(vm::AugmentedDictionary& shard_accounts) {
     if (!g_evm_state) return 0;
-    // One-shot per process. After init_evm_workchain calls
-    // seed_test_accounts the state isn't strictly empty, but it's still in
-    // the "fresh process" state that needs canonical-state hydration.
+    // One-shot per process. Devnet-only bootstrap may prepopulate the
+    // singleton before canonical shard state hydration, but the process still
+    // needs to hydrate from wc=1 ShardAccounts exactly once.
     if (!g_evm_state->needs_initial_hydration()) return 0;
     if (shard_accounts.is_empty()) return 0;
     auto count = populate_state_from_shard_accounts(*g_evm_state, shard_accounts);
@@ -616,10 +584,11 @@ void init_evm_workchain(const std::string& db_root) {
     auto cell_state = std::make_unique<CellEvmState>();
     g_evm_state = std::make_unique<EvmState>(std::move(cell_state));
 
-    // Seed Hardhat/Anvil standard test accounts (idempotent: skips if already seeded).
-    // Production deployments should remove or guard this call. See the
-    // PRE-FUNDED TEST ACCOUNTS block above for the full list and rationale.
+#ifdef TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS
+    // Devnet-only convenience accounts. Production builds do not seed public
+    // test keys into the runtime singleton or genesis.
     seed_test_accounts(*g_evm_state);
+#endif
 
     // Cancun pre-fork prep (Category E in known-divergences). Both calls are
     // safe at the current Shanghai-revision config — they only matter once

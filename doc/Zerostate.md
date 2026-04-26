@@ -308,7 +308,7 @@ TOS ships **three** native tokens, each independent and confined to its own work
 | Token | Lives on | Decimals | Target Supply | Role | Where configured |
 |---|---|---|---|---|---|
 | **TOS** | master (`-1`) + wc=0 (TVM) | 9 (nano-tomi) | **100,000,000 TOS** | L1 platform gas + staking | `crypto/smartcont/gen-zerostate.fif` line 94 (`TM$100000000 allocated-balance -`) |
-| **eTOS** | wc=1 (EVM) | 18 (wei) | **100,000,000 eTOS** | EVM gas + dapp economy | `evm/core/init.cpp::kSeedAmountETos` constexpr (10 Hardhat dev accounts × 10 M each) — dev/test seeding; mainnet uses `evm-zerostate-from-alloc` |
+| **eTOS** | wc=1 (EVM) | 18 (wei) | **100,000,000 eTOS** | EVM gas + dapp economy | `crypto/smartcont/etos-pow-givers.fif` builds the explicit wc=1 allocation tuple and calls `evm-zerostate-from-alloc`; production builds do not expose the legacy zero-arg public test-account helper |
 | **UNO** | wc=2 (STARK) | 9 (nano-UNO) | **21,000,000 UNO** | Privacy "digital gold" (peer of Bitcoin / Zcash) | `uno/core/genesis.h::kGenesisTotalSupplyNano` constexpr; split 60 / 25 / 15 = 12.6 M / 5.25 M / 3.15 M |
 
 **No on-chain bridges.** Each token lives in its own workchain and never moves to another. Conceptual 1:1 parity between TOS and eTOS (sharing the "TOS" narrative and pricing benchmark) is realised by **external markets** — users buy/sell TOS for eTOS on centralised or decentralised exchanges, just like ETH ↔ wETH or BTC ↔ WBTC. UNO never participates in any cross-token flow (privacy preservation requirement, uno-workchain.md §1.5).
@@ -326,7 +326,14 @@ To change the TOS target supply, edit the `TM$<N>` literal on `gen-zerostate.fif
 
 ### eTOS (wc=1 EVM)
 
-The dev/test eTOS distribution seeds 10 Hardhat/Anvil standard EOAs with `kSeedAmountETos = 10_000_000` eTOS each (100 M total). **This is dev/test only** — the private keys are public and documented in `evm/core/init.cpp`. For mainnet:
+The default wc=1 zerostate is built from an explicit allocation tuple via
+`evm-zerostate-from-alloc`. The checked-in genesis path deploys 10
+`EToSPoWGiver` contracts at addresses
+`0x1000000000000000000000000000000000000001` through
+`0x100000000000000000000000000000000000000a`, each funded with
+`10,000,000 eTOS` (100 M total). Production builds do not register the old
+zero-arg public test-account Fift word. To use a different launch
+distribution:
 
 1. Prepare a Hive-style `genesis.json` with real recipient addresses and balances (total 100 M eTOS = 100 M × 10¹⁸ wei).
 2. Use `translate-genesis.py` to convert to a Fift tuple.
@@ -335,7 +342,9 @@ The dev/test eTOS distribution seeds 10 Hardhat/Anvil standard EOAs with `kSeedA
    <allocation-tuple> evm-zerostate-from-alloc  // builds wc=1 accounts cell
    ... wrap into ShardState ...
    ```
-4. Gate the runtime `seed_test_accounts` path (init.cpp) so it no-ops on mainnet (the idempotency check `if (state.read_account(first_addr).has_value()) skip` already handles this when the zerostate carries pre-populated accounts).
+4. Keep runtime public test-account seeding disabled; it is guarded behind the
+   explicit `TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS` build macro and is not part of
+   production genesis.
 
 There is **no protocol-level bridge** between TOS (wc=0) and eTOS (wc=1). The two are economically distinct tokens with their own supply caps and their own genesis distributions; users wishing to "convert" between them transact on external exchanges.
 

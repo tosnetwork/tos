@@ -35,8 +35,8 @@ break that ceiling):
   `evm_workchain::build_evm_zerostate_accounts_cell(const std::vector<GenesisAccount>&)`
   in `crypto/block/evm-workchain/evm-init.{h,cpp}` now accepts arbitrary
   Ethereum-style allocations (address, balance, nonce, code, storage).
-  The zero-arg overload (which seeds the 10 Hardhat EOAs) now delegates
-  to the new path, so behaviour is bit-identical for the existing chain.
+  Production genesis uses explicit allocation Fift (`evm-zerostate-from-alloc`);
+  the old public test-account shortcut is not a production fallback.
   Covered by `test_genesis_alloc_parameterized` in
   `crypto/block/evm-workchain/test-evm-executor.cpp`.
 - **Fift bridge word `evm-zerostate-from-alloc`** in
@@ -345,10 +345,10 @@ that:
    and loses precision on the magic shard value `-2^63`.
 4. Writes a Fift template embedding the 4 validator pubkeys via
    `add-validator` and either Agent K's `evm-zerostate-from-alloc`
-   (when `$GENESIS_ALLOC_FIF` is given) or the legacy zero-arg
-   `evm-zerostate-accounts-cell` (10 Hardhat EOAs). Then runs
-   `tos-create-state` to produce `zerostate.boc`, `basestate0.boc`,
-   `evmstate1.boc` plus their hashes.
+   (when `$GENESIS_ALLOC_FIF` is given) or the explicit
+   `etos-pow-givers.fif` genesis. Then runs `tos-create-state` to
+   produce `zerostate.boc`, `basestate0.boc`, `evmstate1.boc` plus
+   their hashes.
 5. Distributes the zerostate to each validator's `static/` dir via
    symlink (filename = uppercase-hex of file_hash, as the engine
    expects).

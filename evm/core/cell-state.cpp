@@ -354,6 +354,71 @@ void CellEvmState::for_each_storage(
     }
 }
 
+CellEvmStateSizeStats CellEvmState::count_entries_bounded(
+    size_t max_accounts,
+    size_t max_storage_slots) const noexcept {
+    CellEvmStateSizeStats stats;
+    try {
+        account_dict_.check_for_each(
+            [&](td::Ref<vm::CellSlice> value, td::ConstBitPtr, int n) -> bool {
+                if (n != 256 || value.is_null() || value->size_refs() == 0) {
+                    stats.malformed = true;
+                    return false;
+                }
+                if (++stats.accounts > max_accounts) {
+                    stats.exceeded = true;
+                    return false;
+                }
+
+                auto data_cell = value->prefetch_ref(0);
+                silkworm::Account acct;
+                td::Ref<vm::Cell> storage_root;
+                if (!decode_evm_account_data(data_cell, acct, storage_root)) {
+                    stats.malformed = true;
+                    return false;
+                }
+                if (storage_root.is_null()) {
+                    return true;
+                }
+
+                bool special = false;
+                (void)vm::load_cell_slice_special(storage_root, special);
+                if (special) {
+                    stats.malformed = true;
+                    return false;
+                }
+                vm::Dictionary storage(storage_root, 256);
+                storage.check_for_each(
+                    [&](td::Ref<vm::CellSlice> storage_value, td::ConstBitPtr, int storage_n) -> bool {
+                        if (storage_n != 256) {
+                            stats.malformed = true;
+                            return false;
+                        }
+                        evmc::bytes32 unused{};
+                        if (!decode_storage_slice(storage_value, unused)) {
+                            stats.malformed = true;
+                            return false;
+                        }
+                        if (++stats.storage_slots > max_storage_slots) {
+                            stats.exceeded = true;
+                            return false;
+                        }
+                        return true;
+                    });
+                return !stats.exceeded && !stats.malformed;
+            });
+    } catch (vm::VmError&) {
+        stats.malformed = true;
+    } catch (vm::VmVirtError&) {
+        stats.malformed = true;
+    } catch (std::exception&) {
+        stats.malformed = true;
+    } catch (...) {
+        stats.malformed = true;
+    }
+    return stats;
+}
+
 td::Ref<vm::Cell> CellEvmState::serialize_to_cell() const {
     return account_dict_root();
 }

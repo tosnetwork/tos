@@ -28,10 +28,18 @@
 #include "vm/cells.h"
 #include "vm/dict.h"
 
+#include <cstddef>
 #include <unordered_map>
 #include <mutex>
 
 namespace evm_workchain {
+
+struct CellEvmStateSizeStats {
+    size_t accounts{0};
+    size_t storage_slots{0};
+    bool exceeded{false};
+    bool malformed{false};
+};
 
 /// silkworm::State implementation backed by a vm::Dictionary of EvmAccountData
 /// cells. Designed for single-threaded EVM execution; callers wrap with
@@ -118,6 +126,12 @@ class CellEvmState : public silkworm::State {
     void for_each_storage(const evmc::address& address,
                           std::function<void(const evmc::bytes32& slot,
                                               const evmc::bytes32& value)> cb) const;
+
+    /// Bounded state-size scan used before full Ethereum MPT root rebuild.
+    /// Stops as soon as either limit is exceeded, so the preflight itself is
+    /// bounded by the configured safety budget.
+    CellEvmStateSizeStats count_entries_bounded(size_t max_accounts,
+                                                size_t max_storage_slots) const noexcept;
 
     /// Serialize the entire account dictionary into a single cell (suitable
     /// for storing in a ShardAccounts cell or a BoC).

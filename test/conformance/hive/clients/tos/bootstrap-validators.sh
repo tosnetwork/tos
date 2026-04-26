@@ -19,8 +19,8 @@
 #   FIFT_DIR              fift include dir (default /usr/local/share/tos/fift/lib)
 #   SMARTCONT_DIR         smartcont include dir (default /usr/local/share/tos/smartcont)
 #   GENESIS_ALLOC_FIF     optional Fift include emitting an alloc tuple +
-#                         calling evm-zerostate-from-alloc
-#                         (default: zero-arg evm-zerostate-accounts-cell)
+#                         calling evm-zerostate-from-alloc; when absent the
+#                         explicit etos-pow-givers.fif genesis is used
 #   TOS_EVM_CHAIN_ID      decimal evm chain id; only devnet-only validator
 #                         builds compiled with TOS_DEVNET_ALLOW_EVM_CHAIN_ID_ENV
 #                         consume it as an env override
@@ -316,20 +316,22 @@ jq -n \
 #   {block_limit_mul}=1
 #   {*_lifetime}=100000
 #   {new_consensus_config}  -> two `make-simplex-params` lines (mc + shard)
-# Plus, IF $GENESIS_ALLOC_FIF is given, replace the `evm-zerostate-accounts-cell`
-# call (no args, baked-in 10 EOAs) with `include` of the alloc fif (which calls
-# `evm-zerostate-from-alloc` to leave the cell on stack).
+# Plus, if $GENESIS_ALLOC_FIF is given, include it and wrap the resulting
+# ShardAccounts cell. Otherwise include etos-pow-givers.fif, which builds the
+# explicit wc=1 ShardState without public test-account fallbacks.
 # -----------------------------------------------------------------------------
-log "Generating zerostate (chainId=$TOS_EVM_CHAIN_ID, alloc=${GENESIS_ALLOC_FIF:-builtin-10-EOAs})"
-
 ZS_FIF="$DATA/state/gen-zerostate-evm.fif"
 
-# How to push the EVM accounts cell on the stack?
+# How to push the EVM shard state cell on the stack?
 if [ -n "$GENESIS_ALLOC_FIF" ] && [ -s "$GENESIS_ALLOC_FIF" ]; then
-    EVM_ACCOUNTS_PROVIDER='"'"$GENESIS_ALLOC_FIF"'" include'
+    EVM_SHARDSTATE_PROVIDER='"'"$GENESIS_ALLOC_FIF"'" include 1 mkShardStateWithAccounts'
+    EVM_GENESIS_LABEL="$GENESIS_ALLOC_FIF"
 else
-    EVM_ACCOUNTS_PROVIDER='evm-zerostate-accounts-cell'
+    EVM_SHARDSTATE_PROVIDER='"etos-pow-givers.fif" include'
+    EVM_GENESIS_LABEL="etos-pow-givers.fif"
 fi
+
+log "Generating zerostate (chainId=$TOS_EVM_CHAIN_ID, evmGenesis=$EVM_GENESIS_LABEL)"
 
 # 4 validator pubkeys to add
 VAL_KEYS_FIF=""
@@ -387,7 +389,7 @@ basestate0_rhash basestate0_fhash now 0 0 dup 0 add-std-workchain-v2
   dup isShardState? not abort"invalid ShardState created"
 } : mkShardStateWithAccounts
 
-$EVM_ACCOUNTS_PROVIDER 1 mkShardStateWithAccounts
+$EVM_SHARDSTATE_PROVIDER
 dup dup 31 boc+>B dup "evmstate1.boc" B>file
 Bhashu dup =: evmstate1_fhash 256 u>B "evmstate1.fhash" B>file
 hashu dup =: evmstate1_rhash 256 u>B "evmstate1.rhash" B>file

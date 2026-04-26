@@ -15,6 +15,7 @@
 */
 #pragma once
 
+#include <cstddef>
 #include <map>
 #include <unordered_map>
 
@@ -31,6 +32,21 @@
 #include "evm/core/state.h"
 
 namespace evm_workchain {
+
+struct EvmStateSizeStats {
+    size_t accounts{0};
+    size_t storage_slots{0};
+    bool exceeded{false};
+    bool malformed{false};
+};
+
+/// Bounded scan used before full-root rebuilds. Returns `exceeded=true` as
+/// soon as either limit is crossed, so callers can fail closed instead of
+/// letting state size turn one low-gas transaction into unbounded CPU work.
+EvmStateSizeStats estimate_evm_state_size_for_full_root(
+    EvmState& state,
+    size_t max_accounts,
+    size_t max_storage_slots) noexcept;
 
 /// Persistent cache for intermediate trie nodes.
 ///

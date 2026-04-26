@@ -26,6 +26,52 @@ namespace evm_workchain {
 using silkworm::Bytes;
 using silkworm::ByteView;
 
+static bool bytes32_is_zero(const evmc::bytes32& v);
+
+EvmStateSizeStats estimate_evm_state_size_for_full_root(
+    EvmState& state,
+    size_t max_accounts,
+    size_t max_storage_slots) noexcept {
+    EvmStateSizeStats stats;
+
+    if (auto* cell_state = dynamic_cast<CellEvmState*>(&state.state())) {
+        auto cell_stats = cell_state->count_entries_bounded(
+            max_accounts, max_storage_slots);
+        stats.accounts = cell_stats.accounts;
+        stats.storage_slots = cell_stats.storage_slots;
+        stats.exceeded = cell_stats.exceeded;
+        stats.malformed = cell_stats.malformed;
+        return stats;
+    }
+
+    if (auto* in_mem = dynamic_cast<silkworm::InMemoryState*>(&state.state())) {
+        stats.accounts = in_mem->accounts().size();
+        if (stats.accounts > max_accounts) {
+            stats.exceeded = true;
+            return stats;
+        }
+        for (const auto& [addr, incarnations] : in_mem->storage()) {
+            (void)addr;
+            for (const auto& [incarnation, slots] : incarnations) {
+                (void)incarnation;
+                for (const auto& [slot, value] : slots) {
+                    (void)slot;
+                    if (!bytes32_is_zero(value)) {
+                        if (++stats.storage_slots > max_storage_slots) {
+                            stats.exceeded = true;
+                            return stats;
+                        }
+                    }
+                }
+            }
+        }
+        return stats;
+    }
+
+    stats.malformed = true;
+    return stats;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

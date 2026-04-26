@@ -576,19 +576,21 @@ void interpret_create_state(vm::Stack& stack) {
   stack.push(std::move(state));
 }
 
-// Phase C: returns the wc=1 ShardAccounts cell pre-populated with the 10
-// pre-funded EOAs. Used by zerostate.py's Fift template to seed the wc=1
-// zerostate accounts ref (replacing the empty 11-bit cell mkemptyShardState
-// would otherwise produce). Pure function — same content on every binary.
+#ifdef TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS
+// Devnet-only wc=1 default ShardAccounts helper. Production builds do not
+// register any zero-arg EVM allocation word; real networks must use
+// `evm-zerostate-from-alloc` so genesis allocations are explicit and
+// reviewable.
 //
 // Stack: ( -- accounts_cell )
-void interpret_evm_zerostate_accounts_cell(vm::Stack& stack) {
+void interpret_evm_dev_zerostate_accounts_cell(vm::Stack& stack) {
   Ref<vm::Cell> cell = evm_workchain::build_evm_zerostate_accounts_cell();
   if (cell.is_null()) {
-    throw fift::IntError{"could not build EVM zerostate accounts cell"};
+    throw fift::IntError{"could not build dev EVM zerostate accounts cell"};
   }
   stack.push_cell(std::move(cell));
 }
+#endif
 
 // Returns the wc=2 ShardAccounts cell pre-populated with the single UNO
 // executor account (at kUnoExecutorAddressBytes = 0x00…01) as acc_uninit.
@@ -625,10 +627,9 @@ void interpret_uno_zerostate_accounts_cell(vm::Stack& stack) {
 // All integer fields must be non-negative and fit in their respective bit
 // widths. Throws `fift::IntError` on shape mismatch or out-of-range values.
 //
-// This is the parameterised counterpart to `evm-zerostate-accounts-cell`;
-// the C++ overload it forwards to (build_evm_zerostate_accounts_cell with a
+// The C++ overload it forwards to (build_evm_zerostate_accounts_cell with a
 // std::vector<GenesisAccount> argument) is the canonical entry point used by
-// both Hive harness setup and unit tests.
+// production genesis, Hive harness setup, and unit tests.
 void interpret_evm_zerostate_from_alloc(vm::Stack& stack) {
   using evm_workchain::GenesisAccount;
 
@@ -887,13 +888,16 @@ void init_words_custom(fift::Dictionary& d) {
   d.def_stack_word("register_smc ", interpret_register_smartcontract);
   d.def_stack_word("set_config_smc ", interpret_set_config_smartcontract);
   d.def_stack_word("create_state ", interpret_create_state);
-  // Phase C — EVM workchain zerostate seeding
-  d.def_stack_word("evm-zerostate-accounts-cell ", interpret_evm_zerostate_accounts_cell);
+  // EVM workchain zerostate seeding. Production exposes only the explicit
+  // allocation path; the old zero-arg public-test-account word is intentionally
+  // not registered.
+#ifdef TOS_DEVNET_ALLOW_TEST_EVM_ACCOUNTS
+  d.def_stack_word("evm-dev-zerostate-accounts-cell ", interpret_evm_dev_zerostate_accounts_cell);
+#endif
   d.def_stack_word("evm-zerostate-from-alloc ", interpret_evm_zerostate_from_alloc);
-  // UNO workchain zerostate seeding — mirror of evm-zerostate-accounts-cell
-  // for wc=2. Pushes a ShardAccounts cell containing the single UNO executor
-  // account (0x00…01) as acc_uninit, so the collator can route MineUno /
-  // Transfer ext_in_msgs from block 0.
+  // UNO workchain zerostate seeding. Pushes a ShardAccounts cell containing
+  // the single UNO executor account (0x00…01) as acc_uninit, so the collator
+  // can route MineUno / Transfer ext_in_msgs from block 0.
   d.def_stack_word("uno-zerostate-accounts-cell ", interpret_uno_zerostate_accounts_cell);
   d.def_stack_word("isShardState? ", interpret_is_shard_state);
   d.def_stack_word("isWorkchainDescr? ", interpret_is_workchain_descr);
