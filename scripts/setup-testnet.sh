@@ -83,13 +83,13 @@ install = Install(BUILD, REPO)
 async def setup():
     async with Network(install, TESTNET) as network:
         # Create DHT node
-        dht = network.create_dht_node(threads=2)
+        dht = network.create_dht_node()
 
         # Create 3 validators (≥2/3 quorum needs 2 of 3 votes per
         # tos/quorum.h; matches doc/Validator-Local.md).
         nodes = []
         for _ in range(3):
-            node = network.create_full_node(threads=4)
+            node = network.create_full_node()
             node.make_initial_validator()
             node.announce_to(dht)
             nodes.append(node)
