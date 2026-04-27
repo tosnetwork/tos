@@ -73,7 +73,11 @@ class CellStateRollbackSnapshot {
         std::unique_lock lock(state.mutex());
         auto* current_cell_state = dynamic_cast<CellEvmState*>(&state.state());
         if (current_cell_state != nullptr) {
-            CHECK(current_cell_state->load_from_cell(account_root_, false));
+            // Rebind via TrustedLazy: the captured root cell hash is owned by
+            // this snapshot (no external attacker influence) so the per-rollback
+            // cost stays O(1) instead of O(global state size).
+            CHECK(current_cell_state->load_from_cell(
+                account_root_, CellStateLoadMode::TrustedLazy));
             CHECK(current_cell_state->load_trie_witness_from_cell(trie_witness_root_));
             CHECK(current_cell_state->load_block_hashes_from_cell(block_hashes_root_));
             current_cell_state->reset_delta_stats();
@@ -121,7 +125,13 @@ std::unique_ptr<EvmState> build_local_state_from_account_data(
                                 &trie_witness_root)) {
             return nullptr;
         }
-        if (state_root.not_null() && !cell_state->load_from_cell(state_root, false)) {
+        // Hot path: bind the account dictionary without enumerating accounts,
+        // storage, or code. The cell hash of `state_root` is already
+        // authenticated by the surrounding TOS account state, and the full
+        // strict scan in `StrictValidate*` modes scales with global state size
+        // — that is unmetered host work and must not run for every EVM tx.
+        if (state_root.not_null() &&
+            !cell_state->load_from_cell(state_root, CellStateLoadMode::TrustedLazy)) {
             return nullptr;
         }
         if (trie_witness_root.not_null()) {

@@ -271,8 +271,23 @@ struct MptTrie::Node {
         if (!dirty && !rlp_cache.empty()) {
             return rlp_cache;
         }
+        // ensure_decoded() failure here means the witness cell is corrupt;
+        // callers reach this through proof()/serialize_cell() etc., which is
+        // why those entry points have shallow CHECK guards. The fail-closed
+        // counterpart is `proof_safe()`, which calls `ensure_decoded()`
+        // explicitly before invoking `rlp()`.
         CHECK(ensure_decoded());
 
+        rlp_cache = compute_rlp_from_shape(/*trust_cache=*/true);
+        hash_cache.reset();
+        return rlp_cache;
+    }
+
+    /// Recompute this node's canonical RLP encoding from the decoded shape.
+    /// When `trust_cache` is false, child RLP is recomputed recursively
+    /// without consulting any per-node `rlp_cache`. This is the verification
+    /// path for `MptWitnessValidationMode::StrictRecursive`.
+    Bytes compute_rlp_from_shape(bool trust_cache) const {
         Bytes payload;
         switch (kind) {
             case kNodeLeaf: {
@@ -284,25 +299,48 @@ struct MptTrie::Node {
             case kNodeExtension: {
                 Bytes encoded_path = hex_prefix_encode(path, false);
                 silkworm::rlp::encode(payload, ByteView{encoded_path});
-                payload.append(child_ref(child));
+                payload.append(child_ref_with_mode(child, trust_cache));
                 break;
             }
             case kNodeBranch:
                 for (const auto& branch_child : children) {
-                    payload.append(child_ref(branch_child));
+                    payload.append(child_ref_with_mode(branch_child, trust_cache));
                 }
                 silkworm::rlp::encode(payload, ByteView{});
                 break;
             default:
-                CHECK(false);
+                return {};
         }
 
         Bytes out;
         silkworm::rlp::encode_header(out, silkworm::rlp::Header{true, payload.size()});
         out.append(payload);
-        rlp_cache = std::move(out);
-        hash_cache.reset();
-        return rlp_cache;
+        return out;
+    }
+
+    Bytes child_ref_with_mode(const std::shared_ptr<Node>& node,
+                               bool trust_cache) const {
+        if (!node) {
+            return Bytes{silkworm::rlp::kEmptyStringCode};
+        }
+        if (trust_cache) {
+            return child_ref(node);
+        }
+        // Strict recompute: do not look at child->rlp_cache. Force
+        // recomputation from the child's own decoded shape.
+        if (!node->ensure_decoded()) {
+            return Bytes{silkworm::rlp::kEmptyStringCode};
+        }
+        Bytes child_rlp = node->compute_rlp_from_shape(false);
+        if (child_rlp.size() < kHashLength) {
+            return child_rlp;
+        }
+        auto h = ethash::keccak256(child_rlp.data(), child_rlp.size());
+        evmc::bytes32 hash{};
+        std::memcpy(hash.bytes, h.bytes, kHashLength);
+        Bytes out;
+        silkworm::rlp::encode(out, ByteView{hash.bytes, kHashLength});
+        return out;
     }
 
     evmc::bytes32 hash() const {
@@ -522,7 +560,14 @@ UpdateResult erase_rec(std::shared_ptr<MptTrie::Node> node, ByteView key) {
     if (!node) {
         return {nullptr, false};
     }
-    CHECK(node->ensure_decoded());
+    if (!node->ensure_decoded()) {
+        // Fail closed: surface a corrupt lazy node as a no-change result
+        // rather than aborting the process. The trie root stays bound to
+        // its previous (potentially stale) shape; callers see no apparent
+        // mutation and the next `serialize_to_cell` will rebuild from the
+        // unchanged root.
+        return {nullptr, false};
+    }
 
     if (node->kind == kNodeLeaf) {
         if (ByteView{node->path} == key) {
@@ -543,7 +588,9 @@ UpdateResult erase_rec(std::shared_ptr<MptTrie::Node> node, ByteView key) {
         return {normalize_extension(node->path, std::move(updated.node)), true};
     }
 
-    CHECK(node->kind == kNodeBranch);
+    if (node->kind != kNodeBranch) {
+        return {nullptr, false};
+    }
     if (key.empty()) {
         return {node, false};
     }
@@ -582,6 +629,40 @@ void walk_proof(const std::shared_ptr<MptTrie::Node>& node,
     walk_proof(node->children[target[0]], target.substr(1), proof);
 }
 
+/// Fail-closed proof walk. Mirrors `walk_proof` but returns a `td::Status`
+/// when a lazy node's cell cannot be decoded, so the caller (RPC layer) can
+/// surface a corrupt witness as a JSON-RPC error instead of triggering a
+/// process abort via `CHECK`.
+td::Status walk_proof_safe(const std::shared_ptr<MptTrie::Node>& node,
+                            ByteView target,
+                            std::vector<Bytes>& proof) {
+    if (!node) {
+        return td::Status::OK();
+    }
+    if (!node->ensure_decoded()) {
+        return td::Status::Error("MPT proof: failed to decode lazy node");
+    }
+    proof.push_back(node->rlp());
+
+    if (node->kind == kNodeLeaf) {
+        return td::Status::OK();
+    }
+    if (node->kind == kNodeExtension) {
+        if (target.size() < node->path.size() ||
+            !std::equal(node->path.begin(), node->path.end(), target.begin())) {
+            return td::Status::OK();
+        }
+        return walk_proof_safe(node->child, target.substr(node->path.size()), proof);
+    }
+    if (node->kind != kNodeBranch) {
+        return td::Status::Error("MPT proof: unknown node kind");
+    }
+    if (target.empty()) {
+        return td::Status::OK();
+    }
+    return walk_proof_safe(node->children[target[0]], target.substr(1), proof);
+}
+
 bool validate_node_shallow(const std::shared_ptr<MptTrie::Node>& node,
                            size_t& visited) {
     if (!node) {
@@ -597,6 +678,86 @@ bool validate_node_shallow(const std::shared_ptr<MptTrie::Node>& node,
         return !node->path.empty() && node->path.size() <= kKeyNibbles && node->child != nullptr;
     }
     return node->child_count() >= 2;
+}
+
+/// Strict validation budget. Caps total nodes touched, total bytes of RLP
+/// recomputed, and recursion depth so a maliciously deep / wide witness
+/// cannot turn validation itself into a DoS vector.
+struct MptValidationBudget {
+    size_t nodes = 0;
+    size_t rlp_bytes = 0;
+    static constexpr size_t kMaxNodes = 200000;
+    static constexpr size_t kMaxRlpBytes = 64ull * 1024ull * 1024ull;
+    static constexpr size_t kMaxDepth = 128;
+};
+
+bool validate_node_strict(const std::shared_ptr<MptTrie::Node>& node,
+                          MptValidationBudget& budget,
+                          size_t depth) {
+    if (!node) {
+        return true;
+    }
+    if (++budget.nodes > MptValidationBudget::kMaxNodes) {
+        return false;
+    }
+    if (depth > MptValidationBudget::kMaxDepth) {
+        return false;
+    }
+    if (!node->ensure_decoded()) {
+        return false;
+    }
+
+    // Recompute the canonical RLP from the decoded shape WITHOUT trusting
+    // the per-node `rlp_cache`. A tampered witness whose `rlp_cache` does
+    // not match its structural fields will fail this comparison.
+    Bytes recomputed = node->compute_rlp_from_shape(/*trust_cache=*/false);
+    if (recomputed.empty()) {
+        return false;
+    }
+    if (recomputed.size() > MptValidationBudget::kMaxRlpBytes ||
+        budget.rlp_bytes > MptValidationBudget::kMaxRlpBytes - recomputed.size()) {
+        return false;
+    }
+    budget.rlp_bytes += recomputed.size();
+    if (node->rlp_cache.empty() || node->rlp_cache != recomputed) {
+        return false;
+    }
+
+    if (node->kind == kNodeLeaf) {
+        // A leaf must have either a non-empty path or non-empty value (the
+        // single-leaf root case has empty path but kKeyNibbles-length nibble
+        // path is fine; the audit accepts either constraint).
+        if (node->path.size() > kKeyNibbles) {
+            return false;
+        }
+        return !node->path.empty() || !node->value.empty();
+    }
+    if (node->kind == kNodeExtension) {
+        if (node->path.empty() || node->path.size() > kKeyNibbles ||
+            node->child == nullptr) {
+            return false;
+        }
+        // Depth grows by the number of nibbles consumed plus one for the
+        // extension itself, capped against kMaxDepth.
+        size_t next_depth = depth + node->path.size() + 1;
+        if (next_depth > MptValidationBudget::kMaxDepth) {
+            return false;
+        }
+        return validate_node_strict(node->child, budget, next_depth);
+    }
+    if (node->kind == kNodeBranch) {
+        size_t children_count = 0;
+        for (const auto& c : node->children) {
+            if (c) {
+                ++children_count;
+                if (!validate_node_strict(c, budget, depth + 1)) {
+                    return false;
+                }
+            }
+        }
+        return children_count >= 2;
+    }
+    return false;
 }
 
 }  // namespace
@@ -642,6 +803,21 @@ std::vector<Bytes> MptTrie::proof(const ByteView& hashed_key) const {
     return out;
 }
 
+td::Result<std::vector<Bytes>> MptTrie::proof_safe(const ByteView& hashed_key) const {
+    if (hashed_key.size() != kHashLength) {
+        return td::Status::Error("MPT proof_safe: hashed key must be 32 bytes");
+    }
+    if (!root_) {
+        return std::vector<Bytes>{};
+    }
+    Bytes nibbles = silkworm::trie::unpack_nibbles(hashed_key);
+    std::vector<Bytes> out;
+    if (auto status = walk_proof_safe(root_, nibbles, out); status.is_error()) {
+        return std::move(status);
+    }
+    return out;
+}
+
 td::Ref<vm::Cell> MptTrie::serialize_to_cell() const {
     if (!root_) {
         return {};
@@ -649,15 +825,26 @@ td::Ref<vm::Cell> MptTrie::serialize_to_cell() const {
     return root_->serialize_cell();
 }
 
-bool MptTrie::load_from_cell(td::Ref<vm::Cell> root) {
+bool MptTrie::load_from_cell(td::Ref<vm::Cell> root,
+                              MptWitnessValidationMode mode) {
     if (root.is_null()) {
         clear();
         return true;
     }
     auto loaded = Node::lazy(std::move(root));
-    size_t visited = 0;
-    if (!validate_node_shallow(loaded, visited)) {
-        return false;
+    if (mode == MptWitnessValidationMode::StrictRecursive) {
+        MptValidationBudget budget;
+        if (!validate_node_strict(loaded, budget, 0)) {
+            // Reject the tampered witness rather than binding it. Subsequent
+            // proof / update operations therefore see an empty trie instead
+            // of a half-decoded structure that could trigger a CHECK abort.
+            return false;
+        }
+    } else {
+        size_t visited = 0;
+        if (!validate_node_shallow(loaded, visited)) {
+            return false;
+        }
     }
     root_ = std::move(loaded);
     return true;

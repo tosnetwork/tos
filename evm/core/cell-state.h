@@ -26,15 +26,46 @@
 #include <silkworm/core/types/account.hpp>
 
 #include "evm/core/mpt-trie.h"
+#include "td/utils/Status.h"
 #include "vm/cells.h"
 #include "vm/dict.h"
 
+#include <atomic>
 #include <cstddef>
 #include <map>
+#include <set>
 #include <unordered_map>
 #include <mutex>
 
 namespace evm_workchain {
+
+/// Selects how aggressively `CellEvmState::load_from_cell` validates the
+/// supplied state-root cell.
+///
+///   - StrictValidateAndRebuildWitness: full account/storage walk, decode all
+///     bytecode, then rebuild the Ethereum MPT witness from scratch. Used for
+///     hydration, snapshot import, manual repair, and offline verification.
+///   - StrictValidateNoWitness: same eager walk, but leave the witness empty
+///     (caller will load a separate witness cell).
+///   - TrustedLazy: only verify the root cell is non-special and bind the
+///     account dictionary; do NOT walk accounts/storage and do NOT decode
+///     bytecode. Designed for the consensus-bound EVM compute hot path where
+///     the input cell hash is already authenticated by the surrounding TOS
+///     account state and a per-tx full-state scan would be unmetered host
+///     work.
+enum class CellStateLoadMode {
+    StrictValidateAndRebuildWitness,
+    StrictValidateNoWitness,
+    TrustedLazy,
+};
+
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
+/// Test-only instrumentation. Each global counter is bumped exactly once per
+/// full-walk operation in CellEvmState. Tests reset to 0 before exercising a
+/// lazy hot-path call and assert the counter stays at the expected value.
+extern std::atomic<size_t> g_cell_state_full_walks;
+extern std::atomic<size_t> g_storage_index_walks;
+#endif
 
 struct CellEvmStateSizeStats {
     size_t accounts{0};
@@ -161,6 +192,14 @@ class CellEvmState : public silkworm::State {
     std::vector<silkworm::Bytes> ethereum_account_proof(const evmc::address& address) const;
     std::vector<silkworm::Bytes> ethereum_storage_proof(const evmc::address& address,
                                                         const evmc::bytes32& slot) const;
+    /// Fail-closed proof variants. A corrupt witness (lazy node fails to
+    /// decode, or a structural inconsistency surfaces during the walk)
+    /// returns a `td::Status` error rather than crashing the node, so RPC
+    /// handlers can map it to a JSON-RPC -32000 response.
+    td::Result<std::vector<silkworm::Bytes>> ethereum_account_proof_safe(
+        const evmc::address& address) const;
+    td::Result<std::vector<silkworm::Bytes>> ethereum_storage_proof_safe(
+        const evmc::address& address, const evmc::bytes32& slot) const;
     bool trie_witness_ready() const noexcept { return trie_witness_ready_; }
     bool rebuild_trie_witness() noexcept;
 
@@ -176,7 +215,18 @@ class CellEvmState : public silkworm::State {
 
     /// Replace the current account dictionary with one decoded from the given cell.
     /// Pass a null cell to start from empty.
-    bool load_from_cell(td::Ref<vm::Cell> root, bool rebuild_trie_witness = true);
+    bool load_from_cell(td::Ref<vm::Cell> root, CellStateLoadMode mode);
+
+    /// Legacy boolean shim. Maps `true` to `StrictValidateAndRebuildWitness`
+    /// (preserving the previous default) and `false` to
+    /// `StrictValidateNoWitness`. New callers on the consensus hot path should
+    /// pass `CellStateLoadMode::TrustedLazy` explicitly.
+    bool load_from_cell(td::Ref<vm::Cell> root, bool rebuild_trie_witness = true) {
+        return load_from_cell(
+            std::move(root),
+            rebuild_trie_witness ? CellStateLoadMode::StrictValidateAndRebuildWitness
+                                 : CellStateLoadMode::StrictValidateNoWitness);
+    }
 
     /// Serialize / load the canonical EVM block-hash history used by
     /// BLOCKHASH and the EIP-2935 history-storage system call. The serialized
@@ -213,9 +263,25 @@ class CellEvmState : public silkworm::State {
     bool update_account_trie_leaf(const evmc::address& address,
                                   const std::optional<silkworm::Account>& account);
 
+    /// Look up the inner EvmAccountData cell for an address from the account
+    /// dictionary. Returns false if the account is missing or if the dict
+    /// value has the wrong shape. Used by lazy `read_code` and by the lazy
+    /// storage-trie helpers.
+    bool lookup_account_data_cell(const evmc::address& address,
+                                  td::Ref<vm::Cell>& out) const;
+
+    /// Lazy storage-trie helpers (P1). `for_update` marks the trie dirty so
+    /// the next `serialize_trie_witness_to_cell` writes a fresh entry into
+    /// the storage-trie index dictionary. `for_read` only loads into the
+    /// touched-cache without marking dirty.
+    MptTrie* get_or_load_storage_trie_for_update(const evmc::address& address);
+    const MptTrie* get_or_load_storage_trie_for_read(const evmc::address& address) const;
+
     mutable vm::Dictionary account_dict_;  // 256-bit keys → EvmAccountData cells
 
-    // Code storage: code_hash → bytes (silkworm content-addressed)
+    // Code storage: code_hash → bytes (silkworm content-addressed). `mutable`
+    // so the lazy `read_code` path can populate the cache from inside a const
+    // member function.
     mutable std::unordered_map<evmc::bytes32, silkworm::Bytes> code_;
 
     // Block cache for BLOCKHASH opcode (silkworm requires it)
@@ -225,7 +291,17 @@ class CellEvmState : public silkworm::State {
     static thread_local silkworm::Bytes tl_code_buf_;
 
     MptTrie account_trie_;
-    std::map<evmc::address, MptTrie> storage_tries_;
+
+    // Lazy storage trie witness (P1). `storage_trie_index_root_` holds the
+    // root cell of the witness storage-trie index dictionary (256-bit address
+    // → ^MptTrieRoot). Only addresses actually touched by the current
+    // execution are materialised into `touched_storage_tries_`;
+    // `dirty_storage_trie_roots_` records which of those need to be flushed
+    // back into the index on the next serialize.
+    td::Ref<vm::Cell> storage_trie_index_root_;
+    mutable std::map<evmc::address, MptTrie> touched_storage_tries_;
+    std::set<evmc::address> dirty_storage_trie_roots_;
+
     bool trie_witness_ready_{true};
 
     CellEvmStateDeltaStats delta_stats_;

@@ -46,6 +46,12 @@ target_compile_options(evm_workchain PRIVATE
   $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-missing-field-initializers>
 )
 
+# Expose lightweight test-only counters for the lazy state-load and lazy
+# storage-witness-index paths. The atomic increments are O(1) per touched
+# entry and have negligible runtime cost; tests rely on the counters to
+# prove that hot-path operations stay O(touched) instead of O(global state).
+target_compile_definitions(evm_workchain PUBLIC TOS_EVM_TEST_INSTRUMENTATION=1)
+
 target_include_directories(evm_workchain
   PUBLIC
     ${CMAKE_SOURCE_DIR}             # for "evm/core/*.h", "evm/rpc/*.h"

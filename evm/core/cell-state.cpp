@@ -21,6 +21,11 @@
 
 namespace evm_workchain {
 
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
+std::atomic<size_t> g_cell_state_full_walks{0};
+std::atomic<size_t> g_storage_index_walks{0};
+#endif
+
 namespace {
 
 constexpr unsigned long long kEvmTrieWitnessMagic = 0x545249ull;  // "TRI"
@@ -122,18 +127,53 @@ std::optional<silkworm::Account> CellEvmState::read_account(
 }
 
 silkworm::ByteView CellEvmState::read_code(
-    const evmc::address& /*address*/, const evmc::bytes32& code_hash) const noexcept {
+    const evmc::address& address, const evmc::bytes32& code_hash) const noexcept {
     if (code_hash == silkworm::kEmptyHash) return {};
-    auto it = code_.find(code_hash);
-    if (it == code_.end()) return {};
-    // Return a ByteView pointing **into** the map entry's stable storage.
-    // Earlier we copied into a single `tl_code_buf_` thread_local — that
-    // was a bug: silkworm's IntraBlockState caches the ByteView in its
-    // `existing_code_` map, and the next read_code() for a different
-    // code_hash overwrote tl_code_buf_, invalidating the cached pointer.
-    // Recursive contracts that bounce between two code_hashes saw
-    // garbage. Surfaced by Phase G.1 stStaticCall recursive-bomb tests.
-    return silkworm::ByteView{it->second.data(), it->second.size()};
+    if (auto it = code_.find(code_hash); it != code_.end()) {
+        // Return a ByteView pointing **into** the map entry's stable storage.
+        // Earlier we copied into a single `tl_code_buf_` thread_local — that
+        // was a bug: silkworm's IntraBlockState caches the ByteView in its
+        // `existing_code_` map, and the next read_code() for a different
+        // code_hash overwrote tl_code_buf_, invalidating the cached pointer.
+        // Recursive contracts that bounce between two code_hashes saw
+        // garbage. Surfaced by Phase G.1 stStaticCall recursive-bomb tests.
+        return silkworm::ByteView{it->second.data(), it->second.size()};
+    }
+
+    // Lazy decode path: when the state was hydrated via `TrustedLazy`, the
+    // bytecode map is empty. Look up the account's EvmAccountData cell,
+    // decode just this account's bytecode, sanity-check the recovered
+    // code_hash matches what silkworm asked for, and cache the result.
+    try {
+        td::Ref<vm::Cell> account_cell;
+        if (!lookup_account_data_cell(address, account_cell)) {
+            return {};
+        }
+        silkworm::Account acct;
+        td::Ref<vm::Cell> storage_root;
+        td::Ref<vm::Cell> code_root;
+        if (!decode_evm_account_data(account_cell, acct, storage_root, code_root)) {
+            return {};
+        }
+        if (acct.code_hash != code_hash || code_root.is_null()) {
+            return {};
+        }
+        auto decoded = decode_evm_bytecode(code_root);
+        if (decoded.empty()) {
+            return {};
+        }
+        auto [it, inserted] = code_.emplace(
+            code_hash, silkworm::Bytes{decoded.begin(), decoded.end()});
+        return silkworm::ByteView{it->second.data(), it->second.size()};
+    } catch (vm::VmError&) {
+        return {};
+    } catch (vm::VmVirtError&) {
+        return {};
+    } catch (std::exception&) {
+        return {};
+    } catch (...) {
+        return {};
+    }
 }
 
 evmc::bytes32 CellEvmState::read_storage(const evmc::address& address,
@@ -248,9 +288,14 @@ void CellEvmState::update_account(const evmc::address& address,
         if (initial.has_value()) {
             delta_stats_.deleted_accounts++;
         }
-        // Account deleted
+        // Account deleted: drop any cached storage trie and mark it dirty so
+        // `serialize_trie_witness_to_cell` removes the index entry.
         account_dict_.lookup_delete(td::ConstBitPtr{key}, 256);
-        storage_tries_.erase(address);
+        touched_storage_tries_.erase(address);
+        // Insert an empty trie so the dirty flush deletes the index entry
+        // (the flush helper interprets `empty()` as "remove from index").
+        touched_storage_tries_.emplace(address, MptTrie{});
+        dirty_storage_trie_roots_.insert(address);
         CHECK(update_account_trie_leaf(address, std::nullopt));
         return;
     }
@@ -336,16 +381,17 @@ void CellEvmState::update_storage(const evmc::address& address,
     }
 
     auto hashed_slot = keccak_bytes32_value(location);
-    auto& storage_trie = storage_tries_[address];
+    auto* storage_trie = get_or_load_storage_trie_for_update(address);
+    CHECK(storage_trie != nullptr);
     if (current == zero) {
-        CHECK(storage_trie.erase_hashed(bytes32_view(hashed_slot)));
-        if (storage_trie.empty()) {
-            storage_tries_.erase(address);
-        }
+        CHECK(storage_trie->erase_hashed(bytes32_view(hashed_slot)));
     } else {
         auto encoded = encode_mpt_storage_value(current);
-        CHECK(storage_trie.upsert_hashed(bytes32_view(hashed_slot), encoded));
+        CHECK(storage_trie->upsert_hashed(bytes32_view(hashed_slot), encoded));
     }
+    // Mark the touched trie dirty so the next `serialize_trie_witness_to_cell`
+    // flushes the new root cell back into the storage-trie index dictionary.
+    dirty_storage_trie_roots_.insert(address);
 
     set_storage_root(address, storage.get_root_cell());
     auto acct = read_account(address);
@@ -506,11 +552,11 @@ evmc::bytes32 CellEvmState::ethereum_storage_root_hash(const evmc::address& addr
     if (!trie_witness_ready_) {
         return evmc::bytes32{};
     }
-    auto it = storage_tries_.find(address);
-    if (it == storage_tries_.end()) {
+    const auto* trie = get_or_load_storage_trie_for_read(address);
+    if (trie == nullptr || trie->empty()) {
         return silkworm::kEmptyRoot;
     }
-    return it->second.root_hash();
+    return trie->root_hash();
 }
 
 std::vector<silkworm::Bytes> CellEvmState::ethereum_account_proof(
@@ -528,15 +574,45 @@ std::vector<silkworm::Bytes> CellEvmState::ethereum_storage_proof(
     if (!trie_witness_ready_) {
         return {};
     }
-    auto it = storage_tries_.find(address);
-    if (it == storage_tries_.end()) {
+    const auto* trie = get_or_load_storage_trie_for_read(address);
+    if (trie == nullptr || trie->empty()) {
         return {};
     }
     auto hashed = keccak_bytes32_value(slot);
-    return it->second.proof(bytes32_view(hashed));
+    return trie->proof(bytes32_view(hashed));
+}
+
+td::Result<std::vector<silkworm::Bytes>>
+CellEvmState::ethereum_account_proof_safe(const evmc::address& address) const {
+    if (!trie_witness_ready_) {
+        return td::Status::Error(
+            "ethereum_account_proof_safe: trie witness not ready");
+    }
+    auto hashed = keccak_evm_address(address);
+    return account_trie_.proof_safe(bytes32_view(hashed));
+}
+
+td::Result<std::vector<silkworm::Bytes>>
+CellEvmState::ethereum_storage_proof_safe(const evmc::address& address,
+                                          const evmc::bytes32& slot) const {
+    if (!trie_witness_ready_) {
+        return td::Status::Error(
+            "ethereum_storage_proof_safe: trie witness not ready");
+    }
+    const auto* trie = get_or_load_storage_trie_for_read(address);
+    if (trie == nullptr || trie->empty()) {
+        return std::vector<silkworm::Bytes>{};
+    }
+    auto hashed = keccak_bytes32_value(slot);
+    return trie->proof_safe(bytes32_view(hashed));
 }
 
 bool CellEvmState::rebuild_storage_trie_for_account(const evmc::address& address) {
+    // Strict repair helper: walks the full storage dict for the account and
+    // rebuilds its MPT trie. Hot-path callers should use the lazy
+    // get_or_load_* helpers instead. Result is cached into
+    // `touched_storage_tries_` and marked dirty so the next serialize flushes
+    // it into the storage-trie index dictionary.
     MptTrie trie;
     bool ok = for_each_storage_while(
         address,
@@ -551,11 +627,8 @@ bool CellEvmState::rebuild_storage_trie_for_account(const evmc::address& address
     if (!ok) {
         return false;
     }
-    if (trie.empty()) {
-        storage_tries_.erase(address);
-    } else {
-        storage_tries_[address] = std::move(trie);
-    }
+    touched_storage_tries_[address] = std::move(trie);
+    dirty_storage_trie_roots_.insert(address);
     return true;
 }
 
@@ -567,9 +640,11 @@ bool CellEvmState::update_account_trie_leaf(
         return account_trie_.erase_hashed(bytes32_view(hashed_addr));
     }
     evmc::bytes32 storage_root = silkworm::kEmptyRoot;
-    auto storage_it = storage_tries_.find(address);
-    if (storage_it != storage_tries_.end()) {
-        storage_root = storage_it->second.root_hash();
+    // Use the lazy lookup so we don't materialise an MptTrie for accounts
+    // that are not actually being mutated by this transaction.
+    if (const auto* trie = get_or_load_storage_trie_for_read(address);
+        trie != nullptr && !trie->empty()) {
+        storage_root = trie->root_hash();
     }
     auto encoded = account->rlp(storage_root);
     return account_trie_.upsert_hashed(bytes32_view(hashed_addr), encoded);
@@ -578,7 +653,9 @@ bool CellEvmState::update_account_trie_leaf(
 bool CellEvmState::rebuild_trie_witness() noexcept {
     try {
         account_trie_.clear();
-        storage_tries_.clear();
+        storage_trie_index_root_ = {};
+        touched_storage_tries_.clear();
+        dirty_storage_trie_roots_.clear();
         bool ok = for_each_account_while(
             [this](const unsigned char key[32], const silkworm::Account& acct) {
                 evmc::address address{};
@@ -618,23 +695,46 @@ td::Ref<vm::Cell> CellEvmState::serialize_trie_witness_to_cell() const {
     }
     auto account_root = account_trie_.serialize_to_cell();
 
-    vm::Dictionary storage_dict(256);
-    vm::CellBuilder value_cb;
-    for (const auto& [address, trie] : storage_tries_) {
-        if (trie.empty()) {
-            continue;
+    // Flush only storage tries that the executing transaction touched. The
+    // index dictionary is otherwise reused as-is, so the cost of serializing
+    // is O(touched_accounts) instead of O(global storage-bearing accounts).
+    td::Ref<vm::Cell> storage_root = storage_trie_index_root_;
+    if (!dirty_storage_trie_roots_.empty()) {
+        try {
+            vm::Dictionary index(storage_root.is_null() ? td::Ref<vm::Cell>{} : storage_root,
+                                  256);
+            for (const auto& address : dirty_storage_trie_roots_) {
+                unsigned char key[32];
+                address_to_key(address, key);
+                auto it = touched_storage_tries_.find(address);
+                if (it == touched_storage_tries_.end() || it->second.empty()) {
+                    index.lookup_delete(td::ConstBitPtr{key}, 256);
+                    continue;
+                }
+                auto trie_cell = it->second.serialize_to_cell();
+                if (trie_cell.is_null()) {
+                    index.lookup_delete(td::ConstBitPtr{key}, 256);
+                    continue;
+                }
+                vm::CellBuilder value_cb;
+                value_cb.store_ref(trie_cell);
+                CHECK(index.set_builder(td::ConstBitPtr{key}, 256, value_cb));
+            }
+            storage_root = index.get_root_cell();
+            // The serialize is logically const for the witness output, but
+            // we want subsequent calls to skip the flush; promote the cache.
+            const_cast<CellEvmState*>(this)->storage_trie_index_root_ = storage_root;
+            const_cast<CellEvmState*>(this)->dirty_storage_trie_roots_.clear();
+        } catch (vm::VmError&) {
+            return {};
+        } catch (vm::VmVirtError&) {
+            return {};
+        } catch (std::exception&) {
+            return {};
+        } catch (...) {
+            return {};
         }
-        auto root = trie.serialize_to_cell();
-        if (root.is_null()) {
-            continue;
-        }
-        unsigned char key[32];
-        address_to_key(address, key);
-        value_cb.store_ref(root);
-        CHECK(storage_dict.set_builder(td::ConstBitPtr{key}, 256, value_cb));
-        CHECK(value_cb.reset_bool());
     }
-    auto storage_root = storage_dict.get_root_cell();
 
     if (account_root.is_null() && storage_root.is_null()) {
         return {};
@@ -661,7 +761,9 @@ td::Ref<vm::Cell> CellEvmState::serialize_trie_witness_to_cell() const {
 
 bool CellEvmState::load_trie_witness_from_cell(td::Ref<vm::Cell> root) {
     account_trie_.clear();
-    storage_tries_.clear();
+    storage_trie_index_root_ = {};
+    touched_storage_tries_.clear();
+    dirty_storage_trie_roots_.clear();
     trie_witness_ready_ = false;
     if (root.is_null()) {
         trie_witness_ready_ = true;
@@ -680,35 +782,29 @@ bool CellEvmState::load_trie_witness_from_cell(td::Ref<vm::Cell> root) {
         auto has_account = cs.fetch_ulong(1);
         if (has_account == 1) {
             if (cs.size_refs() == 0) return false;
-            if (!account_trie_.load_from_cell(cs.fetch_ref())) return false;
+            // P2 hardening: account trie is recursively validated on
+            // hydration so subsequent proof/update operations can rely on
+            // the cached RLP without trusting per-node `rlp_cache`.
+            if (!account_trie_.load_from_cell(
+                    cs.fetch_ref(),
+                    MptWitnessValidationMode::StrictRecursive)) {
+                return false;
+            }
         }
 
         auto has_storage = cs.fetch_ulong(1);
         if (has_storage == 1) {
             if (cs.size_refs() == 0) return false;
-            vm::Dictionary storage_dict(cs.fetch_ref(), 256);
-            bool ok = true;
-            bool walked = storage_dict.check_for_each(
-                [this, &ok](td::Ref<vm::CellSlice> value,
-                            td::ConstBitPtr key, int n) -> bool {
-                if (n != 256 || value.is_null() ||
-                    value->size() != 0 || value->size_refs() != 1) {
-                    ok = false;
-                    return false;
-                }
-                unsigned char key_bytes[32];
-                td::BitPtr{key_bytes}.copy_from(key, 256);
-                evmc::address address{};
-                std::memcpy(address.bytes, key_bytes + 12, 20);
-                MptTrie trie;
-                if (!trie.load_from_cell(value->prefetch_ref(0))) {
-                    ok = false;
-                    return false;
-                }
-                storage_tries_[address] = std::move(trie);
-                return true;
-            });
-            if (!walked || !ok) return false;
+            // Lazy bind: only verify the index root cell is non-special.
+            // Per-account storage tries are loaded on demand via
+            // `get_or_load_storage_trie_for_*`. The cost of `load_trie_witness`
+            // therefore does not grow with the global number of storage-bearing
+            // accounts.
+            auto index_root = cs.fetch_ref();
+            bool index_special = false;
+            (void)vm::load_cell_slice_special(index_root, index_special);
+            if (index_special) return false;
+            storage_trie_index_root_ = std::move(index_root);
         }
         if (cs.size() != 0 || cs.size_refs() != 0) return false;
         trie_witness_ready_ = true;
@@ -728,12 +824,14 @@ td::Ref<vm::Cell> CellEvmState::serialize_to_cell() const {
     return account_dict_root();
 }
 
-bool CellEvmState::load_from_cell(td::Ref<vm::Cell> root, bool rebuild_witness) {
+bool CellEvmState::load_from_cell(td::Ref<vm::Cell> root, CellStateLoadMode mode) {
     if (root.is_null()) {
         account_dict_ = vm::Dictionary(256);
         code_.clear();
         account_trie_.clear();
-        storage_tries_.clear();
+        storage_trie_index_root_ = {};
+        touched_storage_tries_.clear();
+        dirty_storage_trie_roots_.clear();
         trie_witness_ready_ = true;
         return true;
     }
@@ -743,6 +841,30 @@ bool CellEvmState::load_from_cell(td::Ref<vm::Cell> root, bool rebuild_witness) 
         if (special) return false;
 
         vm::Dictionary new_account_dict(root, 256);
+
+        if (mode == CellStateLoadMode::TrustedLazy) {
+            // Hot-path bind: the supplied root is already authenticated by the
+            // surrounding TOS account state cell hash, so we skip the full
+            // account/storage/code walk and only verify the cell is non-special.
+            // Bytecode is decoded on demand via `read_code`, and the storage
+            // witness index is resolved lazily in
+            // `get_or_load_storage_trie_for_*`.
+            account_dict_ = std::move(new_account_dict);
+            code_.clear();
+            account_trie_.clear();
+            storage_trie_index_root_ = {};
+            touched_storage_tries_.clear();
+            dirty_storage_trie_roots_.clear();
+            trie_witness_ready_ = false;
+            return true;
+        }
+
+        // Strict modes: enumerate all accounts, validate storage roots, and
+        // eagerly decode bytecode. Used for hydration, snapshot import,
+        // manual repair, and offline state-root verification.
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
+        g_cell_state_full_walks.fetch_add(1, std::memory_order_relaxed);
+#endif
         std::unordered_map<evmc::bytes32, silkworm::Bytes> new_code;
         bool ok = true;
         bool walked = new_account_dict.check_for_each([&ok, &new_code](td::Ref<vm::CellSlice> value,
@@ -783,11 +905,13 @@ bool CellEvmState::load_from_cell(td::Ref<vm::Cell> root, bool rebuild_witness) 
         if (!walked || !ok) return false;
         account_dict_ = std::move(new_account_dict);
         code_ = std::move(new_code);
-        if (rebuild_witness) {
+        storage_trie_index_root_ = {};
+        touched_storage_tries_.clear();
+        dirty_storage_trie_roots_.clear();
+        if (mode == CellStateLoadMode::StrictValidateAndRebuildWitness) {
             return rebuild_trie_witness();
         }
         account_trie_.clear();
-        storage_tries_.clear();
         trie_witness_ready_ = false;
         return true;
     } catch (vm::VmError&) {
@@ -901,6 +1025,100 @@ td::Ref<vm::Cell> CellEvmState::get_storage_root(const evmc::address& address) c
     td::Ref<vm::Cell> storage_root;
     if (!decode_evm_account_data(data_cell, acct, storage_root)) return {};
     return storage_root;
+}
+
+// Lazy storage-trie helpers. The witness `storage_trie_index_root_` is a
+// dictionary keyed by 256-bit address whose value is a single ref to the
+// account's MPT storage trie root cell. We materialise an MptTrie object for
+// an address only when the executing transaction actually touches that
+// account's storage, and we mark it dirty so `serialize_trie_witness_to_cell`
+// writes it back into the index. Read-only helpers (proof/root hash) load
+// without dirty-marking.
+const MptTrie* CellEvmState::get_or_load_storage_trie_for_read(
+    const evmc::address& address) const {
+    auto it = touched_storage_tries_.find(address);
+    if (it != touched_storage_tries_.end()) {
+        return &it->second;
+    }
+    if (storage_trie_index_root_.is_null()) {
+        return nullptr;
+    }
+    try {
+        bool special = false;
+        (void)vm::load_cell_slice_special(storage_trie_index_root_, special);
+        if (special) {
+            return nullptr;
+        }
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
+        g_storage_index_walks.fetch_add(1, std::memory_order_relaxed);
+#endif
+        vm::Dictionary index(storage_trie_index_root_, 256);
+        unsigned char key[32];
+        address_to_key(address, key);
+        auto value = index.lookup(td::ConstBitPtr{key}, 256);
+        if (value.is_null()) {
+            return nullptr;
+        }
+        if (value->size() != 0 || value->size_refs() != 1) {
+            return nullptr;
+        }
+        MptTrie trie;
+        if (!trie.load_from_cell(value->prefetch_ref(0))) {
+            return nullptr;
+        }
+        auto [inserted_it, _] = touched_storage_tries_.emplace(address, std::move(trie));
+        return &inserted_it->second;
+    } catch (vm::VmError&) {
+        return nullptr;
+    } catch (vm::VmVirtError&) {
+        return nullptr;
+    } catch (std::exception&) {
+        return nullptr;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+MptTrie* CellEvmState::get_or_load_storage_trie_for_update(
+    const evmc::address& address) {
+    auto it = touched_storage_tries_.find(address);
+    if (it != touched_storage_tries_.end()) {
+        return &it->second;
+    }
+    // Reuse the read path to load lazily, then upgrade to mutable. The
+    // const_cast is sound here: the cache is `mutable`, and we own the
+    // non-const this pointer in this overload.
+    const MptTrie* loaded = static_cast<const CellEvmState*>(this)
+                                ->get_or_load_storage_trie_for_read(address);
+    if (loaded != nullptr) {
+        return const_cast<MptTrie*>(loaded);
+    }
+    // No existing entry — create an empty one for this address.
+    auto [inserted_it, _] = touched_storage_tries_.emplace(address, MptTrie{});
+    return &inserted_it->second;
+}
+
+bool CellEvmState::lookup_account_data_cell(const evmc::address& address,
+                                            td::Ref<vm::Cell>& out) const {
+    out = {};
+    try {
+        unsigned char key[32];
+        address_to_key(address, key);
+        auto cs = account_dict_.lookup(td::ConstBitPtr{key}, 256);
+        if (cs.is_null() || cs->size() != 0 || cs->size_refs() != 1) {
+            return false;
+        }
+        out = cs->prefetch_ref(0);
+        return out.not_null();
+    } catch (vm::VmError&) {
+        return false;
+    } catch (vm::VmVirtError&) {
+        return false;
+    } catch (std::exception&) {
+        return false;
+    } catch (...) {
+        return false;
+    }
 }
 
 void CellEvmState::set_storage_root(const evmc::address& address,

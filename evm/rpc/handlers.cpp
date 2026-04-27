@@ -2696,8 +2696,14 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
     // Persistent witness path: proof generation walks only the MPT path
     // nodes already carried in cp.new_data, matching execution-client trie
     // behaviour instead of rebuilding account/storage tries per RPC call.
+    // Use the fail-closed *_safe variants so a corrupt witness yields a
+    // structured RPC error rather than crashing the node via CHECK abort.
     evmc::bytes32 storage_hash = cell_state->ethereum_storage_root_hash(addr);
-    auto account_proof = cell_state->ethereum_account_proof(addr);
+    auto account_proof_result = cell_state->ethereum_account_proof_safe(addr);
+    if (account_proof_result.is_error()) {
+        return {make_error(id, -32000, "corrupt EVM trie witness"), true};
+    }
+    auto account_proof = account_proof_result.move_as_ok();
 
     if (account_proof.empty()) {
         // Empty trie → emit the canonical empty-trie node so the proof
@@ -2761,7 +2767,12 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
         // `silkworm::State::read_storage` is `const noexcept` so a const
         // reference is enough; no `const_cast` needed.
         auto v = state.state().read_storage(addr, a.incarnation, slots[i]);
-        auto slot_proof = cell_state->ethereum_storage_proof(addr, slots[i]);
+        auto slot_proof_result =
+            cell_state->ethereum_storage_proof_safe(addr, slots[i]);
+        if (slot_proof_result.is_error()) {
+            return {make_error(id, -32000, "corrupt EVM trie witness"), true};
+        }
+        auto slot_proof = slot_proof_result.move_as_ok();
         if (slot_proof.empty()) {
             slot_proof.push_back(silkworm::Bytes{0x80});
         }

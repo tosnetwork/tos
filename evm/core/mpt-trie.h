@@ -17,9 +17,25 @@
 #include <evmc/evmc.hpp>
 #include <silkworm/core/common/bytes.hpp>
 
+#include "td/utils/Status.h"
 #include "vm/cells.h"
 
 namespace evm_workchain {
+
+/// Selects how `MptTrie::load_from_cell` validates the witness on hydration.
+///   - Shallow: only checks the root node's cached fields and shape. Cheap,
+///     but trusts the cached RLP and child refs at deeper levels. Acceptable
+///     when the witness has previously been strictly validated and is being
+///     re-bound to the same state.
+///   - StrictRecursive: walks every reachable node, recomputes RLP from the
+///     decoded shape (without trusting `rlp_cache`), and verifies each
+///     `rlp_cache` byte-equals the recomputation. Used at hydration / import /
+///     debug repair so a corrupt or maliciously-mutated witness cell cannot
+///     produce an invalid proof or trip a runtime CHECK.
+enum class MptWitnessValidationMode {
+    Shallow,
+    StrictRecursive,
+};
 
 class MptTrie {
   public:
@@ -44,9 +60,21 @@ class MptTrie {
     /// Standard Ethereum proof nodes, root to terminal/exclusion node.
     std::vector<silkworm::Bytes> proof(const silkworm::ByteView& hashed_key) const;
 
-    /// Persist/load the witness root node. Null cell means empty trie.
+    /// Fail-closed proof variant. Propagates lazy-decode/structural errors as
+    /// `td::Status` instead of triggering a `CHECK` abort, so RPC handlers
+    /// can map a corrupt witness to a JSON-RPC error rather than crashing
+    /// the node.
+    td::Result<std::vector<silkworm::Bytes>> proof_safe(
+        const silkworm::ByteView& hashed_key) const;
+
+    /// Persist/load the witness root node. Null cell means empty trie. The
+    /// default validation mode is StrictRecursive — callers on a hot path
+    /// that have already validated the witness elsewhere may opt into
+    /// Shallow for speed.
     td::Ref<vm::Cell> serialize_to_cell() const;
-    bool load_from_cell(td::Ref<vm::Cell> root);
+    bool load_from_cell(td::Ref<vm::Cell> root,
+                        MptWitnessValidationMode mode =
+                            MptWitnessValidationMode::StrictRecursive);
 
   private:
     std::shared_ptr<Node> root_;
