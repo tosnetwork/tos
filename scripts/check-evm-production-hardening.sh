@@ -432,6 +432,24 @@ if ! rg -n 'g_evm_rpc_profile\{[^}]*ValidatorMinimal' "$rpc_handlers" >/dev/null
     exit 1
 fi
 
+# M-02: AdminLocal EVM RPC profile must be refused on a non-loopback
+# listener unless `--allow-remote-admin-rpc` is set AND an API key is
+# configured. The listener-layer hardening lives in
+# `validator-engine/json-rpc-server.cpp` (`refusing AdminLocal ...`
+# error strings emitted from `JsonRpcServer::listen`). A regression
+# that silently re-applies `set_evm_rpc_profile(AdminLocal)` on a
+# remote address would re-expose the higher 30M gas cap, eth_getProof
+# and (when compiled in) debug methods to public clients.
+json_rpc_server_cpp="$root/validator-engine/json-rpc-server.cpp"
+if ! grep -q "refusing AdminLocal" "$json_rpc_server_cpp"; then
+    echo "evm production hardening check failed: missing AdminLocal non-loopback hardening in $json_rpc_server_cpp" >&2
+    exit 1
+fi
+if ! grep -q "allow_remote_admin_rpc" "$json_rpc_server_cpp"; then
+    echo "evm production hardening check failed: AdminLocal remote override flag (allow_remote_admin_rpc) missing in $json_rpc_server_cpp" >&2
+    exit 1
+fi
+
 if [[ "${TOS_CHECK_ETOS_GIVER_BYTECODE:-0}" == "1" ]]; then
     if ! command -v node >/dev/null 2>&1; then
         echo "evm production hardening check failed: node is required for EToSPoWGiver bytecode equivalence check" >&2

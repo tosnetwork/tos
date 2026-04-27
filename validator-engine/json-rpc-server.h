@@ -157,7 +157,41 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
     // command-line wiring lives in `validator-engine.cpp` under the
     // `--evm-rpc-profile=validator|follower|admin` flag.
     std::optional<evm_workchain::EvmRpcProfile> evm_rpc_profile;
+    // M-02 hardening: allow the `AdminLocal` EVM RPC profile to be
+    // applied to a non-loopback listener. Default is `false`: a
+    // mis-configured `--evm-rpc-profile=admin` (or
+    // `TOS_EVM_RPC_PROFILE=admin`) on a public interface is refused at
+    // listen time so the heavy gas cap, eth_getProof and (when
+    // compiled in) debug methods cannot silently surface to remote
+    // clients. Operators that genuinely need a remote admin endpoint
+    // must set this to true (CLI flag `--allow-remote-admin-rpc`) AND
+    // configure an API key — both checks are enforced together.
+    bool allow_remote_admin_rpc = false;
   };
+
+  // M-02 hardening: the listen-time decision matrix is broken out so
+  // unit tests can drive every (loopback, profile, api_key, override)
+  // tuple without standing up a real TCP listener. Returns the result
+  // type below; `listen()` itself only translates `Refuse*` outcomes
+  // into the appropriate LOG(ERROR) + early return.
+  enum class ListenDecision {
+    Accept,
+    RefuseAdminRemoteWithoutOverride,
+    RefuseAdminRemoteWithoutApiKey,
+    RefuseWriteRemoteWithoutAuth,
+  };
+  // Pure decision-making helper. No side effects, no logging.
+  // - `is_loopback`     : true iff the listening address is 127.0.0.1 / ::1.
+  // - `profile`         : resolved EvmRpcProfile (already merged with env).
+  // - `api_key_empty`   : `Options::api_key.empty()` snapshot.
+  // - `allow_remote_admin`: `Options::allow_remote_admin_rpc` snapshot.
+  // - `readonly`        : `Options::readonly` snapshot.
+  static ListenDecision decide_listen_admission(
+      bool is_loopback,
+      evm_workchain::EvmRpcProfile profile,
+      bool api_key_empty,
+      bool allow_remote_admin,
+      bool readonly);
 
   static td::actor::ActorOwn<JsonRpcServer> create(
       td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager,

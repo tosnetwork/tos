@@ -246,6 +246,41 @@ JsonRpcServer::JsonRpcServer(
   }
 }
 
+// M-02 hardening: pure decision helper for the listener-layer admission
+// matrix. Tested directly from `validator-engine/test-json-rpc-cache.cpp`
+// against every (is_loopback, profile, api_key, allow_remote_admin,
+// readonly) tuple in the audit's M-02 matrix. Keep this function
+// stateless and side-effect-free — `listen()` translates every
+// `Refuse*` outcome into the appropriate LOG(ERROR) and early return.
+JsonRpcServer::ListenDecision JsonRpcServer::decide_listen_admission(
+    bool is_loopback,
+    evm_workchain::EvmRpcProfile profile,
+    bool api_key_empty,
+    bool allow_remote_admin,
+    bool readonly) {
+  // 1. AdminLocal must be loopback-only unless the operator BOTH
+  //    flips the explicit override AND provisions an API key. This is
+  //    a defense-in-depth gate over a profile misconfiguration: the
+  //    "Local" in the profile name is now enforced at the listener
+  //    layer, not just documented.
+  if (profile == evm_workchain::EvmRpcProfile::AdminLocal && !is_loopback) {
+    if (!allow_remote_admin) {
+      return ListenDecision::RefuseAdminRemoteWithoutOverride;
+    }
+    if (api_key_empty) {
+      return ListenDecision::RefuseAdminRemoteWithoutApiKey;
+    }
+  }
+  // 2. Pre-existing rule: a write-enabled, unauthenticated RPC surface
+  //    cannot be exposed on a non-loopback address. Operators that
+  //    really want this must pass `--json-rpc-readonly` or
+  //    `--json-rpc-api-key`.
+  if (!is_loopback && !readonly && api_key_empty) {
+    return ListenDecision::RefuseWriteRemoteWithoutAuth;
+  }
+  return ListenDecision::Accept;
+}
+
 void JsonRpcServer::listen(td::IPAddress addr) {
   CHECK(http_.empty());
   // Enable EVM RPC rate limiting for the production server
@@ -287,6 +322,52 @@ void JsonRpcServer::listen(td::IPAddress addr) {
                    << "\" is not recognised; using ValidatorMinimal default";
     }
   }
+
+  // M-02 hardening: classify the listening address BEFORE applying the
+  // EVM RPC profile. The earlier ordering eagerly applied
+  // `set_evm_rpc_profile(AdminLocal)` (which raises gas cap, enables
+  // `eth_getProof`, and unlocks the debug allowlist when compiled in)
+  // even when the address turned out to be non-loopback and the
+  // listener was about to be refused below. With the order reversed,
+  // an `AdminLocal` profile mis-set on a public interface never
+  // touches the global EVM toggles.
+  bool is_loopback = false;
+  {
+    auto ip_str = addr.get_ip_str().str();
+    is_loopback = (ip_str == "127.0.0.1" || ip_str == "::1" ||
+                   ip_str == "0:0:0:0:0:0:0:1");
+  }
+
+  // Run the pure admission decision before any side effects. This is
+  // the same matrix exercised by the unit test in
+  // `validator-engine/test-json-rpc-cache.cpp` (M-02 sub-cases).
+  const auto decision = decide_listen_admission(
+      is_loopback, resolved_profile, opts_.api_key.empty(),
+      opts_.allow_remote_admin_rpc, opts_.readonly);
+  switch (decision) {
+    case ListenDecision::RefuseAdminRemoteWithoutOverride:
+      LOG(ERROR) << "JSON-RPC: refusing AdminLocal EVM RPC profile on "
+                 << "non-loopback address (" << addr.get_ip_str().str()
+                 << "); pass --allow-remote-admin-rpc to override "
+                 << "(API key still required).";
+      http_ = {};
+      return;
+    case ListenDecision::RefuseAdminRemoteWithoutApiKey:
+      LOG(ERROR) << "JSON-RPC: refusing AdminLocal EVM RPC profile on "
+                 << "non-loopback address (" << addr.get_ip_str().str()
+                 << ") without API key. Set --json-rpc-api-key.";
+      http_ = {};
+      return;
+    case ListenDecision::RefuseWriteRemoteWithoutAuth:
+      LOG(ERROR) << "JSON-RPC: refusing to listen on non-loopback address "
+                 << addr << " with write methods enabled and no API key. "
+                 << "Set --json-rpc-readonly or --json-rpc-api-key.";
+      http_ = {};
+      return;
+    case ListenDecision::Accept:
+      break;
+  }
+
   evm_workchain::set_evm_rpc_profile(resolved_profile);
   const char* profile_label =
       resolved_profile == evm_workchain::EvmRpcProfile::ValidatorMinimal
@@ -311,25 +392,6 @@ void JsonRpcServer::listen(td::IPAddress addr) {
       PSTRING() << "JsonRPC@" << addr, addr, std::move(callback));
   LOG(WARNING) << "JSON-RPC server listening on " << addr;
 
-  // Refuse to silently expose a write-
-  // enabled, unauthenticated RPC surface on a non-loopback address. Operators
-  // who really want this must pass `--json-rpc-readonly` or `--json-rpc-api-key`.
-  // We deliberately do NOT change the historical defaults (readonly=false,
-  // empty api_key, cors=*) here — only loudly refuse the dangerous combination.
-  bool is_loopback = false;
-  {
-    auto ip_str = addr.get_ip_str().str();
-    if (ip_str == "127.0.0.1" || ip_str == "::1" || ip_str == "0:0:0:0:0:0:0:1") {
-      is_loopback = true;
-    }
-  }
-  if (!is_loopback && !opts_.readonly && opts_.api_key.empty()) {
-    LOG(ERROR) << "JSON-RPC: refusing to listen on non-loopback address " << addr
-               << " with write methods enabled and no API key. "
-               << "Set --json-rpc-readonly or --json-rpc-api-key.";
-    http_ = {};
-    return;
-  }
   if (!is_loopback && opts_.cors_origin == "*" && !opts_.readonly) {
     LOG(WARNING) << "JSON-RPC: serving non-loopback address " << addr
                  << " with CORS Access-Control-Allow-Origin=\"*\" while write "

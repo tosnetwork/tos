@@ -5426,6 +5426,15 @@ void ValidatorEngine::set_evm_rpc_profile(evm_workchain::EvmRpcProfile profile) 
   json_rpc_opts_.evm_rpc_profile = profile;
 }
 
+void ValidatorEngine::set_allow_remote_admin_evm_rpc(bool allow) {
+  // M-02 hardening: keep the validator-engine field and the JsonRpcServer
+  // Options struct in sync. The field on `ValidatorEngine` is the
+  // canonical operator-supplied value; `json_rpc_opts_` is what gets
+  // copied into the server actor at construction time.
+  allow_remote_admin_evm_rpc_ = allow;
+  json_rpc_opts_.allow_remote_admin_rpc = allow;
+}
+
 void ValidatorEngine::get_current_validator_perm_key(td::Promise<std::pair<tos::PublicKey, size_t>> promise) {
   if (state_.is_null()) {
     promise.set_error(td::Status::Error(tos::ErrorCode::notready, "not started"));
@@ -6009,6 +6018,23 @@ int main(int argc, char *argv[]) {
     });
     return td::Status::OK();
   });
+  // M-02 hardening: explicit override that allows the AdminLocal EVM
+  // RPC profile to be applied on a non-loopback listener. The flag
+  // takes no value: passing `--allow-remote-admin-rpc` flips the
+  // override on. The listener still requires an API key to actually
+  // accept the AdminLocal profile remotely (see
+  // `JsonRpcServer::decide_listen_admission`); this flag alone is not
+  // sufficient. Recommended deployment is still loopback + SSH/VPN.
+  p.add_option('\0', "allow-remote-admin-rpc",
+               "Allow AdminLocal EVM RPC profile on non-loopback listeners "
+               "(REQUIRES --json-rpc-api-key, NOT recommended; prefer SSH "
+               "tunnel / VPN to a loopback admin endpoint).",
+               [&]() {
+                 acts.push_back([&x] {
+                   td::actor::send_closure(
+                       x, &ValidatorEngine::set_allow_remote_admin_evm_rpc, true);
+                 });
+               });
   p.add_checked_option(
       '\0', "quic-flood-control", "per-IP limit for QUIC connections (-1 to disable)", [&](td::Slice arg) {
         TRY_RESULT(l, td::to_integer_safe<int64_t>(arg));
