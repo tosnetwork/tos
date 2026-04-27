@@ -167,6 +167,22 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
     // must set this to true (CLI flag `--allow-remote-admin-rpc`) AND
     // configure an API key — both checks are enforced together.
     bool allow_remote_admin_rpc = false;
+
+    // In-process per-IP rate-limit configuration. The gate sits on the
+    // EVM RPC dispatcher BEFORE the per-method limiters. When the
+    // operator does not pin the toggle (`per_ip_enabled` left at
+    // `std::nullopt`) the server picks a default per profile:
+    //   ValidatorMinimal  → disabled (validators usually do not
+    //                       expose public RPC, and benign internal
+    //                       RPC patterns can trip the gate)
+    //   FollowerPublic    → enabled
+    //   AdminLocal        → enabled (loopback admin is small in
+    //                       absolute requests; the gate is a cheap
+    //                       extra layer)
+    std::optional<bool> per_ip_enabled;
+    double per_ip_requests_per_sec = 30.0;
+    double per_ip_burst = 60.0;
+    uint32_t per_ip_table_size = 1024;
   };
 
   // M-02 hardening: the listen-time decision matrix is broken out so
@@ -223,18 +239,25 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   void on_request(RequestPtr request, PayloadPtr payload,
                   td::Promise<HttpReturn> promise);
   // Called by BodyWaiter via actor message — reads payload OUTSIDE HttpPayload mutex.
-  void on_body_ready(PayloadPtr payload, td::Promise<HttpReturn> promise);
+  // `source_ip` is the attribution string for the per-IP rate gate
+  // (see `evm_workchain::consume_per_ip_token`); it is passed by value
+  // to the actor scheduler. Empty string disables the gate.
+  void on_body_ready(PayloadPtr payload, std::string source_ip,
+                     td::Promise<HttpReturn> promise);
   void process_body(td::BufferSlice body, std::string req_id,
+                    std::string source_ip,
                     td::Promise<HttpReturn> promise);
   // JSON-RPC 2.0 single object dispatch: parses id/method/params from `req`
   // and dispatches.  `req` must be a JSON Object — callers (process_body and
   // the batch handler) enforce this.
   void process_single_object_request(td::JsonValue req,
+                                     std::string source_ip,
                                      td::Promise<HttpReturn> promise);
   // JSON-RPC 2.0 batch dispatch: array of element requests becomes an array
   // of element responses (notifications omitted).  See process_batch.
   struct BatchState;
   void process_batch(std::vector<td::JsonValue> elements,
+                     std::string source_ip,
                      td::Promise<HttpReturn> promise);
   void process_batch_step(std::shared_ptr<BatchState> state);
   void finalize_batch(std::shared_ptr<BatchState> state);
@@ -244,7 +267,8 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   void on_post_rest_body_ready(PayloadPtr payload, std::string method,
                                td::Promise<HttpReturn> promise);
   void dispatch_method(std::string method, td::JsonObject &params,
-                       std::string req_id, td::Promise<HttpReturn> promise);
+                       std::string req_id, std::string source_ip,
+                       td::Promise<HttpReturn> promise);
 
   // Method handlers — existing
   void handle_sendBoc(td::JsonObject &params, std::string req_id,
@@ -445,8 +469,13 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
 
   // Cache-aware dispatch: checks cache for read-only methods, delegates to
   // dispatch_method() on miss, and stores successful results.
+  // `source_ip` flows through to `dispatch_method` and is consulted by
+  // the EVM RPC fan-out to drive the per-IP rate-limit gate. Cache hits
+  // return without consulting the gate — that is by design: cached
+  // responses cost essentially nothing.
   void cached_dispatch_method(std::string method, td::JsonObject &params,
-                              std::string req_id, td::Promise<HttpReturn> promise);
+                              std::string req_id, std::string source_ip,
+                              td::Promise<HttpReturn> promise);
 
   void alarm() override;
 

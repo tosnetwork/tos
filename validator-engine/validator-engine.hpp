@@ -507,6 +507,9 @@ class ValidatorEngine : public td::actor::Actor {
   void set_json_rpc_cache_ttl(td::int32 seconds);
   void set_evm_rpc_profile(evm_workchain::EvmRpcProfile profile);
   void set_allow_remote_admin_evm_rpc(bool allow);
+  void set_evm_rpc_per_ip_enabled(bool enabled);
+  void set_evm_rpc_per_ip_rate(double rate);
+  void set_evm_rpc_per_ip_burst(double burst);
 
   void get_current_validator_perm_key(td::Promise<std::pair<tos::PublicKey, size_t>> promise);
 

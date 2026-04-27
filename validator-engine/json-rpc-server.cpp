@@ -387,6 +387,29 @@ void JsonRpcServer::listen(td::IPAddress addr) {
   // uno_sendTransfer are inert — `try_consume_uno_sendtx_token` returns
   // true on every call when g_rate_limit_enabled is false.
   uno_workchain::enable_uno_rpc_rate_limit(true);
+
+  // Defense-in-depth: in-process per-IP rate gate. Operators that pin
+  // `Options::per_ip_enabled` win; otherwise we pick a per-profile
+  // default — ValidatorMinimal opts out (validators rarely expose
+  // public RPC and benign internal traffic could trip the gate),
+  // FollowerPublic and AdminLocal opt in.
+  {
+    bool per_ip_default_for_profile =
+        (resolved_profile != evm_workchain::EvmRpcProfile::ValidatorMinimal);
+    bool per_ip_enabled = opts_.per_ip_enabled.value_or(
+        per_ip_default_for_profile);
+    evm_workchain::PerIpRateConfig cfg;
+    cfg.requests_per_sec = opts_.per_ip_requests_per_sec;
+    cfg.burst = opts_.per_ip_burst;
+    cfg.table_size = opts_.per_ip_table_size;
+    cfg.enabled = per_ip_enabled;
+    evm_workchain::set_per_ip_rate_config(cfg);
+    LOG(WARNING) << "json-rpc: EVM per-IP rate gate "
+                 << (per_ip_enabled ? "ENABLED" : "disabled")
+                 << " (rate=" << cfg.requests_per_sec
+                 << " rps, burst=" << cfg.burst
+                 << ", buckets=" << cfg.table_size << ")";
+  }
   auto callback = std::make_shared<HttpCallback>(actor_id(this));
   http_ = td::actor::create_actor<http::HttpServer>(
       PSTRING() << "JsonRPC@" << addr, addr, std::move(callback));
@@ -427,10 +450,58 @@ void JsonRpcServer::HttpCallback::receive_request(
 
 // ─── Request handling ─────────────────────────────────────────────────────
 
+// Extract the originating client IP for the in-process per-IP rate
+// limiter. Production deployments terminate TLS / front-end gateway
+// at a reverse proxy that injects `X-Forwarded-For` (or `X-Real-IP`),
+// so we honour the leftmost address from those headers when present.
+// When no proxy header is present (direct connection on a private
+// network, in-process test harness) we return an empty string and the
+// per-IP gate downgrades to a no-op for that request — the global and
+// per-method limiters still apply. The per-IP gate is opt-in (default
+// off), so an empty attribution never softens the floor below the
+// existing limits.
+//
+// We trust ONLY a single hop. A malicious client can forge
+// `X-Forwarded-For` themselves, so this is meaningful only when an
+// operator-controlled proxy is the actual peer; if that is not the
+// case the operator must keep the per-IP gate disabled OR run the
+// node behind a proxy that strips the header.
+static std::string extract_source_ip_for_per_ip_rate_limit(
+    const std::unique_ptr<tos::http::HttpRequest> &request) {
+  if (!request) return std::string();
+  std::string xff = request->get_header("X-Forwarded-For");
+  if (!xff.empty()) {
+    auto comma = xff.find(',');
+    std::string first = comma == std::string::npos
+                            ? std::move(xff)
+                            : xff.substr(0, comma);
+    // Strip leading / trailing whitespace.
+    size_t start = 0;
+    while (start < first.size() &&
+           (first[start] == ' ' || first[start] == '\t')) {
+      start++;
+    }
+    size_t end = first.size();
+    while (end > start &&
+           (first[end - 1] == ' ' || first[end - 1] == '\t')) {
+      end--;
+    }
+    if (end > start) {
+      return first.substr(start, end - start);
+    }
+  }
+  std::string xri = request->get_header("X-Real-IP");
+  if (!xri.empty()) {
+    return xri;
+  }
+  return std::string();
+}
+
 void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
                                td::Promise<HttpReturn> promise) {
   auto method = request->method();
   auto url = request->url();
+  std::string source_ip = extract_source_ip_for_per_ip_rate_limit(request);
   // Never log the raw URL — query strings
   // can carry the API key (X-API-Key fallback) or other operator secrets and
   // this log line runs BEFORE auth. Strip the query string for logging only;
@@ -567,7 +638,8 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
         return;
       }
       cached_dispatch_method(std::move(rest_method), json_val.get_object(),
-                             "null", std::move(promise));
+                             "null", std::move(source_ip),
+                             std::move(promise));
       return;
     }
 
@@ -674,7 +746,8 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
                                             "null", opts_.cors_origin));
       return;
     }
-    process_body(body_r.move_as_ok(), "", std::move(promise));
+    process_body(body_r.move_as_ok(), "", std::move(source_ip),
+                 std::move(promise));
   } else {
     // Body not yet fully received — register callback.
     // IMPORTANT: completed() must NOT call payload_->get_slice() directly,
@@ -684,8 +757,11 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     class BodyWaiter : public http::HttpPayload::Callback {
      public:
       BodyWaiter(td::actor::ActorId<JsonRpcServer> server, PayloadPtr payload,
+                 std::string source_ip,
                  td::Promise<HttpReturn> promise)
-          : server_(server), payload_(std::move(payload)), promise_(std::move(promise)) {}
+          : server_(server), payload_(std::move(payload)),
+            source_ip_(std::move(source_ip)),
+            promise_(std::move(promise)) {}
       void run(size_t) override {}
       void completed() override {
         if (fired_) {
@@ -694,20 +770,23 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
         fired_ = true;
         // Do NOT read payload here (mutex deadlock). Defer to actor scheduler.
         td::actor::send_closure(server_, &JsonRpcServer::on_body_ready,
-                                payload_, std::move(promise_));
+                                payload_, std::move(source_ip_),
+                                std::move(promise_));
       }
      private:
       td::actor::ActorId<JsonRpcServer> server_;
       PayloadPtr payload_;
+      std::string source_ip_;
       td::Promise<HttpReturn> promise_;
       bool fired_ = false;
     };
     payload->add_callback(std::make_unique<BodyWaiter>(
-        actor_id(this), payload, std::move(promise)));
+        actor_id(this), payload, std::move(source_ip), std::move(promise)));
   }
 }
 
-void JsonRpcServer::on_body_ready(PayloadPtr payload, td::Promise<HttpReturn> promise) {
+void JsonRpcServer::on_body_ready(PayloadPtr payload, std::string source_ip,
+                                  td::Promise<HttpReturn> promise) {
   if (!payload) {
     promise.set_value(make_eth_json_error(-32603, "Internal error: missing request payload", "null",
                                           opts_.cors_origin));
@@ -721,7 +800,8 @@ void JsonRpcServer::on_body_ready(PayloadPtr payload, td::Promise<HttpReturn> pr
                                           opts_.cors_origin));
     return;
   }
-  process_body(body_r.move_as_ok(), "", std::move(promise));
+  process_body(body_r.move_as_ok(), "", std::move(source_ip),
+               std::move(promise));
 }
 
 // JSON-RPC 2.0 batch request cap.  Anything larger gets rejected with
@@ -731,6 +811,7 @@ void JsonRpcServer::on_body_ready(PayloadPtr payload, td::Promise<HttpReturn> pr
 static constexpr std::size_t kJsonRpcMaxBatchSize = 100;
 
 void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
+                                 std::string source_ip,
                                  td::Promise<HttpReturn> promise) {
   // NOTE: All JSON-RPC envelope errors below use `make_eth_json_error`
   // (spec-compliant `{jsonrpc, id, error:{code, message}}`, HTTP 200) so
@@ -775,7 +856,8 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
     for (auto &e : arr) {
       elements.push_back(std::move(e));
     }
-    process_batch(std::move(elements), std::move(promise));
+    process_batch(std::move(elements), std::move(source_ip),
+                  std::move(promise));
     return;
   }
 
@@ -785,12 +867,14 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
     return;
   }
 
-  process_single_object_request(std::move(json), std::move(promise));
+  process_single_object_request(std::move(json), std::move(source_ip),
+                                std::move(promise));
 }
 
 // JSON-RPC 2.0 single object dispatch — extracted from process_body so the
 // batch handler can re-use it.  `req` MUST be a JSON Object (caller checks).
 void JsonRpcServer::process_single_object_request(td::JsonValue req,
+                                                   std::string source_ip,
                                                    td::Promise<HttpReturn> promise) {
   auto &obj = req.get_object();
 
@@ -878,7 +962,8 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
     jb.enter_value() << params_val;
     std::string params_str = jb.string_builder().as_cslice().str();
 
-    auto result = evm_workchain::handle_eth_rpc(method, params_str, req_id);
+    auto result = evm_workchain::handle_eth_rpc(method, params_str, req_id,
+                                                source_ip);
     if (result) {
       // The EVM RPC handler returns a complete JSON-RPC response string.
       // Wrap it in a raw HTTP response.
@@ -915,12 +1000,14 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
     // error.  Both are spec-shape via make_eth_json_error.
     td::JsonObject empty_params;
     cached_dispatch_method(std::move(method), empty_params,
-                           std::move(req_id), std::move(promise));
+                           std::move(req_id), std::move(source_ip),
+                           std::move(promise));
     return;
   }
 
   cached_dispatch_method(std::move(method), params_val.get_object(),
-                         std::move(req_id), std::move(promise));
+                         std::move(req_id), std::move(source_ip),
+                         std::move(promise));
 }
 
 // ── JSON-RPC 2.0 batch dispatch ────────────────────────────────────────
@@ -945,6 +1032,10 @@ struct JsonRpcServer::BatchState {
   std::size_t cursor{0};
   td::Promise<HttpReturn> final_promise;
   std::string cors;
+  // Source IP attribution for the per-IP rate gate. Every batch
+  // element runs against the same IP, so it is held once on the
+  // batch state rather than re-extracted per element.
+  std::string source_ip;
   // Per-subquery timeouts in
   // QueryTimeoutGuard let a 100-element batch (or any handler chaining
   // sequential liteserver queries) accumulate up to N × request_timeout
@@ -956,6 +1047,7 @@ struct JsonRpcServer::BatchState {
 };
 
 void JsonRpcServer::process_batch(std::vector<td::JsonValue> elements,
+                                  std::string source_ip,
                                   td::Promise<HttpReturn> promise) {
   // Per-element notification flag.  A request is a notification iff its
   // `id` field is absent (NOT iff it's null — null is a valid id).  We
@@ -983,6 +1075,7 @@ void JsonRpcServer::process_batch(std::vector<td::JsonValue> elements,
   state->responses.resize(state->elements.size());
   state->final_promise = std::move(promise);
   state->cors = opts_.cors_origin;
+  state->source_ip = std::move(source_ip);
   if (opts_.request_timeout > 0) {
     state->deadline = td::Timestamp::in(opts_.request_timeout);
   }
@@ -1066,7 +1159,8 @@ void JsonRpcServer::process_batch_step(std::shared_ptr<BatchState> state) {
         });
 
     auto el_moved = std::move(el);
-    process_single_object_request(std::move(el_moved), std::move(sub_promise));
+    process_single_object_request(std::move(el_moved), state->source_ip,
+                                  std::move(sub_promise));
     return;  // wait for sub_promise to fire
   }
   // All elements done — emit the result array (or 204 if all-notifications).
@@ -1114,7 +1208,13 @@ void JsonRpcServer::process_rest_post_body(td::BufferSlice body, std::string met
   if (body.empty()) {
     // Empty body → empty params
     td::JsonObject empty_obj;
-    cached_dispatch_method(std::move(method), empty_obj, "null", std::move(promise));
+    // REST adapters are not the eth_* JSON-RPC dispatcher; they predate the
+    // per-IP rate gate and their callers (Python tests, REST-only clients)
+    // don't carry an X-Forwarded-For attribution. Bypass the gate by
+    // passing an empty source IP — the global / per-method limits still
+    // apply to any methods that hit them.
+    cached_dispatch_method(std::move(method), empty_obj, "null",
+                           std::string(), std::move(promise));
     return;
   }
   auto json_r = td::json_decode(body.as_slice());
@@ -1129,13 +1229,15 @@ void JsonRpcServer::process_rest_post_body(td::BufferSlice body, std::string met
                                       opts_.cors_origin));
     return;
   }
-  cached_dispatch_method(std::move(method), json.get_object(), "null", std::move(promise));
+  cached_dispatch_method(std::move(method), json.get_object(), "null",
+                         std::string(), std::move(promise));
 }
 
 // ─── Method dispatch ──────────────────────────────────────────────────────
 
 void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
-                                    std::string req_id, td::Promise<HttpReturn> promise) {
+                                    std::string req_id, std::string source_ip,
+                                    td::Promise<HttpReturn> promise) {
   // Track per-method request count
   requests_total_.fetch_add(1);
   active_requests_.fetch_add(1);
@@ -1291,7 +1393,8 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
       arr.leave();
       params_str = jb.string_builder().as_cslice().str();
     }
-    auto result = evm_workchain::handle_eth_rpc(method, params_str, req_id);
+    auto result = evm_workchain::handle_eth_rpc(method, params_str, req_id,
+                                                source_ip);
     if (result) {
       promise.set_value(make_raw_json_response(result->json, opts_.cors_origin));
     } else {
@@ -1686,11 +1789,13 @@ void JsonRpcServer::alarm() {
 
 void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &params,
                                            std::string req_id,
+                                           std::string source_ip,
                                            td::Promise<HttpReturn> promise) {
   bool is_cacheable = opts_.cache_ttl > 0 && cacheable_methods().count(method);
 
   if (!is_cacheable) {
-    dispatch_method(std::move(method), params, std::move(req_id), std::move(promise));
+    dispatch_method(std::move(method), params, std::move(req_id),
+                    std::move(source_ip), std::move(promise));
     return;
   }
 
@@ -1809,7 +1914,8 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
         orig_promise.set_value(std::move(result));
       });
 
-  dispatch_method(std::move(method), params, std::move(req_id), std::move(cache_promise));
+  dispatch_method(std::move(method), params, std::move(req_id),
+                  std::move(source_ip), std::move(cache_promise));
 }
 
 // ─── Prometheus metrics collection ──────────────────────────────────────

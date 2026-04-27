@@ -665,4 +665,27 @@ console.log(`EToSPoWGiver bytecode matches source (${compiled.length / 2} bytes,
 NODE
 fi
 
+# N-1 (audit, follower-public RPC hardening): the in-process per-IP
+# rate limiter must be present in the EVM RPC dispatcher. The gate is
+# strictly stronger than relying on a reverse proxy alone — it survives
+# a misconfigured proxy and stops a single attacker from draining the
+# global per-method buckets for everyone else.
+if ! rg -q 'consume_per_ip_token|g_per_ip_buckets' "$rpc_handlers"; then
+    echo "evm production hardening check failed: per-IP rate limiter must be present in EVM RPC dispatcher" >&2
+    exit 1
+fi
+
+# Confirm the dispatcher itself consults the gate (not just defines
+# the helper). Awk walks the body of `handle_eth_rpc` and asserts a
+# `consume_per_ip_token(` call appears before the closing brace.
+if ! awk '
+    /std::optional<RpcResult> handle_eth_rpc\(/ { in_h = 1 }
+    in_h && /consume_per_ip_token\(/ { found = 1 }
+    in_h && /^}$/ { in_h = 0 }
+    END { exit (found ? 0 : 1) }
+' "$rpc_handlers"; then
+    echo "evm production hardening check failed: handle_eth_rpc dispatcher must call consume_per_ip_token before per-method limiters" >&2
+    exit 1
+fi
+
 echo "evm production hardening check passed"

@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <functional>
 
 namespace evm_workchain {
@@ -39,11 +40,27 @@ struct RpcResult {
 
 /// Handle an eth_* JSON-RPC request.
 ///
-/// @param method    The method name (e.g. "eth_chainId").
-/// @param params    The raw JSON params array as a string.
-/// @param id        The request id (number or string) to echo back.
-/// @return          RpcResult with the JSON-RPC response, or std::nullopt
-///                  if this method is not handled by the EVM RPC facade.
+/// @param method     The method name (e.g. "eth_chainId").
+/// @param params     The raw JSON params array as a string.
+/// @param id         The request id (number or string) to echo back.
+/// @param source_ip  Source IP string of the caller, used for the
+///                   in-process per-IP rate-limit gate. Pass an empty
+///                   view to bypass per-IP gating (test harnesses,
+///                   internal callers). The contents of the view are
+///                   not retained beyond the call.
+/// @return           RpcResult with the JSON-RPC response, or std::nullopt
+///                   if this method is not handled by the EVM RPC facade.
+std::optional<RpcResult> handle_eth_rpc(
+    const std::string& method,
+    const std::string& params,
+    const std::string& id,
+    std::string_view source_ip);
+
+/// Backwards-compatible overload: pass an empty source-IP. Prefer the
+/// 4-argument form on every public dispatch path so the per-IP gate
+/// has visibility into untrusted clients. This 3-argument form is
+/// retained for in-process callers (test harnesses, EVM internal
+/// reflection paths) that have no IP to attribute the call to.
 std::optional<RpcResult> handle_eth_rpc(
     const std::string& method,
     const std::string& params,
@@ -121,5 +138,54 @@ void reset_evm_rpc_rate_limit_for_test();
 void set_readonly_evm_inflight_for_test(uint32_t value);
 void set_estimate_gas_inflight_for_test(uint32_t value);
 void set_access_list_inflight_for_test(uint32_t value);
+
+/// In-process per-IP rate-limit configuration.
+///
+/// The handler dispatcher consults a fixed-size token-bucket table
+/// keyed by an FNV1a-32 hash of the source-IP string. Hash collisions
+/// share a bucket — that is acceptable: 1024 buckets keep collision
+/// probability low for benign traffic, and adversarial collisions
+/// only further restrict the attacker.
+///
+/// Defaults are conservative — burst of 60 / refill of 30 per second
+/// is well above any benign wallet's request rate but still costs an
+/// attacker an N-fold amplification to flood the global per-method
+/// limiters.
+struct PerIpRateConfig {
+    double requests_per_sec = 30.0;
+    double burst = 60.0;
+    /// Power of two. Used as a mask (`hash & (table_size - 1)`).
+    uint32_t table_size = 1024;
+    /// Default OFF; opted-in by the operator (validator-engine flag,
+    /// or `evm_workchain::set_per_ip_rate_config`).
+    bool enabled = false;
+};
+
+/// Apply a new per-IP rate configuration. Resets every bucket to
+/// `burst` tokens (so an operator-driven config change does not carry
+/// over a drained bucket from the previous policy). `cfg.table_size`
+/// must be a power of two that is `<=` the build-time
+/// `kPerIpTableSize` cap (1024); larger values silently clamp to the
+/// cap, smaller values mask correctly.
+void set_per_ip_rate_config(const PerIpRateConfig& cfg);
+
+/// Snapshot of the active per-IP rate configuration. Snapshot only —
+/// `enabled` may toggle between this read and the next dispatch.
+PerIpRateConfig get_per_ip_rate_config();
+
+/// Returns true if a request from `source_ip` should be allowed
+/// through the in-process per-IP gate. Returns false when the bucket
+/// is empty; callers MUST translate `false` to JSON-RPC `-32005`
+/// (`per-IP rate limit exceeded`). Returns true unconditionally when
+/// the gate is disabled or `source_ip` is empty.
+bool consume_per_ip_token(std::string_view source_ip);
+
+/// Test helper: refill every per-IP bucket to its burst capacity.
+void reset_per_ip_rate_state_for_test();
+
+/// Test helper: returns the FNV1a-32 hash mod `table_size` for a
+/// given source-IP string. Used by the regression tests to construct
+/// hash collisions deterministically.
+uint32_t per_ip_bucket_index_for_test(std::string_view source_ip);
 
 }  // namespace evm_workchain

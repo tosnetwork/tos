@@ -5435,6 +5435,18 @@ void ValidatorEngine::set_allow_remote_admin_evm_rpc(bool allow) {
   json_rpc_opts_.allow_remote_admin_rpc = allow;
 }
 
+void ValidatorEngine::set_evm_rpc_per_ip_enabled(bool enabled) {
+  json_rpc_opts_.per_ip_enabled = enabled;
+}
+
+void ValidatorEngine::set_evm_rpc_per_ip_rate(double rate) {
+  json_rpc_opts_.per_ip_requests_per_sec = rate;
+}
+
+void ValidatorEngine::set_evm_rpc_per_ip_burst(double burst) {
+  json_rpc_opts_.per_ip_burst = burst;
+}
+
 void ValidatorEngine::get_current_validator_perm_key(td::Promise<std::pair<tos::PublicKey, size_t>> promise) {
   if (state_.is_null()) {
     promise.set_error(td::Status::Error(tos::ErrorCode::notready, "not started"));
@@ -6035,6 +6047,52 @@ int main(int argc, char *argv[]) {
                        x, &ValidatorEngine::set_allow_remote_admin_evm_rpc, true);
                  });
                });
+  // In-process per-IP rate-limit gate. The gate is opt-in by profile by
+  // default (off for ValidatorMinimal, on for FollowerPublic and
+  // AdminLocal). The flags below let operators pin the toggle and
+  // tune the rate / burst explicitly.
+  p.add_option('\0', "evm-rpc-per-ip-enabled",
+               "Force-enable the EVM RPC in-process per-IP rate gate "
+               "(default: enabled for follower / admin profiles, "
+               "disabled for validator-minimal).",
+               [&]() {
+                 acts.push_back([&x] {
+                   td::actor::send_closure(
+                       x, &ValidatorEngine::set_evm_rpc_per_ip_enabled, true);
+                 });
+               });
+  p.add_option('\0', "evm-rpc-per-ip-disabled",
+               "Force-disable the EVM RPC in-process per-IP rate gate.",
+               [&]() {
+                 acts.push_back([&x] {
+                   td::actor::send_closure(
+                       x, &ValidatorEngine::set_evm_rpc_per_ip_enabled, false);
+                 });
+               });
+  p.add_checked_option('\0', "evm-rpc-per-ip-rate",
+      "EVM RPC per-IP refill rate in requests per second (default: 30)",
+      [&](td::Slice arg) {
+    double v = td::to_double(arg);
+    if (!(v > 0.0)) {
+      return td::Status::Error("evm-rpc-per-ip-rate must be > 0");
+    }
+    acts.push_back([&x, v] {
+      td::actor::send_closure(x, &ValidatorEngine::set_evm_rpc_per_ip_rate, v);
+    });
+    return td::Status::OK();
+  });
+  p.add_checked_option('\0', "evm-rpc-per-ip-burst",
+      "EVM RPC per-IP token-bucket burst capacity (default: 60)",
+      [&](td::Slice arg) {
+    double v = td::to_double(arg);
+    if (!(v > 0.0)) {
+      return td::Status::Error("evm-rpc-per-ip-burst must be > 0");
+    }
+    acts.push_back([&x, v] {
+      td::actor::send_closure(x, &ValidatorEngine::set_evm_rpc_per_ip_burst, v);
+    });
+    return td::Status::OK();
+  });
   p.add_checked_option(
       '\0', "quic-flood-control", "per-IP limit for QUIC connections (-1 to disable)", [&](td::Slice arg) {
         TRY_RESULT(l, td::to_integer_safe<int64_t>(arg));

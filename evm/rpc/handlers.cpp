@@ -44,6 +44,7 @@
 #include <silkworm/core/types/address.hpp>
 #include <intx/intx.hpp>
 
+#include <array>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -205,6 +206,187 @@ class AtomicConcurrencyPermit {
 // affected.  Production code enables it via enable_evm_rpc_rate_limit().
 static bool g_rate_limit_enabled = false;
 static bool g_public_getproof_enabled = true;
+
+// ---------------------------------------------------------------------------
+// In-process per-IP rate limiter (defense-in-depth against single-source
+// flood). Strictly stronger than relying on a reverse proxy's per-IP
+// quota: this gate fires even when the proxy is misconfigured or absent.
+//
+// Implementation notes:
+//   * Fixed-size table sized at build time (`kPerIpTableSize`). Bucket
+//     selection is `FNV1a-32(source_ip) & (table_size - 1)` with a
+//     runtime `table_size` that is masked against the build cap. A
+//     fixed table avoids any allocation in the hot path; collisions
+//     (rare with 1024 buckets and benign load, deliberately so for
+//     adversarial load) just share a bucket.
+//   * Each bucket carries its own mutex so the table scales linearly
+//     under contention — a swarm hitting a few buckets does not stall
+//     unrelated source IPs.
+//   * Buckets use chrono-resolution subsecond refill so a 30 rps
+//     refill is honoured smoothly, not in 30-token chunks once a
+//     second.
+// ---------------------------------------------------------------------------
+
+static constexpr uint32_t kPerIpTableSize = 1024;  // power of two
+static_assert((kPerIpTableSize & (kPerIpTableSize - 1)) == 0,
+              "kPerIpTableSize must be a power of two");
+
+struct PerIpBucket {
+    double tokens{60.0};
+    std::chrono::steady_clock::time_point last_refill{
+        std::chrono::steady_clock::now()};
+};
+
+static std::array<PerIpBucket, kPerIpTableSize> g_per_ip_buckets{};
+static std::array<std::mutex, kPerIpTableSize> g_per_ip_mutexes{};
+static std::atomic<bool> g_per_ip_enabled{false};
+// Active runtime configuration. Reads and writes use the lock below;
+// the dispatch hot path takes a quick snapshot under the lock.
+static std::mutex g_per_ip_cfg_mutex;
+static PerIpRateConfig g_per_ip_cfg{};  // defaults from struct definition
+
+// FNV1a-32 over the raw bytes of `s`.
+static uint32_t fnv1a32(std::string_view s) noexcept {
+    uint32_t h = 2166136261u;
+    for (unsigned char c : s) {
+        h ^= static_cast<uint32_t>(c);
+        h *= 16777619u;
+    }
+    return h;
+}
+
+// Mask `requested_size` against the build-time cap and round down to
+// the largest power of two `<=` the request. Returns the active table
+// size used by `bucket_index_for_ip` and friends.
+static uint32_t effective_per_ip_table_size(uint32_t requested_size) noexcept {
+    if (requested_size == 0) return 1;
+    if (requested_size > kPerIpTableSize) requested_size = kPerIpTableSize;
+    // Round down to power of two so the mask `size - 1` works cleanly.
+    uint32_t pow2 = 1;
+    while (pow2 <= (requested_size >> 1)) pow2 <<= 1;
+    return pow2;
+}
+
+static uint32_t bucket_index_for_ip(std::string_view source_ip,
+                                    uint32_t table_size) noexcept {
+    // Caller must pass a power-of-two table_size.
+    return fnv1a32(source_ip) & (table_size - 1);
+}
+
+void set_per_ip_rate_config(const PerIpRateConfig& cfg) {
+    PerIpRateConfig sanitized = cfg;
+    if (!(sanitized.requests_per_sec >= 0.0)) {
+        // NaN or negative: clamp to 0 (deny refill — the bucket can
+        // still serve its initial burst once but will never recover).
+        sanitized.requests_per_sec = 0.0;
+    }
+    if (!(sanitized.burst >= 0.0)) {
+        sanitized.burst = 0.0;
+    }
+    sanitized.table_size = effective_per_ip_table_size(sanitized.table_size);
+
+    {
+        std::lock_guard<std::mutex> cfg_lock(g_per_ip_cfg_mutex);
+        g_per_ip_cfg = sanitized;
+    }
+    g_per_ip_enabled.store(sanitized.enabled, std::memory_order_release);
+
+    // Reset buckets so the new policy starts from a clean slate. We
+    // refill every slot (not just the in-use ones) — the slot count
+    // is tiny (1024) and this only runs on operator-driven config
+    // changes, not in the hot path.
+    auto now = std::chrono::steady_clock::now();
+    for (uint32_t i = 0; i < kPerIpTableSize; ++i) {
+        std::lock_guard<std::mutex> b(g_per_ip_mutexes[i]);
+        g_per_ip_buckets[i].tokens = sanitized.burst;
+        g_per_ip_buckets[i].last_refill = now;
+    }
+}
+
+PerIpRateConfig get_per_ip_rate_config() {
+    std::lock_guard<std::mutex> cfg_lock(g_per_ip_cfg_mutex);
+    PerIpRateConfig out = g_per_ip_cfg;
+    // Reflect the live atomic in case set_per_ip_rate_config has not
+    // been called yet (defaults: enabled=false).
+    out.enabled = g_per_ip_enabled.load(std::memory_order_acquire);
+    return out;
+}
+
+bool consume_per_ip_token(std::string_view source_ip) {
+    if (!g_per_ip_enabled.load(std::memory_order_acquire)) {
+        return true;
+    }
+    if (source_ip.empty()) {
+        // No attribution available — do not gate. The caller is
+        // responsible for choosing whether to bypass the per-IP gate
+        // (in-process callers, batch fan-out where the IP is already
+        // gated upstream).
+        return true;
+    }
+
+    PerIpRateConfig cfg_snapshot;
+    {
+        std::lock_guard<std::mutex> cfg_lock(g_per_ip_cfg_mutex);
+        cfg_snapshot = g_per_ip_cfg;
+    }
+    if (cfg_snapshot.burst <= 0.0) {
+        // Bucket capacity is zero — every request is denied while the
+        // gate is enabled. Treat as "no tokens available".
+        return false;
+    }
+    uint32_t table_size = effective_per_ip_table_size(cfg_snapshot.table_size);
+    uint32_t idx = bucket_index_for_ip(source_ip, table_size);
+
+    auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> bucket_lock(g_per_ip_mutexes[idx]);
+    auto& b = g_per_ip_buckets[idx];
+
+    // Refill against elapsed time. `requests_per_sec` is a double so a
+    // sub-1-rps rate is expressible (operators can dial the gate down
+    // to e.g. 0.5 rps for a hardened endpoint).
+    auto elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                         now - b.last_refill)
+                         .count();
+    if (elapsed_ns > 0) {
+        double elapsed_sec = static_cast<double>(elapsed_ns) / 1.0e9;
+        double added = elapsed_sec * cfg_snapshot.requests_per_sec;
+        double new_tokens = b.tokens + added;
+        if (new_tokens > cfg_snapshot.burst) {
+            new_tokens = cfg_snapshot.burst;
+        }
+        b.tokens = new_tokens;
+        b.last_refill = now;
+    }
+    if (b.tokens < 1.0) {
+        return false;
+    }
+    b.tokens -= 1.0;
+    return true;
+}
+
+void reset_per_ip_rate_state_for_test() {
+    PerIpRateConfig cfg_snapshot;
+    {
+        std::lock_guard<std::mutex> cfg_lock(g_per_ip_cfg_mutex);
+        cfg_snapshot = g_per_ip_cfg;
+    }
+    auto now = std::chrono::steady_clock::now();
+    for (uint32_t i = 0; i < kPerIpTableSize; ++i) {
+        std::lock_guard<std::mutex> b(g_per_ip_mutexes[i]);
+        g_per_ip_buckets[i].tokens = cfg_snapshot.burst;
+        g_per_ip_buckets[i].last_refill = now;
+    }
+}
+
+uint32_t per_ip_bucket_index_for_test(std::string_view source_ip) {
+    PerIpRateConfig cfg_snapshot;
+    {
+        std::lock_guard<std::mutex> cfg_lock(g_per_ip_cfg_mutex);
+        cfg_snapshot = g_per_ip_cfg;
+    }
+    uint32_t table_size = effective_per_ip_table_size(cfg_snapshot.table_size);
+    return bucket_index_for_ip(source_ip, table_size);
+}
 
 // =====================================================================
 // M-03: EvmRpcProfile state machine.
@@ -5403,11 +5585,22 @@ bool is_eth_rpc_method(const std::string& method) noexcept {
 std::optional<RpcResult> handle_eth_rpc(
     const std::string& method,
     const std::string& params,
-    const std::string& id) {
+    const std::string& id,
+    std::string_view source_ip) {
 
     // --- Production hardening: request size validation ---
     if (params.size() > kMaxRpcParamsSize) {
         return RpcResult{make_error(id, -32600, "request params exceed max size"), true};
+    }
+
+    // Defense-in-depth: in-process per-IP rate gate. Applied BEFORE
+    // every per-method limiter so a single attacker cannot drain the
+    // global bucket and starve other source IPs. `source_ip` may be
+    // empty for in-process callers (test harness, internal dispatch);
+    // those bypass the gate by design — see consume_per_ip_token.
+    if (!consume_per_ip_token(source_ip)) {
+        return RpcResult{make_error(id, -32005,
+            "per-IP rate limit exceeded"), true};
     }
 
     // M-03: profile-driven method gating. Each branch returns -32601
@@ -5567,6 +5760,15 @@ std::optional<RpcResult> handle_eth_rpc(
     }
 
     return std::nullopt;
+}
+
+// Backwards-compatible 3-argument overload. Bypasses the per-IP gate
+// by passing an empty source_ip; see handlers.h for the contract.
+std::optional<RpcResult> handle_eth_rpc(
+    const std::string& method,
+    const std::string& params,
+    const std::string& id) {
+    return handle_eth_rpc(method, params, id, std::string_view{});
 }
 
 }  // namespace evm_workchain

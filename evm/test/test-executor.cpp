@@ -1886,6 +1886,234 @@ static void test_eth_rpc_rate_limit_reset_resets_new_buckets() {
 }
 
 // =============================================================================
+// N-1 — EVM RPC in-process per-IP rate limiter
+//
+// The per-IP gate sits BEFORE every per-method limiter in the
+// `handle_eth_rpc` dispatcher. The gate is opt-in (default OFF) and
+// the operator wires it on via `set_per_ip_rate_config`. When the
+// gate is enabled and a request carries an attribution string,
+// `consume_per_ip_token` decrements that source-IP's bucket; when
+// the bucket is empty the dispatcher returns -32005 with the
+// "per-IP rate limit exceeded" message. The tests below pin the
+// observable contract:
+//   * burst capacity is honoured
+//   * sources are isolated by hash (no IP can starve another)
+//   * the gate is a no-op when disabled
+//   * collisions on the FNV1a hash table merge two sources onto a
+//     single shared bucket without crashing or giving either source
+//     extra quota
+// =============================================================================
+
+static void test_n1_per_ip_rate_limiter_enforces_quota() {
+    printf("=== test_n1_per_ip_rate_limiter_enforces_quota ===\n");
+    PerIpRateConfig cfg;
+    cfg.requests_per_sec = 0.0;  // disable refill so the burst is the
+                                  // only quota the test sees within
+                                  // the tight loop.
+    cfg.burst = 30.0;
+    cfg.table_size = 1024;
+    cfg.enabled = true;
+    set_per_ip_rate_config(cfg);
+
+    std::string ip = "192.0.2.1";
+    int accepted = 0;
+    int rate_limited = 0;
+    int other_reject = 0;
+    for (int i = 0; i < 100; ++i) {
+        auto r = handle_eth_rpc("eth_chainId", "[]",
+                                std::to_string(50000 + i),
+                                std::string_view{ip});
+        if (!r) { other_reject++; continue; }
+        if (r->is_error &&
+            r->json.find("per-IP rate limit exceeded") != std::string::npos) {
+            rate_limited++;
+        } else {
+            accepted++;
+        }
+    }
+    printf("  accepted=%d rate_limited=%d other=%d (burst=30)\n",
+           accepted, rate_limited, other_reject);
+    bool ok = accepted == static_cast<int>(cfg.burst) &&
+              rate_limited == (100 - static_cast<int>(cfg.burst)) &&
+              other_reject == 0;
+
+    // Restore the default-disabled state so unrelated tests aren't
+    // affected.
+    PerIpRateConfig disabled;
+    disabled.enabled = false;
+    set_per_ip_rate_config(disabled);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_n1_per_ip_rate_limiter_isolates_sources() {
+    printf("=== test_n1_per_ip_rate_limiter_isolates_sources ===\n");
+    PerIpRateConfig cfg;
+    cfg.requests_per_sec = 0.0;
+    cfg.burst = 5.0;       // low burst so a single source would deny
+                           // most of its requests if quotas were shared.
+    cfg.table_size = 1024;
+    cfg.enabled = true;
+    set_per_ip_rate_config(cfg);
+
+    int accepted = 0;
+    int rate_limited = 0;
+    // 100 unique IPs, one request each. With 1024 buckets the
+    // expected number of collisions among 100 keys is tiny
+    // (birthday-bound ≈ 5%). We accept up to a handful of
+    // collisions — the contract is "ALL accepted" but a single
+    // collision among 100 random keys would still leave ≥99
+    // accepted, which is the regression-line we actually care about.
+    for (int i = 1; i <= 100; ++i) {
+        std::string ip = "192.0.2." + std::to_string(i);
+        auto r = handle_eth_rpc("eth_chainId", "[]",
+                                std::to_string(60000 + i),
+                                std::string_view{ip});
+        if (!r) continue;
+        if (r->is_error &&
+            r->json.find("per-IP rate limit exceeded") != std::string::npos) {
+            rate_limited++;
+        } else {
+            accepted++;
+        }
+    }
+    printf("  accepted=%d rate_limited=%d (expected: all 100 accepted)\n",
+           accepted, rate_limited);
+    bool ok = accepted == 100 && rate_limited == 0;
+
+    PerIpRateConfig disabled;
+    disabled.enabled = false;
+    set_per_ip_rate_config(disabled);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_n1_per_ip_rate_limiter_disabled_no_op() {
+    printf("=== test_n1_per_ip_rate_limiter_disabled_no_op ===\n");
+    PerIpRateConfig cfg;
+    cfg.requests_per_sec = 0.0;
+    cfg.burst = 1.0;       // tiny burst — would be obvious if active.
+    cfg.table_size = 1024;
+    cfg.enabled = false;   // gate explicitly OFF
+    set_per_ip_rate_config(cfg);
+
+    std::string ip = "192.0.2.99";
+    int accepted = 0;
+    for (int i = 0; i < 200; ++i) {
+        auto r = handle_eth_rpc("eth_chainId", "[]",
+                                std::to_string(70000 + i),
+                                std::string_view{ip});
+        if (r && !(r->is_error &&
+                   r->json.find("per-IP rate limit exceeded") !=
+                       std::string::npos)) {
+            accepted++;
+        }
+    }
+    printf("  accepted=%d (expected: 200, gate disabled)\n", accepted);
+    bool ok = accepted == 200;
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+static void test_n1_per_ip_collisions_acceptable() {
+    printf("=== test_n1_per_ip_collisions_acceptable ===\n");
+    // Find two source-IP strings that hash to the same bucket index.
+    // We brute-force the IPv4 space lazily: walk 192.0.2.<i> for
+    // i in [1..255] and 198.51.100.<j> for j in [1..255] and find
+    // any cross-prefix collision. With 1024 buckets and ~510 candidate
+    // strings the birthday probability of *some* collision is high
+    // (~0.999); if no collision is found (deterministic hash, fixed
+    // candidate set) we surface that as a hard fail rather than
+    // silently passing.
+    PerIpRateConfig cfg;
+    cfg.requests_per_sec = 0.0;
+    cfg.burst = 3.0;       // shared burst across the two sources
+    cfg.table_size = 1024;
+    cfg.enabled = true;
+    set_per_ip_rate_config(cfg);
+
+    std::string ip_a;
+    std::string ip_b;
+    bool found = false;
+    {
+        std::vector<std::pair<std::string, uint32_t>> candidates;
+        candidates.reserve(510);
+        for (int i = 1; i <= 255; ++i) {
+            std::string s = "192.0.2." + std::to_string(i);
+            candidates.emplace_back(s, per_ip_bucket_index_for_test(s));
+        }
+        for (int j = 1; j <= 255; ++j) {
+            std::string s = "198.51.100." + std::to_string(j);
+            uint32_t idx = per_ip_bucket_index_for_test(s);
+            for (auto& c : candidates) {
+                if (c.second == idx) {
+                    ip_a = c.first;
+                    ip_b = s;
+                    found = true;
+                    break;
+                }
+            }
+            if (found) break;
+        }
+    }
+    if (!found) {
+        printf("  no FNV1a collision in candidate space; "
+               "table_size or hash changed?\n");
+        PerIpRateConfig disabled;
+        disabled.enabled = false;
+        set_per_ip_rate_config(disabled);
+        printf("  FAILED\n\n");
+        return;
+    }
+    printf("  collision: %s and %s share bucket %u\n",
+           ip_a.c_str(), ip_b.c_str(),
+           per_ip_bucket_index_for_test(ip_a));
+
+    // Drain the shared bucket from the first source. With burst=3
+    // and zero refill, the 3rd request is the last accepted one.
+    int accepted_a = 0;
+    int rejected_a = 0;
+    for (int i = 0; i < 5; ++i) {
+        auto r = handle_eth_rpc("eth_chainId", "[]",
+                                std::to_string(80000 + i),
+                                std::string_view{ip_a});
+        if (!r) continue;
+        if (r->is_error &&
+            r->json.find("per-IP rate limit exceeded") != std::string::npos) {
+            rejected_a++;
+        } else {
+            accepted_a++;
+        }
+    }
+
+    // The second source shares the bucket and should now find it
+    // empty — every request must reject. If the gate did NOT share
+    // buckets on collision, ip_b would see its full burst and pass
+    // 3 requests.
+    int accepted_b = 0;
+    int rejected_b = 0;
+    for (int i = 0; i < 5; ++i) {
+        auto r = handle_eth_rpc("eth_chainId", "[]",
+                                std::to_string(81000 + i),
+                                std::string_view{ip_b});
+        if (!r) continue;
+        if (r->is_error &&
+            r->json.find("per-IP rate limit exceeded") != std::string::npos) {
+            rejected_b++;
+        } else {
+            accepted_b++;
+        }
+    }
+    printf("  ip_a accepted=%d rejected=%d, ip_b accepted=%d rejected=%d "
+           "(burst=3 shared)\n",
+           accepted_a, rejected_a, accepted_b, rejected_b);
+    bool ok = accepted_a == 3 && rejected_a == 2 &&
+              accepted_b == 0 && rejected_b == 5;
+
+    PerIpRateConfig disabled;
+    disabled.enabled = false;
+    set_per_ip_rate_config(disabled);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// =============================================================================
 // M-03 — EvmRpcProfile { ValidatorMinimal, FollowerPublic, AdminLocal }
 //
 // The profile is the single switch that gates heavy read-only RPC,
@@ -13349,6 +13577,13 @@ int main() {
     test_eth_create_access_list_rate_limit_rejects_busy();
     test_eth_call_public_profile_gas_cap();
     test_eth_rpc_rate_limit_reset_resets_new_buckets();
+
+    // N-1 — in-process per-IP rate limiter (defense-in-depth against
+    // single-source flood; complements the global per-method buckets).
+    test_n1_per_ip_rate_limiter_enforces_quota();
+    test_n1_per_ip_rate_limiter_isolates_sources();
+    test_n1_per_ip_rate_limiter_disabled_no_op();
+    test_n1_per_ip_collisions_acceptable();
 
     // M-03 — EvmRpcProfile { ValidatorMinimal, FollowerPublic, AdminLocal }
     test_m03_validator_minimal_disables_eth_call();
