@@ -46,11 +46,18 @@ target_compile_options(evm_workchain PRIVATE
   $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-missing-field-initializers>
 )
 
-# Expose lightweight test-only counters for the lazy state-load and lazy
-# storage-witness-index paths. The atomic increments are O(1) per touched
-# entry and have negligible runtime cost; tests rely on the counters to
-# prove that hot-path operations stay O(touched) instead of O(global state).
-target_compile_definitions(evm_workchain PUBLIC TOS_EVM_TEST_INSTRUMENTATION=1)
+# Test-only instrumentation: lightweight atomic counters that prove the lazy
+# state-load and lazy storage-witness-index hot paths stay O(touched) rather
+# than O(global state). The counters are O(1) per touched entry and cheap,
+# but production binaries must not ship code that exposes test hooks. By
+# default the macro is OFF so `evm_workchain` builds without instrumentation;
+# the dedicated test library `evm_workchain_test` (below) re-builds the same
+# sources with the macro defined and is the only target the unit tests link.
+option(TOS_EVM_TEST_INSTRUMENTATION
+       "Enable EVM lazy-load + MPT walk counters used by tests" OFF)
+if(TOS_EVM_TEST_INSTRUMENTATION)
+  target_compile_definitions(evm_workchain PUBLIC TOS_EVM_TEST_INSTRUMENTATION=1)
+endif()
 
 target_include_directories(evm_workchain
   PUBLIC
@@ -60,6 +67,36 @@ target_include_directories(evm_workchain
 )
 
 target_link_libraries(evm_workchain
+  PUBLIC
+    silkworm_core
+    tos_crypto   # cells, vm types, block types
+    tddb         # RocksDB wrapper for the side-channel cache
+)
+
+# Dedicated test-instrumented build of the same EVM sources. The unit tests
+# link against this library so the lazy-load / MPT-walk counters defined in
+# `evm/core/cell-state.{h,cpp}` are available without forcing every
+# production-side consumer of `evm_workchain` to ship them. Compile flags
+# and link dependencies must mirror `evm_workchain` exactly so behaviour is
+# identical apart from the instrumentation macro.
+add_library(evm_workchain_test STATIC ${EVM_SRC})
+
+target_compile_options(evm_workchain_test PRIVATE
+  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-cast-qual>
+  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-deprecated-literal-operator>
+  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-missing-field-initializers>
+)
+
+target_compile_definitions(evm_workchain_test PUBLIC TOS_EVM_TEST_INSTRUMENTATION=1)
+
+target_include_directories(evm_workchain_test
+  PUBLIC
+    ${CMAKE_SOURCE_DIR}             # for "evm/core/*.h", "evm/rpc/*.h"
+    ${CMAKE_SOURCE_DIR}/crypto      # for "block/*.h"
+    ${CMAKE_SOURCE_DIR}/crypto/vm   # for "vm/cells/*.h"
+)
+
+target_link_libraries(evm_workchain_test
   PUBLIC
     silkworm_core
     tos_crypto   # cells, vm types, block types

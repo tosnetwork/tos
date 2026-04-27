@@ -2892,26 +2892,38 @@ static size_t count_slot_pairs(const std::string& body) {
 
 // Convert a hex-encoded "0x..." string into the largest 32-byte big-endian
 // key/value pair the spec allows (left-padded with zeros for short inputs).
-// Mirrors the inline conversion previously embedded in apply_state_overrides.
-static void parse_slot_kv(const std::string& slot_hex,
-                          const std::string& val_hex,
-                          evmc::bytes32& key,
-                          evmc::bytes32& value) {
-    silkworm::Bytes kb, vb;
-    if (parse_hex_bytes(slot_hex, kb) && kb.size() <= 32) {
+// Returns an error on invalid hex or oversize input so callers can reject
+// the whole stateOverrides request via JSON-RPC -32602 *before* the global
+// EVM mutex is taken — silent zero-padding on bad input would let a buggy
+// or malicious client poke unexpected slots and would also mask debugging.
+static td::Result<std::pair<evmc::bytes32, evmc::bytes32>> parse_slot_kv(
+    const std::string& slot_hex, const std::string& val_hex) {
+    silkworm::Bytes kb;
+    silkworm::Bytes vb;
+    if (!parse_hex_bytes(slot_hex, kb) || kb.size() > 32) {
+        return td::Status::Error("invalid stateOverrides storage slot");
+    }
+    if (!parse_hex_bytes(val_hex, vb) || vb.size() > 32) {
+        return td::Status::Error("invalid stateOverrides storage value");
+    }
+    evmc::bytes32 key{};
+    evmc::bytes32 value{};
+    if (!kb.empty()) {
         std::memcpy(key.bytes + (32 - kb.size()), kb.data(), kb.size());
     }
-    if (parse_hex_bytes(val_hex, vb) && vb.size() <= 32) {
+    if (!vb.empty()) {
         std::memcpy(value.bytes + (32 - vb.size()), vb.data(), vb.size());
     }
+    return std::make_pair(key, value);
 }
 
 // Walk slot-key/value pairs out of a "state" or "stateDiff" object body and
-// emit them into `out`.
-static void extract_slot_pairs(
+// emit them into `out`. Returns an error on the first invalid slot entry so
+// the parent parser can short-circuit before evm_state.mutex() is acquired.
+static td::Status extract_slot_pairs(
     const std::string& body,
     std::vector<std::pair<evmc::bytes32, evmc::bytes32>>& out) {
-    if (body.empty()) return;
+    if (body.empty()) return td::Status::OK();
     size_t p = 1;
     while (p < body.size()) {
         while (p < body.size() && (body[p] == ' ' || body[p] == ',' ||
@@ -2931,11 +2943,14 @@ static void extract_slot_pairs(
         if (ve == std::string::npos) break;
         std::string val_hex = body.substr(vs, ve - vs);
         p = ve + 1;
-        evmc::bytes32 key{};
-        evmc::bytes32 v{};
-        parse_slot_kv(slot_hex, val_hex, key, v);
-        out.emplace_back(key, v);
+        auto kv_res = parse_slot_kv(slot_hex, val_hex);
+        if (kv_res.is_error()) {
+            return kv_res.move_as_error();
+        }
+        auto kv = kv_res.move_as_ok();
+        out.emplace_back(kv.first, kv.second);
     }
+    return td::Status::OK();
 }
 
 // Pre-lock parser for the stateOverrides object of one blockStateCalls
@@ -3005,16 +3020,21 @@ parse_state_overrides_plan(const std::string& bsc_entry) {
         std::string code_hex = extract_json_string_value(val, "code");
         if (!code_hex.empty()) {
             silkworm::Bytes code_bytes;
-            if (parse_hex_bytes(code_hex, code_bytes)) {
-                if (code_bytes.size() > kMaxSimOverrideCodeBytes ||
-                    total_code_bytes >
-                        kMaxSimOverrideCodeBytes - code_bytes.size()) {
-                    return td::Status::Error(
-                        "stateOverrides code budget exceeded");
-                }
-                total_code_bytes += code_bytes.size();
-                ov.code = std::move(code_bytes);
+            // Reject malformed code hex with -32602 instead of silently
+            // dropping it; otherwise a typo in a client-side stateOverride
+            // would simulate against the deployed bytecode and produce a
+            // result that doesn't match what the user thinks they asked for.
+            if (!parse_hex_bytes(code_hex, code_bytes)) {
+                return td::Status::Error("invalid stateOverrides code");
             }
+            if (code_bytes.size() > kMaxSimOverrideCodeBytes ||
+                total_code_bytes >
+                    kMaxSimOverrideCodeBytes - code_bytes.size()) {
+                return td::Status::Error(
+                    "stateOverrides code budget exceeded");
+            }
+            total_code_bytes += code_bytes.size();
+            ov.code = std::move(code_bytes);
         }
 
         std::string state_body = extract_json_object_body(val, "state");
@@ -3038,11 +3058,17 @@ parse_state_overrides_plan(const std::string& bsc_entry) {
         if (!state_body.empty()) {
             ov.has_full_state = true;
             ov.state.reserve(state_slots);
-            extract_slot_pairs(state_body, ov.state);
+            auto status = extract_slot_pairs(state_body, ov.state);
+            if (status.is_error()) {
+                return std::move(status);
+            }
         }
         if (!diff_body.empty()) {
             ov.state_diff.reserve(diff_slots);
-            extract_slot_pairs(diff_body, ov.state_diff);
+            auto status = extract_slot_pairs(diff_body, ov.state_diff);
+            if (status.is_error()) {
+                return std::move(status);
+            }
         }
 
         plan.push_back(std::move(ov));

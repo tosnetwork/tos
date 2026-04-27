@@ -190,6 +190,48 @@ if rg -n 'it->second\.promise\.set_value\(gen_token\(size, priority\)\)' "$valid
     exit 1
 fi
 
+# Compute hot path must not strict-validate the persistent trie witness.
+# The lazy-load contract is: validate the witness root cell shallowly and
+# bind it to the executor; any mutation/proof path then decodes account /
+# storage trie nodes path-bounded. A regression that re-introduces a
+# strict recursive walk on the consensus path would re-establish the
+# O(global accounts) DoS / liveness ceiling P0 was meant to remove.
+#
+# We accept any of the recognised tokens for the strict-recursive variant
+# (current planned identifier is `TrieWitnessLoadMode::StrictRecursive`,
+# but earlier drafts used `StrictRecursiveValidation` and a function name
+# of `load_trie_witness_strict`). The pattern is intentionally tolerant
+# so the check works whether or not the P0 rename has fully landed.
+if [ -f "$compute_phase" ]; then
+    if rg -n 'load_trie_witness_from_cell\([^)]*Strict|load_trie_witness_strict\(|TrieWitnessLoadMode::Strict' "$compute_phase" >/dev/null; then
+        echo "evm production hardening check failed: compute hot path must not strict-recursively validate trie witness (use TrustedShallow + path-bounded decode)" >&2
+        exit 1
+    fi
+fi
+
+# `TOS_EVM_TEST_INSTRUMENTATION` is a test-only macro that exposes lazy-load
+# atomic counters. It must never be a `PUBLIC` compile-definition default
+# on `evm_workchain` because every production binary linked against
+# `evm_workchain` would inherit the instrumentation. The supported pattern
+# is the option/guarded form (default OFF) plus a separate test library.
+if rg -n '^[^#]*target_compile_definitions\(evm_workchain[[:space:]]+PUBLIC[[:space:]]+TOS_EVM_TEST_INSTRUMENTATION' "$root/evm/CMakeLists.txt" >/dev/null; then
+    if ! rg -n 'option\([[:space:]]*TOS_EVM_TEST_INSTRUMENTATION' "$root/evm/CMakeLists.txt" >/dev/null; then
+        echo "evm production hardening check failed: TOS_EVM_TEST_INSTRUMENTATION must not be a default-on PUBLIC compile-definition on evm_workchain" >&2
+        exit 1
+    fi
+fi
+
+# The eth_simulateV1 stateOverrides parser must reject invalid hex before
+# the global EVM mutex is taken. The error strings below are pinned so
+# external monitoring can alert on regressions; they are also the contract
+# the regression test in evm/test/test-executor.cpp asserts on.
+if ! rg -q 'invalid stateOverrides storage slot' "$rpc_handlers" ||
+   ! rg -q 'invalid stateOverrides storage value' "$rpc_handlers" ||
+   ! rg -q 'invalid stateOverrides code' "$rpc_handlers"; then
+    echo "evm production hardening check failed: eth_simulateV1 stateOverrides parser must explicitly reject invalid hex / oversize values before lock" >&2
+    exit 1
+fi
+
 if [[ "${TOS_CHECK_ETOS_GIVER_BYTECODE:-0}" == "1" ]]; then
     if ! command -v node >/dev/null 2>&1; then
         echo "evm production hardening check failed: node is required for EToSPoWGiver bytecode equivalence check" >&2
