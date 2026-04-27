@@ -102,7 +102,8 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
   td::actor::Task<ProtocolMessage> process(BusHandle, std::shared_ptr<OutgoingOverlayRequest> message) {
     auto [awaiter, promise] = td::actor::StartedTask<td::BufferSlice>::make_bridge();
     auto dst = message->destination.get_using(*owning_bus()).adnl_id;
-    // FIXME: Pass max response size from the caller.
+    // Per-request response-size override from the caller is tracked
+    // as V-024 in docs/TODOS.md.
     td::actor::send_closure(
         overlays_, &overlay::Overlays::send_query_via, dst, local_id_.adnl_id, overlay_id_, "", std::move(promise),
         message->timeout, std::move(message->request.data),
@@ -203,8 +204,8 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
     auto maybe_candidate = Candidate::deserialize(std::move(data), bus, peer.idx, parsed_extra->slot_);
 
     if (maybe_candidate.is_error()) {
-      // FIXME: If we actually collected signed broadcast parts, we could have produced a
-      //        MisbehaviorProof here.
+      // Producing a MisbehaviorProof from collected signed
+      // broadcast parts is tracked as V-025 in docs/TODOS.md.
       LOG(WARNING) << "MISBEHAVIOR: Failed to deserialize block candidate broadcast: "
                    << maybe_candidate.move_as_error();
       return;

@@ -174,13 +174,15 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
     const auto& candidate = event->candidate;
 
     if (candidate->parent_id.has_value() && candidate->parent_id->slot >= candidate->id.slot) {
-      // FIXME: report misbehavior
+      // Emitting a MisbehaviorProof here is tracked as V-018 in
+      // docs/TODOS.md.
       return;
     }
 
     if (slot->state->pending_block.has_value()) {
       if (slot->state->pending_block.value()->id != candidate->id) {
-        // FIXME: Report misbehavior
+        // Emitting a MisbehaviorProof here is tracked as V-019 in
+        // docs/TODOS.md.
       }
       return;
     }
@@ -234,7 +236,8 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
     if (validation_result.has<CandidateReject>()) {
       LOG(WARNING) << "Candidate " << candidate->id
                    << " is rejected: " << validation_result.get<CandidateReject>().reason;
-      // FIXME: Report misbehavior
+      // Emitting a MisbehaviorProof here is tracked as V-020 in
+      // docs/TODOS.md.
       co_return td::Unit{};
     }
     co_await std::move(store_candidate);

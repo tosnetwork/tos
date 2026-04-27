@@ -1786,8 +1786,9 @@ void ValidateQuery::got_neighbor_out_queue(int i, td::Result<Ref<MessageQueue>> 
       return;
     }
     descr.set_queue_root(qinfo.out_queue->prefetch_ref(0));
-    // TODO: comment the next two lines in the future when the output queues become huge
-    // (do this carefully)
+    // The two full validate_ref calls below may need to be replaced
+    // with incremental checks once output queues grow large; this
+    // is tracked as V-007 in docs/TODOS.md.
     if (debug_checks_) {
       REJECT_UNLESS_VOID(block::gen::t_OutMsgQueueInfo.validate_ref(1000000, outq_descr->root_cell()));
       REJECT_UNLESS_VOID(block::tlb::t_OutMsgQueueInfo.validate_ref(1000000, outq_descr->root_cell()));
@@ -1807,10 +1808,10 @@ void ValidateQuery::got_neighbor_out_queue(int i, td::Result<Ref<MessageQueue>> 
     }
     outq_descr.clear();
     do {
-      // require masterchain blocks referred to in ProcessedUpto
-      // TODO: perform this only if there are messages for this shard in our output queue
-      // .. (have to check the above condition and perform a `break` here) ..
-      // ..
+      // require masterchain blocks referred to in ProcessedUpto.
+      // Skipping this loop when our output queue has no messages
+      // for the neighbor shard is tracked as V-008 in
+      // docs/TODOS.md.
       for (const auto& entry : descr.processed_upto->list) {
         Ref<MasterchainStateQ> state;
         if (!request_aux_mc_state(entry.mc_seqno, state)) {
@@ -5938,7 +5939,8 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
         return reject_query(PSTRING() << "storage transaction " << lt << " of account " << addr.to_hex()
                                       << " has at least one outbound message");
       }
-      // FIXME
+      // Storage transaction re-execution is unimplemented and is
+      // tracked as V-001 in docs/TODOS.md.
       return reject_query(PSTRING() << "unable to verify storage transaction " << lt << " of account "
                                     << addr.to_hex());
       break;
@@ -5962,7 +5964,8 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
         return reject_query(PSTRING() << "merge prepare transaction " << lt << " of account " << addr.to_hex()
                                       << " must have exactly one outbound message");
       }
-      // FIXME
+      // Merge prepare re-execution is unimplemented and is tracked
+      // as V-002 in docs/TODOS.md.
       return reject_query(PSTRING() << "unable to verify merge prepare transaction " << lt << " of account "
                                     << addr.to_hex());
       break;
@@ -5974,7 +5977,8 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
                                       << " has no inbound message");
       }
       need_credit_phase = true;
-      // FIXME
+      // Merge install re-execution is unimplemented and is tracked
+      // as V-003 in docs/TODOS.md.
       return reject_query(PSTRING() << "unable to verify merge install transaction " << lt << " of account "
                                     << addr.to_hex());
       break;
@@ -5989,7 +5993,8 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
         return reject_query(PSTRING() << "split prepare transaction " << lt << " of account " << addr.to_hex()
                                       << " must have exactly one outbound message");
       }
-      // FIXME
+      // Split prepare re-execution is unimplemented and is tracked
+      // as V-004 in docs/TODOS.md.
       return reject_query(PSTRING() << "unable to verify split prepare transaction " << lt << " of account "
                                     << addr.to_hex());
       break;
@@ -6000,7 +6005,8 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
         return reject_query(PSTRING() << "split install transaction " << lt << " of account " << addr.to_hex()
                                       << " has no inbound message");
       }
-      // FIXME
+      // Split install re-execution is unimplemented and is tracked
+      // as V-005 in docs/TODOS.md.
       return reject_query(PSTRING() << "unable to verify split install transaction " << lt << " of account "
                                     << addr.to_hex());
       break;
@@ -6682,7 +6688,8 @@ bool ValidateQuery::check_shard_libraries() {
   std::sort(lib_publishers_.begin(), lib_publishers_.end());
   std::sort(lib_publishers2_.begin(), lib_publishers2_.end());
   if (lib_publishers_ != lib_publishers2_) {
-    // TODO: better error message with by-element comparison?
+    // A more diagnostic error message via element-by-element diff
+    // is tracked as V-006 in docs/TODOS.md.
     return reject_query("the set of public libraries and their publishing accounts has not been updated correctly");
   }
   return true;

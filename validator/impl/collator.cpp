@@ -933,7 +933,8 @@ bool Collator::unpack_last_mc_state() {
                << " have been enabled in global configuration, but we support only " << supported_version()
                << " (upgrade validator software?)";
   }
-  // TODO: extract start_lt and end_lt from prev_mc_block as well
+  // Tightening lt bounds with prev_mc_block extents is tracked as
+  // V-010 in docs/TODOS.md.
   return true;
 }
 
@@ -1142,10 +1143,9 @@ void Collator::got_neighbor_msg_queue(unsigned i, Ref<OutMsgQueueProof> res) {
     return;
   }
   outq_descr.clear();
-  // require masterchain blocks referred to in ProcessedUpto
-  // TODO: perform this only if there are messages for this shard in our output queue
-  // .. (have to check the above condition and perform a `break` here) ..
-  // ..
+  // require masterchain blocks referred to in ProcessedUpto.
+  // Skipping this loop when our output queue has no messages for
+  // the neighbor shard is tracked as V-009 in docs/TODOS.md.
   for (const auto& entry : descr.processed_upto->list) {
     Ref<MasterchainStateQ> state;
     if (!request_aux_mc_state(entry.mc_seqno, state)) {
@@ -2483,8 +2483,8 @@ td::actor::Task<> Collator::do_collate_inner() {
   if (after_merge_) {
     // 3. merge prepare / merge install
     LOG(DEBUG) << "create merge prepare/install transactions (NOT IMPLEMENTED YET)";
-    // TODO: implement merge prepare/install transactions for "large" smart contracts
-    // ...
+    // Implementing merge prepare/install for large smart contracts
+    // is tracked as V-011 in docs/TODOS.md.
   }
   // 4. import inbound internal messages, process or transit
   LOG(INFO) << "process inbound internal messages";
@@ -2499,8 +2499,8 @@ td::actor::Task<> Collator::do_collate_inner() {
   if (before_split_) {
     // 7. split prepare / split install
     LOG(DEBUG) << "create split prepare/install transactions (NOT IMPLEMENTED YET)";
-    // TODO: implement split prepare/install transactions for "large" smart contracts
-    // ...
+    // Implementing split prepare/install for large smart contracts
+    // is tracked as V-012 in docs/TODOS.md.
   }
   // 8. tock transactions
   LOG(INFO) << "create tock transactions";
@@ -3549,7 +3549,10 @@ td::Result<std::unique_ptr<block::transaction::Transaction>> Collator::impl_crea
         stats->work_time.trx_other += timer.elapsed_both() - trans->time_tvm - trans->time_storage_stat;
       }
     };
-    bool ihr_delivered = false;  // FIXME
+    // ihr_delivered is hard-coded to false; deriving it from
+    // IhrPendingInfo when IHR is reactivated is tracked as V-013
+    // in docs/TODOS.md.
+    bool ihr_delivered = false;
     if (!trans->unpack_input_msg(ihr_delivered, action_phase_cfg)) {
       if (external) {
         // inbound external message was not accepted
@@ -4160,8 +4163,9 @@ bool Collator::process_inbound_message(Ref<vm::CellSlice> enq_msg, tos::LogicalT
     return true;
   }
   // 6.1. check whether we have already processed this message by IHR
-  //      (then create a msg_discard_fin InMsg and remove record from IhrPendingInfo)
-  // .. TODO ..
+  //      (then create a msg_discard_fin InMsg and remove record
+  //      from IhrPendingInfo). Implementing the IHR pending-info
+  //      lookup is tracked as V-014 in docs/TODOS.md.
   // 7. decide what to do with the message
   if (!to_us) {
     // destination is outside our shard, relay transit message
@@ -6248,7 +6252,7 @@ bool Collator::create_mc_block_extra(Ref<vm::Cell>& mc_block_extra) {
          && cb.store_bool_bool(is_key_block_)                      // key_block:(## 1)
          && cb.append_cellslice_bool(shard_conf_->get_root_csr())  // shard_hashes:ShardHashes
          && fees_import_dict_->append_dict_to_bool(cb)             // shard_fees:ShardFees
-         && cb2.store_long_bool(0, 1)                 // ^[ TODO: prev_blk_signatures:(HashmapE 16 CryptoSignature)
+         && cb2.store_long_bool(0, 1)                 // ^[ prev_blk_signatures left empty; populating is V-027
          && cb2.store_maybe_ref(recover_create_msg_)  //   recover_create_msg:(Maybe ^InMsg)
          && cb2.store_maybe_ref(mint_msg_)            //   mint_msg:(Maybe ^InMsg)
          && cb.store_ref_bool(cb2.finalize())         // ]

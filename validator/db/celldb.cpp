@@ -18,7 +18,9 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 
-// FIXME: Remove once RocksDB stops triggering this warning.
+// Suppress implicit-int-float-conversion warnings emitted by the
+// vendored RocksDB headers; the suppression can be lifted once
+// RocksDB no longer trips this diagnostic.
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wimplicit-int-float-conversion"
 #include "rocksdb/merge_operator.h"

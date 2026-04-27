@@ -52,8 +52,14 @@ Vote Vote::from_tl(const tl::UnsignedVote& vote) {
   auto finalize_fn = [&](const tl::finalizeVote& tl_vote) -> Vote { return FinalizeVote::from_tl(tl_vote); };
   auto skip_fn = [&](const tl::skipVote& tl_vote) -> Vote { return SkipVote::from_tl(tl_vote); };
 
-  // FIXME: This doesn't work:
-  // return tos_api::downcast_call(vote, td::overloaded(notarize_fn, finalize_fn, skip_fn));
+  // The natural single-expression form below does not compile
+  // because `tos_api::downcast_call` requires a non-const reference
+  // and cannot deduce the return type from the `td::overloaded`
+  // visitor:
+  //   return tos_api::downcast_call(
+  //       vote, td::overloaded(notarize_fn, finalize_fn, skip_fn));
+  // Instead, capture the visited result in an `optional` from
+  // inside the lambda.
   std::optional<Vote> result;
   tos_api::downcast_call(const_cast<tl::UnsignedVote&>(vote),
                          [&](auto& vote) { result = td::overloaded(notarize_fn, finalize_fn, skip_fn)(vote); });

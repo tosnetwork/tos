@@ -542,7 +542,8 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
     reschedule_standstill_resolution();
   }
 
-  // FIXME: This should probably live in another actor.
+  // Relocating this handler to the broadcast/overlay actor is
+  // tracked as V-021 in docs/TODOS.md.
   template <>
   td::actor::Task<> process(BusHandle, std::shared_ptr<PrecheckCandidateBroadcast> query) {
     if (query->slot < first_nonfinalized_slot_) {

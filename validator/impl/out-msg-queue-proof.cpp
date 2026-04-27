@@ -406,7 +406,8 @@ void OutMsgQueueImporter::got_proof(std::shared_ptr<CacheEntry> entry, std::vect
   if (!check_timeout(entry)) {
     return;
   }
-  // TODO: maybe save proof to small cache? It would allow other queries to reuse this result
+  // Caching query-source proofs in the small cache is tracked as
+  // V-017 in docs/TODOS.md.
   for (auto& p : proofs) {
     auto block_id = p->block_id_;
     if (entry->result.emplace(block_id, std::move(p)).second) {
