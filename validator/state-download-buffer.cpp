@@ -51,43 +51,31 @@ namespace fullnode {
 
 namespace {
 
-// Per-state download cap: a single peer-advertised state must not exceed
-// this size, regardless of which storage mode (heap or tempfile) ends up
-// being used. Acts as the first line of defense against a hostile peer
-// announcing an absurd size. Sized at 16 GiB so the streaming-tempfile
-// downloader admits the largest persistent states observed on long-lived
-// public networks; the heap path is gated by the much smaller
-// kHeapThreshold constant below so this only governs disk usage.
-constexpr td::uint64 kMaxPersistentStateDownloadBytes = 16ULL << 30;  // 16 GiB per state
-
 // Threshold above which the downloader streams chunks into a tempfile
 // instead of allocating a single contiguous BufferSlice. Sized so typical
 // shard/zero states still take the cheap heap path while the large MC
 // state path is forced onto disk where RSS is bounded.
 constexpr td::uint64 kHeapThreshold = 64ULL << 20;  // 64 MiB
 
-// Cumulative download-budget cap: the maximum total bytes outstanding
-// across all in-flight (and held downstream) persistent-state downloads.
-// A consumer that drops a BudgetedBufferSlice / BudgetedStateFile returns
-// its slice to this counter via the shared_ptr destructor.
+// Live budget configuration. The H-03 fix raises the processing cap to
+// match the download cap (so a 16 GiB catch-up state that downloads
+// successfully also parses successfully) and exposes the peak resident
+// memory budget per parse to the streaming BoC importer. All four
+// fields are mutated together via configure_persistent_state_budgets so
+// the reservation hot path can take a single snapshot under a mutex.
 //
-// With the streaming tempfile path most of these bytes are on disk
-// (mmap-backed), not in RAM. The cap here protects against unbounded
-// disk usage and against accumulating huge held BudgetedStateFile
-// handles in case of a downstream stall. Sized at the same ceiling as
-// the per-state cap so a single 16 GiB state may be in flight; resident
-// RAM during parse is independently bounded by
-// kMaxTotalPersistentStateProcessingBytes (which is much smaller).
-constexpr td::uint64 kMaxTotalPersistentStateDownloadBytes = 16ULL << 30;  // 16 GiB total
+// Defaults:
+//   max_download_bytes               16 GiB
+//   max_processing_bytes             16 GiB (raised from the legacy 512 MiB)
+//   max_single_file_bytes            16 GiB
+//   max_resident_bytes_per_parse     256 MiB
+std::mutex g_budget_config_mu;
+PersistentStateBudgetConfig g_budget_config;
 
-// Processing budget covers the transient BufferSlice / mmap views the
-// downstream shard-state pipeline takes while parsing / persisting a
-// downloaded state. Sized to admit two concurrent in-memory parses
-// without rejecting either; the OnDisk parse path no longer allocates a
-// full-state BufferSlice, so the processing budget effectively bounds
-// in-memory clone peaks across all concurrent parses (resident RAM, not
-// disk).
-constexpr td::uint64 kMaxTotalPersistentStateProcessingBytes = 512ULL << 20;
+PersistentStateBudgetConfig load_budget_config_locked() {
+  std::lock_guard<std::mutex> g(g_budget_config_mu);
+  return g_budget_config;
+}
 
 std::atomic<td::uint64> g_persistent_state_download_bytes{0};
 std::atomic<td::uint64> g_persistent_state_processing_bytes{0};
@@ -114,6 +102,34 @@ void release_persistent_state_download_memory(td::uint64 size) {
     LOG(ERROR) << "persistent state download budget underflow: prev=" << previous << " size=" << size;
     g_persistent_state_download_bytes.store(0, std::memory_order_release);
   }
+}
+
+// Validate a configured budget. Each cap must be positive and large
+// enough to support at least the heap-threshold path; an obviously-
+// undersized cap is refused so a misconfigured operator does not
+// silently disable persistent-state downloads.
+td::Status validate_budget_config(const PersistentStateBudgetConfig& cfg) {
+  if (cfg.max_download_bytes < kHeapThreshold) {
+    return td::Status::Error(PSTRING() << "max_download_bytes " << cfg.max_download_bytes
+                                       << " < kHeapThreshold " << kHeapThreshold);
+  }
+  if (cfg.max_processing_bytes < kHeapThreshold) {
+    return td::Status::Error(PSTRING() << "max_processing_bytes " << cfg.max_processing_bytes
+                                       << " < kHeapThreshold " << kHeapThreshold);
+  }
+  if (cfg.max_single_file_bytes < kHeapThreshold) {
+    return td::Status::Error(PSTRING() << "max_single_file_bytes " << cfg.max_single_file_bytes
+                                       << " < kHeapThreshold " << kHeapThreshold);
+  }
+  if (cfg.max_resident_bytes_per_parse < (16ULL << 20)) {
+    return td::Status::Error(PSTRING() << "max_resident_bytes_per_parse "
+                                       << cfg.max_resident_bytes_per_parse << " < 16 MiB minimum");
+  }
+  if (cfg.max_single_file_bytes > cfg.max_download_bytes) {
+    return td::Status::Error(PSTRING() << "max_single_file_bytes " << cfg.max_single_file_bytes
+                                       << " > max_download_bytes " << cfg.max_download_bytes);
+  }
+  return td::Status::OK();
 }
 
 void release_persistent_state_processing_memory(td::uint64 size) {
@@ -490,14 +506,13 @@ bool try_reserve_persistent_state_download_memory(td::uint64 size) {
   if (size == 0) {
     return true;
   }
+  auto cap = load_budget_config_locked().max_download_bytes;
   auto current = g_persistent_state_download_bytes.load(std::memory_order_relaxed);
   for (;;) {
     // Defensive: refuse single reservations larger than the total cap and
     // any reservation that would overflow the running counter. The check
-    // is written so kMaxTotalPersistentStateDownloadBytes - size never
-    // underflows.
-    if (size > kMaxTotalPersistentStateDownloadBytes ||
-        current > kMaxTotalPersistentStateDownloadBytes - size) {
+    // is written so cap - size never underflows.
+    if (size > cap || current > cap - size) {
       return false;
     }
     if (g_persistent_state_download_bytes.compare_exchange_weak(
@@ -511,10 +526,10 @@ bool try_reserve_persistent_state_processing_memory(td::uint64 size) {
   if (size == 0) {
     return true;
   }
+  auto cap = load_budget_config_locked().max_processing_bytes;
   auto current = g_persistent_state_processing_bytes.load(std::memory_order_relaxed);
   for (;;) {
-    if (size > kMaxTotalPersistentStateProcessingBytes ||
-        current > kMaxTotalPersistentStateProcessingBytes - size) {
+    if (size > cap || current > cap - size) {
       return false;
     }
     if (g_persistent_state_processing_bytes.compare_exchange_weak(
@@ -528,9 +543,9 @@ td::Status validate_persistent_state_size(td::uint64 size) {
   if (size == 0) {
     return td::Status::Error("persistent state has zero size");
   }
-  if (size > kMaxPersistentStateDownloadBytes) {
-    return td::Status::Error(PSTRING() << "persistent state too large: " << size << " > "
-                                       << kMaxPersistentStateDownloadBytes);
+  auto cap = load_budget_config_locked().max_single_file_bytes;
+  if (size > cap) {
+    return td::Status::Error(PSTRING() << "persistent state too large: " << size << " > " << cap);
   }
   return td::Status::OK();
 }
@@ -540,11 +555,26 @@ td::uint64 persistent_state_heap_threshold_bytes() {
 }
 
 td::uint64 persistent_state_max_file_bytes() {
-  return kMaxPersistentStateDownloadBytes;
+  return load_budget_config_locked().max_single_file_bytes;
 }
 
 td::uint64 persistent_state_total_download_budget_bytes() {
-  return kMaxTotalPersistentStateDownloadBytes;
+  return load_budget_config_locked().max_download_bytes;
+}
+
+void configure_persistent_state_budgets(PersistentStateBudgetConfig cfg) {
+  auto status = validate_budget_config(cfg);
+  if (status.is_error()) {
+    LOG(ERROR) << "rejecting invalid PersistentStateBudgetConfig: " << status
+               << "; keeping previous configuration";
+    return;
+  }
+  std::lock_guard<std::mutex> g(g_budget_config_mu);
+  g_budget_config = cfg;
+}
+
+PersistentStateBudgetConfig persistent_state_budget_config() {
+  return load_budget_config_locked();
 }
 
 void set_persistent_state_tempfile_dir(std::string dir) {

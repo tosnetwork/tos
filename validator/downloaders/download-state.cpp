@@ -70,11 +70,13 @@ td::Result<td::Ref<vm::Cell>> parse_ondisk_state_for_test(fullnode::BudgetedStat
   // validates the on-disk size against the announced size, so a
   // truncated or padded tempfile is rejected here before any parsing.
   TRY_RESULT(mapped, fullnode::mmap_persistent_state_file(file));
-  // Layer 2: BoC deserialize. This validates the magic bytes, the cell
-  // descriptor structure, the CRC32C trailer, and (on success) computes
-  // the root cell's hash. A flipped byte anywhere in the BoC payload
-  // either fails CRC32C validation or produces a different root hash
-  // than `expected_root_hash`.
+  // Layer 2: BoC deserialize. We deliberately keep the slice-based
+  // deserialize here instead of the streaming-from-file variant: the
+  // helper exists so corruption-rejection tests can drive the same
+  // BoC layer + root-hash compare end-to-end without standing up the
+  // streaming importer's per-cell persist callback. A flipped byte
+  // anywhere in the BoC payload either fails CRC32C validation or
+  // produces a different root hash than `expected_root_hash`.
   TRY_RESULT(root, vm::std_boc_deserialize(mapped));
   if (root.is_null()) {
     return td::Status::Error("parse_ondisk_state_for_test: BoC deserialize returned null root");
@@ -86,6 +88,44 @@ td::Result<td::Ref<vm::Cell>> parse_ondisk_state_for_test(fullnode::BudgetedStat
   // mutating cell content while keeping the BoC envelope intact.
   if (RootHash{root->get_hash().bits()} != expected_root_hash) {
     return td::Status::Error(PSTRING() << "parse_ondisk_state_for_test: root hash mismatch: expected "
+                                       << expected_root_hash.to_hex() << " got "
+                                       << RootHash{root->get_hash().bits()}.to_hex());
+  }
+  return root;
+}
+
+// Streaming variant of the OnDisk parse path: opens `file` for read,
+// runs the bounded BoC importer, and verifies the root hash against
+// the BFT-attested `expected_root_hash`. Peak resident memory is
+// bounded by `opts.max_resident_bytes` regardless of the on-disk file
+// size — the on-disk parse path is no longer constrained by the legacy
+// 512 MiB processing cap.
+//
+// The `persist_cell` callback is invoked once per unique cell as the
+// importer completes its deserialization. The DownloadShardState actor
+// supplies an empty callback today: cells are persisted as a side
+// effect of the downstream archive store / set_block_state path. A
+// future refactor that lands the cells directly into the cell DB can
+// pass a real callback here without changing the streaming contract.
+td::Result<td::Ref<vm::Cell>> parse_ondisk_state_streaming(fullnode::BudgetedStateFile &file,
+                                                           const RootHash &expected_root_hash,
+                                                           td::uint64 max_resident_bytes,
+                                                           vm::StreamingPersistCellFn persist_cell) {
+  if (file.path.empty() || file.size == 0) {
+    return td::Status::Error("parse_ondisk_state_streaming: empty BudgetedStateFile");
+  }
+  TRY_RESULT(fd, td::FileFd::open(file.path, td::FileFd::Flags::Read));
+  vm::StreamingBocImportOptions opts;
+  if (max_resident_bytes > 0) {
+    opts.max_resident_bytes = max_resident_bytes;
+  }
+  TRY_RESULT(root, vm::std_boc_deserialize_from_file_bounded(fd, file.size, opts, std::move(persist_cell)));
+  fd.close();
+  if (root.is_null()) {
+    return td::Status::Error("parse_ondisk_state_streaming: BoC deserialize returned null root");
+  }
+  if (RootHash{root->get_hash().bits()} != expected_root_hash) {
+    return td::Status::Error(PSTRING() << "parse_ondisk_state_streaming: root hash mismatch: expected "
                                        << expected_root_hash.to_hex() << " got "
                                        << RootHash{root->get_hash().bits()}.to_hex());
   }
@@ -625,16 +665,25 @@ void DownloadShardState::downloaded_shard_state(fullnode::DownloadedPersistentSt
   data_file_ = std::move(downloaded.file());
   data_reservation_ = data_file_.reservation;
 
-  // Reserve a processing slice covering the (forthcoming) mmap view.
-  // This is NOT a heap allocation (kernel-mapped pages can be evicted
-  // under pressure) but it is resident memory the OS bills against the
-  // process while pages are dirty, so the processing budget tracks it
-  // for parity with the InMemory clone accounting. The reservation is
-  // sized using the announced file size, which equals the actual size
-  // (mmap_persistent_state_file fails closed otherwise).
-  std::shared_ptr<fullnode::PersistentStateProcessingReservation> processing_reservation;
-  if (data_file_.size > 0) {
-    if (!fullnode::try_reserve_persistent_state_processing_memory(data_file_.size)) {
+  // M-01: reserve a processing slice that will be HELD ACROSS the
+  // entire parse → create_shard_state → archive store handoff. The
+  // legacy code released the reservation right after deserialize
+  // returned, but the resident DataCell tree + ShardState object
+  // continue to occupy memory through checked_shard_state() and
+  // beyond; under-accounting that window is the M-01 hazard.
+  //
+  // The reservation is bounded by the streaming importer's
+  // max_resident_bytes (NOT by the file size): the streaming pass
+  // peaks at the dependency-chain depth, not at the full BoC
+  // materialization. We charge that smaller number against the
+  // processing budget so concurrent imports stack correctly.
+  auto budget_cfg = fullnode::persistent_state_budget_config();
+  td::uint64 processing_charge = budget_cfg.max_resident_bytes_per_parse;
+  if (processing_charge > data_file_.size) {
+    processing_charge = data_file_.size;
+  }
+  if (processing_charge > 0) {
+    if (!fullnode::try_reserve_persistent_state_processing_memory(processing_charge)) {
       data_file_ = fullnode::BudgetedStateFile{};
       data_reservation_.reset();
       fail_handler(actor_id(this),
@@ -643,10 +692,10 @@ void DownloadShardState::downloaded_shard_state(fullnode::DownloadedPersistentSt
       return;
     }
     try {
-      processing_reservation =
-          std::make_shared<fullnode::PersistentStateProcessingReservation>(data_file_.size);
+      state_processing_reservation_ =
+          std::make_shared<fullnode::PersistentStateProcessingReservation>(processing_charge);
     } catch (...) {
-      fullnode::PersistentStateProcessingReservation rollback{data_file_.size};
+      fullnode::PersistentStateProcessingReservation rollback{processing_charge};
       (void)rollback;
       data_file_ = fullnode::BudgetedStateFile{};
       data_reservation_.reset();
@@ -657,22 +706,28 @@ void DownloadShardState::downloaded_shard_state(fullnode::DownloadedPersistentSt
     }
   }
 
-  // Delegate the parse pipeline (mmap + BoC deserialize + root-hash
-  // compare against the BFT-attested expected root) to the shared
-  // helper. The same helper is exercised by
-  // test_h02_ondisk_corrupt_tempfile_rejected_by_boc_or_root_hash with
-  // three corruption variants, pinning the claim that validate_deep()
-  // is structurally redundant on this path because the BoC layer +
-  // root-hash compare enforces the same invariant.
-  auto r_root = parse_ondisk_state_for_test(data_file_, handle_->state());
-  // The deserializer has consumed the mmap-backed slice into a Cell
-  // tree; release the processing reservation before any branching so
-  // bytes are not held longer than necessary across the error / success
-  // paths below.
-  processing_reservation.reset();
+  // H-03: streaming OnDisk parse. Replaces the legacy mmap +
+  // vm::std_boc_deserialize one-shot materialization with a chunked
+  // pread + per-cell deserialize that bounds peak resident memory at
+  // budget_cfg.max_resident_bytes_per_parse. The same root-hash
+  // compare against handle_->state() that
+  // parse_ondisk_state_for_test() does still runs at the end, so the
+  // existing "validate_deep skipped here is OK because BoC + root-hash
+  // is the same invariant" reasoning still applies.
+  //
+  // The persist_cell callback is left empty: the downstream
+  // checked_shard_state() routes through store_persistent_state_file
+  // (which copies the tempfile into the archive) and set_block_state
+  // (which lands the cell tree into the cell DB). A future refactor
+  // that lands the cells directly through the streaming callback can
+  // pass a real callable here without changing the rest of the actor.
+  auto r_root = parse_ondisk_state_streaming(data_file_, handle_->state(),
+                                             budget_cfg.max_resident_bytes_per_parse,
+                                             vm::StreamingPersistCellFn{});
   if (r_root.is_error()) {
     data_file_ = fullnode::BudgetedStateFile{};
     data_reservation_.reset();
+    state_processing_reservation_.reset();
     fail_handler(actor_id(this), r_root.move_as_error());
     return;
   }
@@ -682,6 +737,7 @@ void DownloadShardState::downloaded_shard_state(fullnode::DownloadedPersistentSt
   if (S.is_error()) {
     data_file_ = fullnode::BudgetedStateFile{};
     data_reservation_.reset();
+    state_processing_reservation_.reset();
     fail_handler(actor_id(this), S.move_as_error());
     return;
   }
@@ -694,7 +750,9 @@ void DownloadShardState::downloaded_shard_state(fullnode::DownloadedPersistentSt
   // data_ stays empty in the OnDisk branch — checked_shard_state()
   // detects this and routes to store_persistent_state_file_gen, which
   // copies the tempfile directly into the archive without ever
-  // materializing a BufferSlice of file size.
+  // materializing a BufferSlice of file size. state_processing_reservation_
+  // remains charged across this handoff and is released by
+  // checked_shard_state() once the archive write completes.
   checked_shard_state();
 }
 
@@ -722,16 +780,22 @@ void DownloadShardState::checked_shard_state() {
     auto write_data = [src_path, src_size](td::FileFd &dst) -> td::Status {
       return copy_tempfile_to_writer(src_path, src_size, dst);
     };
+    // M-01: pin state_processing_reservation_ into the completion
+    // lambda alongside the download-budget reservation so the
+    // processing budget stays charged through the archive write.
+    // Both reservations are released exactly once when the lambda
+    // runs to completion, AFTER the archive store fsync's.
     auto P = td::PromiseCreator::lambda(
         [SelfId = actor_id(this), reservation = std::move(data_reservation_),
+         processing_reservation = std::move(state_processing_reservation_),
          file = std::move(data_file_)](td::Result<td::Unit> R) mutable {
           R.ensure();
           // The BudgetedStateFile destructor unmaps + unlinks the
-          // tempfile when `file` goes out of scope; the reservation
-          // returns the bytes to the global download counter. Both
-          // happen exactly once on this completion.
+          // tempfile when `file` goes out of scope; both reservations
+          // return their bytes to the respective global counters.
           (void)file;
           reservation.reset();
+          processing_reservation.reset();
           td::actor::send_closure(SelfId, &DownloadShardState::written_shard_state_file);
         });
     if (block_id_.seqno() == 0) {
@@ -747,11 +811,15 @@ void DownloadShardState::checked_shard_state() {
 
   // InMemory path: hand the BufferSlice to the existing store API. The
   // reservation rides along in the completion lambda and releases when
-  // the disk write is durable.
+  // the disk write is durable. The processing reservation (if held;
+  // the InMemory branch may not have taken one) follows the same
+  // lifetime.
   auto P = td::PromiseCreator::lambda(
-      [SelfId = actor_id(this), reservation = std::move(data_reservation_)](td::Result<td::Unit> R) mutable {
+      [SelfId = actor_id(this), reservation = std::move(data_reservation_),
+       processing_reservation = std::move(state_processing_reservation_)](td::Result<td::Unit> R) mutable {
         R.ensure();
         reservation.reset();
+        processing_reservation.reset();
         td::actor::send_closure(SelfId, &DownloadShardState::written_shard_state_file);
       });
   if (block_id_.seqno() == 0) {
@@ -797,26 +865,70 @@ void DownloadShardState::downloaded_split_state_header(fullnode::DownloadedPersi
     return;
   }
 
-  // OnDisk: mmap → deserialize → effective shards. Pass the tempfile
-  // straight into store_persistent_state_file_gen to avoid a heap
-  // BufferSlice of file size.
+  // OnDisk: streaming BoC deserialize → effective shards. Pass the
+  // tempfile straight into store_persistent_state_file_gen to avoid a
+  // heap BufferSlice of file size; the streaming importer further
+  // bounds peak resident memory at the configured per-parse cap so
+  // even a multi-GiB split-state header parses without mmap-resident
+  // peaks.
   auto file = std::move(downloaded.file());
   auto reservation = file.reservation;
 
-  auto r_slice = fullnode::mmap_persistent_state_file(file);
-  if (r_slice.is_error()) {
-    fail_handler(actor_id(this), r_slice.move_as_error());
-    return;
+  // H-03: split-state header OnDisk parse must take its own processing
+  // reservation. Before this change the split-header path was
+  // unaccounted: a hostile peer could announce a multi-GiB header and
+  // burn unbounded resident memory while the streaming-tempfile
+  // download budget was happy. Charge the per-parse cap (NOT the file
+  // size) since the streaming importer peaks at that smaller number.
+  auto budget_cfg = fullnode::persistent_state_budget_config();
+  td::uint64 processing_charge = budget_cfg.max_resident_bytes_per_parse;
+  if (processing_charge > file.size) {
+    processing_charge = file.size;
   }
-  td::Slice mapped = r_slice.move_as_ok();
+  std::shared_ptr<fullnode::PersistentStateProcessingReservation> split_processing_reservation;
+  if (processing_charge > 0) {
+    if (!fullnode::try_reserve_persistent_state_processing_memory(processing_charge)) {
+      fail_handler(
+          actor_id(this),
+          td::Status::Error(ErrorCode::notready,
+                            "persistent state processing memory budget exceeded for split OnDisk header parse"));
+      return;
+    }
+    try {
+      split_processing_reservation =
+          std::make_shared<fullnode::PersistentStateProcessingReservation>(processing_charge);
+    } catch (...) {
+      fullnode::PersistentStateProcessingReservation rollback{processing_charge};
+      (void)rollback;
+      fail_handler(actor_id(this),
+                   td::Status::Error(ErrorCode::notready,
+                                     "cannot allocate processing reservation for split OnDisk header parse"));
+      return;
+    }
+  }
 
-  auto maybe_header = vm::std_boc_deserialize(mapped);
-  if (maybe_header.is_error()) {
-    fail_handler(actor_id(this), maybe_header.move_as_error());
-    return;
+  td::Ref<vm::Cell> header_root;
+  {
+    auto r_fd = td::FileFd::open(file.path, td::FileFd::Flags::Read);
+    if (r_fd.is_error()) {
+      fail_handler(actor_id(this), r_fd.move_as_error());
+      return;
+    }
+    auto fd = r_fd.move_as_ok();
+    vm::StreamingBocImportOptions opts;
+    opts.max_resident_bytes = budget_cfg.max_resident_bytes_per_parse;
+    auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, file.size, opts,
+                                                            vm::StreamingPersistCellFn{});
+    fd.close();
+    if (r_root.is_error()) {
+      fail_handler(actor_id(this), r_root.move_as_error());
+      return;
+    }
+    header_root = r_root.move_as_ok();
   }
+
   auto maybe_parts = deserializer_->get_effective_shards_from_header(block_id_.shard_full().shard, handle_->state(),
-                                                                      maybe_header.move_as_ok(), split_depth_);
+                                                                      std::move(header_root), split_depth_);
   if (maybe_parts.is_error()) {
     fail_handler(actor_id(this), maybe_parts.move_as_error());
     return;
@@ -830,10 +942,12 @@ void DownloadShardState::downloaded_split_state_header(fullnode::DownloadedPersi
   };
   auto P = td::PromiseCreator::lambda(
       [SelfId = actor_id(this), reservation = std::move(reservation),
+       processing_reservation = std::move(split_processing_reservation),
        file = std::move(file)](td::Result<td::Unit> R) mutable {
         R.ensure();
         (void)file;
         reservation.reset();
+        processing_reservation.reset();
         td::actor::send_closure(SelfId, &DownloadShardState::download_next_part_or_finish);
       });
   td::actor::send_closure(manager_, &ValidatorManager::store_persistent_state_file_gen, block_id_,
@@ -925,23 +1039,61 @@ void DownloadShardState::downloaded_state_part(fullnode::DownloadedPersistentSta
     return;
   }
 
-  // OnDisk: mmap → deserialize, then store via _gen.
+  // OnDisk: streaming deserialize → store via _gen. The split-state
+  // part path is the second of the two split-state branches H-03
+  // calls out as needing its own processing reservation; without it,
+  // a hostile peer could ship many large parts in succession and
+  // burn unbounded resident memory while the streaming-tempfile
+  // download budget tracks only the on-disk bytes.
   auto file = std::move(downloaded.file());
   auto reservation = file.reservation;
 
-  auto r_slice = fullnode::mmap_persistent_state_file(file);
-  if (r_slice.is_error()) {
-    retry_part_download(actor_id(this), r_slice.move_as_error());
-    return;
+  auto budget_cfg = fullnode::persistent_state_budget_config();
+  td::uint64 processing_charge = budget_cfg.max_resident_bytes_per_parse;
+  if (processing_charge > file.size) {
+    processing_charge = file.size;
   }
-  td::Slice mapped = r_slice.move_as_ok();
+  std::shared_ptr<fullnode::PersistentStateProcessingReservation> split_processing_reservation;
+  if (processing_charge > 0) {
+    if (!fullnode::try_reserve_persistent_state_processing_memory(processing_charge)) {
+      retry_part_download(
+          actor_id(this),
+          td::Status::Error(ErrorCode::notready,
+                            "persistent state processing memory budget exceeded for split OnDisk part parse"));
+      return;
+    }
+    try {
+      split_processing_reservation =
+          std::make_shared<fullnode::PersistentStateProcessingReservation>(processing_charge);
+    } catch (...) {
+      fullnode::PersistentStateProcessingReservation rollback{processing_charge};
+      (void)rollback;
+      retry_part_download(actor_id(this),
+                          td::Status::Error(ErrorCode::notready,
+                                            "cannot allocate processing reservation for split OnDisk part parse"));
+      return;
+    }
+  }
 
-  auto maybe_part = vm::std_boc_deserialize(mapped);
-  if (maybe_part.is_error()) {
-    retry_part_download(actor_id(this), maybe_part.move_as_error());
-    return;
+  td::Ref<vm::Cell> root;
+  {
+    auto r_fd = td::FileFd::open(file.path, td::FileFd::Flags::Read);
+    if (r_fd.is_error()) {
+      retry_part_download(actor_id(this), r_fd.move_as_error());
+      return;
+    }
+    auto fd = r_fd.move_as_ok();
+    vm::StreamingBocImportOptions opts;
+    opts.max_resident_bytes = budget_cfg.max_resident_bytes_per_parse;
+    auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, file.size, opts,
+                                                            vm::StreamingPersistCellFn{});
+    fd.close();
+    if (r_root.is_error()) {
+      retry_part_download(actor_id(this), r_root.move_as_error());
+      return;
+    }
+    root = r_root.move_as_ok();
   }
-  auto root = maybe_part.move_as_ok();
   if (root->get_hash() != parts_[idx].root_hash) {
     auto error_message =
         "Hash mismatch for part " +
@@ -958,10 +1110,12 @@ void DownloadShardState::downloaded_state_part(fullnode::DownloadedPersistentSta
   };
   auto P = td::PromiseCreator::lambda(
       [SelfId = actor_id(this), reservation = std::move(reservation),
+       processing_reservation = std::move(split_processing_reservation),
        file = std::move(file)](td::Result<td::Unit> R) mutable {
         R.ensure();
         (void)file;
         reservation.reset();
+        processing_reservation.reset();
         td::actor::send_closure(SelfId, &DownloadShardState::written_state_part_file);
       });
   td::actor::send_closure(manager_, &ValidatorManager::store_persistent_state_file_gen, block_id_,

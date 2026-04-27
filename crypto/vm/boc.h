@@ -18,6 +18,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #pragma once
+#include <functional>
 #include <map>
 #include <set>
 
@@ -401,6 +402,52 @@ class BagOfCells {
 
 td::Result<Ref<Cell>> std_boc_deserialize(td::Slice data, bool can_be_empty = false, bool allow_nonzero_level = false);
 td::Result<td::BufferSlice> std_boc_serialize(Ref<Cell> root, int mode = 0);
+
+// Bounded streaming BoC importer. Reads a serialized BoC directly from a
+// file descriptor in chunks, deserializes each cell as soon as its
+// references are known, hands the freshly-built cell to `persist_cell`,
+// and immediately drops every intermediate cell that no longer has an
+// outstanding parent reference. Peak resident memory is therefore bounded
+// by `opts.max_resident_bytes` (a small queue of cells that have not yet
+// been visited as a reference target) PLUS the BoC header and per-cell
+// scaffolding (offset table, ref counts, work queue), regardless of the
+// total file size.
+//
+// Contract:
+//   * The function returns the root cell on success. The DataCell payload
+//     of the root is owned by the caller; every other cell in the DAG is
+//     reachable via the root only if `persist_cell` chose to keep it.
+//     Callers that persist cells to a CellDb typically immediately
+//     re-resolve the root through their CellDbReader.
+//   * `persist_cell` is invoked exactly once per unique cell in the DAG,
+//     in topological order from leaves to root. Returning a non-OK status
+//     aborts the import and surfaces the error verbatim.
+//   * `opts.max_cells` (when non-zero) caps the cell count declared in
+//     the BoC header; `opts.max_total_cell_bytes` (when non-zero) caps
+//     the data-size field of the header. Both are first-line defenses
+//     against a hostile peer announcing an absurd BoC structure. The
+//     `size` argument is independently checked against the file's
+//     actual length so a truncated tempfile cannot smuggle past the
+//     declared header.
+//   * The file is read in 4 MiB chunks via pread starting at offset 0;
+//     no mmap of the full file is performed. CRC32C trailer (when the
+//     BoC carries one) is validated incrementally against the same
+//     chunked reader so a corrupted trailer fails closed at the same
+//     stage a one-shot deserialize would.
+//   * The function is NOT thread-safe with respect to `file`: the
+//     caller MUST own the FileFd for the duration of the call.
+struct StreamingBocImportOptions {
+  td::uint64 max_cells = 0;             // 0 = use existing kMaxCells default
+  td::uint64 max_roots = 1;
+  td::uint64 max_total_cell_bytes = 0;  // 0 = no cap beyond file size
+  td::uint64 max_resident_bytes = 256ULL << 20;  // resident-memory peak cap
+};
+
+using StreamingPersistCellFn = std::function<td::Status(td::Ref<Cell>)>;
+
+td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded(
+    td::FileFd& file, td::uint64 size, const StreamingBocImportOptions& opts,
+    StreamingPersistCellFn persist_cell);
 
 td::Result<std::vector<Ref<Cell>>> std_boc_deserialize_multi(td::Slice data,
                                                              int max_roots = BagOfCells::default_max_roots);

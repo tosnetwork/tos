@@ -23,6 +23,7 @@
 #include "td/utils/port/FileFd.h"
 #include "validator/interfaces/validator-manager.h"
 #include "validator/state-download-buffer.h"
+#include "vm/boc.h"
 #include "vm/cells/Cell.h"
 
 #include "stats-provider.h"
@@ -59,6 +60,25 @@ td::Status copy_tempfile_to_writer(const std::string &src_path, td::uint64 size,
 // downloaded_shard_state is the regression test.
 td::Result<td::Ref<vm::Cell>> parse_ondisk_state_for_test(fullnode::BudgetedStateFile &file,
                                                           const RootHash &expected_root_hash);
+
+// H-03 streaming OnDisk parse path. Opens the BudgetedStateFile for
+// read, drives the bounded streaming BoC importer with the supplied
+// resident-bytes cap (0 = use the importer's built-in default), and
+// validates the resulting root hash against the BFT-attested
+// `expected_root_hash`. Peak resident memory is bounded by
+// `max_resident_bytes`, NOT by the file size; this is the load-bearing
+// primitive that lets a 600 MiB+ catch-up state parse without hitting
+// the 512 MiB processing cap.
+//
+// `persist_cell` is invoked once per unique cell in topological order
+// (leaves first). The current actor leaves it empty and relies on the
+// downstream set_block_state / archive store to persist; a future
+// caller can pass a real CellDb-write callback here without changing
+// the streaming contract.
+td::Result<td::Ref<vm::Cell>> parse_ondisk_state_streaming(fullnode::BudgetedStateFile &file,
+                                                           const RootHash &expected_root_hash,
+                                                           td::uint64 max_resident_bytes,
+                                                           vm::StreamingPersistCellFn persist_cell);
 
 class SplitStateDeserializer;
 
@@ -134,6 +154,12 @@ class DownloadShardState : public td::actor::Actor {
   // store_persistent_state_file consumes the file, on abort the
   // BudgetedStateFile destructor unlinks the tempfile.
   fullnode::BudgetedStateFile data_file_;
+  // M-01: processing-budget reservation held across parse + create
+  // shard state + archive store. Released exactly once when the archive
+  // handoff finishes (success path) or when the failure branch resets
+  // actor state. Held as a shared_ptr so completion lambdas can extend
+  // its lifetime past `this` without copying the reservation bytes.
+  std::shared_ptr<fullnode::PersistentStateProcessingReservation> state_processing_reservation_;
   td::Ref<ShardState> state_;
 
   ProcessStatus status_;

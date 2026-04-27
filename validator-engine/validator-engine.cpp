@@ -67,6 +67,7 @@
 #include "uno/core/init.h"
 #include "overlay-manager.h"
 #include "overlays.h"
+#include "validator/state-download-buffer.h"
 #include "validator-engine.hpp"
 
 #if TD_DARWIN || TD_LINUX
@@ -6017,10 +6018,119 @@ int main(int argc, char *argv[]) {
         });
         return td::Status::OK();
       });
+
+  // H-03 / M-01 persistent-state budget overrides. These flags raise or
+  // lower the four ceilings the streaming-tempfile downloader and the
+  // streaming BoC importer consult on every reservation:
+  //
+  //   --persistent-state-download-cap=<bytes>
+  //       Cumulative outstanding download budget across all in-flight
+  //       persistent-state downloads. Default 16 GiB.
+  //   --persistent-state-processing-cap=<bytes>
+  //       Cumulative outstanding processing budget across all in-flight
+  //       parses. Default 16 GiB; raised from the legacy 512 MiB so a
+  //       multi-GiB catch-up state that downloads successfully also
+  //       parses successfully.
+  //   --persistent-state-single-file-cap=<bytes>
+  //       Per-state download cap. A single peer-advertised state above
+  //       this value is rejected before any reservation is taken.
+  //       Default 16 GiB.
+  //   --persistent-state-resident-cap=<bytes>
+  //       Per-parse peak resident memory. The streaming BoC importer
+  //       refuses to keep more than this many bytes resident at any
+  //       point during a single parse. Default 256 MiB.
+  //
+  // The reservation is applied IMMEDIATELY (synchronously, before the
+  // engine starts) so an engine startup with mismatched download/
+  // processing caps cannot silently log a successful download that
+  // will later fail to parse.
+  auto parse_budget_bytes = [](td::Slice arg, td::uint64& out) -> td::Status {
+    TRY_RESULT(v, td::to_integer_safe<td::uint64>(arg));
+    if (v == 0) {
+      return td::Status::Error("persistent-state budget must be > 0");
+    }
+    out = v;
+    return td::Status::OK();
+  };
+  p.add_checked_option('\0', "persistent-state-download-cap",
+                       "cumulative outstanding persistent-state download budget in bytes (default 16 GiB)",
+                       [&](td::Slice arg) -> td::Status {
+                         td::uint64 v = 0;
+                         TRY_STATUS(parse_budget_bytes(arg, v));
+                         auto cfg = tos::validator::fullnode::persistent_state_budget_config();
+                         cfg.max_download_bytes = v;
+                         tos::validator::fullnode::configure_persistent_state_budgets(cfg);
+                         return td::Status::OK();
+                       });
+  p.add_checked_option('\0', "persistent-state-processing-cap",
+                       "cumulative outstanding persistent-state processing budget in bytes (default 16 GiB)",
+                       [&](td::Slice arg) -> td::Status {
+                         td::uint64 v = 0;
+                         TRY_STATUS(parse_budget_bytes(arg, v));
+                         auto cfg = tos::validator::fullnode::persistent_state_budget_config();
+                         cfg.max_processing_bytes = v;
+                         tos::validator::fullnode::configure_persistent_state_budgets(cfg);
+                         return td::Status::OK();
+                       });
+  p.add_checked_option('\0', "persistent-state-single-file-cap",
+                       "per-state download cap in bytes (default 16 GiB)",
+                       [&](td::Slice arg) -> td::Status {
+                         td::uint64 v = 0;
+                         TRY_STATUS(parse_budget_bytes(arg, v));
+                         auto cfg = tos::validator::fullnode::persistent_state_budget_config();
+                         cfg.max_single_file_bytes = v;
+                         tos::validator::fullnode::configure_persistent_state_budgets(cfg);
+                         return td::Status::OK();
+                       });
+  p.add_checked_option('\0', "persistent-state-resident-cap",
+                       "per-parse peak resident memory cap in bytes for the streaming BoC importer "
+                       "(default 256 MiB)",
+                       [&](td::Slice arg) -> td::Status {
+                         td::uint64 v = 0;
+                         TRY_STATUS(parse_budget_bytes(arg, v));
+                         auto cfg = tos::validator::fullnode::persistent_state_budget_config();
+                         cfg.max_resident_bytes_per_parse = v;
+                         tos::validator::fullnode::configure_persistent_state_budgets(cfg);
+                         return td::Status::OK();
+                       });
   auto S = p.run(argc, argv);
   if (S.is_error()) {
     LOG(ERROR) << "failed to parse options: " << S.move_as_error();
     std::_Exit(2);
+  }
+
+  // H-03 startup invariant: log the effective persistent-state budget
+  // configuration so an operator can verify the running ceilings (and
+  // CI can grep the line). The streaming importer is on by default
+  // post-H-03 and has no kill switch (the legacy slice-based path is
+  // retained only for the corruption-rejection helper).
+  {
+    auto cfg = tos::validator::fullnode::persistent_state_budget_config();
+    auto fmt_bytes = [](td::uint64 b) -> std::string {
+      constexpr td::uint64 kKiB = 1024;
+      constexpr td::uint64 kMiB = kKiB * 1024;
+      constexpr td::uint64 kGiB = kMiB * 1024;
+      char buf[64];
+      if (b >= kGiB && b % kGiB == 0) {
+        std::snprintf(buf, sizeof(buf), "%lluGiB", static_cast<unsigned long long>(b / kGiB));
+      } else if (b >= kMiB && b % kMiB == 0) {
+        std::snprintf(buf, sizeof(buf), "%lluMiB", static_cast<unsigned long long>(b / kMiB));
+      } else if (b >= kKiB && b % kKiB == 0) {
+        std::snprintf(buf, sizeof(buf), "%lluKiB", static_cast<unsigned long long>(b / kKiB));
+      } else {
+        std::snprintf(buf, sizeof(buf), "%lluB", static_cast<unsigned long long>(b));
+      }
+      return std::string{buf};
+    };
+    LOG(WARNING) << "persistent-state: download_cap=" << fmt_bytes(cfg.max_download_bytes)
+                 << " processing_cap=" << fmt_bytes(cfg.max_processing_bytes)
+                 << " single_file_cap=" << fmt_bytes(cfg.max_single_file_bytes)
+                 << " resident_per_parse=" << fmt_bytes(cfg.max_resident_bytes_per_parse)
+                 << " streaming_importer=on";
+    if (cfg.max_processing_bytes < cfg.max_download_bytes) {
+      LOG(WARNING) << "persistent-state: processing_cap < download_cap; states larger than processing_cap "
+                      "will download but fail to import";
+    }
   }
 
   td::set_runtime_signal_handler(1, need_stats).ensure();

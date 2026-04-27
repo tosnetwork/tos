@@ -218,6 +218,31 @@ struct PersistentStateProcessingReservation {
   ~PersistentStateProcessingReservation();
 };
 
+// Configurable persistent-state budget. The defaults match the post-H-02
+// raised caps; an operator can override any field via the validator-engine
+// CLI flags or via a direct call to configure_persistent_state_budgets at
+// startup. The reservation hot path reads the live config under a single
+// atomic snapshot so a misconfiguration cannot leave half-applied state.
+struct PersistentStateBudgetConfig {
+  td::uint64 max_download_bytes = 16ULL << 30;
+  td::uint64 max_processing_bytes = 16ULL << 30;
+  td::uint64 max_single_file_bytes = 16ULL << 30;
+  td::uint64 max_resident_bytes_per_parse = 256ULL << 20;
+};
+
+// Install a new persistent-state budget configuration. Call this exactly
+// once at startup, BEFORE the first download starts; calling it after
+// downloads are in flight is well-defined (existing reservations remain
+// valid) but has the surprising effect of re-validating future requests
+// against a different ceiling.
+void configure_persistent_state_budgets(PersistentStateBudgetConfig cfg);
+
+// Read the live persistent-state budget configuration. The returned
+// snapshot is consistent with the value the next reservation will
+// observe; the caller can use it for logging or for sizing a streaming
+// importer's max_resident_bytes option.
+PersistentStateBudgetConfig persistent_state_budget_config();
+
 // Public reservation API for the download budget. Returns true iff `size`
 // bytes were CAS'd into the global counter; in that case the caller MUST
 // own a `PersistentStateDownloadReservation{size}` (or wrap one in a
