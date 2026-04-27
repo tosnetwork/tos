@@ -205,10 +205,24 @@ class CellEvmState : public silkworm::State {
     /// witness maintained by update_account/update_storage and do not walk the
     /// full cell state on the hot path.
     evmc::bytes32 ethereum_state_root_hash() const;
-    evmc::bytes32 ethereum_storage_root_hash(const evmc::address& address) const;
-    std::vector<silkworm::Bytes> ethereum_account_proof(const evmc::address& address) const;
-    std::vector<silkworm::Bytes> ethereum_storage_proof(const evmc::address& address,
-                                                        const evmc::bytes32& slot) const;
+    /// Legacy storage-root helper. May lazy-load and mutate
+    /// `touched_storage_tries_` under a const member, and may trigger strict
+    /// recursive validation on a fresh witness load. The execution-side
+    /// update path (`update_account_trie_leaf`) is the only place this should
+    /// keep getting called — it already runs under a unique lock and benefits
+    /// from the populated cache. Public RPC and any read-only path must use
+    /// `ethereum_storage_root_hash_safe_no_cache` instead.
+    evmc::bytes32 ethereum_storage_root_hash_unsafe_for_execution_cache(
+        const evmc::address& address) const;
+    /// Test-only proof helpers. They wrap the path-bounded `_safe` variants
+    /// but discard the `td::Status` so corrupt-witness errors surface as an
+    /// empty proof — fine for the regression suite, never acceptable on the
+    /// production RPC / consensus path. Production code MUST use
+    /// `ethereum_account_proof_safe` and `ethereum_storage_proof_safe[_no_cache]`.
+    std::vector<silkworm::Bytes> ethereum_account_proof_unsafe_for_tests_only(
+        const evmc::address& address) const;
+    std::vector<silkworm::Bytes> ethereum_storage_proof_unsafe_for_tests_only(
+        const evmc::address& address, const evmc::bytes32& slot) const;
     /// Fail-closed proof variants. A corrupt witness (lazy node fails to
     /// decode, or a structural inconsistency surfaces during the walk)
     /// returns a `td::Status` error rather than crashing the node, so RPC
@@ -225,6 +239,31 @@ class CellEvmState : public silkworm::State {
     /// when the address has no entry in the witness storage-trie index
     /// (canonical empty-trie semantics matching `ethereum_storage_proof_safe`).
     td::Result<std::vector<silkworm::Bytes>> ethereum_storage_proof_safe_no_cache(
+        const evmc::address& address, const evmc::bytes32& slot) const;
+
+    /// Read-only storage-root helper for public RPC `eth_getProof`. Mirrors
+    /// `ethereum_storage_proof_safe_no_cache`: shallow-loads the per-account
+    /// storage trie from `storage_trie_index_root_` into a local temporary
+    /// (never writes `mutable touched_storage_tries_`) and never triggers
+    /// strict recursive validation. Returns the canonical empty-trie root
+    /// when the address has no entry in the witness storage-trie index, and
+    /// a `td::Status` error on any malformed cell so the RPC layer can map
+    /// it to a JSON-RPC `-32000 corrupt EVM trie witness`.
+    td::Result<evmc::bytes32> ethereum_storage_root_hash_safe_no_cache(
+        const evmc::address& address) const;
+    /// Cross-check helpers: re-encode the canonical Ethereum account / storage
+    /// leaf from the flat cell state and compare it to the value the witness
+    /// MPT path-bounded walker reports for `keccak(address)` /
+    /// `keccak(slot)`. Returns `td::Status::OK()` only when the witness leaf
+    /// payload matches the flat state byte-for-byte (or both agree on
+    /// canonical absence). Any mismatch — or a malformed/over-budget descent —
+    /// surfaces as a non-OK status so the EVM compute hot path can fail closed
+    /// before EVM execution starts. The implementation never touches the
+    /// `mutable touched_storage_tries_` cache; it uses its own shallow lookup
+    /// out of `storage_trie_index_root_` for the storage-trie side.
+    td::Status verify_account_witness_matches_flat_state(
+        const evmc::address& address) const;
+    td::Status verify_storage_witness_matches_flat_state(
         const evmc::address& address, const evmc::bytes32& slot) const;
     bool trie_witness_ready() const noexcept { return trie_witness_ready_; }
     bool rebuild_trie_witness() noexcept;

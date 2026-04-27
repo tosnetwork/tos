@@ -780,6 +780,60 @@ td::Status walk_proof_safe(const std::shared_ptr<MptTrie::Node>& node,
                             proof, budget);
 }
 
+/// Fail-closed value lookup. Same path-budget semantics as `walk_proof_safe`,
+/// but only returns the leaf's stored value bytes when the descent reaches a
+/// terminal leaf whose remaining path matches `target` exactly. A descent
+/// that ends short of a matching leaf (extension/branch dead-end, branch
+/// child missing, or a leaf whose path diverges) is a canonical absence and
+/// returns `td::Status::OK()` with `out_value` left empty (`std::nullopt`
+/// signal at the public level). Malformed nodes / over-budget descents
+/// surface as a non-OK status.
+td::Status walk_value_safe(const std::shared_ptr<MptTrie::Node>& node,
+                            ByteView target,
+                            std::optional<Bytes>& out_value,
+                            MptPathBudget& budget) {
+    if (!node) {
+        return td::Status::OK();
+    }
+    if (!node->ensure_decoded()) {
+        return td::Status::Error("MPT value: failed to decode lazy node");
+    }
+    if (++budget.nodes > MptPathBudget::kMaxPathNodes) {
+        return td::Status::Error("MPT path budget exceeded");
+    }
+    const auto& encoded = node->rlp();
+    if (encoded.size() > MptPathBudget::kMaxPathRlpBytes ||
+        budget.rlp_bytes >
+            MptPathBudget::kMaxPathRlpBytes - encoded.size()) {
+        return td::Status::Error("MPT path budget exceeded");
+    }
+    budget.rlp_bytes += encoded.size();
+
+    if (node->kind == kNodeLeaf) {
+        if (node->path.size() == target.size() &&
+            std::equal(node->path.begin(), node->path.end(), target.begin())) {
+            out_value = node->value;
+        }
+        return td::Status::OK();
+    }
+    if (node->kind == kNodeExtension) {
+        if (target.size() < node->path.size() ||
+            !std::equal(node->path.begin(), node->path.end(), target.begin())) {
+            return td::Status::OK();
+        }
+        return walk_value_safe(node->child, target.substr(node->path.size()),
+                                out_value, budget);
+    }
+    if (node->kind != kNodeBranch) {
+        return td::Status::Error("MPT value: unknown node kind");
+    }
+    if (target.empty()) {
+        return td::Status::OK();
+    }
+    return walk_value_safe(node->children[target[0]], target.substr(1),
+                            out_value, budget);
+}
+
 bool validate_node_shallow(const std::shared_ptr<MptTrie::Node>& node,
                            size_t& visited) {
     if (!node) {
@@ -948,7 +1002,7 @@ bool MptTrie::erase_hashed(const ByteView& hashed_key) {
     return erase_hashed_safe(hashed_key).is_ok();
 }
 
-evmc::bytes32 MptTrie::root_hash() const {
+evmc::bytes32 MptTrie::root_hash_unsafe_for_tests_only() const {
     auto result = root_hash_safe();
     if (result.is_error()) {
         return silkworm::kEmptyRoot;
@@ -956,7 +1010,8 @@ evmc::bytes32 MptTrie::root_hash() const {
     return result.move_as_ok();
 }
 
-std::vector<Bytes> MptTrie::proof(const ByteView& hashed_key) const {
+std::vector<Bytes> MptTrie::proof_unsafe_for_tests_only(
+    const ByteView& hashed_key) const {
     if (hashed_key.size() != kHashLength || !root_) {
         return {};
     }
@@ -981,6 +1036,25 @@ td::Result<std::vector<Bytes>> MptTrie::proof_safe(const ByteView& hashed_key) c
         return std::move(status);
     }
     return out;
+}
+
+td::Result<std::optional<Bytes>> MptTrie::value_at_hashed_safe(
+    ByteView hashed_key) const {
+    if (hashed_key.size() != kHashLength) {
+        return td::Status::Error(
+            "MPT value_at_hashed_safe: hashed key must be 32 bytes");
+    }
+    if (!root_) {
+        return std::optional<Bytes>{std::nullopt};
+    }
+    Bytes nibbles = silkworm::trie::unpack_nibbles(hashed_key);
+    std::optional<Bytes> out_value;
+    MptPathBudget budget;
+    if (auto status = walk_value_safe(root_, nibbles, out_value, budget);
+        status.is_error()) {
+        return std::move(status);
+    }
+    return out_value;
 }
 
 td::Ref<vm::Cell> MptTrie::serialize_to_cell() const {

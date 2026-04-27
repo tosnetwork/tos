@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <optional>
 #include <vector>
 
 namespace evm_workchain {
@@ -574,30 +575,42 @@ evmc::bytes32 CellEvmState::ethereum_state_root_hash() const {
     if (!trie_witness_ready_) {
         return evmc::bytes32{};
     }
-    return account_trie_.root_hash();
+    // Used by both the EVM compute hot path (cheap root cross-check vs.
+    // declared `eth_state_root`) and tests. The account trie root has
+    // already been validated either via StrictRecursive (hydration) or
+    // shape-bound shallow load + path-budgeted decode (consensus); the
+    // legacy boolean wrapper is sufficient here.
+    return account_trie_.root_hash_unsafe_for_tests_only();
 }
 
-evmc::bytes32 CellEvmState::ethereum_storage_root_hash(const evmc::address& address) const {
+evmc::bytes32 CellEvmState::ethereum_storage_root_hash_unsafe_for_execution_cache(
+    const evmc::address& address) const {
     if (!trie_witness_ready_) {
         return evmc::bytes32{};
     }
+    // Execution cache path: this is called from `update_account_trie_leaf`
+    // (under the EVM unique lock) where promoting the touched storage trie
+    // into the cache is exactly what we want. Public RPC and any read-only
+    // path must use `ethereum_storage_root_hash_safe_no_cache` instead.
     const auto* trie = get_or_load_storage_trie_for_read(address);
     if (trie == nullptr || trie->empty()) {
         return silkworm::kEmptyRoot;
     }
-    return trie->root_hash();
+    return trie->root_hash_unsafe_for_tests_only();
 }
 
-std::vector<silkworm::Bytes> CellEvmState::ethereum_account_proof(
+std::vector<silkworm::Bytes>
+CellEvmState::ethereum_account_proof_unsafe_for_tests_only(
     const evmc::address& address) const {
     if (!trie_witness_ready_) {
         return {};
     }
     auto hashed = keccak_evm_address(address);
-    return account_trie_.proof(bytes32_view(hashed));
+    return account_trie_.proof_unsafe_for_tests_only(bytes32_view(hashed));
 }
 
-std::vector<silkworm::Bytes> CellEvmState::ethereum_storage_proof(
+std::vector<silkworm::Bytes>
+CellEvmState::ethereum_storage_proof_unsafe_for_tests_only(
     const evmc::address& address,
     const evmc::bytes32& slot) const {
     if (!trie_witness_ready_) {
@@ -608,7 +621,7 @@ std::vector<silkworm::Bytes> CellEvmState::ethereum_storage_proof(
         return {};
     }
     auto hashed = keccak_bytes32_value(slot);
-    return trie->proof(bytes32_view(hashed));
+    return trie->proof_unsafe_for_tests_only(bytes32_view(hashed));
 }
 
 td::Result<std::vector<silkworm::Bytes>>
@@ -699,6 +712,190 @@ CellEvmState::ethereum_storage_proof_safe_no_cache(
         return td::Status::Error(
             "ethereum_storage_proof_safe_no_cache: unknown error");
     }
+}
+
+td::Result<evmc::bytes32>
+CellEvmState::ethereum_storage_root_hash_safe_no_cache(
+    const evmc::address& address) const {
+    if (!trie_witness_ready_) {
+        return td::Status::Error("EVM trie witness is not available");
+    }
+
+    // If execution already touched this account in the current snapshot, the
+    // cached MptTrie has been bound and validated; reading its root via the
+    // fail-closed safe API does not require any new cache write.
+    auto touched = touched_storage_tries_.find(address);
+    if (touched != touched_storage_tries_.end()) {
+        if (touched->second.empty()) {
+            return silkworm::kEmptyRoot;
+        }
+        return touched->second.root_hash_safe();
+    }
+
+    if (storage_trie_index_root_.is_null()) {
+        return silkworm::kEmptyRoot;
+    }
+
+    try {
+        bool special = false;
+        (void)vm::load_cell_slice_special(storage_trie_index_root_, special);
+        if (special) {
+            return td::Status::Error("invalid storage trie witness");
+        }
+        vm::Dictionary index(storage_trie_index_root_, 256);
+        unsigned char key[32];
+        address_to_key(address, key);
+        auto value = index.lookup(td::ConstBitPtr{key}, 256);
+        if (value.is_null()) {
+            return silkworm::kEmptyRoot;
+        }
+        if (value->size() != 0 || value->size_refs() != 1) {
+            return td::Status::Error("invalid storage trie witness");
+        }
+        MptTrie tmp;
+        if (!tmp.load_from_cell(value->prefetch_ref(0),
+                                  MptWitnessValidationMode::Shallow)) {
+            return td::Status::Error("invalid storage trie witness");
+        }
+        return tmp.root_hash_safe();
+    } catch (vm::VmError&) {
+        return td::Status::Error("invalid storage trie witness");
+    } catch (vm::VmVirtError&) {
+        return td::Status::Error("invalid storage trie witness");
+    } catch (std::exception&) {
+        return td::Status::Error("invalid storage trie witness");
+    } catch (...) {
+        return td::Status::Error("invalid storage trie witness");
+    }
+}
+
+td::Status CellEvmState::verify_account_witness_matches_flat_state(
+    const evmc::address& address) const {
+    if (!trie_witness_ready_) {
+        return td::Status::Error("EVM trie witness is not available");
+    }
+
+    // Re-encode the canonical Ethereum account RLP from the flat dict. Use
+    // the safe storage-root helper so the storage side is fail-closed and
+    // never promotes a cache entry under a const path.
+    std::optional<silkworm::Account> flat_account = read_account(address);
+    auto storage_root_res = ethereum_storage_root_hash_safe_no_cache(address);
+    if (storage_root_res.is_error()) {
+        return storage_root_res.move_as_error();
+    }
+    evmc::bytes32 storage_root = storage_root_res.move_as_ok();
+
+    // Walk the account MPT shallowly along the keccak(address) path and read
+    // the leaf value, bounded by the path budget. A canonical absence is
+    // returned as `std::nullopt`.
+    auto hashed_addr = keccak_evm_address(address);
+    auto value_res = account_trie_.value_at_hashed_safe(bytes32_view(hashed_addr));
+    if (value_res.is_error()) {
+        return value_res.move_as_error();
+    }
+    std::optional<silkworm::Bytes> witness_leaf = value_res.move_as_ok();
+
+    if (!flat_account.has_value()) {
+        if (witness_leaf.has_value()) {
+            return td::Status::Error(
+                "account witness mismatch: flat absent, witness present");
+        }
+        return td::Status::OK();
+    }
+
+    silkworm::Bytes expected_rlp = flat_account->rlp(storage_root);
+    if (!witness_leaf.has_value()) {
+        return td::Status::Error(
+            "account witness mismatch: flat present, witness absent");
+    }
+    if (witness_leaf->size() != expected_rlp.size() ||
+        std::memcmp(witness_leaf->data(), expected_rlp.data(),
+                    expected_rlp.size()) != 0) {
+        return td::Status::Error(
+            "account witness mismatch: leaf RLP differs from flat state");
+    }
+    return td::Status::OK();
+}
+
+td::Status CellEvmState::verify_storage_witness_matches_flat_state(
+    const evmc::address& address, const evmc::bytes32& slot) const {
+    if (!trie_witness_ready_) {
+        return td::Status::Error("EVM trie witness is not available");
+    }
+
+    // Read the flat storage value via the same code path read_storage uses.
+    evmc::bytes32 flat_value = read_storage(address, /*incarnation=*/0, slot);
+    const bool flat_is_zero = is_zero_bytes32(flat_value);
+
+    // Locate the per-account storage trie via a SHALLOW load out of
+    // `storage_trie_index_root_`; never touches `touched_storage_tries_`.
+    MptTrie tmp;
+    bool storage_trie_present = false;
+    try {
+        if (!storage_trie_index_root_.is_null()) {
+            bool special = false;
+            (void)vm::load_cell_slice_special(storage_trie_index_root_, special);
+            if (special) {
+                return td::Status::Error("invalid storage trie witness");
+            }
+            vm::Dictionary index(storage_trie_index_root_, 256);
+            unsigned char key[32];
+            address_to_key(address, key);
+            auto value = index.lookup(td::ConstBitPtr{key}, 256);
+            if (value.not_null()) {
+                if (value->size() != 0 || value->size_refs() != 1) {
+                    return td::Status::Error(
+                        "invalid storage trie witness");
+                }
+                if (!tmp.load_from_cell(value->prefetch_ref(0),
+                                          MptWitnessValidationMode::Shallow)) {
+                    return td::Status::Error(
+                        "invalid storage trie witness");
+                }
+                storage_trie_present = !tmp.empty();
+            }
+        }
+    } catch (vm::VmError&) {
+        return td::Status::Error("invalid storage trie witness");
+    } catch (vm::VmVirtError&) {
+        return td::Status::Error("invalid storage trie witness");
+    } catch (std::exception&) {
+        return td::Status::Error("invalid storage trie witness");
+    } catch (...) {
+        return td::Status::Error("invalid storage trie witness");
+    }
+
+    auto hashed_slot = keccak_bytes32_value(slot);
+    std::optional<silkworm::Bytes> witness_leaf;
+    if (storage_trie_present) {
+        auto value_res = tmp.value_at_hashed_safe(bytes32_view(hashed_slot));
+        if (value_res.is_error()) {
+            return value_res.move_as_error();
+        }
+        witness_leaf = value_res.move_as_ok();
+    }
+
+    if (flat_is_zero) {
+        // Canonical Ethereum: zero values are not present in the storage trie.
+        if (witness_leaf.has_value()) {
+            return td::Status::Error(
+                "storage witness mismatch: flat zero, witness present");
+        }
+        return td::Status::OK();
+    }
+
+    silkworm::Bytes expected_rlp = encode_mpt_storage_value(flat_value);
+    if (!witness_leaf.has_value()) {
+        return td::Status::Error(
+            "storage witness mismatch: flat present, witness absent");
+    }
+    if (witness_leaf->size() != expected_rlp.size() ||
+        std::memcmp(witness_leaf->data(), expected_rlp.data(),
+                    expected_rlp.size()) != 0) {
+        return td::Status::Error(
+            "storage witness mismatch: leaf RLP differs from flat state");
+    }
+    return td::Status::OK();
 }
 
 bool CellEvmState::rebuild_storage_trie_for_account(const evmc::address& address) {

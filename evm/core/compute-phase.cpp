@@ -360,6 +360,68 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
         }
     }
 
+    // P1.2 cross-check: before executing the transaction, prove that the
+    // touched flat-state values agree with the witness MPT leaves. This
+    // catches a structurally-valid-but-semantically-corrupt witness (where
+    // the root hash matches but a leaf payload disagrees with the flat
+    // dict) and fails closed before the EVM mutates anything. The check is
+    // scoped to keys we already know will be touched: sender, recipient,
+    // and every account / slot in the access list. Each verify call uses
+    // the path-budget shallow lookup (256 nodes / 2 MiB per descent) and
+    // explicitly does NOT promote into `touched_storage_tries_`, so this
+    // path stays O(touched access-list keys) of host work.
+    {
+        std::unique_lock cross_check_lock(state.mutex());
+        if (auto* cs = dynamic_cast<CellEvmState*>(&state.state())) {
+            auto sender_opt = decoded.txn.sender();
+            auto fail_closed = [&](const td::Status& status,
+                                    const char* what) {
+                cross_check_lock.unlock();
+                LOG(WARNING)
+                    << "evm-workchain: " << what << " witness/flat cross-check"
+                    << " failed: " << status.message();
+                rollback_snapshot.restore(state);
+                reject_compute_phase(
+                    cp, gas_limit,
+                    std::string("EVM witness/flat cross-check failed: ") +
+                        status.message().str());
+            };
+            if (sender_opt) {
+                auto sender_status =
+                    cs->verify_account_witness_matches_flat_state(*sender_opt);
+                if (sender_status.is_error()) {
+                    fail_closed(sender_status, "sender account");
+                    return nullptr;
+                }
+            }
+            if (decoded.txn.to.has_value()) {
+                auto recipient_status =
+                    cs->verify_account_witness_matches_flat_state(*decoded.txn.to);
+                if (recipient_status.is_error()) {
+                    fail_closed(recipient_status, "recipient account");
+                    return nullptr;
+                }
+            }
+            for (const auto& entry : decoded.txn.access_list) {
+                auto entry_status =
+                    cs->verify_account_witness_matches_flat_state(entry.account);
+                if (entry_status.is_error()) {
+                    fail_closed(entry_status, "access-list account");
+                    return nullptr;
+                }
+                for (const auto& key : entry.storage_keys) {
+                    auto slot_status =
+                        cs->verify_storage_witness_matches_flat_state(
+                            entry.account, key);
+                    if (slot_status.is_error()) {
+                        fail_closed(slot_status, "access-list storage slot");
+                        return nullptr;
+                    }
+                }
+            }
+        }
+    }
+
     // --- Step 4: Execute the transaction against the local state ---
     auto exec_result = execute_evm_transaction(decoded.txn, block, state, config);
 
@@ -456,9 +518,13 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
         }
     }
 
-    // Debug invariant: persisted cell state + trie witness must round-trip to
-    // the same Ethereum stateRoot without a full trie rebuild.
-#ifndef NDEBUG
+    // Optional invariant: persisted cell state + trie witness must round-trip
+    // to the same Ethereum stateRoot without a full trie rebuild. This is an
+    // expensive cross-check (full StrictRecursive validation of the witness
+    // cell) and must be opt-in. Public testnets / release builds without
+    // NDEBUG must NOT pay this cost per EVM tx; gate it behind an explicit
+    // CMake option (default OFF, see `evm/CMakeLists.txt`).
+#ifdef TOS_EVM_STRICT_COMPUTE_INVARIANTS
     if (evm_state_cell.not_null() || trie_witness_cell.not_null()) {
         auto verify_cell_state = std::make_unique<CellEvmState>();
         CHECK(verify_cell_state->load_from_cell(evm_state_cell, false));

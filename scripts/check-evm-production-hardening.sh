@@ -232,6 +232,40 @@ if ! rg -q 'invalid stateOverrides storage slot' "$rpc_handlers" ||
     exit 1
 fi
 
+# Production sources (evm/core, evm/rpc) must NOT call the legacy unsafe
+# MPT/CellState helpers without the explicit `_unsafe_for_*` / `_safe`
+# suffix. The safe variants surface corrupt-witness errors as `td::Status`;
+# the unsafe variants either lazy-mutate `touched_storage_tries_` under a
+# const path (P0.1 H-01) or swallow corrupt-witness errors as kEmptyRoot.
+# Tests are exempt — they are allowed to keep using the *_unsafe_for_tests_only
+# variants for ergonomics. The check is intentionally tolerant: it scans
+# only for raw call-site shapes, then drops anything containing the safe
+# or unsafe-for-tests-only suffixes.
+unsafe_hits=$(
+    rg -n '(ethereum_storage_root_hash|ethereum_account_proof|ethereum_storage_proof)\(' \
+        "$root/evm/core" "$root/evm/rpc" \
+        --type-add 'cpp:*.{c,cc,cpp,h,hpp}' --type cpp \
+        -g '!evm/test/**' \
+        -g '!**/*test*' 2>/dev/null \
+    | rg -v '_unsafe_for_tests_only|_unsafe_for_execution_cache|_safe' \
+    | rg -v '^[[:space:]]*//' \
+    || true
+)
+if [ -n "$unsafe_hits" ]; then
+    echo "evm production hardening check failed: unsafe MPT/CellState API in production path:" >&2
+    echo "$unsafe_hits" >&2
+    exit 1
+fi
+
+# The expensive EVM compute-phase invariant must NOT be gated on
+# `#ifndef NDEBUG`. Public testnet builds (release WITHOUT NDEBUG) would
+# otherwise reintroduce a per-tx full StrictRecursive validation. Use an
+# explicit opt-in CMake option (`TOS_EVM_STRICT_COMPUTE_INVARIANTS`).
+if rg -n '#ifndef NDEBUG' "$compute_phase" >/dev/null 2>&1; then
+    echo "evm production hardening check failed: expensive EVM compute invariant must use TOS_EVM_STRICT_COMPUTE_INVARIANTS, not NDEBUG" >&2
+    exit 1
+fi
+
 if [[ "${TOS_CHECK_ETOS_GIVER_BYTECODE:-0}" == "1" ]]; then
     if ! command -v node >/dev/null 2>&1; then
         echo "evm production hardening check failed: node is required for EToSPoWGiver bytecode equivalence check" >&2

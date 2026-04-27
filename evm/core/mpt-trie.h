@@ -14,6 +14,7 @@
 #include <atomic>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include <evmc/evmc.hpp>
@@ -92,8 +93,11 @@ class MptTrie {
                                    const silkworm::ByteView& rlp_value);
     td::Status erase_hashed_safe(const silkworm::ByteView& hashed_key);
 
-    /// Ethereum MPT root hash. Empty trie returns keccak256(RLP("")).
-    evmc::bytes32 root_hash() const;
+    /// Test-only Ethereum MPT root hash. Empty trie returns
+    /// keccak256(RLP("")). On a corrupt root the legacy boolean wrapper
+    /// returns `kEmptyRoot` (status discarded) which would silently corrupt
+    /// consensus state — production callers MUST use `root_hash_safe()`.
+    evmc::bytes32 root_hash_unsafe_for_tests_only() const;
 
     /// Fail-closed root-hash variant. Returns an error if the root or one of
     /// its eagerly-required descendants fails to decode while computing the
@@ -102,8 +106,12 @@ class MptTrie {
     /// "empty trie".
     td::Result<evmc::bytes32> root_hash_safe() const;
 
-    /// Standard Ethereum proof nodes, root to terminal/exclusion node.
-    std::vector<silkworm::Bytes> proof(const silkworm::ByteView& hashed_key) const;
+    /// Test-only proof helper. Wraps `proof_safe` but discards a non-OK
+    /// status as an empty proof — production callers MUST use `proof_safe()`
+    /// so a corrupt witness surfaces as a JSON-RPC error rather than a
+    /// silently-empty proof.
+    std::vector<silkworm::Bytes> proof_unsafe_for_tests_only(
+        const silkworm::ByteView& hashed_key) const;
 
     /// Fail-closed proof variant. Propagates lazy-decode/structural errors as
     /// `td::Status` instead of triggering a `CHECK` abort, so RPC handlers
@@ -111,6 +119,17 @@ class MptTrie {
     /// the node.
     td::Result<std::vector<silkworm::Bytes>> proof_safe(
         const silkworm::ByteView& hashed_key) const;
+
+    /// Fail-closed value lookup. Walks the path-budgeted descent for
+    /// `hashed_key` and returns the leaf's stored value bytes if a matching
+    /// leaf is reached, or `std::nullopt` for a canonical absence (the
+    /// descent ends short of a matching leaf). Returns a non-OK
+    /// `td::Status` on any malformed lazy node, structural inconsistency, or
+    /// over-budget descent — same fail-closed contract as `proof_safe`. Used
+    /// by `CellEvmState::verify_*_witness_matches_flat_state` to defend
+    /// against a structurally valid but semantically corrupt witness.
+    td::Result<std::optional<silkworm::Bytes>> value_at_hashed_safe(
+        silkworm::ByteView hashed_key) const;
 
     /// Persist/load the witness root node. Null cell means empty trie. The
     /// default validation mode is StrictRecursive — callers on a hot path

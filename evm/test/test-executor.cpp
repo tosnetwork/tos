@@ -3345,7 +3345,7 @@ void test_persistent_trie_witness_roundtrip() {
     CHECK(reloaded.load_trie_witness_from_cell(witness_cell));
     auto reloaded_root = reloaded.ethereum_state_root_hash();
 
-    auto account_proof = reloaded.ethereum_account_proof(alice);
+    auto account_proof = reloaded.ethereum_account_proof_unsafe_for_tests_only(alice);
     auto hashed_alice = keccak_evm_address(alice);
     silkworm::Bytes proof_key(hashed_alice.bytes, hashed_alice.bytes + 32);
     silkworm::Bytes proof_value;
@@ -6640,7 +6640,8 @@ void test_storage_index_is_lazy() {
     touched.bytes[17] = 0x00;
     touched.bytes[18] = 0x07;  // i=7
     touched.bytes[19] = 0x42;
-    auto root = loaded.ethereum_storage_root_hash(touched);
+    auto root =
+        loaded.ethereum_storage_root_hash_unsafe_for_execution_cache(touched);
     bool root_nonempty = root != silkworm::kEmptyRoot;
     size_t walks_after_touch =
         g_storage_index_walks.load(std::memory_order_relaxed);
@@ -7016,7 +7017,8 @@ void test_mpt_erase_corrupt_lazy_node_does_not_clear_root() {
         auto status = clean.erase_hashed_safe(
             silkworm::ByteView{h_other.bytes, 32});
         sanity_ok = status.is_ok() && !clean.empty() &&
-                    clean.root_hash() != silkworm::kEmptyRoot;
+                    clean.root_hash_unsafe_for_tests_only() !=
+                        silkworm::kEmptyRoot;
     }
 
     // Construct a malformed leaf cell: kind=leaf, empty path, then a
@@ -7053,7 +7055,7 @@ void test_mpt_erase_corrupt_lazy_node_does_not_clear_root() {
         silkworm::Bytes v1{0x82, 0x12, 0x34};
         CHECK(tampered.upsert_hashed_safe(silkworm::ByteView{h1.bytes, 32},
                                            silkworm::ByteView{v1}).is_ok());
-        auto good_root_hash = tampered.root_hash();
+        auto good_root_hash = tampered.root_hash_unsafe_for_tests_only();
 
         // Now reload from the corrupt cell: load_from_cell rejects, leaving
         // tampered's prior root_ unchanged because load_from_cell only
@@ -7071,7 +7073,8 @@ void test_mpt_erase_corrupt_lazy_node_does_not_clear_root() {
             silkworm::ByteView{h_other.bytes, 32});
 
         bool root_still_bound = !tampered.empty() &&
-                                tampered.root_hash() == good_root_hash;
+                                tampered.root_hash_unsafe_for_tests_only() ==
+                                    good_root_hash;
         // The audit-critical invariant: a corrupt-cell load attempt does
         // NOT surreptitiously zero the existing root.
         failclose_ok = !load_ok && status.is_ok() && root_still_bound;
@@ -7083,6 +7086,444 @@ void test_mpt_erase_corrupt_lazy_node_does_not_clear_root() {
            failclose_ok ? "OK" : "FAILED");
 
     bool ok = sanity_ok && failclose_ok;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// =============================================================================
+// P0.1 (H-01) — eth_getProof storageHash safe-no-cache regression tests
+// =============================================================================
+
+void test_eth_get_proof_storage_hash_no_strict_for_large_storage() {
+    printf("=== test_eth_get_proof_storage_hash_no_strict_for_large_storage "
+           "===\n");
+
+    // Pick a unique address pattern unlikely to collide with prior tests.
+    evmc::address target_addr{};
+    target_addr.bytes[0] = 0x73;  // bias the keccak away from common buckets
+    target_addr.bytes[19] = 0x73;
+
+    auto& gs = global_evm_state();
+
+    // Seed an account whose storage trie is large enough that a
+    // StrictRecursive bind would visit many MPT nodes. 10000 slots is the
+    // CI-friendly knob the audit calls out (200000 was the H-01 example, but
+    // that is too slow for the regular suite).
+    constexpr size_t kTargetSlots = 10000;
+    gs.seed_account(target_addr, intx::uint256{1'000'000}, /*nonce=*/0);
+    {
+        std::unique_lock lock(gs.mutex());
+        auto* cs = dynamic_cast<CellEvmState*>(&gs.state());
+        CHECK(cs != nullptr);
+        for (size_t i = 0; i < kTargetSlots; ++i) {
+            evmc::bytes32 slot{};
+            slot.bytes[31] = static_cast<uint8_t>(i & 0xff);
+            slot.bytes[30] = static_cast<uint8_t>((i >> 8) & 0xff);
+            evmc::bytes32 value{};
+            value.bytes[31] = static_cast<uint8_t>((i + 1) & 0xff);
+            cs->update_storage(target_addr, /*incarnation=*/0, slot,
+                               evmc::bytes32{}, value);
+        }
+        // Force the witness through a fresh shallow rebind so any cache
+        // entries left behind by `update_storage` are dropped before we
+        // measure the eth_getProof path.
+        auto state_cell = cs->serialize_to_cell();
+        auto witness_cell = cs->serialize_trie_witness_to_cell();
+        CHECK(cs->load_from_cell(state_cell, CellStateLoadMode::TrustedLazy));
+        CHECK(cs->load_trie_witness_from_cell(
+            witness_cell, TrieWitnessLoadMode::TrustedShallow));
+    }
+
+    // Reset the strict-validation counter AFTER seeding so we only measure
+    // the eth_getProof path's cost.
+    g_mpt_strict_validation_nodes.store(0, std::memory_order_relaxed);
+    size_t storage_walks_before =
+        g_storage_index_walks.load(std::memory_order_relaxed);
+
+    std::string params = "[\"";
+    char hex_buf[2 + 40 + 1];
+    snprintf(hex_buf, sizeof(hex_buf), "0x");
+    for (int i = 0; i < 20; ++i) {
+        snprintf(hex_buf + 2 + 2 * i, 3, "%02x", target_addr.bytes[i]);
+    }
+    params += hex_buf;
+    params += "\",[],\"latest\"]";
+
+    auto rpc_resp = handle_eth_rpc("eth_getProof", params, "1");
+    bool got_resp = rpc_resp.has_value() && !rpc_resp->is_error;
+    bool storage_hash_present =
+        got_resp && rpc_resp->json.find("\"storageHash\":\"0x") !=
+                        std::string::npos;
+
+    size_t strict_visits =
+        g_mpt_strict_validation_nodes.load(std::memory_order_relaxed);
+    size_t storage_walks_after =
+        g_storage_index_walks.load(std::memory_order_relaxed);
+    bool no_strict = strict_visits == 0;
+    bool no_pollution = storage_walks_after == storage_walks_before;
+
+    printf("  RPC returned success: %s\n", got_resp ? "OK" : "FAILED");
+    printf("  storageHash present in JSON: %s\n",
+           storage_hash_present ? "OK" : "FAILED");
+    printf("  strict-recursive visits: %zu (expect 0)\n", strict_visits);
+    printf("  storage-index lazy-load walks: %zu before, %zu after "
+           "(expect equal)\n",
+           storage_walks_before, storage_walks_after);
+
+    bool ok = got_resp && storage_hash_present && no_strict && no_pollution;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+void test_eth_get_proof_corrupt_witness_returns_32000() {
+    printf("=== test_eth_get_proof_corrupt_witness_returns_32000 ===\n");
+
+    auto& gs = global_evm_state();
+
+    // Pick a fresh, unique address.
+    evmc::address target_addr{};
+    target_addr.bytes[0] = 0x55;
+    target_addr.bytes[19] = 0x55;
+    gs.seed_account(target_addr, intx::uint256{42}, /*nonce=*/0);
+
+    // Construct a corrupt storage-trie index: a Dictionary whose value for
+    // `target_addr` is a CellSlice with 256 data bits and zero refs (a
+    // structurally-valid 256→bytes32 leaf), instead of the
+    // 0-data-bits-+-1-ref shape `_safe_no_cache` requires. The
+    // `value->size() != 0 || value->size_refs() != 1` branch then trips and
+    // surfaces "invalid storage trie witness".
+    td::Ref<vm::Cell> bad_storage_index_root;
+    {
+        vm::Dictionary bad_index(256);
+        unsigned char key[32];
+        evm_workchain::address_to_key(target_addr, key);
+        vm::CellBuilder leaf;
+        for (int i = 0; i < 32; ++i) {
+            leaf.store_long(0xab, 8);
+        }
+        CHECK(bad_index.set_builder(td::ConstBitPtr{key}, 256, leaf));
+        bad_storage_index_root = bad_index.get_root_cell();
+        CHECK(bad_storage_index_root.not_null());
+    }
+
+    // Save the current good witness so we can restore the global state
+    // after the test (other tests downstream depend on a healthy witness).
+    td::Ref<vm::Cell> good_state_cell;
+    td::Ref<vm::Cell> good_witness_cell;
+    td::Ref<vm::Cell> tampered_witness;
+    {
+        std::unique_lock lock(gs.mutex());
+        auto* cs = dynamic_cast<CellEvmState*>(&gs.state());
+        CHECK(cs != nullptr);
+        good_state_cell = cs->serialize_to_cell();
+        good_witness_cell = cs->serialize_trie_witness_to_cell();
+        CHECK(good_witness_cell.not_null());
+
+        // Re-emit the wrapper bits with our bad storage_index_root.
+        bool special = false;
+        auto cs_slice = vm::load_cell_slice_special(good_witness_cell, special);
+        CHECK(!special);
+        auto magic = cs_slice.fetch_ulong(24);
+        auto version = cs_slice.fetch_ulong(8);
+        auto has_account = cs_slice.fetch_ulong(1);
+        td::Ref<vm::Cell> account_ref;
+        if (has_account == 1) {
+            account_ref = cs_slice.fetch_ref();
+        }
+        // Drop whatever the original `has_storage` claim was — we synthesise
+        // a tampered one below.
+        vm::CellBuilder cb;
+        cb.store_long(static_cast<long long>(magic), 24);
+        cb.store_long(static_cast<long long>(version), 8);
+        if (has_account == 1) {
+            cb.store_long(1, 1);
+            cb.store_ref(account_ref);
+        } else {
+            cb.store_long(0, 1);
+        }
+        cb.store_long(1, 1);                 // has_storage = 1
+        cb.store_ref(bad_storage_index_root);
+        tampered_witness = cb.finalize();
+        CHECK(tampered_witness.not_null());
+
+        bool bound = cs->load_trie_witness_from_cell(
+            tampered_witness, TrieWitnessLoadMode::TrustedShallow);
+        CHECK(bound);
+    }
+
+    // Reset the strict counter so any unexpected strict walk shows up.
+    g_mpt_strict_validation_nodes.store(0, std::memory_order_relaxed);
+
+    std::string params = "[\"";
+    char hex_buf[2 + 40 + 1];
+    snprintf(hex_buf, sizeof(hex_buf), "0x");
+    for (int i = 0; i < 20; ++i) {
+        snprintf(hex_buf + 2 + 2 * i, 3, "%02x", target_addr.bytes[i]);
+    }
+    params += hex_buf;
+    params += "\",[],\"latest\"]";
+
+    auto rpc_resp = handle_eth_rpc("eth_getProof", params, "2");
+    bool got_resp = rpc_resp.has_value();
+    bool is_error_response = got_resp && rpc_resp->is_error;
+    bool right_code = is_error_response &&
+                      rpc_resp->json.find("\"code\":-32000") != std::string::npos;
+    bool right_message =
+        is_error_response &&
+        rpc_resp->json.find("corrupt EVM trie witness") != std::string::npos;
+
+    printf("  RPC returned: %s\n", got_resp ? "yes" : "NO");
+    printf("  RPC reported error: %s\n", is_error_response ? "yes" : "NO");
+    printf("  error code -32000: %s\n", right_code ? "OK" : "FAILED");
+    printf("  error contains 'corrupt EVM trie witness': %s\n",
+           right_message ? "OK" : "FAILED");
+
+    // Restore the good witness so subsequent tests aren't poisoned.
+    {
+        std::unique_lock lock(gs.mutex());
+        auto* cs = dynamic_cast<CellEvmState*>(&gs.state());
+        if (cs != nullptr && good_witness_cell.not_null()) {
+            (void)cs->load_trie_witness_from_cell(
+                good_witness_cell, TrieWitnessLoadMode::TrustedShallow);
+        }
+    }
+
+    bool ok = got_resp && is_error_response && right_code && right_message;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+void test_eth_get_proof_does_not_pollute_touched_cache() {
+    printf("=== test_eth_get_proof_does_not_pollute_touched_cache ===\n");
+
+    auto& gs = global_evm_state();
+
+    evmc::address target_addr{};
+    target_addr.bytes[0] = 0x91;
+    target_addr.bytes[19] = 0x91;
+    gs.seed_account(target_addr, intx::uint256{1'000}, /*nonce=*/0);
+
+    // Touch storage so the address has a non-empty storage trie in the
+    // witness index. Then force a fresh load so any
+    // `touched_storage_tries_` entry from the seeding write is dropped.
+    {
+        std::unique_lock lock(gs.mutex());
+        auto* cs = dynamic_cast<CellEvmState*>(&gs.state());
+        CHECK(cs != nullptr);
+        for (size_t i = 0; i < 32; ++i) {
+            evmc::bytes32 slot{};
+            slot.bytes[31] = static_cast<uint8_t>(i);
+            evmc::bytes32 value{};
+            value.bytes[31] = static_cast<uint8_t>(i + 1);
+            cs->update_storage(target_addr, /*incarnation=*/0, slot,
+                               evmc::bytes32{}, value);
+        }
+        auto state_cell = cs->serialize_to_cell();
+        auto witness_cell = cs->serialize_trie_witness_to_cell();
+        CHECK(cs->load_from_cell(state_cell, CellStateLoadMode::TrustedLazy));
+        CHECK(cs->load_trie_witness_from_cell(
+            witness_cell, TrieWitnessLoadMode::TrustedShallow));
+    }
+
+    // After the rebind, no addresses are in `touched_storage_tries_`. The
+    // proof path under our P0.1 fix uses the storage-root *_safe_no_cache*
+    // helper plus per-slot *_safe_no_cache* proofs, so neither path should
+    // bump `g_storage_index_walks` (only the cache-mutating
+    // `get_or_load_storage_trie_for_read` increments that counter).
+    size_t storage_walks_before =
+        g_storage_index_walks.load(std::memory_order_relaxed);
+
+    std::string params = "[\"";
+    char hex_buf[2 + 40 + 1];
+    snprintf(hex_buf, sizeof(hex_buf), "0x");
+    for (int i = 0; i < 20; ++i) {
+        snprintf(hex_buf + 2 + 2 * i, 3, "%02x", target_addr.bytes[i]);
+    }
+    params += hex_buf;
+    params += "\",[],\"latest\"]";
+
+    auto rpc_resp = handle_eth_rpc("eth_getProof", params, "3");
+    bool got_resp = rpc_resp.has_value() && !rpc_resp->is_error;
+
+    size_t storage_walks_after =
+        g_storage_index_walks.load(std::memory_order_relaxed);
+    bool no_pollution = storage_walks_after == storage_walks_before;
+
+    printf("  RPC succeeded: %s\n", got_resp ? "OK" : "FAILED");
+    printf("  cache-mutating storage-index walks: %zu before, %zu after "
+           "(expect equal)\n",
+           storage_walks_before, storage_walks_after);
+
+    bool ok = got_resp && no_pollution;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// =============================================================================
+// P1.2 (M-02) — touched flat-state / MPT witness cross-check
+// =============================================================================
+
+void test_compute_rejects_account_witness_flat_state_mismatch() {
+    printf("=== test_compute_rejects_account_witness_flat_state_mismatch ===\n");
+
+    // Build a state where the flat dict says balance=100 but the account MPT
+    // leaf says balance=50. We achieve this by serialising state A (balance
+    // 100) for the flat dict and state B (balance 50) for the witness; both
+    // have the same address and otherwise identical fields.
+    evmc::address target_addr{};
+    target_addr.bytes[19] = 0x33;
+
+    CellEvmState donor_flat;
+    silkworm::Account flat_acct{};
+    flat_acct.balance = intx::uint256{100};
+    flat_acct.nonce = 1;
+    donor_flat.update_account(target_addr, std::nullopt, flat_acct);
+
+    CellEvmState donor_witness;
+    silkworm::Account witness_acct{};
+    witness_acct.balance = intx::uint256{50};
+    witness_acct.nonce = 1;
+    donor_witness.update_account(target_addr, std::nullopt, witness_acct);
+
+    auto state_cell = donor_flat.serialize_to_cell();
+    auto witness_cell = donor_witness.serialize_trie_witness_to_cell();
+    CHECK(state_cell.not_null());
+    CHECK(witness_cell.not_null());
+
+    CellEvmState replay;
+    bool flat_ok = replay.load_from_cell(state_cell,
+                                          CellStateLoadMode::TrustedLazy);
+    bool witness_ok = replay.load_trie_witness_from_cell(
+        witness_cell, TrieWitnessLoadMode::TrustedShallow);
+
+    auto status = replay.verify_account_witness_matches_flat_state(target_addr);
+    bool detected_mismatch = status.is_error();
+    std::string err_msg =
+        detected_mismatch ? status.message().str() : std::string{};
+
+    printf("  flat lazy load: %s\n", flat_ok ? "OK" : "FAILED");
+    printf("  witness shallow bind: %s\n", witness_ok ? "OK" : "FAILED");
+    printf("  cross-check rejected mismatch: %s\n",
+           detected_mismatch ? "OK" : "FAILED");
+    printf("  error message: %s\n", err_msg.c_str());
+
+    bool ok = flat_ok && witness_ok && detected_mismatch &&
+              err_msg.find("account witness mismatch") != std::string::npos;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+void test_compute_rejects_storage_witness_flat_state_mismatch() {
+    printf("=== test_compute_rejects_storage_witness_flat_state_mismatch ===\n");
+
+    // Donor flat: account with one slot value=0xaa.
+    // Donor witness: same account with slot value=0xbb.
+    // Pair flat-state cell with witness cell → storage cross-check fails.
+    evmc::address target_addr{};
+    target_addr.bytes[19] = 0x44;
+    evmc::bytes32 slot{};
+    slot.bytes[31] = 0x01;
+
+    CellEvmState donor_flat;
+    {
+        silkworm::Account acct{};
+        acct.balance = intx::uint256{1};
+        donor_flat.update_account(target_addr, std::nullopt, acct);
+        evmc::bytes32 v{};
+        v.bytes[31] = 0xaa;
+        donor_flat.update_storage(target_addr, 0, slot, evmc::bytes32{}, v);
+    }
+    CellEvmState donor_witness;
+    {
+        silkworm::Account acct{};
+        acct.balance = intx::uint256{1};
+        donor_witness.update_account(target_addr, std::nullopt, acct);
+        evmc::bytes32 v{};
+        v.bytes[31] = 0xbb;
+        donor_witness.update_storage(target_addr, 0, slot, evmc::bytes32{}, v);
+    }
+
+    auto state_cell = donor_flat.serialize_to_cell();
+    auto witness_cell = donor_witness.serialize_trie_witness_to_cell();
+    CHECK(state_cell.not_null());
+    CHECK(witness_cell.not_null());
+
+    CellEvmState replay;
+    bool flat_ok = replay.load_from_cell(state_cell,
+                                          CellStateLoadMode::TrustedLazy);
+    bool witness_ok = replay.load_trie_witness_from_cell(
+        witness_cell, TrieWitnessLoadMode::TrustedShallow);
+
+    auto status = replay.verify_storage_witness_matches_flat_state(
+        target_addr, slot);
+    bool detected_mismatch = status.is_error();
+    std::string err_msg =
+        detected_mismatch ? status.message().str() : std::string{};
+
+    printf("  flat lazy load: %s\n", flat_ok ? "OK" : "FAILED");
+    printf("  witness shallow bind: %s\n", witness_ok ? "OK" : "FAILED");
+    printf("  cross-check rejected mismatch: %s\n",
+           detected_mismatch ? "OK" : "FAILED");
+    printf("  error message: %s\n", err_msg.c_str());
+
+    bool ok = flat_ok && witness_ok && detected_mismatch &&
+              err_msg.find("storage witness mismatch") != std::string::npos;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+void test_compute_accepts_consistent_account_and_storage() {
+    printf("=== test_compute_accepts_consistent_account_and_storage ===\n");
+
+    // Positive control: a self-consistent state must pass both verify
+    // helpers. Build one donor; use the same cell for flat and witness.
+    evmc::address target_addr{};
+    target_addr.bytes[19] = 0x77;
+    evmc::bytes32 slot{};
+    slot.bytes[31] = 0x05;
+
+    CellEvmState donor;
+    {
+        silkworm::Account acct{};
+        acct.balance = intx::uint256{12345};
+        acct.nonce = 7;
+        donor.update_account(target_addr, std::nullopt, acct);
+        evmc::bytes32 v{};
+        v.bytes[31] = 0x42;
+        donor.update_storage(target_addr, 0, slot, evmc::bytes32{}, v);
+    }
+
+    auto state_cell = donor.serialize_to_cell();
+    auto witness_cell = donor.serialize_trie_witness_to_cell();
+    CHECK(state_cell.not_null());
+    CHECK(witness_cell.not_null());
+
+    CellEvmState replay;
+    CHECK(replay.load_from_cell(state_cell, CellStateLoadMode::TrustedLazy));
+    CHECK(replay.load_trie_witness_from_cell(
+        witness_cell, TrieWitnessLoadMode::TrustedShallow));
+
+    auto acct_status =
+        replay.verify_account_witness_matches_flat_state(target_addr);
+    auto slot_status = replay.verify_storage_witness_matches_flat_state(
+        target_addr, slot);
+    // Also sanity-check an unwritten slot: flat returns zero, witness has no
+    // leaf, so the canonical-empty-rule branch must accept.
+    evmc::bytes32 absent_slot{};
+    absent_slot.bytes[31] = 0xfe;
+    auto absent_status = replay.verify_storage_witness_matches_flat_state(
+        target_addr, absent_slot);
+
+    bool acct_ok = acct_status.is_ok();
+    bool slot_ok = slot_status.is_ok();
+    bool absent_ok = absent_status.is_ok();
+
+    printf("  account cross-check OK: %s\n", acct_ok ? "OK" : "FAILED");
+    printf("  written-slot cross-check OK: %s\n", slot_ok ? "OK" : "FAILED");
+    printf("  absent-slot cross-check OK: %s\n",
+           absent_ok ? "OK" : "FAILED");
+
+    bool ok = acct_ok && slot_ok && absent_ok;
     if (!ok) g_test_failures.fetch_add(1);
     printf("  %s\n\n", ok ? "PASSED" : "FAILED");
 }
@@ -7187,6 +7628,16 @@ int main() {
     test_single_large_storage_account_touch_is_path_bounded();
     test_compute_rejects_witness_root_mismatch_without_full_state_scan();
     test_mpt_erase_corrupt_lazy_node_does_not_clear_root();
+
+    // Audit P0.1 (H-01) — eth_getProof storageHash via safe-no-cache helper.
+    test_eth_get_proof_storage_hash_no_strict_for_large_storage();
+    test_eth_get_proof_corrupt_witness_returns_32000();
+    test_eth_get_proof_does_not_pollute_touched_cache();
+
+    // Audit P1.2 (M-02) — flat-state / MPT witness cross-check.
+    test_compute_rejects_account_witness_flat_state_mismatch();
+    test_compute_rejects_storage_witness_flat_state_mismatch();
+    test_compute_accepts_consistent_account_and_storage();
 
     // Scan stdout for FAILED to determine exit code
     // (Individual tests print PASSED or FAILED)

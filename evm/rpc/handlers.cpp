@@ -2705,7 +2705,16 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
     // behaviour instead of rebuilding account/storage tries per RPC call.
     // Use the fail-closed *_safe variants so a corrupt witness yields a
     // structured RPC error rather than crashing the node via CHECK abort.
-    evmc::bytes32 storage_hash = cell_state->ethereum_storage_root_hash(addr);
+    // The storage-root helper is the *no_cache* safe variant so the public
+    // RPC path under a shared lock never (a) triggers strict recursive
+    // validation of a large target storage trie and (b) writes to the
+    // `mutable touched_storage_tries_` cache.
+    auto storage_hash_res =
+        cell_state->ethereum_storage_root_hash_safe_no_cache(addr);
+    if (storage_hash_res.is_error()) {
+        return {make_error(id, -32000, "corrupt EVM trie witness"), true};
+    }
+    evmc::bytes32 storage_hash = storage_hash_res.move_as_ok();
     auto account_proof_result = cell_state->ethereum_account_proof_safe(addr);
     if (account_proof_result.is_error()) {
         return {make_error(id, -32000, "corrupt EVM trie witness"), true};

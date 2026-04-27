@@ -59,6 +59,19 @@ if(TOS_EVM_TEST_INSTRUMENTATION)
   target_compile_definitions(evm_workchain PUBLIC TOS_EVM_TEST_INSTRUMENTATION=1)
 endif()
 
+# Optional expensive EVM compute-phase invariant check. When enabled, every
+# EVM tx re-loads the persisted cell state + trie witness and re-derives the
+# Ethereum stateRoot to verify the witness is internally consistent. This
+# scales with witness size and reintroduces full StrictRecursive validation
+# per tx, so it MUST be opt-in. Default OFF: production / public testnet
+# builds (with or without NDEBUG) never pay this cost. Enable locally with
+# `-DTOS_EVM_STRICT_COMPUTE_INVARIANTS=ON` while debugging witness drift.
+option(TOS_EVM_STRICT_COMPUTE_INVARIANTS
+       "Enable expensive EVM compute invariant checks" OFF)
+if(TOS_EVM_STRICT_COMPUTE_INVARIANTS)
+  target_compile_definitions(evm_workchain PRIVATE TOS_EVM_STRICT_COMPUTE_INVARIANTS=1)
+endif()
+
 target_include_directories(evm_workchain
   PUBLIC
     ${CMAKE_SOURCE_DIR}             # for "evm/core/*.h", "evm/rpc/*.h"
