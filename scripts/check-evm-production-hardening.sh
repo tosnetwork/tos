@@ -552,6 +552,27 @@ if ! rg -q 'fuzz_boc_streaming_truncated_input' "$root/evm/test/test-mpt-fuzz.cp
     exit 1
 fi
 
+# Audit checklist (lines 1097-1112): the deterministic Mulberry32 fuzz
+# drivers in test-mpt-fuzz.cpp explore a fixed seeded space; coverage-
+# guided libFuzzer harnesses explore byte-level mutation patterns the
+# static seed list cannot anticipate. Both surfaces are required for
+# public-readiness fuzz coverage. A regression that drops the
+# coverage-guided harnesses reverts the contract from "no crash on any
+# coverage-discovered input" back to "crash space unmeasured beyond
+# the seed corpus".
+if [ ! -f "$root/evm/test/test-mpt-libfuzzer.cpp" ] || [ ! -f "$root/evm/test/test-boc-libfuzzer.cpp" ]; then
+    echo "evm production hardening check failed: libFuzzer harnesses (test-mpt-libfuzzer.cpp / test-boc-libfuzzer.cpp) must exist for coverage-guided fuzz coverage" >&2
+    exit 1
+fi
+if ! rg -q 'TOS_BUILD_LIBFUZZER' "$root/evm/test/CMakeLists.txt"; then
+    echo "evm production hardening check failed: evm/test/CMakeLists.txt must gate the libFuzzer harnesses behind TOS_BUILD_LIBFUZZER" >&2
+    exit 1
+fi
+if ! rg -q 'TOS_BUILD_LIBFUZZER' "$cmake_lists"; then
+    echo "evm production hardening check failed: root CMakeLists.txt must declare option(TOS_BUILD_LIBFUZZER ...) so the libFuzzer harnesses can be enabled in CI" >&2
+    exit 1
+fi
+
 if [[ "${TOS_CHECK_ETOS_GIVER_BYTECODE:-0}" == "1" ]]; then
     if ! command -v node >/dev/null 2>&1; then
         echo "evm production hardening check failed: node is required for EToSPoWGiver bytecode equivalence check" >&2

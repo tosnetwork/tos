@@ -61,3 +61,45 @@ if (COMMAND tos_test)
 else()
   add_test(NAME test-mpt-fuzz COMMAND test-mpt-fuzz)
 endif()
+
+# Optional coverage-guided fuzz harnesses (libFuzzer + AddressSanitizer).
+#
+# Gated behind TOS_BUILD_LIBFUZZER so default builds remain unaffected.
+# libFuzzer + the `-fsanitize=fuzzer,address` instrumentation pair is a
+# clang-only feature; we fail the configure step explicitly when a
+# non-clang compiler is in use rather than silently producing a binary
+# that is missing `LLVMFuzzerTestOneInput`'s entry-point glue.
+#
+# These targets are NOT registered with `tos_test` / `add_test` — they
+# are not unit tests; they are long-running fuzz drivers. CI should
+# launch them via `scripts/run-libfuzzer.sh` for a bounded duration
+# and treat any `crash-*` artifact in the corpus directory as a
+# security incident.
+if(TOS_BUILD_LIBFUZZER)
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR
+      "TOS_BUILD_LIBFUZZER requires clang (got ${CMAKE_CXX_COMPILER_ID}). "
+      "Reconfigure with -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++.")
+  endif()
+
+  add_executable(test-mpt-libfuzzer test-mpt-libfuzzer.cpp)
+  target_link_libraries(test-mpt-libfuzzer
+    PRIVATE
+      evm_workchain_test
+      tdutils
+      tos_block
+      tos_crypto
+  )
+  target_include_directories(test-mpt-libfuzzer PRIVATE ${SECP256K1_INCLUDE_DIR})
+  target_compile_options(test-mpt-libfuzzer PRIVATE -fsanitize=fuzzer,address)
+  target_link_options(test-mpt-libfuzzer PRIVATE -fsanitize=fuzzer,address)
+
+  add_executable(test-boc-libfuzzer test-boc-libfuzzer.cpp)
+  target_link_libraries(test-boc-libfuzzer
+    PRIVATE
+      tos_crypto
+      tdutils
+  )
+  target_compile_options(test-boc-libfuzzer PRIVATE -fsanitize=fuzzer,address)
+  target_link_options(test-boc-libfuzzer PRIVATE -fsanitize=fuzzer,address)
+endif()

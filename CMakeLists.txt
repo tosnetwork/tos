@@ -96,6 +96,7 @@ option(TOS_USE_ASAN "Use \"ON\" to enable AddressSanitizer." OFF)
 option(TOS_USE_TSAN "Use \"ON\" to enable ThreadSanitizer." OFF)
 option(TOS_USE_UBSAN "Use \"ON\" to enable UndefinedBehaviorSanitizer." OFF)
 option(TOS_USE_COVERAGE "Use \"ON\" to enable code coverage with gcov." OFF)
+option(TOS_BUILD_LIBFUZZER "Build optional libFuzzer harnesses (requires clang)" OFF)
 set(TOS_ARCH "native" CACHE STRING "Architecture, will be passed to -march=")
 
 option(TOS_PRINT_BACKTRACE_ON_CRASH "Attempt to print a backtrace when a fatal signal is caught" ON)
