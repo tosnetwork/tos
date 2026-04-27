@@ -60,6 +60,39 @@ struct BudgetedBufferSlice {
   std::shared_ptr<PersistentStateDownloadReservation> reservation;
 };
 
+// RAII reservation against the global persistent-state PROCESSING memory
+// budget. This budget is separate from the download budget: it accounts the
+// transient extra memory required while parsing/persisting a downloaded
+// state buffer (e.g. the BufferSlice clone fed to `create_shard_state`).
+//
+// The two budgets must be tracked separately because the download budget
+// covers the resident original buffer while it is held alive across the
+// network -> manager -> disk-write pipeline; the processing budget covers
+// the additional clone(s) that exist only during deserialize/validate.
+// Mixing them would either over-restrict downloads (counting transient
+// peaks against the download cap) or under-account the actual peak
+// resident bytes (the audit's M-01 finding: 256 MiB advertised state with
+// real peak closer to 512-768 MiB).
+struct PersistentStateProcessingReservation {
+  td::uint64 bytes{0};
+
+  PersistentStateProcessingReservation() = default;
+  explicit PersistentStateProcessingReservation(td::uint64 b) : bytes(b) {
+  }
+  PersistentStateProcessingReservation(const PersistentStateProcessingReservation &) = delete;
+  PersistentStateProcessingReservation &operator=(const PersistentStateProcessingReservation &) = delete;
+  PersistentStateProcessingReservation(PersistentStateProcessingReservation &&) = delete;
+  PersistentStateProcessingReservation &operator=(PersistentStateProcessingReservation &&) = delete;
+  ~PersistentStateProcessingReservation();
+};
+
+// Production-side reservation API for the processing budget. Returns true
+// iff `size` bytes were CAS'd into the global counter; in that case the
+// caller MUST own a `PersistentStateProcessingReservation{size}` whose
+// destructor will release the bytes exactly once. Zero-byte requests are
+// always admitted as a no-op.
+bool try_reserve_persistent_state_processing_memory(td::uint64 size);
+
 namespace testing {
 
 // Test-only handle to the global persistent-state download budget. These
@@ -67,6 +100,12 @@ namespace testing {
 // invariant without bringing up the full DownloadState actor stack.
 td::uint64 test_get_persistent_state_download_bytes();
 bool test_try_reserve_persistent_state_download_memory(td::uint64 size);
+
+// Test-only handle to the global persistent-state processing budget.
+// Mirrors the download counterpart so the parse/persist clone accounting
+// can be validated without standing up the DownloadShardState actor.
+td::uint64 test_get_persistent_state_processing_bytes();
+bool test_try_reserve_persistent_state_processing_memory(td::uint64 size);
 
 }  // namespace testing
 

@@ -77,8 +77,11 @@ constexpr td::uint64 kMiB = 1ULL << 20;
 
 using tos::validator::fullnode::BudgetedBufferSlice;
 using tos::validator::fullnode::PersistentStateDownloadReservation;
+using tos::validator::fullnode::PersistentStateProcessingReservation;
 using tos::validator::fullnode::testing::test_get_persistent_state_download_bytes;
+using tos::validator::fullnode::testing::test_get_persistent_state_processing_bytes;
 using tos::validator::fullnode::testing::test_try_reserve_persistent_state_download_memory;
+using tos::validator::fullnode::testing::test_try_reserve_persistent_state_processing_memory;
 
 // Helper: reserve `size` bytes against the global download budget and wrap
 // the reservation in a shared_ptr that releases via the same RAII destructor
@@ -88,6 +91,15 @@ std::shared_ptr<PersistentStateDownloadReservation> try_reserve(td::uint64 size)
     return {};
   }
   return std::make_shared<PersistentStateDownloadReservation>(size);
+}
+
+// Same shape as try_reserve but for the processing budget. Returns null
+// when the global processing counter does not have headroom.
+std::shared_ptr<PersistentStateProcessingReservation> try_reserve_processing(td::uint64 size) {
+  if (!test_try_reserve_persistent_state_processing_memory(size)) {
+    return {};
+  }
+  return std::make_shared<PersistentStateProcessingReservation>(size);
 }
 
 void test_budget_covers_downstream_lifetime() {
@@ -245,6 +257,139 @@ void test_full_node_callback_does_not_release_budget_prematurely() {
   std::printf("  PASSED\n");
 }
 
+void test_processing_budget_reserved_during_parse() {
+  std::printf("=== test_processing_budget_reserved_during_parse ===\n");
+
+  // Models the new downloaded_shard_state() flow: the actor moves the
+  // download buffer into actor state (covered by the download budget) and
+  // simultaneously reserves a same-size slice from the SEPARATE processing
+  // budget to account for the single parse clone fed into create_shard_state.
+  //
+  // The invariant under test: while the parse clone is in flight the
+  // processing counter is +N above baseline; the moment the parse clone
+  // is dropped the processing counter returns to baseline. The download
+  // counter is independent and stays charged for as long as the original
+  // buffer is held in actor state.
+
+  const td::uint64 download_baseline = test_get_persistent_state_download_bytes();
+  const td::uint64 processing_baseline = test_get_persistent_state_processing_bytes();
+
+  constexpr td::uint64 kStateSize = 256 * kMiB;
+
+  // Step 1: simulate DownloadState::finish_query() handing a budgeted
+  // buffer to the downstream actor.
+  auto download_reservation = try_reserve(kStateSize);
+  EXPECT_TRUE(download_reservation != nullptr);
+  EXPECT_EQ(test_get_persistent_state_download_bytes(), download_baseline + kStateSize);
+  EXPECT_EQ(test_get_persistent_state_processing_bytes(), processing_baseline);
+
+  // Step 2: simulate downloaded_shard_state() reserving the parse-clone
+  // processing slice. While this reservation is alive, the processing
+  // counter is exactly +kStateSize above its baseline.
+  {
+    auto processing_reservation = try_reserve_processing(kStateSize);
+    EXPECT_TRUE(processing_reservation != nullptr);
+    EXPECT_EQ(test_get_persistent_state_processing_bytes(), processing_baseline + kStateSize);
+    // The download counter is independent: it should still reflect the
+    // original buffer regardless of what the processing budget is doing.
+    EXPECT_EQ(test_get_persistent_state_download_bytes(), download_baseline + kStateSize);
+  }
+  // Step 3: parse clone has been consumed; processing budget returns to
+  // baseline. Download budget is still charged because the original
+  // buffer is still held by the actor (download_reservation alive).
+  EXPECT_EQ(test_get_persistent_state_processing_bytes(), processing_baseline);
+  EXPECT_EQ(test_get_persistent_state_download_bytes(), download_baseline + kStateSize);
+
+  // Cleanup: drop the download reservation; both counters return to
+  // baseline.
+  download_reservation.reset();
+  EXPECT_EQ(test_get_persistent_state_download_bytes(), download_baseline);
+  EXPECT_EQ(test_get_persistent_state_processing_bytes(), processing_baseline);
+
+  std::printf("  PASSED\n");
+}
+
+void test_processing_budget_failure_releases_download_reservation() {
+  std::printf("=== test_processing_budget_failure_releases_download_reservation ===\n");
+
+  // Models the failure branch of downloaded_shard_state(): if create_shard_state
+  // fails (or any subsequent root-hash / validate_deep check fails), the
+  // actor MUST drop both data_ and data_reservation_ AND the processing
+  // reservation. After that, both global counters return to baseline.
+
+  const td::uint64 download_baseline = test_get_persistent_state_download_bytes();
+  const td::uint64 processing_baseline = test_get_persistent_state_processing_bytes();
+
+  constexpr td::uint64 kStateSize = 128 * kMiB;
+
+  // Reserve like the production downloaded_shard_state() does.
+  auto download_reservation = try_reserve(kStateSize);
+  EXPECT_TRUE(download_reservation != nullptr);
+  auto processing_reservation = try_reserve_processing(kStateSize);
+  EXPECT_TRUE(processing_reservation != nullptr);
+  EXPECT_EQ(test_get_persistent_state_download_bytes(), download_baseline + kStateSize);
+  EXPECT_EQ(test_get_persistent_state_processing_bytes(), processing_baseline + kStateSize);
+
+  // Simulate failure-path cleanup: the actor's failure branch resets
+  // data_, data_reservation_, and the local processing_reservation (in
+  // production all three happen synchronously before fail_handler is
+  // dispatched). We model the same drops here.
+  td::BufferSlice data_field(kStateSize);  // stand-in for `data_`
+  data_field = td::BufferSlice{};          // simulate `data_ = td::BufferSlice{}`
+  processing_reservation.reset();
+  download_reservation.reset();
+
+  // Both global counters MUST be back to baseline; nothing should leak
+  // from a failed parse.
+  EXPECT_EQ(test_get_persistent_state_download_bytes(), download_baseline);
+  EXPECT_EQ(test_get_persistent_state_processing_bytes(), processing_baseline);
+
+  std::printf("  PASSED\n");
+}
+
+void test_concurrent_downloads_respect_combined_budget() {
+  std::printf("=== test_concurrent_downloads_respect_combined_budget ===\n");
+
+  // Two concurrent persistent-state downloads must each be admissible
+  // against the 512 MiB processing budget (matching the 512 MiB download
+  // budget). Beyond that the third reservation must fail until one of
+  // the in-flight processing reservations is released.
+
+  const td::uint64 baseline = test_get_persistent_state_processing_bytes();
+
+  // First parse clone: 256 MiB succeeds.
+  auto first = try_reserve_processing(256 * kMiB);
+  EXPECT_TRUE(first != nullptr);
+  EXPECT_EQ(test_get_persistent_state_processing_bytes(), baseline + 256 * kMiB);
+
+  // Second concurrent parse clone: another 256 MiB still fits within the
+  // 512 MiB cap.
+  auto second = try_reserve_processing(256 * kMiB);
+  EXPECT_TRUE(second != nullptr);
+  EXPECT_EQ(test_get_persistent_state_processing_bytes(), baseline + 512 * kMiB);
+
+  // Third reservation: even 1 MiB must be refused because the budget is
+  // fully consumed.
+  auto third = try_reserve_processing(1 * kMiB);
+  EXPECT_FALSE(third != nullptr);
+  EXPECT_EQ(test_get_persistent_state_processing_bytes(), baseline + 512 * kMiB);
+
+  // Releasing one in-flight parse reservation immediately frees its
+  // slice. A new 1 MiB request now succeeds.
+  first.reset();
+  EXPECT_EQ(test_get_persistent_state_processing_bytes(), baseline + 256 * kMiB);
+  auto retried = try_reserve_processing(1 * kMiB);
+  EXPECT_TRUE(retried != nullptr);
+  EXPECT_EQ(test_get_persistent_state_processing_bytes(), baseline + 256 * kMiB + 1 * kMiB);
+
+  // Cleanup.
+  retried.reset();
+  second.reset();
+  EXPECT_EQ(test_get_persistent_state_processing_bytes(), baseline);
+
+  std::printf("  PASSED\n");
+}
+
 }  // namespace
 
 int main() {
@@ -253,6 +398,9 @@ int main() {
   test_oversize_single_reservation_is_rejected();
   test_budgeted_buffer_slice_extends_lifetime();
   test_full_node_callback_does_not_release_budget_prematurely();
+  test_processing_budget_reserved_during_parse();
+  test_processing_budget_failure_releases_download_reservation();
+  test_concurrent_downloads_respect_combined_budget();
   std::printf("All tests completed.\n");
   return 0;
 }

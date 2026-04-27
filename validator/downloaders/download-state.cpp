@@ -303,7 +303,47 @@ void DownloadShardState::downloaded_zero_state(fullnode::BudgetedBufferSlice bud
   // Hold the reservation in actor state so the global download budget
   // stays charged for as long as data_ is being processed and persisted.
   data_reservation_ = std::move(budgeted.reservation);
+
+  // Reserve a separate processing slice that accounts for the parse clone
+  // fed into create_shard_state(). Without this, a 256 MiB advertised
+  // state can briefly resident-spike to ~512 MiB (original + clone) without
+  // any global accounting. Released as soon as create_shard_state() returns
+  // — the cloned BufferSlice is consumed by the parser by then.
+  const auto data_size = data_.size();
+  std::shared_ptr<fullnode::PersistentStateProcessingReservation> processing_reservation;
+  if (data_size > 0) {
+    if (!fullnode::try_reserve_persistent_state_processing_memory(data_size)) {
+      data_ = td::BufferSlice{};
+      data_reservation_.reset();
+      fail_handler(actor_id(this),
+                   td::Status::Error(ErrorCode::notready,
+                                     "persistent state processing memory budget exceeded"));
+      return;
+    }
+    try {
+      processing_reservation = std::make_shared<fullnode::PersistentStateProcessingReservation>(data_size);
+    } catch (...) {
+      // make_shared failed after the global counter was incremented. Release
+      // the bytes via a local RAII reservation whose destructor will
+      // forward to the global counter, so we never leak the reservation.
+      fullnode::PersistentStateProcessingReservation rollback{data_size};
+      (void)rollback;
+      data_ = td::BufferSlice{};
+      data_reservation_.reset();
+      fail_handler(actor_id(this),
+                   td::Status::Error(ErrorCode::notready,
+                                     "cannot allocate processing reservation"));
+      return;
+    }
+  }
+
   auto S = create_shard_state(block_id_, data_.clone());
+  // Parse clone has been consumed by create_shard_state by this point
+  // (success OR failure); release the processing budget unconditionally.
+  processing_reservation.reset();
+  // Zero-state data was already validated by file-hash above, so a parse
+  // failure here is a hard invariant violation (matches the original
+  // behavior of S.ensure()).
   S.ensure();
   state_ = S.move_as_ok();
 
@@ -313,27 +353,81 @@ void DownloadShardState::downloaded_zero_state(fullnode::BudgetedBufferSlice bud
 
 void DownloadShardState::downloaded_shard_state(fullnode::BudgetedBufferSlice budgeted) {
   status_.set_status(PSTRING() << block_id_.id.to_str() << " : processing downloaded state");
-  auto S = create_shard_state(block_id_, budgeted.data.clone());
+
+  // Move the original buffer (and its download-budget reservation) into
+  // actor state up front. Previously this method cloned `budgeted.data`
+  // twice — once for the parser and once into `data_` — so a 256 MiB
+  // advertised state could resident-peak at ~768 MiB (original + parse
+  // clone + persist clone). Moving here means peak = original + ONE
+  // parse clone, and the parse clone is now accounted by the processing
+  // budget below.
+  data_ = std::move(budgeted.data);
+  data_reservation_ = std::move(budgeted.reservation);
+
+  // Reserve a separate processing slice that tracks the single parse
+  // clone fed into create_shard_state(). The reservation is local to
+  // this method scope: as soon as the parser returns (success OR
+  // failure) the cloned BufferSlice has been consumed and the
+  // processing budget is released.
+  const auto data_size = data_.size();
+  std::shared_ptr<fullnode::PersistentStateProcessingReservation> processing_reservation;
+  if (data_size > 0) {
+    if (!fullnode::try_reserve_persistent_state_processing_memory(data_size)) {
+      data_ = td::BufferSlice{};
+      data_reservation_.reset();
+      fail_handler(actor_id(this),
+                   td::Status::Error(ErrorCode::notready,
+                                     "persistent state processing memory budget exceeded"));
+      return;
+    }
+    try {
+      processing_reservation = std::make_shared<fullnode::PersistentStateProcessingReservation>(data_size);
+    } catch (...) {
+      // Roll back the global processing counter via a local RAII
+      // reservation: its destructor returns the bytes to the global
+      // counter exactly once.
+      fullnode::PersistentStateProcessingReservation rollback{data_size};
+      (void)rollback;
+      data_ = td::BufferSlice{};
+      data_reservation_.reset();
+      fail_handler(actor_id(this),
+                   td::Status::Error(ErrorCode::notready,
+                                     "cannot allocate processing reservation"));
+      return;
+    }
+  }
+
+  auto S = create_shard_state(block_id_, data_.clone());
+  // Release the processing reservation before any branching: regardless
+  // of success or error, the parse clone has been consumed by the call
+  // above and the bytes should return to the global counter immediately.
+  processing_reservation.reset();
   if (S.is_error()) {
+    data_ = td::BufferSlice{};
+    data_reservation_.reset();
     fail_handler(actor_id(this), S.move_as_error());
     return;
   }
   auto state = S.move_as_ok();
   if (state->root_hash() != handle_->state()) {
+    data_ = td::BufferSlice{};
+    data_reservation_.reset();
     fail_handler(actor_id(this),
                  td::Status::Error(ErrorCode::protoviolation, "bad persistent state: root hash mismatch"));
     return;
   }
   auto St = state->validate_deep();
   if (St.is_error()) {
+    data_ = td::BufferSlice{};
+    data_reservation_.reset();
     fail_handler(actor_id(this), St.move_as_error());
     return;
   }
   state_ = std::move(state);
-  data_ = budgeted.data.clone();
-  // Hold the reservation so the budget covers the entire deserialize +
-  // validate + persist pipeline.
-  data_reservation_ = std::move(budgeted.reservation);
+  // data_ and data_reservation_ remain populated: checked_shard_state()
+  // will consume them by handing data_ to store_*_state_file and
+  // capturing data_reservation_ into the disk-write completion lambda
+  // (it covers the on-disk write window).
   checked_shard_state();
 }
 

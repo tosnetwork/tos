@@ -40,7 +40,16 @@ constexpr td::uint64 kMaxPersistentStateDownloadBytes = 1ULL << 30;
 constexpr td::uint64 kMaxPersistentStateHeapBufferBytes = 256ULL << 20;
 constexpr td::uint64 kMaxTotalPersistentStateDownloadBytes = 512ULL << 20;
 
+// Processing budget covers the transient BufferSlice clones the downstream
+// shard-state pipeline takes while parsing/persisting a downloaded state.
+// The cap matches the download cap (512 MiB) because in the worst case each
+// in-flight 256 MiB download will need a single same-size parse clone, and
+// two concurrent downloads must be admissible without the parse step
+// failing budgeting (the audit's M-01 worst-case peak).
+constexpr td::uint64 kMaxTotalPersistentStateProcessingBytes = 512ULL << 20;
+
 std::atomic<td::uint64> g_persistent_state_download_bytes{0};
+std::atomic<td::uint64> g_persistent_state_processing_bytes{0};
 
 td::Status validate_persistent_state_size(td::uint64 size) {
   if (size == 0) {
@@ -82,7 +91,34 @@ void release_persistent_state_download_memory(td::uint64 size) {
   CHECK(previous >= size);
 }
 
+void release_persistent_state_processing_memory(td::uint64 size) {
+  if (size == 0) {
+    return;
+  }
+  auto previous = g_persistent_state_processing_bytes.fetch_sub(size, std::memory_order_acq_rel);
+  CHECK(previous >= size);
+}
+
 }  // namespace
+
+bool try_reserve_persistent_state_processing_memory(td::uint64 size) {
+  // Zero-sized reservations are admissible no-ops. They keep callers simple
+  // (e.g. the dtor-only release path) without contending on the global CAS.
+  if (size == 0) {
+    return true;
+  }
+  auto current = g_persistent_state_processing_bytes.load(std::memory_order_relaxed);
+  for (;;) {
+    if (size > kMaxTotalPersistentStateProcessingBytes ||
+        current > kMaxTotalPersistentStateProcessingBytes - size) {
+      return false;
+    }
+    if (g_persistent_state_processing_bytes.compare_exchange_weak(
+            current, current + size, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+      return true;
+    }
+  }
+}
 
 // The reservation destructor is the single point of budget release: it runs
 // exactly once when the last shared_ptr<PersistentStateDownloadReservation>
@@ -90,6 +126,14 @@ void release_persistent_state_download_memory(td::uint64 size) {
 // DownloadState actor's lifetime).
 PersistentStateDownloadReservation::~PersistentStateDownloadReservation() {
   release_persistent_state_download_memory(bytes);
+}
+
+// Mirror destructor for the processing budget. The processing reservation
+// is a separate budget covering transient parse/persist clones; releasing
+// it here is the single point that returns those bytes to the global
+// processing counter, regardless of whether the parse succeeded or failed.
+PersistentStateProcessingReservation::~PersistentStateProcessingReservation() {
+  release_persistent_state_processing_memory(bytes);
 }
 
 namespace testing {
@@ -100,6 +144,14 @@ td::uint64 test_get_persistent_state_download_bytes() {
 
 bool test_try_reserve_persistent_state_download_memory(td::uint64 size) {
   return try_reserve_persistent_state_download_memory(size);
+}
+
+td::uint64 test_get_persistent_state_processing_bytes() {
+  return g_persistent_state_processing_bytes.load(std::memory_order_acquire);
+}
+
+bool test_try_reserve_persistent_state_processing_memory(td::uint64 size) {
+  return try_reserve_persistent_state_processing_memory(size);
 }
 
 }  // namespace testing
