@@ -742,6 +742,71 @@ td::Status cleanup_persistent_state_tempfiles(td::CSlice tempfile_root, td::uint
   });
 }
 
+// CellDbStreamingSink: minimal counting / per-cell-validation sink that
+// flows behind vm::std_boc_deserialize_from_file_bounded. The sink is
+// the load-bearing extension point that lets the OnDisk parse path
+// surface per-cell errors (currently: null cells, sub-callback
+// rejection) BEFORE the streaming importer returns the root. The
+// downstream archive store + set_block_state still owns the actual
+// CellDb commit; see comment in state-download-buffer.h for the full
+// memory contract.
+td::Status CellDbStreamingSink::begin() {
+  if (begun_) {
+    return td::Status::Error("CellDbStreamingSink::begin called twice on same sink");
+  }
+  if (finished_ || aborted_) {
+    return td::Status::Error("CellDbStreamingSink::begin called after finish/abort");
+  }
+  begun_ = true;
+  cell_count_.store(0, std::memory_order_release);
+  return td::Status::OK();
+}
+
+td::Status CellDbStreamingSink::persist(td::Ref<vm::Cell> cell) {
+  if (!begun_) {
+    return td::Status::Error("CellDbStreamingSink::persist called before begin");
+  }
+  if (finished_ || aborted_) {
+    return td::Status::Error("CellDbStreamingSink::persist called after finish/abort");
+  }
+  if (cell.is_null()) {
+    return td::Status::Error("CellDbStreamingSink::persist received null cell");
+  }
+  cell_count_.fetch_add(1, std::memory_order_acq_rel);
+  if (on_cell_) {
+    auto status = on_cell_(std::move(cell));
+    if (status.is_error()) {
+      return status;
+    }
+  }
+  return td::Status::OK();
+}
+
+td::Status CellDbStreamingSink::finish(const vm::Cell::Hash &root_hash) {
+  if (!begun_) {
+    return td::Status::Error("CellDbStreamingSink::finish called before begin");
+  }
+  if (finished_) {
+    return td::Status::Error("CellDbStreamingSink::finish called twice");
+  }
+  if (aborted_) {
+    return td::Status::Error("CellDbStreamingSink::finish called after abort");
+  }
+  finished_ = true;
+  root_hash_ = root_hash;
+  return td::Status::OK();
+}
+
+void CellDbStreamingSink::abort() {
+  // Idempotent. The importer's abort guard guarantees a single call,
+  // but we defend in depth in case a future caller wires a path that
+  // could trigger a second abort (e.g. a wrapper sink).
+  if (aborted_ || finished_) {
+    return;
+  }
+  aborted_ = true;
+}
+
 namespace testing {
 
 td::uint64 test_get_persistent_state_download_bytes() {

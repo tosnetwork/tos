@@ -71,14 +71,30 @@ td::Result<td::Ref<vm::Cell>> parse_ondisk_state_for_test(fullnode::BudgetedStat
 // the 512 MiB processing cap.
 //
 // `persist_cell` is invoked once per unique cell in topological order
-// (leaves first). The current actor leaves it empty and relies on the
-// downstream set_block_state / archive store to persist; a future
-// caller can pass a real CellDb-write callback here without changing
-// the streaming contract.
+// (leaves first). The current actor wires a CellDbStreamingSink that
+// counts cells and surfaces per-cell errors; the downstream
+// set_block_state still does the CellDb commit. See the sink-overload
+// (below) for the load-bearing extension point a future commit can
+// use to land cells directly through the importer.
 td::Result<td::Ref<vm::Cell>> parse_ondisk_state_streaming(fullnode::BudgetedStateFile &file,
                                                            const RootHash &expected_root_hash,
                                                            td::uint64 max_resident_bytes,
                                                            vm::StreamingPersistCellFn persist_cell);
+
+// Sink-based variant. Identical to the std::function overload except
+// that the caller drives the importer with a vm::StreamingCellSink
+// instance — exposing the begin/persist/finish/abort state machine
+// without the std::function wrapper. The actor uses this overload so
+// the sink's accumulated counters / observed root hash are available
+// after the parse returns.
+//
+// `sink` may be nullptr — in that case the importer behaves like the
+// legacy empty-callback path (cells live only through the returned
+// root cell's DAG). The sink, if non-null, MUST outlive the call.
+td::Result<td::Ref<vm::Cell>> parse_ondisk_state_streaming(fullnode::BudgetedStateFile &file,
+                                                           const RootHash &expected_root_hash,
+                                                           td::uint64 max_resident_bytes,
+                                                           vm::StreamingCellSink *sink);
 
 class SplitStateDeserializer;
 

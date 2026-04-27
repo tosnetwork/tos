@@ -1142,9 +1142,89 @@ class StreamingFileReader {
 
 }  // namespace
 
+namespace {
+
+// Adapter so the std::function-based public API delegates to the same
+// sink-driven core implementation. begin/finish are no-ops; abort is a
+// no-op. persist forwards each Ref<Cell> to the wrapped functor.
+class FunctionStreamingCellSink final : public StreamingCellSink {
+ public:
+  explicit FunctionStreamingCellSink(StreamingPersistCellFn fn) : fn_(std::move(fn)) {
+  }
+  td::Status persist(td::Ref<Cell> cell) override {
+    if (!fn_) {
+      return td::Status::OK();
+    }
+    return fn_(std::move(cell));
+  }
+
+ private:
+  StreamingPersistCellFn fn_;
+};
+
+// Core implementation. The two public overloads delegate here so the
+// streaming pipeline lives in exactly one place. `sink` may be nullptr.
+td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd& file, td::uint64 size,
+                                                                     const StreamingBocImportOptions& opts,
+                                                                     StreamingCellSink* sink);
+
+}  // namespace
+
 td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded(td::FileFd& file, td::uint64 size,
                                                                 const StreamingBocImportOptions& opts,
                                                                 StreamingPersistCellFn persist_cell) {
+  if (!persist_cell) {
+    return std_boc_deserialize_from_file_bounded_impl(file, size, opts, /*sink=*/nullptr);
+  }
+  FunctionStreamingCellSink adapter{std::move(persist_cell)};
+  return std_boc_deserialize_from_file_bounded_impl(file, size, opts, &adapter);
+}
+
+td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded(td::FileFd& file, td::uint64 size,
+                                                                const StreamingBocImportOptions& opts,
+                                                                StreamingCellSink* sink) {
+  return std_boc_deserialize_from_file_bounded_impl(file, size, opts, sink);
+}
+
+namespace {
+
+// RAII guard: when the impl returns an error after the sink has been
+// begun but before finish, call sink->abort() exactly once. The success
+// path explicitly arms `disarm_` before the guard goes out of scope so
+// no spurious abort is delivered after a clean finish.
+class StreamingSinkAbortGuard {
+ public:
+  explicit StreamingSinkAbortGuard(StreamingCellSink* sink) : sink_(sink) {
+  }
+  StreamingSinkAbortGuard(const StreamingSinkAbortGuard&) = delete;
+  StreamingSinkAbortGuard& operator=(const StreamingSinkAbortGuard&) = delete;
+  ~StreamingSinkAbortGuard() {
+    if (sink_ && armed_) {
+      sink_->abort();
+    }
+  }
+  void arm() {
+    armed_ = true;
+  }
+  void disarm() {
+    armed_ = false;
+  }
+
+ private:
+  StreamingCellSink* sink_;
+  bool armed_ = false;
+};
+
+td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd& file, td::uint64 size,
+                                                                     const StreamingBocImportOptions& opts,
+                                                                     StreamingCellSink* sink) {
+  // Sink lifecycle: begin() is invoked exactly once after every header
+  // validation has succeeded (right before the cell-build loop). If
+  // begin succeeds the abort guard is armed; any error return from
+  // here on triggers abort exactly once. The success path explicitly
+  // calls finish + disarms the guard before returning the root cell.
+  StreamingSinkAbortGuard abort_guard{sink};
+
   if (size == 0) {
     return td::Status::Error("std_boc_deserialize_from_file_bounded: zero-sized file");
   }
@@ -1370,6 +1450,19 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded(td::FileFd& file
     }
   }
 
+  // Sink begin: every header invariant has been validated and the
+  // offset table + parent_refcount scaffolding is built. The sink may
+  // now allocate per-import resources (write batches, accumulators);
+  // the abort guard ensures abort() runs on any error after this point.
+  if (sink) {
+    auto begin_status = sink->begin();
+    if (begin_status.is_error()) {
+      return td::Status::Error(PSLICE() << "std_boc_deserialize_from_file_bounded: sink begin rejected: "
+                                        << begin_status.error());
+    }
+    abort_guard.arm();
+  }
+
   // Layer 6: streaming deserialize. Iterate cells from leaves to root
   // (highest BoC index first) and build each one. The parent_refcount
   // array drives residency: each time a parent claims a child the
@@ -1493,8 +1586,8 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded(td::FileFd& file
     }
 
     auto cell_ref = td::Ref<Cell>{std::move(data_cell)};
-    if (persist_cell) {
-      auto persist_status = persist_cell(cell_ref);
+    if (sink) {
+      auto persist_status = sink->persist(cell_ref);
       if (persist_status.is_error()) {
         return td::Status::Error(PSLICE() << "std_boc_deserialize_from_file_bounded: persist_cell rejected "
                                              "cell #"
@@ -1537,8 +1630,24 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded(td::FileFd& file
   // remaining refs here.
   cells.clear();
   parent_refcount.clear();
+
+  // Sink finish: every cell has been persisted and the root is about
+  // to be returned. The sink may now commit its write batch / close
+  // its transaction. A finish error aborts the import (the abort guard
+  // is still armed so abort() runs); a success path disarms the guard
+  // so abort() does NOT run on the way out.
+  if (sink) {
+    auto finish_status = sink->finish(root->get_hash());
+    if (finish_status.is_error()) {
+      return td::Status::Error(PSLICE() << "std_boc_deserialize_from_file_bounded: sink finish rejected: "
+                                        << finish_status.error());
+    }
+    abort_guard.disarm();
+  }
   return root;
 }
+
+}  // namespace
 
 /*
  *

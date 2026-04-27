@@ -174,7 +174,7 @@ target_include_directories(validator-state-download-budget PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>/..
 )
-target_link_libraries(validator-state-download-budget PUBLIC tdutils)
+target_link_libraries(validator-state-download-budget PUBLIC tdutils tos_crypto)
 
 add_library(validator-db OBJECT ${VALIDATOR_DB_SOURCE})
 target_include_directories(validator-db PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)

@@ -443,11 +443,73 @@ struct StreamingBocImportOptions {
   td::uint64 max_resident_bytes = 256ULL << 20;  // resident-memory peak cap
 };
 
+// Per-cell sink invoked from inside the streaming BoC importer. Each
+// cell flows through `persist` exactly once, in topological order from
+// leaves to root. Returning a non-OK status aborts the import.
+//
+// Lifecycle invariants:
+//   * `begin` is invoked exactly once after every header invariant
+//     has been validated, immediately before the cell-build loop. If
+//     the import fails BEFORE begin (e.g. header truncation, file-size
+//     mismatch, oversized cell-count) NEITHER begin NOR abort runs.
+//   * `persist(cell)` is invoked exactly cell_count times in
+//     topological order from leaves to root, AFTER begin.
+//   * `finish(root_hash)` runs exactly once on the success path, after
+//     every cell has been persisted, immediately before the importer
+//     returns the root cell. `abort()` does NOT run on the success
+//     path.
+//   * `abort()` runs exactly once on any error path AFTER begin
+//     succeeded — including persist returning Status::Error, finish
+//     returning Status::Error, or any internal importer error caught
+//     during the cell-build loop. abort never runs before begin.
+//
+// State-machine summary:
+//   begin() -> persist(cell) * N -> finish(root_hash)         (success)
+//   begin() -> persist(cell) * k -> abort()                   (any error after begin)
+//   (no callbacks at all)                                     (error before begin)
+//
+// Implementations must be re-entrant only across distinct sinks: a
+// single sink instance is owned by a single std_boc_deserialize_from_file_bounded
+// call for the duration of that call. The importer never invokes any
+// sink method from a different thread than the one that called
+// std_boc_deserialize_from_file_bounded.
+class StreamingCellSink {
+ public:
+  virtual ~StreamingCellSink() = default;
+
+  virtual td::Status begin() {
+    return td::Status::OK();
+  }
+
+  virtual td::Status persist(td::Ref<Cell> cell) = 0;
+
+  virtual td::Status finish(const Cell::Hash& root_hash) {
+    (void)root_hash;
+    return td::Status::OK();
+  }
+
+  virtual void abort() {
+  }
+};
+
+// Backward-compatible callback type. A std::function<Status(Ref<Cell>)>
+// is wrapped in an internal StreamingCellSink adapter by the importer;
+// the adapter's begin/finish/abort are no-ops. Existing callers that
+// already pass a raw lambda continue to compile unchanged.
 using StreamingPersistCellFn = std::function<td::Status(td::Ref<Cell>)>;
 
 td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded(
     td::FileFd& file, td::uint64 size, const StreamingBocImportOptions& opts,
     StreamingPersistCellFn persist_cell);
+
+// Sink-based overload. Equivalent to the std::function variant but
+// surfaces begin/finish/abort to the caller for a clean state-machine
+// hook. `sink` may be nullptr — in that case the importer behaves
+// exactly like the legacy std::function-empty path (cells live only
+// through the returned root cell's DAG).
+td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded(
+    td::FileFd& file, td::uint64 size, const StreamingBocImportOptions& opts,
+    StreamingCellSink* sink);
 
 td::Result<std::vector<Ref<Cell>>> std_boc_deserialize_multi(td::Slice data,
                                                              int max_roots = BagOfCells::default_max_roots);

@@ -132,6 +132,31 @@ td::Result<td::Ref<vm::Cell>> parse_ondisk_state_streaming(fullnode::BudgetedSta
   return root;
 }
 
+td::Result<td::Ref<vm::Cell>> parse_ondisk_state_streaming(fullnode::BudgetedStateFile &file,
+                                                           const RootHash &expected_root_hash,
+                                                           td::uint64 max_resident_bytes,
+                                                           vm::StreamingCellSink *sink) {
+  if (file.path.empty() || file.size == 0) {
+    return td::Status::Error("parse_ondisk_state_streaming: empty BudgetedStateFile");
+  }
+  TRY_RESULT(fd, td::FileFd::open(file.path, td::FileFd::Flags::Read));
+  vm::StreamingBocImportOptions opts;
+  if (max_resident_bytes > 0) {
+    opts.max_resident_bytes = max_resident_bytes;
+  }
+  TRY_RESULT(root, vm::std_boc_deserialize_from_file_bounded(fd, file.size, opts, sink));
+  fd.close();
+  if (root.is_null()) {
+    return td::Status::Error("parse_ondisk_state_streaming: BoC deserialize returned null root");
+  }
+  if (RootHash{root->get_hash().bits()} != expected_root_hash) {
+    return td::Status::Error(PSTRING() << "parse_ondisk_state_streaming: root hash mismatch: expected "
+                                       << expected_root_hash.to_hex() << " got "
+                                       << RootHash{root->get_hash().bits()}.to_hex());
+  }
+  return root;
+}
+
 td::Status copy_tempfile_to_writer(const std::string &src_path, td::uint64 size, td::FileFd &dst) {
   TRY_RESULT(src_fd, td::FileFd::open(src_path, td::FileFd::Read));
   constexpr td::uint64 kChunkBytes = 1ULL << 20;  // 1 MiB
@@ -715,22 +740,46 @@ void DownloadShardState::downloaded_shard_state(fullnode::DownloadedPersistentSt
   // existing "validate_deep skipped here is OK because BoC + root-hash
   // is the same invariant" reasoning still applies.
   //
-  // The persist_cell callback is left empty: the downstream
-  // checked_shard_state() routes through store_persistent_state_file
-  // (which copies the tempfile into the archive) and set_block_state
-  // (which lands the cell tree into the cell DB). A future refactor
-  // that lands the cells directly through the streaming callback can
-  // pass a real callable here without changing the rest of the actor.
+  // K3 (this round): wire a real CellDbStreamingSink. The sink runs
+  // begin/persist/finish/abort around the importer; today its body is
+  // a counting + per-cell-validation pass (defense-in-depth against a
+  // null cell or descriptor corruption surfacing late). The
+  // downstream checked_shard_state() still routes through
+  // store_persistent_state_file (which copies the tempfile into the
+  // archive) and set_block_state (which lands the cell tree into the
+  // cell DB). True streaming-into-CellDb-without-DAG-residency is a
+  // follow-up that requires a deeper refactor of DataCell to use
+  // hash-only references for children — out of scope for this commit.
+  // The sink interface is the load-bearing extension point that lets
+  // that future commit land without changing this actor wiring.
+  fullnode::CellDbStreamingSink streaming_sink;
   auto r_root = parse_ondisk_state_streaming(data_file_, handle_->state(),
                                              budget_cfg.max_resident_bytes_per_parse,
-                                             vm::StreamingPersistCellFn{});
+                                             &streaming_sink);
   if (r_root.is_error()) {
+    LOG(WARNING) << "OnDisk streaming parse failed for " << block_id_.to_str()
+                 << " after " << streaming_sink.cell_count() << " cells: "
+                 << r_root.error();
     data_file_ = fullnode::BudgetedStateFile{};
     data_reservation_.reset();
     state_processing_reservation_.reset();
     fail_handler(actor_id(this), r_root.move_as_error());
     return;
   }
+  if (!streaming_sink.finished()) {
+    // Defense in depth: the importer's contract guarantees finish runs
+    // on the success path. If the sink reports otherwise we treat it
+    // as a programming bug and fail closed rather than silently
+    // committing a half-validated state.
+    data_file_ = fullnode::BudgetedStateFile{};
+    data_reservation_.reset();
+    state_processing_reservation_.reset();
+    fail_handler(actor_id(this),
+                 td::Status::Error("OnDisk streaming sink finished=false on success path"));
+    return;
+  }
+  LOG(INFO) << "OnDisk streaming parse for " << block_id_.to_str() << " imported "
+            << streaming_sink.cell_count() << " cells";
   auto root = r_root.move_as_ok();
 
   auto S = create_shard_state(block_id_, std::move(root));
@@ -917,13 +966,27 @@ void DownloadShardState::downloaded_split_state_header(fullnode::DownloadedPersi
     auto fd = r_fd.move_as_ok();
     vm::StreamingBocImportOptions opts;
     opts.max_resident_bytes = budget_cfg.max_resident_bytes_per_parse;
-    auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, file.size, opts,
-                                                            vm::StreamingPersistCellFn{});
+    // K3: wire the real CellDbStreamingSink so split-state header
+    // imports get the same per-cell validation + counter that the
+    // unsplit OnDisk parse uses. The downstream archive store still
+    // owns the actual CellDb commit.
+    fullnode::CellDbStreamingSink streaming_sink;
+    auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, file.size, opts, &streaming_sink);
     fd.close();
     if (r_root.is_error()) {
+      LOG(WARNING) << "OnDisk streaming split-state header parse failed for " << block_id_.to_str()
+                   << " after " << streaming_sink.cell_count() << " cells: "
+                   << r_root.error();
       fail_handler(actor_id(this), r_root.move_as_error());
       return;
     }
+    if (!streaming_sink.finished()) {
+      fail_handler(actor_id(this),
+                   td::Status::Error("OnDisk streaming sink finished=false on split-header success path"));
+      return;
+    }
+    LOG(INFO) << "OnDisk streaming split-state header parse for " << block_id_.to_str()
+              << " imported " << streaming_sink.cell_count() << " cells";
     header_root = r_root.move_as_ok();
   }
 
@@ -1085,13 +1148,25 @@ void DownloadShardState::downloaded_state_part(fullnode::DownloadedPersistentSta
     auto fd = r_fd.move_as_ok();
     vm::StreamingBocImportOptions opts;
     opts.max_resident_bytes = budget_cfg.max_resident_bytes_per_parse;
-    auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, file.size, opts,
-                                                            vm::StreamingPersistCellFn{});
+    // K3: wire the real CellDbStreamingSink for the split-state part
+    // OnDisk parse. Same pattern as the header path.
+    fullnode::CellDbStreamingSink streaming_sink;
+    auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, file.size, opts, &streaming_sink);
     fd.close();
     if (r_root.is_error()) {
+      LOG(WARNING) << "OnDisk streaming split-state part parse failed for " << block_id_.to_str()
+                   << " part " << idx << " after " << streaming_sink.cell_count() << " cells: "
+                   << r_root.error();
       retry_part_download(actor_id(this), r_root.move_as_error());
       return;
     }
+    if (!streaming_sink.finished()) {
+      retry_part_download(actor_id(this),
+                          td::Status::Error("OnDisk streaming sink finished=false on split-part success path"));
+      return;
+    }
+    LOG(INFO) << "OnDisk streaming split-state part parse for " << block_id_.to_str()
+              << " part " << idx << " imported " << streaming_sink.cell_count() << " cells";
     root = r_root.move_as_ok();
   }
   if (root->get_hash() != parts_[idx].root_hash) {

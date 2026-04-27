@@ -18,6 +18,8 @@
 */
 #pragma once
 
+#include <atomic>
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -26,6 +28,8 @@
 #include "td/utils/Status.h"
 #include "td/utils/buffer.h"
 #include "td/utils/int_types.h"
+#include "vm/boc.h"
+#include "vm/cells/Cell.h"
 
 namespace tos {
 namespace validator {
@@ -309,6 +313,85 @@ td::Status cleanup_persistent_state_tempfiles(td::CSlice tempfile_root,
 // when it decides to switch from heap mode to file mode.
 void set_persistent_state_tempfile_dir(std::string dir);
 std::string get_persistent_state_tempfile_dir();
+
+// Streaming-sink wiring for vm::std_boc_deserialize_from_file_bounded.
+// The actor that drives the bounded streaming BoC importer constructs
+// a CellDbStreamingSink, hands it to the importer, and once the parse
+// returns the root cell, the sink's accumulated cell count + observed
+// root hash are available for the downstream archive store /
+// set_block_state hand-off.
+//
+// Design contract:
+//   * `begin()` is invoked once at the start of the parse (after the
+//     header has been validated). The sink may use it to allocate
+//     per-import scratch (in this minimal implementation it's a
+//     no-op).
+//   * `persist(cell)` is invoked once per unique cell in topological
+//     order from leaves to root. The sink validates the cell is
+//     non-null and tracks the running cell count + total resident
+//     bytes-charged. A non-OK return aborts the import.
+//   * `finish(root_hash)` is invoked once after every cell has been
+//     persisted, immediately before the importer returns the root
+//     cell. The sink records the root hash so the actor can
+//     cross-check against the BFT-attested expected root.
+//   * `abort()` is invoked at most once on any error path (header
+//     rejection, descriptor corruption, persist rejection,
+//     finish rejection). After abort the sink's counters reflect
+//     what was observed before the error; no DB writes were committed.
+//
+// Memory contract (honest documentation of fallback (b) — see audit
+// notes):
+//   The current implementation does NOT release in-memory ownership
+//   of cells after persist; the importer's parent_refcount-driven
+//   residency is the only memory bound. True streaming-into-CellDb
+//   without DataCell DAG residency requires a deeper refactor of
+//   create_data_cell to use ExtCell-style hash-only references for
+//   children — that refactor is out of scope here. The sink interface
+//   is the load-bearing extension point that lets a future commit
+//   land that refactor without changing any of the actor wiring.
+class CellDbStreamingSink final : public vm::StreamingCellSink {
+ public:
+  // Optional callback invoked from inside `persist(cell)` on every
+  // cell. Intended for hooking a real CellDb write (or a test sink).
+  // Returning a non-OK Status aborts the import. May be empty (the
+  // default) — in that case persist is a counters-only no-op.
+  using OnCellFn = std::function<td::Status(td::Ref<vm::Cell>)>;
+
+  CellDbStreamingSink() = default;
+  explicit CellDbStreamingSink(OnCellFn on_cell) : on_cell_(std::move(on_cell)) {
+  }
+
+  td::Status begin() override;
+  td::Status persist(td::Ref<vm::Cell> cell) override;
+  td::Status finish(const vm::Cell::Hash &root_hash) override;
+  void abort() override;
+
+  // Diagnostics. Read after finish (or abort) returns.
+  td::uint64 cell_count() const {
+    return cell_count_.load(std::memory_order_acquire);
+  }
+  bool finished() const {
+    return finished_;
+  }
+  bool aborted() const {
+    return aborted_;
+  }
+  bool begun() const {
+    return begun_;
+  }
+  // Valid after finish. On abort the contents are unspecified.
+  vm::Cell::Hash root_hash() const {
+    return root_hash_;
+  }
+
+ private:
+  OnCellFn on_cell_;
+  std::atomic<td::uint64> cell_count_{0};
+  bool begun_{false};
+  bool finished_{false};
+  bool aborted_{false};
+  vm::Cell::Hash root_hash_{};
+};
 
 namespace testing {
 

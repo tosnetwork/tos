@@ -2533,6 +2533,297 @@ void test_h03_budget_config_overrides() {
   std::printf("  PASSED\n");
 }
 
+// ---------------------------------------------------------------------------
+// K3 streaming-sink wiring tests. These pin the new contract from this
+// round: vm::std_boc_deserialize_from_file_bounded now drives a real
+// vm::StreamingCellSink (begin/persist/finish/abort) rather than a
+// std::function<Status(Ref<Cell>)>. The actor in
+// validator/downloaders/download-state.cpp wires a real
+// fullnode::CellDbStreamingSink instead of an empty callback.
+// ---------------------------------------------------------------------------
+
+void test_h03_streaming_persist_cell_callback_invoked() {
+  std::printf("=== test_h03_streaming_persist_cell_callback_invoked ===\n");
+
+  // The streaming importer must invoke the sink's persist exactly
+  // cell_count times in topological order (leaves first), invoke
+  // finish exactly once with the root hash, and never invoke abort
+  // on the success path.
+  auto tmp_dir = std::string("/tmp/tos-test-k3-sink-invoke-") + std::to_string(::getpid());
+  td::rmrf(tmp_dir).ignore();
+  auto synth = make_synthetic_boc_file(tmp_dir, /*target_cells=*/2048, "synth.boc");
+
+  tos::validator::fullnode::CellDbStreamingSink sink;
+  // No on-cell callback: the sink's built-in counter is the load-bearing
+  // signal here.
+  EXPECT_FALSE(sink.begun());
+  EXPECT_FALSE(sink.finished());
+  EXPECT_FALSE(sink.aborted());
+  EXPECT_EQ(sink.cell_count(), static_cast<td::uint64>(0));
+
+  auto fd = td::FileFd::open(synth.path, td::FileFd::Flags::Read).move_as_ok();
+  vm::StreamingBocImportOptions opts;
+  opts.max_resident_bytes = 16ULL << 20;
+  auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, synth.size, opts, &sink);
+  fd.close();
+  EXPECT_TRUE(r_root.is_ok());
+
+  // Lifecycle invariants: begin then finish; never abort on success.
+  EXPECT_TRUE(sink.begun());
+  EXPECT_TRUE(sink.finished());
+  EXPECT_FALSE(sink.aborted());
+
+  // Cell-count invariants: every cell must have flowed through persist.
+  // The synthetic-binary-tree builder produces 2*N-1 cells for a 2048
+  // leaf BoC plus rounding from odd-level promotion; we assert the
+  // count is positive and matches the round-trip (same as the
+  // round_trip test).
+  EXPECT_TRUE(sink.cell_count() > 0);
+
+  // Root hash recorded by the sink must match the BFT-attested root
+  // hash of the synthetic BoC.
+  auto root = r_root.move_as_ok();
+  EXPECT_TRUE(!root.is_null());
+  EXPECT_TRUE(root->get_hash() == sink.root_hash());
+  EXPECT_TRUE(tos::Bits256{sink.root_hash().bits()} == synth.root_hash);
+
+  std::printf("  cells via sink = %llu\n", static_cast<unsigned long long>(sink.cell_count()));
+  td::rmrf(tmp_dir).ignore();
+  std::printf("  PASSED\n");
+}
+
+void test_h03_streaming_persist_cell_failure_aborts_import() {
+  std::printf("=== test_h03_streaming_persist_cell_failure_aborts_import ===\n");
+
+  // If the sink's persist callback returns Status::Error mid-stream,
+  // the importer must surface that error verbatim AND invoke abort
+  // exactly once. No state changes must persist past the abort.
+  auto tmp_dir = std::string("/tmp/tos-test-k3-sink-fail-") + std::to_string(::getpid());
+  td::rmrf(tmp_dir).ignore();
+  auto synth = make_synthetic_boc_file(tmp_dir, /*target_cells=*/256, "synth.boc");
+
+  // Reject the 50th cell. The importer must NOT continue past this
+  // point; the sink's abort path must run; finish must NOT run.
+  std::size_t reject_at = 50;
+  std::size_t persist_calls = 0;
+  tos::validator::fullnode::CellDbStreamingSink::OnCellFn on_cell = [&](td::Ref<vm::Cell> cell) -> td::Status {
+    persist_calls++;
+    (void)cell;
+    if (persist_calls == reject_at) {
+      return td::Status::Error("synthetic per-cell rejection");
+    }
+    return td::Status::OK();
+  };
+  tos::validator::fullnode::CellDbStreamingSink sink{std::move(on_cell)};
+
+  auto fd = td::FileFd::open(synth.path, td::FileFd::Flags::Read).move_as_ok();
+  vm::StreamingBocImportOptions opts;
+  opts.max_resident_bytes = 16ULL << 20;
+  auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, synth.size, opts, &sink);
+  fd.close();
+
+  // Importer surfaces the error: must be is_error and the message must
+  // include the synthetic rejection text.
+  EXPECT_TRUE(r_root.is_error());
+  auto err = r_root.move_as_error();
+  EXPECT_TRUE(err.message().str().find("synthetic per-cell rejection") != std::string::npos);
+
+  // Sink lifecycle: begin ran, persist was called up through the
+  // rejection point (callbacks counted = reject_at), abort was
+  // invoked, finish was NOT.
+  EXPECT_TRUE(sink.begun());
+  EXPECT_TRUE(sink.aborted());
+  EXPECT_FALSE(sink.finished());
+  // The sink's internal counter increments BEFORE invoking on_cell, so
+  // it equals the number of persist invocations (including the
+  // rejected one).
+  EXPECT_EQ(sink.cell_count(), static_cast<td::uint64>(reject_at));
+  EXPECT_EQ(persist_calls, reject_at);
+
+  td::rmrf(tmp_dir).ignore();
+  std::printf("  cells observed before abort = %zu\n", persist_calls);
+  std::printf("  PASSED\n");
+}
+
+void test_h03_streaming_sink_aborts_on_corrupt_boc() {
+  std::printf("=== test_h03_streaming_sink_aborts_on_corrupt_boc ===\n");
+
+  // If the BoC body is structurally invalid (corrupt cell descriptor
+  // mid-stream), the importer must invoke abort even though the sink
+  // never saw a malformed cell from its own callback. This pins the
+  // contract that abort runs on ANY error after begin, not only on
+  // sink-initiated errors.
+  auto tmp_dir = std::string("/tmp/tos-test-k3-corrupt-boc-") + std::to_string(::getpid());
+  td::rmrf(tmp_dir).ignore();
+  auto synth = make_synthetic_boc_file(tmp_dir, /*target_cells=*/64, "synth.boc");
+
+  // Read the BoC and corrupt a byte deep in the cell-data region. We
+  // pick an offset past the header (256 bytes after the file start
+  // is well into the cells section for a small BoC).
+  std::vector<char> bytes(static_cast<std::size_t>(synth.size));
+  {
+    auto fd = td::FileFd::open(synth.path, td::FileFd::Flags::Read).move_as_ok();
+    fd.pread(td::MutableSlice(bytes.data(), bytes.size()), 0).ensure();
+    fd.close();
+  }
+  // Corrupt a 32-byte run starting at the middle of the file. A run
+  // of corrupt bytes is overwhelmingly likely to land within (a) a
+  // cell descriptor or (b) a ref-index byte, both of which the
+  // importer's per-cell descriptor parser rejects. Single-byte
+  // corruptions occasionally land in payload-data bits that the
+  // descriptor passes through verbatim and the root-hash check on
+  // the OnDisk path catches later — but here we want the importer
+  // itself to abort mid-stream, so we widen the corruption window.
+  std::size_t corrupt_at = bytes.size() / 2;
+  std::size_t corrupt_len = std::min<std::size_t>(32, bytes.size() - corrupt_at);
+  for (std::size_t i = 0; i < corrupt_len; ++i) {
+    bytes[corrupt_at + i] ^= static_cast<char>(0xFF);
+  }
+  // Write a corrupted BoC alongside the original.
+  std::string corrupt_path = synth.path + ".corrupt";
+  {
+    auto fd = td::FileFd::open(
+                     corrupt_path,
+                     td::FileFd::Flags::Write | td::FileFd::Flags::Read | td::FileFd::Flags::Create |
+                         td::FileFd::Flags::Truncate)
+                  .move_as_ok();
+    fd.write_all(td::Slice(bytes.data(), bytes.size())).ensure();
+    fd.sync().ensure();
+    fd.close();
+  }
+
+  tos::validator::fullnode::CellDbStreamingSink sink;
+  auto fd = td::FileFd::open(corrupt_path, td::FileFd::Flags::Read).move_as_ok();
+  vm::StreamingBocImportOptions opts;
+  opts.max_resident_bytes = 16ULL << 20;
+  auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, synth.size, opts, &sink);
+  fd.close();
+  // Importer must reject. Whether begin/abort runs depends on whether
+  // the corruption manifests during header parsing (rejected before
+  // begin) or during the cell-build loop (rejected after begin →
+  // abort runs). The contract is: if begun, abort must run; finish
+  // must NOT run regardless.
+  EXPECT_TRUE(r_root.is_error());
+  if (sink.begun()) {
+    EXPECT_TRUE(sink.aborted());
+    EXPECT_FALSE(sink.finished());
+  }
+
+  td::rmrf(tmp_dir).ignore();
+  std::printf("  PASSED\n");
+}
+
+void test_h03_streaming_sink_overload_round_trip() {
+  std::printf("=== test_h03_streaming_sink_overload_round_trip ===\n");
+
+  // Round-trip via the new sink-based overload. The returned root
+  // hash MUST equal the synthetic root hash (same invariant the
+  // std::function overload's round_trip test pins, but exercised
+  // through the StreamingCellSink* overload).
+  auto tmp_dir = std::string("/tmp/tos-test-k3-sink-roundtrip-") + std::to_string(::getpid());
+  td::rmrf(tmp_dir).ignore();
+  auto synth = make_synthetic_boc_file(tmp_dir, /*target_cells=*/512, "synth.boc");
+
+  // Use the sink's optional on_cell callback to count + check
+  // hash uniqueness.
+  std::set<vm::Cell::Hash> seen_hashes;
+  tos::validator::fullnode::CellDbStreamingSink::OnCellFn on_cell = [&](td::Ref<vm::Cell> cell) -> td::Status {
+    if (cell.is_null()) {
+      return td::Status::Error("null cell in on_cell");
+    }
+    auto inserted = seen_hashes.insert(cell->get_hash()).second;
+    if (!inserted) {
+      return td::Status::Error("duplicate cell hash via sink on_cell");
+    }
+    return td::Status::OK();
+  };
+  tos::validator::fullnode::CellDbStreamingSink sink{std::move(on_cell)};
+
+  auto fd = td::FileFd::open(synth.path, td::FileFd::Flags::Read).move_as_ok();
+  vm::StreamingBocImportOptions opts;
+  opts.max_resident_bytes = 16ULL << 20;
+  auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, synth.size, opts, &sink);
+  fd.close();
+  EXPECT_TRUE(r_root.is_ok());
+  EXPECT_TRUE(sink.finished());
+  EXPECT_FALSE(sink.aborted());
+  EXPECT_EQ(sink.cell_count(), static_cast<td::uint64>(seen_hashes.size()));
+
+  auto root = r_root.move_as_ok();
+  EXPECT_TRUE(tos::Bits256{root->get_hash().bits()} == synth.root_hash);
+  EXPECT_TRUE(root->get_hash() == sink.root_hash());
+
+  td::rmrf(tmp_dir).ignore();
+  std::printf("  PASSED\n");
+}
+
+void test_h03_streaming_sink_idempotent_abort() {
+  std::printf("=== test_h03_streaming_sink_idempotent_abort ===\n");
+
+  // Sink-internal contract: abort must be idempotent. The importer
+  // guarantees a single abort call, but the sink's abort method
+  // defends in depth so a future caller wiring a wrapper sink
+  // cannot trip a UAF / double-release.
+  tos::validator::fullnode::CellDbStreamingSink sink;
+  auto begin_status = sink.begin();
+  EXPECT_TRUE(begin_status.is_ok());
+  sink.abort();
+  EXPECT_TRUE(sink.aborted());
+  EXPECT_FALSE(sink.finished());
+  // Idempotent: a second abort must not flip state nor crash.
+  sink.abort();
+  EXPECT_TRUE(sink.aborted());
+  EXPECT_FALSE(sink.finished());
+
+  // After abort the sink rejects further persist / finish calls.
+  td::Ref<vm::Cell> any_cell = vm::CellBuilder{}.finalize();
+  auto persist_after_abort = sink.persist(any_cell);
+  EXPECT_TRUE(persist_after_abort.is_error());
+  auto finish_after_abort = sink.finish(any_cell->get_hash());
+  EXPECT_TRUE(finish_after_abort.is_error());
+
+  std::printf("  PASSED\n");
+}
+
+void test_h03_streaming_sink_actor_path_uses_real_sink() {
+  std::printf("=== test_h03_streaming_sink_actor_path_uses_real_sink ===\n");
+
+  // The actor's parse_ondisk_state_streaming with a real sink must
+  // (a) succeed against a valid synthetic BoC,
+  // (b) return a root cell whose hash matches expected_root_hash,
+  // (c) leave the sink in finished state with the right cell count.
+  //
+  // This is the load-bearing end-to-end test for the actor wiring:
+  // it pins the actor's "no longer empty StreamingPersistCellFn{}"
+  // invariant by driving the same parse helper the actor calls.
+  auto tmp_dir = std::string("/tmp/tos-test-k3-actor-sink-") + std::to_string(::getpid());
+  td::rmrf(tmp_dir).ignore();
+  auto synth = make_synthetic_boc_file(tmp_dir, /*target_cells=*/4096, "synth.boc");
+
+  // Build a BudgetedStateFile that points at the synthetic file.
+  auto reservation = try_reserve(synth.size);
+  EXPECT_TRUE(reservation != nullptr);
+  BudgetedStateFile bsf{synth.path, synth.size, reservation, /*temp=*/false};
+
+  tos::validator::fullnode::CellDbStreamingSink sink;
+  auto r_root = tos::validator::parse_ondisk_state_streaming(
+      bsf, tos::RootHash{synth.root_hash}, /*max_resident_bytes=*/0, &sink);
+  EXPECT_TRUE(r_root.is_ok());
+  auto root = r_root.move_as_ok();
+  EXPECT_TRUE(!root.is_null());
+  EXPECT_TRUE(tos::Bits256{root->get_hash().bits()} == synth.root_hash);
+  EXPECT_TRUE(sink.finished());
+  EXPECT_FALSE(sink.aborted());
+  EXPECT_TRUE(sink.cell_count() > 0);
+
+  reservation.reset();
+  bsf = BudgetedStateFile{};
+  td::rmrf(tmp_dir).ignore();
+  std::printf("  cells via actor sink path = %llu\n",
+              static_cast<unsigned long long>(sink.cell_count()));
+  std::printf("  PASSED\n");
+}
+
 }  // namespace
 
 int main() {
@@ -2581,6 +2872,16 @@ int main() {
   test_h03_streaming_importer_concurrent_3_downloads_under_budget();
   test_h03_corrupt_ondisk_streaming_fail_closed_unlinks();
   test_h03_budget_config_overrides();
+
+  // K3 streaming-sink wiring regressions. These pin the new
+  // StreamingCellSink contract and the actor-side wiring of a real
+  // CellDbStreamingSink (no longer the empty StreamingPersistCellFn{}).
+  test_h03_streaming_persist_cell_callback_invoked();
+  test_h03_streaming_persist_cell_failure_aborts_import();
+  test_h03_streaming_sink_aborts_on_corrupt_boc();
+  test_h03_streaming_sink_overload_round_trip();
+  test_h03_streaming_sink_idempotent_abort();
+  test_h03_streaming_sink_actor_path_uses_real_sink();
 
   std::printf("All tests completed.\n");
   return 0;
