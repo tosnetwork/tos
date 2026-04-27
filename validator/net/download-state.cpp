@@ -84,13 +84,34 @@ void release_persistent_state_download_memory(td::uint64 size) {
 
 }  // namespace
 
+// The reservation destructor is the single point of budget release: it runs
+// exactly once when the last shared_ptr<PersistentStateDownloadReservation>
+// reference is dropped (downstream may keep the buffer alive past the
+// DownloadState actor's lifetime).
+PersistentStateDownloadReservation::~PersistentStateDownloadReservation() {
+  release_persistent_state_download_memory(bytes);
+}
+
+namespace testing {
+
+td::uint64 test_get_persistent_state_download_bytes() {
+  return g_persistent_state_download_bytes.load(std::memory_order_acquire);
+}
+
+bool test_try_reserve_persistent_state_download_memory(td::uint64 size) {
+  return try_reserve_persistent_state_download_memory(size);
+}
+
+}  // namespace testing
+
 DownloadState::DownloadState(BlockIdExt block_id, BlockIdExt masterchain_block_id, PersistentStateType type,
                              adnl::AdnlNodeIdShort local_id, overlay::OverlayIdShort overlay_id,
                              adnl::AdnlNodeIdShort download_from, td::uint32 priority, td::Timestamp timeout,
                              td::actor::ActorId<ValidatorManagerInterface> validator_manager,
                              td::actor::ActorId<adnl::AdnlSenderInterface> rldp,
                              td::actor::ActorId<overlay::Overlays> overlays, td::actor::ActorId<adnl::Adnl> adnl,
-                             td::actor::ActorId<adnl::AdnlExtClient> client, td::Promise<td::BufferSlice> promise)
+                             td::actor::ActorId<adnl::AdnlExtClient> client,
+                             td::Promise<BudgetedBufferSlice> promise)
     : block_id_(block_id)
     , masterchain_block_id_(masterchain_block_id)
     , type_(type)
@@ -110,7 +131,10 @@ DownloadState::DownloadState(BlockIdExt block_id, BlockIdExt masterchain_block_i
 }
 
 void DownloadState::abort_query(td::Status reason) {
-  release_download_memory();
+  // Drop the RAII reservation here: its destructor is the single source of
+  // budget release. If `reservation_` is null (e.g., we never reserved or
+  // the buffer was already handed off), this is a no-op.
+  reservation_.reset();
   if (promise_) {
     LOG(WARNING) << "failed to download state " << block_id_.to_str() << " from " << download_from_ << ": " << reason;
     promise_.set_error(std::move(reason));
@@ -124,15 +148,19 @@ void DownloadState::alarm() {
 
 void DownloadState::finish_query() {
   if (promise_) {
-    promise_.set_value(std::move(state_));
+    // Hand both the buffer and the reservation downstream. The reservation
+    // shared_ptr keeps the bytes accounted against the global budget for as
+    // long as any caller holds the BudgetedBufferSlice (or any copy of the
+    // shared_ptr). DO NOT release the budget here: that would prematurely
+    // free the accounting while downstream is still holding the buffer.
+    promise_.set_value(BudgetedBufferSlice{std::move(state_), std::move(reservation_)});
+  } else {
+    // Promise was already settled (e.g., disk path delivered an error
+    // before us); drop the reservation locally so the destructor releases
+    // the budget exactly once.
+    reservation_.reset();
   }
-  release_download_memory();
   stop();
-}
-
-void DownloadState::release_download_memory() {
-  release_persistent_state_download_memory(reserved_download_bytes_);
-  reserved_download_bytes_ = 0;
 }
 
 td::Status DownloadState::prepare_download_buffer(td::uint64 size) {
@@ -140,7 +168,7 @@ td::Status DownloadState::prepare_download_buffer(td::uint64 size) {
   if (status.is_error()) {
     return status;
   }
-  if (reserved_download_bytes_ != 0) {
+  if (reservation_) {
     return td::Status::Error(ErrorCode::protoviolation,
                              "persistent state download size announced twice");
   }
@@ -150,16 +178,19 @@ td::Status DownloadState::prepare_download_buffer(td::uint64 size) {
                                        << size << " requested, "
                                        << kMaxTotalPersistentStateDownloadBytes << " total budget");
   }
-  reserved_download_bytes_ = size;
+  // Wrap the reserved bytes in a shared RAII handle. From this point the
+  // ONLY way the budget is released is via this shared_ptr's destructor.
+  auto reservation = std::make_shared<PersistentStateDownloadReservation>(size);
   total_size_ = size;
   try {
     state_ = td::BufferSlice{td::narrow_cast<std::size_t>(total_size_)};
   } catch (...) {
-    release_download_memory();
+    // reservation goes out of scope here; its dtor releases the bytes.
     total_size_ = 0;
     return td::Status::Error(ErrorCode::notready,
                              "cannot allocate persistent state download buffer");
   }
+  reservation_ = std::move(reservation);
   sum_ = 0;
   return td::Status::OK();
 }

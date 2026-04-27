@@ -19,6 +19,8 @@
 */
 #pragma once
 
+#include <memory>
+
 #include <stats-provider.h>
 
 #include "adnl/adnl-ext-client.h"
@@ -32,6 +34,44 @@ namespace validator {
 
 namespace fullnode {
 
+// RAII reservation against the global persistent-state download memory
+// budget. The reservation is held by a shared_ptr alongside the downloaded
+// buffer; the underlying bytes are returned to the global budget only when
+// the last reference is dropped (i.e., when downstream consumers have
+// finished processing the buffer).
+struct PersistentStateDownloadReservation {
+  td::uint64 bytes{0};
+
+  PersistentStateDownloadReservation() = default;
+  explicit PersistentStateDownloadReservation(td::uint64 b) : bytes(b) {
+  }
+  PersistentStateDownloadReservation(const PersistentStateDownloadReservation &) = delete;
+  PersistentStateDownloadReservation &operator=(const PersistentStateDownloadReservation &) = delete;
+  PersistentStateDownloadReservation(PersistentStateDownloadReservation &&) = delete;
+  PersistentStateDownloadReservation &operator=(PersistentStateDownloadReservation &&) = delete;
+  ~PersistentStateDownloadReservation();
+};
+
+// Pairs a downloaded persistent-state buffer with its budget reservation.
+// As long as a BudgetedBufferSlice (or any copy of `reservation`) is held,
+// the corresponding bytes remain accounted against the global budget. The
+// reservation is released exactly once when the last shared_ptr ref is
+// dropped.
+struct BudgetedBufferSlice {
+  td::BufferSlice data;
+  std::shared_ptr<PersistentStateDownloadReservation> reservation;
+};
+
+namespace testing {
+
+// Test-only handle to the global persistent-state download budget. These
+// helpers exist so a unit test can exercise the reservation lifetime
+// invariant without bringing up the full DownloadState actor stack.
+td::uint64 test_get_persistent_state_download_bytes();
+bool test_try_reserve_persistent_state_download_memory(td::uint64 size);
+
+}  // namespace testing
+
 class DownloadState : public td::actor::Actor {
  public:
   DownloadState(BlockIdExt block_id, BlockIdExt masterchain_block_id, PersistentStateType type,
@@ -40,7 +80,7 @@ class DownloadState : public td::actor::Actor {
                 td::actor::ActorId<ValidatorManagerInterface> validator_manager,
                 td::actor::ActorId<adnl::AdnlSenderInterface> rldp, td::actor::ActorId<overlay::Overlays> overlays,
                 td::actor::ActorId<adnl::Adnl> adnl, td::actor::ActorId<adnl::AdnlExtClient> client,
-                td::Promise<td::BufferSlice> promise);
+                td::Promise<BudgetedBufferSlice> promise);
 
   void abort_query(td::Status reason);
   void alarm() override;
@@ -59,7 +99,6 @@ class DownloadState : public td::actor::Actor {
 
  private:
   td::Status prepare_download_buffer(td::uint64 size);
-  void release_download_memory();
 
   BlockIdExt block_id_;
   BlockIdExt masterchain_block_id_;
@@ -78,7 +117,7 @@ class DownloadState : public td::actor::Actor {
   td::actor::ActorId<overlay::Overlays> overlays_;
   td::actor::ActorId<adnl::Adnl> adnl_;
   td::actor::ActorId<adnl::AdnlExtClient> client_;
-  td::Promise<td::BufferSlice> promise_;
+  td::Promise<BudgetedBufferSlice> promise_;
 
   BlockHandle handle_;
   td::BufferSlice state_;
@@ -88,7 +127,11 @@ class DownloadState : public td::actor::Actor {
   td::Timer prev_logged_timer_;
   td::uint64 total_size_ = 0;
   bool download_started_ = false;
-  td::uint64 reserved_download_bytes_ = 0;
+  // RAII handle for the reserved download bytes. Set after the global
+  // budget reserve succeeds in prepare_download_buffer(). Bytes are
+  // released only when the last shared_ptr reference is dropped — which
+  // covers the lifetime of any BudgetedBufferSlice handed to downstream.
+  std::shared_ptr<PersistentStateDownloadReservation> reservation_;
 
   ProcessStatus status_;
 };

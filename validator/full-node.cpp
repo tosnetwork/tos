@@ -414,7 +414,7 @@ void FullNodeImpl::download_block(BlockIdExt id, td::uint32 priority, td::Timest
 }
 
 void FullNodeImpl::download_zero_state(BlockIdExt id, td::uint32 priority, td::Timestamp timeout,
-                                       td::Promise<td::BufferSlice> promise) {
+                                       td::Promise<BudgetedBufferSlice> promise) {
   auto shard = get_shard(id.shard_full());
   if (shard.empty()) {
     VLOG(FULL_NODE_WARNING) << "dropping download state query to unknown shard";
@@ -426,7 +426,7 @@ void FullNodeImpl::download_zero_state(BlockIdExt id, td::uint32 priority, td::T
 
 void FullNodeImpl::download_persistent_state(BlockIdExt id, BlockIdExt masterchain_block_id, PersistentStateType type,
                                              td::uint32 priority, td::Timestamp timeout,
-                                             td::Promise<td::BufferSlice> promise) {
+                                             td::Promise<BudgetedBufferSlice> promise) {
   auto shard = get_shard(id.shard_full(), /* historical = */ true);
   if (shard.empty()) {
     VLOG(FULL_NODE_WARNING) << "dropping download state diff query to unknown shard";
@@ -710,13 +710,44 @@ void FullNodeImpl::start_up() {
     }
     void download_zero_state(BlockIdExt id, td::uint32 priority, td::Timestamp timeout,
                              td::Promise<td::BufferSlice> promise) override {
-      td::actor::send_closure(id_, &FullNodeImpl::download_zero_state, id, priority, timeout, std::move(promise));
+      // ValidatorManagerInterface::Callback uses a plain td::BufferSlice
+      // promise; the internal pipeline emits BudgetedBufferSlice. Adapt
+      // here. The RAII reservation lives in this lambda's local scope
+      // and is destroyed only after promise.set_value() has handed the
+      // buffer to the downstream callback chain — covering the
+      // synchronous handoff at this API boundary.
+      auto adapter = td::PromiseCreator::lambda(
+          [promise = std::move(promise)](td::Result<BudgetedBufferSlice> R) mutable {
+            if (R.is_error()) {
+              promise.set_error(R.move_as_error());
+              return;
+            }
+            auto buf = R.move_as_ok();
+            auto reservation = std::move(buf.reservation);
+            promise.set_value(std::move(buf.data));
+            // reservation drops here; budget bytes are released exactly
+            // once when the last shared_ptr ref disappears.
+            (void)reservation;
+          });
+      td::actor::send_closure(id_, &FullNodeImpl::download_zero_state, id, priority, timeout, std::move(adapter));
     }
     void download_persistent_state(BlockIdExt id, BlockIdExt masterchain_block_id, PersistentStateType type,
                                    td::uint32 priority, td::Timestamp timeout,
                                    td::Promise<td::BufferSlice> promise) override {
+      // See download_zero_state above for the adapter rationale.
+      auto adapter = td::PromiseCreator::lambda(
+          [promise = std::move(promise)](td::Result<BudgetedBufferSlice> R) mutable {
+            if (R.is_error()) {
+              promise.set_error(R.move_as_error());
+              return;
+            }
+            auto buf = R.move_as_ok();
+            auto reservation = std::move(buf.reservation);
+            promise.set_value(std::move(buf.data));
+            (void)reservation;
+          });
       td::actor::send_closure(id_, &FullNodeImpl::download_persistent_state, id, masterchain_block_id, type, priority,
-                              timeout, std::move(promise));
+                              timeout, std::move(adapter));
     }
     void download_block_proof(BlockIdExt block_id, td::uint32 priority, td::Timestamp timeout,
                               td::Promise<td::BufferSlice> promise) override {

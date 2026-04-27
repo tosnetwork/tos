@@ -779,6 +779,9 @@ add_executable(test-tos-collator test/test-tos-collator.cpp)
 target_link_libraries(test-tos-collator overlay tdutils tdactor adnl tl_api dht
   catchain validatorsession validator-disk tos_validator validator-disk )
 
+add_executable(test-download-state-budget test/test-download-state-budget.cpp)
+target_link_libraries(test-download-state-budget PRIVATE full-node tdutils tdactor adnl overlay tl_api dht)
+
 add_executable(test-http test/test-http.cpp)
 target_link_libraries(test-http PRIVATE toshttp)
 
@@ -891,6 +894,7 @@ tos_test(test-dht)
 tos_test(test-rldp)
 tos_test(test-rldp2)
 tos_test(test-validator-session-state)
+tos_test(test-download-state-budget)
 tos_test(test-quorum)
 tos_test(test-catchain)
 tos_test(test-emulator)

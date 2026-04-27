@@ -23,6 +23,7 @@
 #include "validator/interfaces/block-handle.h"
 
 #include "full-node.h"
+#include "net/download-state.hpp"
 #include "rate-limiter.h"
 
 namespace tos {
@@ -56,11 +57,14 @@ class FullNodeShard : public td::actor::Actor {
 
   virtual void download_block(BlockIdExt id, td::uint32 priority, td::Timestamp timeout,
                               td::Promise<ReceivedBlock> promise) = 0;
+  // Persistent state downloads use BudgetedBufferSlice so the
+  // download-memory budget reservation is RAII-tied to the buffer's
+  // lifetime (released only when the last shared_ptr ref is dropped).
   virtual void download_zero_state(BlockIdExt id, td::uint32 priority, td::Timestamp timeout,
-                                   td::Promise<td::BufferSlice> promise) = 0;
+                                   td::Promise<BudgetedBufferSlice> promise) = 0;
   virtual void download_persistent_state(BlockIdExt id, BlockIdExt masterchain_block_id, PersistentStateType type,
                                          td::uint32 priority, td::Timestamp timeout,
-                                         td::Promise<td::BufferSlice> promise) = 0;
+                                         td::Promise<BudgetedBufferSlice> promise) = 0;
 
   virtual void download_block_proof(BlockIdExt block_id, td::uint32 priority, td::Timestamp timeout,
                                     td::Promise<td::BufferSlice> promise) = 0;
