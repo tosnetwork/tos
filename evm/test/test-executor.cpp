@@ -12255,6 +12255,542 @@ void test_k2_counter_resettable_for_test() {
 }
 
 // =============================================================================
+// L2 stress — 10k contracts + EXTCODEHASH loop (audit verification checklist)
+// =============================================================================
+//
+// Audit checklist line 1118-1123 calls for a stress test that pins two
+// invariants on a state with thousands of distinct contracts:
+//
+//   (a) The K-02 always-on `code_root_hash_mismatch_count` counter must
+//       NOT advance on a happy-path EXTCODEHASH-only sweep over 10 000
+//       contracts. EXTCODEHASH only consults `account.code_hash` (a leaf
+//       field), so it must NEVER funnel through `read_code` and therefore
+//       must NEVER decode the bytecode chain. A counter delta > 0 here
+//       would mean the EVM was triggering bytecode decode for an opcode
+//       that is documented not to require it — a regression on either
+//       the silkworm host or the CellEvmState lazy decode path.
+//
+//   (b) The H-01 / K-02 fail-closed contract holds at scale: corrupting
+//       a single contract's flat-state code-root cell (so
+//       keccak(decoded) != account.code_hash) must surface as a
+//       `WitnessMismatch` disposition on any subsequent EVM operation
+//       that decodes that contract's bytecode (EXTCODECOPY in this
+//       test, since EXTCODEHASH bypasses read_code entirely). The
+//       always-on counter must increment, the verifier context's
+//       `first_error` / `offending_what` must capture the corrupt
+//       address as lowercase 0x-hex, and the corrupt bytecode must
+//       NEVER appear in the cache (so a re-read cannot return
+//       canonical-looking bytes).
+//
+// Implementation notes: 10 000 cold EXTCODEHASH calls cost ~26M gas
+// (10 000 × 2 600). EIP-7825 pins the per-tx gas cap at 2^24 =
+// 16 777 216 gas under Osaka, which is the active fork on this chain.
+// So a single tx can only sweep ~6 000 cold accounts. We structure the
+// stress run as two back-to-back transactions covering 5 000 iterations
+// each (10 000 cold EXTCODEHASH calls in total) against the same
+// 10 000-contract base state. Both txs run under their own
+// WitnessFlatConsistencyContext and the always-on K-02 counter is
+// observed across both — the counter-delta == 0 invariant must hold for
+// the combined sweep, not just for a single tx. The looper contract is
+// a small JUMP loop (25 bytes) that derives each victim address from
+// its iteration counter via SHL + OR — the same
+// `addr.bytes[19]=0x42; bytes[15..18]=i_be` scheme the existing
+// `seed_storage_bearing_accounts` helper uses, so we can seed all
+// 10 000 contracts with a focused helper and the EVM derives the same
+// addresses by arithmetic. Each of the two loopers is a separately
+// deployed contract whose initial counter (encoded in the leading
+// PUSH2) is hard-coded to 0 or 5000 respectively, so calldata is not
+// needed and EXTCODEHASH is the only state-touching opcode.
+namespace {
+
+// Bytecode of the looper. Each iteration computes
+// `addr = (counter << 8) | 0x42` (yielding addr.bytes[19]=0x42, the
+// upper bytes carrying `counter`) and runs EXTCODEHASH on it. The loop
+// starts at counter == `start` and terminates when counter == `stop`,
+// covering exactly `stop - start` distinct addresses.
+//
+// Layout (PCs in hex):
+//   00: 61 sh sl       PUSH2 start      ; counter = start
+//   03: 5b             JUMPDEST         ; loop_top (PC=3)
+//   04: 80             DUP1             ; [counter, counter]
+//   05: 60 08          PUSH1 0x08
+//   07: 1b             SHL              ; [counter, counter<<8]
+//   08: 60 42          PUSH1 0x42
+//   0a: 17             OR               ; [counter, addr]
+//   0b: 3f             EXTCODEHASH      ; [counter, hash]
+//   0c: 50             POP              ; [counter]
+//   0d: 60 01          PUSH1 0x01
+//   0f: 01             ADD              ; [counter+1]
+//   10: 61 hi lo       PUSH2 stop
+//   13: 81             DUP2
+//   14: 10             LT               ; [counter+1, counter+1<stop]
+//   15: 61 00 03       PUSH2 0x0003     ; loop_top
+//   18: 57             JUMPI
+//   19: 00             STOP
+//
+// EIP-7825 (active under Osaka on this chain) caps per-tx gas at
+// 2^24 = 16 777 216. With 2 600 gas per cold EXTCODEHASH plus a few
+// dozen gas of arithmetic per iteration, a single tx can sweep at
+// most ~6 000 cold accounts. Callers split the 10 000-contract sweep
+// across two txs (start=0..5000, start=5000..10000) and observe the
+// always-on K-02 counter delta across the union.
+Bytes l2_make_extcodehash_loop_runtime(uint16_t start, uint16_t stop) {
+    Bytes code{
+        0x61, static_cast<uint8_t>((start >> 8) & 0xff),
+              static_cast<uint8_t>(start & 0xff),  // PUSH2 start
+        0x5b,                               // JUMPDEST (loop_top, PC=3)
+        0x80,                               // DUP1
+        0x60, 0x08, 0x1b,                   // PUSH1 8; SHL
+        0x60, 0x42, 0x17,                   // PUSH1 0x42; OR
+        0x3f, 0x50,                         // EXTCODEHASH; POP
+        0x60, 0x01, 0x01,                   // PUSH1 1; ADD
+        0x61, static_cast<uint8_t>((stop >> 8) & 0xff),
+              static_cast<uint8_t>(stop & 0xff),  // PUSH2 stop
+        0x81,                               // DUP2
+        0x10,                               // LT
+        0x61, 0x00, 0x03,                   // PUSH2 loop_top (0x0003)
+        0x57,                               // JUMPI
+        0x00,                               // STOP
+    };
+    return code;
+}
+
+// Bytecode that copies the first byte of `victim`'s deployed runtime
+// into memory and returns it. EXTCODECOPY funnels through silkworm's
+// `state.get_code` → `state.read_code`, where the H-01 keccak invariant
+// gates the decode. Used in the corrupt-detection phase to drive
+// `read_code` on the single corrupt victim (EXTCODEHASH alone bypasses
+// read_code, so it cannot surface a code_root vs code_hash drift).
+//
+// Layout:
+//   00: 60 01      PUSH1 0x01        ; length=1
+//   02: 60 00      PUSH1 0x00        ; src_offset
+//   04: 60 00      PUSH1 0x00        ; dst_offset
+//   06: 73 <addr>  PUSH20 victim     ; 20 bytes
+//   1b: 3c         EXTCODECOPY
+//   1c: 60 01      PUSH1 0x01
+//   1e: 60 00      PUSH1 0x00
+//   20: f3         RETURN
+Bytes l2_make_extcodecopy_runtime(const evmc::address& victim) {
+    Bytes code;
+    code.push_back(0x60); code.push_back(0x01);  // PUSH1 0x01
+    code.push_back(0x60); code.push_back(0x00);  // PUSH1 0x00
+    code.push_back(0x60); code.push_back(0x00);  // PUSH1 0x00
+    code.push_back(0x73);                         // PUSH20
+    code.insert(code.end(), victim.bytes, victim.bytes + 20);
+    code.push_back(0x3c);                         // EXTCODECOPY
+    code.push_back(0x60); code.push_back(0x01);  // PUSH1 0x01
+    code.push_back(0x60); code.push_back(0x00);  // PUSH1 0x00
+    code.push_back(0xf3);                         // RETURN
+    return code;
+}
+
+// Recover the victim address that iteration `i` of the looper would
+// have probed. Mirrors the `(i << 8) | 0x42` formula the bytecode uses.
+evmc::address l2_victim_address_for(uint32_t i) {
+    evmc::address addr{};
+    addr.bytes[19] = 0x42;
+    addr.bytes[18] = static_cast<uint8_t>(i & 0xff);
+    addr.bytes[17] = static_cast<uint8_t>((i >> 8) & 0xff);
+    addr.bytes[16] = static_cast<uint8_t>((i >> 16) & 0xff);
+    addr.bytes[15] = static_cast<uint8_t>((i >> 24) & 0xff);
+    return addr;
+}
+
+// Distinct 7-byte runtime per victim contract. Encodes `i` in a PUSH4
+// constant so the keccak of the bytecode is unique across victims.
+//   00: 63 b3 b2 b1 b0   PUSH4 i
+//   05: 50               POP
+//   06: 00               STOP
+Bytes l2_victim_runtime_for(uint32_t i) {
+    Bytes code{
+        0x63,
+        static_cast<uint8_t>((i >> 24) & 0xff),
+        static_cast<uint8_t>((i >> 16) & 0xff),
+        static_cast<uint8_t>((i >> 8) & 0xff),
+        static_cast<uint8_t>(i & 0xff),
+        0x50,
+        0x00,
+    };
+    return code;
+}
+
+// Seed `count` distinct contract accounts at addresses produced by
+// `l2_victim_address_for(i)`, each carrying a unique tiny runtime.
+// The flat dict, the bytecode chain cell, and the witness account
+// leaf all line up so EXTCODEHASH and EXTCODECOPY return the canonical
+// `keccak(runtime)` for the happy path.
+void l2_seed_extcodehash_victims(CellEvmState& cs, uint32_t count) {
+    for (uint32_t i = 0; i < count; ++i) {
+        auto addr = l2_victim_address_for(i);
+        auto code = l2_victim_runtime_for(i);
+        auto kh = ethash::keccak256(code.data(), code.size());
+        silkworm::Account acct{};
+        acct.nonce = 1;
+        acct.balance = intx::uint256{0};
+        std::memcpy(acct.code_hash.bytes, kh.bytes, 32);
+        cs.update_account(addr, std::nullopt, acct);
+        cs.update_account_code(addr, /*incarnation=*/0, acct.code_hash,
+                               silkworm::ByteView{code.data(), code.size()});
+    }
+}
+
+struct L2ExtcodehashFixture {
+    td::Ref<vm::Cell> state_cell;
+    td::Ref<vm::Cell> witness_cell;
+    evmc::address sender_addr{};
+    evmc::address looper_lo_addr{};   // sweeps [0, mid)
+    evmc::address looper_hi_addr{};   // sweeps [mid, total)
+    silkworm::Account looper_lo_acct{};
+    silkworm::Account looper_hi_acct{};
+    uint32_t victim_count{0};
+};
+
+// Build the donor state with the sender, two looper contracts (each
+// covering half of the 10k sweep so the per-tx Osaka gas cap is
+// respected), and `victim_count` victim contracts; serialise both the
+// flat state and the witness so callers can replay via
+// `h01_make_replay_state`.
+L2ExtcodehashFixture l2_build_fixture(uint32_t victim_count,
+                                       const Bytes& looper_lo_runtime,
+                                       const Bytes& looper_hi_runtime) {
+    L2ExtcodehashFixture fx;
+    fx.victim_count = victim_count;
+    fx.sender_addr = hex_to_addr(
+        "0xf00df00df00df00df00df00df00df00df00df00d");
+    fx.looper_lo_addr = hex_to_addr(
+        "0xc0001ee2c0001ee2c0001ee2c0001ee2c0001ee2");
+    fx.looper_hi_addr = hex_to_addr(
+        "0xc0001ee3c0001ee3c0001ee3c0001ee3c0001ee3");
+
+    CellEvmState donor;
+
+    // Sender — must afford the gas envelope on two back-to-back loop txs.
+    silkworm::Account sender_acct{};
+    sender_acct.balance =
+        intx::uint256{1'000'000} * intx::uint256{1'000'000'000'000'000ULL};
+    sender_acct.nonce = 0;
+    donor.update_account(fx.sender_addr, std::nullopt, sender_acct);
+
+    auto kh_lo =
+        ethash::keccak256(looper_lo_runtime.data(), looper_lo_runtime.size());
+    fx.looper_lo_acct.nonce = 1;
+    fx.looper_lo_acct.balance = intx::uint256{0};
+    std::memcpy(fx.looper_lo_acct.code_hash.bytes, kh_lo.bytes, 32);
+    donor.update_account(fx.looper_lo_addr, std::nullopt, fx.looper_lo_acct);
+    donor.update_account_code(
+        fx.looper_lo_addr, /*incarnation=*/0, fx.looper_lo_acct.code_hash,
+        silkworm::ByteView{looper_lo_runtime.data(),
+                            looper_lo_runtime.size()});
+
+    auto kh_hi =
+        ethash::keccak256(looper_hi_runtime.data(), looper_hi_runtime.size());
+    fx.looper_hi_acct.nonce = 1;
+    fx.looper_hi_acct.balance = intx::uint256{0};
+    std::memcpy(fx.looper_hi_acct.code_hash.bytes, kh_hi.bytes, 32);
+    donor.update_account(fx.looper_hi_addr, std::nullopt, fx.looper_hi_acct);
+    donor.update_account_code(
+        fx.looper_hi_addr, /*incarnation=*/0, fx.looper_hi_acct.code_hash,
+        silkworm::ByteView{looper_hi_runtime.data(),
+                            looper_hi_runtime.size()});
+
+    l2_seed_extcodehash_victims(donor, victim_count);
+
+    fx.state_cell = donor.serialize_to_cell();
+    fx.witness_cell = donor.serialize_trie_witness_to_cell();
+    return fx;
+}
+
+}  // namespace
+
+void test_l2_extcodehash_loop_10k_contracts() {
+    printf("=== test_l2_extcodehash_loop_10k_contracts ===\n");
+
+    constexpr uint16_t kTotal = 10000;
+    constexpr uint16_t kMid = 5000;
+    Bytes looper_lo_runtime = l2_make_extcodehash_loop_runtime(0, kMid);
+    Bytes looper_hi_runtime = l2_make_extcodehash_loop_runtime(kMid, kTotal);
+    auto fx = l2_build_fixture(kTotal, looper_lo_runtime, looper_hi_runtime);
+    CHECK(fx.state_cell.not_null());
+    CHECK(fx.witness_cell.not_null());
+
+    // ----- Phase 1: happy-path EXTCODEHASH sweep over 10 000 contracts.
+    // EIP-7825 caps per-tx gas at 2^24 = 16 777 216 under Osaka, so the
+    // 10 000 cold accounts are split across two back-to-back txs. The
+    // always-on K-02 counter delta is observed across the union — the
+    // counter-delta == 0 invariant must hold for the combined sweep.
+    // Production paths never reset; tests do.
+    reset_code_root_hash_mismatch_count_for_test();
+
+    auto h_clean = h01_make_replay_state(fx.state_cell, fx.witness_cell);
+    CHECK(h_clean.cell_state != nullptr);
+
+    constexpr uint64_t kPerTxGas = 16'700'000;  // < 2^24 Osaka cap
+
+    auto build_tx = [&](uint64_t nonce, const evmc::address& to) {
+        Transaction t;
+        t.type = TransactionType::kLegacy;
+        t.chain_id = kEvmChainId;
+        t.nonce = nonce;
+        t.max_fee_per_gas = 1'000'000'000;
+        t.max_priority_fee_per_gas = 1'000'000'000;
+        t.gas_limit = kPerTxGas;
+        t.to = to;
+        t.value = 0;
+        t.set_sender(fx.sender_addr);
+        return t;
+    };
+
+    uint8_t rand_seed[32] = {};
+    auto block1 = make_evm_block(/*seqno=*/1, /*ts=*/1700000100, rand_seed,
+                                  /*gas_limit=*/30'000'000);
+    auto block2 = make_evm_block(/*seqno=*/2, /*ts=*/1700000110, rand_seed,
+                                  /*gas_limit=*/30'000'000);
+    const auto& config = evm_chain_config();
+
+    WitnessFlatConsistencyContext clean_ctx_lo{};
+    clean_ctx_lo.enabled = true;
+    clean_ctx_lo.checked_accounts.insert(fx.sender_addr);
+    clean_ctx_lo.checked_accounts.insert(fx.looper_lo_addr);
+    clean_ctx_lo.checked_accounts.insert(block1.header.beneficiary);
+
+    auto txn_lo = build_tx(/*nonce=*/0, fx.looper_lo_addr);
+
+    uint64_t counter_before_clean = code_root_hash_mismatch_count();
+    auto t0 = std::chrono::steady_clock::now();
+    auto result_lo = execute_evm_transaction(txn_lo, block1,
+                                              *h_clean.state, config,
+                                              &clean_ctx_lo);
+    auto t1 = std::chrono::steady_clock::now();
+
+    bool lo_succeeded =
+        result_lo.disposition == EvmTxDisposition::ExecutedSucceeded &&
+        result_lo.success;
+
+    WitnessFlatConsistencyContext clean_ctx_hi{};
+    clean_ctx_hi.enabled = true;
+    clean_ctx_hi.checked_accounts.insert(fx.sender_addr);
+    clean_ctx_hi.checked_accounts.insert(fx.looper_hi_addr);
+    clean_ctx_hi.checked_accounts.insert(block2.header.beneficiary);
+
+    auto txn_hi = build_tx(/*nonce=*/1, fx.looper_hi_addr);
+    auto result_hi = execute_evm_transaction(txn_hi, block2,
+                                              *h_clean.state, config,
+                                              &clean_ctx_hi);
+    auto t2 = std::chrono::steady_clock::now();
+    uint64_t counter_after_clean = code_root_hash_mismatch_count();
+
+    bool hi_succeeded =
+        result_hi.disposition == EvmTxDisposition::ExecutedSucceeded &&
+        result_hi.success;
+
+    auto wallclock_lo_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+    auto wallclock_hi_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+    auto wallclock_total_ms = wallclock_lo_ms + wallclock_hi_ms;
+
+    bool clean_succeeded = lo_succeeded && hi_succeeded;
+    bool clean_counter_unchanged =
+        (counter_after_clean - counter_before_clean) == 0;
+    bool clean_no_witness_error =
+        !clean_ctx_lo.first_error.is_error() &&
+        !clean_ctx_hi.first_error.is_error();
+
+    printf("  clean tx#0 (i=0..%u)  Succeeded:           %s gas=%llu\n",
+           kMid, lo_succeeded ? "OK" : "FAILED",
+           static_cast<unsigned long long>(result_lo.gas_used));
+    printf("  clean tx#1 (i=%u..%u) Succeeded:           %s gas=%llu\n",
+           kMid, kTotal, hi_succeeded ? "OK" : "FAILED",
+           static_cast<unsigned long long>(result_hi.gas_used));
+    printf("  clean union counter delta == 0:             %s (delta=%llu)\n",
+           clean_counter_unchanged ? "OK" : "FAILED",
+           static_cast<unsigned long long>(counter_after_clean -
+                                           counter_before_clean));
+    printf("  clean verifier first_error not set:         %s\n",
+           clean_no_witness_error ? "OK" : "FAILED");
+    printf("  clean wall-clock for 10k EXTCODEHASH:       %lld ms "
+           "(tx#0 %lld ms, tx#1 %lld ms)\n",
+           static_cast<long long>(wallclock_total_ms),
+           static_cast<long long>(wallclock_lo_ms),
+           static_cast<long long>(wallclock_hi_ms));
+    if (!clean_succeeded) {
+        printf("  clean tx#0 error: %s\n", result_lo.error_message.c_str());
+        printf("  clean tx#1 error: %s\n", result_hi.error_message.c_str());
+    }
+
+    // ----- Phase 2: corrupt one victim's code-root cell, drive an
+    // EXTCODECOPY against it, and assert the H-01 / K-02 fail-closed
+    // signals fire on the same scaled-up state.
+    //
+    // Pick a mid-range index so the corruption sits well inside the
+    // 10 000-account dict. Replace the victim's EvmAccountData cell
+    // with one whose code_hash claims `keccak(A)` but whose embedded
+    // code chain encodes a different runtime `B`. The witness account
+    // leaf still encodes the canonical (A) shape; the mismatch is
+    // strictly between the per-account code_root cell and the leaf's
+    // code_hash, which is exactly the H-01 invariant `read_code` is
+    // expected to surface.
+    constexpr uint32_t kCorruptIndex = 4242;
+    auto corrupt_addr = l2_victim_address_for(kCorruptIndex);
+
+    Bytes code_A = l2_victim_runtime_for(kCorruptIndex);
+    Bytes code_B{0x60, 0x42, 0x60, 0x00, 0x52, 0x60, 0x20,
+                 0x60, 0x00, 0xf3};  // distinct runtime
+    auto kh_A = ethash::keccak256(code_A.data(), code_A.size());
+
+    // Swap one entry in the donor's flat dict. We re-open the existing
+    // state cell as a Dictionary (256-bit keys) and overwrite the
+    // corrupt entry only — every other contract leaf is preserved
+    // verbatim, so the 10k-account dict shape is otherwise identical.
+    vm::Dictionary corrupt_dict(fx.state_cell, 256);
+    {
+        silkworm::Account corrupt_acct{};
+        corrupt_acct.nonce = 1;
+        corrupt_acct.balance = intx::uint256{0};
+        std::memcpy(corrupt_acct.code_hash.bytes, kh_A.bytes, 32);
+
+        auto code_chain_B = encode_evm_bytecode(td::Slice{
+            reinterpret_cast<const char*>(code_B.data()), code_B.size()});
+        auto bad_data_cell =
+            encode_evm_account_data(corrupt_acct, /*storage_root=*/{},
+                                     code_chain_B);
+        vm::CellBuilder cb;
+        cb.store_ref(bad_data_cell);
+
+        unsigned char key[32];
+        address_to_key(corrupt_addr, key);
+        CHECK(corrupt_dict.set_builder(td::ConstBitPtr{key}, 256, cb));
+    }
+    auto corrupt_state_cell = corrupt_dict.get_root_cell();
+    CHECK(corrupt_state_cell.not_null());
+
+    // Build a probe contract that does EXTCODECOPY against the corrupt
+    // victim. EXTCODECOPY funnels through `state.read_code`, where the
+    // H-01 invariant fires. Mirrors the existing
+    // `test_h01_extcodecopy_flat_witness_drift_rejected` pattern but
+    // against a 10k-contract base state.
+    Bytes probe_runtime = l2_make_extcodecopy_runtime(corrupt_addr);
+    auto probe_kh =
+        ethash::keccak256(probe_runtime.data(), probe_runtime.size());
+    silkworm::Account probe_acct{};
+    probe_acct.nonce = 1;
+    probe_acct.balance = intx::uint256{0};
+    std::memcpy(probe_acct.code_hash.bytes, probe_kh.bytes, 32);
+    evmc::address probe_addr =
+        hex_to_addr("0xc0deca11c0deca11c0deca11c0deca11c0deca11");
+
+    // Wrap the corrupt dict into a fresh donor so we can append the
+    // probe contract and rebuild a witness that includes its leaf. The
+    // donor then re-serialises both the state and the witness, and the
+    // replay state loads them via TrustedLazy + TrustedShallow (the
+    // same path consensus uses).
+    CellEvmState probe_donor;
+    CHECK(probe_donor.load_from_cell(corrupt_state_cell,
+                                       CellStateLoadMode::TrustedLazy));
+    probe_donor.update_account(probe_addr, std::nullopt, probe_acct);
+    probe_donor.update_account_code(
+        probe_addr, /*incarnation=*/0, probe_acct.code_hash,
+        silkworm::ByteView{probe_runtime.data(), probe_runtime.size()});
+    auto corrupt_state_cell_with_probe = probe_donor.serialize_to_cell();
+    auto corrupt_witness_cell = probe_donor.serialize_trie_witness_to_cell();
+    CHECK(corrupt_state_cell_with_probe.not_null());
+    CHECK(corrupt_witness_cell.not_null());
+
+    reset_code_root_hash_mismatch_count_for_test();
+
+    auto h_corrupt = h01_make_replay_state(corrupt_state_cell_with_probe,
+                                            corrupt_witness_cell);
+    CHECK(h_corrupt.cell_state != nullptr);
+
+    Transaction probe_tx;
+    probe_tx.type = TransactionType::kLegacy;
+    probe_tx.chain_id = kEvmChainId;
+    probe_tx.nonce = 0;
+    probe_tx.max_fee_per_gas = 1'000'000'000;
+    probe_tx.max_priority_fee_per_gas = 1'000'000'000;
+    probe_tx.gas_limit = 200'000;
+    probe_tx.to = probe_addr;
+    probe_tx.value = 0;
+    probe_tx.set_sender(fx.sender_addr);
+
+    auto block3 = make_evm_block(/*seqno=*/3, /*ts=*/1700000200, rand_seed);
+
+    WitnessFlatConsistencyContext corrupt_ctx{};
+    corrupt_ctx.enabled = true;
+    corrupt_ctx.checked_accounts.insert(fx.sender_addr);
+    corrupt_ctx.checked_accounts.insert(probe_addr);
+    corrupt_ctx.checked_accounts.insert(corrupt_addr);
+    corrupt_ctx.checked_accounts.insert(block3.header.beneficiary);
+
+    uint64_t counter_before_corrupt = code_root_hash_mismatch_count();
+    auto corrupt_result = execute_evm_transaction(probe_tx, block3,
+                                                    *h_corrupt.state, config,
+                                                    &corrupt_ctx);
+    uint64_t counter_after_corrupt = code_root_hash_mismatch_count();
+
+    bool corrupt_failed_closed =
+        corrupt_result.disposition == EvmTxDisposition::WitnessMismatch;
+    bool corrupt_counter_advanced =
+        (counter_after_corrupt - counter_before_corrupt) >= 1;
+
+    // Build the expected lowercase 0x-hex form of `corrupt_addr` (the
+    // same format `format_evm_address_hex` in cell-state.cpp emits)
+    // and pin it as a substring of `offending_what`.
+    std::string corrupt_hex = "0x";
+    static constexpr char kHexDigits[] = "0123456789abcdef";
+    for (auto b : corrupt_addr.bytes) {
+        corrupt_hex.push_back(kHexDigits[(b >> 4) & 0x0F]);
+        corrupt_hex.push_back(kHexDigits[b & 0x0F]);
+    }
+    bool offending_mentions_corrupt =
+        corrupt_ctx.offending_what.find(corrupt_hex) != std::string::npos;
+
+    // Cache invariant: re-invoke `read_code(corrupt_addr, claimed_hash)`
+    // directly on the underlying CellEvmState. If the H-01 contract
+    // holds, every call returns empty AND bumps the counter (no caching
+    // of corrupt bytes under any key). We bind no verifier ctx — this
+    // is the always-on counter path read-only RPC handlers rely on.
+    evmc::bytes32 claimed_hash{};
+    std::memcpy(claimed_hash.bytes, kh_A.bytes, 32);
+
+    uint64_t counter_pre_recheck = code_root_hash_mismatch_count();
+    auto bv1 = h_corrupt.cell_state->read_code(corrupt_addr, claimed_hash);
+    uint64_t counter_after_first_recheck = code_root_hash_mismatch_count();
+    auto bv2 = h_corrupt.cell_state->read_code(corrupt_addr, claimed_hash);
+    uint64_t counter_after_second_recheck = code_root_hash_mismatch_count();
+
+    bool recheck_returns_empty = bv1.empty() && bv2.empty();
+    bool recheck_each_bumps_counter =
+        (counter_after_first_recheck - counter_pre_recheck) >= 1 &&
+        (counter_after_second_recheck - counter_after_first_recheck) >= 1;
+
+    printf("  corrupt probe disposition WitnessMismatch:   %s\n",
+           corrupt_failed_closed ? "OK" : "FAILED");
+    printf("  corrupt probe counter advanced:              %s (delta=%llu)\n",
+           corrupt_counter_advanced ? "OK" : "FAILED",
+           static_cast<unsigned long long>(counter_after_corrupt -
+                                           counter_before_corrupt));
+    printf("  offending_what contains corrupt 0x-hex:      %s\n",
+           offending_mentions_corrupt ? "OK" : "FAILED");
+    printf("  read_code re-call returns empty (no cache):  %s\n",
+           recheck_returns_empty ? "OK" : "FAILED");
+    printf("  read_code re-call bumps counter every time:  %s\n",
+           recheck_each_bumps_counter ? "OK" : "FAILED");
+    printf("  corrupt error message:                       %s\n",
+           corrupt_result.error_message.c_str());
+    printf("  offending_what:                              %s\n",
+           corrupt_ctx.offending_what.c_str());
+
+    bool ok = clean_succeeded && clean_counter_unchanged &&
+              clean_no_witness_error && corrupt_failed_closed &&
+              corrupt_counter_advanced && offending_mentions_corrupt &&
+              recheck_returns_empty && recheck_each_bumps_counter;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// =============================================================================
 // H-02 — system-call witness verifier coverage (EIP-4788 / EIP-2935)
 // =============================================================================
 //
@@ -12813,6 +13349,15 @@ int main() {
     test_k2_handle_call_corrupt_code_returns_32000();
     test_k2_handle_estimate_gas_corrupt_code_returns_32000();
     test_k2_counter_resettable_for_test();
+
+    // Audit verification-checklist (lines 1118-1123) — 10k-contract
+    // EXTCODEHASH stress: scaled-up version of the H-01 / K-02 fixtures
+    // that pins (a) the always-on K-02 counter does NOT advance on a
+    // pure-EXTCODEHASH sweep over 10 000 distinct contracts, and (b)
+    // a single corrupt code-root cell still surfaces as
+    // WitnessMismatch on EXTCODECOPY against the same 10 000-contract
+    // base state.
+    test_l2_extcodehash_loop_10k_contracts();
 
     // Audit H-02 — system-call witness verifier coverage. EIP-4788 /
     // EIP-2935 system calls run inside a WitnessFlatConsistencyContext
