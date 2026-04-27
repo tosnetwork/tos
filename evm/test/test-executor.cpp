@@ -1046,6 +1046,164 @@ static void test_eth_simulate_v1_rejects_requested_gas_preflight() {
     printf("  %s\n\n", ok ? "PASSED" : "FAILED");
 }
 
+// Build a 20-byte Ethereum address that varies with `idx` so each
+// override account targets a distinct slot in the override map.
+// Helper used only by the stateOverrides budget regression tests below.
+static std::string make_indexed_override_addr(size_t idx) {
+    char buf[43];
+    std::snprintf(buf, sizeof(buf),
+                  "0x%040zx", idx + 1);
+    return std::string(buf);
+}
+
+// Regression: a stateOverride with 1025 storage slots (one over the
+// per-request total cap) must be rejected before evm_state.mutex() is
+// taken. The error message is asserted verbatim because external
+// monitors / SLO dashboards key on it.
+static void test_eth_simulate_v1_rejects_too_many_override_slots_before_lock() {
+    printf("=== test_eth_simulate_v1_rejects_too_many_override_slots_before_lock ===\n");
+
+    // 1025 distinct slots split across two accounts (each well under the
+    // per-account 256 cap, but the sum trips kMaxSimOverrideStorageSlots
+    // = 1024).
+    auto build_account_with_slots = [](const std::string& addr,
+                                        size_t first_idx,
+                                        size_t count) {
+        std::string body = "\"" + addr + "\":{\"stateDiff\":{";
+        for (size_t k = 0; k < count; ++k) {
+            if (k > 0) body += ",";
+            char slot[80];
+            std::snprintf(slot, sizeof(slot),
+                          "\"0x%064zx\":\"0x01\"", first_idx + k);
+            body += slot;
+        }
+        body += "}}";
+        return body;
+    };
+
+    // Five accounts × 205 slots each = 1025 slots total (each account
+    // stays under the 256 per-account cap so we hit the cumulative
+    // limit, not the per-account one).
+    std::string overrides = "{";
+    constexpr size_t kAccounts = 5;
+    constexpr size_t kSlotsPerAccount = 205;
+    for (size_t a = 0; a < kAccounts; ++a) {
+        if (a > 0) overrides += ",";
+        overrides += build_account_with_slots(
+            make_indexed_override_addr(a),
+            a * kSlotsPerAccount,
+            kSlotsPerAccount);
+    }
+    overrides += "}";
+
+    std::string params =
+        "[{\"blockStateCalls\":[{\"stateOverrides\":" + overrides +
+        ",\"calls\":[]}]},\"latest\"]";
+
+    auto r = handle_eth_rpc("eth_simulateV1", params, "2603");
+
+    bool ok = r && r->is_error &&
+              r->json.find("stateOverrides storage budget exceeded") !=
+                  std::string::npos;
+    printf("  response head: %.200s\n",
+           r ? r->json.c_str() : "NOT HANDLED");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// Regression: a stateOverride with code one byte over the 128 KiB cap
+// must be rejected before evm_state.mutex() is taken.
+static void test_eth_simulate_v1_rejects_huge_override_code_before_lock() {
+    printf("=== test_eth_simulate_v1_rejects_huge_override_code_before_lock ===\n");
+
+    constexpr size_t kCodeBytes = 128 * 1024 + 1;
+    std::string code_hex;
+    code_hex.reserve(2 + kCodeBytes * 2);
+    code_hex += "0x";
+    for (size_t k = 0; k < kCodeBytes; ++k) {
+        code_hex += "00";
+    }
+
+    std::string overrides = "{\"" +
+        make_indexed_override_addr(0) +
+        "\":{\"code\":\"" + code_hex + "\"}}";
+
+    std::string params =
+        "[{\"blockStateCalls\":[{\"stateOverrides\":" + overrides +
+        ",\"calls\":[]}]},\"latest\"]";
+
+    auto r = handle_eth_rpc("eth_simulateV1", params, "2604");
+
+    bool ok = r && r->is_error &&
+              r->json.find("stateOverrides code budget exceeded") !=
+                  std::string::npos;
+    printf("  response head: %.200s\n",
+           r ? r->json.c_str() : "NOT HANDLED");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// Regression: 33 distinct stateOverride accounts (one over the cap of
+// 32) must be rejected before evm_state.mutex() is taken.
+static void test_eth_simulate_v1_rejects_too_many_override_accounts() {
+    printf("=== test_eth_simulate_v1_rejects_too_many_override_accounts ===\n");
+
+    std::string overrides = "{";
+    constexpr size_t kAccounts = 33;
+    for (size_t a = 0; a < kAccounts; ++a) {
+        if (a > 0) overrides += ",";
+        overrides += "\"" + make_indexed_override_addr(a) +
+                     "\":{\"nonce\":\"0x1\"}";
+    }
+    overrides += "}";
+
+    std::string params =
+        "[{\"blockStateCalls\":[{\"stateOverrides\":" + overrides +
+        ",\"calls\":[]}]},\"latest\"]";
+
+    auto r = handle_eth_rpc("eth_simulateV1", params, "2605");
+
+    bool ok = r && r->is_error &&
+              r->json.find("too many stateOverride accounts") !=
+                  std::string::npos;
+    printf("  response head: %.200s\n",
+           r ? r->json.c_str() : "NOT HANDLED");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// Regression: one stateOverride account with 257 slots (one over the
+// per-account cap of 256) must be rejected before evm_state.mutex() is
+// taken — even though the cumulative slot count is well below the 1024
+// total cap.
+static void test_eth_simulate_v1_rejects_per_account_slots_cap() {
+    printf("=== test_eth_simulate_v1_rejects_per_account_slots_cap ===\n");
+
+    constexpr size_t kSlots = 257;
+    std::string slot_body;
+    for (size_t k = 0; k < kSlots; ++k) {
+        if (k > 0) slot_body += ",";
+        char slot[80];
+        std::snprintf(slot, sizeof(slot),
+                      "\"0x%064zx\":\"0x01\"", k);
+        slot_body += slot;
+    }
+    std::string overrides = "{\"" +
+        make_indexed_override_addr(0) +
+        "\":{\"stateDiff\":{" + slot_body + "}}}";
+
+    std::string params =
+        "[{\"blockStateCalls\":[{\"stateOverrides\":" + overrides +
+        ",\"calls\":[]}]},\"latest\"]";
+
+    auto r = handle_eth_rpc("eth_simulateV1", params, "2606");
+
+    bool ok = r && r->is_error &&
+              r->json.find(
+                  "stateOverrides per-account storage budget exceeded") !=
+                  std::string::npos;
+    printf("  response head: %.200s\n",
+           r ? r->json.c_str() : "NOT HANDLED");
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
 static void test_signed_transaction() {
     printf("=== test_signed_transaction (real secp256k1 signing + RLP decode) ===\n");
 
@@ -6553,6 +6711,10 @@ int main() {
     test_eth_rpc_block_lookup_and_log_filters();
     test_eth_simulate_v1_rejects_huge_filler_gap();
     test_eth_simulate_v1_rejects_requested_gas_preflight();
+    test_eth_simulate_v1_rejects_too_many_override_slots_before_lock();
+    test_eth_simulate_v1_rejects_huge_override_code_before_lock();
+    test_eth_simulate_v1_rejects_too_many_override_accounts();
+    test_eth_simulate_v1_rejects_per_account_slots_cap();
     test_runtime_chain_id_override();
     test_debug_trace_transaction_gating();
     test_signed_transaction();

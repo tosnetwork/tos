@@ -69,6 +69,13 @@ static constexpr uint64_t kMaxGetProofRequestsPerSec = 2; // proof building is C
 static constexpr uint64_t kMaxGetProofBurst = 4;
 static constexpr uint64_t kMaxSimulateRequestsPerSec = 1; // simulation holds EVM state lock
 static constexpr uint64_t kMaxSimulateBurst = 2;
+// stateOverrides budget for eth_simulateV1. Override parsing/apply happens
+// before the global EVM mutex is taken; over-cap requests are rejected
+// with JSON-RPC -32602 without ever entering the lock.
+static constexpr size_t kMaxSimOverrideAccounts = 32;
+static constexpr size_t kMaxSimOverrideStorageSlots = 1024;
+static constexpr size_t kMaxSimOverrideStorageSlotsPerAccount = 256;
+static constexpr size_t kMaxSimOverrideCodeBytes = 128 * 1024;
 static constexpr uint64_t kMaxGetLogsBlockRange = 10000;  // max toBlock - fromBlock
 static constexpr size_t   kMaxRpcParamsSize = 1 << 20;    // 1 MB
 
@@ -2837,6 +2844,246 @@ static std::string extract_json_object_body(const std::string& json, const std::
     return "";
 }
 
+// Per-account stateOverride entry, parsed and budgeted before the global
+// EVM mutex is acquired. apply_parsed_state_overrides() consumes this
+// in-lock to mutate the IntraBlockState without re-scanning JSON.
+struct ParsedStateOverride {
+    evmc::address address;
+    std::optional<intx::uint256> balance;
+    std::optional<uint64_t> nonce;
+    silkworm::Bytes code;
+    bool has_full_state = false;
+    std::vector<std::pair<evmc::bytes32, evmc::bytes32>> state;
+    std::vector<std::pair<evmc::bytes32, evmc::bytes32>> state_diff;
+};
+
+// Count comma-separated `"hex":"hex"` slot pairs in a JSON object body
+// without allocating per-slot buffers. Used by parse_state_overrides_plan
+// to enforce the per-account / total slot caps before deciding to
+// allocate storage for the parsed plan.
+static size_t count_slot_pairs(const std::string& body) {
+    if (body.empty()) return 0;
+    size_t p = 1;  // skip leading '{'
+    size_t count = 0;
+    while (p < body.size()) {
+        while (p < body.size() && (body[p] == ' ' || body[p] == ',' ||
+                                   body[p] == '\t' || body[p] == '\n' ||
+                                   body[p] == '\r')) ++p;
+        if (p >= body.size() || body[p] == '}') break;
+        if (body[p] != '"') { ++p; continue; }
+        size_t ks = p + 1;
+        size_t ke = body.find('"', ks);
+        if (ke == std::string::npos) break;
+        p = ke + 1;
+        while (p < body.size() && (body[p] == ' ' || body[p] == ':')) ++p;
+        if (p >= body.size() || body[p] != '"') continue;
+        size_t vs = p + 1;
+        size_t ve = body.find('"', vs);
+        if (ve == std::string::npos) break;
+        p = ve + 1;
+        ++count;
+    }
+    return count;
+}
+
+// Convert a hex-encoded "0x..." string into the largest 32-byte big-endian
+// key/value pair the spec allows (left-padded with zeros for short inputs).
+// Mirrors the inline conversion previously embedded in apply_state_overrides.
+static void parse_slot_kv(const std::string& slot_hex,
+                          const std::string& val_hex,
+                          evmc::bytes32& key,
+                          evmc::bytes32& value) {
+    silkworm::Bytes kb, vb;
+    if (parse_hex_bytes(slot_hex, kb) && kb.size() <= 32) {
+        std::memcpy(key.bytes + (32 - kb.size()), kb.data(), kb.size());
+    }
+    if (parse_hex_bytes(val_hex, vb) && vb.size() <= 32) {
+        std::memcpy(value.bytes + (32 - vb.size()), vb.data(), vb.size());
+    }
+}
+
+// Walk slot-key/value pairs out of a "state" or "stateDiff" object body and
+// emit them into `out`.
+static void extract_slot_pairs(
+    const std::string& body,
+    std::vector<std::pair<evmc::bytes32, evmc::bytes32>>& out) {
+    if (body.empty()) return;
+    size_t p = 1;
+    while (p < body.size()) {
+        while (p < body.size() && (body[p] == ' ' || body[p] == ',' ||
+                                   body[p] == '\t' || body[p] == '\n' ||
+                                   body[p] == '\r')) ++p;
+        if (p >= body.size() || body[p] == '}') break;
+        if (body[p] != '"') { ++p; continue; }
+        size_t ks = p + 1;
+        size_t ke = body.find('"', ks);
+        if (ke == std::string::npos) break;
+        std::string slot_hex = body.substr(ks, ke - ks);
+        p = ke + 1;
+        while (p < body.size() && (body[p] == ' ' || body[p] == ':')) ++p;
+        if (p >= body.size() || body[p] != '"') continue;
+        size_t vs = p + 1;
+        size_t ve = body.find('"', vs);
+        if (ve == std::string::npos) break;
+        std::string val_hex = body.substr(vs, ve - vs);
+        p = ve + 1;
+        evmc::bytes32 key{};
+        evmc::bytes32 v{};
+        parse_slot_kv(slot_hex, val_hex, key, v);
+        out.emplace_back(key, v);
+    }
+}
+
+// Pre-lock parser for the stateOverrides object of one blockStateCalls
+// entry. Walks every override account, enforces:
+//   - kMaxSimOverrideAccounts            (account count)
+//   - kMaxSimOverrideCodeBytes           (cumulative code bytes)
+//   - kMaxSimOverrideStorageSlotsPerAccount
+//   - kMaxSimOverrideStorageSlots        (cumulative slot count)
+// On cap violation returns td::Status::Error with the exact message the
+// regression tests pin; the dispatcher converts that into JSON-RPC -32602
+// before evm_state.mutex() is touched.
+static td::Result<std::vector<ParsedStateOverride>>
+parse_state_overrides_plan(const std::string& bsc_entry) {
+    std::vector<ParsedStateOverride> plan;
+    std::string body = extract_json_object_body(bsc_entry, "stateOverrides");
+    if (body.empty()) return plan;
+
+    size_t total_slots = 0;
+    size_t total_code_bytes = 0;
+
+    size_t i = 1;  // skip opening '{'
+    while (i < body.size()) {
+        while (i < body.size() && (body[i] == ' ' || body[i] == '\t' ||
+                                    body[i] == ',' || body[i] == '\n' ||
+                                    body[i] == '\r')) ++i;
+        if (i >= body.size() || body[i] == '}') break;
+        if (body[i] != '"') { ++i; continue; }
+        size_t kstart = i + 1;
+        size_t kend = body.find('"', kstart);
+        if (kend == std::string::npos) break;
+        std::string addr_hex = body.substr(kstart, kend - kstart);
+        i = kend + 1;
+        while (i < body.size() && (body[i] == ' ' || body[i] == ':')) ++i;
+        if (i >= body.size() || body[i] != '{') continue;
+        size_t vstart = i;
+        int depth = 1;
+        ++i;
+        while (i < body.size() && depth > 0) {
+            if (body[i] == '{') depth++;
+            else if (body[i] == '}') depth--;
+            if (depth == 0) break;
+            ++i;
+        }
+        if (depth != 0) break;
+        std::string val = body.substr(vstart, i - vstart + 1);
+        ++i;  // step past '}'
+
+        evmc::address addr{};
+        if (!parse_hex_address(addr_hex, addr)) continue;
+
+        // Enforce the account count cap before pushing the next entry.
+        if (plan.size() >= kMaxSimOverrideAccounts) {
+            return td::Status::Error("too many stateOverride accounts");
+        }
+
+        ParsedStateOverride ov;
+        ov.address = addr;
+
+        std::string bal_hex = extract_json_string_value(val, "balance");
+        if (!bal_hex.empty()) {
+            ov.balance = parse_hex_uint256(bal_hex);
+        }
+        std::string nonce_hex = extract_json_string_value(val, "nonce");
+        if (!nonce_hex.empty()) {
+            ov.nonce = parse_hex_uint64(nonce_hex);
+        }
+        std::string code_hex = extract_json_string_value(val, "code");
+        if (!code_hex.empty()) {
+            silkworm::Bytes code_bytes;
+            if (parse_hex_bytes(code_hex, code_bytes)) {
+                if (code_bytes.size() > kMaxSimOverrideCodeBytes ||
+                    total_code_bytes >
+                        kMaxSimOverrideCodeBytes - code_bytes.size()) {
+                    return td::Status::Error(
+                        "stateOverrides code budget exceeded");
+                }
+                total_code_bytes += code_bytes.size();
+                ov.code = std::move(code_bytes);
+            }
+        }
+
+        std::string state_body = extract_json_object_body(val, "state");
+        std::string diff_body = extract_json_object_body(val, "stateDiff");
+
+        size_t state_slots = count_slot_pairs(state_body);
+        size_t diff_slots = count_slot_pairs(diff_body);
+        size_t account_slots = state_slots + diff_slots;
+
+        if (account_slots > kMaxSimOverrideStorageSlotsPerAccount) {
+            return td::Status::Error(
+                "stateOverrides per-account storage budget exceeded");
+        }
+        if (account_slots > kMaxSimOverrideStorageSlots ||
+            total_slots > kMaxSimOverrideStorageSlots - account_slots) {
+            return td::Status::Error(
+                "stateOverrides storage budget exceeded");
+        }
+        total_slots += account_slots;
+
+        if (!state_body.empty()) {
+            ov.has_full_state = true;
+            ov.state.reserve(state_slots);
+            extract_slot_pairs(state_body, ov.state);
+        }
+        if (!diff_body.empty()) {
+            ov.state_diff.reserve(diff_slots);
+            extract_slot_pairs(diff_body, ov.state_diff);
+        }
+
+        plan.push_back(std::move(ov));
+    }
+
+    return plan;
+}
+
+// Apply a previously parsed-and-budgeted stateOverrides plan to the
+// supplied IntraBlockState. Mirrors apply_state_overrides() semantics but
+// performs no JSON parsing — the plan was vetted before evm_state.mutex()
+// was acquired, so the work under the lock is bounded.
+static void apply_parsed_state_overrides(
+    const std::vector<ParsedStateOverride>& overrides,
+    silkworm::IntraBlockState& ibs) {
+    for (const auto& ov : overrides) {
+        if (ov.balance) {
+            ibs.set_balance(ov.address, *ov.balance);
+        }
+        if (ov.nonce) {
+            ibs.set_nonce(ov.address, *ov.nonce);
+        }
+        if (!ov.code.empty()) {
+            ibs.set_code(ov.address, ov.code);
+        }
+        if (ov.has_full_state) {
+            // create_contract(addr, false) issues a StorageWipe delta so
+            // unset slots read as zero (matches the spec's "replace whole
+            // storage" semantic).
+            ibs.create_contract(ov.address, /*is_code_delegation=*/false);
+            for (const auto& kv : ov.state) {
+                ibs.set_storage(ov.address, kv.first, kv.second);
+            }
+            // Re-apply code after create_contract to defeat its
+            // EIP-7702-only code-preservation branch.
+            if (!ov.code.empty()) {
+                ibs.set_code(ov.address, ov.code);
+            }
+        }
+        for (const auto& kv : ov.state_diff) {
+            ibs.set_storage(ov.address, kv.first, kv.second);
+        }
+    }
+}
+
 // Apply a stateOverrides object (the JSON body, including outer braces) to
 // the supplied IntraBlockState. Each key is a 0x-prefixed 20-byte address;
 // the value is an AccountOverride with optional nonce / balance / code /
@@ -2846,8 +3093,14 @@ static std::string extract_json_object_body(const std::string& json, const std::
 // installs the listed slots. Silkworm has no public "wipe storage" call,
 // but `create_contract(addr, false)` resets the account's storage trie via
 // the StorageWipe delta — we use it for `state` overrides only.
-static void apply_state_overrides(const std::string& bsc_entry,
-                                  silkworm::IntraBlockState& ibs) {
+//
+// NOTE: the eth_simulateV1 path no longer calls this directly; it routes
+// through parse_state_overrides_plan / apply_parsed_state_overrides so
+// override host work is budgeted before the global EVM mutex is held.
+// Kept for any future caller that needs the single-shot JSON entrypoint.
+[[maybe_unused]] static void apply_state_overrides(
+    const std::string& bsc_entry,
+    silkworm::IntraBlockState& ibs) {
     std::string body = extract_json_object_body(bsc_entry, "stateOverrides");
     if (body.empty()) return;
 
@@ -3097,6 +3350,10 @@ struct SimulateBlockPlan {
     std::string bsc_entry;
     SimulateBlockOverrides overrides;
     std::vector<SimulateCallPlan> calls;
+    // Parsed-and-budgeted stateOverrides for this block. Built before the
+    // global EVM mutex is acquired so over-cap requests can be rejected
+    // without ever entering the lock.
+    std::vector<ParsedStateOverride> state_overrides;
 };
 
 // SELFDESTRUCT-emit-log tracer.
@@ -3580,6 +3837,19 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
         block_plan.bsc_entry = bsc_entry;
         block_plan.overrides = parse_block_overrides_for_sim(bsc_entry);
 
+        // Pre-lock stateOverrides budget. Parsing/apply previously ran
+        // under evm_state.mutex(), so a single request with thousands of
+        // slot overrides or a huge code blob could pin the global EVM
+        // lock with un-billed host work. Rejecting before the lock keeps
+        // override CPU/memory costs bounded.
+        auto parsed_overrides = parse_state_overrides_plan(bsc_entry);
+        if (parsed_overrides.is_error()) {
+            return {make_error(id, -32602,
+                               parsed_overrides.error().message().str()),
+                    true};
+        }
+        block_plan.state_overrides = parsed_overrides.move_as_ok();
+
         auto call_jsons = extract_simulate_call_jsons(bsc_entry);
         if (call_jsons.size() > kMaxSimulateCallsPerBlock) {
             return {make_error(id, -38026, "too many calls in block"), true};
@@ -3623,7 +3893,6 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
     silkworm::IntraBlockState ibs(mutable_state);
 
     for (const auto& block_plan : plan) {
-        const auto& bsc_entry = block_plan.bsc_entry;
         // ---- Per-block overrides ----
         const SimulateBlockOverrides& bo = block_plan.overrides;
 
@@ -3692,7 +3961,10 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
         block.header.base_fee_per_gas = 0;
 
         // Apply stateOverrides for this block on top of carryover IBS.
-        apply_state_overrides(bsc_entry, ibs);
+        // The plan was parsed and budgeted before the global EVM mutex was
+        // acquired (see parse_state_overrides_plan above), so the work
+        // performed here is bounded by the override caps.
+        apply_parsed_state_overrides(block_plan.state_overrides, ibs);
 
         struct OneCall {
             silkworm::Transaction txn;
