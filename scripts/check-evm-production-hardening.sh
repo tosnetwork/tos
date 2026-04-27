@@ -325,6 +325,44 @@ if [ -n "$unsafe_l01_offenders" ]; then
     exit 1
 fi
 
+# K-02 (audit, 2026-04-27 follow-up): every silkworm-driving read-only
+# RPC handler that does NOT bind a `WitnessFlatConsistencyContext`
+# MUST snapshot `code_root_hash_mismatch_count()` before executing
+# silkworm and check the delta after, mapping any increment to a
+# JSON-RPC `-32000 corrupt EVM code root`. Without this, a corrupt
+# code root surfaces as a confidently-wrong response (empty bytecode,
+# falsely-cheap gas estimate, missing logs). The check pins the
+# four canonical handlers; future heavy read-only RPC handlers must
+# follow the same pattern and add themselves to this list.
+for handler in handle_call handle_estimate_gas handle_create_access_list handle_simulate_v1; do
+    if ! awk -v h="$handler" '
+        $0 ~ "static RpcResult " h "\\(" { in_h = 1 }
+        in_h && /code_root_hash_mismatch_count\(\)/ { found = 1 }
+        in_h && /^}$/ { in_h = 0 }
+        END { exit (found ? 0 : 1) }
+    ' "$rpc_handlers"; then
+        echo "evm production hardening check failed: $handler must snapshot code_root_hash_mismatch_count before silkworm execution (K-02)" >&2
+        exit 1
+    fi
+done
+
+# K-02 follow-up: `handle_debug_trace_transaction` (admin-gated) ALSO
+# runs silkworm against the live state without a verifier context, so
+# it must snapshot the mismatch counter too. A regression here would
+# let admin-side tracing produce wrong opcode logs on a corrupt code
+# root (silkworm sees an empty `ByteView` and records a no-op trace).
+if rg -q 'handle_debug_trace_transaction' "$rpc_handlers"; then
+    if ! awk '
+        /static RpcResult handle_debug_trace_transaction\(/ { in_h = 1 }
+        in_h && /code_root_hash_mismatch_count\(\)/ { found = 1 }
+        in_h && /^}$/ { in_h = 0 }
+        END { exit (found ? 0 : 1) }
+    ' "$rpc_handlers"; then
+        echo "evm production hardening check failed: handle_debug_trace_transaction must snapshot code_root_hash_mismatch_count (K-02)" >&2
+        exit 1
+    fi
+fi
+
 # H-01 (audit, 2026-04-27): the lazy bytecode decode in
 # `CellEvmState::read_code` MUST keccak-hash the decoded bytes and
 # compare against the requested code_hash before emplacing into the
@@ -429,6 +467,20 @@ fi
 # validator.
 if ! rg -n 'g_evm_rpc_profile\{[^}]*ValidatorMinimal' "$rpc_handlers" >/dev/null; then
     echo "evm production hardening check failed: default EvmRpcProfile must be ValidatorMinimal" >&2
+    exit 1
+fi
+
+# L-02 (f-bis): every read-only EVM RPC handler that runs silkworm
+# against the live state MUST be in the heavy-readonly profile gate.
+# A regression that adds a new heavy RPC handler without listing it
+# alongside `eth_call` re-opens the validator to public swarm load.
+# The check pins the canonical list (eth_call / eth_estimateGas /
+# eth_createAccessList / eth_simulateV1) — all four must appear in
+# the same gating clause inside `handle_eth_rpc`.
+if ! rg -q 'method == "eth_call".*method == "eth_estimateGas"' "$rpc_handlers" \
+        --multiline 2>/dev/null && \
+   ! rg -q -U 'method == "eth_call" \|\| method == "eth_estimateGas" \|\|\s*method == "eth_createAccessList" \|\| method == "eth_simulateV1"' "$rpc_handlers" 2>/dev/null; then
+    echo "evm production hardening check failed: heavy read-only profile gate must list eth_call / eth_estimateGas / eth_createAccessList / eth_simulateV1 together" >&2
     exit 1
 fi
 

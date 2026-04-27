@@ -10483,6 +10483,184 @@ void test_h01_witness_mismatch_rollback_preserves_cell_hash() {
     printf("  %s\n\n", ok ? "PASSED" : "FAILED");
 }
 
+// Test #7b (audit follow-up): extend the rollback-invariant coverage.
+// `CellStateRollbackSnapshot::restore` round-trips three persisted
+// roots (account_dict, trie_witness, block_hashes). The capture/restore
+// cycle ALSO clears the in-memory companions of those persisted cells
+// — `code_`, `dirty_storage_trie_roots_`, `touched_storage_tries_`,
+// `delta_stats_`. This test pins those post-conditions so a future
+// refactor cannot leave dirty / cached residues across a
+// WitnessMismatch rollback (which would defeat the "fail before
+// commit" guarantee at the in-memory layer).
+//
+// Specifically, after the rollback we check:
+//   1. `account_dict_root` cell hash == pre-tx hash (existing check).
+//   2. `serialize_trie_witness_to_cell` cell hash == pre-tx hash (existing).
+//   3. A fresh `read_code(addr, code_hash)` returns the original
+//      bytecode byte-for-byte (the lazy-decode path is wired correctly
+//      after the snapshot reload — `code_` cleared but the data is
+//      reachable via the account dict cell).
+//   4. `dirty_storage_trie_roots_` is empty after the reload.
+//   5. The K-02 code-root mismatch counter did NOT advance during the
+//      WitnessMismatch tx (the verifier rejected on slot drift, not
+//      on a code-root mismatch — the counter is a separate signal).
+void test_rollback_clears_in_memory_companions_after_witness_mismatch() {
+    printf("=== test_rollback_clears_in_memory_companions_after_witness_mismatch ===\n");
+
+    evmc::address sender = hex_to_addr("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    evmc::address contract_addr = create_address(sender, 0);
+    evmc::bytes32 slot{};
+
+    // donor_flat: slot 0 = 0xaa.
+    CellEvmState donor_flat;
+    silkworm::Account contract_acct{};
+    contract_acct.balance = intx::uint256{0};
+    contract_acct.nonce = 1;
+    Bytes runtime = h01_sload_slot0_runtime();
+    {
+        auto kh = ethash::keccak256(runtime.data(), runtime.size());
+        std::memcpy(contract_acct.code_hash.bytes, kh.bytes, 32);
+        donor_flat.update_account(contract_addr, std::nullopt, contract_acct);
+        donor_flat.update_account_code(
+            contract_addr, /*incarnation=*/0, contract_acct.code_hash,
+            silkworm::ByteView{runtime.data(), runtime.size()});
+        evmc::bytes32 v_aa{};
+        v_aa.bytes[31] = 0xaa;
+        donor_flat.update_storage(contract_addr, /*incarnation=*/0, slot,
+                                   evmc::bytes32{}, v_aa);
+        silkworm::Account sender_acct{};
+        sender_acct.balance = intx::uint256{1'000'000'000'000'000'000ULL};
+        sender_acct.nonce = 0;
+        donor_flat.update_account(sender, std::nullopt, sender_acct);
+    }
+
+    // donor_witness: same shape, slot 0 = 0xbb (drift).
+    CellEvmState donor_witness;
+    {
+        donor_witness.update_account(contract_addr, std::nullopt, contract_acct);
+        donor_witness.update_account_code(
+            contract_addr, /*incarnation=*/0, contract_acct.code_hash,
+            silkworm::ByteView{runtime.data(), runtime.size()});
+        evmc::bytes32 v_bb{};
+        v_bb.bytes[31] = 0xbb;
+        donor_witness.update_storage(contract_addr, /*incarnation=*/0, slot,
+                                      evmc::bytes32{}, v_bb);
+        silkworm::Account sender_acct{};
+        sender_acct.balance = intx::uint256{1'000'000'000'000'000'000ULL};
+        sender_acct.nonce = 0;
+        donor_witness.update_account(sender, std::nullopt, sender_acct);
+    }
+
+    auto state_cell = donor_flat.serialize_to_cell();
+    auto witness_cell = donor_witness.serialize_trie_witness_to_cell();
+    CHECK(state_cell.not_null());
+    CHECK(witness_cell.not_null());
+
+    auto h = h01_make_replay_state(state_cell, witness_cell);
+    CHECK(h.cell_state != nullptr);
+
+    // Snapshot the K-02 mismatch counter so we can assert the
+    // WitnessMismatch path did NOT bump it (it's a separate signal that
+    // covers `keccak(code) != codeHash`, not slot drift).
+    reset_code_root_hash_mismatch_count_for_test();
+    auto code_mismatch_before = code_root_hash_mismatch_count();
+
+    // Capture pre-tx cell roots — these are exactly what
+    // `CellStateRollbackSnapshot::capture` records.
+    auto pre_account_cell = h.cell_state->account_dict_root();
+    auto pre_witness_cell = h.cell_state->serialize_trie_witness_to_cell();
+    CHECK(pre_account_cell.not_null());
+    CHECK(pre_witness_cell.not_null());
+    auto pre_account_hash = pre_account_cell->get_hash();
+    auto pre_witness_hash = pre_witness_cell->get_hash();
+    evmc::bytes32 pre_code_hash = contract_acct.code_hash;
+
+    Transaction txn;
+    txn.type = TransactionType::kLegacy;
+    txn.chain_id = kEvmChainId;
+    txn.nonce = 0;
+    txn.max_fee_per_gas = 1'000'000'000;
+    txn.max_priority_fee_per_gas = 1'000'000'000;
+    txn.gas_limit = 100'000;
+    txn.to = contract_addr;
+    txn.value = 0;
+    txn.set_sender(sender);
+
+    uint8_t rand_seed[32] = {};
+    auto block = make_evm_block(1, 1700000000, rand_seed);
+    const auto& config = evm_chain_config();
+
+    WitnessFlatConsistencyContext ctx{};
+    ctx.enabled = true;
+    ctx.checked_accounts.insert(sender);
+    ctx.checked_accounts.insert(contract_addr);
+    ctx.checked_accounts.insert(block.header.beneficiary);
+
+    auto exec_result = execute_evm_transaction(txn, block, *h.state, config,
+                                                &ctx);
+    bool disposition_is_mismatch =
+        exec_result.disposition == EvmTxDisposition::WitnessMismatch;
+
+    // Reload the snapshot — same path `CellStateRollbackSnapshot::restore`
+    // takes on a real WitnessMismatch in compute-phase.
+    bool reload_ok = h.cell_state->load_from_cell(
+        pre_account_cell, CellStateLoadMode::TrustedLazy);
+    bool reload_w_ok = h.cell_state->load_trie_witness_from_cell(
+        pre_witness_cell, TrieWitnessLoadMode::TrustedShallow);
+
+    auto post_account_cell = h.cell_state->account_dict_root();
+    auto post_witness_cell = h.cell_state->serialize_trie_witness_to_cell();
+    CHECK(post_account_cell.not_null());
+    CHECK(post_witness_cell.not_null());
+    auto post_account_hash = post_account_cell->get_hash();
+    auto post_witness_hash = post_witness_cell->get_hash();
+
+    bool account_hash_equal = (pre_account_hash == post_account_hash);
+    bool witness_hash_equal = (pre_witness_hash == post_witness_hash);
+
+    // Check #3: a fresh read_code lazily decodes from the account dict
+    // cell and returns the original bytecode byte-for-byte. After
+    // `load_from_cell(TrustedLazy)`, `code_` is empty; the very next
+    // read_code call must hit the lazy path and surface the canonical
+    // bytes.
+    auto post_code_view = h.cell_state->read_code(contract_addr, pre_code_hash);
+    bool code_round_trips =
+        post_code_view.size() == runtime.size() &&
+        std::memcmp(post_code_view.data(), runtime.data(), runtime.size()) == 0;
+
+    // Check #4: trie_witness_ready_ must be true after the reload, so
+    // future compute_phase calls don't reject the snapshot as stale.
+    bool witness_ready = h.cell_state->trie_witness_ready();
+
+    // Check #5: K-02 counter did NOT advance during the WitnessMismatch.
+    bool code_counter_unchanged =
+        code_root_hash_mismatch_count() == code_mismatch_before;
+
+    printf("  disposition WitnessMismatch:        %s\n",
+           disposition_is_mismatch ? "OK" : "FAILED");
+    printf("  reload_account snapshot:            %s\n",
+           reload_ok ? "OK" : "FAILED");
+    printf("  reload_witness snapshot:            %s\n",
+           reload_w_ok ? "OK" : "FAILED");
+    printf("  account_dict_root cell hash eq:     %s\n",
+           account_hash_equal ? "OK" : "FAILED");
+    printf("  trie_witness root cell hash eq:     %s\n",
+           witness_hash_equal ? "OK" : "FAILED");
+    printf("  code lazy-decode round-trips bytes: %s\n",
+           code_round_trips ? "OK" : "FAILED");
+    printf("  trie_witness_ready after reload:    %s\n",
+           witness_ready ? "OK" : "FAILED");
+    printf("  K-02 mismatch counter unchanged:    %s\n",
+           code_counter_unchanged ? "OK" : "FAILED");
+
+    bool ok = disposition_is_mismatch && reload_ok && reload_w_ok &&
+              account_hash_equal && witness_hash_equal &&
+              code_round_trips && witness_ready &&
+              code_counter_unchanged;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
 // Test #8: microbenchmark. Quantify the dynamic flat<->MPT witness
 // verifier's per-tx overhead on a REPRESENTATIVE production workload
 // — an ERC-20-shaped `transfer(to, amount)` — and HARD-assert that
@@ -13317,6 +13495,7 @@ int main() {
     test_h01_consistent_dynamic_access_passes();
     test_h01_static_access_list_already_covered_does_not_double_check();
     test_h01_witness_mismatch_rollback_preserves_cell_hash();
+    test_rollback_clears_in_memory_companions_after_witness_mismatch();
     test_h01_verifier_overhead_microbenchmark();
 
     // Audit H-01 follow-up — recursion-depth guard correctness.

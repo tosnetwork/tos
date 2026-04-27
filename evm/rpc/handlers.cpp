@@ -217,7 +217,8 @@ static bool g_public_getproof_enabled = true;
 // admin / conformance / local-tooling builds opt in to `AdminLocal`.
 //
 // Profile-dependent toggles (all live under this single atomic):
-//   - eth_call / eth_estimateGas / eth_createAccessList enable bit
+//   - eth_call / eth_estimateGas / eth_createAccessList / eth_simulateV1
+//     enable bit (heavy read-only EVM RPC)
 //   - eth_call / eth_estimateGas / eth_createAccessList gas cap
 //   - eth_getProof enable bit
 //   - debug_* RPC method allowlist (even when TOS_ENABLE_EVM_DEBUG_RPC
@@ -1866,8 +1867,21 @@ static RpcResult handle_debug_trace_transaction(const std::string& params, const
     constexpr size_t kMaxTraceResponseBytes = 32 * 1024 * 1024;
     uint8_t rs[32] = {};
     auto block = make_evm_block(stored_tx->block_number, 0, rs);
+    // Audit K-02: snapshot the always-on code-root mismatch counter
+    // before silkworm runs. `trace_evm_transaction` is a read-only
+    // tracing path that does NOT bind a `WitnessFlatConsistencyContext`,
+    // so a corrupt code root would otherwise be reported in the trace
+    // as a confidently-empty bytecode (no opcodes recorded, gas_used
+    // limited to intrinsic). The post-trace counter delta surfaces
+    // such a condition deterministically.
+    auto trace_code_mismatch_before =
+        global_evm_state().code_root_hash_mismatch_count();
     auto trace = trace_evm_transaction(
         txn, block, global_evm_state(), evm_chain_config(), kMaxTraceSteps);
+    if (global_evm_state().code_root_hash_mismatch_count() !=
+        trace_code_mismatch_before) {
+        return {make_error(id, -32000, "corrupt EVM code root"), true};
+    }
 
     std::string result;
     auto append_result = [&](std::string_view piece) {
@@ -4510,6 +4524,18 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
     auto& mutable_state = const_cast<silkworm::State&>(evm_state.state());
     silkworm::IntraBlockState ibs(mutable_state);
 
+    // Audit K-02 (H-01 follow-up): snapshot the always-on code-root
+    // mismatch counter before the simulation runs. `eth_simulateV1` does
+    // NOT bind a `WitnessFlatConsistencyContext` (read-only fast path,
+    // matching eth_call), so silkworm internal helpers that consult
+    // `CellEvmState::read_code` would otherwise see an empty `ByteView`
+    // on a corrupt code root and silently treat the contract as having
+    // no bytecode. The post-execution counter delta surfaces such a
+    // condition deterministically, mapping to a single JSON-RPC
+    // `-32000 corrupt EVM code root` for the whole batched simulation.
+    auto sim_code_mismatch_before =
+        evm_state.code_root_hash_mismatch_count();
+
     for (const auto& block_plan : plan) {
         // ---- Per-block overrides ----
         const SimulateBlockOverrides& bo = block_plan.overrides;
@@ -4937,6 +4963,15 @@ static RpcResult handle_simulate_v1(const std::string& params, const std::string
     if (!append_bounded(out2, "]", kMaxSimulateResponseBytes)) {
         return {make_error(id, -32602,
                            "eth_simulateV1 response too large"), true};
+    }
+    // Audit K-02: post-execution code-root mismatch check. Any silkworm
+    // path inside the simulated calls that resolved a contract whose
+    // `keccak(code) != code_hash` bumps the global counter; the simulate
+    // response would otherwise be a confidently-wrong "no code" output
+    // (e.g. missing logs / wrong gas). Map the delta to a single
+    // -32000 error for the whole batched request.
+    if (evm_state.code_root_hash_mismatch_count() != sim_code_mismatch_before) {
+        return {make_error(id, -32000, "corrupt EVM code root"), true};
     }
     return {make_result(id, out2), false};
 }
@@ -5383,7 +5418,13 @@ std::optional<RpcResult> handle_eth_rpc(
     // rate limiting and BEFORE the legacy `g_public_getproof_enabled`
     // toggle so a profile transition is the single source of truth.
     if (method == "eth_call" || method == "eth_estimateGas" ||
-        method == "eth_createAccessList") {
+        method == "eth_createAccessList" || method == "eth_simulateV1") {
+        // M-03 follow-up: `eth_simulateV1` runs full silkworm
+        // execution against the live state (one IBS spans every
+        // simulated block, capped at `kMaxSimulateEmittedBlocks`).
+        // Validators must not service it under the
+        // `ValidatorMinimal` profile — operators lift the gate by
+        // moving the node to `FollowerPublic` or `AdminLocal`.
         if (!g_profile_heavy_readonly_enabled.load(std::memory_order_relaxed)) {
             return RpcResult{make_error(id, -32601,
                 std::string(method) +
