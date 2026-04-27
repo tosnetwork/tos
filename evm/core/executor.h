@@ -31,6 +31,8 @@
 
 namespace evm_workchain {
 
+struct WitnessFlatConsistencyContext;
+
 /// Disposition of an EVM execution attempt.
 ///
 /// Audit #2 (2026-04-26): pre-validation failures (bad nonce, insufficient
@@ -51,6 +53,23 @@ enum class EvmTxDisposition {
     ExecutedReverted = 1,
     /// EVM ran successfully (gas charged, state writes committed).
     ExecutedSucceeded = 2,
+    /// Audit H-01: the EVM ran but the dynamic flat-state / MPT witness
+    /// consistency tracker recorded a leaf disagreement on a touched
+    /// account or storage slot. The compute-phase MUST roll back the
+    /// captured snapshot and emit `sk_bad_state`; no side effects survive.
+    WitnessMismatch = 3,
+};
+
+/// Audit H-01: which dynamic witness verification mode the executor runs.
+/// `Enabled` is the consensus default — the compute path opens a
+/// per-transaction `WitnessFlatConsistencyContext` and passes it into
+/// `execute_evm_transaction`. `Disabled` is the read-only / RPC default —
+/// `eth_call`, `eth_estimateGas`, and `eth_simulateV1` short-circuit
+/// without paying the per-touch verifier cost (their results never feed
+/// consensus state).
+enum class WitnessVerificationMode {
+    Disabled = 0,
+    Enabled = 1,
 };
 
 /// Canonical EVM execution result returned to the host chain.
@@ -63,6 +82,10 @@ struct ExecutionResult {
     std::string error_message;
     std::optional<evmc::address> contract_address;  // set for CREATE
     EvmTxDisposition disposition{EvmTxDisposition::InvalidPreValidation};
+    /// Audit H-01: human-readable hint describing which dynamic State
+    /// access tripped the witness consistency tracker. Populated only
+    /// when `disposition == WitnessMismatch`.
+    std::string witness_offending_what;
 };
 
 /// Execute a single EVM transaction against the workchain state.
@@ -75,12 +98,20 @@ struct ExecutionResult {
 /// @param block   Block context (from make_evm_block).
 /// @param state   Mutable reference to the EVM workchain state.
 /// @param config  Chain configuration (from evm_chain_config).
+/// @param witness_ctx  Optional dynamic flat-state / MPT witness
+///                consistency tracker. When non-null, the executor opens
+///                the tracker on the underlying CellEvmState before
+///                pre-validation, drains the first error after EVM
+///                execution, and (on error) suppresses `write_to_db()` so
+///                the caller can roll back. The compute-phase always
+///                supplies a context; read-only RPC paths pass nullptr.
 /// @return        Execution result with gas, logs, and return data.
 ExecutionResult execute_evm_transaction(
     const silkworm::Transaction& txn,
     const silkworm::Block& block,
     EvmState& state,
-    const silkworm::ChainConfig& config);
+    const silkworm::ChainConfig& config,
+    WitnessFlatConsistencyContext* witness_ctx = nullptr);
 
 /// Cheap consensus admission validation for a decoded transaction.
 ///

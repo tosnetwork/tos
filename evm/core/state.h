@@ -29,7 +29,11 @@
 #include <silkworm/core/types/transaction.hpp>
 #include <silkworm/core/trie/prefix_set.hpp>
 
+#include "td/utils/Status.h"
+
 namespace evm_workchain {
+
+struct WitnessFlatConsistencyContext;
 
 // Capacity limits (following ~/s LruCache pattern: fixed max_size)
 constexpr size_t kMaxCachedReceipts      = 10'000;
@@ -192,6 +196,19 @@ class EvmState {
     const silkworm::trie::PrefixSet& storage_changes() const { return storage_changes_; }
     /// Clear all tracked changes (typically after trie root computation).
     void clear_change_tracking();
+
+    /// Audit H-01: open / close / drain the dynamic flat-state / MPT
+    /// witness consistency tracker on the underlying CellEvmState. These
+    /// are forwarders — they do nothing when the backend is the in-memory
+    /// silkworm state (used by some unit tests). The caller owns `ctx`
+    /// and must keep it alive across `begin` / `end`. The caller is also
+    /// responsible for holding `mutex()` exclusively for the duration of
+    /// the bound interval, matching how the executor already takes a
+    /// unique_lock around `execute_evm_transaction`.
+    void begin_witness_consistency_check(
+        WitnessFlatConsistencyContext* ctx) noexcept;
+    void end_witness_consistency_check() noexcept;
+    td::Status consume_witness_consistency_error() noexcept;
 
   private:
     void evict_oldest_receipts();

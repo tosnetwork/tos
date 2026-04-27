@@ -32,12 +32,105 @@
 
 #include <atomic>
 #include <cstddef>
+#include <cstring>
 #include <map>
 #include <set>
+#include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <mutex>
 
 namespace evm_workchain {
+
+/// Hasher for `evmc::address` keys in `std::unordered_set` /
+/// `std::unordered_map`. Wraps `std::hash<std::string_view>` over the 20
+/// little-endian bytes that already form a high-entropy keccak prefix. The
+/// hash is therefore stable across runs / TUs and avoids the cost of an
+/// auxiliary boost-style mix on every lookup.
+struct AddressHash {
+    size_t operator()(const evmc::address& a) const noexcept {
+        return std::hash<std::string_view>{}(
+            std::string_view{reinterpret_cast<const char*>(a.bytes), 20});
+    }
+};
+
+/// Composite key for the dynamic witness consistency tracker: an EVM
+/// account address paired with a 256-bit storage slot. Used to dedupe
+/// per-(address, slot) checks across an EVM transaction so a hot SLOAD /
+/// SSTORE loop doesn't pay the path-bounded MPT proof cost more than once.
+struct StorageKey {
+    evmc::address address{};
+    evmc::bytes32 slot{};
+    bool operator==(const StorageKey& other) const noexcept {
+        return std::memcmp(address.bytes, other.address.bytes, 20) == 0 &&
+               std::memcmp(slot.bytes, other.slot.bytes, 32) == 0;
+    }
+};
+
+struct StorageKeyHash {
+    size_t operator()(const StorageKey& k) const noexcept {
+        // Concatenate address (20 bytes) and slot (32 bytes) into a stable
+        // 52-byte view and hash via std::hash<std::string_view>. Avoids a
+        // bespoke mix and keeps the implementation portable across libstdc++
+        // / libc++ / Windows STLs.
+        unsigned char buf[52];
+        std::memcpy(buf, k.address.bytes, 20);
+        std::memcpy(buf + 20, k.slot.bytes, 32);
+        return std::hash<std::string_view>{}(
+            std::string_view{reinterpret_cast<const char*>(buf), sizeof(buf)});
+    }
+};
+
+/// Per-transaction tracker for the dynamic flat-state / MPT witness
+/// consistency check. The compute-phase opens a context around
+/// `execute_evm_transaction()`; the State read/update path consults the
+/// context inside `noexcept` Silkworm-State overrides and records any
+/// consistency error into `first_error` instead of throwing. The executor
+/// then drains `first_error` after EVM execution and treats a non-OK
+/// status as a fail-closed consensus invariant violation (rollback +
+/// `sk_bad_state`).
+struct WitnessFlatConsistencyContext {
+    bool enabled{false};
+    std::unordered_set<evmc::address, AddressHash> checked_accounts;
+    std::unordered_set<StorageKey, StorageKeyHash> checked_storage;
+    td::Status first_error = td::Status::OK();
+    /// Optional human-readable context for logging on the rollback path.
+    /// Captured at the point of the first detected mismatch, before the
+    /// outer compute-phase rollback overwrites `first_error.message()` via
+    /// move semantics (the message is moved during reject path string
+    /// construction).
+    std::string offending_what;
+};
+
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
+/// Test-only counter incremented every time the dynamic witness consistency
+/// verifier runs the *real* path-bounded MPT proof check (i.e. only the
+/// first time per (address) or (address, slot) inside a transaction).
+/// Fast paths (already-checked dedup, ctx disabled, prior error sticky)
+/// do NOT bump this counter, so a test can assert "static precheck already
+/// covered the address → no double-check" by observing 0.
+extern std::atomic<size_t> g_witness_consistency_checks;
+
+/// Test-only high-water mark of the thread-local recursion-depth guard
+/// used by `verify_account_before_return` / `verify_storage_before_return`.
+/// Each call records `t_witness_verify_depth` after the guard increments
+/// it, so tests can assert "normal verify_account flow only reaches
+/// depth 1 because the dedup-then-call ordering is intact". Reset by the
+/// test before each scenario.
+extern std::atomic<int> g_witness_verify_depth_max_observed;
+
+/// Test-only setter that overrides the thread-local recursion-depth
+/// counter prior to invoking the verifier hooks. Returns the previous
+/// value so tests can restore the counter after the scenario. Used to
+/// drive the depth-guard bail-out path without faking the (correctly
+/// ordered) dedup-before-verify call chain.
+int set_witness_verify_depth_for_testing(int new_depth) noexcept;
+
+/// Test-only getter for the current value of the thread-local depth
+/// counter. Mirrors the setter above and is exposed only so a test can
+/// verify the counter restored cleanly after a guarded call.
+int get_witness_verify_depth_for_testing() noexcept;
+#endif
 
 /// Selects how aggressively `CellEvmState::load_from_cell` validates the
 /// supplied state-root cell.
@@ -265,6 +358,28 @@ class CellEvmState : public silkworm::State {
         const evmc::address& address) const;
     td::Status verify_storage_witness_matches_flat_state(
         const evmc::address& address, const evmc::bytes32& slot) const;
+
+    /// Open / close a per-transaction dynamic witness consistency check.
+    /// While a context is bound, every State read / mutation path that
+    /// surfaces a flat-dict value to the EVM also runs a path-bounded
+    /// witness MPT proof on first touch and records any disagreement into
+    /// the context. Mutations check the *pre-mutation* value so a write
+    /// path can never silently ratify a corrupt witness.
+    ///
+    /// `begin_witness_consistency_check(ctx)` requires `ctx != nullptr`
+    /// and stores a borrowed pointer; the caller owns `ctx` lifetime and
+    /// MUST call `end_witness_consistency_check()` before destroying it.
+    /// Both calls are idempotent w.r.t. parallel executors (each
+    /// CellEvmState instance is single-writer; locking is done at the
+    /// EvmState facade).
+    void begin_witness_consistency_check(
+        WitnessFlatConsistencyContext* ctx) noexcept;
+    void end_witness_consistency_check() noexcept;
+    /// Drain the context's first error. Returns OK if no mismatch was
+    /// recorded. Resets `first_error` so subsequent transactions get a
+    /// clean slate (the context is conceptually per-tx, but reusing the
+    /// allocated unordered_sets across txs would still be safe).
+    td::Status consume_witness_consistency_error() noexcept;
     bool trie_witness_ready() const noexcept { return trie_witness_ready_; }
     bool rebuild_trie_witness() noexcept;
 
@@ -389,6 +504,24 @@ class CellEvmState : public silkworm::State {
     bool trie_witness_ready_{true};
 
     CellEvmStateDeltaStats delta_stats_;
+
+    /// Borrowed pointer to the active dynamic consistency tracker. Set by
+    /// `begin_witness_consistency_check`, cleared by `end_witness_consistency_check`.
+    /// Mutable so that `noexcept const` Silkworm-State overrides
+    /// (`read_account`, `read_code`, `read_storage`, `previous_incarnation`)
+    /// can record errors without dropping `const`-correctness on the
+    /// public API.
+    mutable WitnessFlatConsistencyContext* witness_ctx_{nullptr};
+
+    /// First-touch verifier hooks. These run inside `noexcept` Silkworm
+    /// State overrides, so they MUST NOT throw. Any verification failure
+    /// is captured into `witness_ctx_->first_error` and surfaced after
+    /// EVM execution by `consume_witness_consistency_error()`.
+    void verify_account_before_return(
+        const evmc::address& address) const noexcept;
+    void verify_storage_before_return(
+        const evmc::address& address,
+        const evmc::bytes32& slot) const noexcept;
 };
 
 }  // namespace evm_workchain

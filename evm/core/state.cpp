@@ -367,4 +367,35 @@ void EvmState::clear_change_tracking() {
     storage_changes_.clear();
 }
 
+// ---------------------------------------------------------------------------
+// Audit H-01: dynamic flat-state / MPT witness consistency forwarders
+// ---------------------------------------------------------------------------
+
+void EvmState::begin_witness_consistency_check(
+    WitnessFlatConsistencyContext* ctx) noexcept {
+    // No locking here — the executor takes mutex() exclusively for the
+    // entire transaction window, which already covers begin / end /
+    // consume. Adding another lock here would deadlock against that
+    // unique_lock.
+    if (auto* cs = dynamic_cast<CellEvmState*>(backend_.get())) {
+        cs->begin_witness_consistency_check(ctx);
+    }
+    // Non-cell backends (silkworm::InMemoryState in some tests) silently
+    // skip — their reads bypass the witness entirely so there is nothing
+    // to cross-check.
+}
+
+void EvmState::end_witness_consistency_check() noexcept {
+    if (auto* cs = dynamic_cast<CellEvmState*>(backend_.get())) {
+        cs->end_witness_consistency_check();
+    }
+}
+
+td::Status EvmState::consume_witness_consistency_error() noexcept {
+    if (auto* cs = dynamic_cast<CellEvmState*>(backend_.get())) {
+        return cs->consume_witness_consistency_error();
+    }
+    return td::Status::OK();
+}
+
 }  // namespace evm_workchain

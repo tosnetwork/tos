@@ -360,6 +360,17 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
         }
     }
 
+    // Audit H-01: the per-transaction dynamic flat-state / MPT witness
+    // consistency tracker. The static precheck below populates this
+    // tracker's dedup sets so the dynamic verifier (running inside the
+    // executor's State read/update path) does not pay the cost a second
+    // time for sender / recipient / access-list entries — they are
+    // already proven consistent before pre-validation runs. The lifetime
+    // is the entire compute scope; we hand the address by pointer to the
+    // executor below and drain the result there.
+    WitnessFlatConsistencyContext witness_ctx{};
+    witness_ctx.enabled = true;
+
     // P1.2 cross-check: before executing the transaction, prove that the
     // touched flat-state values agree with the witness MPT leaves. This
     // catches a structurally-valid-but-semantically-corrupt witness (where
@@ -370,6 +381,13 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     // the path-budget shallow lookup (256 nodes / 2 MiB per descent) and
     // explicitly does NOT promote into `touched_storage_tries_`, so this
     // path stays O(touched access-list keys) of host work.
+    //
+    // Audit H-01 extension: we also seed the dynamic verifier's dedup
+    // sets here so an in-flight EVM read of the same address/slot won't
+    // re-run the path-bounded MPT proof. The dedup sets are
+    // unordered_set<evmc::address> / unordered_set<StorageKey>; if seeding
+    // fails (bad_alloc), we fail closed because the dynamic verifier
+    // would otherwise be unable to record its own findings.
     {
         std::unique_lock cross_check_lock(state.mutex());
         if (auto* cs = dynamic_cast<CellEvmState*>(&state.state())) {
@@ -386,11 +404,37 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
                     std::string("EVM witness/flat cross-check failed: ") +
                         status.message().str());
             };
+            auto seed_account = [&](const evmc::address& addr) -> bool {
+                try {
+                    witness_ctx.checked_accounts.insert(addr);
+                    return true;
+                } catch (...) {
+                    return false;
+                }
+            };
+            auto seed_storage = [&](const evmc::address& addr,
+                                    const evmc::bytes32& slot) -> bool {
+                try {
+                    StorageKey key{};
+                    key.address = addr;
+                    key.slot = slot;
+                    witness_ctx.checked_storage.insert(key);
+                    return true;
+                } catch (...) {
+                    return false;
+                }
+            };
             if (sender_opt) {
                 auto sender_status =
                     cs->verify_account_witness_matches_flat_state(*sender_opt);
                 if (sender_status.is_error()) {
                     fail_closed(sender_status, "sender account");
+                    return nullptr;
+                }
+                if (!seed_account(*sender_opt)) {
+                    fail_closed(td::Status::Error(
+                                    "witness consistency tracker exhausted"),
+                                "sender account");
                     return nullptr;
                 }
             }
@@ -401,12 +445,24 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
                     fail_closed(recipient_status, "recipient account");
                     return nullptr;
                 }
+                if (!seed_account(*decoded.txn.to)) {
+                    fail_closed(td::Status::Error(
+                                    "witness consistency tracker exhausted"),
+                                "recipient account");
+                    return nullptr;
+                }
             }
             for (const auto& entry : decoded.txn.access_list) {
                 auto entry_status =
                     cs->verify_account_witness_matches_flat_state(entry.account);
                 if (entry_status.is_error()) {
                     fail_closed(entry_status, "access-list account");
+                    return nullptr;
+                }
+                if (!seed_account(entry.account)) {
+                    fail_closed(td::Status::Error(
+                                    "witness consistency tracker exhausted"),
+                                "access-list account");
                     return nullptr;
                 }
                 for (const auto& key : entry.storage_keys) {
@@ -417,13 +473,65 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
                         fail_closed(slot_status, "access-list storage slot");
                         return nullptr;
                     }
+                    if (!seed_storage(entry.account, key)) {
+                        fail_closed(td::Status::Error(
+                                        "witness consistency tracker exhausted"),
+                                    "access-list storage slot");
+                        return nullptr;
+                    }
                 }
+            }
+
+            // Audit H-01 follow-up: the EVM execution path always touches
+            // `block.header.beneficiary` — silkworm's run_evm warms the
+            // beneficiary into the access set (EIP-2929) and the priority-fee
+            // payment writes to its balance. Without seeding it here the
+            // dynamic verifier would (correctly) fire on first touch, paying
+            // a path-bounded MPT proof that we can collapse into the static
+            // pass. Seeding also ensures the dedup-test below observes
+            // exactly zero dynamic checks for a tx whose access list covers
+            // every other touched leaf. The beneficiary is a host-supplied
+            // address (zero in compute_phase today; non-zero in tests with a
+            // real coinbase) — trust comes from `make_evm_block`, not from
+            // tx-supplied data.
+            const auto& beneficiary = block.header.beneficiary;
+            auto beneficiary_status =
+                cs->verify_account_witness_matches_flat_state(beneficiary);
+            if (beneficiary_status.is_error()) {
+                fail_closed(beneficiary_status, "block beneficiary");
+                return nullptr;
+            }
+            if (!seed_account(beneficiary)) {
+                fail_closed(td::Status::Error(
+                                "witness consistency tracker exhausted"),
+                            "block beneficiary");
+                return nullptr;
             }
         }
     }
 
     // --- Step 4: Execute the transaction against the local state ---
-    auto exec_result = execute_evm_transaction(decoded.txn, block, state, config);
+    auto exec_result = execute_evm_transaction(decoded.txn, block, state,
+                                                config, &witness_ctx);
+
+    // Audit H-01: dynamic flat-state / MPT witness consistency violation.
+    // The verifier inside CellEvmState recorded a leaf disagreement on a
+    // touched account or storage slot that was NOT covered by the static
+    // precheck above (CALL target, undeclared SLOAD, CREATE2 destination,
+    // EIP-7702 authority, system contract, …). Any side effects produced
+    // by run_evm are reverted by the rollback snapshot; we emit
+    // sk_bad_state so consensus rejects the entire block-tx attempt.
+    if (exec_result.disposition == EvmTxDisposition::WitnessMismatch) {
+        LOG(WARNING) << "evm-workchain: tx rejected by dynamic witness/flat "
+                     << "consistency tracker (offending="
+                     << (exec_result.witness_offending_what.empty()
+                             ? "?"
+                             : exec_result.witness_offending_what)
+                     << "): " << exec_result.error_message;
+        rollback_snapshot.restore(state);
+        reject_compute_phase(cp, gas_limit, exec_result.error_message);
+        return nullptr;
+    }
 
     // Audit #2 (2026-04-26): pre-validation failures (bad nonce, insufficient
     // funds, intrinsic gas exceeds limit, EIP-1559/4844 violations, EIP-3607

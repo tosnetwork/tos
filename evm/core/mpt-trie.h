@@ -61,6 +61,97 @@ struct MptPathBudget {
     static constexpr size_t kMaxPathRlpBytes = 2ull * 1024ull * 1024ull;
 };
 
+/// Provenance of an `MptTrie` instance. Drives the path-local cached-RLP
+/// consistency policy used by the `*_safe` walkers.
+///
+/// `InMemoryBuilt`
+///   The trie was constructed in-process via `upsert_hashed[_safe]` /
+///   `erase_hashed[_safe]` and has never been hydrated from a serialized
+///   cell. Newly created `Node`s carry an empty `rlp_cache` until the trie
+///   is serialized for the first time. In this mode the walkers may fall
+///   back to `child->rlp()` to materialize a missing immediate-child
+///   cache. This permissive behaviour exists ONLY so test fixtures and
+///   internal builders can compute proofs / root hashes before a
+///   round-trip; it is NOT part of the production attack surface.
+///
+/// `LoadedFromCell`
+///   The trie's root was bound from a persisted cell via `load_from_cell`
+///   — i.e. the witness travelled across an untrusted boundary (disk,
+///   network, RPC argument). Path-local consistency checks become strict:
+///   an immediate child whose `rlp_cache` cannot be populated from its
+///   persisted cell fails closed with an explicit error rather than
+///   triggering a recursive `rlp()` materialisation. The strict rule
+///   removes the "strict-then-permissive" bypass where an attacker crafts
+///   a witness whose strict re-encoding fails so the walker silently
+///   re-falls back to trusting `child->rlp()`.
+///
+///   Per-node exception (option (1) in the security audit): a child
+///   carrying both `decoded` and `dirty` flags is an in-memory built node
+///   introduced by a post-load mutation (e.g. a fresh `Node::leaf()`
+///   allocated by `MptTrie::upsert_hashed_safe` after `load_from_cell`).
+///   Such a node has a legitimately empty `rlp_cache` — it has never
+///   been serialised. For those children the strict-mode walker permits
+///   the recursive `child->rlp()` materialisation as a narrow exception.
+///   The bypass remains closed because an attacker-controlled lazy cell
+///   that fails to decode never reaches the `decoded && dirty` state:
+///   `Node::ensure_decoded()` leaves it `decoded=false`, and `child_ref_local`
+///   then refuses to fall back. This per-node distinction is required so
+///   production call sites (`CellEvmState::update_storage` →
+///   `update_account_trie_leaf` → `root_hash_safe`) keep working when a
+///   witness-bound trie is mutated mid-block.
+///
+/// Security contract: once an `MptTrie` is bound to `LoadedFromCell` it
+/// remains so for its lifetime — subsequent `upsert_hashed_safe` /
+/// `erase_hashed_safe` mutations do NOT silently downgrade to
+/// `InMemoryBuilt`. The trie keeps the strict-only walker policy; only
+/// per-node `decoded && dirty` children take the in-memory exception.
+/// Only `clear()` (drops the trie entirely) or constructing a fresh
+/// `MptTrie` resets the origin.
+enum class MptOrigin {
+    InMemoryBuilt,
+    LoadedFromCell,
+};
+
+/// Ethereum-format Merkle-Patricia Trie that backs the persistent EVM
+/// state-root witness. Used in two distinct lifecycles:
+///
+///   * `MptOrigin::InMemoryBuilt` — the trie was constructed in-process
+///     from cleartext (key, value) pairs (test fixtures, snapshot
+///     rebuild, the first serialize after genesis). The path-walking
+///     `*_safe` APIs MAY fall back to `child->rlp()` to populate a
+///     missing immediate-child cache because the data is trusted local.
+///
+///   * `MptOrigin::LoadedFromCell` — the trie was hydrated from a
+///     persisted root cell that crossed an untrusted boundary (disk,
+///     network, RPC argument). The instance is pinned in strict mode
+///     for the rest of its lifetime and never silently downgrades to
+///     `InMemoryBuilt`. The `*_safe` walkers enforce path-local cached
+///     RLP consistency and refuse to recursively materialise a missing
+///     `rlp_cache`. This closes the strict-then-permissive bypass that
+///     would otherwise let an attacker craft a witness whose strict
+///     re-encode fails so the walker silently re-falls back to
+///     trusting a child's recomputed RLP.
+///
+/// Mutations on a `LoadedFromCell` trie. `upsert_hashed_safe` and
+/// `erase_hashed_safe` create fresh in-memory `Node`s flagged
+/// `decoded && dirty`. The per-node exception in `child_ref_local`
+/// permits those dirty nodes to use `child->rlp()` because they are
+/// trusted local mutations — they were never deserialised from a
+/// persisted cell. Strict mode therefore continues to apply to every
+/// remaining lazy-loaded node along the descent path; only the dirty
+/// children take the permissive shortcut. A fully-mutated post-load
+/// trie still travels the strict pass for any unmutated witness
+/// node it encounters.
+///
+/// Security contract. An attacker constructing a corrupt witness cell
+/// CANNOT bypass strict checks by causing a partial mutation, because
+/// dirty nodes only exist after a successful trusted mutation API
+/// call — they cannot be created via `load_from_cell`. The
+/// `Node::ensure_decoded()` path leaves an undecodable lazy node with
+/// `decoded=false`, so `child_ref_local` refuses the shortcut and the
+/// `*_safe` walker fails closed. Any subsequent operation on that
+/// lazy node returns a status error rather than treating
+/// `child->rlp()` as authoritative.
 class MptTrie {
   public:
     struct Node;
@@ -69,6 +160,9 @@ class MptTrie {
 
     bool empty() const noexcept { return !root_; }
     void clear() noexcept;
+
+    /// Returns the trie's origin. See `MptOrigin` for the security contract.
+    MptOrigin origin() const noexcept { return origin_; }
 
     /// Legacy mutation API. Returns `false` only when the input is malformed
     /// (wrong key length or empty value). Internally delegates to
@@ -104,6 +198,14 @@ class MptTrie {
     /// hash. Hot-path callers that have to publish a deterministic stateRoot
     /// should prefer this so a malformed witness cannot reach consensus as
     /// "empty trie".
+    ///
+    /// Path-local cached-RLP consistency: the root's cached RLP is verified
+    /// against a non-recursive re-encoding of the decoded shape using cached
+    /// child references. A tampered root whose cached RLP disagrees with its
+    /// decoded fields fails closed instead of producing a hash over the
+    /// tampered cache.
+    ///
+    /// Strict-only on lazy-loaded witnesses: same contract as `proof_safe`.
     td::Result<evmc::bytes32> root_hash_safe() const;
 
     /// Test-only proof helper. Wraps `proof_safe` but discards a non-OK
@@ -117,6 +219,26 @@ class MptTrie {
     /// `td::Status` instead of triggering a `CHECK` abort, so RPC handlers
     /// can map a corrupt witness to a JSON-RPC error rather than crashing
     /// the node.
+    ///
+    /// Path-local cached-RLP consistency: when called on a lazy-loaded
+    /// witness, every node visited along the descent has its cached RLP
+    /// re-encoded from the decoded shape using ONLY the immediate
+    /// children's cached RLP / hash references (no recursion into off-path
+    /// subtrees). The recomputation is then byte-compared against
+    /// `rlp_cache`; a mismatch fails closed with `"MPT: cached RLP does
+    /// not match decoded shape"` instead of leaking a tampered cached
+    /// encoding into the returned proof. The full-tree `StrictRecursive`
+    /// walk is still used at hydration / import / repair; the path-local
+    /// check is the cheap hot-path companion that scales as O(path
+    /// length).
+    ///
+    /// Strict-only on lazy-loaded witnesses (`MptOrigin::LoadedFromCell`):
+    /// an immediate child whose `rlp_cache` cannot be populated from its
+    /// persisted cell fails closed with `"MPT: lazy-loaded child has no
+    /// cached RLP"`. The legacy permissive fallback that would have
+    /// materialised the cache via `child->rlp()` is reachable ONLY for
+    /// `MptOrigin::InMemoryBuilt` tries (test fixtures and pre-serialize
+    /// builders).
     td::Result<std::vector<silkworm::Bytes>> proof_safe(
         const silkworm::ByteView& hashed_key) const;
 
@@ -128,6 +250,12 @@ class MptTrie {
     /// over-budget descent — same fail-closed contract as `proof_safe`. Used
     /// by `CellEvmState::verify_*_witness_matches_flat_state` to defend
     /// against a structurally valid but semantically corrupt witness.
+    ///
+    /// Path-local cached-RLP consistency: same invariant as `proof_safe` —
+    /// each node visited along the descent has its cached RLP verified
+    /// against a non-recursive re-encoding using cached child refs.
+    ///
+    /// Strict-only on lazy-loaded witnesses: same contract as `proof_safe`.
     td::Result<std::optional<silkworm::Bytes>> value_at_hashed_safe(
         silkworm::ByteView hashed_key) const;
 
@@ -135,6 +263,10 @@ class MptTrie {
     /// default validation mode is StrictRecursive — callers on a hot path
     /// that have already validated the witness elsewhere may opt into
     /// Shallow for speed.
+    ///
+    /// Successful `load_from_cell` (including the empty-trie clear path)
+    /// pins the instance's origin to `MptOrigin::LoadedFromCell` so
+    /// subsequent `*_safe` operations use strict-only path-local checks.
     td::Ref<vm::Cell> serialize_to_cell() const;
     bool load_from_cell(td::Ref<vm::Cell> root,
                         MptWitnessValidationMode mode =
@@ -142,6 +274,12 @@ class MptTrie {
 
   private:
     std::shared_ptr<Node> root_;
+    /// Tracks where this trie's nodes came from. `LoadedFromCell` enforces
+    /// strict-only path-local cached-RLP consistency on the public `*_safe`
+    /// API; `InMemoryBuilt` permits a permissive fallback only for nodes
+    /// that have never been serialised. See `MptOrigin` for the full
+    /// contract.
+    MptOrigin origin_{MptOrigin::InMemoryBuilt};
 };
 
 /// RLP-encode an Ethereum storage trie value. Zero values are expected to be

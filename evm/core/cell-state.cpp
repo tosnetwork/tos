@@ -25,6 +25,8 @@ namespace evm_workchain {
 #ifdef TOS_EVM_TEST_INSTRUMENTATION
 std::atomic<size_t> g_cell_state_full_walks{0};
 std::atomic<size_t> g_storage_index_walks{0};
+std::atomic<size_t> g_witness_consistency_checks{0};
+std::atomic<int> g_witness_verify_depth_max_observed{0};
 #endif
 
 namespace {
@@ -113,6 +115,13 @@ CellEvmState::CellEvmState() : account_dict_(256) {}
 
 std::optional<silkworm::Account> CellEvmState::read_account(
     const evmc::address& address) const noexcept {
+    // Dynamic witness consistency hook (audit H-01): on first touch of
+    // this account inside the active transaction, run a path-bounded MPT
+    // proof against the flat dict before surfacing the value to the EVM.
+    // The hook is a no-op when no context is bound, when a previous
+    // mismatch already poisoned the context, or when this address has
+    // already been verified (static precheck or earlier dynamic touch).
+    verify_account_before_return(address);
     unsigned char key[32];
     address_to_key(address, key);
     auto cs = account_dict_.lookup(td::ConstBitPtr{key}, 256);
@@ -129,6 +138,12 @@ std::optional<silkworm::Account> CellEvmState::read_account(
 
 silkworm::ByteView CellEvmState::read_code(
     const evmc::address& address, const evmc::bytes32& code_hash) const noexcept {
+    // Dynamic witness consistency hook (audit H-01): the canonical account
+    // RLP carries `code_hash`, so verifying the account leaf also verifies
+    // the code identity in one shot. EXTCODECOPY / EXTCODESIZE /
+    // EXTCODEHASH and DELEGATECALL targets all funnel through this path,
+    // making `verify_account_before_return` the right hook for them.
+    verify_account_before_return(address);
     if (code_hash == silkworm::kEmptyHash) return {};
     if (auto it = code_.find(code_hash); it != code_.end()) {
         // Return a ByteView pointing **into** the map entry's stable storage.
@@ -180,6 +195,12 @@ silkworm::ByteView CellEvmState::read_code(
 evmc::bytes32 CellEvmState::read_storage(const evmc::address& address,
                                           uint64_t /*incarnation*/,
                                           const evmc::bytes32& location) const noexcept {
+    // Dynamic witness consistency hook (audit H-01): SLOAD on a slot that
+    // was not declared in the access list still goes through here. Verify
+    // the (address, slot) leaf before the EVM consumes the flat value so a
+    // post-checkpoint flat/witness drift can never produce a divergent
+    // execution result.
+    verify_storage_before_return(address, location);
     evmc::bytes32 v{};
     try {
         auto storage_root = get_storage_root(address);
@@ -281,6 +302,13 @@ void CellEvmState::begin_block(silkworm::BlockNum, size_t) {
 void CellEvmState::update_account(const evmc::address& address,
                                    std::optional<silkworm::Account> initial,
                                    std::optional<silkworm::Account> current) {
+    // Dynamic witness consistency hook (audit H-01): verify the
+    // pre-mutation account leaf. Mutations that race ahead of a read (e.g.
+    // a CALL whose first operation is a self-balance bump) would otherwise
+    // overwrite the flat dict before any read path observed the
+    // pre-image. The verifier dedupes against earlier first-touch reads,
+    // so the cost is paid at most once per (tx, address).
+    verify_account_before_return(address);
     CHECK(ensure_trie_witness());
     unsigned char key[32];
     address_to_key(address, key);
@@ -330,6 +358,12 @@ void CellEvmState::update_account_code(const evmc::address& address,
                                         uint64_t /*incarnation*/,
                                         const evmc::bytes32& code_hash,
                                         silkworm::ByteView code) {
+    // Dynamic witness consistency hook (audit H-01): CREATE / CREATE2
+    // commit the new code_hash through here. Verifying the
+    // pre-mutation account leaf ensures the slot-of-deployment was empty
+    // (or held the same designation) in both flat dict and witness — a
+    // flat/witness drift on the deploy address is fatal here too.
+    verify_account_before_return(address);
     if (code_hash == silkworm::kEmptyHash) return;
     CHECK(ensure_trie_witness());
     code_[code_hash] = silkworm::Bytes{code.begin(), code.end()};
@@ -362,6 +396,12 @@ void CellEvmState::update_storage(const evmc::address& address,
                                    const evmc::bytes32& location,
                                    const evmc::bytes32& initial,
                                    const evmc::bytes32& current) {
+    // Dynamic witness consistency hook (audit H-01): verify the
+    // pre-mutation slot leaf. silkworm::IntraBlockState passes the
+    // pre-image as `initial`, but we still consult the underlying State
+    // because IntraBlockState may have been seeded directly via a journal
+    // operation that did not surface the original storage_root cell.
+    verify_storage_before_return(address, location);
     CHECK(ensure_trie_witness());
     static const evmc::bytes32 zero{};
     const bool was_zero = is_zero_bytes32(initial);
@@ -766,6 +806,325 @@ CellEvmState::ethereum_storage_root_hash_safe_no_cache(
         return td::Status::Error("invalid storage trie witness");
     } catch (...) {
         return td::Status::Error("invalid storage trie witness");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic flat-state / MPT witness consistency tracker
+// ---------------------------------------------------------------------------
+//
+// Audit H-01: the static pre-execution cross-check on sender / recipient /
+// access-list only catches drift on accounts and slots the transaction
+// declares up front. Real EVM execution touches a much larger set:
+// dynamic CALL / DELEGATECALL / EXTCODE* targets, undeclared SLOAD /
+// SSTORE slots, CREATE2 destinations, EIP-7702 authorities, the
+// EIP-2935 history-storage system contract, SELFDESTRUCT counterparties,
+// etc. To stay correct we extend the cross-check into the State read /
+// update path itself: every first-touch surfaces the targeted leaf to
+// the witness MPT before the EVM consumes the flat-dict value (or before
+// a mutation overwrites the pre-image).
+//
+// Performance: each unique first-touch costs one path-bounded MPT proof
+// (≤ 256 nodes / 2 MiB by construction of the MPT path budget). Typical
+// transactions touch ~5-20 accounts/slots, so the runtime overhead is
+// small relative to EVM execution itself. The dedup sets bound work to
+// O(unique addresses + unique (addr, slot) pairs) per transaction.
+
+namespace {
+
+// Defense-in-depth recursion guard for the dynamic witness verifier.
+//
+// Call-stack contract (correct dedup-before-verify ordering):
+//
+//   1. `read_account(A)` → `verify_account_before_return(A)`. Depth at
+//      check site = 0. Dedup insert succeeds.
+//   2. The check `t_witness_verify_depth >= kMaxWitnessVerifyDepth`
+//      passes; the `WitnessVerifyDepthGuard` increments depth to 1 and
+//      `verify_account_witness_matches_flat_state(A)` runs.
+//   3. That helper internally calls `read_account(A)` again, which
+//      re-enters `verify_account_before_return(A)`. Depth at the check
+//      site = 1, but the dedup insert hits the existing entry and
+//      returns BEFORE the depth check — depth never advances past 1.
+//   4. The outer guard's destructor restores depth to 0.
+//
+// Therefore in the well-ordered case the high-water mark of
+// `t_witness_verify_depth` is 1 (the value held inside the outer
+// guard's lifetime), and the depth-check site only ever observes 0.
+// The 1→2 transition is reachable ONLY if the dedup-before-verify
+// invariant has been broken (e.g. a future refactor moves the
+// `insert` call after the verify call). In that pathological case
+// the second guard increment lifts depth to 2 and a third entry sees
+// `2 >= kMaxWitnessVerifyDepth` and bails fail-closed instead of
+// recursing unbounded into a stack overflow.
+//
+// The threshold is intentionally tight: kMaxWitnessVerifyDepth = 2
+// catches the FIRST illegal depth (the second post-guard frame). A
+// looser cap would let the broken ordering accumulate frames before
+// converting to a sticky `first_error`. A tighter cap (e.g. 1) would
+// reject the legitimate well-ordered call where the outer guard has
+// already pushed depth to 1 at the moment a sibling re-entry's check
+// runs — which never actually occurs today (dedup wins) but would
+// flap if a sibling helper added a fresh first-touch on a different
+// address inside `verify_*_witness_matches_flat_state`.
+thread_local int t_witness_verify_depth = 0;
+
+struct WitnessVerifyDepthGuard {
+    WitnessVerifyDepthGuard() noexcept {
+        ++t_witness_verify_depth;
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
+        // Track the high-water mark inside the guard's lifetime. Each
+        // ctor records the post-increment value so tests can observe
+        // the maximum stack depth actually reached during a call.
+        int observed = t_witness_verify_depth;
+        int prev = g_witness_verify_depth_max_observed.load(
+            std::memory_order_relaxed);
+        while (observed > prev &&
+               !g_witness_verify_depth_max_observed.compare_exchange_weak(
+                   prev, observed, std::memory_order_relaxed)) {
+            // CAS spin: another thread updated the value; retry with
+            // the freshly observed `prev`. The loop terminates because
+            // `observed` is bounded by kMaxWitnessVerifyDepth.
+        }
+#endif
+    }
+    ~WitnessVerifyDepthGuard() noexcept { --t_witness_verify_depth; }
+    WitnessVerifyDepthGuard(const WitnessVerifyDepthGuard&) = delete;
+    WitnessVerifyDepthGuard& operator=(const WitnessVerifyDepthGuard&) = delete;
+};
+
+constexpr int kMaxWitnessVerifyDepth = 2;
+
+// Lower-case 0x-prefixed hex of an EVM address. Inlined so the
+// recursion-broken / mismatch hot paths do not depend on external
+// helpers (everything in this file must be `noexcept`-safe).
+std::string format_evm_address_hex(const evmc::address& address) {
+    static constexpr char kHexDigits[] = "0123456789abcdef";
+    std::string out;
+    out.reserve(2 + 40);
+    out.append("0x");
+    for (auto b : address.bytes) {
+        out.push_back(kHexDigits[(b >> 4) & 0x0F]);
+        out.push_back(kHexDigits[b & 0x0F]);
+    }
+    return out;
+}
+
+// Lower-case 0x-prefixed hex of a 32-byte slot. Same rationale as the
+// address helper: avoid pulling external dependencies into a noexcept
+// path.
+std::string format_evm_slot_hex(const evmc::bytes32& slot) {
+    static constexpr char kHexDigits[] = "0123456789abcdef";
+    std::string out;
+    out.reserve(2 + 64);
+    out.append("0x");
+    for (auto b : slot.bytes) {
+        out.push_back(kHexDigits[(b >> 4) & 0x0F]);
+        out.push_back(kHexDigits[b & 0x0F]);
+    }
+    return out;
+}
+
+}  // namespace
+
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
+int set_witness_verify_depth_for_testing(int new_depth) noexcept {
+    int prev = t_witness_verify_depth;
+    t_witness_verify_depth = new_depth;
+    return prev;
+}
+
+int get_witness_verify_depth_for_testing() noexcept {
+    return t_witness_verify_depth;
+}
+#endif
+
+void CellEvmState::begin_witness_consistency_check(
+    WitnessFlatConsistencyContext* ctx) noexcept {
+    if (ctx == nullptr) {
+        // Defensive: a nullptr means the caller asked for a no-op; clear
+        // any stale pointer so a previously-aborted transaction can't
+        // leak a dangling context into the next one.
+        witness_ctx_ = nullptr;
+        return;
+    }
+    ctx->enabled = true;
+    witness_ctx_ = ctx;
+}
+
+void CellEvmState::end_witness_consistency_check() noexcept {
+    if (witness_ctx_ != nullptr) {
+        witness_ctx_->enabled = false;
+    }
+    witness_ctx_ = nullptr;
+}
+
+td::Status CellEvmState::consume_witness_consistency_error() noexcept {
+    if (witness_ctx_ == nullptr) {
+        return td::Status::OK();
+    }
+    if (witness_ctx_->first_error.is_error()) {
+        td::Status taken = std::move(witness_ctx_->first_error);
+        witness_ctx_->first_error = td::Status::OK();
+        return taken;
+    }
+    return td::Status::OK();
+}
+
+void CellEvmState::verify_account_before_return(
+    const evmc::address& address) const noexcept {
+    if (witness_ctx_ == nullptr || !witness_ctx_->enabled ||
+        witness_ctx_->first_error.is_error()) {
+        return;
+    }
+    // CRITICAL: the dedup `insert` MUST happen BEFORE the call to
+    // `verify_account_witness_matches_flat_state`. The verifier internally
+    // calls `read_account` (and the safe storage-root helper that may also
+    // touch flat-dict reads), which re-enters this hook. Insert-then-check
+    // ensures the second entry hits the `!inserted` early-return below
+    // (dedup hit) and bails harmlessly. Reordering — moving the insert
+    // after the verify call — would cause unbounded recursion. The
+    // `WitnessVerifyDepthGuard` below is a defense-in-depth backstop: if a
+    // future refactor accidentally breaks the dedup invariant, we cap the
+    // stack at two levels and surface a sticky error instead of crashing.
+    try {
+        auto [_, inserted] = witness_ctx_->checked_accounts.insert(address);
+        if (!inserted) {
+            return;
+        }
+    } catch (const std::bad_alloc&) {
+        witness_ctx_->first_error =
+            td::Status::Error("witness consistency tracker exhausted");
+        witness_ctx_->offending_what =
+            std::string("account-tracker insert: account ") +
+            format_evm_address_hex(address);
+        return;
+    } catch (...) {
+        witness_ctx_->first_error =
+            td::Status::Error("witness consistency tracker exhausted");
+        witness_ctx_->offending_what =
+            std::string("account-tracker insert: account ") +
+            format_evm_address_hex(address);
+        return;
+    }
+    if (t_witness_verify_depth >= kMaxWitnessVerifyDepth) {
+        // Defense-in-depth: dedup-before-verify invariant has been broken
+        // (likely a future refactor). Mark first_error and bail before we
+        // blow the stack. The compute-phase rollback path picks this up.
+        witness_ctx_->first_error =
+            td::Status::Error("witness verifier recursion broken");
+        witness_ctx_->offending_what =
+            std::string("dynamic account witness recursion: account ") +
+            format_evm_address_hex(address);
+        return;
+    }
+    WitnessVerifyDepthGuard depth_guard;
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
+    g_witness_consistency_checks.fetch_add(1, std::memory_order_relaxed);
+#endif
+    // Run the path-bounded cross-check. The implementation never throws —
+    // it returns errors as `td::Status` and uses internal try/catch on its
+    // VM call path — but defensive try/catch here guards against any
+    // future helper that escalates to an exception.
+    try {
+        auto st = verify_account_witness_matches_flat_state(address);
+        if (st.is_error()) {
+            // Strict offending hint: include the EVM address as
+            // lower-case 0x-hex so the rollback log line carries the
+            // exact identity that drifted, not just a coarse
+            // "account" tag. Existing matchers that look for the
+            // substring "account" still match because the prefix
+            // remains "dynamic account witness".
+            witness_ctx_->offending_what =
+                std::string("dynamic account witness: account ") +
+                format_evm_address_hex(address);
+            witness_ctx_->first_error = std::move(st);
+        }
+    } catch (...) {
+        witness_ctx_->first_error =
+            td::Status::Error("dynamic account witness verifier threw");
+        witness_ctx_->offending_what =
+            std::string("dynamic account witness: account ") +
+            format_evm_address_hex(address);
+    }
+}
+
+void CellEvmState::verify_storage_before_return(
+    const evmc::address& address,
+    const evmc::bytes32& slot) const noexcept {
+    if (witness_ctx_ == nullptr || !witness_ctx_->enabled ||
+        witness_ctx_->first_error.is_error()) {
+        return;
+    }
+    // CRITICAL: the dedup `insert` MUST happen BEFORE the call to
+    // `verify_storage_witness_matches_flat_state`. The verifier internally
+    // calls `read_storage`, which re-enters this hook. Insert-then-check
+    // ensures the second entry is a no-op (dedup hit). Reordering — e.g.
+    // verifying first and inserting only on success — would cause
+    // unbounded recursion through `read_storage` → verify_storage_before_return
+    // → verify_storage_witness_matches_flat_state → read_storage → ...
+    // The `WitnessVerifyDepthGuard` below caps the stack so a broken
+    // invariant fails closed instead of crashing.
+    StorageKey key{};
+    key.address = address;
+    key.slot = slot;
+    try {
+        auto [_, inserted] = witness_ctx_->checked_storage.insert(key);
+        if (!inserted) {
+            return;
+        }
+    } catch (const std::bad_alloc&) {
+        witness_ctx_->first_error =
+            td::Status::Error("witness consistency tracker exhausted");
+        witness_ctx_->offending_what =
+            std::string("storage-tracker insert: account ") +
+            format_evm_address_hex(address) + " slot " +
+            format_evm_slot_hex(slot);
+        return;
+    } catch (...) {
+        witness_ctx_->first_error =
+            td::Status::Error("witness consistency tracker exhausted");
+        witness_ctx_->offending_what =
+            std::string("storage-tracker insert: account ") +
+            format_evm_address_hex(address) + " slot " +
+            format_evm_slot_hex(slot);
+        return;
+    }
+    if (t_witness_verify_depth >= kMaxWitnessVerifyDepth) {
+        // Defense-in-depth: dedup-before-verify invariant has been broken.
+        // Cap recursion before we blow the stack and surface a sticky
+        // first_error so the compute-phase rolls back fail-closed.
+        witness_ctx_->first_error =
+            td::Status::Error("witness verifier recursion broken");
+        witness_ctx_->offending_what =
+            std::string("dynamic storage witness recursion: account ") +
+            format_evm_address_hex(address) + " slot " +
+            format_evm_slot_hex(slot);
+        return;
+    }
+    WitnessVerifyDepthGuard depth_guard;
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
+    g_witness_consistency_checks.fetch_add(1, std::memory_order_relaxed);
+#endif
+    try {
+        auto st = verify_storage_witness_matches_flat_state(address, slot);
+        if (st.is_error()) {
+            // Strict offending hint: include the (account, slot) pair
+            // as lower-case 0x-hex so the log line carries the exact
+            // tuple that drifted. Substring matchers looking for
+            // "storage" continue to work via the prefix.
+            witness_ctx_->offending_what =
+                std::string("dynamic storage witness: account ") +
+                format_evm_address_hex(address) + " slot " +
+                format_evm_slot_hex(slot);
+            witness_ctx_->first_error = std::move(st);
+        }
+    } catch (...) {
+        witness_ctx_->first_error =
+            td::Status::Error("dynamic storage witness verifier threw");
+        witness_ctx_->offending_what =
+            std::string("dynamic storage witness: account ") +
+            format_evm_address_hex(address) + " slot " +
+            format_evm_slot_hex(slot);
     }
 }
 

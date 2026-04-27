@@ -13,6 +13,7 @@
     Source: TOS-specific adapter (not copied from ~/s).
 */
 #include "evm/core/executor.h"
+#include "evm/core/cell-state.h"
 
 #include <limits>
 #include <optional>
@@ -517,11 +518,60 @@ ExecutionResult execute_evm_transaction(
     const silkworm::Transaction& txn,
     const silkworm::Block& block,
     EvmState& evm_state,
-    const silkworm::ChainConfig& config) {
+    const silkworm::ChainConfig& config,
+    WitnessFlatConsistencyContext* witness_ctx) {
 
     std::unique_lock lock(evm_state.mutex());
+
+    // Audit H-01: bind the dynamic flat-state / MPT witness consistency
+    // tracker for the duration of this transaction. The tracker is a
+    // no-op when `witness_ctx == nullptr` (read-only / RPC entry points)
+    // or when the underlying state is not a CellEvmState (some unit
+    // tests). RAII-style end is unnecessary because we always reach the
+    // end_witness_consistency_check call below — even on the early-return
+    // paths inside `run_evm`, the EvmState dtor would clear `witness_ctx_`
+    // when this CellEvmState is destroyed; for the long-lived global
+    // state singleton we explicitly clear here.
+    if (witness_ctx != nullptr) {
+        evm_state.begin_witness_consistency_check(witness_ctx);
+    }
+
     silkworm::IntraBlockState ibs(evm_state.state());
     auto result = run_evm(txn, block, ibs, config, /*commit_state=*/true);
+
+    // Audit H-01: drain the consistency tracker. A non-OK status means
+    // some dynamically-touched account or slot disagreed between the
+    // flat dict and the witness MPT. Per the audit "fail-closed" rule,
+    // we override the disposition so the compute-phase rolls back the
+    // captured snapshot and emits `sk_bad_state`. The rollback path in
+    // compute-phase.cpp restores the pre-tx flat dict + witness, so any
+    // writes that may have completed (write_to_db ran before we drained)
+    // are reverted before consensus continues.
+    if (witness_ctx != nullptr) {
+        auto consistency_status =
+            evm_state.consume_witness_consistency_error();
+        // Always end the tracker, even on the success path, so the
+        // CellEvmState's borrowed pointer is cleared before the lock
+        // releases. Tests that share the global state across transactions
+        // rely on this — a stray tracker pointer would cause stale-set
+        // dedup to mask future first-touches.
+        evm_state.end_witness_consistency_check();
+        if (consistency_status.is_error()) {
+            // Preserve the verifier's error message and the offending-what
+            // hint for the compute-phase log line. The mismatch may have
+            // surfaced after write_to_db ran (the verifier hook fires
+            // synchronously inside `update_account` / `update_storage`
+            // before the mutation, but the underlying flat dict is
+            // already mutated for any earlier first-touch that did NOT
+            // mismatch). The caller's rollback snapshot covers both
+            // cases.
+            result.error_message =
+                std::string("EVM witness/flat consistency violation: ") +
+                consistency_status.message().str();
+            result.witness_offending_what = witness_ctx->offending_what;
+            result.disposition = EvmTxDisposition::WitnessMismatch;
+        }
+    }
 
     // Track changed accounts for incremental state root computation.
     // Sender, recipient, and beneficiary are always touched.

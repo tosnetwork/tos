@@ -275,6 +275,236 @@ struct MptTrie::Node {
         return out;
     }
 
+    /// Compute a path-local child reference. The strict-mode policy
+    /// (`require_cached==true`) is the production attack-surface defence:
+    /// for a lazy-loaded witness the immediate child MUST already carry a
+    /// `rlp_cache` (populated either at construction time or by a single
+    /// `ensure_decoded()` call). If the cache is still empty after that —
+    /// because the persisted child cell could not be decoded — strict mode
+    /// fails closed via `out_ok=false`. There is NO recursive
+    /// `child->rlp()` fallback for genuinely lazy children: that would
+    /// bypass the path-local consistency check.
+    ///
+    /// Per-node origin (strict mode only): a child whose
+    /// `decoded && dirty` flags both hold is an in-memory built node — it
+    /// was constructed via `Node::leaf()` / `Node::extension()` /
+    /// `Node::branch()` (or marked dirty by an in-memory mutation) and
+    /// has never been serialised, so its cache is legitimately empty. For
+    /// such a child the strict pass falls back to `child->rlp()` to
+    /// materialise the cache. This narrow exception preserves correctness
+    /// for tries that mix cell-loaded subtrees with fresh in-memory
+    /// mutations (e.g. `update_storage` on a witness-bound storage trie),
+    /// without re-introducing the lazy-loaded bypass: an attacker-crafted
+    /// child cell that fails to decode never reaches the
+    /// `decoded && dirty` state — `ensure_decoded()` leaves it
+    /// `decoded=false`, so strict mode fails closed exactly as
+    /// documented.
+    ///
+    /// Permissive mode (`require_cached==false`) is the legacy, full
+    /// permissive policy used only by in-memory-only tries
+    /// (`MptOrigin::InMemoryBuilt`).
+    ///
+    ///   * null child -> RLP empty-string code
+    ///   * non-null child whose RLP (cached or freshly materialised) is
+    ///     < 32 bytes -> inline that RLP
+    ///   * non-null child whose RLP is >= 32 bytes -> RLP-encode keccak(rlp)
+    Bytes child_ref_local(const std::shared_ptr<Node>& node,
+                           bool require_cached, bool& out_ok) const {
+        out_ok = true;
+        if (!node) {
+            return Bytes{silkworm::rlp::kEmptyStringCode};
+        }
+        // Force decode of the immediate child so its `rlp_cache` reflects
+        // the persisted bytes from the witness cell. A lazy child still
+        // carries the ORIGINAL `rlp_cache` cell ref; ensure_decoded reads
+        // it. This call is bounded to a single immediate child and does
+        // NOT recurse into the off-path subtree.
+        if (node->rlp_cache.empty() && !node->decoded) {
+            (void)node->ensure_decoded();
+        }
+        if (node->rlp_cache.empty()) {
+            // Per-node origin: an in-memory-built node carries
+            // `decoded && dirty` and has a legitimately empty cache. The
+            // strict policy permits the recursive `child->rlp()`
+            // materialisation only for such nodes — a node that came from
+            // a persisted cell is either successfully decoded with a
+            // populated cache (handled below) or `ensure_decoded()`
+            // failed and `decoded` is still false (handled by the
+            // `require_cached` branch).
+            const bool in_memory_built = node->decoded && node->dirty;
+            if (require_cached && !in_memory_built) {
+                out_ok = false;
+                return {};
+            }
+            // Either permissive mode or per-node strict-with-in-memory
+            // exception: materialise via the existing recursive helper.
+            const Bytes& child_rlp = node->rlp();
+            if (child_rlp.size() < kHashLength) {
+                return child_rlp;
+            }
+            auto h = node->hash();
+            Bytes out;
+            silkworm::rlp::encode(out, ByteView{h.bytes, kHashLength});
+            return out;
+        }
+        const Bytes& cached = node->rlp_cache;
+        if (cached.size() < kHashLength) {
+            return cached;  // inline
+        }
+        auto h = ethash::keccak256(cached.data(), cached.size());
+        Bytes out;
+        silkworm::rlp::encode(out, ByteView{h.bytes, kHashLength});
+        return out;
+    }
+
+    /// Re-encode this node's canonical RLP using ONLY this node's decoded
+    /// shape and the cached RLP / hash of immediate children. Does NOT
+    /// recurse into child subtrees; it consults each immediate child's
+    /// `rlp_cache` directly.
+    ///
+    /// `require_cached`:
+    ///   * `true` -> strict path-local re-encoding for verifying a
+    ///     lazy-loaded witness; if any non-null immediate child has an
+    ///     empty `rlp_cache` the function returns empty `Bytes{}` to
+    ///     signal "cannot verify path-locally".
+    ///   * `false` -> permissive variant that falls back to `child->rlp()`
+    ///     to materialise a missing cache, preserving in-memory built
+    ///     trie semantics.
+    ///
+    /// Returns an empty `Bytes{}` on error (unknown kind, or strict-mode
+    /// child cache miss). Caller MUST treat empty as a hard failure rather
+    /// than a successful zero-length encoding.
+    Bytes compute_rlp_local_shape_using_child_refs(bool require_cached) const {
+        Bytes payload;
+        switch (kind) {
+            case kNodeLeaf: {
+                Bytes encoded_path = hex_prefix_encode(path, true);
+                silkworm::rlp::encode(payload, ByteView{encoded_path});
+                silkworm::rlp::encode(payload, ByteView{value});
+                break;
+            }
+            case kNodeExtension: {
+                Bytes encoded_path = hex_prefix_encode(path, false);
+                silkworm::rlp::encode(payload, ByteView{encoded_path});
+                bool ok = true;
+                Bytes ref = child_ref_local(child, require_cached, ok);
+                if (!ok) {
+                    return {};
+                }
+                payload.append(ref);
+                break;
+            }
+            case kNodeBranch: {
+                for (const auto& branch_child : children) {
+                    bool ok = true;
+                    Bytes ref =
+                        child_ref_local(branch_child, require_cached, ok);
+                    if (!ok) {
+                        return {};
+                    }
+                    payload.append(ref);
+                }
+                silkworm::rlp::encode(payload, ByteView{});
+                break;
+            }
+            default:
+                return {};
+        }
+
+        Bytes out;
+        silkworm::rlp::encode_header(out, silkworm::rlp::Header{true, payload.size()});
+        out.append(payload);
+        return out;
+    }
+
+    /// Verify that this node's `rlp_cache` agrees with a fresh, non-recursive
+    /// re-encoding of the decoded shape (using cached refs of immediate
+    /// children). Adds the verified RLP size to `budget.rlp_bytes` and fails
+    /// closed if the path-budget cap is exceeded.
+    ///
+    /// Performance: one extra local re-encoding per path node. For a
+    /// 32-byte hashed key the descent depth is ~6-8 nodes, so the overhead
+    /// is negligible. The check defends RPC and consensus hot paths from a
+    /// witness whose cached RLP no longer matches its decoded fields (disk
+    /// corruption, bug-induced cache divergence, malicious witness).
+    ///
+    /// Strategy:
+    ///   * `strict==true` (lazy-loaded witnesses, the production attack
+    ///     surface): re-encode using ONLY immediate children's
+    ///     `rlp_cache`. The strict pass delegates to `child_ref_local`
+    ///     with `require_cached=true`, which fails closed for any child
+    ///     that came from a persisted cell but has no cached RLP (i.e.
+    ///     `ensure_decoded()` failed). The narrow per-node exception:
+    ///     a child carrying `decoded && dirty` is an in-memory built
+    ///     node introduced by a post-load mutation (e.g. a fresh
+    ///     `Node::leaf()` allocated by `update_storage`); for such a
+    ///     child the strict pass permits the recursive `child->rlp()`
+    ///     materialisation. The bypass remains closed because an
+    ///     attacker-controlled lazy cell that fails to decode never
+    ///     reaches `decoded && dirty`. If neither path produces a
+    ///     reference for the entire encoding, fail closed with
+    ///     `"MPT: lazy-loaded child has no cached RLP"`.
+    ///   * `strict==false` (in-memory built tries that have never been
+    ///     serialised — e.g. test fixtures, internal builders): keep the
+    ///     legacy strict-then-permissive behaviour. The strict pass is
+    ///     attempted first because it is cheaper and correct for
+    ///     already-cached children; only if the strict pass cannot derive
+    ///     a child reference do we fall back to `child->rlp()` for ALL
+    ///     children, regardless of dirty state. Permissive mode is
+    ///     reachable ONLY via the `*_safe` walkers' explicit choice
+    ///     based on `MptTrie::origin()`; production callers (RPC, witness
+    ///     proof helpers) always pass `strict=true`.
+    ///
+    /// Whichever pass produced `local`, if our own `rlp_cache` is
+    /// non-empty and disagrees byte-for-byte, fail closed with `"MPT:
+    /// cached RLP does not match decoded shape"`. A tampered cell whose
+    /// cached RLP does not match the structural fields cannot leak
+    /// through.
+    td::Result<Bytes> rlp_checked_local(MptPathBudget& budget,
+                                          bool strict) const {
+        if (!ensure_decoded()) {
+            return td::Status::Error("MPT: failed to decode lazy node");
+        }
+        // Strict pass with the per-node in-memory exception baked into
+        // `child_ref_local`. This is the production attack-surface
+        // defence: cell-loaded children must already carry a cached RLP
+        // (or successfully populate one via `ensure_decoded()`); only
+        // post-load in-memory mutations get the recursive materialisation.
+        Bytes local =
+            compute_rlp_local_shape_using_child_refs(/*require_cached=*/true);
+        if (local.empty()) {
+            if (strict) {
+                // No permissive fallback for lazy-loaded witnesses: an
+                // immediate child whose persisted cell could not populate
+                // its `rlp_cache` AND that is not an in-memory dirty node
+                // is the attack vector. Surface a fail-closed RPC /
+                // consensus error rather than silently bypassing the
+                // path-local consistency check via `child->rlp()`.
+                return td::Status::Error(
+                    "MPT: lazy-loaded child has no cached RLP");
+            }
+            // Permissive: in-memory only trie; ALL children may have
+            // legitimately empty caches because the trie has never been
+            // serialised. Materialise via the existing recursive helper.
+            local =
+                compute_rlp_local_shape_using_child_refs(/*require_cached=*/false);
+            if (local.empty()) {
+                return td::Status::Error("MPT: invalid local node shape");
+            }
+        }
+        if (local.size() > MptPathBudget::kMaxPathRlpBytes ||
+            budget.rlp_bytes >
+                MptPathBudget::kMaxPathRlpBytes - local.size()) {
+            return td::Status::Error("MPT path budget exceeded");
+        }
+        budget.rlp_bytes = budget.rlp_bytes + local.size();  // safe: cap checked
+        if (!rlp_cache.empty() && rlp_cache != local) {
+            return td::Status::Error(
+                "MPT: cached RLP does not match decoded shape");
+        }
+        return local;
+    }
+
     const Bytes& rlp() const {
         if (!dirty && !rlp_cache.empty()) {
             return rlp_cache;
@@ -737,27 +967,40 @@ void walk_proof(const std::shared_ptr<MptTrie::Node>& node,
 /// process abort via `CHECK`. Each decoded node consumes from a path budget
 /// (count + total RLP bytes); exceeding either cap fails the proof rather
 /// than allowing an O(global trie) walk on a corrupt or pathological witness.
+///
+/// `strict` selects the path-local cached-RLP consistency policy used at
+/// each visited node. The public `MptTrie::proof_safe` derives this from
+/// `MptTrie::origin()`: lazy-loaded witnesses always pass `strict=true`
+/// (no permissive fallback for missing immediate-child caches);
+/// in-memory built tries (test fixtures / pre-serialize builders) pass
+/// `strict=false` to keep the legacy permissive behaviour.
 td::Status walk_proof_safe(const std::shared_ptr<MptTrie::Node>& node,
                             ByteView target,
                             std::vector<Bytes>& proof,
-                            MptPathBudget& budget) {
+                            MptPathBudget& budget,
+                            bool strict) {
     if (!node) {
         return td::Status::OK();
     }
     if (!node->ensure_decoded()) {
         return td::Status::Error("MPT proof: failed to decode lazy node");
     }
-    if (++budget.nodes > MptPathBudget::kMaxPathNodes) {
+    if (budget.nodes >= MptPathBudget::kMaxPathNodes) {
         return td::Status::Error("MPT path budget exceeded");
     }
-    const auto& encoded = node->rlp();
-    if (encoded.size() > MptPathBudget::kMaxPathRlpBytes ||
-        budget.rlp_bytes >
-            MptPathBudget::kMaxPathRlpBytes - encoded.size()) {
-        return td::Status::Error("MPT path budget exceeded");
+    budget.nodes = budget.nodes + 1;  // safe: cap checked above
+
+    // Path-local cached-RLP consistency: re-encode this node from the
+    // decoded shape using cached child refs and compare against
+    // `rlp_cache`. A tampered witness whose cached RLP does not match
+    // the decoded fields fails closed here without recursing into
+    // off-path subtrees. Also folds the per-node RLP byte count into
+    // the path budget.
+    auto encoded_res = node->rlp_checked_local(budget, strict);
+    if (encoded_res.is_error()) {
+        return encoded_res.move_as_error();
     }
-    budget.rlp_bytes += encoded.size();
-    proof.push_back(encoded);
+    proof.push_back(encoded_res.move_as_ok());
 
     if (node->kind == kNodeLeaf) {
         return td::Status::OK();
@@ -768,7 +1011,7 @@ td::Status walk_proof_safe(const std::shared_ptr<MptTrie::Node>& node,
             return td::Status::OK();
         }
         return walk_proof_safe(node->child, target.substr(node->path.size()),
-                                proof, budget);
+                                proof, budget, strict);
     }
     if (node->kind != kNodeBranch) {
         return td::Status::Error("MPT proof: unknown node kind");
@@ -777,7 +1020,7 @@ td::Status walk_proof_safe(const std::shared_ptr<MptTrie::Node>& node,
         return td::Status::OK();
     }
     return walk_proof_safe(node->children[target[0]], target.substr(1),
-                            proof, budget);
+                            proof, budget, strict);
 }
 
 /// Fail-closed value lookup. Same path-budget semantics as `walk_proof_safe`,
@@ -788,26 +1031,34 @@ td::Status walk_proof_safe(const std::shared_ptr<MptTrie::Node>& node,
 /// returns `td::Status::OK()` with `out_value` left empty (`std::nullopt`
 /// signal at the public level). Malformed nodes / over-budget descents
 /// surface as a non-OK status.
+///
+/// `strict` selects the path-local cached-RLP consistency policy at each
+/// visited node — same semantics as `walk_proof_safe`.
 td::Status walk_value_safe(const std::shared_ptr<MptTrie::Node>& node,
                             ByteView target,
                             std::optional<Bytes>& out_value,
-                            MptPathBudget& budget) {
+                            MptPathBudget& budget,
+                            bool strict) {
     if (!node) {
         return td::Status::OK();
     }
     if (!node->ensure_decoded()) {
         return td::Status::Error("MPT value: failed to decode lazy node");
     }
-    if (++budget.nodes > MptPathBudget::kMaxPathNodes) {
+    if (budget.nodes >= MptPathBudget::kMaxPathNodes) {
         return td::Status::Error("MPT path budget exceeded");
     }
-    const auto& encoded = node->rlp();
-    if (encoded.size() > MptPathBudget::kMaxPathRlpBytes ||
-        budget.rlp_bytes >
-            MptPathBudget::kMaxPathRlpBytes - encoded.size()) {
-        return td::Status::Error("MPT path budget exceeded");
+    budget.nodes = budget.nodes + 1;  // safe: cap checked above
+
+    // Path-local cached-RLP consistency check; same fail-closed contract
+    // as `walk_proof_safe`. Even though the value walk does not return
+    // RLP bytes, a tampered cached envelope must not be silently trusted
+    // — flat-state cross-checks rely on the decoded value being the
+    // same object the cached RLP claims to encode.
+    auto encoded_res = node->rlp_checked_local(budget, strict);
+    if (encoded_res.is_error()) {
+        return encoded_res.move_as_error();
     }
-    budget.rlp_bytes += encoded.size();
 
     if (node->kind == kNodeLeaf) {
         if (node->path.size() == target.size() &&
@@ -822,7 +1073,7 @@ td::Status walk_value_safe(const std::shared_ptr<MptTrie::Node>& node,
             return td::Status::OK();
         }
         return walk_value_safe(node->child, target.substr(node->path.size()),
-                                out_value, budget);
+                                out_value, budget, strict);
     }
     if (node->kind != kNodeBranch) {
         return td::Status::Error("MPT value: unknown node kind");
@@ -831,7 +1082,7 @@ td::Status walk_value_safe(const std::shared_ptr<MptTrie::Node>& node,
         return td::Status::OK();
     }
     return walk_value_safe(node->children[target[0]], target.substr(1),
-                            out_value, budget);
+                            out_value, budget, strict);
 }
 
 bool validate_node_shallow(const std::shared_ptr<MptTrie::Node>& node,
@@ -938,6 +1189,11 @@ bool validate_node_strict(const std::shared_ptr<MptTrie::Node>& node,
 
 void MptTrie::clear() noexcept {
     root_.reset();
+    // Reset origin: a `clear()`'d trie is structurally indistinguishable
+    // from a freshly default-constructed (in-memory built) one. Future
+    // mutations on this instance start fresh and do not inherit the
+    // strict-only contract from a previous cell-loaded incarnation.
+    origin_ = MptOrigin::InMemoryBuilt;
 }
 
 td::Status MptTrie::upsert_hashed_safe(const ByteView& hashed_key,
@@ -957,6 +1213,13 @@ td::Status MptTrie::upsert_hashed_safe(const ByteView& hashed_key,
         return std::move(updated.status);
     }
     root_ = std::move(updated.node);
+    // SECURITY: do NOT reset `origin_` here. The contract is "once
+    // cell-loaded, always strict": a cell-loaded trie that is then
+    // mutated stays in `MptOrigin::LoadedFromCell`, so the path-local
+    // walkers continue to use strict-only consistency. New in-memory
+    // nodes introduced by this mutation inherit the strict policy; if a
+    // later proof reaches a still-uncached new node, the walker fails
+    // closed instead of falling back to `child->rlp()`.
     return td::Status::OK();
 }
 
@@ -976,6 +1239,8 @@ td::Status MptTrie::erase_hashed_safe(const ByteView& hashed_key) {
     if (updated.changed) {
         root_ = std::move(updated.node);
     }
+    // SECURITY: same contract as `upsert_hashed_safe` — do NOT reset
+    // `origin_`. A cell-loaded trie remains strict for its lifetime.
     return td::Status::OK();
 }
 
@@ -986,7 +1251,30 @@ td::Result<evmc::bytes32> MptTrie::root_hash_safe() const {
     if (!root_->ensure_decoded()) {
         return td::Status::Error("MPT root_hash: failed to decode root");
     }
-    return root_->hash();
+    // Path-local cached-RLP consistency: keccak the locally re-encoded
+    // root rather than the (possibly tampered) cached RLP. This binds the
+    // returned root hash to the decoded structural fields of the root
+    // node and the cached references of its immediate children, so a
+    // witness whose root cell carries a forged cached RLP fails closed
+    // here instead of broadcasting the tampered hash as the canonical
+    // stateRoot.
+    //
+    // Strict-only on lazy-loaded witnesses: see `MptOrigin` in the header.
+    // A trie that was bound from a persisted cell uses no permissive
+    // fallback; a trie that has only ever existed in memory may still
+    // need the recursive helper to materialise a never-serialised child
+    // cache.
+    MptPathBudget budget;
+    const bool strict = (origin_ == MptOrigin::LoadedFromCell);
+    auto encoded_res = root_->rlp_checked_local(budget, strict);
+    if (encoded_res.is_error()) {
+        return encoded_res.move_as_error();
+    }
+    Bytes encoded = encoded_res.move_as_ok();
+    auto h = ethash::keccak256(encoded.data(), encoded.size());
+    evmc::bytes32 out{};
+    std::memcpy(out.bytes, h.bytes, kHashLength);
+    return out;
 }
 
 // Audit: consensus-critical mutation paths (CellEvmState::update_storage,
@@ -1031,7 +1319,9 @@ td::Result<std::vector<Bytes>> MptTrie::proof_safe(const ByteView& hashed_key) c
     Bytes nibbles = silkworm::trie::unpack_nibbles(hashed_key);
     std::vector<Bytes> out;
     MptPathBudget budget;
-    if (auto status = walk_proof_safe(root_, nibbles, out, budget);
+    // Strict-only on lazy-loaded witnesses: see `MptOrigin` in the header.
+    const bool strict = (origin_ == MptOrigin::LoadedFromCell);
+    if (auto status = walk_proof_safe(root_, nibbles, out, budget, strict);
         status.is_error()) {
         return std::move(status);
     }
@@ -1050,7 +1340,10 @@ td::Result<std::optional<Bytes>> MptTrie::value_at_hashed_safe(
     Bytes nibbles = silkworm::trie::unpack_nibbles(hashed_key);
     std::optional<Bytes> out_value;
     MptPathBudget budget;
-    if (auto status = walk_value_safe(root_, nibbles, out_value, budget);
+    // Strict-only on lazy-loaded witnesses: see `MptOrigin` in the header.
+    const bool strict = (origin_ == MptOrigin::LoadedFromCell);
+    if (auto status =
+            walk_value_safe(root_, nibbles, out_value, budget, strict);
         status.is_error()) {
         return std::move(status);
     }
@@ -1068,6 +1361,11 @@ bool MptTrie::load_from_cell(td::Ref<vm::Cell> root,
                               MptWitnessValidationMode mode) {
     if (root.is_null()) {
         clear();
+        // Even an empty witness is "loaded from cell" — pin the origin so
+        // a caller that subsequently mutates this trie cannot
+        // accidentally regain the in-memory permissive policy by binding
+        // null first.
+        origin_ = MptOrigin::LoadedFromCell;
         return true;
     }
     auto loaded = Node::lazy(std::move(root));
@@ -1086,6 +1384,20 @@ bool MptTrie::load_from_cell(td::Ref<vm::Cell> root,
         }
     }
     root_ = std::move(loaded);
+    // Pin the origin to LoadedFromCell. This is the security gate for
+    // strict-only path-local cached-RLP consistency: every subsequent
+    // `*_safe` walk sets `strict=true` from `MptOrigin::LoadedFromCell`,
+    // which removes the strict-then-permissive bypass entirely on the
+    // production attack surface.
+    //
+    // Note: the contract is "once cell-loaded, always strict". The
+    // mutation entry points (`upsert_hashed_safe`, `erase_hashed_safe`,
+    // and the legacy boolean wrappers that delegate to them) MUST NOT
+    // reset this flag. New in-memory nodes introduced by such mutations
+    // therefore inherit the strict-only policy; if a later proof passes
+    // through a still-uncached new node, the walker fails closed instead
+    // of bypassing the verification.
+    origin_ = MptOrigin::LoadedFromCell;
     return true;
 }
 
