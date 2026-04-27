@@ -913,4 +913,52 @@ if awk '
     exit 1
 fi
 
+# Q-2 (audit, 2026-04-27): every state-growth invariance test in
+# evm/test/test-executor.cpp MUST keep its OFF/ON ratio assertions HARD
+# (i.e. drive `g_test_failures.fetch_add` and surface FAILED on
+# violation). A regression that loosened any of these to "info-only"
+# logging would silently mask a re-introduction of an O(N) per-tx
+# executor walk. Each test name is paired with the explicit assert-
+# folding line `if (!ok) g_test_failures.fetch_add(1)` that lives in
+# the H-01 / Q-2 harness pattern.
+test_executor_cpp="$root/evm/test/test-executor.cpp"
+for q2_test in \
+    test_q2_state_growth_invariance_sload_1m_slots \
+    test_q2_state_growth_invariance_call \
+    test_q2_state_growth_invariance_create2 \
+    test_q2_state_growth_invariance_eip7702_setcode; do
+    if ! rg -q "void ${q2_test}\\(\\)" "$test_executor_cpp"; then
+        echo "evm production hardening check failed: ${q2_test} must exist in $test_executor_cpp (Q-2)" >&2
+        exit 1
+    fi
+    # Each Q-2 test must contain BOTH a HARD ratio bound assertion
+    # (ratio_off <= kHardOff) and the failure-folding line that bumps
+    # g_test_failures on assertion violation. The `awk` block scopes the
+    # search to the body of the named function so a failure-folding line
+    # in a sibling test does not satisfy this rule by accident.
+    if ! awk -v fn="$q2_test" '
+        $0 ~ ("^void " fn "\\(\\)") { in_fn = 1; next }
+        in_fn && /^void / { in_fn = 0 }
+        in_fn && /ratio_off <= kHardOff/ { saw_hard = 1 }
+        in_fn && /g_test_failures.fetch_add\(1\)/ { saw_fold = 1 }
+        END { exit (saw_hard && saw_fold ? 0 : 1) }
+    ' "$test_executor_cpp"; then
+        echo "evm production hardening check failed: ${q2_test} must HARD-assert ratio_off <= kHardOff and fold to g_test_failures (Q-2)" >&2
+        exit 1
+    fi
+done
+# The Q-2 SLOAD test must scale to ≥ 1M storage slots when
+# TOS_RUN_M_BENCH=1, per the audit checklist (≥ 1M storage slots).
+if ! rg -q 'TOS_RUN_M_BENCH' "$test_executor_cpp"; then
+    echo "evm production hardening check failed: test_q2_state_growth_invariance_sload_1m_slots must support TOS_RUN_M_BENCH=1 to exercise the ≥ 1M storage-slot leg (Q-2)" >&2
+    exit 1
+fi
+# The Q-2 CALL test must place all five CALL targets in the EIP-2930
+# access list — losing the access list would let the per-tx accounts-
+# touched scale with global state on first cold read.
+if ! rg -q 'access_list.push_back' "$test_executor_cpp"; then
+    echo "evm production hardening check failed: test_q2_state_growth_invariance_call must seed an access_list to keep first-touch cost constant in N (Q-2)" >&2
+    exit 1
+fi
+
 echo "evm production hardening check passed"

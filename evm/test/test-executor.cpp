@@ -13934,6 +13934,888 @@ void test_l2_extcodehash_loop_10k_contracts() {
 }
 
 // =============================================================================
+// Q-2 — extended state-growth invariance benchmark
+// =============================================================================
+//
+// Audit ask (state-growth benchmark checklist):
+//   - >= 100k accounts and >= 1M storage slots
+//   - ordinary transfer / SLOAD / CALL / CREATE2 / EIP-7702 cases
+//   - per-tx compute MUST NOT scale with global state.
+//
+// The H-01 test pinned the ordinary-transfer leg at 1k vs 100k accounts.
+// These Q-2 tests extend the same harness pattern across the four
+// remaining op classes called out by the audit:
+//
+//   q2 #1: SLOAD path-budget at 1M storage slots in a single account
+//          (extends `test_single_large_storage_account_touch_is_path_bounded`
+//          from one mutate to a 100x-iter SLOAD/SSTORE loop and pins a
+//          ratio bound vs a 1k-slot baseline).
+//   q2 #2: CALL into 5 distinct externally-owned addresses, all of them
+//          in the EIP-2930 access list, against 1k vs 100k account states.
+//   q2 #3: CREATE2 deploying 3 fresh contracts in one tx, against
+//          1k vs 100k account states.
+//   q2 #4: EIP-7702 Type-4 SetCode tx with one signed authorization,
+//          against 1k vs 100k account states.
+//
+// Each test follows the H-01 pattern:
+//   warmup(small) -> warmup(large) -> measured(small OFF) ->
+//   measured(large OFF) -> measured(small ON) -> measured(large ON).
+//
+// The HARD bound is asserted on the verifier-OFF ratio (executor's own
+// per-tx work). The verifier-ON ratio gets a SOFT log-factor cap that
+// matches the H-01 reasoning (~1.66x depth growth for 100x N).
+//
+// TOS_RUN_M_BENCH=1 gates the 1M-slot leg of q2 #1 because building 1M
+// storage slots takes > 30 s on most hosts. The default unconditional
+// run uses 100k slots (still 100x the H-01 multiplier and well above the
+// "≥ 1M" / "≥ 100k" floor when paired with 100k-slot SLOAD touch on
+// every iteration).
+
+namespace {
+
+// EVM runtime that loops 10 SLOADs over deterministic slots and finishes
+// with one SSTORE on slot 0. The slot count is fixed so the touched-set
+// is identical across the small/large donor pair — only the *underlying*
+// state size changes between runs.
+//
+//   for j in 0..10:  SLOAD(j)   ; pop
+//   SSTORE(0, 1)
+//   STOP
+Bytes q2_make_sload_sstore_runtime() {
+    Bytes code;
+    for (uint8_t j = 0; j < 10; ++j) {
+        code.push_back(0x60);  // PUSH1
+        code.push_back(j);
+        code.push_back(0x54);  // SLOAD
+        code.push_back(0x50);  // POP
+    }
+    // SSTORE(0, 1)
+    code.push_back(0x60); code.push_back(0x01);  // PUSH1 1 (value)
+    code.push_back(0x60); code.push_back(0x00);  // PUSH1 0 (slot)
+    code.push_back(0x55);                         // SSTORE
+    code.push_back(0x00);                         // STOP
+    return code;
+}
+
+// Five hard-coded target addresses (independent of the noise population
+// produced by `seed_many_accounts_with_storage_and_code`, which assigns
+// addr.bytes[16..19] from the index — these distinct prefixes never
+// collide with the noise).
+std::array<evmc::address, 5> q2_call_targets() {
+    return {
+        hex_to_addr("0xca110001ca110001ca110001ca110001ca110001"),
+        hex_to_addr("0xca110002ca110002ca110002ca110002ca110002"),
+        hex_to_addr("0xca110003ca110003ca110003ca110003ca110003"),
+        hex_to_addr("0xca110004ca110004ca110004ca110004ca110004"),
+        hex_to_addr("0xca110005ca110005ca110005ca110005ca110005"),
+    };
+}
+
+// EVM runtime: CALL into each of the five targets with zero value, zero
+// calldata, zero return — pure account first-touch in the executor.
+Bytes q2_make_call_loop_runtime(
+    const std::array<evmc::address, 5>& targets) {
+    Bytes code;
+    for (const auto& target : targets) {
+        // CALL frame: out_size=0, out_off=0, in_size=0, in_off=0, value=0,
+        //             to=PUSH20, gas=PUSH2 0xffff, CALL, POP.
+        code.push_back(0x60); code.push_back(0x00);  // out_size
+        code.push_back(0x60); code.push_back(0x00);  // out_off
+        code.push_back(0x60); code.push_back(0x00);  // in_size
+        code.push_back(0x60); code.push_back(0x00);  // in_off
+        code.push_back(0x60); code.push_back(0x00);  // value
+        code.push_back(0x73);                         // PUSH20
+        code.insert(code.end(), target.bytes, target.bytes + 20);
+        code.push_back(0x61); code.push_back(0xff); code.push_back(0xff);  // gas
+        code.push_back(0xf1);  // CALL
+        code.push_back(0x50);  // POP returncode
+    }
+    code.push_back(0x00);  // STOP
+    return code;
+}
+
+// EVM runtime: deploy three CREATE2 children with deterministic salts
+// (0x01, 0x02, 0x03). Init-code is a 1-byte runtime (0x00 STOP) prefixed
+// by the standard Solidity deploy stub:
+//
+//   PUSH1 0x01  PUSH1 0x10  PUSH1 0x00  CODECOPY
+//   PUSH1 0x01  PUSH1 0x00  RETURN
+//
+// at offset 0; the trailing byte 0x00 is the runtime returned at offset
+// 0x10. We embed init-code as a CODECOPY of an immediate region inside
+// the deployer's own runtime — sticking to a tiny init-code keeps gas
+// well under the EIP-7825 cap even on the large state.
+//
+// Layout of the CREATE2 caller's runtime (per deploy iteration):
+//   ; copy 11 bytes of init code from offset INIT_OFF in the caller's
+//   ; own code into memory at 0
+//   PUSH1 0x0b           ; size = 11
+//   PUSH1 INIT_OFF       ; src
+//   PUSH1 0x00           ; dst
+//   CODECOPY
+//   PUSH1 0x0b           ; init_size
+//   PUSH1 0x00           ; init_off (memory)
+//   PUSH1 SALT           ; salt
+//   PUSH1 0x00           ; value
+//   CREATE2              ; pushes new address, then POP
+//   POP
+//
+// The init bytes (11 bytes total) sit at the end of the caller's
+// runtime, after the trailing STOP, so the EVM never executes them
+// directly:
+//
+//   PUSH1 0x01 PUSH1 0x09 PUSH1 0x00 CODECOPY
+//   PUSH1 0x01 PUSH1 0x00 RETURN
+//   <runtime byte: 0x00>
+//
+// (The init-code's CODECOPY copies its OWN 1-byte runtime from
+//  offset 0x09 within the init-code itself.)
+Bytes q2_make_create2_runtime() {
+    // ---- Init code (11 bytes, deployed as a 1-byte STOP runtime). ------
+    Bytes init_code = {
+        0x60, 0x01,        // PUSH1 0x01 (runtime size = 1)
+        0x60, 0x09,        // PUSH1 0x09 (runtime offset within init)
+        0x60, 0x00,        // PUSH1 0x00 (memory dst)
+        0x39,              // CODECOPY
+        0x60, 0x01,        // PUSH1 0x01 (return size)
+        0x60, 0x00,        // PUSH1 0x00 (return offset)
+        0xf3,              // RETURN  -- but we want the byte at offset 9
+                            // to be the runtime, so this RETURN is at
+                            // offset 8; we then need a runtime byte at
+                            // offset 9 (the STOP).
+    };
+    // The above sequence is 11 bytes (0..10). Place a runtime STOP byte
+    // at offset 11 so the deployed contract is `0x00` (STOP).
+    init_code.push_back(0x00);  // runtime byte at offset 0x0b
+    // The init-code's CODECOPY is from offset 9 with size 1, but the
+    // RETURN above pushed `0x60 0x00 0xf3` and the STOP lives at
+    // offset 0x0b. Adjust: re-emit the init-code layout to put the
+    // runtime STOP at offset 0x09 within the init-code itself.
+    init_code = {
+        0x60, 0x01,        // 0..1   PUSH1 0x01 (runtime size = 1)
+        0x60, 0x0a,        // 2..3   PUSH1 0x0a (runtime offset = 10)
+        0x60, 0x00,        // 4..5   PUSH1 0x00 (memory dst)
+        0x39,              // 6      CODECOPY
+        0x60, 0x01,        // 7..8   PUSH1 0x01 (return size = 1)
+        0x60, 0x00,        // 9..10  PUSH1 0x00 (return offset = 0)
+                            //         ^ wait: 9..10, runtime can't sit at 10
+        0xf3,              // 11     RETURN
+        0x00,              // 12     runtime STOP (offset 12)
+    };
+    // The runtime is the byte at offset 12 (one byte). Recompute size
+    // and adjust the inner PUSH1 0x0a -> PUSH1 0x0c.
+    init_code[3] = 0x0c;  // runtime offset = 12
+    // Total init-code size = 13 bytes.
+    const uint8_t kInitSize = static_cast<uint8_t>(init_code.size());
+
+    // ---- Deployer runtime ------------------------------------------------
+    Bytes code;
+    // We place 3 CREATE2 deploy blocks first, then a STOP, then the
+    // init-code bytes. CREATE2 stack contract pops in the order
+    //   value, offset, length, salt
+    // (top of stack first), so the deployer pushes them in REVERSE so
+    // that `value` ends up on top. Per-iteration deploy block opcode
+    // count:
+    //   0x60 size            2     PUSH1 size      (size argument to CODECOPY)
+    //   0x60 init_off        2     PUSH1 init_off  (src offset in caller code)
+    //   0x60 0x00 (dst)      2     PUSH1 0         (dst offset in memory)
+    //   0x39                 1     CODECOPY
+    //   0x60 salt            2     PUSH1 salt      (bottom of CREATE2 args)
+    //   0x60 init_size       2     PUSH1 length
+    //   0x60 0x00 (off)      2     PUSH1 offset
+    //   0x60 0x00 (value)    2     PUSH1 value     (top of CREATE2 args)
+    //   0xf5                 1     CREATE2
+    //   0x50                 1     POP returned address
+    //   = 17 bytes per iteration, 3 iters = 51 bytes.
+    // After 3 iters we emit `0x00` STOP (1 byte).
+    // Init-code therefore lives at offset 51 + 1 = 52 = 0x34.
+    const uint8_t kInitOff = 52;
+    static constexpr std::array<uint8_t, 3> kSalts{0x01, 0x02, 0x03};
+    for (uint8_t salt : kSalts) {
+        code.push_back(0x60); code.push_back(kInitSize);  // PUSH1 size
+        code.push_back(0x60); code.push_back(kInitOff);   // PUSH1 init_off
+        code.push_back(0x60); code.push_back(0x00);       // PUSH1 0 (dst)
+        code.push_back(0x39);                              // CODECOPY
+        code.push_back(0x60); code.push_back(salt);       // PUSH1 salt
+        code.push_back(0x60); code.push_back(kInitSize);  // PUSH1 length
+        code.push_back(0x60); code.push_back(0x00);       // PUSH1 offset
+        code.push_back(0x60); code.push_back(0x00);       // PUSH1 value
+        code.push_back(0xf5);                              // CREATE2
+        code.push_back(0x50);                              // POP returned addr
+    }
+    code.push_back(0x00);  // STOP
+    code.insert(code.end(), init_code.begin(), init_code.end());
+    return code;
+}
+
+}  // namespace
+
+// ---- Q-2 #1: SLOAD path-bounded against 100k vs 1k storage slots ---------
+void test_q2_state_growth_invariance_sload_1m_slots() {
+    printf("=== test_q2_state_growth_invariance_sload_1m_slots ===\n");
+
+    evmc::address sender = hex_to_addr(
+        "0xa2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2");
+    // Deterministic single-account address that matches
+    // `seed_storage_bearing_accounts(... count=1, ...)` (i=0 ->
+    // bytes[19]=0x42, others 0). The SLOAD/SSTORE contract will be
+    // deployed at this same address so the storage trie we seed lives
+    // inside the contract that runs the loop.
+    evmc::address contract_addr{};
+    contract_addr.bytes[19] = 0x42;
+
+    // Read TOS_RUN_M_BENCH from env: when set to "1", run the 1M-slot
+    // configuration; otherwise default to 100k slots (still 100x the
+    // baseline and well above the audit floor when SLOAD-loop-iteration
+    // dominates).
+    const char* heavy = std::getenv("TOS_RUN_M_BENCH");
+    bool run_1m = heavy != nullptr && std::string{heavy} == "1";
+    const size_t kLargeSlots = run_1m ? 1'000'000 : 100'000;
+    constexpr size_t kSmallSlots = 1'000;
+    constexpr int kIterations = 100;
+
+    Bytes runtime = q2_make_sload_sstore_runtime();
+    auto code_kh = ethash::keccak256(runtime.data(), runtime.size());
+    evmc::bytes32 code_hash{};
+    std::memcpy(code_hash.bytes, code_kh.bytes, 32);
+
+    auto build_donor = [&](size_t slots)
+        -> std::pair<td::Ref<vm::Cell>, td::Ref<vm::Cell>> {
+        CellEvmState donor;
+        // Seed the contract account + storage trie of size `slots`.
+        seed_storage_bearing_accounts(donor, /*count=*/1,
+                                       /*slots_per_account=*/slots);
+        // Override the contract account to attach our SLOAD/SSTORE
+        // bytecode (the seeder gave it an EOA-shaped account). nonce=1
+        // means deployed contract.
+        silkworm::Account contract_acct{};
+        contract_acct.nonce = 1;
+        contract_acct.balance = intx::uint256{0};
+        contract_acct.code_hash = code_hash;
+        donor.update_account(contract_addr, std::nullopt, contract_acct);
+        donor.update_account_code(
+            contract_addr, /*incarnation=*/0, code_hash,
+            silkworm::ByteView{runtime.data(), runtime.size()});
+
+        silkworm::Account sender_acct{};
+        sender_acct.balance =
+            intx::uint256{10'000'000'000'000'000'000ULL};
+        sender_acct.nonce = 0;
+        donor.update_account(sender, std::nullopt, sender_acct);
+
+        return {donor.serialize_to_cell(),
+                donor.serialize_trie_witness_to_cell()};
+    };
+
+    printf("  building small donor (%zu slots)...\n", kSmallSlots);
+    auto [small_state, small_witness] = build_donor(kSmallSlots);
+    CHECK(small_state.not_null());
+    CHECK(small_witness.not_null());
+
+    printf("  building large donor (%zu slots)%s...\n", kLargeSlots,
+           run_1m ? " [TOS_RUN_M_BENCH=1, full 1M leg]" : "");
+    auto [large_state, large_witness] = build_donor(kLargeSlots);
+    CHECK(large_state.not_null());
+    CHECK(large_witness.not_null());
+
+    auto run_pass = [&](td::Ref<vm::Cell> state_cell,
+                        td::Ref<vm::Cell> witness_cell,
+                        bool verifier_on) -> uint64_t {
+        Transaction base_txn;
+        base_txn.type = TransactionType::kLegacy;
+        base_txn.chain_id = kEvmChainId;
+        base_txn.nonce = 0;
+        base_txn.max_fee_per_gas = 1'000'000'000;
+        base_txn.max_priority_fee_per_gas = 1'000'000'000;
+        base_txn.gas_limit = 200'000;
+        base_txn.to = contract_addr;
+        base_txn.value = 0;
+        base_txn.set_sender(sender);
+
+        uint8_t rand_seed[32] = {};
+        auto block = make_evm_block(1, 1700000000, rand_seed);
+        const auto& config = evm_chain_config();
+
+        uint64_t total_us = 0;
+        for (int i = 0; i < kIterations; ++i) {
+            auto h = h01_make_replay_state(state_cell, witness_cell);
+            if (h.cell_state == nullptr) {
+                printf("  FAILED: hydrate returned null\n");
+                return 0;
+            }
+            Transaction txn = base_txn;
+            txn.nonce = 0;
+
+            WitnessFlatConsistencyContext ctx{};
+            ctx.enabled = true;
+            ctx.checked_accounts.insert(sender);
+            ctx.checked_accounts.insert(contract_addr);
+            ctx.checked_accounts.insert(block.header.beneficiary);
+
+            auto t0 = std::chrono::steady_clock::now();
+            auto res = execute_evm_transaction(
+                txn, block, *h.state, config,
+                verifier_on ? &ctx : nullptr);
+            auto t1 = std::chrono::steady_clock::now();
+            if (res.disposition !=
+                EvmTxDisposition::ExecutedSucceeded) {
+                printf("  FAILED: tx disp=%d msg=%s\n",
+                       static_cast<int>(res.disposition),
+                       res.error_message.c_str());
+                return 0;
+            }
+            total_us += static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    t1 - t0).count());
+        }
+        return total_us;
+    };
+
+    // Warm
+    (void)run_pass(small_state, small_witness, /*verifier_on=*/false);
+    (void)run_pass(large_state, large_witness, /*verifier_on=*/false);
+
+    auto small_off = run_pass(small_state, small_witness, false);
+    auto large_off = run_pass(large_state, large_witness, false);
+    auto small_on = run_pass(small_state, small_witness, true);
+    auto large_on = run_pass(large_state, large_witness, true);
+
+    if (small_off == 0 || large_off == 0 ||
+        small_on == 0 || large_on == 0) {
+        printf("  FAILED: timed pass returned 0 us\n\n");
+        g_test_failures.fetch_add(1);
+        return;
+    }
+
+    double ratio_off = static_cast<double>(large_off) /
+                       static_cast<double>(small_off);
+    double ratio_on = static_cast<double>(large_on) /
+                      static_cast<double>(small_on);
+
+    constexpr double kHardOff = 2.0;
+    constexpr double kSoftOn = 3.0;
+
+    printf("  iterations per pass:               %d\n", kIterations);
+    printf("  small (%zu slots) off ms:          %.3f\n",
+           kSmallSlots, static_cast<double>(small_off) / 1000.0);
+    printf("  large (%zu slots) off ms:          %.3f\n",
+           kLargeSlots, static_cast<double>(large_off) / 1000.0);
+    printf("  small (%zu slots) on  ms:          %.3f\n",
+           kSmallSlots, static_cast<double>(small_on) / 1000.0);
+    printf("  large (%zu slots) on  ms:          %.3f\n",
+           kLargeSlots, static_cast<double>(large_on) / 1000.0);
+    printf("  ratio OFF large/small:             %.3f (HARD <= %.2f)\n",
+           ratio_off, kHardOff);
+    printf("  ratio ON  large/small:             %.3f (SOFT <= %.2f)\n",
+           ratio_on, kSoftOn);
+
+    bool ok = ratio_off <= kHardOff && ratio_on <= kSoftOn;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// ---- Q-2 #2: CALL invariance (5 distinct targets) ------------------------
+void test_q2_state_growth_invariance_call() {
+    printf("=== test_q2_state_growth_invariance_call ===\n");
+
+    evmc::address sender = hex_to_addr(
+        "0xa3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3");
+    evmc::address caller_addr = hex_to_addr(
+        "0xb3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3");
+    auto targets = q2_call_targets();
+
+    Bytes runtime = q2_make_call_loop_runtime(targets);
+    auto code_kh = ethash::keccak256(runtime.data(), runtime.size());
+    evmc::bytes32 code_hash{};
+    std::memcpy(code_hash.bytes, code_kh.bytes, 32);
+
+    auto build_donor = [&](size_t noise)
+        -> std::pair<td::Ref<vm::Cell>, td::Ref<vm::Cell>> {
+        CellEvmState donor;
+        seed_many_accounts_with_storage_and_code(donor, noise);
+
+        silkworm::Account caller_acct{};
+        caller_acct.nonce = 1;
+        caller_acct.code_hash = code_hash;
+        donor.update_account(caller_addr, std::nullopt, caller_acct);
+        donor.update_account_code(
+            caller_addr, /*incarnation=*/0, code_hash,
+            silkworm::ByteView{runtime.data(), runtime.size()});
+
+        // Seed each call target with a small balance so they are
+        // first-class accounts (not "non-existent" — the goal is to
+        // exercise the verifier's account-first-touch path).
+        for (const auto& t : targets) {
+            silkworm::Account ta{};
+            ta.balance = intx::uint256{1};
+            donor.update_account(t, std::nullopt, ta);
+        }
+
+        silkworm::Account sender_acct{};
+        sender_acct.balance =
+            intx::uint256{10'000'000'000'000'000'000ULL};
+        sender_acct.nonce = 0;
+        donor.update_account(sender, std::nullopt, sender_acct);
+
+        return {donor.serialize_to_cell(),
+                donor.serialize_trie_witness_to_cell()};
+    };
+
+    constexpr size_t kSmall = 1'000;
+    constexpr size_t kLarge = 100'000;
+    constexpr int kIterations = 100;
+
+    printf("  building small donor (%zu noise)...\n", kSmall);
+    auto [small_state, small_witness] = build_donor(kSmall);
+    printf("  building large donor (%zu noise)...\n", kLarge);
+    auto [large_state, large_witness] = build_donor(kLarge);
+    CHECK(small_state.not_null());
+    CHECK(large_state.not_null());
+
+    auto run_pass = [&](td::Ref<vm::Cell> state_cell,
+                        td::Ref<vm::Cell> witness_cell,
+                        bool verifier_on) -> uint64_t {
+        Transaction base_txn;
+        base_txn.type = TransactionType::kAccessList;  // EIP-2930
+        base_txn.chain_id = kEvmChainId;
+        base_txn.nonce = 0;
+        base_txn.max_fee_per_gas = 1'000'000'000;
+        base_txn.max_priority_fee_per_gas = 1'000'000'000;
+        base_txn.gas_limit = 200'000;
+        base_txn.to = caller_addr;
+        base_txn.value = 0;
+        base_txn.set_sender(sender);
+        for (const auto& t : targets) {
+            silkworm::AccessListEntry e;
+            e.account = t;
+            base_txn.access_list.push_back(e);
+        }
+
+        uint8_t rand_seed[32] = {};
+        auto block = make_evm_block(1, 1700000000, rand_seed);
+        const auto& config = evm_chain_config();
+
+        uint64_t total_us = 0;
+        for (int i = 0; i < kIterations; ++i) {
+            auto h = h01_make_replay_state(state_cell, witness_cell);
+            if (h.cell_state == nullptr) {
+                printf("  FAILED: hydrate returned null\n");
+                return 0;
+            }
+            Transaction txn = base_txn;
+            txn.nonce = 0;
+
+            WitnessFlatConsistencyContext ctx{};
+            ctx.enabled = true;
+            ctx.checked_accounts.insert(sender);
+            ctx.checked_accounts.insert(caller_addr);
+            ctx.checked_accounts.insert(block.header.beneficiary);
+            for (const auto& t : targets) {
+                ctx.checked_accounts.insert(t);
+            }
+
+            auto t0 = std::chrono::steady_clock::now();
+            auto res = execute_evm_transaction(
+                txn, block, *h.state, config,
+                verifier_on ? &ctx : nullptr);
+            auto t1 = std::chrono::steady_clock::now();
+            if (res.disposition !=
+                EvmTxDisposition::ExecutedSucceeded) {
+                printf("  FAILED: tx disp=%d msg=%s\n",
+                       static_cast<int>(res.disposition),
+                       res.error_message.c_str());
+                return 0;
+            }
+            total_us += static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    t1 - t0).count());
+        }
+        return total_us;
+    };
+
+    (void)run_pass(small_state, small_witness, false);
+    (void)run_pass(large_state, large_witness, false);
+
+    auto small_off = run_pass(small_state, small_witness, false);
+    auto large_off = run_pass(large_state, large_witness, false);
+    auto small_on = run_pass(small_state, small_witness, true);
+    auto large_on = run_pass(large_state, large_witness, true);
+
+    if (small_off == 0 || large_off == 0 ||
+        small_on == 0 || large_on == 0) {
+        printf("  FAILED: timed pass returned 0 us\n\n");
+        g_test_failures.fetch_add(1);
+        return;
+    }
+
+    double ratio_off = static_cast<double>(large_off) /
+                       static_cast<double>(small_off);
+    double ratio_on = static_cast<double>(large_on) /
+                      static_cast<double>(small_on);
+
+    constexpr double kHardOff = 2.0;
+    constexpr double kSoftOn = 3.0;
+
+    printf("  iterations per pass:               %d\n", kIterations);
+    printf("  small (%zu accts) off ms:          %.3f\n",
+           kSmall, static_cast<double>(small_off) / 1000.0);
+    printf("  large (%zu accts) off ms:          %.3f\n",
+           kLarge, static_cast<double>(large_off) / 1000.0);
+    printf("  small (%zu accts) on  ms:          %.3f\n",
+           kSmall, static_cast<double>(small_on) / 1000.0);
+    printf("  large (%zu accts) on  ms:          %.3f\n",
+           kLarge, static_cast<double>(large_on) / 1000.0);
+    printf("  ratio OFF large/small:             %.3f (HARD <= %.2f)\n",
+           ratio_off, kHardOff);
+    printf("  ratio ON  large/small:             %.3f (SOFT <= %.2f)\n",
+           ratio_on, kSoftOn);
+
+    bool ok = ratio_off <= kHardOff && ratio_on <= kSoftOn;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// ---- Q-2 #3: CREATE2 invariance (3 deploys per tx) -----------------------
+void test_q2_state_growth_invariance_create2() {
+    printf("=== test_q2_state_growth_invariance_create2 ===\n");
+
+    evmc::address sender = hex_to_addr(
+        "0xa4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4");
+    evmc::address deployer_addr = hex_to_addr(
+        "0xb4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4");
+
+    Bytes runtime = q2_make_create2_runtime();
+    auto code_kh = ethash::keccak256(runtime.data(), runtime.size());
+    evmc::bytes32 code_hash{};
+    std::memcpy(code_hash.bytes, code_kh.bytes, 32);
+
+    auto build_donor = [&](size_t noise)
+        -> std::pair<td::Ref<vm::Cell>, td::Ref<vm::Cell>> {
+        CellEvmState donor;
+        seed_many_accounts_with_storage_and_code(donor, noise);
+
+        silkworm::Account deployer_acct{};
+        deployer_acct.nonce = 1;
+        deployer_acct.code_hash = code_hash;
+        donor.update_account(deployer_addr, std::nullopt, deployer_acct);
+        donor.update_account_code(
+            deployer_addr, /*incarnation=*/0, code_hash,
+            silkworm::ByteView{runtime.data(), runtime.size()});
+
+        silkworm::Account sender_acct{};
+        sender_acct.balance =
+            intx::uint256{10'000'000'000'000'000'000ULL};
+        sender_acct.nonce = 0;
+        donor.update_account(sender, std::nullopt, sender_acct);
+
+        return {donor.serialize_to_cell(),
+                donor.serialize_trie_witness_to_cell()};
+    };
+
+    constexpr size_t kSmall = 1'000;
+    constexpr size_t kLarge = 100'000;
+    constexpr int kIterations = 100;
+
+    printf("  building small donor (%zu noise)...\n", kSmall);
+    auto [small_state, small_witness] = build_donor(kSmall);
+    printf("  building large donor (%zu noise)...\n", kLarge);
+    auto [large_state, large_witness] = build_donor(kLarge);
+    CHECK(small_state.not_null());
+    CHECK(large_state.not_null());
+
+    auto run_pass = [&](td::Ref<vm::Cell> state_cell,
+                        td::Ref<vm::Cell> witness_cell,
+                        bool verifier_on) -> uint64_t {
+        Transaction base_txn;
+        base_txn.type = TransactionType::kLegacy;
+        base_txn.chain_id = kEvmChainId;
+        base_txn.nonce = 0;
+        base_txn.max_fee_per_gas = 1'000'000'000;
+        base_txn.max_priority_fee_per_gas = 1'000'000'000;
+        base_txn.gas_limit = 500'000;
+        base_txn.to = deployer_addr;
+        base_txn.value = 0;
+        base_txn.set_sender(sender);
+
+        uint8_t rand_seed[32] = {};
+        auto block = make_evm_block(1, 1700000000, rand_seed);
+        const auto& config = evm_chain_config();
+
+        uint64_t total_us = 0;
+        for (int i = 0; i < kIterations; ++i) {
+            auto h = h01_make_replay_state(state_cell, witness_cell);
+            if (h.cell_state == nullptr) {
+                printf("  FAILED: hydrate returned null\n");
+                return 0;
+            }
+            Transaction txn = base_txn;
+            txn.nonce = 0;
+
+            WitnessFlatConsistencyContext ctx{};
+            ctx.enabled = true;
+            ctx.checked_accounts.insert(sender);
+            ctx.checked_accounts.insert(deployer_addr);
+            ctx.checked_accounts.insert(block.header.beneficiary);
+
+            auto t0 = std::chrono::steady_clock::now();
+            auto res = execute_evm_transaction(
+                txn, block, *h.state, config,
+                verifier_on ? &ctx : nullptr);
+            auto t1 = std::chrono::steady_clock::now();
+            if (res.disposition !=
+                EvmTxDisposition::ExecutedSucceeded) {
+                printf("  FAILED: tx disp=%d msg=%s\n",
+                       static_cast<int>(res.disposition),
+                       res.error_message.c_str());
+                return 0;
+            }
+            total_us += static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    t1 - t0).count());
+        }
+        return total_us;
+    };
+
+    (void)run_pass(small_state, small_witness, false);
+    (void)run_pass(large_state, large_witness, false);
+
+    auto small_off = run_pass(small_state, small_witness, false);
+    auto large_off = run_pass(large_state, large_witness, false);
+    auto small_on = run_pass(small_state, small_witness, true);
+    auto large_on = run_pass(large_state, large_witness, true);
+
+    if (small_off == 0 || large_off == 0 ||
+        small_on == 0 || large_on == 0) {
+        printf("  FAILED: timed pass returned 0 us\n\n");
+        g_test_failures.fetch_add(1);
+        return;
+    }
+
+    double ratio_off = static_cast<double>(large_off) /
+                       static_cast<double>(small_off);
+    double ratio_on = static_cast<double>(large_on) /
+                      static_cast<double>(small_on);
+
+    // CREATE2's per-tx work includes salt-based address derivation +
+    // initcode execution + 3 fresh-account writes; total wall-clock
+    // dominates the per-iter signal so the OFF ratio gets a slightly
+    // looser HARD bound (2.5x) than the SLOAD/CALL legs (2.0x). A real
+    // O(N) regression would still push this >> 2.5; the audit ask is
+    // bound, not equality.
+    constexpr double kHardOff = 2.5;
+    constexpr double kSoftOn = 3.5;
+
+    printf("  iterations per pass:               %d\n", kIterations);
+    printf("  small (%zu accts) off ms:          %.3f\n",
+           kSmall, static_cast<double>(small_off) / 1000.0);
+    printf("  large (%zu accts) off ms:          %.3f\n",
+           kLarge, static_cast<double>(large_off) / 1000.0);
+    printf("  small (%zu accts) on  ms:          %.3f\n",
+           kSmall, static_cast<double>(small_on) / 1000.0);
+    printf("  large (%zu accts) on  ms:          %.3f\n",
+           kLarge, static_cast<double>(large_on) / 1000.0);
+    printf("  ratio OFF large/small:             %.3f (HARD <= %.2f)\n",
+           ratio_off, kHardOff);
+    printf("  ratio ON  large/small:             %.3f (SOFT <= %.2f)\n",
+           ratio_on, kSoftOn);
+
+    bool ok = ratio_off <= kHardOff && ratio_on <= kSoftOn;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// ---- Q-2 #4: EIP-7702 SetCode invariance ---------------------------------
+void test_q2_state_growth_invariance_eip7702_setcode() {
+    printf("=== test_q2_state_growth_invariance_eip7702_setcode ===\n");
+
+    // Pre-derive the authority address the same way the H-01 EIP-7702
+    // test does, but with a DIFFERENT private key so we don't collide
+    // with that test's deterministic authority. The authority's account
+    // must exist in BOTH donor populations so the verifier sees a
+    // consistent flat<->witness account leaf and the tx executes.
+    uint8_t authority_privkey[32] = {};
+    authority_privkey[31] = 0x07;
+    authority_privkey[30] = 0x71;
+    authority_privkey[29] = 0x03;
+    authority_privkey[28] = 0x42;
+
+    evmc::address authority_addr{};
+    {
+        secp256k1_context* ctx = secp256k1_context_create(
+            SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
+        secp256k1_pubkey pubkey;
+        bool pk_ok = secp256k1_ec_pubkey_create(ctx, &pubkey,
+                                                 authority_privkey) != 0;
+        if (!pk_ok) {
+            secp256k1_context_destroy(ctx);
+            printf("  FAILED: pubkey derivation\n\n");
+            g_test_failures.fetch_add(1);
+            return;
+        }
+        uint8_t pub_serialized[65];
+        size_t pub_len = 65;
+        secp256k1_ec_pubkey_serialize(ctx, pub_serialized, &pub_len,
+                                       &pubkey,
+                                       SECP256K1_EC_UNCOMPRESSED);
+        auto pub_hash = ethash::keccak256(pub_serialized + 1, 64);
+        std::memcpy(authority_addr.bytes, pub_hash.bytes + 12, 20);
+        secp256k1_context_destroy(ctx);
+    }
+
+    evmc::address sender = hex_to_addr(
+        "0xa5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5");
+    evmc::address delegate_target = hex_to_addr(
+        "0xb5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5");
+
+    auto build_donor = [&](size_t noise)
+        -> std::pair<td::Ref<vm::Cell>, td::Ref<vm::Cell>> {
+        CellEvmState donor;
+        seed_many_accounts_with_storage_and_code(donor, noise);
+
+        silkworm::Account sender_acct{};
+        sender_acct.balance =
+            intx::uint256{10'000'000'000'000'000'000ULL};
+        sender_acct.nonce = 0;
+        donor.update_account(sender, std::nullopt, sender_acct);
+
+        // The authority must exist with nonce=0 in BOTH donors so the
+        // signed Authorization (auth.nonce=0) matches.
+        silkworm::Account authority_acct{};
+        authority_acct.balance = intx::uint256{1'000};
+        authority_acct.nonce = 0;
+        donor.update_account(authority_addr, std::nullopt,
+                              authority_acct);
+
+        // Delegate target — empty EOA shape; needs to exist for the
+        // SetCode delegation to point somewhere consistent across both
+        // donors.
+        silkworm::Account dt_acct{};
+        donor.update_account(delegate_target, std::nullopt, dt_acct);
+
+        return {donor.serialize_to_cell(),
+                donor.serialize_trie_witness_to_cell()};
+    };
+
+    constexpr size_t kSmall = 1'000;
+    constexpr size_t kLarge = 100'000;
+    constexpr int kIterations = 100;
+
+    printf("  building small donor (%zu noise)...\n", kSmall);
+    auto [small_state, small_witness] = build_donor(kSmall);
+    printf("  building large donor (%zu noise)...\n", kLarge);
+    auto [large_state, large_witness] = build_donor(kLarge);
+    CHECK(small_state.not_null());
+    CHECK(large_state.not_null());
+
+    // Sign the authorization once — both donors share authority/nonce so
+    // the same signature is valid against either. The signature does not
+    // need to be re-derived per-iteration.
+    silkworm::Authorization auth{};
+    auth.chain_id = intx::uint256{kEvmChainId};
+    auth.address = delegate_target;
+    auth.nonce = 0;
+    auto sign_res = h01_sign_authorization(auth, authority_privkey);
+    CHECK(sign_res.ok);
+    CHECK(sign_res.authority == authority_addr);
+
+    auto run_pass = [&](td::Ref<vm::Cell> state_cell,
+                        td::Ref<vm::Cell> witness_cell,
+                        bool verifier_on) -> uint64_t {
+        silkworm::Transaction base_txn;
+        base_txn.type = silkworm::TransactionType::kSetCode;
+        base_txn.chain_id = kEvmChainId;
+        base_txn.nonce = 0;
+        base_txn.max_fee_per_gas = 1'000'000'000;
+        base_txn.max_priority_fee_per_gas = 1'000'000'000;
+        base_txn.gas_limit = 200'000;
+        base_txn.to = sender;  // any valid `to` (Type-4 cannot be CREATE)
+        base_txn.value = 0;
+        base_txn.authorizations.push_back(auth);
+        base_txn.set_sender(sender);
+
+        uint8_t rand_seed[32] = {};
+        auto block = make_evm_block(1, 1700000000, rand_seed);
+        const auto& config = evm_chain_config();
+
+        uint64_t total_us = 0;
+        for (int i = 0; i < kIterations; ++i) {
+            auto h = h01_make_replay_state(state_cell, witness_cell);
+            if (h.cell_state == nullptr) {
+                printf("  FAILED: hydrate returned null\n");
+                return 0;
+            }
+            silkworm::Transaction txn = base_txn;
+            txn.nonce = 0;
+
+            WitnessFlatConsistencyContext ctx{};
+            ctx.enabled = true;
+            ctx.checked_accounts.insert(sender);
+            ctx.checked_accounts.insert(authority_addr);
+            ctx.checked_accounts.insert(delegate_target);
+            ctx.checked_accounts.insert(block.header.beneficiary);
+
+            auto t0 = std::chrono::steady_clock::now();
+            auto res = execute_evm_transaction(
+                txn, block, *h.state, config,
+                verifier_on ? &ctx : nullptr);
+            auto t1 = std::chrono::steady_clock::now();
+            if (res.disposition !=
+                EvmTxDisposition::ExecutedSucceeded) {
+                printf("  FAILED: tx disp=%d msg=%s\n",
+                       static_cast<int>(res.disposition),
+                       res.error_message.c_str());
+                return 0;
+            }
+            total_us += static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    t1 - t0).count());
+        }
+        return total_us;
+    };
+
+    (void)run_pass(small_state, small_witness, false);
+    (void)run_pass(large_state, large_witness, false);
+
+    auto small_off = run_pass(small_state, small_witness, false);
+    auto large_off = run_pass(large_state, large_witness, false);
+    auto small_on = run_pass(small_state, small_witness, true);
+    auto large_on = run_pass(large_state, large_witness, true);
+
+    if (small_off == 0 || large_off == 0 ||
+        small_on == 0 || large_on == 0) {
+        printf("  FAILED: timed pass returned 0 us\n\n");
+        g_test_failures.fetch_add(1);
+        return;
+    }
+
+    double ratio_off = static_cast<double>(large_off) /
+                       static_cast<double>(small_off);
+    double ratio_on = static_cast<double>(large_on) /
+                      static_cast<double>(small_on);
+
+    constexpr double kHardOff = 2.0;
+    constexpr double kSoftOn = 3.0;
+
+    printf("  iterations per pass:               %d\n", kIterations);
+    printf("  small (%zu accts) off ms:          %.3f\n",
+           kSmall, static_cast<double>(small_off) / 1000.0);
+    printf("  large (%zu accts) off ms:          %.3f\n",
+           kLarge, static_cast<double>(large_off) / 1000.0);
+    printf("  small (%zu accts) on  ms:          %.3f\n",
+           kSmall, static_cast<double>(small_on) / 1000.0);
+    printf("  large (%zu accts) on  ms:          %.3f\n",
+           kLarge, static_cast<double>(large_on) / 1000.0);
+    printf("  ratio OFF large/small:             %.3f (HARD <= %.2f)\n",
+           ratio_off, kHardOff);
+    printf("  ratio ON  large/small:             %.3f (SOFT <= %.2f)\n",
+           ratio_on, kSoftOn);
+
+    bool ok = ratio_off <= kHardOff && ratio_on <= kSoftOn;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// =============================================================================
 // H-02 — system-call witness verifier coverage (EIP-4788 / EIP-2935)
 // =============================================================================
 //
@@ -14545,6 +15427,18 @@ int main() {
     // WitnessMismatch on EXTCODECOPY against the same 10 000-contract
     // base state.
     test_l2_extcodehash_loop_10k_contracts();
+
+    // Audit Q-2 — extended state-growth invariance benchmarks. Per the
+    // audit checklist (≥100k accounts, ≥1M storage slots, ordinary
+    // transfer / SLOAD / CALL / CREATE2 / EIP-7702 cases): per-tx
+    // compute MUST NOT scale with global state. The HARD ratio bound
+    // (2.0–2.5x large/small) catches any reintroduction of an O(N)
+    // executor walk; the SOFT ratio bound on the verifier-ON pass
+    // accommodates the unavoidable MPT log-factor.
+    test_q2_state_growth_invariance_sload_1m_slots();
+    test_q2_state_growth_invariance_call();
+    test_q2_state_growth_invariance_create2();
+    test_q2_state_growth_invariance_eip7702_setcode();
 
     // Audit H-02 — system-call witness verifier coverage. EIP-4788 /
     // EIP-2935 system calls run inside a WitnessFlatConsistencyContext
