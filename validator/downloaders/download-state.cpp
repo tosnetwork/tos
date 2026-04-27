@@ -157,6 +157,33 @@ td::Result<td::Ref<vm::Cell>> parse_ondisk_state_streaming(fullnode::BudgetedSta
   return root;
 }
 
+// H-02 / H-03 full-options overload. Lets the caller forward every
+// `vm::StreamingBocImportOptions` field (max_resident_bytes,
+// max_cells, max_scaffolding_bytes, max_total_cell_bytes,
+// max_roots) verbatim. Used by the actor wiring so a single budget
+// configuration object drives every BoC import in the persistent-state
+// path.
+td::Result<td::Ref<vm::Cell>> parse_ondisk_state_streaming(fullnode::BudgetedStateFile &file,
+                                                           const RootHash &expected_root_hash,
+                                                           const vm::StreamingBocImportOptions &opts,
+                                                           vm::StreamingCellSink *sink) {
+  if (file.path.empty() || file.size == 0) {
+    return td::Status::Error("parse_ondisk_state_streaming: empty BudgetedStateFile");
+  }
+  TRY_RESULT(fd, td::FileFd::open(file.path, td::FileFd::Flags::Read));
+  TRY_RESULT(root, vm::std_boc_deserialize_from_file_bounded(fd, file.size, opts, sink));
+  fd.close();
+  if (root.is_null()) {
+    return td::Status::Error("parse_ondisk_state_streaming: BoC deserialize returned null root");
+  }
+  if (RootHash{root->get_hash().bits()} != expected_root_hash) {
+    return td::Status::Error(PSTRING() << "parse_ondisk_state_streaming: root hash mismatch: expected "
+                                       << expected_root_hash.to_hex() << " got "
+                                       << RootHash{root->get_hash().bits()}.to_hex());
+  }
+  return root;
+}
+
 td::Status copy_tempfile_to_writer(const std::string &src_path, td::uint64 size, td::FileFd &dst) {
   TRY_RESULT(src_fd, td::FileFd::open(src_path, td::FileFd::Read));
   constexpr td::uint64 kChunkBytes = 1ULL << 20;  // 1 MiB
@@ -703,9 +730,28 @@ void DownloadShardState::downloaded_shard_state(fullnode::DownloadedPersistentSt
   // materialization. We charge that smaller number against the
   // processing budget so concurrent imports stack correctly.
   auto budget_cfg = fullnode::persistent_state_budget_config();
-  td::uint64 processing_charge = budget_cfg.max_resident_bytes_per_parse;
-  if (processing_charge > data_file_.size) {
-    processing_charge = data_file_.size;
+  // H-02 short-term cap. The streaming importer still returns the full
+  // root cell DAG, so resident bytes for the returned tree can exceed
+  // the per-cell residency budget. Charge against the conservative
+  // returned-DAG cap (file.size, capped at max_returned_dag_bytes_per_parse)
+  // and fail closed when the file is larger than that cap unless the
+  // future ExtCell-backed importer is enabled.
+  if (data_file_.size > budget_cfg.max_returned_dag_bytes_per_parse &&
+      !budget_cfg.enable_true_cell_db_streaming_import) {
+    data_file_ = fullnode::BudgetedStateFile{};
+    data_reservation_.reset();
+    fail_handler(
+        actor_id(this),
+        td::Status::Error(ErrorCode::notready,
+                          PSTRING() << "persistent state too large for in-memory returned DAG (file_size="
+                                    << data_file_.size << " > max_returned_dag_bytes_per_parse="
+                                    << budget_cfg.max_returned_dag_bytes_per_parse
+                                    << "); enable CellDb streaming importer"));
+    return;
+  }
+  td::uint64 processing_charge = data_file_.size;
+  if (processing_charge > budget_cfg.max_returned_dag_bytes_per_parse) {
+    processing_charge = budget_cfg.max_returned_dag_bytes_per_parse;
   }
   if (processing_charge > 0) {
     if (!fullnode::try_reserve_persistent_state_processing_memory(processing_charge)) {
@@ -753,9 +799,13 @@ void DownloadShardState::downloaded_shard_state(fullnode::DownloadedPersistentSt
   // The sink interface is the load-bearing extension point that lets
   // that future commit land without changing this actor wiring.
   fullnode::CellDbStreamingSink streaming_sink;
-  auto r_root = parse_ondisk_state_streaming(data_file_, handle_->state(),
-                                             budget_cfg.max_resident_bytes_per_parse,
-                                             &streaming_sink);
+  vm::StreamingBocImportOptions opts;
+  opts.max_resident_bytes = budget_cfg.max_resident_bytes_per_parse;
+  opts.max_cells = budget_cfg.max_cells_per_parse;
+  opts.max_scaffolding_bytes = budget_cfg.max_scaffolding_bytes_per_parse;
+  opts.max_total_cell_bytes =
+      std::min(data_file_.size, budget_cfg.max_total_cell_bytes_per_parse);
+  auto r_root = parse_ondisk_state_streaming(data_file_, handle_->state(), opts, &streaming_sink);
   if (r_root.is_error()) {
     LOG(WARNING) << "OnDisk streaming parse failed for " << block_id_.to_str()
                  << " after " << streaming_sink.cell_count() << " cells: "
@@ -930,9 +980,21 @@ void DownloadShardState::downloaded_split_state_header(fullnode::DownloadedPersi
   // download budget was happy. Charge the per-parse cap (NOT the file
   // size) since the streaming importer peaks at that smaller number.
   auto budget_cfg = fullnode::persistent_state_budget_config();
-  td::uint64 processing_charge = budget_cfg.max_resident_bytes_per_parse;
-  if (processing_charge > file.size) {
-    processing_charge = file.size;
+  // H-02 short-term cap, mirrored on the split-state header path.
+  if (file.size > budget_cfg.max_returned_dag_bytes_per_parse &&
+      !budget_cfg.enable_true_cell_db_streaming_import) {
+    fail_handler(
+        actor_id(this),
+        td::Status::Error(ErrorCode::notready,
+                          PSTRING() << "split persistent state header too large for in-memory returned DAG (file_size="
+                                    << file.size << " > max_returned_dag_bytes_per_parse="
+                                    << budget_cfg.max_returned_dag_bytes_per_parse
+                                    << "); enable CellDb streaming importer"));
+    return;
+  }
+  td::uint64 processing_charge = file.size;
+  if (processing_charge > budget_cfg.max_returned_dag_bytes_per_parse) {
+    processing_charge = budget_cfg.max_returned_dag_bytes_per_parse;
   }
   std::shared_ptr<fullnode::PersistentStateProcessingReservation> split_processing_reservation;
   if (processing_charge > 0) {
@@ -966,6 +1028,9 @@ void DownloadShardState::downloaded_split_state_header(fullnode::DownloadedPersi
     auto fd = r_fd.move_as_ok();
     vm::StreamingBocImportOptions opts;
     opts.max_resident_bytes = budget_cfg.max_resident_bytes_per_parse;
+    opts.max_cells = budget_cfg.max_cells_per_parse;
+    opts.max_scaffolding_bytes = budget_cfg.max_scaffolding_bytes_per_parse;
+    opts.max_total_cell_bytes = std::min(file.size, budget_cfg.max_total_cell_bytes_per_parse);
     // K3: wire the real CellDbStreamingSink so split-state header
     // imports get the same per-cell validation + counter that the
     // unsplit OnDisk parse uses. The downstream archive store still
@@ -1112,9 +1177,21 @@ void DownloadShardState::downloaded_state_part(fullnode::DownloadedPersistentSta
   auto reservation = file.reservation;
 
   auto budget_cfg = fullnode::persistent_state_budget_config();
-  td::uint64 processing_charge = budget_cfg.max_resident_bytes_per_parse;
-  if (processing_charge > file.size) {
-    processing_charge = file.size;
+  // H-02 short-term cap, mirrored on the split-state part path.
+  if (file.size > budget_cfg.max_returned_dag_bytes_per_parse &&
+      !budget_cfg.enable_true_cell_db_streaming_import) {
+    retry_part_download(
+        actor_id(this),
+        td::Status::Error(ErrorCode::notready,
+                          PSTRING() << "split persistent state part too large for in-memory returned DAG (file_size="
+                                    << file.size << " > max_returned_dag_bytes_per_parse="
+                                    << budget_cfg.max_returned_dag_bytes_per_parse
+                                    << "); enable CellDb streaming importer"));
+    return;
+  }
+  td::uint64 processing_charge = file.size;
+  if (processing_charge > budget_cfg.max_returned_dag_bytes_per_parse) {
+    processing_charge = budget_cfg.max_returned_dag_bytes_per_parse;
   }
   std::shared_ptr<fullnode::PersistentStateProcessingReservation> split_processing_reservation;
   if (processing_charge > 0) {
@@ -1148,6 +1225,9 @@ void DownloadShardState::downloaded_state_part(fullnode::DownloadedPersistentSta
     auto fd = r_fd.move_as_ok();
     vm::StreamingBocImportOptions opts;
     opts.max_resident_bytes = budget_cfg.max_resident_bytes_per_parse;
+    opts.max_cells = budget_cfg.max_cells_per_parse;
+    opts.max_scaffolding_bytes = budget_cfg.max_scaffolding_bytes_per_parse;
+    opts.max_total_cell_bytes = std::min(file.size, budget_cfg.max_total_cell_bytes_per_parse);
     // K3: wire the real CellDbStreamingSink for the split-state part
     // OnDisk parse. Same pattern as the header path.
     fullnode::CellDbStreamingSink streaming_sink;

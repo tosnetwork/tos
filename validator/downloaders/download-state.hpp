@@ -96,6 +96,16 @@ td::Result<td::Ref<vm::Cell>> parse_ondisk_state_streaming(fullnode::BudgetedSta
                                                            td::uint64 max_resident_bytes,
                                                            vm::StreamingCellSink *sink);
 
+// H-02 / H-03 full-options overload. Lets the caller forward every
+// `vm::StreamingBocImportOptions` field (max_resident_bytes,
+// max_cells, max_scaffolding_bytes, max_total_cell_bytes,
+// max_roots) verbatim. The actor uses this overload so a single
+// PersistentStateBudgetConfig snapshot drives every BoC import.
+td::Result<td::Ref<vm::Cell>> parse_ondisk_state_streaming(fullnode::BudgetedStateFile &file,
+                                                           const RootHash &expected_root_hash,
+                                                           const vm::StreamingBocImportOptions &opts,
+                                                           vm::StreamingCellSink *sink);
+
 class SplitStateDeserializer;
 
 struct SplitStatePart {

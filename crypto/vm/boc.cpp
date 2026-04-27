@@ -20,6 +20,8 @@
 #include <algorithm>
 #include <iomanip>
 #include <iostream>
+#include <limits>
+#include <new>
 
 #include "td/utils/Slice-decl.h"
 #include "td/utils/bits.h"
@@ -1337,14 +1339,75 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
     return td::Status::Error(PSLICE() << "std_boc_deserialize_from_file_bounded: too many roots "
                                       << info.root_count << " > " << opts.max_roots);
   }
-  if (opts.max_cells > 0 && static_cast<td::uint64>(info.cell_count) > opts.max_cells) {
+  // H-03: a `max_cells == 0` request maps to `kDefaultStreamingBocMaxCells`,
+  // never to "unlimited". The same rule applies to max_total_cell_bytes
+  // and max_scaffolding_bytes below. A caller that omits these fields
+  // gets the safe default; a caller that explicitly sets a non-zero
+  // value gets that value verbatim.
+  const td::uint64 effective_max_cells =
+      opts.max_cells != 0 ? opts.max_cells : kDefaultStreamingBocMaxCells;
+  if (static_cast<td::uint64>(info.cell_count) > effective_max_cells) {
     return td::Status::Error(PSLICE() << "std_boc_deserialize_from_file_bounded: cell count "
-                                      << info.cell_count << " > max_cells " << opts.max_cells);
+                                      << info.cell_count << " > max_cells " << effective_max_cells);
   }
-  if (opts.max_total_cell_bytes > 0 && info.data_size > opts.max_total_cell_bytes) {
+  const td::uint64 effective_max_total_cell_bytes =
+      opts.max_total_cell_bytes != 0 ? opts.max_total_cell_bytes : kDefaultStreamingBocMaxTotalCellBytes;
+  if (info.data_size > effective_max_total_cell_bytes) {
     return td::Status::Error(PSLICE() << "std_boc_deserialize_from_file_bounded: declared data_size "
                                       << info.data_size << " > max_total_cell_bytes "
-                                      << opts.max_total_cell_bytes);
+                                      << effective_max_total_cell_bytes);
+  }
+
+  // H-03 scaffolding budget. Compute the upper-bound bytes that would be
+  // pulled into RAM for the importer's three O(cell_count) tables BEFORE
+  // any of the four vectors is allocated. The arithmetic uses a manual
+  // overflow check (no implicit reliance on wraparound) so a malicious
+  // header announcing a `cell_count` near 2^64 / sizeof(Ref<Cell>) is
+  // rejected here rather than after a partial allocation. Zero in the
+  // option means "use default cap"; a non-zero value is honoured
+  // verbatim.
+  const td::uint64 effective_max_scaffolding_bytes =
+      opts.max_scaffolding_bytes != 0 ? opts.max_scaffolding_bytes : kDefaultStreamingBocMaxScaffoldingBytes;
+  {
+    auto safe_add = [](td::uint64& acc, td::uint64 v) -> bool {
+      if (v > std::numeric_limits<td::uint64>::max() - acc) {
+        return false;
+      }
+      acc += v;
+      return true;
+    };
+    auto safe_mul = [](td::uint64 a, td::uint64 b, td::uint64& out) -> bool {
+      if (a == 0 || b == 0) {
+        out = 0;
+        return true;
+      }
+      if (a > std::numeric_limits<td::uint64>::max() / b) {
+        return false;
+      }
+      out = a * b;
+      return true;
+    };
+    const td::uint64 cell_count_u64 = static_cast<td::uint64>(info.cell_count);
+    td::uint64 scaffolding = 0;
+    td::uint64 product = 0;
+    // offset_table: (cell_count + 1) * sizeof(td::uint64). The +1 must
+    // not overflow either, hence the explicit check.
+    if (cell_count_u64 == std::numeric_limits<td::uint64>::max() ||
+        !safe_mul(cell_count_u64 + 1, sizeof(td::uint64), product) ||
+        !safe_add(scaffolding, product) ||
+        !safe_mul(cell_count_u64, sizeof(td::uint32), product) ||
+        !safe_add(scaffolding, product) ||
+        !safe_mul(cell_count_u64, sizeof(td::Ref<vm::Cell>), product) ||
+        !safe_add(scaffolding, product)) {
+      return td::Status::Error(PSLICE()
+                               << "std_boc_deserialize_from_file_bounded: BoC scaffolding size overflow for "
+                               << info.cell_count << " cells");
+    }
+    if (scaffolding > effective_max_scaffolding_bytes) {
+      return td::Status::Error(PSLICE()
+                               << "std_boc_deserialize_from_file_bounded: BoC scaffolding budget exceeded: "
+                               << scaffolding << " > " << effective_max_scaffolding_bytes);
+    }
   }
 
   // Layer 3: optional CRC32C trailer. For a streaming reader we can
@@ -1374,7 +1437,17 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
 
   // Layer 4: read root indices. Stored at info.roots_offset, root_count
   // entries, ref_byte_size each. Total size is bounded by max_roots.
-  std::vector<int> root_indices(info.root_count, 0);
+  // The vector is tiny (max_roots is 1 by default), but H-03 still
+  // requires every BoC import vector to fail closed on bad_alloc — a
+  // hostile thread allocator can starve any allocation, however small.
+  std::vector<int> root_indices;
+  try {
+    root_indices.assign(static_cast<std::size_t>(info.root_count), 0);
+  } catch (const std::bad_alloc&) {
+    return td::Status::Error("std_boc_deserialize_from_file_bounded: cannot allocate BoC import scaffolding");
+  } catch (...) {
+    return td::Status::Error("std_boc_deserialize_from_file_bounded: cannot allocate BoC import scaffolding");
+  }
   if (info.has_roots) {
     td::uint64 roots_bytes = static_cast<td::uint64>(info.root_count) * info.ref_byte_size;
     TRY_RESULT(roots_slice, reader.read(info.roots_offset, static_cast<std::size_t>(roots_bytes)));
@@ -1400,8 +1473,10 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
   std::vector<td::uint64> offset_table;
   try {
     offset_table.assign(static_cast<std::size_t>(info.cell_count) + 1, 0);
+  } catch (const std::bad_alloc&) {
+    return td::Status::Error("std_boc_deserialize_from_file_bounded: cannot allocate BoC import scaffolding");
   } catch (...) {
-    return td::Status::Error("std_boc_deserialize_from_file_bounded: cannot allocate offset table");
+    return td::Status::Error("std_boc_deserialize_from_file_bounded: cannot allocate BoC import scaffolding");
   }
   if (info.has_index) {
     td::uint64 index_bytes = static_cast<td::uint64>(info.cell_count) * info.offset_byte_size;
@@ -1474,7 +1549,14 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
   //
   // Roots are explicitly counted as "parents" so the root cell is not
   // dropped by the residency tracker before the function returns it.
-  std::vector<td::uint32> parent_refcount(static_cast<std::size_t>(info.cell_count), 0);
+  std::vector<td::uint32> parent_refcount;
+  try {
+    parent_refcount.assign(static_cast<std::size_t>(info.cell_count), 0);
+  } catch (const std::bad_alloc&) {
+    return td::Status::Error("std_boc_deserialize_from_file_bounded: cannot allocate BoC import scaffolding");
+  } catch (...) {
+    return td::Status::Error("std_boc_deserialize_from_file_bounded: cannot allocate BoC import scaffolding");
+  }
   for (int idx : root_indices) {
     parent_refcount[static_cast<std::size_t>(idx)] += 1;
   }
@@ -1533,7 +1615,14 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
   // count is decremented, and the child slot in `cells` is dropped
   // when the count hits zero. Resident memory peaks at the longest
   // dependency chain rather than the full cell count.
-  std::vector<td::Ref<Cell>> cells(static_cast<std::size_t>(info.cell_count));
+  std::vector<td::Ref<Cell>> cells;
+  try {
+    cells.assign(static_cast<std::size_t>(info.cell_count), td::Ref<Cell>{});
+  } catch (const std::bad_alloc&) {
+    return td::Status::Error("std_boc_deserialize_from_file_bounded: cannot allocate BoC import scaffolding");
+  } catch (...) {
+    return td::Status::Error("std_boc_deserialize_from_file_bounded: cannot allocate BoC import scaffolding");
+  }
 
   // Resident-byte tracker. Each cell's contribution is its serialized
   // payload size, which is a tight overestimate of the DataCell heap

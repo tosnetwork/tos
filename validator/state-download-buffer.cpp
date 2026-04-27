@@ -129,6 +129,29 @@ td::Status validate_budget_config(const PersistentStateBudgetConfig& cfg) {
     return td::Status::Error(PSTRING() << "max_single_file_bytes " << cfg.max_single_file_bytes
                                        << " > max_download_bytes " << cfg.max_download_bytes);
   }
+  // H-02: the per-parse returned-DAG cap must be at least the resident
+  // budget — anything smaller would refuse parses that the streaming
+  // importer can already complete inside its resident window.
+  if (cfg.max_returned_dag_bytes_per_parse < cfg.max_resident_bytes_per_parse) {
+    return td::Status::Error(PSTRING() << "max_returned_dag_bytes_per_parse "
+                                       << cfg.max_returned_dag_bytes_per_parse
+                                       << " < max_resident_bytes_per_parse "
+                                       << cfg.max_resident_bytes_per_parse);
+  }
+  // H-03: the cell-count, scaffolding and total-cell-bytes per-parse
+  // caps must all be positive. Zero would defer to the streaming
+  // importer's built-in defaults; we enforce the explicit-non-zero
+  // contract here so an operator who opts in to budget overrides has
+  // no way to accidentally request "unlimited".
+  if (cfg.max_cells_per_parse == 0) {
+    return td::Status::Error("max_cells_per_parse must be > 0");
+  }
+  if (cfg.max_scaffolding_bytes_per_parse == 0) {
+    return td::Status::Error("max_scaffolding_bytes_per_parse must be > 0");
+  }
+  if (cfg.max_total_cell_bytes_per_parse == 0) {
+    return td::Status::Error("max_total_cell_bytes_per_parse must be > 0");
+  }
   return td::Status::OK();
 }
 

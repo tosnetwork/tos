@@ -6177,6 +6177,59 @@ int main(int argc, char *argv[]) {
                          tos::validator::fullnode::configure_persistent_state_budgets(cfg);
                          return td::Status::OK();
                        });
+  // H-02 short-term cap. Until the truly-streaming-into-CellDb importer
+  // (returning an ExtCell hash-only root) ships, the OnDisk parse path
+  // returns the full root cell DAG; resident bytes for the returned tree
+  // can therefore exceed --persistent-state-resident-cap. The processing
+  // reservation is charged at min(file.size, this value), and a state
+  // whose file size exceeds this value is refused at parse time. Default
+  // 512 MiB.
+  p.add_checked_option('\0', "persistent-state-max-returned-dag-bytes-per-parse",
+                       "fail-closed cap on returned root cell DAG bytes per parse (default 512 MiB)",
+                       [&](td::Slice arg) -> td::Status {
+                         td::uint64 v = 0;
+                         TRY_STATUS(parse_budget_bytes(arg, v));
+                         auto cfg = tos::validator::fullnode::persistent_state_budget_config();
+                         cfg.max_returned_dag_bytes_per_parse = v;
+                         tos::validator::fullnode::configure_persistent_state_budgets(cfg);
+                         return td::Status::OK();
+                       });
+  // H-03 cell-count cap forwarded to vm::StreamingBocImportOptions.
+  p.add_checked_option('\0', "persistent-state-max-cells-per-parse",
+                       "max cell count accepted by the streaming BoC importer per parse "
+                       "(default kDefaultStreamingBocMaxCells = 50,000,000)",
+                       [&](td::Slice arg) -> td::Status {
+                         td::uint64 v = 0;
+                         TRY_STATUS(parse_budget_bytes(arg, v));
+                         auto cfg = tos::validator::fullnode::persistent_state_budget_config();
+                         cfg.max_cells_per_parse = v;
+                         tos::validator::fullnode::configure_persistent_state_budgets(cfg);
+                         return td::Status::OK();
+                       });
+  // H-03 scaffolding-bytes cap forwarded to vm::StreamingBocImportOptions.
+  p.add_checked_option('\0', "persistent-state-max-scaffolding-bytes-per-parse",
+                       "max O(cell_count) scaffolding bytes the streaming BoC importer is allowed "
+                       "to allocate per parse (default 512 MiB)",
+                       [&](td::Slice arg) -> td::Status {
+                         td::uint64 v = 0;
+                         TRY_STATUS(parse_budget_bytes(arg, v));
+                         auto cfg = tos::validator::fullnode::persistent_state_budget_config();
+                         cfg.max_scaffolding_bytes_per_parse = v;
+                         tos::validator::fullnode::configure_persistent_state_budgets(cfg);
+                         return td::Status::OK();
+                       });
+  // H-03 total-cell-bytes cap forwarded to vm::StreamingBocImportOptions.
+  p.add_checked_option('\0', "persistent-state-max-total-cell-bytes-per-parse",
+                       "max declared cell-data bytes accepted by the streaming BoC importer per parse "
+                       "(default 16 GiB)",
+                       [&](td::Slice arg) -> td::Status {
+                         td::uint64 v = 0;
+                         TRY_STATUS(parse_budget_bytes(arg, v));
+                         auto cfg = tos::validator::fullnode::persistent_state_budget_config();
+                         cfg.max_total_cell_bytes_per_parse = v;
+                         tos::validator::fullnode::configure_persistent_state_budgets(cfg);
+                         return td::Status::OK();
+                       });
   auto S = p.run(argc, argv);
   if (S.is_error()) {
     LOG(ERROR) << "failed to parse options: " << S.move_as_error();
@@ -6210,10 +6263,22 @@ int main(int argc, char *argv[]) {
                  << " processing_cap=" << fmt_bytes(cfg.max_processing_bytes)
                  << " single_file_cap=" << fmt_bytes(cfg.max_single_file_bytes)
                  << " resident_per_parse=" << fmt_bytes(cfg.max_resident_bytes_per_parse)
+                 << " returned_dag_per_parse=" << fmt_bytes(cfg.max_returned_dag_bytes_per_parse)
+                 << " max_cells_per_parse=" << cfg.max_cells_per_parse
+                 << " scaffolding_per_parse=" << fmt_bytes(cfg.max_scaffolding_bytes_per_parse)
+                 << " total_cell_bytes_per_parse=" << fmt_bytes(cfg.max_total_cell_bytes_per_parse)
+                 << " true_cell_db_streaming_import="
+                 << (cfg.enable_true_cell_db_streaming_import ? "on" : "off")
                  << " streaming_importer=on";
     if (cfg.max_processing_bytes < cfg.max_download_bytes) {
       LOG(WARNING) << "persistent-state: processing_cap < download_cap; states larger than processing_cap "
                       "will download but fail to import";
+    }
+    if (!cfg.enable_true_cell_db_streaming_import &&
+        cfg.max_single_file_bytes > cfg.max_returned_dag_bytes_per_parse) {
+      LOG(WARNING) << "persistent-state: max_single_file_bytes > max_returned_dag_bytes_per_parse; "
+                      "states between these caps will download but fail closed at parse time until "
+                      "--enable-true-cell-db-streaming-import is supported";
     }
   }
 

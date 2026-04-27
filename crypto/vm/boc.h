@@ -445,11 +445,48 @@ td::Result<td::BufferSlice> std_boc_serialize(Ref<Cell> root, int mode = 0);
 //     would.
 //   * The function is NOT thread-safe with respect to `file`: the
 //     caller MUST own the FileFd for the duration of the call.
+// Default ceilings applied by the streaming BoC importer when the caller
+// passes a zero in the corresponding StreamingBocImportOptions field. The
+// importer treats every "0 = use default" branch as a request for these
+// values; an explicit non-zero override always wins. The defaults are
+// sized so:
+//   * `kDefaultStreamingBocMaxCells` (50,000,000) absorbs any realistic
+//     persistent-state DAG yet rejects an attacker who declares a billion
+//     cells in the BoC header.
+//   * `kDefaultStreamingBocMaxScaffoldingBytes` (512 MiB) caps the sum
+//     `(cell_count+1)*8 + cell_count*4 + cell_count*sizeof(Ref<Cell>)` so
+//     even a header that announces the full max_cells default cannot pull
+//     more than ~512 MiB of importer scaffolding into RAM.
+//   * `kDefaultStreamingBocMaxTotalCellBytes` (16 GiB) matches the
+//     persistent-state single-file ceiling so a hostile peer cannot
+//     declare more cell data than a legitimate state contains.
+inline constexpr td::uint64 kDefaultStreamingBocMaxCells = 50'000'000;
+inline constexpr td::uint64 kDefaultStreamingBocMaxScaffoldingBytes = 512ULL << 20;
+inline constexpr td::uint64 kDefaultStreamingBocMaxTotalCellBytes = 16ULL << 30;
+
 struct StreamingBocImportOptions {
-  td::uint64 max_cells = 0;             // 0 = use existing kMaxCells default
+  // Maximum declared cell count. Zero is treated as
+  // `kDefaultStreamingBocMaxCells` — the comment "0 = use default" is a
+  // guarantee, not a description; the importer never accepts an
+  // unbounded `cell_count` regardless of what the caller passes.
+  td::uint64 max_cells = kDefaultStreamingBocMaxCells;
   td::uint64 max_roots = 1;
-  td::uint64 max_total_cell_bytes = 0;  // 0 = no cap beyond file size
+  // Maximum declared total cell bytes (BoC header `data_size`). Zero is
+  // treated as `kDefaultStreamingBocMaxTotalCellBytes`.
+  td::uint64 max_total_cell_bytes = kDefaultStreamingBocMaxTotalCellBytes;
+  // Per-parse peak resident-byte budget enforced inside the cell-build
+  // loop. The streaming importer charges each cell's serialized size
+  // when the cell becomes the next leaf-to-root frontier and credits the
+  // bytes back when the cell is released by its last outstanding parent.
   td::uint64 max_resident_bytes = 256ULL << 20;  // resident-memory peak cap
+  // Maximum total bytes the importer is allowed to allocate for its
+  // O(cell_count) scaffolding tables (`offset_table`, `parent_refcount`,
+  // `cells`). The sum is computed with overflow checks BEFORE any of the
+  // four vectors is constructed; if the budget is exceeded the importer
+  // returns Status::Error("BoC scaffolding budget exceeded") without
+  // ever allocating. Zero is treated as
+  // `kDefaultStreamingBocMaxScaffoldingBytes`.
+  td::uint64 max_scaffolding_bytes = kDefaultStreamingBocMaxScaffoldingBytes;
 };
 
 // Per-cell sink invoked from inside the streaming BoC importer. Each

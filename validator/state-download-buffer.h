@@ -232,6 +232,36 @@ struct PersistentStateBudgetConfig {
   td::uint64 max_processing_bytes = 16ULL << 30;
   td::uint64 max_single_file_bytes = 16ULL << 30;
   td::uint64 max_resident_bytes_per_parse = 256ULL << 20;
+  // H-02 short-term cap. Until the truly-streaming-into-CellDb importer
+  // (returning an ExtCell hash-only root) ships, the OnDisk parse path
+  // returns the full root cell DAG; resident bytes for the returned DAG
+  // can therefore exceed `max_resident_bytes_per_parse`. The processing
+  // reservation is charged at min(file.size, this value), and a state
+  // whose `file.size` exceeds this value is fail-closed unless
+  // `enable_true_cell_db_streaming_import` is set. Default is 512 MiB
+  // — half of the 1 GiB processing-cap headroom that the post-H-02
+  // ceilings reserve for a single concurrent parse.
+  td::uint64 max_returned_dag_bytes_per_parse = 512ULL << 20;
+  // H-03 cell-count cap forwarded to vm::StreamingBocImportOptions.
+  // Defaults to vm::kDefaultStreamingBocMaxCells.
+  td::uint64 max_cells_per_parse = vm::kDefaultStreamingBocMaxCells;
+  // H-03 scaffolding-bytes cap forwarded to vm::StreamingBocImportOptions.
+  // Defaults to vm::kDefaultStreamingBocMaxScaffoldingBytes.
+  td::uint64 max_scaffolding_bytes_per_parse = vm::kDefaultStreamingBocMaxScaffoldingBytes;
+  // H-03 total-cell-bytes cap forwarded to vm::StreamingBocImportOptions.
+  // Defaults to vm::kDefaultStreamingBocMaxTotalCellBytes (16 GiB), which
+  // matches the persistent-state single-file ceiling. The actor caps
+  // this further at min(file.size, this value) so a small state cannot
+  // declare more cell bytes than its envelope contains.
+  td::uint64 max_total_cell_bytes_per_parse = vm::kDefaultStreamingBocMaxTotalCellBytes;
+  // H-02 long-term feature flag. When the future ExtCell hash-only root
+  // refactor lands, callers that opt in here will be allowed to parse
+  // a state whose `file.size` exceeds `max_returned_dag_bytes_per_parse`
+  // because the importer will no longer return the full DAG. Until that
+  // refactor lands the flag is intentionally false; flipping it without
+  // landing the refactor would silently re-enable the OOM hazard the
+  // short-term cap closes.
+  bool enable_true_cell_db_streaming_import = false;
 };
 
 // Install a new persistent-state budget configuration. Call this exactly

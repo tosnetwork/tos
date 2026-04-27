@@ -490,8 +490,25 @@ void WaitBlockState::got_state_from_net_budgeted(fullnode::DownloadedPersistentS
     }
     auto fd = r_fd.move_as_ok();
     auto budget_cfg = fullnode::persistent_state_budget_config();
+    // H-02 short-term cap, mirrored on the zero-state OnDisk path. The
+    // streaming importer still returns the full root DAG; refuse a
+    // zero state larger than the returned-DAG cap unless the future
+    // ExtCell-backed importer is enabled.
+    if (file.size > budget_cfg.max_returned_dag_bytes_per_parse &&
+        !budget_cfg.enable_true_cell_db_streaming_import) {
+      abort_query(td::Status::Error(
+          ErrorCode::notready,
+          PSTRING() << "zero state too large for in-memory returned DAG (file_size=" << file.size
+                    << " > max_returned_dag_bytes_per_parse="
+                    << budget_cfg.max_returned_dag_bytes_per_parse
+                    << "); enable CellDb streaming importer"));
+      return;
+    }
     vm::StreamingBocImportOptions opts;
     opts.max_resident_bytes = budget_cfg.max_resident_bytes_per_parse;
+    opts.max_cells = budget_cfg.max_cells_per_parse;
+    opts.max_scaffolding_bytes = budget_cfg.max_scaffolding_bytes_per_parse;
+    opts.max_total_cell_bytes = std::min(file.size, budget_cfg.max_total_cell_bytes_per_parse);
     auto r_root = vm::std_boc_deserialize_from_file_bounded(
         fd, file.size, opts, vm::StreamingPersistCellFn{});
     fd.close();
