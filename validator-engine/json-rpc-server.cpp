@@ -21,6 +21,7 @@
 #include "evm/rpc/handlers.h"
 #include "uno/rpc/handlers.h"
 
+#include <cstdlib>
 #include <cstring>
 
 namespace tos {
@@ -249,6 +250,56 @@ void JsonRpcServer::listen(td::IPAddress addr) {
   CHECK(http_.empty());
   // Enable EVM RPC rate limiting for the production server
   evm_workchain::enable_evm_rpc_rate_limit(true);
+
+  // M-03: resolve EVM RPC profile.
+  //
+  // Resolution order:
+  //   1. `Options::evm_rpc_profile` set via the validator-engine CLI
+  //      flag `--evm-rpc-profile=validator|follower|admin` (preferred —
+  //      the operator pinned the profile in the launch command).
+  //   2. The `TOS_EVM_RPC_PROFILE` environment variable (same names),
+  //      so deployment scripts that don't go through validator-engine
+  //      (test harness, staging containers) can still pick a profile
+  //      without code changes.
+  //   3. The default `EvmRpcProfile::ValidatorMinimal` (the safest
+  //      surface — heavy read-only RPC and eth_getProof disabled,
+  //      debug methods locked even if compiled in).
+  //
+  // The profile MUST be applied via `set_evm_rpc_profile()`; that
+  // path centralises gas-cap + getProof + debug toggles + bucket
+  // resets in one place (see evm/rpc/handlers.cpp `apply_profile`).
+  evm_workchain::EvmRpcProfile resolved_profile =
+      evm_workchain::EvmRpcProfile::ValidatorMinimal;
+  bool profile_resolved_from_options = false;
+  if (opts_.evm_rpc_profile.has_value()) {
+    resolved_profile = *opts_.evm_rpc_profile;
+    profile_resolved_from_options = true;
+  } else if (const char* env = std::getenv("TOS_EVM_RPC_PROFILE"); env != nullptr) {
+    std::string s{env};
+    if (s == "validator" || s == "minimal" || s == "validator-minimal") {
+      resolved_profile = evm_workchain::EvmRpcProfile::ValidatorMinimal;
+    } else if (s == "follower" || s == "public" || s == "follower-public") {
+      resolved_profile = evm_workchain::EvmRpcProfile::FollowerPublic;
+    } else if (s == "admin" || s == "admin-local" || s == "local") {
+      resolved_profile = evm_workchain::EvmRpcProfile::AdminLocal;
+    } else {
+      LOG(WARNING) << "json-rpc: TOS_EVM_RPC_PROFILE=\"" << s
+                   << "\" is not recognised; using ValidatorMinimal default";
+    }
+  }
+  evm_workchain::set_evm_rpc_profile(resolved_profile);
+  const char* profile_label =
+      resolved_profile == evm_workchain::EvmRpcProfile::ValidatorMinimal
+          ? "ValidatorMinimal"
+          : (resolved_profile == evm_workchain::EvmRpcProfile::FollowerPublic
+                 ? "FollowerPublic"
+                 : "AdminLocal");
+  LOG(WARNING) << "json-rpc: EVM RPC profile = " << profile_label
+               << (profile_resolved_from_options ? " (from --evm-rpc-profile)"
+                   : (std::getenv("TOS_EVM_RPC_PROFILE") != nullptr
+                          ? " (from TOS_EVM_RPC_PROFILE)"
+                          : " (default)"));
+
   // Enable UNO RPC rate limiting (gate on uno_sendTransfer +
   // uno_sendMineUno). Without this, the per-method rate-limit checks in
   // uno_sendMineUno (forged-PI DoS hardening, K-mine-rate-limit) and

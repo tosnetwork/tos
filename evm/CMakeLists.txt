@@ -116,4 +116,42 @@ target_link_libraries(evm_workchain_test
     tddb         # RocksDB wrapper for the side-channel cache
 )
 
+# Third variant: same EVM sources as `evm_workchain_test`, additionally
+# compiled with `TOS_ENABLE_EVM_DEBUG_RPC=1`. The debug-method coverage
+# tests (e.g. `test_m03_validator_minimal_disables_debug_methods`) need
+# the dispatcher in `rpc/handlers.cpp` to compile in the debug_*
+# branches; flipping the macro on the test executable alone is not
+# sufficient because `is_eth_rpc_method` and the profile gate live in
+# the library's translation unit. Production binaries continue to link
+# `evm_workchain` (no debug surface), the default unit tests link
+# `evm_workchain_test` (no debug surface), and only
+# `test-evm-executor-debug` links this library.
+add_library(evm_workchain_test_debug STATIC ${EVM_SRC})
+
+target_compile_options(evm_workchain_test_debug PRIVATE
+  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-cast-qual>
+  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-deprecated-literal-operator>
+  $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-missing-field-initializers>
+)
+
+target_compile_definitions(evm_workchain_test_debug
+  PUBLIC
+    TOS_EVM_TEST_INSTRUMENTATION=1
+    TOS_ENABLE_EVM_DEBUG_RPC=1
+)
+
+target_include_directories(evm_workchain_test_debug
+  PUBLIC
+    ${CMAKE_SOURCE_DIR}             # for "evm/core/*.h", "evm/rpc/*.h"
+    ${CMAKE_SOURCE_DIR}/crypto      # for "block/*.h"
+    ${CMAKE_SOURCE_DIR}/crypto/vm   # for "vm/cells/*.h"
+)
+
+target_link_libraries(evm_workchain_test_debug
+  PUBLIC
+    silkworm_core
+    tos_crypto   # cells, vm types, block types
+    tddb         # RocksDB wrapper for the side-channel cache
+)
+
 add_subdirectory(test)

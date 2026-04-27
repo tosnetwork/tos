@@ -5432,6 +5432,10 @@ void ValidatorEngine::set_json_rpc_cache_ttl(td::int32 seconds) {
   json_rpc_opts_.cache_ttl = seconds;
 }
 
+void ValidatorEngine::set_evm_rpc_profile(evm_workchain::EvmRpcProfile profile) {
+  json_rpc_opts_.evm_rpc_profile = profile;
+}
+
 void ValidatorEngine::get_current_validator_perm_key(td::Promise<std::pair<tos::PublicKey, size_t>> promise) {
   if (state_.is_null()) {
     promise.set_error(td::Status::Error(tos::ErrorCode::notready, "not started"));
@@ -5982,6 +5986,37 @@ int main(int argc, char *argv[]) {
       return td::Status::Error("cache TTL must be >= 0");
     }
     acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_cache_ttl, v); });
+    return td::Status::OK();
+  });
+  // M-03: EVM RPC profile selector. Three profiles, all routed through
+  // `evm_workchain::set_evm_rpc_profile()` (the centralised toggle for
+  // gas cap / getProof / debug methods / rate buckets):
+  //   validator | minimal           — heavy read-only RPC, eth_getProof,
+  //                                   debug methods all DISABLED. The
+  //                                   safest default for consensus nodes.
+  //   follower  | public            — heavy read-only RPC + eth_getProof
+  //                                   ENABLED at the public 10M gas cap;
+  //                                   debug methods stay DISABLED.
+  //   admin     | local             — full surface, 30M gas cap, debug
+  //                                   methods exposed if compiled in.
+  p.add_checked_option('\0', "evm-rpc-profile",
+      "EVM JSON-RPC profile (validator|follower|admin); default: validator",
+      [&](td::Slice arg) {
+    std::string s{arg.data(), arg.size()};
+    evm_workchain::EvmRpcProfile profile;
+    if (s == "validator" || s == "minimal" || s == "validator-minimal") {
+      profile = evm_workchain::EvmRpcProfile::ValidatorMinimal;
+    } else if (s == "follower" || s == "public" || s == "follower-public") {
+      profile = evm_workchain::EvmRpcProfile::FollowerPublic;
+    } else if (s == "admin" || s == "admin-local" || s == "local") {
+      profile = evm_workchain::EvmRpcProfile::AdminLocal;
+    } else {
+      return td::Status::Error(
+          "evm-rpc-profile must be one of validator|follower|admin");
+    }
+    acts.push_back([&x, profile] {
+      td::actor::send_closure(x, &ValidatorEngine::set_evm_rpc_profile, profile);
+    });
     return td::Status::OK();
   });
   p.add_checked_option(

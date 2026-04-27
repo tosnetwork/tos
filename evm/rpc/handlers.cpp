@@ -206,11 +206,109 @@ class AtomicConcurrencyPermit {
 static bool g_rate_limit_enabled = false;
 static bool g_public_getproof_enabled = true;
 
-// Admin/conformance read-only EVM RPC gas-cap profile. Default = false
-// (public profile, capped at 10M gas per read-only call). Switched on
-// at runtime via `enable_admin_evm_rpc_profile()` for local-only /
-// conformance / tooling builds that need 30M gas per call.
-static std::atomic<bool> g_admin_evm_rpc_profile{false};
+// =====================================================================
+// M-03: EvmRpcProfile state machine.
+//
+// The profile centralises every security-sensitive surface of the EVM
+// RPC handlers. The default is `ValidatorMinimal` because validators
+// (consensus nodes) MUST NOT compete for the global EVM state mutex
+// against heavy read-only public RPC traffic. Operators that want a
+// public-readonly RPC follower deliberately set `FollowerPublic`;
+// admin / conformance / local-tooling builds opt in to `AdminLocal`.
+//
+// Profile-dependent toggles (all live under this single atomic):
+//   - eth_call / eth_estimateGas / eth_createAccessList enable bit
+//   - eth_call / eth_estimateGas / eth_createAccessList gas cap
+//   - eth_getProof enable bit
+//   - debug_* RPC method allowlist (even when TOS_ENABLE_EVM_DEBUG_RPC
+//     is compiled in, the runtime profile gates them)
+// =====================================================================
+static std::atomic<EvmRpcProfile> g_evm_rpc_profile{EvmRpcProfile::ValidatorMinimal};
+
+// Cached per-profile flags. Updated atomically inside `apply_profile`.
+// Reads use relaxed ordering — these are advisory throttles, not
+// state-machine invariants, so there is no data dependency that needs
+// a stronger fence.
+static std::atomic<bool> g_profile_heavy_readonly_enabled{false};
+static std::atomic<bool> g_profile_getproof_enabled{false};
+static std::atomic<bool> g_profile_debug_rpc_enabled{false};
+
+static void reset_rpc_buckets_locked() {
+    g_rpc_limiter.reset();
+    g_getlogs_limiter.reset();
+    g_getproof_limiter.reset();
+    g_simulate_limiter.reset();
+    g_call_limiter.reset();
+    g_estimate_gas_limiter.reset();
+    g_access_list_limiter.reset();
+    g_getproof_inflight.store(0, std::memory_order_relaxed);
+    g_simulate_inflight.store(0, std::memory_order_relaxed);
+    g_readonly_evm_inflight.store(0, std::memory_order_relaxed);
+    g_estimate_gas_inflight.store(0, std::memory_order_relaxed);
+    g_access_list_inflight.store(0, std::memory_order_relaxed);
+}
+
+// Apply a profile transition: update every cached flag in a single
+// place and reset rate buckets so a transition cannot carry over a
+// drained bucket from the previous profile (a swarmed FollowerPublic
+// node should not stay rate-limited after the operator switches it
+// to AdminLocal mode).
+static void apply_profile(EvmRpcProfile profile) {
+    switch (profile) {
+        case EvmRpcProfile::ValidatorMinimal:
+            // Validators stay out of heavy read-only EVM RPC work
+            // entirely. We pick "disabled" rather than "low cap" so
+            // operators get a deterministic rejection rather than
+            // surprising under-budget eth_call results.
+            g_profile_heavy_readonly_enabled.store(false,
+                std::memory_order_relaxed);
+            // eth_getProof builds path proofs over the persistent
+            // witness — that is also too heavy for a validator under
+            // public load. Leave it disabled until the operator opts
+            // up to FollowerPublic.
+            g_profile_getproof_enabled.store(false,
+                std::memory_order_relaxed);
+            // Debug methods are admin-only at runtime even if the
+            // build flag is on (the build flag controls compilation;
+            // the profile controls exposure).
+            g_profile_debug_rpc_enabled.store(false,
+                std::memory_order_relaxed);
+            break;
+        case EvmRpcProfile::FollowerPublic:
+            // Heavy read-only RPC enabled at the 10M public gas cap
+            // (clamp_read_only_rpc_gas reads the profile to pick).
+            g_profile_heavy_readonly_enabled.store(true,
+                std::memory_order_relaxed);
+            g_profile_getproof_enabled.store(true,
+                std::memory_order_relaxed);
+            // Public follower MUST NOT expose debug RPC even if the
+            // build flag is set.
+            g_profile_debug_rpc_enabled.store(false,
+                std::memory_order_relaxed);
+            break;
+        case EvmRpcProfile::AdminLocal:
+            g_profile_heavy_readonly_enabled.store(true,
+                std::memory_order_relaxed);
+            g_profile_getproof_enabled.store(true,
+                std::memory_order_relaxed);
+            // Admin profile honours the compile flag: we still gate
+            // the dispatch entries with #ifdef TOS_ENABLE_EVM_DEBUG_RPC,
+            // but at runtime the admin profile lets them through.
+            g_profile_debug_rpc_enabled.store(true,
+                std::memory_order_relaxed);
+            break;
+    }
+    g_evm_rpc_profile.store(profile, std::memory_order_relaxed);
+    reset_rpc_buckets_locked();
+}
+
+void set_evm_rpc_profile(EvmRpcProfile profile) {
+    apply_profile(profile);
+}
+
+EvmRpcProfile get_evm_rpc_profile() {
+    return g_evm_rpc_profile.load(std::memory_order_relaxed);
+}
 
 void enable_evm_rpc_rate_limit(bool enable) {
     g_rate_limit_enabled = enable;
@@ -227,15 +325,6 @@ void enable_evm_rpc_rate_limit(bool enable) {
 
 void enable_public_evm_getproof(bool enable) {
     g_public_getproof_enabled = enable;
-}
-
-// Toggle the admin/conformance read-only EVM RPC profile. When enabled,
-// per-request read-only gas is capped at kMaxAdminReadOnlyRpcGas (30M)
-// rather than the public default (kMaxPublicReadOnlyRpcGas, 10M). This
-// must only be turned on for local-only / conformance / tooling builds;
-// public-network endpoints should leave it OFF (the default).
-void enable_admin_evm_rpc_profile(bool enable) {
-    g_admin_evm_rpc_profile.store(enable, std::memory_order_relaxed);
 }
 
 // Expose the global EVM bucket so the
@@ -1034,8 +1123,8 @@ static std::vector<silkworm::AccessListEntry> parse_access_list(const std::strin
 //                                        Ethereum execution-apis suite).
 //
 // The admin cap is selected only when the operator explicitly opts in
-// at runtime via `enable_admin_evm_rpc_profile(true)`. Keeping the
-// public cap as the structural default reduces the per-request worst
+// at runtime via `set_evm_rpc_profile(EvmRpcProfile::AdminLocal)`.
+// Keeping the public cap as the structural default reduces the per-request worst
 // case under public load and matches the audit's P0.2 ask. The legacy
 // `kMaxReadOnlyRpcGas` alias is retained to avoid forcing an audit of
 // every call site at this point in the change set; it now resolves to
@@ -1047,8 +1136,14 @@ inline constexpr uint64_t kMaxReadOnlyRpcGas = kMaxAdminReadOnlyRpcGas;
 
 // Profile selector lives near `g_rate_limit_enabled` above; declared
 // extern here so the helpers below can read it without re-defining.
+// AdminLocal raises the cap to match Ethereum L1 block gas; every
+// other profile keeps the conservative public 10M cap. ValidatorMinimal
+// also gets the public cap because if the rare call gets through (eg.
+// an operator forgot to disable heavy read-only RPC at the proxy) it
+// must still respect the conservative bound.
 inline uint64_t active_read_only_rpc_gas_cap() noexcept {
-    return g_admin_evm_rpc_profile.load(std::memory_order_relaxed)
+    return g_evm_rpc_profile.load(std::memory_order_relaxed)
+                   == EvmRpcProfile::AdminLocal
         ? kMaxAdminReadOnlyRpcGas
         : kMaxPublicReadOnlyRpcGas;
 }
@@ -2829,6 +2924,18 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
     // Find the INNER array and scan only within its bounds so a later
     // blockhash string isn't mis-read as a storage key.
     //
+    // L-01 (strict invalid-param rejection):
+    //   * The second positional parameter MUST be a JSON array. Any
+    //     other shape (string / object / null / missing) returns
+    //     -32602 "storage keys must be a JSON array" rather than
+    //     silently treating it as an empty list.
+    //   * Empty hex ("0x"), oversize hex (> 64 nibbles), and any
+    //     non-hex character return -32602 immediately. The previous
+    //     behaviour was to silently `continue` past invalid input,
+    //     which let callers receive a partial-success response with
+    //     missing storageProof entries — confusing for wallets,
+    //     indexers, and fuzzers.
+    //
     // Cap storage keys even with persistent witness: each requested slot
     // emits a path proof, and an uncapped list can still force large JSON
     // responses. Geth defaults to 1000 keys; we pick 128 — generous for
@@ -2837,9 +2944,76 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
     // truncating, so callers know they need to chunk their request.
     constexpr size_t kMaxGetProofStorageKeys = 128;
     std::vector<evmc::bytes32> slots;
-    auto kpos = params.find('[', params.find('[') + 1);
-    auto kend = (kpos != std::string::npos) ? params.find(']', kpos + 1) : std::string::npos;
-    if (kpos != std::string::npos && kend != std::string::npos && kend > kpos) {
+    // Locate the second top-level positional parameter. The address
+    // string lives after `[` then a quoted hex address; we scan past
+    // the closing quote and the following `,` to find the start of
+    // the storage-keys parameter. Anything other than `[` here is a
+    // hard rejection per L-01.
+    auto outer_lbrack = params.find('[');
+    auto addr_quote_end = std::string::npos;
+    if (outer_lbrack != std::string::npos) {
+        auto addr_quote_start = params.find('"', outer_lbrack + 1);
+        if (addr_quote_start != std::string::npos) {
+            addr_quote_end = params.find('"', addr_quote_start + 1);
+        }
+    }
+    auto storage_param_start = std::string::npos;
+    if (addr_quote_end != std::string::npos) {
+        // First non-space char after the closing `"` and `,`.
+        auto comma = params.find(',', addr_quote_end + 1);
+        if (comma != std::string::npos) {
+            size_t i = comma + 1;
+            while (i < params.size() && (params[i] == ' ' || params[i] == '\t' ||
+                                         params[i] == '\n' || params[i] == '\r')) {
+                ++i;
+            }
+            storage_param_start = i;
+        }
+    }
+    if (storage_param_start == std::string::npos ||
+        storage_param_start >= params.size()) {
+        return {make_error(id, -32602,
+            "eth_getProof: storage keys must be a JSON array"), true};
+    }
+    // L-01 edge cases:
+    //   * `null` — the caller asked for no proofs. Per the Ethereum
+    //     execution-API spec the response is a successful one with
+    //     an empty `storageProof`. We accept it here without entering
+    //     the array parser; the slots vector stays empty.
+    //   * Anything else that isn't `[` — string, object, number,
+    //     truthy/falsy literal — is hard rejection -32602. The
+    //     post-array parser must run only on a literal `[`.
+    bool storage_keys_is_explicit_null = false;
+    {
+        // Cheap literal check: `null` followed by whitespace, `,`, `]`,
+        // or end of input. Anything else with the prefix `null` (e.g.
+        // `nullable`) falls through to the strict reject below.
+        constexpr std::string_view kNull{"null"};
+        if (storage_param_start + kNull.size() <= params.size() &&
+            params.compare(storage_param_start, kNull.size(), kNull) == 0) {
+            size_t after = storage_param_start + kNull.size();
+            bool boundary_ok =
+                after >= params.size() || params[after] == ',' ||
+                params[after] == ']' || params[after] == ' ' ||
+                params[after] == '\t' || params[after] == '\n' ||
+                params[after] == '\r';
+            if (boundary_ok) {
+                storage_keys_is_explicit_null = true;
+            }
+        }
+    }
+    if (!storage_keys_is_explicit_null &&
+        params[storage_param_start] != '[') {
+        return {make_error(id, -32602,
+            "eth_getProof: storage keys must be a JSON array"), true};
+    }
+    if (!storage_keys_is_explicit_null) {
+        auto kpos = storage_param_start;
+        auto kend = params.find(']', kpos + 1);
+        if (kend == std::string::npos || kend <= kpos) {
+            return {make_error(id, -32602,
+                "eth_getProof: storage keys must be a JSON array"), true};
+        }
         size_t scan = kpos;
         while (scan < kend) {
             auto h = params.find("0x", scan);
@@ -2855,7 +3029,8 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
             size_t hex_end = e;
             size_t hex_len = hex_end - hex_start;
             if (hex_len == 0 || hex_len > 64) {
-                scan = e + 1; continue;
+                return {make_error(id, -32602,
+                    "eth_getProof: invalid storage key length"), true};
             }
             if (slots.size() >= kMaxGetProofStorageKeys) {
                 return {make_error(id, -32602,
@@ -2864,10 +3039,12 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
             }
             evmc::bytes32 s{};
             size_t nibble_offset = 64 - hex_len;  // left-pad nibbles
-            bool ok = true;
             for (size_t i = 0; i < hex_len; ++i) {
                 uint8_t n;
-                if (!parse_hex_byte(params[hex_start + i], n)) { ok = false; break; }
+                if (!parse_hex_byte(params[hex_start + i], n)) {
+                    return {make_error(id, -32602,
+                        "eth_getProof: invalid storage key hex"), true};
+                }
                 size_t tgt_nibble = nibble_offset + i;
                 size_t byte = tgt_nibble / 2;
                 if (tgt_nibble % 2 == 0) {
@@ -2876,7 +3053,7 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
                     s.bytes[byte] |= n;
                 }
             }
-            if (ok) slots.push_back(s);
+            slots.push_back(s);
             scan = e + 1;
         }
     }
@@ -4980,10 +5157,41 @@ std::optional<RpcResult> handle_eth_rpc(
         return RpcResult{make_error(id, -32600, "request params exceed max size"), true};
     }
 
-    if (method == "eth_getProof" && !g_public_getproof_enabled) {
-        return RpcResult{make_error(id, -32601,
-                                    "eth_getProof disabled by node policy"), true};
+    // M-03: profile-driven method gating. Each branch returns -32601
+    // ("method not found") with a precise "disabled by node profile"
+    // suffix so operators / clients can distinguish "this method does
+    // not exist on this build" from "this build supports the method
+    // but the operator profile excludes it". The check runs BEFORE
+    // rate limiting and BEFORE the legacy `g_public_getproof_enabled`
+    // toggle so a profile transition is the single source of truth.
+    if (method == "eth_call" || method == "eth_estimateGas" ||
+        method == "eth_createAccessList") {
+        if (!g_profile_heavy_readonly_enabled.load(std::memory_order_relaxed)) {
+            return RpcResult{make_error(id, -32601,
+                std::string(method) +
+                " disabled by node profile"), true};
+        }
     }
+    if (method == "eth_getProof") {
+        if (!g_profile_getproof_enabled.load(std::memory_order_relaxed)) {
+            return RpcResult{make_error(id, -32601,
+                "eth_getProof disabled by node profile"), true};
+        }
+        if (!g_public_getproof_enabled) {
+            return RpcResult{make_error(id, -32601,
+                                        "eth_getProof disabled by node policy"), true};
+        }
+    }
+#ifdef TOS_ENABLE_EVM_DEBUG_RPC
+    if (method == "debug_traceTransaction" ||
+        method == "debug_rebuildRpcCache") {
+        if (!g_profile_debug_rpc_enabled.load(std::memory_order_relaxed)) {
+            return RpcResult{make_error(id, -32601,
+                std::string(method) +
+                " disabled by node profile"), true};
+        }
+    }
+#endif
 
     // --- Production hardening: rate limiting ---
     if (g_rate_limit_enabled) {

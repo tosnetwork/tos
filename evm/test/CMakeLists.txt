@@ -13,6 +13,28 @@ else()
   add_test(NAME test-evm-executor COMMAND test-evm-executor)
 endif()
 
+# Debug-RPC-enabled sibling of test-evm-executor. Links against
+# `evm_workchain_test_debug`, which rebuilds every EVM source with
+# `TOS_ENABLE_EVM_DEBUG_RPC=1` (in addition to the
+# `TOS_EVM_TEST_INSTRUMENTATION=1` already on the regular test
+# library). The debug-method coverage tests
+# (e.g. `test_m03_validator_minimal_disables_debug_methods`) exercise
+# the dispatcher in `rpc/handlers.cpp` — flipping the macro only on
+# this executable's translation unit would leave `is_eth_rpc_method`
+# and the profile gate (compiled into the library) without their
+# `debug_*` branches, so the dispatcher would silently treat the
+# methods as unknown. The macro propagates to this executable
+# transitively from the library's PUBLIC compile-definitions.
+add_executable(test-evm-executor-debug test-executor.cpp)
+target_link_libraries(test-evm-executor-debug PRIVATE evm_workchain_test_debug)
+target_include_directories(test-evm-executor-debug PRIVATE ${SECP256K1_INCLUDE_DIR})
+
+if (COMMAND tos_test)
+  tos_test(test-evm-executor-debug)
+else()
+  add_test(NAME test-evm-executor-debug COMMAND test-evm-executor-debug)
+endif()
+
 add_executable(test-evm-compute-purity test-evm-compute-purity.cpp)
 target_link_libraries(test-evm-compute-purity PRIVATE evm_workchain_test)
 target_include_directories(test-evm-compute-purity PRIVATE ${SECP256K1_INCLUDE_DIR})

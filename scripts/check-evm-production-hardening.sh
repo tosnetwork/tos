@@ -141,9 +141,19 @@ if rg -n 'kMaxSimulateFillerJump[[:space:]]*=[[:space:]]*8192' "$rpc_handlers"; 
     exit 1
 fi
 
-if ! rg -q 'kMaxPersistentStateDownloadBytes' "$validator_download_state" ||
-   ! rg -q 'kMaxPersistentStateHeapBufferBytes' "$validator_download_state" ||
-   ! rg -q 'persistent state stream exceeds advertised size|persistent state too large' "$validator_download_state" ||
+# Persistent-state downloader must validate total and cumulative size
+# before streaming. The download-budget constants and reservation API
+# may live either in `validator/net/download-state.cpp` (legacy
+# placement) or in the dedicated `validator/state-download-buffer.cpp`
+# library (post-M-01 modularisation). Accept either location, and
+# accept either the legacy `kMaxPersistentStateHeapBufferBytes` name
+# or the post-modularisation `kHeapThreshold` name.
+state_buffer_cpp="$root/validator/state-download-buffer.cpp"
+search_paths=("$validator_download_state")
+[ -f "$state_buffer_cpp" ] && search_paths+=("$state_buffer_cpp")
+if ! rg -q 'kMaxPersistentStateDownloadBytes' "${search_paths[@]}" 2>/dev/null ||
+   ! rg -q 'kMaxPersistentStateHeapBufferBytes|kHeapThreshold' "${search_paths[@]}" 2>/dev/null ||
+   ! rg -q 'persistent state stream exceeds advertised size|persistent state too large' "${search_paths[@]}" 2>/dev/null ||
    ! rg -q 'download_started_' "$root/validator/net/download-state.hpp"; then
     echo "evm production hardening check failed: persistent state downloader must validate total and cumulative size before streaming" >&2
     exit 1
@@ -221,6 +231,23 @@ if rg -n '^[^#]*target_compile_definitions\(evm_workchain[[:space:]]+PUBLIC[[:sp
     fi
 fi
 
+# Defense in depth: TOS_ENABLE_EVM_DEBUG_RPC unlocks debug_* RPC methods
+# (debug_traceTransaction, debug_rebuildRpcCache, ...). It may only be set
+# on the test-debug variant library (evm_workchain_test_debug), never on
+# the production `evm_workchain` library. The regex requires whitespace
+# directly after `evm_workchain`, so `evm_workchain_test` and
+# `evm_workchain_test_debug` cannot match (their underscore consumes the
+# space slot). The post-filter via the invert grep is a belt-and-braces
+# guard in case the regex engine ever loosens. Multiline mode (`rg -U`)
+# is required because the production CMakeLists splits multi-flag
+# `target_compile_definitions(...)` across several lines.
+if rg -n -U 'target_compile_definitions\(\s*evm_workchain[[:space:]]+(PUBLIC|PRIVATE|INTERFACE)[^)]*TOS_ENABLE_EVM_DEBUG_RPC' \
+     "$root/evm/CMakeLists.txt" "$root/evm/test/CMakeLists.txt" 2>/dev/null \
+     | rg -v 'evm_workchain_test_debug|evm_workchain_test\b' >/dev/null; then
+    echo "evm production hardening check failed: TOS_ENABLE_EVM_DEBUG_RPC must only be set on the debug-test library, not on production evm_workchain" >&2
+    exit 1
+fi
+
 # The eth_simulateV1 stateOverrides parser must reject invalid hex before
 # the global EVM mutex is taken. The error strings below are pinned so
 # external monitoring can alert on regressions; they are also the contract
@@ -263,6 +290,83 @@ fi
 # explicit opt-in CMake option (`TOS_EVM_STRICT_COMPUTE_INVARIANTS`).
 if rg -n '#ifndef NDEBUG' "$compute_phase" >/dev/null 2>&1; then
     echo "evm production hardening check failed: expensive EVM compute invariant must use TOS_EVM_STRICT_COMPUTE_INVARIANTS, not NDEBUG" >&2
+    exit 1
+fi
+
+# L-02 (a): RPC handlers MUST NOT call the unsafe-for-tests-only
+# MPT / CellState helpers. The safe variants surface corrupt-witness
+# errors as `td::Status`; the unsafe variants either lazy-mutate
+# `touched_storage_tries_` under a const path or swallow corrupt
+# witnesses. The check is scoped to `evm/rpc/` because untrusted JSON
+# inputs land there; `evm/core` legitimately defines wrapper
+# functions whose own name carries the `*_unsafe_for_tests_only`
+# suffix (those wrappers are themselves the test-only API and are
+# already covered by the broader `evm/core` audit on lines ~244-258).
+unsafe_rpc_hits=$(
+    rg -n '(proof_unsafe_for_tests_only|root_hash_unsafe_for_tests_only|ethereum_(account|storage)_proof_unsafe_for_tests_only|ethereum_storage_root_hash_unsafe_for_execution_cache)\(' \
+        "$root/evm/rpc" \
+        --type-add 'cpp:*.{c,cc,cpp,h,hpp}' --type cpp \
+        -g '!evm/test/**' -g '!**/*test*' 2>/dev/null \
+    | rg -v '^[^:]+:[0-9]+:[[:space:]]*//' \
+    || true
+)
+if [ -n "$unsafe_rpc_hits" ]; then
+    echo "evm production hardening check failed: unsafe MPT/CellState API used in production path" >&2
+    echo "$unsafe_rpc_hits" >&2
+    exit 1
+fi
+
+# L-02 (b): the eth_getProof storage-key parser MUST NOT silently
+# `continue` past invalid hex keys (L-01 hardening). Any regression
+# that re-introduces `continue` after `hex_len > 64` or inside the
+# eth_getProof loop is a strict-validation regression.
+if rg -n 'eth_getProof.*continue|hex_len > 64.*continue' "$rpc_handlers" >/dev/null; then
+    echo "evm production hardening check failed: eth_getProof storage key parser must not silently continue past invalid input" >&2
+    exit 1
+fi
+
+# L-02 (c): TOS_EVM_STRICT_COMPUTE_INVARIANTS must default OFF. The
+# expensive per-tx StrictRecursive invariant check is opt-in only.
+if rg -n 'option\(TOS_EVM_STRICT_COMPUTE_INVARIANTS[^)]*ON\b' "$root/evm/CMakeLists.txt" >/dev/null; then
+    echo "evm production hardening check failed: TOS_EVM_STRICT_COMPUTE_INVARIANTS must default OFF" >&2
+    exit 1
+fi
+
+# L-02 (d): TOS_ALLOW_NPX_SOLC=1 must NOT be set in CI release scripts.
+# Operators may still set it locally for development. Be tolerant if
+# the .github/ or scripts/ci/ directories don't exist.
+if [ -d "$root/.github" ] || [ -d "$root/scripts/ci" ]; then
+    npx_hits=""
+    for ci_dir in "$root/.github" "$root/scripts/ci"; do
+        [ -d "$ci_dir" ] || continue
+        hits=$(rg -n 'TOS_ALLOW_NPX_SOLC[[:space:]]*=[[:space:]]*1' "$ci_dir" 2>/dev/null \
+                 | rg -v 'allowed-locally|local-dev' || true)
+        if [ -n "$hits" ]; then
+            npx_hits+="$hits"$'\n'
+        fi
+    done
+    if [ -n "$npx_hits" ]; then
+        echo "evm production hardening check failed: TOS_ALLOW_NPX_SOLC=1 must not be set in CI release profile" >&2
+        echo "$npx_hits" >&2
+        exit 1
+    fi
+fi
+
+# L-02 (e): debug RPC dispatcher + allowlist MUST be wrapped in
+# TOS_ENABLE_EVM_DEBUG_RPC. The earlier checks (lines ~74-94) already
+# verify per-method gating; this is a coarser sanity check that the
+# macro itself is referenced at all.
+if ! rg -n '#ifdef TOS_ENABLE_EVM_DEBUG_RPC' "$rpc_handlers" >/dev/null; then
+    echo "evm production hardening check failed: debug RPC must be guarded by TOS_ENABLE_EVM_DEBUG_RPC" >&2
+    exit 1
+fi
+
+# L-02 (f): default EvmRpcProfile MUST be ValidatorMinimal (M-03
+# hand-off). A regression that lowers the default to FollowerPublic
+# silently re-exposes heavy read-only RPC + eth_getProof on every
+# validator.
+if ! rg -n 'g_evm_rpc_profile\{[^}]*ValidatorMinimal' "$rpc_handlers" >/dev/null; then
+    echo "evm production hardening check failed: default EvmRpcProfile must be ValidatorMinimal" >&2
     exit 1
 fi
 

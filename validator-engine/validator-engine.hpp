@@ -498,6 +498,7 @@ class ValidatorEngine : public td::actor::Actor {
   void set_json_rpc_request_timeout(double seconds);
   void set_json_rpc_api_key(std::string key);
   void set_json_rpc_cache_ttl(td::int32 seconds);
+  void set_evm_rpc_profile(evm_workchain::EvmRpcProfile profile);
 
   void get_current_validator_perm_key(td::Promise<std::pair<tos::PublicKey, size_t>> promise);
 

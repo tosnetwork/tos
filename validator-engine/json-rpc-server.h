@@ -19,6 +19,7 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 
 #include "http/http-server.h"
 #include "metrics/metrics-collectors.h"
@@ -27,6 +28,7 @@
 #include "td/utils/Time.h"
 #include "validator/validator.h"
 #include "block/block.h"
+#include "evm/rpc/handlers.h"
 
 #include <list>
 #include <set>
@@ -149,6 +151,12 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
     td::int32 cache_ttl = 0;        // seconds, 0 = disabled
     std::size_t cache_max_entries = 1024;
     std::size_t cache_max_body_bytes = 8 << 20;
+    // M-03: explicit EVM RPC profile selector. When unset, the server
+    // falls back to the `TOS_EVM_RPC_PROFILE` environment variable, then
+    // to `EvmRpcProfile::ValidatorMinimal` (the safest surface). The
+    // command-line wiring lives in `validator-engine.cpp` under the
+    // `--evm-rpc-profile=validator|follower|admin` flag.
+    std::optional<evm_workchain::EvmRpcProfile> evm_rpc_profile;
   };
 
   static td::actor::ActorOwn<JsonRpcServer> create(

@@ -64,15 +64,39 @@ void enable_evm_rpc_rate_limit(bool enable);
 /// Enabled by default; production profiles may still turn it off by policy.
 void enable_public_evm_getproof(bool enable);
 
-/// Enable the admin/conformance read-only EVM RPC profile. When OFF
-/// (the default), per-request read-only gas (eth_call /
-/// eth_estimateGas / eth_createAccessList / eth_simulateV1) is capped
-/// at the public 10M-gas limit. When ON, the cap is raised to 30M to
-/// match Ethereum L1 block gas — required for the execution-apis
-/// conformance suite and for local tooling that simulates whole-block
-/// sized calls. Must only be enabled on local-only / admin RPC
-/// endpoints.
-void enable_admin_evm_rpc_profile(bool enable);
+/// JSON-RPC node profile selector. The active profile drives every
+/// security-sensitive surface of the EVM RPC handlers in lockstep:
+///   - which read-only EVM RPC methods (eth_call / eth_estimateGas /
+///     eth_createAccessList) are enabled at all;
+///   - the per-request read-only gas cap;
+///   - whether `eth_getProof` is enabled;
+///   - whether debug_* RPC methods are exposed even when
+///     `TOS_ENABLE_EVM_DEBUG_RPC` is compiled in.
+///
+/// `ValidatorMinimal` is the safest default: it pins consensus nodes
+/// behind the "minimal" surface (stop heavy read-only RPC from
+/// competing for the global EVM state mutex). `FollowerPublic` is for
+/// dedicated public RPC replicas that don't run consensus.
+/// `AdminLocal` is for local-only operator endpoints / conformance
+/// suites that need the full RPC API at the higher 30M gas cap. The
+/// new profile MUST be set via `set_evm_rpc_profile()`; do NOT scatter
+/// per-flag setters across the codebase.
+enum class EvmRpcProfile {
+    ValidatorMinimal,   ///< validator nodes — minimal heavy read-only RPC
+    FollowerPublic,     ///< follower / RPC replica — heavy RPC enabled with limits
+    AdminLocal,         ///< local admin / conformance — full caps, debug methods if compiled in
+};
+
+/// Set the active EVM RPC profile. Must be called before serving RPC.
+/// Resets per-method rate buckets and inflight counters and re-applies
+/// every profile-dependent toggle (gas cap, debug allowlist, getProof
+/// enable bit) atomically.
+void set_evm_rpc_profile(EvmRpcProfile profile);
+
+/// Read the currently active EVM RPC profile. Snapshot only — readers
+/// must not depend on a stable value across long sequences of
+/// requests.
+EvmRpcProfile get_evm_rpc_profile();
 
 /// Try to consume one token from the global EVM RPC bucket. Used by the
 /// `eth_sendRawTransaction` fast path in `json-rpc-server-send.cpp`, which
