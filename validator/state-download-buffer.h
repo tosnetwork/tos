@@ -314,6 +314,8 @@ td::Status cleanup_persistent_state_tempfiles(td::CSlice tempfile_root,
 void set_persistent_state_tempfile_dir(std::string dir);
 std::string get_persistent_state_tempfile_dir();
 
+// See docs/adr/0001-streaming-cell-import-and-residency.md
+//
 // Streaming-sink wiring for vm::std_boc_deserialize_from_file_bounded.
 // The actor that drives the bounded streaming BoC importer constructs
 // a CellDbStreamingSink, hands it to the importer, and once the parse

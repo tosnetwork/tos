@@ -403,6 +403,8 @@ class BagOfCells {
 td::Result<Ref<Cell>> std_boc_deserialize(td::Slice data, bool can_be_empty = false, bool allow_nonzero_level = false);
 td::Result<td::BufferSlice> std_boc_serialize(Ref<Cell> root, int mode = 0);
 
+// See docs/adr/0001-streaming-cell-import-and-residency.md
+//
 // Bounded streaming BoC importer. Reads a serialized BoC directly from a
 // file descriptor in chunks, deserializes each cell as soon as its
 // references are known, hands the freshly-built cell to `persist_cell`,
