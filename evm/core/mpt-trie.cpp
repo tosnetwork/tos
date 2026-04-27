@@ -1290,6 +1290,12 @@ bool MptTrie::erase_hashed(const ByteView& hashed_key) {
     return erase_hashed_safe(hashed_key).is_ok();
 }
 
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
+// L-01 (audit): unsafe `*_unsafe_for_tests_only` definitions are gated
+// behind `TOS_EVM_TEST_INSTRUMENTATION`. Production builds of
+// `evm_workchain` do NOT define the macro, so these symbols are not
+// emitted into the production library archive. Test libraries
+// (`evm_workchain_test{,_debug}`) define the macro and link normally.
 evmc::bytes32 MptTrie::root_hash_unsafe_for_tests_only() const {
     auto result = root_hash_safe();
     if (result.is_error()) {
@@ -1308,6 +1314,7 @@ std::vector<Bytes> MptTrie::proof_unsafe_for_tests_only(
     walk_proof(root_, nibbles, out);
     return out;
 }
+#endif  // TOS_EVM_TEST_INSTRUMENTATION
 
 td::Result<std::vector<Bytes>> MptTrie::proof_safe(const ByteView& hashed_key) const {
     if (hashed_key.size() != kHashLength) {

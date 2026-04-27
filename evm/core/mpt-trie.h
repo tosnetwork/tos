@@ -187,11 +187,20 @@ class MptTrie {
                                    const silkworm::ByteView& rlp_value);
     td::Status erase_hashed_safe(const silkworm::ByteView& hashed_key);
 
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
     /// Test-only Ethereum MPT root hash. Empty trie returns
     /// keccak256(RLP("")). On a corrupt root the legacy boolean wrapper
     /// returns `kEmptyRoot` (status discarded) which would silently corrupt
     /// consensus state — production callers MUST use `root_hash_safe()`.
+    ///
+    /// L-01 (audit): the symbol is gated behind
+    /// `TOS_EVM_TEST_INSTRUMENTATION` so production targets do NOT export
+    /// it. Tests link the dedicated `evm_workchain_test{_debug}` libraries
+    /// which set the macro; the production `evm_workchain` library does
+    /// not, so a future production caller cannot accidentally link
+    /// against this symbol.
     evmc::bytes32 root_hash_unsafe_for_tests_only() const;
+#endif
 
     /// Fail-closed root-hash variant. Returns an error if the root or one of
     /// its eagerly-required descendants fails to decode while computing the
@@ -208,12 +217,18 @@ class MptTrie {
     /// Strict-only on lazy-loaded witnesses: same contract as `proof_safe`.
     td::Result<evmc::bytes32> root_hash_safe() const;
 
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
     /// Test-only proof helper. Wraps `proof_safe` but discards a non-OK
     /// status as an empty proof — production callers MUST use `proof_safe()`
     /// so a corrupt witness surfaces as a JSON-RPC error rather than a
     /// silently-empty proof.
+    ///
+    /// L-01 (audit): same `TOS_EVM_TEST_INSTRUMENTATION` gating as
+    /// `root_hash_unsafe_for_tests_only`. Production targets must not
+    /// export this symbol.
     std::vector<silkworm::Bytes> proof_unsafe_for_tests_only(
         const silkworm::ByteView& hashed_key) const;
+#endif
 
     /// Fail-closed proof variant. Propagates lazy-decode/structural errors as
     /// `td::Status` instead of triggering a `CHECK` abort, so RPC handlers

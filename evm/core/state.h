@@ -137,6 +137,21 @@ class EvmState {
     uint64_t get_nonce(const evmc::address& addr) const;
     std::optional<silkworm::Account> read_account(const evmc::address& addr) const;
     silkworm::Bytes read_code_copy(const evmc::address& addr, const evmc::bytes32& code_hash) const;
+
+    /// Audit H-01: bytecode read with explicit `keccak(code) == code_hash`
+    /// enforcement. The lazy decode in `CellEvmState::read_code` already
+    /// fails closed via the witness context when invoked under an
+    /// executing transaction; RPC paths (`eth_getCode`) run without a
+    /// witness context, so the validity check has to happen here. Returns
+    /// `Status::Error("corrupt EVM code root: keccak(code) != codeHash")`
+    /// when the cell-tree decode produces bytecode whose hash does not
+    /// match the canonical account `code_hash`. The empty-code case
+    /// (account.code_hash == kEmptyHash) is canonical empty code and
+    /// returns an empty Bytes successfully.
+    td::Result<silkworm::Bytes> read_code_copy_checked(
+        const evmc::address& addr,
+        const evmc::bytes32& code_hash) const;
+
     evmc::bytes32 read_storage_copy(const evmc::address& addr, uint64_t incarnation,
                                     const evmc::bytes32& location) const;
 

@@ -11109,6 +11109,838 @@ void test_h01_witness_consistency_oom_bad_alloc_handled() {
 #endif
 }
 
+// =============================================================================
+// H-01 follow-up — code_hash invariant on lazy bytecode decode
+// =============================================================================
+//
+// Audit H-01: `read_code` and `update_account_code` MUST enforce
+// `keccak(decoded) == account.codeHash` so a corrupt flat-state code root
+// cell can never produce execution divergence. The static account-leaf
+// MPT proof commits to `code_hash`, but the per-account `code_root` cell
+// in flat state has no separate authentication path — the new fix makes
+// the cell-tree decode itself the authentication step.
+//
+// All four tests construct a state where the EvmAccountData cell encodes
+// `code_hash = keccak(A)` but the embedded code chain encodes `B`. We do
+// this by constructing the account cell directly with `encode_evm_account_data`
+// (the runtime `update_account_code` API now refuses such writes after
+// the H-01 fix, so we build the cell bypassing that API).
+namespace {
+
+// Build an account dict cell containing exactly `target_addr → bad_acct`,
+// where the EvmAccountData encodes `code_hash` but the code_root chain
+// encodes a *different* runtime. Caller-supplied `code_for_chain` becomes
+// the actual cell payload while `acct.code_hash` carries the falsely
+// claimed identity. Returns the dict root cell (suitable for `load_from_cell`).
+td::Ref<vm::Cell> h01_make_corrupt_code_root_state(
+    const evmc::address& target_addr,
+    const silkworm::Account& acct,
+    const Bytes& code_for_chain) {
+    auto code_chain = encode_evm_bytecode(td::Slice{
+        reinterpret_cast<const char*>(code_for_chain.data()),
+        code_for_chain.size()});
+    auto data_cell = encode_evm_account_data(acct, /*storage_root=*/{}, code_chain);
+    vm::CellBuilder cb;
+    cb.store_ref(data_cell);
+    vm::Dictionary dict(256);
+    unsigned char key[32];
+    address_to_key(target_addr, key);
+    CHECK(dict.set_builder(td::ConstBitPtr{key}, 256, cb));
+    return dict.get_root_cell();
+}
+
+}  // namespace
+
+void test_h01_code_root_hash_mismatch_call_fails_closed() {
+    printf("=== test_h01_code_root_hash_mismatch_call_fails_closed ===\n");
+
+    evmc::address sender = hex_to_addr("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+    evmc::address contract_addr = hex_to_addr(
+        "0xbadc0debadc0debadc0debadc0debadc0debadc0");
+
+    // code_A: SLOAD(0); RETURN. code_hash = keccak(code_A).
+    Bytes code_A = h01_sload_slot0_runtime();
+    // code_B: a different runtime — pick PUSH1 0x42; PUSH1 0; MSTORE; ...
+    // RETURN(0,32). Distinguishable from code_A so a successful execution
+    // would produce a non-aa, non-bb 32-byte return value.
+    Bytes code_B{
+        0x60, 0x42,   // PUSH1 0x42
+        0x60, 0x00,   // PUSH1 0
+        0x52,          // MSTORE
+        0x60, 0x20,   // PUSH1 32
+        0x60, 0x00,   // PUSH1 0
+        0xf3,          // RETURN
+    };
+
+    // Sender + contract account leaves carry code_hash = keccak(code_A).
+    auto kh_A = ethash::keccak256(code_A.data(), code_A.size());
+    silkworm::Account contract_acct{};
+    contract_acct.balance = intx::uint256{0};
+    contract_acct.nonce = 1;
+    std::memcpy(contract_acct.code_hash.bytes, kh_A.bytes, 32);
+
+    silkworm::Account sender_acct{};
+    sender_acct.balance = intx::uint256{1'000'000'000'000'000'000ULL};
+    sender_acct.nonce = 0;
+
+    // Build the corrupt flat dict by hand: contract_addr → EvmAccountData
+    // with codeHash=keccak(A) but code chain encoding B. Use a separate
+    // donor for the sender so the dict has two entries.
+    vm::Dictionary corrupt_dict(256);
+    {
+        auto code_chain_B = encode_evm_bytecode(td::Slice{
+            reinterpret_cast<const char*>(code_B.data()), code_B.size()});
+        auto bad_data_cell = encode_evm_account_data(contract_acct, /*storage_root=*/{},
+                                                      code_chain_B);
+        vm::CellBuilder cb;
+        cb.store_ref(bad_data_cell);
+        unsigned char key[32];
+        address_to_key(contract_addr, key);
+        CHECK(corrupt_dict.set_builder(td::ConstBitPtr{key}, 256, cb));
+    }
+    {
+        auto good_data_cell = encode_evm_account_data(sender_acct, /*storage_root=*/{},
+                                                       /*code_root=*/{});
+        vm::CellBuilder cb;
+        cb.store_ref(good_data_cell);
+        unsigned char key[32];
+        address_to_key(sender, key);
+        CHECK(corrupt_dict.set_builder(td::ConstBitPtr{key}, 256, cb));
+    }
+    auto state_cell = corrupt_dict.get_root_cell();
+    CHECK(state_cell.not_null());
+
+    // Witness side: build a *consistent* witness from a separate donor so
+    // the account leaves cross-check OK; only the bytecode is the
+    // mismatch we want to surface. The witness account leaf carries the
+    // same RLP shape (nonce, balance, storageRoot, codeHash) that the
+    // flat side does, so `verify_account_witness_matches_flat_state` is
+    // happy and the only fail-closed signal is the codeHash check inside
+    // `read_code`.
+    CellEvmState witness_donor;
+    witness_donor.update_account(contract_addr, std::nullopt, contract_acct);
+    witness_donor.update_account_code(
+        contract_addr, /*incarnation=*/0, contract_acct.code_hash,
+        silkworm::ByteView{code_A.data(), code_A.size()});
+    witness_donor.update_account(sender, std::nullopt, sender_acct);
+    auto witness_cell = witness_donor.serialize_trie_witness_to_cell();
+    CHECK(witness_cell.not_null());
+
+    auto h = h01_make_replay_state(state_cell, witness_cell);
+    CHECK(h.cell_state != nullptr);
+
+    Transaction txn;
+    txn.type = TransactionType::kLegacy;
+    txn.chain_id = kEvmChainId;
+    txn.nonce = 0;
+    txn.max_fee_per_gas = 1'000'000'000;
+    txn.max_priority_fee_per_gas = 1'000'000'000;
+    txn.gas_limit = 100'000;
+    txn.to = contract_addr;
+    txn.value = 0;
+    txn.set_sender(sender);
+
+    uint8_t rand_seed[32] = {};
+    auto block = make_evm_block(1, 1700000000, rand_seed);
+    const auto& config = evm_chain_config();
+
+    WitnessFlatConsistencyContext ctx{};
+    ctx.enabled = true;
+    ctx.checked_accounts.insert(sender);
+    ctx.checked_accounts.insert(contract_addr);
+    ctx.checked_accounts.insert(block.header.beneficiary);
+
+    auto exec_result = execute_evm_transaction(txn, block, *h.state, config, &ctx);
+
+    bool disposition_is_mismatch =
+        exec_result.disposition == EvmTxDisposition::WitnessMismatch;
+    bool message_mentions_code =
+        exec_result.error_message.find("code") != std::string::npos ||
+        exec_result.error_message.find("witness") != std::string::npos;
+
+    // Sanity check: the EVM should have NOT executed code_B. The
+    // `return_data` comes from the EVM call result; a successful run
+    // of code_B would return a 32-byte word with the 0x42 marker in
+    // the last byte. WitnessMismatch fails closed BEFORE any return
+    // data is committed.
+    bool no_code_B_payload = true;
+    if (exec_result.return_data.size() == 32) {
+        no_code_B_payload = exec_result.return_data[31] != 0x42;
+    }
+
+    printf("  disposition WitnessMismatch:        %s\n",
+           disposition_is_mismatch ? "OK" : "FAILED");
+    printf("  error mentions code/witness:        %s\n",
+           message_mentions_code ? "OK" : "FAILED");
+    printf("  return data is NOT code_B payload:  %s\n",
+           no_code_B_payload ? "OK" : "FAILED");
+    printf("  error message:                      %s\n",
+           exec_result.error_message.c_str());
+
+    bool ok = disposition_is_mismatch && message_mentions_code &&
+              no_code_B_payload;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+void test_h01_extcodecopy_flat_witness_drift_rejected() {
+    printf("=== test_h01_extcodecopy_flat_witness_drift_rejected ===\n");
+
+    evmc::address sender = hex_to_addr("0xfeedfacefeedfacefeedfacefeedfacefeedface");
+    evmc::address caller_addr = create_address(sender, 0);
+    evmc::address victim_addr = hex_to_addr(
+        "0xc0fec0fec0fec0fec0fec0fec0fec0fec0fec0fe");
+
+    // Victim contract: claims code_hash = keccak(code_A) but flat-state
+    // code chain encodes code_B.
+    Bytes code_A = h01_sload_slot0_runtime();
+    Bytes code_B{0x60, 0x42, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3};
+
+    auto kh_A = ethash::keccak256(code_A.data(), code_A.size());
+    silkworm::Account victim_acct{};
+    victim_acct.nonce = 1;
+    victim_acct.balance = intx::uint256{0};
+    std::memcpy(victim_acct.code_hash.bytes, kh_A.bytes, 32);
+
+    // Caller bytecode: EXTCODECOPY(victim, dst=0, src=0, len=2);
+    // RETURN(0, 2). Layout:
+    //   PUSH1 0x02      (length)
+    //   PUSH1 0x00      (src offset)
+    //   PUSH1 0x00      (dst offset)
+    //   PUSH20 victim   (address)
+    //   EXTCODECOPY
+    //   PUSH1 0x02      (return length)
+    //   PUSH1 0x00      (return offset)
+    //   RETURN
+    Bytes caller_runtime;
+    caller_runtime.insert(caller_runtime.end(), {0x60, 0x02});
+    caller_runtime.insert(caller_runtime.end(), {0x60, 0x00});
+    caller_runtime.insert(caller_runtime.end(), {0x60, 0x00});
+    caller_runtime.push_back(0x73);  // PUSH20
+    caller_runtime.insert(caller_runtime.end(), victim_addr.bytes,
+                          victim_addr.bytes + 20);
+    caller_runtime.push_back(0x3c);  // EXTCODECOPY
+    caller_runtime.insert(caller_runtime.end(), {0x60, 0x02});
+    caller_runtime.insert(caller_runtime.end(), {0x60, 0x00});
+    caller_runtime.push_back(0xf3);  // RETURN
+
+    silkworm::Account caller_acct{};
+    caller_acct.nonce = 1;
+    caller_acct.balance = intx::uint256{0};
+    auto kh_caller = ethash::keccak256(caller_runtime.data(),
+                                        caller_runtime.size());
+    std::memcpy(caller_acct.code_hash.bytes, kh_caller.bytes, 32);
+
+    silkworm::Account sender_acct{};
+    sender_acct.balance = intx::uint256{1'000'000'000'000'000'000ULL};
+    sender_acct.nonce = 0;
+
+    // Hand-build the flat dict: caller (clean), victim (corrupt), sender (clean).
+    vm::Dictionary corrupt_dict(256);
+    {
+        auto caller_code_chain = encode_evm_bytecode(td::Slice{
+            reinterpret_cast<const char*>(caller_runtime.data()),
+            caller_runtime.size()});
+        auto cell = encode_evm_account_data(caller_acct, {}, caller_code_chain);
+        vm::CellBuilder cb;
+        cb.store_ref(cell);
+        unsigned char key[32];
+        address_to_key(caller_addr, key);
+        CHECK(corrupt_dict.set_builder(td::ConstBitPtr{key}, 256, cb));
+    }
+    {
+        auto victim_code_chain_B = encode_evm_bytecode(td::Slice{
+            reinterpret_cast<const char*>(code_B.data()), code_B.size()});
+        auto cell = encode_evm_account_data(victim_acct, {},
+                                             victim_code_chain_B);
+        vm::CellBuilder cb;
+        cb.store_ref(cell);
+        unsigned char key[32];
+        address_to_key(victim_addr, key);
+        CHECK(corrupt_dict.set_builder(td::ConstBitPtr{key}, 256, cb));
+    }
+    {
+        auto cell = encode_evm_account_data(sender_acct, {}, {});
+        vm::CellBuilder cb;
+        cb.store_ref(cell);
+        unsigned char key[32];
+        address_to_key(sender, key);
+        CHECK(corrupt_dict.set_builder(td::ConstBitPtr{key}, 256, cb));
+    }
+    auto state_cell = corrupt_dict.get_root_cell();
+    CHECK(state_cell.not_null());
+
+    // Witness carries the canonical (non-drift) view of the same accounts.
+    CellEvmState witness_donor;
+    witness_donor.update_account(caller_addr, std::nullopt, caller_acct);
+    witness_donor.update_account_code(
+        caller_addr, 0, caller_acct.code_hash,
+        silkworm::ByteView{caller_runtime.data(), caller_runtime.size()});
+    witness_donor.update_account(victim_addr, std::nullopt, victim_acct);
+    witness_donor.update_account_code(
+        victim_addr, 0, victim_acct.code_hash,
+        silkworm::ByteView{code_A.data(), code_A.size()});
+    witness_donor.update_account(sender, std::nullopt, sender_acct);
+    auto witness_cell = witness_donor.serialize_trie_witness_to_cell();
+    CHECK(witness_cell.not_null());
+
+    auto h = h01_make_replay_state(state_cell, witness_cell);
+    CHECK(h.cell_state != nullptr);
+
+    Transaction txn;
+    txn.type = TransactionType::kLegacy;
+    txn.chain_id = kEvmChainId;
+    txn.nonce = 0;
+    txn.max_fee_per_gas = 1'000'000'000;
+    txn.max_priority_fee_per_gas = 1'000'000'000;
+    txn.gas_limit = 200'000;
+    txn.to = caller_addr;
+    txn.value = 0;
+    txn.set_sender(sender);
+
+    uint8_t rand_seed[32] = {};
+    auto block = make_evm_block(1, 1700000000, rand_seed);
+    const auto& config = evm_chain_config();
+
+    WitnessFlatConsistencyContext ctx{};
+    ctx.enabled = true;
+    ctx.checked_accounts.insert(sender);
+    ctx.checked_accounts.insert(caller_addr);
+    ctx.checked_accounts.insert(block.header.beneficiary);
+    // Deliberately do NOT pre-seed victim_addr — the EXTCODECOPY first
+    // touch on victim is what triggers `read_code`'s code-hash check.
+
+    auto exec_result = execute_evm_transaction(txn, block, *h.state, config, &ctx);
+
+    bool fail_closed =
+        exec_result.disposition == EvmTxDisposition::WitnessMismatch ||
+        // EXTCODECOPY of an empty / mismatching code returns zeroed bytes;
+        // the verifier may also surface as a code/witness error message.
+        (exec_result.disposition == EvmTxDisposition::ExecutedSucceeded &&
+         exec_result.return_data.size() == 2 &&
+         exec_result.return_data[0] == 0 &&
+         exec_result.return_data[1] == 0);
+
+    bool not_code_B_payload = true;
+    if (exec_result.return_data.size() == 2) {
+        // code_B starts with 0x60 0x42; if EXTCODECOPY returned that,
+        // the code-hash check did NOT fire fail-closed.
+        not_code_B_payload = !(exec_result.return_data[0] == 0x60 &&
+                                exec_result.return_data[1] == 0x42);
+    }
+
+    printf("  fail-closed (mismatch or empty-code zero): %s\n",
+           fail_closed ? "OK" : "FAILED");
+    printf("  EXTCODECOPY did NOT leak code_B bytes:     %s\n",
+           not_code_B_payload ? "OK" : "FAILED");
+    printf("  disposition: %d, error: %s\n",
+           static_cast<int>(exec_result.disposition),
+           exec_result.error_message.c_str());
+
+    bool ok = fail_closed && not_code_B_payload;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+void test_h01_eth_get_code_corrupt_returns_32000() {
+    printf("=== test_h01_eth_get_code_corrupt_returns_32000 ===\n");
+
+    auto& gs = global_evm_state();
+
+    // Pick a fresh address so we don't disturb other tests.
+    evmc::address target_addr = hex_to_addr(
+        "0x000000000000000000000000000000000000c0de");
+
+    // Capture pre-test snapshots so we can restore the global state
+    // after the corruption — other tests downstream rely on a healthy
+    // account dict + witness.
+    td::Ref<vm::Cell> pre_state_cell;
+    td::Ref<vm::Cell> pre_witness_cell;
+    {
+        std::unique_lock lock(gs.mutex());
+        auto* cs = dynamic_cast<CellEvmState*>(&gs.state());
+        CHECK(cs != nullptr);
+        pre_state_cell = cs->serialize_to_cell();
+        pre_witness_cell = cs->serialize_trie_witness_to_cell();
+    }
+
+    // Build a corrupt account dict that contains target_addr with a
+    // code_root cell whose payload doesn't hash to the claimed code_hash,
+    // then load it as the global state's account dict via TrustedLazy.
+    Bytes code_A = h01_sload_slot0_runtime();
+    Bytes code_B{0x60, 0x42, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3};
+    auto kh_A = ethash::keccak256(code_A.data(), code_A.size());
+    silkworm::Account corrupt_acct{};
+    corrupt_acct.nonce = 1;
+    std::memcpy(corrupt_acct.code_hash.bytes, kh_A.bytes, 32);
+
+    auto corrupt_state_cell =
+        h01_make_corrupt_code_root_state(target_addr, corrupt_acct, code_B);
+    CHECK(corrupt_state_cell.not_null());
+
+    {
+        std::unique_lock lock(gs.mutex());
+        auto* cs = dynamic_cast<CellEvmState*>(&gs.state());
+        CHECK(cs != nullptr);
+        bool loaded = cs->load_from_cell(corrupt_state_cell,
+                                          CellStateLoadMode::TrustedLazy);
+        CHECK(loaded);
+    }
+
+    // Build a hex0x of target_addr.
+    char hex_buf[2 + 40 + 1];
+    snprintf(hex_buf, sizeof(hex_buf), "0x");
+    for (int i = 0; i < 20; ++i) {
+        snprintf(hex_buf + 2 + 2 * i, 3, "%02x", target_addr.bytes[i]);
+    }
+    std::string params = std::string("[\"") + hex_buf + "\",\"latest\"]";
+
+    auto rpc_resp = handle_eth_rpc("eth_getCode", params, "h01-corrupt");
+
+    // Restore pre-test state regardless of pass/fail so other tests are clean.
+    {
+        std::unique_lock lock(gs.mutex());
+        auto* cs = dynamic_cast<CellEvmState*>(&gs.state());
+        if (cs != nullptr) {
+            (void)cs->load_from_cell(pre_state_cell,
+                                      CellStateLoadMode::TrustedLazy);
+            if (pre_witness_cell.not_null()) {
+                (void)cs->load_trie_witness_from_cell(
+                    pre_witness_cell, TrieWitnessLoadMode::TrustedShallow);
+            }
+        }
+    }
+
+    bool got_resp = rpc_resp.has_value();
+    bool is_error_response = got_resp && rpc_resp->is_error;
+    bool right_code = is_error_response &&
+                      rpc_resp->json.find("\"code\":-32000") != std::string::npos;
+    bool right_message = is_error_response &&
+                         rpc_resp->json.find("corrupt EVM code root") !=
+                             std::string::npos;
+
+    printf("  RPC returned: %s\n", got_resp ? "yes" : "NO");
+    printf("  RPC reported error: %s\n", is_error_response ? "yes" : "NO");
+    printf("  error code -32000: %s\n", right_code ? "OK" : "FAILED");
+    printf("  error contains 'corrupt EVM code root': %s\n",
+           right_message ? "OK" : "FAILED");
+
+    bool ok = got_resp && is_error_response && right_code && right_message;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+void test_h01_update_account_code_mismatch_rejected() {
+    printf("=== test_h01_update_account_code_mismatch_rejected ===\n");
+
+    // Build a fresh CellEvmState. Seed an account that we will then try
+    // to call `update_account_code` on with mismatched code. The H-01
+    // defensive check must (a) refuse to persist the code, (b) clear
+    // `trie_witness_ready_`, and (c) record the consistency violation
+    // into a bound witness context so the executor's drain step picks
+    // it up.
+    CellEvmState cs;
+    evmc::address addr = hex_to_addr(
+        "0x1000000000000000000000000000000000001234");
+    silkworm::Account acct{};
+    acct.balance = intx::uint256{0};
+    acct.nonce = 1;
+    cs.update_account(addr, std::nullopt, acct);
+    CHECK(cs.trie_witness_ready());
+
+    Bytes code_A = h01_sload_slot0_runtime();
+    Bytes code_B{0x60, 0x42, 0x60, 0x00, 0x52};  // different content
+    auto kh_A = ethash::keccak256(code_A.data(), code_A.size());
+    evmc::bytes32 code_hash_A{};
+    std::memcpy(code_hash_A.bytes, kh_A.bytes, 32);
+
+    // Bind a witness ctx so the verifier can record the drift, and
+    // capture the offending hint string.
+    WitnessFlatConsistencyContext ctx{};
+    ctx.enabled = true;
+    cs.begin_witness_consistency_check(&ctx);
+
+    // Pass: code_B with code_hash_A. Defensive check refuses to persist;
+    // marks witness not-ready; records "update_account_code codeHash mismatch".
+    cs.update_account_code(addr, /*incarnation=*/0, code_hash_A,
+                            silkworm::ByteView{code_B.data(), code_B.size()});
+
+    bool witness_ready_cleared = !cs.trie_witness_ready();
+    auto status = cs.consume_witness_consistency_error();
+    bool consistency_error_recorded = status.is_error();
+    std::string err_msg =
+        consistency_error_recorded ? status.message().str() : std::string{};
+    bool offending_recorded =
+        !ctx.offending_what.empty() &&
+        ctx.offending_what.find("update_account_code codeHash mismatch") !=
+            std::string::npos;
+
+    cs.end_witness_consistency_check();
+
+    // The flat dict's account leaf must NOT carry code_B as its embedded
+    // code chain. We re-read the inner EvmAccountData and check that the
+    // code_root ref is null (because update_account_code returned early
+    // before any persist).
+    auto root = cs.account_dict_root();
+    CHECK(root.not_null());
+    bool no_persist = true;
+    {
+        vm::Dictionary dict(root, 256);
+        unsigned char key[32];
+        address_to_key(addr, key);
+        auto value = dict.lookup(td::ConstBitPtr{key}, 256);
+        if (value.not_null() && value->size_refs() == 1) {
+            silkworm::Account got_acct;
+            td::Ref<vm::Cell> got_storage_root;
+            td::Ref<vm::Cell> got_code_root;
+            CHECK(decode_evm_account_data(value->prefetch_ref(0), got_acct,
+                                            got_storage_root, got_code_root));
+            no_persist = got_code_root.is_null();
+        }
+    }
+
+    printf("  trie_witness_ready cleared:        %s\n",
+           witness_ready_cleared ? "OK" : "FAILED");
+    printf("  consistency error recorded:        %s\n",
+           consistency_error_recorded ? "OK" : "FAILED");
+    printf("  offending hint mentions mismatch:  %s (%s)\n",
+           offending_recorded ? "OK" : "FAILED",
+           ctx.offending_what.c_str());
+    printf("  flat dict did NOT persist code:    %s\n",
+           no_persist ? "OK" : "FAILED");
+    printf("  consume status message:            %s\n", err_msg.c_str());
+
+    bool ok = witness_ready_cleared && consistency_error_recorded &&
+              offending_recorded && no_persist;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// =============================================================================
+// H-02 — system-call witness verifier coverage (EIP-4788 / EIP-2935)
+// =============================================================================
+//
+// Audit H-02: the per-block protocol-injected system calls
+// (kBeaconRootsAddress under Cancun+, kHistoryStorageAddress under
+// Prague+) MUST run inside a `WitnessFlatConsistencyContext` so that any
+// flat/MPT drift on their account/storage/code leaves is rejected
+// fail-closed at the compute-phase boundary. The previous code path
+// silently logged "continuing — predeploy may be missing" and let user
+// transactions execute against a corrupt witness; the new helper
+// `execute_system_transaction_with_witness` rejects the entire block-tx
+// attempt instead.
+//
+// All three tests drive `run_evm_compute_phase` end-to-end so the
+// rollback / `sk_bad_state` path is exercised exactly as the validator
+// would observe it.
+
+namespace {
+
+// Build a minimal valid EVM external-message body cell carrying a
+// signed legacy transfer.
+struct H02BuiltMessage {
+    td::Ref<vm::Cell> ext_msg;
+    td::Ref<vm::Cell> body_cell;
+    evmc::address sender;
+};
+
+std::optional<H02BuiltMessage> h02_build_signed_transfer_msg(
+    uint32_t key_seed, const evmc::address& to) {
+    auto signed_tx = make_signed_raw_transfer(key_seed, /*nonce=*/0, to);
+    if (!signed_tx) return std::nullopt;
+    auto ext_msg = build_evm_external_message(signed_tx->raw_rlp.data(),
+                                               signed_tx->raw_rlp.size(),
+                                               signed_tx->sender);
+    if (ext_msg.is_null()) return std::nullopt;
+    auto cs = vm::load_cell_slice(ext_msg);
+    unsigned header_bits = 2 + 2 + 3 + 8 + 256 + 4;
+    cs.advance(header_bits);
+    (void)cs.fetch_ulong(1);   // init = nothing
+    (void)cs.fetch_ulong(1);   // body = right (ref)
+    auto body_cell = cs.fetch_ref();
+    H02BuiltMessage out{ext_msg, body_cell, signed_tx->sender};
+    return out;
+}
+
+// Construct a fresh CellEvmState seeded with the EIP-4788 / EIP-2935
+// predeploys plus an arbitrary helper account. Returns it and its
+// freshly-serialised state + witness cells. Used by the H-02 tests to
+// produce TWO donors that disagree on a system-contract leaf so the
+// replay state's flat-dict and witness MPT differ exactly there.
+struct H02PredeployHandles {
+    td::Ref<vm::Cell> state_cell;
+    td::Ref<vm::Cell> witness_cell;
+};
+
+H02PredeployHandles h02_seed_predeploys() {
+    auto cs_owned = std::make_unique<CellEvmState>();
+    auto* cs = cs_owned.get();
+    auto state = std::make_unique<EvmState>(std::move(cs_owned));
+    seed_eip4788_predeploy(*state);
+    seed_eip2935_predeploy(*state);
+    H02PredeployHandles out{
+        cs->serialize_to_cell(),
+        cs->serialize_trie_witness_to_cell(),
+    };
+    return out;
+}
+
+}  // namespace
+
+void test_h02_eip4788_beacon_roots_storage_drift_rejected() {
+    printf("=== test_h02_eip4788_beacon_roots_storage_drift_rejected ===\n");
+
+    evmc::address recipient = hex_to_addr(
+        "0x1111000000000000000000000000000000001111");
+
+    // Strategy: donor_flat has the clean predeploy at kBeaconRootsAddress;
+    // donor_witness has a *drifted* account leaf at the same address (the
+    // verifier fires on the FIRST `read_account` of the system contract
+    // during the EIP-4788 system call). Drifting balance is the simplest
+    // signal because the canonical Ethereum account RLP carries balance,
+    // and the verifier compares the re-encoded RLP against the witness
+    // leaf byte-for-byte.
+    auto donor_flat_handles = h02_seed_predeploys();
+
+    auto donor_witness_owned = std::make_unique<CellEvmState>();
+    {
+        auto state = std::make_unique<EvmState>(std::move(donor_witness_owned));
+        seed_eip4788_predeploy(*state);
+        seed_eip2935_predeploy(*state);
+        auto* cs = dynamic_cast<CellEvmState*>(&state->state());
+        CHECK(cs != nullptr);
+        // Drift the kBeaconRootsAddress account: re-write it with a
+        // different balance. The witness MPT now has a leaf that
+        // disagrees with the flat side (balance=0 vs balance=42).
+        auto existing = cs->read_account(silkworm::protocol::kBeaconRootsAddress);
+        CHECK(existing.has_value());
+        silkworm::Account drifted = *existing;
+        drifted.balance = intx::uint256{42};
+        std::unique_lock lock(state->mutex());
+        cs->update_account(silkworm::protocol::kBeaconRootsAddress,
+                           existing, drifted);
+        auto state_cell = cs->serialize_to_cell();
+        auto witness_cell = cs->serialize_trie_witness_to_cell();
+        donor_witness_owned = std::make_unique<CellEvmState>();
+        CHECK(donor_witness_owned->load_from_cell(
+            state_cell, CellStateLoadMode::TrustedLazy));
+        CHECK(donor_witness_owned->load_trie_witness_from_cell(
+            witness_cell, TrieWitnessLoadMode::TrustedShallow));
+    }
+
+    auto state_cell = donor_flat_handles.state_cell;
+    auto witness_cell = donor_witness_owned->serialize_trie_witness_to_cell();
+    CHECK(state_cell.not_null());
+    CHECK(witness_cell.not_null());
+
+    // Replay state: flat dict from donor_flat (no kBeaconRootsAddress storage),
+    // witness MPT from donor_witness (storage slot present).
+    auto cs_owned = std::make_unique<CellEvmState>();
+    auto* cs = cs_owned.get();
+    CHECK(cs->load_from_cell(state_cell, CellStateLoadMode::TrustedLazy));
+    CHECK(cs->load_trie_witness_from_cell(
+        witness_cell, TrieWitnessLoadMode::TrustedShallow));
+    auto state = std::make_unique<EvmState>(std::move(cs_owned));
+
+    auto built = h02_build_signed_transfer_msg(/*key_seed=*/0xCAFE0001, recipient);
+    CHECK(built.has_value());
+    auto body_slice = vm::load_cell_slice(built->body_cell);
+
+    state->seed_account(built->sender,
+                         intx::uint256{1'000'000'000'000'000'000ULL}, 0);
+
+    block::ComputePhase cp{};
+    uint8_t rand_seed[32] = {};
+    bool ran = run_evm_compute_phase(cp, body_slice,
+                                      /*gas_limit=*/30'000'000,
+                                      *state,
+                                      /*block_seqno=*/1,
+                                      /*timestamp=*/1700000010,
+                                      rand_seed);
+
+    bool sk_bad_state = (cp.skip_reason == block::ComputePhase::sk_bad_state);
+    bool not_accepted = !cp.accepted;
+    bool log_mentions_witness =
+        cp.vm_log.find("witness") != std::string::npos ||
+        cp.vm_log.find("EIP-4788") != std::string::npos ||
+        cp.vm_log.find("account") != std::string::npos;
+
+    printf("  run_evm_compute_phase ran: %s\n", ran ? "OK" : "FAILED");
+    printf("  cp.skip_reason sk_bad_state: %s\n",
+           sk_bad_state ? "OK" : "FAILED");
+    printf("  cp.accepted false:           %s\n",
+           not_accepted ? "OK" : "FAILED");
+    printf("  log mentions witness/4788/account: %s\n",
+           log_mentions_witness ? "OK" : "FAILED");
+    printf("  vm_log: %s\n", cp.vm_log.c_str());
+
+    bool ok = ran && sk_bad_state && not_accepted && log_mentions_witness;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+void test_h02_eip2935_history_storage_drift_rejected() {
+    printf("=== test_h02_eip2935_history_storage_drift_rejected ===\n");
+
+    evmc::address recipient = hex_to_addr(
+        "0x2222000000000000000000000000000000002222");
+
+    // Same shape as the EIP-4788 test: drift the EIP-2935 history-storage
+    // account's leaf so the witness MPT disagrees with the flat side on
+    // the very first `read_account` of kHistoryStorageAddress during the
+    // system call.
+    auto donor_flat_handles = h02_seed_predeploys();
+
+    auto donor_witness_owned = std::make_unique<CellEvmState>();
+    {
+        auto state = std::make_unique<EvmState>(std::move(donor_witness_owned));
+        seed_eip4788_predeploy(*state);
+        seed_eip2935_predeploy(*state);
+        auto* cs = dynamic_cast<CellEvmState*>(&state->state());
+        CHECK(cs != nullptr);
+        auto existing = cs->read_account(silkworm::protocol::kHistoryStorageAddress);
+        CHECK(existing.has_value());
+        silkworm::Account drifted = *existing;
+        drifted.balance = intx::uint256{99};
+        std::unique_lock lock(state->mutex());
+        cs->update_account(silkworm::protocol::kHistoryStorageAddress,
+                           existing, drifted);
+        auto state_cell = cs->serialize_to_cell();
+        auto witness_cell = cs->serialize_trie_witness_to_cell();
+        donor_witness_owned = std::make_unique<CellEvmState>();
+        CHECK(donor_witness_owned->load_from_cell(
+            state_cell, CellStateLoadMode::TrustedLazy));
+        CHECK(donor_witness_owned->load_trie_witness_from_cell(
+            witness_cell, TrieWitnessLoadMode::TrustedShallow));
+    }
+
+    auto state_cell = donor_flat_handles.state_cell;
+    auto witness_cell = donor_witness_owned->serialize_trie_witness_to_cell();
+    CHECK(state_cell.not_null());
+    CHECK(witness_cell.not_null());
+
+    auto cs_owned = std::make_unique<CellEvmState>();
+    auto* cs = cs_owned.get();
+    CHECK(cs->load_from_cell(state_cell, CellStateLoadMode::TrustedLazy));
+    CHECK(cs->load_trie_witness_from_cell(
+        witness_cell, TrieWitnessLoadMode::TrustedShallow));
+    auto state = std::make_unique<EvmState>(std::move(cs_owned));
+
+    auto built = h02_build_signed_transfer_msg(/*key_seed=*/0xCAFE0002, recipient);
+    CHECK(built.has_value());
+    auto body_slice = vm::load_cell_slice(built->body_cell);
+
+    state->seed_account(built->sender,
+                         intx::uint256{1'000'000'000'000'000'000ULL}, 0);
+
+    block::ComputePhase cp{};
+    uint8_t rand_seed[32] = {};
+    // Prague's EIP-2935 system call requires block_seqno > 0 (see
+    // compute-phase.cpp's `rev >= EVMC_PRAGUE && block_seqno > 0` gate).
+    bool ran = run_evm_compute_phase(cp, body_slice,
+                                      /*gas_limit=*/30'000'000,
+                                      *state,
+                                      /*block_seqno=*/2,
+                                      /*timestamp=*/1700000020,
+                                      rand_seed);
+
+    bool sk_bad_state = (cp.skip_reason == block::ComputePhase::sk_bad_state);
+    bool not_accepted = !cp.accepted;
+    bool log_mentions_witness =
+        cp.vm_log.find("witness") != std::string::npos ||
+        cp.vm_log.find("EIP-2935") != std::string::npos ||
+        cp.vm_log.find("account") != std::string::npos ||
+        // The EIP-4788 call also runs first under Cancun+; if its
+        // account leaf is consistent the verifier passes that one and
+        // the EIP-2935 call surfaces the drift. Either way the
+        // helper's reject path produces a non-empty vm_log mentioning
+        // a recognised system-call label or canonical witness keyword.
+        cp.vm_log.find("EIP-4788") != std::string::npos;
+
+    printf("  run_evm_compute_phase ran: %s\n", ran ? "OK" : "FAILED");
+    printf("  cp.skip_reason sk_bad_state: %s\n",
+           sk_bad_state ? "OK" : "FAILED");
+    printf("  cp.accepted false:           %s\n",
+           not_accepted ? "OK" : "FAILED");
+    printf("  log mentions witness/2935/account: %s\n",
+           log_mentions_witness ? "OK" : "FAILED");
+    printf("  vm_log: %s\n", cp.vm_log.c_str());
+
+    bool ok = ran && sk_bad_state && not_accepted && log_mentions_witness;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+void test_h02_eip4788_predeploy_missing_rejects_block() {
+    printf("=== test_h02_eip4788_predeploy_missing_rejects_block ===\n");
+
+    evmc::address recipient = hex_to_addr(
+        "0x3333000000000000000000000000000000003333");
+
+    // donor_flat: NO predeploy at kBeaconRootsAddress (mimics a corrupt
+    // import / state sync that dropped the predeploy entry).
+    // donor_witness: HAS the predeploys.
+    auto cs_flat_owned = std::make_unique<CellEvmState>();
+    {
+        // Seed only an unrelated account so the dict is non-empty.
+        evmc::address dummy = hex_to_addr(
+            "0xc0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0");
+        silkworm::Account dummy_acct{};
+        dummy_acct.balance = intx::uint256{1};
+        cs_flat_owned->update_account(dummy, std::nullopt, dummy_acct);
+    }
+    auto state_cell = cs_flat_owned->serialize_to_cell();
+
+    auto donor_w_handles = h02_seed_predeploys();
+    auto witness_cell = donor_w_handles.witness_cell;
+    CHECK(state_cell.not_null());
+    CHECK(witness_cell.not_null());
+
+    auto cs_owned = std::make_unique<CellEvmState>();
+    auto* cs = cs_owned.get();
+    CHECK(cs->load_from_cell(state_cell, CellStateLoadMode::TrustedLazy));
+    CHECK(cs->load_trie_witness_from_cell(
+        witness_cell, TrieWitnessLoadMode::TrustedShallow));
+    auto state = std::make_unique<EvmState>(std::move(cs_owned));
+
+    auto built = h02_build_signed_transfer_msg(/*key_seed=*/0xCAFE0003, recipient);
+    CHECK(built.has_value());
+    auto body_slice = vm::load_cell_slice(built->body_cell);
+
+    state->seed_account(built->sender,
+                         intx::uint256{1'000'000'000'000'000'000ULL}, 0);
+
+    block::ComputePhase cp{};
+    uint8_t rand_seed[32] = {};
+    bool ran = run_evm_compute_phase(cp, body_slice,
+                                      /*gas_limit=*/30'000'000,
+                                      *state,
+                                      /*block_seqno=*/1,
+                                      /*timestamp=*/1700000030,
+                                      rand_seed);
+
+    // The block must be rejected. Audit explicitly forbids the
+    // "continuing — predeploy may be missing" graceful-continue path:
+    // we expect cp.skip_reason == sk_bad_state, cp.accepted == false.
+    bool sk_bad_state = (cp.skip_reason == block::ComputePhase::sk_bad_state);
+    bool not_accepted = !cp.accepted;
+    bool no_continuing =
+        cp.vm_log.find("continuing") == std::string::npos;
+
+    printf("  run_evm_compute_phase ran: %s\n", ran ? "OK" : "FAILED");
+    printf("  cp.skip_reason sk_bad_state: %s\n",
+           sk_bad_state ? "OK" : "FAILED");
+    printf("  cp.accepted false:           %s\n",
+           not_accepted ? "OK" : "FAILED");
+    printf("  log does NOT carry 'continuing' graceful path: %s\n",
+           no_continuing ? "OK" : "FAILED");
+    printf("  vm_log: %s\n", cp.vm_log.c_str());
+
+    bool ok = ran && sk_bad_state && not_accepted && no_continuing;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
 int main() {
     printf("EVM Workchain — execution test suite\n");
     printf("=====================================\n\n");
@@ -11303,6 +12135,24 @@ int main() {
     // Audit H-01 follow-up — defense-in-depth and state-growth invariants.
     test_h01_witness_consistency_oom_bad_alloc_handled();
     test_h01_state_growth_invariant_per_tx_compute_independent_of_state_size();
+
+    // Audit H-01 follow-up — code_hash invariant on lazy bytecode decode.
+    // `read_code` and `update_account_code` must enforce
+    // `keccak(decoded) == account.codeHash` so a corrupt flat-state code
+    // cell can never produce execution divergence on the consensus or
+    // RPC paths.
+    test_h01_code_root_hash_mismatch_call_fails_closed();
+    test_h01_extcodecopy_flat_witness_drift_rejected();
+    test_h01_eth_get_code_corrupt_returns_32000();
+    test_h01_update_account_code_mismatch_rejected();
+
+    // Audit H-02 — system-call witness verifier coverage. EIP-4788 /
+    // EIP-2935 system calls run inside a WitnessFlatConsistencyContext
+    // and reject the entire block-tx attempt fail-closed on any
+    // flat/MPT drift on their account / storage / code leaves.
+    test_h02_eip4788_beacon_roots_storage_drift_rejected();
+    test_h02_eip2935_history_storage_drift_rejected();
+    test_h02_eip4788_predeploy_missing_rejects_block();
 
     // Scan stdout for FAILED to determine exit code
     // (Individual tests print PASSED or FAILED)

@@ -323,6 +323,7 @@ class CellEvmState : public silkworm::State {
     /// witness maintained by update_account/update_storage and do not walk the
     /// full cell state on the hot path.
     evmc::bytes32 ethereum_state_root_hash() const;
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
     /// Legacy storage-root helper. May lazy-load and mutate
     /// `touched_storage_tries_` under a const member, and may trigger strict
     /// recursive validation on a fresh witness load. The execution-side
@@ -330,6 +331,11 @@ class CellEvmState : public silkworm::State {
     /// keep getting called — it already runs under a unique lock and benefits
     /// from the populated cache. Public RPC and any read-only path must use
     /// `ethereum_storage_root_hash_safe_no_cache` instead.
+    ///
+    /// L-01 (audit): test-only API gated behind
+    /// `TOS_EVM_TEST_INSTRUMENTATION`. Production targets do NOT define
+    /// the macro and therefore do not export this symbol — production
+    /// callers cannot accidentally link against it.
     evmc::bytes32 ethereum_storage_root_hash_unsafe_for_execution_cache(
         const evmc::address& address) const;
     /// Test-only proof helpers. They wrap the path-bounded `_safe` variants
@@ -337,10 +343,13 @@ class CellEvmState : public silkworm::State {
     /// empty proof — fine for the regression suite, never acceptable on the
     /// production RPC / consensus path. Production code MUST use
     /// `ethereum_account_proof_safe` and `ethereum_storage_proof_safe[_no_cache]`.
+    ///
+    /// L-01 (audit): same `TOS_EVM_TEST_INSTRUMENTATION` gating.
     std::vector<silkworm::Bytes> ethereum_account_proof_unsafe_for_tests_only(
         const evmc::address& address) const;
     std::vector<silkworm::Bytes> ethereum_storage_proof_unsafe_for_tests_only(
         const evmc::address& address, const evmc::bytes32& slot) const;
+#endif  // TOS_EVM_TEST_INSTRUMENTATION
     /// Fail-closed proof variants. A corrupt witness (lazy node fails to
     /// decode, or a structural inconsistency surfaces during the walk)
     /// returns a `td::Status` error rather than crashing the node, so RPC
@@ -547,6 +556,22 @@ class CellEvmState : public silkworm::State {
     void verify_storage_before_return(
         const evmc::address& address,
         const evmc::bytes32& slot) const noexcept;
+
+    /// Audit H-01: keccak256 of the supplied bytecode. Used by
+    /// `read_code` / `update_account_code` to enforce the canonical
+    /// Ethereum invariant `keccak(code) == account.codeHash` whenever
+    /// bytecode is decoded from the flat-state cell tree or accepted
+    /// from a mutation. `noexcept` so it remains usable from the
+    /// `noexcept` Silkworm-State overrides.
+    static evmc::bytes32 keccak_code_hash(silkworm::ByteView code) noexcept;
+
+    /// Audit H-01: record a witness consistency error from a
+    /// `noexcept` State path. Sets `witness_ctx_->first_error` and
+    /// `witness_ctx_->offending_what` only when a context is bound,
+    /// is enabled, and has not already captured an earlier error
+    /// (sticky). Safe to call from any first-touch read/update hook.
+    void record_witness_error_if_active(
+        const evmc::address& address, td::Slice what) const noexcept;
 };
 
 }  // namespace evm_workchain

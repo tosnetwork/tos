@@ -75,6 +75,42 @@ silkworm::Bytes EvmState::read_code_copy(const evmc::address& addr, const evmc::
     return silkworm::Bytes{code.begin(), code.end()};
 }
 
+td::Result<silkworm::Bytes> EvmState::read_code_copy_checked(
+    const evmc::address& addr, const evmc::bytes32& code_hash) const {
+    // Audit H-01: enforce the canonical Ethereum invariant
+    // `keccak(code) == account.codeHash` on every checked code read.
+    // `eth_getCode` is the production path that this guards: a corrupt
+    // import / state sync / disk bit-flip that mutates the per-account
+    // bytecode cell (without updating `code_hash`) would otherwise
+    // surface the wrong code to wallets and contracts that consult the
+    // RPC. The lazy-decode hook inside CellEvmState already records a
+    // witness error during executing transactions; here we map the
+    // mismatch to a `td::Status::Error` so the RPC handler can return
+    // a deterministic JSON-RPC error rather than the wrong code.
+    std::shared_lock lock(mutex_);
+    if (code_hash == silkworm::kEmptyHash) {
+        return silkworm::Bytes{};
+    }
+    auto code = backend_->read_code(addr, code_hash);
+    silkworm::Bytes copy{code.begin(), code.end()};
+    if (copy.empty()) {
+        // The flat-state account either has no code cell or the lazy
+        // decode rejected a structurally invalid one. Both cases must
+        // surface as an error here so a corrupt code root never appears
+        // as canonical empty code on the RPC.
+        return td::Status::Error(
+            "corrupt EVM code root: keccak(code) != codeHash");
+    }
+    auto actual = ethash::keccak256(copy.data(), copy.size());
+    evmc::bytes32 actual_hash{};
+    std::memcpy(actual_hash.bytes, actual.bytes, sizeof(actual_hash.bytes));
+    if (actual_hash != code_hash) {
+        return td::Status::Error(
+            "corrupt EVM code root: keccak(code) != codeHash");
+    }
+    return copy;
+}
+
 evmc::bytes32 EvmState::read_storage_copy(const evmc::address& addr, uint64_t incarnation,
                                           const evmc::bytes32& location) const {
     std::shared_lock lock(mutex_);

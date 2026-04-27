@@ -144,14 +144,16 @@ fi
 # Persistent-state downloader must validate total and cumulative size
 # before streaming. The download-budget constants and reservation API
 # may live either in `validator/net/download-state.cpp` (legacy
-# placement) or in the dedicated `validator/state-download-buffer.cpp`
-# library (post-M-01 modularisation). Accept either location, and
-# accept either the legacy `kMaxPersistentStateHeapBufferBytes` name
-# or the post-modularisation `kHeapThreshold` name.
+# placement), the dedicated `validator/state-download-buffer.cpp`
+# library (post-M-01 modularisation), or — after the J2 streaming
+# importer — be expressed via the configurable
+# `PersistentStateBudgetConfig::max_download_bytes` field.
 state_buffer_cpp="$root/validator/state-download-buffer.cpp"
+state_buffer_h="$root/validator/state-download-buffer.h"
 search_paths=("$validator_download_state")
 [ -f "$state_buffer_cpp" ] && search_paths+=("$state_buffer_cpp")
-if ! rg -q 'kMaxPersistentStateDownloadBytes' "${search_paths[@]}" 2>/dev/null ||
+[ -f "$state_buffer_h" ] && search_paths+=("$state_buffer_h")
+if ! rg -q 'kMaxPersistentStateDownloadBytes|max_download_bytes' "${search_paths[@]}" 2>/dev/null ||
    ! rg -q 'kMaxPersistentStateHeapBufferBytes|kHeapThreshold' "${search_paths[@]}" 2>/dev/null ||
    ! rg -q 'persistent state stream exceeds advertised size|persistent state too large' "${search_paths[@]}" 2>/dev/null ||
    ! rg -q 'download_started_' "$root/validator/net/download-state.hpp"; then
@@ -281,6 +283,66 @@ unsafe_hits=$(
 if [ -n "$unsafe_hits" ]; then
     echo "evm production hardening check failed: unsafe MPT/CellState API in production path:" >&2
     echo "$unsafe_hits" >&2
+    exit 1
+fi
+
+# L-01 (audit, 2026-04-27): the `*_unsafe_for_tests_only` API surface MUST
+# be wrapped in `#ifdef TOS_EVM_TEST_INSTRUMENTATION` so production builds
+# of `evm_workchain` (which do not define the macro) do not export the
+# symbols. The check below uses awk to track which lines fall inside an
+# `#ifdef TOS_EVM_TEST_INSTRUMENTATION ... #endif` block; any
+# `*_unsafe_for_tests_only(...)` call site / declaration outside that
+# region (and outside test-* sources) is a regression.
+unsafe_l01_offenders=""
+for f in $(find "$root/evm/core" "$root/evm/rpc" \
+                -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) 2>/dev/null); do
+    case "$f" in
+        */test-*)
+            continue
+            ;;
+    esac
+    out=$(awk -v file="$f" '
+        BEGIN { depth = 0 }
+        /^[[:space:]]*#[[:space:]]*ifdef[[:space:]]+TOS_EVM_TEST_INSTRUMENTATION([[:space:]]|$)/ { depth++; next }
+        /^[[:space:]]*#[[:space:]]*if[[:space:]]+defined\([[:space:]]*TOS_EVM_TEST_INSTRUMENTATION[[:space:]]*\)/ { depth++; next }
+        /^[[:space:]]*#[[:space:]]*if(n)?def[[:space:]]+/ { if (depth > 0) depth++; next }
+        /^[[:space:]]*#[[:space:]]*if[[:space:]]/ { if (depth > 0) depth++; next }
+        /^[[:space:]]*#[[:space:]]*endif/ { if (depth > 0) depth--; next }
+        /unsafe_for_tests_only\(/ {
+            if (depth == 0 && $0 !~ /^[[:space:]]*\/\//) {
+                printf("%s:%d:%s\n", file, NR, $0)
+            }
+        }
+    ' "$f")
+    if [ -n "$out" ]; then
+        unsafe_l01_offenders="${unsafe_l01_offenders}${out}
+"
+    fi
+done
+if [ -n "$unsafe_l01_offenders" ]; then
+    echo "evm production hardening check failed: unsafe API used outside test instrumentation" >&2
+    printf '%s' "$unsafe_l01_offenders" >&2
+    exit 1
+fi
+
+# H-01 (audit, 2026-04-27): the lazy bytecode decode in
+# `CellEvmState::read_code` MUST keccak-hash the decoded bytes and
+# compare against the requested code_hash before emplacing into the
+# code cache. Anything less reintroduces the
+# "code_hash committed but code_root is some other bytecode" execution-
+# divergence path the audit calls out. The check here is structural:
+# we require the read_code function in cell-state.cpp to (a) call
+# decode_evm_bytecode AND (b) compute keccak_code_hash of the decoded
+# bytes AFTER the decode. The exact identifiers are pinned so a future
+# refactor that drops the comparison shows up in CI.
+if ! awk '
+    /silkworm::ByteView CellEvmState::read_code\(/, /^}/ {
+        if (/decode_evm_bytecode\(/) decoded = 1
+        if (decoded && /keccak_code_hash\(/) keccak = 1
+    }
+    END { exit (keccak ? 0 : 1) }
+' "$root/evm/core/cell-state.cpp"; then
+    echo "evm production hardening check failed: CellEvmState::read_code must compute keccak_code_hash after decode_evm_bytecode (H-01 fail-closed code-root invariant)" >&2
     exit 1
 fi
 

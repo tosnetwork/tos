@@ -616,7 +616,21 @@ static RpcResult handle_get_code(const std::string& params, const std::string& i
     if (!acct) {
         return {make_result(id, "\"0x\""), false};
     }
-    auto code = global_evm_state().read_code_copy(addr, acct->code_hash);
+    if (acct->code_hash == silkworm::kEmptyHash) {
+        return {make_result(id, "\"0x\""), false};
+    }
+    // Audit H-01: enforce `keccak(code) == account.codeHash` on the
+    // RPC path. A corrupt flat-state code cell that decodes to
+    // bytecode whose hash disagrees with the account leaf must
+    // surface as a deterministic JSON-RPC error rather than as the
+    // wrong code (or as canonical empty). `read_code_copy_checked`
+    // returns an error in both the empty-decode-with-non-empty-hash
+    // and hash-mismatch cases, which we map to `-32000`.
+    auto code_res = global_evm_state().read_code_copy_checked(addr, acct->code_hash);
+    if (code_res.is_error()) {
+        return {make_error(id, -32000, "corrupt EVM code root"), true};
+    }
+    auto code = code_res.move_as_ok();
     if (code.empty()) {
         return {make_result(id, "\"0x\""), false};
     }

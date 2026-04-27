@@ -28,6 +28,7 @@
 #include <memory>
 #include <string>
 
+#include "td/utils/ScopeGuard.h"
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"  // td::buffer_to_hex
 
@@ -100,6 +101,74 @@ class CellStateRollbackSnapshot {
     td::Ref<vm::Cell> block_hashes_root_;
     bool captured_{false};
 };
+
+// Audit H-02: helper that runs an EIP-4788 / EIP-2935 (or any future
+// protocol-injected) system transaction with the dynamic flat-state /
+// MPT witness consistency tracker active. Without this, system calls
+// touch flat-state account / storage / code on every block but bypass
+// the verifier the user-tx path opens — flat/MPT drift on the system
+// contracts (`kBeaconRootsAddress`, `kHistoryStorageAddress`) would
+// only be caught later, after consensus had already accepted writes
+// based on a corrupt witness.
+//
+// Contract:
+//   * Caller does NOT hold `state.mutex()`. The helper takes the
+//     unique_lock itself, runs `begin_witness_consistency_check`
+//     under that lock, executes the system tx via the same silkworm
+//     EVM machinery the user path uses, and then drains the
+//     consistency tracker via `consume_witness_consistency_error`.
+//   * Returns `td::Status::OK()` only when the system tx ran without
+//     throwing AND the dynamic verifier did not record any
+//     flat/witness drift on the touched account / storage / code
+//     leaves. Any system call exception (predeploy missing or
+//     corrupt) and any verifier-observed drift surface as a non-OK
+//     status; the caller MUST treat this as a deterministic reject
+//     for the entire block-tx attempt.
+//   * Errors produced by `begin_witness_consistency_check` /
+//     `end_witness_consistency_check` cannot occur (the underlying
+//     setter is `noexcept` and does only pointer stores).
+td::Status execute_system_transaction_with_witness(
+    EvmState& state,
+    const silkworm::Block& block,
+    const silkworm::ChainConfig& config,
+    const silkworm::Transaction& sys_txn,
+    uint64_t block_seqno,
+    const char* label) {
+    WitnessFlatConsistencyContext sys_ctx{};
+    sys_ctx.enabled = true;
+
+    std::unique_lock lock(state.mutex());
+    state.begin_witness_consistency_check(&sys_ctx);
+    SCOPE_EXIT {
+        // Always drop the borrowed pointer before the context goes out
+        // of scope. The underlying CellEvmState::end_witness_consistency_check
+        // is noexcept and idempotent.
+        state.end_witness_consistency_check();
+    };
+
+    try {
+        silkworm::IntraBlockState ibs(state.state());
+        silkworm::EVM sys_evm(block, ibs, config);
+        sys_evm.execute(sys_txn, silkworm::protocol::kSystemCallGasLimit);
+        ibs.destruct_touched_dead();
+        ibs.write_to_db(block_seqno);
+    } catch (const std::exception& e) {
+        return td::Status::Error(
+            std::string(label) + " system call threw: " + e.what());
+    } catch (...) {
+        return td::Status::Error(
+            std::string(label) + " system call threw unknown exception");
+    }
+
+    // Drain the verifier. A non-OK status means the system call read or
+    // wrote a flat-state leaf that disagreed with the witness MPT — the
+    // entire block-tx attempt must be rejected by the caller via
+    // `rollback_snapshot.restore` + `reject_compute_phase`.
+    if (auto st = state.consume_witness_consistency_error(); st.is_error()) {
+        return st;
+    }
+    return td::Status::OK();
+}
 
 // Build a fresh EvmState seeded from `account_data` (the cp.new_data v5
 // cell from the previous block). Returns nullptr if the cell is malformed
@@ -289,6 +358,14 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
     rollback_snapshot.capture(state);
 
     // --- Step 3b: EIP-4788 / EIP-2935 system calls (Cancun+ / Pectra+) ---
+    //
+    // Audit H-02: each system call runs under its own
+    // `WitnessFlatConsistencyContext`, so any flat/MPT drift on the
+    // system contract's account / storage / code leaves is caught at
+    // first touch and rejects the entire block-tx attempt. The legacy
+    // "continuing — predeploy may be missing" graceful-continue path
+    // is GONE: a system call failure at this stage is a deterministic
+    // consensus-level reject, exactly like a user-tx witness mismatch.
     {
         const auto rev = config.revision(block_seqno, timestamp);
         if (rev >= EVMC_CANCUN) {
@@ -298,20 +375,15 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
             sys_txn.to = silkworm::protocol::kBeaconRootsAddress;
             sys_txn.data = silkworm::Bytes(32, 0);
             sys_txn.set_sender(silkworm::protocol::kSystemAddress);
-            std::unique_lock sys_lock(state.mutex());
-            silkworm::IntraBlockState sys_ibs(state.state());
-            silkworm::EVM sys_evm(block, sys_ibs, config);
-            try {
-                sys_evm.execute(sys_txn, silkworm::protocol::kSystemCallGasLimit);
-                sys_ibs.destruct_touched_dead();
-                sys_ibs.write_to_db(block_seqno);
-            } catch (const std::exception& e) {
-                LOG(ERROR) << "evm-workchain: EIP-4788 system call threw at block "
-                           << block_seqno << ": " << e.what()
-                           << " (continuing — predeploy may be missing)";
-            } catch (...) {
-                LOG(ERROR) << "evm-workchain: EIP-4788 system call threw at block "
-                           << block_seqno << " (unknown exception)";
+            auto st = execute_system_transaction_with_witness(
+                state, block, config, sys_txn, block_seqno, "EIP-4788");
+            if (st.is_error()) {
+                LOG(WARNING) << "evm-workchain: EIP-4788 system call rejected "
+                                "block-tx attempt at #"
+                             << block_seqno << ": " << st.message();
+                rollback_snapshot.restore(state);
+                reject_compute_phase(cp, gas_limit, st.message().str());
+                return nullptr;
             }
         }
 
@@ -328,20 +400,15 @@ std::shared_ptr<EvmBlockSideEffects> run_compute_against_state(
             sys_txn.data = silkworm::Bytes{
                 silkworm::ByteView{block.header.parent_hash.bytes, 32}};
             sys_txn.set_sender(silkworm::protocol::kSystemAddress);
-            std::unique_lock sys_lock(state.mutex());
-            silkworm::IntraBlockState sys_ibs(state.state());
-            silkworm::EVM sys_evm(block, sys_ibs, config);
-            try {
-                sys_evm.execute(sys_txn, silkworm::protocol::kSystemCallGasLimit);
-                sys_ibs.destruct_touched_dead();
-                sys_ibs.write_to_db(block_seqno);
-            } catch (const std::exception& e) {
-                LOG(ERROR) << "evm-workchain: EIP-2935 system call threw at block "
-                           << block_seqno << ": " << e.what()
-                           << " (continuing — predeploy may be missing)";
-            } catch (...) {
-                LOG(ERROR) << "evm-workchain: EIP-2935 system call threw at block "
-                           << block_seqno << " (unknown exception)";
+            auto st = execute_system_transaction_with_witness(
+                state, block, config, sys_txn, block_seqno, "EIP-2935");
+            if (st.is_error()) {
+                LOG(WARNING) << "evm-workchain: EIP-2935 system call rejected "
+                                "block-tx attempt at #"
+                             << block_seqno << ": " << st.message();
+                rollback_snapshot.restore(state);
+                reject_compute_phase(cp, gas_limit, st.message().str());
+                return nullptr;
             }
         }
     }

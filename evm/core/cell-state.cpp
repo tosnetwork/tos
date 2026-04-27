@@ -176,7 +176,29 @@ silkworm::ByteView CellEvmState::read_code(
             return {};
         }
         auto decoded = decode_evm_bytecode(code_root);
+        // Audit H-01: enforce `keccak(decoded) == code_hash` BEFORE
+        // emplacing into the code cache. The flat-state account leaf
+        // commits to `code_hash` via the canonical Ethereum account RLP,
+        // and the surrounding `cp.new_data` cell hash binds that. But
+        // the per-account `code_root` cell in flat-state is *not*
+        // re-hashed against `code_hash` anywhere else — a corrupt
+        // import / state sync / disk bit-flip that swaps the bytecode
+        // cell payload would otherwise let the EVM execute the wrong
+        // bytecode (cached forever after the first lookup, since
+        // `code_` is keyed by the asked-for `code_hash`). Empty decode
+        // for a non-empty `code_hash` is a special case of the same
+        // mismatch.
         if (decoded.empty()) {
+            record_witness_error_if_active(
+                address,
+                td::Slice("EVM code root decodes empty for non-empty codeHash"));
+            return {};
+        }
+        auto actual_hash = keccak_code_hash(silkworm::ByteView{
+            reinterpret_cast<const uint8_t*>(decoded.data()), decoded.size()});
+        if (actual_hash != code_hash) {
+            record_witness_error_if_active(
+                address, td::Slice("EVM code root/hash mismatch"));
             return {};
         }
         auto [it, inserted] = code_.emplace(
@@ -366,6 +388,23 @@ void CellEvmState::update_account_code(const evmc::address& address,
     // flat/witness drift on the deploy address is fatal here too.
     verify_account_before_return(address);
     if (code_hash == silkworm::kEmptyHash) return;
+    // Audit H-01: defensive `keccak(code) == code_hash` on the write
+    // path. Production callers (`run_evm` / silkworm CREATE) always
+    // pass matching code/hash, so this is normally a free check. A
+    // mismatched call would mean an upstream code-store bug or a
+    // hostile mutation reaching the State adapter — refuse to persist
+    // it, mark the witness as not-ready so compute_phase rejects the
+    // block, and record the consistency violation for the executor's
+    // drain step. `trie_witness_ready_ = false` cascades through
+    // `compute-phase`'s post-execution `trie_witness_ready()` gate so
+    // the rolled-back snapshot is what consensus observes.
+    auto actual_hash = keccak_code_hash(code);
+    if (actual_hash != code_hash) {
+        record_witness_error_if_active(
+            address, td::Slice("update_account_code codeHash mismatch"));
+        trie_witness_ready_ = false;
+        return;
+    }
     CHECK(ensure_trie_witness());
     code_[code_hash] = silkworm::Bytes{code.begin(), code.end()};
 
@@ -620,10 +659,24 @@ evmc::bytes32 CellEvmState::ethereum_state_root_hash() const {
     // declared `eth_state_root`) and tests. The account trie root has
     // already been validated either via StrictRecursive (hydration) or
     // shape-bound shallow load + path-budgeted decode (consensus); the
-    // legacy boolean wrapper is sufficient here.
-    return account_trie_.root_hash_unsafe_for_tests_only();
+    // safe variant returns an error only on a corrupt witness, in which
+    // case we fall back to the canonical "empty" sentinel matching the
+    // legacy boolean-wrapper semantics. Production callers that need to
+    // distinguish "empty" from "corrupt" must use the trie's own
+    // `root_hash_safe()` directly through the witness verifier.
+    auto root_res = account_trie_.root_hash_safe();
+    if (root_res.is_error()) {
+        return silkworm::kEmptyRoot;
+    }
+    return root_res.move_as_ok();
 }
 
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
+// L-01 (audit): unsafe `*_unsafe_for_*` CellEvmState wrappers are gated
+// behind `TOS_EVM_TEST_INSTRUMENTATION`. Production callers (compute
+// hot path / RPC) MUST use the `_safe[_no_cache]` variants instead.
+// Production builds of `evm_workchain` do NOT define the macro and so
+// do not export these symbols at all.
 evmc::bytes32 CellEvmState::ethereum_storage_root_hash_unsafe_for_execution_cache(
     const evmc::address& address) const {
     if (!trie_witness_ready_) {
@@ -637,7 +690,11 @@ evmc::bytes32 CellEvmState::ethereum_storage_root_hash_unsafe_for_execution_cach
     if (trie == nullptr || trie->empty()) {
         return silkworm::kEmptyRoot;
     }
-    return trie->root_hash_unsafe_for_tests_only();
+    auto root_res = trie->root_hash_safe();
+    if (root_res.is_error()) {
+        return silkworm::kEmptyRoot;
+    }
+    return root_res.move_as_ok();
 }
 
 std::vector<silkworm::Bytes>
@@ -664,6 +721,7 @@ CellEvmState::ethereum_storage_proof_unsafe_for_tests_only(
     auto hashed = keccak_bytes32_value(slot);
     return trie->proof_unsafe_for_tests_only(bytes32_view(hashed));
 }
+#endif  // TOS_EVM_TEST_INSTRUMENTATION
 
 td::Result<std::vector<silkworm::Bytes>>
 CellEvmState::ethereum_account_proof_safe(const evmc::address& address) const {
@@ -966,6 +1024,48 @@ int get_bad_alloc_injection_for_test() noexcept {
     return t_witness_consistency_inject_bad_alloc_after_n_inserts;
 }
 #endif
+
+evmc::bytes32 CellEvmState::keccak_code_hash(silkworm::ByteView code) noexcept {
+    // Audit H-01: canonical `keccak(code)` for the code-hash invariant
+    // enforcement on the bytecode lazy-decode and write paths. Mirrors
+    // the Ethereum spec rule `account.codeHash == keccak256(code)` and
+    // is `noexcept` so it can be called from the `noexcept` Silkworm
+    // State overrides. ethash::keccak256 is the same primitive used to
+    // derive `code_hash` on every other production path (silkworm
+    // CREATE, EIP-4788/EIP-2935 predeploy seeders, RPC bytecode
+    // recovery), so the comparison is bitwise sound.
+    auto h = ethash::keccak256(code.data(), code.size());
+    evmc::bytes32 out{};
+    std::memcpy(out.bytes, h.bytes, sizeof(out.bytes));
+    return out;
+}
+
+void CellEvmState::record_witness_error_if_active(
+    const evmc::address& address, td::Slice what) const noexcept {
+    // Audit H-01: capture a fail-closed witness consistency error from a
+    // `noexcept` State path. Sticky semantics — only the first error
+    // wins — match the rest of the verifier so log lines and rollback
+    // logic see a single canonical failure description per tx. The
+    // function never throws: the offending_what string allocation can
+    // fail in pathological OOM, in which case we leave first_error
+    // populated with the original status (still surfaces as a
+    // fail-closed disposition through `consume_witness_consistency_error`).
+    if (witness_ctx_ == nullptr || !witness_ctx_->enabled ||
+        witness_ctx_->first_error.is_error()) {
+        return;
+    }
+    try {
+        witness_ctx_->first_error =
+            td::Status::Error(what.str());
+        witness_ctx_->offending_what =
+            format_evm_address_hex(address) + ": " + what.str();
+    } catch (...) {
+        // OOM constructing the offending_what string. The first_error
+        // captured the canonical message via td::Status::Error which
+        // owns its own buffer — that is enough for the executor to
+        // surface the violation as `WitnessMismatch`.
+    }
+}
 
 void CellEvmState::begin_witness_consistency_check(
     WitnessFlatConsistencyContext* ctx) noexcept {
