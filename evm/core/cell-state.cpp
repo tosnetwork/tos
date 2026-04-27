@@ -216,6 +216,26 @@ silkworm::ByteView CellEvmState::read_code(
     verify_account_before_return(address);
     if (code_hash == silkworm::kEmptyHash) return {};
     if (auto it = code_.find(code_hash); it != code_.end()) {
+        // Audit H-01 (P0.3): verified-only cache invariant. Every
+        // entry must satisfy `entry.hash == code_hash` (the map key);
+        // the only way to violate this is direct memory corruption or
+        // a writer path that bypassed `decode_and_verify_code_root` /
+        // its sister write helper. We re-check the invariant on every
+        // hit so a corrupted entry fails closed instead of letting
+        // silkworm execute the wrong bytecode. The check is a single
+        // 32-byte compare — cheap enough for the hot path.
+        if (it->second.hash != code_hash) {
+            record_witness_error_if_active(
+                address,
+                td::Slice("EVM code cache entry hash mismatch"));
+            s_code_root_hash_mismatch_count_inner.fetch_add(
+                1, std::memory_order_relaxed);
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
+            g_code_root_hash_mismatch_count.fetch_add(
+                1, std::memory_order_relaxed);
+#endif
+            return {};
+        }
         // Return a ByteView pointing **into** the map entry's stable storage.
         // Earlier we copied into a single `tl_code_buf_` thread_local — that
         // was a bug: silkworm's IntraBlockState caches the ByteView in its
@@ -223,13 +243,15 @@ silkworm::ByteView CellEvmState::read_code(
         // code_hash overwrote tl_code_buf_, invalidating the cached pointer.
         // Recursive contracts that bounce between two code_hashes saw
         // garbage. Surfaced by Phase G.1 stStaticCall recursive-bomb tests.
-        return silkworm::ByteView{it->second.data(), it->second.size()};
+        return silkworm::ByteView{it->second.bytes.data(),
+                                  it->second.bytes.size()};
     }
 
     // Lazy decode path: when the state was hydrated via `TrustedLazy`, the
     // bytecode map is empty. Look up the account's EvmAccountData cell,
-    // decode just this account's bytecode, sanity-check the recovered
-    // code_hash matches what silkworm asked for, and cache the result.
+    // decode just this account's bytecode through the H-01 chokepoint
+    // (which enforces `keccak(decoded) == code_hash`), and cache the
+    // verified result.
     try {
         td::Ref<vm::Cell> account_cell;
         if (!lookup_account_data_cell(address, account_cell)) {
@@ -241,30 +263,31 @@ silkworm::ByteView CellEvmState::read_code(
         if (!decode_evm_account_data(account_cell, acct, storage_root, code_root)) {
             return {};
         }
-        if (acct.code_hash != code_hash || code_root.is_null()) {
+        if (acct.code_hash != code_hash) {
+            // The account's authoritative leaf advertises a different
+            // code_hash than what silkworm asked for. This is not a
+            // code-root corruption case — it is a stale or wrong
+            // `code_hash` query. Return canonical "not the code we
+            // know about" without bumping the K-02 mismatch counter,
+            // matching the historical contract.
             return {};
         }
-        auto decoded = decode_evm_bytecode(code_root);
-        // Audit H-01: enforce `keccak(decoded) == code_hash` BEFORE
-        // emplacing into the code cache. The flat-state account leaf
-        // commits to `code_hash` via the canonical Ethereum account RLP,
-        // and the surrounding `cp.new_data` cell hash binds that. But
-        // the per-account `code_root` cell in flat-state is *not*
-        // re-hashed against `code_hash` anywhere else — a corrupt
+        // Audit H-01 (P0.1 / P0.4): the helper enforces the canonical
+        // `keccak(decoded) == code_hash` invariant and rejects the
+        // empty-decode-with-non-empty-hash special case. A corrupt
         // import / state sync / disk bit-flip that swaps the bytecode
         // cell payload would otherwise let the EVM execute the wrong
         // bytecode (cached forever after the first lookup, since
-        // `code_` is keyed by the asked-for `code_hash`). Empty decode
-        // for a non-empty `code_hash` is a special case of the same
-        // mismatch.
-        if (decoded.empty()) {
+        // `code_` is keyed by the asked-for `code_hash`).
+        auto verified = decode_and_verify_code_root(
+            code_root, code_hash, td::Slice("read_code lazy decode"));
+        if (verified.is_error()) {
             record_witness_error_if_active(
-                address,
-                td::Slice("EVM code root decodes empty for non-empty codeHash"));
+                address, td::Slice(verified.error().message()));
             // Audit K-02: bump the always-on mismatch counter so RPC
             // handlers without a verifier context can detect this code
-            // path and fail-closed (otherwise the empty return would be
-            // mistaken for canonical "no code").
+            // path and fail-closed (otherwise the empty return would
+            // be mistaken for canonical "no code").
             s_code_root_hash_mismatch_count_inner.fetch_add(
                 1, std::memory_order_relaxed);
 #ifdef TOS_EVM_TEST_INSTRUMENTATION
@@ -273,25 +296,12 @@ silkworm::ByteView CellEvmState::read_code(
 #endif
             return {};
         }
-        auto actual_hash = keccak_code_hash(silkworm::ByteView{
-            reinterpret_cast<const uint8_t*>(decoded.data()), decoded.size()});
-        if (actual_hash != code_hash) {
-            record_witness_error_if_active(
-                address, td::Slice("EVM code root/hash mismatch"));
-            // Audit K-02: bump the always-on mismatch counter for the
-            // benefit of RPC handlers running without a verifier
-            // context; see the contract block above `read_code`.
-            s_code_root_hash_mismatch_count_inner.fetch_add(
-                1, std::memory_order_relaxed);
-#ifdef TOS_EVM_TEST_INSTRUMENTATION
-            g_code_root_hash_mismatch_count.fetch_add(
-                1, std::memory_order_relaxed);
-#endif
-            return {};
-        }
+        auto verified_bytes = verified.move_as_ok();
         auto [it, inserted] = code_.emplace(
-            code_hash, silkworm::Bytes{decoded.begin(), decoded.end()});
-        return silkworm::ByteView{it->second.data(), it->second.size()};
+            code_hash,
+            VerifiedCodeEntry{std::move(verified_bytes), code_hash});
+        return silkworm::ByteView{it->second.bytes.data(),
+                                  it->second.bytes.size()};
     } catch (vm::VmError&) {
         return {};
     } catch (vm::VmVirtError&) {
@@ -494,7 +504,12 @@ void CellEvmState::update_account_code(const evmc::address& address,
         return;
     }
     CHECK(ensure_trie_witness());
-    code_[code_hash] = silkworm::Bytes{code.begin(), code.end()};
+    // Audit H-01 (P0.4): the verified-only cache invariant holds because
+    // we just confirmed `keccak(code) == code_hash` above. Storing the
+    // hash alongside the bytes lets `read_code` re-check the invariant
+    // on every cache hit without recomputing keccak.
+    code_[code_hash] = VerifiedCodeEntry{
+        silkworm::Bytes{code.begin(), code.end()}, code_hash};
 
     // Also embed the bytecode in the account's EvmAccountData cell so it
     // survives restart via cp.new_data → populate_state_from_shard_accounts.
@@ -1126,6 +1141,70 @@ evmc::bytes32 CellEvmState::keccak_code_hash(silkworm::ByteView code) noexcept {
     evmc::bytes32 out{};
     std::memcpy(out.bytes, h.bytes, sizeof(out.bytes));
     return out;
+}
+
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
+void CellEvmState::poison_code_cache_for_test(
+    const evmc::bytes32& cache_key,
+    const evmc::bytes32& advertised_hash,
+    silkworm::ByteView stored_bytes) {
+    // Audit H-01 (P0.3): poisons the verified-only cache so the
+    // cache-hit invariant test can drive the fail-closed branch. The
+    // test calls this with `advertised_hash != cache_key` (the
+    // "corrupted entry" pattern) so a subsequent `read_code(_,
+    // cache_key)` hits the cache, observes the stored hash mismatch,
+    // bumps the K-02 mismatch counter, and returns empty.
+    code_[cache_key] = VerifiedCodeEntry{
+        silkworm::Bytes{stored_bytes.begin(), stored_bytes.end()},
+        advertised_hash};
+}
+#endif  // TOS_EVM_TEST_INSTRUMENTATION
+
+td::Result<silkworm::Bytes> CellEvmState::decode_and_verify_code_root(
+    const td::Ref<vm::Cell>& code_root,
+    const evmc::bytes32& expected_hash,
+    td::Slice context) {
+    // Audit H-01 (P0.1 / P0.4): single chokepoint enforcing the
+    // canonical Ethereum invariant `keccak(decoded) == account.codeHash`
+    // for *every* path that decodes a per-account code_root cell. The
+    // four explicit error cases below mirror the audit spec exactly so
+    // a regression in any caller is immediately observable in the
+    // returned status message. `context` is suffixed onto every error
+    // so logs / counters distinguish between "strict load", "lazy
+    // decode", and any future repair / import path that funnels
+    // through this helper.
+    auto with_context = [&](const char* base) {
+        std::string out = base;
+        if (context.size() != 0) {
+            out += " (";
+            out.append(context.data(), context.size());
+            out += ")";
+        }
+        return td::Status::Error(std::move(out));
+    };
+
+    if (expected_hash == silkworm::kEmptyHash) {
+        if (code_root.not_null()) {
+            return with_context("empty codeHash has non-null code_root");
+        }
+        return silkworm::Bytes{};
+    }
+
+    if (code_root.is_null()) {
+        return with_context("non-empty codeHash has null code_root");
+    }
+
+    auto decoded = decode_evm_bytecode(code_root);
+    if (decoded.empty()) {
+        return with_context("non-empty codeHash has empty decoded bytecode");
+    }
+
+    auto actual = keccak_code_hash(silkworm::ByteView{
+        reinterpret_cast<const uint8_t*>(decoded.data()), decoded.size()});
+    if (actual != expected_hash) {
+        return with_context("EVM code_root bytecode hash mismatch");
+    }
+    return silkworm::Bytes{decoded.begin(), decoded.end()};
 }
 
 void CellEvmState::record_witness_error_if_active(
@@ -1775,10 +1854,22 @@ bool CellEvmState::load_from_cell(td::Ref<vm::Cell> root, CellStateLoadMode mode
         // Strict modes: enumerate all accounts, validate storage roots, and
         // eagerly decode bytecode. Used for hydration, snapshot import,
         // manual repair, and offline state-root verification.
+        //
+        // Audit H-01 (P0.2): every per-account code_root cell is decoded
+        // through `decode_and_verify_code_root`, which enforces the
+        // canonical Ethereum invariant `keccak(decoded) == acct.code_hash`
+        // BEFORE the bytes are admitted into `new_code`. Without this, a
+        // corrupt canonical state where `code_hash` and the embedded code
+        // chain disagree would still hydrate "successfully" and seed the
+        // verified-only cache with wrong bytecode — every subsequent
+        // `read_code` cache hit would silently surface the wrong code to
+        // silkworm. The mismatch fail-closes the entire load (returns
+        // `false` to the caller), which the bool-shim hydration path in
+        // `init.cpp` then maps to a hard hydration error.
 #ifdef TOS_EVM_TEST_INSTRUMENTATION
         g_cell_state_full_walks.fetch_add(1, std::memory_order_relaxed);
 #endif
-        std::unordered_map<evmc::bytes32, silkworm::Bytes> new_code;
+        std::unordered_map<evmc::bytes32, VerifiedCodeEntry> new_code;
         bool ok = true;
         bool walked = new_account_dict.check_for_each([&ok, &new_code](td::Ref<vm::CellSlice> value,
                                                                         td::ConstBitPtr /*key*/, int n) -> bool {
@@ -1796,23 +1887,26 @@ bool CellEvmState::load_from_cell(td::Ref<vm::Cell> root, CellStateLoadMode mode
                 ok = false;
                 return false;
             }
+            // Audit H-01 (P0.2): code_root + code_hash invariant. The
+            // helper handles all four cases (empty/empty, empty/non-null,
+            // non-empty/null, non-empty/decoded mismatch) and only
+            // returns OK when `keccak(decoded) == acct.code_hash`. The
+            // empty-codeHash + null code_root path returns OK with an
+            // empty Bytes; we drop those entries so the cache only ever
+            // holds real bytecode (matching the previous behaviour where
+            // the loop short-circuited above before the decode call).
+            auto verified = decode_and_verify_code_root(
+                code_root, acct.code_hash, td::Slice("strict load"));
+            if (verified.is_error()) {
+                ok = false;
+                return false;
+            }
             if (acct.code_hash == silkworm::kEmptyHash) {
-                if (code_root.not_null()) {
-                    ok = false;
-                    return false;
-                }
                 return true;
             }
-            if (code_root.is_null()) {
-                ok = false;
-                return false;
-            }
-            auto bytes = decode_evm_bytecode(code_root);
-            if (bytes.empty()) {
-                ok = false;
-                return false;
-            }
-            new_code[acct.code_hash] = silkworm::Bytes{bytes.begin(), bytes.end()};
+            new_code.emplace(acct.code_hash,
+                              VerifiedCodeEntry{verified.move_as_ok(),
+                                                acct.code_hash});
             return true;
         });
         if (!walked || !ok) return false;

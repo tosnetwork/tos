@@ -368,19 +368,70 @@ fi
 # compare against the requested code_hash before emplacing into the
 # code cache. Anything less reintroduces the
 # "code_hash committed but code_root is some other bytecode" execution-
-# divergence path the audit calls out. The check here is structural:
-# we require the read_code function in cell-state.cpp to (a) call
-# decode_evm_bytecode AND (b) compute keccak_code_hash of the decoded
-# bytes AFTER the decode. The exact identifiers are pinned so a future
-# refactor that drops the comparison shows up in CI.
+# divergence path the audit calls out. The structural check is split
+# in two:
+#
+#   (1) `CellEvmState::read_code` must funnel its lazy decode through
+#       the single chokepoint `decode_and_verify_code_root` (or, in a
+#       legacy build, call `decode_evm_bytecode` AND `keccak_code_hash`
+#       directly). The chokepoint variant is the canonical post-H-01
+#       implementation; without it the helper's verification is
+#       bypassed.
+#   (2) `decode_and_verify_code_root` itself must compute
+#       `keccak_code_hash` of the result of `decode_evm_bytecode` so the
+#       chokepoint can never be downgraded to a bare decode.
+#
+# Both checks live in cell-state.cpp; a regression in either fails
+# CI immediately.
 if ! awk '
     /silkworm::ByteView CellEvmState::read_code\(/, /^}/ {
+        if (/decode_and_verify_code_root\(/) verified = 1
         if (/decode_evm_bytecode\(/) decoded = 1
         if (decoded && /keccak_code_hash\(/) keccak = 1
     }
+    END { exit ((verified || keccak) ? 0 : 1) }
+' "$root/evm/core/cell-state.cpp"; then
+    echo "evm production hardening check failed: CellEvmState::read_code must funnel through decode_and_verify_code_root (or compute keccak_code_hash after decode_evm_bytecode) (H-01 fail-closed code-root invariant)" >&2
+    exit 1
+fi
+
+# H-01 (audit, 2026-04-27, P0.1): the chokepoint helper itself must
+# enforce the invariant — call decode_evm_bytecode AND
+# keccak_code_hash. Without this, a future refactor could collapse the
+# helper into a bare decode and silently disable the strict-load /
+# read_code / update_account_code verification paths.
+if ! awk '
+    /td::Result<silkworm::Bytes> CellEvmState::decode_and_verify_code_root\(/ { in_h = 1 }
+    in_h {
+        if (/decode_evm_bytecode\(/) decoded = 1
+        if (decoded && /keccak_code_hash\(/) keccak = 1
+    }
+    in_h && /^}$/ { in_h = 0 }
     END { exit (keccak ? 0 : 1) }
 ' "$root/evm/core/cell-state.cpp"; then
-    echo "evm production hardening check failed: CellEvmState::read_code must compute keccak_code_hash after decode_evm_bytecode (H-01 fail-closed code-root invariant)" >&2
+    echo "evm production hardening check failed: CellEvmState::decode_and_verify_code_root must compute keccak_code_hash on the decode_evm_bytecode result (H-01 chokepoint integrity)" >&2
+    exit 1
+fi
+
+# H-01 (audit, 2026-04-27, P0.2): the strict-mode `load_from_cell`
+# code-cache populate path MUST funnel through
+# `decode_and_verify_code_root` BEFORE inserting into `new_code`. The
+# previous bug was a bare `decode_evm_bytecode` followed by a direct
+# `new_code[acct.code_hash] = ...` assignment with no keccak check, so
+# `init.cpp` hydration would happily seed the cache with bytecode whose
+# hash disagreed with the account leaf's `code_hash`. The check is
+# scoped to the "Strict modes:" section bounded by the
+# `code_ = std::move(new_code);` cache-commit point.
+if ! awk '
+    /Strict modes:/ { in_s = 1 }
+    in_s {
+        if (/decode_and_verify_code_root\(/) verified = 1
+        if (/new_code\.emplace\(|new_code\[/) emplaced = 1
+    }
+    in_s && /code_ = std::move\(new_code\)/ { in_s = 0 }
+    END { exit (verified && emplaced ? 0 : 1) }
+' "$root/evm/core/cell-state.cpp"; then
+    echo "evm production hardening check failed: CellEvmState::load_from_cell strict-mode path must call decode_and_verify_code_root before populating new_code (H-01 P0.2 fail-closed hydration)" >&2
     exit 1
 fi
 

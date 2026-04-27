@@ -12661,6 +12661,255 @@ void test_k2_counter_resettable_for_test() {
 }
 
 // =============================================================================
+// H-01 follow-up — strict load + cache-hit invariant (P0.2 / P0.3)
+// =============================================================================
+//
+// Audit H-01 (P0.2 / P0.3): the verified-only code cache must hold
+// only entries whose keccak hash agrees with the requested key. The
+// fix is a single chokepoint helper `decode_and_verify_code_root`
+// that every cache writer (lazy decode, strict load, mutation API)
+// funnels through; a sister cache-hit invariant re-checks the
+// stored hash on every read so direct memory corruption (or a
+// future writer regression) fails closed instead of silently
+// surfacing the wrong bytecode to silkworm.
+//
+// The three tests below pin:
+//   1. Strict load fails closed when `code_hash` and the embedded
+//      `code_root` cell decode to different bytecode. TrustedLazy
+//      still succeeds (load is cheap), but the first `read_code`
+//      bumps the K-02 counter and returns empty.
+//   2. A poisoned verified-cache entry — same key, advertised hash
+//      mismatches the key — bumps the K-02 counter and returns
+//      empty on cache hit (no decode required, the invariant is
+//      checked before silkworm sees any bytes).
+//   3. eth_call against the strict-load-rejected canonical state
+//      maps to JSON-RPC `-32000 corrupt EVM code root` (extends the
+//      existing K-02 handler-side test to cover the strict-load
+//      hydration path, not just the lazy-decode path).
+
+void test_h01_strict_load_rejects_code_root_mismatch() {
+    printf("=== test_h01_strict_load_rejects_code_root_mismatch ===\n");
+
+    reset_code_root_hash_mismatch_count_for_test();
+
+    // Build a corrupt canonical state: the account leaf advertises
+    // code_hash = keccak(A) but the embedded code chain encodes B.
+    evmc::address target_addr = hex_to_addr(
+        "0x000000000000000000000000000000000000a101");
+    Bytes code_A = h01_sload_slot0_runtime();
+    Bytes code_B{0x60, 0x42, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3};
+    auto kh_A = ethash::keccak256(code_A.data(), code_A.size());
+    silkworm::Account corrupt_acct{};
+    corrupt_acct.nonce = 1;
+    corrupt_acct.balance = intx::uint256{0};
+    std::memcpy(corrupt_acct.code_hash.bytes, kh_A.bytes, 32);
+    evmc::bytes32 code_hash_A{};
+    std::memcpy(code_hash_A.bytes, kh_A.bytes, 32);
+
+    auto state_cell = h01_make_corrupt_code_root_state(target_addr,
+                                                        corrupt_acct, code_B);
+    CHECK(state_cell.not_null());
+
+    // (P0.2) StrictValidateNoWitness must reject the entire load: the
+    // helper detects keccak(decoded code_B) != keccak(code_A) and
+    // returns an error, which the strict-load lambda translates to a
+    // hard `false` return. Hydration via the bool-shim path now
+    // fail-closes too, because `false` maps to StrictValidateNoWitness.
+    {
+        CellEvmState cs_strict;
+        bool strict_loaded = cs_strict.load_from_cell(
+            state_cell, CellStateLoadMode::StrictValidateNoWitness);
+        bool strict_loaded_rebuild = false;
+        {
+            CellEvmState cs_strict_rebuild;
+            strict_loaded_rebuild = cs_strict_rebuild.load_from_cell(
+                state_cell, CellStateLoadMode::StrictValidateAndRebuildWitness);
+        }
+        bool legacy_bool_shim_rejected =
+            !CellEvmState{}.load_from_cell(state_cell, /*rebuild_witness=*/false);
+
+        printf("  StrictValidateNoWitness rejected:        %s\n",
+               (!strict_loaded) ? "OK" : "FAILED");
+        printf("  StrictValidateAndRebuildWitness rejected: %s\n",
+               (!strict_loaded_rebuild) ? "OK" : "FAILED");
+        printf("  Legacy bool=false shim rejected:         %s\n",
+               legacy_bool_shim_rejected ? "OK" : "FAILED");
+
+        if (strict_loaded || strict_loaded_rebuild ||
+            !legacy_bool_shim_rejected) {
+            g_test_failures.fetch_add(1);
+            printf("  FAILED\n\n");
+            return;
+        }
+    }
+
+    // (P0.4 / lazy path) TrustedLazy succeeds (the strict walk is
+    // skipped by design), but the first `read_code` for the corrupt
+    // account decodes through `decode_and_verify_code_root`, observes
+    // the mismatch, bumps the K-02 counter, and returns empty.
+    CellEvmState cs_lazy;
+    CHECK(cs_lazy.load_from_cell(state_cell, CellStateLoadMode::TrustedLazy));
+    uint64_t before = code_root_hash_mismatch_count();
+    auto bv = cs_lazy.read_code(target_addr, code_hash_A);
+    uint64_t after = code_root_hash_mismatch_count();
+
+    bool lazy_returned_empty = bv.empty();
+    bool counter_advanced = after == before + 1;
+
+    printf("  TrustedLazy + read_code returned empty:  %s\n",
+           lazy_returned_empty ? "OK" : "FAILED");
+    printf("  K-02 counter advanced by 1 (delta=%llu): %s\n",
+           static_cast<unsigned long long>(after - before),
+           counter_advanced ? "OK" : "FAILED");
+
+    bool ok = lazy_returned_empty && counter_advanced;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+void test_h01_cache_hit_rejects_poisoned_entry() {
+    printf("=== test_h01_cache_hit_rejects_poisoned_entry ===\n");
+
+    reset_code_root_hash_mismatch_count_for_test();
+
+    // Seed a clean account so `read_code` finds a valid leaf for
+    // `target_addr`. The poisoning happens at the cache layer below
+    // — the canonical flat-state stays consistent.
+    evmc::address target_addr = hex_to_addr(
+        "0x000000000000000000000000000000000000a201");
+    Bytes code_A = h01_sload_slot0_runtime();
+    Bytes code_B{0x60, 0x42, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3};
+    auto kh_A = ethash::keccak256(code_A.data(), code_A.size());
+    auto kh_B = ethash::keccak256(code_B.data(), code_B.size());
+    evmc::bytes32 code_hash_A{};
+    std::memcpy(code_hash_A.bytes, kh_A.bytes, 32);
+    evmc::bytes32 code_hash_B{};
+    std::memcpy(code_hash_B.bytes, kh_B.bytes, 32);
+
+    silkworm::Account acct{};
+    acct.balance = intx::uint256{0};
+    acct.nonce = 1;
+    std::memcpy(acct.code_hash.bytes, kh_A.bytes, 32);
+
+    CellEvmState cs;
+    cs.update_account(target_addr, std::nullopt, acct);
+    cs.update_account_code(target_addr, /*incarnation=*/0, code_hash_A,
+                            silkworm::ByteView{code_A.data(), code_A.size()});
+
+    // Sanity: clean read returns the right bytes (cache populated by
+    // the update_account_code write above). Re-issuing read_code is a
+    // cache hit on the verified-only path, so this also cross-checks
+    // that the invariant doesn't break the happy path.
+    {
+        auto bv = cs.read_code(target_addr, code_hash_A);
+        bool clean_hit_ok = bv.size() == code_A.size() &&
+                            std::memcmp(bv.data(), code_A.data(),
+                                         code_A.size()) == 0;
+        printf("  pre-poison cache hit returns code_A:    %s\n",
+               clean_hit_ok ? "OK" : "FAILED");
+        if (!clean_hit_ok) {
+            g_test_failures.fetch_add(1);
+            printf("  FAILED\n\n");
+            return;
+        }
+    }
+
+    // Poison the cache: store `code_B` under key `code_hash_A` with
+    // advertised hash `code_hash_B`. The K-02 invariant in the
+    // cache-hit branch must observe `entry.hash != cache_key`, bump
+    // the counter, and return empty.
+    cs.poison_code_cache_for_test(
+        code_hash_A, code_hash_B,
+        silkworm::ByteView{code_B.data(), code_B.size()});
+
+    uint64_t before = code_root_hash_mismatch_count();
+    auto bv = cs.read_code(target_addr, code_hash_A);
+    uint64_t after = code_root_hash_mismatch_count();
+
+    bool returned_empty = bv.empty();
+    bool counter_advanced = after == before + 1;
+    bool no_code_B_payload = true;
+    if (!bv.empty() && bv.size() >= 1) {
+        no_code_B_payload = bv[0] != 0x60 || bv.size() != code_B.size();
+    }
+
+    printf("  cache hit on poisoned entry empty:      %s\n",
+           returned_empty ? "OK" : "FAILED");
+    printf("  K-02 counter advanced by 1 (delta=%llu): %s\n",
+           static_cast<unsigned long long>(after - before),
+           counter_advanced ? "OK" : "FAILED");
+    printf("  no code_B bytes leaked to caller:       %s\n",
+           no_code_B_payload ? "OK" : "FAILED");
+
+    bool ok = returned_empty && counter_advanced && no_code_B_payload;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+void test_h01_eth_call_corrupt_strict_load_returns_32000() {
+    printf("=== test_h01_eth_call_corrupt_strict_load_returns_32000 ===\n");
+
+    reset_code_root_hash_mismatch_count_for_test();
+
+    // The K2GlobalCorruptCodeRootGuard installs the corrupt state via
+    // TrustedLazy (so the K-02 lazy-decode path drives the handler
+    // response). Here we additionally cross-check that the *strict*
+    // load entry point fails closed BEFORE the handler runs, which is
+    // the P0.2 contract: hydration of a corrupt canonical state never
+    // gets to populate the cache in the first place. Then, against
+    // the TrustedLazy view of the same corrupt state, eth_call must
+    // surface JSON-RPC `-32000 corrupt EVM code root` because
+    // silkworm's internal `read_code` calls bump the K-02 counter
+    // during the handler frame.
+    evmc::address target_addr = hex_to_addr(
+        "0x000000000000000000000000000000000000a301");
+    Bytes code_A = h01_sload_slot0_runtime();
+    Bytes code_B{0x60, 0x42, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3};
+    auto kh_A = ethash::keccak256(code_A.data(), code_A.size());
+    silkworm::Account corrupt_acct{};
+    corrupt_acct.nonce = 1;
+    std::memcpy(corrupt_acct.code_hash.bytes, kh_A.bytes, 32);
+
+    auto state_cell = h01_make_corrupt_code_root_state(target_addr,
+                                                        corrupt_acct, code_B);
+    CHECK(state_cell.not_null());
+
+    // (P0.2 cross-check) Strict load is fail-closed.
+    bool strict_rejected = !CellEvmState{}.load_from_cell(
+        state_cell, CellStateLoadMode::StrictValidateNoWitness);
+
+    auto rpc_resp = std::optional<RpcResult>{};
+    {
+        K2GlobalCorruptCodeRootGuard guard(target_addr, corrupt_acct, code_B);
+        auto params = k2_build_call_params(target_addr);
+        rpc_resp = handle_eth_rpc("eth_call", params, "h01-strict-call");
+    }
+
+    bool got_resp = rpc_resp.has_value();
+    bool is_error = got_resp && rpc_resp->is_error;
+    bool right_code = is_error &&
+                      rpc_resp->json.find("\"code\":-32000") !=
+                          std::string::npos;
+    bool right_message = is_error &&
+                         rpc_resp->json.find("corrupt EVM code root") !=
+                             std::string::npos;
+
+    printf("  Strict load on corrupt state rejected: %s\n",
+           strict_rejected ? "OK" : "FAILED");
+    printf("  eth_call returned an error:            %s\n",
+           is_error ? "OK" : "FAILED");
+    printf("  error code -32000:                     %s\n",
+           right_code ? "OK" : "FAILED");
+    printf("  error contains 'corrupt EVM code root': %s\n",
+           right_message ? "OK" : "FAILED");
+
+    bool ok = strict_rejected && got_resp && is_error && right_code &&
+              right_message;
+    if (!ok) g_test_failures.fetch_add(1);
+    printf("  %s\n\n", ok ? "PASSED" : "FAILED");
+}
+
+// =============================================================================
 // L2 stress — 10k contracts + EXTCODEHASH loop (audit verification checklist)
 // =============================================================================
 //
@@ -13763,6 +14012,18 @@ int main() {
     test_k2_handle_call_corrupt_code_returns_32000();
     test_k2_handle_estimate_gas_corrupt_code_returns_32000();
     test_k2_counter_resettable_for_test();
+
+    // Audit H-01 follow-up (P0.2 / P0.3) — strict load + cache-hit
+    // invariant for the verified-only code cache. Strict-mode
+    // `load_from_cell` rejects a corrupt canonical state where
+    // `code_hash` and the embedded `code_root` cell decode to
+    // different bytecode; a poisoned cache entry whose stored hash
+    // disagrees with its key fails closed on cache hit; eth_call
+    // against a TrustedLazy view of the same corrupt state surfaces
+    // JSON-RPC `-32000 corrupt EVM code root`.
+    test_h01_strict_load_rejects_code_root_mismatch();
+    test_h01_cache_hit_rejects_poisoned_entry();
+    test_h01_eth_call_corrupt_strict_load_returns_32000();
 
     // Audit verification-checklist (lines 1118-1123) — 10k-contract
     // EXTCODEHASH stress: scaled-up version of the H-01 / K-02 fixtures

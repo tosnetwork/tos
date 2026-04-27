@@ -505,6 +505,23 @@ class CellEvmState : public silkworm::State {
     void set_storage_root_for_hydration(const evmc::address& address,
                                          td::Ref<vm::Cell> root);
 
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
+    /// Audit H-01 (P0.3): test-only helper that pollutes the
+    /// verified-only code cache so the K-02 cache-hit invariant can be
+    /// exercised against a deliberately corrupted entry. Stores
+    /// `(stored_bytes, advertised_hash)` under `cache_key`; if
+    /// `advertised_hash != cache_key` (the typical pollution pattern), a
+    /// subsequent `read_code(_, cache_key)` will hit the cache, observe
+    /// the stored hash mismatch against the requested key, bump the
+    /// always-on K-02 mismatch counter, and return an empty `ByteView`.
+    /// The setter is gated behind `TOS_EVM_TEST_INSTRUMENTATION` so
+    /// release builds neither define the symbol nor expose the
+    /// poisoning surface.
+    void poison_code_cache_for_test(const evmc::bytes32& cache_key,
+                                     const evmc::bytes32& advertised_hash,
+                                     silkworm::ByteView stored_bytes);
+#endif  // TOS_EVM_TEST_INSTRUMENTATION
+
     // ----- Free helpers (used outside CellEvmState) -----
 
   private:
@@ -544,10 +561,25 @@ class CellEvmState : public silkworm::State {
 
     mutable vm::Dictionary account_dict_;  // 256-bit keys → EvmAccountData cells
 
-    // Code storage: code_hash → bytes (silkworm content-addressed). `mutable`
-    // so the lazy `read_code` path can populate the cache from inside a const
-    // member function.
-    mutable std::unordered_map<evmc::bytes32, silkworm::Bytes> code_;
+    /// Audit H-01 / K-02 (P0.3): verified-only code-cache entry. Every
+    /// insertion into `code_` MUST have already passed the canonical
+    /// `keccak(bytes) == hash` invariant via `decode_and_verify_code_root`
+    /// (or its sister helper for in-memory writes). Storing the verified
+    /// `hash` alongside the bytes lets the cache-hit path re-check the
+    /// invariant without recomputing keccak: a cheap `bytes32` compare
+    /// against the requested `code_hash` is sufficient because the only
+    /// way a stored entry can disagree with its key is direct memory
+    /// corruption — and even then the compare fails closed instead of
+    /// silently surfacing the wrong bytecode to silkworm.
+    struct VerifiedCodeEntry {
+        silkworm::Bytes bytes;
+        evmc::bytes32 hash;
+    };
+
+    // Code storage: code_hash → verified-bytecode entry (silkworm content-
+    // addressed). `mutable` so the lazy `read_code` path can populate the
+    // cache from inside a const member function.
+    mutable std::unordered_map<evmc::bytes32, VerifiedCodeEntry> code_;
 
     // Block cache for BLOCKHASH opcode (silkworm requires it)
     std::unordered_map<silkworm::BlockNum, evmc::bytes32> canonical_;
@@ -596,6 +628,36 @@ class CellEvmState : public silkworm::State {
     /// from a mutation. `noexcept` so it remains usable from the
     /// `noexcept` Silkworm-State overrides.
     static evmc::bytes32 keccak_code_hash(silkworm::ByteView code) noexcept;
+
+    /// Audit H-01 (P0.1 / P0.4): single chokepoint that decodes a
+    /// per-account code_root cell and verifies the canonical Ethereum
+    /// invariant `keccak(decoded) == expected_hash` BEFORE the bytes
+    /// are admitted to the verified-only code cache. Every path that
+    /// populates `code_` from a flat-state cell tree (lazy
+    /// `read_code` decode, eager strict-mode `load_from_cell`, future
+    /// hydration / repair tooling) MUST funnel through this helper so
+    /// no caller can re-introduce the unauthenticated decode bug.
+    ///
+    /// Contract:
+    ///   * `expected_hash == kEmptyHash` && `code_root` null → returns
+    ///     an empty `Bytes` (canonical "no code").
+    ///   * `expected_hash == kEmptyHash` && `code_root` non-null →
+    ///     `Status::Error("empty codeHash has non-null code_root")`.
+    ///   * non-empty hash && null `code_root` →
+    ///     `Status::Error("non-empty codeHash has null code_root")`.
+    ///   * decode produces empty for non-empty hash →
+    ///     `Status::Error("non-empty codeHash has empty decoded
+    ///     bytecode")`.
+    ///   * `keccak(decoded) != expected_hash` →
+    ///     `Status::Error("EVM code_root bytecode hash mismatch")`.
+    ///
+    /// `context` is appended to error messages so callers (strict
+    /// load, lazy decode, hydration) surface their own provenance in
+    /// logs without each having to format the prefix themselves.
+    static td::Result<silkworm::Bytes> decode_and_verify_code_root(
+        const td::Ref<vm::Cell>& code_root,
+        const evmc::bytes32& expected_hash,
+        td::Slice context);
 
     /// Audit H-01: record a witness consistency error from a
     /// `noexcept` State path. Sets `witness_ctx_->first_error` and
