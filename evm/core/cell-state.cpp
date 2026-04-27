@@ -296,7 +296,9 @@ void CellEvmState::update_account(const evmc::address& address,
         // (the flush helper interprets `empty()` as "remove from index").
         touched_storage_tries_.emplace(address, MptTrie{});
         dirty_storage_trie_roots_.insert(address);
-        CHECK(update_account_trie_leaf(address, std::nullopt));
+        if (!update_account_trie_leaf(address, std::nullopt)) {
+            trie_witness_ready_ = false;
+        }
         return;
     }
     if (!initial.has_value()) {
@@ -318,7 +320,9 @@ void CellEvmState::update_account(const evmc::address& address,
     vm::CellBuilder cb;
     cb.store_ref(data_cell);
     account_dict_.set_builder(td::ConstBitPtr{key}, 256, cb);
-    CHECK(update_account_trie_leaf(address, current));
+    if (!update_account_trie_leaf(address, current)) {
+        trie_witness_ready_ = false;
+    }
 }
 
 void CellEvmState::update_account_code(const evmc::address& address,
@@ -347,7 +351,9 @@ void CellEvmState::update_account_code(const evmc::address& address,
     vm::CellBuilder vcb;
     vcb.store_ref(data_cell);
     account_dict_.set_builder(td::ConstBitPtr{key}, 256, vcb);
-    CHECK(update_account_trie_leaf(address, acct));
+    if (!update_account_trie_leaf(address, acct)) {
+        trie_witness_ready_ = false;
+    }
 }
 
 void CellEvmState::update_storage(const evmc::address& address,
@@ -381,13 +387,34 @@ void CellEvmState::update_storage(const evmc::address& address,
     }
 
     auto hashed_slot = keccak_bytes32_value(location);
-    auto* storage_trie = get_or_load_storage_trie_for_update(address);
+    // Hot-path mutation: bind the storage trie via shallow validation. The
+    // witness root cell hash is already authenticated by the surrounding
+    // cp.new_data trie witness root, and a strict recursive walk would scale
+    // with the target account's full storage size — that is unmetered host
+    // work. Path-budgeted decoding inside `*_safe` mutation routines bounds
+    // the per-tx cost to the MPT path length.
+    auto* storage_trie = get_or_load_storage_trie_for_update(
+        address, MptWitnessValidationMode::Shallow);
     CHECK(storage_trie != nullptr);
     if (current == zero) {
-        CHECK(storage_trie->erase_hashed(bytes32_view(hashed_slot)));
+        // Fail-closed: a corrupt lazy node along the erase path must not
+        // silently clear the trie root. `erase_hashed_safe` returns OK on a
+        // genuine no-op missing key and an error only when decoding fails;
+        // we propagate that as `!trie_witness_ready_` so compute_phase can
+        // reject the tx instead of persisting a zeroed witness.
+        auto erase_status = storage_trie->erase_hashed_safe(bytes32_view(hashed_slot));
+        if (erase_status.is_error()) {
+            trie_witness_ready_ = false;
+            return;
+        }
     } else {
         auto encoded = encode_mpt_storage_value(current);
-        CHECK(storage_trie->upsert_hashed(bytes32_view(hashed_slot), encoded));
+        auto upsert_status = storage_trie->upsert_hashed_safe(
+            bytes32_view(hashed_slot), encoded);
+        if (upsert_status.is_error()) {
+            trie_witness_ready_ = false;
+            return;
+        }
     }
     // Mark the touched trie dirty so the next `serialize_trie_witness_to_cell`
     // flushes the new root cell back into the storage-trie index dictionary.
@@ -395,7 +422,9 @@ void CellEvmState::update_storage(const evmc::address& address,
 
     set_storage_root(address, storage.get_root_cell());
     auto acct = read_account(address);
-    CHECK(update_account_trie_leaf(address, acct));
+    if (!update_account_trie_leaf(address, acct)) {
+        trie_witness_ready_ = false;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -607,6 +636,71 @@ CellEvmState::ethereum_storage_proof_safe(const evmc::address& address,
     return trie->proof_safe(bytes32_view(hashed));
 }
 
+td::Result<std::vector<silkworm::Bytes>>
+CellEvmState::ethereum_storage_proof_safe_no_cache(
+    const evmc::address& address, const evmc::bytes32& slot) const {
+    if (!trie_witness_ready_) {
+        return td::Status::Error(
+            "ethereum_storage_proof_safe_no_cache: trie witness not ready");
+    }
+    // Read-only path that does not promote the loaded trie into the
+    // `touched_storage_tries_` cache, so public RPC callers operating under a
+    // shared lock never trigger a `mutable` cache mutation. Returns the
+    // canonical empty-trie proof when the address has no entry in the witness
+    // index, matching `ethereum_storage_proof_safe` semantics.
+    auto cached_it = touched_storage_tries_.find(address);
+    if (cached_it != touched_storage_tries_.end()) {
+        if (cached_it->second.empty()) {
+            return std::vector<silkworm::Bytes>{};
+        }
+        auto hashed = keccak_bytes32_value(slot);
+        return cached_it->second.proof_safe(bytes32_view(hashed));
+    }
+
+    if (storage_trie_index_root_.is_null()) {
+        return std::vector<silkworm::Bytes>{};
+    }
+    try {
+        bool special = false;
+        (void)vm::load_cell_slice_special(storage_trie_index_root_, special);
+        if (special) {
+            return td::Status::Error(
+                "ethereum_storage_proof_safe_no_cache: index root is special");
+        }
+        vm::Dictionary index(storage_trie_index_root_, 256);
+        unsigned char key[32];
+        address_to_key(address, key);
+        auto value = index.lookup(td::ConstBitPtr{key}, 256);
+        if (value.is_null()) {
+            return std::vector<silkworm::Bytes>{};
+        }
+        if (value->size() != 0 || value->size_refs() != 1) {
+            return td::Status::Error(
+                "ethereum_storage_proof_safe_no_cache: malformed index entry");
+        }
+        MptTrie tmp;
+        if (!tmp.load_from_cell(value->prefetch_ref(0),
+                                  MptWitnessValidationMode::Shallow)) {
+            return td::Status::Error(
+                "ethereum_storage_proof_safe_no_cache: failed to bind trie root");
+        }
+        auto hashed = keccak_bytes32_value(slot);
+        return tmp.proof_safe(bytes32_view(hashed));
+    } catch (vm::VmError&) {
+        return td::Status::Error(
+            "ethereum_storage_proof_safe_no_cache: vm error");
+    } catch (vm::VmVirtError&) {
+        return td::Status::Error(
+            "ethereum_storage_proof_safe_no_cache: vm virtual error");
+    } catch (std::exception& e) {
+        return td::Status::Error(
+            std::string("ethereum_storage_proof_safe_no_cache: ") + e.what());
+    } catch (...) {
+        return td::Status::Error(
+            "ethereum_storage_proof_safe_no_cache: unknown error");
+    }
+}
+
 bool CellEvmState::rebuild_storage_trie_for_account(const evmc::address& address) {
     // Strict repair helper: walks the full storage dict for the account and
     // rebuilds its MPT trie. Hot-path callers should use the lazy
@@ -637,17 +731,30 @@ bool CellEvmState::update_account_trie_leaf(
     const std::optional<silkworm::Account>& account) {
     auto hashed_addr = keccak_evm_address(address);
     if (!account.has_value()) {
-        return account_trie_.erase_hashed(bytes32_view(hashed_addr));
+        // Fail-closed: a corrupt lazy node along the erase path leaves the
+        // account trie root unchanged rather than zeroing it. Surface the
+        // underlying status as a boolean false so the caller can mark the
+        // witness as not-ready.
+        auto status = account_trie_.erase_hashed_safe(bytes32_view(hashed_addr));
+        return status.is_ok();
     }
     evmc::bytes32 storage_root = silkworm::kEmptyRoot;
-    // Use the lazy lookup so we don't materialise an MptTrie for accounts
-    // that are not actually being mutated by this transaction.
-    if (const auto* trie = get_or_load_storage_trie_for_read(address);
+    // Hot-path lookup: shallow load is sufficient — a strict recursive walk
+    // over a large storage trie just to read its current root would
+    // reintroduce O(account storage size) host work for every leaf update.
+    if (const auto* trie = get_or_load_storage_trie_for_read(
+            address, MptWitnessValidationMode::Shallow);
         trie != nullptr && !trie->empty()) {
-        storage_root = trie->root_hash();
+        auto root = trie->root_hash_safe();
+        if (root.is_error()) {
+            return false;
+        }
+        storage_root = root.move_as_ok();
     }
     auto encoded = account->rlp(storage_root);
-    return account_trie_.upsert_hashed(bytes32_view(hashed_addr), encoded);
+    auto status = account_trie_.upsert_hashed_safe(
+        bytes32_view(hashed_addr), encoded);
+    return status.is_ok();
 }
 
 bool CellEvmState::rebuild_trie_witness() noexcept {
@@ -759,7 +866,8 @@ td::Ref<vm::Cell> CellEvmState::serialize_trie_witness_to_cell() const {
     return cb.finalize();
 }
 
-bool CellEvmState::load_trie_witness_from_cell(td::Ref<vm::Cell> root) {
+bool CellEvmState::load_trie_witness_from_cell(td::Ref<vm::Cell> root,
+                                                TrieWitnessLoadMode mode) {
     account_trie_.clear();
     storage_trie_index_root_ = {};
     touched_storage_tries_.clear();
@@ -769,6 +877,17 @@ bool CellEvmState::load_trie_witness_from_cell(td::Ref<vm::Cell> root) {
         trie_witness_ready_ = true;
         return true;
     }
+    // Choose how aggressively the account-trie root is validated. Strict mode
+    // recursively recomputes every node's RLP — appropriate for hydration /
+    // import / repair. Trusted-shallow mode only binds the root cell and
+    // defers per-node decoding to the proof / mutation path under a path
+    // budget. The storage-trie index root is always lazily bound regardless
+    // of mode (its per-account entries are only decoded when an executing
+    // transaction actually touches that account).
+    const auto account_trie_mode =
+        (mode == TrieWitnessLoadMode::StrictRecursive)
+            ? MptWitnessValidationMode::StrictRecursive
+            : MptWitnessValidationMode::Shallow;
     try {
         bool special = false;
         auto cs = vm::load_cell_slice_special(root, special);
@@ -782,12 +901,7 @@ bool CellEvmState::load_trie_witness_from_cell(td::Ref<vm::Cell> root) {
         auto has_account = cs.fetch_ulong(1);
         if (has_account == 1) {
             if (cs.size_refs() == 0) return false;
-            // P2 hardening: account trie is recursively validated on
-            // hydration so subsequent proof/update operations can rely on
-            // the cached RLP without trusting per-node `rlp_cache`.
-            if (!account_trie_.load_from_cell(
-                    cs.fetch_ref(),
-                    MptWitnessValidationMode::StrictRecursive)) {
+            if (!account_trie_.load_from_cell(cs.fetch_ref(), account_trie_mode)) {
                 return false;
             }
         }
@@ -1008,7 +1122,9 @@ void CellEvmState::set_storage_root_for_hydration(const evmc::address& address,
     set_storage_root(address, std::move(root));
     CHECK(rebuild_storage_trie_for_account(address));
     auto acct = read_account(address);
-    CHECK(update_account_trie_leaf(address, acct));
+    if (!update_account_trie_leaf(address, acct)) {
+        trie_witness_ready_ = false;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1035,7 +1151,7 @@ td::Ref<vm::Cell> CellEvmState::get_storage_root(const evmc::address& address) c
 // writes it back into the index. Read-only helpers (proof/root hash) load
 // without dirty-marking.
 const MptTrie* CellEvmState::get_or_load_storage_trie_for_read(
-    const evmc::address& address) const {
+    const evmc::address& address, MptWitnessValidationMode mode) const {
     auto it = touched_storage_tries_.find(address);
     if (it != touched_storage_tries_.end()) {
         return &it->second;
@@ -1063,7 +1179,7 @@ const MptTrie* CellEvmState::get_or_load_storage_trie_for_read(
             return nullptr;
         }
         MptTrie trie;
-        if (!trie.load_from_cell(value->prefetch_ref(0))) {
+        if (!trie.load_from_cell(value->prefetch_ref(0), mode)) {
             return nullptr;
         }
         auto [inserted_it, _] = touched_storage_tries_.emplace(address, std::move(trie));
@@ -1079,8 +1195,17 @@ const MptTrie* CellEvmState::get_or_load_storage_trie_for_read(
     }
 }
 
+const MptTrie* CellEvmState::get_or_load_storage_trie_for_read(
+    const evmc::address& address) const {
+    // Legacy entry point: keep StrictRecursive semantics for repair / import
+    // callers that haven't been migrated yet. Hot-path callers must pass
+    // `MptWitnessValidationMode::Shallow` explicitly.
+    return get_or_load_storage_trie_for_read(
+        address, MptWitnessValidationMode::StrictRecursive);
+}
+
 MptTrie* CellEvmState::get_or_load_storage_trie_for_update(
-    const evmc::address& address) {
+    const evmc::address& address, MptWitnessValidationMode mode) {
     auto it = touched_storage_tries_.find(address);
     if (it != touched_storage_tries_.end()) {
         return &it->second;
@@ -1089,13 +1214,19 @@ MptTrie* CellEvmState::get_or_load_storage_trie_for_update(
     // const_cast is sound here: the cache is `mutable`, and we own the
     // non-const this pointer in this overload.
     const MptTrie* loaded = static_cast<const CellEvmState*>(this)
-                                ->get_or_load_storage_trie_for_read(address);
+                                ->get_or_load_storage_trie_for_read(address, mode);
     if (loaded != nullptr) {
         return const_cast<MptTrie*>(loaded);
     }
     // No existing entry — create an empty one for this address.
     auto [inserted_it, _] = touched_storage_tries_.emplace(address, MptTrie{});
     return &inserted_it->second;
+}
+
+MptTrie* CellEvmState::get_or_load_storage_trie_for_update(
+    const evmc::address& address) {
+    return get_or_load_storage_trie_for_update(
+        address, MptWitnessValidationMode::StrictRecursive);
 }
 
 bool CellEvmState::lookup_account_data_cell(const evmc::address& address,

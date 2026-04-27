@@ -2774,8 +2774,12 @@ static RpcResult handle_get_proof(const std::string& params, const std::string& 
         // `silkworm::State::read_storage` is `const noexcept` so a const
         // reference is enough; no `const_cast` needed.
         auto v = state.state().read_storage(addr, a.incarnation, slots[i]);
+        // Public RPC path runs under a shared lock, so use the no-cache
+        // variant: it never writes to the `mutable touched_storage_tries_`
+        // cache, avoiding silent data races between concurrent shared-lock
+        // readers and removing a writer-blocking surface.
         auto slot_proof_result =
-            cell_state->ethereum_storage_proof_safe(addr, slots[i]);
+            cell_state->ethereum_storage_proof_safe_no_cache(addr, slots[i]);
         if (slot_proof_result.is_error()) {
             return {make_error(id, -32000, "corrupt EVM trie witness"), true};
         }

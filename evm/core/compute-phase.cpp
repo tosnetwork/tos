@@ -29,6 +29,7 @@
 #include <string>
 
 #include "td/utils/logging.h"
+#include "td/utils/misc.h"  // td::buffer_to_hex
 
 namespace evm_workchain {
 
@@ -75,10 +76,15 @@ class CellStateRollbackSnapshot {
         if (current_cell_state != nullptr) {
             // Rebind via TrustedLazy: the captured root cell hash is owned by
             // this snapshot (no external attacker influence) so the per-rollback
-            // cost stays O(1) instead of O(global state size).
+            // cost stays O(1) instead of O(global state size). The witness is
+            // similarly restored via TrustedShallow — the captured root is the
+            // pre-execution witness this same code wrote out, so a strict
+            // recursive walk would be redundant and reintroduce O(global account
+            // trie nodes) cost on every rollback path.
             CHECK(current_cell_state->load_from_cell(
                 account_root_, CellStateLoadMode::TrustedLazy));
-            CHECK(current_cell_state->load_trie_witness_from_cell(trie_witness_root_));
+            CHECK(current_cell_state->load_trie_witness_from_cell(
+                trie_witness_root_, TrieWitnessLoadMode::TrustedShallow));
             CHECK(current_cell_state->load_block_hashes_from_cell(block_hashes_root_));
             current_cell_state->reset_delta_stats();
         }
@@ -135,7 +141,29 @@ std::unique_ptr<EvmState> build_local_state_from_account_data(
             return nullptr;
         }
         if (trie_witness_root.not_null()) {
-            if (!cell_state->load_trie_witness_from_cell(trie_witness_root)) {
+            // Bind the witness via TrustedShallow: the input cell hash is
+            // already authenticated by the surrounding TOS account state, and
+            // a strict recursive walk here would be O(global account trie
+            // nodes) of unmetered host work per EVM tx. After the cheap bind
+            // we still cross-check the witnessed root hash against the
+            // declared `eth_state_root` from cp.new_data; that comparison is
+            // O(root node) and forces fail-closed on a structurally valid but
+            // semantically mismatched witness.
+            if (!cell_state->load_trie_witness_from_cell(
+                    trie_witness_root,
+                    TrieWitnessLoadMode::TrustedShallow)) {
+                return nullptr;
+            }
+            const auto witnessed_root = cell_state->ethereum_state_root_hash();
+            if (witnessed_root == evmc::bytes32{} ||
+                witnessed_root != eth_state_root) {
+                LOG(WARNING)
+                    << "evm-workchain: trie witness root mismatch: declared="
+                    << td::buffer_to_hex(td::Slice{
+                           reinterpret_cast<const char*>(eth_state_root.bytes), 32})
+                    << " witnessed="
+                    << td::buffer_to_hex(td::Slice{
+                           reinterpret_cast<const char*>(witnessed_root.bytes), 32});
                 return nullptr;
             }
         } else if (!cell_state->rebuild_trie_witness()) {

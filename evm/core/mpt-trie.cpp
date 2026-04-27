@@ -22,6 +22,14 @@
 
 namespace evm_workchain {
 
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
+/// Test-only counter: bumped exactly once per node touched by the strict
+/// recursive MPT validator. Tests reset it to 0 before exercising a hot-path
+/// (TrustedShallow) load and assert it stays at 0, proving the consensus
+/// path no longer pays an O(global trie nodes) host-side cost per EVM tx.
+std::atomic<size_t> g_mpt_strict_validation_nodes{0};
+#endif
+
 using silkworm::Bytes;
 using silkworm::ByteView;
 
@@ -414,32 +422,57 @@ struct MptTrie::Node {
 
 namespace {
 
+/// Outcome of a single recursive insert / erase step. `status` is
+/// `td::Status::OK()` for both successful changes and successful no-ops; a
+/// non-OK status means the descent encountered a corrupt lazy node and the
+/// caller MUST NOT mutate the trie root from `node` (which still points at
+/// the unchanged subtree).
 struct UpdateResult {
     std::shared_ptr<MptTrie::Node> node;
     bool changed{false};
+    td::Status status = td::Status::OK();
+
+    bool ok() const { return status.is_ok(); }
 };
 
-std::shared_ptr<MptTrie::Node> normalize_extension(
+UpdateResult normalize_extension_safe(
     Bytes path,
     std::shared_ptr<MptTrie::Node> child) {
     if (!child) {
-        return nullptr;
+        return {nullptr, false, td::Status::OK()};
     }
     if (path.empty()) {
-        return child;
+        return {std::move(child), false, td::Status::OK()};
     }
-    CHECK(child->ensure_decoded());
+    if (!child->ensure_decoded()) {
+        return {std::move(child), false,
+                td::Status::Error("MPT normalize_extension: failed to decode lazy node")};
+    }
     if (child->kind == kNodeLeaf) {
-        return MptTrie::Node::leaf(concat_path(path, child->path), child->value);
+        return {MptTrie::Node::leaf(concat_path(path, child->path), child->value),
+                false, td::Status::OK()};
     }
     if (child->kind == kNodeExtension) {
-        return MptTrie::Node::extension(concat_path(path, child->path), child->child);
+        return {MptTrie::Node::extension(concat_path(path, child->path), child->child),
+                false, td::Status::OK()};
     }
-    return MptTrie::Node::extension(std::move(path), std::move(child));
+    return {MptTrie::Node::extension(std::move(path), std::move(child)),
+            false, td::Status::OK()};
 }
 
-std::shared_ptr<MptTrie::Node> collapse_branch(std::shared_ptr<MptTrie::Node> branch) {
-    CHECK(branch && branch->ensure_decoded() && branch->kind == kNodeBranch);
+UpdateResult collapse_branch_safe(std::shared_ptr<MptTrie::Node> branch) {
+    if (!branch) {
+        return {nullptr, false,
+                td::Status::Error("MPT collapse_branch: null branch")};
+    }
+    if (!branch->ensure_decoded()) {
+        return {std::move(branch), false,
+                td::Status::Error("MPT collapse_branch: failed to decode lazy node")};
+    }
+    if (branch->kind != kNodeBranch) {
+        return {std::move(branch), false,
+                td::Status::Error("MPT collapse_branch: not a branch node")};
+    }
     int only_child = -1;
     size_t count = 0;
     for (int i = 0; i < 16; ++i) {
@@ -449,48 +482,71 @@ std::shared_ptr<MptTrie::Node> collapse_branch(std::shared_ptr<MptTrie::Node> br
         }
     }
     if (count == 0) {
-        return nullptr;
+        return {nullptr, false, td::Status::OK()};
     }
     if (count > 1) {
         branch->mark_dirty();
-        return branch;
+        return {std::move(branch), false, td::Status::OK()};
     }
 
     auto child = branch->children[only_child];
-    CHECK(child && child->ensure_decoded());
+    if (!child) {
+        return {std::move(branch), false,
+                td::Status::Error("MPT collapse_branch: missing only-child")};
+    }
+    if (!child->ensure_decoded()) {
+        return {std::move(branch), false,
+                td::Status::Error("MPT collapse_branch: failed to decode child")};
+    }
     if (child->kind == kNodeLeaf) {
-        return MptTrie::Node::leaf(
-            one_plus_path(static_cast<uint8_t>(only_child), child->path),
-            child->value);
+        return {MptTrie::Node::leaf(
+                    one_plus_path(static_cast<uint8_t>(only_child), child->path),
+                    child->value),
+                false, td::Status::OK()};
     }
     if (child->kind == kNodeExtension) {
-        return MptTrie::Node::extension(
-            one_plus_path(static_cast<uint8_t>(only_child), child->path),
-            child->child);
+        return {MptTrie::Node::extension(
+                    one_plus_path(static_cast<uint8_t>(only_child), child->path),
+                    child->child),
+                false, td::Status::OK()};
     }
-    return MptTrie::Node::extension(
-        Bytes{static_cast<uint8_t>(only_child)},
-        std::move(child));
+    return {MptTrie::Node::extension(
+                Bytes{static_cast<uint8_t>(only_child)},
+                std::move(child)),
+            false, td::Status::OK()};
 }
 
+/// Per-descent path budget for mutation. Each intermediate node decoded
+/// during insert/erase consumes from the budget; exceeding it surfaces as a
+/// fail-closed error so a maliciously deep / wide witness cannot turn a
+/// single slot mutation into an O(global trie) walk.
 UpdateResult insert_rec(std::shared_ptr<MptTrie::Node> node,
                         ByteView key,
-                        ByteView value) {
+                        ByteView value,
+                        MptPathBudget& budget) {
     if (!node) {
         return {MptTrie::Node::leaf(Bytes{key.begin(), key.end()},
-                                    Bytes{value.begin(), value.end()}), true};
+                                    Bytes{value.begin(), value.end()}),
+                true, td::Status::OK()};
     }
-    CHECK(node->ensure_decoded());
+    if (!node->ensure_decoded()) {
+        return {std::move(node), false,
+                td::Status::Error("MPT insert: failed to decode lazy node")};
+    }
+    if (++budget.nodes > MptPathBudget::kMaxPathNodes) {
+        return {std::move(node), false,
+                td::Status::Error("MPT path budget exceeded")};
+    }
 
     if (node->kind == kNodeLeaf) {
         const size_t common = common_prefix_len(node->path, key);
         if (common == node->path.size() && common == key.size()) {
             if (ByteView{node->value.data(), node->value.size()} == value) {
-                return {node, false};
+                return {node, false, td::Status::OK()};
             }
             node->value = Bytes{value.begin(), value.end()};
             node->mark_dirty();
-            return {node, true};
+            return {node, true, td::Status::OK()};
         }
 
         auto branch = MptTrie::Node::branch();
@@ -508,19 +564,32 @@ UpdateResult insert_rec(std::shared_ptr<MptTrie::Node> node,
                 Bytes{value.begin(), value.end()});
         }
         Bytes prefix{key.begin(), key.begin() + static_cast<std::ptrdiff_t>(common)};
-        return {normalize_extension(std::move(prefix), std::move(branch)), true};
+        auto normalized =
+            normalize_extension_safe(std::move(prefix), std::move(branch));
+        if (!normalized.ok()) {
+            return normalized;
+        }
+        return {std::move(normalized.node), true, td::Status::OK()};
     }
 
     if (node->kind == kNodeExtension) {
         const size_t common = common_prefix_len(node->path, key);
         if (common == node->path.size()) {
-            auto updated = insert_rec(node->child, key.substr(common), value);
+            auto updated =
+                insert_rec(node->child, key.substr(common), value, budget);
+            if (!updated.ok()) {
+                return updated;
+            }
             if (!updated.changed) {
-                return {node, false};
+                return {node, false, td::Status::OK()};
             }
             node->child = std::move(updated.node);
             node->mark_dirty();
-            return {normalize_extension(node->path, node->child), true};
+            auto normalized = normalize_extension_safe(node->path, node->child);
+            if (!normalized.ok()) {
+                return normalized;
+            }
+            return {std::move(normalized.node), true, td::Status::OK()};
         }
 
         auto branch = MptTrie::Node::branch();
@@ -539,68 +608,101 @@ UpdateResult insert_rec(std::shared_ptr<MptTrie::Node> node,
                 Bytes{value.begin(), value.end()});
         }
         Bytes prefix{key.begin(), key.begin() + static_cast<std::ptrdiff_t>(common)};
-        return {normalize_extension(std::move(prefix), std::move(branch)), true};
+        auto normalized =
+            normalize_extension_safe(std::move(prefix), std::move(branch));
+        if (!normalized.ok()) {
+            return normalized;
+        }
+        return {std::move(normalized.node), true, td::Status::OK()};
     }
 
-    CHECK(node->kind == kNodeBranch);
+    if (node->kind != kNodeBranch) {
+        return {std::move(node), false,
+                td::Status::Error("MPT insert: unknown node kind")};
+    }
     if (key.empty()) {
-        return {node, false};
+        return {node, false, td::Status::OK()};
     }
     uint8_t idx = key[0];
-    auto updated = insert_rec(node->children[idx], key.substr(1), value);
+    auto updated = insert_rec(node->children[idx], key.substr(1), value, budget);
+    if (!updated.ok()) {
+        return updated;
+    }
     if (!updated.changed) {
-        return {node, false};
+        return {node, false, td::Status::OK()};
     }
     node->children[idx] = std::move(updated.node);
     node->mark_dirty();
-    return {node, true};
+    return {node, true, td::Status::OK()};
 }
 
-UpdateResult erase_rec(std::shared_ptr<MptTrie::Node> node, ByteView key) {
+UpdateResult erase_rec(std::shared_ptr<MptTrie::Node> node, ByteView key,
+                        MptPathBudget& budget) {
     if (!node) {
-        return {nullptr, false};
+        return {nullptr, false, td::Status::OK()};
     }
     if (!node->ensure_decoded()) {
-        // Fail closed: surface a corrupt lazy node as a no-change result
-        // rather than aborting the process. The trie root stays bound to
-        // its previous (potentially stale) shape; callers see no apparent
-        // mutation and the next `serialize_to_cell` will rebuild from the
-        // unchanged root.
-        return {nullptr, false};
+        // Fail closed: surface a corrupt lazy node as an error so the upper
+        // layer (`erase_hashed_safe`) leaves the existing root untouched
+        // instead of overwriting it with a half-decoded subtree (or, worse,
+        // a `nullptr` that would zero out the witness).
+        return {std::move(node), false,
+                td::Status::Error("MPT erase: failed to decode lazy node")};
+    }
+    if (++budget.nodes > MptPathBudget::kMaxPathNodes) {
+        return {std::move(node), false,
+                td::Status::Error("MPT path budget exceeded")};
     }
 
     if (node->kind == kNodeLeaf) {
         if (ByteView{node->path} == key) {
-            return {nullptr, true};
+            return {nullptr, true, td::Status::OK()};
         }
-        return {node, false};
+        return {node, false, td::Status::OK()};
     }
 
     if (node->kind == kNodeExtension) {
         if (key.size() < node->path.size() ||
             !std::equal(node->path.begin(), node->path.end(), key.begin())) {
-            return {node, false};
+            return {node, false, td::Status::OK()};
         }
-        auto updated = erase_rec(node->child, key.substr(node->path.size()));
+        auto updated =
+            erase_rec(node->child, key.substr(node->path.size()), budget);
+        if (!updated.ok()) {
+            return updated;
+        }
         if (!updated.changed) {
-            return {node, false};
+            return {node, false, td::Status::OK()};
         }
-        return {normalize_extension(node->path, std::move(updated.node)), true};
+        auto normalized =
+            normalize_extension_safe(node->path, std::move(updated.node));
+        if (!normalized.ok()) {
+            return normalized;
+        }
+        return {std::move(normalized.node), true, td::Status::OK()};
     }
 
     if (node->kind != kNodeBranch) {
-        return {nullptr, false};
+        return {std::move(node), false,
+                td::Status::Error("MPT erase: unknown node kind")};
     }
     if (key.empty()) {
-        return {node, false};
+        return {node, false, td::Status::OK()};
     }
     const uint8_t idx = key[0];
-    auto updated = erase_rec(node->children[idx], key.substr(1));
+    auto updated = erase_rec(node->children[idx], key.substr(1), budget);
+    if (!updated.ok()) {
+        return updated;
+    }
     if (!updated.changed) {
-        return {node, false};
+        return {node, false, td::Status::OK()};
     }
     node->children[idx] = std::move(updated.node);
-    return {collapse_branch(std::move(node)), true};
+    auto collapsed = collapse_branch_safe(std::move(node));
+    if (!collapsed.ok()) {
+        return collapsed;
+    }
+    return {std::move(collapsed.node), true, td::Status::OK()};
 }
 
 void walk_proof(const std::shared_ptr<MptTrie::Node>& node,
@@ -632,17 +734,30 @@ void walk_proof(const std::shared_ptr<MptTrie::Node>& node,
 /// Fail-closed proof walk. Mirrors `walk_proof` but returns a `td::Status`
 /// when a lazy node's cell cannot be decoded, so the caller (RPC layer) can
 /// surface a corrupt witness as a JSON-RPC error instead of triggering a
-/// process abort via `CHECK`.
+/// process abort via `CHECK`. Each decoded node consumes from a path budget
+/// (count + total RLP bytes); exceeding either cap fails the proof rather
+/// than allowing an O(global trie) walk on a corrupt or pathological witness.
 td::Status walk_proof_safe(const std::shared_ptr<MptTrie::Node>& node,
                             ByteView target,
-                            std::vector<Bytes>& proof) {
+                            std::vector<Bytes>& proof,
+                            MptPathBudget& budget) {
     if (!node) {
         return td::Status::OK();
     }
     if (!node->ensure_decoded()) {
         return td::Status::Error("MPT proof: failed to decode lazy node");
     }
-    proof.push_back(node->rlp());
+    if (++budget.nodes > MptPathBudget::kMaxPathNodes) {
+        return td::Status::Error("MPT path budget exceeded");
+    }
+    const auto& encoded = node->rlp();
+    if (encoded.size() > MptPathBudget::kMaxPathRlpBytes ||
+        budget.rlp_bytes >
+            MptPathBudget::kMaxPathRlpBytes - encoded.size()) {
+        return td::Status::Error("MPT path budget exceeded");
+    }
+    budget.rlp_bytes += encoded.size();
+    proof.push_back(encoded);
 
     if (node->kind == kNodeLeaf) {
         return td::Status::OK();
@@ -652,7 +767,8 @@ td::Status walk_proof_safe(const std::shared_ptr<MptTrie::Node>& node,
             !std::equal(node->path.begin(), node->path.end(), target.begin())) {
             return td::Status::OK();
         }
-        return walk_proof_safe(node->child, target.substr(node->path.size()), proof);
+        return walk_proof_safe(node->child, target.substr(node->path.size()),
+                                proof, budget);
     }
     if (node->kind != kNodeBranch) {
         return td::Status::Error("MPT proof: unknown node kind");
@@ -660,7 +776,8 @@ td::Status walk_proof_safe(const std::shared_ptr<MptTrie::Node>& node,
     if (target.empty()) {
         return td::Status::OK();
     }
-    return walk_proof_safe(node->children[target[0]], target.substr(1), proof);
+    return walk_proof_safe(node->children[target[0]], target.substr(1),
+                            proof, budget);
 }
 
 bool validate_node_shallow(const std::shared_ptr<MptTrie::Node>& node,
@@ -697,6 +814,9 @@ bool validate_node_strict(const std::shared_ptr<MptTrie::Node>& node,
     if (!node) {
         return true;
     }
+#ifdef TOS_EVM_TEST_INSTRUMENTATION
+    g_mpt_strict_validation_nodes.fetch_add(1, std::memory_order_relaxed);
+#endif
     if (++budget.nodes > MptValidationBudget::kMaxNodes) {
         return false;
     }
@@ -766,31 +886,74 @@ void MptTrie::clear() noexcept {
     root_.reset();
 }
 
-bool MptTrie::upsert_hashed(const ByteView& hashed_key, const ByteView& rlp_value) {
-    if (hashed_key.size() != kHashLength || rlp_value.empty()) {
-        return false;
-    }
-    Bytes nibbles = silkworm::trie::unpack_nibbles(hashed_key);
-    auto updated = insert_rec(root_, nibbles, rlp_value);
-    root_ = std::move(updated.node);
-    return true;
-}
-
-bool MptTrie::erase_hashed(const ByteView& hashed_key) {
+td::Status MptTrie::upsert_hashed_safe(const ByteView& hashed_key,
+                                       const ByteView& rlp_value) {
     if (hashed_key.size() != kHashLength) {
-        return false;
+        return td::Status::Error("MPT upsert: hashed key must be 32 bytes");
+    }
+    if (rlp_value.empty()) {
+        return td::Status::Error("MPT upsert: empty RLP value");
     }
     Bytes nibbles = silkworm::trie::unpack_nibbles(hashed_key);
-    auto updated = erase_rec(root_, nibbles);
+    MptPathBudget budget;
+    auto updated = insert_rec(root_, nibbles, rlp_value, budget);
+    if (!updated.ok()) {
+        // Leave root_ untouched on error: a corrupt lazy descent must not
+        // be allowed to silently install a partial subtree as the new root.
+        return std::move(updated.status);
+    }
     root_ = std::move(updated.node);
-    return true;
+    return td::Status::OK();
 }
 
-evmc::bytes32 MptTrie::root_hash() const {
+td::Status MptTrie::erase_hashed_safe(const ByteView& hashed_key) {
+    if (hashed_key.size() != kHashLength) {
+        return td::Status::Error("MPT erase: hashed key must be 32 bytes");
+    }
+    Bytes nibbles = silkworm::trie::unpack_nibbles(hashed_key);
+    MptPathBudget budget;
+    auto updated = erase_rec(root_, nibbles, budget);
+    if (!updated.ok()) {
+        // Critical fail-closed property: do NOT clear or rebind root_ on a
+        // decode error. The previous shape — even if it's stale — is safer
+        // than producing a kEmptyRoot from a corrupt subtree.
+        return std::move(updated.status);
+    }
+    if (updated.changed) {
+        root_ = std::move(updated.node);
+    }
+    return td::Status::OK();
+}
+
+td::Result<evmc::bytes32> MptTrie::root_hash_safe() const {
     if (!root_) {
         return silkworm::kEmptyRoot;
     }
+    if (!root_->ensure_decoded()) {
+        return td::Status::Error("MPT root_hash: failed to decode root");
+    }
     return root_->hash();
+}
+
+// Audit: consensus-critical mutation paths (CellEvmState::update_storage,
+// update_account_trie_leaf, etc.) MUST use the `_safe` variants below. The
+// boolean wrappers keep older non-consensus call sites compiling and silently
+// swallow corrupt-witness errors as `false` — that is unsafe to extend to new
+// consensus consumers.
+bool MptTrie::upsert_hashed(const ByteView& hashed_key, const ByteView& rlp_value) {
+    return upsert_hashed_safe(hashed_key, rlp_value).is_ok();
+}
+
+bool MptTrie::erase_hashed(const ByteView& hashed_key) {
+    return erase_hashed_safe(hashed_key).is_ok();
+}
+
+evmc::bytes32 MptTrie::root_hash() const {
+    auto result = root_hash_safe();
+    if (result.is_error()) {
+        return silkworm::kEmptyRoot;
+    }
+    return result.move_as_ok();
 }
 
 std::vector<Bytes> MptTrie::proof(const ByteView& hashed_key) const {
@@ -812,7 +975,9 @@ td::Result<std::vector<Bytes>> MptTrie::proof_safe(const ByteView& hashed_key) c
     }
     Bytes nibbles = silkworm::trie::unpack_nibbles(hashed_key);
     std::vector<Bytes> out;
-    if (auto status = walk_proof_safe(root_, nibbles, out); status.is_error()) {
+    MptPathBudget budget;
+    if (auto status = walk_proof_safe(root_, nibbles, out, budget);
+        status.is_error()) {
         return std::move(status);
     }
     return out;

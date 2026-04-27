@@ -672,10 +672,21 @@ static void test_block_hash_history_roundtrip_and_read_header() {
 // Test 7 — cp_new_data_declared_root_not_recomputed_per_tx
 // ---------------------------------------------------------------------------
 //
-// Full eth_state_root verification is still available to strict decoders, but
-// the hot compute path must not run a full trie recomputation before every tx.
-// A deliberately stale declared root should fail strict decode while snapshot
-// compute can still execute from the TOS-bound state_root cell.
+// Two invariants on the same code path:
+//   1. The compute hot path must NOT do an O(global state) Ethereum trie
+//      recomputation per tx; declared `eth_state_root` is therefore not
+//      used as a verification trigger that scans the full flat state.
+//   2. After P0 (audit `[High] 每笔 EVM tx 仍对 account MPT witness ...`),
+//      the hot path DOES perform an O(root-node) cheap consistency check
+//      between the declared `eth_state_root` and the witnessed root hash.
+//      A deliberately stale declared root must therefore fail closed.
+//
+// This guarantees an attacker cannot have the validator silently execute
+// against a stale or malicious declared root while skipping the full scan.
+//
+// Strict decoders (snapshot import / repair) keep their full
+// declared-root recompute; the hot path delegates to the cheap shallow
+// witness root comparison.
 
 static void test_cp_new_data_declared_root_not_recomputed_per_tx() {
     tprintf("[TEST] cp_new_data_declared_root_not_recomputed_per_tx\n");
@@ -716,15 +727,21 @@ static void test_cp_new_data_declared_root_not_recomputed_per_tx() {
     auto out = run_once(bad_account_data, tx->raw_rlp,
                         /*block_seqno=*/818181,
                         /*timestamp=*/1800000300);
-    if (strict_decoded || !out.ok || !out.success || out.new_data.is_null()) {
-        tprintf("  FAILED: strict_decoded=%d ok=%d success=%d new_data=%d\n",
-                strict_decoded,
-                out.ok,
-                out.success,
-                out.new_data.not_null());
+    // Post-P0 invariants:
+    //   - strict decode still rejects the bad declared root;
+    //   - the hot compute path *also* fails closed via the cheap shallow
+    //     witness-root vs declared-root comparison;
+    //   - no full state scan ran (otherwise this test would not finish in
+    //     reasonable time on the larger states the audit calls out).
+    if (strict_decoded) {
+        tprintf("  FAILED: strict decode accepted a tampered eth_state_root\n");
         return;
     }
-    tprintf("  PASSED (compute uses persisted witness; strict decode still rejects bad root)\n");
+    if (out.success) {
+        tprintf("  FAILED: hot path executed with mismatched eth_state_root\n");
+        return;
+    }
+    tprintf("  PASSED (strict decode + hot path both reject the tampered declared root)\n");
 }
 
 // ---------------------------------------------------------------------------

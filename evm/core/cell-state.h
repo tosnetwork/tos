@@ -59,6 +59,23 @@ enum class CellStateLoadMode {
     TrustedLazy,
 };
 
+/// Selects how aggressively `CellEvmState::load_trie_witness_from_cell`
+/// validates the supplied witness root cell.
+///
+///   - StrictRecursive: walks the whole account trie (and validates each
+///     cached RLP byte against the recomputed RLP) before binding. Used by
+///     hydration, snapshot import, manual repair, and offline verification.
+///   - TrustedShallow: only verifies the witness root cell decodes into a
+///     non-special root node. Account-trie internal nodes are decoded lazily
+///     on the proof / mutation path. Designed for the consensus-bound EVM
+///     compute hot path where the input cell hash is already authenticated by
+///     the surrounding TOS account state and a strict per-tx walk would be
+///     unmetered host work scaling with global account count.
+enum class TrieWitnessLoadMode {
+    StrictRecursive,
+    TrustedShallow,
+};
+
 #ifdef TOS_EVM_TEST_INSTRUMENTATION
 /// Test-only instrumentation. Each global counter is bumped exactly once per
 /// full-walk operation in CellEvmState. Tests reset to 0 before exercising a
@@ -200,13 +217,32 @@ class CellEvmState : public silkworm::State {
         const evmc::address& address) const;
     td::Result<std::vector<silkworm::Bytes>> ethereum_storage_proof_safe(
         const evmc::address& address, const evmc::bytes32& slot) const;
+
+    /// Read-only proof helper for public RPC `eth_getProof`. Builds the
+    /// storage proof from a temporary local `MptTrie` shallow-loaded directly
+    /// out of `storage_trie_index_root_`, so the `mutable touched_storage_tries_`
+    /// cache is **not** mutated under the shared lock. Returns an empty proof
+    /// when the address has no entry in the witness storage-trie index
+    /// (canonical empty-trie semantics matching `ethereum_storage_proof_safe`).
+    td::Result<std::vector<silkworm::Bytes>> ethereum_storage_proof_safe_no_cache(
+        const evmc::address& address, const evmc::bytes32& slot) const;
     bool trie_witness_ready() const noexcept { return trie_witness_ready_; }
     bool rebuild_trie_witness() noexcept;
 
     /// Serialize/load the persistent Ethereum MPT witness. Null witness means
-    /// the empty state trie.
+    /// the empty state trie. The mode-aware overload selects between strict
+    /// recursive validation (hydration/import/repair) and a cheap trusted
+    /// shallow bind suitable for the EVM compute hot path.
     td::Ref<vm::Cell> serialize_trie_witness_to_cell() const;
-    bool load_trie_witness_from_cell(td::Ref<vm::Cell> root);
+    bool load_trie_witness_from_cell(td::Ref<vm::Cell> root, TrieWitnessLoadMode mode);
+
+    /// Legacy entry point that defaults to `StrictRecursive`. New consensus
+    /// hot-path callers must pass `TrieWitnessLoadMode::TrustedShallow`
+    /// explicitly so a per-tx full account-trie walk is not reintroduced.
+    bool load_trie_witness_from_cell(td::Ref<vm::Cell> root) {
+        return load_trie_witness_from_cell(std::move(root),
+                                            TrieWitnessLoadMode::StrictRecursive);
+    }
 
     /// Serialize the entire account dictionary into a single cell (suitable
     /// for storing in a ShardAccounts cell or a BoC).
@@ -270,12 +306,21 @@ class CellEvmState : public silkworm::State {
     bool lookup_account_data_cell(const evmc::address& address,
                                   td::Ref<vm::Cell>& out) const;
 
-    /// Lazy storage-trie helpers (P1). `for_update` marks the trie dirty so
-    /// the next `serialize_trie_witness_to_cell` writes a fresh entry into
-    /// the storage-trie index dictionary. `for_read` only loads into the
+    /// Lazy storage-trie helpers. `for_update` marks the trie dirty so the
+    /// next `serialize_trie_witness_to_cell` writes a fresh entry into the
+    /// storage-trie index dictionary. `for_read` only loads into the
     /// touched-cache without marking dirty.
+    ///
+    /// The mode-aware overloads pick between strict recursive validation
+    /// (used by repair/import paths) and the shallow bind used by the EVM
+    /// compute hot path. Default callers (no `mode` argument) keep the
+    /// historical strict-recursive behaviour for legacy import paths.
     MptTrie* get_or_load_storage_trie_for_update(const evmc::address& address);
+    MptTrie* get_or_load_storage_trie_for_update(const evmc::address& address,
+                                                  MptWitnessValidationMode mode);
     const MptTrie* get_or_load_storage_trie_for_read(const evmc::address& address) const;
+    const MptTrie* get_or_load_storage_trie_for_read(
+        const evmc::address& address, MptWitnessValidationMode mode) const;
 
     mutable vm::Dictionary account_dict_;  // 256-bit keys → EvmAccountData cells
 
